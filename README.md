@@ -7,8 +7,8 @@
   <a href="https://github.com/manuhuth/NoLimits.jl/actions/workflows/CI.yml">
     <img src="https://github.com/manuhuth/NoLimits.jl/actions/workflows/CI.yml/badge.svg?branch=main" alt="CI"/>
   </a>
-  <a href="https://manuhuth.github.io/NoLimits.jl">
-    <img src="https://img.shields.io/badge/docs-stable-blue.svg" alt="Documentation"/>
+  <a href="https://manuhuth.github.io/NoLimits.jl/dev/">
+    <img src="https://img.shields.io/badge/docs-dev-blue.svg" alt="Documentation"/>
   </a>
   <a href="https://codecov.io/gh/manuhuth/NoLimits.jl">
     <img src="https://codecov.io/gh/manuhuth/NoLimits.jl/branch/main/graph/badge.svg" alt="Coverage"/>
@@ -125,7 +125,7 @@ plot_vpc(res; n_simulations=200)
 plot_residuals(res)
 ```
 
-More examples — including neural-ODE models, HMM outcomes, normalizing-flow random effects, and multi-method comparison — are available in the [Tutorials](https://manuhuth.github.io/NoLimits.jl/tutorials/).
+More examples — including neural-ODE models, HMM outcomes, normalizing-flow random effects, and multi-method comparison — are available in the [Tutorials](https://manuhuth.github.io/NoLimits.jl/dev/tutorials/).
 
 
 
@@ -168,7 +168,7 @@ Registry-based installation (`Pkg.add("NoLimits")`) will be available once the p
 
 Full documentation, including tutorials, method descriptions, and API reference:
 
-**[https://manuhuth.github.io/NoLimits.jl](https://manuhuth.github.io/NoLimits.jl)**
+**[https://manuhuth.github.io/NoLimits.jl/dev/](https://manuhuth.github.io/NoLimits.jl/dev/)**
 
 
 
