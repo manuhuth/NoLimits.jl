@@ -17,13 +17,13 @@
 
 NoLimits.jl provides a unified, open-source framework for specifying, estimating, and diagnosing hierarchical models of longitudinal data. It is designed for life-science applications — from pharmacokinetics and systems biology to ecology and neuroscience — where population variability, mechanistic dynamics, and complex outcome structures must be modeled jointly.
 
----
+
 
 ## Why NoLimits.jl?
 
 Nonlinear mixed-effects (NLME) models are the standard tool for longitudinal analysis in the biomedical sciences, but existing software enforces trade-offs between expressiveness, estimation flexibility, and modern machine-learning integration. NoLimits.jl addresses these gaps through a single, composable modeling language in which mechanistic structure, learned components, flexible random-effect distributions, and diverse outcome types coexist within one coherent specification — and can be estimated with multiple inference strategies without rewriting the model.
 
----
+
 
 ## Key Features
 
@@ -62,7 +62,7 @@ All methods share a single `fit_model` interface, enabling direct comparison acr
 
 Visual predictive checks (VPCs), residual diagnostics (QQ, PIT, ACF), random-effects distribution diagnostics, observation-level predictive distribution plots, multistart waterfall plots, and UQ parameter distribution plots.
 
----
+
 
 ## Quickstart
 
@@ -128,7 +128,7 @@ plot_residuals(res)
 
 More examples — including neural-ODE models, HMM outcomes, normalizing-flow random effects, and multi-method comparison — are available in the [Tutorials](https://manuhuth.github.io/NoLimits.jl/tutorials/).
 
----
+
 
 
 ## Installation
@@ -142,7 +142,7 @@ Pkg.add(url="https://github.com/manuhuth/NoLimits.jl")
 
 Registry-based installation (`Pkg.add("NoLimits")`) will be available once the package is registered in the Julia General Registry.
 
----
+
 
 ## Documentation
 
@@ -150,7 +150,7 @@ Full documentation, including tutorials, method descriptions, and API reference:
 
 **[https://manuhuth.github.io/NoLimits.jl](https://manuhuth.github.io/NoLimits.jl)**
 
----
+
 
 ## Citation
 
@@ -165,7 +165,7 @@ A manuscript describing NoLimits.jl is in preparation. In the meantime, if you u
 }
 ```
 
----
+
 
 ## License
 

@@ -3,9 +3,6 @@ uuid = "1d491b74-35a5-408f-ae19-cf8524c3769d"
 version = "0.1.0"
 authors = ["Manuel Huth", "Jonas Arruda", "Jan Hasenauer"]
 
-[compat]
-julia = "1.12"
-
 [deps]
 Bijectors = "76274a88-744f-5084-9051-94815aaf08c4"
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
@@ -60,6 +57,7 @@ Turing = "fce5fe82-541a-59a6-adf8-730c64b5f9a0"
 Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
 
 [compat]
+julia = "1.12"
 Bijectors = "0.15.15"
 CSV = "0.10.15"
 ColorSchemes = "3.31.0"
