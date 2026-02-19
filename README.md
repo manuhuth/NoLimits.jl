@@ -2,13 +2,18 @@
   <img src="docs/src/assets/logo.png" width="200" alt="NoLimits.jl logo"/>
 </p>
 
-<h1 align="center">NoLimits.jl</h1>
 
 <p align="center">
-  <b>Composable nonlinear mixed-effects modeling for longitudinal data in Julia.</b>
+  <a href="https://github.com/manuhuth/NoLimits.jl/actions/workflows/CI.yml">
+    <img src="https://github.com/manuhuth/NoLimits.jl/actions/workflows/CI.yml/badge.svg?branch=main" alt="CI"/>
+  </a>
+  <a href="https://manuhuth.github.io/NoLimits.jl">
+    <img src="https://img.shields.io/badge/docs-stable-blue.svg" alt="Documentation"/>
+  </a>
+  <a href="https://codecov.io/gh/manuhuth/NoLimits.jl">
+    <img src="https://codecov.io/gh/manuhuth/NoLimits.jl/branch/main/graph/badge.svg" alt="Coverage"/>
+  </a>
 </p>
-
----
 
 NoLimits.jl provides a unified, open-source framework for specifying, estimating, and diagnosing hierarchical models of longitudinal data. It is designed for life-science applications — from pharmacokinetics and systems biology to ecology and neuroscience — where population variability, mechanistic dynamics, and complex outcome structures must be modeled jointly.
 
@@ -125,63 +130,6 @@ More examples — including neural-ODE models, HMM outcomes, normalizing-flow ra
 
 ---
 
-## Repository Structure
-
-```
-NoLimits.jl/
-├── src/
-│   ├── NoLimits.jl                          # Module entry point
-│   ├── Constants.jl                         # Global constants
-│   ├── model/                               # Model DSL and block macros
-│   │   ├── Model.jl                         # @Model macro and bundle types
-│   │   ├── Parameters.jl                    # RealNumber, RealVector, NNParameters, ...
-│   │   ├── FixedEffects.jl                  # @fixedEffects
-│   │   ├── RandomEffects.jl                 # @randomEffects
-│   │   ├── Covariates.jl                    # @covariates
-│   │   ├── Helpers.jl                       # @helpers
-│   │   ├── PreDE.jl                         # @preDifferentialEquation
-│   │   ├── DifferentialEquation.jl          # @DifferentialEquation
-│   │   ├── InitialDE.jl                     # @initialDE
-│   │   └── Formulas.jl                      # @formulas
-│   ├── data_model/
-│   │   └── DataModel.jl                     # DataModel construction and validation
-│   ├── data_simulation/
-│   │   └── data_simulation.jl               # simulate_data, simulate_data_model
-│   ├── estimation/                          # Estimation methods
-│   │   ├── common.jl                        # Shared types and accessors
-│   │   ├── mle.jl                           # MLE
-│   │   ├── map.jl                           # MAP
-│   │   ├── mcmc_turing.jl                   # MCMC (Turing.jl)
-│   │   ├── laplace.jl                       # Laplace / LaplaceMAP
-│   │   ├── FOCEI.jl                         # FOCEI / FOCEIMAP
-│   │   ├── mcem.jl                          # MCEM
-│   │   ├── saem.jl                          # SAEM
-│   │   └── Multistart.jl                    # Multistart wrapper
-│   ├── plotting/                            # Visualization
-│   │   ├── plots.jl                         # plot_fits, plot_data
-│   │   ├── plotting_vpc.jl                  # plot_vpc
-│   │   ├── plotting_uq.jl                   # plot_uq_distributions
-│   │   ├── plotting_observation_distributions.jl
-│   │   └── plotting_random_effects.jl
-│   ├── distributions/                       # Custom distributions
-│   │   ├── outcomes/
-│   │   │   ├── DiscreteTimeHMM.jl
-│   │   │   └── ContinuousTimeHMM.jl
-│   │   └── random_effects/
-│   │       └── NormalizingPlanarFlows.jl
-│   ├── soft_trees/
-│   │   └── SoftTrees.jl                     # Soft decision trees
-│   └── utils/
-│       ├── GeneralUtils.jl
-│       ├── ParameterTranformations.jl
-│       └── Splines.jl
-├── test/                                    # Test suite (~54 test files)
-├── benchmarks/                              # Performance benchmarks
-├── examples/                               # Usage examples
-└── docs/                                   # Documentation source
-```
-
----
 
 ## Installation
 

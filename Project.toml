@@ -1,7 +1,10 @@
 name = "NoLimits"
 uuid = "1d491b74-35a5-408f-ae19-cf8524c3769d"
 version = "0.1.0"
-authors = ["manuel "]
+authors = ["Manuel Huth", "Jonas Arruda", "Jan Hasenauer"]
+
+[compat]
+julia = "1.12"
 
 [deps]
 Bijectors = "76274a88-744f-5084-9051-94815aaf08c4"
