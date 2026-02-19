@@ -6,7 +6,7 @@ using NoLimits
 makedocs(;
     sitename="NoLimits.jl",
     modules=[NoLimits],
-    format=Documenter.HTML(; prettyurls=false, collapselevel=1, sidebar_sitename=false, size_threshold=400*1024),
+    format=Documenter.HTML(; prettyurls=get(ENV, "CI", nothing) == "true", collapselevel=1, sidebar_sitename=false, size_threshold=400*1024),
     repo=Remotes.GitHub("manuhuth", "NoLimits.jl"),
     checkdocs=:none,
     pages=[
