@@ -168,7 +168,7 @@ Registry-based installation (`Pkg.add("NoLimits")`) will be available once the p
 
 Full documentation, including tutorials, method descriptions, and API reference:
 
-**[https://manuhuth.github.io/NoLimits.jl/dev/](https://manuhuth.github.io/NoLimits.jl/dev/)**
+[![Documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://manuhuth.github.io/NoLimits.jl/dev/)
 
 
 
