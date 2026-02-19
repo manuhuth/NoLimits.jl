@@ -13,7 +13,6 @@ makedocs(;
         "Home" => "index.md",
         "Installation" => "installation.md",
         "Capabilities" => "capabilities.md",
-        "NLME Methodology" => "nlme-methodology.md",
         "Model Building" => [
             "Overview" => "model-building/index.md",
             "@Model" => "model-building/model-macro.md",
@@ -55,7 +54,6 @@ makedocs(;
             "Mixed-Effects Tutorial 6: Left-Censored Nonlinear Model (Laplace)" => "tutorials/mixed-effects-left-censored-virload50-laplace.md",
             "Fixed-Effects Tutorial 1: Nonlinear Longitudinal Model (MLE + MAP)" => "tutorials/fixed-effects-nonlinear-mle-map.md",
         ],
-        "Developers Guide" => "developers-guide.md",
         "How to Contribute" => "how-to-contribute.md",
         "API" => "api.md",
     ],

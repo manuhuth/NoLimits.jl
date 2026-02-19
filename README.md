@@ -47,9 +47,8 @@ All methods share a single `fit_model` interface, enabling direct comparison acr
 
 | Inference paradigm | Methods |
 |---|---|
-| **Frequentist (fixed effects)** | MLE, MAP, Multistart |
-| **Frequentist (mixed effects)** | Laplace, LaplaceMAP, FOCEI, FOCEIMAP, SAEM, MCEM |
-| **Bayesian** | MCMC (Turing.jl) |
+| **Fixed effects** | MLE, MAP, MCMC, Multistart |
+| **Mixed effects** | Laplace, LaplaceMAP, SAEM, MCEM, MCMC |
 
 ### Uncertainty Quantification
 
@@ -130,6 +129,27 @@ More examples — including neural-ODE models, HMM outcomes, normalizing-flow ra
 
 
 
+
+## Julia Ecosystem
+
+NoLimits.jl is built on and integrates directly with established Julia packages. Users familiar with any of these libraries will find the interfaces immediately familiar.
+
+| Domain | Package | Role in NoLimits.jl |
+|---|---|---|
+| **ODE solving** | [OrdinaryDiffEq.jl](https://github.com/SciML/OrdinaryDiffEq.jl) | Solves ODE-based structural models; full SciML solver zoo available |
+| **Distributions** | [Distributions.jl](https://github.com/JuliaStats/Distributions.jl) | Observation models and random-effect distributions; any `Distribution` works out of the box |
+| **Numerical optimisation** | [Optimization.jl](https://github.com/SciML/Optimization.jl) | Unified interface for all gradient-based and derivative-free optimisers used in estimation |
+| **MCMC sampling** | [Turing.jl](https://github.com/TuringLang/Turing.jl) | Full Bayesian inference and E-step sampling in MCEM/SAEM |
+| **MCMC diagnostics** | [MCMCChains.jl](https://github.com/TuringLang/MCMCChains.jl) | Chain storage, diagnostics, and summaries for Bayesian fits |
+| **Neural networks** | [Lux.jl](https://github.com/LuxDL/Lux.jl) | Neural-network components embedded in model formulas, ODE dynamics, or RE distributions |
+| **Automatic differentiation** | [ForwardDiff.jl](https://github.com/JuliaDiff/ForwardDiff.jl) | Gradient computation for all estimation and UQ methods |
+| **Parameter arrays** | [ComponentArrays.jl](https://github.com/jonniedie/ComponentArrays.jl) | Named, nested parameter vectors used end-to-end in all estimation paths |
+| **Data** | [DataFrames.jl](https://github.com/JuliaData/DataFrames.jl) | Standard tabular data interface for model input and output |
+| **Dynamic covariates** | [DataInterpolations.jl](https://github.com/SciML/DataInterpolations.jl) | Continuous-time interpolation of time-varying inputs inside ODE solvers |
+| **Profile likelihood** | [LikelihoodProfiler.jl](https://github.com/insysbio/LikelihoodProfiler.jl) | Profile-likelihood-based uncertainty quantification |
+| **Plotting** | [Plots.jl](https://github.com/JuliaPlots/Plots.jl) | All diagnostic and visualisation outputs |
+
+---
 
 ## Installation
 

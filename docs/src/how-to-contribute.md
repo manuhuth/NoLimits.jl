@@ -1,27 +1,6 @@
 # How to Contribute
 
-This page is a placeholder and will be expanded with contribution guidelines for NoLimits.jl.
+Contributions and feedback are welcome. The easiest ways to get involved are:
 
-## Contribution Workflow
-
-TODO
-
-## Reporting Issues
-
-TODO
-
-## Submitting Pull Requests
-
-TODO
-
-## Documentation Contributions
-
-TODO
-
-## Testing Expectations
-
-TODO
-
-## Review and Merge Process
-
-TODO
+- **Open an issue** on [GitHub](https://github.com/manuhuth/NoLimits.jl/issues) to report a bug, request a feature, or ask a question.
+- **Get in touch** by emailing the lead developer and maintainer Manuel Huth at [manuel.huth@uni-bonn.de](mailto:manuel.huth@uni-bonn.de).
