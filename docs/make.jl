@@ -7,7 +7,7 @@ makedocs(;
     sitename="NoLimits.jl",
     modules=[NoLimits],
     format=Documenter.HTML(; prettyurls=false, collapselevel=1, sidebar_sitename=false, size_threshold=400*1024),
-    remotes=nothing,
+    repo=Remotes.GitHub("manuhuth", "NoLimits.jl"),
     checkdocs=:none,
     pages=[
         "Home" => "index.md",
@@ -59,4 +59,9 @@ makedocs(;
         "How to Contribute" => "how-to-contribute.md",
         "API" => "api.md",
     ],
+)
+
+deploydocs(;
+    repo = "github.com/manuhuth/NoLimits.jl",
+    devbranch = "main",
 )

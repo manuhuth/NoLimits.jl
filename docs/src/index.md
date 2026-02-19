@@ -24,6 +24,13 @@ For a concise overview of what the package can do, see [Capabilities](@ref). For
 
 ## How to Cite
 
-Citation metadata is being finalized.
+A manuscript describing NoLimits.jl is in preparation. In the meantime, please cite this repository:
 
-Placeholder BibTeX entry: `@article{NoLimits_placeholder_2026, title={NoLimits.jl: Nonlinear Mixed-Effects Modeling in Julia}, author={To be updated}, journal={To be updated}, year={2026}, doi={To be updated}}`
+```bibtex
+@software{NoLimits_jl_2026,
+  title  = {{NoLimits.jl}},
+  author = {Huth, Manuel and Arruda, Jonas and Hasenauer, Jan},
+  year   = {2026},
+  url    = {https://github.com/manuhuth/NoLimits.jl}
+}
+```
