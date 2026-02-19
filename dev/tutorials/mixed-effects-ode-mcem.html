@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Mixed-Effects Tutorial 2: ODE Model with Dosing Events (MCEM) · NoLimits.jl</title><meta name="title" content="Mixed-Effects Tutorial 2: ODE Model with Dosing Events (MCEM) · NoLimits.jl"/><meta property="og:title" content="Mixed-Effects Tutorial 2: ODE Model with Dosing Events (MCEM) · NoLimits.jl"/><meta property="twitter:title" content="Mixed-Effects Tutorial 2: ODE Model with Dosing Events (MCEM) · NoLimits.jl"/><meta name="description" content="Documentation for NoLimits.jl."/><meta property="og:description" content="Documentation for NoLimits.jl."/><meta property="twitter:description" content="Documentation for NoLimits.jl."/><script data-outdated-warner src="../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL=".."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../assets/documenter.js"></script><script src="../search_index.js"></script><script src="../siteinfo.js"></script><script src="../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><a class="docs-logo" href="../index.html"><img src="../assets/logo.png" alt="NoLimits.jl logo"/></a><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../index.html">Home</a></li><li><a class="tocitem" href="../installation.html">Installation</a></li><li><a class="tocitem" href="../capabilities.html">Capabilities</a></li><li><a class="tocitem" href="../nlme-methodology.html">NLME Methodology</a></li><li><input class="collapse-toggle" id="menuitem-5" type="checkbox"/><label class="tocitem" for="menuitem-5"><span class="docs-label">Model Building</span><i class="docs-chevron"></i></label><ul class="collapsed"><li><a class="tocitem" href="../model-building/index.html">Overview</a></li><li><a class="tocitem" href="../model-building/model-macro.html">@Model</a></li><li><a class="tocitem" href="../model-building/helpers.html">@helpers</a></li><li><a class="tocitem" href="../model-building/fixed-effects.html">@fixedEffects</a></li><li><a class="tocitem" href="../model-building/covariates.html">@covariates</a></li><li><a class="tocitem" href="../model-building/random-effects.html">@randomEffects</a></li><li><a class="tocitem" href="../model-building/pre-differential-equation.html">@preDifferentialEquation</a></li><li><a class="tocitem" href="../model-building/differential-equation.html">@DifferentialEquation</a></li><li><a class="tocitem" href="../model-building/initial-de.html">@initialDE</a></li><li><a class="tocitem" href="../model-building/formulas.html">@formulas</a></li><li><a class="tocitem" href="../model-building/universal-function-approximators.html">Function Approximators (NNs + SoftTrees)</a></li></ul></li><li><a class="tocitem" href="../data-model-construction.html">Data Model Construction</a></li><li><input class="collapse-toggle" id="menuitem-7" type="checkbox"/><label class="tocitem" for="menuitem-7"><span class="docs-label">Estimation</span><i class="docs-chevron"></i></label><ul class="collapsed"><li><a class="tocitem" href="../estimation/index.html">Overview</a></li><li><a class="tocitem" href="../estimation/laplace.html">Laplace</a></li><li><a class="tocitem" href="../estimation/laplace-map.html">Laplace MAP</a></li><li><a class="tocitem" href="../estimation/mcem.html">MCEM</a></li><li><a class="tocitem" href="../estimation/saem.html">SAEM</a></li><li><a class="tocitem" href="../estimation/mcmc.html">MCMC</a></li><li><a class="tocitem" href="../estimation/mle.html">MLE</a></li><li><a class="tocitem" href="../estimation/mle-map.html">MAP</a></li><li><a class="tocitem" href="../estimation/multistart.html">Multistart</a></li></ul></li><li><input class="collapse-toggle" id="menuitem-8" type="checkbox"/><label class="tocitem" for="menuitem-8"><span class="docs-label">Uncertainty Quantification</span><i class="docs-chevron"></i></label><ul class="collapsed"><li><a class="tocitem" href="../uncertainty-quantification/index.html">Overview</a></li><li><a class="tocitem" href="../uncertainty-quantification/wald.html">Wald</a></li><li><a class="tocitem" href="../uncertainty-quantification/profile-likelihood.html">Profile likelihood</a></li><li><a class="tocitem" href="../uncertainty-quantification/mcmc-based-uncertainty.html">MCMC-based uncertainty</a></li></ul></li><li><a class="tocitem" href="../plotting/index.html">Plotting</a></li><li><input class="collapse-toggle" id="menuitem-10" type="checkbox" checked/><label class="tocitem" for="menuitem-10"><span class="docs-label">Tutorials</span><i class="docs-chevron"></i></label><ul class="collapsed"><li><a class="tocitem" href="mixed-effects-multiple-methods.html">Mixed-Effects Tutorial 1: Nonlinear Random-Effects Model Across Multiple Estimation Methods</a></li><li class="is-active"><a class="tocitem" href="mixed-effects-ode-mcem.html">Mixed-Effects Tutorial 2: ODE Model with Dosing Events (MCEM)</a><ul class="internal"><li><a class="tocitem" href="#What-You-Will-Learn"><span>What You Will Learn</span></a></li><li><a class="tocitem" href="#Step-1:-Prepare-the-Event-Table"><span>Step 1: Prepare the Event-Table</span></a></li><li><a class="tocitem" href="#Step-2:-Define-the-ODE-Mixed-Effects-Model"><span>Step 2: Define the ODE Mixed-Effects Model</span></a></li><li><a class="tocitem" href="#Step-3:-Build-the-DataModel"><span>Step 3: Build the DataModel</span></a></li><li><a class="tocitem" href="#Step-4:-Configure-MCEM"><span>Step 4: Configure MCEM</span></a></li><li><a class="tocitem" href="#Step-5:-Fit-the-Model-and-Inspect-Core-Outputs"><span>Step 5: Fit the Model and Inspect Core Outputs</span></a></li><li><a class="tocitem" href="#Step-6:-Visualize-Fitted-Trajectories"><span>Step 6: Visualize Fitted Trajectories</span></a></li><li><a class="tocitem" href="#Step-7:-Assess-the-Observation-Distribution"><span>Step 7: Assess the Observation Distribution</span></a></li><li><a class="tocitem" href="#Step-8:-Quantify-Parameter-Uncertainty"><span>Step 8: Quantify Parameter Uncertainty</span></a></li><li><a class="tocitem" href="#Practical-Guidance"><span>Practical Guidance</span></a></li></ul></li><li><a class="tocitem" href="mixed-effects-nn-saem.html">Mixed-Effects Tutorial 3: Neural Differential-Equation Components (SAEM)</a></li><li><a class="tocitem" href="mixed-effects-softtree-saem.html">Mixed-Effects Tutorial 4: SoftTree Differential-Equation Components (SAEM)</a></li><li><a class="tocitem" href="mixed-effects-seizure-counts-poisson-nb-mcem.html">Mixed-Effects Tutorial 5: Seizure Counts with Poisson and NegativeBinomial Outcomes (MCEM)</a></li><li><a class="tocitem" href="mixed-effects-left-censored-virload50-laplace.html">Mixed-Effects Tutorial 6: Left-Censored Nonlinear Model (Laplace)</a></li><li><a class="tocitem" href="fixed-effects-nonlinear-mle-map.html">Fixed-Effects Tutorial 1: Nonlinear Longitudinal Model (MLE + MAP)</a></li></ul></li><li><a class="tocitem" href="../developers-guide.html">Developers Guide</a></li><li><a class="tocitem" href="../how-to-contribute.html">How to Contribute</a></li><li><a class="tocitem" href="../api.html">API</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Tutorials</a></li><li class="is-active"><a href="mixed-effects-ode-mcem.html">Mixed-Effects Tutorial 2: ODE Model with Dosing Events (MCEM)</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href="mixed-effects-ode-mcem.html">Mixed-Effects Tutorial 2: ODE Model with Dosing Events (MCEM)</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/manuhuth/NoLimits.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/manuhuth/NoLimits.jl/blob/main/docs/src/tutorials/mixed-effects-ode-mcem.md" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="Mixed-Effects-Tutorial-2:-ODE-Model-with-Input-Events-(MCEM)"><a class="docs-heading-anchor" href="#Mixed-Effects-Tutorial-2:-ODE-Model-with-Input-Events-(MCEM)">Mixed-Effects Tutorial 2: ODE Model with Input Events (MCEM)</a><a id="Mixed-Effects-Tutorial-2:-ODE-Model-with-Input-Events-(MCEM)-1"></a><a class="docs-heading-anchor-permalink" href="#Mixed-Effects-Tutorial-2:-ODE-Model-with-Input-Events-(MCEM)" title="Permalink"></a></h1><p>Many longitudinal studies involve systems whose dynamics are governed by ordinary differential equations (ODEs) with discrete input events –- a bolus injection, a nutrient pulse, or a stimulus onset. When individuals differ in their dynamic parameters, nonlinear mixed-effects models provide a principled way to separate population-level trends from subject-level variability. In this tutorial, you will build such a model from scratch and fit it using the Monte Carlo Expectation-Maximization (MCEM) algorithm, a method well-suited to problems where random effects enter the model nonlinearly.</p><p>Starting from a publicly available concentration-time dataset (Theophylline), you will learn how to prepare event-aware data, define a two-compartment ODE model with subject-level random effects, run the full estimation workflow, and generate publication-quality diagnostics. The structural model describes a two-compartment transfer system (<code>depot</code>, <code>center</code>) in which material moves from a depot compartment into a central compartment and is subsequently eliminated. Subject-level random effects on the transfer rate (<code>ka</code>), elimination rate (<code>cl</code>), and distribution volume (<code>v</code>) capture between-individual variability. Although this tutorial uses concentration-time data, the workflow generalizes to any domain where compartmental ODE dynamics with discrete input events arise –- tracer kinetics in imaging, nutrient uptake in ecology, or substrate processing in bioprocess engineering.</p><h2 id="What-You-Will-Learn"><a class="docs-heading-anchor" href="#What-You-Will-Learn">What You Will Learn</a><a id="What-You-Will-Learn-1"></a><a class="docs-heading-anchor-permalink" href="#What-You-Will-Learn" title="Permalink"></a></h2><p>By the end of this tutorial, you will be able to:</p><ul><li><strong>Prepare event-aware data</strong> –- convert a raw longitudinal table into the event format NoLimits.jl expects for ODE models with discrete inputs (bolus injections, perturbations, or similar events).</li><li><strong>Define a nonlinear mixed-effects ODE model</strong> –- use the <code>@preDifferentialEquation</code> and <code>@DifferentialEquation</code> blocks to specify a model whose random effects enter nonlinearly, a setting where MCEM is especially useful.</li><li><strong>Fit the model with MCEM</strong> –- run the estimation and inspect core diagnostics including the objective value and estimated parameters.</li><li><strong>Visualize and assess results</strong> –- generate fitted trajectory plots, observation-distribution diagnostics, and Wald-based uncertainty quantification summaries.</li></ul><h2 id="Step-1:-Prepare-the-Event-Table"><a class="docs-heading-anchor" href="#Step-1:-Prepare-the-Event-Table">Step 1: Prepare the Event-Table</a><a id="Step-1:-Prepare-the-Event-Table-1"></a><a class="docs-heading-anchor-permalink" href="#Step-1:-Prepare-the-Event-Table" title="Permalink"></a></h2><p>In this step, you will convert raw longitudinal data into the event-table format that NoLimits.jl uses for ODE models with discrete inputs. An event table interleaves input events (such as a bolus entering a compartment) with observation rows, so that the ODE solver knows when and where to apply external perturbations. The key columns are:</p><ul><li><code>EVID</code> –- an integer flag distinguishing input events (<code>1</code>) from observation rows (<code>0</code>).</li><li><code>AMT</code> –- the magnitude of the input event (e.g., total amount delivered).</li><li><code>CMT</code> –- the name of the ODE compartment that receives the input.</li><li><code>RATE</code> –- the infusion rate; <code>0.0</code> indicates an instantaneous bolus.</li></ul><p>The code below loads the Theophylline dataset –- a widely used concentration-time dataset recording twelve individuals over time –- and reshapes it into this event-table format. Each individual receives a single bolus input at time zero, followed by a series of concentration observations.</p><pre><code class="language-julia hljs">using NoLimits
+using CSV
+using DataFrames
+using Distributions
+using Downloads
+using Random
+using LinearAlgebra
+using OrdinaryDiffEq
+using SciMLBase
+
+include(joinpath(@__DIR__, &quot;_data_loaders.jl&quot;))
+
+Random.seed!(123)
+
+theoph_df = load_theoph()
+
+function build_theoph_event_df(tbl::DataFrame)
+    df = DataFrame(
+        id=Int[],
+        t=Float64[],
+        AMT=Float64[],
+        EVID=Int[],
+        CMT=Union{String, Missing}[],
+        RATE=Float64[],
+        y1=Union{Float64, Missing}[],
+        _event_order=Int[],
+    )
+
+    for g in groupby(tbl, :Subject)
+        id = Int(first(g.Subject))
+        amt = Float64(first(g.Wt)) * Float64(first(g.Dose))
+
+        push!(df, (id, 0.0, amt, 1, &quot;depot&quot;, 0.0, missing, 0))
+
+        g_sorted = sort(DataFrame(g), :Time)
+        for row in eachrow(g_sorted)
+            push!(df, (id, Float64(row.Time), 0.0, 0, missing, 0.0, Float64(row.conc), 1))
+        end
+    end
+
+    sort!(df, [:id, :t, :_event_order])
+    select!(df, Not(:_event_order))
+    return df
+end
+
+df = build_theoph_event_df(theoph_df)
+first(df, 12)</code></pre><h2 id="Step-2:-Define-the-ODE-Mixed-Effects-Model"><a class="docs-heading-anchor" href="#Step-2:-Define-the-ODE-Mixed-Effects-Model">Step 2: Define the ODE Mixed-Effects Model</a><a id="Step-2:-Define-the-ODE-Mixed-Effects-Model-1"></a><a class="docs-heading-anchor-permalink" href="#Step-2:-Define-the-ODE-Mixed-Effects-Model" title="Permalink"></a></h2><p>In this step, you will specify the mechanistic model. The goal is twofold: describe the ODE dynamics of the two-compartment system, and account for inter-individual variability through random effects.</p><p>The model has three system parameters –- a transfer rate <code>ka</code>, an elimination rate <code>cl</code>, and a distribution volume <code>v</code> –- each of which varies across individuals. To ensure positivity, each parameter is expressed as an exponential transform of a population-level fixed effect plus a subject-specific random deviation:</p><ul><li><code>ka = exp(tka + eta[1])</code></li><li><code>cl = exp(tcl + eta[2])</code></li><li><code>v = exp(tv + eta[3])</code></li></ul><p>Because the parameters enter the ODE nonlinearly (through the exponential transform of the random effects), standard linear mixed-effects approximations do not apply. This is precisely the setting where Monte Carlo EM methods such as MCEM offer a robust estimation strategy.</p><p>The random effects vector <code>eta</code> follows a multivariate normal distribution with a diagonal covariance matrix whose entries (<code>omega1</code>, <code>omega2</code>, <code>omega3</code>) are estimated alongside the other fixed effects. Observations are modeled as normally distributed around the predicted concentration in the central compartment, with residual standard deviation <code>sigma_eps</code>.</p><p>After defining the model, you will configure the ODE solver. <code>Tsit5()</code> is an efficient explicit Runge–Kutta method well-suited to non-stiff systems, and the tolerances below balance numerical accuracy with computational cost.</p><pre><code class="language-julia hljs">using NoLimits
+using Distributions
+using LinearAlgebra
+using OrdinaryDiffEq
+
+model_raw = @Model begin
+    @covariates begin
+        t = Covariate()
+    end
+
+    @fixedEffects begin
+        tka = RealNumber(0.45, prior=Uniform(0.1, 5.0), calculate_se=true)
+        tcl = RealNumber(1.0, prior=Uniform(0.1, 5.0), calculate_se=true)
+        tv = RealNumber(3.45, prior=Uniform(0.1, 5.0), calculate_se=true)
+
+        omega1 = RealNumber(1.0, scale=:log, prior=Uniform(0.0, 2.0), calculate_se=true)
+        omega2 = RealNumber(1.0, scale=:log, prior=Uniform(0.0, 2.0), calculate_se=true)
+        omega3 = RealNumber(1.0, scale=:log, prior=Uniform(0.0, 2.0), calculate_se=true)
+
+        sigma_eps = RealNumber(1.0, scale=:log, prior=Uniform(0.0, 2.0), calculate_se=true)
+    end
+
+    @randomEffects begin
+        eta = RandomEffect(
+            MvNormal([0.0, 0.0, 0.0], Diagonal([omega1, omega2, omega3]));
+            column=:id,
+        )
+    end
+
+    @preDifferentialEquation begin
+        ka = exp(tka + eta[1])
+        cl = exp(tcl + eta[2])
+        v = exp(tv + eta[3])
+    end
+
+    @DifferentialEquation begin
+        D(depot) ~ -ka * depot
+        D(center) ~ ka * depot - cl / v * center
+    end
+
+    @initialDE begin
+        depot = 0.0
+        center = 0.0
+    end
+
+    @formulas begin
+        y1 ~ Normal(center(t) / v, sigma_eps)
+    end
+end
+
+model = set_solver_config(
+    model_raw;
+    saveat_mode=:saveat,
+    alg=Tsit5(),
+    kwargs=(abstol=1e-6, reltol=1e-6),
+)</code></pre><h3 id="Model-Summary"><a class="docs-heading-anchor" href="#Model-Summary">Model Summary</a><a id="Model-Summary-1"></a><a class="docs-heading-anchor-permalink" href="#Model-Summary" title="Permalink"></a></h3><p>Before moving on, it is good practice to inspect the model structure with <code>NoLimits.summarize</code>. This confirms that all blocks –- fixed effects, random effects, covariates, ODE states, and formulas –- have been parsed correctly.</p><pre><code class="language-julia hljs">model_summary = NoLimits.summarize(model)
+model_summary</code></pre><h2 id="Step-3:-Build-the-DataModel"><a class="docs-heading-anchor" href="#Step-3:-Build-the-DataModel">Step 3: Build the DataModel</a><a id="Step-3:-Build-the-DataModel-1"></a><a class="docs-heading-anchor-permalink" href="#Step-3:-Build-the-DataModel" title="Permalink"></a></h2><p>In this step, you will connect the model to the data by constructing a <code>DataModel</code>. This constructor validates the dataset against the model&#39;s requirements –- checking that all declared covariates are present, that constant covariates are indeed constant within each group, and that event columns are well-formed. You must explicitly specify the event-related column names so that NoLimits.jl can correctly distinguish input events from observation rows during ODE integration.</p><pre><code class="language-julia hljs">dm = DataModel(
+    model,
+    df;
+    primary_id=:id,
+    time_col=:t,
+    evid_col=:EVID,
+    amt_col=:AMT,
+    rate_col=:RATE,
+    cmt_col=:CMT,
+)
+</code></pre><h3 id="DataModel-Summary"><a class="docs-heading-anchor" href="#DataModel-Summary">DataModel Summary</a><a id="DataModel-Summary-1"></a><a class="docs-heading-anchor-permalink" href="#DataModel-Summary" title="Permalink"></a></h3><p>Summarizing the <code>DataModel</code> gives you an overview of the number of individuals, batches (groups of individuals linked by shared random-effect levels), observation counts, and event structure. This is a useful checkpoint before launching a potentially expensive estimation run.</p><pre><code class="language-julia hljs">dm_summary = NoLimits.summarize(dm)
+dm_summary</code></pre><h2 id="Step-4:-Configure-MCEM"><a class="docs-heading-anchor" href="#Step-4:-Configure-MCEM">Step 4: Configure MCEM</a><a id="Step-4:-Configure-MCEM-1"></a><a class="docs-heading-anchor-permalink" href="#Step-4:-Configure-MCEM" title="Permalink"></a></h2><p>In this step, you will set up the MCEM algorithm. MCEM alternates between two stages: (1) an E-step that samples random effects from their conditional posterior given the current fixed-effect estimates, and (2) an M-step that maximizes the expected complete-data log-likelihood with respect to the fixed effects. The number of Monte Carlo samples in the E-step can grow across iterations, improving the approximation as the algorithm converges.</p><p>The configuration below is tuned for a tutorial setting –- moderate iteration counts and sample sizes that keep runtime reasonable. For production analyses, you would typically increase <code>maxiters</code>, raise the ceiling of the sample schedule, and draw more MCMC samples per E-step to reduce Monte Carlo noise in the gradient estimates.</p><p>A few notes on the specific settings:</p><ul><li><code>sample_schedule</code> controls how the number of Monte Carlo samples grows with each EM iteration, starting at 60 and increasing by 20 per iteration up to a maximum of 260.</li><li><code>progress=false</code> suppresses progress bars to keep documentation output clean.</li><li><code>EnsembleThreads()</code> enables multithreaded ODE solving across individuals for faster execution.</li></ul><pre><code class="language-julia hljs">mcem_method = NoLimits.MCEM(;
+    maxiters=12,
+    sample_schedule=i -&gt; min(60 + 20 * (i - 1), 260),
+    turing_kwargs=(n_samples=60, n_adapt=20, progress=false),
+    optim_kwargs=(maxiters=220,),
+    progress=false,
+)
+
+serialization = SciMLBase.EnsembleThreads()</code></pre><h2 id="Step-5:-Fit-the-Model-and-Inspect-Core-Outputs"><a class="docs-heading-anchor" href="#Step-5:-Fit-the-Model-and-Inspect-Core-Outputs">Step 5: Fit the Model and Inspect Core Outputs</a><a id="Step-5:-Fit-the-Model-and-Inspect-Core-Outputs-1"></a><a class="docs-heading-anchor-permalink" href="#Step-5:-Fit-the-Model-and-Inspect-Core-Outputs" title="Permalink"></a></h2><p>With everything in place, you can now run the fit. The call to <code>fit_model</code> performs the full MCEM optimization loop and returns a result object containing parameter estimates, diagnostics, and metadata.</p><p>After fitting, you will extract the final objective value –- the marginal log-likelihood approximation at convergence. This number is useful for comparing models or monitoring optimization progress, but model adequacy is best judged through the predictive diagnostics covered in the next steps.</p><pre><code class="language-julia hljs">res_mcem = fit_model(
+    dm,
+    mcem_method;
+    serialization=serialization,
+    rng=Random.Xoshiro(33),
+)
+
+fit_summary = (
+    objective=NoLimits.get_objective(res_mcem),
+)
+
+fit_summary</code></pre><h3 id="FitResult-Summary"><a class="docs-heading-anchor" href="#FitResult-Summary">FitResult Summary</a><a id="FitResult-Summary-1"></a><a class="docs-heading-anchor-permalink" href="#FitResult-Summary" title="Permalink"></a></h3><p>The structured summary provides a convenient overview of convergence status, iteration counts, and method-specific diagnostics.</p><pre><code class="language-julia hljs">fit_result_summary = NoLimits.summarize(res_mcem)
+fit_result_summary</code></pre><p>You can also extract the estimated fixed-effect parameters on their natural (untransformed) scale. The population-level log-scale parameters (<code>tka</code>, <code>tcl</code>, <code>tv</code>) can be exponentiated to recover typical-individual values, and <code>sigma_eps</code> represents the residual observation noise.</p><pre><code class="language-julia hljs">params = NoLimits.get_params(res_mcem; scale=:untransformed)
+(
+    tka=params.tka,
+    tcl=params.tcl,
+    tv=params.tv,
+    sigma_eps=params.sigma_eps,
+)</code></pre><h2 id="Step-6:-Visualize-Fitted-Trajectories"><a class="docs-heading-anchor" href="#Step-6:-Visualize-Fitted-Trajectories">Step 6: Visualize Fitted Trajectories</a><a id="Step-6:-Visualize-Fitted-Trajectories-1"></a><a class="docs-heading-anchor-permalink" href="#Step-6:-Visualize-Fitted-Trajectories" title="Permalink"></a></h2><p>A natural first diagnostic is to overlay the model&#39;s predicted trajectories on the observed data. In this step, the <code>plot_fits</code> function computes individual-level predictions (using empirical Bayes estimates of the random effects) and plots them alongside the raw observations. Showing the first two individuals provides a quick visual check that the model captures the characteristic rise-and-fall dynamics of the two-compartment system.</p><pre><code class="language-julia hljs">p_fit_mcem = plot_fits(
+    res_mcem;
+    observable=:y1,
+    individuals_idx=[1, 2],
+    ncols=2,
+    shared_x_axis=true,
+    shared_y_axis=true,
+)
+
+p_fit_mcem</code></pre><h2 id="Step-7:-Assess-the-Observation-Distribution"><a class="docs-heading-anchor" href="#Step-7:-Assess-the-Observation-Distribution">Step 7: Assess the Observation Distribution</a><a id="Step-7:-Assess-the-Observation-Distribution-1"></a><a class="docs-heading-anchor-permalink" href="#Step-7:-Assess-the-Observation-Distribution" title="Permalink"></a></h2><p>Beyond trajectory-level checks, it is valuable to examine how well the model&#39;s predicted observation distribution matches the data at individual time points. In this step, <code>plot_observation_distributions</code> visualizes the predictive distribution for a given individual and observation row, letting you assess whether the assumed error model (here, a normal distribution with standard deviation <code>sigma_eps</code>) is well-calibrated.</p><pre><code class="language-julia hljs">p_obs_mcem = plot_observation_distributions(
+    res_mcem;
+    observables=:y1,
+    individuals_idx=1,
+    obs_rows=1,
+)
+
+p_obs_mcem</code></pre><h2 id="Step-8:-Quantify-Parameter-Uncertainty"><a class="docs-heading-anchor" href="#Step-8:-Quantify-Parameter-Uncertainty">Step 8: Quantify Parameter Uncertainty</a><a id="Step-8:-Quantify-Parameter-Uncertainty-1"></a><a class="docs-heading-anchor-permalink" href="#Step-8:-Quantify-Parameter-Uncertainty" title="Permalink"></a></h2><p>Point estimates alone are insufficient for scientific conclusions –- you also need to quantify how precisely each parameter has been determined. In this step, you will use the Wald approach, which constructs approximate confidence intervals from the curvature of the log-likelihood at the optimum (the observed information matrix). For MCEM fits, computing this curvature requires an auxiliary random-effects integration step; the Laplace approximation (<code>re_approx=:laplace</code>) serves this purpose here.</p><p>The resulting uncertainty estimates are visualized as density plots on the natural parameter scale, providing an intuitive picture of estimation precision given the available data.</p><pre><code class="language-julia hljs">uq_mcem = compute_uq(
+    res_mcem;
+    method=:wald,
+    vcov=:hessian,
+    re_approx=:laplace,
+    pseudo_inverse=true,
+    serialization=serialization,
+    n_draws=400,
+    rng=Random.Xoshiro(44),
+)
+
+p_uq_mcem = plot_uq_distributions(
+    uq_mcem;
+    scale=:natural,
+    plot_type=:density,
+    show_legend=false,
+)
+
+p_uq_mcem</code></pre><h3 id="UQ-Summaries"><a class="docs-heading-anchor" href="#UQ-Summaries">UQ Summaries</a><a id="UQ-Summaries-1"></a><a class="docs-heading-anchor-permalink" href="#UQ-Summaries" title="Permalink"></a></h3><p>Finally, the numerical summaries consolidate point estimates and confidence intervals into a single table –- a format suitable for reporting results in publications or for systematic comparison across candidate models.</p><pre><code class="language-julia hljs">uq_summary_mcem = NoLimits.summarize(uq_mcem)
+fit_uq_summary_mcem = NoLimits.summarize(res_mcem, uq_mcem)
+
+fit_uq_summary_mcem</code></pre><h2 id="Practical-Guidance"><a class="docs-heading-anchor" href="#Practical-Guidance">Practical Guidance</a><a id="Practical-Guidance-1"></a><a class="docs-heading-anchor-permalink" href="#Practical-Guidance" title="Permalink"></a></h2><ul><li><strong>Objective values are optimization diagnostics, not model quality scores.</strong> A lower objective indicates better optimization convergence, but model adequacy should be judged through predictive checks –- trajectory plots and observation-distribution diagnostics provide complementary views of fit quality.</li><li><strong>Inspect trajectory and distributional diagnostics together.</strong> <code>plot_fits</code> reveals whether the model captures the overall shape of the response, while <code>plot_observation_distributions</code> tests whether the local predictive distribution is well-calibrated. Discrepancies in either diagnostic suggest different kinds of model misspecification.</li><li><strong>Scale up before changing model structure.</strong> If the fit appears unstable or the objective has not plateaued, first try increasing <code>maxiters</code> and the sample schedule ceiling. MCEM convergence can be slow when Monte Carlo noise dominates the gradient signal, and increasing sample sizes is often more productive than modifying the structural model.</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="mixed-effects-multiple-methods.html">« Mixed-Effects Tutorial 1: Nonlinear Random-Effects Model Across Multiple Estimation Methods</a><a class="docs-footer-nextpage" href="mixed-effects-nn-saem.html">Mixed-Effects Tutorial 3: Neural Differential-Equation Components (SAEM) »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Thursday 19 February 2026 22:57">Thursday 19 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Mixed-Effects Tutorial 4: SoftTree Differential-Equation Components (SAEM) · NoLimits.jl</title><meta name="title" content="Mixed-Effects Tutorial 4: SoftTree Differential-Equation Components (SAEM) · NoLimits.jl"/><meta property="og:title" content="Mixed-Effects Tutorial 4: SoftTree Differential-Equation Components (SAEM) · NoLimits.jl"/><meta property="twitter:title" content="Mixed-Effects Tutorial 4: SoftTree Differential-Equation Components (SAEM) · NoLimits.jl"/><meta name="description" content="Documentation for NoLimits.jl."/><meta property="og:description" content="Documentation for NoLimits.jl."/><meta property="twitter:description" content="Documentation for NoLimits.jl."/><script data-outdated-warner src="../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL=".."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../assets/documenter.js"></script><script src="../search_index.js"></script><script src="../siteinfo.js"></script><script src="../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><a class="docs-logo" href="../index.html"><img src="../assets/logo.png" alt="NoLimits.jl logo"/></a><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../index.html">Home</a></li><li><a class="tocitem" href="../installation.html">Installation</a></li><li><a class="tocitem" href="../capabilities.html">Capabilities</a></li><li><a class="tocitem" href="../nlme-methodology.html">NLME Methodology</a></li><li><input class="collapse-toggle" id="menuitem-5" type="checkbox"/><label class="tocitem" for="menuitem-5"><span class="docs-label">Model Building</span><i class="docs-chevron"></i></label><ul class="collapsed"><li><a class="tocitem" href="../model-building/index.html">Overview</a></li><li><a class="tocitem" href="../model-building/model-macro.html">@Model</a></li><li><a class="tocitem" href="../model-building/helpers.html">@helpers</a></li><li><a class="tocitem" href="../model-building/fixed-effects.html">@fixedEffects</a></li><li><a class="tocitem" href="../model-building/covariates.html">@covariates</a></li><li><a class="tocitem" href="../model-building/random-effects.html">@randomEffects</a></li><li><a class="tocitem" href="../model-building/pre-differential-equation.html">@preDifferentialEquation</a></li><li><a class="tocitem" href="../model-building/differential-equation.html">@DifferentialEquation</a></li><li><a class="tocitem" href="../model-building/initial-de.html">@initialDE</a></li><li><a class="tocitem" href="../model-building/formulas.html">@formulas</a></li><li><a class="tocitem" href="../model-building/universal-function-approximators.html">Function Approximators (NNs + SoftTrees)</a></li></ul></li><li><a class="tocitem" href="../data-model-construction.html">Data Model Construction</a></li><li><input class="collapse-toggle" id="menuitem-7" type="checkbox"/><label class="tocitem" for="menuitem-7"><span class="docs-label">Estimation</span><i class="docs-chevron"></i></label><ul class="collapsed"><li><a class="tocitem" href="../estimation/index.html">Overview</a></li><li><a class="tocitem" href="../estimation/laplace.html">Laplace</a></li><li><a class="tocitem" href="../estimation/laplace-map.html">Laplace MAP</a></li><li><a class="tocitem" href="../estimation/mcem.html">MCEM</a></li><li><a class="tocitem" href="../estimation/saem.html">SAEM</a></li><li><a class="tocitem" href="../estimation/mcmc.html">MCMC</a></li><li><a class="tocitem" href="../estimation/mle.html">MLE</a></li><li><a class="tocitem" href="../estimation/mle-map.html">MAP</a></li><li><a class="tocitem" href="../estimation/multistart.html">Multistart</a></li></ul></li><li><input class="collapse-toggle" id="menuitem-8" type="checkbox"/><label class="tocitem" for="menuitem-8"><span class="docs-label">Uncertainty Quantification</span><i class="docs-chevron"></i></label><ul class="collapsed"><li><a class="tocitem" href="../uncertainty-quantification/index.html">Overview</a></li><li><a class="tocitem" href="../uncertainty-quantification/wald.html">Wald</a></li><li><a class="tocitem" href="../uncertainty-quantification/profile-likelihood.html">Profile likelihood</a></li><li><a class="tocitem" href="../uncertainty-quantification/mcmc-based-uncertainty.html">MCMC-based uncertainty</a></li></ul></li><li><a class="tocitem" href="../plotting/index.html">Plotting</a></li><li><input class="collapse-toggle" id="menuitem-10" type="checkbox" checked/><label class="tocitem" for="menuitem-10"><span class="docs-label">Tutorials</span><i class="docs-chevron"></i></label><ul class="collapsed"><li><a class="tocitem" href="mixed-effects-multiple-methods.html">Mixed-Effects Tutorial 1: Nonlinear Random-Effects Model Across Multiple Estimation Methods</a></li><li><a class="tocitem" href="mixed-effects-ode-mcem.html">Mixed-Effects Tutorial 2: ODE Model with Dosing Events (MCEM)</a></li><li><a class="tocitem" href="mixed-effects-nn-saem.html">Mixed-Effects Tutorial 3: Neural Differential-Equation Components (SAEM)</a></li><li class="is-active"><a class="tocitem" href="mixed-effects-softtree-saem.html">Mixed-Effects Tutorial 4: SoftTree Differential-Equation Components (SAEM)</a><ul class="internal"><li><a class="tocitem" href="#Learning-Goals"><span>Learning Goals</span></a></li><li><a class="tocitem" href="#Step-1:-Data-Setup"><span>Step 1: Data Setup</span></a></li><li><a class="tocitem" href="#Step-2:-Define-SoftTree-Driven-ODE-Mixed-Effects-Model"><span>Step 2: Define SoftTree-Driven ODE Mixed-Effects Model</span></a></li><li><a class="tocitem" href="#Step-3:-Build-DataModel-and-Configure-SAEM"><span>Step 3: Build <code>DataModel</code> and Configure SAEM</span></a></li><li><a class="tocitem" href="#Step-4:-Fit-and-Inspect-Core-Result-Summary"><span>Step 4: Fit and Inspect Core Result Summary</span></a></li><li><a class="tocitem" href="#Step-5:-Fitted-Trajectories-(First-2-Individuals)"><span>Step 5: Fitted Trajectories (First 2 Individuals)</span></a></li><li><a class="tocitem" href="#Step-6:-Observation-Distribution-Diagnostic"><span>Step 6: Observation Distribution Diagnostic</span></a></li><li><a class="tocitem" href="#Interpretation-Notes"><span>Interpretation Notes</span></a></li></ul></li><li><a class="tocitem" href="mixed-effects-seizure-counts-poisson-nb-mcem.html">Mixed-Effects Tutorial 5: Seizure Counts with Poisson and NegativeBinomial Outcomes (MCEM)</a></li><li><a class="tocitem" href="mixed-effects-left-censored-virload50-laplace.html">Mixed-Effects Tutorial 6: Left-Censored Nonlinear Model (Laplace)</a></li><li><a class="tocitem" href="fixed-effects-nonlinear-mle-map.html">Fixed-Effects Tutorial 1: Nonlinear Longitudinal Model (MLE + MAP)</a></li></ul></li><li><a class="tocitem" href="../developers-guide.html">Developers Guide</a></li><li><a class="tocitem" href="../how-to-contribute.html">How to Contribute</a></li><li><a class="tocitem" href="../api.html">API</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Tutorials</a></li><li class="is-active"><a href="mixed-effects-softtree-saem.html">Mixed-Effects Tutorial 4: SoftTree Differential-Equation Components (SAEM)</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href="mixed-effects-softtree-saem.html">Mixed-Effects Tutorial 4: SoftTree Differential-Equation Components (SAEM)</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/manuhuth/NoLimits.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/manuhuth/NoLimits.jl/blob/main/docs/src/tutorials/mixed-effects-softtree-saem.md" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="Mixed-Effects-Tutorial-4:-SoftTree-Differential-Equation-Components-(SAEM)"><a class="docs-heading-anchor" href="#Mixed-Effects-Tutorial-4:-SoftTree-Differential-Equation-Components-(SAEM)">Mixed-Effects Tutorial 4: SoftTree Differential-Equation Components (SAEM)</a><a id="Mixed-Effects-Tutorial-4:-SoftTree-Differential-Equation-Components-(SAEM)-1"></a><a class="docs-heading-anchor-permalink" href="#Mixed-Effects-Tutorial-4:-SoftTree-Differential-Equation-Components-(SAEM)" title="Permalink"></a></h1><p>When building mechanistic models of longitudinal data, you often know the broad structure of the system – compartments, conservation laws, transfer pathways – but not the precise functional forms that govern how material moves between states. Neural networks are one way to learn those unknown rate functions from data, as shown in Tutorial 3. Soft decision trees offer an appealing alternative. They can approximate arbitrary nonlinear mappings, yet their branching structure provides built-in feature selection and piecewise-smooth approximation that is often easier to interpret. For the low-dimensional inputs typical of scientific rate functions (a single state variable, or time itself), soft trees can match neural network flexibility with substantially fewer parameters.</p><p>In this tutorial, you will build a mixed-effects ODE model in which soft decision trees parameterize the ODE right-hand side, then estimate the model with the Stochastic Approximation Expectation-Maximization (SAEM) algorithm. The model is structurally parallel to Tutorial 3, so you can directly compare the two function-approximation strategies on the same data and compartmental structure.</p><h2 id="Learning-Goals"><a class="docs-heading-anchor" href="#Learning-Goals">Learning Goals</a><a id="Learning-Goals-1"></a><a class="docs-heading-anchor-permalink" href="#Learning-Goals" title="Permalink"></a></h2><p>By the end of this tutorial, you will be able to:</p><ul><li>Declare <code>SoftTreeParameters</code> blocks that create differentiable decision trees whose flattened parameters join the fixed-effects vector, exposing callable functions (e.g., <code>STA1</code>) for use inside <code>@DifferentialEquation</code>.</li><li>Wire multiple soft trees into a two-compartment transfer ODE, letting the trees learn unknown rate functions from data.</li><li>Couple each tree&#39;s parameter vector to subject-level random effects via <code>MvNormal</code> distributions, giving every individual a personalized version of the dynamics.</li><li>Fit the model with SAEM using closed-form Gaussian updates for the random-effect means.</li><li>Visualize individual-level trajectories and observation distributions to assess model adequacy.</li></ul><h2 id="Step-1:-Data-Setup"><a class="docs-heading-anchor" href="#Step-1:-Data-Setup">Step 1: Data Setup</a><a id="Step-1:-Data-Setup-1"></a><a class="docs-heading-anchor-permalink" href="#Step-1:-Data-Setup" title="Permalink"></a></h2><p>In this step, you will load the Theophylline dataset used throughout these tutorials. The dataset records time-series measurements for 12 subjects and provides a clean example of two-compartment transfer dynamics: a substance enters a depot (input) compartment and moves to a central (observed) compartment, where it is measured and gradually cleared. You will reshape the data so that the initial amount <code>d</code> appears as a constant covariate for each subject.</p><pre><code class="language-julia hljs">using NoLimits
+using CSV
+using DataFrames
+using Distributions
+using Downloads
+using Random
+using LinearAlgebra
+using OrdinaryDiffEq
+using SciMLBase
+using Turing
+
+include(joinpath(@__DIR__, &quot;_data_loaders.jl&quot;))
+
+Random.seed!(654)
+
+theoph_df = load_theoph()
+
+function build_theoph_non_event_df(tbl::DataFrame)
+    df = DataFrame(
+        ID=Int.(tbl.Subject),
+        t=Float64.(tbl.Time),
+        y=Float64.(tbl.conc),
+        d=Float64.(tbl.Wt .* tbl.Dose),
+    )
+    sort!(df, [:ID, :t])
+    return df
+end
+
+df = build_theoph_non_event_df(theoph_df)
+first(df, 10)</code></pre><h2 id="Step-2:-Define-SoftTree-Driven-ODE-Mixed-Effects-Model"><a class="docs-heading-anchor" href="#Step-2:-Define-SoftTree-Driven-ODE-Mixed-Effects-Model">Step 2: Define SoftTree-Driven ODE Mixed-Effects Model</a><a id="Step-2:-Define-SoftTree-Driven-ODE-Mixed-Effects-Model-1"></a><a class="docs-heading-anchor-permalink" href="#Step-2:-Define-SoftTree-Driven-ODE-Mixed-Effects-Model" title="Permalink"></a></h2><p>In this step, you will construct the full mixed-effects model. The guiding idea is the same as in the neural ODE tutorial: rather than specifying closed-form rate laws, you let data-driven function approximators learn the rate functions directly from observations. The difference is the choice of approximator. Each <code>SoftTreeParameters</code> block declares a soft decision tree with a specified input dimension and depth. The <code>depth_st</code> parameter controls expressiveness – a tree of depth <code>d</code> has <code>2^d</code> leaf nodes, each contributing a smooth local approximation. The block&#39;s flattened parameters become part of the fixed-effects vector, and the associated callable function (e.g., <code>STA1</code>) evaluates the tree at any input.</p><p>The ODE system wires four soft trees into a two-compartment transfer model:</p><ul><li><code>fA1(t)</code> and <code>fA2(t)</code> govern the dynamics of the depot (input) compartment.</li><li><code>fC1(t)</code> and <code>fC2(t)</code> govern the dynamics of the central (observed) compartment.</li></ul><p>To capture between-subject variability, each tree&#39;s parameter vector is paired with a subject-level random-effect vector drawn from an <code>MvNormal</code> distribution centered on the population parameters. This gives every individual a personalized version of the transfer dynamics while sharing structure across the population.</p><pre><code class="language-julia hljs">using NoLimits
+using Distributions
+using LinearAlgebra
+using OrdinaryDiffEq
+
+depth_st = 2
+
+model_raw = @Model begin
+    @helpers begin
+        softplus(u) = u &gt; 20 ? u : log1p(exp(u))
+    end
+
+    @covariates begin
+        t = Covariate()
+        d = ConstantCovariate(constant_on=:ID)
+    end
+
+    @fixedEffects begin
+        sigma = RealNumber(1.0, scale=:log, prior=LogNormal(log(1.0), 0.5), calculate_se=true)
+
+        gA1 = SoftTreeParameters(1, depth_st; function_name=:STA1, calculate_se=false)
+        gA2 = SoftTreeParameters(1, depth_st; function_name=:STA2, calculate_se=false)
+        gC1 = SoftTreeParameters(1, depth_st; function_name=:STC1, calculate_se=false)
+        gC2 = SoftTreeParameters(1, depth_st; function_name=:STC2, calculate_se=false)
+    end
+
+    @randomEffects begin
+        etaA1 = RandomEffect(MvNormal(gA1, Diagonal(ones(length(gA1)))); column=:ID)
+        etaA2 = RandomEffect(MvNormal(gA2, Diagonal(ones(length(gA2)))); column=:ID)
+        etaC1 = RandomEffect(MvNormal(gC1, Diagonal(ones(length(gC1)))); column=:ID)
+        etaC2 = RandomEffect(MvNormal(gC2, Diagonal(ones(length(gC2)))); column=:ID)
+    end
+
+    @DifferentialEquation begin
+        a_A(t) = softplus(depot)
+        x_C(t) = softplus(center)
+
+        fA1(t) = softplus(STA1([t / 24], etaA1)[1])
+        fA2(t) = softplus(STA2([a_A(t)], etaA2)[1])
+        fC1(t) = -softplus(STC1([x_C(t)], etaC1)[1])
+        fC2(t) = softplus(STC2([t / 24], etaC2)[1])
+
+        D(depot) ~ -d * fA1(t) - fA2(t)
+        D(center) ~ d * fA1(t) + fA2(t) + fC1(t) + d * fC2(t)
+    end
+
+    @initialDE begin
+        depot = d
+        center = 0.0
+    end
+
+    @formulas begin
+        y ~ Normal(center(t), sigma)
+    end
+end
+
+model = set_solver_config(
+    model_raw;
+    saveat_mode=:saveat,
+    alg=AutoTsit5(Rosenbrock23()),
+    kwargs=(abstol=1e-2, reltol=1e-2),
+)</code></pre><p>Before moving on, inspect the assembled model to verify that all blocks – covariates, fixed effects, random effects, ODE, and formulas – are correctly wired together.</p><h3 id="Model-Summary"><a class="docs-heading-anchor" href="#Model-Summary">Model Summary</a><a id="Model-Summary-1"></a><a class="docs-heading-anchor-permalink" href="#Model-Summary" title="Permalink"></a></h3><pre><code class="language-julia hljs">model_summary = NoLimits.summarize(model)
+model_summary</code></pre><h2 id="Step-3:-Build-DataModel-and-Configure-SAEM"><a class="docs-heading-anchor" href="#Step-3:-Build-DataModel-and-Configure-SAEM">Step 3: Build <code>DataModel</code> and Configure SAEM</a><a id="Step-3:-Build-DataModel-and-Configure-SAEM-1"></a><a class="docs-heading-anchor-permalink" href="#Step-3:-Build-DataModel-and-Configure-SAEM" title="Permalink"></a></h2><p>In this step, you will pair the model with the observed data by constructing a <code>DataModel</code>, then configure the SAEM fitting algorithm. SAEM alternates between two phases: an E-step that samples subject-level random effects conditional on the current population parameters, and an M-step that updates those population parameters using stochastic sufficient statistics. Setting <code>builtin_stats=:closed_form</code> enables built-in closed-form block updates. This avoids gradient-based optimization for those mapped parameters and can substantially improve convergence stability, particularly when the random-effect vectors are high-dimensional (as they are here, since each tree&#39;s full parameter vector is individualized).</p><p>Several configuration details are worth noting. The <code>re_mean_params</code> mapping tells SAEM which fixed-effect parameter serves as the population mean for each random-effect distribution. The <code>ebe_multistart_n</code> and <code>ebe_multistart_k</code> settings control multistart initialization of the empirical Bayes estimates, reducing the risk of poor local optima during early iterations. Finally, <code>progress=true</code> displays SAEM iteration progress at the outer level, while <code>progress=false</code> inside <code>turing_kwargs</code> suppresses verbose output from the inner sampler.</p><pre><code class="language-julia hljs">dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+
+saem_method = NoLimits.SAEM(;
+    sampler=MH(),
+    builtin_stats=:closed_form,
+    re_mean_params=(; etaA1=:gA1, etaA2=:gA2, etaC1=:gC1, etaC2=:gC2),
+    re_cov_params=NamedTuple(),
+    resid_var_param=:sigma,
+    maxiters=1000,
+    mcmc_steps=80,
+    t0=30,
+    turing_kwargs=(n_samples=80, n_adapt=0, progress=false),
+    optim_kwargs=(maxiters=300,),
+    verbose=false,
+    progress=true,
+    ebe_multistart_n=300,
+    ebe_multistart_k=3,
+    ebe_rescue_on_high_grad=false
+)
+
+serialization = SciMLBase.EnsembleThreads()</code></pre><p>Before fitting, review the data model summary to confirm that individuals, covariates, and grouping structures were parsed as expected.</p><h3 id="DataModel-Summary"><a class="docs-heading-anchor" href="#DataModel-Summary">DataModel Summary</a><a id="DataModel-Summary-1"></a><a class="docs-heading-anchor-permalink" href="#DataModel-Summary" title="Permalink"></a></h3><pre><code class="language-julia hljs">dm_summary = NoLimits.summarize(dm)
+dm_summary</code></pre><h2 id="Step-4:-Fit-and-Inspect-Core-Result-Summary"><a class="docs-heading-anchor" href="#Step-4:-Fit-and-Inspect-Core-Result-Summary">Step 4: Fit and Inspect Core Result Summary</a><a id="Step-4:-Fit-and-Inspect-Core-Result-Summary-1"></a><a class="docs-heading-anchor-permalink" href="#Step-4:-Fit-and-Inspect-Core-Result-Summary" title="Permalink"></a></h2><p>In this step, you will run the SAEM algorithm and examine the results. The algorithm iterates up to 1000 times, using Metropolis-Hastings sampling for the random effects within each E-step. After fitting completes, you will extract the final objective value and parameter count as a quick sanity check before looking at more detailed diagnostics.</p><pre><code class="language-julia hljs">res_saem = fit_model(
+    dm,
+    saem_method;
+    serialization=serialization,
+    rng=Random.Xoshiro(31),
+)
+
+(
+    objective=NoLimits.get_objective(res_saem),
+    n_params=length(NoLimits.get_params(res_saem; scale=:untransformed)),
+)</code></pre><p>For a more detailed view – including parameter estimates and convergence diagnostics – call the <code>summarize</code> function on the fit result.</p><pre><code class="language-julia hljs">fit_summary_saem = NoLimits.summarize(res_saem)
+fit_summary_saem</code></pre><h2 id="Step-5:-Fitted-Trajectories-(First-2-Individuals)"><a class="docs-heading-anchor" href="#Step-5:-Fitted-Trajectories-(First-2-Individuals)">Step 5: Fitted Trajectories (First 2 Individuals)</a><a id="Step-5:-Fitted-Trajectories-(First-2-Individuals)-1"></a><a class="docs-heading-anchor-permalink" href="#Step-5:-Fitted-Trajectories-(First-2-Individuals)" title="Permalink"></a></h2><p>In this step, you will overlay the model&#39;s predicted trajectories on the raw observations for the first two subjects. Plotting fitted curves against data provides an immediate visual assessment of model adequacy: do the predicted dynamics capture the timing and magnitude of the observed response?</p><pre><code class="language-julia hljs">p_fit_saem = plot_fits(
+    res_saem;
+    observable=:y,
+    individuals_idx=[1, 2],
+    ncols=2,
+    shared_x_axis=true,
+    shared_y_axis=true,
+)
+
+p_fit_saem</code></pre><h2 id="Step-6:-Observation-Distribution-Diagnostic"><a class="docs-heading-anchor" href="#Step-6:-Observation-Distribution-Diagnostic">Step 6: Observation Distribution Diagnostic</a><a id="Step-6:-Observation-Distribution-Diagnostic-1"></a><a class="docs-heading-anchor-permalink" href="#Step-6:-Observation-Distribution-Diagnostic" title="Permalink"></a></h2><p>As a final check, you will examine the implied observation distribution at a single data point for the first individual. Rather than showing only a point prediction, this plot displays the full predictive distribution, letting you assess whether the residual variance is well-calibrated and the model&#39;s uncertainty envelope is reasonable.</p><pre><code class="language-julia hljs">p_obs_saem = plot_observation_distributions(
+    res_saem;
+    observables=:y,
+    individuals_idx=1,
+    obs_rows=1,
+)
+
+p_obs_saem</code></pre><h2 id="Interpretation-Notes"><a class="docs-heading-anchor" href="#Interpretation-Notes">Interpretation Notes</a><a id="Interpretation-Notes-1"></a><a class="docs-heading-anchor-permalink" href="#Interpretation-Notes" title="Permalink"></a></h2><ul><li>This modeling pattern combines mechanistic compartmental structure with soft decision tree function approximators inside a single mixed-effects ODE. The compartments encode known domain knowledge (mass conservation, transfer pathways), while the trees learn the unknown rate functions from data. This separation means you retain interpretable system structure without needing to specify rate-law functional forms in advance.</li><li>Compared to neural networks, soft trees can be more parameter-efficient for the low-dimensional inputs common in scientific rate functions, and their piecewise-smooth approximation may be easier to inspect post hoc. The choice between the two is problem-dependent; both can be embedded in the same NoLimits framework with minimal code changes (compare this tutorial with Tutorial 3).</li><li>The built-in closed-form updates (<code>builtin_stats=:closed_form</code>) materially improve SAEM convergence stability when the individualized parameter vectors are high-dimensional, as they are here.</li><li>The settings in this tutorial are intentionally modest to keep runtime short. For production analyses, consider increasing <code>maxiters</code>, <code>mcmc_steps</code>, and the number of MCMC samples to ensure thorough convergence.</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="mixed-effects-nn-saem.html">« Mixed-Effects Tutorial 3: Neural Differential-Equation Components (SAEM)</a><a class="docs-footer-nextpage" href="mixed-effects-seizure-counts-poisson-nb-mcem.html">Mixed-Effects Tutorial 5: Seizure Counts with Poisson and NegativeBinomial Outcomes (MCEM) »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Thursday 19 February 2026 22:57">Thursday 19 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
