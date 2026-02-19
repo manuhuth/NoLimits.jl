@@ -4,3 +4,6 @@ Manifest.toml
 # Documentation
 docs/build/
 docs/cache/
+
+# macOS
+.DS_Store

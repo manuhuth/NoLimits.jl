@@ -774,7 +774,12 @@ Reports Hessian/SVD rank, null directions, condition metrics, and RE information
 
 ### 2.8 Fit Result Accessors
 
+By default fit results store the `DataModel` (disable with `fit_model(...; store_data_model=false)`). When stored, accessors that normally require `dm` as the first argument also accept a single-argument form that reads it from the result.
+
+Accessors throw an informative error when the method does not define the requested field (e.g. `get_chain` on MLE, or `get_loglikelihood` on MCMC).
+
 ```julia
+# Core (FitResult)
 get_params(res; scale=:transformed|:untransformed|:both)
 get_objective(res)
 get_converged(res)
@@ -783,15 +788,28 @@ get_summary(res)
 get_method(res)
 get_result(res)
 get_data_model(res)
+
+# Optimization-based methods (MLE/MAP/Laplace/LaplaceMAP/FOCEI/FOCEIMAP/MCEM/SAEM)
 get_iterations(res)
 get_raw(res)
 get_notes(res)
-get_chain(res)            # MCMC only
-get_observed(res)         # MCMC only
-get_sampler(res)          # MCMC only
-get_random_effects(dm, res; ...)   # Laplace/LaplaceMAP/FOCEI/FOCEIMAP/MCEM/SAEM
-get_loglikelihood(dm, res; ...)    # MLE/MAP/Laplace/LaplaceMAP/FOCEI/FOCEIMAP
+
+# MCMC-specific
+get_chain(res)
+get_observed(res)
+get_sampler(res)
+get_n_samples(res)
+
+# Random effects — Laplace/LaplaceMAP/FOCEI/FOCEIMAP/MCEM/SAEM (EB point estimates)
+get_random_effects(dm, res; constants_re=NamedTuple(), flatten=true, include_constants=true)
+get_random_effects(res; constants_re=..., flatten=..., include_constants=...)  # uses stored dm
+
+# Log-likelihood — MLE/MAP/Laplace/LaplaceMAP/FOCEI/FOCEIMAP/MCEM/SAEM (EB modes used for RE methods)
+get_loglikelihood(dm, res; constants_re=NamedTuple(), ode_args=(), ode_kwargs=NamedTuple(), serialization=EnsembleSerial())
+get_loglikelihood(res; constants_re=..., ode_args=..., ode_kwargs=..., serialization=...)  # uses stored dm
 ```
+
+Multistart results route all core accessors to the best run automatically. See section 2.4 for multistart-specific accessors.
 
 ---
 

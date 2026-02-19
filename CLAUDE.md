@@ -8,7 +8,7 @@ This file provides guidance for Claude Code when working on the NoLimits.jl pack
 
 - Fixed and random effects (univariate and multivariate)
 - Nonlinear models with and without ordinary differential equations (ODEs)
-- Multiple estimation methods (MLE, MAP, MCMC, Laplace approximation, SAEM, MCEM)
+- Multiple estimation methods (MLE, MAP, MCMC, Laplace, FOCEI, SAEM, MCEM)
 - Complex covariate structures (constant, varying, and dynamic/interpolated)
 - Visualization and diagnostic tools
 
@@ -41,6 +41,7 @@ src/
 │   ├── map.jl                   # Maximum A Posteriori estimation
 │   ├── mcmc_turing.jl           # MCMC via Turing.jl
 │   ├── laplace.jl               # Laplace approximation
+│   ├── FOCEI.jl                 # FOCEI/FOCEIMAP estimation
 │   ├── mcem.jl                  # Monte Carlo EM
 │   ├── saem.jl                  # Stochastic Approximation EM
 │   └── Multistart.jl            # Multistart optimization
@@ -48,6 +49,7 @@ src/
 │   ├── plotting.jl              # Core plotting utilities
 │   ├── plots.jl                 # PlotStyle and plot_fits/plot_data
 │   ├── plotting_vpc.jl          # Visual Predictive Checks
+│   ├── plotting_uq.jl           # UQ distribution plots
 │   ├── plotting_observation_distributions.jl
 │   └── plotting_random_effects.jl
 ├── distributions/               # Custom distributions
@@ -263,22 +265,23 @@ get_re_indices(dm, idx; obs_only=true)  # RE indices for individual
 
 ### Unified API
 ```julia
-fit_model(dm::DataModel, method::FittingMethod; constants, penalty,
+fit_model(dm::DataModel, method::FittingMethod; constants, constants_re, penalty,
           ode_args, ode_kwargs, serialization, rng, theta_0_untransformed)
 ```
 
 ### Available Methods
 - **MLE** - Maximum likelihood (fixed effects only)
 - **MAP** - Maximum a posteriori (requires priors on fixed effects)
-- **MCMC** - Turing-based sampling (fixed effects only, requires priors)
+- **MCMC** - Turing-based sampling (fixed + optional RE, requires priors)
 - **Laplace/LaplaceMAP** - Laplace approximation with Empirical Bayes (random effects)
+- **FOCEI/FOCEIMAP** - First-order conditional estimation with interaction (random effects)
 - **SAEM** - Stochastic Approximation EM (random effects)
 - **MCEM** - Monte Carlo EM (random effects)
 - **Multistart** - Runs any optimization-based method with multiple starting points
 
 ### Constants
-- `constants::NamedTuple` uses **natural (untransformed) scale** values
-- Constants are removed from optimizer state; injected during evaluation
+- `constants::NamedTuple` fixes free fixed effects on the **transformed** scale; removed from optimizer state
+- `constants_re::NamedTuple` fixes specific RE levels: `(; η=(; A=0.0, B=0.3))`
 
 ### Penalties
 - `penalty::NamedTuple` applies per-parameter penalties on **natural scale**
@@ -286,7 +289,7 @@ fit_model(dm::DataModel, method::FittingMethod; constants, penalty,
 
 ## Fit Result Accessors
 
-Always use accessor functions instead of dot access:
+Always use accessor functions instead of dot access. Fit results store the DataModel by default (`store_data_model=false` to disable). Accessors throw an informative error for unsupported method combinations (e.g. `get_chain` on MLE).
 
 ```julia
 get_method(res)           # -> FittingMethod
@@ -298,23 +301,32 @@ get_objective(res)
 get_converged(res)
 get_data_model(res)       # -> DataModel (stored by default)
 
-# MCMC-specific
-get_chain(res)
-get_observed(res)
-get_sampler(res)
-
-# Optimization-based methods
+# Optimization-based methods (MLE/MAP/Laplace/LaplaceMAP/FOCEI/FOCEIMAP/MCEM/SAEM)
 get_iterations(res)
 get_raw(res)
 get_notes(res)
 
-# Random effects (Laplace/LaplaceMAP/MCEM/SAEM)
-get_random_effects(dm, res; constants_re=NamedTuple(), flatten=true)
-get_loglikelihood(dm, res; constants_re=NamedTuple(), ...)
+# MCMC-specific
+get_chain(res)
+get_observed(res)
+get_sampler(res)
+get_n_samples(res)
+
+# Random effects (Laplace/LaplaceMAP/FOCEI/FOCEIMAP/MCEM/SAEM) — EB point estimates
+get_random_effects(dm, res; constants_re=NamedTuple(), flatten=true, include_constants=true)
+get_random_effects(res; ...)              # uses stored dm
+
+# Log-likelihood (MLE/MAP/Laplace/LaplaceMAP/FOCEI/FOCEIMAP/MCEM/SAEM)
+get_loglikelihood(dm, res; constants_re=NamedTuple(), ode_args=(), ode_kwargs=NamedTuple(), serialization=EnsembleSerial())
+get_loglikelihood(res; ...)               # uses stored dm
 
 # Multistart
 get_multistart_results(res)
 get_multistart_errors(res)
+get_multistart_starts(res)
+get_multistart_failed_results(res)
+get_multistart_failed_starts(res)
+get_multistart_best_index(res)
 get_multistart_best(res)
 ```
 
@@ -451,17 +463,20 @@ All plotting functions accept:
 - `save_path::Union{Nothing, String} = nothing`
 
 Key plotting functions:
-- `plot_fits` - Model predictions vs observations
 - `plot_data` - Raw observed data
+- `plot_fits` - Model predictions vs observations
+- `plot_fits_comparison` - Overlay multiple fits
 - `plot_vpc` - Visual Predictive Checks
-- `plot_residuals` - Residual diagnostics
-- `plot_qq_pearson_residuals` - QQ plots for Pearson residuals
-- `plot_re_distribution_sampling` - Random effects density plots
-- `plot_re_bivariate_kdes` - Random effects correlations
-- `plot_qq_random_effects` - Random effects QQ plots
-- `plot_observation_distribution(s)` - Observation distribution analysis
-- `plot_waterfall_multistart` - Multistart objective values
-- `plot_parameter_summaries` - Parameter variation across fits
+- `plot_observation_distributions` - Per-observation predicted distributions
+- `get_residuals` - Returns DataFrame with `:pit`, `:quantile`, `:raw`, `:pearson`, `:logscore`
+- `plot_residuals`, `plot_residual_distribution`, `plot_residual_qq`, `plot_residual_pit`, `plot_residual_acf`
+- `plot_random_effect_distributions` - Per-level marginal RE distributions
+- `plot_random_effect_pit`, `plot_random_effect_standardized`, `plot_random_effect_standardized_scatter`
+- `plot_random_effects_pdf`, `plot_random_effects_scatter`, `plot_random_effect_pairplot`
+- `plot_uq_distributions` - UQ parameter distributions
+- `plot_multistart_waterfall` - Sorted objective values across starts
+- `plot_multistart_fixed_effect_variability` - Parameter variation across starts
+- `build_plot_cache` - Precompute ODE solutions / distributions for reuse
 
 ## Testing
 
@@ -500,11 +515,7 @@ julia --project benchmarks/estimation_mle_benchmarks.jl
 
 ## Documentation Files
 
-- `MODEL_CAPABILITIES.md` - Comprehensive model examples (17 examples)
-- `ACCESSORS.md` - API reference for fit results
-- `NOTES.md` - Implementation notes and conventions
-- `plotting_reference.md` - Plotting system documentation
-- `FIXED_EFFECTS_ONLY_CAPABILITIES.md` - Fixed-effects only capabilities
+- `CAPABILITIES.md` - Consolidated capability reference (model building, estimation, UQ, plotting, simulation)
 
 ---
 
