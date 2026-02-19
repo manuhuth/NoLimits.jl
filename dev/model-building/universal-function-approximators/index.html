@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>Function Approximators (NNs + SoftTrees) · NoLimits.jl</title><meta name="title" content="Function Approximators (NNs + SoftTrees) · NoLimits.jl"/><meta property="og:title" content="Function Approximators (NNs + SoftTrees) · NoLimits.jl"/><meta property="twitter:title" content="Function Approximators (NNs + SoftTrees) · NoLimits.jl"/><meta name="description" content="Documentation for NoLimits.jl."/><meta property="og:description" content="Documentation for NoLimits.jl."/><meta property="twitter:description" content="Documentation for NoLimits.jl."/><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../search_index.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><a class="docs-logo" href="../../"><img src="../../assets/logo.png" alt="NoLimits.jl logo"/></a><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><a class="tocitem" href="../../installation/">Installation</a></li><li><a class="tocitem" href="../../capabilities/">Capabilities</a></li><li><a class="tocitem" href="../../nlme-methodology/">NLME Methodology</a></li><li><input class="collapse-toggle" id="menuitem-5" type="checkbox" checked/><label class="tocitem" for="menuitem-5"><span class="docs-label">Model Building</span><i class="docs-chevron"></i></label><ul class="collapsed"><li><a class="tocitem" href="../">Overview</a></li><li><a class="tocitem" href="../model-macro/">@Model</a></li><li><a class="tocitem" href="../helpers/">@helpers</a></li><li><a class="tocitem" href="../fixed-effects/">@fixedEffects</a></li><li><a class="tocitem" href="../covariates/">@covariates</a></li><li><a class="tocitem" href="../random-effects/">@randomEffects</a></li><li><a class="tocitem" href="../pre-differential-equation/">@preDifferentialEquation</a></li><li><a class="tocitem" href="../differential-equation/">@DifferentialEquation</a></li><li><a class="tocitem" href="../initial-de/">@initialDE</a></li><li><a class="tocitem" href="../formulas/">@formulas</a></li><li class="is-active"><a class="tocitem" href>Function Approximators (NNs + SoftTrees)</a><ul class="internal"><li><a class="tocitem" href="#Where-They-Can-Be-Used"><span>Where They Can Be Used</span></a></li><li><a class="tocitem" href="#Pattern-1:-Population-Level-Approximators-with-Separate-Random-Effects"><span>Pattern 1: Population-Level Approximators with Separate Random Effects</span></a></li><li><a class="tocitem" href="#Pattern-2:-Full-Parameter-Individualization-via-Random-Effects"><span>Pattern 2: Full-Parameter Individualization via Random Effects</span></a></li><li><a class="tocitem" href="#Pattern-3:-Hybrid-Models-Combining-Both-Strategies"><span>Pattern 3: Hybrid Models Combining Both Strategies</span></a></li><li><a class="tocitem" href="#Practical-Notes"><span>Practical Notes</span></a></li></ul></li></ul></li><li><a class="tocitem" href="../../data-model-construction/">Data Model Construction</a></li><li><input class="collapse-toggle" id="menuitem-7" type="checkbox"/><label class="tocitem" for="menuitem-7"><span class="docs-label">Estimation</span><i class="docs-chevron"></i></label><ul class="collapsed"><li><a class="tocitem" href="../../estimation/">Overview</a></li><li><a class="tocitem" href="../../estimation/laplace/">Laplace</a></li><li><a class="tocitem" href="../../estimation/laplace-map/">Laplace MAP</a></li><li><a class="tocitem" href="../../estimation/mcem/">MCEM</a></li><li><a class="tocitem" href="../../estimation/saem/">SAEM</a></li><li><a class="tocitem" href="../../estimation/mcmc/">MCMC</a></li><li><a class="tocitem" href="../../estimation/mle/">MLE</a></li><li><a class="tocitem" href="../../estimation/mle-map/">MAP</a></li><li><a class="tocitem" href="../../estimation/multistart/">Multistart</a></li></ul></li><li><input class="collapse-toggle" id="menuitem-8" type="checkbox"/><label class="tocitem" for="menuitem-8"><span class="docs-label">Uncertainty Quantification</span><i class="docs-chevron"></i></label><ul class="collapsed"><li><a class="tocitem" href="../../uncertainty-quantification/">Overview</a></li><li><a class="tocitem" href="../../uncertainty-quantification/wald/">Wald</a></li><li><a class="tocitem" href="../../uncertainty-quantification/profile-likelihood/">Profile likelihood</a></li><li><a class="tocitem" href="../../uncertainty-quantification/mcmc-based-uncertainty/">MCMC-based uncertainty</a></li></ul></li><li><a class="tocitem" href="../../plotting/">Plotting</a></li><li><input class="collapse-toggle" id="menuitem-10" type="checkbox"/><label class="tocitem" for="menuitem-10"><span class="docs-label">Tutorials</span><i class="docs-chevron"></i></label><ul class="collapsed"><li><a class="tocitem" href="../../tutorials/mixed-effects-multiple-methods/">Mixed-Effects Tutorial 1: Nonlinear Random-Effects Model Across Multiple Estimation Methods</a></li><li><a class="tocitem" href="../../tutorials/mixed-effects-ode-mcem/">Mixed-Effects Tutorial 2: ODE Model with Dosing Events (MCEM)</a></li><li><a class="tocitem" href="../../tutorials/mixed-effects-nn-saem/">Mixed-Effects Tutorial 3: Neural Differential-Equation Components (SAEM)</a></li><li><a class="tocitem" href="../../tutorials/mixed-effects-softtree-saem/">Mixed-Effects Tutorial 4: SoftTree Differential-Equation Components (SAEM)</a></li><li><a class="tocitem" href="../../tutorials/mixed-effects-seizure-counts-poisson-nb-mcem/">Mixed-Effects Tutorial 5: Seizure Counts with Poisson and NegativeBinomial Outcomes (MCEM)</a></li><li><a class="tocitem" href="../../tutorials/mixed-effects-left-censored-virload50-laplace/">Mixed-Effects Tutorial 6: Left-Censored Nonlinear Model (Laplace)</a></li><li><a class="tocitem" href="../../tutorials/fixed-effects-nonlinear-mle-map/">Fixed-Effects Tutorial 1: Nonlinear Longitudinal Model (MLE + MAP)</a></li></ul></li><li><a class="tocitem" href="../../developers-guide/">Developers Guide</a></li><li><a class="tocitem" href="../../how-to-contribute/">How to Contribute</a></li><li><a class="tocitem" href="../../api/">API</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Model Building</a></li><li class="is-active"><a href>Function Approximators (NNs + SoftTrees)</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>Function Approximators (NNs + SoftTrees)</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/manuhuth/NoLimits.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/manuhuth/NoLimits.jl/blob/main/docs/src/model-building/universal-function-approximators.md" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="Function-Approximators:-Neural-Networks-and-Soft-Trees"><a class="docs-heading-anchor" href="#Function-Approximators:-Neural-Networks-and-Soft-Trees">Function Approximators: Neural Networks and Soft Trees</a><a id="Function-Approximators:-Neural-Networks-and-Soft-Trees-1"></a><a class="docs-heading-anchor-permalink" href="#Function-Approximators:-Neural-Networks-and-Soft-Trees" title="Permalink"></a></h1><p>Nonlinear mixed-effects models often require flexible functional forms to capture relationships that cannot be specified a priori. NoLimits supports two classes of learnable function approximators – neural networks and soft decision trees – that can be embedded directly into any model block. Their parameters are estimated jointly with all other model parameters during fitting.</p><p>The supported parameter constructors are:</p><ul><li><code>NNParameters(...)</code> – wraps a <a href="https://github.com/LuxDL/Lux.jl">Lux.jl</a> neural network architecture.</li><li><code>SoftTreeParameters(...)</code> – constructs a differentiable soft decision tree.</li></ul><p>Both are declared in <code>@fixedEffects</code> and exposed as callable model functions through the <code>function_name</code> keyword argument.</p><h2 id="Where-They-Can-Be-Used"><a class="docs-heading-anchor" href="#Where-They-Can-Be-Used">Where They Can Be Used</a><a id="Where-They-Can-Be-Used-1"></a><a class="docs-heading-anchor-permalink" href="#Where-They-Can-Be-Used" title="Permalink"></a></h2><p>Model functions created from <code>NNParameters</code> and <code>SoftTreeParameters</code> are available throughout the model specification. Specifically, they can appear in:</p><ul><li><code>@randomEffects</code> – parameterizing the distributions of random effects</li><li><code>@preDifferentialEquation</code> – computing time-constant derived quantities</li><li><code>@DifferentialEquation</code> – within the right-hand side of ODE systems</li><li><code>@initialDE</code> – setting initial conditions</li><li><code>@formulas</code> – constructing the observation model</li></ul><h2 id="Pattern-1:-Population-Level-Approximators-with-Separate-Random-Effects"><a class="docs-heading-anchor" href="#Pattern-1:-Population-Level-Approximators-with-Separate-Random-Effects">Pattern 1: Population-Level Approximators with Separate Random Effects</a><a id="Pattern-1:-Population-Level-Approximators-with-Separate-Random-Effects-1"></a><a class="docs-heading-anchor-permalink" href="#Pattern-1:-Population-Level-Approximators-with-Separate-Random-Effects" title="Permalink"></a></h2><p>In this pattern, the approximator parameters are shared across all individuals (population-level fixed effects), while between-subject variability is captured by separate, additive random effects. This is the simplest way to introduce flexible nonlinearity without dramatically increasing the dimensionality of the random-effects space.</p><pre><code class="language-julia hljs">using NoLimits
+using Distributions
+using Lux
+
+chain = Lux.Chain(Lux.Dense(2, 4, tanh), Lux.Dense(4, 1))
+
+model = @Model begin
+    @fixedEffects begin
+        sigma = RealNumber(0.3, scale=:log)
+        z_nn = NNParameters(chain; function_name=:NN1, calculate_se=false)
+        z_st = SoftTreeParameters(2, 2; function_name=:ST1, calculate_se=false)
+    end
+
+    @covariates begin
+        t = Covariate()
+        x = ConstantCovariateVector([:Age, :BMI]; constant_on=:ID)
+    end
+
+    @randomEffects begin
+        eta = RandomEffect(Normal(0.0, 1.0); column=:ID)
+    end
+
+    @formulas begin
+        mu = NN1([x.Age, x.BMI], z_nn)[1] + ST1([x.Age, x.BMI], z_st)[1] + tanh(eta) + eta^2
+        y ~ Gamma(abs(mu) + 1e-6, sigma)
+    end
+end</code></pre><h2 id="Pattern-2:-Full-Parameter-Individualization-via-Random-Effects"><a class="docs-heading-anchor" href="#Pattern-2:-Full-Parameter-Individualization-via-Random-Effects">Pattern 2: Full-Parameter Individualization via Random Effects</a><a id="Pattern-2:-Full-Parameter-Individualization-via-Random-Effects-1"></a><a class="docs-heading-anchor-permalink" href="#Pattern-2:-Full-Parameter-Individualization-via-Random-Effects" title="Permalink"></a></h2><p>When the functional form itself is expected to vary across individuals, the entire parameter vector of an approximator can be treated as a random effect. Each individual receives a personalized set of network or tree weights drawn from a multivariate distribution centered on the population-level parameters. This enables fully individualized nonlinear mappings at the cost of a high-dimensional random-effects distribution.</p><pre><code class="language-julia hljs">using NoLimits
+using Distributions
+using Lux
+using LinearAlgebra
+
+chain_A1 = Lux.Chain(Lux.Dense(1, 4, tanh), Lux.Dense(4, 1))
+chain_A2 = Lux.Chain(Lux.Dense(1, 4, tanh), Lux.Dense(4, 1))
+
+model = @Model begin
+    @helpers begin
+        softplus(u) = u &gt; 20 ? u : log1p(exp(u))
+    end
+
+    @covariates begin
+        t = Covariate()
+        d = ConstantCovariate(; constant_on=:ID)
+    end
+
+    @fixedEffects begin
+        sigma = RealNumber(0.3, scale=:log)
+        zA1 = NNParameters(chain_A1; function_name=:NNA1, calculate_se=false)
+        zA2 = NNParameters(chain_A2; function_name=:NNA2, calculate_se=false)
+        gC1 = SoftTreeParameters(1, 2; function_name=:STC1, calculate_se=false)
+        gC2 = SoftTreeParameters(1, 2; function_name=:STC2, calculate_se=false)
+    end
+
+    @randomEffects begin
+        etaA1 = RandomEffect(MvNormal(zA1, Diagonal(ones(length(zA1)))); column=:ID)
+        etaA2 = RandomEffect(MvNormal(zA2, Diagonal(ones(length(zA2)))); column=:ID)
+        etaC1 = RandomEffect(MvNormal(gC1, Diagonal(ones(length(gC1)))); column=:ID)
+        etaC2 = RandomEffect(MvNormal(gC2, Diagonal(ones(length(gC2)))); column=:ID)
+    end
+
+    @DifferentialEquation begin
+        a_A(t) = softplus(depot)
+        x_C(t) = softplus(center)
+
+        fA1(t) = softplus(NNA1([t / 24], etaA1)[1])
+        fA2(t) = softplus(NNA2([a_A(t)], etaA2)[1])
+        fC1(t) = -softplus(STC1([x_C(t)], etaC1)[1])
+        fC2(t) = softplus(STC2([t / 24], etaC2)[1])
+
+        D(depot) ~ -d * fA1(t) - fA2(t)
+        D(center) ~ d * fA1(t) + fA2(t) + fC1(t) + d * fC2(t)
+    end
+
+    @initialDE begin
+        depot = d
+        center = 0.0
+    end
+
+    @formulas begin
+        y ~ LogNormal(center(t), sigma)
+    end
+end</code></pre><h2 id="Pattern-3:-Hybrid-Models-Combining-Both-Strategies"><a class="docs-heading-anchor" href="#Pattern-3:-Hybrid-Models-Combining-Both-Strategies">Pattern 3: Hybrid Models Combining Both Strategies</a><a id="Pattern-3:-Hybrid-Models-Combining-Both-Strategies-1"></a><a class="docs-heading-anchor-permalink" href="#Pattern-3:-Hybrid-Models-Combining-Both-Strategies" title="Permalink"></a></h2><p>A single model can combine population-level and fully individualized approximators. For instance, one network may capture a shared population-level transformation while another is individualized through random effects. This provides a principled way to decompose variation into components that are common across individuals and components that are subject-specific.</p><pre><code class="language-julia hljs">using NoLimits
+using Distributions
+using Lux
+using LinearAlgebra
+
+chain = Lux.Chain(Lux.Dense(1, 4, tanh), Lux.Dense(4, 1))
+
+model = @Model begin
+    @covariates begin
+        t = Covariate()
+        c = ConstantCovariate(; constant_on=:ID)
+    end
+
+    @fixedEffects begin
+        sigma = RealNumber(0.3, scale=:log)
+        z_fix = NNParameters(chain; function_name=:NNfix, calculate_se=false)
+        g_mix = SoftTreeParameters(1, 2; function_name=:STmix, calculate_se=false)
+    end
+
+    @randomEffects begin
+        eta_g = RandomEffect(MvNormal(g_mix, Diagonal(ones(length(g_mix)))); column=:ID)
+    end
+
+    @DifferentialEquation begin
+        D(x1) ~ -abs(NNfix([t / 24], z_fix)[1]) * x1 + abs(STmix([t / 24], eta_g)[1])
+    end
+
+    @initialDE begin
+        x1 = c
+    end
+
+    @formulas begin
+        y ~ Exponential(log1p(x1(t)^2) + sigma)
+    end
+end</code></pre><h2 id="Practical-Notes"><a class="docs-heading-anchor" href="#Practical-Notes">Practical Notes</a><a id="Practical-Notes-1"></a><a class="docs-heading-anchor-permalink" href="#Practical-Notes" title="Permalink"></a></h2><ul><li>The <code>function_name</code> keyword controls the callable name used to invoke the approximator in model expressions. Each approximator must have a unique function name.</li><li>Learned parameter blocks are typically declared with <code>calculate_se=false</code>, since standard error computation for high-dimensional parameter vectors is often neither feasible nor informative.</li><li>The same <code>@Model</code> DSL is used for fixed-effects-only and mixed-effects workflows; only the presence and structure of <code>@randomEffects</code> determines whether individualization occurs.</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../formulas/">« @formulas</a><a class="docs-footer-nextpage" href="../../data-model-construction/">Data Model Construction »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Thursday 19 February 2026 23:19">Thursday 19 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

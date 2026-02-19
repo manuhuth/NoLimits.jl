@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>MCMC · NoLimits.jl</title><meta name="title" content="MCMC · NoLimits.jl"/><meta property="og:title" content="MCMC · NoLimits.jl"/><meta property="twitter:title" content="MCMC · NoLimits.jl"/><meta name="description" content="Documentation for NoLimits.jl."/><meta property="og:description" content="Documentation for NoLimits.jl."/><meta property="twitter:description" content="Documentation for NoLimits.jl."/><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../search_index.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><a class="docs-logo" href="../../"><img src="../../assets/logo.png" alt="NoLimits.jl logo"/></a><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><a class="tocitem" href="../../installation/">Installation</a></li><li><a class="tocitem" href="../../capabilities/">Capabilities</a></li><li><a class="tocitem" href="../../nlme-methodology/">NLME Methodology</a></li><li><input class="collapse-toggle" id="menuitem-5" type="checkbox"/><label class="tocitem" for="menuitem-5"><span class="docs-label">Model Building</span><i class="docs-chevron"></i></label><ul class="collapsed"><li><a class="tocitem" href="../../model-building/">Overview</a></li><li><a class="tocitem" href="../../model-building/model-macro/">@Model</a></li><li><a class="tocitem" href="../../model-building/helpers/">@helpers</a></li><li><a class="tocitem" href="../../model-building/fixed-effects/">@fixedEffects</a></li><li><a class="tocitem" href="../../model-building/covariates/">@covariates</a></li><li><a class="tocitem" href="../../model-building/random-effects/">@randomEffects</a></li><li><a class="tocitem" href="../../model-building/pre-differential-equation/">@preDifferentialEquation</a></li><li><a class="tocitem" href="../../model-building/differential-equation/">@DifferentialEquation</a></li><li><a class="tocitem" href="../../model-building/initial-de/">@initialDE</a></li><li><a class="tocitem" href="../../model-building/formulas/">@formulas</a></li><li><a class="tocitem" href="../../model-building/universal-function-approximators/">Function Approximators (NNs + SoftTrees)</a></li></ul></li><li><a class="tocitem" href="../../data-model-construction/">Data Model Construction</a></li><li><input class="collapse-toggle" id="menuitem-7" type="checkbox" checked/><label class="tocitem" for="menuitem-7"><span class="docs-label">Estimation</span><i class="docs-chevron"></i></label><ul class="collapsed"><li><a class="tocitem" href="../">Overview</a></li><li><a class="tocitem" href="../laplace/">Laplace</a></li><li><a class="tocitem" href="../laplace-map/">Laplace MAP</a></li><li><a class="tocitem" href="../mcem/">MCEM</a></li><li><a class="tocitem" href="../saem/">SAEM</a></li><li class="is-active"><a class="tocitem" href>MCMC</a><ul class="internal"><li><a class="tocitem" href="#Applicability"><span>Applicability</span></a></li><li><a class="tocitem" href="#Basic-Usage-(Mixed-Effects,-Nonlinear-in-Random-Effects)"><span>Basic Usage (Mixed Effects, Nonlinear in Random Effects)</span></a></li><li><a class="tocitem" href="#Constructor-Options"><span>Constructor Options</span></a></li><li><a class="tocitem" href="#Sampler-Dependent-Defaults"><span>Sampler-Dependent Defaults</span></a></li><li><a class="tocitem" href="#Turing.jl-Interface"><span>Turing.jl Interface</span></a></li><li><a class="tocitem" href="#Fit-Keywords"><span>Fit Keywords</span></a></li><li><a class="tocitem" href="#Pattern:-Fix-Known-Random-Effect-Levels-(constants_re)"><span>Pattern: Fix Known Random-Effect Levels (<code>constants_re</code>)</span></a></li><li><a class="tocitem" href="#Pattern:-Sample-Random-Effects-with-All-Fixed-Effects-Held-Constant"><span>Pattern: Sample Random Effects with All Fixed Effects Held Constant</span></a></li><li><a class="tocitem" href="#Fixed-Effects-Only-Example"><span>Fixed-Effects-Only Example</span></a></li><li><a class="tocitem" href="#HMM-Example-(Mixed-Effects)"><span>HMM Example (Mixed Effects)</span></a></li><li><a class="tocitem" href="#Accessing-Results"><span>Accessing Results</span></a></li></ul></li><li><a class="tocitem" href="../mle/">MLE</a></li><li><a class="tocitem" href="../mle-map/">MAP</a></li><li><a class="tocitem" href="../multistart/">Multistart</a></li></ul></li><li><input class="collapse-toggle" id="menuitem-8" type="checkbox"/><label class="tocitem" for="menuitem-8"><span class="docs-label">Uncertainty Quantification</span><i class="docs-chevron"></i></label><ul class="collapsed"><li><a class="tocitem" href="../../uncertainty-quantification/">Overview</a></li><li><a class="tocitem" href="../../uncertainty-quantification/wald/">Wald</a></li><li><a class="tocitem" href="../../uncertainty-quantification/profile-likelihood/">Profile likelihood</a></li><li><a class="tocitem" href="../../uncertainty-quantification/mcmc-based-uncertainty/">MCMC-based uncertainty</a></li></ul></li><li><a class="tocitem" href="../../plotting/">Plotting</a></li><li><input class="collapse-toggle" id="menuitem-10" type="checkbox"/><label class="tocitem" for="menuitem-10"><span class="docs-label">Tutorials</span><i class="docs-chevron"></i></label><ul class="collapsed"><li><a class="tocitem" href="../../tutorials/mixed-effects-multiple-methods/">Mixed-Effects Tutorial 1: Nonlinear Random-Effects Model Across Multiple Estimation Methods</a></li><li><a class="tocitem" href="../../tutorials/mixed-effects-ode-mcem/">Mixed-Effects Tutorial 2: ODE Model with Dosing Events (MCEM)</a></li><li><a class="tocitem" href="../../tutorials/mixed-effects-nn-saem/">Mixed-Effects Tutorial 3: Neural Differential-Equation Components (SAEM)</a></li><li><a class="tocitem" href="../../tutorials/mixed-effects-softtree-saem/">Mixed-Effects Tutorial 4: SoftTree Differential-Equation Components (SAEM)</a></li><li><a class="tocitem" href="../../tutorials/mixed-effects-seizure-counts-poisson-nb-mcem/">Mixed-Effects Tutorial 5: Seizure Counts with Poisson and NegativeBinomial Outcomes (MCEM)</a></li><li><a class="tocitem" href="../../tutorials/mixed-effects-left-censored-virload50-laplace/">Mixed-Effects Tutorial 6: Left-Censored Nonlinear Model (Laplace)</a></li><li><a class="tocitem" href="../../tutorials/fixed-effects-nonlinear-mle-map/">Fixed-Effects Tutorial 1: Nonlinear Longitudinal Model (MLE + MAP)</a></li></ul></li><li><a class="tocitem" href="../../developers-guide/">Developers Guide</a></li><li><a class="tocitem" href="../../how-to-contribute/">How to Contribute</a></li><li><a class="tocitem" href="../../api/">API</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Estimation</a></li><li class="is-active"><a href>MCMC</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>MCMC</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/manuhuth/NoLimits.jl" title="View the repository on GitHub"><span class="docs-icon fa-brands"></span><span class="docs-label is-hidden-touch">GitHub</span></a><a class="docs-navbar-link" href="https://github.com/manuhuth/NoLimits.jl/blob/main/docs/src/estimation/mcmc.md" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="MCMC"><a class="docs-heading-anchor" href="#MCMC">MCMC</a><a id="MCMC-1"></a><a class="docs-heading-anchor-permalink" href="#MCMC" title="Permalink"></a></h1><p>Markov chain Monte Carlo (MCMC) methods provide a principled approach to Bayesian inference by drawing samples from the posterior distribution of model parameters. Rather than returning a single point estimate, the <code>MCMC</code> method in NoLimits.jl produces a full set of posterior samples, enabling rich uncertainty characterization. This is particularly valuable when the posterior landscape is complex, multimodal, or when downstream analyses require propagating parameter uncertainty into predictions. NoLimits interfaces with <a href="https://turinglang.org/">Turing.jl</a> for all MCMC sampling.</p><p><code>MCMC</code> supports both:</p><ul><li><strong>Mixed-effects models</strong> with random effects jointly sampled alongside fixed effects</li><li><strong>Fixed-effects-only models</strong> where only population-level parameters are inferred</li></ul><h2 id="Applicability"><a class="docs-heading-anchor" href="#Applicability">Applicability</a><a id="Applicability-1"></a><a class="docs-heading-anchor-permalink" href="#Applicability" title="Permalink"></a></h2><p>The following conditions must hold to use <code>MCMC</code>:</p><ul><li>All free fixed effects must have prior distributions assigned.</li><li>At least one parameter must be sampled: either a free fixed effect, or random effects in a mixed-effects model (even if all fixed effects are held constant via <code>constants</code>).</li><li>Penalty terms are not supported; use <code>MAP</code> for penalized estimation instead.</li></ul><p>Note that <code>MCMC</code> samples on the natural (untransformed) parameter scale. The parameter transforms used by optimization-based methods (such as <code>MLE</code> or <code>Laplace</code>) do not apply during sampling.</p><h2 id="Basic-Usage-(Mixed-Effects,-Nonlinear-in-Random-Effects)"><a class="docs-heading-anchor" href="#Basic-Usage-(Mixed-Effects,-Nonlinear-in-Random-Effects)">Basic Usage (Mixed Effects, Nonlinear in Random Effects)</a><a id="Basic-Usage-(Mixed-Effects,-Nonlinear-in-Random-Effects)-1"></a><a class="docs-heading-anchor-permalink" href="#Basic-Usage-(Mixed-Effects,-Nonlinear-in-Random-Effects)" title="Permalink"></a></h2><pre><code class="language-julia hljs">using NoLimits
+using DataFrames
+using Distributions
+using Turing
+
+model = @Model begin
+    @fixedEffects begin
+        a = RealNumber(0.2, prior=Normal(0.0, 1.0))
+        b = RealNumber(0.1, prior=Normal(0.0, 1.0))
+        tau = RealNumber(0.4, scale=:log, prior=LogNormal(log(0.4), 0.5))
+        sigma = RealNumber(0.3, scale=:log, prior=LogNormal(log(0.3), 0.5))
+    end
+
+    @covariates begin
+        t = Covariate()
+    end
+
+    @randomEffects begin
+        eta = RandomEffect(Normal(0.0, tau); column=:ID)
+    end
+
+    @formulas begin
+        mu = exp(a + b * t + eta)   # nonlinear in random effects
+        y ~ LogNormal(log(mu), sigma)
+    end
+end
+
+df = DataFrame(
+    ID = [:A, :A, :B, :B, :C, :C],
+    t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+    y = [1.00, 1.26, 0.93, 1.12, 1.08, 1.37],
+)
+
+dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+
+method = NoLimits.MCMC(;
+    sampler=NUTS(0.75),
+    turing_kwargs=(n_samples=500, n_adapt=250, progress=false),
+)
+
+res = fit_model(dm, method)</code></pre><h2 id="Constructor-Options"><a class="docs-heading-anchor" href="#Constructor-Options">Constructor Options</a><a id="Constructor-Options-1"></a><a class="docs-heading-anchor-permalink" href="#Constructor-Options" title="Permalink"></a></h2><p>The <code>MCMC</code> constructor accepts the following keyword arguments, which control the sampler, the number of draws, and the automatic differentiation backend:</p><pre><code class="language-julia hljs">using NoLimits
+using Turing
+
+method = NoLimits.MCMC(;
+    sampler=Turing.NUTS(0.75),
+    turing_kwargs=NamedTuple(),
+    adtype=Turing.AutoForwardDiff(),
+    progress=false,
+)</code></pre><h2 id="Sampler-Dependent-Defaults"><a class="docs-heading-anchor" href="#Sampler-Dependent-Defaults">Sampler-Dependent Defaults</a><a id="Sampler-Dependent-Defaults-1"></a><a class="docs-heading-anchor-permalink" href="#Sampler-Dependent-Defaults" title="Permalink"></a></h2><p>When <code>n_samples</code> and <code>n_adapt</code> are not explicitly provided in <code>turing_kwargs</code>, NoLimits applies sampler-specific defaults:</p><table><tr><th style="text-align: right">Sampler kind</th><th style="text-align: right">Default <code>n_samples</code></th><th style="text-align: right">Default <code>n_adapt</code></th></tr><tr><td style="text-align: right"><code>NUTS</code></td><td style="text-align: right"><code>1000</code></td><td style="text-align: right"><code>500</code></td></tr><tr><td style="text-align: right"><code>HMC</code></td><td style="text-align: right"><code>1500</code></td><td style="text-align: right"><code>750</code></td></tr><tr><td style="text-align: right"><code>MH</code></td><td style="text-align: right"><code>2500</code></td><td style="text-align: right"><code>0</code></td></tr><tr><td style="text-align: right">Other</td><td style="text-align: right"><code>1000</code></td><td style="text-align: right"><code>500</code></td></tr></table><h2 id="Turing.jl-Interface"><a class="docs-heading-anchor" href="#Turing.jl-Interface">Turing.jl Interface</a><a id="Turing.jl-Interface-1"></a><a class="docs-heading-anchor-permalink" href="#Turing.jl-Interface" title="Permalink"></a></h2><p><code>MCMC</code> interfaces directly with <a href="https://turinglang.org/">Turing.jl</a>. The interaction between NoLimits and Turing is as follows:</p><ul><li><code>sampler</code> is passed directly to <code>Turing.sample</code>.</li><li><code>turing_kwargs</code> are forwarded to <code>Turing.sample</code> after removing <code>n_samples</code> and <code>n_adapt</code>, which NoLimits handles explicitly.</li><li>If <code>progress</code> is not set in <code>turing_kwargs</code>, NoLimits uses the value from <code>MCMC(progress=...)</code>.</li><li>If <code>verbose</code> is not set in <code>turing_kwargs</code>, the default is <code>false</code>.</li><li><code>adtype</code> configures Turing&#39;s automatic differentiation backend before sampling begins.</li></ul><h2 id="Fit-Keywords"><a class="docs-heading-anchor" href="#Fit-Keywords">Fit Keywords</a><a id="Fit-Keywords-1"></a><a class="docs-heading-anchor-permalink" href="#Fit-Keywords" title="Permalink"></a></h2><p>The call <code>fit_model(dm, NoLimits.MCMC(...); ...)</code> accepts the following keyword arguments:</p><ul><li><strong><code>constants</code></strong> – Fixes selected fixed effects to known values on the natural scale, removing them from the sampled parameter set.</li><li><strong><code>constants_re</code></strong> – For mixed-effects models, fixes specific random-effect levels to known values while the remaining levels continue to be sampled. Level existence and dimensionality are validated.</li><li><strong><code>ode_args</code>, <code>ode_kwargs</code></strong> – Forwarded to ODE solvers used during likelihood evaluation.</li><li><strong><code>serialization</code></strong> – Controls whether likelihood evaluation proceeds via <code>EnsembleSerial()</code> or <code>EnsembleThreads()</code>.</li><li><strong><code>rng</code></strong> – Random number generator used for sampling.</li><li><strong><code>theta_0_untransformed</code></strong> – When provided (and <code>turing_kwargs</code> does not already include <code>initial_params</code>), this value initializes the free fixed effects.</li><li><strong><code>store_data_model</code></strong> – If <code>true</code>, stores the <code>DataModel</code> inside the <code>FitResult</code> for use by downstream accessor functions.</li></ul><p>Not supported:</p><ul><li><strong><code>penalty</code></strong> – Raises an error. Use <code>MAP</code> for penalized inference.</li></ul><h2 id="Pattern:-Fix-Known-Random-Effect-Levels-(constants_re)"><a class="docs-heading-anchor" href="#Pattern:-Fix-Known-Random-Effect-Levels-(constants_re)">Pattern: Fix Known Random-Effect Levels (<code>constants_re</code>)</a><a id="Pattern:-Fix-Known-Random-Effect-Levels-(constants_re)-1"></a><a class="docs-heading-anchor-permalink" href="#Pattern:-Fix-Known-Random-Effect-Levels-(constants_re)" title="Permalink"></a></h2><p>In some workflows, certain random-effect levels are known a priori – for example, from a previous analysis or by experimental design. These can be held fixed while the remaining levels are sampled:</p><pre><code class="language-julia hljs">constants_re = (; eta=(; A=0.0))
+
+res_fixed_levels = fit_model(
+    dm,
+    NoLimits.MCMC(; sampler=NUTS(0.75), turing_kwargs=(n_samples=300, n_adapt=150, progress=false));
+    constants_re=constants_re,
+)</code></pre><h2 id="Pattern:-Sample-Random-Effects-with-All-Fixed-Effects-Held-Constant"><a class="docs-heading-anchor" href="#Pattern:-Sample-Random-Effects-with-All-Fixed-Effects-Held-Constant">Pattern: Sample Random Effects with All Fixed Effects Held Constant</a><a id="Pattern:-Sample-Random-Effects-with-All-Fixed-Effects-Held-Constant-1"></a><a class="docs-heading-anchor-permalink" href="#Pattern:-Sample-Random-Effects-with-All-Fixed-Effects-Held-Constant" title="Permalink"></a></h2><p>For mixed-effects models, it can be useful to fix all population-level parameters and sample only the individual-level random effects. This is valid because random effects are treated as sampled parameters in the Bayesian framework:</p><pre><code class="language-julia hljs">res_re_only = fit_model(
+    dm,
+    NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=400, n_adapt=0, progress=false));
+    constants=(a=0.2, b=0.1, tau=0.4, sigma=0.3),
+)</code></pre><h2 id="Fixed-Effects-Only-Example"><a class="docs-heading-anchor" href="#Fixed-Effects-Only-Example">Fixed-Effects-Only Example</a><a id="Fixed-Effects-Only-Example-1"></a><a class="docs-heading-anchor-permalink" href="#Fixed-Effects-Only-Example" title="Permalink"></a></h2><p>When the model contains no random effects, <code>MCMC</code> samples only the fixed effects. The following example illustrates Bayesian inference for a Poisson regression model with count outcomes:</p><pre><code class="language-julia hljs">using NoLimits
+using DataFrames
+using Distributions
+using Turing
+
+model_fixed = @Model begin
+    @covariates begin
+        t = Covariate()
+        z = Covariate()
+    end
+
+    @fixedEffects begin
+        a = RealNumber(0.0, prior=Normal(0.0, 1.0))
+        b = RealNumber(0.2, prior=Normal(0.0, 1.0))
+    end
+
+    @formulas begin
+        lambda = exp(a + b * z)
+        y ~ Poisson(lambda)
+    end
+end
+
+df_fixed = DataFrame(
+    ID = [1, 1, 2, 2, 3, 3],
+    t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+    z = [0.0, 0.2, 0.5, 0.7, 1.0, 1.2],
+    y = [1, 1, 2, 2, 2, 3],
+)
+
+dm_fixed = DataModel(model_fixed, df_fixed; primary_id=:ID, time_col=:t)
+
+res_fixed = fit_model(
+    dm_fixed,
+    NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=300, n_adapt=0, progress=false)),
+)</code></pre><h2 id="HMM-Example-(Mixed-Effects)"><a class="docs-heading-anchor" href="#HMM-Example-(Mixed-Effects)">HMM Example (Mixed Effects)</a><a id="HMM-Example-(Mixed-Effects)-1"></a><a class="docs-heading-anchor-permalink" href="#HMM-Example-(Mixed-Effects)" title="Permalink"></a></h2><p>Hidden Markov models (HMMs) with subject-level random effects can also be estimated via MCMC. In the following example, random effects enter the emission probabilities nonlinearly:</p><pre><code class="language-julia hljs">using NoLimits
+using DataFrames
+using Distributions
+using Turing
+
+model_hmm = @Model begin
+    @covariates begin
+        t = Covariate()
+    end
+
+    @fixedEffects begin
+        p1_r = RealNumber(0.0, prior=Normal(0.0, 1.0))
+        p2_r = RealNumber(0.0, prior=Normal(0.0, 1.0))
+    end
+
+    @randomEffects begin
+        eta = RandomEffect(Normal(0.0, 1.0); column=:ID)
+    end
+
+    @formulas begin
+        p1 = 0.8 / (1 + exp(-(p1_r + eta))) + 0.1  # nonlinear in random effects
+        p2 = 0.8 / (1 + exp(-p2_r)) + 0.1
+        P = [0.9 0.1; 0.2 0.8]
+        y ~ DiscreteTimeDiscreteStatesHMM(
+            P,
+            (Bernoulli(p1), Bernoulli(p2)),
+            Categorical([0.6, 0.4]),
+        )
+    end
+end
+
+df_hmm = DataFrame(
+    ID = [:A, :A, :A, :B, :B, :B],
+    t = [0.0, 1.0, 2.0, 0.0, 1.0, 2.0],
+    y = [0, 1, 1, 1, 0, 1],
+)
+
+dm_hmm = DataModel(model_hmm, df_hmm; primary_id=:ID, time_col=:t)
+
+res_hmm = fit_model(
+    dm_hmm,
+    NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=200, n_adapt=0, progress=false)),
+)</code></pre><h2 id="Accessing-Results"><a class="docs-heading-anchor" href="#Accessing-Results">Accessing Results</a><a id="Accessing-Results-1"></a><a class="docs-heading-anchor-permalink" href="#Accessing-Results" title="Permalink"></a></h2><p>Because <code>MCMC</code> produces posterior samples rather than a single point estimate, some result accessors differ from those of optimization-based methods:</p><pre><code class="language-julia hljs">chain = get_chain(res)
+sampler_used = get_sampler(res)
+n_samples = get_n_samples(res)
+observed = get_observed(res)
+diagnostics = get_diagnostics(res)</code></pre><p>Since there is no single optimized objective value, <code>get_objective(res)</code> returns <code>NaN</code> and <code>get_converged(res)</code> returns <code>missing</code>.</p></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../saem/">« SAEM</a><a class="docs-footer-nextpage" href="../mle/">MLE »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Thursday 19 February 2026 23:19">Thursday 19 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
