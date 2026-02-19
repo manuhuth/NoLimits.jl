@@ -1,0 +1,364 @@
+Random effects capabilities
+
+This document summarizes the current random-effects estimation capabilities in
+NoLimits.jl. It focuses on Laplace/LaplaceMAP, FOCEI/FOCEIMAP, MCMC,
+MCEM, and SAEM, and highlights what is supported, how to configure methods, and
+where the test suite demonstrates the behavior.
+
+Scope
+- Covers random-effects estimation methods and their options.
+- Does not cover fixed-effects-only MLE/MAP/MCMC; see NOTES.md and
+  FIXED_EFFECTS_ONLY_CAPABILITIES.md.
+
+Unified interface (random effects)
+- All methods use:
+  fit_model(dm::DataModel, method::FittingMethod;
+            constants, constants_re, penalty, ode_args, ode_kwargs,
+            serialization, rng, theta_0_untransformed)
+- constants:
+  fixed-effect constants are provided on the transformed scale; they are
+  injected into θ and removed from the optimizer state.
+- constants_re:
+  fixes random effects at specific levels, same shape as
+  Laplace/LaplaceMAP/FOCEI/FOCEIMAP/MCMC/MCEM/SAEM:
+    constants_re = (; η=(; A=0.0, B=0.3))
+  Level keys may be Symbol/String; they are matched against the RE grouping
+  column values. Invalid levels throw.
+- serialization:
+  EnsembleSerial() or EnsembleThreads() to control threading in loglikelihood
+  and batch computations.
+
+Accessors (no dot access needed)
+- `get_params(res; scale=:transformed|:untransformed|:both)`
+- `get_objective(res)` / `get_converged(res)`
+- `get_random_effects(dm, res; ...)` (Laplace/LaplaceMAP/FOCEI/FOCEIMAP/MCEM/SAEM)
+- `get_chain(res)` / `get_observed(res)` (MCMC only)
+- `get_loglikelihood(dm, res; ...)` (MLE/MAP/Laplace/LaplaceMAP/FOCEI/FOCEIMAP)
+
+Plotting integration (Laplace-style results)
+- Laplace/LaplaceMAP/FOCEI/FOCEIMAP share the same EB-mode based plotting path in
+  the plotting cache.
+- Random-effects diagnostics and standard plotting utilities (fits, residuals,
+  observation distributions, VPC, random-effect diagnostics) are available.
+
+Random-effects batching (core concept)
+- Random effects create connected components across individuals. Each component
+  is treated as a "batch" for Laplace/LaplaceMAP/FOCEI/FOCEIMAP/MCEM/SAEM.
+- constants_re can disconnect batches by removing fixed levels from the graph.
+- Batch construction lives in:
+  src/estimation/laplace.jl (_build_laplace_batches/_build_laplace_batch_infos).
+
+Laplace (approximate ML)
+Location: src/estimation/laplace.jl
+Core idea
+- Approximates the marginal likelihood by a local Gaussian expansion around
+  batch-wise posterior modes (EBEs).
+- For each batch, optimize b (random effects) and compute Hessian in b.
+
+Algorithm details
+- Inner optimization per batch: _laplace_solve_batch!(...).
+- EBEs cached in _LaplaceCache; cache reuse controlled via theta_tol.
+- Skips inner optimization if the gradient at the start value is already small.
+- Hessian stabilization: cholesky(-H + jitter*I) with growth if needed.
+- Objective and gradient w.r.t θ computed with envelope corrections.
+Laplace Hessian/logdet options
+- `jitter`, `max_tries`, `growth`, `adaptive`, `scale_factor`
+- `use_trace_logdet_grad` (default: true)
+- `use_hutchinson` (default: false)
+- `hutchinson_n` (used when Hutchinson is enabled)
+Stability additions
+- Multistart if the post-solve gradient is still large:
+  - sample n starts from RE priors (covariate-dependent),
+  - rank by logf, optimize the best k, keep the best result.
+  - options: multistart_n, multistart_k, multistart_grad_tol.
+- If the starting logf is non-finite, a small prior-sampling fallback picks a
+  viable start before optimizing.
+- Per-batch caching of last b/logf/grad avoids redundant gradient work.
+- Adaptive Hessian jitter (scale-aware) via adaptive_jitter/jitter_scale.
+
+Capabilities
+- Multiple RE groups and multivariate REs.
+- ODE models.
+- constants_re (fixed levels).
+- Threaded evaluation of batches (EnsembleThreads).
+- Supports BlackBoxOptim if finite bounds are provided.
+
+Outputs
+- LaplaceResult includes EB modes (per batch).
+- get_laplace_random_effects(...) can extract EB modes to data frames.
+
+Tests
+- Batching and constants_re: test/estimation_laplace_tests.jl
+- Multivariate REs, multiple groups, covariate-dependent RE priors:
+  test/estimation_laplace_tests.jl
+- Gradient checks (incl. ODE): test/estimation_laplace_tests.jl,
+  test/estimation_laplace_fit_tests.jl
+- Fit runs, threading, bounds: test/estimation_laplace_fit_tests.jl
+
+LaplaceMAP (approximate MAP)
+Location: src/estimation/laplace.jl
+Core idea
+- Same as Laplace, but includes fixed-effect priors in the objective.
+- Requires priors for all fixed effects; errors if any are priorless.
+
+Capabilities
+- Everything supported by Laplace (multivariate REs, multiple groups, ODE, etc.).
+- Penalties are allowed and applied on the natural scale.
+
+Tests
+- Prior requirement and MAP run: test/estimation_laplace_map_tests.jl
+- Multivariate REs + multiple groups: test/estimation_laplace_map_tests.jl
+- ODE model: test/estimation_laplace_map_tests.jl
+
+FOCEI (first-order conditional estimation with interaction)
+Location: src/estimation/FOCEI.jl
+Core idea
+- Uses Laplace-style batch modes (EBEs), but uses an information-matrix based
+  logdet term instead of the full `-∂²logf/∂b²` logdet.
+- Default information path is `info_mode=:fisher_common` (analytic expected
+  information for supported outcomes/priors).
+- `info_mode=:custom` allows user-provided information-matrix approximations.
+
+Algorithm details
+- Per-batch objective:
+  `logf(θ,b*) + 0.5*n_b*log(2π) - 0.5*logdet(I(θ,b*))`
+- Information options:
+  - `info_mode`: `:fisher_common` or `:custom`
+  - `info_jitter`, `info_max_tries`, `info_jitter_growth`,
+    `info_adaptive_jitter`, `info_jitter_scale`
+  - `info_custom` callback for `info_mode=:custom`:
+    `(dm, batch_info, θ, b, const_cache, ll_cache) -> I::AbstractMatrix`
+  - Built-in helper for custom OPG behavior:
+    `info_mode=:custom, info_custom=focei_information_opg`
+  - `fallback_to_laplace`
+- Mode-sensitivity options:
+  - `mode_sensitivity=:exact_hessian` (default) uses Laplace Hessian solve for
+    `db*/dθ` correction.
+  - `mode_sensitivity=:focei_info` reuses FOCEI information Cholesky for
+    `db*/dθ` approximation and avoids the extra Hessian solve.
+- `info_mode=:fisher_common` supports:
+  - outcomes: `Normal`, `LogNormal`, `Bernoulli`, `Poisson`, `Exponential`,
+    `Geometric`, `Binomial`
+  - random-effects priors: `Normal`, `LogNormal`, `Exponential`, `MvNormal`
+- If unsupported distributions are encountered in `:fisher_common`, FOCEI now
+  raises an informative error (automatic OPG fallback removed).
+- If FOCEI logdet/mode-sensitivity steps fail and `fallback_to_laplace=true`,
+  derivatives fall back to Laplace derivatives.
+
+Capabilities
+- Multiple RE groups and multivariate REs.
+- ODE and non-ODE models.
+- Non-Gaussian outcomes in fisher-common supported set
+  (`Bernoulli`/`Poisson`/`Exponential`/`Geometric`/`Binomial`).
+- Arbitrary outcome/RE distributions via `info_mode=:custom` (e.g.
+  `NormalizingPlanarFlow` random effects with `focei_information_opg`).
+- `constants` and `constants_re`.
+- Threaded batch evaluation (EnsembleThreads).
+
+Outputs and diagnostics
+- `FOCEIResult` includes EB modes (per batch).
+- Notes include fallback counters:
+  `focei_fallback_total`, `focei_fallback_info_logdet`,
+  `focei_fallback_mode_hessian`, plus `_at_solution` variants.
+
+Tests
+- Core fit/gradient behavior, constants_re, non-Gaussian outcomes,
+  multivariate REs, NPF REs, and fallback reporting:
+  test/estimation_focei_tests.jl
+
+FOCEIMAP (FOCEI approximate MAP)
+Location: src/estimation/FOCEI.jl
+Core idea
+- Same approximation path as FOCEI (information-based logdet), but with fixed-effect
+  priors included in the objective and gradient.
+- Requires priors for all fixed effects; errors if any are priorless.
+
+Capabilities
+- Everything supported by FOCEI (multiple RE groups, multivariate REs, ODE/non-ODE,
+  fisher-common supported non-Gaussian outcomes, custom info path for arbitrary
+  distributions including NPF random effects, constants/constants_re, threading).
+- Penalties are allowed and applied on the natural scale.
+
+Outputs and diagnostics
+- `FOCEIMAPResult` includes EB modes (per batch).
+- Notes include FOCEI fallback counters (same fields as FOCEI).
+
+Tests
+- Prior requirement, fit/accessor path, prior-vs-penalty equivalence, and fallback notes:
+  test/estimation_focei_map_tests.jl
+
+MCMC (Turing, random effects)
+Location: src/estimation/mcmc_turing.jl
+Core idea
+- Full Bayesian sampling using Turing, including random effects.
+- Priors are required on all free fixed effects.
+
+Algorithm details
+- Constructs a Turing model that samples fixed effects and RE levels.
+- Supports random-effects-only sampling when all fixed effects are held constant.
+- RE sampling supports scalar and vector (multivariate) distributions.
+- constants_re are respected by replacing fixed levels in η.
+- Uses loglikelihood(dm, θ, η_vec) under the hood.
+- Uses Turing’s AD backend (configurable).
+
+Capabilities
+- Multiple RE groups; multivariate REs.
+- Non-Gaussian REs (e.g., Laplace).
+- Normalizing flow REs (NPF).
+- Models with NN/SoftTree/Spline blocks.
+- ODE models.
+- HMM outcomes (discrete-time and continuous-time).
+- Threaded likelihood via EnsembleThreads.
+
+Notes
+- Parameter scale settings (log/cholesky) are ignored for MCMC; priors are
+  defined on the natural scale (info message emitted).
+- Penalties are not supported (use MAP).
+
+Tests
+- Basic RE, multivariate RE, multiple groups, constants_re:
+  test/estimation_mcmc_re_tests.jl
+- Non-normal RE, NPF, NN/SoftTree/Spline, ODE, HMMs:
+  test/estimation_mcmc_re_tests.jl
+- MCMC baseline behavior (priors required, penalties rejected):
+  test/estimation_mcmc_tests.jl
+
+MCEM (Monte Carlo EM)
+Location: src/estimation/mcem.jl
+Core idea
+- E-step: sample random effects per batch with MCMC (Turing).
+- M-step: maximize MC approximation of Q(θ) via Optimization.jl.
+ - EBEs: computes Laplace-style EB random-effects point estimates after fitting.
+
+Algorithm details
+- Sample schedule: fixed integer, vector by iteration, or function.
+- Warm start of MCMC with previous parameters.
+- Q(θ) and gradients computed from batch samples via ForwardDiff.
+- Convergence criteria: θ and Q (rtol/atol).
+
+Capabilities
+- Multiple RE groups; multivariate REs.
+- constants and constants_re.
+- RE distributions parameterized by constant covariates.
+- ODE models.
+- Threaded E-step sampling.
+- Optimizer choices: LBFGS, Adam, BlackBoxOptim, etc.
+
+Notes
+- Priors on fixed effects are ignored (info message emitted).
+- For BlackBoxOptim, bounds must be provided.
+
+Tests
+- Basic MCEM, NUTS/MH, multigroup, constants_re:
+  test/estimation_mcem_tests.jl
+- Multivariate RE and ODE:
+  test/estimation_mcem_tests.jl
+- Optimizer variants:
+  test/estimation_mcem_tests.jl
+
+SAEM (Stochastic Approximation EM)
+Location: src/estimation/saem.jl
+Core idea
+- E-step: batchwise MCMC of random effects.
+- Q update: Robbins–Monro recursion with step size γ_t.
+- M-step: Optimization.jl (or closed-form when available).
+ - EBEs: computes Laplace-style EB random-effects point estimates after fitting.
+
+Algorithm details
+- update_schedule controls minibatching (:all, Int, or custom function).
+- stores a bounded window of batch samples for memory efficiency.
+- Convergence criteria: both θ and Q (rtol/atol) must satisfy tolerances for
+  `consecutive_params` consecutive iterations after `t0`.
+
+Default options (constructor)
+- `update_schedule=:all`, `warm_start=true`, `verbose=false`
+- `mcmc_steps=10` (used directly each SAEM iteration; if set to `0`, falls back to `turing_kwargs.n_samples`, then `1`)
+- `max_store=50`, `t0=20`, `kappa=0.65`, `maxiters=300`
+- `rtol_theta=5e-5`, `atol_theta=5e-7`
+- `rtol_Q=5e-5`, `atol_Q=5e-7`
+- `consecutive_params=4`
+
+Capabilities
+- Multiple RE groups; multivariate REs.
+- constants and constants_re.
+- RE distributions parameterized by constant covariates.
+- ODE models.
+- Threaded E-step and threaded Q evaluation.
+- Optimizer variants (LBFGS, Adam, BlackBoxOptim).
+
+Notes
+- Priors on fixed effects are ignored (info message emitted).
+- For BlackBoxOptim, bounds must be provided.
+
+Tests
+- Basic SAEM, NUTS/MH, multigroup, constants_re:
+  test/estimation_saem_tests.jl
+- Threaded and minibatch updates:
+  test/estimation_saem_tests.jl
+- Optimizer variants:
+  test/estimation_saem_tests.jl
+- ODE and RE covariate parameterization:
+  test/estimation_saem_tests.jl
+
+SAEM built-ins
+1) builtin_stats = :gaussian_re
+- Updates Gaussian RE variance (scalar and multivariate).
+- Residual variance update for Normal outcomes:
+  - shared σ via resid_var_param = :σ
+  - per-outcome σ via resid_var_param = (; y1=:σ1, y2=:σ2)
+- Multiple RE dists and multiple Normal outcomes supported.
+
+2) builtin_mean = :glm
+- Updates mean parameters for GLM-style outcomes:
+  Normal (identity), Bernoulli (logit), Poisson (log), Exponential (log).
+- Supports multiple outcomes.
+- Supports ODE models and varying/dynamic covariates.
+- Uses current random effects samples as offsets and optimizes Q via
+  Optimization.jl (ForwardDiff).
+
+3) Interaction
+- builtin_stats and builtin_mean can be used together.
+- When builtins are active, SAEM uses Q-only evaluation for convergence to
+  avoid AD issues in variance parameters.
+
+Built-in tests
+- gaussian_re (scalar, multivariate, multiple RE groups, multiple outcomes,
+  separate σs): test/estimation_saem_tests.jl
+- builtin_mean GLM (Bernoulli+Poisson, Normal+Exponential):
+  test/estimation_saem_tests.jl
+- builtin_mean + builtin_stats together:
+  test/estimation_saem_tests.jl
+
+SAEM sufficient-statistics path
+- Optional user-provided hooks:
+  suffstats(dm, batch_infos, b_current, θ, constants_re)
+  q_from_stats(stats, θ, dm)
+  mstep_closed_form(stats, dm) (optional)
+- If provided, SAEM uses stats update and can skip gradients/optimization.
+
+Tests
+- Linear and nonlinear Gaussian examples:
+  test/estimation_saem_suffstats_tests.jl
+
+Constants & bounds summary
+- constants: fixed effects (transformed scale).
+- constants_re: fixed RE levels (NamedTuple / Dict / Pair supported).
+- Bounds:
+  - used in Laplace/LaplaceMAP/FOCEI/FOCEIMAP/MCEM/SAEM.
+  - BlackBoxOptim requires finite bounds.
+
+Threading summary
+- Laplace: objective/grad across batches uses threads.
+- FOCEI/FOCEIMAP: objective/grad across batches uses threads.
+- MCMC: loglikelihood can use EnsembleThreads.
+- MCEM/SAEM: batch sampling and Q evaluation can use threads.
+
+Key test files (random effects)
+- Laplace: test/estimation_laplace_tests.jl, test/estimation_laplace_fit_tests.jl
+- LaplaceMAP: test/estimation_laplace_map_tests.jl
+- FOCEI: test/estimation_focei_tests.jl
+- FOCEIMAP: test/estimation_focei_map_tests.jl
+- MCMC RE: test/estimation_mcmc_re_tests.jl
+- MCEM: test/estimation_mcem_tests.jl
+- SAEM: test/estimation_saem_tests.jl
+- SAEM suffstats: test/estimation_saem_suffstats_tests.jl

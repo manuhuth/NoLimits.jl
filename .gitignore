@@ -1,0 +1,6 @@
+# Julia
+Manifest.toml
+
+# Documentation
+docs/build/
+docs/cache/

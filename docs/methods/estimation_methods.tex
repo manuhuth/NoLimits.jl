@@ -1,0 +1,967 @@
+\documentclass[12pt]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{bbm}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{colortbl}
+\usepackage{multirow}
+\usepackage{array}
+%\usepackage{tabulary}
+%\usepackage{etoolbox}
+\usepackage{booktabs}
+\usepackage{pdflscape}
+
+
+\usepackage{todonotes}
+\usepackage{lineno}
+
+\usepackage{natbib}
+\usepackage{graphicx}
+
+\usepackage{url}
+\def\UrlBreaks{\do\/\do-}
+
+\usepackage{pdflscape}
+\usepackage{afterpage}
+
+
+\setlength{\parindent}{0em}
+\setlength{\parskip}{0.5em}
+\renewcommand{\baselinestretch}{1.15} 
+
+\newcommand*\diff{\mathop{}\!\mathrm{d}}
+\newcommand*\Diff[1]{\mathop{}\!\mathrm{d^#1}}
+\usepackage{array}
+\newcolumntype{L}[1]{>{\raggedright\let\newline\\\arraybackslash\hspace{0pt}}m{#1}}
+\newcolumntype{C}[1]{>{\centering\let\newline\\\arraybackslash\hspace{0pt}}m{#1}}
+\newcolumntype{R}[1]{>{\raggedleft\let\newline\\\arraybackslash\hspace{0pt}}m{#1}}
+
+%%%%
+%%%%
+\title{}
+\author{Manuel Huth}
+\date{}
+
+\begin{document}
+
+
+\section*{Laplace Approximation for NLME with Mutiple Groups}
+
+
+\textbf{Notation}. Let 
+\[
+y_{i,j,k}=\begin{pmatrix}y_{i,j,k,1}&y_{i,j,k,2}&\hdots&y_{i,j,k,n_i}\end{pmatrix}'
+\]
+be an \(n_i\)-dimensional random vector of outcome variables with support \(\mathbb{D}_y\subset\mathbb{R}^{n_i}\). Let \(\eta_i\), \(\lambda_j\), and \(a_k\) be \(n_\eta\)-, \(n_\lambda\)-, and \(n_a\)-dimensional random vectors of random effects with supports \(\mathbb{S}_\eta,\mathbb{S}_\lambda,\mathbb{S}_a\) defined over \(\mathbb{D}_\eta\subset\mathbb{R}^{n_\eta}\), \(\mathbb{D}_\lambda\subset\mathbb{R}^{n_\lambda}\), and \(\mathbb{D}_a\subset\mathbb{R}^{n_a}\), respectively.
+
+The index \(i\in\{1,\dots,N\}\) denotes individuals (primary id). The index \(j\in\{1,\dots,J\}\) denotes a secondary grouping variable (e.g. schools or areas of living) such that \(j=j(i)\) is constant within an individual \(i\), but a given \(j\) can be shared by multiple individuals. We further introduce a third grouping index \(k\in\{1,\dots,K\}\) (e.g. age group) such that \(k=k(i)\) is constant within an individual \(i\), but \emph{need not be constant within a \(j\)-group}; i.e., individuals sharing the same \(j\) may belong to different \(k\)-groups. (e.g. individuals sharing the same school must not be in the same age group.
+
+The collection of individual-level random effects for \(N\) individuals is denoted by
+\[
+\eta=\begin{pmatrix}\eta_1&\eta_2&\hdots&\eta_N\end{pmatrix}',
+\]
+the collection of \(j\)-level random effects by
+\[
+\lambda=\begin{pmatrix}\lambda_1&\lambda_2&\hdots&\lambda_J\end{pmatrix}',
+\]
+and the collection of \(k\)-level random effects by
+\[
+a=\begin{pmatrix}a_1&a_2&\hdots&a_K\end{pmatrix}'.
+\]
+
+Furthermore, let \(\theta\in\mathbb{D}_\theta\subset\mathbb{R}^{n_\theta}\) be a vector of fixed effects that parameterizes the distributional parameters
+\[
+\phi_\eta=\Phi_\eta(\theta),\qquad 
+\phi_\lambda=\Phi_\lambda(\theta),\qquad
+\phi_a=\Phi_a(\theta),
+\]
+associated with the random-effects distributions of \(\eta_i\), \(\lambda_j\), and \(a_k\), respectively.
+
+
+
+\textbf{Joint density}. 
+The joint density of the outcome vectors and the random effects is denoted by
+\[
+p\!\left(\, \{y_{i,j(i),k(i)}\}_{i\in\mathcal{C}},\ \{\eta_i\}_{i\in\mathcal{C}},\ \{\lambda_j\}_{j\in\mathcal{J}(\mathcal{C})},\ \{a_k\}_{k\in\mathcal{K}(\mathcal{C})}\ ;\ \theta \right),
+\]
+where \(\theta\) indicates the density's dependency on the fixed effects.
+Here, \(\mathcal{C}\subseteq\{1,\dots,N\}\) is the (maximal) set of individuals that are mutually dependent through shared random effects, defined as the transitive closure of the relation
+\[
+i \sim i' \quad \Longleftrightarrow \quad j(i)=j(i')\ \ \text{or}\ \ k(i)=k(i').
+\]
+Equivalently, \(\mathcal{C}\) is the connected component (in the graph induced by shared group memberships) containing a reference individual \(i_0\).
+Moreover, \(\mathcal{J}(\mathcal{C})=\{\,j(i): i\in\mathcal{C}\,\}\) and
+\(\mathcal{K}(\mathcal{C})=\{\,k(i): i\in\mathcal{C}\,\}\) denote the sets of \(j\)- and \(k\)-groups that occur among individuals in \(\mathcal{C}\).
+
+Define the product spaces
+\[
+\mathbb{D}_{\eta,\mathcal{C}} := \prod_{i\in\mathcal{C}} \mathbb{D}_\eta,\qquad
+\mathbb{D}_{\lambda,\mathcal{C}} := \prod_{j\in\mathcal{J}(\mathcal{C})} \mathbb{D}_\lambda,\qquad
+\mathbb{D}_{a,\mathcal{C}} := \prod_{k\in\mathcal{K}(\mathcal{C})} \mathbb{D}_a.
+\]
+The random effects can then be marginalized out of the joint density function. In particular, for a connected component (batch) \(\mathcal{C}\) we obtain the marginal likelihood contribution
+\[
+\begin{aligned}
+p\!\left(\{y_{i,j(i),k(i)}\}_{i\in\mathcal{C}};\theta\right)
+=&
+\int_{\mathbb{D}_{\eta,\mathcal{C}}}
+\int_{\mathbb{D}_{\lambda,\mathcal{C}}}
+\int_{\mathbb{D}_{a,\mathcal{C}}}
+p\!\Big(
+\{y_{i,j(i),k(i)}\}_{i\in\mathcal{C}}
+\,\Big|\,
+\{\eta_i\}_{i\in\mathcal{C}},
+\{\lambda_j\}_{j\in\mathcal{J}(\mathcal{C})},
+\{a_k\}_{k\in\mathcal{K}(\mathcal{C})};
+\theta
+\Big) \\
+&\qquad\times
+p\!\left(\{\eta_i\}_{i\in\mathcal{C}};\theta\right)
+\,p\!\left(\{\lambda_j\}_{j\in\mathcal{J}(\mathcal{C})};\theta\right)
+\,p\!\left(\{a_k\}_{k\in\mathcal{K}(\mathcal{C})};\theta\right)
+\, da\, d\lambda\, d\eta .
+\end{aligned}
+\]
+where \(d\eta=\prod_{i\in\mathcal{C}} d\eta_i\),
+\(d\lambda=\prod_{j\in\mathcal{J}(\mathcal{C})} d\lambda_j\), and
+\(da=\prod_{k\in\mathcal{K}(\mathcal{C})} da_k\).
+
+Assuming conditional independence across individuals given the random effects, the conditional likelihood factorizes as
+\[
+p\!\left(\{y_{i,j(i),k(i)}\}_{i\in\mathcal{C}}
+\mid \{\eta_i\}_{i\in\mathcal{C}},\{\lambda_j\}_{j\in\mathcal{J}(\mathcal{C})},\{a_k\}_{k\in\mathcal{K}(\mathcal{C})};\theta\right)
+=
+\prod_{i\in\mathcal{C}}
+p\!\left(y_{i,j(i),k(i)} \mid \eta_i,\lambda_{j(i)},a_{k(i)};\theta\right).
+\]
+Moreover, assuming independence of the random-effects groups \(\eta\), \(\lambda\), and \(a\), and independence within each group across indices, we have
+\[
+p\!\left(\{\eta_i\}_{i\in\mathcal{C}};\theta\right)
+= \prod_{i\in\mathcal{C}} p(\eta_i;\theta),\qquad
+p\!\left(\{\lambda_j\}_{j\in\mathcal{J}(\mathcal{C})};\theta\right)
+= \prod_{j\in\mathcal{J}(\mathcal{C})} p(\lambda_j;\theta),\qquad
+p\!\left(\{a_k\}_{k\in\mathcal{K}(\mathcal{C})};\theta\right)
+= \prod_{k\in\mathcal{K}(\mathcal{C})} p(a_k;\theta).
+\]
+Combining these yields
+\[
+\begin{aligned}
+p\!\left(\{y_{i,j(i),k(i)}\}_{i\in\mathcal{C}};\theta\right)
+=&
+\int_{\mathbb{D}_{\eta,\mathcal{C}}}
+\int_{\mathbb{D}_{\lambda,\mathcal{C}}}
+\int_{\mathbb{D}_{a,\mathcal{C}}}
+\Bigg[
+\prod_{i\in\mathcal{C}}
+p\!\left(
+y_{i,j(i),k(i)}
+\mid
+\eta_i,\lambda_{j(i)},a_{k(i)};
+\theta
+\right)
+\Bigg] \\
+&\qquad\times
+\Bigg[
+\prod_{i\in\mathcal{C}} p(\eta_i;\theta)
+\Bigg]
+\Bigg[
+\prod_{j\in\mathcal{J}(\mathcal{C})} p(\lambda_j;\theta)
+\Bigg]
+\Bigg[
+\prod_{k\in\mathcal{K}(\mathcal{C})} p(a_k;\theta)
+\Bigg]
+\, da\, d\lambda\, d\eta .
+\end{aligned}
+\]
+\subsection*{Method: Laplace}
+
+\textbf{Taylor approximation}. For a connected component (batch) \(\mathcal{C}\), define the stacked random-effects vector
+\[
+b_{\mathcal{C}}
+:=
+\begin{pmatrix}
+\{\eta_i\}_{i\in\mathcal{C}}\\[2pt]
+\{\lambda_j\}_{j\in\mathcal{J}(\mathcal{C})}\\[2pt]
+\{a_k\}_{k\in\mathcal{K}(\mathcal{C})}
+\end{pmatrix}
+\in \mathbb{D}_{\mathcal{C}}
+:=\mathbb{D}_{\eta,\mathcal{C}}\times \mathbb{D}_{\lambda,\mathcal{C}}\times \mathbb{D}_{a,\mathcal{C}},
+\qquad 
+n_{\mathcal{C}} := \dim(b_{\mathcal{C}})=|\mathcal{C}|\,n_\eta+|\mathcal{J}(\mathcal{C})|\,n_\lambda+|\mathcal{K}(\mathcal{C})|\,n_a.
+\]
+To reduce notational burden, define the integrand
+\[
+f_{\mathcal{C}}(b_{\mathcal{C}};\theta)
+:=
+\left[
+\prod_{i\in\mathcal{C}}
+p\!\left(y_{i,j(i),k(i)} \mid \eta_i,\lambda_{j(i)},a_{k(i)};\theta\right)
+\right]
+\left[
+\prod_{i\in\mathcal{C}} p(\eta_i;\theta)
+\right]
+\left[
+\prod_{j\in\mathcal{J}(\mathcal{C})} p(\lambda_j;\theta)
+\right]
+\left[
+\prod_{k\in\mathcal{K}(\mathcal{C})} p(a_k;\theta)
+\right],
+\]
+so that
+\[
+p\!\left(\{y_{i,j(i),k(i)}\}_{i\in\mathcal{C}};\theta\right)
+=
+\int_{\mathbb{D}_{\mathcal{C}}} f_{\mathcal{C}}(b_{\mathcal{C}};\theta)\, db_{\mathcal{C}}.
+\]
+Assuming \(f_{\mathcal{C}}(b_{\mathcal{C}};\theta)>0\) for all \(b_{\mathcal{C}}\in\mathbb{D}_{\mathcal{C}}\), Laplace's method applies to the log-integrand
+\[
+\ell_{\mathcal{C}}(b_{\mathcal{C}};\theta):=\ln f_{\mathcal{C}}(b_{\mathcal{C}};\theta).
+\]
+Let \(b_{\mathcal{C}}^*\) denote the mode of \(\ell_{\mathcal{C}}(\cdot;\theta)\) (equivalently of \(f_{\mathcal{C}}\)). The second-order Taylor polynomial of \(\ell_{\mathcal{C}}\) around \(b_{\mathcal{C}}^*\) is
+\begin{equation}
+\label{eq:taylor_laplace_component}
+T_{\mathcal{C}}(b_{\mathcal{C}})
+=
+\ell_{\mathcal{C}}(b_{\mathcal{C}}^*;\theta)
++
+\underbrace{\left.\frac{\partial \ell_{\mathcal{C}}}{\partial b_{\mathcal{C}}}\right\rvert_{b_{\mathcal{C}}^*}}_{:=\,g_{\mathcal{C}}(b_{\mathcal{C}}^*)}{}'
+(b_{\mathcal{C}}-b_{\mathcal{C}}^*)
++
+\frac{1}{2}(b_{\mathcal{C}}-b_{\mathcal{C}}^*)'
+\underbrace{\left.\frac{\partial^2 \ell_{\mathcal{C}}}{\partial b_{\mathcal{C}}\partial b_{\mathcal{C}}'}\right\rvert_{b_{\mathcal{C}}^*}}_{:=\,H_{\mathcal{C}}(b_{\mathcal{C}}^*)}
+(b_{\mathcal{C}}-b_{\mathcal{C}}^*).
+\end{equation}
+Using this approximation,
+\begin{equation}
+\label{eq:laplace_step_component}
+\begin{split}
+\int_{\mathbb{D}_{\mathcal{C}}} f_{\mathcal{C}}(b_{\mathcal{C}};\theta)\, db_{\mathcal{C}}
+&=
+\int_{\mathbb{D}_{\mathcal{C}}} \exp\!\big(\ell_{\mathcal{C}}(b_{\mathcal{C}};\theta)\big)\, db_{\mathcal{C}}
+\approx
+\int_{\mathbb{D}_{\mathcal{C}}} \exp\!\big(T_{\mathcal{C}}(b_{\mathcal{C}})\big)\, db_{\mathcal{C}}\\
+&=
+f_{\mathcal{C}}(b_{\mathcal{C}}^*;\theta)
+\int_{\mathbb{D}_{\mathcal{C}}}
+\exp\!\left(
+g_{\mathcal{C}}(b_{\mathcal{C}}^*)'(b_{\mathcal{C}}-b_{\mathcal{C}}^*)
++\tfrac{1}{2}(b_{\mathcal{C}}-b_{\mathcal{C}}^*)'H_{\mathcal{C}}(b_{\mathcal{C}}^*)(b_{\mathcal{C}}-b_{\mathcal{C}}^*)
+\right) db_{\mathcal{C}}.
+\end{split}
+\end{equation}
+If \(b_{\mathcal{C}}^*\) is an interior mode of \(\mathbb{D}_{\mathcal{C}}\), then \(g_{\mathcal{C}}(b_{\mathcal{C}}^*)=0\), and the integral simplifies to
+\begin{equation}
+\label{eq:laplace_component}
+\int_{\mathbb{D}_{\mathcal{C}}} f_{\mathcal{C}}(b_{\mathcal{C}};\theta)\, db_{\mathcal{C}}
+\approx
+f_{\mathcal{C}}(b_{\mathcal{C}}^*;\theta)\,(2\pi)^{\frac{n_{\mathcal{C}}}{2}}
+\det\!\left(-H_{\mathcal{C}}(b_{\mathcal{C}}^*)^{-1}\right)^{\frac{1}{2}},
+\end{equation}
+where the approximation is exact if \(\mathbb{D}_{\mathcal{C}}=\mathbb{R}^{n_{\mathcal{C}}}\). Note that \(H_{\mathcal{C}}(b_{\mathcal{C}}^*)\) is negative definite at a strict local maximum, hence \(-H_{\mathcal{C}}(b_{\mathcal{C}}^*)\) is positive definite and the determinant is well-defined.
+
+\textbf{Empirical Bayes estimate}. The empirical Bayes (mode) estimate for component (batch) \(\mathcal{C}\) is
+\[
+b_{\mathcal{C}}^*
+=
+\arg\max_{b_{\mathcal{C}}\in\mathbb{D}_{\mathcal{C}}}\ \ell_{\mathcal{C}}(b_{\mathcal{C}};\theta)
+=
+\arg\max_{b_{\mathcal{C}}\in\mathbb{D}_{\mathcal{C}}}\ \ln f_{\mathcal{C}}(b_{\mathcal{C}};\theta).
+\]
+
+\textbf{Laplace log-likelihood}. The Laplace approximation yields the following approximated log-likelihood contribution of component (batch) \(\mathcal{C}\):
+\begin{equation}
+\label{eq:laplace_loglik_component}
+\begin{split}
+\ln p\!\left(\{y_{i,j(i),k(i)}\}_{i\in\mathcal{C}};\theta\right)
+\approx\ 
+&\ln f_{\mathcal{C}}(b_{\mathcal{C}}^*;\theta)
++\frac{n_{\mathcal{C}}}{2}\ln(2\pi)
++\frac{1}{2}\ln\det\!\left(-H_{\mathcal{C}}(b_{\mathcal{C}}^*)^{-1}\right)\\
+=\ 
+&\ln f_{\mathcal{C}}(b_{\mathcal{C}}^*;\theta)
++\frac{n_{\mathcal{C}}}{2}\ln(2\pi)
+-\frac{1}{2}\ln\det\!\left(-H_{\mathcal{C}}(b_{\mathcal{C}}^*)\right).
+\end{split}
+\end{equation}
+
+\textbf{Aggregated Laplace log-likelihood}. 
+Let \(\{\mathcal{C}_1,\dots,\mathcal{C}_M\}\), with $M \leq N$, denote the partition of \(\{1,\dots,N\}\) into connected components (batches) induced by shared random effects. If the random effect is only on the individuals $M=N$. Under the conditional independence assumptions, the marginal likelihood factorizes across components, and the fully approximated log-likelihood is obtained by summing the component-wise Laplace contributions:
+\begin{equation}
+\label{eq:laplace_loglik_full}
+\begin{split}
+\ln p\!\left(\{y_{i,j(i),k(i)}\}_{i=1}^N;\theta\right)
+&=
+\sum_{m=1}^M
+\ln p\!\left(\{y_{i,j(i),k(i)}\}_{i\in\mathcal{C}_m};\theta\right) \\
+&\approx
+\sum_{m=1}^M
+\Bigg[
+\ln f_{\mathcal{C}_m}(b_{\mathcal{C}_m}^*;\theta)
++\frac{n_{\mathcal{C}_m}}{2}\ln(2\pi)
+-\frac{1}{2}\ln\det\!\left(-H_{\mathcal{C}_m}(b_{\mathcal{C}_m}^*)\right)
+\Bigg].
+\end{split}
+\end{equation}
+
+
+\textbf{Gradient w.r.t.\ fixed effects}. 
+Let \(\{\mathcal{C}_1,\dots,\mathcal{C}_M\}\) denote the connected components (batches) and recall the aggregated Laplace log-likelihood
+\[
+\tilde\ell(\theta)
+:=
+\sum_{m=1}^M
+\Bigg[
+\ln f_{\mathcal{C}_m}(b_{\mathcal{C}_m}^*;\theta)
++\frac{n_{\mathcal{C}_m}}{2}\ln(2\pi)
+-\frac{1}{2}\ln\det\!\left(-H_{\mathcal{C}_m}(b_{\mathcal{C}_m}^*)\right)
+\Bigg],
+\]
+where \(b_{\mathcal{C}_m}^*(\theta)=\arg\max_{b_{\mathcal{C}_m}\in\mathbb{D}_{\mathcal{C}_m}} \ln f_{\mathcal{C}_m}(b_{\mathcal{C}_m};\theta)\) is the empirical Bayes (mode) estimate and
+\(H_{\mathcal{C}_m}(b;\theta)=\frac{\partial^2}{\partial b\,\partial b'}\ln f_{\mathcal{C}_m}(b;\theta)\).
+
+The gradient of \(\tilde\ell(\theta)\) is
+\begin{equation}
+\label{eq:grad_laplace_full}
+\nabla_\theta \tilde\ell(\theta)
+=
+\sum_{m=1}^M
+\left[
+\nabla_\theta \ln f_{\mathcal{C}_m}(b_{\mathcal{C}_m}^*(\theta);\theta)
+-\frac{1}{2}\,\nabla_\theta \ln\det\!\left(-H_{\mathcal{C}_m}(b_{\mathcal{C}_m}^*(\theta);\theta)\right)
+\right].
+\end{equation}
+Importantly, \(b_{\mathcal{C}_m}^*\) depends on \(\theta\). By the envelope theorem applied to
+\(\ln f_{\mathcal{C}_m}(b;\theta)\) at its maximizer \(b=b_{\mathcal{C}_m}^*(\theta)\), the derivative of the first term does not require differentiating through \(b_{\mathcal{C}_m}^*\):
+\begin{equation}
+\label{eq:envelope_term}
+\nabla_\theta \ln f_{\mathcal{C}_m}(b_{\mathcal{C}_m}^*(\theta);\theta)
+=
+\left.\frac{\partial}{\partial\theta}\ln f_{\mathcal{C}_m}(b;\theta)\right\rvert_{b=b_{\mathcal{C}_m}^*(\theta)}.
+\end{equation}
+For the curvature correction term, however, the dependence \(b_{\mathcal{C}_m}^*(\theta)\) must be taken into account:
+\begin{equation}
+\label{eq:curvature_term_chainrule}
+\nabla_\theta \ln\det\!\left(-H_{\mathcal{C}_m}(b_{\mathcal{C}_m}^*(\theta);\theta)\right)
+=
+\left.\frac{\partial}{\partial\theta}\ln\det\!\left(-H_{\mathcal{C}_m}(b;\theta)\right)\right\rvert_{b=b_{\mathcal{C}_m}^*}
++
+\left.\frac{\partial}{\partial b}\ln\det\!\left(-H_{\mathcal{C}_m}(b;\theta)\right)\right\rvert_{b=b_{\mathcal{C}_m}^*}
+\frac{\partial b_{\mathcal{C}_m}^*(\theta)}{\partial\theta}.
+\end{equation}
+The sensitivity \(\frac{\partial b_{\mathcal{C}_m}^*(\theta)}{\partial\theta}\) follows from implicit differentiation of the first-order optimality condition
+\[
+g_{\mathcal{C}_m}(b_{\mathcal{C}_m}^*(\theta);\theta)
+:=
+\left.\frac{\partial}{\partial b}\ln f_{\mathcal{C}_m}(b;\theta)\right\rvert_{b=b_{\mathcal{C}_m}^*(\theta)}
+=0,
+\]
+which yields
+\begin{equation}
+\label{eq:dbdtheta}
+\frac{\partial b_{\mathcal{C}_m}^*(\theta)}{\partial\theta}
+=
+-\,H_{\mathcal{C}_m}(b_{\mathcal{C}_m}^*;\theta)^{-1}
+\left.\frac{\partial g_{\mathcal{C}_m}(b;\theta)}{\partial\theta}\right\rvert_{b=b_{\mathcal{C}_m}^*}.
+\end{equation}
+Finally, using the identity \(\nabla_X \ln\det(X)=X^{-\top}\) for invertible \(X\) and the differential
+\(d\,\ln\det(X)=\mathrm{tr}(X^{-1}dX)\), one convenient representation of the partial derivatives in
+\eqref{eq:curvature_term_chainrule} is
+\begin{equation}
+\begin{aligned}
+\label{eq:logdet_partials}
+\frac{\partial}{\partial\theta}\ln\det\!\left(-H_{\mathcal{C}_m}(b;\theta)\right)
+=
+\mathrm{tr}\!\left(\left[-H_{\mathcal{C}_m}(b;\theta)\right]^{-1}\left[-\frac{\partial H_{\mathcal{C}_m}(b;\theta)}{\partial\theta}\right]\right), \\
+\frac{\partial}{\partial b}\ln\det\!\left(-H_{\mathcal{C}_m}(b;\theta)\right)
+=
+\mathrm{tr}\!\left(\left[-H_{\mathcal{C}_m}(b;\theta)\right]^{-1}\left[-\frac{\partial H_{\mathcal{C}_m}(b;\theta)}{\partial b}\right]\right),
+\end{aligned}
+\end{equation}
+where \(\frac{\partial H}{\partial\theta}\) and \(\frac{\partial H}{\partial b}\) are understood element-wise (yielding third-order derivative tensors).
+
+\textbf{Gradient computation via automatic differentiation}. 
+Direct application of automatic differentiation (AD) to the aggregated Laplace log-likelihood
+\eqref{eq:laplace_loglik_full} would, in principle, require differentiating through the empirical Bayes solution
+\(b_{\mathcal{C}}^*(\theta)\), leading to deeply nested AD (optimization inside differentiation).
+This is computationally expensive and numerically fragile for large components.
+Instead, we exploit the structure of the Laplace approximation to minimize the degree of nesting.
+
+\medskip
+\noindent
+\emph{Envelope term}.  
+For the leading term \(\ln f_{\mathcal{C}}(b_{\mathcal{C}}^*;\theta)\), the envelope theorem applies, since
+\(b_{\mathcal{C}}^*(\theta)\) maximizes \(\ln f_{\mathcal{C}}(b;\theta)\) for fixed \(\theta\).
+As a consequence,
+\[
+\nabla_\theta \ln f_{\mathcal{C}}(b_{\mathcal{C}}^*;\theta)
+=
+\left.\frac{\partial}{\partial\theta}\ln f_{\mathcal{C}}(b;\theta)\right\rvert_{b=b_{\mathcal{C}}^*},
+\]
+and no differentiation through the optimizer is required.
+In practice, this term can be obtained using standard forward-mode AD applied to
+\(\ln f_{\mathcal{C}}(b;\theta)\) with \(b\) treated as constant (after the EBE estimation.
+
+\medskip
+\noindent
+\emph{Curvature correction}.  
+The remaining term,
+\[
+-\tfrac{1}{2}\ln\det\!\left(-H_{\mathcal{C}}(b_{\mathcal{C}}^*;\theta)\right),
+\]
+does depend on \(\theta\) both explicitly and implicitly through \(b_{\mathcal{C}}^*(\theta)\).
+However, this dependence can be handled without differentiating through the optimization algorithm.
+Instead, we proceed in three steps:
+\begin{enumerate}
+\item Compute the Hessian
+\(
+H_{\mathcal{C}}(b_{\mathcal{C}}^*;\theta)
+=
+\left.\frac{\partial^2}{\partial b\,\partial b'}\ln f_{\mathcal{C}}(b;\theta)\right\rvert_{b=b_{\mathcal{C}}^*}
+\)
+using AD applied once to the log-integrand.
+
+\item Obtain the sensitivity
+\(
+\frac{\partial b_{\mathcal{C}}^*(\theta)}{\partial\theta}
+\)
+by implicit differentiation of the first-order optimality condition
+\(g_{\mathcal{C}}(b_{\mathcal{C}}^*;\theta)=0\), yielding
+\[
+\frac{\partial b_{\mathcal{C}}^*}{\partial\theta}
+=
+-\,H_{\mathcal{C}}(b_{\mathcal{C}}^*;\theta)^{-1}
+\left.\frac{\partial g_{\mathcal{C}}(b;\theta)}{\partial\theta}\right\rvert_{b=b_{\mathcal{C}}^*}.
+\]
+This step requires solving a linear system but avoids higher-order nested AD.
+
+\item Evaluate the gradient of the log-determinant using matrix calculus identities:
+\[
+\nabla_\theta \ln\det(-H)
+=
+\mathrm{tr}\!\left((-H)^{-1}(-\nabla_\theta H)\right)
++
+\mathrm{tr}\!\left((-H)^{-1}(-\nabla_b H)\,\frac{\partial b^*}{\partial\theta}\right).
+\]
+All partial derivatives of \(H\) are computed using AD with respect to either \(b\) or \(\theta\),
+but never through the optimization loop itself.
+\end{enumerate}
+
+\medskip
+\noindent
+\emph{Resulting AD structure}.  
+Overall, this strategy reduces the computation of \(\nabla_\theta \tilde\ell(\theta)\) to:
+\begin{itemize}
+\item one optimization per component to obtain \(b_{\mathcal{C}}^*\),
+\item first- and second-order AD of \(\ln f_{\mathcal{C}}(b;\theta)\),
+\item linear solves involving the Hessian \(H_{\mathcal{C}}(b_{\mathcal{C}}^*;\theta)\).
+\end{itemize}
+Crucially, no differentiation through the optimizer is required, and nested AD is avoided entirely.
+This yields a scalable and numerically stable procedure for gradient-based optimization of the
+Laplace-approximated likelihood.
+
+\textbf{Optimizing Laplace evaluations via caching of empirical Bayes estimates}. 
+Evaluating the Laplace-approximated objective \(\tilde\ell(\theta)\) and its gradient \(\nabla_\theta \tilde\ell(\theta)\) requires the empirical Bayes estimate (EBE) \(b_{\mathcal{C}}^*(\theta)\) for each component \(\mathcal{C}\). Since the EBE is obtained by solving an inner optimization problem, recomputing \(b_{\mathcal{C}}^*(\theta)\) separately in every function evaluation and again in every gradient evaluation is unnecessarily expensive.
+
+To avoid redundant inner solves, we cache the EBEs together with the fixed-effects vector at which they were computed. Concretely, for each component \(\mathcal{C}\) we store
+\[
+(\theta_{\mathrm{cache}},\ \{b_{\mathcal{C},\mathrm{cache}}^*\}_{\mathcal{C}}),
+\qquad \text{where } b_{\mathcal{C},\mathrm{cache}}^* = b_{\mathcal{C}}^*(\theta_{\mathrm{cache}}).
+\]
+At the beginning of an objective (or gradient) evaluation at \(\theta\), we check whether \(\theta\) matches the cached value \(\theta_{\mathrm{cache}}\). If the fixed effects are identical, i.e.
+\[
+\theta = \theta_{\mathrm{cache}},
+\]
+we reuse the stored EBEs \(b_{\mathcal{C},\mathrm{cache}}^*\) for all components. Otherwise, we recompute \(b_{\mathcal{C}}^*(\theta)\), update the cache by setting \(\theta_{\mathrm{cache}}\leftarrow \theta\) and \(b_{\mathcal{C},\mathrm{cache}}^*\leftarrow b_{\mathcal{C}}^*(\theta)\), and then proceed with the Laplace evaluation.
+
+This caching strategy ensures that, for a given \(\theta\), the expensive computation of \(b_{\mathcal{C}}^*(\theta)\) is performed at most once, even if the optimizer requests both the objective and gradient at the same iterate. In practice, this substantially reduces runtime for gradient-based optimization routines that evaluate \(\tilde\ell(\theta)\) and \(\nabla_\theta \tilde\ell(\theta)\) sequentially at identical parameter values.
+
+\textbf{Hessian w.r.t.\ fixed effects for inference (inverse Hessian)}.
+For inference based on the Laplace-approximated marginal log-likelihood, we require the observed information
+\(
+\mathcal{I}(\theta) \approx -\nabla_\theta^2 \tilde\ell(\theta)
+\)
+and, in particular, the inverse Hessian \(\left[-\nabla_\theta^2 \tilde\ell(\theta)\right]^{-1}\).
+We therefore compute the exact Hessian of the Laplace objective \(\tilde\ell(\theta)\) (up to the Laplace approximation itself) while avoiding differentiation through the EBE solver.
+
+\medskip
+\noindent
+\emph{Component-wise decomposition.}
+For each component \(\mathcal{C}\), define
+\[
+\ell_{\mathcal{C}}(b;\theta) := \ln f_{\mathcal{C}}(b;\theta),\qquad
+g_{\mathcal{C}}(b;\theta):=\nabla_b \ell_{\mathcal{C}}(b;\theta),\qquad
+H_{\mathcal{C}}(b;\theta):=\nabla_b^2 \ell_{\mathcal{C}}(b;\theta),
+\]
+and let \(b_{\mathcal{C}}^*(\theta)\) satisfy \(g_{\mathcal{C}}(b_{\mathcal{C}}^*;\theta)=0\).
+The Laplace log-likelihood contribution is
+\[
+\tilde\ell_{\mathcal{C}}(\theta)
+=
+\ell_{\mathcal{C}}(b_{\mathcal{C}}^*;\theta)
++\frac{n_{\mathcal{C}}}{2}\ln(2\pi)
+-\frac{1}{2}\ln\det\!\left(-H_{\mathcal{C}}(b_{\mathcal{C}}^*;\theta)\right),
+\qquad
+\tilde\ell(\theta)=\sum_{m=1}^M \tilde\ell_{\mathcal{C}_m}(\theta).
+\]
+Hence,
+\[
+\nabla_\theta^2 \tilde\ell(\theta)=\sum_{m=1}^M \nabla_\theta^2 \tilde\ell_{\mathcal{C}_m}(\theta).
+\]
+
+\medskip
+\noindent
+\emph{EBE sensitivity (no differentiation through the optimizer).}
+Let
+\[
+G_{\mathcal{C}}(b;\theta):=\nabla_\theta g_{\mathcal{C}}(b;\theta)=\nabla_\theta\nabla_b \ell_{\mathcal{C}}(b;\theta)\in\mathbb{R}^{n_{\mathcal{C}}\times n_\theta}.
+\]
+Implicit differentiation of \(g_{\mathcal{C}}(b_{\mathcal{C}}^*;\theta)=0\) gives
+\begin{equation}
+\label{eq:db_star_dtheta_hess}
+\frac{\partial b_{\mathcal{C}}^*}{\partial\theta}
+=
+-\,H_{\mathcal{C}}(b_{\mathcal{C}}^*;\theta)^{-1}\,G_{\mathcal{C}}(b_{\mathcal{C}}^*;\theta),
+\end{equation}
+which requires only linear solves with \(H_{\mathcal{C}}\).
+
+\medskip
+\noindent
+\emph{Hessian of the envelope term (exact, second order only).}
+Differentiating the envelope identity yields the Schur-complement form
+\begin{equation}
+\label{eq:hess_envelope_schur_final}
+\nabla_\theta^2 \ell_{\mathcal{C}}(b_{\mathcal{C}}^*;\theta)
+=
+\left.\nabla_\theta^2 \ell_{\mathcal{C}}(b;\theta)\right\rvert_{b=b_{\mathcal{C}}^*}
+-
+G_{\mathcal{C}}(b_{\mathcal{C}}^*;\theta)^\top\,
+H_{\mathcal{C}}(b_{\mathcal{C}}^*;\theta)^{-1}\,
+G_{\mathcal{C}}(b_{\mathcal{C}}^*;\theta).
+\end{equation}
+This avoids nested AD entirely: it needs \(\nabla_\theta^2 \ell_{\mathcal{C}}\), \(G_{\mathcal{C}}\), and solves in \(H_{\mathcal{C}}\), all evaluated at \((b_{\mathcal{C}}^*,\theta)\).
+
+\medskip
+\noindent
+\emph{Hessian of the curvature correction via directional derivatives (no explicit 4th-order tensors).}
+Let
+\[
+A_{\mathcal{C}}(\theta):=-H_{\mathcal{C}}(b_{\mathcal{C}}^*(\theta);\theta)\quad\text{(positive definite at the mode)},
+\qquad
+c_{\mathcal{C}}(\theta):=-\tfrac{1}{2}\ln\det A_{\mathcal{C}}(\theta).
+\]
+For any direction \(u\in\mathbb{R}^{n_\theta}\), define the directional EBE sensitivity
+\[
+\dot b_{\mathcal{C}}(u)
+:=
+\frac{\partial b_{\mathcal{C}}^*}{\partial\theta}\,u
+=
+-\,H_{\mathcal{C}}^{-1}\,G_{\mathcal{C}}\,u,
+\]
+and the corresponding directional change in the matrix \(A_{\mathcal{C}}\):
+\begin{equation}
+\label{eq:dA_directional}
+\dot A_{\mathcal{C}}(u)
+=
+-\left(\frac{\partial H_{\mathcal{C}}}{\partial\theta}[u]
++
+\frac{\partial H_{\mathcal{C}}}{\partial b}\big[\dot b_{\mathcal{C}}(u)\big]\right),
+\end{equation}
+where \(\frac{\partial H}{\partial\theta}[u]\) and \(\frac{\partial H}{\partial b}[\cdot]\) denote directional derivatives (not full tensors).
+
+Then the gradient and Hessian of the curvature correction can be expressed using matrix differential identities:
+\[
+\nabla_\theta c_{\mathcal{C}}(\theta)\,u
+=
+-\tfrac{1}{2}\,\mathrm{tr}\!\left(A_{\mathcal{C}}^{-1}\,\dot A_{\mathcal{C}}(u)\right),
+\]
+and for two directions \(u,v\in\mathbb{R}^{n_\theta}\),
+\begin{equation}
+\label{eq:curvature_hessian_directional}
+\nabla_\theta^2 c_{\mathcal{C}}(\theta)[u,v]
+=
+-\tfrac{1}{2}\left(
+-\mathrm{tr}\!\left(A_{\mathcal{C}}^{-1}\dot A_{\mathcal{C}}(u)\,A_{\mathcal{C}}^{-1}\dot A_{\mathcal{C}}(v)\right)
++
+\mathrm{tr}\!\left(A_{\mathcal{C}}^{-1}\ddot A_{\mathcal{C}}(u,v)\right)
+\right),
+\end{equation}
+with \(\ddot A_{\mathcal{C}}(u,v)\) the second directional derivative of \(A_{\mathcal{C}}(\theta)\).
+Importantly, both \(\dot A_{\mathcal{C}}(u)\) and \(\ddot A_{\mathcal{C}}(u,v)\) can be computed with AD using
+\emph{directional} Jacobian-/Hessian-vector products of \(H_{\mathcal{C}}(b;\theta)\) w.r.t.\ \((b,\theta)\),
+combined with the linear solve for \(\dot b_{\mathcal{C}}(u)\). This avoids forming third-/fourth-order derivative tensors explicitly.
+
+\medskip
+\noindent
+\emph{Assembling the full Hessian.}
+Combining \eqref{eq:hess_envelope_schur_final} and \eqref{eq:curvature_hessian_directional}, we obtain
+\[
+\nabla_\theta^2 \tilde\ell_{\mathcal{C}}(\theta)
+=
+\nabla_\theta^2 \ell_{\mathcal{C}}(b_{\mathcal{C}}^*;\theta)
++\nabla_\theta^2 c_{\mathcal{C}}(\theta).
+\]
+In practice, we compute \(\nabla_\theta^2 \tilde\ell(\theta)\) by repeatedly evaluating Hessian-vector products
+\(\nabla_\theta^2 \tilde\ell(\theta)\,u\) (using the above directional formulas and AD for the required derivative products),
+and, if needed, constructing the full matrix by choosing \(u=e_r\) (standard basis vectors).
+The resulting Hessian can be factorized (e.g.\ Cholesky) to obtain the inverse Hessian for inference.
+
+
+
+% EM Algorithm
+
+\subsection*{Method: MCEM (MCMC-EM) as an alternative to Laplace}
+
+\textbf{Setup.}
+Recall that the marginal likelihood is obtained by integrating out the random effects. In the present notation, for each connected component (batch) \(\mathcal{C}\) we write the complete-data (joint) density as
+\[
+p\!\left(\{y_{i,j(i),k(i)}\}_{i\in\mathcal{C}},\, b_{\mathcal{C}};\theta\right)
+=
+p\!\left(\{y_{i,j(i),k(i)}\}_{i\in\mathcal{C}} \mid b_{\mathcal{C}};\theta\right)\,
+p\!\left(b_{\mathcal{C}};\theta\right),
+\]
+where \(b_{\mathcal{C}}=(\{\eta_i\}_{i\in\mathcal{C}},\{\lambda_j\}_{j\in\mathcal{J}(\mathcal{C})},\{a_k\}_{k\in\mathcal{K}(\mathcal{C})})\).
+Under the conditional independence assumptions used above,
+\[
+\begin{aligned}
+    p\!\left(\{y_{i,j(i),k(i)}\}_{i\in\mathcal{C}} \mid b_{\mathcal{C}};\theta\right)
+=
+\prod_{i\in\mathcal{C}} p\!\left(y_{i,j(i),k(i)} \mid \eta_i,\lambda_{j(i)},a_{k(i)};\theta\right),
+\\
+p(b_{\mathcal{C}};\theta)
+=
+\prod_{i\in\mathcal{C}}p(\eta_i;\theta)\prod_{j\in\mathcal{J}(\mathcal{C})}p(\lambda_j;\theta)\prod_{k\in\mathcal{K}(\mathcal{C})}p(a_k;\theta).
+\end{aligned}
+
+\]
+The marginal likelihood factorizes over batches \(\{\mathcal{C}_1,\dots,\mathcal{C}_M\}\), hence the marginal log-likelihood is
+\[
+\ell(\theta)
+=
+\sum_{m=1}^M \ln p\!\left(\{y_{i,j(i),k(i)}\}_{i\in\mathcal{C}_m};\theta\right),
+\qquad
+p\!\left(\{y\}_{i\in\mathcal{C}};\theta\right)=\int_{\mathbb{D}_{\mathcal{C}}} p\!\left(\{y\}_{i\in\mathcal{C}},b_{\mathcal{C}};\theta\right)\,db_{\mathcal{C}}.
+\]
+
+\textbf{EM principle.}
+EM maximizes \(\ell(\theta)\) by iterating between:
+\begin{itemize}
+\item \textbf{E-step:} compute the conditional expectation of the complete-data log-likelihood under the current parameter value \(\theta^{(t)}\),
+\item \textbf{M-step:} maximize that expected complete-data log-likelihood w.r.t.\ \(\theta\).
+\end{itemize}
+Define the complete-data log-likelihood contribution of batch \(\mathcal{C}\) as
+\[
+\ell_{\mathcal{C}}^{\mathrm{c}}(b_{\mathcal{C}};\theta)
+:=
+\ln p\!\left(\{y_{i,j(i),k(i)}\}_{i\in\mathcal{C}},\, b_{\mathcal{C}};\theta\right).
+\]
+Then the EM auxiliary function is
+\[
+Q(\theta\mid\theta^{(t)})
+:=
+\mathbb{E}_{\,b\,\mid\,y,\theta^{(t)}}\!\left[\ln p(y,b;\theta)\right]
+=
+\sum_{m=1}^M
+\mathbb{E}_{\,b_{\mathcal{C}_m}\,\mid\,\{y\}_{i\in\mathcal{C}_m},\theta^{(t)}}\!\left[
+\ell_{\mathcal{C}_m}^{\mathrm{c}}(b_{\mathcal{C}_m};\theta)
+\right],
+\]
+where the second equality uses that the posterior \(p(b\mid y,\theta^{(t)})\) factorizes over connected components, and thus the expectation decomposes over batches.
+
+\textbf{MCEM E-step (MCMC approximation).}
+In general, the posterior
+\[
+p\!\left(b_{\mathcal{C}} \mid \{y\}_{i\in\mathcal{C}},\theta^{(t)}\right)
+\propto
+p\!\left(\{y\}_{i\in\mathcal{C}} \mid b_{\mathcal{C}};\theta^{(t)}\right)\,
+p\!\left(b_{\mathcal{C}};\theta^{(t)}\right)
+\]
+is not available in closed form. MCEM replaces the exact conditional expectation by a Monte Carlo average based on MCMC draws
+\[
+b_{\mathcal{C}}^{(1)},\dots,b_{\mathcal{C}}^{(S)}
+\sim
+p\!\left(b_{\mathcal{C}} \mid \{y\}_{i\in\mathcal{C}},\theta^{(t)}\right),
+\]
+generated e.g.\ by Metropolis--Hastings, HMC/NUTS, or Gibbs sampling when conditional distributions are available.
+The batch-wise contribution is approximated by
+\[
+\widehat Q_{\mathcal{C}}(\theta\mid\theta^{(t)})
+:=
+\frac{1}{S}\sum_{s=1}^S
+\ell_{\mathcal{C}}^{\mathrm{c}}(b_{\mathcal{C}}^{(s)};\theta),
+\qquad
+\widehat Q(\theta\mid\theta^{(t)})
+=
+\sum_{m=1}^M \widehat Q_{\mathcal{C}_m}(\theta\mid\theta^{(t)}).
+\]
+Under standard regularity and ergodicity conditions for the MCMC kernel, \(\widehat Q(\theta\mid\theta^{(t)})\to Q(\theta\mid\theta^{(t)})\) as \(S\to\infty\).
+
+\textbf{M-step.}
+The M-step updates the parameters by maximizing the Monte Carlo approximation:
+\[
+\theta^{(t+1)}
+=
+\arg\max_{\theta\in\mathbb{D}_\theta}\ \widehat Q(\theta\mid\theta^{(t)}).
+\]
+When a closed-form maximizer is not available, a numerical optimizer can be used. In that case, gradients can be obtained by exchanging differentiation and summation:
+\[
+\nabla_\theta \widehat Q(\theta\mid\theta^{(t)})
+=
+\frac{1}{S}\sum_{m=1}^M\sum_{s=1}^S
+\nabla_\theta \ell_{\mathcal{C}_m}^{\mathrm{c}}(b_{\mathcal{C}_m}^{(s)};\theta),
+\]
+where each term can be computed with AD because \(b_{\mathcal{C}_m}^{(s)}\) is treated as constant during the M-step (the sampling distribution depends on \(\theta^{(t)}\), not on the \(\theta\) being optimized in the M-step). This avoids nested AD through the MCMC procedure.
+
+\textbf{Practical considerations (rigorous convergence control).}
+Because \(\widehat Q\) is noisy for finite \(S\), the classical MCEM strategy increases the number of MCMC samples with iterations, e.g.\ \(S=S_t\to\infty\), to ensure that the Monte Carlo error diminishes as \(t\) grows. A common sufficient condition is that the Monte Carlo error decreases fast enough such that optimization error dominates (e.g.\ by increasing \(S_t\) over iterations).
+An alternative is stochastic approximation EM (SAEM), which updates \(Q\) via a Robbins--Monro recursion; SAEM typically uses a fixed MCMC cost per iteration and a decreasing step size to ensure convergence.
+
+\textbf{Relation to Laplace.}
+Laplace approximates the batch integral by a local Gaussian expansion around the posterior mode \(b_{\mathcal{C}}^*(\theta)\). In contrast, MCEM targets the same marginal likelihood but approximates the E-step expectation using samples from the full posterior \(p(b_{\mathcal{C}}\mid y,\theta^{(t)})\), thereby avoiding local-Gaussian assumptions at the cost of MCMC computation.
+
+
+\subsection*{Method: SAEM (Stochastic Approximation EM) with block MCMC}
+
+\textbf{Setup.}
+As in the MCEM formulation, the complete-data log-likelihood contribution of a connected component (batch) \(\mathcal{C}\) is
+\[
+\ell_{\mathcal{C}}^{\mathrm{c}}(b_{\mathcal{C}};\theta)
+:=
+\ln p\!\left(\{y_{i,j(i),k(i)}\}_{i\in\mathcal{C}},\, b_{\mathcal{C}};\theta\right),
+\qquad
+\ell^{\mathrm{c}}(b;\theta)=\sum_{m=1}^M \ell_{\mathcal{C}_m}^{\mathrm{c}}(b_{\mathcal{C}_m};\theta),
+\]
+where \(b_{\mathcal{C}}=(\{\eta_i\}_{i\in\mathcal{C}},\{\lambda_j\}_{j\in\mathcal{J}(\mathcal{C})},\{a_k\}_{k\in\mathcal{K}(\mathcal{C})})\).
+At iteration \(t\), SAEM targets the batch-wise posterior
+\[
+\pi_{\mathcal{C}}^{(t)}(b_{\mathcal{C}})
+:=
+p\!\left(b_{\mathcal{C}} \mid \{y_{i,j(i),k(i)}\}_{i\in\mathcal{C}},\theta^{(t)}\right)
+\propto
+p\!\left(\{y_{i,j(i),k(i)}\}_{i\in\mathcal{C}} \mid b_{\mathcal{C}};\theta^{(t)}\right)\,
+p\!\left(b_{\mathcal{C}};\theta^{(t)}\right).
+\]
+
+\textbf{Block MCMC within batches.}
+Since dependence only propagates within connected components, it is natural to construct a Markov kernel that updates \(b_{\mathcal{C}}\) batch-wise. Concretely, for each \(\mathcal{C}\) we employ a block-transition kernel \(K_{\mathcal{C}}^{(t)}\) that leaves \(\pi_{\mathcal{C}}^{(t)}\) invariant and is implemented by successive updates of blocks, e.g.
+\[
+b_{\mathcal{C}}=(\eta_{\mathcal{C}},\lambda_{\mathcal{J}(\mathcal{C})},a_{\mathcal{K}(\mathcal{C})})
+\quad\leadsto\quad
+\eta_{\mathcal{C}} \ \leadsto\ \lambda_{\mathcal{J}(\mathcal{C})}\ \leadsto\ a_{\mathcal{K}(\mathcal{C})},
+\]
+where \(\eta_{\mathcal{C}}=\{\eta_i\}_{i\in\mathcal{C}}\), \(\lambda_{\mathcal{J}(\mathcal{C})}=\{\lambda_j\}_{j\in\mathcal{J}(\mathcal{C})}\), and \(a_{\mathcal{K}(\mathcal{C})}=\{a_k\}_{k\in\mathcal{K}(\mathcal{C})}\).
+Each block update may be realized via Metropolis--Hastings, HMC, slice sampling, or Gibbs steps when available. This formulation allows non-Gaussian random-effects distributions \(p(\eta_i;\theta),p(\lambda_j;\theta),p(a_k;\theta)\) and non-conjugate observation models.
+
+\textbf{SA (stochastic approximation) recursion.}
+SAEM replaces the exact E-step expectation by a stochastic approximation updated using MCMC draws. There are two equivalent presentations:
+
+\medskip
+\noindent
+\emph{(i) General recursion for the auxiliary function.}
+Let
+\[
+Q(\theta\mid\theta^{(t)})
+=
+\mathbb{E}_{b\mid y,\theta^{(t)}}\!\left[\ell^{\mathrm{c}}(b;\theta)\right]
+=
+\sum_{m=1}^M
+\mathbb{E}_{b_{\mathcal{C}_m}\sim \pi_{\mathcal{C}_m}^{(t)}}\!\left[\ell_{\mathcal{C}_m}^{\mathrm{c}}(b_{\mathcal{C}_m};\theta)\right].
+\]
+SAEM maintains a running approximation \(\widehat Q^{(t)}(\theta)\) and updates it as
+\begin{equation}
+\label{eq:saem_Q_update}
+\widehat Q^{(t+1)}(\theta)
+=
+(1-\gamma_{t+1})\,\widehat Q^{(t)}(\theta)
++
+\gamma_{t+1}\,
+\ell^{\mathrm{c}}\!\big(b^{(t+1)};\theta\big),
+\end{equation}
+where \(b^{(t+1)}\) is obtained by MCMC, i.e.\ \(b_{\mathcal{C}}^{(t+1)}\sim K_{\mathcal{C}}^{(t)}(\cdot \mid b_{\mathcal{C}}^{(t)})\) for each batch \(\mathcal{C}\) (or a subset of batches, see below).
+
+\medskip
+\noindent
+\emph{(ii) Sufficient-statistics recursion (exponential-family case).}
+If the complete-data model admits a representation
+\[
+\ell^{\mathrm{c}}(b;\theta) = \langle S(y,b),\,\psi(\theta)\rangle - A(\theta) + \text{const}(y,b),
+\]
+for some sufficient statistics \(S(y,b)\), then \eqref{eq:saem_Q_update} can be replaced by tracking
+\[
+s^{(t)} \approx \mathbb{E}_{b\mid y,\theta^{(t)}}[S(y,b)]
+\]
+via the Robbins--Monro recursion
+\begin{equation}
+\label{eq:saem_s_update}
+s^{(t+1)} = s^{(t)} + \gamma_{t+1}\Big(S(y,b^{(t+1)})-s^{(t)}\Big).
+\end{equation}
+The M-step can then often be expressed in closed form as a function of \(s^{(t+1)}\). This path is preferred when available; otherwise, one reverts to the general recursion \eqref{eq:saem_Q_update} with a numerical M-step.
+
+\textbf{Step-size schedule.}
+The sequence \((\gamma_t)_{t\ge 1}\) is chosen according to the canonical SAEM schedule
+\[
+\gamma_t
+=
+\begin{cases}
+1, & t\le t_0,\\
+(t-t_0)^{-\kappa}, & t>t_0,
+\end{cases}
+\qquad \kappa\in(1/2,1],
+\]
+where \(t_0\) and \(\kappa\) are user-adjustable hyperparameters. The standard Robbins--Monro conditions,
+\(\sum_{t=1}^\infty \gamma_t = \infty\) and \(\sum_{t=1}^\infty \gamma_t^2 < \infty\),
+hold for \(\kappa\in(1/2,1]\).
+
+\textbf{M-step.}
+The parameter update is defined as
+\begin{equation}
+\label{eq:saem_Mstep}
+\theta^{(t+1)} \in \arg\max_{\theta\in\mathbb{D}_\theta}\ \widehat Q^{(t+1)}(\theta),
+\end{equation}
+or, in the sufficient-statistics formulation, \(\theta^{(t+1)} = \arg\max_{\theta} Q(\theta\mid s^{(t+1)})\).
+When \eqref{eq:saem_Mstep} is solved numerically, gradients can be computed with AD by treating the current MCMC draw(s) \(b^{(t+1)}\) (or the current statistics \(s^{(t+1)}\)) as fixed within the M-step; this avoids nested differentiation through the MCMC kernels.
+
+\textbf{Batch-wise and parallel update schedules.}
+Since the posterior factorizes across connected components, SAEM can update batches independently. Let \(\mathcal{M}_t\subseteq\{1,\dots,M\}\) denote the set of batches updated at iteration \(t\). A general user-configurable scheme is:
+\begin{itemize}
+\item For each \(m\in \mathcal{M}_t\), generate one (or several) MCMC transition(s) using \(K_{\mathcal{C}_m}^{(t)}\) to obtain \(b_{\mathcal{C}_m}^{(t+1)}\).
+\item For \(m\notin \mathcal{M}_t\), set \(b_{\mathcal{C}_m}^{(t+1)}:=b_{\mathcal{C}_m}^{(t)}\).
+\end{itemize}
+This framework covers fully parallel SAEM (\(\mathcal{M}_t=\{1,\dots,M\}\) for all \(t\)), minibatch SAEM (random \(\mathcal{M}_t\) of fixed size), and deterministic schedules. The stochastic approximation updates \eqref{eq:saem_Q_update} or \eqref{eq:saem_s_update} then use the resulting global state \(b^{(t+1)}\) (or the corresponding batch contributions) to update \(\widehat Q\) or \(s\).
+
+\textbf{Remarks on rigor and convergence.}
+Under standard conditions---ergodicity of each batch kernel \(K_{\mathcal{C}}^{(t)}\) with invariant distribution \(\pi_{\mathcal{C}}^{(t)}\), regularity of the complete-data likelihood, and Robbins--Monro step sizes \((\gamma_t)\)---SAEM converges to a (local) maximizer of the observed-data likelihood. The batch-wise factorization is particularly advantageous: it reduces MCMC state dimension, improves mixing, and allows scalable parallel implementations without changing the underlying likelihood target.
+
+\textbf{Exponential-family structure of the complete-data likelihood: refined classification.}
+The applicability of a sufficient-statistics SAEM formulation depends on whether the
+\emph{complete-data log-likelihood}
+\[
+\ln p(y,b;\theta)=\ln p(y\mid b;\theta)+\ln p(b;\theta)
+\]
+is an exponential family \emph{in the parameter \(\theta\)}.  
+This is a stronger requirement than the observation model being an exponential family in \(y\) for fixed \(\theta\).
+Below we classify common model combinations accordingly.
+
+\medskip
+\noindent
+\textbf{Class A: Exponential family in \(\theta\) (closed-form or low-dimensional M-step).}
+
+\medskip
+\noindent
+\emph{A1. Gaussian outcomes with homoscedastic variance.}
+\[
+y_{i,j,k} \mid b \sim \mathcal{N}(\mu_{i,j,k}(b,\theta),\ \sigma^2),
+\qquad
+b\sim \mathcal{N}(0,\Omega),
+\]
+with \(\theta=(\beta,\sigma^2,\Omega)\).
+\emph{Result:} Quadratic complete-data likelihood. Sufficient statistics exist for all variance components.
+
+\medskip
+\noindent
+\emph{A2. Gaussian outcomes with proportional (multiplicative) noise.}
+\[
+y_{i,j,k} \mid b \sim \mathcal{N}\!\left(\mu_{i,j,k}(b,\theta),\ \sigma^2\,v_{i,j,k}(b)^2\right),
+\]
+where \(v_{i,j,k}(b)\) is known given \(b\) (e.g.\ \(v=\mu\), log-normal error).
+\emph{Result:} The dependence on \(\sigma^2\) enters only through \(\ln\sigma^2\) and \(1/\sigma^2\); the complete-data likelihood remains exponential family in \(\sigma^2\).
+
+\medskip
+\noindent
+\emph{A3. GLMMs with canonical links and Gaussian random effects.}
+\begin{itemize}
+\item Bernoulli (logit / probit)
+\item Binomial (logit)
+\item Poisson (log)
+\item Gamma (inverse / log)
+\end{itemize}
+with Gaussian random effects.
+\emph{Result:} Complete-data likelihood is exponential family in \(\theta\), although the marginal likelihood is not.
+
+\medskip
+\noindent
+\emph{A4. Conjugate hierarchical models.}
+\begin{itemize}
+\item Poisson–Gamma
+\item Binomial–Beta
+\item Multinomial–Dirichlet
+\end{itemize}
+\emph{Result:} Full conjugacy yields exponential-family structure and closed-form SAEM updates.
+
+\medskip
+\noindent
+\emph{A5. Survival models with Gamma frailty.}
+\[
+\lambda(t\mid b)=b\,\lambda_0(t)\exp(X\beta),
+\qquad b\sim\text{Gamma}(\alpha,\beta).
+\]
+\emph{Result:} Complete-data likelihood is exponential family in \((\beta,\alpha,\beta)\).
+
+\medskip
+\noindent
+\textbf{Class B: Not exponential family in \(\theta\) (numerical M-step required).}
+
+\medskip
+\noindent
+\emph{B1. Gaussian outcomes with heteroscedastic variance depending nonlinearly on \(\theta\).}
+\[
+y \mid b \sim \mathcal{N}\!\big(\mu(b,\theta),\ \sigma^2(b,\theta)\big),
+\]
+with, for example,
+\[
+\sigma(b,\theta)=\sqrt{(a + c\,\mu(b,\theta))^2}
+\quad\text{or}\quad
+\sigma^2(b,\theta)=\exp(\alpha+\beta\,\mu(b,\theta)).
+\]
+\emph{Result:} The log-likelihood contains terms such as \(\ln(a+c\,\mu)\) and \((a+c\,\mu)^{-2}\),
+which cannot be written in exponential-family form in \(\theta\).
+SAEM remains valid, but the M-step must be solved numerically.
+
+\medskip
+\noindent
+\emph{B2. Combined additive + proportional error models.}
+\[
+\sigma^2(b,\theta)=\sigma_a^2 + \sigma_p^2\,\mu(b,\theta)^2.
+\]
+\emph{Result:} Although common in NLME, this variance structure breaks exponential-family structure in
+\((\sigma_a^2,\sigma_p^2)\); numerical M-step required.
+
+\medskip
+\noindent
+\emph{B3. Non-Gaussian, non-conjugate random effects.}
+\begin{itemize}
+\item Lognormal frailty
+\item Student-\(t\) random effects
+\item Mixture distributions
+\end{itemize}
+\emph{Result:} No sufficient-statistics form in \(\theta\); SAEM via general stochastic approximation.
+
+\medskip
+\noindent
+\emph{B4. Nonlinear mixed-effects models with structural parameters inside nonlinear predictors.}
+\[
+y_i = f(t_i,\theta,\eta_i) + \varepsilon_i.
+\]
+\emph{Result:} Even with Gaussian noise, structural parameters inside \(f\) typically break exponential-family structure; only variance components may admit closed-form updates.
+
+\medskip
+\noindent
+\emph{B5. Models with truncation, censoring, or constraints depending on \(\theta\).}
+\emph{Result:} Normalizing constants depend on \(\theta\) in a non-linear way; numerical M-step required.
+
+\medskip
+\noindent
+\textbf{Summary and implementation guidance.}
+\begin{itemize}
+\item Exponential-family structure in \(\theta\) ⇒ SAEM with sufficient statistics and closed-form or low-dimensional M-step.
+\item Nonlinear dependence of \(\theta\) inside variances, link functions, or constraints ⇒ SAEM with numerical M-step.
+\item Both regimes share the same stochastic-approximation E-step and block MCMC sampler.
+\end{itemize}
+
+
+% REFERENCES
+\bibliographystyle{abbrvnat}
+\bibliography{Database} % here the bib file
+\end{document}
