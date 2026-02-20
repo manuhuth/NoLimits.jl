@@ -49,14 +49,14 @@ All methods share a single `fit_model` interface, enabling direct comparison acr
 
 | Inference paradigm | Methods |
 |---|---|
-| **Fixed effects** | MLE, MAP, MCMC, Multistart |
-| **Mixed effects** | Laplace, LaplaceMAP, SAEM, MCEM, MCMC |
+| **Fixed effects** | MLE, MAP, MCMC, VI, Multistart |
+| **Mixed effects** | Laplace, LaplaceMAP, SAEM, MCEM, MCMC, VI |
 
 ### Uncertainty Quantification
 
 - Wald intervals (Hessian or sandwich covariance)
 - Profile-likelihood intervals (LikelihoodProfiler.jl)
-- MCMC-based posterior intervals
+- Posterior intervals from MCMC chains or VI variational posteriors
 - All accessible through a unified `compute_uq` interface
 
 ### Diagnostics and Visualization

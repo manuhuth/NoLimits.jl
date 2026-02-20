@@ -35,8 +35,8 @@ NoLimits.jl provides a broad set of modeling, estimation, and diagnostic capabil
 
 | Model type | Available methods |
 | --- | --- |
-| Mixed-effects | Laplace approximation, LaplaceMAP, MCEM, SAEM, MCMC |
-| Fixed-effects only | MLE, MAP, MCMC |
+| Mixed-effects | Laplace approximation, LaplaceMAP, MCEM, SAEM, MCMC, VI |
+| Fixed-effects only | MLE, MAP, MCMC, VI |
 | Cross-method | Multistart optimization wrapper |
 
 All methods share a unified `fit_model` interface, allowing direct comparison of estimation approaches on the same model and data.
@@ -45,7 +45,7 @@ All methods share a unified `fit_model` interface, allowing direct comparison of
 
 - **Wald-based intervals** from Hessian or sandwich covariance estimates.
 - **Profile-likelihood intervals** via `LikelihoodProfiler.jl`.
-- **MCMC-based intervals** from posterior chains (direct or refit).
+- **Posterior-draw intervals** from MCMC chains or VI variational posteriors (direct or refit).
 - A unified `compute_uq` interface across all backends.
 
 ## Diagnostics and Visualization

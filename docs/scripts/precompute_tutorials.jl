@@ -153,6 +153,10 @@ function precompute_tutorial_1()
         turing_kwargs=(n_samples=1000, n_adapt=500, progress=false),
     )
 
+    vi_method = NoLimits.VI(;
+        turing_kwargs=(max_iter=500, family=:fullrank, progress=false),
+    )
+
     serialization = SciMLBase.EnsembleThreads()
 
     fits = (
@@ -160,6 +164,7 @@ function precompute_tutorial_1()
         res_mcem=fit_model(dm, mcem_method; serialization=serialization, rng=Random.Xoshiro(12)),
         res_saem=fit_model(dm, saem_method; serialization=serialization, rng=Random.Xoshiro(13)),
         res_mcmc=fit_model(dm, mcmc_method; serialization=serialization, rng=Random.Xoshiro(14)),
+        res_vi=fit_model(dm, vi_method; serialization=serialization, rng=Random.Xoshiro(15)),
     )
     fit_file = write_tutorial_cache("tutorial_mixed_methods_1_fits_v1", fits)
     @info "Tutorial 1 fit cache written." file=fit_file
@@ -201,6 +206,13 @@ function precompute_tutorial_1()
             mcmc_warmup=500,
             mcmc_draws=300,
             rng=Random.Xoshiro(104),
+        ),
+        uq_vi=compute_uq(
+            fits.res_vi;
+            method=:chain,
+            serialization=serialization,
+            mcmc_draws=300,
+            rng=Random.Xoshiro(105),
         ),
     )
     uq_file = write_tutorial_cache("tutorial_mixed_methods_1_uq_v1", uqs)

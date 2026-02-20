@@ -14,7 +14,7 @@ uq = compute_uq(res)  # method=:auto
 
 When `method=:auto` is used, the backend is selected automatically based on the source fit:
 
-- If `res` comes from `MCMC`, the backend is `:chain`.
+- If `res` comes from `MCMC` or `VI`, the backend is `:chain`.
 - If `interval=:profile` is explicitly requested, the backend is `:profile`.
 - Otherwise, the backend defaults to `:wald`.
 
@@ -25,7 +25,7 @@ The table below summarizes the available UQ backends, their associated estimatio
 | Backend | `method` | Typical source fit | Output style |
 | --- | --- | --- | --- |
 | Wald | `:wald` | `MLE`, `MAP`, `Laplace`, `LaplaceMAP`, `MCEM`, `SAEM` | covariance + Gaussian-draw intervals |
-| Chain | `:chain` | `MCMC` | posterior-draw intervals |
+| Chain | `:chain` | `MCMC`, `VI` | posterior-draw intervals |
 | Profile likelihood | `:profile` | `MLE`, `MAP`, `Laplace`, `LaplaceMAP` | profile intervals |
 | MCMC refit | `:mcmc_refit` | non-`MCMC` fits | posterior-draw intervals from refit |
 
@@ -54,7 +54,7 @@ For `MCEM` and `SAEM` source fits, the Wald backend also accepts random-effects 
 
 ### Chain (`method=:chain`)
 
-The chain backend extracts posterior samples from an existing `MCMC` fit and computes equal-tail credible intervals directly from the retained draws. No additional computation is required beyond the original sampling run.
+The chain backend extracts posterior samples from an existing `MCMC` fit or draws from an existing `VI` variational posterior and computes equal-tail credible intervals directly from those samples.
 
 ```julia
 if @isdefined(res_mcmc) && res_mcmc !== nothing

@@ -9,7 +9,7 @@ Longitudinal studies -- where repeated measurements are collected from multiple 
 NoLimits.jl removes these trade-offs. It supports:
 
 - **Diverse structural models.** Classical nonlinear functions, mechanistic ODE systems, and hidden Markov outcome models can be combined within a single specification.
-- **Flexible estimation.** The same model can be fitted using frequentist maximum-likelihood methods (Laplace approximation, MCEM, SAEM) or full Bayesian MCMC sampling, enabling comparison across inferential paradigms.
+- **Flexible estimation.** The same model can be fitted using frequentist maximum-likelihood methods (Laplace approximation, MCEM, SAEM), full Bayesian MCMC sampling, or variational inference (VI), enabling comparison across inferential paradigms.
 - **Machine-learning integration.** Neural-network components -- including neural-ODE constructions -- and soft decision trees can be embedded alongside known mechanistic terms. This allows models to retain established scientific structure while learning unknown nonlinear behavior from data.
 - **Rich hierarchical variability.** Random-effect distributions are not restricted to Gaussian forms; heavy-tailed, skewed, and normalizing-flow-based distributions are supported. These distributions can themselves be parameterized by covariates and learned functions.
 - **Composability.** Multiple outcomes, multiple grouping structures (e.g., subject-level and site-level), covariates at different temporal resolutions, and learned components can all coexist in one coherent model definition.

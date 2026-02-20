@@ -12,12 +12,13 @@ using Random
         end
 
         @fixedEffects begin
-            a = RealNumber(0.2, prior=Normal(0.0, 1.0))
-            σ = RealNumber(0.5, scale=:log, prior=LogNormal(0.0, 0.5))
+            b = RealNumber(1.0, prior=Normal(0.0, 2.0))
+            a = RealNumber(0.2, prior=Uniform(0.0, 1.0))
+            σ = RealNumber(0.5, scale=:log, prior=Uniform(0.001, 0.5))
         end
 
         @formulas begin
-            y ~ Normal(exp(a*t), σ)
+            y ~ Normal(a*t + b, σ)
         end
     end
 
