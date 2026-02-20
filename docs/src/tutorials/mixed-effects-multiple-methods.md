@@ -47,9 +47,6 @@ Concretely, the model uses a logistic-style saturating function with three popul
 All fixed effects are given weakly informative priors. These priors are not strictly necessary for the optimization-based methods (Laplace, MCEM, SAEM), but they are required for MCMC and VI and serve to regularize the likelihood surface for all methods.
 
 ```julia
-using NoLimits
-using Distributions
-
 model = @Model begin
     @helpers begin
         softplus(u) = u > 20 ? u : log1p(exp(u))
@@ -60,11 +57,11 @@ model = @Model begin
     end
 
     @fixedEffects begin
-        phi1 = RealNumber(30.0, prior=LogNormal(log(30.0), 0.5), calculate_se=true)
-        log_vmax = RealNumber(log(190.0), prior=Normal(log(190.0), 0.5), calculate_se=true)
-        phi3 = RealNumber(700.0, prior=LogNormal(log(700.0), 0.5), calculate_se=true)
-        omega = RealNumber(1.0, scale=:log, prior=LogNormal(log(1.0), 0.5), calculate_se=true)
-        sigma = RealNumber(6.0, scale=:log, prior=LogNormal(log(6.0), 0.5), calculate_se=true)
+        phi1     = RealNumber(30.0,  prior=LogNormal(log(30.0), 0.30), calculate_se=true)
+        log_vmax = RealNumber(10.0,  prior=Normal(5.00, 0.35),          calculate_se=true)
+        phi3     = RealNumber(700.0, prior=LogNormal(log(700.0), 0.30), calculate_se=true)
+        omega    = RealNumber(0.3, scale=:log, prior=LogNormal(log(0.155), 0.35), calculate_se=true)
+        sigma    = RealNumber(0.3, scale=:log, prior=LogNormal(log(0.113), 0.30), calculate_se=true)
     end
 
     @randomEffects begin
@@ -137,7 +134,7 @@ mcmc_method = NoLimits.MCMC(;
 )
 
 vi_method = NoLimits.VI(;
-    turing_kwargs=(max_iter=500, family=:fullrank, progress=false),
+    turing_kwargs=(max_iter=30000, progress=false),
 )
 
 serialization = SciMLBase.EnsembleThreads()
@@ -163,7 +160,7 @@ res_laplace = fit_model(dm, laplace_method; serialization=serialization, rng=Ran
 res_mcem = fit_model(dm, mcem_method; serialization=serialization, rng=Random.Xoshiro(12))
 res_saem = fit_model(dm, saem_method; serialization=serialization, rng=Random.Xoshiro(13))
 res_mcmc = fit_model(dm, mcmc_method; serialization=serialization, rng=Random.Xoshiro(14))
-res_vi = fit_model(dm, vi_method; serialization=serialization, rng=Random.Xoshiro(15))
+res_vi = fit_model(dm, vi_method; serialization=serialization, rng=Random.Xoshiro(12))
 
 ```
 
@@ -254,7 +251,7 @@ p_fit_mcmc = plot_fits(
 p_fit_vi = plot_fits(
     res_vi;
     observable=:circumference,
-    individuals_idx=inds,
+    #individuals_idx=inds,
     ncols=2,
     shared_x_axis=true,
     shared_y_axis=true,
