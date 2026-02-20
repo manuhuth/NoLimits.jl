@@ -29,7 +29,7 @@ A manuscript describing NoLimits.jl is in preparation. In the meantime, please c
 ```bibtex
 @software{NoLimits_jl_2026,
   title  = {{NoLimits.jl}},
-  author = {Huth, Manuel and Arruda, Jonas and Hasenauer, Jan},
+  author = {Huth, Manuel and Arruda, Jonas and Peiter, Clemens and Schmid, Nina and Hasenauer, Jan},
   year   = {2026},
   url    = {https://github.com/manuhuth/NoLimits.jl}
 }

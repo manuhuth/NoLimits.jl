@@ -17,6 +17,8 @@
 
 NoLimits.jl provides a unified, open-source framework for specifying, estimating, and diagnosing hierarchical models of longitudinal data. It is designed for life-science applications — from pharmacokinetics and systems biology to ecology and neuroscience — where population variability, mechanistic dynamics, and complex outcome structures must be modeled jointly.
 
+**NoLimits.jl** is developed and maintained by the [Hasenauer Lab](https://www.mathematics-and-life-sciences.uni-bonn.de/en/research/hasenauer-group) at the University of Bonn, with [Manuel Huth](https://www.mathematics-and-life-sciences.uni-bonn.de/en/group-members/people/hasenauer-group-members/manuel-huth) as the main developer and maintainer.
+
 
 
 ## Why NoLimits.jl?
@@ -179,7 +181,7 @@ A manuscript describing NoLimits.jl is in preparation. In the meantime, if you u
 ```bibtex
 @software{NoLimits_jl_2026,
   title  = {{NoLimits.jl}},
-  author = {Huth, Manuel and Arruda, Jonas and Hasenauer, Jan},
+  author = {Huth, Manuel and Arruda, Jonas and Peiter, Clemens and Schmid, Nina and Hasenauer, Jan},
   year   = {2026},
   url    = {https://github.com/manuhuth/NoLimits.jl}
 }
