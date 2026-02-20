@@ -1,17 +1,20 @@
 # MCMC-Based Uncertainty
 
-Markov chain Monte Carlo (MCMC) methods provide a sampling-based approach to uncertainty quantification that makes no parametric assumptions about the shape of the posterior distribution. This makes MCMC-based UQ particularly valuable for models with complex likelihood surfaces, multimodal posteriors, or strong parameter correlations -- situations where the Gaussian approximation underlying Wald intervals may be inadequate.
+Posterior-draw uncertainty quantification in NoLimits.jl supports both exact posterior chains (`MCMC`) and approximate posterior draws (`VI`). This family of methods is useful when Gaussian approximations (Wald-style) are too restrictive, for example in correlated, skewed, or otherwise non-quadratic posterior geometries.
 
-NoLimits.jl provides two MCMC-based UQ workflows:
+NoLimits.jl provides two posterior-draw UQ workflows:
 
-- **Chain UQ** (`method=:chain`): extracts uncertainty directly from an existing `MCMC` fit.
+- **Chain UQ** (`method=:chain`): extracts uncertainty directly from an existing `MCMC` or `VI` fit.
 - **MCMC refit UQ** (`method=:mcmc_refit`): launches a new MCMC sampling run from a non-`MCMC` source fit.
 
 Both workflows build on the package's MCMC interface, which integrates with [Turing.jl](https://turinglang.org/).
 
 ## 1) Chain UQ (`method=:chain`)
 
-Chain UQ operates on the posterior samples already present in a fitted `MCMC` result. It computes equal-tail credible intervals from the retained post-warmup draws, requiring no additional model evaluations.
+Chain UQ operates on posterior draws already available from a fitted `MCMC` or `VI` result:
+
+- For `MCMC`, it uses retained post-warmup chain samples.
+- For `VI`, it samples draws from the fitted variational posterior.
 
 ```julia
 using NoLimits
@@ -27,17 +30,27 @@ if @isdefined(res_mcmc) && res_mcmc !== nothing
         rng=Random.Xoshiro(1),
     )
 end
+
+if @isdefined(res_vi) && res_vi !== nothing
+    uq_chain_vi = compute_uq(
+        res_vi;
+        method=:chain,
+        level=0.95,
+        mcmc_draws=1000,
+        rng=Random.Xoshiro(2),
+    )
+end
 ```
 
 ### Requirements
 
-- `res_mcmc` must originate from a `NoLimits.MCMC` fit.
+- The source fit must originate from `NoLimits.MCMC` or `NoLimits.VI`.
 - The fit must include a stored `DataModel` (`store_data_model=true`).
 
 ### Key Controls
 
-- `mcmc_warmup`: number of initial iterations discarded per chain as burn-in. If omitted, NoLimits uses `n_adapt` from the fit diagnostics when available.
-- `mcmc_draws`: number of retained post-warmup draws used for interval construction.
+- `mcmc_warmup`: number of initial iterations discarded per chain as burn-in for MCMC. If omitted, NoLimits uses `n_adapt` from the fit diagnostics when available. Ignored for VI.
+- `mcmc_draws`: number of posterior draws used for interval construction (subsampled from MCMC chains, or sampled from the VI posterior).
 - `constants`: optional fixed-effect constants that exclude specified coordinates from UQ.
 - `rng`: controls random subsampling when `mcmc_draws` is smaller than the total number of available draws.
 
@@ -106,7 +119,7 @@ When no explicit configuration is provided, defaults from `NoLimits.MCMC` are us
 
 ## Returned Quantities
 
-Both MCMC-based backends return interval estimates, covariance estimates computed from retained draws, and the draws themselves.
+Both backends return interval estimates, covariance estimates computed from retained draws, and the draws themselves.
 
 ```julia
 if @isdefined(uq_chain)
@@ -124,13 +137,15 @@ end
 
 ## Diagnostics
 
-The diagnostics returned by `get_uq_diagnostics` provide information about the sampling run and the draws used for UQ.
+The diagnostics returned by `get_uq_diagnostics` provide information about the draw source and the draws used for UQ.
 
-Common fields for both MCMC-based backends include:
+Common fields include:
 
-- `warmup`: number of discarded warmup iterations.
+- `warmup`: number of discarded warmup iterations (`0` for VI chain UQ).
 - `requested_draws`, `available_draws`, `used_draws`: draw accounting information.
-- `n_iter`, `n_chains`, `n_samples`: sampling configuration details.
+- `n_iter`, `n_chains`, `n_samples`: draw-source metadata.
+- `source`: draw source tag (for example `:mcmc_chain` or `:vi_posterior`).
+- `n_active_parameters`: number of active fixed-effect coordinates used in UQ.
 
 For `method=:mcmc_refit`, the diagnostics additionally include:
 

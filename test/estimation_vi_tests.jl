@@ -17,7 +17,7 @@ using Random
         end
 
         @formulas begin
-            y ~ Normal(exp(a), σ)
+            y ~ Normal(exp(a*t), σ)
         end
     end
 
@@ -28,7 +28,7 @@ using Random
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.VI(; turing_kwargs=(max_iter=20, progress=false)); rng=Random.Xoshiro(1))
+    res = fit_model(dm, NoLimits.VI(; turing_kwargs=(max_iter=30, progress=false)); rng=Random.Xoshiro(1))
 
     @test res isa FitResult
     @test res.result isa NoLimits.VIResult

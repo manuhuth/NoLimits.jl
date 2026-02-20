@@ -33,8 +33,8 @@ The choice of method depends on whether the model includes random effects and on
 
 | Model type | Methods | Notes |
 | --- | --- | --- |
-| Mixed-effects | `Laplace`, `LaplaceMAP`, `MCEM`, `SAEM`, `MCMC` | Require random effects in the model |
-| Fixed-effects only | `MLE`, `MAP`, `MCMC` | `MLE` is likelihood-only; `MAP` adds priors; `MCMC` is Bayesian |
+| Mixed-effects | `Laplace`, `LaplaceMAP`, `MCEM`, `SAEM`, `MCMC`, `VI` | Require random effects in the model |
+| Fixed-effects only | `MLE`, `MAP`, `MCMC`, `VI` | `MLE` is likelihood-only; `MAP` adds priors; `MCMC`/`VI` are Bayesian |
 | Cross-method | `Multistart` | Wrapper that runs repeated fits from different starting values |
 
 ## Common Fit Keywords
@@ -43,7 +43,7 @@ Several keyword arguments are shared across methods (though not all apply to eve
 
 - `constants`: fix selected fixed effects to known values (specified on the natural, untransformed scale).
 - `constants_re`: fix selected random-effect levels to known values (available for mixed-effects methods only).
-- `penalty`: L2-style parameter penalties (not supported by `MCMC`; use `MAP` for penalized estimation instead).
+- `penalty`: L2-style parameter penalties (not supported by `MCMC` or `VI`; use `MAP` for penalized estimation instead).
 - `ode_args`, `ode_kwargs`: forwarded to the ODE solver during likelihood evaluation.
 - `serialization`: `EnsembleSerial()` or `EnsembleThreads()` for parallel evaluation across individuals.
 - `rng`: random-number generator for reproducibility.
@@ -54,6 +54,7 @@ Several keyword arguments are shared across methods (though not all apply to eve
 **Prior requirements by method:**
 
 - `MCMC` requires priors on all free fixed effects.
+- `VI` requires priors on all free fixed effects.
 - `LaplaceMAP` requires priors on all fixed effects.
 - `MAP` requires at least one fixed-effect prior.
 - `MCEM` and `SAEM` do not incorporate fixed-effect priors in their objective.
@@ -162,7 +163,7 @@ res_laplace_fixed = fit_model(
 
 ## Fixed-Effects-Only Path
 
-For models without random effects, use `MLE`, `MAP`, or `MCMC`:
+For models without random effects, use `MLE`, `MAP`, `MCMC`, or `VI`:
 
 ```julia
 model_fixed = @Model begin
@@ -187,5 +188,10 @@ res_mle = fit_model(dm_fixed, NoLimits.MLE(; optim_kwargs=(maxiters=120,)))
 res_mcmc_fixed = fit_model(
     dm_fixed,
     NoLimits.MCMC(; turing_kwargs=(n_samples=300, n_adapt=100, progress=false)),
+)
+
+res_vi_fixed = fit_model(
+    dm_fixed,
+    NoLimits.VI(; turing_kwargs=(max_iter=300, progress=false)),
 )
 ```
