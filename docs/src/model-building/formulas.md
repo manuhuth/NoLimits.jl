@@ -202,6 +202,91 @@ model = @Model begin
 end
 ```
 
+## Example: Multivariate Hidden Markov Observation Model
+
+When each observation consists of several outcome variables that share the same hidden state, use `MVDiscreteTimeDiscreteStatesHMM` or `MVContinuousTimeDiscreteStatesHMM`. The observable column in the DataFrame should contain `Vector{<:Real}` values, one vector per observation time.
+
+Two emission modes are supported:
+
+- **Conditionally independent**: the emission for state `k` is a `Tuple` of M scalar distributions, one per outcome. Missing entries in the observation vector are skipped (contribute zero log-likelihood).
+- **Joint `MvNormal`**: the emission for state `k` is a single `MvNormal`. Partial missings are handled by marginalising analytically over the observed indices.
+
+### Discrete time, conditionally independent emissions
+
+The transition matrix is row-stochastic (each row sums to one). The outer `Tuple` contains one inner `Tuple` of scalar distributions per state.
+
+```julia
+using NoLimits
+using Distributions
+
+model = @Model begin
+    @fixedEffects begin
+        p12   = RealNumber(0.3)
+        p21   = RealNumber(0.2)
+        mu1   = RealNumber(1.0)
+        mu2   = RealNumber(3.0)
+        sigma = RealNumber(0.5, scale=:log)
+    end
+
+    @covariates begin
+        t = Covariate()
+    end
+
+    @formulas begin
+        outcome ~ MVDiscreteTimeDiscreteStatesHMM(
+            [1-p12  p12;
+              p21  1-p21],
+            (
+                (Normal(mu1, sigma), Bernoulli(0.2)),  # state 1: (continuous, binary)
+                (Normal(mu2, sigma), Bernoulli(0.8)),  # state 2: (continuous, binary)
+            ),
+            Categorical([0.5, 0.5])
+        )
+    end
+end
+```
+
+The `outcome` column in the DataFrame must hold two-element vectors (one `Float64` and one `0.0`/`1.0`) matching the M=2 outcomes declared by the emission tuples.
+
+### Continuous time, joint MvNormal emissions
+
+The transition matrix is a rate matrix (generator): off-diagonal entries ≥ 0, each row sums to zero. State propagation uses the matrix exponential `exp(Q · Δt)`. Joint `MvNormal` emissions enable full cross-outcome correlation within each state.
+
+```julia
+using NoLimits
+using Distributions
+using LinearAlgebra
+
+model = @Model begin
+    @fixedEffects begin
+        lambda12 = RealNumber(0.2, scale=:log)
+        lambda21 = RealNumber(0.3, scale=:log)
+        mu1      = RealNumber(0.0)
+        mu2      = RealNumber(2.0)
+    end
+
+    @covariates begin
+        t       = Covariate()
+        delta_t = Covariate()
+    end
+
+    @formulas begin
+        outcome ~ MVContinuousTimeDiscreteStatesHMM(
+            [-lambda12  lambda12;
+              lambda21 -lambda21],
+            (
+                MvNormal([mu1, mu1], I(2)),
+                MvNormal([mu2, mu2], I(2)),
+            ),
+            Categorical([0.5, 0.5]),
+            delta_t
+        )
+    end
+end
+```
+
+Here `delta_t` is a time-varying covariate holding the elapsed time since the previous observation for each row. The `outcome` column must hold two-element vectors matching the dimension of the `MvNormal` emissions. Partially-missing vectors (e.g. `[1.2, missing]`) are handled by marginalising the `MvNormal` over the observed index.
+
 ## Related APIs
 
 The following functions provide programmatic access to the internal representation and evaluation of formulas:

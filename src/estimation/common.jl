@@ -904,7 +904,8 @@ function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_
         for (j, col) in pairs(obs_cols)
             y = getfield(obs_series, col)[i]
             dist = getproperty(obs, col)
-            if dist isa ContinuousTimeDiscreteStatesHMM || dist isa DiscreteTimeDiscreteStatesHMM
+            if dist isa ContinuousTimeDiscreteStatesHMM || dist isa DiscreteTimeDiscreteStatesHMM ||
+               dist isa MVContinuousTimeDiscreteStatesHMM || dist isa MVDiscreteTimeDiscreteStatesHMM
                 if hmm_seen === nothing
                     hmm_init = Vector{Vector{T_hmm}}(undef, length(obs_cols))
                     hmm_seen = falses(length(obs_cols))
@@ -918,11 +919,19 @@ function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_
                     hs[j] = true
                 end
                 init_p = hi[j]
-                dist_use = dist isa ContinuousTimeDiscreteStatesHMM ?
-                           ContinuousTimeDiscreteStatesHMM(dist.transition_matrix, dist.emission_dists,
-                                                           Distributions.Categorical(init_p), dist.Δt) :
-                           DiscreteTimeDiscreteStatesHMM(dist.transition_matrix, dist.emission_dists,
-                                                         Distributions.Categorical(init_p))
+                dist_use = if dist isa ContinuousTimeDiscreteStatesHMM
+                    ContinuousTimeDiscreteStatesHMM(dist.transition_matrix, dist.emission_dists,
+                                                    Distributions.Categorical(init_p), dist.Δt)
+                elseif dist isa MVContinuousTimeDiscreteStatesHMM
+                    MVContinuousTimeDiscreteStatesHMM(dist.transition_matrix, dist.emission_dists,
+                                                      Distributions.Categorical(init_p), dist.Δt)
+                elseif dist isa MVDiscreteTimeDiscreteStatesHMM
+                    MVDiscreteTimeDiscreteStatesHMM(dist.transition_matrix, dist.emission_dists,
+                                                    Distributions.Categorical(init_p))
+                else
+                    DiscreteTimeDiscreteStatesHMM(dist.transition_matrix, dist.emission_dists,
+                                                  Distributions.Categorical(init_p))
+                end
                 v = logpdf(dist_use, y)
                 if !isfinite(v)
                     return -Inf
