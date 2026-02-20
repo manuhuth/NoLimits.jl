@@ -4,6 +4,7 @@ export summarize
 
 using Statistics
 using MCMCChains
+using Random
 
 """
     FitResultSummary
@@ -109,7 +110,7 @@ function _fq_method_symbol(res::FitResult)
     return _method_symbol(get_method(res))
 end
 
-@inline _fq_inference_from_method(method::FittingMethod) = method isa MCMC ? :bayesian : :frequentist
+@inline _fq_inference_from_method(method::FittingMethod) = (method isa MCMC || method isa VI) ? :bayesian : :frequentist
 @inline _fq_inference_from_uq(uq::UQResult) = (uq.backend == :chain || uq.backend == :mcmc_refit) ? :bayesian : :frequentist
 
 function _fq_try_loglikelihood(res::FitResult)
@@ -213,50 +214,117 @@ function _fq_chain_values(arr, var_idx::Int, warmup::Int)
     return Float64.(vals)
 end
 
-function _fq_mcmc_fixed_point_estimate(res::FitResult, dm::DataModel)
-    fe = dm.model.fixed.fixed
-    constants = _fit_kw(res, :constants, NamedTuple())
+function _fq_spec_map(fe::FixedEffects)
+    names = get_names(fe)
+    specs = get_transforms(fe).forward.specs
+    out = Dict{Symbol, TransformSpec}()
+    for i in eachindex(names)
+        out[names[i]] = specs[i]
+    end
+    return out
+end
+
+function _fq_value_from_lookup(v0, name::Symbol, spec::TransformSpec, lookup::Function)
+    if v0 isa Number
+        val = lookup(string(name))
+        return val === nothing ? v0 : val
+    end
+    if spec.kind == :expm && v0 isa AbstractMatrix
+        n = size(v0, 1)
+        vv = Matrix{Float64}(undef, size(v0)...)
+        for j in 1:n
+            for i in 1:j
+                key = string(name, "[", i, ",", j, "]")
+                val = lookup(key)
+                x = val === nothing ? Float64(v0[i, j]) : Float64(val)
+                vv[i, j] = x
+                vv[j, i] = x
+            end
+        end
+        return vv
+    end
+    vv = similar(v0, Float64)
+    for ci in CartesianIndices(v0)
+        key = string(name, "[", join(Tuple(ci), ","), "]")
+        val = lookup(key)
+        vv[ci] = val === nothing ? Float64(v0[ci]) : Float64(val)
+    end
+    return vv
+end
+
+function _fq_fixed_point_estimate_from_lookup(fe::FixedEffects,
+                                              constants::NamedTuple,
+                                              lookup::Function)
     θu = deepcopy(get_θ0_untransformed(fe))
-
-    chain = get_chain(res)
-    arr = _fq_chain_array(chain)
-    warmup = _fq_mcmc_warmup(res)
-    idx_map = _fq_chain_idx_map(chain)
-
+    spec_map = _fq_spec_map(fe)
     for name in get_names(fe)
         if haskey(constants, name)
             setproperty!(θu, name, getfield(constants, name))
             continue
         end
         v0 = getproperty(θu, name)
-        if v0 isa Number
-            idx = _lookup_chain_index(idx_map, string(name))
-            if idx != 0
-                vals = _fq_chain_values(arr, idx, warmup)
-                setproperty!(θu, name, median(vals))
-            end
-        else
-            vv = similar(v0, Float64)
-            for ci in CartesianIndices(v0)
-                key = string(name, "[", join(Tuple(ci), ","), "]")
-                idx = _lookup_chain_index(idx_map, key)
-                if idx != 0
-                    vals = _fq_chain_values(arr, idx, warmup)
-                    vv[ci] = median(vals)
-                else
-                    vv[ci] = Float64(v0[ci])
-                end
-            end
-            setproperty!(θu, name, vv)
-        end
+        spec = spec_map[name]
+        setproperty!(θu, name, _fq_value_from_lookup(v0, name, spec, lookup))
     end
     return _as_component_array(θu)
 end
 
+function _fq_mcmc_fixed_point_estimate(res::FitResult, dm::DataModel)
+    fe = dm.model.fixed.fixed
+    constants = _fit_kw(res, :constants, NamedTuple())
+
+    chain = get_chain(res)
+    arr = _fq_chain_array(chain)
+    warmup = _fq_mcmc_warmup(res)
+    idx_map = _fq_chain_idx_map(chain)
+    med_cache = Dict{Int, Float64}()
+    lookup = key -> begin
+        idx = _lookup_chain_index(idx_map, key)
+        idx == 0 && return nothing
+        if !haskey(med_cache, idx)
+            med_cache[idx] = Float64(median(_fq_chain_values(arr, idx, warmup)))
+        end
+        return med_cache[idx]
+    end
+    return _fq_fixed_point_estimate_from_lookup(fe, constants, lookup)
+end
+
+function _fq_vi_fixed_point_estimate(res::FitResult, dm::DataModel; n_draws::Int=1000)
+    fe = dm.model.fixed.fixed
+    constants = _fit_kw(res, :constants, NamedTuple())
+    n_draws >= 1 || error("n_draws must be >= 1.")
+    draw_pack = sample_posterior(res; n_draws=n_draws, rng=Random.Xoshiro(0x4f13), return_names=true)
+    draws = draw_pack.draws
+    names = draw_pack.names
+    idx_map = Dict{String, Int}()
+    for (i, n) in enumerate(names)
+        idx_map[string(n)] = i
+    end
+    med_cache = Dict{Int, Float64}()
+    lookup = key -> begin
+        idx = _lookup_chain_index(idx_map, key)
+        idx == 0 && return nothing
+        if !haskey(med_cache, idx)
+            med_cache[idx] = Float64(median(@view draws[:, idx]))
+        end
+        return med_cache[idx]
+    end
+    return _fq_fixed_point_estimate_from_lookup(fe, constants, lookup)
+end
+
 function _fq_fit_component_estimates(res::FitResult, dm::DataModel, scale::Symbol)
     fe = dm.model.fixed.fixed
-    if get_method(res) isa MCMC
+    method = get_method(res)
+    if method isa MCMC
         θu = _fq_mcmc_fixed_point_estimate(res, dm)
+        if scale == :natural
+            return _coords_on_transformed_layout(fe, θu, get_names(fe); natural=true)
+        else
+            θt = get_transform(fe)(θu)
+            return _coords_on_transformed_layout(fe, θt, get_names(fe); natural=false)
+        end
+    elseif method isa VI
+        θu = _fq_vi_fixed_point_estimate(res, dm)
         if scale == :natural
             return _coords_on_transformed_layout(fe, θu, get_names(fe); natural=true)
         else
@@ -366,25 +434,7 @@ function _fq_parse_re_chain_name(s::String, re_set::Set{Symbol})
     return nothing
 end
 
-function _fq_mcmc_random_effect_rows(res::FitResult, dm::DataModel)
-    re_names = get_re_names(dm.model.random.random)
-    isempty(re_names) && return NamedTuple[]
-    re_set = Set(re_names)
-
-    chain = get_chain(res)
-    arr = _fq_chain_array(chain)
-    warmup = _fq_mcmc_warmup(res)
-    idx_map = _fq_chain_idx_map(chain)
-
-    by_key = Dict{Tuple{Symbol, Int}, Vector{Float64}}()
-    for (k, idx) in pairs(idx_map)
-        parsed = _fq_parse_re_chain_name(k, re_set)
-        parsed === nothing && continue
-        re, _, dim = parsed
-        med = median(_fq_chain_values(arr, idx, warmup))
-        push!(get!(by_key, (re, dim), Float64[]), med)
-    end
-
+function _fq_re_rows_from_component_medians(by_key::Dict{Tuple{Symbol, Int}, Vector{Float64}})
     rows = NamedTuple[]
     re_dims = Dict{Symbol, Set{Int}}()
     for (k, _) in by_key
@@ -411,6 +461,49 @@ function _fq_mcmc_random_effect_rows(res::FitResult, dm::DataModel)
     return rows
 end
 
+function _fq_mcmc_random_effect_rows(res::FitResult, dm::DataModel)
+    re_names = get_re_names(dm.model.random.random)
+    isempty(re_names) && return NamedTuple[]
+    re_set = Set(re_names)
+
+    chain = get_chain(res)
+    arr = _fq_chain_array(chain)
+    warmup = _fq_mcmc_warmup(res)
+    idx_map = _fq_chain_idx_map(chain)
+
+    by_key = Dict{Tuple{Symbol, Int}, Vector{Float64}}()
+    for (k, idx) in pairs(idx_map)
+        parsed = _fq_parse_re_chain_name(k, re_set)
+        parsed === nothing && continue
+        re, _, dim = parsed
+        med = median(_fq_chain_values(arr, idx, warmup))
+        push!(get!(by_key, (re, dim), Float64[]), med)
+    end
+
+    return _fq_re_rows_from_component_medians(by_key)
+end
+
+function _fq_vi_random_effect_rows(res::FitResult, dm::DataModel; n_draws::Int=1000)
+    re_names = get_re_names(dm.model.random.random)
+    isempty(re_names) && return NamedTuple[]
+    re_set = Set(re_names)
+    n_draws >= 1 || error("n_draws must be >= 1.")
+    draw_pack = sample_posterior(res; n_draws=n_draws, rng=Random.Xoshiro(0x6a07), return_names=true)
+    draws = draw_pack.draws
+    names = draw_pack.names
+
+    by_key = Dict{Tuple{Symbol, Int}, Vector{Float64}}()
+    for (j, n) in enumerate(names)
+        parsed = _fq_parse_re_chain_name(string(n), re_set)
+        parsed === nothing && continue
+        re, _, dim = parsed
+        med = Float64(median(@view draws[:, j]))
+        push!(get!(by_key, (re, dim), Float64[]), med)
+    end
+
+    return _fq_re_rows_from_component_medians(by_key)
+end
+
 function _fq_random_effect_block(res::FitResult; constants_re::NamedTuple=NamedTuple())
     dm = get_data_model(res)
     dm === nothing && return ("Random effects summary unavailable", NamedTuple[], ["Random-effects summary unavailable: FitResult does not store DataModel."])
@@ -423,6 +516,10 @@ function _fq_random_effect_block(res::FitResult; constants_re::NamedTuple=NamedT
         rows = _fq_mcmc_random_effect_rows(res, dm)
         label = "Posterior random effects summary (chain medians across draws)"
         return (label, rows, isempty(rows) ? ["No random-effects chain coordinates detected."] : String[])
+    elseif method isa VI
+        rows = _fq_vi_random_effect_rows(res, dm)
+        label = "Posterior random effects summary (VI posterior medians across draws)"
+        return (label, rows, isempty(rows) ? ["No random-effects VI coordinates detected."] : String[])
     end
 
     try

@@ -253,6 +253,40 @@ end
     @test cache.chain !== nothing
 end
 
+@testset "Plot cache (VI)" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.1, prior=Normal(0.0, 1.0))
+            σ = RealNumber(0.3, scale=:log, prior=LogNormal(0.0, 0.5))
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, 1.0); column=:ID)
+        end
+
+        @formulas begin
+            y ~ Normal(a + η, σ)
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 2, 2],
+        t = [0.0, 1.0, 0.0, 1.0],
+        y = [0.1, 0.2, 0.0, -0.1]
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    res = fit_model(dm, NoLimits.VI(; turing_kwargs=(max_iter=25, progress=false)))
+
+    cache = build_plot_cache(res; cache_obs_dists=false, mcmc_draws=8)
+    @test cache isa PlotCache
+    @test cache.chain === nothing
+end
+
 @testset "Plot cache (ODE)" begin
     model = @Model begin
         @fixedEffects begin

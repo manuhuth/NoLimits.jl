@@ -20,7 +20,7 @@ struct _MCMCReMeta{L, M, R}
     is_scalar::Bool
 end
 
-function _warn_if_scaled_params(fe::FixedEffects)
+function _warn_if_scaled_params(fe::FixedEffects; method_name::AbstractString="MCMC")
     specs = get_transforms(fe).forward.specs
     ignored = Symbol[]
     for spec in specs
@@ -28,7 +28,7 @@ function _warn_if_scaled_params(fe::FixedEffects)
             push!(ignored, spec.name)
         end
     end
-    isempty(ignored) || @debug "MCMC uses priors on the natural scale; parameter scale settings are ignored during sampling." ignored_parameters=ignored
+    isempty(ignored) || @debug "$(method_name) uses priors on the natural scale; parameter scale settings are ignored during sampling." ignored_parameters=ignored
     return nothing
 end
 
@@ -207,62 +207,59 @@ function _build_turing_model_re(fixed_names::Vector{Symbol}, free_names::Vector{
                     levels = meta.levels
                     lvl_to_idx = meta.level_to_index
                     samples = getproperty(re_samples, re)
+                    scalar_like = meta.is_scalar || meta.dim == 1
                     if g isa AbstractVector
                         if length(g) == 1
                             gv = g[1]
                             if fixed !== nothing && haskey(fixed, gv)
                                 v = fixed[gv]
-                                push!(nt_pairs, re => (meta.is_scalar ? T(v) : T.(v)))
                             else
                                 idx = get(lvl_to_idx, gv, 0)
                                 idx == 0 && error("Missing random effect value for $(re) level $(gv).")
                                 v = samples[idx]
-                                if meta.is_scalar
-                                    push!(nt_pairs, re => T(v))
-                                else
-                                    push!(nt_pairs, re => Vector{T}(v))
-                                end
+                            end
+                            if scalar_like
+                                push!(nt_pairs, re => v)
+                            else
+                                push!(nt_pairs, re => (v isa AbstractVector ? collect(v) : [v]))
                             end
                         else
-                            if meta.is_scalar
-                                vals = Vector{T}(undef, length(g))
+                            if scalar_like
+                                vals = [begin
+                                    if fixed !== nothing && haskey(fixed, gv)
+                                        fixed[gv]
+                                    else
+                                        idx = get(lvl_to_idx, gv, 0)
+                                        idx == 0 && error("Missing random effect value for $(re) level $(gv).")
+                                        samples[idx]
+                                    end
+                                end for gv in g]
                             else
-                                vals = Vector{Vector{T}}(undef, length(g))
-                            end
-                            for (gi, gv) in Base.pairs(g)
-                                if fixed !== nothing && haskey(fixed, gv)
-                                    v = fixed[gv]
-                                    if meta.is_scalar
-                                        vals[gi] = T(v)
+                                vals = [begin
+                                    if fixed !== nothing && haskey(fixed, gv)
+                                        v = fixed[gv]
                                     else
-                                        vals[gi] = T.(v)
+                                        idx = get(lvl_to_idx, gv, 0)
+                                        idx == 0 && error("Missing random effect value for $(re) level $(gv).")
+                                        v = samples[idx]
                                     end
-                                else
-                                    idx = get(lvl_to_idx, gv, 0)
-                                    idx == 0 && error("Missing random effect value for $(re) level $(gv).")
-                                    v = samples[idx]
-                                    if meta.is_scalar
-                                        vals[gi] = T(v)
-                                    else
-                                        vals[gi] = Vector{T}(v)
-                                    end
-                                end
+                                    v isa AbstractVector ? collect(v) : [v]
+                                end for gv in g]
                             end
                             push!(nt_pairs, re => vals)
                         end
                     else
                         if fixed !== nothing && haskey(fixed, g)
                             v = fixed[g]
-                            push!(nt_pairs, re => (meta.is_scalar ? T(v) : T.(v)))
                         else
                             idx = get(lvl_to_idx, g, 0)
                             idx == 0 && error("Missing random effect value for $(re) level $(g).")
                             v = samples[idx]
-                            if meta.is_scalar
-                                push!(nt_pairs, re => T(v))
-                            else
-                                push!(nt_pairs, re => Vector{T}(v))
-                            end
+                        end
+                        if scalar_like
+                            push!(nt_pairs, re => v)
+                        else
+                            push!(nt_pairs, re => (v isa AbstractVector ? collect(v) : [v]))
                         end
                     end
                 end
@@ -311,7 +308,7 @@ function _fit_model(dm::DataModel, method::MCMC, args...;
     isempty(keys(penalty)) || error("MCMC does not support penalty terms. Use priors and MAP instead.")
 
     fe = dm.model.fixed.fixed
-    _warn_if_scaled_params(fe)
+    _warn_if_scaled_params(fe; method_name="MCMC")
     priors = get_priors(fe)
     fixed_names = get_names(fe)
     fixed_set = Set(fixed_names)

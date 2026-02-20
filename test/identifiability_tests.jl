@@ -102,7 +102,7 @@ end
         y = [-0.2, -0.1, 0.0, 0.1, 0.2, -0.3, 0.3, -0.15, 0.12, -0.05]
     )
     dm = nothing
-    @test_logs (:warn, r"weakly identified") begin
+    @test_logs match_mode=:any (:warn, r"weakly identified") begin
         dm = DataModel(model, df; primary_id=:OBS, time_col=:t)
     end
 

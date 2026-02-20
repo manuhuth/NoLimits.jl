@@ -205,6 +205,47 @@ end
     @test p !== nothing
 end
 
+@testset "residuals VI summary and draw-level outputs" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.2, prior=Normal(0.0, 1.0))
+            σ = RealNumber(0.3, scale=:log, prior=LogNormal(0.0, 0.5))
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @formulas begin
+            y ~ Normal(a * t, σ)
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 2, 2],
+        t = [0.0, 1.0, 0.0, 1.0],
+        y = [0.1, 0.2, 0.0, -0.1]
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    res = fit_model(dm, NoLimits.VI(; turing_kwargs=(max_iter=30, progress=false)))
+
+    rdf = get_residuals(res; mcmc_draws=8, mcmc_quantiles=[10, 90])
+    @test nrow(rdf) == nrow(df)
+    @test all(rdf.n_draws .== 8)
+    @test all(ismissing.(rdf.draw))
+    @test all(.!ismissing.(rdf.pit_qlo))
+    @test all(.!ismissing.(rdf.pit_qhi))
+
+    rdf_draw = get_residuals(res; mcmc_draws=5, return_draw_level=true, residuals=[:pit])
+    @test nrow(rdf_draw) == 5 * nrow(df)
+    @test all(rdf_draw.n_draws .== 5)
+    @test all(.!ismissing.(rdf_draw.draw))
+
+    p = plot_residual_qq(res; mcmc_draws=5)
+    @test p !== nothing
+end
+
 @testset "residual API validation errors" begin
     model = @Model begin
         @fixedEffects begin

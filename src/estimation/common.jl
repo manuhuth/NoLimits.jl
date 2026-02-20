@@ -21,6 +21,10 @@ export get_notes
 export get_observed
 export get_sampler
 export get_n_samples
+export get_variational_posterior
+export get_vi_trace
+export get_vi_state
+export sample_posterior
 export get_loglikelihood
 export get_laplace_random_effects
 export get_re_covariate_usage
@@ -341,6 +345,34 @@ Return the number of MCMC samples drawn. Only valid for MCMC results.
 """
 get_n_samples(res::FitResult) = get_n_samples(res.result)
 
+"""
+    get_variational_posterior(res::FitResult)
+
+Return the variational posterior object for VI fits.
+"""
+get_variational_posterior(res::FitResult) = get_variational_posterior(res.result)
+
+"""
+    get_vi_trace(res::FitResult)
+
+Return per-iteration VI trace information.
+"""
+get_vi_trace(res::FitResult) = get_vi_trace(res.result)
+
+"""
+    get_vi_state(res::FitResult)
+
+Return the final VI optimizer state.
+"""
+get_vi_state(res::FitResult) = get_vi_state(res.result)
+
+"""
+    sample_posterior(res::FitResult; n_draws, rng)
+
+Draw posterior samples from methods that expose a posterior sampler (e.g. VI).
+"""
+sample_posterior(res::FitResult; kwargs...) = sample_posterior(res.result; kwargs...)
+
 @inline function _maxabs(v::AbstractVector)
     m = zero(eltype(v))
     @inbounds for i in eachindex(v)
@@ -382,6 +414,10 @@ get_sampler(res::MethodResult) = hasproperty(res, :sampler) ? res.sampler :
     error("sampler not available for this method.")
 get_n_samples(res::MethodResult) = hasproperty(res, :n_samples) ? res.n_samples :
     error("n_samples not available for this method.")
+get_variational_posterior(::MethodResult) = error("Variational posterior access not supported for this method.")
+get_vi_trace(::MethodResult) = error("VI trace access not supported for this method.")
+get_vi_state(::MethodResult) = error("VI state access not supported for this method.")
+sample_posterior(::MethodResult; kwargs...) = error("Posterior sampling not supported for this method.")
 
 function _re_dataframes_from_bstars(dm::DataModel,
                                     batch_infos::Vector,

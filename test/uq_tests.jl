@@ -123,6 +123,48 @@ end
     @test d.available_draws >= d.used_draws
 end
 
+@testset "UQ chain for VI" begin
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+        @fixedEffects begin
+            a = RealNumber(0.2, prior=Normal(0.0, 1.0), calculate_se=true)
+            b = RealNumber(0.1, prior=Normal(0.0, 1.0), calculate_se=false)
+            σ = RealNumber(0.3, scale=:log, prior=LogNormal(0.0, 0.5), calculate_se=true)
+        end
+        @formulas begin
+            y ~ Normal(a + b * t, σ)
+        end
+    end
+
+    df = DataFrame(
+        ID=[1, 1, 2, 2],
+        t=[0.0, 1.0, 0.0, 1.0],
+        y=[0.2, 0.3, 0.1, 0.2],
+    )
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    res = fit_model(dm, NoLimits.VI(; turing_kwargs=(max_iter=30, progress=false)); rng=Random.Xoshiro(401))
+
+    uq = compute_uq(res; method=:chain, mcmc_draws=35, rng=Random.Xoshiro(402))
+    @test get_uq_backend(uq) == :chain
+    @test get_uq_source_method(uq) == :vi
+    @test get_uq_parameter_names(uq) == [:a, :σ]
+    @test size(get_uq_draws(uq)) == (35, 2)
+    d = get_uq_diagnostics(uq)
+    @test d.requested_draws == 35
+    @test d.used_draws == 35
+    @test d.source == :vi_posterior
+
+    uq_auto = compute_uq(res; method=:auto, n_draws=22, rng=Random.Xoshiro(403))
+    @test get_uq_backend(uq_auto) == :chain
+    @test size(get_uq_draws(uq_auto)) == (22, 2)
+
+    uq_const = compute_uq(res; method=:chain, constants=(a=0.2,), mcmc_draws=20, rng=Random.Xoshiro(404))
+    @test get_uq_parameter_names(uq_const) == [:σ]
+    @test size(get_uq_draws(uq_const)) == (20, 1)
+end
+
 @testset "UQ errors when no active calculate_se parameters" begin
     model = @Model begin
         @covariates begin

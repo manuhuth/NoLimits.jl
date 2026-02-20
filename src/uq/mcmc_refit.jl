@@ -92,6 +92,7 @@ function _compute_uq_mcmc_refit(res::FitResult;
                                  constants=constants_all,
                                  mcmc_warmup=mcmc_warmup,
                                  mcmc_draws=mcmc_draws,
+                                 default_draws=2000,
                                  rng=rng)
 
     diag = merge(uq_chain.diagnostics, (;

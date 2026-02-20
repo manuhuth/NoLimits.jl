@@ -347,6 +347,50 @@ end
 
 end
 
+@testset "plot_random_effects VI" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.1, prior=Uniform(0.0, 0.9))
+            σ = RealNumber(0.3, scale=:log, prior=Uniform(0.01, 1.0))
+        end
+
+        @covariates begin
+            t = Covariate()
+            Age = ConstantCovariate()
+        end
+
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, 0.5); column=:ID)
+        end
+
+        @formulas begin
+            y ~ Normal(a + η, σ)
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 2, 2, 3, 3, 4, 4],
+        t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+        Age = [30.0, 30.0, 40.0, 40.0, 35.0, 35.0, 45.0, 45.0],
+        y = [0.1, 0.2, 0.0, 0.1, 0.15, 0.25, -0.05, 0.05]
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    res = fit_model(dm, VI(; turing_kwargs=(max_iter=35, progress=false)))
+
+    p_pit_hist = plot_random_effect_pit(res; mcmc_draws=6, show_hist=true, show_kde=false, show_qq=false)
+    @test p_pit_hist !== nothing
+
+    p_dist = plot_random_effect_distributions(res; mcmc_draws=6)
+    @test p_dist !== nothing
+
+    p_pdf = plot_random_effects_pdf(res; mcmc_draws=6)
+    @test p_pdf !== nothing
+
+    p_scatter = plot_random_effects_scatter(res; mcmc_draws=6)
+    @test p_scatter !== nothing
+end
+
 @testset "plot_random_effects MCMC constants_re" begin
     model = @Model begin
         @fixedEffects begin

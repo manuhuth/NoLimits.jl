@@ -270,14 +270,7 @@ function _residual_row(; individual_idx::Int,
 end
 
 function _maybe_with_mcmc_warmup(res::FitResult, mcmc_warmup::Union{Nothing, Int})
-    if mcmc_warmup === nothing
-        return res
-    end
-    conv = res.diagnostics.convergence
-    conv = merge(conv, (n_adapt=mcmc_warmup,))
-    return FitResult(res.method, res.result, res.summary,
-                     FitDiagnostics(res.diagnostics.timing, res.diagnostics.optimizer, conv, res.diagnostics.notes),
-                     res.data_model, res.fit_args, res.fit_kwargs)
+    return _with_posterior_warmup(res, mcmc_warmup)
 end
 
 function _ensure_obs_cache_nonmcmc(res::FitResult,
@@ -367,14 +360,14 @@ function get_residuals(res::FitResult;
     end
 
     rows = Vector{Any}()
-    is_mcmc = res.result isa MCMCResult
+    is_mcmc = _is_posterior_draw_fit(res)
 
     if is_mcmc
         mcmc_draws >= 1 || error("mcmc_draws must be >= 1.")
         res_use = _maybe_with_mcmc_warmup(res, mcmc_warmup)
-        θ_draws, η_draws, _ = _mcmc_drawn_params(res_use, dm, constants_re_use, params, mcmc_draws, rng)
+        θ_draws, η_draws, _ = _posterior_drawn_params(res_use, dm, constants_re_use, params, mcmc_draws, rng)
         n_draws = length(θ_draws)
-        isempty(θ_draws) && error("No MCMC draws available for residual computation.")
+        isempty(θ_draws) && error("No posterior draws available for residual computation.")
 
         for i in inds
             ind = dm.individuals[i]

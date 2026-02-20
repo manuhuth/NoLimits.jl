@@ -151,6 +151,39 @@ end
     @test p_vpc_pois !== nothing
 end
 
+@testset "plot_vpc VI random effects" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.2, prior=Normal(0.0, 1.0))
+            σ = RealNumber(0.3, scale=:log, prior=LogNormal(0.0, 0.5))
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, 0.5); column=:ID)
+        end
+
+        @formulas begin
+            y ~ Normal(a * t + η, σ)
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 2, 2, 3, 3],
+        t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+        y = [0.1, 0.2, 0.0, -0.1, 0.05, 0.1]
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    res = fit_model(dm, VI(; turing_kwargs=(max_iter=30, progress=false)))
+
+    p = plot_vpc(res; n_simulations=5, n_bins=3, mcmc_draws=5)
+    @test p !== nothing
+end
+
 @testset "plot_vpc constants_re and unsupported serialization" begin
     model = @Model begin
         @fixedEffects begin

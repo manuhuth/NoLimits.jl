@@ -16,13 +16,13 @@ Compute uncertainty quantification for the fixed-effect parameters of a fitted m
 
 Three backends are supported:
 - **`:wald`** – Wald intervals derived from the inverse Hessian of the objective.
-- **`:chain`** – Posterior intervals from an MCMC chain (when the source fit used MCMC
-  or when `method=:mcmc`).
+- **`:chain`** – Posterior intervals from posterior draws (MCMC chains or VI posterior
+  samples).
 - **`:profile`** – Profile-likelihood intervals computed by NLopt.
 
 # Keyword Arguments
-- `method::Symbol = :auto`: UQ backend. `:auto` selects `:chain` for MCMC fits and
-  `:wald` otherwise; can also be `:wald`, `:profile`, or `:mcmc`.
+- `method::Symbol = :auto`: UQ backend. `:auto` selects `:chain` for MCMC/VI fits and
+  `:wald` otherwise; can also be `:wald`, `:chain`, `:profile`, or `:mcmc_refit`.
 - `interval::Symbol = :auto`: interval type. `:auto` picks a sensible default per backend.
   For Wald: `:wald` or `:normal`; for chain: `:equaltail` or `:chain`; for profile:
   `:profile`.
@@ -35,7 +35,8 @@ Three backends are supported:
 - `hessian_backend::Symbol = :auto`: Hessian computation backend.
 - `fd_abs_step`, `fd_rel_step`, `fd_max_tries`: finite-difference Hessian settings.
 - `n_draws::Int = 2000`: number of draws to generate (for the chain and MCMC backends).
-- `mcmc_warmup`, `mcmc_draws`: MCMC warm-up and draw counts (overrides defaults).
+- `mcmc_warmup`, `mcmc_draws`: chain-draw settings. For MCMC, warm-up and draw count;
+  for VI, `mcmc_draws` is the posterior sample count (`mcmc_warmup` ignored).
 - `constants`, `constants_re`, `penalty`, `ode_args`, `ode_kwargs`, `serialization`:
   forwarded to objective evaluations (default: inherit from the source fit result).
 - `profile_method`, `profile_scan_width`, `profile_scan_tol`, `profile_loss_tol`,
@@ -90,7 +91,7 @@ function compute_uq(res::FitResult;
         if interval == :profile
             :profile
         else
-            res.result isa MCMCResult ? :chain : :wald
+            (res.result isa MCMCResult || res.result isa VIResult) ? :chain : :wald
         end
     else
         method
@@ -115,6 +116,7 @@ function compute_uq(res::FitResult;
                                  constants=constants,
                                  mcmc_warmup=mcmc_warmup,
                                  mcmc_draws=mcmc_draws,
+                                 default_draws=n_draws,
                                  rng=rng)
     elseif backend == :wald
         src_method = get_method(res)

@@ -293,16 +293,10 @@ function plot_vpc(res::FitResult;
     percentiles = sort(Float64.(collect(percentiles)))
     (length(percentiles) >= 2 && all(0 .<= percentiles .<= 100)) || error("percentiles must be in [0,100] with length >= 2.")
 
-    is_mcmc = res.result isa MCMCResult
+    is_mcmc = _is_posterior_draw_fit(res)
     if is_mcmc
-        @info "VPC for MCMC uses posterior draws to simulate observations."
-        if mcmc_warmup !== nothing
-            conv = res.diagnostics.convergence
-            conv = merge(conv, (n_adapt=mcmc_warmup,))
-            res = FitResult(res.method, res.result, res.summary,
-                            FitDiagnostics(res.diagnostics.timing, res.diagnostics.optimizer, conv, res.diagnostics.notes),
-                            res.data_model, res.fit_args, res.fit_kwargs)
-        end
+        @info "VPC uses posterior draws to simulate observations."
+        res = _with_posterior_warmup(res, mcmc_warmup)
     end
 
     plots = Vector{Any}(undef, length(observables))
@@ -331,7 +325,7 @@ function plot_vpc(res::FitResult;
         is_bern = dist_rep isa Bernoulli
 
         if is_mcmc
-            θ_draws, η_draws, _ = _mcmc_drawn_params(res, dm, constants_re_use, NamedTuple(), mcmc_draws, rng)
+            θ_draws, η_draws, _ = _posterior_drawn_params(res, dm, constants_re_use, NamedTuple(), mcmc_draws, rng)
             n_sim = length(θ_draws)
             for s in 1:n_sim
                 sim_x, sim_vals = _simulate_obs(dm, θ_draws[s], η_draws[s], obs_name, rng, x_axis_feature)

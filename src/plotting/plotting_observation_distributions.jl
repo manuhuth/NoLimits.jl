@@ -115,7 +115,7 @@ function plot_observation_distributions(res::FitResult;
         x_axis_feature = _require_varying_covariate(dm, x_axis_feature)
     end
 
-    is_mcmc = res.result isa MCMCResult
+    is_mcmc = _is_posterior_draw_fit(res)
     if !is_mcmc && cache === nothing
         cache = build_plot_cache(res; dm=dm, constants_re=constants_re_use, cache_obs_dists=cache_obs_dists, rng=rng)
     end
@@ -128,14 +128,8 @@ function plot_observation_distributions(res::FitResult;
     θ_draws = nothing
     η_draws = nothing
     if is_mcmc
-        if mcmc_warmup !== nothing
-            conv = res.diagnostics.convergence
-            conv = merge(conv, (n_adapt=mcmc_warmup,))
-            res = FitResult(res.method, res.result, res.summary,
-                            FitDiagnostics(res.diagnostics.timing, res.diagnostics.optimizer, conv, res.diagnostics.notes),
-                            res.data_model, res.fit_args, res.fit_kwargs)
-        end
-        θ_draws, η_draws, _ = _mcmc_drawn_params(res, dm, constants_re_use, NamedTuple(), mcmc_draws, rng)
+        res = _with_posterior_warmup(res, mcmc_warmup)
+        θ_draws, η_draws, _ = _posterior_drawn_params(res, dm, constants_re_use, NamedTuple(), mcmc_draws, rng)
         mcmc_quantiles = sort(Float64.(collect(mcmc_quantiles)))
         (length(mcmc_quantiles) >= 2 && all(0 .<= mcmc_quantiles .<= 100)) || error("mcmc_quantiles must be in [0,100] with length >= 2.")
     end

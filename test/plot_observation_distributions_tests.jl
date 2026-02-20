@@ -131,6 +131,35 @@ end
     @test p !== nothing
 end
 
+@testset "plot_observation_distributions VI" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.2, prior=Normal(0.0, 1.0))
+            σ = RealNumber(0.3, scale=:log, prior=LogNormal(0.0, 0.5))
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @formulas begin
+            y ~ Normal(a, σ)
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1],
+        t = [0.0, 1.0],
+        y = [0.1, 0.2]
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    res = fit_model(dm, NoLimits.VI(; turing_kwargs=(max_iter=25, progress=false)))
+
+    p = plot_observation_distributions(res; individuals_idx=1, obs_rows=1, observables=:y, mcmc_draws=30)
+    @test p !== nothing
+end
+
 @testset "plot_observation_distributions caching" begin
     model = @Model begin
         @fixedEffects begin

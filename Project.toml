@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Manuel Huth", "Jonas Arruda", "Clemens Peiter", "Nina Schmid", "Jan Hasenauer"]
 
 [deps]
+AdvancedVI = "b5ca4192-6429-45e5-a2d9-87aec30a685c"
 Bijectors = "76274a88-744f-5084-9051-94815aaf08c4"
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
 ColorSchemes = "35d6a980-a343-548e-a6ea-1d62b119f2f4"
@@ -57,7 +58,7 @@ Turing = "fce5fe82-541a-59a6-adf8-730c64b5f9a0"
 Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
 
 [compat]
-julia = "1.12"
+AdvancedVI = "0.6.2"
 Bijectors = "0.15.15"
 CSV = "0.10.15"
 ColorSchemes = "3.31.0"
@@ -94,3 +95,4 @@ StatsFuns = "1.5.2"
 StatsPlots = "0.15.8"
 Test = "1.11.0"
 Turing = "0.42.5"
+julia = "1.12"

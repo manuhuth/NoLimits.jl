@@ -133,16 +133,10 @@ function plot_random_effects_pdf(res::FitResult;
         p = create_styled_plot(title="No random-effect distributions to plot.", style=style, kwargs_subplot...)
         return _save_plot!(p, save_path)
     end
-    is_mcmc = res.result isa MCMCResult
+    is_mcmc = _is_posterior_draw_fit(res)
 
     if is_mcmc
-        if mcmc_warmup !== nothing
-            conv = res.diagnostics.convergence
-            conv = merge(conv, (n_adapt=mcmc_warmup,))
-            res = FitResult(res.method, res.result, res.summary,
-                            FitDiagnostics(res.diagnostics.timing, res.diagnostics.optimizer, conv, res.diagnostics.notes),
-                            res.data_model, res.fit_args, res.fit_kwargs)
-        end
+        res = _with_posterior_warmup(res, mcmc_warmup)
         mcmc_quantiles = sort(Float64.(collect(mcmc_quantiles)))
         (length(mcmc_quantiles) >= 2 && all(0 .<= mcmc_quantiles .<= 100)) || error("mcmc_quantiles must be in [0,100] with length >= 2.")
     end
@@ -153,7 +147,7 @@ function plot_random_effects_pdf(res::FitResult;
     merge_limits = (lims, minv, maxv) -> lims === nothing ? (minv, maxv) :
         (min(lims[1], minv), max(lims[2], maxv))
 
-    θ_base = res.result isa MCMCResult ? _mcmc_fixed_means(res, dm)[1] : get_params(res; scale=:untransformed)
+    θ_base = _is_posterior_draw_fit(res) ? _posterior_fixed_means(res, dm)[1] : get_params(res; scale=:untransformed)
     dists_builder = get_create_random_effect_distribution(dm.model.random.random)
     model_funs = get_model_funs(dm.model)
     helpers = get_helper_funs(dm.model)
@@ -173,7 +167,7 @@ function plot_random_effects_pdf(res::FitResult;
             if is_mcmc
                 if θ_draws_cache === nothing
                     constants_re = _fit_constants_re(res)
-                    θ_draws_cache, _, _ = _mcmc_drawn_params(res, dm, constants_re, NamedTuple(), mcmc_draws, rng)
+                    θ_draws_cache, _, _ = _posterior_drawn_params(res, dm, constants_re, NamedTuple(), mcmc_draws, rng)
                 end
                 samples_by_draw = Vector{Vector{Float64}}()
                 grid_list = Vector{Tuple{Vector{Float64}, Vector{Float64}}}()
@@ -369,7 +363,7 @@ function plot_random_effects_scatter(res::FitResult;
     for re in re_list
         level_to_ind = _level_to_individual(dm, re)
         lvls = _resolve_levels(dm, re, levels, individuals_idx)
-        ebe_map, value_cols = res.result isa MCMCResult ? _ebe_by_level_mcmc(dm, res, re, mcmc_draws, Random.default_rng()) : _ebe_by_level(dm, res, re)
+        ebe_map, value_cols = _is_posterior_draw_fit(res) ? _ebe_by_level_mcmc(dm, res, re, mcmc_draws, Random.default_rng()) : _ebe_by_level(dm, res, re)
         show_comp = length(value_cols) > 1
         lvls_use = [lvl for lvl in lvls if haskey(ebe_map, lvl)]
         isempty(lvls_use) && (lvls_use = collect(keys(ebe_map)))
@@ -394,7 +388,7 @@ function plot_random_effects_scatter(res::FitResult;
             end
             title = show_comp ? string(re, " | ", comp_name) : string(re)
             xlabel = x_covariate === nothing ? (any(lvl -> lvl isa Number, lvls_use) ? "Level" : "Index") : _axis_label(x_covariate)
-            ylabel = res.result isa MCMCResult ? "Posterior Mean EBE" : "Empirical Bayes Estimate (EBE)"
+            ylabel = _is_posterior_draw_fit(res) ? "Posterior Mean EBE" : "Empirical Bayes Estimate (EBE)"
             p = create_styled_plot(title=title, xlabel=xlabel, ylabel=ylabel, style=style, kwargs_subplot...)
             create_styled_scatter!(p, xs, ys; label="", color=style.color_secondary, style=style)
             push!(plots, p)
@@ -479,7 +473,7 @@ function plot_random_effect_pairplot(res::FitResult;
         ebe_maps = Dict{Symbol, Any}()
         comp_names = Dict{Symbol, Vector{Symbol}}()
         for r in res_group
-            ebe_map, value_cols = res.result isa MCMCResult ? _ebe_by_level_mcmc(dm, res, r, mcmc_draws, rng) : _ebe_by_level(dm, res, r)
+            ebe_map, value_cols = _is_posterior_draw_fit(res) ? _ebe_by_level_mcmc(dm, res, r, mcmc_draws, rng) : _ebe_by_level(dm, res, r)
             ebe_maps[r] = ebe_map
             comp_names[r] = Symbol.(value_cols)
         end
@@ -605,7 +599,7 @@ end
 
 function _ebe_by_level_mcmc(dm::DataModel, res::FitResult, re::Symbol, mcmc_draws::Int, rng::AbstractRNG)
     constants_re = _fit_constants_re(res)
-    θ_draws, η_draws, _ = _mcmc_drawn_params(res, dm, constants_re, NamedTuple(), mcmc_draws, rng)
+    θ_draws, η_draws, _ = _posterior_drawn_params(res, dm, constants_re, NamedTuple(), mcmc_draws, rng)
     sums = Dict{Any, Vector{Float64}}()
     counts = Dict{Any, Int}()
     for d in eachindex(η_draws)
@@ -808,16 +802,10 @@ function plot_random_effect_distributions(res::FitResult;
     save_path = _resolve_plot_path(save_path, plot_path)
     _require_re_supported(res)
     re_list = _resolve_re_names(dm, re_names)
-    is_mcmc = res.result isa MCMCResult
+    is_mcmc = _is_posterior_draw_fit(res)
 
     if is_mcmc
-        if mcmc_warmup !== nothing
-            conv = res.diagnostics.convergence
-            conv = merge(conv, (n_adapt=mcmc_warmup,))
-            res = FitResult(res.method, res.result, res.summary,
-                            FitDiagnostics(res.diagnostics.timing, res.diagnostics.optimizer, conv, res.diagnostics.notes),
-                            res.data_model, res.fit_args, res.fit_kwargs)
-        end
+        res = _with_posterior_warmup(res, mcmc_warmup)
         mcmc_quantiles = sort(Float64.(collect(mcmc_quantiles)))
         (length(mcmc_quantiles) >= 2 && all(0 .<= mcmc_quantiles .<= 100)) || error("mcmc_quantiles must be in [0,100] with length >= 2.")
     end
@@ -828,7 +816,7 @@ function plot_random_effect_distributions(res::FitResult;
     ylims = nothing
     θ_draws_cache = nothing
 
-    θ_base = res.result isa MCMCResult ? _mcmc_fixed_means(res, dm)[1] : get_params(res; scale=:untransformed)
+    θ_base = _is_posterior_draw_fit(res) ? _posterior_fixed_means(res, dm)[1] : get_params(res; scale=:untransformed)
     dists_builder = get_create_random_effect_distribution(dm.model.random.random)
     model_funs = get_model_funs(dm.model)
     helpers = get_helper_funs(dm.model)
@@ -861,7 +849,7 @@ function plot_random_effect_distributions(res::FitResult;
                             @info "Flow marginal plotted via sampling (MCMC averaged)." re=re level=lvl samples=flow_samples
                             if θ_draws_cache === nothing
                                 constants_re = _fit_constants_re(res)
-                                θ_draws_cache, _, _ = _mcmc_drawn_params(res, dm, constants_re, NamedTuple(), mcmc_draws, rng)
+                                θ_draws_cache, _, _ = _posterior_drawn_params(res, dm, constants_re, NamedTuple(), mcmc_draws, rng)
                             end
                             samples_by_draw = Vector{Vector{Float64}}()
                             min_v = Inf
@@ -1060,7 +1048,7 @@ function plot_random_effect_pit(res::FitResult;
     save_path = _resolve_plot_path(save_path, plot_path)
     _require_re_supported(res)
     re_list = _resolve_re_names(dm, re_names)
-    is_mcmc = res.result isa MCMCResult
+    is_mcmc = _is_posterior_draw_fit(res)
     x_covariate === nothing || throw(ArgumentError("`x_covariate` is not supported by `plot_random_effect_pit`. Use `plot_random_effects_scatter` or `plot_random_effect_standardized_scatter` instead."))
 
     if (show_hist + show_kde + show_qq) > 1
@@ -1071,13 +1059,7 @@ function plot_random_effect_pit(res::FitResult;
     end
 
     if is_mcmc
-        if mcmc_warmup !== nothing
-            conv = res.diagnostics.convergence
-            conv = merge(conv, (n_adapt=mcmc_warmup,))
-            res = FitResult(res.method, res.result, res.summary,
-                            FitDiagnostics(res.diagnostics.timing, res.diagnostics.optimizer, conv, res.diagnostics.notes),
-                            res.data_model, res.fit_args, res.fit_kwargs)
-        end
+        res = _with_posterior_warmup(res, mcmc_warmup)
         mcmc_quantiles = sort(Float64.(collect(mcmc_quantiles)))
         (length(mcmc_quantiles) >= 2 && all(0 .<= mcmc_quantiles .<= 100)) || error("mcmc_quantiles must be in [0,100] with length >= 2.")
     end
@@ -1086,7 +1068,7 @@ function plot_random_effect_pit(res::FitResult;
     xlims = nothing
     ylims = nothing
 
-    θ_base = res.result isa MCMCResult ? _mcmc_fixed_means(res, dm)[1] : get_params(res; scale=:untransformed)
+    θ_base = _is_posterior_draw_fit(res) ? _posterior_fixed_means(res, dm)[1] : get_params(res; scale=:untransformed)
     dists_builder = get_create_random_effect_distribution(dm.model.random.random)
     model_funs = get_model_funs(dm.model)
     helpers = get_helper_funs(dm.model)
@@ -1102,7 +1084,7 @@ function plot_random_effect_pit(res::FitResult;
         for (ci, comp_name) in enumerate(value_cols)
             if is_mcmc
                 constants_re = _fit_constants_re(res)
-                θ_draws, η_draws, _ = _mcmc_drawn_params(res, dm, constants_re, NamedTuple(), mcmc_draws, rng)
+                θ_draws, η_draws, _ = _posterior_drawn_params(res, dm, constants_re, NamedTuple(), mcmc_draws, rng)
                 pits_by_draw = Vector{Vector{Float64}}()
                 for d in eachindex(θ_draws)
                     pits_d = Float64[]
@@ -1364,7 +1346,7 @@ function plot_random_effect_standardized(res::FitResult;
     save_path = _resolve_plot_path(save_path, plot_path)
     _require_re_supported(res)
     re_list = _resolve_re_names(dm, re_names)
-    θ_base = res.result isa MCMCResult ? _mcmc_fixed_means(res, dm)[1] : get_params(res; scale=:untransformed)
+    θ_base = _is_posterior_draw_fit(res) ? _posterior_fixed_means(res, dm)[1] : get_params(res; scale=:untransformed)
     dists_builder = get_create_random_effect_distribution(dm.model.random.random)
     model_funs = get_model_funs(dm.model)
     helpers = get_helper_funs(dm.model)
@@ -1373,7 +1355,7 @@ function plot_random_effect_standardized(res::FitResult;
     for re in re_list
         level_to_ind = _level_to_individual(dm, re)
         lvls = _resolve_levels(dm, re, levels, individuals_idx)
-        ebe_map, value_cols = res.result isa MCMCResult ? _ebe_by_level_mcmc(dm, res, re, mcmc_draws, Random.default_rng()) : _ebe_by_level(dm, res, re)
+        ebe_map, value_cols = _is_posterior_draw_fit(res) ? _ebe_by_level_mcmc(dm, res, re, mcmc_draws, Random.default_rng()) : _ebe_by_level(dm, res, re)
         show_comp = length(value_cols) > 1
         lvls_use = [lvl for lvl in lvls if haskey(ebe_map, lvl)]
         isempty(lvls_use) && (lvls_use = collect(keys(ebe_map)))
@@ -1468,7 +1450,7 @@ function plot_random_effect_standardized_scatter(res::FitResult;
         x_covariate in cov.constants || error("x_covariate must be a constant covariate.")
     end
 
-    θ_base = res.result isa MCMCResult ? _mcmc_fixed_means(res, dm)[1] : get_params(res; scale=:untransformed)
+    θ_base = _is_posterior_draw_fit(res) ? _posterior_fixed_means(res, dm)[1] : get_params(res; scale=:untransformed)
     dists_builder = get_create_random_effect_distribution(dm.model.random.random)
     model_funs = get_model_funs(dm.model)
     helpers = get_helper_funs(dm.model)
@@ -1478,7 +1460,7 @@ function plot_random_effect_standardized_scatter(res::FitResult;
     for re in re_list
         level_to_ind = _level_to_individual(dm, re)
         lvls = _resolve_levels(dm, re, levels, individuals_idx)
-        ebe_map, value_cols = res.result isa MCMCResult ? _ebe_by_level_mcmc(dm, res, re, mcmc_draws, Random.default_rng()) : _ebe_by_level(dm, res, re)
+        ebe_map, value_cols = _is_posterior_draw_fit(res) ? _ebe_by_level_mcmc(dm, res, re, mcmc_draws, Random.default_rng()) : _ebe_by_level(dm, res, re)
         show_comp = length(value_cols) > 1
         lvls_use = [lvl for lvl in lvls if haskey(ebe_map, lvl)]
         isempty(lvls_use) && (lvls_use = collect(keys(ebe_map)))

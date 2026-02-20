@@ -13,6 +13,7 @@ end
     method isa MLE && return :mle
     method isa MAP && return :map
     method isa MCMC && return :mcmc
+    method isa VI && return :vi
     method isa Laplace && return :laplace
     method isa LaplaceMAP && return :laplace_map
     method isa FOCEI && return :focei
