@@ -2,6 +2,7 @@ using Test
 using NoLimits
 using DataFrames
 using Distributions
+using Plots
 
 @testset "plot_data and plot_fits basic" begin
     model = @Model begin
@@ -520,5 +521,90 @@ end
     df_bad.y .= df_bad.y .+ 1.0
     dm_bad = DataModel(model, df_bad; primary_id=:ID, time_col=:t)
     res_bad = fit_model(dm_bad, NoLimits.MLE(; optim_kwargs=(maxiters=40,)))
-    @test_throws ErrorException plot_fits_comparison([res1, res_bad])
+@test_throws ErrorException plot_fits_comparison([res1, res_bad])
+end
+
+@testset "plot_data/fits multivariate HMM" begin
+    model = @Model begin
+        @fixedEffects begin
+            mu1 = RealNumber(0.0)
+            mu2 = RealNumber(3.0)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @formulas begin
+            P = [0.9 0.1; 0.2 0.8]
+            e1 = (Normal(mu1, 1.0), Normal(2.0, 0.5))
+            e2 = (Normal(mu2, 1.0), Normal(-1.0, 0.5))
+            y ~ MVDiscreteTimeDiscreteStatesHMM(P, (e1, e2), Categorical([0.5, 0.5]))
+        end
+    end
+
+    df = DataFrame(
+        ID = repeat(1:2, inner=3),
+        t = vcat(0.0, 1.0, 2.0, 0.0, 1.0, 2.0),
+        y = [
+            Union{Missing, Float64}[0.1, 2.0],
+            Union{Missing, Float64}[0.2, missing],
+            Union{Missing, Float64}[0.4, 1.9],
+            Union{Missing, Float64}[3.0, -1.1],
+            Union{Missing, Float64}[2.8, missing],
+            Union{Missing, Float64}[missing, -1.2],
+        ]
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    res = fit_model(dm, NoLimits.MLE(optim_kwargs=(; iterations=5)))
+    n_marginals = 2
+
+    p_data_single = plot_data(res; marginal_layout=:single)
+    @test p_data_single !== nothing
+
+    p_data_vector = plot_data(res; marginal_layout=:vector)
+    @test isa(p_data_vector, Vector{Plots.Plot})
+    @test length(p_data_vector) == n_marginals
+
+    p_fits_single = plot_fits(res; marginal_layout=:single)
+    @test p_fits_single !== nothing
+
+    p_fits_vector = plot_fits(res; marginal_layout=:vector)
+    @test isa(p_fits_vector, Vector{Plots.Plot})
+    @test length(p_fits_vector) == n_marginals
+
+    n_inds = length(unique(df.ID))
+    p_hidden = plot_hidden_states(res)
+    @test p_hidden !== nothing
+
+    p_hidden_dm = plot_hidden_states(dm)
+    @test p_hidden_dm !== nothing
+
+    p_hidden_vector = plot_hidden_states(res; figure_layout=:vector)
+    @test isa(p_hidden_vector, Vector{Plots.Plot})
+    @test length(p_hidden_vector) == n_inds
+
+    p_hidden_single_ind = plot_hidden_states(res; figure_layout=:vector, individuals_idx=1)
+    @test length(p_hidden_single_ind) == 1
+
+    p_hidden_dm_vector = plot_hidden_states(dm; figure_layout=:vector)
+    @test isa(p_hidden_dm_vector, Vector{Plots.Plot})
+
+    p_emission = plot_emission_distributions(res, time_idx=1, ncols=1)
+    @test p_emission !== nothing
+
+    p_emission_idx = plot_emission_distributions(res; time_idx=2)
+    @test p_emission_idx !== nothing
+
+    p_emission_point = plot_emission_distributions(res; time_point=1.0)
+    @test p_emission_point !== nothing
+
+    p_emission_vector = plot_emission_distributions(res; figure_layout=:vector)
+    @test isa(p_emission_vector, Vector{Plots.Plot})
+    @test length(p_emission_vector) == n_inds
+
+    p_emission_dm = plot_emission_distributions(dm)
+    @test p_emission_dm !== nothing
+
+    p_emission_dm_vector = plot_emission_distributions(dm; figure_layout=:vector)
+    @test isa(p_emission_dm_vector, Vector{Plots.Plot})
 end

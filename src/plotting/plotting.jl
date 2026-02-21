@@ -6,6 +6,8 @@ export plot_fits
 export plot_fits_comparison
 export plot_multistart_waterfall
 export plot_multistart_fixed_effect_variability
+export plot_hidden_states
+export plot_emission_distributions
 
 using ComponentArrays
 using Distributions
@@ -186,7 +188,7 @@ function combine_plots(plots::Vector; ncols::Int=DEFAULT_PLOT_COLS, kwargs...)
     return plot(plots...; layout=(ceil(Int, length(plots) / ncols), ncols), size=size, kwargs...)
 end
 
-function _apply_shared_axes!(plots::Vector{Any}, xlim, ylim)
+function _apply_shared_axes!(plots::AbstractVector, xlim, ylim)
     for p in plots
         xlim !== nothing && plot!(p; xlims=xlim)
         ylim !== nothing && plot!(p; ylims=ylim)
