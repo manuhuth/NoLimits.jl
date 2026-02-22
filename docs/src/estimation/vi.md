@@ -175,6 +175,33 @@ uq = compute_uq(
 
 `mcmc_warmup` is ignored for VI because there is no chain adaptation phase.
 
+## Multistart with VI
+
+`VI` is fully compatible with `Multistart`. Use it when the ELBO landscape may be multimodal or when sensitivity to initialization is a concern:
+
+```julia
+using NoLimits
+using Random
+
+ms = NoLimits.Multistart(;
+    n_draws_requested = 10,
+    n_draws_used      = 3,
+    sampling          = :lhs,
+    rng               = Random.Xoshiro(42),
+)
+
+res_ms = fit_model(
+    ms, dm,
+    NoLimits.VI(; turing_kwargs=(max_iter=300, family=:meanfield, progress=false)),
+    rng=Random.Xoshiro(1),
+)
+
+posterior = get_variational_posterior(res_ms)
+objective = get_objective(res_ms)   # final ELBO of the best run
+```
+
+The screening phase evaluates the marginal log-likelihood at η = 0 for each candidate before running any VI optimization. The best run is selected by the final ELBO value (`get_objective`). See the [Multistart](multistart.md) page for full details on the two-phase workflow and logging.
+
 ## Practical Notes
 
 - Start with `family=:meanfield` for speed, then compare with `:fullrank` when posterior correlations are expected.

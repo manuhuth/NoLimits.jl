@@ -248,33 +248,66 @@ function _multistart_initials(dm::DataModel, ms::Multistart)
         @warn "n_draws_used > n_draws_requested; increasing requested draws to match." n_draws_used=n_used n_draws_requested=n_req
         n_req = n_used
     end
-    n_req = max(n_req, n_used - 1)
+    n_req = max(n_req, 1)   # always at least θ0_u itself
 
+    n_sampled = n_req - 1   # θ0_u occupies slot 1
     samples_by_param = Dict{Symbol, Vector{Any}}()
     for name in get_names(fe)
-        if haskey(dists, name)
-            dist = getfield(dists, name)
-            value = getproperty(θ0_u, name)
-            samples = _sample_param(name, value, dist, n_req, ms.sampling, ms.rng)
-            lb = getproperty(lower, name)
-            ub = getproperty(upper, name)
-            for s in samples
-                _check_bounds(name, s, lb, ub)
-            end
-            samples_by_param[name] = samples
+        haskey(dists, name) || continue
+        dist = getfield(dists, name)
+        value = getproperty(θ0_u, name)
+        samples = _sample_param(name, value, dist, n_sampled, ms.sampling, ms.rng)
+        lb = getproperty(lower, name)
+        ub = getproperty(upper, name)
+        for s in samples
+            _check_bounds(name, s, lb, ub)
         end
+        samples_by_param[name] = samples
     end
 
-    starts = Vector{ComponentArray}(undef, n_used)
-    starts[1] = θ0_u
-    for i in 2:n_used
+    # Materialise ALL n_req starts
+    all_starts = Vector{ComponentArray}(undef, n_req)
+    all_starts[1] = θ0_u
+    for i in 2:n_req
         θi = deepcopy(θ0_u)
         for (name, samples) in samples_by_param
             setproperty!(θi, name, samples[i - 1])
         end
-        starts[i] = θi
+        all_starts[i] = θi
     end
-    return starts
+    return all_starts
+end
+
+function _build_zero_eta(dm::DataModel)
+    cache = dm.re_group_info.laplace_cache
+    (cache === nothing || isempty(cache.re_names)) && return ComponentArray()
+    pairs = Pair{Symbol, Any}[]
+    for (ri, re) in enumerate(cache.re_names)
+        dim = cache.dims[ri]
+        is_scalar = cache.is_scalar[ri]
+        push!(pairs, re => (is_scalar || dim == 1) ? 0.0 : zeros(dim))
+    end
+    return ComponentArray(NamedTuple(pairs))
+end
+
+function _multistart_screen(dm::DataModel,
+                            candidates::Vector{ComponentArray},
+                            n_used::Int,
+                            ode_args::Tuple,
+                            ode_kwargs::NamedTuple,
+                            serialization::SciMLBase.EnsembleAlgorithm)
+    cache = build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs,
+                           serialization=serialization, force_saveat=true)
+    η0 = _build_zero_eta(dm)
+    scores = Vector{Float64}(undef, length(candidates))
+    for (i, θu) in enumerate(candidates)
+        ll = loglikelihood(dm, θu, η0; cache=cache, serialization=serialization)
+        scores[i] = isfinite(ll) ? -ll : Inf   # minimise negative LL
+    end
+    idxs = partialsortperm(scores, 1:min(n_used, length(candidates)))
+    # Return selected candidates and their LL values (sign-flipped back from scores)
+    selected_ll = [-scores[j] for j in idxs]
+    return candidates[idxs], selected_ll
 end
 
 function _multistart_score(res::FitResult)
@@ -353,7 +386,28 @@ function fit_model(ms::Multistart, dm::DataModel, method::FittingMethod, args...
         kw_nt = Base.structdiff(kw_nt, (theta_0_untransformed=nothing,))
     end
 
-    starts = _multistart_initials(dm, ms)
+    ode_args         = get(kw_nt, :ode_args,       ())
+    ode_kwargs_inner = get(kw_nt, :ode_kwargs,      NamedTuple())
+    serialization    = get(kw_nt, :serialization,   EnsembleSerial())
+
+    all_starts = _multistart_initials(dm, ms)
+    n_req  = length(all_starts)
+    n_used = min(ms.n_draws_used, n_req)
+    varied = collect(keys(_collect_param_dists(dm, ms)))
+    varied_str = isempty(varied) ? "none" : join(string.(varied), ", ")
+
+    if n_req > n_used
+        starts, screen_lls = _multistart_screen(dm, all_starts, n_used, ode_args, ode_kwargs_inner, serialization)
+        finite_lls = filter(isfinite, screen_lls)
+        if isempty(finite_lls)
+            @info "Multistart" candidates=n_req selected=n_used varying=varied_str screening_ll="all -Inf"
+        else
+            @info "Multistart" candidates=n_req selected=n_used varying=varied_str best_screening_ll=maximum(finite_lls) worst_screening_ll=minimum(finite_lls)
+        end
+    else
+        starts = all_starts
+        @info "Multistart" candidates=n_req selected=n_used varying=varied_str
+    end
     n_starts = length(starts)
     results = Vector{Union{FitResult, Nothing}}(undef, n_starts)
     errors = Vector{Any}(undef, n_starts)

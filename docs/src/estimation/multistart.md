@@ -2,7 +2,7 @@
 
 Nonlinear models frequently have multiple local optima, making the estimated parameters sensitive to initialization. The `Multistart` wrapper addresses this by running multiple fits from different initial parameter values and selecting the best result. This strategy is especially important for complex models where a single optimization run provides limited confidence that the global optimum has been found.
 
-`Multistart` operates as a method-agnostic wrapper around `fit_model`: it generates a set of candidate starting points, dispatches independent fits, and returns the run with the best objective value. Because each fit is independent, the individual runs can be executed in parallel.
+`Multistart` operates as a method-agnostic wrapper around `fit_model`: it samples many candidate starting points, **screens** them with a cheap log-likelihood evaluation to identify the most promising ones, then fully optimizes only the top candidates. Because each optimization is independent, the runs can be executed in parallel.
 
 The call pattern is:
 
@@ -20,13 +20,16 @@ where `ms` is a `NoLimits.Multistart(...)` object and `method` is any fitting me
 - `MAP`
 - `Laplace`
 - `LaplaceMAP`
+- `FOCEI`
+- `FOCEIMAP`
 - `MCEM`
 - `SAEM`
+- `VI` (see note below)
 - `MCMC` (supported, but usually not recommended as a primary restart strategy)
 
 ## Recommendation
 
-`Multistart` is most beneficial for optimization- and EM-based methods (`MLE`, `MAP`, `Laplace`, `LaplaceMAP`, `MCEM`, `SAEM`), where the choice of starting values strongly influences which local optimum is found.
+`Multistart` is most beneficial for optimization- and EM-based methods (`MLE`, `MAP`, `Laplace`, `LaplaceMAP`, `FOCEI`, `FOCEIMAP`, `MCEM`, `SAEM`, `VI`), where the choice of starting values strongly influences which local optimum is found.
 
 For `MCMC`, multistart is technically supported but generally not recommended as the primary strategy. In most Bayesian workflows, tuning sampler settings and chain diagnostics is more effective than varying initial values across restarts.
 
@@ -46,6 +49,43 @@ ms = NoLimits.Multistart(;
     rng=Random.default_rng(),
 )
 ```
+
+## Two-Phase Workflow
+
+`Multistart` uses a two-phase approach to avoid running full optimizations from all sampled candidates:
+
+**Phase 1 — Screening.** All `n_draws_requested` candidates are evaluated cheaply by computing the marginal log-likelihood at η = 0 (no random-effects perturbation) using a pre-compiled ODE and covariate cache. Candidates are ranked by this screening log-likelihood and the top `n_draws_used` are selected via a partial sort — no full optimization is performed during this phase.
+
+**Phase 2 — Optimization.** The selected `n_draws_used` candidates are passed to the wrapped fitting method as independent starting points. Each run produces a full `FitResult`. The run with the best final objective is returned as the best result.
+
+If `n_draws_requested == n_draws_used`, Phase 1 is skipped entirely — no screening cache is built and all candidates proceed directly to optimization.
+
+### Progress Logging
+
+At the start of each `fit_model` call, a summary is logged:
+
+```
+┌ Info: Multistart
+│   candidates = 20
+│   selected = 5
+│   varying = "a, σ"
+│   best_screening_ll = -12.4
+└   worst_screening_ll = -18.7
+```
+
+- `candidates` — total starting points generated (= `n_draws_requested`, after any automatic adjustment).
+- `selected` — candidates forwarded to full optimization (= `n_draws_used`).
+- `varying` — names of parameters whose values differ across starts (those with a prior or an entry in `dists`).
+- `best_screening_ll` / `worst_screening_ll` — log-likelihood range of the selected candidates at η = 0. Omitted when screening is skipped (`candidates == selected`) or when all candidates produce non-finite likelihoods.
+
+### Screening and Method Direction
+
+Screening always ranks candidates by the marginal log-likelihood (higher is better). This is the correct direction for every supported method:
+
+- **MLE / MAP / Laplace / FOCEI / MCEM / SAEM / VI** — all internally minimize the negative log-likelihood (or a penalized variant). Selecting candidates with the highest screening LL puts the optimizer in the most promising region.
+- **MCMC** — though MCMC does not optimize, starting from a high-likelihood region improves early mixing and reduces warm-up cost.
+
+No sign adjustment is made per-method; the screening criterion is uniform.
 
 ## How Starts Are Built
 
@@ -77,12 +117,16 @@ Two sampling strategies are available:
 
 ## Requested vs. Used Draws
 
-The `n_draws_requested` and `n_draws_used` parameters decouple the sampling and fitting stages:
+The `n_draws_requested` and `n_draws_used` parameters control the two phases:
 
-- `n_draws_requested` controls how many candidate starting points are sampled per parameter.
-- `n_draws_used` determines how many fits are actually executed (including the default start as the first run).
+| Parameter | Phase | Effect |
+|---|---|---|
+| `n_draws_requested` | Screening | Total candidates sampled. More candidates give better coverage but increase screening cost. |
+| `n_draws_used` | Optimization | Candidates forwarded to full optimization. Larger values improve coverage but increase runtime proportionally. |
 
-If `n_draws_used` exceeds `n_draws_requested`, the number of requested draws is automatically increased and a warning is emitted.
+If `n_draws_used` exceeds `n_draws_requested`, the number of requested draws is automatically increased to match and a warning is emitted.
+
+Setting `n_draws_requested == n_draws_used` disables screening: all candidates proceed directly to optimization without any pre-evaluation.
 
 ## Scoring and Best-Run Selection
 
@@ -95,10 +139,8 @@ After all fits complete, successful runs are ranked by the following scoring rul
 The run with the lowest score is selected as the best result:
 
 ```julia
-if @isdefined(res_ms) && res_ms !== nothing
-    best = get_multistart_best(res_ms)
-    best_idx = get_multistart_best_index(res_ms)
-end
+best = get_multistart_best(res_ms)
+best_idx = get_multistart_best_index(res_ms)
 ```
 
 If all runs fail, `Multistart` raises an error reporting the first recorded failure.
@@ -109,6 +151,8 @@ The `ms.serialization` field controls execution of the individual fits:
 
 - **`EnsembleSerial()`**: Fits run sequentially in a single thread.
 - **`EnsembleThreads()`**: Fits run in parallel across available threads.
+
+Note that screening (Phase 1) always runs serially regardless of `serialization`; only Phase 2 (the full optimizations) is parallelized.
 
 Random number generator behavior depends on how `rng` is supplied:
 
@@ -121,38 +165,34 @@ All fit keywords are forwarded to the wrapped method, with one exception:
 
 - **`theta_0_untransformed`** is ignored (with a warning), because `Multistart` manages starting points internally.
 
-All other keywords -- such as `constants`, `constants_re`, `serialization`, and `store_data_model` -- are passed through unchanged.
+All other keywords -- such as `constants`, `constants_re`, `ode_args`, `ode_kwargs`, `serialization`, and `store_data_model` -- are passed through unchanged.
 
 ## Multistart Result Accessors
 
 The `MultistartFitResult` provides detailed access to both successful and failed runs:
 
 ```julia
-if @isdefined(res_ms) && res_ms !== nothing
-    ok_runs = get_multistart_results(res_ms)
-    ok_starts = get_multistart_starts(res_ms)
+ok_runs    = get_multistart_results(res_ms)
+ok_starts  = get_multistart_starts(res_ms)
 
-    failed_runs = get_multistart_failed_results(res_ms)
-    failed_starts = get_multistart_failed_starts(res_ms)
-    failed_errors = get_multistart_errors(res_ms)
+failed_runs   = get_multistart_failed_results(res_ms)
+failed_starts = get_multistart_failed_starts(res_ms)
+failed_errors = get_multistart_errors(res_ms)
 
-    best_run = get_multistart_best(res_ms)
-    best_idx = get_multistart_best_index(res_ms)
-end
+best_run = get_multistart_best(res_ms)
+best_idx = get_multistart_best_index(res_ms)
 ```
 
 Standard fit accessors also work directly on a `MultistartFitResult`, dispatching to the best run:
 
 ```julia
-if @isdefined(res_ms) && res_ms !== nothing
-    theta_best = get_params(res_ms; scale=:untransformed)
-    obj_best = get_objective(res_ms)
-end
+theta_best = get_params(res_ms; scale=:untransformed)
+obj_best   = get_objective(res_ms)
 ```
 
-## Example: Fixed-Effects MLE
+## Example: Fixed-Effects MLE with Screening
 
-The following example demonstrates multistart optimization for a simple fixed-effects model using Latin Hypercube Sampling to generate initial values:
+The following example generates 20 candidates via LHS, screens them to the top 5 by log-likelihood, and runs 5 full optimizations:
 
 ```julia
 using NoLimits
@@ -175,24 +215,85 @@ model = @Model begin
 end
 
 df = DataFrame(
-    ID = [:A, :A, :B, :B],
-    t = [0.0, 1.0, 0.0, 1.0],
-    y = [0.1, 0.2, 0.0, -0.1],
+    ID    = [:A, :A, :B, :B],
+    t     = [0.0, 1.0, 0.0, 1.0],
+    y     = [0.1, 0.2, 0.0, -0.1],
 )
 
 dm = DataModel(model, df; primary_id=:ID, time_col=:t)
 
 ms = NoLimits.Multistart(;
-    dists=(; a=Normal(0.0, 1.0)),
-    n_draws_requested=6,
-    n_draws_used=4,
-    sampling=:lhs,
+    dists             = (; a=Normal(0.0, 1.0)),
+    n_draws_requested = 20,
+    n_draws_used      = 5,
+    sampling          = :lhs,
 )
 
 res_ms = fit_model(ms, dm, NoLimits.MLE(; optim_kwargs=(maxiters=80,)))
 
-best = get_multistart_best(res_ms)
+best      = get_multistart_best(res_ms)
 theta_best = get_params(res_ms; scale=:untransformed)
+```
+
+The logged output will look similar to:
+
+```
+┌ Info: Multistart
+│   candidates = 20
+│   selected = 5
+│   varying = "a"
+│   best_screening_ll = -2.1
+└   worst_screening_ll = -8.4
+```
+
+## Example: Variational Inference with Multistart
+
+`VI` benefits from multistart when the ELBO landscape is multimodal. The usage is identical to any other method:
+
+```julia
+using NoLimits
+using DataFrames
+using Distributions
+using Random
+
+model = @Model begin
+    @covariates begin
+        t = Covariate()
+    end
+
+    @fixedEffects begin
+        a     = RealNumber(0.0, prior=Normal(0.0, 1.0))
+        sigma = RealNumber(0.5, scale=:log, prior=LogNormal(0.0, 0.5))
+    end
+
+    @formulas begin
+        y ~ Normal(a, sigma)
+    end
+end
+
+df = DataFrame(
+    ID = [:A, :A, :B, :B],
+    t  = [0.0, 1.0, 0.0, 1.0],
+    y  = [0.1, 0.2, 0.0, -0.1],
+)
+
+dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+
+ms = NoLimits.Multistart(;
+    n_draws_requested = 10,
+    n_draws_used      = 3,
+    sampling          = :lhs,
+    rng               = Random.Xoshiro(42),
+)
+
+res_ms = fit_model(
+    ms, dm,
+    NoLimits.VI(; turing_kwargs=(max_iter=300, family=:meanfield, progress=false)),
+    rng=Random.Xoshiro(1),
+)
+
+posterior = get_variational_posterior(res_ms)
+objective = get_objective(res_ms)   # final ELBO of the best run
 ```
 
 ## Optional: MCMC with Multistart (Supported, Usually Not Recommended)
@@ -211,7 +312,7 @@ model = @Model begin
     end
 
     @fixedEffects begin
-        a = RealNumber(0.2, prior=Normal(0.0, 1.0))
+        a     = RealNumber(0.2, prior=Normal(0.0, 1.0))
         sigma = RealNumber(0.5, scale=:log, prior=LogNormal(0.0, 0.2))
     end
 
@@ -222,17 +323,16 @@ end
 
 df = DataFrame(
     ID = [:A, :A, :B, :B],
-    t = [0.0, 1.0, 0.0, 1.0],
-    y = [1.0, 1.1, 0.9, 1.0],
+    t  = [0.0, 1.0, 0.0, 1.0],
+    y  = [1.0, 1.1, 0.9, 1.0],
 )
 
 dm = DataModel(model, df; primary_id=:ID, time_col=:t)
 
-ms = NoLimits.Multistart(; n_draws_requested=4, n_draws_used=3)
+ms = NoLimits.Multistart(; n_draws_requested=6, n_draws_used=3)
 
 res_ms = fit_model(
-    ms,
-    dm,
+    ms, dm,
     NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=200, n_adapt=0, progress=false)),
 )
 
