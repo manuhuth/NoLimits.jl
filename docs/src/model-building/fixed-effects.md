@@ -31,10 +31,13 @@ NoLimits provides parameter types for scalars, vectors, structured matrices, and
 
 | Constructor | Purpose |
 |---|---|
-| `RealNumber(value; scale, lower, upper, prior, calculate_se)` | Scalar parameter (`:identity` or `:log` scale) |
-| `RealVector(value; scale, lower, upper, prior, calculate_se)` | Vector parameter with per-element scale |
+| `RealNumber(value; scale, lower, upper, prior, calculate_se)` | Scalar parameter (`:identity`, `:log`, or `:logit` scale) |
+| `RealVector(value; scale, lower, upper, prior, calculate_se)` | Vector parameter with per-element scale (`:identity`, `:log`, `:logit`, or mixed) |
 | `RealPSDMatrix(value; scale, prior, calculate_se)` | Symmetric positive semi-definite matrix (`:cholesky` or `:expm`) |
 | `RealDiagonalMatrix(value; scale, prior, calculate_se)` | Diagonal matrix (`:log` scale on diagonal entries) |
+| `ProbabilityVector(value; scale, prior, calculate_se)` | Probability simplex vector of length k≥2 (`:stickbreak` scale) |
+| `DiscreteTransitionMatrix(value; scale, prior, calculate_se)` | Square row-stochastic matrix n×n, n≥2 (`:stickbreakrows` scale) |
+| `ContinuousTransitionMatrix(value; scale, prior, calculate_se)` | Square rate matrix (Q-matrix) n×n, n≥2 (`:lograterows` scale) |
 | `NNParameters(chain; function_name, seed, prior, calculate_se)` | Lux neural network weights |
 | `SoftTreeParameters(input_dim, depth; function_name, n_output, seed, prior, calculate_se)` | Soft decision tree parameters |
 | `SplineParameters(knots; function_name, degree, prior, calculate_se)` | B-spline coefficients |
@@ -83,8 +86,14 @@ lp = logprior(fe, theta_u)
 The behaviour of each scale option is summarized below:
 
 - **`:log` scale** applies an elementwise log transform and is supported for `RealNumber`, `RealVector`, and `RealDiagonalMatrix`. For inherently positive quantities such as standard deviations, `:log` enforces positivity in transformed space; an explicit `lower` bound is therefore optional.
+- **`:logit` scale** applies the logit transform (`log(x/(1-x))`, clamped to `[-20, 20]`) and is supported for `RealNumber` and `RealVector`. Use this for parameters that must lie in `(0, 1)`, such as probabilities. The inverse is the sigmoid function. The initial value must be strictly between 0 and 1; the constructor errors otherwise. Bounds are enforced implicitly via clamping — no explicit `lower`/`upper` are needed.
 - **`:cholesky`** (for `RealPSDMatrix`) parameterizes the matrix via its Cholesky factor with log-transformed diagonal entries.
 - **`:expm`** (for `RealPSDMatrix`) parameterizes the matrix via matrix logarithm/exponential, storing only the upper-triangular elements.
+- **`:stickbreak`** (for `ProbabilityVector`) maps a k-probability simplex to k-1 unconstrained reals via the logistic stick-breaking transform. Each element νᵢ = pᵢ/(1-Σⱼ<ᵢ pⱼ) is passed through logit. The last probability is determined and not stored. Silently normalises the initial value if the sum is within 1e-6 of 1.
+- **`:stickbreakrows`** (for `DiscreteTransitionMatrix`) applies the stick-breaking transform independently to each row of an n×n row-stochastic matrix, yielding n*(n-1) unconstrained parameters.
+- **`:lograterows`** (for `ContinuousTransitionMatrix`) maps each off-diagonal entry of a rate matrix to its logarithm, yielding n*(n-1) unconstrained reals. The diagonal is always recomputed as minus the row sum and is never stored as a free parameter. Initial off-diagonal values must be non-negative.
+
+For `RealVector`, scales can be mixed per element by passing a `Vector{Symbol}`, e.g. `scale=[:logit, :log, :identity]`. Mixed vectors use an elementwise dispatch that applies each element's transform independently.
 
 ## Example: Learned Function Approximators
 
@@ -109,6 +118,77 @@ params = get_params(fe_learned)
 y_nn = model_funs.NN1([0.4, 0.6], params.z_nn.value)[1]
 y_st = model_funs.ST1([0.4, 0.6], params.z_st.value)[1]
 y_sp = model_funs.SP1(0.5, params.z_sp.value)
+```
+
+## Example: Constrained Stochastic Matrices
+
+Three dedicated parameter types handle the structural constraints that arise in Hidden Markov Models and other latent-variable models:
+
+| Type | Purpose | Transform | Free parameters |
+|---|---|---|---|
+| `ProbabilityVector(value)` | Probability simplex of length k, k≥2 | `:stickbreak` | k-1 |
+| `DiscreteTransitionMatrix(value)` | n×n row-stochastic matrix, n≥2 | `:stickbreakrows` | n*(n-1) |
+| `ContinuousTransitionMatrix(value)` | n×n rate matrix (Q-matrix), n≥2 | `:lograterows` | n*(n-1) |
+
+All three types are AD-compatible and can be used anywhere in a model formula where the corresponding matrix or vector is expected. The values they provide in formulas are plain Julia arrays (`Vector` or `Matrix`), enabling direct indexing and arithmetic.
+
+The first example uses `ProbabilityVector` for the initial state distribution and `DiscreteTransitionMatrix` for the row-stochastic transition matrix of a discrete-time two-state HMM:
+
+```julia
+using NoLimits
+using Distributions
+
+model_disc = @Model begin
+    @fixedEffects begin
+        pi0   = ProbabilityVector([0.6, 0.4])
+        P     = DiscreteTransitionMatrix([0.9 0.1; 0.2 0.8])
+        mu1   = RealNumber(0.0)
+        mu2   = RealNumber(2.0)
+        sigma = RealNumber(0.5, scale=:log)
+    end
+
+    @covariates begin
+        t = Covariate()
+    end
+
+    @formulas begin
+        y ~ DiscreteTimeDiscreteStatesHMM(
+            P,
+            (Normal(mu1, sigma), Normal(mu2, sigma)),
+            Categorical(pi0),
+        )
+    end
+end
+```
+
+For continuous-time transitions, `ContinuousTransitionMatrix` declares the full rate matrix. Off-diagonal entries must be non-negative; the diagonal is always derived as minus the row sum and never appears among the free parameters:
+
+```julia
+using NoLimits
+using Distributions
+
+model_cont = @Model begin
+    @fixedEffects begin
+        Q     = ContinuousTransitionMatrix([-0.2 0.2; 0.3 -0.3])
+        mu1   = RealNumber(0.0)
+        mu2   = RealNumber(2.0)
+        sigma = RealNumber(0.5, scale=:log)
+    end
+
+    @covariates begin
+        t       = Covariate()
+        delta_t = Covariate()
+    end
+
+    @formulas begin
+        y ~ ContinuousTimeDiscreteStatesHMM(
+            Q,
+            (Normal(mu1, sigma), Normal(mu2, sigma)),
+            Categorical([0.5, 0.5]),
+            delta_t,
+        )
+    end
+end
 ```
 
 ## Example: Normalizing Flows for Flexible Random-Effect Distributions

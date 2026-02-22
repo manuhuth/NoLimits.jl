@@ -274,6 +274,7 @@ end
     uq_mcem = compute_uq(res_mcem;
                          method=:wald,
                          re_approx=:laplace,
+                         pseudo_inverse=true,
                          n_draws=20,
                          rng=Random.Xoshiro(210))
     @test get_uq_source_method(uq_mcem) == :mcem
@@ -292,6 +293,7 @@ end
                          method=:wald,
                          re_approx=:focei,
                          re_approx_method=NoLimits.FOCEI(; info_mode=:custom, info_custom=NoLimits.focei_information_opg, multistart_n=0, multistart_k=0),
+                         pseudo_inverse=true,
                          n_draws=20,
                          rng=Random.Xoshiro(211))
     @test get_uq_source_method(uq_saem) == :saem

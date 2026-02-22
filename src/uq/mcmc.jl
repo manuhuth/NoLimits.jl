@@ -178,6 +178,7 @@ function _compute_uq_chain(res::FitResult;
         :chain,
         _method_symbol(method),
         active_names,
+        nothing,
         copy(est_n),
         copy(est_n),
         intervals_n,

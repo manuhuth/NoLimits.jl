@@ -37,10 +37,11 @@ Validation rules:
 Declares fixed parameters with bounds, transforms, and optional priors. Supported parameter blocks:
 - `RealNumber`, `RealVector`
 - `RealPSDMatrix`, `RealDiagonalMatrix`
+- `ProbabilityVector`, `DiscreteTransitionMatrix`
 - `NNParameters`, `SoftTreeParameters`, `SplineParameters`, `NPFParameter`
 
 Transform-aware optimization support:
-- Typical scales include identity, `:log`, matrix transforms such as Cholesky/expm paths.
+- Typical scales include `:identity`, `:log`, `:logit`, matrix transforms (`:cholesky`, `:expm`), and simplex transforms (`:stickbreak`, `:stickbreakrows`).
 
 Model functions from `NNParameters`, `SoftTreeParameters`, `SplineParameters` are registered in `model_funs` and callable in formulas/DE/preDE.
 

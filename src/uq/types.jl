@@ -32,7 +32,12 @@ Use the accessor functions to retrieve individual components:
 Fields:
 - `backend::Symbol`: UQ backend used (`:wald`, `:chain`, or `:profile`).
 - `source_method::Symbol`: estimation method of the source fit result.
-- `parameter_names::Vector{Symbol}`: names of the free fixed-effect parameters.
+- `parameter_names::Vector{Symbol}`: names on the transformed scale.
+- `parameter_names_natural::Union{Nothing, Vector{Symbol}}`: names on the natural scale,
+  or `nothing` if identical to `parameter_names`. For `ProbabilityVector` and
+  `DiscreteTransitionMatrix` parameters the Wald backend extends the natural scale with
+  the derived last probability / last-column entries, giving more names than the
+  transformed scale.
 - `estimates_transformed`, `estimates_natural`: point estimates on each scale.
 - `intervals_transformed`, `intervals_natural`: [`UQIntervals`](@ref) or `nothing`.
 - `vcov_transformed`, `vcov_natural`: variance-covariance matrices or `nothing`.
@@ -43,6 +48,7 @@ struct UQResult
     backend::Symbol
     source_method::Symbol
     parameter_names::Vector{Symbol}
+    parameter_names_natural::Union{Nothing, Vector{Symbol}}
     estimates_transformed::Vector{Float64}
     estimates_natural::Vector{Float64}
     intervals_transformed::Union{Nothing, UQIntervals}

@@ -343,7 +343,8 @@ function _formulas_build_formulas_expr(ir::FormulasIR,
                                        model_fun_names::Vector{Symbol},
                                        state_names::Vector{Symbol},
                                        signal_names::Vector{Symbol},
-                                       index_sym::Symbol)
+                                       index_sym::Symbol,
+                                       collect_fixed_names::Vector{Symbol} = Symbol[])
     det_exprs = copy(ir.det_exprs)
     obs_exprs = copy(ir.obs_exprs)
     all_exprs = vcat(det_exprs, obs_exprs)
@@ -402,11 +403,16 @@ function _formulas_build_formulas_expr(ir::FormulasIR,
     explicit_var = [s for s in bare_var if s in time_call_syms]
     implicit_var = [s for s in bare_var if !(s in time_call_syms)]
 
+    collect_fixed_set = Set(collect_fixed_names)
     binds = Expr[]
     push!(binds, :(t = getproperty(varying_covariates, $(QuoteNode(index_sym)))))
 
     for s in fixed_used
-        push!(binds, :( $(s) = getproperty(fixed_effects, $(QuoteNode(s))) ))
+        if s in collect_fixed_set
+            push!(binds, :( $(s) = collect(getproperty(fixed_effects, $(QuoteNode(s)))) ))
+        else
+            push!(binds, :( $(s) = getproperty(fixed_effects, $(QuoteNode(s))) ))
+        end
     end
     for s in re_used
         push!(binds, :( $(s) = getproperty(random_effects, $(QuoteNode(s))) ))
@@ -499,6 +505,7 @@ together with lists of required DE states and signals.
 """
 function get_formulas_builders(f::Formulas;
                                fixed_names::Vector{Symbol} = Symbol[],
+                               collect_fixed_names::Vector{Symbol} = Symbol[],
                                random_names::Vector{Symbol} = Symbol[],
                                prede_names::Vector{Symbol} = Symbol[],
                                const_cov_names::Vector{Symbol} = Symbol[],
@@ -514,7 +521,8 @@ function get_formulas_builders(f::Formulas;
         const_cov_names, varying_cov_names,
         helper_names, model_fun_names,
         state_names, signal_names,
-        index_sym
+        index_sym,
+        collect_fixed_names
     )
 
     form_all_rgf = RuntimeGeneratedFunction(@__MODULE__, @__MODULE__, form_all_expr)

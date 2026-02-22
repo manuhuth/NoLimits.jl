@@ -24,13 +24,6 @@ Return the symbol identifying the estimation method of the source fit result.
 get_uq_source_method(uq::UQResult) = uq.source_method
 
 """
-    get_uq_parameter_names(uq::UQResult) -> Vector{Symbol}
-
-Return the names of the free fixed-effect parameters covered by this result.
-"""
-get_uq_parameter_names(uq::UQResult) = copy(uq.parameter_names)
-
-"""
     get_uq_diagnostics(uq::UQResult) -> NamedTuple
 
 Return backend-specific diagnostic information from the UQ computation.
@@ -40,6 +33,27 @@ get_uq_diagnostics(uq::UQResult) = uq.diagnostics
 function _uq_component(names::Vector{Symbol}, vals::Vector{Float64})
     return ComponentArray(NamedTuple{Tuple(names)}(Tuple(vals)))
 end
+
+@inline function _uq_names_for_scale(uq::UQResult, scale::Symbol)
+    if scale == :natural && uq.parameter_names_natural !== nothing
+        return uq.parameter_names_natural
+    end
+    return uq.parameter_names
+end
+
+"""
+    get_uq_parameter_names(uq::UQResult; scale=:transformed) -> Vector{Symbol}
+
+Return the names of the free fixed-effect parameters covered by this result.
+
+# Keyword Arguments
+- `scale::Symbol = :transformed`: `:transformed` (default) or `:natural`. For the Wald
+  backend with `ProbabilityVector` or `DiscreteTransitionMatrix` parameters, the natural
+  scale includes the derived last probability / last-column entries and may have more
+  names than the transformed scale.
+"""
+get_uq_parameter_names(uq::UQResult; scale::Symbol=:transformed) =
+    copy(_uq_names_for_scale(uq, scale))
 
 """
     get_uq_estimates(uq::UQResult; scale=:natural, as_component=true)
@@ -60,7 +74,8 @@ function get_uq_estimates(uq::UQResult; scale::Symbol=:natural, as_component::Bo
     else
         error("scale must be :natural or :transformed.")
     end
-    return as_component ? _uq_component(uq.parameter_names, vals) : copy(vals)
+    names = _uq_names_for_scale(uq, scale)
+    return as_component ? _uq_component(names, vals) : copy(vals)
 end
 
 """
@@ -84,10 +99,11 @@ function get_uq_intervals(uq::UQResult; scale::Symbol=:natural, as_component::Bo
         error("scale must be :natural or :transformed.")
     end
     ints === nothing && return nothing
+    names = _uq_names_for_scale(uq, scale)
     if as_component
         return (level=ints.level,
-                lower=_uq_component(uq.parameter_names, ints.lower),
-                upper=_uq_component(uq.parameter_names, ints.upper))
+                lower=_uq_component(names, ints.lower),
+                upper=_uq_component(names, ints.upper))
     end
     return (level=ints.level, lower=copy(ints.lower), upper=copy(ints.upper))
 end

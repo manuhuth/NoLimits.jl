@@ -4,8 +4,8 @@ using Distributions
 using KernelDensity
 using Plots
 
-function _uq_param_indices(uq::UQResult, parameters)
-    names = get_uq_parameter_names(uq)
+function _uq_param_indices(uq::UQResult, parameters; scale::Symbol=:transformed)
+    names = get_uq_parameter_names(uq; scale=scale)
     if parameters === nothing
         return collect(eachindex(names))
     end
@@ -67,6 +67,7 @@ end
         k = coord_transforms[j]
         k == :identity && return :normal
         k == :log && return :lognormal
+        k == :logit && return :logitnormal
     end
     return :none
 end
@@ -103,6 +104,17 @@ function _wald_density_xy(kind::Symbol, μ::Float64, v::Float64; npts::Int=300)
         if !isfinite(lo) || !isfinite(hi) || hi <= lo
             lo = max(0.0, exp(μ - 4σ))
             hi = exp(μ + 4σ)
+        end
+        x = collect(range(lo, hi; length=npts))
+        y = pdf.(dist, x)
+        return (x, y)
+    elseif kind == :logitnormal
+        dist = LogitNormal(μ, σ)
+        lo = quantile(dist, 0.001)
+        hi = quantile(dist, 0.999)
+        if !isfinite(lo) || !isfinite(hi) || hi <= lo
+            lo = max(0.0, logit_inverse(μ - 4σ))
+            hi = min(1.0, logit_inverse(μ + 4σ))
         end
         x = collect(range(lo, hi; length=npts))
         y = pdf.(dist, x)
@@ -298,8 +310,8 @@ function plot_uq_distributions(uq::UQResult;
 
     est = get_uq_estimates(uq; scale=scale, as_component=false)
     ints = get_uq_intervals(uq; scale=scale, as_component=false)
-    names = get_uq_parameter_names(uq)
-    idx = _uq_param_indices(uq, parameters)
+    names = get_uq_parameter_names(uq; scale=scale)
+    idx = _uq_param_indices(uq, parameters; scale=scale)
     pidx = length(idx)
     pidx >= 1 || error("No parameters selected for UQ plotting.")
     closed_form_kinds = [plot_type == :density ? _wald_closed_form_kind(backend, scale, j, vcov_t, coord_transforms) : :none for j in idx]
@@ -347,7 +359,7 @@ function plot_uq_distributions(uq::UQResult;
                        label=show_legend ? "Histogram" : "")
         else
             kind = closed_form_kinds[k]
-            if kind == :normal || kind == :lognormal
+            if kind == :normal || kind == :lognormal || kind == :logitnormal
                 xy = _wald_density_xy(kind, est_t[j], vcov_t[j, j])
                 if show_interval && ints !== nothing && xy !== nothing
                     lo = ints.lower[j]

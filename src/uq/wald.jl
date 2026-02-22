@@ -179,6 +179,14 @@ function _compute_uq_wald_no_re(res::FitResult;
     intervals_n = _intervals_from_draws(draws_n, level)
     Vn = _cov_from_draws(draws_n)
 
+    ext = _extend_natural_stickbreak(fe, free_names, active_names, active_kinds,
+                                     est_n, draws_n, intervals_n)
+    names_n    = ext !== nothing ? ext[1] : nothing
+    est_n_use  = ext !== nothing ? ext[2] : est_n
+    draws_n_use = ext !== nothing ? ext[3] : draws_n
+    intervals_n_use = ext !== nothing ? ext[4] : intervals_n
+    Vn_use = draws_n_use !== nothing ? _cov_from_draws(draws_n_use) : Vn
+
     diag = merge((;
         hessian_backend=backend_used,
         hessian_reduced=true,
@@ -194,14 +202,15 @@ function _compute_uq_wald_no_re(res::FitResult;
         :wald,
         _method_symbol(method),
         active_names,
+        names_n,
         est_t,
-        est_n,
+        est_n_use,
         intervals_t,
-        intervals_n,
+        intervals_n_use,
         Vt,
-        Vn,
+        Vn_use,
         draws_t,
-        draws_n,
+        draws_n_use,
         diag
     )
 end
@@ -399,6 +408,14 @@ function _compute_uq_wald_re(res::FitResult;
     intervals_n = _intervals_from_draws(draws_n, level)
     Vn = _cov_from_draws(draws_n)
 
+    ext = _extend_natural_stickbreak(fe, free_names, active_names, active_kinds,
+                                     est_n, draws_n, intervals_n)
+    names_n    = ext !== nothing ? ext[1] : nothing
+    est_n_use  = ext !== nothing ? ext[2] : est_n
+    draws_n_use = ext !== nothing ? ext[3] : draws_n
+    intervals_n_use = ext !== nothing ? ext[4] : intervals_n
+    Vn_use = draws_n_use !== nothing ? _cov_from_draws(draws_n_use) : Vn
+
     diag = if fallback_tracker === nothing
         merge((;
             hessian_backend=backend_used,
@@ -433,14 +450,15 @@ function _compute_uq_wald_re(res::FitResult;
         :wald,
         _method_symbol(source_method),
         active_names,
+        names_n,
         est_t,
-        est_n,
+        est_n_use,
         intervals_t,
-        intervals_n,
+        intervals_n_use,
         Vt,
-        Vn,
+        Vn_use,
         draws_t,
-        draws_n,
+        draws_n_use,
         diag
     )
 end

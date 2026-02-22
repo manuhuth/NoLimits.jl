@@ -82,9 +82,9 @@ function _flat_transform_kinds_for_free(fe::FixedEffects, free_names::Vector{Sym
     for name in free_names
         spec = spec_map[name]
         v = getproperty(θt, name)
-        if spec.kind == :log && spec.mask !== nothing && !(v isa Number)
+        if spec.kind == :elementwise
             for j in eachindex(spec.mask)
-                push!(out, spec.mask[j] ? :log : :identity)
+                push!(out, spec.mask[j])
             end
         else
             n = v isa Number ? 1 : length(vec(v))
@@ -102,6 +102,30 @@ end
         out = Float64[]
         for j in 1:n
             for i in 1:j
+                push!(out, Float64(value[i, j]))
+            end
+        end
+        return out
+    elseif natural && spec.kind == :stickbreak && value isa AbstractVector
+        # Drop last (determined) probability; return first k-1 components.
+        return Float64.(value[1:end-1])
+    elseif natural && spec.kind == :stickbreakrows && value isa AbstractMatrix
+        # Drop last column from each row; return n*(n-1) components.
+        n = size(value, 1)
+        out = Float64[]
+        for i in 1:n
+            for j in 1:n-1
+                push!(out, Float64(value[i, j]))
+            end
+        end
+        return out
+    elseif natural && spec.kind == :lograterows && value isa AbstractMatrix
+        # Return off-diagonal entries in row-major order (same count as transformed).
+        n = size(value, 1)
+        out = Float64[]
+        for i in 1:n
+            for j in 1:n
+                i == j && continue
                 push!(out, Float64(value[i, j]))
             end
         end
@@ -131,6 +155,107 @@ function _coords_on_transformed_layout(fe::FixedEffects,
         append!(out, _coords_for_param(getproperty(θ, name), spec_map[name]; natural=natural))
     end
     return out
+end
+
+# Returns (extended_names_n, extended_est_n, extended_draws_n, extended_intervals_n)
+# or nothing if no stickbreak/stickbreakrows parameters are active.
+# Appends derived last-probability entries for ProbabilityVector and
+# derived last-column entries for DiscreteTransitionMatrix.
+function _extend_natural_stickbreak(
+    fe::FixedEffects,
+    free_names::Vector{Symbol},
+    active_names::Vector{Symbol},
+    active_kinds::Vector{Symbol},
+    est_n::Vector{Float64},
+    draws_n::Union{Nothing, Matrix{Float64}},
+    intervals_n::Union{Nothing, UQIntervals}
+)
+    has_sb = any(k -> k == :stickbreak || k == :stickbreakrows, active_kinds)
+    has_sb || return nothing
+
+    all_fe_names = get_names(fe)
+    all_specs = get_transforms(fe).forward.specs
+    spec_map = Dict{Symbol, TransformSpec}(all_fe_names[i] => all_specs[i] for i in eachindex(all_fe_names))
+    params_nt = get_params(fe)
+    θt = get_θ0_transformed(fe)
+
+    # Build parameter -> contiguous range in active array
+    param_active_ranges = Dict{Symbol, UnitRange{Int}}()
+    active_pos = 0
+    for name in free_names
+        p = getfield(params_nt, name)
+        spec = spec_map[name]
+        v = getproperty(θt, name)
+        n_t = v isa Number ? 1 : length(vec(v))
+        if p.calculate_se
+            param_active_ranges[name] = (active_pos + 1):(active_pos + n_t)
+            active_pos += n_t
+        end
+    end
+
+    level = intervals_n !== nothing ? intervals_n.level : 0.95
+    α = 1.0 - level
+
+    derived_names  = Symbol[]
+    derived_est    = Float64[]
+    derived_lower  = Float64[]
+    derived_upper  = Float64[]
+    draw_cols      = Vector{Float64}[]
+
+    for name in free_names
+        p = getfield(params_nt, name)
+        !p.calculate_se && continue
+        spec = spec_map[name]
+        rng  = param_active_ranges[name]
+
+        if spec.kind == :stickbreak
+            k = spec.size[1]
+            push!(derived_names, Symbol(name, "_", k))
+            push!(derived_est,   1.0 - sum(est_n[rng]))
+            if draws_n !== nothing
+                col = 1.0 .- vec(sum(@view(draws_n[:, rng]); dims=2))
+                push!(draw_cols,    col)
+                push!(derived_lower, quantile(col, α / 2))
+                push!(derived_upper, quantile(col, 1 - α / 2))
+            end
+
+        elseif spec.kind == :stickbreakrows
+            n    = spec.size[1]
+            base = n * (n - 1)
+            for i in 1:n
+                row_rng = (rng.start + (i - 1) * (n - 1)):(rng.start + i * (n - 1) - 1)
+                push!(derived_names, Symbol(name, "_", base + i))
+                push!(derived_est,   1.0 - sum(est_n[row_rng]))
+                if draws_n !== nothing
+                    col = 1.0 .- vec(sum(@view(draws_n[:, row_rng]); dims=2))
+                    push!(draw_cols,    col)
+                    push!(derived_lower, quantile(col, α / 2))
+                    push!(derived_upper, quantile(col, 1 - α / 2))
+                end
+            end
+        end
+    end
+
+    isempty(derived_names) && return nothing
+
+    ext_names      = vcat(active_names, derived_names)
+    ext_est_n      = vcat(est_n, derived_est)
+
+    ext_draws_n = if draws_n !== nothing && !isempty(draw_cols)
+        hcat(draws_n, reduce(hcat, draw_cols))
+    else
+        nothing
+    end
+
+    ext_intervals_n = if intervals_n !== nothing
+        UQIntervals(level,
+                    vcat(intervals_n.lower, derived_lower),
+                    vcat(intervals_n.upper, derived_upper))
+    else
+        nothing
+    end
+
+    return (ext_names, ext_est_n, ext_draws_n, ext_intervals_n)
 end
 
 function _build_ll_cache_uq(dm::DataModel,

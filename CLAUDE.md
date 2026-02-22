@@ -76,12 +76,14 @@ docs/                            # Documentation
 Always use `ComponentArray(values, getaxes(existing_array))` - do not splat axes and do not call `axes` directly.
 
 ### Parameter Blocks (src/model/Parameters.jl)
-Types: `RealNumber`, `RealVector`, `RealPSDMatrix`, `RealDiagonalMatrix`, `NNParameters`, `NPFParameter`, `SoftTreeParameters`, `SplineParameters`
+Types: `RealNumber`, `RealVector`, `RealPSDMatrix`, `RealDiagonalMatrix`, `ProbabilityVector`, `DiscreteTransitionMatrix`, `NNParameters`, `NPFParameter`, `SoftTreeParameters`, `SplineParameters`
 
 Scales:
-- `REAL_SCALES = (:identity, :log)`
+- `REAL_SCALES = (:identity, :log, :logit)`
 - `PSD_SCALES = (:cholesky, :expm)`
 - `DIAGONAL_SCALES = (:log,)`
+- `PROBABILITY_SCALES = (:stickbreak,)`
+- `TRANSITION_SCALES = (:stickbreakrows,)`
 
 ### Struct Organization
 - Nested structures with ≤5 fields each
@@ -132,10 +134,12 @@ All parameter blocks inherit from `AbstractParameterBlock` and have common field
 
 | Type | Value | Scale Options | Extra Fields |
 |------|-------|---------------|--------------|
-| `RealNumber` | `T<:Real` | `:identity`, `:log` | `lower`, `upper` |
-| `RealVector` | `Vector{T}` | per-element `:identity`/`:log` | `lower`, `upper` |
+| `RealNumber` | `T<:Real` | `:identity`, `:log`, `:logit` | `lower`, `upper` |
+| `RealVector` | `Vector{T}` | per-element `:identity`/`:log`/`:logit` (mixed ok) | `lower`, `upper` |
 | `RealPSDMatrix` | `Matrix{T}` (symmetric PSD) | `:cholesky`, `:expm` | - |
 | `RealDiagonalMatrix` | `Vector{T}` (diagonal entries) | `:log` | - |
+| `ProbabilityVector` | `Vector{T}` (k-simplex, k≥2) | `:stickbreak` | - |
+| `DiscreteTransitionMatrix` | `Matrix{T}` (n×n row-stochastic, n≥2) | `:stickbreakrows` | - |
 | `NNParameters` | flattened Lux chain params | - | `chain`, `function_name`, `reconstructor` |
 | `SoftTreeParameters` | flattened tree params | - | `input_dim`, `depth`, `n_output`, `function_name`, `reconstructor` |
 | `SplineParameters` | B-spline coefficients | - | `knots`, `degree`, `function_name` |

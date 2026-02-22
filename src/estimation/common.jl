@@ -919,18 +919,21 @@ function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_
                     hs[j] = true
                 end
                 init_p = hi[j]
+                # Use check_args=false so that degenerate posteriors (NaN/Inf from
+                # zero-probability observations at extreme parameter values) do not
+                # throw a DomainError.  The isfinite guard below catches NaN logpdf.
                 dist_use = if dist isa ContinuousTimeDiscreteStatesHMM
                     ContinuousTimeDiscreteStatesHMM(dist.transition_matrix, dist.emission_dists,
-                                                    Distributions.Categorical(init_p), dist.Δt)
+                                                    Distributions.Categorical(init_p; check_args=false), dist.Δt)
                 elseif dist isa MVContinuousTimeDiscreteStatesHMM
                     MVContinuousTimeDiscreteStatesHMM(dist.transition_matrix, dist.emission_dists,
-                                                      Distributions.Categorical(init_p), dist.Δt)
+                                                      Distributions.Categorical(init_p; check_args=false), dist.Δt)
                 elseif dist isa MVDiscreteTimeDiscreteStatesHMM
                     MVDiscreteTimeDiscreteStatesHMM(dist.transition_matrix, dist.emission_dists,
-                                                    Distributions.Categorical(init_p))
+                                                    Distributions.Categorical(init_p; check_args=false))
                 else
                     DiscreteTimeDiscreteStatesHMM(dist.transition_matrix, dist.emission_dists,
-                                                  Distributions.Categorical(init_p))
+                                                  Distributions.Categorical(init_p; check_args=false))
                 end
                 v = logpdf(dist_use, y)
                 if !isfinite(v)

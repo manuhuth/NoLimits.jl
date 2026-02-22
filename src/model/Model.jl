@@ -494,6 +494,7 @@ macro Model(block)
     initial_builder_var = gensym(:initial_builder)
     de_bundle_var = gensym(:de_bundle)
     fixed_names_var = gensym(:fixed_names)
+    collect_fixed_names_var = gensym(:collect_fixed_names)
     random_names_var = gensym(:random_names)
     prede_names_var = gensym(:prede_names)
     const_cov_names_var = gensym(:const_cov_names)
@@ -534,6 +535,7 @@ macro Model(block)
         _validate_de_covariate_usage($(de_var), $(covariates_var))
 
         local $(fixed_names_var) = get_names($(fixed_var))
+        local $(collect_fixed_names_var) = get_collect_names($(fixed_var))
         local $(random_names_var) = get_re_names($(random_var))
         local $(prede_names_var) = $(prede_var) === nothing ? Symbol[] : get_prede_names($(prede_var))
         local $(const_cov_names_var) = $(covariates_var).constants
@@ -546,6 +548,7 @@ macro Model(block)
         local ($(form_all_var), $(form_obs_var), $(req_states_var), $(req_signals_var)) = get_formulas_builders(
             $(formulas_var);
             fixed_names = $(fixed_names_var),
+            collect_fixed_names = $(collect_fixed_names_var),
             random_names = $(random_names_var),
             prede_names = $(prede_names_var),
             const_cov_names = $(const_cov_names_var),

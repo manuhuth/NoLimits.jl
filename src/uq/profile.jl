@@ -363,6 +363,7 @@ function _compute_uq_profile(res::FitResult;
         :profile,
         _method_symbol(method),
         active_names,
+        nothing,
         est_t,
         est_n,
         intervals_t,

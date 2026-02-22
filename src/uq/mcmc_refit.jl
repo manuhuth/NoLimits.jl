@@ -107,6 +107,7 @@ function _compute_uq_mcmc_refit(res::FitResult;
         :mcmc_refit,
         _method_symbol(src_method),
         uq_chain.parameter_names,
+        uq_chain.parameter_names_natural,
         uq_chain.estimates_transformed,
         uq_chain.estimates_natural,
         uq_chain.intervals_transformed,

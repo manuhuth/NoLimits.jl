@@ -27,6 +27,7 @@ export get_se_mask
 export get_se_names
 export get_model_funs
 export get_params
+export get_collect_names
 
 struct FixedEffectsMeta
     names::Vector{Symbol}
@@ -204,6 +205,30 @@ get_model_funs(fe::FixedEffects) = fe.extras.model_funs
 Return the raw parameter block structs as a `NamedTuple` keyed by parameter name.
 """
 get_params(fe::FixedEffects) = fe.extras.params
+
+"""
+    get_collect_names(fe::FixedEffects) -> Vector{Symbol}
+
+Return the names of fixed-effect parameters whose untransformed values must be
+materialised (via `collect`) before use in formula functions.
+
+`ComponentArray` returns `SubArray` views for multi-element parameters. For
+`ProbabilityVector` and `DiscreteTransitionMatrix` parameters the probability
+values must be a concrete `Vector` or `Matrix` (not a view) so that
+`Distributions.Categorical(p)` and similar constructors work correctly under
+both `Float64` and `ForwardDiff.Dual` element types.
+"""
+function get_collect_names(fe::FixedEffects)
+    params = get_params(fe)
+    names = Symbol[]
+    for name in get_names(fe)
+        p = getfield(params, name)
+        if p isa ProbabilityVector || p isa DiscreteTransitionMatrix || p isa ContinuousTransitionMatrix
+            push!(names, name)
+        end
+    end
+    return names
+end
 
 """
     logprior(fe::FixedEffects, θ_untransformed::ComponentArray) -> Real
@@ -432,6 +457,18 @@ end
 function _param_value(p::SplineParameters)
     return p.value
 end
+
+function _param_value(p::ProbabilityVector)
+    return p.value
+end
+
+function _param_value(p::DiscreteTransitionMatrix)
+    return p.value
+end
+
+function _param_value(p::ContinuousTransitionMatrix)
+    return p.value
+end
 function _param_lower(p::RealNumber)
     return p.lower
 end
@@ -462,6 +499,25 @@ end
 
 function _param_lower(p::SplineParameters)
     return p.lower
+end
+
+function _param_lower(p::ProbabilityVector)
+    return fill(zero(eltype(p.value)), length(p.value))
+end
+
+function _param_lower(p::DiscreteTransitionMatrix)
+    return fill(zero(eltype(p.value)), size(p.value))
+end
+
+function _param_lower(p::ContinuousTransitionMatrix)
+    # Off-diagonal entries must be ≥ 0; diagonal has no lower bound (it's derived).
+    n = size(p.value, 1)
+    T = eltype(p.value)
+    lb = fill(zero(T), n, n)
+    for i in 1:n
+        lb[i, i] = T(-Inf)
+    end
+    return lb
 end
 function _param_upper(p::RealNumber)
     return p.upper
@@ -494,16 +550,35 @@ end
 function _param_upper(p::SplineParameters)
     return p.upper
 end
+
+function _param_upper(p::ProbabilityVector)
+    return fill(one(eltype(p.value)), length(p.value))
+end
+
+function _param_upper(p::DiscreteTransitionMatrix)
+    return fill(one(eltype(p.value)), size(p.value))
+end
+
+function _param_upper(p::ContinuousTransitionMatrix)
+    return fill(Inf, size(p.value))
+end
 function _param_spec(name::Symbol, p::RealNumber)
     return TransformSpec(name, p.scale, (1, 1), nothing)
 end
 
 function _param_spec(name::Symbol, p::RealVector)
-    mask = p.scale .== :log
-    if any(mask)
-        return TransformSpec(name, :log, (length(p.value), 1), collect(mask))
+    scales = p.scale  # Vector{Symbol}
+    n = length(p.value)
+    first_scale = scales[1]
+    if all(s -> s === first_scale, scales)
+        if first_scale === :identity
+            return TransformSpec(name, :identity, (n, 1), nothing)
+        else
+            return TransformSpec(name, first_scale, (n, 1), nothing)
+        end
+    else
+        return TransformSpec(name, :elementwise, (n, 1), collect(scales))
     end
-    return TransformSpec(name, :identity, (length(p.value), 1), nothing)
 end
 
 function _param_spec(name::Symbol, p::RealPSDMatrix)
@@ -528,6 +603,21 @@ end
 
 function _param_spec(name::Symbol, p::SplineParameters)
     return TransformSpec(name, :identity, (length(p.value), 1), nothing)
+end
+
+function _param_spec(name::Symbol, p::ProbabilityVector)
+    k = length(p.value)
+    return TransformSpec(name, :stickbreak, (k, 1), nothing)
+end
+
+function _param_spec(name::Symbol, p::DiscreteTransitionMatrix)
+    n = size(p.value, 1)
+    return TransformSpec(name, :stickbreakrows, (n, n), nothing)
+end
+
+function _param_spec(name::Symbol, p::ContinuousTransitionMatrix)
+    n = size(p.value, 1)
+    return TransformSpec(name, :lograterows, (n, n), nothing)
 end
 function _collect_model_fun!(p::NNParameters, model_fun_pairs)
     st = Lux.initialstates(Xoshiro(0), p.chain)
@@ -668,21 +758,8 @@ function _transform_bounds(bounds::Tuple{ComponentArray, ComponentArray}, names:
         u = upper[name]
         if spec.kind == :log
             if l isa AbstractArray
-                l2 = copy(l)
-                u2 = copy(u)
-                if spec.mask === nothing
-                    for j in eachindex(l2)
-                        l2[j] = l2[j] == -Inf ? log(EPSILON) : log(l2[j])
-                        u2[j] = u2[j] == Inf ? Inf : log(u2[j])
-                    end
-                else
-                    for j in eachindex(spec.mask)
-                        if spec.mask[j]
-                            l2[j] = l2[j] == -Inf ? log(EPSILON) : log(l2[j])
-                            u2[j] = u2[j] == Inf ? Inf : log(u2[j])
-                        end
-                    end
-                end
+                l2 = map(x -> x == -Inf ? log(EPSILON) : log(x), l)
+                u2 = map(x -> x == Inf ? Inf : log(x), u)
                 push!(lower_pairs, name => l2)
                 push!(upper_pairs, name => u2)
             else
@@ -691,6 +768,30 @@ function _transform_bounds(bounds::Tuple{ComponentArray, ComponentArray}, names:
                 push!(lower_pairs, name => l2)
                 push!(upper_pairs, name => u2)
             end
+        elseif spec.kind == :logit
+            if l isa AbstractArray
+                n = length(l)
+                push!(lower_pairs, name => fill(-Inf, n))
+                push!(upper_pairs, name => fill(Inf, n))
+            else
+                push!(lower_pairs, name => -Inf)
+                push!(upper_pairs, name => Inf)
+            end
+        elseif spec.kind == :elementwise
+            mask = spec.mask
+            l2 = copy(collect(l))
+            u2 = copy(collect(u))
+            for j in eachindex(mask)
+                if mask[j] === :log
+                    l2[j] = l2[j] == -Inf ? log(EPSILON) : log(l2[j])
+                    u2[j] = u2[j] == Inf ? Inf : log(u2[j])
+                elseif mask[j] === :logit
+                    l2[j] = -Inf
+                    u2[j] = Inf
+                end
+            end
+            push!(lower_pairs, name => l2)
+            push!(upper_pairs, name => u2)
         elseif spec.kind == :cholesky
             n1, n2 = spec.size
             push!(lower_pairs, name => fill(-Inf, n1 * n2))
@@ -700,6 +801,18 @@ function _transform_bounds(bounds::Tuple{ComponentArray, ComponentArray}, names:
             n = n1 * (n1 + 1) ÷ 2
             push!(lower_pairs, name => fill(-Inf, n))
             push!(upper_pairs, name => fill(Inf, n))
+        elseif spec.kind == :stickbreak
+            k = spec.size[1]
+            push!(lower_pairs, name => fill(-Inf, k - 1))
+            push!(upper_pairs, name => fill(Inf, k - 1))
+        elseif spec.kind == :stickbreakrows
+            n = spec.size[1]
+            push!(lower_pairs, name => fill(-Inf, n * (n - 1)))
+            push!(upper_pairs, name => fill(Inf, n * (n - 1)))
+        elseif spec.kind == :lograterows
+            n = spec.size[1]
+            push!(lower_pairs, name => fill(-Inf, n * (n - 1)))
+            push!(upper_pairs, name => fill(Inf, n * (n - 1)))
         else
             push!(lower_pairs, name => l)
             push!(upper_pairs, name => u)

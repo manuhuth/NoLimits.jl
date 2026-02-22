@@ -10,6 +10,7 @@ using FunctionChains
 
 export AbstractParameterBlock
 export RealNumber, RealVector, RealPSDMatrix, RealDiagonalMatrix, NNParameters, NPFParameter, SoftTreeParameters, SplineParameters
+export ProbabilityVector, DiscreteTransitionMatrix, ContinuousTransitionMatrix
 export Priorless
 
 """
@@ -68,6 +69,9 @@ function RealNumber(value::Real; name::Symbol = :unnamed, scale::Symbol = :ident
     if scale == :log
         lower >= 0 || error("Invalid lower bound for parameter $(name). Expected lower > 0 for scale :log; got lower=$(lower).")
     end
+    if scale == :logit
+        (value > 0 && value < 1) || error("Invalid initial value for parameter $(name). Expected value ∈ (0, 1) for scale :logit; got value=$(value).")
+    end
     T = value isa AbstractFloat ? typeof(value) : Float64
     v = T(value)
     l = T(lower)
@@ -117,6 +121,11 @@ function RealVector(value::AbstractVector{<:Real};
     s = collect(scale)
     if any(s .== :log)
         lower = map((l, sc) -> (sc == :log && l == -Inf) ? EPSILON : l, lower, s)
+    end
+    for (idx, (sc, vi)) in enumerate(zip(s, value))
+        if sc == :logit && !(vi > 0 && vi < 1)
+            error("Invalid initial value for parameter $(name) at index $(idx). Expected value ∈ (0, 1) for scale :logit; got value=$(vi).")
+        end
     end
 
     T = eltype(value) <: AbstractFloat ? eltype(value) : Float64
@@ -426,6 +435,153 @@ function SoftTreeParameters(input_dim::Integer, depth::Integer; name::Symbol = :
     u = fill(T(Inf), length(v))
     _check_nn_prior(prior, name, length(v))
     return SoftTreeParameters{T, typeof(v), typeof(recon)}(name, function_name, Int(input_dim), Int(depth), Int(n_output), Int(seed), v, recon, l, u, prior, calculate_se)
+end
+
+"""
+    ProbabilityVector(value; name, scale, prior, calculate_se) -> ProbabilityVector
+
+A probability vector parameter block: a vector of `k ≥ 2` non-negative entries
+summing to 1. Optimised via the logistic stick-breaking reparameterisation, which
+maps the simplex to `k-1` unconstrained reals.
+
+# Arguments
+- `value::AbstractVector{<:Real}`: initial probability vector. All entries must be
+  non-negative and sum to 1 (within tolerance); if the sum differs by less than
+  `atol=1e-6`, the vector is silently normalised.
+
+# Keyword Arguments
+- `name::Symbol = :unnamed`: parameter name (injected automatically by `@fixedEffects`).
+- `scale::Symbol = :stickbreak`: reparameterisation. Must be in `PROBABILITY_SCALES`.
+- `prior = Priorless()`: a `Distributions.Distribution` or `Priorless()`.
+- `calculate_se::Bool = false`: whether to include this parameter in standard-error calculations.
+"""
+@with_kw struct ProbabilityVector{T<:Real, VT<:AbstractVector{T}} <: AbstractParameterBlock
+    name::Symbol = :unnamed
+    value::VT
+    scale::Symbol = :stickbreak
+    prior = Priorless()
+    calculate_se::Bool = false
+end
+
+function ProbabilityVector(value::AbstractVector{<:Real};
+    name::Symbol = :unnamed,
+    scale::Symbol = :stickbreak,
+    prior = Priorless(),
+    calculate_se::Bool = false)
+    _check_prior(prior, name)
+    scale in PROBABILITY_SCALES || error("Invalid scale for parameter $(name). Expected one of $(PROBABILITY_SCALES); got $(scale).")
+    length(value) >= 2 || error("ProbabilityVector for parameter $(name) requires at least 2 elements; got $(length(value)).")
+    T = eltype(value) <: AbstractFloat ? eltype(value) : Float64
+    v = T.(value)
+    all(v .>= 0) || error("All entries of ProbabilityVector for parameter $(name) must be non-negative.")
+    s = sum(v)
+    atol = T(1e-6)
+    abs(s - one(T)) <= atol || error("ProbabilityVector for parameter $(name) must sum to 1 (within 1e-6); got sum=$(s).")
+    v = v ./ s   # silent normalisation
+    return ProbabilityVector{T, typeof(v)}(name, v, scale, prior, calculate_se)
+end
+
+"""
+    DiscreteTransitionMatrix(value; name, scale, prior, calculate_se) -> DiscreteTransitionMatrix
+
+A square row-stochastic matrix parameter block of size `n×n` (`n ≥ 2`). Each row
+is a probability vector and is independently reparameterised via the logistic
+stick-breaking transform, yielding `n*(n-1)` unconstrained reals.
+
+# Arguments
+- `value::AbstractMatrix{<:Real}`: initial row-stochastic matrix. Each row must be
+  non-negative and sum to 1 (within tolerance); rows are silently normalised if needed.
+
+# Keyword Arguments
+- `name::Symbol = :unnamed`: parameter name (injected automatically by `@fixedEffects`).
+- `scale::Symbol = :stickbreakrows`: reparameterisation. Must be in `TRANSITION_SCALES`.
+- `prior = Priorless()`: a `Distributions.Distribution` or `Priorless()`.
+- `calculate_se::Bool = false`: whether to include this parameter in standard-error calculations.
+"""
+@with_kw struct DiscreteTransitionMatrix{T<:Real, MT<:AbstractMatrix{T}} <: AbstractParameterBlock
+    name::Symbol = :unnamed
+    value::MT
+    scale::Symbol = :stickbreakrows
+    prior = Priorless()
+    calculate_se::Bool = false
+end
+
+function DiscreteTransitionMatrix(value::AbstractMatrix{<:Real};
+    name::Symbol = :unnamed,
+    scale::Symbol = :stickbreakrows,
+    prior = Priorless(),
+    calculate_se::Bool = false)
+    _check_prior(prior, name)
+    scale in TRANSITION_SCALES || error("Invalid scale for parameter $(name). Expected one of $(TRANSITION_SCALES); got $(scale).")
+    n, m = size(value)
+    n == m || error("DiscreteTransitionMatrix for parameter $(name) must be square; got $(n)×$(m).")
+    n >= 2 || error("DiscreteTransitionMatrix for parameter $(name) requires at least 2 states; got $(n).")
+    T = eltype(value) <: AbstractFloat ? eltype(value) : Float64
+    v = T.(value)
+    all(v .>= 0) || error("All entries of DiscreteTransitionMatrix for parameter $(name) must be non-negative.")
+    row_sums = sum(v; dims=2)
+    atol = T(1e-6)
+    all(abs.(row_sums .- one(T)) .<= atol) || error("Each row of DiscreteTransitionMatrix for parameter $(name) must sum to 1 (within 1e-6); got row sums=$(vec(row_sums)).")
+    v = v ./ row_sums   # silent row-wise normalisation
+    return DiscreteTransitionMatrix{T, typeof(v)}(name, v, scale, prior, calculate_se)
+end
+
+"""
+    ContinuousTransitionMatrix(value; name, scale, prior, calculate_se) -> ContinuousTransitionMatrix
+
+An `n×n` rate matrix (Q-matrix) parameter block for continuous-time Markov chains (`n ≥ 2`).
+
+The Q-matrix has:
+- Off-diagonal entries `Q[i,j] ≥ 0` (transition rates from state `i` to state `j`, `i ≠ j`).
+- Diagonal entries `Q[i,i] = -∑_{j≠i} Q[i,j]` (rows sum to zero).
+
+The `n*(n-1)` off-diagonal rates are optimised on the log scale (`:lograterows`), mapping
+each rate to an unconstrained real via `log`. The diagonal is recomputed from the off-diagonals
+and is not an independent free parameter.
+
+# Arguments
+- `value::AbstractMatrix{<:Real}`: initial `n×n` Q-matrix. Off-diagonal entries must be
+  non-negative. The diagonal is always silently recomputed as `-rowsum` of the off-diagonals,
+  so any diagonal values provided in `value` are ignored.
+
+# Keyword Arguments
+- `name::Symbol = :unnamed`: parameter name (injected automatically by `@fixedEffects`).
+- `scale::Symbol = :lograterows`: reparameterisation. Must be in `RATE_MATRIX_SCALES`.
+- `prior = Priorless()`: a `Distributions.Distribution` or `Priorless()`.
+- `calculate_se::Bool = false`: whether to include this parameter in standard-error calculations.
+"""
+@with_kw struct ContinuousTransitionMatrix{T<:Real, MT<:AbstractMatrix{T}} <: AbstractParameterBlock
+    name::Symbol = :unnamed
+    value::MT
+    scale::Symbol = :lograterows
+    prior = Priorless()
+    calculate_se::Bool = false
+end
+
+function ContinuousTransitionMatrix(value::AbstractMatrix{<:Real};
+    name::Symbol = :unnamed,
+    scale::Symbol = :lograterows,
+    prior = Priorless(),
+    calculate_se::Bool = false)
+    _check_prior(prior, name)
+    scale in RATE_MATRIX_SCALES || error("Invalid scale for parameter $(name). Expected one of $(RATE_MATRIX_SCALES); got $(scale).")
+    n, m = size(value)
+    n == m || error("ContinuousTransitionMatrix for parameter $(name) must be square; got $(n)×$(m).")
+    n >= 2 || error("ContinuousTransitionMatrix for parameter $(name) requires at least 2 states; got $(n).")
+    T = eltype(value) <: AbstractFloat ? eltype(value) : Float64
+    v = T.(value)
+    # Validate off-diagonals: must be non-negative.
+    for i in 1:n
+        for j in 1:n
+            i == j && continue
+            v[i, j] >= zero(T) || error("ContinuousTransitionMatrix for parameter $(name): off-diagonal entry Q[$(i),$(j)] must be non-negative; got $(v[i,j]).")
+        end
+    end
+    # Always recompute diagonal from off-diagonals (diagonal is a derived quantity).
+    for i in 1:n
+        v[i, i] = -sum(v[i, j] for j in 1:n if j != i)
+    end
+    return ContinuousTransitionMatrix{T, typeof(v)}(name, v, scale, prior, calculate_se)
 end
 
 function _check_prior(prior, name::Symbol)

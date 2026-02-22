@@ -8,7 +8,7 @@ NoLimits.jl provides a broad set of modeling, estimation, and diagnostic capabil
 - **Fixed-effects-only models** for settings where random effects are not needed.
 - **ODE-based and non-ODE models** within the same modeling framework: algebraic structural models and mechanistic ODE systems share the same specification language.
 - **Multiple outcomes** in one model, including mixed outcome types (e.g., continuous and count outcomes jointly).
-- **Hidden Markov outcome models** via `DiscreteTimeDiscreteStatesHMM` and `ContinuousTimeDiscreteStatesHMM`, enabling latent-state-dependent observation processes.
+- **Hidden Markov outcome models** via `DiscreteTimeDiscreteStatesHMM` and `ContinuousTimeDiscreteStatesHMM`, enabling latent-state-dependent observation processes. Dedicated parameter types `ProbabilityVector`, `DiscreteTransitionMatrix`, and `ContinuousTransitionMatrix` provide AD-compatible, automatically constrained representations of initial-state distributions and transition or rate matrices.
 - **Left-censored and interval-censored observations** through `censored(...)` in the observation model.
 
 ## Random-Effects Flexibility

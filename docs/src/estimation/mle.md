@@ -190,7 +190,7 @@ res_pois = fit_model(dm_pois, NoLimits.MLE())
 
 ## HMM Example (Fixed-Effects-Only)
 
-Hidden Markov models (HMMs) with discrete states and discrete time steps can also be estimated via `MLE`. In the example below, emission probabilities are parameterized through constrained logistic transforms to ensure they remain in the valid range.
+Hidden Markov models (HMMs) with discrete states and discrete time steps can also be estimated via `MLE`. The dedicated parameter types `ProbabilityVector` and `DiscreteTransitionMatrix` handle all simplex and row-stochastic constraints automatically, with full AD support through the logistic stick-breaking parameterization.
 
 ```julia
 using NoLimits
@@ -203,18 +203,17 @@ model_hmm = @Model begin
     end
 
     @fixedEffects begin
-        p1_r = RealNumber(0.0)
-        p2_r = RealNumber(0.0)
+        pi0 = ProbabilityVector([0.6, 0.4])
+        P   = DiscreteTransitionMatrix([0.9 0.1; 0.2 0.8])
+        p1  = RealNumber(0.2, scale=:logit)
+        p2  = RealNumber(0.8, scale=:logit)
     end
 
     @formulas begin
-        p1 = 0.8 / (1 + exp(-p1_r)) + 0.1
-        p2 = 0.8 / (1 + exp(-p2_r)) + 0.1
-        P = [0.9 0.1; 0.2 0.8]
         y ~ DiscreteTimeDiscreteStatesHMM(
             P,
             (Bernoulli(p1), Bernoulli(p2)),
-            Categorical([0.6, 0.4]),
+            Categorical(pi0),
         )
     end
 end

@@ -26,6 +26,9 @@ RealNumber
 RealVector
 RealPSDMatrix
 RealDiagonalMatrix
+ProbabilityVector
+DiscreteTransitionMatrix
+ContinuousTransitionMatrix
 NNParameters
 NPFParameter
 SoftTreeParameters

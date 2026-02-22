@@ -6,6 +6,7 @@ using ForwardDiff
 using ReverseDiff
 using Zygote
 using DataFrames
+using Distributions
 
 @testset "ParameterTransformations" begin
     # Log transform round-trip on scalar and vector.
