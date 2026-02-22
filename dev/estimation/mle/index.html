@@ -104,7 +104,7 @@ df_pois = DataFrame(
 )
 
 dm_pois = DataModel(model_pois, df_pois; primary_id=:ID, time_col=:t)
-res_pois = fit_model(dm_pois, NoLimits.MLE())</code></pre><h2 id="HMM-Example-(Fixed-Effects-Only)"><a class="docs-heading-anchor" href="#HMM-Example-(Fixed-Effects-Only)">HMM Example (Fixed-Effects-Only)</a><a id="HMM-Example-(Fixed-Effects-Only)-1"></a><a class="docs-heading-anchor-permalink" href="#HMM-Example-(Fixed-Effects-Only)" title="Permalink"></a></h2><p>Hidden Markov models (HMMs) with discrete states and discrete time steps can also be estimated via <code>MLE</code>. In the example below, emission probabilities are parameterized through constrained logistic transforms to ensure they remain in the valid range.</p><pre><code class="language-julia hljs">using NoLimits
+res_pois = fit_model(dm_pois, NoLimits.MLE())</code></pre><h2 id="HMM-Example-(Fixed-Effects-Only)"><a class="docs-heading-anchor" href="#HMM-Example-(Fixed-Effects-Only)">HMM Example (Fixed-Effects-Only)</a><a id="HMM-Example-(Fixed-Effects-Only)-1"></a><a class="docs-heading-anchor-permalink" href="#HMM-Example-(Fixed-Effects-Only)" title="Permalink"></a></h2><p>Hidden Markov models (HMMs) with discrete states and discrete time steps can also be estimated via <code>MLE</code>. The dedicated parameter types <code>ProbabilityVector</code> and <code>DiscreteTransitionMatrix</code> handle all simplex and row-stochastic constraints automatically, with full AD support through the logistic stick-breaking parameterization.</p><pre><code class="language-julia hljs">using NoLimits
 using DataFrames
 using Distributions
 
@@ -114,18 +114,17 @@ model_hmm = @Model begin
     end
 
     @fixedEffects begin
-        p1_r = RealNumber(0.0)
-        p2_r = RealNumber(0.0)
+        pi0 = ProbabilityVector([0.6, 0.4])
+        P   = DiscreteTransitionMatrix([0.9 0.1; 0.2 0.8])
+        p1  = RealNumber(0.2, scale=:logit)
+        p2  = RealNumber(0.8, scale=:logit)
     end
 
     @formulas begin
-        p1 = 0.8 / (1 + exp(-p1_r)) + 0.1
-        p2 = 0.8 / (1 + exp(-p2_r)) + 0.1
-        P = [0.9 0.1; 0.2 0.8]
         y ~ DiscreteTimeDiscreteStatesHMM(
             P,
             (Bernoulli(p1), Bernoulli(p2)),
-            Categorical([0.6, 0.4]),
+            Categorical(pi0),
         )
     end
 end
@@ -141,4 +140,4 @@ res_hmm = fit_model(dm_hmm, NoLimits.MLE(optim_kwargs=(iterations=5,)))</code></
 theta_t = get_params(res; scale=:transformed)
 obj = get_objective(res)
 ok = get_converged(res)
-diag = get_diagnostics(res)</code></pre></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../vi/">« VI</a><a class="docs-footer-nextpage" href="../mle-map/">MAP »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Saturday 21 February 2026 16:41">Saturday 21 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+diag = get_diagnostics(res)</code></pre></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../vi/">« VI</a><a class="docs-footer-nextpage" href="../mle-map/">MAP »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Sunday 22 February 2026 15:02">Sunday 22 February 2026</span>. Using Julia version 1.12.5.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
