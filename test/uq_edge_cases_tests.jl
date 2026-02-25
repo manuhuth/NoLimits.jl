@@ -199,6 +199,7 @@ end
                             constants=constants)
     uq_laplace = compute_uq(res_laplace;
                             method=:wald,
+                            pseudo_inverse=true,
                             n_draws=30,
                             fd_abs_step=1e-4,
                             fd_rel_step=1e-4,
