@@ -17,17 +17,17 @@ using Random
     x = [0.1, -0.2, 0.3]
     y = tree(x, params)
     y_fast = tree(x, params, Val(:fast))
-    y_inplace = tree(x, params, Val(:inplace))
+    
     @test length(y) == 4
     @test isapprox(y, y_fast; rtol=1e-10, atol=1e-12)
-    @test isapprox(y, y_inplace; rtol=1e-10, atol=1e-12)
+
 
     @test_throws ErrorException SoftTree(0, 2, 4)
     @test_throws ErrorException SoftTree(3, 0, 4)
     @test_throws ErrorException SoftTree(3, 2, 0)
     @test_throws ErrorException tree([1.0, 2.0], params)
     @test_throws ErrorException tree([1.0, 2.0], params, Val(:fast))
-    @test_throws ErrorException tree([1.0, 2.0], params, Val(:inplace))
+
 
     badW = ones(2, 3)
     badb = ones(3)

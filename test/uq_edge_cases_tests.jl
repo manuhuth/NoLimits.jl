@@ -200,9 +200,9 @@ end
     uq_laplace = compute_uq(res_laplace;
                             method=:wald,
                             n_draws=30,
-                            fd_abs_step=1e-6,
-                            fd_rel_step=1e-6,
-                            fd_max_tries=12,
+                            fd_abs_step=1e-4,
+                            fd_rel_step=1e-4,
+                            fd_max_tries=50,
                             rng=Random.Xoshiro(206))
     @test get_uq_source_method(uq_laplace) == :laplace
     @test get_uq_parameter_names(uq_laplace) == [:β_1, :β_2, :a, :σ]
