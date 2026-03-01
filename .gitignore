@@ -7,3 +7,6 @@ docs/cache/
 
 # macOS
 .DS_Store
+
+# linux
+.vscode/
