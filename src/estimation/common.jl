@@ -18,6 +18,7 @@ export get_chain
 export get_iterations
 export get_raw
 export get_notes
+export get_closed_form_mstep_used
 export get_observed
 export get_sampler
 export get_n_samples
@@ -325,6 +326,17 @@ Return any method-specific string notes attached to the result.
 get_notes(res::FitResult) = get_notes(res.result)
 
 """
+    get_closed_form_mstep_used(res::FitResult) -> Bool
+
+Return `true` when the fitting run used any closed-form M-step updates.
+
+Currently this is method-specific metadata populated by methods that support
+closed-form M-step paths (e.g. SAEM). Methods without this concept return
+`false`.
+"""
+get_closed_form_mstep_used(res::FitResult) = get_closed_form_mstep_used(res.result)
+
+"""
     get_observed(res::FitResult)
 
 Return the observed data used during MCMC sampling. Only valid for MCMC results.
@@ -408,6 +420,7 @@ get_raw(res::MethodResult) = hasproperty(res, :raw) ? res.raw :
     error("raw result not available for this method.")
 get_notes(res::MethodResult) = hasproperty(res, :notes) ? res.notes :
     error("notes not available for this method.")
+get_closed_form_mstep_used(::MethodResult) = false
 get_observed(res::MethodResult) = hasproperty(res, :observed) ? res.observed :
     error("observed data not available for this method.")
 get_sampler(res::MethodResult) = hasproperty(res, :sampler) ? res.sampler :

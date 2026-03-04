@@ -126,7 +126,7 @@ MCEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(
      rtol_Q=1e-4,
      atol_Q=1e-6,
      consecutive_params=3,
-     ebe_optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
+     ebe_optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep=1.0)),
      ebe_optim_kwargs=NamedTuple(),
      ebe_adtype=Optimization.AutoForwardDiff(),
      ebe_grad_tol=:auto,

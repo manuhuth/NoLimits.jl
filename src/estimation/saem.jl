@@ -187,7 +187,7 @@ SAEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(
      resid_var_param=:σ,
      re_cov_params=NamedTuple(),
      re_mean_params=NamedTuple(),
-     ebe_optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
+     ebe_optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep=1.0)),
      ebe_optim_kwargs=NamedTuple(),
      ebe_adtype=Optimization.AutoForwardDiff(),
      ebe_grad_tol=:auto,
@@ -230,6 +230,14 @@ struct SAEMResult{S, O, I, R, N, B} <: MethodResult
     raw::R
     notes::N
     eb_modes::B
+end
+
+function get_closed_form_mstep_used(res::SAEMResult)
+    notes = res.notes
+    if notes isa NamedTuple && hasproperty(notes, :closed_form_mstep_used)
+        return Bool(getproperty(notes, :closed_form_mstep_used))
+    end
+    return false
 end
 
 mutable struct _SAEMDiagnostics{T}
@@ -281,6 +289,31 @@ end
     return nothing
 end
 
+const _SAEM_HMM_CALL_NAMES = (
+    :DiscreteTimeDiscreteStatesHMM,
+    :ContinuousTimeDiscreteStatesHMM,
+    :MVDiscreteTimeDiscreteStatesHMM,
+    :MVContinuousTimeDiscreteStatesHMM,
+)
+
+@inline _saem_is_hmm_call_name(name) = name !== nothing && (name in _SAEM_HMM_CALL_NAMES)
+
+const _SAEM_HMM_DISCRETE_CALL_NAMES = (
+    :DiscreteTimeDiscreteStatesHMM,
+    :MVDiscreteTimeDiscreteStatesHMM,
+)
+
+const _SAEM_HMM_SCALAR_EMISSION_CALL_NAMES = (
+    :Bernoulli,
+    :Poisson,
+    :Normal,
+    :LogNormal,
+    :Exponential,
+)
+
+@inline _saem_is_discrete_hmm_call_name(name) = name !== nothing && (name in _SAEM_HMM_DISCRETE_CALL_NAMES)
+@inline _saem_is_hmm_scalar_emission_call_name(name) = name !== nothing && (name in _SAEM_HMM_SCALAR_EMISSION_CALL_NAMES)
+
 @inline function _saem_symbol_tuple_from_vector_expr(ex)
     ex isa Expr && ex.head == :vect || return nothing
     vals = ex.args
@@ -291,6 +324,129 @@ end
 @inline function _saem_number_vector_expr(ex)
     ex isa Expr && ex.head == :vect || return false
     return all(v -> v isa Number, ex.args)
+end
+
+@inline function _saem_formulas_assignment_map(ir)
+    pairs = Pair{Symbol, Expr}[]
+    for (nm, ex) in zip(ir.det_names, ir.det_exprs)
+        ex isa Expr && push!(pairs, nm => ex)
+    end
+    return Dict{Symbol, Expr}(pairs)
+end
+
+function _saem_collect_expr_calls!(out::Vector{Expr}, ex, pred::Function)
+    if ex isa Expr
+        cname = _saem_call_name(ex)
+        if pred(cname)
+            push!(out, ex)
+            return out
+        end
+        for a in ex.args
+            _saem_collect_expr_calls!(out, a, pred)
+        end
+    end
+    return out
+end
+
+function _saem_resolve_to_fixed_symbol(ex, assign_map::Dict{Symbol, Expr}, fixed_set::Set{Symbol};
+                                       seen::Set{Symbol}=Set{Symbol}())
+    if ex isa Symbol
+        ex in fixed_set && return ex
+        haskey(assign_map, ex) || return nothing
+        ex in seen && return nothing
+        push!(seen, ex)
+        return _saem_resolve_to_fixed_symbol(assign_map[ex], assign_map, fixed_set; seen=seen)
+    end
+
+    ex isa Expr || return nothing
+    if ex.head == :ref
+        return _saem_resolve_to_fixed_symbol(ex.args[1], assign_map, fixed_set; seen=seen)
+    elseif ex.head == :call
+        cname = _saem_call_name(ex)
+        if cname in (:reshape, :vec, :collect, :copy, :identity, :transpose, :permutedims)
+            length(ex.args) >= 2 || return nothing
+            return _saem_resolve_to_fixed_symbol(ex.args[2], assign_map, fixed_set; seen=seen)
+        elseif cname == :getindex
+            length(ex.args) >= 2 || return nothing
+            return _saem_resolve_to_fixed_symbol(ex.args[2], assign_map, fixed_set; seen=seen)
+        end
+    end
+    return nothing
+end
+
+@inline function _saem_hmm_transition_status(hmm_outcomes::Tuple, has_direct_transition_target::Bool)
+    isempty(hmm_outcomes) && return :not_applicable
+    return has_direct_transition_target ? :ineligible : :covered_by_re_or_external
+end
+
+function _saem_parse_hmm_emission_target_expr(em_expr, assign_map::Dict{Symbol, Expr}, fixed_set::Set{Symbol})
+    ex = em_expr
+    if em_expr isa Symbol && haskey(assign_map, em_expr)
+        ex = assign_map[em_expr]
+    end
+
+    calls = Expr[]
+    _saem_collect_expr_calls!(calls, ex, _saem_is_hmm_scalar_emission_call_name)
+    isempty(calls) && return nothing
+
+    family = nothing
+    target = nothing
+    for c in calls
+        cname = _saem_call_name(c)
+        cname == :Bernoulli || return nothing
+        length(c.args) == 2 || return nothing
+        t = _saem_resolve_to_fixed_symbol(c.args[2], assign_map, fixed_set)
+        t === nothing && return nothing
+        if family === nothing
+            family = :bernoulli
+            target = t
+        else
+            family == :bernoulli || return nothing
+            target == t || return nothing
+        end
+    end
+    return (family=:bernoulli, target=target)
+end
+
+function _saem_autodetect_hmm_emission_params(dm::DataModel, fixed_set::Set{Symbol})
+    ir = get_formulas_ir(dm.model.formulas.formulas)
+    assign_map = _saem_formulas_assignment_map(ir)
+    pairs = Pair{Symbol, Any}[]
+
+    for (obs, ex) in zip(ir.obs_names, ir.obs_exprs)
+        cname = _saem_call_name(ex)
+        _saem_is_hmm_call_name(cname) || continue
+        ex isa Expr || continue
+        length(ex.args) >= 4 || continue
+        em_expr = ex.args[3]
+        parsed = _saem_parse_hmm_emission_target_expr(em_expr, assign_map, fixed_set)
+        parsed === nothing && continue
+        hmm_type = _saem_is_discrete_hmm_call_name(cname) ? :discrete_time : :continuous_time
+        push!(pairs, obs => (family=parsed.family, target=parsed.target, hmm_type=hmm_type))
+    end
+    return NamedTuple(pairs)
+end
+
+function _saem_hmm_has_direct_transition_target(dm::DataModel, fixed_set::Set{Symbol})
+    ir = get_formulas_ir(dm.model.formulas.formulas)
+    assign_map = _saem_formulas_assignment_map(ir)
+    for ex in ir.obs_exprs
+        cname = _saem_call_name(ex)
+        _saem_is_hmm_call_name(cname) || continue
+        ex isa Expr || continue
+        length(ex.args) >= 3 || continue
+        trans_expr = ex.args[2]
+        t = _saem_resolve_to_fixed_symbol(trans_expr, assign_map, fixed_set)
+        t === nothing || return true
+    end
+    return false
+end
+
+@inline function _saem_hmm_emission_mapping_supported(info)
+    hasproperty(info, :family) || return false
+    hasproperty(info, :target) || return false
+    hasproperty(info, :hmm_type) || return false
+    return info.family == :bernoulli && info.hmm_type == :discrete_time
 end
 
 function _saem_parse_re_gaussian_mapping(dist_expr, fixed_set::Set{Symbol})
@@ -429,6 +585,15 @@ function _saem_autodetect_resid_var_param(dm::DataModel, fixed_set::Set{Symbol})
     return NamedTuple(pairs)
 end
 
+function _saem_hmm_outcome_names(dm::DataModel)
+    ir = get_formulas_ir(dm.model.formulas.formulas)
+    hmm = Symbol[]
+    for (obs, ex) in zip(ir.obs_names, ir.obs_exprs)
+        _saem_is_hmm_call_name(_saem_call_name(ex)) && push!(hmm, obs)
+    end
+    return hmm
+end
+
 function _saem_autodetect_gaussian_re(dm::DataModel, fixed_names::Vector{Symbol})
     re_model = dm.model.random.random
     re_names = get_re_names(re_model)
@@ -450,11 +615,113 @@ function _saem_autodetect_gaussian_re(dm::DataModel, fixed_names::Vector{Symbol}
 
     resid_var_param = _saem_autodetect_resid_var_param(dm, fixed_set)
     has_outcome_updates = resid_var_param isa NamedTuple ? !isempty(keys(resid_var_param)) : true
-    isempty(cov_pairs) && isempty(mean_pairs) && !has_outcome_updates && return nothing
+    hmm_emission_params = _saem_autodetect_hmm_emission_params(dm, fixed_set)
+    has_hmm_emission_updates = !isempty(keys(hmm_emission_params))
+    isempty(cov_pairs) && isempty(mean_pairs) && !has_outcome_updates && !has_hmm_emission_updates && return nothing
+    hmm_outcomes = Tuple(_saem_hmm_outcome_names(dm))
+    has_direct_transition_target = _saem_hmm_has_direct_transition_target(dm, fixed_set)
+    hmm_emission_all_supported = !isempty(hmm_outcomes) &&
+                                 all(col -> haskey(hmm_emission_params, col) &&
+                                            _saem_hmm_emission_mapping_supported(getfield(hmm_emission_params, col)),
+                                     hmm_outcomes)
+    hmm_emission_status = isempty(hmm_outcomes) ? :not_applicable :
+                          (hmm_emission_all_supported ? :eligible : :ineligible)
     return (re_cov_params=NamedTuple(cov_pairs),
             re_mean_params=NamedTuple(mean_pairs),
             re_families=NamedTuple(family_pairs),
-            resid_var_param=resid_var_param)
+            resid_var_param=resid_var_param,
+            hmm_emission_params=hmm_emission_params,
+            hmm_outcomes=hmm_outcomes,
+            hmm_transition_closed_form=_saem_hmm_transition_status(hmm_outcomes, has_direct_transition_target),
+            hmm_emission_closed_form=hmm_emission_status)
+end
+
+function _saem_builtin_closed_form_eligibility(dm::DataModel,
+                                               re_cov_params::NamedTuple,
+                                               re_mean_params::NamedTuple,
+                                               resid_var_param,
+                                               hmm_emission_params::NamedTuple=NamedTuple())
+    re_targets = _saem_builtin_re_targets(re_cov_params, re_mean_params)
+    obs_targets = _saem_outcome_targets(dm.config.obs_cols, resid_var_param)
+    all_outcome_targets = Symbol[collect(keys(obs_targets))...]
+    hmm_outcomes_vec = _saem_hmm_outcome_names(dm)
+    hmm_set = Set{Symbol}(hmm_outcomes_vec)
+
+    outcome_targets_hmm = Symbol[]
+    outcome_targets_non_hmm = Symbol[]
+    for col in all_outcome_targets
+        if col in hmm_set
+            push!(outcome_targets_hmm, col)
+        else
+            push!(outcome_targets_non_hmm, col)
+        end
+    end
+
+    reasons = Symbol[]
+    !isempty(outcome_targets_hmm) && push!(reasons, :hmm_outcome_targets_ignored)
+    hmm_emission_targets_supported = Symbol[]
+    hmm_emission_targets_unsupported = Symbol[]
+    for col in hmm_outcomes_vec
+        if haskey(hmm_emission_params, col) &&
+           _saem_hmm_emission_mapping_supported(getfield(hmm_emission_params, col))
+            push!(hmm_emission_targets_supported, col)
+        else
+            push!(hmm_emission_targets_unsupported, col)
+        end
+    end
+    !isempty(hmm_outcomes_vec) && isempty(hmm_emission_targets_supported) &&
+        push!(reasons, :hmm_latent_state_suffstats_not_available_builtin)
+    !isempty(hmm_emission_targets_unsupported) &&
+        push!(reasons, :hmm_emission_mapping_not_supported_builtin)
+    has_direct_transition_target = _saem_hmm_has_direct_transition_target(dm, Set(get_names(dm.model.fixed.fixed)))
+    has_direct_transition_target &&
+        push!(reasons, :hmm_transition_mapping_not_supported_builtin)
+
+    re_block_eligible = !isempty(re_targets)
+    outcome_block_eligible = !isempty(outcome_targets_non_hmm)
+    hmm_emission_block_eligible = !isempty(hmm_emission_targets_supported)
+    has_any_closed_form_block = re_block_eligible || outcome_block_eligible || hmm_emission_block_eligible
+    hmm_outcomes = Tuple(hmm_outcomes_vec)
+    hmm_emission_status = isempty(hmm_outcomes) ? :not_applicable :
+                          (isempty(hmm_emission_targets_unsupported) && !isempty(hmm_emission_targets_supported) ?
+                           :eligible :
+                           (!isempty(hmm_emission_targets_supported) ? :partial : :ineligible))
+
+    return (re_block_eligible=re_block_eligible,
+            outcome_block_eligible=outcome_block_eligible,
+            hmm_emission_block_eligible=hmm_emission_block_eligible,
+            has_any_closed_form_block=has_any_closed_form_block,
+            re_targets=Tuple(re_targets),
+            outcome_targets_non_hmm=Tuple(outcome_targets_non_hmm),
+            outcome_targets_hmm=Tuple(outcome_targets_hmm),
+            hmm_emission_targets=Tuple(hmm_emission_targets_supported),
+            hmm_emission_targets_unsupported=Tuple(hmm_emission_targets_unsupported),
+            hmm_emission_params=hmm_emission_params,
+            hmm_outcomes=hmm_outcomes,
+            hmm_transition_closed_form=_saem_hmm_transition_status(hmm_outcomes, has_direct_transition_target),
+            hmm_emission_closed_form=hmm_emission_status,
+            reasons=Tuple(reasons))
+end
+
+function _saem_prune_hmm_outcome_targets(dm::DataModel, resid_var_param, hmm_outcomes)
+    isempty(hmm_outcomes) && return resid_var_param
+    obs_targets = _saem_outcome_targets(dm.config.obs_cols, resid_var_param)
+    isempty(keys(obs_targets)) && return NamedTuple()
+
+    hmm_set = Set{Symbol}(Symbol.(collect(hmm_outcomes)))
+    kept = Pair{Symbol, Any}[]
+    for (col, target) in pairs(obs_targets)
+        col in hmm_set && continue
+        push!(kept, col => target)
+    end
+
+    if isempty(kept)
+        return NamedTuple()
+    end
+    if resid_var_param isa Symbol && length(kept) == length(dm.config.obs_cols)
+        return resid_var_param
+    end
+    return NamedTuple(kept)
 end
 
 function _saem_re_family_map(dm::DataModel)
@@ -550,6 +817,258 @@ end
     else
         return NamedTuple()
     end
+end
+
+@inline function _saem_is_hmm_distribution(dist)
+    return (dist isa DiscreteTimeDiscreteStatesHMM) ||
+           (dist isa ContinuousTimeDiscreteStatesHMM) ||
+           (dist isa MVDiscreteTimeDiscreteStatesHMM) ||
+           (dist isa MVContinuousTimeDiscreteStatesHMM)
+end
+
+@inline function _saem_hmm_state_emission_probs(dist::DiscreteTimeDiscreteStatesHMM, y, T::Type)
+    probs = Vector{T}(undef, dist.n_states)
+    if ismissing(y)
+        fill!(probs, one(T))
+        return probs
+    end
+    for k in 1:dist.n_states
+        v = _fast_logpdf(dist.emission_dists[k], y)
+        v === nothing && (v = logpdf(dist.emission_dists[k], y))
+        probs[k] = isfinite(v) ? exp(T(v)) : zero(T)
+    end
+    return probs
+end
+
+@inline function _saem_hmm_state_emission_probs(dist::MVDiscreteTimeDiscreteStatesHMM, y, T::Type)
+    probs = Vector{T}(undef, dist.n_states)
+    for k in 1:dist.n_states
+        v = _mv_emission_logpdf(dist.emission_dists[k], y)
+        probs[k] = isfinite(v) ? exp(T(v)) : zero(T)
+    end
+    return probs
+end
+
+@inline _saem_hmm_state_emission_probs(::Any, ::Any, ::Type) = nothing
+
+function _saem_hmm_smoothed_gamma(dists::Vector, ys::Vector, T::Type)
+    n_time = length(dists)
+    n_time == length(ys) || return (nothing, false)
+    n_time == 0 && return (nothing, false)
+
+    first_dist = dists[1]
+    (first_dist isa DiscreteTimeDiscreteStatesHMM || first_dist isa MVDiscreteTimeDiscreteStatesHMM) ||
+        return (nothing, false)
+
+    K = first_dist.n_states
+    alpha = zeros(T, K, n_time)
+    beta = zeros(T, K, n_time)
+    emit = zeros(T, K, n_time)
+    scales = zeros(T, n_time)
+    trans = Vector{Matrix{T}}(undef, n_time)
+
+    p0 = T.(first_dist.initial_dist.p)
+    for t in 1:n_time
+        dist_t = dists[t]
+        typeof(dist_t) === typeof(first_dist) || return (nothing, false)
+        A = T.(dist_t.transition_matrix)
+        trans[t] = A
+        b = _saem_hmm_state_emission_probs(dist_t, ys[t], T)
+        b === nothing && return (nothing, false)
+        emit[:, t] .= b
+
+        pred = if t == 1
+            transpose(A) * p0
+        else
+            transpose(A) * view(alpha, :, t - 1)
+        end
+        unnorm = pred .* b
+        c = sum(unnorm)
+        (isfinite(c) && c > zero(T)) || return (nothing, false)
+        alpha[:, t] .= unnorm ./ c
+        scales[t] = c
+    end
+
+    beta[:, n_time] .= one(T)
+    for t in (n_time - 1):-1:1
+        A_next = trans[t + 1]
+        tmp = view(emit, :, t + 1) .* view(beta, :, t + 1)
+        c = scales[t + 1]
+        (isfinite(c) && c > zero(T)) || return (nothing, false)
+        beta[:, t] .= (A_next * tmp) ./ c
+    end
+
+    gamma = alpha .* beta
+    for t in 1:n_time
+        s = sum(view(gamma, :, t))
+        (isfinite(s) && s > zero(T)) || return (nothing, false)
+        gamma[:, t] ./= s
+    end
+    return (gamma, true)
+end
+
+function _saem_hmm_bernoulli_stats_from_sequence(dists::Vector, ys::Vector, target, T::Type)
+    gamma, ok = _saem_hmm_smoothed_gamma(dists, ys, T)
+    ok || return (nothing, false)
+    first_dist = dists[1]
+    K = first_dist.n_states
+
+    if first_dist isa DiscreteTimeDiscreteStatesHMM
+        all(d -> d isa DiscreteTimeDiscreteStatesHMM, dists) || return (nothing, false)
+        all(k -> first_dist.emission_dists[k] isa Bernoulli, 1:K) || return (nothing, false)
+        sum_w = zeros(T, K, 1)
+        sum_wy = zeros(T, K, 1)
+        for t in eachindex(ys)
+            y = ys[t]
+            if ismissing(y)
+                continue
+            end
+            yy = T(y)
+            (yy == zero(T) || yy == one(T)) || return (nothing, false)
+            for k in 1:K
+                w = gamma[k, t]
+                sum_w[k, 1] += w
+                sum_wy[k, 1] += w * yy
+            end
+        end
+        return ((family=:hmm_bernoulli, target=target, sum_w=sum_w, sum_wy=sum_wy), true)
+    end
+
+    first_dist isa MVDiscreteTimeDiscreteStatesHMM || return (nothing, false)
+    all(d -> d isa MVDiscreteTimeDiscreteStatesHMM, dists) || return (nothing, false)
+    all(k -> first_dist.emission_dists[k] isa Tuple, 1:K) || return (nothing, false)
+    M = length(first_dist.emission_dists[1])
+    all(k -> length(first_dist.emission_dists[k]) == M, 1:K) || return (nothing, false)
+    all(k -> all(m -> first_dist.emission_dists[k][m] isa Bernoulli, 1:M), 1:K) || return (nothing, false)
+
+    sum_w = zeros(T, K, M)
+    sum_wy = zeros(T, K, M)
+    for t in eachindex(ys)
+        y = ys[t]
+        y isa AbstractVector || return (nothing, false)
+        length(y) == M || return (nothing, false)
+        for m in 1:M
+            ym = y[m]
+            ismissing(ym) && continue
+            yy = T(ym)
+            (yy == zero(T) || yy == one(T)) || return (nothing, false)
+            for k in 1:K
+                w = gamma[k, t]
+                sum_w[k, m] += w
+                sum_wy[k, m] += w * yy
+            end
+        end
+    end
+
+    return ((family=:hmm_bernoulli, target=target, sum_w=sum_w, sum_wy=sum_wy), true)
+end
+
+@inline function _saem_merge_hmm_stats(a, b)
+    (a.family == b.family && a.target == b.target) || return nothing
+    return (family=a.family,
+            target=a.target,
+            sum_w=a.sum_w + b.sum_w,
+            sum_wy=a.sum_wy + b.sum_wy)
+end
+
+function _saem_collect_hmm_stats_individual(dm::DataModel,
+                                            idx::Int,
+                                            θ,
+                                            η_ind,
+                                            cache::_LLCache,
+                                            hmm_emission_params::NamedTuple)
+    isempty(keys(hmm_emission_params)) && return (NamedTuple(), true)
+
+    model = dm.model
+    ind = dm.individuals[idx]
+    obs_rows = dm.row_groups.obs_rows[idx]
+    const_cov = ind.const_cov
+    obs_series = ind.series.obs
+    vary_cache = cache.vary_cache === nothing ? nothing : cache.vary_cache[idx]
+
+    sol_accessors = nothing
+    if model.de.de !== nothing
+        pre = calculate_prede(model, θ, η_ind, const_cov)
+        pc = (;
+            fixed_effects = θ,
+            random_effects = η_ind,
+            constant_covariates = const_cov,
+            varying_covariates = merge((t = ind.series.vary.t[1],), ind.series.dyn),
+            helpers = cache.helpers,
+            model_funs = cache.model_funs,
+            preDE = pre
+        )
+        compiled = get_de_compiler(model.de.de)(pc)
+        u0 = calculate_initial_state(model, θ, η_ind, const_cov)
+        cb = nothing
+        infusion_rates = nothing
+        if ind.callbacks !== nothing
+            _apply_initial_events!(u0, ind.callbacks)
+            cb = ind.callbacks.callback
+            infusion_rates = ind.callbacks.infusion_rates
+        end
+        f!_use = _with_infusion(get_de_f!(model.de.de), infusion_rates)
+        prob = cache.prob_templates === nothing ? nothing : cache.prob_templates[idx]
+        if prob === nothing
+            prob = ODEProblem{true, SciMLBase.FullSpecialize}(f!_use, u0, ind.tspan, compiled)
+            if cache.prob_templates !== nothing
+                cache.prob_templates[idx] = prob
+            end
+        end
+
+        Tprob = promote_type(eltype(θ), eltype(η_ind), eltype(u0))
+        prob = remake(prob; u0 = Tprob.(u0), p = compiled)
+        saveat_use = _ll_saveat(cache, idx, ind)
+        sol = if saveat_use === nothing
+            solve_kwargs = _ode_solve_kwargs(cache.solver_cfg.kwargs,
+                                             cache.ode_kwargs,
+                                             (dense=true,))
+            cb === nothing ?
+                solve(prob, cache.alg, cache.ode_args...; solve_kwargs...) :
+                solve(prob, cache.alg, cache.ode_args...; solve_kwargs..., callback=cb)
+        else
+            solve_kwargs = _ode_solve_kwargs(cache.solver_cfg.kwargs,
+                                             cache.ode_kwargs,
+                                             (saveat=saveat_use, save_everystep=false, dense=false))
+            cb === nothing ?
+                solve(prob, cache.alg, cache.ode_args...; solve_kwargs...) :
+                solve(prob, cache.alg, cache.ode_args...; solve_kwargs..., callback=cb)
+        end
+        SciMLBase.successful_retcode(sol) || return (NamedTuple(), false)
+        sol_accessors = get_de_accessors_builder(model.de.de)(sol, compiled)
+    end
+
+    seq_dist = Dict{Symbol, Vector{Any}}()
+    seq_y = Dict{Symbol, Vector{Any}}()
+    for col in keys(hmm_emission_params)
+        seq_dist[col] = Any[]
+        seq_y[col] = Any[]
+    end
+
+    time_col = _get_col(dm.df, dm.config.time_col)[obs_rows]
+    for i in eachindex(obs_rows)
+        vary = vary_cache === nothing ? _varying_at(dm, ind, i, time_col) : vary_cache[i]
+        obs = sol_accessors === nothing ?
+              calculate_formulas_obs(model, θ, η_ind, const_cov, vary) :
+              calculate_formulas_obs(model, θ, η_ind, const_cov, vary, sol_accessors)
+        for col in keys(hmm_emission_params)
+            dist = getproperty(obs, col)
+            _saem_is_hmm_distribution(dist) || return (NamedTuple(), false)
+            push!(seq_dist[col], dist)
+            push!(seq_y[col], getfield(obs_series, col)[i])
+        end
+    end
+
+    Tstats = promote_type(eltype(θ), Float64)
+    pairs = Pair{Symbol, Any}[]
+    for col in keys(hmm_emission_params)
+        info = getfield(hmm_emission_params, col)
+        _saem_hmm_emission_mapping_supported(info) || return (NamedTuple(), false)
+        st, ok = _saem_hmm_bernoulli_stats_from_sequence(seq_dist[col], seq_y[col], info.target, Tstats)
+        ok || return (NamedTuple(), false)
+        push!(pairs, col => st)
+    end
+    return (NamedTuple(pairs), true)
 end
 
 function _saem_push_outcome_stat(prev, dist, y, T::Type)
@@ -686,6 +1205,7 @@ function _saem_collect_outcome_stats_individual(dm::DataModel,
         for col in obs_cols
             haskey(obs_targets, col) || continue
             dist = getproperty(obs, col)
+            _saem_outcome_family(dist) == :unsupported && continue
             y = getfield(obs_series, col)[i]
             prev = get(stats_dict, col, nothing)
             nxt = _saem_push_outcome_stat(prev, dist, y, Tstats)
@@ -707,6 +1227,7 @@ function _saem_builtin_collect_current_stats(dm::DataModel,
                                              θ::ComponentArray,
                                              const_cache::LaplaceConstantsCache,
                                              resid_var_param,
+                                             hmm_emission_params::NamedTuple,
                                              re_cov_params::NamedTuple,
                                              re_mean_params::NamedTuple,
                                              re_family_map::NamedTuple,
@@ -789,7 +1310,41 @@ function _saem_builtin_collect_current_stats(dm::DataModel,
             end
         end
     end
-    return (re=re_stats, outcome=NamedTuple(outcome_pairs))
+    hmm_pairs = Pair{Symbol, Any}[]
+    if !isempty(keys(hmm_emission_params))
+        hmm_acc = Dict{Symbol, Any}()
+        all_supported = true
+        for (bi, info) in enumerate(batch_infos)
+            b = b_current[bi]
+            for i in info.inds
+                η_ind = _build_eta_ind(dm, i, info, b, const_cache, θ)
+                stats_i, ok = _saem_collect_hmm_stats_individual(dm, i, θ, η_ind, ll_cache, hmm_emission_params)
+                if !ok
+                    all_supported = false
+                    break
+                end
+                for (col, st) in pairs(stats_i)
+                    prev = get(hmm_acc, col, nothing)
+                    if prev === nothing
+                        hmm_acc[col] = st
+                    else
+                        merged = _saem_merge_hmm_stats(prev, st)
+                        merged === nothing && (all_supported = false; break)
+                        hmm_acc[col] = merged
+                    end
+                end
+                all_supported || break
+            end
+            all_supported || break
+        end
+        if all_supported
+            for col in keys(hmm_emission_params)
+                haskey(hmm_acc, col) && push!(hmm_pairs, col => hmm_acc[col])
+            end
+        end
+    end
+
+    return (re=re_stats, outcome=NamedTuple(outcome_pairs), hmm=NamedTuple(hmm_pairs))
 end
 
 function _saem_builtin_smooth_re_stats(prev_re::NamedTuple, curr_re::NamedTuple, γ::Real)
@@ -843,11 +1398,39 @@ function _saem_builtin_smooth_outcome_stats(prev_out::NamedTuple, curr_out::Name
     return NamedTuple(pairs)
 end
 
+function _saem_builtin_smooth_hmm_stats(prev_hmm::NamedTuple, curr_hmm::NamedTuple, γ::Real)
+    keys_order = Symbol[collect(keys(prev_hmm))...]
+    for col in keys(curr_hmm)
+        col in keys_order || push!(keys_order, col)
+    end
+    pairs = Pair{Symbol, Any}[]
+    for col in keys_order
+        if haskey(prev_hmm, col) && haskey(curr_hmm, col)
+            p = getfield(prev_hmm, col)
+            c = getfield(curr_hmm, col)
+            if p.family == c.family && p.target == c.target
+                push!(pairs, col => (family=c.family,
+                                     target=c.target,
+                                     sum_w=_saem_blend(p.sum_w, c.sum_w, γ),
+                                     sum_wy=_saem_blend(p.sum_wy, c.sum_wy, γ)))
+            else
+                push!(pairs, col => c)
+            end
+        elseif haskey(curr_hmm, col)
+            push!(pairs, col => getfield(curr_hmm, col))
+        else
+            push!(pairs, col => getfield(prev_hmm, col))
+        end
+    end
+    return NamedTuple(pairs)
+end
+
 function _saem_builtin_smooth_stats(prev_stats, curr_stats, γ::Real)
     prev_stats === nothing && return curr_stats
     re = _saem_builtin_smooth_re_stats(prev_stats.re, curr_stats.re, γ)
     outcome = _saem_builtin_smooth_outcome_stats(prev_stats.outcome, curr_stats.outcome, γ)
-    return (; re, outcome)
+    hmm = _saem_builtin_smooth_hmm_stats(prev_stats.hmm, curr_stats.hmm, γ)
+    return (; re, outcome, hmm)
 end
 
 @inline function _saem_named_target_value(target::NamedTuple, keys::Tuple)
@@ -987,6 +1570,7 @@ function _saem_builtin_updates_from_smoothed_stats(dm::DataModel,
                                                    θ::ComponentArray,
                                                    stats,
                                                    resid_var_param,
+                                                   hmm_emission_params::NamedTuple,
                                                    re_cov_params::NamedTuple,
                                                    re_mean_params::NamedTuple)
     stats === nothing && return NamedTuple()
@@ -1016,6 +1600,33 @@ function _saem_builtin_updates_from_smoothed_stats(dm::DataModel,
                 target = getfield(resid_var_param, col)
                 st = getfield(stats.outcome, col)
                 _saem_outcome_update_from_stat!(updates, θ, target, st, col)
+            end
+        end
+    end
+
+    if !isempty(keys(stats.hmm))
+        for col in keys(hmm_emission_params)
+            haskey(stats.hmm, col) || continue
+            st = getfield(stats.hmm, col)
+            st.family == :hmm_bernoulli || continue
+            target = st.target
+            sum_w = st.sum_w
+            sum_wy = st.sum_wy
+            p_hat = clamp.(sum_wy ./ max.(sum_w, eps(eltype(sum_w))), eps(eltype(sum_w)), one(eltype(sum_w)) - eps(eltype(sum_w)))
+            if target isa Symbol && hasproperty(θ, target)
+                θ_target = getproperty(θ, target)
+                val = if θ_target isa AbstractVector
+                    vec(p_hat)
+                elseif θ_target isa AbstractMatrix
+                    p_hat
+                elseif θ_target isa Number
+                    vec(p_hat)[1]
+                else
+                    vec(p_hat)
+                end
+                push!(updates, target => val)
+            else
+                _saem_push_param_updates!(updates, θ, target, vec(p_hat); context="hmm.$(col)")
             end
         end
     end
@@ -1173,6 +1784,40 @@ function _saem_collect_target_symbols!(out::Vector{Symbol}, target)
     return out
 end
 
+function _saem_log_closed_form_plan(requested_mode::Symbol,
+                                    effective_mode::Symbol,
+                                    elig,
+                                    re_cov_params::NamedTuple,
+                                    re_mean_params::NamedTuple,
+                                    resid_var_param,
+                                    hmm_emission_params::NamedTuple,
+                                    has_custom_closed_form::Bool)
+    requested_norm = _saem_normalize_builtin_stats_mode(requested_mode)
+    requested_norm == :none && !has_custom_closed_form && return nothing
+
+    re_cov_targets = Symbol[]
+    re_mean_targets = Symbol[]
+    resid_targets = Symbol[]
+    hmm_emission_targets = Symbol[]
+
+    for v in values(re_cov_params)
+        _saem_collect_target_symbols!(re_cov_targets, v)
+    end
+    for v in values(re_mean_params)
+        _saem_collect_target_symbols!(re_mean_targets, v)
+    end
+    _saem_collect_target_symbols!(resid_targets, resid_var_param)
+    for col in keys(hmm_emission_params)
+        info = getfield(hmm_emission_params, col)
+        if hasproperty(info, :target)
+            _saem_collect_target_symbols!(hmm_emission_targets, getproperty(info, :target))
+        end
+    end
+
+    @info "SAEM closed-form M-step plan" requested_mode=requested_mode effective_mode=effective_mode has_custom_closed_form=has_custom_closed_form has_any_closed_form_block=elig.has_any_closed_form_block re_block_eligible=elig.re_block_eligible outcome_block_eligible=elig.outcome_block_eligible hmm_emission_block_eligible=elig.hmm_emission_block_eligible re_targets=elig.re_targets outcome_targets_non_hmm=elig.outcome_targets_non_hmm outcome_targets_hmm=elig.outcome_targets_hmm hmm_outcomes=elig.hmm_outcomes hmm_transition_closed_form=elig.hmm_transition_closed_form hmm_emission_closed_form=elig.hmm_emission_closed_form hmm_emission_targets=elig.hmm_emission_targets hmm_emission_targets_unsupported=elig.hmm_emission_targets_unsupported mapped_re_cov_params=Tuple(keys(re_cov_params)) mapped_re_mean_params=Tuple(keys(re_mean_params)) mapped_re_cov_targets=Tuple(unique(re_cov_targets)) mapped_re_mean_targets=Tuple(unique(re_mean_targets)) mapped_residual_targets=Tuple(unique(resid_targets)) mapped_hmm_emission_outcomes=Tuple(keys(hmm_emission_params)) mapped_hmm_emission_param_targets=Tuple(unique(hmm_emission_targets)) reasons=elig.reasons
+    return nothing
+end
+
 function _saem_glm_supported(dm::DataModel,
                              batch_infos::Vector{_LaplaceBatchInfo},
                              b_current::AbstractVector,
@@ -1321,10 +1966,12 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs, nthreads=Threads.maxthreadid(), force_saveat=true) :
                build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs, force_saveat=true)
 
-    builtin_stats_mode = _saem_normalize_builtin_stats_mode(method.saem.builtin_stats)
+    builtin_stats_mode_requested = _saem_normalize_builtin_stats_mode(method.saem.builtin_stats)
+    builtin_stats_mode = builtin_stats_mode_requested
     resid_var_param = method.saem.resid_var_param
     re_cov_params = method.saem.re_cov_params
     re_mean_params = method.saem.re_mean_params
+    hmm_emission_params = NamedTuple()
     if builtin_stats_mode == :auto
         manual_has_re = !isempty(keys(re_cov_params)) || !isempty(keys(re_mean_params))
         manual_has_resid = !(resid_var_param == :σ || (resid_var_param isa NamedTuple && isempty(keys(resid_var_param))))
@@ -1335,6 +1982,7 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
             builtin_stats_mode = :closed_form
             re_cov_params = isempty(keys(re_cov_params)) ? auto_cfg.re_cov_params : merge(auto_cfg.re_cov_params, re_cov_params)
             re_mean_params = isempty(keys(re_mean_params)) ? auto_cfg.re_mean_params : merge(auto_cfg.re_mean_params, re_mean_params)
+            hmm_emission_params = auto_cfg.hmm_emission_params
             if resid_var_param isa NamedTuple
                 if isempty(keys(resid_var_param))
                     resid_var_param = auto_cfg.resid_var_param
@@ -1346,6 +1994,27 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
             end
         end
     end
+    if isempty(keys(hmm_emission_params))
+        hmm_emission_params = _saem_autodetect_hmm_emission_params(dm, Set(fixed_names))
+    end
+    builtin_cf_elig = _saem_builtin_closed_form_eligibility(dm, re_cov_params, re_mean_params,
+                                                             resid_var_param, hmm_emission_params)
+    if builtin_stats_mode == :closed_form
+        resid_var_param = _saem_prune_hmm_outcome_targets(dm, resid_var_param, builtin_cf_elig.hmm_outcomes)
+        builtin_cf_elig = _saem_builtin_closed_form_eligibility(dm, re_cov_params, re_mean_params,
+                                                                 resid_var_param, hmm_emission_params)
+        if !isempty(builtin_cf_elig.outcome_targets_hmm)
+            @info "SAEM builtin_stats ignores HMM outcome targets; applying closed-form updates to eligible non-HMM/re blocks only." hmm_outcomes=builtin_cf_elig.outcome_targets_hmm
+        end
+        if !builtin_cf_elig.has_any_closed_form_block
+            @info "SAEM builtin_stats has no eligible closed-form blocks; falling back to numeric M-step."
+            builtin_stats_mode = :none
+        end
+    end
+    has_custom_closed_form = method.saem.suffstats !== nothing && method.saem.mstep_closed_form !== nothing
+    _saem_log_closed_form_plan(method.saem.builtin_stats, builtin_stats_mode, builtin_cf_elig,
+                               re_cov_params, re_mean_params, resid_var_param, hmm_emission_params,
+                               has_custom_closed_form)
     re_family_map = _saem_re_family_map(dm)
 
     θt_free = ComponentArray(NamedTuple{Tuple(base_free_names)}(Tuple(getproperty(θ0_t, n) for n in base_free_names)))
@@ -1373,6 +2042,9 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
     samples_store = Vector{Vector{Matrix}}()
     s = nothing
     builtin_stats_state = nothing
+    closed_form_builtin_used = false
+    closed_form_custom_used = false
+    numeric_mstep_used = false
 
     θ_prev = copy(θt_free)
     θt_full_init = ComponentArray(eltype(θt_free).(θ_const_t), axs_full)
@@ -1460,13 +2132,15 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
             cache = ll_cache isa Vector ? ll_cache[1] : ll_cache
             curr_stats = _saem_builtin_collect_current_stats(dm, batch_infos, b_current,
                                                              ComponentArray(θu_curr, getaxes(θu_curr)), const_cache,
-                                                             resid_var_param, re_cov_params, re_mean_params,
+                                                             resid_var_param, hmm_emission_params,
+                                                             re_cov_params, re_mean_params,
                                                              re_family_map, cache)
             builtin_stats_state = _saem_builtin_smooth_stats(builtin_stats_state, curr_stats, γ)
             updates = _saem_builtin_updates_from_smoothed_stats(dm, ComponentArray(θu_curr, getaxes(θu_curr)),
-                                                                builtin_stats_state, resid_var_param,
+                                                                builtin_stats_state, resid_var_param, hmm_emission_params,
                                                                 re_cov_params, re_mean_params)
             if !isempty(updates)
+                closed_form_builtin_used = true
                 iter_constants = merge(iter_constants, updates)
             end
         elseif builtin_stats_mode != :none
@@ -1602,6 +2276,7 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
             prob = use_bounds ? OptimizationProblem(optf, θ0_init; lb=lb, ub=ub) :
                                 OptimizationProblem(optf, θ0_init)
             if method.saem.suffstats !== nothing && method.saem.mstep_closed_form !== nothing
+                closed_form_custom_used = true
                 θu_new = method.saem.mstep_closed_form(s, dm)
                 θt_full = transform(θu_new)
                 θt_free = ComponentArray(NamedTuple{Tuple(free_names_iter)}(Tuple(getproperty(θt_full, n) for n in free_names_iter)))
@@ -1614,6 +2289,7 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                     θt_free = ComponentArray(θt_free_vec, axs_free)
                 end
             else
+                numeric_mstep_used = true
                 sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
                 θ_hat_t_raw = sol.u
                 θ_hat_t_free = θ_hat_t_raw isa ComponentArray ? θ_hat_t_raw : ComponentArray(θ_hat_t_raw, axs_free)
@@ -1686,12 +2362,24 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
     end
     θ_hat_u = inv_transform(θ_hat_t)
 
+    closed_form_used = closed_form_builtin_used || closed_form_custom_used
+    closed_form_sources = Symbol[]
+    closed_form_builtin_used && push!(closed_form_sources, :builtin_stats)
+    closed_form_custom_used && push!(closed_form_sources, :custom_mstep_closed_form)
+    mstep_mode = closed_form_used ? (numeric_mstep_used ? :hybrid : :closed_form_only) : :numeric_only
+    notes = (diagnostics=diag,
+             closed_form_mstep_used=closed_form_used,
+             closed_form_mstep_mode=mstep_mode,
+             closed_form_mstep_sources=Tuple(closed_form_sources),
+             builtin_stats_mode_requested=method.saem.builtin_stats,
+             builtin_stats_mode_effective=builtin_stats_mode,
+             builtin_stats_closed_form_eligibility=builtin_cf_elig)
     summary = FitSummary(Q_prev, converged,
                          FitParameters(θ_hat_t, θ_hat_u),
-                         NamedTuple())
+                         notes)
     diagnostics = FitDiagnostics((;), (optimizer=method.optimizer,),
                                  (saem_iters=length(diag.Q_hist), dθ_abs=diag.dθ_abs[end], dQ_abs=diag.dQ_abs[end]),
-                                 NamedTuple())
+                                 notes)
     ebe = EBEOptions(method.saem.ebe_optimizer, method.saem.ebe_optim_kwargs, method.saem.ebe_adtype,
                      method.saem.ebe_grad_tol, method.saem.ebe_multistart_n, method.saem.ebe_multistart_k,
                      method.saem.ebe_multistart_max_rounds, method.saem.ebe_multistart_sampling)
@@ -1699,6 +2387,6 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                                                 rescue=method.saem.ebe_rescue,
                                                 progress=method.saem.progress,
                                                 progress_desc="SAEM Final EBE")[1] : nothing
-    result = SAEMResult(nothing, Q_prev, length(diag.Q_hist), nothing, (diagnostics=diag,), eb_modes)
+    result = SAEMResult(nothing, Q_prev, length(diag.Q_hist), nothing, notes, eb_modes)
     return FitResult(method, result, summary, diagnostics, store_data_model ? dm : nothing, args, fit_kwargs)
 end
