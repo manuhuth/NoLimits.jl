@@ -10,3 +10,6 @@ docs/cache/
 
 # linux
 .vscode/
+
+# local code for trying
+examples/

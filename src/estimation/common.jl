@@ -924,10 +924,12 @@ function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_
                 # throw a DomainError.  The isfinite guard below catches NaN logpdf.
                 dist_use = if dist isa ContinuousTimeDiscreteStatesHMM
                     ContinuousTimeDiscreteStatesHMM(dist.transition_matrix, dist.emission_dists,
-                                                    Distributions.Categorical(init_p; check_args=false), dist.Δt)
+                                                    Distributions.Categorical(init_p; check_args=false), dist.Δt;
+                                                    propagation_mode=dist.propagation_mode)
                 elseif dist isa MVContinuousTimeDiscreteStatesHMM
                     MVContinuousTimeDiscreteStatesHMM(dist.transition_matrix, dist.emission_dists,
-                                                      Distributions.Categorical(init_p; check_args=false), dist.Δt)
+                                                      Distributions.Categorical(init_p; check_args=false), dist.Δt;
+                                                      propagation_mode=dist.propagation_mode)
                 elseif dist isa MVDiscreteTimeDiscreteStatesHMM
                     MVDiscreteTimeDiscreteStatesHMM(dist.transition_matrix, dist.emission_dists,
                                                     Distributions.Categorical(init_p; check_args=false))
