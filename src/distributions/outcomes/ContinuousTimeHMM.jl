@@ -19,28 +19,37 @@ function _ct_hmm_adjacency(transition_matrix::AbstractMatrix{<:Real}; atol::Real
     return adj
 end
 
-function _ct_hmm_is_acyclic(transition_matrix::AbstractMatrix{<:Real}; atol::Real=1e-12)
-    n_states = size(transition_matrix, 1)
-    adj = _ct_hmm_adjacency(transition_matrix; atol=atol)
-    color = fill(0, n_states) # 0=unvisited, 1=visiting, 2=done
-
-    function dfs(v::Int)
-        color[v] = 1
-        for u in adj[v]
-            color[u] == 1 && return false
-            if color[u] == 0 && !dfs(u)
-                return false
-            end
+function _ct_hmm_topological_order(adj::Vector{Vector{Int}})
+    n = length(adj)
+    indeg = zeros(Int, n)
+    for i in 1:n
+        for j in adj[i]
+            indeg[j] += 1
         end
-        color[v] = 2
-        return true
     end
+    order = Vector{Int}(undef, n)
+    queue = Int[]
+    for i in 1:n
+        indeg[i] == 0 && push!(queue, i)
+    end
+    head = 1
+    k = 1
+    while head <= length(queue)
+        v = queue[head]
+        head += 1
+        order[k] = v
+        k += 1
+        for u in adj[v]
+            indeg[u] -= 1
+            indeg[u] == 0 && push!(queue, u)
+        end
+    end
+    return (k == n + 1) ? order : nothing
+end
 
-    for v in 1:n_states
-        color[v] == 0 || continue
-        dfs(v) || return false
-    end
-    return true
+function _ct_hmm_is_acyclic(transition_matrix::AbstractMatrix{<:Real}; atol::Real=1e-12)
+    adj = _ct_hmm_adjacency(transition_matrix; atol=atol)
+    return _ct_hmm_topological_order(adj) !== nothing
 end
 
 function _ct_hmm_path_kernel(lambdas::AbstractVector{<:Real}, Δt::Real; atol::Real=1e-10)
@@ -113,6 +122,65 @@ function _ct_hmm_transition_matrix_pathsum(transition_matrix::AbstractMatrix{<:R
     return Tprob
 end
 
+function _ct_hmm_probabilities_pathsum_dag(
+    transition_matrix::AbstractMatrix{<:Real},
+    initial_p::AbstractVector{<:Real},
+    Δt::Real;
+    atol::Real=1e-10
+)
+    n_states = size(transition_matrix, 1)
+    adj = _ct_hmm_adjacency(transition_matrix; atol=atol)
+    order = _ct_hmm_topological_order(adj)
+    order === nothing && return nothing
+
+    # parents[j] = all i with edge i -> j
+    parents = [Int[] for _ in 1:n_states]
+    for i in 1:n_states
+        for j in adj[i]
+            push!(parents[j], i)
+        end
+    end
+
+    λ = [-transition_matrix[i, i] for i in 1:n_states]
+    Tprob = promote_type(eltype(transition_matrix), eltype(initial_p), typeof(Δt))
+    C = zeros(Tprob, n_states, n_states) # row j: coefficients for exp(-λ[r] t)
+    eps_tol = Tprob(atol)
+
+    # Solve lower-triangular-in-topological-order coefficient system:
+    # p_j(t) = sum_r C[j,r] exp(-λ_r t)
+    for j in order
+        row_sum = zero(Tprob)
+        for r in 1:n_states
+            if r == j
+                continue
+            end
+            rhs = zero(Tprob)
+            for i in parents[j]
+                rhs += transition_matrix[i, j] * C[i, r]
+            end
+            d = λ[j] - λ[r]
+            if abs(d) <= eps_tol
+                abs(rhs) <= eps_tol || return nothing
+                C[j, r] = zero(Tprob)
+            else
+                C[j, r] = rhs / d
+            end
+            row_sum += C[j, r]
+        end
+        C[j, j] = initial_p[j] - row_sum
+    end
+
+    p = zeros(Tprob, n_states)
+    for j in 1:n_states
+        s = zero(Tprob)
+        for r in 1:n_states
+            s += C[j, r] * exp(-λ[r] * Δt)
+        end
+        p[j] = s
+    end
+    return p ./ sum(p)
+end
+
 function _ct_hmm_probabilities_hidden_states(
     transition_matrix::AbstractMatrix{<:Real},
     initial_p::AbstractVector{<:Real},
@@ -127,12 +195,9 @@ function _ct_hmm_probabilities_hidden_states(
     end
 
     if mode == :pathsum || mode == :auto
-        if _ct_hmm_is_acyclic(transition_matrix; atol=atol)
-            Tprob = _ct_hmm_transition_matrix_pathsum(transition_matrix, Δt; atol=atol)
-            if Tprob !== nothing
-                p = transpose(Tprob) * initial_p
-                return p ./ sum(p)
-            end
+        p = _ct_hmm_probabilities_pathsum_dag(transition_matrix, initial_p, Δt; atol=atol)
+        if p !== nothing
+            return p
         end
         if mode == :pathsum
             error("propagation_mode=:pathsum requested but path-sum is not applicable " *
