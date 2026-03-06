@@ -5,6 +5,54 @@ using Distributions
 using ForwardDiff
 using ComponentArrays
 using Turing
+using LinearAlgebra
+
+@testset "HMM acyclic path-sum propagation matches matrix exponential" begin
+    λ12, λ13, λ23 = 0.4, 0.2, 0.7
+    Q = [
+        -(λ12 + λ13)  λ12           λ13
+        0.0           -λ23          λ23
+        0.0           0.0           0.0
+    ]
+    init = Categorical([1.0, 0.0, 0.0])
+    dt = 1.7
+
+    hmm = ContinuousTimeDiscreteStatesHMM(
+        Q,
+        (Bernoulli(0.2), Bernoulli(0.5), Bernoulli(0.8)),
+        init,
+        dt
+    )
+
+    p_pathsum = probabilities_hidden_states(hmm)
+    p_expm = exp(transpose(Q) * dt) * init.p
+
+    @test isapprox(p_pathsum, p_expm; rtol=1e-9, atol=1e-10)
+    @test isapprox(sum(p_pathsum), 1.0; atol=1e-12)
+end
+
+@testset "HMM cyclic propagation falls back consistently" begin
+    λ12, λ23, λ31 = 0.4, 0.6, 0.5
+    Q = [
+        -λ12  λ12  0.0
+        0.0  -λ23  λ23
+        λ31  0.0  -λ31
+    ]
+    init = Categorical([0.7, 0.2, 0.1])
+    dt = 0.9
+
+    hmm = ContinuousTimeDiscreteStatesHMM(
+        Q,
+        (Bernoulli(0.2), Bernoulli(0.5), Bernoulli(0.8)),
+        init,
+        dt
+    )
+
+    p = probabilities_hidden_states(hmm)
+    p_expm = exp(transpose(Q) * dt) * init.p
+
+    @test isapprox(p, p_expm; rtol=1e-10, atol=1e-12)
+end
 
 @testset "HMM DataModel + loglikelihood" begin
     model = @Model begin

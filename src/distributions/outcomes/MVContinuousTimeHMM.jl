@@ -48,6 +48,7 @@ struct MVContinuousTimeDiscreteStatesHMM{
     emission_dists    :: E
     initial_dist      :: D
     Δt                :: T
+    propagation_mode  :: Symbol
 end
 
 function MVContinuousTimeDiscreteStatesHMM(
@@ -55,7 +56,10 @@ function MVContinuousTimeDiscreteStatesHMM(
     emission_dists    :: Tuple,
     initial_dist      :: Distributions.Categorical,
     Δt                :: Real,
+    ;
+    propagation_mode  :: Symbol = :auto,
 )
+    _ct_hmm_validate_mode(propagation_mode)
     n_states = size(transition_matrix, 1)
     size(transition_matrix, 2) == n_states ||
         error("transition_matrix must be square, got $(size(transition_matrix)).")
@@ -73,7 +77,7 @@ function MVContinuousTimeDiscreteStatesHMM(
                   "$(_mv_n_outcomes(emission_dists[k])).")
     end
     return MVContinuousTimeDiscreteStatesHMM(
-        n_states, n_outcomes, transition_matrix, emission_dists, initial_dist, Δt)
+        n_states, n_outcomes, transition_matrix, emission_dists, initial_dist, Δt, propagation_mode)
 end
 
 # ---------------------------------------------------------------------------
@@ -87,7 +91,8 @@ Marginal prior probabilities of the hidden states at the current observation
 time, propagated from `hmm.initial_dist` via `exp(Q · Δt)`.
 """
 function probabilities_hidden_states(hmm::MVContinuousTimeDiscreteStatesHMM)
-    return expv(hmm.Δt, transpose(hmm.transition_matrix), hmm.initial_dist.p)
+    return _ct_hmm_probabilities_hidden_states(
+        hmm.transition_matrix, hmm.initial_dist.p, hmm.Δt; mode=hmm.propagation_mode)
 end
 
 """

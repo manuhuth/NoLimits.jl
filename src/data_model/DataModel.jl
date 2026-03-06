@@ -514,7 +514,7 @@ function _info_numeric_re_group_levels(model, df)
     end
     isempty(numeric_cols) && return nothing
     cols_str = join(string.(numeric_cols), ", ")
-    @info "DataModel detected numeric random-effect grouping levels in column(s) $(cols_str). You wwill not be able to use constant random-effects. If you want to use constantr andom effects, consider ralabeling your random efefcts to strings or symbols."
+    @info "DataModel detected numeric random-effect grouping levels in column(s) $(cols_str). You wwill not be able to use constant random-effects. If you want to use constant random effects, consider relabeling your random effects to strings or symbols."
     return nothing
 end
 
