@@ -143,6 +143,7 @@ function plot_observation_distributions(res::FitResult;
             for j in obs_idx
                 row = obs_rows_all[j]
                 y_obs = getfield(ind.series.obs, obs_name)[j]
+                has_obs_val = y_obs isa Number && isfinite(float(y_obs))
                 tval = dm.df[row, dm.config.time_col]
                 p = create_styled_plot(title=string(dm.config.primary_id, ": ", dm.df[row, dm.config.primary_id], ", ",
                                                     dm.config.time_col, ": ", tval),
@@ -188,9 +189,11 @@ function plot_observation_distributions(res::FitResult;
                         plot!(p, vals, qlo; color=style.color_secondary, alpha=mcmc_quantiles_alpha, linestyle=:dash, label="$(mcmc_quantiles[1])%")
                         plot!(p, vals, qhi; color=style.color_secondary, alpha=mcmc_quantiles_alpha, linestyle=:dash, label="$(mcmc_quantiles[end])%")
                         ylabel!(p, "Probability Mass")
-                        vline!(p, [y_obs]; color=style.color_primary, label="observed")
+                        if has_obs_val
+                            vline!(p, [y_obs]; color=style.color_primary, label="observed")
+                        end
                         xlim = (minimum(vals), maximum(vals))
-                        if y_obs isa Number
+                        if has_obs_val
                             xlim = (min(xlim[1], float(y_obs)), max(xlim[2], float(y_obs)))
                         end
                         xlims_by_group[(i, obs_name)] = haskey(xlims_by_group, (i, obs_name)) ?
@@ -208,9 +211,11 @@ function plot_observation_distributions(res::FitResult;
                         plot!(p, grid.y, pdf_mean; color=style.color_secondary, label="posterior mean PDF")
                         plot!(p, grid.y, qlo; color=style.color_secondary, alpha=mcmc_quantiles_alpha, linestyle=:dash, label="$(mcmc_quantiles[1])%")
                         plot!(p, grid.y, qhi; color=style.color_secondary, alpha=mcmc_quantiles_alpha, linestyle=:dash, label="$(mcmc_quantiles[end])%")
-                        vline!(p, [y_obs]; color=style.color_primary, label="observed")
+                        if has_obs_val
+                            vline!(p, [y_obs]; color=style.color_primary, label="observed")
+                        end
                         xlim = (minimum(grid.y), maximum(grid.y))
-                        if y_obs isa Number
+                        if has_obs_val
                             xlim = (min(xlim[1], float(y_obs)), max(xlim[2], float(y_obs)))
                         end
                         xlims_by_group[(i, obs_name)] = haskey(xlims_by_group, (i, obs_name)) ?
@@ -257,9 +262,11 @@ function plot_observation_distributions(res::FitResult;
                         probs = pdf.(Ref(dist), vals)
                         bar!(p, vals, probs; color=style.color_secondary, label="PMF")
                         ylabel!(p, "Probability Mass")
-                        vline!(p, [y_obs]; color=style.color_primary, label="observed")
+                        if has_obs_val
+                            vline!(p, [y_obs]; color=style.color_primary, label="observed")
+                        end
                         xlim = (minimum(vals), maximum(vals))
-                        if y_obs isa Number
+                        if has_obs_val
                             xlim = (min(xlim[1], float(y_obs)), max(xlim[2], float(y_obs)))
                         end
                         xlims_by_group[(i, obs_name)] = haskey(xlims_by_group, (i, obs_name)) ?
@@ -272,9 +279,11 @@ function plot_observation_distributions(res::FitResult;
                         grid === nothing && error("Unable to build PDF grid for $(obs_name).")
                         pdf_vals = vec(grid.z[:, 1])
                         plot!(p, grid.y, pdf_vals; color=style.color_secondary, label="PDF")
-                        vline!(p, [y_obs]; color=style.color_primary, label="observed")
+                        if has_obs_val
+                            vline!(p, [y_obs]; color=style.color_primary, label="observed")
+                        end
                         xlim = (minimum(grid.y), maximum(grid.y))
-                        if y_obs isa Number
+                        if has_obs_val
                             xlim = (min(xlim[1], float(y_obs)), max(xlim[2], float(y_obs)))
                         end
                         xlims_by_group[(i, obs_name)] = haskey(xlims_by_group, (i, obs_name)) ?

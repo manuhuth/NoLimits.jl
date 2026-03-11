@@ -71,6 +71,34 @@ end
     @test p !== nothing
 end
 
+@testset "plot_observation_distributions handles missing selected observation (regression)" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.1)
+            σ = RealNumber(0.3, scale=:log)
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @formulas begin
+            y ~ Normal(a, σ)
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1],
+        t = [0.0, 1.0],
+        y = Union{Missing, Float64}[missing, 0.2]
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    @test plot_observation_distributions(dm; individuals_idx=1, obs_rows=1, observables=:y) !== nothing
+    res = fit_model(dm, NoLimits.MLE())
+    @test plot_observation_distributions(res; individuals_idx=1, obs_rows=1, observables=:y) !== nothing
+end
+
 @testset "plot_observation_distributions discrete" begin
     model = @Model begin
         @fixedEffects begin

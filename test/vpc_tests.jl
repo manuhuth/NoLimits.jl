@@ -85,6 +85,38 @@ end
     @test p_vpc !== nothing
 end
 
+@testset "plot_vpc skips missing observed outcomes (regression)" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.1)
+            b = RealNumber(-0.2)
+            σ = RealNumber(0.3, scale=:log)
+        end
+
+        @covariates begin
+            t = Covariate()
+            z = Covariate()
+        end
+
+        @formulas begin
+            y ~ Normal(a + b * z, σ)
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 2, 2],
+        t = [0.0, 1.0, 0.0, 1.0],
+        z = [0.1, 0.2, 0.1, 0.2],
+        y = Union{Missing, Float64}[0.15, missing, 0.14, missing]
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    res = fit_model(dm, NoLimits.MLE())
+
+    @test plot_vpc(res; n_simulations=5, n_bins=2) !== nothing
+    @test plot_vpc(res; x_axis_feature=:z, n_simulations=5, n_bins=2) !== nothing
+end
+
 @testset "plot_vpc discrete mcmc random effects" begin
     model_bern = @Model begin
         @fixedEffects begin

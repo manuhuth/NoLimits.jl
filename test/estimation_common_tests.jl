@@ -432,3 +432,87 @@ end
     @test g isa ComponentArray
     @test all(isfinite, collect(g))
 end
+
+@testset "loglikelihood skips missing scalar observables (non-ODE regression)" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.2)
+            b = RealNumber(-0.3)
+            σy = RealNumber(0.5)
+            σz = RealNumber(0.7)
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @formulas begin
+            μ = a + b * t
+            y ~ Normal(μ, σy)
+            z ~ Normal(μ + 1.0, σz)
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 1],
+        t = [0.0, 1.0, 2.0],
+        y = Union{Missing, Float64}[1.1, missing, missing],
+        z = Union{Missing, Float64}[2.2, 2.0, missing]
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    θ = get_θ0_untransformed(model.fixed.fixed)
+    ll = loglikelihood(dm, θ, ComponentArray())
+
+    μ1 = 1.2
+    μ2 = 0.9
+    ll_expected = logpdf(Normal(μ1, 0.5), 1.1) +
+                  logpdf(Normal(μ1 + 1.0, 0.7), 2.2) +
+                  logpdf(Normal(μ2 + 1.0, 0.7), 2.0)
+    @test ll ≈ ll_expected atol=1e-12
+end
+
+@testset "loglikelihood skips missing scalar observables (ODE regression)" begin
+    model = @Model begin
+        @fixedEffects begin
+            k = RealNumber(0.0)
+            σy = RealNumber(0.2)
+            σz = RealNumber(0.3)
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @DifferentialEquation begin
+            D(x1) ~ -k * x1
+        end
+
+        @initialDE begin
+            x1 = 1.0
+        end
+
+        @formulas begin
+            y ~ Normal(x1(t), σy)
+            z ~ Normal(2.0 * x1(t), σz)
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 1, 1],
+        t = [0.0, 1.0, 2.0, 3.0],
+        y = Union{Missing, Float64}[1.1, missing, 0.95, missing],
+        z = Union{Missing, Float64}[2.05, 1.9, missing, missing]
+    )
+
+    model_saveat = set_solver_config(model; saveat_mode=:saveat)
+    dm = DataModel(model_saveat, df; primary_id=:ID, time_col=:t)
+    θ = get_θ0_untransformed(model_saveat.fixed.fixed)
+    ll = loglikelihood(dm, θ, ComponentArray())
+
+    ll_expected = logpdf(Normal(1.0, 0.2), 1.1) +
+                  logpdf(Normal(2.0, 0.3), 2.05) +
+                  logpdf(Normal(2.0, 0.3), 1.9) +
+                  logpdf(Normal(1.0, 0.2), 0.95)
+    @test ll ≈ ll_expected atol=1e-12
+end

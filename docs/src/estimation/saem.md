@@ -259,6 +259,8 @@ Built-in blockwise closed-form updates are available for:
 
 These updates are compatible with arbitrarily nonlinear model structure, including ODE-based dynamics and function-approximator components, provided that the updated parameters appear in the supported distribution blocks.
 
+For HMM outcomes (`DiscreteTimeDiscreteStatesHMM`, `ContinuousTimeDiscreteStatesHMM`, and multivariate variants), built-in closed-form updates are currently limited to eligible random-effect distribution blocks. Transition/emission parameter blocks are marked ineligible in built-in mode because latent-state sufficient statistics are not constructed by this pathway.
+
 ### Example 1: Neural-Network-Based Nonlinear ODE Model with Closed-Form RE-Mean and Outcome-Scale Blocks
 
 The following example illustrates a mixed-effects ODE model in which neural network parameter vectors serve as random-effect distribution means. Despite the highly nonlinear dynamics, the random-effect mean parameters and observation scale parameter admit closed-form SAEM updates.
@@ -585,6 +587,8 @@ After fitting, results are accessed through the standard accessor interface. Lik
 theta_u = NoLimits.get_params(res; scale=:untransformed)
 obj = get_objective(res)
 ok = get_converged(res)
+used_closed_form = NoLimits.get_closed_form_mstep_used(res)
+notes = NoLimits.get_notes(res)  # includes closed_form_mstep_mode/sources and builtin_stats_closed_form_eligibility
 
 re_df = get_random_effects(res)
 ```

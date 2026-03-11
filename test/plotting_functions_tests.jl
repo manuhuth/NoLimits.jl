@@ -114,6 +114,41 @@ end
     @test p_fits_time !== nothing
 end
 
+@testset "plot_data/plot_fits skip missing scalar observations (regression)" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.1)
+            b = RealNumber(-0.2)
+            σ = RealNumber(0.3, scale=:log)
+        end
+
+        @covariates begin
+            t = Covariate()
+            z = Covariate()
+        end
+
+        @formulas begin
+            y ~ Normal(a + b * z, σ)
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 2, 2],
+        t = [0.0, 1.0, 0.0, 1.0],
+        z = [0.1, 0.2, 0.1, 0.2],
+        y = Union{Missing, Float64}[0.15, missing, 0.14, missing]
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    res = fit_model(dm, NoLimits.MLE())
+
+    @test plot_data(res) !== nothing
+    @test plot_data(dm) !== nothing
+    @test plot_fits(res) !== nothing
+    @test plot_fits(dm) !== nothing
+    @test plot_fits_comparison([res, res]) !== nothing
+end
+
 @testset "plot_fits discrete and random effects" begin
     model = @Model begin
         @fixedEffects begin

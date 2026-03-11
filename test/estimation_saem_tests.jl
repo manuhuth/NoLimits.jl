@@ -11,6 +11,68 @@ using LinearAlgebra
 
 const SAEM_FAST = (maxiters=3, t0=1, kappa=0.6, mcmc_steps=1, max_store=3)
 
+function _saem_test_create_trans_pi0(eta_hmm, eta_initial)
+    n_states = length(eta_initial) + 1
+    @assert length(eta_hmm) == n_states * (n_states - 1)
+
+    T = promote_type(eltype(eta_hmm), eltype(eta_initial))
+    A = Matrix{T}(undef, n_states, n_states)
+    pi0 = Vector{T}(undef, n_states)
+
+    m0 = zero(T)
+    @inbounds for j in 1:(n_states - 1)
+        eta = eta_initial[j]
+        m0 = ifelse(eta > m0, eta, m0)
+    end
+
+    denom0 = exp(-m0)
+    @inbounds for s in 2:n_states
+        val = exp(eta_initial[s - 1] - m0)
+        pi0[s] = val
+        denom0 += val
+    end
+    invden0 = inv(denom0)
+    pi0[1] = exp(-m0) * invden0
+    @inbounds for s in 2:n_states
+        pi0[s] *= invden0
+    end
+
+    row_logits = Vector{T}(undef, n_states - 1)
+    idx = 1
+    @inbounds for i in 1:n_states
+        m = zero(T)
+        for k in 1:(n_states - 1)
+            eta = eta_hmm[idx]
+            row_logits[k] = eta
+            m = ifelse(eta > m, eta, m)
+            idx += 1
+        end
+
+        denom = exp(-m)
+        k = 1
+        for s in 1:n_states
+            if s == i
+                continue
+            end
+            val = exp(row_logits[k] - m)
+            A[i, s] = val
+            denom += val
+            k += 1
+        end
+
+        invden = inv(denom)
+        A[i, i] = exp(-m) * invden
+        for s in 1:n_states
+            if s == i
+                continue
+            end
+            A[i, s] *= invden
+        end
+    end
+
+    return A, pi0
+end
+
 @testset "SAEM default sampler" begin
     method = NoLimits.SAEM()
     @test method.saem.sampler isa NUTS
@@ -18,6 +80,97 @@ const SAEM_FAST = (maxiters=3, t0=1, kappa=0.6, mcmc_steps=1, max_store=3)
     @test method.saem.ebe_multistart_k == 10
     @test method.saem.ebe_multistart_sampling == :lhs
     @test method.saem.ebe_rescue.sampling == :lhs
+end
+
+@testset "SAEM closed-form M-step flag metadata" begin
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+
+        @fixedEffects begin
+            a = RealNumber(0.2)
+            σ = RealNumber(0.5, scale=:log)
+        end
+
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, 1.0); column=:ID)
+        end
+
+        @formulas begin
+            y ~ Normal(a + η, σ)
+        end
+    end
+
+    df = DataFrame(
+        ID = [:A, :A, :B, :B],
+        t = [0.0, 1.0, 0.0, 1.0],
+        y = [0.1, 0.2, 0.0, -0.1]
+    )
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+
+    res_numeric = fit_model(dm, NoLimits.SAEM(;
+        sampler=MH(),
+        turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
+        builtin_stats=:none,
+        maxiters=2,
+        progress=false,
+        max_store=4,
+    ))
+    @test !NoLimits.get_closed_form_mstep_used(res_numeric)
+    notes_numeric = NoLimits.get_notes(res_numeric)
+    @test notes_numeric.closed_form_mstep_used === false
+    @test notes_numeric.closed_form_mstep_mode == :numeric_only
+    @test isempty(notes_numeric.closed_form_mstep_sources)
+
+    res_builtin = fit_model(dm, NoLimits.SAEM(;
+        sampler=MH(),
+        turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
+        builtin_stats=:closed_form,
+        maxiters=2,
+        progress=false,
+        max_store=4,
+    ))
+    @test NoLimits.get_closed_form_mstep_used(res_builtin)
+    notes_builtin = NoLimits.get_notes(res_builtin)
+    @test notes_builtin.closed_form_mstep_used === true
+    @test notes_builtin.closed_form_mstep_mode == :hybrid
+    @test :builtin_stats in notes_builtin.closed_form_mstep_sources
+
+    suffstats = (dm, batch_infos, b_current, θ, constants_re) -> begin
+        s = 0.0
+        for b in b_current
+            s += sum(b)
+        end
+        return (; s)
+    end
+    mstep_closed_form = (s, dm) -> get_θ0_untransformed(dm.model.fixed.fixed)
+    res_custom = fit_model(dm, NoLimits.SAEM(;
+        sampler=MH(),
+        turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
+        builtin_stats=:none,
+        suffstats=suffstats,
+        mstep_closed_form=mstep_closed_form,
+        maxiters=2,
+        progress=false,
+        max_store=4,
+    ))
+    @test NoLimits.get_closed_form_mstep_used(res_custom)
+    notes_custom = NoLimits.get_notes(res_custom)
+    @test notes_custom.closed_form_mstep_used === true
+    @test notes_custom.closed_form_mstep_mode == :closed_form_only
+    @test :custom_mstep_closed_form in notes_custom.closed_form_mstep_sources
+
+    @test_logs match_mode=:any (:info, r"SAEM closed-form M-step plan") begin
+        fit_model(dm, NoLimits.SAEM(;
+            sampler=MH(),
+            turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
+            builtin_stats=:auto,
+            maxiters=1,
+            progress=false,
+            max_store=2,
+        ))
+    end
 end
 
 @testset "SAEM basic (random effects)" begin
@@ -595,13 +748,15 @@ end
     θ = NoLimits.get_θ0_untransformed(model.fixed.fixed)
     stats = (;
         re=(; η=(family=:mvnormal, mean=[0.0, 0.0], second=[0.25 0.0; 0.0 0.04], n=10)),
-        outcome=NamedTuple()
+        outcome=NamedTuple(),
+        hmm=NamedTuple()
     )
 
     updates = NoLimits._saem_builtin_updates_from_smoothed_stats(
         dm,
         θ,
         stats,
+        NamedTuple(),
         NamedTuple(),
         (; η=(:ω1, :ω2)),
         NamedTuple()
@@ -767,6 +922,52 @@ end
                              resid_var_param=(; y1=:σ1, y2=:σ2),
                              re_cov_params=(; η=:τ)))
     @test res isa FitResult
+end
+
+@testset "SAEM builtin_stats skips missing normal outcomes (regression)" begin
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+
+        @fixedEffects begin
+            a = RealNumber(0.1)
+            b = RealNumber(0.2)
+            σ1 = RealNumber(0.4, scale=:log)
+            σ2 = RealNumber(0.3, scale=:log)
+            τ = RealNumber(0.3, scale=:log)
+        end
+
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, τ); column=:ID)
+        end
+
+        @formulas begin
+            y1 ~ Normal(a + η, σ1)
+            y2 ~ Normal(b + η, σ2)
+        end
+    end
+
+    df = DataFrame(
+        ID = [:A, :A, :B, :B],
+        t = [0.0, 1.0, 0.0, 1.0],
+        y1 = Union{Missing, Float64}[0.1, missing, 0.0, -0.1],
+        y2 = Union{Missing, Float64}[missing, 0.25, 0.05, missing]
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
+                             max_store=4,
+                             maxiters=2,
+                             builtin_stats=:closed_form,
+                             resid_var_param=(; y1=:σ1, y2=:σ2),
+                             re_cov_params=(; η=:τ)))
+    @test res isa FitResult
+    notes = NoLimits.get_notes(res)
+    @test notes.builtin_stats_mode_effective == :closed_form
+    @test :builtin_stats in notes.closed_form_mstep_sources
+    θ = NoLimits.get_params(res; scale=:untransformed)
+    @test θ.σ1 > 0 && θ.σ2 > 0 && θ.τ > 0
 end
 
 @testset "SAEM builtin_stats gaussian_re falls back for non-Normal outcomes" begin
@@ -1003,6 +1204,342 @@ end
     auto_cfg = NoLimits._saem_autodetect_gaussian_re(dm, NoLimits.get_names(model.fixed.fixed))
     @test auto_cfg !== nothing
     @test auto_cfg.resid_var_param == (; yb=:p, yp=:λ)
+end
+
+@testset "SAEM builtin_stats classifies HMM closed-form eligibility" begin
+    model_partial = @Model begin
+        @helpers begin
+            create_trans_pi0(eta_hmm, eta_initial) = _saem_test_create_trans_pi0(eta_hmm, eta_initial)
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @fixedEffects begin
+            mean_transitions = RealVector([0.0, 0.0])
+            mean_initial = RealNumber(0.0)
+            omega_hmm = RealVector([0.3, 0.3], scale=fill(:log, 2))
+            omega_initial = RealNumber(0.3, scale=:log)
+            eta_theta = RealVector(fill(0.6, 4), scale=fill(:logit, 4))
+        end
+
+        @randomEffects begin
+            eta_hmm = RandomEffect(MvNormal(mean_transitions, Diagonal(omega_hmm)); column=:ID)
+            eta_initial = RandomEffect(Normal(mean_initial, omega_initial); column=:ID)
+        end
+
+        @formulas begin
+            trans_pi0 = create_trans_pi0(eta_hmm, [eta_initial])
+            theta_mat = reshape(eta_theta, 2, 2)
+            emissions = ntuple(s -> ntuple(j -> Bernoulli(theta_mat[s, j]), 2), 2)
+            y ~ MVDiscreteTimeDiscreteStatesHMM(trans_pi0[1], emissions, Categorical(trans_pi0[2]))
+        end
+    end
+
+    df = DataFrame(
+        ID = [:A, :A, :B, :B],
+        t = [0.0, 1.0, 0.0, 1.0],
+        y = [[1, 0], [0, 1], [1, 1], [0, 0]]
+    )
+
+    dm_partial = DataModel(model_partial, df; primary_id=:ID, time_col=:t)
+    auto_cfg = NoLimits._saem_autodetect_gaussian_re(dm_partial, NoLimits.get_names(model_partial.fixed.fixed))
+    @test auto_cfg !== nothing
+    @test auto_cfg.re_cov_params == (; eta_hmm=:omega_hmm, eta_initial=:omega_initial)
+    @test auto_cfg.re_mean_params == (; eta_hmm=:mean_transitions, eta_initial=:mean_initial)
+    @test auto_cfg.resid_var_param == NamedTuple()
+    @test auto_cfg.hmm_emission_params.y.target == :eta_theta
+    @test auto_cfg.hmm_outcomes == (:y,)
+    @test auto_cfg.hmm_transition_closed_form == :covered_by_re_or_external
+    @test auto_cfg.hmm_emission_closed_form == :eligible
+
+    elig_partial = NoLimits._saem_builtin_closed_form_eligibility(
+        dm_partial,
+        auto_cfg.re_cov_params,
+        auto_cfg.re_mean_params,
+        auto_cfg.resid_var_param,
+        auto_cfg.hmm_emission_params
+    )
+    @test elig_partial.re_block_eligible
+    @test !elig_partial.outcome_block_eligible
+    @test elig_partial.hmm_emission_block_eligible
+    @test elig_partial.has_any_closed_form_block
+    @test elig_partial.hmm_outcomes == (:y,)
+    @test elig_partial.hmm_transition_closed_form == :covered_by_re_or_external
+    @test elig_partial.hmm_emission_closed_form == :eligible
+    @test !(:hmm_latent_state_suffstats_not_available_builtin in elig_partial.reasons)
+
+    res_partial = fit_model(dm_partial, NoLimits.SAEM(;
+                                  sampler=MH(),
+                                  turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
+                                  mcmc_steps=1,
+                                  max_store=4,
+                                  maxiters=2,
+                                  progress=false,
+                                  builtin_stats=:auto);
+                            store_eb_modes=false)
+    notes_partial = NoLimits.get_notes(res_partial)
+    @test notes_partial.builtin_stats_mode_effective == :closed_form
+    @test notes_partial.builtin_stats_closed_form_eligibility.re_block_eligible
+    @test !notes_partial.builtin_stats_closed_form_eligibility.outcome_block_eligible
+    @test notes_partial.builtin_stats_closed_form_eligibility.hmm_emission_block_eligible
+    @test notes_partial.builtin_stats_closed_form_eligibility.hmm_outcomes == (:y,)
+    @test NoLimits.get_closed_form_mstep_used(res_partial)
+    @test notes_partial.closed_form_mstep_mode == :closed_form_only
+    @test :builtin_stats in notes_partial.closed_form_mstep_sources
+
+    model_ineligible = @Model begin
+        @helpers begin
+            create_trans_pi0(eta_hmm, eta_initial) = _saem_test_create_trans_pi0(eta_hmm, eta_initial)
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @fixedEffects begin
+            eta_theta = RealVector(fill(0.6, 4), scale=fill(:logit, 4))
+        end
+
+        @randomEffects begin
+            eta_hmm = RandomEffect(MvNormal([0.0, 0.0], Diagonal([1.0, 1.0])); column=:ID)
+            eta_initial = RandomEffect(Normal(0.0, 1.0); column=:ID)
+        end
+
+        @formulas begin
+            trans_pi0 = create_trans_pi0(eta_hmm, [eta_initial])
+            theta_mat = reshape(eta_theta, 2, 2)
+            emissions = ntuple(s -> ntuple(j -> Bernoulli(clamp(0.8 * theta_mat[s, j] + 0.1, 0.0, 1.0)), 2), 2)
+            y ~ MVDiscreteTimeDiscreteStatesHMM(trans_pi0[1], emissions, Categorical(trans_pi0[2]))
+        end
+    end
+
+    dm_ineligible = DataModel(model_ineligible, df; primary_id=:ID, time_col=:t)
+    auto_cfg_none = NoLimits._saem_autodetect_gaussian_re(dm_ineligible, NoLimits.get_names(model_ineligible.fixed.fixed))
+    @test auto_cfg_none === nothing
+
+    res_ineligible = fit_model(dm_ineligible, NoLimits.SAEM(;
+                                    sampler=MH(),
+                                    turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
+                                    mcmc_steps=1,
+                                    max_store=4,
+                                    maxiters=2,
+                                    progress=false,
+                                    builtin_stats=:auto);
+                              store_eb_modes=false)
+    notes_ineligible = NoLimits.get_notes(res_ineligible)
+    @test notes_ineligible.builtin_stats_mode_effective == :none
+    @test !notes_ineligible.builtin_stats_closed_form_eligibility.has_any_closed_form_block
+    @test notes_ineligible.builtin_stats_closed_form_eligibility.hmm_outcomes == (:y,)
+    @test !NoLimits.get_closed_form_mstep_used(res_ineligible)
+    @test notes_ineligible.closed_form_mstep_mode == :numeric_only
+end
+
+@testset "SAEM builtin_stats HMM emission handles fully missing rows (regression)" begin
+    model = @Model begin
+        @helpers begin
+            create_trans_pi0(eta_hmm, eta_initial) = _saem_test_create_trans_pi0(eta_hmm, eta_initial)
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @fixedEffects begin
+            mean_transitions = RealVector([0.0, 0.0])
+            mean_initial = RealNumber(0.0)
+            omega_hmm = RealVector([0.3, 0.3], scale=fill(:log, 2))
+            omega_initial = RealNumber(0.3, scale=:log)
+            eta_theta = RealVector(fill(0.6, 4), scale=fill(:logit, 4))
+        end
+
+        @randomEffects begin
+            eta_hmm = RandomEffect(MvNormal(mean_transitions, Diagonal(omega_hmm)); column=:ID)
+            eta_initial = RandomEffect(Normal(mean_initial, omega_initial); column=:ID)
+        end
+
+        @formulas begin
+            trans_pi0 = create_trans_pi0(eta_hmm, [eta_initial])
+            theta_mat = reshape(eta_theta, 2, 2)
+            emissions = ntuple(s -> ntuple(j -> Bernoulli(theta_mat[s, j]), 2), 2)
+            y ~ MVDiscreteTimeDiscreteStatesHMM(trans_pi0[1], emissions, Categorical(trans_pi0[2]))
+        end
+    end
+
+    df = DataFrame(
+        ID = [:A, :A, :B, :B],
+        t = [0.0, 1.0, 0.0, 1.0],
+        y = Any[[1, 0], missing, [1, 1], [0, 0]]
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    res = fit_model(dm, NoLimits.SAEM(;
+                              sampler=MH(),
+                              turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
+                              mcmc_steps=1,
+                              max_store=4,
+                              maxiters=2,
+                              progress=false,
+                              builtin_stats=:auto);
+                        store_eb_modes=false)
+    @test res isa FitResult
+    notes = NoLimits.get_notes(res)
+    @test notes.builtin_stats_mode_effective == :closed_form
+    @test :builtin_stats in notes.closed_form_mstep_sources
+end
+
+@testset "SAEM builtin_stats auto detects lts_random_no_cv full closed-form coverage" begin
+    n_states = 7
+    n_outcomes = 9
+    n_transition_random_effects = n_states * (n_states - 1)
+
+    model = @Model begin
+        @helpers begin
+            create_trans_pi0(eta_hmm, eta_initial) = _saem_test_create_trans_pi0(eta_hmm, eta_initial)
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @fixedEffects begin
+            mean_initial = RealVector(fill(0.0, n_states - 1))
+            mean_transitions = RealVector(fill(0.0, n_transition_random_effects))
+            omega_hmm = RealVector(fill(0.3, n_transition_random_effects), scale=fill(:log, n_transition_random_effects))
+            omega_initial = RealVector(fill(0.3, n_states - 1), scale=fill(:log, n_states - 1))
+            eta_theta = RealVector(fill(0.5, n_states * n_outcomes), scale=fill(:logit, n_states * n_outcomes))
+        end
+
+        @randomEffects begin
+            eta_hmm = RandomEffect(MvNormal(mean_transitions, Diagonal(omega_hmm)); column=:ID)
+            eta_initial = RandomEffect(MvNormal(mean_initial, Diagonal(omega_initial)); column=:ID)
+        end
+
+        @formulas begin
+            trans_pi0 = create_trans_pi0(eta_hmm, eta_initial)
+            theta_mat = reshape(eta_theta, 7, 9)
+            emissions = ntuple(s -> ntuple(j -> Bernoulli(theta_mat[s, j]), 9), 7)
+            y ~ MVDiscreteTimeDiscreteStatesHMM(trans_pi0[1], emissions, Categorical(trans_pi0[2]))
+        end
+    end
+
+    df = DataFrame(
+        ID = [:A, :A, :B, :B],
+        t = [0.0, 1.0, 0.0, 1.0],
+        y = [
+            [1, 0, 1, 0, 1, 0, 1, 0, 1],
+            [0, 1, 0, 1, 0, 1, 0, 1, 0],
+            [1, 1, 0, 0, 1, 1, 0, 0, 1],
+            [0, 0, 1, 1, 0, 0, 1, 1, 0],
+        ]
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    fixed_names = NoLimits.get_names(model.fixed.fixed)
+    auto_cfg = NoLimits._saem_autodetect_gaussian_re(dm, fixed_names)
+    @test auto_cfg !== nothing
+    @test auto_cfg.re_cov_params == (; eta_hmm=:omega_hmm, eta_initial=:omega_initial)
+    @test auto_cfg.re_mean_params == (; eta_hmm=:mean_transitions, eta_initial=:mean_initial)
+    @test auto_cfg.resid_var_param == NamedTuple()
+    @test auto_cfg.hmm_emission_params.y.target == :eta_theta
+    @test auto_cfg.hmm_outcomes == (:y,)
+    @test auto_cfg.hmm_transition_closed_form == :covered_by_re_or_external
+    @test auto_cfg.hmm_emission_closed_form == :eligible
+
+    elig = NoLimits._saem_builtin_closed_form_eligibility(
+        dm,
+        auto_cfg.re_cov_params,
+        auto_cfg.re_mean_params,
+        auto_cfg.resid_var_param,
+        auto_cfg.hmm_emission_params,
+    )
+    @test elig.re_block_eligible
+    @test !elig.outcome_block_eligible
+    @test elig.hmm_emission_block_eligible
+    @test elig.has_any_closed_form_block
+    @test elig.hmm_outcomes == (:y,)
+    @test elig.hmm_transition_closed_form == :covered_by_re_or_external
+    @test elig.hmm_emission_closed_form == :eligible
+
+    closed_form_targets = Symbol[]
+    for v in values(auto_cfg.re_cov_params)
+        NoLimits._saem_collect_target_symbols!(closed_form_targets, v)
+    end
+    for v in values(auto_cfg.re_mean_params)
+        NoLimits._saem_collect_target_symbols!(closed_form_targets, v)
+    end
+    for col in keys(auto_cfg.hmm_emission_params)
+        info = getfield(auto_cfg.hmm_emission_params, col)
+        if hasproperty(info, :target) && info.target isa Symbol
+            push!(closed_form_targets, info.target)
+        end
+    end
+    @test Set(closed_form_targets) == Set(fixed_names)
+end
+
+@testset "SAEM builtin_stats runs lts_random_no_cv style model in closed-form-only mode" begin
+    n_states = 7
+    n_outcomes = 9
+    n_transition_random_effects = n_states * (n_states - 1)
+
+    model = @Model begin
+        @helpers begin
+            create_trans_pi0(eta_hmm, eta_initial) = _saem_test_create_trans_pi0(eta_hmm, eta_initial)
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @fixedEffects begin
+            mean_initial = RealVector(fill(0.0, n_states - 1))
+            mean_transitions = RealVector(fill(0.0, n_transition_random_effects))
+            omega_hmm = RealVector(fill(0.3, n_transition_random_effects), scale=fill(:log, n_transition_random_effects))
+            omega_initial = RealVector(fill(0.3, n_states - 1), scale=fill(:log, n_states - 1))
+            eta_theta = RealVector(fill(0.5, n_states * n_outcomes), scale=fill(:logit, n_states * n_outcomes))
+        end
+
+        @randomEffects begin
+            eta_hmm = RandomEffect(MvNormal(mean_transitions, Diagonal(omega_hmm)); column=:ID)
+            eta_initial = RandomEffect(MvNormal(mean_initial, Diagonal(omega_initial)); column=:ID)
+        end
+
+        @formulas begin
+            trans_pi0 = create_trans_pi0(eta_hmm, eta_initial)
+            theta_mat = reshape(eta_theta, 7, 9)
+            emissions = ntuple(s -> ntuple(j -> Bernoulli(theta_mat[s, j]), 9), 7)
+            y ~ MVDiscreteTimeDiscreteStatesHMM(trans_pi0[1], emissions, Categorical(trans_pi0[2]))
+        end
+    end
+
+    df = DataFrame(
+        ID = [:A, :A, :B, :B],
+        t = [0.0, 1.0, 0.0, 1.0],
+        y = [
+            [1, 0, 1, 0, 1, 0, 1, 0, 1],
+            [0, 1, 0, 1, 0, 1, 0, 1, 0],
+            [1, 1, 0, 0, 1, 1, 0, 0, 1],
+            [0, 0, 1, 1, 0, 0, 1, 1, 0],
+        ]
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    res = fit_model(dm, NoLimits.SAEM(;
+            sampler=MH(),
+            turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
+            mcmc_steps=1,
+            max_store=4,
+            maxiters=2,
+            progress=false,
+            builtin_stats=:auto);
+        store_eb_modes=false)
+
+    notes = NoLimits.get_notes(res)
+    @test notes.builtin_stats_mode_effective == :closed_form
+    @test NoLimits.get_closed_form_mstep_used(res)
+    @test notes.closed_form_mstep_mode == :closed_form_only
+    @test :builtin_stats in notes.closed_form_mstep_sources
 end
 
 @testset "SAEM builtin_mean glm (Bernoulli + Poisson)" begin

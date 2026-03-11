@@ -210,18 +210,8 @@ function _validate_schema(model, df, config::DataModelConfig)
         end
     end
 
-    # Observation columns should not be missing on EVID=0 rows
-    if config.evid_col !== nothing
-        evid = _get_col(df, config.evid_col)
-        obs_idx = findall(==(0), evid)
-        for c in config.obs_cols
-            _check_missing(_get_col(df, c)[obs_idx], c)
-        end
-    else
-        for c in config.obs_cols
-            _check_missing(_get_col(df, c), c)
-        end
-    end
+    # Observable columns may contain missings on observation rows.
+    # Likelihood and diagnostics paths decide how to handle them.
 
     # Check that obs_cols from @formulas exist in the data.
     formula_obs = get_formulas_meta(model.formulas.formulas).obs_names

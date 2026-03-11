@@ -59,6 +59,54 @@ end
     @test isfinite(ll)
 end
 
+@testset "Discrete-time HMM missing observation propagates hidden state (regression)" begin
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+
+        @fixedEffects begin
+            p1 = RealNumber(0.9)
+            p2 = RealNumber(0.2)
+        end
+
+        @formulas begin
+            P = [0.85 0.15;
+                 0.25 0.75]
+            y ~ DiscreteTimeDiscreteStatesHMM(P,
+                                              (Bernoulli(p1), Bernoulli(p2)),
+                                              Categorical([0.6, 0.4]))
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 1],
+        t = [0.0, 1.0, 2.0],
+        y = Union{Missing, Int}[1, missing, 0]
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    θ = get_θ0_untransformed(dm.model.fixed.fixed)
+    ll = NoLimits.loglikelihood(dm, θ, ComponentArray())
+
+    A = [0.85 0.15; 0.25 0.75]
+    init = [0.6, 0.4]
+    p_emit_1 = [pdf(Bernoulli(0.9), 1), pdf(Bernoulli(0.2), 1)]
+    p_emit_0 = [pdf(Bernoulli(0.9), 0), pdf(Bernoulli(0.2), 0)]
+
+    p_hidden_1 = transpose(A) * init
+    ll1 = log(sum(p_hidden_1 .* p_emit_1))
+    post_1 = p_hidden_1 .* p_emit_1
+    post_1 ./= sum(post_1)
+
+    p_hidden_2 = transpose(A) * post_1
+    p_hidden_3 = transpose(A) * p_hidden_2
+    ll3 = log(sum(p_hidden_3 .* p_emit_0))
+
+    ll_expected = ll1 + ll3
+    @test ll ≈ ll_expected atol=1e-12
+end
+
 @testset "Discrete-time HMM ForwardDiff" begin
     model = @Model begin
         @covariates begin

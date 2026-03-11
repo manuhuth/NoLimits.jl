@@ -18,6 +18,7 @@ export get_chain
 export get_iterations
 export get_raw
 export get_notes
+export get_closed_form_mstep_used
 export get_observed
 export get_sampler
 export get_n_samples
@@ -325,6 +326,17 @@ Return any method-specific string notes attached to the result.
 get_notes(res::FitResult) = get_notes(res.result)
 
 """
+    get_closed_form_mstep_used(res::FitResult) -> Bool
+
+Return `true` when the fitting run used any closed-form M-step updates.
+
+Currently this is method-specific metadata populated by methods that support
+closed-form M-step paths (e.g. SAEM). Methods without this concept return
+`false`.
+"""
+get_closed_form_mstep_used(res::FitResult) = get_closed_form_mstep_used(res.result)
+
+"""
     get_observed(res::FitResult)
 
 Return the observed data used during MCMC sampling. Only valid for MCMC results.
@@ -408,6 +420,7 @@ get_raw(res::MethodResult) = hasproperty(res, :raw) ? res.raw :
     error("raw result not available for this method.")
 get_notes(res::MethodResult) = hasproperty(res, :notes) ? res.notes :
     error("notes not available for this method.")
+get_closed_form_mstep_used(::MethodResult) = false
 get_observed(res::MethodResult) = hasproperty(res, :observed) ? res.observed :
     error("observed data not available for this method.")
 get_sampler(res::MethodResult) = hasproperty(res, :sampler) ? res.sampler :
@@ -937,12 +950,20 @@ function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_
                     DiscreteTimeDiscreteStatesHMM(dist.transition_matrix, dist.emission_dists,
                                                   Distributions.Categorical(init_p; check_args=false))
                 end
+                if y === missing
+                    # Unobserved HMM outcome: no likelihood contribution.
+                    # Still propagate the hidden-state prior to keep temporal
+                    # state updates consistent for the next observation.
+                    copyto!(init_p, probabilities_hidden_states(dist_use))
+                    continue
+                end
                 v = logpdf(dist_use, y)
                 if !isfinite(v)
                     return -Inf
                 end
                 copyto!(init_p, posterior_hidden_states(dist_use, y))
             else
+                y === missing && continue
                 v = _fast_logpdf(dist, y)
                 v === nothing && (v = logpdf(dist, y))
                 if !isfinite(v)
@@ -1028,6 +1049,7 @@ function _resid_stats_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_LL
             dist = getproperty(obs, col)
             dist isa Normal || return (resid_ss, resid_n, false)
             y = getfield(obs_series, col)[i]
+            y === missing && continue
             resid = y - dist.μ
             resid_ss += resid * resid
             resid_n += 1
@@ -1112,6 +1134,7 @@ function _resid_stats_individual_cols(dm::DataModel, idx::Int, θ, η_ind, cache
             dist = getproperty(obs, col)
             dist isa Normal || return (resid_ss, resid_n, false)
             y = getfield(obs_series, col)[i]
+            y === missing && continue
             resid = y - dist.μ
             resid_ss[j] += resid * resid
             resid_n[j] += 1

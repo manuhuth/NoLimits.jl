@@ -1277,3 +1277,35 @@ end
     dm = DataModel(model_unused, df_unused_missing; primary_id=:ID, time_col=:t)
     @test dm isa DataModel
 end
+
+@testset "DataModel allows partially missing observables on observation rows (regression)" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            σy = RealNumber(0.4)
+            σz = RealNumber(0.6)
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @formulas begin
+            μ = a + 0.1 * t
+            y ~ Normal(μ, σy)
+            z ~ Normal(μ + 1.0, σz)
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 1],
+        t = [0.0, 1.0, 2.0],
+        y = Union{Missing, Float64}[1.0, missing, 1.2],
+        z = Union{Missing, Float64}[2.1, 2.0, missing]
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    ind = get_individual(dm, 1)
+    @test isequal(ind.series.obs.y, Union{Missing, Float64}[1.0, missing, 1.2])
+    @test isequal(ind.series.obs.z, Union{Missing, Float64}[2.1, 2.0, missing])
+end

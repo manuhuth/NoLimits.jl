@@ -130,9 +130,21 @@ function _pad_limits(lo, hi; frac=0.05)
 end
 
 function _merge_limits(lims, vals)
-    isempty(vals) && return lims
-    lo = minimum(vals)
-    hi = maximum(vals)
+    vals === nothing && return lims
+    iter = vals isa Number || vals === missing ? (vals,) : vals
+    lo = Inf
+    hi = -Inf
+    has_finite = false
+    for v in iter
+        v === missing && continue
+        v isa Real || continue
+        x = float(v)
+        isfinite(x) || continue
+        has_finite = true
+        lo = min(lo, x)
+        hi = max(hi, x)
+    end
+    has_finite || return lims
     return lims === nothing ? (lo, hi) : (min(lims[1], lo), max(lims[2], hi))
 end
 
@@ -177,6 +189,17 @@ function _collect_multivariate_series(x, y, n_marginals; marginal_idx::Union{Not
         return xs, ys
     end
     return xs[marginal_idx], ys[marginal_idx]
+end
+
+function _collect_scalar_series(x, y)
+    xs = Vector{Any}()
+    ys = Vector{Any}()
+    for (xi, yi) in zip(x, y)
+        (xi === missing || yi === missing) && continue
+        push!(xs, xi)
+        push!(ys, yi)
+    end
+    return xs, ys
 end
 
 
@@ -231,16 +254,17 @@ function _plot_data_dm(dm::DataModel;
                 ylims = _merge_limits(ylims, ys)
             end
         else
-            create_styled_scatter!(p, x, y; label="", style=style)
-            xlims = _merge_limits(xlims, x)
-            ylims = _merge_limits(ylims, y)
+            xs, ys = _collect_scalar_series(x, y)
+            create_styled_scatter!(p, xs, ys; label="", style=style)
+            xlims = _merge_limits(xlims, xs)
+            ylims = _merge_limits(ylims, ys)
         end
         plots[k] = p
     end
 
     if shared_x_axis || shared_y_axis
-        xlim_use = shared_x_axis ? _pad_limits(xlims[1], xlims[2]) : nothing
-        ylim_use = shared_y_axis ? _pad_limits(ylims[1], ylims[2]) : nothing
+        xlim_use = shared_x_axis && xlims !== nothing ? _pad_limits(xlims[1], xlims[2]) : nothing
+        ylim_use = shared_y_axis && ylims !== nothing ? _pad_limits(ylims[1], ylims[2]) : nothing
         _apply_shared_axes!(plots, xlim_use, ylim_use)
     end
     p = combine_plots(plots; ncols=ncols, kwargs_layout...)
@@ -527,6 +551,7 @@ function plot_fits(res::FitResult;
         x_fit = use_dense ? _dense_time_grid(ind) : x_obs
         x_density = use_dense ? x_fit : x_obs
         y_obs = getfield(ind.series.obs, obs_name)
+        x_obs_plot, y_obs_plot = is_mv ? (nothing, nothing) : _collect_scalar_series(x_obs, y_obs)
         title_id = string(dm.config.primary_id, ": ", dm.df[obs_rows[1], dm.config.primary_id])
         p = create_styled_plot(title=title_id,
                                xlabel=x_axis_feature === nothing ? "Time" : _axis_label(x_axis_feature),
@@ -548,7 +573,7 @@ function plot_fits(res::FitResult;
                                            style=style)
                 end
             else
-                create_styled_scatter!(p, x_obs, y_obs; label="data", color=style.color_primary, style=style)
+                create_styled_scatter!(p, x_obs_plot, y_obs_plot; label="data", color=style.color_primary, style=style)
             end
         end
 
@@ -751,7 +776,7 @@ function plot_fits(res::FitResult;
 
         plots[k] = p
         xlims = xlims === nothing ? (minimum(x_fit), maximum(x_fit)) : (min(xlims[1], minimum(x_fit)), max(xlims[2], maximum(x_fit)))
-        observed_values = is_mv ? [val for vec in ys_per_margin for val in vec] : y_obs
+        observed_values = is_mv ? [val for vec in ys_per_margin for val in vec] : y_obs_plot
         ylims = _merge_limits(ylims, observed_values)
     end
 
@@ -1547,6 +1572,7 @@ function _plot_fits_comparison_impl(fits::AbstractVector{<:FitResult},
         obs_rows = dm_ref.row_groups.obs_rows[i]
         x_obs = _get_x_values(dm_ref, ind, obs_rows, x_axis_feature)
         y_obs = getfield(ind.series.obs, obs_name)
+        x_obs_plot, y_obs_plot = _collect_scalar_series(x_obs, y_obs)
         title_id = string(dm_ref.config.primary_id, ": ", dm_ref.df[obs_rows[1], dm_ref.config.primary_id])
         p = create_styled_plot(title=title_id,
                                xlabel=x_axis_feature === nothing ? "Time" : _axis_label(x_axis_feature),
@@ -1554,7 +1580,7 @@ function _plot_fits_comparison_impl(fits::AbstractVector{<:FitResult},
                                style=style,
                                kwargs_subplot...)
         if plot_data_points
-            create_styled_scatter!(p, x_obs, y_obs; label="data", color=style.color_primary, style=style)
+            create_styled_scatter!(p, x_obs_plot, y_obs_plot; label="data", color=style.color_primary, style=style)
         end
 
         for j in eachindex(fits)
@@ -1574,8 +1600,7 @@ function _plot_fits_comparison_impl(fits::AbstractVector{<:FitResult},
                     (min(ylims[1], minimum(curve.preds)), max(ylims[2], maximum(curve.preds)))
         end
 
-        ylims = ylims === nothing ? (minimum(y_obs), maximum(y_obs)) :
-                (min(ylims[1], minimum(y_obs)), max(ylims[2], maximum(y_obs)))
+        ylims = _merge_limits(ylims, y_obs_plot)
         plots[k] = p
     end
 

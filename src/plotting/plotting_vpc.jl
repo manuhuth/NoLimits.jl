@@ -56,6 +56,32 @@ function _weighted_quantile(values::Vector{Float64}, weights::Vector{Float64}, p
     return v[i]
 end
 
+function _collect_observed_xy(ind::Individual,
+                              dm::DataModel,
+                              obs_rows::Vector{Int},
+                              obs_name::Symbol,
+                              x_axis_feature)
+    x_raw = _vpc_x_values(dm, ind, obs_rows, x_axis_feature)
+    y_raw = getfield(ind.series.obs, obs_name)
+    x_all = Float64[]
+    x_obs = Float64[]
+    y_obs = Float64[]
+    for (xv, yv) in zip(x_raw, y_raw)
+        xv === missing && continue
+        xv isa Real || continue
+        xf = Float64(xv)
+        isfinite(xf) || continue
+        push!(x_all, xf)
+        yv === missing && continue
+        yv isa Real || continue
+        yf = Float64(yv)
+        isfinite(yf) || continue
+        push!(x_obs, xf)
+        push!(y_obs, yf)
+    end
+    return x_all, x_obs, y_obs
+end
+
 function _kernel_quantiles(x::Vector{Float64},
                            y::Vector{Float64},
                            xgrid::Vector{Float64},
@@ -301,21 +327,30 @@ function plot_vpc(res::FitResult;
 
     plots = Vector{Any}(undef, length(observables))
     for (oi, obs_name) in enumerate(observables)
+        x_label = x_axis_feature === nothing ? "Time" : _axis_label(x_axis_feature)
         all_x = Float64[]
         all_y = Float64[]
+        all_x_bins = Float64[]
         x_by_ind = Vector{Vector{Float64}}(undef, length(dm.individuals))
         y_by_ind = Vector{Vector{Float64}}(undef, length(dm.individuals))
         for (i, ind) in enumerate(dm.individuals)
             obs_rows = dm.row_groups.obs_rows[i]
-            x = Float64.(_vpc_x_values(dm, ind, obs_rows, x_axis_feature))
-            y = Float64.(getfield(ind.series.obs, obs_name))
-            append!(all_x, x)
-            append!(all_y, y)
-            x_by_ind[i] = x
-            y_by_ind[i] = y
+            x_all_i, x_i, y_i = _collect_observed_xy(ind, dm, obs_rows, obs_name, x_axis_feature)
+            append!(all_x_bins, x_all_i)
+            append!(all_x, x_i)
+            append!(all_y, y_i)
+            x_by_ind[i] = x_i
+            y_by_ind[i] = y_i
         end
-        n_bins_eff = _resolve_n_bins(all_x, n_bins)
-        edges = _bin_edges_quantile(all_x, n_bins_eff)
+        x_for_bins = isempty(all_x) ? all_x_bins : all_x
+        if isempty(x_for_bins)
+            @warn "No finite x values found for observable; returning empty VPC subplot." observable=obs_name
+            plots[oi] = create_styled_plot(title=string(obs_name), xlabel=x_label,
+                                           ylabel=_axis_label(obs_name), style=style)
+            continue
+        end
+        n_bins_eff = _resolve_n_bins(x_for_bins, n_bins)
+        edges = _bin_edges_quantile(x_for_bins, n_bins_eff)
 
         sim_x_all = Float64[]
         sim_y_all = Float64[]
@@ -347,16 +382,15 @@ function plot_vpc(res::FitResult;
             end
         end
 
-        x_label = x_axis_feature === nothing ? "Time" : _axis_label(x_axis_feature)
         p = create_styled_plot(title=string(obs_name), xlabel=x_label,
                                ylabel=_axis_label(obs_name), style=style)
-        if show_obs_points
+        if show_obs_points && !isempty(all_y)
             scatter!(p, all_x, all_y; color=style.color_primary, alpha=0.3,
                      markersize=style.marker_size, markerstrokewidth=style.marker_stroke_width,
                      label="obs")
         end
 
-        if show_obs_percentiles && !is_discrete
+        if show_obs_percentiles && !is_discrete && !isempty(all_y)
             if obs_percentiles_method == :kernel
                 obs_percentiles_mode == :pooled || error("obs_percentiles_mode=:per_individual is only supported with obs_percentiles_method=:quantile.")
                 bw = bandwidth === nothing ? (maximum(all_x) - minimum(all_x)) / 10 : bandwidth
@@ -449,7 +483,7 @@ function plot_vpc(res::FitResult;
         end
 
         plots[oi] = p
-        xlims!(p, _pad_limits(minimum(all_x), maximum(all_x)))
+        xlims!(p, _pad_limits(minimum(x_for_bins), maximum(x_for_bins)))
     end
 
     p = combine_plots(plots; ncols=ncols, kwargs_plot...)

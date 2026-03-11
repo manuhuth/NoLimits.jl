@@ -770,12 +770,15 @@ function _transform_bounds(bounds::Tuple{ComponentArray, ComponentArray}, names:
             end
         elseif spec.kind == :logit
             if l isa AbstractArray
-                n = length(l)
-                push!(lower_pairs, name => fill(-Inf, n))
-                push!(upper_pairs, name => fill(Inf, n))
+                l2 = map(x -> (isinf(x) || x <= 0) ? -Inf : log(x / (1 - x)), l)
+                u2 = map(x -> (isinf(x) || x >= 1) ? Inf  : log(x / (1 - x)), u)
+                push!(lower_pairs, name => l2)
+                push!(upper_pairs, name => u2)
             else
-                push!(lower_pairs, name => -Inf)
-                push!(upper_pairs, name => Inf)
+                l2 = (isinf(l) || l <= 0) ? -Inf : log(l / (1 - l))
+                u2 = (isinf(u) || u >= 1) ? Inf  : log(u / (1 - u))
+                push!(lower_pairs, name => l2)
+                push!(upper_pairs, name => u2)
             end
         elseif spec.kind == :elementwise
             mask = spec.mask
@@ -786,8 +789,9 @@ function _transform_bounds(bounds::Tuple{ComponentArray, ComponentArray}, names:
                     l2[j] = l2[j] == -Inf ? log(EPSILON) : log(l2[j])
                     u2[j] = u2[j] == Inf ? Inf : log(u2[j])
                 elseif mask[j] === :logit
-                    l2[j] = -Inf
-                    u2[j] = Inf
+                    lj = l2[j]; uj = u2[j]
+                    l2[j] = (isinf(lj) || lj <= 0) ? -Inf : log(lj / (1 - lj))
+                    u2[j] = (isinf(uj) || uj >= 1) ? Inf  : log(uj / (1 - uj))
                 end
             end
             push!(lower_pairs, name => l2)
