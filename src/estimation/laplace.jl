@@ -707,7 +707,7 @@ function _build_eta_ind(dm::DataModel,
                         θ::ComponentArray)
     cache = dm.re_group_info.laplace_cache
     re_names = cache.re_names
-    pairs = Pair{Symbol, Any}[]
+    nt_pairs = Pair{Symbol, Any}[]
     T = eltype(b)
     for (ri, re) in enumerate(re_names)
         info = batch_info.re_info[ri]
@@ -720,18 +720,18 @@ function _build_eta_ind(dm::DataModel,
             if const_mask[id]
                 if info.is_scalar || info.dim == 1
                     v = const_scalars[id]
-                    push!(pairs, re => T(v))
+                    push!(nt_pairs, re => T(v))
                 else
                     v = const_vectors[id]
-                    push!(pairs, re => T.(v))
+                    push!(nt_pairs, re => T.(v))
                 end
             else
                 v = _re_value_from_b(info, id, b)
                 v === nothing && error("Missing random effect value for $(re) level $(cache.re_index[ri].levels[id]).")
                 if info.is_scalar || info.dim == 1
-                    push!(pairs, re => T(v))
+                    push!(nt_pairs, re => T(v))
                 else
-                    push!(pairs, re => Vector{T}(v))
+                    push!(nt_pairs, re => Vector{T}(v))
                 end
             end
         else
@@ -759,10 +759,10 @@ function _build_eta_ind(dm::DataModel,
                     end
                 end
             end
-            push!(pairs, re => vals)
+            push!(nt_pairs, re => vals)
         end
     end
-    nt = NamedTuple(pairs)
+    nt = NamedTuple(nt_pairs)
     return ComponentArray(nt)
 end
 

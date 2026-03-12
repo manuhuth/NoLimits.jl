@@ -824,6 +824,58 @@ function _varying_at(dm::DataModel, ind::Individual, idx::Int, t_obs)
     return merge(NamedTuple(pairs), ind.series.dyn)
 end
 
+@inline function _needs_rowwise_random_effects(dm::DataModel, idx::Int; obs_only::Bool=true)
+    dm.model.de.de !== nothing && return false
+    re_names = get_re_names(dm.model.random.random)
+    isempty(re_names) && return false
+    info = dm.re_group_info.index_by_individual
+    for re in re_names
+        re_info = getfield(info, re)
+        positions = obs_only ? re_info.unique_pos_obs[idx] : re_info.unique_pos_all[idx]
+        isempty(positions) && continue
+        first_pos = positions[1]
+        @inbounds for k in 2:length(positions)
+            positions[k] != first_pos && return true
+        end
+    end
+    return false
+end
+
+@inline function _row_random_effects_at(dm::DataModel,
+                                        idx::Int,
+                                        row_idx::Int,
+                                        η_ind::NamedTuple,
+                                        rowwise_re::Bool;
+                                        obs_only::Bool=true)
+    return _row_random_effects_at(dm, idx, row_idx, ComponentArray(η_ind), rowwise_re; obs_only=obs_only)
+end
+
+function _row_random_effects_at(dm::DataModel,
+                                idx::Int,
+                                row_idx::Int,
+                                η_ind::ComponentArray,
+                                rowwise_re::Bool;
+                                obs_only::Bool=true)
+    rowwise_re || return η_ind
+    re_names = get_re_names(dm.model.random.random)
+    isempty(re_names) && return η_ind
+    ind = dm.individuals[idx]
+    info = dm.re_group_info.index_by_individual
+    nt_pairs = Pair{Symbol, Any}[]
+    for re in re_names
+        η_re = getproperty(η_ind, re)
+        nlevels = length(getfield(ind.re_groups, re))
+        if nlevels <= 1
+            push!(nt_pairs, re => η_re)
+            continue
+        end
+        re_info = getfield(info, re)
+        positions = obs_only ? re_info.unique_pos_obs[idx] : re_info.unique_pos_all[idx]
+        push!(nt_pairs, re => η_re[positions[row_idx]])
+    end
+    return ComponentArray(NamedTuple(nt_pairs))
+end
+
 mutable struct _LLCache{H, M, S, A, O, K, P, V, SA}
     helpers::H
     model_funs::M
@@ -909,11 +961,13 @@ function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_
     T_hmm = promote_type(eltype(θ), eltype(η_ind))
     hmm_init = nothing
     hmm_seen = nothing
+    rowwise_re = _needs_rowwise_random_effects(dm, idx; obs_only=true)
     for i in eachindex(obs_rows)
         vary = vary_cache === nothing ? _varying_at(dm, ind, i, _get_col(dm.df, dm.config.time_col)[obs_rows]) : vary_cache[i]
+        η_row = _row_random_effects_at(dm, idx, i, η_ind, rowwise_re; obs_only=true)
         obs = sol_accessors === nothing ?
-              calculate_formulas_obs(model, θ, η_ind, const_cov, vary) :
-              calculate_formulas_obs(model, θ, η_ind, const_cov, vary, sol_accessors)
+              calculate_formulas_obs(model, θ, η_row, const_cov, vary) :
+              calculate_formulas_obs(model, θ, η_row, const_cov, vary, sol_accessors)
         for (j, col) in pairs(obs_cols)
             y = getfield(obs_series, col)[i]
             dist = getproperty(obs, col)
@@ -1038,11 +1092,13 @@ function _resid_stats_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_LL
     resid_n = 0
     obs_cols = dm.config.obs_cols
     time_col = _get_col(dm.df, dm.config.time_col)[obs_rows]
+    rowwise_re = _needs_rowwise_random_effects(dm, idx; obs_only=true)
     for i in eachindex(obs_rows)
         vary = vary_cache === nothing ? _varying_at(dm, ind, i, time_col) : vary_cache[i]
+        η_row = _row_random_effects_at(dm, idx, i, η_ind, rowwise_re; obs_only=true)
         obs = sol_accessors === nothing ?
-              calculate_formulas_obs(model, θ, η_ind, const_cov, vary) :
-              calculate_formulas_obs(model, θ, η_ind, const_cov, vary, sol_accessors)
+              calculate_formulas_obs(model, θ, η_row, const_cov, vary) :
+              calculate_formulas_obs(model, θ, η_row, const_cov, vary, sol_accessors)
         for col in obs_cols
             dist = getproperty(obs, col)
             dist isa Normal || return (resid_ss, resid_n, false)
@@ -1123,11 +1179,13 @@ function _resid_stats_individual_cols(dm::DataModel, idx::Int, θ, η_ind, cache
     resid_ss = zeros(Tss, length(obs_cols))
     resid_n = zeros(Int, length(obs_cols))
     time_col = _get_col(dm.df, dm.config.time_col)[obs_rows]
+    rowwise_re = _needs_rowwise_random_effects(dm, idx; obs_only=true)
     for i in eachindex(obs_rows)
         vary = vary_cache === nothing ? _varying_at(dm, ind, i, time_col) : vary_cache[i]
+        η_row = _row_random_effects_at(dm, idx, i, η_ind, rowwise_re; obs_only=true)
         obs = sol_accessors === nothing ?
-              calculate_formulas_obs(model, θ, η_ind, const_cov, vary) :
-              calculate_formulas_obs(model, θ, η_ind, const_cov, vary, sol_accessors)
+              calculate_formulas_obs(model, θ, η_row, const_cov, vary) :
+              calculate_formulas_obs(model, θ, η_row, const_cov, vary, sol_accessors)
         for (j, col) in pairs(obs_cols)
             dist = getproperty(obs, col)
             dist isa Normal || return (resid_ss, resid_n, false)

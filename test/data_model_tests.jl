@@ -5,6 +5,156 @@ using Distributions
 using SciMLBase
 using DataInterpolations
 
+@testset "row-varying RE capability detection" begin
+    df_basic = DataFrame(
+        ID = [1, 1, 2, 2],
+        t = [0.0, 1.0, 0.0, 1.0],
+        dt = [1.0, 1.0, 1.0, 1.0],
+        y = [0.0, 1.0, 0.0, 1.0]
+    )
+
+    model_non_ode = @Model begin
+        @fixedEffects begin
+            σ = RealNumber(0.5)
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, 1.0); column=:ID)
+        end
+
+        @formulas begin
+            y ~ Normal(η, σ)
+        end
+    end
+
+    @test !NoLimits._has_continuous_time_hmm_outcomes(model_non_ode, df_basic; primary_id=:ID, time_col=:t)
+    @test NoLimits._supports_row_varying_re_groups(model_non_ode, df_basic; primary_id=:ID, time_col=:t)
+
+    model_ode = @Model begin
+        @fixedEffects begin
+            k = RealNumber(0.2)
+            σ = RealNumber(0.5)
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, 1.0); column=:ID)
+        end
+
+        @DifferentialEquation begin
+            D(x1) ~ -k * x1 + η
+        end
+
+        @initialDE begin
+            x1 = 1.0
+        end
+
+        @formulas begin
+            y ~ Normal(x1(t), σ)
+        end
+    end
+
+    @test !NoLimits._supports_row_varying_re_groups(model_ode, df_basic; primary_id=:ID, time_col=:t)
+
+    model_ct_hmm = @Model begin
+        @fixedEffects begin
+            λ12_r = RealNumber(0.1, scale=:log)
+            λ21_r = RealNumber(0.1, scale=:log)
+            p1_r = RealNumber(0.0)
+            p2_r = RealNumber(0.0)
+        end
+
+        @covariates begin
+            t = Covariate()
+            dt = Covariate()
+        end
+
+        @formulas begin
+            λ12 = exp(λ12_r)
+            λ21 = exp(λ21_r)
+            p1 = 1 / (1 + exp(-p1_r))
+            p2 = 1 / (1 + exp(-p2_r))
+            Q = [-λ12 λ12; λ21 -λ21]
+            y ~ ContinuousTimeDiscreteStatesHMM(Q,
+                                                (Bernoulli(p1), Bernoulli(p2)),
+                                                Categorical([0.6, 0.4]),
+                                                dt)
+        end
+    end
+
+    @test NoLimits._has_continuous_time_hmm_outcomes(model_ct_hmm, df_basic; primary_id=:ID, time_col=:t)
+    @test !NoLimits._supports_row_varying_re_groups(model_ct_hmm, df_basic; primary_id=:ID, time_col=:t)
+
+    model_ct_hmm_helper = @Model begin
+        @helpers begin
+            make_hmm(Q, p1, p2, dt) = ContinuousTimeDiscreteStatesHMM(
+                Q,
+                (Bernoulli(p1), Bernoulli(p2)),
+                Categorical([0.6, 0.4]),
+                dt
+            )
+        end
+
+        @fixedEffects begin
+            λ12_r = RealNumber(0.1, scale=:log)
+            λ21_r = RealNumber(0.1, scale=:log)
+            p1_r = RealNumber(0.0)
+            p2_r = RealNumber(0.0)
+        end
+
+        @covariates begin
+            t = Covariate()
+            dt = Covariate()
+        end
+
+        @formulas begin
+            λ12 = exp(λ12_r)
+            λ21 = exp(λ21_r)
+            p1 = 1 / (1 + exp(-p1_r))
+            p2 = 1 / (1 + exp(-p2_r))
+            Q = [-λ12 λ12; λ21 -λ21]
+            y ~ make_hmm(Q, p1, p2, dt)
+        end
+    end
+
+    @test NoLimits._has_continuous_time_hmm_outcomes(model_ct_hmm_helper, df_basic; primary_id=:ID, time_col=:t)
+    @test !NoLimits._supports_row_varying_re_groups(model_ct_hmm_helper, df_basic; primary_id=:ID, time_col=:t)
+
+    model_dt_hmm = @Model begin
+        @fixedEffects begin
+            p11_r = RealNumber(0.0)
+            p22_r = RealNumber(0.0)
+            p1_r = RealNumber(0.0)
+            p2_r = RealNumber(0.0)
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @formulas begin
+            p11 = 1 / (1 + exp(-p11_r))
+            p22 = 1 / (1 + exp(-p22_r))
+            p1 = 1 / (1 + exp(-p1_r))
+            p2 = 1 / (1 + exp(-p2_r))
+            P = [p11 (1 - p11); (1 - p22) p22]
+            y ~ DiscreteTimeDiscreteStatesHMM(P,
+                                              (Bernoulli(p1), Bernoulli(p2)),
+                                              Categorical([0.6, 0.4]))
+        end
+    end
+
+    @test !NoLimits._has_continuous_time_hmm_outcomes(model_dt_hmm, df_basic; primary_id=:ID, time_col=:t)
+    @test NoLimits._supports_row_varying_re_groups(model_dt_hmm, df_basic; primary_id=:ID, time_col=:t)
+end
+
 @testset "DataModel without events" begin
     model = @Model begin
         @fixedEffects begin
@@ -38,9 +188,11 @@ using DataInterpolations
         y = [1.0, 1.1, 0.9, 1.0, 1.2]
     )
 
-    @test_throws ErrorException DataModel(model, df;
-        primary_id=:ID,
-                   time_col=:t)
+    dm_varying = DataModel(model, df;
+                           primary_id=:ID,
+                           time_col=:t)
+    @test length(get_individuals(dm_varying)) == 3
+    @test length(get_batches(dm_varying)) == 1
 
     df_ok = DataFrame(
         ID = [1, 1, 2, 2, 3],
@@ -383,10 +535,14 @@ end
     @test_throws ErrorException DataModel(model, df_bad; primary_id=:ID, time_col=:t)
 end
 
-@testset "DataModel rejects year varying within individuals" begin
+@testset "DataModel allows year varying within individuals for non-ODE models" begin
     model = @Model begin
         @fixedEffects begin
             σ = RealNumber(0.5)
+        end
+
+        @covariates begin
+            t = Covariate()
         end
 
         @randomEffects begin
@@ -407,7 +563,142 @@ end
         y = [1.0, 1.1, 1.2, 0.9, 1.0]
     )
 
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    @test dm isa DataModel
+    info = get_re_group_info(dm)
+    @test info.values.η_year == [2020, 2021, 2022]
+    @test info.index_by_row.η_year == [1, 2, 2, 1, 3]
+    @test info.representative_row_by_level.η_year == [1, 2, 5]
+    @test info.index_by_individual.η_year.level_ids_obs[1] == [1, 2, 2]
+    @test info.index_by_individual.η_year.unique_pos_obs[1] == [1, 2, 2]
+    @test info.index_by_individual.η_year.level_ids_obs[2] == [1, 3]
+    @test info.index_by_individual.η_year.unique_pos_obs[2] == [1, 2]
+    @test info.index_by_individual.η_year.level_ids_all[1] == [1, 2, 2]
+    @test info.index_by_individual.η_year.unique_pos_all[2] == [1, 2]
+    @test get_re_indices(dm, 1).η_year == [1, 2, 2]
+    @test get_re_indices(dm, 2).η_year == [1, 3]
+    @test get_re_indices(dm, 1; obs_only=false).η_year == [1, 2, 2]
+end
+
+@testset "DataModel rejects year varying within individuals for ODE models" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.2)
+            σ = RealNumber(0.5)
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @randomEffects begin
+            η_id = RandomEffect(Normal(0.0, 1.0); column=:ID)
+            η_year = RandomEffect(Normal(0.0, 1.0); column=:YEAR)
+        end
+
+        @DifferentialEquation begin
+            D(x1) ~ -a * x1 + η_id + η_year
+        end
+
+        @initialDE begin
+            x1 = 1.0
+        end
+
+        @formulas begin
+            y ~ Normal(x1(t), σ)
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 1, 2, 2],
+        YEAR = [2020, 2021, 2021, 2020, 2022],
+        t = [0.0, 0.5, 1.0, 0.0, 1.0],
+        y = [1.0, 1.1, 1.2, 0.9, 1.0]
+    )
+
     @test_throws ErrorException DataModel(model, df; primary_id=:ID, time_col=:t)
+end
+
+@testset "DataModel rejects year varying within individuals for continuous-time HMM models" begin
+    model = @Model begin
+        @fixedEffects begin
+            λ12_r = RealNumber(0.1, scale=:log)
+            λ21_r = RealNumber(0.1, scale=:log)
+            p1_r = RealNumber(0.0)
+            p2_r = RealNumber(0.0)
+        end
+
+        @covariates begin
+            t = Covariate()
+            dt = Covariate()
+        end
+
+        @randomEffects begin
+            η_year = RandomEffect(Normal(0.0, 1.0); column=:YEAR)
+        end
+
+        @formulas begin
+            λ12 = exp(λ12_r + η_year)
+            λ21 = exp(λ21_r)
+            p1 = 1 / (1 + exp(-p1_r))
+            p2 = 1 / (1 + exp(-p2_r))
+            Q = [-λ12 λ12; λ21 -λ21]
+            y ~ ContinuousTimeDiscreteStatesHMM(Q,
+                                                (Bernoulli(p1), Bernoulli(p2)),
+                                                Categorical([0.6, 0.4]),
+                                                dt)
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 1, 2, 2],
+        YEAR = [2020, 2021, 2021, 2020, 2022],
+        t = [0.0, 1.0, 2.0, 0.0, 1.0],
+        dt = [1.0, 1.0, 1.0, 1.0, 1.0],
+        y = [0, 1, 1, 1, 0]
+    )
+
+    @test_throws ErrorException DataModel(model, df; primary_id=:ID, time_col=:t)
+end
+
+@testset "DataModel allows year varying within individuals for discrete-time HMM models" begin
+    model = @Model begin
+        @fixedEffects begin
+            p11_r = RealNumber(0.0)
+            p22_r = RealNumber(0.0)
+            p1_r = RealNumber(0.0)
+            p2_r = RealNumber(0.0)
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @randomEffects begin
+            η_year = RandomEffect(Normal(0.0, 1.0); column=:YEAR)
+        end
+
+        @formulas begin
+            p11 = 1 / (1 + exp(-(p11_r + η_year)))
+            p22 = 1 / (1 + exp(-p22_r))
+            p1 = 1 / (1 + exp(-p1_r))
+            p2 = 1 / (1 + exp(-p2_r))
+            P = [p11 (1 - p11); (1 - p22) p22]
+            y ~ DiscreteTimeDiscreteStatesHMM(P,
+                                              (Bernoulli(p1), Bernoulli(p2)),
+                                              Categorical([0.6, 0.4]))
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 1, 2, 2],
+        YEAR = [2020, 2021, 2021, 2020, 2022],
+        t = [0.0, 1.0, 2.0, 0.0, 1.0],
+        y = [0, 1, 1, 1, 0]
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    @test dm isa DataModel
 end
 
 @testset "DataModel errors when year covariate varies within YEAR group" begin

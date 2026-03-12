@@ -1,6 +1,7 @@
 using Test
 using NoLimits
 using DataFrames
+using DataInterpolations
 using Distributions
 using Random
 using Lux
@@ -461,4 +462,42 @@ end
 
     @test :η in propertynames(sim)
     @test any(sim.y .!= df.y)
+end
+
+@testset "simulate_data uses row-specific random effects for varying non-ODE groups" begin
+    model = @Model begin
+        @fixedEffects begin
+            σ = RealNumber(1.0e-6, scale=:log)
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @randomEffects begin
+            η_year = RandomEffect(Normal(0.0, 1.0); column=:YEAR)
+        end
+
+        @formulas begin
+            y ~ Normal(η_year, σ)
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 1, 2, 2],
+        YEAR = [:A, :B, :B, :A, :C],
+        t = [0.0, 1.0, 2.0, 0.0, 1.0],
+        y = zeros(5)
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    sim = simulate_data(dm; rng=MersenneTwister(21))
+
+    @test sim.η_year[1] == sim.η_year[4]
+    @test sim.η_year[2] == sim.η_year[3]
+    @test isapprox(sim.y[1], sim.η_year[1]; atol=1.0e-3)
+    @test isapprox(sim.y[2], sim.η_year[2]; atol=1.0e-3)
+    @test isapprox(sim.y[3], sim.η_year[3]; atol=1.0e-3)
+    @test isapprox(sim.y[4], sim.η_year[4]; atol=1.0e-3)
+    @test isapprox(sim.y[5], sim.η_year[5]; atol=1.0e-3)
 end

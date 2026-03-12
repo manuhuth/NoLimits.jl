@@ -16,6 +16,7 @@ using DataInterpolations
 using DiffEqCallbacks
 using SciMLBase
 using Distributions
+using Random
 
 """
     DataModelConfig{S}
@@ -64,9 +65,18 @@ struct LaplaceRECache{N, D, S, I, X}
     re_index::X
 end
 
-struct REGroupInfo{V, I, L}
+struct REIndividualRowIndex{LA, LO, PA, PO}
+    level_ids_all::LA
+    level_ids_obs::LO
+    unique_pos_all::PA
+    unique_pos_obs::PO
+end
+
+struct REGroupInfo{V, I, II, R, L}
     values::V
     index_by_row::I
+    index_by_individual::II
+    representative_row_by_level::R
     laplace_cache::L
 end
 
@@ -431,6 +441,114 @@ function _validate_re_dist_covariates(model, covariates)
     end
 end
 
+@inline _is_continuous_time_hmm_dist(dist) =
+    (dist isa ContinuousTimeDiscreteStatesHMM) || (dist isa MVContinuousTimeDiscreteStatesHMM)
+
+@inline _is_continuous_time_hmm_call_name(name) =
+    (name === :ContinuousTimeDiscreteStatesHMM) || (name === :MVContinuousTimeDiscreteStatesHMM)
+
+function _probe_random_effects(model, const_cov::NamedTuple)
+    re_names = get_re_names(model.random.random)
+    isempty(re_names) && return ComponentArray()
+    θ0 = get_θ0_untransformed(model.fixed.fixed)
+    dists_builder = get_create_random_effect_distribution(model.random.random)
+    dists = dists_builder(θ0, const_cov, get_model_funs(model), get_helper_funs(model))
+    rng = Random.MersenneTwister(0)
+    pairs = Pair{Symbol, Any}[]
+    for re in re_names
+        dist = getproperty(dists, re)
+        push!(pairs, re => rand(rng, dist))
+    end
+    return ComponentArray(NamedTuple(pairs))
+end
+
+function _probe_varying_covariates(covariates, df, rows, obs_row::Int, time_col::Symbol)
+    vary = _build_vary_cov(covariates, df, rows, [obs_row], time_col, true)
+    dyn = _build_dyn_cov(covariates, df, rows, time_col)
+    pairs = Pair{Symbol, Any}[]
+    if hasproperty(vary, :t)
+        push!(pairs, :t => getproperty(vary, :t)[1])
+    else
+        push!(pairs, :t => _get_col(df, time_col)[obs_row])
+    end
+    for name in keys(vary)
+        name == :t && continue
+        v = getfield(vary, name)
+        if v isa AbstractVector
+            push!(pairs, name => v[1])
+        elseif v isa NamedTuple
+            sub = NamedTuple{keys(v)}(Tuple(getfield(v, k)[1] for k in keys(v)))
+            push!(pairs, name => sub)
+        end
+    end
+    return merge(NamedTuple(pairs), dyn)
+end
+
+function _probe_first_observation_distributions(model,
+                                                df;
+                                                primary_id::Symbol,
+                                                time_col::Symbol,
+                                                evid_col::Union{Nothing, Symbol}=nothing)
+    cov = model.covariates.covariates
+    _, groups = _group_indices(df, primary_id)
+    for rows in groups
+        obs_rows = if evid_col === nothing
+            rows
+        else
+            evid = _get_col(df, evid_col)[rows]
+            rows[findall(==(0), evid)]
+        end
+        isempty(obs_rows) && continue
+        const_cov = _build_const_cov(cov, df, rows)
+        η = _probe_random_effects(model, const_cov)
+        vary = _probe_varying_covariates(cov, df, rows, obs_rows[1], time_col)
+        θ0 = get_θ0_untransformed(model.fixed.fixed)
+        return calculate_formulas_obs(model, θ0, η, const_cov, vary)
+    end
+    return NamedTuple()
+end
+
+function _has_continuous_time_hmm_outcomes(model,
+                                           df;
+                                           primary_id::Symbol,
+                                           time_col::Symbol,
+                                           evid_col::Union{Nothing, Symbol}=nothing)
+    ir = get_formulas_ir(model.formulas.formulas)
+    any(_is_continuous_time_hmm_call_name, ir.call_heads) && return true
+    model.de.de !== nothing && return false
+    try
+        obs = _probe_first_observation_distributions(
+            model,
+            df;
+            primary_id=primary_id,
+            time_col=time_col,
+            evid_col=evid_col
+        )
+        for name in get_formulas_meta(model.formulas.formulas).obs_names
+            hasproperty(obs, name) || continue
+            _is_continuous_time_hmm_dist(getproperty(obs, name)) && return true
+        end
+    catch
+        return false
+    end
+    return false
+end
+
+function _supports_row_varying_re_groups(model,
+                                         df;
+                                         primary_id::Symbol,
+                                         time_col::Symbol,
+                                         evid_col::Union{Nothing, Symbol}=nothing)
+    model.de.de === nothing || return false
+    return !_has_continuous_time_hmm_outcomes(
+        model,
+        df;
+        primary_id=primary_id,
+        time_col=time_col,
+        evid_col=evid_col
+    )
+end
+
 function get_re_covariate_usage(dm::DataModel)
     re = dm.model.random.random
     cov = dm.model.covariates.covariates
@@ -445,9 +563,17 @@ function get_re_covariate_usage(dm::DataModel)
     return NamedTuple(pairs)
 end
 
-function _validate_re_group_within_primary(model, df, primary_id::Symbol)
+function _validate_re_group_within_primary(model, df, config::DataModelConfig)
     re_names = get_re_names(model.random.random)
     isempty(re_names) && return nothing
+    primary_id = config.primary_id
+    _supports_row_varying_re_groups(
+        model,
+        df;
+        primary_id=primary_id,
+        time_col=config.time_col,
+        evid_col=config.evid_col
+    ) && return nothing
     re_groups = get_re_groups(model.random.random)
     for re in re_names
         group_col = getfield(re_groups, re)
@@ -889,17 +1015,20 @@ function _build_re_groups(model, df, rows)
     return NamedTuple(pairs)
 end
 
-function _build_re_group_info(model, df, individuals)
+function _build_re_group_info(model, df, individuals, row_groups::RowGroups)
     re_names = get_re_names(model.random.random)
-    isempty(re_names) && return REGroupInfo(NamedTuple(), NamedTuple(), nothing)
+    isempty(re_names) && return REGroupInfo(NamedTuple(), NamedTuple(), NamedTuple(), NamedTuple(), nothing)
     re_groups = get_re_groups(model.random.random)
     values_pairs = Pair{Symbol, Any}[]
     index_pairs = Pair{Symbol, Any}[]
+    index_by_individual_pairs = Pair{Symbol, Any}[]
+    representative_row_pairs = Pair{Symbol, Any}[]
     for re in re_names
         col = getfield(re_groups, re)
         gcol = _get_col(df, col)
         values = Vector{eltype(gcol)}()
         index_by_row = Vector{Int}(undef, length(gcol))
+        representative_rows = Int[]
         idx_map = Dict{eltype(gcol), Int}()
         for i in eachindex(gcol)
             g = gcol[i]
@@ -908,16 +1037,51 @@ function _build_re_group_info(model, df, individuals)
                 push!(values, g)
                 idx = length(values)
                 idx_map[g] = idx
+                push!(representative_rows, i)
             end
             index_by_row[i] = idx
         end
+        level_ids_all = Vector{Vector{Int}}(undef, length(individuals))
+        level_ids_obs = Vector{Vector{Int}}(undef, length(individuals))
+        unique_pos_all = Vector{Vector{Int}}(undef, length(individuals))
+        unique_pos_obs = Vector{Vector{Int}}(undef, length(individuals))
+        for ind_idx in eachindex(individuals)
+            ind = individuals[ind_idx]
+            rows = row_groups.rows[ind_idx]
+            obs_rows = row_groups.obs_rows[ind_idx]
+            level_ids_all_i = index_by_row[rows]
+            level_ids_obs_i = index_by_row[obs_rows]
+            g = getfield(ind.re_groups, re)
+            unique_levels = g isa AbstractVector ? g : [g]
+            unique_pos_map = Dict{Int, Int}()
+            for (pos, level) in enumerate(unique_levels)
+                unique_pos_map[idx_map[level]] = pos
+            end
+            unique_pos_all_i = Vector{Int}(undef, length(level_ids_all_i))
+            unique_pos_obs_i = Vector{Int}(undef, length(level_ids_obs_i))
+            @inbounds for k in eachindex(level_ids_all_i)
+                unique_pos_all_i[k] = unique_pos_map[level_ids_all_i[k]]
+            end
+            @inbounds for k in eachindex(level_ids_obs_i)
+                unique_pos_obs_i[k] = unique_pos_map[level_ids_obs_i[k]]
+            end
+            level_ids_all[ind_idx] = level_ids_all_i
+            level_ids_obs[ind_idx] = level_ids_obs_i
+            unique_pos_all[ind_idx] = unique_pos_all_i
+            unique_pos_obs[ind_idx] = unique_pos_obs_i
+        end
         push!(values_pairs, re => values)
         push!(index_pairs, re => index_by_row)
+        push!(index_by_individual_pairs,
+              re => REIndividualRowIndex(level_ids_all, level_ids_obs, unique_pos_all, unique_pos_obs))
+        push!(representative_row_pairs, re => representative_rows)
     end
     values_nt = NamedTuple(values_pairs)
     index_nt = NamedTuple(index_pairs)
+    index_by_individual_nt = NamedTuple(index_by_individual_pairs)
+    representative_row_nt = NamedTuple(representative_row_pairs)
     cache = _build_laplace_re_cache(model, individuals, values_nt)
-    return REGroupInfo(values_nt, index_nt, cache)
+    return REGroupInfo(values_nt, index_nt, index_by_individual_nt, representative_row_nt, cache)
 end
 
 function _build_pairing(individuals, model)
@@ -1071,7 +1235,7 @@ function DataModel(model,
     _validate_re_group_constants(model, df, cov)
     _validate_constant_covariates_primary(model, df, primary_id, cov)
     _validate_re_dist_covariates(model, cov)
-    _validate_re_group_within_primary(model, df, primary_id)
+    _validate_re_group_within_primary(model, df, config)
     _validate_re_group_identifiability(model, df, config)
     _validate_prede_random_effects(model, primary_id)
     include_t = model.de.de !== nothing
@@ -1130,7 +1294,7 @@ function DataModel(model,
     pairing = _build_pairing(individuals, model)
     id_index = Dict{Any, Int}((keys_sorted[i] => i) for i in eachindex(keys_sorted))
     row_groups = RowGroups(groups, obs_groups)
-    re_group_info = _build_re_group_info(model, df, individuals)
+    re_group_info = _build_re_group_info(model, df, individuals, row_groups)
     return DataModel(model, df, individuals, pairing, config, id_index, row_groups, re_group_info)
 end
 
@@ -1190,7 +1354,7 @@ get_row_groups(dm::DataModel) = dm.row_groups
     get_re_group_info(dm::DataModel) -> REGroupInfo
 
 Return the `REGroupInfo` struct containing random-effect level values and per-row
-level indices.
+level indices, plus per-individual row-level assignments.
 """
 get_re_group_info(dm::DataModel) = dm.re_group_info
 
@@ -1227,14 +1391,12 @@ function get_re_indices(dm::DataModel, id; obs_only::Bool=true)
 end
 
 function get_re_indices(dm::DataModel, idx::Int; obs_only::Bool=true)
-    rows = dm.row_groups.rows[idx]
-    obs_rows = dm.row_groups.obs_rows[idx]
-    use_rows = obs_only ? obs_rows : rows
     re_names = get_re_names(dm.model.random.random)
-    info = dm.re_group_info.index_by_row
+    info = dm.re_group_info.index_by_individual
     pairs = Pair{Symbol, Any}[]
     for re in re_names
-        idxs = getfield(info, re)[use_rows]
+        re_index = getfield(info, re)
+        idxs = obs_only ? re_index.level_ids_obs[idx] : re_index.level_ids_all[idx]
         push!(pairs, re => idxs)
     end
     return NamedTuple(pairs)

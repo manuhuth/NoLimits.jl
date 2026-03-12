@@ -652,11 +652,13 @@ function _focei_collect_common_params_individual(dm::DataModel,
     end
 
     t_obs = _get_col(dm.df, dm.config.time_col)[obs_rows]
+    rowwise_re = _needs_rowwise_random_effects(dm, idx; obs_only=true)
     for i in eachindex(obs_rows)
         vary = vary_cache === nothing ? _varying_at(dm, ind, i, t_obs) : vary_cache[i]
+        η_row = _row_random_effects_at(dm, idx, i, η_ind, rowwise_re; obs_only=true)
         obs = sol_accessors === nothing ?
-              calculate_formulas_obs(model, θ, η_ind, const_cov, vary) :
-              calculate_formulas_obs(model, θ, η_ind, const_cov, vary, sol_accessors)
+              calculate_formulas_obs(model, θ, η_row, const_cov, vary) :
+              calculate_formulas_obs(model, θ, η_row, const_cov, vary, sol_accessors)
         for col in dm.config.obs_cols
             dist = getproperty(obs, col)
             status = _focei_push_common_params!(vals, weights, dist)

@@ -14,6 +14,7 @@ NoLimits.jl provides a broad set of modeling, estimation, and diagnostic capabil
 ## Random-Effects Flexibility
 
 - Univariate and multivariate random effects.
+- Multiple grouping columns, including row-varying non-`primary_id` group membership for non-ODE and discrete-time HMM models.
 - Random-effect distributions beyond the Gaussian family: heavy-tailed (`TDist`), skewed (`SkewNormal`), positive-valued (`LogNormal`, `Gamma`), and other distributions from `Distributions.jl`.
 - Flow-based random effects via `NormalizingPlanarFlow` for highly flexible latent distributions.
 - Random-effect distributions parameterized by covariates, neural networks, soft decision trees, or spline functions -- enabling covariate-dependent heterogeneity that goes beyond standard variance models.

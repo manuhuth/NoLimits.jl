@@ -138,6 +138,7 @@ function plot_observation_distributions(res::FitResult;
         ind = dm.individuals[i]
         obs_rows_all = dm.row_groups.obs_rows[i]
         obs_idx = _resolve_obs_rows(obs_rows, obs_rows_all)
+        rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only=true)
 
         for obs_name in obs_list
             for j in obs_idx
@@ -165,9 +166,10 @@ function plot_observation_distributions(res::FitResult;
                             sol_accessors = get_de_accessors_builder(dm.model.de.de)(sol, compiled)
                         end
                         vary = _varying_at_plot(dm, ind, j, row)
+                        η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only=true)
                         obs = sol_accessors === nothing ?
-                              calculate_formulas_obs(dm.model, θ, η_ind, ind.const_cov, vary) :
-                              calculate_formulas_obs(dm.model, θ, η_ind, ind.const_cov, vary, sol_accessors)
+                              calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
+                              calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
                         dists[d] = getproperty(obs, obs_name)
                     end
 
@@ -245,9 +247,10 @@ function plot_observation_distributions(res::FitResult;
                         getproperty(cache.obs_dists[i][j], obs_name)
                     else
                         vary = _varying_at_plot(dm, ind, j, row)
+                        η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only=true)
                         obs = sol_accessors === nothing ?
-                              calculate_formulas_obs(dm.model, θ, η_ind, ind.const_cov, vary) :
-                              calculate_formulas_obs(dm.model, θ, η_ind, ind.const_cov, vary, sol_accessors)
+                              calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
+                              calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
                         getproperty(obs, obs_name)
                     end
 
@@ -317,7 +320,7 @@ function plot_observation_distributions(res::FitResult;
 end
 
 function plot_observation_distributions(dm::DataModel; kwargs...)
-    constants_re = haskey(kwargs, :constants_re) ? getfield(kwargs, :constants_re) : NamedTuple()
+    constants_re = haskey(kwargs, :constants_re) ? kwargs[:constants_re] : NamedTuple()
     cache = build_plot_cache(dm; constants_re=constants_re, cache_obs_dists=false)
     res = FitResult(MLE(), MLEResult(NamedTuple(), 0.0, 0, NamedTuple(), NamedTuple()),
                     FitSummary(0.0, true, FitParameters(ComponentArray(), ComponentArray()), NamedTuple()),

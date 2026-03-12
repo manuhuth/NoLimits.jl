@@ -392,3 +392,55 @@ end
     fd = FiniteDifferences.grad(FiniteDifferences.central_fdm(5, 1), laplace_obj, collect(θ0))[1]
     @test isapprox(collect(g), fd; rtol=1e-3, atol=1e-3)
 end
+
+@testset "Laplace builds local eta vectors for individuals spanning RE levels" begin
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+
+        @fixedEffects begin
+            a = RealNumber(0.0)
+            σ = RealNumber(0.2)
+        end
+
+        @randomEffects begin
+            η_year = RandomEffect(Normal(0.0, 1.0); column=:YEAR)
+        end
+
+        @formulas begin
+            y ~ Normal(a + η_year, σ)
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 1, 2, 2],
+        YEAR = [:B, :A, :A, :A, :C],
+        t = [0.0, 1.0, 2.0, 0.0, 1.0],
+        y = [0.15, -0.05, -0.2, 0.0, 0.45]
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    _, batch_infos, const_cache = NoLimits._build_laplace_batch_infos(dm, NamedTuple())
+    @test length(batch_infos) == 1
+    info = batch_infos[1]
+    cache = build_ll_cache(dm)
+    θ = get_θ0_untransformed(model.fixed.fixed)
+    b = [0.2, -0.1, 0.4]
+
+    η_1 = NoLimits._build_eta_ind(dm, 1, info, b, const_cache, θ)
+    η_2 = NoLimits._build_eta_ind(dm, 2, info, b, const_cache, θ)
+
+    @test collect(η_1.η_year) == [0.2, -0.1]
+    @test collect(η_2.η_year) == [-0.1, 0.4]
+
+    ll_1 = NoLimits._loglikelihood_individual(dm, 1, θ, η_1, cache)
+    ll_2 = NoLimits._loglikelihood_individual(dm, 2, θ, η_2, cache)
+    ll_expected = logpdf(Normal(0.2, 0.2), 0.15) +
+                  logpdf(Normal(-0.1, 0.2), -0.05) +
+                  logpdf(Normal(-0.1, 0.2), -0.2) +
+                  logpdf(Normal(-0.1, 0.2), 0.0) +
+                  logpdf(Normal(0.4, 0.2), 0.45)
+
+    @test ll_1 + ll_2 ≈ ll_expected atol=1e-12
+end

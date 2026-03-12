@@ -854,7 +854,7 @@ function _mcmc_random_effects_means(res::FitResult,
 
     η_vec = Vector{ComponentArray}(undef, length(dm.individuals))
     for (i, ind) in enumerate(dm.individuals)
-        pairs = Pair{Symbol, Any}[]
+        nt_pairs = Pair{Symbol, Any}[]
         for re in re_names
             g = getfield(ind.re_groups, re)
             fixed = haskey(fixed_maps, re) ? getfield(fixed_maps, re) : Dict{Any, Any}()
@@ -867,7 +867,7 @@ function _mcmc_random_effects_means(res::FitResult,
                     else
                         v = level_means[re][lvl]
                     end
-                    push!(pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
+                    push!(nt_pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
                 else
                     vals = dim == 1 ? Vector{Float64}(undef, length(g)) : Vector{Vector{Float64}}(undef, length(g))
                     for (gi, lvl) in pairs(g)
@@ -878,7 +878,7 @@ function _mcmc_random_effects_means(res::FitResult,
                         end
                         vals[gi] = dim == 1 ? v : Vector{Float64}(v)
                     end
-                    push!(pairs, re => vals)
+                    push!(nt_pairs, re => vals)
                 end
             else
                 if haskey(fixed, g)
@@ -886,10 +886,10 @@ function _mcmc_random_effects_means(res::FitResult,
                 else
                     v = level_means[re][g]
                 end
-                push!(pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
+                push!(nt_pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
             end
         end
-        η_vec[i] = ComponentArray(NamedTuple(pairs))
+        η_vec[i] = ComponentArray(NamedTuple(nt_pairs))
     end
     return η_vec
 end
@@ -958,7 +958,7 @@ function _vi_random_effects_means(res::FitResult,
 
     η_vec = Vector{ComponentArray}(undef, length(dm.individuals))
     for (i, ind) in enumerate(dm.individuals)
-        pairs = Pair{Symbol, Any}[]
+        nt_pairs = Pair{Symbol, Any}[]
         for re in re_names
             g = getfield(ind.re_groups, re)
             fixed = haskey(fixed_maps, re) ? getfield(fixed_maps, re) : Dict{Any, Any}()
@@ -971,7 +971,7 @@ function _vi_random_effects_means(res::FitResult,
                     else
                         v = level_means[re][lvl]
                     end
-                    push!(pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
+                    push!(nt_pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
                 else
                     vals = dim == 1 ? Vector{Float64}(undef, length(g)) : Vector{Vector{Float64}}(undef, length(g))
                     for (gi, lvl) in pairs(g)
@@ -982,7 +982,7 @@ function _vi_random_effects_means(res::FitResult,
                         end
                         vals[gi] = dim == 1 ? v : Vector{Float64}(v)
                     end
-                    push!(pairs, re => vals)
+                    push!(nt_pairs, re => vals)
                 end
             else
                 if haskey(fixed, g)
@@ -990,10 +990,10 @@ function _vi_random_effects_means(res::FitResult,
                 else
                     v = level_means[re][g]
                 end
-                push!(pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
+                push!(nt_pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
             end
         end
-        η_vec[i] = ComponentArray(NamedTuple(pairs))
+        η_vec[i] = ComponentArray(NamedTuple(nt_pairs))
     end
     return η_vec
 end
@@ -1146,7 +1146,7 @@ function _mcmc_drawn_params(res::FitResult,
 
         η_vec = Vector{ComponentArray}(undef, length(dm.individuals))
         for (i, ind) in enumerate(dm.individuals)
-            pairs = Pair{Symbol, Any}[]
+            nt_pairs = Pair{Symbol, Any}[]
             for re in re_names
                 fixed = haskey(fixed_maps, re) ? getfield(fixed_maps, re) : Dict{Any, Any}()
                 meta = re_meta[re]
@@ -1165,7 +1165,7 @@ function _mcmc_drawn_params(res::FitResult,
                             v = _get_re_value(re, li, dim, iter_idx, chain_idx)
                             v === nothing && (v = dim == 1 ? 0.0 : zeros(dim))
                         end
-                        push!(pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
+                        push!(nt_pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
                     else
                         vals_re = dim == 1 ? Vector{Float64}(undef, length(g)) : Vector{Vector{Float64}}(undef, length(g))
                         for (gi, lvl) in pairs(g)
@@ -1179,7 +1179,7 @@ function _mcmc_drawn_params(res::FitResult,
                             end
                             vals_re[gi] = dim == 1 ? v : Vector{Float64}(v)
                         end
-                        push!(pairs, re => vals_re)
+                        push!(nt_pairs, re => vals_re)
                     end
                 else
                     if haskey(fixed, g)
@@ -1190,10 +1190,10 @@ function _mcmc_drawn_params(res::FitResult,
                         v = _get_re_value(re, li, dim, iter_idx, chain_idx)
                         v === nothing && (v = dim == 1 ? 0.0 : zeros(dim))
                     end
-                    push!(pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
+                    push!(nt_pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
                 end
             end
-            η_vec[i] = ComponentArray(NamedTuple(pairs))
+            η_vec[i] = ComponentArray(NamedTuple(nt_pairs))
         end
         η_draws[k] = η_vec
     end
@@ -1345,7 +1345,7 @@ function _vi_drawn_params(res::FitResult,
 
         η_vec = Vector{ComponentArray}(undef, length(dm.individuals))
         for (i, ind) in enumerate(dm.individuals)
-            pairs = Pair{Symbol, Any}[]
+            nt_pairs = Pair{Symbol, Any}[]
             for re in re_names
                 fixed = haskey(fixed_maps, re) ? getfield(fixed_maps, re) : Dict{Any, Any}()
                 meta = re_meta[re]
@@ -1364,7 +1364,7 @@ function _vi_drawn_params(res::FitResult,
                             v = _get_re_value(re, li, dim, row)
                             v === nothing && (v = dim == 1 ? 0.0 : zeros(dim))
                         end
-                        push!(pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
+                        push!(nt_pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
                     else
                         vals_re = dim == 1 ? Vector{Float64}(undef, length(g)) : Vector{Vector{Float64}}(undef, length(g))
                         for (gi, lvl) in pairs(g)
@@ -1378,7 +1378,7 @@ function _vi_drawn_params(res::FitResult,
                             end
                             vals_re[gi] = dim == 1 ? v : Vector{Float64}(v)
                         end
-                        push!(pairs, re => vals_re)
+                        push!(nt_pairs, re => vals_re)
                     end
                 else
                     if haskey(fixed, g)
@@ -1389,10 +1389,10 @@ function _vi_drawn_params(res::FitResult,
                         v = _get_re_value(re, li, dim, row)
                         v === nothing && (v = dim == 1 ? 0.0 : zeros(dim))
                     end
-                    push!(pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
+                    push!(nt_pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
                 end
             end
-            η_vec[i] = ComponentArray(NamedTuple(pairs))
+            η_vec[i] = ComponentArray(NamedTuple(nt_pairs))
         end
         η_draws[k] = η_vec
     end
@@ -1530,7 +1530,7 @@ function _default_random_effects_from_dm(dm::DataModel,
 
     η_vec = Vector{ComponentArray}(undef, length(dm.individuals))
     for (i, ind) in enumerate(dm.individuals)
-        pairs = Pair{Symbol, Any}[]
+        nt_pairs = Pair{Symbol, Any}[]
         for re in re_names
             fixed = haskey(fixed_maps, re) ? getfield(fixed_maps, re) : Dict{Any, Any}()
             dim = get(level_dims, re, 1)
@@ -1539,21 +1539,21 @@ function _default_random_effects_from_dm(dm::DataModel,
                 if length(g) == 1
                     lvl = g[1]
                     v = haskey(fixed, lvl) ? fixed[lvl] : level_vals[re][lvl]
-                    push!(pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
+                    push!(nt_pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
                 else
                     vals_re = dim == 1 ? Vector{Float64}(undef, length(g)) : Vector{Vector{Float64}}(undef, length(g))
                     for (gi, lvl) in pairs(g)
                         v = haskey(fixed, lvl) ? fixed[lvl] : level_vals[re][lvl]
                         vals_re[gi] = dim == 1 ? v : Vector{Float64}(v)
                     end
-                    push!(pairs, re => vals_re)
+                    push!(nt_pairs, re => vals_re)
                 end
             else
                 v = haskey(fixed, g) ? fixed[g] : level_vals[re][g]
-                push!(pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
+                push!(nt_pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
             end
         end
-        η_vec[i] = ComponentArray(NamedTuple(pairs))
+        η_vec[i] = ComponentArray(NamedTuple(nt_pairs))
     end
     return η_vec
 end
@@ -1624,13 +1624,15 @@ function build_plot_cache(res::FitResult;
             ind = dm.individuals[i]
             obs_rows = dm.row_groups.obs_rows[i]
             η_ind = η_vec[i] isa ComponentArray ? η_vec[i] : ComponentArray(η_vec[i])
+            rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only=true)
             sol_accessors = dm.model.de.de === nothing ? nothing : get_de_accessors_builder(dm.model.de.de)(sols[i], compiled_cache[i])
             dists_i = Vector{NamedTuple}(undef, length(obs_rows))
             for (j, row) in enumerate(obs_rows)
                 vary = _varying_at_plot(dm, ind, j, row)
+                η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only=true)
                 obs = sol_accessors === nothing ?
-                      calculate_formulas_obs(dm.model, θ, η_ind, ind.const_cov, vary) :
-                      calculate_formulas_obs(dm.model, θ, η_ind, ind.const_cov, vary, sol_accessors)
+                      calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
+                      calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
                 dists_i[j] = obs
             end
             obs_dists[i] = dists_i
@@ -1676,13 +1678,15 @@ function build_plot_cache(dm::DataModel;
             ind = dm.individuals[i]
             obs_rows = dm.row_groups.obs_rows[i]
             η_ind = η_vec[i] isa ComponentArray ? η_vec[i] : ComponentArray(η_vec[i])
+            rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only=true)
             sol_accessors = dm.model.de.de === nothing ? nothing : get_de_accessors_builder(dm.model.de.de)(sols[i], compiled_cache[i])
             dists_i = Vector{NamedTuple}(undef, length(obs_rows))
             for (j, row) in enumerate(obs_rows)
                 vary = _varying_at_plot(dm, ind, j, row)
+                η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only=true)
                 obs = sol_accessors === nothing ?
-                      calculate_formulas_obs(dm.model, θ, η_ind, ind.const_cov, vary) :
-                      calculate_formulas_obs(dm.model, θ, η_ind, ind.const_cov, vary, sol_accessors)
+                      calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
+                      calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
                 dists_i[j] = obs
             end
             obs_dists[i] = dists_i

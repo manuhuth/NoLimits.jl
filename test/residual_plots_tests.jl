@@ -322,3 +322,40 @@ end
     p_pit = plot_residual_pit(res; show_hist=true, show_kde=false, show_qq=true)
     @test p_pit !== nothing
 end
+
+@testset "residuals use row-specific random effects for varying non-ODE groups" begin
+    model = @Model begin
+        @fixedEffects begin
+            σ = RealNumber(1.0e-6, scale=:log)
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @randomEffects begin
+            η_year = RandomEffect(Normal(0.0, 1.0); column=:YEAR)
+        end
+
+        @formulas begin
+            y ~ Normal(η_year, σ)
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 1, 2, 2],
+        YEAR = [:A, :B, :B, :A, :C],
+        t = [0.0, 1.0, 2.0, 0.0, 1.0],
+        y = [0.1, 0.4, 0.4, 0.1, 0.3]
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    constants_re = (; η_year=(; A=0.1, B=0.4, C=0.3))
+    cache = build_plot_cache(dm; constants_re=constants_re, cache_obs_dists=true)
+
+    rdf = get_residuals(dm; cache=cache, cache_obs_dists=true, residuals=[:raw])
+    sort!(rdf, :row)
+
+    @test Float64.(rdf.fitted) ≈ [0.1, 0.4, 0.4, 0.1, 0.3]
+    @test maximum(abs.(Float64.(rdf.res_raw))) < 1.0e-6
+end

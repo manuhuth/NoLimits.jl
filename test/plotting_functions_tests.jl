@@ -643,3 +643,36 @@ end
     p_emission_dm_vector = plot_emission_distributions(dm; figure_layout=:vector)
     @test isa(p_emission_dm_vector, Vector{Plots.Plot})
 end
+
+@testset "plot_fits supports varying non-ODE random-effect groups" begin
+    model = @Model begin
+        @fixedEffects begin
+            σ = RealNumber(1.0e-6, scale=:log)
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @randomEffects begin
+            η_year = RandomEffect(Normal(0.0, 1.0); column=:YEAR)
+        end
+
+        @formulas begin
+            y ~ Normal(η_year, σ)
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 1, 2, 2],
+        YEAR = [:A, :B, :B, :A, :C],
+        t = [0.0, 1.0, 2.0, 0.0, 1.0],
+        y = [0.1, 0.4, 0.4, 0.1, 0.3]
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    constants_re = (; η_year=(; A=0.1, B=0.4, C=0.3))
+
+    p = plot_fits(dm; constants_re=constants_re, plot_density=true)
+    @test p !== nothing
+end

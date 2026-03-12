@@ -200,6 +200,7 @@ function _simulate_obs(dm::DataModel,
         x = _vpc_x_values(dm, ind, obs_rows, x_axis_feature)
         sim_x[i] = Float64.(x)
         η_ind = η_vec[i]
+        rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only=true)
         sol_accessors = nothing
         if dm.model.de.de !== nothing
             sol, compiled = _solve_dense_individual(dm, ind, θ, η_ind)
@@ -208,9 +209,10 @@ function _simulate_obs(dm::DataModel,
         vals = Vector{Float64}(undef, length(obs_rows))
         for (j, row) in enumerate(obs_rows)
             vary = _varying_at_plot(dm, ind, j, row)
+            η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only=true)
             obs = sol_accessors === nothing ?
-                  calculate_formulas_obs(dm.model, θ, η_ind, ind.const_cov, vary) :
-                  calculate_formulas_obs(dm.model, θ, η_ind, ind.const_cov, vary, sol_accessors)
+                  calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
+                  calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
             dist = getproperty(obs, obs_name)
             vals[j] = rand(rng, dist)
         end
@@ -225,6 +227,7 @@ function _representative_dist(dm::DataModel, obs_name::Symbol, x_axis_feature)
     ind = dm.individuals[1]
     obs_rows = dm.row_groups.obs_rows[1]
     η_ind = η_vec[1]
+    rowwise_re = _needs_rowwise_random_effects(dm, 1; obs_only=true)
     sol_accessors = nothing
     if dm.model.de.de !== nothing
         sol, compiled = _solve_dense_individual(dm, ind, θ, η_ind)
@@ -234,9 +237,10 @@ function _representative_dist(dm::DataModel, obs_name::Symbol, x_axis_feature)
     if dm.model.de.de === nothing && x_axis_feature !== nothing
         vary = merge(vary, (t = 0.0,))
     end
+    η_row = _row_random_effects_at(dm, 1, 1, η_ind, rowwise_re; obs_only=true)
     obs = sol_accessors === nothing ?
-          calculate_formulas_obs(dm.model, θ, η_ind, ind.const_cov, vary) :
-          calculate_formulas_obs(dm.model, θ, η_ind, ind.const_cov, vary, sol_accessors)
+          calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
+          calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
     return getproperty(obs, obs_name)
 end
 

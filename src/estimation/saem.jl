@@ -1054,11 +1054,13 @@ function _saem_collect_hmm_stats_individual(dm::DataModel,
     end
 
     time_col = _get_col(dm.df, dm.config.time_col)[obs_rows]
+    rowwise_re = _needs_rowwise_random_effects(dm, idx; obs_only=true)
     for i in eachindex(obs_rows)
         vary = vary_cache === nothing ? _varying_at(dm, ind, i, time_col) : vary_cache[i]
+        η_row = _row_random_effects_at(dm, idx, i, η_ind, rowwise_re; obs_only=true)
         obs = sol_accessors === nothing ?
-              calculate_formulas_obs(model, θ, η_ind, const_cov, vary) :
-              calculate_formulas_obs(model, θ, η_ind, const_cov, vary, sol_accessors)
+              calculate_formulas_obs(model, θ, η_row, const_cov, vary) :
+              calculate_formulas_obs(model, θ, η_row, const_cov, vary, sol_accessors)
         for col in keys(hmm_emission_params)
             dist = getproperty(obs, col)
             _saem_is_hmm_distribution(dist) || return (NamedTuple(), false)
@@ -1206,11 +1208,13 @@ function _saem_collect_outcome_stats_individual(dm::DataModel,
     obs_cols = dm.config.obs_cols
     time_col = _get_col(dm.df, dm.config.time_col)[obs_rows]
     stats_dict = Dict{Symbol, Any}()
+    rowwise_re = _needs_rowwise_random_effects(dm, idx; obs_only=true)
     for i in eachindex(obs_rows)
         vary = vary_cache === nothing ? _varying_at(dm, ind, i, time_col) : vary_cache[i]
+        η_row = _row_random_effects_at(dm, idx, i, η_ind, rowwise_re; obs_only=true)
         obs = sol_accessors === nothing ?
-              calculate_formulas_obs(model, θ, η_ind, const_cov, vary) :
-              calculate_formulas_obs(model, θ, η_ind, const_cov, vary, sol_accessors)
+              calculate_formulas_obs(model, θ, η_row, const_cov, vary) :
+              calculate_formulas_obs(model, θ, η_row, const_cov, vary, sol_accessors)
         for col in obs_cols
             haskey(obs_targets, col) || continue
             dist = getproperty(obs, col)
@@ -1842,10 +1846,12 @@ function _saem_glm_supported(dm::DataModel,
         for i in info.inds
             ind = dm.individuals[i]
             obs_rows = dm.row_groups.obs_rows[i]
+            rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only=true)
             for j in eachindex(obs_rows)
                 v = _varying_at(dm, ind, j, _get_col(dm.df, dm.config.time_col)[obs_rows])
                 η_ind = _build_eta_ind(dm, i, info, b, const_cache, θ)
-                obs = calculate_formulas_obs(model, θ, η_ind, ind.const_cov, v)
+                η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only=true)
+                obs = calculate_formulas_obs(model, θ, η_row, ind.const_cov, v)
                 for col in dm.config.obs_cols
                     dist = getproperty(obs, col)
                     dist isa allowed || return false

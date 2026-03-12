@@ -209,7 +209,7 @@ using DataInterpolations
 - **Time column declaration**: `time_col` must be declared in `@covariates` as `Covariate()` or `DynamicCovariate()`.
 - **Event columns**: when `evid_col` is set, event columns (`AMT`, `RATE`, `CMT`) are required and validated for completeness on event rows.
 - **Missing values**: observation rows (`EVID == 0`) cannot have missing values in outcome or covariate columns used by `@formulas`.
-- **Grouping consistency**: random-effect grouping columns cannot contain missing values. Grouping columns other than `primary_id` must be constant within each `primary_id`.
+- **Grouping consistency**: random-effect grouping columns cannot contain missing values. For ODE models and continuous-time HMM outcomes, grouping columns other than `primary_id` must still be constant within each `primary_id`. For non-ODE models and discrete-time HMM outcomes, non-`primary_id` grouping columns may vary within an individual; in that case, the random effect is selected row by row from the observed grouping value.
 - **Numeric random-effect grouping levels**: if any random-effect grouping column uses numeric levels, `DataModel` emits:
   `DataModel detected numeric random-effect grouping levels in column(s) $(cols_str). You wwill not be able to use constant random-effects. If you want to use constantr andom effects, consider ralabeling your random efefcts to strings or symbols.`
   In this case, constant random-effects are unavailable unless grouping levels are relabeled to strings or symbols.
@@ -241,3 +241,5 @@ re_info = get_re_group_info(dm)
 re_idx_obs = get_re_indices(dm, 1)               # observation rows
 re_idx_all = get_re_indices(dm, 1; obs_only=false)
 ```
+
+When a grouping column varies within an individual in a supported non-ODE model, `get_re_indices` returns the row-level random-effect level ids in observation-row order (or all-row order when `obs_only=false`).

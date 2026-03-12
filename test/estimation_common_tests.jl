@@ -516,3 +516,49 @@ end
                   logpdf(Normal(1.0, 0.2), 0.95)
     @test ll ≈ ll_expected atol=1e-12
 end
+
+@testset "loglikelihood non-ODE uses row-specific random effects for varying groups" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.0)
+            σ = RealNumber(0.2)
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @randomEffects begin
+            η_year = RandomEffect(Normal(0.0, 1.0); column=:YEAR)
+        end
+
+        @formulas begin
+            y ~ Normal(a + η_year, σ)
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 1, 2, 2],
+        YEAR = [:A, :B, :B, :A, :C],
+        t = [0.0, 1.0, 2.0, 0.0, 1.0],
+        y = [0.05, 0.55, 0.35, -0.15, 0.2]
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    θ = get_θ0_untransformed(model.fixed.fixed)
+    η_list = [
+        ComponentArray((; η_year = [0.1, 0.4])),
+        ComponentArray((; η_year = [0.1, 0.3]))
+    ]
+
+    ll = loglikelihood(dm, θ, η_list)
+    ll_expected = logpdf(Normal(0.1, 0.2), 0.05) +
+                  logpdf(Normal(0.4, 0.2), 0.55) +
+                  logpdf(Normal(0.4, 0.2), 0.35) +
+                  logpdf(Normal(0.1, 0.2), -0.15) +
+                  logpdf(Normal(0.3, 0.2), 0.2)
+
+    @test NoLimits._needs_rowwise_random_effects(dm, 1; obs_only=true)
+    @test NoLimits._needs_rowwise_random_effects(dm, 2; obs_only=true)
+    @test ll ≈ ll_expected atol=1e-12
+end

@@ -581,6 +581,7 @@ function plot_fits(res::FitResult;
             n_draws = length(θ_draws)
             preds = zeros(Float64, n_draws, length(use_dense ? x_fit : obs_rows))
             dists_for_density = plot_density ? Vector{Vector{Distribution}}(undef, n_draws) : nothing
+            rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only=true)
             for d in 1:n_draws
                 θ = θ_draws[d]
                 η_ind = η_draws[d][i]
@@ -605,9 +606,10 @@ function plot_fits(res::FitResult;
                     dists = Vector{Distribution}(undef, length(obs_rows))
                     for (j, row) in enumerate(obs_rows)
                         vary = _varying_at_plot(dm, ind, j, row)
+                        η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only=true)
                         obs = sol_accessors === nothing ?
-                              calculate_formulas_obs(dm.model, θ, η_ind, ind.const_cov, vary) :
-                              calculate_formulas_obs(dm.model, θ, η_ind, ind.const_cov, vary, sol_accessors)
+                              calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
+                              calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
                         dist = getproperty(obs, obs_name)
                         dists[j] = dist
                         preds[d, j] = _stat_from_dist(dist, plot_func)
@@ -668,6 +670,7 @@ function plot_fits(res::FitResult;
         else
             θ = cache.params
             η_ind = cache.random_effects[i]
+            rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only=true)
             sol_accessors = nothing
             if dm.model.de.de !== nothing
                 sol = cache.sols[i]
@@ -725,9 +728,10 @@ function plot_fits(res::FitResult;
             else
                 for (j, row) in enumerate(obs_rows)
                     vary = _varying_at_plot(dm, ind, j, row)
+                    η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only=true)
                     obs = sol_accessors === nothing ?
-                          calculate_formulas_obs(dm.model, θ, η_ind, ind.const_cov, vary) :
-                          calculate_formulas_obs(dm.model, θ, η_ind, ind.const_cov, vary, sol_accessors)
+                          calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
+                          calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
                     dist = getproperty(obs, obs_name)
                     if is_mv
                         mean_vec = _stat_from_dist(dist, plot_func)
@@ -848,6 +852,7 @@ function _plot_hidden_states_impl(dm::DataModel,
                                kwargs_subplot...)
         θ_ind = θ
         η_ind = η_vec[i]
+        rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only=true)
         sol_accessors = nothing
         if dm.model.de.de !== nothing
             sol = nothing
@@ -873,9 +878,10 @@ function _plot_hidden_states_impl(dm::DataModel,
         n_states = nothing
         for (j, row) in enumerate(obs_rows)
             vary = _varying_at_plot(dm, ind, j, row)
+            η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only=true)
             obs = sol_accessors === nothing ?
-                  calculate_formulas_obs(dm.model, θ_ind, η_ind, ind.const_cov, vary) :
-                  calculate_formulas_obs(dm.model, θ_ind, η_ind, ind.const_cov, vary, sol_accessors)
+                  calculate_formulas_obs(dm.model, θ_ind, η_row, ind.const_cov, vary) :
+                  calculate_formulas_obs(dm.model, θ_ind, η_row, ind.const_cov, vary, sol_accessors)
             dist = getproperty(obs, obs_name)
             dist isa MVDiscreteTimeDiscreteStatesHMM || error("Observable $(obs_name) must be MVDiscreteTimeDiscreteStatesHMM.")
             y_val = getfield(ind.series.obs, obs_name)[j]
@@ -1155,9 +1161,11 @@ function _plot_emission_for_individual(dm::DataModel,
     end
 
     vary = _varying_at_plot(dm, ind, row_pos, row)
+    rowwise_re = _needs_rowwise_random_effects(dm, ind_idx; obs_only=true)
+    η_row = _row_random_effects_at(dm, ind_idx, row_pos, η_ind, rowwise_re; obs_only=true)
     obs = sol_accessors === nothing ?
-          calculate_formulas_obs(dm.model, θ, η_ind, ind.const_cov, vary) :
-          calculate_formulas_obs(dm.model, θ, η_ind, ind.const_cov, vary, sol_accessors)
+          calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
+          calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
     dist = getproperty(obs, obs_name)
     dist isa MVDiscreteTimeDiscreteStatesHMM || error("Observable $(obs_name) must be MVDiscreteTimeDiscreteStatesHMM.")
 
@@ -1518,6 +1526,7 @@ function _fit_curve_from_cache(dm::DataModel,
     end
 
     preds = Vector{Float64}(undef, length(x_fit))
+    rowwise_re = _needs_rowwise_random_effects(dm, ind_idx; obs_only=true)
     if use_dense
         for (j, t) in enumerate(x_fit)
             vary = (t = t,)
@@ -1527,9 +1536,10 @@ function _fit_curve_from_cache(dm::DataModel,
     else
         for (j, row) in enumerate(obs_rows)
             vary = _varying_at_plot(dm, ind, j, row)
+            η_row = _row_random_effects_at(dm, ind_idx, j, η_ind, rowwise_re; obs_only=true)
             obs = sol_accessors === nothing ?
-                  calculate_formulas_obs(dm.model, θ, η_ind, ind.const_cov, vary) :
-                  calculate_formulas_obs(dm.model, θ, η_ind, ind.const_cov, vary, sol_accessors)
+                  calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
+                  calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
             preds[j] = _stat_from_dist(getproperty(obs, obs_name), plot_func)
         end
     end

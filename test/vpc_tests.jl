@@ -2,6 +2,7 @@ using Test
 using NoLimits
 using DataFrames
 using Distributions
+using Random
 using Turing
 
 @testset "plot_vpc basic" begin
@@ -289,4 +290,43 @@ end
     @test_throws ErrorException plot_vpc(res; obs_percentiles_method=:invalid)
     @test_throws ErrorException plot_vpc(res; obs_percentiles_mode=:invalid)
     @test_throws ErrorException plot_vpc(res; obs_percentiles_mode=:per_individual, obs_percentiles_method=:kernel)
+end
+
+@testset "plot_vpc internals use row-specific random effects for varying non-ODE groups" begin
+    model = @Model begin
+        @fixedEffects begin
+            σ = RealNumber(1.0e-6, scale=:log)
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @randomEffects begin
+            η_year = RandomEffect(Normal(0.0, 1.0); column=:YEAR)
+        end
+
+        @formulas begin
+            y ~ Normal(η_year, σ)
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 1, 2, 2],
+        YEAR = [:A, :B, :B, :A, :C],
+        t = [0.0, 1.0, 2.0, 0.0, 1.0],
+        y = [0.1, 0.4, 0.4, 0.1, 0.3]
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    θ = NoLimits.get_θ0_untransformed(dm.model.fixed.fixed)
+    level_vals = Dict{Symbol, Dict{Any, Any}}(:η_year => Dict{Any, Any}(:A => 0.1, :B => 0.4, :C => 0.3))
+    η_vec = NoLimits._eta_vec_from_levels(dm, level_vals)
+
+    sim_x, sim_vals = NoLimits._simulate_obs(dm, θ, η_vec, :y, MersenneTwister(1), nothing)
+
+    @test sim_x[1] == [0.0, 1.0, 2.0]
+    @test sim_x[2] == [0.0, 1.0]
+    @test sim_vals[1] ≈ [0.1, 0.4, 0.4] atol=1.0e-3
+    @test sim_vals[2] ≈ [0.1, 0.3] atol=1.0e-3
 end

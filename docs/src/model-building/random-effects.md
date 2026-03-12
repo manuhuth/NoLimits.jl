@@ -167,3 +167,21 @@ The parsed random-effects object provides programmatic access to its components 
 - The `column` keyword defines the hierarchical level at which each random effect varies. This grouping structure is used during data-model construction, batching, and estimation.
 - When a model includes multiple grouping columns, any constant covariate used within a random-effect distribution must declare `constant_on` for the corresponding grouping column to ensure consistency.
 - Grouping columns must be present in the data and may not have unique values per observation (which would render the random effects unidentifiable).
+
+## Row-Varying Group Membership Within an Individual
+
+NoLimits supports one grouping column per declared random effect. If you need an interaction grouping such as `SITE:YEAR`, create that composite column in the data and point `column` at it explicitly.
+
+Whether a non-`primary_id` grouping column may change within an individual depends on the model class:
+
+| Context | May a non-`primary_id` grouping column vary within an individual? | Semantics |
+|---------|-------------------------------------------------------------------|-----------|
+| Non-ODE formulas | Yes | The random effect used for each observation row is selected from that row's grouping value. |
+| Discrete-time HMM outcomes | Yes | Row-wise selection is applied at each observation row. |
+| ODE models | No | Random effects must remain uniquely defined at the individual level during ODE evaluation. |
+| Continuous-time HMM outcomes | No | These models still require grouping columns to be constant within each individual. |
+
+Two related constraints still apply:
+
+- Random effects referenced in `@preDifferentialEquation` must be grouped by `primary_id`.
+- Constant covariates keep their current validation rules: they must remain constant within `primary_id` and within every declared `constant_on` grouping.

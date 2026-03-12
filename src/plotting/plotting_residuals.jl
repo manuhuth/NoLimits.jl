@@ -374,6 +374,7 @@ function get_residuals(res::FitResult;
             obs_rows_all = dm.row_groups.obs_rows[i]
             obs_idx = _resolve_residual_obs_rows(obs_rows, obs_rows_all)
             xvals = _get_x_values(dm, ind, obs_rows_all, x_axis_use)
+            rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only=true)
 
             sol_accessors_draw = Vector{Any}(undef, n_draws)
             for d in 1:n_draws
@@ -408,9 +409,10 @@ function get_residuals(res::FitResult;
                         η_ind = η_draws[d][i]
                         sol_accessors = sol_accessors_draw[d]
                         vary = _varying_at_plot(dm, ind, j, row)
+                        η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only=true)
                         obs = sol_accessors === nothing ?
-                              calculate_formulas_obs(dm.model, θ, η_ind, ind.const_cov, vary) :
-                              calculate_formulas_obs(dm.model, θ, η_ind, ind.const_cov, vary, sol_accessors)
+                              calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
+                              calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
                         dist = getproperty(obs, obs_name)
                         met = _compute_residual_metrics(dist, yval, residual_list, fitted_stat,
                                                         randomize_discrete, cdf_fallback_mc, rng)
@@ -466,6 +468,7 @@ function get_residuals(res::FitResult;
             obs_rows_all = dm.row_groups.obs_rows[i]
             obs_idx = _resolve_residual_obs_rows(obs_rows, obs_rows_all)
             xvals = _get_x_values(dm, ind, obs_rows_all, x_axis_use)
+            rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only=true)
 
             θ = cache_use.params
             η_ind = cache_use.random_effects[i]
@@ -497,9 +500,10 @@ function get_residuals(res::FitResult;
                         getproperty(cache_use.obs_dists[i][j], obs_name)
                     else
                         vary = _varying_at_plot(dm, ind, j, row)
+                        η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only=true)
                         obs = sol_accessors === nothing ?
-                              calculate_formulas_obs(dm.model, θ, η_ind, ind.const_cov, vary) :
-                              calculate_formulas_obs(dm.model, θ, η_ind, ind.const_cov, vary, sol_accessors)
+                              calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
+                              calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
                         getproperty(obs, obs_name)
                     end
 
