@@ -48,7 +48,7 @@ A scalar real-valued fixed-effect parameter block.
 - `lower::Real = -Inf`: lower bound on the natural scale (defaults to `EPSILON` when `scale=:log`).
 - `upper::Real = Inf`: upper bound on the natural scale.
 - `prior = Priorless()`: prior distribution (`Distributions.Distribution`) or `Priorless()`.
-- `calculate_se::Bool = false`: whether to include this parameter in standard-error calculations.
+- `calculate_se::Bool = true`: whether to include this parameter in standard-error calculations.
 """
 @with_kw struct RealNumber{T<:Real} <: AbstractParameterBlock
     name::Symbol = :unnamed
@@ -57,11 +57,11 @@ A scalar real-valued fixed-effect parameter block.
     lower::T = -Inf
     upper::T = Inf
     prior = Priorless()
-    calculate_se::Bool = false
+    calculate_se::Bool = true
 end
 
 function RealNumber(value::Real; name::Symbol = :unnamed, scale::Symbol = :identity,
-    lower::Real = -Inf, upper::Real = Inf, prior = Priorless(), calculate_se::Bool = false)
+    lower::Real = -Inf, upper::Real = Inf, prior = Priorless(), calculate_se::Bool = true)
     _check_prior(prior, name)
     scale in REAL_SCALES || error("Invalid scale for parameter $(name). Expected one of $(REAL_SCALES); got $(scale).")
     scale == :log && lower == -Inf && (lower = EPSILON)
@@ -97,7 +97,7 @@ A vector of real-valued fixed-effect parameters with per-element scale options.
 - `upper`: upper bounds per element. Defaults to `Inf`.
 - `prior = Priorless()`: a `Distributions.Distribution`, a `Vector{Distribution}` of
   matching length, or `Priorless()`.
-- `calculate_se::Bool = false`: whether to include this parameter in standard-error calculations.
+- `calculate_se::Bool = true`: whether to include this parameter in standard-error calculations.
 """
 @with_kw struct RealVector{T<:Real, VT<:AbstractVector{T}} <: AbstractParameterBlock
     name::Symbol = :unnamed
@@ -106,7 +106,7 @@ A vector of real-valued fixed-effect parameters with per-element scale options.
     lower::VT = fill(-Inf, length(value))
     upper::VT = fill(Inf, length(value))
     prior = Priorless()
-    calculate_se::Bool = false
+    calculate_se::Bool = true
 end
 
 function RealVector(value::AbstractVector{<:Real};
@@ -115,7 +115,7 @@ function RealVector(value::AbstractVector{<:Real};
     lower = fill(-Inf, length(value)),
     upper = fill(Inf, length(value)),
     prior = Priorless(),
-    calculate_se::Bool = false)
+    calculate_se::Bool = true)
     _check_prior(prior, name)
     all(s -> s in REAL_SCALES, scale) || error("Invalid scale for parameter $(name). Expected each scale in $(REAL_SCALES); got $(scale).")
     s = collect(scale)

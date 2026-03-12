@@ -25,6 +25,8 @@ The following rules are enforced at macro-expansion time:
 - The right-hand side must be one of the supported parameter constructor calls listed below.
 - An empty block is valid and produces an empty fixed-effects object.
 
+For standard-error eligibility, `RealNumber` and `RealVector` default to `calculate_se=true`. All other fixed-effect block types default to `calculate_se=false`.
+
 ## Supported Parameter Types
 
 NoLimits provides parameter types for scalars, vectors, structured matrices, and learned function approximators. Each type controls how values are stored, transformed during optimization, and optionally regularized via priors.

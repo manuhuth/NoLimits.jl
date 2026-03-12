@@ -166,7 +166,7 @@ fit_uq_summary
 
 UQ is computed on the subset of free fixed-effect coordinates that are eligible for uncertainty calculation. Eligibility is controlled at parameter definition time through the `calculate_se` argument in `@fixedEffects` constructors (e.g., `RealNumber`, `RealVector`, `RealPSDMatrix`, `NNParameters`, `SoftTreeParameters`).
 
-By default, `calculate_se` is `false` for `NNParameters`, `SoftTreeParameters`, and `SplineParameters`, because standard errors for high-dimensional parameter vectors are rarely scientifically informative. Classical fixed-effect types such as `RealNumber` and `RealVector` are included by default unless explicitly excluded with `calculate_se=false`.
+By default, `calculate_se` is `true` for `RealNumber` and `RealVector`. It is `false` for the remaining fixed-effect block types (`RealPSDMatrix`, `RealDiagonalMatrix`, `ProbabilityVector`, `DiscreteTransitionMatrix`, `ContinuousTransitionMatrix`, `NNParameters`, `SoftTreeParameters`, `SplineParameters`, and `NPFParameter`). This keeps scalar and low-dimensional vector effects in UQ by default while leaving structured and high-dimensional blocks opt-in.
 
 ```julia
 model = @Model begin

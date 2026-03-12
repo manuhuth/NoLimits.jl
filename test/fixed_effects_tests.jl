@@ -162,6 +162,9 @@ end
     end
     @test get_transform(fe_default)(get_θ0_untransformed(fe_default)).a ≈ 1.0
     @test get_transform(fe_default)(get_θ0_untransformed(fe_default)).v == [1.0, 2.0, 3.0]
+    @test get_params(fe_default).a.calculate_se
+    @test get_params(fe_default).v.calculate_se
+    @test all(get_se_mask(fe_default))
 
     # Mixed log + identity vector with default bounds on log entries.
     fe_mix = @fixedEffects begin
@@ -181,6 +184,7 @@ end
     @test length(θt_chol.Ω) == 4
     θrt_chol = get_inverse_transform(fe_chol)(θt_chol)
     @test isapprox(θrt_chol.Ω, get_θ0_untransformed(fe_chol).Ω; rtol=1e-6, atol=1e-8)
+    @test !get_params(fe_chol).Ω.calculate_se
 
     # Diagonal matrix parameters should log-transform elementwise.
     fe_diag = @fixedEffects begin
@@ -190,6 +194,7 @@ end
     @test θt_diag.D ≈ log.([1.0, 2.0, 3.0])
     θrt_diag = get_inverse_transform(fe_diag)(θt_diag)
     @test isapprox(θrt_diag.D, [1.0, 2.0, 3.0]; rtol=1e-6, atol=1e-8)
+    @test !get_params(fe_diag).D.calculate_se
 end
 
 @testset "FixedEffects edge coverage" begin
