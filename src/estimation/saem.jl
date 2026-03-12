@@ -866,48 +866,17 @@ function _saem_hmm_smoothed_gamma(dists::Vector, ys::Vector, T::Type)
         return (nothing, false)
 
     K = first_dist.n_states
-    alpha = zeros(T, K, n_time)
-    beta = zeros(T, K, n_time)
-    emit = zeros(T, K, n_time)
-    scales = zeros(T, n_time)
-    trans = Vector{Matrix{T}}(undef, n_time)
-
-    p0 = T.(first_dist.initial_dist.p)
+    gamma = zeros(T, K, n_time)
     for t in 1:n_time
         dist_t = dists[t]
         typeof(dist_t) === typeof(first_dist) || return (nothing, false)
-        A = T.(dist_t.transition_matrix)
-        trans[t] = A
         b = _saem_hmm_state_emission_probs(dist_t, ys[t], T)
         b === nothing && return (nothing, false)
-        emit[:, t] .= b
-
-        pred = if t == 1
-            transpose(A) * p0
-        else
-            transpose(A) * view(alpha, :, t - 1)
-        end
+        pred = T.(probabilities_hidden_states(dist_t))
         unnorm = pred .* b
         c = sum(unnorm)
         (isfinite(c) && c > zero(T)) || return (nothing, false)
-        alpha[:, t] .= unnorm ./ c
-        scales[t] = c
-    end
-
-    beta[:, n_time] .= one(T)
-    for t in (n_time - 1):-1:1
-        A_next = trans[t + 1]
-        tmp = view(emit, :, t + 1) .* view(beta, :, t + 1)
-        c = scales[t + 1]
-        (isfinite(c) && c > zero(T)) || return (nothing, false)
-        beta[:, t] .= (A_next * tmp) ./ c
-    end
-
-    gamma = alpha .* beta
-    for t in 1:n_time
-        s = sum(view(gamma, :, t))
-        (isfinite(s) && s > zero(T)) || return (nothing, false)
-        gamma[:, t] ./= s
+        gamma[:, t] .= unnorm ./ c
     end
     return (gamma, true)
 end

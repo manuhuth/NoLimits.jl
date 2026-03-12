@@ -287,6 +287,53 @@ end
     @test isfinite(ll)
 end
 
+@testset "MVContinuousTimeHMM: loglikelihood matches rowwise simulation semantics" begin
+    Q = [-0.2 0.2; 0.2 -0.2]
+    emissions = (
+        (Normal(0.0, 0.25), Normal(0.0, 0.25)),
+        (Normal(3.0, 0.25), Normal(3.0, 0.25)),
+    )
+    init = Categorical([1.0, 0.0])
+
+    model = @Model begin
+        @fixedEffects begin
+            dummy = RealNumber(0.0)
+        end
+
+        @covariates begin
+            t  = Covariate()
+            dt = Covariate()
+        end
+        @formulas begin
+            y ~ MVContinuousTimeDiscreteStatesHMM(
+                [-0.2 0.2; 0.2 -0.2],
+                (
+                    (Normal(0.0, 0.25), Normal(0.0, 0.25)),
+                    (Normal(3.0, 0.25), Normal(3.0, 0.25)),
+                ),
+                Categorical([1.0, 0.0]),
+                dt
+            )
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1],
+        t  = [0.0, 1.0],
+        dt = [1.0, 1.0],
+        y  = [[0.0, 0.1], [3.0, 2.9]],
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    θ = get_θ0_untransformed(dm.model.fixed.fixed)
+    dist = MVContinuousTimeDiscreteStatesHMM(Q, emissions, init, 1.0)
+
+    ll = NoLimits.loglikelihood(dm, θ, ComponentArray())
+    expected = sum(logpdf(dist, y) for y in df.y)
+
+    @test isapprox(ll, expected; atol=1e-12)
+end
+
 @testset "MVContinuousTimeHMM: ForwardDiff through full model" begin
     model = @Model begin
         @fixedEffects begin

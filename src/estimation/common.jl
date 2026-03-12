@@ -958,9 +958,6 @@ function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_
 
     ll = 0.0
     obs_cols = dm.config.obs_cols
-    T_hmm = promote_type(eltype(θ), eltype(η_ind))
-    hmm_init = nothing
-    hmm_seen = nothing
     rowwise_re = _needs_rowwise_random_effects(dm, idx; obs_only=true)
     for i in eachindex(obs_rows)
         vary = vary_cache === nothing ? _varying_at(dm, ind, i, _get_col(dm.df, dm.config.time_col)[obs_rows]) : vary_cache[i]
@@ -971,49 +968,13 @@ function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_
         for (j, col) in pairs(obs_cols)
             y = getfield(obs_series, col)[i]
             dist = getproperty(obs, col)
-            if dist isa ContinuousTimeDiscreteStatesHMM || dist isa DiscreteTimeDiscreteStatesHMM ||
-               dist isa MVContinuousTimeDiscreteStatesHMM || dist isa MVDiscreteTimeDiscreteStatesHMM
-                if hmm_seen === nothing
-                    hmm_init = Vector{Vector{T_hmm}}(undef, length(obs_cols))
-                    hmm_seen = falses(length(obs_cols))
-                end
-                hs = hmm_seen::BitVector
-                hi = hmm_init::Vector{Vector{T_hmm}}
-                if !hs[j]
-                    buf = Vector{T_hmm}(undef, length(dist.initial_dist.p))
-                    copyto!(buf, dist.initial_dist.p)
-                    hi[j] = buf
-                    hs[j] = true
-                end
-                init_p = hi[j]
-                # Use check_args=false so that degenerate posteriors (NaN/Inf from
-                # zero-probability observations at extreme parameter values) do not
-                # throw a DomainError.  The isfinite guard below catches NaN logpdf.
-                dist_use = if dist isa ContinuousTimeDiscreteStatesHMM
-                    ContinuousTimeDiscreteStatesHMM(dist.transition_matrix, dist.emission_dists,
-                                                    Distributions.Categorical(init_p; check_args=false), dist.Δt)
-                elseif dist isa MVContinuousTimeDiscreteStatesHMM
-                    MVContinuousTimeDiscreteStatesHMM(dist.transition_matrix, dist.emission_dists,
-                                                      Distributions.Categorical(init_p; check_args=false), dist.Δt)
-                elseif dist isa MVDiscreteTimeDiscreteStatesHMM
-                    MVDiscreteTimeDiscreteStatesHMM(dist.transition_matrix, dist.emission_dists,
-                                                    Distributions.Categorical(init_p; check_args=false))
-                else
-                    DiscreteTimeDiscreteStatesHMM(dist.transition_matrix, dist.emission_dists,
-                                                  Distributions.Categorical(init_p; check_args=false))
-                end
-                if y === missing
-                    # Unobserved HMM outcome: no likelihood contribution.
-                    # Still propagate the hidden-state prior to keep temporal
-                    # state updates consistent for the next observation.
-                    copyto!(init_p, probabilities_hidden_states(dist_use))
-                    continue
-                end
-                v = logpdf(dist_use, y)
+            if dist isa ContinuousTimeDiscreteStatesHMM || dist isa MVContinuousTimeDiscreteStatesHMM ||
+               dist isa DiscreteTimeDiscreteStatesHMM || dist isa MVDiscreteTimeDiscreteStatesHMM
+                y === missing && continue
+                v = logpdf(dist, y)
                 if !isfinite(v)
                     return -Inf
                 end
-                copyto!(init_p, posterior_hidden_states(dist_use, y))
             else
                 y === missing && continue
                 v = _fast_logpdf(dist, y)

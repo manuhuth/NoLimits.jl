@@ -281,8 +281,57 @@ end
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     θ  = get_θ0_untransformed(dm.model.fixed.fixed)
     ll = NoLimits.loglikelihood(dm, θ, ComponentArray())
+    dist = MVDiscreteTimeDiscreteStatesHMM(
+        [0.9 0.1; 0.2 0.8],
+        (
+            (Normal(0.0, 1.0), Normal(2.0, 0.5)),
+            (Normal(3.0, 1.0), Normal(-1.0, 0.5)),
+        ),
+        Categorical([0.6, 0.4])
+    )
+    expected = sum(logpdf(dist, y) for y in df.y)
 
     @test isfinite(ll)
+    @test isapprox(ll, expected; atol=1e-12)
+end
+
+@testset "MVDiscreteTimeHMM: missing observations do not propagate hidden state" begin
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+        @fixedEffects begin
+            μ1 = RealNumber(0.0)
+            μ2 = RealNumber(3.0)
+        end
+        @formulas begin
+            P  = [0.9 0.1; 0.2 0.8]
+            e1 = (Normal(μ1, 1.0), Normal(2.0, 0.5))
+            e2 = (Normal(μ2, 1.0), Normal(-1.0, 0.5))
+            y ~ MVDiscreteTimeDiscreteStatesHMM(P, (e1, e2), Categorical([0.6, 0.4]))
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 1],
+        t  = [0.0, 1.0, 2.0],
+        y  = Any[[0.1, 2.1], missing, [3.1, -0.9]],
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    θ  = get_θ0_untransformed(dm.model.fixed.fixed)
+    ll = NoLimits.loglikelihood(dm, θ, ComponentArray())
+    dist = MVDiscreteTimeDiscreteStatesHMM(
+        [0.9 0.1; 0.2 0.8],
+        (
+            (Normal(0.0, 1.0), Normal(2.0, 0.5)),
+            (Normal(3.0, 1.0), Normal(-1.0, 0.5)),
+        ),
+        Categorical([0.6, 0.4])
+    )
+    expected = logpdf(dist, [0.1, 2.1]) + logpdf(dist, [3.1, -0.9])
+
+    @test isapprox(ll, expected; atol=1e-12)
 end
 
 @testset "MVDiscreteTimeHMM: ForwardDiff through full model" begin

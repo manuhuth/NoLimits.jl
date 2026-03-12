@@ -1336,6 +1336,24 @@ end
     @test notes_ineligible.closed_form_mstep_mode == :numeric_only
 end
 
+@testset "SAEM discrete HMM emission stats use rowwise posteriors" begin
+    P = [0.85 0.15; 0.25 0.75]
+    init = Categorical([0.6, 0.4])
+    dists = [
+        DiscreteTimeDiscreteStatesHMM(P, (Bernoulli(0.9), Bernoulli(0.2)), init),
+        DiscreteTimeDiscreteStatesHMM(P, (Bernoulli(0.9), Bernoulli(0.2)), init),
+        DiscreteTimeDiscreteStatesHMM(P, (Bernoulli(0.9), Bernoulli(0.2)), init),
+    ]
+    ys = Union{Missing, Int}[1, missing, 0]
+
+    gamma, ok = NoLimits._saem_hmm_smoothed_gamma(dists, ys, Float64)
+
+    @test ok
+    @test isapprox(gamma[:, 1], posterior_hidden_states(dists[1], 1); atol=1e-12)
+    @test isapprox(gamma[:, 2], probabilities_hidden_states(dists[2]); atol=1e-12)
+    @test isapprox(gamma[:, 3], posterior_hidden_states(dists[3], 0); atol=1e-12)
+end
+
 @testset "SAEM builtin_stats HMM emission handles fully missing rows (regression)" begin
     model = @Model begin
         @helpers begin

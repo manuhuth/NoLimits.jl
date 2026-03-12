@@ -48,6 +48,90 @@ using Turing
     @test isfinite(ll)
 end
 
+@testset "HMM loglikelihood matches rowwise simulation semantics" begin
+    Q = [-0.2 0.2; 0.2 -0.2]
+    emissions = (Bernoulli(0.01), Bernoulli(0.99))
+    init = Categorical([1.0, 0.0])
+
+    model = @Model begin
+        @fixedEffects begin
+            dummy = RealNumber(0.0)
+        end
+
+        @covariates begin
+            t = Covariate()
+            dt = Covariate()
+        end
+
+        @formulas begin
+            y ~ ContinuousTimeDiscreteStatesHMM(
+                [-0.2 0.2; 0.2 -0.2],
+                (Bernoulli(0.01), Bernoulli(0.99)),
+                Categorical([1.0, 0.0]),
+                dt
+            )
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 1],
+        t = [0.0, 1.0, 2.0],
+        dt = [1.0, 1.0, 1.0],
+        y = [0, 1, 1]
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    θ = get_θ0_untransformed(dm.model.fixed.fixed)
+    dist = ContinuousTimeDiscreteStatesHMM(Q, emissions, init, 1.0)
+
+    ll = NoLimits.loglikelihood(dm, θ, ComponentArray())
+    expected = sum(logpdf(dist, y) for y in df.y)
+
+    @test isapprox(ll, expected; atol=1e-12)
+end
+
+@testset "HMM missing observations do not propagate hidden state in loglikelihood" begin
+    Q = [-0.2 0.2; 0.2 -0.2]
+    emissions = (Bernoulli(0.01), Bernoulli(0.99))
+    init = Categorical([1.0, 0.0])
+
+    model = @Model begin
+        @fixedEffects begin
+            dummy = RealNumber(0.0)
+        end
+
+        @covariates begin
+            t = Covariate()
+            dt = Covariate()
+        end
+
+        @formulas begin
+            y ~ ContinuousTimeDiscreteStatesHMM(
+                [-0.2 0.2; 0.2 -0.2],
+                (Bernoulli(0.01), Bernoulli(0.99)),
+                Categorical([1.0, 0.0]),
+                dt
+            )
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 1],
+        t = [0.0, 1.0, 2.0],
+        dt = [1.0, 1.0, 1.0],
+        y = Union{Missing, Int}[0, missing, 1]
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    θ = get_θ0_untransformed(dm.model.fixed.fixed)
+    dist = ContinuousTimeDiscreteStatesHMM(Q, emissions, init, 1.0)
+
+    ll = NoLimits.loglikelihood(dm, θ, ComponentArray())
+    expected = logpdf(dist, 0) + logpdf(dist, 1)
+
+    @test isapprox(ll, expected; atol=1e-12)
+end
+
 @testset "HMM ForwardDiff" begin
     model = @Model begin
         @fixedEffects begin

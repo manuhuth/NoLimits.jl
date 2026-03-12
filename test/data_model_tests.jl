@@ -90,7 +90,7 @@ using DataInterpolations
     end
 
     @test NoLimits._has_continuous_time_hmm_outcomes(model_ct_hmm, df_basic; primary_id=:ID, time_col=:t)
-    @test !NoLimits._supports_row_varying_re_groups(model_ct_hmm, df_basic; primary_id=:ID, time_col=:t)
+    @test NoLimits._supports_row_varying_re_groups(model_ct_hmm, df_basic; primary_id=:ID, time_col=:t)
 
     model_ct_hmm_helper = @Model begin
         @helpers begin
@@ -125,7 +125,7 @@ using DataInterpolations
     end
 
     @test NoLimits._has_continuous_time_hmm_outcomes(model_ct_hmm_helper, df_basic; primary_id=:ID, time_col=:t)
-    @test !NoLimits._supports_row_varying_re_groups(model_ct_hmm_helper, df_basic; primary_id=:ID, time_col=:t)
+    @test NoLimits._supports_row_varying_re_groups(model_ct_hmm_helper, df_basic; primary_id=:ID, time_col=:t)
 
     model_dt_hmm = @Model begin
         @fixedEffects begin
@@ -619,7 +619,7 @@ end
     @test_throws ErrorException DataModel(model, df; primary_id=:ID, time_col=:t)
 end
 
-@testset "DataModel rejects year varying within individuals for continuous-time HMM models" begin
+@testset "DataModel allows year varying within individuals for continuous-time HMM models" begin
     model = @Model begin
         @fixedEffects begin
             λ12_r = RealNumber(0.1, scale=:log)
@@ -658,7 +658,8 @@ end
         y = [0, 1, 1, 1, 0]
     )
 
-    @test_throws ErrorException DataModel(model, df; primary_id=:ID, time_col=:t)
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    @test dm isa DataModel
 end
 
 @testset "DataModel allows year varying within individuals for discrete-time HMM models" begin

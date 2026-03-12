@@ -24,7 +24,7 @@ using Turing
     @test post_flip[2] > post_flip[1]
 end
 
-@testset "Discrete-time HMM loglikelihood + update" begin
+@testset "Discrete-time HMM loglikelihood matches rowwise simulation semantics" begin
     model = @Model begin
         @covariates begin
             t = Covariate()
@@ -55,11 +55,18 @@ end
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     θ = get_θ0_untransformed(dm.model.fixed.fixed)
     ll = NoLimits.loglikelihood(dm, θ, ComponentArray())
+    dist = DiscreteTimeDiscreteStatesHMM(
+        [0.9 0.1; 0.2 0.8],
+        (Bernoulli(0.5), Bernoulli(0.5)),
+        Categorical([0.6, 0.4])
+    )
+    expected = sum(logpdf(dist, y) for y in df.y)
 
     @test isfinite(ll)
+    @test isapprox(ll, expected; atol=1e-12)
 end
 
-@testset "Discrete-time HMM missing observation propagates hidden state (regression)" begin
+@testset "Discrete-time HMM missing observations do not propagate hidden state" begin
     model = @Model begin
         @covariates begin
             t = Covariate()
@@ -88,23 +95,14 @@ end
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     θ = get_θ0_untransformed(dm.model.fixed.fixed)
     ll = NoLimits.loglikelihood(dm, θ, ComponentArray())
+    dist = DiscreteTimeDiscreteStatesHMM(
+        [0.85 0.15; 0.25 0.75],
+        (Bernoulli(0.9), Bernoulli(0.2)),
+        Categorical([0.6, 0.4])
+    )
+    expected = logpdf(dist, 1) + logpdf(dist, 0)
 
-    A = [0.85 0.15; 0.25 0.75]
-    init = [0.6, 0.4]
-    p_emit_1 = [pdf(Bernoulli(0.9), 1), pdf(Bernoulli(0.2), 1)]
-    p_emit_0 = [pdf(Bernoulli(0.9), 0), pdf(Bernoulli(0.2), 0)]
-
-    p_hidden_1 = transpose(A) * init
-    ll1 = log(sum(p_hidden_1 .* p_emit_1))
-    post_1 = p_hidden_1 .* p_emit_1
-    post_1 ./= sum(post_1)
-
-    p_hidden_2 = transpose(A) * post_1
-    p_hidden_3 = transpose(A) * p_hidden_2
-    ll3 = log(sum(p_hidden_3 .* p_emit_0))
-
-    ll_expected = ll1 + ll3
-    @test ll ≈ ll_expected atol=1e-12
+    @test isapprox(ll, expected; atol=1e-12)
 end
 
 @testset "Discrete-time HMM ForwardDiff" begin

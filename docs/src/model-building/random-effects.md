@@ -179,7 +179,7 @@ Whether a non-`primary_id` grouping column may change within an individual depen
 | Non-ODE formulas | Yes | The random effect used for each observation row is selected from that row's grouping value. |
 | Discrete-time HMM outcomes | Yes | Row-wise selection is applied at each observation row. |
 | ODE models | No | Random effects must remain uniquely defined at the individual level during ODE evaluation. |
-| Continuous-time HMM outcomes | No | These models still require grouping columns to be constant within each individual. |
+| Continuous-time HMM outcomes | Yes | Row-wise selection is applied at each observation row. |
 
 Two related constraints still apply:
 

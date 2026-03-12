@@ -539,14 +539,7 @@ function _supports_row_varying_re_groups(model,
                                          primary_id::Symbol,
                                          time_col::Symbol,
                                          evid_col::Union{Nothing, Symbol}=nothing)
-    model.de.de === nothing || return false
-    return !_has_continuous_time_hmm_outcomes(
-        model,
-        df;
-        primary_id=primary_id,
-        time_col=time_col,
-        evid_col=evid_col
-    )
+    return model.de.de === nothing
 end
 
 function get_re_covariate_usage(dm::DataModel)
