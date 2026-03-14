@@ -547,6 +547,24 @@ struct PlotCache{S, O, C, P, R, M}
     meta::M
 end
 
+@inline _is_hmm_dist(dist) =
+    dist isa ContinuousTimeDiscreteStatesHMM || dist isa MVContinuousTimeDiscreteStatesHMM ||
+    dist isa DiscreteTimeDiscreteStatesHMM   || dist isa MVDiscreteTimeDiscreteStatesHMM
+
+# Apply HMM forward-filter step for one observable column.
+# Updates hmm_priors[col] in-place and returns the distribution conditioned on past observations.
+function _apply_hmm_filter!(hmm_priors::Dict{Symbol, Any}, col::Symbol, dist, y_val)
+    _is_hmm_dist(dist) || return dist
+    prior = get(hmm_priors, col, nothing)
+    dist_filtered = _hmm_with_prior(dist, prior)
+    if y_val === missing
+        hmm_priors[col] = probabilities_hidden_states(dist_filtered)
+    else
+        hmm_priors[col] = posterior_hidden_states(dist_filtered, y_val)
+    end
+    return dist_filtered
+end
+
 @inline function _plot_with_infusion(f!, infusion_rates)
     infusion_rates === nothing && return f!
     return function (du, u, p, t)
@@ -1620,6 +1638,7 @@ function build_plot_cache(res::FitResult;
 
     obs_dists = nothing
     if cache_obs_dists
+        obs_names_all = get_formulas_meta(dm.model.formulas.formulas).obs_names
         obs_dists = Vector{Vector{NamedTuple}}(undef, length(dm.individuals))
         for i in eachindex(dm.individuals)
             ind = dm.individuals[i]
@@ -1628,13 +1647,22 @@ function build_plot_cache(res::FitResult;
             rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only=true)
             sol_accessors = dm.model.de.de === nothing ? nothing : get_de_accessors_builder(dm.model.de.de)(sols[i], compiled_cache[i])
             dists_i = Vector{NamedTuple}(undef, length(obs_rows))
+            hmm_priors = Dict{Symbol, Any}()
             for (j, row) in enumerate(obs_rows)
                 vary = _varying_at_plot(dm, ind, j, row)
                 η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only=true)
                 obs = sol_accessors === nothing ?
                       calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
                       calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
-                dists_i[j] = obs
+                filtered_pairs = Pair{Symbol, Any}[]
+                for col in obs_names_all
+                    d = getproperty(obs, col)
+                    if _is_hmm_dist(d)
+                        y_val = getfield(ind.series.obs, col)[j]
+                        push!(filtered_pairs, col => _apply_hmm_filter!(hmm_priors, col, d, y_val))
+                    end
+                end
+                dists_i[j] = isempty(filtered_pairs) ? obs : merge(obs, NamedTuple(filtered_pairs))
             end
             obs_dists[i] = dists_i
         end
@@ -1674,6 +1702,7 @@ function build_plot_cache(dm::DataModel;
 
     obs_dists = nothing
     if cache_obs_dists
+        obs_names_all = get_formulas_meta(dm.model.formulas.formulas).obs_names
         obs_dists = Vector{Vector{NamedTuple}}(undef, length(dm.individuals))
         for i in eachindex(dm.individuals)
             ind = dm.individuals[i]
@@ -1682,13 +1711,22 @@ function build_plot_cache(dm::DataModel;
             rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only=true)
             sol_accessors = dm.model.de.de === nothing ? nothing : get_de_accessors_builder(dm.model.de.de)(sols[i], compiled_cache[i])
             dists_i = Vector{NamedTuple}(undef, length(obs_rows))
+            hmm_priors = Dict{Symbol, Any}()
             for (j, row) in enumerate(obs_rows)
                 vary = _varying_at_plot(dm, ind, j, row)
                 η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only=true)
                 obs = sol_accessors === nothing ?
                       calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
                       calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
-                dists_i[j] = obs
+                filtered_pairs = Pair{Symbol, Any}[]
+                for col in obs_names_all
+                    d = getproperty(obs, col)
+                    if _is_hmm_dist(d)
+                        y_val = getfield(ind.series.obs, col)[j]
+                        push!(filtered_pairs, col => _apply_hmm_filter!(hmm_priors, col, d, y_val))
+                    end
+                end
+                dists_i[j] = isempty(filtered_pairs) ? obs : merge(obs, NamedTuple(filtered_pairs))
             end
             obs_dists[i] = dists_i
         end

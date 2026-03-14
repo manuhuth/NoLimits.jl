@@ -603,6 +603,8 @@ function plot_fits(res::FitResult;
                         end
                     end
                 else
+                    y_obs_series_mcmc = getfield(ind.series.obs, obs_name)
+                    hmm_priors_draw = Dict{Symbol, Any}()
                     dists = Vector{Distribution}(undef, length(obs_rows))
                     for (j, row) in enumerate(obs_rows)
                         vary = _varying_at_plot(dm, ind, j, row)
@@ -610,7 +612,7 @@ function plot_fits(res::FitResult;
                         obs = sol_accessors === nothing ?
                               calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
                               calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
-                        dist = getproperty(obs, obs_name)
+                        dist = _apply_hmm_filter!(hmm_priors_draw, obs_name, getproperty(obs, obs_name), y_obs_series_mcmc[j])
                         dists[j] = dist
                         preds[d, j] = _stat_from_dist(dist, plot_func)
                     end
@@ -726,13 +728,15 @@ function plot_fits(res::FitResult;
                     ylims = ylims === nothing ? (y_min, y_max) : (min(ylims[1], y_min), max(ylims[2], y_max))
                 end
             else
+                y_obs_series = getfield(ind.series.obs, obs_name)
+                hmm_priors = Dict{Symbol, Any}()
                 for (j, row) in enumerate(obs_rows)
                     vary = _varying_at_plot(dm, ind, j, row)
                     η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only=true)
                     obs = sol_accessors === nothing ?
                           calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
                           calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
-                    dist = getproperty(obs, obs_name)
+                    dist = _apply_hmm_filter!(hmm_priors, obs_name, getproperty(obs, obs_name), y_obs_series[j])
                     if is_mv
                         mean_vec = _stat_from_dist(dist, plot_func)
                         for m in 1:n_marginals
@@ -876,6 +880,7 @@ function _plot_hidden_states_impl(dm::DataModel,
         times = Float64[]
         posteriors = Vector{Vector{Float64}}()
         n_states = nothing
+        hmm_priors_hs = Dict{Symbol, Any}()
         for (j, row) in enumerate(obs_rows)
             vary = _varying_at_plot(dm, ind, j, row)
             η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only=true)
@@ -885,12 +890,18 @@ function _plot_hidden_states_impl(dm::DataModel,
             dist = getproperty(obs, obs_name)
             dist isa MVDiscreteTimeDiscreteStatesHMM || error("Observable $(obs_name) must be MVDiscreteTimeDiscreteStatesHMM.")
             y_val = getfield(ind.series.obs, obs_name)[j]
-            y_val === missing && continue
+            prior = get(hmm_priors_hs, obs_name, nothing)
+            dist_filtered = _hmm_with_prior(dist, prior)
+            if y_val === missing
+                hmm_priors_hs[obs_name] = probabilities_hidden_states(dist_filtered)
+                continue
+            end
+            post = posterior_hidden_states(dist_filtered, y_val)
+            hmm_priors_hs[obs_name] = post
             if n_states === nothing
                 n_states = dist.n_states
             end
             push!(times, x_vals[j])
-            post = posterior_hidden_states(dist, y_val)
             push!(posteriors, post)
         end
 
@@ -1534,13 +1545,16 @@ function _fit_curve_from_cache(dm::DataModel,
             preds[j] = _stat_from_dist(getproperty(obs, obs_name), plot_func)
         end
     else
+        y_obs_series_cmp = getfield(ind.series.obs, obs_name)
+        hmm_priors_cmp = Dict{Symbol, Any}()
         for (j, row) in enumerate(obs_rows)
             vary = _varying_at_plot(dm, ind, j, row)
             η_row = _row_random_effects_at(dm, ind_idx, j, η_ind, rowwise_re; obs_only=true)
             obs = sol_accessors === nothing ?
                   calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
                   calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
-            preds[j] = _stat_from_dist(getproperty(obs, obs_name), plot_func)
+            dist = _apply_hmm_filter!(hmm_priors_cmp, obs_name, getproperty(obs, obs_name), y_obs_series_cmp[j])
+            preds[j] = _stat_from_dist(dist, plot_func)
         end
     end
     return (x_obs=x_obs, x_fit=x_fit, preds=preds)

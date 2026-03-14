@@ -241,7 +241,7 @@ end
 # _fit_model dispatch
 # ---------------------------------------------------------------------------
 
-function _fit_model(dm::DataModel, method::SparseGrid, args...;
+function _fit_model_scalar(dm::DataModel, method::SparseGrid, args...;
                     constants::NamedTuple        = NamedTuple(),
                     constants_re::NamedTuple     = NamedTuple(),
                     penalty::NamedTuple          = NamedTuple(),
@@ -530,7 +530,58 @@ struct SparseGridMAPResult{S, O, I, R, N, B} <: MethodResult
     eb_modes::B
 end
 
+# ---------------------------------------------------------------------------
+# Progressive refinement interceptors (level::Vector{Int})
+# ---------------------------------------------------------------------------
+# Both structs are now defined, so these methods can reference them safely.
+
+function _fit_model(dm::DataModel, method::SparseGrid, args...;
+                    theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
+                    kwargs...)
+    level = method.level
+    level isa Vector{Int} || return _fit_model_scalar(dm, method, args...;
+                                       theta_0_untransformed=theta_0_untransformed,
+                                       kwargs...)
+    isempty(level) && error("SparseGrid: `level` vector must not be empty.")
+    all(>(0), level) || error("SparseGrid: all entries in `level` must be positive integers.")
+
+    θ0 = theta_0_untransformed
+    local res
+    for lv in level
+        inner = SparseGrid(lv,
+                           method.optimizer, method.optim_kwargs, method.adtype,
+                           method.inner, method.multistart, method.lb, method.ub,
+                           method.ignore_model_bounds)
+        res = _fit_model_scalar(dm, inner, args...; theta_0_untransformed=θ0, kwargs...)
+        θ0  = get_params(res; scale=:untransformed)
+    end
+    return res
+end
+
 function _fit_model(dm::DataModel, method::SparseGridMAP, args...;
+                    theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
+                    kwargs...)
+    level = method.level
+    level isa Vector{Int} || return _fit_model_scalar(dm, method, args...;
+                                       theta_0_untransformed=theta_0_untransformed,
+                                       kwargs...)
+    isempty(level) && error("SparseGridMAP: `level` vector must not be empty.")
+    all(>(0), level) || error("SparseGridMAP: all entries in `level` must be positive integers.")
+
+    θ0 = theta_0_untransformed
+    local res
+    for lv in level
+        inner = SparseGridMAP(lv,
+                              method.optimizer, method.optim_kwargs, method.adtype,
+                              method.inner, method.multistart, method.lb, method.ub,
+                              method.ignore_model_bounds)
+        res = _fit_model_scalar(dm, inner, args...; theta_0_untransformed=θ0, kwargs...)
+        θ0  = get_params(res; scale=:untransformed)
+    end
+    return res
+end
+
+function _fit_model_scalar(dm::DataModel, method::SparseGridMAP, args...;
                     constants::NamedTuple        = NamedTuple(),
                     constants_re::NamedTuple     = NamedTuple(),
                     penalty::NamedTuple          = NamedTuple(),

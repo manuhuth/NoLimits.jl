@@ -1357,16 +1357,19 @@ function loglikelihood(dm::DataModel, θ::ComponentArray, η;
     solver_cfg = get_solver_config(dm.model)
     alg = solver_cfg.alg === nothing ? Tsit5() : solver_cfg.alg
     if cache === nothing
-        cache = build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs)
+        cache = build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs, serialization=serialization)
     end
     n = length(dm.individuals)
     if serialization isa SciMLBase.EnsembleThreads
         nthreads = Threads.maxthreadid()
         caches = if cache isa Vector
+            length(cache) < nthreads &&
+                throw(ArgumentError("Threaded loglikelihood requires at least $(nthreads) cache entries, got $(length(cache))."))
             cache
+        elseif cache isa _LLCache
+            build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs, nthreads=nthreads)
         else
-            built = cache isa _LLCache ? cache :
-                    build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs, nthreads=nthreads)
+            built = build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs, nthreads=nthreads)
             built isa Vector ? built : [built]
         end
         T = eltype(θ)

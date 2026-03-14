@@ -503,7 +503,7 @@ end
         @test isfinite(obj)
         @test obj > 0   # negative log-likelihood > 0
 
-        params = get_params(res; scale=:untransformed)
+        params = NoLimits.get_params(res; scale=:untransformed)
         @test isfinite(params.a)
         @test isfinite(params.σ) && params.σ > 0
         @test isfinite(params.ω) && params.ω > 0
@@ -557,8 +557,8 @@ end
         res_sg  = fit_model(dm, SparseGrid(level=2; optim_kwargs=(maxiters=300,)))
         res_lap = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=300,)))
 
-        p_sg  = get_params(res_sg;  scale=:untransformed)
-        p_lap = get_params(res_lap; scale=:untransformed)
+        p_sg  = NoLimits.get_params(res_sg;  scale=:untransformed)
+        p_lap = NoLimits.get_params(res_lap; scale=:untransformed)
 
         # Within 50% — both methods approximate the same marginal likelihood
         @test abs(p_sg.a  - p_lap.a)  / (abs(p_lap.a)  + 1e-6) < 0.5
@@ -641,7 +641,7 @@ end
                             optimizer=OptimizationOptimJL.BFGS(),
                             optim_kwargs=(maxiters=200,)))
         @test isfinite(get_objective(res))
-        @test get_params(res; scale=:untransformed).σ > 0
+        @test NoLimits.get_params(res; scale=:untransformed).σ > 0
     end
 
     @testset "NelderMead outer optimizer" begin
@@ -649,7 +649,7 @@ end
                             optimizer=OptimizationOptimJL.NelderMead(),
                             optim_kwargs=(maxiters=500,)))
         @test isfinite(get_objective(res))
-        @test get_params(res; scale=:untransformed).σ > 0
+        @test NoLimits.get_params(res; scale=:untransformed).σ > 0
     end
 
     @testset "BlackBoxOptim outer optimizer" begin
@@ -659,14 +659,14 @@ end
                             optim_kwargs=(maxiters=500,),
                             lb=lb_val, ub=ub_val))
         @test isfinite(get_objective(res))
-        @test get_params(res; scale=:untransformed).σ > 0
+        @test NoLimits.get_params(res; scale=:untransformed).σ > 0
     end
 
     # ── constants kwarg ───────────────────────────────────────────────────────
     @testset "constants fix a parameter" begin
         res = fit_model(dm, SparseGrid(level=1; optim_kwargs=(maxiters=200,));
                         constants=(a=1.0,))
-        params = get_params(res; scale=:untransformed)
+        params = NoLimits.get_params(res; scale=:untransformed)
         @test params.a ≈ 1.0
         @test isfinite(params.σ)
     end
@@ -817,7 +817,7 @@ end  # @testset "SparseGrid sparsegrid.jl"
         @test isfinite(get_objective(res))
         @test get_objective(res) > 0
 
-        params = get_params(res; scale=:untransformed)
+        params = NoLimits.get_params(res; scale=:untransformed)
         @test isfinite(params.a)
         @test isfinite(params.σ) && params.σ > 0
 
@@ -877,7 +877,7 @@ end
         @test isfinite(obj)
         @test obj > 0   # negative MAP objective > 0
 
-        params = get_params(res; scale=:untransformed)
+        params = NoLimits.get_params(res; scale=:untransformed)
         @test isfinite(params.a)
         @test isfinite(params.σ) && params.σ > 0
         @test isfinite(params.ω) && params.ω > 0
@@ -935,8 +935,8 @@ end
         res_mle = fit_model(dm_t, SparseGrid(level=1; optim_kwargs=(maxiters=300,)))
         res_map = fit_model(dm_t, SparseGridMAP(level=1; optim_kwargs=(maxiters=300,)))
 
-        a_mle = get_params(res_mle; scale=:untransformed).a
-        a_map = get_params(res_map; scale=:untransformed).a
+        a_mle = NoLimits.get_params(res_mle; scale=:untransformed).a
+        a_map = NoLimits.get_params(res_map; scale=:untransformed).a
 
         # MAP should be pulled toward 0 compared to MLE
         @test abs(a_map) < abs(a_mle)
@@ -1927,3 +1927,105 @@ end  # @testset "SparseGrid TDist RE"
     end
 
 end  # @testset "SparseGrid generic ContinuousUnivariateDistribution fallback"
+
+
+# ============================================================
+# Progressive refinement: level::Vector{Int}
+# ============================================================
+
+@testset "SparseGrid progressive refinement (level::Vector{Int})" begin
+
+    function _make_progressive_dm(; n_id=10, n_obs=5, rng=MersenneTwister(42))
+        ids  = repeat(1:n_id, inner=n_obs)
+        yobs = 1.0 .+ 0.3 .* randn(rng, n_id * n_obs)
+        tobs = repeat(1:n_obs, n_id) .* 1.0
+        model = @Model begin
+            @fixedEffects begin
+                a = RealNumber(1.0)
+                σ = RealNumber(0.3, scale=:log)
+                ω = RealNumber(0.3, scale=:log)
+            end
+            @covariates begin; t = Covariate(); end
+            @randomEffects begin
+                η = RandomEffect(Normal(0.0, ω); column=:ID)
+            end
+            @formulas begin; y ~ Normal(a + η, σ); end
+        end
+        df = DataFrame(ID=ids, t=tobs, y=yobs)
+        DataModel(model, df; primary_id=:ID, time_col=:t)
+    end
+
+    @testset "level=[1,2] converges and result is scalar-level" begin
+        dm  = _make_progressive_dm()
+        res = fit_model(dm, SparseGrid(level=[1, 2]; optim_kwargs=(maxiters=200,)))
+        @test NoLimits.get_converged(res)
+        @test isfinite(NoLimits.get_objective(res))
+        # Returned method should carry the last scalar level (2)
+        @test NoLimits.get_method(res).level == 2
+    end
+
+    @testset "level=[1] (single-element) behaves like level=1" begin
+        rng = MersenneTwister(1)
+        dm  = _make_progressive_dm(; rng=rng)
+        res_vec    = fit_model(dm, SparseGrid(level=[1];    optim_kwargs=(maxiters=200,)))
+        res_scalar = fit_model(dm, SparseGrid(level=1;      optim_kwargs=(maxiters=200,)))
+        @test NoLimits.get_converged(res_vec)
+        @test abs(NoLimits.get_objective(res_vec) - NoLimits.get_objective(res_scalar)) < 1e-4
+    end
+
+    @testset "level=[1,2,3] three-stage refinement" begin
+        dm  = _make_progressive_dm()
+        res = fit_model(dm, SparseGrid(level=[1, 2, 3]; optim_kwargs=(maxiters=150,)))
+        @test NoLimits.get_converged(res)
+        @test NoLimits.get_method(res).level == 3
+        p = NoLimits.get_params(res; scale=:untransformed)
+        @test isfinite(p.a) && isfinite(p.σ) && isfinite(p.ω)
+    end
+
+    @testset "level=[1,2] result compatible with all accessors" begin
+        dm  = _make_progressive_dm()
+        res = fit_model(dm, SparseGrid(level=[1, 2]; optim_kwargs=(maxiters=150,)))
+        @test isfinite(NoLimits.get_objective(res))
+        @test NoLimits.get_iterations(res) isa Integer
+        re = NoLimits.get_random_effects(dm, res)
+        @test re isa NamedTuple && haskey(re, :η)
+        ll = NoLimits.get_loglikelihood(res)
+        @test isfinite(ll)
+    end
+
+    @testset "SparseGridMAP level=[1,2] works" begin
+        rng  = MersenneTwister(7)
+        n_id = 10; n_obs = 5
+        ids  = repeat(1:n_id, inner=n_obs)
+        yobs = 1.0 .+ 0.3 .* randn(rng, n_id * n_obs)
+        tobs = repeat(1:n_obs, n_id) .* 1.0
+        model = @Model begin
+            @fixedEffects begin
+                a = RealNumber(1.0; prior=Normal(0.0, 2.0))
+                σ = RealNumber(0.3, scale=:log; prior=LogNormal(0.0, 1.0))
+                ω = RealNumber(0.3, scale=:log; prior=LogNormal(0.0, 1.0))
+            end
+            @covariates begin; t = Covariate(); end
+            @randomEffects begin
+                η = RandomEffect(Normal(0.0, ω); column=:ID)
+            end
+            @formulas begin; y ~ Normal(a + η, σ); end
+        end
+        df  = DataFrame(ID=ids, t=tobs, y=yobs)
+        dm  = DataModel(model, df; primary_id=:ID, time_col=:t)
+        res = fit_model(dm, SparseGridMAP(level=[1, 2]; optim_kwargs=(maxiters=200,)))
+        @test NoLimits.get_converged(res)
+        @test NoLimits.get_method(res).level == 2
+    end
+
+    @testset "empty level vector throws" begin
+        dm = _make_progressive_dm()
+        @test_throws ErrorException fit_model(dm, SparseGrid(level=Int[]))
+    end
+
+    @testset "non-positive level entry throws" begin
+        dm = _make_progressive_dm()
+        @test_throws ErrorException fit_model(dm, SparseGrid(level=[1, 0]))
+    end
+
+end  # @testset "SparseGrid progressive refinement"

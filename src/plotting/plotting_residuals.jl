@@ -489,6 +489,25 @@ function get_residuals(res::FitResult;
 
             for obs_name in obs_list
                 yvals = getfield(ind.series.obs, obs_name)
+                # Non-cache path: do a full forward pass through all rows for HMM filtering,
+                # storing filtered dists so obs_idx subsets get the correct filtered state.
+                row_dists_res = if cache_use.obs_dists === nothing
+                    hmm_priors_res = Dict{Symbol, Any}()
+                    d_vec = Vector{Any}(undef, length(obs_rows_all))
+                    for j in eachindex(obs_rows_all)
+                        row_j = obs_rows_all[j]
+                        vary_j = _varying_at_plot(dm, ind, j, row_j)
+                        η_row_j = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only=true)
+                        obs_j = sol_accessors === nothing ?
+                                calculate_formulas_obs(dm.model, θ, η_row_j, ind.const_cov, vary_j) :
+                                calculate_formulas_obs(dm.model, θ, η_row_j, ind.const_cov, vary_j, sol_accessors)
+                        d_vec[j] = _apply_hmm_filter!(hmm_priors_res, obs_name,
+                                                      getproperty(obs_j, obs_name), yvals[j])
+                    end
+                    d_vec
+                else
+                    nothing
+                end
                 for j in obs_idx
                     row = obs_rows_all[j]
                     id_val = dm.df[row, dm.config.primary_id]
@@ -499,12 +518,7 @@ function get_residuals(res::FitResult;
                     dist = if cache_use.obs_dists !== nothing
                         getproperty(cache_use.obs_dists[i][j], obs_name)
                     else
-                        vary = _varying_at_plot(dm, ind, j, row)
-                        η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only=true)
-                        obs = sol_accessors === nothing ?
-                              calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
-                              calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
-                        getproperty(obs, obs_name)
+                        row_dists_res[j]
                     end
 
                     met = _compute_residual_metrics(dist, yval, residual_list, fitted_stat,
