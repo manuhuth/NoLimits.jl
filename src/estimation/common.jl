@@ -982,11 +982,42 @@ function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_
         for (j, col) in pairs(obs_cols)
             y = getfield(obs_series, col)[i]
             dist = getproperty(obs, col)
-            if dist isa ContinuousTimeDiscreteStatesHMM || dist isa MVContinuousTimeDiscreteStatesHMM ||
-               dist isa DiscreteTimeDiscreteStatesHMM || dist isa MVDiscreteTimeDiscreteStatesHMM
+            if dist isa ContinuousTimeDiscreteStatesHMM || dist isa DiscreteTimeDiscreteStatesHMM ||
+               dist isa MVContinuousTimeDiscreteStatesHMM || dist isa MVDiscreteTimeDiscreteStatesHMM
+                if hmm_seen === nothing
+                    hmm_init = Vector{Vector{T_hmm}}(undef, length(obs_cols))
+                    hmm_seen = falses(length(obs_cols))
+                end
+                hs = hmm_seen::BitVector
+                hi = hmm_init::Vector{Vector{T_hmm}}
+                if !hs[j]
+                    buf = Vector{T_hmm}(undef, length(dist.initial_dist.p))
+                    copyto!(buf, dist.initial_dist.p)
+                    hi[j] = buf
+                    hs[j] = true
+                end
+                init_p = hi[j]
+                # Use check_args=false so that degenerate posteriors (NaN/Inf from
+                # zero-probability observations at extreme parameter values) do not
+                # throw a DomainError.  The isfinite guard below catches NaN logpdf.
+                dist_up = if dist isa ContinuousTimeDiscreteStatesHMM
+                    ContinuousTimeDiscreteStatesHMM(dist.transition_matrix, dist.emission_dists,
+                                                    Distributions.Categorical(init_p; check_args=false), dist.Δt;
+                                                    propagation_mode=dist.propagation_mode)
+                elseif dist isa MVContinuousTimeDiscreteStatesHMM
+                    MVContinuousTimeDiscreteStatesHMM(dist.transition_matrix, dist.emission_dists,
+                                                      Distributions.Categorical(init_p; check_args=false), dist.Δt;
+                                                      propagation_mode=dist.propagation_mode)
+                elseif dist isa MVDiscreteTimeDiscreteStatesHMM
+                    MVDiscreteTimeDiscreteStatesHMM(dist.transition_matrix, dist.emission_dists,
+                                                    Distributions.Categorical(init_p; check_args=false))
+                else
+                    DiscreteTimeDiscreteStatesHMM(dist.transition_matrix, dist.emission_dists,
+                                                  Distributions.Categorical(init_p; check_args=false))
+                end
                 prior = get(hmm_priors, col, nothing)
                 dist_use = try
-                    _hmm_with_prior(dist, prior)
+                    _hmm_with_prior(dist_up, prior)
                 catch err
                     if err isa DomainError || err isa ArgumentError
                         return -Inf
