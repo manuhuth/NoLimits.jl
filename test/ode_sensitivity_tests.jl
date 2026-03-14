@@ -5,6 +5,7 @@ using ForwardDiff
 using FiniteDifferences
 using Lux
 using NoLimits
+using ComponentArrays
 
 @testset "ODE forward sensitivity" begin
     # Simple linear ODE with parameter sensitivity check.

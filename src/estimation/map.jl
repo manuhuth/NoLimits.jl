@@ -9,7 +9,7 @@ using Random
 using LineSearches
 
 """
-    MAP(; optimizer, optim_kwargs, adtype, lb, ub) <: FittingMethod
+    MAP(; optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds) <: FittingMethod
 
 Maximum A Posteriori estimation for models without random effects.
 Requires prior distributions on at least one free fixed effect.
@@ -23,6 +23,8 @@ Requires prior distributions on at least one free fixed effect.
 - `lb`: lower bounds on the transformed parameter scale, or `nothing` to use the
   model-declared bounds.
 - `ub`: upper bounds on the transformed parameter scale, or `nothing`.
+- `ignore_model_bounds::Bool = false`: when `true`, ignore bounds declared in
+  `@fixedEffects` unless explicit `lb`/`ub` are passed.
 """
 struct MAP{O, K, A, L, U} <: FittingMethod
     optimizer::O
@@ -30,13 +32,15 @@ struct MAP{O, K, A, L, U} <: FittingMethod
     adtype::A
     lb::L
     ub::U
+    ignore_model_bounds::Bool
 end
 
 MAP(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
     optim_kwargs=NamedTuple(),
     adtype=Optimization.AutoForwardDiff(),
     lb=nothing,
-    ub=nothing) = MAP(optimizer, optim_kwargs, adtype, lb, ub)
+    ub=nothing,
+    ignore_model_bounds=false) = MAP(optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds)
 
 """
     MAPResult{S, O, I, R, N} <: MethodResult

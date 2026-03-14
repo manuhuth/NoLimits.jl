@@ -2198,7 +2198,7 @@ end
                  multistart_grad_tol, multistart_max_rounds, multistart_sampling,
                  jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale,
                  use_trace_logdet_grad, use_hutchinson, hutchinson_n, theta_tol,
-                 fastpath_options, fastpath_mode, lb, ub) <: FittingMethod
+                 fastpath_options, fastpath_mode, lb, ub, ignore_model_bounds) <: FittingMethod
 
 Laplace approximation with MAP-regularised fixed effects for random-effects models.
 Identical to [`Laplace`](@ref) but adds the log-prior of the fixed effects to the
@@ -2219,6 +2219,7 @@ struct LaplaceMAP{O, K, A, IO, HO, CO, MS, FP, L, U} <: FittingMethod
     fastpath::FP
     lb::L
     ub::U
+    ignore_model_bounds::Bool
 end
 
 LaplaceMAP(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
@@ -2249,14 +2250,15 @@ LaplaceMAP(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTra
            fastpath_options=nothing,
            fastpath_mode=:auto,
            lb=nothing,
-           ub=nothing) = begin
+           ub=nothing,
+           ignore_model_bounds=false) = begin
     inner = inner_options === nothing ? LaplaceInnerOptions(inner_optimizer, inner_kwargs, inner_adtype, inner_grad_tol) : inner_options
     hess = hessian_options === nothing ? LaplaceHessianOptions(jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale, use_trace_logdet_grad, use_hutchinson, hutchinson_n) : hessian_options
     cache = cache_options === nothing ? LaplaceCacheOptions(theta_tol) : cache_options
     ms = multistart_options === nothing ? LaplaceMultistartOptions(multistart_n, multistart_k, multistart_grad_tol, multistart_max_rounds, multistart_sampling) : multistart_options
     fp = fastpath_options === nothing ? LaplaceFastpathOptions(fastpath_mode) : fastpath_options
     fp = _resolve_laplace_fastpath_options(fp)
-    LaplaceMAP(optimizer, optim_kwargs, adtype, inner, hess, cache, ms, fp, lb, ub)
+    LaplaceMAP(optimizer, optim_kwargs, adtype, inner, hess, cache, ms, fp, lb, ub, ignore_model_bounds)
 end
 
 """
