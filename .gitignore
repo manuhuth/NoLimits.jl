@@ -7,3 +7,9 @@ docs/cache/
 
 # macOS
 .DS_Store
+
+# linux
+.vscode/
+
+# local code for trying
+examples/
