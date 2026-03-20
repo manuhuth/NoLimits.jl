@@ -39,6 +39,7 @@ makedocs(;
             "MLE" => "estimation/mle.md",
             "MAP" => "estimation/mle-map.md",
             "Multistart" => "estimation/multistart.md",
+            "Saving & Loading" => "estimation/saving-and-loading.md",
         ],
         "Uncertainty Quantification" => [
             "Overview" => "uncertainty-quantification/index.md",
