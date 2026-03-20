@@ -1259,7 +1259,7 @@ end
     σ > 0 || return -Inf
     ly = log(y)
     z = (ly - dist.μ) / σ
-    return -log(y) - log(σ) - 0.5 * log(2π) - 0.5 * z * z
+    return -ly - log(σ) - 0.5 * log(2π) - 0.5 * z * z
 end
 
 @inline function _fast_logpdf(dist::Bernoulli, y)
@@ -1392,8 +1392,6 @@ function loglikelihood(dm::DataModel, θ::ComponentArray, η;
                        serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
                        cache=nothing)
     θ = _symmetrize_psd_params(θ, dm.model.fixed.fixed)
-    solver_cfg = get_solver_config(dm.model)
-    alg = solver_cfg.alg === nothing ? Tsit5() : solver_cfg.alg
     if cache === nothing
         cache = build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs, serialization=serialization)
     end

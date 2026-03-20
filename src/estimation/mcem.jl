@@ -573,7 +573,7 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
                     ode_args::Tuple=(),
                     ode_kwargs::NamedTuple=NamedTuple(),
                     serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
-                    rng::AbstractRNG=Random.default_rng(),
+                    rng::AbstractRNG=Xoshiro(0),
                     theta_0_untransformed::Union{Nothing, ComponentArray}=nothing,
                     store_eb_modes::Bool=true,
                     store_data_model::Bool=true)

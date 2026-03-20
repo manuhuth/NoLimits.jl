@@ -751,7 +751,7 @@ function identifiability_report(dm::DataModel;
                                 ode_args::Tuple=(),
                                 ode_kwargs::NamedTuple=NamedTuple(),
                                 serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
-                                rng::AbstractRNG=Random.default_rng(),
+                                rng::AbstractRNG=Xoshiro(0),
                                 rng_seed::Union{Nothing, UInt64}=nothing,
                                 atol::Real=1e-8,
                                 rtol::Real=sqrt(eps(Float64)),

@@ -72,7 +72,7 @@ function Multistart(; dists=NamedTuple(),
                     n_draws_used::Int=50,
                     sampling::Symbol=:random,
                     serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
-                    rng::AbstractRNG=Random.default_rng())
+                    rng::AbstractRNG=Xoshiro(0))
     n_draws_requested < 0 && error("n_draws_requested must be ≥ 0.")
     n_draws_used < 1 && error("n_draws_used must be ≥ 1.")
     (sampling == :random || sampling == :lhs) || error("sampling must be :random or :lhs.")

@@ -2514,7 +2514,7 @@ function _fit_model(dm::DataModel, method::Laplace, args...;
                     ode_args::Tuple=(),
                     ode_kwargs::NamedTuple=NamedTuple(),
                     serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
-                    rng::AbstractRNG=Random.default_rng(),
+                    rng::AbstractRNG=Xoshiro(0),
                     theta_0_untransformed::Union{Nothing, ComponentArray}=nothing,
                     store_data_model::Bool=true)
     fit_kwargs = (constants=constants,
@@ -2713,7 +2713,7 @@ function _fit_model(dm::DataModel, method::LaplaceMAP, args...;
                     ode_args::Tuple=(),
                     ode_kwargs::NamedTuple=NamedTuple(),
                     serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
-                    rng::AbstractRNG=Random.default_rng(),
+                    rng::AbstractRNG=Xoshiro(0),
                     theta_0_untransformed::Union{Nothing, ComponentArray}=nothing,
                     store_data_model::Bool=true)
     fit_kwargs = (constants=constants,
