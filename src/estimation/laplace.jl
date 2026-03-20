@@ -2132,7 +2132,6 @@ end
 
 @inline function _log_laplace_fastpath_start(dm::DataModel, mode::Symbol, method::Symbol)
     info = _laplace_fastpath_start_info(dm, mode)
-    @info "Laplace fast-path eligibility" method=method mode=info.mode active=info.active backend=info.backend reason=info.summary_reason outcomes=info.outcomes
     return info
 end
 

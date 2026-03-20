@@ -11,6 +11,7 @@ export get_multistart_best
 using ComponentArrays
 using Distributions
 using LinearAlgebra
+using ProgressMeter
 using Random
 using SciMLBase
 
@@ -34,6 +35,7 @@ fully optimised.
 - `serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial()`: parallelisation
   strategy for running multiple starts.
 - `rng::AbstractRNG = Random.default_rng()`: random-number generator.
+- `progress::Bool = true`: whether to display progress bars for the screening and fitting phases.
 """
 struct Multistart{D, S, R}
     dists::D
@@ -42,6 +44,7 @@ struct Multistart{D, S, R}
     sampling::Symbol
     serialization::S
     rng::R
+    progress::Bool
 end
 
 """
@@ -72,11 +75,12 @@ function Multistart(; dists=NamedTuple(),
                     n_draws_used::Int=50,
                     sampling::Symbol=:random,
                     serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
-                    rng::AbstractRNG=Xoshiro(0))
+                    rng::AbstractRNG=Xoshiro(0),
+                    progress::Bool=true)
     n_draws_requested < 0 && error("n_draws_requested must be ≥ 0.")
     n_draws_used < 1 && error("n_draws_used must be ≥ 1.")
     (sampling == :random || sampling == :lhs) || error("sampling must be :random or :lhs.")
-    return Multistart(dists, n_draws_requested, n_draws_used, sampling, serialization, rng)
+    return Multistart(dists, n_draws_requested, n_draws_used, sampling, serialization, rng, progress)
 end
 
 function _lhs_unit(n::Int, rng::AbstractRNG)
@@ -295,14 +299,17 @@ function _multistart_screen(dm::DataModel,
                             n_used::Int,
                             ode_args::Tuple,
                             ode_kwargs::NamedTuple,
-                            serialization::SciMLBase.EnsembleAlgorithm)
+                            serialization::SciMLBase.EnsembleAlgorithm;
+                            progress::Bool=true)
     cache = build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs,
                            serialization=serialization, force_saveat=true)
     η0 = _build_zero_eta(dm)
     scores = Vector{Float64}(undef, length(candidates))
+    screen_p = progress ? Progress(length(candidates); desc="Multistart screening: ", showspeed=true) : nothing
     for (i, θu) in enumerate(candidates)
         ll = loglikelihood(dm, θu, η0; cache=cache, serialization=serialization)
         scores[i] = isfinite(ll) ? -ll : Inf   # minimise negative LL
+        progress && next!(screen_p)
     end
     idxs = partialsortperm(scores, 1:min(n_used, length(candidates)))
     # Return selected candidates and their LL values (sign-flipped back from scores)
@@ -386,6 +393,7 @@ function fit_model(ms::Multistart, dm::DataModel, method::FittingMethod, args...
         kw_nt = Base.structdiff(kw_nt, (theta_0_untransformed=nothing,))
     end
 
+    progress         = ms.progress
     ode_args         = get(kw_nt, :ode_args,       ())
     ode_kwargs_inner = get(kw_nt, :ode_kwargs,      NamedTuple())
     serialization    = get(kw_nt, :serialization,   EnsembleSerial())
@@ -397,7 +405,7 @@ function fit_model(ms::Multistart, dm::DataModel, method::FittingMethod, args...
     varied_str = isempty(varied) ? "none" : join(string.(varied), ", ")
 
     if n_req > n_used
-        starts, screen_lls = _multistart_screen(dm, all_starts, n_used, ode_args, ode_kwargs_inner, serialization)
+        starts, screen_lls = _multistart_screen(dm, all_starts, n_used, ode_args, ode_kwargs_inner, serialization; progress=progress)
         finite_lls = filter(isfinite, screen_lls)
         if isempty(finite_lls)
             @info "Multistart" candidates=n_req selected=n_used varying=varied_str screening_ll="all -Inf"
@@ -412,6 +420,7 @@ function fit_model(ms::Multistart, dm::DataModel, method::FittingMethod, args...
     results = Vector{Union{FitResult, Nothing}}(undef, n_starts)
     errors = Vector{Any}(undef, n_starts)
     rngs = [Random.Xoshiro(rand(ms.rng, UInt)) for _ in 1:n_starts]
+    fit_p = progress ? Progress(n_starts; desc="Multistart fitting:  ", showspeed=true) : nothing
 
     function run_one(i)
         try
@@ -424,6 +433,7 @@ function fit_model(ms::Multistart, dm::DataModel, method::FittingMethod, args...
             errors[i] = err
             results[i] = nothing
         end
+        progress && next!(fit_p)
     end
 
     if ms.serialization isa EnsembleThreads
