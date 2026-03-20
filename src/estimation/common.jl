@@ -948,7 +948,8 @@ function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_
         end
 
         T = promote_type(eltype(θ), eltype(η_ind), eltype(u0))
-        prob = remake(prob; u0 = T.(u0), p = compiled)
+        u0_T = eltype(u0) === T ? u0 : T.(u0)
+        prob = remake(prob; u0 = u0_T, p = compiled)
         saveat_use = _ll_saveat(cache, idx, ind)
         sol = if saveat_use === nothing
             solve_kwargs = _ode_solve_kwargs(cache.solver_cfg.kwargs,
@@ -969,10 +970,14 @@ function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_
         sol_accessors = get_de_accessors_builder(model.de.de)(sol, compiled)
     end
 
-    ll = 0.0
+    T_el = promote_type(eltype(θ), eltype(η_ind))
+    ll = zero(T_el)
     obs_cols = dm.config.obs_cols
     rowwise_re = _needs_rowwise_random_effects(dm, idx; obs_only=true)
     hmm_priors = Dict{Symbol, Any}()
+    hmm_seen = nothing
+    hmm_init = nothing
+    T_hmm = T_el
     for i in eachindex(obs_rows)
         vary = vary_cache === nothing ? _varying_at(dm, ind, i, _get_col(dm.df, dm.config.time_col)[obs_rows]) : vary_cache[i]
         η_row = _row_random_effects_at(dm, idx, i, η_ind, rowwise_re; obs_only=true)
@@ -1107,7 +1112,8 @@ function _resid_stats_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_LL
         end
 
         T = promote_type(eltype(θ), eltype(η_ind), eltype(u0))
-        prob = remake(prob; u0 = T.(u0), p = compiled)
+        u0_T = eltype(u0) === T ? u0 : T.(u0)
+        prob = remake(prob; u0 = u0_T, p = compiled)
         saveat_use = _ll_saveat(cache, idx, ind)
         sol = if saveat_use === nothing
             solve_kwargs = _ode_solve_kwargs(cache.solver_cfg.kwargs,
@@ -1191,7 +1197,8 @@ function _resid_stats_individual_cols(dm::DataModel, idx::Int, θ, η_ind, cache
         end
 
         T = promote_type(eltype(θ), eltype(η_ind), eltype(u0))
-        prob = remake(prob; u0 = T.(u0), p = compiled)
+        u0_T = eltype(u0) === T ? u0 : T.(u0)
+        prob = remake(prob; u0 = u0_T, p = compiled)
         saveat_use = _ll_saveat(cache, idx, ind)
         sol = if saveat_use === nothing
             solve_kwargs = _ode_solve_kwargs(cache.solver_cfg.kwargs,
