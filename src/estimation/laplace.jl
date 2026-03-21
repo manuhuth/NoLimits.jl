@@ -2194,6 +2194,7 @@ struct Laplace{O, K, A, IO, HO, CO, MS, FP, L, U} <: FittingMethod
     lb::L
     ub::U
     ignore_model_bounds::Bool
+    nan_recovery::Symbol   # :nan (propagate NaN to optimizer) or :fd (full FD fallback)
 end
 
 Laplace(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
@@ -2225,14 +2226,15 @@ Laplace(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracki
         fastpath_mode=:auto,
         lb=nothing,
         ub=nothing,
-        ignore_model_bounds=false) = begin
+        ignore_model_bounds=false,
+        nan_recovery=:fd) = begin
     inner = inner_options === nothing ? LaplaceInnerOptions(inner_optimizer, inner_kwargs, inner_adtype, inner_grad_tol) : inner_options
     hess = hessian_options === nothing ? LaplaceHessianOptions(jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale, use_trace_logdet_grad, use_hutchinson, hutchinson_n) : hessian_options
     cache = cache_options === nothing ? LaplaceCacheOptions(theta_tol) : cache_options
     ms = multistart_options === nothing ? LaplaceMultistartOptions(multistart_n, multistart_k, multistart_grad_tol, multistart_max_rounds, multistart_sampling) : multistart_options
     fp = fastpath_options === nothing ? LaplaceFastpathOptions(fastpath_mode) : fastpath_options
     fp = _resolve_laplace_fastpath_options(fp)
-    Laplace(optimizer, optim_kwargs, adtype, inner, hess, cache, ms, fp, lb, ub, ignore_model_bounds)
+    Laplace(optimizer, optim_kwargs, adtype, inner, hess, cache, ms, fp, lb, ub, ignore_model_bounds, nan_recovery)
 end
 
 """
@@ -2280,6 +2282,7 @@ struct LaplaceMAP{O, K, A, IO, HO, CO, MS, FP, L, U} <: FittingMethod
     lb::L
     ub::U
     ignore_model_bounds::Bool
+    nan_recovery::Symbol
 end
 
 LaplaceMAP(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
@@ -2311,14 +2314,15 @@ LaplaceMAP(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTra
            fastpath_mode=:auto,
            lb=nothing,
            ub=nothing,
-           ignore_model_bounds=false) = begin
+           ignore_model_bounds=false,
+           nan_recovery=:fd) = begin
     inner = inner_options === nothing ? LaplaceInnerOptions(inner_optimizer, inner_kwargs, inner_adtype, inner_grad_tol) : inner_options
     hess = hessian_options === nothing ? LaplaceHessianOptions(jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale, use_trace_logdet_grad, use_hutchinson, hutchinson_n) : hessian_options
     cache = cache_options === nothing ? LaplaceCacheOptions(theta_tol) : cache_options
     ms = multistart_options === nothing ? LaplaceMultistartOptions(multistart_n, multistart_k, multistart_grad_tol, multistart_max_rounds, multistart_sampling) : multistart_options
     fp = fastpath_options === nothing ? LaplaceFastpathOptions(fastpath_mode) : fastpath_options
     fp = _resolve_laplace_fastpath_options(fp)
-    LaplaceMAP(optimizer, optim_kwargs, adtype, inner, hess, cache, ms, fp, lb, ub, ignore_model_bounds)
+    LaplaceMAP(optimizer, optim_kwargs, adtype, inner, hess, cache, ms, fp, lb, ub, ignore_model_bounds, nan_recovery)
 end
 
 """
@@ -2695,7 +2699,19 @@ function _fit_model(dm::DataModel, method::Laplace, args...;
         for name in free_names
             setproperty!(grad_free, name, getproperty(grad_t_ca, name))
         end
-        any(isnan, grad_free) && return (infT, ComponentArray(zeros(T, length(θt_free)), axs_free))
+        if any(isnan, grad_free)
+            if method.nan_recovery === :fd
+                for i in eachindex(grad_free)
+                    ε = max(1e-5, 1e-5 * abs(θt_free[i]))
+                    θp = copy(θt_free); θp[i] += ε
+                    θm = copy(θt_free); θm[i] -= ε
+                    fp = obj_only(θp, nothing)
+                    fm = obj_only(θm, nothing)
+                    grad_free[i] = (isfinite(fp) && isfinite(fm)) ? (fp - fm) / (2ε) : zero(T)
+                end
+            end
+            # :nan — NaN propagates to the optimizer as-is
+        end
         obj += _penalty_value(θu, penalty)
         _laplace_obj_cache_set_obj_grad!(obj_cache, θt_free, obj, grad_free)
         return (obj, grad_free)
@@ -2912,7 +2928,19 @@ function _fit_model(dm::DataModel, method::LaplaceMAP, args...;
         for name in free_names
             setproperty!(grad_free, name, getproperty(grad_t_ca, name))
         end
-        any(isnan, grad_free) && return (infT, ComponentArray(zeros(T, length(θt_free)), axs_free))
+        if any(isnan, grad_free)
+            if method.nan_recovery === :fd
+                for i in eachindex(grad_free)
+                    ε = max(1e-5, 1e-5 * abs(θt_free[i]))
+                    θp = copy(θt_free); θp[i] += ε
+                    θm = copy(θt_free); θm[i] -= ε
+                    fp = obj_only(θp, nothing)
+                    fm = obj_only(θm, nothing)
+                    grad_free[i] = (isfinite(fp) && isfinite(fm)) ? (fp - fm) / (2ε) : zero(T)
+                end
+            end
+            # :nan — NaN propagates to the optimizer as-is
+        end
         _laplace_obj_cache_set_obj_grad!(obj_cache, θt_free, obj, grad_free)
         return (obj, grad_free)
     end

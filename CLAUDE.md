@@ -90,9 +90,8 @@ Scales:
 - Accessor functions for immutable access (use `get_X` pattern, not dot access)
 
 ### AD Support
-- Zygote-friendly code: non-mutating implementations
-- Multiple AD backends: ForwardDiff, ReverseDiff, Zygote
-- SciMLStructures for adjoint AD support
+- ForwardDiff only — all code must be ForwardDiff-compatible
+- Non-mutating implementations required for ForwardDiff compatibility
 
 ### NamedTuple Iteration
 Use `Base.pairs(nt)` - do not call `pairs` unqualified.
@@ -341,7 +340,7 @@ get_multistart_best(res)
 - `:cholesky` uses log-diag Cholesky, returns vec
 - `:expm` uses matrix log/exp; stores only upper-tri vector
 
-All transform operations are non-mutating to stay Zygote-friendly.
+All transform operations are non-mutating to stay ForwardDiff-compatible.
 
 ## Random Effects (src/model/RandomEffects.jl)
 
@@ -500,7 +499,7 @@ AD coverage includes random-effects logpdf gradients/Hessians w.r.t. fixed-effec
 - **ODE Solving:** OrdinaryDiffEq.jl, DiffEqBase.jl, SciMLBase.jl
 - **Data:** DataFrames.jl, CSV.jl, DataInterpolations.jl
 - **Distributions:** Distributions.jl
-- **AD:** ForwardDiff.jl, ReverseDiff.jl, Zygote.jl, DifferentiationInterface.jl
+- **AD:** ForwardDiff.jl
 - **Optimization:** Optimization.jl, OptimizationOptimJL.jl
 - **Bayesian/MCMC:** Turing.jl, MCMCChains.jl, DynamicPPL.jl
 - **Neural Networks:** Lux.jl
@@ -1082,7 +1081,7 @@ params_rand = init_params(tree, Xoshiro(0))
 x = [0.1, -0.2, 0.3]
 y = tree(x, params)
 y_fast = tree(x, params, Val(:fast))        # Mutating, faster
-y_inplace = tree(x, params, Val(:inplace))  # Zygote.Buffer
+y_inplace = tree(x, params, Val(:inplace))  # ForwardDiff-compatible inplace
 ```
 
 ### Model with NN/SoftTree/Spline in Formulas
