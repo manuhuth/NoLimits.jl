@@ -14,7 +14,7 @@ using LinearAlgebra
 using ProgressMeter
 import ForwardDiff
 
-struct SAEMOptions{S, K, U, W, V, P, F1, F2, F3, B, M, R, C, RM, EO, EK, EA, EG, ER}
+struct SAEMOptions{S, K, U, W, V, P, F1, F2, F3, B, M, R, C, RM, EO, EK, EA, EG, ER, AF}
     sampler::S
     turing_kwargs::K
     update_schedule::U
@@ -48,6 +48,9 @@ struct SAEMOptions{S, K, U, W, V, P, F1, F2, F3, B, M, R, C, RM, EO, EK, EA, EG,
     ebe_multistart_max_rounds::Int
     ebe_multistart_sampling::Symbol
     ebe_rescue::ER
+    anneal_to_fixed::AF
+    anneal_schedule::Symbol
+    anneal_min_sd::Float64
 end
 
 struct _SAEMQCache{T}
@@ -93,6 +96,59 @@ function _saem_store_push!(store::_SAEMSampleStore, b_current, γ::Float64)
     store.next_idx = store.next_idx == store.capacity ? 1 : store.next_idx + 1
     store.len = store.len < store.capacity ? store.len + 1 : store.capacity
     return store
+end
+
+# ── anneal_to_fixed helpers ──────────────────────────────────────────────────
+
+function _saem_validate_anneal(anneal_to_fixed, anneal_schedule, dm)
+    isempty(anneal_to_fixed) && return NamedTuple()
+    anneal_schedule in (:exponential, :linear, :gamma) ||
+        error("anneal_schedule must be :exponential, :linear, or :gamma. Got: $(anneal_schedule)")
+    re = dm.model.random.random
+    re_names_set = Set(get_re_names(re))
+    re_dist_exprs = get_re_dist_exprs(re)
+    names = Symbol[]
+    sds   = Float64[]
+    for name in anneal_to_fixed
+        name isa Symbol || error("anneal_to_fixed: entries must be Symbols. Got: $name")
+        name in re_names_set ||
+            error("anneal_to_fixed: unknown RE name :$name. Available: $(sort(collect(re_names_set)))")
+        expr = getproperty(re_dist_exprs, name)
+        # expr is like Expr(:call, :Normal, mu_expr, sd_expr)
+        dist_name = expr.args[1]
+        dist_name == :Normal ||
+            error("anneal_to_fixed: RE :$name must have a Normal distribution. " *
+                  "Found: $(expr). Change to Normal(μ, σ) with a plain numeric literal SD.")
+        sd_expr = expr.args[3]
+        sd_expr isa Number ||
+            error("anneal_to_fixed: RE :$name has SD `$sd_expr` which is not a plain numeric " *
+                  "literal. `anneal_to_fixed` requires the SD to be a hardcoded number, " *
+                  "e.g. Normal(a, 0.5) where 0.5 is a literal. Got: $(expr)")
+        push!(names, name)
+        push!(sds, Float64(sd_expr))
+    end
+    return NamedTuple{Tuple(names)}(Tuple(sds))
+end
+
+function _saem_anneal_sd(sd0::Float64, min_sd::Float64, iter::Int, maxiters::Int,
+                          schedule::Symbol, t0::Int, kappa::Float64)
+    iter == 1 && return sd0
+    frac = (iter - 1) / max(1, maxiters - 1)
+    result = if schedule === :exponential
+        λ = log(sd0 / min_sd)
+        sd0 * exp(-λ * frac)
+    elseif schedule === :linear
+        sd0 - (sd0 - min_sd) * frac
+    else  # :gamma
+        γ1 = _saem_gamma(1,    t0, kappa)
+        γi = _saem_gamma(iter, t0, kappa)
+        max(min_sd, sd0 * γi / γ1)
+    end
+    return clamp(result, min_sd, sd0)
+end
+
+@inline function _saem_anneal_normal(d::Normal, sd::Real)
+    return Normal(mean(d), sd)
 end
 
 @inline function _saem_thread_caches(dm::DataModel, ll_cache, nthreads::Int)
@@ -238,7 +294,10 @@ SAEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(
      ebe_rescue_grad_tol=ebe_grad_tol,
      ebe_rescue_multistart_sampling=ebe_multistart_sampling,
      lb=nothing,
-     ub=nothing) = begin
+     ub=nothing,
+     anneal_to_fixed=(),
+     anneal_schedule=:exponential,
+     anneal_min_sd=1e-5) = begin
     ebe_rescue = EBERescueOptions(ebe_rescue_on_high_grad, ebe_rescue_multistart_n, ebe_rescue_multistart_k, ebe_rescue_max_rounds, ebe_rescue_grad_tol, ebe_rescue_multistart_sampling)
     saem = SAEMOptions(sampler, turing_kwargs, update_schedule, warm_start, verbose, progress,
                        mcmc_steps, max_store, t0, kappa,
@@ -248,7 +307,8 @@ SAEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(
                        ebe_optimizer, ebe_optim_kwargs, ebe_adtype, ebe_grad_tol,
                        ebe_multistart_n, ebe_multistart_k, ebe_multistart_max_rounds,
                        ebe_multistart_sampling,
-                       ebe_rescue)
+                       ebe_rescue,
+                       anneal_to_fixed, anneal_schedule, anneal_min_sd)
     SAEM(optimizer, optim_kwargs, adtype, saem, lb, ub)
 end
 
@@ -1754,7 +1814,8 @@ function _saem_Q(dm::DataModel,
                  ll_cache,
                  store::_SAEMSampleStore;
                  serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
-                 q_cache::Union{Nothing, _SAEMQCache}=nothing)
+                 q_cache::Union{Nothing, _SAEMQCache}=nothing,
+                 anneal_sds::NamedTuple=NamedTuple())
     total = zero(eltype(θ))
     store.len == 0 && return total
     if serialization isa SciMLBase.EnsembleThreads
@@ -1777,7 +1838,8 @@ function _saem_Q(dm::DataModel,
                 w = store.weights[k]
                 snap = store.snaps[k][bi]
                 isempty(snap) && continue
-                logf = _laplace_logf_batch(dm, info, θ, snap, const_cache, caches[tid])
+                logf = _laplace_logf_batch(dm, info, θ, snap, const_cache, caches[tid];
+                                           anneal_sds=anneal_sds)
                 !isfinite(logf) && (bad[] = true; break)
                 acc += w * logf
             end
@@ -1798,7 +1860,8 @@ function _saem_Q(dm::DataModel,
                 w = store.weights[k]
                 snap = store.snaps[k][bi]
                 isempty(snap) && continue
-                logf = _laplace_logf_batch(dm, info, θ, snap, const_cache, ll_cache_local)
+                logf = _laplace_logf_batch(dm, info, θ, snap, const_cache, ll_cache_local;
+                                           anneal_sds=anneal_sds)
                 !isfinite(logf) && return Inf
                 acc += w * logf
             end
@@ -1900,7 +1963,8 @@ function _saem_builtin_mean_updates(dm::DataModel,
                                     optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
                                     optim_kwargs::NamedTuple=NamedTuple(),
                                     serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
-                                    penalty::NamedTuple=NamedTuple())
+                                    penalty::NamedTuple=NamedTuple(),
+                                    anneal_sds::NamedTuple=NamedTuple())
     isempty(mean_params) && return NamedTuple()
     if dm.model.de.de === nothing
         _saem_glm_supported(dm, batch_infos, b_current, θu_curr, const_cache, ll_cache) || return NamedTuple()
@@ -1925,7 +1989,7 @@ function _saem_builtin_mean_updates(dm::DataModel,
         end
         θu = inv_transform(θt_full)
         Q = _saem_Q(dm, batch_infos, θu, const_cache, ll_cache, sample_store;
-                    serialization=serialization, q_cache=q_cache)
+                    serialization=serialization, q_cache=q_cache, anneal_sds=anneal_sds)
         !isfinite(Q) && return Inf
         obj = -Q + _penalty_value(θu, penalty)
         !isfinite(obj) && return Inf
@@ -2057,6 +2121,21 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                                has_custom_closed_form)
     re_family_map = _saem_re_family_map(dm)
 
+    # anneal_to_fixed validation
+    anneal_initial_sds = _saem_validate_anneal(method.saem.anneal_to_fixed,
+                                               method.saem.anneal_schedule, dm)
+    do_anneal = !isempty(anneal_initial_sds)
+    anneal_names = do_anneal ? Tuple(keys(anneal_initial_sds)) : ()
+    if do_anneal
+        # Warn if an annealed RE also has a closed-form cov update (annealing always wins)
+        for name in anneal_names
+            if haskey(re_cov_params, name)
+                @info "SAEM anneal_to_fixed: RE :$name also appears in re_cov_params; " *
+                      "annealing overrides the closed-form covariance update."
+            end
+        end
+    end
+
     θt_free = ComponentArray(NamedTuple{Tuple(base_free_names)}(Tuple(getproperty(θ0_t, n) for n in base_free_names)))
     axs_free = getaxes(θt_free)
     axs_full = getaxes(θ_const_t)
@@ -2120,6 +2199,17 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
         end
         θu_curr = inv_transform(θt_full_curr)
 
+        # Compute annealed SDs for this iteration
+        anneal_sds = if do_anneal
+            NamedTuple{anneal_names}(
+                Tuple(_saem_anneal_sd(getfield(anneal_initial_sds, n), method.saem.anneal_min_sd,
+                                     iter, method.saem.maxiters, method.saem.anneal_schedule,
+                                     method.saem.t0, method.saem.kappa)
+                      for n in anneal_names))
+        else
+            NamedTuple()
+        end
+
         if serialization isa SciMLBase.EnsembleThreads
             nthreads = Threads.maxthreadid()
             caches = _saem_thread_caches(dm, ll_cache, nthreads)
@@ -2127,7 +2217,8 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                 info = batch_infos[bi]
                 samples, lastp, lastb = _mcem_sample_batch(dm, info, θu_curr, const_cache, caches[Threads.threadid()],
                                                            method.saem.sampler, tkwargs, batch_rngs[bi],
-                                                           re_names, method.saem.warm_start, last_params[bi])
+                                                           re_names, method.saem.warm_start, last_params[bi];
+                                                           anneal_sds=anneal_sds)
                 b_current[bi] = lastb
                 last_params[bi] = lastp
             end
@@ -2136,7 +2227,8 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                 info = batch_infos[bi]
                 samples, lastp, lastb = _mcem_sample_batch(dm, info, θu_curr, const_cache, ll_cache,
                                                            method.saem.sampler, tkwargs, batch_rngs[bi],
-                                                           re_names, method.saem.warm_start, last_params[bi])
+                                                           re_names, method.saem.warm_start, last_params[bi];
+                                                           anneal_sds=anneal_sds)
                 b_current[bi] = lastb
                 last_params[bi] = lastp
             end
@@ -2167,6 +2259,16 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                                                                 re_cov_params, re_mean_params)
             if !isempty(updates)
                 closed_form_builtin_used = true
+                # annealing always wins: strip cov targets for annealed REs
+                if do_anneal
+                    for an in anneal_names
+                        if haskey(re_cov_params, an)
+                            target_sym = re_cov_params[an]
+                            target_sym isa Symbol && haskey(updates, target_sym) &&
+                                (updates = Base.structdiff(updates, NamedTuple{(target_sym,)}((nothing,))))
+                        end
+                    end
+                end
                 iter_constants = merge(iter_constants, updates)
             end
         elseif builtin_stats_mode != :none
@@ -2204,7 +2306,8 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                                                           ComponentArray(θu_curr, getaxes(θu_curr)), const_cache,
                                                           mean_params, cache, sample_store, transform, inv_transform;
                                                           optimizer=method.optimizer, optim_kwargs=method.optim_kwargs,
-                                                          serialization=serialization, penalty=penalty)
+                                                          serialization=serialization, penalty=penalty,
+                                                          anneal_sds=anneal_sds)
                 if !isempty(mean_updates)
                     iter_constants = merge(iter_constants, mean_updates)
                 end
@@ -2235,7 +2338,7 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                 Q_new = method.saem.q_from_stats(s, θu_new, dm)
             else
                 Q_new = _saem_Q(dm, batch_infos, θu_new, const_cache, ll_cache, sample_store;
-                                serialization=serialization, q_cache=q_cache)
+                                serialization=serialization, q_cache=q_cache, anneal_sds=anneal_sds)
             end
         else
             obj_cache = (θ=Ref{Any}(nothing), obj=Ref{Any}(nothing))
@@ -2258,7 +2361,7 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                 Q = method.saem.suffstats !== nothing && method.saem.q_from_stats !== nothing ?
                     method.saem.q_from_stats(s, θu, dm) :
                     _saem_Q(dm, batch_infos, θu, const_cache, ll_cache, sample_store;
-                            serialization=serialization, q_cache=q_cache)
+                            serialization=serialization, q_cache=q_cache, anneal_sds=anneal_sds)
                 !isfinite(Q) && return T(Inf)
                 obj = -Q + _penalty_value(θu, penalty)
                 !isfinite(obj) && return T(Inf)
@@ -2333,7 +2436,7 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                 Q_new = method.saem.q_from_stats(s, θu_new, dm)
             else
                 Q_new = _saem_Q(dm, batch_infos, θu_new, const_cache, ll_cache, sample_store;
-                               serialization=serialization, q_cache=q_cache)
+                               serialization=serialization, q_cache=q_cache, anneal_sds=anneal_sds)
             end
         end
         Q_new = Q_new == Inf ? T0(Inf) : Q_new

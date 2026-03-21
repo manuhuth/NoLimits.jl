@@ -1170,7 +1170,8 @@ function _laplace_logf_batch(dm::DataModel,
                              θ::ComponentArray,
                              b,
                              const_cache::LaplaceConstantsCache,
-                             cache::_LLCache)
+                             cache::_LLCache;
+                             anneal_sds::NamedTuple=NamedTuple())
     T_ll = promote_type(eltype(θ), eltype(b))
     ll = zero(T_ll)
     model_funs = cache.model_funs
@@ -1180,6 +1181,7 @@ function _laplace_logf_batch(dm::DataModel,
     # random-effects prior term (free levels only)
     re_cache = dm.re_group_info.laplace_cache
     re_names = re_cache.re_names
+    has_anneal = !isempty(anneal_sds)
     for (ri, re) in enumerate(re_names)
         info = batch_info.re_info[ri]
         isempty(info.map.levels) && continue
@@ -1188,6 +1190,9 @@ function _laplace_logf_batch(dm::DataModel,
             const_cov = dm.individuals[rep_idx].const_cov
             dists = dists_builder(θ_re, const_cov, model_funs, helpers)
             dist = getproperty(dists, re)
+            if has_anneal && haskey(anneal_sds, re)
+                dist = Normal(mean(dist), getfield(anneal_sds, re))
+            end
             v = _re_value_from_b(info, level_id, b)
             v === nothing && continue
             lp = logpdf(dist, v)

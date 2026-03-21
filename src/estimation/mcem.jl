@@ -215,6 +215,9 @@ function _build_mcem_batch_model(re_names::Vector{Symbol})
                 const_cov = dm.individuals[$reps_sym[1]].const_cov
                 dists = dists_builder(θ_re, const_cov, model_funs, helpers)
                 dist = getproperty(dists, $re_q)
+                if _has_anneal && haskey(anneal_sds, $re_q)
+                    dist = Normal(mean(dist), getfield(anneal_sds, $re_q))
+                end
                 v1 = ($(Symbol(re, :_v1)) ~ dist)
                 local $vals_sym = Vector{typeof(v1)}(undef, nlvls)
                 $vals_sym[1] = v1
@@ -222,6 +225,9 @@ function _build_mcem_batch_model(re_names::Vector{Symbol})
                     const_cov = dm.individuals[$reps_sym[j]].const_cov
                     dists = dists_builder(θ_re, const_cov, model_funs, helpers)
                     dist = getproperty(dists, $re_q)
+                    if _has_anneal && haskey(anneal_sds, $re_q)
+                        dist = Normal(mean(dist), getfield(anneal_sds, $re_q))
+                    end
                     $vals_sym[j] ~ dist
                 end
             else
@@ -234,6 +240,9 @@ function _build_mcem_batch_model(re_names::Vector{Symbol})
                 const_cov = dm.individuals[$reps_sym[1]].const_cov
                 dists = dists_builder(θ_re, const_cov, model_funs, helpers)
                 dist = getproperty(dists, $re_q)
+                if _has_anneal && haskey(anneal_sds, $re_q)
+                    dist = Normal(mean(dist), getfield(anneal_sds, $re_q))
+                end
                 v1 = ($(Symbol(re, :_v1)) ~ dist)
                 local $vals_sym = Vector{typeof(v1)}(undef, nlvls)
                 $vals_sym[1] = v1
@@ -241,6 +250,9 @@ function _build_mcem_batch_model(re_names::Vector{Symbol})
                     const_cov = dm.individuals[$reps_sym[j]].const_cov
                     dists = dists_builder(θ_re, const_cov, model_funs, helpers)
                     dist = getproperty(dists, $re_q)
+                    if _has_anneal && haskey(anneal_sds, $re_q)
+                        dist = Normal(mean(dist), getfield(anneal_sds, $re_q))
+                    end
                     $vals_sym[j] ~ dist
                 end
             else
@@ -262,11 +274,12 @@ function _build_mcem_batch_model(re_names::Vector{Symbol})
                            Expr(:tuple, re_val_syms...))
 
     ex = quote
-        @model function $(fname)(dm, info, θ, const_cache, cache)
+        @model function $(fname)(dm, info, θ, const_cache, cache, anneal_sds=NamedTuple())
             θ_re = _symmetrize_psd_params(θ, dm.model.fixed.fixed)
             dists_builder = get_create_random_effect_distribution(dm.model.random.random)
             model_funs = cache.model_funs
             helpers = cache.helpers
+            _has_anneal = !isempty(anneal_sds)
 
             $sample_blocks
             re_samples = $re_samples_expr
@@ -447,14 +460,15 @@ function _filter_b_samples_by_prior(dm::DataModel,
 end
 
 function _mcem_sample_batch(dm, info, θ, const_cache, cache, sampler, turing_kwargs, rng,
-                            re_names, warm_start, last_params)
+                            re_names, warm_start, last_params;
+                            anneal_sds::NamedTuple=NamedTuple())
     nb = info.n_b
     if nb == 0
         return (zeros(eltype(θ), 0, 0), Float64[], eltype(θ)[])
     end
     fname = _build_mcem_batch_model(re_names)
     model_fn = Base.invokelatest(getfield, @__MODULE__, fname)
-    model = Base.invokelatest(model_fn, dm, info, θ, const_cache, cache)
+    model = Base.invokelatest(model_fn, dm, info, θ, const_cache, cache, anneal_sds)
     n_samples = get(turing_kwargs, :n_samples, 100)
     n_adapt = get(turing_kwargs, :n_adapt, 50)
     tkwargs = Base.structdiff(turing_kwargs, (n_samples=0, n_adapt=0))
