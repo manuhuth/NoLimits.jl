@@ -67,6 +67,15 @@ end
     return s * (one(s) - s)
 end
 
+# Safe log-scale inverse Jacobian: g * exp(t), but returns 0 when g == 0 and exp(t) = Inf.
+# Without this guard, 0 * Inf = NaN in IEEE arithmetic, which corrupts gradients when
+# a parameter is driven to an extreme transformed value by the optimizer.
+@inline function _safe_log_inv_jac(g::Real, t::Real)
+    e = exp(t)
+    isinf(e) && iszero(g) && return zero(typeof(g * e))
+    return g * e
+end
+
 """
     stickbreak_forward(p) -> Vector
 
@@ -214,7 +223,7 @@ end
 end
 
 @inline function _scalar_inv_jacobian(kind::Symbol, g::Real, x::Real)
-    kind === :log   && return g * exp(x)
+    kind === :log   && return _safe_log_inv_jac(g, x)
     kind === :logit && return g * _logit_inv_jacobian(x)
     return g
 end
@@ -294,7 +303,7 @@ function apply_inv_jacobian_T(it::InverseTransform, θt::ComponentArray, grad_u:
         θti = θt[name]
         gu = grad_u[name]
         if spec.kind == :log
-            return gu .* exp.(θti)
+            return _safe_log_inv_jac.(gu, θti)
         elseif spec.kind == :logit
             return gu .* _logit_inv_jacobian.(θti)
         elseif spec.kind == :elementwise
@@ -355,7 +364,7 @@ function apply_inv_jacobian_T(it::InverseTransform, θt::ComponentArray, grad_u:
                 g_ii = T_acc(gu[i, i])
                 for j in 1:n
                     i == j && continue
-                    out[idx] = exp(T_acc(θti[idx])) * (T_acc(gu[i, j]) - g_ii)
+                    out[idx] = _safe_log_inv_jac(T_acc(gu[i, j]) - g_ii, T_acc(θti[idx]))
                     idx += 1
                 end
             end

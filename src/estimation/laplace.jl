@@ -2683,13 +2683,14 @@ function _fit_model(dm::DataModel, method::Laplace, args...;
                                                              fastpath=fastpath_info,
                                                              rng=rng,
                                                              serialization=serialization)
-        obj == Inf && return (infT, ComponentArray(zeros(T, length(θt_free)), axs_free))
+        !isfinite(obj) && return (infT, ComponentArray(zeros(T, length(θt_free)), axs_free))
         grad_u = grad_full
         grad_t_ca = apply_inv_jacobian_T(inv_transform, θt_full, grad_u)
         grad_free = similar(θt_free)
         for name in free_names
             setproperty!(grad_free, name, getproperty(grad_t_ca, name))
         end
+        any(isnan, grad_free) && return (infT, ComponentArray(zeros(T, length(θt_free)), axs_free))
         obj += _penalty_value(θu, penalty)
         _laplace_obj_cache_set_obj_grad!(obj_cache, θt_free, obj, grad_free)
         return (obj, grad_free)
@@ -2890,9 +2891,9 @@ function _fit_model(dm::DataModel, method::LaplaceMAP, args...;
                                                              fastpath=fastpath_info,
                                                              rng=rng,
                                                              serialization=serialization)
-        obj == Inf && return (infT, ComponentArray(zeros(T, length(θt_free)), axs_free))
+        !isfinite(obj) && return (infT, ComponentArray(zeros(T, length(θt_free)), axs_free))
         lp = logprior(fe, θu)
-        lp == -Inf && return (infT, ComponentArray(zeros(T, length(θt_free)), axs_free))
+        !isfinite(lp) && return (infT, ComponentArray(zeros(T, length(θt_free)), axs_free))
         penalty_val = _penalty_value(θu, penalty)
         obj += -lp + penalty_val
 
@@ -2906,6 +2907,7 @@ function _fit_model(dm::DataModel, method::LaplaceMAP, args...;
         for name in free_names
             setproperty!(grad_free, name, getproperty(grad_t_ca, name))
         end
+        any(isnan, grad_free) && return (infT, ComponentArray(zeros(T, length(θt_free)), axs_free))
         _laplace_obj_cache_set_obj_grad!(obj_cache, θt_free, obj, grad_free)
         return (obj, grad_free)
     end
