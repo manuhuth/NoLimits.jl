@@ -84,6 +84,7 @@ laplace_method = NoLimits.Laplace(;
     theta_tol=0.0,
     lb=nothing,
     ub=nothing,
+    nan_recovery=:nan,
 )
 ```
 
@@ -107,6 +108,7 @@ The constructor keywords fall into several logical groups, summarized in the tab
 | Logdet gradient strategy | `use_trace_logdet_grad`, `use_hutchinson`, `hutchinson_n` | Computational path for logdet-related derivatives. |
 | Caching | `theta_tol` | Reuse tolerance for objective/gradient cache across nearby fixed-effect values. |
 | Bounds | `lb`, `ub` | Optional transformed-scale bounds for free fixed effects. |
+| NaN recovery | `nan_recovery` | Strategy when the outer gradient contains `NaN` values. |
 
 ### Inner vs Outer Optimizer Choices (Optimization.jl Interface)
 
@@ -183,6 +185,18 @@ This section provides additional detail on each option group.
 - `lb`, `ub`
   - Bounds are interpreted on transformed parameters and are applied only to free fixed effects.
   - If constants are set via `constants`, bounds for those constant parameters are ignored.
+- `nan_recovery`
+  - Controls what happens when the outer fixed-effect gradient contains `NaN`. This can occur when a parameter is pushed to an extreme value during optimization (e.g., a log-scale parameter so large that the corresponding natural-scale value overflows), making certain Jacobian chain-rule products numerically undefined (`0 * Inf = NaN`).
+  - `:nan` (default) — lets the `NaN` propagate to the optimizer as-is. BFGS will emit a warning and stop, which is an honest failure signal (as opposed to false convergence from a zero gradient).
+  - `:fd` — falls back to a full central-difference gradient computed on the transformed scale. Each perturbed point re-runs the inner EB optimization, so this is more expensive but allows the optimizer to recover and continue past transient NaN regions.
+
+  ```julia
+  # Default: NaN propagates; optimizer warns and stops honestly
+  res = fit_model(dm, NoLimits.Laplace())
+
+  # FD fallback: keeps optimization alive through transient NaN gradients
+  res = fit_model(dm, NoLimits.Laplace(; nan_recovery=:fd))
+  ```
 
 ### Advanced Option Containers
 

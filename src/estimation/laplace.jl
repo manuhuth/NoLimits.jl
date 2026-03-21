@@ -2227,7 +2227,7 @@ Laplace(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracki
         lb=nothing,
         ub=nothing,
         ignore_model_bounds=false,
-        nan_recovery=:fd) = begin
+        nan_recovery=:nan) = begin
     inner = inner_options === nothing ? LaplaceInnerOptions(inner_optimizer, inner_kwargs, inner_adtype, inner_grad_tol) : inner_options
     hess = hessian_options === nothing ? LaplaceHessianOptions(jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale, use_trace_logdet_grad, use_hutchinson, hutchinson_n) : hessian_options
     cache = cache_options === nothing ? LaplaceCacheOptions(theta_tol) : cache_options
@@ -2315,7 +2315,7 @@ LaplaceMAP(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTra
            lb=nothing,
            ub=nothing,
            ignore_model_bounds=false,
-           nan_recovery=:fd) = begin
+           nan_recovery=:nan) = begin
     inner = inner_options === nothing ? LaplaceInnerOptions(inner_optimizer, inner_kwargs, inner_adtype, inner_grad_tol) : inner_options
     hess = hessian_options === nothing ? LaplaceHessianOptions(jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale, use_trace_logdet_grad, use_hutchinson, hutchinson_n) : hessian_options
     cache = cache_options === nothing ? LaplaceCacheOptions(theta_tol) : cache_options

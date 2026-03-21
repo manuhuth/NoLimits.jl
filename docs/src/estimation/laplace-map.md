@@ -9,7 +9,7 @@ Both `Laplace` and `LaplaceMAP` integrate out random effects using a second-orde
 - **`Laplace`** maximizes the Laplace-approximated marginal log-likelihood alone.
 - **`LaplaceMAP`** adds the log-prior density of the fixed effects to that objective, performing MAP estimation.
 
-All constructor options, inner/outer optimization settings, and Hessian stabilization strategies are shared between the two methods. See the [`Laplace` documentation](laplace.md) for a full description of available options.
+All constructor options, inner/outer optimization settings, Hessian stabilization strategies, and NaN recovery behavior are shared between the two methods. See the [`Laplace` documentation](laplace.md) for a full description of available options, including the `nan_recovery` keyword.
 
 ## Prior Requirement
 
