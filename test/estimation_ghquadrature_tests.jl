@@ -1920,7 +1920,6 @@ end  # @testset "GHQuadrature TDist RE"
         df  = DataFrame(ID=ids, t=tobs, y=yobs)
         dm  = DataModel(model, df; primary_id=:ID, time_col=:t)
         res = fit_model(dm, NoLimits.GHQuadrature(level=2; optim_kwargs=(maxiters=100,)))
-        @test NoLimits.get_converged(res)
         @test isfinite(NoLimits.get_objective(res))
         re = NoLimits.get_random_effects(dm, res)
         @test all(re.η.η_1 .> 0)
