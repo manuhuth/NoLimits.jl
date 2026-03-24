@@ -64,6 +64,9 @@ _df_with_re() = DataFrame(ID=[1,1,2,2,3,3], t=[0.0,1.0,0.0,1.0,0.0,1.0], y=[1.0,
     @test get_converged(res) == get_converged(res2)
     @test get_raw(res2) === nothing
     @test get_data_model(res2) === dm
+    # method is replaced by a lightweight stub on save/load
+    @test get_method(res2) isa NoLimits._SavedFittingMethod
+    @test get_method(res2).kind == :mle
 end
 
 # ── MLE include_data ──────────────────────────────────────────────────────────
@@ -114,6 +117,8 @@ end
 
     @test get_objective(res) ≈ get_objective(res2)
     @test NoLimits.get_params(res).untransformed ≈ NoLimits.get_params(res2).untransformed
+    @test get_method(res2) isa NoLimits._SavedFittingMethod
+    @test get_method(res2).kind == :map
 end
 
 # ── Laplace ───────────────────────────────────────────────────────────────────
@@ -217,4 +222,109 @@ end
     # Write a fake saved object with wrong version
     JLD2.jldsave(path; saved=(; format_version=999))
     @test_throws ErrorException load_fit(path)
+end
+
+# ── Cross-session load (fresh Julia subprocess) ───────────────────────────────
+# These tests spawn a completely fresh Julia process to prove that:
+#   1. load_fit does not error in a new session
+#   2. get_loglikelihood / get_residuals / get_random_effects all work on the
+#      reconstructed DataModel (require include_data=true + model kwarg)
+
+@testset "Cross-session MLE: params + LL + residuals" begin
+    model = _simple_model_no_re()
+    df    = _df_no_re()
+    dm    = DataModel(model, df; primary_id=:ID, time_col=:t)
+    res   = fit_model(dm, NoLimits.MLE())
+
+    path = tempname() * ".jld2"
+    save_fit(path, res; include_data=true)
+
+    expected_obj  = get_objective(res)
+    expected_ll   = get_loglikelihood(dm, res)
+    expected_nres = nrow(get_residuals(res))
+
+    script = """
+    using NoLimits, Distributions, DataFrames
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            σ = RealNumber(0.5, scale=:log)
+        end
+        @covariates begin t = Covariate() end
+        @formulas begin y ~ Normal(a, σ) end
+    end
+    res = load_fit($(repr(path)); model=model)
+    println(get_objective(res))
+    println(get_method(res).kind)
+    println(get_loglikelihood(res))
+    println(nrow(get_residuals(res)))
+    p = plot_fits(res)
+    println(typeof(p))
+    """
+
+    script_path = tempname() * ".jl"
+    write(script_path, script)
+
+    project_dir = pkgdir(NoLimits)
+    out   = readchomp(`$(Base.julia_cmd()) --project=$(project_dir) $(script_path)`)
+    lines = split(strip(out), '\n'; keepempty=false)
+
+    @test length(lines) >= 5
+    @test parse(Float64, strip(lines[end-4])) ≈ expected_obj  atol=1e-10
+    @test strip(lines[end-3]) == "mle"
+    @test parse(Float64, strip(lines[end-2])) ≈ expected_ll   atol=1e-8
+    @test parse(Int,     strip(lines[end-1])) == expected_nres
+    @test occursin("Plot", strip(lines[end]))  # plot_fits returns a Plots.Plot
+end
+
+@testset "Cross-session Laplace: params + RE + LL" begin
+    model = _simple_model_with_re()
+    df    = _df_with_re()
+    dm    = DataModel(model, df; primary_id=:ID, time_col=:t)
+    res   = fit_model(dm, NoLimits.Laplace())
+
+    path = tempname() * ".jld2"
+    save_fit(path, res; include_data=true)
+
+    expected_obj   = get_objective(res)
+    expected_ll    = get_loglikelihood(dm, res)
+    expected_re    = get_random_effects(dm, res)
+    expected_n_ids = nrow(expected_re.η)
+
+    script = """
+    using NoLimits, Distributions, DataFrames
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            σ = RealNumber(0.5, scale=:log)
+        end
+        @covariates begin t = Covariate() end
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, 1.0); column=:ID)
+        end
+        @formulas begin y ~ Normal(a + η, σ) end
+    end
+    res = load_fit($(repr(path)); model=model)
+    println(get_objective(res))
+    println(get_method(res).kind)
+    println(get_loglikelihood(res))
+    re = get_random_effects(res)
+    println(nrow(re.η))
+    p = plot_fits(res)
+    println(typeof(p))
+    """
+
+    script_path = tempname() * ".jl"
+    write(script_path, script)
+
+    project_dir = pkgdir(NoLimits)
+    out   = readchomp(`$(Base.julia_cmd()) --project=$(project_dir) $(script_path)`)
+    lines = split(strip(out), '\n'; keepempty=false)
+
+    @test length(lines) >= 5
+    @test parse(Float64, strip(lines[end-4])) ≈ expected_obj   atol=1e-10
+    @test strip(lines[end-3]) == "laplace"
+    @test parse(Float64, strip(lines[end-2])) ≈ expected_ll    atol=1e-8
+    @test parse(Int,     strip(lines[end-1])) == expected_n_ids
+    @test occursin("Plot", strip(lines[end]))  # plot_fits returns a Plots.Plot
 end

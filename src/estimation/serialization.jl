@@ -1,6 +1,7 @@
 export save_fit, load_fit
 
 import JLD2
+using Logging: with_logger, NullLogger
 using SciMLBase: EnsembleSerial, EnsembleThreads, EnsembleDistributed
 using Random: default_rng
 
@@ -165,7 +166,30 @@ struct SavedMultistartFitResult{M, R, RE, SK, EK, B, DF}
     data_model_config::Union{Nothing, _SavedDataModelConfig}
 end
 
+# ─── Method stripping ─────────────────────────────────────────────────────────
+# FittingMethod structs contain optimizer/sampler objects with bare Function fields
+# that JLD2 cannot serialise cleanly.  Replace them with a lightweight stub.
+
+_strip_fitting_method(::MLE)                  = _SavedFittingMethod(:mle)
+_strip_fitting_method(::MAP)                  = _SavedFittingMethod(:map)
+_strip_fitting_method(::Laplace)              = _SavedFittingMethod(:laplace)
+_strip_fitting_method(::LaplaceMAP)           = _SavedFittingMethod(:laplacemap)
+_strip_fitting_method(::FOCEI)                = _SavedFittingMethod(:focei)
+_strip_fitting_method(::FOCEIMAP)             = _SavedFittingMethod(:foceimap)
+_strip_fitting_method(::MCEM)                 = _SavedFittingMethod(:mcem)
+_strip_fitting_method(::SAEM)                 = _SavedFittingMethod(:saem)
+_strip_fitting_method(::MCMC)                 = _SavedFittingMethod(:mcmc)
+_strip_fitting_method(::GHQuadrature)         = _SavedFittingMethod(:ghquadrature)
+_strip_fitting_method(::GHQuadratureMAP)      = _SavedFittingMethod(:ghquadraturemap)
+_strip_fitting_method(::VI)                   = _SavedFittingMethod(:vi)
+_strip_fitting_method(m::_SavedFittingMethod) = m  # idempotent
+
 # ─── Strip helpers ────────────────────────────────────────────────────────────
+
+# OptimizationSolution holds a `cache` field that contains the problem closure
+# (which captures the DataModel / model functions).  Extract only the parameter
+# vector `sol.u` so nothing session-specific leaks into the saved file.
+_strip_solution(sol) = hasproperty(sol, :u) ? sol.u : sol
 
 function _ensemble_to_symbol(s)
     s isa EnsembleSerial      && return :serial
@@ -195,34 +219,34 @@ function _strip_fit_kwargs(kw::NamedTuple)
 end
 
 _strip_method_result(r::MLEResult) =
-    SavedMLEResult(r.solution, r.objective, r.iterations, r.notes)
+    SavedMLEResult(_strip_solution(r.solution), r.objective, r.iterations, r.notes)
 
 _strip_method_result(r::MAPResult) =
-    SavedMAPResult(r.solution, r.objective, r.iterations, r.notes)
+    SavedMAPResult(_strip_solution(r.solution), r.objective, r.iterations, r.notes)
 
 _strip_method_result(r::LaplaceResult) =
-    SavedLaplaceResult(r.solution, r.objective, r.iterations, r.notes, r.eb_modes)
+    SavedLaplaceResult(_strip_solution(r.solution), r.objective, r.iterations, r.notes, r.eb_modes)
 
 _strip_method_result(r::LaplaceMAPResult) =
-    SavedLaplaceMAPResult(r.solution, r.objective, r.iterations, r.notes, r.eb_modes)
+    SavedLaplaceMAPResult(_strip_solution(r.solution), r.objective, r.iterations, r.notes, r.eb_modes)
 
 _strip_method_result(r::FOCEIResult) =
-    SavedFOCEIResult(r.solution, r.objective, r.iterations, r.notes, r.eb_modes)
+    SavedFOCEIResult(_strip_solution(r.solution), r.objective, r.iterations, r.notes, r.eb_modes)
 
 _strip_method_result(r::FOCEIMAPResult) =
-    SavedFOCEIMAPResult(r.solution, r.objective, r.iterations, r.notes, r.eb_modes)
+    SavedFOCEIMAPResult(_strip_solution(r.solution), r.objective, r.iterations, r.notes, r.eb_modes)
 
 _strip_method_result(r::MCEMResult) =
-    SavedMCEMResult(r.solution, r.objective, r.iterations, r.notes, r.eb_modes)
+    SavedMCEMResult(_strip_solution(r.solution), r.objective, r.iterations, r.notes, r.eb_modes)
 
 _strip_method_result(r::SAEMResult) =
-    SavedSAEMResult(r.solution, r.objective, r.iterations, r.notes, r.eb_modes)
+    SavedSAEMResult(_strip_solution(r.solution), r.objective, r.iterations, r.notes, r.eb_modes)
 
 _strip_method_result(r::GHQuadratureResult) =
-    SavedGHQuadratureResult(r.solution, r.objective, r.iterations, r.notes, r.eb_modes)
+    SavedGHQuadratureResult(_strip_solution(r.solution), r.objective, r.iterations, r.notes, r.eb_modes)
 
 _strip_method_result(r::GHQuadratureMAPResult) =
-    SavedGHQuadratureMAPResult(r.solution, r.objective, r.iterations, r.notes, r.eb_modes)
+    SavedGHQuadratureMAPResult(_strip_solution(r.solution), r.objective, r.iterations, r.notes, r.eb_modes)
 
 _strip_method_result(r::MCMCResult) =
     SavedMCMCResult(r.chain, _mcmc_sampler_kind(r.sampler), r.n_samples, r.notes, r.observed)
@@ -241,7 +265,7 @@ function _strip_fit_result(res::FitResult; include_data::Bool=false)
     config = (include_data && dm !== nothing) ? _build_saved_config(dm) : nothing
     return SavedFitResult(
         _SERIALIZATION_FORMAT_VERSION,
-        res.method,
+        _strip_fitting_method(res.method),
         _strip_method_result(res.result),
         res.summary,
         diag,
@@ -265,7 +289,7 @@ function _strip_fit_result(res::MultistartFitResult; include_data::Bool=false)
     config  = (include_data && best_dm !== nothing) ? _build_saved_config(best_dm) : nothing
     return SavedMultistartFitResult(
         _SERIALIZATION_FORMAT_VERSION,
-        res.method,          # inner method (MLE/MAP/etc.), stored directly
+        _strip_fitting_method(res.method),   # store stub, not full method
         saved_ok,
         saved_err,
         res.starts_ok,
@@ -406,7 +430,9 @@ The path string.
 function save_fit(path::AbstractString, res::Union{FitResult, MultistartFitResult};
                   include_data::Bool=false)
     stripped = _strip_fit_result(res; include_data=include_data)
-    JLD2.jldsave(path; saved=stripped)
+    with_logger(NullLogger()) do
+        JLD2.jldsave(path; saved=stripped)
+    end
     return path
 end
 
@@ -441,7 +467,9 @@ functions.
 [`save_fit`](@ref)
 """
 function load_fit(path::AbstractString; model=nothing, dm=nothing)
-    saved = JLD2.load(path, "saved")
+    saved = with_logger(NullLogger()) do
+        JLD2.load(path, "saved")
+    end
     saved.format_version == _SERIALIZATION_FORMAT_VERSION ||
         error("Unsupported SavedFitResult format version $(saved.format_version). " *
               "Expected version $(_SERIALIZATION_FORMAT_VERSION). " *

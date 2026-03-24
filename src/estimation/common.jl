@@ -48,6 +48,23 @@ Abstract base type for all estimation methods. Concrete subtypes include
 abstract type FittingMethod end
 
 """
+    _SavedFittingMethod <: FittingMethod
+
+Lightweight stub that records which fitting method was used when a [`FitResult`](@ref)
+is loaded from disk via [`load_fit`](@ref). Replaces the full method struct (which
+contains optimiser closures that cannot be serialised) on save.
+
+`get_method(res).kind` returns a Symbol such as `:mle`, `:map`, `:laplace`, etc.
+"""
+struct _SavedFittingMethod <: FittingMethod
+    kind::Symbol   # :mle :map :laplace :laplacemap :focei :foceimap
+                   # :mcem :saem :mcmc :vi :ghquadrature :ghquadraturemap
+end
+
+Base.show(io::IO, m::_SavedFittingMethod) =
+    print(io, "_SavedFittingMethod(:$(m.kind)) [loaded from disk; original optimiser not stored]")
+
+"""
     MethodResult
 
 Abstract base type for the method-specific result structs stored inside
@@ -249,8 +266,11 @@ function _nl_fmt_compact_value(x)
     return string(x)
 end
 
+_nl_method_name(m) = nameof(typeof(m))
+_nl_method_name(m::_SavedFittingMethod) = Symbol(uppercase(string(m.kind)) * "_loaded")
+
 function _nl_fitresult_show_line(res::FitResult)
-    method_name = nameof(typeof(res.method))
+    method_name = _nl_method_name(res.method)
     objective_str = _nl_fmt_compact_value(get_objective(res))
     converged = get_converged(res)
     n_params = try
