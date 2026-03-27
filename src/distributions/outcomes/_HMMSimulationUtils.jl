@@ -8,6 +8,13 @@ using Distributions
 @inline _is_hmm_dist(::ContinuousTimeDiscreteStatesHMM) = true
 @inline _is_hmm_dist(::MVDiscreteTimeDiscreteStatesHMM) = true
 @inline _is_hmm_dist(::MVContinuousTimeDiscreteStatesHMM) = true
+@inline _is_hmm_dist(::DiscreteTimeObservedStatesMarkovModel) = true
+@inline _is_hmm_dist(::ContinuousTimeObservedStatesMarkovModel) = true
+
+# Trait: true only for fully-observed Markov models (one-hot posterior update).
+@inline _is_observed_markov(::Any) = false
+@inline _is_observed_markov(::DiscreteTimeObservedStatesMarkovModel) = true
+@inline _is_observed_markov(::ContinuousTimeObservedStatesMarkovModel) = true
 
 function _hmm_onehot_prior(n_states::Int, state::Int)
     probs = zeros(Float64, n_states)
@@ -96,6 +103,42 @@ end
     )
 end
 
+@inline function _hmm_with_initial_state(dist::DiscreteTimeObservedStatesMarkovModel, state::Int)
+    return DiscreteTimeObservedStatesMarkovModel(
+        dist.transition_matrix,
+        _hmm_onehot_prior(dist.n_states, state),
+        dist.state_labels,
+    )
+end
+
+@inline function _hmm_with_initial_probs(dist::DiscreteTimeObservedStatesMarkovModel, probs)
+    return DiscreteTimeObservedStatesMarkovModel(
+        dist.transition_matrix,
+        _hmm_probs_to_categorical(probs),
+        dist.state_labels,
+    )
+end
+
+@inline function _hmm_with_initial_state(dist::ContinuousTimeObservedStatesMarkovModel, state::Int)
+    return ContinuousTimeObservedStatesMarkovModel(
+        dist.transition_matrix,
+        _hmm_onehot_prior(dist.n_states, state),
+        dist.Δt,
+        dist.state_labels;
+        propagation_mode=dist.propagation_mode,
+    )
+end
+
+@inline function _hmm_with_initial_probs(dist::ContinuousTimeObservedStatesMarkovModel, probs)
+    return ContinuousTimeObservedStatesMarkovModel(
+        dist.transition_matrix,
+        _hmm_probs_to_categorical(probs),
+        dist.Δt,
+        dist.state_labels;
+        propagation_mode=dist.propagation_mode,
+    )
+end
+
 @inline _hmm_with_prior(dist, prior_probs) =
     prior_probs === nothing ? dist : _hmm_with_initial_probs(dist, prior_probs)
 
@@ -126,3 +169,10 @@ end
 
 @inline _hmm_emission_rand(rng::AbstractRNG, dist::MVContinuousTimeDiscreteStatesHMM, state::Int) =
     _mv_emission_rand(rng, dist.emission_dists[state])
+
+# For observed-state Markov models the "emission" is the state label itself.
+@inline _hmm_emission_rand(rng::AbstractRNG, dist::DiscreteTimeObservedStatesMarkovModel, state::Int) =
+    dist.state_labels[state]
+
+@inline _hmm_emission_rand(rng::AbstractRNG, dist::ContinuousTimeObservedStatesMarkovModel, state::Int) =
+    dist.state_labels[state]

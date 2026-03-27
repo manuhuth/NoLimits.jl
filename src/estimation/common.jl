@@ -1008,7 +1008,8 @@ function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_
             y = getfield(obs_series, col)[i]
             dist = getproperty(obs, col)
             if dist isa ContinuousTimeDiscreteStatesHMM || dist isa DiscreteTimeDiscreteStatesHMM ||
-               dist isa MVContinuousTimeDiscreteStatesHMM || dist isa MVDiscreteTimeDiscreteStatesHMM
+               dist isa MVContinuousTimeDiscreteStatesHMM || dist isa MVDiscreteTimeDiscreteStatesHMM ||
+               dist isa DiscreteTimeObservedStatesMarkovModel || dist isa ContinuousTimeObservedStatesMarkovModel
                 if hmm_seen === nothing
                     hmm_init = Vector{Vector{T_hmm}}(undef, length(obs_cols))
                     hmm_seen = falses(length(obs_cols))
@@ -1036,6 +1037,15 @@ function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_
                 elseif dist isa MVDiscreteTimeDiscreteStatesHMM
                     MVDiscreteTimeDiscreteStatesHMM(dist.transition_matrix, dist.emission_dists,
                                                     Distributions.Categorical(init_p; check_args=false))
+                elseif dist isa DiscreteTimeObservedStatesMarkovModel
+                    DiscreteTimeObservedStatesMarkovModel(dist.transition_matrix,
+                                                          Distributions.Categorical(init_p; check_args=false),
+                                                          dist.state_labels)
+                elseif dist isa ContinuousTimeObservedStatesMarkovModel
+                    ContinuousTimeObservedStatesMarkovModel(dist.transition_matrix,
+                                                            Distributions.Categorical(init_p; check_args=false),
+                                                            dist.Δt, dist.state_labels;
+                                                            propagation_mode=dist.propagation_mode)
                 else
                     DiscreteTimeDiscreteStatesHMM(dist.transition_matrix, dist.emission_dists,
                                                   Distributions.Categorical(init_p; check_args=false))
