@@ -81,6 +81,7 @@ end
 
 mutable struct _SaemixMHState
     b          :: Vector{Float64}         # current flat b (all free RE levels)
+    b_prop     :: Vector{Float64}         # preallocated proposal buffer (same length as b)
     indiv_ll   :: Vector{Float64}         # obs log-lik per individual (indexed by pos in inds)
     level_plp  :: Vector{Float64}         # prior log-pdf per free level
     levels     :: Vector{_SaemixMHLevel}  # pre-built level metadata
@@ -259,7 +260,7 @@ function _saemixmh_init_state(dm::DataModel,
     _saemixmh_level_plp!(level_plp, levels, dm, θ, const_cache, cache, b)
     dom = _saemixmh_init_dom(levels, dm, θ, const_cache, cache, re_names)
     n_dims = length(dom)
-    return _SaemixMHState(b, indiv_ll, level_plp, levels,
+    return _SaemixMHState(b, similar(b), indiv_ll, level_plp, levels,
                            dom, zeros(Int, n_dims), zeros(Int, n_dims),
                            0, 0)
 end
@@ -285,8 +286,8 @@ function _saemixmh_kern1!(state::_SaemixMHState,
     helpers    = cache.helpers
     has_anneal = !isempty(anneal_sds)
     b          = state.b
+    b_prop     = state.b_prop
     indiv_ll   = state.indiv_ll
-    b_prop     = similar(b)
 
     for _ in 1:n_steps
         for (k, lv) in enumerate(state.levels)
@@ -312,27 +313,38 @@ function _saemixmh_kern1!(state::_SaemixMHState,
                 end
             end
 
-            # Compute new obs-LL for affected individuals
-            Δ_ll = 0.0
-            new_ll = Vector{Float64}(undef, length(lv.group_pos))
-            for (gi, pos) in enumerate(lv.group_pos)
-                i = batch_info.inds[pos]
-                η_ind = _build_eta_ind(dm, i, batch_info, b_prop, const_cache, θ_re)
-                ll_new = _loglikelihood_individual(dm, i, θ_re, η_ind, cache)
-                new_ll[gi] = ll_new
-                Δ_ll += ll_new - indiv_ll[pos]
-            end
-
             # Accept / reject (likelihood ratio only — prior terms cancel)
             state.n_total += 1
-            if log(rand(rng)) < Δ_ll
-                # Accept: update b and indiv_ll
-                copyto!(b, b_prop)
-                state.level_plp[k] = logpdf(dist, eta_star)
-                for (gi, pos) in enumerate(lv.group_pos)
-                    indiv_ll[pos] = new_ll[gi]
+            if length(lv.group_pos) == 1
+                # Fast path: single individual — no temporary vector allocation
+                pos    = lv.group_pos[1]
+                i      = batch_info.inds[pos]
+                η_ind  = _build_eta_ind(dm, i, batch_info, b_prop, const_cache, θ_re)
+                ll_new = _loglikelihood_individual(dm, i, θ_re, η_ind, cache)
+                if log(rand(rng)) < ll_new - indiv_ll[pos]
+                    copyto!(b, b_prop)
+                    state.level_plp[k] = logpdf(dist, eta_star)
+                    indiv_ll[pos]      = ll_new
+                    state.n_accept     += 1
                 end
-                state.n_accept += 1
+            else
+                Δ_ll   = 0.0
+                new_ll = Vector{Float64}(undef, length(lv.group_pos))
+                for (gi, pos) in enumerate(lv.group_pos)
+                    i      = batch_info.inds[pos]
+                    η_ind  = _build_eta_ind(dm, i, batch_info, b_prop, const_cache, θ_re)
+                    ll_new = _loglikelihood_individual(dm, i, θ_re, η_ind, cache)
+                    new_ll[gi] = ll_new
+                    Δ_ll      += ll_new - indiv_ll[pos]
+                end
+                if log(rand(rng)) < Δ_ll
+                    copyto!(b, b_prop)
+                    state.level_plp[k] = logpdf(dist, eta_star)
+                    for (gi, pos) in enumerate(lv.group_pos)
+                        indiv_ll[pos] = new_ll[gi]
+                    end
+                    state.n_accept += 1
+                end
             end
         end
     end
@@ -362,9 +374,8 @@ function _saemixmh_kern2!(state::_SaemixMHState,
     helpers    = cache.helpers
     has_anneal = !isempty(anneal_sds)
     b          = state.b
+    b_prop     = state.b_prop
     indiv_ll   = state.indiv_ll
-    b_prop     = similar(b)
-    dim_offset = 0
 
     for _ in 1:n_steps
         dim_offset = 0
@@ -393,30 +404,43 @@ function _saemixmh_kern2!(state::_SaemixMHState,
                     logpdf(dist, view(b_prop, r))
                 end
 
-                # New obs-LL for affected individuals
-                Δ_ll = 0.0
-                new_ll = Vector{Float64}(undef, length(lv.group_pos))
-                for (gi, pos) in enumerate(lv.group_pos)
-                    i = batch_info.inds[pos]
-                    η_ind = _build_eta_ind(dm, i, batch_info, b_prop, const_cache, θ_re)
-                    ll_new = _loglikelihood_individual(dm, i, θ_re, η_ind, cache)
-                    new_ll[gi] = ll_new
-                    Δ_ll += ll_new - indiv_ll[pos]
-                end
-
-                # Full log-joint ratio
-                Δ = new_plp - state.level_plp[k] + Δ_ll
-                state.n_total += 1
+                # Full log-joint ratio; fast path avoids temporary vector allocation
+                state.n_total  += 1
                 state.n_total2[dom_idx] += 1
-
-                if log(rand(rng)) < Δ
-                    copyto!(b, b_prop)
-                    state.level_plp[k] = new_plp
-                    for (gi, pos) in enumerate(lv.group_pos)
-                        indiv_ll[pos] = new_ll[gi]
+                if length(lv.group_pos) == 1
+                    # Fast path: single individual
+                    pos    = lv.group_pos[1]
+                    i      = batch_info.inds[pos]
+                    η_ind  = _build_eta_ind(dm, i, batch_info, b_prop, const_cache, θ_re)
+                    ll_new = _loglikelihood_individual(dm, i, θ_re, η_ind, cache)
+                    Δ = new_plp - state.level_plp[k] + (ll_new - indiv_ll[pos])
+                    if log(rand(rng)) < Δ
+                        copyto!(b, b_prop)
+                        state.level_plp[k]       = new_plp
+                        indiv_ll[pos]            = ll_new
+                        state.n_accept           += 1
+                        state.n_accept2[dom_idx] += 1
                     end
-                    state.n_accept += 1
-                    state.n_accept2[dom_idx] += 1
+                else
+                    Δ_ll   = 0.0
+                    new_ll = Vector{Float64}(undef, length(lv.group_pos))
+                    for (gi, pos) in enumerate(lv.group_pos)
+                        i      = batch_info.inds[pos]
+                        η_ind  = _build_eta_ind(dm, i, batch_info, b_prop, const_cache, θ_re)
+                        ll_new = _loglikelihood_individual(dm, i, θ_re, η_ind, cache)
+                        new_ll[gi] = ll_new
+                        Δ_ll      += ll_new - indiv_ll[pos]
+                    end
+                    Δ = new_plp - state.level_plp[k] + Δ_ll
+                    if log(rand(rng)) < Δ
+                        copyto!(b, b_prop)
+                        state.level_plp[k] = new_plp
+                        for (gi, pos) in enumerate(lv.group_pos)
+                            indiv_ll[pos] = new_ll[gi]
+                        end
+                        state.n_accept           += 1
+                        state.n_accept2[dom_idx] += 1
+                    end
                 end
             end
             dim_offset += lv.dim

@@ -232,7 +232,7 @@ or closed-form updates (when `builtin_stats` is enabled).
 - `optimizer`: M-step Optimization.jl optimiser. Defaults to `LBFGS` with backtracking.
 - `optim_kwargs::NamedTuple = NamedTuple()`: keyword arguments for the M-step `solve`.
 - `adtype`: AD backend for the M-step. Defaults to `AutoForwardDiff()`.
-- `sampler`: Turing-compatible sampler. Defaults to `NUTS(0.75)`.
+- `sampler`: Turing-compatible sampler. Defaults to `MH()`.
 - `turing_kwargs::NamedTuple = NamedTuple()`: keyword arguments for `Turing.sample`.
 - `update_schedule`: which parameters to update per iteration (`:all` or a `Vector{Symbol}`).
 - `warm_start::Bool = true`: initialise the sampler from the previous iteration's modes.
@@ -279,7 +279,7 @@ end
 SAEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
      optim_kwargs=NamedTuple(),
      adtype=Optimization.AutoForwardDiff(),
-     sampler=Turing.NUTS(0.75),
+     sampler=MH(),
      turing_kwargs=NamedTuple(),
     update_schedule=:all,
     warm_start=true,

@@ -112,8 +112,11 @@ end
 @inline _amh_bij_log_jac(::Val{:Normal}, ::Real, ::Real)    = 0.0
 
 # MvNormal: identity (η ∈ ℝ^d, no bijection needed)
-@inline _amh_bij_forward(::Val{:MvNormal}, η::AbstractVector) = Vector{Float64}(η)
-@inline _amh_bij_inverse(::Val{:MvNormal}, z::AbstractVector) = Vector{Float64}(z)
+# When input is already Vector{Float64}, return it directly to avoid an unnecessary copy.
+@inline _amh_bij_forward(::Val{:MvNormal}, η::Vector{Float64}) = η
+@inline _amh_bij_forward(::Val{:MvNormal}, η::AbstractVector)  = Vector{Float64}(η)
+@inline _amh_bij_inverse(::Val{:MvNormal}, z::Vector{Float64}) = z
+@inline _amh_bij_inverse(::Val{:MvNormal}, z::AbstractVector)  = Vector{Float64}(z)
 @inline _amh_bij_log_jac(::Val{:MvNormal}, ::AbstractVector, ::AbstractVector) = 0.0
 
 # LogNormal: log bijection (η > 0)
@@ -149,10 +152,10 @@ end
 end
 
 # NormalizingPlanarFlow: identity (output ∈ ℝ^d; user chose η-space)
-@inline _amh_bij_forward(::Val{:NormalizingPlanarFlow}, η::AbstractVector) =
-    Vector{Float64}(η)
-@inline _amh_bij_inverse(::Val{:NormalizingPlanarFlow}, z::AbstractVector) =
-    Vector{Float64}(z)
+@inline _amh_bij_forward(::Val{:NormalizingPlanarFlow}, η::Vector{Float64}) = η
+@inline _amh_bij_forward(::Val{:NormalizingPlanarFlow}, η::AbstractVector)  = Vector{Float64}(η)
+@inline _amh_bij_inverse(::Val{:NormalizingPlanarFlow}, z::Vector{Float64}) = z
+@inline _amh_bij_inverse(::Val{:NormalizingPlanarFlow}, z::AbstractVector)  = Vector{Float64}(z)
 @inline _amh_bij_log_jac(
     ::Val{:NormalizingPlanarFlow}, ::AbstractVector, ::AbstractVector) = 0.0
 
@@ -244,7 +247,7 @@ end
 function _amh_propose(rng::AbstractRNG, z_curr::AbstractVector{<:Real},
                        L::Matrix{Float64})
     d = length(z_curr)
-    return Vector{Float64}(z_curr) .+ L * randn(rng, d)
+    return z_curr .+ L * randn(rng, d)
 end
 
 # ---------------------------------------------------------------------------

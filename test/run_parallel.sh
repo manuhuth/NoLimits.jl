@@ -70,6 +70,12 @@ TESTS=(
   estimation_saem_tests.jl
   estimation_saem_autodetect_tests.jl
   estimation_saem_suffstats_tests.jl
+  saem_schedule_tests.jl
+  saem_multichain_tests.jl
+  saem_sa_anneal_tests.jl
+  saem_var_lb_tests.jl
+  saem_saemixmh_tests.jl
+  saem_adaptive_mh_tests.jl
   estimation_multistart_tests.jl
   estimation_ghquadrature_tests.jl
   uq_tests.jl
@@ -86,6 +92,7 @@ TESTS=(
   stickbreak_uq_natural_extension_tests.jl
   ad_stickbreak_hmm.jl
   continuous_transition_matrix_tests.jl
+  serialization_tests.jl
 )
 
 run_test() {

@@ -25,7 +25,6 @@ The following example demonstrates a minimal SAEM workflow with a nonlinear mixe
 using NoLimits
 using DataFrames
 using Distributions
-using Turing
 
 model = @Model begin
     @fixedEffects begin
@@ -74,36 +73,74 @@ The full set of constructor arguments is shown below. All arguments have default
 using Optimization
 using OptimizationOptimJL
 using LineSearches
-using Turing
 
 method = NoLimits.SAEM(;
+    # M-step optimizer
     optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
     optim_kwargs=NamedTuple(),
     adtype=Optimization.AutoForwardDiff(),
-    sampler=Turing.NUTS(0.75),
+
+    # E-step sampler
+    sampler=MH(),
     turing_kwargs=NamedTuple(),
     update_schedule=:all,
     warm_start=true,
-    verbose=false,
-    progress=true,
     mcmc_steps=80,
-    max_store=50,
-    t0=20,
+
+    # SA schedule
+    sa_schedule=:robbins_monro,
+    sa_burnin_iters=0,
+    t0=150,
     kappa=0.65,
+    sa_phase1_iters=200,
+    sa_phase2_kappa=-1.0,
+    sa_schedule_fn=nothing,
+
+    # Multi-chain E-step
+    n_chains=1,
+    auto_small_n_chains=false,
+    small_n_chain_target=50,
+
+    # SA variance annealing
+    sa_anneal_targets=NamedTuple(),
+    sa_anneal_schedule=:exponential,
+    sa_anneal_iters=0,
+    sa_anneal_alpha=0.9,
+    sa_anneal_fn=nothing,
+
+    # Variance lower bound
+    auto_var_lb=true,
+    var_lb_value=1e-5,
+
+    # Convergence and stopping
     maxiters=300,
     rtol_theta=5e-5,
     atol_theta=5e-7,
     rtol_Q=5e-5,
     atol_Q=5e-7,
     consecutive_params=4,
+
+    # Custom statistics hooks
+    max_store=50,
     suffstats=nothing,
     q_from_stats=nothing,
     mstep_closed_form=nothing,
+
+    # Built-in statistics hooks
     builtin_stats=:auto,
     builtin_mean=:none,
     resid_var_param=:σ,
     re_cov_params=NamedTuple(),
     re_mean_params=NamedTuple(),
+
+    # M-step variant
+    mstep_sa_on_params=false,
+
+    # Verbose / progress
+    verbose=false,
+    progress=true,
+
+    # Final EB modes
     ebe_optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
     ebe_optim_kwargs=NamedTuple(),
     ebe_adtype=Optimization.AutoForwardDiff(),
@@ -115,11 +152,15 @@ method = NoLimits.SAEM(;
     ebe_rescue_on_high_grad=true,
     ebe_rescue_multistart_n=128,
     ebe_rescue_multistart_k=32,
-    ebe_rescue_max_rounds=0,
+    ebe_rescue_max_rounds=8,
     ebe_rescue_grad_tol=:auto,
     ebe_rescue_multistart_sampling=:lhs,
+
+    # Bounds
     lb=nothing,
     ub=nothing,
+
+    # RE annealing (collapse REs toward fixed effects)
     anneal_to_fixed=(),
     anneal_schedule=:exponential,
     anneal_min_sd=1e-5,
@@ -134,9 +175,14 @@ The constructor arguments are organized into the following functional groups.
 | --- | --- | --- |
 | M-step optimizer | `optimizer`, `optim_kwargs`, `adtype` | Fixed-effect update in each SAEM iteration via [Optimization.jl](https://docs.sciml.ai/Optimization/stable/). |
 | E-step sampler | `sampler`, `turing_kwargs`, `mcmc_steps`, `update_schedule`, `warm_start` | Random-effect sampling and batch update selection. |
-| SA schedule and stopping | `t0`, `kappa`, `maxiters`, `rtol_theta`, `atol_theta`, `rtol_Q`, `atol_Q`, `consecutive_params` | Stochastic approximation gain schedule and convergence criteria. |
+| SA schedule | `sa_schedule`, `sa_burnin_iters`, `t0`, `kappa`, `sa_phase1_iters`, `sa_phase2_kappa`, `sa_schedule_fn` | Gain sequence shape and phases. |
+| Multi-chain | `n_chains`, `auto_small_n_chains`, `small_n_chain_target` | Number of parallel MCMC chains per batch. |
+| SA variance annealing | `sa_anneal_targets`, `sa_anneal_schedule`, `sa_anneal_iters`, `sa_anneal_alpha`, `sa_anneal_fn` | Post-M-step variance floor that decays over iterations to prevent early collapse. |
+| Variance lower bound | `auto_var_lb`, `var_lb_value` | Hard permanent floor on variance / SD parameters. |
+| Convergence and stopping | `maxiters`, `rtol_theta`, `atol_theta`, `rtol_Q`, `atol_Q`, `consecutive_params` | Stopping criteria. |
 | Custom statistics hooks | `suffstats`, `q_from_stats`, `mstep_closed_form`, `max_store` | User-defined sufficient statistics and optional closed-form M-step. |
 | Built-in statistics hooks | `builtin_stats`, `builtin_mean`, `resid_var_param`, `re_cov_params`, `re_mean_params` | Automatic closed-form parameter updates for supported distribution structures. |
+| M-step variant | `mstep_sa_on_params` | Use current-iteration samples (not ring buffer) with Robbins-Monro parameter update. |
 | Final EB modes | `ebe_*`, `ebe_rescue_*` | Post-fit empirical Bayes mode optimization used by random-effects accessors. |
 | Bounds | `lb`, `ub` | Optional transformed-scale bounds on free fixed effects. |
 | RE annealing | `anneal_to_fixed`, `anneal_schedule`, `anneal_min_sd` | Progressive shrinkage of selected RE prior SDs toward zero, collapsing those effects to fixed by the final iteration. |
@@ -148,10 +194,10 @@ The constructor arguments are organized into the following functional groups.
 These arguments configure the MCMC sampling of random effects at each SAEM iteration.
 
 - `sampler`
-  - Turing sampler used for the random-effect E-step.
-  - Common choices include `NUTS(...)` and `MH()`.
+  - Sampler used for the random-effect E-step.
+  - Default: `MH()`. See [Samplers](#samplers) for all available options.
 - `turing_kwargs`
-  - Additional keyword arguments passed to Turing sampling calls.
+  - Additional keyword arguments passed to Turing sampling calls (ignored for `SaemixMH` and `AdaptiveNoLimitsMH`).
 - `mcmc_steps`
   - Number of MCMC samples drawn per iteration.
   - If `mcmc_steps <= 0`, SAEM falls back to `turing_kwargs[:n_samples]` (or `1`).
@@ -164,8 +210,6 @@ These arguments configure the MCMC sampling of random effects at each SAEM itera
 - `warm_start`
   - When `true`, reuses latent-state sampler state between iterations where available.
 
-The E-step sampling interface is built on [Turing.jl](https://turinglang.org/).
-
 ### M-step Optimization Inputs
 
 When the M-step is performed numerically (i.e., no closed-form update is provided), these arguments control the fixed-effect optimization.
@@ -177,25 +221,82 @@ When the M-step is performed numerically (i.e., no closed-form update is provide
   - Keyword arguments forwarded to `Optimization.solve`.
 - `adtype`
   - Automatic differentiation backend used to construct the `OptimizationFunction`.
+- `mstep_sa_on_params`
+  - When `false` (default), the M-step minimizes the ring-buffer Q-function and sets `θ_new = θ̂` directly.
+  - When `true`, the M-step uses only the current iteration's samples and applies a Robbins-Monro parameter update: `θ_new = θ_old + γ*(θ̂ - θ_old)`. Recommended when using `SaemixMH` (whose kernel-1 draws from the prior, so the current-sample Q is well-identified). For Turing-based samplers the ring-buffer default is preferred.
 
 SAEM uses the SciML [Optimization.jl](https://docs.sciml.ai/Optimization/stable/) interface for numerical M-step updates.
 
-### SA Schedule and Convergence Inputs
+### SA Schedule Inputs
 
-The stochastic approximation gain sequence controls the rate at which running statistics are updated toward new samples. A two-phase schedule is used: an initial averaging phase followed by a decay phase.
+The SA gain sequence `γ_t ∈ [0, 1]` controls how aggressively new samples update the running statistics at each iteration. SAEM supports three schedule modes selected by `sa_schedule`.
 
-- `t0`, `kappa`
-  - Define the SA gain schedule `gamma_t`:
-    - `gamma_t = 1` for `t <= t0` (averaging phase)
-    - `gamma_t = (t - t0)^(-kappa)` for `t > t0` (decay phase)
-- `maxiters`
-  - Maximum number of SAEM iterations.
-- `rtol_theta`, `atol_theta`
-  - Relative and absolute stabilization tolerances for fixed effects.
-- `rtol_Q`, `atol_Q`
-  - Relative and absolute stabilization tolerances for the SAEM Q criterion.
-- `consecutive_params`
-  - Number of consecutive iterations that must simultaneously satisfy both parameter and Q criteria before convergence is declared.
+- `sa_schedule`
+  - `:robbins_monro` (default): classic Robbins-Monro two-phase schedule built from `t0` and `kappa`.
+  - `:two_phase`: explicit two-phase schedule built from `sa_phase1_iters` and `sa_phase2_kappa`.
+  - `:custom`: user-supplied function `sa_schedule_fn(iter, opts) -> Float64`.
+
+#### `:robbins_monro` schedule
+
+| Phase | Condition | γ |
+| --- | --- | --- |
+| Burn-in | `iter ≤ sa_burnin_iters` | 0 (no SA update) |
+| Stabilization | `sa_burnin_iters < iter ≤ sa_burnin_iters + t0` | 1 |
+| Decay | otherwise | `((phase3_total - k3) / phase3_total)^kappa` |
+
+where `phase3_total = maxiters - sa_burnin_iters - t0` and `k3 = iter - sa_burnin_iters - t0`.
+
+- `sa_burnin_iters::Int = 0`: iterations before SA updates begin. During burn-in no SA smoothing is performed and no samples are stored.
+- `t0::Int = 150`: length of the stabilization phase (γ = 1).
+- `kappa::Float64 = 0.65`: decay exponent controlling how quickly γ falls off after stabilization.
+
+#### `:two_phase` schedule
+
+| Phase | Condition | γ |
+| --- | --- | --- |
+| Burn-in | `iter ≤ sa_burnin_iters` | 0 |
+| Phase 1 | `sa_burnin_iters < iter ≤ sa_burnin_iters + sa_phase1_iters` | 1 |
+| Phase 2 | otherwise | `k2^sa_phase2_kappa` |
+
+where `k2 = iter - sa_burnin_iters - sa_phase1_iters`.
+
+- `sa_phase1_iters::Int = 200`: length of the full-weight phase.
+- `sa_phase2_kappa::Float64 = -1.0`: exponent for phase-2 decay. Negative values produce increasing γ (rarely useful); set to a small negative number close to 0 for a slow decay.
+
+#### `:custom` schedule
+
+- `sa_schedule_fn`: a callable with signature `(iter::Int, opts::SAEMOptions) -> Float64` returning `γ ∈ [0, 1]`.
+
+### Multi-Chain E-step
+
+Running multiple independent MCMC chains per batch and averaging their samples before the SA update reduces variance in the E-step at the cost of proportionally more likelihood evaluations.
+
+- `n_chains::Int = 1`: number of MCMC chains run per batch per iteration.
+- `auto_small_n_chains::Bool = false`: when `true`, automatically increases `n_chains` for small datasets so that the total number of E-step samples (`n_batches × n_chains`) reaches `small_n_chain_target`. Useful when the dataset has few individuals and few batches.
+- `small_n_chain_target::Int = 50`: target total sample count used by `auto_small_n_chains`.
+
+### SA Variance Annealing
+
+After each M-step, scalar variance and SD parameters for RE distributions can be clamped to a decaying lower floor. This prevents variance parameters from collapsing to near-zero too early in the run (when the E-step is still mixing poorly), while allowing them to reach their optimal value once the chain has warmed up.
+
+The floor starts at `alpha × initial_value` and decays to zero over `sa_anneal_iters` iterations.
+
+- `sa_anneal_targets::NamedTuple = NamedTuple()`: explicit mapping of fixed-effect name to `alpha` value, e.g., `(; τ = 0.9)`. When empty, targets are auto-detected from `re_cov_params` for Normal and LogNormal RE families.
+- `sa_anneal_schedule::Symbol = :exponential`: shape of the floor decay.
+  - `:exponential`: `floor = alpha × init × exp(-3 × frac)`.
+  - `:linear`: `floor = alpha × init × (1 - frac)`.
+- `sa_anneal_iters::Int = 0`: number of iterations over which the floor is active. If zero, defaults to `0.3 × maxiters`.
+- `sa_anneal_alpha::Float64 = 0.9`: fraction of the initial parameter value used as the starting floor (auto-detection mode only; explicit `sa_anneal_targets` carry their own alpha per entry).
+- `sa_anneal_fn`: reserved for future use (not active).
+
+SA variance annealing is distinct from `anneal_to_fixed`. The latter collapses an RE entirely into a fixed effect by shrinking its prior SD to zero; SA variance annealing only prevents its estimated variance from hitting zero prematurely during optimization.
+
+### Variance Lower Bound
+
+A hard, permanent lower bound is applied to scalar RE covariance and residual SD parameters after every M-step update. Unlike SA variance annealing, this floor does not decay — it is enforced for the entire run.
+
+- `auto_var_lb::Bool = true`: when `true`, automatically applies the lower bound to all scalar RE cov params (Normal, LogNormal, MvNormal scalar covariance) and the residual variance parameter.
+- `var_lb_value::Float64 = 1e-5`: minimum value enforced for the targeted parameters on the natural (untransformed) scale.
 
 ### Custom Statistics Inputs
 
@@ -264,6 +365,87 @@ After convergence, SAEM computes empirical Bayes modal estimates of the random e
   - Target SD reached at the final iteration.
   - Default: `1e-5`.
 
+## Samplers
+
+SAEM accepts three types of E-step sampler.
+
+### `MH()` (default)
+
+Turing's built-in random-walk Metropolis-Hastings. Uses a fixed standard-Normal proposal in the linked (unconstrained) space. Fast per-step but requires careful tuning of `mcmc_steps` to achieve adequate mixing.
+
+```julia
+using Turing
+res = fit_model(dm, SAEM(sampler=MH()))
+```
+
+### `SaemixMH`
+
+A lightweight Turing-free MH sampler that directly operates on the flat random-effects vector. Implements two kernels in the style of the saemix R package:
+
+- **Kernel 1** (`n_kern1` steps): independent proposal from the current RE prior `p(η|θ)`. Acceptance uses only the likelihood ratio. Efficient when the posterior is close to the prior.
+- **Kernel 2** (`n_kern2` steps): per-level coordinate-wise random walk in the natural parameter space. Scale adapts via Robbins-Monro to reach `target_accept`. Uses the full log-joint ratio.
+
+Because `SaemixMH` bypasses Turing entirely it avoids interpreter and compilation overhead, making it significantly faster per iteration for large models.
+
+```julia
+res = fit_model(dm, SAEM(
+    sampler    = SaemixMH(n_kern1=2, n_kern2=2),
+    mcmc_steps = 1,
+    maxiters   = 300,
+))
+```
+
+Constructor keywords:
+- `n_kern1::Int = 2`: prior-proposal steps per E-step call.
+- `n_kern2::Int = 2`: per-level random-walk steps per E-step call.
+- `target_accept::Float64 = 0.44`: target acceptance rate for kernel-2 adaptation.
+- `adapt_rate::Float64 = 0.7`: Robbins-Monro exponent for kernel-2 scale updates.
+
+`SaemixMH` works well with `mstep_sa_on_params=true` because kernel-1's prior-proposal structure makes the current-sample Q well-identified.
+
+### `AdaptiveNoLimitsMH`
+
+An adaptive MH sampler implementing the Haario et al. (2001) algorithm. Maintains a per-RE-name running covariance in the natural proposal space and pools samples across all active levels of the same RE for faster covariance adaptation.
+
+The proposal space is adjusted per distribution family:
+
+| Distribution | Proposal space | Bijection |
+| --- | --- | --- |
+| `Normal` | η ∈ ℝ | identity |
+| `MvNormal` | η ∈ ℝ^d | identity |
+| `LogNormal` | z = log(η) | log / exp |
+| `Exponential` | z = log(η) | log / exp |
+| `Beta` | z = logit(η) | logit / sigmoid |
+| `NormalizingPlanarFlow` | η ∈ ℝ^d | identity |
+
+Adaptation state persists across SAEM iterations via the warm-start mechanism.
+
+```julia
+res = fit_model(dm, SAEM(sampler=AdaptiveNoLimitsMH()))
+```
+
+Constructor keywords:
+- `adapt_start::Int = 50`: pooled sample count before Haario updates activate.
+- `init_scale::Float64 = 1.0`: multiplier on the prior-based initial proposal covariance.
+- `eps_reg::Float64 = 1e-6`: regularisation added to the diagonal to ensure positive-definiteness.
+
+`AdaptiveNoLimitsMH` is most useful when the RE posterior covariance differs substantially from the prior, when REs are correlated (`MvNormal` with `d ≥ 2`), or when the prior is weakly informative.
+
+### Turing-Based Samplers (`NUTS`, etc.)
+
+Any Turing-compatible sampler can be used:
+
+```julia
+using Turing
+res = fit_model(dm, SAEM(
+    sampler      = NUTS(0.75),
+    turing_kwargs = (n_samples=10, n_adapt=5, progress=false),
+    mcmc_steps   = 10,
+))
+```
+
+Note: Turing-based samplers re-compile the model at each SAEM iteration and are significantly slower per step than `SaemixMH` or `AdaptiveNoLimitsMH` for most models.
+
 ## RE Annealing
 
 The `anneal_to_fixed` option progressively shrinks the prior standard deviation of selected Normal random effects from their initial value toward `anneal_min_sd` over the course of SAEM iterations. By the final iteration the prior SD is negligibly small, which effectively collapses the annealed RE into a fixed shift — the sampler can no longer move it away from its mean, so it behaves as a fixed effect without requiring a model change.
@@ -318,7 +500,6 @@ When `builtin_stats=:closed_form` (or `:auto`) and an annealed RE also appears i
 using NoLimits
 using DataFrames
 using Distributions
-using Turing
 
 model = @Model begin
     @fixedEffects begin
@@ -374,7 +555,7 @@ method_gamma = NoLimits.SAEM(;
     maxiters=100,
     anneal_to_fixed=(:eta_site,),
     anneal_schedule=:gamma,
-    t0=20,
+    t0=150,
     kappa=0.65,
 )
 ```
@@ -623,7 +804,6 @@ When using custom sufficient statistics, it is recommended to also provide `q_fr
 using NoLimits
 using DataFrames
 using Distributions
-using Turing
 using ComponentArrays
 
 model = @Model begin
