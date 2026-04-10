@@ -9,7 +9,7 @@ using OptimizationOptimisers
 using OptimizationBBO
 using LinearAlgebra
 
-const SAEM_FAST = (maxiters=3, t0=1, kappa=0.6, mcmc_steps=1, max_store=3)
+const SAEM_FAST = (maxiters=3, t0=1, kappa=0.6, mcmc_steps=1, q_store_max=3)
 
 function _saem_test_create_trans_pi0(eta_hmm, eta_initial)
     n_states = length(eta_initial) + 1
@@ -115,7 +115,7 @@ end
         builtin_stats=:none,
         maxiters=2,
         progress=false,
-        max_store=4,
+        q_store_max=4,
     ))
     @test !NoLimits.get_closed_form_mstep_used(res_numeric)
     notes_numeric = NoLimits.get_notes(res_numeric)
@@ -129,7 +129,7 @@ end
         builtin_stats=:closed_form,
         maxiters=2,
         progress=false,
-        max_store=4,
+        q_store_max=4,
     ))
     @test NoLimits.get_closed_form_mstep_used(res_builtin)
     notes_builtin = NoLimits.get_notes(res_builtin)
@@ -153,7 +153,7 @@ end
         mstep_closed_form=mstep_closed_form,
         maxiters=2,
         progress=false,
-        max_store=4,
+        q_store_max=4,
     ))
     @test NoLimits.get_closed_form_mstep_used(res_custom)
     notes_custom = NoLimits.get_notes(res_custom)
@@ -168,7 +168,7 @@ end
             builtin_stats=:auto,
             maxiters=1,
             progress=false,
-            max_store=2,
+            q_store_max=2,
         ))
     end
 end
@@ -201,7 +201,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             max_store=4))
+                             q_store_max=4))
     @test res isa FitResult
     @test NoLimits.get_converged(res) isa Bool
 end
@@ -239,7 +239,7 @@ end
                                    turing_kwargs=(n_samples=1, n_adapt=0, progress=false, verbose=false),
                                    maxiters=2,
                                    mcmc_steps=1,
-                                   max_store=4,
+                                   q_store_max=4,
                                    progress=false)
     res_serial = fit_model(dm, method; serialization=EnsembleSerial(), rng=MersenneTwister(123))
     res_threads = fit_model(dm, method; serialization=EnsembleThreads(), rng=MersenneTwister(123))
@@ -276,7 +276,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(; sampler=NUTS(5, 0.3), turing_kwargs=(n_samples=5, n_adapt=3, progress=false),
-                             max_store=4))
+                             q_store_max=4))
     @test res isa FitResult
 end
 
@@ -317,7 +317,7 @@ end
         rtol_theta=Inf,
         atol_Q=0.0,
         rtol_Q=0.0,
-        max_store=4
+        q_store_max=4
     ))
     # If stopping used only parameter tolerance, this would stop after 1 iteration.
     @test res.result.iterations == 2
@@ -353,7 +353,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             max_store=4))
+                             q_store_max=4))
     @test res isa FitResult
     re = NoLimits.get_random_effects(dm, res)
     @test !isempty(re)
@@ -387,7 +387,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             max_store=4);
+                             q_store_max=4);
                     constants_re=(; η=(; A=0.0,)))
     @test res isa FitResult
 end
@@ -420,7 +420,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             max_store=4);
+                             q_store_max=4);
                     serialization=EnsembleThreads())
     @test res isa FitResult
 end
@@ -453,7 +453,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             update_schedule=1, max_store=4))
+                             update_schedule=1, q_store_max=4))
     @test res isa FitResult
 end
 
@@ -488,7 +488,7 @@ end
                   optim_kwargs=(; maxiters=3),
                   sampler=MH(),
                   turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                  max_store=4)
+                  q_store_max=4)
     res = fit_model(dm, method)
     @test res isa FitResult
 end
@@ -525,7 +525,7 @@ end
                   optim_kwargs=(; iterations=3),
                   sampler=MH(),
                   turing_kwargs=(n_samples=4, n_adapt=0, progress=false),
-                  max_store=4,
+                  q_store_max=4,
                   lb=lb, ub=ub)
     res = fit_model(dm, method)
     @test res isa FitResult
@@ -559,7 +559,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             max_store=4);
+                             q_store_max=4);
                     constants=(a=0.2,))
     @test res isa FitResult
 end
@@ -596,7 +596,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             max_store=4))
+                             q_store_max=4))
     @test res isa FitResult
 end
 
@@ -629,7 +629,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             max_store=4,
+                             q_store_max=4,
                              builtin_stats=:closed_form,
                              resid_var_param=:σ,
                              re_cov_params=(; η=:τ)))
@@ -665,7 +665,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             max_store=4,
+                             q_store_max=4,
                              builtin_stats=:closed_form,
                              resid_var_param=:σ,
                              re_cov_params=(; η=:Ω)))
@@ -703,7 +703,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             max_store=4,
+                             q_store_max=4,
                              maxiters=2,
                              builtin_stats=:closed_form,
                              resid_var_param=:σ,
@@ -794,7 +794,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             max_store=4,
+                             q_store_max=4,
                              maxiters=3,
                              builtin_stats=:closed_form,
                              resid_var_param=:σ,
@@ -838,7 +838,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             max_store=4,
+                             q_store_max=4,
                              builtin_stats=:closed_form,
                              resid_var_param=:σ,
                              re_cov_params=(; η_id=:τ_id, η_site=:τ_site)))
@@ -877,7 +877,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             max_store=4,
+                             q_store_max=4,
                              builtin_stats=:closed_form,
                              resid_var_param=:σ,
                              re_cov_params=(; η=:τ)))
@@ -917,7 +917,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             max_store=4,
+                             q_store_max=4,
                              builtin_stats=:closed_form,
                              resid_var_param=(; y1=:σ1, y2=:σ2),
                              re_cov_params=(; η=:τ)))
@@ -957,7 +957,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             max_store=4,
+                             q_store_max=4,
                              maxiters=2,
                              builtin_stats=:closed_form,
                              resid_var_param=(; y1=:σ1, y2=:σ2),
@@ -999,7 +999,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             max_store=4,
+                             q_store_max=4,
                              builtin_stats=:closed_form,
                              re_cov_params=(; η=:τ)))
     @test res isa FitResult
@@ -1040,7 +1040,7 @@ end
     @test auto_cfg.resid_var_param == :σ
 
     res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             max_store=4,
+                             q_store_max=4,
                              maxiters=2,
                              builtin_stats=:auto))
     @test res isa FitResult
@@ -1083,7 +1083,7 @@ end
     @test auto_cfg.resid_var_param == :σ
 
     res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             max_store=4,
+                             q_store_max=4,
                              maxiters=2,
                              builtin_stats=:auto))
     @test res isa FitResult
@@ -1165,7 +1165,7 @@ end
     @test auto_cfg.resid_var_param == (; y_ln=(; μ=:μy, σ=:σy), y_exp=:θy)
 
     res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             max_store=4,
+                             q_store_max=4,
                              maxiters=2,
                              builtin_stats=:auto))
     @test res isa FitResult
@@ -1274,7 +1274,7 @@ end
                                   sampler=MH(),
                                   turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
                                   mcmc_steps=1,
-                                  max_store=4,
+                                  q_store_max=4,
                                   maxiters=2,
                                   progress=false,
                                   builtin_stats=:auto);
@@ -1323,7 +1323,7 @@ end
                                     sampler=MH(),
                                     turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
                                     mcmc_steps=1,
-                                    max_store=4,
+                                    q_store_max=4,
                                     maxiters=2,
                                     progress=false,
                                     builtin_stats=:auto);
@@ -1425,7 +1425,7 @@ end
                               sampler=MH(),
                               turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
                               mcmc_steps=1,
-                              max_store=4,
+                              q_store_max=4,
                               maxiters=2,
                               progress=false,
                               builtin_stats=:auto);
@@ -1576,7 +1576,7 @@ end
             sampler=MH(),
             turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
             mcmc_steps=1,
-            max_store=4,
+            q_store_max=4,
             maxiters=2,
             progress=false,
             builtin_stats=:auto);
@@ -1622,7 +1622,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             max_store=4,
+                             q_store_max=4,
                              builtin_mean=:glm))
     @test res isa FitResult
 end
@@ -1659,7 +1659,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             max_store=4,
+                             q_store_max=4,
                              builtin_mean=:glm))
     @test res isa FitResult
 end
@@ -1702,7 +1702,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             max_store=4,
+                             q_store_max=4,
                              maxiters=2,
                              builtin_mean=:glm))
     @test res isa FitResult
@@ -1737,7 +1737,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             max_store=4,
+                             q_store_max=4,
                              builtin_mean=:glm,
                              builtin_stats=:closed_form,
                              resid_var_param=:σ,
@@ -1778,7 +1778,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             max_store=4,
+                             q_store_max=4,
                              builtin_mean=:glm,
                              builtin_stats=:closed_form,
                              resid_var_param=(; y1=:σ1, y2=:σ2),
@@ -1876,7 +1876,7 @@ end
     method = NoLimits.SAEM(;
         sampler=MH(),
         turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-        max_store=4,
+        q_store_max=4,
         maxiters=2,
         mcmc_steps=1,
         t0=1,

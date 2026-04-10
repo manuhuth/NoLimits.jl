@@ -191,7 +191,7 @@ const _HMM_RE_SMOKE_METHODS = [
     (:MCMC, () -> NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=2, n_adapt=0, progress=false))),
     (:VI, () -> NoLimits.VI(; turing_kwargs=(max_iter=3, progress=false))),
     (:MCEM, () -> NoLimits.MCEM(; sampler=MH(), turing_kwargs=(n_samples=2, n_adapt=0, progress=false), maxiters=1, progress=false)),
-    (:SAEM, () -> NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=2, n_adapt=0, progress=false), mcmc_steps=1, max_store=4, maxiters=1, progress=false, builtin_stats=:auto)),
+    (:SAEM, () -> NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=2, n_adapt=0, progress=false), mcmc_steps=1, q_store_max=4, maxiters=1, progress=false, builtin_stats=:auto)),
 ]
 
 for (model_name, dm_builder) in _HMM_RE_SMOKE_MODELS

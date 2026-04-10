@@ -22,7 +22,9 @@ struct SAEMOptions{S, K, U, W, V, P, F1, F2, F3, B, M, R, C, RM, EO, EK, EA, EG,
     verbose::V
     progress::P
     mcmc_steps::Int
-    max_store::Int
+    q_store_max::Int
+    q_store_epsilon::Float64
+    q_store_min::Int
     t0::Int
     kappa::Float64
     maxiters::Int
@@ -81,28 +83,45 @@ function _init_saem_q_cache(::Type{T}, nbatches::Int, serialization) where {T}
 end
 
 # O2+O4+O5: ring buffer for SA sample history — avoids push!/deleteat! and Matrix wrappers
+# head: 1-based index of the oldest active entry.
+# next_idx: 1-based next-write position (= head when buffer is full).
+# Invariant: active slots in age order are head, head+1, ..., head+len-1 (all mod capacity,
+# 1-based). After each push, entries whose SA weight falls below q_epsilon are pruned from
+# the oldest end (subject to the q_min floor). Retained weights are normalised in _saem_Q.
 mutable struct _SAEMSampleStore
     weights::Vector{Float64}                          # [slot] weight, preallocated
     snaps::Vector{Vector{Vector{Float64}}}            # [slot][batch] re-values, preallocated
+    head::Int                                         # 1-based oldest active slot
     next_idx::Int                                     # 1-based next-write slot (wraps)
-    len::Int                                          # current fill count (0..capacity)
+    len::Int                                          # active entry count (0..capacity)
     capacity::Int
+    q_epsilon::Float64                                # weight pruning threshold
+    q_min::Int                                        # minimum retained entry count
 end
 
-function _init_saem_sample_store(capacity::Int, batch_infos::Vector{_LaplaceBatchInfo})
+function _init_saem_sample_store(capacity::Int, q_epsilon::Float64, q_min::Int,
+                                  batch_infos::Vector{_LaplaceBatchInfo})
     weights = zeros(Float64, capacity)
     snaps = [[zeros(Float64, info.n_b) for info in batch_infos] for _ in 1:capacity]
-    return _SAEMSampleStore(weights, snaps, 1, 0, capacity)
+    return _SAEMSampleStore(weights, snaps, 1, 1, 0, capacity, q_epsilon, q_min)
 end
 
 function _saem_store_push!(store::_SAEMSampleStore, b_current, γ::Float64)
     γ == 0.0 && return store
-    # Scale all existing weights in-place (no allocation)
     one_minus_γ = 1.0 - γ
-    @inbounds for i in 1:store.len
-        store.weights[i] *= one_minus_γ
+    # Scale all active weights in-place, iterating from head (wrapping)
+    h = store.head
+    @inbounds for _ in 1:store.len
+        store.weights[h] *= one_minus_γ
+        h = h == store.capacity ? 1 : h + 1
     end
-    # Overwrite at next_idx (evicts oldest entry when full)
+    # If full, evict oldest by advancing head (len stays at capacity)
+    if store.len == store.capacity
+        store.head = store.head == store.capacity ? 1 : store.head + 1
+    else
+        store.len += 1
+    end
+    # Write new entry to next_idx
     idx = store.next_idx
     store.weights[idx] = γ
     snaps_slot = store.snaps[idx]
@@ -111,7 +130,12 @@ function _saem_store_push!(store::_SAEMSampleStore, b_current, γ::Float64)
         isempty(snap) || copyto!(snap, b_current[bi])
     end
     store.next_idx = store.next_idx == store.capacity ? 1 : store.next_idx + 1
-    store.len = store.len < store.capacity ? store.len + 1 : store.capacity
+    # Prune entries below q_epsilon from the oldest end (subject to q_min floor)
+    @inbounds while store.len > store.q_min &&
+                    store.weights[store.head] < store.q_epsilon
+        store.head = store.head == store.capacity ? 1 : store.head + 1
+        store.len -= 1
+    end
     return store
 end
 
@@ -229,7 +253,8 @@ end
 
 """
     SAEM(; optimizer, optim_kwargs, adtype, sampler, turing_kwargs, update_schedule,
-           warm_start, verbose, progress, mcmc_steps, max_store, t0, kappa, maxiters,
+           warm_start, verbose, progress, mcmc_steps, q_store_max, q_store_epsilon,
+           q_store_min, t0, kappa, maxiters,
            rtol_theta, atol_theta, rtol_Q, atol_Q, consecutive_params, suffstats,
            q_from_stats, mstep_closed_form, builtin_stats, builtin_mean,
            resid_var_param, re_cov_params, re_mean_params, ebe_optimizer,
@@ -255,7 +280,18 @@ or closed-form updates (when `builtin_stats` is enabled).
 - `verbose::Bool = false`: print per-iteration diagnostics.
 - `progress::Bool = true`: show a progress bar.
 - `mcmc_steps::Int = 80`: number of MCMC steps per E-step.
-- `max_store::Int = 50`: size of the sufficient statistic history window.
+- `q_store_max::Int = 50`: ring buffer capacity — maximum number of snapshots retained.
+- `q_store_epsilon::Float64 = 1e-10`: weight threshold for the adaptive memory policy.
+  After each push, snapshots whose SA weight falls below this value are pruned from the
+  oldest end of the buffer (subject to `q_store_min`). The retained weights are
+  renormalised to sum to 1 before evaluating Q, so Q is scale-invariant to pruning.
+  During the γ=1 stabilisation phase all previous snapshots are immediately pruned,
+  keeping only the current iteration's sample. Only applies to the numeric Q path;
+  if `suffstats` is provided this parameter has no effect (a warning is emitted if set
+  to a non-default value).
+- `q_store_min::Int = 0`: guaranteed minimum number of retained snapshots. When epsilon
+  pruning would reduce the active count below this floor, the most-recent snapshots are
+  kept unconditionally regardless of their weight.
 - `t0::Int = 20`: burn-in iterations before stochastic approximation averaging begins.
 - `kappa::Float64 = 0.65`: step-size decay exponent for the Robbins-Monro schedule.
 - `maxiters::Int = 300`: maximum number of SAEM iterations.
@@ -302,7 +338,9 @@ SAEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(
     verbose=false,
     progress=true,
     mcmc_steps=80,
-     max_store=50,
+     q_store_max::Int=50,
+     q_store_epsilon::Float64=1e-10,
+     q_store_min::Int=0,
      t0=150,
      kappa=0.65,
     maxiters=300,
@@ -354,9 +392,18 @@ SAEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(
      sa_anneal_fn=nothing,
      auto_var_lb::Bool=true,
      var_lb_value::Float64=1e-5) = begin
+    q_store_max >= 1 ||
+        error("SAEM: q_store_max must be ≥ 1. Got: $q_store_max")
+    0 <= q_store_min <= q_store_max ||
+        error("SAEM: q_store_min must satisfy 0 ≤ q_store_min ≤ q_store_max. Got: q_store_min=$q_store_min, q_store_max=$q_store_max")
+    0 < q_store_epsilon < 1 ||
+        error("SAEM: q_store_epsilon must be in (0, 1). Got: $q_store_epsilon")
+    if suffstats !== nothing && q_store_epsilon != 1e-10
+        @warn "SAEM: q_store_epsilon has no effect when suffstats is provided. The adaptive Q memory policy only applies to the numeric Q path."
+    end
     ebe_rescue = EBERescueOptions(ebe_rescue_on_high_grad, ebe_rescue_multistart_n, ebe_rescue_multistart_k, ebe_rescue_max_rounds, ebe_rescue_grad_tol, ebe_rescue_multistart_sampling)
     saem = SAEMOptions(sampler, turing_kwargs, update_schedule, warm_start, verbose, progress,
-                       mcmc_steps, max_store, t0, kappa,
+                       mcmc_steps, q_store_max, q_store_epsilon, q_store_min, t0, kappa,
                        maxiters, rtol_theta, atol_theta, rtol_Q, atol_Q, consecutive_params,
                        suffstats, q_from_stats, mstep_closed_form,
                        builtin_stats, builtin_mean, resid_var_param, re_cov_params, re_mean_params,
@@ -2068,6 +2115,17 @@ function _saem_batches(update_schedule, nbatches::Int, iter::Int, rng::AbstractR
     return _saem_batches!(Vector{Int}(), update_schedule, nbatches, iter, rng)
 end
 
+# Sum of active snapshot weights (always Float64; used for renormalisation in _saem_Q).
+function _saem_store_weight_sum(store::_SAEMSampleStore)
+    s = 0.0
+    h = store.head
+    @inbounds for _ in 1:store.len
+        s += store.weights[h]
+        h = h == store.capacity ? 1 : h + 1
+    end
+    return s
+end
+
 function _saem_Q(dm::DataModel,
                  batch_infos::Vector{_LaplaceBatchInfo},
                  θ::ComponentArray,
@@ -2079,6 +2137,13 @@ function _saem_Q(dm::DataModel,
                  anneal_sds::NamedTuple=NamedTuple())
     total = zero(eltype(θ))
     store.len == 0 && return total
+    # Compute weight sum once (Float64) for renormalisation; guard against degenerate store.
+    weight_sum = _saem_store_weight_sum(store)
+    weight_sum < 1e-300 && return total
+    # Capture head/len as locals — they must not change during Q evaluation.
+    h_start = store.head
+    active_len = store.len
+    cap = store.capacity
     if serialization isa SciMLBase.EnsembleThreads
         nthreads = Threads.maxthreadid()
         caches = _saem_thread_caches(dm, ll_cache, nthreads)
@@ -2095,9 +2160,11 @@ function _saem_Q(dm::DataModel,
             tid = Threads.threadid()
             info = batch_infos[bi]
             acc = zero(eltype(θ))
-            @inbounds for k in 1:store.len
-                w = store.weights[k]
-                snap = store.snaps[k][bi]
+            h = h_start
+            @inbounds for _ in 1:active_len
+                w = store.weights[h]
+                snap = store.snaps[h][bi]
+                h = h == cap ? 1 : h + 1
                 isempty(snap) && continue
                 logf = _laplace_logf_batch(dm, info, θ, snap, const_cache, caches[tid];
                                            anneal_sds=anneal_sds)
@@ -2112,14 +2179,16 @@ function _saem_Q(dm::DataModel,
         @inbounds for bi in eachindex(batch_infos)
             total += partial_obj[bi]
         end
-        return total
+        return total / weight_sum
     else
         ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
         for (bi, info) in enumerate(batch_infos)
             acc = zero(eltype(θ))
-            @inbounds for k in 1:store.len
-                w = store.weights[k]
-                snap = store.snaps[k][bi]
+            h = h_start
+            @inbounds for _ in 1:active_len
+                w = store.weights[h]
+                snap = store.snaps[h][bi]
+                h = h == cap ? 1 : h + 1
                 isempty(snap) && continue
                 logf = _laplace_logf_batch(dm, info, θ, snap, const_cache, ll_cache_local;
                                            anneal_sds=anneal_sds)
@@ -2128,7 +2197,7 @@ function _saem_Q(dm::DataModel,
             end
             total += acc
         end
-        return total
+        return total / weight_sum
     end
 end
 
@@ -2157,7 +2226,7 @@ function _saem_obsLL(dm::DataModel,
 end
 
 # Evaluate Q from only the current iteration's samples (b_current).
-# Used when mstep_sa_on_params=true: O(N) vs O(max_store × N) for _saem_Q.
+# Used when mstep_sa_on_params=true: O(N) vs O(q_store_max × N) for _saem_Q.
 function _saem_Q_current(dm::DataModel,
                           batch_infos::Vector{_LaplaceBatchInfo},
                           θ::ComponentArray,
@@ -2509,7 +2578,8 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
     var_lb_eff = min(method.saem.anneal_min_sd, method.saem.var_lb_value)
 
     # O2+O4+O5: preallocated ring buffer for SA sample history
-    sample_store = _init_saem_sample_store(method.saem.max_store, batch_infos)
+    sample_store = _init_saem_sample_store(method.saem.q_store_max, method.saem.q_store_epsilon,
+                                           method.saem.q_store_min, batch_infos)
     s = nothing
     builtin_stats_state = nothing
     closed_form_builtin_used = false

@@ -63,7 +63,7 @@ end
         sampler    = SaemixMH(n_kern1=2, n_kern2=2),
         maxiters   = 100,
         mcmc_steps = 1,
-        max_store  = 20,
+        q_store_max  = 20,
         progress   = false,
     ))
 
@@ -115,7 +115,7 @@ end
         sampler      = SaemixMH(n_kern1=2, n_kern2=2),
         maxiters     = 80,
         mcmc_steps   = 1,
-        max_store    = 20,
+        q_store_max    = 20,
         builtin_mean = :glm,
         re_cov_params = (; η = :τ),
         progress     = false,
@@ -162,7 +162,7 @@ end
         sampler    = SaemixMH(),
         maxiters   = 20,
         mcmc_steps = 1,
-        max_store  = 10,
+        q_store_max  = 10,
         progress   = false,
     ))
     @test isfinite(NoLimits.get_objective(res))

@@ -713,14 +713,14 @@ Tests: `test/estimation_mcem_tests.jl`
 
 ```julia
 fit_model(dm, SAEM(; sampler, turing_kwargs, optimizer, optim_kwargs, adtype,
-                     maxiters, t0, kappa, max_store, update_schedule,
-                     rtol_theta, atol_theta, rtol_Q, atol_Q, consecutive_params,
-                     builtin_stats, builtin_mean, ...))
+                     maxiters, t0, kappa, q_store_max, q_store_epsilon, q_store_min,
+                     update_schedule, rtol_theta, atol_theta, rtol_Q, atol_Q,
+                     consecutive_params, builtin_stats, builtin_mean, ...))
 ```
 
 Core idea: E-step batchwise MCMC; Q update via Robbins–Monro recursion with step size γ_t; M-step via Optimization.jl or closed-form. EBEs computed via Laplace-style after fitting.
 
-Default options: `update_schedule=:all`, `warm_start=true`, `max_store=50`, `t0=20`, `kappa=0.65`, `maxiters=300`, `consecutive_params=4`.
+Default options: `update_schedule=:all`, `warm_start=true`, `q_store_max=50`, `q_store_epsilon=1e-10`, `q_store_min=0`, `t0=20`, `kappa=0.65`, `maxiters=300`, `consecutive_params=4`.
 
 Built-in sufficient statistics:
 - `builtin_stats=:gaussian_re` — updates Gaussian RE variance (scalar and multivariate) and optional Normal outcome residual variance.

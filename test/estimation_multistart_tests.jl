@@ -226,7 +226,7 @@ end
                                         maxiters=2))
     @test !isempty(NoLimits.get_random_effects(res_mcem))
     res_saem = fit_model(ms, dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                                        max_store=3,
+                                        q_store_max=3,
                                         maxiters=2))
     @test !isempty(NoLimits.get_random_effects(res_saem))
 end
@@ -259,7 +259,7 @@ end
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     ms = NoLimits.Multistart(dists=(; a=Normal(0.0, 1.0)), n_draws_requested=3, n_draws_used=2)
     res = fit_model(ms, dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                                     max_store=3,
+                                     q_store_max=3,
                                      builtin_stats=:closed_form,
                                      resid_var_param=:σ,
                                      re_cov_params=(; η=:τ),

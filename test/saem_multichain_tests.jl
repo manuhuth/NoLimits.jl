@@ -101,7 +101,7 @@ end
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
         turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
-        maxiters=4, t0=2, progress=false, max_store=4, builtin_stats=:none,
+        maxiters=4, t0=2, progress=false, q_store_max=4, builtin_stats=:none,
         n_chains=1
     ))
     conv = NoLimits.get_diagnostics(res).convergence
@@ -115,7 +115,7 @@ end
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
         turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
-        maxiters=4, t0=2, progress=false, max_store=4, builtin_stats=:none,
+        maxiters=4, t0=2, progress=false, q_store_max=4, builtin_stats=:none,
         n_chains=2
     ))
     conv = NoLimits.get_diagnostics(res).convergence
@@ -130,7 +130,7 @@ end
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
         turing_kwargs=(n_samples=2, n_adapt=0, progress=false),
-        maxiters=2, t0=1, progress=false, max_store=3, builtin_stats=:none,
+        maxiters=2, t0=1, progress=false, q_store_max=3, builtin_stats=:none,
         auto_small_n_chains=true, small_n_chain_target=50
     ))
     conv = NoLimits.get_diagnostics(res).convergence
@@ -165,7 +165,7 @@ end
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
         turing_kwargs=(n_samples=1, n_adapt=0, progress=false),
-        maxiters=2, t0=1, progress=false, max_store=3, builtin_stats=:none,
+        maxiters=2, t0=1, progress=false, q_store_max=3, builtin_stats=:none,
         n_chains=1, auto_small_n_chains=true, small_n_chain_target=50
     ))
     conv = NoLimits.get_diagnostics(res).convergence

@@ -182,7 +182,7 @@ end
 
 
     res_saem = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                                  max_store=4,
+                                  q_store_max=4,
                                   maxiters=2))
     re_saem = NoLimits.get_random_effects(res_saem)
     @test !isempty(re_saem)

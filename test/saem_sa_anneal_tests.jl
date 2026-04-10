@@ -215,7 +215,7 @@ end
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
         turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
-        maxiters=6, t0=2, progress=false, max_store=4, builtin_stats=:none,
+        maxiters=6, t0=2, progress=false, q_store_max=4, builtin_stats=:none,
         sa_anneal_iters=4, sa_anneal_alpha=0.9,
     ))
     conv = NoLimits.get_diagnostics(res).convergence
@@ -232,7 +232,7 @@ end
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
         turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
-        maxiters=4, t0=2, progress=false, max_store=4, builtin_stats=:none,
+        maxiters=4, t0=2, progress=false, q_store_max=4, builtin_stats=:none,
         sa_anneal_iters=4, sa_anneal_alpha=0.9,
     ))
     @test isfinite(NoLimits.get_objective(res))
@@ -243,7 +243,7 @@ end
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
         turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
-        maxiters=4, t0=2, progress=false, max_store=4, builtin_stats=:none,
+        maxiters=4, t0=2, progress=false, q_store_max=4, builtin_stats=:none,
         sa_anneal_iters=4, sa_anneal_alpha=0.0,
         # alpha=0 → floor=0 → no clamping ever
     ))
@@ -259,7 +259,7 @@ end
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
         turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
-        maxiters=6, t0=2, progress=false, max_store=4, builtin_stats=:none,
+        maxiters=6, t0=2, progress=false, q_store_max=4, builtin_stats=:none,
         sa_anneal_iters=4, sa_anneal_alpha=0.9,
     ))
     conv = NoLimits.get_diagnostics(res).convergence
@@ -275,7 +275,7 @@ end
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
         turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
-        maxiters=6, t0=2, progress=false, max_store=4, builtin_stats=:none,
+        maxiters=6, t0=2, progress=false, q_store_max=4, builtin_stats=:none,
         sa_anneal_iters=4, sa_anneal_alpha=0.9,
         sa_anneal_targets=(; omega=0.9),
     ))
@@ -306,7 +306,7 @@ end
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
         turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
-        maxiters=4, t0=2, progress=false, max_store=4, builtin_stats=:none,
+        maxiters=4, t0=2, progress=false, q_store_max=4, builtin_stats=:none,
     ))
     conv = NoLimits.get_diagnostics(res).convergence
     @test isfinite(NoLimits.get_objective(res))
@@ -319,7 +319,7 @@ end
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
         turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
-        maxiters=6, t0=2, progress=false, max_store=4, builtin_stats=:none,
+        maxiters=6, t0=2, progress=false, q_store_max=4, builtin_stats=:none,
         sa_anneal_iters=4, sa_anneal_alpha=0.9, sa_anneal_schedule=:linear,
     ))
     @test isfinite(NoLimits.get_objective(res))
@@ -333,7 +333,7 @@ end
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
         turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
-        maxiters=10, t0=2, progress=false, max_store=4, builtin_stats=:none,
+        maxiters=10, t0=2, progress=false, q_store_max=4, builtin_stats=:none,
         sa_anneal_alpha=0.9,  # sa_anneal_iters=0 (default) → auto = 3
     ))
     conv = NoLimits.get_diagnostics(res).convergence

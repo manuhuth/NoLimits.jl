@@ -138,7 +138,7 @@ end
     store = NoLimits._SAEMSampleStore(
         zeros(Float64, capacity),
         [[zeros(Float64, 1) for _ in 1:n_batches] for _ in 1:capacity],
-        1, 0, capacity
+        1, 1, 0, capacity, 1e-10, 0
     )
     b = [zeros(Float64, 1), zeros(Float64, 1)]
 
@@ -181,7 +181,7 @@ end
         sampler=MH(),
         turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
         maxiters=5, t0=2, kappa=0.65,
-        progress=false, max_store=4, builtin_stats=:none
+        progress=false, q_store_max=4, builtin_stats=:none
     ))
     conv   = NoLimits.get_diagnostics(res).convergence
     method = NoLimits.get_method(res)
@@ -210,7 +210,7 @@ end
         maxiters=8,
         sa_schedule=:two_phase,
         sa_burnin_iters=2, sa_phase1_iters=3, sa_phase2_kappa=-1.0,
-        progress=false, max_store=4, builtin_stats=:none
+        progress=false, q_store_max=4, builtin_stats=:none
     ))
     conv = NoLimits.get_diagnostics(res).convergence
 
@@ -241,7 +241,7 @@ end
         turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
         maxiters=4,
         sa_schedule=:custom, sa_schedule_fn=constant_fn,
-        progress=false, max_store=4, builtin_stats=:none
+        progress=false, q_store_max=4, builtin_stats=:none
     ))
     conv = NoLimits.get_diagnostics(res).convergence
 

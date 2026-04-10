@@ -120,8 +120,12 @@ method = NoLimits.SAEM(;
     atol_Q=5e-7,
     consecutive_params=4,
 
+    # Adaptive Q memory policy
+    q_store_max=50,
+    q_store_epsilon=1e-10,
+    q_store_min=0,
+
     # Custom statistics hooks
-    max_store=50,
     suffstats=nothing,
     q_from_stats=nothing,
     mstep_closed_form=nothing,
@@ -180,7 +184,8 @@ The constructor arguments are organized into the following functional groups.
 | SA variance annealing | `sa_anneal_targets`, `sa_anneal_schedule`, `sa_anneal_iters`, `sa_anneal_alpha`, `sa_anneal_fn` | Post-M-step variance floor that decays over iterations to prevent early collapse. |
 | Variance lower bound | `auto_var_lb`, `var_lb_value` | Hard permanent floor on variance / SD parameters. |
 | Convergence and stopping | `maxiters`, `rtol_theta`, `atol_theta`, `rtol_Q`, `atol_Q`, `consecutive_params` | Stopping criteria. |
-| Custom statistics hooks | `suffstats`, `q_from_stats`, `mstep_closed_form`, `max_store` | User-defined sufficient statistics and optional closed-form M-step. |
+| Adaptive Q memory | `q_store_max`, `q_store_epsilon`, `q_store_min` | Ring buffer capacity and adaptive pruning policy for the numerical Q path. |
+| Custom statistics hooks | `suffstats`, `q_from_stats`, `mstep_closed_form` | User-defined sufficient statistics and optional closed-form M-step. |
 | Built-in statistics hooks | `builtin_stats`, `builtin_mean`, `resid_var_param`, `re_cov_params`, `re_mean_params` | Automatic closed-form parameter updates for supported distribution structures. |
 | M-step variant | `mstep_sa_on_params` | Use current-iteration samples (not ring buffer) with Robbins-Monro parameter update. |
 | Final EB modes | `ebe_*`, `ebe_rescue_*` | Post-fit empirical Bayes mode optimization used by random-effects accessors. |
@@ -312,9 +317,25 @@ SAEM supports a fully user-defined sufficient-statistics pathway, allowing close
   - Callback for user-defined closed-form M-step:
     - `mstep_closed_form(s, dm) -> ComponentArray`
   - The closed-form M-step is activated only when both `suffstats` and `mstep_closed_form` are provided.
-- `max_store`
-  - Number of latent snapshot iterations retained for numerical Q evaluation.
-  - Used in the numerical Q path (i.e., when `suffstats` is not active).
+### Adaptive Q Memory Policy Inputs
+
+These arguments control the ring buffer used for numerical Q evaluation (the path taken when `suffstats` is not provided).
+
+- `q_store_max` (default `50`)
+  - Ring buffer capacity: the maximum number of snapshots retained at any time.
+- `q_store_epsilon` (default `1e-10`)
+  - Weight pruning threshold. After each push, snapshots whose SA weight falls below
+    this value are removed from the oldest end of the buffer (subject to `q_store_min`).
+    During the γ=1 stabilisation phase all previous snapshots are immediately pruned,
+    keeping only the current iteration's sample in the buffer.
+  - The retained weights are renormalised to sum to 1 before evaluating Q, so the
+    objective is scale-invariant to pruning.
+  - Has no effect when `suffstats` is provided; a warning is emitted if set to a
+    non-default value alongside `suffstats`.
+- `q_store_min` (default `0`)
+  - Guaranteed minimum number of retained snapshots. When epsilon pruning would reduce
+    the active count below this floor, the most-recent snapshots are kept
+    unconditionally regardless of their weight.
 
 ### Built-in Update Inputs
 

@@ -373,7 +373,7 @@ end
     res_saem = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
         turing_kwargs=(n_samples=2, n_adapt=0, progress=false),
-        mcmc_steps=1, max_store=4, maxiters=1, progress=false, builtin_stats=:auto);
+        mcmc_steps=1, q_store_max=4, maxiters=1, progress=false, builtin_stats=:auto);
         rng=Random.Xoshiro(42))
     @test res_saem isa FitResult
     @test isfinite(NoLimits.get_objective(res_saem))
