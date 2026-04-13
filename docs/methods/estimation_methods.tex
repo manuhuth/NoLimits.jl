@@ -634,7 +634,6 @@ p(b_{\mathcal{C}};\theta)
 =
 \prod_{i\in\mathcal{C}}p(\eta_i;\theta)\prod_{j\in\mathcal{J}(\mathcal{C})}p(\lambda_j;\theta)\prod_{k\in\mathcal{K}(\mathcal{C})}p(a_k;\theta).
 \end{aligned}
-
 \]
 The marginal likelihood factorizes over batches \(\{\mathcal{C}_1,\dots,\mathcal{C}_M\}\), hence the marginal log-likelihood is
 \[
@@ -884,9 +883,9 @@ with Gaussian random effects.
 \noindent
 \emph{A4. Conjugate hierarchical models.}
 \begin{itemize}
-\item Poisson–Gamma
-\item Binomial–Beta
-\item Multinomial–Dirichlet
+\item Poisson--Gamma
+\item Binomial--Beta
+\item Multinomial--Dirichlet
 \end{itemize}
 \emph{Result:} Full conjugacy yields exponential-family structure and closed-form SAEM updates.
 
@@ -955,8 +954,8 @@ y_i = f(t_i,\theta,\eta_i) + \varepsilon_i.
 \noindent
 \textbf{Summary and implementation guidance.}
 \begin{itemize}
-\item Exponential-family structure in \(\theta\) ⇒ SAEM with sufficient statistics and closed-form or low-dimensional M-step.
-\item Nonlinear dependence of \(\theta\) inside variances, link functions, or constraints ⇒ SAEM with numerical M-step.
+\item Exponential-family structure in \(\theta\) $\Rightarrow$ SAEM with sufficient statistics and closed-form or low-dimensional M-step.
+\item Nonlinear dependence of \(\theta\) inside variances, link functions, or constraints $\Rightarrow$ SAEM with numerical M-step.
 \item Both regimes share the same stochastic-approximation E-step and block MCMC sampler.
 \end{itemize}
 

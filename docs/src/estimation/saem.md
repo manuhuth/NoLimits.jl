@@ -77,7 +77,7 @@ using LineSearches
 method = NoLimits.SAEM(;
     # M-step optimizer
     optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
-    optim_kwargs=NamedTuple(),
+    optim_kwargs=(; iterations=50),
     adtype=Optimization.AutoForwardDiff(),
 
     # E-step sampler
@@ -138,7 +138,11 @@ method = NoLimits.SAEM(;
     re_mean_params=NamedTuple(),
 
     # M-step variant
-    mstep_sa_on_params=false,
+    mstep_sa_on_params=true,
+
+    # E-step retry (used when mstep_sa_on_params=true)
+    max_estep_retries=3,
+    retry_mcmc_steps=1,
 
     # Verbose / progress
     verbose=false,
@@ -187,7 +191,8 @@ The constructor arguments are organized into the following functional groups.
 | Adaptive Q memory | `q_store_max`, `q_store_epsilon`, `q_store_min` | Ring buffer capacity and adaptive pruning policy for the numerical Q path. |
 | Custom statistics hooks | `suffstats`, `q_from_stats`, `mstep_closed_form` | User-defined sufficient statistics and optional closed-form M-step. |
 | Built-in statistics hooks | `builtin_stats`, `builtin_mean`, `resid_var_param`, `re_cov_params`, `re_mean_params` | Automatic closed-form parameter updates for supported distribution structures. |
-| M-step variant | `mstep_sa_on_params` | Use current-iteration samples (not ring buffer) with Robbins-Monro parameter update. |
+| M-step variant | `mstep_sa_on_params` | Use current-iteration samples (not ring buffer) with Robbins-Monro parameter update (default). |
+| E-step retry | `max_estep_retries`, `retry_mcmc_steps` | Re-sample batches that yield a non-finite objective when `mstep_sa_on_params=true`. |
 | Final EB modes | `ebe_*`, `ebe_rescue_*` | Post-fit empirical Bayes mode optimization used by random-effects accessors. |
 | Bounds | `lb`, `ub` | Optional transformed-scale bounds on free fixed effects. |
 | RE annealing | `anneal_to_fixed`, `anneal_schedule`, `anneal_min_sd` | Progressive shrinkage of selected RE prior SDs toward zero, collapsing those effects to fixed by the final iteration. |
@@ -224,13 +229,29 @@ When the M-step is performed numerically (i.e., no closed-form update is provide
   - Default: `OptimizationOptimJL.LBFGS(...)`.
 - `optim_kwargs`
   - Keyword arguments forwarded to `Optimization.solve`.
+  - Default: `(; iterations=50)`. The inner LBFGS is capped at 50 iterations per SAEM step; the outer SA loop provides the global convergence trajectory.
 - `adtype`
   - Automatic differentiation backend used to construct the `OptimizationFunction`.
 - `mstep_sa_on_params`
-  - When `false` (default), the M-step minimizes the ring-buffer Q-function and sets `θ_new = θ̂` directly.
-  - When `true`, the M-step uses only the current iteration's samples and applies a Robbins-Monro parameter update: `θ_new = θ_old + γ*(θ̂ - θ_old)`. Recommended when using `SaemixMH` (whose kernel-1 draws from the prior, so the current-sample Q is well-identified). For Turing-based samplers the ring-buffer default is preferred.
+  - When `true` (default), the M-step optimizes only the current iteration's samples and applies a Robbins-Monro parameter update: `θ_new = θ_old + γ*(θ̂ - θ_old)`. The ring buffer is capped to capacity 1, eliminating storage and reweighting overhead from previous snapshots. This is significantly more memory-efficient than the ring-buffer path and is the recommended mode.
+  - When `false`, the M-step minimizes the full ring-buffer Q-function and sets `θ_new = θ̂` directly. Useful as a diagnostic or when you want the classical ring-buffer SAEM behaviour.
 
 SAEM uses the SciML [Optimization.jl](https://docs.sciml.ai/Optimization/stable/) interface for numerical M-step updates.
+
+### E-step Retry Inputs
+
+When `mstep_sa_on_params=true`, batches that produce a non-finite objective after an E-step update are automatically re-sampled before the M-step. This makes the mode safe to use with any sampler, including Turing-based samplers (`MH()`, `NUTS`) that can occasionally draw from low-density regions early in training.
+
+- `max_estep_retries`
+  - Maximum number of re-sampling attempts for non-finite batches per iteration.
+  - Must be `≥ 0`. Setting to `0` disables the retry mechanism entirely.
+  - Default: `3`.
+- `retry_mcmc_steps`
+  - Number of MCMC steps used in each retry attempt (per bad batch).
+  - Must be `≥ 1`.
+  - Default: `1`.
+
+Only batches with a non-finite log-joint are retried; finite batches are not touched. If a batch remains non-finite after all retries, it is skipped for this iteration and the previous sample is retained.
 
 ### SA Schedule Inputs
 
@@ -422,7 +443,7 @@ Constructor keywords:
 - `target_accept::Float64 = 0.44`: target acceptance rate for kernel-2 adaptation.
 - `adapt_rate::Float64 = 0.7`: Robbins-Monro exponent for kernel-2 scale updates.
 
-`SaemixMH` works well with `mstep_sa_on_params=true` because kernel-1's prior-proposal structure makes the current-sample Q well-identified.
+`SaemixMH` pairs naturally with the default `mstep_sa_on_params=true` because kernel-1's prior-proposal draws always produce a finite log-joint, so E-step retries are rarely triggered. For Turing-based samplers (`MH()`, `NUTS`) the E-step retry mechanism (`max_estep_retries=3`) handles the occasional non-finite objective that can arise early in training.
 
 ### `AdaptiveNoLimitsMH`
 

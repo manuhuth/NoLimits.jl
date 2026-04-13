@@ -975,7 +975,7 @@ function _laplace_maybe_polish_fast_ode!(cache::_LaplaceCache,
                               optim_kwargs=optim_kwargs,
                               adtype=adtype)
     catch err
-        if err isa DomainError || err isa ArgumentError || err isa MethodError
+        if err isa DomainError || err isa ArgumentError || err isa MethodError || err isa ErrorException
             nothing
         else
             rethrow(err)
@@ -1382,7 +1382,7 @@ function _laplace_compute_bstar_batch!(cache::_LaplaceCache,
                               optim_kwargs=optim_kwargs,
                               adtype=adtype)
     catch err
-        if err isa DomainError || err isa ArgumentError
+        if err isa DomainError || err isa ArgumentError || err isa ErrorException
             nothing
         else
             rethrow(err)
@@ -1433,7 +1433,7 @@ function _laplace_compute_bstar_batch!(cache::_LaplaceCache,
                                           optim_kwargs=optim_kwargs,
                                           adtype=adtype)
                 catch err
-                    if err isa DomainError || err isa ArgumentError
+                    if err isa DomainError || err isa ArgumentError || err isa ErrorException
                         nothing
                     else
                         rethrow(err)
