@@ -69,6 +69,8 @@ struct SAEMOptions{S, K, U, W, V, P, F1, F2, F3, B, M, R, C, RM, EO, EK, EA, EG,
     sa_anneal_fn::ANF
     auto_var_lb::Bool
     var_lb_value::Float64
+    max_estep_retries::Int
+    retry_mcmc_steps::Int
 end
 
 struct _SAEMQCache{T}
@@ -271,7 +273,9 @@ or closed-form updates (when `builtin_stats` is enabled).
 
 # Keyword Arguments
 - `optimizer`: M-step Optimization.jl optimiser. Defaults to `LBFGS` with backtracking.
-- `optim_kwargs::NamedTuple = NamedTuple()`: keyword arguments for the M-step `solve`.
+- `optim_kwargs::NamedTuple = (; iterations=50)`: keyword arguments for the M-step `solve`.
+  The default caps the inner LBFGS at 50 iterations per M-step, which is sufficient given
+  the SA parameter update smooths θ across iterations.
 - `adtype`: AD backend for the M-step. Defaults to `AutoForwardDiff()`.
 - `sampler`: Turing-compatible sampler. Defaults to `MH()`.
 - `turing_kwargs::NamedTuple = NamedTuple()`: keyword arguments for `Turing.sample`.
@@ -311,13 +315,20 @@ or closed-form updates (when `builtin_stats` is enabled).
   `ebe_multistart_sampling`: multistart settings for EBE mode computation.
 - `ebe_rescue_*`: rescue multistart settings when an EBE mode has a high gradient norm.
 - `lb`, `ub`: bounds on the transformed fixed-effect scale, or `nothing`.
-- `mstep_sa_on_params::Bool = false`: if `true`, the numerical M-step uses only the
+- `mstep_sa_on_params::Bool = true`: if `true`, the numerical M-step uses only the
   current iteration's random-effect samples (not the ring buffer) as the objective,
   and applies a Robbins-Monro parameter update
   `θ_new = θ_old + γ*(θ̂ − θ_old)` rather than setting `θ_new = θ̂` directly.
-  Useful with `SaemixMH` (whose kernel-1 draws from the prior, so the current-sample
-  Q is well-identified). For Turing-based samplers (`MH`, `NUTS`) the ring-buffer
-  default is preferred.
+  Works with any sampler; see `max_estep_retries` for robustness against non-finite
+  objectives early in training. Set to `false` to revert to the ring-buffer M-step.
+- `max_estep_retries::Int = 3`: when `mstep_sa_on_params=true`, maximum number of
+  additional E-step rounds to attempt when one or more batches produce a non-finite
+  log-likelihood at the current RE sample. Each retry re-runs the MCMC sampler for
+  the offending batches only (using `retry_mcmc_steps` steps), then overwrites the
+  capacity-1 ring buffer slot. If all retries are exhausted the M-step is skipped for
+  that iteration (existing behaviour). Has no effect when `mstep_sa_on_params=false`.
+- `retry_mcmc_steps::Int = 1`: number of MCMC steps per retry attempt. Kept small
+  (default 1) since the goal is merely to escape the bad RE value, not to fully mix.
 """
 struct SAEM{O, K, A, SO, L, U} <: FittingMethod
     optimizer::O
@@ -329,7 +340,7 @@ struct SAEM{O, K, A, SO, L, U} <: FittingMethod
 end
 
 SAEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
-     optim_kwargs=NamedTuple(),
+     optim_kwargs=(; iterations=50),
      adtype=Optimization.AutoForwardDiff(),
      sampler=MH(),
      turing_kwargs=NamedTuple(),
@@ -376,7 +387,7 @@ SAEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(
      anneal_to_fixed=(),
      anneal_schedule=:exponential,
      anneal_min_sd=1e-5,
-     mstep_sa_on_params::Bool=false,
+     mstep_sa_on_params::Bool=true,
      sa_schedule::Symbol=:robbins_monro,
      sa_burnin_iters::Int=0,
      sa_phase1_iters::Int=200,
@@ -391,7 +402,9 @@ SAEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(
      sa_anneal_alpha::Float64=0.9,
      sa_anneal_fn=nothing,
      auto_var_lb::Bool=true,
-     var_lb_value::Float64=1e-5) = begin
+     var_lb_value::Float64=1e-5,
+     max_estep_retries::Int=3,
+     retry_mcmc_steps::Int=1) = begin
     q_store_max >= 1 ||
         error("SAEM: q_store_max must be ≥ 1. Got: $q_store_max")
     0 <= q_store_min <= q_store_max ||
@@ -401,6 +414,10 @@ SAEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(
     if suffstats !== nothing && q_store_epsilon != 1e-10
         @warn "SAEM: q_store_epsilon has no effect when suffstats is provided. The adaptive Q memory policy only applies to the numeric Q path."
     end
+    max_estep_retries >= 0 ||
+        error("SAEM: max_estep_retries must be ≥ 0. Got: $max_estep_retries")
+    retry_mcmc_steps >= 1 ||
+        error("SAEM: retry_mcmc_steps must be ≥ 1. Got: $retry_mcmc_steps")
     ebe_rescue = EBERescueOptions(ebe_rescue_on_high_grad, ebe_rescue_multistart_n, ebe_rescue_multistart_k, ebe_rescue_max_rounds, ebe_rescue_grad_tol, ebe_rescue_multistart_sampling)
     saem = SAEMOptions(sampler, turing_kwargs, update_schedule, warm_start, verbose, progress,
                        mcmc_steps, q_store_max, q_store_epsilon, q_store_min, t0, kappa,
@@ -415,7 +432,7 @@ SAEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(
                        sa_schedule, sa_burnin_iters, sa_phase1_iters, sa_phase2_kappa, sa_schedule_fn,
                        n_chains, auto_small_n_chains, small_n_chain_target,
                        sa_anneal_targets, sa_anneal_schedule, sa_anneal_iters, sa_anneal_alpha, sa_anneal_fn,
-                       auto_var_lb, var_lb_value)
+                       auto_var_lb, var_lb_value, max_estep_retries, retry_mcmc_steps)
     SAEM(optimizer, optim_kwargs, adtype, saem, lb, ub)
 end
 
@@ -2248,6 +2265,28 @@ function _saem_Q_current(dm::DataModel,
     return total
 end
 
+# Return indices (into batch_infos) from `updated` whose current RE sample gives a
+# non-finite log-likelihood at θ. Used by the E-step retry mechanism.
+function _saem_bad_batches(dm::DataModel,
+                            batch_infos::Vector{_LaplaceBatchInfo},
+                            updated::AbstractVector{Int},
+                            θ::ComponentArray,
+                            b_current::AbstractVector,
+                            const_cache::LaplaceConstantsCache,
+                            ll_cache;
+                            anneal_sds::NamedTuple=NamedTuple())
+    bad = Int[]
+    ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
+    @inbounds for bi in updated
+        snap = b_current[bi]
+        isempty(snap) && continue
+        logf = _laplace_logf_batch(dm, batch_infos[bi], θ, snap, const_cache, ll_cache_local;
+                                   anneal_sds=anneal_sds)
+        isfinite(logf) || push!(bad, bi)
+    end
+    return bad
+end
+
 function _saem_collect_target_symbols!(out::Vector{Symbol}, target)
     if target isa Symbol
         push!(out, target)
@@ -2578,8 +2617,11 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
     var_lb_eff = min(method.saem.anneal_min_sd, method.saem.var_lb_value)
 
     # O2+O4+O5: preallocated ring buffer for SA sample history
-    sample_store = _init_saem_sample_store(method.saem.q_store_max, method.saem.q_store_epsilon,
-                                           method.saem.q_store_min, batch_infos)
+    # When mstep_sa_on_params=true the M-step reads only b_current, so the ring buffer is
+    # never used for optimization — capacity=1 minimises memory while keeping Q_new valid.
+    _store_capacity = method.saem.mstep_sa_on_params ? 1 : method.saem.q_store_max
+    sample_store = _init_saem_sample_store(_store_capacity, method.saem.q_store_epsilon,
+                                           min(method.saem.q_store_min, _store_capacity), batch_infos)
     s = nothing
     builtin_stats_state = nothing
     closed_form_builtin_used = false
@@ -2608,6 +2650,9 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
     haskey(tkwargs, :n_adapt)   || (tkwargs = merge(tkwargs, (n_adapt=50,)))
     haskey(tkwargs, :progress)  || (tkwargs = merge(tkwargs, (progress=false,)))
     haskey(tkwargs, :verbose)   || (tkwargs = merge(tkwargs, (verbose=false,)))
+    # Retry tkwargs: same as tkwargs but with retry_mcmc_steps steps (kept small to
+    # escape bad RE values cheaply — no need for full mixing on each retry).
+    retry_tkwargs = merge(tkwargs, (n_samples=method.saem.retry_mcmc_steps,))
 
     # Pre-loop initialization: seed b_current and last_chain_params from prior mean so that
     # the first MCMC chain (warm_start=true) starts at a valid, finite-likelihood point.
@@ -2701,6 +2746,33 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
         else
             # O2+O4+O5: push into ring buffer in-place (no allocation, no Array shifts)
             _saem_store_push!(sample_store, b_current, γ)
+        end
+
+        # E-step retry: when mstep_sa_on_params=true the M-step objective is Q_current,
+        # which is Inf if any updated batch has a non-finite log-likelihood. Re-sample
+        # only the offending batches (using retry_mcmc_steps steps each) and overwrite
+        # the capacity-1 store slot. Retries are skipped for the suffstats path.
+        if method.saem.mstep_sa_on_params && method.saem.max_estep_retries > 0 &&
+                method.saem.suffstats === nothing
+            for _retry in 1:method.saem.max_estep_retries
+                bad = _saem_bad_batches(dm, batch_infos, updated, θu_curr, b_current,
+                                        const_cache, ll_cache; anneal_sds=anneal_sds)
+                isempty(bad) && break
+                for bi in bad
+                    info = batch_infos[bi]
+                    for c in 1:effective_n_chains
+                        _, lastp, lastb = _mcem_sample_batch(
+                            dm, info, θu_curr, const_cache, ll_cache,
+                            method.saem.sampler, retry_tkwargs, batch_rngs[bi],
+                            re_names, method.saem.warm_start, last_chain_params[bi][c];
+                            anneal_sds=anneal_sds)
+                        b_chains[bi][c] = lastb
+                        last_chain_params[bi][c] = lastp
+                    end
+                end
+                _saem_update_b_current!(b_current, b_chains, bad, effective_n_chains)
+                _saem_store_push!(sample_store, b_current, γ)
+            end
         end
 
 

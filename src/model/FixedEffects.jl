@@ -674,21 +674,26 @@ function _collect_model_fun!(p::SplineParameters, model_fun_pairs, ::Type{T}) wh
 end
 function _collect_model_fun!(p::NPFParameter, model_fun_pairs)
     key = Symbol("NPF_", p.name)
-    q0 = MvNormal(zeros(p.n_input), I)
+    q0 = p.base_dist
     push!(model_fun_pairs, key => (θ) -> NormalizingPlanarFlow(θ, p.reconstructor, q0))
 end
 function _collect_model_fun!(p::NPFParameter, model_fun_pairs, ::Type{T}) where {T}
     key = Symbol("NPF_", p.name)
-    q0T = MvNormal(zeros(T, p.n_input), I)
+    q0T = _adapt_base_dist(p.base_dist, T)
     push!(model_fun_pairs, key => (θ) -> begin
         TT = eltype(θ)
         if TT === T
             return NormalizingPlanarFlow(_to_type(T, θ), p.reconstructor, q0T)
         end
-        q0 = MvNormal(zeros(TT, p.n_input), I)
+        q0 = _adapt_base_dist(p.base_dist, TT)
         return NormalizingPlanarFlow(_to_type(TT, θ), p.reconstructor, q0)
     end)
 end
+
+# Adapt base distribution element type for ForwardDiff compatibility.
+# MvNormal is re-parameterised with typed mean/cov; other distributions are used as-is.
+_adapt_base_dist(d::MvNormal, ::Type{T}) where {T} = MvNormal(T.(mean(d)), Matrix{T}(cov(d)))
+_adapt_base_dist(d, ::Type{T}) where {T} = d
 function _collect_model_fun!(p, model_fun_pairs)
     return nothing
 end

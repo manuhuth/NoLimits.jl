@@ -95,7 +95,7 @@ struct NormalizingPlanarFlow{D<:Distribution, R<:Optimisers.Restructure} <: Abst
 end
 
 """
-    NormalizingPlanarFlow(n_input::Int, n_layers::Int; init=glorot_init)
+    NormalizingPlanarFlow(n_input::Int, n_layers::Int; init=glorot_init, base_dist=nothing)
 
 Construct a normalizing planar flow with specified dimensions.
 
@@ -103,21 +103,27 @@ Construct a normalizing planar flow with specified dimensions.
 - `n_input` - Dimension of the random effects
 - `n_layers` - Number of planar transformation layers
 - `init` - Initialization function (default: `x -> sqrt(1/n_input) * x`)
+- `base_dist` - Base distribution (default: `MvNormal(zeros(n_input), I)`)
 
 # Returns
-A `NormalizingPlanarFlow` with base distribution `MvNormal(zeros(n_input), I)`.
+A `NormalizingPlanarFlow` with the specified base distribution.
 
 # Example
 ```julia
-# 3D random effects with 5 transformation layers
+# 3D random effects with 5 transformation layers, default Gaussian base
 flow = NormalizingPlanarFlow(3, 5)
+
+# With a custom base distribution
+using Distributions
+flow_t = NormalizingPlanarFlow(1, 3; base_dist=MvTDist(3, zeros(1), ones(1,1)))
 
 # Sample from the flow
 samples = rand(flow, 1000)
 ```
 """
-function NormalizingPlanarFlow(n_input::Int, n_layers::Int; init= x -> sqrt( (1/n_input)) .* x)
-    q₀ = MvNormal(zeros(Float64, n_input), I)
+function NormalizingPlanarFlow(n_input::Int, n_layers::Int; init= x -> sqrt( (1/n_input)) .* x,
+                               base_dist=nothing)
+    q₀ = isnothing(base_dist) ? MvNormal(zeros(Float64, n_input), I) : base_dist
     d = length(q₀)
     Ls = [PlanarLayer(d, init) for _ in 1:n_layers]
     ts = fchain(Ls)

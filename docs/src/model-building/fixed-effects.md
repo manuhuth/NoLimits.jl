@@ -43,7 +43,7 @@ NoLimits provides parameter types for scalars, vectors, structured matrices, and
 | `NNParameters(chain; function_name, seed, prior, calculate_se)` | Lux neural network weights |
 | `SoftTreeParameters(input_dim, depth; function_name, n_output, seed, prior, calculate_se)` | Soft decision tree parameters |
 | `SplineParameters(knots; function_name, degree, prior, calculate_se)` | B-spline coefficients |
-| `NPFParameter(n_input, n_layers; seed, init, prior, calculate_se)` | Normalizing planar flow parameters |
+| `NPFParameter(n_input, n_layers; seed, init, base_dist, prior, calculate_se)` | Normalizing planar flow parameters |
 
 ## Example: Classical Parameter Blocks
 
@@ -197,13 +197,38 @@ end
 
 Normalizing planar flows (`NPFParameter`) allow the random-effect distribution to depart from standard parametric families. The flow parameters are declared as fixed effects and referenced inside `@randomEffects` via `NormalizingPlanarFlow`. The corresponding model function is registered automatically.
 
+By default the flow uses a standard `MvNormal` base distribution. A custom base distribution can be passed via the `base_dist` keyword — any continuous multivariate distribution from Distributions.jl is supported (e.g. `MvTDist` for heavier tails, or a `MvNormal` with a non-zero mean or non-identity covariance).
+
 ```julia
 using NoLimits
 using Distributions
+using LinearAlgebra
 
+# Default base distribution: MvNormal(zeros(1), I)
 model = @Model begin
     @fixedEffects begin
-        psi = NPFParameter(1, 3, seed=1, calculate_se=false)
+        psi = NPFParameter(1, 3; seed=1, calculate_se=false)
+        sigma = RealNumber(0.3, scale=:log)
+    end
+
+    @covariates begin
+        t = Covariate()
+    end
+
+    @randomEffects begin
+        eta = RandomEffect(NormalizingPlanarFlow(psi); column=:ID)
+    end
+
+    @formulas begin
+        y ~ Normal(log1p(eta^2), sigma)
+    end
+end
+
+# Custom base distribution: MvTDist for heavier tails
+model_t = @Model begin
+    @fixedEffects begin
+        psi = NPFParameter(1, 3; seed=1, calculate_se=false,
+                           base_dist=MvTDist(5, zeros(1), ones(1, 1)))
         sigma = RealNumber(0.3, scale=:log)
     end
 

@@ -326,6 +326,8 @@ end
 ```
 
 #### 7) Planar flow random effects
+`NPFParameter` accepts an optional `base_dist` keyword (default: `MvNormal(zeros(n_input), I)`).
+Any continuous multivariate distribution can be used, e.g. `MvTDist` for heavier tails.
 ```julia
 model = @Model begin
     @helpers begin
@@ -333,7 +335,11 @@ model = @Model begin
     end
     @fixedEffects begin
         σ = RealNumber(0.4)
-        ψ = NPFParameter(1, 3, seed=1, calculate_se=false)
+        # Default Gaussian base
+        ψ = NPFParameter(1, 3; seed=1, calculate_se=false)
+        # Heavy-tailed base (uncomment to use instead)
+        # ψ = NPFParameter(1, 3; seed=1, calculate_se=false,
+        #                  base_dist=MvTDist(5, zeros(1), ones(1, 1)))
     end
     @randomEffects begin
         η = RandomEffect(NormalizingPlanarFlow(ψ); column=:ID)

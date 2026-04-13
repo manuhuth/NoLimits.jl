@@ -288,13 +288,13 @@ function NNParameters(chain; name::Symbol = :unnamed, function_name::Symbol, see
 end
 
 """
-    NPFParameter(n_input, n_layers; name, seed, init, prior, calculate_se) -> NPFParameter
+    NPFParameter(n_input, n_layers; name, seed, init, base_dist, prior, calculate_se) -> NPFParameter
 
 A parameter block for a Normalizing Planar Flow (NPF), enabling flexible non-Gaussian
 distributions in `@randomEffects` via `RandomEffect(NormalizingPlanarFlow(ψ); column=:ID)`.
 
 The flow is composed of `n_layers` planar transformations on an `n_input`-dimensional
-base Gaussian. Parameters are stored as a flat real vector.
+base distribution. Parameters are stored as a flat real vector.
 
 # Arguments
 - `n_input::Integer`: dimensionality of the latent space (typically 1 for scalar random effects).
@@ -304,10 +304,14 @@ base Gaussian. Parameters are stored as a flat real vector.
 - `name::Symbol = :unnamed`: parameter name (injected automatically by `@fixedEffects`).
 - `seed::Integer = 0`: random seed for initialisation.
 - `init::Function`: weight initialisation function; defaults to `x -> sqrt(1/n_input) .* x`.
+- `base_dist`: base distribution for the flow. Defaults to `MvNormal(zeros(n_input), I)`.
+  Can be any continuous multivariate distribution (e.g. `MvTDist(3, zeros(1), ones(1,1))`).
+  For ForwardDiff compatibility, `MvNormal` base distributions are automatically re-parameterised
+  with the correct element type; other distributions are used as-is.
 - `prior = Priorless()`: `Priorless()`, a `Vector{Distribution}`, or a multivariate `Distribution`.
 - `calculate_se::Bool = false`: whether to include this parameter in standard-error calculations.
 """
-@with_kw struct NPFParameter{T<:Real, VT<:AbstractVector{T}, R} <: AbstractParameterBlock
+@with_kw struct NPFParameter{T<:Real, VT<:AbstractVector{T}, R, BD} <: AbstractParameterBlock
     name::Symbol = :unnamed
     n_input::Int
     n_layers::Int
@@ -315,6 +319,7 @@ base Gaussian. Parameters are stored as a flat real vector.
     init::Function = x -> sqrt((1 / n_input)) .* x
     value::VT
     reconstructor::R
+    base_dist::BD
     lower::VT = fill(-Inf, length(value))
     upper::VT = fill(Inf, length(value))
     prior = Priorless()
@@ -322,7 +327,8 @@ base Gaussian. Parameters are stored as a flat real vector.
 end
 
 function NPFParameter(n_input::Integer, n_layers::Integer; name::Symbol = :unnamed, seed::Integer = 0,
-    init::Function = x -> sqrt((1 / n_input)) .* x, prior = Priorless(), calculate_se::Bool = false)
+    init::Function = x -> sqrt((1 / n_input)) .* x, base_dist = nothing,
+    prior = Priorless(), calculate_se::Bool = false)
     n_input > 0 || error("Invalid n_input for parameter $(name). Expected n_input > 0; got $(n_input).")
     n_layers > 0 || error("Invalid n_layers for parameter $(name). Expected n_layers > 0; got $(n_layers).")
     rng = Xoshiro(seed)
@@ -335,7 +341,8 @@ function NPFParameter(n_input::Integer, n_layers::Integer; name::Symbol = :unnam
     l = fill(T(-Inf), length(v))
     u = fill(T(Inf), length(v))
     _check_nn_prior(prior, name, length(v))
-    return NPFParameter{T, typeof(v), typeof(reconstructor)}(name, d, Int(n_layers), Int(seed), init, v, reconstructor, l, u, prior, calculate_se)
+    resolved_base = isnothing(base_dist) ? MvNormal(zeros(T, d), I) : base_dist
+    return NPFParameter{T, typeof(v), typeof(reconstructor), typeof(resolved_base)}(name, d, Int(n_layers), Int(seed), init, v, reconstructor, resolved_base, l, u, prior, calculate_se)
 end
 
 """
