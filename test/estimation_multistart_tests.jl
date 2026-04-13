@@ -415,3 +415,197 @@ end
     @test any(s -> s.Ω != starts[1].Ω, starts[2:end])
     @test !isempty(NoLimits.get_random_effects(res))
 end
+
+# ── Tests specifically for _build_mean_eta (replaces _build_zero_eta) ──────────
+
+@testset "Multistart mean eta: non-zero constant RE mean" begin
+    # RE distribution has mean 2.0 — old zero-init would diverge from the mean.
+    # Screening must still rank candidates and run without error.
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+        @fixedEffects begin
+            a = RealNumber(0.2)
+            σ = RealNumber(0.5, scale=:log)
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(2.0, 0.5); column=:ID)
+        end
+        @formulas begin
+            y ~ Normal(a + η, σ)
+        end
+    end
+    df = DataFrame(
+        ID = [:A, :A, :B, :B],
+        t  = [0.0, 1.0, 0.0, 1.0],
+        y  = [2.1, 2.2, 1.9, 2.0]
+    )
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    # n_draws_requested > n_draws_used → screening branch exercises _build_mean_eta
+    ms = NoLimits.Multistart(dists=(; a=Normal(0.0, 1.0)), n_draws_requested=4, n_draws_used=2)
+    res = fit_model(ms, dm, NoLimits.Laplace(; optim_kwargs=(maxiters=3,)))
+    @test res isa NoLimits.MultistartFitResult
+    @test length(NoLimits.get_multistart_results(res)) == 2
+    @test isfinite(NoLimits.get_objective(res))
+end
+
+@testset "Multistart mean eta: covariate-dependent RE distribution" begin
+    # RE mean depends on a constant covariate — means differ per individual.
+    # Verifies per-individual eta vector is built correctly.
+    model = @Model begin
+        @covariates begin
+            t   = Covariate()
+            Age = ConstantCovariate(; constant_on=:ID)
+        end
+        @fixedEffects begin
+            a  = RealNumber(0.2)
+            b  = RealNumber(0.1)
+            σ  = RealNumber(0.5, scale=:log)
+            τ  = RealNumber(0.5, scale=:log)
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(b * Age, τ); column=:ID)
+        end
+        @formulas begin
+            y ~ Normal(a + η, σ)
+        end
+    end
+    df = DataFrame(
+        ID  = [:A, :A, :B, :B],
+        t   = [0.0, 1.0, 0.0, 1.0],
+        Age = [30.0, 30.0, 50.0, 50.0],
+        y   = [3.2, 3.3, 5.1, 5.0]
+    )
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    ms = NoLimits.Multistart(dists=(; a=Normal(0.0, 1.0)), n_draws_requested=4, n_draws_used=2)
+    res = fit_model(ms, dm, NoLimits.Laplace(; optim_kwargs=(maxiters=3,)))
+    @test res isa NoLimits.MultistartFitResult
+    @test isfinite(NoLimits.get_objective(res))
+    re = NoLimits.get_random_effects(res)
+    @test haskey(re, :η)
+end
+
+@testset "Multistart mean eta: MvNormal RE with non-zero mean" begin
+    # MvNormal RE with explicit non-zero mean vector.
+    using LinearAlgebra
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+        @fixedEffects begin
+            a = RealNumber(0.2)
+            σ = RealNumber(0.5, scale=:log)
+            Ω = RealPSDMatrix(Matrix(I, 2, 2), scale=:cholesky)
+        end
+        @randomEffects begin
+            η = RandomEffect(MvNormal([1.0, -1.0], Ω); column=:ID)
+        end
+        @formulas begin
+            y ~ Normal(a + η[1], σ)
+        end
+    end
+    df = DataFrame(
+        ID = [:A, :A, :B, :B],
+        t  = [0.0, 1.0, 0.0, 1.0],
+        y  = [1.2, 1.3, 1.0, 0.9]
+    )
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    ms = NoLimits.Multistart(dists=(; a=Normal(0.0, 1.0)), n_draws_requested=4, n_draws_used=2)
+    res = fit_model(ms, dm, NoLimits.Laplace(; optim_kwargs=(maxiters=3,)))
+    @test res isa NoLimits.MultistartFitResult
+    @test isfinite(NoLimits.get_objective(res))
+end
+
+@testset "Multistart mean eta: NPF RE (no analytic mean, fallback to 0)" begin
+    # NormalizingPlanarFlow has no analytic mean — _build_mean_eta must fall back to 0.0
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+        @fixedEffects begin
+            a = RealNumber(0.2)
+            σ = RealNumber(0.5, scale=:log)
+            ψ = NPFParameter(1, 2; seed=1, calculate_se=false)
+        end
+        @randomEffects begin
+            η = RandomEffect(NormalizingPlanarFlow(ψ); column=:ID)
+        end
+        @formulas begin
+            y ~ Normal(a + η, σ)
+        end
+    end
+    df = DataFrame(
+        ID = [:A, :A, :B, :B],
+        t  = [0.0, 1.0, 0.0, 1.0],
+        y  = [0.1, 0.2, 0.0, -0.1]
+    )
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    ms = NoLimits.Multistart(dists=(; a=Normal(0.0, 1.0)), n_draws_requested=4, n_draws_used=2)
+    res = fit_model(ms, dm, NoLimits.Laplace(; optim_kwargs=(maxiters=3,)))
+    @test res isa NoLimits.MultistartFitResult
+    @test isfinite(NoLimits.get_objective(res))
+end
+
+@testset "Multistart mean eta: no screening (n_draws_used == n_draws_requested)" begin
+    # When all candidates are used, _build_mean_eta is never called — sanity check.
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+        @fixedEffects begin
+            a = RealNumber(0.2)
+            σ = RealNumber(0.5, scale=:log)
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(1.5, 0.5); column=:ID)
+        end
+        @formulas begin
+            y ~ Normal(a + η, σ)
+        end
+    end
+    df = DataFrame(
+        ID = [:A, :A, :B, :B],
+        t  = [0.0, 1.0, 0.0, 1.0],
+        y  = [1.7, 1.8, 1.6, 1.5]
+    )
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    ms = NoLimits.Multistart(dists=(; a=Normal(0.0, 1.0)), n_draws_requested=2, n_draws_used=2)
+    res = fit_model(ms, dm, NoLimits.Laplace(; optim_kwargs=(maxiters=3,)))
+    @test res isa NoLimits.MultistartFitResult
+    @test length(NoLimits.get_multistart_results(res)) == 2
+end
+
+@testset "Multistart mean eta: multiple RE groups with non-zero means" begin
+    # Two RE groups, each with non-zero mean — tests that all RE names are handled.
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+        @fixedEffects begin
+            a = RealNumber(0.2)
+            σ = RealNumber(0.5, scale=:log)
+        end
+        @randomEffects begin
+            η_id   = RandomEffect(Normal( 1.0, 0.5); column=:ID)
+            η_site = RandomEffect(Normal(-0.5, 0.5); column=:SITE)
+        end
+        @formulas begin
+            y ~ Normal(a + η_id + η_site, σ)
+        end
+    end
+    df = DataFrame(
+        ID   = [1, 1, 2, 2, 3, 3, 4, 4],
+        SITE = [:A, :A, :A, :A, :B, :B, :B, :B],
+        t    = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+        y    = [1.0, 1.1, 0.9, 1.0, 1.2, 1.1, 1.0, 0.95]
+    )
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    ms = NoLimits.Multistart(dists=(; a=Normal(0.0, 1.0)), n_draws_requested=4, n_draws_used=2)
+    res = fit_model(ms, dm, NoLimits.Laplace(; optim_kwargs=(maxiters=3,)))
+    @test res isa NoLimits.MultistartFitResult
+    @test isfinite(NoLimits.get_objective(res))
+    re = NoLimits.get_random_effects(res)
+    @test haskey(re, :η_id)
+    @test haskey(re, :η_site)
+end

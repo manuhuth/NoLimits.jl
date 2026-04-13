@@ -5,6 +5,9 @@ using FiniteDifferences
 using LinearAlgebra
 using Distributions
 using ComponentArrays
+using NormalizingFlows
+using FunctionChains
+using Optimisers
 
 @testset "Laplace batching with constant RE levels" begin
     model = @Model begin
@@ -443,4 +446,60 @@ end
                   logpdf(Normal(0.4, 0.2), 0.45)
 
     @test ll_1 + ll_2 ≈ ll_expected atol=1e-12
+end
+
+@testset "Laplace with NormalizingPlanarFlow custom base_dist" begin
+    df = DataFrame(
+        ID = [:A, :A, :B, :B, :C, :C],
+        t  = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+        y  = [0.1, 0.2, 0.0, -0.1, 0.3, 0.25]
+    )
+
+    function make_npf_model(base)
+        @Model begin
+            @fixedEffects begin
+                a = RealNumber(0.1)
+                σ = RealNumber(0.3, scale=:log)
+                ψ = NPFParameter(1, 2; seed=1, calculate_se=false, base_dist=base)
+            end
+            @covariates begin
+                t = Covariate()
+            end
+            @randomEffects begin
+                η = RandomEffect(NormalizingPlanarFlow(ψ); column=:ID)
+            end
+            @formulas begin
+                y ~ Normal(a + η[1], σ)
+            end
+        end
+    end
+
+    # Default MvNormal base
+    res_default = fit_model(
+        DataModel(make_npf_model(nothing), df; primary_id=:ID, time_col=:t),
+        NoLimits.Laplace(; optim_kwargs=(maxiters=5,))
+    )
+    @test res_default isa FitResult
+    @test isfinite(NoLimits.get_objective(res_default))
+
+    # Custom MvNormal base with non-zero mean and non-identity covariance
+    q0_mvn = MvNormal([0.5], [2.0;;])
+    res_mvn = fit_model(
+        DataModel(make_npf_model(q0_mvn), df; primary_id=:ID, time_col=:t),
+        NoLimits.Laplace(; optim_kwargs=(maxiters=5,))
+    )
+    @test res_mvn isa FitResult
+    @test isfinite(NoLimits.get_objective(res_mvn))
+
+    # Custom MvTDist base (non-MvNormal, passthrough _adapt_base_dist)
+    q0_t = MvTDist(5, zeros(1), ones(1, 1))
+    res_tdist = fit_model(
+        DataModel(make_npf_model(q0_t), df; primary_id=:ID, time_col=:t),
+        NoLimits.Laplace(; optim_kwargs=(maxiters=5,))
+    )
+    @test res_tdist isa FitResult
+    @test isfinite(NoLimits.get_objective(res_tdist))
+
+    # Different base_dists produce different objectives
+    @test NoLimits.get_objective(res_default) != NoLimits.get_objective(res_tdist)
 end

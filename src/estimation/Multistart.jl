@@ -282,16 +282,43 @@ function _multistart_initials(dm::DataModel, ms::Multistart)
     return all_starts
 end
 
-function _build_zero_eta(dm::DataModel)
-    cache = dm.re_group_info.laplace_cache
-    (cache === nothing || isempty(cache.re_names)) && return ComponentArray()
-    pairs = Pair{Symbol, Any}[]
-    for (ri, re) in enumerate(cache.re_names)
-        dim = cache.dims[ri]
-        is_scalar = cache.is_scalar[ri]
-        push!(pairs, re => (is_scalar || dim == 1) ? 0.0 : zeros(dim))
+function _build_mean_eta(dm::DataModel)
+    re_cache = dm.re_group_info.laplace_cache
+    (re_cache === nothing || isempty(re_cache.re_names)) && return ComponentArray()
+    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
+    model_funs    = get_model_funs(dm.model)
+    helpers       = get_helper_funs(dm.model)
+    θ0            = get_θ0_untransformed(dm.model.fixed.fixed)
+    n             = length(dm.individuals)
+    etas          = Vector{ComponentArray}(undef, n)
+    for i in 1:n
+        const_cov = dm.individuals[i].const_cov
+        dists     = dists_builder(θ0, const_cov, model_funs, helpers)
+        pairs     = Pair{Symbol, Any}[]
+        for (ri, re) in enumerate(re_cache.re_names)
+            dim       = re_cache.dims[ri]
+            is_scalar = re_cache.is_scalar[ri]
+            dist      = getproperty(dists, re)
+            val = if is_scalar || dim == 1
+                v = 0.0
+                try; v = Float64(mean(dist)); catch; end
+                v
+            else
+                v = zeros(dim)
+                try
+                    m = mean(dist)
+                    if m isa AbstractVector && length(m) == dim
+                        v = Float64.(m)
+                    end
+                catch
+                end
+                v
+            end
+            push!(pairs, re => val)
+        end
+        etas[i] = ComponentArray(NamedTuple(pairs))
     end
-    return ComponentArray(NamedTuple(pairs))
+    return etas
 end
 
 function _multistart_screen(dm::DataModel,
@@ -303,7 +330,7 @@ function _multistart_screen(dm::DataModel,
                             progress::Bool=true)
     cache = build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs,
                            serialization=serialization, force_saveat=true)
-    η0 = _build_zero_eta(dm)
+    η0 = _build_mean_eta(dm)
     scores = Vector{Float64}(undef, length(candidates))
     screen_p = progress ? Progress(length(candidates); desc="Multistart screening: ", showspeed=true) : nothing
     for (i, θu) in enumerate(candidates)
