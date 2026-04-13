@@ -716,13 +716,15 @@ function get_random_effects(dm::DataModel,
         serialization = haskey(res.fit_kwargs, :serialization) ? getfield(res.fit_kwargs, :serialization) : EnsembleSerial()
         rng = haskey(res.fit_kwargs, :rng) ? getfield(res.fit_kwargs, :rng) : Random.default_rng()
         ll_cache = build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs, serialization=serialization, force_saveat=true)
-        ebe = EBEOptions(res.method.saem.ebe_optimizer, res.method.saem.ebe_optim_kwargs, res.method.saem.ebe_adtype,
-                         res.method.saem.ebe_grad_tol, res.method.saem.ebe_multistart_n, res.method.saem.ebe_multistart_k,
-                         res.method.saem.ebe_multistart_max_rounds, res.method.saem.ebe_multistart_sampling)
         bstars = res.result.eb_modes
         if bstars === nothing
+            # When the result was loaded from disk, fall back to defaults from a vanilla SAEM().
+            _saem_opts = res.method isa _SavedFittingMethod ? SAEM().saem : res.method.saem
+            ebe = EBEOptions(_saem_opts.ebe_optimizer, _saem_opts.ebe_optim_kwargs, _saem_opts.ebe_adtype,
+                             _saem_opts.ebe_grad_tol, _saem_opts.ebe_multistart_n, _saem_opts.ebe_multistart_k,
+                             _saem_opts.ebe_multistart_max_rounds, _saem_opts.ebe_multistart_sampling)
             bstars, batch_infos = _compute_bstars(dm, θu, constants_re, ll_cache, ebe, rng;
-                                                  rescue=res.method.saem.ebe_rescue)
+                                                  rescue=_saem_opts.ebe_rescue)
         else
             _, batch_infos, _ = _build_laplace_batch_infos(dm, constants_re)
         end
