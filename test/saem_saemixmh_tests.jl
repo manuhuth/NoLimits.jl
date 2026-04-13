@@ -15,13 +15,22 @@ using Random
     @test s isa SaemixMH
     @test s.n_kern1       == 2
     @test s.n_kern2       == 2
-    @test s.target_accept == 0.44
-    @test s.adapt_rate    == 0.7
+    @test s.n_kern3       == 2
+    @test s.proba_mcmc    == 0.4
+    @test s.stepsize_rw   == 0.4
+    @test s.rw_init       == 0.5
 
-    s2 = SaemixMH(n_kern1=3, n_kern2=1, target_accept=0.234, adapt_rate=0.5)
+    s2 = SaemixMH(n_kern1=3, n_kern2=1, n_kern3=4, proba_mcmc=0.234, stepsize_rw=0.5, rw_init=0.7)
     @test s2.n_kern1  == 3
     @test s2.n_kern2  == 1
-    @test s2.adapt_rate == 0.5
+    @test s2.n_kern3  == 4
+    @test s2.proba_mcmc == 0.234
+    @test s2.stepsize_rw == 0.5
+    @test s2.rw_init == 0.7
+
+    s3 = SaemixMH(target_accept=0.31, adapt_rate=0.2)
+    @test s3.proba_mcmc == 0.31
+    @test s3.stepsize_rw == 0.2
 end
 
 # ---------------------------------------------------------------------------
@@ -72,6 +81,47 @@ end
     @test abs(params.a - true_a)  < 0.8
     @test 0.05 < params.σ < 2.0
     @test 0.05 < params.τ < 2.0
+end
+
+@testset "SaemixMH kernel 3 multivariate RE finite objective" begin
+    rng    = MersenneTwister(23)
+    n_id   = 18
+    ids    = repeat(1:n_id, inner=4)
+    ts     = repeat([0.0, 0.5, 1.0, 1.5], n_id)
+
+    Ω_true = Diagonal([0.5, 0.3])
+    ηs     = rand(rng, MvNormal([0.0, 0.0], Ω_true), n_id)
+    ys     = 1.2 .+ ηs[1, ids] .+ 0.4 .* ηs[2, ids] .+ 0.25 .* randn(rng, length(ids))
+    df     = DataFrame(ID=ids, t=ts, y=ys)
+
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.5)
+            σ = RealNumber(0.4, scale=:log)
+            ω1 = RealNumber(0.4, scale=:log)
+            ω2 = RealNumber(0.4, scale=:log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(MvNormal([0.0, 0.0], Diagonal([ω1, ω2])); column=:ID)
+        end
+        @formulas begin
+            y ~ Normal(a + η[1] + 0.4 * η[2], σ)
+        end
+    end
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    res = fit_model(dm, SAEM(
+        sampler    = SaemixMH(),
+        maxiters   = 30,
+        mcmc_steps = 1,
+        q_store_max = 10,
+        progress   = false,
+    ))
+
+    @test isfinite(NoLimits.get_objective(res))
 end
 
 # ---------------------------------------------------------------------------

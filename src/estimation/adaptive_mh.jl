@@ -657,7 +657,8 @@ function _mcem_sample_batch(dm::DataModel, info::_LaplaceBatchInfo,
                              sampler::AdaptiveNoLimitsMH, turing_kwargs::NamedTuple,
                              rng::AbstractRNG, re_names::Vector{Symbol},
                              warm_start, last_params;
-                             anneal_sds::NamedTuple=NamedTuple())
+                             anneal_sds::NamedTuple=NamedTuple(),
+                             outer_iter::Int=1)
     nb = info.n_b
     if nb == 0
         return (zeros(eltype(θ), 0, 0), nothing, eltype(θ)[])

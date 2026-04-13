@@ -422,16 +422,17 @@ res = fit_model(dm, SAEM(sampler=MH()))
 
 ### `SaemixMH`
 
-A lightweight Turing-free MH sampler that directly operates on the flat random-effects vector. Implements two kernels in the style of the saemix R package:
+A lightweight Turing-free MH sampler that directly operates on the flat random-effects vector. Implements the first three kernels of the saemix R package:
 
 - **Kernel 1** (`n_kern1` steps): independent proposal from the current RE prior `p(η|θ)`. Acceptance uses only the likelihood ratio. Efficient when the posterior is close to the prior.
-- **Kernel 2** (`n_kern2` steps): per-level coordinate-wise random walk in the natural parameter space. Scale adapts via Robbins-Monro to reach `target_accept`. Uses the full log-joint ratio.
+- **Kernel 2** (`n_kern2` steps): per-level coordinate-wise random walk in the natural parameter space. Uses the full log-joint ratio and saemix's `domega2[:, 1]` adaptation rule.
+- **Kernel 3** (`n_kern3` steps): block random walk using the same iteration-dependent block-size schedule as saemix. Uses the full log-joint ratio and saemix's `domega2[:, nrs2]` adaptation rule.
 
 Because `SaemixMH` bypasses Turing entirely it avoids interpreter and compilation overhead, making it significantly faster per iteration for large models.
 
 ```julia
 res = fit_model(dm, SAEM(
-    sampler    = SaemixMH(n_kern1=2, n_kern2=2),
+    sampler    = SaemixMH(),
     mcmc_steps = 1,
     maxiters   = 300,
 ))
@@ -439,9 +440,15 @@ res = fit_model(dm, SAEM(
 
 Constructor keywords:
 - `n_kern1::Int = 2`: prior-proposal steps per E-step call.
-- `n_kern2::Int = 2`: per-level random-walk steps per E-step call.
-- `target_accept::Float64 = 0.44`: target acceptance rate for kernel-2 adaptation.
-- `adapt_rate::Float64 = 0.7`: Robbins-Monro exponent for kernel-2 scale updates.
+- `n_kern2::Int = 2`: coordinate random-walk steps per E-step call.
+- `n_kern3::Int = 2`: block random-walk steps per E-step call, matching saemix default.
+- `proba_mcmc::Float64 = 0.4`: saemix acceptance-rate target.
+- `stepsize_rw::Float64 = 0.4`: saemix multiplicative adaptation step size.
+- `rw_init::Float64 = 0.5`: saemix initial random-walk scale multiplier.
+
+Backward-compatible aliases:
+- `target_accept` maps to `proba_mcmc`.
+- `adapt_rate` maps to `stepsize_rw`.
 
 `SaemixMH` pairs naturally with the default `mstep_sa_on_params=true` because kernel-1's prior-proposal draws always produce a finite log-joint, so E-step retries are rarely triggered. For Turing-based samplers (`MH()`, `NUTS`) the E-step retry mechanism (`max_estep_retries=3`) handles the occasional non-finite objective that can arise early in training.
 

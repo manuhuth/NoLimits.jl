@@ -576,7 +576,8 @@ end
 
 function _mcem_sample_batch(dm, info, θ, const_cache, cache, sampler, turing_kwargs, rng,
                             re_names, warm_start, last_params;
-                            anneal_sds::NamedTuple=NamedTuple())
+                            anneal_sds::NamedTuple=NamedTuple(),
+                            outer_iter::Int=1)
     nb = info.n_b
     if nb == 0
         return (zeros(eltype(θ), 0, 0), Float64[], eltype(θ)[])
@@ -1410,7 +1411,8 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
                     samples, lastp, _ = _mcem_sample_batch(
                         dm, info, θu_curr, const_cache, caches[Threads.threadid()],
                         mcmc_es.sampler, tkwargs, batch_rngs[bi],
-                        re_names, mcmc_es.warm_start, last_params[bi])
+                        re_names, mcmc_es.warm_start, last_params[bi];
+                        outer_iter=iter)
                     samples_by_batch[bi] = samples
                     last_params[bi] = lastp
                 end
@@ -1419,7 +1421,8 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
                     samples, lastp, _ = _mcem_sample_batch(
                         dm, info, θu_curr, const_cache, ll_cache,
                         mcmc_es.sampler, tkwargs, batch_rngs[bi],
-                        re_names, mcmc_es.warm_start, last_params[bi])
+                        re_names, mcmc_es.warm_start, last_params[bi];
+                        outer_iter=iter)
                     samples_by_batch[bi] = samples
                     last_params[bi] = lastp
                 end

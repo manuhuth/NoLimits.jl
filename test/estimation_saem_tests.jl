@@ -75,7 +75,7 @@ end
 
 @testset "SAEM default sampler" begin
     method = NoLimits.SAEM()
-    @test method.saem.sampler isa MH
+    @test method.saem.sampler isa SaemixMH
     @test method.saem.ebe_multistart_n == 50
     @test method.saem.ebe_multistart_k == 10
     @test method.saem.ebe_multistart_sampling == :lhs

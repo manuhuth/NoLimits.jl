@@ -277,13 +277,18 @@ or closed-form updates (when `builtin_stats` is enabled).
   The default caps the inner LBFGS at 50 iterations per M-step, which is sufficient given
   the SA parameter update smooths θ across iterations.
 - `adtype`: AD backend for the M-step. Defaults to `AutoForwardDiff()`.
-- `sampler`: Turing-compatible sampler. Defaults to `MH()`.
-- `turing_kwargs::NamedTuple = NamedTuple()`: keyword arguments for `Turing.sample`.
+- `sampler`: Sampler for the E-step. Defaults to `SaemixMH()` (saemix-style 3-kernel MH,
+  no Turing overhead). Pass `MH()` or `AdaptiveNoLimitsMH()` for Turing-based samplers.
+- `turing_kwargs::NamedTuple = NamedTuple()`: keyword arguments for `Turing.sample` (only
+  used by Turing-based samplers; ignored by `SaemixMH`).
 - `update_schedule`: which parameters to update per iteration (`:all` or a `Vector{Symbol}`).
 - `warm_start::Bool = true`: initialise the sampler from the previous iteration's modes.
 - `verbose::Bool = false`: print per-iteration diagnostics.
 - `progress::Bool = true`: show a progress bar.
-- `mcmc_steps::Int = 80`: number of MCMC steps per E-step.
+- `mcmc_steps`: number of MCMC sweeps per E-step. Defaults to `1` for `SaemixMH` (one
+  sweep runs kernels 1–3, i.e. `n_kern1 + n_kern2 + n_kern3` proposals per RE level) and
+  `80` for Turing-based samplers (`MH`, `AdaptiveNoLimitsMH`, `NUTS`). Override explicitly
+  when needed.
 - `q_store_max::Int = 50`: ring buffer capacity — maximum number of snapshots retained.
 - `q_store_epsilon::Float64 = 1e-10`: weight threshold for the adaptive memory policy.
   After each push, snapshots whose SA weight falls below this value are pruned from the
@@ -342,13 +347,13 @@ end
 SAEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
      optim_kwargs=(; iterations=50),
      adtype=Optimization.AutoForwardDiff(),
-     sampler=MH(),
+     sampler=SaemixMH(),
      turing_kwargs=NamedTuple(),
     update_schedule=:all,
     warm_start=true,
     verbose=false,
     progress=true,
-    mcmc_steps=80,
+    mcmc_steps=nothing,
      q_store_max::Int=50,
      q_store_epsilon::Float64=1e-10,
      q_store_min::Int=0,
@@ -419,8 +424,9 @@ SAEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(
     retry_mcmc_steps >= 1 ||
         error("SAEM: retry_mcmc_steps must be ≥ 1. Got: $retry_mcmc_steps")
     ebe_rescue = EBERescueOptions(ebe_rescue_on_high_grad, ebe_rescue_multistart_n, ebe_rescue_multistart_k, ebe_rescue_max_rounds, ebe_rescue_grad_tol, ebe_rescue_multistart_sampling)
+    resolved_mcmc_steps = isnothing(mcmc_steps) ? (sampler isa SaemixMH ? 1 : 80) : mcmc_steps
     saem = SAEMOptions(sampler, turing_kwargs, update_schedule, warm_start, verbose, progress,
-                       mcmc_steps, q_store_max, q_store_epsilon, q_store_min, t0, kappa,
+                       resolved_mcmc_steps, q_store_max, q_store_epsilon, q_store_min, t0, kappa,
                        maxiters, rtol_theta, atol_theta, rtol_Q, atol_Q, consecutive_params,
                        suffstats, q_from_stats, mstep_closed_form,
                        builtin_stats, builtin_mean, resid_var_param, re_cov_params, re_mean_params,
@@ -2719,7 +2725,7 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                     _, lastp, lastb = _mcem_sample_batch(dm, info, θu_curr, const_cache, caches[Threads.threadid()],
                                                          method.saem.sampler, tkwargs, batch_rngs[bi],
                                                          re_names, method.saem.warm_start, last_chain_params[bi][c];
-                                                         anneal_sds=anneal_sds)
+                                                         anneal_sds=anneal_sds, outer_iter=iter)
                     b_chains[bi][c] = lastb
                     last_chain_params[bi][c] = lastp
                 end
@@ -2731,7 +2737,7 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                     _, lastp, lastb = _mcem_sample_batch(dm, info, θu_curr, const_cache, ll_cache,
                                                          method.saem.sampler, tkwargs, batch_rngs[bi],
                                                          re_names, method.saem.warm_start, last_chain_params[bi][c];
-                                                         anneal_sds=anneal_sds)
+                                                         anneal_sds=anneal_sds, outer_iter=iter)
                     b_chains[bi][c] = lastb
                     last_chain_params[bi][c] = lastp
                 end
@@ -2765,7 +2771,7 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                             dm, info, θu_curr, const_cache, ll_cache,
                             method.saem.sampler, retry_tkwargs, batch_rngs[bi],
                             re_names, method.saem.warm_start, last_chain_params[bi][c];
-                            anneal_sds=anneal_sds)
+                            anneal_sds=anneal_sds, outer_iter=iter)
                         b_chains[bi][c] = lastb
                         last_chain_params[bi][c] = lastp
                     end
