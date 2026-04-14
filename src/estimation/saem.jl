@@ -321,9 +321,12 @@ or closed-form updates (when `builtin_stats` is enabled).
 
 # Keyword Arguments
 - `optimizer`: M-step Optimization.jl optimiser. Defaults to `LBFGS` with backtracking.
-- `optim_kwargs::NamedTuple = (; iterations=50)`: keyword arguments for the M-step `solve`.
-  The default caps the inner LBFGS at 50 iterations per M-step, which is sufficient given
-  the SA parameter update smooths θ across iterations.
+- `optim_kwargs::NamedTuple = (; iterations=10)`: keyword arguments for the M-step `solve`.
+  The default caps the inner LBFGS at 10 iterations per M-step. During the exploration
+  phase γ=1 (first ~half of iterations) the update is a full step `θ_new = θ_hat`, so
+  a reasonable M-step optimum is needed; during the convergence phase γ→0 fewer iterations
+  suffice. 10 is a good balance — LBFGS with warm starts typically converges in 5–15
+  steps anyway, and using fewer than ~10 degrades quality during exploration.
 - `adtype`: AD backend for the M-step. Defaults to `AutoForwardDiff()`.
 - `sampler`: Sampler for the E-step. Defaults to `SaemixMH()` (saemix-style 3-kernel MH,
   no Turing overhead). Pass `MH()` or `AdaptiveNoLimitsMH()` for Turing-based samplers.
@@ -393,7 +396,7 @@ struct SAEM{O, K, A, SO, L, U} <: FittingMethod
 end
 
 SAEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
-     optim_kwargs=(; iterations=50),
+     optim_kwargs=(; iterations=10),
      adtype=Optimization.AutoForwardDiff(),
      sampler=SaemixMH(),
      turing_kwargs=NamedTuple(),
