@@ -74,11 +74,17 @@ end
 end
 
 @testset "SA schedule: _saem_schedule_phase labels" begin
-    # Default: sa_burnin_iters=0, t0=maxiters÷2=150 — no burn-in, stabilization then decay
+    # Default: sa_burnin_iters=0, t0=maxiters÷2 — no burn-in, stabilization then decay
     opts_rm = NoLimits.SAEM().saem
+    @test opts_rm.t0 == opts_rm.maxiters ÷ 2
     @test NoLimits._saem_schedule_phase(1,   opts_rm) === :robbins_monro        # stabilization
-    @test NoLimits._saem_schedule_phase(150, opts_rm) === :robbins_monro        # last stabilization
-    @test NoLimits._saem_schedule_phase(151, opts_rm) === :robbins_monro_decay  # first decay
+    @test NoLimits._saem_schedule_phase(opts_rm.t0, opts_rm) === :robbins_monro        # last stabilization
+    @test NoLimits._saem_schedule_phase(opts_rm.t0 + 1, opts_rm) === :robbins_monro_decay  # first decay
+
+    opts_rm_short = NoLimits.SAEM(; maxiters=10).saem
+    @test opts_rm_short.t0 == 5
+    @test NoLimits._saem_schedule_phase(opts_rm_short.t0, opts_rm_short) === :robbins_monro
+    @test NoLimits._saem_schedule_phase(opts_rm_short.t0 + 1, opts_rm_short) === :robbins_monro_decay
 
     # With burn-in
     opts_rm_bi = NoLimits.SAEM(; sa_burnin_iters=3, t0=5).saem

@@ -578,6 +578,9 @@ function _mcem_sample_batch(dm, info, θ, const_cache, cache, sampler, turing_kw
                             re_names, warm_start, last_params;
                             anneal_sds::NamedTuple=NamedTuple(),
                             outer_iter::Int=1)
+    if sampler isa SaemixMH
+        error("SAEM internal error: SaemixMH dispatched to generic _mcem_sample_batch with cache type $(typeof(cache)). This usually means a threaded SAEM path passed a cache vector instead of a per-thread cache.")
+    end
     nb = info.n_b
     if nb == 0
         return (zeros(eltype(θ), 0, 0), Float64[], eltype(θ)[])

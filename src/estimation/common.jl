@@ -32,6 +32,7 @@ export get_laplace_random_effects
 export get_re_covariate_usage
 export loglikelihood
 export build_ll_cache
+export MCIntegrator
 
 using StatsFuns
 using SpecialFunctions
@@ -92,6 +93,50 @@ struct EBERescueOptions{T}
     max_rounds::Int
     grad_tol::T
     sampling::Symbol
+end
+
+"""
+    MCIntegrator(; n_samples, mode, sampler, n_warmup, rng)
+
+Configuration for Monte Carlo marginal log-likelihood integration used by
+[`get_loglikelihood_quadrature`](@ref) as a primary integrator or fallback.
+
+# Keyword Arguments
+- `n_samples::Int = 1000`: number of Monte Carlo samples.
+- `mode::Symbol = :turing`: integration mode.
+  - `:turing` — uses Turing MCMC to fit a Gaussian proposal `q` to the posterior
+    `p(b|y,θ)`, then draws fresh IID samples from `q` and applies an IS correction.
+    More accurate than `:prior` at the same sample count; default.
+  - `:prior` — draws `b_r ~ p(b | θ)` from the prior and estimates
+    `log p(y|θ) ≈ logsumexp(log p(y|b_r,θ)) - log(n_samples)`.
+    Simple fallback; higher variance when the posterior is narrow relative to the prior.
+- `sampler`: Turing-compatible sampler used when `mode = :turing`
+  (e.g. `MH()`, `NUTS(0.65)`, `AdaptiveNoLimitsMH()`). Ignored for `:prior`.
+- `n_warmup::Int = 500`: number of MCMC warmup steps. Ignored for `:prior`.
+- `rng::Union{Nothing, AbstractRNG} = nothing`: random number generator.
+  `nothing` (default) means the RNG is inherited from `get_loglikelihood_quadrature`'s
+  `seed` argument, ensuring reproducibility without setting it explicitly here.
+  Pass an explicit RNG to pin reproducibility independently of the caller.
+"""
+struct MCIntegrator{S, R}
+    n_samples :: Int
+    mode      :: Symbol
+    sampler   :: S
+    n_warmup  :: Int
+    rng       :: R   # Union{Nothing, AbstractRNG}
+end
+
+function MCIntegrator(;
+    n_samples :: Int                            = 1000,
+    mode      :: Symbol                         = :turing,
+    sampler                                     = nothing,
+    n_warmup  :: Int                            = 500,
+    rng       :: Union{Nothing, AbstractRNG}    = nothing,
+)
+    mode in (:prior, :turing) || error("MCIntegrator mode must be :prior or :turing, got :$(mode).")
+    n_samples > 0 || error("MCIntegrator n_samples must be > 0.")
+    n_warmup >= 0 || error("MCIntegrator n_warmup must be ≥ 0.")
+    return MCIntegrator(n_samples, mode, sampler, n_warmup, rng)
 end
 
 @inline _default_ebe_grad_tol(dm::DataModel) = dm.model.de.de === nothing ? 1e-4 : 1e-2
@@ -820,15 +865,16 @@ end
 
 """
     get_loglikelihood_quadrature(dm, res; level=3, constants_re, ode_args, ode_kwargs,
-                                  serialization, ebe_options, rng, jitter) -> Float64
+                                  serialization, ebe_options, rng, jitter,
+                                  mc_integrator, fallback) -> Float64
 
-Compute the marginal log-likelihood using **Adaptive Gauss-Hermite Quadrature** (AGHQ).
+Compute the marginal log-likelihood using **Adaptive Gauss-Hermite Quadrature** (AGHQ),
+with optional Monte Carlo sampling as the primary method or as a fallback.
 
 Unlike `get_loglikelihood`, which plugs in the EBE point estimate for Laplace/FOCEI/SAEM/MCEM
-methods, this function integrates over each batch's random effects using sparse-grid
-quadrature centred at the EBE mode with the local posterior curvature for scaling.
+methods, this function integrates over each batch's random effects.
 
-The integration measure for each batch is
+The integration measure for AGHQ is
 
     b = b* + S * z,  z ~ N(0, I)
 
@@ -856,6 +902,12 @@ Laplace, LaplaceMAP, FOCEI, FOCEIMAP, SAEM, MCEM, GHQuadrature, GHQuadratureMAP.
   modes are unavailable. `nothing` uses the same defaults as `Laplace()`.
 - `rng`: random number generator for EBE multistart (if needed).
 - `jitter`: initial jitter for Cholesky of negative Hessian (default 1e-6).
+- `mc_integrator::Union{Nothing, MCIntegrator}`: if not `nothing`, use Monte Carlo
+  sampling for **all** batches instead of AGHQ. See [`MCIntegrator`](@ref).
+- `fallback::Union{Nothing, MCIntegrator}`: what to do when the Cholesky of `-H` fails
+  for a batch. `nothing` raises an error (old behaviour). An `MCIntegrator` falls back to
+  sampling for that batch and issues a warning. Default: `MCIntegrator()` (prior sampling,
+  1000 samples).
 """
 function get_loglikelihood_quadrature(dm::DataModel,
                                        res::FitResult;
@@ -865,8 +917,11 @@ function get_loglikelihood_quadrature(dm::DataModel,
                                        ode_kwargs::NamedTuple=NamedTuple(),
                                        serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
                                        ebe_options::Union{Nothing, EBEOptions}=nothing,
-                                       rng::AbstractRNG=Random.default_rng(),
-                                       jitter::Float64=1e-6)
+                                       seed::Int=0,
+                                       rng::AbstractRNG=Random.Xoshiro(seed),
+                                       jitter::Float64=1e-6,
+                                       mc_integrator::Union{Nothing, MCIntegrator}=nothing,
+                                       fallback::Union{Nothing, MCIntegrator}=MCIntegrator())
     if res.result isa MCMCResult
         error("get_loglikelihood_quadrature: MCMC results are not supported.")
     end
@@ -883,17 +938,22 @@ function get_loglikelihood_quadrature(dm::DataModel,
     ll_cache = build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs, force_saveat=true)
 
     # Resolve EBE modes: use stored ones if available and matching, else compute.
-    bstars = if hasproperty(res.result, :eb_modes) &&
+    # Not needed when mc_integrator is set (pure MC path skips EBE/Hessian entirely).
+    bstars = if mc_integrator === nothing
+        if hasproperty(res.result, :eb_modes) &&
                 res.result.eb_modes !== nothing &&
                 length(res.result.eb_modes) == length(batch_infos)
-        res.result.eb_modes
+            res.result.eb_modes
+        else
+            ebe = ebe_options === nothing ? _default_ebe_options() : ebe_options
+            bstars_new, _ = _compute_bstars(dm, θu, constants_re, ll_cache, ebe, rng)
+            bstars_new
+        end
     else
-        ebe = ebe_options === nothing ? _default_ebe_options() : ebe_options
-        bstars_new, _ = _compute_bstars(dm, θu, constants_re, ll_cache, ebe, rng)
-        bstars_new
+        nothing
     end
 
-    if _any_batch_too_large(dm, batch_infos, level, 10_000)
+    if mc_integrator === nothing && _any_batch_too_large(dm, batch_infos, level, 10_000)
         @warn "get_loglikelihood_quadrature: one or more batches have > 10,000 quadrature nodes. " *
               "Consider reducing `level` or checking your RE batch structure."
     end
@@ -911,12 +971,28 @@ function get_loglikelihood_quadrature(dm::DataModel,
             end
             total += s
         else
-            b_star = bstars[bi]
-            re_measure = build_centered_re_measure(b_star, info, bi, θu_re, const_cache, dm, ll_cache;
-                                                    jitter=jitter)
-            sgrid = level isa Int ? get_sparse_grid(info.n_b, level) :
-                                    _build_anisotropic_batch_grid(dm, info, level)
-            bll = batch_loglik_ghq(dm, info, θu_re, re_measure, sgrid, const_cache, ll_cache)
+            bll = if mc_integrator !== nothing
+                # MC for all batches: skip AGHQ entirely
+                _batch_loglik_from_mc(dm, info, θu_re, const_cache, ll_cache, mc_integrator, rng)
+            else
+                b_star = bstars[bi]
+                re_measure = build_centered_re_measure(b_star, info, bi, θu_re, const_cache, dm, ll_cache;
+                                                        jitter=jitter)
+                if re_measure !== nothing
+                    sgrid = level isa Int ? get_sparse_grid(info.n_b, level) :
+                                            _build_anisotropic_batch_grid(dm, info, level)
+                    batch_loglik_ghq(dm, info, θu_re, re_measure, sgrid, const_cache, ll_cache)
+                elseif fallback !== nothing
+                    @warn "get_loglikelihood_quadrature: Cholesky of -H failed for batch $bi " *
+                          "(b* may not be a true mode or posterior is near-flat). " *
+                          "Falling back to $(fallback.mode) MC sampling with $(fallback.n_samples) samples."
+                    _batch_loglik_from_mc(dm, info, θu_re, const_cache, ll_cache, fallback, rng)
+                else
+                    error("get_loglikelihood_quadrature: Cholesky of -H failed for batch $bi. " *
+                          "Pass fallback=MCIntegrator(...) to use sampling as fallback, " *
+                          "or increase `jitter`.")
+                end
+            end
             bll == -Inf && return -Inf
             total += bll
         end
@@ -931,14 +1007,18 @@ function get_loglikelihood_quadrature(res::FitResult;
                                        ode_kwargs::NamedTuple=NamedTuple(),
                                        serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
                                        ebe_options::Union{Nothing, EBEOptions}=nothing,
-                                       rng::AbstractRNG=Random.default_rng(),
-                                       jitter::Float64=1e-6)
+                                       seed::Int=0,
+                                       rng::AbstractRNG=Random.Xoshiro(seed),
+                                       jitter::Float64=1e-6,
+                                       mc_integrator::Union{Nothing, MCIntegrator}=nothing,
+                                       fallback::Union{Nothing, MCIntegrator}=MCIntegrator())
     dm = res.data_model
     dm === nothing && error("This fit result does not store a DataModel; call get_loglikelihood_quadrature(dm, res) instead.")
     return get_loglikelihood_quadrature(dm, res; level=level, constants_re=constants_re,
                                         ode_args=ode_args, ode_kwargs=ode_kwargs,
                                         serialization=serialization, ebe_options=ebe_options,
-                                        rng=rng, jitter=jitter)
+                                        seed=seed, rng=rng, jitter=jitter,
+                                        mc_integrator=mc_integrator, fallback=fallback)
 end
 
 function get_re_covariate_usage(res::FitResult; dm::Union{Nothing, DataModel}=nothing)

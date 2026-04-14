@@ -90,7 +90,8 @@ method = NoLimits.SAEM(;
     # SA schedule
     sa_schedule=:robbins_monro,
     sa_burnin_iters=0,
-    t0=150,
+    maxiters=300,
+    t0=maxiters ÷ 2,
     kappa=0.65,
     sa_phase1_iters=200,
     sa_phase2_kappa=-1.0,
@@ -113,7 +114,6 @@ method = NoLimits.SAEM(;
     var_lb_value=1e-5,
 
     # Convergence and stopping
-    maxiters=300,
     rtol_theta=5e-5,
     atol_theta=5e-7,
     rtol_Q=5e-5,
@@ -604,7 +604,7 @@ method_gamma = NoLimits.SAEM(;
     maxiters=100,
     anneal_to_fixed=(:eta_site,),
     anneal_schedule=:gamma,
-    t0=150,
+    t0=50,
     kappa=0.65,
 )
 ```
