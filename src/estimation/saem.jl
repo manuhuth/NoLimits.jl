@@ -323,9 +323,9 @@ or closed-form updates (when `builtin_stats` is enabled).
 - `optimizer`: M-step Optimization.jl optimiser. Defaults to `LBFGS` with backtracking.
 - `optim_kwargs::NamedTuple = (; iterations=10, g_abstol=1e-2, f_reltol=1e-3)`: keyword
   arguments for the M-step `solve`. The defaults cap the inner LBFGS at 10 iterations
-  and use loose convergence tolerances (max-norm gradient < 0.01, relative function
-  improvement < 0.1%) appropriate for the approximate M-step in SAEM — tight convergence
-  is unnecessary since the SA step-size γ already limits how far θ moves.
+  and convergence tolerances (max-norm gradient < 1e-4, relative function improvement
+  < 1e-6) appropriate for the approximate M-step in SAEM — tight convergence is
+  unnecessary since the SA step-size γ already limits how far θ moves.
 - `adtype`: AD backend for the M-step. Defaults to `AutoForwardDiff()`.
 - `sampler`: Sampler for the E-step. Defaults to `SaemixMH()` (saemix-style 3-kernel MH,
   no Turing overhead). Pass `MH()` or `AdaptiveNoLimitsMH()` for Turing-based samplers.
@@ -395,7 +395,7 @@ struct SAEM{O, K, A, SO, L, U} <: FittingMethod
 end
 
 SAEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
-     optim_kwargs=(; iterations=10, g_abstol=1e-2, f_reltol=1e-3),
+     optim_kwargs=(; iterations=10, g_abstol=1e-4, f_reltol=1e-6),
      adtype=Optimization.AutoForwardDiff(),
      sampler=SaemixMH(),
      turing_kwargs=NamedTuple(),
