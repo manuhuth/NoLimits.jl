@@ -226,6 +226,54 @@ end
     end
 end
 
+function _saem_sample_batches!(dm::DataModel,
+                               batch_infos::Vector{_LaplaceBatchInfo},
+                               batches::AbstractVector{Int},
+                               θ::ComponentArray,
+                               const_cache::LaplaceConstantsCache,
+                               ll_cache,
+                               sampler,
+                               turing_kwargs,
+                               batch_rngs,
+                               re_names::Vector{Symbol},
+                               warm_start,
+                               last_chain_params,
+                               b_chains,
+                               effective_n_chains::Int,
+                               serialization::SciMLBase.EnsembleAlgorithm;
+                               anneal_sds::NamedTuple=NamedTuple(),
+                               outer_iter::Int=1)
+    isempty(batches) && return nothing
+    if serialization isa SciMLBase.EnsembleThreads
+        caches = _saem_thread_caches(dm, ll_cache, Threads.maxthreadid())
+        Threads.@threads for bi in batches
+            info = batch_infos[bi]
+            cache = caches[Threads.threadid()]
+            for c in 1:effective_n_chains
+                _, lastp, lastb = _mcem_sample_batch(dm, info, θ, const_cache, cache,
+                                                     sampler, turing_kwargs, batch_rngs[bi],
+                                                     re_names, warm_start, last_chain_params[bi][c];
+                                                     anneal_sds=anneal_sds, outer_iter=outer_iter)
+                b_chains[bi][c] = lastb
+                last_chain_params[bi][c] = lastp
+            end
+        end
+    else
+        for bi in batches
+            info = batch_infos[bi]
+            for c in 1:effective_n_chains
+                _, lastp, lastb = _mcem_sample_batch(dm, info, θ, const_cache, ll_cache,
+                                                     sampler, turing_kwargs, batch_rngs[bi],
+                                                     re_names, warm_start, last_chain_params[bi][c];
+                                                     anneal_sds=anneal_sds, outer_iter=outer_iter)
+                b_chains[bi][c] = lastb
+                last_chain_params[bi][c] = lastp
+            end
+        end
+    end
+    return nothing
+end
+
 @inline function _saem_thread_rngs(rng::AbstractRNG, nthreads::Int)
     return _spawn_child_rngs(rng, nthreads)
 end
@@ -357,9 +405,9 @@ SAEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(
      q_store_max::Int=50,
      q_store_epsilon::Float64=1e-10,
      q_store_min::Int=0,
-     t0=150,
-     kappa=0.65,
     maxiters=300,
+     t0=nothing,
+     kappa=0.65,
     rtol_theta=5e-5,
     atol_theta=5e-7,
     rtol_Q=5e-5,
@@ -423,10 +471,11 @@ SAEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(
         error("SAEM: max_estep_retries must be ≥ 0. Got: $max_estep_retries")
     retry_mcmc_steps >= 1 ||
         error("SAEM: retry_mcmc_steps must be ≥ 1. Got: $retry_mcmc_steps")
+    resolved_t0 = isnothing(t0) ? (maxiters ÷ 2) : t0
     ebe_rescue = EBERescueOptions(ebe_rescue_on_high_grad, ebe_rescue_multistart_n, ebe_rescue_multistart_k, ebe_rescue_max_rounds, ebe_rescue_grad_tol, ebe_rescue_multistart_sampling)
     resolved_mcmc_steps = isnothing(mcmc_steps) ? (sampler isa SaemixMH ? 1 : 80) : mcmc_steps
     saem = SAEMOptions(sampler, turing_kwargs, update_schedule, warm_start, verbose, progress,
-                       resolved_mcmc_steps, q_store_max, q_store_epsilon, q_store_min, t0, kappa,
+                       resolved_mcmc_steps, q_store_max, q_store_epsilon, q_store_min, resolved_t0, kappa,
                        maxiters, rtol_theta, atol_theta, rtol_Q, atol_Q, consecutive_params,
                        suffstats, q_from_stats, mstep_closed_form,
                        builtin_stats, builtin_mean, resid_var_param, re_cov_params, re_mean_params,
@@ -2716,33 +2765,11 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
             NamedTuple()
         end
 
-        if serialization isa SciMLBase.EnsembleThreads
-            nthreads = Threads.maxthreadid()
-            caches = _saem_thread_caches(dm, ll_cache, nthreads)
-            Threads.@threads for bi in updated
-                info = batch_infos[bi]
-                for c in 1:effective_n_chains
-                    _, lastp, lastb = _mcem_sample_batch(dm, info, θu_curr, const_cache, caches[Threads.threadid()],
-                                                         method.saem.sampler, tkwargs, batch_rngs[bi],
-                                                         re_names, method.saem.warm_start, last_chain_params[bi][c];
-                                                         anneal_sds=anneal_sds, outer_iter=iter)
-                    b_chains[bi][c] = lastb
-                    last_chain_params[bi][c] = lastp
-                end
-            end
-        else
-            for bi in updated
-                info = batch_infos[bi]
-                for c in 1:effective_n_chains
-                    _, lastp, lastb = _mcem_sample_batch(dm, info, θu_curr, const_cache, ll_cache,
-                                                         method.saem.sampler, tkwargs, batch_rngs[bi],
-                                                         re_names, method.saem.warm_start, last_chain_params[bi][c];
-                                                         anneal_sds=anneal_sds, outer_iter=iter)
-                    b_chains[bi][c] = lastb
-                    last_chain_params[bi][c] = lastp
-                end
-            end
-        end
+        _saem_sample_batches!(dm, batch_infos, updated, θu_curr, const_cache, ll_cache,
+                              method.saem.sampler, tkwargs, batch_rngs,
+                              re_names, method.saem.warm_start, last_chain_params, b_chains,
+                              effective_n_chains, serialization;
+                              anneal_sds=anneal_sds, outer_iter=iter)
         _saem_update_b_current!(b_current, b_chains, updated, effective_n_chains)
 
 
@@ -2764,18 +2791,14 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                 bad = _saem_bad_batches(dm, batch_infos, updated, θu_curr, b_current,
                                         const_cache, ll_cache; anneal_sds=anneal_sds)
                 isempty(bad) && break
-                for bi in bad
-                    info = batch_infos[bi]
-                    for c in 1:effective_n_chains
-                        _, lastp, lastb = _mcem_sample_batch(
-                            dm, info, θu_curr, const_cache, ll_cache,
-                            method.saem.sampler, retry_tkwargs, batch_rngs[bi],
-                            re_names, method.saem.warm_start, last_chain_params[bi][c];
-                            anneal_sds=anneal_sds, outer_iter=iter)
-                        b_chains[bi][c] = lastb
-                        last_chain_params[bi][c] = lastp
-                    end
+                if method.saem.verbose
+                    @info "SAEM retrying bad batches" iter=iter retry=_retry bad_batches=bad
                 end
+                _saem_sample_batches!(dm, batch_infos, bad, θu_curr, const_cache, ll_cache,
+                                      method.saem.sampler, retry_tkwargs, batch_rngs,
+                                      re_names, method.saem.warm_start, last_chain_params, b_chains,
+                                      effective_n_chains, serialization;
+                                      anneal_sds=anneal_sds, outer_iter=iter)
                 _saem_update_b_current!(b_current, b_chains, bad, effective_n_chains)
                 _saem_store_push!(sample_store, b_current, γ)
             end

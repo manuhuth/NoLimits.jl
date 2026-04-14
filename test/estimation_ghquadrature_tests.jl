@@ -1033,7 +1033,7 @@ end  # @testset "GHQuadrature Wald UQ"
     dm_uq = _make_map_ghq_dm()
 
     @testset "compute_uq GHQuadrature :profile level=2" begin
-        res = fit_model(dm_uq, GHQuadrature(level=3; optim_kwargs=(maxiters=400,)))
+        res = fit_model(dm_uq, GHQuadrature(level=2; optim_kwargs=(maxiters=800,)))
         uq  = compute_uq(res; method=:profile)
 
         @test uq isa NoLimits.UQResult
@@ -2028,3 +2028,100 @@ end  # @testset "GHQuadrature generic ContinuousUnivariateDistribution fallback"
     end
 
 end  # @testset "GHQuadrature progressive refinement"
+
+
+# ============================================================
+# MCIntegrator: prior sampling and Turing MCMC sampling
+# ============================================================
+
+@testset "get_loglikelihood_quadrature MC sampling" begin
+
+    # Shared fixture: simple Normal RE model with Laplace fit
+    function _mc_test_dm(; n_id=10, n_obs=5, rng=MersenneTwister(900))
+        ids  = repeat(1:n_id, inner=n_obs)
+        yobs = 1.0 .+ 0.4 .* randn(rng, n_id * n_obs)
+        tobs = repeat(1:n_obs, n_id) .* 1.0
+        model = @Model begin
+            @fixedEffects begin
+                a = RealNumber(1.0)
+                σ = RealNumber(0.4, scale=:log)
+                ω = RealNumber(0.4, scale=:log)
+            end
+            @covariates begin; t = Covariate(); end
+            @randomEffects begin; η = RandomEffect(Normal(0.0, ω); column=:ID); end
+            @formulas begin; y ~ Normal(a + η, σ); end
+        end
+        df = DataFrame(ID=ids, t=tobs, y=yobs)
+        dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+        res = fit_model(dm, NoLimits.Laplace())
+        return dm, res
+    end
+
+    @testset "MCIntegrator constructor" begin
+        mc = MCIntegrator()
+        @test mc.n_samples == 1000
+        @test mc.mode === :turing
+        @test mc.sampler === nothing
+        @test mc.n_warmup == 500
+        @test mc.rng === nothing
+
+        mc2 = MCIntegrator(n_samples=500, mode=:prior)
+        @test mc2.n_samples == 500
+
+        @test_throws ErrorException MCIntegrator(mode=:unknown)
+        @test_throws ErrorException MCIntegrator(n_samples=0)
+        @test_throws ErrorException MCIntegrator(n_warmup=-1)
+    end
+
+    @testset "prior MC for all batches: finite and close to quadrature" begin
+        dm, res = _mc_test_dm()
+        ll_ghq = get_loglikelihood_quadrature(res; level=2, seed=1)
+        ll_mc  = get_loglikelihood_quadrature(res; seed=1,
+                     mc_integrator=MCIntegrator(n_samples=3000, mode=:prior))
+        @test isfinite(ll_ghq)
+        @test isfinite(ll_mc)
+        # Prior MC should be in the right ballpark (within 15 log units for n_id=10)
+        @test abs(ll_mc - ll_ghq) < 15.0
+    end
+
+    @testset "seed makes result reproducible" begin
+        dm, res = _mc_test_dm()
+        ll1 = get_loglikelihood_quadrature(res; seed=42,
+                  mc_integrator=MCIntegrator(n_samples=200, mode=:prior))
+        ll2 = get_loglikelihood_quadrature(res; seed=42,
+                  mc_integrator=MCIntegrator(n_samples=200, mode=:prior))
+        @test ll1 == ll2
+    end
+
+    @testset "fallback=nothing is accepted and default AGHQ path works" begin
+        dm, res = _mc_test_dm()
+        ll = get_loglikelihood_quadrature(res; level=2, seed=1, fallback=nothing)
+        @test isfinite(ll)
+    end
+
+    @testset "Turing MC for all batches: finite result" begin
+        dm, res = _mc_test_dm(n_id=8, n_obs=5, rng=MersenneTwister(901))
+        ll_mc_turing = get_loglikelihood_quadrature(res; seed=2,
+            mc_integrator=MCIntegrator(n_samples=500, mode=:turing,
+                                       sampler=Turing.MH(), n_warmup=200))
+        @test isfinite(ll_mc_turing)
+    end
+
+    @testset "Turing MC close to quadrature" begin
+        dm, res = _mc_test_dm(n_id=10, n_obs=5, rng=MersenneTwister(903))
+        ll_ghq    = get_loglikelihood_quadrature(res; level=2, seed=3)
+        ll_turing = get_loglikelihood_quadrature(res; seed=3,
+            mc_integrator=MCIntegrator(n_samples=1000, mode=:turing,
+                                       sampler=Turing.MH(), n_warmup=500))
+        @test isfinite(ll_turing)
+        @test abs(ll_turing - ll_ghq) < 2.0
+    end
+
+    @testset "fallback MCIntegrator path works end-to-end" begin
+        dm, res = _mc_test_dm(n_id=8, n_obs=4)
+        ll = get_loglikelihood_quadrature(res; seed=10, jitter=1e-6,
+            fallback=MCIntegrator(n_samples=500, mode=:prior))
+        @test isfinite(ll)
+    end
+
+end  # @testset "get_loglikelihood_quadrature MC sampling"
