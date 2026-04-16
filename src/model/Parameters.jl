@@ -328,6 +328,7 @@ end
 
 function NPFParameter(n_input::Integer, n_layers::Integer; name::Symbol = :unnamed, seed::Integer = 0,
     init::Function = x -> sqrt((1 / n_input)) .* x, base_dist = nothing,
+    weights::Union{AbstractVector, Nothing} = nothing,
     prior = Priorless(), calculate_se::Bool = false)
     n_input > 0 || error("Invalid n_input for parameter $(name). Expected n_input > 0; got $(n_input).")
     n_layers > 0 || error("Invalid n_layers for parameter $(name). Expected n_layers > 0; got $(n_layers).")
@@ -337,7 +338,12 @@ function NPFParameter(n_input::Integer, n_layers::Integer; name::Symbol = :unnam
     ts = fchain(Ls)
     flat, reconstructor = Optimisers.destructure(ts)
     T = eltype(flat) <: AbstractFloat ? eltype(flat) : Float64
-    v = T.(flat)
+    if !isnothing(weights)
+        length(weights) == length(flat) || error("Provided weights length ($(length(weights))) does not match expected flat parameter length ($(length(flat))) for parameter $(name).")
+        v = T.(weights)
+    else
+        v = T.(flat)
+    end
     l = fill(T(-Inf), length(v))
     u = fill(T(Inf), length(v))
     _check_nn_prior(prior, name, length(v))
