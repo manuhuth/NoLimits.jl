@@ -108,8 +108,6 @@ function _ident_method_symbol(method)
     method isa MAP && return :map
     method isa Laplace && return :laplace
     method isa LaplaceMAP && return :laplace_map
-    method isa FOCEI && return :focei
-    method isa FOCEIMAP && return :focei_map
     error("Unsupported method $(typeof(method)) for identifiability_report.")
 end
 
@@ -120,11 +118,9 @@ function _resolve_ident_method(dm::DataModel, method_spec)
         method_spec === :map && return MAP()
         method_spec === :laplace && return Laplace()
         method_spec === :laplace_map && return LaplaceMAP()
-        method_spec === :focei && return FOCEI()
-        method_spec === :focei_map && return FOCEIMAP()
-        error("Unknown identifiability method $(method_spec). Use :auto, :mle, :map, :laplace, :laplace_map, :focei, or :focei_map.")
+        error("Unknown identifiability method $(method_spec). Use :auto, :mle, :map, :laplace, or :laplace_map.")
     end
-    if method_spec isa MLE || method_spec isa MAP || method_spec isa Laplace || method_spec isa LaplaceMAP || method_spec isa FOCEI || method_spec isa FOCEIMAP
+    if method_spec isa MLE || method_spec isa MAP || method_spec isa Laplace || method_spec isa LaplaceMAP
         return method_spec
     end
     error("Unsupported method specification $(typeof(method_spec)) for identifiability_report.")
@@ -133,9 +129,9 @@ end
 function _validate_ident_method(dm::DataModel, method)
     has_re = _has_random_effects(dm)
     if method isa MLE || method isa MAP
-        has_re && error("MLE/MAP identifiability diagnostics require models without random effects. Use method=:laplace, :laplace_map, :focei, or :focei_map for random-effects models.")
-    elseif method isa Laplace || method isa LaplaceMAP || method isa FOCEI || method isa FOCEIMAP
-        has_re || error("Laplace/LaplaceMAP/FOCEI/FOCEIMAP identifiability diagnostics require random effects. Use method=:mle or :map for fixed-effects models.")
+        has_re && error("MLE/MAP identifiability diagnostics require models without random effects. Use method=:laplace or :laplace_map for random-effects models.")
+    elseif method isa Laplace || method isa LaplaceMAP
+        has_re || error("Laplace/LaplaceMAP identifiability diagnostics require random effects. Use method=:mle or :map for fixed-effects models.")
     else
         error("Unsupported method $(typeof(method)) for identifiability diagnostics.")
     end
@@ -150,12 +146,12 @@ function _validate_ident_method(dm::DataModel, method)
         has_prior || error("MAP identifiability diagnostics require at least one prior on fixed effects.")
     end
 
-    if method isa LaplaceMAP || method isa FOCEIMAP
+    if method isa LaplaceMAP
         priors = get_priors(fe)
         for name in fixed_names
-            hasproperty(priors, name) || error("LaplaceMAP/FOCEIMAP identifiability diagnostics require priors on all fixed effects. Missing prior for $(name).")
+            hasproperty(priors, name) || error("LaplaceMAP identifiability diagnostics require priors on all fixed effects. Missing prior for $(name).")
             getfield(priors, name) isa Priorless &&
-                error("LaplaceMAP/FOCEIMAP identifiability diagnostics require priors on all fixed effects. Priorless for $(name).")
+                error("LaplaceMAP identifiability diagnostics require priors on all fixed effects. Priorless for $(name).")
         end
     end
     return nothing
@@ -380,7 +376,7 @@ function _laplace_batch_labels(dm::DataModel, info::_LaplaceBatchInfo)
 end
 
 function _build_re_information(dm::DataModel,
-                               method::Union{Laplace, LaplaceMAP, FOCEI, FOCEIMAP},
+                               method::Union{Laplace, LaplaceMAP},
                                θu::ComponentArray,
                                batch_infos::Vector{_LaplaceBatchInfo},
                                const_cache::LaplaceConstantsCache,
@@ -403,11 +399,7 @@ function _build_re_information(dm::DataModel,
                                  rng=Random.Xoshiro(seed),
                                  serialization=ebe_serialization)
     out = RandomEffectInformation[]
-    hess_opts = if method isa Laplace || method isa LaplaceMAP
-        method.hessian
-    else
-        method.fallback_hessian
-    end
+    hess_opts = method.hessian
     for (bi, info) in enumerate(batch_infos)
         nb = info.n_b
         labels = _laplace_batch_labels(dm, info)
@@ -482,7 +474,7 @@ function _build_no_re_objective(dm::DataModel,
 end
 
 function _build_laplace_objective(dm::DataModel,
-                                  method::Union{Laplace, LaplaceMAP, FOCEI, FOCEIMAP},
+                                  method::Union{Laplace, LaplaceMAP},
                                   prep,
                                   fe::FixedEffects;
                                   constants_re::NamedTuple=NamedTuple(),
@@ -502,31 +494,20 @@ function _build_laplace_objective(dm::DataModel,
     inner_opts = _resolve_inner_options(method.inner, dm)
     multistart_opts = _resolve_multistart_options(method.multistart, inner_opts)
     has_penalty = !isempty(keys(penalty))
-    has_prior = method isa LaplaceMAP || method isa FOCEIMAP
+    has_prior = method isa LaplaceMAP
 
     function eval_obj_grad(x_vec::Vector{Float64})
         θt_free = ComponentArray(x_vec, prep.axs_free)
         θt_full = _merge_full_theta(prep.θ_const_t, prep.axs_full, θt_free, prep.free_names)
         θu = prep.inv_transform(θt_full)
 
-        obj, grad_u, _ = if method isa Laplace || method isa LaplaceMAP
-            _laplace_objective_and_grad(dm, batch_infos, θu, const_cache, ll_cache, ebe_cache;
-                                        inner=inner_opts,
-                                        hessian=method.hessian,
-                                        cache_opts=cache_opts,
-                                        multistart=multistart_opts,
-                                        rng=Random.Xoshiro(seed),
-                                        serialization=serialization)
-        else
-            _focei_objective_and_grad(dm, batch_infos, θu, const_cache, ll_cache, ebe_cache;
-                                      inner=inner_opts,
-                                      info_opts=method.info,
-                                      fallback_hessian=method.fallback_hessian,
-                                      cache_opts=cache_opts,
-                                      multistart=multistart_opts,
-                                      rng=Random.Xoshiro(seed),
-                                      serialization=serialization)
-        end
+        obj, grad_u, _ = _laplace_objective_and_grad(dm, batch_infos, θu, const_cache, ll_cache, ebe_cache;
+                                                     inner=inner_opts,
+                                                     hessian=method.hessian,
+                                                     cache_opts=cache_opts,
+                                                     multistart=multistart_opts,
+                                                     rng=Random.Xoshiro(seed),
+                                                     serialization=serialization)
         obj == Inf && return (Inf, fill(NaN, length(x_vec)), θu)
 
         if has_prior
@@ -553,15 +534,7 @@ function _build_laplace_objective(dm::DataModel,
 
     obj_only = x -> eval_obj_grad(x)[1]
     grad_fun = x -> eval_obj_grad(x)[2]
-    objective_symbol = if method isa LaplaceMAP
-        :laplace_posterior
-    elseif method isa Laplace
-        :laplace_likelihood
-    elseif method isa FOCEIMAP
-        :focei_posterior
-    else
-        :focei_likelihood
-    end
+    objective_symbol = method isa LaplaceMAP ? :laplace_posterior : :laplace_likelihood
     re_info_fun = x -> begin
         θt_free = ComponentArray(x, prep.axs_free)
         θt_full = _merge_full_theta(prep.θ_const_t, prep.axs_full, θt_free, prep.free_names)
@@ -669,7 +642,7 @@ function _identifiability_report(dm::DataModel,
     cond = _condition_number_from_svals(svals, tol)
     null_dirs = _build_null_directions(Hsym, prep.free_names, prep.ranges, tol)
     locally_identifiable = nullity == 0
-    if method isa Laplace || method isa LaplaceMAP || method isa FOCEI || method isa FOCEIMAP
+    if method isa Laplace || method isa LaplaceMAP
         re_info = re_info_fun(x0)
     end
 
@@ -723,7 +696,7 @@ used by default (`at=:fit`).
 # Keyword Arguments
 - `method::Union{Symbol, FittingMethod} = :auto`: estimation method whose objective is
   used. `:auto` selects `MLE` for models without random effects and `Laplace` otherwise.
-  Supported symbols: `:mle`, `:map`, `:laplace`, `:laplace_map`, `:focei`, `:focei_map`.
+  Supported symbols: `:mle`, `:map`, `:laplace`, `:laplace_map`.
 - `at::Union{Symbol, ComponentArray} = :start`: evaluation point. `:start` uses the
   model initial values, `:fit` uses the fitted estimates (only for the `FitResult`
   method), or a `ComponentArray` of untransformed parameter values.
@@ -802,7 +775,7 @@ function identifiability_report(res::FitResult;
     dm === nothing && error("This fit result does not store a DataModel; call identifiability_report(dm, ...) instead.")
 
     method_use = if method === :fit
-        if res.method isa MLE || res.method isa MAP || res.method isa Laplace || res.method isa LaplaceMAP || res.method isa FOCEI || res.method isa FOCEIMAP
+        if res.method isa MLE || res.method isa MAP || res.method isa Laplace || res.method isa LaplaceMAP
             res.method
         else
             @warn "identifiability_report does not have a direct objective for $(typeof(res.method)); using method=:auto."

@@ -67,22 +67,6 @@ struct SavedLaplaceMAPResult{S, O, I, N, B}
     eb_modes::B
 end
 
-struct SavedFOCEIResult{S, O, I, N, B}
-    solution::S
-    objective::O
-    iterations::I
-    notes::N
-    eb_modes::B
-end
-
-struct SavedFOCEIMAPResult{S, O, I, N, B}
-    solution::S
-    objective::O
-    iterations::I
-    notes::N
-    eb_modes::B
-end
-
 struct SavedMCEMResult{S, O, I, N, B}
     solution::S
     objective::O
@@ -174,8 +158,6 @@ _strip_fitting_method(::MLE)                  = _SavedFittingMethod(:mle)
 _strip_fitting_method(::MAP)                  = _SavedFittingMethod(:map)
 _strip_fitting_method(::Laplace)              = _SavedFittingMethod(:laplace)
 _strip_fitting_method(::LaplaceMAP)           = _SavedFittingMethod(:laplacemap)
-_strip_fitting_method(::FOCEI)                = _SavedFittingMethod(:focei)
-_strip_fitting_method(::FOCEIMAP)             = _SavedFittingMethod(:foceimap)
 _strip_fitting_method(::MCEM)                 = _SavedFittingMethod(:mcem)
 _strip_fitting_method(::SAEM)                 = _SavedFittingMethod(:saem)
 _strip_fitting_method(::MCMC)                 = _SavedFittingMethod(:mcmc)
@@ -229,12 +211,6 @@ _strip_method_result(r::LaplaceResult) =
 
 _strip_method_result(r::LaplaceMAPResult) =
     SavedLaplaceMAPResult(_strip_solution(r.solution), r.objective, r.iterations, r.notes, r.eb_modes)
-
-_strip_method_result(r::FOCEIResult) =
-    SavedFOCEIResult(_strip_solution(r.solution), r.objective, r.iterations, r.notes, r.eb_modes)
-
-_strip_method_result(r::FOCEIMAPResult) =
-    SavedFOCEIMAPResult(_strip_solution(r.solution), r.objective, r.iterations, r.notes, r.eb_modes)
 
 _strip_method_result(r::MCEMResult) =
     SavedMCEMResult(_strip_solution(r.solution), r.objective, r.iterations, r.notes, r.eb_modes)
@@ -321,12 +297,6 @@ _reconstruct_method_result(s::SavedLaplaceResult) =
 
 _reconstruct_method_result(s::SavedLaplaceMAPResult) =
     LaplaceMAPResult(s.solution, s.objective, s.iterations, nothing, s.notes, s.eb_modes)
-
-_reconstruct_method_result(s::SavedFOCEIResult) =
-    FOCEIResult(s.solution, s.objective, s.iterations, nothing, s.notes, s.eb_modes)
-
-_reconstruct_method_result(s::SavedFOCEIMAPResult) =
-    FOCEIMAPResult(s.solution, s.objective, s.iterations, nothing, s.notes, s.eb_modes)
 
 _reconstruct_method_result(s::SavedMCEMResult) =
     MCEMResult(s.solution, s.objective, s.iterations, nothing, s.notes, s.eb_modes)

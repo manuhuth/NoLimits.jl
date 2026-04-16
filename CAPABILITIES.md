@@ -668,38 +668,6 @@ Same as Laplace but includes fixed-effect priors in the objective. Requires prio
 
 Tests: `test/estimation_laplace_map_tests.jl`
 
-#### FOCEI (first-order conditional estimation with interaction)
-
-```julia
-fit_model(dm, FOCEI(; ..., info_mode, info_jitter, info_max_tries,
-                       fallback_to_laplace, mode_sensitivity, info_custom, ...))
-```
-
-Core idea: uses Laplace-style batch modes (EBEs) but an information-matrix based logdet term.
-
-Information mode options:
-- `info_mode=:fisher_common` (default) — analytic expected information for supported outcomes/priors.
-- `info_mode=:custom` — user-provided information-matrix approximation with signature `(dm, batch_info, θ, b, const_cache, ll_cache) -> I::AbstractMatrix`.
-- Built-in helper: `info_mode=:custom, info_custom=focei_information_opg`.
-
-`:fisher_common` supports:
-- Outcomes: `Normal`, `LogNormal`, `Bernoulli`, `Poisson`, `Exponential`, `Geometric`, `Binomial`
-- RE priors: `Normal`, `LogNormal`, `Exponential`, `MvNormal`
-
-Mode sensitivity options: `:exact_hessian` (default) or `:focei_info`.
-
-Capabilities: multiple RE groups, multivariate REs, ODE and non-ODE models, constants/constants_re, threaded batches.
-
-Outputs: `FOCEIResult` includes EB modes and fallback counters in notes.
-
-Tests: `test/estimation_focei_tests.jl`
-
-#### FOCEIMAP
-
-Same approximation path as FOCEI but adds fixed-effect priors to the objective. Requires priors for all fixed effects.
-
-Tests: `test/estimation_focei_map_tests.jl`
-
 #### MCEM (Monte Carlo EM)
 
 ```julia
@@ -761,12 +729,11 @@ fit_model(dm, Multistart(base_method; n_starts, sampling, ...))
 
 - `constants` — fixed effects on transformed scale.
 - `constants_re` — fixed RE levels (NamedTuple / Dict / Pair supported).
-- Bounds (lb/ub) — used in Laplace/LaplaceMAP/FOCEI/FOCEIMAP/MCEM/SAEM; BlackBoxOptim requires finite bounds.
+- Bounds (lb/ub) — used in Laplace/LaplaceMAP/MCEM/SAEM; BlackBoxOptim requires finite bounds.
 
 ### 2.6 Threading Summary
 
 - Laplace: objective/grad across batches uses threads.
-- FOCEI/FOCEIMAP: objective/grad across batches uses threads.
 - MCMC: loglikelihood can use `EnsembleThreads`.
 - MCEM/SAEM: batch sampling and Q evaluation can use threads.
 
@@ -777,7 +744,7 @@ identifiability_report(dm::DataModel; ...)
 identifiability_report(res::FitResult; ...)
 ```
 
-Reports Hessian/SVD rank, null directions, condition metrics, and RE information diagnostics. Supported for MLE/MAP/Laplace/FOCEI families.
+Reports Hessian/SVD rank, null directions, condition metrics, and RE information diagnostics. Supported for MLE/MAP/Laplace families.
 
 ### 2.8 Fit Result Accessors
 
@@ -796,7 +763,7 @@ get_method(res)
 get_result(res)
 get_data_model(res)
 
-# Optimization-based methods (MLE/MAP/Laplace/LaplaceMAP/FOCEI/FOCEIMAP/MCEM/SAEM)
+# Optimization-based methods (MLE/MAP/Laplace/LaplaceMAP/MCEM/SAEM)
 get_iterations(res)
 get_raw(res)
 get_notes(res)
@@ -807,11 +774,11 @@ get_observed(res)
 get_sampler(res)
 get_n_samples(res)
 
-# Random effects — Laplace/LaplaceMAP/FOCEI/FOCEIMAP/MCEM/SAEM (EB point estimates)
+# Random effects — Laplace/LaplaceMAP/MCEM/SAEM (EB point estimates)
 get_random_effects(dm, res; constants_re=NamedTuple(), flatten=true, include_constants=true)
 get_random_effects(res; constants_re=..., flatten=..., include_constants=...)  # uses stored dm
 
-# Log-likelihood — MLE/MAP/Laplace/LaplaceMAP/FOCEI/FOCEIMAP/MCEM/SAEM (EB modes used for RE methods)
+# Log-likelihood — MLE/MAP/Laplace/LaplaceMAP/MCEM/SAEM (EB modes used for RE methods)
 get_loglikelihood(dm, res; constants_re=NamedTuple(), ode_args=(), ode_kwargs=NamedTuple(), serialization=EnsembleSerial())
 get_loglikelihood(res; constants_re=..., ode_args=..., ode_kwargs=..., serialization=...)  # uses stored dm
 ```
@@ -840,7 +807,7 @@ Backend selection (`method`):
 
 #### Wald (`method=:wald`)
 
-Supported source methods: `MLE`, `MAP`, `Laplace`, `LaplaceMAP`, `FOCEI`, `FOCEIMAP`, `MCEM`, `SAEM`.
+Supported source methods: `MLE`, `MAP`, `Laplace`, `LaplaceMAP`, `MCEM`, `SAEM`.
 
 Core behavior:
 - Builds objective around fitted point and computes transformed-scale Hessian.
@@ -850,7 +817,7 @@ Core behavior:
 
 Key kwargs: `vcov=:hessian|:sandwich`, `hessian_backend=:auto|:forwarddiff|:fd_gradient`, `pseudo_inverse=false`, `n_draws=2000`.
 
-For `MCEM`/`SAEM`: `re_approx=:auto|:laplace|:focei`, `re_approx_method`.
+For `MCEM`/`SAEM`: `re_approx=:auto|:laplace`, `re_approx_method`.
 
 #### Chain (`method=:chain`)
 
@@ -862,7 +829,7 @@ Key kwargs: `mcmc_warmup`, `mcmc_draws`.
 
 #### Profile (`method=:profile`)
 
-Supported source methods: `MLE`, `MAP`, `Laplace`, `LaplaceMAP`, `FOCEI`, `FOCEIMAP`.
+Supported source methods: `MLE`, `MAP`, `Laplace`, `LaplaceMAP`.
 
 Uses `LikelihoodProfiler.jl` per active coordinate. Profiles objective with all other coordinates re-optimized. No covariance matrix output.
 
@@ -1045,7 +1012,7 @@ Residual autocorrelation by observable (average across individuals), up to `max_
 
 ### 4.5 Random-Effects Diagnostics
 
-Supported fit types: `Laplace`, `LaplaceMAP`, `FOCEI`, `FOCEIMAP`, `MCEM`, `SAEM`, `MCMC`.
+Supported fit types: `Laplace`, `LaplaceMAP`, `MCEM`, `SAEM`, `MCMC`.
 
 #### plot_random_effect_distributions
 Per-level marginal RE distribution with EBE marker (optimization methods) or posterior mean marker (MCMC). For `NormalizingPlanarFlow`, uses sampling and KDE approximations.
@@ -1122,9 +1089,7 @@ Supports simulation with RE draws, ODE solves, event handling, and flexible dist
 - `ComponentArray` is used end-to-end in estimation paths.
 - ForwardDiff buffers/configs are cached in key gradient paths for allocation/performance improvements.
 - Threaded execution is supported in major random-effects estimation workflows via serialization controls.
-- Distribution flexibility is broad at the modeling layer for both outcomes and random effects. Some approximation methods have narrower analytic assumptions:
-  - FOCEI `info_mode=:fisher_common` supports a defined subset of outcomes/RE priors.
-  - FOCEI `info_mode=:custom` expands to arbitrary distributions through user-supplied information approximation.
+- Distribution flexibility is broad at the modeling layer for both outcomes and random effects.
 - Bayesian and simulation paths are generally the most distribution-flexible, subject to valid `logpdf`/`rand` behavior and stable autodiff.
 
 ---
@@ -1137,8 +1102,6 @@ Supports simulation with RE draws, ODE solves, event handling, and flexible dist
 | RE distribution / AD | `test/random_effects_tests.jl`, `test/ad_random_effects.jl` |
 | Laplace | `test/estimation_laplace_tests.jl`, `test/estimation_laplace_fit_tests.jl` |
 | LaplaceMAP | `test/estimation_laplace_map_tests.jl` |
-| FOCEI | `test/estimation_focei_tests.jl` |
-| FOCEIMAP | `test/estimation_focei_map_tests.jl` |
 | MCEM | `test/estimation_mcem_tests.jl` |
 | SAEM | `test/estimation_saem_tests.jl`, `test/estimation_saem_suffstats_tests.jl` |
 | MCMC RE | `test/estimation_mcmc_re_tests.jl` |

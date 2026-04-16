@@ -59,7 +59,7 @@ contains optimiser closures that cannot be serialised) on save.
 `get_method(res).kind` returns a Symbol such as `:mle`, `:map`, `:laplace`, etc.
 """
 struct _SavedFittingMethod <: FittingMethod
-    kind::Symbol   # :mle :map :laplace :laplacemap :focei :foceimap
+    kind::Symbol   # :mle :map :laplace :laplacemap
                    # :mcem :saem :mcmc :vi :ghquadrature :ghquadraturemap
 end
 
@@ -595,8 +595,8 @@ function get_laplace_random_effects(dm::DataModel,
                                     constants_re::NamedTuple=NamedTuple(),
                                     flatten::Bool=true,
                                     include_constants::Bool=true)
-    (res.result isa LaplaceResult || res.result isa LaplaceMAPResult || res.result isa FOCEIResult || res.result isa FOCEIMAPResult || res.result isa GHQuadratureResult || res.result isa GHQuadratureMAPResult) ||
-        error("Laplace-style random-effects accessor requires a Laplace, LaplaceMAP, FOCEI, FOCEIMAP, GHQuadrature, or GHQuadratureMAP fit result.")
+    (res.result isa LaplaceResult || res.result isa LaplaceMAPResult || res.result isa GHQuadratureResult || res.result isa GHQuadratureMAPResult) ||
+        error("Laplace-style random-effects accessor requires a Laplace, LaplaceMAP, GHQuadrature, or GHQuadratureMAP fit result.")
     constants_re = _res_constants_re(res, constants_re)
     re_names = get_re_names(dm.model.random.random)
     isempty(re_names) && return NamedTuple()
@@ -722,7 +722,7 @@ end
 Return empirical Bayes (EB) random-effect estimates as a `NamedTuple` of `DataFrame`s,
 one per random effect.
 
-Supported methods: `Laplace`, `LaplaceMAP`, `FOCEI`, `FOCEIMAP`, `MCEM`, `SAEM`.
+Supported methods: `Laplace`, `LaplaceMAP`, `MCEM`, `SAEM`, `GHQuadrature`, `GHQuadratureMAP`.
 
 # Keyword Arguments
 - `constants_re::NamedTuple = NamedTuple()`: fix random effects at given values (natural scale).
@@ -735,7 +735,7 @@ function get_random_effects(dm::DataModel,
                             flatten::Bool=true,
                             include_constants::Bool=true)
     constants_re = _res_constants_re(res, constants_re)
-    if res.result isa LaplaceResult || res.result isa LaplaceMAPResult || res.result isa FOCEIResult || res.result isa FOCEIMAPResult || res.result isa GHQuadratureResult || res.result isa GHQuadratureMAPResult
+    if res.result isa LaplaceResult || res.result isa LaplaceMAPResult || res.result isa GHQuadratureResult || res.result isa GHQuadratureMAPResult
         return get_laplace_random_effects(dm, res; constants_re=constants_re, flatten=flatten, include_constants=include_constants)
     end
     if res.result isa MCEMResult
@@ -797,7 +797,7 @@ end
 
 Compute the marginal log-likelihood at the estimated parameter values.
 
-For MLE/MAP results, evaluates the population log-likelihood. For Laplace/FOCEI
+For MLE/MAP results, evaluates the population log-likelihood. For Laplace-style
 results, evaluates using the EB modes stored in the result.
 
 # Keyword Arguments
@@ -816,7 +816,7 @@ function get_loglikelihood(dm::DataModel,
     θu = get_params(res; scale=:untransformed)
     if res.result isa MLEResult || res.result isa MAPResult
         return loglikelihood(dm, θu, ComponentArray(); ode_args=ode_args, ode_kwargs=ode_kwargs, serialization=serialization)
-    elseif res.result isa LaplaceResult || res.result isa LaplaceMAPResult || res.result isa FOCEIResult || res.result isa FOCEIMAPResult || res.result isa GHQuadratureMAPResult
+    elseif res.result isa LaplaceResult || res.result isa LaplaceMAPResult || res.result isa GHQuadratureMAPResult
         pairing, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re)
         bstars = res.result.eb_modes
         length(bstars) == length(batch_infos) || error("Laplace-style EB modes do not match number of batches.")
@@ -871,7 +871,7 @@ end
 Compute the marginal log-likelihood using **Adaptive Gauss-Hermite Quadrature** (AGHQ),
 with optional Monte Carlo sampling as the primary method or as a fallback.
 
-Unlike `get_loglikelihood`, which plugs in the EBE point estimate for Laplace/FOCEI/SAEM/MCEM
+Unlike `get_loglikelihood`, which plugs in the EBE point estimate for Laplace/SAEM/MCEM
 methods, this function integrates over each batch's random effects.
 
 The integration measure for AGHQ is
@@ -886,7 +886,7 @@ the Hessian H of log p(b | y, θ) at b*. The log-correction
 accounts for the prior, Jacobian, and Gaussian quadrature measure.
 
 # Supported methods
-Laplace, LaplaceMAP, FOCEI, FOCEIMAP, SAEM, MCEM, GHQuadrature, GHQuadratureMAP.
+Laplace, LaplaceMAP, SAEM, MCEM, GHQuadrature, GHQuadratureMAP.
 
 # Not supported
 - **MCMC**: raises an error.

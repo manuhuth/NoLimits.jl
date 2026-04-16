@@ -184,7 +184,7 @@ end
     @test get_uq_parameter_names(uq) == [:β_1, :β_2, :a, :σ]
 end
 
-@testset "UQ edge: Laplace/FOCEI with multivariate + planar-flow REs, vector FE, NN/SoftTree/Spline" begin
+@testset "UQ edge: Laplace with multivariate + planar-flow REs, vector FE, NN/SoftTree/Spline" begin
     model = _uq_edge_re_blocks_flow_model()
     dm = DataModel(model, _uq_edge_re_df(); primary_id=:ID, time_col=:t)
     θ0 = get_θ0_untransformed(dm.model.fixed.fixed)
@@ -207,28 +207,9 @@ end
                             rng=Random.Xoshiro(206))
     @test get_uq_source_method(uq_laplace) == :laplace
     @test get_uq_parameter_names(uq_laplace) == [:β_1, :β_2, :a, :σ]
-
-    res_focei = fit_model(dm,
-                          NoLimits.FOCEI(;
-                                                 optim_kwargs=(maxiters=5,),
-                                                 inner_kwargs=(maxiters=15,),
-                                                 info_mode=:custom,
-                                                 info_custom=NoLimits.focei_information_opg,
-                                                 multistart_n=0,
-                                                 multistart_k=0);
-                          constants=constants)
-    uq_focei = compute_uq(res_focei;
-                          method=:wald,
-                          n_draws=30,
-                          fd_abs_step=1e-6,
-                          fd_rel_step=1e-6,
-                          fd_max_tries=12,
-                          rng=Random.Xoshiro(207))
-    @test get_uq_source_method(uq_focei) == :focei
-    @test get_uq_parameter_names(uq_focei) == [:β_1, :β_2, :a, :σ]
 end
 
-@testset "UQ edge: LaplaceMAP/FOCEIMAP with multivariate + planar-flow REs and vector FE" begin
+@testset "UQ edge: LaplaceMAP with multivariate + planar-flow REs and vector FE" begin
     model = _uq_edge_re_flow_map_model()
     dm = DataModel(model, _uq_edge_re_df(); primary_id=:ID, time_col=:t)
     θ0 = get_θ0_untransformed(dm.model.fixed.fixed)
@@ -287,12 +268,11 @@ end
                          constants=constants)
     uq_saem = compute_uq(res_saem;
                          method=:wald,
-                         re_approx=:focei,
-                         re_approx_method=NoLimits.FOCEI(; info_mode=:custom, info_custom=NoLimits.focei_information_opg, multistart_n=0, multistart_k=0),
+                         re_approx=:laplace,
                          pseudo_inverse=true,
                          n_draws=20,
                          rng=Random.Xoshiro(211))
     @test get_uq_source_method(uq_saem) == :saem
     @test get_uq_parameter_names(uq_saem) == [:β_1, :β_2, :a, :σ]
-    @test get_uq_diagnostics(uq_saem).approximation_method == :focei
+    @test get_uq_diagnostics(uq_saem).approximation_method == :laplace
 end

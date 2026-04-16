@@ -121,8 +121,7 @@ function _build_uq_obj_re(res::FitResult,
     ebe_cache = _init_laplace_eval_cache(length(batch_infos), Float64)
     cache_opts = LaplaceCacheOptions(0.0)
     use_penalty = !isempty(keys(penalty_use))
-    use_prior = method isa LaplaceMAP || method isa FOCEIMAP || method isa GHQuadratureMAP
-    fallback_tracker = method isa FOCEI || method isa FOCEIMAP ? _FOCEIFallbackTracker() : nothing
+    use_prior = method isa LaplaceMAP || method isa GHQuadratureMAP
     seed = rand(rng, UInt64)
 
     function obj_full(x::AbstractVector)
@@ -145,7 +144,7 @@ function _build_uq_obj_re(res::FitResult,
                 total += bll
             end
             -total
-        elseif method isa Laplace || method isa LaplaceMAP
+        else
             _laplace_objective_only(dm, batch_infos, θu, const_cache, ll_cache, ebe_cache;
                                     inner=method.inner,
                                     hessian=method.hessian,
@@ -153,16 +152,6 @@ function _build_uq_obj_re(res::FitResult,
                                     multistart=method.multistart,
                                     rng=Random.Xoshiro(seed),
                                     serialization=serialization_use)
-        else
-            _focei_objective_only(dm, batch_infos, θu, const_cache, ll_cache, ebe_cache;
-                                  inner=method.inner,
-                                  info_opts=method.info,
-                                  fallback_hessian=method.fallback_hessian,
-                                  cache_opts=cache_opts,
-                                  multistart=method.multistart,
-                                  rng=Random.Xoshiro(seed),
-                                  fallback_tracker=fallback_tracker,
-                                  serialization=serialization_use)
         end
         obj == Inf && return Inf
 
@@ -187,7 +176,6 @@ function _build_uq_obj_re(res::FitResult,
         θ_const_t=θ_const_t,
         xhat_full=xhat_full,
         obj_full=obj_full,
-        fallback_tracker=fallback_tracker,
     )
 end
 
@@ -211,9 +199,9 @@ function _compute_uq_profile(res::FitResult;
     dm = get_data_model(res)
     dm === nothing && error("This fit result does not store a DataModel; pass store_data_model=true when fitting.")
     method = get_method(res)
-    if !(method isa MLE || method isa MAP || method isa Laplace || method isa LaplaceMAP || method isa FOCEI || method isa FOCEIMAP ||
+    if !(method isa MLE || method isa MAP || method isa Laplace || method isa LaplaceMAP ||
          method isa GHQuadrature || method isa GHQuadratureMAP)
-        error("Profile UQ is currently supported for MLE, MAP, Laplace, LaplaceMAP, FOCEI, FOCEIMAP, GHQuadrature, and GHQuadratureMAP fit results.")
+        error("Profile UQ is currently supported for MLE, MAP, Laplace, LaplaceMAP, GHQuadrature, and GHQuadratureMAP fit results.")
     end
 
     constants_use = constants === nothing ? _fit_kw(res, :constants, NamedTuple()) : constants
@@ -225,7 +213,7 @@ function _compute_uq_profile(res::FitResult;
 
     ctx = if method isa MLE || method isa MAP
         _build_uq_obj_no_re(res, constants_use, penalty_use, ode_args_use, ode_kwargs_use, serialization_use)
-    else  # Laplace, LaplaceMAP, FOCEI, FOCEIMAP, GHQuadrature, GHQuadratureMAP
+    else  # Laplace, LaplaceMAP, GHQuadrature, GHQuadratureMAP
         _build_uq_obj_re(res, constants_use, constants_re_use, penalty_use, ode_args_use, ode_kwargs_use, serialization_use, rng)
     end
 

@@ -15,7 +15,7 @@ using Statistics
 function _require_re_supported(res::FitResult)
     if res.result isa MLEResult || res.result isa MAPResult
         @warn "Random-effects diagnostics are not available for MLE/MAP."
-        error("Random-effects diagnostics require Laplace/LaplaceMAP/FOCEI/FOCEIMAP/MCEM/SAEM/MCMC.")
+        error("Random-effects diagnostics require Laplace/LaplaceMAP/MCEM/SAEM/MCMC.")
     end
 end
 

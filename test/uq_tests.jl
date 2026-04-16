@@ -276,43 +276,6 @@ end
     end
 end
 
-@testset "UQ Wald for FOCEI" begin
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-        @fixedEffects begin
-            a = RealNumber(0.2, calculate_se=true)
-            ω = RealNumber(0.6, scale=:log, calculate_se=true)
-            σ = RealNumber(0.3, scale=:log, calculate_se=true)
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, ω); column=:ID)
-        end
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID=[1, 1, 2, 2, 3, 3],
-        t=[0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
-        y=[0.2, 0.25, 0.1, 0.15, 0.3, 0.35],
-    )
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.FOCEI(; optim_kwargs=(maxiters=8,)))
-
-    uq = compute_uq(res; method=:wald, n_draws=100, rng=Random.Xoshiro(6))
-    @test get_uq_backend(uq) == :wald
-    @test get_uq_source_method(uq) == :focei
-    @test get_uq_parameter_names(uq) == [:a, :ω, :σ]
-    @test size(get_uq_vcov(uq)) == (3, 3)
-    @test size(get_uq_draws(uq)) == (100, 3)
-    d = get_uq_diagnostics(uq)
-    @test haskey(d, :hessian_backend)
-    @test haskey(d, :focei_fallback_total)
-end
-
 @testset "UQ Wald for LaplaceMAP" begin
     model = @Model begin
         @covariates begin
@@ -342,39 +305,6 @@ end
     uq = compute_uq(res; method=:wald, n_draws=80, rng=Random.Xoshiro(7))
     @test get_uq_backend(uq) == :wald
     @test get_uq_source_method(uq) == :laplace_map
-    @test get_uq_parameter_names(uq) == [:a, :ω, :σ]
-    @test size(get_uq_vcov(uq)) == (3, 3)
-end
-
-@testset "UQ Wald for FOCEIMAP" begin
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-        @fixedEffects begin
-            a = RealNumber(0.2, prior=Normal(0.0, 1.0), calculate_se=true)
-            ω = RealNumber(0.6, scale=:log, prior=LogNormal(0.0, 0.5), calculate_se=true)
-            σ = RealNumber(0.3, scale=:log, prior=LogNormal(0.0, 0.5), calculate_se=true)
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, ω); column=:ID)
-        end
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID=[1, 1, 2, 2, 3, 3],
-        t=[0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
-        y=[0.2, 0.25, 0.1, 0.15, 0.3, 0.35],
-    )
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.FOCEIMAP(; optim_kwargs=(maxiters=8,)))
-
-    uq = compute_uq(res; method=:wald, n_draws=70, rng=Random.Xoshiro(8))
-    @test get_uq_backend(uq) == :wald
-    @test get_uq_source_method(uq) == :focei_map
     @test get_uq_parameter_names(uq) == [:a, :ω, :σ]
     @test size(get_uq_vcov(uq)) == (3, 3)
 end
@@ -633,45 +563,4 @@ end
     d = get_uq_diagnostics(uq)
     @test d.approximation_method == :laplace
     @test_throws ErrorException compute_uq(res; method=:wald, re_approx=:invalid)
-end
-
-@testset "UQ Wald for SAEM via FOCEI approximation" begin
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-        @fixedEffects begin
-            a = RealNumber(0.2, calculate_se=true)
-            ω = RealNumber(0.6, scale=:log, calculate_se=true)
-            σ = RealNumber(0.3, scale=:log, calculate_se=false)
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, ω); column=:ID)
-        end
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID=[1, 1, 2, 2],
-        t=[0.0, 1.0, 0.0, 1.0],
-        y=[0.2, 0.25, 0.1, 0.15],
-    )
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm,
-                    NoLimits.SAEM(;
-                                          maxiters=1,
-                                          mcmc_steps=1,
-                                          update_schedule=:all,
-                                          turing_kwargs=(n_adapt=1, progress=false),
-                                          optim_kwargs=(maxiters=4,)))
-
-    uq = compute_uq(res; method=:wald, re_approx=:focei, n_draws=30, rng=Random.Xoshiro(22))
-    @test get_uq_backend(uq) == :wald
-    @test get_uq_source_method(uq) == :saem
-    @test get_uq_parameter_names(uq) == [:a, :ω]
-    @test size(get_uq_vcov(uq)) == (2, 2)
-    d = get_uq_diagnostics(uq)
-    @test d.approximation_method == :focei
 end
