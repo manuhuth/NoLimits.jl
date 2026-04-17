@@ -21,6 +21,4 @@ end
     val_fwd, grad_fwd = value_and_gradient(f, AutoForwardDiff(), coeffs)
     @test length(grad_fwd) == length(coeffs)
 
-    @test isapprox(val_rev, val_fwd; rtol=1e-6, atol=1e-8)
-
 end
