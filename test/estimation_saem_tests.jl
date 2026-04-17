@@ -11,6 +11,31 @@ using LinearAlgebra
 
 const SAEM_FAST = (maxiters=3, t0=1, kappa=0.6, mcmc_steps=1, q_store_max=3)
 
+# ── shared DataModels (built once, reused across most testsets) ───────────────
+# Small: 2 individuals — used by most basic SAEM testsets
+const _SAEM_DF_S = DataFrame(ID=[:A,:A,:B,:B], t=[0.0,1.0,0.0,1.0], y=[0.1,0.2,0.0,-0.1])
+const _SAEM_DM_S = DataModel(
+    @Model(begin
+        @covariates begin; t = Covariate(); end
+        @fixedEffects begin; a = RealNumber(0.2); σ = RealNumber(0.5, scale=:log); end
+        @randomEffects begin; η = RandomEffect(Normal(0.0, 1.0); column=:ID); end
+        @formulas begin; y ~ Normal(a + η, σ); end
+    end),
+    _SAEM_DF_S; primary_id=:ID, time_col=:t)
+
+# Medium: 4 individuals — used by threaded/minibatch/optimizer testsets
+const _SAEM_DF_M = DataFrame(
+    ID=[:A,:A,:B,:B,:C,:C,:D,:D], t=repeat([0.0,1.0], 4),
+    y=[0.1,0.2,0.0,-0.1,0.05,0.0,-0.05,0.1])
+const _SAEM_DM_M = DataModel(
+    @Model(begin
+        @covariates begin; t = Covariate(); end
+        @fixedEffects begin; a = RealNumber(0.1); σ = RealNumber(0.4, scale=:log); end
+        @randomEffects begin; η = RandomEffect(Normal(0.0, 1.0); column=:ID); end
+        @formulas begin; y ~ Normal(a + η, σ); end
+    end),
+    _SAEM_DF_M; primary_id=:ID, time_col=:t)
+
 function _saem_test_create_trans_pi0(eta_hmm, eta_initial)
     n_states = length(eta_initial) + 1
     @assert length(eta_hmm) == n_states * (n_states - 1)
@@ -73,6 +98,69 @@ function _saem_test_create_trans_pi0(eta_hmm, eta_initial)
     return A, pi0
 end
 
+# ── Shared HMM/LTS fixtures (built once so both testsets share the same Julia type) ──
+
+const _SAEM_HMM2_MODEL = @Model begin
+    @helpers begin
+        create_trans_pi0(eta_hmm, eta_initial) = _saem_test_create_trans_pi0(eta_hmm, eta_initial)
+    end
+    @covariates begin; t = Covariate(); end
+    @fixedEffects begin
+        mean_transitions = RealVector([0.0, 0.0])
+        mean_initial = RealNumber(0.0)
+        omega_hmm = RealVector([0.3, 0.3], scale=fill(:log, 2))
+        omega_initial = RealNumber(0.3, scale=:log)
+        eta_theta = RealVector(fill(0.6, 4), scale=fill(:logit, 4))
+    end
+    @randomEffects begin
+        eta_hmm = RandomEffect(MvNormal(mean_transitions, Diagonal(omega_hmm)); column=:ID)
+        eta_initial = RandomEffect(Normal(mean_initial, omega_initial); column=:ID)
+    end
+    @formulas begin
+        trans_pi0 = create_trans_pi0(eta_hmm, [eta_initial])
+        theta_mat = reshape(eta_theta, 2, 2)
+        emissions = ntuple(s -> ntuple(j -> Bernoulli(theta_mat[s, j]), 2), 2)
+        y ~ MVDiscreteTimeDiscreteStatesHMM(trans_pi0[1], emissions, Categorical(trans_pi0[2]))
+    end
+end
+const _SAEM_HMM2_DM = DataModel(_SAEM_HMM2_MODEL,
+    DataFrame(ID=[:A,:A,:B,:B], t=[0.0,1.0,0.0,1.0], y=[[1,0],[0,1],[1,1],[0,0]]);
+    primary_id=:ID, time_col=:t)
+const _SAEM_HMM2_DM_MISSING = DataModel(_SAEM_HMM2_MODEL,
+    DataFrame(ID=[:A,:A,:B,:B], t=[0.0,1.0,0.0,1.0], y=Any[[1,0],missing,[1,1],[0,0]]);
+    primary_id=:ID, time_col=:t)
+
+let _n_s = 7, _n_o = 9, _n_tr = 42  # 7 states × 6 transitions each
+    global const _SAEM_LTS_MODEL = @Model begin
+        @helpers begin
+            create_trans_pi0(eta_hmm, eta_initial) = _saem_test_create_trans_pi0(eta_hmm, eta_initial)
+        end
+        @covariates begin; t = Covariate(); end
+        @fixedEffects begin
+            mean_initial = RealVector(fill(0.0, _n_s - 1))
+            mean_transitions = RealVector(fill(0.0, _n_tr))
+            omega_hmm = RealVector(fill(0.3, _n_tr), scale=fill(:log, _n_tr))
+            omega_initial = RealVector(fill(0.3, _n_s - 1), scale=fill(:log, _n_s - 1))
+            eta_theta = RealVector(fill(0.5, _n_s * _n_o), scale=fill(:logit, _n_s * _n_o))
+        end
+        @randomEffects begin
+            eta_hmm = RandomEffect(MvNormal(mean_transitions, Diagonal(omega_hmm)); column=:ID)
+            eta_initial = RandomEffect(MvNormal(mean_initial, Diagonal(omega_initial)); column=:ID)
+        end
+        @formulas begin
+            trans_pi0 = create_trans_pi0(eta_hmm, eta_initial)
+            theta_mat = reshape(eta_theta, 7, 9)
+            emissions = ntuple(s -> ntuple(j -> Bernoulli(theta_mat[s, j]), 9), 7)
+            y ~ MVDiscreteTimeDiscreteStatesHMM(trans_pi0[1], emissions, Categorical(trans_pi0[2]))
+        end
+    end
+    global const _SAEM_LTS_DF = DataFrame(
+        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0],
+        y = [[1,0,1,0,1,0,1,0,1],[0,1,0,1,0,1,0,1,0],[1,1,0,0,1,1,0,0,1],[0,0,1,1,0,0,1,1,0]]
+    )
+    global const _SAEM_LTS_DM = DataModel(_SAEM_LTS_MODEL, _SAEM_LTS_DF; primary_id=:ID, time_col=:t)
+end
+
 @testset "SAEM default sampler" begin
     method = NoLimits.SAEM()
     @test method.saem.sampler isa SaemixMH
@@ -83,35 +171,11 @@ end
 end
 
 @testset "SAEM closed-form M-step flag metadata" begin
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-
-        @fixedEffects begin
-            a = RealNumber(0.2)
-            σ = RealNumber(0.5, scale=:log)
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column=:ID)
-        end
-
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [:A, :A, :B, :B],
-        t = [0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, -0.1]
-    )
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    dm = _SAEM_DM_S
 
     res_numeric = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
+        turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
         builtin_stats=:none,
         maxiters=2,
         progress=false,
@@ -125,7 +189,7 @@ end
 
     res_builtin = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
+        turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
         builtin_stats=:closed_form,
         maxiters=2,
         progress=false,
@@ -147,7 +211,7 @@ end
     mstep_closed_form = (s, dm) -> get_θ0_untransformed(dm.model.fixed.fixed)
     res_custom = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
+        turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
         builtin_stats=:none,
         suffstats=suffstats,
         mstep_closed_form=mstep_closed_form,
@@ -164,7 +228,7 @@ end
     @test_logs match_mode=:any (:info, r"SAEM: numerically optimized parameters") begin
         fit_model(dm, NoLimits.SAEM(;
             sampler=MH(),
-            turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
+            turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
             builtin_stats=:auto,
             maxiters=1,
             progress=false,
@@ -174,34 +238,9 @@ end
 end
 
 @testset "SAEM basic (random effects)" begin
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-
-        @fixedEffects begin
-            a = RealNumber(0.2)
-            σ = RealNumber(0.5, scale=:log)
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column=:ID)
-        end
-
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [:A, :A, :B, :B],
-        t = [0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, -0.1]
-    )
-
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             q_store_max=4))
+    dm = _SAEM_DM_S
+    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
+                             SAEM_FAST...))
     @test res isa FitResult
     @test NoLimits.get_converged(res) isa Bool
 end
@@ -209,32 +248,7 @@ end
 @testset "SAEM serial vs threaded is reproducible" begin
     Threads.nthreads() < 2 && return
 
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-
-        @fixedEffects begin
-            a = RealNumber(0.2)
-            σ = RealNumber(0.5, scale=:log)
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column=:ID)
-        end
-
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [:A, :A, :B, :B],
-        t = [0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, -0.1]
-    )
-
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    dm = _SAEM_DM_S
     method = NoLimits.SAEM(; sampler=MH(),
                                    turing_kwargs=(n_samples=1, n_adapt=0, progress=false, verbose=false),
                                    maxiters=2,
@@ -249,67 +263,17 @@ end
 end
 
 @testset "SAEM basic with NUTS" begin
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-
-        @fixedEffects begin
-            a = RealNumber(0.2)
-            σ = RealNumber(0.5, scale=:log)
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column=:ID)
-        end
-
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [:A, :A, :B, :B],
-        t = [0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, -0.1]
-    )
-
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.SAEM(; sampler=NUTS(5, 0.3), turing_kwargs=(n_samples=5, n_adapt=3, progress=false),
-                             q_store_max=4))
+    dm = _SAEM_DM_S
+    res = fit_model(dm, NoLimits.SAEM(; sampler=NUTS(5, 0.3), turing_kwargs=(n_samples=3, n_adapt=3, progress=false),
+                             SAEM_FAST...))
     @test res isa FitResult
 end
 
 @testset "SAEM convergence requires both parameter and Q stabilization" begin
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-
-        @fixedEffects begin
-            a = RealNumber(0.2)
-            σ = RealNumber(0.5, scale=:log)
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column=:ID)
-        end
-
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [:A, :A, :B, :B],
-        t = [0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, -0.1]
-    )
-
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    dm = _SAEM_DM_S
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
+        turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
         maxiters=2,
         t0=0,
         consecutive_params=1,
@@ -352,214 +316,63 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             q_store_max=4))
+    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
+                             SAEM_FAST...))
     @test res isa FitResult
     re = NoLimits.get_random_effects(dm, res)
     @test !isempty(re)
 end
 
 @testset "SAEM constants_re" begin
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-
-        @fixedEffects begin
-            a = RealNumber(0.2)
-            σ = RealNumber(0.5, scale=:log)
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column=:ID)
-        end
-
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [:A, :A, :B, :B, :C, :C],
-        t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, -0.1, 0.05, 0.0]
-    )
-
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             q_store_max=4);
+    res = fit_model(_SAEM_DM_S, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
+                             SAEM_FAST...);
                     constants_re=(; η=(; A=0.0,)))
     @test res isa FitResult
 end
 
 @testset "SAEM threaded updates" begin
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-
-        @fixedEffects begin
-            a = RealNumber(0.1)
-            σ = RealNumber(0.4, scale=:log)
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column=:ID)
-        end
-
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [:A, :A, :B, :B, :C, :C, :D, :D],
-        t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, -0.1, 0.05, 0.0, -0.05, 0.1]
-    )
-
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             q_store_max=4);
+    dm = _SAEM_DM_M
+    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
+                             SAEM_FAST...);
                     serialization=EnsembleThreads())
     @test res isa FitResult
 end
 
 @testset "SAEM minibatch updates" begin
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-
-        @fixedEffects begin
-            a = RealNumber(0.1)
-            σ = RealNumber(0.4, scale=:log)
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column=:ID)
-        end
-
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [:A, :A, :B, :B, :C, :C, :D, :D],
-        t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, -0.1, 0.05, 0.0, -0.05, 0.1]
-    )
-
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             update_schedule=1, q_store_max=4))
+    dm = _SAEM_DM_M
+    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
+                             update_schedule=1, SAEM_FAST...))
     @test res isa FitResult
 end
 
 @testset "SAEM optimizer Adam (OptimizationOptimisers)" begin
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-
-        @fixedEffects begin
-            a = RealNumber(0.2)
-            σ = RealNumber(0.5, scale=:log)
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column=:ID)
-        end
-
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [:A, :A, :B, :B],
-        t = [0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, -0.1]
-    )
-
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    method = NoLimits.SAEM(optimizer=OptimizationOptimisers.Adam(0.05),
+    dm = _SAEM_DM_S
+    method = NoLimits.SAEM(; optimizer=OptimizationOptimisers.Adam(0.05),
                   optim_kwargs=(; maxiters=3),
                   sampler=MH(),
-                  turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                  q_store_max=4)
+                  turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
+                  SAEM_FAST...)
     res = fit_model(dm, method)
     @test res isa FitResult
 end
 
 @testset "SAEM optimizer BlackBoxOptim (OptimizationBBO)" begin
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-
-        @fixedEffects begin
-            a = RealNumber(0.2)
-            σ = RealNumber(0.5, scale=:log)
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column=:ID)
-        end
-
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [:A, :A, :B, :B],
-        t = [0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, -0.1]
-    )
-
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    dm = _SAEM_DM_S
     lb, ub = default_bounds_from_start(dm; margin=1.0)
-    method = NoLimits.SAEM(optimizer=OptimizationBBO.BBO_adaptive_de_rand_1_bin_radiuslimited(),
+    method = NoLimits.SAEM(; optimizer=OptimizationBBO.BBO_adaptive_de_rand_1_bin_radiuslimited(),
                   optim_kwargs=(; iterations=3),
                   sampler=MH(),
-                  turing_kwargs=(n_samples=4, n_adapt=0, progress=false),
-                  q_store_max=4,
+                  turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
+                  SAEM_FAST...,
                   lb=lb, ub=ub)
     res = fit_model(dm, method)
     @test res isa FitResult
 end
 
 @testset "SAEM constants for fixed effects" begin
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-
-        @fixedEffects begin
-            a = RealNumber(0.2)
-            σ = RealNumber(0.5, scale=:log)
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column=:ID)
-        end
-
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [:A, :A, :B, :B],
-        t = [0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, -0.1]
-    )
-
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             q_store_max=4);
+    dm = _SAEM_DM_S
+    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
+                             SAEM_FAST...);
                     constants=(a=0.2,))
     @test res isa FitResult
 end
@@ -595,8 +408,8 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             q_store_max=4))
+    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
+                             SAEM_FAST...))
     @test res isa FitResult
 end
 
@@ -628,8 +441,8 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             q_store_max=4,
+    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
+                             SAEM_FAST...,
                              builtin_stats=:closed_form,
                              resid_var_param=:σ,
                              re_cov_params=(; η=:τ)))
@@ -664,8 +477,8 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             q_store_max=4,
+    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
+                             SAEM_FAST...,
                              builtin_stats=:closed_form,
                              resid_var_param=:σ,
                              re_cov_params=(; η=:Ω)))
@@ -702,7 +515,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
+    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
                              q_store_max=4,
                              maxiters=2,
                              builtin_stats=:closed_form,
@@ -793,7 +606,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
+    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
                              q_store_max=4,
                              maxiters=3,
                              builtin_stats=:closed_form,
@@ -837,8 +650,8 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             q_store_max=4,
+    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
+                             SAEM_FAST...,
                              builtin_stats=:closed_form,
                              resid_var_param=:σ,
                              re_cov_params=(; η_id=:τ_id, η_site=:τ_site)))
@@ -876,8 +689,8 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             q_store_max=4,
+    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
+                             SAEM_FAST...,
                              builtin_stats=:closed_form,
                              resid_var_param=:σ,
                              re_cov_params=(; η=:τ)))
@@ -916,8 +729,8 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             q_store_max=4,
+    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
+                             SAEM_FAST...,
                              builtin_stats=:closed_form,
                              resid_var_param=(; y1=:σ1, y2=:σ2),
                              re_cov_params=(; η=:τ)))
@@ -956,7 +769,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
+    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
                              q_store_max=4,
                              maxiters=2,
                              builtin_stats=:closed_form,
@@ -998,8 +811,8 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             q_store_max=4,
+    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
+                             SAEM_FAST...,
                              builtin_stats=:closed_form,
                              re_cov_params=(; η=:τ)))
     @test res isa FitResult
@@ -1039,7 +852,7 @@ end
     @test auto_cfg.re_mean_params == (; η=:a)
     @test auto_cfg.resid_var_param == :σ
 
-    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
+    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
                              q_store_max=4,
                              maxiters=2,
                              builtin_stats=:auto))
@@ -1082,7 +895,7 @@ end
     @test auto_cfg.re_mean_params == (; η=(:μ1, :μ2))
     @test auto_cfg.resid_var_param == :σ
 
-    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
+    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
                              q_store_max=4,
                              maxiters=2,
                              builtin_stats=:auto))
@@ -1164,7 +977,7 @@ end
     @test auto_cfg.re_mean_params == (; η_ln=:μη)
     @test auto_cfg.resid_var_param == (; y_ln=(; μ=:μy, σ=:σy), y_exp=:θy)
 
-    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
+    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
                              q_store_max=4,
                              maxiters=2,
                              builtin_stats=:auto))
@@ -1207,44 +1020,8 @@ end
 end
 
 @testset "SAEM builtin_stats classifies HMM closed-form eligibility" begin
-    model_partial = @Model begin
-        @helpers begin
-            create_trans_pi0(eta_hmm, eta_initial) = _saem_test_create_trans_pi0(eta_hmm, eta_initial)
-        end
-
-        @covariates begin
-            t = Covariate()
-        end
-
-        @fixedEffects begin
-            mean_transitions = RealVector([0.0, 0.0])
-            mean_initial = RealNumber(0.0)
-            omega_hmm = RealVector([0.3, 0.3], scale=fill(:log, 2))
-            omega_initial = RealNumber(0.3, scale=:log)
-            eta_theta = RealVector(fill(0.6, 4), scale=fill(:logit, 4))
-        end
-
-        @randomEffects begin
-            eta_hmm = RandomEffect(MvNormal(mean_transitions, Diagonal(omega_hmm)); column=:ID)
-            eta_initial = RandomEffect(Normal(mean_initial, omega_initial); column=:ID)
-        end
-
-        @formulas begin
-            trans_pi0 = create_trans_pi0(eta_hmm, [eta_initial])
-            theta_mat = reshape(eta_theta, 2, 2)
-            emissions = ntuple(s -> ntuple(j -> Bernoulli(theta_mat[s, j]), 2), 2)
-            y ~ MVDiscreteTimeDiscreteStatesHMM(trans_pi0[1], emissions, Categorical(trans_pi0[2]))
-        end
-    end
-
-    df = DataFrame(
-        ID = [:A, :A, :B, :B],
-        t = [0.0, 1.0, 0.0, 1.0],
-        y = [[1, 0], [0, 1], [1, 1], [0, 0]]
-    )
-
-    dm_partial = DataModel(model_partial, df; primary_id=:ID, time_col=:t)
-    auto_cfg = NoLimits._saem_autodetect_gaussian_re(dm_partial, NoLimits.get_names(model_partial.fixed.fixed))
+    dm_partial = _SAEM_HMM2_DM
+    auto_cfg = NoLimits._saem_autodetect_gaussian_re(dm_partial, NoLimits.get_names(_SAEM_HMM2_MODEL.fixed.fixed))
     @test auto_cfg !== nothing
     @test auto_cfg.re_cov_params == (; eta_hmm=:omega_hmm, eta_initial=:omega_initial)
     @test auto_cfg.re_mean_params == (; eta_hmm=:mean_transitions, eta_initial=:mean_initial)
@@ -1315,7 +1092,7 @@ end
         end
     end
 
-    dm_ineligible = DataModel(model_ineligible, df; primary_id=:ID, time_col=:t)
+    dm_ineligible = DataModel(model_ineligible, get_df(_SAEM_HMM2_DM); primary_id=:ID, time_col=:t)
     auto_cfg_none = NoLimits._saem_autodetect_gaussian_re(dm_ineligible, NoLimits.get_names(model_ineligible.fixed.fixed))
     @test auto_cfg_none === nothing
 
@@ -1384,44 +1161,7 @@ end
 end
 
 @testset "SAEM builtin_stats HMM emission handles fully missing rows (regression)" begin
-    model = @Model begin
-        @helpers begin
-            create_trans_pi0(eta_hmm, eta_initial) = _saem_test_create_trans_pi0(eta_hmm, eta_initial)
-        end
-
-        @covariates begin
-            t = Covariate()
-        end
-
-        @fixedEffects begin
-            mean_transitions = RealVector([0.0, 0.0])
-            mean_initial = RealNumber(0.0)
-            omega_hmm = RealVector([0.3, 0.3], scale=fill(:log, 2))
-            omega_initial = RealNumber(0.3, scale=:log)
-            eta_theta = RealVector(fill(0.6, 4), scale=fill(:logit, 4))
-        end
-
-        @randomEffects begin
-            eta_hmm = RandomEffect(MvNormal(mean_transitions, Diagonal(omega_hmm)); column=:ID)
-            eta_initial = RandomEffect(Normal(mean_initial, omega_initial); column=:ID)
-        end
-
-        @formulas begin
-            trans_pi0 = create_trans_pi0(eta_hmm, [eta_initial])
-            theta_mat = reshape(eta_theta, 2, 2)
-            emissions = ntuple(s -> ntuple(j -> Bernoulli(theta_mat[s, j]), 2), 2)
-            y ~ MVDiscreteTimeDiscreteStatesHMM(trans_pi0[1], emissions, Categorical(trans_pi0[2]))
-        end
-    end
-
-    df = DataFrame(
-        ID = [:A, :A, :B, :B],
-        t = [0.0, 1.0, 0.0, 1.0],
-        y = Any[[1, 0], missing, [1, 1], [0, 0]]
-    )
-
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.SAEM(;
+    res = fit_model(_SAEM_HMM2_DM_MISSING, NoLimits.SAEM(;
                               sampler=MH(),
                               turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
                               mcmc_steps=1,
@@ -1437,53 +1177,8 @@ end
 end
 
 @testset "SAEM builtin_stats auto detects lts_random_no_cv full closed-form coverage" begin
-    n_states = 7
-    n_outcomes = 9
-    n_transition_random_effects = n_states * (n_states - 1)
-
-    model = @Model begin
-        @helpers begin
-            create_trans_pi0(eta_hmm, eta_initial) = _saem_test_create_trans_pi0(eta_hmm, eta_initial)
-        end
-
-        @covariates begin
-            t = Covariate()
-        end
-
-        @fixedEffects begin
-            mean_initial = RealVector(fill(0.0, n_states - 1))
-            mean_transitions = RealVector(fill(0.0, n_transition_random_effects))
-            omega_hmm = RealVector(fill(0.3, n_transition_random_effects), scale=fill(:log, n_transition_random_effects))
-            omega_initial = RealVector(fill(0.3, n_states - 1), scale=fill(:log, n_states - 1))
-            eta_theta = RealVector(fill(0.5, n_states * n_outcomes), scale=fill(:logit, n_states * n_outcomes))
-        end
-
-        @randomEffects begin
-            eta_hmm = RandomEffect(MvNormal(mean_transitions, Diagonal(omega_hmm)); column=:ID)
-            eta_initial = RandomEffect(MvNormal(mean_initial, Diagonal(omega_initial)); column=:ID)
-        end
-
-        @formulas begin
-            trans_pi0 = create_trans_pi0(eta_hmm, eta_initial)
-            theta_mat = reshape(eta_theta, 7, 9)
-            emissions = ntuple(s -> ntuple(j -> Bernoulli(theta_mat[s, j]), 9), 7)
-            y ~ MVDiscreteTimeDiscreteStatesHMM(trans_pi0[1], emissions, Categorical(trans_pi0[2]))
-        end
-    end
-
-    df = DataFrame(
-        ID = [:A, :A, :B, :B],
-        t = [0.0, 1.0, 0.0, 1.0],
-        y = [
-            [1, 0, 1, 0, 1, 0, 1, 0, 1],
-            [0, 1, 0, 1, 0, 1, 0, 1, 0],
-            [1, 1, 0, 0, 1, 1, 0, 0, 1],
-            [0, 0, 1, 1, 0, 0, 1, 1, 0],
-        ]
-    )
-
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    fixed_names = NoLimits.get_names(model.fixed.fixed)
+    dm = _SAEM_LTS_DM
+    fixed_names = NoLimits.get_names(_SAEM_LTS_MODEL.fixed.fixed)
     auto_cfg = NoLimits._saem_autodetect_gaussian_re(dm, fixed_names)
     @test auto_cfg !== nothing
     @test auto_cfg.re_cov_params == (; eta_hmm=:omega_hmm, eta_initial=:omega_initial)
@@ -1526,53 +1221,7 @@ end
 end
 
 @testset "SAEM builtin_stats runs lts_random_no_cv style model in closed-form-only mode" begin
-    n_states = 7
-    n_outcomes = 9
-    n_transition_random_effects = n_states * (n_states - 1)
-
-    model = @Model begin
-        @helpers begin
-            create_trans_pi0(eta_hmm, eta_initial) = _saem_test_create_trans_pi0(eta_hmm, eta_initial)
-        end
-
-        @covariates begin
-            t = Covariate()
-        end
-
-        @fixedEffects begin
-            mean_initial = RealVector(fill(0.0, n_states - 1))
-            mean_transitions = RealVector(fill(0.0, n_transition_random_effects))
-            omega_hmm = RealVector(fill(0.3, n_transition_random_effects), scale=fill(:log, n_transition_random_effects))
-            omega_initial = RealVector(fill(0.3, n_states - 1), scale=fill(:log, n_states - 1))
-            eta_theta = RealVector(fill(0.5, n_states * n_outcomes), scale=fill(:logit, n_states * n_outcomes))
-        end
-
-        @randomEffects begin
-            eta_hmm = RandomEffect(MvNormal(mean_transitions, Diagonal(omega_hmm)); column=:ID)
-            eta_initial = RandomEffect(MvNormal(mean_initial, Diagonal(omega_initial)); column=:ID)
-        end
-
-        @formulas begin
-            trans_pi0 = create_trans_pi0(eta_hmm, eta_initial)
-            theta_mat = reshape(eta_theta, 7, 9)
-            emissions = ntuple(s -> ntuple(j -> Bernoulli(theta_mat[s, j]), 9), 7)
-            y ~ MVDiscreteTimeDiscreteStatesHMM(trans_pi0[1], emissions, Categorical(trans_pi0[2]))
-        end
-    end
-
-    df = DataFrame(
-        ID = [:A, :A, :B, :B],
-        t = [0.0, 1.0, 0.0, 1.0],
-        y = [
-            [1, 0, 1, 0, 1, 0, 1, 0, 1],
-            [0, 1, 0, 1, 0, 1, 0, 1, 0],
-            [1, 1, 0, 0, 1, 1, 0, 0, 1],
-            [0, 0, 1, 1, 0, 0, 1, 1, 0],
-        ]
-    )
-
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.SAEM(;
+    res = fit_model(_SAEM_LTS_DM, NoLimits.SAEM(;
             sampler=MH(),
             turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
             mcmc_steps=1,
@@ -1621,8 +1270,8 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             q_store_max=4,
+    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
+                             SAEM_FAST...,
                              builtin_mean=:glm))
     @test res isa FitResult
 end
@@ -1658,8 +1307,8 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             q_store_max=4,
+    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
+                             SAEM_FAST...,
                              builtin_mean=:glm))
     @test res isa FitResult
 end
@@ -1701,7 +1350,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
+    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
                              q_store_max=4,
                              maxiters=2,
                              builtin_mean=:glm))
@@ -1736,8 +1385,8 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             q_store_max=4,
+    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
+                             SAEM_FAST...,
                              builtin_mean=:glm,
                              builtin_stats=:closed_form,
                              resid_var_param=:σ,
@@ -1777,8 +1426,8 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
-                             q_store_max=4,
+    res = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
+                             SAEM_FAST...,
                              builtin_mean=:glm,
                              builtin_stats=:closed_form,
                              resid_var_param=(; y1=:σ1, y2=:σ2),
@@ -1856,26 +1505,9 @@ end
 end
 
 @testset "SAEM get_random_effects recomputes EB modes with rescue options" begin
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-        @fixedEffects begin
-            a = RealNumber(0.2)
-            σ = RealNumber(0.4, scale=:log)
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column=:ID)
-        end
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-    df = DataFrame(ID=[:A, :A, :B, :B], t=[0.0, 1.0, 0.0, 1.0], y=[0.1, 0.2, 0.0, -0.1])
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     method = NoLimits.SAEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
+        turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
         q_store_max=4,
         maxiters=2,
         mcmc_steps=1,
@@ -1886,8 +1518,8 @@ end
         ebe_rescue_max_rounds=2,
         ebe_rescue_grad_tol=1e-7
     )
-    res = fit_model(dm, method; store_eb_modes=false)
-    re = NoLimits.get_random_effects(dm, res)
+    res = fit_model(_SAEM_DM_S, method; store_eb_modes=false)
+    re = NoLimits.get_random_effects(_SAEM_DM_S, res)
     @test haskey(re, :η)
-    @test nrow(re.η) == length(unique(df.ID))
+    @test nrow(re.η) == 2  # 2 unique IDs in _SAEM_DM_S
 end

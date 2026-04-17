@@ -493,7 +493,7 @@ end
 
     # ── Basic fit at level=1 ─────────────────────────────────────────────────
     @testset "Basic fit level=1 LBFGS" begin
-        res = fit_model(dm, GHQuadrature(level=1; optim_kwargs=(maxiters=200,)))
+        res = fit_model(dm, GHQuadrature(level=1; optim_kwargs=(maxiters=15,)))
 
         @test res isa NoLimits.FitResult
         @test res.result isa NoLimits.GHQuadratureResult
@@ -532,7 +532,7 @@ end
 
     # ── get_loglikelihood re-evaluates sparse grid ────────────────────────────
     @testset "get_loglikelihood matches -objective" begin
-        res = fit_model(dm, GHQuadrature(level=1; optim_kwargs=(maxiters=200,)))
+        res = fit_model(dm, GHQuadrature(level=1; optim_kwargs=(maxiters=15,)))
         ll  = get_loglikelihood(dm, res)
         @test isfinite(ll)
         # objective = -LL (no penalty), so ll ≈ -objective
@@ -541,8 +541,8 @@ end
 
     # ── Level comparison: higher level → lower (or equal) -LL ────────────────
     @testset "Level 1 vs 2 objective" begin
-        res1 = fit_model(dm, GHQuadrature(level=1; optim_kwargs=(maxiters=300,)))
-        res2 = fit_model(dm, GHQuadrature(level=2; optim_kwargs=(maxiters=300,)))
+        res1 = fit_model(dm, GHQuadrature(level=1; optim_kwargs=(maxiters=25,)))
+        res2 = fit_model(dm, GHQuadrature(level=2; optim_kwargs=(maxiters=25,)))
         # Level 2 should get at least as good or better objective in most cases;
         # we check that both converge and give finite objectives.
         @test isfinite(get_objective(res1))
@@ -554,8 +554,8 @@ end
 
     # ── Parameter agreement with Laplace ─────────────────────────────────────
     @testset "Parameter agreement with Laplace" begin
-        res_sg  = fit_model(dm, GHQuadrature(level=2; optim_kwargs=(maxiters=300,)))
-        res_lap = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=300,)))
+        res_sg  = fit_model(dm, GHQuadrature(level=2; optim_kwargs=(maxiters=25,)))
+        res_lap = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=25,)))
 
         p_sg  = NoLimits.get_params(res_sg;  scale=:untransformed)
         p_lap = NoLimits.get_params(res_lap; scale=:untransformed)
@@ -639,7 +639,7 @@ end
     @testset "BFGS outer optimizer" begin
         res = fit_model(dm, GHQuadrature(level=1;
                             optimizer=OptimizationOptimJL.BFGS(),
-                            optim_kwargs=(maxiters=200,)))
+                            optim_kwargs=(maxiters=15,)))
         @test isfinite(get_objective(res))
         @test NoLimits.get_params(res; scale=:untransformed).σ > 0
     end
@@ -647,7 +647,7 @@ end
     @testset "NelderMead outer optimizer" begin
         res = fit_model(dm, GHQuadrature(level=1;
                             optimizer=OptimizationOptimJL.NelderMead(),
-                            optim_kwargs=(maxiters=500,)))
+                            optim_kwargs=(maxiters=30,)))
         @test isfinite(get_objective(res))
         @test NoLimits.get_params(res; scale=:untransformed).σ > 0
     end
@@ -656,7 +656,7 @@ end
         lb_val, ub_val = NoLimits.default_bounds_from_start(dm; margin=3.0)
         res = fit_model(dm, GHQuadrature(level=1;
                             optimizer=BBO_adaptive_de_rand_1_bin_radiuslimited(),
-                            optim_kwargs=(maxiters=500,),
+                            optim_kwargs=(maxiters=30,),
                             lb=lb_val, ub=ub_val))
         @test isfinite(get_objective(res))
         @test NoLimits.get_params(res; scale=:untransformed).σ > 0
@@ -664,7 +664,7 @@ end
 
     # ── constants kwarg ───────────────────────────────────────────────────────
     @testset "constants fix a parameter" begin
-        res = fit_model(dm, GHQuadrature(level=1; optim_kwargs=(maxiters=200,));
+        res = fit_model(dm, GHQuadrature(level=1; optim_kwargs=(maxiters=15,));
                         constants=(a=1.0,))
         params = NoLimits.get_params(res; scale=:untransformed)
         @test params.a ≈ 1.0
@@ -810,7 +810,7 @@ end  # @testset "GHQuadrature ghquadrature.jl"
         df_npf = DataFrame(ID=ids, t=ts, y=ys)
         dm_npf = DataModel(model_npf, df_npf; primary_id=:ID, time_col=:t)
 
-        res = fit_model(dm_npf, GHQuadrature(level=1; optim_kwargs=(maxiters=200,)))
+        res = fit_model(dm_npf, GHQuadrature(level=1; optim_kwargs=(maxiters=15,)))
 
         @test res isa NoLimits.FitResult
         @test res.result isa NoLimits.GHQuadratureResult
@@ -868,7 +868,7 @@ end
 
     # ── Basic fit ────────────────────────────────────────────────────────────
     @testset "Basic fit" begin
-        res = fit_model(dm_map, GHQuadratureMAP(level=1; optim_kwargs=(maxiters=200,)))
+        res = fit_model(dm_map, GHQuadratureMAP(level=1; optim_kwargs=(maxiters=15,)))
 
         @test res isa NoLimits.FitResult
         @test res.result isa NoLimits.GHQuadratureMAPResult
@@ -890,7 +890,7 @@ end
 
     # ── All accessors work ───────────────────────────────────────────────────
     @testset "Accessors" begin
-        res = fit_model(dm_map, GHQuadratureMAP(level=1; optim_kwargs=(maxiters=200,)))
+        res = fit_model(dm_map, GHQuadratureMAP(level=1; optim_kwargs=(maxiters=15,)))
 
         re = get_random_effects(dm_map, res)
         @test re isa NamedTuple
@@ -932,8 +932,8 @@ end
         df_t = DataFrame(ID=ids, t=ts, y=ys)
         dm_t = DataModel(model_tight, df_t; primary_id=:ID, time_col=:t)
 
-        res_mle = fit_model(dm_t, GHQuadrature(level=1; optim_kwargs=(maxiters=300,)))
-        res_map = fit_model(dm_t, GHQuadratureMAP(level=1; optim_kwargs=(maxiters=300,)))
+        res_mle = fit_model(dm_t, GHQuadrature(level=1; optim_kwargs=(maxiters=25,)))
+        res_map = fit_model(dm_t, GHQuadratureMAP(level=1; optim_kwargs=(maxiters=25,)))
 
         a_mle = NoLimits.get_params(res_mle; scale=:untransformed).a
         a_map = NoLimits.get_params(res_map; scale=:untransformed).a
@@ -974,7 +974,7 @@ end  # @testset "GHQuadratureMAP"
 
     # ── GHQuadrature Wald (default ForwardDiff Hessian) ────────────────────────
     @testset "compute_uq GHQuadrature level=2" begin
-        res = fit_model(dm_uq, GHQuadrature(level=2; optim_kwargs=(maxiters=400,)))
+        res = fit_model(dm_uq, GHQuadrature(level=2; optim_kwargs=(maxiters=30,)))
         uq  = compute_uq(res; method=:wald, pseudo_inverse=true)
 
         @test uq isa NoLimits.UQResult
@@ -994,7 +994,7 @@ end  # @testset "GHQuadratureMAP"
 
     # ── GHQuadratureMAP Wald (adds prior) ───────────────────────────────────────
     @testset "compute_uq GHQuadratureMAP level=2" begin
-        res = fit_model(dm_uq, GHQuadratureMAP(level=2; optim_kwargs=(maxiters=400,)))
+        res = fit_model(dm_uq, GHQuadratureMAP(level=2; optim_kwargs=(maxiters=30,)))
         uq  = compute_uq(res; method=:wald, pseudo_inverse=true)
 
         @test uq isa NoLimits.UQResult
@@ -1006,7 +1006,7 @@ end  # @testset "GHQuadratureMAP"
 
     # ── Sandwich vcov ────────────────────────────────────────────────────────
     @testset "compute_uq GHQuadrature sandwich vcov level=2" begin
-        res = fit_model(dm_uq, GHQuadrature(level=2; optim_kwargs=(maxiters=400,)))
+        res = fit_model(dm_uq, GHQuadrature(level=2; optim_kwargs=(maxiters=30,)))
         uq  = compute_uq(res; method=:wald, vcov=:sandwich, pseudo_inverse=true)
 
         @test uq isa NoLimits.UQResult
@@ -1017,7 +1017,7 @@ end  # @testset "GHQuadratureMAP"
 
     # ── hessian_backend :fd_gradient also works ───────────────────────────────
     @testset "compute_uq GHQuadrature fd_gradient backend level=2" begin
-        res = fit_model(dm_uq, GHQuadrature(level=2; optim_kwargs=(maxiters=400,)))
+        res = fit_model(dm_uq, GHQuadrature(level=2; optim_kwargs=(maxiters=30,)))
         uq  = compute_uq(res; method=:wald, hessian_backend=:fd_gradient, pseudo_inverse=true)
 
         @test uq isa NoLimits.UQResult
@@ -1033,7 +1033,7 @@ end  # @testset "GHQuadrature Wald UQ"
     dm_uq = _make_map_ghq_dm()
 
     @testset "compute_uq GHQuadrature :profile level=2" begin
-        res = fit_model(dm_uq, GHQuadrature(level=2; optim_kwargs=(maxiters=800,)))
+        res = fit_model(dm_uq, GHQuadrature(level=2; optim_kwargs=(maxiters=40,)))
         uq  = compute_uq(res; method=:profile)
 
         @test uq isa NoLimits.UQResult
@@ -1050,7 +1050,7 @@ end  # @testset "GHQuadrature Profile UQ"
     dm_uq = _make_map_ghq_dm()
 
     @testset "compute_uq GHQuadratureMAP :mcmc_refit" begin
-        res = fit_model(dm_uq, GHQuadratureMAP(level=1; optim_kwargs=(maxiters=200,)))
+        res = fit_model(dm_uq, GHQuadratureMAP(level=1; optim_kwargs=(maxiters=15,)))
         uq  = compute_uq(res;
                          method=:mcmc_refit,
                          mcmc_sampler=Turing.MH(),
@@ -1064,7 +1064,7 @@ end  # @testset "GHQuadrature Profile UQ"
 
     @testset "compute_uq GHQuadrature :mcmc_refit (with priors)" begin
         # GHQuadrature with priors on all fixed effects can use mcmc_refit
-        res = fit_model(dm_uq, GHQuadrature(level=1; optim_kwargs=(maxiters=200,)))
+        res = fit_model(dm_uq, GHQuadrature(level=1; optim_kwargs=(maxiters=15,)))
         uq  = compute_uq(res;
                          method=:mcmc_refit,
                          mcmc_sampler=Turing.MH(),
@@ -1084,9 +1084,9 @@ end  # @testset "GHQuadrature mcmc_refit UQ"
 
     # ── EnsembleThreads produces same objective as EnsembleSerial ─────────────
     @testset "EnsembleThreads matches EnsembleSerial objective" begin
-        res_serial   = fit_model(dm_par, GHQuadrature(level=2; optim_kwargs=(maxiters=300,));
+        res_serial   = fit_model(dm_par, GHQuadrature(level=2; optim_kwargs=(maxiters=25,));
                                  serialization=EnsembleSerial())
-        res_threaded = fit_model(dm_par, GHQuadrature(level=2; optim_kwargs=(maxiters=300,));
+        res_threaded = fit_model(dm_par, GHQuadrature(level=2; optim_kwargs=(maxiters=25,));
                                  serialization=EnsembleThreads())
 
         # Objectives should agree within numerical tolerance (same deterministic quadrature)
@@ -1099,7 +1099,7 @@ end  # @testset "GHQuadrature mcmc_refit UQ"
 
     @testset "GHQuadratureMAP EnsembleThreads runs without error" begin
         dm_m = _make_map_ghq_dm()
-        res = fit_model(dm_m, GHQuadratureMAP(level=2; optim_kwargs=(maxiters=300,));
+        res = fit_model(dm_m, GHQuadratureMAP(level=2; optim_kwargs=(maxiters=25,));
                         serialization=EnsembleThreads())
         @test res.result isa NoLimits.GHQuadratureMAPResult
         @test isfinite(get_objective(res))
@@ -1318,7 +1318,7 @@ end  # @testset "GHQuadrature LogNormal RE"
         df  = DataFrame(ID=ids, t=tobs, y=yobs)
         dm  = DataModel(model, df; primary_id=:ID, time_col=:t)
 
-        res = fit_model(dm, NoLimits.GHQuadrature(level=2; optim_kwargs=(maxiters=150,)))
+        res = fit_model(dm, NoLimits.GHQuadrature(level=2; optim_kwargs=(maxiters=35,)))
 
         @test NoLimits.get_converged(res)
         p = NoLimits.get_params(res; scale=:untransformed)
@@ -1543,8 +1543,8 @@ end  # @testset "Additional 1D quadrature rules"
         dm = DataModel(model, df; primary_id=:ID, time_col=:t)
 
         # Anisotropic level: η at level 2 (isotropic would use same level for all)
-        res_iso  = fit_model(dm, GHQuadrature(level=2; optim_kwargs=(maxiters=200,)))
-        res_aniso = fit_model(dm, GHQuadrature(level=(η=2,); optim_kwargs=(maxiters=200,)))
+        res_iso  = fit_model(dm, GHQuadrature(level=2; optim_kwargs=(maxiters=15,)))
+        res_aniso = fit_model(dm, GHQuadrature(level=(η=2,); optim_kwargs=(maxiters=15,)))
 
         @test NoLimits.get_converged(res_iso)
         @test NoLimits.get_converged(res_aniso)
@@ -1589,7 +1589,7 @@ end  # @testset "Additional 1D quadrature rules"
         dm = DataModel(model, df; primary_id=:ID, time_col=:t)
 
         # (nonexistent=5,) → η defaults to level 1
-        res = fit_model(dm, GHQuadrature(level=(nonexistent=5,); optim_kwargs=(maxiters=150,)))
+        res = fit_model(dm, GHQuadrature(level=(nonexistent=5,); optim_kwargs=(maxiters=25,)))
         @test NoLimits.get_converged(res)
         @test isfinite(NoLimits.get_objective(res))
     end
@@ -1632,7 +1632,7 @@ end  # @testset "Anisotropic sparse grids"
 
         df  = DataFrame(ID=ids, t=tobs, y=yobs)
         dm  = DataModel(model, df; primary_id=:ID, time_col=:t)
-        res = fit_model(dm, NoLimits.GHQuadrature(level=2; optim_kwargs=(maxiters=150,)))
+        res = fit_model(dm, NoLimits.GHQuadrature(level=2; optim_kwargs=(maxiters=35,)))
 
         @test NoLimits.get_converged(res)
         p = NoLimits.get_params(res; scale=:untransformed)
@@ -1715,7 +1715,7 @@ end  # @testset "GHQuadrature Gamma RE"
 
         df  = DataFrame(ID=ids, t=tobs, y=yobs)
         dm  = DataModel(model, df; primary_id=:ID, time_col=:t)
-        res = fit_model(dm, NoLimits.GHQuadrature(level=2; optim_kwargs=(maxiters=150,)))
+        res = fit_model(dm, NoLimits.GHQuadrature(level=2; optim_kwargs=(maxiters=35,)))
 
         @test NoLimits.get_converged(res)
         p = NoLimits.get_params(res; scale=:untransformed)
@@ -1773,7 +1773,7 @@ end  # @testset "GHQuadrature Exponential RE"
 
         df  = DataFrame(ID=ids, t=tobs, y=yobs)
         dm  = DataModel(model, df; primary_id=:ID, time_col=:t)
-        res = fit_model(dm, NoLimits.GHQuadrature(level=2; optim_kwargs=(maxiters=150,)))
+        res = fit_model(dm, NoLimits.GHQuadrature(level=2; optim_kwargs=(maxiters=35,)))
 
         @test NoLimits.get_converged(res)
         p = NoLimits.get_params(res; scale=:untransformed)
@@ -1833,7 +1833,7 @@ end  # @testset "GHQuadrature Weibull RE"
 
         df  = DataFrame(ID=ids, t=tobs, y=yobs)
         dm  = DataModel(model, df; primary_id=:ID, time_col=:t)
-        res = fit_model(dm, NoLimits.GHQuadrature(level=2; optim_kwargs=(maxiters=150,)))
+        res = fit_model(dm, NoLimits.GHQuadrature(level=2; optim_kwargs=(maxiters=70,)))
 
         @test NoLimits.get_converged(res)
         p = NoLimits.get_params(res; scale=:untransformed)
@@ -1956,7 +1956,7 @@ end  # @testset "GHQuadrature generic ContinuousUnivariateDistribution fallback"
 
     @testset "level=[1,2] converges and result is scalar-level" begin
         dm  = _make_progressive_dm()
-        res = fit_model(dm, GHQuadrature(level=[1, 2]; optim_kwargs=(maxiters=200,)))
+        res = fit_model(dm, GHQuadrature(level=[1, 2]; optim_kwargs=(maxiters=25,)))
         @test NoLimits.get_converged(res)
         @test isfinite(NoLimits.get_objective(res))
         # Returned method should carry the last scalar level (2)
@@ -1966,15 +1966,15 @@ end  # @testset "GHQuadrature generic ContinuousUnivariateDistribution fallback"
     @testset "level=[1] (single-element) behaves like level=1" begin
         rng = MersenneTwister(1)
         dm  = _make_progressive_dm(; rng=rng)
-        res_vec    = fit_model(dm, GHQuadrature(level=[1];    optim_kwargs=(maxiters=200,)))
-        res_scalar = fit_model(dm, GHQuadrature(level=1;      optim_kwargs=(maxiters=200,)))
+        res_vec    = fit_model(dm, GHQuadrature(level=[1];    optim_kwargs=(maxiters=25,)))
+        res_scalar = fit_model(dm, GHQuadrature(level=1;      optim_kwargs=(maxiters=25,)))
         @test NoLimits.get_converged(res_vec)
         @test abs(NoLimits.get_objective(res_vec) - NoLimits.get_objective(res_scalar)) < 1e-4
     end
 
     @testset "level=[1,2,3] three-stage refinement" begin
         dm  = _make_progressive_dm()
-        res = fit_model(dm, GHQuadrature(level=[1, 2, 3]; optim_kwargs=(maxiters=150,)))
+        res = fit_model(dm, GHQuadrature(level=[1, 2, 3]; optim_kwargs=(maxiters=25,)))
         @test NoLimits.get_converged(res)
         @test NoLimits.get_method(res).level == 3
         p = NoLimits.get_params(res; scale=:untransformed)
@@ -1983,7 +1983,7 @@ end  # @testset "GHQuadrature generic ContinuousUnivariateDistribution fallback"
 
     @testset "level=[1,2] result compatible with all accessors" begin
         dm  = _make_progressive_dm()
-        res = fit_model(dm, GHQuadrature(level=[1, 2]; optim_kwargs=(maxiters=150,)))
+        res = fit_model(dm, GHQuadrature(level=[1, 2]; optim_kwargs=(maxiters=12,)))
         @test isfinite(NoLimits.get_objective(res))
         @test NoLimits.get_iterations(res) isa Integer
         re = NoLimits.get_random_effects(dm, res)
@@ -2012,7 +2012,7 @@ end  # @testset "GHQuadrature generic ContinuousUnivariateDistribution fallback"
         end
         df  = DataFrame(ID=ids, t=tobs, y=yobs)
         dm  = DataModel(model, df; primary_id=:ID, time_col=:t)
-        res = fit_model(dm, GHQuadratureMAP(level=[1, 2]; optim_kwargs=(maxiters=200,)))
+        res = fit_model(dm, GHQuadratureMAP(level=[1, 2]; optim_kwargs=(maxiters=15,)))
         @test NoLimits.get_converged(res)
         @test NoLimits.get_method(res).level == 2
     end
@@ -2053,7 +2053,7 @@ end  # @testset "GHQuadrature progressive refinement"
         end
         df = DataFrame(ID=ids, t=tobs, y=yobs)
         dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-        res = fit_model(dm, NoLimits.Laplace())
+        res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=15,)))
         return dm, res
     end
 

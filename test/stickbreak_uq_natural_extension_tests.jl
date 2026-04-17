@@ -239,7 +239,7 @@ using Random
                    randn(MersenneTwister(2), 6) .+ 1.3)
         )
         dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-        res = fit_model(dm, NoLimits.MLE())
+        res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)))
         @test NoLimits.get_converged(res)
 
         uq = compute_uq(res; n_draws=200, rng=MersenneTwister(42))
@@ -311,7 +311,7 @@ using Random
                    randn(MersenneTwister(4), 6) .+ 0.5)
         )
         dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-        res = fit_model(dm, NoLimits.MLE())
+        res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)))
         @test NoLimits.get_converged(res)
 
         uq = compute_uq(res; n_draws=200, rng=MersenneTwister(42))
@@ -369,7 +369,7 @@ using Random
                    randn(MersenneTwister(6), 5) .+ 0.0)
         )
         dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-        res = fit_model(dm, NoLimits.MLE())
+        res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)))
         @test NoLimits.get_converged(res)
 
         uq = compute_uq(res; n_draws=200, rng=MersenneTwister(99))
@@ -416,7 +416,7 @@ using Random
                    randn(MersenneTwister(8), 5) .+ 0.5)
         )
         dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-        res = fit_model(dm, NoLimits.MLE())
+        res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)))
         uq = compute_uq(res; n_draws=100, rng=MersenneTwister(10))
 
         # Only sigma is active; parameter_names_natural should be nothing

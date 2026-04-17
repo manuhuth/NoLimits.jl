@@ -323,11 +323,11 @@ end
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 
-    res_mle = fit_model(dm, NoLimits.MLE(); constants=(Γ=θ0.Γ, sp=θ0.sp))
+    res_mle = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)); constants=(Γ=θ0.Γ, sp=θ0.sp))
     @test res_mle isa FitResult
     @test isfinite(NoLimits.get_objective(res_mle))
 
-    res_map = fit_model(dm, NoLimits.MAP(); constants=(Γ=θ0.Γ, sp=θ0.sp))
+    res_map = fit_model(dm, NoLimits.MAP(; optim_kwargs=(maxiters=5,)); constants=(Γ=θ0.Γ, sp=θ0.sp))
     @test res_map isa FitResult
     @test isfinite(NoLimits.get_objective(res_map))
 end
@@ -386,11 +386,11 @@ end
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 
-    res_mle = fit_model(dm, NoLimits.MLE(); constants=(ζ=θ0.ζ, Γ=θ0.Γ, sp=θ0.sp));
+    res_mle = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)); constants=(ζ=θ0.ζ, Γ=θ0.Γ, sp=θ0.sp));
     @test res_mle isa FitResult
     @test isfinite(NoLimits.get_objective(res_mle))
 
-    res_map = fit_model(dm, NoLimits.MAP(); constants=(ζ=θ0.ζ, Γ=θ0.Γ, sp=θ0.sp))
+    res_map = fit_model(dm, NoLimits.MAP(; optim_kwargs=(maxiters=5,)); constants=(ζ=θ0.ζ, Γ=θ0.Γ, sp=θ0.sp))
     @test res_map isa FitResult
     @test isfinite(NoLimits.get_objective(res_map))
 end

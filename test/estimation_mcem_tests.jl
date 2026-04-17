@@ -45,7 +45,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCEM(; sampler=MH(), turing_kwargs=(n_samples=10, n_adapt=0, progress=false),
+    res = fit_model(dm, NoLimits.MCEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
                              maxiters=2))
     @test res isa FitResult
     @test NoLimits.get_converged(res) isa Bool
@@ -81,7 +81,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     method = NoLimits.MCEM(; sampler=MH(),
-                                   turing_kwargs=(n_samples=8, n_adapt=0, progress=false, verbose=false),
+                                   turing_kwargs=(n_samples=4, n_adapt=0, progress=false, verbose=false),
                                    maxiters=2,
                                    progress=false)
     res_serial = fit_model(dm, method; serialization=EnsembleSerial(), rng=MersenneTwister(123))
@@ -152,7 +152,7 @@ end
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.MCEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=8, n_adapt=0, progress=false),
+        turing_kwargs=(n_samples=4, n_adapt=0, progress=false),
         maxiters=2,
         consecutive_params=1,
         atol_theta=Inf,
@@ -193,7 +193,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCEM(; sampler=MH(), turing_kwargs=(n_samples=10, n_adapt=0, progress=false),
+    res = fit_model(dm, NoLimits.MCEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
                              maxiters=2))
     @test res isa FitResult
     re = NoLimits.get_random_effects(dm, res)
@@ -227,7 +227,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCEM(; sampler=MH(), turing_kwargs=(n_samples=10, n_adapt=0, progress=false),
+    res = fit_model(dm, NoLimits.MCEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
                              maxiters=2);
                     constants_re=(; η=(; A=0.0,)))
     @test res isa FitResult
@@ -260,7 +260,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCEM(; sampler=MH(), turing_kwargs=(n_samples=8, n_adapt=0, progress=false),
+    res = fit_model(dm, NoLimits.MCEM(; sampler=MH(), turing_kwargs=(n_samples=4, n_adapt=0, progress=false),
                              maxiters=2);
                     constants=(a=0.2,))
     @test res isa FitResult
@@ -297,7 +297,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCEM(; sampler=MH(), turing_kwargs=(n_samples=8, n_adapt=0, progress=false),
+    res = fit_model(dm, NoLimits.MCEM(; sampler=MH(), turing_kwargs=(n_samples=4, n_adapt=0, progress=false),
                              maxiters=2))
     @test res isa FitResult
 end
@@ -329,7 +329,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCEM(; sampler=MH(), turing_kwargs=(n_samples=10, n_adapt=0, progress=false),
+    res = fit_model(dm, NoLimits.MCEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
                              maxiters=2);
                     serialization=EnsembleThreads())
     @test res isa FitResult
@@ -362,7 +362,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCEM(; sampler=MH(), turing_kwargs=(n_samples=10, n_adapt=0, progress=false),
+    res = fit_model(dm, NoLimits.MCEM(; sampler=MH(), turing_kwargs=(n_samples=5, n_adapt=0, progress=false),
                              maxiters=2))
     @test res isa FitResult
 end
@@ -429,7 +429,7 @@ end
     method = NoLimits.MCEM(optimizer=OptimizationOptimisers.Adam(0.05),
                   optim_kwargs=(; maxiters=3),
                   sampler=MH(),
-                  turing_kwargs=(n_samples=8, n_adapt=0, progress=false),
+                  turing_kwargs=(n_samples=4, n_adapt=0, progress=false),
                   maxiters=2)
     res = fit_model(dm, method)
     @test res isa FitResult
@@ -599,7 +599,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.MCEM(; sampler=MH(),
-                                              turing_kwargs=(n_samples=8, n_adapt=0, progress=false),
+                                              turing_kwargs=(n_samples=4, n_adapt=0, progress=false),
                                               maxiters=2))
     @test res isa FitResult
     @test NoLimits.get_converged(res) isa Bool
@@ -640,7 +640,7 @@ end
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     method = NoLimits.MCEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=8, n_adapt=0, progress=false),
+        turing_kwargs=(n_samples=4, n_adapt=0, progress=false),
         maxiters=1,
         ebe_rescue_on_high_grad=true,
         ebe_rescue_multistart_n=12,

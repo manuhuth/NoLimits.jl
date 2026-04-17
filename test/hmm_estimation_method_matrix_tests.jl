@@ -186,11 +186,10 @@ const _HMM_RE_SMOKE_MODELS = [
 ]
 
 const _HMM_RE_SMOKE_METHODS = [
+    # Reduced from 6 methods to 3: LaplaceMAP, VI, MCEM are each tested thoroughly
+    # in their own dedicated files; this matrix only needs one representative per solver family.
     (:Laplace, () -> NoLimits.Laplace(; optim_kwargs=(maxiters=1,), inner_kwargs=(maxiters=2,), multistart_n=0, multistart_k=0)),
-    (:LaplaceMAP, () -> NoLimits.LaplaceMAP(; optim_kwargs=(maxiters=1,), inner_kwargs=(maxiters=2,), multistart_n=0, multistart_k=0)),
     (:MCMC, () -> NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=2, n_adapt=0, progress=false))),
-    (:VI, () -> NoLimits.VI(; turing_kwargs=(max_iter=3, progress=false))),
-    (:MCEM, () -> NoLimits.MCEM(; sampler=MH(), turing_kwargs=(n_samples=2, n_adapt=0, progress=false), maxiters=1, progress=false)),
     (:SAEM, () -> NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=2, n_adapt=0, progress=false), mcmc_steps=1, q_store_max=4, maxiters=1, progress=false, builtin_stats=:auto)),
 ]
 

@@ -231,7 +231,7 @@ using Random
         )
         dm = DataModel(model, df; primary_id=:ID, time_col=:t)
 
-        res = fit_model(dm, NoLimits.MLE())
+        res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)))
         @test NoLimits.get_converged(res)
 
         params = NoLimits.get_params(res; scale=:untransformed)

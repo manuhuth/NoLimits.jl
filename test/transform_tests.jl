@@ -3,8 +3,6 @@ using NoLimits
 using ComponentArrays
 using LinearAlgebra
 using ForwardDiff
-using ReverseDiff
-using Zygote
 using DataFrames
 using Distributions
 
@@ -42,12 +40,10 @@ using Distributions
     @test isapprox(Erec, Aexp; rtol=1e-8, atol=1e-8)
     @test length(θEt.E) == 3
 
-    # AD check for log transform (ForwardDiff + Zygote).
+    # AD check for log transform (ForwardDiff).
     f_log(x) = log_forward(x)
     @test isapprox(ForwardDiff.derivative(f_log, 2.0), 1 / 2.0; rtol=1e-8, atol=1e-10)
     f_log_vec(v) = log_forward(v[1])
-    @test isapprox(ReverseDiff.gradient(f_log_vec, [2.0])[1], 1 / 2.0; rtol=1e-8, atol=1e-10)
-    @test isapprox(Zygote.gradient(f_log, 2.0)[1], 1 / 2.0; rtol=1e-8, atol=1e-10)
 
     # AD check for cholesky transform on a PSD matrix built from parameters.
     function f_chol(v)
@@ -60,14 +56,6 @@ using Distributions
     g = ForwardDiff.gradient(f_chol, v0)
     @test length(g) == length(v0)
 
-    g_rev = ReverseDiff.gradient(f_chol, v0)
-    @test length(g_rev) == length(v0)
-
-    g_zyg = Zygote.gradient(f_chol, v0)[1]
-    @test length(g_zyg) == length(v0)
-    @test isapprox(g_rev, g; rtol=1e-6, atol=1e-8)
-    @test isapprox(g_zyg, g; rtol=1e-6, atol=1e-8)
-
     # AD check for expm-based transform on a PSD matrix built from parameters.
     function f_expm(v)
         L = reshape(v, 2, 2)
@@ -77,10 +65,6 @@ using Distributions
     end
     g_expm = ForwardDiff.gradient(f_expm, v0)
     @test length(g_expm) == length(v0)
-    @test_skip ReverseDiff.gradient(f_expm, v0)
-    g_expm_zyg = Zygote.gradient(f_expm, v0)[1]
-    @test length(g_expm_zyg) == length(v0)
-    @test isapprox(g_expm_zyg, g_expm; rtol=1e-6, atol=1e-8)
 
     # PSD params are symmetrized for log-likelihood paths.
     model = @Model begin

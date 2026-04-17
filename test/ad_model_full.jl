@@ -4,7 +4,6 @@ using ComponentArrays
 using Distributions
 using OrdinaryDiffEq
 using SciMLSensitivity
-using Zygote
 using ForwardDiff
 using FiniteDifferences
 using DataInterpolations

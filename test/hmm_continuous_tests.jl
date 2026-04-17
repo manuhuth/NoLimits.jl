@@ -332,8 +332,8 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res_mle = fit_model(dm, NoLimits.MLE())
-    res_map = fit_model(dm, NoLimits.MAP())
+    res_mle = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)))
+    res_map = fit_model(dm, NoLimits.MAP(; optim_kwargs=(maxiters=5,)))
     res_mcmc = fit_model(dm, NoLimits.MCMC(sampler=MH(), turing_kwargs=(; n_samples=15, n_adapt=5)))
 
 

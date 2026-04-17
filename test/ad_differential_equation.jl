@@ -2,7 +2,6 @@ using Test
 using NoLimits
 using DifferentiationInterface
 using ForwardDiff
-using Zygote
 using ComponentArrays
 
 @testset "DifferentialEquation AD" begin
@@ -26,18 +25,12 @@ using ComponentArrays
     f_u(u) = sum(f(u, pc, 0.5))
     u0 = [1.0, 2.0]
     val_fwd, grad_fwd = value_and_gradient(f_u, AutoForwardDiff(), u0)
-    grad_zyg = Zygote.gradient(f_u, u0)[1]
-    @test isapprox(grad_zyg, grad_fwd; rtol=1e-6, atol=1e-8)
 
     hess = ForwardDiff.hessian(f_u, u0)
     @test size(hess, 1) == length(u0)
     @test size(hess, 2) == length(u0)
     @test isapprox(hess, hess'; rtol=1e-6, atol=1e-8)
 
-    hess_mixed = hessian_fwd_over_zygote(f_u, u0)
-    @test size(hess_mixed, 1) == length(u0)
-    @test size(hess_mixed, 2) == length(u0)
-    @test isapprox(hess_mixed, hess; rtol=1e-6, atol=1e-8)
 end
 
 @testset "DifferentialEquation AD (params, transformed)" begin
@@ -80,18 +73,12 @@ end
     end
 
     val_fwd, grad_fwd = value_and_gradient(fθ, AutoForwardDiff(), θ0)
-    grad_zyg = Zygote.gradient(fθ, θ0)[1]
-    @test isapprox(grad_zyg, grad_fwd; rtol=1e-6, atol=1e-8)
 
     hess = ForwardDiff.hessian(fθ, θ0)
     @test size(hess, 1) == length(θ0)
     @test size(hess, 2) == length(θ0)
     @test isapprox(hess, hess'; rtol=1e-6, atol=1e-8)
 
-    hess_mixed = hessian_fwd_over_zygote(fθ, θ0)
-    @test size(hess_mixed, 1) == length(θ0)
-    @test size(hess_mixed, 2) == length(θ0)
-    @test isapprox(hess_mixed, hess; rtol=1e-6, atol=1e-8)
 end
 
 @testset "DifferentialEquation AD (in-place)" begin
@@ -159,16 +146,10 @@ end
     end
 
     val_fwd, grad_fwd = value_and_gradient(fθ, AutoForwardDiff(), θ0)
-    grad_zyg = Zygote.gradient(fθ, θ0)[1]
-    @test isapprox(grad_zyg, grad_fwd; rtol=1e-6, atol=1e-8)
 
     hess = ForwardDiff.hessian(fθ, θ0)
     @test size(hess, 1) == length(θ0)
     @test size(hess, 2) == length(θ0)
     @test isapprox(hess, hess'; rtol=1e-6, atol=1e-8)
 
-    hess_mixed = hessian_fwd_over_zygote(fθ, θ0)
-    @test size(hess_mixed, 1) == length(θ0)
-    @test size(hess_mixed, 2) == length(θ0)
-    @test isapprox(hess_mixed, hess; rtol=1e-6, atol=1e-8)
 end

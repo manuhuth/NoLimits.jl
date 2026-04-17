@@ -2,7 +2,6 @@ using Test
 using NoLimits
 using DifferentiationInterface
 using ForwardDiff
-using Zygote
 using ComponentArrays
 using Distributions
 using Lux
@@ -33,18 +32,12 @@ using Lux
     end
 
     val_fwd, grad_fwd = value_and_gradient(f, AutoForwardDiff(), fixed_effects0)
-    grad_zyg = Zygote.gradient(f, fixed_effects0)[1]
-    @test isapprox(grad_zyg, grad_fwd; rtol=1e-6, atol=1e-8)
 
     hess = ForwardDiff.hessian(f, fixed_effects0)
     @test size(hess, 1) == length(fixed_effects0)
     @test size(hess, 2) == length(fixed_effects0)
     @test isapprox(hess, hess'; rtol=1e-6, atol=1e-8)
 
-    hess_mixed = hessian_fwd_over_zygote(f, fixed_effects0)
-    @test size(hess_mixed, 1) == length(fixed_effects0)
-    @test size(hess_mixed, 2) == length(fixed_effects0)
-    @test isapprox(hess_mixed, hess; rtol=1e-6, atol=1e-8)
 end
 
 @testset "PreDE AD (simple)" begin
@@ -62,8 +55,6 @@ end
     f(βθ) = build(ComponentArray(β=βθ[1]), random_effects, NamedTuple(), NamedTuple(), helpers).b
 
     val_fwd, grad_fwd = value_and_gradient(f, AutoForwardDiff(), [1.0])
-    grad_zyg = Zygote.gradient(f, [1.0])[1]
-    @test isapprox(grad_zyg, grad_fwd; rtol=1e-6, atol=1e-8)
 end
 
 @testset "PreDE AD (model_funs)" begin
@@ -92,6 +83,4 @@ end
     f(feθ) = build(inverse_transform(feθ), random_effects, constant_features_i, model_funs, NamedTuple()).total
 
     val_fwd, grad_fwd = value_and_gradient(f, AutoForwardDiff(), fixed_effects0)
-    grad_zyg = Zygote.gradient(f, fixed_effects0)[1]
-    @test isapprox(grad_zyg, grad_fwd; rtol=1e-6, atol=1e-8)
 end

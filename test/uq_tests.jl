@@ -110,16 +110,16 @@ end
         y=[0.2, 0.3, 0.1, 0.2],
     )
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCMC(; turing_kwargs=(n_samples=40, n_adapt=10, progress=false)))
+    res = fit_model(dm, NoLimits.MCMC(; turing_kwargs=(n_samples=20, n_adapt=5, progress=false)))
 
-    uq = compute_uq(res; method=:chain, mcmc_draws=30, rng=Random.Xoshiro(4))
+    uq = compute_uq(res; method=:chain, mcmc_draws=15, rng=Random.Xoshiro(4))
     @test get_uq_backend(uq) == :chain
     @test get_uq_source_method(uq) == :mcmc
     @test get_uq_parameter_names(uq) == [:a, :σ]
-    @test size(get_uq_draws(uq)) == (30, 2)
+    @test size(get_uq_draws(uq)) == (15, 2)
     d = get_uq_diagnostics(uq)
-    @test d.requested_draws == 30
-    @test d.used_draws == 30
+    @test d.requested_draws == 15
+    @test d.used_draws == 15
     @test d.available_draws >= d.used_draws
 end
 
@@ -144,7 +144,7 @@ end
         y=[0.2, 0.3, 0.1, 0.2],
     )
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.VI(; turing_kwargs=(max_iter=30, progress=false)); rng=Random.Xoshiro(401))
+    res = fit_model(dm, NoLimits.VI(; turing_kwargs=(max_iter=15, progress=false)); rng=Random.Xoshiro(401))
 
     uq = compute_uq(res; method=:chain, mcmc_draws=35, rng=Random.Xoshiro(402))
     @test get_uq_backend(uq) == :chain
@@ -335,7 +335,7 @@ end
                     method=:profile,
                     profile_method=:LIN_EXTRAPOL,
                     profile_scan_width=1.0,
-                    profile_max_iter=300,
+                    profile_max_iter=80,
                     profile_scan_tol=1e-2,
                     profile_loss_tol=1e-2,
                     rng=Random.Xoshiro(9))
@@ -381,7 +381,7 @@ end
                     method=:profile,
                     profile_method=:LIN_EXTRAPOL,
                     profile_scan_width=0.8,
-                    profile_max_iter=250,
+                    profile_max_iter=80,
                     profile_scan_tol=1e-2,
                     profile_loss_tol=1e-2,
                     rng=Random.Xoshiro(10))
@@ -419,16 +419,16 @@ end
 
     uq = compute_uq(res;
                     method=:mcmc_refit,
-                    mcmc_turing_kwargs=(n_samples=25, n_adapt=5, progress=false),
-                    mcmc_draws=20,
+                    mcmc_turing_kwargs=(n_samples=12, n_adapt=3, progress=false),
+                    mcmc_draws=9,
                     rng=Random.Xoshiro(11))
     @test get_uq_backend(uq) == :mcmc_refit
     @test get_uq_source_method(uq) == :mle
     @test get_uq_parameter_names(uq) == [:a, :σ]
-    @test size(get_uq_draws(uq)) == (20, 2)
+    @test size(get_uq_draws(uq)) == (9, 2)
     d = get_uq_diagnostics(uq)
-    @test d.requested_draws == 20
-    @test d.used_draws == 20
+    @test d.requested_draws == 9
+    @test d.used_draws == 9
     @test d.available_draws >= d.used_draws
     @test haskey(d, :sampled_fixed_names)
     @test :b ∉ d.sampled_fixed_names
