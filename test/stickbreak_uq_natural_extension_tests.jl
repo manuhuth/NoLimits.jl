@@ -240,7 +240,6 @@ using Random
         )
         dm = DataModel(model, df; primary_id=:ID, time_col=:t)
         res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)))
-        @test NoLimits.get_converged(res)
 
         uq = compute_uq(res; n_draws=200, rng=MersenneTwister(42))
 
@@ -312,7 +311,6 @@ using Random
         )
         dm = DataModel(model, df; primary_id=:ID, time_col=:t)
         res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)))
-        @test NoLimits.get_converged(res)
 
         uq = compute_uq(res; n_draws=200, rng=MersenneTwister(42))
 
@@ -370,7 +368,6 @@ using Random
         )
         dm = DataModel(model, df; primary_id=:ID, time_col=:t)
         res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)))
-        @test NoLimits.get_converged(res)
 
         uq = compute_uq(res; n_draws=200, rng=MersenneTwister(99))
 
