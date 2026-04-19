@@ -1540,7 +1540,7 @@ function _laplace_get_bstar!(cache::_LaplaceCache,
                              fastpath=nothing,
                              multistart=LaplaceMultistartOptions(0, 0, grad_tol, 5, :lhs),
                              rng::AbstractRNG=Random.default_rng(),
-                             serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
+                             serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                              progress::Bool=false,
                              progress_desc::AbstractString="EBE")
     θ_vec = θ
@@ -2466,7 +2466,7 @@ function _laplace_objective_and_grad(dm::DataModel,
                                      multistart::LaplaceMultistartOptions,
                                      fastpath=nothing,
                                      rng::AbstractRNG,
-                                     serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial())
+                                     serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads())
     inner_opts = _resolve_inner_options(inner, dm)
     multistart_opts = _resolve_multistart_options(multistart, inner_opts)
 
@@ -2554,7 +2554,7 @@ function _laplace_objective_only(dm::DataModel,
                                  multistart::LaplaceMultistartOptions,
                                  fastpath=nothing,
                                  rng::AbstractRNG,
-                                 serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial())
+                                 serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads())
     inner_opts = _resolve_inner_options(inner, dm)
     multistart_opts = _resolve_multistart_options(multistart, inner_opts)
 
@@ -2629,7 +2629,7 @@ function _fit_model(dm::DataModel, method::Laplace, args...;
                     penalty::NamedTuple=NamedTuple(),
                     ode_args::Tuple=(),
                     ode_kwargs::NamedTuple=NamedTuple(),
-                    serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
+                    serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                     rng::AbstractRNG=Xoshiro(0),
                     theta_0_untransformed::Union{Nothing, ComponentArray}=nothing,
                     store_data_model::Bool=true)
@@ -2844,7 +2844,7 @@ function _fit_model(dm::DataModel, method::LaplaceMAP, args...;
                     penalty::NamedTuple=NamedTuple(),
                     ode_args::Tuple=(),
                     ode_kwargs::NamedTuple=NamedTuple(),
-                    serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
+                    serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                     rng::AbstractRNG=Xoshiro(0),
                     theta_0_untransformed::Union{Nothing, ComponentArray}=nothing,
                     store_data_model::Bool=true)

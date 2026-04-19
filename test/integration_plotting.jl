@@ -33,7 +33,7 @@ const _PLT_DM_P = DataModel(
     _PLT_DF_P; primary_id=:ID, time_col=:t)
 
 const _PLT_RES_MCMC = fit_model(_PLT_DM_P,
-    NoLimits.MCMC(; turing_kwargs=(n_samples=5, n_adapt=2, progress=false));
+    NoLimits.MCMC(; turing_kwargs=(n_samples=2, n_adapt=2, progress=false));
     rng=MersenneTwister(42))
 const _PLT_RES_VI = fit_model(_PLT_DM_P,
     NoLimits.VI(; turing_kwargs=(max_iter=10, progress=false));
@@ -53,7 +53,7 @@ const _PLT_RE_DM = DataModel(
     end),
     _PLT_RE_DF; primary_id=:ID, time_col=:t)
 const _PLT_RE_RES_LAP = fit_model(_PLT_RE_DM,
-    NoLimits.Laplace(; optim_kwargs=(maxiters=8,), multistart_n=0, multistart_k=0))
+    NoLimits.Laplace(; optim_kwargs=(maxiters=2,), multistart_n=2, multistart_k=2))
 
 # a + b*z model — the "standard plotting fixture" used by most plot/vpc/residual tests
 const _PLOT_DF = DataFrame(

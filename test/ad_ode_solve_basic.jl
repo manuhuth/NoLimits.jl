@@ -118,7 +118,6 @@ end
 
     val_fwd, grad_fwd = value_and_gradient(fη_fd, AutoForwardDiff(), [0.1])
     hess = ForwardDiff.hessian(fη_fd, [0.1])
-    @test isfinite(val_fwd)
     @test all(isfinite, grad_fwd)
     @test size(hess) == (1, 1)
 

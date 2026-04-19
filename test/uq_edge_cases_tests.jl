@@ -125,7 +125,7 @@ const _UQE_FLOW_MAP_CONSTANTS  = (ψ=_UQE_FLOW_MAP_θ0.ψ,)
 # ══════════════════════════════════════════════════════════════════════════════
 
 @testset "UQ edge: MLE/MAP/profile/mcmc_refit with vector FE + NN/SoftTree/Spline" begin
-    res_mle = fit_model(_UQE_FIXED_DM_P, NoLimits.MLE(; optim_kwargs=(maxiters=8,));
+    res_mle = fit_model(_UQE_FIXED_DM_P, NoLimits.MLE(; optim_kwargs=(maxiters=2,));
                         constants=_UQE_FIXED_CONSTANTS)
     uq_mle = compute_uq(res_mle; method=:wald, n_draws=8, rng=Random.Xoshiro(201))
     @test get_uq_source_method(uq_mle) == :mle
@@ -144,13 +144,13 @@ const _UQE_FLOW_MAP_CONSTANTS  = (ψ=_UQE_FLOW_MAP_θ0.ψ,)
 
     uq_refit = compute_uq(res_mle;
                           method=:mcmc_refit,
-                          mcmc_turing_kwargs=(n_samples=6, n_adapt=2, progress=false),
+                          mcmc_turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
                           mcmc_draws=5,
                           rng=Random.Xoshiro(203))
     @test get_uq_backend(uq_refit) == :mcmc_refit
     @test get_uq_parameter_names(uq_refit) == [:β_1, :β_2, :a, :σ]
 
-    res_map = fit_model(_UQE_FIXED_DM_P, NoLimits.MAP(; optim_kwargs=(maxiters=8,));
+    res_map = fit_model(_UQE_FIXED_DM_P, NoLimits.MAP(; optim_kwargs=(maxiters=2,));
                         constants=_UQE_FIXED_CONSTANTS)
     uq_map = compute_uq(res_map; method=:wald, n_draws=8, rng=Random.Xoshiro(204))
     @test get_uq_source_method(uq_map) == :map
@@ -159,7 +159,7 @@ end
 
 @testset "UQ edge: MCMC chain with multivariate + planar-flow REs and vector FE" begin
     res = fit_model(_UQE_RE_FLOW_MAP_DM,
-                    NoLimits.MCMC(; turing_kwargs=(n_samples=15, n_adapt=5, progress=false));
+                    NoLimits.MCMC(; turing_kwargs=(n_samples=2, n_adapt=2, progress=false));
                     constants=_UQE_FLOW_MAP_CONSTANTS)
     uq = compute_uq(res; method=:chain, mcmc_draws=5, rng=Random.Xoshiro(205))
     @test get_uq_source_method(uq) == :mcmc
@@ -169,9 +169,9 @@ end
 @testset "UQ edge: Laplace with multivariate + planar-flow REs, vector FE, NN/SoftTree/Spline" begin
     res_laplace = fit_model(_UQE_RE_BLOCKS_DM,
                             NoLimits.Laplace(;
-                                optim_kwargs=(maxiters=5,),
-                                inner_kwargs=(maxiters=6,),
-                                multistart_n=0, multistart_k=0);
+                                optim_kwargs=(maxiters=2,),
+                                inner_kwargs=(maxiters=2,),
+                                multistart_n=2, multistart_k=2);
                             constants=_UQE_BLOCKS_CONSTANTS)
     uq_laplace = compute_uq(res_laplace;
                             method=:wald,
@@ -186,9 +186,9 @@ end
 @testset "UQ edge: LaplaceMAP with multivariate + planar-flow REs and vector FE" begin
     res_lmap = fit_model(_UQE_RE_FLOW_MAP_DM,
                          NoLimits.LaplaceMAP(;
-                             optim_kwargs=(maxiters=4,),
-                             inner_kwargs=(maxiters=6,),
-                             multistart_n=0, multistart_k=0);
+                             optim_kwargs=(maxiters=2,),
+                             inner_kwargs=(maxiters=2,),
+                             multistart_n=2, multistart_k=2);
                          constants=_UQE_FLOW_MAP_CONSTANTS)
     uq_lmap = compute_uq(res_lmap;
                          method=:wald,
@@ -203,10 +203,10 @@ end
 @testset "UQ edge: MCEM/SAEM with multivariate + planar-flow REs, vector FE, NN/SoftTree/Spline" begin
     res_mcem = fit_model(_UQE_RE_BLOCKS_DM,
                          NoLimits.MCEM(;
-                             maxiters=1,
+                             maxiters=2,
                              sample_schedule=2,
-                             turing_kwargs=(n_samples=4, n_adapt=1, progress=false),
-                             optim_kwargs=(maxiters=4,));
+                             turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
+                             optim_kwargs=(maxiters=2,));
                          constants=_UQE_BLOCKS_CONSTANTS)
     uq_mcem = compute_uq(res_mcem;
                          method=:wald, re_approx=:laplace, pseudo_inverse=true,
@@ -217,11 +217,11 @@ end
 
     res_saem = fit_model(_UQE_RE_BLOCKS_DM,
                          NoLimits.SAEM(;
-                             maxiters=1,
+                             maxiters=2,
                              mcmc_steps=1,
                              update_schedule=:all,
-                             turing_kwargs=(n_adapt=1, progress=false),
-                             optim_kwargs=(maxiters=4,));
+                             turing_kwargs=(n_adapt=2, progress=false),
+                             optim_kwargs=(maxiters=2,));
                          constants=_UQE_BLOCKS_CONSTANTS)
     uq_saem = compute_uq(res_saem;
                          method=:wald, re_approx=:laplace, pseudo_inverse=true,

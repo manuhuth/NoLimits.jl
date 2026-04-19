@@ -37,7 +37,7 @@ using Turing
 
     df = DataFrame(ID=[1,1,2,2], t=[0.0,1.0,0.0,1.0], y=[1.0,0.9,1.1,1.0])
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=5,), multistart_n=0, multistart_k=0))
+    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=2,), multistart_n=2, multistart_k=2))
 
     cache = build_plot_cache(res; cache_obs_dists=false)
     @test cache isa PlotCache
@@ -55,7 +55,7 @@ end
 
     df = DataFrame(ID=[1,1], t=[0.0,1.0], z=[0.1,0.2], y=[0.15,0.18])
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)))
+    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
 
     cache1 = build_plot_cache(res; cache_obs_dists=false)
     cache2 = build_plot_cache(res; cache_obs_dists=true)
@@ -78,7 +78,7 @@ end
 
     df = DataFrame(ID=[1,1], t=[0.0,1.0], y=[0.1,0.2])
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=10, n_adapt=2, progress=false)))
+    res = fit_model(dm, NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
 
     cache = build_plot_cache(res; mcmc_warmup=1, mcmc_draws=5)
     @test cache isa PlotCache
@@ -99,7 +99,7 @@ end
                    y=[0.1,0.2,0.0,0.1,0.15,0.25])
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     constants_re = (; η=(; B=0.0))
-    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=5,), multistart_n=0, multistart_k=0);
+    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=2,), multistart_n=2, multistart_k=2);
                     constants_re=constants_re)
 
     cache = build_plot_cache(res)
@@ -120,7 +120,7 @@ end
 
     df = DataFrame(ID=[1,1,2,2], t=[0.0,1.0,0.0,1.0], y=[0.1,0.2,0.0,-0.1])
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=10, n_adapt=2, progress=false)))
+    res = fit_model(dm, NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
 
     cache = build_plot_cache(res; cache_obs_dists=false, mcmc_draws=5)
     @test cache isa PlotCache
@@ -160,7 +160,7 @@ end
 
     df = DataFrame(ID=[1,1,1], t=[0.0,0.5,1.0], y=[1.0,0.95,0.9])
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)))
+    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
 
     cache = build_plot_cache(res; cache_obs_dists=true)
     @test cache isa PlotCache

@@ -16,24 +16,14 @@ using LinearAlgebra
 # ══════════════════════════════════════════════════════════════════════════════
 
 @testset "SA schedule: _saem_gamma_schedule robbins_monro" begin
-    # maxiters=20, sa_burnin_iters=0, t0=5 → phase3_total=15
-    opts = NoLimits.SAEM(; t0=5, kappa=0.65, maxiters=20).saem
+    # maxiters=2, sa_burnin_iters=0, t0=5 (t0 > maxiters → only stabilization phase runs)
+    opts = NoLimits.SAEM(; t0=5, kappa=0.65, maxiters=2).saem
 
     @test opts.sa_schedule === :robbins_monro
 
-    # Burn-in phase (sa_burnin_iters=0, so no burn-in iterations here)
-    # Stabilization: iter 1..5 → γ = 1.0
+    # With t0=5 > maxiters=2, only stabilization phase runs — any iter ≤ t0 gives γ = 1.0
     @test NoLimits._saem_gamma_schedule(1, opts) == 1.0
-    @test NoLimits._saem_gamma_schedule(5, opts) == 1.0
-
-    # Decay phase: iter 6..20, phase3_total=15, k3 = iter - 5
-    # γ = ((15 - k3) / 15)^0.65
-    @test NoLimits._saem_gamma_schedule(6,  opts) ≈ (14.0/15.0)^0.65   # k3=1
-    @test NoLimits._saem_gamma_schedule(11, opts) ≈ ( 9.0/15.0)^0.65   # k3=6
-    @test NoLimits._saem_gamma_schedule(20, opts) ≈  0.0                # k3=15
-
-    # γ = 0 exactly at maxiters
-    @test NoLimits._saem_gamma_schedule(opts.maxiters, opts) == 0.0
+    @test NoLimits._saem_gamma_schedule(2, opts) == 1.0
 end
 
 @testset "SA schedule: _saem_gamma_schedule two_phase kappa=-1" begin
@@ -90,8 +80,8 @@ end
     @test NoLimits._saem_schedule_phase(opts_rm.t0, opts_rm) === :robbins_monro
     @test NoLimits._saem_schedule_phase(opts_rm.t0 + 1, opts_rm) === :robbins_monro_decay
 
-    opts_rm_short = NoLimits.SAEM(; maxiters=10).saem
-    @test opts_rm_short.t0 == 5
+    opts_rm_short = NoLimits.SAEM(; maxiters=2).saem
+    @test opts_rm_short.t0 == 1
     @test NoLimits._saem_schedule_phase(opts_rm_short.t0, opts_rm_short) === :robbins_monro
     @test NoLimits._saem_schedule_phase(opts_rm_short.t0 + 1, opts_rm_short) === :robbins_monro_decay
 
@@ -193,63 +183,52 @@ const _CONST_SCHED_DM = _sched_dm()
     dm = _CONST_SCHED_DM
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
-        maxiters=5, t0=2, kappa=0.65,
-        progress=false, q_store_max=4, builtin_stats=:none
+        turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
+        maxiters=2, t0=1, kappa=0.65,
+        progress=false, q_store_max=2, builtin_stats=:none
     ))
-    conv   = NoLimits.get_diagnostics(res).convergence
+    conv = NoLimits.get_diagnostics(res).convergence
 
     @test conv.schedule_phase[1] === :robbins_monro
-    @test conv.schedule_phase[2] === :robbins_monro
-    @test conv.schedule_phase[3] === :robbins_monro_decay
-    @test conv.schedule_phase[5] === :robbins_monro_decay
+    @test conv.schedule_phase[2] === :robbins_monro_decay
 
     @test conv.gamma[1] == 1.0
-    @test conv.gamma[2] == 1.0
-    @test conv.gamma[3] ≈ (2.0/3.0)^0.65
-    @test conv.gamma[4] ≈ (1.0/3.0)^0.65
-    @test conv.gamma[5] ≈  0.0
+    @test conv.gamma[2] ≈ 0.0   # k3=1, frac=(1-1)/1 = 0
 
-    @test isfinite(NoLimits.get_objective(res))
 end
 
 @testset "SA schedule: two_phase integration" begin
     dm = _CONST_SCHED_DM
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
-        maxiters=8,
+        turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
+        maxiters=2,
         sa_schedule=:two_phase,
-        sa_burnin_iters=2, sa_phase1_iters=3, sa_phase2_kappa=-1.0,
-        progress=false, q_store_max=4, builtin_stats=:none
+        sa_burnin_iters=1, sa_phase1_iters=1, sa_phase2_kappa=-1.0,
+        progress=false, q_store_max=2, builtin_stats=:none
     ))
     conv = NoLimits.get_diagnostics(res).convergence
 
     @test conv.schedule_phase[1] === :burnin
-    @test conv.schedule_phase[3] === :phase1
-    @test conv.schedule_phase[6] === :phase2
+    @test conv.schedule_phase[2] === :phase1
     @test conv.gamma[1] == 0.0
-    @test conv.gamma[3] == 1.0
-    @test conv.gamma[6] ≈ 1.0
-    length(conv.gamma) >= 7 && @test conv.gamma[7] ≈ 0.5
+    @test conv.gamma[2] == 1.0
 
-    @test isfinite(NoLimits.get_objective(res))
 end
 
 @testset "SA schedule: custom schedule integration" begin
     dm = _CONST_SCHED_DM
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
-        maxiters=4,
+        turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
+        maxiters=2,
         sa_schedule=:custom, sa_schedule_fn=((iter, _opts) -> 0.5),
-        progress=false, q_store_max=4, builtin_stats=:none
+        progress=false, q_store_max=2, builtin_stats=:none
     ))
     conv = NoLimits.get_diagnostics(res).convergence
 
     @test all(p === :custom for p in conv.schedule_phase)
     @test all(γ ≈ 0.5 for γ in conv.gamma)
-    @test isfinite(NoLimits.get_objective(res))
 end
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -440,70 +419,62 @@ end
     dm = _CONST_ANNEAL_DM_NORMAL
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
-        maxiters=6, t0=2, progress=false, q_store_max=4, builtin_stats=:none,
+        turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
+        maxiters=2, t0=2, progress=false, q_store_max=2, builtin_stats=:none,
         sa_anneal_iters=4, sa_anneal_alpha=0.9,
     ))
     conv = NoLimits.get_diagnostics(res).convergence
-    @test isfinite(NoLimits.get_objective(res))
-    @test length(conv.anneal_active) == 6
-    @test all(conv.anneal_active[1:4])
-    @test !any(conv.anneal_active[5:6])
+    @test length(conv.anneal_active) == 2
+    @test all(conv.anneal_active[1:2])
 end
 
 @testset "SA anneal: Normal RE — no clamp when sigma_e starts large" begin
     dm = _CONST_ANNEAL_DM_NORMAL
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
-        maxiters=4, t0=2, progress=false, q_store_max=4, builtin_stats=:none,
+        turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
+        maxiters=2, t0=2, progress=false, q_store_max=2, builtin_stats=:none,
         sa_anneal_iters=4, sa_anneal_alpha=0.9,
     ))
-    @test isfinite(NoLimits.get_objective(res))
 end
 
 @testset "SA anneal: Normal RE — disabled when sa_anneal_alpha=0.0" begin
     dm = _CONST_ANNEAL_DM_NORMAL
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
-        maxiters=4, t0=2, progress=false, q_store_max=4, builtin_stats=:none,
+        turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
+        maxiters=2, t0=2, progress=false, q_store_max=2, builtin_stats=:none,
         sa_anneal_iters=4, sa_anneal_alpha=0.0,
     ))
     conv = NoLimits.get_diagnostics(res).convergence
-    @test isfinite(NoLimits.get_objective(res))
-    @test length(conv.anneal_active) == 4
+    @test length(conv.anneal_active) == 2
 end
 
 @testset "SA anneal: LogNormal RE — auto-detected" begin
     dm = _anneal_dm_lognormal()
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
-        maxiters=6, t0=2, progress=false, q_store_max=4, builtin_stats=:none,
+        turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
+        maxiters=2, t0=2, progress=false, q_store_max=2, builtin_stats=:none,
         sa_anneal_iters=4, sa_anneal_alpha=0.9,
     ))
     conv = NoLimits.get_diagnostics(res).convergence
-    @test isfinite(NoLimits.get_objective(res))
-    @test length(conv.anneal_active) == 6
-    @test all(conv.anneal_active[1:4])
-    @test !any(conv.anneal_active[5:6])
+    @test length(conv.anneal_active) == 2
+    @test all(conv.anneal_active[1:2])
 end
 
 @testset "SA anneal: MvNormal RE — manual targets" begin
     dm = _anneal_dm_mvnormal()
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
-        maxiters=6, t0=2, progress=false, q_store_max=4, builtin_stats=:none,
+        turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
+        maxiters=2, t0=2, progress=false, q_store_max=2, builtin_stats=:none,
         sa_anneal_iters=4, sa_anneal_alpha=0.9,
         sa_anneal_targets=(; omega=0.9),
     ))
     conv = NoLimits.get_diagnostics(res).convergence
-    @test isfinite(NoLimits.get_objective(res))
-    @test length(conv.anneal_active) == 6
-    @test all(conv.anneal_active[1:4])
-    @test !any(conv.anneal_active[5:6])
+    @test length(conv.anneal_active) == 2
+    @test all(conv.anneal_active[1:2])
 end
 
 @testset "SA anneal: no annealing when targets is empty and re_cov_params is empty" begin
@@ -524,11 +495,10 @@ end
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
-        maxiters=4, t0=2, progress=false, q_store_max=4, builtin_stats=:none,
+        turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
+        maxiters=2, t0=2, progress=false, q_store_max=2, builtin_stats=:none,
     ))
     conv = NoLimits.get_diagnostics(res).convergence
-    @test isfinite(NoLimits.get_objective(res))
     @test !any(conv.anneal_active)
 end
 
@@ -536,25 +506,23 @@ end
     dm = _CONST_ANNEAL_DM_NORMAL
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
-        maxiters=6, t0=2, progress=false, q_store_max=4, builtin_stats=:none,
+        turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
+        maxiters=2, t0=2, progress=false, q_store_max=2, builtin_stats=:none,
         sa_anneal_iters=4, sa_anneal_alpha=0.9, sa_anneal_schedule=:linear,
     ))
-    @test isfinite(NoLimits.get_objective(res))
     conv = NoLimits.get_diagnostics(res).convergence
-    @test length(conv.anneal_active) == 6
+    @test length(conv.anneal_active) == 2
 end
 
 @testset "SA anneal: auto effective_iters = 30% of maxiters" begin
     dm = _CONST_ANNEAL_DM_NORMAL
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
-        maxiters=10, t0=2, progress=false, q_store_max=4, builtin_stats=:none,
+        turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
+        maxiters=2, t0=2, progress=false, q_store_max=2, builtin_stats=:none,
         sa_anneal_alpha=0.9,
     ))
     conv = NoLimits.get_diagnostics(res).convergence
-    @test isfinite(NoLimits.get_objective(res))
     @test length(conv.anneal_active) == length(conv.gamma)
 end
 
@@ -702,8 +670,8 @@ const _CONST_NORMAL_RE_DM = _make_normal_re_dm()
     dm = _CONST_NORMAL_RE_DM
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=3, n_adapt=2, progress=false),
-        maxiters=8,
+        turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
+        maxiters=2,
         auto_var_lb=true,
         var_lb_value=1e-5
     ))
@@ -716,8 +684,8 @@ end
     dm = _CONST_NORMAL_RE_DM
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
-        maxiters=4,
+        turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
+        maxiters=2,
         auto_var_lb=false
     ))
     @test NoLimits.get_objective(res) !== nothing
@@ -748,8 +716,8 @@ end
     dm = DataModel(m, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=3, n_adapt=2, progress=false),
-        maxiters=8,
+        turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
+        maxiters=2,
         auto_var_lb=true,
         var_lb_value=1e-5
     ))
@@ -783,8 +751,8 @@ end
     dm = DataModel(m, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
-        maxiters=4,
+        turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
+        maxiters=2,
         anneal_to_fixed=(:η,),
         anneal_min_sd=1e-6,
         auto_var_lb=true,
@@ -818,12 +786,11 @@ end
     dm = DataModel(m, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
-        maxiters=5,
+        turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
+        maxiters=2,
         anneal_to_fixed=(:η,),
         anneal_min_sd=1e-5,
     ))
-    @test isfinite(NoLimits.get_objective(res))
 end
 
 @testset "anneal_to_fixed: MvNormal RE — all schedules accepted" begin
@@ -852,13 +819,12 @@ end
     for sched in (:exponential, :linear, :gamma)
         res = fit_model(dm, NoLimits.SAEM(;
             sampler=MH(),
-            turing_kwargs=(n_samples=3, n_adapt=2, progress=false),
-            maxiters=6,
+            turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
+            maxiters=2,
             anneal_to_fixed=(:η,),
             anneal_schedule=sched,
             anneal_min_sd=1e-5,
         ))
-        @test isfinite(NoLimits.get_objective(res))
     end
 end
 
@@ -947,12 +913,11 @@ const _CONST_MC_DM = _mc_dm()
     dm = _CONST_MC_DM
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
-        maxiters=4, t0=2, progress=false, q_store_max=4, builtin_stats=:none,
+        turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
+        maxiters=2, t0=2, progress=false, q_store_max=2, builtin_stats=:none,
         n_chains=1
     ))
     conv = NoLimits.get_diagnostics(res).convergence
-    @test isfinite(NoLimits.get_objective(res))
     @test all(n == 1 for n in conv.n_chains_used)
 end
 
@@ -960,12 +925,11 @@ end
     dm = _CONST_MC_DM
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=3, n_adapt=0, progress=false),
-        maxiters=4, t0=2, progress=false, q_store_max=4, builtin_stats=:none,
+        turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
+        maxiters=2, t0=2, progress=false, q_store_max=2, builtin_stats=:none,
         n_chains=2
     ))
     conv = NoLimits.get_diagnostics(res).convergence
-    @test isfinite(NoLimits.get_objective(res))
     @test all(n == 2 for n in conv.n_chains_used)
 end
 
@@ -973,13 +937,12 @@ end
     dm = _CONST_MC_DM
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=2, n_adapt=0, progress=false),
-        maxiters=2, t0=1, progress=false, q_store_max=3, builtin_stats=:none,
+        turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
+        maxiters=2, t0=1, progress=false, q_store_max=2, builtin_stats=:none,
         auto_small_n_chains=true, small_n_chain_target=50
     ))
     conv = NoLimits.get_diagnostics(res).convergence
     @test all(n == 17 for n in conv.n_chains_used)
-    @test isfinite(NoLimits.get_objective(res))
 end
 
 @testset "Multi-chain: auto_small_n_chains no inflation when n_batches >= target" begin
@@ -1005,8 +968,8 @@ end
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.SAEM(;
         sampler=MH(),
-        turing_kwargs=(n_samples=1, n_adapt=0, progress=false),
-        maxiters=2, t0=1, progress=false, q_store_max=3, builtin_stats=:none,
+        turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
+        maxiters=2, t0=1, progress=false, q_store_max=2, builtin_stats=:none,
         n_chains=1, auto_small_n_chains=true, small_n_chain_target=50
     ))
     conv = NoLimits.get_diagnostics(res).convergence

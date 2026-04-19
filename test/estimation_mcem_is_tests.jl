@@ -12,19 +12,19 @@ using Random
     @test es_mcmc.warm_start == true
     @test es_mcmc.sample_schedule == 250
 
-    es_is = NoLimits.MCEM_IS(n_samples=200, proposal=:prior)
+    es_is = NoLimits.MCEM_IS(n_samples=2, proposal=:prior)
     @test es_is.n_samples == 200
     @test es_is.proposal === :prior
     @test es_is.adapt == true
     @test es_is.warm_start_mcmc_iters == 0
     @test es_is.mcmc_warmup === nothing
 
-    es_is2 = NoLimits.MCEM_IS(n_samples=100, proposal=:gaussian, warm_start_mcmc_iters=3)
+    es_is2 = NoLimits.MCEM_IS(n_samples=2, proposal=:gaussian, warm_start_mcmc_iters=3)
     @test es_is2.warm_start_mcmc_iters == 3
     @test es_is2.mcmc_warmup isa NoLimits.MCEM_MCMC
 
     # MCEM with IS e_step
-    method = NoLimits.MCEM(e_step=NoLimits.MCEM_IS(n_samples=50))
+    method = NoLimits.MCEM(e_step=NoLimits.MCEM_IS(n_samples=2))
     @test method.e_step isa NoLimits.MCEM_IS
     @test method.e_step.n_samples == 50
 
@@ -58,8 +58,8 @@ end
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
 
     res = fit_model(dm, NoLimits.MCEM(
-        e_step = NoLimits.MCEM_IS(n_samples=30, proposal=:prior, adapt=false),
-        maxiters=5,
+        e_step = NoLimits.MCEM_IS(n_samples=2, proposal=:prior, adapt=false),
+        maxiters=2,
         consecutive_params=1,
         progress=false,
     ))
@@ -94,8 +94,8 @@ end
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
 
     res = fit_model(dm, NoLimits.MCEM(
-        e_step = NoLimits.MCEM_IS(n_samples=20, proposal=:gaussian, adapt=true),
-        maxiters=4,
+        e_step = NoLimits.MCEM_IS(n_samples=2, proposal=:gaussian, adapt=true),
+        maxiters=2,
         consecutive_params=1,
         progress=false,
     ))
@@ -142,8 +142,8 @@ end
     end
 
     res = fit_model(dm, NoLimits.MCEM(
-        e_step = NoLimits.MCEM_IS(n_samples=30, proposal=my_proposal_is_test),
-        maxiters=4,
+        e_step = NoLimits.MCEM_IS(n_samples=2, proposal=my_proposal_is_test),
+        maxiters=2,
         consecutive_params=1,
         progress=false,
     ))
@@ -178,19 +178,19 @@ end
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
 
     es = NoLimits.MCEM_IS(
-        n_samples            = 20,
+        n_samples=2,
         proposal             = :gaussian,
         adapt                = true,
         warm_start_mcmc_iters = 2,
         mcmc_warmup          = NoLimits.MCEM_MCMC(
             sampler       = MH(),
-            turing_kwargs = (n_samples=10, n_adapt=5, progress=false),
+            turing_kwargs = (n_samples=2, n_adapt=2, progress=false),
             sample_schedule = 10,
         ),
     )
     res = fit_model(dm, NoLimits.MCEM(
         e_step         = es,
-        maxiters       = 6,
+        maxiters=2,
         consecutive_params = 1,
         progress       = false,
     ))
@@ -227,8 +227,8 @@ end
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
 
     res = fit_model(dm, NoLimits.MCEM(
-        e_step         = NoLimits.MCEM_IS(n_samples=50, proposal=:prior),
-        maxiters       = 2,
+        e_step         = NoLimits.MCEM_IS(n_samples=2, proposal=:prior),
+        maxiters=2,
         consecutive_params = 1,
         progress       = false,
     ))
@@ -267,8 +267,8 @@ end
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
 
     res = fit_model(dm, NoLimits.MCEM(
-        e_step         = NoLimits.MCEM_IS(n_samples=40, proposal=:prior),
-        maxiters       = 3,
+        e_step         = NoLimits.MCEM_IS(n_samples=2, proposal=:prior),
+        maxiters=2,
         consecutive_params = 1,
         progress       = false,
     ))
@@ -304,8 +304,8 @@ end
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
 
     res = fit_model(dm, NoLimits.MCEM(
-        e_step         = NoLimits.MCEM_IS(n_samples=30, proposal=:prior),
-        maxiters       = 4,
+        e_step         = NoLimits.MCEM_IS(n_samples=2, proposal=:prior),
+        maxiters=2,
         consecutive_params = 1,
         progress       = false,
     ))
@@ -340,8 +340,8 @@ end
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
 
     res = fit_model(dm, NoLimits.MCEM(
-        e_step         = NoLimits.MCEM_IS(n_samples=30, proposal=:gaussian, adapt=true),
-        maxiters       = 4,
+        e_step         = NoLimits.MCEM_IS(n_samples=2, proposal=:gaussian, adapt=true),
+        maxiters=2,
         consecutive_params = 1,
         progress       = false,
     ))
@@ -379,8 +379,8 @@ end
     # Old API: sampler= and turing_kwargs= at the top level
     method = NoLimits.MCEM(
         sampler       = MH(),
-        turing_kwargs = (n_samples=10, n_adapt=5, progress=false),
-        maxiters      = 3,
+        turing_kwargs = (n_samples=2, n_adapt=2, progress=false),
+        maxiters=2,
         consecutive_params = 1,
         progress      = false,
     )

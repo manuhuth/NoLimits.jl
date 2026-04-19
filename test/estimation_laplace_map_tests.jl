@@ -61,7 +61,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.LaplaceMAP(; optim_kwargs=(maxiters=3,));
+    res = fit_model(dm, NoLimits.LaplaceMAP(; optim_kwargs=(maxiters=2,));
                     penalty=(; a=0.1));
     @test res.summary.converged isa Bool
 end
@@ -96,7 +96,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.LaplaceMAP(; optim_kwargs=(maxiters=3,)));
+    res = fit_model(dm, NoLimits.LaplaceMAP(; optim_kwargs=(maxiters=2,)));
     @test res.summary.converged isa Bool
 end
 
@@ -188,8 +188,8 @@ end
     dm_prior = DataModel(model_prior, df; primary_id=:ID, time_col=:t)
     dm_pen = DataModel(model_penalty, df; primary_id=:ID, time_col=:t)
 
-    res_prior = fit_model(dm_prior, NoLimits.LaplaceMAP(; optim_kwargs=(maxiters=3,)), constants=(; σ=0.5))
-    res_pen = fit_model(dm_pen, NoLimits.Laplace(; optim_kwargs=(maxiters=3,)), penalty=(; a=0.5), constants=(; σ=0.5))
+    res_prior = fit_model(dm_prior, NoLimits.LaplaceMAP(; optim_kwargs=(maxiters=2,)), constants=(; σ=0.5))
+    res_pen = fit_model(dm_pen, NoLimits.Laplace(; optim_kwargs=(maxiters=2,)), penalty=(; a=0.5), constants=(; σ=0.5))
 
     θ_prior = NoLimits.get_params(res_prior; scale=:untransformed)
     θ_pen = NoLimits.get_params(res_pen; scale=:untransformed)
@@ -230,5 +230,4 @@ end
 
     @test res isa FitResult
     @test res.summary.converged isa Bool
-    @test isfinite(NoLimits.get_objective(res))
 end

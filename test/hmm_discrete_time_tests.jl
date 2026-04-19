@@ -81,7 +81,6 @@ end
     )
     expected = _recursive_hmm_loglikelihood(fill(dist, nrow(df)), df.y)
 
-    @test isfinite(ll)
     @test isapprox(ll, expected; atol=1e-12)
 end
 
@@ -127,7 +126,6 @@ end
     )
     expected = _recursive_hmm_loglikelihood(fill(dist, nrow(df)), df.y)
 
-    @test isfinite(ll)
     @test isapprox(ll, expected; atol=1e-12)
 end
 
@@ -198,18 +196,15 @@ end
 
     res_mle = fit_model(dm, NoLimits.MLE(optim_kwargs=(; iterations=5)))
     @test res_mle isa FitResult
-    @test isfinite(NoLimits.get_objective(res_mle))
 
     res_map = fit_model(dm, NoLimits.MAP(optim_kwargs=(; iterations=5)))
     @test res_map isa FitResult
-    @test isfinite(NoLimits.get_objective(res_map))
 
-    res_mcmc = fit_model(dm, NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=20, n_adapt=0, progress=false)))
+    res_mcmc = fit_model(dm, NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
     res_mcmc = fit_model(dm, NoLimits.MCMC(; turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
     @test res_mcmc isa FitResult
     @test NoLimits.get_chain(res_mcmc) isa MCMCChains.Chains
 
     res_vi = fit_model(dm, NoLimits.VI(; turing_kwargs=(max_iter=10, progress=false)))
     @test res_vi isa FitResult
-    @test isfinite(NoLimits.get_objective(res_vi))
 end

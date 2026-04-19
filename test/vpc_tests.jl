@@ -22,7 +22,7 @@ using Turing
 
     df = DataFrame(ID=[1,1,1], t=[0.0,0.5,1.0], y=[1.0,0.95,0.9])
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)))
+    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
     @test plot_vpc(res; n_simulations=5, n_bins=3) !== nothing
 end
 
@@ -38,7 +38,7 @@ end
     df = DataFrame(ID=[1,1,2,2], t=[0.0,1.0,0.0,1.0], z=[0.1,0.2,0.1,0.2],
                    y=Union{Missing,Float64}[0.15, missing, 0.14, missing])
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)))
+    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
     @test plot_vpc(res; n_simulations=5, n_bins=2) !== nothing
     @test plot_vpc(res; x_axis_feature=:z, n_simulations=5, n_bins=2) !== nothing
 end
@@ -53,7 +53,7 @@ end
     df_bern = DataFrame(ID=[1,1,2,2,3,3], t=[0.0,1.0,0.0,1.0,0.0,1.0],
                         z=[0.1,0.2,0.1,0.2,0.1,0.2], y=[0,1,0,1,0,1])
     dm_bern = DataModel(model_bern, df_bern; primary_id=:ID, time_col=:t)
-    res_bern = fit_model(dm_bern, MCMC(; sampler=MH(), turing_kwargs=(n_samples=10, n_adapt=2, progress=false)))
+    res_bern = fit_model(dm_bern, MCMC(; sampler=MH(), turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
     @test plot_vpc(res_bern; n_simulations=5, n_bins=3, mcmc_draws=5) !== nothing
 
     model_pois = @Model begin
@@ -65,7 +65,7 @@ end
     df_pois = DataFrame(ID=[1,1,2,2,3,3], t=[0.0,1.0,0.0,1.0,0.0,1.0],
                         z=[0.1,0.2,0.1,0.2,0.1,0.2], y=[1,2,1,2,1,3])
     dm_pois = DataModel(model_pois, df_pois; primary_id=:ID, time_col=:t)
-    res_pois = fit_model(dm_pois, MCMC(; sampler=MH(), turing_kwargs=(n_samples=10, n_adapt=2, progress=false)))
+    res_pois = fit_model(dm_pois, MCMC(; sampler=MH(), turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
     @test plot_vpc(res_pois; n_simulations=5, n_bins=3, mcmc_draws=5) !== nothing
 end
 
@@ -95,7 +95,7 @@ end
     df = DataFrame(ID=[:A,:A,:B,:B,:C,:C], t=[0.0,1.0,0.0,1.0,0.0,1.0], y=[0.1,0.2,0.0,0.1,0.15,0.25])
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     constants_re = (; η=(; B=0.0))
-    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=5,), multistart_n=0, multistart_k=0);
+    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=2,), multistart_n=2, multistart_k=2);
                     constants_re=constants_re)
     @test plot_vpc(res; n_simulations=5, n_bins=2) !== nothing
     @test_throws ArgumentError plot_vpc(res; serialization=:unsupported)

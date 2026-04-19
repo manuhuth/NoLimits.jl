@@ -742,7 +742,7 @@ function get_random_effects(dm::DataModel,
         θu = get_params(res; scale=:untransformed)
         ode_args = haskey(res.fit_kwargs, :ode_args) ? getfield(res.fit_kwargs, :ode_args) : ()
         ode_kwargs = haskey(res.fit_kwargs, :ode_kwargs) ? getfield(res.fit_kwargs, :ode_kwargs) : NamedTuple()
-        serialization = haskey(res.fit_kwargs, :serialization) ? getfield(res.fit_kwargs, :serialization) : EnsembleSerial()
+        serialization = haskey(res.fit_kwargs, :serialization) ? getfield(res.fit_kwargs, :serialization) : EnsembleThreads()
         rng = haskey(res.fit_kwargs, :rng) ? getfield(res.fit_kwargs, :rng) : Random.default_rng()
         ll_cache = build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs, serialization=serialization, force_saveat=true)
         bstars = res.result.eb_modes
@@ -759,7 +759,7 @@ function get_random_effects(dm::DataModel,
         θu = get_params(res; scale=:untransformed)
         ode_args = haskey(res.fit_kwargs, :ode_args) ? getfield(res.fit_kwargs, :ode_args) : ()
         ode_kwargs = haskey(res.fit_kwargs, :ode_kwargs) ? getfield(res.fit_kwargs, :ode_kwargs) : NamedTuple()
-        serialization = haskey(res.fit_kwargs, :serialization) ? getfield(res.fit_kwargs, :serialization) : EnsembleSerial()
+        serialization = haskey(res.fit_kwargs, :serialization) ? getfield(res.fit_kwargs, :serialization) : EnsembleThreads()
         rng = haskey(res.fit_kwargs, :rng) ? getfield(res.fit_kwargs, :rng) : Random.default_rng()
         ll_cache = build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs, serialization=serialization, force_saveat=true)
         bstars = res.result.eb_modes
@@ -804,14 +804,14 @@ results, evaluates using the EB modes stored in the result.
 - `constants_re::NamedTuple = NamedTuple()`: random effects fixed at given values.
 - `ode_args::Tuple = ()`: additional positional arguments for the ODE solver.
 - `ode_kwargs::NamedTuple = NamedTuple()`: additional keyword arguments for the ODE solver.
-- `serialization = EnsembleSerial()`: parallelisation strategy.
+- `serialization = EnsembleThreads()`: parallelisation strategy.
 """
 function get_loglikelihood(dm::DataModel,
                            res::FitResult;
                            constants_re::NamedTuple=NamedTuple(),
                            ode_args::Tuple=(),
                            ode_kwargs::NamedTuple=NamedTuple(),
-                           serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial())
+                           serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads())
     constants_re = _res_constants_re(res, constants_re)
     θu = get_params(res; scale=:untransformed)
     if res.result isa MLEResult || res.result isa MAPResult
@@ -844,7 +844,7 @@ function get_loglikelihood(res::FitResult;
                            constants_re::NamedTuple=NamedTuple(),
                            ode_args::Tuple=(),
                            ode_kwargs::NamedTuple=NamedTuple(),
-                           serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial())
+                           serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads())
     dm = res.data_model
     dm === nothing && error("This fit result does not store a DataModel; call get_loglikelihood(dm, res) instead.")
     return get_loglikelihood(dm, res; constants_re=constants_re, ode_args=ode_args, ode_kwargs=ode_kwargs, serialization=serialization)
@@ -897,7 +897,7 @@ Laplace, LaplaceMAP, SAEM, MCEM, GHQuadrature, GHQuadratureMAP.
 - `level`: Smolyak accuracy level (default 3). Same as in `GHQuadrature`.
 - `constants_re`: fixes specific RE levels on the natural scale.
 - `ode_args`, `ode_kwargs`: forwarded to the ODE solver.
-- `serialization`: `EnsembleSerial()` (default) or `EnsembleThreads()`.
+- `serialization`: `EnsembleThreads()` (default) or `EnsembleSerial()`.
 - `ebe_options::Union{Nothing, EBEOptions}`: EBE optimizer options used when stored
   modes are unavailable. `nothing` uses the same defaults as `Laplace()`.
 - `rng`: random number generator for EBE multistart (if needed).
@@ -915,7 +915,7 @@ function get_loglikelihood_quadrature(dm::DataModel,
                                        constants_re::NamedTuple=NamedTuple(),
                                        ode_args::Tuple=(),
                                        ode_kwargs::NamedTuple=NamedTuple(),
-                                       serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
+                                       serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                                        ebe_options::Union{Nothing, EBEOptions}=nothing,
                                        seed::Int=0,
                                        rng::AbstractRNG=Random.Xoshiro(seed),
@@ -1005,7 +1005,7 @@ function get_loglikelihood_quadrature(res::FitResult;
                                        constants_re::NamedTuple=NamedTuple(),
                                        ode_args::Tuple=(),
                                        ode_kwargs::NamedTuple=NamedTuple(),
-                                       serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
+                                       serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                                        ebe_options::Union{Nothing, EBEOptions}=nothing,
                                        seed::Int=0,
                                        rng::AbstractRNG=Random.Xoshiro(seed),
@@ -1045,7 +1045,7 @@ Fit a model to data using the specified estimation method.
   natural scale (not available for MCMC).
 - `ode_args::Tuple = ()`: extra positional arguments forwarded to the ODE solver.
 - `ode_kwargs::NamedTuple = NamedTuple()`: extra keyword arguments forwarded to the ODE solver.
-- `serialization = EnsembleSerial()`: parallelisation strategy.
+- `serialization = EnsembleThreads()`: parallelisation strategy.
 - `rng = Random.default_rng()`: random number generator (used by MCMC/SAEM/MCEM).
 - `theta_0_untransformed::Union{Nothing, ComponentArray} = nothing`: custom starting
   point on the natural scale; defaults to the model's declared initial values.
@@ -1568,7 +1568,7 @@ end
 function build_ll_cache(dm::DataModel;
                         ode_args::Tuple=(),
                         ode_kwargs::NamedTuple=NamedTuple(),
-                        serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
+                        serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                         force_saveat::Bool=false,
                         nthreads::Int=1)
     if serialization isa SciMLBase.EnsembleThreads && nthreads == 1
@@ -1641,7 +1641,7 @@ end
 function loglikelihood(dm::DataModel, θ::ComponentArray, η;
                        ode_args::Tuple=(),
                        ode_kwargs::NamedTuple=NamedTuple(),
-                       serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
+                       serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                        cache=nothing)
     θ = _symmetrize_psd_params(θ, dm.model.fixed.fixed)
     if cache === nothing

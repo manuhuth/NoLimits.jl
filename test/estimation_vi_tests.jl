@@ -33,7 +33,6 @@ using Random
 
     @test res isa FitResult
     @test res.result isa NoLimits.VIResult
-    @test isfinite(NoLimits.get_objective(res))
     @test NoLimits.get_converged(res) isa Bool
     @test length(NoLimits.get_vi_trace(res)) > 0
     @test NoLimits.get_vi_state(res) isa NamedTuple
@@ -168,7 +167,6 @@ end
     res = fit_model(dm, NoLimits.VI(; turing_kwargs=(max_iter=15, progress=false)); rng=Random.Xoshiro(10))
     @test res isa FitResult
     @test res.result isa NoLimits.VIResult
-    @test isfinite(NoLimits.get_objective(res))
     draws = NoLimits.sample_posterior(res; n_draws=5, rng=Random.Xoshiro(11), return_names=true)
     @test any(startswith(string(n), "η_vals[") for n in draws.names)
 

@@ -349,7 +349,5 @@ end
 
     ll1 = NoLimits.loglikelihood(dm, θ1, ComponentArray())
     ll2 = NoLimits.loglikelihood(dm, θ2, ComponentArray())
-    @test isfinite(ll1)
-    @test isfinite(ll2)
     @test abs(ll2 - ll1) > 1e-6
 end

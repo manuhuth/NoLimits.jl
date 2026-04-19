@@ -226,7 +226,7 @@ end
 function _build_ll_cache_ident(dm::DataModel;
                                ode_args::Tuple=(),
                                ode_kwargs::NamedTuple=NamedTuple(),
-                               serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial())
+                               serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads())
     if serialization isa SciMLBase.EnsembleThreads
         return build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs, nthreads=Threads.maxthreadid(), force_saveat=true)
     end
@@ -438,7 +438,7 @@ function _build_no_re_objective(dm::DataModel,
                                 penalty::NamedTuple=NamedTuple(),
                                 ode_args::Tuple=(),
                                 ode_kwargs::NamedTuple=NamedTuple(),
-                                serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial())
+                                serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads())
     ll_cache = _build_ll_cache_ident(dm; ode_args=ode_args, ode_kwargs=ode_kwargs, serialization=serialization)
     has_penalty = !isempty(keys(penalty))
     has_prior = method isa MAP
@@ -481,7 +481,7 @@ function _build_laplace_objective(dm::DataModel,
                                   penalty::NamedTuple=NamedTuple(),
                                   ode_args::Tuple=(),
                                   ode_kwargs::NamedTuple=NamedTuple(),
-                                  serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
+                                  serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                                   rng::AbstractRNG=Random.default_rng(),
                                   rng_seed::Union{Nothing, UInt64}=nothing,
                                   atol::Real=1e-8,
@@ -569,7 +569,7 @@ function _identifiability_report(dm::DataModel,
                                  penalty::NamedTuple=NamedTuple(),
                                  ode_args::Tuple=(),
                                  ode_kwargs::NamedTuple=NamedTuple(),
-                                 serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
+                                 serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                                  rng::AbstractRNG=Random.default_rng(),
                                  rng_seed::Union{Nothing, UInt64}=nothing,
                                  atol::Real=1e-8,
@@ -723,7 +723,7 @@ function identifiability_report(dm::DataModel;
                                 penalty::NamedTuple=NamedTuple(),
                                 ode_args::Tuple=(),
                                 ode_kwargs::NamedTuple=NamedTuple(),
-                                serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
+                                serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                                 rng::AbstractRNG=Xoshiro(0),
                                 rng_seed::Union{Nothing, UInt64}=nothing,
                                 atol::Real=1e-8,
@@ -793,7 +793,7 @@ function identifiability_report(res::FitResult;
     penalty_use = penalty === nothing ? (haskey(fitkw, :penalty) ? getfield(fitkw, :penalty) : NamedTuple()) : penalty
     ode_args_use = ode_args === nothing ? (haskey(fitkw, :ode_args) ? getfield(fitkw, :ode_args) : ()) : ode_args
     ode_kwargs_use = ode_kwargs === nothing ? (haskey(fitkw, :ode_kwargs) ? getfield(fitkw, :ode_kwargs) : NamedTuple()) : ode_kwargs
-    serialization_use = serialization === nothing ? (haskey(fitkw, :serialization) ? getfield(fitkw, :serialization) : EnsembleSerial()) : serialization
+    serialization_use = serialization === nothing ? (haskey(fitkw, :serialization) ? getfield(fitkw, :serialization) : EnsembleThreads()) : serialization
     rng_use = rng === nothing ? (haskey(fitkw, :rng) ? getfield(fitkw, :rng) : Random.default_rng()) : rng
 
     fit_point = get_params(res; scale=:untransformed)

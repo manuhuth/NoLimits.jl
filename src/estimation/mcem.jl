@@ -181,11 +181,12 @@ fixed effects.
 - `rtol_Q`, `atol_Q`: relative/absolute convergence tolerance on the Q-function.
 - `consecutive_params::Int = 3`: consecutive iterations satisfying tolerance to converge.
 - `ebe_optimizer`, `ebe_optim_kwargs`, `ebe_adtype`, `ebe_grad_tol`: EBE inner optimiser.
-- `ebe_multistart_n`, `ebe_multistart_k`, `ebe_multistart_max_rounds`,
+- `ebe_multistart_n`, `ebe_multistart_k` (default 1), `ebe_multistart_max_rounds`,
   `ebe_multistart_sampling`: multistart settings for EBE mode computation.
-- `ebe_rescue_on_high_grad`, `ebe_rescue_multistart_n`, `ebe_rescue_multistart_k`,
-  `ebe_rescue_max_rounds`, `ebe_rescue_grad_tol`, `ebe_rescue_multistart_sampling`:
-  rescue multistart settings when an EBE mode has a high gradient norm.
+- `ebe_rescue_on_high_grad` (default `false`), `ebe_rescue_multistart_n`,
+  `ebe_rescue_multistart_k`, `ebe_rescue_max_rounds`, `ebe_rescue_grad_tol`,
+  `ebe_rescue_multistart_sampling`: rescue multistart settings when an EBE mode has a
+  high gradient norm. Disabled by default.
 - `lb`, `ub`: bounds on the transformed fixed-effect scale, or `nothing`.
 """
 struct MCEM{O, K, A, ES, EO, EB, ER, L, U} <: FittingMethod
@@ -223,10 +224,10 @@ MCEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(
      ebe_adtype=Optimization.AutoForwardDiff(),
      ebe_grad_tol=:auto,
      ebe_multistart_n=50,
-     ebe_multistart_k=10,
+     ebe_multistart_k=1,
      ebe_multistart_max_rounds=5,
      ebe_multistart_sampling=:lhs,
-     ebe_rescue_on_high_grad=true,
+     ebe_rescue_on_high_grad=false,
      ebe_rescue_multistart_n=128,
      ebe_rescue_multistart_k=32,
      ebe_rescue_max_rounds=8,
@@ -988,7 +989,7 @@ function _mcem_Q_array(dm::DataModel,
                        ll_cache,
                        samples_by_batch::AbstractVector{<:AbstractMatrix},
                        weights_by_batch::Union{Nothing, AbstractVector{<:AbstractVector}}=nothing;
-                       serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
+                       serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                        q_cache::Union{Nothing, _MCEMQCache}=nothing)
     total = zero(eltype(θ))
     if serialization isa SciMLBase.EnsembleThreads
@@ -1062,7 +1063,7 @@ function _mcem_Q(dm::DataModel,
                  ll_cache,
                  samples_by_batch::AbstractVector{<:AbstractMatrix},
                  weights_by_batch::Union{Nothing, AbstractVector{<:AbstractVector}}=nothing;
-                 serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
+                 serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                  q_cache::Union{Nothing, _MCEMQCache}=nothing)
     return _mcem_Q_array(dm, batch_infos, θ, const_cache, ll_cache, samples_by_batch,
                          weights_by_batch; serialization=serialization, q_cache=q_cache)
@@ -1075,7 +1076,7 @@ function _mcem_Q(dm::DataModel,
                  ll_cache,
                  samples_by_batch::AbstractVector{<:AbstractMatrix},
                  weights_by_batch::Union{Nothing, AbstractVector{<:AbstractVector}}=nothing;
-                 serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
+                 serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                  q_cache::Union{Nothing, _MCEMQCache}=nothing)
     return _mcem_Q_array(dm, batch_infos, θ, const_cache, ll_cache, samples_by_batch,
                          weights_by_batch; serialization=serialization, q_cache=q_cache)
@@ -1088,7 +1089,7 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
                     penalty::NamedTuple=NamedTuple(),
                     ode_args::Tuple=(),
                     ode_kwargs::NamedTuple=NamedTuple(),
-                    serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
+                    serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                     rng::AbstractRNG=Xoshiro(0),
                     theta_0_untransformed::Union{Nothing, ComponentArray}=nothing,
                     store_eb_modes::Bool=true,

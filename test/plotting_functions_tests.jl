@@ -33,7 +33,7 @@ using Plots
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:age)
-    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)))
+    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
 
     @test plot_fits(res) !== nothing
     @test plot_fits(dm) !== nothing
@@ -68,7 +68,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)))
+    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
 
     @test plot_data(res) !== nothing
     @test plot_data(dm) !== nothing
@@ -106,7 +106,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=5,), multistart_n=0, multistart_k=0))
+    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=2,), multistart_n=2, multistart_k=2))
 
     p_fits = plot_fits(res; plot_density=true)
     @test p_fits !== nothing
@@ -137,7 +137,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)))
+    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
 
     p_fits = plot_fits(res; plot_density=false)
     @test p_fits !== nothing
@@ -203,7 +203,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)))
+    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
 
     @test plot_data(res) !== nothing
     @test plot_fits(res) !== nothing
@@ -239,7 +239,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     constants_re = (; η=(; B=0.0))
-    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=5,), multistart_n=0, multistart_k=0);
+    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=2,), multistart_n=2, multistart_k=2);
                     constants_re=constants_re)
 
     @test plot_fits(res) !== nothing
@@ -278,7 +278,7 @@ end
         sampling=:lhs,
     )
 
-    res_ms = fit_model(ms, dm, NoLimits.MLE(; optim_kwargs=(maxiters=10,)))
+    res_ms = fit_model(ms, dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
     @test plot_multistart_waterfall(res_ms) !== nothing
 
     mktempdir() do tmp
@@ -322,7 +322,7 @@ end
         sampling=:lhs,
     )
 
-    res_ms = fit_model(ms, dm, NoLimits.MLE(; optim_kwargs=(maxiters=10,)))
+    res_ms = fit_model(ms, dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
 
     @test plot_multistart_fixed_effect_variability(res_ms; k_best=3, mode=:points) !== nothing
     @test plot_multistart_fixed_effect_variability(
@@ -365,8 +365,8 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res1 = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=10,)))
-    res2 = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=10,)); constants=(; a=0.2))
+    res1 = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
+    res2 = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)); constants=(; a=0.2))
 
     @test plot_fits_comparison(res1) !== nothing
 
@@ -405,7 +405,7 @@ end
     df_bad = copy(df)
     df_bad.y .= df_bad.y .+ 1.0
     dm_bad = DataModel(model, df_bad; primary_id=:ID, time_col=:t)
-    res_bad = fit_model(dm_bad, NoLimits.MLE(; optim_kwargs=(maxiters=5,)))
+    res_bad = fit_model(dm_bad, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
     @test_throws ErrorException plot_fits_comparison([res1, res_bad])
 end
 

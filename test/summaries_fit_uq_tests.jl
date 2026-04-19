@@ -30,7 +30,7 @@ using Turing: MH
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, MLE(; optim_kwargs=(maxiters=3,)))
+    res = fit_model(dm, MLE(; optim_kwargs=(maxiters=2,)))
 
     s_fit = summarize(res)
     @test s_fit isa FitResultSummary
@@ -107,7 +107,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=8,)))
+    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=2,)))
 
     s_fit = summarize(res)
     @test s_fit isa FitResultSummary
@@ -169,7 +169,7 @@ end
         dm,
         MCMC(;
             sampler=MH(),
-            turing_kwargs=(n_samples=20, n_adapt=0, progress=false, verbose=false),
+            turing_kwargs=(n_samples=2, n_adapt=2, progress=false, verbose=false),
             progress=false,
         )
     )

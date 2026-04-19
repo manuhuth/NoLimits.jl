@@ -38,7 +38,7 @@ using Random
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=3,)))
+    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=2,)))
     @test res.result.eb_modes !== nothing
     @test length(res.result.eb_modes) == length(get_batches(dm))
 end
@@ -131,7 +131,7 @@ end
         obj, _, _ = NoLimits._laplace_objective_and_grad(dm, batch_infos, θ, const_cache, ll_cache, ebe_cache;
                                                                  inner=NoLimits.LaplaceInnerOptions(
                                                                      OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
-                                                                 (maxiters=20,),
+                                                                 (maxiters=2,),
                                                                  Optimization.AutoForwardDiff(),
                                                                  1e-6),
                                                                  hessian=NoLimits.LaplaceHessianOptions(1e-6, 6, 10.0, false, 0.0, true, false, 0),
@@ -146,7 +146,7 @@ end
         _, g, _ = NoLimits._laplace_objective_and_grad(dm, batch_infos, θ, const_cache, ll_cache, ebe_cache;
                                                               inner=NoLimits.LaplaceInnerOptions(
                                                                   OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
-                                                                  (maxiters=20,),
+                                                                  (maxiters=2,),
                                                                   Optimization.AutoForwardDiff(),
                                                                   1e-6),
                                                               hessian=NoLimits.LaplaceHessianOptions(1e-6, 6, 10.0, false, 0.0, true, false, 0),
@@ -212,7 +212,7 @@ end
         obj, _, _ = NoLimits._laplace_objective_and_grad(dm, batch_infos, θ, const_cache, ll_cache, ebe_cache;
                                                                  inner=NoLimits.LaplaceInnerOptions(
                                                                      OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
-                                                                 (maxiters=30,),
+                                                                 (maxiters=2,),
                                                                  Optimization.AutoForwardDiff(),
                                                                  1e-6),
                                                                  hessian=NoLimits.LaplaceHessianOptions(1e-6, 6, 10.0, false, 0.0, true, false, 0),
@@ -227,7 +227,7 @@ end
         _, g, _ = NoLimits._laplace_objective_and_grad(dm, batch_infos, θ, const_cache, ll_cache, ebe_cache;
                                                               inner=NoLimits.LaplaceInnerOptions(
                                                                   OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
-                                                                  (maxiters=30,),
+                                                                  (maxiters=2,),
                                                                   Optimization.AutoForwardDiff(),
                                                                   1e-6),
                                                               hessian=NoLimits.LaplaceHessianOptions(1e-6, 6, 10.0, false, 0.0, true, false, 0),
@@ -324,7 +324,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    method = NoLimits.Laplace(; optim_kwargs=(maxiters=3,))
+    method = NoLimits.Laplace(; optim_kwargs=(maxiters=2,))
     res_serial = fit_model(dm, method; serialization=EnsembleSerial(), rng=MersenneTwister(123))
     res_threads = fit_model(dm, method; serialization=EnsembleThreads(), rng=MersenneTwister(123))
     @test res_serial.summary.objective == res_threads.summary.objective
@@ -361,13 +361,13 @@ end
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     @test_throws ErrorException fit_model(dm, NoLimits.Laplace(;
         optimizer=OptimizationBBO.BBO_adaptive_de_rand_1_bin_radiuslimited(),
-        optim_kwargs=(maxiters=5,)
+        optim_kwargs=(maxiters=2,)
     ))
 
     lb, ub = default_bounds_from_start(dm; margin=1.0)
     res = fit_model(dm, NoLimits.Laplace(;
         optimizer=OptimizationBBO.BBO_adaptive_de_rand_1_bin_radiuslimited(),
-        optim_kwargs=(maxiters=5,),
+        optim_kwargs=(maxiters=2,),
         lb=lb,
         ub=ub
     ))
@@ -413,7 +413,7 @@ end
     rng = MersenneTwister(1)
     res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=2,),
                                                  multistart_n=2,
-                                                 multistart_k=1,
+                                                 multistart_k=2,
                                                  multistart_grad_tol=0.0),
                     rng=rng)
     @test res isa FitResult

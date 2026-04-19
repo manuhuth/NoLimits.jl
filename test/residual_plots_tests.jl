@@ -23,7 +23,7 @@ using Distributions
     df = DataFrame(ID=[1,1,2,2], t=[0.0,1.0,0.0,1.0], z=[0.2,-0.1,0.3,0.0],
                    y_cont=[0.1,0.0,0.2,0.1], y_bin=[1,0,1,0])
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)))
+    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
 
     rdf = get_residuals(res; residuals=[:pit, :raw], randomize_discrete=false)
     @test nrow(rdf) == 2 * nrow(df)
@@ -44,7 +44,7 @@ end
                    y=[0.1,0.2,0.0,0.1,0.15,0.25])
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     constants_re = (; η=(; B=0.0))
-    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=5,), multistart_n=0, multistart_k=0);
+    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=2,), multistart_n=2, multistart_k=2);
                     constants_re=constants_re)
 
     @test nrow(get_residuals(res)) == nrow(df)
@@ -63,7 +63,7 @@ end
 
     df = DataFrame(ID=[1,1,2,2], t=[0.0,1.0,0.0,1.0], y=[0.1,0.2,0.0,-0.1])
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCMC(; turing_kwargs=(n_samples=10, n_adapt=2, progress=false)))
+    res = fit_model(dm, NoLimits.MCMC(; turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
 
     rdf = get_residuals(res; mcmc_draws=5, mcmc_quantiles=[10, 90])
     @test nrow(rdf) == nrow(df)
@@ -115,7 +115,7 @@ end
     end
     df = DataFrame(ID=[1,1], t=[0.0,1.0], z=[0.1,0.2], y=[0.1,0.2])
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)))
+    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
     @test_throws ErrorException get_residuals(res; residuals=[:not_a_metric])
     @test_throws ErrorException plot_residuals(res; residual=:not_a_metric)
     @test_throws ErrorException get_residuals(res; x_axis_feature=:missing_feature)
@@ -132,7 +132,7 @@ end
     df = DataFrame(ID=[1,1,2,2,3,3], t=[0.0,1.0,0.0,1.0,0.0,1.0],
                    z=[0.0,0.4,0.2,0.6,0.8,1.0], y=[1,2,1,2,3,4])
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)))
+    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
 
     rdf = get_residuals(res; residuals=[:pit, :raw, :pearson], randomize_discrete=true)
     @test nrow(rdf) == nrow(df)

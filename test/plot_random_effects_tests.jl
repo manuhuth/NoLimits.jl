@@ -23,7 +23,7 @@ const _PRE_NORM_DF = DataFrame(
     Age = [30.0, 30.0, 40.0, 40.0, 35.0, 35.0, 45.0, 45.0, 28.0, 28.0, 55.0, 55.0],
     y = [0.1, 0.2, 0.0, 0.1, 0.15, 0.25, -0.05, 0.05, 0.2, 0.3, -0.1, 0.0])
 const _PRE_NORM_DM = DataModel(_PRE_NORM_MODEL, _PRE_NORM_DF; primary_id=:ID, time_col=:t)
-const _PRE_NORM_RES_LAP = fit_model(_PRE_NORM_DM, NoLimits.Laplace(; optim_kwargs=(maxiters=8,)))
+const _PRE_NORM_RES_LAP = fit_model(_PRE_NORM_DM, NoLimits.Laplace(; optim_kwargs=(maxiters=2,)))
 
 # Group 2: Simple Normal RE, no extra covariates
 # Used by: "single-level RE", "constants_re Laplace", "constants_re MCMC"
@@ -61,7 +61,7 @@ const _PRE_NPF_DF = DataFrame(
     t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
     y = [0.1, 0.2, 0.0, -0.1, 0.15, 0.05])
 const _PRE_NPF_DM = DataModel(_PRE_NPF_MODEL, _PRE_NPF_DF; primary_id=:ID, time_col=:t)
-const _PRE_NPF_RES_LAP = fit_model(_PRE_NPF_DM, NoLimits.Laplace(; optim_kwargs=(maxiters=8,)))
+const _PRE_NPF_RES_LAP = fit_model(_PRE_NPF_DM, NoLimits.Laplace(; optim_kwargs=(maxiters=2,)))
 
 @testset "plot_random_effects Laplace" begin
     dm  = _PRE_NORM_DM
@@ -153,7 +153,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=8,)))
+    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=2,)))
 
     p_dist = plot_random_effect_distributions(res)
     @test p_dist !== nothing
@@ -195,7 +195,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=8,)))
+    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=2,)))
 
     p_dist = plot_random_effect_distributions(res)
     @test p_dist !== nothing
@@ -208,7 +208,7 @@ end
     dm = DataModel(_PRE_SIMPLE_MODEL,
                    DataFrame(ID=[1,1,1,1], t=[0.0,1.0,2.0,3.0], y=[0.1,0.2,0.15,0.25]);
                    primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=8,)))
+    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=2,)))
 
     p_dist = plot_random_effect_distributions(res)
     @test p_dist !== nothing
@@ -220,7 +220,7 @@ end
 @testset "plot_random_effects Laplace constants_re" begin
     dm = _PRE_CONST_RE_DM
     constants_re = (; η=(; B=0.0))
-    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=8,)); constants_re=constants_re)
+    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=2,)); constants_re=constants_re)
 
     p_dist = plot_random_effect_distributions(res)
     @test p_dist !== nothing
@@ -258,7 +258,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=8,)))
+    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=2,)))
 
     p_dist = plot_random_effect_distributions(res)
     @test p_dist !== nothing
@@ -275,7 +275,7 @@ end
 
 @testset "plot_random_effects MCMC" begin
     dm  = _PRE_NORM_DM
-    res = fit_model(dm, NoLimits.MCMC(; turing_kwargs=(n_samples=8, n_adapt=3, progress=false)))
+    res = fit_model(dm, NoLimits.MCMC(; turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
 
     p_pit_hist = plot_random_effect_pit(res; mcmc_draws=5, show_hist=true, show_kde=false, show_qq=false)
     @test p_pit_hist !== nothing
@@ -351,7 +351,7 @@ end
 @testset "plot_random_effects MCMC constants_re" begin
     dm = _PRE_CONST_RE_DM
     constants_re = (; η=(; B=0.0))
-    res = fit_model(dm, NoLimits.MCMC(; turing_kwargs=(n_samples=8, n_adapt=3, progress=false)); constants_re=constants_re)
+    res = fit_model(dm, NoLimits.MCMC(; turing_kwargs=(n_samples=2, n_adapt=2, progress=false)); constants_re=constants_re)
 
     p_dist = plot_random_effect_distributions(res; flow_plot=:kde, flow_samples=200, mcmc_draws=5)
     @test p_dist !== nothing
@@ -415,7 +415,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.MCMC(; sampler=NUTS(5, 0.3),
-                                              turing_kwargs=(n_samples=8, n_adapt=3, progress=false)))
+                                              turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
 
     p_dist = plot_random_effect_distributions(res; flow_plot=:kde, flow_samples=50, mcmc_draws=5)
     @test p_dist !== nothing
@@ -454,7 +454,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=8,)))
+    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=2,)))
 
     p_dist = plot_random_effect_distributions(res)
     @test p_dist !== nothing
@@ -493,7 +493,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCMC(; turing_kwargs=(n_samples=8, n_adapt=3, progress=false)))
+    res = fit_model(dm, NoLimits.MCMC(; turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
 
     p_dist = plot_random_effect_distributions(res)
     @test p_dist !== nothing
@@ -505,7 +505,7 @@ end
 @testset "plot_random_effects MCMC NormalizingPlanarFlow RE" begin
     dm  = _PRE_NPF_DM
     res = fit_model(dm, MCMC(; sampler=NUTS(5, 0.3),
-                                       turing_kwargs=(n_samples=8, n_adapt=3, progress=false)))
+                                       turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
 
     p_dist = plot_random_effect_distributions(res; flow_plot=:kde, flow_samples=50, mcmc_draws=5)
     @test p_dist !== nothing

@@ -694,7 +694,9 @@ fit_model(dm, SAEM(; sampler, turing_kwargs, optimizer, optim_kwargs, adtype,
 
 Core idea: E-step batchwise MCMC; Q update via Robbins–Monro recursion with step size γ_t; M-step via Optimization.jl or closed-form. EBEs computed via Laplace-style after fitting.
 
-Default options: `update_schedule=:all`, `warm_start=true`, `q_store_max=50`, `q_store_epsilon=1e-10`, `q_store_min=0`, `t0=20`, `kappa=0.65`, `maxiters=300`, `consecutive_params=4`.
+Default options: `sampler=SaemixMH()`, `mcmc_steps=1` (for `SaemixMH`; `80` for Turing-based samplers), `update_schedule=:all`, `warm_start=true`, `q_store_max=50`, `q_store_epsilon=1e-10`, `q_store_min=0`, `t0=20`, `kappa=0.65`, `maxiters=300`, `consecutive_params=4`.
+
+`SaemixMH` defaults: `n_kern1=2`, `n_kern2=2`, `n_kern3=2` (proposals per kernel per sweep), `proba_mcmc=0.4`, `stepsize_rw=0.4`, `rw_init=0.5`. Pass `MH()` or `AdaptiveNoLimitsMH()` for Turing-based samplers.
 
 Built-in sufficient statistics:
 - `builtin_stats=:gaussian_re` — updates Gaussian RE variance (scalar and multivariate) and optional Normal outcome residual variance.

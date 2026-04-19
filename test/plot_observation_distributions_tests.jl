@@ -16,7 +16,7 @@ using Lux
     df = DataFrame(ID=[1,1,1,2,2,2], t=[0.0,0.5,1.0,0.0,0.5,1.0],
                    y=[0.1,0.15,0.2,0.0,0.05,0.1])
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)))
+    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
     @test plot_observation_distributions(res; individuals_idx=[1,2], obs_rows=[1,3], observables=:y) !== nothing
 end
 
@@ -29,7 +29,7 @@ end
     df = DataFrame(ID=[1,1], t=[0.0,1.0], y=Union{Missing,Float64}[missing, 0.2])
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     @test plot_observation_distributions(dm; individuals_idx=1, obs_rows=1, observables=:y) !== nothing
-    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)))
+    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
     @test plot_observation_distributions(res; individuals_idx=1, obs_rows=1, observables=:y) !== nothing
 end
 
@@ -41,7 +41,7 @@ end
     end
     df = DataFrame(ID=[1,1], t=[0.0,1.0], z=[0.1,0.2], y=[1,2])
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)))
+    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
     @test plot_observation_distributions(res; individuals_idx=1, obs_rows=1, observables=:y) !== nothing
 end
 
@@ -102,7 +102,7 @@ end
                    y=[0.1,0.2,0.0,0.1,0.15,0.25])
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     constants_re = (; η=(; B=0.0))
-    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=5,), multistart_n=0, multistart_k=0);
+    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=2,), multistart_n=2, multistart_k=2);
                     constants_re=constants_re)
     @test plot_observation_distributions(res; individuals_idx=1, obs_rows=1, observables=:y) !== nothing
 end
@@ -115,7 +115,7 @@ end
     end
     df = DataFrame(ID=[1,1,2,2], t=[0.0,1.0,0.0,1.0], z=[0.1,0.3,0.0,0.2], y=[0,1,0,1])
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)))
+    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
     @test plot_observation_distributions(res; individuals_idx=1, obs_rows=1, observables=:y) !== nothing
     @test plot_observation_distributions(dm; individuals_idx=1, obs_rows=1, observables=:y) !== nothing
 end
