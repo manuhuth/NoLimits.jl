@@ -3112,7 +3112,8 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
              closed_form_mstep_sources=Tuple(closed_form_sources),
              builtin_stats_mode_requested=method.saem.builtin_stats,
              builtin_stats_mode_effective=builtin_stats_mode,
-             builtin_stats_closed_form_eligibility=builtin_cf_elig)
+             builtin_stats_closed_form_eligibility=builtin_cf_elig,
+             anneal_to_fixed=method.saem.anneal_to_fixed)
     summary = FitSummary(Q_prev, converged,
                          FitParameters(θ_hat_t, θ_hat_u),
                          notes)
@@ -3127,7 +3128,9 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
     ebe = EBEOptions(method.saem.ebe_optimizer, method.saem.ebe_optim_kwargs, method.saem.ebe_adtype,
                      method.saem.ebe_grad_tol, method.saem.ebe_multistart_n, method.saem.ebe_multistart_k,
                      method.saem.ebe_multistart_max_rounds, method.saem.ebe_multistart_sampling)
-    eb_modes = store_eb_modes ? _compute_bstars(dm, θ_hat_u, fixed_maps, ll_cache, ebe, rng;
+    ebe_fixed_maps = _saem_anneal_constants_re(dm, θ_hat_u, method.saem.anneal_to_fixed,
+                                               fixed_maps)
+    eb_modes = store_eb_modes ? _compute_bstars(dm, θ_hat_u, ebe_fixed_maps, ll_cache, ebe, rng;
                                                 rescue=method.saem.ebe_rescue,
                                                 progress=method.saem.progress,
                                                 progress_desc="SAEM Final EBE")[1] : nothing

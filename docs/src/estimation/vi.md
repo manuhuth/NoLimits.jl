@@ -1,17 +1,20 @@
 # VI
 
-Variational inference (VI) provides approximate Bayesian inference by optimizing a parameterized posterior family instead of drawing Markov chains. In NoLimits.jl, `VI` is integrated through Turing + AdvancedVI and supports both fixed-effects-only and mixed-effects models.
+Variational inference (VI) provides approximate Bayesian inference by optimizing a parameterized posterior family instead of drawing Markov chains. In NoLimits.jl, `VI` is integrated through Turing + AdvancedVI and supports **fixed-effects-only** models.
 
 Compared with `MCMC`, VI is often faster and easier to scale, but it returns an approximation whose quality depends on the selected variational family.
+
+!!! note
+    VI is not supported for models with random effects. Use `MCMC` for full Bayesian
+    inference on mixed-effects models.
 
 ## Applicability
 
 The following conditions must hold to use `VI`:
 
+- The model must not have random effects.
 - All free fixed effects must have priors.
-- At least one parameter must be sampled.
-  - Fixed-only models: at least one fixed effect must remain free.
-  - Mixed-effects models: random effects can be sampled even if all fixed effects are held constant.
+- At least one fixed effect must remain free (not held constant).
 - `penalty` is not supported.
 
 `VI` samples on the natural (untransformed) parameter scale.
@@ -78,7 +81,6 @@ method = NoLimits.VI(; turing_kwargs=NamedTuple())
 `fit_model(dm, NoLimits.VI(...); ...)` supports:
 
 - `constants` for fixed effects
-- `constants_re` for selected random-effect levels
 - `ode_args`, `ode_kwargs`
 - `serialization`
 - `rng`
@@ -88,50 +90,7 @@ method = NoLimits.VI(; turing_kwargs=NamedTuple())
 Not supported:
 
 - `penalty`
-
-## Mixed-Effects Pattern
-
-```julia
-using NoLimits
-using DataFrames
-using Distributions
-using Random
-
-model_re = @Model begin
-    @covariates begin
-        t = Covariate()
-    end
-
-    @fixedEffects begin
-        a = RealNumber(0.0, prior=Normal(0.0, 1.0))
-        b = RealNumber(0.2, prior=Normal(0.0, 1.0))
-        omega = RealNumber(0.4, scale=:log, prior=LogNormal(-1.0, 0.4))
-        sigma = RealNumber(0.2, scale=:log, prior=LogNormal(-1.5, 0.3))
-    end
-
-    @randomEffects begin
-        eta = RandomEffect(Normal(0.0, omega); column=:ID)
-    end
-
-    @formulas begin
-        y ~ Normal(a + b * t + eta, sigma)
-    end
-end
-
-df_re = DataFrame(
-    ID = [:A, :A, :B, :B, :C, :C, :D, :D],
-    t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
-    y = [0.05, 0.25, -0.1, 0.15, 0.15, 0.35, -0.05, 0.10],
-)
-
-dm_re = DataModel(model_re, df_re; primary_id=:ID, time_col=:t)
-
-res_re = fit_model(
-    dm_re,
-    NoLimits.VI(; turing_kwargs=(max_iter=400, family=:fullrank, progress=false)),
-    rng=Random.Xoshiro(2),
-)
-```
+- `constants_re` (VI is fixed-effects only)
 
 ## Accessing VI Outputs
 

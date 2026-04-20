@@ -407,7 +407,7 @@ end
 end
 
 # ══════════════════════════════════════════════════════════════════════════════
-# VI (no-RE tests only; RE test is in integration_simple_re.jl)
+# VI (fixed-effects only; VI rejects RE models — tested in integration_simple_re.jl)
 # ══════════════════════════════════════════════════════════════════════════════
 
 @testset "VI basic (no RE)" begin
@@ -489,7 +489,7 @@ end
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
     @test NoLimits.get_observed(res).y == _NRE_DF.y
     @test NoLimits.get_sampler(res) isa Any
-    @test NoLimits.get_n_samples(res) == 5
+    @test NoLimits.get_n_samples(res) == 2
     @test_throws ErrorException NoLimits.get_loglikelihood(res)
 end
 

@@ -1460,6 +1460,7 @@ function _default_random_effects(res::FitResult,
         return _eta_from_eb(dm, batch_infos, bstars, constants_re, θ)
     end
     if res.result isa SAEMResult
+        constants_re = _saem_anneal_constants_re(dm, θ, _saem_anneal_names(res), constants_re)
         ode_args = haskey(res.fit_kwargs, :ode_args) ? getfield(res.fit_kwargs, :ode_args) : ()
         ode_kwargs = haskey(res.fit_kwargs, :ode_kwargs) ? getfield(res.fit_kwargs, :ode_kwargs) : NamedTuple()
         serialization = haskey(res.fit_kwargs, :serialization) ? getfield(res.fit_kwargs, :serialization) : EnsembleSerial()

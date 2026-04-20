@@ -136,7 +136,7 @@ end
     @test_throws ErrorException fit_model(dm, NoLimits.VI(); penalty=(a=1.0,))
 end
 
-@testset "VI supports random effects + RE-only sampling + constants_re validation" begin
+@testset "VI rejects models with random effects" begin
     model = @Model begin
         @covariates begin
             t = Covariate()
@@ -164,26 +164,12 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
 
-    res = fit_model(dm, NoLimits.VI(; turing_kwargs=(max_iter=15, progress=false)); rng=Random.Xoshiro(10))
-    @test res isa FitResult
-    @test res.result isa NoLimits.VIResult
-    draws = NoLimits.sample_posterior(res; n_draws=5, rng=Random.Xoshiro(11), return_names=true)
-    @test any(startswith(string(n), "η_vals[") for n in draws.names)
-
-    res_re_only = fit_model(dm, NoLimits.VI(; turing_kwargs=(max_iter=10, progress=false));
-                            constants=(a=0.2, σ=0.5),
-                            rng=Random.Xoshiro(12))
-    @test res_re_only isa FitResult
-    draws_re_only = NoLimits.sample_posterior(res_re_only; n_draws=4, rng=Random.Xoshiro(13), return_names=true)
-    @test all(startswith(string(n), "η_vals[") for n in draws_re_only.names)
-
     err = try
-        fit_model(dm, NoLimits.VI(; turing_kwargs=(max_iter=5, progress=false));
-                  constants_re=(; η=(; A=[0.0],)))
+        fit_model(dm, NoLimits.VI(; turing_kwargs=(max_iter=5, progress=false)); rng=Random.Xoshiro(10))
         nothing
     catch e
         e
     end
     @test err isa ErrorException
-    @test occursin("scalar number", sprint(showerror, err))
+    @test occursin("not supported for models with random effects", sprint(showerror, err))
 end

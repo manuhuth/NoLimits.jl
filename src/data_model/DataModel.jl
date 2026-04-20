@@ -120,6 +120,7 @@ end
 struct EventCallbacks{C, R, RS, B}
     callback::C
     infusion_rates::R
+    init_infusion_rates::R
     init_resets::RS
     init_bolus::B
 end
@@ -989,7 +990,7 @@ function _build_callbacks(model, df, rows, config::DataModelConfig)
     resets_out = isempty(init_resets) ? nothing : init_resets
     bolus_out = isempty(init_bolus_pairs) ? nothing : init_bolus_pairs
     (cb === nothing && resets_out === nothing && bolus_out === nothing) && return nothing
-    return EventCallbacks(cb, infusion_rates, resets_out, bolus_out)
+    return EventCallbacks(cb, infusion_rates, copy(infusion_rates), resets_out, bolus_out)
 end
 
 @inline function _apply_initial_events!(u0, callbacks::EventCallbacks)
@@ -999,6 +1000,7 @@ end
     callbacks.init_bolus !== nothing && @inbounds for (idx, val) in callbacks.init_bolus
         u0[idx] += val
     end
+    copyto!(callbacks.infusion_rates, callbacks.init_infusion_rates)
     return u0
 end
 

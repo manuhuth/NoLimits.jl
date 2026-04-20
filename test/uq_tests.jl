@@ -110,7 +110,7 @@ end
         y=[0.2, 0.3, 0.1, 0.2],
     )
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCMC(; turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
+    res = fit_model(dm, NoLimits.MCMC(; turing_kwargs=(n_samples=18, n_adapt=2, progress=false)))
 
     uq = compute_uq(res; method=:chain, mcmc_draws=15, rng=Random.Xoshiro(4))
     @test get_uq_backend(uq) == :chain

@@ -97,10 +97,14 @@ function _dist_quantile_bounds(dists, coverage)
     return (minimum(lows), maximum(highs))
 end
 
-function _density_grid_continuous(dists, coverage, n_points)
-    bounds = _dist_quantile_bounds(dists, coverage)
-    bounds === nothing && return nothing
-    y_min, y_max = bounds
+function _density_grid_continuous(dists, coverage, n_points; bounds=nothing)
+    if bounds !== nothing
+        y_min, y_max = bounds
+    else
+        b = _dist_quantile_bounds(dists, coverage)
+        b === nothing && return nothing
+        y_min, y_max = b
+    end
     y = range(y_min, y_max; length=n_points)
     z = zeros(length(y), length(dists))
     for (j, d) in enumerate(dists)

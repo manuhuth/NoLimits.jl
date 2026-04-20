@@ -304,7 +304,7 @@ end
 
 end
 
-@testset "plot_random_effects VI" begin
+@testset "plot_random_effects MCMC" begin
     model = @Model begin
         @fixedEffects begin
             a = RealNumber(0.1, prior=Uniform(0.0, 0.9))
@@ -333,15 +333,15 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, VI(; turing_kwargs=(max_iter=8, progress=false)))
+    res = fit_model(dm, MCMC(; turing_kwargs=(n_samples=10, n_adapt=5, progress=false)))
 
-    p_pit_hist = plot_random_effect_pit(res; mcmc_draws=6, show_hist=true, show_kde=false, show_qq=false)
+    p_pit_hist = plot_random_effect_pit(res; mcmc_draws=6, mcmc_warmup=3, show_hist=true, show_kde=false, show_qq=false)
     @test p_pit_hist !== nothing
 
-    p_dist = plot_random_effect_distributions(res; mcmc_draws=6)
+    p_dist = plot_random_effect_distributions(res; mcmc_draws=6, mcmc_warmup=3)
     @test p_dist !== nothing
 
-    p_pdf = plot_random_effects_pdf(res; mcmc_draws=6)
+    p_pdf = plot_random_effects_pdf(res; mcmc_draws=6, mcmc_warmup=3)
     @test p_pdf !== nothing
 
     p_scatter = plot_random_effects_scatter(res; mcmc_draws=6)

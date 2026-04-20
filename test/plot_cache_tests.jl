@@ -127,15 +127,14 @@ end
     @test cache.chain !== nothing
 end
 
-@testset "Plot cache (VI)" begin
+@testset "Plot cache (VI, fixed-effects only)" begin
     model = @Model begin
         @fixedEffects begin
             a = RealNumber(0.1, prior=Normal(0.0, 1.0))
             σ = RealNumber(0.3, scale=:log, prior=LogNormal(0.0, 0.5))
         end
         @covariates begin; t = Covariate(); end
-        @randomEffects begin; η = RandomEffect(Normal(0.0, 1.0); column=:ID); end
-        @formulas begin; y ~ Normal(a + η, σ); end
+        @formulas begin; y ~ Normal(a, σ); end
     end
 
     df = DataFrame(ID=[1,1,2,2], t=[0.0,1.0,0.0,1.0], y=[0.1,0.2,0.0,-0.1])

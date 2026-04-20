@@ -41,7 +41,7 @@ const _RE_DM = DataModel(
     end),
     _RE_DF; primary_id=:ID, time_col=:t)
 
-# With-priors RE model — used for LaplaceMAP, VI, and serialization.
+# With-priors RE model — used for LaplaceMAP and serialization.
 const _RE_DM_P = DataModel(
     @Model(begin
         @covariates begin; t = Covariate(); end
@@ -417,10 +417,10 @@ end
 end
 
 # ══════════════════════════════════════════════════════════════════════════════
-# VI with random effects
+# VI rejects RE models
 # ══════════════════════════════════════════════════════════════════════════════
 
-@testset "VI supports random effects + RE-only sampling + constants_re validation" begin
+@testset "VI rejects models with random effects" begin
     dm = DataModel(
         @Model(begin
             @covariates begin; t = Covariate(); end
@@ -434,26 +434,12 @@ end
         DataFrame(ID=[:A,:A,:B,:B], t=[0.0,1.0,0.0,1.0], y=[0.1,0.2,0.0,-0.1]);
         primary_id=:ID, time_col=:t)
 
-    res = fit_model(dm, NoLimits.VI(; turing_kwargs=(max_iter=15, progress=false));
-                    rng=Random.Xoshiro(10))
-    @test res isa FitResult
-    @test res.result isa NoLimits.VIResult
-    draws = NoLimits.sample_posterior(res; n_draws=5, rng=Random.Xoshiro(11), return_names=true)
-    @test any(startswith(string(n), "η_vals[") for n in draws.names)
-
-    res_re = fit_model(dm, NoLimits.VI(; turing_kwargs=(max_iter=10, progress=false));
-                       constants=(a=0.2, σ=0.5), rng=Random.Xoshiro(12))
-    @test res_re isa FitResult
-    draws_re = NoLimits.sample_posterior(res_re; n_draws=4, rng=Random.Xoshiro(13), return_names=true)
-    @test all(startswith(string(n), "η_vals[") for n in draws_re.names)
-
     err = try
-        fit_model(dm, NoLimits.VI(; turing_kwargs=(max_iter=5, progress=false));
-                  constants_re=(; η=(; A=[0.0],)))
+        fit_model(dm, NoLimits.VI(; turing_kwargs=(max_iter=5, progress=false)); rng=Random.Xoshiro(10))
         nothing
     catch e; e end
     @test err isa ErrorException
-    @test occursin("scalar number", sprint(showerror, err))
+    @test occursin("not supported for models with random effects", sprint(showerror, err))
 end
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -36,7 +36,7 @@ NoLimits.jl provides a broad set of modeling, estimation, and diagnostic capabil
 
 | Model type | Available methods |
 | --- | --- |
-| Mixed-effects | Laplace approximation, LaplaceMAP, MCEM, SAEM, MCMC, VI |
+| Mixed-effects | Laplace approximation, LaplaceMAP, MCEM, SAEM, MCMC |
 | Fixed-effects only | MLE, MAP, MCMC, VI |
 | Cross-method | Multistart optimization wrapper |
 

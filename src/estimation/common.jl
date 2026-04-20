@@ -757,6 +757,7 @@ function get_random_effects(dm::DataModel,
     end
     if res.result isa SAEMResult
         θu = get_params(res; scale=:untransformed)
+        constants_re = _saem_anneal_constants_re(dm, θu, _saem_anneal_names(res), constants_re)
         ode_args = haskey(res.fit_kwargs, :ode_args) ? getfield(res.fit_kwargs, :ode_args) : ()
         ode_kwargs = haskey(res.fit_kwargs, :ode_kwargs) ? getfield(res.fit_kwargs, :ode_kwargs) : NamedTuple()
         serialization = haskey(res.fit_kwargs, :serialization) ? getfield(res.fit_kwargs, :serialization) : EnsembleThreads()
@@ -1568,7 +1569,7 @@ end
 function build_ll_cache(dm::DataModel;
                         ode_args::Tuple=(),
                         ode_kwargs::NamedTuple=NamedTuple(),
-                        serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
+                        serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
                         force_saveat::Bool=false,
                         nthreads::Int=1)
     if serialization isa SciMLBase.EnsembleThreads && nthreads == 1
@@ -1660,7 +1661,8 @@ function loglikelihood(dm::DataModel, θ::ComponentArray, η;
             built = build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs, nthreads=nthreads)
             built isa Vector ? built : [built]
         end
-        T = eltype(θ)
+        η_eltype = η isa Vector ? (isempty(η) ? Float64 : eltype(first(η))) : eltype(η)
+        T = promote_type(eltype(θ), η_eltype)
         by_individual = Vector{T}(undef, n)
         bad = Threads.Atomic{Bool}(false)
         Threads.@threads for i in 1:n

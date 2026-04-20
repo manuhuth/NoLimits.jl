@@ -50,7 +50,7 @@ All methods share a single `fit_model` interface, enabling direct comparison acr
 | Inference paradigm | Methods |
 |---|---|
 | **Fixed effects** | MLE, MAP, MCMC, VI, Multistart |
-| **Mixed effects** | Laplace, LaplaceMAP, GHQuadrature, GHQuadratureMAP, SAEM, MCEM, MCMC, VI |
+| **Mixed effects** | Laplace, LaplaceMAP, GHQuadrature, GHQuadratureMAP, SAEM, MCEM, MCMC |
 
 ### Uncertainty Quantification
 

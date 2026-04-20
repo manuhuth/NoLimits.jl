@@ -63,7 +63,7 @@ end
 
     df = DataFrame(ID=[1,1,2,2], t=[0.0,1.0,0.0,1.0], y=[0.1,0.2,0.0,-0.1])
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCMC(; turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
+    res = fit_model(dm, NoLimits.MCMC(; turing_kwargs=(n_samples=8, n_adapt=2, progress=false)))
 
     rdf = get_residuals(res; mcmc_draws=5, mcmc_quantiles=[10, 90])
     @test nrow(rdf) == nrow(df)
