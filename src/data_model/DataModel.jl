@@ -123,6 +123,10 @@ struct EventCallbacks{C, R, RS, B}
     init_infusion_rates::R
     init_resets::RS
     init_bolus::B
+    # All times at which the callback fires (infusion starts, stops, bolus, reset).
+    # Used by the plotting layer to ensure the dense time grid includes these times
+    # so that short infusions are not missed when tspan >> infusion duration.
+    all_times::Vector{Float64}
 end
 
 """
@@ -708,7 +712,9 @@ function _build_vary_cov(covariates, df, rows, obs_rows, time_col, include_t::Bo
     return NamedTuple(out)
 end
 
-function _build_saveat(df, rows, obs_rows, time_col, config::DataModelConfig, time_offsets::Vector{Float64})
+function _build_saveat(df, rows, obs_rows, time_col, config::DataModelConfig,
+                       time_offsets::Vector{Float64},
+                       callback_times::Vector{Float64}=Float64[])
     config.saveat_mode == :dense && return nothing
     tvals = _get_col(df, time_col)[obs_rows]
     if !isempty(time_offsets)
@@ -726,6 +732,11 @@ function _build_saveat(df, rows, obs_rows, time_col, config::DataModelConfig, ti
         if !isempty(evt_idx)
             tvals = vcat(tvals, _get_col(df, time_col)[rows][evt_idx])
         end
+    end
+    # Include infusion stop times (and any other callback-fire times) so that
+    # the saved ODE solution captures the state at those critical events.
+    if !isempty(callback_times)
+        tvals = vcat(tvals, callback_times)
     end
     return sort(unique(tvals))
 end
@@ -990,7 +1001,7 @@ function _build_callbacks(model, df, rows, config::DataModelConfig)
     resets_out = isempty(init_resets) ? nothing : init_resets
     bolus_out = isempty(init_bolus_pairs) ? nothing : init_bolus_pairs
     (cb === nothing && resets_out === nothing && bolus_out === nothing) && return nothing
-    return EventCallbacks(cb, infusion_rates, copy(infusion_rates), resets_out, bolus_out)
+    return EventCallbacks(cb, infusion_rates, copy(infusion_rates), resets_out, bolus_out, times)
 end
 
 @inline function _apply_initial_events!(u0, callbacks::EventCallbacks)
@@ -1301,7 +1312,8 @@ function DataModel(model,
             tspan = (tmin, tmax)
         end
         re_groups = _build_re_groups(model, df, rows)
-        saveat = _build_saveat(df, rows, obs_rows, time_col, config, time_offsets)
+        cb_times = callbacks !== nothing ? callbacks.all_times : Float64[]
+        saveat = _build_saveat(df, rows, obs_rows, time_col, config, time_offsets, cb_times)
         individuals[i] = Individual(series, const_cov, callbacks, tspan, re_groups, saveat)
     end
 

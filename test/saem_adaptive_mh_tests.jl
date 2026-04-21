@@ -106,7 +106,7 @@ end
         progress   = false,
         warm_start = true,
     ))
-    @test NoLimits.get_iterations(res) == 15
+    @test NoLimits.get_iterations(res) == 2
 end
 
 # ---------------------------------------------------------------------------

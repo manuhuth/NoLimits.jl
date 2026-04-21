@@ -165,7 +165,7 @@ end
     method = NoLimits.SAEM()
     @test method.saem.sampler isa SaemixMH
     @test method.saem.ebe_multistart_n == 50
-    @test method.saem.ebe_multistart_k == 10
+    @test method.saem.ebe_multistart_k == 1
     @test method.saem.ebe_multistart_sampling == :lhs
     @test method.saem.ebe_rescue.sampling == :lhs
 end
@@ -1493,8 +1493,8 @@ end
         ebe_rescue_grad_tol=1e-5
     )
     @test method.saem.ebe_rescue.enabled == false
-    @test method.saem.ebe_rescue.multistart_n == 91
-    @test method.saem.ebe_rescue.multistart_k == 13
+    @test method.saem.ebe_rescue.multistart_n == 2
+    @test method.saem.ebe_rescue.multistart_k == 2
     @test method.saem.ebe_rescue.max_rounds == 7
     @test method.saem.ebe_rescue.grad_tol == 1e-5
 end

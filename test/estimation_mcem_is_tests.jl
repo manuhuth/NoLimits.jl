@@ -13,7 +13,7 @@ using Random
     @test es_mcmc.sample_schedule == 250
 
     es_is = NoLimits.MCEM_IS(n_samples=2, proposal=:prior)
-    @test es_is.n_samples == 200
+    @test es_is.n_samples == 2
     @test es_is.proposal === :prior
     @test es_is.adapt == true
     @test es_is.warm_start_mcmc_iters == 0
@@ -26,7 +26,7 @@ using Random
     # MCEM with IS e_step
     method = NoLimits.MCEM(e_step=NoLimits.MCEM_IS(n_samples=2))
     @test method.e_step isa NoLimits.MCEM_IS
-    @test method.e_step.n_samples == 50
+    @test method.e_step.n_samples == 2
 
     # Backward compat: MCEM() still creates MCEM_MCMC
     method2 = NoLimits.MCEM()

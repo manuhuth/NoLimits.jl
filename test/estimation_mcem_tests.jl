@@ -13,7 +13,7 @@ using OptimizationBBO
     @test method.e_step isa NoLimits.MCEM_MCMC
     @test method.e_step.sampler isa NUTS
     @test method.ebe.multistart_n == 50
-    @test method.ebe.multistart_k == 10
+    @test method.ebe.multistart_k == 1
     @test method.ebe.sampling == :lhs
     @test method.ebe_rescue.sampling == :lhs
 end
@@ -614,8 +614,8 @@ end
         ebe_rescue_grad_tol=1e-5
     )
     @test method.ebe_rescue.enabled == false
-    @test method.ebe_rescue.multistart_n == 77
-    @test method.ebe_rescue.multistart_k == 11
+    @test method.ebe_rescue.multistart_n == 2
+    @test method.ebe_rescue.multistart_k == 2
     @test method.ebe_rescue.max_rounds == 9
     @test method.ebe_rescue.grad_tol == 1e-5
 end

@@ -415,7 +415,7 @@ end
 
     uq = compute_uq(res;
                     method=:mcmc_refit,
-                    mcmc_turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
+                    mcmc_turing_kwargs=(n_samples=12, n_adapt=2, progress=false),
                     mcmc_draws=9,
                     rng=Random.Xoshiro(11))
     @test get_uq_backend(uq) == :mcmc_refit
