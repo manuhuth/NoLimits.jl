@@ -331,8 +331,20 @@ function _attach_random_effects!(df::DataFrame, dm::DataModel, re_samples)
     return nothing
 end
 
+function _resolve_sim_theta(dm::DataModel, theta_untransformed)
+    fe = dm.model.fixed.fixed
+    if theta_untransformed === nothing
+        return get_θ0_untransformed(fe)
+    end
+    θ = theta_untransformed isa ComponentArray ? theta_untransformed : ComponentArray(theta_untransformed)
+    for name in get_names(fe)
+        hasproperty(θ, name) || error("theta_untransformed is missing parameter $(name).")
+    end
+    return θ
+end
+
 """
-    simulate_data(dm::DataModel; rng, replace_missings, serialization) -> DataFrame
+    simulate_data(dm::DataModel; rng, replace_missings, serialization, theta_untransformed) -> DataFrame
 
 Simulate observations from a `DataModel` using the model's initial parameter values.
 
@@ -346,15 +358,18 @@ are left unchanged.
   simulated values; otherwise leave them as `missing`.
 - `serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial()`: parallelisation
   strategy (e.g. `EnsembleThreads()`).
+- `theta_untransformed = nothing`: fixed-effect parameter vector used for simulation on
+  the natural scale. If `nothing`, use the model's declared initial values (`θ0`).
 
 # Returns
 A copy of `dm.df` with simulated observation values.
 """
 function simulate_data(dm::DataModel; rng=Random.default_rng(),
                        replace_missings::Bool=false,
-                       serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial())
+                       serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
+                       theta_untransformed=nothing)
     df = deepcopy(dm.df)
-    θ = get_θ0_untransformed(dm.model.fixed.fixed)
+    θ = _resolve_sim_theta(dm, theta_untransformed)
 
     re_samples = _sample_random_effects(dm, rng)
     _attach_random_effects!(df, dm, re_samples)
@@ -388,7 +403,7 @@ function simulate_data(dm::DataModel; rng=Random.default_rng(),
 end
 
 """
-    simulate_data_model(dm::DataModel; rng, replace_missings, serialization) -> DataModel
+    simulate_data_model(dm::DataModel; rng, replace_missings, serialization, theta_untransformed) -> DataModel
 
 Simulate observations from a `DataModel` and return a new `DataModel` wrapping the
 simulated data.
@@ -401,11 +416,18 @@ Calls [`simulate_data`](@ref) and constructs a fresh `DataModel` from the result
 - `replace_missings::Bool = false`: forwarded to [`simulate_data`](@ref).
 - `serialization::SciMLBase.EnsembleAlgorithm`: parallelisation strategy; defaults to
   the strategy stored in `dm`.
+- `theta_untransformed = nothing`: fixed-effect parameter vector used for simulation on
+  the natural scale. Forwarded to [`simulate_data`](@ref).
 """
 function simulate_data_model(dm::DataModel; rng=Random.default_rng(),
                              replace_missings::Bool=false,
-                             serialization::SciMLBase.EnsembleAlgorithm=dm.config.serialization)
-    df_sim = simulate_data(dm; rng=rng, replace_missings=replace_missings, serialization=serialization)
+                             serialization::SciMLBase.EnsembleAlgorithm=dm.config.serialization,
+                             theta_untransformed=nothing)
+    df_sim = simulate_data(dm;
+                           rng=rng,
+                           replace_missings=replace_missings,
+                           serialization=serialization,
+                           theta_untransformed=theta_untransformed)
     cfg = dm.config
     return DataModel(dm.model, df_sim;
                      primary_id=cfg.primary_id,
