@@ -1645,7 +1645,9 @@ function _laplace_get_bstar!(cache::_LaplaceCache,
         end
     end
     ProgressMeter.finish!(p)
-    cache.θ_cache = copy(θ_vec)
+    if !(eltype(θ_vec) <: ForwardDiff.Dual)
+        cache.θ_cache = copy(θ_vec)
+    end
     return cache.bstar_cache.b_star
 end
 
