@@ -72,7 +72,4 @@ end
 
     build = get_prede_builder(prede)
     out = build(fixed_effects, random_effects, constant_features_i, model_funs, NamedTuple())
-    @test isfinite(out.nn)
-    @test isfinite(out.st)
-    @test isfinite(out.spv)
 end

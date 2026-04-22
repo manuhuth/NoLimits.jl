@@ -247,7 +247,7 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
                     penalty::NamedTuple          = NamedTuple(),
                     ode_args::Tuple              = (),
                     ode_kwargs::NamedTuple       = NamedTuple(),
-                    serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial(),
+                    serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
                     rng::AbstractRNG             = Random.default_rng(),
                     theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
                     store_data_model::Bool       = true)
@@ -587,7 +587,7 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadratureMAP, args...;
                     penalty::NamedTuple          = NamedTuple(),
                     ode_args::Tuple              = (),
                     ode_kwargs::NamedTuple       = NamedTuple(),
-                    serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial(),
+                    serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
                     rng::AbstractRNG             = Random.default_rng(),
                     theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
                     store_data_model::Bool       = true)

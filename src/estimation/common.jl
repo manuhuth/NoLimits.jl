@@ -32,6 +32,7 @@ export get_laplace_random_effects
 export get_re_covariate_usage
 export loglikelihood
 export build_ll_cache
+export MCIntegrator
 
 using StatsFuns
 using SpecialFunctions
@@ -58,7 +59,7 @@ contains optimiser closures that cannot be serialised) on save.
 `get_method(res).kind` returns a Symbol such as `:mle`, `:map`, `:laplace`, etc.
 """
 struct _SavedFittingMethod <: FittingMethod
-    kind::Symbol   # :mle :map :laplace :laplacemap :focei :foceimap
+    kind::Symbol   # :mle :map :laplace :laplacemap
                    # :mcem :saem :mcmc :vi :ghquadrature :ghquadraturemap
 end
 
@@ -92,6 +93,50 @@ struct EBERescueOptions{T}
     max_rounds::Int
     grad_tol::T
     sampling::Symbol
+end
+
+"""
+    MCIntegrator(; n_samples, mode, sampler, n_warmup, rng)
+
+Configuration for Monte Carlo marginal log-likelihood integration used by
+[`get_loglikelihood_quadrature`](@ref) as a primary integrator or fallback.
+
+# Keyword Arguments
+- `n_samples::Int = 1000`: number of Monte Carlo samples.
+- `mode::Symbol = :turing`: integration mode.
+  - `:turing` — uses Turing MCMC to fit a Gaussian proposal `q` to the posterior
+    `p(b|y,θ)`, then draws fresh IID samples from `q` and applies an IS correction.
+    More accurate than `:prior` at the same sample count; default.
+  - `:prior` — draws `b_r ~ p(b | θ)` from the prior and estimates
+    `log p(y|θ) ≈ logsumexp(log p(y|b_r,θ)) - log(n_samples)`.
+    Simple fallback; higher variance when the posterior is narrow relative to the prior.
+- `sampler`: Turing-compatible sampler used when `mode = :turing`
+  (e.g. `MH()`, `NUTS(0.65)`, `AdaptiveNoLimitsMH()`). Ignored for `:prior`.
+- `n_warmup::Int = 500`: number of MCMC warmup steps. Ignored for `:prior`.
+- `rng::Union{Nothing, AbstractRNG} = nothing`: random number generator.
+  `nothing` (default) means the RNG is inherited from `get_loglikelihood_quadrature`'s
+  `seed` argument, ensuring reproducibility without setting it explicitly here.
+  Pass an explicit RNG to pin reproducibility independently of the caller.
+"""
+struct MCIntegrator{S, R}
+    n_samples :: Int
+    mode      :: Symbol
+    sampler   :: S
+    n_warmup  :: Int
+    rng       :: R   # Union{Nothing, AbstractRNG}
+end
+
+function MCIntegrator(;
+    n_samples :: Int                            = 1000,
+    mode      :: Symbol                         = :turing,
+    sampler                                     = nothing,
+    n_warmup  :: Int                            = 500,
+    rng       :: Union{Nothing, AbstractRNG}    = nothing,
+)
+    mode in (:prior, :turing) || error("MCIntegrator mode must be :prior or :turing, got :$(mode).")
+    n_samples > 0 || error("MCIntegrator n_samples must be > 0.")
+    n_warmup >= 0 || error("MCIntegrator n_warmup must be ≥ 0.")
+    return MCIntegrator(n_samples, mode, sampler, n_warmup, rng)
 end
 
 @inline _default_ebe_grad_tol(dm::DataModel) = dm.model.de.de === nothing ? 1e-4 : 1e-2
@@ -550,8 +595,8 @@ function get_laplace_random_effects(dm::DataModel,
                                     constants_re::NamedTuple=NamedTuple(),
                                     flatten::Bool=true,
                                     include_constants::Bool=true)
-    (res.result isa LaplaceResult || res.result isa LaplaceMAPResult || res.result isa FOCEIResult || res.result isa FOCEIMAPResult || res.result isa GHQuadratureResult || res.result isa GHQuadratureMAPResult) ||
-        error("Laplace-style random-effects accessor requires a Laplace, LaplaceMAP, FOCEI, FOCEIMAP, GHQuadrature, or GHQuadratureMAP fit result.")
+    (res.result isa LaplaceResult || res.result isa LaplaceMAPResult || res.result isa GHQuadratureResult || res.result isa GHQuadratureMAPResult) ||
+        error("Laplace-style random-effects accessor requires a Laplace, LaplaceMAP, GHQuadrature, or GHQuadratureMAP fit result.")
     constants_re = _res_constants_re(res, constants_re)
     re_names = get_re_names(dm.model.random.random)
     isempty(re_names) && return NamedTuple()
@@ -677,7 +722,7 @@ end
 Return empirical Bayes (EB) random-effect estimates as a `NamedTuple` of `DataFrame`s,
 one per random effect.
 
-Supported methods: `Laplace`, `LaplaceMAP`, `FOCEI`, `FOCEIMAP`, `MCEM`, `SAEM`.
+Supported methods: `Laplace`, `LaplaceMAP`, `MCEM`, `SAEM`, `GHQuadrature`, `GHQuadratureMAP`.
 
 # Keyword Arguments
 - `constants_re::NamedTuple = NamedTuple()`: fix random effects at given values (natural scale).
@@ -690,14 +735,14 @@ function get_random_effects(dm::DataModel,
                             flatten::Bool=true,
                             include_constants::Bool=true)
     constants_re = _res_constants_re(res, constants_re)
-    if res.result isa LaplaceResult || res.result isa LaplaceMAPResult || res.result isa FOCEIResult || res.result isa FOCEIMAPResult || res.result isa GHQuadratureResult || res.result isa GHQuadratureMAPResult
+    if res.result isa LaplaceResult || res.result isa LaplaceMAPResult || res.result isa GHQuadratureResult || res.result isa GHQuadratureMAPResult
         return get_laplace_random_effects(dm, res; constants_re=constants_re, flatten=flatten, include_constants=include_constants)
     end
     if res.result isa MCEMResult
         θu = get_params(res; scale=:untransformed)
         ode_args = haskey(res.fit_kwargs, :ode_args) ? getfield(res.fit_kwargs, :ode_args) : ()
         ode_kwargs = haskey(res.fit_kwargs, :ode_kwargs) ? getfield(res.fit_kwargs, :ode_kwargs) : NamedTuple()
-        serialization = haskey(res.fit_kwargs, :serialization) ? getfield(res.fit_kwargs, :serialization) : EnsembleSerial()
+        serialization = haskey(res.fit_kwargs, :serialization) ? getfield(res.fit_kwargs, :serialization) : EnsembleThreads()
         rng = haskey(res.fit_kwargs, :rng) ? getfield(res.fit_kwargs, :rng) : Random.default_rng()
         ll_cache = build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs, serialization=serialization, force_saveat=true)
         bstars = res.result.eb_modes
@@ -712,9 +757,10 @@ function get_random_effects(dm::DataModel,
     end
     if res.result isa SAEMResult
         θu = get_params(res; scale=:untransformed)
+        constants_re = _saem_anneal_constants_re(dm, θu, _saem_anneal_names(res), constants_re)
         ode_args = haskey(res.fit_kwargs, :ode_args) ? getfield(res.fit_kwargs, :ode_args) : ()
         ode_kwargs = haskey(res.fit_kwargs, :ode_kwargs) ? getfield(res.fit_kwargs, :ode_kwargs) : NamedTuple()
-        serialization = haskey(res.fit_kwargs, :serialization) ? getfield(res.fit_kwargs, :serialization) : EnsembleSerial()
+        serialization = haskey(res.fit_kwargs, :serialization) ? getfield(res.fit_kwargs, :serialization) : EnsembleThreads()
         rng = haskey(res.fit_kwargs, :rng) ? getfield(res.fit_kwargs, :rng) : Random.default_rng()
         ll_cache = build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs, serialization=serialization, force_saveat=true)
         bstars = res.result.eb_modes
@@ -752,26 +798,26 @@ end
 
 Compute the marginal log-likelihood at the estimated parameter values.
 
-For MLE/MAP results, evaluates the population log-likelihood. For Laplace/FOCEI
+For MLE/MAP results, evaluates the population log-likelihood. For Laplace-style
 results, evaluates using the EB modes stored in the result.
 
 # Keyword Arguments
 - `constants_re::NamedTuple = NamedTuple()`: random effects fixed at given values.
 - `ode_args::Tuple = ()`: additional positional arguments for the ODE solver.
 - `ode_kwargs::NamedTuple = NamedTuple()`: additional keyword arguments for the ODE solver.
-- `serialization = EnsembleSerial()`: parallelisation strategy.
+- `serialization = EnsembleThreads()`: parallelisation strategy.
 """
 function get_loglikelihood(dm::DataModel,
                            res::FitResult;
                            constants_re::NamedTuple=NamedTuple(),
                            ode_args::Tuple=(),
                            ode_kwargs::NamedTuple=NamedTuple(),
-                           serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial())
+                           serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads())
     constants_re = _res_constants_re(res, constants_re)
     θu = get_params(res; scale=:untransformed)
     if res.result isa MLEResult || res.result isa MAPResult
         return loglikelihood(dm, θu, ComponentArray(); ode_args=ode_args, ode_kwargs=ode_kwargs, serialization=serialization)
-    elseif res.result isa LaplaceResult || res.result isa LaplaceMAPResult || res.result isa FOCEIResult || res.result isa FOCEIMAPResult || res.result isa GHQuadratureMAPResult
+    elseif res.result isa LaplaceResult || res.result isa LaplaceMAPResult || res.result isa GHQuadratureMAPResult
         pairing, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re)
         bstars = res.result.eb_modes
         length(bstars) == length(batch_infos) || error("Laplace-style EB modes do not match number of batches.")
@@ -799,7 +845,7 @@ function get_loglikelihood(res::FitResult;
                            constants_re::NamedTuple=NamedTuple(),
                            ode_args::Tuple=(),
                            ode_kwargs::NamedTuple=NamedTuple(),
-                           serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial())
+                           serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads())
     dm = res.data_model
     dm === nothing && error("This fit result does not store a DataModel; call get_loglikelihood(dm, res) instead.")
     return get_loglikelihood(dm, res; constants_re=constants_re, ode_args=ode_args, ode_kwargs=ode_kwargs, serialization=serialization)
@@ -820,15 +866,16 @@ end
 
 """
     get_loglikelihood_quadrature(dm, res; level=3, constants_re, ode_args, ode_kwargs,
-                                  serialization, ebe_options, rng, jitter) -> Float64
+                                  serialization, ebe_options, rng, jitter,
+                                  mc_integrator, fallback) -> Float64
 
-Compute the marginal log-likelihood using **Adaptive Gauss-Hermite Quadrature** (AGHQ).
+Compute the marginal log-likelihood using **Adaptive Gauss-Hermite Quadrature** (AGHQ),
+with optional Monte Carlo sampling as the primary method or as a fallback.
 
-Unlike `get_loglikelihood`, which plugs in the EBE point estimate for Laplace/FOCEI/SAEM/MCEM
-methods, this function integrates over each batch's random effects using sparse-grid
-quadrature centred at the EBE mode with the local posterior curvature for scaling.
+Unlike `get_loglikelihood`, which plugs in the EBE point estimate for Laplace/SAEM/MCEM
+methods, this function integrates over each batch's random effects.
 
-The integration measure for each batch is
+The integration measure for AGHQ is
 
     b = b* + S * z,  z ~ N(0, I)
 
@@ -840,7 +887,7 @@ the Hessian H of log p(b | y, θ) at b*. The log-correction
 accounts for the prior, Jacobian, and Gaussian quadrature measure.
 
 # Supported methods
-Laplace, LaplaceMAP, FOCEI, FOCEIMAP, SAEM, MCEM, GHQuadrature, GHQuadratureMAP.
+Laplace, LaplaceMAP, SAEM, MCEM, GHQuadrature, GHQuadratureMAP.
 
 # Not supported
 - **MCMC**: raises an error.
@@ -851,11 +898,17 @@ Laplace, LaplaceMAP, FOCEI, FOCEIMAP, SAEM, MCEM, GHQuadrature, GHQuadratureMAP.
 - `level`: Smolyak accuracy level (default 3). Same as in `GHQuadrature`.
 - `constants_re`: fixes specific RE levels on the natural scale.
 - `ode_args`, `ode_kwargs`: forwarded to the ODE solver.
-- `serialization`: `EnsembleSerial()` (default) or `EnsembleThreads()`.
+- `serialization`: `EnsembleThreads()` (default) or `EnsembleSerial()`.
 - `ebe_options::Union{Nothing, EBEOptions}`: EBE optimizer options used when stored
   modes are unavailable. `nothing` uses the same defaults as `Laplace()`.
 - `rng`: random number generator for EBE multistart (if needed).
 - `jitter`: initial jitter for Cholesky of negative Hessian (default 1e-6).
+- `mc_integrator::Union{Nothing, MCIntegrator}`: if not `nothing`, use Monte Carlo
+  sampling for **all** batches instead of AGHQ. See [`MCIntegrator`](@ref).
+- `fallback::Union{Nothing, MCIntegrator}`: what to do when the Cholesky of `-H` fails
+  for a batch. `nothing` raises an error (old behaviour). An `MCIntegrator` falls back to
+  sampling for that batch and issues a warning. Default: `MCIntegrator()` (prior sampling,
+  1000 samples).
 """
 function get_loglikelihood_quadrature(dm::DataModel,
                                        res::FitResult;
@@ -863,10 +916,13 @@ function get_loglikelihood_quadrature(dm::DataModel,
                                        constants_re::NamedTuple=NamedTuple(),
                                        ode_args::Tuple=(),
                                        ode_kwargs::NamedTuple=NamedTuple(),
-                                       serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
+                                       serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                                        ebe_options::Union{Nothing, EBEOptions}=nothing,
-                                       rng::AbstractRNG=Random.default_rng(),
-                                       jitter::Float64=1e-6)
+                                       seed::Int=0,
+                                       rng::AbstractRNG=Random.Xoshiro(seed),
+                                       jitter::Float64=1e-6,
+                                       mc_integrator::Union{Nothing, MCIntegrator}=nothing,
+                                       fallback::Union{Nothing, MCIntegrator}=MCIntegrator())
     if res.result isa MCMCResult
         error("get_loglikelihood_quadrature: MCMC results are not supported.")
     end
@@ -883,17 +939,22 @@ function get_loglikelihood_quadrature(dm::DataModel,
     ll_cache = build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs, force_saveat=true)
 
     # Resolve EBE modes: use stored ones if available and matching, else compute.
-    bstars = if hasproperty(res.result, :eb_modes) &&
+    # Not needed when mc_integrator is set (pure MC path skips EBE/Hessian entirely).
+    bstars = if mc_integrator === nothing
+        if hasproperty(res.result, :eb_modes) &&
                 res.result.eb_modes !== nothing &&
                 length(res.result.eb_modes) == length(batch_infos)
-        res.result.eb_modes
+            res.result.eb_modes
+        else
+            ebe = ebe_options === nothing ? _default_ebe_options() : ebe_options
+            bstars_new, _ = _compute_bstars(dm, θu, constants_re, ll_cache, ebe, rng)
+            bstars_new
+        end
     else
-        ebe = ebe_options === nothing ? _default_ebe_options() : ebe_options
-        bstars_new, _ = _compute_bstars(dm, θu, constants_re, ll_cache, ebe, rng)
-        bstars_new
+        nothing
     end
 
-    if _any_batch_too_large(dm, batch_infos, level, 10_000)
+    if mc_integrator === nothing && _any_batch_too_large(dm, batch_infos, level, 10_000)
         @warn "get_loglikelihood_quadrature: one or more batches have > 10,000 quadrature nodes. " *
               "Consider reducing `level` or checking your RE batch structure."
     end
@@ -911,12 +972,28 @@ function get_loglikelihood_quadrature(dm::DataModel,
             end
             total += s
         else
-            b_star = bstars[bi]
-            re_measure = build_centered_re_measure(b_star, info, bi, θu_re, const_cache, dm, ll_cache;
-                                                    jitter=jitter)
-            sgrid = level isa Int ? get_sparse_grid(info.n_b, level) :
-                                    _build_anisotropic_batch_grid(dm, info, level)
-            bll = batch_loglik_ghq(dm, info, θu_re, re_measure, sgrid, const_cache, ll_cache)
+            bll = if mc_integrator !== nothing
+                # MC for all batches: skip AGHQ entirely
+                _batch_loglik_from_mc(dm, info, θu_re, const_cache, ll_cache, mc_integrator, rng)
+            else
+                b_star = bstars[bi]
+                re_measure = build_centered_re_measure(b_star, info, bi, θu_re, const_cache, dm, ll_cache;
+                                                        jitter=jitter)
+                if re_measure !== nothing
+                    sgrid = level isa Int ? get_sparse_grid(info.n_b, level) :
+                                            _build_anisotropic_batch_grid(dm, info, level)
+                    batch_loglik_ghq(dm, info, θu_re, re_measure, sgrid, const_cache, ll_cache)
+                elseif fallback !== nothing
+                    @warn "get_loglikelihood_quadrature: Cholesky of -H failed for batch $bi " *
+                          "(b* may not be a true mode or posterior is near-flat). " *
+                          "Falling back to $(fallback.mode) MC sampling with $(fallback.n_samples) samples."
+                    _batch_loglik_from_mc(dm, info, θu_re, const_cache, ll_cache, fallback, rng)
+                else
+                    error("get_loglikelihood_quadrature: Cholesky of -H failed for batch $bi. " *
+                          "Pass fallback=MCIntegrator(...) to use sampling as fallback, " *
+                          "or increase `jitter`.")
+                end
+            end
             bll == -Inf && return -Inf
             total += bll
         end
@@ -929,16 +1006,20 @@ function get_loglikelihood_quadrature(res::FitResult;
                                        constants_re::NamedTuple=NamedTuple(),
                                        ode_args::Tuple=(),
                                        ode_kwargs::NamedTuple=NamedTuple(),
-                                       serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
+                                       serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                                        ebe_options::Union{Nothing, EBEOptions}=nothing,
-                                       rng::AbstractRNG=Random.default_rng(),
-                                       jitter::Float64=1e-6)
+                                       seed::Int=0,
+                                       rng::AbstractRNG=Random.Xoshiro(seed),
+                                       jitter::Float64=1e-6,
+                                       mc_integrator::Union{Nothing, MCIntegrator}=nothing,
+                                       fallback::Union{Nothing, MCIntegrator}=MCIntegrator())
     dm = res.data_model
     dm === nothing && error("This fit result does not store a DataModel; call get_loglikelihood_quadrature(dm, res) instead.")
     return get_loglikelihood_quadrature(dm, res; level=level, constants_re=constants_re,
                                         ode_args=ode_args, ode_kwargs=ode_kwargs,
                                         serialization=serialization, ebe_options=ebe_options,
-                                        rng=rng, jitter=jitter)
+                                        seed=seed, rng=rng, jitter=jitter,
+                                        mc_integrator=mc_integrator, fallback=fallback)
 end
 
 function get_re_covariate_usage(res::FitResult; dm::Union{Nothing, DataModel}=nothing)
@@ -965,7 +1046,7 @@ Fit a model to data using the specified estimation method.
   natural scale (not available for MCMC).
 - `ode_args::Tuple = ()`: extra positional arguments forwarded to the ODE solver.
 - `ode_kwargs::NamedTuple = NamedTuple()`: extra keyword arguments forwarded to the ODE solver.
-- `serialization = EnsembleSerial()`: parallelisation strategy.
+- `serialization = EnsembleThreads()`: parallelisation strategy.
 - `rng = Random.default_rng()`: random number generator (used by MCMC/SAEM/MCEM).
 - `theta_0_untransformed::Union{Nothing, ComponentArray} = nothing`: custom starting
   point on the natural scale; defaults to the model's declared initial values.
@@ -1561,7 +1642,7 @@ end
 function loglikelihood(dm::DataModel, θ::ComponentArray, η;
                        ode_args::Tuple=(),
                        ode_kwargs::NamedTuple=NamedTuple(),
-                       serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
+                       serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                        cache=nothing)
     θ = _symmetrize_psd_params(θ, dm.model.fixed.fixed)
     if cache === nothing
@@ -1580,7 +1661,8 @@ function loglikelihood(dm::DataModel, θ::ComponentArray, η;
             built = build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs, nthreads=nthreads)
             built isa Vector ? built : [built]
         end
-        T = eltype(θ)
+        η_eltype = η isa Vector ? (isempty(η) ? Float64 : eltype(first(η))) : eltype(η)
+        T = promote_type(eltype(θ), η_eltype)
         by_individual = Vector{T}(undef, n)
         bad = Threads.Atomic{Bool}(false)
         Threads.@threads for i in 1:n

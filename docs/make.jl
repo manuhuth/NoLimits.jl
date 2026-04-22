@@ -55,7 +55,7 @@ makedocs(;
             "Mixed-Effects Tutorial 4: SoftTree Differential-Equation Components (SAEM)" => "tutorials/mixed-effects-softtree-saem.md",
             "Mixed-Effects Tutorial 5: Seizure Counts with Poisson and NegativeBinomial Outcomes (MCEM)" => "tutorials/mixed-effects-seizure-counts-poisson-nb-mcem.md",
             "Mixed-Effects Tutorial 6: Left-Censored Nonlinear Model (Laplace)" => "tutorials/mixed-effects-left-censored-virload50-laplace.md",
-            "Mixed-Effects Tutorial 7: Variational Inference (VI)" => "tutorials/mixed-effects-vi.md",
+            "Mixed-Effects Tutorial 7: VI for Mixed Effects (Not Supported)" => "tutorials/mixed-effects-vi.md",
             "Fixed-Effects Tutorial 1: Nonlinear Longitudinal Model (MLE + MAP)" => "tutorials/fixed-effects-nonlinear-mle-map.md",
             "Fixed-Effects Tutorial 2: Variational Inference (VI)" => "tutorials/fixed-effects-vi.md",
         ],

@@ -79,7 +79,7 @@ end
     df = _make_df()
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.MCMC(; sampler=NUTS(5, 0.3),
-                                              turing_kwargs=(n_samples=20, n_adapt=10, progress=false)))
+                                              turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
 
     p_pdf = plot_random_effects_pdf(res; mcmc_draws=5)
     @test p_pdf !== nothing
@@ -156,7 +156,7 @@ end
     df = _make_df()
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.MCMC(; sampler=NUTS(5, 0.3),
-                                              turing_kwargs=(n_samples=20, n_adapt=10, progress=false)))
+                                              turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
 
     p_pdf = plot_random_effects_pdf(res; mcmc_draws=5, flow_samples=50, flow_plot=:kde)
     @test p_pdf !== nothing
@@ -233,7 +233,7 @@ end
     df = _make_df()
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.MCMC(; sampler=NUTS(5, 0.3),
-                                              turing_kwargs=(n_samples=20, n_adapt=10, progress=false)))
+                                              turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
 
     p_pdf = plot_random_effects_pdf(res; mcmc_draws=5, flow_samples=50, flow_plot=:hist)
     @test p_pdf !== nothing

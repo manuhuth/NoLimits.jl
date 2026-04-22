@@ -20,8 +20,6 @@ where `ms` is a `NoLimits.Multistart(...)` object and `method` is any fitting me
 - `MAP`
 - `Laplace`
 - `LaplaceMAP`
-- `FOCEI`
-- `FOCEIMAP`
 - `MCEM`
 - `SAEM`
 - `VI` (see note below)
@@ -29,7 +27,7 @@ where `ms` is a `NoLimits.Multistart(...)` object and `method` is any fitting me
 
 ## Recommendation
 
-`Multistart` is most beneficial for optimization- and EM-based methods (`MLE`, `MAP`, `Laplace`, `LaplaceMAP`, `FOCEI`, `FOCEIMAP`, `MCEM`, `SAEM`, `VI`), where the choice of starting values strongly influences which local optimum is found.
+`Multistart` is most beneficial for optimization- and EM-based methods (`MLE`, `MAP`, `Laplace`, `LaplaceMAP`, `MCEM`, `SAEM`, `VI`), where the choice of starting values strongly influences which local optimum is found.
 
 For `MCMC`, multistart is technically supported but generally not recommended as the primary strategy. In most Bayesian workflows, tuning sampler settings and chain diagnostics is more effective than varying initial values across restarts.
 
@@ -82,7 +80,7 @@ At the start of each `fit_model` call, a summary is logged:
 
 Screening always ranks candidates by the marginal log-likelihood (higher is better). This is the correct direction for every supported method:
 
-- **MLE / MAP / Laplace / FOCEI / MCEM / SAEM / VI** — all internally minimize the negative log-likelihood (or a penalized variant). Selecting candidates with the highest screening LL puts the optimizer in the most promising region.
+- **MLE / MAP / Laplace / MCEM / SAEM / VI** — all internally minimize the negative log-likelihood (or a penalized variant). Selecting candidates with the highest screening LL puts the optimizer in the most promising region.
 - **MCMC** — though MCMC does not optimize, starting from a high-likelihood region improves early mixing and reduces warm-up cost.
 
 No sign adjustment is made per-method; the screening criterion is uniform.

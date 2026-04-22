@@ -30,7 +30,7 @@ using Turing: MH
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, MLE(; optim_kwargs=(maxiters=3,)))
+    res = fit_model(dm, MLE(; optim_kwargs=(maxiters=2,)))
 
     s_fit = summarize(res)
     @test s_fit isa FitResultSummary
@@ -107,7 +107,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=8,)))
+    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=2,)))
 
     s_fit = summarize(res)
     @test s_fit isa FitResultSummary
@@ -169,7 +169,7 @@ end
         dm,
         MCMC(;
             sampler=MH(),
-            turing_kwargs=(n_samples=20, n_adapt=0, progress=false, verbose=false),
+            turing_kwargs=(n_samples=2, n_adapt=2, progress=false, verbose=false),
             progress=false,
         )
     )
@@ -195,7 +195,7 @@ end
     @test !occursin("NaN", txt_comb)
 end
 
-@testset "Fit/UQ summaries (bayesian VI with random effects)" begin
+@testset "Fit/UQ summaries (bayesian MCMC with random effects)" begin
     model = @Model begin
         @fixedEffects begin
             a = RealNumber(0.2; prior=Normal(0.0, 1.0), calculate_se=true)
@@ -222,11 +222,11 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, VI(; turing_kwargs=(max_iter=30, progress=false)); rng=Random.Xoshiro(710))
+    res = fit_model(dm, MCMC(; turing_kwargs=(n_samples=30, n_adapt=10, progress=false)); rng=Random.Xoshiro(710))
 
     s_fit = summarize(res)
     @test s_fit isa FitResultSummary
-    @test s_fit.method == :vi
+    @test s_fit.method == :mcmc
     @test s_fit.inference == :bayesian
     @test occursin("Posterior random effects summary", s_fit.random_effect_label)
     @test s_fit.n_obs_total == 4
@@ -235,7 +235,7 @@ end
     @test occursin("objective", txt_fit)
     @test !occursin("NaN", txt_fit)
 
-    uq = compute_uq(res; method=:chain, mcmc_draws=20, rng=Random.Xoshiro(711))
+    uq = compute_uq(res; method=:chain, mcmc_draws=20, mcmc_warmup=5, rng=Random.Xoshiro(711))
     s_comb = summarize(res, uq)
     @test s_comb isa UQResultSummary
     @test s_comb.inference == :bayesian

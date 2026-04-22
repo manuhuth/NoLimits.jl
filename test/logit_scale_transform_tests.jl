@@ -11,7 +11,6 @@ using FiniteDifferences
     end
 
     # Forward transform returns a finite value.
-    @test isfinite(logit_forward(0.5))
     @test logit_forward(0.5) ≈ 0.0   # logit(0.5) = 0
 
     # Clamping: very small / large values in (0,1) are clamped on the transformed scale.

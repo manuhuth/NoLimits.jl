@@ -36,7 +36,7 @@ using SciMLBase
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=20, n_adapt=0, progress=false)))
+    res = fit_model(dm, NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 end
@@ -70,7 +70,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCMC(; sampler=NUTS(5, 0.3), turing_kwargs=(n_samples=20, n_adapt=10, progress=false)))
+    res = fit_model(dm, NoLimits.MCMC(; sampler=NUTS(5, 0.3), turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 end
@@ -102,7 +102,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCMC(; sampler=NUTS(5, 0.3), turing_kwargs=(n_samples=20, n_adapt=10, progress=false));
+    res = fit_model(dm, NoLimits.MCMC(; sampler=NUTS(5, 0.3), turing_kwargs=(n_samples=2, n_adapt=2, progress=false));
                     constants_re=(; η=(; A=0.0,)))
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
@@ -135,7 +135,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=20, n_adapt=0, progress=false));
+    res = fit_model(dm, NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=2, n_adapt=2, progress=false));
                     constants=(a=0.2, σ=0.5))
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
@@ -169,7 +169,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     err = try
-        fit_model(dm, NoLimits.MCMC(; turing_kwargs=(n_samples=10, n_adapt=5, progress=false));
+        fit_model(dm, NoLimits.MCMC(; turing_kwargs=(n_samples=2, n_adapt=2, progress=false));
                   constants_re=(; η=(; A=[0.0],)))
         nothing
     catch e
@@ -207,7 +207,7 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     err = try
-        fit_model(dm, NoLimits.MCMC(; turing_kwargs=(n_samples=10, n_adapt=5, progress=false));
+        fit_model(dm, NoLimits.MCMC(; turing_kwargs=(n_samples=2, n_adapt=2, progress=false));
                   constants_re=(; η=(; A=[0.0],)))
         nothing
     catch e
@@ -244,7 +244,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCMC(; turing_kwargs=(n_samples=20, n_adapt=10, progress=false));
+    res = fit_model(dm, NoLimits.MCMC(; turing_kwargs=(n_samples=2, n_adapt=2, progress=false));
                     constants_re=(; η=(; A=[0.0, 0.0],)))
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
@@ -277,7 +277,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=20, n_adapt=0, progress=false)))
+    res = fit_model(dm, NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 end
@@ -309,7 +309,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCMC(; sampler=NUTS(5, 0.3), turing_kwargs=(n_samples=20, n_adapt=10, progress=false)))
+    res = fit_model(dm, NoLimits.MCMC(; sampler=NUTS(5, 0.3), turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 end
@@ -345,8 +345,8 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res_nuts = fit_model(dm, NoLimits.MCMC(; sampler=NUTS(5, 0.3), turing_kwargs=(n_samples=20, n_adapt=10, progress=false)))
-    res_mh = fit_model(dm, NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=20, n_adapt=0, progress=false)))
+    res_nuts = fit_model(dm, NoLimits.MCMC(; sampler=NUTS(5, 0.3), turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
+    res_mh = fit_model(dm, NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
     @test res_nuts isa FitResult
     @test NoLimits.get_chain(res_nuts) isa MCMCChains.Chains
     @test res_mh isa FitResult
@@ -403,7 +403,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCMC(; sampler=NUTS(5, 0.3), turing_kwargs=(n_samples=15, n_adapt=5, progress=false)))
+    res = fit_model(dm, NoLimits.MCMC(; sampler=NUTS(5, 0.3), turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 end
@@ -444,7 +444,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCMC(; sampler=NUTS(5, 0.3), turing_kwargs=(n_samples=10, n_adapt=5, progress=false)))
+    res = fit_model(dm, NoLimits.MCMC(; sampler=NUTS(5, 0.3), turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 end
@@ -476,7 +476,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCMC(; sampler=NUTS(5, 0.3), turing_kwargs=(n_samples=10, n_adapt=5, progress=false));
+    res = fit_model(dm, NoLimits.MCMC(; sampler=NUTS(5, 0.3), turing_kwargs=(n_samples=2, n_adapt=2, progress=false));
                     serialization=EnsembleThreads())
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
@@ -515,7 +515,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=20, n_adapt=0, progress=false)))
+    res = fit_model(dm, NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 end
@@ -560,7 +560,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=2, n_adapt=0, progress=false)))
+    res = fit_model(dm, NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 end
@@ -595,7 +595,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=20, n_adapt=0, progress=false)))
+    res = fit_model(dm, NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 end

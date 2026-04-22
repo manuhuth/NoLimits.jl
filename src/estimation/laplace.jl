@@ -119,7 +119,8 @@ function _normalize_constants_re(dm::DataModel, constants_re::NamedTuple)
         if spec isa NamedTuple
             spec = spec
         elseif spec isa AbstractDict
-            spec = (; spec...)
+            # Keep as-is; Base.pairs works for any key type. Avoid (; spec...)
+            # which fails when keys are not Symbols (e.g. integer group levels).
         elseif spec isa Base.Iterators.Pairs
             spec = NamedTuple(spec)
         elseif spec isa Pair
@@ -186,6 +187,60 @@ function _build_constants_cache(dm::DataModel, constants_re::NamedTuple)
         end
     end
     return LaplaceConstantsCache(is_const, scalar_vals, vector_vals)
+end
+
+# ── SAEM anneal-to-fixed helpers ─────────────────────────────────────────────
+
+function _saem_anneal_names(res::FitResult)
+    res.result isa SAEMResult || return ()
+    if res.method isa _SavedFittingMethod
+        notes = res.result.notes
+        if notes isa NamedTuple && hasproperty(notes, :anneal_to_fixed)
+            return notes.anneal_to_fixed
+        end
+        return ()
+    end
+    return res.method.saem.anneal_to_fixed
+end
+
+# For each annealed RE, compute the prior-distribution mean per group level at
+# the final θu, and pin those levels via constants_re so the EBE optimizer
+# excludes them entirely.  User-supplied constants_re entries take precedence.
+function _saem_anneal_constants_re(dm::DataModel,
+                                    θu::ComponentArray,
+                                    anneal_names,
+                                    constants_re::NamedTuple)
+    isempty(anneal_names) && return constants_re
+    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
+    helpers       = get_helper_funs(dm.model)
+    model_funs    = get_model_funs(dm.model)
+
+    level_means = Dict{Symbol, Dict{Any, Any}}()
+    for name in anneal_names
+        level_means[Symbol(name)] = Dict{Any, Any}()
+    end
+
+    for ind in dm.individuals
+        for name in anneal_names
+            sym  = Symbol(name)
+            # re_groups stores a Vector of unique levels for that individual
+            gvec = getfield(ind.re_groups, sym)
+            for gv in gvec
+                haskey(level_means[sym], gv) && continue
+                dists = dists_builder(θu, ind.const_cov, model_funs, helpers)
+                dist  = getfield(dists, sym)
+                level_means[sym][gv] = Distributions.mean(dist)
+            end
+        end
+    end
+
+    pairs = Pair{Symbol, Any}[k => v for (k, v) in Base.pairs(constants_re)]
+    for name in anneal_names
+        sym = Symbol(name)
+        haskey(constants_re, sym) && continue   # user-supplied wins
+        push!(pairs, sym => level_means[sym])
+    end
+    return NamedTuple(pairs)
 end
 
 function _build_laplace_batches(dm::DataModel, const_cache::LaplaceConstantsCache)
@@ -1540,7 +1595,7 @@ function _laplace_get_bstar!(cache::_LaplaceCache,
                              fastpath=nothing,
                              multistart=LaplaceMultistartOptions(0, 0, grad_tol, 5, :lhs),
                              rng::AbstractRNG=Random.default_rng(),
-                             serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
+                             serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                              progress::Bool=false,
                              progress_desc::AbstractString="EBE")
     θ_vec = θ
@@ -1590,7 +1645,9 @@ function _laplace_get_bstar!(cache::_LaplaceCache,
         end
     end
     ProgressMeter.finish!(p)
-    cache.θ_cache = copy(θ_vec)
+    if !(eltype(θ_vec) <: ForwardDiff.Dual)
+        cache.θ_cache = copy(θ_vec)
+    end
     return cache.bstar_cache.b_star
 end
 
@@ -2466,7 +2523,7 @@ function _laplace_objective_and_grad(dm::DataModel,
                                      multistart::LaplaceMultistartOptions,
                                      fastpath=nothing,
                                      rng::AbstractRNG,
-                                     serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial())
+                                     serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads())
     inner_opts = _resolve_inner_options(inner, dm)
     multistart_opts = _resolve_multistart_options(multistart, inner_opts)
 
@@ -2554,7 +2611,7 @@ function _laplace_objective_only(dm::DataModel,
                                  multistart::LaplaceMultistartOptions,
                                  fastpath=nothing,
                                  rng::AbstractRNG,
-                                 serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial())
+                                 serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads())
     inner_opts = _resolve_inner_options(inner, dm)
     multistart_opts = _resolve_multistart_options(multistart, inner_opts)
 
@@ -2629,7 +2686,7 @@ function _fit_model(dm::DataModel, method::Laplace, args...;
                     penalty::NamedTuple=NamedTuple(),
                     ode_args::Tuple=(),
                     ode_kwargs::NamedTuple=NamedTuple(),
-                    serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
+                    serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                     rng::AbstractRNG=Xoshiro(0),
                     theta_0_untransformed::Union{Nothing, ComponentArray}=nothing,
                     store_data_model::Bool=true)
@@ -2844,7 +2901,7 @@ function _fit_model(dm::DataModel, method::LaplaceMAP, args...;
                     penalty::NamedTuple=NamedTuple(),
                     ode_args::Tuple=(),
                     ode_kwargs::NamedTuple=NamedTuple(),
-                    serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
+                    serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                     rng::AbstractRNG=Xoshiro(0),
                     theta_0_untransformed::Union{Nothing, ComponentArray}=nothing,
                     store_data_model::Bool=true)

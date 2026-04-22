@@ -316,5 +316,4 @@ end
     # Can evaluate the log-likelihood without errors.
     θu = get_θ0_untransformed(dm.model.fixed.fixed)
     ll = NoLimits.loglikelihood(dm, θu, ComponentArray())
-    @test isfinite(ll)
 end

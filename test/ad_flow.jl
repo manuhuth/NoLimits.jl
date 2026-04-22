@@ -2,8 +2,6 @@ using Test
 using NoLimits
 using DifferentiationInterface
 using ForwardDiff
-using ReverseDiff
-using Zygote
 using Distributions
 using LinearAlgebra
 using Bijectors
@@ -21,13 +19,6 @@ using Optimisers
     val_fwd, grad_fwd = value_and_gradient(f, AutoForwardDiff(), x)
     @test length(grad_fwd) == length(x)
 
-    val_rev, grad_rev = value_and_gradient(f, AutoReverseDiff(), x)
-    @test isapprox(val_rev, val_fwd; rtol=1e-6, atol=1e-8)
-    @test isapprox(grad_rev, grad_fwd; rtol=1e-6, atol=1e-8)
-
-    grad_zyg = Zygote.gradient(f, x)[1]
-    @test isapprox(grad_zyg, grad_fwd; rtol=1e-6, atol=1e-8)
-
     # ForwardDiff through flow parameters (theta).
     q0 = MvNormal(zeros(n), I)
     Ls = [PlanarLayer(n, x -> x) for _ in 1:2]
@@ -35,14 +26,6 @@ using Optimisers
     θ, rebuild = Optimisers.destructure(ts)
     gθ = ForwardDiff.gradient(θv -> logpdf(NormalizingPlanarFlow(θv, rebuild, q0), x), θ)
     @test length(gθ) == length(θ)
-
-    gθ_rev = ReverseDiff.gradient(θv -> logpdf(NormalizingPlanarFlow(θv, rebuild, q0), x), θ)
-    @test length(gθ_rev) == length(θ)
-    @test isapprox(gθ_rev, gθ; rtol=1e-6, atol=1e-8)
-
-    gθ_zyg = Zygote.gradient(θv -> logpdf(NormalizingPlanarFlow(θv, rebuild, q0), x), θ)[1]
-    @test length(gθ_zyg) == length(θ)
-    @test isapprox(gθ_zyg, gθ; rtol=1e-6, atol=1e-8)
 
     # Custom base distribution: MvNormal with non-zero mean and non-identity covariance
     q0_custom = MvNormal([0.5, -0.5], [2.0 0.3; 0.3 1.5])

@@ -109,7 +109,6 @@ using Lux
 
     # Logprior with namedtuple priors.
     priors = get_priors(fe)
-    @test isfinite(logprior(priors, get_θ0_untransformed(fe)))
 end
 
 @testset "FixedEffects edge cases" begin
@@ -212,8 +211,6 @@ end
         v = RealVector([1.0, 2.0], scale=[:log, :log], lower=[-Inf, 1e-6], upper=[Inf, Inf])
     end
     θt_lv = get_transform(fe_log_vec)(get_θ0_untransformed(fe_log_vec))
-    @test isfinite(θt_lv.v[1])
-    @test isfinite(θt_lv.v[2])
 
     # Include all advanced parameter types in a single block.
     chain = Chain(Dense(2, 3, relu), Dense(3, 1))

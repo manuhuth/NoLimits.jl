@@ -4,71 +4,8 @@ using DataFrames
 using Distributions
 using Plots
 
-@testset "plot_data and plot_fits basic" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(0.1)
-            b = RealNumber(-0.2)
-            σ = RealNumber(0.3, scale=:log)
-        end
-
-        @covariates begin
-            z = Covariate()
-            t = Covariate()
-        end
-
-        @formulas begin
-            y ~ Normal(a + b * z, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [1, 1, 2, 2],
-        t = [0.0, 1.0, 0.0, 1.0],
-        z = [0.1, 0.2, 0.1, 0.2],
-        y = [0.15, 0.18, 0.14, 0.19]
-    )
-
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MLE())
-
-    p_data = plot_data(res)
-    @test p_data !== nothing
-
-    p_fits = plot_fits(res)
-    @test p_fits !== nothing
-
-    p_fits_dm = plot_fits(dm)
-    @test p_fits_dm !== nothing
-
-    p_data_dm = plot_data(dm)
-    @test p_data_dm !== nothing
-
-    p_data_z = plot_data(res, x_axis_feature=:z)
-    @test p_data_z !== nothing
-
-    p_fits_z = plot_fits(res, x_axis_feature=:z)
-    @test p_fits_z !== nothing
-
-    p_fits_dm_z = plot_fits(dm, x_axis_feature=:z)
-    @test p_fits_dm_z !== nothing
-
-    p_data_dm_z = plot_data(dm, x_axis_feature=:z)
-    @test p_data_dm_z !== nothing
-
-    mktempdir() do tmp
-        data_path = joinpath(tmp, "plot_data.png")
-        fits_path = joinpath(tmp, "plot_fits.png")
-        plot_data(res; plot_path=data_path)
-        plot_fits(res; plot_path=fits_path)
-        @test isfile(data_path)
-        @test isfile(fits_path)
-        @test_throws ErrorException plot_data(res; save_path=joinpath(tmp, "a.png"), plot_path=joinpath(tmp, "b.png"))
-    end
-
-    @test_throws ErrorException plot_fits(res; x_axis_feature=:missing_feature)
-
-end
+# Note: "plot_data and plot_fits basic", "plot_fits MCMC", "plot_fits VI"
+# have been moved to integration_plotting.jl (shared fixtures).
 
 @testset "plot_fits supports non-:t time_col" begin
     model = @Model begin
@@ -96,22 +33,13 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:age)
-    res = fit_model(dm, NoLimits.MLE())
+    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
 
-    p_fits = plot_fits(res)
-    @test p_fits !== nothing
-
-    p_fits_dm = plot_fits(dm)
-    @test p_fits_dm !== nothing
-
-    p_data = plot_data(res)
-    @test p_data !== nothing
-
-    p_data_dm = plot_data(dm)
-    @test p_data_dm !== nothing
-
-    p_fits_time = plot_fits(res, x_axis_feature=:age)
-    @test p_fits_time !== nothing
+    @test plot_fits(res) !== nothing
+    @test plot_fits(dm) !== nothing
+    @test plot_data(res) !== nothing
+    @test plot_data(dm) !== nothing
+    @test plot_fits(res, x_axis_feature=:age) !== nothing
 end
 
 @testset "plot_data/plot_fits skip missing scalar observations (regression)" begin
@@ -140,7 +68,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MLE())
+    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
 
     @test plot_data(res) !== nothing
     @test plot_data(dm) !== nothing
@@ -178,7 +106,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.Laplace())
+    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=2,), multistart_n=2, multistart_k=2))
 
     p_fits = plot_fits(res; plot_density=true)
     @test p_fits !== nothing
@@ -209,67 +137,9 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MLE())
+    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
 
     p_fits = plot_fits(res; plot_density=false)
-    @test p_fits !== nothing
-end
-
-@testset "plot_fits MCMC" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(0.2, prior=Normal(0.0, 1.0))
-            σ = RealNumber(0.3, scale=:log, prior=LogNormal(0.0, 0.5))
-        end
-
-        @covariates begin
-            t = Covariate()
-        end
-
-        @formulas begin
-            y ~ Normal(a*t, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [1, 1, 2, 2],
-        t = [0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, -0.1]
-    )
-
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, MCMC(; turing_kwargs=(n_samples=100, n_adapt=2, progress=false)))
-
-    p_fits = plot_fits(res; mcmc_draws=100, plot_mcmc_quantiles=true, mcmc_quantiles=[5, 95], mcmc_quantiles_alpha=0.8)
-    @test p_fits !== nothing
-end
-
-@testset "plot_fits VI" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(0.2, prior=Normal(0.0, 1.0))
-            σ = RealNumber(0.3, scale=:log, prior=LogNormal(0.0, 0.5))
-        end
-
-        @covariates begin
-            t = Covariate()
-        end
-
-        @formulas begin
-            y ~ Normal(a * t, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [1, 1, 2, 2],
-        t = [0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, -0.1]
-    )
-
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, VI(; turing_kwargs=(max_iter=30, progress=false)))
-
-    p_fits = plot_fits(res; mcmc_draws=30, plot_mcmc_quantiles=true, mcmc_quantiles=[5, 95], mcmc_quantiles_alpha=0.8)
     @test p_fits !== nothing
 end
 
@@ -333,19 +203,12 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MLE());
+    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
 
-    p_data = plot_data(res)
-    @test p_data !== nothing
-
-    p_fits = plot_fits(res)
-    @test p_fits !== nothing
-
-    p_fits_density = plot_fits(res; plot_density=true)
-    @test p_fits_density !== nothing
-
-    p_fits_dm = plot_fits(dm)
-    @test p_fits_dm !== nothing
+    @test plot_data(res) !== nothing
+    @test plot_fits(res) !== nothing
+    @test plot_fits(res; plot_density=true) !== nothing
+    @test plot_fits(dm) !== nothing
 end
 
 @testset "plot_fits inherits constants_re from fit result" begin
@@ -376,10 +239,10 @@ end
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     constants_re = (; η=(; B=0.0))
-    res = fit_model(dm, NoLimits.Laplace(); constants_re=constants_re)
+    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=2,), multistart_n=2, multistart_k=2);
+                    constants_re=constants_re)
 
-    p = plot_fits(res)
-    @test p !== nothing
+    @test plot_fits(res) !== nothing
 end
 
 @testset "plot_multistart_waterfall basic" begin
@@ -410,14 +273,13 @@ end
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     ms = NoLimits.Multistart(;
         dists=(; a=Normal(0.0, 0.5), b=Normal(0.0, 0.5)),
-        n_draws_requested=6,
-        n_draws_used=4,
+        n_draws_requested=4,
+        n_draws_used=3,
         sampling=:lhs,
     )
 
-    res_ms = fit_model(ms, dm, NoLimits.MLE(; optim_kwargs=(maxiters=80,)))
-    p = plot_multistart_waterfall(res_ms)
-    @test p !== nothing
+    res_ms = fit_model(ms, dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
+    @test plot_multistart_waterfall(res_ms) !== nothing
 
     mktempdir() do tmp
         p_path = joinpath(tmp, "plot_multistart_waterfall.png")
@@ -455,29 +317,18 @@ end
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     ms = NoLimits.Multistart(;
         dists=(; a=Normal(0.0, 0.4), b=Normal(0.0, 0.4), v=Normal(0.0, 0.25)),
-        n_draws_requested=6,
-        n_draws_used=4,
+        n_draws_requested=4,
+        n_draws_used=3,
         sampling=:lhs,
     )
 
-    res_ms = fit_model(ms, dm, NoLimits.MLE(; optim_kwargs=(maxiters=80,)))
+    res_ms = fit_model(ms, dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
 
-    p_points = plot_multistart_fixed_effect_variability(res_ms; k_best=3, mode=:points)
-    @test p_points !== nothing
-
-    p_quant = plot_multistart_fixed_effect_variability(
-        res_ms;
-        k_best=3,
-        mode=:quantiles,
-        quantiles=[0.1, 0.5, 0.9],
-        include_parameters=[:b],
-        exclude_parameters=[:a],
-    )
-    @test p_quant !== nothing
-
-    p_transformed = plot_multistart_fixed_effect_variability(res_ms; k_best=3, scale=:transformed)
-    @test p_transformed !== nothing
-
+    @test plot_multistart_fixed_effect_variability(res_ms; k_best=3, mode=:points) !== nothing
+    @test plot_multistart_fixed_effect_variability(
+        res_ms; k_best=3, mode=:quantiles, quantiles=[0.1, 0.5, 0.9],
+        include_parameters=[:b], exclude_parameters=[:a]) !== nothing
+    @test plot_multistart_fixed_effect_variability(res_ms; k_best=3, scale=:transformed) !== nothing
     @test_throws ErrorException plot_multistart_fixed_effect_variability(res_ms; mode=:invalid)
     @test_throws ErrorException plot_multistart_fixed_effect_variability(res_ms; include_parameters=[:missing_parameter])
 
@@ -514,11 +365,10 @@ end
     )
 
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res1 = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=80,)))
-    res2 = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=80,)); constants=(; a=0.2))
+    res1 = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
+    res2 = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)); constants=(; a=0.2))
 
-    p_single = plot_fits_comparison(res1)
-    @test p_single !== nothing
+    @test plot_fits_comparison(res1) !== nothing
 
     p_vec = plot_fits_comparison([res1, res2]; individuals_idx=1:2)
     @test p_vec !== nothing
@@ -536,7 +386,7 @@ end
     styled = PlotStyle(comparison_line_styles=Dict("baseline" => :dash))
     p_nt_style = plot_fits_comparison((baseline=res1, constrained=res2); individuals_idx=1:2, style=styled)
     @test p_nt_style !== nothing
-    idx_base = findfirst(==( "baseline"), [String(get(s.plotattributes, :label, "")) for s in p_nt_style.subplots[1].series_list])
+    idx_base = findfirst(==("baseline"), [String(get(s.plotattributes, :label, "")) for s in p_nt_style.subplots[1].series_list])
     @test idx_base !== nothing
     @test get(p_nt_style.subplots[1].series_list[idx_base].plotattributes, :linestyle, :solid) == :dash
 
@@ -555,8 +405,8 @@ end
     df_bad = copy(df)
     df_bad.y .= df_bad.y .+ 1.0
     dm_bad = DataModel(model, df_bad; primary_id=:ID, time_col=:t)
-    res_bad = fit_model(dm_bad, NoLimits.MLE(; optim_kwargs=(maxiters=40,)))
-@test_throws ErrorException plot_fits_comparison([res1, res_bad])
+    res_bad = fit_model(dm_bad, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
+    @test_throws ErrorException plot_fits_comparison([res1, res_bad])
 end
 
 @testset "plot_data/fits multivariate HMM" begin
@@ -593,55 +443,34 @@ end
     res = fit_model(dm, NoLimits.MLE(optim_kwargs=(; iterations=5)))
     n_marginals = 2
 
-    p_data_single = plot_data(res; marginal_layout=:single)
-    @test p_data_single !== nothing
-
+    @test plot_data(res; marginal_layout=:single) !== nothing
     p_data_vector = plot_data(res; marginal_layout=:vector)
     @test isa(p_data_vector, Vector{Plots.Plot})
     @test length(p_data_vector) == n_marginals
 
-    p_fits_single = plot_fits(res; marginal_layout=:single)
-    @test p_fits_single !== nothing
-
+    @test plot_fits(res; marginal_layout=:single) !== nothing
     p_fits_vector = plot_fits(res; marginal_layout=:vector)
     @test isa(p_fits_vector, Vector{Plots.Plot})
     @test length(p_fits_vector) == n_marginals
 
     n_inds = length(unique(df.ID))
-    p_hidden = plot_hidden_states(res)
-    @test p_hidden !== nothing
-
-    p_hidden_dm = plot_hidden_states(dm)
-    @test p_hidden_dm !== nothing
+    @test plot_hidden_states(res) !== nothing
+    @test plot_hidden_states(dm) !== nothing
 
     p_hidden_vector = plot_hidden_states(res; figure_layout=:vector)
     @test isa(p_hidden_vector, Vector{Plots.Plot})
     @test length(p_hidden_vector) == n_inds
+    @test length(plot_hidden_states(res; figure_layout=:vector, individuals_idx=1)) == 1
+    @test isa(plot_hidden_states(dm; figure_layout=:vector), Vector{Plots.Plot})
 
-    p_hidden_single_ind = plot_hidden_states(res; figure_layout=:vector, individuals_idx=1)
-    @test length(p_hidden_single_ind) == 1
-
-    p_hidden_dm_vector = plot_hidden_states(dm; figure_layout=:vector)
-    @test isa(p_hidden_dm_vector, Vector{Plots.Plot})
-
-    p_emission = plot_emission_distributions(res, time_idx=1, ncols=1)
-    @test p_emission !== nothing
-
-    p_emission_idx = plot_emission_distributions(res; time_idx=2)
-    @test p_emission_idx !== nothing
-
-    p_emission_point = plot_emission_distributions(res; time_point=1.0)
-    @test p_emission_point !== nothing
-
+    @test plot_emission_distributions(res, time_idx=1, ncols=1) !== nothing
+    @test plot_emission_distributions(res; time_idx=2) !== nothing
+    @test plot_emission_distributions(res; time_point=1.0) !== nothing
     p_emission_vector = plot_emission_distributions(res; figure_layout=:vector)
     @test isa(p_emission_vector, Vector{Plots.Plot})
     @test length(p_emission_vector) == n_inds
-
-    p_emission_dm = plot_emission_distributions(dm)
-    @test p_emission_dm !== nothing
-
-    p_emission_dm_vector = plot_emission_distributions(dm; figure_layout=:vector)
-    @test isa(p_emission_dm_vector, Vector{Plots.Plot})
+    @test plot_emission_distributions(dm) !== nothing
+    @test isa(plot_emission_distributions(dm; figure_layout=:vector), Vector{Plots.Plot})
 end
 
 @testset "plot_fits supports varying non-ODE random-effect groups" begin
@@ -673,6 +502,5 @@ end
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     constants_re = (; η_year=(; A=0.1, B=0.4, C=0.3))
 
-    p = plot_fits(dm; constants_re=constants_re, plot_density=true)
-    @test p !== nothing
+    @test plot_fits(dm; constants_re=constants_re, plot_density=true) !== nothing
 end

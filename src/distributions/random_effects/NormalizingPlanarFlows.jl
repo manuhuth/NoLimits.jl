@@ -1,6 +1,7 @@
 using NormalizingFlows, Bijectors, FunctionChains, Functors, Optimisers, Distributions
 import StaticArrays
 import Random: AbstractRNG, default_rng
+import Statistics
 
 export AbstractNormalizingFlow
 export NormalizingPlanarFlow
@@ -175,3 +176,8 @@ Distributions.rand(rng::AbstractRNG, d::NormalizingPlanarFlow, dims::Dims...) = 
 
 # Use the underlying transformed distribution's bijector for HMC/NUTS.
 Bijectors.bijector(d::NormalizingPlanarFlow) = Bijectors.bijector(d.base)
+
+# Estimate covariance via sampling — used only for MH step-size initialisation,
+# so an empirical approximation is sufficient.
+Statistics.cov(d::NormalizingPlanarFlow; n_samples::Int=2000) =
+    Statistics.cov(rand(default_rng(), d, n_samples)')

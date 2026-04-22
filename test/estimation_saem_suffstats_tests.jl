@@ -51,7 +51,7 @@ using Turing
     q_from_stats = (s, θ, dm) -> -0.5 * (s.s1^2 + s.s2^2)
 
     res = fit_model(dm, NoLimits.SAEM(; sampler=MH(),
-                             turing_kwargs=(n_samples=4, n_adapt=0, progress=false),
+                             turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
                              suffstats=suffstats,
                              q_from_stats=q_from_stats))
     @test res isa FitResult
@@ -104,7 +104,7 @@ end
     q_from_stats = (s, θ, dm) -> -0.5 * (s.s1^2 + s.s2^2)
 
     res = fit_model(dm, NoLimits.SAEM(; sampler=MH(),
-                             turing_kwargs=(n_samples=4, n_adapt=0, progress=false),
+                             turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
                              suffstats=suffstats,
                              q_from_stats=q_from_stats))
     @test res isa FitResult

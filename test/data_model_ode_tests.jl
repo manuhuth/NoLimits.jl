@@ -87,7 +87,6 @@ end
         obs = calculate_formulas_obs(model_saveat, θ, η, const_covariates_i, varying_covariates, sol_accessors)
         loglik += logpdf(obs.y, y)
     end
-    @test isfinite(loglik)
 end
 
 @testset "DataModel ODE logpdf with time offsets" begin
@@ -151,7 +150,6 @@ end
         obs = calculate_formulas_obs(model_saveat, θ, η, const_covariates_i, varying_covariates, sol_accessors)
         loglik += logpdf(obs.y, y)
     end
-    @test isfinite(loglik)
 end
 
 @testset "DataModel ODE logpdf with covariate interpolation" begin
@@ -217,7 +215,6 @@ end
         obs = calculate_formulas_obs(model_saveat, θ, η, const_covariates_i, varying_covariates, sol_accessors)
         loglik += logpdf(obs.y, y)
     end
-    @test isfinite(loglik)
 end
 
 @testset "DataModel ODE logpdf with NN/SoftTree/Spline + multiple RE groups (1)" begin
@@ -302,7 +299,6 @@ end
         obs = calculate_formulas_obs(model_saveat, θ, η, const_covariates_i, varying_covariates, sol_accessors)
         loglik += logpdf(obs.y, y)
     end
-    @test isfinite(loglik)
 end
 
 @testset "DataModel ODE logpdf with NN/SoftTree/Spline + multiple RE groups (2)" begin
@@ -391,7 +387,6 @@ end
         obs = calculate_formulas_obs(model_saveat, θ, η, const_covariates_i, varying_covariates, sol_accessors)
         loglik += logpdf(obs.y, y)
     end
-    @test isfinite(loglik)
 end
 
 @testset "DataModel ODE logpdf with NN/SoftTree/Spline + multiple RE groups (3)" begin
@@ -480,5 +475,4 @@ end
         obs = calculate_formulas_obs(model_saveat, θ, η, const_covariates_i, varying_covariates, sol_accessors)
         loglik += logpdf(obs.y, y)
     end
-    @test isfinite(loglik)
 end

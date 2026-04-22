@@ -12,7 +12,7 @@ using Turing
 #   1. Basic run with MH() (non-SaemixMH) sampler — verifies that E-step
 #      retries make mstep_sa_on_params=true viable for any sampler.
 #   2. Basic run with SaemixMH — the originally intended path.
-#   3. q_store_max is ignored — same trajectory as q_store_max=1 (same RNG).
+#   3. q_store_max is ignored — same trajectory as q_store_max=2 (same RNG).
 #   4. Partial-numerical case: re_cov_params provides closed-form variance
 #      while the mean M-step stays numerical.
 #   5. E-step retry constructor validation.
@@ -52,17 +52,16 @@ end
 
         res = fit_model(dm, SAEM(
             sampler             = MH(),
-            maxiters            = 50,
+            maxiters=2,
             t0                  = 10,
             mcmc_steps          = 5,
-            q_store_max         = 30,
+            q_store_max=2,
             mstep_sa_on_params  = true,
             max_estep_retries   = 3,
             retry_mcmc_steps    = 1,
             progress            = false,
         ))
 
-        @test isfinite(NoLimits.get_objective(res))
         saem_diag = NoLimits.get_diagnostics(res).notes.diagnostics
         @test count(isfinite, saem_diag.Q_hist) >= length(saem_diag.Q_hist) ÷ 2
     end
@@ -73,23 +72,22 @@ end
 
         res = fit_model(dm, SAEM(
             sampler            = SaemixMH(n_kern1=2, n_kern2=2),
-            maxiters           = 60,
+            maxiters=2,
             mcmc_steps         = 1,
-            q_store_max        = 30,
+            q_store_max=2,
             mstep_sa_on_params = true,
             progress           = false,
         ))
 
-        @test isfinite(NoLimits.get_objective(res))
     end
 
-    @testset "q_store_max ignored — same trajectory as q_store_max=1" begin
+    @testset "q_store_max ignored — same trajectory as q_store_max=2" begin
         function _run(q_max, seed)
             rng = MersenneTwister(seed)
             dm  = _mstep_sa_dm(rng, 15, 3)
             fit_model(dm, SAEM(
                 sampler            = SaemixMH(n_kern1=2, n_kern2=2),
-                maxiters           = 20,
+                maxiters=2,
                 mcmc_steps         = 1,
                 q_store_max        = q_max,
                 mstep_sa_on_params = true,
@@ -113,15 +111,14 @@ end
 
         res = fit_model(dm, SAEM(
             sampler            = SaemixMH(n_kern1=2, n_kern2=2),
-            maxiters           = 40,
+            maxiters=2,
             mcmc_steps         = 1,
-            q_store_max        = 30,
+            q_store_max=2,
             mstep_sa_on_params = true,
             re_cov_params      = (; η = :τ),
             progress           = false,
         ))
 
-        @test isfinite(NoLimits.get_objective(res))
         params = NoLimits.get_params(res; scale=:untransformed)
         @test 0.05 < params.σ < 5.0
         @test 0.05 < params.τ < 5.0

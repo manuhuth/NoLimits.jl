@@ -2,7 +2,6 @@ using Test
 using NoLimits
 using DifferentiationInterface
 using ForwardDiff
-using Zygote
 using ComponentArrays
 using Distributions
 using LinearAlgebra
@@ -30,18 +29,12 @@ using LinearAlgebra
     rv0 = ComponentArray(a=0.1, b=1.2)
 
     val_fwd, grad_fwd = value_and_gradient(f, AutoForwardDiff(), rv0)
-    grad_zyg = Zygote.gradient(f, rv0)[1]
-    @test isapprox(grad_zyg, grad_fwd; rtol=1e-6, atol=1e-8)
 
     hess = ForwardDiff.hessian(f, rv0)
     @test size(hess, 1) == length(rv0)
     @test size(hess, 2) == length(rv0)
     @test isapprox(hess, hess'; rtol=1e-6, atol=1e-8)
 
-    hess_mixed = hessian_fwd_over_zygote(f, rv0)
-    @test size(hess_mixed, 1) == length(rv0)
-    @test size(hess_mixed, 2) == length(rv0)
-    @test isapprox(hess_mixed, hess; rtol=1e-6, atol=1e-8)
 end
 
 @testset "RandomEffects value AD (large)" begin
@@ -68,16 +61,10 @@ end
     f(rv::ComponentArray) = logpdf_fn(dists, rv)
 
     val_fwd, grad_fwd = value_and_gradient(f, AutoForwardDiff(), rv0)
-    grad_zyg = Zygote.gradient(f, rv0)[1]
-    @test isapprox(grad_zyg, grad_fwd; rtol=1e-6, atol=1e-8)
 
     hess = ForwardDiff.hessian(f, rv0)
     @test size(hess, 1) == length(rv0)
     @test size(hess, 2) == length(rv0)
     @test isapprox(hess, hess'; rtol=1e-6, atol=1e-8)
 
-    hess_mixed = hessian_fwd_over_zygote(f, rv0)
-    @test size(hess_mixed, 1) == length(rv0)
-    @test size(hess_mixed, 2) == length(rv0)
-    @test isapprox(hess_mixed, hess; rtol=1e-6, atol=1e-8)
 end

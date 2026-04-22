@@ -585,6 +585,10 @@ Base.eltype(::CenteredREMeasure{T}) where T = T
 
 Build a `CenteredREMeasure` for AGHQ, centering the quadrature nodes at `b_star`
 and scaling by the inverse Cholesky of the negative log-posterior Hessian at b*.
+
+Returns `nothing` if the Cholesky factorization of `-H` fails (e.g. due to a
+near-flat or indefinite Hessian). The caller is responsible for handling this case,
+for example by falling back to a sampling-based marginal likelihood estimator.
 """
 function build_centered_re_measure(
     b_star::AbstractVector,
@@ -600,9 +604,7 @@ function build_centered_re_measure(
     T = eltype(b_star)
     H = _laplace_hessian_b(dm, batch_info, θu, b_star, const_cache, ll_cache, nothing, bi)
     chol, _ = _laplace_cholesky_negH(H; jitter=jitter, max_tries=max_tries)
-    (chol === nothing || chol.info != 0) &&
-        error("AGHQ: Cholesky of negative log-posterior Hessian failed at EBE mode for batch $bi. " *
-              "The posterior may be flat or b* is not a true mode. Try increasing `jitter`.")
+    (chol === nothing || chol.info != 0) && return nothing
     L = chol.L  # lower triangular, L*L' = -H
     S = LowerTriangular(inv(Matrix(L)))
     log_det_S = -sum(log, diag(L))

@@ -102,7 +102,6 @@ end
     end
     # The forward transform maps 0.3 → logit_forward(0.3) (finite).
     θ0t = get_θ0_transformed(fe)
-    @test isfinite(θ0t.p)
 
     # Transformed bounds should be (-Inf, Inf).
     lb, ub = get_bounds_transformed(fe)

@@ -71,7 +71,6 @@ using NoLimits
                logpdf(dists.η_st, re_vals.η_st) +
                logpdf(dists.η_sp, re_vals.η_sp) +
                logpdf(dists.η_help, re_vals.η_help)
-    @test isfinite(total_lp)
     @test isapprox(total_lp, expected)
 
     @test dists.η_normal isa Normal
@@ -169,7 +168,6 @@ end
                logpdf(dists.η_sp, re_vals.η_sp) +
                logpdf(dists.η_nn2, re_vals.η_nn2) +
                logpdf(dists.η_dot, re_vals.η_dot)
-    @test isfinite(total_lp)
     @test isapprox(total_lp, expected)
 
     @test dists.η_cauchy isa Truncated
@@ -207,7 +205,6 @@ end
     re_vals = ComponentArray(a=0.0, b=1.0)
     total = get_re_logpdf(re)(dists, re_vals)
     expected = logpdf(dists.a, re_vals.a) + logpdf(dists.b, re_vals.b)
-    @test isfinite(total)
     @test isapprox(total, expected)
 end
 

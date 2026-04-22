@@ -2,7 +2,7 @@ using LinearAlgebra
 using Random
 
 @inline function _is_re_laplace_family(method::FittingMethod)
-    return method isa Laplace || method isa LaplaceMAP || method isa FOCEI || method isa FOCEIMAP
+    return method isa Laplace || method isa LaplaceMAP
 end
 
 function _resolve_wald_re_approx_method(source_method::FittingMethod;
@@ -17,22 +17,20 @@ function _resolve_wald_re_approx_method(source_method::FittingMethod;
     end
 
     if !(source_method isa MCEM || source_method isa SAEM)
-        error("Wald UQ for random-effects models currently supports Laplace, LaplaceMAP, FOCEI, FOCEIMAP, MCEM, SAEM, GHQuadrature, and GHQuadratureMAP.")
+        error("Wald UQ for random-effects models currently supports Laplace, LaplaceMAP, MCEM, SAEM, GHQuadrature, and GHQuadratureMAP.")
     end
 
     if re_approx_method !== nothing
         _is_re_laplace_family(re_approx_method) ||
-            error("re_approx_method must be a Laplace/LaplaceMAP/FOCEI/FOCEIMAP method instance.")
+            error("re_approx_method must be a Laplace/LaplaceMAP method instance.")
         return re_approx_method
     end
 
     approx = re_approx == :auto ? :laplace : re_approx
     if approx == :laplace
         return Laplace()
-    elseif approx == :focei
-        return FOCEI()
     end
-    error("For MCEM/SAEM Wald UQ, re_approx must be :auto, :laplace, or :focei.")
+    error("For MCEM/SAEM Wald UQ, re_approx must be :auto or :laplace.")
 end
 
 function _compute_uq_wald_no_re(res::FitResult;
@@ -280,8 +278,7 @@ function _compute_uq_wald_re(res::FitResult;
     ebe_cache = _init_laplace_eval_cache(length(batch_infos), Float64)
     cache_opts = LaplaceCacheOptions(0.0)
     use_penalty = !isempty(keys(penalty_use))
-    use_prior = approx_method isa LaplaceMAP || approx_method isa FOCEIMAP || approx_method isa GHQuadratureMAP
-    fallback_tracker = approx_method isa FOCEI || approx_method isa FOCEIMAP ? _FOCEIFallbackTracker() : nothing
+    use_prior = approx_method isa LaplaceMAP || approx_method isa GHQuadratureMAP
     seed = rand(rng, UInt64)
 
     function _θu_from_active(x_active::AbstractVector)
@@ -311,7 +308,7 @@ function _compute_uq_wald_re(res::FitResult;
                 total += bll
             end
             -total
-        elseif approx_method isa Laplace || approx_method isa LaplaceMAP
+        else
             _laplace_objective_only(dm, batch_infos, θu, const_cache, ll_cache, ebe_cache;
                                     inner=approx_method.inner,
                                     hessian=approx_method.hessian,
@@ -319,16 +316,6 @@ function _compute_uq_wald_re(res::FitResult;
                                     multistart=approx_method.multistart,
                                     rng=Random.Xoshiro(seed),
                                     serialization=serialization_use)
-        else
-            _focei_objective_only(dm, batch_infos, θu, const_cache, ll_cache, ebe_cache;
-                                  inner=approx_method.inner,
-                                  info_opts=approx_method.info,
-                                  fallback_hessian=approx_method.fallback_hessian,
-                                  cache_opts=cache_opts,
-                                  multistart=approx_method.multistart,
-                                  rng=Random.Xoshiro(seed),
-                                  fallback_tracker=fallback_tracker,
-                                  serialization=serialization_use)
         end
         obj == Inf && return Inf
 
@@ -380,7 +367,7 @@ function _compute_uq_wald_re(res::FitResult;
                               _symmetrize_psd_params(θu, fe),
                               const_cache, ll_cache_local, approx_method.level)
                     bll == -Inf ? Inf : -bll
-                elseif approx_method isa Laplace || approx_method isa LaplaceMAP
+                else
                     _laplace_objective_only(dm, info_single, θu, const_cache, ll_cache, ebe_cache_i;
                                             inner=approx_method.inner,
                                             hessian=approx_method.hessian,
@@ -388,16 +375,6 @@ function _compute_uq_wald_re(res::FitResult;
                                             multistart=approx_method.multistart,
                                             rng=Random.Xoshiro(seed_i),
                                             serialization=serialization_use)
-                else
-                    _focei_objective_only(dm, info_single, θu, const_cache, ll_cache, ebe_cache_i;
-                                          inner=approx_method.inner,
-                                          info_opts=approx_method.info,
-                                          fallback_hessian=approx_method.fallback_hessian,
-                                          cache_opts=cache_opts,
-                                          multistart=approx_method.multistart,
-                                          rng=Random.Xoshiro(seed_i),
-                                          fallback_tracker=nothing,
-                                          serialization=serialization_use)
                 end
                 return obj_bi == Inf ? Inf : Float64(obj_bi)
             end
@@ -439,35 +416,17 @@ function _compute_uq_wald_re(res::FitResult;
     intervals_n_use = ext !== nothing ? ext[4] : intervals_n
     Vn_use = draws_n_use !== nothing ? _cov_from_draws(draws_n_use) : Vn
 
-    diag = if fallback_tracker === nothing
-        merge((;
-            hessian_backend=backend_used,
-            hessian_reduced=true,
-            inactive_fixed_effects_held_constant=true,
-            vcov=vcov,
-            approximation_method=_method_symbol(approx_method),
-            pseudo_inverse=pseudo_inverse,
-            n_draws=n_draws,
-            n_active_parameters=length(active_idx),
-            coordinate_transforms=active_kinds,
-        ), vcov_diag)
-    else
-        fb = _focei_fallback_notes(fallback_tracker)
-        merge((;
-            hessian_backend=backend_used,
-            hessian_reduced=true,
-            inactive_fixed_effects_held_constant=true,
-            vcov=vcov,
-            approximation_method=_method_symbol(approx_method),
-            pseudo_inverse=pseudo_inverse,
-            n_draws=n_draws,
-            n_active_parameters=length(active_idx),
-            coordinate_transforms=active_kinds,
-            focei_fallback_total=fb.focei_fallback_total,
-            focei_fallback_info_logdet=fb.focei_fallback_info_logdet,
-            focei_fallback_mode_hessian=fb.focei_fallback_mode_hessian,
-        ), vcov_diag)
-    end
+    diag = merge((;
+        hessian_backend=backend_used,
+        hessian_reduced=true,
+        inactive_fixed_effects_held_constant=true,
+        vcov=vcov,
+        approximation_method=_method_symbol(approx_method),
+        pseudo_inverse=pseudo_inverse,
+        n_draws=n_draws,
+        n_active_parameters=length(active_idx),
+        coordinate_transforms=active_kinds,
+    ), vcov_diag)
 
     return UQResult(
         :wald,
