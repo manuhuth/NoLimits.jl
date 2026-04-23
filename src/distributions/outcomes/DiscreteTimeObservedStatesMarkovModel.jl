@@ -8,9 +8,10 @@ using Distributions, Random
     DiscreteTimeObservedStatesMarkovModel(transition_matrix, emission_dists, initial_dist, state_labels)
     <: Distribution{Univariate, Discrete}
 
-A discrete-time Markov model with **fully observed** states. Unlike the HMM variants, the latent
-state is directly observable — the observation IS the state label. The posterior after observing
-a state is therefore a one-hot vector (certainty), making forward filtering exact and efficient.
+A discrete-time Markov model with observed states. Unlike the HMM variants, the latent state is
+directly observable when a single state label is provided. Set-valued labels are also supported
+to represent censored/partially observed states (e.g. `(2, 3, 4)` means state is compatible with
+any of 2, 3, or 4).
 
 Implements the `Distributions.jl` interface (`logpdf`, `pdf`, `rand`, `mean`, `var`, `cdf`).
 Used as an observation distribution in `@formulas` blocks.
@@ -68,12 +69,6 @@ function DiscreteTimeObservedStatesMarkovModel(
         transition_matrix, initial_dist, collect(1:n_states))
 end
 
-# --- State label lookup ---
-
-function _find_state_index(dist::DiscreteTimeObservedStatesMarkovModel, y)
-    return findfirst(==(y), dist.state_labels)
-end
-
 # --- Hidden state probabilities (shared interface with HMM variants) ---
 
 """
@@ -90,25 +85,51 @@ end
 """
     posterior_hidden_states(dist::DiscreteTimeObservedStatesMarkovModel, y)
 
-Returns the one-hot posterior after observing state `y`. Since the state is fully observed,
-the posterior is degenerate: probability 1 at the index of `y`, 0 elsewhere.
+For a scalar observed state `y`, returns the one-hot posterior after observing that state.
 
-Returns a zero vector if `y` is not found in `state_labels`.
+For a set-valued observation (for example `(2, 3, 4)`), returns the prior restricted to
+compatible states and renormalized. This matches msm-style censored-state handling where
+the likelihood contribution is the sum of prior probabilities over compatible states.
+
+Returns a zero vector if no compatible state is found.
 """
 function posterior_hidden_states(dist::DiscreteTimeObservedStatesMarkovModel, y)
-    idx = _find_state_index(dist, y)
-    post = zeros(Float64, dist.n_states)
-    idx !== nothing && (post[idx] = 1.0)
+    idxs = _hmm_compatible_state_indices(dist.state_labels, y)
+    p = probabilities_hidden_states(dist)
+    T = eltype(p)
+    post = zeros(T, dist.n_states)
+    isempty(idxs) && return post
+    if !_is_state_set_observation(y) && length(idxs) == 1
+        post[idxs[1]] = one(T)
+        return post
+    end
+    mass = zero(T)
+    for idx in idxs
+        mass += p[idx]
+    end
+    (isfinite(mass) && mass > zero(T)) || return post
+    inv_mass = inv(mass)
+    for idx in idxs
+        post[idx] = p[idx] * inv_mass
+    end
     return post
 end
 
 # --- Distributions.jl interface ---
 
 function Distributions.logpdf(dist::DiscreteTimeObservedStatesMarkovModel, y)
-    idx = _find_state_index(dist, y)
-    idx === nothing && return -Inf
+    idxs = _hmm_compatible_state_indices(dist.state_labels, y)
+    isempty(idxs) && return -Inf
     p = probabilities_hidden_states(dist)
-    return log(p[idx])
+    if !_is_state_set_observation(y) && length(idxs) == 1
+        return log(p[idxs[1]])
+    end
+    mass = zero(eltype(p))
+    for idx in idxs
+        mass += p[idx]
+    end
+    (isfinite(mass) && mass > zero(eltype(p))) || return -Inf
+    return log(mass)
 end
 
 Distributions.pdf(dist::DiscreteTimeObservedStatesMarkovModel, y) = exp(logpdf(dist, y))

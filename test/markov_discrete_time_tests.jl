@@ -91,7 +91,22 @@ end
     @test_throws MethodError cdf(dist, :healthy)
 end
 
-# ── 4. Forward-filter correctness (integer states, no missing) ─────────────────
+# ── 4. Set-valued (censored) observations ──────────────────────────────────────
+@testset "DT observed MC: set-valued observations" begin
+    T = [0.8 0.2; 0.3 0.7]
+    dist = DiscreteTimeObservedStatesMarkovModel(T, Categorical([1.0, 0.0]))
+    p = probabilities_hidden_states(dist)  # [0.8, 0.2]
+
+    @test isapprox(logpdf(dist, (1, 2)), log(1.0); atol=1e-12)
+    @test isapprox(logpdf(dist, (2, 99)), log(p[2]); atol=1e-12)
+    @test logpdf(dist, (99, 100)) == -Inf
+
+    @test isapprox(posterior_hidden_states(dist, (1, 2)), p; atol=1e-12)
+    @test isapprox(posterior_hidden_states(dist, (2, 99)), [0.0, 1.0]; atol=1e-12)
+    @test isapprox(posterior_hidden_states(dist, (99, 100)), [0.0, 0.0]; atol=1e-12)
+end
+
+# ── 5. Forward-filter correctness (integer states, no missing) ─────────────────
 @testset "DT observed MC: forward-filter loglikelihood correctness" begin
     model = @Model begin
         @covariates begin
@@ -127,7 +142,7 @@ end
     @test isapprox(ll, expected; atol=1e-12)
 end
 
-# ── 5. Missing observations propagate state distribution ──────────────────────
+# ── 6. Missing observations propagate state distribution ──────────────────────
 @testset "DT observed MC: missing observations propagate state" begin
     model = @Model begin
         @covariates begin
@@ -163,7 +178,44 @@ end
     @test isapprox(ll, expected; atol=1e-12)
 end
 
-# ── 6. Symbol-label DataModel ──────────────────────────────────────────────────
+# ── 7. Set-valued labels through DataModel ─────────────────────────────────────
+@testset "DT observed MC: set-valued labels through DataModel" begin
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+
+        @fixedEffects begin
+            dummy = RealNumber(0.0)
+        end
+
+        @formulas begin
+            T_mat = [0.7 0.3; 0.2 0.8]
+            y ~ DiscreteTimeObservedStatesMarkovModel(T_mat, Categorical([0.6, 0.4]))
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 1, 1],
+        t  = [0.0, 1.0, 2.0, 3.0],
+        y  = Any[1, (1, 2), missing, (2,)]
+    )
+
+    dm  = DataModel(model, df; primary_id=:ID, time_col=:t)
+    θ   = get_θ0_untransformed(dm.model.fixed.fixed)
+    ll  = NoLimits.loglikelihood(dm, θ, ComponentArray())
+
+    dist_ref = DiscreteTimeObservedStatesMarkovModel(
+        [0.7 0.3; 0.2 0.8],
+        Categorical([0.6, 0.4])
+    )
+    expected = _recursive_markov_loglikelihood(fill(dist_ref, nrow(df)), df.y)
+
+    @test isfinite(ll)
+    @test isapprox(ll, expected; atol=1e-12)
+end
+
+# ── 8. Symbol-label DataModel ──────────────────────────────────────────────────
 @testset "DT observed MC: symbol labels through DataModel" begin
     model = @Model begin
         @covariates begin
@@ -202,7 +254,7 @@ end
     @test isapprox(ll, expected; atol=1e-12)
 end
 
-# ── 7. ForwardDiff gradient ────────────────────────────────────────────────────
+# ── 9. ForwardDiff gradient ────────────────────────────────────────────────────
 @testset "DT observed MC: ForwardDiff gradient through transition parameters" begin
     model = @Model begin
         @covariates begin
@@ -237,7 +289,7 @@ end
     @test all(isfinite, g)
 end
 
-# ── 8. MLE / MAP / MCMC ────────────────────────────────────────────────────────
+# ── 10. MLE / MAP / MCMC ───────────────────────────────────────────────────────
 @testset "DT observed MC: MLE/MAP/MCMC" begin
     model = @Model begin
         @covariates begin
