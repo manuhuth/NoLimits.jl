@@ -450,7 +450,7 @@ SAEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(
      sa_phase2_kappa::Float64=-1.0,
      sa_schedule_fn=nothing,
      n_chains::Int=1,
-     auto_small_n_chains::Bool=false,
+     auto_small_n_chains::Bool=true,
      small_n_chain_target::Int=50,
      sa_anneal_targets::NamedTuple=NamedTuple(),
      sa_anneal_schedule::Symbol=:exponential,

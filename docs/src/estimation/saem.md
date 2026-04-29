@@ -99,7 +99,7 @@ method = NoLimits.SAEM(;
 
     # Multi-chain E-step
     n_chains=1,
-    auto_small_n_chains=false,
+    auto_small_n_chains=true,
     small_n_chain_target=50,
 
     # SA variance annealing
@@ -298,7 +298,7 @@ where `k2 = iter - sa_burnin_iters - sa_phase1_iters`.
 Running multiple independent MCMC chains per batch and averaging their samples before the SA update reduces variance in the E-step at the cost of proportionally more likelihood evaluations.
 
 - `n_chains::Int = 1`: number of MCMC chains run per batch per iteration.
-- `auto_small_n_chains::Bool = false`: when `true`, automatically increases `n_chains` for small datasets so that the total number of E-step samples (`n_batches × n_chains`) reaches `small_n_chain_target`. Useful when the dataset has few individuals and few batches.
+- `auto_small_n_chains::Bool = true`: automatically increases `n_chains` for small datasets so that the total number of E-step samples (`n_batches × n_chains`) reaches `small_n_chain_target`. Useful when the dataset has few individuals and few batches.
 - `small_n_chain_target::Int = 50`: target total sample count used by `auto_small_n_chains`.
 
 ### SA Variance Annealing
