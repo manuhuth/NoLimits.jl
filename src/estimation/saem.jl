@@ -294,10 +294,10 @@ function _saem_batches!(buf::Vector{Int}, update_schedule, nbatches::Int, iter::
         Random.randperm!(rng, buf)
         resize!(buf, m)
         return buf
-    elseif update_schedule isa Function
+    elseif hasmethod(update_schedule, Tuple{Int, Int, AbstractRNG})
         return update_schedule(nbatches, iter, rng)
     else
-        error("Invalid update_schedule. Use :all, Int minibatch size, or a function (nbatches, iter, rng) -> Vector{Int}.")
+        error("Invalid update_schedule. Use :all, Int minibatch size, or a callable (nbatches, iter, rng) -> Vector{Int}.")
     end
 end
 
