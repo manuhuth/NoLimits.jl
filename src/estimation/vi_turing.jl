@@ -12,8 +12,8 @@ using Random
 """
     VI(; turing_kwargs=NamedTuple()) <: FittingMethod
 
-Variational inference via Turing/AdvancedVI for models with or without random effects.
-All free fixed effects and random effects must have prior distributions.
+Variational inference via Turing/AdvancedVI for **fixed-effects-only** models.
+All free fixed effects must have prior distributions.
 
 `turing_kwargs` controls VI behavior and is forwarded to `Turing.vi` after removing
 NoLimits-managed keys:
@@ -23,6 +23,10 @@ NoLimits-managed keys:
 - `adtype` (default: `Turing.AutoForwardDiff()`)
 - `progress` / `show_progress` (default: `false`)
 - `convergence_window`, `convergence_rtol`, `convergence_atol` (NoLimits convergence rule)
+
+!!! note
+    VI is not supported for models with random effects. Use `MCMC` for full Bayesian
+    inference on mixed-effects models.
 """
 struct VI{K} <: FittingMethod
     turing_kwargs::K
@@ -169,7 +173,7 @@ function _fit_model(dm::DataModel, method::VI, args...;
                     penalty::NamedTuple=NamedTuple(),
                     ode_args::Tuple=(),
                     ode_kwargs::NamedTuple=NamedTuple(),
-                    serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
+                    serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                     rng::AbstractRNG=Xoshiro(0),
                     theta_0_untransformed::Union{Nothing, ComponentArray}=nothing,
                     store_data_model::Bool=true)
@@ -183,6 +187,13 @@ function _fit_model(dm::DataModel, method::VI, args...;
                   theta_0_untransformed=theta_0_untransformed,
                   store_data_model=store_data_model)
     re_names = get_re_names(dm.model.random.random)
+    if !isempty(re_names)
+        error(
+            "VI is not supported for models with random effects. " *
+            "Use MCMC for full Bayesian inference on mixed-effects models, or " *
+            "use Laplace/LaplaceMAP/MCEM/SAEM for likelihood-based mixed-effects estimation."
+        )
+    end
     isempty(keys(penalty)) || error("VI does not support penalty terms. Use priors and MAP instead.")
 
     fe = dm.model.fixed.fixed
@@ -194,8 +205,8 @@ function _fit_model(dm::DataModel, method::VI, args...;
         name in fixed_set || error("Unknown constant parameter $(name).")
     end
     free_names = [n for n in fixed_names if !(n in keys(constants))]
-    if isempty(free_names) && isempty(re_names)
-        error("VI requires at least one sampled parameter. For fixed-effects-only models, leave at least one fixed effect free.")
+    if isempty(free_names)
+        error("VI requires at least one sampled parameter. Leave at least one fixed effect free.")
     end
     for name in free_names
         haskey(priors, name) || error("VI requires priors on all free fixed effects. Missing prior for $(name).")
@@ -214,62 +225,9 @@ function _fit_model(dm::DataModel, method::VI, args...;
 
     free_names_t = Tuple(free_names)
     priors_nt = NamedTuple{free_names_t}(Tuple(getfield(priors, n) for n in free_names))
-    model = nothing
-    if isempty(re_names)
-        fname = _build_turing_model(fixed_names, free_names)
-        model_fn = Base.invokelatest(getfield, @__MODULE__, fname)
-        model = Base.invokelatest(model_fn, dm, cache, serialization, priors_nt, constants)
-    else
-        fixed_maps = _normalize_constants_re(dm, constants_re)
-        _build_constants_cache(dm, fixed_maps)
-        const_covs = [ind.const_cov for ind in dm.individuals]
-        dists_builder = get_create_random_effect_distribution(dm.model.random.random)
-        model_funs = get_model_funs(dm.model)
-        helpers = get_helper_funs(dm.model)
-        re_pairs = Pair{Symbol, Any}[]
-        for re in re_names
-            reps_map = Dict{Any, Int}()
-            for (i, ind) in enumerate(dm.individuals)
-                g = getfield(ind.re_groups, re)
-                if g isa AbstractVector
-                    for gv in g
-                        haskey(reps_map, gv) || (reps_map[gv] = i)
-                    end
-                else
-                    haskey(reps_map, g) || (reps_map[g] = i)
-                end
-            end
-            levels_all = getfield(dm.re_group_info.values, re)
-            fixed = haskey(fixed_maps, re) ? getfield(fixed_maps, re) : Dict{Any, Any}()
-            levels_free = Any[]
-            reps = Int[]
-            for lvl in levels_all
-                haskey(fixed, lvl) && continue
-                push!(levels_free, lvl)
-                push!(reps, reps_map[lvl])
-            end
-            level_to_index = Dict{Any, Int}()
-            for (i, lvl) in enumerate(levels_free)
-                level_to_index[lvl] = i
-            end
-            dim = 0
-            is_scalar = true
-            if !isempty(levels_free)
-                rep = reps[1]
-                θ0_re = _symmetrize_psd_params(get_θ0_untransformed(fe), fe)
-                dists = dists_builder(θ0_re, const_covs[rep], model_funs, helpers)
-                dist = getproperty(dists, re)
-                is_scalar = dist isa Distributions.UnivariateDistribution
-                dim = is_scalar ? 1 : length(dist)
-                dim == 0 && error("Random effect $(re) has zero dimension.")
-            end
-            push!(re_pairs, re => _MCMCReMeta(levels_free, level_to_index, reps, dim, is_scalar))
-        end
-        re_meta = NamedTuple(re_pairs)
-        fname = _build_turing_model_re(fixed_names, free_names, re_names)
-        model_fn = Base.invokelatest(getfield, @__MODULE__, fname)
-        model = Base.invokelatest(model_fn, dm, cache, serialization, priors_nt, constants, re_names, re_meta, fixed_maps, const_covs)
-    end
+    fname = _build_turing_model(fixed_names, free_names)
+    model_fn = Base.invokelatest(getfield, @__MODULE__, fname)
+    model = Base.invokelatest(model_fn, dm, cache, serialization, priors_nt, constants)
     f_old = model.f
     f_wrap = (fargs...)->Base.invokelatest(f_old, fargs...)
     miss = typeof(model).parameters[4]

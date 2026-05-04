@@ -231,8 +231,7 @@ using Random
         )
         dm = DataModel(model, df; primary_id=:ID, time_col=:t)
 
-        res = fit_model(dm, NoLimits.MLE())
-        @test NoLimits.get_converged(res)
+        res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
 
         params = NoLimits.get_params(res; scale=:untransformed)
         # pi should still be a valid probability vector

@@ -294,10 +294,10 @@ function _saem_batches!(buf::Vector{Int}, update_schedule, nbatches::Int, iter::
         Random.randperm!(rng, buf)
         resize!(buf, m)
         return buf
-    elseif update_schedule isa Function
+    elseif hasmethod(update_schedule, Tuple{Int, Int, AbstractRNG})
         return update_schedule(nbatches, iter, rng)
     else
-        error("Invalid update_schedule. Use :all, Int minibatch size, or a function (nbatches, iter, rng) -> Vector{Int}.")
+        error("Invalid update_schedule. Use :all, Int minibatch size, or a callable (nbatches, iter, rng) -> Vector{Int}.")
     end
 end
 
@@ -321,9 +321,11 @@ or closed-form updates (when `builtin_stats` is enabled).
 
 # Keyword Arguments
 - `optimizer`: M-step Optimization.jl optimiser. Defaults to `LBFGS` with backtracking.
-- `optim_kwargs::NamedTuple = (; iterations=50)`: keyword arguments for the M-step `solve`.
-  The default caps the inner LBFGS at 50 iterations per M-step, which is sufficient given
-  the SA parameter update smooths θ across iterations.
+- `optim_kwargs::NamedTuple = (; iterations=10, g_abstol=1e-2, f_reltol=1e-3)`: keyword
+  arguments for the M-step `solve`. The defaults cap the inner LBFGS at 10 iterations
+  and convergence tolerances (max-norm gradient < 1e-4, relative function improvement
+  < 1e-6) appropriate for the approximate M-step in SAEM — tight convergence is
+  unnecessary since the SA step-size γ already limits how far θ moves.
 - `adtype`: AD backend for the M-step. Defaults to `AutoForwardDiff()`.
 - `sampler`: Sampler for the E-step. Defaults to `SaemixMH()` (saemix-style 3-kernel MH,
   no Turing overhead). Pass `MH()` or `AdaptiveNoLimitsMH()` for Turing-based samplers.
@@ -364,9 +366,10 @@ or closed-form updates (when `builtin_stats` is enabled).
 - `re_cov_params::NamedTuple = NamedTuple()`: mapping of RE name to covariance parameter.
 - `re_mean_params::NamedTuple = NamedTuple()`: mapping of RE name to mean parameter.
 - `ebe_optimizer`, `ebe_optim_kwargs`, `ebe_adtype`, `ebe_grad_tol`: EBE inner optimiser.
-- `ebe_multistart_n`, `ebe_multistart_k`, `ebe_multistart_max_rounds`,
+- `ebe_multistart_n`, `ebe_multistart_k` (default 1), `ebe_multistart_max_rounds`,
   `ebe_multistart_sampling`: multistart settings for EBE mode computation.
-- `ebe_rescue_*`: rescue multistart settings when an EBE mode has a high gradient norm.
+- `ebe_rescue_on_high_grad` (default `false`), `ebe_rescue_*`: rescue multistart settings
+  when an EBE mode has a high gradient norm. Disabled by default.
 - `lb`, `ub`: bounds on the transformed fixed-effect scale, or `nothing`.
 - `mstep_sa_on_params::Bool = true`: if `true`, the numerical M-step uses only the
   current iteration's random-effect samples (not the ring buffer) as the objective,
@@ -393,7 +396,7 @@ struct SAEM{O, K, A, SO, L, U} <: FittingMethod
 end
 
 SAEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
-     optim_kwargs=(; iterations=50),
+     optim_kwargs=(; iterations=10, g_abstol=1e-4, f_reltol=1e-6),
      adtype=Optimization.AutoForwardDiff(),
      sampler=SaemixMH(),
      turing_kwargs=NamedTuple(),
@@ -426,10 +429,10 @@ SAEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(
      ebe_adtype=Optimization.AutoForwardDiff(),
      ebe_grad_tol=:auto,
      ebe_multistart_n=50,
-     ebe_multistart_k=10,
+     ebe_multistart_k=1,
      ebe_multistart_max_rounds=5,
      ebe_multistart_sampling=:lhs,
-     ebe_rescue_on_high_grad=true,
+     ebe_rescue_on_high_grad=false,
      ebe_rescue_multistart_n=128,
      ebe_rescue_multistart_k=32,
      ebe_rescue_max_rounds=8,
@@ -447,7 +450,7 @@ SAEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(
      sa_phase2_kappa::Float64=-1.0,
      sa_schedule_fn=nothing,
      n_chains::Int=1,
-     auto_small_n_chains::Bool=false,
+     auto_small_n_chains::Bool=true,
      small_n_chain_target::Int=50,
      sa_anneal_targets::NamedTuple=NamedTuple(),
      sa_anneal_schedule::Symbol=:exponential,
@@ -2204,7 +2207,7 @@ function _saem_Q(dm::DataModel,
                  const_cache::LaplaceConstantsCache,
                  ll_cache,
                  store::_SAEMSampleStore;
-                 serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
+                 serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                  q_cache::Union{Nothing, _SAEMQCache}=nothing,
                  anneal_sds::NamedTuple=NamedTuple())
     total = zero(eltype(θ))
@@ -2305,7 +2308,7 @@ function _saem_Q_current(dm::DataModel,
                           const_cache::LaplaceConstantsCache,
                           ll_cache,
                           b_current::AbstractVector;
-                          serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
+                          serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                           anneal_sds::NamedTuple=NamedTuple())
     total = zero(eltype(θ))
     ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
@@ -2429,7 +2432,7 @@ function _saem_builtin_mean_updates(dm::DataModel,
                                     inv_transform;
                                     optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
                                     optim_kwargs::NamedTuple=NamedTuple(),
-                                    serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
+                                    serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                                     penalty::NamedTuple=NamedTuple(),
                                     anneal_sds::NamedTuple=NamedTuple())
     isempty(mean_params) && return NamedTuple()
@@ -2483,7 +2486,7 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                     penalty::NamedTuple=NamedTuple(),
                     ode_args::Tuple=(),
                     ode_kwargs::NamedTuple=NamedTuple(),
-                    serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
+                    serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                     rng::AbstractRNG=Xoshiro(0),
                     theta_0_untransformed::Union{Nothing, ComponentArray}=nothing,
                     store_eb_modes::Bool=true,
@@ -3109,7 +3112,8 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
              closed_form_mstep_sources=Tuple(closed_form_sources),
              builtin_stats_mode_requested=method.saem.builtin_stats,
              builtin_stats_mode_effective=builtin_stats_mode,
-             builtin_stats_closed_form_eligibility=builtin_cf_elig)
+             builtin_stats_closed_form_eligibility=builtin_cf_elig,
+             anneal_to_fixed=method.saem.anneal_to_fixed)
     summary = FitSummary(Q_prev, converged,
                          FitParameters(θ_hat_t, θ_hat_u),
                          notes)
@@ -3124,7 +3128,9 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
     ebe = EBEOptions(method.saem.ebe_optimizer, method.saem.ebe_optim_kwargs, method.saem.ebe_adtype,
                      method.saem.ebe_grad_tol, method.saem.ebe_multistart_n, method.saem.ebe_multistart_k,
                      method.saem.ebe_multistart_max_rounds, method.saem.ebe_multistart_sampling)
-    eb_modes = store_eb_modes ? _compute_bstars(dm, θ_hat_u, fixed_maps, ll_cache, ebe, rng;
+    ebe_fixed_maps = _saem_anneal_constants_re(dm, θ_hat_u, method.saem.anneal_to_fixed,
+                                               fixed_maps)
+    eb_modes = store_eb_modes ? _compute_bstars(dm, θ_hat_u, ebe_fixed_maps, ll_cache, ebe, rng;
                                                 rescue=method.saem.ebe_rescue,
                                                 progress=method.saem.progress,
                                                 progress_desc="SAEM Final EBE")[1] : nothing

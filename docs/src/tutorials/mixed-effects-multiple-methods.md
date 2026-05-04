@@ -7,7 +7,7 @@ Nonlinear mixed-effects (NLME) models are a cornerstone of longitudinal data ana
 By the end of this tutorial, you will be able to:
 
 - **Build** a nonlinear mixed-effects model with lognormal random effects on a growth asymptote.
-- **Configure** five fundamentally different estimation strategies -- Laplace approximation, MCEM, SAEM, full Bayesian MCMC, and variational inference (VI) -- with sensible defaults.
+- **Configure** four fundamentally different estimation strategies -- Laplace approximation, MCEM, SAEM, and full Bayesian MCMC -- with sensible defaults.
 - **Compare** methods in predictive space using NoLimits' diagnostic and visualization tools, rather than relying solely on objective function values.
 - **Interpret** where the estimators converge, where they diverge, and what each method uniquely provides.
 
@@ -44,7 +44,7 @@ Next, you will specify the statistical model. The biological reasoning is straig
 
 Concretely, the model uses a logistic-style saturating function with three population-level parameters: an initial size `phi1`, a log-scale population mean for the asymptote `log_vmax`, and a midpoint parameter `phi3` that controls the timing of the growth inflection. Each tree's individual asymptote `vmax_i` is drawn from a lognormal distribution, which ensures positivity and places between-tree variability on a multiplicative scale -- a natural choice when larger individuals tend to show proportionally larger variation. The observation model is also lognormal, so residual variability scales with the predicted circumference rather than being additive. To maintain numerical stability during optimization, the predicted mean is passed through a `softplus` function that enforces positivity without introducing hard discontinuities.
 
-All fixed effects are given weakly informative priors. These priors are not strictly necessary for the optimization-based methods (Laplace, MCEM, SAEM), but they are required for MCMC and VI and serve to regularize the likelihood surface for all methods.
+All fixed effects are given weakly informative priors. These priors are not strictly necessary for the optimization-based methods (Laplace, MCEM, SAEM), but they are required for MCMC and serve to regularize the likelihood surface for all methods.
 
 ```julia
 model = @Model begin
@@ -99,8 +99,6 @@ You will then configure five estimation methods. Each represents a fundamentally
 
 - **MCMC** (Markov chain Monte Carlo) samples the full joint posterior over both fixed and random effects. Rather than returning a single "best" parameter estimate, it produces a collection of plausible parameter sets that together characterize uncertainty. This provides the richest picture of parameter uncertainty -- including asymmetric or multimodal posteriors -- but is the most computationally expensive and requires careful convergence assessment.
 
-- **VI** (variational inference) optimizes an approximate posterior family instead of drawing full chains. It is often much faster than MCMC and still provides posterior draws for predictive and uncertainty analyses, but it is approximate and can miss complex posterior features if the chosen variational family is too restrictive.
-
 The configuration values below are chosen to balance runtime and stability for this tutorial; in a research setting, you would typically increase iteration counts, sample sizes, and warmup periods.
 
 ```julia
@@ -133,10 +131,6 @@ mcmc_method = NoLimits.MCMC(;
     turing_kwargs=(n_samples=1000, n_adapt=500, progress=false),
 )
 
-vi_method = NoLimits.VI(;
-    turing_kwargs=(max_iter=30000, progress=false),
-)
-
 serialization = SciMLBase.EnsembleThreads()
 ```
 
@@ -160,8 +154,6 @@ res_laplace = fit_model(dm, laplace_method; serialization=serialization, rng=Ran
 res_mcem = fit_model(dm, mcem_method; serialization=serialization, rng=Random.Xoshiro(12))
 res_saem = fit_model(dm, saem_method; serialization=serialization, rng=Random.Xoshiro(13))
 res_mcmc = fit_model(dm, mcmc_method; serialization=serialization, rng=Random.Xoshiro(14))
-res_vi = fit_model(dm, vi_method; serialization=serialization, rng=Random.Xoshiro(12))
-
 ```
 
 ### FitResult Summaries
@@ -173,12 +165,11 @@ fit_summary_laplace = NoLimits.summarize(res_laplace)
 fit_summary_mcem = NoLimits.summarize(res_mcem)
 fit_summary_saem = NoLimits.summarize(res_saem)
 fit_summary_mcmc = NoLimits.summarize(res_mcmc)
-fit_summary_vi = NoLimits.summarize(res_vi)
 
 fit_summary_laplace
 ```
 
-## Step 5: Compare Objective Values (Laplace, MCEM, SAEM, VI)
+## Step 5: Compare Objective Values (Laplace, MCEM, SAEM)
 
 It is tempting to compare objective function values across methods, but this requires care: each method optimizes a different quantity, so raw values are not directly comparable.
 
@@ -187,7 +178,6 @@ objectives = (
     laplace=NoLimits.get_objective(res_laplace),
     mcem=NoLimits.get_objective(res_mcem),
     saem=NoLimits.get_objective(res_saem),
-    vi=NoLimits.get_objective(res_vi),
 )
 
 objectives
@@ -197,13 +187,12 @@ The signs and magnitudes differ because each method defines its objective differ
 
 - **Laplace** reports the minimized value of the Laplace-approximated marginal likelihood (a loss function, so lower is better).
 - **MCEM** and **SAEM** report the EM auxiliary quantity `Q` at the final iterate, which is a lower bound on the log-likelihood (higher is better).
-- **VI** reports the final evidence lower bound (ELBO), which is optimized over the variational family (higher is better within the same VI configuration).
 
 Because these quantities differ by construction, raw values are not directly comparable across methods. Within a single method family, however, objective values can be compared meaningfully -- for example, when evaluating different starting points or model specifications with the same estimator.
 
 ## Step 6: Fitted Trajectories for the First Two Individuals
 
-The most informative way to compare methods is in predictive space: do the fitted trajectories agree when overlaid on the observed data? In this step, you will generate fit plots for the first two trees under each method. For MCMC and VI, you will additionally overlay posterior predictive quantile bands (5th and 95th percentiles), which provide a visual summary of prediction uncertainty that accounts for both parameter and random-effect uncertainty.
+The most informative way to compare methods is in predictive space: do the fitted trajectories agree when overlaid on the observed data? In this step, you will generate fit plots for the first two trees under each method. For MCMC, you will additionally overlay posterior predictive quantile bands (5th and 95th percentiles), which provide a visual summary of prediction uncertainty that accounts for both parameter and random-effect uncertainty.
 
 ```julia
 inds = collect(1:min(2, length(dm.individuals)))
@@ -248,21 +237,9 @@ p_fit_mcmc = plot_fits(
     mcmc_draws=300,
 )
 
-p_fit_vi = plot_fits(
-    res_vi;
-    observable=:circumference,
-    #individuals_idx=inds,
-    ncols=2,
-    shared_x_axis=true,
-    shared_y_axis=true,
-    plot_mcmc_quantiles=true,
-    mcmc_quantiles=[5, 95],
-    mcmc_draws=300,
-)
-
 ```
 
-When all five methods are well-calibrated, you should see broadly similar trajectories. Differences, when they appear, tend to be most visible in the tails of the growth curve where data are sparse.
+When all four methods are well-calibrated, you should see broadly similar trajectories. Differences, when they appear, tend to be most visible in the tails of the growth curve where data are sparse.
 
 Laplace fit plot:
 
@@ -286,12 +263,6 @@ MCMC fit plot (with posterior predictive bands):
 
 ```julia
 p_fit_mcmc
-```
-
-VI fit plot (with posterior predictive bands):
-
-```julia
-p_fit_vi
 ```
 
 ## Step 7: Observation Distribution Diagnostics (First Individual)
@@ -331,14 +302,6 @@ p_obs_mcmc = plot_observation_distributions(
     mcmc_draws=300,
 )
 
-p_obs_vi = plot_observation_distributions(
-    res_vi;
-    observables=:circumference,
-    individuals_idx=1,
-    obs_rows=1,
-    mcmc_draws=300,
-)
-
 ```
 
 Laplace observation distribution:
@@ -365,17 +328,11 @@ MCMC observation distribution:
 p_obs_mcmc
 ```
 
-VI observation distribution:
-
-```julia
-p_obs_vi
-```
-
 ## Step 8: Uncertainty Quantification Across Methods
 
-A key reason to compare methods is to understand how they characterize parameter uncertainty. The optimization-based methods (Laplace, MCEM, SAEM) return point estimates; you can obtain approximate uncertainty via Wald-type confidence intervals, which are derived from the curvature of the objective function at the optimum. Intuitively, a sharply peaked objective implies tight uncertainty, while a flat objective implies wide intervals. MCMC and VI, by contrast, produce posterior draws (exact-chain and variational-approximation respectively), enabling distribution-based uncertainty summaries.
+A key reason to compare methods is to understand how they characterize parameter uncertainty. The optimization-based methods (Laplace, MCEM, SAEM) return point estimates; you can obtain approximate uncertainty via Wald-type confidence intervals, which are derived from the curvature of the objective function at the optimum. Intuitively, a sharply peaked objective implies tight uncertainty, while a flat objective implies wide intervals. MCMC, by contrast, produces exact posterior draws enabling distribution-based uncertainty summaries.
 
-Below, you will compute uncertainty quantification (UQ) summaries for all five methods and generate density plots of the resulting parameter distributions on the natural (untransformed) scale.
+Below, you will compute uncertainty quantification (UQ) summaries for all four methods and generate density plots of the resulting parameter distributions on the natural (untransformed) scale.
 
 ```julia
 uq_laplace = compute_uq(
@@ -415,19 +372,10 @@ uq_mcmc = compute_uq(
     mcmc_draws=300,
     rng=Random.Xoshiro(104),
 )
-uq_vi = compute_uq(
-    res_vi;
-    method=:chain,
-    serialization=serialization,
-    mcmc_draws=300,
-    rng=Random.Xoshiro(105),
-)
-
 p_uq_laplace = plot_uq_distributions(uq_laplace; scale=:natural, plot_type=:density, show_legend=false)
 p_uq_mcem = plot_uq_distributions(uq_mcem; scale=:natural, plot_type=:density, show_legend=false)
 p_uq_saem = plot_uq_distributions(uq_saem; scale=:natural, plot_type=:density, show_legend=false)
 p_uq_mcmc = plot_uq_distributions(uq_mcmc; scale=:natural, plot_type=:density, show_legend=false)
-p_uq_vi = plot_uq_distributions(uq_vi; scale=:natural, plot_type=:density, show_legend=false)
 
 ```
 
@@ -440,13 +388,11 @@ uq_summary_laplace = NoLimits.summarize(uq_laplace)
 uq_summary_mcem = NoLimits.summarize(uq_mcem)
 uq_summary_saem = NoLimits.summarize(uq_saem)
 uq_summary_mcmc = NoLimits.summarize(uq_mcmc)
-uq_summary_vi = NoLimits.summarize(uq_vi)
 
 fit_uq_summary_laplace = NoLimits.summarize(res_laplace, uq_laplace)
 fit_uq_summary_mcem = NoLimits.summarize(res_mcem, uq_mcem)
 fit_uq_summary_saem = NoLimits.summarize(res_saem, uq_saem)
 fit_uq_summary_mcmc = NoLimits.summarize(res_mcmc, uq_mcmc)
-fit_uq_summary_vi = NoLimits.summarize(res_vi, uq_vi)
 
 fit_uq_summary_laplace
 ```
@@ -475,12 +421,6 @@ MCMC UQ distribution:
 p_uq_mcmc
 ```
 
-VI UQ distribution:
-
-```julia
-p_uq_vi
-```
-
 ## Interpretation and Practical Guidance
 
 Several principles emerge from this multi-method comparison:
@@ -489,6 +429,6 @@ Several principles emerge from this multi-method comparison:
 
 **Method agreement on central structure is the norm for well-specified models.** For a dataset like Orange, where the model is a reasonable description of the data-generating process, Laplace, MCEM, and SAEM will typically recover similar point estimates and trajectory shapes. Disagreement is a useful diagnostic signal -- it may indicate model misspecification, insufficient iterations, or a challenging likelihood surface.
 
-**MCMC provides the richest uncertainty characterization, while VI provides a faster approximate posterior alternative.** Posterior predictive bands and marginal posterior distributions from MCMC capture asymmetry, multimodality, and correlation structure most faithfully. VI can be substantially faster and often gives useful posterior summaries, but remains an approximation whose quality should be checked against predictive diagnostics and, when feasible, MCMC.
+**MCMC provides the richest uncertainty characterization.** Posterior predictive bands and marginal posterior distributions from MCMC capture asymmetry, multimodality, and correlation structure most faithfully.
 
-**Choose your method based on your inferential goal.** If you need fast point estimates with approximate standard errors for model selection or screening, Laplace is often sufficient. If you need robust estimates under flexible random-effect distributions, SAEM or MCEM may be preferable. If full posterior inference is the goal -- for example, for decision-making under uncertainty or for propagating parameter uncertainty into downstream predictions -- MCMC is the strongest choice. If you need Bayesian posterior-style outputs with lower runtime, VI is a practical middle ground.
+**Choose your method based on your inferential goal.** If you need fast point estimates with approximate standard errors for model selection or screening, Laplace is often sufficient. If you need robust estimates under flexible random-effect distributions, SAEM or MCEM may be preferable. If full posterior inference is the goal -- for example, for decision-making under uncertainty or for propagating parameter uncertainty into downstream predictions -- MCMC is the strongest choice.

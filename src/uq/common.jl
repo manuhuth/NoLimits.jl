@@ -16,8 +16,6 @@ end
     method isa VI && return :vi
     method isa Laplace && return :laplace
     method isa LaplaceMAP && return :laplace_map
-    method isa FOCEI && return :focei
-    method isa FOCEIMAP && return :focei_map
     method isa MCEM && return :mcem
     method isa SAEM && return :saem
     return Symbol(lowercase(string(nameof(typeof(method)))))

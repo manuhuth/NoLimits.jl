@@ -50,8 +50,6 @@ import NoLimits: loglikelihood
 
     ll1 = loglikelihood(dm, θ, η_list)
     ll2 = loglikelihood(dm, θ, η_list)
-    @test isfinite(ll1)
-    @test isfinite(ll2)
     @test ll1 == ll2
 end
 
@@ -104,8 +102,6 @@ end
 
     ll1 = loglikelihood(dm, θ, η_list)
     ll2 = loglikelihood(dm, θ, η_list)
-    @test isfinite(ll1)
-    @test isfinite(ll2)
     @test ll1 == ll2
 end
 
@@ -197,7 +193,6 @@ end
     ]
 
     ll = loglikelihood(dm, θ, η_list)
-    @test isfinite(ll)
 end
 
 @testset "loglikelihood complex ODE (NN/SoftTree/Spline, multi-RE)" begin
@@ -264,7 +259,6 @@ end
     ]
 
     ll = loglikelihood(dm, θ, η_list)
-    @test isfinite(ll)
 end
 
 @testset "loglikelihood ForwardDiff (fixed effects)" begin

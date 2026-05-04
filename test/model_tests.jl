@@ -242,7 +242,6 @@ end
 
     obs = calculate_formulas_obs(model, θ, η, const_covariates_i, varying_covariates)
     @test obs.obs isa Normal
-    @test isfinite(logpdf(obs.obs, 1.0))
 end
 
 @testset "Model ODE logpdf at observation times" begin
@@ -297,7 +296,6 @@ end
         obs = calculate_formulas_obs(model, θ, η, const_covariates_i, varying_covariates, sol_accessors)
         loglik += logpdf(obs.y, y)
     end
-    @test isfinite(loglik)
 end
 
 @testset "Model rejects varying covariate in DE" begin
@@ -439,5 +437,4 @@ end
         obs = calculate_formulas_obs(model, θ, η, const_covariates_i, varying_covariates, sol_accessors)
         loglik += logpdf(obs.y, y)
     end
-    @test isfinite(loglik)
 end

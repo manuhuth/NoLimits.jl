@@ -1436,7 +1436,7 @@ function _default_random_effects(res::FitResult,
     re_names = get_re_names(dm.model.random.random)
     isempty(re_names) && return fill(ComponentArray(NamedTuple()), length(dm.individuals))
 
-    if res.result isa LaplaceResult || res.result isa LaplaceMAPResult || res.result isa FOCEIResult || res.result isa FOCEIMAPResult ||
+    if res.result isa LaplaceResult || res.result isa LaplaceMAPResult ||
        res.result isa GHQuadratureResult || res.result isa GHQuadratureMAPResult
         _, batch_infos, _ = _build_laplace_batch_infos(dm, constants_re)
         bstars = res.result.eb_modes
@@ -1460,18 +1460,21 @@ function _default_random_effects(res::FitResult,
         return _eta_from_eb(dm, batch_infos, bstars, constants_re, θ)
     end
     if res.result isa SAEMResult
+        constants_re = _saem_anneal_constants_re(dm, θ, _saem_anneal_names(res), constants_re)
         ode_args = haskey(res.fit_kwargs, :ode_args) ? getfield(res.fit_kwargs, :ode_args) : ()
         ode_kwargs = haskey(res.fit_kwargs, :ode_kwargs) ? getfield(res.fit_kwargs, :ode_kwargs) : NamedTuple()
         serialization = haskey(res.fit_kwargs, :serialization) ? getfield(res.fit_kwargs, :serialization) : EnsembleSerial()
         rng_use = haskey(res.fit_kwargs, :rng) ? getfield(res.fit_kwargs, :rng) : rng
         ll_cache = build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs, serialization=serialization)
-        ebe = EBEOptions(res.method.saem.ebe_optimizer, res.method.saem.ebe_optim_kwargs, res.method.saem.ebe_adtype,
-                         res.method.saem.ebe_grad_tol, res.method.saem.ebe_multistart_n, res.method.saem.ebe_multistart_k,
-                         res.method.saem.ebe_multistart_max_rounds, res.method.saem.ebe_multistart_sampling)
         bstars = res.result.eb_modes
         if bstars === nothing
+            # Fall back to default SAEM EBE options for loaded results
+            _saem_cfg = res.method isa _SavedFittingMethod ? SAEM() : res.method
+            ebe = EBEOptions(_saem_cfg.saem.ebe_optimizer, _saem_cfg.saem.ebe_optim_kwargs, _saem_cfg.saem.ebe_adtype,
+                             _saem_cfg.saem.ebe_grad_tol, _saem_cfg.saem.ebe_multistart_n, _saem_cfg.saem.ebe_multistart_k,
+                             _saem_cfg.saem.ebe_multistart_max_rounds, _saem_cfg.saem.ebe_multistart_sampling)
             bstars, batch_infos = _compute_bstars(dm, θ, constants_re, ll_cache, ebe, rng_use;
-                                                  rescue=res.method.saem.ebe_rescue)
+                                                  rescue=_saem_cfg.saem.ebe_rescue)
         else
             _, batch_infos, _ = _build_laplace_batch_infos(dm, constants_re)
         end

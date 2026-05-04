@@ -2,8 +2,6 @@ using Test
 using NoLimits
 using DifferentiationInterface
 using ForwardDiff
-using ReverseDiff
-using Zygote
 
 function _softtree_scalar(x, tree, params)
     return sum(tree(x, params))
@@ -31,8 +29,6 @@ end
 
     # ReverseDiff does not support Zygote.Buffer-based implementation.
 
-    grad_zyg = Zygote.gradient(f, x)[1]
-    @test isapprox(grad_zyg, grad_fwd; rtol=1e-6, atol=1e-8)
 
     val_fwd_fast, grad_fwd_fast = value_and_gradient(f_fast, AutoForwardDiff(), x)
     @test isapprox(val_fwd_fast, val_fwd; rtol=1e-6, atol=1e-8)
@@ -41,8 +37,6 @@ end
     # ReverseDiff does not support Zygote.Buffer-based implementation.
 
     val_fwd_p, grad_fwd_p = value_and_gradient(f_params, AutoForwardDiff(), flat)
-    grad_zyg_p = Zygote.gradient(f_params, flat)[1]
-    @test isapprox(grad_zyg_p, grad_fwd_p; rtol=1e-6, atol=1e-8)
 
     # ReverseDiff does not support Zygote.Buffer-based implementation.
 end

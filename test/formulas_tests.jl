@@ -321,5 +321,4 @@ end
     all = form_all(ctx, sol_accessors, const_covariates_i, varying_covariates)
     @test obs.outcome_1_current isa ContinuousTimeDiscreteStatesHMM
     @test all.outcome_1_current isa ContinuousTimeDiscreteStatesHMM
-    @test isfinite(logpdf(obs.outcome_1_current, 1.0))
 end

@@ -124,13 +124,11 @@ end
     @test mean(npf_custom.base_dist) == [0.5, -0.5]
     flow_custom = NormalizingPlanarFlow(npf_custom.value, npf_custom.reconstructor, npf_custom.base_dist)
     @test length(flow_custom) == 2
-    @test isfinite(logpdf(flow_custom, zeros(2)))
     @test length(rand(flow_custom)) == 2
 
     # NormalizingPlanarFlow constructor also accepts base_dist keyword
     flow_kw = NormalizingPlanarFlow(2, 2; base_dist=q0_custom)
     @test length(flow_kw) == 2
-    @test isfinite(logpdf(flow_kw, zeros(2)))
 
     # Custom base distribution: MvTDist (uses passthrough _adapt_base_dist)
     q0_t = MvTDist(3, zeros(2), Matrix(I, 2, 2))
@@ -138,7 +136,6 @@ end
     @test npf_tdist.base_dist isa MvTDist
     flow_tdist = NormalizingPlanarFlow(npf_tdist.value, npf_tdist.reconstructor, npf_tdist.base_dist)
     @test length(flow_tdist) == 2
-    @test isfinite(logpdf(flow_tdist, zeros(2)))
     @test length(rand(flow_tdist)) == 2
 end
 

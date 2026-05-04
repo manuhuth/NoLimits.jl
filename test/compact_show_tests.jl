@@ -25,7 +25,7 @@ using Distributions
         y=[0.1, 0.2, 0.0, 0.1],
     )
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)); store_data_model=true)
+    res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)); store_data_model=true)
     uq = compute_uq(res; method=:wald, n_draws=60)
 
     txt_model = sprint(show, model)

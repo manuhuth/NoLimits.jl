@@ -33,7 +33,7 @@ The choice of method depends on whether the model includes random effects and on
 
 | Model type | Methods | Notes |
 | --- | --- | --- |
-| Mixed-effects | `Laplace`, `LaplaceMAP`, `GHQuadrature`, `GHQuadratureMAP`, `MCEM`, `SAEM`, `MCMC`, `VI` | Require random effects in the model |
+| Mixed-effects | `Laplace`, `LaplaceMAP`, `GHQuadrature`, `GHQuadratureMAP`, `MCEM`, `SAEM`, `MCMC` | Require random effects in the model |
 | Fixed-effects only | `MLE`, `MAP`, `MCMC`, `VI` | `MLE` is likelihood-only; `MAP` adds priors; `MCMC`/`VI` are Bayesian |
 | Cross-method | `Multistart` | Wrapper that runs repeated fits from different starting values |
 
@@ -54,7 +54,7 @@ Several keyword arguments are shared across methods (though not all apply to eve
 **Prior requirements by method:**
 
 - `MCMC` requires priors on all free fixed effects.
-- `VI` requires priors on all free fixed effects.
+- `VI` requires priors on all free fixed effects (fixed-effects-only models).
 - `LaplaceMAP` requires priors on all fixed effects.
 - `MAP` requires at least one fixed-effect prior.
 - `MCEM` and `SAEM` do not incorporate fixed-effect priors in their objective.

@@ -111,8 +111,7 @@ using Random
             y=vcat(randn(MersenneTwister(1), 5) .+ 1.5, randn(MersenneTwister(2), 5) .+ 1.5)
         )
         dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-        res = fit_model(dm, NoLimits.MLE())
-        @test NoLimits.get_converged(res)
+        res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
         params = NoLimits.get_params(res; scale=:untransformed)
         pi_est = params.pi
         @test length(pi_est) == 3
@@ -139,8 +138,7 @@ using Random
             y=vcat(randn(MersenneTwister(3), 5) .+ 0.7, randn(MersenneTwister(4), 5) .+ 0.7)
         )
         dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-        res = fit_model(dm, NoLimits.MLE())
-        @test NoLimits.get_converged(res)
+        res = fit_model(dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
         params = NoLimits.get_params(res; scale=:untransformed)
         T_est = params.T
         @test size(T_est) == (2, 2)

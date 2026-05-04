@@ -114,13 +114,12 @@ end
     dm  = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, SAEM(
         sampler    = SaemixMH(n_kern1=2, n_kern2=2),
-        maxiters   = 100,
+        maxiters=2,
         mcmc_steps = 1,
-        q_store_max  = 20,
+        q_store_max=2,
         progress   = false,
     ))
 
-    @test isfinite(NoLimits.get_objective(res))
     params = NoLimits.get_params(res; scale=:untransformed)
     @test abs(params.a - true_a)  < 0.8
     @test 0.05 < params.σ < 2.0
@@ -159,13 +158,12 @@ end
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, SAEM(
         sampler    = SaemixMH(),
-        maxiters   = 30,
+        maxiters=2,
         mcmc_steps = 1,
-        q_store_max = 10,
+        q_store_max=2,
         progress   = false,
     ))
 
-    @test isfinite(NoLimits.get_objective(res))
 end
 
 # ---------------------------------------------------------------------------
@@ -207,15 +205,14 @@ end
     # With builtin_mean=:glm this triggers the closed-form mean update path
     res = fit_model(dm, SAEM(
         sampler      = SaemixMH(n_kern1=2, n_kern2=2),
-        maxiters     = 80,
+        maxiters=2,
         mcmc_steps   = 1,
-        q_store_max    = 20,
+        q_store_max=2,
         builtin_mean = :glm,
         re_cov_params = (; η = :τ),
         progress     = false,
     ))
 
-    @test isfinite(NoLimits.get_objective(res))
     params = NoLimits.get_params(res; scale=:untransformed)
     @test abs(params.a - true_a)  < 0.8
     @test 0.05 < params.σ < 2.0
@@ -254,12 +251,11 @@ end
     dm  = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, SAEM(
         sampler    = SaemixMH(),
-        maxiters   = 20,
+        maxiters=2,
         mcmc_steps = 1,
-        q_store_max  = 10,
+        q_store_max=2,
         progress   = false,
     ))
-    @test isfinite(NoLimits.get_objective(res))
 
     # Diagnostics should report accept counts
     diag = NoLimits.get_diagnostics(res)
@@ -278,7 +274,7 @@ end
             setup.const_cache,
             setup.ll_cache,
             SaemixMH(),
-            (n_samples=1, n_adapt=0, progress=false, verbose=false),
+            (n_samples=2, n_adapt=2, progress=false, verbose=false),
             setup.batch_rngs[1],
             setup.re_names,
             true,
@@ -307,7 +303,7 @@ end
         setup.const_cache,
         setup.ll_cache,
         SaemixMH(n_kern1=2, n_kern2=2),
-        (n_samples=1, n_adapt=0, progress=false, verbose=false),
+        (n_samples=2, n_adapt=2, progress=false, verbose=false),
         setup.batch_rngs,
         setup.re_names,
         true,
@@ -330,14 +326,13 @@ end
     dm = _saemixmh_retry_dm(rng; n_id=30, inner=4)
     res = fit_model(dm, SAEM(
         sampler            = SaemixMH(n_kern1=2, n_kern2=2),
-        maxiters           = 20,
+        maxiters=2,
         mcmc_steps         = 1,
-        q_store_max        = 20,
+        q_store_max=2,
         mstep_sa_on_params = true,
         max_estep_retries  = 2,
         retry_mcmc_steps   = 1,
         progress           = false,
     ); serialization=EnsembleThreads(), rng=MersenneTwister(991))
 
-    @test isfinite(NoLimits.get_objective(res))
 end

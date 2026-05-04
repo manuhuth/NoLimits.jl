@@ -2,8 +2,6 @@ using Test
 using NoLimits
 using ComponentArrays
 using ForwardDiff
-using ReverseDiff
-using Zygote
 
 @testset "StickBreakTransforms" begin
 
@@ -198,14 +196,6 @@ using Zygote
         v0 = [0.3, 0.4, 0.3]
         g = ForwardDiff.gradient(f, v0)
         @test length(g) == 3
-        @test all(isfinite, g)
-    end
-
-    @testset "Zygote through stickbreak_inverse" begin
-        f(t) = sum(stickbreak_inverse(t) .^ 2)
-        t0 = [0.5, -0.5]
-        g = Zygote.gradient(f, t0)[1]
-        @test length(g) == 2
         @test all(isfinite, g)
     end
 

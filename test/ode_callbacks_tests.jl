@@ -135,6 +135,17 @@ using OrdinaryDiffEq
         @test isapprox(sol(0.0)[1], 0.0)
         @test isapprox(sol(1.0)[1], 0.5)
         @test isapprox(sol(2.0)[1], 1.0)
+
+        # infusion_rates must be reset between solves on the same DataModel —
+        # regression test: t=t0 infusion was only initialised once at construction,
+        # so the second solve saw infusion_rates=[0] and subsequent solves saw negative rates
+        dm_evt = DataModel(model, df_evt; primary_id=:ID, time_col=:t,
+                           evid_col=:EVID, amt_col=:AMT, rate_col=:RATE, cmt_col=:CMT)
+        θ = get_θ0_untransformed(model.fixed.fixed)
+        ll_first  = NoLimits.loglikelihood(dm_evt, θ, ComponentArray())
+        ll_second = NoLimits.loglikelihood(dm_evt, θ, ComponentArray())
+        @test isfinite(ll_first)
+        @test ll_first == ll_second
     end
 
     @testset "Reset" begin
@@ -349,7 +360,75 @@ end
 
     ll1 = NoLimits.loglikelihood(dm, θ1, ComponentArray())
     ll2 = NoLimits.loglikelihood(dm, θ2, ComponentArray())
-    @test isfinite(ll1)
-    @test isfinite(ll2)
     @test abs(ll2 - ll1) > 1e-6
+end
+
+# Regression test: a 1-day infusion in a long-tspan model (tspan ≈ 300 days)
+# had a visual artifact where the dense time grid step (≈1.5 days) skipped the
+# infusion stop time (t=1), making V appear to increase for ~2 days instead of 1.
+# Fix: EventCallbacks.all_times stores all callback fire times; _dense_time_grid
+# includes them so the stop time is never missed.
+@testset "ODE callbacks: dense time grid includes infusion stop times" begin
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+
+        @fixedEffects begin
+            k = RealNumber(0.5)
+            σ = RealNumber(0.01)
+        end
+
+        @DifferentialEquation begin
+            D(V) ~ -k * V
+        end
+
+        @initialDE begin
+            V = 0.0
+        end
+
+        @formulas begin
+            y ~ Normal(V(t), σ)
+        end
+    end
+
+    # Long tspan (300 days), 1-day infusion at t=0 (AMT=1, RATE=1).
+    # Observation at t=300 so tspan=(0,300) and the default 200-point grid
+    # has step ≈1.5 days — without the fix, t=1 (stop time) falls between
+    # grid points and V appears to peak much later than it actually does.
+    df = DataFrame(
+        ID   = [1, 1],
+        t    = [0.0, 300.0],
+        EVID = [1, 0],
+        AMT  = [1.0, 0.0],
+        RATE = [1.0, 0.0],
+        CMT  = [1, 1],
+        y    = [missing, 0.0]
+    )
+
+    dm = DataModel(model, df;
+                   primary_id=:ID,
+                   time_col=:t,
+                   evid_col=:EVID,
+                   amt_col=:AMT,
+                   rate_col=:RATE,
+                   cmt_col=:CMT)
+
+    ind = get_individuals(dm)[1]
+
+    # all_times must contain the infusion stop time t=1.0
+    @test ind.callbacks !== nothing
+    @test 1.0 in ind.callbacks.all_times
+
+    # _dense_time_grid must include t=1.0 so the plotting layer captures the
+    # peak of V correctly (default saveat_mode is :dense, so ind.saveat is nothing)
+    grid = NoLimits._dense_time_grid(ind)
+    @test 1.0 in grid
+
+    # Without the fix the grid step is 300/199 ≈ 1.508 days, so t=1 fell between
+    # two grid points and V appeared to peak at t≈1.5 instead of t=1.
+    # With the fix t=1 is pinned to the grid so the true maximum is captured.
+    # Verify: the grid contains t=1 explicitly and no interior grid point is earlier
+    # than t=1 and later than t=0 (i.e. t=1 IS the first interior grid point).
+    @test minimum(filter(t -> t > 0.0, grid)) ≤ 1.0
 end

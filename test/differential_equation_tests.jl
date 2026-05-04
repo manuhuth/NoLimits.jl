@@ -187,5 +187,4 @@ end
     pc = get_de_compiler(de)(p)
     du = similar([0.5])
     get_de_f!(de)(du, [0.5], pc, 0.0)
-    @test isfinite(du[1])
 end

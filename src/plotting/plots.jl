@@ -57,7 +57,15 @@ end
 
 function _dense_time_grid(ind::Individual; n::Int=200)
     t0, t1 = ind.tspan
-    return collect(range(t0, t1; length=n))
+    base = collect(range(t0, t1; length=n))
+    # Include all callback fire times (infusion starts, stops, bolus, resets) so that
+    # short infusions whose stop time falls between uniform grid points are not missed.
+    # Without this, a 1-day infusion in a 400-day tspan (grid step ~2 days) would be
+    # invisible and V would appear to peak at t≈2 instead of t=1.
+    if ind.callbacks !== nothing && !isempty(ind.callbacks.all_times)
+        return sort!(unique!(vcat(base, ind.callbacks.all_times)))
+    end
+    return base
 end
 
 function _can_dense_plot(dm::DataModel)
@@ -97,10 +105,14 @@ function _dist_quantile_bounds(dists, coverage)
     return (minimum(lows), maximum(highs))
 end
 
-function _density_grid_continuous(dists, coverage, n_points)
-    bounds = _dist_quantile_bounds(dists, coverage)
-    bounds === nothing && return nothing
-    y_min, y_max = bounds
+function _density_grid_continuous(dists, coverage, n_points; bounds=nothing)
+    if bounds !== nothing
+        y_min, y_max = bounds
+    else
+        b = _dist_quantile_bounds(dists, coverage)
+        b === nothing && return nothing
+        y_min, y_max = b
+    end
     y = range(y_min, y_max; length=n_points)
     z = zeros(length(y), length(dists))
     for (j, d) in enumerate(dists)

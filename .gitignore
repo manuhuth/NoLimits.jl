@@ -19,5 +19,9 @@ examples/
 
 # Local-only files (not for repo)
 CLAUDE.md
+AGENTS.md
 agents.md
+CAPABILITIES.md
+SAEM_Q_MEMORY_POLICY.md
+TEST_RUNTIMES.md
 benchmarks/

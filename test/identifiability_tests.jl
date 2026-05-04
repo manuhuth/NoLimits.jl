@@ -106,7 +106,7 @@ end
         dm = DataModel(model, df; primary_id=:OBS, time_col=:t)
     end
 
-    lap = NoLimits.Laplace(; inner_kwargs=(maxiters=20,), multistart_n=0, multistart_k=0)
+    lap = NoLimits.Laplace(; inner_kwargs=(maxiters=2,), multistart_n=2, multistart_k=2)
     rep = identifiability_report(dm;
                                  method=lap,
                                  at=:start,
@@ -149,7 +149,7 @@ end
         y = [0.1, 0.2, 0.0, -0.1]
     )
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    lap_map = NoLimits.LaplaceMAP(; inner_kwargs=(maxiters=20,), multistart_n=0, multistart_k=0)
+    lap_map = NoLimits.LaplaceMAP(; inner_kwargs=(maxiters=2,), multistart_n=2, multistart_k=2)
     rep = identifiability_report(dm;
                                  method=lap_map,
                                  at=:start,

@@ -153,7 +153,7 @@ end
     df    = _df_no_re()
     dm    = DataModel(model, df; primary_id=:ID, time_col=:t)
     res   = fit_model(dm, NoLimits.MCMC(;
-                turing_kwargs=(n_samples=50, n_adapt=25, progress=false)))
+                turing_kwargs=(n_samples=2, n_adapt=2, progress=false)))
 
     path = tempname() * ".jld2"
     save_fit(path, res)
@@ -201,7 +201,7 @@ end
     dm  = DataModel(model, df; primary_id=:ID, time_col=:t)
     ms  = NoLimits.Multistart(dists=(; a=Normal(1.0, 0.2)),
                               n_draws_requested=4, n_draws_used=3)
-    res = fit_model(ms, dm, NoLimits.MLE(; optim_kwargs=(maxiters=5,)))
+    res = fit_model(ms, dm, NoLimits.MLE(; optim_kwargs=(maxiters=2,)))
 
     path = tempname() * ".jld2"
     save_fit(path, res)
