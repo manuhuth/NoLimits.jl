@@ -294,10 +294,10 @@ function _saem_batches!(buf::Vector{Int}, update_schedule, nbatches::Int, iter::
         Random.randperm!(rng, buf)
         resize!(buf, m)
         return buf
-    elseif update_schedule isa Function
+    elseif hasmethod(update_schedule, Tuple{Int, Int, AbstractRNG})
         return update_schedule(nbatches, iter, rng)
     else
-        error("Invalid update_schedule. Use :all, Int minibatch size, or a function (nbatches, iter, rng) -> Vector{Int}.")
+        error("Invalid update_schedule. Use :all, Int minibatch size, or a callable (nbatches, iter, rng) -> Vector{Int}.")
     end
 end
 
@@ -450,7 +450,7 @@ SAEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(
      sa_phase2_kappa::Float64=-1.0,
      sa_schedule_fn=nothing,
      n_chains::Int=1,
-     auto_small_n_chains::Bool=false,
+     auto_small_n_chains::Bool=true,
      small_n_chain_target::Int=50,
      sa_anneal_targets::NamedTuple=NamedTuple(),
      sa_anneal_schedule::Symbol=:exponential,
