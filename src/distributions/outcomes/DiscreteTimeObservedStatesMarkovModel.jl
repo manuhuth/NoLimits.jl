@@ -4,13 +4,12 @@ export probabilities_hidden_states, posterior_hidden_states
 using Distributions, Random
 
 """
-    DiscreteTimeObservedStatesMarkovModel(transition_matrix, emission_dists, initial_dist)
-    DiscreteTimeObservedStatesMarkovModel(transition_matrix, emission_dists, initial_dist, state_labels)
+    DiscreteTimeObservedStatesMarkovModel(transition_matrix, initial_dist)
+    DiscreteTimeObservedStatesMarkovModel(transition_matrix, initial_dist, state_labels)
     <: Distribution{Univariate, Discrete}
 
-A discrete-time Markov model with **fully observed** states. Unlike the HMM variants, the latent
-state is directly observable — the observation IS the state label. The posterior after observing
-a state is therefore a one-hot vector (certainty), making forward filtering exact and efficient.
+A discrete-time Markov model with observed states. Unlike the HMM variants, the latent state is
+directly observable when a single state label is provided.
 
 Implements the `Distributions.jl` interface (`logpdf`, `pdf`, `rand`, `mean`, `var`, `cdf`).
 Used as an observation distribution in `@formulas` blocks.
@@ -44,7 +43,7 @@ end
 function DiscreteTimeObservedStatesMarkovModel(
     transition_matrix :: AbstractMatrix{<:Real},
     initial_dist      :: Distributions.Categorical,
-    state_labels      :: Vector{T},
+    state_labels      :: Vector{T}
 ) where T
     n_states = size(transition_matrix, 1)
     size(transition_matrix, 2) == n_states ||
@@ -55,24 +54,21 @@ function DiscreteTimeObservedStatesMarkovModel(
     length(state_labels) == n_states ||
         error("length(state_labels) must equal n_states ($n_states), " *
               "got $(length(state_labels)).")
-    return DiscreteTimeObservedStatesMarkovModel(n_states, transition_matrix, initial_dist, state_labels)
+    return DiscreteTimeObservedStatesMarkovModel(
+        n_states, transition_matrix, initial_dist, state_labels)
 end
 
 # Default constructor: integer labels 1..n_states
 function DiscreteTimeObservedStatesMarkovModel(
     transition_matrix :: AbstractMatrix{<:Real},
-    initial_dist      :: Distributions.Categorical,
+    initial_dist      :: Distributions.Categorical
 )
     n_states = size(transition_matrix, 1)
     return DiscreteTimeObservedStatesMarkovModel(
         transition_matrix, initial_dist, collect(1:n_states))
 end
 
-# --- State label lookup ---
-
-function _find_state_index(dist::DiscreteTimeObservedStatesMarkovModel, y)
-    return findfirst(==(y), dist.state_labels)
-end
+@inline _omm_is_observed_markov_dist(::DiscreteTimeObservedStatesMarkovModel) = true
 
 # --- Hidden state probabilities (shared interface with HMM variants) ---
 
@@ -90,25 +86,37 @@ end
 """
     posterior_hidden_states(dist::DiscreteTimeObservedStatesMarkovModel, y)
 
-Returns the one-hot posterior after observing state `y`. Since the state is fully observed,
-the posterior is degenerate: probability 1 at the index of `y`, 0 elsewhere.
+For a scalar observed state `y`, returns the one-hot posterior after observing that state.
 
-Returns a zero vector if `y` is not found in `state_labels`.
+Returns a zero vector if the observation label is not found.
 """
 function posterior_hidden_states(dist::DiscreteTimeObservedStatesMarkovModel, y)
-    idx = _find_state_index(dist, y)
-    post = zeros(Float64, dist.n_states)
-    idx !== nothing && (post[idx] = 1.0)
+    idx = _omm_scalar_observation_index(dist.state_labels, y)
+    p = probabilities_hidden_states(dist)
+    T = eltype(p)
+    post = zeros(T, dist.n_states)
+    idx === nothing && return post
+    post[idx] = one(T)
     return post
+end
+
+function posterior_hidden_states(dist::DiscreteTimeObservedStatesMarkovModel, y::AbstractVector)
+    _omm_scalar_observation_index(dist.state_labels, y)
+    return zeros(eltype(probabilities_hidden_states(dist)), dist.n_states)
 end
 
 # --- Distributions.jl interface ---
 
 function Distributions.logpdf(dist::DiscreteTimeObservedStatesMarkovModel, y)
-    idx = _find_state_index(dist, y)
+    idx = _omm_scalar_observation_index(dist.state_labels, y)
     idx === nothing && return -Inf
     p = probabilities_hidden_states(dist)
     return log(p[idx])
+end
+
+function Distributions.logpdf(dist::DiscreteTimeObservedStatesMarkovModel, y::AbstractVector)
+    _omm_scalar_observation_index(dist.state_labels, y)
+    return -Inf
 end
 
 Distributions.pdf(dist::DiscreteTimeObservedStatesMarkovModel, y) = exp(logpdf(dist, y))
