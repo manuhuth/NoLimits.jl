@@ -302,6 +302,16 @@ end
 @inline _is_observed_markov_outcome_dist(::ContinuousTimeObservedStatesMarkovModel) = true
 @inline _is_observed_markov_outcome_dist(::CoarsedObservedStatesMarkovModel) = true
 
+@inline _is_observed_markov_call_name(name) =
+    (name === :DiscreteTimeObservedStatesMarkovModel) ||
+    (name === :ContinuousTimeObservedStatesMarkovModel) ||
+    (name === :coarsed)
+
+function _has_observed_markov_outcomes(model)
+    ir = get_formulas_ir(model.formulas.formulas)
+    return any(_is_observed_markov_call_name, ir.call_heads)
+end
+
 @inline _is_coarsed_observed_markov_outcome_dist(::Any) = false
 @inline _is_coarsed_observed_markov_outcome_dist(::CoarsedObservedStatesMarkovModel) = true
 
@@ -330,6 +340,7 @@ end
 
 function _validate_observed_markov_coarsed_usage(model, df, config::DataModelConfig)
     isempty(config.obs_cols) && return nothing
+    _has_observed_markov_outcomes(model) || return nothing
     obs_probe = _probe_first_observation_distributions(
         model,
         df;
