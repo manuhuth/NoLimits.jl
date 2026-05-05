@@ -10,11 +10,13 @@ using Distributions
 @inline _is_hmm_dist(::MVContinuousTimeDiscreteStatesHMM) = true
 @inline _is_hmm_dist(::DiscreteTimeObservedStatesMarkovModel) = true
 @inline _is_hmm_dist(::ContinuousTimeObservedStatesMarkovModel) = true
+@inline _is_hmm_dist(::CoarsedObservedStatesMarkovModel) = true
 
 # Trait: true only for fully-observed Markov models (one-hot posterior update).
 @inline _is_observed_markov(::Any) = false
 @inline _is_observed_markov(::DiscreteTimeObservedStatesMarkovModel) = true
 @inline _is_observed_markov(::ContinuousTimeObservedStatesMarkovModel) = true
+@inline _is_observed_markov(::CoarsedObservedStatesMarkovModel) = true
 
 function _hmm_onehot_prior(n_states::Int, state::Int)
     probs = zeros(Float64, n_states)
@@ -139,6 +141,14 @@ end
     )
 end
 
+@inline function _hmm_with_initial_state(dist::CoarsedObservedStatesMarkovModel, state::Int)
+    return coarsed(_hmm_with_initial_state(dist.base_dist, state))
+end
+
+@inline function _hmm_with_initial_probs(dist::CoarsedObservedStatesMarkovModel, probs)
+    return coarsed(_hmm_with_initial_probs(dist.base_dist, probs))
+end
+
 @inline _hmm_with_prior(dist, prior_probs) =
     prior_probs === nothing ? dist : _hmm_with_initial_probs(dist, prior_probs)
 
@@ -176,3 +186,6 @@ end
 
 @inline _hmm_emission_rand(rng::AbstractRNG, dist::ContinuousTimeObservedStatesMarkovModel, state::Int) =
     dist.state_labels[state]
+
+@inline _hmm_emission_rand(rng::AbstractRNG, dist::CoarsedObservedStatesMarkovModel, state::Int) =
+    [_hmm_emission_rand(rng, dist.base_dist, state)]

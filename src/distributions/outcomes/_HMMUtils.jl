@@ -17,25 +17,3 @@
     end
     return m + log(s)
 end
-
-@inline _is_state_set_observation(y) =
-    (y isa AbstractVector || y isa Tuple || y isa AbstractSet)
-
-function _hmm_compatible_state_indices(state_labels::AbstractVector, y)
-    idx = findfirst(==(y), state_labels)
-    idx === nothing || return [idx]
-
-    if _is_state_set_observation(y)
-        idxs = Int[]
-        for yi in y
-            idx = findfirst(==(yi), state_labels)
-            idx === nothing || push!(idxs, idx)
-        end
-        if !isempty(idxs)
-            sort!(idxs)
-            unique!(idxs)
-        end
-        return idxs
-    end
-    return Int[]
-end

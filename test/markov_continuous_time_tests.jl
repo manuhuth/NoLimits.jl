@@ -123,16 +123,32 @@ end
 # ── 6. Set-valued (censored) observations ──────────────────────────────────────
 @testset "CT observed MC: set-valued observations" begin
     Q = [-1.0 1.0; 0.5 -0.5]
-    dist = ContinuousTimeObservedStatesMarkovModel(Q, Categorical([1.0, 0.0]), 0.5)
+    dist = coarsed(ContinuousTimeObservedStatesMarkovModel(
+        Q, Categorical([1.0, 0.0]), 0.5))
     p = probabilities_hidden_states(dist)
 
-    @test isapprox(logpdf(dist, (1, 2)), log(1.0); atol=1e-12)
-    @test isapprox(logpdf(dist, (2, 99)), log(p[2]); atol=1e-12)
-    @test logpdf(dist, (99, 100)) == -Inf
+    @test isapprox(logpdf(dist, [1, 2]), log(1.0); atol=1e-12)
+    @test isapprox(logpdf(dist, [2, 99]), log(p[2]); atol=1e-12)
+    @test logpdf(dist, [99, 100]) == -Inf
 
-    @test isapprox(posterior_hidden_states(dist, (1, 2)), p; atol=1e-12)
-    @test isapprox(posterior_hidden_states(dist, (2, 99)), [0.0, 1.0]; atol=1e-12)
-    @test isapprox(posterior_hidden_states(dist, (99, 100)), [0.0, 0.0]; atol=1e-12)
+    @test isapprox(posterior_hidden_states(dist, [1, 2]), p; atol=1e-12)
+    @test isapprox(posterior_hidden_states(dist, [2, 99]), [0.0, 1.0]; atol=1e-12)
+    @test isapprox(posterior_hidden_states(dist, [99, 100]), [0.0, 0.0]; atol=1e-12)
+end
+
+@testset "CT observed MC: set-valued observations require coarsed wrapper" begin
+    Q = [-1.0 1.0; 0.5 -0.5]
+    dist = ContinuousTimeObservedStatesMarkovModel(Q, Categorical([1.0, 0.0]), 0.5)
+
+    err = try
+        logpdf(dist, [1, 2])
+        nothing
+    catch e
+        e
+    end
+    @test err isa ErrorException
+    @test occursin("coarsed", sprint(showerror, err))
+    @test_throws ErrorException posterior_hidden_states(dist, [1, 2])
 end
 
 # ── 7. Forward-filter correctness (integer states, no missing) ─────────────────
@@ -227,6 +243,45 @@ end
 
         @formulas begin
             Q = [-1.0  1.0; 0.5 -0.5]
+            y ~ coarsed(ContinuousTimeObservedStatesMarkovModel(Q, Categorical([0.6, 0.4]), dt))
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 1, 1],
+        t  = [0.0, 1.0, 2.0, 3.0],
+        dt = fill(1.0, 4),
+        y  = Any[[1], [1, 2], missing, [2]]
+    )
+
+    dm  = DataModel(model, df; primary_id=:ID, time_col=:t)
+    θ   = get_θ0_untransformed(dm.model.fixed.fixed)
+    ll  = NoLimits.loglikelihood(dm, θ, ComponentArray())
+
+    dist_ref = coarsed(ContinuousTimeObservedStatesMarkovModel(
+        [-1.0 1.0; 0.5 -0.5],
+        Categorical([0.6, 0.4]),
+        1.0
+    ))
+    expected = _recursive_markov_loglikelihood_ct(fill(dist_ref, nrow(df)), df.y)
+
+    @test isfinite(ll)
+    @test isapprox(ll, expected; atol=1e-12)
+end
+
+@testset "CT observed MC: DataModel set-valued labels require coarsed wrapper" begin
+    model = @Model begin
+        @covariates begin
+            t  = Covariate()
+            dt = Covariate()
+        end
+
+        @fixedEffects begin
+            dummy = RealNumber(0.0)
+        end
+
+        @formulas begin
+            Q = [-1.0  1.0; 0.5 -0.5]
             y ~ ContinuousTimeObservedStatesMarkovModel(Q, Categorical([0.6, 0.4]), dt)
         end
     end
@@ -235,22 +290,51 @@ end
         ID = [1, 1, 1, 1],
         t  = [0.0, 1.0, 2.0, 3.0],
         dt = fill(1.0, 4),
-        y  = Any[1, (1, 2), missing, (2,)]
+        y  = Any[[1], [1, 2], missing, [2]]
     )
 
-    dm  = DataModel(model, df; primary_id=:ID, time_col=:t)
-    θ   = get_θ0_untransformed(dm.model.fixed.fixed)
-    ll  = NoLimits.loglikelihood(dm, θ, ComponentArray())
+    err = try
+        DataModel(model, df; primary_id=:ID, time_col=:t)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ErrorException
+    @test occursin("non-coarsed", sprint(showerror, err))
+end
 
-    dist_ref = ContinuousTimeObservedStatesMarkovModel(
-        [-1.0 1.0; 0.5 -0.5],
-        Categorical([0.6, 0.4]),
-        1.0
+@testset "CT observed MC: DataModel coarsed model requires AbstractVector observations" begin
+    model = @Model begin
+        @covariates begin
+            t  = Covariate()
+            dt = Covariate()
+        end
+
+        @fixedEffects begin
+            dummy = RealNumber(0.0)
+        end
+
+        @formulas begin
+            Q = [-1.0  1.0; 0.5 -0.5]
+            y ~ coarsed(ContinuousTimeObservedStatesMarkovModel(Q, Categorical([0.6, 0.4]), dt))
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 1, 1],
+        t  = [0.0, 1.0, 2.0, 3.0],
+        dt = fill(1.0, 4),
+        y  = Union{Missing, Int}[1, 2, missing, 2]
     )
-    expected = _recursive_markov_loglikelihood_ct(fill(dist_ref, nrow(df)), df.y)
 
-    @test isfinite(ll)
-    @test isapprox(ll, expected; atol=1e-12)
+    err = try
+        DataModel(model, df; primary_id=:ID, time_col=:t)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ErrorException
+    @test occursin("all non-missing observations must be AbstractVectors", sprint(showerror, err))
 end
 
 # ── 10. ForwardDiff gradient through Q-matrix entries ─────────────────────────

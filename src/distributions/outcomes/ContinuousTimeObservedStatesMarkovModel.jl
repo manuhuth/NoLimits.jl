@@ -10,8 +10,6 @@ using Distributions, ExponentialAction, Random
 A continuous-time Markov model with observed states. State propagation is performed
 via the matrix exponential `exp(Q · Δt)` where `Q` is the rate matrix (generator). Unlike the
 CT-HMM variants, the latent state is directly observable when a single state label is provided.
-Set-valued labels are also supported to represent censored/partially observed states (e.g.
-`(2, 3, 4)` means state is compatible with any of 2, 3, or 4).
 
 Implements the `Distributions.jl` interface (`logpdf`, `pdf`, `rand`, `mean`, `var`, `cdf`).
 Used as an observation distribution in `@formulas` blocks.
@@ -51,7 +49,7 @@ function ContinuousTimeObservedStatesMarkovModel(
     initial_dist      :: Distributions.Categorical,
     Δt                :: Real,
     state_labels      :: Vector{T};
-    propagation_mode  :: Symbol = :auto,
+    propagation_mode  :: Symbol = :auto
 ) where T
     _ct_hmm_validate_mode(propagation_mode)
     n_states = size(transition_matrix, 1)
@@ -72,13 +70,15 @@ function ContinuousTimeObservedStatesMarkovModel(
     transition_matrix :: AbstractMatrix{<:Real},
     initial_dist      :: Distributions.Categorical,
     Δt                :: Real;
-    propagation_mode  :: Symbol = :auto,
+    propagation_mode  :: Symbol = :auto
 )
     n_states = size(transition_matrix, 1)
     return ContinuousTimeObservedStatesMarkovModel(
         transition_matrix, initial_dist, Δt, collect(1:n_states);
         propagation_mode=propagation_mode)
 end
+
+@inline _omm_is_observed_markov_dist(::ContinuousTimeObservedStatesMarkovModel) = true
 
 # --- Hidden state probabilities (shared interface with HMM variants) ---
 
@@ -99,49 +99,35 @@ end
 
 For a scalar observed state `y`, returns the one-hot posterior after observing that state.
 
-For a set-valued observation (for example `(2, 3, 4)`), returns the prior restricted to
-compatible states and renormalized. This matches msm-style censored-state handling where
-the likelihood contribution is the sum of prior probabilities over compatible states.
-
-Returns a zero vector if no compatible state is found.
+Returns a zero vector if the observation label is not found.
 """
 function posterior_hidden_states(dist::ContinuousTimeObservedStatesMarkovModel, y)
-    idxs = _hmm_compatible_state_indices(dist.state_labels, y)
+    idx = _omm_scalar_observation_index(dist.state_labels, y)
     p = probabilities_hidden_states(dist)
     T = eltype(p)
     post = zeros(T, dist.n_states)
-    isempty(idxs) && return post
-    if !_is_state_set_observation(y) && length(idxs) == 1
-        post[idxs[1]] = one(T)
-        return post
-    end
-    mass = zero(T)
-    for idx in idxs
-        mass += p[idx]
-    end
-    (isfinite(mass) && mass > zero(T)) || return post
-    inv_mass = inv(mass)
-    for idx in idxs
-        post[idx] = p[idx] * inv_mass
-    end
+    idx === nothing && return post
+    post[idx] = one(T)
     return post
+end
+
+function posterior_hidden_states(dist::ContinuousTimeObservedStatesMarkovModel, y::AbstractVector)
+    _omm_scalar_observation_index(dist.state_labels, y)
+    return zeros(eltype(probabilities_hidden_states(dist)), dist.n_states)
 end
 
 # --- Distributions.jl interface ---
 
 function Distributions.logpdf(dist::ContinuousTimeObservedStatesMarkovModel, y)
-    idxs = _hmm_compatible_state_indices(dist.state_labels, y)
-    isempty(idxs) && return -Inf
+    idx = _omm_scalar_observation_index(dist.state_labels, y)
+    idx === nothing && return -Inf
     p = probabilities_hidden_states(dist)
-    if !_is_state_set_observation(y) && length(idxs) == 1
-        return log(p[idxs[1]])
-    end
-    mass = zero(eltype(p))
-    for idx in idxs
-        mass += p[idx]
-    end
-    (isfinite(mass) && mass > zero(eltype(p))) || return -Inf
-    return log(mass)
+    return log(p[idx])
+end
+
+function Distributions.logpdf(dist::ContinuousTimeObservedStatesMarkovModel, y::AbstractVector)
+    _omm_scalar_observation_index(dist.state_labels, y)
+    return -Inf
 end
 
 Distributions.pdf(dist::ContinuousTimeObservedStatesMarkovModel, y) = exp(logpdf(dist, y))
