@@ -997,6 +997,12 @@ jointly and split per individual.
 - `jitter::Real = 1e-8`: initial Cholesky jitter (Laplace path only).
 - `n_adapt::Int = 200`: MCMC adaptation steps for the first sweep (MCMC path only).
 - `warm_start::Bool = true`: seed the MCMC chain at the EB mode (MCMC path only).
+- `sampler = nothing`: override the MCMC sampler used for MCEM/SAEM. Defaults to
+  the sampler stored on the fit method, or to `SaemixMH()` when the result was
+  loaded from disk (where the original sampler is not serialised).
+- `turing_kwargs::NamedTuple = NamedTuple()`: extra kwargs passed through to the
+  MCMC sampler. Merged on top of the method's stored `turing_kwargs` when those
+  are available.
 
 The returned `NamedTuple` mirrors [`get_random_effects`](@ref), with one extra
 leading `:sample` integer column (1..`n_samples`) so each individual appears
@@ -1011,7 +1017,9 @@ function sample_random_effects(dm::DataModel,
                                include_constants::Bool=true,
                                jitter::Real=1e-8,
                                n_adapt::Int=200,
-                               warm_start::Bool=true)
+                               warm_start::Bool=true,
+                               sampler=nothing,
+                               turing_kwargs::NamedTuple=NamedTuple())
     n_samples >= 1 || error("n_samples must be >= 1.")
     constants_re = _res_constants_re(res, constants_re)
 
@@ -1029,28 +1037,27 @@ function sample_random_effects(dm::DataModel,
                                        jitter=jitter)
     end
 
-    # MCMC path for MCEM / SAEM — pick the same sampler used in the E-step.
-    sampler, base_tkwargs = if res.result isa MCEMResult
-        if res.method isa _SavedFittingMethod
-            error("Cannot sample MCEM conditional: original sampler not stored after load_fit. " *
-                  "Refit or use a Laplace-style result.")
-        end
+    # MCMC path for MCEM / SAEM. Prefer the sampler stored on the method;
+    # fall back to SaemixMH() when the result was loaded from disk or the
+    # method has no usable MCMC sampler (e.g. pure-IS MCEM).
+    method_sampler, method_tkwargs = if res.method isa _SavedFittingMethod
+        (nothing, NamedTuple())
+    elseif res.result isa MCEMResult
         es = _mcmc_e_step(res.method.e_step)
-        es === nothing && error("This MCEM result has no MCMC sampler available (pure IS).")
-        (es.sampler, es.turing_kwargs)
+        es === nothing ? (nothing, NamedTuple()) : (es.sampler, es.turing_kwargs)
     elseif res.result isa SAEMResult
-        if res.method isa _SavedFittingMethod
-            error("Cannot sample SAEM conditional: original sampler not stored after load_fit. " *
-                  "Refit or use a Laplace-style result.")
-        end
         (res.method.saem.sampler, res.method.saem.turing_kwargs)
     else
         error("Random-effects sampling not supported for this method.")
     end
 
+    final_sampler = sampler !== nothing ? sampler :
+                    (method_sampler !== nothing ? method_sampler : SaemixMH())
+    base_tkwargs = merge(method_tkwargs, turing_kwargs)
+
     return _sample_re_mcmc_path(dm, res, constants_re,
                                  bstars, batch_infos, θu, const_cache, ll_cache,
-                                 sampler, base_tkwargs;
+                                 final_sampler, base_tkwargs;
                                  n_samples=n_samples, n_adapt=n_adapt, rng=rng,
                                  warm_start=warm_start, flatten=flatten,
                                  include_constants=include_constants)
@@ -1064,13 +1071,16 @@ function sample_random_effects(res::FitResult;
                                include_constants::Bool=true,
                                jitter::Real=1e-8,
                                n_adapt::Int=200,
-                               warm_start::Bool=true)
+                               warm_start::Bool=true,
+                               sampler=nothing,
+                               turing_kwargs::NamedTuple=NamedTuple())
     dm = res.data_model
     dm === nothing && error("This fit result does not store a DataModel; call sample_random_effects(dm, res) instead.")
     return sample_random_effects(dm, res; n_samples=n_samples, rng=rng,
                                  constants_re=constants_re, flatten=flatten,
                                  include_constants=include_constants,
-                                 jitter=jitter, n_adapt=n_adapt, warm_start=warm_start)
+                                 jitter=jitter, n_adapt=n_adapt, warm_start=warm_start,
+                                 sampler=sampler, turing_kwargs=turing_kwargs)
 end
 
 """
