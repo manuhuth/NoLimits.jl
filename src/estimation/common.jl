@@ -8,6 +8,7 @@ export fit_model
 export get_summary
 export get_params
 export get_random_effects
+export sample_random_effects
 export get_diagnostics
 export get_result
 export get_method
@@ -788,6 +789,288 @@ function get_random_effects(res::FitResult;
     dm = res.data_model
     dm === nothing && error("This fit result does not store a DataModel; call get_random_effects(dm, res) instead.")
     return get_random_effects(dm, res; constants_re=constants_re, flatten=flatten, include_constants=include_constants)
+end
+
+function _resolve_bstars_for_re(dm::DataModel, res::FitResult, constants_re::NamedTuple)
+    if res.result isa LaplaceResult || res.result isa LaplaceMAPResult || res.result isa GHQuadratureResult || res.result isa GHQuadratureMAPResult
+        θu = get_params(res; scale=:untransformed)
+        ode_args = haskey(res.fit_kwargs, :ode_args) ? getfield(res.fit_kwargs, :ode_args) : ()
+        ode_kwargs = haskey(res.fit_kwargs, :ode_kwargs) ? getfield(res.fit_kwargs, :ode_kwargs) : NamedTuple()
+        serialization = haskey(res.fit_kwargs, :serialization) ? getfield(res.fit_kwargs, :serialization) : EnsembleThreads()
+        ll_cache = build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs, serialization=serialization, force_saveat=true)
+        _, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re)
+        return res.result.eb_modes, batch_infos, θu, const_cache, ll_cache, constants_re
+    end
+    if res.result isa MCEMResult
+        θu = get_params(res; scale=:untransformed)
+        ode_args = haskey(res.fit_kwargs, :ode_args) ? getfield(res.fit_kwargs, :ode_args) : ()
+        ode_kwargs = haskey(res.fit_kwargs, :ode_kwargs) ? getfield(res.fit_kwargs, :ode_kwargs) : NamedTuple()
+        serialization = haskey(res.fit_kwargs, :serialization) ? getfield(res.fit_kwargs, :serialization) : EnsembleThreads()
+        rng = haskey(res.fit_kwargs, :rng) ? getfield(res.fit_kwargs, :rng) : Random.default_rng()
+        ll_cache = build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs, serialization=serialization, force_saveat=true)
+        bstars = res.result.eb_modes
+        if bstars === nothing
+            bstars, batch_infos = _compute_bstars(dm, θu, constants_re, ll_cache, res.method.ebe, rng;
+                                                  rescue=res.method.ebe_rescue)
+            _, _, const_cache = _build_laplace_batch_infos(dm, constants_re)
+        else
+            _, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re)
+        end
+        return bstars, batch_infos, θu, const_cache, ll_cache, constants_re
+    end
+    if res.result isa SAEMResult
+        θu = get_params(res; scale=:untransformed)
+        constants_re = _saem_anneal_constants_re(dm, θu, _saem_anneal_names(res), constants_re)
+        ode_args = haskey(res.fit_kwargs, :ode_args) ? getfield(res.fit_kwargs, :ode_args) : ()
+        ode_kwargs = haskey(res.fit_kwargs, :ode_kwargs) ? getfield(res.fit_kwargs, :ode_kwargs) : NamedTuple()
+        serialization = haskey(res.fit_kwargs, :serialization) ? getfield(res.fit_kwargs, :serialization) : EnsembleThreads()
+        rng = haskey(res.fit_kwargs, :rng) ? getfield(res.fit_kwargs, :rng) : Random.default_rng()
+        ll_cache = build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs, serialization=serialization, force_saveat=true)
+        bstars = res.result.eb_modes
+        if bstars === nothing
+            _saem_opts = res.method isa _SavedFittingMethod ? SAEM().saem : res.method.saem
+            ebe = EBEOptions(_saem_opts.ebe_optimizer, _saem_opts.ebe_optim_kwargs, _saem_opts.ebe_adtype,
+                             _saem_opts.ebe_grad_tol, _saem_opts.ebe_multistart_n, _saem_opts.ebe_multistart_k,
+                             _saem_opts.ebe_multistart_max_rounds, _saem_opts.ebe_multistart_sampling)
+            bstars, batch_infos = _compute_bstars(dm, θu, constants_re, ll_cache, ebe, rng;
+                                                  rescue=_saem_opts.ebe_rescue)
+            _, _, const_cache = _build_laplace_batch_infos(dm, constants_re)
+        else
+            _, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re)
+        end
+        return bstars, batch_infos, θu, const_cache, ll_cache, constants_re
+    end
+    error("Random-effects access not supported for this method.")
+end
+
+function _bstars_to_re_df(dm::DataModel, batch_infos, bstars_per_sample::Vector,
+                          constants_re::NamedTuple, flatten::Bool, include_constants::Bool)
+    n_samples = length(bstars_per_sample)
+    n_samples == 0 && return NamedTuple()
+    sample_dfs = Vector{NamedTuple}(undef, n_samples)
+    for s in 1:n_samples
+        sample_dfs[s] = _re_dataframes_from_bstars(dm, batch_infos, bstars_per_sample[s];
+                                                  constants_re=constants_re,
+                                                  flatten=flatten,
+                                                  include_constants=include_constants)
+    end
+    isempty(sample_dfs[1]) && return NamedTuple()
+    re_keys = keys(sample_dfs[1])
+    out_pairs = Pair{Symbol, Any}[]
+    for k in re_keys
+        df_list = DataFrame[]
+        for s in 1:n_samples
+            df = copy(sample_dfs[s][k])
+            insertcols!(df, 1, :sample => fill(s, nrow(df)))
+            push!(df_list, df)
+        end
+        push!(out_pairs, k => vcat(df_list...))
+    end
+    return NamedTuple(out_pairs)
+end
+
+# Laplace-approximation path: bstars come from the EB modes, conditional
+# covariance is (-H)^{-1}. Used for Laplace, LaplaceMAP, GHQuadrature(MAP).
+function _sample_re_laplace_path(dm::DataModel, res::FitResult, constants_re::NamedTuple,
+                                  bstars, batch_infos, θu, const_cache, ll_cache;
+                                  n_samples::Int, rng::AbstractRNG, flatten::Bool,
+                                  include_constants::Bool, jitter::Real)
+    ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
+    n_batches = length(batch_infos)
+
+    chols = Vector{Any}(undef, n_batches)
+    for (bi, info) in enumerate(batch_infos)
+        if info.n_b == 0
+            chols[bi] = nothing
+            continue
+        end
+        H = _laplace_hessian_b(dm, info, θu, bstars[bi], const_cache, ll_cache_local,
+                               nothing, bi; ctx="sample_random_effects")
+        chol, _ = _laplace_cholesky_negH(H; jitter=jitter, max_tries=8,
+                                         growth=10.0, adaptive=true,
+                                         scale_factor=1e-6)
+        (chol === nothing || chol.info != 0) &&
+            error("Failed to compute conditional covariance for batch $bi: " *
+                  "negative Hessian is not positive definite even with jitter.")
+        chols[bi] = chol
+    end
+
+    bstars_per_sample = Vector{Vector{Any}}(undef, n_samples)
+    for s in 1:n_samples
+        sampled = Vector{Any}(undef, n_batches)
+        for bi in 1:n_batches
+            info = batch_infos[bi]
+            b0 = bstars[bi]
+            if info.n_b == 0
+                sampled[bi] = b0
+                continue
+            end
+            z = randn(rng, eltype(b0), info.n_b)
+            sampled[bi] = b0 .+ (chols[bi].U \ z)
+        end
+        bstars_per_sample[s] = sampled
+    end
+    return _bstars_to_re_df(dm, batch_infos, bstars_per_sample,
+                            constants_re, flatten, include_constants)
+end
+
+# MCMC path: draw n_samples from the exact conditional p(b | y, θ̂) using
+# the same MCMC kernel that drives the E-step (Turing sampler for MCEM,
+# SaemixMH or Turing for SAEM). Each call to _mcem_sample_batch advances
+# the chain by one sweep and we record the state after every sweep.
+function _sample_re_mcmc_path(dm::DataModel, res::FitResult, constants_re::NamedTuple,
+                               bstars, batch_infos, θu, const_cache, ll_cache,
+                               sampler, base_turing_kwargs;
+                               n_samples::Int, n_adapt::Int, rng::AbstractRNG,
+                               warm_start::Bool, flatten::Bool, include_constants::Bool)
+    ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
+    re_names = get_re_names(dm.model.random.random)
+    n_batches = length(batch_infos)
+
+    # Per-sweep kwargs: 1 sample per call so we can record every step.
+    tkwargs = merge(base_turing_kwargs, (n_samples=1, n_adapt=n_adapt))
+    haskey(tkwargs, :progress) || (tkwargs = merge(tkwargs, (progress=false,)))
+    haskey(tkwargs, :verbose)  || (tkwargs = merge(tkwargs, (verbose=false,)))
+
+    # Per-batch RNGs to keep results reproducible without inter-batch correlations.
+    batch_rngs = _spawn_child_rngs(rng, n_batches)
+
+    # Seed each chain at the EB mode so samples are useful immediately.
+    last_params = Vector{Any}(undef, n_batches)
+    for bi in 1:n_batches
+        info = batch_infos[bi]
+        last_params[bi] = info.n_b == 0 ? nothing :
+            _b_to_last_params(bstars[bi], info, re_names)
+    end
+
+    bstars_per_sample = Vector{Vector{Any}}(undef, n_samples)
+    for s in 1:n_samples
+        sampled = Vector{Any}(undef, n_batches)
+        # Only the first sweep performs adaptation; subsequent sweeps reuse the chain.
+        sweep_kwargs = s == 1 ? tkwargs : merge(tkwargs, (n_adapt=0,))
+        for bi in 1:n_batches
+            info = batch_infos[bi]
+            if info.n_b == 0
+                sampled[bi] = bstars[bi]
+                continue
+            end
+            samples_mat, lastp, lastb = _mcem_sample_batch(
+                dm, info, θu, const_cache, ll_cache_local, sampler, sweep_kwargs,
+                batch_rngs[bi], re_names, warm_start, last_params[bi])
+            last_params[bi] = lastp
+            sampled[bi] = size(samples_mat, 2) > 0 ? vec(samples_mat[:, end]) : copy(lastb)
+        end
+        bstars_per_sample[s] = sampled
+    end
+    return _bstars_to_re_df(dm, batch_infos, bstars_per_sample,
+                            constants_re, flatten, include_constants)
+end
+
+"""
+    sample_random_effects(dm::DataModel, res::FitResult; n_samples, rng,
+                          constants_re, flatten, include_constants,
+                          jitter, n_adapt, warm_start) -> NamedTuple
+    sample_random_effects(res::FitResult; ...) -> NamedTuple
+
+Draw samples from the conditional posterior of the random effects
+``p(b_i \\mid y_i, \\hat{\\theta})`` for each individual.
+
+The sampling mechanism matches the one the fitting method itself uses for the
+conditional distribution, so the draws are consistent with the E-step:
+
+- `Laplace`, `LaplaceMAP`, `GHQuadrature`, `GHQuadratureMAP`: Gaussian Laplace
+  approximation centred at the EBE mode ``b^\\star`` with covariance
+  ``(-H)^{-1}``, where ``H`` is the Hessian of the joint log-density at ``b^\\star``.
+- `MCEM`, `SAEM`: MCMC samples drawn from the exact conditional with the same
+  sampler used in the E-step (Turing sampler for MCEM, `SaemixMH` or Turing
+  sampler for SAEM), seeded at the EBE mode.
+
+For batched random effects (e.g. blockwise MCEM/SAEM), the batch is sampled
+jointly and split per individual.
+
+# Keyword Arguments
+- `n_samples::Int = 100`: number of conditional posterior draws per individual.
+- `rng::AbstractRNG = Random.default_rng()`: random source for the draws.
+- `constants_re::NamedTuple = NamedTuple()`: fix random effects at given values.
+- `flatten::Bool = true`: expand vector random effects to individual columns.
+- `include_constants::Bool = true`: include constant random effects in the output.
+- `jitter::Real = 1e-8`: initial Cholesky jitter (Laplace path only).
+- `n_adapt::Int = 200`: MCMC adaptation steps for the first sweep (MCMC path only).
+- `warm_start::Bool = true`: seed the MCMC chain at the EB mode (MCMC path only).
+
+The returned `NamedTuple` mirrors [`get_random_effects`](@ref), with one extra
+leading `:sample` integer column (1..`n_samples`) so each individual appears
+`n_samples` times per `DataFrame`.
+"""
+function sample_random_effects(dm::DataModel,
+                               res::FitResult;
+                               n_samples::Int=100,
+                               rng::AbstractRNG=Random.default_rng(),
+                               constants_re::NamedTuple=NamedTuple(),
+                               flatten::Bool=true,
+                               include_constants::Bool=true,
+                               jitter::Real=1e-8,
+                               n_adapt::Int=200,
+                               warm_start::Bool=true)
+    n_samples >= 1 || error("n_samples must be >= 1.")
+    constants_re = _res_constants_re(res, constants_re)
+
+    bstars, batch_infos, θu, const_cache, ll_cache, constants_re =
+        _resolve_bstars_for_re(dm, res, constants_re)
+    isempty(batch_infos) && return NamedTuple()
+
+    if res.result isa LaplaceResult || res.result isa LaplaceMAPResult ||
+       res.result isa GHQuadratureResult || res.result isa GHQuadratureMAPResult
+        return _sample_re_laplace_path(dm, res, constants_re,
+                                       bstars, batch_infos, θu, const_cache, ll_cache;
+                                       n_samples=n_samples, rng=rng,
+                                       flatten=flatten,
+                                       include_constants=include_constants,
+                                       jitter=jitter)
+    end
+
+    # MCMC path for MCEM / SAEM — pick the same sampler used in the E-step.
+    sampler, base_tkwargs = if res.result isa MCEMResult
+        if res.method isa _SavedFittingMethod
+            error("Cannot sample MCEM conditional: original sampler not stored after load_fit. " *
+                  "Refit or use a Laplace-style result.")
+        end
+        es = _mcmc_e_step(res.method.e_step)
+        es === nothing && error("This MCEM result has no MCMC sampler available (pure IS).")
+        (es.sampler, es.turing_kwargs)
+    elseif res.result isa SAEMResult
+        if res.method isa _SavedFittingMethod
+            error("Cannot sample SAEM conditional: original sampler not stored after load_fit. " *
+                  "Refit or use a Laplace-style result.")
+        end
+        (res.method.saem.sampler, res.method.saem.turing_kwargs)
+    else
+        error("Random-effects sampling not supported for this method.")
+    end
+
+    return _sample_re_mcmc_path(dm, res, constants_re,
+                                 bstars, batch_infos, θu, const_cache, ll_cache,
+                                 sampler, base_tkwargs;
+                                 n_samples=n_samples, n_adapt=n_adapt, rng=rng,
+                                 warm_start=warm_start, flatten=flatten,
+                                 include_constants=include_constants)
+end
+
+function sample_random_effects(res::FitResult;
+                               n_samples::Int=100,
+                               rng::AbstractRNG=Random.default_rng(),
+                               constants_re::NamedTuple=NamedTuple(),
+                               flatten::Bool=true,
+                               include_constants::Bool=true,
+                               jitter::Real=1e-8,
+                               n_adapt::Int=200,
+                               warm_start::Bool=true)
+    dm = res.data_model
+    dm === nothing && error("This fit result does not store a DataModel; call sample_random_effects(dm, res) instead.")
+    return sample_random_effects(dm, res; n_samples=n_samples, rng=rng,
+                                 constants_re=constants_re, flatten=flatten,
+                                 include_constants=include_constants,
+                                 jitter=jitter, n_adapt=n_adapt, warm_start=warm_start)
 end
 
 """

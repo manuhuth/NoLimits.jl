@@ -117,6 +117,12 @@ end
     re = NoLimits.get_random_effects(res)
     @test !isempty(re)
 
+    re_samples = NoLimits.sample_random_effects(res; n_samples=5)
+    @test !isempty(re_samples)
+    @test :sample in propertynames(re_samples.η)
+    @test nrow(re_samples.η) == 5 * nrow(re.η)
+    @test sort(unique(re_samples.η.sample)) == collect(1:5)
+
     model_map = @Model begin
         @covariates begin
             t = Covariate()
@@ -139,6 +145,10 @@ end
     res_map = fit_model(dm_map, NoLimits.LaplaceMAP(; optim_kwargs=(maxiters=2,)))
     re_map = NoLimits.get_random_effects(res_map)
     @test !isempty(re_map)
+
+    re_map_samples = NoLimits.sample_random_effects(res_map; n_samples=3)
+    @test !isempty(re_map_samples)
+    @test nrow(re_map_samples.η) == 3 * nrow(re_map.η)
 end
 
 @testset "Accessors (MCEM/SAEM)" begin
@@ -174,6 +184,12 @@ end
     @test !isempty(re_mcem)
     @test res_mcem.result.eb_modes !== nothing
 
+    re_mcem_samples = NoLimits.sample_random_effects(res_mcem; n_samples=4, n_adapt=2)
+    @test !isempty(re_mcem_samples)
+    @test :sample in propertynames(re_mcem_samples.η)
+    @test nrow(re_mcem_samples.η) == 4 * nrow(re_mcem.η)
+    @test sort(unique(re_mcem_samples.η.sample)) == collect(1:4)
+
 
     res_saem = fit_model(dm, NoLimits.SAEM(; sampler=MH(), turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
                                   q_store_max=2,
@@ -181,5 +197,16 @@ end
     re_saem = NoLimits.get_random_effects(res_saem)
     @test !isempty(re_saem)
     @test res_saem.result.eb_modes !== nothing
+
+    re_saem_samples = NoLimits.sample_random_effects(res_saem; n_samples=3, n_adapt=2)
+    @test !isempty(re_saem_samples)
+    @test :sample in propertynames(re_saem_samples.η)
+    @test nrow(re_saem_samples.η) == 3 * nrow(re_saem.η)
+
+    # SAEM with the default SaemixMH sampler
+    res_saem_smh = fit_model(dm, NoLimits.SAEM(; q_store_max=2, maxiters=2))
+    re_saem_smh_samples = NoLimits.sample_random_effects(res_saem_smh; n_samples=3)
+    @test !isempty(re_saem_smh_samples)
+    @test nrow(re_saem_smh_samples.η) == 3 * nrow(NoLimits.get_random_effects(res_saem_smh).η)
 
 end
