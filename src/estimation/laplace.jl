@@ -1281,6 +1281,46 @@ function _laplace_logf_batch(dm::DataModel,
     return ll
 end
 
+# RE-prior-only counterpart to _laplace_logf_batch.
+# Evaluates log p(η | θ_re) for all free RE levels in the batch — no ODE, no observation
+# likelihood.  Used by the Q2 M-step optimizer to update parameters that appear only in
+# random-effect distribution expressions.
+function _re_logpdf_batch(dm::DataModel,
+                          batch_info::_LaplaceBatchInfo,
+                          θ::ComponentArray,
+                          b,
+                          cache::_LLCache;
+                          anneal_sds::NamedTuple=NamedTuple())
+    T_ll = promote_type(eltype(θ), eltype(b))
+    ll = zero(T_ll)
+    model_funs = cache.model_funs
+    helpers = cache.helpers
+    θ_re = _symmetrize_psd_params(θ, dm.model.fixed.fixed)
+    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
+    re_cache = dm.re_group_info.laplace_cache
+    re_names = re_cache.re_names
+    has_anneal = !isempty(anneal_sds)
+    for (ri, re) in enumerate(re_names)
+        info = batch_info.re_info[ri]
+        isempty(info.map.levels) && continue
+        for (li, level_id) in enumerate(info.map.levels)
+            rep_idx = info.reps[li]
+            const_cov = dm.individuals[rep_idx].const_cov
+            dists = dists_builder(θ_re, const_cov, model_funs, helpers)
+            dist = getproperty(dists, re)
+            if has_anneal && haskey(anneal_sds, re)
+                dist = _saem_apply_anneal_dist(dist, getfield(anneal_sds, re))
+            end
+            v = _re_value_from_b(info, level_id, b)
+            v === nothing && continue
+            lp = logpdf(dist, v)
+            isfinite(lp) || return T_ll(-Inf)
+            ll += lp
+        end
+    end
+    return ll
+end
+
 function _laplace_obsll_batch(dm::DataModel,
                               batch_info::_LaplaceBatchInfo,
                               θ::ComponentArray,

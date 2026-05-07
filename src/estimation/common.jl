@@ -1808,3 +1808,62 @@ function _log_closed_form_plan(method_name::String,
     end
     return nothing
 end
+
+"""
+    _compute_obs_fe_syms(model) -> Set{Symbol}
+
+Return the set of fixed-effect names that appear in any observation-side block:
+`@formulas`, `@preDifferentialEquation`, `@DifferentialEquation`, or `@initialDE`.
+
+A fixed-effect name NOT in this set appears only in `@randomEffects` distribution
+expressions and therefore belongs entirely to Q2 (the RE-distribution term of the
+complete-data log-likelihood), enabling a cheaper M-step that skips ODE evaluation.
+"""
+function _compute_obs_fe_syms(model)
+    fe_names = Set(get_names(model.fixed.fixed))
+    syms = Set{Symbol}()
+    # @formulas — FormulasIR.var_syms contains all variable symbols
+    union!(syms, filter(∈(fe_names), model.formulas.formulas.ir.var_syms))
+    de = model.de
+    if de !== nothing
+        # @preDifferentialEquation
+        if de.prede !== nothing
+            union!(syms, filter(∈(fe_names), de.prede.meta.syms))
+        end
+        # @DifferentialEquation — var_syms are non-state/signal variable references,
+        # fun_syms are function-call heads (e.g. model functions used in RHS)
+        if de.de !== nothing
+            union!(syms, filter(∈(fe_names), de.de.meta.var_syms))
+            union!(syms, filter(∈(fe_names), de.de.meta.fun_syms))
+        end
+        # @initialDE
+        if de.initial !== nothing
+            union!(syms, filter(∈(fe_names), de.initial.ir.var_syms))
+            union!(syms, filter(∈(fe_names), de.initial.ir.prop_syms))
+        end
+    end
+    return syms
+end
+
+"""
+    _partition_q1_q2_names(model, free_names) -> (q1=Vector{Symbol}, q2=Vector{Symbol})
+
+Partition `free_names` into Q1 parameters (appear in obs-side blocks, require ODE
+evaluation) and Q2 parameters (appear only in `@randomEffects` distribution expressions,
+no ODE required).
+
+Returns a NamedTuple `(q1=..., q2=...)` preserving the original order of `free_names`.
+"""
+function _partition_q1_q2_names(model, free_names::Vector{Symbol})
+    obs_fe = _compute_obs_fe_syms(model)
+    re_syms_map = get_re_syms(model.random.random)
+    re_fe_syms = Set{Symbol}()
+    for (_, syms) in Base.pairs(re_syms_map)
+        union!(re_fe_syms, syms)
+    end
+    # Q2 candidates: in RE distribution expressions but not in any obs-side block
+    q2_candidates = setdiff(re_fe_syms, obs_fe)
+    q2_free = [n for n in free_names if n ∈ q2_candidates]
+    q1_free = [n for n in free_names if n ∉ q2_candidates]
+    return (q1=q1_free, q2=q2_free)
+end

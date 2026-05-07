@@ -2377,6 +2377,99 @@ function _saem_Q_current(dm::DataModel,
     return total
 end
 
+# Q2 counterpart to _saem_Q: evaluates only log p(η|θ_re), averaged over the ring buffer.
+# Used for the Q2 M-step (parameters that appear only in RE distribution expressions).
+function _saem_Q2(dm::DataModel,
+                  batch_infos::Vector{_LaplaceBatchInfo},
+                  θ::ComponentArray,
+                  const_cache::LaplaceConstantsCache,
+                  ll_cache,
+                  store::_SAEMSampleStore;
+                  serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
+                  anneal_sds::NamedTuple=NamedTuple())
+    total = zero(eltype(θ))
+    store.len == 0 && return total
+    weight_sum = _saem_store_weight_sum(store)
+    weight_sum < 1e-300 && return total
+    h_start = store.head
+    active_len = store.len
+    cap = store.capacity
+    if serialization isa SciMLBase.EnsembleThreads
+        nthreads = Threads.maxthreadid()
+        caches = _saem_thread_caches(dm, ll_cache, nthreads)
+        Tθ = eltype(θ)
+        partial_obj = Vector{Tθ}(undef, length(batch_infos))
+        fill!(partial_obj, zero(Tθ))
+        bad = Threads.Atomic{Bool}(false)
+        Threads.@threads for bi in eachindex(batch_infos)
+            bad[] && continue
+            tid = Threads.threadid()
+            info = batch_infos[bi]
+            acc = zero(eltype(θ))
+            h = h_start
+            @inbounds for _ in 1:active_len
+                w = store.weights[h]
+                snap = store.snaps[h][bi]
+                h = h == cap ? 1 : h + 1
+                isempty(snap) && continue
+                logf = _re_logpdf_batch(dm, info, θ, snap, caches[tid];
+                                        anneal_sds=anneal_sds)
+                !isfinite(logf) && (bad[] = true; break)
+                acc += w * logf
+            end
+            bad[] && continue
+            partial_obj[bi] = acc
+        end
+        bad[] && return Inf
+        total = zero(Tθ)
+        @inbounds for bi in eachindex(batch_infos)
+            total += partial_obj[bi]
+        end
+        return total / weight_sum
+    else
+        ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
+        for (bi, info) in enumerate(batch_infos)
+            acc = zero(eltype(θ))
+            h = h_start
+            @inbounds for _ in 1:active_len
+                w = store.weights[h]
+                snap = store.snaps[h][bi]
+                h = h == cap ? 1 : h + 1
+                isempty(snap) && continue
+                logf = _re_logpdf_batch(dm, info, θ, snap, ll_cache_local;
+                                        anneal_sds=anneal_sds)
+                !isfinite(logf) && return Inf
+                acc += w * logf
+            end
+            total += acc
+        end
+        return total / weight_sum
+    end
+end
+
+# Q2 counterpart to _saem_Q_current: uses only the current iteration's samples.
+# Used for the Q2 M-step when mstep_sa_on_params=true.
+function _saem_Q2_current(dm::DataModel,
+                           batch_infos::Vector{_LaplaceBatchInfo},
+                           θ::ComponentArray,
+                           const_cache::LaplaceConstantsCache,
+                           ll_cache,
+                           b_current::AbstractVector;
+                           serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
+                           anneal_sds::NamedTuple=NamedTuple())
+    total = zero(eltype(θ))
+    ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
+    for (bi, info) in enumerate(batch_infos)
+        snap = b_current[bi]
+        isempty(snap) && continue
+        logf = _re_logpdf_batch(dm, info, θ, snap, ll_cache_local;
+                                anneal_sds=anneal_sds)
+        !isfinite(logf) && return typeof(total)(Inf)
+        total += logf
+    end
+    return total
+end
+
 # Return indices (into batch_infos) from `updated` whose current RE sample gives a
 # non-finite log-likelihood at θ. Used by the E-step retry mechanism.
 function _saem_bad_batches(dm::DataModel,
@@ -2644,6 +2737,12 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                                re_cov_params, re_mean_params, resid_var_param, hmm_emission_params,
                                has_custom_closed_form, base_free_names)
     re_family_map = _saem_re_family_map(dm)
+
+    # Detect Q2-only free parameters (appear only in RE distributions, never in obs-side blocks).
+    # These are optimised in a cheap separate M-step that skips ODE evaluation entirely.
+    q2_base_free_names = let p = _partition_q1_q2_names(dm.model, base_free_names)
+        p.q2
+    end
 
     # anneal_to_fixed validation
     anneal_initial_sds = _saem_validate_anneal(method.saem.anneal_to_fixed,
@@ -2946,6 +3045,80 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
         base_free_names = free_names_iter
         θ_const_t = θ_const_t_iter
         axs_full = axs_full_iter
+
+        # ── Q2 numerical M-step ──────────────────────────────────────────────
+        # Optimise parameters that appear only in RE distribution expressions.
+        # No ODE calls needed — objective is purely log p(η | θ_Q2).
+        let q2_free_now = [n for n in q2_base_free_names if n ∉ keys(iter_constants)]
+            if !isempty(q2_free_now)
+                θt_q2 = ComponentArray(NamedTuple{Tuple(q2_free_now)}(
+                    Tuple(getproperty(θt_full_curr, n) for n in q2_free_now)))
+                axs_q2 = getaxes(θt_q2)
+                function obj_q2(ψt, p)
+                    any(isnan, ψt) && return eltype(ψt)(Inf)
+                    ψt_ca = ψt isa ComponentArray ? ψt : ComponentArray(ψt, axs_q2)
+                    T = eltype(ψt_ca)
+                    θt_full_q2 = ComponentArray(T.(collect(θt_full_curr)), axs_full_iter)
+                    for name in q2_free_now
+                        setproperty!(θt_full_q2, name, getproperty(ψt_ca, name))
+                    end
+                    θu_q2 = inv_transform(θt_full_q2)
+                    Q2val = if method.saem.mstep_sa_on_params
+                        _saem_Q2_current(dm, batch_infos, θu_q2, const_cache, ll_cache,
+                                         b_current; serialization=serialization,
+                                         anneal_sds=anneal_sds)
+                    else
+                        _saem_Q2(dm, batch_infos, θu_q2, const_cache, ll_cache,
+                                 sample_store; serialization=serialization,
+                                 anneal_sds=anneal_sds)
+                    end
+                    isfinite(Q2val) || return T(Inf)
+                    return -Q2val
+                end
+                lower_t_q2, upper_t_q2 = get_bounds_transformed(fe)
+                lb_q2 = collect(ComponentArray(NamedTuple{Tuple(q2_free_now)}(
+                    Tuple(getproperty(lower_t_q2, n) for n in q2_free_now))))
+                ub_q2 = collect(ComponentArray(NamedTuple{Tuple(q2_free_now)}(
+                    Tuple(getproperty(upper_t_q2, n) for n in q2_free_now))))
+                use_bounds_q2 = !(all(isinf, lb_q2) && all(isinf, ub_q2))
+                θ0_q2 = collect(θt_q2)
+                optf_q2 = OptimizationFunction(obj_q2, method.adtype)
+                prob_q2 = use_bounds_q2 ?
+                    OptimizationProblem(optf_q2, θ0_q2; lb=lb_q2, ub=ub_q2) :
+                    OptimizationProblem(optf_q2, θ0_q2)
+                sol_q2 = Optimization.solve(prob_q2, method.optimizer; method.optim_kwargs...)
+                if all(isfinite, sol_q2.u)
+                    θt_q2_opt = ComponentArray(sol_q2.u, axs_q2)
+                    if method.saem.mstep_sa_on_params
+                        θt_q2_before = collect(θt_q2)
+                        θt_q2_opt = ComponentArray(
+                            θt_q2_before .+ γ .* (collect(θt_q2_opt) .- θt_q2_before),
+                            axs_q2)
+                    end
+                    θt_full_q2_opt = ComponentArray(collect(θt_full_curr), axs_full_iter)
+                    for name in q2_free_now
+                        setproperty!(θt_full_q2_opt, name, getproperty(θt_q2_opt, name))
+                    end
+                    θu_q2_opt = inv_transform(θt_full_q2_opt)
+                    q2_updates = NamedTuple{Tuple(q2_free_now)}(
+                        Tuple(getproperty(θu_q2_opt, n) for n in q2_free_now))
+                    iter_constants = merge(iter_constants, q2_updates)
+                    iter_constants = _saem_clamp_constants_to_bounds(iter_constants, fe)
+                    # Recompute free names / axes with Q2 params now treated as constants
+                    free_names_iter = [n for n in fixed_names if n ∉ keys(iter_constants)]
+                    θt_free = ComponentArray(NamedTuple{Tuple(free_names_iter)}(
+                        Tuple(getproperty(θt_full_curr, n) for n in free_names_iter)))
+                    axs_free = getaxes(θt_free)
+                    copyto!(θ_const_u_work, θ0_u)
+                    _apply_constants!(θ_const_u_work, iter_constants)
+                    θ_const_t_iter = transform(θ_const_u_work)
+                    axs_full_iter = getaxes(θ_const_t_iter)
+                    base_free_names = free_names_iter
+                    θ_const_t = θ_const_t_iter
+                    axs_full = axs_full_iter
+                end
+            end
+        end
 
         anneal_was_active = false
         all_fixed_by_builtin = isempty(free_names_iter)
