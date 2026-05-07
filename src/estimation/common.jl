@@ -933,7 +933,17 @@ function get_loglikelihood_quadrature(dm::DataModel,
 
     constants_re = _res_constants_re(res, constants_re)
     θu = get_params(res; scale=:untransformed)
+    # Upcast to Float64 if needed (SAEM stores Float32; Hessian computation requires Float64)
+    θu = eltype(θu) === Float64 ? θu : ComponentArray(Float64.(θu), getaxes(θu))
     θu_re = _symmetrize_psd_params(θu, dm.model.fixed.fixed)
+    # For SAEM with anneal_to_fixed, rebuild the annealed constants_re from the final θ
+    # so that _build_laplace_batch_infos sees the correct n_b (matching stored eb_modes).
+    if res.result isa SAEMResult &&
+            hasproperty(res.result.notes, :anneal_to_fixed) &&
+            !isempty(res.result.notes.anneal_to_fixed)
+        constants_re = _saem_anneal_constants_re(dm, θu_re, res.result.notes.anneal_to_fixed,
+                                                 constants_re)
+    end
 
     _, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re)
     ll_cache = build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs, force_saveat=true)
