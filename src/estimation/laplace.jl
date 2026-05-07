@@ -579,9 +579,13 @@ end
         Σ = Distributions.cov(dist.normal)
         return LogNormal(μ[i], sqrt(Σ[i, i]))
     elseif dist isa Distributions.MvLogitNormal
+        # MvLogitNormal: outer dim = d+1 (simplex), inner MvNormal dim = d.
+        # The i-th ALR coordinate (for i ≤ d) is Normal(μ[i], sqrt(Σ[i,i])).
+        # The reference category (i = d+1) has no simple marginal.
+        i <= length(dist.normal) || return nothing
         μ = Distributions.mean(dist.normal)
         Σ = Distributions.cov(dist.normal)
-        return LogitNormal(μ[i], sqrt(Σ[i, i]))
+        return Normal(μ[i], sqrt(Σ[i, i]))
     end
     return nothing
 end

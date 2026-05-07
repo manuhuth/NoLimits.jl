@@ -309,6 +309,45 @@ end
     @test auto_cfg.resid_var_param == :σ
 end
 
+@testset "SAEM auto-detect: MvLogNormal and MvLogitNormal mean+cov detection" begin
+    df = DataFrame(ID=[:A, :A, :B, :B], t=[0.0, 1.0, 0.0, 1.0], y=[0.2, 0.15, 0.3, 0.35])
+
+    # MvLogNormal with diagonal cov target
+    model_ln = @Model begin
+        @covariates begin; t = Covariate() end
+        @fixedEffects begin
+            μ = RealVector([0.0, 0.0])
+            ω = RealVector([1.0, 1.0], scale=[:log, :log], lower=[1e-6, 1e-6])
+            σ = RealNumber(0.3, scale=:log)
+        end
+        @randomEffects begin
+            η = RandomEffect(MvLogNormal(μ, Diagonal(ω)); column=:ID)
+        end
+        @formulas begin; y ~ Normal(η[1], σ) end
+    end
+    cfg_ln = _auto_cfg(model_ln, df)
+    @test cfg_ln !== nothing
+    @test cfg_ln.re_mean_params == (; η=:μ)
+    @test cfg_ln.re_cov_params  == (; η=:ω)
+
+    # MvLogitNormal with full PSD cov target
+    model_lit = @Model begin
+        @covariates begin; t = Covariate() end
+        @fixedEffects begin
+            Ω = RealPSDMatrix(Matrix(I, 2, 2), scale=:cholesky)
+            σ = RealNumber(0.1, scale=:log)
+        end
+        @randomEffects begin
+            η = RandomEffect(MvLogitNormal([0.0, 0.0], Ω); column=:ID)
+        end
+        @formulas begin; y ~ Normal(η[1], σ) end
+    end
+    cfg_lit = _auto_cfg(model_lit, df)
+    @test cfg_lit !== nothing
+    @test cfg_lit.re_mean_params == NamedTuple()
+    @test cfg_lit.re_cov_params  == (; η=:Ω)
+end
+
 @testset "SAEM auto-detect: supported RE still detected when another RE family is unsupported" begin
     model = @Model begin
         @covariates begin

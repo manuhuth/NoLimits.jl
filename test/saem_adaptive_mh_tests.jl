@@ -152,6 +152,65 @@ end
 end
 
 # ---------------------------------------------------------------------------
+# MvLogNormal / MvLogitNormal RE (d=2) — component-wise bijections
+# ---------------------------------------------------------------------------
+
+@testset "AdaptiveNoLimitsMH MvLogNormal and MvLogitNormal RE (d=2)" begin
+    rng = MersenneTwister(42)
+    n_id = 8
+    ids  = repeat(1:n_id, inner=2)
+    ts   = repeat([0.0, 1.0], n_id)
+
+    # MvLogNormal: η ∈ (0,∞)^2
+    ηs_ln = exp.(randn(rng, n_id, 2))
+    df_ln = DataFrame(ID=ids, t=ts, y=ηs_ln[ids, 1] .+ 0.2 .* randn(rng, length(ids)))
+
+    model_ln = @Model begin
+        @fixedEffects begin
+            σ = RealNumber(0.3, scale=:log)
+            Ω = RealPSDMatrix([0.5 0.0; 0.0 0.5]; scale=:cholesky)
+        end
+        @covariates begin; t = Covariate() end
+        @randomEffects begin
+            η = RandomEffect(MvLogNormal([0.0, 0.0], Ω); column=:ID)
+        end
+        @formulas begin; y ~ Normal(η[1], σ) end
+    end
+
+    dm_ln = DataModel(model_ln, df_ln; primary_id=:ID, time_col=:t)
+    res_ln = fit_model(dm_ln, SAEM(sampler=AdaptiveNoLimitsMH(adapt_start=2),
+                                   maxiters=1, mcmc_steps=5, progress=false))
+    @test NoLimits.get_converged(res_ln) isa Bool
+    @test plot_random_effects_pdf(res_ln)     !== nothing
+    @test plot_random_effects_scatter(res_ln) !== nothing
+    @test plot_random_effect_pairplot(res_ln) !== nothing
+
+    # MvLogitNormal: η ∈ (0,1)^2
+    ηs_lit = 1 ./ (1 .+ exp.(randn(rng, n_id, 2)))
+    df_lit = DataFrame(ID=ids, t=ts, y=ηs_lit[ids, 1] .+ 0.05 .* randn(rng, length(ids)))
+
+    model_lit = @Model begin
+        @fixedEffects begin
+            σ = RealNumber(0.1, scale=:log)
+            Ω = RealPSDMatrix([0.5 0.0; 0.0 0.5]; scale=:cholesky)
+        end
+        @covariates begin; t = Covariate() end
+        @randomEffects begin
+            η = RandomEffect(MvLogitNormal([0.0, 0.0], Ω); column=:ID)
+        end
+        @formulas begin; y ~ Normal(η[1], σ) end
+    end
+
+    dm_lit = DataModel(model_lit, df_lit; primary_id=:ID, time_col=:t)
+    res_lit = fit_model(dm_lit, SAEM(sampler=AdaptiveNoLimitsMH(adapt_start=2),
+                                     maxiters=1, mcmc_steps=5, progress=false))
+    @test NoLimits.get_converged(res_lit) isa Bool
+    @test plot_random_effects_pdf(res_lit)     !== nothing
+    @test plot_random_effects_scatter(res_lit) !== nothing
+    @test plot_random_effect_pairplot(res_lit) !== nothing
+end
+
+# ---------------------------------------------------------------------------
 # LogNormal RE — log-space bijection
 # ---------------------------------------------------------------------------
 

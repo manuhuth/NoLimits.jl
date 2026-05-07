@@ -1790,8 +1790,11 @@ function _saem_builtin_collect_current_stats(dm::DataModel,
                     all(raw .> zero(Tθ)) || continue
                     log.(raw)
                 elseif family == :mvlogitnormal
-                    all(zero(Tθ) .< raw .< one(Tθ)) || continue
-                    log.(raw ./ (one(Tθ) .- raw))
+                    # ALR: z_i = log(η_i / η_{d+1}); raw is (d+1)-dim simplex vector
+                    all(raw .> zero(Tθ)) || continue
+                    η_ref = raw[end]
+                    η_ref > zero(Tθ) || continue
+                    log.(raw[begin:end-1]) .- log(η_ref)
                 elseif family == :normal || family == :mvnormal || family == :exponential
                     raw
                 else
