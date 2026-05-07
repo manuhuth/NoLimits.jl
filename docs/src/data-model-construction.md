@@ -201,6 +201,22 @@ using DataInterpolations
 | `QuadraticSpline` | 3 |
 | `CubicSpline` | 3 |
 
+## Coarsed Observed-State Markov Outcomes
+
+For outcomes modeled with `DiscreteTimeObservedStatesMarkovModel` or
+`ContinuousTimeObservedStatesMarkovModel`, coarsed/set-valued observations must be
+declared explicitly in the model using `coarsed(...)`.
+
+`DataModel` enforces a strict model-data contract:
+
+- If the model uses `coarsed(...)`, all non-missing entries of the corresponding
+  observation column must be `AbstractVector`s.
+- If the model does not use `coarsed(...)`, non-missing entries must be scalar labels
+  (not vectors).
+
+This prevents accidental interpretation changes from mixed scalar/vector encodings and
+ensures coarsed-state likelihoods are used only when explicitly requested.
+
 ## Validation Rules
 
 `DataModel` performs comprehensive validation at construction time to catch specification and data inconsistencies early. The checks include:
@@ -209,6 +225,7 @@ using DataInterpolations
 - **Time column declaration**: `time_col` must be declared in `@covariates` as `Covariate()` or `DynamicCovariate()`.
 - **Event columns**: when `evid_col` is set, event columns (`AMT`, `RATE`, `CMT`) are required and validated for completeness on event rows.
 - **Missing values**: observation rows (`EVID == 0`) cannot have missing values in outcome or covariate columns used by `@formulas`.
+- **Coarsed observed-state Markov outcomes**: for observed-state Markov outcome distributions, vector-valued observations require `coarsed(...)`; conversely, `coarsed(...)` requires vector-valued non-missing observations.
 - **Grouping consistency**: random-effect grouping columns cannot contain missing values. For ODE models, grouping columns other than `primary_id` must remain constant within each `primary_id`. For non-ODE models, including discrete-time and continuous-time HMM outcomes, non-`primary_id` grouping columns may vary within an individual; in that case, the random effect is selected row by row from the observed grouping value.
 - **Numeric random-effect grouping levels**: if any random-effect grouping column uses numeric levels, `DataModel` emits:
   `DataModel detected numeric random-effect grouping levels in column(s) $(cols_str). You wwill not be able to use constant random-effects. If you want to use constantr andom effects, consider ralabeling your random efefcts to strings or symbols.`
