@@ -570,10 +570,20 @@ end
 end
 
 @inline function _laplace_marginal_mvnormal(dist, i::Int)
-    dist isa Distributions.AbstractMvNormal || return nothing
-    μ = Distributions.mean(dist)
-    Σ = Distributions.cov(dist)
-    return Normal(μ[i], sqrt(Σ[i, i]))
+    if dist isa Distributions.AbstractMvNormal
+        μ = Distributions.mean(dist)
+        Σ = Distributions.cov(dist)
+        return Normal(μ[i], sqrt(Σ[i, i]))
+    elseif dist isa Distributions.MvLogNormal
+        μ = Distributions.mean(dist.normal)
+        Σ = Distributions.cov(dist.normal)
+        return LogNormal(μ[i], sqrt(Σ[i, i]))
+    elseif dist isa Distributions.MvLogitNormal
+        μ = Distributions.mean(dist.normal)
+        Σ = Distributions.cov(dist.normal)
+        return LogitNormal(μ[i], sqrt(Σ[i, i]))
+    end
+    return nothing
 end
 
 function _laplace_lhs_draws_mvnormal(dist, n::Int, rng::AbstractRNG, dim::Int)
@@ -676,7 +686,9 @@ function _laplace_sample_b0s(dm::DataModel,
                     b0s[i][first(r)] = T(v)
                 end
             else
-                draws = (sampling === :lhs && dist isa Distributions.AbstractMvNormal) ?
+                draws = (sampling === :lhs && (dist isa Distributions.AbstractMvNormal ||
+                         dist isa Distributions.MvLogNormal ||
+                         dist isa Distributions.MvLogitNormal)) ?
                         _laplace_lhs_draws_mvnormal(dist, n, rng, dim) : nothing
                 draws === nothing && (draws = [rand(rng, dist) for _ in 1:n])
                 for i in 1:n

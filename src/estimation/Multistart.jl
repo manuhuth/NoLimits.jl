@@ -99,6 +99,14 @@ function _marginal(dist, i::Int)
         μ = Distributions.mean(dist)
         Σ = Distributions.cov(dist)
         return Normal(μ[i], sqrt(Σ[i, i]))
+    elseif dist isa Distributions.MvLogNormal
+        μ = Distributions.mean(dist.normal)
+        Σ = Distributions.cov(dist.normal)
+        return LogNormal(μ[i], sqrt(Σ[i, i]))
+    elseif dist isa Distributions.MvLogitNormal
+        μ = Distributions.mean(dist.normal)
+        Σ = Distributions.cov(dist.normal)
+        return LogitNormal(μ[i], sqrt(Σ[i, i]))
     end
     return nothing
 end

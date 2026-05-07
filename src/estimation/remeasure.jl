@@ -329,6 +329,42 @@ function build_re_measure_from_batch(
                 end
                 push!(correction_fns, nothing)
 
+            elseif dist isa Distributions.MvLogNormal
+                # η = exp(μ_log + L*z), z ~ N(0,I).  Push-forward IS MvLogNormal, correction = 0.
+                has_npf = true
+                d_inner = dist.normal
+                μ_k = Vector(Distributions.mean(d_inner))
+                Σ = d_inner.Σ
+                if Σ isa Distributions.PDMats.PDMat && isdefined(Σ, :chol)
+                    L_k = Matrix(Σ.chol.L)
+                else
+                    Σ_mat = Σ isa AbstractMatrix ? Σ : Matrix(Σ)
+                    L_k   = Matrix(cholesky(Symmetric(Σ_mat + 1e-12 * I)).L)
+                end
+                push!(μ_segs, μ_k); push!(L_diags, L_k)
+                let μ = μ_k, L = L_k
+                    push!(segment_fns, z_k -> exp.(μ .+ L * z_k))
+                end
+                push!(correction_fns, nothing)
+
+            elseif dist isa Distributions.MvLogitNormal
+                # η = logistic(μ + L*z), z ~ N(0,I).  Push-forward IS MvLogitNormal, correction = 0.
+                has_npf = true
+                d_inner = dist.normal
+                μ_k = Vector(Distributions.mean(d_inner))
+                Σ = d_inner.Σ
+                if Σ isa Distributions.PDMats.PDMat && isdefined(Σ, :chol)
+                    L_k = Matrix(Σ.chol.L)
+                else
+                    Σ_mat = Σ isa AbstractMatrix ? Σ : Matrix(Σ)
+                    L_k   = Matrix(cholesky(Symmetric(Σ_mat + 1e-12 * I)).L)
+                end
+                push!(μ_segs, μ_k); push!(L_diags, L_k)
+                let μ = μ_k, L = L_k
+                    push!(segment_fns, z_k -> one.(z_k) ./ (one.(z_k) .+ exp.(-(μ .+ L * z_k))))
+                end
+                push!(correction_fns, nothing)
+
             elseif dist isa Distributions.LogNormal
                 # η = exp(μ_log + σ_log * z), z ~ N(0,1)
                 # Push-forward of N(0,1) under this map IS LogNormal(μ_log, σ_log),
@@ -513,7 +549,7 @@ function build_re_measure_from_batch(
                 error(
                     "build_re_measure_from_batch: unsupported RE distribution type " *
                     "$(typeof(dist)) for RE '$(re)'. " *
-                    "Supported: Normal, MvNormal, LogNormal, Beta, NormalizingPlanarFlow."
+                    "Supported: Normal, MvNormal, MvLogNormal, MvLogitNormal, LogNormal, Beta, NormalizingPlanarFlow."
                 )
             end
         end
