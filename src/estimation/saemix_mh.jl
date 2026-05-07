@@ -276,11 +276,19 @@ function _saemixmh_init_domega2(levels::Vector{_SaemixMHLevel},
         if d == 1
             scales[1] = rw_init * _saemixmh_zspace_std(dist, lv.re_type)
         else
-            # MvNormal (identity bijection): use diagonal of covariance in natural space
-            V = cov(dist)
-            for j in 1:d
-                v = V[j, j]
+            # Use the covariance of the *inner* normal for MvLogNormal/MvLogitNormal
+            # (proposal is in z-space for those types); identity for MvNormal.
+            V_dist = if lv.re_type == :MvLogNormal || lv.re_type == :MvLogitNormal
+                cov(dist.normal)
+            else
+                cov(dist)
+            end
+            for j in 1:min(d, size(V_dist, 1))
+                v = V_dist[j, j]
                 scales[j] = isfinite(v) && v > 0 ? rw_init * sqrt(v) : rw_init
+            end
+            for j in size(V_dist, 1)+1:d
+                scales[j] = rw_init
             end
         end
         domega2[k] = repeat(reshape(scales, d, 1), 1, d)

@@ -663,7 +663,10 @@ function _standardize_re(dist, val::Vector{Float64}; flow_samples::Int=500)
         return L \ (z .- μ)
     end
     if dist isa Distributions.MvLogitNormal
-        z = log.(clamp.(val, 1e-15, 1.0 - 1e-15) ./ (1.0 .- clamp.(val, 1e-15, 1.0 - 1e-15)))
+        # ALR: z_i = log(η_i / η_{d+1}), inner d-dim coords
+        ηf  = max.(Float64.(val), 1e-300)
+        ref = ηf[end]
+        z   = log.(ηf[begin:end-1]) .- log(ref)
         μ = try Float64.(Distributions.mean(dist.normal)) catch; return nothing end
         Σ = try Matrix{Float64}(cov(dist.normal)) catch; return nothing end
         L = try cholesky(Σ).L catch; return nothing end
@@ -715,12 +718,13 @@ function _marginal_normal(dist, i::Int)
         i <= length(μv) || return nothing
         return LogNormal(μv[i], sqrt(Σm[i, i]))
     elseif dist isa Distributions.MvLogitNormal
+        # Inner (ALR) marginal for i-th ALR coordinate (only valid for i ≤ inner dim d)
+        i <= length(dist.normal) || return nothing
         μ = try Distributions.mean(dist.normal) catch; return nothing end
         Σ = try cov(dist.normal) catch; return nothing end
         μv = Float64.(collect(vec(μ)))
         Σm = Matrix{Float64}(Σ)
-        i <= length(μv) || return nothing
-        return LogitNormal(μv[i], sqrt(Σm[i, i]))
+        return Normal(μv[i], sqrt(Σm[i, i]))
     end
     return nothing
 end
@@ -770,12 +774,15 @@ function _mahalanobis(dist, val::Vector{Float64})
         return dot(d, invΣ * d)
     end
     if dist isa Distributions.MvLogitNormal
-        z = log.(clamp.(val, 1e-15, 1.0 - 1e-15) ./ (1.0 .- clamp.(val, 1e-15, 1.0 - 1e-15)))
+        # ALR: z_i = log(η_i / η_{d+1})
+        ηf  = max.(Float64.(val), 1e-300)
+        ref = ηf[end]
+        z   = log.(ηf[begin:end-1]) .- log(ref)
         μ = try Float64.(Distributions.mean(dist.normal)) catch; return nothing end
         Σ = try Matrix{Float64}(cov(dist.normal)) catch; return nothing end
-        d = z .- μ
+        dv = z .- μ
         invΣ = try inv(Σ) catch; return nothing end
-        return dot(d, invΣ * d)
+        return dot(dv, invΣ * dv)
     end
     if dist isa Distributions.MultivariateDistribution && !(dist isa MvNormal)
         @warn "Skipping Mahalanobis distance for non-Normal multivariate RE." dist=typeof(dist)

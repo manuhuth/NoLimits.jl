@@ -348,7 +348,8 @@ function build_re_measure_from_batch(
                 push!(correction_fns, nothing)
 
             elseif dist isa Distributions.MvLogitNormal
-                # η = logistic(μ + L*z), z ~ N(0,I).  Push-forward IS MvLogitNormal, correction = 0.
+                # MvLogitNormal: length(dist) = d+1 (simplex), inner normal has dim d.
+                # z ~ MvNormal(μ, Σ) (d-dim), η = softmax(vcat(μ+L*z, 0)) (d+1-dim simplex).
                 has_npf = true
                 d_inner = dist.normal
                 μ_k = Vector(Distributions.mean(d_inner))
@@ -361,7 +362,11 @@ function build_re_measure_from_batch(
                 end
                 push!(μ_segs, μ_k); push!(L_diags, L_k)
                 let μ = μ_k, L = L_k
-                    push!(segment_fns, z_k -> one.(z_k) ./ (one.(z_k) .+ exp.(-(μ .+ L * z_k))))
+                    push!(segment_fns, z_k -> begin
+                        u = μ .+ L * z_k
+                        unnorm = vcat(exp.(u), one(eltype(u)))
+                        unnorm ./ sum(unnorm)
+                    end)
                 end
                 push!(correction_fns, nothing)
 
