@@ -1229,7 +1229,8 @@ function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_
             dist = getproperty(obs, col)
             if dist isa ContinuousTimeDiscreteStatesHMM || dist isa DiscreteTimeDiscreteStatesHMM ||
                dist isa MVContinuousTimeDiscreteStatesHMM || dist isa MVDiscreteTimeDiscreteStatesHMM ||
-               dist isa DiscreteTimeObservedStatesMarkovModel || dist isa ContinuousTimeObservedStatesMarkovModel
+               dist isa DiscreteTimeObservedStatesMarkovModel || dist isa ContinuousTimeObservedStatesMarkovModel ||
+               dist isa CoarsedObservedStatesMarkovModel
                 if hmm_seen === nothing
                     hmm_init = Vector{Vector{T_hmm}}(undef, length(obs_cols))
                     hmm_seen = falses(length(obs_cols))
@@ -1237,8 +1238,10 @@ function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_
                 hs = hmm_seen::BitVector
                 hi = hmm_init::Vector{Vector{T_hmm}}
                 if !hs[j]
-                    buf = Vector{T_hmm}(undef, length(dist.initial_dist.p))
-                    copyto!(buf, dist.initial_dist.p)
+                    init_probs = dist isa CoarsedObservedStatesMarkovModel ?
+                                 dist.base_dist.initial_dist.p : dist.initial_dist.p
+                    buf = Vector{T_hmm}(undef, length(init_probs))
+                    copyto!(buf, init_probs)
                     hi[j] = buf
                     hs[j] = true
                 end
@@ -1266,6 +1269,24 @@ function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_
                                                             Distributions.Categorical(init_p; check_args=false),
                                                             dist.Δt, dist.state_labels;
                                                             propagation_mode=dist.propagation_mode)
+                elseif dist isa CoarsedObservedStatesMarkovModel &&
+                       dist.base_dist isa DiscreteTimeObservedStatesMarkovModel
+                    base_dist = dist.base_dist
+                    coarsed(DiscreteTimeObservedStatesMarkovModel(
+                        base_dist.transition_matrix,
+                        Distributions.Categorical(init_p; check_args=false),
+                        base_dist.state_labels
+                    ))
+                elseif dist isa CoarsedObservedStatesMarkovModel &&
+                       dist.base_dist isa ContinuousTimeObservedStatesMarkovModel
+                    base_dist = dist.base_dist
+                    coarsed(ContinuousTimeObservedStatesMarkovModel(
+                        base_dist.transition_matrix,
+                        Distributions.Categorical(init_p; check_args=false),
+                        base_dist.Δt,
+                        base_dist.state_labels;
+                        propagation_mode=base_dist.propagation_mode
+                    ))
                 else
                     DiscreteTimeDiscreteStatesHMM(dist.transition_matrix, dist.emission_dists,
                                                   Distributions.Categorical(init_p; check_args=false))
