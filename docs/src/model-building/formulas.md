@@ -200,6 +200,42 @@ model = @Model begin
 end
 ```
 
+## Example: Coarsed Observed-State Markov Model
+
+For observed-state Markov models with set-valued observations (for example `[2, 3, 4]`
+meaning the true state is known to be one of these labels), wrap the distribution with
+`coarsed(...)` in `@formulas`.
+
+```julia
+using NoLimits
+using Distributions
+
+model = @Model begin
+    @fixedEffects begin
+        P = DiscreteTransitionMatrix([0.7 0.3; 0.2 0.8])
+    end
+
+    @covariates begin
+        t = Covariate()
+    end
+
+    @formulas begin
+        y ~ coarsed(
+            DiscreteTimeObservedStatesMarkovModel(
+                P,
+                Categorical([0.5, 0.5]),
+                [2, 3],
+            )
+        )
+    end
+end
+```
+
+Data encoding requirements:
+- With `coarsed(...)`: all non-missing observations in `y` must be `AbstractVector`s,
+  e.g. `[2]`, `[3]`, `[2, 3]`.
+- Without `coarsed(...)`: observations must be scalar labels.
+
 ## Example: Multivariate Hidden Markov Observation Model
 
 When each observation consists of several outcome variables that share the same hidden state, use `MVDiscreteTimeDiscreteStatesHMM` or `MVContinuousTimeDiscreteStatesHMM`. The observable column in the DataFrame should contain `Vector{<:Real}` values, one vector per observation time.
