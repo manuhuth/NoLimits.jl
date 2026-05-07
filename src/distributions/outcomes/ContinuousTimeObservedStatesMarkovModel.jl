@@ -7,10 +7,9 @@ using Distributions, ExponentialAction, Random
     ContinuousTimeObservedStatesMarkovModel(transition_matrix, initial_dist, Δt, state_labels)
     <: Distribution{Univariate, Discrete}
 
-A continuous-time Markov model with **fully observed** states. State propagation is performed
+A continuous-time Markov model with observed states. State propagation is performed
 via the matrix exponential `exp(Q · Δt)` where `Q` is the rate matrix (generator). Unlike the
-CT-HMM variants, the latent state is directly observable — the observation IS the state label.
-The posterior after observing a state is therefore a one-hot vector (certainty).
+CT-HMM variants, the latent state is directly observable when a single state label is provided.
 
 Implements the `Distributions.jl` interface (`logpdf`, `pdf`, `rand`, `mean`, `var`, `cdf`).
 Used as an observation distribution in `@formulas` blocks.
@@ -50,7 +49,7 @@ function ContinuousTimeObservedStatesMarkovModel(
     initial_dist      :: Distributions.Categorical,
     Δt                :: Real,
     state_labels      :: Vector{T};
-    propagation_mode  :: Symbol = :auto,
+    propagation_mode  :: Symbol = :auto
 ) where T
     _ct_hmm_validate_mode(propagation_mode)
     n_states = size(transition_matrix, 1)
@@ -71,7 +70,7 @@ function ContinuousTimeObservedStatesMarkovModel(
     transition_matrix :: AbstractMatrix{<:Real},
     initial_dist      :: Distributions.Categorical,
     Δt                :: Real;
-    propagation_mode  :: Symbol = :auto,
+    propagation_mode  :: Symbol = :auto
 )
     n_states = size(transition_matrix, 1)
     return ContinuousTimeObservedStatesMarkovModel(
@@ -79,11 +78,7 @@ function ContinuousTimeObservedStatesMarkovModel(
         propagation_mode=propagation_mode)
 end
 
-# --- State label lookup ---
-
-function _find_state_index(dist::ContinuousTimeObservedStatesMarkovModel, y)
-    return findfirst(==(y), dist.state_labels)
-end
+@inline _omm_is_observed_markov_dist(::ContinuousTimeObservedStatesMarkovModel) = true
 
 # --- Hidden state probabilities (shared interface with HMM variants) ---
 
@@ -102,25 +97,37 @@ end
 """
     posterior_hidden_states(dist::ContinuousTimeObservedStatesMarkovModel, y)
 
-Returns the one-hot posterior after observing state `y`. Since the state is fully observed,
-the posterior is degenerate: probability 1 at the index of `y`, 0 elsewhere.
+For a scalar observed state `y`, returns the one-hot posterior after observing that state.
 
-Returns a zero vector if `y` is not found in `state_labels`.
+Returns a zero vector if the observation label is not found.
 """
 function posterior_hidden_states(dist::ContinuousTimeObservedStatesMarkovModel, y)
-    idx = _find_state_index(dist, y)
-    post = zeros(Float64, dist.n_states)
-    idx !== nothing && (post[idx] = 1.0)
+    idx = _omm_scalar_observation_index(dist.state_labels, y)
+    p = probabilities_hidden_states(dist)
+    T = eltype(p)
+    post = zeros(T, dist.n_states)
+    idx === nothing && return post
+    post[idx] = one(T)
     return post
+end
+
+function posterior_hidden_states(dist::ContinuousTimeObservedStatesMarkovModel, y::AbstractVector)
+    _omm_scalar_observation_index(dist.state_labels, y)
+    return zeros(eltype(probabilities_hidden_states(dist)), dist.n_states)
 end
 
 # --- Distributions.jl interface ---
 
 function Distributions.logpdf(dist::ContinuousTimeObservedStatesMarkovModel, y)
-    idx = _find_state_index(dist, y)
+    idx = _omm_scalar_observation_index(dist.state_labels, y)
     idx === nothing && return -Inf
     p = probabilities_hidden_states(dist)
     return log(p[idx])
+end
+
+function Distributions.logpdf(dist::ContinuousTimeObservedStatesMarkovModel, y::AbstractVector)
+    _omm_scalar_observation_index(dist.state_labels, y)
+    return -Inf
 end
 
 Distributions.pdf(dist::ContinuousTimeObservedStatesMarkovModel, y) = exp(logpdf(dist, y))

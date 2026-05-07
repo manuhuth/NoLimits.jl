@@ -331,7 +331,13 @@ or closed-form updates (when `builtin_stats` is enabled).
   no Turing overhead). Pass `MH()` or `AdaptiveNoLimitsMH()` for Turing-based samplers.
 - `turing_kwargs::NamedTuple = NamedTuple()`: keyword arguments for `Turing.sample` (only
   used by Turing-based samplers; ignored by `SaemixMH`).
-- `update_schedule`: which parameters to update per iteration (`:all` or a `Vector{Symbol}`).
+- `update_schedule`: which batches to update per SAEM iteration. Options:
+  - `:all` (default) — update all batches every iteration.
+  - `Int` — random minibatch of that size, sampled without replacement each iteration.
+  - Any callable with signature `(nbatches::Int, iter::Int, rng) -> Vector{Int}` — returns
+    the indices of batches to update. Can be a plain function or a callable struct (a
+    mutable struct with a matching `call` method, useful for stateful schedules).
+    Example: a struct that cycles through all batches in successive windows of 100.
 - `warm_start::Bool = true`: initialise the sampler from the previous iteration's modes.
 - `verbose::Bool = false`: print per-iteration diagnostics.
 - `progress::Bool = true`: show a progress bar.

@@ -876,14 +876,14 @@ end
 @testset "Multi-chain: SAEMOptions n_chains defaults" begin
     opts = NoLimits.SAEM().saem
     @test opts.n_chains == 1
-    @test opts.auto_small_n_chains == false
+    @test opts.auto_small_n_chains == true
     @test opts.small_n_chain_target == 50
 end
 
 @testset "Multi-chain: SAEMOptions explicit values" begin
-    opts = NoLimits.SAEM(; n_chains=4, auto_small_n_chains=true, small_n_chain_target=20).saem
+    opts = NoLimits.SAEM(; n_chains=4, auto_small_n_chains=false, small_n_chain_target=20).saem
     @test opts.n_chains == 4
-    @test opts.auto_small_n_chains == true
+    @test opts.auto_small_n_chains == false
     @test opts.small_n_chain_target == 20
 end
 
