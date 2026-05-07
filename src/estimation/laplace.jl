@@ -2601,7 +2601,7 @@ function _laplace_objective_and_grad(dm::DataModel,
     if serialization isa SciMLBase.EnsembleThreads
         nthreads = Threads.maxthreadid()
         caches = _laplace_thread_caches(dm, ll_cache, nthreads)
-        obj_by_batch = Vector{Float64}(undef, length(batch_infos))
+        obj_by_batch = Vector{eltype(θ)}(undef, length(batch_infos))
         grad_by_batch = Matrix{eltype(θ)}(undef, length(θ), length(batch_infos))
         bad = Threads.Atomic{Bool}(false)
         Threads.@threads for bi in eachindex(batch_infos)
@@ -2690,7 +2690,7 @@ function _laplace_objective_only(dm::DataModel,
     if serialization isa SciMLBase.EnsembleThreads
         nthreads = Threads.maxthreadid()
         caches = _laplace_thread_caches(dm, ll_cache, nthreads)
-        obj_by_batch = Vector{Float64}(undef, length(batch_infos))
+        obj_by_batch = Vector{eltype(θ)}(undef, length(batch_infos))
         bad = Threads.Atomic{Bool}(false)
         Threads.@threads for bi in eachindex(batch_infos)
             bad[] && continue
