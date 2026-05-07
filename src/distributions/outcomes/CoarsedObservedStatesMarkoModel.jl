@@ -2,11 +2,44 @@ export CoarsedObservedStatesMarkovModel, coarsed
 
 using Distributions
 
+"""
+    CoarsedObservedStatesMarkovModel(base_dist)
+
+Observed-state Markov-model outcome wrapper for coarsed (set-valued) observations.
+
+This distribution is created via [`coarsed`](@ref). It preserves the same hidden-state
+probabilities as `base_dist`, but evaluates observation likelihoods by summing over the
+compatible observed labels supplied in each set-valued observation.
+"""
 struct CoarsedObservedStatesMarkovModel{D <: Distribution{Univariate, Discrete}} <:
        Distribution{Univariate, Discrete}
     base_dist::D
 end
 
+"""
+    coarsed(dist::Distribution{Univariate, Discrete}) -> CoarsedObservedStatesMarkovModel
+
+Wrap an observed-state Markov-model distribution so that observations are interpreted as
+coarsed/set-valued state labels.
+
+Accepted base distributions:
+- [`DiscreteTimeObservedStatesMarkovModel`](@ref)
+- [`ContinuousTimeObservedStatesMarkovModel`](@ref)
+
+For a set-valued observation `y = [s1, s2, ...]`, the likelihood contribution is
+`sum(P(state = sk))` over all compatible labels in `y`.
+
+Use this wrapper in `@formulas` when the observation column contains `AbstractVector`
+entries, e.g. `[2,3,4]`.
+
+# Example
+```julia
+dist = ContinuousTimeObservedStatesMarkovModel(Q, π, labels, Δt)
+@formulas begin
+    y ~ coarsed(dist)
+end
+```
+"""
 function coarsed(dist::D) where {D <: Distribution{Univariate, Discrete}}
     _omm_is_observed_markov_dist(dist) || error(
         "coarsed(...) is only defined for observed Markov-model distributions " *

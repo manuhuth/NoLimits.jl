@@ -694,7 +694,7 @@ function _saem_build_var_lb_target_set(re_cov_params::NamedTuple, re_family_map:
     for re_name in keys(re_cov_params)
         haskey(re_family_map, re_name) || continue
         family = getproperty(re_family_map, re_name)
-        family in (:normal, :lognormal, :mvnormal) || continue
+        family in (:normal, :lognormal, :mvnormal, :mvlognormal, :mvlogitnormal) || continue
         cov_sym = getproperty(re_cov_params, re_name)
         cov_sym isa Symbol || continue
         hasproperty(θ0_u, cov_sym) || continue
@@ -996,6 +996,44 @@ function _saem_parse_re_gaussian_mapping(dist_expr, fixed_set::Set{Symbol})
         return (family=:mvnormal, mean=mean_target, cov=cov_target)
     end
 
+    if cname == :MvLogNormal || cname == :MvLogitNormal
+        (dist_expr isa Expr && length(dist_expr.args) == 3) || return nothing
+        μarg = dist_expr.args[2]
+        Σarg = dist_expr.args[3]
+
+        mean_target = nothing
+        if μarg isa Symbol
+            μarg in fixed_set && (mean_target = μarg)
+        else
+            μ_tuple = _saem_symbol_tuple_from_vector_expr(μarg)
+            if μ_tuple !== nothing
+                all(s -> s in fixed_set, μ_tuple) && (mean_target = μ_tuple)
+            elseif _saem_number_vector_expr(μarg)
+                mean_target = nothing
+            end
+        end
+
+        cov_target = nothing
+        if Σarg isa Symbol
+            Σarg in fixed_set && (cov_target = Σarg)
+        else
+            cname_cov = _saem_call_name(Σarg)
+            if cname_cov == :Diagonal && Σarg isa Expr && length(Σarg.args) == 2
+                darg = Σarg.args[2]
+                if darg isa Symbol
+                    darg in fixed_set && (cov_target = darg)
+                else
+                    d_tuple = _saem_symbol_tuple_from_vector_expr(darg)
+                    if d_tuple !== nothing
+                        all(s -> s in fixed_set, d_tuple) && (cov_target = d_tuple)
+                    end
+                end
+            end
+        end
+        fam = cname == :MvLogNormal ? :mvlognormal : :mvlogitnormal
+        return (family=fam, mean=mean_target, cov=cov_target)
+    end
+
     return nothing
 end
 
@@ -1217,6 +1255,10 @@ function _saem_re_family_map(dm::DataModel)
                 family = :normal
             elseif cname == :MvNormal
                 family = :mvnormal
+            elseif cname == :MvLogNormal
+                family = :mvlognormal
+            elseif cname == :MvLogitNormal
+                family = :mvlogitnormal
             elseif cname == :LogNormal
                 family = :lognormal
             elseif cname == :Exponential
@@ -1744,9 +1786,12 @@ function _saem_builtin_collect_current_stats(dm::DataModel,
                 v = _re_value_from_b(rei, lvl_id, b)
                 v === nothing && continue
                 raw = v isa Number ? Tθ[v] : Tθ.(collect(v))
-                x = if family == :lognormal
+                x = if family == :lognormal || family == :mvlognormal
                     all(raw .> zero(Tθ)) || continue
                     log.(raw)
+                elseif family == :mvlogitnormal
+                    all(zero(Tθ) .< raw .< one(Tθ)) || continue
+                    log.(raw ./ (one(Tθ) .- raw))
                 elseif family == :normal || family == :mvnormal || family == :exponential
                     raw
                 else
@@ -2159,7 +2204,7 @@ function _saem_builtin_updates_from_smoothed_stats(dm::DataModel,
         Σ_hat = 0.5 .* (Σ_hat .+ Σ_hat')
         var_diag = max.(diag(Σ_hat), zero(eltype(Σ_hat)))
         σ_diag = sqrt.(var_diag)
-        cov_diag = family == :mvnormal ? var_diag : σ_diag
+        cov_diag = (family == :mvnormal || family == :mvlognormal || family == :mvlogitnormal) ? var_diag : σ_diag
 
         if haskey(re_mean_params, re)
             _saem_push_param_updates!(updates, θ, getfield(re_mean_params, re), μ_hat;

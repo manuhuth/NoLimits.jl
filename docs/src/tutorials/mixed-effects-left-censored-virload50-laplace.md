@@ -6,6 +6,10 @@ How should these below-limit values be handled? The answer matters. Dropping cen
 
 In this tutorial, you will fit a nonlinear mixed-effects model to the `virload50` dataset from the `npde` R package, which contains longitudinal log10 viral load measurements from 50 HIV-positive patients. The structural model is a bi-exponential decay function that captures two distinct phases of viral dynamics: rapid initial suppression and slower long-term decline. Subject-specific parameters enter through `LogNormal` random effects, making the model nonlinear in the random effects. You will handle left-censoring directly in the observation model using NoLimits' `censored(...)` syntax and estimate the model with the Laplace approximation.
 
+If your outcome is a discrete observed-state Markov model with ambiguous/set-valued state
+labels, use `coarsed(...)` instead of `censored(...)`. See the formulas documentation:
+[`Example: Coarsed Observed-State Markov Model`](../model-building/formulas.md#example-coarsed-observed-state-markov-model).
+
 ## Learning Goals
 
 By the end of this tutorial, you will know how to:

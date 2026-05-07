@@ -655,6 +655,20 @@ function _standardize_re(dist, val::Vector{Float64}; flow_samples::Int=500)
             return L \ (val .- μv)
         end
     end
+    if dist isa Distributions.MvLogNormal
+        z = log.(max.(val, 1e-300))
+        μ = try Float64.(Distributions.mean(dist.normal)) catch; return nothing end
+        Σ = try Matrix{Float64}(cov(dist.normal)) catch; return nothing end
+        L = try cholesky(Σ).L catch; return nothing end
+        return L \ (z .- μ)
+    end
+    if dist isa Distributions.MvLogitNormal
+        z = log.(clamp.(val, 1e-15, 1.0 - 1e-15) ./ (1.0 .- clamp.(val, 1e-15, 1.0 - 1e-15)))
+        μ = try Float64.(Distributions.mean(dist.normal)) catch; return nothing end
+        Σ = try Matrix{Float64}(cov(dist.normal)) catch; return nothing end
+        L = try cholesky(Σ).L catch; return nothing end
+        return L \ (z .- μ)
+    end
     if dist isa Distributions.MultivariateDistribution && !(dist isa MvNormal)
         @warn "Skipping multivariate RE standardization for non-Normal distribution." dist=typeof(dist)
         return nothing
@@ -686,22 +700,29 @@ function _standardize_re(dist, val::Vector{Float64}; flow_samples::Int=500)
 end
 
 function _marginal_normal(dist, i::Int)
-    dist isa MvNormal || return nothing
-    μ = try
-        Distributions.mean(dist)
-    catch
-        return nothing
+    if dist isa MvNormal
+        μ = try Distributions.mean(dist) catch; return nothing end
+        Σ = try cov(dist) catch; return nothing end
+        μv = Float64.(collect(vec(μ)))
+        Σm = Matrix{Float64}(Σ)
+        i <= length(μv) || return nothing
+        return Normal(μv[i], sqrt(Σm[i, i]))
+    elseif dist isa Distributions.MvLogNormal
+        μ = try Distributions.mean(dist.normal) catch; return nothing end
+        Σ = try cov(dist.normal) catch; return nothing end
+        μv = Float64.(collect(vec(μ)))
+        Σm = Matrix{Float64}(Σ)
+        i <= length(μv) || return nothing
+        return LogNormal(μv[i], sqrt(Σm[i, i]))
+    elseif dist isa Distributions.MvLogitNormal
+        μ = try Distributions.mean(dist.normal) catch; return nothing end
+        Σ = try cov(dist.normal) catch; return nothing end
+        μv = Float64.(collect(vec(μ)))
+        Σm = Matrix{Float64}(Σ)
+        i <= length(μv) || return nothing
+        return LogitNormal(μv[i], sqrt(Σm[i, i]))
     end
-    Σ = try
-        cov(dist)
-    catch
-        return nothing
-    end
-    μv = μ isa Number ? [Float64(μ)] : Float64.(collect(vec(μ)))
-    Σm = Σ isa Number ? [Float64(Σ)] : Matrix{Float64}(Σ)
-    i <= length(μv) || return nothing
-    σ2 = Σm[i, i]
-    return Normal(μv[i], sqrt(σ2))
+    return nothing
 end
 
 function _kde_xy(vals; bandwidth=nothing)
@@ -740,6 +761,22 @@ function _interp_linear(x_src::AbstractVector, y_src::AbstractVector, x_tgt::Abs
 end
 
 function _mahalanobis(dist, val::Vector{Float64})
+    if dist isa Distributions.MvLogNormal
+        z = log.(max.(val, 1e-300))
+        μ = try Float64.(Distributions.mean(dist.normal)) catch; return nothing end
+        Σ = try Matrix{Float64}(cov(dist.normal)) catch; return nothing end
+        d = z .- μ
+        invΣ = try inv(Σ) catch; return nothing end
+        return dot(d, invΣ * d)
+    end
+    if dist isa Distributions.MvLogitNormal
+        z = log.(clamp.(val, 1e-15, 1.0 - 1e-15) ./ (1.0 .- clamp.(val, 1e-15, 1.0 - 1e-15)))
+        μ = try Float64.(Distributions.mean(dist.normal)) catch; return nothing end
+        Σ = try Matrix{Float64}(cov(dist.normal)) catch; return nothing end
+        d = z .- μ
+        invΣ = try inv(Σ) catch; return nothing end
+        return dot(d, invΣ * d)
+    end
     if dist isa Distributions.MultivariateDistribution && !(dist isa MvNormal)
         @warn "Skipping Mahalanobis distance for non-Normal multivariate RE." dist=typeof(dist)
         return nothing

@@ -24,6 +24,8 @@ The sampler works in the natural proposal space for each distribution family:
 |-------------------|----------------|---------------|
 | `Normal`          | η ∈ ℝ          | identity      |
 | `MvNormal`        | η ∈ ℝ^d        | identity      |
+| `MvLogNormal`     | z = log.(η)    | log / exp (component-wise) |
+| `MvLogitNormal`   | z = logit.(η)  | logit / logistic (component-wise) |
 | `LogNormal`       | z = log(η)     | log / exp     |
 | `Exponential`     | z = log(η)     | log / exp     |
 | `Beta`            | z = logit(η)   | logit / sigmoid |
@@ -119,6 +121,31 @@ end
 @inline _amh_bij_inverse(::Val{:MvNormal}, z::AbstractVector)  = Vector{Float64}(z)
 @inline _amh_bij_log_jac(::Val{:MvNormal}, ::AbstractVector, ::AbstractVector) = 0.0
 
+# MvLogNormal: component-wise log bijection (η ∈ (0,∞)^d)
+# J_f(η) diagonal 1/η_i → log|J| = -sum(z);  MH correction = sum(z_new) - sum(z_old)
+@inline _amh_bij_forward(::Val{:MvLogNormal}, η::AbstractVector) =
+    Float64.(log.(max.(η, 1e-300)))
+@inline _amh_bij_inverse(::Val{:MvLogNormal}, z::AbstractVector) = Float64.(exp.(z))
+@inline _amh_bij_log_jac(::Val{:MvLogNormal}, z_new::AbstractVector, z_old::AbstractVector) =
+    sum(z_new) - sum(z_old)
+
+# MvLogitNormal: component-wise logit bijection (η ∈ (0,1)^d)
+# J_f(η) diagonal 1/(η_i(1-η_i)) → log|J| = -sum(log η_i + log(1-η_i))
+# MH correction = sum(log(η_new*(1-η_new))) - sum(log(η_old*(1-η_old)))
+@inline function _amh_bij_forward(::Val{:MvLogitNormal}, η::AbstractVector)
+    ηf = clamp.(Float64.(η), 1e-15, 1.0 - 1e-15)
+    return log.(ηf) .- log1p.(-ηf)
+end
+@inline _amh_bij_inverse(::Val{:MvLogitNormal}, z::AbstractVector) =
+    one(Float64) ./ (one(Float64) .+ exp.(-Float64.(z)))
+@inline function _amh_bij_log_jac(::Val{:MvLogitNormal},
+                                   z_new::AbstractVector, z_old::AbstractVector)
+    η_new = _amh_bij_inverse(Val(:MvLogitNormal), z_new)
+    η_old = _amh_bij_inverse(Val(:MvLogitNormal), z_old)
+    return sum(log.(max.(η_new .* (one(Float64) .- η_new), 1e-300))) -
+           sum(log.(max.(η_old .* (one(Float64) .- η_old), 1e-300)))
+end
+
 # LogNormal: log bijection (η > 0)
 # J_f(η) = 1/η  →  log|J_f| = -log(η) = -z
 # Correction: -z_old - (-z_new) = z_new - z_old
@@ -183,6 +210,17 @@ end
 @inline _bij_log_jac_forward(::Val{:Normal}, ::Real)              = 0.0
 @inline _bij_log_jac_forward(::Val{:MvNormal}, ::AbstractVector)  = 0.0
 @inline _bij_log_jac_forward(::Val{:NormalizingPlanarFlow}, ::AbstractVector) = 0.0
+# MvLogNormal: z = log(η), log|dz/dη| = -sum(z_i)
+@inline _bij_log_jac_forward(::Val{:MvLogNormal}, z::AbstractVector) = -sum(z)
+# MvLogitNormal: z = logit(η), log|dz/dη| = -sum(log(η_i*(1-η_i)))
+@inline function _bij_log_jac_forward(::Val{:MvLogitNormal}, z::AbstractVector)
+    acc = 0.0
+    for zi in z
+        σ = 1.0 / (1.0 + exp(-Float64(zi)))
+        acc -= log(max(σ * (1.0 - σ), 1e-300))
+    end
+    return acc
+end
 
 # LogNormal: z = log(η), dz/dη = 1/η = exp(-z) → log|dz/dη| = -z
 @inline _bij_log_jac_forward(::Val{:LogNormal}, z::Real)   = -Float64(z)
@@ -225,6 +263,20 @@ function _amh_init_cov(dist::AbstractMvNormal, dim::Int,
                         init_scale::Float64, eps_reg::Float64)
     λ = 2.38^2 / dim * init_scale
     Ω = Matrix{Float64}(cov(dist))
+    return λ .* Ω .+ eps_reg .* Matrix{Float64}(I(dim))
+end
+
+function _amh_init_cov(dist::MvLogNormal, dim::Int,
+                        init_scale::Float64, eps_reg::Float64)
+    λ = 2.38^2 / dim * init_scale
+    Ω = Matrix{Float64}(cov(dist.normal))
+    return λ .* Ω .+ eps_reg .* Matrix{Float64}(I(dim))
+end
+
+function _amh_init_cov(dist::MvLogitNormal, dim::Int,
+                        init_scale::Float64, eps_reg::Float64)
+    λ = 2.38^2 / dim * init_scale
+    Ω = Matrix{Float64}(cov(dist.normal))
     return λ .* Ω .+ eps_reg .* Matrix{Float64}(I(dim))
 end
 
