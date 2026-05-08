@@ -601,8 +601,9 @@ end
     dm = DataModel(model, df; primary_id=:ID, time_col=:t)
     res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=3,)))
 
-    re = reestimate_ebes(res; ebe_multistart_sampling=:mcmc,
-                              ebe_multistart_n=5, ebe_mcmc_n_adapt=2)
+    res_new = reestimate_ebes(res; ebe_multistart_sampling=:mcmc,
+                                  ebe_multistart_n=5, ebe_mcmc_n_adapt=2)
+    re = get_random_effects(res_new)
     @test re isa NamedTuple
     @test haskey(re, :η)
     @test nrow(re.η) == 3

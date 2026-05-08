@@ -915,7 +915,7 @@ const _CONST_MC_DM = _mc_dm()
         sampler=MH(),
         turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
         maxiters=2, t0=2, progress=false, q_store_max=2, builtin_stats=:none,
-        n_chains=1
+        n_chains=1, auto_small_n_chains=false
     ))
     conv = NoLimits.get_diagnostics(res).convergence
     @test all(n == 1 for n in conv.n_chains_used)
@@ -927,7 +927,7 @@ end
         sampler=MH(),
         turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
         maxiters=2, t0=2, progress=false, q_store_max=2, builtin_stats=:none,
-        n_chains=2
+        n_chains=2, auto_small_n_chains=false
     ))
     conv = NoLimits.get_diagnostics(res).convergence
     @test all(n == 2 for n in conv.n_chains_used)
