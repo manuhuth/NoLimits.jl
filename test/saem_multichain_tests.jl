@@ -64,7 +64,7 @@ end
 @testset "Multi-chain: SAEMOptions n_chains defaults" begin
     opts = NoLimits.SAEM().saem
     @test opts.n_chains == 1
-    @test opts.auto_small_n_chains == false
+    @test opts.auto_small_n_chains == true
     @test opts.small_n_chain_target == 50
 end
 
@@ -102,7 +102,7 @@ end
         sampler=MH(),
         turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
         maxiters=2, t0=2, progress=false, q_store_max=2, builtin_stats=:none,
-        n_chains=1
+        n_chains=1, auto_small_n_chains=false
     ))
     conv = NoLimits.get_diagnostics(res).convergence
 
@@ -115,7 +115,7 @@ end
         sampler=MH(),
         turing_kwargs=(n_samples=2, n_adapt=2, progress=false),
         maxiters=2, t0=2, progress=false, q_store_max=2, builtin_stats=:none,
-        n_chains=2
+        n_chains=2, auto_small_n_chains=false
     ))
     conv = NoLimits.get_diagnostics(res).convergence
 

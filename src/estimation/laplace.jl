@@ -721,349 +721,6 @@ function _laplace_sample_b0(dm::DataModel,
     return isempty(draws) ? eltype(θ)[] : draws[1]
 end
 
-@inline function _laplace_scalar_logf(dm::DataModel,
-                                      batch_info::_LaplaceBatchInfo,
-                                      θ::ComponentArray,
-                                      const_cache::LaplaceConstantsCache,
-                                      cache::_LLCache,
-                                      b::Real)
-    return _laplace_logf_batch(dm, batch_info, θ, SVector{1, typeof(b)}(b), const_cache, cache)
-end
-
-@inline function _laplace_scalar_grad_norm(logf::Function, b::Real)
-    g = ForwardDiff.derivative(logf, b)
-    return isfinite(g) ? abs(Float64(g)) : Inf
-end
-
-@inline function _laplace_inf_norm(v)
-    isempty(v) && return 0.0
-    n = maximum(abs, v)
-    return isfinite(n) ? Float64(n) : Inf
-end
-
-function _laplace_scalar_newton_mode(logf::Function,
-                                     b0::Real;
-                                     grad_tol::Real=1e-6,
-                                     maxiters::Int=30,
-                                     max_linesearch::Int=20)
-    T = promote_type(typeof(b0), Float64)
-    b = T(b0)
-    f = logf(b)
-    isfinite(f) || return nothing
-    best_b = b
-    best_f = f
-    tiny = sqrt(eps(Float64))
-
-    for _ in 1:maxiters
-        g = ForwardDiff.derivative(logf, b)
-        isfinite(g) || break
-        abs(g) <= grad_tol && return best_b
-
-        h = ForwardDiff.derivative(z -> ForwardDiff.derivative(logf, z), b)
-        step = if isfinite(h) && abs(h) > tiny
-            -g / h
-        else
-            -sign(g) * max(T(1e-3), T(0.1) * (one(T) + abs(b)))
-        end
-        isfinite(step) || break
-        abs(step) <= tiny * (one(T) + abs(b)) && return best_b
-
-        α = one(T)
-        accepted = false
-        for _ in 1:max_linesearch
-            b_try = b + α * step
-            f_try = logf(b_try)
-            if isfinite(f_try) && f_try >= f
-                b = b_try
-                f = f_try
-                accepted = true
-                break
-            end
-            α *= T(0.5)
-        end
-
-        if !accepted
-            α = one(T)
-            step2 = sign(g) * max(T(1e-3), T(0.01) * (one(T) + abs(b)))
-            for _ in 1:max_linesearch
-                b_try = b + α * step2
-                f_try = logf(b_try)
-                if isfinite(f_try) && f_try >= f
-                    b = b_try
-                    f = f_try
-                    accepted = true
-                    break
-                end
-                α *= T(0.5)
-            end
-        end
-
-        accepted || break
-        if f > best_f
-            best_f = f
-            best_b = b
-        end
-    end
-    return best_b
-end
-
-function _laplace_compute_bstar_batch_scalar_fast!(cache::_LaplaceCache,
-                                                   bi::Int,
-                                                   dm::DataModel,
-                                                   info::_LaplaceBatchInfo,
-                                                   θ_val::ComponentArray,
-                                                   const_cache::LaplaceConstantsCache,
-                                                   ll_cache::_LLCache;
-                                                   multistart,
-                                                   rng::AbstractRNG)
-    info.n_b == 1 || return false
-    logf = b -> _laplace_scalar_logf(dm, info, θ_val, const_cache, ll_cache, b)
-    T = eltype(θ_val)
-    b0_default = _laplace_default_b0(dm, info, θ_val, const_cache, ll_cache)
-    isempty(b0_default) && return false
-    b_start = b0_default[1]
-
-    if cache.bstar_cache.has_bstar[bi]
-        b_prev = cache.bstar_cache.b_star[bi]
-        if length(b_prev) == 1
-            f_prev = logf(b_prev[1])
-            f_def = logf(b_start)
-            if isfinite(f_prev) && (!isfinite(f_def) || f_prev > f_def)
-                b_start = b_prev[1]
-            end
-        end
-    end
-
-    if !isfinite(logf(b_start))
-        b_start = b0_default[1]
-    end
-    isfinite(logf(b_start)) || return false
-
-    b_best = _laplace_scalar_newton_mode(logf, b_start; grad_tol=multistart.grad_tol)
-    b_best === nothing && return false
-    f_best = logf(b_best)
-    isfinite(f_best) || return false
-    g_best = _laplace_scalar_grad_norm(logf, b_best)
-
-    if g_best > multistart.grad_tol && multistart.n > 0
-        n = max(1, multistart.n)
-        rounds = max(1, multistart.max_rounds)
-        for _ in 1:rounds
-            starts = _laplace_sample_b0s(dm, info, θ_val, const_cache, ll_cache, rng, n, multistart.sampling)
-            for b0 in starts
-                length(b0) == 1 || continue
-                b_try = _laplace_scalar_newton_mode(logf, b0[1]; grad_tol=multistart.grad_tol)
-                b_try === nothing && continue
-                f_try = logf(b_try)
-                isfinite(f_try) || continue
-                if f_try > f_best
-                    b_best = b_try
-                    f_best = f_try
-                    g_best = _laplace_scalar_grad_norm(logf, b_best)
-                end
-            end
-            g_best <= multistart.grad_tol && break
-            n *= 2
-        end
-    end
-
-    _laplace_store_bstar!(cache, bi, T[b_best])
-    return true
-end
-
-function _laplace_newton_mode_batch!(cache::_LaplaceCache,
-                                     bi::Int,
-                                     dm::DataModel,
-                                     info::_LaplaceBatchInfo,
-                                     θ_val::ComponentArray,
-                                     const_cache::LaplaceConstantsCache,
-                                     ll_cache::_LLCache,
-                                     b0::AbstractVector;
-                                     grad_tol::Real=1e-6,
-                                     maxiters::Int=30,
-                                     max_linesearch::Int=20)
-    nb = info.n_b
-    length(b0) == nb || return (success=false, b=Vector{eltype(θ_val)}(), logf=-Inf, grad_norm=Inf)
-    T = eltype(θ_val)
-    b = Vector{T}(undef, nb)
-    @inbounds for i in 1:nb
-        b[i] = b0[i]
-    end
-    b_try = similar(b)
-
-    g, f = _laplace_gradb_cached!(cache, bi, dm, info, θ_val, const_cache, ll_cache, b)
-    isfinite(f) || return (success=false, b=Vector{T}(), logf=-Inf, grad_norm=Inf)
-    gnorm = _laplace_inf_norm(g)
-    best_b = copy(b)
-    best_f = f
-    best_gnorm = gnorm
-    tiny = sqrt(eps(Float64))
-
-    for _ in 1:maxiters
-        if gnorm <= grad_tol
-            return (success=true, b=best_b, logf=best_f, grad_norm=best_gnorm)
-        end
-
-        H = _laplace_hessian_b(dm, info, θ_val, b, const_cache, ll_cache, cache.ad_cache, bi; ctx="fastpath_newton_b")
-        chol, _ = _laplace_cholesky_negH(H; jitter=1e-8, max_tries=6, growth=10.0, adaptive=true, scale_factor=1e-6)
-        (chol === nothing || chol.info != 0) && break
-        step = chol \ g
-        step_norm = _laplace_inf_norm(step)
-        b_norm = _laplace_inf_norm(b)
-        (isfinite(step_norm) && step_norm > tiny * (1.0 + b_norm)) || break
-
-        α = one(T)
-        accepted = false
-        for _ in 1:max_linesearch
-            @inbounds for i in eachindex(b)
-                b_try[i] = b[i] + α * step[i]
-            end
-            f_try = _laplace_logf_batch(dm, info, θ_val, b_try, const_cache, ll_cache)
-            if isfinite(f_try) && f_try >= f
-                b, b_try = b_try, b
-                g, f = _laplace_gradb_cached!(cache, bi, dm, info, θ_val, const_cache, ll_cache, b)
-                gnorm = _laplace_inf_norm(g)
-                accepted = true
-                break
-            end
-            α *= T(0.5)
-        end
-
-        accepted || break
-        if f > best_f
-            best_f = f
-            best_gnorm = gnorm
-            copyto!(best_b, b)
-        end
-    end
-    return (success=best_gnorm <= grad_tol, b=best_b, logf=best_f, grad_norm=best_gnorm)
-end
-
-function _laplace_compute_bstar_batch_dense_fast!(cache::_LaplaceCache,
-                                                  bi::Int,
-                                                  dm::DataModel,
-                                                  info::_LaplaceBatchInfo,
-                                                  θ_val::ComponentArray,
-                                                  const_cache::LaplaceConstantsCache,
-                                                  ll_cache::_LLCache;
-                                                  grad_tol::Real=1e-6,
-                                                  maxiters::Int=30,
-                                                  multistart,
-                                                  rng::AbstractRNG)
-    nb = info.n_b
-    nb > 1 || return false
-    b0_default = _laplace_default_b0(dm, info, θ_val, const_cache, ll_cache)
-    length(b0_default) == nb || return false
-    b_start = b0_default
-    f_start = _laplace_logf_batch(dm, info, θ_val, b_start, const_cache, ll_cache)
-
-    if cache.bstar_cache.has_bstar[bi]
-        b_prev = cache.bstar_cache.b_star[bi]
-        if length(b_prev) == nb
-            f_prev = _laplace_logf_batch(dm, info, θ_val, b_prev, const_cache, ll_cache)
-            if isfinite(f_prev) && (!isfinite(f_start) || f_prev > f_start)
-                b_start = b_prev
-                f_start = f_prev
-            end
-        end
-    end
-
-    if !isfinite(f_start) && multistart.n > 0
-        starts = _laplace_sample_b0s(dm, info, θ_val, const_cache, ll_cache, rng, multistart.n, multistart.sampling)
-        best_f = -Inf
-        for b0 in starts
-            length(b0) == nb || continue
-            f0 = _laplace_logf_batch(dm, info, θ_val, b0, const_cache, ll_cache)
-            if isfinite(f0) && f0 > best_f
-                best_f = f0
-                b_start = b0
-                f_start = f0
-            end
-        end
-    end
-
-    isfinite(f_start) || return false
-    best = _laplace_newton_mode_batch!(cache, bi, dm, info, θ_val, const_cache, ll_cache, b_start;
-                                       grad_tol=grad_tol,
-                                       maxiters=maxiters)
-    best.success || begin
-        if multistart.n > 0 && multistart.k > 0
-            n = multistart.n
-            k = multistart.k
-            max_rounds = max(1, multistart.max_rounds)
-            for _ in 1:max_rounds
-                k = min(k, n)
-                starts = _laplace_sample_b0s(dm, info, θ_val, const_cache, ll_cache, rng, n, multistart.sampling)
-                vals = Vector{Tuple{Float64, Vector{eltype(θ_val)}}}(undef, n)
-                for s in 1:n
-                    b0 = starts[s]
-                    f0 = (length(b0) == nb) ? _laplace_logf_batch(dm, info, θ_val, b0, const_cache, ll_cache) : -Inf
-                    isfinite(f0) || (f0 = -Inf)
-                    vals[s] = (f0, b0)
-                end
-                idxs = k < n ? partialsortperm(vals, 1:k; by=x -> x[1], rev=true) : (1:n)
-                for s in idxs
-                    b0 = vals[s][2]
-                    length(b0) == nb || continue
-                    cand = _laplace_newton_mode_batch!(cache, bi, dm, info, θ_val, const_cache, ll_cache, b0;
-                                                       grad_tol=grad_tol,
-                                                       maxiters=maxiters)
-                    if cand.logf > best.logf
-                        best = cand
-                    end
-                    cand.success && break
-                end
-                best.success && break
-                n *= 2
-                k = min(2k, n)
-            end
-        end
-        best.success || return false
-    end
-    _laplace_store_bstar!(cache, bi, best.b)
-    return true
-end
-
-function _laplace_maybe_polish_fast_ode!(cache::_LaplaceCache,
-                                         bi::Int,
-                                         dm::DataModel,
-                                         info::_LaplaceBatchInfo,
-                                         θ_val::ComponentArray,
-                                         const_cache::LaplaceConstantsCache,
-                                         ll_cache::_LLCache;
-                                         optimizer,
-                                         optim_kwargs::NamedTuple,
-                                         adtype)
-    dm.model.de.de === nothing && return nothing
-    b_fast = cache.bstar_cache.b_star[bi]
-    isempty(b_fast) && return nothing
-    f_fast = _laplace_logf_batch(dm, info, θ_val, b_fast, const_cache, ll_cache)
-    isfinite(f_fast) || return nothing
-
-    sol = try
-        _laplace_solve_batch!(dm, info, θ_val, const_cache, ll_cache, cache.ad_cache, bi, b_fast;
-                              optimizer=optimizer,
-                              optim_kwargs=optim_kwargs,
-                              adtype=adtype)
-    catch err
-        if err isa DomainError || err isa ArgumentError || err isa MethodError || err isa ErrorException
-            nothing
-        else
-            rethrow(err)
-        end
-    end
-    sol === nothing && return nothing
-
-    b_polish = sol.u
-    f_polish = _laplace_sol_logf(sol)
-    if !isfinite(f_polish)
-        f_polish = _laplace_logf_batch(dm, info, θ_val, b_polish, const_cache, ll_cache)
-    end
-    if isfinite(f_polish) && f_polish >= f_fast
-        _laplace_store_bstar!(cache, bi, b_polish)
-    end
-    return nothing
-end
 
 @inline function _laplace_gradb_cached!(cache::_LaplaceCache,
                                        bi::Int,
@@ -1461,9 +1118,9 @@ function _laplace_compute_bstar_batch!(cache::_LaplaceCache,
                                        optim_kwargs::NamedTuple=NamedTuple(),
                                        adtype=Optimization.AutoForwardDiff(),
                                        grad_tol=1e-6,
-                                       fastpath_newton_inner::Bool=false,
                                        multistart=LaplaceMultistartOptions(0, 0, grad_tol, 5, :lhs),
-                                       rng::AbstractRNG=Random.default_rng())
+                                       rng::AbstractRNG=Random.default_rng(),
+                                       mcmc_candidates::Union{Nothing, AbstractMatrix}=nothing)
     nb = info.n_b
     if nb == 0
         b_slot = cache.bstar_cache.b_star[bi]
@@ -1472,35 +1129,6 @@ function _laplace_compute_bstar_batch!(cache::_LaplaceCache,
         end
         cache.bstar_cache.has_bstar[bi] = true
         return nothing
-    end
-    if fastpath_newton_inner
-        maxiters_fast = haskey(optim_kwargs, :maxiters) ? Int(getproperty(optim_kwargs, :maxiters)) : 30
-        fast_ok = try
-            if nb == 1
-                _laplace_compute_bstar_batch_scalar_fast!(cache, bi, dm, info, θ_val, const_cache, ll_cache;
-                                                          multistart=multistart,
-                                                          rng=rng)
-            else
-                _laplace_compute_bstar_batch_dense_fast!(cache, bi, dm, info, θ_val, const_cache, ll_cache;
-                                                         grad_tol=grad_tol,
-                                                         maxiters=maxiters_fast,
-                                                         multistart=multistart,
-                                                         rng=rng)
-            end
-        catch err
-            if err isa DomainError || err isa ArgumentError || err isa MethodError
-                false
-            else
-                rethrow(err)
-            end
-        end
-        if fast_ok
-            _laplace_maybe_polish_fast_ode!(cache, bi, dm, info, θ_val, const_cache, ll_cache;
-                                            optimizer=optimizer,
-                                            optim_kwargs=optim_kwargs,
-                                            adtype=adtype)
-            return nothing
-        end
     end
     b0_default = _laplace_default_b0(dm, info, θ_val, const_cache, ll_cache)
     b_start = b0_default
@@ -1570,13 +1198,26 @@ function _laplace_compute_bstar_batch!(cache::_LaplaceCache,
         _laplace_store_bstar!(cache, bi, b_best)
         return nothing
     end
-    if g_best_norm > multistart.grad_tol && multistart.n > 0 && multistart.k > 0
-        n = multistart.n
+    use_mcmc = mcmc_candidates !== nothing && size(mcmc_candidates, 2) > 0
+    if g_best_norm > multistart.grad_tol && multistart.k > 0 && (multistart.n > 0 || use_mcmc)
+        n_mcmc_stored = use_mcmc ? size(mcmc_candidates, 2) : 0
+        n = use_mcmc ? max(multistart.n, n_mcmc_stored) : multistart.n
         k = multistart.k
-        max_rounds = max(1, multistart.max_rounds)
+        max_rounds = use_mcmc ? 1 : max(1, multistart.max_rounds)
         for round in 1:max_rounds
             k = min(k, n)
-            b0s = _laplace_sample_b0s(dm, info, θ_val, const_cache, ll_cache, rng, n, multistart.sampling)
+            if use_mcmc
+                mcmc_b0s = [mcmc_candidates[:, i] for i in 1:n_mcmc_stored]
+                n_lhs = max(0, multistart.n - n_mcmc_stored)
+                lhs_b0s = n_lhs > 0 ?
+                    _laplace_sample_b0s(dm, info, θ_val, const_cache, ll_cache, rng, n_lhs, multistart.sampling) :
+                    Vector{Vector{eltype(θ_val)}}()
+                b0s = vcat(mcmc_b0s, lhs_b0s)
+                n = length(b0s)
+                k = min(k, n)
+            else
+                b0s = _laplace_sample_b0s(dm, info, θ_val, const_cache, ll_cache, rng, n, multistart.sampling)
+            end
             vals = Vector{Tuple{Float64, Vector{eltype(θ_val)}}}(undef, n)
             for s in 1:n
                 b0 = b0s[s]
@@ -1626,6 +1267,7 @@ function _laplace_compute_bstar_batch!(cache::_LaplaceCache,
             if g_best_norm <= multistart.grad_tol
                 break
             end
+            use_mcmc && break
             n *= 2
             k = min(k * 2, n)
         end
@@ -1648,12 +1290,12 @@ function _laplace_get_bstar!(cache::_LaplaceCache,
                              adtype=Optimization.AutoForwardDiff(),
                              grad_tol=1e-6,
                              theta_tol=0.0,
-                             fastpath=nothing,
                              multistart=LaplaceMultistartOptions(0, 0, grad_tol, 5, :lhs),
                              rng::AbstractRNG=Random.default_rng(),
                              serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                              progress::Bool=false,
-                             progress_desc::AbstractString="EBE")
+                             progress_desc::AbstractString="EBE",
+                             mcmc_candidates_by_batch::Union{Nothing, Vector}=nothing)
     θ_vec = θ
     if cache.θ_cache !== nothing && length(cache.θ_cache) == length(θ_vec)
         maxdiff = _maxabsdiff(θ_vec, cache.θ_cache)
@@ -1668,7 +1310,6 @@ function _laplace_get_bstar!(cache::_LaplaceCache,
     p = ProgressMeter.Progress(length(batch_infos); desc=progress_desc, enabled=progress && !isempty(batch_infos))
     θ_val = _laplace_floatize(θ)
     batch_rngs = _laplace_thread_rngs(rng, length(batch_infos))
-    fastpath_newton_inner = _laplace_fastpath_newton_inner_enabled(fastpath)
     use_threaded = serialization isa SciMLBase.EnsembleThreads || ll_cache isa AbstractVector
     if use_threaded
         nthreads = Threads.maxthreadid()
@@ -1681,9 +1322,9 @@ function _laplace_get_bstar!(cache::_LaplaceCache,
                                           optim_kwargs=optim_kwargs,
                                           adtype=adtype,
                                           grad_tol=grad_tol,
-                                          fastpath_newton_inner=fastpath_newton_inner,
                                           multistart=multistart,
-                                          rng=batch_rngs[bi])
+                                          rng=batch_rngs[bi],
+                                          mcmc_candidates=mcmc_candidates_by_batch === nothing ? nothing : mcmc_candidates_by_batch[bi])
             ProgressMeter.next!(p)
         end
     else
@@ -1694,9 +1335,9 @@ function _laplace_get_bstar!(cache::_LaplaceCache,
                                           optim_kwargs=optim_kwargs,
                                           adtype=adtype,
                                           grad_tol=grad_tol,
-                                          fastpath_newton_inner=fastpath_newton_inner,
                                           multistart=multistart,
-                                          rng=batch_rngs[bi])
+                                          rng=batch_rngs[bi],
+                                          mcmc_candidates=mcmc_candidates_by_batch === nothing ? nothing : mcmc_candidates_by_batch[bi])
             ProgressMeter.next!(p)
         end
     end
@@ -1988,264 +1629,6 @@ struct LaplaceCacheOptions{T}
     theta_tol::T
 end
 
-struct LaplaceFastpathOptions
-    mode::Symbol
-end
-
-@inline function _resolve_laplace_fastpath_mode(mode::Symbol)
-    (mode === :auto || mode === :off) || error("fastpath_mode must be :auto or :off.")
-    return mode
-end
-
-@inline function _resolve_laplace_fastpath_options(fp::LaplaceFastpathOptions)
-    return LaplaceFastpathOptions(_resolve_laplace_fastpath_mode(fp.mode))
-end
-
-const _LAPLACE_FASTPATH_SUPPORTED_OUTCOME_CALLS = (:Normal, :LogNormal, :Bernoulli, :Poisson)
-const _LAPLACE_FASTPATH_SUPPORTED_RE_CALLS = (:Normal, :LogNormal)
-
-@inline function _laplace_call_name(ex)
-    ex isa Expr && ex.head == :call || return nothing
-    fn = ex.args[1]
-    if fn isa Symbol
-        return fn
-    elseif fn isa GlobalRef
-        return fn.name
-    elseif fn isa Expr && fn.head == :.
-        tail = fn.args[end]
-        tail isa QuoteNode && (tail = tail.value)
-        return tail isa Symbol ? tail : nothing
-    end
-    return nothing
-end
-
-@inline function _laplace_formulas_assignment_map(ir)
-    pairs = Pair{Symbol, Expr}[]
-    for (nm, ex) in zip(ir.det_names, ir.det_exprs)
-        ex isa Expr && push!(pairs, nm => ex)
-    end
-    return Dict{Symbol, Expr}(pairs)
-end
-
-function _laplace_resolve_assignment(ex, assign_map::Dict{Symbol, Expr}; seen::Set{Symbol}=Set{Symbol}())
-    ex isa Symbol || return ex
-    haskey(assign_map, ex) || return ex
-    ex in seen && return ex
-    seen_next = copy(seen)
-    push!(seen_next, ex)
-    return _laplace_resolve_assignment(assign_map[ex], assign_map; seen=seen_next)
-end
-
-function _laplace_re_degree(ex, assign_map::Dict{Symbol, Expr}, re_set::Set{Symbol}; seen::Set{Symbol}=Set{Symbol}())
-    if ex isa Number
-        return 0
-    elseif ex isa QuoteNode
-        return ex.value isa Number ? 0 : 2
-    elseif ex isa Symbol
-        ex in re_set && return 1
-        haskey(assign_map, ex) || return 0
-        ex in seen && return 2
-        seen_next = copy(seen)
-        push!(seen_next, ex)
-        return _laplace_re_degree(assign_map[ex], assign_map, re_set; seen=seen_next)
-    elseif !(ex isa Expr)
-        return 0
-    end
-
-    if ex.head == :ref
-        isempty(ex.args) && return 2
-        base_deg = _laplace_re_degree(ex.args[1], assign_map, re_set; seen=seen)
-        base_deg == 2 && return 2
-        for idx in ex.args[2:end]
-            _laplace_re_degree(idx, assign_map, re_set; seen=seen) == 0 || return 2
-        end
-        return base_deg
-    elseif ex.head == :.
-        isempty(ex.args) && return 2
-        return _laplace_re_degree(ex.args[1], assign_map, re_set; seen=seen)
-    elseif ex.head == :call
-        fname = _laplace_call_name(ex)
-        args = ex.args[2:end]
-        degs = [_laplace_re_degree(a, assign_map, re_set; seen=seen) for a in args]
-        any(d -> d == 2, degs) && return 2
-
-        if fname === :+ || fname === :-
-            return isempty(degs) ? 0 : maximum(degs)
-        elseif fname === :*
-            n_linear = count(==(1), degs)
-            return n_linear <= 1 ? (n_linear == 1 ? 1 : 0) : 2
-        elseif fname === :/
-            length(degs) == 2 || return 2
-            degs[2] == 0 || return 2
-            return degs[1]
-        elseif fname === :^
-            length(args) == 2 || return 2
-            exp_arg = args[2]
-            exp_arg isa Number || return 2
-            if exp_arg == 0
-                return 0
-            elseif exp_arg == 1
-                return degs[1]
-            end
-            return degs[1] == 0 ? 0 : 2
-        elseif fname in (:identity, :copy, :collect, :vec, :reshape, :transpose, :permutedims, :getindex)
-            isempty(degs) && return 2
-            any(d -> d != 0, degs[2:end]) && return 2
-            return degs[1]
-        end
-
-        # Generic function call is nonlinear if any argument depends on RE.
-        return isempty(degs) || maximum(degs) == 0 ? 0 : 2
-    end
-
-    child_degs = [_laplace_re_degree(a, assign_map, re_set; seen=seen) for a in ex.args]
-    any(d -> d == 2, child_degs) && return 2
-    return isempty(child_degs) || maximum(child_degs) == 0 ? 0 : 2
-end
-
-@inline function _laplace_expr_depends_on_re(ex, assign_map::Dict{Symbol, Expr}, re::Symbol)
-    return _laplace_re_degree(ex, assign_map, Set{Symbol}((re,))) > 0
-end
-
-function _laplace_expr_uses_state_signal_call(ex, assign_map::Dict{Symbol, Expr}, state_signal_set::Set{Symbol}; seen::Set{Symbol}=Set{Symbol}())
-    if ex isa Symbol
-        haskey(assign_map, ex) || return false
-        ex in seen && return false
-        seen_next = copy(seen)
-        push!(seen_next, ex)
-        return _laplace_expr_uses_state_signal_call(assign_map[ex], assign_map, state_signal_set; seen=seen_next)
-    elseif !(ex isa Expr)
-        return false
-    end
-
-    if ex.head == :call
-        fname = _laplace_call_name(ex)
-        if fname !== nothing && fname in state_signal_set && length(ex.args) == 2
-            return true
-        end
-    end
-
-    for a in ex.args
-        _laplace_expr_uses_state_signal_call(a, assign_map, state_signal_set; seen=seen) && return true
-    end
-    return false
-end
-
-function _laplace_matches_link_affine(ex, assign_map::Dict{Symbol, Expr}, re_set::Set{Symbol}, link_names::Tuple{Vararg{Symbol}})
-    ex_resolved = _laplace_resolve_assignment(ex, assign_map)
-    ex_resolved isa Expr && ex_resolved.head == :call || return false
-    cname = _laplace_call_name(ex_resolved)
-    cname in link_names || return false
-    length(ex_resolved.args) == 2 || return false
-    return _laplace_re_degree(ex_resolved.args[2], assign_map, re_set) <= 1
-end
-
-function _laplace_outcome_fastpath_info(obs::Symbol, ex, assign_map::Dict{Symbol, Expr},
-                                        re_names::Vector{Symbol}, re_supported::Set{Symbol},
-                                        re_set::Set{Symbol}, de_re_set::Set{Symbol},
-                                        state_signal_set::Set{Symbol})
-    reasons = Symbol[]
-    ex_resolved = _laplace_resolve_assignment(ex, assign_map)
-    ex_resolved isa Expr && ex_resolved.head == :call || return (outcome=obs, eligible=false, reasons=(:unsupported_outcome_distribution,))
-    cname = _laplace_call_name(ex_resolved)
-    cname in _LAPLACE_FASTPATH_SUPPORTED_OUTCOME_CALLS || return (outcome=obs, eligible=false, reasons=(:unsupported_outcome_distribution,))
-
-    uses_de_state_signal = _laplace_expr_uses_state_signal_call(ex_resolved, assign_map, state_signal_set)
-    uses_re = Symbol[re for re in re_names if _laplace_expr_depends_on_re(ex_resolved, assign_map, re)]
-    if uses_de_state_signal
-        for re in de_re_set
-            re in uses_re || push!(uses_re, re)
-        end
-        !isempty(de_re_set) && push!(reasons, :random_effect_in_de_dynamics)
-    end
-
-    for re in uses_re
-        re in re_supported || begin
-            push!(reasons, :unsupported_random_effect_distribution)
-            break
-        end
-    end
-
-    if cname === :Normal || cname === :LogNormal
-        length(ex_resolved.args) == 3 || push!(reasons, :invalid_outcome_arity)
-        if length(ex_resolved.args) == 3
-            μarg = ex_resolved.args[2]
-            σarg = ex_resolved.args[3]
-            _laplace_re_degree(μarg, assign_map, re_set) <= 1 || push!(reasons, :nonlinear_mean_in_random_effect)
-            _laplace_re_degree(σarg, assign_map, re_set) == 0 || push!(reasons, :scale_depends_on_random_effect)
-        end
-    elseif cname === :Bernoulli
-        length(ex_resolved.args) == 2 || push!(reasons, :invalid_outcome_arity)
-        if length(ex_resolved.args) == 2
-            _laplace_matches_link_affine(ex_resolved.args[2], assign_map, re_set, (:logistic, :invlogit)) ||
-                push!(reasons, :bernoulli_requires_logistic_affine)
-        end
-    elseif cname === :Poisson
-        length(ex_resolved.args) == 2 || push!(reasons, :invalid_outcome_arity)
-        if length(ex_resolved.args) == 2
-            _laplace_matches_link_affine(ex_resolved.args[2], assign_map, re_set, (:exp,)) ||
-                push!(reasons, :poisson_requires_exp_affine)
-        end
-    end
-
-    if isempty(reasons)
-        tag = cname === :Normal ? :eligible_normal_linear_re :
-              cname === :LogNormal ? :eligible_lognormal_linear_re :
-              cname === :Bernoulli ? :eligible_bernoulli_logistic_linear_re :
-              :eligible_poisson_log_linear_re
-        return (outcome=obs, eligible=true, reasons=(tag,))
-    end
-    return (outcome=obs, eligible=false, reasons=Tuple(unique(reasons)))
-end
-
-function _laplace_fastpath_auto_outcomes(dm::DataModel)
-    formulas = dm.model.formulas.formulas
-    ir = get_formulas_ir(formulas)
-    assign_map = _laplace_formulas_assignment_map(ir)
-    re_model = dm.model.random.random
-    re_names = get_re_names(re_model)
-    re_set = Set(re_names)
-    re_dist_exprs = get_re_dist_exprs(re_model)
-    re_supported = Set{Symbol}()
-    for re in re_names
-        hasproperty(re_dist_exprs, re) || continue
-        cname = _laplace_call_name(getproperty(re_dist_exprs, re))
-        cname in _LAPLACE_FASTPATH_SUPPORTED_RE_CALLS && push!(re_supported, re)
-    end
-
-    de_re_set = Set{Symbol}()
-    state_signal_set = Set{Symbol}()
-    if dm.model.de.de !== nothing
-        de_meta = get_de_meta(dm.model.de.de)
-        de_var_set = Set(de_meta.var_syms)
-        for re in re_names
-            re in de_var_set && push!(de_re_set, re)
-        end
-        for s in vcat(de_meta.state_names, de_meta.signal_names)
-            push!(state_signal_set, s)
-        end
-    end
-
-    outcomes = NamedTuple[]
-    for (obs, ex) in zip(ir.obs_names, ir.obs_exprs)
-        push!(outcomes, _laplace_outcome_fastpath_info(obs, ex, assign_map, re_names, re_supported, re_set, de_re_set, state_signal_set))
-    end
-    return outcomes
-end
-
-@inline function _laplace_fastpath_all_outcomes_eligible(outcomes)
-    !isempty(outcomes) || return false
-    return all(o -> o.eligible, outcomes)
-end
-
-@inline function _laplace_fastpath_newton_inner_enabled(info)
-    info === nothing && return false
-    hasproperty(info, :active) || return false
-    hasproperty(info, :backend) || return false
-    backend = getproperty(info, :backend)
-    return Bool(info.active) && (backend === :newton_inner || backend === :scalar_inner)
-end
-
 @inline _default_inner_grad_tol(dm::DataModel) = dm.model.de.de === nothing ? 1e-8 : 1e-2
 
 @inline function _resolve_inner_options(inner::LaplaceInnerOptions, dm::DataModel)
@@ -2267,44 +1650,6 @@ end
     return LaplaceMultistartOptions(multistart.n, multistart.k, gt, multistart.max_rounds, sampling)
 end
 
-function _laplace_fastpath_start_info(dm::DataModel, mode::Symbol)
-    mode = _resolve_laplace_fastpath_mode(mode)
-    obs_names = get_formulas_meta(dm.model.formulas.formulas).obs_names
-    if mode === :off
-        outcomes = [(outcome=o, eligible=false, reasons=(:mode_off,)) for o in obs_names]
-        return (mode=mode, active=false, backend=:none, summary_reason=:mode_off, outcomes=outcomes)
-    end
-
-    outcomes = _laplace_fastpath_auto_outcomes(dm)
-    has_eligible = any(o -> o.eligible, outcomes)
-    all_eligible = _laplace_fastpath_all_outcomes_eligible(outcomes)
-    if all_eligible
-        summary = dm.model.de.de === nothing ? :newton_inner_backend_enabled : :newton_inner_backend_enabled_with_ode_polish
-        return (mode=mode,
-                active=true,
-                backend=:newton_inner,
-                summary_reason=summary,
-                outcomes=outcomes)
-    elseif has_eligible
-        return (mode=mode,
-                active=false,
-                backend=:none,
-                summary_reason=:partial_eligibility_backend_requires_all_outcomes,
-                outcomes=outcomes)
-    else
-        return (mode=mode,
-                active=false,
-                backend=:none,
-                summary_reason=:no_eligible_outcomes,
-                outcomes=outcomes)
-    end
-end
-
-@inline function _log_laplace_fastpath_start(dm::DataModel, mode::Symbol, method::Symbol)
-    info = _laplace_fastpath_start_info(dm, mode)
-    return info
-end
-
 """
     Laplace(; optimizer, optim_kwargs, adtype, inner_options, hessian_options,
               cache_options, multistart_options, inner_optimizer, inner_kwargs,
@@ -2312,7 +1657,7 @@ end
               multistart_grad_tol, multistart_max_rounds, multistart_sampling,
               jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale,
               use_trace_logdet_grad, use_hutchinson, hutchinson_n, theta_tol,
-              fastpath_options, fastpath_mode, lb, ub) <: FittingMethod
+              lb, ub) <: FittingMethod
 
 Laplace approximation with Empirical Bayes Estimates (EBE) for random-effects models.
 The outer optimiser maximises the Laplace-approximated marginal likelihood over the
@@ -2341,13 +1686,9 @@ random effects.
 - `use_hutchinson::Bool = false`: use Hutchinson estimator instead of Cholesky for log-det.
 - `hutchinson_n::Int = 8`: number of Rademacher vectors for the Hutchinson estimator.
 - `theta_tol::Float64 = 0.0`: fixed-effect change tolerance for EBE caching.
-- `fastpath_mode::Symbol = :auto`: fast-path mode (`:auto` or `:off`). In step 4,
-  this enables a Newton-based inner-mode backend for fully eligible models (with
-  a generic polishing pass for ODE models) and falls back
-  to the generic path otherwise.
 - `lb`, `ub`: bounds on the transformed fixed-effect scale, or `nothing`.
 """
-struct Laplace{O, K, A, IO, HO, CO, MS, FP, L, U} <: FittingMethod
+struct Laplace{O, K, A, IO, HO, CO, MS, L, U} <: FittingMethod
     optimizer::O
     optim_kwargs::K
     adtype::A
@@ -2355,7 +1696,6 @@ struct Laplace{O, K, A, IO, HO, CO, MS, FP, L, U} <: FittingMethod
     hessian::HO
     cache::CO
     multistart::MS
-    fastpath::FP
     lb::L
     ub::U
     ignore_model_bounds::Bool
@@ -2387,8 +1727,6 @@ Laplace(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracki
         use_hutchinson=false,
         hutchinson_n=8,
         theta_tol=0.0,
-        fastpath_options=nothing,
-        fastpath_mode=:auto,
         lb=nothing,
         ub=nothing,
         ignore_model_bounds=false,
@@ -2397,9 +1735,7 @@ Laplace(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracki
     hess = hessian_options === nothing ? LaplaceHessianOptions(jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale, use_trace_logdet_grad, use_hutchinson, hutchinson_n) : hessian_options
     cache = cache_options === nothing ? LaplaceCacheOptions(theta_tol) : cache_options
     ms = multistart_options === nothing ? LaplaceMultistartOptions(multistart_n, multistart_k, multistart_grad_tol, multistart_max_rounds, multistart_sampling) : multistart_options
-    fp = fastpath_options === nothing ? LaplaceFastpathOptions(fastpath_mode) : fastpath_options
-    fp = _resolve_laplace_fastpath_options(fp)
-    Laplace(optimizer, optim_kwargs, adtype, inner, hess, cache, ms, fp, lb, ub, ignore_model_bounds, nan_recovery)
+    Laplace(optimizer, optim_kwargs, adtype, inner, hess, cache, ms, lb, ub, ignore_model_bounds, nan_recovery)
 end
 
 """
@@ -2425,7 +1761,7 @@ end
                  multistart_grad_tol, multistart_max_rounds, multistart_sampling,
                  jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale,
                  use_trace_logdet_grad, use_hutchinson, hutchinson_n, theta_tol,
-                 fastpath_options, fastpath_mode, lb, ub, ignore_model_bounds) <: FittingMethod
+                 lb, ub, ignore_model_bounds) <: FittingMethod
 
 Laplace approximation with MAP-regularised fixed effects for random-effects models.
 Identical to [`Laplace`](@ref) but adds the log-prior of the fixed effects to the
@@ -2435,7 +1771,7 @@ Requires prior distributions on at least one free fixed effect.
 See [`Laplace`](@ref) for a description of all keyword arguments. The only difference
 in defaults is `multistart_max_rounds = 5`.
 """
-struct LaplaceMAP{O, K, A, IO, HO, CO, MS, FP, L, U} <: FittingMethod
+struct LaplaceMAP{O, K, A, IO, HO, CO, MS, L, U} <: FittingMethod
     optimizer::O
     optim_kwargs::K
     adtype::A
@@ -2443,7 +1779,6 @@ struct LaplaceMAP{O, K, A, IO, HO, CO, MS, FP, L, U} <: FittingMethod
     hessian::HO
     cache::CO
     multistart::MS
-    fastpath::FP
     lb::L
     ub::U
     ignore_model_bounds::Bool
@@ -2475,8 +1810,6 @@ LaplaceMAP(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTra
            use_hutchinson=false,
            hutchinson_n=8,
            theta_tol=0.0,
-           fastpath_options=nothing,
-           fastpath_mode=:auto,
            lb=nothing,
            ub=nothing,
            ignore_model_bounds=false,
@@ -2485,9 +1818,7 @@ LaplaceMAP(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTra
     hess = hessian_options === nothing ? LaplaceHessianOptions(jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale, use_trace_logdet_grad, use_hutchinson, hutchinson_n) : hessian_options
     cache = cache_options === nothing ? LaplaceCacheOptions(theta_tol) : cache_options
     ms = multistart_options === nothing ? LaplaceMultistartOptions(multistart_n, multistart_k, multistart_grad_tol, multistart_max_rounds, multistart_sampling) : multistart_options
-    fp = fastpath_options === nothing ? LaplaceFastpathOptions(fastpath_mode) : fastpath_options
-    fp = _resolve_laplace_fastpath_options(fp)
-    LaplaceMAP(optimizer, optim_kwargs, adtype, inner, hess, cache, ms, fp, lb, ub, ignore_model_bounds, nan_recovery)
+    LaplaceMAP(optimizer, optim_kwargs, adtype, inner, hess, cache, ms, lb, ub, ignore_model_bounds, nan_recovery)
 end
 
 """
@@ -2581,7 +1912,6 @@ function _laplace_objective_and_grad(dm::DataModel,
                                      hessian::LaplaceHessianOptions,
                                      cache_opts::LaplaceCacheOptions,
                                      multistart::LaplaceMultistartOptions,
-                                     fastpath=nothing,
                                      rng::AbstractRNG,
                                      serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads())
     inner_opts = _resolve_inner_options(inner, dm)
@@ -2593,7 +1923,6 @@ function _laplace_objective_and_grad(dm::DataModel,
                                  adtype=inner_opts.adtype,
                                  grad_tol=inner_opts.grad_tol,
                                  theta_tol=cache_opts.theta_tol,
-                                 fastpath=fastpath,
                                  multistart=multistart_opts,
                                  rng=rng,
                                  serialization=serialization)
@@ -2669,7 +1998,6 @@ function _laplace_objective_only(dm::DataModel,
                                  hessian::LaplaceHessianOptions,
                                  cache_opts::LaplaceCacheOptions,
                                  multistart::LaplaceMultistartOptions,
-                                 fastpath=nothing,
                                  rng::AbstractRNG,
                                  serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads())
     inner_opts = _resolve_inner_options(inner, dm)
@@ -2681,7 +2009,6 @@ function _laplace_objective_only(dm::DataModel,
                                  adtype=inner_opts.adtype,
                                  grad_tol=inner_opts.grad_tol,
                                  theta_tol=cache_opts.theta_tol,
-                                 fastpath=fastpath,
                                  multistart=multistart_opts,
                                  rng=rng,
                                  serialization=serialization)
@@ -2772,7 +2099,6 @@ function _fit_model(dm::DataModel, method::Laplace, args...;
         error("Laplace requires at least one free fixed effect. Remove constants or specify a fixed effect or random effect.")
 
     free_names = [n for n in fixed_names if !(n in keys(constants))]
-    fastpath_info = _log_laplace_fastpath_start(dm, method.fastpath.mode, :laplace)
     θ0_u = get_θ0_untransformed(fe)
     if theta_0_untransformed !== nothing
         for n in fixed_names
@@ -2830,7 +2156,6 @@ function _fit_model(dm::DataModel, method::Laplace, args...;
                                       hessian=method.hessian,
                                       cache_opts=method.cache,
                                       multistart=multistart_opts,
-                                      fastpath=fastpath_info,
                                       rng=rng,
                                       serialization=serialization)
         !isfinite(obj) && return infT
@@ -2858,7 +2183,6 @@ function _fit_model(dm::DataModel, method::Laplace, args...;
                                                              hessian=method.hessian,
                                                              cache_opts=method.cache,
                                                              multistart=multistart_opts,
-                                                             fastpath=fastpath_info,
                                                              rng=rng,
                                                              serialization=serialization)
         !isfinite(obj) && return (infT, ComponentArray(zeros(T, length(θt_free)), axs_free))
@@ -2993,7 +2317,6 @@ function _fit_model(dm::DataModel, method::LaplaceMAP, args...;
         error("LaplaceMAP requires at least one free fixed effect. Remove constants or specify a fixed effect or random effect.")
 
     free_names = [n for n in fixed_names if !(n in keys(constants))]
-    fastpath_info = _log_laplace_fastpath_start(dm, method.fastpath.mode, :laplace_map)
     θ0_u = get_θ0_untransformed(fe)
     if theta_0_untransformed !== nothing
         for n in fixed_names
@@ -3051,7 +2374,6 @@ function _fit_model(dm::DataModel, method::LaplaceMAP, args...;
                                       hessian=method.hessian,
                                       cache_opts=method.cache,
                                       multistart=multistart_opts,
-                                      fastpath=fastpath_info,
                                       rng=rng,
                                       serialization=serialization)
         obj == Inf && return infT
@@ -3081,7 +2403,6 @@ function _fit_model(dm::DataModel, method::LaplaceMAP, args...;
                                                              hessian=method.hessian,
                                                              cache_opts=method.cache,
                                                              multistart=multistart_opts,
-                                                             fastpath=fastpath_info,
                                                              rng=rng,
                                                              serialization=serialization)
         !isfinite(obj) && return (infT, ComponentArray(zeros(T, length(θt_free)), axs_free))
@@ -3195,4 +2516,14 @@ function _laplace_floatize(θ::ComponentArray)
     eltype(θ) === Float64 && return θ
     vals = map(_laplace_value, θ)
     return ComponentArray(Float64.(vals), getaxes(θ))
+end
+
+function _with_eb_modes(result::LaplaceResult, eb_modes)
+    return LaplaceResult(result.solution, result.objective, result.iterations,
+                         result.raw, result.notes, eb_modes)
+end
+
+function _with_eb_modes(result::LaplaceMAPResult, eb_modes)
+    return LaplaceMAPResult(result.solution, result.objective, result.iterations,
+                            result.raw, result.notes, eb_modes)
 end

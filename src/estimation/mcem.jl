@@ -1589,13 +1589,20 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
                                   dθ_abs=isempty(diag.dθ_abs) ? T0(NaN) : diag.dθ_abs[end],
                                   dQ_abs=isempty(diag.dQ_abs) ? T0(NaN) : diag.dQ_abs[end]),
                                  NamedTuple())
+    last_b_candidates = @isdefined(samples_by_batch) ? samples_by_batch : nothing
     eb_modes = store_eb_modes ? _compute_bstars(dm, θ_hat_u, constants_re, ll_cache, method.ebe, rng;
                                                 rescue=method.ebe_rescue,
                                                 progress=method.progress,
-                                                progress_desc="MCEM Final EBE")[1] : nothing
+                                                progress_desc="MCEM Final EBE",
+                                                mcmc_candidates_by_batch=last_b_candidates)[1] : nothing
 
     notes = (diagnostics=diag,)
 
     result = MCEMResult(nothing, Q_prev, length(diag.Q_hist), nothing, notes, eb_modes)
     return FitResult(method, result, summary, diagnostics, store_data_model ? dm : nothing, args, fit_kwargs)
+end
+
+function _with_eb_modes(result::MCEMResult, eb_modes)
+    return MCEMResult(result.solution, result.objective, result.iterations,
+                      result.raw, result.notes, eb_modes)
 end

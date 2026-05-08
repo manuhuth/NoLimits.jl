@@ -6,7 +6,7 @@ PROJ=/Users/manuel/Documents/LongitudinalData.jl/NoLimits
 OUT=/tmp/nl_test_results
 mkdir -p "$OUT"
 
-# List of test files from runtests.jl (excluding commented ones)
+# List of test files (all .jl files in test/ except runtests.jl and ode_sensitivity_tests.jl)
 TESTS=(
   softtrees_tests.jl
   ad_softtree.jl
@@ -62,25 +62,25 @@ TESTS=(
   estimation_laplace_fit_tests.jl
   estimation_hutchinson_tests.jl
   estimation_laplace_map_tests.jl
-  laplace_fastpath_baseline_tests.jl
-  laplace_fastpath_config_tests.jl
   estimation_mcem_tests.jl
   estimation_mcem_is_tests.jl
   estimation_saem_tests.jl
+  saem_options_unit_tests.jl
   saem_schedule_tests.jl
   saem_multichain_tests.jl
   saem_sa_anneal_tests.jl
   saem_var_lb_tests.jl
+  saem_anneal_ebe_tests.jl
+  saem_mstep_sa_on_params_tests.jl
   estimation_saem_autodetect_tests.jl
   estimation_saem_suffstats_tests.jl
-  saem_schedule_tests.jl
-  saem_multichain_tests.jl
-  saem_sa_anneal_tests.jl
-  saem_var_lb_tests.jl
   saem_saemixmh_tests.jl
   saem_adaptive_mh_tests.jl
   estimation_multistart_tests.jl
   estimation_ghquadrature_tests.jl
+  integration_no_re.jl
+  integration_simple_re.jl
+  integration_plotting.jl
   uq_tests.jl
   uq_edge_cases_tests.jl
   uq_plotting_tests.jl
@@ -89,10 +89,17 @@ TESTS=(
   hmm_estimation_method_matrix_tests.jl
   hmm_mv_discrete_tests.jl
   hmm_mv_continuous_tests.jl
+  markov_discrete_time_tests.jl
+  markov_continuous_time_tests.jl
+  ct_hmm_equil_approx_accuracy.jl
+  ct_hmm_gap_cost.jl
   stickbreak_parameter_tests.jl
   stickbreak_transform_tests.jl
   stickbreak_uq_tests.jl
   stickbreak_uq_natural_extension_tests.jl
+  logit_scale_parameter_tests.jl
+  logit_scale_transform_tests.jl
+  logit_scale_uq_tests.jl
   ad_stickbreak_hmm.jl
   continuous_transition_matrix_tests.jl
   serialization_tests.jl

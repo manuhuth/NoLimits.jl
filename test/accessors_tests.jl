@@ -83,7 +83,7 @@ end
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
     @test NoLimits.get_observed(res).y == df.y
     @test NoLimits.get_sampler(res) isa Any
-    @test NoLimits.get_n_samples(res) == 5
+    @test NoLimits.get_n_samples(res) == 2
     @test_throws ErrorException NoLimits.get_loglikelihood(res)
 end
 

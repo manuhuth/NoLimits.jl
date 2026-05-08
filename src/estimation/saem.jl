@@ -3363,10 +3363,20 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                      method.saem.ebe_multistart_max_rounds, method.saem.ebe_multistart_sampling)
     ebe_fixed_maps = _saem_anneal_constants_re(dm, θ_hat_u, method.saem.anneal_to_fixed,
                                                fixed_maps)
+    last_b_candidates = [
+        isempty(b_chains[bi]) ? Matrix{Float64}(undef, 0, 0) : hcat(b_chains[bi]...)
+        for bi in eachindex(batch_infos)
+    ]
     eb_modes = store_eb_modes ? _compute_bstars(dm, θ_hat_u, ebe_fixed_maps, ll_cache, ebe, rng;
                                                 rescue=method.saem.ebe_rescue,
                                                 progress=method.saem.progress,
-                                                progress_desc="SAEM Final EBE")[1] : nothing
+                                                progress_desc="SAEM Final EBE",
+                                                mcmc_candidates_by_batch=last_b_candidates)[1] : nothing
     result = SAEMResult(nothing, Q_prev, length(diag.Q_hist), nothing, notes, eb_modes)
     return FitResult(method, result, summary, diagnostics, store_data_model ? dm : nothing, args, fit_kwargs)
+end
+
+function _with_eb_modes(result::SAEMResult, eb_modes)
+    return SAEMResult(result.solution, result.objective, result.iterations,
+                      result.raw, result.notes, eb_modes)
 end

@@ -1387,6 +1387,7 @@ end
         y = [1.0, 1.1, 0.9, 1.0]
     )
 
+    empty!(NoLimits._warned_numeric_re_group_cols)
     dm = nothing
     @test_logs (:info, r"numeric random-effect grouping levels") begin
         dm = DataModel(model, df; primary_id=:ID, time_col=:t)
