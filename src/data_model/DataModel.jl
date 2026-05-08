@@ -707,6 +707,8 @@ function _validate_re_group_identifiability(model, df, config::DataModelConfig)
     return nothing
 end
 
+const _warned_numeric_re_group_cols = Set{Vector{Symbol}}()
+
 function _info_numeric_re_group_levels(model, df)
     re_names = get_re_names(model.random.random)
     isempty(re_names) && return nothing
@@ -723,8 +725,11 @@ function _info_numeric_re_group_levels(model, df)
         push!(numeric_cols, col)
     end
     isempty(numeric_cols) && return nothing
+    sort!(numeric_cols)
+    numeric_cols in _warned_numeric_re_group_cols && return nothing
+    push!(_warned_numeric_re_group_cols, numeric_cols)
     cols_str = join(string.(numeric_cols), ", ")
-    @info "DataModel detected numeric random-effect grouping levels in column(s) $(cols_str). You wwill not be able to use constant random-effects. If you want to use constant random effects, consider relabeling your random effects to strings or symbols."
+    @info "DataModel detected numeric random-effect grouping levels in column(s) $(cols_str). You will not be able to use constant random-effects. If you want to use constant random effects, consider relabeling your random effects to strings or symbols."
     return nothing
 end
 

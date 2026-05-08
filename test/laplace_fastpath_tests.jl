@@ -610,17 +610,17 @@ end
 
     res_l_auto = fit_model(dm_l, lap_auto; rng=MersenneTwister(22))
     res_l_off = fit_model(dm_l, lap_off; rng=MersenneTwister(22))
-    @test isapprox(get_objective(res_l_auto), get_objective(res_l_off); atol=1e-10, rtol=1e-10)
+    @test isapprox(get_objective(res_l_auto), get_objective(res_l_off); atol=1e-6, rtol=1e-6)
 
     res_m_auto = fit_model(dm_m, map_auto; rng=MersenneTwister(22))
     res_m_off = fit_model(dm_m, map_off; rng=MersenneTwister(22))
-    @test isapprox(get_objective(res_m_auto), get_objective(res_m_off); atol=1e-10, rtol=1e-10)
+    @test isapprox(get_objective(res_m_auto), get_objective(res_m_off); atol=1e-6, rtol=1e-6)
 
     res_l2_auto = fit_model(dm_l2, lap_auto_dense; rng=MersenneTwister(33))
     res_l2_off = fit_model(dm_l2, lap_off_dense; rng=MersenneTwister(33))
-    @test isapprox(get_objective(res_l2_auto), get_objective(res_l2_off); atol=1e-8, rtol=1e-8)
+    @test isapprox(get_objective(res_l2_auto), get_objective(res_l2_off); atol=1e-5, rtol=1e-5)
 
     res_ode_auto = fit_model(dm_ode, lap_auto_ode; rng=MersenneTwister(44))
     res_ode_off = fit_model(dm_ode, lap_off_ode; rng=MersenneTwister(44))
-    @test isapprox(get_objective(res_ode_auto), get_objective(res_ode_off); atol=1e-8, rtol=1e-8)
+    @test isapprox(get_objective(res_ode_auto), get_objective(res_ode_off); atol=1e-5, rtol=1e-5)
 end

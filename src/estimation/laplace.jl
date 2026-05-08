@@ -1281,6 +1281,46 @@ function _laplace_logf_batch(dm::DataModel,
     return ll
 end
 
+# RE-prior-only counterpart to _laplace_logf_batch.
+# Evaluates log p(η | θ_re) for all free RE levels in the batch — no ODE, no observation
+# likelihood.  Used by the Q2 M-step optimizer to update parameters that appear only in
+# random-effect distribution expressions.
+function _re_logpdf_batch(dm::DataModel,
+                          batch_info::_LaplaceBatchInfo,
+                          θ::ComponentArray,
+                          b,
+                          cache::_LLCache;
+                          anneal_sds::NamedTuple=NamedTuple())
+    T_ll = promote_type(eltype(θ), eltype(b))
+    ll = zero(T_ll)
+    model_funs = cache.model_funs
+    helpers = cache.helpers
+    θ_re = _symmetrize_psd_params(θ, dm.model.fixed.fixed)
+    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
+    re_cache = dm.re_group_info.laplace_cache
+    re_names = re_cache.re_names
+    has_anneal = !isempty(anneal_sds)
+    for (ri, re) in enumerate(re_names)
+        info = batch_info.re_info[ri]
+        isempty(info.map.levels) && continue
+        for (li, level_id) in enumerate(info.map.levels)
+            rep_idx = info.reps[li]
+            const_cov = dm.individuals[rep_idx].const_cov
+            dists = dists_builder(θ_re, const_cov, model_funs, helpers)
+            dist = getproperty(dists, re)
+            if has_anneal && haskey(anneal_sds, re)
+                dist = _saem_apply_anneal_dist(dist, getfield(anneal_sds, re))
+            end
+            v = _re_value_from_b(info, level_id, b)
+            v === nothing && continue
+            lp = logpdf(dist, v)
+            isfinite(lp) || return T_ll(-Inf)
+            ll += lp
+        end
+    end
+    return ll
+end
+
 function _laplace_obsll_batch(dm::DataModel,
                               batch_info::_LaplaceBatchInfo,
                               θ::ComponentArray,
@@ -2473,14 +2513,16 @@ mutable struct _LaplaceObjCache{T, G}
     has_grad::Bool
 end
 
-@inline function _laplace_obj_cache_set_obj!(cache::_LaplaceObjCache, θ, obj)
+@inline function _laplace_obj_cache_set_obj!(cache::_LaplaceObjCache{T}, θ, obj) where T
+    eltype(θ) === T || return nothing
     cache.θ = copy(θ)
     cache.obj = obj
     cache.has_grad = false
     return nothing
 end
 
-@inline function _laplace_obj_cache_set_obj_grad!(cache::_LaplaceObjCache, θ, obj, grad)
+@inline function _laplace_obj_cache_set_obj_grad!(cache::_LaplaceObjCache{T}, θ, obj, grad) where T
+    eltype(θ) === T || return nothing
     cache.θ = copy(θ)
     cache.obj = obj
     cache.grad = grad
@@ -2488,7 +2530,8 @@ end
     return nothing
 end
 
-@inline function _laplace_obj_cache_lookup(cache::_LaplaceObjCache, θ, theta_tol)
+@inline function _laplace_obj_cache_lookup(cache::_LaplaceObjCache{T}, θ, theta_tol) where T
+    eltype(θ) === T || return nothing
     cache.θ === nothing && return nothing
     cache.has_grad || return nothing
     maxdiff = _maxabsdiff(θ, cache.θ)
@@ -2498,7 +2541,8 @@ end
     return nothing
 end
 
-@inline function _laplace_obj_cache_lookup_obj(cache::_LaplaceObjCache, θ, theta_tol)
+@inline function _laplace_obj_cache_lookup_obj(cache::_LaplaceObjCache{T}, θ, theta_tol) where T
+    eltype(θ) === T || return nothing
     cache.θ === nothing && return nothing
     maxdiff = _maxabsdiff(θ, cache.θ)
     if isfinite(maxdiff) && maxdiff <= theta_tol
@@ -2561,7 +2605,7 @@ function _laplace_objective_and_grad(dm::DataModel,
     if serialization isa SciMLBase.EnsembleThreads
         nthreads = Threads.maxthreadid()
         caches = _laplace_thread_caches(dm, ll_cache, nthreads)
-        obj_by_batch = Vector{Float64}(undef, length(batch_infos))
+        obj_by_batch = Vector{eltype(θ)}(undef, length(batch_infos))
         grad_by_batch = Matrix{eltype(θ)}(undef, length(θ), length(batch_infos))
         bad = Threads.Atomic{Bool}(false)
         Threads.@threads for bi in eachindex(batch_infos)
@@ -2650,7 +2694,7 @@ function _laplace_objective_only(dm::DataModel,
     if serialization isa SciMLBase.EnsembleThreads
         nthreads = Threads.maxthreadid()
         caches = _laplace_thread_caches(dm, ll_cache, nthreads)
-        obj_by_batch = Vector{Float64}(undef, length(batch_infos))
+        obj_by_batch = Vector{eltype(θ)}(undef, length(batch_infos))
         bad = Threads.Atomic{Bool}(false)
         Threads.@threads for bi in eachindex(batch_infos)
             bad[] && continue

@@ -1082,6 +1082,68 @@ function _mcem_Q(dm::DataModel,
                          weights_by_batch; serialization=serialization, q_cache=q_cache)
 end
 
+# Q2 counterpart to _mcem_Q: evaluates only log p(η|θ_re) — no ODE calls.
+# Used for the Q2 M-step (parameters that appear only in RE distribution expressions).
+function _mcem_Q2(dm::DataModel,
+                  batch_infos::Vector{_LaplaceBatchInfo},
+                  θ::ComponentArray,
+                  const_cache::LaplaceConstantsCache,
+                  ll_cache,
+                  samples_by_batch::AbstractVector{<:AbstractMatrix},
+                  weights_by_batch::Union{Nothing, AbstractVector{<:AbstractVector}}=nothing;
+                  serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads())
+    total = zero(eltype(θ))
+    if serialization isa SciMLBase.EnsembleThreads
+        nthreads = Threads.maxthreadid()
+        caches = _mcem_thread_caches(dm, ll_cache, nthreads)
+        Tθ = eltype(θ)
+        partial_obj = Vector{Tθ}(undef, length(batch_infos))
+        fill!(partial_obj, zero(Tθ))
+        bad = Threads.Atomic{Bool}(false)
+        Threads.@threads for bi in eachindex(batch_infos)
+            bad[] && continue
+            tid = Threads.threadid()
+            info = batch_infos[bi]
+            samples = samples_by_batch[bi]
+            size(samples, 2) == 0 && continue
+            ws = weights_by_batch === nothing ? nothing : weights_by_batch[bi]
+            acc = zero(eltype(θ))
+            for s in 1:size(samples, 2)
+                b = view(samples, :, s)
+                logf = _re_logpdf_batch(dm, info, θ, b, caches[tid])
+                !isfinite(logf) && (bad[] = true; break)
+                w = ws === nothing ? one(eltype(θ)) : eltype(θ)(ws[s])
+                acc += w * logf
+            end
+            bad[] && continue
+            ws === nothing && (acc /= size(samples, 2))
+            partial_obj[bi] = acc
+        end
+        bad[] && return Inf
+        @inbounds for bi in eachindex(batch_infos)
+            total += partial_obj[bi]
+        end
+    else
+        ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
+        for (bi, info) in enumerate(batch_infos)
+            samples = samples_by_batch[bi]
+            size(samples, 2) == 0 && continue
+            ws = weights_by_batch === nothing ? nothing : weights_by_batch[bi]
+            acc = zero(eltype(θ))
+            for s in 1:size(samples, 2)
+                b = view(samples, :, s)
+                logf = _re_logpdf_batch(dm, info, θ, b, ll_cache_local)
+                !isfinite(logf) && return Inf
+                w = ws === nothing ? one(eltype(θ)) : eltype(θ)(ws[s])
+                acc += w * logf
+            end
+            ws === nothing && (acc /= size(samples, 2))
+            total += acc
+        end
+    end
+    return total
+end
+
 
 function _fit_model(dm::DataModel, method::MCEM, args...;
                     constants::NamedTuple=NamedTuple(),
@@ -1147,6 +1209,11 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
     axs_free = getaxes(θt_free)
     axs_full = getaxes(θ_const_t)
     T0 = eltype(θt_free)
+
+    # Detect Q2-only free parameters (appear only in RE distributions, never in obs-side blocks).
+    q2_base_free_names = let p = _partition_q1_q2_names(dm.model, free_names)
+        p.q2
+    end
 
     diag = _MCEMDiagnostics{T0}(Vector{AbstractVector{T0}}(),
                                Vector{T0}(),
@@ -1317,8 +1384,66 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
         θu_new = nothing
         Q_new  = T0(Inf)
 
-        θt_free_iter = ComponentArray(NamedTuple{Tuple(free_names)}(
-            Tuple(getproperty(θt_full_curr, n) for n in free_names)))
+        # Q2 sub-step: optimise parameters that appear only in RE distribution
+        # expressions (no ODE needed).  Results are folded into mstep_constants so the
+        # Q1 optimizer below sees them as fixed.
+        mstep_constants = constants
+        let q2_free_now = [n for n in q2_base_free_names if n ∉ keys(mstep_constants)]
+            if !isempty(q2_free_now)
+                lower_t_q2_all, upper_t_q2_all = get_bounds_transformed(fe)
+                θt_q2 = ComponentArray(NamedTuple{Tuple(q2_free_now)}(
+                    Tuple(getproperty(θt_full_curr, n) for n in q2_free_now)))
+                axs_q2 = getaxes(θt_q2)
+                function obj_q2(ψt, p)
+                    any(isnan, ψt) && return eltype(ψt)(Inf)
+                    ψt_ca = ψt isa ComponentArray ? ψt : ComponentArray(ψt, axs_q2)
+                    T = eltype(ψt_ca)
+                    θt_full_q2 = ComponentArray(T.(collect(θt_full_curr)), axs_full)
+                    for name in q2_free_now
+                        setproperty!(θt_full_q2, name, getproperty(ψt_ca, name))
+                    end
+                    θu_q2 = inv_transform(θt_full_q2)
+                    Q2val = _mcem_Q2(dm, batch_infos, θu_q2, const_cache, ll_cache,
+                                     samples_by_batch, weights_by_batch;
+                                     serialization=serialization)
+                    isfinite(Q2val) || return T(Inf)
+                    return -Q2val
+                end
+                lb_q2 = collect(ComponentArray(NamedTuple{Tuple(q2_free_now)}(
+                    Tuple(getproperty(lower_t_q2_all, n) for n in q2_free_now))))
+                ub_q2 = collect(ComponentArray(NamedTuple{Tuple(q2_free_now)}(
+                    Tuple(getproperty(upper_t_q2_all, n) for n in q2_free_now))))
+                use_bounds_q2 = !(all(isinf, lb_q2) && all(isinf, ub_q2))
+                θ0_q2 = collect(θt_q2)
+                optf_q2 = OptimizationFunction(obj_q2, method.adtype)
+                prob_q2 = use_bounds_q2 ?
+                    OptimizationProblem(optf_q2, θ0_q2; lb=lb_q2, ub=ub_q2) :
+                    OptimizationProblem(optf_q2, θ0_q2)
+                sol_q2 = Optimization.solve(prob_q2, method.optimizer; method.optim_kwargs...)
+                if all(isfinite, sol_q2.u)
+                    θt_q2_opt = ComponentArray(sol_q2.u, axs_q2)
+                    θt_full_q2_opt = ComponentArray(collect(θt_full_curr), axs_full)
+                    for name in q2_free_now
+                        setproperty!(θt_full_q2_opt, name, getproperty(θt_q2_opt, name))
+                    end
+                    θu_q2_opt = inv_transform(θt_full_q2_opt)
+                    q2_updates = NamedTuple{Tuple(q2_free_now)}(
+                        Tuple(getproperty(θu_q2_opt, n) for n in q2_free_now))
+                    mstep_constants = merge(mstep_constants, q2_updates)
+                end
+            end
+        end
+
+        # Determine Q1 free names and per-iteration full-θ state
+        # (Q2-optimal params are now baked into mstep_constants).
+        free_names_q1 = [n for n in free_names if n ∉ keys(mstep_constants)]
+        θ_const_u_q1 = copy(θ_const_u)
+        _apply_constants!(θ_const_u_q1, mstep_constants)
+        θ_const_t_q1 = transform(θ_const_u_q1)
+        axs_full_q1 = getaxes(θ_const_t_q1)
+
+        θt_free_iter = ComponentArray(NamedTuple{Tuple(free_names_q1)}(
+            Tuple(getproperty(θt_full_curr, n) for n in free_names_q1)))
         axs_free_iter = getaxes(θt_free_iter)
 
         obj_cache = (θ=Ref{Any}(nothing), obj=Ref{Any}(nothing))
@@ -1331,8 +1456,8 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
                 _maxabsdiff(θt_vec, obj_cache.θ[]) == 0.0 && return obj_cache.obj[]
             end
             T = eltype(θt_free_loc)
-            θt_full_loc = ComponentArray(T.(θ_const_t), axs_full)
-            for name in free_names
+            θt_full_loc = ComponentArray(T.(θ_const_t_q1), axs_full_q1)
+            for name in free_names_q1
                 setproperty!(θt_full_loc, name, getproperty(θt_free_loc, name))
             end
             θu = inv_transform(θt_full_loc)
@@ -1351,8 +1476,8 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
         optf = OptimizationFunction(obj_only, method.adtype)
         lower_t, upper_t = get_bounds_transformed(fe)
 
-        lower_t_free_iter = ComponentArray(NamedTuple{Tuple(free_names)}(Tuple(getproperty(lower_t, n) for n in free_names)))
-        upper_t_free_iter = ComponentArray(NamedTuple{Tuple(free_names)}(Tuple(getproperty(upper_t, n) for n in free_names)))
+        lower_t_free_iter = ComponentArray(NamedTuple{Tuple(free_names_q1)}(Tuple(getproperty(lower_t, n) for n in free_names_q1)))
+        upper_t_free_iter = ComponentArray(NamedTuple{Tuple(free_names_q1)}(Tuple(getproperty(upper_t, n) for n in free_names_q1)))
         lower_t_free_vec = collect(lower_t_free_iter)
         upper_t_free_vec = collect(upper_t_free_iter)
         use_bounds = !(all(isinf, lower_t_free_vec) && all(isinf, upper_t_free_vec))
@@ -1364,10 +1489,10 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
             lb_m = method.lb
             ub_m = method.ub
             if lb_m isa ComponentArray
-                lb_m = ComponentArray(NamedTuple{Tuple(free_names)}(Tuple(getproperty(lb_m, n) for n in free_names)))
+                lb_m = ComponentArray(NamedTuple{Tuple(free_names_q1)}(Tuple(getproperty(lb_m, n) for n in free_names_q1)))
             end
             if ub_m isa ComponentArray
-                ub_m = ComponentArray(NamedTuple{Tuple(free_names)}(Tuple(getproperty(ub_m, n) for n in free_names)))
+                ub_m = ComponentArray(NamedTuple{Tuple(free_names_q1)}(Tuple(getproperty(ub_m, n) for n in free_names_q1)))
             end
             lb_m = lb_m === nothing ? lower_t_free_vec : collect(lb_m)
             ub_m = ub_m === nothing ? upper_t_free_vec : collect(ub_m)
@@ -1394,8 +1519,8 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
             θ_hat_t_free = θ_hat_t_raw isa ComponentArray ? θ_hat_t_raw :
                             ComponentArray(θ_hat_t_raw, axs_free_iter)
 
-            θt_full_new = ComponentArray(eltype(θ_hat_t_free).(θ_const_t), axs_full)
-            for name in free_names
+            θt_full_new = ComponentArray(eltype(θ_hat_t_free).(θ_const_t_q1), axs_full_q1)
+            for name in free_names_q1
                 setproperty!(θt_full_new, name, getproperty(θ_hat_t_free, name))
             end
             θu_new = inv_transform(θt_full_new)
