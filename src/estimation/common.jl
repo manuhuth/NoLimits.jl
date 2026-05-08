@@ -1146,7 +1146,6 @@ Supported methods: `Laplace`, `LaplaceMAP`, `MCEM`, `SAEM`.
   containing at least one listed individual are re-optimised; the remaining batches retain
   the `eb_modes` already stored in `res`. Co-batch individuals are always re-optimised.
 - `ode_args::Tuple`, `ode_kwargs::NamedTuple`: forwarded to the ODE solver.
-- `serialization::EnsembleAlgorithm`: parallelisation (default: `EnsembleSerial()`).
 - `rng::AbstractRNG`: random number generator.
 - `progress::Bool`: show progress bar (default: `false`).
 """
@@ -1172,7 +1171,6 @@ function reestimate_ebes(dm::DataModel,
                          individuals=nothing,
                          ode_args::Tuple=(),
                          ode_kwargs::NamedTuple=NamedTuple(),
-                         serialization::SciMLBase.EnsembleAlgorithm=EnsembleSerial(),
                          rng::AbstractRNG=Random.default_rng(),
                          progress::Bool=false)
     supported = res.result isa LaplaceResult || res.result isa LaplaceMAPResult ||
@@ -1190,8 +1188,7 @@ function reestimate_ebes(dm::DataModel,
     if res.result isa SAEMResult
         constants_re = _saem_anneal_constants_re(dm, θu, _saem_anneal_names(res), constants_re)
     end
-    ll_cache = build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs,
-                              serialization=serialization, force_saveat=true)
+    ll_cache = build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs, force_saveat=true)
     mcmc_candidates = nothing
     if ebe_multistart_sampling == :mcmc
         _, batch_infos_all, const_cache_all = _build_laplace_batch_infos(dm, constants_re)
