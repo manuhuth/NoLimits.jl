@@ -1295,7 +1295,8 @@ function _laplace_get_bstar!(cache::_LaplaceCache,
                              serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                              progress::Bool=false,
                              progress_desc::AbstractString="EBE",
-                             mcmc_candidates_by_batch::Union{Nothing, Vector}=nothing)
+                             mcmc_candidates_by_batch::Union{Nothing, Vector}=nothing,
+                             active_batches::Union{Nothing, AbstractSet{Int}}=nothing)
     θ_vec = θ
     if cache.θ_cache !== nothing && length(cache.θ_cache) == length(θ_vec)
         maxdiff = _maxabsdiff(θ_vec, cache.θ_cache)
@@ -1307,7 +1308,8 @@ function _laplace_get_bstar!(cache::_LaplaceCache,
     if cache.grad_cache.last_valid !== nothing
         fill!(cache.grad_cache.last_valid, false)
     end
-    total_inds = sum(max(0, info.n_b) for info in batch_infos; init=0)
+    total_inds = sum(max(0, info.n_b) for (bi, info) in enumerate(batch_infos)
+                     if active_batches === nothing || bi ∈ active_batches; init=0)
     p = ProgressMeter.Progress(total_inds; desc=progress_desc, enabled=progress && total_inds > 0)
     θ_val = _laplace_floatize(θ)
     batch_rngs = _laplace_thread_rngs(rng, length(batch_infos))
@@ -1317,6 +1319,7 @@ function _laplace_get_bstar!(cache::_LaplaceCache,
         caches = _laplace_thread_caches(dm, ll_cache, nthreads)
         ind_counter = Threads.Atomic{Int}(0)
         Threads.@threads for bi in eachindex(batch_infos)
+            active_batches !== nothing && !(bi ∈ active_batches) && continue
             info = batch_infos[bi]
             tid = Threads.threadid()
             _laplace_compute_bstar_batch!(cache, bi, dm, info, θ_val, const_cache, caches[tid];
@@ -1334,6 +1337,7 @@ function _laplace_get_bstar!(cache::_LaplaceCache,
         ll_cache_local = ll_cache isa AbstractVector ? ll_cache[1] : ll_cache
         ind_done = 0
         for (bi, info) in enumerate(batch_infos)
+            active_batches !== nothing && !(bi ∈ active_batches) && continue
             _laplace_compute_bstar_batch!(cache, bi, dm, info, θ_val, const_cache, ll_cache_local;
                                           optimizer=optimizer,
                                           optim_kwargs=optim_kwargs,
