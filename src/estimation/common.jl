@@ -643,12 +643,16 @@ function _compute_mcmc_candidates(dm::DataModel,
                                   sampler,
                                   n_samples::Int,
                                   n_adapt::Int,
-                                  rng::AbstractRNG)
+                                  rng::AbstractRNG,
+                                  active_batch_indices=nothing)
     re_names = get_re_names(dm.model.random.random)
     ll_local = ll_cache isa AbstractVector ? ll_cache[1] : ll_cache
     turing_kwargs = (n_samples=n_samples, n_adapt=n_adapt, progress=false)
-    return map(batch_infos) do info
-        info.n_b == 0 && return Matrix{Float64}(undef, 0, 0)
+    active_set = active_batch_indices === nothing ? nothing : Set(active_batch_indices)
+    return map(enumerate(batch_infos)) do (bi, info)
+        if info.n_b == 0 || (active_set !== nothing && !(bi ∈ active_set))
+            return Matrix{Float64}(undef, 0, 0)
+        end
         samples, _, _ = _mcem_sample_batch(dm, info, θu, const_cache, ll_local,
                                            sampler, turing_kwargs, rng,
                                            re_names, false, nothing)
@@ -665,7 +669,8 @@ function _compute_bstars(dm::DataModel,
                          rescue::Union{Nothing, EBERescueOptions}=nothing,
                          progress::Bool=false,
                          progress_desc::AbstractString="Final EBE",
-                         mcmc_candidates_by_batch::Union{Nothing, Vector}=nothing)
+                         mcmc_candidates_by_batch::Union{Nothing, Vector}=nothing,
+                         active_batch_indices::Union{Nothing, AbstractVector{Int}}=nothing)
     ebe = _resolve_ebe_options(ebe, dm)
     rescue = _resolve_ebe_rescue_options(rescue, ebe.grad_tol, dm)
     _, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re)
@@ -681,11 +686,12 @@ function _compute_bstars(dm::DataModel,
     ebe_cache = _LaplaceCache(nothing, bstar_cache, grad_cache, ad_cache, hess_cache)
     ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
     ebe_serialization = ll_cache isa Vector ? SciMLBase.EnsembleThreads() : SciMLBase.EnsembleSerial()
+    active_set = active_batch_indices === nothing ? nothing : Set(active_batch_indices)
 
     function _batch_grad_norms()
         norms = Vector{Float64}(undef, n_batches)
         for (bi, info) in enumerate(batch_infos)
-            if info.n_b == 0
+            if info.n_b == 0 || (active_set !== nothing && !(bi ∈ active_set))
                 norms[bi] = 0.0
                 continue
             end
@@ -711,7 +717,8 @@ function _compute_bstars(dm::DataModel,
                                  serialization=ebe_serialization,
                                  progress=progress,
                                  progress_desc="$(progress_desc) (pass 1)",
-                                 mcmc_candidates_by_batch=mcmc_candidates_by_batch)
+                                 mcmc_candidates_by_batch=mcmc_candidates_by_batch,
+                                 active_batches=active_set)
 
     if rescue !== nothing && rescue.enabled && n_batches > 0
         norms_before = _batch_grad_norms()
@@ -727,7 +734,8 @@ function _compute_bstars(dm::DataModel,
                                          rng=rng,
                                          serialization=ebe_serialization,
                                          progress=progress,
-                                         progress_desc="$(progress_desc) (rescue)")
+                                         progress_desc="$(progress_desc) (rescue)",
+                                         active_batches=active_set)
             norms_after = _batch_grad_norms()
             if any(>(rescue_tol), norms_after)
                 @warn "Final EBE rescue multistart did not satisfy the EBE gradient tolerance for all batches." max_grad_before=maximum(norms_before) max_grad_after=maximum(norms_after) grad_tol=rescue_tol multistart_n=rescue.multistart_n multistart_k=rescue.multistart_k max_rounds=rescue.max_rounds
@@ -896,24 +904,33 @@ function reestimate_ebes(dm::DataModel,
         constants_re = _saem_anneal_constants_re(dm, θu, _saem_anneal_names(res), constants_re)
     end
     ll_cache = build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs, force_saveat=true)
+    # Compute batch structure once; derive active batch set if individuals are specified.
+    _, batch_infos_pre, const_cache_pre = _build_laplace_batch_infos(dm, constants_re)
+    active_batch_indices = if individuals !== nothing
+        ind_indices = Set(dm.id_index[id] for id in individuals if haskey(dm.id_index, id))
+        findall(bi -> any(i ∈ ind_indices for i in batch_infos_pre[bi].inds),
+                eachindex(batch_infos_pre))
+    else
+        nothing
+    end
     mcmc_candidates = nothing
     if ebe_multistart_sampling == :mcmc
-        _, batch_infos_all, const_cache_all = _build_laplace_batch_infos(dm, constants_re)
-        mcmc_candidates = _compute_mcmc_candidates(dm, batch_infos_all, const_cache_all, θu,
+        mcmc_candidates = _compute_mcmc_candidates(dm, batch_infos_pre, const_cache_pre, θu,
                                                    ll_cache, ebe_mcmc_sampler,
-                                                   ebe_multistart_n, ebe_mcmc_n_adapt, rng)
+                                                   ebe_multistart_n, ebe_mcmc_n_adapt, rng,
+                                                   active_batch_indices)
     end
     bstars, batch_infos = _compute_bstars(dm, θu, constants_re, ll_cache, ebe, rng;
                                           rescue=ebe_rescue, progress=progress,
-                                          mcmc_candidates_by_batch=mcmc_candidates)
+                                          mcmc_candidates_by_batch=mcmc_candidates,
+                                          active_batch_indices=active_batch_indices)
     new_eb_modes = if individuals !== nothing
         existing = res.result.eb_modes
         if existing !== nothing && length(existing) == length(bstars)
-            ind_indices = Set(dm.id_index[id] for id in individuals if haskey(dm.id_index, id))
-            keep = [any(i ∈ ind_indices for i in bi.inds) for bi in batch_infos]
+            active_set = Set(active_batch_indices)
             merged = copy(existing)
-            for (bi, should_replace) in enumerate(keep)
-                should_replace && (merged[bi] = bstars[bi])
+            for bi in active_set
+                merged[bi] = bstars[bi]
             end
             merged
         else
