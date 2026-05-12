@@ -1313,20 +1313,34 @@ end
 end
 
 @inline function _saem_outcome_family(dist)
-    if dist isa Normal
+    d = dist isa Distributions.Censored ? dist.uncensored : dist
+    if d isa Normal
         return :normal
-    elseif dist isa LogNormal
+    elseif d isa LogNormal
         return :lognormal
-    elseif dist isa Exponential
+    elseif d isa Exponential
         return :exponential
-    elseif dist isa Bernoulli
+    elseif d isa Bernoulli
         return :bernoulli
-    elseif dist isa Poisson
+    elseif d isa Poisson
         return :poisson
     else
         return :unsupported
     end
 end
+
+@inline function _impute_censored_y(dist::Distributions.Censored, y, rng)
+    base = dist.uncensored
+    lo, hi = dist.lower, dist.upper
+    if lo !== nothing && y <= lo
+        return rand(rng, truncated(base; upper=lo)), base
+    elseif hi !== nothing && y >= hi
+        return rand(rng, truncated(base; lower=hi)), base
+    else
+        return y, base
+    end
+end
+@inline _impute_censored_y(dist, y, _rng) = (y, dist)
 
 @inline function _saem_outcome_targets(obs_cols, resid_var_param)
     if resid_var_param isa NamedTuple
@@ -1663,7 +1677,8 @@ function _saem_collect_outcome_stats_individual(dm::DataModel,
                                                 θ,
                                                 η_ind,
                                                 cache::_LLCache,
-                                                obs_targets::NamedTuple)
+                                                obs_targets::NamedTuple,
+                                                rng::AbstractRNG)
     isempty(keys(obs_targets)) && return (NamedTuple(), true)
 
     model = dm.model
@@ -1742,8 +1757,9 @@ function _saem_collect_outcome_stats_individual(dm::DataModel,
             _saem_outcome_family(dist) == :unsupported && continue
             y = getfield(obs_series, col)[i]
             ismissing(y) && continue
+            y_use, dist_base = _impute_censored_y(dist, y, rng)
             prev = get(stats_dict, col, nothing)
-            nxt = _saem_push_outcome_stat(prev, dist, y, Tstats)
+            nxt = _saem_push_outcome_stat(prev, dist_base, y_use, Tstats)
             nxt === nothing && return (NamedTuple(), false)
             stats_dict[col] = nxt
         end
@@ -1766,7 +1782,8 @@ function _saem_builtin_collect_current_stats(dm::DataModel,
                                              re_cov_params::NamedTuple,
                                              re_mean_params::NamedTuple,
                                              re_family_map::NamedTuple,
-                                             ll_cache::_LLCache)
+                                             ll_cache::_LLCache,
+                                             rng::AbstractRNG)
     Tθ = promote_type(eltype(θ), Float64)
     cache = dm.re_group_info.laplace_cache
     re_names = cache.re_names
@@ -1826,7 +1843,7 @@ function _saem_builtin_collect_current_stats(dm::DataModel,
             b = b_current[bi]
             for i in info.inds
                 η_ind = _build_eta_ind(dm, i, info, b, const_cache, θ)
-                stats_i, ok = _saem_collect_outcome_stats_individual(dm, i, θ, η_ind, ll_cache, obs_targets)
+                stats_i, ok = _saem_collect_outcome_stats_individual(dm, i, θ, η_ind, ll_cache, obs_targets, rng)
                 if !ok
                     all_supported = false
                     break
@@ -2975,7 +2992,7 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                                                              ComponentArray(θu_curr, getaxes(θu_curr)), const_cache,
                                                              resid_var_param, hmm_emission_params,
                                                              re_cov_params, re_mean_params,
-                                                             re_family_map, cache)
+                                                             re_family_map, cache, rng)
             builtin_stats_state = _saem_builtin_smooth_stats(builtin_stats_state, curr_stats, γ)
             updates = _saem_builtin_updates_from_smoothed_stats(dm, ComponentArray(θu_curr, getaxes(θu_curr)),
                                                                 builtin_stats_state, resid_var_param, hmm_emission_params,
