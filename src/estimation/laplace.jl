@@ -893,6 +893,45 @@ function _build_eta_ind_fast(template::ComponentArray{Float64},
     return ComponentArray(vals, getaxes(template))
 end
 
+# Evaluates log p(η_const | θ) for all constant RE levels in the batch.
+# Each unique constant level contributes exactly once (deduplicated via `seen`).
+function _const_re_prior_logf(dm::DataModel,
+                               batch_info::_LaplaceBatchInfo,
+                               θ_re::ComponentArray,
+                               const_cache::LaplaceConstantsCache,
+                               cache::_LLCache;
+                               anneal_sds::NamedTuple=NamedTuple())
+    isempty(const_cache.is_const) && return zero(eltype(θ_re))
+    T = eltype(θ_re)
+    ll = zero(T)
+    re_cache = dm.re_group_info.laplace_cache
+    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
+    has_anneal = !isempty(anneal_sds)
+    for (ri, re) in enumerate(re_cache.re_names)
+        const_mask = const_cache.is_const[ri]
+        any(const_mask) || continue
+        seen = falses(length(const_mask))
+        for i in batch_info.inds
+            for id in re_cache.ind_level_ids[i][ri]
+                (const_mask[id] && !seen[id]) || continue
+                seen[id] = true
+                dists = dists_builder(θ_re, dm.individuals[i].const_cov,
+                                      cache.model_funs, cache.helpers)
+                dist = getproperty(dists, re)
+                has_anneal && haskey(anneal_sds, re) &&
+                    (dist = _saem_apply_anneal_dist(dist, getfield(anneal_sds, re)))
+                v = re_cache.is_scalar[ri] || re_cache.dims[ri] == 1 ?
+                    T(const_cache.scalar_vals[ri][id]) :
+                    T.(const_cache.vector_vals[ri][id])
+                lp = logpdf(dist, v)
+                isfinite(lp) || return T(-Inf)
+                ll += lp
+            end
+        end
+    end
+    return ll
+end
+
 function _laplace_logf_batch(dm::DataModel,
                              batch_info::_LaplaceBatchInfo,
                              θ::ComponentArray,
@@ -928,6 +967,10 @@ function _laplace_logf_batch(dm::DataModel,
             ll += lp
         end
     end
+    # constant-RE prior term
+    const_ll = _const_re_prior_logf(dm, batch_info, θ_re, const_cache, cache; anneal_sds=anneal_sds)
+    !isfinite(const_ll) && return T_ll(-Inf)
+    ll += const_ll
     # likelihood term
     for i in batch_info.inds
         η_ind = _build_eta_ind(dm, i, batch_info, b, const_cache, θ_re)
@@ -946,6 +989,7 @@ function _re_logpdf_batch(dm::DataModel,
                           batch_info::_LaplaceBatchInfo,
                           θ::ComponentArray,
                           b,
+                          const_cache::LaplaceConstantsCache,
                           cache::_LLCache;
                           anneal_sds::NamedTuple=NamedTuple())
     T_ll = promote_type(eltype(θ), eltype(b))
@@ -975,6 +1019,10 @@ function _re_logpdf_batch(dm::DataModel,
             ll += lp
         end
     end
+    # constant-RE prior term
+    const_ll = _const_re_prior_logf(dm, batch_info, θ_re, const_cache, cache; anneal_sds=anneal_sds)
+    !isfinite(const_ll) && return T_ll(-Inf)
+    ll += const_ll
     return ll
 end
 

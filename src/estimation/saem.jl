@@ -1635,6 +1635,7 @@ function _saem_push_outcome_stat(prev, dist, y, T::Type)
     family = _saem_outcome_family(dist)
     family == :unsupported && return nothing
     yy = T(y)
+    isfinite(yy) || return prev
 
     if family == :normal
         resid = yy - T(dist.μ)
@@ -2443,7 +2444,7 @@ function _saem_Q2(dm::DataModel,
                 snap = store.snaps[h][bi]
                 h = h == cap ? 1 : h + 1
                 isempty(snap) && continue
-                logf = _re_logpdf_batch(dm, info, θ, snap, caches[tid];
+                logf = _re_logpdf_batch(dm, info, θ, snap, const_cache, caches[tid];
                                         anneal_sds=anneal_sds)
                 !isfinite(logf) && (bad[] = true; break)
                 acc += w * logf
@@ -2467,7 +2468,7 @@ function _saem_Q2(dm::DataModel,
                 snap = store.snaps[h][bi]
                 h = h == cap ? 1 : h + 1
                 isempty(snap) && continue
-                logf = _re_logpdf_batch(dm, info, θ, snap, ll_cache_local;
+                logf = _re_logpdf_batch(dm, info, θ, snap, const_cache, ll_cache_local;
                                         anneal_sds=anneal_sds)
                 !isfinite(logf) && return Inf
                 acc += w * logf
@@ -2493,7 +2494,7 @@ function _saem_Q2_current(dm::DataModel,
     for (bi, info) in enumerate(batch_infos)
         snap = b_current[bi]
         isempty(snap) && continue
-        logf = _re_logpdf_batch(dm, info, θ, snap, ll_cache_local;
+        logf = _re_logpdf_batch(dm, info, θ, snap, const_cache, ll_cache_local;
                                 anneal_sds=anneal_sds)
         !isfinite(logf) && return typeof(total)(Inf)
         total += logf
@@ -2779,6 +2780,15 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
     _saem_log_closed_form_plan(method.saem.builtin_stats, builtin_stats_mode, builtin_cf_elig,
                                re_cov_params, re_mean_params, resid_var_param, hmm_emission_params,
                                has_custom_closed_form, base_free_names, q2_base_free_names)
+    let obs_targets = _saem_outcome_targets(dm.config.obs_cols, resid_var_param),
+        ir = get_formulas_ir(dm.model.formulas.formulas)
+        censored_cols = [obs for (obs, ex) in zip(ir.obs_names, ir.obs_exprs)
+                         if haskey(obs_targets, obs) && _saem_call_name(ex) == :censored]
+        if !isempty(censored_cols)
+            targets = NamedTuple(col => getfield(obs_targets, col) for col in censored_cols)
+            @info "SAEM builtin_stats: censored column(s) $(censored_cols) — σ sufficient statistics via truncated sampling." targets=targets
+        end
+    end
     re_family_map = _saem_re_family_map(dm)
 
     # anneal_to_fixed validation

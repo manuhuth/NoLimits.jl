@@ -121,6 +121,27 @@ function _build_turing_model(fixed_names::Vector{Symbol}, free_names::Vector{Sym
     return fname
 end
 
+# Evaluates log p(η_const | θ) for all constant RE levels passed via const_re_info.
+# const_re_info: NamedTuple mapping RE name → (vals::Vector, reps::Vector{Int})
+function _mcmc_const_re_prior(dm::DataModel, θ_re::ComponentArray, const_re_info,
+                               model_funs, helpers)
+    T = eltype(θ_re)
+    ll = zero(T)
+    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
+    for (re, info) in Base.pairs(const_re_info)
+        isempty(info.vals) && continue
+        for (val, rep) in zip(info.vals, info.reps)
+            dists = dists_builder(θ_re, dm.individuals[rep].const_cov, model_funs, helpers)
+            dist = getfield(dists, re)
+            v = val isa AbstractVector ? T.(val) : T(val)
+            lp = logpdf(dist, v)
+            isfinite(lp) || return T(-Inf)
+            ll += lp
+        end
+    end
+    return ll
+end
+
 function _build_turing_model_re(fixed_names::Vector{Symbol}, free_names::Vector{Symbol}, re_names::Vector{Symbol})
     key = (Tuple(fixed_names), Tuple(free_names), Tuple(re_names))
     if haskey(_MCMC_MODEL_CACHE_RE, key)
@@ -184,7 +205,7 @@ function _build_turing_model_re(fixed_names::Vector{Symbol}, free_names::Vector{
                            Expr(:tuple, re_val_syms...))
 
     ex = quote
-        @model function $(fname)(dm, cache, serialization, priors, constants, re_names, re_meta, fixed_maps, const_covs)
+        @model function $(fname)(dm, cache, serialization, priors, constants, re_names, re_meta, fixed_maps, const_covs, const_re_info)
             $(assigns...)
             θ = $θ_expr
             θ_re = _symmetrize_psd_params(θ, dm.model.fixed.fixed)
@@ -194,6 +215,7 @@ function _build_turing_model_re(fixed_names::Vector{Symbol}, free_names::Vector{
             helpers = get_helper_funs(dm.model)
 
             $sample_blocks
+            Turing.@addlogprob! _mcmc_const_re_prior(dm, θ_re, const_re_info, model_funs, helpers)
             re_samples = $re_samples_expr
 
             η_vec = Vector{ComponentArray}(undef, length(dm.individuals))
@@ -350,6 +372,7 @@ function _fit_model(dm::DataModel, method::MCMC, args...;
         model_funs = get_model_funs(dm.model)
         helpers = get_helper_funs(dm.model)
         re_pairs = Pair{Symbol, Any}[]
+        const_re_info_pairs = Pair{Symbol, Any}[]
         for re in re_names
             reps_map = Dict{Any, Int}()
             for (i, ind) in enumerate(dm.individuals)
@@ -387,11 +410,21 @@ function _fit_model(dm::DataModel, method::MCMC, args...;
                 dim == 0 && error("Random effect $(re) has zero dimension.")
             end
             push!(re_pairs, re => _MCMCReMeta(levels_free, level_to_index, reps, dim, is_scalar))
+            # Collect constant-level (val, rep_idx) pairs for this RE.
+            const_vals = Any[]
+            const_reps = Int[]
+            for (lvl, val) in pairs(fixed)
+                haskey(reps_map, lvl) || continue
+                push!(const_vals, val)
+                push!(const_reps, reps_map[lvl])
+            end
+            push!(const_re_info_pairs, re => (vals=const_vals, reps=const_reps))
         end
         re_meta = NamedTuple(re_pairs)
+        const_re_info = NamedTuple(const_re_info_pairs)
         fname = _build_turing_model_re(fixed_names, free_names, re_names)
         model_fn = Base.invokelatest(getfield, @__MODULE__, fname)
-        model = Base.invokelatest(model_fn, dm, cache, serialization, priors_nt, constants, re_names, re_meta, fixed_maps, const_covs)
+        model = Base.invokelatest(model_fn, dm, cache, serialization, priors_nt, constants, re_names, re_meta, fixed_maps, const_covs, const_re_info)
     end
     f_old = model.f
     f_wrap = (args...)->Base.invokelatest(f_old, args...)

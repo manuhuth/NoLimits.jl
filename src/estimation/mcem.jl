@@ -1110,7 +1110,7 @@ function _mcem_Q2(dm::DataModel,
             acc = zero(eltype(θ))
             for s in 1:size(samples, 2)
                 b = view(samples, :, s)
-                logf = _re_logpdf_batch(dm, info, θ, b, caches[tid])
+                logf = _re_logpdf_batch(dm, info, θ, b, const_cache, caches[tid])
                 !isfinite(logf) && (bad[] = true; break)
                 w = ws === nothing ? one(eltype(θ)) : eltype(θ)(ws[s])
                 acc += w * logf
@@ -1132,7 +1132,7 @@ function _mcem_Q2(dm::DataModel,
             acc = zero(eltype(θ))
             for s in 1:size(samples, 2)
                 b = view(samples, :, s)
-                logf = _re_logpdf_batch(dm, info, θ, b, ll_cache_local)
+                logf = _re_logpdf_batch(dm, info, θ, b, const_cache, ll_cache_local)
                 !isfinite(logf) && return Inf
                 w = ws === nothing ? one(eltype(θ)) : eltype(θ)(ws[s])
                 acc += w * logf

@@ -156,7 +156,9 @@ function _ghq_batch_ll(dm::DataModel,
             !isfinite(lli) && return T(-Inf)
             total += T(lli)
         end
-        return total
+        const_ll = _const_re_prior_logf(dm, info, θu_re, const_cache, ll_cache)
+        !isfinite(const_ll) && return T(-Inf)
+        return total + T(const_ll)
     end
 
     # Select grid: isotropic (Int) or anisotropic (NamedTuple)
@@ -175,7 +177,10 @@ function _ghq_batch_ll(dm::DataModel,
         e isa DomainError && return T(-Inf)
         rethrow(e)
     end
-    return batch_loglik_ghq(dm, info, θu_re, re_measure, sgrid, const_cache, ll_cache)
+    ghq_ll = batch_loglik_ghq(dm, info, θu_re, re_measure, sgrid, const_cache, ll_cache)
+    const_ll = _const_re_prior_logf(dm, info, θu_re, const_cache, ll_cache)
+    (!isfinite(ghq_ll) || !isfinite(const_ll)) && return T(-Inf)
+    return ghq_ll + T(const_ll)
 end
 
 """
