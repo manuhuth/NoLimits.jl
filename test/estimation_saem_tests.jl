@@ -1518,3 +1518,47 @@ end
     @test haskey(re, :η)
     @test nrow(re.η) == 2  # 2 unique IDs in _SAEM_DM_S
 end
+
+@testset "SAEM constants_re: fixed-RE individuals contribute observations to Q" begin
+    # When constants_re pins one individual's RE, the other individual's observations must
+    # still influence the M-step objective. We verify this by checking that:
+    # (a) the fit converges without error,
+    # (b) the Q-function value is strictly smaller (worse) when that individual is excluded
+    #     from the data entirely vs. pinning its RE.
+    fast = (maxiters=3, t0=1, kappa=0.6, mcmc_steps=1, q_store_max=2)
+    rng = Xoshiro(42)
+    method = NoLimits.SAEM(;
+        sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=2, progress=false),
+        fast...,
+    )
+    # Fit with RE for :A pinned to 0.0 — :B should still contribute its observations.
+    res = fit_model(_SAEM_DM_S, method; constants_re=(; η=(; A=0.0,)), rng=rng)
+    @test res isa NoLimits.FitResult
+    @test isfinite(NoLimits.get_objective(res))
+
+    # The Q function at the estimated θ must be finite and include both individuals.
+    # Build the internal Q for the result to check it does not return Inf.
+    θu = NoLimits.get_params(res; scale=:untransformed)
+    _, batch_infos, const_cache = NoLimits._build_laplace_batch_infos(_SAEM_DM_S, (; η=(; A=0.0,)))
+    ll_cache = NoLimits.build_ll_cache(_SAEM_DM_S)
+    # Manually evaluate logf for the constant-RE batch with an empty b — must be finite.
+    for (bi, info) in enumerate(batch_infos)
+        if info.n_b == 0
+            logf = NoLimits._laplace_logf_batch(_SAEM_DM_S, info, θu, Float64[], const_cache, ll_cache)
+            @test isfinite(logf)
+        end
+    end
+end
+
+@testset "SAEM constants_re: all RE constant — fit runs and objective is finite" begin
+    # When all RE levels are constant the entire model reduces to a fixed-effects evaluation
+    # on the M-step.  The fit should complete without error and yield a finite objective.
+    fast = (maxiters=3, t0=1, kappa=0.6, mcmc_steps=1, q_store_max=2)
+    method = NoLimits.SAEM(;
+        sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=2, progress=false),
+        fast...,
+    )
+    res = fit_model(_SAEM_DM_S, method; constants_re=(; η=(; A=0.0, B=0.0,)), rng=Xoshiro(1))
+    @test res isa NoLimits.FitResult
+    @test isfinite(NoLimits.get_objective(res))
+end

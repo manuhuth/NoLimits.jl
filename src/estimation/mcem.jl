@@ -991,11 +991,19 @@ function _mcem_Q_array(dm::DataModel,
                        weights_by_batch::Union{Nothing, AbstractVector{<:AbstractVector}}=nothing;
                        serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                        q_cache::Union{Nothing, _MCEMQCache}=nothing)
-    total = zero(eltype(θ))
+    Tθ = eltype(θ)
+    total = zero(Tθ)
+    # Constant-RE batches (n_b == 0): logf is independent of samples — evaluate once.
+    ll_cache_c = ll_cache isa Vector ? ll_cache[1] : ll_cache
+    for (bi, info) in enumerate(batch_infos)
+        info.n_b > 0 && continue
+        logf = _laplace_logf_batch(dm, info, θ, Tθ[], const_cache, ll_cache_c)
+        !isfinite(logf) && return Tθ(Inf)
+        total += logf
+    end
     if serialization isa SciMLBase.EnsembleThreads
         nthreads = Threads.maxthreadid()
         caches = _mcem_thread_caches(dm, ll_cache, nthreads)
-        Tθ = eltype(θ)
         use_cache = q_cache !== nothing && eltype(q_cache.partial_obj) === Tθ
         partial_obj = use_cache ? q_cache.partial_obj : Vector{Tθ}()
         if length(partial_obj) != length(batch_infos)
@@ -1005,19 +1013,17 @@ function _mcem_Q_array(dm::DataModel,
         bad = Threads.Atomic{Bool}(false)
         Threads.@threads for bi in eachindex(batch_infos)
             bad[] && continue
+            batch_infos[bi].n_b == 0 && continue
             tid = Threads.threadid()
             info = batch_infos[bi]
             samples = samples_by_batch[bi]
-            if size(samples, 2) == 0
-                continue
-            end
             ws = weights_by_batch === nothing ? nothing : weights_by_batch[bi]
-            acc = zero(eltype(θ))
+            acc = zero(Tθ)
             for s in 1:size(samples, 2)
                 b = view(samples, :, s)
                 logf = _laplace_logf_batch(dm, info, θ, b, const_cache, caches[tid])
                 !isfinite(logf) && (bad[] = true; break)
-                w = ws === nothing ? one(eltype(θ)) : eltype(θ)(ws[s])
+                w = ws === nothing ? one(Tθ) : Tθ(ws[s])
                 acc += w * logf
             end
             bad[] && continue
@@ -1027,24 +1033,22 @@ function _mcem_Q_array(dm::DataModel,
             end
             partial_obj[bi] = acc
         end
-        bad[] && return Inf
+        bad[] && return Tθ(Inf)
         @inbounds for bi in eachindex(batch_infos)
             total += partial_obj[bi]
         end
     else
         ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
         for (bi, info) in enumerate(batch_infos)
+            info.n_b == 0 && continue
             samples = samples_by_batch[bi]
-            if size(samples, 2) == 0
-                continue
-            end
             ws = weights_by_batch === nothing ? nothing : weights_by_batch[bi]
-            acc = zero(eltype(θ))
+            acc = zero(Tθ)
             for s in 1:size(samples, 2)
                 b = view(samples, :, s)
                 logf = _laplace_logf_batch(dm, info, θ, b, const_cache, ll_cache_local)
-                !isfinite(logf) && return Inf
-                w = ws === nothing ? one(eltype(θ)) : eltype(θ)(ws[s])
+                !isfinite(logf) && return Tθ(Inf)
+                w = ws === nothing ? one(Tθ) : Tθ(ws[s])
                 acc += w * logf
             end
             if ws === nothing
@@ -1092,49 +1096,57 @@ function _mcem_Q2(dm::DataModel,
                   samples_by_batch::AbstractVector{<:AbstractMatrix},
                   weights_by_batch::Union{Nothing, AbstractVector{<:AbstractVector}}=nothing;
                   serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads())
-    total = zero(eltype(θ))
+    Tθ = eltype(θ)
+    total = zero(Tθ)
+    # Constant-RE batches: RE prior is deterministic — evaluate once outside the sample loop.
+    ll_cache_c = ll_cache isa Vector ? ll_cache[1] : ll_cache
+    for (bi, info) in enumerate(batch_infos)
+        info.n_b > 0 && continue
+        logf = _re_logpdf_batch(dm, info, θ, Tθ[], const_cache, ll_cache_c)
+        !isfinite(logf) && return Tθ(Inf)
+        total += logf
+    end
     if serialization isa SciMLBase.EnsembleThreads
         nthreads = Threads.maxthreadid()
         caches = _mcem_thread_caches(dm, ll_cache, nthreads)
-        Tθ = eltype(θ)
         partial_obj = Vector{Tθ}(undef, length(batch_infos))
         fill!(partial_obj, zero(Tθ))
         bad = Threads.Atomic{Bool}(false)
         Threads.@threads for bi in eachindex(batch_infos)
             bad[] && continue
+            batch_infos[bi].n_b == 0 && continue
             tid = Threads.threadid()
             info = batch_infos[bi]
             samples = samples_by_batch[bi]
-            size(samples, 2) == 0 && continue
             ws = weights_by_batch === nothing ? nothing : weights_by_batch[bi]
-            acc = zero(eltype(θ))
+            acc = zero(Tθ)
             for s in 1:size(samples, 2)
                 b = view(samples, :, s)
                 logf = _re_logpdf_batch(dm, info, θ, b, const_cache, caches[tid])
                 !isfinite(logf) && (bad[] = true; break)
-                w = ws === nothing ? one(eltype(θ)) : eltype(θ)(ws[s])
+                w = ws === nothing ? one(Tθ) : Tθ(ws[s])
                 acc += w * logf
             end
             bad[] && continue
             ws === nothing && (acc /= size(samples, 2))
             partial_obj[bi] = acc
         end
-        bad[] && return Inf
+        bad[] && return Tθ(Inf)
         @inbounds for bi in eachindex(batch_infos)
             total += partial_obj[bi]
         end
     else
         ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
         for (bi, info) in enumerate(batch_infos)
+            info.n_b == 0 && continue
             samples = samples_by_batch[bi]
-            size(samples, 2) == 0 && continue
             ws = weights_by_batch === nothing ? nothing : weights_by_batch[bi]
-            acc = zero(eltype(θ))
+            acc = zero(Tθ)
             for s in 1:size(samples, 2)
                 b = view(samples, :, s)
                 logf = _re_logpdf_batch(dm, info, θ, b, const_cache, ll_cache_local)
-                !isfinite(logf) && return Inf
-                w = ws === nothing ? one(eltype(θ)) : eltype(θ)(ws[s])
+                !isfinite(logf) && return Tθ(Inf)
+                w = ws === nothing ? one(Tθ) : Tθ(ws[s])
                 acc += w * logf
             end
             ws === nothing && (acc /= size(samples, 2))

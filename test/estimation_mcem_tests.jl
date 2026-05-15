@@ -653,3 +653,49 @@ end
     @test haskey(re, :η)
     @test nrow(re.η) == length(unique(df.ID))
 end
+
+@testset "MCEM constants_re: fixed-RE individuals contribute observations to Q" begin
+    model = @Model begin
+        @covariates begin; t = Covariate(); end
+        @fixedEffects begin; a = RealNumber(0.2); σ = RealNumber(0.5, scale=:log); end
+        @randomEffects begin; η = RandomEffect(Normal(0.0, 1.0); column=:ID); end
+        @formulas begin; y ~ Normal(a + η, σ); end
+    end
+    df = DataFrame(ID=[:A,:A,:B,:B], t=[0.0,1.0,0.0,1.0], y=[0.1,0.2,0.0,-0.1])
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    method = NoLimits.MCEM(;
+        sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=2, progress=false), maxiters=3,
+    )
+    # Pin :A's RE to 0.0 — individual :B must still contribute its observations.
+    res = fit_model(dm, method; constants_re=(; η=(; A=0.0,)), rng=Xoshiro(7))
+    @test res isa NoLimits.FitResult
+    @test isfinite(NoLimits.get_objective(res))
+
+    # Verify logf for constant-RE batch is finite (observations included).
+    θu = NoLimits.get_params(res; scale=:untransformed)
+    _, batch_infos, const_cache = NoLimits._build_laplace_batch_infos(dm, (; η=(; A=0.0,)))
+    ll_cache = NoLimits.build_ll_cache(dm)
+    for (bi, info) in enumerate(batch_infos)
+        if info.n_b == 0
+            logf = NoLimits._laplace_logf_batch(dm, info, θu, Float64[], const_cache, ll_cache)
+            @test isfinite(logf)
+        end
+    end
+end
+
+@testset "MCEM constants_re: all RE constant — fit runs and objective is finite" begin
+    model = @Model begin
+        @covariates begin; t = Covariate(); end
+        @fixedEffects begin; a = RealNumber(0.2); σ = RealNumber(0.5, scale=:log); end
+        @randomEffects begin; η = RandomEffect(Normal(0.0, 1.0); column=:ID); end
+        @formulas begin; y ~ Normal(a + η, σ); end
+    end
+    df = DataFrame(ID=[:A,:A,:B,:B], t=[0.0,1.0,0.0,1.0], y=[0.1,0.2,0.0,-0.1])
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+    method = NoLimits.MCEM(;
+        sampler=MH(), turing_kwargs=(n_samples=3, n_adapt=2, progress=false), maxiters=3,
+    )
+    res = fit_model(dm, method; constants_re=(; η=(; A=0.0, B=0.0,)), rng=Xoshiro(8))
+    @test res isa NoLimits.FitResult
+    @test isfinite(NoLimits.get_objective(res))
+end
