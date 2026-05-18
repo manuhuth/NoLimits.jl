@@ -466,21 +466,21 @@ maps the simplex to `k-1` unconstrained reals.
 - `name::Symbol = :unnamed`: parameter name (injected automatically by `@fixedEffects`).
 - `scale::Symbol = :stickbreak`: reparameterisation. Must be in `PROBABILITY_SCALES`.
 - `prior = Priorless()`: a `Distributions.Distribution` or `Priorless()`.
-- `calculate_se::Bool = false`: whether to include this parameter in standard-error calculations.
+- `calculate_se::Bool = true`: whether to include this parameter in standard-error calculations.
 """
 @with_kw struct ProbabilityVector{T<:Real, VT<:AbstractVector{T}} <: AbstractParameterBlock
     name::Symbol = :unnamed
     value::VT
     scale::Symbol = :stickbreak
     prior = Priorless()
-    calculate_se::Bool = false
+    calculate_se::Bool = true
 end
 
 function ProbabilityVector(value::AbstractVector{<:Real};
     name::Symbol = :unnamed,
     scale::Symbol = :stickbreak,
     prior = Priorless(),
-    calculate_se::Bool = false)
+    calculate_se::Bool = true)
     _check_prior(prior, name)
     scale in PROBABILITY_SCALES || error("Invalid scale for parameter $(name). Expected one of $(PROBABILITY_SCALES); got $(scale).")
     length(value) >= 2 || error("ProbabilityVector for parameter $(name) requires at least 2 elements; got $(length(value)).")
@@ -509,21 +509,21 @@ stick-breaking transform, yielding `n*(n-1)` unconstrained reals.
 - `name::Symbol = :unnamed`: parameter name (injected automatically by `@fixedEffects`).
 - `scale::Symbol = :stickbreakrows`: reparameterisation. Must be in `TRANSITION_SCALES`.
 - `prior = Priorless()`: a `Distributions.Distribution` or `Priorless()`.
-- `calculate_se::Bool = false`: whether to include this parameter in standard-error calculations.
+- `calculate_se::Bool = true`: whether to include this parameter in standard-error calculations.
 """
 @with_kw struct DiscreteTransitionMatrix{T<:Real, MT<:AbstractMatrix{T}} <: AbstractParameterBlock
     name::Symbol = :unnamed
     value::MT
     scale::Symbol = :stickbreakrows
     prior = Priorless()
-    calculate_se::Bool = false
+    calculate_se::Bool = true
 end
 
 function DiscreteTransitionMatrix(value::AbstractMatrix{<:Real};
     name::Symbol = :unnamed,
     scale::Symbol = :stickbreakrows,
     prior = Priorless(),
-    calculate_se::Bool = false)
+    calculate_se::Bool = true)
     _check_prior(prior, name)
     scale in TRANSITION_SCALES || error("Invalid scale for parameter $(name). Expected one of $(TRANSITION_SCALES); got $(scale).")
     n, m = size(value)
@@ -561,21 +561,21 @@ and is not an independent free parameter.
 - `name::Symbol = :unnamed`: parameter name (injected automatically by `@fixedEffects`).
 - `scale::Symbol = :lograterows`: reparameterisation. Must be in `RATE_MATRIX_SCALES`.
 - `prior = Priorless()`: a `Distributions.Distribution` or `Priorless()`.
-- `calculate_se::Bool = false`: whether to include this parameter in standard-error calculations.
+- `calculate_se::Bool = true`: whether to include this parameter in standard-error calculations.
 """
 @with_kw struct ContinuousTransitionMatrix{T<:Real, MT<:AbstractMatrix{T}} <: AbstractParameterBlock
     name::Symbol = :unnamed
     value::MT
     scale::Symbol = :lograterows
     prior = Priorless()
-    calculate_se::Bool = false
+    calculate_se::Bool = true
 end
 
 function ContinuousTransitionMatrix(value::AbstractMatrix{<:Real};
     name::Symbol = :unnamed,
     scale::Symbol = :lograterows,
     prior = Priorless(),
-    calculate_se::Bool = false)
+    calculate_se::Bool = true)
     _check_prior(prior, name)
     scale in RATE_MATRIX_SCALES || error("Invalid scale for parameter $(name). Expected one of $(RATE_MATRIX_SCALES); got $(scale).")
     n, m = size(value)
