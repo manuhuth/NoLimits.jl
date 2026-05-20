@@ -196,16 +196,7 @@ get_multistart_best
 
 ### Cross-Validation
 
-```@docs
-CVSpec
-CVFoldResult
-CVResult
-cross_validate
-fit_cv
-get_fold_results
-get_obs_scores
-get_spec
-```
+See [Cross Validation](@ref) for the full API.
 
 ### Fit Summaries
 
