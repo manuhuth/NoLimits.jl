@@ -10,44 +10,16 @@ All plotting functions accept a file-path keyword for saving output directly:
 
 ## Plotting APIs
 
-The following functions are organized by the diagnostic question they address.
+The plotting functions fall into a handful of diagnostic groups:
 
-**Core trajectory and data plotting:**
+- **Trajectory and data plotting:** `plot_data` (raw observed trajectories), `plot_fits` and `plot_fits_comparison` (model-implied trajectories, optionally overlaying multiple fits), and `build_plot_cache` (precompute parameters, random effects, ODE solves, and optional observation distributions for reuse across plots).
+- **Multistart diagnostics:** `plot_multistart_waterfall` (sorted objective values) and `plot_multistart_fixed_effect_variability` (parameter stability across restarts).
+- **Observation and predictive diagnostics:** `plot_observation_distributions` (per-observation predicted densities) and `plot_vpc` (visual predictive check).
+- **Residual diagnostics:** `get_residuals` (tabular metrics: `:quantile`, `:pit`, `:raw`, `:pearson`, `:logscore`) plus `plot_residuals`, `plot_residual_distribution`, `plot_residual_qq`, `plot_residual_pit`, and `plot_residual_acf`.
+- **Random-effects diagnostics:** `plot_random_effects_pdf`, `plot_random_effect_distributions`, `plot_random_effect_pit`, `plot_random_effect_standardized`, `plot_random_effect_standardized_scatter`, `plot_random_effect_pairplot`, and `plot_random_effects_scatter`.
+- **Uncertainty quantification:** `plot_uq_distributions` (parameter uncertainty from a `UQResult`).
 
-- `build_plot_cache`: Precompute reusable plot inputs (parameters, random effects, ODE solves, optional observation distributions) from a `FitResult` or `DataModel`. Avoids redundant computation when generating multiple plots from the same fit.
-- `plot_data`: Plot observed trajectories by individual.
-- `plot_fits`: Plot model-implied trajectories, with optional predictive-density overlays.
-- `plot_fits_comparison`: Overlay fitted trajectories from multiple fit results on the same individual panels, enabling direct visual comparison of competing models or estimation methods.
-- `plot_multistart_waterfall`: Plot successful multistart runs as objective-valued dots, sorted from best to worst by the package multistart ranking criterion.
-- `plot_multistart_fixed_effect_variability`: Plot fixed-effect variability across top multistart runs as z-scores (single panel).
-
-**Observation and predictive diagnostics:**
-
-- `plot_observation_distributions`: Plot predictive outcome distributions at selected observations, with observed values overlaid. Reveals local miscalibration that aggregate summaries may obscure.
-- `plot_vpc`: Visual predictive check comparing simulated observations with observed data. Provides a calibration assessment in the observation space.
-
-**Residual diagnostics:**
-
-- `get_residuals`: Return residual metrics in tabular form (`:quantile`, `:pit`, `:raw`, `:pearson`, `:logscore`).
-- `plot_residuals`: Residuals versus a chosen x-axis variable (time or any varying covariate).
-- `plot_residual_distribution`: Residual distribution histograms by observable.
-- `plot_residual_qq`: QQ diagnostics for selected residual metrics.
-- `plot_residual_pit`: Probability integral transform (PIT) diagnostics via histogram, KDE, or QQ view.
-- `plot_residual_acf`: Residual autocorrelation by lag, useful for detecting unmodeled temporal structure.
-
-**Random-effects diagnostics:**
-
-- `plot_random_effects_pdf`: Marginal random-effect density, including posterior summaries for MCMC fits.
-- `plot_random_effect_distributions`: Distribution-level diagnostics with empirical Bayes estimate (EBE) or posterior-mean overlays by level.
-- `plot_random_effect_pit`: PIT diagnostics for random effects.
-- `plot_random_effect_standardized`: Distribution of standardized EBEs, assessing whether the assumed random-effect variance is appropriate.
-- `plot_random_effect_standardized_scatter`: Standardized EBEs versus level index or a constant covariate.
-- `plot_random_effect_pairplot`: Pairwise EBE dependency visualization for detecting unexplained correlations.
-- `plot_random_effects_scatter`: EBE or posterior-mean scatter versus level index or a constant covariate.
-
-**Uncertainty quantification diagnostics:**
-
-- `plot_uq_distributions`: Parameter uncertainty visualization from a `UQResult` (density or histogram).
+See the [Plotting and Diagnostics](../api.md#Plotting-and-Diagnostics) section of the API reference for the full list of functions and their arguments.
 
 ## Executable setup
 
@@ -166,7 +138,7 @@ p_ms
 
 Comparing fitted trajectories from different estimation methods or model specifications is a natural step in model selection. `plot_fits_comparison` overlays trajectories from multiple fit results on the same individual panels, making differences in structural predictions immediately visible.
 
-For vectors, legend labels are assigned as `Model 1`, `Model 2`, and so on in input order. For `NamedTuple` and `Dict` inputs, the provided keys serve as legend labels. Per-model line styles can be customized through `PlotStyle(comparison_line_styles=Dict(...))`.
+For vectors, legend labels are assigned as `Model 1`, `Model 2`, and so on in input order. For `NamedTuple` and `Dict` inputs, the provided keys serve as legend labels. Per-model line styles can be customized through `PlotStyle(comparison_line_styles=Dict(...))`; `PlotStyle` is the shared styling object accepted by all plotting functions (colours, line styles, layout) — see its docstring in the API reference for the full set of fields. The `individuals_idx` keyword (here `1:2`) restricts the panels to the selected individuals.
 
 ```@example plotting_overview
 saem_quick = NoLimits.SAEM(;
@@ -194,12 +166,7 @@ p_compare
 
 Beyond comparing objective values, it is informative to examine how fixed-effect estimates vary across top-ranked multistart runs. `plot_multistart_fixed_effect_variability` displays this variation as z-scores in a single panel, providing a concise summary of parameter stability across optimization restarts.
 
-Configuration options:
-
-- `scale=:untransformed` (default): display parameters on the natural scale
-- Only top-level fixed-effect blocks with `calculate_se=true` are included by default
-- `mode=:points` shows all values from the top-`k_best` runs; `mode=:quantiles` shows quantile summaries instead
-- Use `include_parameters` or `exclude_parameters` to select specific parameter blocks by name
+By default it plots blocks with `calculate_se=true` on the natural scale (`scale=:untransformed`) using `mode=:points` (all values from the top-`k_best` runs); `mode=:quantiles` shows quantile summaries instead, and `include_parameters`/`exclude_parameters` select specific blocks by name. See the [Plotting and Diagnostics](../api.md#Plotting-and-Diagnostics) API reference for the full argument list.
 
 ```@example plotting_overview
 p_ms_var_points = plot_multistart_fixed_effect_variability(
@@ -236,6 +203,8 @@ p_obs_dist = plot_observation_distributions(
 p_obs_dist
 ```
 
+Here `obs_rows` selects which observation rows (per individual) to display and `observables` selects which outcome(s) to plot; see the API reference for the full signature.
+
 ## Residual QQ diagnostic
 
 Quantile-quantile plots provide a sensitive assessment of whether residuals conform to their expected reference distribution. `plot_residual_qq` compares observed residual quantiles against theoretical quantiles; systematic departures from the diagonal indicate structural misspecification, heavy tails, or incorrect assumptions about the observation noise.
@@ -245,6 +214,8 @@ p_qq = plot_residual_qq(res; cache=cache, residual=:quantile)
 p_qq
 ```
 
+The `residual` keyword chooses which residual metric to plot (one of the columns returned by `get_residuals`: `:quantile`, `:pit`, `:raw`, `:pearson`, `:logscore`).
+
 ## Visual predictive check
 
 The visual predictive check (VPC) is a widely used diagnostic in longitudinal modelling. It evaluates a model's ability to reproduce the distribution of observed data through simulation. `plot_vpc` generates predictive envelopes from repeated simulations under the fitted model and overlays them on the observed data summaries. Agreement between the simulated envelopes and observed trends indicates that the model captures both the central tendency and the variability structure of the data.
@@ -253,6 +224,8 @@ The visual predictive check (VPC) is a widely used diagnostic in longitudinal mo
 p_vpc = plot_vpc(res; n_simulations=20, percentiles=[5, 50, 95])
 p_vpc
 ```
+
+`n_simulations` sets the number of simulated datasets used to build the predictive envelopes, and `percentiles` selects the envelope quantiles (here the 5th, 50th, and 95th); see the API reference for the remaining keywords.
 
 ## Random-effects distribution diagnostic
 

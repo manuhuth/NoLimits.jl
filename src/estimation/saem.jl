@@ -73,6 +73,8 @@ struct SAEMOptions{S, K, U, W, V, P, F1, F2, F3, B, M, R, C, RM, EO, EK, EA, EG,
     retry_mcmc_steps::Int
     store_obsLL::Bool
     obsLL_every::Int
+    store_diagnostics::Bool
+    diagnostics_every::Int
 end
 
 struct _SAEMQCache{T}
@@ -470,7 +472,9 @@ SAEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(
      max_estep_retries::Int=3,
      retry_mcmc_steps::Int=1,
      store_obsLL::Bool=false,
-     obsLL_every::Int=1) = begin
+     obsLL_every::Int=1,
+     store_diagnostics::Bool=false,
+     diagnostics_every::Int=1) = begin
     q_store_max >= 1 ||
         error("SAEM: q_store_max must be ≥ 1. Got: $q_store_max")
     0 <= q_store_min <= q_store_max ||
@@ -486,6 +490,8 @@ SAEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(
         error("SAEM: retry_mcmc_steps must be ≥ 1. Got: $retry_mcmc_steps")
     obsLL_every >= 1 ||
         error("SAEM: obsLL_every must be ≥ 1. Got: $obsLL_every")
+    diagnostics_every >= 1 ||
+        error("SAEM: diagnostics_every must be ≥ 1. Got: $diagnostics_every")
     resolved_t0 = isnothing(t0) ? (maxiters ÷ 2) : t0
     ebe_rescue = EBERescueOptions(ebe_rescue_on_high_grad, ebe_rescue_multistart_n, ebe_rescue_multistart_k, ebe_rescue_max_rounds, ebe_rescue_grad_tol, ebe_rescue_multistart_sampling)
     resolved_mcmc_steps = isnothing(mcmc_steps) ? (sampler isa SaemixMH ? 1 : 80) : mcmc_steps
@@ -503,7 +509,7 @@ SAEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(
                        n_chains, auto_small_n_chains, small_n_chain_target,
                        sa_anneal_targets, sa_anneal_schedule, sa_anneal_iters, sa_anneal_alpha, sa_anneal_fn,
                        auto_var_lb, var_lb_value, max_estep_retries, retry_mcmc_steps,
-                       store_obsLL, obsLL_every)
+                       store_obsLL, obsLL_every, store_diagnostics, diagnostics_every)
     SAEM(optimizer, optim_kwargs, adtype, saem, lb, ub)
 end
 
@@ -3389,7 +3395,9 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
         dQ_abs = abs(Q_new - Q_prev)
         dQ_rel = dQ_abs / max(T0(1.0), abs(Q_prev))
 
-        push!(diag.θ_hist, θ_prev_new)
+        if method.saem.store_diagnostics && iter % method.saem.diagnostics_every == 0
+            push!(diag.θ_hist, copy(θt_full))
+        end
         push!(diag.Q_hist, Q_new)
         push!(diag.dθ_abs, dθ_abs)
         push!(diag.dθ_rel, dθ_rel)

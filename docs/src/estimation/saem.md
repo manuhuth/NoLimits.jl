@@ -77,15 +77,15 @@ using LineSearches
 method = NoLimits.SAEM(;
     # M-step optimizer
     optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
-    optim_kwargs=(; iterations=50),
+    optim_kwargs=(; iterations=10, g_abstol=1e-4, f_reltol=1e-6),
     adtype=Optimization.AutoForwardDiff(),
 
     # E-step sampler
-    sampler=MH(),
+    sampler=SaemixMH(),
     turing_kwargs=NamedTuple(),
     update_schedule=:all,
     warm_start=true,
-    mcmc_steps=80,
+    mcmc_steps=nothing,   # resolves to 1 for SaemixMH (the default sampler), 80 otherwise
 
     # SA schedule
     sa_schedule=:robbins_monro,
@@ -154,10 +154,10 @@ method = NoLimits.SAEM(;
     ebe_adtype=Optimization.AutoForwardDiff(),
     ebe_grad_tol=:auto,
     ebe_multistart_n=50,
-    ebe_multistart_k=10,
+    ebe_multistart_k=1,
     ebe_multistart_max_rounds=5,
     ebe_multistart_sampling=:lhs,
-    ebe_rescue_on_high_grad=true,
+    ebe_rescue_on_high_grad=false,
     ebe_rescue_multistart_n=128,
     ebe_rescue_multistart_k=32,
     ebe_rescue_max_rounds=8,
@@ -199,17 +199,20 @@ The constructor arguments are organized into the following functional groups.
 
 ## Constructor Input Reference
 
+The constructor signature block above lists every keyword with its default. See the [`SAEM`](@ref) entry in the API reference for the full list. This section explains the behavior of the option groups whose effect is not obvious from their names.
+
 ### E-step Sampling Inputs
 
 These arguments configure the MCMC sampling of random effects at each SAEM iteration.
 
 - `sampler`
   - Sampler used for the random-effect E-step.
-  - Default: `MH()`. See [Samplers](#samplers) for all available options.
+  - Default: `SaemixMH()`. See [Samplers](#samplers) for all available options.
 - `turing_kwargs`
   - Additional keyword arguments passed to Turing sampling calls (ignored for `SaemixMH` and `AdaptiveNoLimitsMH`).
 - `mcmc_steps`
   - Number of MCMC samples drawn per iteration.
+  - Default: `nothing`, which resolves to `1` when the sampler is `SaemixMH` (the default) and `80` for any other sampler.
   - If `mcmc_steps <= 0`, SAEM falls back to `turing_kwargs[:n_samples]` (or `1`).
 - `update_schedule`
   - Controls which batches of individuals are updated at each iteration, enabling minibatch variants of SAEM.
@@ -224,14 +227,9 @@ These arguments configure the MCMC sampling of random effects at each SAEM itera
 
 When the M-step is performed numerically (i.e., no closed-form update is provided), these arguments control the fixed-effect optimization.
 
-- `optimizer`
-  - Optimizer for the M-step fixed-effect update.
-  - Default: `OptimizationOptimJL.LBFGS(...)`.
 - `optim_kwargs`
   - Keyword arguments forwarded to `Optimization.solve`.
-  - Default: `(; iterations=50)`. The inner LBFGS is capped at 50 iterations per SAEM step; the outer SA loop provides the global convergence trajectory.
-- `adtype`
-  - Automatic differentiation backend used to construct the `OptimizationFunction`.
+  - Default: `(; iterations=10, g_abstol=1e-4, f_reltol=1e-6)`. The inner LBFGS is capped at 10 iterations per SAEM step; the outer SA loop provides the global convergence trajectory.
 - `mstep_sa_on_params`
   - When `true` (default), the M-step optimizes only the current iteration's samples and applies a Robbins-Monro parameter update: `θ_new = θ_old + γ*(θ̂ - θ_old)`. The ring buffer is capped to capacity 1, eliminating storage and reweighting overhead from previous snapshots. This is significantly more memory-efficient than the ring-buffer path and is the recommended mode.
   - When `false`, the M-step minimizes the full ring-buffer Q-function and sets `θ_new = θ̂` directly. Useful as a diagnostic or when you want the classical ring-buffer SAEM behaviour.
@@ -273,7 +271,7 @@ The SA gain sequence `γ_t ∈ [0, 1]` controls how aggressively new samples upd
 where `phase3_total = maxiters - sa_burnin_iters - t0` and `k3 = iter - sa_burnin_iters - t0`.
 
 - `sa_burnin_iters::Int = 0`: iterations before SA updates begin. During burn-in no SA smoothing is performed and no samples are stored.
-- `t0::Int = 150`: length of the stabilization phase (γ = 1).
+- `t0::Int = maxiters ÷ 2`: length of the stabilization phase (γ = 1). Defaults to `nothing`, which resolves to `maxiters ÷ 2` (i.e. `150` at the default `maxiters=300`).
 - `kappa::Float64 = 0.65`: decay exponent controlling how quickly γ falls off after stabilization.
 
 #### `:two_phase` schedule
@@ -375,20 +373,11 @@ When `suffstats` is provided, `builtin_mean=:glm` is skipped by design to avoid 
 
 ### Final EB Mode Inputs
 
-After convergence, SAEM computes empirical Bayes modal estimates of the random effects for use by downstream accessors and diagnostics.
-
-- `ebe_optimizer`, `ebe_optim_kwargs`, `ebe_adtype`, `ebe_grad_tol`
-  - Configuration for the final EB mode optimization.
-- `ebe_multistart_n`, `ebe_multistart_k`, `ebe_multistart_max_rounds`, `ebe_multistart_sampling`
-  - Multistart configuration for EB mode optimization.
-- `ebe_rescue_on_high_grad` and remaining `ebe_rescue_*`
-  - Rescue strategy activated if the final EB gradient norm remains above threshold.
+After convergence, SAEM computes empirical Bayes modal estimates of the random effects for use by downstream accessors and diagnostics, configured through the `ebe_*` keywords. When `ebe_rescue_on_high_grad=true` (default `false`), a rescue strategy governed by the `ebe_rescue_*` keywords is activated if the final EB gradient norm remains above threshold. See the [`SAEM`](@ref) API entry for the full keyword list and defaults.
 
 ### Bound Inputs
 
-- `lb`, `ub`
-  - Optional transformed-scale bounds for free fixed effects.
-  - When a closed-form M-step is used, SAEM projects closed-form updates into these bounds on the transformed scale.
+`lb`, `ub` are optional transformed-scale bounds for free fixed effects. When a closed-form M-step is used, SAEM projects the closed-form updates into these bounds on the transformed scale.
 
 ### RE Annealing Inputs
 
@@ -411,7 +400,7 @@ After convergence, SAEM computes empirical Bayes modal estimates of the random e
 
 SAEM accepts three types of E-step sampler.
 
-### `MH()` (default)
+### `MH()`
 
 Turing's built-in random-walk Metropolis-Hastings. Uses a fixed standard-Normal proposal in the linked (unconstrained) space. Fast per-step but requires careful tuning of `mcmc_steps` to achieve adequate mixing.
 
@@ -420,7 +409,7 @@ using Turing
 res = fit_model(dm, SAEM(sampler=MH()))
 ```
 
-### `SaemixMH`
+### `SaemixMH` (default)
 
 A lightweight Turing-free MH sampler that directly operates on the flat random-effects vector. Implements the first three kernels of the saemix R package:
 

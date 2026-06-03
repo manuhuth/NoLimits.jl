@@ -204,9 +204,4 @@ end
 
 ## Related APIs
 
-The following functions provide lower-level access to the DE subsystem:
-
-- `get_de_states(de)` and `get_de_signals(de)` -- enumerate declared states and signals.
-- `get_de_compiler(de)`, `get_de_f!(de)`, `get_de_f(de)` -- access the compiled ODE function and its context builder.
-- `get_de_accessors_builder(de)` -- returns a function that constructs solution accessors from an ODE solution.
-- `build_de_params(de, \theta; ...)` -- assembles ODE parameters with tunable modes (`:theta`, `:eta`, `:both`).
+Lower-level access to the DE subsystem is provided by `get_de_states`/`get_de_signals` (enumerate declared states and signals), `get_de_compiler`/`get_de_f!`/`get_de_f` (the compiled ODE function and its context builder), `get_de_accessors_builder` (constructs solution accessors from an ODE solution), and `build_de_params` (assembles ODE parameters; its `tunable` keyword selects which parameters are tunable and accepts `:θ`, `:η`, or `:both`, default `:both`). Full signatures are in the [API reference](../api.md).

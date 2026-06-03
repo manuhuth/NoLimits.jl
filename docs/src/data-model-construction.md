@@ -19,11 +19,13 @@ dm = DataModel(
 
 The key constructor arguments are:
 
-- `primary_id`: the column that identifies individual trajectories (e.g., subject ID).
-- `time_col`: the column used for longitudinal time indexing.
-- `evid_col`: enables event-table parsing for ODE models (see below).
-- `amt_col`, `rate_col`, `cmt_col`: event-related columns, used when `evid_col` is set.
-- `serialization`: controls parallel execution mode (default `EnsembleSerial()`; use `EnsembleThreads()` for multi-threaded evaluation).
+- `primary_id` (default `nothing`): the column that identifies individual trajectories (e.g., subject ID). See the inference note below.
+- `time_col` (default `:TIME`): the column used for longitudinal time indexing.
+- `evid_col` (default `nothing`): enables event-table parsing for ODE models (see below).
+- `amt_col` (default `:AMT`), `rate_col` (default `:RATE`), `cmt_col` (default `:CMT`): event-related columns, used when `evid_col` is set.
+- `serialization` (default `EnsembleSerial()`): controls parallel execution mode; use `EnsembleThreads()` for multi-threaded evaluation.
+
+The examples below always pass these explicitly, but if you omit them the defaults above apply (so a dataset whose time column is named `TIME` and whose event columns are named `AMT`/`RATE`/`CMT` needs no overrides).
 
 If `primary_id` is omitted, it is inferred automatically when the model uses exactly one random-effect grouping column. When multiple grouping columns are present, `primary_id` must be specified explicitly.
 
@@ -118,6 +120,7 @@ dm = DataModel(model, df; primary_id=:ID, time_col=:t)
 
 For models where external inputs (e.g., doses, stimuli, or resets) modify the ODE state during integration, use the `evid_col` argument to activate event parsing. The supported event types are:
 
+- `EVID = 0`: observation row (the default for ordinary measurement rows; likelihood and covariate validation operate on these).
 - `EVID = 1`: input event (instantaneous bolus if `RATE = 0`, or constant-rate infusion if `RATE > 0`).
 - `EVID = 2`: reset event (sets the specified compartment to the `AMT` value).
 
@@ -227,8 +230,8 @@ ensures coarsed-state likelihoods are used only when explicitly requested.
 - **Missing values**: observation rows (`EVID == 0`) cannot have missing values in outcome or covariate columns used by `@formulas`.
 - **Coarsed observed-state Markov outcomes**: for observed-state Markov outcome distributions, vector-valued observations require `coarsed(...)`; conversely, `coarsed(...)` requires vector-valued non-missing observations.
 - **Grouping consistency**: random-effect grouping columns cannot contain missing values. For ODE models, grouping columns other than `primary_id` must remain constant within each `primary_id`. For non-ODE models, including discrete-time and continuous-time HMM outcomes, non-`primary_id` grouping columns may vary within an individual; in that case, the random effect is selected row by row from the observed grouping value.
-- **Numeric random-effect grouping levels**: if any random-effect grouping column uses numeric levels, `DataModel` emits:
-  `DataModel detected numeric random-effect grouping levels in column(s) $(cols_str). You wwill not be able to use constant random-effects. If you want to use constantr andom effects, consider ralabeling your random efefcts to strings or symbols.`
+- **Numeric random-effect grouping levels**: if any random-effect grouping column uses numeric levels, `DataModel` emits an informational `@info` message (not an error):
+  `DataModel detected numeric random-effect grouping levels in column(s) $(cols_str). You will not be able to use constant random-effects. If you want to use constant random effects, consider relabeling your random effects to strings or symbols.`
   In this case, constant random-effects are unavailable unless grouping levels are relabeled to strings or symbols.
 - **Constant covariate consistency**: constant covariates must be constant within `primary_id` and within all declared `constant_on` groups.
 - **Random-effect covariate dependencies**: random-effect distributions that use covariates require those covariates to be `ConstantCovariate` or `ConstantCovariateVector`.

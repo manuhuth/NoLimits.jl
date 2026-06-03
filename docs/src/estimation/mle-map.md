@@ -59,4 +59,4 @@ res_mle = fit_model(dm, NoLimits.MLE())
 res_map = fit_model(dm, NoLimits.MAP())
 ```
 
-All constructor options documented on the [MLE](mle.md) page -- including `optimizer`, `optim_kwargs`, `adtype`, `lb`, `ub`, and the `fit_model` keywords (`constants`, `penalty`, etc.) -- apply to `MAP` as well.
+All constructor options documented on the [MLE](mle.md) page -- including `optimizer`, `optim_kwargs`, `adtype`, `lb`, `ub`, `ignore_model_bounds` (default `false`, disables model-declared bounds), and the `fit_model` keywords (`constants`, `penalty`, etc.) -- apply to `MAP` as well.

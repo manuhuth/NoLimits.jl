@@ -64,6 +64,7 @@ method = NoLimits.MLE(;
     adtype=Optimization.AutoForwardDiff(),
     lb=nothing,
     ub=nothing,
+    ignore_model_bounds=false,
 )
 ```
 
@@ -72,7 +73,9 @@ method = NoLimits.MLE(;
 | Group | Keywords | Description |
 | --- | --- | --- |
 | Optimization | `optimizer`, `optim_kwargs`, `adtype` | Controls fixed-effect objective optimization via [Optimization.jl](https://docs.sciml.ai/Optimization/stable/). |
-| Bounds | `lb`, `ub` | Optional transformed-scale bounds for free fixed effects. |
+| Bounds | `lb`, `ub`, `ignore_model_bounds` | Optional transformed-scale bounds for free fixed effects; `ignore_model_bounds` disables model-declared bounds. |
+
+`ignore_model_bounds` defaults to `false`. Setting it to `true` disables the parameter bounds declared in the model during optimization. This keyword also applies to [`MAP`](mle-map.md), which shares the `MLE` constructor options.
 
 ## Optimization.jl Interface
 

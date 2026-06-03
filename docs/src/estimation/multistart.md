@@ -42,11 +42,18 @@ ms = NoLimits.Multistart(;
     dists=NamedTuple(),
     n_draws_requested=100,
     n_draws_used=50,
-    sampling=:random,               # :random or :lhs
-    serialization=EnsembleSerial(), # controls parallelism across starts
-    rng=Random.default_rng(),
+    sampling=:random,                # :random or :lhs
+    serialization=EnsembleThreads(), # controls parallelism across starts
+    rng=Xoshiro(0),
+    progress=true,
+    screening=:prior_mean,           # :prior_mean or :ebe
+    ebe_maxiters=30,
 )
 ```
+
+- `screening` — Phase-1 screening criterion (see [Two-Phase Workflow](#two-phase-workflow)). `:prior_mean` (default) evaluates each candidate at η = 0; `:ebe` runs a short empirical-Bayes optimization (capped at `ebe_maxiters` iterations) before scoring.
+- `ebe_maxiters` — maximum inner EB iterations per candidate when `screening=:ebe`. Default `30`.
+- `progress` — enables or disables the progress bar. Default `true`.
 
 ## Two-Phase Workflow
 
@@ -145,14 +152,14 @@ If all runs fail, `Multistart` raises an error reporting the first recorded fail
 
 ## Parallelism and RNG Behavior
 
-The `ms.serialization` field controls execution of the individual fits:
+The `ms.serialization` field controls execution of the individual fits and defaults to `EnsembleThreads()`:
 
+- **`EnsembleThreads()`** (default): Fits run in parallel across available threads.
 - **`EnsembleSerial()`**: Fits run sequentially in a single thread.
-- **`EnsembleThreads()`**: Fits run in parallel across available threads.
 
 Note that screening (Phase 1) always runs serially regardless of `serialization`; only Phase 2 (the full optimizations) is parallelized.
 
-Random number generator behavior depends on how `rng` is supplied:
+Random number generator behavior depends on how `rng` is supplied (the constructor default is `Xoshiro(0)`):
 
 - If `rng` is not passed to `fit_model(ms, ...)`, each start receives an internally spawned child RNG to ensure independence.
 - If `rng` is explicitly provided in the fit keywords, that generator is forwarded to every underlying fit call.

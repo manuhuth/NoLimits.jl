@@ -281,7 +281,7 @@ predictive percentile bands stratified by x-axis bins.
   computation.
 - `bandwidth::Union{Nothing, Float64} = nothing`: smoothing bandwidth for percentile
   curves, or `nothing` for no smoothing.
-- `obs_percentiles_method::Symbol = :quantile`: `:quantile` or `:weighted`.
+- `obs_percentiles_method::Symbol = :kernel`: `:kernel` (smooth, default) or `:quantile` (bin-based).
 - `constants_re::NamedTuple = NamedTuple()`: random-effect constants.
 - `mcmc_draws::Int = 1000`, `mcmc_warmup`: MCMC draw settings.
 - `style::PlotStyle = PlotStyle()`: visual style configuration.
@@ -304,11 +304,12 @@ function plot_vpc(res::FitResult;
                   plot_path::Union{Nothing, String}=nothing,
                   obs_percentiles_mode::Symbol=:pooled,
                   bandwidth::Union{Nothing, Float64}=nothing,
-                  obs_percentiles_method::Symbol=:quantile,
+                  obs_percentiles_method::Symbol=:kernel,
                   constants_re::NamedTuple=NamedTuple(),
                   mcmc_draws::Int=1000,
                   mcmc_warmup::Union{Nothing, Int}=nothing,
-                  style::PlotStyle=PlotStyle())
+                  style::PlotStyle=PlotStyle(),
+                  kwargs_subplot=NamedTuple())
     dm = _get_dm(res, dm)
     save_path = _resolve_plot_path(save_path, plot_path)
     if n_sim !== nothing
@@ -358,8 +359,8 @@ function plot_vpc(res::FitResult;
         x_for_bins = isempty(all_x) ? all_x_bins : all_x
         if isempty(x_for_bins)
             @warn "No finite x values found for observable; returning empty VPC subplot." observable=obs_name
-            plots[oi] = create_styled_plot(title=string(obs_name), xlabel=x_label,
-                                           ylabel=_axis_label(obs_name), style=style)
+            _kw_vpc = merge((xlabel=x_label, ylabel=_axis_label(obs_name)), kwargs_subplot)
+            plots[oi] = create_styled_plot(; title="", style=style, _kw_vpc...)
             continue
         end
         n_bins_eff = _resolve_n_bins(x_for_bins, n_bins)
@@ -395,8 +396,8 @@ function plot_vpc(res::FitResult;
             end
         end
 
-        p = create_styled_plot(title=string(obs_name), xlabel=x_label,
-                               ylabel=_axis_label(obs_name), style=style)
+        _kw_vpc = merge((xlabel=x_label, ylabel=_axis_label(obs_name)), kwargs_subplot)
+        p = create_styled_plot(; title="", style=style, _kw_vpc...)
         if show_obs_points && !isempty(all_y)
             scatter!(p, all_x, all_y; color=style.color_primary, alpha=0.3,
                      markersize=style.marker_size, markerstrokewidth=style.marker_stroke_width,
@@ -480,17 +481,26 @@ function plot_vpc(res::FitResult;
                     end
                 end
             else
-                sim_q = Dict{Float64, Vector{Float64}}((p => Vector{Float64}(undef, n_bins_eff)) for p in percentiles)
-                for b in 1:n_bins_eff
-                    vals = sim_y_all[bins_sim .== b]
+                if bandwidth !== nothing
+                    xgrid = collect(LinRange(minimum(sim_x_all), maximum(sim_x_all), 200))
+                    sm_sim = _kernel_quantiles(sim_x_all, sim_y_all, xgrid, bandwidth, percentiles)
                     for pctl in percentiles
-                        sim_q[pctl][b] = isempty(vals) ? NaN : quantile(vals, pctl / 100)
+                        lbl = "sim $(pctl)%"
+                        plot!(p, xgrid, sm_sim[pctl]; color=COLOR_SECONDARY, label=lbl)
                     end
-                end
-                for pctl in percentiles
-                    x_plot, y_plot = _extend_bin_series(x_centers, sim_q[pctl], edges)
-                    lbl = "sim $(pctl)%"
-                    plot!(p, x_plot, y_plot; color=COLOR_SECONDARY, label=lbl)
+                else
+                    sim_q = Dict{Float64, Vector{Float64}}((p => Vector{Float64}(undef, n_bins_eff)) for p in percentiles)
+                    for b in 1:n_bins_eff
+                        vals = sim_y_all[bins_sim .== b]
+                        for pctl in percentiles
+                            sim_q[pctl][b] = isempty(vals) ? NaN : quantile(vals, pctl / 100)
+                        end
+                    end
+                    for pctl in percentiles
+                        x_plot, y_plot = _extend_bin_series(x_centers, sim_q[pctl], edges)
+                        lbl = "sim $(pctl)%"
+                        plot!(p, x_plot, y_plot; color=COLOR_SECONDARY, label=lbl)
+                    end
                 end
             end
         end

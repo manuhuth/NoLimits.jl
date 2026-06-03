@@ -64,7 +64,7 @@ laplace_method = NoLimits.Laplace(;
     optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
     optim_kwargs=NamedTuple(),
     adtype=Optimization.AutoForwardDiff(),
-    inner_optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
+    inner_optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep=1.0)),
     inner_kwargs=NamedTuple(),
     inner_adtype=Optimization.AutoForwardDiff(),
     inner_grad_tol=:auto,
@@ -84,7 +84,8 @@ laplace_method = NoLimits.Laplace(;
     theta_tol=0.0,
     lb=nothing,
     ub=nothing,
-    nan_recovery=:nan,
+    ignore_model_bounds=false,
+    nan_recovery=:backtrack,
 )
 ```
 
@@ -94,6 +95,9 @@ Notes:
 - `use_trace_logdet_grad=true` is the default gradient path for the log-determinant term.
 - `use_hutchinson=true` activates the stochastic Hutchinson approximation for logdet-related terms.
 - `lb`/`ub` are bounds on transformed fixed-effect parameters.
+- `ignore_model_bounds=false` by default; set `true` to disable the model-declared parameter bounds during optimization.
+
+See the [`Laplace`](@ref) entry in the API reference for the full list of keyword arguments and their defaults.
 
 ### Option Groups
 
@@ -107,7 +111,7 @@ The constructor keywords fall into several logical groups, summarized in the tab
 | Hessian stabilization | `jitter`, `max_tries`, `jitter_growth`, `adaptive_jitter`, `jitter_scale` | Cholesky stabilization for `-H` in log-determinant calculations. |
 | Logdet gradient strategy | `use_trace_logdet_grad`, `use_hutchinson`, `hutchinson_n` | Computational path for logdet-related derivatives. |
 | Caching | `theta_tol` | Reuse tolerance for objective/gradient cache across nearby fixed-effect values. |
-| Bounds | `lb`, `ub` | Optional transformed-scale bounds for free fixed effects. |
+| Bounds | `lb`, `ub`, `ignore_model_bounds` | Optional transformed-scale bounds for free fixed effects; `ignore_model_bounds` disables model-declared bounds. |
 | NaN recovery | `nan_recovery` | Strategy when the outer gradient contains `NaN` values. |
 
 ### Inner vs Outer Optimizer Choices (Optimization.jl Interface)
@@ -162,36 +166,21 @@ laplace_global_outer = NoLimits.Laplace(;
 
 ### Detailed Behavior
 
-This section provides additional detail on each option group.
+This section explains the behaviour of the options whose effect is not obvious from their name. See the [`Laplace`](@ref) entry in the API reference for the complete keyword list and defaults.
 
-- `inner_grad_tol`
-  - `:auto` resolves to `1e-8` for non-ODE models and `1e-2` for ODE models.
-- `multistart_sampling`
-  - Supported values are `:lhs` (Latin hypercube sampling) and `:random`.
-- `multistart_n`, `multistart_k`
-  - Control the size of the candidate start pool and the number of starts selected for EB multistart optimization.
-- `jitter`, `max_tries`, `jitter_growth`
-  - If the Cholesky factorization of `-H` fails, it is retried with increasing diagonal jitter (`jitter * jitter_growth^attempt`).
-- `adaptive_jitter`, `jitter_scale`
-  - When `adaptive_jitter=true`, the initial jitter is scaled by the Hessian diagonal magnitude (`jitter_scale * mean(abs(diag(-H)))`), then bounded below by `jitter`.
-- `use_trace_logdet_grad`
-  - Uses trace-based derivatives of logdet terms (default path).
-- `use_hutchinson`, `hutchinson_n`
-  - Uses stochastic Hutchinson estimation for logdet derivative terms with `hutchinson_n` probe vectors.
-  - When `use_hutchinson=true`, this path is used instead of the exact logdet gradient.
-- `theta_tol`
-  - Cache tolerance for reusing objective/gradient values at nearby parameter vectors.
-  - `0.0` means reuse only for effectively identical vectors.
-- `lb`, `ub`
-  - Bounds are interpreted on transformed parameters and are applied only to free fixed effects.
-  - If constants are set via `constants`, bounds for those constant parameters are ignored.
-- `nan_recovery`
-  - Controls what happens when the outer fixed-effect gradient contains `NaN`. This can occur when a parameter is pushed to an extreme value during optimization (e.g., a log-scale parameter so large that the corresponding natural-scale value overflows), making certain Jacobian chain-rule products numerically undefined (`0 * Inf = NaN`).
-  - `:nan` (default) — lets the `NaN` propagate to the optimizer as-is. BFGS will emit a warning and stop, which is an honest failure signal (as opposed to false convergence from a zero gradient).
+- `inner_grad_tol=:auto` resolves to `1e-8` for non-ODE models and `1e-2` for ODE models.
+- `multistart_sampling` supports `:lhs` (Latin hypercube sampling) and `:random`.
+- Hessian jitter (`jitter`, `max_tries`, `jitter_growth`): if the Cholesky factorization of `-H` fails, it is retried with increasing diagonal jitter (`jitter * jitter_growth^attempt`). When `adaptive_jitter=true`, the initial jitter is scaled by the Hessian diagonal magnitude (`jitter_scale * mean(abs(diag(-H)))`), then bounded below by `jitter`.
+- Logdet gradient (`use_trace_logdet_grad`, `use_hutchinson`, `hutchinson_n`): the default uses trace-based derivatives of the logdet terms. When `use_hutchinson=true`, stochastic Hutchinson estimation with `hutchinson_n` probe vectors is used instead of the exact logdet gradient.
+- `theta_tol` is the cache tolerance for reusing objective/gradient values at nearby parameter vectors; `0.0` means reuse only for effectively identical vectors.
+- `lb`, `ub` are interpreted on transformed parameters and applied only to free fixed effects; bounds for parameters held constant via `constants` are ignored. `ignore_model_bounds=true` additionally disables the model-declared parameter bounds.
+- `nan_recovery` controls what happens when the outer fixed-effect gradient contains `NaN`. This can occur when a parameter is pushed to an extreme value during optimization (e.g., a log-scale parameter so large that the corresponding natural-scale value overflows), making certain Jacobian chain-rule products numerically undefined (`0 * Inf = NaN`).
+  - `:backtrack` (default) — treats a `NaN` gradient as a non-finite objective, forcing the line search to backtrack out of the offending region so optimization can continue.
+  - `:nan` — lets the `NaN` propagate to the optimizer as-is. BFGS will emit a warning and stop, which is an honest failure signal (as opposed to false convergence from a zero gradient); useful for debugging.
   - `:fd` — falls back to a full central-difference gradient computed on the transformed scale. Each perturbed point re-runs the inner EB optimization, so this is more expensive but allows the optimizer to recover and continue past transient NaN regions.
 
   ```julia
-  # Default: NaN propagates; optimizer warns and stops honestly
+  # Default: NaN gradient forces a backtracking step
   res = fit_model(dm, NoLimits.Laplace())
 
   # FD fallback: keeps optimization alive through transient NaN gradients

@@ -5,6 +5,7 @@ export get_model
 export get_df
 export get_individuals
 export get_individual
+export get_covariates
 export get_batches
 export get_batch_ids
 export get_primary_id
@@ -1275,7 +1276,10 @@ function _build_laplace_re_cache(model, individuals, values_nt)
                           for i in eachindex(ind_level_ids))
         nt_pairs = Pair{Symbol, Any}[]
         for (ri, re) in enumerate(re_names)
-            if is_scalar[ri] || dims[ri] == 1
+            # Only univariate REs become a scalar component. A length-1 multivariate
+            # RE (e.g. 1-D MvNormal) keeps a 1-vector component so its logpdf is fed a
+            # vector.
+            if is_scalar[ri]
                 push!(nt_pairs, re => 0.0)
             else
                 push!(nt_pairs, re => zeros(dims[ri]))
@@ -1529,4 +1533,18 @@ function get_individual(dm::DataModel, id)
     idx = get(dm.id_index, id, nothing)
     idx === nothing && error("No individual found for id $(id). Check primary_id or data values.")
     return dm.individuals[idx]
+end
+
+"""
+    get_covariates(dm::DataModel, covariate::Symbol) -> Vector
+
+Return the per-individual values of a constant covariate, ordered by individual index.
+Raises an error if the covariate is not present.
+"""
+function get_covariates(dm::DataModel, covariate::Symbol)
+    isempty(dm.individuals) && return []
+    first_cov = dm.individuals[1].const_cov
+    hasproperty(first_cov, covariate) ||
+        error("Covariate :$(covariate) not found. Available: $(propertynames(first_cov)).")
+    return [getfield(ind.const_cov, covariate) for ind in dm.individuals]
 end

@@ -379,7 +379,35 @@ function _cv_collect_obs(dm_test, θu, η_vec, ll_cache_test, loss)
     return isempty(dfs) ? DataFrame() : vcat(dfs...)
 end
 
-# EBE path: pre-build η for each test individual (seen → training EBE, unseen → zero).
+# Prior-mean RE value for an unseen test individual, shaped to match `ref` (a
+# scalar or vector component of a reference η). Tries the distribution mean, then
+# the median, then zero — mirroring `_re_start_value`, so non-zero-mean RE priors
+# (Beta, Gumbel, LogNormal, …) are honoured rather than collapsed to zero.
+function _re_prior_mean_or_zero(dist, ref)
+    v = try Distributions.mean(dist) catch; nothing end
+    v === nothing && (v = try Distributions.median(dist) catch; nothing end)
+    if ref isa AbstractVector
+        v === nothing && return zeros(Float64, length(ref))
+        return v isa AbstractVector ? collect(Float64.(v)) : fill(Float64(v), length(ref))
+    else
+        v === nothing && return 0.0
+        return v isa AbstractVector ? Float64(first(v)) : Float64(v)
+    end
+end
+
+# Build a prior-mean η ComponentArray for unseen test individual `j`, evaluating
+# each RE distribution at that individual's constant covariates.
+function _cv_prior_mean_eta(dm, j, θu, dists_builder, model_funs, helpers, re_names, ref_eta)
+    const_cov = dm.individuals[j].const_cov
+    dists = dists_builder(θu, const_cov, model_funs, helpers)
+    nt = NamedTuple((re => _re_prior_mean_or_zero(getproperty(dists, re),
+                                                  getproperty(ref_eta, re))
+                     for re in re_names))
+    return ComponentArray(nt)
+end
+
+# EBE path: pre-build η for each test individual (seen → training EBE,
+# unseen → RE prior mean).
 function _cv_evaluate_ebe(dm_train, dm_test, res_train, θu, ll_cache_test, loss,
                            constants_re)
     bstars, batch_infos, _, const_cache, _, _ =
@@ -388,8 +416,18 @@ function _cv_evaluate_ebe(dm_train, dm_test, res_train, θu, ll_cache_test, loss
     re_to_eta = Dict{Any,ComponentArray}(
         dm_train.individuals[i].re_groups => η_train_vec[i]
         for i in 1:length(dm_train.individuals))
-    zero_eta = zero(η_train_vec[1])
-    η_test = [get(re_to_eta, dm_test.individuals[j].re_groups, zero_eta)
+    ref_eta         = η_train_vec[1]
+    dists_builder   = get_create_random_effect_distribution(dm_test.model.random.random)
+    model_funs_test = get_model_funs(dm_test.model)
+    helpers_test    = get_helper_funs(dm_test.model)
+    re_names        = get_re_names(dm_test.model.random.random)
+    mean_eta_cache  = Dict{Int,ComponentArray}()
+    η_test = [haskey(re_to_eta, dm_test.individuals[j].re_groups) ?
+                  re_to_eta[dm_test.individuals[j].re_groups] :
+                  get!(() -> _cv_prior_mean_eta(dm_test, j, θu, dists_builder,
+                                                model_funs_test, helpers_test,
+                                                re_names, ref_eta),
+                       mean_eta_cache, j)
               for j in 1:length(dm_test.individuals)]
     return _cv_collect_obs(dm_test, θu, η_test, ll_cache_test, loss)
 end
@@ -410,7 +448,7 @@ function _cv_evaluate_mc(dm_train, dm_test, res_train, θu, ll_cache_test, loss,
             re_to_train[dm_train.individuals[i].re_groups] = (bi, i)
         end
     end
-    zero_eta = zero(η_train_vec[1])
+    ref_eta = η_train_vec[1]
 
     # Conditional samples for seen individuals (Laplace or MCMC path)
     bstars_per_sample = nothing
@@ -439,14 +477,16 @@ function _cv_evaluate_mc(dm_train, dm_test, res_train, θu, ll_cache_test, loss,
         end
     end
 
-    # Prior distribution builder for unseen montecarlo
-    dists_builder = unseen_re_mode == :montecarlo ?
-        get_create_random_effect_distribution(dm_test.model.random.random) : nothing
+    # RE distribution builder — used for unseen :montecarlo draws and :mean plug-in.
+    dists_builder = get_create_random_effect_distribution(dm_test.model.random.random)
     model_funs_test = get_model_funs(dm_test.model)
     helpers_test    = get_helper_funs(dm_test.model)
 
     n_test    = length(dm_test.individuals)
     sample_rngs = _spawn_child_rngs(rng, n_mc_samples)
+
+    # Prior-mean η for unseen individuals under :mean — identical across samples.
+    mean_eta_cache = Dict{Int,ComponentArray}()
 
     # Collect per-sample DataFrames: all_dfs[s] = vector of DataFrames, one per test individual
     all_dfs = [Vector{DataFrame}(undef, n_test) for _ in 1:n_mc_samples]
@@ -468,8 +508,11 @@ function _cv_evaluate_mc(dm_train, dm_test, res_train, θu, ll_cache_test, loss,
                 dists = dists_builder(θu, ind_j.const_cov, model_funs_test, helpers_test)
                 ComponentArray(NamedTuple((re => rand(srng, getproperty(dists, re))
                                            for re in re_names)))
-            else             # :mean — zero RE, same for every sample
-                zero_eta
+            else             # :mean — RE prior mean, same for every sample
+                get!(() -> _cv_prior_mean_eta(dm_test, j, θu, dists_builder,
+                                              model_funs_test, helpers_test,
+                                              re_names, ref_eta),
+                     mean_eta_cache, j)
             end
 
             all_dfs[s][j] = _eval_individual_obs(dm_test, j, θu, η_j, ll_cache_test, loss)

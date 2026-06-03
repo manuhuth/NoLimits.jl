@@ -16,7 +16,8 @@ using Random
 using SciMLBase
 
 """
-    Multistart(; dists, n_draws_requested, n_draws_used, sampling, serialization, rng)
+    Multistart(; dists, n_draws_requested, n_draws_used, sampling, serialization, rng,
+               progress, screening, ebe_maxiters)
 
 Multistart wrapper that runs any optimization-based fitting method from multiple initial
 parameter vectors and returns the best result.
@@ -36,6 +37,14 @@ fully optimised.
   strategy for running multiple starts.
 - `rng::AbstractRNG = Random.default_rng()`: random-number generator.
 - `progress::Bool = true`: whether to display progress bars for the screening and fitting phases.
+- `screening::Symbol = :prior_mean`: objective used for pre-selecting starting points.
+  - `:prior_mean` — evaluates the observation log-likelihood with random effects fixed at
+    their prior means under each candidate θ. Fast but ignores RE adaptability.
+  - `:ebe` — for each candidate θ, first computes per-individual Empirical Bayes Estimates
+    (EBEs) by maximising the joint log-density (observation ll + RE prior), then uses the
+    resulting joint log-density as the screening score. More accurate but slower.
+- `ebe_maxiters::Int = 30`: maximum inner-optimisation iterations per individual when
+  `screening = :ebe`. Lower values trade accuracy for speed.
 """
 struct Multistart{D, S, R}
     dists::D
@@ -45,6 +54,8 @@ struct Multistart{D, S, R}
     serialization::S
     rng::R
     progress::Bool
+    screening::Symbol
+    ebe_maxiters::Int
 end
 
 """
@@ -76,11 +87,16 @@ function Multistart(; dists=NamedTuple(),
                     sampling::Symbol=:random,
                     serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
                     rng::AbstractRNG=Xoshiro(0),
-                    progress::Bool=true)
+                    progress::Bool=true,
+                    screening::Symbol=:prior_mean,
+                    ebe_maxiters::Int=30)
     n_draws_requested < 0 && error("n_draws_requested must be ≥ 0.")
     n_draws_used < 1 && error("n_draws_used must be ≥ 1.")
     (sampling == :random || sampling == :lhs) || error("sampling must be :random or :lhs.")
-    return Multistart(dists, n_draws_requested, n_draws_used, sampling, serialization, rng, progress)
+    (screening == :prior_mean || screening == :ebe) || error("screening must be :prior_mean or :ebe.")
+    ebe_maxiters < 1 && error("ebe_maxiters must be ≥ 1.")
+    return Multistart(dists, n_draws_requested, n_draws_used, sampling, serialization, rng,
+                      progress, screening, ebe_maxiters)
 end
 
 function _lhs_unit(n::Int, rng::AbstractRNG)
@@ -291,18 +307,17 @@ function _multistart_initials(dm::DataModel, ms::Multistart)
     return all_starts
 end
 
-function _build_mean_eta(dm::DataModel)
+function _build_mean_eta(dm::DataModel, θu::ComponentArray)
     re_cache = dm.re_group_info.laplace_cache
     (re_cache === nothing || isempty(re_cache.re_names)) && return ComponentArray()
     dists_builder = get_create_random_effect_distribution(dm.model.random.random)
     model_funs    = get_model_funs(dm.model)
     helpers       = get_helper_funs(dm.model)
-    θ0            = get_θ0_untransformed(dm.model.fixed.fixed)
     n             = length(dm.individuals)
     etas          = Vector{ComponentArray}(undef, n)
     for i in 1:n
         const_cov = dm.individuals[i].const_cov
-        dists     = dists_builder(θ0, const_cov, model_funs, helpers)
+        dists     = dists_builder(θu, const_cov, model_funs, helpers)
         pairs     = Pair{Symbol, Any}[]
         for (ri, re) in enumerate(re_cache.re_names)
             dim       = re_cache.dims[ri]
@@ -330,27 +345,118 @@ function _build_mean_eta(dm::DataModel)
     return etas
 end
 
+# Compute per-individual EBEs by maximising the joint log-density (obs ll + RE prior)
+# for each candidate θu.  Returns (etas, joint_score) where joint_score is the total
+# joint log-density at the EBEs (used as the screening score).
+function _build_ebe_eta(dm::DataModel, θu::ComponentArray, ll_cache; maxiters::Int=30)
+    re_cache = dm.re_group_info.laplace_cache
+    (re_cache === nothing || isempty(re_cache.re_names)) && return (ComponentArray(), 0.0)
+    dists_builder   = get_create_random_effect_distribution(dm.model.random.random)
+    re_logpdf_fn    = get_re_logpdf(dm.model.random.random)
+    model_funs      = get_model_funs(dm.model)
+    helpers         = get_helper_funs(dm.model)
+    re_names        = re_cache.re_names
+    re_names_tuple  = Tuple(re_names)
+    optimizer       = OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep=1.0))
+    n               = length(dm.individuals)
+    etas            = Vector{ComponentArray}(undef, n)
+    joint_score     = 0.0
+    for i in 1:n
+        const_cov = dm.individuals[i].const_cov
+        dists     = dists_builder(θu, const_cov, model_funs, helpers)
+        # Build prior mean as starting point
+        pairs = Pair{Symbol, Any}[]
+        for (ri, re) in enumerate(re_names)
+            dim       = re_cache.dims[ri]
+            is_scalar = re_cache.is_scalar[ri]
+            dist      = getproperty(dists, re)
+            val = if is_scalar || dim == 1
+                v = 0.0
+                try; v = Float64(mean(dist)); catch; end
+                v
+            else
+                v = zeros(dim)
+                try
+                    m = mean(dist)
+                    if m isa AbstractVector && length(m) == dim
+                        v = Float64.(m)
+                    end
+                catch
+                end
+                v
+            end
+            push!(pairs, re => val)
+        end
+        η0_i    = ComponentArray(NamedTuple(pairs))
+        axs     = getaxes(η0_i)
+        η0_flat = Vector(η0_i)
+        if isempty(η0_flat)
+            etas[i] = η0_i
+            continue
+        end
+        # Closure: negative joint log-density to minimise
+        neg_logf = let dm=dm, i=i, θu=θu, ll_cache=ll_cache,
+                       axs=axs, dists=dists, re_logpdf_fn=re_logpdf_fn,
+                       re_names=re_names, re_names_tuple=re_names_tuple
+            (η_flat, _) -> begin
+                η_i  = ComponentArray(η_flat, axs)
+                ll   = _loglikelihood_individual(dm, i, θu, η_i, ll_cache)
+                !isfinite(ll) && return eltype(η_flat)(Inf)
+                re_v = NamedTuple{re_names_tuple}(
+                    Tuple([getproperty(η_i, re) for re in re_names]))
+                lp = re_logpdf_fn(dists, re_v)
+                !isfinite(lp) && return eltype(η_flat)(Inf)
+                return -(ll + lp)
+            end
+        end
+        try
+            prob = OptimizationProblem(
+                OptimizationFunction(neg_logf, Optimization.AutoForwardDiff()),
+                η0_flat)
+            sol        = solve(prob, optimizer; maxiters=maxiters)
+            etas[i]    = ComponentArray(sol.u, axs)
+            f_sol      = sol.objective  # = -(joint log-density at EBE)
+            joint_score += isfinite(f_sol) ? -f_sol : -Inf
+        catch
+            etas[i]    = η0_i
+            f0         = neg_logf(η0_flat, nothing)
+            joint_score += isfinite(f0) ? -f0 : 0.0
+        end
+        !isfinite(joint_score) && break
+    end
+    return etas, joint_score
+end
+
 function _multistart_screen(dm::DataModel,
                             candidates::Vector{ComponentArray},
                             n_used::Int,
                             ode_args::Tuple,
                             ode_kwargs::NamedTuple,
-                            serialization::SciMLBase.EnsembleAlgorithm;
+                            serialization::SciMLBase.EnsembleAlgorithm,
+                            screening::Symbol,
+                            ebe_maxiters::Int;
                             progress::Bool=true)
+    # EBE inner optimisation is serial per individual; use EnsembleSerial for that path.
+    cache_serialization = screening == :ebe ? EnsembleSerial() : serialization
     cache = build_ll_cache(dm; ode_args=ode_args, ode_kwargs=ode_kwargs,
-                           serialization=serialization, force_saveat=true)
-    η0 = _build_mean_eta(dm)
+                           serialization=cache_serialization, force_saveat=true)
     scores = Vector{Float64}(undef, length(candidates))
     screen_p = progress ? Progress(length(candidates); desc="Multistart screening: ", showspeed=true) : nothing
     for (i, θu) in enumerate(candidates)
-        ll = loglikelihood(dm, θu, η0; cache=cache, serialization=serialization)
-        scores[i] = isfinite(ll) ? -ll : Inf   # minimise negative LL
+        if screening == :ebe
+            etas, joint_score = _build_ebe_eta(dm, θu, cache; maxiters=ebe_maxiters)
+            scores[i] = isfinite(joint_score) ? -joint_score : Inf
+        else
+            η0 = _build_mean_eta(dm, θu)
+            ll = loglikelihood(dm, θu, η0; cache=cache, serialization=serialization)
+            scores[i] = isfinite(ll) ? -ll : Inf
+        end
         progress && next!(screen_p)
     end
     idxs = partialsortperm(scores, 1:min(n_used, length(candidates)))
-    # Return selected candidates and their LL values (sign-flipped back from scores)
-    selected_ll = [-scores[j] for j in idxs]
-    return candidates[idxs], selected_ll
+    # Return selected candidates and their scores (sign-flipped back from minimisation scores)
+    selected_scores = [-scores[j] for j in idxs]
+    return candidates[idxs], selected_scores
 end
 
 function _multistart_score(res::FitResult)
@@ -441,12 +547,21 @@ function fit_model(ms::Multistart, dm::DataModel, method::FittingMethod, args...
     varied_str = isempty(varied) ? "none" : join(string.(varied), ", ")
 
     if n_req > n_used
-        starts, screen_lls = _multistart_screen(dm, all_starts, n_used, ode_args, ode_kwargs_inner, serialization; progress=progress)
-        finite_lls = filter(isfinite, screen_lls)
-        if isempty(finite_lls)
-            @info "Multistart" candidates=n_req selected=n_used varying=varied_str screening_ll="all -Inf"
+        starts, screen_scores = _multistart_screen(dm, all_starts, n_used, ode_args,
+                                                    ode_kwargs_inner, serialization,
+                                                    ms.screening, ms.ebe_maxiters;
+                                                    progress=progress)
+        finite_scores = filter(isfinite, screen_scores)
+        if isempty(finite_scores)
+            if ms.screening == :ebe
+                @info "Multistart" candidates=n_req selected=n_used varying=varied_str screening=ms.screening best_screening_joint_ll="all -Inf"
+            else
+                @info "Multistart" candidates=n_req selected=n_used varying=varied_str screening=ms.screening best_screening_ll="all -Inf"
+            end
+        elseif ms.screening == :ebe
+            @info "Multistart" candidates=n_req selected=n_used varying=varied_str screening=ms.screening best_screening_joint_ll=maximum(finite_scores) worst_screening_joint_ll=minimum(finite_scores)
         else
-            @info "Multistart" candidates=n_req selected=n_used varying=varied_str best_screening_ll=maximum(finite_lls) worst_screening_ll=minimum(finite_lls)
+            @info "Multistart" candidates=n_req selected=n_used varying=varied_str screening=ms.screening best_screening_ll=maximum(finite_scores) worst_screening_ll=minimum(finite_scores)
         end
     else
         starts = all_starts

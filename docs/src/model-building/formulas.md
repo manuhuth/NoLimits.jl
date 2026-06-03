@@ -202,8 +202,22 @@ end
 
 ## Example: Coarsed Observed-State Markov Model
 
-For observed-state Markov models with set-valued observations (for example `[2, 3, 4]`
-meaning the true state is known to be one of these labels), wrap the distribution with
+In an observed-state Markov model the latent state *is* the observation. The
+`DiscreteTimeObservedStatesMarkovModel` constructor takes three positional arguments:
+
+```julia
+DiscreteTimeObservedStatesMarkovModel(transition_matrix, initial_dist, state_labels)
+```
+
+The **third argument is `state_labels`** -- a vector giving one label per state, whose
+length must equal the number of states (the size of `transition_matrix`). It maps state
+index → label and defaults to `[1, 2, ..., n_states]` if omitted. In the example below
+`[2, 3]` simply means the two states are labelled `2` and `3` (it is *not* a set of
+observed values).
+
+`state_labels` is distinct from the *coarsened observation* encoding used in the data. To
+allow set-valued observations (where the true state is only known to be one of several
+labels, e.g. `[2, 3]` meaning "state 2 or state 3"), wrap the distribution with
 `coarsed(...)` in `@formulas`.
 
 ```julia
@@ -223,18 +237,20 @@ model = @Model begin
         y ~ coarsed(
             DiscreteTimeObservedStatesMarkovModel(
                 P,
-                Categorical([0.5, 0.5]),
-                [2, 3],
+                Categorical([0.5, 0.5]),  # prior over states at the previous time
+                [2, 3],                   # state_labels: the two states are labelled 2 and 3
             )
         )
     end
 end
 ```
 
-Data encoding requirements:
-- With `coarsed(...)`: all non-missing observations in `y` must be `AbstractVector`s,
-  e.g. `[2]`, `[3]`, `[2, 3]`.
-- Without `coarsed(...)`: observations must be scalar labels.
+Data encoding requirements (these concern the **observations** in column `y`, not
+`state_labels`):
+- With `coarsed(...)`: all non-missing observations in `y` must be `AbstractVector`s of
+  labels, e.g. `[2]`, `[3]`, `[2, 3]` (the latter meaning the true state is one of those
+  labels).
+- Without `coarsed(...)`: observations must be scalar labels drawn from `state_labels`.
 
 ## Example: Multivariate Hidden Markov Observation Model
 
@@ -319,11 +335,4 @@ Here `delta_t` is a time-varying covariate holding the elapsed time since the pr
 
 ## Related APIs
 
-The following functions provide programmatic access to the internal representation and evaluation of formulas:
-
-- `get_formulas_meta(formulas)`
-- `get_formulas_ir(formulas)`
-- `get_formulas_builders(formulas; ...)`
-- `get_formulas_all(formulas, ctx, sol_accessors, constant_covariates_i, varying_covariates; ...)`
-- `get_formulas_obs(formulas, ctx, sol_accessors, constant_covariates_i, varying_covariates; ...)`
-- `get_formulas_time_offsets(formulas, state_names, signal_names)`
+Programmatic access to the internal representation and evaluation of formulas is provided by `get_formulas_meta`, `get_formulas_ir`, `get_formulas_builders`, `get_formulas_all`, `get_formulas_obs`, and `get_formulas_time_offsets`. Full signatures are in the [API reference](../api.md).

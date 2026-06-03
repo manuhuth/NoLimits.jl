@@ -15,7 +15,7 @@ For visualization of Wald-based densities, closed-form curves are used when avai
 Wald UQ is supported for results from the following estimation methods:
 
 - Fixed-effects fits: `MLE` and `MAP`
-- Mixed-effects fits: `Laplace`, `LaplaceMAP`, `MCEM`, and `SAEM`
+- Mixed-effects fits: `Laplace`, `LaplaceMAP`, `MCEM`, `SAEM`, `GHQuadrature`, and `GHQuadratureMAP`
 
 ## Minimal Usage
 

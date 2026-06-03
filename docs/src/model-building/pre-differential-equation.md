@@ -32,7 +32,7 @@ The following constraints are enforced at parse time:
 
 - Fixed effects
 - Random effects
-- Constant covariates (`constant_features_i`)
+- Constant covariates
 - Helper functions declared in `@helpers`
 - Model functions produced by learned parameter blocks (`NNParameters`, `SoftTreeParameters`, `SplineParameters`, `NPFParameter`)
 

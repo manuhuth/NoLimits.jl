@@ -2,10 +2,12 @@ export PlotCache
 export PlotStyle
 export build_plot_cache
 export plot_data
+export plot_observed_profiles
 export plot_fits
 export plot_fits_comparison
 export plot_multistart_waterfall
 export plot_multistart_fixed_effect_variability
+export plot_em_trajectories
 export plot_hidden_states
 export plot_emission_distributions
 
@@ -21,13 +23,14 @@ using Statistics
 
 """
     PlotStyle(; color_primary, color_secondary, color_accent, color_dark,
-               color_density, color_reference, font_family, font_size_title,
-               font_size_label, font_size_tick, font_size_legend,
+               color_density, color_reference, font_family,
+               font_size_title, font_size_label, font_size_tick, font_size_legend,
                font_size_annotation, line_width_primary, line_width_secondary,
                comparison_default_linestyle, comparison_line_styles, marker_size,
                marker_size_small, marker_alpha, marker_stroke_width,
                marker_size_pmf, marker_stroke_width_pmf,
-               base_subplot_width, base_subplot_height)
+               base_subplot_width, base_subplot_height,
+               left_margin, bottom_margin)
 
 Visual style configuration for all NoLimits plotting functions.
 
@@ -43,14 +46,18 @@ All plotting functions accept a `style::PlotStyle` keyword argument. Construct a
 - `color_reference::String`: reference line colour (default: `"#2C3E50"`).
 - `font_family::String`: font family for all text (default: `"Helvetica"`).
 - `font_size_title`, `font_size_label`, `font_size_tick`, `font_size_legend`,
-  `font_size_annotation`: font sizes in points.
+  `font_size_annotation`: font sizes in points, applied uniformly across all plots
+  (defaults: 12, 11, 10, 9, 8).
 - `line_width_primary`, `line_width_secondary`: line widths in pixels.
 - `comparison_default_linestyle`, `comparison_line_styles`: line style overrides for
   `plot_fits_comparison`.
 - `marker_size`, `marker_size_small`, `marker_alpha`, `marker_stroke_width`: marker
   appearance for continuous outcomes.
 - `marker_size_pmf`, `marker_stroke_width_pmf`: marker appearance for discrete outcomes.
-- `base_subplot_width`, `base_subplot_height`: base pixel dimensions per subplot panel.
+- `left_margin`: left margin per subplot to ensure y-axis labels are not clipped
+  (default: `10mm`).
+- `bottom_margin`: bottom margin per subplot to ensure x-axis labels are not clipped
+  (default: `8mm`).
 """
 Base.@kwdef struct PlotStyle
     color_primary::String = "#0072B2"
@@ -61,11 +68,11 @@ Base.@kwdef struct PlotStyle
     color_reference::String = "#2C3E50"
 
     font_family::String = "Helvetica"
-    font_size_title::Int = 11
-    font_size_label::Int = 10
-    font_size_tick::Int = 9
-    font_size_legend::Int = 8
-    font_size_annotation::Int = 7
+    font_size_title::Int = 16
+    font_size_label::Int = 14
+    font_size_tick::Int = 12
+    font_size_legend::Int = 11
+    font_size_annotation::Int = 10
 
     line_width_primary::Float64 = 2.0
     line_width_secondary::Float64 = 1.5
@@ -80,6 +87,9 @@ Base.@kwdef struct PlotStyle
 
     base_subplot_width::Int = 350
     base_subplot_height::Int = 280
+
+    left_margin::typeof(1mm) = PLOT_LEFT_MARGIN
+    bottom_margin::typeof(1mm) = PLOT_BOTTOM_MARGIN
 end
 
 const COLOR_PRIMARY = "#0072B2"
@@ -102,14 +112,16 @@ const MAX_FIGURE_WIDTH = 1800
 const MIN_FIGURE_HEIGHT = 300
 const MAX_FIGURE_HEIGHT = 2400
 const PLOT_MARGIN = 3mm
+const PLOT_LEFT_MARGIN = 10mm
+const PLOT_BOTTOM_MARGIN = 8mm
 const DEFAULT_DPI = 300
 
-function calculate_plot_size(nplots::Int, ncols::Int)
+function calculate_plot_size(nplots::Int, ncols::Int, style::PlotStyle=PlotStyle())
     ncols = min(ncols, nplots)
     nrows = ceil(Int, nplots / ncols)
     scale = nplots <= 4 ? 1.0 : nplots <= 9 ? 0.95 : nplots <= 16 ? 0.85 : nplots <= 25 ? 0.75 : 0.65
-    width = round(Int, ncols * BASE_SUBPLOT_WIDTH * scale)
-    height = round(Int, nrows * BASE_SUBPLOT_HEIGHT * scale)
+    width = round(Int, ncols * style.base_subplot_width * scale)
+    height = round(Int, nrows * style.base_subplot_height * scale)
     width = clamp(width, MIN_FIGURE_WIDTH, MAX_FIGURE_WIDTH)
     height = clamp(height, MIN_FIGURE_HEIGHT, MAX_FIGURE_HEIGHT)
     return (width, height)
@@ -123,11 +135,13 @@ function default_plot_kwargs(style::PlotStyle=PlotStyle())
         gridlinewidth = 0.5,
         foreground_color_grid = :gray,
         legend = :best,
-        titlefontsize = style.font_size_title,
-        guidefontsize = style.font_size_label,
-        tickfontsize = style.font_size_tick,
+        titlefontsize  = style.font_size_title,
+        guidefontsize  = style.font_size_label,
+        tickfontsize   = style.font_size_tick,
         legendfontsize = style.font_size_legend,
         margin = PLOT_MARGIN,
+        left_margin = style.left_margin,
+        bottom_margin = style.bottom_margin,
         fontfamily = style.font_family,
     )
 end
@@ -183,9 +197,17 @@ function add_annotation!(p, x, y, text; fontsize=7, halign=:right)
     return p
 end
 
-function combine_plots(plots::Vector; ncols::Int=DEFAULT_PLOT_COLS, kwargs...)
-    size = calculate_plot_size(length(plots), ncols)
-    return plot(plots...; layout=(ceil(Int, length(plots) / ncols), ncols), size=size, kwargs...)
+function combine_plots(plots::Vector; ncols::Int=DEFAULT_PLOT_COLS, style::PlotStyle=PlotStyle(), kwargs...)
+    nrows = ceil(Int, length(plots) / ncols)
+    font_kw = (
+        titlefontsize  = style.font_size_title,
+        guidefontsize  = style.font_size_label,
+        tickfontsize   = style.font_size_tick,
+        legendfontsize = style.font_size_legend,
+        fontfamily     = style.font_family,
+    )
+    auto_kw = merge(font_kw, (layout=(nrows, ncols), size=calculate_plot_size(length(plots), ncols, style)))
+    return plot(plots...; merge(auto_kw, NamedTuple(kwargs))...)
 end
 
 function _apply_shared_axes!(plots::AbstractVector, xlim, ylim)
@@ -527,6 +549,167 @@ function plot_multistart_fixed_effect_variability(res::MultistartFitResult;
     end
     plot!(p; yticks=(y, labels), ylims=(0.5, length(labels) + 0.5), yflip=true, xlims=(zmin, zmax))
     return _save_plot!(p, save_path)
+end
+
+"""
+    plot_em_trajectories(res::FitResult; dm, scale, include_parameters, exclude_parameters,
+                         ncols, style, kwargs_subplot, kwargs_layout, save_path) -> Plots.Plot
+
+Plot the Q-function and fixed-effect parameter trajectories over EM iterations for a
+[`SAEM`](@ref) or [`MCEM`](@ref) fit result.
+
+Requires the fit to have been run with `store_diagnostics=true`. The first panel shows
+the Q-function over all iterations; subsequent panels show one trace per scalar
+parameter element (e.g. `β[1]`, `β[2]`, `Ω[1,1]`, ...).
+
+# Keyword Arguments
+- `dm::Union{Nothing, DataModel} = nothing`: data model for the inverse transform when
+  `scale=:untransformed`. Inferred from `res` when stored.
+- `scale::Symbol = :untransformed`: `:untransformed` (natural scale) or `:transformed`
+  (optimiser scale). Affects the plotted values; `:untransformed` requires the DataModel.
+- `include_parameters`: `Symbol`, `String`, or vector thereof. If set, only the named
+  top-level parameter blocks are plotted. Defaults to `nothing` (all free parameters).
+- `exclude_parameters`: `Symbol`, `String`, or vector thereof. If set, the named blocks
+  are removed from the selection. Applied after `include_parameters`.
+- `ncols::Int = $(DEFAULT_PLOT_COLS)`: number of subplot columns.
+- `style::PlotStyle = PlotStyle()`: visual style configuration.
+- `kwargs_subplot`: additional keyword arguments forwarded to each individual subplot.
+- `kwargs_layout`: additional keyword arguments forwarded to the combined layout.
+- `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
+"""
+function plot_em_trajectories(res::FitResult;
+                              dm::Union{Nothing, DataModel}=nothing,
+                              scale::Symbol=:untransformed,
+                              include_parameters=nothing,
+                              exclude_parameters=nothing,
+                              ncols::Int=DEFAULT_PLOT_COLS,
+                              style::PlotStyle=PlotStyle(),
+                              kwargs_subplot=NamedTuple(),
+                              kwargs_layout=NamedTuple(),
+                              save_path::Union{Nothing, String}=nothing,
+                              plot_path::Union{Nothing, String}=nothing)
+    save_path = _resolve_plot_path(save_path, plot_path)
+    scale in (:untransformed, :transformed) ||
+        error("scale must be :untransformed or :transformed. Got: $(scale).")
+
+    method = get_method(res)
+    method isa Union{SAEM, MCEM} ||
+        error("plot_em_trajectories requires a SAEM or MCEM fit result. Got: $(typeof(method)).")
+
+    diag = get_notes(res).diagnostics
+    isempty(diag.θ_hist) &&
+        error("No parameter trajectory stored. Re-fit with store_diagnostics=true.")
+
+    diagnostics_every = method isa SAEM ? method.saem.diagnostics_every :
+                                          method.diagnostics_every
+    stored_iters = [k * diagnostics_every for k in 1:length(diag.θ_hist)]
+
+    # Resolve DataModel and build inverse transform if needed.
+    if scale == :untransformed
+        dm_use = dm !== nothing ? dm : get_data_model(res)
+        dm_use === nothing &&
+            error("scale=:untransformed requires the DataModel. Re-fit with " *
+                  "store_data_model=true (the default), or pass dm=... explicitly.")
+        full_inv = get_inverse_transform(dm_use.model.fixed.fixed)
+        hist_names = collect(keys(diag.θ_hist[1]))
+        name_to_idx = Dict(full_inv.names[i] => i for i in eachindex(full_inv.names))
+        valid_idxs = [name_to_idx[n] for n in hist_names if haskey(name_to_idx, n)]
+        restricted_inv = InverseTransform(full_inv.names[valid_idxs],
+                                          full_inv.specs[valid_idxs])
+        θ_vals = [restricted_inv(θ_t) for θ_t in diag.θ_hist]
+
+        # Determine parameter declaration order from the DataModel.
+        all_fe_names = get_names(dm_use.model.fixed.fixed)
+        free_fe_names = [n for n in all_fe_names if n in Set(hist_names)]
+    else
+        θ_vals = diag.θ_hist
+        free_fe_names = collect(keys(diag.θ_hist[1]))
+    end
+
+    # Apply include / exclude filters.
+    include_set = _normalize_top_level_parameter_selection(include_parameters,
+                                                           "include_parameters")
+    exclude_set = _normalize_top_level_parameter_selection(exclude_parameters,
+                                                           "exclude_parameters")
+    known = Set(free_fe_names)
+    if include_set !== nothing
+        unknown = [n for n in include_set if !(n in known)]
+        isempty(unknown) ||
+            error("Unknown include_parameters: $(unknown). " *
+                  "Available free parameters: $(free_fe_names).")
+    end
+    if exclude_set !== nothing
+        unknown = [n for n in exclude_set if !(n in known)]
+        isempty(unknown) ||
+            error("Unknown exclude_parameters: $(unknown). " *
+                  "Available free parameters: $(free_fe_names).")
+    end
+    selected_order = if include_set !== nothing
+        [n for n in free_fe_names if n in include_set]
+    else
+        copy(free_fe_names)
+    end
+    if exclude_set !== nothing
+        filter!(n -> !(n in exclude_set), selected_order)
+    end
+    isempty(selected_order) &&
+        error("No parameters selected for plotting after include/exclude filters.")
+
+    x_label = diagnostics_every == 1 ? "EM Iteration" :
+                                       "EM Iteration (×$(diagnostics_every))"
+
+    plots = Plots.Plot[]
+
+    # Q-function panel (always uses all iterations, not just stored ones).
+    # Plot index 1 is always in column 1, so it gets the ylabel.
+    q_plot = create_styled_plot(; title="Q Function", xlabel="EM Iteration",
+                                  ylabel="Value", style=style, kwargs_subplot...)
+    create_styled_line!(q_plot, collect(1:length(diag.Q_hist)), Float64.(diag.Q_hist);
+                        label="", color=style.color_primary, style=style)
+    push!(plots, q_plot)
+
+    # One panel per scalar element of each selected parameter block.
+    for pname in selected_order
+        first_val = getproperty(θ_vals[1], pname)
+        if first_val isa Number
+            traj = Float64[float(getproperty(θ, pname)) for θ in θ_vals]
+            push!(plots, create_styled_plot(; title=string(pname), xlabel=x_label,
+                                              ylabel="", style=style, kwargs_subplot...))
+            create_styled_line!(plots[end], stored_iters, traj;
+                                label="", color=style.color_primary, style=style)
+        elseif first_val isa AbstractVector
+            n_elem = length(first_val)
+            for j in eachindex(first_val)
+                traj = Float64[float(getproperty(θ, pname)[j]) for θ in θ_vals]
+                label = n_elem == 1 ? string(pname) : string(pname, "[", j, "]")
+                push!(plots, create_styled_plot(; title=label, xlabel=x_label,
+                                                  ylabel="", style=style, kwargs_subplot...))
+                create_styled_line!(plots[end], stored_iters, traj;
+                                    label="", color=style.color_primary, style=style)
+            end
+        elseif first_val isa AbstractMatrix
+            for r in axes(first_val, 1)
+                for c in axes(first_val, 2)
+                    traj = Float64[float(getproperty(θ, pname)[r, c]) for θ in θ_vals]
+                    label = string(pname, "[", r, ",", c, "]")
+                    push!(plots, create_styled_plot(; title=label, xlabel=x_label,
+                                                      ylabel="", style=style, kwargs_subplot...))
+                    create_styled_line!(plots[end], stored_iters, traj;
+                                        label="", color=style.color_primary, style=style)
+                end
+            end
+        end
+    end
+
+    # Apply "Value" ylabel only to panels in the first column.
+    for i in eachindex(plots)
+        if (i - 1) % ncols == 0
+            plot!(plots[i]; ylabel="Value")
+        end
+    end
+
+    result = combine_plots(plots; ncols=ncols, style=style, kwargs_layout...)
+    return _save_plot!(result, save_path)
 end
 
 """
@@ -1485,6 +1668,10 @@ function _default_random_effects(res::FitResult,
         return _mcmc_random_effects_means(res, dm, constants_re, θ; max_draws=mcmc_draws, rng=rng)
     elseif res.result isa VIResult
         return _vi_random_effects_means(res, dm, constants_re, θ; max_draws=mcmc_draws, rng=rng)
+    end
+
+    if res.result isa PooledResult
+        return res.result.eta_vec
     end
 
     return fill(ComponentArray(NamedTuple()), length(dm.individuals))

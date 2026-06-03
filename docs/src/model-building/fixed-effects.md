@@ -29,21 +29,21 @@ For standard-error eligibility, `RealNumber` and `RealVector` default to `calcul
 
 ## Supported Parameter Types
 
-NoLimits provides parameter types for scalars, vectors, structured matrices, and learned function approximators. Each type controls how values are stored, transformed during optimization, and optionally regularized via priors.
+NoLimits provides parameter types for scalars, vectors, structured matrices, and learned function approximators. Each type controls how values are stored, transformed during optimization, and optionally regularized via priors. The overview below lists the purpose and value kind of each type; see the [Parameter Types](../api.md#Parameter-Types) section of the API reference for full constructor signatures, keyword arguments, and defaults.
 
-| Constructor | Purpose |
-|---|---|
-| `RealNumber(value; scale, lower, upper, prior, calculate_se)` | Scalar parameter (`:identity`, `:log`, or `:logit` scale) |
-| `RealVector(value; scale, lower, upper, prior, calculate_se)` | Vector parameter with per-element scale (`:identity`, `:log`, `:logit`, or mixed) |
-| `RealPSDMatrix(value; scale, prior, calculate_se)` | Symmetric positive semi-definite matrix (`:cholesky` or `:expm`) |
-| `RealDiagonalMatrix(value; scale, prior, calculate_se)` | Diagonal matrix (`:log` scale on diagonal entries) |
-| `ProbabilityVector(value; scale, prior, calculate_se)` | Probability simplex vector of length k≥2 (`:stickbreak` scale) |
-| `DiscreteTransitionMatrix(value; scale, prior, calculate_se)` | Square row-stochastic matrix n×n, n≥2 (`:stickbreakrows` scale) |
-| `ContinuousTransitionMatrix(value; scale, prior, calculate_se)` | Square rate matrix (Q-matrix) n×n, n≥2 (`:lograterows` scale) |
-| `NNParameters(chain; function_name, seed, prior, calculate_se)` | Lux neural network weights |
-| `SoftTreeParameters(input_dim, depth; function_name, n_output, seed, prior, calculate_se)` | Soft decision tree parameters |
-| `SplineParameters(knots; function_name, degree, prior, calculate_se)` | B-spline coefficients |
-| `NPFParameter(n_input, n_layers; seed, init, base_dist, prior, calculate_se)` | Normalizing planar flow parameters |
+| Type | Purpose | Value kind |
+|---|---|---|
+| `RealNumber` | Scalar parameter | scalar `Real` |
+| `RealVector` | Vector parameter with per-element scale | `Vector{<:Real}` |
+| `RealPSDMatrix` | Symmetric positive semi-definite matrix | square `Matrix` |
+| `RealDiagonalMatrix` | Diagonal matrix | diagonal entries `Vector` |
+| `ProbabilityVector` | Probability simplex of length k≥2 | `Vector` summing to 1 |
+| `DiscreteTransitionMatrix` | n×n row-stochastic matrix (n≥2) | row-stochastic `Matrix` |
+| `ContinuousTransitionMatrix` | n×n rate matrix / Q-matrix (n≥2) | rate `Matrix` |
+| `NNParameters` | Lux neural network weights | flattened Lux params |
+| `SoftTreeParameters` | Soft decision tree parameters | flattened tree params |
+| `SplineParameters` | B-spline coefficients | coefficient `Vector` |
+| `NPFParameter` | Normalizing planar flow parameters | flattened flow params |
 
 ## Example: Classical Parameter Blocks
 
@@ -124,13 +124,7 @@ y_sp = model_funs.SP1(0.5, params.z_sp.value)
 
 ## Example: Constrained Stochastic Matrices
 
-Three dedicated parameter types handle the structural constraints that arise in Hidden Markov Models and other latent-variable models:
-
-| Type | Purpose | Transform | Free parameters |
-|---|---|---|---|
-| `ProbabilityVector(value)` | Probability simplex of length k, k≥2 | `:stickbreak` | k-1 |
-| `DiscreteTransitionMatrix(value)` | n×n row-stochastic matrix, n≥2 | `:stickbreakrows` | n*(n-1) |
-| `ContinuousTransitionMatrix(value)` | n×n rate matrix (Q-matrix), n≥2 | `:lograterows` | n*(n-1) |
+Three dedicated parameter types handle the structural constraints that arise in Hidden Markov Models and other latent-variable models -- `ProbabilityVector` (`:stickbreak`), `DiscreteTransitionMatrix` (`:stickbreakrows`), and `ContinuousTransitionMatrix` (`:lograterows`). Their constraints, transforms, and free-parameter counts are described in the scale list above.
 
 All three types are AD-compatible and can be used anywhere in a model formula where the corresponding matrix or vector is expected. The values they provide in formulas are plain Julia arrays (`Vector` or `Matrix`), enabling direct indexing and arithmetic.
 

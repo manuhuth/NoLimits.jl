@@ -142,9 +142,102 @@ model = @Model begin
 end
 ```
 
+## Extending an Existing Model
+
+`@Model` has a second form that builds a new model from an existing one, overriding only
+the blocks you supply:
+
+```julia
+new_model = @Model base_model begin
+    # only the blocks you want to change
+end
+```
+
+Every model built by `@Model` stores the source expression of each of its blocks (see
+[`get_source`](@ref)). The extension form reuses those stored blocks for anything you do
+not mention, so you only restate what actually changes between the two models.
+
+### Merge semantics
+
+Within an overridden block, entries are merged **by name** -- the left-hand side of each
+declaration:
+
+- An entry whose name matches one already in the base block **replaces** it, keeping its
+  original position.
+- A new name is **appended** to the end of the block.
+- Assigning a name to `nothing` (e.g. `sigma_k = nothing`) **removes** it from the block.
+
+A block you do not mention at all is inherited verbatim. The merged result is rebuilt
+through the full single-argument `@Model` pipeline, so **all normal validation applies**
+(required `@formulas`, at least one parameter, DE/initial-DE pairing, covariate-usage
+rules, etc.).
+
+### Example: Gaussian → normalizing-flow random effect
+
+Starting from a Gaussian baseline:
+
+```julia
+model_gauss = @Model begin
+    @covariates begin
+        age = Covariate()
+    end
+    @fixedEffects begin
+        L_inf_pop = RealNumber(705.0, scale = :log)
+        k_pop     = RealNumber(0.104, scale = :log)
+        sigma_L   = RealNumber(0.10,  scale = :log)
+        sigma_k   = RealNumber(0.40,  scale = :log)
+        sigma_y   = RealNumber(15.0,  scale = :log)
+    end
+    @randomEffects begin
+        eta_k = RandomEffect(Normal(0.0, sigma_k); column = :fishid)
+        eta_L = RandomEffect(Normal(0.0, sigma_L); column = :fishid)
+    end
+    @formulas begin
+        length ~ Normal(
+            exp(log(L_inf_pop) + eta_L) *
+                (1 - exp(-exp(log(k_pop) + eta_k) * age)),
+            sigma_y)
+    end
+end
+```
+
+the flow variant changes only three blocks -- `@covariates`, `@fixedEffects` keeps all
+parameters except `sigma_k` (removed) and adds `psi`, `eta_k` becomes a flow while `eta_L`
+is inherited, and the `length` formula switches `eta_k` to `eta_k[1]`:
+
+```julia
+model_flow = @Model model_gauss begin
+    @fixedEffects begin
+        sigma_k = nothing                                      # drop the Gaussian scale
+        psi     = NPFParameter(1, 4; seed = 42, calculate_se = false)
+    end
+    @randomEffects begin
+        eta_k = RandomEffect(NormalizingPlanarFlow(psi); column = :fishid)
+        # eta_L is inherited unchanged
+    end
+    @formulas begin
+        length ~ Normal(
+            exp(log(L_inf_pop) + eta_L) *
+                (1 - exp(-exp(log(k_pop) + eta_k[1]) * age)),
+            sigma_y)
+    end
+end
+```
+
+`model_flow` ends up with fixed effects `L_inf_pop, k_pop, sigma_L, sigma_y, psi` and
+random effects `eta_k` (flow) and `eta_L` (inherited Gaussian). Extension models can
+themselves be extended -- the new model again stores its own source.
+
+!!! warning "Blocks must be self-contained"
+    Inherited and overriding blocks are re-evaluated in the module where the extension
+    call occurs. Any variable they reference (for example a `Lux.Chain`, a `knots` vector,
+    or a precomputed matrix) must be available as a global in that module. Local variables
+    captured at the base model's original call site are **not** carried over -- declare
+    such values as globals, or re-declare them before the extension call.
+
 ## Model Summary
 
-After construction, use `NoLimits.summarize(model)` to inspect the declared structure:
+After construction, use `NoLimits.summarize(model)` to inspect the declared structure. It returns a `ModelSummary` describing the model's blocks -- counts and lists of fixed effects, random effects, covariates, deterministic formulas, outcome distributions, and differential-equation states/signals -- which is pretty-printed via `Base.show`.
 
 ```julia
 model_summary = NoLimits.summarize(model)
@@ -153,11 +246,6 @@ model_summary
 
 ## Runtime Evaluation Helpers
 
-`@Model` wires internal evaluation functions used during fitting and simulation:
-
-- `calculate_prede(...)` -- evaluate pre-DE expressions
-- `calculate_initial_state(...)` -- compute ODE initial conditions
-- `calculate_formulas_all(...)` -- evaluate all formula nodes
-- `calculate_formulas_obs(...)` -- evaluate observation-node formulas only
+`@Model` wires internal evaluation functions used during fitting and simulation -- `calculate_prede` (pre-DE expressions), `calculate_initial_state` (ODE initial conditions), `calculate_formulas_all` (all formula nodes), and `calculate_formulas_obs` (observation-node formulas only). Full signatures are in the [API reference](../api.md).
 
 When formulas reference ODE states or signals, formula evaluation requires DE solution accessors from `get_de_accessors_builder(...)`.

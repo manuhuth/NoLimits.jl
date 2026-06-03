@@ -32,6 +32,7 @@ export get_loglikelihood
 export get_loglikelihood_quadrature
 export get_laplace_random_effects
 export get_re_covariate_usage
+export compute_shrinkage
 export loglikelihood
 export build_ll_cache
 export MCIntegrator
@@ -542,7 +543,7 @@ function _re_dataframes_from_bstars(dm::DataModel,
         const_mask = const_cache.is_const[ri]
         const_scalars = const_cache.scalar_vals[ri]
         const_vectors = const_cache.vector_vals[ri]
-        is_scalar = cache.is_scalar[ri] || cache.dims[ri] == 1
+        is_scalar = cache.is_scalar[ri]
 
         # determine dimension
         dim = 1
@@ -810,6 +811,9 @@ function get_random_effects(dm::DataModel,
         return _re_dataframes_from_bstars(dm, batch_infos, bstars; constants_re=constants_re,
                                           flatten=flatten, include_constants=include_constants)
     end
+    if res.result isa PooledResult
+        return _pooled_re_dataframes(dm, res.result.eta_vec; flatten=flatten)
+    end
     error("Random-effects access not supported for this method.")
 end
 
@@ -820,6 +824,39 @@ function get_random_effects(res::FitResult;
     dm = res.data_model
     dm === nothing && error("This fit result does not store a DataModel; call get_random_effects(dm, res) instead.")
     return get_random_effects(dm, res; constants_re=constants_re, flatten=flatten, include_constants=include_constants)
+end
+
+"""
+    get_random_effects(res::FitResult, re::Symbol; kwargs...) -> Vector
+
+    get_random_effects(dm::DataModel, res::FitResult, re::Symbol; kwargs...) -> Vector
+
+Return the empirical Bayes estimates for a single random effect `re` as a plain vector,
+ordered by individual index in `dm`.
+"""
+function get_random_effects(dm::DataModel, res::FitResult, re::Symbol;
+                            constants_re::NamedTuple=NamedTuple(),
+                            include_constants::Bool=true)
+    nt = get_random_effects(dm, res; constants_re=constants_re, flatten=true,
+                            include_constants=include_constants)
+    haskey(nt, re) || error("Random effect :$(re) not found. Available: $(keys(nt)).")
+    df = getfield(nt, re)
+    id_col = dm.config.primary_id
+    val_cols = [c for c in propertynames(df) if c != id_col]
+    length(val_cols) == 1 ||
+        error("Random effect :$(re) is multivariate ($(length(val_cols)) components); use get_random_effects(res) to access the full DataFrame.")
+    val_col = val_cols[1]
+    id_order = [dm.df[dm.row_groups.obs_rows[i][1], id_col] for i in 1:length(dm.individuals)]
+    id_to_val = Dict(row[id_col] => row[val_col] for row in eachrow(df))
+    return [id_to_val[id] for id in id_order]
+end
+
+function get_random_effects(res::FitResult, re::Symbol;
+                            constants_re::NamedTuple=NamedTuple(),
+                            include_constants::Bool=true)
+    dm = res.data_model
+    dm === nothing && error("This fit result does not store a DataModel; call get_random_effects(dm, res, re) instead.")
+    return get_random_effects(dm, res, re; constants_re=constants_re, include_constants=include_constants)
 end
 
 function _resolve_bstars_for_re(dm::DataModel, res::FitResult, constants_re::NamedTuple)
@@ -1306,6 +1343,8 @@ function get_loglikelihood(dm::DataModel,
             total += bll
         end
         return total
+    elseif res.result isa PooledResult
+        return loglikelihood(dm, θu, res.result.eta_vec; ode_args=ode_args, ode_kwargs=ode_kwargs, serialization=serialization)
     else
         error("loglikelihood accessor not supported for this method.")
     end
@@ -1399,6 +1438,10 @@ function get_loglikelihood_quadrature(dm::DataModel,
     if res.result isa MLEResult || res.result isa MAPResult
         error("get_loglikelihood_quadrature: MLE/MAP models have no random effects. " *
               "Use get_loglikelihood instead, which already returns the exact marginal log-likelihood.")
+    end
+    if res.result isa PooledResult
+        error("get_loglikelihood_quadrature: Pooled/PooledMap results have fixed RE. " *
+              "Use get_loglikelihood instead.")
     end
 
     constants_re = _res_constants_re(res, constants_re)
@@ -2336,4 +2379,87 @@ function _partition_q1_q2_names(model, free_names::Vector{Symbol})
     q2_free = [n for n in free_names if n ∈ q2_candidates]
     q1_free = [n for n in free_names if n ∉ q2_candidates]
     return (q1=q1_free, q2=q2_free)
+end
+
+"""
+    compute_shrinkage(res::FitResult; dm, constants_re) -> NamedTuple
+
+Compute eta shrinkage for every scalar random effect in the fitted model.
+
+Shrinkage is defined as `1 - SD(eta) / omega`, where `eta_i = f(EBE_i) - mu_i` is the
+individual-level random-effect residual, `mu_i` is the covariate-adjusted population mean
+for individual `i`, and `omega` is the estimated standard deviation of the RE distribution.
+For `LogNormal` random effects the transformation is `f(x) = log(x)`; for `Normal` it is
+the identity; for all other distributions the linear deviation from the population mean is
+used.
+
+A value near 0 indicates that EBEs carry individual information. Values above 0.3–0.4
+signal that EBEs are pulled toward the population mean and should not be interpreted as
+individual estimates.
+
+# Keyword Arguments
+- `dm::Union{Nothing, DataModel} = nothing`: data model (inferred from `res` by default).
+- `constants_re::NamedTuple = NamedTuple()`: random effects fixed at given values.
+
+# Returns
+A `NamedTuple` mapping each RE name to a `NamedTuple` with fields
+`shrinkage`, `eta_std`, and `sigma`.
+"""
+function compute_shrinkage(res::FitResult;
+                           dm::Union{Nothing, DataModel}=nothing,
+                           constants_re::NamedTuple=NamedTuple())
+    dm_use = dm !== nothing ? dm : get_data_model(res)
+    dm_use === nothing &&
+        error("This fit result does not store a DataModel; pass dm=... explicitly.")
+
+    θ = get_params(res; scale=:untransformed)
+    constants_re = _res_constants_re(res, constants_re)
+    re_names   = get_re_names(dm_use.model.random.random)
+    dists_builder = get_create_random_effect_distribution(dm_use.model.random.random)
+    model_funs = get_model_funs(dm_use.model)
+    helpers    = get_helper_funs(dm_use.model)
+
+    pairs = Pair{Symbol, NamedTuple}[]
+    for re in re_names
+        # get_random_effects(res, re) returns a vector ordered by individual index
+        ebes = try
+            get_random_effects(dm_use, res, re; constants_re=constants_re)
+        catch
+            continue
+        end
+        length(ebes) == length(dm_use.individuals) || continue
+
+        etas   = Float64[]
+        sigma  = NaN
+        valid  = true
+
+        for i in eachindex(dm_use.individuals)
+            ind  = dm_use.individuals[i]
+            ebe  = Float64(ebes[i])
+            isfinite(ebe) || continue
+
+            dists = dists_builder(θ, ind.const_cov, model_funs, helpers)
+            hasfield(typeof(dists), re) || (valid = false; break)
+            dist_i = getfield(dists, re)
+
+            local eta_i::Float64
+            if dist_i isa LogNormal
+                eta_i  = log(ebe) - dist_i.μ
+                sigma  = dist_i.σ
+            elseif dist_i isa Normal
+                eta_i  = ebe - dist_i.μ
+                sigma  = dist_i.σ
+            else
+                eta_i  = ebe - mean(dist_i)
+                sigma  = std(dist_i)
+            end
+            push!(etas, eta_i)
+        end
+
+        valid && !isempty(etas) && isfinite(sigma) && sigma > 0 || continue
+        eta_s   = std(etas)
+        shrink  = 1.0 - eta_s / sigma
+        push!(pairs, re => (; shrinkage=shrink, eta_std=eta_s, sigma=sigma))
+    end
+    return NamedTuple(pairs)
 end

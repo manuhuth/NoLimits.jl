@@ -363,7 +363,7 @@ function _laplace_batch_labels(dm::DataModel, info::_LaplaceBatchInfo)
         for (li, level_id) in enumerate(re_info.map.levels)
             level = levels_all[level_id]
             r = re_info.ranges[li]
-            if re_info.is_scalar || re_info.dim == 1
+            if re_info.is_scalar
                 push!(labels, string(re, "[", level, "]"))
             else
                 for k in 1:length(r)

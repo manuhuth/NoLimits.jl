@@ -37,8 +37,8 @@ IS is often substantially faster per iteration than MCMC because it requires onl
 
 ```julia
 NoLimits.MCEM_IS(;
-    n_samples             = 200,
-    proposal              = :prior,
+    n_samples             = 500,
+    proposal              = :gaussian,
     adapt                 = true,
     warm_start_mcmc_iters = 0,
     mcmc_warmup           = nothing,
@@ -196,7 +196,7 @@ method = NoLimits.MCEM(;
 
     # M-step
     optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
-    optim_kwargs=NamedTuple(),
+    optim_kwargs=(; iterations=50, g_abstol=1e-4, f_reltol=1e-6),
     adtype=Optimization.AutoForwardDiff(),
 
     # EM convergence
@@ -215,10 +215,10 @@ method = NoLimits.MCEM(;
     ebe_adtype=Optimization.AutoForwardDiff(),
     ebe_grad_tol=:auto,
     ebe_multistart_n=50,
-    ebe_multistart_k=10,
+    ebe_multistart_k=1,
     ebe_multistart_max_rounds=5,
     ebe_multistart_sampling=:lhs,
-    ebe_rescue_on_high_grad=true,
+    ebe_rescue_on_high_grad=false,
     ebe_rescue_multistart_n=128,
     ebe_rescue_multistart_k=32,
     ebe_rescue_max_rounds=8,
@@ -242,38 +242,13 @@ method = NoLimits.MCEM(;
 | Final EB estimation | `ebe_*` and `ebe_rescue_*` options | Post-fit empirical Bayes mode computation used by random-effects accessors and diagnostics. |
 | Bounds | `lb`, `ub` | Optional transformed-scale bounds for free fixed effects in M-step optimization. |
 
-## Constructor Input Reference
+## Behavioral Notes
 
-### M-step Optimization Inputs
+The constructor signature block above lists every keyword with its default. See the [`MCEM`](@ref) entry in the API reference for the full list. The notes below explain the behavior that is not obvious from the names.
 
-- `optimizer` — optimizer for fixed effects in each MCEM iteration. Default: `LBFGS` with backtracking line search.
-- `optim_kwargs` — keyword arguments forwarded to `Optimization.solve` for the M-step optimizer.
-- `adtype` — AD backend for the M-step objective.
-
-### EM Convergence Inputs
-
-MCEM monitors both fixed-effect parameter stability and Q-function stability.
-
-- `maxiters` — maximum number of MCEM iterations.
-- `rtol_theta`, `atol_theta` — relative and absolute tolerances for fixed-effect stabilization.
-- `rtol_Q`, `atol_Q` — relative and absolute tolerances for Q-function stabilization.
-- `consecutive_params` — number of consecutive iterations that must simultaneously satisfy both criteria before convergence is declared.
-- `verbose` — enables iteration-level logging of `Q`, `dtheta`, `dQ`, and sample count.
-- `progress` — enables or disables the progress bar.
-
-### Final EB Mode Inputs
-
-After the EM iterations complete, MCEM computes empirical Bayes (EB) modal estimates of the random effects used by downstream accessors.
-
-- `ebe_optimizer`, `ebe_optim_kwargs`, `ebe_adtype` — optimizer, solve arguments, and AD backend for EB mode optimization.
-- `ebe_grad_tol` — gradient tolerance for EB optimization (`:auto` selects a data-adaptive value).
-- `ebe_multistart_n`, `ebe_multistart_k`, `ebe_multistart_max_rounds`, `ebe_multistart_sampling` — multistart configuration for EB optimization.
-- `ebe_rescue_on_high_grad` — enables a rescue multistart if the final EB gradient norm remains above threshold.
-- `ebe_rescue_multistart_n`, `ebe_rescue_multistart_k`, `ebe_rescue_max_rounds`, `ebe_rescue_grad_tol`, `ebe_rescue_multistart_sampling` — configuration for the rescue strategy.
-
-### Bound Inputs
-
-- `lb`, `ub` — optional transformed-scale bounds for free fixed effects. Parameters held constant via the `constants` fit keyword are excluded automatically.
+- **EM convergence.** MCEM monitors both fixed-effect parameter stability (`rtol_theta`, `atol_theta`) and Q-function stability (`rtol_Q`, `atol_Q`). `consecutive_params` is the number of consecutive iterations that must simultaneously satisfy both criteria before convergence is declared. `verbose` enables iteration-level logging of `Q`, `dtheta`, `dQ`, and sample count.
+- **Final EB modes.** After the EM iterations complete, MCEM computes empirical Bayes (EB) modal estimates of the random effects used by downstream accessors, configured through the `ebe_*` keywords (`ebe_grad_tol=:auto` selects a data-adaptive tolerance). When `ebe_rescue_on_high_grad=true` (default `false`), a rescue multistart governed by the `ebe_rescue_*` keywords is triggered if the final EB gradient norm remains above threshold.
+- **Bounds.** `lb`, `ub` are optional transformed-scale bounds for free fixed effects in the M-step optimization. Parameters held constant via the `constants` fit keyword are excluded automatically.
 
 ## Diagnostics
 

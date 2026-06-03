@@ -139,6 +139,8 @@ struct MCEMOptions{S, K, SS, W, V, P}
     warm_start::W
     verbose::V
     progress::P
+    store_diagnostics::Bool
+    diagnostics_every::Int
 end
 
 struct EMOptions{T}
@@ -166,7 +168,7 @@ fixed effects.
 
 # Keyword Arguments
 - `optimizer`: M-step Optimization.jl optimiser. Defaults to `LBFGS` with backtracking.
-- `optim_kwargs::NamedTuple = NamedTuple()`: keyword arguments for the M-step `solve`.
+- `optim_kwargs::NamedTuple = (; iterations=50, g_abstol=1e-4, f_reltol=1e-6)`: keyword arguments for the M-step `solve`.
 - `adtype`: AD backend for the M-step. Defaults to `AutoForwardDiff()`.
 - `e_step`: E-step strategy. Either [`MCEM_MCMC`](@ref) or [`MCEM_IS`](@ref). When
   omitted, defaults to `MCEM_MCMC` constructed from the legacy keyword arguments below.
@@ -176,6 +178,10 @@ fixed effects.
 - `warm_start::Bool = true`: (legacy) initialise sampler from previous iteration's modes.
 - `verbose::Bool = false`: print per-iteration diagnostics.
 - `progress::Bool = true`: show a progress bar.
+- `store_diagnostics::Bool = false`: store per-iteration parameter trajectories
+  (`θ_hist`) in the result diagnostics. Disabled by default to save memory.
+- `diagnostics_every::Int = 1`: when `store_diagnostics=true`, store only every n-th
+  iteration. E.g. `diagnostics_every=10` keeps one snapshot per 10 iterations.
 - `maxiters::Int = 100`: maximum number of EM iterations.
 - `rtol_theta`, `atol_theta`: relative/absolute convergence tolerance on fixed effects.
 - `rtol_Q`, `atol_Q`: relative/absolute convergence tolerance on the Q-function.
@@ -201,10 +207,12 @@ struct MCEM{O, K, A, ES, EO, EB, ER, L, U} <: FittingMethod
     ub::U
     verbose::Bool
     progress::Bool
+    store_diagnostics::Bool
+    diagnostics_every::Int
 end
 
 MCEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
-     optim_kwargs=NamedTuple(),
+     optim_kwargs=(; iterations=50, g_abstol=1e-4, f_reltol=1e-6),
      adtype=Optimization.AutoForwardDiff(),
      e_step=nothing,
      sampler=Turing.NUTS(0.75),
@@ -235,7 +243,11 @@ MCEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(
      ebe_rescue_multistart_sampling=ebe_multistart_sampling,
      lb=nothing,
      ub=nothing,
+     store_diagnostics::Bool=false,
+     diagnostics_every::Int=1,
      ) = begin
+    diagnostics_every >= 1 ||
+        error("MCEM: diagnostics_every must be ≥ 1. Got: $diagnostics_every")
     # When e_step is not provided, build MCEM_MCMC from legacy kwargs (backward compat)
     e_step_actual = if e_step === nothing
         MCEM_MCMC(sampler, turing_kwargs, sample_schedule, warm_start)
@@ -250,7 +262,7 @@ MCEM(; optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(
                                    ebe_rescue_multistart_k, ebe_rescue_max_rounds,
                                    ebe_rescue_grad_tol, ebe_rescue_multistart_sampling)
     MCEM(optimizer, optim_kwargs, adtype, e_step_actual, em, ebe, ebe_rescue,
-         lb, ub, verbose, progress)
+         lb, ub, verbose, progress, store_diagnostics, diagnostics_every)
 end
 
 """
@@ -1552,7 +1564,9 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
         dQ_abs = abs(Q_new - Q_prev)
         dQ_rel = dQ_abs / max(T0(1.0), abs(Q_prev))
 
-        push!(diag.θ_hist, θ_prev_new)
+        if method.store_diagnostics && iter % method.diagnostics_every == 0
+            push!(diag.θ_hist, θ_prev_new)
+        end
         push!(diag.Q_hist, Q_new)
         push!(diag.dθ_abs, dθ_abs)
         push!(diag.dθ_rel, dθ_rel)

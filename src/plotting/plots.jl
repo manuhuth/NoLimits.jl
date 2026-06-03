@@ -1,5 +1,11 @@
+export plot_dv_pred
+export plot_dv_ipred
+export plot_wres_pred
+export plot_shrinkage
+
 using Distributions
 using Plots
+using Random
 
 function _get_dm(res, dm::Union{Nothing, DataModel})
     dm !== nothing && return dm
@@ -240,11 +246,9 @@ function _plot_data_dm(dm::DataModel;
         x = _get_x_values(dm, ind, obs_rows, x_axis_feature)
         y = getfield(ind.series.obs, obs_name)
         title_id = string(dm.config.primary_id, ": ", dm.df[obs_rows[1], dm.config.primary_id])
-        p = create_styled_plot(title=title_id,
-                               xlabel=x_axis_feature === nothing ? "Time" : _axis_label(x_axis_feature),
-                               ylabel=_axis_label(obs_name),
-                               style=style,
-                               kwargs_subplot...)
+        _kw249 = merge((xlabel=x_axis_feature === nothing ? "Time" : _axis_label(x_axis_feature),
+                        ylabel=_axis_label(obs_name)), kwargs_subplot)
+        p = create_styled_plot(; title=title_id, style=style, _kw249...)
         if is_mv
             if marginal_idx === nothing
                 xs, ys = _collect_multivariate_series(x, y, n_marginals)
@@ -279,7 +283,7 @@ function _plot_data_dm(dm::DataModel;
         ylim_use = shared_y_axis && ylims !== nothing ? _pad_limits(ylims[1], ylims[2]) : nothing
         _apply_shared_axes!(plots, xlim_use, ylim_use)
     end
-    p = combine_plots(plots; ncols=ncols, kwargs_layout...)
+    p = combine_plots(plots; ncols=ncols, style=style, kwargs_layout...)
     return _save_plot!(p, save_path)
 end
 
@@ -553,6 +557,8 @@ function plot_fits(res::FitResult;
         plot_density = false
     end
 
+    _default_xlabel = x_axis_feature === nothing ? "Time" : _axis_label(x_axis_feature)
+    _default_ylabel = get(kwargs_subplot, :ylabel, _axis_label(obs_name))
     for (k, i) in enumerate(inds)
         ind = dm.individuals[i]
         obs_rows = dm.row_groups.obs_rows[i]
@@ -565,11 +571,10 @@ function plot_fits(res::FitResult;
         y_obs = getfield(ind.series.obs, obs_name)
         x_obs_plot, y_obs_plot = is_mv ? (nothing, nothing) : _collect_scalar_series(x_obs, y_obs)
         title_id = string(dm.config.primary_id, ": ", dm.df[obs_rows[1], dm.config.primary_id])
-        p = create_styled_plot(title=title_id,
-                               xlabel=x_axis_feature === nothing ? "Time" : _axis_label(x_axis_feature),
-                               ylabel=_axis_label(obs_name),
-                               style=style,
-                               kwargs_subplot...)
+        is_leftmost = (k - 1) % ncols == 0
+        _ylabel = is_leftmost ? _default_ylabel : ""
+        _kw574 = merge((xlabel=_default_xlabel,), kwargs_subplot, (ylabel=_ylabel,))
+        p = create_styled_plot(; title=title_id, style=style, _kw574...)
         xs_per_margin = nothing
         ys_per_margin = nothing
         if is_mv
@@ -805,7 +810,7 @@ function plot_fits(res::FitResult;
         ylim_use = shared_y_axis ? _pad_limits(ylims[1], ylims[2]) : nothing
         _apply_shared_axes!(plots, xlim_use, ylim_use)
     end
-    p = combine_plots(plots; ncols=ncols, kwargs_layout...)
+    p = combine_plots(plots; ncols=ncols, style=style, kwargs_layout...)
     return _save_plot!(p, save_path)
 end
 
@@ -861,11 +866,9 @@ function _plot_hidden_states_impl(dm::DataModel,
         obs_rows = dm.row_groups.obs_rows[i]
         x_vals = _get_x_values(dm, ind, obs_rows, x_axis_feature)
         title_id = string(dm.config.primary_id, ": ", dm.df[obs_rows[1], dm.config.primary_id])
-        p = create_styled_plot(title=title_id,
-                               xlabel=x_axis_feature === nothing ? "Time" : _axis_label(x_axis_feature),
-                               ylabel="Hidden-state probability",
-                               style=style,
-                               kwargs_subplot...)
+        _kw870 = merge((xlabel=x_axis_feature === nothing ? "Time" : _axis_label(x_axis_feature),
+                        ylabel="Hidden-state probability"), kwargs_subplot)
+        p = create_styled_plot(; title=title_id, style=style, _kw870...)
         θ_ind = θ
         η_ind = η_vec[i]
         rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only=true)
@@ -969,7 +972,7 @@ function _plot_hidden_states_impl(dm::DataModel,
         ylim_use = shared_y_axis ? (0.0, 1.0) : nothing
         _apply_shared_axes!(plots, xlim_use, ylim_use)
     end
-    p = combine_plots(plots; ncols=ncols, kwargs_layout...)
+    p = combine_plots(plots; ncols=ncols, style=style, kwargs_layout...)
     return _save_plot!(p, save_path)
 end
 
@@ -1200,11 +1203,8 @@ function _plot_emission_for_individual(dm::DataModel,
     overall_ylim = nothing
 
     for s in 1:n_states
-        p_state = create_styled_plot(title="$title_base • State $s",
-                                     xlabel="Outcome value",
-                                     ylabel="Density",
-                                     style=style,
-                                     kwargs_subplot...)
+        _kw1209 = merge((xlabel="Outcome value", ylabel="Density"), kwargs_subplot)
+        p_state = create_styled_plot(; title="$title_base • State $s", style=style, _kw1209...)
         emission = dist.emission_dists[s]
         marginals = _state_emission_marginals(emission)
         state_xlim = nothing
@@ -1241,7 +1241,7 @@ function _plot_emission_for_individual(dm::DataModel,
         state_plots[s] = p_state
     end
 
-    combined = combine_plots(state_plots; ncols=min(state_ncols, n_states))
+    combined = combine_plots(state_plots; ncols=min(state_ncols, n_states), style=style)
     return (plot=combined, xlims=overall_xlim, ylims=overall_ylim)
 end
 
@@ -1296,7 +1296,7 @@ function _plot_emission_impl(dm::DataModel,
     if figure_layout == :vector
         return plots
     end
-    p = combine_plots(plots; ncols=ncols, kwargs_layout...)
+    p = combine_plots(plots; ncols=ncols, style=style, kwargs_layout...)
     return _save_plot!(p, save_path)
 end
 
@@ -1610,11 +1610,9 @@ function _plot_fits_comparison_impl(fits::AbstractVector{<:FitResult},
         y_obs = getfield(ind.series.obs, obs_name)
         x_obs_plot, y_obs_plot = _collect_scalar_series(x_obs, y_obs)
         title_id = string(dm_ref.config.primary_id, ": ", dm_ref.df[obs_rows[1], dm_ref.config.primary_id])
-        p = create_styled_plot(title=title_id,
-                               xlabel=x_axis_feature === nothing ? "Time" : _axis_label(x_axis_feature),
-                               ylabel=_axis_label(obs_name),
-                               style=style,
-                               kwargs_subplot...)
+        _kw1619 = merge((xlabel=x_axis_feature === nothing ? "Time" : _axis_label(x_axis_feature),
+                         ylabel=_axis_label(obs_name)), kwargs_subplot)
+        p = create_styled_plot(; title=title_id, style=style, _kw1619...)
         if plot_data_points
             create_styled_scatter!(p, x_obs_plot, y_obs_plot; label="data", color=style.color_primary, style=style)
         end
@@ -1645,7 +1643,7 @@ function _plot_fits_comparison_impl(fits::AbstractVector{<:FitResult},
         ylim_use = shared_y_axis ? _pad_limits(ylims[1], ylims[2]) : nothing
         _apply_shared_axes!(plots, xlim_use, ylim_use)
     end
-    p = combine_plots(plots; ncols=ncols, kwargs_layout...)
+    p = combine_plots(plots; ncols=ncols, style=style, kwargs_layout...)
     return _save_plot!(p, save_path)
 end
 
@@ -1695,4 +1693,432 @@ function plot_fits_comparison(results::AbstractDict; kwargs...)
         push!(fits, _as_fit_result_for_plotting(v))
     end
     return _plot_fits_comparison_impl(fits, labels; kwargs...)
+end
+
+"""
+    plot_observed_profiles(dm::DataModel; observable, individuals_idx, x_axis_feature,
+                           style, kwargs_subplot, kwargs_layout, save_path, plot_path)
+                           -> Plots.Plot
+
+    plot_observed_profiles(res::FitResult; dm, observable, individuals_idx,
+                           x_axis_feature, style, kwargs_subplot, kwargs_layout,
+                           save_path, plot_path) -> Plots.Plot
+
+Plot observed trajectories for all (or selected) individuals overlaid on a single panel
+(spaghetti plot). Each individual's time series is drawn as a connected line with
+scatter points at the observed time points.
+
+# Keyword Arguments
+- `dm::Union{Nothing, DataModel} = nothing`: data model (inferred from `res` by default).
+- `observable`: name of the outcome variable to plot, or `nothing` to use the first.
+- `individuals_idx`: indices or IDs of individuals to include, or `nothing` for all.
+- `x_axis_feature::Union{Symbol, Nothing} = nothing`: covariate for the x-axis;
+  defaults to the time column.
+- `style::PlotStyle = PlotStyle()`: visual style configuration.
+- `kwargs_subplot`: extra keyword arguments forwarded to the single panel.
+- `kwargs_layout`: extra keyword arguments forwarded to the layout call.
+- `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
+- `plot_path::Union{Nothing, String} = nothing`: alias for `save_path`.
+"""
+function plot_observed_profiles(dm::DataModel;
+                                observable=nothing,
+                                individuals_idx=nothing,
+                                x_axis_feature::Union{Symbol, Nothing}=nothing,
+                                style::PlotStyle=PlotStyle(),
+                                kwargs_subplot=NamedTuple(),
+                                kwargs_layout=NamedTuple(),
+                                save_path::Union{Nothing, String}=nothing,
+                                plot_path::Union{Nothing, String}=nothing)
+    save_path = _resolve_plot_path(save_path, plot_path)
+    obs_name = _get_observable(dm, observable)
+    inds = individuals_idx === nothing ? collect(eachindex(dm.individuals)) : collect(individuals_idx)
+
+    _kw_op = merge((xlabel=x_axis_feature === nothing ? "Time" : _axis_label(x_axis_feature),
+                    ylabel=_axis_label(obs_name), legend=false), kwargs_subplot)
+    p = create_styled_plot(; title="Observed profiles", style=style, _kw_op...)
+
+    for i in inds
+        ind = dm.individuals[i]
+        obs_rows = dm.row_groups.obs_rows[i]
+        x = _get_x_values(dm, ind, obs_rows, x_axis_feature)
+        y = getfield(ind.series.obs, obs_name)
+        xs, ys = _collect_scalar_series(x, y)
+        isempty(xs) && continue
+        order = sortperm(xs)
+        xs_sorted = xs[order]
+        ys_sorted = ys[order]
+        create_styled_line!(p, xs_sorted, ys_sorted; label="", color=style.color_primary, style=style)
+        create_styled_scatter!(p, xs_sorted, ys_sorted; label="", color=style.color_primary, style=style)
+    end
+
+    return _save_plot!(p, save_path)
+end
+
+function plot_observed_profiles(res::FitResult;
+                                dm::Union{Nothing, DataModel}=nothing,
+                                observable=nothing,
+                                individuals_idx=nothing,
+                                x_axis_feature::Union{Symbol, Nothing}=nothing,
+                                style::PlotStyle=PlotStyle(),
+                                kwargs_subplot=NamedTuple(),
+                                kwargs_layout=NamedTuple(),
+                                save_path::Union{Nothing, String}=nothing,
+                                plot_path::Union{Nothing, String}=nothing)
+    dm = _get_dm(res, dm)
+    return plot_observed_profiles(dm;
+                                  observable=observable,
+                                  individuals_idx=individuals_idx,
+                                  x_axis_feature=x_axis_feature,
+                                  style=style,
+                                  kwargs_subplot=kwargs_subplot,
+                                  kwargs_layout=kwargs_layout,
+                                  save_path=save_path,
+                                  plot_path=plot_path)
+end
+
+# Per-individual covariate-adjusted population-mean random effects for PRED.
+# For each individual, the prior distribution is evaluated at that individual's
+# constant covariates, so weight-based covariate shifts are preserved.
+function _pred_re_per_individual(dm::DataModel, θ::ComponentArray)
+    re_names = get_re_names(dm.model.random.random)
+    isempty(re_names) && return fill(ComponentArray(NamedTuple()), length(dm.individuals))
+
+    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
+    model_funs = get_model_funs(dm.model)
+    helpers = get_helper_funs(dm.model)
+
+    η_vec = Vector{ComponentArray}(undef, length(dm.individuals))
+    for (i, ind) in enumerate(dm.individuals)
+        nt_pairs = Pair{Symbol, Any}[]
+        for re in re_names
+            dist = getproperty(dists_builder(θ, ind.const_cov, model_funs, helpers), re)
+            if dist isa Distributions.UnivariateDistribution
+                v = try Float64(Distributions.mean(dist)) catch; 0.0 end
+                push!(nt_pairs, re => v)
+            else
+                v = try Vector{Float64}(Distributions.mean(dist)) catch; zeros(Float64, length(dist)) end
+                push!(nt_pairs, re => v)
+            end
+        end
+        η_vec[i] = ComponentArray(NamedTuple(nt_pairs))
+    end
+    return η_vec
+end
+
+# Collect (dv, pred, sigma_pred) across all non-missing observations using η_pop.
+function _collect_pred_series(dm::DataModel, obs_name::Symbol,
+                              θ::ComponentArray, η_pop::Vector)
+    dv_all = Float64[]
+    pred_all = Float64[]
+    sigma_all = Float64[]
+
+    for i in eachindex(dm.individuals)
+        ind = dm.individuals[i]
+        obs_rows = dm.row_groups.obs_rows[i]
+        y_series = getfield(ind.series.obs, obs_name)
+        η_ind = η_pop[i]
+        rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only=true)
+
+        sol_accessors = nothing
+        if dm.model.de.de !== nothing
+            sol, compiled = _solve_dense_individual(dm, ind, θ, η_ind)
+            sol_accessors = get_de_accessors_builder(dm.model.de.de)(sol, compiled)
+        end
+
+        for (j, row) in enumerate(obs_rows)
+            yj = y_series[j]
+            (yj === missing || !(yj isa Real)) && continue
+            y = Float64(yj)
+            isfinite(y) || continue
+
+            vary = _varying_at_plot(dm, ind, j, row)
+            η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only=true)
+            obs_nt = sol_accessors === nothing ?
+                     calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
+                     calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
+            dist = getproperty(obs_nt, obs_name)
+
+            pred_val = try Float64(mean(dist)) catch; NaN end
+            isfinite(pred_val) || continue
+            sigma_val = try Float64(std(dist)) catch; NaN end
+            (isfinite(sigma_val) && sigma_val > 0) || continue
+
+            push!(dv_all, y)
+            push!(pred_all, pred_val)
+            push!(sigma_all, sigma_val)
+        end
+    end
+    return dv_all, pred_all, sigma_all
+end
+
+# Collect (dv, ipred) across all non-missing observations using EBEs.
+function _collect_ipred_series(dm::DataModel, obs_name::Symbol,
+                               θ::ComponentArray, η_ebe::Vector)
+    dv_all = Float64[]
+    ipred_all = Float64[]
+
+    for i in eachindex(dm.individuals)
+        ind = dm.individuals[i]
+        obs_rows = dm.row_groups.obs_rows[i]
+        y_series = getfield(ind.series.obs, obs_name)
+        η_ind = η_ebe[i]
+        rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only=true)
+
+        sol_accessors = nothing
+        if dm.model.de.de !== nothing
+            sol, compiled = _solve_dense_individual(dm, ind, θ, η_ind)
+            sol_accessors = get_de_accessors_builder(dm.model.de.de)(sol, compiled)
+        end
+
+        for (j, row) in enumerate(obs_rows)
+            yj = y_series[j]
+            (yj === missing || !(yj isa Real)) && continue
+            y = Float64(yj)
+            isfinite(y) || continue
+
+            vary = _varying_at_plot(dm, ind, j, row)
+            η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only=true)
+            obs_nt = sol_accessors === nothing ?
+                     calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
+                     calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
+            dist = getproperty(obs_nt, obs_name)
+
+            ipred_val = try Float64(mean(dist)) catch; NaN end
+            isfinite(ipred_val) || continue
+
+            push!(dv_all, y)
+            push!(ipred_all, ipred_val)
+        end
+    end
+    return dv_all, ipred_all
+end
+
+"""
+    plot_dv_pred(res::FitResult; dm, observable, style, kwargs_subplot,
+                 kwargs_layout, save_path, plot_path) -> Plots.Plot
+
+Goodness-of-fit scatter plot of observed values (DV) against population
+predictions (PRED). PRED is the model prediction evaluated at each
+individual's population-mean random effects using that individual's own
+constant covariates, preserving covariate-driven shifts such as allometric
+weight scaling. An identity line is overlaid for reference.
+
+# Keyword Arguments
+- `dm::Union{Nothing, DataModel} = nothing`: data model (inferred from `res` by default).
+- `observable`: name of the outcome variable, or `nothing` for the first.
+- `style::PlotStyle = PlotStyle()`: visual style configuration.
+- `kwargs_subplot`, `kwargs_layout`: extra keyword arguments for the subplot and layout.
+- `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
+- `plot_path::Union{Nothing, String} = nothing`: alias for `save_path`.
+"""
+function plot_dv_pred(res::FitResult;
+                     dm::Union{Nothing, DataModel}=nothing,
+                     observable=nothing,
+                     style::PlotStyle=PlotStyle(),
+                     kwargs_subplot=NamedTuple(),
+                     kwargs_layout=NamedTuple(),
+                     save_path::Union{Nothing, String}=nothing,
+                     plot_path::Union{Nothing, String}=nothing)
+    dm = _get_dm(res, dm)
+    save_path = _resolve_plot_path(save_path, plot_path)
+    obs_name = _get_observable(dm, observable)
+    θ = get_params(res; scale=:untransformed)
+    η_pred = _pred_re_per_individual(dm, θ)
+
+    dv, pred, _ = _collect_pred_series(dm, obs_name, θ, η_pred)
+    isempty(dv) && error("No non-missing observations found for observable :$(obs_name).")
+
+    lo = min(minimum(dv), minimum(pred))
+    hi = max(maximum(dv), maximum(pred))
+    lims = _pad_limits(lo, hi)
+
+    _kw_dvp = merge((xlabel="Population prediction (PRED)", ylabel="Observed (DV)"), kwargs_subplot)
+    p = create_styled_plot(; style=style, _kw_dvp...)
+    create_styled_scatter!(p, pred, dv; label="", color=style.color_primary, style=style)
+    plot!(p, collect(lims), collect(lims);
+          color=style.color_reference, linestyle=:dash,
+          linewidth=style.line_width_secondary, label="")
+    plot!(p; xlims=lims, ylims=lims)
+
+    return _save_plot!(p, save_path)
+end
+
+"""
+    plot_dv_ipred(res::FitResult; dm, observable, style, kwargs_subplot,
+                  kwargs_layout, save_path, plot_path) -> Plots.Plot
+
+Goodness-of-fit scatter plot of observed values (DV) against individual
+predictions (IPRED). IPRED is the model prediction evaluated at each
+individual's empirical Bayes estimates of the random effects. An identity
+line is overlaid for reference.
+
+# Keyword Arguments
+- `dm::Union{Nothing, DataModel} = nothing`: data model (inferred from `res` by default).
+- `observable`: name of the outcome variable, or `nothing` for the first.
+- `style::PlotStyle = PlotStyle()`: visual style configuration.
+- `kwargs_subplot`, `kwargs_layout`: extra keyword arguments for the subplot and layout.
+- `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
+- `plot_path::Union{Nothing, String} = nothing`: alias for `save_path`.
+"""
+function plot_dv_ipred(res::FitResult;
+                      dm::Union{Nothing, DataModel}=nothing,
+                      observable=nothing,
+                      style::PlotStyle=PlotStyle(),
+                      kwargs_subplot=NamedTuple(),
+                      kwargs_layout=NamedTuple(),
+                      save_path::Union{Nothing, String}=nothing,
+                      plot_path::Union{Nothing, String}=nothing)
+    dm = _get_dm(res, dm)
+    save_path = _resolve_plot_path(save_path, plot_path)
+    obs_name = _get_observable(dm, observable)
+    θ = get_params(res; scale=:untransformed)
+    constants_re = _res_constants_re(res, NamedTuple())
+    η_ebe = _default_random_effects(res, dm, constants_re, θ, Random.default_rng(), 1)
+
+    dv, ipred = _collect_ipred_series(dm, obs_name, θ, η_ebe)
+    isempty(dv) && error("No non-missing observations found for observable :$(obs_name).")
+
+    lo = min(minimum(dv), minimum(ipred))
+    hi = max(maximum(dv), maximum(ipred))
+    lims = _pad_limits(lo, hi)
+
+    _kw_dvi = merge((xlabel="Individual prediction (IPRED)", ylabel="Observed (DV)"), kwargs_subplot)
+    p = create_styled_plot(; style=style, _kw_dvi...)
+    create_styled_scatter!(p, ipred, dv; label="", color=style.color_primary, style=style)
+    plot!(p, collect(lims), collect(lims);
+          color=style.color_reference, linestyle=:dash,
+          linewidth=style.line_width_secondary, label="")
+    plot!(p; xlims=lims, ylims=lims)
+
+    return _save_plot!(p, save_path)
+end
+
+"""
+    plot_wres_pred(res::FitResult; dm, observable, style, kwargs_subplot,
+                   kwargs_layout, save_path, plot_path) -> Plots.Plot
+
+Population residual diagnostic plot: weighted population residuals (WRES)
+against population predictions (PRED). WRES is defined as
+`(DV - PRED) / sigma`, where `sigma` is the standard deviation of the
+observation distribution at the population-mean random effects. A horizontal
+zero reference line is overlaid.
+
+# Keyword Arguments
+- `dm::Union{Nothing, DataModel} = nothing`: data model (inferred from `res` by default).
+- `observable`: name of the outcome variable, or `nothing` for the first.
+- `style::PlotStyle = PlotStyle()`: visual style configuration.
+- `kwargs_subplot`, `kwargs_layout`: extra keyword arguments for the subplot and layout.
+- `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
+- `plot_path::Union{Nothing, String} = nothing`: alias for `save_path`.
+"""
+function plot_wres_pred(res::FitResult;
+                       dm::Union{Nothing, DataModel}=nothing,
+                       observable=nothing,
+                       style::PlotStyle=PlotStyle(),
+                       kwargs_subplot=NamedTuple(),
+                       kwargs_layout=NamedTuple(),
+                       save_path::Union{Nothing, String}=nothing,
+                       plot_path::Union{Nothing, String}=nothing)
+    dm = _get_dm(res, dm)
+    save_path = _resolve_plot_path(save_path, plot_path)
+    obs_name = _get_observable(dm, observable)
+    θ = get_params(res; scale=:untransformed)
+    η_pred = _pred_re_per_individual(dm, θ)
+
+    dv, pred, sigma = _collect_pred_series(dm, obs_name, θ, η_pred)
+    isempty(dv) && error("No non-missing observations found for observable :$(obs_name).")
+
+    wres = (dv .- pred) ./ sigma
+
+    pred_lo, pred_hi = _pad_limits(minimum(pred), maximum(pred))
+    wres_lo, wres_hi = _pad_limits(minimum(wres), maximum(wres))
+
+    _kw_wres = merge((xlabel="Population prediction (PRED)", ylabel="Weighted residual (WRES)"), kwargs_subplot)
+    p = create_styled_plot(; style=style, _kw_wres...)
+    create_styled_scatter!(p, pred, wres; label="", color=style.color_primary, style=style)
+    hline!(p, [0.0];
+           color=style.color_reference, linestyle=:dash,
+           linewidth=style.line_width_secondary, label="")
+    plot!(p; xlims=(pred_lo, pred_hi), ylims=(wres_lo, wres_hi))
+
+    return _save_plot!(p, save_path)
+end
+
+"""
+    plot_shrinkage(res::FitResult; dm, constants_re, threshold, style,
+                   kwargs_subplot, save_path, plot_path) -> Plots.Plot
+
+Horizontal bar chart of eta shrinkage for all scalar random effects, with a
+vertical reference line at `threshold` (default 30 %).
+
+Bars are coloured by severity: below `threshold` (green), between `threshold`
+and 50 % (orange), above 50 % (red). Shrinkage is computed via
+[`compute_shrinkage`](@ref).
+
+# Keyword Arguments
+- `dm::Union{Nothing, DataModel} = nothing`: data model (inferred from `res` by default).
+- `constants_re::NamedTuple = NamedTuple()`: random effects fixed at given values.
+- `threshold::Real = 0.30`: reference line position (fraction, not percent).
+- `style::PlotStyle = PlotStyle()`: visual style configuration.
+- `kwargs_subplot`: extra keyword arguments passed to the subplot.
+- `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
+- `plot_path::Union{Nothing, String} = nothing`: alias for `save_path`.
+"""
+function plot_shrinkage(res::FitResult;
+                        dm::Union{Nothing, DataModel}=nothing,
+                        constants_re::NamedTuple=NamedTuple(),
+                        threshold::Real=0.30,
+                        bar_color::Union{Nothing, String}=nothing,
+                        style::PlotStyle=PlotStyle(),
+                        kwargs_subplot=NamedTuple(),
+                        save_path::Union{Nothing, String}=nothing,
+                        plot_path::Union{Nothing, String}=nothing)
+    save_path = _resolve_plot_path(save_path, plot_path)
+    shrink_nt = compute_shrinkage(res; dm=dm, constants_re=constants_re)
+    isempty(shrink_nt) && error("No shrinkage values computed; check that the model has scalar random effects.")
+
+    re_labels  = [string(k) for k in keys(shrink_nt)]
+    values_pct = [getfield(v, :shrinkage) * 100 for v in values(shrink_nt)]
+    n = length(re_labels)
+
+    bar_colors = if bar_color !== nothing
+        fill(bar_color, n)
+    else
+        map(values_pct) do v
+            v < threshold * 100 ? "#009E73" :
+            v < 50.0            ? "#E69F00" : "#D55E00"
+        end
+    end
+
+    p = create_styled_plot(;
+        xlabel="ETA shrinkage (%)",
+        ylabel="",
+        title="ETA shrinkage",
+        style=style,
+        kwargs_subplot...)
+
+    yticks_pos = collect(1:n)
+    for i in 1:n
+        bar_val = max(values_pct[i], 0.0)
+        plot!(p, [0.0, bar_val], [yticks_pos[i], yticks_pos[i]];
+              seriestype=:path,
+              linewidth=18,
+              color=bar_colors[i],
+              label="")
+        annotate!(p, bar_val + 1.5, yticks_pos[i],
+                  text(string(round(values_pct[i]; digits=1), "%"),
+                       font("Helvetica", 9), :left, :vcenter))
+    end
+
+    vline!(p, [threshold * 100];
+           color=style.color_reference, linestyle=:dash,
+           linewidth=style.line_width_secondary, label="$(round(Int, threshold*100))%")
+
+    plot!(p;
+          yticks=(yticks_pos, re_labels),
+          xlims=(-2.0, max(maximum(values_pct) * 1.25 + 5.0, threshold * 100 * 1.5)),
+          ylims=(0.5, n + 0.5),
+          legend=:bottomright)
+
+    return _save_plot!(p, save_path)
 end

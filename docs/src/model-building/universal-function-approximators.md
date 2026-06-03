@@ -1,6 +1,6 @@
 # Function Approximators: Neural Networks and Soft Trees
 
-Nonlinear mixed-effects models often require flexible functional forms to capture relationships that cannot be specified a priori. NoLimits supports two classes of learnable function approximators -- neural networks and soft decision trees -- that can be embedded directly into any model block. Their parameters are estimated jointly with all other model parameters during fitting.
+Nonlinear mixed-effects models often require flexible functional forms to capture relationships that cannot be specified a priori. This page focuses on two classes of learnable function approximators -- neural networks and soft decision trees -- that can be embedded directly into any model block. Their parameters are estimated jointly with all other model parameters during fitting.
 
 The supported parameter constructors are:
 
@@ -8,6 +8,15 @@ The supported parameter constructors are:
 - `SoftTreeParameters(...)` -- constructs a differentiable soft decision tree.
 
 Both are declared in `@fixedEffects` and exposed as callable model functions through the `function_name` keyword argument.
+
+!!! note "Other learnable function approximators"
+    Neural networks and soft trees are not the only learnable function-approximator
+    parameter blocks. B-splines (`SplineParameters`) and normalizing planar flows
+    (`NPFParameter`) are declared the same way -- in `@fixedEffects`, with a
+    `function_name` (for splines) and used through `@randomEffects` (for flows). They are
+    documented in [`@fixedEffects`](@ref) and [`@randomEffects`](@ref); full constructor
+    signatures are in the [Parameter Types](../api.md#Parameter-Types) section of the API
+    reference.
 
 ## Where They Can Be Used
 

@@ -11,6 +11,7 @@ export get_model_funs
 export get_helper_funs
 export get_solver_config
 export set_solver_config
+export get_source
 export calculate_prede
 export calculate_initial_state
 export calculate_formulas_all
@@ -150,7 +151,7 @@ struct FormulasBundle{F, A, O}
 end
 
 """
-    Model{F, R, C, D, H, O}
+    Model{F, R, C, D, H, O, S}
 
 Top-level model struct produced by the `@Model` macro. Bundles all model components:
 fixed effects, random effects, covariates, ODE system, helper functions, and observation
@@ -163,18 +164,34 @@ formulas.
 - `de::DEBundle`: ODE system components (may hold `nothing` when no DE is defined).
 - `helpers::HelpersBundle`: user-defined helper functions.
 - `formulas::FormulasBundle`: observation model (deterministic + observation nodes).
+- `source::S`: `NamedTuple` of the source expression for each `@Model` sub-block (or
+  `nothing` for blocks not present), used by the model-extension form
+  `@Model base begin ... end`. Is `nothing` for models built by other means.
 
 Use accessor functions [`get_model_funs`](@ref), [`get_helper_funs`](@ref),
 [`get_solver_config`](@ref), etc. rather than accessing fields directly.
 """
-struct Model{F, R, C, D, H, O}
+struct Model{F, R, C, D, H, O, S}
     fixed::F
     random::R
     covariates::C
     de::D
     helpers::H
     formulas::O
+    source::S
 end
+
+# Backwards-compatible constructor: models built without stored source carry `nothing`.
+Model(fixed, random, covariates, de, helpers, formulas) =
+    Model(fixed, random, covariates, de, helpers, formulas, nothing)
+
+"""
+    get_source(m::Model) -> Union{NamedTuple, Nothing}
+
+Return the `NamedTuple` of stored sub-block source expressions used by the model-extension
+form `@Model base begin ... end`, or `nothing` when the model carries no stored source.
+"""
+get_source(m::Model) = m.source
 
 function _nl_short_join_symbols(v::AbstractVector{Symbol}; max_items::Int=3)
     n = length(v)
@@ -292,7 +309,7 @@ arguments and replaces the existing configuration.
 """
 function set_solver_config(m::Model, cfg::ODESolverConfig)
     de_bundle = DEBundle(m.de.de, m.de.initial, m.de.prede, cfg, m.de.initial_builder)
-    return Model(m.fixed, m.random, m.covariates, de_bundle, m.helpers, m.formulas)
+    return Model(m.fixed, m.random, m.covariates, de_bundle, m.helpers, m.formulas, m.source)
 end
 
 function set_solver_config(m::Model; alg=nothing, kwargs=NamedTuple(), args=(), saveat_mode::Symbol=:dense)
@@ -508,6 +525,7 @@ macro Model(block)
     req_states_var = gensym(:req_states)
     req_signals_var = gensym(:req_signals)
     formulas_bundle_var = gensym(:formulas_bundle)
+    source_var = gensym(:source)
 
     return quote
         local $(helpers_var) = $(esc(helpers_block))
@@ -560,6 +578,206 @@ macro Model(block)
         )
 
         local $(formulas_bundle_var) = FormulasBundle($(formulas_var), $(form_all_var), $(form_obs_var), $(req_states_var), $(req_signals_var))
-        Model($(fixed_bundle_var), $(random_bundle_var), $(cov_bundle_var), $(de_bundle_var), $(helpers_bundle_var), $(formulas_bundle_var))
+        local $(source_var) = (
+            helpers = $(QuoteNode(helpers_expr)),
+            fixed = $(QuoteNode(fixed_expr)),
+            covariates = $(QuoteNode(cov_expr)),
+            random = $(QuoteNode(random_expr)),
+            prede = $(QuoteNode(prede_expr)),
+            de = $(QuoteNode(de_expr)),
+            initial = $(QuoteNode(initial_expr)),
+            formulas = $(QuoteNode(formulas_expr)),
+        )
+        Model($(fixed_bundle_var), $(random_bundle_var), $(cov_bundle_var), $(de_bundle_var), $(helpers_bundle_var), $(formulas_bundle_var), $(source_var))
     end
+end
+
+# ---------------------------------------------------------------------------
+# Model extension: `@Model base begin ... end`
+# ---------------------------------------------------------------------------
+
+# Ordered sub-block keys (must match the order @Model expects) and their macro heads.
+const _MODEL_BLOCK_ORDER = (:helpers, :fixed, :covariates, :random, :prede, :de, :initial, :formulas)
+const _MODEL_BLOCK_HEADS = (
+    helpers = :helpers,
+    fixed = :fixedEffects,
+    covariates = :covariates,
+    random = :randomEffects,
+    prede = :preDifferentialEquation,
+    de = :DifferentialEquation,
+    initial = :initialDE,
+    formulas = :formulas,
+)
+
+# Body (inner begin...end block) of a `@head begin ... end` macrocall expression.
+function _block_body(macrocall::Expr)
+    body = macrocall.args[end]
+    (body isa Expr && body.head == :block) ||
+        error("Malformed @Model sub-block; expected a begin ... end body.")
+    return body
+end
+
+# Merge key for a block line. Returns `nothing` for unkeyed lines (kept positionally).
+function _block_line_key(ln)
+    ln isa Expr || return nothing
+    if ln.head == :(=)
+        return _lhs_key(ln.args[1])
+    elseif ln.head == :call && length(ln.args) == 3 && ln.args[1] === :~
+        return _lhs_key(ln.args[2])
+    end
+    return nothing
+end
+
+function _lhs_key(lhs)
+    lhs isa Symbol && return lhs
+    if lhs isa Expr && lhs.head == :call && !isempty(lhs.args)
+        f = lhs.args[1]
+        # D(x1) ~ ...  -> state x1 ; signal s(t) = ... -> :s
+        if f === :D && length(lhs.args) >= 2
+            inner = lhs.args[2]
+            return (:D, inner isa Symbol ? inner : _lhs_key(inner))
+        end
+        return f isa Symbol ? f : nothing
+    end
+    return nothing
+end
+
+# A line `name = nothing` removes `name` from the merged block. The literal `nothing`
+# on a right-hand side parses to the Symbol `:nothing` (not the value `nothing`).
+_is_removal(ln) = ln isa Expr && ln.head == :(=) && length(ln.args) == 2 &&
+    (ln.args[2] === :nothing || ln.args[2] === nothing)
+
+# Rebuild a `@head begin body end` macrocall from a body block.
+_wrap_block(head::Symbol, body::Expr) =
+    Expr(:macrocall, Symbol("@", head), LineNumberNode(0, Symbol("@", head)), body)
+
+# Drop removal sentinels from a freshly-introduced block (no base to merge against).
+function _strip_removals(macrocall::Expr, head::Symbol)
+    body = Expr(:block)
+    for ln in _block_body(macrocall).args
+        ln isa LineNumberNode && continue
+        _is_removal(ln) && continue
+        push!(body.args, ln)
+    end
+    return _wrap_block(head, body)
+end
+
+# Merge a base block with an override block by left-hand-side name, preserving order.
+function _merge_model_block(base_blk, new_blk, head::Symbol)
+    new_blk === nothing && return base_blk
+    base_blk === nothing && return _strip_removals(new_blk, head)
+
+    entries = Tuple{Any, Any}[]      # (key, line); line === nothing marks a removal
+    index = Dict{Any, Int}()
+    pos = Ref(0)
+
+    function upsert!(ln)
+        k = _block_line_key(ln)
+        k === nothing && (k = (:__pos__, pos[] += 1))   # unkeyed: stable, never replaced
+        if haskey(index, k)
+            entries[index[k]] = (k, ln)
+        else
+            push!(entries, (k, ln))
+            index[k] = length(entries)
+        end
+    end
+
+    for ln in _block_body(base_blk).args
+        ln isa LineNumberNode && continue
+        upsert!(ln)
+    end
+    for ln in _block_body(new_blk).args
+        ln isa LineNumberNode && continue
+        if _is_removal(ln)
+            k = _block_line_key(ln)
+            haskey(index, k) && (entries[index[k]] = (k, nothing))
+            continue
+        end
+        upsert!(ln)
+    end
+
+    body = Expr(:block)
+    for (_, ln) in entries
+        ln === nothing && continue
+        push!(body.args, ln)
+    end
+    return _wrap_block(head, body)
+end
+
+# Runtime worker for `@Model base begin ... end`.
+function _extend_model(base, new_src::NamedTuple, mod::Module)
+    base isa Model ||
+        error("@Model base begin ... end: `base` must be a Model built by @Model, got $(typeof(base)).")
+    base_src = get_source(base)
+    base_src === nothing &&
+        error("@Model base begin ... end: `base` carries no stored source. Only models built by @Model can be extended.")
+
+    combined = Expr(:block)
+    for key in _MODEL_BLOCK_ORDER
+        head = getfield(_MODEL_BLOCK_HEADS, key)
+        merged = _merge_model_block(getfield(base_src, key), getfield(new_src, key), head)
+        merged === nothing || push!(combined.args, merged)
+    end
+    full = Expr(:macrocall, Symbol("@Model"), LineNumberNode(0, Symbol("@Model")), combined)
+    return Core.eval(mod, full)
+end
+
+"""
+    @Model base begin ... end
+
+Extension form of [`@Model`](@ref): build a new model from an existing `base` model,
+overriding only the sub-blocks supplied in the `begin ... end` body. Sub-blocks not
+mentioned are inherited verbatim from `base`.
+
+Within an overridden block, entries are merged **by name** (the left-hand side of each
+declaration):
+
+- an entry whose name matches one in the base block **replaces** it (in place),
+- a new name is **appended**, and
+- assigning a name to `nothing` (e.g. `sigma_k = nothing`) **removes** it.
+
+The merged model is rebuilt through the full single-argument `@Model` pipeline, so all
+normal validation applies. `base` must be a model produced by `@Model` (its block sources
+are stored and retrieved via [`get_source`](@ref)).
+
+!!! note "Self-contained blocks"
+    Inherited and overriding blocks are re-evaluated in the module where the extension
+    call occurs. Any variable they reference (e.g. a `Chain`, a `knots` vector) must be a
+    global in that module — locals captured at the base model's original call site are not
+    available.
+
+# Example
+```julia
+model_flow = @Model model_gauss begin
+    @fixedEffects begin
+        sigma_k = nothing                                   # drop the Gaussian scale
+        psi = NPFParameter(1, 4; seed = 42, calculate_se = false)
+    end
+    @randomEffects begin
+        eta_k = RandomEffect(NormalizingPlanarFlow(psi); column = :fishid)
+    end
+    @formulas begin
+        length ~ Normal(
+            exp(log(L_inf_pop) + eta_L) *
+                (1 - exp(-exp(log(k_pop) + eta_k[1]) * age)),
+            sigma_y)
+    end
+end
+```
+"""
+macro Model(base, block)
+    (block isa Expr && block.head == :block) ||
+        error("@Model base begin ... end expects a begin ... end block as the second argument.")
+    _model_validate_blocks(block)
+    new_src = (
+        helpers = _model_find_block(block, :helpers),
+        fixed = _model_find_block(block, :fixedEffects),
+        covariates = _model_find_block(block, :covariates),
+        random = _model_find_block(block, :randomEffects),
+        prede = _model_find_block(block, :preDifferentialEquation),
+        de = _model_find_block(block, :DifferentialEquation),
+        initial = _model_find_block(block, :initialDE),
+        formulas = _model_find_block(block, :formulas),
+    )
+    return :(_extend_model($(esc(base)), $(QuoteNode(new_src)), $(QuoteNode(__module__))))
 end

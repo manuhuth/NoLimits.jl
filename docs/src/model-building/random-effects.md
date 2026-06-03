@@ -175,17 +175,12 @@ end
 
 ## Metadata and Builder Accessors
 
-The parsed random-effects object provides programmatic access to its components through the following accessor functions:
+The parsed random-effects object exposes accessor functions for its components. The most commonly used are:
 
-| Accessor | Returns |
-|----------|---------|
-| `get_re_names` | Vector of random effect names |
-| `get_re_groups` | NamedTuple mapping each effect to its grouping column |
-| `get_re_types` | NamedTuple mapping each effect to its distribution type symbol |
-| `get_re_syms` | NamedTuple mapping each effect to the symbols used in its distribution |
-| `get_re_dist_exprs` | Distribution expressions (as parsed) |
-| `get_create_random_effect_distribution` | Function that constructs distributions at runtime given fixed effects, covariates, model functions, and helpers |
-| `get_re_logpdf` | Function computing the joint log-density of all random effects |
+- `get_re_names` -- vector of random-effect names.
+- `get_re_groups` -- NamedTuple mapping each effect to its grouping column.
+
+The remaining accessors (`get_re_types`, `get_re_syms`, `get_re_dist_exprs`, `get_create_random_effect_distribution`, `get_re_logpdf`) provide lower-level access to distribution metadata and runtime builders; their signatures are documented in the [API reference](../api.md).
 
 ## Grouping and Data Requirements
 

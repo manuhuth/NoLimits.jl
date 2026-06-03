@@ -24,14 +24,11 @@ end
 
 ## Constructor Reference
 
-The following constructor forms are available within `@covariates`:
-
-- `name = Covariate()`
-- `name = CovariateVector([:col1, :col2, ...])`
-- `name = ConstantCovariate(; constant_on=...)`
-- `name = ConstantCovariateVector([:col1, :col2, ...]; constant_on=...)`
-- `name = DynamicCovariate(; interpolation=...)`
-- `name = DynamicCovariateVector([:col1, :col2, ...]; interpolations=[...])`
+Six constructor forms are available within `@covariates`: the scalar/vector pairs
+`Covariate`/`CovariateVector` (varying), `ConstantCovariate`/`ConstantCovariateVector`
+(constant within a group), and `DynamicCovariate`/`DynamicCovariateVector` (interpolated).
+See the [Covariate Types](../api.md#Covariate-Types) section of the API reference for full
+constructor signatures and keyword arguments.
 
 Note the following macro-level conventions:
 
@@ -41,16 +38,7 @@ Note the following macro-level conventions:
 
 ## Supported Interpolation Types
 
-Dynamic covariates construct interpolating functions from observed time--value pairs using [DataInterpolations.jl](https://docs.sciml.ai/DataInterpolations/stable/). The following interpolation methods are currently supported:
-
-- `ConstantInterpolation`
-- `SmoothedConstantInterpolation`
-- `LinearInterpolation`
-- `QuadraticInterpolation`
-- `LagrangeInterpolation`
-- `QuadraticSpline`
-- `CubicSpline`
-- `AkimaInterpolation`
+Dynamic covariates construct interpolating functions from observed time--value pairs using [DataInterpolations.jl](https://docs.sciml.ai/DataInterpolations/stable/). The supported interpolation methods are `ConstantInterpolation`, `SmoothedConstantInterpolation`, `LinearInterpolation`, `QuadraticInterpolation`, `LagrangeInterpolation`, `QuadraticSpline`, `CubicSpline`, and `AkimaInterpolation` (see the [Covariate Types](../api.md#Covariate-Types) section of the API reference for the per-method minimum-observation requirements).
 
 When no interpolation is specified, `DynamicCovariate` defaults to `LinearInterpolation`. To use a non-default method, ensure that `DataInterpolations` is loaded in the model-definition environment (e.g., `using DataInterpolations`).
 

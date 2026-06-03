@@ -94,6 +94,7 @@ struct _SaemixMHLevel
     range     :: UnitRange{Int}   # slice of flat b for this level
     rep_ind   :: Int              # representative individual index (const_cov access)
     dim       :: Int              # dimensionality (1 for scalar RE)
+    is_scalar :: Bool             # true only for univariate dists (value fed to logpdf is scalar)
     group_pos :: Vector{Int}      # positions into batch_info.inds that use this level
     re_type   :: Symbol           # distribution type symbol (for bijection dispatch)
 end
@@ -187,7 +188,7 @@ function _saemixmh_level_plp!(level_plp::Vector{Float64},
             dist = _saem_apply_anneal_dist(dist, getfield(anneal_sds, re))
         end
         r = lv.range
-        if lv.dim == 1
+        if lv.is_scalar
             level_plp[k] = logpdf(dist, b[first(r)])
         else
             level_plp[k] = logpdf(dist, view(b, r))
@@ -212,6 +213,7 @@ function _saemixmh_build_levels(dm::DataModel,
             range  = info.ranges[li]
             rep    = info.reps[li]
             dim    = info.dim
+            is_scalar = info.is_scalar
 
             # which individuals (by position in batch_info.inds) use this level?
             group_pos = Int[]
@@ -222,7 +224,7 @@ function _saemixmh_build_levels(dm::DataModel,
                 end
             end
 
-            push!(levels, _SaemixMHLevel(ri, li, range, rep, dim, group_pos, re_type))
+            push!(levels, _SaemixMHLevel(ri, li, range, rep, dim, is_scalar, group_pos, re_type))
         end
     end
     return levels
@@ -454,7 +456,7 @@ function _saemixmh_kern2!(state::_SaemixMHState,
                 log_jac_d = _amh_bij_log_jac(lv.re_type, z_prop_d, z_curr_d)
 
                 # New prior lp for this level (using b_prop)
-                new_plp = if lv.dim == 1
+                new_plp = if lv.is_scalar
                     logpdf(dist, b_prop[first(r)])
                 else
                     logpdf(dist, view(b_prop, r))
@@ -573,7 +575,7 @@ function _saemixmh_kern3!(state::_SaemixMHState,
                     nt2[coord] += 1
                 end
 
-                new_plp = if d == 1
+                new_plp = if lv.is_scalar
                     logpdf(dist, b_prop[first(r)])
                 else
                     logpdf(dist, view(b_prop, r))

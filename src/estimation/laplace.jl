@@ -160,7 +160,7 @@ function _build_constants_cache(dm::DataModel, constants_re::NamedTuple)
     for (ri, re) in enumerate(re_names)
         levels = cache.re_index[ri].levels
         is_const[ri] = falses(length(levels))
-        if cache.is_scalar[ri] || cache.dims[ri] == 1
+        if cache.is_scalar[ri]
             scalar_vals[ri] = Vector{Float64}(undef, length(levels))
             vector_vals[ri] = Vector{Vector{Float64}}(undef, 0)
         else
@@ -176,7 +176,7 @@ function _build_constants_cache(dm::DataModel, constants_re::NamedTuple)
             idx = get(idx_map, k, 0)
             idx == 0 && error("constants_re for $(re) includes level $(k) not found in column $(getfield(get_re_groups(dm.model.random.random), re)). The value must be present in that column.")
             is_const[ri][idx] = true
-            if cache.is_scalar[ri] || cache.dims[ri] == 1
+            if cache.is_scalar[ri]
                 v isa Number || error("constants_re for $(re) level $(k) must be a scalar number.")
                 scalar_vals[ri][idx] = Float64(v)
             else
@@ -500,7 +500,10 @@ end
     idx = info.map.level_to_index[level_id]
     idx == 0 && return nothing
     r = info.ranges[idx]
-    if info.is_scalar || length(r) == 1
+    # Only genuinely univariate REs collapse to a scalar value. A length-1
+    # multivariate RE (e.g. 1-D MvNormal) must stay a 1-vector so that its
+    # logpdf/mean operate on a vector.
+    if info.is_scalar
         return b[first(r)]
     else
         return view(b, r)
@@ -523,6 +526,10 @@ function _re_start_value(dist, dim::Int, T)
             catch
             end
         end
+        # A length-1 multivariate distribution (e.g. 1-D MvNormal) returns a
+        # length-1 vector mean/median; the flat b-vector slot is scalar, so
+        # reduce it to its single element.
+        ok && v isa AbstractVector && (v = first(v))
         return ok ? T(v) : T(0.0)
     else
         v = nothing
@@ -678,7 +685,7 @@ function _laplace_sample_b0s(dm::DataModel,
             dist = getproperty(dists, re)
             r = info.ranges[li]
             dim = length(r)
-            if info.is_scalar || info.dim == 1
+            if info.is_scalar
                 draws = sampling === :lhs ? _laplace_lhs_draws_univariate(dist, n, rng) : nothing
                 draws === nothing && (draws = [rand(rng, dist) for _ in 1:n])
                 for i in 1:n
@@ -795,7 +802,7 @@ function _build_eta_ind(dm::DataModel,
         if length(ids) == 1
             id = ids[1]
             if const_mask[id]
-                if info.is_scalar || info.dim == 1
+                if info.is_scalar
                     v = const_scalars[id]
                     push!(nt_pairs, re => T(v))
                 else
@@ -805,21 +812,21 @@ function _build_eta_ind(dm::DataModel,
             else
                 v = _re_value_from_b(info, id, b)
                 v === nothing && error("Missing random effect value for $(re) level $(cache.re_index[ri].levels[id]).")
-                if info.is_scalar || info.dim == 1
+                if info.is_scalar
                     push!(nt_pairs, re => T(v))
                 else
                     push!(nt_pairs, re => Vector{T}(v))
                 end
             end
         else
-            if info.is_scalar || info.dim == 1
+            if info.is_scalar
                 vals = Vector{T}(undef, length(ids))
             else
                 vals = Vector{Vector{T}}(undef, length(ids))
             end
             for (gi, id) in pairs(ids)
                 if const_mask[id]
-                    if info.is_scalar || info.dim == 1
+                    if info.is_scalar
                         v = const_scalars[id]
                         vals[gi] = T(v)
                     else
@@ -829,7 +836,7 @@ function _build_eta_ind(dm::DataModel,
                 else
                     v = _re_value_from_b(info, id, b)
                     v === nothing && error("Missing random effect value for $(re) level $(cache.re_index[ri].levels[id]).")
-                    if info.is_scalar || info.dim == 1
+                    if info.is_scalar
                         vals[gi] = T(v)
                     else
                         vals[gi] = Vector{T}(v)
@@ -862,7 +869,7 @@ function _build_eta_ind_fast(template::ComponentArray{Float64},
         id = cache.ind_level_ids[ind_idx][ri][1]
         const_mask = const_cache.is_const[ri]
         if const_mask[id]
-            if info.is_scalar || info.dim == 1
+            if info.is_scalar
                 @inbounds vals[out_pos] = T(const_cache.scalar_vals[ri][id])
                 out_pos += 1
             else
@@ -877,7 +884,7 @@ function _build_eta_ind_fast(template::ComponentArray{Float64},
             b_idx = info.map.level_to_index[id]
             b_idx == 0 && error("Missing random effect value for $(re) level $(cache.re_index[ri].levels[id]).")
             r = info.ranges[b_idx]
-            if info.is_scalar || info.dim == 1
+            if info.is_scalar
                 @inbounds vals[out_pos] = b[first(r)]
                 out_pos += 1
             else
@@ -920,7 +927,7 @@ function _const_re_prior_logf(dm::DataModel,
                 dist = getproperty(dists, re)
                 has_anneal && haskey(anneal_sds, re) &&
                     (dist = _saem_apply_anneal_dist(dist, getfield(anneal_sds, re)))
-                v = re_cache.is_scalar[ri] || re_cache.dims[ri] == 1 ?
+                v = re_cache.is_scalar[ri] ?
                     T(const_cache.scalar_vals[ri][id]) :
                     T.(const_cache.vector_vals[ri][id])
                 lp = logpdf(dist, v)

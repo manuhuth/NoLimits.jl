@@ -62,6 +62,7 @@ set_solver_config
 get_model_funs
 get_helper_funs
 get_solver_config
+get_source
 ```
 
 ### Model Component Structs
@@ -140,6 +141,8 @@ MLE
 MAP
 Laplace
 LaplaceMAP
+GHQuadrature
+GHQuadratureMAP
 MCEM
 MCEM_MCMC
 MCEM_IS
@@ -155,6 +158,8 @@ MLEResult
 MAPResult
 LaplaceResult
 LaplaceMAPResult
+GHQuadratureResult
+GHQuadratureMAPResult
 MCEMResult
 SAEMResult
 MCMCResult
