@@ -4,18 +4,18 @@ Overview
   method                              : saem
   inference                           : frequentist
   scale                               : natural
-  objective                           : -183.4979
+  objective                           : -154.8177
   iterations                          : 300
   parameters shown (reported / total) : 5 / 5
 
 Parameter estimates
   parameter      Estimate
   -----------------------
-  phi1            84.4174
-  log_vmax         9.4345
-  phi3          2045.6917
-  omega            1.0e-5
-  sigma            0.5457
+  phi1            31.1846
+  log_vmax          5.035
+  phi3           639.2453
+  omega            0.1615
+  sigma            0.1054
 
 Outcome data coverage
   outcome             n_obs   n_missing
@@ -26,4 +26,4 @@ Outcome data coverage
 Empirical Bayes random effects summary (across RE levels)
   random effect       n          mean            sd           q25        median           q75
   ---------------------------------------------------------------------------
-  vmax_i              5       12510.0      5.672e-7       12510.0       12510.0       12510.0
+  vmax_i              5      155.3211       25.0445      134.0798      147.4289      182.4259

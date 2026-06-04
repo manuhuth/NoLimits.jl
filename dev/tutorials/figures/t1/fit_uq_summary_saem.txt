@@ -5,18 +5,18 @@ Overview
   source_method                       : saem
   inference                           : frequentist
   scale                               : natural
-  objective                           : -183.4979
+  objective                           : -154.8177
   interval level                      : 0.95
   parameters shown (reported / total) : 5 / 5
 
 Parameter uncertainty summary
   parameter      Estimate    Std. Error      CI Lower      CI Upper
   ---------------------------------------------------
-  phi1            84.4174        8.8352       66.2933      101.1816
-  log_vmax         9.4345        0.4765        8.5368       10.3418
-  phi3          2045.6917       46.9648     1950.6711      2138.921
-  omega            1.0e-5      3.013e19     6.378e-24      2.038e13
-  sigma            0.5457        0.0646        0.4418        0.6801
+  phi1            31.1846         1.512       28.2717       34.1481
+  log_vmax          5.035        0.0757        4.8852        5.1787
+  phi3           639.2453       13.9464      611.5278      667.4985
+  omega            0.1615        0.0608        0.0822        0.3038
+  sigma            0.1054        0.0127         0.086        0.1311
 
 Outcome data coverage
   outcome             n_obs   n_missing
@@ -27,4 +27,4 @@ Outcome data coverage
 Empirical Bayes random effects summary (across RE levels)
   random effect       n          mean            sd           q25        median           q75
   ---------------------------------------------------------------------------
-  vmax_i              5       12510.0      5.672e-7       12510.0       12510.0       12510.0
+  vmax_i              5      155.3211       25.0445      134.0798      147.4289      182.4259

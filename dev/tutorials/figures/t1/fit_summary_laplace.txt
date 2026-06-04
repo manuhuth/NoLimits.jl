@@ -4,18 +4,18 @@ Overview
   method                              : laplace
   inference                           : frequentist
   scale                               : natural
-  objective                           : 150.4425
-  iterations                          : 60
+  objective                           : 140.191
+  iterations                          : 41
   parameters shown (reported / total) : 5 / 5
 
 Parameter estimates
   parameter      Estimate
   -----------------------
-  phi1            31.2678
-  log_vmax         5.0348
-  phi3           639.2259
-  omega          4.204e-8
-  sigma            0.1803
+  phi1            31.2235
+  log_vmax         5.0347
+  phi3           639.7141
+  omega            0.1669
+  sigma            0.1126
 
 Outcome data coverage
   outcome             n_obs   n_missing
@@ -26,4 +26,4 @@ Outcome data coverage
 Empirical Bayes random effects summary (across RE levels)
   random effect       n          mean            sd           q25        median           q75
   ---------------------------------------------------------------------------
-  vmax_i              5      153.6613     7.264e-12      153.6613      153.6613      153.6613
+  vmax_i              5      155.3009       24.9109      134.1697      147.4651      182.2564
