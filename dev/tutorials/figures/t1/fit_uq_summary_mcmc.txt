@@ -1,0 +1,30 @@
+UQResultSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  backend                             : chain
+  source_method                       : mcmc
+  inference                           : bayesian
+  scale                               : natural
+  objective                           : -
+  interval level                      : 0.95
+  parameters shown (reported / total) : 5 / 5
+
+Parameter uncertainty summary
+  parameter      Estimate     CrI Lower     CrI Upper
+  -------------------------------------
+  phi1            31.2844       28.3011        34.635
+  log_vmax         5.0389        4.8882        5.2152
+  phi3           640.3221      608.3582      675.1972
+  omega            0.1793        0.1038        0.2998
+  sigma              0.12        0.0967        0.1493
+
+Outcome data coverage
+  outcome             n_obs   n_missing
+  -------------------------------------
+  circumference          35           0
+  TOTAL                  35           0
+
+Posterior random effects summary (chain medians across draws)
+  random effect       n          mean            sd           q25        median           q75
+  ---------------------------------------------------------------------------
+  vmax_i              5      155.8193       24.7194      134.3352      148.0814      182.5353

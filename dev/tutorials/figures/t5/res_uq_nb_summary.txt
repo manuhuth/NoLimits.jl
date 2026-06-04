@@ -1,0 +1,33 @@
+UQResultSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  backend                             : wald
+  source_method                       : mcem
+  inference                           : frequentist
+  scale                               : natural
+  objective                           : -644.3865
+  interval level                      : 0.95
+  parameters shown (reported / total) : 8 / 8
+
+Parameter uncertainty summary
+  parameter      Estimate    Std. Error      CI Lower      CI Upper
+  ---------------------------------------------------
+  beta0           -1.6782        1.8586       -5.7139        1.8811
+  beta_1           0.7117        0.1841        0.3967        1.0668
+  beta_2           0.2867        0.4903       -0.7524        1.2554
+  beta_3          -0.2126        0.2095          -0.7        0.1046
+  beta_4          -0.0467        0.0448       -0.1386        0.0213
+  beta_5          -0.0162        0.0695       -0.1276        0.1205
+  omega            0.6723        0.1454        0.4743        0.9971
+  log_r            2.0591        0.2506        1.5563        2.5683
+
+Outcome data coverage
+  outcome        n_obs   n_missing
+  --------------------------------
+  seizures         236           0
+  TOTAL            236           0
+
+Empirical Bayes random effects summary (across RE levels)
+  random effect       n          mean            sd           q25        median           q75
+  ---------------------------------------------------------------------------
+  eta                59          0.23        0.5312       -0.0403         0.225        0.4592

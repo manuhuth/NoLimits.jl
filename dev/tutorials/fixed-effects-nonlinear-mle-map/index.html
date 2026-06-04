@@ -13,7 +13,18 @@ Random.seed!(202)
 
 df = load_orange()
 
-first(df, 8)</code></pre><p>Each row records one measurement occasion. The <code>Tree</code> column identifies the individual, <code>age</code> gives the tree&#39;s age in days since planting, and <code>circumference</code> is the trunk circumference in millimetres. Because every tree is measured at the same set of ages, this is a balanced design – convenient for illustration, though NoLimits.jl handles unbalanced data equally well.</p><h2 id="Step-2:-Define-a-Nonlinear-Fixed-Effects-Model"><a class="docs-heading-anchor" href="#Step-2:-Define-a-Nonlinear-Fixed-Effects-Model">Step 2: Define a Nonlinear Fixed-Effects Model</a><a id="Step-2:-Define-a-Nonlinear-Fixed-Effects-Model-1"></a><a class="docs-heading-anchor-permalink" href="#Step-2:-Define-a-Nonlinear-Fixed-Effects-Model" title="Permalink"></a></h2><p>In this step, you will express the scientific model as a NoLimits model specification. The structural model is a three-parameter logistic growth curve, one of the simplest sigmoidal functions used in biology:</p><p class="math-container">\[\mu(t) = \frac{a}{1 + \exp\!\bigl(-k\,(t - t_0)\bigr)}\]</p><p>Here, <code>a</code> sets the upper asymptote (the maximum circumference the model can predict), <code>k</code> controls the steepness of the growth phase, and <code>t0</code> locates the inflection point – the age at which growth is fastest. Observations are assumed normally distributed around this deterministic trajectory with standard deviation <code>sigma</code>.</p><p>Notice that we also attach prior distributions to each parameter. MLE will ignore these priors entirely, but they become essential for MAP estimation in Step 4. The priors encode only weak domain knowledge: circumferences are positive and on the order of tens to hundreds of millimetres, growth rates are small and positive, and the inflection point falls somewhere within the range of observed ages.</p><pre><code class="language-julia hljs">using NoLimits
+first(df, 8)</code></pre><p>&lt;!– injected:fe1-dfhead –&gt;</p><pre><code class="language-text hljs">8×4 DataFrame
+ Row │ rownames  Tree   age    circumference
+     │ Int64     Int64  Int64  Int64
+─────┼───────────────────────────────────────
+   1 │        1      1    118             30
+   2 │        2      1    484             58
+   3 │        3      1    664             87
+   4 │        4      1   1004            115
+   5 │        5      1   1231            120
+   6 │        6      1   1372            142
+   7 │        7      1   1582            145
+   8 │        8      2    118             33</code></pre><p>Each row records one measurement occasion. The <code>Tree</code> column identifies the individual, <code>age</code> gives the tree&#39;s age in days since planting, and <code>circumference</code> is the trunk circumference in millimetres. Because every tree is measured at the same set of ages, this is a balanced design – convenient for illustration, though NoLimits.jl handles unbalanced data equally well.</p><h2 id="Step-2:-Define-a-Nonlinear-Fixed-Effects-Model"><a class="docs-heading-anchor" href="#Step-2:-Define-a-Nonlinear-Fixed-Effects-Model">Step 2: Define a Nonlinear Fixed-Effects Model</a><a id="Step-2:-Define-a-Nonlinear-Fixed-Effects-Model-1"></a><a class="docs-heading-anchor-permalink" href="#Step-2:-Define-a-Nonlinear-Fixed-Effects-Model" title="Permalink"></a></h2><p>In this step, you will express the scientific model as a NoLimits model specification. The structural model is a three-parameter logistic growth curve, one of the simplest sigmoidal functions used in biology:</p><p class="math-container">\[\mu(t) = \frac{a}{1 + \exp\!\bigl(-k\,(t - t_0)\bigr)}\]</p><p>Here, <code>a</code> sets the upper asymptote (the maximum circumference the model can predict), <code>k</code> controls the steepness of the growth phase, and <code>t0</code> locates the inflection point – the age at which growth is fastest. Observations are assumed normally distributed around this deterministic trajectory with standard deviation <code>sigma</code>.</p><p>Notice that we also attach prior distributions to each parameter. MLE will ignore these priors entirely, but they become essential for MAP estimation in Step 4. The priors encode only weak domain knowledge: circumferences are positive and on the order of tens to hundreds of millimetres, growth rates are small and positive, and the inflection point falls somewhere within the range of observed ages.</p><pre><code class="language-julia hljs">using NoLimits
 using Distributions
 
 model = @Model begin
@@ -22,10 +33,10 @@ model = @Model begin
     end
 
     @fixedEffects begin
-        a = RealNumber(100.0, prior=Normal(100.0, 30.0), calculate_se=true)
-        k = RealNumber(0.01, prior=Normal(0.01, 0.01), calculate_se=true)
-        t0 = RealNumber(500.0, prior=Normal(500.0, 200.0), calculate_se=true)
-        σ = RealNumber(5.0, scale=:log, prior=LogNormal(1.0, 0.5), calculate_se=true)
+        a = RealNumber(200.0, prior=Normal(200.0, 50.0), calculate_se=true)
+        k = RealNumber(0.005, prior=Normal(0.005, 0.005), calculate_se=true)
+        t0 = RealNumber(700.0, prior=Normal(700.0, 200.0), calculate_se=true)
+        σ = RealNumber(25.0, scale=:log, prior=LogNormal(log(25.0), 0.5), calculate_se=true)
     end
 
     @formulas begin
@@ -33,28 +44,161 @@ model = @Model begin
         circumference ~ Normal(μ, σ)
     end
 end</code></pre><p>A few points worth noting about this specification. The <code>@covariates</code> block declares <code>age</code> as a time-varying covariate, which tells NoLimits to look up a column called <code>age</code> in the data frame. The residual standard deviation <code>sigma</code> is parameterised on the log scale (<code>scale=:log</code>), which constrains it to be strictly positive during optimisation without requiring explicit bounds. Finally, the <code>@formulas</code> block first computes the deterministic prediction <code>mu</code> and then declares that the observed column <code>circumference</code> follows a normal distribution centred on that prediction.</p><h3 id="Model-Summary"><a class="docs-heading-anchor" href="#Model-Summary">Model Summary</a><a id="Model-Summary-1"></a><a class="docs-heading-anchor-permalink" href="#Model-Summary" title="Permalink"></a></h3><p>Before fitting, it is good practice to inspect the model structure programmatically. The summary confirms which parameters are declared as fixed effects, which covariates are expected, and what form the observation model takes.</p><pre><code class="language-julia hljs">model_summary = NoLimits.summarize(model)
-model_summary</code></pre><h2 id="Step-3:-Build-the-DataModel-and-Configure-Estimation"><a class="docs-heading-anchor" href="#Step-3:-Build-the-DataModel-and-Configure-Estimation">Step 3: Build the DataModel and Configure Estimation</a><a id="Step-3:-Build-the-DataModel-and-Configure-Estimation-1"></a><a class="docs-heading-anchor-permalink" href="#Step-3:-Build-the-DataModel-and-Configure-Estimation" title="Permalink"></a></h2><p>With the model and data in hand, you will now pair them into a <code>DataModel</code> – the central object that validates the data against the model specification and prepares the internal structures needed for estimation. In the same step, you will configure the two estimation methods (MLE and MAP), specifying a maximum of 150 optimiser iterations for each.</p><pre><code class="language-julia hljs">dm = DataModel(model, df; primary_id=:Tree, time_col=:age)
+model_summary</code></pre><p>&lt;!– injected:fe1-model –&gt;</p><pre><code class="language-text hljs">ModelSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  model type                          : non-ODE
+  fixed-effect blocks                 : 4
+  fixed-effect scalar values          : 4
+  random effects                      : 0
+  random-effect grouping columns      : 0
+  covariates (declared)               : 1
+  formulas (deterministic / outcomes) : 1 / 1
+  requires DE accessors               : false
 
-mle_method = NoLimits.MLE(; optim_kwargs=(maxiters=150,))
-map_method = NoLimits.MAP(; optim_kwargs=(maxiters=150,))
+Structure blocks
+  helpers              : false
+  fixed effects        : true
+  random effects       : false
+  covariates           : true
+  preDE                : false
+  DifferentialEquation : false
+  initialDE            : false
+
+Covariate classes
+  varying  : 1
+  constant : 0
+  dynamic  : 0
+
+Fixed-effects declarations
+  name  type        size  se  prior      scale     bounds                              details
+  ---------------------------------------------------------------------------------------------------------
+  a     RealNumber     1  yes  Normal     identity  finite lower 0/1, finite upper 0/1  -
+  k     RealNumber     1  yes  Normal     identity  finite lower 0/1, finite upper 0/1  -
+  t0    RealNumber     1  yes  Normal     identity  finite lower 0/1, finite upper 0/1  -
+  σ     RealNumber     1  yes  LogNormal  log       finite lower 1/1, finite upper 0/1  -
+
+Random-effects declarations
+  (none)
+
+Covariate declarations
+  name  kind       columns                   constant_on           interpolation
+  ---------------------------------------------------------------------------------------
+  age   Covariate  age                       -                     -
+
+Formulas
+  deterministic names : μ
+  outcome names       : circumference
+  required DE states  : (none)
+  required DE signals : (none)
+  declared DE states  : (none)
+  declared DE signals : (none)
+Outcome distribution types
+  circumference =&gt; Normal
+
+Helper functions
+  names : (none)</code></pre><h2 id="Step-3:-Build-the-DataModel-and-Configure-Estimation"><a class="docs-heading-anchor" href="#Step-3:-Build-the-DataModel-and-Configure-Estimation">Step 3: Build the DataModel and Configure Estimation</a><a id="Step-3:-Build-the-DataModel-and-Configure-Estimation-1"></a><a class="docs-heading-anchor-permalink" href="#Step-3:-Build-the-DataModel-and-Configure-Estimation" title="Permalink"></a></h2><p>With the model and data in hand, you will now pair them into a <code>DataModel</code> – the central object that validates the data against the model specification and prepares the internal structures needed for estimation. In the same step, you will configure the two estimation methods (MLE and MAP), specifying a maximum of 500 optimiser iterations for each.</p><pre><code class="language-julia hljs">dm = DataModel(model, df; primary_id=:Tree, time_col=:age)
+
+mle_method = NoLimits.MLE(; optim_kwargs=(maxiters=500,))
+map_method = NoLimits.MAP(; optim_kwargs=(maxiters=500,))
 
 serialization = SciMLBase.EnsembleThreads()</code></pre><p>The <code>primary_id=:Tree</code> argument tells NoLimits which column identifies individuals, and <code>time_col=:age</code> specifies the time axis. Setting <code>serialization=EnsembleThreads()</code> enables multi-threaded likelihood evaluation across individuals – a minor convenience here with only five trees, but essential for larger datasets where per-individual computations dominate runtime.</p><h3 id="DataModel-Summary"><a class="docs-heading-anchor" href="#DataModel-Summary">DataModel Summary</a><a id="DataModel-Summary-1"></a><a class="docs-heading-anchor-permalink" href="#DataModel-Summary" title="Permalink"></a></h3><p>It is worth verifying that the data were parsed correctly. The summary should confirm five individuals, seven observations each, no missing values, and no events.</p><pre><code class="language-julia hljs">dm_summary = NoLimits.summarize(dm)
-dm_summary</code></pre><h2 id="Step-4:-Fit-with-MLE-and-MAP"><a class="docs-heading-anchor" href="#Step-4:-Fit-with-MLE-and-MAP">Step 4: Fit with MLE and MAP</a><a id="Step-4:-Fit-with-MLE-and-MAP-1"></a><a class="docs-heading-anchor-permalink" href="#Step-4:-Fit-with-MLE-and-MAP" title="Permalink"></a></h2><p>You are now ready to estimate the model parameters under both methods. Each call to <code>fit_model</code> runs a gradient-based optimiser (L-BFGS by default), starting from the initial values declared in the <code>@fixedEffects</code> block. The key difference lies in the objective function: MLE maximises the log-likelihood alone, while MAP maximises the log-likelihood plus the log-prior.</p><pre><code class="language-julia hljs">res_mle = fit_model(dm, mle_method; serialization=serialization, rng=Random.Xoshiro(41))
+dm_summary</code></pre><p>&lt;!– injected:fe1-dm –&gt;</p><pre><code class="language-text hljs">DataModelSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  model type                 : non-ODE
+  event-aware                : false
+  individuals                : 5
+  rows (total / obs / event) : 35 / 35 / 0
+  fixed effects (top-level)  : 4
+  outcomes                   : 1
+  covariates (declared)      : 1
+  random effects             : 0
+
+Covariate classes
+  varying  : 1
+  constant : 0
+  dynamic  : 0
+
+Outcome distribution types
+  circumference =&gt; Normal
+
+Random-effect distribution types
+  (none)
+
+Individual design diagnostics
+  individuals with one observation              : 0
+  global observed time range                    : 118.0 to 1582.0
+  unique observed time points                   : 7
+  duplicate (ID, time) observation rows         : 0
+  monotonic-time violations (observation order) : 0
+
+Observations per individual
+  metric       n          mean            sd           min           q25        median           q75           max
+  ----------------------------------------------------------------------------------------------------------------
+  count        5           7.0           0.0           7.0           7.0           7.0           7.0           7.0
+
+Time span per individual
+  metric       n          mean            sd           min           q25        median           q75           max
+  ----------------------------------------------------------------------------------------------------------------
+  span         5        1464.0           0.0        1464.0        1464.0        1464.0        1464.0        1464.0
+
+Median sampling interval per individual
+  metric          n          mean            sd           min           q25        median           q75           max
+  -------------------------------------------------------------------------------------------------------------------
+  median_dt       5         218.5           0.0         218.5         218.5         218.5         218.5         218.5
+
+Outcome descriptive statistics (observation rows)
+  Variable            n          mean            sd           min           q25        median           q75           max
+  -----------------------------------------------------------------------------------------------------------------------
+  circumference      35      115.8571        56.661          30.0          65.5         115.0         161.5         214.0
+
+Declared covariates
+  name  kind       columns
+  -------------------------------------
+  age   Covariate  age
+
+Covariate descriptive statistics (observation rows)
+  Variable       n          mean            sd           min           q25        median           q75           max
+  ------------------------------------------------------------------------------------------------------------------
+  age.age       35      922.1429       484.787         118.0         484.0        1004.0        1372.0        1582.0</code></pre><h2 id="Step-4:-Fit-with-MLE-and-MAP"><a class="docs-heading-anchor" href="#Step-4:-Fit-with-MLE-and-MAP">Step 4: Fit with MLE and MAP</a><a id="Step-4:-Fit-with-MLE-and-MAP-1"></a><a class="docs-heading-anchor-permalink" href="#Step-4:-Fit-with-MLE-and-MAP" title="Permalink"></a></h2><p>You are now ready to estimate the model parameters under both methods. Each call to <code>fit_model</code> runs a gradient-based optimiser (L-BFGS by default), starting from the initial values declared in the <code>@fixedEffects</code> block. The key difference lies in the objective function: MLE maximises the log-likelihood alone, while MAP maximises the log-likelihood plus the log-prior.</p><pre><code class="language-julia hljs">res_mle = fit_model(dm, mle_method; serialization=serialization, rng=Random.Xoshiro(41))
 res_map = fit_model(dm, map_method; serialization=serialization, rng=Random.Xoshiro(42))
 
 (
     objective_mle=NoLimits.get_objective(res_mle),
     objective_map=NoLimits.get_objective(res_map),
-)</code></pre><p>The returned objective values are negative log-likelihoods (for MLE) or negative log-posteriors (for MAP), so lower values indicate a better fit. Because the MAP objective includes additional prior penalty terms, its numerical value is not directly comparable to the MLE objective; what matters at this stage is that each method converged successfully.</p><p>To verify convergence and examine standard errors, you can request a detailed fit summary. This reports convergence status, the final objective value, and standard errors for all parameters whose <code>calculate_se</code> flag was set to <code>true</code>.</p><pre><code class="language-julia hljs">fit_summary_mle = NoLimits.summarize(res_mle)
+)</code></pre><p>&lt;!– injected:fe1-obj –&gt;</p><pre><code class="language-text hljs">(objective_mle = 158.39871272191726, objective_map = 168.53669404545346)</code></pre><p>The returned objective values are negative log-likelihoods (for MLE) or negative log-posteriors (for MAP), so lower values indicate a better fit. Because the MAP objective includes additional prior penalty terms, its numerical value is not directly comparable to the MLE objective; what matters at this stage is that each method converged successfully.</p><p>To verify convergence and examine standard errors, you can request a detailed fit summary. This reports convergence status, the final objective value, and standard errors for all parameters whose <code>calculate_se</code> flag was set to <code>true</code>.</p><pre><code class="language-julia hljs">fit_summary_mle = NoLimits.summarize(res_mle)
 fit_summary_map = NoLimits.summarize(res_map)
 
-fit_summary_mle</code></pre><h2 id="Step-5:-Compare-Parameter-Estimates"><a class="docs-heading-anchor" href="#Step-5:-Compare-Parameter-Estimates">Step 5: Compare Parameter Estimates</a><a id="Step-5:-Compare-Parameter-Estimates-1"></a><a class="docs-heading-anchor-permalink" href="#Step-5:-Compare-Parameter-Estimates" title="Permalink"></a></h2><p>With both fits complete, you can now extract the estimated parameters on the original (untransformed) scale and compare them side by side.</p><pre><code class="language-julia hljs">θ_mle = NoLimits.get_params(res_mle; scale=:untransformed)
+fit_summary_mle</code></pre><p>&lt;!– injected:fe1-fitmle –&gt;</p><pre><code class="language-text hljs">FitResultSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  method                              : mle
+  inference                           : frequentist
+  scale                               : natural
+  objective                           : 158.3987
+  iterations                          : 65
+  parameters shown (reported / total) : 4 / 4
+
+Parameter estimates
+  parameter      Estimate
+  -----------------------
+  a              192.6876
+  k                0.0028
+  t0             728.7564
+  σ                22.348
+
+Outcome data coverage
+  outcome             n_obs   n_missing
+  -------------------------------------
+  circumference          35           0
+  TOTAL                  35           0</code></pre><h2 id="Step-5:-Compare-Parameter-Estimates"><a class="docs-heading-anchor" href="#Step-5:-Compare-Parameter-Estimates">Step 5: Compare Parameter Estimates</a><a id="Step-5:-Compare-Parameter-Estimates-1"></a><a class="docs-heading-anchor-permalink" href="#Step-5:-Compare-Parameter-Estimates" title="Permalink"></a></h2><p>With both fits complete, you can now extract the estimated parameters on the original (untransformed) scale and compare them side by side.</p><pre><code class="language-julia hljs">θ_mle = NoLimits.get_params(res_mle; scale=:untransformed)
 θ_map = NoLimits.get_params(res_map; scale=:untransformed)
 
 (
     mle=θ_mle,
     map=θ_map,
-)</code></pre><p>Because this dataset is relatively small (35 observations total), the priors exert a noticeable pull on the MAP estimates. In particular, parameters whose likelihood surface is flat – such as the asymptote <code>a</code>, which is only weakly constrained when few trees have approached their maximum size – will be drawn toward the prior mean under MAP but left at the pure likelihood optimum under MLE. As sample size grows, the likelihood dominates and the two methods converge to the same values. This behaviour serves as a useful diagnostic: large MLE–MAP discrepancies flag parameters that the data alone cannot pin down precisely.</p><h2 id="Step-6:-Fitted-Trajectories"><a class="docs-heading-anchor" href="#Step-6:-Fitted-Trajectories">Step 6: Fitted Trajectories</a><a id="Step-6:-Fitted-Trajectories-1"></a><a class="docs-heading-anchor-permalink" href="#Step-6:-Fitted-Trajectories" title="Permalink"></a></h2><p>Plotting model predictions against raw observations is the most direct way to assess goodness of fit. In this step, you will overlay the estimated logistic curves on the data for the first two trees under each estimation method.</p><pre><code class="language-julia hljs">inds = [1, 2]
+)</code></pre><p>&lt;!– injected:fe1-params –&gt;</p><pre><code class="language-text hljs">(mle = (a = 192.68759194333077, k = 0.002828584933848338, t0 = 728.7563833068424, σ = 22.348047859224817), map = (a = 191.87573045497976, k = 0.0028588792012332553, t0 = 724.0263172189675, σ = 22.18411244352174))</code></pre><p>Because this dataset is relatively small (35 observations total), the priors exert a noticeable pull on the MAP estimates. In particular, parameters whose likelihood surface is flat – such as the asymptote <code>a</code>, which is only weakly constrained when few trees have approached their maximum size – will be drawn toward the prior mean under MAP but left at the pure likelihood optimum under MLE. As sample size grows, the likelihood dominates and the two methods converge to the same values. This behaviour serves as a useful diagnostic: large MLE–MAP discrepancies flag parameters that the data alone cannot pin down precisely.</p><h2 id="Step-6:-Fitted-Trajectories"><a class="docs-heading-anchor" href="#Step-6:-Fitted-Trajectories">Step 6: Fitted Trajectories</a><a id="Step-6:-Fitted-Trajectories-1"></a><a class="docs-heading-anchor-permalink" href="#Step-6:-Fitted-Trajectories" title="Permalink"></a></h2><p>Plotting model predictions against raw observations is the most direct way to assess goodness of fit. In this step, you will overlay the estimated logistic curves on the data for the first two trees under each estimation method.</p><pre><code class="language-julia hljs">inds = [1, 2]
 
 p_fit_mle = plot_fits(
     res_mle;
@@ -72,7 +216,7 @@ p_fit_map = plot_fits(
     ncols=2,
     shared_x_axis=true,
     shared_y_axis=true,
-)</code></pre><p>MLE fit plot:</p><pre><code class="language-julia hljs">p_fit_mle</code></pre><p>Because there are no random effects in this model, every tree is predicted by the same population-level curve. Deviations between the curve and individual data points therefore reflect both measurement noise and genuine between-tree variability that the current model does not capture. If these residual patterns appear systematic – for example, if one tree consistently lies above the curve while another lies below – that is a strong signal that random effects should be introduced (see the mixed-effects tutorials).</p><p>MAP fit plot:</p><pre><code class="language-julia hljs">p_fit_map</code></pre><p>The MAP trajectories may appear nearly identical to the MLE trajectories or show subtle shifts, depending on how informative the priors are relative to the data. Comparing the two plots is a quick visual assessment of prior influence.</p><h2 id="Step-7:-Observation-Distribution-Diagnostics"><a class="docs-heading-anchor" href="#Step-7:-Observation-Distribution-Diagnostics">Step 7: Observation Distribution Diagnostics</a><a id="Step-7:-Observation-Distribution-Diagnostics-1"></a><a class="docs-heading-anchor-permalink" href="#Step-7:-Observation-Distribution-Diagnostics" title="Permalink"></a></h2><p>Beyond trajectory plots, it is informative to inspect the implied observation distribution at individual time points. In this step, you will plot the normal distribution predicted by the model at the first observation of the first tree, with the actual observed value marked. A well-calibrated model places observed values near the centre of the predicted distribution rather than in the tails.</p><pre><code class="language-julia hljs">p_obs_mle = plot_observation_distributions(
+)</code></pre><p>MLE fit plot:</p><pre><code class="language-julia hljs">p_fit_mle</code></pre><p>&lt;!– injected:fe1-pfitmle –&gt; <img src="../figures/fe1/p_fit_mle.png" alt="Fitted population logistic trajectories under MLE for the first two trees."/></p><p>Because there are no random effects in this model, every tree is predicted by the same population-level curve. Deviations between the curve and individual data points therefore reflect both measurement noise and genuine between-tree variability that the current model does not capture. If these residual patterns appear systematic – for example, if one tree consistently lies above the curve while another lies below – that is a strong signal that random effects should be introduced (see the mixed-effects tutorials).</p><p>MAP fit plot:</p><pre><code class="language-julia hljs">p_fit_map</code></pre><p>&lt;!– injected:fe1-pfitmap –&gt; <img src="../figures/fe1/p_fit_map.png" alt="Fitted population logistic trajectories under MAP for the first two trees."/></p><p>The MAP trajectories may appear nearly identical to the MLE trajectories or show subtle shifts, depending on how informative the priors are relative to the data. Comparing the two plots is a quick visual assessment of prior influence.</p><h2 id="Step-7:-Observation-Distribution-Diagnostics"><a class="docs-heading-anchor" href="#Step-7:-Observation-Distribution-Diagnostics">Step 7: Observation Distribution Diagnostics</a><a id="Step-7:-Observation-Distribution-Diagnostics-1"></a><a class="docs-heading-anchor-permalink" href="#Step-7:-Observation-Distribution-Diagnostics" title="Permalink"></a></h2><p>Beyond trajectory plots, it is informative to inspect the implied observation distribution at individual time points. In this step, you will plot the normal distribution predicted by the model at the first observation of the first tree, with the actual observed value marked. A well-calibrated model places observed values near the centre of the predicted distribution rather than in the tails.</p><pre><code class="language-julia hljs">p_obs_mle = plot_observation_distributions(
     res_mle;
     observables=:circumference,
     individuals_idx=1,
@@ -84,4 +228,4 @@ p_obs_map = plot_observation_distributions(
     observables=:circumference,
     individuals_idx=1,
     obs_rows=1,
-)</code></pre><p>MLE observation-distribution plot:</p><pre><code class="language-julia hljs">p_obs_mle</code></pre><p>MAP observation-distribution plot:</p><pre><code class="language-julia hljs">p_obs_map</code></pre><p>If an observed value sits far in the tail of the predicted distribution, this may indicate model misspecification – for instance, a residual error distribution that is too narrow, or a structural model that systematically over- or under-predicts at certain ages.</p><h2 id="Summary-and-Next-Steps"><a class="docs-heading-anchor" href="#Summary-and-Next-Steps">Summary and Next Steps</a><a id="Summary-and-Next-Steps-1"></a><a class="docs-heading-anchor-permalink" href="#Summary-and-Next-Steps" title="Permalink"></a></h2><p>This tutorial demonstrated the end-to-end workflow for fixed-effects nonlinear modelling in NoLimits.jl: specifying a scientifically motivated structural model, pairing it with data, estimating parameters via MLE and MAP, and diagnosing the results. Several practical points are worth keeping in mind:</p><ul><li><strong>MLE is purely data-driven.</strong> It finds the parameter values that maximise the likelihood of the observed data. Declared priors have no effect on the MLE objective.</li><li><strong>MAP incorporates prior knowledge.</strong> By adding log-prior terms to the objective, MAP can stabilise estimation when the data provide limited information about certain parameters – a common situation in nonlinear models with saturation or asymptotic behaviour.</li><li><strong>Fixed-effects models assume no between-subject variability.</strong> Every individual is predicted by the same curve. When individual trajectories diverge systematically, random effects are needed to account for that heterogeneity. The mixed-effects tutorials show how to extend this model accordingly.</li><li><strong>Diagnostic tools are method-agnostic.</strong> Whether you use MLE, MAP, or any other estimation method in NoLimits.jl, functions such as <code>plot_fits</code> and <code>plot_observation_distributions</code> work identically, making it straightforward to compare results across methods.</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../mixed-effects-vi/">« Mixed-Effects Tutorial 7: VI for Mixed Effects (Not Supported)</a><a class="docs-footer-nextpage" href="../fixed-effects-vi/">Fixed-Effects Tutorial 2: Variational Inference (VI) »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Wednesday 3 June 2026 22:25">Wednesday 3 June 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+)</code></pre><p>MLE observation-distribution plot:</p><pre><code class="language-julia hljs">p_obs_mle</code></pre><p>&lt;!– injected:fe1-pobsmle –&gt; <img src="../figures/fe1/p_obs_mle.png" alt="Predicted observation distribution at the first observation of the first tree (MLE)."/></p><p>MAP observation-distribution plot:</p><pre><code class="language-julia hljs">p_obs_map</code></pre><p>&lt;!– injected:fe1-pobsmap –&gt; <img src="../figures/fe1/p_obs_map.png" alt="Predicted observation distribution at the first observation of the first tree (MAP)."/></p><p>If an observed value sits far in the tail of the predicted distribution, this may indicate model misspecification – for instance, a residual error distribution that is too narrow, or a structural model that systematically over- or under-predicts at certain ages.</p><h2 id="Summary-and-Next-Steps"><a class="docs-heading-anchor" href="#Summary-and-Next-Steps">Summary and Next Steps</a><a id="Summary-and-Next-Steps-1"></a><a class="docs-heading-anchor-permalink" href="#Summary-and-Next-Steps" title="Permalink"></a></h2><p>This tutorial demonstrated the end-to-end workflow for fixed-effects nonlinear modelling in NoLimits.jl: specifying a scientifically motivated structural model, pairing it with data, estimating parameters via MLE and MAP, and diagnosing the results. Several practical points are worth keeping in mind:</p><ul><li><strong>MLE is purely data-driven.</strong> It finds the parameter values that maximise the likelihood of the observed data. Declared priors have no effect on the MLE objective.</li><li><strong>MAP incorporates prior knowledge.</strong> By adding log-prior terms to the objective, MAP can stabilise estimation when the data provide limited information about certain parameters – a common situation in nonlinear models with saturation or asymptotic behaviour.</li><li><strong>Fixed-effects models assume no between-subject variability.</strong> Every individual is predicted by the same curve. When individual trajectories diverge systematically, random effects are needed to account for that heterogeneity. The mixed-effects tutorials show how to extend this model accordingly.</li><li><strong>Diagnostic tools are method-agnostic.</strong> Whether you use MLE, MAP, or any other estimation method in NoLimits.jl, functions such as <code>plot_fits</code> and <code>plot_observation_distributions</code> work identically, making it straightforward to compare results across methods.</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../mixed-effects-vi/">« Mixed-Effects Tutorial 7: VI for Mixed Effects (Not Supported)</a><a class="docs-footer-nextpage" href="../fixed-effects-vi/">Fixed-Effects Tutorial 2: Variational Inference (VI) »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Thursday 4 June 2026 07:49">Thursday 4 June 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

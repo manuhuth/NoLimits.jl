@@ -1,0 +1,23 @@
+UQResultSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  backend                             : chain
+  source_method                       : vi
+  inference                           : bayesian
+  scale                               : natural
+  objective                           : -0.7632
+  interval level                      : 0.95
+  parameters shown (reported / total) : 3 / 3
+
+Parameter uncertainty summary
+  parameter      Estimate     CrI Lower     CrI Upper
+  -------------------------------------
+  a               -0.0112       -0.1137        0.0907
+  b                 0.312        0.1709        0.4618
+  sigma            0.1746        0.1164        0.2696
+
+Outcome data coverage
+  outcome       n_obs   n_missing
+  -------------------------------
+  y                 8           0
+  TOTAL             8           0

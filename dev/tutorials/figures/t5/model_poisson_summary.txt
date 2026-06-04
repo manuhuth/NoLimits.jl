@@ -1,0 +1,56 @@
+ModelSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  model type                          : non-ODE
+  fixed-effect blocks                 : 3
+  fixed-effect scalar values          : 7
+  random effects                      : 1
+  random-effect grouping columns      : 1
+  covariates (declared)               : 2
+  formulas (deterministic / outcomes) : 2 / 1
+  requires DE accessors               : false
+
+Structure blocks
+  helpers              : true
+  fixed effects        : true
+  random effects       : true
+  covariates           : true
+  preDE                : false
+  DifferentialEquation : false
+  initialDE            : false
+
+Covariate classes
+  varying  : 2
+  constant : 0
+  dynamic  : 0
+
+Fixed-effects declarations
+  name   type        size  se  prior      scale       bounds                              details
+  ------------------------------------------------------------------------------------------------------------
+  beta0  RealNumber     1  yes  Priorless  identity    finite lower 0/1, finite upper 0/1  -
+  beta   RealVector     5  yes  Priorless  identityx5  finite lower 0/5, finite upper 0/5  -
+  omega  RealNumber     1  yes  Priorless  log         finite lower 1/1, finite upper 0/1  -
+
+Random-effects declarations
+  name  group    dist  
+  -----------------------
+  eta   Subject  Normal
+
+Covariate declarations
+  name      kind             columns                   constant_on           interpolation
+  -------------------------------------------------------------------------------------------------
+  period_f  Covariate        period_f                  -                     -
+  x         CovariateVector  base_log, age_log, trt_active, period_centered, trt_period_centered  -                     -
+
+Formulas
+  deterministic names : log_rate, lambda
+  outcome names       : seizures
+  required DE states  : (none)
+  required DE signals : (none)
+  declared DE states  : (none)
+  declared DE signals : (none)
+Outcome distribution types
+  seizures => Poisson
+
+Helper functions
+  names : safe_exp, linpred

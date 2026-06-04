@@ -1,0 +1,33 @@
+FitResultSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  method                              : mcem
+  inference                           : frequentist
+  scale                               : natural
+  objective                           : -145.5209
+  iterations                          : 12
+  parameters shown (reported / total) : 7 / 7
+
+Parameter estimates
+  parameter      Estimate
+  -----------------------
+  tka              0.4688
+  tcl              1.0085
+  tv               3.4531
+  omega1           0.3972
+  omega2           0.0719
+  omega3           0.0177
+  sigma_eps        0.6987
+
+Outcome data coverage
+  outcome       n_obs   n_missing
+  -------------------------------
+  y1              132          12
+  TOTAL           132          12
+
+Empirical Bayes random effects summary (across RE levels)
+  random effect  component       n          mean            sd           q25        median           q75
+  --------------------------------------------------------------------------------------------------
+  eta            eta_1          12       -0.0186        0.5949       -0.4342       -0.1124        0.2337
+  eta            eta_2          12        0.0077         0.245       -0.1305        0.0413        0.1574
+  eta            eta_3          12       -0.0023        0.1153       -0.0969        0.0076        0.0668

@@ -1,0 +1,23 @@
+FitResultSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  method                              : mle
+  inference                           : frequentist
+  scale                               : natural
+  objective                           : 158.3987
+  iterations                          : 65
+  parameters shown (reported / total) : 4 / 4
+
+Parameter estimates
+  parameter      Estimate
+  -----------------------
+  a              192.6876
+  k                0.0028
+  t0             728.7564
+  σ                22.348
+
+Outcome data coverage
+  outcome             n_obs   n_missing
+  -------------------------------------
+  circumference          35           0
+  TOTAL                  35           0

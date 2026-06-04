@@ -1,0 +1,64 @@
+DataModelSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  model type                 : non-ODE
+  event-aware                : false
+  individuals                : 5
+  rows (total / obs / event) : 35 / 35 / 0
+  fixed effects (top-level)  : 5
+  outcomes                   : 1
+  covariates (declared)      : 1
+  random effects             : 1
+
+Covariate classes
+  varying  : 1
+  constant : 0
+  dynamic  : 0
+
+Outcome distribution types
+  circumference => LogNormal
+
+Random-effect distribution types
+  vmax_i => LogNormal
+
+Individual design diagnostics
+  individuals with one observation              : 0
+  global observed time range                    : 118.0 to 1582.0
+  unique observed time points                   : 7
+  duplicate (ID, time) observation rows         : 0
+  monotonic-time violations (observation order) : 0
+
+Observations per individual
+  metric       n          mean            sd           min           q25        median           q75           max
+  ----------------------------------------------------------------------------------------------------------------
+  count        5           7.0           0.0           7.0           7.0           7.0           7.0           7.0
+
+Time span per individual
+  metric       n          mean            sd           min           q25        median           q75           max
+  ----------------------------------------------------------------------------------------------------------------
+  span         5        1464.0           0.0        1464.0        1464.0        1464.0        1464.0        1464.0
+
+Median sampling interval per individual
+  metric          n          mean            sd           min           q25        median           q75           max
+  -------------------------------------------------------------------------------------------------------------------
+  median_dt       5         218.5           0.0         218.5         218.5         218.5         218.5         218.5
+
+Outcome descriptive statistics (observation rows)
+  Variable            n          mean            sd           min           q25        median           q75           max
+  -----------------------------------------------------------------------------------------------------------------------
+  circumference      35      115.8571        56.661          30.0          65.5         115.0         161.5         214.0
+
+Declared covariates
+  name  kind       columns
+  -------------------------------------
+  age   Covariate  age
+
+Covariate descriptive statistics (observation rows)
+  Variable       n          mean            sd           min           q25        median           q75           max
+  ------------------------------------------------------------------------------------------------------------------
+  age.age       35      922.1429       484.787         118.0         484.0        1004.0        1372.0        1582.0
+
+Per-random-effect summary
+  random effect  group  dist         levels  rows/level min        median           max
+  -----------------------------------------------------------------------------------
+  vmax_i         Tree   LogNormal         5             7.0           7.0           7.0

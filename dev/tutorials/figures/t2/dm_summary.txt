@@ -1,0 +1,64 @@
+DataModelSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  model type                 : ODE
+  event-aware                : true
+  individuals                : 12
+  rows (total / obs / event) : 144 / 132 / 12
+  fixed effects (top-level)  : 7
+  outcomes                   : 1
+  covariates (declared)      : 1
+  random effects             : 1
+
+Covariate classes
+  varying  : 1
+  constant : 0
+  dynamic  : 0
+
+Outcome distribution types
+  y1 => Normal
+
+Random-effect distribution types
+  eta => MvNormal
+
+Individual design diagnostics
+  individuals with one observation              : 0
+  global observed time range                    : 0.0 to 24.65
+  unique observed time points                   : 78
+  duplicate (ID, time) observation rows         : 0
+  monotonic-time violations (observation order) : 0
+
+Observations per individual
+  metric       n          mean            sd           min           q25        median           q75           max
+  ----------------------------------------------------------------------------------------------------------------
+  count       12          11.0           0.0          11.0          11.0          11.0          11.0          11.0
+
+Time span per individual
+  metric       n          mean            sd           min           q25        median           q75           max
+  ----------------------------------------------------------------------------------------------------------------
+  span        12       24.1992        0.2439          23.7         24.11        24.195        24.355         24.65
+
+Median sampling interval per individual
+  metric          n          mean            sd           min           q25        median           q75           max
+  -------------------------------------------------------------------------------------------------------------------
+  median_dt      12        1.5092        0.0277         1.445        1.4975        1.5075        1.5312          1.55
+
+Outcome descriptive statistics (observation rows)
+  Variable       n          mean            sd           min           q25        median           q75           max
+  ------------------------------------------------------------------------------------------------------------------
+  y1           132        4.9605        2.8564           0.0        2.8775         5.275          7.14          11.4
+
+Declared covariates
+  name  kind       columns
+  -------------------------------------
+  t     Covariate  t
+
+Covariate descriptive statistics (observation rows)
+  Variable       n          mean            sd           min           q25        median           q75           max
+  ------------------------------------------------------------------------------------------------------------------
+  t.t          132        5.8946        6.8997           0.0         0.595          3.53           9.0         24.65
+
+Per-random-effect summary
+  random effect  group  dist        levels  rows/level min        median           max
+  ----------------------------------------------------------------------------------
+  eta            id     MvNormal        12            11.0          11.0          11.0

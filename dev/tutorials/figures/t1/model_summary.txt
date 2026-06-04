@@ -1,0 +1,57 @@
+ModelSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  model type                          : non-ODE
+  fixed-effect blocks                 : 5
+  fixed-effect scalar values          : 5
+  random effects                      : 1
+  random-effect grouping columns      : 1
+  covariates (declared)               : 1
+  formulas (deterministic / outcomes) : 2 / 1
+  requires DE accessors               : false
+
+Structure blocks
+  helpers              : true
+  fixed effects        : true
+  random effects       : true
+  covariates           : true
+  preDE                : false
+  DifferentialEquation : false
+  initialDE            : false
+
+Covariate classes
+  varying  : 1
+  constant : 0
+  dynamic  : 0
+
+Fixed-effects declarations
+  name      type        size  se  prior      scale     bounds                              details
+  -------------------------------------------------------------------------------------------------------------
+  phi1      RealNumber     1  yes  LogNormal  identity  finite lower 0/1, finite upper 0/1  -
+  log_vmax  RealNumber     1  yes  Normal     identity  finite lower 0/1, finite upper 0/1  -
+  phi3      RealNumber     1  yes  LogNormal  identity  finite lower 0/1, finite upper 0/1  -
+  omega     RealNumber     1  yes  LogNormal  log       finite lower 1/1, finite upper 0/1  -
+  sigma     RealNumber     1  yes  LogNormal  log       finite lower 1/1, finite upper 0/1  -
+
+Random-effects declarations
+  name    group  dist     
+  --------------------------
+  vmax_i  Tree   LogNormal
+
+Covariate declarations
+  name  kind       columns                   constant_on           interpolation
+  ---------------------------------------------------------------------------------------
+  age   Covariate  age                       -                     -
+
+Formulas
+  deterministic names : mu_raw, mu
+  outcome names       : circumference
+  required DE states  : (none)
+  required DE signals : (none)
+  declared DE states  : (none)
+  declared DE signals : (none)
+Outcome distribution types
+  circumference => LogNormal
+
+Helper functions
+  names : softplus

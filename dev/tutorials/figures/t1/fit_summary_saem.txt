@@ -1,0 +1,29 @@
+FitResultSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  method                              : saem
+  inference                           : frequentist
+  scale                               : natural
+  objective                           : -183.4979
+  iterations                          : 300
+  parameters shown (reported / total) : 5 / 5
+
+Parameter estimates
+  parameter      Estimate
+  -----------------------
+  phi1            84.4174
+  log_vmax         9.4345
+  phi3          2045.6917
+  omega            1.0e-5
+  sigma            0.5457
+
+Outcome data coverage
+  outcome             n_obs   n_missing
+  -------------------------------------
+  circumference          35           0
+  TOTAL                  35           0
+
+Empirical Bayes random effects summary (across RE levels)
+  random effect       n          mean            sd           q25        median           q75
+  ---------------------------------------------------------------------------
+  vmax_i              5       12510.0      5.672e-7       12510.0       12510.0       12510.0

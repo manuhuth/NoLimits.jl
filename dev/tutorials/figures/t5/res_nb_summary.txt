@@ -1,0 +1,32 @@
+FitResultSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  method                              : mcem
+  inference                           : frequentist
+  scale                               : natural
+  objective                           : -644.3865
+  iterations                          : 4
+  parameters shown (reported / total) : 8 / 8
+
+Parameter estimates
+  parameter      Estimate
+  -----------------------
+  beta0           -1.6782
+  beta_1           0.7117
+  beta_2           0.2867
+  beta_3          -0.2126
+  beta_4          -0.0467
+  beta_5          -0.0162
+  omega            0.6723
+  log_r            2.0591
+
+Outcome data coverage
+  outcome        n_obs   n_missing
+  --------------------------------
+  seizures         236           0
+  TOTAL            236           0
+
+Empirical Bayes random effects summary (across RE levels)
+  random effect       n          mean            sd           q25        median           q75
+  ---------------------------------------------------------------------------
+  eta                59          0.23        0.5312       -0.0403         0.225        0.4592

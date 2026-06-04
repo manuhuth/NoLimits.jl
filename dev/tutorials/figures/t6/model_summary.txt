@@ -1,0 +1,64 @@
+ModelSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  model type                          : non-ODE
+  fixed-effect blocks                 : 9
+  fixed-effect scalar values          : 9
+  random effects                      : 4
+  random-effect grouping columns      : 1
+  covariates (declared)               : 1
+  formulas (deterministic / outcomes) : 2 / 1
+  requires DE accessors               : false
+
+Structure blocks
+  helpers              : false
+  fixed effects        : true
+  random effects       : true
+  covariates           : true
+  preDE                : false
+  DifferentialEquation : false
+  initialDE            : false
+
+Covariate classes
+  varying  : 1
+  constant : 0
+  dynamic  : 0
+
+Fixed-effects declarations
+  name      type        size  se  prior      scale     bounds                              details
+  -------------------------------------------------------------------------------------------------------------
+  beta_A    RealNumber     1  yes  Priorless  identity  finite lower 0/1, finite upper 0/1  -
+  beta_B    RealNumber     1  yes  Priorless  identity  finite lower 0/1, finite upper 0/1  -
+  beta_k1   RealNumber     1  yes  Priorless  identity  finite lower 0/1, finite upper 0/1  -
+  beta_k2   RealNumber     1  yes  Priorless  identity  finite lower 0/1, finite upper 0/1  -
+  omega_A   RealNumber     1  yes  Priorless  log       finite lower 1/1, finite upper 0/1  -
+  omega_B   RealNumber     1  yes  Priorless  log       finite lower 1/1, finite upper 0/1  -
+  omega_k1  RealNumber     1  yes  Priorless  log       finite lower 1/1, finite upper 0/1  -
+  omega_k2  RealNumber     1  yes  Priorless  log       finite lower 1/1, finite upper 0/1  -
+  sigma     RealNumber     1  yes  Priorless  log       finite lower 1/1, finite upper 0/1  -
+
+Random-effects declarations
+  name  group  dist     
+  ------------------------
+  A_i   ID     LogNormal
+  B_i   ID     LogNormal
+  k1_i  ID     LogNormal
+  k2_i  ID     LogNormal
+
+Covariate declarations
+  name  kind       columns                   constant_on           interpolation
+  ---------------------------------------------------------------------------------------
+  Time  Covariate  Time                      -                     -
+
+Formulas
+  deterministic names : V_i, mu
+  outcome names       : Log_VL
+  required DE states  : (none)
+  required DE signals : (none)
+  declared DE states  : (none)
+  declared DE signals : (none)
+Outcome distribution types
+  Log_VL => censored
+
+Helper functions
+  names : (none)

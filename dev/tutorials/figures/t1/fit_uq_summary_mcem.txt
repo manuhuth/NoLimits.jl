@@ -1,0 +1,30 @@
+UQResultSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  backend                             : wald
+  source_method                       : mcem
+  inference                           : frequentist
+  scale                               : natural
+  objective                           : -157.3752
+  interval level                      : 0.95
+  parameters shown (reported / total) : 5 / 5
+
+Parameter uncertainty summary
+  parameter      Estimate    Std. Error      CI Lower      CI Upper
+  ---------------------------------------------------
+  phi1             31.227        1.5863       28.2251       34.2288
+  log_vmax         5.0336        0.0821        4.8537        5.1925
+  phi3           639.5453       15.6415      604.8724      669.1783
+  omega             0.169        0.0607        0.0826        0.3175
+  sigma            0.1127         0.015        0.0866        0.1458
+
+Outcome data coverage
+  outcome             n_obs   n_missing
+  -------------------------------------
+  circumference          35           0
+  TOTAL                  35           0
+
+Empirical Bayes random effects summary (across RE levels)
+  random effect       n          mean            sd           q25        median           q75
+  ---------------------------------------------------------------------------
+  vmax_i              5        155.27       24.9555      134.1013      147.4157      182.2748

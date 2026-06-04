@@ -1,0 +1,23 @@
+FitResultSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  method                              : map
+  inference                           : frequentist
+  scale                               : natural
+  objective                           : 168.5367
+  iterations                          : 81
+  parameters shown (reported / total) : 4 / 4
+
+Parameter estimates
+  parameter      Estimate
+  -----------------------
+  a              191.8757
+  k                0.0029
+  t0             724.0263
+  σ               22.1841
+
+Outcome data coverage
+  outcome             n_obs   n_missing
+  -------------------------------------
+  circumference          35           0
+  TOTAL                  35           0

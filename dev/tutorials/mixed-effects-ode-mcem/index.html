@@ -45,7 +45,22 @@ function build_theoph_event_df(tbl::DataFrame)
 end
 
 df = build_theoph_event_df(theoph_df)
-first(df, 12)</code></pre><h2 id="Step-2:-Define-the-ODE-Mixed-Effects-Model"><a class="docs-heading-anchor" href="#Step-2:-Define-the-ODE-Mixed-Effects-Model">Step 2: Define the ODE Mixed-Effects Model</a><a id="Step-2:-Define-the-ODE-Mixed-Effects-Model-1"></a><a class="docs-heading-anchor-permalink" href="#Step-2:-Define-the-ODE-Mixed-Effects-Model" title="Permalink"></a></h2><p>In this step, you will specify the mechanistic model. The goal is twofold: describe the ODE dynamics of the two-compartment system, and account for inter-individual variability through random effects.</p><p>The model has three system parameters –- a transfer rate <code>ka</code>, an elimination rate <code>cl</code>, and a distribution volume <code>v</code> –- each of which varies across individuals. To ensure positivity, each parameter is expressed as an exponential transform of a population-level fixed effect plus a subject-specific random deviation:</p><ul><li><code>ka = exp(tka + eta[1])</code></li><li><code>cl = exp(tcl + eta[2])</code></li><li><code>v = exp(tv + eta[3])</code></li></ul><p>Because the parameters enter the ODE nonlinearly (through the exponential transform of the random effects), standard linear mixed-effects approximations do not apply. This is precisely the setting where Monte Carlo EM methods such as MCEM offer a robust estimation strategy.</p><p>The random effects vector <code>eta</code> follows a multivariate normal distribution with a diagonal covariance matrix whose entries (<code>omega1</code>, <code>omega2</code>, <code>omega3</code>) are estimated alongside the other fixed effects. Observations are modeled as normally distributed around the predicted concentration in the central compartment, with residual standard deviation <code>sigma_eps</code>.</p><p>After defining the model, you will configure the ODE solver. <code>Tsit5()</code> is an efficient explicit Runge–Kutta method well-suited to non-stiff systems, and the tolerances below balance numerical accuracy with computational cost.</p><pre><code class="language-julia hljs">using NoLimits
+first(df, 12)</code></pre><p>&lt;!– injected:t2-dfhead –&gt;</p><pre><code class="language-text hljs">12×7 DataFrame
+ Row │ id     t        AMT      EVID   CMT      RATE     y1
+     │ Int64  Float64  Float64  Int64  String?  Float64  Float64?
+─────┼──────────────────────────────────────────────────────────────
+   1 │     1     0.0   319.992      1  depot        0.0  missing
+   2 │     1     0.0     0.0        0  missing      0.0        0.74
+   3 │     1     0.25    0.0        0  missing      0.0        2.84
+   4 │     1     0.57    0.0        0  missing      0.0        6.57
+   5 │     1     1.12    0.0        0  missing      0.0       10.5
+   6 │     1     2.02    0.0        0  missing      0.0        9.66
+   7 │     1     3.82    0.0        0  missing      0.0        8.58
+   8 │     1     5.1     0.0        0  missing      0.0        8.36
+   9 │     1     7.03    0.0        0  missing      0.0        7.47
+  10 │     1     9.05    0.0        0  missing      0.0        6.89
+  11 │     1    12.12    0.0        0  missing      0.0        5.94
+  12 │     1    24.37    0.0        0  missing      0.0        3.28</code></pre><h2 id="Step-2:-Define-the-ODE-Mixed-Effects-Model"><a class="docs-heading-anchor" href="#Step-2:-Define-the-ODE-Mixed-Effects-Model">Step 2: Define the ODE Mixed-Effects Model</a><a id="Step-2:-Define-the-ODE-Mixed-Effects-Model-1"></a><a class="docs-heading-anchor-permalink" href="#Step-2:-Define-the-ODE-Mixed-Effects-Model" title="Permalink"></a></h2><p>In this step, you will specify the mechanistic model. The goal is twofold: describe the ODE dynamics of the two-compartment system, and account for inter-individual variability through random effects.</p><p>The model has three system parameters –- a transfer rate <code>ka</code>, an elimination rate <code>cl</code>, and a distribution volume <code>v</code> –- each of which varies across individuals. To ensure positivity, each parameter is expressed as an exponential transform of a population-level fixed effect plus a subject-specific random deviation:</p><ul><li><code>ka = exp(tka + eta[1])</code></li><li><code>cl = exp(tcl + eta[2])</code></li><li><code>v = exp(tv + eta[3])</code></li></ul><p>Because the parameters enter the ODE nonlinearly (through the exponential transform of the random effects), standard linear mixed-effects approximations do not apply. This is precisely the setting where Monte Carlo EM methods such as MCEM offer a robust estimation strategy.</p><p>The random effects vector <code>eta</code> follows a multivariate normal distribution with a diagonal covariance matrix whose entries (<code>omega1</code>, <code>omega2</code>, <code>omega3</code>) are estimated alongside the other fixed effects. Observations are modeled as normally distributed around the predicted concentration in the central compartment, with residual standard deviation <code>sigma_eps</code>.</p><p>After defining the model, you will configure the ODE solver. <code>Tsit5()</code> is an efficient explicit Runge–Kutta method well-suited to non-stiff systems, and the tolerances below balance numerical accuracy with computational cost.</p><pre><code class="language-julia hljs">using NoLimits
 using Distributions
 using LinearAlgebra
 using OrdinaryDiffEq
@@ -101,7 +116,65 @@ model = set_solver_config(
     alg=Tsit5(),
     kwargs=(abstol=1e-6, reltol=1e-6),
 )</code></pre><h3 id="Model-Summary"><a class="docs-heading-anchor" href="#Model-Summary">Model Summary</a><a id="Model-Summary-1"></a><a class="docs-heading-anchor-permalink" href="#Model-Summary" title="Permalink"></a></h3><p>Before moving on, it is good practice to inspect the model structure with <code>NoLimits.summarize</code>. This confirms that all blocks –- fixed effects, random effects, covariates, ODE states, and formulas –- have been parsed correctly.</p><pre><code class="language-julia hljs">model_summary = NoLimits.summarize(model)
-model_summary</code></pre><h2 id="Step-3:-Build-the-DataModel"><a class="docs-heading-anchor" href="#Step-3:-Build-the-DataModel">Step 3: Build the DataModel</a><a id="Step-3:-Build-the-DataModel-1"></a><a class="docs-heading-anchor-permalink" href="#Step-3:-Build-the-DataModel" title="Permalink"></a></h2><p>In this step, you will connect the model to the data by constructing a <code>DataModel</code>. This constructor validates the dataset against the model&#39;s requirements –- checking that all declared covariates are present, that constant covariates are indeed constant within each group, and that event columns are well-formed. You must explicitly specify the event-related column names so that NoLimits.jl can correctly distinguish input events from observation rows during ODE integration.</p><pre><code class="language-julia hljs">dm = DataModel(
+model_summary</code></pre><p>&lt;!– injected:t2-model –&gt;</p><pre><code class="language-text hljs">ModelSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  model type                          : ODE
+  fixed-effect blocks                 : 7
+  fixed-effect scalar values          : 7
+  random effects                      : 1
+  random-effect grouping columns      : 1
+  covariates (declared)               : 1
+  formulas (deterministic / outcomes) : 0 / 1
+  requires DE accessors               : true
+
+Structure blocks
+  helpers              : false
+  fixed effects        : true
+  random effects       : true
+  covariates           : true
+  preDE                : true
+  DifferentialEquation : true
+  initialDE            : true
+
+Covariate classes
+  varying  : 1
+  constant : 0
+  dynamic  : 0
+
+Fixed-effects declarations
+  name       type        size  se  prior    scale     bounds                              details
+  ------------------------------------------------------------------------------------------------------------
+  tka        RealNumber     1  yes  Uniform  identity  finite lower 0/1, finite upper 0/1  -
+  tcl        RealNumber     1  yes  Uniform  identity  finite lower 0/1, finite upper 0/1  -
+  tv         RealNumber     1  yes  Uniform  identity  finite lower 0/1, finite upper 0/1  -
+  omega1     RealNumber     1  yes  Uniform  log       finite lower 1/1, finite upper 0/1  -
+  omega2     RealNumber     1  yes  Uniform  log       finite lower 1/1, finite upper 0/1  -
+  omega3     RealNumber     1  yes  Uniform  log       finite lower 1/1, finite upper 0/1  -
+  sigma_eps  RealNumber     1  yes  Uniform  log       finite lower 1/1, finite upper 0/1  -
+
+Random-effects declarations
+  name  group  dist    
+  -----------------------
+  eta   id     MvNormal
+
+Covariate declarations
+  name  kind       columns                   constant_on           interpolation
+  ---------------------------------------------------------------------------------------
+  t     Covariate  t                         -                     -
+
+Formulas
+  deterministic names : (none)
+  outcome names       : y1
+  required DE states  : center
+  required DE signals : (none)
+  declared DE states  : depot, center
+  declared DE signals : (none)
+Outcome distribution types
+  y1 =&gt; Normal
+
+Helper functions
+  names : (none)</code></pre><h2 id="Step-3:-Build-the-DataModel"><a class="docs-heading-anchor" href="#Step-3:-Build-the-DataModel">Step 3: Build the DataModel</a><a id="Step-3:-Build-the-DataModel-1"></a><a class="docs-heading-anchor-permalink" href="#Step-3:-Build-the-DataModel" title="Permalink"></a></h2><p>In this step, you will connect the model to the data by constructing a <code>DataModel</code>. This constructor validates the dataset against the model&#39;s requirements –- checking that all declared covariates are present, that constant covariates are indeed constant within each group, and that event columns are well-formed. You must explicitly specify the event-related column names so that NoLimits.jl can correctly distinguish input events from observation rows during ODE integration.</p><pre><code class="language-julia hljs">dm = DataModel(
     model,
     df;
     primary_id=:id,
@@ -112,7 +185,70 @@ model_summary</code></pre><h2 id="Step-3:-Build-the-DataModel"><a class="docs-he
     cmt_col=:CMT,
 )
 </code></pre><h3 id="DataModel-Summary"><a class="docs-heading-anchor" href="#DataModel-Summary">DataModel Summary</a><a id="DataModel-Summary-1"></a><a class="docs-heading-anchor-permalink" href="#DataModel-Summary" title="Permalink"></a></h3><p>Summarizing the <code>DataModel</code> gives you an overview of the number of individuals, batches (groups of individuals linked by shared random-effect levels), observation counts, and event structure. This is a useful checkpoint before launching a potentially expensive estimation run.</p><pre><code class="language-julia hljs">dm_summary = NoLimits.summarize(dm)
-dm_summary</code></pre><h2 id="Step-4:-Configure-MCEM"><a class="docs-heading-anchor" href="#Step-4:-Configure-MCEM">Step 4: Configure MCEM</a><a id="Step-4:-Configure-MCEM-1"></a><a class="docs-heading-anchor-permalink" href="#Step-4:-Configure-MCEM" title="Permalink"></a></h2><p>In this step, you will set up the MCEM algorithm. MCEM alternates between two stages: (1) an E-step that samples random effects from their conditional posterior given the current fixed-effect estimates, and (2) an M-step that maximizes the expected complete-data log-likelihood with respect to the fixed effects. The number of Monte Carlo samples in the E-step can grow across iterations, improving the approximation as the algorithm converges.</p><p>The configuration below is tuned for a tutorial setting –- moderate iteration counts and sample sizes that keep runtime reasonable. For production analyses, you would typically increase <code>maxiters</code>, raise the ceiling of the sample schedule, and draw more MCMC samples per E-step to reduce Monte Carlo noise in the gradient estimates.</p><p>A few notes on the specific settings:</p><ul><li><code>sample_schedule</code> controls how the number of Monte Carlo samples grows with each EM iteration, starting at 60 and increasing by 20 per iteration up to a maximum of 260.</li><li><code>progress=false</code> suppresses progress bars to keep documentation output clean.</li><li><code>EnsembleThreads()</code> enables multithreaded ODE solving across individuals for faster execution.</li></ul><pre><code class="language-julia hljs">mcem_method = NoLimits.MCEM(;
+dm_summary</code></pre><p>&lt;!– injected:t2-dm –&gt;</p><pre><code class="language-text hljs">DataModelSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  model type                 : ODE
+  event-aware                : true
+  individuals                : 12
+  rows (total / obs / event) : 144 / 132 / 12
+  fixed effects (top-level)  : 7
+  outcomes                   : 1
+  covariates (declared)      : 1
+  random effects             : 1
+
+Covariate classes
+  varying  : 1
+  constant : 0
+  dynamic  : 0
+
+Outcome distribution types
+  y1 =&gt; Normal
+
+Random-effect distribution types
+  eta =&gt; MvNormal
+
+Individual design diagnostics
+  individuals with one observation              : 0
+  global observed time range                    : 0.0 to 24.65
+  unique observed time points                   : 78
+  duplicate (ID, time) observation rows         : 0
+  monotonic-time violations (observation order) : 0
+
+Observations per individual
+  metric       n          mean            sd           min           q25        median           q75           max
+  ----------------------------------------------------------------------------------------------------------------
+  count       12          11.0           0.0          11.0          11.0          11.0          11.0          11.0
+
+Time span per individual
+  metric       n          mean            sd           min           q25        median           q75           max
+  ----------------------------------------------------------------------------------------------------------------
+  span        12       24.1992        0.2439          23.7         24.11        24.195        24.355         24.65
+
+Median sampling interval per individual
+  metric          n          mean            sd           min           q25        median           q75           max
+  -------------------------------------------------------------------------------------------------------------------
+  median_dt      12        1.5092        0.0277         1.445        1.4975        1.5075        1.5312          1.55
+
+Outcome descriptive statistics (observation rows)
+  Variable       n          mean            sd           min           q25        median           q75           max
+  ------------------------------------------------------------------------------------------------------------------
+  y1           132        4.9605        2.8564           0.0        2.8775         5.275          7.14          11.4
+
+Declared covariates
+  name  kind       columns
+  -------------------------------------
+  t     Covariate  t
+
+Covariate descriptive statistics (observation rows)
+  Variable       n          mean            sd           min           q25        median           q75           max
+  ------------------------------------------------------------------------------------------------------------------
+  t.t          132        5.8946        6.8997           0.0         0.595          3.53           9.0         24.65
+
+Per-random-effect summary
+  random effect  group  dist        levels  rows/level min        median           max
+  ----------------------------------------------------------------------------------
+  eta            id     MvNormal        12            11.0          11.0          11.0</code></pre><h2 id="Step-4:-Configure-MCEM"><a class="docs-heading-anchor" href="#Step-4:-Configure-MCEM">Step 4: Configure MCEM</a><a id="Step-4:-Configure-MCEM-1"></a><a class="docs-heading-anchor-permalink" href="#Step-4:-Configure-MCEM" title="Permalink"></a></h2><p>In this step, you will set up the MCEM algorithm. MCEM alternates between two stages: (1) an E-step that samples random effects from their conditional posterior given the current fixed-effect estimates, and (2) an M-step that maximizes the expected complete-data log-likelihood with respect to the fixed effects. The number of Monte Carlo samples in the E-step can grow across iterations, improving the approximation as the algorithm converges.</p><p>The configuration below is tuned for a tutorial setting –- moderate iteration counts and sample sizes that keep runtime reasonable. For production analyses, you would typically increase <code>maxiters</code>, raise the ceiling of the sample schedule, and draw more MCMC samples per E-step to reduce Monte Carlo noise in the gradient estimates.</p><p>A few notes on the specific settings:</p><ul><li><code>sample_schedule</code> controls how the number of Monte Carlo samples grows with each EM iteration, starting at 60 and increasing by 20 per iteration up to a maximum of 260.</li><li><code>progress=false</code> suppresses progress bars to keep documentation output clean.</li><li><code>EnsembleThreads()</code> enables multithreaded ODE solving across individuals for faster execution.</li></ul><pre><code class="language-julia hljs">mcem_method = NoLimits.MCEM(;
     maxiters=12,
     sample_schedule=i -&gt; min(60 + 20 * (i - 1), 260),
     turing_kwargs=(n_samples=60, n_adapt=20, progress=false),
@@ -131,14 +267,46 @@ fit_summary = (
     objective=NoLimits.get_objective(res_mcem),
 )
 
-fit_summary</code></pre><h3 id="FitResult-Summary"><a class="docs-heading-anchor" href="#FitResult-Summary">FitResult Summary</a><a id="FitResult-Summary-1"></a><a class="docs-heading-anchor-permalink" href="#FitResult-Summary" title="Permalink"></a></h3><p>The structured summary provides a convenient overview of convergence status, iteration counts, and method-specific diagnostics.</p><pre><code class="language-julia hljs">fit_result_summary = NoLimits.summarize(res_mcem)
-fit_result_summary</code></pre><p>You can also extract the estimated fixed-effect parameters on their natural (untransformed) scale. The population-level log-scale parameters (<code>tka</code>, <code>tcl</code>, <code>tv</code>) can be exponentiated to recover typical-individual values, and <code>sigma_eps</code> represents the residual observation noise.</p><pre><code class="language-julia hljs">params = NoLimits.get_params(res_mcem; scale=:untransformed)
+fit_summary</code></pre><p>&lt;!– injected:t2-obj –&gt;</p><pre><code class="language-text hljs">(objective = -145.52093283427416,)</code></pre><h3 id="FitResult-Summary"><a class="docs-heading-anchor" href="#FitResult-Summary">FitResult Summary</a><a id="FitResult-Summary-1"></a><a class="docs-heading-anchor-permalink" href="#FitResult-Summary" title="Permalink"></a></h3><p>The structured summary provides a convenient overview of convergence status, iteration counts, and method-specific diagnostics.</p><pre><code class="language-julia hljs">fit_result_summary = NoLimits.summarize(res_mcem)
+fit_result_summary</code></pre><p>&lt;!– injected:t2-fitres –&gt;</p><pre><code class="language-text hljs">FitResultSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  method                              : mcem
+  inference                           : frequentist
+  scale                               : natural
+  objective                           : -145.5209
+  iterations                          : 12
+  parameters shown (reported / total) : 7 / 7
+
+Parameter estimates
+  parameter      Estimate
+  -----------------------
+  tka              0.4688
+  tcl              1.0085
+  tv               3.4531
+  omega1           0.3972
+  omega2           0.0719
+  omega3           0.0177
+  sigma_eps        0.6987
+
+Outcome data coverage
+  outcome       n_obs   n_missing
+  -------------------------------
+  y1              132          12
+  TOTAL           132          12
+
+Empirical Bayes random effects summary (across RE levels)
+  random effect  component       n          mean            sd           q25        median           q75
+  --------------------------------------------------------------------------------------------------
+  eta            eta_1          12       -0.0186        0.5949       -0.4342       -0.1124        0.2337
+  eta            eta_2          12        0.0077         0.245       -0.1305        0.0413        0.1574
+  eta            eta_3          12       -0.0023        0.1153       -0.0969        0.0076        0.0668</code></pre><p>You can also extract the estimated fixed-effect parameters on their natural (untransformed) scale. The population-level log-scale parameters (<code>tka</code>, <code>tcl</code>, <code>tv</code>) can be exponentiated to recover typical-individual values, and <code>sigma_eps</code> represents the residual observation noise.</p><pre><code class="language-julia hljs">params = NoLimits.get_params(res_mcem; scale=:untransformed)
 (
     tka=params.tka,
     tcl=params.tcl,
     tv=params.tv,
     sigma_eps=params.sigma_eps,
-)</code></pre><h2 id="Step-6:-Visualize-Fitted-Trajectories"><a class="docs-heading-anchor" href="#Step-6:-Visualize-Fitted-Trajectories">Step 6: Visualize Fitted Trajectories</a><a id="Step-6:-Visualize-Fitted-Trajectories-1"></a><a class="docs-heading-anchor-permalink" href="#Step-6:-Visualize-Fitted-Trajectories" title="Permalink"></a></h2><p>A natural first diagnostic is to overlay the model&#39;s predicted trajectories on the observed data. In this step, the <code>plot_fits</code> function computes individual-level predictions (using empirical Bayes estimates of the random effects) and plots them alongside the raw observations. Showing the first two individuals provides a quick visual check that the model captures the characteristic rise-and-fall dynamics of the two-compartment system.</p><pre><code class="language-julia hljs">p_fit_mcem = plot_fits(
+)</code></pre><p>&lt;!– injected:t2-params –&gt;</p><pre><code class="language-text hljs">(tka = 0.46883216585378884, tcl = 1.008534014759881, tv = 3.4531404125311163, sigma_eps = 0.698706352652697)</code></pre><h2 id="Step-6:-Visualize-Fitted-Trajectories"><a class="docs-heading-anchor" href="#Step-6:-Visualize-Fitted-Trajectories">Step 6: Visualize Fitted Trajectories</a><a id="Step-6:-Visualize-Fitted-Trajectories-1"></a><a class="docs-heading-anchor-permalink" href="#Step-6:-Visualize-Fitted-Trajectories" title="Permalink"></a></h2><p>A natural first diagnostic is to overlay the model&#39;s predicted trajectories on the observed data. In this step, the <code>plot_fits</code> function computes individual-level predictions (using empirical Bayes estimates of the random effects) and plots them alongside the raw observations. Showing the first two individuals provides a quick visual check that the model captures the characteristic rise-and-fall dynamics of the two-compartment system.</p><pre><code class="language-julia hljs">p_fit_mcem = plot_fits(
     res_mcem;
     observable=:y1,
     individuals_idx=[1, 2],
@@ -147,14 +315,14 @@ fit_result_summary</code></pre><p>You can also extract the estimated fixed-effec
     shared_y_axis=true,
 )
 
-p_fit_mcem</code></pre><h2 id="Step-7:-Assess-the-Observation-Distribution"><a class="docs-heading-anchor" href="#Step-7:-Assess-the-Observation-Distribution">Step 7: Assess the Observation Distribution</a><a id="Step-7:-Assess-the-Observation-Distribution-1"></a><a class="docs-heading-anchor-permalink" href="#Step-7:-Assess-the-Observation-Distribution" title="Permalink"></a></h2><p>Beyond trajectory-level checks, it is valuable to examine how well the model&#39;s predicted observation distribution matches the data at individual time points. In this step, <code>plot_observation_distributions</code> visualizes the predictive distribution for a given individual and observation row, letting you assess whether the assumed error model (here, a normal distribution with standard deviation <code>sigma_eps</code>) is well-calibrated.</p><pre><code class="language-julia hljs">p_obs_mcem = plot_observation_distributions(
+p_fit_mcem</code></pre><p>&lt;!– injected:t2-pfit –&gt; <img src="../figures/t2/p_fit_mcem.png" alt="Fitted two-compartment trajectories for the first two individuals (MCEM)."/></p><h2 id="Step-7:-Assess-the-Observation-Distribution"><a class="docs-heading-anchor" href="#Step-7:-Assess-the-Observation-Distribution">Step 7: Assess the Observation Distribution</a><a id="Step-7:-Assess-the-Observation-Distribution-1"></a><a class="docs-heading-anchor-permalink" href="#Step-7:-Assess-the-Observation-Distribution" title="Permalink"></a></h2><p>Beyond trajectory-level checks, it is valuable to examine how well the model&#39;s predicted observation distribution matches the data at individual time points. In this step, <code>plot_observation_distributions</code> visualizes the predictive distribution for a given individual and observation row, letting you assess whether the assumed error model (here, a normal distribution with standard deviation <code>sigma_eps</code>) is well-calibrated.</p><pre><code class="language-julia hljs">p_obs_mcem = plot_observation_distributions(
     res_mcem;
     observables=:y1,
     individuals_idx=1,
     obs_rows=1,
 )
 
-p_obs_mcem</code></pre><h2 id="Step-8:-Quantify-Parameter-Uncertainty"><a class="docs-heading-anchor" href="#Step-8:-Quantify-Parameter-Uncertainty">Step 8: Quantify Parameter Uncertainty</a><a id="Step-8:-Quantify-Parameter-Uncertainty-1"></a><a class="docs-heading-anchor-permalink" href="#Step-8:-Quantify-Parameter-Uncertainty" title="Permalink"></a></h2><p>Point estimates alone are insufficient for scientific conclusions –- you also need to quantify how precisely each parameter has been determined. In this step, you will use the Wald approach, which constructs approximate confidence intervals from the curvature of the log-likelihood at the optimum (the observed information matrix). For MCEM fits, computing this curvature requires an auxiliary random-effects integration step; the Laplace approximation (<code>re_approx=:laplace</code>) serves this purpose here.</p><p>The resulting uncertainty estimates are visualized as density plots on the natural parameter scale, providing an intuitive picture of estimation precision given the available data.</p><pre><code class="language-julia hljs">uq_mcem = compute_uq(
+p_obs_mcem</code></pre><p>&lt;!– injected:t2-pobs –&gt; <img src="../figures/t2/p_obs_mcem.png" alt="Predicted observation distribution at the first observation of the first individual (MCEM)."/></p><h2 id="Step-8:-Quantify-Parameter-Uncertainty"><a class="docs-heading-anchor" href="#Step-8:-Quantify-Parameter-Uncertainty">Step 8: Quantify Parameter Uncertainty</a><a id="Step-8:-Quantify-Parameter-Uncertainty-1"></a><a class="docs-heading-anchor-permalink" href="#Step-8:-Quantify-Parameter-Uncertainty" title="Permalink"></a></h2><p>Point estimates alone are insufficient for scientific conclusions –- you also need to quantify how precisely each parameter has been determined. In this step, you will use the Wald approach, which constructs approximate confidence intervals from the curvature of the log-likelihood at the optimum (the observed information matrix). For MCEM fits, computing this curvature requires an auxiliary random-effects integration step; the Laplace approximation (<code>re_approx=:laplace</code>) serves this purpose here.</p><p>The resulting uncertainty estimates are visualized as density plots on the natural parameter scale, providing an intuitive picture of estimation precision given the available data.</p><pre><code class="language-julia hljs">uq_mcem = compute_uq(
     res_mcem;
     method=:wald,
     vcov=:hessian,
@@ -172,7 +340,40 @@ p_uq_mcem = plot_uq_distributions(
     show_legend=false,
 )
 
-p_uq_mcem</code></pre><h3 id="UQ-Summaries"><a class="docs-heading-anchor" href="#UQ-Summaries">UQ Summaries</a><a id="UQ-Summaries-1"></a><a class="docs-heading-anchor-permalink" href="#UQ-Summaries" title="Permalink"></a></h3><p>Finally, the numerical summaries consolidate point estimates and confidence intervals into a single table –- a format suitable for reporting results in publications or for systematic comparison across candidate models.</p><pre><code class="language-julia hljs">uq_summary_mcem = NoLimits.summarize(uq_mcem)
+p_uq_mcem</code></pre><p>&lt;!– injected:t2-puq –&gt; <img src="../figures/t2/p_uq_mcem.png" alt="Wald approximate parameter distributions on the natural scale (MCEM)."/></p><h3 id="UQ-Summaries"><a class="docs-heading-anchor" href="#UQ-Summaries">UQ Summaries</a><a id="UQ-Summaries-1"></a><a class="docs-heading-anchor-permalink" href="#UQ-Summaries" title="Permalink"></a></h3><p>Finally, the numerical summaries consolidate point estimates and confidence intervals into a single table –- a format suitable for reporting results in publications or for systematic comparison across candidate models.</p><pre><code class="language-julia hljs">uq_summary_mcem = NoLimits.summarize(uq_mcem)
 fit_uq_summary_mcem = NoLimits.summarize(res_mcem, uq_mcem)
 
-fit_uq_summary_mcem</code></pre><h2 id="Practical-Guidance"><a class="docs-heading-anchor" href="#Practical-Guidance">Practical Guidance</a><a id="Practical-Guidance-1"></a><a class="docs-heading-anchor-permalink" href="#Practical-Guidance" title="Permalink"></a></h2><ul><li><strong>Objective values are optimization diagnostics, not model quality scores.</strong> A lower objective indicates better optimization convergence, but model adequacy should be judged through predictive checks –- trajectory plots and observation-distribution diagnostics provide complementary views of fit quality.</li><li><strong>Inspect trajectory and distributional diagnostics together.</strong> <code>plot_fits</code> reveals whether the model captures the overall shape of the response, while <code>plot_observation_distributions</code> tests whether the local predictive distribution is well-calibrated. Discrepancies in either diagnostic suggest different kinds of model misspecification.</li><li><strong>Scale up before changing model structure.</strong> If the fit appears unstable or the objective has not plateaued, first try increasing <code>maxiters</code> and the sample schedule ceiling. MCEM convergence can be slow when Monte Carlo noise dominates the gradient signal, and increasing sample sizes is often more productive than modifying the structural model.</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../mixed-effects-multiple-methods/">« Mixed-Effects Tutorial 1: Nonlinear Random-Effects Model Across Multiple Estimation Methods</a><a class="docs-footer-nextpage" href="../mixed-effects-nn-saem/">Mixed-Effects Tutorial 3: Neural Differential-Equation Components (SAEM) »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Wednesday 3 June 2026 22:25">Wednesday 3 June 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+fit_uq_summary_mcem</code></pre><p>&lt;!– injected:t2-fituq –&gt;</p><pre><code class="language-text hljs">UQResultSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  backend                             : wald
+  source_method                       : mcem
+  inference                           : frequentist
+  scale                               : natural
+  objective                           : -145.5209
+  interval level                      : 0.95
+  parameters shown (reported / total) : 7 / 7
+
+Parameter uncertainty summary
+  parameter      Estimate    Std. Error      CI Lower      CI Upper
+  ---------------------------------------------------
+  tka              0.4688        0.1969        0.0789        0.8438
+  tcl              1.0085         0.095        0.8168        1.1879
+  tv               3.4531        0.0483        3.3588        3.5432
+  omega1           0.3972         0.216        0.1739         0.954
+  omega2           0.0719        0.0421        0.0309        0.1865
+  omega3           0.0177         0.014        0.0058        0.0579
+  sigma_eps        0.6987        0.0491        0.6166        0.7926
+
+Outcome data coverage
+  outcome       n_obs   n_missing
+  -------------------------------
+  y1              132          12
+  TOTAL           132          12
+
+Empirical Bayes random effects summary (across RE levels)
+  random effect  component       n          mean            sd           q25        median           q75
+  --------------------------------------------------------------------------------------------------
+  eta            eta_1          12       -0.0186        0.5949       -0.4342       -0.1124        0.2337
+  eta            eta_2          12        0.0077         0.245       -0.1305        0.0413        0.1574
+  eta            eta_3          12       -0.0023        0.1153       -0.0969        0.0076        0.0668</code></pre><h2 id="Practical-Guidance"><a class="docs-heading-anchor" href="#Practical-Guidance">Practical Guidance</a><a id="Practical-Guidance-1"></a><a class="docs-heading-anchor-permalink" href="#Practical-Guidance" title="Permalink"></a></h2><ul><li><strong>Objective values are optimization diagnostics, not model quality scores.</strong> A lower objective indicates better optimization convergence, but model adequacy should be judged through predictive checks –- trajectory plots and observation-distribution diagnostics provide complementary views of fit quality.</li><li><strong>Inspect trajectory and distributional diagnostics together.</strong> <code>plot_fits</code> reveals whether the model captures the overall shape of the response, while <code>plot_observation_distributions</code> tests whether the local predictive distribution is well-calibrated. Discrepancies in either diagnostic suggest different kinds of model misspecification.</li><li><strong>Scale up before changing model structure.</strong> If the fit appears unstable or the objective has not plateaued, first try increasing <code>maxiters</code> and the sample schedule ceiling. MCEM convergence can be slow when Monte Carlo noise dominates the gradient signal, and increasing sample sizes is often more productive than modifying the structural model.</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../mixed-effects-multiple-methods/">« Mixed-Effects Tutorial 1: Nonlinear Random-Effects Model Across Multiple Estimation Methods</a><a class="docs-footer-nextpage" href="../mixed-effects-nn-saem/">Mixed-Effects Tutorial 3: Neural Differential-Equation Components (SAEM) »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Thursday 4 June 2026 07:49">Thursday 4 June 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

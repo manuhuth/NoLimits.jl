@@ -1,0 +1,70 @@
+DataModelSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  model type                 : non-ODE
+  event-aware                : false
+  individuals                : 50
+  rows (total / obs / event) : 300 / 300 / 0
+  fixed effects (top-level)  : 9
+  outcomes                   : 1
+  covariates (declared)      : 1
+  random effects             : 4
+
+Covariate classes
+  varying  : 1
+  constant : 0
+  dynamic  : 0
+
+Outcome distribution types
+  Log_VL => censored
+
+Random-effect distribution types
+  A_i  => LogNormal
+  B_i  => LogNormal
+  k1_i => LogNormal
+  k2_i => LogNormal
+
+Individual design diagnostics
+  individuals with one observation              : 0
+  global observed time range                    : 0.0 to 168.0
+  unique observed time points                   : 6
+  duplicate (ID, time) observation rows         : 0
+  monotonic-time violations (observation order) : 0
+
+Observations per individual
+  metric       n          mean            sd           min           q25        median           q75           max
+  ----------------------------------------------------------------------------------------------------------------
+  count       50           6.0           0.0           6.0           6.0           6.0           6.0           6.0
+
+Time span per individual
+  metric       n          mean            sd           min           q25        median           q75           max
+  ----------------------------------------------------------------------------------------------------------------
+  span        50         168.0           0.0         168.0         168.0         168.0         168.0         168.0
+
+Median sampling interval per individual
+  metric          n          mean            sd           min           q25        median           q75           max
+  -------------------------------------------------------------------------------------------------------------------
+  median_dt      50          28.0           0.0          28.0          28.0          28.0          28.0          28.0
+
+Outcome descriptive statistics (observation rows)
+  Variable       n          mean            sd           min           q25        median           q75           max
+  ------------------------------------------------------------------------------------------------------------------
+  Log_VL       300         2.378        1.0243           1.7           1.7         1.885        2.6525          6.28
+
+Declared covariates
+  name  kind       columns
+  -------------------------------------
+  Time  Covariate  Time
+
+Covariate descriptive statistics (observation rows)
+  Variable        n          mean            sd           min           q25        median           q75           max
+  -------------------------------------------------------------------------------------------------------------------
+  Time.Time     300       74.6667       55.2167           0.0          28.0          70.0         112.0         168.0
+
+Per-random-effect summary
+  random effect  group  dist         levels  rows/level min        median           max
+  -----------------------------------------------------------------------------------
+  A_i            ID     LogNormal        50             6.0           6.0           6.0
+  B_i            ID     LogNormal        50             6.0           6.0           6.0
+  k1_i           ID     LogNormal        50             6.0           6.0           6.0
+  k2_i           ID     LogNormal        50             6.0           6.0           6.0

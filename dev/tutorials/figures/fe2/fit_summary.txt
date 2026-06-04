@@ -1,0 +1,22 @@
+FitResultSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  method                              : vi
+  inference                           : bayesian
+  scale                               : natural
+  objective                           : -0.7632
+  iterations                          : missing
+  parameters shown (reported / total) : 3 / 3
+
+Parameter estimates
+  parameter      Estimate
+  -----------------------
+  a               -0.0085
+  b                0.3152
+  sigma            0.1681
+
+Outcome data coverage
+  outcome       n_obs   n_missing
+  -------------------------------
+  y                 8           0
+  TOTAL             8           0

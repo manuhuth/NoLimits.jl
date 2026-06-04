@@ -1,0 +1,59 @@
+ModelSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  model type                          : ODE
+  fixed-effect blocks                 : 7
+  fixed-effect scalar values          : 7
+  random effects                      : 1
+  random-effect grouping columns      : 1
+  covariates (declared)               : 1
+  formulas (deterministic / outcomes) : 0 / 1
+  requires DE accessors               : true
+
+Structure blocks
+  helpers              : false
+  fixed effects        : true
+  random effects       : true
+  covariates           : true
+  preDE                : true
+  DifferentialEquation : true
+  initialDE            : true
+
+Covariate classes
+  varying  : 1
+  constant : 0
+  dynamic  : 0
+
+Fixed-effects declarations
+  name       type        size  se  prior    scale     bounds                              details
+  ------------------------------------------------------------------------------------------------------------
+  tka        RealNumber     1  yes  Uniform  identity  finite lower 0/1, finite upper 0/1  -
+  tcl        RealNumber     1  yes  Uniform  identity  finite lower 0/1, finite upper 0/1  -
+  tv         RealNumber     1  yes  Uniform  identity  finite lower 0/1, finite upper 0/1  -
+  omega1     RealNumber     1  yes  Uniform  log       finite lower 1/1, finite upper 0/1  -
+  omega2     RealNumber     1  yes  Uniform  log       finite lower 1/1, finite upper 0/1  -
+  omega3     RealNumber     1  yes  Uniform  log       finite lower 1/1, finite upper 0/1  -
+  sigma_eps  RealNumber     1  yes  Uniform  log       finite lower 1/1, finite upper 0/1  -
+
+Random-effects declarations
+  name  group  dist    
+  -----------------------
+  eta   id     MvNormal
+
+Covariate declarations
+  name  kind       columns                   constant_on           interpolation
+  ---------------------------------------------------------------------------------------
+  t     Covariate  t                         -                     -
+
+Formulas
+  deterministic names : (none)
+  outcome names       : y1
+  required DE states  : center
+  required DE signals : (none)
+  declared DE states  : depot, center
+  declared DE signals : (none)
+Outcome distribution types
+  y1 => Normal
+
+Helper functions
+  names : (none)

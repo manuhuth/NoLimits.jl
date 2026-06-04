@@ -1,0 +1,61 @@
+ModelSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  model type                          : ODE
+  fixed-effect blocks                 : 5
+  fixed-effect scalar values          : 29
+  random effects                      : 4
+  random-effect grouping columns      : 1
+  covariates (declared)               : 2
+  formulas (deterministic / outcomes) : 0 / 1
+  requires DE accessors               : true
+
+Structure blocks
+  helpers              : true
+  fixed effects        : true
+  random effects       : true
+  covariates           : true
+  preDE                : false
+  DifferentialEquation : true
+  initialDE            : true
+
+Covariate classes
+  varying  : 1
+  constant : 1
+  dynamic  : 0
+
+Fixed-effects declarations
+  name   type          size  se  prior      scale  bounds                              details
+  ---------------------------------------------------------------------------------------------------------
+  sigma  RealNumber       1  yes  LogNormal  log    finite lower 1/1, finite upper 0/1  -
+  zA1    NNParameters     7  no  Priorless  n/a    finite lower 0/7, finite upper 0/7  function=NNA1, weights=7
+  zA2    NNParameters     7  no  Priorless  n/a    finite lower 0/7, finite upper 0/7  function=NNA2, weights=7
+  zC1    NNParameters     7  no  Priorless  n/a    finite lower 0/7, finite upper 0/7  function=NNC1, weights=7
+  zC2    NNParameters     7  no  Priorless  n/a    finite lower 0/7, finite upper 0/7  function=NNC2, weights=7
+
+Random-effects declarations
+  name   group  dist    
+  ------------------------
+  etaA1  ID     MvNormal
+  etaA2  ID     MvNormal
+  etaC1  ID     MvNormal
+  etaC2  ID     MvNormal
+
+Covariate declarations
+  name  kind               columns                   constant_on           interpolation
+  -----------------------------------------------------------------------------------------------
+  t     Covariate          t                         -                     -
+  d     ConstantCovariate  d                         ID                    -
+
+Formulas
+  deterministic names : (none)
+  outcome names       : y
+  required DE states  : center
+  required DE signals : (none)
+  declared DE states  : depot, center
+  declared DE signals : a_A, x_C, fA1, fA2, fC1, fC2
+Outcome distribution types
+  y => Normal
+
+Helper functions
+  names : softplus

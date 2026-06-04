@@ -1,0 +1,70 @@
+DataModelSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  model type                 : non-ODE
+  event-aware                : false
+  individuals                : 59
+  rows (total / obs / event) : 236 / 236 / 0
+  fixed effects (top-level)  : 3
+  outcomes                   : 1
+  covariates (declared)      : 2
+  random effects             : 1
+
+Covariate classes
+  varying  : 2
+  constant : 0
+  dynamic  : 0
+
+Outcome distribution types
+  seizures => Poisson
+
+Random-effect distribution types
+  eta => Normal
+
+Individual design diagnostics
+  individuals with one observation              : 0
+  global observed time range                    : 1.0 to 4.0
+  unique observed time points                   : 4
+  duplicate (ID, time) observation rows         : 0
+  monotonic-time violations (observation order) : 0
+
+Observations per individual
+  metric       n          mean            sd           min           q25        median           q75           max
+  ----------------------------------------------------------------------------------------------------------------
+  count       59           4.0           0.0           4.0           4.0           4.0           4.0           4.0
+
+Time span per individual
+  metric       n          mean            sd           min           q25        median           q75           max
+  ----------------------------------------------------------------------------------------------------------------
+  span        59           3.0           0.0           3.0           3.0           3.0           3.0           3.0
+
+Median sampling interval per individual
+  metric          n          mean            sd           min           q25        median           q75           max
+  -------------------------------------------------------------------------------------------------------------------
+  median_dt      59           1.0           0.0           1.0           1.0           1.0           1.0           1.0
+
+Outcome descriptive statistics (observation rows)
+  Variable       n          mean            sd           min           q25        median           q75           max
+  ------------------------------------------------------------------------------------------------------------------
+  seizures     236        8.2627       12.3302           0.0          2.75           4.0           9.0         102.0
+
+Declared covariates
+  name      kind             columns
+  -----------------------------------------------
+  period_f  Covariate        period_f
+  x         CovariateVector  base_log, age_log, trt_active, period_centered, trt_period_centered
+
+Covariate descriptive statistics (observation rows)
+  Variable                    n          mean            sd           min           q25        median           q75           max
+  -------------------------------------------------------------------------------------------------------------------------------
+  period_f.period_f         236           2.5         1.118           1.0          1.75           2.5          3.25           4.0
+  x.base_log                236        3.2071        0.7117        1.9459        2.5649        3.1355        3.7377        5.0239
+  x.age_log                 236        3.3561        0.2141        2.9444        3.1781        3.3673        3.4965        3.7612
+  x.trt_active              236        0.5254        0.4994           0.0           0.0           1.0           1.0           1.0
+  x.period_centered         236           1.5         1.118           0.0          0.75           1.5          2.25           3.0
+  x.trt_period_centered     236        0.7881        1.1036           0.0           0.0           0.0           2.0           3.0
+
+Per-random-effect summary
+  random effect  group    dist      levels  rows/level min        median           max
+  ----------------------------------------------------------------------------------
+  eta            Subject  Normal        59             4.0           4.0           4.0

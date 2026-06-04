@@ -23,24 +23,24 @@ sort!(df, [:ID, :Time])
     n_rows = nrow(df),
     n_subjects = length(unique(df.ID)),
     n_censored = count(==(1), df.cens),
-)</code></pre><h2 id="Step-2:-Define-the-Nonlinear-Left-Censored-Mixed-Effects-Model"><a class="docs-heading-anchor" href="#Step-2:-Define-the-Nonlinear-Left-Censored-Mixed-Effects-Model">Step 2: Define the Nonlinear Left-Censored Mixed-Effects Model</a><a id="Step-2:-Define-the-Nonlinear-Left-Censored-Mixed-Effects-Model-1"></a><a class="docs-heading-anchor-permalink" href="#Step-2:-Define-the-Nonlinear-Left-Censored-Mixed-Effects-Model" title="Permalink"></a></h2><p>In this step, you will define the structural model for viral load dynamics. The bi-exponential decay function captures two biologically distinct phases: the rapid initial clearance of free virus from the plasma, and the slower decline driven by the loss of productively infected cells. On the original scale, the model for subject <span>$i$</span> at time <span>$t$</span> is:</p><p class="math-container">\[V_i(t) = A_i e^{-k_{1,i} t} + B_i e^{-k_{2,i} t},
+)</code></pre><p>&lt;!– injected:t6-data –&gt;</p><pre><code class="language-text hljs">(n_rows = 300, n_subjects = 50, n_censored = 131)</code></pre><h2 id="Step-2:-Define-the-Nonlinear-Left-Censored-Mixed-Effects-Model"><a class="docs-heading-anchor" href="#Step-2:-Define-the-Nonlinear-Left-Censored-Mixed-Effects-Model">Step 2: Define the Nonlinear Left-Censored Mixed-Effects Model</a><a id="Step-2:-Define-the-Nonlinear-Left-Censored-Mixed-Effects-Model-1"></a><a class="docs-heading-anchor-permalink" href="#Step-2:-Define-the-Nonlinear-Left-Censored-Mixed-Effects-Model" title="Permalink"></a></h2><p>In this step, you will define the structural model for viral load dynamics. The bi-exponential decay function captures two biologically distinct phases: the rapid initial clearance of free virus from the plasma, and the slower decline driven by the loss of productively infected cells. On the original scale, the model for subject <span>$i$</span> at time <span>$t$</span> is:</p><p class="math-container">\[V_i(t) = A_i e^{-k_{1,i} t} + B_i e^{-k_{2,i} t},
 \qquad \mu_{it} = \log_{10}(V_i(t)).\]</p><p>Each subject-specific parameter (<span>$A_i$</span>, <span>$B_i$</span>, <span>$k_{1,i}$</span>, <span>$k_{2,i}$</span>) is drawn from a <code>LogNormal</code> distribution, which guarantees positivity – a necessary constraint since both amplitudes and rate constants must be strictly positive for the model to be biologically meaningful. The fixed effects (<code>beta_A</code>, <code>beta_B</code>, <code>beta_k1</code>, <code>beta_k2</code>) represent population-level medians on the log scale, while the <code>omega</code> parameters govern the magnitude of between-subject variability for each parameter.</p><p>The observation model is where the censoring logic enters. By writing <code>censored(Normal(mu, sigma), lower=1.7, upper=Inf)</code>, you specify a Normal distribution that is left-censored at the log10 detection limit of 1.7. NoLimits handles this as follows: when the recorded <code>Log_VL</code> value exceeds 1.7, the observation contributes the standard Normal density; when <code>Log_VL</code> equals 1.7 (the pinned value for censored rows in this dataset), the observation instead contributes the cumulative probability <span>$\Phi\bigl((1.7 - \mu) / \sigma\bigr)$</span>, representing the probability that the true value falls below the detection limit. This censored-likelihood approach is statistically exact and avoids the biases introduced by ad hoc imputation or deletion strategies.</p><pre><code class="language-julia hljs">model = @Model begin
     @covariates begin
         Time = Covariate()
     end
 
     @fixedEffects begin
-        beta_A = RealNumber(5.5, calculate_se=true)
-        beta_B = RealNumber(4.2, calculate_se=true)
-        beta_k1 = RealNumber(-1.6, calculate_se=true)
-        beta_k2 = RealNumber(-3.5, calculate_se=true)
+        beta_A = RealNumber(9.9, calculate_se=true)
+        beta_B = RealNumber(5.0, calculate_se=true)
+        beta_k1 = RealNumber(-1.9, calculate_se=true)
+        beta_k2 = RealNumber(-5.3, calculate_se=true)
 
-        omega_A = RealNumber(0.20, scale=:log, calculate_se=true)
-        omega_B = RealNumber(0.20, scale=:log, calculate_se=true)
-        omega_k1 = RealNumber(0.20, scale=:log, calculate_se=true)
-        omega_k2 = RealNumber(0.20, scale=:log, calculate_se=true)
+        omega_A = RealNumber(0.40, scale=:log, calculate_se=true)
+        omega_B = RealNumber(0.40, scale=:log, calculate_se=true)
+        omega_k1 = RealNumber(0.40, scale=:log, calculate_se=true)
+        omega_k2 = RealNumber(0.40, scale=:log, calculate_se=true)
 
-        sigma = RealNumber(0.18, scale=:log, calculate_se=true)
+        sigma = RealNumber(0.25, scale=:log, calculate_se=true)
     end
 
     @randomEffects begin
@@ -58,25 +58,192 @@ sort!(df, [:ID, :Time])
     end
 end
 
-NoLimits.summarize(model)</code></pre><h2 id="Step-3:-Build-DataModel-and-Configure-Laplace"><a class="docs-heading-anchor" href="#Step-3:-Build-DataModel-and-Configure-Laplace">Step 3: Build <code>DataModel</code> and Configure <code>Laplace</code></a><a id="Step-3:-Build-DataModel-and-Configure-Laplace-1"></a><a class="docs-heading-anchor-permalink" href="#Step-3:-Build-DataModel-and-Configure-Laplace" title="Permalink"></a></h2><p>In this step, you will bind the model to the dataset by constructing a <code>DataModel</code>. This validates that all required columns are present and correctly typed, groups observations by subject, and assembles the internal data structures needed for estimation.</p><p>Next, you will configure the Laplace approximation. This method approximates the marginal likelihood by finding the mode of each subject&#39;s conditional random-effects distribution (the empirical Bayes estimates) and using a second-order Taylor expansion around those modes to integrate out the random effects analytically. Two sets of optimization controls are available: <code>inner_kwargs</code> governs the per-subject random-effects optimization, while <code>optim_kwargs</code> governs the outer fixed-effects optimization. Multistart is disabled here for speed, but enabling it can help avoid local optima in models with more complex likelihood surfaces.</p><pre><code class="language-julia hljs">dm = DataModel(model, df; primary_id=:ID, time_col=:Time)
+NoLimits.summarize(model)</code></pre><p>&lt;!– injected:t6-model –&gt;</p><pre><code class="language-text hljs">ModelSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  model type                          : non-ODE
+  fixed-effect blocks                 : 9
+  fixed-effect scalar values          : 9
+  random effects                      : 4
+  random-effect grouping columns      : 1
+  covariates (declared)               : 1
+  formulas (deterministic / outcomes) : 2 / 1
+  requires DE accessors               : false
+
+Structure blocks
+  helpers              : false
+  fixed effects        : true
+  random effects       : true
+  covariates           : true
+  preDE                : false
+  DifferentialEquation : false
+  initialDE            : false
+
+Covariate classes
+  varying  : 1
+  constant : 0
+  dynamic  : 0
+
+Fixed-effects declarations
+  name      type        size  se  prior      scale     bounds                              details
+  -------------------------------------------------------------------------------------------------------------
+  beta_A    RealNumber     1  yes  Priorless  identity  finite lower 0/1, finite upper 0/1  -
+  beta_B    RealNumber     1  yes  Priorless  identity  finite lower 0/1, finite upper 0/1  -
+  beta_k1   RealNumber     1  yes  Priorless  identity  finite lower 0/1, finite upper 0/1  -
+  beta_k2   RealNumber     1  yes  Priorless  identity  finite lower 0/1, finite upper 0/1  -
+  omega_A   RealNumber     1  yes  Priorless  log       finite lower 1/1, finite upper 0/1  -
+  omega_B   RealNumber     1  yes  Priorless  log       finite lower 1/1, finite upper 0/1  -
+  omega_k1  RealNumber     1  yes  Priorless  log       finite lower 1/1, finite upper 0/1  -
+  omega_k2  RealNumber     1  yes  Priorless  log       finite lower 1/1, finite upper 0/1  -
+  sigma     RealNumber     1  yes  Priorless  log       finite lower 1/1, finite upper 0/1  -
+
+Random-effects declarations
+  name  group  dist     
+  ------------------------
+  A_i   ID     LogNormal
+  B_i   ID     LogNormal
+  k1_i  ID     LogNormal
+  k2_i  ID     LogNormal
+
+Covariate declarations
+  name  kind       columns                   constant_on           interpolation
+  ---------------------------------------------------------------------------------------
+  Time  Covariate  Time                      -                     -
+
+Formulas
+  deterministic names : V_i, mu
+  outcome names       : Log_VL
+  required DE states  : (none)
+  required DE signals : (none)
+  declared DE states  : (none)
+  declared DE signals : (none)
+Outcome distribution types
+  Log_VL =&gt; censored
+
+Helper functions
+  names : (none)</code></pre><h2 id="Step-3:-Build-DataModel-and-Configure-Laplace"><a class="docs-heading-anchor" href="#Step-3:-Build-DataModel-and-Configure-Laplace">Step 3: Build <code>DataModel</code> and Configure <code>Laplace</code></a><a id="Step-3:-Build-DataModel-and-Configure-Laplace-1"></a><a class="docs-heading-anchor-permalink" href="#Step-3:-Build-DataModel-and-Configure-Laplace" title="Permalink"></a></h2><p>In this step, you will bind the model to the dataset by constructing a <code>DataModel</code>. This validates that all required columns are present and correctly typed, groups observations by subject, and assembles the internal data structures needed for estimation.</p><p>Next, you will configure the Laplace approximation. This method approximates the marginal likelihood by finding the mode of each subject&#39;s conditional random-effects distribution (the empirical Bayes estimates) and using a second-order Taylor expansion around those modes to integrate out the random effects analytically. Two sets of optimization controls are available: <code>inner_kwargs</code> governs the per-subject random-effects optimization, while <code>optim_kwargs</code> governs the outer fixed-effects optimization. Multistart is disabled here for speed, but enabling it can help avoid local optima in models with more complex likelihood surfaces.</p><pre><code class="language-julia hljs">dm = DataModel(model, df; primary_id=:ID, time_col=:Time)
 
 laplace_method = NoLimits.Laplace(;
-    optim_kwargs=(maxiters=250,),
-    inner_kwargs=(maxiters=100,),
+    optim_kwargs=(maxiters=400,),
+    inner_kwargs=(maxiters=150,),
     multistart_n=0,
     multistart_k=0,
 )
 
 serialization = SciMLBase.EnsembleThreads()
 
-NoLimits.summarize(dm)</code></pre><h2 id="Step-4:-Fit-and-Inspect-Core-Summary"><a class="docs-heading-anchor" href="#Step-4:-Fit-and-Inspect-Core-Summary">Step 4: Fit and Inspect Core Summary</a><a id="Step-4:-Fit-and-Inspect-Core-Summary-1"></a><a class="docs-heading-anchor-permalink" href="#Step-4:-Fit-and-Inspect-Core-Summary" title="Permalink"></a></h2><p>With the data model and estimation method in place, you can now run the fit. The Laplace algorithm alternates between two stages: an inner loop that updates the empirical Bayes estimates of the random effects for each subject, and an outer loop that optimizes the fixed-effects parameters with respect to the Laplace-approximated marginal likelihood. After convergence, the summary reports the estimated parameter values alongside the final objective function value.</p><pre><code class="language-julia hljs">res = fit_model(
+NoLimits.summarize(dm)</code></pre><p>&lt;!– injected:t6-dm –&gt;</p><pre><code class="language-text hljs">DataModelSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  model type                 : non-ODE
+  event-aware                : false
+  individuals                : 50
+  rows (total / obs / event) : 300 / 300 / 0
+  fixed effects (top-level)  : 9
+  outcomes                   : 1
+  covariates (declared)      : 1
+  random effects             : 4
+
+Covariate classes
+  varying  : 1
+  constant : 0
+  dynamic  : 0
+
+Outcome distribution types
+  Log_VL =&gt; censored
+
+Random-effect distribution types
+  A_i  =&gt; LogNormal
+  B_i  =&gt; LogNormal
+  k1_i =&gt; LogNormal
+  k2_i =&gt; LogNormal
+
+Individual design diagnostics
+  individuals with one observation              : 0
+  global observed time range                    : 0.0 to 168.0
+  unique observed time points                   : 6
+  duplicate (ID, time) observation rows         : 0
+  monotonic-time violations (observation order) : 0
+
+Observations per individual
+  metric       n          mean            sd           min           q25        median           q75           max
+  ----------------------------------------------------------------------------------------------------------------
+  count       50           6.0           0.0           6.0           6.0           6.0           6.0           6.0
+
+Time span per individual
+  metric       n          mean            sd           min           q25        median           q75           max
+  ----------------------------------------------------------------------------------------------------------------
+  span        50         168.0           0.0         168.0         168.0         168.0         168.0         168.0
+
+Median sampling interval per individual
+  metric          n          mean            sd           min           q25        median           q75           max
+  -------------------------------------------------------------------------------------------------------------------
+  median_dt      50          28.0           0.0          28.0          28.0          28.0          28.0          28.0
+
+Outcome descriptive statistics (observation rows)
+  Variable       n          mean            sd           min           q25        median           q75           max
+  ------------------------------------------------------------------------------------------------------------------
+  Log_VL       300         2.378        1.0243           1.7           1.7         1.885        2.6525          6.28
+
+Declared covariates
+  name  kind       columns
+  -------------------------------------
+  Time  Covariate  Time
+
+Covariate descriptive statistics (observation rows)
+  Variable        n          mean            sd           min           q25        median           q75           max
+  -------------------------------------------------------------------------------------------------------------------
+  Time.Time     300       74.6667       55.2167           0.0          28.0          70.0         112.0         168.0
+
+Per-random-effect summary
+  random effect  group  dist         levels  rows/level min        median           max
+  -----------------------------------------------------------------------------------
+  A_i            ID     LogNormal        50             6.0           6.0           6.0
+  B_i            ID     LogNormal        50             6.0           6.0           6.0
+  k1_i           ID     LogNormal        50             6.0           6.0           6.0
+  k2_i           ID     LogNormal        50             6.0           6.0           6.0</code></pre><h2 id="Step-4:-Fit-and-Inspect-Core-Summary"><a class="docs-heading-anchor" href="#Step-4:-Fit-and-Inspect-Core-Summary">Step 4: Fit and Inspect Core Summary</a><a id="Step-4:-Fit-and-Inspect-Core-Summary-1"></a><a class="docs-heading-anchor-permalink" href="#Step-4:-Fit-and-Inspect-Core-Summary" title="Permalink"></a></h2><p>With the data model and estimation method in place, you can now run the fit. The Laplace algorithm alternates between two stages: an inner loop that updates the empirical Bayes estimates of the random effects for each subject, and an outer loop that optimizes the fixed-effects parameters with respect to the Laplace-approximated marginal likelihood. After convergence, the summary reports the estimated parameter values alongside the final objective function value.</p><pre><code class="language-julia hljs">res = fit_model(
     dm,
     laplace_method;
     serialization=serialization,
     rng=Random.Xoshiro(7003),
 )
 
-NoLimits.summarize(res)</code></pre><h2 id="Step-5:-Fitted-Trajectories-(First-2-Individuals)"><a class="docs-heading-anchor" href="#Step-5:-Fitted-Trajectories-(First-2-Individuals)">Step 5: Fitted Trajectories (First 2 Individuals)</a><a id="Step-5:-Fitted-Trajectories-(First-2-Individuals)-1"></a><a class="docs-heading-anchor-permalink" href="#Step-5:-Fitted-Trajectories-(First-2-Individuals)" title="Permalink"></a></h2><p>In this step, you will overlay the model&#39;s fitted trajectories on the observed data for a visual check of model adequacy. For subjects with censored observations, pay attention to the predicted curve near the detection limit: a well-fitting model should produce predicted values at or near 1.7 at censored time points, reflecting the fact that the true viral load lies somewhere below this threshold rather than at a precisely known value.</p><pre><code class="language-julia hljs">p_fit = plot_fits(
+NoLimits.summarize(res)</code></pre><p>&lt;!– injected:t6-res –&gt;</p><pre><code class="language-text hljs">FitResultSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  method                              : laplace
+  inference                           : frequentist
+  scale                               : natural
+  objective                           : 270.5745
+  iterations                          : 39
+  parameters shown (reported / total) : 9 / 9
+
+Parameter estimates
+  parameter      Estimate
+  -----------------------
+  beta_A           8.5294
+  beta_B          -8.0105
+  beta_k1         -2.7631
+  beta_k2         -9.6889
+  omega_A         7.76e-7
+  omega_B          0.0752
+  omega_k1         0.2876
+  omega_k2         0.1184
+  sigma             0.744
+
+Outcome data coverage
+  outcome       n_obs   n_missing
+  -------------------------------
+  Log_VL          300           0
+  TOTAL           300           0
+
+Empirical Bayes random effects summary (across RE levels)
+  random effect       n          mean            sd           q25        median           q75
+  ---------------------------------------------------------------------------
+  A_i                50     5061.1887      6.255e-9     5061.1887     5061.1887     5061.1887
+  B_i                50     0.0003301     1.902e-11     0.0003301     0.0003301     0.0003301
+  k1_i               50        0.0658        0.0162        0.0512        0.0647        0.0822
+  k2_i               50       6.11e-5     1.178e-13       6.11e-5       6.11e-5       6.11e-5</code></pre><h2 id="Step-5:-Fitted-Trajectories-(First-2-Individuals)"><a class="docs-heading-anchor" href="#Step-5:-Fitted-Trajectories-(First-2-Individuals)">Step 5: Fitted Trajectories (First 2 Individuals)</a><a id="Step-5:-Fitted-Trajectories-(First-2-Individuals)-1"></a><a class="docs-heading-anchor-permalink" href="#Step-5:-Fitted-Trajectories-(First-2-Individuals)" title="Permalink"></a></h2><p>In this step, you will overlay the model&#39;s fitted trajectories on the observed data for a visual check of model adequacy. For subjects with censored observations, pay attention to the predicted curve near the detection limit: a well-fitting model should produce predicted values at or near 1.7 at censored time points, reflecting the fact that the true viral load lies somewhere below this threshold rather than at a precisely known value.</p><pre><code class="language-julia hljs">p_fit = plot_fits(
     res;
     observable=:Log_VL,
     individuals_idx=[1, 2],
@@ -85,18 +252,76 @@ NoLimits.summarize(res)</code></pre><h2 id="Step-5:-Fitted-Trajectories-(First-2
     shared_y_axis=true,
 )
 
-p_fit</code></pre><h2 id="Step-6:-Observation-Distribution-Diagnostic-(First-Individual)"><a class="docs-heading-anchor" href="#Step-6:-Observation-Distribution-Diagnostic-(First-Individual)">Step 6: Observation Distribution Diagnostic (First Individual)</a><a id="Step-6:-Observation-Distribution-Diagnostic-(First-Individual)-1"></a><a class="docs-heading-anchor-permalink" href="#Step-6:-Observation-Distribution-Diagnostic-(First-Individual)" title="Permalink"></a></h2><p>This diagnostic reveals the full predictive distribution at selected time points for a single subject. For uncensored observations, you will see a Normal density centered on the predicted log10 viral load. For censored observations, the distribution is truncated at the detection limit, with the probability mass below 1.7 collapsed into a point mass. Examining these distributions is a useful way to verify that the censored likelihood is behaving as intended and that the model assigns appropriate probability to the below-limit region.</p><pre><code class="language-julia hljs">p_obs = plot_observation_distributions(
+p_fit</code></pre><p>&lt;!– injected:t6-pfit –&gt; <img src="../figures/t6/p_fit.png" alt="Fitted bi-exponential viral-load trajectories for the first two subjects (Laplace)."/></p><h2 id="Step-6:-Observation-Distribution-Diagnostic-(First-Individual)"><a class="docs-heading-anchor" href="#Step-6:-Observation-Distribution-Diagnostic-(First-Individual)">Step 6: Observation Distribution Diagnostic (First Individual)</a><a id="Step-6:-Observation-Distribution-Diagnostic-(First-Individual)-1"></a><a class="docs-heading-anchor-permalink" href="#Step-6:-Observation-Distribution-Diagnostic-(First-Individual)" title="Permalink"></a></h2><p>This diagnostic reveals the full predictive distribution at selected time points for a single subject. For uncensored observations, you will see a Normal density centered on the predicted log10 viral load. For censored observations, the distribution is truncated at the detection limit, with the probability mass below 1.7 collapsed into a point mass. Examining these distributions is a useful way to verify that the censored likelihood is behaving as intended and that the model assigns appropriate probability to the below-limit region.</p><pre><code class="language-julia hljs">p_obs = plot_observation_distributions(
     res;
     observables=:Log_VL,
     individuals_idx=1,
     obs_rows=[1, 2],
 )
 
-p_obs</code></pre><h2 id="Step-7:-Wald-Uncertainty-Quantification"><a class="docs-heading-anchor" href="#Step-7:-Wald-Uncertainty-Quantification">Step 7: Wald Uncertainty Quantification</a><a id="Step-7:-Wald-Uncertainty-Quantification-1"></a><a class="docs-heading-anchor-permalink" href="#Step-7:-Wald-Uncertainty-Quantification" title="Permalink"></a></h2><p>In this final step, you will assess the precision of the estimated fixed effects by computing Wald-based confidence intervals. The Wald method constructs approximate 95% intervals from the observed Fisher information matrix – that is, the curvature of the log-likelihood at the optimum. This is computationally inexpensive and provides a practical first assessment of parameter identifiability: wide intervals may signal that the data contain insufficient information to pin down a particular parameter.</p><pre><code class="language-julia hljs">uq = compute_uq(
+p_obs</code></pre><p>&lt;!– injected:t6-pobs –&gt; <img src="../figures/t6/p_obs.png" alt="Predicted observation distributions at the first two observations of the first subject, including the left-censored region."/></p><h2 id="Step-7:-Wald-Uncertainty-Quantification"><a class="docs-heading-anchor" href="#Step-7:-Wald-Uncertainty-Quantification">Step 7: Wald Uncertainty Quantification</a><a id="Step-7:-Wald-Uncertainty-Quantification-1"></a><a class="docs-heading-anchor-permalink" href="#Step-7:-Wald-Uncertainty-Quantification" title="Permalink"></a></h2><p>In this final step, you will assess the precision of the estimated fixed effects by computing Wald-based confidence intervals. The Wald method constructs approximate 95% intervals from the observed Fisher information matrix – that is, the curvature of the log-likelihood at the optimum. This is computationally inexpensive and provides a practical first assessment of parameter identifiability: wide intervals may signal that the data contain insufficient information to pin down a particular parameter.</p><pre><code class="language-julia hljs">uq = compute_uq(
     res;
     method=:wald,
     n_draws=800,
     level=0.95,
 )
 
-NoLimits.summarize(uq)</code></pre><p>For a consolidated report combining point estimates and their uncertainty, pass both the fit result and the uncertainty object to <code>summarize</code>. This tabular format is convenient for inclusion in manuscripts and supplementary materials.</p><pre><code class="language-julia hljs">NoLimits.summarize(res, uq)</code></pre><p>Finally, you can visualize the implied sampling distributions of the fixed-effects parameters on the natural (untransformed) scale. Parameters estimated on the log scale (the <code>omega</code> and <code>sigma</code> parameters) are back-transformed before plotting, so the density plots reflect the scale on which these quantities are scientifically interpretable.</p><pre><code class="language-julia hljs">plot_uq_distributions(uq; scale=:natural, plot_type=:density, show_legend=false)</code></pre><h2 id="Interpretation-Notes"><a class="docs-heading-anchor" href="#Interpretation-Notes">Interpretation Notes</a><a id="Interpretation-Notes-1"></a><a class="docs-heading-anchor-permalink" href="#Interpretation-Notes" title="Permalink"></a></h2><ul><li><strong>Nonlinearity and the Laplace approximation.</strong> The model is nonlinear in its random effects because subject-level <code>LogNormal</code> parameters (<code>A_i</code>, <code>B_i</code>, <code>k1_i</code>, <code>k2_i</code>) appear inside a bi-exponential trajectory. This nonlinearity is precisely what necessitates the Laplace approximation rather than a simpler linear mixed-effects approach.</li><li><strong>Why the censored likelihood matters.</strong> Left-censored rows contribute through the cumulative Normal probability of falling below 1.7, not through a standard density evaluated at the pinned recorded value. This distinction is critical for unbiased estimation whenever detection limits are present.</li><li><strong>A reusable template.</strong> The workflow demonstrated here – model definition, data binding, Laplace estimation, diagnostics, and uncertainty quantification – serves as a baseline template for censored nonlinear mixed-effects analyses in NoLimits. For datasets with higher censoring fractions or more complex censoring patterns (e.g., interval censoring), the same <code>censored(...)</code> syntax generalizes naturally.</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../mixed-effects-seizure-counts-poisson-nb-mcem/">« Mixed-Effects Tutorial 5: Seizure Counts with Poisson and NegativeBinomial Outcomes (MCEM)</a><a class="docs-footer-nextpage" href="../mixed-effects-vi/">Mixed-Effects Tutorial 7: VI for Mixed Effects (Not Supported) »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Wednesday 3 June 2026 22:25">Wednesday 3 June 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
+NoLimits.summarize(uq)</code></pre><p>&lt;!– injected:t6-uq –&gt;</p><pre><code class="language-text hljs">UQResultSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  backend                             : wald
+  source_method                       : laplace
+  inference                           : frequentist
+  scale                               : natural
+  objective                           : -
+  interval level                      : 0.95
+  parameters shown (reported / total) : 9 / 9
+
+Parameter uncertainty summary
+  parameter      Estimate    Std. Error      CI Lower      CI Upper
+  ---------------------------------------------------
+  beta_A           8.5294        0.0081        8.5141        8.5463
+  beta_B          -8.0105        0.2293       -8.4471        -7.558
+  beta_k1         -2.7631        0.0656       -2.9009       -2.6349
+  beta_k2         -9.6889        0.0929       -9.8624       -9.4989
+  omega_A         7.76e-7      4.903e-7      3.164e-7      2.029e-6
+  omega_B          0.0752        0.0649        0.0234        0.2617
+  omega_k1         0.2876        0.0711        0.1814        0.4658
+  omega_k2         0.1184        0.0434        0.0643        0.2328
+  sigma             0.744        0.0233        0.6989        0.7904</code></pre><p>For a consolidated report combining point estimates and their uncertainty, pass both the fit result and the uncertainty object to <code>summarize</code>. This tabular format is convenient for inclusion in manuscripts and supplementary materials.</p><pre><code class="language-julia hljs">NoLimits.summarize(res, uq)</code></pre><p>&lt;!– injected:t6-resuq –&gt;</p><pre><code class="language-text hljs">UQResultSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  backend                             : wald
+  source_method                       : laplace
+  inference                           : frequentist
+  scale                               : natural
+  objective                           : 270.5745
+  interval level                      : 0.95
+  parameters shown (reported / total) : 9 / 9
+
+Parameter uncertainty summary
+  parameter      Estimate    Std. Error      CI Lower      CI Upper
+  ---------------------------------------------------
+  beta_A           8.5294        0.0081        8.5141        8.5463
+  beta_B          -8.0105        0.2293       -8.4471        -7.558
+  beta_k1         -2.7631        0.0656       -2.9009       -2.6349
+  beta_k2         -9.6889        0.0929       -9.8624       -9.4989
+  omega_A         7.76e-7      4.903e-7      3.164e-7      2.029e-6
+  omega_B          0.0752        0.0649        0.0234        0.2617
+  omega_k1         0.2876        0.0711        0.1814        0.4658
+  omega_k2         0.1184        0.0434        0.0643        0.2328
+  sigma             0.744        0.0233        0.6989        0.7904
+
+Outcome data coverage
+  outcome       n_obs   n_missing
+  -------------------------------
+  Log_VL          300           0
+  TOTAL           300           0
+
+Empirical Bayes random effects summary (across RE levels)
+  random effect       n          mean            sd           q25        median           q75
+  ---------------------------------------------------------------------------
+  A_i                50     5061.1887      6.255e-9     5061.1887     5061.1887     5061.1887
+  B_i                50     0.0003301     1.902e-11     0.0003301     0.0003301     0.0003301
+  k1_i               50        0.0658        0.0162        0.0512        0.0647        0.0822
+  k2_i               50       6.11e-5     1.178e-13       6.11e-5       6.11e-5       6.11e-5</code></pre><p>Finally, you can visualize the implied sampling distributions of the fixed-effects parameters on the natural (untransformed) scale. Parameters estimated on the log scale (the <code>omega</code> and <code>sigma</code> parameters) are back-transformed before plotting, so the density plots reflect the scale on which these quantities are scientifically interpretable.</p><pre><code class="language-julia hljs">plot_uq_distributions(uq; scale=:natural, plot_type=:density, show_legend=false)</code></pre><p>&lt;!– injected:t6-puq –&gt; <img src="../figures/t6/p_uq.png" alt="Wald approximate parameter distributions on the natural scale."/></p><h2 id="Interpretation-Notes"><a class="docs-heading-anchor" href="#Interpretation-Notes">Interpretation Notes</a><a id="Interpretation-Notes-1"></a><a class="docs-heading-anchor-permalink" href="#Interpretation-Notes" title="Permalink"></a></h2><ul><li><strong>Nonlinearity and the Laplace approximation.</strong> The model is nonlinear in its random effects because subject-level <code>LogNormal</code> parameters (<code>A_i</code>, <code>B_i</code>, <code>k1_i</code>, <code>k2_i</code>) appear inside a bi-exponential trajectory. This nonlinearity is precisely what necessitates the Laplace approximation rather than a simpler linear mixed-effects approach.</li><li><strong>Why the censored likelihood matters.</strong> Left-censored rows contribute through the cumulative Normal probability of falling below 1.7, not through a standard density evaluated at the pinned recorded value. This distinction is critical for unbiased estimation whenever detection limits are present.</li><li><strong>The slow phase is only weakly identified here.</strong> With a large fraction of observations censored at the detection limit, the data carry little information about the slow second exponential, so its amplitude estimate collapses toward zero and the fitted trajectory is effectively dominated by the fast phase. This is the data speaking rather than a defect: the observable dynamics are a single decline to the detection limit. Datasets with longer follow-up or a higher detection limit would identify both phases more sharply.</li><li><strong>A reusable template.</strong> The workflow demonstrated here – model definition, data binding, Laplace estimation, diagnostics, and uncertainty quantification – serves as a baseline template for censored nonlinear mixed-effects analyses in NoLimits. For datasets with higher censoring fractions or more complex censoring patterns (e.g., interval censoring), the same <code>censored(...)</code> syntax generalizes naturally.</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../mixed-effects-seizure-counts-poisson-nb-mcem/">« Mixed-Effects Tutorial 5: Seizure Counts with Poisson and NegativeBinomial Outcomes (MCEM)</a><a class="docs-footer-nextpage" href="../mixed-effects-vi/">Mixed-Effects Tutorial 7: VI for Mixed Effects (Not Supported) »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.17.0 on <span class="colophon-date" title="Thursday 4 June 2026 07:49">Thursday 4 June 2026</span>. Using Julia version 1.12.6.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
