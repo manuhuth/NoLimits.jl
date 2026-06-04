@@ -593,6 +593,9 @@ function _mcem_sample_batch(dm, info, θ, const_cache, cache, sampler, turing_kw
     tkwargs = Base.structdiff(turing_kwargs, (n_samples=0, n_adapt=0))
     haskey(tkwargs, :progress) || (tkwargs = merge(tkwargs, (progress=false,)))
     haskey(tkwargs, :verbose) || (tkwargs = merge(tkwargs, (verbose=false,)))
+    # Turing ≥ 0.45 defaults to FlexiChains; `_extract_b_samples` consumes the chain via
+    # the MCMCChains API (`names`/`Array`), so force an MCMCChains.Chains result here.
+    tkwargs = merge(tkwargs, (chain_type=MCMCChains.Chains,))
     chain = if warm_start && last_params isa NamedTuple && !isempty(last_params)
         init = DynamicPPL.InitFromParams(last_params)
         Base.invokelatest(Turing.sample, rng, model, sampler, n_samples;
