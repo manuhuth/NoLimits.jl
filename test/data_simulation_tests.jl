@@ -588,3 +588,47 @@ end
     @test all(path -> all(diff(path) .>= 0), paths)
     @test any(path -> any(==(3), path), paths)
 end
+
+@testset "simulate_data uses theta_untransformed for random effect distributions" begin
+    model = @Model begin
+        @fixedEffects begin
+            a   = RealNumber(0.0)
+            σ_y = RealNumber(0.01)
+            σ_η = RealNumber(1.0, scale=:log)   # θ0: σ_η = 1
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, σ_η); column=:ID)
+        end
+
+        @formulas begin
+            y ~ Normal(a + η, σ_y)
+        end
+    end
+
+    n_ind = 100
+    df = DataFrame(
+        ID = repeat(1:n_ind, inner=2),
+        t  = repeat([0.0, 1.0], n_ind),
+        y  = zeros(2 * n_ind),
+    )
+
+    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
+
+    fitted_theta = (a=0.0, σ_y=0.01, σ_η=20.0)
+
+    sim_θ0     = simulate_data(dm; rng=MersenneTwister(42))
+    sim_fitted = simulate_data(dm; rng=MersenneTwister(42), theta_untransformed=fitted_theta)
+
+    # One η per individual (constant within ID)
+    η_θ0     = [sim_θ0.η[findfirst(==(id), sim_θ0.ID)]        for id in 1:n_ind]
+    η_fitted = [sim_fitted.η[findfirst(==(id), sim_fitted.ID)] for id in 1:n_ind]
+
+    # σ_η = 1 (θ0) → std ≈ 1; σ_η = 20 (fitted) → std ≈ 20
+    @test std(η_θ0)     < 5.0
+    @test std(η_fitted) > 5.0
+end

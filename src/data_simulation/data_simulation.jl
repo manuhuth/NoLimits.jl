@@ -273,7 +273,7 @@ function _warn_bad_value(dm::DataModel, row::Int, col::Symbol, dist, val)
     return nothing
 end
 
-function _sample_random_effects(dm::DataModel, rng)
+function _sample_random_effects(dm::DataModel, rng, θ)
     model = dm.model
     re_names = get_re_names(model.random.random)
     isempty(re_names) && return Dict{Symbol, Any}()
@@ -281,7 +281,7 @@ function _sample_random_effects(dm::DataModel, rng)
     re_values = dm.re_group_info.values
     re_index_by_row = dm.re_group_info.index_by_row
     cov = model.covariates.covariates
-    θ = get_θ0_untransformed(model.fixed.fixed)
+
     model_funs = get_model_funs(model)
     helpers = get_helper_funs(model)
     create = get_create_random_effect_distribution(model.random.random)
@@ -371,7 +371,7 @@ function simulate_data(dm::DataModel; rng=Random.default_rng(),
     df = deepcopy(dm.df)
     θ = _resolve_sim_theta(dm, theta_untransformed)
 
-    re_samples = _sample_random_effects(dm, rng)
+    re_samples = _sample_random_effects(dm, rng, θ)
     _attach_random_effects!(df, dm, re_samples)
 
     rngs = _rngs_for_serialization(rng, serialization)
