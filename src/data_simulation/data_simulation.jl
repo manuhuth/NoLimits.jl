@@ -346,7 +346,8 @@ end
 """
     simulate_data(dm::DataModel; rng, replace_missings, serialization, theta_untransformed) -> DataFrame
 
-Simulate observations from a `DataModel` using the model's initial parameter values.
+Simulate observations from a `DataModel` using the provided parameter values, or the model's initial parameter values if none are given.
+
 
 Random effects are drawn from their prior distributions and observation columns are
 replaced with draws from the model's observation distributions. Non-observation columns
