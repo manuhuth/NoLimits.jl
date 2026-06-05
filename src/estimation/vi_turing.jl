@@ -40,7 +40,7 @@ VI(; turing_kwargs=NamedTuple()) = VI(turing_kwargs)
 Method-specific result from a [`VI`](@ref) fit. Stores the variational posterior,
 optimization trace/state, ELBO summary, and observed data.
 """
-struct VIResult{Q, T, S, N, O, V, C} <: MethodResult
+struct VIResult{Q, T, S, N, O, V, C, M} <: MethodResult
     posterior::Q
     trace::T
     state::S
@@ -52,6 +52,8 @@ struct VIResult{Q, T, S, N, O, V, C} <: MethodResult
     observed::O
     varinfo::V
     coord_names::C
+    model::M       # DynamicPPL model used for VI; needed to unlink posterior draws to
+                   # natural space. `nothing` after deserialization (draws stay linked).
 end
 
 get_variational_posterior(res::VIResult) = res.posterior
@@ -136,11 +138,36 @@ function _vi_coord_names(varinfo)
     return names
 end
 
+# Map variational draws (rows) from the model's unconstrained/linked space — which is what
+# `rand(q)` produces under Turing >=0.45 (vi runs with `unconstrained=true`) — back to the
+# natural (constrained) parameter space the consumers expect. Requires the stored model;
+# after deserialization (model === nothing) the linked draws are returned unchanged.
+function _vi_unlink_draws(res::VIResult, linked::AbstractMatrix)
+    res.model === nothing && return linked
+    model = res.model
+    vil = DynamicPPL.link(DynamicPPL.VarInfo(model), model)
+    ks  = collect(keys(vil))
+    out = similar(linked)
+    @inbounds for r in axes(linked, 1)
+        z  = collect(@view linked[r, :])
+        vn = DynamicPPL.invlink!!(DynamicPPL.unflatten!!(deepcopy(vil), z), model)
+        pos = 1
+        for k in ks
+            for x in DynamicPPL.getindex_internal(vn, k)
+                out[r, pos] = x
+                pos += 1
+            end
+        end
+    end
+    return out
+end
+
 function sample_posterior(res::VIResult; n_draws::Int=1000, rng::AbstractRNG=Xoshiro(0), return_names::Bool=false)
     n_draws >= 1 || error("n_draws must be >= 1.")
     raw = rand(rng, res.posterior, n_draws)
     mat = raw isa AbstractVector ? reshape(raw, :, 1) : Matrix(raw)
-    draws = Matrix(permutedims(mat))
+    linked = Matrix(permutedims(mat))
+    draws = _vi_unlink_draws(res, linked)
     if return_names
         return (draws=draws, names=res.coord_names)
     end
@@ -275,6 +302,6 @@ function _fit_model(dm::DataModel, method::VI, args...;
                                   convergence_rtol=conv_rtol,
                                   convergence_atol=conv_atol))
     result = VIResult(posterior, trace, state, n_iter, max_iter, final_elbo, converged,
-                      NamedTuple(), obs, varinfo, coord_names)
+                      NamedTuple(), obs, varinfo, coord_names, model)
     return FitResult(method, result, summary, diagnostics, store_data_model ? dm : nothing, args, fit_kwargs)
 end

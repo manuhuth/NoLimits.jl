@@ -527,7 +527,7 @@ end
             η = RandomEffect(NormalizingPlanarFlow(ψ); column=:ID)
         end
         @formulas begin
-            y ~ Normal(a + η, σ)
+            y ~ Normal(a + η[1], σ)
         end
     end
     df = DataFrame(

@@ -685,7 +685,7 @@ end  # @testset "GHQuadrature ghquadrature.jl"
                 η = RandomEffect(NormalizingPlanarFlow(ψ); column=:ID)
             end
             @formulas begin
-                y ~ Normal(a + sat(η), σ)
+                y ~ Normal(a + sat(η[1]), σ)
             end
         end
         df_v = DataFrame(ID=repeat(1:5, inner=3),
@@ -714,7 +714,7 @@ end  # @testset "GHQuadrature ghquadrature.jl"
                 η = RandomEffect(NormalizingPlanarFlow(ψ); column=:ID)
             end
             @formulas begin
-                y ~ Normal(a + sat(η), σ)
+                y ~ Normal(a + sat(η[1]), σ)
             end
         end
         df_v = DataFrame(ID=repeat(1:4, inner=3),
@@ -781,7 +781,7 @@ end  # @testset "GHQuadrature ghquadrature.jl"
                 η = RandomEffect(NormalizingPlanarFlow(ψ); column=:ID)
             end
             @formulas begin
-                y ~ Normal(a + sat(η), σ)
+                y ~ Normal(a + sat(η[1]), σ)
             end
         end
         rng = MersenneTwister(99)

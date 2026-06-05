@@ -939,7 +939,26 @@ function _const_re_prior_logf(dm::DataModel,
     return ll
 end
 
-function _laplace_logf_batch(dm::DataModel,
+# Wrapper around the batch log-density. An invalid RE covariance — e.g. a degenerate
+# matrix-exp (`:expm`) draw the optimiser/UQ steps into — makes distribution construction
+# throw (`PosDefException` etc.) rather than return a finite density. Treat such numeric
+# failures as a -Inf log-density so callers backtrack instead of crashing. The try/catch is
+# free on the non-throwing path, so the hot-path performance of the impl is preserved.
+function _laplace_logf_batch(dm::DataModel, batch_info::_LaplaceBatchInfo, θ::ComponentArray,
+                             b, const_cache::LaplaceConstantsCache, cache::_LLCache;
+                             anneal_sds::NamedTuple=NamedTuple())
+    try
+        return _laplace_logf_batch_impl(dm, batch_info, θ, b, const_cache, cache; anneal_sds=anneal_sds)
+    catch err
+        if err isa LinearAlgebra.PosDefException || err isa LinearAlgebra.SingularException ||
+           err isa DomainError || err isa ArgumentError
+            return convert(promote_type(eltype(θ), eltype(b)), -Inf)
+        end
+        rethrow(err)
+    end
+end
+
+function _laplace_logf_batch_impl(dm::DataModel,
                              batch_info::_LaplaceBatchInfo,
                              θ::ComponentArray,
                              b,
@@ -1447,6 +1466,18 @@ function _laplace_hessian_b(dm::DataModel,
     return H
 end
 
+# Pluggable Hessian builder for the inner negative Hessian of the log-joint.
+# `_ExactHess` uses the full second-order AD Hessian (the Laplace default); FOCEI plugs
+# in the Gauss-Newton / expected-information Hessian (defined in focei.jl).  Both return
+# `H = ∇²_b log f`, i.e. the (typically negative-definite) raw Hessian, so the downstream
+# `negH = -H` / Cholesky / trace-gradient machinery is identical.
+abstract type _HessMode end
+struct _ExactHess <: _HessMode end
+@inline _build_hess_b(::_ExactHess, dm::DataModel, batch_info::_LaplaceBatchInfo, θ, b,
+                      const_cache::LaplaceConstantsCache, cache::_LLCache,
+                      ad_cache::Union{Nothing, LaplaceADCache}, bi::Int; ctx::AbstractString="") =
+    _laplace_hessian_b(dm, batch_info, θ, b, const_cache, cache, ad_cache, bi; ctx=ctx)
+
 function _laplace_cholesky_negH(H::AbstractMatrix; jitter=1e-6, max_tries=6, growth=10.0,
                                 adaptive=false, scale_factor=0.0)
     n = size(H, 1)
@@ -1481,7 +1512,8 @@ function _laplace_logdet_negH(dm::DataModel,
                               scale_factor=0.0,
                               ctx::AbstractString="",
                               hess_cache::Union{Nothing, _LaplaceHessCache}=nothing,
-                              use_cache::Bool=false)
+                              use_cache::Bool=false,
+                              hmode::_HessMode=_ExactHess())
     if batch_info.n_b == 0
         T = eltype(θ)
         H = zeros(T, 0, 0)
@@ -1504,7 +1536,7 @@ function _laplace_logdet_negH(dm::DataModel,
             end
         end
     end
-    H = _laplace_hessian_b(dm, batch_info, θ, b, const_cache, cache, ad_cache, bi; ctx=ctx)
+    H = _build_hess_b(hmode, dm, batch_info, θ, b, const_cache, cache, ad_cache, bi; ctx=ctx)
     chol, _ = _laplace_cholesky_negH(H; jitter=jitter, max_tries=max_tries, growth=growth,
                                      adaptive=adaptive, scale_factor=scale_factor)
     infT = convert(eltype(H), Inf)
@@ -1541,7 +1573,8 @@ function _laplace_grad_batch(dm::DataModel,
                              use_trace_logdet_grad::Bool=true,
                              use_hutchinson::Bool=false,
                              hutchinson_n::Int=8,
-                             rng::AbstractRNG=Random.default_rng())
+                             rng::AbstractRNG=Random.default_rng(),
+                             hmode::_HessMode=_ExactHess())
     nb = batch_info.n_b
     if nb == 0
         logf = _laplace_logf_batch(dm, batch_info, θ, b, const_cache, cache)
@@ -1552,7 +1585,7 @@ function _laplace_grad_batch(dm::DataModel,
 
     logf = _laplace_logf_batch(dm, batch_info, θ, b, const_cache, cache)
     logdet, H, chol = _laplace_logdet_negH(dm, batch_info, θ, b, const_cache, cache, ad_cache, bi; jitter=jitter, max_tries=max_tries, growth=growth,
-                                           adaptive=adaptive, scale_factor=scale_factor, ctx="logdet")
+                                           adaptive=adaptive, scale_factor=scale_factor, ctx="logdet", hmode=hmode)
     infT = convert(eltype(θ), Inf)
     logdet == Inf && return (logf=-Inf, logdet=infT, grad=ComponentArray(zeros(length(θ)), getaxes(θ)))
 
@@ -1598,14 +1631,14 @@ function _laplace_grad_batch(dm::DataModel,
             z = rand(rng, (-1, 1), n)
             Az = Ainv * z
             fθ = θv -> begin
-                Hθ = _laplace_hessian_b(dm, batch_info, θv, b, const_cache, cache, nothing, bi; ctx="hutch_dH_dθ")
+                Hθ = _build_hess_b(hmode, dm, batch_info, θv, b, const_cache, cache, nothing, bi; ctx="hutch_dH_dθ")
                 Hθ * Az
             end
             cfg = _get_fd_cfg!(buf.logdet_θ_cfg, fθ, θ_vec, () -> ForwardDiff.JacobianConfig(fθ, θ_vec))
             Jθv = ForwardDiff.jacobian(fθ, θ_vec, cfg)
             grad_logdet_θ .+= -(Jθv' * z)
             fb = bv -> begin
-                Hb = _laplace_hessian_b(dm, batch_info, θ, bv, const_cache, cache, nothing, bi; ctx="hutch_dH_db")
+                Hb = _build_hess_b(hmode, dm, batch_info, θ, bv, const_cache, cache, nothing, bi; ctx="hutch_dH_db")
                 Hb * Az
             end
             cfg = _get_fd_cfg!(buf.logdet_b_cfg, fb, b, () -> ForwardDiff.JacobianConfig(fb, b))
@@ -1620,7 +1653,7 @@ function _laplace_grad_batch(dm::DataModel,
         weights = Vector{eltype(H)}(undef, _ntri(n))
         _vech_weights!(weights, Ainv)
         fθ = θv -> begin
-            Hθ = _laplace_hessian_b(dm, batch_info, θv, b, const_cache, cache, nothing, bi; ctx="trace_dH_dθ")
+            Hθ = _build_hess_b(hmode, dm, batch_info, θv, b, const_cache, cache, nothing, bi; ctx="trace_dH_dθ")
             _vech(Hθ)
         end
         cfg = _get_fd_cfg!(buf.Jθ_cfg, fθ, θ_vec, () -> ForwardDiff.JacobianConfig(fθ, θ_vec))
@@ -1628,7 +1661,7 @@ function _laplace_grad_batch(dm::DataModel,
         grad_logdet_θ = -(buf.Jθ' * weights)
 
         fb = bv -> begin
-            Hb = _laplace_hessian_b(dm, batch_info, θ, bv, const_cache, cache, nothing, bi; ctx="trace_dH_db")
+            Hb = _build_hess_b(hmode, dm, batch_info, θ, bv, const_cache, cache, nothing, bi; ctx="trace_dH_db")
             _vech(Hb)
         end
         cfg = _get_fd_cfg!(buf.Jb_cfg, fb, b, () -> ForwardDiff.JacobianConfig(fb, b))
@@ -1972,7 +2005,8 @@ function _laplace_objective_and_grad(dm::DataModel,
                                      cache_opts::LaplaceCacheOptions,
                                      multistart::LaplaceMultistartOptions,
                                      rng::AbstractRNG,
-                                     serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads())
+                                     serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
+                                     hmode::_HessMode=_ExactHess())
     inner_opts = _resolve_inner_options(inner, dm)
     multistart_opts = _resolve_multistart_options(multistart, inner_opts)
 
@@ -2010,7 +2044,8 @@ function _laplace_objective_and_grad(dm::DataModel,
                                       use_trace_logdet_grad=hessian.use_trace_logdet_grad,
                                       use_hutchinson=hessian.use_hutchinson,
                                       hutchinson_n=hessian.hutchinson_n,
-                                      rng=batch_rngs[bi])
+                                      rng=batch_rngs[bi],
+                                      hmode=hmode)
             if res.logf == -Inf
                 bad[] = true
                 continue
@@ -2038,7 +2073,8 @@ function _laplace_objective_and_grad(dm::DataModel,
                                       use_trace_logdet_grad=hessian.use_trace_logdet_grad,
                                       use_hutchinson=hessian.use_hutchinson,
                                       hutchinson_n=hessian.hutchinson_n,
-                                      rng=batch_rngs[bi])
+                                      rng=batch_rngs[bi],
+                                      hmode=hmode)
             res.logf == -Inf && return (infT, ComponentArray(grad, axs), bstars)
             total += res.logf + 0.5 * info.n_b * log(2π) - 0.5 * res.logdet
             grad .+= res.grad
@@ -2058,7 +2094,8 @@ function _laplace_objective_only(dm::DataModel,
                                  cache_opts::LaplaceCacheOptions,
                                  multistart::LaplaceMultistartOptions,
                                  rng::AbstractRNG,
-                                 serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads())
+                                 serialization::SciMLBase.EnsembleAlgorithm=EnsembleThreads(),
+                                 hmode::_HessMode=_ExactHess())
     inner_opts = _resolve_inner_options(inner, dm)
     multistart_opts = _resolve_multistart_options(multistart, inner_opts)
 
@@ -2096,7 +2133,8 @@ function _laplace_objective_only(dm::DataModel,
                                                 adaptive=hessian.adaptive,
                                                 scale_factor=hessian.scale_factor,
                                                 hess_cache=ebe_cache.hess_cache,
-                                                use_cache=use_cache)
+                                                use_cache=use_cache,
+                                                hmode=hmode)
             logdet == Inf && (bad[] = true; continue)
             obj_by_batch[bi] = logf + 0.5 * info.n_b * log(2π) - 0.5 * logdet
         end
@@ -2118,7 +2156,8 @@ function _laplace_objective_only(dm::DataModel,
                                                 adaptive=hessian.adaptive,
                                                 scale_factor=hessian.scale_factor,
                                                 hess_cache=ebe_cache.hess_cache,
-                                                use_cache=use_cache)
+                                                use_cache=use_cache,
+                                                hmode=hmode)
             logdet == Inf && return infT
             total += logf + 0.5 * info.n_b * log(2π) - 0.5 * logdet
         end

@@ -313,10 +313,11 @@ _reconstruct_method_result(s::SavedGHQuadratureMAPResult) =
 _reconstruct_method_result(s::SavedMCMCResult) =
     MCMCResult(s.chain, _SavedSamplerStub(s.sampler_kind), s.n_samples, s.notes, s.observed)
 
-# VIResult: state=nothing, varinfo=nothing — both are not reconstructable from disk.
+# VIResult: state=nothing, varinfo=nothing, model=nothing — not reconstructable from disk.
+# (Without the model, `sample_posterior` cannot unlink draws and returns them as-is.)
 _reconstruct_method_result(s::SavedVIResult) =
     VIResult(s.posterior, s.trace, nothing, s.n_iter, s.max_iter,
-             s.final_elbo, s.converged, s.notes, s.observed, nothing, s.coord_names)
+             s.final_elbo, s.converged, s.notes, s.observed, nothing, s.coord_names, nothing)
 
 function _reconstruct_fit_kwargs(kw::NamedTuple)
     keep = (:constants, :constants_re, :penalty, :ode_args, :ode_kwargs, :theta_0_untransformed)

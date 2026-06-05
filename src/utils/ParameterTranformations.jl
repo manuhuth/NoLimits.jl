@@ -1,5 +1,6 @@
 using LinearAlgebra
 using Lux
+import ForwardDiff
 
 using ComponentArrays
 
@@ -249,7 +250,12 @@ function expm_forward(A::AbstractMatrix{<:Real})
 end
 
 function expm_inverse(T::AbstractMatrix{<:Real})
-    return Matrix(exp(Symmetric(T)))
+    # `exp(Symmetric(T))` is symmetric in value, but under ForwardDiff its derivative
+    # (Fréchet) partials can come back slightly asymmetric. Since Ω(T) is symmetric for
+    # every T, the true derivative is symmetric too, so re-wrapping the result in
+    # `Symmetric` before densifying both fixes the partials and guarantees an exactly
+    # Hermitian matrix — required by the (stricter) `cholesky` inside MvNormal/PDMats.
+    return Matrix(Symmetric(exp(Symmetric(T))))
 end
 
 function _expm_frechet(A::AbstractMatrix{<:Real}, E::AbstractMatrix{<:Real})
@@ -261,6 +267,34 @@ function _expm_frechet(A::AbstractMatrix{<:Real}, E::AbstractMatrix{<:Real})
     M = [Matrix{TT}(A) Matrix{TT}(E); Z Matrix{TT}(A)]
     EM = exp(M)
     return EM[1:n, 1:n], EM[1:n, n+1:2n]
+end
+
+# ForwardDiff-aware matrix exponential of a symmetric matrix (single-level Dual).
+# The generic eigen-based `exp(Symmetric)` has NaN / asymmetric ForwardDiff derivatives at
+# repeated eigenvalues (e.g. Ω = I, the typical optimisation/UQ point — the derivative of an
+# eigen-based matrix function divides by eigenvalue gaps), and the Padé `exp(::Matrix)` has no
+# `Dual` method. So compute the value with the eigen-exp of the (Float64) symmetric value, and
+# each partial direction with the AD-safe block-2×2 Padé Fréchet derivative (`_expm_frechet`,
+# which has no eigengaps), then reassemble the `Dual`. This matches the reverse-mode Jacobian
+# the transform already uses and yields finite, exactly-symmetric derivatives, so the
+# reconstructed covariance is accepted by the (stricter) `cholesky` inside MvNormal/PDMats.
+# Nested Duals fall back to the generic `<:Real` method above.
+function expm_inverse(T::AbstractMatrix{ForwardDiff.Dual{Tg, V, N}}) where {Tg, V<:AbstractFloat, N}
+    n = size(T, 1)
+    Tv = ForwardDiff.value.(T)
+    Sv = 0.5 .* (Tv .+ Tv')                          # symmetric value
+    Mv = Matrix(Symmetric(exp(Symmetric(Sv))))       # value (eigen ok — no AD here)
+    dMs = ntuple(N) do k
+        Pk = ForwardDiff.partials.(T, k)
+        Ek = 0.5 .* (Pk .+ Pk')                      # symmetric seed direction
+        _, F = _expm_frechet(Sv, Ek)
+        Matrix(Symmetric(F))                          # symmetric Fréchet derivative
+    end
+    out = Matrix{ForwardDiff.Dual{Tg, V, N}}(undef, n, n)
+    @inbounds for j in 1:n, i in 1:n
+        out[i, j] = ForwardDiff.Dual{Tg}(Mv[i, j], ntuple(k -> dMs[k][i, j], N)...)
+    end
+    return out
 end
 
 function _upper_tri_vec(T::AbstractMatrix{<:Real})
