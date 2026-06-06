@@ -16,7 +16,7 @@ using Distributions
         @test isapprox(sum(p.value), 1.0; atol=1e-14)
         @test p.scale == :stickbreak
         @test p.prior isa Priorless
-        @test p.calculate_se == false
+        @test p.calculate_se == true
     end
 
     @testset "ProbabilityVector with name and kwargs" begin
@@ -61,7 +61,7 @@ using Distributions
         @test all(isapprox.(sum(A.value; dims=2), 1.0; atol=1e-14))
         @test A.scale == :stickbreakrows
         @test A.prior isa Priorless
-        @test A.calculate_se == false
+        @test A.calculate_se == true
     end
 
     @testset "DiscreteTransitionMatrix 3x3" begin
