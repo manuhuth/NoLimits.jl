@@ -31,9 +31,11 @@ jobs:
           version: "1.12"
       - uses: julia-actions/cache@v2
       - uses: julia-actions/julia-buildpkg@v1
-      - uses: julia-actions/julia-runtest@v1
-        with:
-          coverage: true
+      # --code-coverage is its own compile config (recompiles regardless), hence
+      # the generous timeout; --check-bounds=auto still avoids stacking a second
+      # mismatch on top of it.
+      - name: Run tests (coverage)
+        run: julia --color=yes --project=. -e 'using Pkg; Pkg.test(; coverage=true, julia_args=["--check-bounds=auto"])'
         env:
           TEST_GROUP: ${{ matrix.group }}
           TEST_GROUPS: "10"

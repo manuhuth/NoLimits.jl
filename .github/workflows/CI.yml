@@ -15,7 +15,7 @@ jobs:
   test:
     name: test ubuntu - shard ${{ matrix.group }}/8
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -27,9 +27,12 @@ jobs:
           version: "1.12"
       - uses: julia-actions/cache@v2
       - uses: julia-actions/julia-buildpkg@v1
-      - uses: julia-actions/julia-runtest@v1
-        with:
-          coverage: false
+      # NB: `Pkg.test()` defaults to --check-bounds=yes, a DIFFERENT compile
+      # configuration than buildpkg's cached precompile, which forces a ~20-min
+      # recompile of the whole dependency tree on every shard. --check-bounds=auto
+      # reuses the restored cache, so the per-shard precompile drops to ~0.
+      - name: Run tests (no coverage)
+        run: julia --color=yes --project=. -e 'using Pkg; Pkg.test(; julia_args=["--check-bounds=auto"])'
         env:
           TEST_GROUP: ${{ matrix.group }}
           TEST_GROUPS: "8"
@@ -52,9 +55,8 @@ jobs:
           version: "1.12"
       - uses: julia-actions/cache@v2
       - uses: julia-actions/julia-buildpkg@v1
-      - uses: julia-actions/julia-runtest@v1
-        with:
-          coverage: false
+      - name: Run tests (no coverage)
+        run: julia --color=yes --project=. -e 'using Pkg; Pkg.test(; julia_args=["--check-bounds=auto"])'
         env:
           TEST_GROUP: ${{ matrix.group }}
           TEST_GROUPS: "8"
