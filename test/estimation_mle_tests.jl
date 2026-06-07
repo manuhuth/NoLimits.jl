@@ -8,34 +8,7 @@ using OptimizationOptimisers
 using OptimizationOptimJL
 
 @testset "MLE non-ODE" begin
-    model = @Model begin
-        @helpers begin
-            softplus(u) = log1p(exp(u))
-        end
-
-        @covariates begin
-            t = Covariate()
-        end
-
-        @fixedEffects begin
-            a = RealNumber(0.3)
-            σ = RealNumber(0.5, scale=:log)
-        end
-
-        @formulas begin
-            y ~ Normal(softplus(a), σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [1, 1],
-        t = [0.0, 1.0],
-        y = [1.0, 1.1]
-    )
-
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.MLE())
-
+    res = fx_mle()                        # shared no-RE MLE fit
     @test res isa FitResult
     @test NoLimits.get_params(res; scale=:untransformed) isa ComponentArray
 end

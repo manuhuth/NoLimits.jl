@@ -6,30 +6,7 @@ using Turing
 using Random
 
 @testset "VI basic (no RE)" begin
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-
-        @fixedEffects begin
-            b = RealNumber(1.0, prior=Normal(0.0, 2.0))
-            a = RealNumber(0.2, prior=Uniform(0.0, 1.0))
-            σ = RealNumber(0.5, scale=:log, prior=Uniform(0.001, 0.5))
-        end
-
-        @formulas begin
-            y ~ Normal(a*t + b, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [:A, :A, :B, :B],
-        t = [0.0, 1.0, 0.0, 1.0],
-        y = [1.0, 1.05, 0.98, 1.02]
-    )
-
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-    res = fit_model(dm, NoLimits.VI(; turing_kwargs=(max_iter=30, progress=false)); rng=Random.Xoshiro(1))
+    res = fx_vi()                         # shared no-RE VI fit
 
     @test res isa FitResult
     @test res.result isa NoLimits.VIResult
