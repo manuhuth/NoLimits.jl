@@ -55,31 +55,10 @@ const NL = NoLimits
 end
 
 @testset "FOCEI negH equals exact Laplace Hessian (linear-Gaussian)" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(1.0)
-            σ = RealNumber(0.5, scale=:log, lower=1e-8, upper=Inf)
-            ω = RealNumber(0.7, scale=:log, lower=1e-8, upper=Inf)
-        end
-        @covariates begin
-            t = Covariate()
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, ω); column=:ID)
-        end
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-
-    Random.seed!(3)
-    ids = repeat(1:6, inner=4)
-    df = DataFrame(ID=ids, t=repeat(0:3, 6), y=randn(24) .* 0.6 .+ 1.0)
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-
+    dm = fx_re_dm()                       # shared scalar-RE linear-Gaussian model
     _, batch_infos, const_cache = NL._build_laplace_batch_infos(dm, NamedTuple())
     ll_cache = NL.build_ll_cache(dm; force_saveat=true)
-    θu = NL.get_θ0_untransformed(dm.model.fixed.fixed)
+    θu = NL.get_θ0_untransformed(fx_re_model().fixed.fixed)
 
     for info in batch_infos
         info.n_b == 0 && continue
@@ -94,42 +73,11 @@ end
 end
 
 @testset "FOCEI fit matches Laplace (linear-Gaussian)" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(0.5)
-            σ = RealNumber(0.4, scale=:log, lower=1e-8, upper=Inf)
-            ω = RealNumber(0.4, scale=:log, lower=1e-8, upper=Inf)
-        end
-        @covariates begin
-            t = Covariate()
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, ω); column=:ID)
-        end
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-
-    Random.seed!(42)
-    rows = NamedTuple[]
-    for i in 1:12
-        ηi = 0.5 * randn()
-        for j in 1:4
-            push!(rows, (ID=i, t=float(j-1), y=1.0 + ηi + 0.3 * randn()))
-        end
-    end
-    df = DataFrame(rows)
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-
-    rf = fit_model(dm, NL.FOCEI(multistart_n=1, multistart_k=1); serialization=NL.EnsembleSerial())
-    rl = fit_model(dm, NL.Laplace(multistart_n=1, multistart_k=1); serialization=NL.EnsembleSerial())
-
-    # Identical objective and estimates: FOCEI ≡ Laplace for a linear-Gaussian model.
+    # FOCEI ≡ Laplace is an exact identity for linear-Gaussian models, so the
+    # shared fx_focei()/fx_laplace() fits (same fx_re_dm) must agree.
+    rf = fx_focei(); rl = fx_laplace()
     @test NL.get_objective(rf) ≈ NL.get_objective(rl) atol=1e-3
     @test collect(NL.get_params(rf; scale=:untransformed)) ≈ collect(NL.get_params(rl; scale=:untransformed)) atol=1e-2
-
-    # Result accessors work via the shared LaplaceResult.
     @test rf.result.eb_modes !== nothing
     re = NL.get_random_effects(rf)
     @test re isa NamedTuple && re.η isa DataFrame
@@ -137,37 +85,7 @@ end
 end
 
 @testset "FOCEI Wald UQ matches Laplace (linear-Gaussian)" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(0.5)
-            σ = RealNumber(0.4, scale=:log, lower=1e-8, upper=Inf)
-            ω = RealNumber(0.4, scale=:log, lower=1e-8, upper=Inf)
-        end
-        @covariates begin
-            t = Covariate()
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, ω); column=:ID)
-        end
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-
-    Random.seed!(42)
-    rows = NamedTuple[]
-    for i in 1:12
-        ηi = 0.5 * randn()
-        for j in 1:4
-            push!(rows, (ID=i, t=float(j-1), y=1.0 + ηi + 0.3 * randn()))
-        end
-    end
-    df = DataFrame(rows)
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-
-    rf = fit_model(dm, NL.FOCEI(multistart_n=1, multistart_k=1); serialization=NL.EnsembleSerial())
-    rl = fit_model(dm, NL.Laplace(multistart_n=1, multistart_k=1); serialization=NL.EnsembleSerial())
-
+    rf = fx_focei(); rl = fx_laplace()
     uq_f = compute_uq(rf; n_draws=30, serialization=NL.EnsembleSerial())
     uq_l = compute_uq(rl; n_draws=30, serialization=NL.EnsembleSerial())
 
@@ -235,28 +153,8 @@ end
 end
 
 @testset "FOCEI outer gradient matches finite differences" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(0.8)
-            σ = RealNumber(0.5, scale=:log, lower=1e-8, upper=Inf)
-            ω = RealNumber(0.6, scale=:log, lower=1e-8, upper=Inf)
-        end
-        @covariates begin
-            t = Covariate()
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, ω); column=:ID)
-        end
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-    Random.seed!(9)
-    ids = repeat(1:10, inner=4)
-    df = DataFrame(ID=ids, t=repeat(0:3, 10), y=randn(40) .* 0.6 .+ 0.8)
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-
-    fe = dm.model.fixed.fixed
+    dm = fx_re_dm()                       # shared scalar-RE model
+    fe = fx_re_model().fixed.fixed
     method = NL.FOCEI(multistart_n=1, multistart_k=1)
     inner_opts = NL._resolve_inner_options(method.inner, dm)
     ms_opts = NL._resolve_multistart_options(method.multistart, inner_opts)
@@ -310,10 +208,7 @@ end
 end
 
 @testset "FOCEIMAP runs and requires priors" begin
-    Random.seed!(13)
-    df = DataFrame(ID=repeat(1:8, inner=3), t=repeat(0:2, 8), y=randn(24) .* 0.4 .+ 0.5)
-
-    # No priors → error.
+    # No priors → error (bespoke: needs a prior-less model).
     model_np = @Model begin
         @fixedEffects begin
             a = RealNumber(0.5)
@@ -329,69 +224,18 @@ end
             y ~ Normal(a + η, σ)
         end
     end
-    dm_np = DataModel(model_np, df; primary_id=:ID, time_col=:t)
+    dm_np = DataModel(model_np, fx_re_df(); primary_id=:ID, time_col=:t)
     @test_throws ErrorException fit_model(dm_np, NL.FOCEIMAP())
 
-    # Priors on all fixed effects → runs.
-    model_p = @Model begin
-        @fixedEffects begin
-            a = RealNumber(0.5, prior=Normal(0.0, 1.0))
-            σ = RealNumber(0.4, scale=:log, lower=1e-8, upper=Inf, prior=LogNormal(0.0, 0.5))
-        end
-        @covariates begin
-            t = Covariate()
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 0.5); column=:ID)
-        end
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-    dm_p = DataModel(model_p, df; primary_id=:ID, time_col=:t)
-    rmap = fit_model(dm_p, NL.FOCEIMAP(multistart_n=1, multistart_k=1, optim_kwargs=(maxiters=3,)); serialization=NL.EnsembleSerial())
+    # Priors on all fixed effects → runs (shared prior archetype).
+    rmap = fit_model(fx_re_prior_dm(), NL.FOCEIMAP(multistart_n=1, multistart_k=1, optim_kwargs=(maxiters=3,)); serialization=NL.EnsembleSerial())
     @test isfinite(NL.get_objective(rmap))
     @test NL.get_converged(rmap) isa Bool
 end
 
 @testset "FOCEI fits an ODE model" begin
-    model = @Model begin
-        @fixedEffects begin
-            ke = RealNumber(0.5, scale=:log, lower=1e-8, upper=Inf)
-            σ  = RealNumber(0.3, scale=:log, lower=1e-8, upper=Inf)
-            ω  = RealNumber(0.3, scale=:log, lower=1e-8, upper=Inf)
-        end
-        @covariates begin
-            t = Covariate()
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, ω); column=:ID)
-        end
-        @DifferentialEquation begin
-            D(x1) ~ -ke * exp(η) * x1
-        end
-        @initialDE begin
-            x1 = 10.0
-        end
-        @formulas begin
-            y ~ Normal(x1(t), σ)
-        end
-    end
-
-    Random.seed!(5)
-    rows = NamedTuple[]
-    for i in 1:6
-        ηi = 0.3 * randn()
-        for tt in (0.5, 1.0, 2.0, 4.0)
-            conc = 10.0 * exp(-0.5 * exp(ηi) * tt)
-            push!(rows, (ID=i, t=tt, y=conc + 0.3 * randn()))
-        end
-    end
-    df = DataFrame(rows)
-    dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-
-    # Smoke test: a few iterations suffice to exercise the ODE FOCEI path + accessors.
-    res = fit_model(dm, NL.FOCEI(multistart_n=1, multistart_k=1, optim_kwargs=(maxiters=3,)); serialization=NL.EnsembleSerial())
+    # Smoke test: exercise the ODE FOCEI path + accessors on the shared ODE archetype.
+    res = fit_model(fx_ode_dm(), NL.FOCEI(multistart_n=1, multistart_k=1, optim_kwargs=(maxiters=3,)); serialization=NL.EnsembleSerial())
     @test isfinite(NL.get_objective(res))
     @test res.result.eb_modes !== nothing
     @test NL.get_random_effects(res) isa NamedTuple
