@@ -1,1 +1,0 @@
-(n_rows = 300, n_subjects = 50, n_censored = 131)

@@ -1,1 +1,0 @@
-(poisson_objective = -677.3374001650726, nb_objective = -644.3865261530952)
