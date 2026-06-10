@@ -83,9 +83,12 @@ makedocs(;
     ],
 )
 
-deploydocs(;
+# Must be DocumenterVitepress.deploydocs (NOT Documenter.deploydocs): it reads bases.txt
+# and deploys the built site from build/<i> into the correct version subfolder. Plain
+# Documenter.deploydocs would deploy build/ wholesale and leave the site under /dev/1/.
+DocumenterVitepress.deploydocs(;
     repo = "github.com/manuhuth/NoLimits.jl",
-    target = joinpath(@__DIR__, "build"),
+    target = "build",
     branch = "gh-pages",
     devbranch = "main",
     push_preview = true,
