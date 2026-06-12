@@ -584,7 +584,8 @@ function _probe_varying_covariates(covariates, df, rows, obs_row::Int, time_col:
         if v isa AbstractVector
             push!(pairs, name => v[1])
         elseif v isa NamedTuple
-            sub = NamedTuple{keys(v)}(Tuple(getfield(v, k)[1] for k in keys(v)))
+            sub = _covariate_vector(NamedTuple{keys(v)}(Tuple(getfield(v, k)[1]
+            for k in keys(v))))
             push!(pairs, name => sub)
         end
     end
@@ -775,6 +776,22 @@ function _extract_constants(params, rows)
     return params
 end
 
+# Materialise a covariate-vector value from a NamedTuple of its per-column entries.
+# When every entry is `Real`, return a `ComponentArray` so the value behaves both as a
+# labelled record (`x.Age`, `x.weight`) AND as a numeric vector (`x' * β`, `dot(x, β)`,
+# `sum(x)`, indexing). Non-numeric (e.g. categorical) covariate vectors stay NamedTuples:
+# field access still works and vector arithmetic is undefined for them anyway. The branch
+# is decided at compile time from the NamedTuple type, so the hot per-row path stays
+# type-stable.
+@generated function _covariate_vector(nt::NamedTuple)
+    fts = fieldtypes(nt.parameters[2])
+    if !isempty(fts) && all(ft -> ft <: Real, fts)
+        return :(ComponentArray(nt))
+    else
+        return :(nt)
+    end
+end
+
 function _build_const_cov(covariates, df, rows)
     params = covariates.params
     out = Pair{Symbol, Any}[]
@@ -785,8 +802,8 @@ function _build_const_cov(covariates, df, rows)
             val = _get_col(df, col)[rows[1]]
             push!(out, name => val)
         elseif p isa ConstantCovariateVector
-            vals = NamedTuple{Tuple(p.columns)}(Tuple(_get_col(df, c)[rows[1]]
-            for c in p.columns))
+            vals = _covariate_vector(NamedTuple{Tuple(p.columns)}(Tuple(_get_col(df, c)[rows[1]]
+            for c in p.columns)))
             push!(out, name => vals)
         end
     end

@@ -27,7 +27,8 @@ function _varying_at(dm::DataModel, ind::Individual, idx::Int, row::Int)
         if v isa AbstractVector
             push!(pairs, name => v[idx])
         elseif v isa NamedTuple
-            sub = NamedTuple{keys(v)}(Tuple(getfield(v, k)[idx] for k in keys(v)))
+            sub = _covariate_vector(NamedTuple{keys(v)}(Tuple(getfield(v, k)[idx]
+            for k in keys(v))))
             push!(pairs, name => sub)
         end
     end

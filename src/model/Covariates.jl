@@ -61,7 +61,10 @@ data-frame columns to read:
     x = ConstantCovariateVector([:Age, :BMI]; constant_on=:ID)
 end
 ```
-Accessed in model blocks as `x.Age`, `x.BMI`.
+Inside model blocks the value supports both named-field access (`x.Age`, `x.BMI`) and
+numeric-vector operations in column order (`x' * β`, `dot(x, β)`, `sum(x)`, `x[1]`). The
+vector behaviour requires every column to be numeric; mixed/categorical vectors keep
+field access only.
 
 # Keyword Arguments
 - `constant_on`: a `Symbol` or vector of `Symbol`s naming the grouping column(s).
@@ -81,7 +84,10 @@ A vector of time-varying scalar covariates read row-by-row.
     z = CovariateVector([:z1, :z2])
 end
 ```
-Accessed in model blocks as `z.z1`, `z.z2`.
+Inside model blocks the per-row value supports both named-field access (`z.z1`, `z.z2`)
+and numeric-vector operations in column order (`z' * β`, `dot(z, β)`, `sum(z)`, `z[1]`).
+The vector behaviour requires every column to be numeric; mixed/categorical vectors keep
+field access only.
 
 # Arguments
 - `columns::Vector{Symbol}`: names of the data-frame columns to collect.
@@ -122,6 +128,11 @@ end
 
 # Arguments
 - `columns::Vector{Symbol}`: data-frame column names.
+
+Accessed in model blocks by named field, each called at a time point: `inputs.i1(t)`.
+Unlike `ConstantCovariateVector`/`CovariateVector`, the value is a bundle of interpolant
+functions, so whole-vector numeric operations (`inputs' * β`) are not supported — index
+a field and call it instead.
 
 # Keyword Arguments
 - `interpolations`: a `Vector` of DataInterpolations.jl types, one per column.

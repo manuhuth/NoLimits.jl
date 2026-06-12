@@ -1703,7 +1703,7 @@ end
 # forces dynamic dispatch at each `calculate_formulas_obs` call site (and breaks
 # Enzyme reverse mode). Going through the NamedTuple structure keeps row types concrete.
 @inline _vary_value_at(v::AbstractVector, idx::Int) = v[idx]
-@inline _vary_value_at(v::NamedTuple, idx::Int) = map(x -> x[idx], v)
+@inline _vary_value_at(v::NamedTuple, idx::Int) = _covariate_vector(map(x -> x[idx], v))
 
 @inline function _vary_row(vary::NamedTuple, dyn::NamedTuple, t_obs, idx::Int)
     t_val = hasproperty(vary, :t) ? vary.t[idx] : t_obs[idx]

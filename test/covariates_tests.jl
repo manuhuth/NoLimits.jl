@@ -1,6 +1,9 @@
 using Test
 using NoLimits
 using DataInterpolations
+using ComponentArrays
+using Distributions
+using ForwardDiff
 
 @testset "Covariates macro" begin
     # Basic macro expansion builds names, groups, and interpolations.
@@ -155,4 +158,45 @@ end
 
     @test cov.params.c.constant_on == [:ID]
     @test cov.params.v.constant_on == [:ID, :SITE]
+end
+
+@testset "Covariate vectors usable as numeric vectors" begin
+    # Numeric covariate vectors materialise as ComponentArrays: both named-field access
+    # (x.Age) and numeric-vector operations (x' * β) work, in column order.
+    cv = NoLimits._covariate_vector((Age = 30.0, Weight = 70.0))
+    @test cv isa ComponentArray
+    @test cv.Age == 30.0 && cv.Weight == 70.0
+    @test cv' * [0.5, -0.2] ≈ 30.0 * 0.5 + 70.0 * (-0.2)
+    @test collect(cv) == [30.0, 70.0]
+    @test eltype(NoLimits._covariate_vector((a = 1.0f0, b = 2.0f0))) == Float32
+
+    # Mixed/categorical covariate vectors keep field access only (stay NamedTuples).
+    cat = NoLimits._covariate_vector((grp = "A", Age = 5.0))
+    @test cat isa NamedTuple && cat.Age == 5.0
+
+    # The per-row time-varying extraction also yields a ComponentArray.
+    row = NoLimits._vary_value_at((z1 = [1.0, 2.0], z2 = [3.0, 4.0]), 2)
+    @test row isa ComponentArray && collect(row) == [2.0, 4.0]
+
+    # End-to-end through generated formula code, including ForwardDiff (AD) over the
+    # fixed effects: ∂(x'β)/∂β = x and ∂(z'γ)/∂γ = z.
+    formulas = @formulas begin
+        lin = x' * β + z' * γ
+        obs ~ Normal(lin, σ)
+    end
+    (_, form_obs, _, _) = get_formulas_builders(formulas;
+        fixed_names = [:β, :γ, :σ], const_cov_names = [:x], varying_cov_names = [:z])
+    const_cov = (x = NoLimits._covariate_vector((Age = 30.0, Weight = 70.0)),)
+    vary = (t = 0.0, z = NoLimits._covariate_vector((z1 = 2.0, z2 = 5.0)))
+    obj = function (p)
+        ctx = (; fixed_effects = (β = p[1:2], γ = p[3:4], σ = 0.4),
+            random_effects = NamedTuple(), prede = NamedTuple(),
+            helpers = NamedTuple(), model_funs = NamedTuple())
+        return mean(form_obs(ctx, NamedTuple(), const_cov, vary).obs)
+    end
+    p0 = [0.5, -0.2, 1.0, 0.3]
+    @test obj(p0) ≈ (30.0 * 0.5 + 70.0 * (-0.2)) + (2.0 * 1.0 + 5.0 * 0.3)
+    g = ForwardDiff.gradient(obj, p0)
+    @test g[1:2] ≈ [30.0, 70.0]
+    @test g[3:4] ≈ [2.0, 5.0]
 end
