@@ -11,8 +11,8 @@ using ComponentArrays
 using LinearAlgebra
 using Random
 
-# Consolidated Laplace / LaplaceMAP tests (merges the former estimation_laplace,
-# estimation_laplace_fit and estimation_laplace_map files). Standard structures
+# Consolidated Laplace tests (merges the former estimation_laplace and
+# estimation_laplace_fit files). Standard structures
 # reuse the shared fixtures (fit/model built once); bespoke @Models are kept only
 # where a test specifically exercises that structure or an error path.
 
@@ -261,9 +261,6 @@ end
     lap = NoLimits.Laplace()
     @test lap.multistart.n == 50 && lap.multistart.k == 10 &&
           lap.multistart.sampling == :lhs
-    lap_map = NoLimits.LaplaceMAP()
-    @test lap_map.multistart.n == 50 && lap_map.multistart.k == 10 &&
-          lap_map.multistart.sampling == :lhs
     @test fit_model(fx_re_dm(),
         NoLimits.Laplace(; optim_kwargs = (maxiters = 2,),
             multistart_n = 2, multistart_k = 2, multistart_grad_tol = 0.0),
@@ -316,135 +313,6 @@ end
     re = get_random_effects(res_new)
     @test re isa NamedTuple && haskey(re, :η) &&
           nrow(re.η) == length(get_individuals(fx_re_dm()))
-end
-
-# ── LaplaceMAP ───────────────────────────────────────────────────────────────
-@testset "LaplaceMAP requires priors on all fixed effects" begin
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-        @fixedEffects begin
-            a = RealNumber(0.2, prior = Normal(0.0, 1.0))
-            σ = RealNumber(0.5, scale = :log)
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column = :ID)
-        end
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-    dm = DataModel(model,
-        DataFrame(ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0], y = [0.1, 0.2, 0.0, -0.1]);
-        primary_id = :ID, time_col = :t)
-    @test_throws ErrorException fit_model(
-        dm, NoLimits.LaplaceMAP(; optim_kwargs = (maxiters = 2,)))
-end
-
-@testset "LaplaceMAP runs with priors and penalties" begin
-    @test fit_model(
-        fx_re_prior_dm(), NoLimits.LaplaceMAP(; optim_kwargs = (maxiters = 2,));
-        penalty = (; a = 0.1)).summary.converged isa Bool
-end
-
-@testset "LaplaceMAP non-normal Bernoulli outcome" begin
-    res = fx_bern_lmap()
-    @test res isa FitResult && res.summary.converged isa Bool
-end
-
-@testset "LaplaceMAP with multivariate REs and multiple groups" begin
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-        @fixedEffects begin
-            a = RealNumber(0.1, prior = Normal(0.0, 1.0))
-            σ = RealNumber(0.4, scale = :log, prior = LogNormal(0.0, 0.5))
-            μ = RealVector([0.0, 0.0], prior = MvNormal([0.0, 0.0], LinearAlgebra.I(2)))
-        end
-        @randomEffects begin
-            η_id = RandomEffect(MvNormal([0.0, 0.0], LinearAlgebra.I(2)); column = :ID)
-            η_site = RandomEffect(MvNormal(μ, LinearAlgebra.I(2)); column = :SITE)
-        end
-        @formulas begin
-            y ~ Normal(a + η_id[1] + η_site[2], σ)
-        end
-    end
-    dm = DataModel(model, fx_mg_df(); primary_id = :ID, time_col = :t)
-    @test fit_model(
-        dm, NoLimits.LaplaceMAP(; optim_kwargs = (maxiters = 2,))).summary.converged isa
-          Bool
-end
-
-@testset "LaplaceMAP with ODE model" begin
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-        @fixedEffects begin
-            a = RealNumber(0.3, prior = Normal(0.3, 0.3))
-            σ = RealNumber(0.5, scale = :log, prior = LogNormal(0.0, 0.5))
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column = :ID)
-        end
-        @DifferentialEquation begin
-            D(x1) ~ -a * x1 + η
-        end
-        @initialDE begin
-            x1 = 1.0
-        end
-        @formulas begin
-            y ~ Normal(x1(t), σ)
-        end
-    end
-    dm = DataModel(set_solver_config(model; saveat_mode = :saveat),
-        fx_ode_df(); primary_id = :ID, time_col = :t)
-    @test fit_model(
-        dm, NoLimits.LaplaceMAP(; optim_kwargs = (maxiters = 2,))).summary.converged isa
-          Bool
-end
-
-@testset "LaplaceMAP normal prior equals penalty" begin
-    model_prior = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-        @fixedEffects begin
-            a = RealNumber(0.0, prior = Normal(0.0, 1.0))
-            σ = RealNumber(0.5, scale = :log, prior = LogNormal(0.0, 0.5))
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column = :ID)
-        end
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-    model_penalty = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-        @fixedEffects begin
-            a = RealNumber(0.0)
-            σ = RealNumber(0.5, scale = :log)
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column = :ID)
-        end
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-    df = DataFrame(ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0], y = [0.1, 0.2, 0.0, -0.1])
-    res_prior = fit_model(DataModel(model_prior, df; primary_id = :ID, time_col = :t),
-        NoLimits.LaplaceMAP(; optim_kwargs = (maxiters = 2,)), constants = (; σ = 0.5))
-    res_pen = fit_model(DataModel(model_penalty, df; primary_id = :ID, time_col = :t),
-        NoLimits.Laplace(; optim_kwargs = (maxiters = 2,)), penalty = (; a = 0.5), constants = (;
-            σ = 0.5))
-    @test isapprox(NoLimits.get_params(res_prior; scale = :untransformed).a,
-        NoLimits.get_params(res_pen; scale = :untransformed).a; rtol = 1e-3, atol = 1e-3)
 end
 
 @testset "Laplace with NormalizingPlanarFlow custom base_dist" begin

@@ -1581,8 +1581,7 @@ function _default_random_effects(res::FitResult,
     re_names = get_re_names(dm.model.random.random)
     isempty(re_names) && return fill(ComponentArray(NamedTuple()), length(dm.individuals))
 
-    if res.result isa LaplaceResult || res.result isa LaplaceMAPResult ||
-       res.result isa GHQuadratureResult || res.result isa GHQuadratureMAPResult
+    if res.result isa LaplaceResult || res.result isa GHQuadratureResult
         _, batch_infos, _ = _build_laplace_batch_infos(dm, constants_re)
         bstars = res.result.eb_modes
         length(bstars) == length(batch_infos) ||

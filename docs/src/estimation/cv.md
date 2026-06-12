@@ -25,7 +25,7 @@ For models with random effects, two separate modes control prediction for seen a
 **`seen_re_mode`** - individuals who appear in the training set:
 
 - `:ebe` (default) - plug in the empirical Bayes estimate (EBE, MAP of the conditional posterior) obtained from the training fit. Fast and the standard approach in pharmacometrics.
-- `:conditional` - draw `n_mc_samples` samples from the training conditional posterior `p(b | y_train, θ̂)` using the Laplace approximation (for `Laplace`/`LaplaceMAP`) or MCMC sweeps (for `MCEM`/`SAEM`), then average per-observation log-likelihoods via `logsumexp` and predicted means arithmetically.
+- `:conditional` - draw `n_mc_samples` samples from the training conditional posterior `p(b | y_train, θ̂)` using the Laplace approximation (for `Laplace`) or MCMC sweeps (for `MCEM`/`SAEM`), then average per-observation log-likelihoods via `logsumexp` and predicted means arithmetically.
 
 **`unseen_re_mode`** - individuals absent from training (only possible with `kind=:id`):
 

@@ -221,34 +221,6 @@ end
     @test_throws ErrorException fit_model(dm, NL.FOCEI())
 end
 
-@testset "FOCEIMAP runs and requires priors" begin
-    # No priors → error (bespoke: needs a prior-less model).
-    model_np = @Model begin
-        @fixedEffects begin
-            a = RealNumber(0.5)
-            σ = RealNumber(0.4, scale = :log, lower = 1e-8, upper = Inf)
-        end
-        @covariates begin
-            t = Covariate()
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 0.5); column = :ID)
-        end
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-    dm_np = DataModel(model_np, fx_re_df(); primary_id = :ID, time_col = :t)
-    @test_throws ErrorException fit_model(dm_np, NL.FOCEIMAP())
-
-    # Priors on all fixed effects → runs (shared prior archetype).
-    rmap = fit_model(fx_re_prior_dm(),
-        NL.FOCEIMAP(multistart_n = 1, multistart_k = 1, optim_kwargs = (maxiters = 3,));
-        serialization = NL.EnsembleSerial())
-    @test isfinite(NL.get_objective(rmap))
-    @test NL.get_converged(rmap) isa Bool
-end
-
 @testset "FOCEI fits an ODE model" begin
     # Smoke test: exercise the ODE FOCEI path + accessors on the shared ODE archetype.
     res = fit_model(fx_ode_dm(),

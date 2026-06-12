@@ -893,7 +893,7 @@ end  # @testset "GHQuadrature ghquadrature.jl"
 end  # @testset "GHQuadrature NPF RE support"
 
 # =============================================================================
-# Phase 2: GHQuadratureMAP + Wald UQ
+# Phase 2: Wald UQ
 # =============================================================================
 
 # ---------------------------------------------------------------------------
@@ -916,76 +916,7 @@ const _GHQ_MAP_DM = _make_map_ghq_dm()
 const _GHQ_MAP_RES_GHQ2 = fit_model(
     _GHQ_MAP_DM, GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,)))
 
-@testset "GHQuadratureMAP" begin
-    dm_map = _make_map_ghq_dm()
-
-    # ── Basic fit ────────────────────────────────────────────────────────────
-    @testset "Basic fit" begin
-        res = fit_model(dm_map, GHQuadratureMAP(level = 1; optim_kwargs = (maxiters = 2,)))
-
-        @test res isa NoLimits.FitResult
-        @test res.result isa NoLimits.GHQuadratureMAPResult
-
-        obj = get_objective(res)
-
-        params = NoLimits.get_params(res; scale = :untransformed)
-
-        @test get_converged(res) isa Bool
-
-        iters = get_iterations(res)
-        @test iters === missing || (iters isa Integer && iters >= 0)
-    end
-
-    # ── All accessors work ───────────────────────────────────────────────────
-    @testset "Accessors" begin
-        res = fit_model(dm_map, GHQuadratureMAP(level = 1; optim_kwargs = (maxiters = 2,)))
-
-        re = get_random_effects(dm_map, res)
-        @test re isa NamedTuple
-        @test haskey(re, :η)
-        @test nrow(re.η) == 8
-
-        re2 = get_random_effects(res)
-        @test nrow(re2.η) == 8
-
-        ll = get_loglikelihood(res)
-        @test ll < 0   # log-likelihood itself is negative
-    end
-
-    # ── GHQuadrature vs GHQuadratureMAP: MAP pulls parameters toward prior ───────
-    @testset "MAP regularization pulls toward prior" begin
-        # With a strong Normal(0, 0.3) prior on a, MAP estimate of a should
-        # be closer to 0 than MLE estimate on same data.
-        model_tight = _ghq_prior_model(; a0 = 2.0, a_prior_sd = 0.3)
-        rng_t = MersenneTwister(99)
-        ids = repeat(1:6, inner = 4)
-        ts = repeat(1.0:4.0, outer = 6)
-        ys = 3.0 .+ 0.5 .* randn(rng_t, 24)   # true a ≈ 3, far from prior 0
-        df_t = DataFrame(ID = ids, t = ts, y = ys)
-        dm_t = DataModel(model_tight, df_t; primary_id = :ID, time_col = :t)
-
-        res_mle = fit_model(dm_t, GHQuadrature(level = 1; optim_kwargs = (maxiters = 2,)))
-        res_map = fit_model(
-            dm_t, GHQuadratureMAP(level = 1; optim_kwargs = (maxiters = 2,)))
-
-        a_mle = NoLimits.get_params(res_mle; scale = :untransformed).a
-        a_map = NoLimits.get_params(res_map; scale = :untransformed).a
-
-        # MAP should be pulled toward 0 compared to MLE
-        @test abs(a_map) < abs(a_mle)
-    end
-
-    # ── Error: GHQuadratureMAP with no-prior model ─────────────────────────────
-    @testset "Errors without priors" begin
-        df_n = DataFrame(ID = repeat(1:3, inner = 2), t = [1.0, 2.0, 1.0, 2.0, 1.0, 2.0],
-            y = randn(MersenneTwister(1), 6))
-        dm_n = DataModel(_GHQ_SCALAR_MODEL, df_n; primary_id = :ID, time_col = :t)
-        @test_throws ErrorException fit_model(dm_n, GHQuadratureMAP(level = 1))
-    end
-end  # @testset "GHQuadratureMAP"
-
 @testset "GHQuadrature Wald UQ" begin
-    dm_uq = _GHQ_MAP_DM
 
     # ── GHQuadrature Wald (default ForwardDiff Hessian) ────────────────────────
     @testset "compute_uq GHQuadrature level=2" begin
@@ -999,16 +930,6 @@ end  # @testset "GHQuadratureMAP"
 
         # Intervals should be finite and ordered
 
-    end
-
-    # ── GHQuadratureMAP Wald (adds prior) ───────────────────────────────────────
-    @testset "compute_uq GHQuadratureMAP level=2" begin
-        res = fit_model(dm_uq, GHQuadratureMAP(level = 2; optim_kwargs = (maxiters = 2,)))
-        uq = compute_uq(res; method = :wald, pseudo_inverse = true)
-
-        @test uq isa NoLimits.UQResult
-        cia = get_uq_intervals(uq)
-        @test hasproperty(cia.lower, :a)
     end
 
     # ── Sandwich vcov ────────────────────────────────────────────────────────
@@ -1045,18 +966,6 @@ end  # @testset "GHQuadrature Profile UQ"
 @testset "GHQuadrature mcmc_refit UQ" begin
     dm_uq = _GHQ_MAP_DM
 
-    @testset "compute_uq GHQuadratureMAP :mcmc_refit" begin
-        res = fit_model(dm_uq, GHQuadratureMAP(level = 1; optim_kwargs = (maxiters = 2,)))
-        uq = compute_uq(res;
-            method = :mcmc_refit,
-            mcmc_sampler = Turing.MH(),
-            mcmc_turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false))
-
-        @test uq isa NoLimits.UQResult
-        cia = get_uq_intervals(uq)
-        @test hasproperty(cia.lower, :a)
-    end
-
     @testset "compute_uq GHQuadrature :mcmc_refit (with priors)" begin
         # GHQuadrature with priors on all fixed effects can use mcmc_refit
         res = fit_model(dm_uq, GHQuadrature(level = 1; optim_kwargs = (maxiters = 2,)))
@@ -1089,13 +998,6 @@ end  # @testset "GHQuadrature mcmc_refit UQ"
         # Both should converge and produce valid RE estimates
         re_t = get_random_effects(dm_par, res_threaded)
         @test nrow(re_t.η) == 10
-    end
-
-    @testset "GHQuadratureMAP EnsembleThreads runs without error" begin
-        dm_m = _make_map_ghq_dm()
-        res = fit_model(dm_m, GHQuadratureMAP(level = 2; optim_kwargs = (maxiters = 2,));
-            serialization = EnsembleThreads())
-        @test res.result isa NoLimits.GHQuadratureMAPResult
     end
 end  # @testset "GHQuadrature parallelization (EnsembleThreads)"
 
@@ -1725,20 +1627,6 @@ end  # @testset "GHQuadrature generic ContinuousUnivariateDistribution fallback"
         re = NoLimits.get_random_effects(dm, res)
         @test re isa NamedTuple && haskey(re, :η)
         ll = NoLimits.get_loglikelihood(res)
-    end
-
-    @testset "GHQuadratureMAP level=[1,2] works" begin
-        rng = MersenneTwister(7)
-        n_id = 10
-        n_obs = 5
-        ids = repeat(1:n_id, inner = n_obs)
-        yobs = 1.0 .+ 0.3 .* randn(rng, n_id * n_obs)
-        tobs = repeat(1:n_obs, n_id) .* 1.0
-        df = DataFrame(ID = ids, t = tobs, y = yobs)
-        dm = DataModel(_GHQ_MAP_MODEL, df; primary_id = :ID, time_col = :t)
-        res = fit_model(dm, GHQuadratureMAP(level = [1, 2]; optim_kwargs = (maxiters = 2,)))
-        @test NoLimits.get_converged(res) isa Bool
-        @test NoLimits.get_method(res).level == 2
     end
 
     @testset "empty level vector throws" begin

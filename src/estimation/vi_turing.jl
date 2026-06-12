@@ -201,7 +201,7 @@ function _fit_model(dm::DataModel, method::VI, args...;
         error(
             "VI is not supported for models with random effects. " *
             "Use MCMC for full Bayesian inference on mixed-effects models, or " *
-            "use Laplace/LaplaceMAP/MCEM/SAEM for likelihood-based mixed-effects estimation."
+            "use Laplace/MCEM/SAEM for likelihood-based mixed-effects estimation."
         )
     end
     isempty(keys(penalty)) ||

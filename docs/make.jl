@@ -46,8 +46,8 @@ makedocs(;
         "Estimation" => [
             "Overview" => "estimation/index.md",
             "MLE / MAP" => "estimation/mle.md",
-            "Laplace / LaplaceMAP" => "estimation/laplace.md",
-            "FOCEI / FOCEIMAP" => "estimation/focei.md",
+            "Laplace" => "estimation/laplace.md",
+            "FOCEI" => "estimation/focei.md",
             "GH Quadrature" => "estimation/ghquadrature.md",
             "MCEM" => "estimation/mcem.md",
             "SAEM" => "estimation/saem.md",

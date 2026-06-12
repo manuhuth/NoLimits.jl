@@ -59,12 +59,6 @@ end
     @test plot_fits_comparison([res, res]) !== nothing
 end
 
-@testset "plot_fits discrete and random effects" begin
-    # fx_bern: Bernoulli(logistic(a + η)) with scalar RE.
-    p_fits = plot_fits(fx_bern_lmap(); plot_density = true)
-    @test p_fits !== nothing
-end
-
 @testset "plot_fits discrete poisson" begin
     p_fits = plot_fits(fx_pois_laplace(); plot_density = false)
     @test p_fits !== nothing

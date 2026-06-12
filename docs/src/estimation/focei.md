@@ -1,4 +1,4 @@
-# FOCEI / FOCEIMAP
+# FOCEI
 
 First-Order Conditional Estimation with Interaction (FOCEI) is a workhorse algorithm for
 nonlinear mixed-effects models, introduced by [lindstrom1990nonlinear](@citet) and analyzed
@@ -132,44 +132,6 @@ method = NoLimits.FOCEI(;
 )
 ```
 
-## MAP Regularization: `FOCEIMAP`
-
-[`FOCEIMAP`](@ref) is identical to `FOCEI` but adds the log-prior of the fixed effects to
-the outer objective, yielding a maximum a posteriori estimate of the population parameters
-with the random effects integrated out by FOCEI. It requires a prior on **every** free
-fixed effect.
-
-```julia
-using NoLimits
-using DataFrames
-using Distributions
-
-model_map = @Model begin
-    @fixedEffects begin
-        a     = RealNumber(1.0,            prior=Normal(1.0, 0.5))
-        b     = RealNumber(0.2, scale=:log, prior=LogNormal(log(0.2), 0.5))
-        sigma = RealNumber(0.3, scale=:log, prior=LogNormal(log(0.3), 0.5))
-        omega = RealNumber(0.4, scale=:log, prior=LogNormal(log(0.4), 0.5))
-    end
-
-    @covariates begin
-        t = Covariate()
-    end
-
-    @randomEffects begin
-        eta = RandomEffect(Normal(0.0, omega); column=:ID)
-    end
-
-    @formulas begin
-        mu = a * exp(-b * t) + eta
-        y ~ Normal(mu, sigma)
-    end
-end
-
-dm_map = DataModel(model_map, df; primary_id=:ID, time_col=:t)
-res_map = fit_model(dm_map, NoLimits.FOCEIMAP())
-```
-
 ## Accessing Results
 
 FOCEI fits expose the standard accessor interface, including empirical Bayes estimates of
@@ -192,5 +154,5 @@ available through [`get_residuals`](@ref) and the residual-plot functions; see
 ## Uncertainty Quantification
 
 Wald confidence intervals from the inverse observed-information matrix are available for
-FOCEI and FOCEIMAP fits through [`compute_uq`](@ref); see
+FOCEI fits through [`compute_uq`](@ref); see
 [Uncertainty Quantification](../uncertainty-quantification/index.md).

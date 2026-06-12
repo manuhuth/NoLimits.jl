@@ -216,23 +216,6 @@ end
     @test get_uq_parameter_names(uq_laplace) == [:β_1, :β_2, :a, :σ]
 end
 
-@testset "UQ edge: LaplaceMAP with multivariate + planar-flow REs and vector FE" begin
-    res_lmap = fit_model(_UQE_RE_FLOW_MAP_DM,
-        NoLimits.LaplaceMAP(;
-            optim_kwargs = (maxiters = 2,),
-            inner_kwargs = (maxiters = 2,),
-            multistart_n = 1, multistart_k = 1);
-        constants = _UQE_FLOW_MAP_CONSTANTS)
-    uq_lmap = compute_uq(res_lmap;
-        method = :wald,
-        pseudo_inverse = true,
-        n_draws = 8,
-        fd_abs_step = 1e-4, fd_rel_step = 1e-4, fd_max_tries = 50,
-        rng = Random.Xoshiro(208))
-    @test get_uq_source_method(uq_lmap) == :laplace_map
-    @test get_uq_parameter_names(uq_lmap) == [:β_1, :β_2, :a, :σ]
-end
-
 @testset "UQ edge: MCEM/SAEM with multivariate + planar-flow REs, vector FE, NN/SoftTree/Spline" begin
     res_mcem = fit_model(_UQE_RE_BLOCKS_DM,
         NoLimits.MCEM(;

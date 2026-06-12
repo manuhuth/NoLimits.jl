@@ -97,7 +97,7 @@ function _assert_hmm_method_smoke(dm, method_name::Symbol, method)
 end
 
 const _HMM_RE_SMOKE_METHODS = Dict(
-    # One representative per solver family: LaplaceMAP, VI, MCEM are each tested
+    # One representative per solver family: VI and MCEM are each tested
     # thoroughly in their own dedicated files.
     :Laplace => () -> NoLimits.Laplace(;
         optim_kwargs = (maxiters = 2,), inner_kwargs = (maxiters = 2,),

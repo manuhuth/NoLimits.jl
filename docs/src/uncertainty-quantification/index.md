@@ -24,9 +24,9 @@ The table below summarizes the available UQ backends, their associated estimatio
 
 | Backend | `method` | Typical source fit | Output style |
 | --- | --- | --- | --- |
-| Wald | `:wald` | `MLE`, `MAP`, `Laplace`, `LaplaceMAP`, `MCEM`, `SAEM`, `GHQuadrature`, `GHQuadratureMAP` | covariance + Gaussian-draw intervals |
+| Wald | `:wald` | `MLE`, `MAP`, `Laplace`, `MCEM`, `SAEM`, `GHQuadrature` | covariance + Gaussian-draw intervals |
 | Chain | `:chain` | `MCMC`, `VI` | posterior-draw intervals |
-| Profile likelihood | `:profile` | `MLE`, `MAP`, `Laplace`, `LaplaceMAP` | profile intervals |
+| Profile likelihood | `:profile` | `MLE`, `MAP`, `Laplace` | profile intervals |
 | MCMC refit | `:mcmc_refit` | non-`MCMC` fits | posterior-draw intervals from refit |
 
 ### Wald (`method=:wald`)

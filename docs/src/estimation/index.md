@@ -33,15 +33,15 @@ The choice of method depends on whether the model includes random effects and on
 
 | Model type | Methods | Notes |
 | --- | --- | --- |
-| Mixed-effects | `Laplace`, `LaplaceMAP`, `FOCEI`, `FOCEIMAP`, `GHQuadrature`, `GHQuadratureMAP`, `MCEM`, `SAEM`, `MCMC` | Require random effects in the model |
+| Mixed-effects | `Laplace`, `FOCEI`, `GHQuadrature`, `MCEM`, `SAEM`, `MCMC` | Require random effects in the model |
 | Mixed-effects (pooled) | `Pooled`, `PooledMap` | Naive pooled estimation: random effects plugged in at their distributional mean, recomputed from the fixed effects at every objective evaluation |
 | Fixed-effects only | `MLE`, `MAP`, `MCMC`, `VI` | `MLE` is likelihood-only; `MAP` adds priors; `MCMC`/`VI` are Bayesian |
 | Cross-method | `Multistart` | Wrapper that runs repeated fits from different starting values |
 | Model comparison | `cross_validate` + `fit_cv` | Observation-wise or subject-wise k-fold CV; supports EBE and Monte Carlo RE prediction |
 
-The `MAP`-suffixed variants (`LaplaceMAP`, `FOCEIMAP`, `PooledMap`) are identical to their base methods but add the log-prior of the fixed effects to the objective.
+The `MAP`-suffixed variant `PooledMap` is identical to `Pooled` but adds the log-prior of the fixed effects to the objective.
 
-Each method has a dedicated page with its objective, options, and examples: [Laplace / LaplaceMAP](laplace.md), [FOCEI / FOCEIMAP](focei.md), [GH Quadrature](ghquadrature.md), [MCEM](mcem.md), [SAEM](saem.md), [Pooled / PooledMap](pooled.md), [MCMC](mcmc.md), [VI](vi.md), and [MLE / MAP](mle.md). The [Pooled](pooled.md) method also serves as a fast warm start for the other estimators via `pooled_init`.
+Each method has a dedicated page with its objective, options, and examples: [Laplace](laplace.md), [FOCEI](focei.md), [GH Quadrature](ghquadrature.md), [MCEM](mcem.md), [SAEM](saem.md), [Pooled / PooledMap](pooled.md), [MCMC](mcmc.md), [VI](vi.md), and [MLE / MAP](mle.md). The [Pooled](pooled.md) method also serves as a fast warm start for the other estimators via `pooled_init`.
 
 ## Common Fit Keywords
 
@@ -61,7 +61,6 @@ Several keyword arguments are shared across methods (though not all apply to eve
 
 - `MCMC` requires priors on all free fixed effects.
 - `VI` requires priors on all free fixed effects (fixed-effects-only models).
-- `LaplaceMAP` and `FOCEIMAP` require priors on all fixed effects.
 - `MAP` requires at least one fixed-effect prior.
 - `PooledMap` requires a prior on at least one fixed effect.
 - `MCEM` and `SAEM` do not incorporate fixed-effect priors in their objective.

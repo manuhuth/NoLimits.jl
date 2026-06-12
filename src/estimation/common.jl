@@ -48,7 +48,7 @@ using SciMLBase
 
 Abstract base type for all estimation methods. Concrete subtypes include
 [`MLE`](@ref), [`MAP`](@ref), [`MCMC`](@ref), [`Laplace`](@ref),
-[`LaplaceMAP`](@ref), [`SAEM`](@ref), [`MCEM`](@ref), and [`Multistart`](@ref).
+[`SAEM`](@ref), [`MCEM`](@ref), and [`Multistart`](@ref).
 """
 abstract type FittingMethod end
 
@@ -62,8 +62,8 @@ contains optimiser closures that cannot be serialised) on save.
 `get_method(res).kind` returns a Symbol such as `:mle`, `:map`, `:laplace`, etc.
 """
 struct _SavedFittingMethod <: FittingMethod
-    kind::Symbol   # :mle :map :laplace :laplacemap
-    # :mcem :saem :mcmc :vi :ghquadrature :ghquadraturemap
+    kind::Symbol   # :mle :map :laplace
+    # :mcem :saem :mcmc :vi :ghquadrature
 end
 
 function Base.show(io::IO, m::_SavedFittingMethod)
@@ -623,9 +623,8 @@ function get_laplace_random_effects(dm::DataModel,
         constants_re::NamedTuple = NamedTuple(),
         flatten::Bool = true,
         include_constants::Bool = true)
-    (res.result isa LaplaceResult || res.result isa LaplaceMAPResult ||
-     res.result isa GHQuadratureResult || res.result isa GHQuadratureMAPResult) ||
-        error("Laplace-style random-effects accessor requires a Laplace, LaplaceMAP, GHQuadrature, or GHQuadratureMAP fit result.")
+    (res.result isa LaplaceResult || res.result isa GHQuadratureResult) ||
+        error("Laplace-style random-effects accessor requires a Laplace or GHQuadrature fit result.")
     constants_re = _res_constants_re(res, constants_re)
     re_names = get_re_names(dm.model.random.random)
     isempty(re_names) && return NamedTuple()
@@ -791,7 +790,7 @@ end
 Return empirical Bayes (EB) random-effect estimates as a `NamedTuple` of `DataFrame`s,
 one per random effect.
 
-Supported methods: `Laplace`, `LaplaceMAP`, `MCEM`, `SAEM`, `GHQuadrature`, `GHQuadratureMAP`.
+Supported methods: `Laplace`, `MCEM`, `SAEM`, `GHQuadrature`.
 
 # Keyword Arguments
 - `constants_re::NamedTuple = NamedTuple()`: fix random effects at given values (natural scale).
@@ -804,8 +803,7 @@ function get_random_effects(dm::DataModel,
         flatten::Bool = true,
         include_constants::Bool = true)
     constants_re = _res_constants_re(res, constants_re)
-    if res.result isa LaplaceResult || res.result isa LaplaceMAPResult ||
-       res.result isa GHQuadratureResult || res.result isa GHQuadratureMAPResult
+    if res.result isa LaplaceResult || res.result isa GHQuadratureResult
         return get_laplace_random_effects(
             dm, res; constants_re = constants_re, flatten = flatten,
             include_constants = include_constants)
@@ -919,8 +917,7 @@ function get_random_effects(res::FitResult, re::Symbol;
 end
 
 function _resolve_bstars_for_re(dm::DataModel, res::FitResult, constants_re::NamedTuple)
-    if res.result isa LaplaceResult || res.result isa LaplaceMAPResult ||
-       res.result isa GHQuadratureResult || res.result isa GHQuadratureMAPResult
+    if res.result isa LaplaceResult || res.result isa GHQuadratureResult
         θu = get_params(res; scale = :untransformed)
         ode_args = haskey(res.fit_kwargs, :ode_args) ? getfield(res.fit_kwargs, :ode_args) :
                    ()
@@ -1015,7 +1012,7 @@ function _bstars_to_re_df(dm::DataModel, batch_infos, bstars_per_sample::Vector,
 end
 
 # Laplace-approximation path: bstars come from the EB modes, conditional
-# covariance is (-H)^{-1}. Used for Laplace, LaplaceMAP, GHQuadrature(MAP).
+# covariance is (-H)^{-1}. Used for Laplace, GHQuadrature.
 # Returns raw bstars_per_sample (Vector{Vector{Any}}) without the DataFrame conversion.
 # Used directly by fit_cv for CV evaluation.
 function _sample_laplace_bstars_raw(dm::DataModel, batch_infos, bstars, θu, const_cache,
@@ -1139,7 +1136,7 @@ Draw samples from the conditional posterior of the random effects
 The sampling mechanism matches the one the fitting method itself uses for the
 conditional distribution, so the draws are consistent with the E-step:
 
-- `Laplace`, `LaplaceMAP`, `GHQuadrature`, `GHQuadratureMAP`: Gaussian Laplace
+- `Laplace`, `GHQuadrature`: Gaussian Laplace
   approximation centred at the EBE mode ``b^\\star`` with covariance
   ``(-H)^{-1}``, where ``H`` is the Hessian of the joint log-density at ``b^\\star``.
 - `MCEM`, `SAEM`: MCMC samples drawn from the exact conditional with the same
@@ -1188,8 +1185,7 @@ function sample_random_effects(dm::DataModel,
         dm, res, constants_re)
     isempty(batch_infos) && return NamedTuple()
 
-    if res.result isa LaplaceResult || res.result isa LaplaceMAPResult ||
-       res.result isa GHQuadratureResult || res.result isa GHQuadratureMAPResult
+    if res.result isa LaplaceResult || res.result isa GHQuadratureResult
         return _sample_re_laplace_path(dm, res, constants_re,
             bstars, batch_infos, θu, const_cache, ll_cache;
             n_samples = n_samples, rng = rng,
@@ -1254,7 +1250,7 @@ stored in the result. Returns a new `FitResult` with `eb_modes` replaced by the
 freshly-optimised modes. Use `get_random_effects` on the returned result to obtain the
 corresponding `NamedTuple` of `DataFrame`s.
 
-Supported methods: `Laplace`, `LaplaceMAP`, `MCEM`, `SAEM`.
+Supported methods: `Laplace`, `MCEM`, `SAEM`.
 
 # Keyword Arguments
 - `ebe_optimizer`: inner optimiser for EBE mode-finding (default: `LBFGS` with backtracking).
@@ -1311,7 +1307,7 @@ function reestimate_ebes(dm::DataModel,
         ode_kwargs::NamedTuple = NamedTuple(),
         rng::AbstractRNG = Random.default_rng(),
         progress::Bool = false)
-    supported = res.result isa LaplaceResult || res.result isa LaplaceMAPResult ||
+    supported = res.result isa LaplaceResult ||
                 res.result isa MCEMResult || res.result isa SAEMResult
     supported || error("reestimate_ebes is not supported for this fitting method.")
     sampling_sym = ebe_multistart_sampling == :mcmc ? :lhs : ebe_multistart_sampling
@@ -1408,8 +1404,7 @@ function get_loglikelihood(dm::DataModel,
     if res.result isa MLEResult || res.result isa MAPResult
         return loglikelihood(dm, θu, ComponentArray(); ode_args = ode_args,
             ode_kwargs = ode_kwargs, serialization = serialization)
-    elseif res.result isa LaplaceResult || res.result isa LaplaceMAPResult ||
-           res.result isa GHQuadratureMAPResult
+    elseif res.result isa LaplaceResult
         pairing, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re)
         bstars = res.result.eb_modes
         length(bstars) == length(batch_infos) ||
@@ -1417,7 +1412,7 @@ function get_loglikelihood(dm::DataModel,
         η_vec = _eta_from_eb(dm, batch_infos, bstars, const_cache, θu)
         return loglikelihood(dm, θu, η_vec; ode_args = ode_args,
             ode_kwargs = ode_kwargs, serialization = serialization)
-    elseif res.result isa GHQuadratureResult || res.result isa GHQuadratureMAPResult
+    elseif res.result isa GHQuadratureResult
         # Re-evaluate the sparse-grid marginal log-likelihood at the estimated θ.
         level = res.method.level
         ll_cache = build_ll_cache(
@@ -1487,7 +1482,7 @@ the Hessian H of log p(b | y, θ) at b*. The log-correction
 accounts for the prior, Jacobian, and Gaussian quadrature measure.
 
 # Supported methods
-Laplace, LaplaceMAP, SAEM, MCEM, GHQuadrature, GHQuadratureMAP.
+Laplace, SAEM, MCEM, GHQuadrature.
 
 # Not supported
 - **MCMC**: raises an error.

@@ -59,8 +59,8 @@ NoLimits.jl is designed to avoid these trade-offs. It supports:
   site-level), covariates at different temporal resolutions, and learned components can all
   coexist in one coherent model definition.
 
-Fixed-effects-only workflows are also supported for problems where random effects are not
-required.
+NoLimits.jl is designed for mixed-effects models, but it can equally be used for
+fixed-effects-only analysis when random effects are not required.
 
 ## Getting Started
 

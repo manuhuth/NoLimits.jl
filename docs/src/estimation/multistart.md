@@ -19,7 +19,6 @@ where `ms` is a `NoLimits.Multistart(...)` object and `method` is any fitting me
 - `MLE`
 - `MAP`
 - `Laplace`
-- `LaplaceMAP`
 - `MCEM`
 - `SAEM`
 - `VI` (see note below)
@@ -27,7 +26,7 @@ where `ms` is a `NoLimits.Multistart(...)` object and `method` is any fitting me
 
 ## Recommendation
 
-`Multistart` is most beneficial for optimization- and EM-based methods (`MLE`, `MAP`, `Laplace`, `LaplaceMAP`, `MCEM`, `SAEM`, `VI`), where the choice of starting values strongly influences which local optimum is found.
+`Multistart` is most beneficial for optimization- and EM-based methods (`MLE`, `MAP`, `Laplace`, `MCEM`, `SAEM`, `VI`), where the choice of starting values strongly influences which local optimum is found.
 
 For `MCMC`, multistart is technically supported but generally not recommended as the primary strategy. In most Bayesian workflows, tuning sampler settings and chain diagnostics is more effective than varying initial values across restarts.
 

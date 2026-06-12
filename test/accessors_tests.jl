@@ -36,7 +36,7 @@ end
 
 @testset "Accessors: random-effects methods" begin
     # get_random_effects works for every RE estimator (all share LaplaceResult-style EB modes).
-    for res in (fx_laplace(), fx_lmap(), fx_focei(), fx_ghq(), fx_mcem(), fx_saem())
+    for res in (fx_laplace(), fx_focei(), fx_ghq(), fx_mcem(), fx_saem())
         @test !isempty(NL.get_random_effects(res))
     end
     @test fx_mcem().result.eb_modes !== nothing
@@ -44,7 +44,6 @@ end
 
     # sample_random_effects returns n_samples × per-level rows, tagged by :sample.
     for (res, n, kw) in ((fx_laplace(), 5, ()),
-        (fx_lmap(), 3, ()),
         (fx_mcem(), 4, (; n_adapt = 2)),
         (fx_saem(), 3, (; n_adapt = 2)))
         base = nrow(NL.get_random_effects(res).η)

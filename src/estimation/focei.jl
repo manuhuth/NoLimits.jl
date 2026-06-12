@@ -1,5 +1,4 @@
 export FOCEI
-export FOCEIMAP
 
 using Optimization
 using OptimizationOptimJL
@@ -721,68 +720,6 @@ function FOCEI(; interaction::Bool = true,
         ms, lb, ub, ignore_model_bounds, interaction)
 end
 
-"""
-    FOCEIMAP(; interaction=true, ...) <: FittingMethod
-
-FOCEI with MAP-regularised fixed effects: identical to [`FOCEI`](@ref) but adds the
-log-prior of the fixed effects to the outer objective.  Requires a prior on at least one
-free fixed effect.  See [`FOCEI`](@ref) for keyword arguments.
-"""
-struct FOCEIMAP{O, K, A, IO, HO, CO, MS, L, U} <: FittingMethod
-    optimizer::O
-    optim_kwargs::K
-    adtype::A
-    inner::IO
-    hessian::HO
-    cache::CO
-    multistart::MS
-    lb::L
-    ub::U
-    ignore_model_bounds::Bool
-    interaction::Bool
-end
-
-function FOCEIMAP(; interaction::Bool = true,
-        optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking()),
-        optim_kwargs = NamedTuple(),
-        adtype = Optimization.AutoForwardDiff(),
-        inner_options = nothing,
-        hessian_options = nothing,
-        cache_options = nothing,
-        multistart_options = nothing,
-        inner_optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
-        inner_kwargs = NamedTuple(),
-        inner_adtype = Optimization.AutoForwardDiff(),
-        inner_grad_tol = :auto,
-        multistart_n = 50,
-        multistart_k = 10,
-        multistart_grad_tol = inner_grad_tol,
-        multistart_max_rounds = 5,
-        multistart_sampling = :lhs,
-        jitter = 1e-6,
-        max_tries = 6,
-        jitter_growth = 10.0,
-        adaptive_jitter = true,
-        jitter_scale = 1e-6,
-        theta_tol = 0.0,
-        lb = nothing,
-        ub = nothing,
-        ignore_model_bounds = false)
-    inner = inner_options === nothing ?
-            LaplaceInnerOptions(
-        inner_optimizer, inner_kwargs, inner_adtype, inner_grad_tol) : inner_options
-    hess = hessian_options === nothing ?
-           LaplaceHessianOptions(
-        jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale, true, false, 8) :
-           hessian_options
-    cache = cache_options === nothing ? LaplaceCacheOptions(theta_tol) : cache_options
-    ms = multistart_options === nothing ?
-         LaplaceMultistartOptions(multistart_n, multistart_k, multistart_grad_tol,
-        multistart_max_rounds, multistart_sampling) : multistart_options
-    FOCEIMAP(optimizer, optim_kwargs, adtype, inner, hess, cache,
-        ms, lb, ub, ignore_model_bounds, interaction)
-end
-
 # -------------------------------------------------------------------------------------
 # 7. Distribution guard.
 # -------------------------------------------------------------------------------------
@@ -816,7 +753,7 @@ end
 # 8. Fit drivers.
 # -------------------------------------------------------------------------------------
 
-function _fit_focei(dm::DataModel, method, is_map::Bool, args, fit_kwargs;
+function _fit_focei(dm::DataModel, method, args, fit_kwargs;
         constants::NamedTuple,
         constants_re::NamedTuple,
         penalty::NamedTuple,
@@ -847,16 +784,6 @@ function _fit_focei(dm::DataModel, method, is_map::Bool, args, fit_kwargs;
                 error("theta_0_untransformed is missing parameter $(n).")
         end
         θ0_u = theta_0_untransformed
-    end
-
-    if is_map
-        priors = get_priors(fe)
-        for name in fixed_names
-            hasproperty(priors, name) ||
-                error("FOCEIMAP requires priors on all fixed effects. Missing prior for $(name).")
-            getfield(priors, name) isa Priorless &&
-                error("FOCEIMAP requires priors on all fixed effects. Priorless for $(name).")
-        end
     end
 
     transform = get_transform(fe)
@@ -916,11 +843,6 @@ function _fit_focei(dm::DataModel, method, is_map::Bool, args, fit_kwargs;
             cache_opts = method.cache, multistart = multistart_opts,
             rng = rng, serialization = serialization, hmode = hmode)
         !isfinite(obj) && return infT
-        if is_map
-            lp = logprior(fe, θu)
-            !isfinite(lp) && return infT
-            obj += -lp
-        end
         has_penalty && (obj += _penalty_value(θu, penalty))
         _laplace_obj_cache_set_obj!(obj_cache, θt_free, obj)
         return obj
@@ -945,12 +867,6 @@ function _fit_focei(dm::DataModel, method, is_map::Bool, args, fit_kwargs;
             rng = rng, serialization = serialization, hmode = hmode)
         !isfinite(obj) && return (infT, zgrad)
         grad_u = grad_full
-        if is_map
-            lp = logprior(fe, θu)
-            !isfinite(lp) && return (infT, zgrad)
-            obj += -lp
-            grad_u = grad_u .- ForwardDiff.gradient(x -> logprior(fe, x), θu)
-        end
         if has_penalty
             obj += _penalty_value(θu, penalty)
             grad_u = grad_u .+ ForwardDiff.gradient(x -> _penalty_value(x, penalty), θu)
@@ -1009,10 +925,7 @@ function _fit_focei(dm::DataModel, method, is_map::Bool, args, fit_kwargs;
     niter = hasproperty(sol, :stats) && hasproperty(sol.stats, :iterations) ?
             sol.stats.iterations : missing
     raw = hasproperty(sol, :original) ? sol.original : sol
-    result = is_map ?
-             LaplaceMAPResult(
-        sol, sol.objective, niter, raw, NamedTuple(), ebe_cache.bstar_cache.b_star) :
-             LaplaceResult(
+    result = LaplaceResult(
         sol, sol.objective, niter, raw, NamedTuple(), ebe_cache.bstar_cache.b_star)
     return FitResult(method, result, summary, diagnostics,
         store_data_model ? dm : nothing, args, fit_kwargs)
@@ -1031,26 +944,7 @@ function _fit_model(dm::DataModel, method::FOCEI, args...;
     fit_kwargs = (constants = constants, constants_re = constants_re, penalty = penalty,
         ode_args = ode_args, ode_kwargs = ode_kwargs, serialization = serialization,
         rng = rng, theta_0_untransformed = theta_0_untransformed, store_data_model = store_data_model)
-    return _fit_focei(dm, method, false, args, fit_kwargs;
-        constants = constants, constants_re = constants_re, penalty = penalty,
-        ode_args = ode_args, ode_kwargs = ode_kwargs, serialization = serialization,
-        rng = rng, theta_0_untransformed = theta_0_untransformed, store_data_model = store_data_model)
-end
-
-function _fit_model(dm::DataModel, method::FOCEIMAP, args...;
-        constants::NamedTuple = NamedTuple(),
-        constants_re::NamedTuple = NamedTuple(),
-        penalty::NamedTuple = NamedTuple(),
-        ode_args::Tuple = (),
-        ode_kwargs::NamedTuple = NamedTuple(),
-        serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        rng::AbstractRNG = Xoshiro(0),
-        theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
-        store_data_model::Bool = true)
-    fit_kwargs = (constants = constants, constants_re = constants_re, penalty = penalty,
-        ode_args = ode_args, ode_kwargs = ode_kwargs, serialization = serialization,
-        rng = rng, theta_0_untransformed = theta_0_untransformed, store_data_model = store_data_model)
-    return _fit_focei(dm, method, true, args, fit_kwargs;
+    return _fit_focei(dm, method, args, fit_kwargs;
         constants = constants, constants_re = constants_re, penalty = penalty,
         ode_args = ode_args, ode_kwargs = ode_kwargs, serialization = serialization,
         rng = rng, theta_0_untransformed = theta_0_untransformed, store_data_model = store_data_model)

@@ -123,7 +123,6 @@ function _build_uq_obj_re(res::FitResult,
     ebe_cache = _init_laplace_eval_cache(length(batch_infos), Float64)
     cache_opts = LaplaceCacheOptions(0.0)
     use_penalty = !isempty(keys(penalty_use))
-    use_prior = method isa LaplaceMAP || method isa GHQuadratureMAP
     seed = rand(rng, UInt64)
 
     function obj_full(x::AbstractVector)
@@ -135,7 +134,7 @@ function _build_uq_obj_re(res::FitResult,
         end
         θu = _as_component_array(inv_transform(θt_full))
 
-        obj = if method isa GHQuadrature || method isa GHQuadratureMAP
+        obj = if method isa GHQuadrature
             ll_cache_local = ll_cache isa AbstractVector ? ll_cache[1] : ll_cache
             total = 0.0
             for info in batch_infos
@@ -157,11 +156,6 @@ function _build_uq_obj_re(res::FitResult,
         end
         obj == Inf && return Inf
 
-        if use_prior
-            lp = logprior(fe, θu)
-            lp == -Inf && return Inf
-            obj += -lp
-        end
         use_penalty && (obj += _penalty_value(θu, penalty_use))
         return Float64(obj)
     end
@@ -202,9 +196,9 @@ function _compute_uq_profile(res::FitResult;
     dm === nothing &&
         error("This fit result does not store a DataModel; pass store_data_model=true when fitting.")
     method = get_method(res)
-    if !(method isa MLE || method isa MAP || method isa Laplace || method isa LaplaceMAP ||
-         method isa GHQuadrature || method isa GHQuadratureMAP)
-        error("Profile UQ is currently supported for MLE, MAP, Laplace, LaplaceMAP, GHQuadrature, and GHQuadratureMAP fit results.")
+    if !(method isa MLE || method isa MAP || method isa Laplace ||
+         method isa GHQuadrature)
+        error("Profile UQ is currently supported for MLE, MAP, Laplace, and GHQuadrature fit results.")
     end
 
     constants_use = constants === nothing ? _fit_kw(res, :constants, NamedTuple()) :
@@ -221,7 +215,7 @@ function _compute_uq_profile(res::FitResult;
     ctx = if method isa MLE || method isa MAP
         _build_uq_obj_no_re(res, constants_use, penalty_use, ode_args_use,
             ode_kwargs_use, serialization_use)
-    else  # Laplace, LaplaceMAP, GHQuadrature, GHQuadratureMAP
+    else  # Laplace, GHQuadrature
         _build_uq_obj_re(res, constants_use, constants_re_use, penalty_use,
             ode_args_use, ode_kwargs_use, serialization_use, rng)
     end

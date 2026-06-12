@@ -204,10 +204,9 @@ Given a prior $p(\theta)$, the [MAP](estimation/mle.md#MAP-Estimation) estimate 
 posterior of the fixed effects,
 
 ```math
-\hat\theta_{\text{MAP}} = \arg\max_{\theta} \Big[\log p(\theta) + \ell(\theta)\Big],
+\hat\theta_{\text{MAP}} = \arg\max_{\theta} \Big[\log p(\theta) + \ell(\theta)\Big].
 ```
 
-with $\ell$ approximated by Laplace or FOCEI (the `LaplaceMAP` and `FOCEIMAP` variants).
 Full Bayesian inference via [MCMC](estimation/mcmc.md) targets the joint posterior
 
 ```math

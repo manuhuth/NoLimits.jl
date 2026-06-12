@@ -60,14 +60,6 @@ struct SavedLaplaceResult{S, O, I, N, B}
     eb_modes::B
 end
 
-struct SavedLaplaceMAPResult{S, O, I, N, B}
-    solution::S
-    objective::O
-    iterations::I
-    notes::N
-    eb_modes::B
-end
-
 struct SavedMCEMResult{S, O, I, N, B}
     solution::S
     objective::O
@@ -85,14 +77,6 @@ struct SavedSAEMResult{S, O, I, N, B}
 end
 
 struct SavedGHQuadratureResult{S, O, I, N, B}
-    solution::S
-    objective::O
-    iterations::I
-    notes::N
-    eb_modes::B
-end
-
-struct SavedGHQuadratureMAPResult{S, O, I, N, B}
     solution::S
     objective::O
     iterations::I
@@ -158,12 +142,10 @@ end
 _strip_fitting_method(::MLE) = _SavedFittingMethod(:mle)
 _strip_fitting_method(::MAP) = _SavedFittingMethod(:map)
 _strip_fitting_method(::Laplace) = _SavedFittingMethod(:laplace)
-_strip_fitting_method(::LaplaceMAP) = _SavedFittingMethod(:laplacemap)
 _strip_fitting_method(::MCEM) = _SavedFittingMethod(:mcem)
 _strip_fitting_method(::SAEM) = _SavedFittingMethod(:saem)
 _strip_fitting_method(::MCMC) = _SavedFittingMethod(:mcmc)
 _strip_fitting_method(::GHQuadrature) = _SavedFittingMethod(:ghquadrature)
-_strip_fitting_method(::GHQuadratureMAP) = _SavedFittingMethod(:ghquadraturemap)
 _strip_fitting_method(::VI) = _SavedFittingMethod(:vi)
 _strip_fitting_method(m::_SavedFittingMethod) = m  # idempotent
 
@@ -215,11 +197,6 @@ function _strip_method_result(r::LaplaceResult)
         _strip_solution(r.solution), r.objective, r.iterations, r.notes, r.eb_modes)
 end
 
-function _strip_method_result(r::LaplaceMAPResult)
-    SavedLaplaceMAPResult(
-        _strip_solution(r.solution), r.objective, r.iterations, r.notes, r.eb_modes)
-end
-
 function _strip_method_result(r::MCEMResult)
     SavedMCEMResult(
         _strip_solution(r.solution), r.objective, r.iterations, r.notes, r.eb_modes)
@@ -232,11 +209,6 @@ end
 
 function _strip_method_result(r::GHQuadratureResult)
     SavedGHQuadratureResult(
-        _strip_solution(r.solution), r.objective, r.iterations, r.notes, r.eb_modes)
-end
-
-function _strip_method_result(r::GHQuadratureMAPResult)
-    SavedGHQuadratureMAPResult(
         _strip_solution(r.solution), r.objective, r.iterations, r.notes, r.eb_modes)
 end
 
@@ -318,10 +290,6 @@ function _reconstruct_method_result(s::SavedLaplaceResult)
     LaplaceResult(s.solution, s.objective, s.iterations, nothing, s.notes, s.eb_modes)
 end
 
-function _reconstruct_method_result(s::SavedLaplaceMAPResult)
-    LaplaceMAPResult(s.solution, s.objective, s.iterations, nothing, s.notes, s.eb_modes)
-end
-
 function _reconstruct_method_result(s::SavedMCEMResult)
     MCEMResult(s.solution, s.objective, s.iterations, nothing, s.notes, s.eb_modes)
 end
@@ -332,11 +300,6 @@ end
 
 function _reconstruct_method_result(s::SavedGHQuadratureResult)
     GHQuadratureResult(s.solution, s.objective, s.iterations, nothing, s.notes, s.eb_modes)
-end
-
-function _reconstruct_method_result(s::SavedGHQuadratureMAPResult)
-    GHQuadratureMAPResult(
-        s.solution, s.objective, s.iterations, nothing, s.notes, s.eb_modes)
 end
 
 function _reconstruct_method_result(s::SavedMCMCResult)

@@ -246,47 +246,6 @@ Validation rules for `constants_re`:
 - Level names must exist in the corresponding grouping column.
 - Values must have the correct dimension (scalar for univariate RE; vector for multivariate RE).
 
-## MAP Regularization (`LaplaceMAP`)
-
-[`LaplaceMAP`](@ref) extends `Laplace` by adding the log-prior of the fixed effects to the objective, yielding maximum a posteriori estimates of the fixed effects under the same Laplace approximation to the marginal likelihood. The random-effects integration, inner/outer optimization, Hessian stabilization, caching, and NaN-recovery behavior are all identical to `Laplace`; the only difference is the added fixed-effect log-prior term.
-
-Because the prior enters the objective, **every** fixed effect declared in `@fixedEffects` must carry a prior. If any fixed effect is `Priorless`, fitting raises an error.
-
-```julia
-using NoLimits
-using DataFrames
-using Distributions
-
-model_map = @Model begin
-    @fixedEffects begin
-        a = RealNumber(0.2, prior=Normal(0.0, 1.0))
-        sigma = RealNumber(0.5, scale=:log, prior=LogNormal(0.0, 0.5))
-    end
-
-    @covariates begin
-        t = Covariate()
-    end
-
-    @randomEffects begin
-        eta_id = RandomEffect(Normal(0.0, 1.0); column=:ID)
-    end
-
-    @formulas begin
-        y ~ LogNormal(a + eta_id, sigma)
-    end
-end
-
-dm_map = DataModel(model_map, df; primary_id=:ID, time_col=:t)
-res_laplace_map = fit_model(dm_map, NoLimits.LaplaceMAP(; optim_kwargs=(maxiters=80,)))
-```
-
-Because the two methods share the same interface, the same data model can be fit both ways to compare the effect of the prior. This regularization can improve estimation stability when data are sparse or when parameters are weakly identified by the likelihood alone:
-
-```julia
-res_laplace     = fit_model(dm_map, NoLimits.Laplace())
-res_laplace_map = fit_model(dm_map, NoLimits.LaplaceMAP())
-```
-
 ## Accessing Results
 
 After fitting, results are accessed through the standard accessor interface.

@@ -95,15 +95,13 @@ end
 
 function _cv_has_re_support(res::FitResult)
     r = res.result
-    return r isa LaplaceResult || r isa LaplaceMAPResult ||
-           r isa GHQuadratureResult || r isa GHQuadratureMAPResult ||
+    return r isa LaplaceResult || r isa GHQuadratureResult ||
            r isa MCEMResult || r isa SAEMResult
 end
 
 # Only RE-aware fitting methods accept the constants_re kwarg.
 _cv_method_accepts_constants_re(::FittingMethod) = false
 _cv_method_accepts_constants_re(::Laplace) = true
-_cv_method_accepts_constants_re(::LaplaceMAP) = true
 _cv_method_accepts_constants_re(::MCEM) = true
 _cv_method_accepts_constants_re(::SAEM) = true
 _cv_method_accepts_constants_re(::MCMC) = true
@@ -467,9 +465,8 @@ function _cv_evaluate_mc(dm_train, dm_test, res_train, θu, ll_cache_test, loss,
     # Conditional samples for seen individuals (Laplace or MCMC path)
     bstars_per_sample = nothing
     if seen_re_mode == :conditional
-        if res_train.result isa LaplaceResult || res_train.result isa LaplaceMAPResult ||
-           res_train.result isa GHQuadratureResult ||
-           res_train.result isa GHQuadratureMAPResult
+        if res_train.result isa LaplaceResult ||
+           res_train.result isa GHQuadratureResult
             lcl = ll_cache_train isa Vector ? ll_cache_train[1] : ll_cache_train
             bstars_per_sample = _sample_laplace_bstars_raw(
                 dm_train, batch_infos, bstars, θu, const_cache, lcl;

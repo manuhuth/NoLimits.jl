@@ -66,8 +66,8 @@ evaluation point, its spectral decomposition, and a local identifiability verdic
 
 Fields:
 - `method::Symbol`: estimation method used (e.g. `:mle`, `:laplace`).
-- `objective::Symbol`: objective evaluated (`:likelihood`, `:posterior`, `:laplace_likelihood`,
-  or `:laplace_posterior`).
+- `objective::Symbol`: objective evaluated (`:likelihood`, `:posterior`, or
+  `:laplace_likelihood`).
 - `at::Symbol`: where the Hessian was evaluated (`:start`, `:fit`, or `:custom` for a
   user-supplied point).
 - `point_untransformed`: parameter values on the natural scale.
@@ -109,7 +109,6 @@ function _ident_method_symbol(method)
     method isa MLE && return :mle
     method isa MAP && return :map
     method isa Laplace && return :laplace
-    method isa LaplaceMAP && return :laplace_map
     error("Unsupported method $(typeof(method)) for identifiability_report.")
 end
 
@@ -119,11 +118,9 @@ function _resolve_ident_method(dm::DataModel, method_spec)
         method_spec === :mle && return MLE()
         method_spec === :map && return MAP()
         method_spec === :laplace && return Laplace()
-        method_spec === :laplace_map && return LaplaceMAP()
-        error("Unknown identifiability method $(method_spec). Use :auto, :mle, :map, :laplace, or :laplace_map.")
+        error("Unknown identifiability method $(method_spec). Use :auto, :mle, :map, or :laplace.")
     end
-    if method_spec isa MLE || method_spec isa MAP || method_spec isa Laplace ||
-       method_spec isa LaplaceMAP
+    if method_spec isa MLE || method_spec isa MAP || method_spec isa Laplace
         return method_spec
     end
     error("Unsupported method specification $(typeof(method_spec)) for identifiability_report.")
@@ -133,10 +130,10 @@ function _validate_ident_method(dm::DataModel, method)
     has_re = _has_random_effects(dm)
     if method isa MLE || method isa MAP
         has_re &&
-            error("MLE/MAP identifiability diagnostics require models without random effects. Use method=:laplace or :laplace_map for random-effects models.")
-    elseif method isa Laplace || method isa LaplaceMAP
+            error("MLE/MAP identifiability diagnostics require models without random effects. Use method=:laplace for random-effects models.")
+    elseif method isa Laplace
         has_re ||
-            error("Laplace/LaplaceMAP identifiability diagnostics require random effects. Use method=:mle or :map for fixed-effects models.")
+            error("Laplace identifiability diagnostics require random effects. Use method=:mle or :map for fixed-effects models.")
     else
         error("Unsupported method $(typeof(method)) for identifiability diagnostics.")
     end
@@ -152,16 +149,6 @@ function _validate_ident_method(dm::DataModel, method)
                     any(!(getfield(priors, k) isa Priorless) for k in keys(priors))
         has_prior ||
             error("MAP identifiability diagnostics require at least one prior on fixed effects.")
-    end
-
-    if method isa LaplaceMAP
-        priors = get_priors(fe)
-        for name in fixed_names
-            hasproperty(priors, name) ||
-                error("LaplaceMAP identifiability diagnostics require priors on all fixed effects. Missing prior for $(name).")
-            getfield(priors, name) isa Priorless &&
-                error("LaplaceMAP identifiability diagnostics require priors on all fixed effects. Priorless for $(name).")
-        end
     end
     return nothing
 end
@@ -394,7 +381,7 @@ function _laplace_batch_labels(dm::DataModel, info::_LaplaceBatchInfo)
 end
 
 function _build_re_information(dm::DataModel,
-        method::Union{Laplace, LaplaceMAP},
+        method::Laplace,
         θu::ComponentArray,
         batch_infos::Vector{_LaplaceBatchInfo},
         const_cache::LaplaceConstantsCache,
@@ -500,7 +487,7 @@ function _build_no_re_objective(dm::DataModel,
 end
 
 function _build_laplace_objective(dm::DataModel,
-        method::Union{Laplace, LaplaceMAP},
+        method::Laplace,
         prep,
         fe::FixedEffects;
         constants_re::NamedTuple = NamedTuple(),
@@ -521,7 +508,6 @@ function _build_laplace_objective(dm::DataModel,
     inner_opts = _resolve_inner_options(method.inner, dm)
     multistart_opts = _resolve_multistart_options(method.multistart, inner_opts)
     has_penalty = !isempty(keys(penalty))
-    has_prior = method isa LaplaceMAP
 
     function eval_obj_grad(x_vec::Vector{Float64})
         θt_free = ComponentArray(x_vec, prep.axs_free)
@@ -537,14 +523,6 @@ function _build_laplace_objective(dm::DataModel,
             rng = Random.Xoshiro(seed),
             serialization = serialization)
         obj == Inf && return (Inf, fill(NaN, length(x_vec)), θu)
-
-        if has_prior
-            lp = logprior(fe, θu)
-            lp == -Inf && return (Inf, fill(NaN, length(x_vec)), θu)
-            obj += -lp
-            lp_grad = ForwardDiff.gradient(v -> logprior(fe, v), θu)
-            grad_u = grad_u .- lp_grad
-        end
 
         if has_penalty
             obj += _penalty_value(θu, penalty)
@@ -562,7 +540,7 @@ function _build_laplace_objective(dm::DataModel,
 
     obj_only = x -> eval_obj_grad(x)[1]
     grad_fun = x -> eval_obj_grad(x)[2]
-    objective_symbol = method isa LaplaceMAP ? :laplace_posterior : :laplace_likelihood
+    objective_symbol = :laplace_likelihood
     re_info_fun = x -> begin
         θt_free = ComponentArray(x, prep.axs_free)
         θt_full = _merge_full_theta(prep.θ_const_t, prep.axs_full, θt_free, prep.free_names)
@@ -675,7 +653,7 @@ function _identifiability_report(dm::DataModel,
     cond = _condition_number_from_svals(svals, tol)
     null_dirs = _build_null_directions(Hsym, prep.free_names, prep.ranges, tol)
     locally_identifiable = nullity == 0
-    if method isa Laplace || method isa LaplaceMAP
+    if method isa Laplace
         re_info = re_info_fun(x0)
     end
 
@@ -729,7 +707,7 @@ used by default (`at=:fit`).
 # Keyword Arguments
 - `method::Union{Symbol, FittingMethod} = :auto`: estimation method whose objective is
   used. `:auto` selects `MLE` for models without random effects and `Laplace` otherwise.
-  Supported symbols: `:mle`, `:map`, `:laplace`, `:laplace_map`.
+  Supported symbols: `:mle`, `:map`, `:laplace`.
 - `at::Union{Symbol, ComponentArray} = :start`: evaluation point. `:start` uses the
   model initial values, `:fit` uses the fitted estimates (only for the `FitResult`
   method), or a `ComponentArray` of untransformed parameter values.
@@ -809,8 +787,7 @@ function identifiability_report(res::FitResult;
         error("This fit result does not store a DataModel; call identifiability_report(dm, ...) instead.")
 
     method_use = if method === :fit
-        if res.method isa MLE || res.method isa MAP || res.method isa Laplace ||
-           res.method isa LaplaceMAP
+        if res.method isa MLE || res.method isa MAP || res.method isa Laplace
             res.method
         else
             @warn "identifiability_report does not have a direct objective for $(typeof(res.method)); using method=:auto."

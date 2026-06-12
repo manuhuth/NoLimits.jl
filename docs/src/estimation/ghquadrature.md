@@ -157,23 +157,6 @@ res = fit_model(dm, NoLimits.GHQuadrature(level=[1, 2]))
 !!! note "No inner optimization during fitting"
     Unlike `Laplace`, `GHQuadrature` does **not** run an inner optimization during the forward pass. The objective is a direct sum over quadrature nodes and is fully differentiable by ForwardDiff. The inner optimizer is used only after convergence to compute empirical Bayes mode estimates for `get_random_effects`.
 
-## MAP Variant
-
-`GHQuadratureMAP` adds the log-prior of the fixed effects to the outer objective, yielding a MAP estimate. It requires priors on all free fixed effects:
-
-```julia
-model_map = @Model begin
-    @fixedEffects begin
-        a = RealNumber(0.2; prior=Normal(0.0, 1.0))
-        b = RealNumber(0.1; prior=Normal(0.0, 1.0))
-        sigma = RealNumber(0.3, scale=:log; prior=LogNormal(0.0, 0.5))
-    end
-    # ... same as above
-end
-
-res_map = fit_model(dm, NoLimits.GHQuadratureMAP(level=2))
-```
-
 ## Accessing Results
 
 ```julia

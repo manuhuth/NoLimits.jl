@@ -266,41 +266,6 @@ end
     end
 end
 
-@testset "UQ Wald for LaplaceMAP" begin
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-        @fixedEffects begin
-            a = RealNumber(0.2, prior = Normal(0.0, 1.0), calculate_se = true)
-            ω = RealNumber(
-                0.6, scale = :log, prior = LogNormal(0.0, 0.5), calculate_se = true)
-            σ = RealNumber(
-                0.3, scale = :log, prior = LogNormal(0.0, 0.5), calculate_se = true)
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, ω); column = :ID)
-        end
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [1, 1, 2, 2, 3, 3],
-        t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
-        y = [0.2, 0.25, 0.1, 0.15, 0.3, 0.35]
-    )
-    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm, NoLimits.LaplaceMAP(; optim_kwargs = (maxiters = 2,)))
-
-    uq = compute_uq(res; method = :wald, n_draws = 30, rng = Random.Xoshiro(7))
-    @test get_uq_backend(uq) == :wald
-    @test get_uq_source_method(uq) == :laplace_map
-    @test get_uq_parameter_names(uq) == [:a, :ω, :σ]
-    @test size(get_uq_vcov(uq)) == (3, 3)
-end
-
 @testset "UQ profile for MLE" begin
     df = DataFrame(
         ID = [1, 1, 2, 2, 3, 3],

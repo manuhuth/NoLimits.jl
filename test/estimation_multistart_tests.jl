@@ -60,15 +60,11 @@ end
     @test res isa NoLimits.MultistartFitResult
 end
 
-@testset "Multistart Laplace / LaplaceMAP" begin
+@testset "Multistart Laplace" begin
     ms = NoLimits.Multistart(
         dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 4, n_draws_used = 3)
     res = fit_model(ms, fx_re_dm(), NoLimits.Laplace(; optim_kwargs = (maxiters = 2,)))
     @test !isempty(NoLimits.get_random_effects(res))
-
-    res_map = fit_model(
-        ms, fx_re_prior_dm(), NoLimits.LaplaceMAP(; optim_kwargs = (maxiters = 2,)))
-    @test !isempty(NoLimits.get_random_effects(res_map))
 end
 
 @testset "Multistart MCMC" begin

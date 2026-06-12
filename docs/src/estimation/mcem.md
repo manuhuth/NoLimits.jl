@@ -104,7 +104,7 @@ MCEM is designed for models that include both fixed and random effects:
 - The model must declare at least one random effect and at least one free fixed effect.
 - Multiple random-effect grouping columns and multivariate random effects are fully supported.
 
-If fixed-effect priors are defined in the model, MCEM ignores them in its objective. To incorporate priors, use `LaplaceMAP` or `MCMC` instead.
+If fixed-effect priors are defined in the model, MCEM ignores them in its objective. To incorporate priors, use `MCMC` instead.
 
 ## Basic Usage
 

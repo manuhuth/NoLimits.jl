@@ -265,7 +265,7 @@ function fx_pois_dm()
         () -> DataModel(fx_pois_model(), fx_pois_df(); primary_id = :ID, time_col = :t))
 end
 
-# ── Scalar RE, Bernoulli outcome (priors, for LaplaceMAP) ────────────────────
+# ── Scalar RE, Bernoulli outcome (priors; used by SAEM) ──────────────────────
 function fx_bern_model()
     _fx(:bern_model,
         () -> @Model begin
@@ -459,12 +459,6 @@ function fx_laplace()
         () -> fit_model(fx_re_dm(), NoLimits.Laplace(; optim_kwargs = (maxiters = 3,));
             serialization = _SER))
 end
-function fx_lmap()
-    _fx(:lmap,
-        () -> fit_model(
-            fx_re_prior_dm(), NoLimits.LaplaceMAP(; optim_kwargs = (maxiters = 3,));
-            serialization = _SER))
-end
 function fx_mg_laplace()
     _fx(:mg_laplace,
         () -> fit_model(fx_mg_dm(), NoLimits.Laplace(; optim_kwargs = (maxiters = 3,));
@@ -483,12 +477,6 @@ end
 function fx_pois_laplace()
     _fx(:pois_laplace,
         () -> fit_model(fx_pois_dm(), NoLimits.Laplace(; optim_kwargs = (maxiters = 2,));
-            serialization = _SER))
-end
-function fx_bern_lmap()
-    _fx(:bern_lmap,
-        () -> fit_model(
-            fx_bern_dm(), NoLimits.LaplaceMAP(; optim_kwargs = (maxiters = 2,));
             serialization = _SER))
 end
 function fx_focei()

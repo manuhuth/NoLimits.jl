@@ -2,15 +2,14 @@ using LinearAlgebra
 using Random
 
 @inline function _is_re_laplace_family(method::FittingMethod)
-    return method isa Laplace || method isa LaplaceMAP
+    return method isa Laplace
 end
 
 function _resolve_wald_re_approx_method(source_method::FittingMethod;
         re_approx::Symbol,
         re_approx_method::Union{Nothing, FittingMethod})
     if _is_re_laplace_family(source_method) || source_method isa GHQuadrature ||
-       source_method isa GHQuadratureMAP ||
-       source_method isa FOCEI || source_method isa FOCEIMAP
+       source_method isa FOCEI
         re_approx == :auto ||
             error("re_approx is only used for MCEM/SAEM Wald UQ results.")
         re_approx_method === nothing ||
@@ -19,12 +18,12 @@ function _resolve_wald_re_approx_method(source_method::FittingMethod;
     end
 
     if !(source_method isa MCEM || source_method isa SAEM)
-        error("Wald UQ for random-effects models currently supports Laplace, LaplaceMAP, FOCEI, FOCEIMAP, MCEM, SAEM, GHQuadrature, and GHQuadratureMAP.")
+        error("Wald UQ for random-effects models currently supports Laplace, FOCEI, MCEM, SAEM, and GHQuadrature.")
     end
 
     if re_approx_method !== nothing
         _is_re_laplace_family(re_approx_method) ||
-            error("re_approx_method must be a Laplace/LaplaceMAP method instance.")
+            error("re_approx_method must be a Laplace method instance.")
         return re_approx_method
     end
 
@@ -334,12 +333,10 @@ function _compute_uq_wald_re(res::FitResult;
     ebe_cache = _init_laplace_eval_cache(length(batch_infos), Float64)
     cache_opts = LaplaceCacheOptions(0.0)
     use_penalty = !isempty(keys(penalty_use))
-    use_prior = approx_method isa LaplaceMAP || approx_method isa GHQuadratureMAP ||
-                approx_method isa FOCEIMAP
-    # FOCEI/FOCEIMAP: differentiate the same Fisher-information Laplace objective the
+    # FOCEI: differentiate the same Fisher-information Laplace objective the
     # optimizer minimized (NONMEM-style FOCEI vcov); otherwise exact inner Hessian.
-    hmode_use = (approx_method isa FOCEI || approx_method isa FOCEIMAP) ?
-                _FOCEIHess(approx_method.interaction) : _ExactHess()
+    hmode_use = approx_method isa FOCEI ? _FOCEIHess(approx_method.interaction) :
+                _ExactHess()
     seed = rand(rng, UInt64)
 
     function _θu_from_active(x_active::AbstractVector)
@@ -358,7 +355,7 @@ function _compute_uq_wald_re(res::FitResult;
     function obj_active(x_active::AbstractVector)
         θu = _θu_from_active(x_active)
 
-        obj = if approx_method isa GHQuadrature || approx_method isa GHQuadratureMAP
+        obj = if approx_method isa GHQuadrature
             ll_cache_local = ll_cache isa AbstractVector ? ll_cache[1] : ll_cache
             total = 0.0
             for info in batch_infos
@@ -381,18 +378,13 @@ function _compute_uq_wald_re(res::FitResult;
         end
         obj == Inf && return Inf
 
-        if use_prior
-            lp = logprior(fe, θu)
-            lp == -Inf && return Inf
-            obj += -lp
-        end
         use_penalty && (obj += _penalty_value(θu, penalty_use))
         return obj
     end
 
     hess_backend_use = if hessian_backend != :auto
         hessian_backend
-    elseif approx_method isa GHQuadrature || approx_method isa GHQuadratureMAP
+    elseif approx_method isa GHQuadrature
         :forwarddiff
     else
         :fd_gradient
@@ -425,8 +417,7 @@ function _compute_uq_wald_re(res::FitResult;
             seed_i = seed + UInt64(bi)
             obj_b = function (x_active::AbstractVector)
                 θu = _θu_from_active(x_active)
-                obj_bi = if approx_method isa GHQuadrature ||
-                            approx_method isa GHQuadratureMAP
+                obj_bi = if approx_method isa GHQuadrature
                     ll_cache_local = ll_cache isa AbstractVector ? ll_cache[1] : ll_cache
                     bll = _ghq_batch_ll(dm, info_single[1],
                         _symmetrize_psd_params(θu, fe),

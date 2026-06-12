@@ -65,6 +65,9 @@ inference paradigms without rewriting the model.
 > distributions, native neural-network components, and a unified likelihood-and-Bayesian
 > inference interface.
 
+NoLimits.jl is designed for mixed-effects models, but it can equally be used for
+fixed-effects-only analysis when random effects are not required.
+
 ## Key Features
 
 ### Composable model specification
@@ -92,7 +95,7 @@ directly on the same model and dataset without rewriting it.
 | Inference paradigm | Methods |
 |---|---|
 | **Fixed effects** | MLE, MAP, MCMC, VI |
-| **Mixed effects** | Laplace, LaplaceMAP, FOCEI, FOCEIMAP, GHQuadrature, GHQuadratureMAP, MCEM, SAEM, MCMC |
+| **Mixed effects** | Laplace, FOCEI, GHQuadrature, MCEM, SAEM, MCMC |
 | **Pooled (mixed effects)** | Pooled, PooledMap |
 | **Cross-method** | Multistart |
 

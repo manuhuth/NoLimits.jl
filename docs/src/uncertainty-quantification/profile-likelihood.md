@@ -17,7 +17,6 @@ Profile UQ is available for fitted results from the following estimation methods
 - `MLE`
 - `MAP`
 - `Laplace`
-- `LaplaceMAP`
 
 ## Minimal Usage
 

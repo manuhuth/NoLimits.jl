@@ -140,11 +140,8 @@ fit_model
 MLE
 MAP
 Laplace
-LaplaceMAP
 FOCEI
-FOCEIMAP
 GHQuadrature
-GHQuadratureMAP
 MCEM
 MCEM_MCMC
 MCEM_IS
@@ -161,9 +158,7 @@ Multistart
 MLEResult
 MAPResult
 LaplaceResult
-LaplaceMAPResult
 GHQuadratureResult
-GHQuadratureMAPResult
 MCEMResult
 SAEMResult
 MCMCResult
