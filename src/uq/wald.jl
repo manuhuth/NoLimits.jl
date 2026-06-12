@@ -290,8 +290,14 @@ function _compute_uq_wald_re(res::FitResult;
     ode_args_use = ode_args === nothing ? _fit_kw(res, :ode_args, ()) : ode_args
     ode_kwargs_use = ode_kwargs === nothing ? _fit_kw(res, :ode_kwargs, NamedTuple()) :
                      ode_kwargs
-    serialization_use = serialization === nothing ?
-                        _fit_kw(res, :serialization, EnsembleSerial()) : serialization
+    # Force SERIAL evaluation of the random-effects Laplace objective (EB solve + inner
+    # logdet/Hessian) used to build the covariance. The threaded per-batch inner Hessian
+    # is non-deterministic run-to-run (it produces a varying Wald covariance) — the
+    # optimizer-driven fit masks this, but UQ reports the covariance directly. Wald UQ is
+    # a one-shot post-fit step, so serial is an acceptable cost for a reproducible, correct
+    # covariance. (The MLE/MAP/Pooled Wald path is unaffected — it has no inner Laplace
+    # Hessian — so it keeps the caller's serialization.)
+    serialization_use = SciMLBase.EnsembleSerial()
 
     fe = dm.model.fixed.fixed
     free_names = _free_fixed_names(fe, constants_use)

@@ -2384,7 +2384,14 @@ end
 # concrete row type, giving each individual a `Vector{<concrete NamedTuple>}`.
 function _build_vary_cache_individual(vary::NamedTuple, dyn::NamedTuple, t_obs,
         n_rows::Int)
-    return [_vary_row(vary, dyn, t_obs, j) for j in 1:n_rows]
+    # Each thread cache must own its dynamic-covariate interpolants. A DataInterpolations
+    # interpolant mutates an internal search guesser (`idx_prev`) on every evaluation, so
+    # sharing one interpolant across threads (they all reference the single DataModel's
+    # `series.dyn`) is a data race that makes threaded results nondeterministic. deepcopy
+    # gives this cache its own interpolants; skipped when there are no dynamic covariates
+    # (the common case), so non-dynamic models pay nothing.
+    dyn_local = isempty(dyn) ? dyn : map(deepcopy, dyn)
+    return [_vary_row(vary, dyn_local, t_obs, j) for j in 1:n_rows]
 end
 
 function _build_vary_cache(dm::DataModel)

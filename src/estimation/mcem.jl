@@ -1065,31 +1065,36 @@ function _mcem_Q_array(dm::DataModel,
         end
         fill!(partial_obj, zero(Tθ))
         bad = Threads.Atomic{Bool}(false)
-        Threads.@threads for bi in eachindex(batch_infos)
-            bad[] && continue
-            batch_infos[bi].n_b == 0 && continue
-            tid = Threads.threadid()
-            info = batch_infos[bi]
-            samples = samples_by_batch[bi]
-            ws = weights_by_batch === nothing ? nothing : weights_by_batch[bi]
-            acc = zero(Tθ)
-            # θ is fixed for this whole Q evaluation — hoist the θ-only work
-            # (symmetrize + RE-distribution table) out of the sample loop.
-            tctx = _safe_theta_ctx(dm, info, θ, caches[tid])
-            for s in 1:size(samples, 2)
-                b = view(samples, :, s)
-                logf = _laplace_logf_batch(
-                    dm, info, θ, b, const_cache, caches[tid]; tctx = tctx)
-                !isfinite(logf) && (bad[] = true; break)
-                w = ws === nothing ? one(Tθ) : Tθ(ws[s])
-                acc += w * logf
+        # Chunk-indexed cache assignment: `caches[Threads.threadid()]` is unsafe under
+        # task migration (two tasks may share a slot and race on its buffers).
+        n_chunks = length(caches)
+        Threads.@threads for chunk in 1:n_chunks
+            cache_c = caches[chunk]
+            for bi in chunk:n_chunks:length(batch_infos)
+                bad[] && break
+                batch_infos[bi].n_b == 0 && continue
+                info = batch_infos[bi]
+                samples = samples_by_batch[bi]
+                ws = weights_by_batch === nothing ? nothing : weights_by_batch[bi]
+                acc = zero(Tθ)
+                # θ is fixed for this whole Q evaluation — hoist the θ-only work
+                # (symmetrize + RE-distribution table) out of the sample loop.
+                tctx = _safe_theta_ctx(dm, info, θ, cache_c)
+                for s in 1:size(samples, 2)
+                    b = view(samples, :, s)
+                    logf = _laplace_logf_batch(
+                        dm, info, θ, b, const_cache, cache_c; tctx = tctx)
+                    !isfinite(logf) && (bad[] = true; break)
+                    w = ws === nothing ? one(Tθ) : Tθ(ws[s])
+                    acc += w * logf
+                end
+                bad[] && break
+                # For MCMC (uniform weights) divide by count; for IS weights already sum to 1
+                if ws === nothing
+                    acc /= size(samples, 2)
+                end
+                partial_obj[bi] = acc
             end
-            bad[] && continue
-            # For MCMC (uniform weights) divide by count; for IS weights already sum to 1
-            if ws === nothing
-                acc /= size(samples, 2)
-            end
-            partial_obj[bi] = acc
         end
         bad[] && return Tθ(Inf)
         @inbounds for bi in eachindex(batch_infos)
@@ -1172,24 +1177,29 @@ function _mcem_Q2(dm::DataModel,
         partial_obj = Vector{Tθ}(undef, length(batch_infos))
         fill!(partial_obj, zero(Tθ))
         bad = Threads.Atomic{Bool}(false)
-        Threads.@threads for bi in eachindex(batch_infos)
-            bad[] && continue
-            batch_infos[bi].n_b == 0 && continue
-            tid = Threads.threadid()
-            info = batch_infos[bi]
-            samples = samples_by_batch[bi]
-            ws = weights_by_batch === nothing ? nothing : weights_by_batch[bi]
-            acc = zero(Tθ)
-            for s in 1:size(samples, 2)
-                b = view(samples, :, s)
-                logf = _re_logpdf_batch(dm, info, θ, b, const_cache, caches[tid])
-                !isfinite(logf) && (bad[] = true; break)
-                w = ws === nothing ? one(Tθ) : Tθ(ws[s])
-                acc += w * logf
+        # Chunk-indexed cache assignment (see Q-step above): `caches[Threads.threadid()]`
+        # is unsafe under task migration.
+        n_chunks = length(caches)
+        Threads.@threads for chunk in 1:n_chunks
+            cache_c = caches[chunk]
+            for bi in chunk:n_chunks:length(batch_infos)
+                bad[] && break
+                batch_infos[bi].n_b == 0 && continue
+                info = batch_infos[bi]
+                samples = samples_by_batch[bi]
+                ws = weights_by_batch === nothing ? nothing : weights_by_batch[bi]
+                acc = zero(Tθ)
+                for s in 1:size(samples, 2)
+                    b = view(samples, :, s)
+                    logf = _re_logpdf_batch(dm, info, θ, b, const_cache, cache_c)
+                    !isfinite(logf) && (bad[] = true; break)
+                    w = ws === nothing ? one(Tθ) : Tθ(ws[s])
+                    acc += w * logf
+                end
+                bad[] && break
+                ws === nothing && (acc /= size(samples, 2))
+                partial_obj[bi] = acc
             end
-            bad[] && continue
-            ws === nothing && (acc /= size(samples, 2))
-            partial_obj[bi] = acc
         end
         bad[] && return Tθ(Inf)
         @inbounds for bi in eachindex(batch_infos)
@@ -1386,15 +1396,21 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
             if serialization isa SciMLBase.EnsembleThreads
                 nthreads = Threads.maxthreadid()
                 caches = _mcem_thread_caches(dm, ll_cache, nthreads)
-                Threads.@threads for bi in eachindex(batch_infos)
-                    info = batch_infos[bi]
-                    samples, lastp, _ = _mcem_sample_batch(
-                        dm, info, θu_curr, const_cache, caches[Threads.threadid()],
-                        mcmc_es.sampler, tkwargs, batch_rngs[bi],
-                        re_names, mcmc_es.warm_start, last_params[bi];
-                        outer_iter = iter)
-                    samples_by_batch[bi] = samples
-                    last_params[bi] = lastp
+                # Chunk-indexed cache assignment: `caches[Threads.threadid()]` is unsafe
+                # under task migration (two tasks may share a slot and race on its buffers).
+                n_chunks = length(caches)
+                Threads.@threads for chunk in 1:n_chunks
+                    cache_c = caches[chunk]
+                    for bi in chunk:n_chunks:length(batch_infos)
+                        info = batch_infos[bi]
+                        samples, lastp, _ = _mcem_sample_batch(
+                            dm, info, θu_curr, const_cache, cache_c,
+                            mcmc_es.sampler, tkwargs, batch_rngs[bi],
+                            re_names, mcmc_es.warm_start, last_params[bi];
+                            outer_iter = iter)
+                        samples_by_batch[bi] = samples
+                        last_params[bi] = lastp
+                    end
                 end
             else
                 for (bi, info) in enumerate(batch_infos)
@@ -1425,17 +1441,23 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
             if serialization isa SciMLBase.EnsembleThreads
                 nthreads = Threads.maxthreadid()
                 caches = _mcem_thread_caches(dm, ll_cache, nthreads)
-                Threads.@threads for bi in eachindex(batch_infos)
-                    info = batch_infos[bi]
-                    samps, log_ws, ess = _is_sample_batch(
-                        dm, info, θu_curr, const_cache, caches[Threads.threadid()],
-                        batch_rngs[bi], re_names, re_types, is_es, proposal_blocks[bi])
-                    samples_by_batch[bi] = samps
-                    weights_by_batch[bi] = exp.(log_ws)
-                    ess_by_batch[bi] = ess
-                    if is_es.adapt
-                        _is_update_blocks!(proposal_blocks[bi], samps, info,
-                            re_names, re_types, 2, 1e-6; log_ws = log_ws)
+                # Chunk-indexed cache assignment: `caches[Threads.threadid()]` is unsafe
+                # under task migration (two tasks may share a slot and race on its buffers).
+                n_chunks = length(caches)
+                Threads.@threads for chunk in 1:n_chunks
+                    cache_c = caches[chunk]
+                    for bi in chunk:n_chunks:length(batch_infos)
+                        info = batch_infos[bi]
+                        samps, log_ws, ess = _is_sample_batch(
+                            dm, info, θu_curr, const_cache, cache_c,
+                            batch_rngs[bi], re_names, re_types, is_es, proposal_blocks[bi])
+                        samples_by_batch[bi] = samps
+                        weights_by_batch[bi] = exp.(log_ws)
+                        ess_by_batch[bi] = ess
+                        if is_es.adapt
+                            _is_update_blocks!(proposal_blocks[bi], samps, info,
+                                re_names, re_types, 2, 1e-6; log_ws = log_ws)
+                        end
                     end
                 end
             else
