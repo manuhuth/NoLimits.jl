@@ -382,18 +382,26 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
         θu_re = _symmetrize_psd_params(θu, dm.model.fixed.fixed)
 
         total = if ll_cache isa AbstractVector
-            # Threaded path: each batch gets its own ll_cache slot.
             results = Vector{T}(undef, length(batch_infos))
             bad = Threads.Atomic{Bool}(false)
-            Threads.@threads for bi in eachindex(batch_infos)
-                tid = Threads.threadid()
-                bll = _ghq_batch_ll(dm, batch_infos[bi], θu_re, const_cache,
-                    ll_cache[tid], method.level)
-                if bll == -Inf
-                    Threads.atomic_or!(bad, true)
-                    results[bi] = zero(T)
-                else
-                    results[bi] = T(bll)
+            # Chunk-indexed cache assignment — `Threads.threadid()` indexing is
+            # unsafe under task migration (two tasks could share one cache slot).
+            n_chunks = length(ll_cache)
+            Threads.@threads for c in 1:n_chunks
+                cache_c = ll_cache[c]
+                for bi in c:n_chunks:length(batch_infos)
+                    if bad[]
+                        results[bi] = zero(T)
+                        continue
+                    end
+                    bll = _ghq_batch_ll(dm, batch_infos[bi], θu_re, const_cache,
+                        cache_c, method.level)
+                    if bll == -Inf
+                        Threads.atomic_or!(bad, true)
+                        results[bi] = zero(T)
+                    else
+                        results[bi] = T(bll)
+                    end
                 end
             end
             bad[] && return infT

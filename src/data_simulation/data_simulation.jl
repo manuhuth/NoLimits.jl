@@ -382,9 +382,15 @@ function simulate_data(dm::DataModel; rng = Random.default_rng(),
 
     rngs = _rngs_for_serialization(rng, serialization)
     if serialization isa SciMLBase.EnsembleThreads
-        Threads.@threads for i in eachindex(dm.individuals)
-            _simulate_individual!(
-                df, dm, i, θ, re_samples, rngs[Threads.threadid()], replace_missings)
+        # Chunk-indexed RNG assignment: each task owns RNG slot `c` for its whole stride.
+        # `rngs[Threads.threadid()]` is unsafe under task migration (two tasks could share
+        # one RNG, racing on its state and making the simulation nondeterministic).
+        n_chunks = length(rngs)
+        Threads.@threads for c in 1:n_chunks
+            rng_c = rngs[c]
+            for i in c:n_chunks:length(dm.individuals)
+                _simulate_individual!(df, dm, i, θ, re_samples, rng_c, replace_missings)
+            end
         end
     elseif serialization isa SciMLBase.EnsembleDistributed
         parts = pmap(
