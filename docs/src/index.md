@@ -5,7 +5,7 @@ layout: home
 hero:
   name: "NoLimits.jl"
   text: "Nonlinear mixed-effects modeling for longitudinal data"
-  tagline: Mechanistic ODEs, hidden Markov models, neural-network and soft-tree components, and frequentist, Bayesian, and variational estimation - composed in one framework, fit through one interface.
+  tagline: Mechanistic ODEs, Markov models, differentiable machine learning components, and frequentist and Bayesian estimation - composed in one framework, fit through one interface.
   image:
     src: /logo.png
     alt: NoLimits.jl
@@ -22,15 +22,17 @@ hero:
 
 features:
   - title: Diverse structural models
-    details: Classical nonlinear functions, mechanistic ODE systems, and hidden Markov outcome models combine within a single specification.
+    details: Classical nonlinear functions, mechanistic ODE systems, and Markov outcome models combine within a single specification.
   - title: Flexible estimation
-    details: Fit one model with Laplace, FOCEI, MCEM, SAEM, full Bayesian MCMC, or variational inference - and compare paradigms without rewriting it.
+    details: Fit one model with Laplace, FOCEI, MCEM, SAEM, or full Bayesian MCMC (plus variational inference for fixed-effects-only models), and compare paradigms without rewriting it.
   - title: Machine-learning integration
     details: Embed neural networks (including neural-ODE constructions) and soft decision trees alongside known mechanistic terms.
   - title: Rich hierarchical variability
     details: Heavy-tailed, skewed, and normalizing-flow random-effect distributions, optionally parameterized by covariates and learned functions.
 ---
 ```
+
+**NoLimits** stands for **NO**n **LI**near **MI**xed effec**TS**.
 
 ## Why NoLimits.jl?
 
@@ -44,10 +46,11 @@ estimation flexibility, and modern machine-learning integration.
 NoLimits.jl is designed to avoid these trade-offs. It supports:
 
 - **Diverse structural models.** Classical nonlinear functions, mechanistic ODE systems, and
-  hidden Markov outcome models can be combined within a single specification.
+  Markov outcome models (observed-state and hidden) can be combined within a single specification.
 - **Flexible estimation.** The same model can be fitted using frequentist methods (Laplace
-  approximation, FOCEI, MCEM, SAEM, Gauss–Hermite quadrature), full Bayesian MCMC sampling,
-  or variational inference, enabling comparison across inferential paradigms.
+  approximation, FOCEI, MCEM, SAEM, Gauss-Hermite quadrature) or full Bayesian MCMC sampling,
+  enabling comparison across inferential paradigms; variational inference is additionally
+  available for fixed-effects-only models.
 - **Machine-learning integration.** Neural-network components - including neural-ODE
   constructions - and soft decision trees can be embedded alongside known mechanistic terms,
   so models retain established scientific structure while learning unknown nonlinear behavior

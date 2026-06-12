@@ -1,28 +1,28 @@
 # Mixed-Effects Tutorial 2: ODE Model with Input Events (MCEM)
 
-Many longitudinal studies involve systems whose dynamics are governed by ordinary differential equations (ODEs) with discrete input events --- a bolus injection, a nutrient pulse, or a stimulus onset. When individuals differ in their dynamic parameters, nonlinear mixed-effects models provide a principled way to separate population-level trends from subject-level variability. In this tutorial, you will build such a model from scratch and fit it using the Monte Carlo Expectation-Maximization (MCEM) algorithm, a method well-suited to problems where random effects enter the model nonlinearly.
+Many longitudinal studies involve systems whose dynamics are governed by ordinary differential equations (ODEs) with discrete input events - a bolus injection, a nutrient pulse, or a stimulus onset. When individuals differ in their dynamic parameters, nonlinear mixed-effects models provide a principled way to separate population-level trends from subject-level variability. In this tutorial, you will build such a model from scratch and fit it using the Monte Carlo Expectation-Maximization (MCEM) algorithm, a method well-suited to problems where random effects enter the model nonlinearly.
 
-Starting from a publicly available concentration-time dataset (Theophylline), you will learn how to prepare event-aware data, define a two-compartment ODE model with subject-level random effects, run the full estimation workflow, and generate publication-quality diagnostics. The structural model describes a two-compartment transfer system (`depot`, `center`) in which material moves from a depot compartment into a central compartment and is subsequently eliminated. Subject-level random effects on the transfer rate (`ka`), elimination rate (`cl`), and distribution volume (`v`) capture between-individual variability. Although this tutorial uses concentration-time data, the workflow generalizes to any domain where compartmental ODE dynamics with discrete input events arise --- tracer kinetics in imaging, nutrient uptake in ecology, or substrate processing in bioprocess engineering.
+Starting from a publicly available concentration-time dataset (Theophylline), you will learn how to prepare event-aware data, define a two-compartment ODE model with subject-level random effects, run the full estimation workflow, and generate publication-quality diagnostics. The structural model describes a two-compartment transfer system (`depot`, `center`) in which material moves from a depot compartment into a central compartment and is subsequently eliminated. Subject-level random effects on the transfer rate (`ka`), elimination rate (`cl`), and distribution volume (`v`) capture between-individual variability. Although this tutorial uses concentration-time data, the workflow generalizes to any domain where compartmental ODE dynamics with discrete input events arise - tracer kinetics in imaging, nutrient uptake in ecology, or substrate processing in bioprocess engineering.
 
 ## What You Will Learn
 
 By the end of this tutorial, you will be able to:
 
-- **Prepare event-aware data** --- convert a raw longitudinal table into the event format NoLimits.jl expects for ODE models with discrete inputs (bolus injections, perturbations, or similar events).
-- **Define a nonlinear mixed-effects ODE model** --- use the `@preDifferentialEquation` and `@DifferentialEquation` blocks to specify a model whose random effects enter nonlinearly, a setting where MCEM is especially useful.
-- **Fit the model with MCEM** --- run the estimation and inspect core diagnostics including the objective value and estimated parameters.
-- **Visualize and assess results** --- generate fitted trajectory plots, observation-distribution diagnostics, and Wald-based uncertainty quantification summaries.
+- **Prepare event-aware data** - convert a raw longitudinal table into the event format NoLimits.jl expects for ODE models with discrete inputs (bolus injections, perturbations, or similar events).
+- **Define a nonlinear mixed-effects ODE model** - use the `@preDifferentialEquation` and `@DifferentialEquation` blocks to specify a model whose random effects enter nonlinearly, a setting where MCEM is especially useful.
+- **Fit the model with MCEM** - run the estimation and inspect core diagnostics including the objective value and estimated parameters.
+- **Visualize and assess results** - generate fitted trajectory plots, observation-distribution diagnostics, and Wald-based uncertainty quantification summaries.
 
 ## Step 1: Prepare the Event-Table
 
 In this step, you will convert raw longitudinal data into the event-table format that NoLimits.jl uses for ODE models with discrete inputs. An event table interleaves input events (such as a bolus entering a compartment) with observation rows, so that the ODE solver knows when and where to apply external perturbations. The key columns are:
 
-- `EVID` --- an integer flag distinguishing input events (`1`) from observation rows (`0`).
-- `AMT` --- the magnitude of the input event (e.g., total amount delivered).
-- `CMT` --- the name of the ODE compartment that receives the input.
-- `RATE` --- the infusion rate; `0.0` indicates an instantaneous bolus.
+- `EVID` - an integer flag distinguishing input events (`1`) from observation rows (`0`).
+- `AMT` - the magnitude of the input event (e.g., total amount delivered).
+- `CMT` - the name of the ODE compartment that receives the input.
+- `RATE` - the infusion rate; `0.0` indicates an instantaneous bolus.
 
-The code below loads the Theophylline dataset --- a widely used concentration-time dataset recording twelve individuals over time --- and reshapes it into this event-table format. Each individual receives a single bolus input at time zero, followed by a series of concentration observations.
+The code below loads the Theophylline dataset - a widely used concentration-time dataset recording twelve individuals over time - and reshapes it into this event-table format. Each individual receives a single bolus input at time zero, followed by a series of concentration observations.
 
 ```julia
 using NoLimits
@@ -74,7 +74,7 @@ df = build_theoph_event_df(theoph_df)
 first(df, 12)
 ```
 
-<!-- injected:t2-dfhead -->
+<!- injected:t2-dfhead ->
 ```text
 12×7 DataFrame
  Row │ id     t        AMT      EVID   CMT      RATE     y1
@@ -98,7 +98,7 @@ first(df, 12)
 
 In this step, you will specify the mechanistic model. The goal is twofold: describe the ODE dynamics of the two-compartment system, and account for inter-individual variability through random effects.
 
-The model has three system parameters --- a transfer rate `ka`, an elimination rate `cl`, and a distribution volume `v` --- each of which varies across individuals. To ensure positivity, each parameter is expressed as an exponential transform of a population-level fixed effect plus a subject-specific random deviation:
+The model has three system parameters - a transfer rate `ka`, an elimination rate `cl`, and a distribution volume `v` - each of which varies across individuals. To ensure positivity, each parameter is expressed as an exponential transform of a population-level fixed effect plus a subject-specific random deviation:
 
 - `ka = exp(tka + eta[1])`
 - `cl = exp(tcl + eta[2])`
@@ -108,7 +108,7 @@ Because the parameters enter the ODE nonlinearly (through the exponential transf
 
 The random effects vector `eta` follows a multivariate normal distribution with a diagonal covariance matrix whose entries (`omega1`, `omega2`, `omega3`) are estimated alongside the other fixed effects. Observations are modeled as normally distributed around the predicted concentration in the central compartment, with residual standard deviation `sigma_eps`.
 
-After defining the model, you will configure the ODE solver. `Tsit5()` is an efficient explicit Runge--Kutta method well-suited to non-stiff systems, and the tolerances below balance numerical accuracy with computational cost.
+After defining the model, you will configure the ODE solver. `Tsit5()` is an efficient explicit Runge-Kutta method well-suited to non-stiff systems, and the tolerances below balance numerical accuracy with computational cost.
 
 ```julia
 using NoLimits
@@ -171,14 +171,14 @@ model = set_solver_config(
 
 ### Model Summary
 
-Before moving on, it is good practice to inspect the model structure with `NoLimits.summarize`. This confirms that all blocks --- fixed effects, random effects, covariates, ODE states, and formulas --- have been parsed correctly.
+Before moving on, it is good practice to inspect the model structure with `NoLimits.summarize`. This confirms that all blocks - fixed effects, random effects, covariates, ODE states, and formulas - have been parsed correctly.
 
 ```julia
 model_summary = NoLimits.summarize(model)
 model_summary
 ```
 
-<!-- injected:t2-model -->
+<!- injected:t2-model ->
 ```text
 ModelSummary
 ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -243,7 +243,7 @@ Helper functions
 
 ## Step 3: Build the DataModel
 
-In this step, you will connect the model to the data by constructing a `DataModel`. This constructor validates the dataset against the model's requirements --- checking that all declared covariates are present, that constant covariates are indeed constant within each group, and that event columns are well-formed. You must explicitly specify the event-related column names so that NoLimits.jl can correctly distinguish input events from observation rows during ODE integration.
+In this step, you will connect the model to the data by constructing a `DataModel`. This constructor validates the dataset against the model's requirements - checking that all declared covariates are present, that constant covariates are indeed constant within each group, and that event columns are well-formed. You must explicitly specify the event-related column names so that NoLimits.jl can correctly distinguish input events from observation rows during ODE integration.
 
 ```julia
 dm = DataModel(
@@ -268,7 +268,7 @@ dm_summary = NoLimits.summarize(dm)
 dm_summary
 ```
 
-<!-- injected:t2-dm -->
+<!- injected:t2-dm ->
 ```text
 DataModelSummary
 ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -340,7 +340,7 @@ Per-random-effect summary
 
 In this step, you will set up the MCEM algorithm. MCEM alternates between two stages: (1) an E-step that samples random effects from their conditional posterior given the current fixed-effect estimates, and (2) an M-step that maximizes the expected complete-data log-likelihood with respect to the fixed effects. The number of Monte Carlo samples in the E-step can grow across iterations, improving the approximation as the algorithm converges.
 
-The configuration below is tuned for a tutorial setting --- moderate iteration counts and sample sizes that keep runtime reasonable. For production analyses, you would typically increase `maxiters`, raise the ceiling of the sample schedule, and draw more MCMC samples per E-step to reduce Monte Carlo noise in the gradient estimates.
+The configuration below is tuned for a tutorial setting - moderate iteration counts and sample sizes that keep runtime reasonable. For production analyses, you would typically increase `maxiters`, raise the ceiling of the sample schedule, and draw more MCMC samples per E-step to reduce Monte Carlo noise in the gradient estimates.
 
 A few notes on the specific settings:
 
@@ -364,7 +364,7 @@ serialization = SciMLBase.EnsembleThreads()
 
 With everything in place, you can now run the fit. The call to `fit_model` performs the full MCEM optimization loop and returns a result object containing parameter estimates, diagnostics, and metadata.
 
-After fitting, you will extract the final objective value --- the marginal log-likelihood approximation at convergence. This number is useful for comparing models or monitoring optimization progress, but model adequacy is best judged through the predictive diagnostics covered in the next steps.
+After fitting, you will extract the final objective value - the marginal log-likelihood approximation at convergence. This number is useful for comparing models or monitoring optimization progress, but model adequacy is best judged through the predictive diagnostics covered in the next steps.
 
 ```julia
 res_mcem = fit_model(
@@ -381,7 +381,7 @@ fit_summary = (
 fit_summary
 ```
 
-<!-- injected:t2-obj -->
+<!- injected:t2-obj ->
 ```text
 (objective = -145.18060999648057,)
 ```
@@ -395,7 +395,7 @@ fit_result_summary = NoLimits.summarize(res_mcem)
 fit_result_summary
 ```
 
-<!-- injected:t2-fitres -->
+<!- injected:t2-fitres ->
 ```text
 FitResultSummary
 ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -444,7 +444,7 @@ params = NoLimits.get_params(res_mcem; scale=:untransformed)
 )
 ```
 
-<!-- injected:t2-params -->
+<!- injected:t2-params ->
 ```text
 (tka = 0.452678124367957, tcl = 1.0076137236747467, tv = 3.456574166252174, sigma_eps = 0.694302232373099)
 ```
@@ -466,7 +466,7 @@ p_fit_mcem = plot_fits(
 p_fit_mcem
 ```
 
-<!-- injected:t2-pfit -->
+<!- injected:t2-pfit ->
 ![Fitted two-compartment trajectories for the first two individuals (MCEM).](figures/t2/p_fit_mcem.png)
 
 ## Step 7: Assess the Observation Distribution
@@ -484,12 +484,12 @@ p_obs_mcem = plot_observation_distributions(
 p_obs_mcem
 ```
 
-<!-- injected:t2-pobs -->
+<!- injected:t2-pobs ->
 ![Predicted observation distribution at the first observation of the first individual (MCEM).](figures/t2/p_obs_mcem.png)
 
 ## Step 8: Quantify Parameter Uncertainty
 
-Point estimates alone are insufficient for scientific conclusions --- you also need to quantify how precisely each parameter has been determined. In this step, you will use the Wald approach, which constructs approximate confidence intervals from the curvature of the log-likelihood at the optimum (the observed information matrix). For MCEM fits, computing this curvature requires an auxiliary random-effects integration step; the Laplace approximation (`re_approx=:laplace`) serves this purpose here.
+Point estimates alone are insufficient for scientific conclusions - you also need to quantify how precisely each parameter has been determined. In this step, you will use the Wald approach, which constructs approximate confidence intervals from the curvature of the log-likelihood at the optimum (the observed information matrix). For MCEM fits, computing this curvature requires an auxiliary random-effects integration step; the Laplace approximation (`re_approx=:laplace`) serves this purpose here.
 
 The resulting uncertainty estimates are visualized as density plots on the natural parameter scale, providing an intuitive picture of estimation precision given the available data.
 
@@ -515,12 +515,12 @@ p_uq_mcem = plot_uq_distributions(
 p_uq_mcem
 ```
 
-<!-- injected:t2-puq -->
+<!- injected:t2-puq ->
 ![Wald approximate parameter distributions on the natural scale (MCEM).](figures/t2/p_uq_mcem.png)
 
 ### UQ Summaries
 
-Finally, the numerical summaries consolidate point estimates and confidence intervals into a single table --- a format suitable for reporting results in publications or for systematic comparison across candidate models.
+Finally, the numerical summaries consolidate point estimates and confidence intervals into a single table - a format suitable for reporting results in publications or for systematic comparison across candidate models.
 
 ```julia
 uq_summary_mcem = NoLimits.summarize(uq_mcem)
@@ -529,7 +529,7 @@ fit_uq_summary_mcem = NoLimits.summarize(res_mcem, uq_mcem)
 fit_uq_summary_mcem
 ```
 
-<!-- injected:t2-fituq -->
+<!- injected:t2-fituq ->
 ```text
 UQResultSummary
 ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -569,6 +569,6 @@ Empirical Bayes random effects summary (across RE levels)
 
 ## Practical Guidance
 
-- **Objective values are optimization diagnostics, not model quality scores.** A lower objective indicates better optimization convergence, but model adequacy should be judged through predictive checks --- trajectory plots and observation-distribution diagnostics provide complementary views of fit quality.
+- **Objective values are optimization diagnostics, not model quality scores.** A lower objective indicates better optimization convergence, but model adequacy should be judged through predictive checks - trajectory plots and observation-distribution diagnostics provide complementary views of fit quality.
 - **Inspect trajectory and distributional diagnostics together.** `plot_fits` reveals whether the model captures the overall shape of the response, while `plot_observation_distributions` tests whether the local predictive distribution is well-calibrated. Discrepancies in either diagnostic suggest different kinds of model misspecification.
 - **Scale up before changing model structure.** If the fit appears unstable or the objective has not plateaued, first try increasing `maxiters` and the sample schedule ceiling. MCEM convergence can be slow when Monte Carlo noise dominates the gradient signal, and increasing sample sizes is often more productive than modifying the structural model.

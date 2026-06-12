@@ -2,7 +2,7 @@
 
 Point estimates alone are insufficient for reliable scientific conclusions. Uncertainty quantification (UQ) provides confidence intervals and variance-covariance information that characterize the precision of estimated parameters, enabling principled model comparison and decision-making. Reporting parameter uncertainty is standard practice in the biological sciences and is typically required for publication.
 
-NoLimits.jl offers a unified UQ interface through `compute_uq`, which accepts a fitted model result (`FitResult`) and returns a `UQResult`. The same interface supports multiple uncertainty backends -- Wald-based approximations, profile-likelihood intervals, posterior-chain intervals, and MCMC refit workflows -- so that the choice of UQ method can be varied independently of the estimation method.
+NoLimits.jl offers a unified UQ interface through `compute_uq`, which accepts a fitted model result (`FitResult`) and returns a `UQResult`. The same interface supports multiple uncertainty backends - Wald-based approximations, profile-likelihood intervals, posterior-chain intervals, and MCMC refit workflows - so that the choice of UQ method can be varied independently of the estimation method.
 
 ## Quick Start
 
@@ -75,7 +75,7 @@ Key options:
 
 ### Profile (`method=:profile`)
 
-The profile-likelihood backend computes likelihood-based confidence intervals by profiling one parameter at a time around the fitted optimum. Unlike the Wald approach, profile intervals do not assume a Gaussian posterior shape and can capture asymmetric uncertainty -- a common situation for variance parameters or parameters near constraints.
+The profile-likelihood backend computes likelihood-based confidence intervals by profiling one parameter at a time around the fitted optimum. Unlike the Wald approach, profile intervals do not assume a Gaussian posterior shape and can capture asymmetric uncertainty - a common situation for variance parameters or parameters near constraints.
 
 ```julia
 uq_profile = compute_uq(

@@ -2,7 +2,7 @@
 
 Every ODE system requires a complete specification of initial conditions. The `@initialDE` block defines the initial value of each state declared in `@DifferentialEquation`, and it is mandatory whenever that block is present.
 
-Initial values may be constants, expressions involving fixed effects and random effects, or outputs of learned model functions -- enabling individual-specific starting conditions in mixed-effects models.
+Initial values may be constants, expressions involving fixed effects and random effects, or outputs of learned model functions - enabling individual-specific starting conditions in mixed-effects models.
 
 ## Core Syntax
 
@@ -98,7 +98,7 @@ u0 = builder(theta, eta, const_covariates, model_funs, helpers, prede)
 
 ## Example: Nonlinear Mixed-Effects ODE Initialization
 
-In a complete model, initial conditions often depend on individual-level derived quantities. Here, the initial state is set to a preDE value that combines a fixed effect, a covariate, and a random effect -- so each individual begins integration from a distinct starting point.
+In a complete model, initial conditions often depend on individual-level derived quantities. Here, the initial state is set to a preDE value that combines a fixed effect, a covariate, and a random effect - so each individual begins integration from a distinct starting point.
 
 ```julia
 using NoLimits

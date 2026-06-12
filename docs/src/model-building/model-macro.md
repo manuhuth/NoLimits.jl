@@ -23,7 +23,7 @@ model = @Model begin
 end
 ```
 
-Only macro blocks are allowed inside `@Model` -- no bare Julia statements.
+Only macro blocks are allowed inside `@Model` - no bare Julia statements.
 
 ## Available Blocks
 
@@ -159,7 +159,7 @@ not mention, so you only restate what actually changes between the two models.
 
 ### Merge semantics
 
-Within an overridden block, entries are merged **by name** -- the left-hand side of each
+Within an overridden block, entries are merged **by name** - the left-hand side of each
 declaration:
 
 - An entry whose name matches one already in the base block **replaces** it, keeping its
@@ -201,7 +201,7 @@ model_gauss = @Model begin
 end
 ```
 
-the flow variant changes only three blocks -- `@covariates`, `@fixedEffects` keeps all
+the flow variant changes only three blocks - `@covariates`, `@fixedEffects` keeps all
 parameters except `sigma_k` (removed) and adds `psi`, `eta_k` becomes a flow while `eta_L`
 is inherited, and the `length` formula switches `eta_k` to `eta_k[1]`:
 
@@ -226,18 +226,18 @@ end
 
 `model_flow` ends up with fixed effects `L_inf_pop, k_pop, sigma_L, sigma_y, psi` and
 random effects `eta_k` (flow) and `eta_L` (inherited Gaussian). Extension models can
-themselves be extended -- the new model again stores its own source.
+themselves be extended - the new model again stores its own source.
 
 !!! warning "Blocks must be self-contained"
     Inherited and overriding blocks are re-evaluated in the module where the extension
     call occurs. Any variable they reference (for example a `Lux.Chain`, a `knots` vector,
     or a precomputed matrix) must be available as a global in that module. Local variables
-    captured at the base model's original call site are **not** carried over -- declare
+    captured at the base model's original call site are **not** carried over - declare
     such values as globals, or re-declare them before the extension call.
 
 ## Model Summary
 
-After construction, use `NoLimits.summarize(model)` to inspect the declared structure. It returns a `ModelSummary` describing the model's blocks -- counts and lists of fixed effects, random effects, covariates, deterministic formulas, outcome distributions, and differential-equation states/signals -- which is pretty-printed via `Base.show`.
+After construction, use `NoLimits.summarize(model)` to inspect the declared structure. It returns a `ModelSummary` describing the model's blocks - counts and lists of fixed effects, random effects, covariates, deterministic formulas, outcome distributions, and differential-equation states/signals - which is pretty-printed via `Base.show`.
 
 ```julia
 model_summary = NoLimits.summarize(model)
@@ -246,6 +246,6 @@ model_summary
 
 ## Runtime Evaluation Helpers
 
-`@Model` wires internal evaluation functions used during fitting and simulation -- `calculate_prede` (pre-DE expressions), `calculate_initial_state` (ODE initial conditions), `calculate_formulas_all` (all formula nodes), and `calculate_formulas_obs` (observation-node formulas only). Full signatures are in the [API reference](../api.md).
+`@Model` wires internal evaluation functions used during fitting and simulation - `calculate_prede` (pre-DE expressions), `calculate_initial_state` (ODE initial conditions), `calculate_formulas_all` (all formula nodes), and `calculate_formulas_obs` (observation-node formulas only). Full signatures are in the [API reference](../api.md).
 
 When formulas reference ODE states or signals, formula evaluation requires DE solution accessors from `get_de_accessors_builder(...)`.

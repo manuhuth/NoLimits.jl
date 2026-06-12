@@ -1,6 +1,6 @@
 # Mixed-Effects Tutorial 3: Neural Differential-Equation Components (SAEM)
 
-In many scientific domains -- from systems biology to chemical engineering to ecology -- we understand the broad structure of a dynamical system (e.g., compartments connected by transfer rates) but lack precise knowledge of every rate law or interaction term. Neural ordinary differential equations (Neural ODEs) offer a principled way to address this gap: they embed small neural networks directly inside an ODE system, allowing the data to shape the functional forms that mechanistic reasoning alone cannot specify. Crucially, this approach preserves the interpretable compartmental structure while letting learned components capture the unknown nonlinearities.
+In many scientific domains - from systems biology to chemical engineering to ecology - we understand the broad structure of a dynamical system (e.g., compartments connected by transfer rates) but lack precise knowledge of every rate law or interaction term. Neural ordinary differential equations (Neural ODEs) offer a principled way to address this gap: they embed small neural networks directly inside an ODE system, allowing the data to shape the functional forms that mechanistic reasoning alone cannot specify. Crucially, this approach preserves the interpretable compartmental structure while letting learned components capture the unknown nonlinearities.
 
 In this tutorial, you will build a mixed-effects ODE model in which multiple neural-network components parameterize the ODE right-hand side, and fit it with the Stochastic Approximation Expectation-Maximization (SAEM) algorithm. By the end, you will have a working example of a hybrid mechanistic-neural model that accounts for between-subject variability through random effects on the network weights themselves.
 
@@ -15,7 +15,7 @@ By the end of this tutorial, you will be able to:
 
 ## Step 1: Data Setup
 
-In this step, you will load and prepare the data. We use the classic Theophylline dataset, which records concentration-time profiles for 12 subjects after oral administration. Although this dataset originates from pharmacology, the underlying dynamics -- a substance entering a depot compartment and transferring to a central compartment where it is observed and cleared -- are a standard example of a two-compartment transfer system that arises across many fields, from tracer kinetics to nutrient cycling. You will reshape the data into a flat format where the initial amount `d` enters as a constant covariate.
+In this step, you will load and prepare the data. We use the classic Theophylline dataset, which records concentration-time profiles for 12 subjects after oral administration. Although this dataset originates from pharmacology, the underlying dynamics - a substance entering a depot compartment and transferring to a central compartment where it is observed and cleared - are a standard example of a two-compartment transfer system that arises across many fields, from tracer kinetics to nutrient cycling. You will reshape the data into a flat format where the initial amount `d` enters as a constant covariate.
 
 ```julia
 using NoLimits
@@ -51,7 +51,7 @@ df = build_theoph_non_event_df(theoph_df)
 first(df, 10)
 ```
 
-<!-- injected:t3-dfhead -->
+<!- injected:t3-dfhead ->
 ```text
 10×4 DataFrame
  Row │ ID     t        y        d
@@ -71,7 +71,7 @@ first(df, 10)
 
 ## Step 2: Define the Neural ODE Mixed-Effects Model
 
-In this step, you will define the core model. The key idea is that instead of specifying closed-form rate functions (such as first-order kinetics), you let neural networks learn these functions directly from data. Each `NNParameters` block declares a small feedforward network whose flattened weights become part of the fixed-effects parameter vector. At evaluation time, a callable function (e.g., `NNA1`) reconstructs the network from its weight vector and evaluates it -- so you can use it inside `@DifferentialEquation` just like any other function.
+In this step, you will define the core model. The key idea is that instead of specifying closed-form rate functions (such as first-order kinetics), you let neural networks learn these functions directly from data. Each `NNParameters` block declares a small feedforward network whose flattened weights become part of the fixed-effects parameter vector. At evaluation time, a callable function (e.g., `NNA1`) reconstructs the network from its weight vector and evaluates it - so you can use it inside `@DifferentialEquation` just like any other function.
 
 The ODE right-hand side uses four neural components arranged in a two-compartment transfer system:
 
@@ -159,7 +159,7 @@ model_summary = NoLimits.summarize(model)
 model_summary
 ```
 
-<!-- injected:t3-model -->
+<!- injected:t3-model ->
 ```text
 ModelSummary
 ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -245,7 +245,7 @@ dm_summary = NoLimits.summarize(dm)
 dm_summary
 ```
 
-<!-- injected:t3-dm -->
+<!- injected:t3-dm ->
 ```text
 DataModelSummary
 ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -339,19 +339,19 @@ res_saem = fit_model(
 )
 ```
 
-<!-- injected:t3-obj -->
+<!- injected:t3-obj ->
 ```text
 (objective = -565.6734432525224, n_params = 29)
 ```
 
-For a more detailed summary of the fit -- including parameter estimates and convergence diagnostics -- call the `summarize` function.
+For a more detailed summary of the fit - including parameter estimates and convergence diagnostics - call the `summarize` function.
 
 ```julia
 fit_summary_saem = NoLimits.summarize(res_saem)
 fit_summary_saem
 ```
 
-<!-- injected:t3-fit -->
+<!- injected:t3-fit ->
 ```text
 FitResultSummary
 ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -409,7 +409,7 @@ Empirical Bayes random effects summary (across RE levels)
 
 ## Step 5: Visualize Fitted Trajectories
 
-In this step, you will overlay the model predictions on the raw observations for the first two subjects. Plotting fitted trajectories against observed data provides an immediate visual assessment of model adequacy -- you should see the neural ODE tracking the characteristic rise-and-decay pattern of the two-compartment transfer system, with subject-specific variation captured by the random effects.
+In this step, you will overlay the model predictions on the raw observations for the first two subjects. Plotting fitted trajectories against observed data provides an immediate visual assessment of model adequacy - you should see the neural ODE tracking the characteristic rise-and-decay pattern of the two-compartment transfer system, with subject-specific variation captured by the random effects.
 
 ```julia
 p_fit_saem = plot_fits(
@@ -424,7 +424,7 @@ p_fit_saem = plot_fits(
 p_fit_saem
 ```
 
-<!-- injected:t3-pfit -->
+<!- injected:t3-pfit ->
 ![Fitted trajectories for the first two subjects (SAEM, default settings).](figures/t3/p_fit_saem.png)
 
 ## Step 6: Inspect the Observation Distribution
@@ -442,7 +442,7 @@ p_obs_saem = plot_observation_distributions(
 p_obs_saem
 ```
 
-<!-- injected:t3-pobs -->
+<!- injected:t3-pobs ->
 ![Predicted observation distribution at the first observation of the first subject.](figures/t3/p_obs_saem.png)
 
 ## Interpretation Notes

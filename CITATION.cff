@@ -3,25 +3,29 @@ message: "If you use NoLimits.jl in your research, please cite it as below."
 title: "NoLimits.jl"
 abstract: >-
   A Julia framework for nonlinear mixed-effects modeling of longitudinal data,
-  unifying mechanistic ODEs, hidden Markov models, neural-network and soft-tree
+  unifying mechanistic ODEs, Markov models, neural-network and soft-tree
   components, and flexible random-effect distributions under frequentist,
   Bayesian, and variational estimation through a single fitting interface.
 type: software
 authors:
   - family-names: "Huth"
     given-names: "Manuel"
-    affiliation: "University of Bonn"
+    affiliation: "Bonn Center for Mathematical Life Sciences, University of Bonn"
   - family-names: "Arruda"
     given-names: "Jonas"
+    affiliation: "Bonn Center for Mathematical Life Sciences, University of Bonn"
   - family-names: "Peiter"
     given-names: "Clemens"
+    affiliation: "Bonn Center for Mathematical Life Sciences, University of Bonn"
   - family-names: "Gusinow"
     given-names: "Roy"
+    affiliation: "Bonn Center for Mathematical Life Sciences, University of Bonn"
   - family-names: "Schmid"
     given-names: "Nina"
+    affiliation: "Bonn Center for Mathematical Life Sciences, University of Bonn"
   - family-names: "Hasenauer"
     given-names: "Jan"
-    affiliation: "University of Bonn"
+    affiliation: "Bonn Center for Mathematical Life Sciences, University of Bonn"
 version: "0.1.0"
 license: MIT
 repository-code: "https://github.com/manuhuth/NoLimits.jl"

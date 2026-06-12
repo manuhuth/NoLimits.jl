@@ -116,8 +116,8 @@ For square-matrix parameters, `Multistart` symmetrizes the sampled matrix and ap
 
 Two sampling strategies are available:
 
-- **`sampling=:random`** -- Draws are taken directly from the specified distributions.
-- **`sampling=:lhs`** -- Latin Hypercube Sampling is used when the distribution supports quantile-based inversion, producing more uniform coverage of the parameter space. For distributions where a direct LHS quantile path is unavailable, the method falls back to random draws.
+- **`sampling=:random`** - Draws are taken directly from the specified distributions.
+- **`sampling=:lhs`** - Latin Hypercube Sampling is used when the distribution supports quantile-based inversion, producing more uniform coverage of the parameter space. For distributions where a direct LHS quantile path is unavailable, the method falls back to random draws.
 
 ## Requested vs. Used Draws
 
@@ -169,7 +169,7 @@ All fit keywords are forwarded to the wrapped method, with one exception:
 
 - **`theta_0_untransformed`** is ignored (with a warning), because `Multistart` manages starting points internally.
 
-All other keywords -- such as `constants`, `constants_re`, `ode_args`, `ode_kwargs`, `serialization`, and `store_data_model` -- are passed through unchanged.
+All other keywords - such as `constants`, `constants_re`, `ode_args`, `ode_kwargs`, `serialization`, and `store_data_model` - are passed through unchanged.
 
 ## Multistart Result Accessors
 

@@ -4,9 +4,9 @@ Covariates encode subject-level attributes, time-varying measurements, and exter
 
 NoLimits distinguishes three covariate classes, each with distinct semantics for how values are resolved at evaluation time:
 
-- **Varying covariates** (`Covariate`, `CovariateVector`) -- values that change across observations and are accessed row-by-row from the data.
-- **Constant covariates** (`ConstantCovariate`, `ConstantCovariateVector`) -- values that remain fixed within a grouping level (e.g., per subject or per site) and are extracted once per group.
-- **Dynamic covariates** (`DynamicCovariate`, `DynamicCovariateVector`) -- time-series values that are converted into continuous interpolating functions, enabling evaluation at arbitrary time points within differential equations and formulas.
+- **Varying covariates** (`Covariate`, `CovariateVector`) - values that change across observations and are accessed row-by-row from the data.
+- **Constant covariates** (`ConstantCovariate`, `ConstantCovariateVector`) - values that remain fixed within a grouping level (e.g., per subject or per site) and are extracted once per group.
+- **Dynamic covariates** (`DynamicCovariate`, `DynamicCovariateVector`) - time-series values that are converted into continuous interpolating functions, enabling evaluation at arbitrary time points within differential equations and formulas.
 
 ## Core Syntax
 
@@ -38,7 +38,7 @@ Note the following macro-level conventions:
 
 ## Supported Interpolation Types
 
-Dynamic covariates construct interpolating functions from observed time--value pairs using [DataInterpolations.jl](https://docs.sciml.ai/DataInterpolations/stable/). The supported interpolation methods are `ConstantInterpolation`, `SmoothedConstantInterpolation`, `LinearInterpolation`, `QuadraticInterpolation`, `LagrangeInterpolation`, `QuadraticSpline`, `CubicSpline`, and `AkimaInterpolation` (see the [Covariate Types](../api.md#Covariate-Types) section of the API reference for the per-method minimum-observation requirements).
+Dynamic covariates construct interpolating functions from observed time-value pairs using [DataInterpolations.jl](https://docs.sciml.ai/DataInterpolations/stable/). The supported interpolation methods are `ConstantInterpolation`, `SmoothedConstantInterpolation`, `LinearInterpolation`, `QuadraticInterpolation`, `LagrangeInterpolation`, `QuadraticSpline`, `CubicSpline`, and `AkimaInterpolation` (see the [Covariate Types](../api.md#Covariate-Types) section of the API reference for the per-method minimum-observation requirements).
 
 When no interpolation is specified, `DynamicCovariate` defaults to `LinearInterpolation`. To use a non-default method, ensure that `DataInterpolations` is loaded in the model-definition environment (e.g., `using DataInterpolations`).
 

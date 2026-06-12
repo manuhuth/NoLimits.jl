@@ -12,7 +12,7 @@ The method applies a change of variables that maps the random-effects vector $b$
 
 $$\log L(\theta) \approx \text{signed-logsumexp}_r \bigl[\log |w_r| + \textstyle\sum_i \ell_i(b_r, \theta) + \log c(b_r, z_r)\bigr]$$
 
-where $\{(z_r, w_r)\}$ are the Smolyak–GH nodes and weights, $b_r = T(z_r)$ is the node in natural parameter space via a transport map $T$, and $\log c$ is a log-correction factor that accounts for the change of measure.
+where $\{(z_r, w_r)\}$ are the Smolyak-GH nodes and weights, $b_r = T(z_r)$ is the node in natural parameter space via a transport map $T$, and $\log c$ is a log-correction factor that accounts for the change of measure.
 
 The **Smolyak construction** controls the curse of dimensionality: rather than forming the full tensor product of one-dimensional GH rules (which grows exponentially in the number of random effects), Smolyak grids include only a judiciously chosen subset of tensor-product points. This keeps the number of nodes manageable even for moderately high-dimensional random-effects vectors while preserving the accuracy of the approximation.
 
@@ -129,9 +129,9 @@ NoLimits.GHQuadrature(;
 
 ### `level`
 
-Controls the accuracy of the Smolyak–GH quadrature. Can be:
+Controls the accuracy of the Smolyak-GH quadrature. Can be:
 
-- **`Int`** (isotropic): the same level is applied to all RE groups. Levels 1–3 are numerically stable; higher levels can exhibit cancellation in the signed logsumexp for non-Gaussian posteriors.
+- **`Int`** (isotropic): the same level is applied to all RE groups. Levels 1-3 are numerically stable; higher levels can exhibit cancellation in the signed logsumexp for non-Gaussian posteriors.
 - **`NamedTuple`** (anisotropic): a different level per RE group, e.g. `level = (eta_id = 3, eta_site = 2)`. RE groups not mentioned default to level 1. Useful when different random effects are expected to need different quadrature accuracy.
 - **`Vector{Int}`** (progressive refinement): runs optimization sequentially through the listed levels, warm-starting each from the previous result. For example, `level = [1, 2]` first optimizes at level 1 and then refines at level 2 starting from the level-1 estimates. This can improve stability when starting values are uncertain.
 
@@ -174,7 +174,7 @@ The Smolyak weights alternate in sign at higher levels (inclusion-exclusion cons
 
 Practical guidance:
 
-- Levels 1–3 are numerically stable for most NLME models with moderate data.
+- Levels 1-3 are numerically stable for most NLME models with moderate data.
 - If instability appears at level 2, try `level = [1, 2]` (progressive refinement) to reach a better starting region first.
 - If instability persists, fall back to `Laplace`, which avoids this issue by design.
 - For heavily non-Gaussian posteriors or very informative data, `MCEM` or `SAEM` may be more appropriate.

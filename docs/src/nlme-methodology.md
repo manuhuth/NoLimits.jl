@@ -164,7 +164,7 @@ is the negative Hessian of the log-joint at the mode.
 ### FOCEI approximation
 
 [FOCEI](estimation/focei.md) is the Laplace approximation with $H_i$ replaced by the
-expected-information (Gauss–Newton) form [lindstrom1990nonlinear, wang2007derivation](@cite)
+expected-information (Gauss-Newton) form [lindstrom1990nonlinear, wang2007derivation](@cite)
 
 ```math
 H_i(\theta) = \sum_{j} J_{ij}^{\top}\, \mathcal{I}(\phi_{ij})\, J_{ij} - \nabla_\eta^2 \log p_\eta(\hat\eta_i \mid \theta),
@@ -187,7 +187,7 @@ Q(\theta \mid \theta^{(t)}) = \sum_{i=1}^{N} \mathbb{E}_{\eta \sim p_{\eta\mid y
 
 When this expectation is intractable, [MCEM](estimation/mcem.md) replaces it by a Monte
 Carlo average over samples from $p_{\eta\mid y}$ [wei1990monte](@cite). [SAEM](estimation/saem.md)
-instead maintains a Robbins–Monro stochastic approximation of $Q$
+instead maintains a Robbins-Monro stochastic approximation of $Q$
 [delyon1999convergence, kuhn2004coupling, kuhn2005maximum](@cite),
 
 ```math
@@ -215,7 +215,7 @@ p(\theta, \eta \mid y) \;\propto\; p(\theta) \prod_{i=1}^{N} p_{y,\eta}(y_i, \et
 
 using the Turing.jl backend [turingjl](@cite) [gelfand1990sampling, gelman1995bayesian](@cite),
 while [variational inference](estimation/vi.md) approximates the posterior by minimizing a
-Kullback–Leibler divergence within a parametric family [blei2017variational](@cite).
+Kullback-Leibler divergence within a parametric family [blei2017variational](@cite).
 
 ## Prediction
 

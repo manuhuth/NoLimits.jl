@@ -12,7 +12,7 @@ the log-joint) is formed.
 
 The Laplace marginal-likelihood approximation requires the negative Hessian of the
 individual log-joint with respect to the random effects, evaluated at the EB mode. FOCEI
-replaces this exact Hessian with the **expected-information (Gauss–Newton) form**
+replaces this exact Hessian with the **expected-information (Gauss-Newton) form**
 
 ```math
 H_i(\theta) \;=\; \sum_{j} J_{ij}^{\top}\, \mathcal{I}(\phi_{ij})\, J_{ij} \;-\; \nabla_{\eta}^2 \log p_\eta(\hat\eta_i \mid \theta),

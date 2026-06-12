@@ -106,14 +106,14 @@ The refit determines which parameters to sample as follows:
 
 The MCMC refit can be configured in two ways. Either pass a fully configured method object:
 
-- `mcmc_method::NoLimits.MCMC` -- an explicit MCMC method instance.
+- `mcmc_method::NoLimits.MCMC` - an explicit MCMC method instance.
 
 Or configure the sampler through individual keyword arguments:
 
-- `mcmc_sampler` -- the sampling algorithm (defaults to Turing's NUTS sampler).
-- `mcmc_turing_kwargs` -- keyword arguments forwarded to Turing's sampling call.
-- `mcmc_adtype` -- automatic differentiation backend for the sampler.
-- `mcmc_fit_kwargs` -- additional keyword arguments for the underlying `fit_model` call.
+- `mcmc_sampler` - the sampling algorithm (defaults to Turing's NUTS sampler).
+- `mcmc_turing_kwargs` - keyword arguments forwarded to Turing's sampling call.
+- `mcmc_adtype` - automatic differentiation backend for the sampler.
+- `mcmc_fit_kwargs` - additional keyword arguments for the underlying `fit_model` call.
 
 When no explicit configuration is provided, defaults from `NoLimits.MCMC` are used with a NUTS sampler.
 

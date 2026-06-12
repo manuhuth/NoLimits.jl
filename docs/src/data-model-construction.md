@@ -2,7 +2,7 @@
 
 The `DataModel` constructor binds a `@Model` specification to a tabular dataset, producing the per-individual data structures required by estimation, simulation, and plotting workflows.
 
-At construction time, `DataModel` validates that the dataset schema is consistent with the model definition, splits rows by individual identifier, builds observation and covariate series, prepares random-effect group mappings, and -- for ODE models with event columns -- assembles event callback metadata.
+At construction time, `DataModel` validates that the dataset schema is consistent with the model definition, splits rows by individual identifier, builds observation and covariate series, prepares random-effect group mappings, and - for ODE models with event columns - assembles event callback metadata.
 
 ## Constructor
 

@@ -311,13 +311,34 @@ plot_multistart_fixed_effect_variability
 
 ## Distributions
 
-### Hidden Markov Models
+### Markov Models
+
+NoLimits supports both hidden-state and observed-state Markov outcome models, in discrete
+and continuous time.
+
+#### Hidden Markov models
+
+The state is latent and drives an emission distribution.
 
 ```@docs
 DiscreteTimeDiscreteStatesHMM
+ContinuousTimeDiscreteStatesHMM
+MVDiscreteTimeDiscreteStatesHMM
+MVContinuousTimeDiscreteStatesHMM
 probabilities_hidden_states
 posterior_hidden_states
-ContinuousTimeDiscreteStatesHMM
+```
+
+#### Observed-state Markov models
+
+The state itself is the observation; `coarsed` wraps an observed-state model for
+set-valued (ambiguous) observations.
+
+```@docs
+DiscreteTimeObservedStatesMarkovModel
+ContinuousTimeObservedStatesMarkovModel
+CoarsedObservedStatesMarkovModel
+coarsed
 ```
 
 ### Normalizing Flows

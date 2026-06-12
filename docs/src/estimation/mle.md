@@ -101,19 +101,19 @@ The `MLE` objective is the negative log-likelihood of the data given the model p
 
 The following keyword arguments are accepted by `fit_model(dm, NoLimits.MLE(...); ...)`:
 
-- `constants` -- named tuple of fixed-effect values to hold constant during optimization.
-- `penalty` -- named tuple of per-parameter penalty weights (L2, on the natural scale).
-- `ode_args`, `ode_kwargs` -- additional positional and keyword arguments forwarded to the ODE solver.
-- `serialization` -- ensemble algorithm controlling parallelism (e.g., `EnsembleThreads()`).
-- `rng` -- random number generator, used where stochastic initialization is needed.
-- `theta_0_untransformed` -- custom starting values on the natural (untransformed) scale.
-- `store_data_model` -- whether to store the `DataModel` in the result (default: `true`).
+- `constants` - named tuple of fixed-effect values to hold constant during optimization.
+- `penalty` - named tuple of per-parameter penalty weights (L2, on the natural scale).
+- `ode_args`, `ode_kwargs` - additional positional and keyword arguments forwarded to the ODE solver.
+- `serialization` - ensemble algorithm controlling parallelism (e.g., `EnsembleThreads()`).
+- `rng` - random number generator, used where stochastic initialization is needed.
+- `theta_0_untransformed` - custom starting values on the natural (untransformed) scale.
+- `store_data_model` - whether to store the `DataModel` in the result (default: `true`).
 
 The keyword `constants_re` does not apply to `MLE`, as this method does not involve random effects.
 
 ## ODE Example
 
-Models that include ordinary differential equations are handled transparently -- no special configuration is needed beyond specifying the ODE system. The example below fits a scalar ODE with a quadratic nonlinearity.
+Models that include ordinary differential equations are handled transparently - no special configuration is needed beyond specifying the ODE system. The example below fits a scalar ODE with a quadratic nonlinearity.
 
 ```julia
 using NoLimits

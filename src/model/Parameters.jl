@@ -273,10 +273,9 @@ the fixed-effects `ComponentArray`.
 - `chain`: the neural-network architecture, either a `Lux.Chain` or a
   `SimpleChains.SimpleChain`. The `SimpleChain` backend gives much lower allocation and
   faster forward passes for small CPU MLPs and is fully ForwardDiff-compatible, so it works
-  with every ForwardDiff-based fitting method (MLE/MAP/Laplace/FOCEI/SAEM/MCEM/…). Note: a
-  `SimpleChain` is **not** Enzyme-differentiable (its `@turbo` kernels); use a `Lux.Chain`
-  if you need `AutoEnzyme`. Output shape and the call convention are identical for both
-  backends, so a `SimpleChain` is a drop-in replacement for a `Lux.Chain`.
+  with every ForwardDiff-based fitting method (MLE/MAP/Laplace/FOCEI/SAEM/MCEM/…). Output
+  shape and the call convention are identical for both backends, so a `SimpleChain` is a
+  drop-in replacement for a `Lux.Chain`.
 
 # Keyword Arguments
 - `name::Symbol = :unnamed`: parameter name (injected automatically by `@fixedEffects`).
@@ -323,8 +322,7 @@ end
 SimpleChains.jl backend for [`NNParameters`](@ref). A `SimpleChains.SimpleChain` already stores
 its parameters as a flat `Vector`, so they are kept as-is (no `Optimisers.destructure`/`reconstructor`
 round-trip); at runtime the network is evaluated directly as `chain(input, θ_slice)`. Parameters
-are initialised as `Float64`. This backend is ForwardDiff-compatible but **not**
-Enzyme-differentiable — see the main [`NNParameters`](@ref) docstring for the full caveat.
+are initialised as `Float64`. This backend is ForwardDiff-compatible.
 """
 function NNParameters(chain::SimpleChain; name::Symbol = :unnamed,
         function_name::Symbol, seed::Integer = 0,

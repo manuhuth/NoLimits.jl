@@ -1,18 +1,18 @@
 # Function Approximators: Neural Networks and Soft Trees
 
-Nonlinear mixed-effects models often require flexible functional forms to capture relationships that cannot be specified a priori. This page focuses on two classes of learnable function approximators -- neural networks and soft decision trees -- that can be embedded directly into any model block. Their parameters are estimated jointly with all other model parameters during fitting.
+Nonlinear mixed-effects models often require flexible functional forms to capture relationships that cannot be specified a priori. This page focuses on two classes of learnable function approximators - neural networks and soft decision trees - that can be embedded directly into any model block. Their parameters are estimated jointly with all other model parameters during fitting.
 
 The supported parameter constructors are:
 
-- `NNParameters(...)` -- wraps a [Lux.jl](https://github.com/LuxDL/Lux.jl) `Chain` **or** a [SimpleChains.jl](https://github.com/PumasAI/SimpleChains.jl) `SimpleChain` neural-network architecture.
-- `SoftTreeParameters(...)` -- constructs a differentiable soft decision tree.
+- `NNParameters(...)` - wraps a [Lux.jl](https://github.com/LuxDL/Lux.jl) `Chain` **or** a [SimpleChains.jl](https://github.com/PumasAI/SimpleChains.jl) `SimpleChain` neural-network architecture.
+- `SoftTreeParameters(...)` - constructs a differentiable soft decision tree.
 
 Both are declared in `@fixedEffects` and exposed as callable model functions through the `function_name` keyword argument.
 
 !!! note "Other learnable function approximators"
     Neural networks and soft trees are not the only learnable function-approximator
     parameter blocks. B-splines (`SplineParameters`) and normalizing planar flows
-    (`NPFParameter`) are declared the same way -- in `@fixedEffects`, with a
+    (`NPFParameter`) are declared the same way - in `@fixedEffects`, with a
     `function_name` (for splines) and used through `@randomEffects` (for flows). They are
     documented in [`@fixedEffects`](@ref) and [`@randomEffects`](@ref); full constructor
     signatures are in the [Parameter Types](../api.md#Parameter-Types) section of the API
@@ -24,8 +24,6 @@ Both are declared in `@fixedEffects` and exposed as callable model functions thr
     `SimpleChain` is purpose-built for small CPU networks and gives noticeably faster,
     lower-allocation forward passes and gradients; because it is fully ForwardDiff-compatible
     it works with every ForwardDiff-based estimator (MLE, MAP, Laplace, FOCEI, SAEM, MCEM, …).
-    The one restriction: a `SimpleChain` is **not** differentiable by Enzyme (its `@turbo`
-    kernels), so keep a Lux `Chain` if you fit with `AutoEnzyme`.
 
     ```julia
     using SimpleChains
@@ -38,11 +36,11 @@ Both are declared in `@fixedEffects` and exposed as callable model functions thr
 
 Model functions created from `NNParameters` and `SoftTreeParameters` are available throughout the model specification. Specifically, they can appear in:
 
-- `@randomEffects` -- parameterizing the distributions of random effects
-- `@preDifferentialEquation` -- computing time-constant derived quantities
-- `@DifferentialEquation` -- within the right-hand side of ODE systems
-- `@initialDE` -- setting initial conditions
-- `@formulas` -- constructing the observation model
+- `@randomEffects` - parameterizing the distributions of random effects
+- `@preDifferentialEquation` - computing time-constant derived quantities
+- `@DifferentialEquation` - within the right-hand side of ODE systems
+- `@initialDE` - setting initial conditions
+- `@formulas` - constructing the observation model
 
 ## Pattern 1: Population-Level Approximators with Separate Random Effects
 

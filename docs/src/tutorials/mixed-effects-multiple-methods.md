@@ -1,13 +1,13 @@
 # Mixed-Effects Tutorial 1: Nonlinear Random-Effects Model Across Multiple Estimation Methods
 
-Nonlinear mixed-effects (NLME) models are a cornerstone of longitudinal data analysis in the biological sciences. They describe how individual trajectories vary around a shared population-level trend -- capturing, for example, how different organisms grow at different rates toward different asymptotes, even when the underlying biological mechanism is the same. A natural question arises in practice: **how sensitive are my conclusions to the estimation algorithm I choose?** This tutorial addresses that question directly. You will fit a single nonlinear growth model to a classic biological dataset using four distinct estimation strategies, then compare the results in terms of fitted trajectories, observation-level predictions, and parameter uncertainty. By the end, you will have a practical template for multi-method comparison and a clear intuition for when each approach is most appropriate.
+Nonlinear mixed-effects (NLME) models are a cornerstone of longitudinal data analysis in the biological sciences. They describe how individual trajectories vary around a shared population-level trend - capturing, for example, how different organisms grow at different rates toward different asymptotes, even when the underlying biological mechanism is the same. A natural question arises in practice: **how sensitive are my conclusions to the estimation algorithm I choose?** This tutorial addresses that question directly. You will fit a single nonlinear growth model to a classic biological dataset using four distinct estimation strategies, then compare the results in terms of fitted trajectories, observation-level predictions, and parameter uncertainty. By the end, you will have a practical template for multi-method comparison and a clear intuition for when each approach is most appropriate.
 
 ## What You Will Learn
 
 By the end of this tutorial, you will be able to:
 
 - **Build** a nonlinear mixed-effects model with lognormal random effects on a growth asymptote.
-- **Configure** four fundamentally different estimation strategies -- Laplace approximation, MCEM, SAEM, and full Bayesian MCMC -- with sensible defaults.
+- **Configure** four fundamentally different estimation strategies - Laplace approximation, MCEM, SAEM, and full Bayesian MCMC - with sensible defaults.
 - **Compare** methods in predictive space using NoLimits' diagnostic and visualization tools, rather than relying solely on objective function values.
 - **Interpret** where the estimators converge, where they diverge, and what each method uniquely provides.
 
@@ -38,7 +38,7 @@ df = load_orange()
 first(df, 8)
 ```
 
-<!-- injected:t1-dfhead -->
+<!- injected:t1-dfhead ->
 ```text
 8×4 DataFrame
  Row │ rownames  Tree   age    circumference
@@ -58,7 +58,7 @@ first(df, 8)
 
 Next, you will specify the statistical model. The biological reasoning is straightforward: each tree's circumference follows a saturating growth curve, increasing from an initial size toward a tree-specific maximum. You will model this maximum (the asymptote) as a random effect, allowing each tree to have its own upper bound while sharing a common growth shape across the population.
 
-Concretely, the model uses a logistic-style saturating function with three population-level parameters: an initial size `phi1`, a log-scale population mean for the asymptote `log_vmax`, and a midpoint parameter `phi3` that controls the timing of the growth inflection. Each tree's individual asymptote `vmax_i` is drawn from a lognormal distribution, which ensures positivity and places between-tree variability on a multiplicative scale -- a natural choice when larger individuals tend to show proportionally larger variation. The observation model is also lognormal, so residual variability scales with the predicted circumference rather than being additive. To maintain numerical stability during optimization, the predicted mean is passed through a `softplus` function that enforces positivity without introducing hard discontinuities.
+Concretely, the model uses a logistic-style saturating function with three population-level parameters: an initial size `phi1`, a log-scale population mean for the asymptote `log_vmax`, and a midpoint parameter `phi3` that controls the timing of the growth inflection. Each tree's individual asymptote `vmax_i` is drawn from a lognormal distribution, which ensures positivity and places between-tree variability on a multiplicative scale - a natural choice when larger individuals tend to show proportionally larger variation. The observation model is also lognormal, so residual variability scales with the predicted circumference rather than being additive. To maintain numerical stability during optimization, the predicted mean is passed through a `softplus` function that enforces positivity without introducing hard discontinuities.
 
 All fixed effects are given weakly informative priors. These priors are not strictly necessary for the optimization-based methods (Laplace, MCEM, SAEM), but they are required for MCMC and serve to regularize the likelihood surface for all methods.
 
@@ -101,7 +101,7 @@ model_summary = NoLimits.summarize(model)
 model_summary
 ```
 
-<!-- injected:t1-model -->
+<!- injected:t1-model ->
 ```text
 ModelSummary
 ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -164,7 +164,7 @@ Helper functions
 
 ## Step 3: Build the DataModel and Configure Estimation Methods
 
-In this step, you will wrap the model and data together into a `DataModel` -- a structure that validates the data schema, groups individuals into batches for the random effects structure, and prepares internal representations for each estimation method.
+In this step, you will wrap the model and data together into a `DataModel` - a structure that validates the data schema, groups individuals into batches for the random effects structure, and prepares internal representations for each estimation method.
 
 You will then configure four estimation methods. Each represents a fundamentally different strategy for handling the random effects integral that appears in the marginal likelihood:
 
@@ -174,11 +174,11 @@ You will then configure four estimation methods. Each represents a fundamentally
 
 - **SAEM** (Stochastic Approximation EM) follows a similar alternating logic but replaces the full sampling step with a stochastic approximation that updates a running average of sufficient statistics. This means it converges with fewer samples per iteration than MCEM, making it attractive for larger problems, though its stochastic nature can make convergence harder to diagnose.
 
-- **MCMC** (Markov chain Monte Carlo) samples the full joint posterior over both fixed and random effects. Rather than returning a single "best" parameter estimate, it produces a collection of plausible parameter sets that together characterize uncertainty. This provides the richest picture of parameter uncertainty -- including asymmetric or multimodal posteriors -- but is the most computationally expensive and requires careful convergence assessment.
+- **MCMC** (Markov chain Monte Carlo) samples the full joint posterior over both fixed and random effects. Rather than returning a single "best" parameter estimate, it produces a collection of plausible parameter sets that together characterize uncertainty. This provides the richest picture of parameter uncertainty - including asymmetric or multimodal posteriors - but is the most computationally expensive and requires careful convergence assessment.
 
 The configuration values below are chosen to balance runtime and stability for this tutorial; in a research setting, you would typically increase iteration counts, sample sizes, and warmup periods. SAEM is run entirely with its default settings (`NoLimits.SAEM()`), which is a deliberate point of this tutorial: with sensible starting values, the out-of-the-box configuration converges to the same solution as the carefully tuned estimators, with no method-specific tuning required.
 
-One detail deserves emphasis here, because it matters for every estimator and especially for the stochastic ones. The initial value of `log_vmax` is set to `5.0` -- close to the log of a plausible asymptote for these trees (`exp(5.0) ≈ 148`). Stochastic-approximation methods like SAEM draw the random effects from the *current* parameter values at each iteration, so a starting point far from the data (for example `log_vmax = 10.0`, implying an asymptote near `22000`) can trap the sampler in a degenerate region of the likelihood and prevent convergence, even when the gradient-based methods would eventually escape it. Choosing starting values on the right order of magnitude is one of the most effective and least appreciated ways to make mixed-effects estimation robust.
+One detail deserves emphasis here, because it matters for every estimator and especially for the stochastic ones. The initial value of `log_vmax` is set to `5.0` - close to the log of a plausible asymptote for these trees (`exp(5.0) ≈ 148`). Stochastic-approximation methods like SAEM draw the random effects from the *current* parameter values at each iteration, so a starting point far from the data (for example `log_vmax = 10.0`, implying an asymptote near `22000`) can trap the sampler in a degenerate region of the likelihood and prevent convergence, even when the gradient-based methods would eventually escape it. Choosing starting values on the right order of magnitude is one of the most effective and least appreciated ways to make mixed-effects estimation robust.
 
 ```julia
 dm = DataModel(model, df; primary_id=:Tree, time_col=:age)
@@ -213,7 +213,7 @@ dm_summary = NoLimits.summarize(dm)
 dm_summary
 ```
 
-<!-- injected:t1-dm -->
+<!- injected:t1-dm ->
 ```text
 DataModelSummary
 ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -307,7 +307,7 @@ fit_summary_mcmc = NoLimits.summarize(res_mcmc)
 fit_summary_laplace
 ```
 
-<!-- injected:t1-fitlap -->
+<!- injected:t1-fitlap ->
 ```text
 FitResultSummary
 ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -354,7 +354,7 @@ objectives = (
 objectives
 ```
 
-<!-- injected:t1-obj -->
+<!- injected:t1-obj ->
 ```text
 (laplace = 140.19104904494876, mcem = -157.26026347250098, saem = -154.8177352877204)
 ```
@@ -364,11 +364,11 @@ The signs and magnitudes differ because each method defines its objective differ
 - **Laplace** reports the minimized value of the Laplace-approximated marginal likelihood (a loss function, so lower is better).
 - **MCEM** and **SAEM** report the EM auxiliary quantity `Q` at the final iterate, which is a lower bound on the log-likelihood (higher is better).
 
-Because these quantities differ by construction, raw values are not directly comparable across methods. Within a single method family, however, objective values can be compared meaningfully -- for example, when evaluating different starting points or model specifications with the same estimator.
+Because these quantities differ by construction, raw values are not directly comparable across methods. Within a single method family, however, objective values can be compared meaningfully - for example, when evaluating different starting points or model specifications with the same estimator.
 
 ## Step 6: Compare Parameter Estimates Side by Side
 
-While objective values are not comparable across methods, the *parameter estimates* are -- and lining them up in a single table is the quickest way to see whether the four estimators agree on the population structure. NoLimits provides `compare_parameters` for exactly this purpose. It accepts any number of `FitResult` objects, matches parameters by name across models, and reports them on a common scale (`:natural` by default). Parameters present in only some models are shown as `-` in the columns where they are absent.
+While objective values are not comparable across methods, the *parameter estimates* are - and lining them up in a single table is the quickest way to see whether the four estimators agree on the population structure. NoLimits provides `compare_parameters` for exactly this purpose. It accepts any number of `FitResult` objects, matches parameters by name across models, and reports them on a common scale (`:natural` by default). Parameters present in only some models are shown as `-` in the columns where they are absent.
 
 For the optimization-based methods (Laplace, MCEM, SAEM) the reported value is the point estimate at the optimum. For MCMC, which returns a full posterior rather than a single point, the column reports the **posterior median** of each parameter (computed per component from the post-warmup draws), giving a robust central summary that lines up directly with the point estimates from the other methods.
 
@@ -381,7 +381,7 @@ param_comparison = compare_parameters(
 param_comparison
 ```
 
-<!-- injected:t1-paramcompare -->
+<!- injected:t1-paramcompare ->
 ```text
 ParameterComparison
 ===================================================
@@ -394,7 +394,7 @@ ParameterComparison
   sigma        0.1126    0.1125    0.1054     0.118
 ```
 
-The agreement is striking: all four methods recover the same initial size (`phi1 ≈ 31`), the same log-asymptote (`log_vmax ≈ 5.04`, i.e. an asymptotic circumference near `155`), the same growth midpoint (`phi3 ≈ 640`), and the same between-tree and residual variability (`omega ≈ 0.16`, `sigma ≈ 0.11`). The small differences between columns are well within the stochastic noise of the Monte Carlo methods. This is the multi-method comparison distilled to a single view -- when the estimates line up this cleanly, you can be confident your conclusions are not an artifact of the estimation algorithm.
+The agreement is striking: all four methods recover the same initial size (`phi1 ≈ 31`), the same log-asymptote (`log_vmax ≈ 5.04`, i.e. an asymptotic circumference near `155`), the same growth midpoint (`phi3 ≈ 640`), and the same between-tree and residual variability (`omega ≈ 0.16`, `sigma ≈ 0.11`). The small differences between columns are well within the stochastic noise of the Monte Carlo methods. This is the multi-method comparison distilled to a single view - when the estimates line up this cleanly, you can be confident your conclusions are not an artifact of the estimation algorithm.
 
 As an alternative to the `labels` keyword, you can pass `label => fit` pairs directly:
 
@@ -465,7 +465,7 @@ Laplace fit plot:
 p_fit_laplace
 ```
 
-<!-- injected:t1-pfitlap -->
+<!- injected:t1-pfitlap ->
 ![Laplace fitted trajectories for the first two trees.](figures/t1/p_fit_laplace.png)
 
 MCEM fit plot:
@@ -474,7 +474,7 @@ MCEM fit plot:
 p_fit_mcem
 ```
 
-<!-- injected:t1-pfitmcem -->
+<!- injected:t1-pfitmcem ->
 ![MCEM fitted trajectories for the first two trees.](figures/t1/p_fit_mcem.png)
 
 SAEM fit plot:
@@ -483,10 +483,10 @@ SAEM fit plot:
 p_fit_saem
 ```
 
-<!-- injected:t1-pfitsaem -->
+<!- injected:t1-pfitsaem ->
 ![SAEM (default settings) fitted trajectories for the first two trees.](figures/t1/p_fit_saem.png)
 
-With its default settings and sensible starting values, SAEM converges to the same solution as the other estimators: its fitted trajectories are visually indistinguishable from the Laplace, MCEM, and MCMC fits, tracking the saturating growth curve cleanly through the observed age range. This is the payoff of the starting-value discussion in Step 3 -- once the sampler begins in a sensible region of parameter space, the out-of-the-box stochastic-approximation configuration recovers the population parameters without any method-specific tuning. The recovered estimates (`phi3 ≈ 639`, `log_vmax ≈ 5.04`, `omega ≈ 0.16`) match the gradient-based and fully Bayesian methods to within stochastic noise.
+With its default settings and sensible starting values, SAEM converges to the same solution as the other estimators: its fitted trajectories are visually indistinguishable from the Laplace, MCEM, and MCMC fits, tracking the saturating growth curve cleanly through the observed age range. This is the payoff of the starting-value discussion in Step 3 - once the sampler begins in a sensible region of parameter space, the out-of-the-box stochastic-approximation configuration recovers the population parameters without any method-specific tuning. The recovered estimates (`phi3 ≈ 639`, `log_vmax ≈ 5.04`, `omega ≈ 0.16`) match the gradient-based and fully Bayesian methods to within stochastic noise.
 
 MCMC fit plot (with posterior predictive bands):
 
@@ -494,7 +494,7 @@ MCMC fit plot (with posterior predictive bands):
 p_fit_mcmc
 ```
 
-<!-- injected:t1-pfitmcmc -->
+<!- injected:t1-pfitmcmc ->
 ![MCMC fitted trajectories with posterior predictive bands for the first two trees.](figures/t1/p_fit_mcmc.png)
 
 ## Step 8: Observation Distribution Diagnostics (First Individual)
@@ -543,7 +543,7 @@ Laplace observation distribution:
 p_obs_laplace
 ```
 
-<!-- injected:t1-pobslap -->
+<!- injected:t1-pobslap ->
 ![Laplace predicted observation distribution at the first observation of the first tree.](figures/t1/p_obs_laplace.png)
 
 MCEM observation distribution:
@@ -552,7 +552,7 @@ MCEM observation distribution:
 p_obs_mcem
 ```
 
-<!-- injected:t1-pobsmcem -->
+<!- injected:t1-pobsmcem ->
 ![MCEM predicted observation distribution at the first observation of the first tree.](figures/t1/p_obs_mcem.png)
 
 SAEM observation distribution:
@@ -561,7 +561,7 @@ SAEM observation distribution:
 p_obs_saem
 ```
 
-<!-- injected:t1-pobssaem -->
+<!- injected:t1-pobssaem ->
 ![SAEM predicted observation distribution at the first observation of the first tree.](figures/t1/p_obs_saem.png)
 
 MCMC observation distribution:
@@ -570,7 +570,7 @@ MCMC observation distribution:
 p_obs_mcmc
 ```
 
-<!-- injected:t1-pobsmcmc -->
+<!- injected:t1-pobsmcmc ->
 ![MCMC predicted observation distribution at the first observation of the first tree.](figures/t1/p_obs_mcmc.png)
 
 ## Step 9: Uncertainty Quantification Across Methods
@@ -642,7 +642,7 @@ fit_uq_summary_mcmc = NoLimits.summarize(res_mcmc, uq_mcmc)
 fit_uq_summary_laplace
 ```
 
-<!-- injected:t1-fituqlap -->
+<!- injected:t1-fituqlap ->
 ```text
 UQResultSummary
 ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -682,7 +682,7 @@ Laplace UQ distribution:
 p_uq_laplace
 ```
 
-<!-- injected:t1-puqlap -->
+<!- injected:t1-puqlap ->
 ![Laplace Wald approximate parameter distributions on the natural scale.](figures/t1/p_uq_laplace.png)
 
 MCEM UQ distribution:
@@ -691,7 +691,7 @@ MCEM UQ distribution:
 p_uq_mcem
 ```
 
-<!-- injected:t1-puqmcem -->
+<!- injected:t1-puqmcem ->
 ![MCEM Wald approximate parameter distributions on the natural scale.](figures/t1/p_uq_mcem.png)
 
 SAEM UQ distribution:
@@ -700,7 +700,7 @@ SAEM UQ distribution:
 p_uq_saem
 ```
 
-<!-- injected:t1-puqsaem -->
+<!- injected:t1-puqsaem ->
 ![SAEM Wald approximate parameter distributions on the natural scale.](figures/t1/p_uq_saem.png)
 
 MCMC UQ distribution:
@@ -709,7 +709,7 @@ MCMC UQ distribution:
 p_uq_mcmc
 ```
 
-<!-- injected:t1-puqmcmc -->
+<!- injected:t1-puqmcmc ->
 ![MCMC posterior parameter distributions on the natural scale.](figures/t1/p_uq_mcmc.png)
 
 ## Interpretation and Practical Guidance
@@ -718,8 +718,8 @@ Several principles emerge from this multi-method comparison:
 
 **Evaluate agreement in predictive space, not objective space.** Because each method optimizes a different quantity, comparing raw objective values across methods is misleading. Instead, compare fitted trajectories, observation-level distributions, and uncertainty intervals. When methods agree in predictive space, you can be more confident that your conclusions are robust to the choice of estimator.
 
-**Method agreement on central structure is the norm for well-specified models.** For a dataset like Orange, where the model is a reasonable description of the data-generating process, Laplace, MCEM, and SAEM will typically recover similar point estimates and trajectory shapes. Disagreement is a useful diagnostic signal -- it may indicate model misspecification, insufficient iterations, or a challenging likelihood surface.
+**Method agreement on central structure is the norm for well-specified models.** For a dataset like Orange, where the model is a reasonable description of the data-generating process, Laplace, MCEM, and SAEM will typically recover similar point estimates and trajectory shapes. Disagreement is a useful diagnostic signal - it may indicate model misspecification, insufficient iterations, or a challenging likelihood surface.
 
 **MCMC provides the richest uncertainty characterization.** Posterior predictive bands and marginal posterior distributions from MCMC capture asymmetry, multimodality, and correlation structure most faithfully.
 
-**Choose your method based on your inferential goal.** If you need fast point estimates with approximate standard errors for model selection or screening, Laplace is often sufficient. If you need robust estimates under flexible random-effect distributions, SAEM or MCEM may be preferable. If full posterior inference is the goal -- for example, for decision-making under uncertainty or for propagating parameter uncertainty into downstream predictions -- MCMC is the strongest choice.
+**Choose your method based on your inferential goal.** If you need fast point estimates with approximate standard errors for model selection or screening, Laplace is often sufficient. If you need robust estimates under flexible random-effect distributions, SAEM or MCEM may be preferable. If full posterior inference is the goal - for example, for decision-making under uncertainty or for propagating parameter uncertainty into downstream predictions - MCMC is the strongest choice.
