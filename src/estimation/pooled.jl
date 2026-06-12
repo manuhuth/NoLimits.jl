@@ -527,10 +527,10 @@ function _pooled_structural_syms(model)
     end
     initial = model.de.initial
     if initial !== nothing
-        m = get_initialde_meta(initial)
-        union!(syms, m.var_syms)
-        union!(syms, m.prop_syms)
-        union!(syms, m.call_syms)
+        ir_init = initial.ir
+        union!(syms, ir_init.var_syms)
+        union!(syms, ir_init.prop_syms)
+        union!(syms, ir_init.call_syms)
     end
     prede = model.de.prede
     if prede !== nothing
