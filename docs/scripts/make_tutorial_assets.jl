@@ -19,7 +19,7 @@ using Random
 using LinearAlgebra
 using OrdinaryDiffEq
 using SciMLBase
-using Lux
+using SimpleChains
 using Turing
 using Plots
 
@@ -151,7 +151,7 @@ function tutorial1()
     plot_fits(res_mcmc; observable = :circumference, individuals_idx = inds, ncols = 2,
         shared_x_axis = true, shared_y_axis = true, plot_mcmc_quantiles = true,
         mcmc_quantiles = [5, 95], mcmc_warmup = 500, mcmc_draws = 300,
-        save_path = fig(slug, "p_fit_mcmc"))
+        rng = Random.Xoshiro(201), save_path = fig(slug, "p_fit_mcmc"))
 
     plot_observation_distributions(
         res_laplace; observables = :circumference, individuals_idx = 1,
@@ -164,8 +164,8 @@ function tutorial1()
         obs_rows = 1, save_path = fig(slug, "p_obs_saem"))
     plot_observation_distributions(
         res_mcmc; observables = :circumference, individuals_idx = 1,
-        obs_rows = 1, mcmc_warmup = 500, mcmc_draws = 300, save_path = fig(
-            slug, "p_obs_mcmc"))
+        obs_rows = 1, mcmc_warmup = 500, mcmc_draws = 300,
+        rng = Random.Xoshiro(202), save_path = fig(slug, "p_obs_mcmc"))
 
     uq_laplace = compute_uq(
         res_laplace; method = :wald, vcov = :hessian, pseudo_inverse = true,
@@ -331,10 +331,10 @@ function tutorial3()
     txt(slug, "df_head", first(df, 10))
 
     width_nn = 2
-    chain_A1 = Lux.Chain(Lux.Dense(1, width_nn, tanh), Lux.Dense(width_nn, 1))
-    chain_A2 = Lux.Chain(Lux.Dense(1, width_nn, tanh), Lux.Dense(width_nn, 1))
-    chain_C1 = Lux.Chain(Lux.Dense(1, width_nn, tanh), Lux.Dense(width_nn, 1))
-    chain_C2 = Lux.Chain(Lux.Dense(1, width_nn, tanh), Lux.Dense(width_nn, 1))
+    chain_A1 = SimpleChain(static(1), TurboDense(tanh, width_nn), TurboDense(identity, 1))
+    chain_A2 = SimpleChain(static(1), TurboDense(tanh, width_nn), TurboDense(identity, 1))
+    chain_C1 = SimpleChain(static(1), TurboDense(tanh, width_nn), TurboDense(identity, 1))
+    chain_C2 = SimpleChain(static(1), TurboDense(tanh, width_nn), TurboDense(identity, 1))
 
     model_raw = @Model begin
         @helpers begin
@@ -572,7 +572,8 @@ function tutorial5()
         res_poisson; observables = :seizures, individuals_idx = 1,
         obs_rows = [1, 2], save_path = fig(slug, "p_obs_poisson"))
 
-    uq_poisson = compute_uq(res_poisson; method = :wald, n_draws = 100, level = 0.95)
+    uq_poisson = compute_uq(
+        res_poisson; method = :wald, n_draws = 100, level = 0.95, rng = Random.Xoshiro(151))
     txt(slug, "uq_poisson_summary", NoLimits.summarize(uq_poisson))
     txt(slug, "res_uq_poisson_summary", NoLimits.summarize(res_poisson, uq_poisson))
     plot_uq_distributions(uq_poisson; save_path = fig(slug, "p_uq_poisson"))
@@ -619,7 +620,8 @@ function tutorial5()
     plot_observation_distributions(res_nb; observables = :seizures, individuals_idx = 1,
         obs_rows = [1, 2], save_path = fig(slug, "p_obs_nb"))
 
-    uq_nb = compute_uq(res_nb; method = :wald, n_draws = 100, level = 0.95)
+    uq_nb = compute_uq(
+        res_nb; method = :wald, n_draws = 100, level = 0.95, rng = Random.Xoshiro(152))
     txt(slug, "uq_nb_summary", NoLimits.summarize(uq_nb))
     txt(slug, "res_uq_nb_summary", NoLimits.summarize(res_nb, uq_nb))
     plot_uq_distributions(uq_nb; save_path = fig(slug, "p_uq_nb"))
@@ -698,7 +700,8 @@ function tutorial6()
     plot_observation_distributions(res; observables = :Log_VL, individuals_idx = 1,
         obs_rows = [1, 2], save_path = fig(slug, "p_obs"))
 
-    uq = compute_uq(res; method = :wald, n_draws = 800, level = 0.95)
+    uq = compute_uq(
+        res; method = :wald, n_draws = 800, level = 0.95, rng = Random.Xoshiro(153))
     txt(slug, "uq_summary", NoLimits.summarize(uq))
     txt(slug, "res_uq_summary", NoLimits.summarize(res, uq))
     plot_uq_distributions(uq; scale = :natural, plot_type = :density, show_legend = false,
@@ -814,9 +817,11 @@ function tutorial9()
     txt(slug, "uq_summary", NoLimits.summarize(res_vi, uq_vi))
 
     plot_fits(res_vi; observable = :y, individuals_idx = [1, 2], ncols = 2,
-        plot_mcmc_quantiles = true, mcmc_draws = 120, save_path = fig(slug, "p_fit_vi"))
+        plot_mcmc_quantiles = true, mcmc_draws = 120, rng = Random.Xoshiro(13),
+        save_path = fig(slug, "p_fit_vi"))
     plot_observation_distributions(res_vi; observables = :y, individuals_idx = 1,
-        obs_rows = 1, mcmc_draws = 120, save_path = fig(slug, "p_obs_vi"))
+        obs_rows = 1, mcmc_draws = 120, rng = Random.Xoshiro(14),
+        save_path = fig(slug, "p_obs_vi"))
     return nothing
 end
 

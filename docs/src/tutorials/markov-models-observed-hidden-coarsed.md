@@ -191,6 +191,7 @@ uq_par = uq = NoLimits.compute_uq(
     method=:wald,
     vcov=:hessian,
     pseudo_inverse=false,
+    rng=Random.Xoshiro(1204),
 )
 NoLimits.summarize(uq_par)
 ```

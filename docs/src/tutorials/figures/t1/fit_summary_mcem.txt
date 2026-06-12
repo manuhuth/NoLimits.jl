@@ -4,18 +4,18 @@ Overview
   method                              : mcem
   inference                           : frequentist
   scale                               : natural
-  objective                           : -157.3139
+  objective                           : -157.2603
   iterations                          : 20
   parameters shown (reported / total) : 5 / 5
 
 Parameter estimates
   parameter      Estimate
   -----------------------
-  phi1            31.2533
-  log_vmax         5.0374
-  phi3           640.6214
-  omega            0.1696
-  sigma            0.1124
+  phi1             31.232
+  log_vmax         5.0352
+  phi3            639.912
+  omega            0.1671
+  sigma            0.1125
 
 Outcome data coverage
   outcome             n_obs   n_missing
@@ -26,4 +26,4 @@ Outcome data coverage
 Empirical Bayes random effects summary (across RE levels)
   random effect       n          mean            sd           q25        median           q75
   ---------------------------------------------------------------------------
-  vmax_i              5      155.4527       25.0236       134.217      147.5871      182.5236
+  vmax_i              5      155.3324       24.9312      134.1819      147.4916      182.3083

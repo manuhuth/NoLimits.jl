@@ -383,7 +383,7 @@ fit_summary
 
 <!-- injected:t2-obj -->
 ```text
-(objective = -145.52093283427416,)
+(objective = -145.18060999648057,)
 ```
 
 ### FitResult Summary
@@ -403,20 +403,20 @@ Overview
   method                              : mcem
   inference                           : frequentist
   scale                               : natural
-  objective                           : -145.5209
+  objective                           : -145.1806
   iterations                          : 12
   parameters shown (reported / total) : 7 / 7
 
 Parameter estimates
   parameter      Estimate
   -----------------------
-  tka              0.4688
-  tcl              1.0085
-  tv               3.4531
-  omega1           0.3972
-  omega2           0.0719
-  omega3           0.0177
-  sigma_eps        0.6987
+  tka              0.4527
+  tcl              1.0076
+  tv               3.4566
+  omega1           0.4089
+  omega2           0.0708
+  omega3            0.019
+  sigma_eps        0.6943
 
 Outcome data coverage
   outcome       n_obs   n_missing
@@ -427,9 +427,9 @@ Outcome data coverage
 Empirical Bayes random effects summary (across RE levels)
   random effect  component       n          mean            sd           q25        median           q75
   --------------------------------------------------------------------------------------------------
-  eta            eta_1          12       -0.0186        0.5949       -0.4342       -0.1124        0.2337
-  eta            eta_2          12        0.0077         0.245       -0.1305        0.0413        0.1574
-  eta            eta_3          12       -0.0023        0.1153       -0.0969        0.0076        0.0668
+  eta            eta_1          12       -0.0011        0.5975       -0.4122       -0.0957        0.2514
+  eta            eta_2          12        0.0078        0.2431       -0.1275         0.041        0.1565
+  eta            eta_3          12       -0.0048        0.1182       -0.1011        0.0051        0.0658
 ```
 
 You can also extract the estimated fixed-effect parameters on their natural (untransformed) scale. The population-level log-scale parameters (`tka`, `tcl`, `tv`) can be exponentiated to recover typical-individual values, and `sigma_eps` represents the residual observation noise.
@@ -446,7 +446,7 @@ params = NoLimits.get_params(res_mcem; scale=:untransformed)
 
 <!-- injected:t2-params -->
 ```text
-(tka = 0.46883216585378884, tcl = 1.008534014759881, tv = 3.4531404125311163, sigma_eps = 0.698706352652697)
+(tka = 0.452678124367957, tcl = 1.0076137236747467, tv = 3.456574166252174, sigma_eps = 0.694302232373099)
 ```
 
 ## Step 6: Visualize Fitted Trajectories
@@ -538,20 +538,20 @@ Overview
   source_method                       : mcem
   inference                           : frequentist
   scale                               : natural
-  objective                           : -145.5209
+  objective                           : -145.1806
   interval level                      : 0.95
   parameters shown (reported / total) : 7 / 7
 
 Parameter uncertainty summary
   parameter      Estimate    Std. Error      CI Lower      CI Upper
   ---------------------------------------------------
-  tka              0.4688        0.1969        0.0789        0.8438
-  tcl              1.0085         0.095        0.8168        1.1879
-  tv               3.4531        0.0483        3.3588        3.5432
-  omega1           0.3972         0.216        0.1739         0.954
-  omega2           0.0719        0.0421        0.0309        0.1865
-  omega3           0.0177         0.014        0.0058        0.0579
-  sigma_eps        0.6987        0.0491        0.6166        0.7926
+  tka              0.4527        0.2018        0.0776        0.8783
+  tcl              1.0076        0.0922        0.8316         1.188
+  tv               3.4566        0.0489        3.3578        3.5499
+  omega1           0.4089         0.224        0.1818        1.0375
+  omega2           0.0708         0.042        0.0287        0.1952
+  omega3            0.019        0.0137        0.0069        0.0559
+  sigma_eps        0.6943        0.0485        0.6099        0.7916
 
 Outcome data coverage
   outcome       n_obs   n_missing
@@ -562,9 +562,9 @@ Outcome data coverage
 Empirical Bayes random effects summary (across RE levels)
   random effect  component       n          mean            sd           q25        median           q75
   --------------------------------------------------------------------------------------------------
-  eta            eta_1          12       -0.0186        0.5949       -0.4342       -0.1124        0.2337
-  eta            eta_2          12        0.0077         0.245       -0.1305        0.0413        0.1574
-  eta            eta_3          12       -0.0023        0.1153       -0.0969        0.0076        0.0668
+  eta            eta_1          12       -0.0011        0.5975       -0.4122       -0.0957        0.2514
+  eta            eta_2          12        0.0078        0.2431       -0.1275         0.041        0.1565
+  eta            eta_3          12       -0.0048        0.1182       -0.1011        0.0051        0.0658
 ```
 
 ## Practical Guidance

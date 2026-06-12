@@ -12,11 +12,11 @@ Overview
 Parameter uncertainty summary
   parameter      Estimate     CrI Lower     CrI Upper
   -------------------------------------
-  phi1            31.2844       28.3011        34.635
-  log_vmax         5.0389        4.8882        5.2152
-  phi3           640.3221      608.3582      675.1972
-  omega            0.1793        0.1038        0.2998
-  sigma              0.12        0.0967        0.1493
+  phi1            31.1675       28.0572       34.6622
+  log_vmax         5.0377        4.9086         5.181
+  phi3            640.373      610.4249      673.6824
+  omega            0.1776        0.1037        0.2919
+  sigma            0.1195        0.0964         0.149
 
 Outcome data coverage
   outcome             n_obs   n_missing
@@ -27,4 +27,4 @@ Outcome data coverage
 Posterior random effects summary (chain medians across draws)
   random effect       n          mean            sd           q25        median           q75
   ---------------------------------------------------------------------------
-  vmax_i              5      155.8193       24.7194      134.3352      148.0814      182.5353
+  vmax_i              5      155.8414       24.9047      134.7549      147.8491      183.2821

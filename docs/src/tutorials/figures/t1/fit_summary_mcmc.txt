@@ -11,11 +11,11 @@ Overview
 Parameter estimates
   parameter      Estimate
   -----------------------
-  phi1            31.1333
-  log_vmax         5.0359
-  phi3            640.858
-  omega            0.1737
-  sigma            0.1185
+  phi1            31.2431
+  log_vmax         5.0339
+  phi3           639.8539
+  omega            0.1719
+  sigma             0.118
 
 Outcome data coverage
   outcome             n_obs   n_missing
@@ -26,4 +26,4 @@ Outcome data coverage
 Posterior random effects summary (chain medians across draws)
   random effect       n          mean            sd           q25        median           q75
   ---------------------------------------------------------------------------
-  vmax_i              5      155.8193       24.7194      134.3352      148.0814      182.5353
+  vmax_i              5      155.8414       24.9047      134.7549      147.8491      183.2821

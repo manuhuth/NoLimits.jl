@@ -27,7 +27,7 @@ using Random
 using LinearAlgebra
 using OrdinaryDiffEq
 using SciMLBase
-using Lux
+using SimpleChains
 using Turing
 
 include(joinpath(@__DIR__, "_data_loaders.jl"))
@@ -85,13 +85,13 @@ using NoLimits
 using Distributions
 using LinearAlgebra
 using OrdinaryDiffEq
-using Lux
+using SimpleChains
 
 width_nn = 2
-chain_A1 = Lux.Chain(Lux.Dense(1, width_nn, tanh), Lux.Dense(width_nn, 1))
-chain_A2 = Lux.Chain(Lux.Dense(1, width_nn, tanh), Lux.Dense(width_nn, 1))
-chain_C1 = Lux.Chain(Lux.Dense(1, width_nn, tanh), Lux.Dense(width_nn, 1))
-chain_C2 = Lux.Chain(Lux.Dense(1, width_nn, tanh), Lux.Dense(width_nn, 1))
+chain_A1 = SimpleChain(static(1), TurboDense(tanh, width_nn), TurboDense(identity, 1))
+chain_A2 = SimpleChain(static(1), TurboDense(tanh, width_nn), TurboDense(identity, 1))
+chain_C1 = SimpleChain(static(1), TurboDense(tanh, width_nn), TurboDense(identity, 1))
+chain_C2 = SimpleChain(static(1), TurboDense(tanh, width_nn), TurboDense(identity, 1))
 
 model_raw = @Model begin
     @helpers begin
@@ -341,7 +341,7 @@ res_saem = fit_model(
 
 <!-- injected:t3-obj -->
 ```text
-(objective = -566.59931513905, n_params = 29)
+(objective = -565.6734432525224, n_params = 29)
 ```
 
 For a more detailed summary of the fit -- including parameter estimates and convergence diagnostics -- call the `summarize` function.
@@ -359,14 +359,14 @@ Overview
   method                              : saem
   inference                           : frequentist
   scale                               : natural
-  objective                           : -566.5993
+  objective                           : -565.6734
   iterations                          : 300
   parameters shown (reported / total) : 1 / 29
 
 Parameter estimates
   parameter      Estimate
   -----------------------
-  sigma            1.4655
+  sigma            1.2516
 
 Outcome data coverage
   outcome       n_obs   n_missing
@@ -377,34 +377,34 @@ Outcome data coverage
 Empirical Bayes random effects summary (across RE levels)
   random effect  component       n          mean            sd           q25        median           q75
   --------------------------------------------------------------------------------------------------
-  etaA1          etaA1_1        12        7.0109        0.0249        6.9941        7.0063         7.027
-  etaA1          etaA1_2        12       -3.9893        0.0069       -3.9918       -3.9899        -3.988
-  etaA1          etaA1_3        12       -1.4607        0.0601       -1.4942       -1.4596       -1.4369
-  etaA1          etaA1_4        12        0.9254        0.0662        0.8756         0.921        0.9753
-  etaA1          etaA1_5        12       -2.8715        0.1696       -3.0285        -2.886       -2.7435
-  etaA1          etaA1_6        12        0.9148        0.1492        0.7938        0.8918        1.0396
-  etaA1          etaA1_7        12       -6.8905        0.1671       -7.0129       -6.8715        -6.779
-  etaA2          etaA2_1        12       -2.4305        0.0018       -2.4301       -2.4301       -2.4301
-  etaA2          etaA2_2        12       -1.7398     0.0009948       -1.7398       -1.7398       -1.7398
-  etaA2          etaA2_3        12       -0.2848        0.0027       -0.2845       -0.2845       -0.2845
-  etaA2          etaA2_4        12       -0.0919        0.0016       -0.0923       -0.0923       -0.0923
-  etaA2          etaA2_5        12        3.1304        0.0031        3.1307        3.1316        3.1319
-  etaA2          etaA2_6        12       -0.3706        0.0041       -0.3722        -0.372       -0.3715
-  etaA2          etaA2_7        12       -3.2436        0.0104       -3.2407       -3.2405       -3.2401
-  etaC1          etaC1_1        12       -3.5356        0.0334       -3.5489       -3.5198         -3.51
-  etaC1          etaC1_2        12        1.7381        0.2918        1.4245        1.7708        1.8963
-  etaC1          etaC1_3        12        4.8901        0.0193        4.8814        4.8981        4.9041
-  etaC1          etaC1_4        12      -13.3755        0.0435      -13.4124      -13.3729      -13.3405
-  etaC1          etaC1_5        12       -5.2313        0.0964       -5.2747       -5.2638        -5.226
-  etaC1          etaC1_6        12        7.2803        0.0843        7.2261        7.2682        7.3407
-  etaC1          etaC1_7        12         1.681        0.0791        1.6626        1.6972        1.7178
-  etaC2          etaC2_1        12       -2.7478        0.0042        -2.748       -2.7478       -2.7477
-  etaC2          etaC2_2        12       -4.7313        0.0211       -4.7388       -4.7245       -4.7178
-  etaC2          etaC2_3        12       -1.7794        0.0181         -1.79       -1.7853       -1.7723
-  etaC2          etaC2_4        12        0.9664        0.1426        0.8394        0.9529         1.082
-  etaC2          etaC2_5        12        1.7422        0.0939        1.6953        1.7598        1.8059
-  etaC2          etaC2_6        12        4.1325        0.0798        4.0898        4.1081        4.1628
-  etaC2          etaC2_7        12       -6.1334         0.101       -6.1993       -6.1513       -6.0833
+  etaA1          etaA1_1        12       -3.2608         0.007       -3.2633       -3.2619        -3.259
+  etaA1          etaA1_2        12       -7.4295        0.0533       -7.4406       -7.4075       -7.4048
+  etaA1          etaA1_3        12       -0.3189        0.1671       -0.4456       -0.3247       -0.2511
+  etaA1          etaA1_4        12        1.7397        0.1548        1.6893        1.7748        1.8298
+  etaA1          etaA1_5        12        1.0381        0.0855        0.9877         1.037        1.0692
+  etaA1          etaA1_6        12        4.1726        0.2456        3.9889        4.1181        4.2466
+  etaA1          etaA1_7        12       -7.1985        0.2266       -7.3706       -7.2566        -7.106
+  etaA2          etaA2_1        12       -1.6694         0.025       -1.6635       -1.6615       -1.6615
+  etaA2          etaA2_2        12         2.149        0.0055        2.1491        2.1491        2.1492
+  etaA2          etaA2_3        12        1.5924         0.008        1.5908        1.5908        1.5916
+  etaA2          etaA2_4        12        2.2571          0.01         2.258         2.258        2.2618
+  etaA2          etaA2_5        12        2.7403         0.027        2.7463        2.7464        2.7469
+  etaA2          etaA2_6        12       -3.4498        0.0113       -3.4529       -3.4518       -3.4517
+  etaA2          etaA2_7        12        -2.902        0.0092       -2.9052       -2.9052       -2.9051
+  etaC1          etaC1_1        12        1.3359        0.2004         1.158        1.3366        1.4721
+  etaC1          etaC1_2        12        4.1416        0.0723        4.1114        4.1179        4.1545
+  etaC1          etaC1_3        12      -10.7082        0.0431      -10.7333      -10.7161       -10.689
+  etaC1          etaC1_4        12       -6.4091        0.0378       -6.4234       -6.4197       -6.4073
+  etaC1          etaC1_5        12        9.8789          0.12         9.826        9.8426        9.9084
+  etaC1          etaC1_6        12        4.3265        0.1072        4.2866        4.3572        4.3921
+  etaC1          etaC1_7        12        4.9443         0.118        4.9058        4.9601        5.0143
+  etaC2          etaC2_1        12       -2.5971        0.0053       -2.5966       -2.5954       -2.5954
+  etaC2          etaC2_2        12        7.5833        0.0395        7.5659        7.5693         7.581
+  etaC2          etaC2_3        12       -3.0693        0.0068        -3.072       -3.0707       -3.0684
+  etaC2          etaC2_4        12       -1.5788        0.1091       -1.6396       -1.6206       -1.5935
+  etaC2          etaC2_5        12        4.6203        0.0656        4.5629        4.6077        4.6731
+  etaC2          etaC2_6        12       -3.8042        0.0522       -3.8469       -3.8027       -3.7733
+  etaC2          etaC2_7        12       -3.7944        0.0685        -3.848       -3.7863       -3.7352
 ```
 
 ## Step 5: Visualize Fitted Trajectories

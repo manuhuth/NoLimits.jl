@@ -5,7 +5,7 @@ Overview
   inference                           : frequentist
   scale                               : natural
   objective                           : 140.191
-  iterations                          : 41
+  iterations                          : 40
   parameters shown (reported / total) : 5 / 5
 
 Parameter estimates

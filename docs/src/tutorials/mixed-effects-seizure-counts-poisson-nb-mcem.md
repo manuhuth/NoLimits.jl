@@ -298,20 +298,20 @@ Overview
   method                              : mcem
   inference                           : frequentist
   scale                               : natural
-  objective                           : -677.3374
+  objective                           : -676.3986
   iterations                          : 4
   parameters shown (reported / total) : 7 / 7
 
 Parameter estimates
   parameter      Estimate
   -----------------------
-  beta0            0.0735
-  beta_1            0.486
-  beta_2          -0.0509
-  beta_3            -0.23
+  beta0           -0.0769
+  beta_1           0.5199
+  beta_2          -0.0385
+  beta_3          -0.2307
   beta_4          -0.0428
   beta_5          -0.0315
-  omega            0.8001
+  omega            0.7901
 
 Outcome data coverage
   outcome        n_obs   n_missing
@@ -322,7 +322,7 @@ Outcome data coverage
 Empirical Bayes random effects summary (across RE levels)
   random effect       n          mean            sd           q25        median           q75
   ---------------------------------------------------------------------------
-  eta                59        0.3584         0.664        0.0325        0.2522        0.6785
+  eta                59        0.3579        0.6502        0.0455        0.2804        0.6631
 ```
 
 To assess how well the model captures individual seizure trajectories, you will now plot fitted values against observed data for the first two subjects. The observation-distribution diagnostic reveals the full predictive distribution at selected time points -- a particularly informative view for count data, where the shape of the distribution (not just its mean) carries clinical significance.
@@ -367,6 +367,7 @@ uq_poisson = compute_uq(
     method=:wald,
     n_draws=100,
     level=0.95,
+    rng=Random.Xoshiro(151),
 )
 
 NoLimits.summarize(uq_poisson)
@@ -388,13 +389,13 @@ Overview
 Parameter uncertainty summary
   parameter      Estimate    Std. Error      CI Lower      CI Upper
   ---------------------------------------------------
-  beta0            0.0735        0.4484       -1.0183        0.7948
-  beta_1            0.486        0.3987       -0.4354        1.1709
-  beta_2          -0.0509        0.3985       -0.7342        0.8715
-  beta_3            -0.23        0.2453       -0.5901        0.3111
-  beta_4          -0.0428        0.0266       -0.0917        0.0152
-  beta_5          -0.0315        0.0389       -0.1082        0.0424
-  omega            0.8001        0.4821        0.3741        2.4773
+  beta0           -0.0769        0.2511       -0.5655        0.3351
+  beta_1           0.5199         0.404       -0.2619        1.1926
+  beta_2          -0.0385        0.3491       -0.6245        0.6125
+  beta_3          -0.2307        0.2097       -0.6067         0.189
+  beta_4          -0.0428        0.0284       -0.1046        0.0077
+  beta_5          -0.0315        0.0379       -0.1057        0.0322
+  omega            0.7901        0.4303        0.3728        1.9309
 ```
 
 For a consolidated view, combine the parameter estimates and their uncertainty into a single summary table -- the format most convenient for reporting in manuscripts and presentations.
@@ -412,20 +413,20 @@ Overview
   source_method                       : mcem
   inference                           : frequentist
   scale                               : natural
-  objective                           : -677.3374
+  objective                           : -676.3986
   interval level                      : 0.95
   parameters shown (reported / total) : 7 / 7
 
 Parameter uncertainty summary
   parameter      Estimate    Std. Error      CI Lower      CI Upper
   ---------------------------------------------------
-  beta0            0.0735        0.4484       -1.0183        0.7948
-  beta_1            0.486        0.3987       -0.4354        1.1709
-  beta_2          -0.0509        0.3985       -0.7342        0.8715
-  beta_3            -0.23        0.2453       -0.5901        0.3111
-  beta_4          -0.0428        0.0266       -0.0917        0.0152
-  beta_5          -0.0315        0.0389       -0.1082        0.0424
-  omega            0.8001        0.4821        0.3741        2.4773
+  beta0           -0.0769        0.2511       -0.5655        0.3351
+  beta_1           0.5199         0.404       -0.2619        1.1926
+  beta_2          -0.0385        0.3491       -0.6245        0.6125
+  beta_3          -0.2307        0.2097       -0.6067         0.189
+  beta_4          -0.0428        0.0284       -0.1046        0.0077
+  beta_5          -0.0315        0.0379       -0.1057        0.0322
+  omega            0.7901        0.4303        0.3728        1.9309
 
 Outcome data coverage
   outcome        n_obs   n_missing
@@ -436,7 +437,7 @@ Outcome data coverage
 Empirical Bayes random effects summary (across RE levels)
   random effect       n          mean            sd           q25        median           q75
   ---------------------------------------------------------------------------
-  eta                59        0.3584         0.664        0.0325        0.2522        0.6785
+  eta                59        0.3579        0.6502        0.0455        0.2804        0.6631
 ```
 
 Finally, visualize the approximate sampling distributions of the fixed-effects parameters implied by the Wald approximation.
@@ -579,21 +580,21 @@ Overview
   method                              : mcem
   inference                           : frequentist
   scale                               : natural
-  objective                           : -644.3865
+  objective                           : -645.9053
   iterations                          : 4
   parameters shown (reported / total) : 8 / 8
 
 Parameter estimates
   parameter      Estimate
   -----------------------
-  beta0           -1.6782
-  beta_1           0.7117
-  beta_2           0.2867
-  beta_3          -0.2126
-  beta_4          -0.0467
-  beta_5          -0.0162
-  omega            0.6723
-  log_r            2.0591
+  beta0           -1.1335
+  beta_1           0.6983
+  beta_2            0.143
+  beta_3          -0.2572
+  beta_4          -0.0464
+  beta_5          -0.0181
+  omega            0.6876
+  log_r            2.0511
 
 Outcome data coverage
   outcome        n_obs   n_missing
@@ -604,7 +605,7 @@ Outcome data coverage
 Empirical Bayes random effects summary (across RE levels)
   random effect       n          mean            sd           q25        median           q75
   ---------------------------------------------------------------------------
-  eta                59          0.23        0.5312       -0.0403         0.225        0.4592
+  eta                59        0.2344        0.5379       -0.0228        0.2442          0.43
 ```
 
 Generate the same fitted-trajectory and observation-distribution diagnostics as before. Comparing these plots side-by-side with the Poisson versions will reveal whether the Negative Binomial's wider predictive intervals better capture the observed variability in seizure counts.
@@ -649,6 +650,7 @@ uq_nb = compute_uq(
     method=:wald,
     n_draws=100,
     level=0.95,
+    rng=Random.Xoshiro(152),
 )
 
 NoLimits.summarize(uq_nb)
@@ -664,21 +666,21 @@ Overview
   source_method                       : mcem
   inference                           : frequentist
   scale                               : natural
-  objective                           : -644.3865
+  objective                           : -645.9053
   interval level                      : 0.95
   parameters shown (reported / total) : 8 / 8
 
 Parameter uncertainty summary
   parameter      Estimate    Std. Error      CI Lower      CI Upper
   ---------------------------------------------------
-  beta0           -1.6782        1.8586       -5.7139        1.8811
-  beta_1           0.7117        0.1841        0.3967        1.0668
-  beta_2           0.2867        0.4903       -0.7524        1.2554
-  beta_3          -0.2126        0.2095          -0.7        0.1046
-  beta_4          -0.0467        0.0448       -0.1386        0.0213
-  beta_5          -0.0162        0.0695       -0.1276        0.1205
-  omega            0.6723        0.1454        0.4743        0.9971
-  log_r            2.0591        0.2506        1.5563        2.5683
+  beta0           -1.1335        1.8818       -4.5512        3.0523
+  beta_1           0.6983        0.2004        0.2894        1.0615
+  beta_2            0.143         0.487       -0.8916        1.0095
+  beta_3          -0.2572        0.2114       -0.6218        0.1798
+  beta_4          -0.0464        0.0451       -0.1395        0.0356
+  beta_5          -0.0181        0.0613       -0.1276        0.0905
+  omega            0.6876        0.1361        0.4668        0.9454
+  log_r            2.0511        0.2112        1.6316        2.3858
 
 Outcome data coverage
   outcome        n_obs   n_missing
@@ -689,7 +691,7 @@ Outcome data coverage
 Empirical Bayes random effects summary (across RE levels)
   random effect       n          mean            sd           q25        median           q75
   ---------------------------------------------------------------------------
-  eta                59          0.23        0.5312       -0.0403         0.225        0.4592
+  eta                59        0.2344        0.5379       -0.0228        0.2442          0.43
 ```
 
 The uncertainty distribution plots for the Negative Binomial model now include the dispersion parameter `log_r` -- a parameter with no counterpart in the Poisson model, whose magnitude directly quantifies the degree of overdispersion in the data.
@@ -714,7 +716,7 @@ As a final diagnostic, you will compare the objective function values (negative 
 
 <!-- injected:t5-obj -->
 ```text
-(poisson_objective = -677.3374001650726, nb_objective = -644.3865261530952)
+(poisson_objective = -676.3985855275587, nb_objective = -645.9052503662361)
 ```
 
 Keep in mind that these two objective values arise from different likelihood families. They provide a useful heuristic comparison, but definitive model selection requires the formal tools mentioned above.

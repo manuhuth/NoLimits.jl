@@ -168,6 +168,7 @@ p_fit_vi = plot_fits(
     ncols=2,
     plot_mcmc_quantiles=true,
     mcmc_draws=120,
+    rng=Random.Xoshiro(13),
 )
 
 p_obs_vi = plot_observation_distributions(
@@ -176,6 +177,7 @@ p_obs_vi = plot_observation_distributions(
     individuals_idx=1,
     obs_rows=1,
     mcmc_draws=120,
+    rng=Random.Xoshiro(14),
 )
 ```
 

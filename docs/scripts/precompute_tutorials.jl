@@ -5,7 +5,7 @@ using Random
 using LinearAlgebra
 using OrdinaryDiffEq
 using SciMLBase
-using Lux
+using SimpleChains
 using Turing
 
 const DOCS_ROOT = normpath(joinpath(@__DIR__, ".."))
@@ -348,10 +348,10 @@ function precompute_tutorial_3()
     df = build_theoph_non_event_df(theoph_subset)
 
     width_nn = 2
-    chain_A1 = Lux.Chain(Lux.Dense(1, width_nn, tanh), Lux.Dense(width_nn, 1))
-    chain_A2 = Lux.Chain(Lux.Dense(1, width_nn, tanh), Lux.Dense(width_nn, 1))
-    chain_C1 = Lux.Chain(Lux.Dense(1, width_nn, tanh), Lux.Dense(width_nn, 1))
-    chain_C2 = Lux.Chain(Lux.Dense(1, width_nn, tanh), Lux.Dense(width_nn, 1))
+    chain_A1 = SimpleChain(static(1), TurboDense(tanh, width_nn), TurboDense(identity, 1))
+    chain_A2 = SimpleChain(static(1), TurboDense(tanh, width_nn), TurboDense(identity, 1))
+    chain_C1 = SimpleChain(static(1), TurboDense(tanh, width_nn), TurboDense(identity, 1))
+    chain_C2 = SimpleChain(static(1), TurboDense(tanh, width_nn), TurboDense(identity, 1))
 
     model_raw = @Model begin
         @helpers begin

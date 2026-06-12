@@ -258,7 +258,7 @@ res_map = fit_model(dm, map_method; serialization=serialization, rng=Random.Xosh
 
 <!-- injected:fe1-obj -->
 ```text
-(objective_mle = 158.39871272191726, objective_map = 168.53669404545346)
+(objective_mle = 158.39871272191726, objective_map = 168.53669404545343)
 ```
 
 The returned objective values are negative log-likelihoods (for MLE) or negative log-posteriors (for MAP), so lower values indicate a better fit. Because the MAP objective includes additional prior penalty terms, its numerical value is not directly comparable to the MLE objective; what matters at this stage is that each method converged successfully.
@@ -315,7 +315,7 @@ With both fits complete, you can now extract the estimated parameters on the ori
 
 <!-- injected:fe1-params -->
 ```text
-(mle = (a = 192.68759194333077, k = 0.002828584933848338, t0 = 728.7563833068424, σ = 22.348047859224817), map = (a = 191.87573045497976, k = 0.0028588792012332553, t0 = 724.0263172189675, σ = 22.18411244352174))
+(mle = (a = 192.68759193577552, k = 0.002828584934064404, t0 = 728.7563832627657, σ = 22.34804785876128), map = (a = 191.8757304534822, k = 0.0028588792012859006, t0 = 724.0263172113838, σ = 22.184112443700283))
 ```
 
 Because this dataset is relatively small (35 observations total), the priors exert a noticeable pull on the MAP estimates. In particular, parameters whose likelihood surface is flat -- such as the asymptote `a`, which is only weakly constrained when few trees have approached their maximum size -- will be drawn toward the prior mean under MAP but left at the pure likelihood optimum under MLE. As sample size grows, the likelihood dominates and the two methods converge to the same values. This behaviour serves as a useful diagnostic: large MLE--MAP discrepancies flag parameters that the data alone cannot pin down precisely.

@@ -296,22 +296,22 @@ Overview
   method                              : laplace
   inference                           : frequentist
   scale                               : natural
-  objective                           : 270.5745
-  iterations                          : 39
+  objective                           : 261.9148
+  iterations                          : 49
   parameters shown (reported / total) : 9 / 9
 
 Parameter estimates
   parameter      Estimate
   -----------------------
-  beta_A           8.5294
-  beta_B          -8.0105
-  beta_k1         -2.7631
-  beta_k2         -9.6889
-  omega_A         7.76e-7
-  omega_B          0.0752
-  omega_k1         0.2876
-  omega_k2         0.1184
-  sigma             0.744
+  beta_A           8.9221
+  beta_B          -6.6133
+  beta_k1         -2.5989
+  beta_k2          -5.934
+  omega_A        5.928e-8
+  omega_B          0.0057
+  omega_k1         0.3952
+  omega_k2         0.0458
+  sigma            0.6915
 
 Outcome data coverage
   outcome       n_obs   n_missing
@@ -322,10 +322,10 @@ Outcome data coverage
 Empirical Bayes random effects summary (across RE levels)
   random effect       n          mean            sd           q25        median           q75
   ---------------------------------------------------------------------------
-  A_i                50     5061.1887      6.255e-9     5061.1887     5061.1887     5061.1887
-  B_i                50     0.0003301     1.902e-11     0.0003301     0.0003301     0.0003301
-  k1_i               50        0.0658        0.0162        0.0512        0.0647        0.0822
-  k2_i               50       6.11e-5     1.178e-13       6.11e-5       6.11e-5       6.11e-5
+  A_i                50     7496.0306     1.171e-10     7496.0306     7496.0306     7496.0306
+  B_i                50        0.0013     9.694e-13        0.0013        0.0013        0.0013
+  k1_i               50        0.0793        0.0283        0.0541        0.0721        0.1071
+  k2_i               50        0.0026     3.523e-11        0.0026        0.0026        0.0026
 ```
 
 ## Step 5: Fitted Trajectories (First 2 Individuals)
@@ -376,6 +376,7 @@ uq = compute_uq(
     method=:wald,
     n_draws=800,
     level=0.95,
+    rng=Random.Xoshiro(153),
 )
 
 NoLimits.summarize(uq)
@@ -397,15 +398,15 @@ Overview
 Parameter uncertainty summary
   parameter      Estimate    Std. Error      CI Lower      CI Upper
   ---------------------------------------------------
-  beta_A           8.5294        0.0081        8.5141        8.5463
-  beta_B          -8.0105        0.2293       -8.4471        -7.558
-  beta_k1         -2.7631        0.0656       -2.9009       -2.6349
-  beta_k2         -9.6889        0.0929       -9.8624       -9.4989
-  omega_A         7.76e-7      4.903e-7      3.164e-7      2.029e-6
-  omega_B          0.0752        0.0649        0.0234        0.2617
-  omega_k1         0.2876        0.0711        0.1814        0.4658
-  omega_k2         0.1184        0.0434        0.0643        0.2328
-  sigma             0.744        0.0233        0.6989        0.7904
+  beta_A           8.9221        0.0047        8.9132        8.9316
+  beta_B          -6.6133        0.0391       -6.6868       -6.5402
+  beta_k1         -2.5989        0.0755       -2.7422       -2.4495
+  beta_k2          -5.934        0.0228       -5.9783       -5.8889
+  omega_A        5.928e-8      3.234e-5     9.395e-11       3.66e-5
+  omega_B          0.0057        0.0013        0.0037        0.0088
+  omega_k1         0.3952        0.0707         0.282        0.5554
+  omega_k2         0.0458     0.0006977        0.0444        0.0472
+  sigma            0.6915        0.0077        0.6754        0.7063
 ```
 
 For a consolidated report combining point estimates and their uncertainty, pass both the fit result and the uncertainty object to `summarize`. This tabular format is convenient for inclusion in manuscripts and supplementary materials.
@@ -423,22 +424,22 @@ Overview
   source_method                       : laplace
   inference                           : frequentist
   scale                               : natural
-  objective                           : 270.5745
+  objective                           : 261.9148
   interval level                      : 0.95
   parameters shown (reported / total) : 9 / 9
 
 Parameter uncertainty summary
   parameter      Estimate    Std. Error      CI Lower      CI Upper
   ---------------------------------------------------
-  beta_A           8.5294        0.0081        8.5141        8.5463
-  beta_B          -8.0105        0.2293       -8.4471        -7.558
-  beta_k1         -2.7631        0.0656       -2.9009       -2.6349
-  beta_k2         -9.6889        0.0929       -9.8624       -9.4989
-  omega_A         7.76e-7      4.903e-7      3.164e-7      2.029e-6
-  omega_B          0.0752        0.0649        0.0234        0.2617
-  omega_k1         0.2876        0.0711        0.1814        0.4658
-  omega_k2         0.1184        0.0434        0.0643        0.2328
-  sigma             0.744        0.0233        0.6989        0.7904
+  beta_A           8.9221        0.0047        8.9132        8.9316
+  beta_B          -6.6133        0.0391       -6.6868       -6.5402
+  beta_k1         -2.5989        0.0755       -2.7422       -2.4495
+  beta_k2          -5.934        0.0228       -5.9783       -5.8889
+  omega_A        5.928e-8      3.234e-5     9.395e-11       3.66e-5
+  omega_B          0.0057        0.0013        0.0037        0.0088
+  omega_k1         0.3952        0.0707         0.282        0.5554
+  omega_k2         0.0458     0.0006977        0.0444        0.0472
+  sigma            0.6915        0.0077        0.6754        0.7063
 
 Outcome data coverage
   outcome       n_obs   n_missing
@@ -449,10 +450,10 @@ Outcome data coverage
 Empirical Bayes random effects summary (across RE levels)
   random effect       n          mean            sd           q25        median           q75
   ---------------------------------------------------------------------------
-  A_i                50     5061.1887      6.255e-9     5061.1887     5061.1887     5061.1887
-  B_i                50     0.0003301     1.902e-11     0.0003301     0.0003301     0.0003301
-  k1_i               50        0.0658        0.0162        0.0512        0.0647        0.0822
-  k2_i               50       6.11e-5     1.178e-13       6.11e-5       6.11e-5       6.11e-5
+  A_i                50     7496.0306     1.171e-10     7496.0306     7496.0306     7496.0306
+  B_i                50        0.0013     9.694e-13        0.0013        0.0013        0.0013
+  k1_i               50        0.0793        0.0283        0.0541        0.0721        0.1071
+  k2_i               50        0.0026     3.523e-11        0.0026        0.0026        0.0026
 ```
 
 Finally, you can visualize the implied sampling distributions of the fixed-effects parameters on the natural (untransformed) scale. Parameters estimated on the log scale (the `omega` and `sigma` parameters) are back-transformed before plotting, so the density plots reflect the scale on which these quantities are scientifically interpretable.

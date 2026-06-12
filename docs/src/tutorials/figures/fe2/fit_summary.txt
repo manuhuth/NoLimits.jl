@@ -4,16 +4,16 @@ Overview
   method                              : vi
   inference                           : bayesian
   scale                               : natural
-  objective                           : -0.7632
+  objective                           : 0.2621
   iterations                          : missing
   parameters shown (reported / total) : 3 / 3
 
 Parameter estimates
   parameter      Estimate
   -----------------------
-  a               -0.0085
-  b                0.3152
-  sigma            0.1681
+  a               -0.0065
+  b                0.3162
+  sigma            0.1672
 
 Outcome data coverage
   outcome       n_obs   n_missing

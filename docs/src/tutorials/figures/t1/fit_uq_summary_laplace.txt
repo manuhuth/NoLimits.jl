@@ -12,11 +12,11 @@ Overview
 Parameter uncertainty summary
   parameter      Estimate    Std. Error      CI Lower      CI Upper
   ---------------------------------------------------
-  phi1            31.2235        1.6549       27.8176       34.4232
-  log_vmax         5.0347        0.0793        4.8815        5.1832
-  phi3           639.7141       15.7902      608.8016      669.4466
-  omega            0.1669        0.0613        0.0906        0.3218
-  sigma            0.1126        0.0148        0.0858        0.1418
+  phi1            31.2235        1.6549       27.8177       34.4233
+  log_vmax         5.0347        0.0794        4.8845        5.1866
+  phi3           639.7141       15.7902      608.8016      669.4465
+  omega            0.1669        0.0588        0.0841        0.3032
+  sigma            0.1126        0.0149        0.0847        0.1418
 
 Outcome data coverage
   outcome             n_obs   n_missing

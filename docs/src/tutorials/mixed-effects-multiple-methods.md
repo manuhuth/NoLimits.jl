@@ -316,7 +316,7 @@ Overview
   inference                           : frequentist
   scale                               : natural
   objective                           : 140.191
-  iterations                          : 41
+  iterations                          : 40
   parameters shown (reported / total) : 5 / 5
 
 Parameter estimates
@@ -356,7 +356,7 @@ objectives
 
 <!-- injected:t1-obj -->
 ```text
-(laplace = 140.19104954818783, mcem = -157.31394771620114, saem = -154.8177352877204)
+(laplace = 140.19104904494876, mcem = -157.26026347250098, saem = -154.8177352877204)
 ```
 
 The signs and magnitudes differ because each method defines its objective differently:
@@ -387,11 +387,11 @@ ParameterComparison
 ===================================================
   parameter   Laplace      MCEM      SAEM      MCMC
 ---------------------------------------------------
-  phi1        31.2235   31.2533   31.1846   31.1333
-  log_vmax     5.0347    5.0374     5.035    5.0359
-  phi3       639.7141  640.6214  639.2453   640.858
-  omega        0.1669    0.1696    0.1615    0.1737
-  sigma        0.1126    0.1124    0.1054    0.1185
+  phi1        31.2235    31.232   31.1846   31.2431
+  log_vmax     5.0347    5.0352     5.035    5.0339
+  phi3       639.7141   639.912  639.2453  639.8539
+  omega        0.1669    0.1671    0.1615    0.1719
+  sigma        0.1126    0.1125    0.1054     0.118
 ```
 
 The agreement is striking: all four methods recover the same initial size (`phi1 ≈ 31`), the same log-asymptote (`log_vmax ≈ 5.04`, i.e. an asymptotic circumference near `155`), the same growth midpoint (`phi3 ≈ 640`), and the same between-tree and residual variability (`omega ≈ 0.16`, `sigma ≈ 0.11`). The small differences between columns are well within the stochastic noise of the Monte Carlo methods. This is the multi-method comparison distilled to a single view -- when the estimates line up this cleanly, you can be confident your conclusions are not an artifact of the estimation algorithm.
@@ -452,6 +452,7 @@ p_fit_mcmc = plot_fits(
     mcmc_quantiles=[5, 95],
     mcmc_warmup=500,
     mcmc_draws=300,
+    rng=Random.Xoshiro(201),
 )
 
 ```
@@ -531,6 +532,7 @@ p_obs_mcmc = plot_observation_distributions(
     obs_rows=1,
     mcmc_warmup=500,
     mcmc_draws=300,
+    rng=Random.Xoshiro(202),
 )
 
 ```
@@ -656,11 +658,11 @@ Overview
 Parameter uncertainty summary
   parameter      Estimate    Std. Error      CI Lower      CI Upper
   ---------------------------------------------------
-  phi1            31.2235        1.6549       27.8176       34.4232
-  log_vmax         5.0347        0.0793        4.8815        5.1832
-  phi3           639.7141       15.7902      608.8016      669.4466
-  omega            0.1669        0.0613        0.0906        0.3218
-  sigma            0.1126        0.0148        0.0858        0.1418
+  phi1            31.2235        1.6549       27.8177       34.4233
+  log_vmax         5.0347        0.0794        4.8845        5.1866
+  phi3           639.7141       15.7902      608.8016      669.4465
+  omega            0.1669        0.0588        0.0841        0.3032
+  sigma            0.1126        0.0149        0.0847        0.1418
 
 Outcome data coverage
   outcome             n_obs   n_missing
