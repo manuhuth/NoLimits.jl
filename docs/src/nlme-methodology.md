@@ -161,7 +161,7 @@ EBE [tierney1986accurate, wolfinger1993laplace](@cite), giving the marginal appr
 where $H_i(\theta) = -\nabla_\eta^2 \log p_{y,\eta}(y_i, \eta \mid x_i, \theta)\big|_{\eta=\hat\eta_i}$
 is the negative Hessian of the log-joint at the mode.
 
-### FOCEI
+### FOCEI approximation
 
 [FOCEI](estimation/focei.md) is the Laplace approximation with $H_i$ replaced by the
 expected-information (Gauss–Newton) form [lindstrom1990nonlinear, wang2007derivation](@cite)
