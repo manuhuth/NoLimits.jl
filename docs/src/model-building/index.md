@@ -2,7 +2,7 @@
 
 Model specification in NoLimits.jl uses a composable domain-specific language (DSL) centered on the `@Model` macro. The key design principle is that mechanistic structure, hierarchical variability, and learned nonlinear components can all be expressed and combined within a single, coherent model definition.
 
-All examples in this documentation section use nonlinear models. When random effects are present, they enter the model nonlinearly -- reflecting the typical use case in applied longitudinal analysis.
+All examples in this documentation section use nonlinear models. When random effects are present, they enter the model nonlinearly - reflecting the typical use case in applied longitudinal analysis.
 
 ## Overview
 
@@ -13,8 +13,8 @@ This page introduces the main composition patterns available in the modeling DSL
 The `@Model` DSL supports flexible combinations of:
 
 - **Multiple outcomes** in a single model, including mixed outcome types (e.g., a continuous measurement and a count variable jointly).
-- **Multiple random-effect grouping structures** -- for example, subject-level and site-level variability in the same specification.
-- **Covariates at different temporal resolutions** -- time-varying, group-constant, and interpolated covariates can coexist.
+- **Multiple random-effect grouping structures** - for example, subject-level and site-level variability in the same specification.
+- **Covariates at different temporal resolutions** - time-varying, group-constant, and interpolated covariates can coexist.
 - **Learned function approximators** such as neural networks and soft decision trees, freely combined with known mechanistic terms.
 - **ODE and non-ODE workflows** sharing the same specification language.
 
@@ -118,13 +118,13 @@ end
 
 The following sub-pages document each model block in detail:
 
-- [`@Model`](@ref) -- Top-level macro and validation rules
-- [`@helpers`](@ref) -- Reusable helper functions
-- [`@fixedEffects`](@ref) -- Population-level parameter definitions
-- [`@covariates`](@ref) -- Covariate types and interpolation
-- [`@randomEffects`](@ref) -- Random-effect distributions and grouping
-- [`@preDifferentialEquation`](@ref) -- Time-constant derived quantities
-- [`@DifferentialEquation`](@ref) -- ODE dynamics and derived signals
-- [`@initialDE`](@ref) -- Initial conditions for ODE states
-- [`@formulas`](@ref) -- Observation models and deterministic nodes
-- [Function Approximators (NNs + SoftTrees)](universal-function-approximators.md) -- Neural networks and soft decision trees
+- [`@Model`](@ref) - Top-level macro and validation rules
+- [`@helpers`](@ref) - Reusable helper functions
+- [`@fixedEffects`](@ref) - Population-level parameter definitions
+- [`@covariates`](@ref) - Covariate types and interpolation
+- [`@randomEffects`](@ref) - Random-effect distributions and grouping
+- [`@preDifferentialEquation`](@ref) - Time-constant derived quantities
+- [`@DifferentialEquation`](@ref) - ODE dynamics and derived signals
+- [`@initialDE`](@ref) - Initial conditions for ODE states
+- [`@formulas`](@ref) - Observation models and deterministic nodes
+- [Function Approximators (NNs + SoftTrees)](universal-function-approximators.md) - Neural networks and soft decision trees

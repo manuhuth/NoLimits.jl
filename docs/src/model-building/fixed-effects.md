@@ -99,7 +99,7 @@ For `RealVector`, scales can be mixed per element by passing a `Vector{Symbol}`,
 
 ## Example: Learned Function Approximators
 
-Neural networks, soft decision trees, and B-splines can be declared as fixed effects and are automatically exposed as callable model functions. This enables flexible, data-driven components within an otherwise parametric model specification. `NNParameters` accepts either a Lux `Chain` or a SimpleChains `SimpleChain` - see [Function Approximators](universal-function-approximators.md) for the trade-offs (SimpleChains is faster and lower-allocation under ForwardDiff; Lux is required for `AutoEnzyme`).
+Neural networks, soft decision trees, and B-splines can be declared as fixed effects and are automatically exposed as callable model functions. This enables flexible, data-driven components within an otherwise parametric model specification. `NNParameters` accepts either a Lux `Chain` or a SimpleChains `SimpleChain` - see [Function Approximators](universal-function-approximators.md) for the trade-offs (SimpleChains is faster and lower-allocation under ForwardDiff).
 
 ```julia
 using NoLimits
@@ -124,7 +124,7 @@ y_sp = model_funs.SP1(0.5, params.z_sp.value)
 
 ## Example: Constrained Stochastic Matrices
 
-Three dedicated parameter types handle the structural constraints that arise in Hidden Markov Models and other latent-variable models -- `ProbabilityVector` (`:stickbreak`), `DiscreteTransitionMatrix` (`:stickbreakrows`), and `ContinuousTransitionMatrix` (`:lograterows`). Their constraints, transforms, and free-parameter counts are described in the scale list above.
+Three dedicated parameter types handle the structural constraints that arise in Markov models (both hidden and observed-state) and other latent-variable models - `ProbabilityVector` (`:stickbreak`), `DiscreteTransitionMatrix` (`:stickbreakrows`), and `ContinuousTransitionMatrix` (`:lograterows`). Their constraints, transforms, and free-parameter counts are described in the scale list above.
 
 All three types are AD-compatible and can be used anywhere in a model formula where the corresponding matrix or vector is expected. The values they provide in formulas are plain Julia arrays (`Vector` or `Matrix`), enabling direct indexing and arithmetic.
 

@@ -8,7 +8,7 @@ NoLimits.jl provides a broad set of modeling, estimation, and diagnostic capabil
 - **Fixed-effects-only models** for settings where random effects are not needed.
 - **ODE-based and non-ODE models** within the same modeling framework: algebraic structural models and mechanistic ODE systems share the same specification language.
 - **Multiple outcomes** in one model, including mixed outcome types (e.g., continuous and count outcomes jointly).
-- **Hidden Markov outcome models** via `DiscreteTimeDiscreteStatesHMM` and `ContinuousTimeDiscreteStatesHMM`, enabling latent-state-dependent observation processes. Dedicated parameter types `ProbabilityVector`, `DiscreteTransitionMatrix`, and `ContinuousTransitionMatrix` provide AD-compatible, automatically constrained representations of initial-state distributions and transition or rate matrices.
+- **Markov outcome models** in discrete and continuous time, covering both hidden Markov models, where the state is latent and drives an emission distribution (`DiscreteTimeDiscreteStatesHMM`, `ContinuousTimeDiscreteStatesHMM`, and the multivariate `MVDiscreteTimeDiscreteStatesHMM` / `MVContinuousTimeDiscreteStatesHMM`), and observed-state Markov models, where the state itself is the observation (`DiscreteTimeObservedStatesMarkovModel`, `ContinuousTimeObservedStatesMarkovModel`), including coarsed/set-valued observations (`CoarsedObservedStatesMarkovModel`). Dedicated parameter types `ProbabilityVector`, `DiscreteTransitionMatrix`, and `ContinuousTransitionMatrix` provide AD-compatible, automatically constrained representations of initial-state distributions and transition or rate matrices.
 - **Left-censored and interval-censored observations** through `censored(...)` in the observation model.
 
 ## Random-Effects Flexibility
@@ -17,11 +17,11 @@ NoLimits.jl provides a broad set of modeling, estimation, and diagnostic capabil
 - Multiple grouping columns, including row-varying non-`primary_id` group membership for non-ODE and discrete-time HMM models.
 - Random-effect distributions beyond the Gaussian family: heavy-tailed (`TDist`), skewed (`SkewNormal`), positive-valued (`LogNormal`, `Gamma`), and other distributions from `Distributions.jl`.
 - Flow-based random effects via `NormalizingPlanarFlow` for highly flexible latent distributions.
-- Random-effect distributions parameterized by covariates, neural networks, soft decision trees, or spline functions -- enabling covariate-dependent heterogeneity that goes beyond standard variance models.
+- Random-effect distributions parameterized by covariates, neural networks, soft decision trees, or spline functions - enabling covariate-dependent heterogeneity that goes beyond standard variance models.
 
 ## Machine-Learning Integration
 
-- **Neural-network parameter blocks** (`NNParameters`, backed by either a Lux `Chain` or a SimpleChains `SimpleChain`) can be embedded in formulas, ODE dynamics, initial conditions, and random-effect distribution parameterizations. Neural-ODE-style models arise naturally when learned components appear inside `@DifferentialEquation`. The SimpleChains backend is faster and lower-allocation under ForwardDiff (the default AD); the Lux backend additionally supports `AutoEnzyme`.
+- **Neural-network parameter blocks** (`NNParameters`, backed by either a Lux `Chain` or a SimpleChains `SimpleChain`) can be embedded in formulas, ODE dynamics, initial conditions, and random-effect distribution parameterizations. Neural-ODE-style models arise naturally when learned components appear inside `@DifferentialEquation`. The SimpleChains backend is faster and lower-allocation under ForwardDiff (the default AD).
 - **Soft decision tree parameter blocks** (`SoftTreeParameters`) provide an alternative differentiable function approximator with the same integration points as neural networks.
 - **Spline parameter blocks** (`SplineParameters`) for smooth, learnable basis-function expansions.
 - All learned components can be used at the population level (fixed effects only) or individualized through full-parameter random effects.
@@ -36,7 +36,7 @@ NoLimits.jl provides a broad set of modeling, estimation, and diagnostic capabil
 
 | Model type | Available methods |
 | --- | --- |
-| Mixed-effects | Laplace approximation, FOCEI, MCEM, SAEM, Gauss–Hermite quadrature (GHQuadrature), MCMC |
+| Mixed-effects | Laplace approximation, FOCEI, MCEM, SAEM, Gauss-Hermite quadrature (GHQuadrature), MCMC |
 | Mixed-effects (pooled) | Pooled, PooledMap |
 | Fixed-effects only | MLE, MAP, MCMC, VI |
 | Cross-method | Multistart optimization wrapper |
@@ -62,4 +62,4 @@ All methods share a unified `fit_model` interface, allowing direct comparison of
 
 ## Composability
 
-A defining feature of NoLimits.jl is that the capabilities above are freely composable. A single model can simultaneously use ODE dynamics, multiple learned function approximators, several random-effect grouping levels with non-Gaussian distributions, covariates at different temporal resolutions, and multiple outcome types. This composability is central to the package design and is exercised throughout the test suite.
+A defining feature of NoLimits.jl is that the capabilities above are freely composable. A single model can simultaneously use ODE dynamics, multiple learned function approximators, several random-effect grouping levels with non-Gaussian distributions, covariates at different temporal resolutions, and multiple outcome types. These combinations are exercised throughout the test suite.

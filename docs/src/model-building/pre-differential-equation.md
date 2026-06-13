@@ -1,6 +1,6 @@
 # `@preDifferentialEquation`
 
-In many longitudinal models, certain quantities depend on fixed effects, random effects, and covariates but do not vary with time. Computing these derived quantities once before ODE integration -- rather than redundantly at each solver step -- improves both clarity and performance.
+In many longitudinal models, certain quantities depend on fixed effects, random effects, and covariates but do not vary with time. Computing these derived quantities once before ODE integration - rather than redundantly at each solver step - improves both clarity and performance.
 
 The `@preDifferentialEquation` block defines such time-constant derived quantities. Values declared here are available in `@DifferentialEquation`, `@initialDE`, and `@formulas`.
 
@@ -132,9 +132,9 @@ end
 
 The following functions provide programmatic access to preDE internals:
 
-- `get_prede_names(prede)` -- returns the declared preDE variable names.
-- `get_prede_syms(prede)` -- returns the parsed symbol dependencies for each variable.
-- `get_prede_builder(prede)` -- returns the evaluation function that computes preDE values from model inputs.
+- `get_prede_names(prede)` - returns the declared preDE variable names.
+- `get_prede_syms(prede)` - returns the parsed symbol dependencies for each variable.
+- `get_prede_builder(prede)` - returns the evaluation function that computes preDE values from model inputs.
 
 ## Data-Model Constraint for Random Effects in preDE
 

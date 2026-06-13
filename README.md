@@ -5,8 +5,12 @@
 <h1 align="center">NoLimits.jl</h1>
 
 <p align="center">
-  <em>Nonlinear mixed-effects modeling for longitudinal data: mechanistic ODEs, hidden Markov models,<br/>
-  neural-network and soft-tree components, and frequentist, Bayesian, and variational estimation,<br/>
+  <strong>NoLimits</strong> stands for <strong>NO</strong>n <strong>LI</strong>near <strong>MI</strong>xed effec<strong>TS</strong>.
+</p>
+
+<p align="center">
+  <em>Nonlinear mixed-effects modeling for longitudinal data: mechanistic ODEs, Markov models,<br/>
+  differentiable machine learning components, and frequentist and Bayesian estimation,<br/>
   composed in one framework and fit through one interface.</em>
 </p>
 
@@ -34,11 +38,10 @@
   </a>
 </p>
 
-NoLimits.jl is a unified, open-source framework for specifying, estimating, and diagnosing
-hierarchical models of longitudinal data. It targets life-science applications, from
-pharmacometrics and systems biology to ecology, psychometrics, and medical imaging, where
-population variability, mechanistic dynamics, and complex outcome structures must be modeled
-jointly.
+NoLimits.jl is an open-source framework for building, estimating, and diagnosing hierarchical
+models of longitudinal data. It is aimed at life-science applications such as pharmacometrics
+and systems biology, where population variability and mechanistic dynamics must be modeled
+together.
 
 The package is developed and maintained by the
 [Hasenauer Lab](https://www.mathematics-and-life-sciences.uni-bonn.de/en/research/hasenauer-group)
@@ -60,11 +63,6 @@ mechanistic structure, learned components, flexible random-effect distributions,
 outcome types coexist in one coherent specification, and can be estimated with multiple
 inference paradigms without rewriting the model.
 
-> NoLimits.jl brings these capabilities together in one composable package: mechanistic ODE and
-> latent-state (hidden Markov) model classes, heavy-tailed and flow-based random-effect
-> distributions, native neural-network components, and a unified likelihood-and-Bayesian
-> inference interface.
-
 NoLimits.jl is designed for mixed-effects models, but it can equally be used for
 fixed-effects-only analysis when random effects are not required.
 
@@ -72,20 +70,17 @@ fixed-effects-only analysis when random effects are not required.
 
 ### Composable model specification
 
-| Component | Capabilities |
-|---|---|
-| **Structural model** | Algebraic functions, ODE systems (via OrdinaryDiffEq.jl), derived signals |
-| **Machine-learning blocks** | Neural networks (Lux.jl), soft decision trees, B-splines (embeddable in formulas, ODE right-hand sides, initial conditions, or RE distributions) |
-| **Random effects** | Univariate and multivariate; multiple grouping structures simultaneously (e.g., subject + site) |
-| **RE distributions** | Gaussian, non-Gaussian (heavy-tailed, skewed, positive-valued), normalizing planar flows (optionally parameterized by covariates and learned functions) |
-| **Outcome model** | Normal, LogNormal, Poisson, Bernoulli, NegativeBinomial, and arbitrary `Distributions.jl` families; hidden Markov models with random effects |
-| **Covariates** | Time-varying, group-constant, and interpolated dynamic covariates (8 interpolation types) |
-| **Missing data** | Likelihood-based handling of missing observations and covariates under parametric assumptions (no ad hoc imputation) |
-| **Censoring** | Left-censored and interval-censored observations |
-
-All components are freely composable: a single model can simultaneously use ODE dynamics,
-neural-network subterms, multiple RE grouping levels with flow-based distributions, and mixed
-outcome types.
+A model is assembled from freely composable blocks: a structural model (algebraic functions,
+ODE systems via OrdinaryDiffEq.jl, and derived signals); differentiable machine-learning
+components (neural networks, soft decision trees, and B-splines) embeddable in formulas, ODE
+right-hand sides, initial conditions, or random-effect distributions; univariate and
+multivariate random effects over multiple simultaneous grouping structures (e.g., subject and
+site), with Gaussian, non-Gaussian, or normalizing-flow distributions optionally parameterized
+by covariates and learned functions; outcomes from any `Distributions.jl` family (such as
+Normal, LogNormal, Poisson, Bernoulli, and NegativeBinomial) as well as observed-state and
+hidden Markov models; time-varying, group-constant, and interpolated dynamic covariates (eight
+interpolation types); and likelihood-based handling of missing data and left- or
+interval-censored observations. A single model can use all of these at once.
 
 ### One model, many estimators
 
@@ -203,29 +198,28 @@ plot_residuals(res)
 ```
 
 Swapping the inference paradigm is a one-line change: `fit_model(dm, SAEM())`, `fit_model(dm, MCEM())`,
-or `fit_model(dm, MCMC())` all fit the *same* model. More examples (neural-ODE models, HMM
+or `fit_model(dm, MCMC())` all fit the *same* model. More examples (neural-ODE models, Markov-model
 outcomes, normalizing-flow random effects, count outcomes, censored data, and multi-method
 comparison) are in the [Tutorials](https://manuhuth.github.io/NoLimits.jl/dev/tutorials/mixed-effects-multiple-methods).
 
 ## Built on the Julia ecosystem
 
-NoLimits.jl integrates directly with established Julia packages. Users familiar with any of
-them will find the interfaces immediately recognizable.
-
-| Domain | Package | Role in NoLimits.jl |
-|---|---|---|
-| **ODE solving** | [OrdinaryDiffEq.jl](https://github.com/SciML/OrdinaryDiffEq.jl) | Solves ODE-based structural models; full SciML solver zoo available |
-| **Distributions** | [Distributions.jl](https://github.com/JuliaStats/Distributions.jl) | Observation and random-effect distributions; any `Distribution` works out of the box |
-| **Numerical optimization** | [Optimization.jl](https://github.com/SciML/Optimization.jl) | Unified interface for all gradient-based and derivative-free optimizers |
-| **MCMC sampling** | [Turing.jl](https://github.com/TuringLang/Turing.jl) | Full Bayesian inference and E-step sampling in MCEM/SAEM |
-| **MCMC diagnostics** | [MCMCChains.jl](https://github.com/TuringLang/MCMCChains.jl) | Chain storage, diagnostics, and summaries for Bayesian fits |
-| **Neural networks** | [Lux.jl](https://github.com/LuxDL/Lux.jl) | Neural-network components in formulas, ODE dynamics, or RE distributions |
-| **Automatic differentiation** | [ForwardDiff.jl](https://github.com/JuliaDiff/ForwardDiff.jl) | Gradient computation for all estimation and UQ methods |
-| **Parameter arrays** | [ComponentArrays.jl](https://github.com/jonniedie/ComponentArrays.jl) | Named, nested parameter vectors used end-to-end |
-| **Data** | [DataFrames.jl](https://github.com/JuliaData/DataFrames.jl) | Standard tabular interface for model input and output |
-| **Dynamic covariates** | [DataInterpolations.jl](https://github.com/SciML/DataInterpolations.jl) | Continuous-time interpolation of time-varying inputs inside ODE solvers |
-| **Profile likelihood** | [LikelihoodProfiler.jl](https://github.com/insysbio/LikelihoodProfiler.jl) | Profile-likelihood uncertainty quantification |
-| **Plotting** | [Plots.jl](https://github.com/JuliaPlots/Plots.jl) | All diagnostic and visualization outputs |
+NoLimits.jl integrates directly with established Julia packages, so users familiar with any of
+them will find the interfaces immediately recognizable. It interfaces with
+[OrdinaryDiffEq.jl](https://github.com/SciML/OrdinaryDiffEq.jl) for ODE solving,
+[Distributions.jl](https://github.com/JuliaStats/Distributions.jl) for observation and
+random-effect distributions,
+[Optimization.jl](https://github.com/SciML/Optimization.jl) for numerical optimization,
+[Turing.jl](https://github.com/TuringLang/Turing.jl) and
+[MCMCChains.jl](https://github.com/TuringLang/MCMCChains.jl) for MCMC sampling and diagnostics,
+[Lux.jl](https://github.com/LuxDL/Lux.jl) and
+[SimpleChains.jl](https://github.com/PumasAI/SimpleChains.jl) for neural-network components,
+[ForwardDiff.jl](https://github.com/JuliaDiff/ForwardDiff.jl) for automatic differentiation,
+[ComponentArrays.jl](https://github.com/jonniedie/ComponentArrays.jl) for named parameter arrays,
+[DataFrames.jl](https://github.com/JuliaData/DataFrames.jl) for tabular data,
+[DataInterpolations.jl](https://github.com/SciML/DataInterpolations.jl) for dynamic covariates,
+[LikelihoodProfiler.jl](https://github.com/insysbio/LikelihoodProfiler.jl) for profile-likelihood
+uncertainty quantification, and [Plots.jl](https://github.com/JuliaPlots/Plots.jl) for visualization.
 
 ## Documentation
 

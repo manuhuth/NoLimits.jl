@@ -1,6 +1,6 @@
 # Estimation
 
-Parameter estimation is the process of inferring model parameters from observed data. NoLimits.jl provides a unified, method-driven interface: you pass a `DataModel` and a method object to `fit_model`, which returns a structured `FitResult`. Because the same interface is used across all estimation methods, switching between approaches -- or comparing several on the same model and data -- requires changing only the method argument.
+Parameter estimation is the process of inferring model parameters from observed data. NoLimits.jl provides a unified, method-driven interface: you pass a `DataModel` and a method object to `fit_model`, which returns a structured `FitResult`. Because the same interface is used across all estimation methods, switching between approaches - or comparing several on the same model and data - requires changing only the method argument.
 
 ## Unified Entry Point
 
@@ -20,7 +20,7 @@ summary = get_summary(res)
 diagnostics = get_diagnostics(res)
 ```
 
-Use `NoLimits.summarize(res)` for a compact summary table that includes the objective value, parameter estimates, and -- for mixed-effects fits -- random-effects summaries:
+Use `NoLimits.summarize(res)` for a compact summary table that includes the objective value, parameter estimates, and - for mixed-effects fits - random-effects summaries:
 
 ```julia
 fit_summary = NoLimits.summarize(res)
@@ -155,7 +155,7 @@ chain_mcmc = get_chain(res_mcmc)
 
 ## Fixing Known Random-Effect Levels
 
-In some workflows, random-effect values are known for a subset of individuals -- for instance, from a previous analysis or an external constraint. The `constants_re` keyword fixes these levels at their known values while allowing all remaining levels to be estimated normally:
+In some workflows, random-effect values are known for a subset of individuals - for instance, from a previous analysis or an external constraint. The `constants_re` keyword fixes these levels at their known values while allowing all remaining levels to be estimated normally:
 
 ```julia
 constants_re = (; eta=(; A=0.0))

@@ -507,15 +507,15 @@ A random effect is eligible for annealing if and only if:
 
 Valid examples:
 ```julia
-eta = RandomEffect(Normal(0.0, 2.0); column=:ID)   # literal SD 2.0 ✓
-eta = RandomEffect(Normal(a, 0.5);   column=:ID)   # literal SD 0.5, mean is fixed effect ✓
+eta = RandomEffect(Normal(0.0, 2.0); column=:ID)   # literal SD 2.0           (eligible)
+eta = RandomEffect(Normal(a, 0.5);   column=:ID)   # literal SD 0.5, mean is FE (eligible)
 ```
 
 Invalid examples (raise a clear error at startup):
 ```julia
-eta = RandomEffect(Normal(0.0, tau); column=:ID)   # SD is fixed-effect param tau ✗
-eta = RandomEffect(Normal(mu, tau);  column=:ID)   # both mu and tau are params ✗
-eta = RandomEffect(MvNormal(...);    column=:ID)   # not Normal ✗
+eta = RandomEffect(Normal(0.0, tau); column=:ID)   # SD is fixed-effect param tau (not eligible)
+eta = RandomEffect(Normal(mu, tau);  column=:ID)   # both mu and tau are params   (not eligible)
+eta = RandomEffect(MvNormal(...);    column=:ID)   # not Normal                   (not eligible)
 ```
 
 ### Schedule Options
@@ -684,8 +684,8 @@ saem_method = NoLimits.SAEM(;
 
 The closed-form blocks arise from the following model structure:
 
-- Each random-effect block is `MvNormal(mean_parameter, fixed_covariance)` (e.g., `etaA1 ~ MvNormal(zA1, I)`). With `re_mean_params`, SAEM updates the mean vectors (`zA1`, `zA2`, `zC1`, `zC2`) using smoothed conditional means of the sampled random effects -- a closed-form Gaussian mean update.
-- The observation model is `y ~ Normal(center(t), sigma)`. With `resid_var_param=:sigma`, SAEM updates `sigma` from smoothed residual second moments -- a closed-form Normal scale update.
+- Each random-effect block is `MvNormal(mean_parameter, fixed_covariance)` (e.g., `etaA1 ~ MvNormal(zA1, I)`). With `re_mean_params`, SAEM updates the mean vectors (`zA1`, `zA2`, `zC1`, `zC2`) using smoothed conditional means of the sampled random effects - a closed-form Gaussian mean update.
+- The observation model is `y ~ Normal(center(t), sigma)`. With `resid_var_param=:sigma`, SAEM updates `sigma` from smoothed residual second moments - a closed-form Normal scale update.
 - Setting `re_cov_params=NamedTuple()` leaves the random-effect covariance fixed, so only mean and outcome-scale closed-form blocks are applied.
 
 The ODE dynamics and neural network transformations introduce substantial nonlinearity, but this does not affect the availability of closed-form updates for the distribution-parameter blocks.

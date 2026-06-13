@@ -1,6 +1,6 @@
 # `@helpers`
 
-The `@helpers` block defines reusable helper functions within the `@Model` DSL. These are useful when the same nonlinear transformation appears in multiple places -- for example, a saturation function used in both the structural model and the observation model.
+The `@helpers` block defines reusable helper functions within the `@Model` DSL. These are useful when the same nonlinear transformation appears in multiple places - for example, a saturation function used in both the structural model and the observation model.
 
 Helper functions are parsed at macro-expansion time and returned as a `NamedTuple` of callables.
 

@@ -1,6 +1,6 @@
 # Laplace
 
-The Laplace approximation is a widely used technique for integrating out random effects in nonlinear mixed-effects models. Rather than evaluating the marginal likelihood integral exactly -- which is intractable for nonlinear models -- the Laplace method approximates it via a second-order Taylor expansion around the empirical Bayes (EB) mode of each individual's random-effects vector. The resulting closed-form approximation can be optimized over the fixed effects using standard gradient-based methods, combining computational efficiency with support for complex nonlinear model structures.
+The Laplace approximation is a widely used technique for integrating out random effects in nonlinear mixed-effects models. Rather than evaluating the marginal likelihood integral exactly - which is intractable for nonlinear models - the Laplace method approximates it via a second-order Taylor expansion around the empirical Bayes (EB) mode of each individual's random-effects vector. The resulting closed-form approximation can be optimized over the fixed effects using standard gradient-based methods, combining computational efficiency with support for complex nonlinear model structures.
 
 ## Applicability
 
@@ -228,7 +228,7 @@ laplace_hutch = NoLimits.Laplace(;
 
 ## Fixing Known Random-Effect Levels (`constants_re`)
 
-In some settings, certain random-effect levels are known a priori -- for example, a reference group set to zero or a level estimated in a previous analysis. `Laplace` supports fixing selected random-effect levels to specified values while estimating the remaining levels via EB.
+In some settings, certain random-effect levels are known a priori - for example, a reference group set to zero or a level estimated in a previous analysis. `Laplace` supports fixing selected random-effect levels to specified values while estimating the remaining levels via EB.
 
 ```julia
 constants_re = (; eta_id=(; A=0.0))

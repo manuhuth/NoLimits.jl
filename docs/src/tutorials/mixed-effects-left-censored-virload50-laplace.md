@@ -1,8 +1,8 @@
 # Mixed-Effects Tutorial 6: Left-Censored Nonlinear Model (Laplace)
 
-In many biomedical assays, measurements below a detection threshold cannot be reliably quantified. This situation, known as *left-censoring*, arises whenever an instrument's lower limit of quantification (LLOQ) truncates the observable range. HIV viral load monitoring is a canonical example: modern RT-PCR assays report "below detectable limit" for viral RNA concentrations under approximately 50 copies/mL -- or equivalently, below about 1.7 on the log10 scale. In patients responding well to antiretroviral therapy, censored observations can account for 30--40% of all measurements, making proper statistical treatment essential.
+In many biomedical assays, measurements below a detection threshold cannot be reliably quantified. This situation, known as *left-censoring*, arises whenever an instrument's lower limit of quantification (LLOQ) truncates the observable range. HIV viral load monitoring is a canonical example: modern RT-PCR assays report "below detectable limit" for viral RNA concentrations under approximately 50 copies/mL - or equivalently, below about 1.7 on the log10 scale. In patients responding well to antiretroviral therapy, censored observations can account for 30-40% of all measurements, making proper statistical treatment essential.
 
-How should these below-limit values be handled? The answer matters. Dropping censored rows discards information and inflates uncertainty. Substituting the detection limit as though it were a true measurement concentrates probability mass at that value and biases parameter estimates downward. The principled approach is a *censored likelihood*: uncensored observations contribute their usual probability density, while censored observations contribute the cumulative probability of falling at or below the detection threshold. This formulation correctly encodes what we actually know -- that the true value lies somewhere below the limit, without committing to a specific magnitude.
+How should these below-limit values be handled? The answer matters. Dropping censored rows discards information and inflates uncertainty. Substituting the detection limit as though it were a true measurement concentrates probability mass at that value and biases parameter estimates downward. The principled approach is a *censored likelihood*: uncensored observations contribute their usual probability density, while censored observations contribute the cumulative probability of falling at or below the detection threshold. This formulation correctly encodes what we actually know - that the true value lies somewhere below the limit, without committing to a specific magnitude.
 
 In this tutorial, you will fit a nonlinear mixed-effects model to the `virload50` dataset from the `npde` R package, which contains longitudinal log10 viral load measurements from 50 HIV-positive patients. The structural model is a bi-exponential decay function that captures two distinct phases of viral dynamics: rapid initial suppression and slower long-term decline. Subject-specific parameters enter through `LogNormal` random effects, making the model nonlinear in the random effects. You will handle left-censoring directly in the observation model using NoLimits' `censored(...)` syntax and estimate the model with the Laplace approximation.
 
@@ -22,7 +22,7 @@ By the end of this tutorial, you will know how to:
 
 ## Step 1: Data Setup
 
-In this step, you will load the `virload50` dataset and prepare it for modeling. The dataset contains four columns: a subject identifier (`ID`), observation time (`Time`), log10 viral load (`Log_VL`), and a censoring indicator (`cens`, where 1 flags values at or below the detection limit of 1.7). After selecting these columns, you will enforce the correct types and sort by subject and time -- a requirement for the internal data structures used by NoLimits.
+In this step, you will load the `virload50` dataset and prepare it for modeling. The dataset contains four columns: a subject identifier (`ID`), observation time (`Time`), log10 viral load (`Log_VL`), and a censoring indicator (`cens`, where 1 flags values at or below the detection limit of 1.7). After selecting these columns, you will enforce the correct types and sort by subject and time - a requirement for the internal data structures used by NoLimits.
 
 The summary statistics printed at the end provide a quick overview of the dataset dimensions and the fraction of censored observations.
 
@@ -54,7 +54,7 @@ sort!(df, [:ID, :Time])
 )
 ```
 
-<!-- injected:t6-data -->
+<!- injected:t6-data ->
 ```text
 (n_rows = 300, n_subjects = 50, n_censored = 131)
 ```
@@ -68,7 +68,7 @@ V_i(t) = A_i e^{-k_{1,i} t} + B_i e^{-k_{2,i} t},
 \qquad \mu_{it} = \log_{10}(V_i(t)).
 ```
 
-Each subject-specific parameter ($A_i$, $B_i$, $k_{1,i}$, $k_{2,i}$) is drawn from a `LogNormal` distribution, which guarantees positivity -- a necessary constraint since both amplitudes and rate constants must be strictly positive for the model to be biologically meaningful. The fixed effects (`beta_A`, `beta_B`, `beta_k1`, `beta_k2`) represent population-level medians on the log scale, while the `omega` parameters govern the magnitude of between-subject variability for each parameter.
+Each subject-specific parameter ($A_i$, $B_i$, $k_{1,i}$, $k_{2,i}$) is drawn from a `LogNormal` distribution, which guarantees positivity - a necessary constraint since both amplitudes and rate constants must be strictly positive for the model to be biologically meaningful. The fixed effects (`beta_A`, `beta_B`, `beta_k1`, `beta_k2`) represent population-level medians on the log scale, while the `omega` parameters govern the magnitude of between-subject variability for each parameter.
 
 The observation model is where the censoring logic enters. By writing `censored(Normal(mu, sigma), lower=1.7, upper=Inf)`, you specify a Normal distribution that is left-censored at the log10 detection limit of 1.7. NoLimits handles this as follows: when the recorded `Log_VL` value exceeds 1.7, the observation contributes the standard Normal density; when `Log_VL` equals 1.7 (the pinned value for censored rows in this dataset), the observation instead contributes the cumulative probability $\Phi\bigl((1.7 - \mu) / \sigma\bigr)$, representing the probability that the true value falls below the detection limit. This censored-likelihood approach is statistically exact and avoids the biases introduced by ad hoc imputation or deletion strategies.
 
@@ -110,7 +110,7 @@ end
 NoLimits.summarize(model)
 ```
 
-<!-- injected:t6-model -->
+<!- injected:t6-model ->
 ```text
 ModelSummary
 ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -199,7 +199,7 @@ serialization = SciMLBase.EnsembleThreads()
 NoLimits.summarize(dm)
 ```
 
-<!-- injected:t6-dm -->
+<!- injected:t6-dm ->
 ```text
 DataModelSummary
 ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -288,7 +288,7 @@ res = fit_model(
 NoLimits.summarize(res)
 ```
 
-<!-- injected:t6-res -->
+<!- injected:t6-res ->
 ```text
 FitResultSummary
 ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -345,7 +345,7 @@ p_fit = plot_fits(
 p_fit
 ```
 
-<!-- injected:t6-pfit -->
+<!- injected:t6-pfit ->
 ![Fitted bi-exponential viral-load trajectories for the first two subjects (Laplace).](figures/t6/p_fit.png)
 
 ## Step 6: Observation Distribution Diagnostic (First Individual)
@@ -363,12 +363,12 @@ p_obs = plot_observation_distributions(
 p_obs
 ```
 
-<!-- injected:t6-pobs -->
+<!- injected:t6-pobs ->
 ![Predicted observation distributions at the first two observations of the first subject, including the left-censored region.](figures/t6/p_obs.png)
 
 ## Step 7: Wald Uncertainty Quantification
 
-In this final step, you will assess the precision of the estimated fixed effects by computing Wald-based confidence intervals. The Wald method constructs approximate 95% intervals from the observed Fisher information matrix -- that is, the curvature of the log-likelihood at the optimum. This is computationally inexpensive and provides a practical first assessment of parameter identifiability: wide intervals may signal that the data contain insufficient information to pin down a particular parameter.
+In this final step, you will assess the precision of the estimated fixed effects by computing Wald-based confidence intervals. The Wald method constructs approximate 95% intervals from the observed Fisher information matrix - that is, the curvature of the log-likelihood at the optimum. This is computationally inexpensive and provides a practical first assessment of parameter identifiability: wide intervals may signal that the data contain insufficient information to pin down a particular parameter.
 
 ```julia
 uq = compute_uq(
@@ -382,7 +382,7 @@ uq = compute_uq(
 NoLimits.summarize(uq)
 ```
 
-<!-- injected:t6-uq -->
+<!- injected:t6-uq ->
 ```text
 UQResultSummary
 ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -415,7 +415,7 @@ For a consolidated report combining point estimates and their uncertainty, pass 
 NoLimits.summarize(res, uq)
 ```
 
-<!-- injected:t6-resuq -->
+<!- injected:t6-resuq ->
 ```text
 UQResultSummary
 ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -462,7 +462,7 @@ Finally, you can visualize the implied sampling distributions of the fixed-effec
 plot_uq_distributions(uq; scale=:natural, plot_type=:density, show_legend=false)
 ```
 
-<!-- injected:t6-puq -->
+<!- injected:t6-puq ->
 ![Wald approximate parameter distributions on the natural scale.](figures/t6/p_uq.png)
 
 ## Interpretation Notes
@@ -470,4 +470,4 @@ plot_uq_distributions(uq; scale=:natural, plot_type=:density, show_legend=false)
 - **Nonlinearity and the Laplace approximation.** The model is nonlinear in its random effects because subject-level `LogNormal` parameters (`A_i`, `B_i`, `k1_i`, `k2_i`) appear inside a bi-exponential trajectory. This nonlinearity is precisely what necessitates the Laplace approximation rather than a simpler linear mixed-effects approach.
 - **Why the censored likelihood matters.** Left-censored rows contribute through the cumulative Normal probability of falling below 1.7, not through a standard density evaluated at the pinned recorded value. This distinction is critical for unbiased estimation whenever detection limits are present.
 - **The slow phase is only weakly identified here.** With a large fraction of observations censored at the detection limit, the data carry little information about the slow second exponential, so its amplitude estimate collapses toward zero and the fitted trajectory is effectively dominated by the fast phase. This is the data speaking rather than a defect: the observable dynamics are a single decline to the detection limit. Datasets with longer follow-up or a higher detection limit would identify both phases more sharply.
-- **A reusable template.** The workflow demonstrated here -- model definition, data binding, Laplace estimation, diagnostics, and uncertainty quantification -- serves as a baseline template for censored nonlinear mixed-effects analyses in NoLimits. For datasets with higher censoring fractions or more complex censoring patterns (e.g., interval censoring), the same `censored(...)` syntax generalizes naturally.
+- **A reusable template.** The workflow demonstrated here - model definition, data binding, Laplace estimation, diagnostics, and uncertainty quantification - serves as a baseline template for censored nonlinear mixed-effects analyses in NoLimits. For datasets with higher censoring fractions or more complex censoring patterns (e.g., interval censoring), the same `censored(...)` syntax generalizes naturally.

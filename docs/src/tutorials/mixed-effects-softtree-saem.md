@@ -1,6 +1,6 @@
 # Mixed-Effects Tutorial 4: SoftTree Differential-Equation Components (SAEM)
 
-When building mechanistic models of longitudinal data, you often know the broad structure of the system -- compartments, conservation laws, transfer pathways -- but not the precise functional forms that govern how material moves between states. Neural networks are one way to learn those unknown rate functions from data, as shown in Tutorial 3. Soft decision trees offer an appealing alternative. They can approximate arbitrary nonlinear mappings, yet their branching structure provides built-in feature selection and piecewise-smooth approximation that is often easier to interpret. For the low-dimensional inputs typical of scientific rate functions (a single state variable, or time itself), soft trees can match neural network flexibility with substantially fewer parameters.
+When building mechanistic models of longitudinal data, you often know the broad structure of the system - compartments, conservation laws, transfer pathways - but not the precise functional forms that govern how material moves between states. Neural networks are one way to learn those unknown rate functions from data, as shown in Tutorial 3. Soft decision trees offer an appealing alternative. They can approximate arbitrary nonlinear mappings, yet their branching structure provides built-in feature selection and piecewise-smooth approximation that is often easier to interpret. For the low-dimensional inputs typical of scientific rate functions (a single state variable, or time itself), soft trees can match neural network flexibility with substantially fewer parameters.
 
 In this tutorial, you will build a mixed-effects ODE model in which soft decision trees parameterize the ODE right-hand side, then estimate the model with the Stochastic Approximation Expectation-Maximization (SAEM) algorithm. The model is structurally parallel to Tutorial 3, so you can directly compare the two function-approximation strategies on the same data and compartmental structure.
 
@@ -51,7 +51,7 @@ df = build_theoph_non_event_df(theoph_df)
 first(df, 10)
 ```
 
-<!-- injected:t4-dfhead -->
+<!- injected:t4-dfhead ->
 ```text
 10×4 DataFrame
  Row │ ID     t        y        d
@@ -71,7 +71,7 @@ first(df, 10)
 
 ## Step 2: Define SoftTree-Driven ODE Mixed-Effects Model
 
-In this step, you will construct the full mixed-effects model. The guiding idea is the same as in the neural ODE tutorial: rather than specifying closed-form rate laws, you let data-driven function approximators learn the rate functions directly from observations. The difference is the choice of approximator. Each `SoftTreeParameters` block declares a soft decision tree with a specified input dimension and depth. The `depth_st` parameter controls expressiveness -- a tree of depth `d` has `2^d` leaf nodes, each contributing a smooth local approximation. The block's flattened parameters become part of the fixed-effects vector, and the associated callable function (e.g., `STA1`) evaluates the tree at any input.
+In this step, you will construct the full mixed-effects model. The guiding idea is the same as in the neural ODE tutorial: rather than specifying closed-form rate laws, you let data-driven function approximators learn the rate functions directly from observations. The difference is the choice of approximator. Each `SoftTreeParameters` block declares a soft decision tree with a specified input dimension and depth. The `depth_st` parameter controls expressiveness - a tree of depth `d` has `2^d` leaf nodes, each contributing a smooth local approximation. The block's flattened parameters become part of the fixed-effects vector, and the associated callable function (e.g., `STA1`) evaluates the tree at any input.
 
 The ODE system wires four soft trees into a two-compartment transfer model:
 
@@ -145,7 +145,7 @@ model = set_solver_config(
 )
 ```
 
-Before moving on, inspect the assembled model to verify that all blocks -- covariates, fixed effects, random effects, ODE, and formulas -- are correctly wired together.
+Before moving on, inspect the assembled model to verify that all blocks - covariates, fixed effects, random effects, ODE, and formulas - are correctly wired together.
 
 ### Model Summary
 
@@ -154,7 +154,7 @@ model_summary = NoLimits.summarize(model)
 model_summary
 ```
 
-<!-- injected:t4-model -->
+<!- injected:t4-model ->
 ```text
 ModelSummary
 ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -240,7 +240,7 @@ dm_summary = NoLimits.summarize(dm)
 dm_summary
 ```
 
-<!-- injected:t4-dm -->
+<!- injected:t4-dm ->
 ```text
 DataModelSummary
 ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -334,19 +334,19 @@ res_saem = fit_model(
 )
 ```
 
-<!-- injected:t4-obj -->
+<!- injected:t4-obj ->
 ```text
 (objective = -644.2180056833639, n_params = 41)
 ```
 
-For a more detailed view -- including parameter estimates and convergence diagnostics -- call the `summarize` function on the fit result.
+For a more detailed view - including parameter estimates and convergence diagnostics - call the `summarize` function on the fit result.
 
 ```julia
 fit_summary_saem = NoLimits.summarize(res_saem)
 fit_summary_saem
 ```
 
-<!-- injected:t4-fit -->
+<!- injected:t4-fit ->
 ```text
 FitResultSummary
 ════════════════════════════════════════════════════════════════════════════════════════════════
@@ -432,7 +432,7 @@ p_fit_saem = plot_fits(
 p_fit_saem
 ```
 
-<!-- injected:t4-pfit -->
+<!- injected:t4-pfit ->
 ![Fitted trajectories for the first two subjects (SAEM, default settings).](figures/t4/p_fit_saem.png)
 
 ## Step 6: Observation Distribution Diagnostic
@@ -450,7 +450,7 @@ p_obs_saem = plot_observation_distributions(
 p_obs_saem
 ```
 
-<!-- injected:t4-pobs -->
+<!- injected:t4-pobs ->
 ![Predicted observation distribution at the first observation of the first subject.](figures/t4/p_obs_saem.png)
 
 ## Interpretation Notes

@@ -45,10 +45,10 @@ uq_sandwich = compute_uq(res; method=:wald, vcov=:sandwich, n_draws=1000)
 
 ## Numerical Robustness Controls
 
-When the Hessian is poorly conditioned -- for example, because the log-likelihood surface is locally flat along certain parameter directions -- the following controls can improve numerical stability:
+When the Hessian is poorly conditioned - for example, because the log-likelihood surface is locally flat along certain parameter directions - the following controls can improve numerical stability:
 
 - `pseudo_inverse`: use the Moore-Penrose pseudo-inverse when direct matrix inversion is numerically unstable.
-- `hessian_backend`: choose the differentiation strategy -- `:auto`, `:forwarddiff`, or `:fd_gradient` (finite-difference based).
+- `hessian_backend`: choose the differentiation strategy - `:auto`, `:forwarddiff`, or `:fd_gradient` (finite-difference based).
 - `fd_abs_step`: absolute step size for finite-difference computation.
 - `fd_rel_step`: relative step size for finite-difference computation.
 - `fd_max_tries`: maximum number of retry attempts for finite-difference gradient and Hessian evaluations.

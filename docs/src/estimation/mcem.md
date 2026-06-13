@@ -78,7 +78,7 @@ es = NoLimits.MCEM_IS(
 )
 ```
 
-Iterations 1–5 use the MCMC E-step; the Gaussian proposal is initialized from those MCMC samples (with uniform weights). From iteration 6 onward the IS E-step is used.
+Iterations 1-5 use the MCMC E-step; the Gaussian proposal is initialized from those MCMC samples (with uniform weights). From iteration 6 onward the IS E-step is used.
 
 #### User-Supplied Proposal
 

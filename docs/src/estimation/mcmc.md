@@ -104,21 +104,21 @@ When `n_samples` and `n_adapt` are not explicitly provided in `turing_kwargs`, N
 
 The call `fit_model(dm, NoLimits.MCMC(...); ...)` accepts the following keyword arguments:
 
-- **`constants`** -- Fixes selected fixed effects to known values on the natural scale, removing them from the sampled parameter set.
-- **`constants_re`** -- For mixed-effects models, fixes specific random-effect levels to known values while the remaining levels continue to be sampled. Level existence and dimensionality are validated.
-- **`ode_args`, `ode_kwargs`** -- Forwarded to ODE solvers used during likelihood evaluation.
-- **`serialization`** -- Controls whether likelihood evaluation proceeds via `EnsembleSerial()` or `EnsembleThreads()`.
-- **`rng`** -- Random number generator used for sampling.
-- **`theta_0_untransformed`** -- When provided (and `turing_kwargs` does not already include `initial_params`), this value initializes the free fixed effects.
-- **`store_data_model`** -- If `true`, stores the `DataModel` inside the `FitResult` for use by downstream accessor functions.
+- **`constants`** - Fixes selected fixed effects to known values on the natural scale, removing them from the sampled parameter set.
+- **`constants_re`** - For mixed-effects models, fixes specific random-effect levels to known values while the remaining levels continue to be sampled. Level existence and dimensionality are validated.
+- **`ode_args`, `ode_kwargs`** - Forwarded to ODE solvers used during likelihood evaluation.
+- **`serialization`** - Controls whether likelihood evaluation proceeds via `EnsembleSerial()` or `EnsembleThreads()`.
+- **`rng`** - Random number generator used for sampling.
+- **`theta_0_untransformed`** - When provided (and `turing_kwargs` does not already include `initial_params`), this value initializes the free fixed effects.
+- **`store_data_model`** - If `true`, stores the `DataModel` inside the `FitResult` for use by downstream accessor functions.
 
 Not supported:
 
-- **`penalty`** -- Raises an error. Use `MAP` for penalized inference.
+- **`penalty`** - Raises an error. Use `MAP` for penalized inference.
 
 ## Pattern: Fix Known Random-Effect Levels (`constants_re`)
 
-In some workflows, certain random-effect levels are known a priori -- for example, from a previous analysis or by experimental design. These can be held fixed while the remaining levels are sampled:
+In some workflows, certain random-effect levels are known a priori - for example, from a previous analysis or by experimental design. These can be held fixed while the remaining levels are sampled:
 
 ```julia
 constants_re = (; eta=(; A=0.0))

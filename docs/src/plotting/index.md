@@ -1,6 +1,6 @@
 # Plotting
 
-Effective model assessment depends on graphical diagnostics that expose patterns invisible in summary statistics alone. NoLimits provides a unified plotting interface for data inspection, fitted-model evaluation, residual analysis, random-effects diagnostics, and uncertainty visualization. Each function targets a specific aspect of model adequacy -- from individual-level trajectory fits to distributional calibration of predictions -- and all follow a consistent API.
+Effective model assessment depends on graphical diagnostics that expose patterns invisible in summary statistics alone. NoLimits provides a unified plotting interface for data inspection, fitted-model evaluation, residual analysis, random-effects diagnostics, and uncertainty visualization. Each function targets a specific aspect of model adequacy - from individual-level trajectory fits to distributional calibration of predictions - and all follow a consistent API.
 
 This page contains executable examples that render directly during the documentation build.
 

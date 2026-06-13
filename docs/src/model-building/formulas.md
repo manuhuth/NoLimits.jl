@@ -209,7 +209,7 @@ In an observed-state Markov model the latent state *is* the observation. The
 DiscreteTimeObservedStatesMarkovModel(transition_matrix, initial_dist, state_labels)
 ```
 
-The **third argument is `state_labels`** -- a vector giving one label per state, whose
+The **third argument is `state_labels`** - a vector giving one label per state, whose
 length must equal the number of states (the size of `transition_matrix`). It maps state
 index → label and defaults to `[1, 2, ..., n_states]` if omitted. In the example below
 `[2, 3]` simply means the two states are labelled `2` and `3` (it is *not* a set of

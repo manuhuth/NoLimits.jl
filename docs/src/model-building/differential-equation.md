@@ -8,8 +8,8 @@ Within `@Model`, this block is optional. When present, the companion `@initialDE
 
 Statements inside `@DifferentialEquation` take one of two forms:
 
-- **State dynamics:** `D(state) ~ rhs_expression` -- defines the time derivative of a state variable.
-- **Derived signals:** `signal(t) = expression` (or `signal(\xi) = expression`) -- defines an auxiliary quantity computed within the ODE, useful for intermediate calculations that appear in multiple state equations.
+- **State dynamics:** `D(state) ~ rhs_expression` - defines the time derivative of a state variable.
+- **Derived signals:** `signal(t) = expression` (or `signal(\xi) = expression`) - defines an auxiliary quantity computed within the ODE, useful for intermediate calculations that appear in multiple state equations.
 
 ```julia
 de = @DifferentialEquation begin
