@@ -63,6 +63,11 @@ include("uq/uq.jl")
 include("uq/accessors.jl")
 include("summaries/fit_uq_summary.jl")
 include("summaries/parameter_comparison.jl")
+# Public plotting API (stub generics). Drawing methods live in the Plots extension
+# (ext/NoLimitsPlotsExt.jl) and load when Plots.jl is imported alongside NoLimits.
+# The Plots-free pieces (PlotStyle, PlotCache, get_residuals, build_plot_cache, and
+# all their helpers) remain in the plotting/*.jl files below, in the core module.
+include("plotting/plotting_api.jl")
 include("plotting/plotting.jl")
 include("plotting/plots.jl")
 include("plotting/plotting_vpc.jl")
