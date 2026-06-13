@@ -59,12 +59,27 @@ against the `[compat]` bounds in `Project.toml`.
 
 A few conventions are load-bearing and enforced throughout the codebase:
 
-- **ForwardDiff compatibility.** All model and likelihood code must be differentiable with
-  ForwardDiff; this requires non-mutating implementations on the differentiated paths.
-- **Accessor functions.** Struct fields are accessed through `get_*` accessor functions
-  rather than direct field access, both internally and in the public API.
+- **Differentiability.** All model and likelihood code must be differentiable. ForwardDiff, the
+  default backend, propagates `Dual` numbers and handles in-place mutation fine; what it needs is
+  *type-generic* code that lets a `Dual` flow through, so allocate temporaries from the input
+  element type (`similar(x)`, `zeros(eltype(x), n)`) rather than a hard-coded `Float64`.
+  Non-mutating implementations are required only on paths that also run through a reverse-mode
+  backend such as Zygote (used for VI and normalizing flows), which cannot differentiate array
+  mutation. See [Helpers](model-building/helpers.md).
+- **Accessor functions.** Struct fields are reached through `get_*` accessor functions rather
+  than direct field access. This applies internally and, above all, in the public API: every
+  user-facing type ships `get_*` accessors, so users never have to reach into a struct with dot
+  syntax. Field layout is an implementation detail and may change between versions.
 - **`ComponentArray` construction.** Reuse existing axes with
   `ComponentArray(values, getaxes(existing))` rather than reconstructing axes.
+- **Formatting (JuliaFormatter).** Source, tests, and docs follow the SciML style, pinned in
+  `.JuliaFormatter.toml` (`style = "sciml"`). Run
+  [JuliaFormatter.jl](https://github.com/domluna/JuliaFormatter.jl) v1 before committing
+  (`julia -e 'using JuliaFormatter; format(["src", "test", "docs"])'`), since the `Format` CI job
+  fails on any diff. Use v1 specifically; v2 formats differently and produces spurious diffs.
+- **Static quality (Aqua.jl).** `test/aqua_tests.jl` runs `Aqua.test_all(NoLimits)` with no
+  ignore lists, so contributions must keep method ambiguities at zero, avoid type piracy, and
+  give every dependency a `[compat]` entry. It runs as part of the test suite.
 
 See the source of an existing estimation method (for example `src/estimation/laplace.jl`)
 for the expected style when adding a new method.
@@ -129,7 +144,10 @@ Releases follow the standard Julia workflow:
 
 1. Bump the `version` field in `Project.toml` (semantic versioning) and update any
    `[compat]` bounds as needed.
-2. Merge to `main`; continuous integration runs the test suite and builds the documentation.
+2. Open a pull request against `main` and wait for continuous integration to pass. `main` is a
+   protected branch: it accepts no direct pushes, and a pull request can be merged only after the
+   required CI checks (test suite, formatting, and documentation build) are green. This is
+   enforced for maintainers too.
 3. Register the new version in the Julia General registry (e.g. via the Registrator bot).
    `TagBot` then creates the matching Git tag and GitHub release automatically, and the
    documentation for the tagged version is deployed to GitHub Pages.

@@ -16,8 +16,8 @@ improvements, and code.
 
 1. Fork the repository and create a topic branch from `main`.
 2. Set up the development environment and read the conventions in the
-   [Developers Guide](developers-guide.md) - in particular ForwardDiff compatibility
-   (non-mutating differentiated paths) and the `get_*` accessor pattern.
+   [Developers Guide](developers-guide.md) - in particular the differentiability, formatting,
+   and `get_*` accessor conventions.
 3. Make your change with accompanying tests. New functionality should add or extend a file
    under `test/` and stay wired into `test/runtests.jl`.
 4. Run the test suite locally before opening a pull request:
