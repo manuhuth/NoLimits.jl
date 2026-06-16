@@ -1671,7 +1671,15 @@ end  # @testset "GHQuadrature progressive refinement"
         end
         df = DataFrame(ID = ids, t = tobs, y = yobs)
         dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-        res = fit_model(dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 2,)))
+        # The MC-vs-quadrature tolerances below were calibrated against a 2-iteration
+        # LBFGS fit. The default outer optimizer (NLopt.LN_BOBYQA) reads maxiters as a
+        # function-evaluation cap, so 2 evals leave the fit at a degenerate point and the
+        # comparisons blow past tolerance. Pin the gradient-based LBFGS here.
+        res = fit_model(dm,
+            NoLimits.Laplace(;
+                optimizer = OptimizationOptimJL.LBFGS(
+                    linesearch = LineSearches.BackTracking()),
+                optim_kwargs = (maxiters = 2,)))
         return dm, res
     end
 

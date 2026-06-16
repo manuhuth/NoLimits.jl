@@ -5,6 +5,8 @@ using Distributions
 using ComponentArrays
 using Random
 using LinearAlgebra
+using OptimizationOptimJL
+using NoLimits.LineSearches
 
 # ── Shared models (UQ assertions need specific calculate_se flag patterns, so
 # these stay local rather than using the fx_ fixtures; each distinct flag
@@ -249,7 +251,15 @@ end
     for (scale, n_coords, seed) in ((:cholesky, 4, 31), (:expm, 3, 32))
         model = _uq_psd_re_model(scale)
         dm = DataModel(model, _uq_psd_re_df(); primary_id = :ID, time_col = :t)
-        res = fit_model(dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 2,)))
+        # The default outer optimizer (NLopt.LN_BOBYQA) is derivative-free and
+        # unconstrained; on this weakly-identified PSD covariance it wanders into a
+        # degenerate region and the Wald vcov comes out NaN. Pin the gradient-based
+        # LBFGS these finiteness/symmetry checks were calibrated against.
+        res = fit_model(dm,
+            NoLimits.Laplace(;
+                optimizer = OptimizationOptimJL.LBFGS(
+                    linesearch = LineSearches.BackTracking()),
+                optim_kwargs = (maxiters = 2,)))
 
         uq = compute_uq(res; method = :wald, pseudo_inverse = true,
             n_draws = 40, rng = Random.Xoshiro(seed))
