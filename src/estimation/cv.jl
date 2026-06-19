@@ -697,7 +697,7 @@ function fit_cv(cv_spec::CVSpec, method::FittingMethod, args...;
     fold_results = if fold_serialization isa SciMLBase.EnsembleSerial
         [_run_fold(f) for f in 1:n_folds]
     else
-        buf = Vector{Any}(undef, n_folds)
+        buf = Vector{CVFoldResult}(undef, n_folds)
         Threads.@threads for f in 1:n_folds
             buf[f] = _run_fold(f)
         end
