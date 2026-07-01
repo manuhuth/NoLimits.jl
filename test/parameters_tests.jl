@@ -147,7 +147,7 @@ end
     # Custom base distribution: MvTDist (uses passthrough _adapt_base_dist)
     q0_t = MvTDist(3, zeros(2), Matrix(I, 2, 2))
     npf_tdist = NPFParameter(2, 2; name = :npf_tdist, base_dist = q0_t)
-    @test npf_tdist.base_dist isa MvTDist
+    @test npf_tdist.base_dist isa Distributions.AbstractMvTDist
     flow_tdist = NormalizingPlanarFlow(
         npf_tdist.value, npf_tdist.reconstructor, npf_tdist.base_dist)
     @test length(flow_tdist) == 2
