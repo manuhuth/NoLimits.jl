@@ -1,10 +1,23 @@
 # Installation
 
-NoLimits.jl requires Julia 1.12 or later. The package is currently installed directly from GitHub.
+NoLimits.jl requires Julia 1.12 or later.
 
 ## Installing the Package
 
-In a Julia session, run:
+The package is registered in the Julia General Registry so you can install it with:
+
+```julia
+using Pkg
+Pkg.add("NoLimits")
+```
+
+or from the REPL package mode (press `]`):
+
+```julia
+pkg> add NoLimits
+```
+
+To install the latest development version directly from GitHub:
 
 ```julia
 using Pkg
@@ -18,7 +31,3 @@ using NoLimits
 ```
 
 If this runs without errors, the installation is complete and you are ready to proceed to the [Tutorials](tutorials/mixed-effects-multiple-methods.md).
-
-## Registry Status
-
-Registry-based installation (`Pkg.add("NoLimits")`) will be available once the package is published in a Julia package registry.
