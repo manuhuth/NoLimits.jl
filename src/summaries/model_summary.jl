@@ -43,45 +43,9 @@ struct ModelSummary
     helper_names::Vector{Symbol}
 end
 
-function _ms_call_head_symbol(f)
-    if f isa Symbol
-        return f
-    elseif f isa GlobalRef
-        return f.name
-    elseif f isa Expr && f.head == :.
-        last = f.args[end]
-        last isa QuoteNode && (last = last.value)
-        return last isa Symbol ? last : :unknown
-    end
-    return :unknown
-end
-
-function _ms_distribution_type_from_expr(ex)
-    ex isa Expr || return :unknown
-    ex.head == :call || return :unknown
-    return _ms_call_head_symbol(ex.args[1])
-end
-
-function _ms_namedtuple_from_symbols(names::Vector{Symbol}, vals::Vector)
-    isempty(names) && return NamedTuple()
-    return NamedTuple{Tuple(names)}(Tuple(vals))
-end
-
-function _ms_resolve_re_distribution_types(re_model)
-    re_names = get_re_names(re_model)
-    raw_types = get_re_types(re_model)
-    dist_exprs = get_re_dist_exprs(re_model)
-    vals = Symbol[]
-    for re in re_names
-        t = getfield(raw_types, re)
-        if t === :unknown
-            ex = getfield(dist_exprs, re)
-            t = _ms_distribution_type_from_expr(ex)
-        end
-        push!(vals, t)
-    end
-    return _ms_namedtuple_from_symbols(re_names, vals)
-end
+# Expression/printing helpers are shared with data_model_summary.jl (included
+# first): _call_head_symbol, _distribution_type_from_expr, _namedtuple_from_symbols,
+# _resolve_re_distribution_types, _print_key_values, _print_distribution_types.
 
 function _ms_prior_type(prior)
     prior isa Priorless && return "Priorless"
@@ -202,29 +166,6 @@ function _ms_cov_summary(p)
         constant_on = Symbol[], interpolation = "-")
 end
 
-function _ms_print_key_values(io::IO, title::String, rows::AbstractVector{<:Pair})
-    println(io, title)
-    isempty(rows) && (println(io, "  (none)"); return)
-    keys_str = [string(first(r)) for r in rows]
-    w = maximum(length, keys_str)
-    for (i, r) in enumerate(rows)
-        println(io, "  ", rpad(keys_str[i], w), " : ", last(r))
-    end
-end
-
-function _ms_print_distribution_types(io::IO, title::String, nt::NamedTuple)
-    println(io, title)
-    ks = collect(keys(nt))
-    if isempty(ks)
-        println(io, "  (none)")
-        return
-    end
-    w = maximum(length(string(k)) for k in ks)
-    for k in ks
-        println(io, "  ", rpad(string(k), w), " => ", getfield(nt, k))
-    end
-end
-
 function _ms_join_syms(xs::Vector{Symbol})
     isempty(xs) && return "(none)"
     return join(string.(xs), ", ")
@@ -280,7 +221,7 @@ function summarize(m::Model)
     re_model = m.random.random
     re_names = get_re_names(re_model)
     re_groups = get_re_groups(re_model)
-    re_types = _ms_resolve_re_distribution_types(re_model)
+    re_types = _resolve_re_distribution_types(re_model)
     random_effect_summaries = NamedTuple[]
     for re in re_names
         push!(random_effect_summaries,
@@ -307,8 +248,8 @@ function summarize(m::Model)
 
     formulas = m.formulas.formulas
     ir = get_formulas_ir(formulas)
-    outcome_dist_types = _ms_namedtuple_from_symbols(
-        ir.obs_names, [_ms_distribution_type_from_expr(ex) for ex in ir.obs_exprs])
+    outcome_dist_types = _namedtuple_from_symbols(
+        ir.obs_names, [_distribution_type_from_expr(ex) for ex in ir.obs_exprs])
 
     helper_names = Symbol[collect(keys(m.helpers.funcs))...]
     required_states = copy(m.formulas.required_states)
@@ -356,7 +297,7 @@ function Base.show(io::IO, ::MIME"text/plain", s::ModelSummary)
     println(io, "ModelSummary")
     println(io, repeat("═", 96))
 
-    _ms_print_key_values(io,
+    _print_key_values(io,
         "Overview",
         [
             "model type" => (s.model_type == :ode ? "ODE" : "non-ODE"),
@@ -370,7 +311,7 @@ function Base.show(io::IO, ::MIME"text/plain", s::ModelSummary)
         ])
     println(io)
 
-    _ms_print_key_values(io,
+    _print_key_values(io,
         "Structure blocks",
         [
             "helpers" => s.has_helpers,
@@ -383,7 +324,7 @@ function Base.show(io::IO, ::MIME"text/plain", s::ModelSummary)
         ])
     println(io)
 
-    _ms_print_key_values(io,
+    _print_key_values(io,
         "Covariate classes",
         [
             "varying" => s.n_covariates_varying,
@@ -486,7 +427,7 @@ function Base.show(io::IO, ::MIME"text/plain", s::ModelSummary)
     end
     println(io)
 
-    _ms_print_key_values(io,
+    _print_key_values(io,
         "Formulas",
         [
             "deterministic names" => _ms_join_syms(s.deterministic_formula_names),
@@ -496,11 +437,11 @@ function Base.show(io::IO, ::MIME"text/plain", s::ModelSummary)
             "declared DE states" => _ms_join_syms(s.de_states),
             "declared DE signals" => _ms_join_syms(s.de_signals)
         ])
-    _ms_print_distribution_types(
+    _print_distribution_types(
         io, "Outcome distribution types", s.outcome_distribution_types)
     println(io)
 
-    _ms_print_key_values(io, "Helper functions", [
+    _print_key_values(io, "Helper functions", [
         "names" => _ms_join_syms(s.helper_names)
     ])
 end

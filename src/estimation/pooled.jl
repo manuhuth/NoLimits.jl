@@ -167,6 +167,17 @@ end
 _pooled_plugin_label(s::Symbol) = s
 _pooled_plugin_label(::_PooledMCPlugin) = :mc_mean
 
+# Evaluate `f()`, returning its value only when it is finite throughout; `nothing`
+# on throw or non-finite. Probes which plug-in statistics a RE distribution supports.
+function _pooled_finite_or_nothing(f)
+    v = try
+        f()
+    catch
+        nothing
+    end
+    return v !== nothing && all(isfinite, v) ? v : nothing
+end
+
 function _pooled_plugin_strategies(dm::DataModel, θ::ComponentArray;
         mc_draws::Int = 256, rng::AbstractRNG = Xoshiro(0))
     model = get_model(dm)
@@ -180,20 +191,12 @@ function _pooled_plugin_strategies(dm::DataModel, θ::ComponentArray;
     ind = first(get_individuals(dm))
     θs = _symmetrize_psd_params(θ, model.fixed.fixed)
     dists = dists_builder(θs, ind.const_cov, model_funs, helpers)
-    finite_or_nothing = f -> begin
-        v = try
-            f()
-        catch
-            nothing
-        end
-        v !== nothing && all(isfinite, v) ? v : nothing
-    end
     strategies = Any[]
     for re in re_names
         dist = getproperty(dists, re)
-        strat = if finite_or_nothing(() -> mean(dist)) !== nothing
+        strat = if _pooled_finite_or_nothing(() -> mean(dist)) !== nothing
             :mean
-        elseif finite_or_nothing(() -> median(dist)) !== nothing
+        elseif _pooled_finite_or_nothing(() -> median(dist)) !== nothing
             :median
         elseif dist isa NormalizingPlanarFlow
             _PooledMCPlugin([rand(rng, dist.base.dist) for _ in 1:mc_draws])
@@ -452,28 +455,22 @@ function _pooled_spread_kinds(dm::DataModel, θ::ComponentArray)
     ind = first(get_individuals(dm))
     θs = _symmetrize_psd_params(θ, model.fixed.fixed)
     dists = dists_builder(θs, ind.const_cov, model_funs, helpers)
-    finite_or_nothing = f -> begin
-        v = try
-            f()
-        catch
-            nothing
-        end
-        v !== nothing && all(isfinite, v) ? v : nothing
-    end
     kinds = Symbol[]
     for (ri, re) in enumerate(re_names)
         dist = getproperty(dists, re)
         kind = if lp_cache.dims[ri] == 1
-            if finite_or_nothing(() -> var(dist)) !== nothing
+            if _pooled_finite_or_nothing(() -> var(dist)) !== nothing
                 :var
-            elseif finite_or_nothing(() -> quantile(dist, 0.75) - quantile(dist, 0.25)) !==
+            elseif _pooled_finite_or_nothing(() -> quantile(dist, 0.75) -
+                                                   quantile(dist, 0.25)) !==
                    nothing
                 :iqr
             else
                 :none
             end
         else
-            finite_or_nothing(() -> vec(Matrix(cov(dist)))) !== nothing ? :cov : :none
+            _pooled_finite_or_nothing(() -> vec(Matrix(cov(dist)))) !== nothing ? :cov :
+            :none
         end
         push!(kinds, kind)
     end
@@ -971,11 +968,8 @@ function _fit_pooled(dm::DataModel, method;
     part = _pooled_partition(dm, method, θ_user_t, inv_transform, constants,
         strategies, rng)
 
-    cache = serialization isa SciMLBase.EnsembleThreads ?
-            build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-        nthreads = Threads.maxthreadid(), force_saveat = true) :
-            build_ll_cache(
-        dm; ode_args = ode_args, ode_kwargs = ode_kwargs, force_saveat = true)
+    cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = serialization, force_saveat = true)
 
     # data nll with η recomputed from θ — used by verification B (always the
     # recompute path, so frozen parameters are genuinely exercised through η)
@@ -1097,14 +1091,29 @@ function _pooled_solve(dm::DataModel, method, θ_start_u::ComponentArray,
         Tuple(getproperty(θ0_t, n) for n in free_names)))
     axs = getaxes(θ0_free_t)
 
+    # Positional free/constants merge (mirrors mle.jl): the per-name `setproperty!`
+    # loop dispatches on runtime Symbols every objective evaluation and breaks
+    # Enzyme's runtime rules on the shadow views.
+    free_idx = let lab_full = ComponentArrays.labels(θ_const_t),
+        lab_free = ComponentArrays.labels(θ0_free_t)
+
+        pos_full = Dict{String, Int}(lab_full[i] => i for i in eachindex(lab_full))
+        Int[pos_full[l] for l in lab_free]
+    end
+    θ_const_t_vec = collect(θ_const_t)
+    axs_full = getaxes(θ_const_t)
     function obj(θt, p)
-        θt_free = θt isa ComponentArray ? θt : ComponentArray(θt, axs)
-        T = eltype(θt_free)
+        v_free = θt isa ComponentArray ? ComponentArrays.getdata(θt) : θt
+        T = eltype(v_free)
         infT = convert(T, Inf)
-        θt_full = ComponentArray(T.(θ_const_t), getaxes(θ_const_t))
-        for name in free_names
-            setproperty!(θt_full, name, getproperty(θt_free, name))
+        full = Vector{T}(undef, length(θ_const_t_vec))
+        @inbounds for i in eachindex(full)
+            full[i] = θ_const_t_vec[i]
         end
+        @inbounds for k in eachindex(free_idx)
+            full[free_idx[k]] = v_free[k]
+        end
+        θt_full = ComponentArray(full, axs_full)
         θu = inv_transform(θt_full)
         add = add_term(θu)
         add == Inf && return infT
@@ -1124,10 +1133,8 @@ function _pooled_solve(dm::DataModel, method, θ_start_u::ComponentArray,
 
     optf = OptimizationFunction(obj, method.adtype)
     lower_t, upper_t = get_bounds_transformed(fe)
-    lower_t_free = ComponentArray(NamedTuple{Tuple(free_names)}(
-        Tuple(getproperty(lower_t, n) for n in free_names)))
-    upper_t_free = ComponentArray(NamedTuple{Tuple(free_names)}(
-        Tuple(getproperty(upper_t, n) for n in free_names)))
+    lower_t_free = _ca_subset(lower_t, free_names)
+    upper_t_free = _ca_subset(upper_t, free_names)
     lower_t_free_vec = collect(lower_t_free)
     upper_t_free_vec = collect(upper_t_free)
     use_bounds = !method.ignore_model_bounds &&
@@ -1139,8 +1146,7 @@ function _pooled_solve(dm::DataModel, method, θ_start_u::ComponentArray,
         return [bound])
         if bound isa ComponentArray || bound isa NamedTuple
             b = bound isa ComponentArray ? bound : ComponentArray(bound)
-            b = ComponentArray(NamedTuple{Tuple(free_names)}(
-                Tuple(getproperty(b, n) for n in free_names)))
+            b = _ca_subset(b, free_names)
             return collect(b)
         end
         return collect(bound)

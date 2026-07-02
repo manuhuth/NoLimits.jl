@@ -230,14 +230,6 @@ function _formulas_arg_uses_time(ex)
     return false
 end
 
-function _formulas_is_state_call(ex, name::Symbol)
-    ex isa Expr || return false
-    ex.head == :call || return false
-    ex.args[1] == name || return false
-    length(ex.args) == 2 || return false
-    return ex.args[2] == :t || ex.args[2] == :ξ
-end
-
 function _formulas_state_used_bare(ex, state::Symbol)
     ex isa Symbol && ex == state && return true
     ex isa Expr || return false
@@ -669,16 +661,6 @@ macro formulas(block)
     var_syms = Set([s for s in var_syms if Base.isidentifier(s)])
     skip_vars = Set([:Inf, :NaN, :nothing, :missing, :true, :false])
     var_syms = Set([s for s in var_syms if !(s in skip_vars)])
-
-    # Enforce state usage with (t) if state names are provided.
-    # The model macro will inject state_syms at expansion time if needed.
-    state_syms = Set{Symbol}()
-    for s in state_syms
-        for ex in all_exprs
-            _formulas_state_used_bare(ex, s) &&
-                error("State $(s) must be called as $(s)(t) in @formulas.")
-        end
-    end
 
     return quote
         meta = FormulasMeta($(Expr(:vect, QuoteNode.(all_names)...)),

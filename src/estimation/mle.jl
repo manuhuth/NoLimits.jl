@@ -103,11 +103,8 @@ function _fit_no_re(dm::DataModel, method;
     θ_const_u = deepcopy(θ0_u)
     _apply_constants!(θ_const_u, constants)
     θ_const_t = transform(θ_const_u)
-    cache = serialization isa SciMLBase.EnsembleThreads ?
-            build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-        nthreads = Threads.maxthreadid(), force_saveat = true) :
-            build_ll_cache(
-        dm; ode_args = ode_args, ode_kwargs = ode_kwargs, force_saveat = true)
+    cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = serialization, force_saveat = true)
 
     θ0_free_t = ComponentArray(NamedTuple{Tuple(free_names)}(Tuple(getproperty(θ0_t, n)
     for n in free_names)))
@@ -148,12 +145,8 @@ function _fit_no_re(dm::DataModel, method;
 
     optf = OptimizationFunction(obj, method.adtype)
     lower_t, upper_t = get_bounds_transformed(fe)
-    lower_t_free = ComponentArray(NamedTuple{Tuple(free_names)}(Tuple(getproperty(
-                                                                          lower_t, n)
-    for n in free_names)))
-    upper_t_free = ComponentArray(NamedTuple{Tuple(free_names)}(Tuple(getproperty(
-                                                                          upper_t, n)
-    for n in free_names)))
+    lower_t_free = _ca_subset(lower_t, free_names)
+    upper_t_free = _ca_subset(upper_t, free_names)
     lower_t_free_vec = collect(lower_t_free)
     upper_t_free_vec = collect(upper_t_free)
     use_bounds = !method.ignore_model_bounds &&
@@ -168,9 +161,7 @@ function _fit_no_re(dm::DataModel, method;
         end
         if bound isa ComponentArray || bound isa NamedTuple
             bound_ca = bound isa ComponentArray ? bound : ComponentArray(bound)
-            bound_ca = ComponentArray(NamedTuple{Tuple(free_names)}(Tuple(getproperty(
-                                                                              bound_ca, n)
-            for n in free_names)))
+            bound_ca = _ca_subset(bound_ca, free_names)
             return collect(bound_ca)
         end
         return collect(bound)

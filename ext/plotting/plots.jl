@@ -424,7 +424,7 @@ function plot_fits(res::FitResult;
                     hmm_priors_draw = Dict{Symbol, Any}()
                     dists = Vector{Distribution}(undef, length(obs_rows))
                     for (j, row) in enumerate(obs_rows)
-                        vary = _varying_at_plot(dm, ind, j, row)
+                        vary = _varying_at(dm, ind, j, row)
                         η_row = _row_random_effects_at(
                             dm, i, j, η_ind, rowwise_re; obs_only = true)
                         obs = sol_accessors === nothing ?
@@ -558,7 +558,7 @@ function plot_fits(res::FitResult;
                 y_obs_series = getfield(ind.series.obs, obs_name)
                 hmm_priors = Dict{Symbol, Any}()
                 for (j, row) in enumerate(obs_rows)
-                    vary = _varying_at_plot(dm, ind, j, row)
+                    vary = _varying_at(dm, ind, j, row)
                     η_row = _row_random_effects_at(
                         dm, i, j, η_ind, rowwise_re; obs_only = true)
                     obs = sol_accessors === nothing ?
@@ -689,7 +689,7 @@ function _plot_hidden_states_impl(dm::DataModel,
         n_states = nothing
         hmm_priors_hs = Dict{Symbol, Any}()
         for (j, row) in enumerate(obs_rows)
-            vary = _varying_at_plot(dm, ind, j, row)
+            vary = _varying_at(dm, ind, j, row)
             η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only = true)
             obs = sol_accessors === nothing ?
                   calculate_formulas_obs(dm.model, θ_ind, η_row, ind.const_cov, vary) :
@@ -964,7 +964,7 @@ function _plot_emission_for_individual(dm::DataModel,
         sol_accessors = get_de_accessors_builder(dm.model.de.de)(sol, compiled)
     end
 
-    vary = _varying_at_plot(dm, ind, row_pos, row)
+    vary = _varying_at(dm, ind, row_pos, row)
     rowwise_re = _needs_rowwise_random_effects(dm, ind_idx; obs_only = true)
     η_row = _row_random_effects_at(dm, ind_idx, row_pos, η_ind, rowwise_re; obs_only = true)
     obs = sol_accessors === nothing ?

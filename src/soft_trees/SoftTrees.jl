@@ -230,30 +230,10 @@ end
 # default's ordering so all three entry points agree for any parameters.
 function (tree::SoftTree)(
         x::AbstractVector{<:Real}, params::SoftTreeParams, ::Val{:inplace})
-    # Mutating-buffer variant kept for API compatibility: identical traversal to the
-    # default method, but the probability buffer is filled in place. ForwardDiff
-    # propagates `Dual`s through the promoted-eltype buffer, so the result matches the
-    # default method for any params.
-    length(x) == tree.input_dim ||
-        error("Invalid input length. Expected $(tree.input_dim); got $(length(x)).")
-    n_leaves = 2^tree.depth
-    T = promote_type(
-        eltype(params.node_weights), eltype(params.node_biases), eltype(x))
-    probs = zeros(T, n_leaves)
-    probs[1] = one(T)
-    for level in 0:(tree.depth - 1)
-        n_prev = 2^level
-        start_idx = 2^level
-        for k in 1:n_prev
-            old = probs[k]
-            p = _sigmoid(_st_rowdot(params.node_weights, start_idx + k - 1, x) +
-                         params.node_biases[start_idx + k - 1])
-            probs[n_prev + k] = old * (one(T) - p)
-            probs[k] = old * p
-        end
-    end
-    return [_st_leafdot(params.leaf_values, o, probs)
-            for o in 1:size(params.leaf_values, 1)]
+    # Kept for API compatibility: the body had become identical to the default
+    # method (its `zeros` vs `undef` buffer init is unobservable — the level loop
+    # writes every leaf slot), so it simply delegates, like `Val(:fast)`.
+    return tree(x, params)
 end
 
 function (tree::SoftTree)(x::AbstractVector{<:Real}, params::SoftTreeParams, ::Val{:fast})

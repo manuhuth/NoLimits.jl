@@ -3,6 +3,7 @@ using NoLimits
 using Plots
 using DataFrames
 using Distributions
+using Random
 
 # Note: "residual plots basic API (FitResult + DataModel + cache)"
 # has been moved to integration_plotting.jl (shared fixtures).
@@ -185,4 +186,52 @@ end
     sort!(rdf, :row)
     @test Float64.(rdf.fitted) ≈ [0.1, 0.4, 0.4, 0.1, 0.3]
     @test maximum(abs.(Float64.(rdf.res_raw))) < 1.0e-6
+end
+
+@testset "MCMC residuals apply HMM forward filtering" begin
+    hmm_model = @Model begin
+        @fixedEffects begin
+            μ2 = RealNumber(3.0, prior = Normal(3.0, 0.5))
+            σh = RealNumber(0.5, scale = :log, prior = LogNormal(-0.7, 0.3))
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @formulas begin
+            y ~ DiscreteTimeDiscreteStatesHMM([0.8 0.2; 0.3 0.7],
+                (Normal(0.0, σh), Normal(μ2, σh)), Categorical([0.6, 0.4]))
+        end
+    end
+    df = DataFrame(ID = [1, 1, 1], t = [0.0, 1.0, 2.0], y = [3.1, 0.05, 2.9])
+    dm = DataModel(hmm_model, df; primary_id = :ID, time_col = :t)
+    res = fit_model(dm,
+        NoLimits.MCMC(;
+            turing_kwargs = (n_samples = 30, n_adapt = 15, progress = false)))
+
+    dfres = get_residuals(res; residuals = [:logscore], mcmc_draws = 1,
+        rng = Xoshiro(11), return_draw_level = true)
+
+    # Replicate the single posterior draw the residual path selects with the
+    # same rng, then forward-filter by hand.
+    res_use = NoLimits._with_posterior_warmup(res, nothing)
+    θd, ηd, _ = NoLimits._posterior_drawn_params(
+        res_use, dm, NamedTuple(), NamedTuple(), 1, Xoshiro(11))
+    θ = θd[1]
+    η_i = ηd[1][1]
+    ind = get_individuals(dm)[1]
+    rows = NoLimits.get_row_groups(dm).obs_rows[1]
+    dists = [calculate_formulas_obs(hmm_model, θ, η_i, ind.const_cov,
+                 NoLimits._varying_at(dm, ind, j, rows[j])).y for j in 1:3]
+    y = df.y
+    post1 = posterior_hidden_states(dists[1], y[1])
+    d2f = NoLimits._hmm_with_prior(dists[2], post1)
+    post2 = posterior_hidden_states(d2f, y[2])
+    d3f = NoLimits._hmm_with_prior(dists[3], post2)
+
+    ls = sort(dfres, :obs_index).logscore
+    @test ls[1] ≈ -logpdf(dists[1], y[1])
+    @test ls[2] ≈ -logpdf(d2f, y[2])
+    @test ls[3] ≈ -logpdf(d3f, y[3])
+    # Guard that filtering actually matters for this data (keeps the test sharp).
+    @test !(ls[2] ≈ -logpdf(dists[2], y[2]))
 end

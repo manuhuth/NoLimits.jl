@@ -242,12 +242,23 @@ function logprior(fe::FixedEffects, θ_untransformed::ComponentArray)
     return logprior(fe.extras.priors, θ_untransformed)
 end
 
+# Subset a name-keyed ComponentArray (or any property container) to `names` in
+# order — the standard free-parameter extraction used across the fit entry points.
+@inline function _ca_subset(x, names)
+    return ComponentArray(NamedTuple{Tuple(names)}(Tuple(getproperty(x, n)
+    for n in names)))
+end
+
 function logprior(priors::NamedTuple, θ::ComponentArray)
-    total = 0.0
+    # getproperty (a view), not θ[name] (which copies array-valued components) —
+    # logpdf is evaluated on identical values either way, and this runs per
+    # MAP/profile/wald objective evaluation. Typed zero keeps the accumulator
+    # concrete under Dual-θ gradient sweeps.
+    total = zero(promote_type(eltype(θ), Float64))
     for name in keys(priors)
         prior = getfield(priors, name)
         prior isa Priorless && continue
-        val = θ[name]
+        val = getproperty(θ, name)
         total += _logprior_eval(prior, val)
     end
     return total
@@ -330,12 +341,6 @@ macro fixedEffects(block)
     end
 end
 
-function _param_value_type(val)
-    val isa Number && return typeof(val)
-    val isa AbstractArray && return eltype(val)
-    return Float64
-end
-
 function _value_type(val)
     val isa Number && return typeof(val)
     val isa AbstractArray && return eltype(val)
@@ -345,7 +350,7 @@ end
 function _infer_scalar_type(values)
     T = Float64
     for v in values
-        T = promote_type(T, _param_value_type(v))
+        T = promote_type(T, _value_type(v))
     end
     return T
 end
@@ -434,56 +439,15 @@ function build_fixed_effects(params::NamedTuple)
     return FixedEffects(meta, values, bounds, transforms, extras)
 end
 
-function _param_value(p::RealNumber)
-    return p.value
-end
+# Every parameter block stores its (initial) value in `.value`.
+_param_value(p::AbstractParameterBlock) = p.value
 
-function _param_value(p::RealVector)
-    return p.value
-end
-
-function _param_value(p::RealPSDMatrix)
-    return p.value
-end
-
-function _param_value(p::RealDiagonalMatrix)
-    return p.value
-end
-
-function _param_value(p::NNParameters)
-    return p.value
-end
-
-function _param_value(p::NPFParameter)
-    return p.value
-end
-
-function _param_value(p::SoftTreeParameters)
-    return p.value
-end
-
-function _param_value(p::SplineParameters)
-    return p.value
-end
-
-function _param_value(p::ProbabilityVector)
-    return p.value
-end
-
-function _param_value(p::DiscreteTransitionMatrix)
-    return p.value
-end
-
-function _param_value(p::ContinuousTransitionMatrix)
-    return p.value
-end
-function _param_lower(p::RealNumber)
-    return p.lower
-end
-
-function _param_lower(p::RealVector)
-    return p.lower
-end
+# Blocks with explicit user-settable bounds store them in `.lower`/`.upper`;
+# the constrained blocks (PSD/diagonal/simplex/transition) derive theirs below.
+const _ExplicitBoundsBlock = Union{RealNumber, RealVector, NNParameters, NPFParameter,
+    SoftTreeParameters, SplineParameters}
+_param_lower(p::_ExplicitBoundsBlock) = p.lower
+_param_upper(p::_ExplicitBoundsBlock) = p.upper
 
 function _param_lower(p::RealPSDMatrix)
     return fill(-Inf, size(p.value))
@@ -491,22 +455,6 @@ end
 
 function _param_lower(p::RealDiagonalMatrix)
     return fill(-Inf, length(p.value))
-end
-
-function _param_lower(p::NNParameters)
-    return p.lower
-end
-
-function _param_lower(p::NPFParameter)
-    return p.lower
-end
-
-function _param_lower(p::SoftTreeParameters)
-    return p.lower
-end
-
-function _param_lower(p::SplineParameters)
-    return p.lower
 end
 
 function _param_lower(p::ProbabilityVector)
@@ -527,13 +475,6 @@ function _param_lower(p::ContinuousTransitionMatrix)
     end
     return lb
 end
-function _param_upper(p::RealNumber)
-    return p.upper
-end
-
-function _param_upper(p::RealVector)
-    return p.upper
-end
 
 function _param_upper(p::RealPSDMatrix)
     return fill(Inf, size(p.value))
@@ -541,22 +482,6 @@ end
 
 function _param_upper(p::RealDiagonalMatrix)
     return fill(Inf, length(p.value))
-end
-
-function _param_upper(p::NNParameters)
-    return p.upper
-end
-
-function _param_upper(p::NPFParameter)
-    return p.upper
-end
-
-function _param_upper(p::SoftTreeParameters)
-    return p.upper
-end
-
-function _param_upper(p::SplineParameters)
-    return p.upper
 end
 
 function _param_upper(p::ProbabilityVector)
@@ -579,11 +504,7 @@ function _param_spec(name::Symbol, p::RealVector)
     n = length(p.value)
     first_scale = scales[1]
     if all(s -> s === first_scale, scales)
-        if first_scale === :identity
-            return TransformSpec(name, :identity, (n, 1), nothing)
-        else
-            return TransformSpec(name, first_scale, (n, 1), nothing)
-        end
+        return TransformSpec(name, first_scale, (n, 1), nothing)
     else
         return TransformSpec(name, :elementwise, (n, 1), collect(scales))
     end
@@ -806,11 +727,6 @@ function _collect_model_fun!(p, model_fun_pairs)
 end
 function _collect_model_fun!(p, model_fun_pairs, ::Type{T}) where {T}
     return nothing
-end
-
-function _logprior_for_param(p, val)
-    p.prior isa Priorless && return 0.0
-    return _logprior_eval(p.prior, val)
 end
 
 function _logprior_eval(prior::Distribution, val)

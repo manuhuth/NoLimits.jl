@@ -496,7 +496,7 @@ function _plot_residual_pit_df(df::DataFrame;
             p = create_styled_plot(title = string(obs_name, " | PIT Density"),
                 xlabel = "PIT", ylabel = "Density",
                 style = style, kwargs_subplot...)
-            xk, yk = _residual_kde_xy(pits; bandwidth = kde_bandwidth)
+            xk, yk = _kde_xy(pits; bandwidth = kde_bandwidth)
             plot!(p, xk, yk; color = style.color_secondary, label = "")
             push!(plots, p)
         else

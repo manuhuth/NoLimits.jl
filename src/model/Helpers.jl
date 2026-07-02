@@ -7,43 +7,8 @@ struct HelperDef
     source::Expr
 end
 
-function _helper_call_name(f)
-    if f isa Symbol
-        return f
-    elseif f isa GlobalRef
-        return f.name
-    elseif f isa Expr && f.head == :.
-        last = f.args[end]
-        last isa QuoteNode && (last = last.value)
-        return last isa Symbol ? last : nothing
-    end
-    return nothing
-end
-
-function _helper_is_mutating_assign(ex::Expr)
-    if ex.head == :(=)
-        lhs = ex.args[1]
-        return lhs isa Expr && (lhs.head == :ref || lhs.head == :.)
-    end
-    head_str = string(ex.head)
-    return startswith(head_str, ".") && endswith(head_str, "=")
-end
-
-function _helper_contains_mutation(ex)
-    ex isa Expr || return false
-    _helper_is_mutating_assign(ex) && return true
-    if ex.head == :call
-        fname = _helper_call_name(ex.args[1])
-        fname !== nothing && endswith(String(fname), "!") && return true
-    end
-    for arg in ex.args
-        _helper_contains_mutation(arg) && return true
-    end
-    return false
-end
-
 function _warn_if_mutating_helper(def::HelperDef)
-    _helper_contains_mutation(def.body) || return nothing
+    _macro_contains_mutation(def.body) || return nothing
     @warn "Possible mutation detected in @helpers for $(def.name). ForwardDiff usually handles mutation but it can increase compile time and runtime for large models, and may break some reverse-mode AD backends. Consider a non-mutating form."
     return nothing
 end

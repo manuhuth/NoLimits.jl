@@ -398,9 +398,7 @@ function _focei_prior_mean_b(
     try
         return _focei_prior_mean_b_impl(dm, batch_info, θ_re, const_cache, cache)
     catch err
-        if err isa LinearAlgebra.PosDefException ||
-           err isa LinearAlgebra.SingularException ||
-           err isa DomainError || err isa ArgumentError
+        if _is_numeric_error(err)
             return zeros(eltype(θ_re), batch_info.n_b)
         end
         rethrow(err)
@@ -563,9 +561,7 @@ function _focei_negH_batch(dm::DataModel, batch_info::_LaplaceBatchInfo, θ, b,
         return _focei_negH_batch_impl(dm, batch_info, θ, b, const_cache, cache;
             interaction = interaction, tctx = tctx)
     catch err
-        if err isa LinearAlgebra.PosDefException ||
-           err isa LinearAlgebra.SingularException ||
-           err isa DomainError || err isa ArgumentError
+        if _is_numeric_error(err)
             nb = batch_info.n_b
             return fill(convert(promote_type(eltype(θ), eltype(b)), NaN), nb, nb)
         end
@@ -800,21 +796,11 @@ function _fit_focei(dm::DataModel, method, args, fit_kwargs;
     multistart_opts = _resolve_multistart_options(method.multistart, inner_opts)
 
     _, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re)
-    ll_cache = serialization isa SciMLBase.EnsembleThreads ?
-               build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-        nthreads = Threads.maxthreadid(), force_saveat = true) :
-               build_ll_cache(
-        dm; ode_args = ode_args, ode_kwargs = ode_kwargs, force_saveat = true)
+    ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = serialization, force_saveat = true)
     n_batches = length(batch_infos)
     Tθ = eltype(θ0_t)
-    bstar_cache = _LaplaceBStarCache([Vector{Tθ}() for _ in 1:n_batches], falses(n_batches))
-    grad_cache = _LaplaceGradCache([Vector{Tθ}() for _ in 1:n_batches],
-        fill(Tθ(NaN), n_batches),
-        [Vector{Tθ}() for _ in 1:n_batches],
-        falses(n_batches))
-    ad_cache = _init_laplace_ad_cache(n_batches)
-    hess_cache = _init_laplace_hess_cache(Tθ, n_batches)
-    ebe_cache = _LaplaceCache(nothing, bstar_cache, grad_cache, ad_cache, hess_cache)
+    ebe_cache = _init_laplace_eval_cache(n_batches, Tθ)
 
     θ0_free_t = θ0_t[free_names]
     axs_free = getaxes(θ0_free_t)

@@ -306,6 +306,12 @@ get_data_model(res::FitResult) = res.data_model
 get_fit_args(res::FitResult) = res.fit_args
 get_fit_kwargs(res::FitResult) = res.fit_kwargs
 
+# Stored fit keyword with a default — shared by the RE/loglikelihood accessors,
+# plotting, and the UQ entry points.
+@inline function _fit_kw(res::FitResult, key::Symbol, default)
+    return haskey(res.fit_kwargs, key) ? getfield(res.fit_kwargs, key) : default
+end
+
 function _nl_fmt_compact_value(x)
     x === nothing && return "-"
     x isa Missing && return "-"
@@ -720,14 +726,7 @@ function _compute_bstars(dm::DataModel,
     _, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re)
     T = eltype(θu)
     n_batches = length(batch_infos)
-    bstar_cache = _LaplaceBStarCache([Vector{T}() for _ in 1:n_batches], falses(n_batches))
-    grad_cache = _LaplaceGradCache([Vector{T}() for _ in 1:n_batches],
-        fill(T(NaN), n_batches),
-        [Vector{T}() for _ in 1:n_batches],
-        falses(n_batches))
-    ad_cache = _init_laplace_ad_cache(n_batches)
-    hess_cache = _init_laplace_hess_cache(T, n_batches)
-    ebe_cache = _LaplaceCache(nothing, bstar_cache, grad_cache, ad_cache, hess_cache)
+    ebe_cache = _init_laplace_eval_cache(n_batches, T)
     ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
     ebe_serialization = ll_cache isa Vector ? SciMLBase.EnsembleThreads() :
                         SciMLBase.EnsembleSerial()
@@ -824,18 +823,16 @@ function get_random_effects(dm::DataModel,
     end
     if res.result isa MCEMResult
         θu = get_params(res; scale = :untransformed)
-        ode_args = haskey(res.fit_kwargs, :ode_args) ? getfield(res.fit_kwargs, :ode_args) :
-                   ()
-        ode_kwargs = haskey(res.fit_kwargs, :ode_kwargs) ?
-                     getfield(res.fit_kwargs, :ode_kwargs) : NamedTuple()
-        serialization = haskey(res.fit_kwargs, :serialization) ?
-                        getfield(res.fit_kwargs, :serialization) : EnsembleThreads()
-        rng = haskey(res.fit_kwargs, :rng) ? getfield(res.fit_kwargs, :rng) :
-              Random.default_rng()
-        ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-            serialization = serialization, force_saveat = true)
         bstars = res.result.eb_modes
         if bstars === nothing
+            # Only the recompute path needs the fit kwargs and a likelihood cache
+            # (an O(rows) build) — stored modes skip both.
+            ode_args = _fit_kw(res, :ode_args, ())
+            ode_kwargs = _fit_kw(res, :ode_kwargs, NamedTuple())
+            serialization = _fit_kw(res, :serialization, EnsembleThreads())
+            rng = _fit_kw(res, :rng, Random.default_rng())
+            ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+                serialization = serialization, force_saveat = true)
             bstars, batch_infos = _compute_bstars(
                 dm, θu, constants_re, ll_cache, res.method.ebe, rng;
                 rescue = res.method.ebe_rescue)
@@ -850,18 +847,16 @@ function get_random_effects(dm::DataModel,
         θu = get_params(res; scale = :untransformed)
         constants_re = _saem_anneal_constants_re(
             dm, θu, _saem_anneal_names(res), constants_re)
-        ode_args = haskey(res.fit_kwargs, :ode_args) ? getfield(res.fit_kwargs, :ode_args) :
-                   ()
-        ode_kwargs = haskey(res.fit_kwargs, :ode_kwargs) ?
-                     getfield(res.fit_kwargs, :ode_kwargs) : NamedTuple()
-        serialization = haskey(res.fit_kwargs, :serialization) ?
-                        getfield(res.fit_kwargs, :serialization) : EnsembleThreads()
-        rng = haskey(res.fit_kwargs, :rng) ? getfield(res.fit_kwargs, :rng) :
-              Random.default_rng()
-        ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-            serialization = serialization, force_saveat = true)
         bstars = res.result.eb_modes
         if bstars === nothing
+            # Only the recompute path needs the fit kwargs and a likelihood cache
+            # (an O(rows) build) — stored modes skip both.
+            ode_args = _fit_kw(res, :ode_args, ())
+            ode_kwargs = _fit_kw(res, :ode_kwargs, NamedTuple())
+            serialization = _fit_kw(res, :serialization, EnsembleThreads())
+            rng = _fit_kw(res, :rng, Random.default_rng())
+            ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+                serialization = serialization, force_saveat = true)
             # When the result was loaded from disk, fall back to defaults from a vanilla SAEM().
             _saem_opts = res.method isa _SavedFittingMethod ? SAEM().saem : res.method.saem
             ebe = EBEOptions(_saem_opts.ebe_optimizer,
@@ -933,12 +928,9 @@ end
 function _resolve_bstars_for_re(dm::DataModel, res::FitResult, constants_re::NamedTuple)
     if res.result isa LaplaceResult || res.result isa GHQuadratureResult
         θu = get_params(res; scale = :untransformed)
-        ode_args = haskey(res.fit_kwargs, :ode_args) ? getfield(res.fit_kwargs, :ode_args) :
-                   ()
-        ode_kwargs = haskey(res.fit_kwargs, :ode_kwargs) ?
-                     getfield(res.fit_kwargs, :ode_kwargs) : NamedTuple()
-        serialization = haskey(res.fit_kwargs, :serialization) ?
-                        getfield(res.fit_kwargs, :serialization) : EnsembleThreads()
+        ode_args = _fit_kw(res, :ode_args, ())
+        ode_kwargs = _fit_kw(res, :ode_kwargs, NamedTuple())
+        serialization = _fit_kw(res, :serialization, EnsembleThreads())
         ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
             serialization = serialization, force_saveat = true)
         _, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re)
@@ -946,14 +938,10 @@ function _resolve_bstars_for_re(dm::DataModel, res::FitResult, constants_re::Nam
     end
     if res.result isa MCEMResult
         θu = get_params(res; scale = :untransformed)
-        ode_args = haskey(res.fit_kwargs, :ode_args) ? getfield(res.fit_kwargs, :ode_args) :
-                   ()
-        ode_kwargs = haskey(res.fit_kwargs, :ode_kwargs) ?
-                     getfield(res.fit_kwargs, :ode_kwargs) : NamedTuple()
-        serialization = haskey(res.fit_kwargs, :serialization) ?
-                        getfield(res.fit_kwargs, :serialization) : EnsembleThreads()
-        rng = haskey(res.fit_kwargs, :rng) ? getfield(res.fit_kwargs, :rng) :
-              Random.default_rng()
+        ode_args = _fit_kw(res, :ode_args, ())
+        ode_kwargs = _fit_kw(res, :ode_kwargs, NamedTuple())
+        serialization = _fit_kw(res, :serialization, EnsembleThreads())
+        rng = _fit_kw(res, :rng, Random.default_rng())
         ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
             serialization = serialization, force_saveat = true)
         bstars = res.result.eb_modes
@@ -971,14 +959,10 @@ function _resolve_bstars_for_re(dm::DataModel, res::FitResult, constants_re::Nam
         θu = get_params(res; scale = :untransformed)
         constants_re = _saem_anneal_constants_re(
             dm, θu, _saem_anneal_names(res), constants_re)
-        ode_args = haskey(res.fit_kwargs, :ode_args) ? getfield(res.fit_kwargs, :ode_args) :
-                   ()
-        ode_kwargs = haskey(res.fit_kwargs, :ode_kwargs) ?
-                     getfield(res.fit_kwargs, :ode_kwargs) : NamedTuple()
-        serialization = haskey(res.fit_kwargs, :serialization) ?
-                        getfield(res.fit_kwargs, :serialization) : EnsembleThreads()
-        rng = haskey(res.fit_kwargs, :rng) ? getfield(res.fit_kwargs, :rng) :
-              Random.default_rng()
+        ode_args = _fit_kw(res, :ode_args, ())
+        ode_kwargs = _fit_kw(res, :ode_kwargs, NamedTuple())
+        serialization = _fit_kw(res, :serialization, EnsembleThreads())
+        rng = _fit_kw(res, :rng, Random.default_rng())
         ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
             serialization = serialization, force_saveat = true)
         bstars = res.result.eb_modes
@@ -1102,9 +1086,10 @@ function _sample_mcmc_bstars_raw(dm::DataModel, batch_infos, bstars, θu, const_
                           _b_to_last_params(bstars[bi], info, re_names)
     end
     bstars_per_sample = Vector{Vector{Any}}(undef, n_samples)
+    tkwargs_noadapt = merge(tkwargs, (n_adapt = 0,))
     for s in 1:n_samples
         sampled = Vector{Any}(undef, n_batches)
-        sweep_kwargs = s == 1 ? tkwargs : merge(tkwargs, (n_adapt = 0,))
+        sweep_kwargs = s == 1 ? tkwargs : tkwargs_noadapt
         for bi in 1:n_batches
             info = batch_infos[bi]
             if info.n_b == 0
@@ -1115,7 +1100,7 @@ function _sample_mcmc_bstars_raw(dm::DataModel, batch_infos, bstars, θu, const_
                 dm, info, θu, const_cache, ll_cache_local, sampler, sweep_kwargs,
                 batch_rngs[bi], re_names, warm_start, last_params[bi])
             last_params[bi] = lastp
-            sampled[bi] = size(samples_mat, 2) > 0 ? vec(samples_mat[:, end]) : copy(lastb)
+            sampled[bi] = size(samples_mat, 2) > 0 ? samples_mat[:, end] : copy(lastb)
         end
         bstars_per_sample[s] = sampled
     end
@@ -2148,55 +2133,10 @@ function _loglikelihood_rows_hmm(dm::DataModel, idx::Int, θ, η_ind, cache::_LL
                     hmm_seen[j] = true
                 end
                 init_p = hmm_init[j]
-                # Use check_args=false so that degenerate posteriors (NaN/Inf from
-                # zero-probability observations at extreme parameter values) do not
-                # throw a DomainError.  The isfinite guard below catches NaN logpdf.
-                dist_up = if dist isa ContinuousTimeDiscreteStatesHMM
-                    ContinuousTimeDiscreteStatesHMM(
-                        dist.transition_matrix, dist.emission_dists,
-                        Distributions.Categorical(init_p; check_args = false), dist.Δt;
-                        propagation_mode = dist.propagation_mode)
-                elseif dist isa MVContinuousTimeDiscreteStatesHMM
-                    MVContinuousTimeDiscreteStatesHMM(
-                        dist.transition_matrix, dist.emission_dists,
-                        Distributions.Categorical(init_p; check_args = false), dist.Δt;
-                        propagation_mode = dist.propagation_mode)
-                elseif dist isa MVDiscreteTimeDiscreteStatesHMM
-                    MVDiscreteTimeDiscreteStatesHMM(
-                        dist.transition_matrix, dist.emission_dists,
-                        Distributions.Categorical(init_p; check_args = false))
-                elseif dist isa DiscreteTimeObservedStatesMarkovModel
-                    DiscreteTimeObservedStatesMarkovModel(dist.transition_matrix,
-                        Distributions.Categorical(init_p; check_args = false),
-                        dist.state_labels)
-                elseif dist isa ContinuousTimeObservedStatesMarkovModel
-                    ContinuousTimeObservedStatesMarkovModel(dist.transition_matrix,
-                        Distributions.Categorical(init_p; check_args = false),
-                        dist.Δt, dist.state_labels;
-                        propagation_mode = dist.propagation_mode)
-                elseif dist isa CoarsedObservedStatesMarkovModel &&
-                       dist.base_dist isa DiscreteTimeObservedStatesMarkovModel
-                    base_dist = dist.base_dist
-                    coarsed(DiscreteTimeObservedStatesMarkovModel(
-                        base_dist.transition_matrix,
-                        Distributions.Categorical(init_p; check_args = false),
-                        base_dist.state_labels
-                    ))
-                elseif dist isa CoarsedObservedStatesMarkovModel &&
-                       dist.base_dist isa ContinuousTimeObservedStatesMarkovModel
-                    base_dist = dist.base_dist
-                    coarsed(ContinuousTimeObservedStatesMarkovModel(
-                        base_dist.transition_matrix,
-                        Distributions.Categorical(init_p; check_args = false),
-                        base_dist.Δt,
-                        base_dist.state_labels;
-                        propagation_mode = base_dist.propagation_mode
-                    ))
-                else
-                    DiscreteTimeDiscreteStatesHMM(
-                        dist.transition_matrix, dist.emission_dists,
-                        Distributions.Categorical(init_p; check_args = false))
-                end
+                # check_args=false inside `_hmm_pin_initial_probs`: degenerate
+                # posteriors must not throw — the isfinite guard below catches
+                # NaN logpdf.
+                dist_up = _hmm_pin_initial_probs(dist, init_p)
                 prior = hmm_has_prior[j] ? hmm_priors[j] : nothing
                 dist_use = try
                     _hmm_with_prior(dist_up, prior)
@@ -2307,69 +2247,6 @@ function _resid_stats_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_LL
             resid = y - dist.μ
             resid_ss += resid * resid
             resid_n += 1
-        end
-    end
-    return (resid_ss, resid_n, true)
-end
-
-function _resid_stats_individual_cols(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache)
-    model = dm.model
-    ind = dm.individuals[idx]
-    obs_rows = dm.row_groups.obs_rows[idx]
-    const_cov = ind.const_cov
-    obs_series = ind.series.obs
-    vary_cache = cache.vary_cache === nothing ? nothing : cache.vary_cache[idx]
-    if η_ind isa NamedTuple
-        η_ind = ComponentArray(η_ind)
-    end
-
-    sol_accessors = nothing
-    pre = nothing
-    if model.de.de !== nothing
-        pre = calculate_prede(model, θ, η_ind, const_cov)
-        sol_accessors = _ll_solve_de(dm, idx, θ, η_ind, cache, pre)
-        sol_accessors === nothing &&
-            return (zeros(promote_type(eltype(θ), Float64), length(dm.config.obs_cols)),
-                zeros(Int, length(dm.config.obs_cols)),
-                false)
-    end
-
-    Tss = promote_type(eltype(θ), Float64)
-    obs_cols = dm.config.obs_cols
-    resid_ss = zeros(Tss, length(obs_cols))
-    resid_n = zeros(Int, length(obs_cols))
-    time_col = vary_cache === nothing ? _get_col(dm.df, dm.config.time_col)[obs_rows] :
-               nothing
-    rowwise_re = _needs_rowwise_random_effects(dm, idx; obs_only = true)
-    pre === nothing && !rowwise_re && (pre = calculate_prede(model, θ, η_ind, const_cov))
-    ctx = rowwise_re ? nothing :
-          (; fixed_effects = θ, random_effects = η_ind, prede = pre,
-        helpers = cache.helpers, model_funs = cache.model_funs)
-    sol_acc = sol_accessors === nothing ? NamedTuple() : sol_accessors
-    row_tmpl = if rowwise_re && !isempty(obs_rows)
-        η_ind isa NamedTuple && (η_ind = ComponentArray(η_ind))
-        _row_re_template(dm, idx, 1, η_ind; obs_only = true)
-    else
-        nothing
-    end
-    for i in eachindex(obs_rows)
-        vary = vary_cache === nothing ? _varying_at(dm, ind, i, time_col) : vary_cache[i]
-        obs = if rowwise_re
-            η_row = _row_random_effects_fill(dm, idx, i, η_ind, row_tmpl; obs_only = true)
-            sol_accessors === nothing ?
-            calculate_formulas_obs(model, θ, η_row, const_cov, vary) :
-            calculate_formulas_obs(model, θ, η_row, const_cov, vary, sol_accessors)
-        else
-            model.formulas.obs(ctx, sol_acc, const_cov, vary)
-        end
-        for (j, col) in pairs(obs_cols)
-            dist = getproperty(obs, col)
-            dist isa Normal || return (resid_ss, resid_n, false)
-            y = getfield(obs_series, col)[i]
-            y === missing && continue
-            resid = y - dist.μ
-            resid_ss[j] += resid * resid
-            resid_n[j] += 1
         end
     end
     return (resid_ss, resid_n, true)
@@ -2529,6 +2406,8 @@ function loglikelihood(dm::DataModel, θ::ComponentArray, η;
                 build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
         serialization = serialization) : cache
     n = length(dm.individuals)
+    η_eltype = ηs isa Vector ? (isempty(ηs) ? Float64 : eltype(first(ηs))) : eltype(ηs)
+    T = promote_type(eltype(θs), η_eltype)
     if serialization isa SciMLBase.EnsembleThreads
         nthreads = Threads.maxthreadid()
         caches = if cache_use isa Vector
@@ -2543,8 +2422,6 @@ function loglikelihood(dm::DataModel, θ::ComponentArray, η;
                 dm; ode_args = ode_args, ode_kwargs = ode_kwargs, nthreads = nthreads)
             built isa Vector ? built : [built]
         end
-        η_eltype = ηs isa Vector ? (isempty(ηs) ? Float64 : eltype(first(ηs))) : eltype(ηs)
-        T = promote_type(eltype(θs), η_eltype)
         by_individual = Vector{T}(undef, n)
         bad = Threads.Atomic{Bool}(false)
         # Chunk-indexed cache assignment: each task owns cache slot `c` for its whole
@@ -2572,7 +2449,10 @@ function loglikelihood(dm::DataModel, θ::ComponentArray, η;
         end
         return ll
     else
-        ll = zero(eltype(θs))
+        # zero(T), not zero(eltype(θs)): a Dual-η/Float64-θ evaluation would
+        # otherwise carry a loop-wide Union accumulator (the threaded branch
+        # promotes the same way).
+        ll = zero(T)
         for i in 1:n
             η_ind = ηs isa Vector ? ηs[i] : ηs
             lli = _loglikelihood_individual(dm, i, θs, η_ind, cache_use)

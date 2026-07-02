@@ -80,116 +80,9 @@ Return the raw assignment expressions from the `@preDifferentialEquation` block.
 """
 get_prede_lines(p::PreDifferentialEquation) = p.meta.lines
 
-function _prede_is_identifier(sym::Symbol)
-    return Base.isidentifier(sym)
-end
-
-function _prede_call_name(f)
-    if f isa Symbol
-        return f
-    elseif f isa GlobalRef
-        return f.name
-    elseif f isa Expr && f.head == :.
-        last = f.args[end]
-        last isa QuoteNode && (last = last.value)
-        return last isa Symbol ? last : nothing
-    end
-    return nothing
-end
-
-function _prede_is_mutating_assign(ex::Expr)
-    if ex.head == :(=)
-        lhs = ex.args[1]
-        return lhs isa Expr && (lhs.head == :ref || lhs.head == :.)
-    end
-    head_str = string(ex.head)
-    return startswith(head_str, ".") && endswith(head_str, "=")
-end
-
-function _prede_contains_mutation(ex)
-    ex isa Expr || return false
-    _prede_is_mutating_assign(ex) && return true
-    if ex.head == :call
-        fname = _prede_call_name(ex.args[1])
-        fname !== nothing && endswith(String(fname), "!") && return true
-    end
-    for arg in ex.args
-        _prede_contains_mutation(arg) && return true
-    end
-    return false
-end
-
 function _warn_if_mutating_prede(name::Symbol, ex::Expr)
-    _prede_contains_mutation(ex) || return nothing
+    _macro_contains_mutation(ex) || return nothing
     @warn "Possible mutation detected in @preDifferentialEquation for $(name). ForwardDiff usually handles mutation but it can increase compile time and runtime for large models, and may break some reverse-mode AD backends. Consider a non-mutating form."
-    return nothing
-end
-
-function _prede_collect_call_symbols(ex, out::Set{Symbol})
-    ex isa Expr || return out
-    if ex.head == :call
-        f = ex.args[1]
-        if f isa Symbol && _prede_is_identifier(f)
-            push!(out, f)
-        end
-        for arg in ex.args[2:end]
-            _prede_collect_call_symbols(arg, out)
-        end
-        return out
-    elseif ex.head == :ref
-        _prede_collect_call_symbols(ex.args[1], out)
-        return out
-    else
-        for arg in ex.args
-            _prede_collect_call_symbols(arg, out)
-        end
-        return out
-    end
-end
-
-function _prede_collect_var_symbols(ex, out::Set{Symbol})
-    ex isa Symbol && return (push!(out, ex); out)
-    ex isa Expr || return out
-    if ex.head == :call
-        for arg in ex.args[2:end]
-            _prede_collect_var_symbols(arg, out)
-        end
-        return out
-    elseif ex.head == :ref
-        _prede_collect_var_symbols(ex.args[1], out)
-        return out
-    elseif ex.head == :.
-        _prede_collect_var_symbols(ex.args[1], out)
-        return out
-    else
-        for arg in ex.args
-            _prede_collect_var_symbols(arg, out)
-        end
-        return out
-    end
-end
-
-function _prede_collect_property_bases(ex, out::Set{Symbol})
-    ex isa Expr || return out
-    if ex.head == :.
-        base = ex.args[1]
-        base isa Symbol && push!(out, base)
-        _prede_collect_property_bases(base, out)
-        return out
-    end
-    for arg in ex.args
-        _prede_collect_property_bases(arg, out)
-    end
-    return out
-end
-
-function _prede_forbidden_symbol(ex)
-    ex isa Symbol && (ex == :t || ex == :ξ) && return ex
-    ex isa Expr || return nothing
-    for arg in ex.args
-        found = _prede_forbidden_symbol(arg)
-        found === nothing || return found
-    end
     return nothing
 end
 
@@ -208,7 +101,7 @@ function _parse_prede(block::Expr)
             error("Left-hand side must be a symbol in @preDifferentialEquation block.")
         rhs isa LineNumberNode &&
             error("Invalid right-hand side in @preDifferentialEquation block.")
-        forbidden = _prede_forbidden_symbol(rhs)
+        forbidden = _macro_forbidden_symbol(rhs)
         forbidden === nothing ||
             error("preDifferentialEquation uses forbidden symbol $(forbidden).")
         rhs isa Expr && _warn_if_mutating_prede(lhs, rhs)
@@ -247,9 +140,9 @@ macro preDifferentialEquation(block)
     var_syms = Set{Symbol}()
     prop_syms = Set{Symbol}()
     for ex in exprs
-        _prede_collect_call_symbols(ex, call_syms)
-        _prede_collect_var_symbols(ex, var_syms)
-        _prede_collect_property_bases(ex, prop_syms)
+        _macro_collect_call_symbols(ex, call_syms)
+        _macro_collect_var_symbols(ex, var_syms)
+        _macro_collect_property_bases(ex, prop_syms)
     end
 
     delete!(var_syms, :fixed_effects)

@@ -111,31 +111,13 @@ function _lhs_draws_univariate(dist, n::Int, rng::AbstractRNG)
     return [Distributions.quantile(dist, ui) for ui in u]
 end
 
-function _marginal(dist, i::Int)
-    if dist isa Distributions.AbstractMvNormal
-        μ = Distributions.mean(dist)
-        Σ = Distributions.cov(dist)
-        return Normal(μ[i], sqrt(Σ[i, i]))
-    elseif dist isa Distributions.MvLogNormal
-        μ = Distributions.mean(dist.normal)
-        Σ = Distributions.cov(dist.normal)
-        return LogNormal(μ[i], sqrt(Σ[i, i]))
-    elseif dist isa Distributions.MvLogitNormal
-        i <= length(dist.normal) || return nothing
-        μ = Distributions.mean(dist.normal)
-        Σ = Distributions.cov(dist.normal)
-        return Normal(μ[i], sqrt(Σ[i, i]))
-    end
-    return nothing
-end
-
 function _lhs_draws_array(dist, n::Int, rng::AbstractRNG, size_hint)
     total = length(size_hint)
-    m1 = _marginal(dist, 1)
+    m1 = _laplace_marginal_mvnormal(dist, 1)
     m1 === nothing && return nothing
     draws = [Vector{Any}(undef, n) for _ in 1:total]
     for j in 1:total
-        mj = _marginal(dist, j)
+        mj = _laplace_marginal_mvnormal(dist, j)
         mj === nothing && return nothing
         dj = _lhs_draws_univariate(mj, n, rng)
         dj === nothing && return nothing
@@ -310,6 +292,28 @@ function _multistart_initials(dm::DataModel, ms::Multistart)
     return all_starts
 end
 
+# Prior-mean plug-in value for one RE; 0/zeros fallback when `mean` is unavailable.
+function _re_mean_or_zero(dist, dim::Int, is_scalar::Bool)
+    if is_scalar || dim == 1
+        v = 0.0
+        try
+            v = Float64(mean(dist))
+        catch
+        end
+        return v
+    else
+        v = zeros(dim)
+        try
+            m = mean(dist)
+            if m isa AbstractVector && length(m) == dim
+                v = Float64.(m)
+            end
+        catch
+        end
+        return v
+    end
+end
+
 function _build_mean_eta(dm::DataModel, θu::ComponentArray)
     re_cache = dm.re_group_info.laplace_cache
     (re_cache === nothing || isempty(re_cache.re_names)) && return ComponentArray()
@@ -326,25 +330,7 @@ function _build_mean_eta(dm::DataModel, θu::ComponentArray)
             dim = re_cache.dims[ri]
             is_scalar = re_cache.is_scalar[ri]
             dist = getproperty(dists, re)
-            val = if is_scalar || dim == 1
-                v = 0.0
-                try
-                    v = Float64(mean(dist))
-                catch
-                end
-                v
-            else
-                v = zeros(dim)
-                try
-                    m = mean(dist)
-                    if m isa AbstractVector && length(m) == dim
-                        v = Float64.(m)
-                    end
-                catch
-                end
-                v
-            end
-            push!(pairs, re => val)
+            push!(pairs, re => _re_mean_or_zero(dist, dim, is_scalar))
         end
         etas[i] = ComponentArray(NamedTuple(pairs))
     end
@@ -376,25 +362,7 @@ function _build_ebe_eta(dm::DataModel, θu::ComponentArray, ll_cache; maxiters::
             dim = re_cache.dims[ri]
             is_scalar = re_cache.is_scalar[ri]
             dist = getproperty(dists, re)
-            val = if is_scalar || dim == 1
-                v = 0.0
-                try
-                    v = Float64(mean(dist))
-                catch
-                end
-                v
-            else
-                v = zeros(dim)
-                try
-                    m = mean(dist)
-                    if m isa AbstractVector && length(m) == dim
-                        v = Float64.(m)
-                    end
-                catch
-                end
-                v
-            end
-            push!(pairs, re => val)
+            push!(pairs, re => _re_mean_or_zero(dist, dim, is_scalar))
         end
         η0_i = ComponentArray(NamedTuple(pairs))
         axs = getaxes(η0_i)

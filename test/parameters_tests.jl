@@ -1,6 +1,7 @@
 using Test
 using NoLimits
 using Distributions
+using Random
 using Lux
 using LinearAlgebra
 using Optimisers
@@ -214,4 +215,16 @@ end
     @test RealVector([0.5, 0.5]; name = :v3).prior isa NoLimits.Priorless
     @test RealVector([0.5, 0.5]; name = :v4, lower = [0.0, 0.0], upper = [1.0, 1.0],
         prior = MvNormal(zeros(2), I)).prior isa MvNormal
+end
+
+@testset "NPFParameter seeded initialization is reproducible" begin
+    p1 = NPFParameter(2, 3; name = :ψ, seed = 7)
+    p2 = NPFParameter(2, 3; name = :ψ, seed = 7)
+    p3 = NPFParameter(2, 3; name = :ψ, seed = 8)
+    @test p1.value == p2.value
+    @test p1.value != p3.value
+    # The global RNG state must not leak into construction.
+    Random.seed!(1234)
+    p4 = NPFParameter(2, 3; name = :ψ, seed = 7)
+    @test p4.value == p1.value
 end

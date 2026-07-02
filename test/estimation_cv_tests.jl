@@ -234,3 +234,11 @@ end
     @test get_fold_results(res) === res.fold_results
     @test get_obs_scores(res) === res.obs_scores
 end
+
+@testset "constants_re method gate covers all RE-aware optimizers" begin
+    @test NoLimits._cv_method_accepts_constants_re(NoLimits.Laplace())
+    @test NoLimits._cv_method_accepts_constants_re(NoLimits.FOCEI())
+    @test NoLimits._cv_method_accepts_constants_re(NoLimits.GHQuadrature())
+    @test NoLimits._cv_method_accepts_constants_re(NoLimits.SAEM())
+    @test !NoLimits._cv_method_accepts_constants_re(NoLimits.MLE())
+end

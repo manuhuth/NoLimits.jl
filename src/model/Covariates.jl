@@ -386,13 +386,11 @@ function build_covariates(params::NamedTuple)
         if p isa ConstantCovariate
             push!(constants, name)
             push!(flat_names, name)
-            _ensure_no_interpolation(p, name)
         elseif p isa ConstantCovariateVector
             push!(constants, name)
             for (i, col) in enumerate(p.columns)
                 push!(flat_names, Symbol(name, "_", i))
             end
-            _ensure_no_interpolation(p, name)
         elseif p isa Covariate
             push!(varying, name)
             push!(flat_names, name)
@@ -422,14 +420,6 @@ function build_covariates(params::NamedTuple)
 
     return Covariates(
         names, flat_names, constants, varying, dynamic, interpolations, params)
-end
-
-function _ensure_no_interpolation(p::AbstractCovariate, name::Symbol)
-    if p isa ConstantCovariate || p isa ConstantCovariateVector || p isa Covariate ||
-       p isa CovariateVector
-        return nothing
-    end
-    return nothing
 end
 
 function _ensure_interpolation(p::AbstractCovariate, name::Symbol)

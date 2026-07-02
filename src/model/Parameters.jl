@@ -14,7 +14,6 @@ export RealNumber, RealVector, RealPSDMatrix, RealDiagonalMatrix, NNParameters,
        NPFParameter, SoftTreeParameters, SplineParameters
 export ProbabilityVector, DiscreteTransitionMatrix, ContinuousTransitionMatrix
 export Priorless
-export NPFParameter, SoftTreeParameters, SplineParameters
 
 """
     Priorless()
@@ -405,9 +404,14 @@ function NPFParameter(
         error("Invalid n_input for parameter $(name). Expected n_input > 0; got $(n_input).")
     n_layers > 0 ||
         error("Invalid n_layers for parameter $(name). Expected n_layers > 0; got $(n_layers).")
-    rng = Xoshiro(seed)
     d = Int(n_input)
-    Ls = [PlanarLayer(d, init) for _ in 1:Int(n_layers)]
+    # Seeded initialization: Bijectors' `PlanarLayer(d, init)` draws w/u/b from the
+    # GLOBAL RNG, which made `seed` inert and construction non-reproducible. Draw
+    # from Xoshiro(seed) in the same per-layer (w, u, b) order with the same
+    # wrapper semantics.
+    rng = Xoshiro(seed)
+    Ls = [PlanarLayer(init(randn(rng, d)), init(randn(rng, d)), init(randn(rng, 1)))
+          for _ in 1:Int(n_layers)]
     ts = fchain(Ls)
     flat, reconstructor = Optimisers.destructure(ts)
     T = eltype(flat) <: AbstractFloat ? eltype(flat) : Float64

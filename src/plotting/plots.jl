@@ -400,7 +400,7 @@ function _fit_curve_from_cache(dm::DataModel,
         y_obs_series_cmp = getfield(ind.series.obs, obs_name)
         hmm_priors_cmp = Dict{Symbol, Any}()
         for (j, row) in enumerate(obs_rows)
-            vary = _varying_at_plot(dm, ind, j, row)
+            vary = _varying_at(dm, ind, j, row)
             η_row = _row_random_effects_at(
                 dm, ind_idx, j, η_ind, rowwise_re; obs_only = true)
             obs = sol_accessors === nothing ?
@@ -475,7 +475,7 @@ function _collect_pred_series(dm::DataModel, obs_name::Symbol,
             y = Float64(yj)
             isfinite(y) || continue
 
-            vary = _varying_at_plot(dm, ind, j, row)
+            vary = _varying_at(dm, ind, j, row)
             η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only = true)
             obs_nt = sol_accessors === nothing ?
                      calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
@@ -529,7 +529,7 @@ function _collect_ipred_series(dm::DataModel, obs_name::Symbol,
             y = Float64(yj)
             isfinite(y) || continue
 
-            vary = _varying_at_plot(dm, ind, j, row)
+            vary = _varying_at(dm, ind, j, row)
             η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only = true)
             obs_nt = sol_accessors === nothing ?
                      calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :

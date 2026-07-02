@@ -335,13 +335,8 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
     # ── Infrastructure ───────────────────────────────────────────────────────
     pairing, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re)
 
-    ll_cache = if serialization isa SciMLBase.EnsembleThreads
-        build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-            nthreads = Threads.maxthreadid(), force_saveat = true)
-    else
-        build_ll_cache(
-            dm; ode_args = ode_args, ode_kwargs = ode_kwargs, force_saveat = true)
-    end
+    ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = serialization, force_saveat = true)
 
     # Pre-populate sparse-grid cache for all unique free-RE dimensions.
     _prepopulate_ghq_cache(dm, batch_infos, method.level)
@@ -353,14 +348,7 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
     # EB-mode cache (used post-hoc for get_random_effects).
     n_batches = length(batch_infos)
     Tθ = eltype(θ0_t)
-    bstar_cache = _LaplaceBStarCache([Vector{Tθ}() for _ in 1:n_batches], falses(n_batches))
-    grad_cache = _LaplaceGradCache([Vector{Tθ}() for _ in 1:n_batches],
-        fill(Tθ(NaN), n_batches),
-        [Vector{Tθ}() for _ in 1:n_batches],
-        falses(n_batches))
-    ad_cache = _init_laplace_ad_cache(n_batches)
-    hess_cache = _init_laplace_hess_cache(Tθ, n_batches)
-    ebe_cache = _LaplaceCache(nothing, bstar_cache, grad_cache, ad_cache, hess_cache)
+    ebe_cache = _init_laplace_eval_cache(n_batches, Tθ)
 
     # ── Objective ────────────────────────────────────────────────────────────
     θ0_free_t = θ0_t[free_names]

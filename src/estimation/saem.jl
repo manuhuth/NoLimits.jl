@@ -215,21 +215,9 @@ end
     return MvNormal(mean(d), sd^2 * I)
 end
 
-@inline function _saem_thread_caches(dm::DataModel, ll_cache, nthreads::Int)
-    if ll_cache isa Vector
-        return ll_cache
-    elseif ll_cache isa _LLCache
-        caches = build_ll_cache(dm;
-            ode_args = ll_cache.ode_args,
-            ode_kwargs = ll_cache.ode_kwargs,
-            force_saveat = ll_cache.saveat_cache !== nothing,
-            nthreads = nthreads)
-        return caches isa Vector ? caches : [caches]
-    else
-        caches = build_ll_cache(dm; nthreads = nthreads)
-        return caches isa Vector ? caches : [caches]
-    end
-end
+# Byte-identical twin of MCEM's per-thread cache fan-out — one shared
+# implementation (mcem.jl), aliased under the SAEM-side name.
+const _saem_thread_caches = _mcem_thread_caches
 
 function _saem_sample_batches!(dm::DataModel,
         batch_infos::Vector{_LaplaceBatchInfo},
@@ -1617,6 +1605,57 @@ end
         sum_wy = a.sum_wy + b.sum_wy)
 end
 
+# Shared DE-solve context for the two per-individual SAEM stats collectors.
+# Byte-identical to the solve in `_loglikelihood_individual` (the flat-p template
+# layout is shared through `cache.prob_templates`, so every user of the templates
+# must pack identically). Returns `(sol_accessors, ok)`; `(nothing, true)` for
+# non-DE models, `(nothing, false)` on a failed solve.
+function _saem_stats_sol_accessors(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache)
+    model = dm.model
+    model.de.de === nothing && return (nothing, true)
+    ind = dm.individuals[idx]
+    const_cov = ind.const_cov
+    pre = calculate_prede(model, θ, η_ind, const_cov)
+    pc = (;
+        fixed_effects = θ,
+        random_effects = η_ind,
+        constant_covariates = const_cov,
+        varying_covariates = merge((t = ind.series.vary.t[1],), ind.series.dyn),
+        helpers = cache.helpers,
+        model_funs = cache.model_funs,
+        preDE = pre
+    )
+    compiled = get_de_compiler(model.de.de)(pc)
+    u0 = calculate_initial_state(model, θ, η_ind, const_cov)
+    cb = nothing
+    infusion_rates = nothing
+    if ind.callbacks !== nothing
+        _apply_initial_events!(u0, ind.callbacks)
+        cb = ind.callbacks.callback
+        infusion_rates = ind.callbacks.infusion_rates
+    end
+    # Flat-vector solve parameters via DERHSFlat — must match the
+    # _loglikelihood_individual template layout (shared cache.prob_templates).
+    layout, plen = _flat_layout(compiled.vars)
+    f!_use = _with_infusion(
+        DERHSFlat(get_de_f!(model.de.de), layout, compiled.funs), infusion_rates)
+    Tprob = promote_type(eltype(θ), eltype(η_ind), eltype(u0))
+    p_flat = _flat_pack(compiled.vars, layout, plen, Tprob)
+    prob = cache.prob_templates === nothing ? nothing : cache.prob_templates[idx]
+    if prob === nothing
+        saveat_use = _ll_saveat(cache, idx, ind)
+        prob = _ll_build_prob_template(f!_use, u0, ind.tspan, p_flat, cb, saveat_use)
+        if cache.prob_templates !== nothing
+            cache.prob_templates[idx] = prob
+        end
+    end
+
+    prob = remake(prob; u0 = Tprob.(u0), p = p_flat)
+    sol = _ll_ode_solve_baked(cache, prob)
+    SciMLBase.successful_retcode(sol) || return (nothing, false)
+    return (get_de_accessors_builder(model.de.de)(sol, compiled), true)
+end
+
 function _saem_collect_hmm_stats_individual(dm::DataModel,
         idx::Int,
         θ,
@@ -1632,48 +1671,8 @@ function _saem_collect_hmm_stats_individual(dm::DataModel,
     obs_series = ind.series.obs
     vary_cache = cache.vary_cache === nothing ? nothing : cache.vary_cache[idx]
 
-    sol_accessors = nothing
-    if model.de.de !== nothing
-        pre = calculate_prede(model, θ, η_ind, const_cov)
-        pc = (;
-            fixed_effects = θ,
-            random_effects = η_ind,
-            constant_covariates = const_cov,
-            varying_covariates = merge((t = ind.series.vary.t[1],), ind.series.dyn),
-            helpers = cache.helpers,
-            model_funs = cache.model_funs,
-            preDE = pre
-        )
-        compiled = get_de_compiler(model.de.de)(pc)
-        u0 = calculate_initial_state(model, θ, η_ind, const_cov)
-        cb = nothing
-        infusion_rates = nothing
-        if ind.callbacks !== nothing
-            _apply_initial_events!(u0, ind.callbacks)
-            cb = ind.callbacks.callback
-            infusion_rates = ind.callbacks.infusion_rates
-        end
-        # Flat-vector solve parameters via DERHSFlat — must match the
-        # _loglikelihood_individual template layout (shared cache.prob_templates).
-        layout, plen = _flat_layout(compiled.vars)
-        f!_use = _with_infusion(
-            DERHSFlat(get_de_f!(model.de.de), layout, compiled.funs), infusion_rates)
-        Tprob = promote_type(eltype(θ), eltype(η_ind), eltype(u0))
-        p_flat = _flat_pack(compiled.vars, layout, plen, Tprob)
-        prob = cache.prob_templates === nothing ? nothing : cache.prob_templates[idx]
-        if prob === nothing
-            saveat_use = _ll_saveat(cache, idx, ind)
-            prob = _ll_build_prob_template(f!_use, u0, ind.tspan, p_flat, cb, saveat_use)
-            if cache.prob_templates !== nothing
-                cache.prob_templates[idx] = prob
-            end
-        end
-
-        prob = remake(prob; u0 = Tprob.(u0), p = p_flat)
-        sol = _ll_ode_solve_baked(cache, prob)
-        SciMLBase.successful_retcode(sol) || return (NamedTuple(), false)
-        sol_accessors = get_de_accessors_builder(model.de.de)(sol, compiled)
-    end
+    sol_accessors, solve_ok = _saem_stats_sol_accessors(dm, idx, θ, η_ind, cache)
+    solve_ok || return (NamedTuple(), false)
 
     # Per-column row sequences: preallocated, index-written vectors keyed by a
     # NamedTuple (the row count and column set are both known up front) — the
@@ -1793,53 +1792,18 @@ function _saem_collect_outcome_stats_individual(dm::DataModel,
     obs_series = ind.series.obs
     vary_cache = cache.vary_cache === nothing ? nothing : cache.vary_cache[idx]
 
-    sol_accessors = nothing
-    if model.de.de !== nothing
-        pre = calculate_prede(model, θ, η_ind, const_cov)
-        pc = (;
-            fixed_effects = θ,
-            random_effects = η_ind,
-            constant_covariates = const_cov,
-            varying_covariates = merge((t = ind.series.vary.t[1],), ind.series.dyn),
-            helpers = cache.helpers,
-            model_funs = cache.model_funs,
-            preDE = pre
-        )
-        compiled = get_de_compiler(model.de.de)(pc)
-        u0 = calculate_initial_state(model, θ, η_ind, const_cov)
-        cb = nothing
-        infusion_rates = nothing
-        if ind.callbacks !== nothing
-            _apply_initial_events!(u0, ind.callbacks)
-            cb = ind.callbacks.callback
-            infusion_rates = ind.callbacks.infusion_rates
-        end
-        # Flat-vector solve parameters via DERHSFlat — must match the
-        # _loglikelihood_individual template layout (shared cache.prob_templates).
-        layout, plen = _flat_layout(compiled.vars)
-        f!_use = _with_infusion(
-            DERHSFlat(get_de_f!(model.de.de), layout, compiled.funs), infusion_rates)
-        Tprob = promote_type(eltype(θ), eltype(η_ind), eltype(u0))
-        p_flat = _flat_pack(compiled.vars, layout, plen, Tprob)
-        prob = cache.prob_templates === nothing ? nothing : cache.prob_templates[idx]
-        if prob === nothing
-            saveat_use = _ll_saveat(cache, idx, ind)
-            prob = _ll_build_prob_template(f!_use, u0, ind.tspan, p_flat, cb, saveat_use)
-            if cache.prob_templates !== nothing
-                cache.prob_templates[idx] = prob
-            end
-        end
-
-        prob = remake(prob; u0 = Tprob.(u0), p = p_flat)
-        sol = _ll_ode_solve_baked(cache, prob)
-        SciMLBase.successful_retcode(sol) || return (NamedTuple(), false)
-        sol_accessors = get_de_accessors_builder(model.de.de)(sol, compiled)
-    end
+    sol_accessors, solve_ok = _saem_stats_sol_accessors(dm, idx, θ, η_ind, cache)
+    solve_ok || return (NamedTuple(), false)
 
     Tstats = promote_type(eltype(θ), Float64)
     obs_cols = dm.config.obs_cols
     time_col = _get_col(dm.df, dm.config.time_col)[obs_rows]
-    stats_dict = Dict{Symbol, Any}()
+    # Concrete value type (every family emits the same stat shape): an Any-valued
+    # Dict would box one freshly-built stat NamedTuple per observation row per
+    # SAEM iteration on the default closed-form-stats path.
+    stats_dict = Dict{Symbol,
+        NamedTuple{
+            (:family, :s1, :s2, :ss, :n), Tuple{Symbol, Tstats, Tstats, Tstats, Int}}}()
     rowwise_re = _needs_rowwise_random_effects(dm, idx; obs_only = true)
     for i in eachindex(obs_rows)
         vary = vary_cache === nothing ? _varying_at(dm, ind, i, time_col) : vary_cache[i]
@@ -1861,7 +1825,7 @@ function _saem_collect_outcome_stats_individual(dm::DataModel,
         end
     end
 
-    pairs = Pair{Symbol, Any}[]
+    pairs = Pair{Symbol, valtype(stats_dict)}[]
     for col in obs_cols
         haskey(stats_dict, col) && push!(pairs, col => stats_dict[col])
     end
@@ -2374,10 +2338,6 @@ function _saem_builtin_updates_from_smoothed_stats(dm::DataModel,
     return NamedTuple(_saem_unique_updates(updates))
 end
 
-function _saem_batches(update_schedule, nbatches::Int, iter::Int, rng::AbstractRNG)
-    return _saem_batches!(Vector{Int}(), update_schedule, nbatches, iter, rng)
-end
-
 # Sum of active snapshot weights (always Float64; used for renormalization in _saem_Q).
 function _saem_store_weight_sum(store::_SAEMSampleStore)
     s = 0.0
@@ -2870,11 +2830,8 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
     fixed_maps = _normalize_constants_re(dm, constants_re)
     const_cache = _build_constants_cache(dm, fixed_maps)
     pairing, batch_infos, _ = _build_laplace_batch_infos(dm, fixed_maps)
-    ll_cache = serialization isa SciMLBase.EnsembleThreads ?
-               build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-        nthreads = Threads.maxthreadid(), force_saveat = true) :
-               build_ll_cache(
-        dm; ode_args = ode_args, ode_kwargs = ode_kwargs, force_saveat = true)
+    ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = serialization, force_saveat = true)
 
     builtin_stats_mode_requested = _saem_normalize_builtin_stats_mode(method.saem.builtin_stats)
     builtin_stats_mode = builtin_stats_mode_requested
@@ -3085,27 +3042,8 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
         for bi in 1:length(batch_infos)
             info = batch_infos[bi]
             info.n_b == 0 && continue
-            b_init = _re_prior_mean_b(dm, info, θ0_u, const_cache, cache_init, re_names)
-            logf = _laplace_logf_batch(dm, info, θ0_u, b_init, const_cache, cache_init)
-            if !isfinite(logf)
-                b_init = nothing
-                for _ in 1:10
-                    samp, _ = _is_prior_sample_batch(
-                        dm, info, θ0_u, const_cache, cache_init,
-                        rng, 1, re_names)
-                    b_cand = samp[:, 1]
-                    if isfinite(_laplace_logf_batch(
-                        dm, info, θ0_u, b_cand, const_cache, cache_init))
-                        b_init = b_cand
-                        break
-                    end
-                end
-                if b_init === nothing
-                    error("SAEM: Cannot find valid initial random effects for batch $bi after 10 tries. " *
-                          "Initial fixed-effect parameters likely produce -Inf log-likelihood. " *
-                          "Try different starting values.")
-                end
-            end
+            b_init = _em_seed_batch_b(
+                dm, info, θ0_u, const_cache, cache_init, rng, re_names, bi, "SAEM")
             b_current[bi] .= b_init
             lp = _b_to_last_params(b_init, info, re_names)
             for c in 1:effective_n_chains
@@ -3286,11 +3224,16 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                 θt_q2 = ComponentArray(NamedTuple{Tuple(q2_free_now)}(
                     Tuple(getproperty(θt_full_curr, n) for n in q2_free_now)))
                 axs_q2 = getaxes(θt_q2)
+                # Single-assignment aliases: `θt_full_curr`/`axs_full_iter` are
+                # reassigned elsewhere in the iteration, so capturing them directly
+                # would box them (`Core.Box`) inside every objective evaluation.
+                θt_full_q2_base = θt_full_curr
+                axs_full_q2 = axs_full_iter
                 function obj_q2(ψt, p)
                     any(isnan, ψt) && return eltype(ψt)(Inf)
                     ψt_ca = ψt isa ComponentArray ? ψt : ComponentArray(ψt, axs_q2)
                     T = eltype(ψt_ca)
-                    θt_full_q2 = ComponentArray(T.(collect(θt_full_curr)), axs_full_iter)
+                    θt_full_q2 = ComponentArray(T.(collect(θt_full_q2_base)), axs_full_q2)
                     for name in q2_free_now
                         setproperty!(θt_full_q2, name, getproperty(ψt_ca, name))
                     end
@@ -3308,10 +3251,8 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                     return -Q2val
                 end
                 lower_t_q2, upper_t_q2 = get_bounds_transformed(fe)
-                lb_q2 = collect(ComponentArray(NamedTuple{Tuple(q2_free_now)}(
-                    Tuple(getproperty(lower_t_q2, n) for n in q2_free_now))))
-                ub_q2 = collect(ComponentArray(NamedTuple{Tuple(q2_free_now)}(
-                    Tuple(getproperty(upper_t_q2, n) for n in q2_free_now))))
+                lb_q2 = collect(_ca_subset(lower_t_q2, q2_free_now))
+                ub_q2 = collect(_ca_subset(upper_t_q2, q2_free_now))
                 use_bounds_q2 = !(all(isinf, lb_q2) && all(isinf, ub_q2))
                 θ0_q2 = collect(θt_q2)
                 optf_q2 = OptimizationFunction(obj_q2, method.adtype)
@@ -3372,11 +3313,23 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
             end
         else
             obj_cache = (θ = Ref{Any}(nothing), obj = Ref{Any}(nothing))
+            # Single-assignment aliases for the captured per-iteration state: the
+            # `*_iter` locals (and `axs_free`) are assigned twice per iteration, so
+            # capturing them directly boxes them (`Core.Box`) and dynamically types
+            # the θt_full rebuild in every M-step objective evaluation. The free
+            # vector is a closure-LOCAL (`θt_free_loc`): the objective must not
+            # write through to the outer `θt_free`, which the non-finite-solution
+            # path reads after the solve expecting the pre-solve iterate.
+            θ_const_t_obj = θ_const_t_iter
+            axs_full_obj = axs_full_iter
+            free_names_obj = free_names_iter
+            axs_free_obj = axs_free
             function obj_only(θt, p)
                 any(isnan, θt) && return eltype(θt)(Inf)
-                θt_free = θt isa ComponentArray ? θt : ComponentArray(θt, axs_free)
-                θt_vec = θt_free
-                use_cache = !(eltype(θt_free) <: ForwardDiff.Dual)
+                θt_free_loc = θt isa ComponentArray ? θt :
+                              ComponentArray(θt, axs_free_obj)
+                θt_vec = θt_free_loc
+                use_cache = !(eltype(θt_free_loc) <: ForwardDiff.Dual)
                 if use_cache && obj_cache.θ[] !== nothing &&
                    length(obj_cache.θ[]) == length(θt_vec)
                     maxdiff = _maxabsdiff(θt_vec, obj_cache.θ[])
@@ -3384,10 +3337,10 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                         return obj_cache.obj[]
                     end
                 end
-                T = eltype(θt_free)
-                θt_full = ComponentArray(T.(θ_const_t_iter), axs_full_iter)
-                for name in free_names_iter
-                    setproperty!(θt_full, name, getproperty(θt_free, name))
+                T = eltype(θt_free_loc)
+                θt_full = ComponentArray(T.(θ_const_t_obj), axs_full_obj)
+                for name in free_names_obj
+                    setproperty!(θt_full, name, getproperty(θt_free_loc, name))
                 end
                 θu = inv_transform(θt_full)
                 Q = if method.saem.suffstats !== nothing &&
@@ -3412,14 +3365,8 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
 
             optf = OptimizationFunction(obj_only, method.adtype)
             lower_t, upper_t = get_bounds_transformed(fe)
-            lower_t_free = ComponentArray(NamedTuple{Tuple(free_names_iter)}(Tuple(getproperty(
-                                                                                       lower_t,
-                                                                                       n)
-            for n in free_names_iter)))
-            upper_t_free = ComponentArray(NamedTuple{Tuple(free_names_iter)}(Tuple(getproperty(
-                                                                                       upper_t,
-                                                                                       n)
-            for n in free_names_iter)))
+            lower_t_free = _ca_subset(lower_t, free_names_iter)
+            upper_t_free = _ca_subset(upper_t, free_names_iter)
             lower_t_free_vec = collect(lower_t_free)
             upper_t_free_vec = collect(upper_t_free)
             use_bounds = !(all(isinf, lower_t_free_vec) && all(isinf, upper_t_free_vec))
@@ -3431,14 +3378,10 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                 lb = method.lb
                 ub = method.ub
                 if lb isa ComponentArray
-                    lb = ComponentArray(NamedTuple{Tuple(free_names_iter)}(Tuple(getproperty(
-                                                                                     lb, n)
-                    for n in free_names_iter)))
+                    lb = _ca_subset(lb, free_names_iter)
                 end
                 if ub isa ComponentArray
-                    ub = ComponentArray(NamedTuple{Tuple(free_names_iter)}(Tuple(getproperty(
-                                                                                     ub, n)
-                    for n in free_names_iter)))
+                    ub = _ca_subset(ub, free_names_iter)
                 end
                 lb = lb === nothing ? lower_t_free_vec : collect(lb)
                 ub = ub === nothing ? upper_t_free_vec : collect(ub)

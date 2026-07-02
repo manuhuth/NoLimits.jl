@@ -766,14 +766,6 @@ function _group_indices(df, primary_id::Symbol)
     return keys_sorted, [groups[k] for k in keys_sorted]
 end
 
-function _extract_constants(params, rows)
-    cons = NamedTuple()
-    if isempty(rows)
-        return cons
-    end
-    return params
-end
-
 # Materialise a covariate-vector value from a NamedTuple of its per-column entries.
 # When every entry is `Real`, return a `ComponentArray` so the value behaves both as a
 # labeled record (`x.Age`, `x.weight`) AND as a numeric vector (`x' * β`, `dot(x, β)`,

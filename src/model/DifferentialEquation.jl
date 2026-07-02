@@ -284,7 +284,9 @@ Base.size(p::DEParams) = (length(p.θ) + length(p.η),)
 Base.length(p::DEParams) = length(p.θ) + length(p.η)
 Base.axes(p::DEParams) = (Base.OneTo(length(p)),)
 Base.getindex(p::DEParams, i::Int) = i <= length(p.θ) ? p.θ[i] : p.η[i - length(p.θ)]
-Base.iterate(p::DEParams, state...) = iterate(vcat(collect(p.θ), collect(p.η)), state...)
+# Iteration: the AbstractArray default (getindex-based) yields the identical
+# element sequence; the old override rebuilt `vcat(collect(θ), collect(η))` on
+# every single iteration step.
 
 function Base.size(t::DETunable)
     t.mode == :θ ? (length(t.θ),) :
@@ -301,13 +303,6 @@ function Base.getindex(t::DETunable, i::Int)
     t.mode == :θ ? t.θ[i] :
     t.mode == :η ? t.η[i] :
     (i <= length(t.θ) ? t.θ[i] : t.η[i - length(t.θ)])
-end
-function Base.iterate(t::DETunable, state...)
-    iterate(
-        t.mode == :θ ? collect(t.θ) :
-        t.mode == :η ? collect(t.η) :
-        vcat(collect(t.θ), collect(t.η)),
-        state...)
 end
 
 # ---------------------------------------------------------------------------
@@ -520,7 +515,6 @@ end
 
 isscimlstructure(::DEParams) = true
 isscimlstructure(::Type{<:DEParams}) = true
-isscimlstructure(::Type{DEParams{S}}) where {S} = true
 ismutablescimlstructure(::DEParams) = false
 
 hasportion(::SciMLStructures.Tunable, ::DEParams) = true
@@ -552,119 +546,20 @@ function canonicalize(::SciMLStructures.Tunable, p::DEParams)
     return vals, repack, false
 end
 
-function canonicalize(::SciMLStructures.Constants, p::DEParams)
+# All non-Tunable portions are empty for DEParams: one shared body, but one
+# method per concrete portion type — a Union in the portion argument combined
+# with the concrete `p::DEParams` is AMBIGUOUS against SciMLStructures' own
+# `canonicalize(::Portion, ::AbstractArray)` fallbacks (crossed specificity).
+function _canonicalize_empty(p::DEParams)
     empty = similar(collect(p.θ), 0)
     repack = _ -> p
     return empty, repack, false
 end
-
-function canonicalize(::SciMLStructures.Caches, p::DEParams)
-    empty = similar(collect(p.θ), 0)
-    repack = _ -> p
-    return empty, repack, false
-end
-
-function canonicalize(::SciMLStructures.Discrete, p::DEParams)
-    empty = similar(collect(p.θ), 0)
-    repack = _ -> p
-    return empty, repack, false
-end
-
-function canonicalize(::SciMLStructures.Input, p::DEParams)
-    empty = similar(collect(p.θ), 0)
-    repack = _ -> p
-    return empty, repack, false
-end
-
-function canonicalize(::SciMLStructures.Initials, p::DEParams)
-    empty = similar(collect(p.θ), 0)
-    repack = _ -> p
-    return empty, repack, false
-end
-
-function _de_is_identifier(sym::Symbol)
-    return Base.isidentifier(sym)
-end
-
-function _de_call_name(f)
-    if f isa Symbol
-        return f
-    elseif f isa GlobalRef
-        return f.name
-    elseif f isa Expr && f.head == :.
-        last = f.args[end]
-        last isa QuoteNode && (last = last.value)
-        return last isa Symbol ? last : nothing
-    end
-    return nothing
-end
-
-function _de_collect_call_symbols(ex, out::Set{Symbol})
-    ex isa Expr || return out
-    if ex.head == :call
-        f = ex.args[1]
-        if f isa Symbol && _de_is_identifier(f)
-            push!(out, f)
-        end
-        for arg in ex.args[2:end]
-            _de_collect_call_symbols(arg, out)
-        end
-        return out
-    elseif ex.head == :ref
-        _de_collect_call_symbols(ex.args[1], out)
-        return out
-    else
-        for arg in ex.args
-            _de_collect_call_symbols(arg, out)
-        end
-        return out
-    end
-end
-
-function _de_collect_var_symbols(ex, out::Set{Symbol})
-    ex isa Symbol && return (push!(out, ex); out)
-    ex isa Expr || return out
-    if ex.head == :call
-        for arg in ex.args[2:end]
-            _de_collect_var_symbols(arg, out)
-        end
-        return out
-    elseif ex.head == :ref
-        _de_collect_var_symbols(ex.args[1], out)
-        return out
-    elseif ex.head == :.
-        _de_collect_var_symbols(ex.args[1], out)
-        return out
-    else
-        for arg in ex.args
-            _de_collect_var_symbols(arg, out)
-        end
-        return out
-    end
-end
-
-function _de_collect_property_bases(ex, out::Set{Symbol})
-    ex isa Expr || return out
-    if ex.head == :.
-        base = ex.args[1]
-        base isa Symbol && push!(out, base)
-        _de_collect_property_bases(base, out)
-        return out
-    end
-    for arg in ex.args
-        _de_collect_property_bases(arg, out)
-    end
-    return out
-end
-
-function _de_collect_symbols(ex, out::Set{Symbol})
-    ex isa Symbol && return (push!(out, ex); out)
-    ex isa Expr || return out
-    for arg in ex.args
-        _de_collect_symbols(arg, out)
-    end
-    return out
-end
+canonicalize(::SciMLStructures.Constants, p::DEParams) = _canonicalize_empty(p)
+canonicalize(::SciMLStructures.Caches, p::DEParams) = _canonicalize_empty(p)
+canonicalize(::SciMLStructures.Discrete, p::DEParams) = _canonicalize_empty(p)
+canonicalize(::SciMLStructures.Input, p::DEParams) = _canonicalize_empty(p)
+canonicalize(::SciMLStructures.Initials, p::DEParams) = _canonicalize_empty(p)
 
 function _de_signal_used_bare(ex, name::Symbol)
     ex isa Symbol && return ex == name
@@ -695,34 +590,6 @@ function _de_collect_time_calls(ex, out::Set{Symbol})
             _de_collect_time_calls(arg, out)
         end
         return out
-    end
-end
-
-function _de_is_signal_call(ex, name::Symbol)
-    ex isa Expr || return false
-    ex.head == :call || return false
-    ex.args[1] == name || return false
-    length(ex.args) == 2 || return false
-    return ex.args[2] == :t || ex.args[2] == :ξ
-end
-
-function _de_rewrite_expr(
-        ex, state_map::Dict{Symbol, Int}, var_syms::Set{Symbol}, fun_syms::Set{Symbol})
-    ex isa Expr || return ex
-    if ex.head == :call
-        f = ex.args[1]
-        new_args = [_de_rewrite_expr(arg, state_map, var_syms, fun_syms)
-                    for arg in ex.args[2:end]]
-        if f isa Symbol && f in fun_syms
-            return Expr(:call, Expr(:., :funs, QuoteNode(f)), new_args...)
-        end
-        return Expr(:call, f, new_args...)
-    elseif ex.head == :.
-        base = _de_rewrite_expr(ex.args[1], state_map, var_syms, fun_syms)
-        return Expr(:., base, ex.args[2])
-    else
-        return Expr(ex.head,
-            map(arg -> _de_rewrite_expr(arg, state_map, var_syms, fun_syms), ex.args)...)
     end
 end
 
@@ -878,9 +745,9 @@ macro DifferentialEquation(block)
     prop_syms = Set{Symbol}()
     time_call_syms = Set{Symbol}()
     for ex in vcat(rhs_rewritten, signal_rewritten)
-        _de_collect_call_symbols(ex, call_syms)
-        _de_collect_var_symbols(ex, var_syms)
-        _de_collect_property_bases(ex, prop_syms)
+        _macro_collect_call_symbols(ex, call_syms)
+        _macro_collect_var_symbols(ex, var_syms)
+        _macro_collect_property_bases(ex, prop_syms)
         _de_collect_time_calls(ex, time_call_syms)
     end
 

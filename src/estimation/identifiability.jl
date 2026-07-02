@@ -153,7 +153,7 @@ function _validate_ident_method(dm::DataModel, method)
     return nothing
 end
 
-function _select_point(fe::FixedEffects, at, default_sym::Symbol,
+function _select_point(fe::FixedEffects, at,
         fit_point::Union{Nothing, ComponentArray} = nothing)
     if at isa ComponentArray
         return at, :custom
@@ -224,31 +224,8 @@ function _merge_full_theta(θ_const_t, axs_full, θt_free, free_names)
     return θt_full
 end
 
-function _build_ll_cache_ident(dm::DataModel;
-        ode_args::Tuple = (),
-        ode_kwargs::NamedTuple = NamedTuple(),
-        serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads())
-    if serialization isa SciMLBase.EnsembleThreads
-        return build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-            nthreads = Threads.maxthreadid(), force_saveat = true)
-    end
-    return build_ll_cache(
-        dm; ode_args = ode_args, ode_kwargs = ode_kwargs, force_saveat = true)
-end
-
 function _laplace_seed(rng::AbstractRNG, rng_seed::Union{Nothing, UInt64})
     return rng_seed === nothing ? rand(rng, UInt64) : rng_seed
-end
-
-function _init_laplace_eval_cache(n_batches::Int, T::Type{<:Real})
-    bstar_cache = _LaplaceBStarCache([Vector{T}() for _ in 1:n_batches], falses(n_batches))
-    grad_cache = _LaplaceGradCache([Vector{T}() for _ in 1:n_batches],
-        fill(T(NaN), n_batches),
-        [Vector{T}() for _ in 1:n_batches],
-        falses(n_batches))
-    ad_cache = _init_laplace_ad_cache(n_batches)
-    hess_cache = _init_laplace_hess_cache(T, n_batches)
-    return _LaplaceCache(nothing, bstar_cache, grad_cache, ad_cache, hess_cache)
 end
 
 function _svd_tol(svals::AbstractVector, atol::Real, rtol::Real)
@@ -450,8 +427,8 @@ function _build_no_re_objective(dm::DataModel,
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads())
-    ll_cache = _build_ll_cache_ident(
-        dm; ode_args = ode_args, ode_kwargs = ode_kwargs, serialization = serialization)
+    ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = serialization, force_saveat = true)
     has_penalty = !isempty(keys(penalty))
     has_prior = method isa MAP
 
@@ -500,8 +477,8 @@ function _build_laplace_objective(dm::DataModel,
         atol::Real = 1e-8,
         rtol::Real = sqrt(eps(Float64)))
     _, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re)
-    ll_cache = _build_ll_cache_ident(
-        dm; ode_args = ode_args, ode_kwargs = ode_kwargs, serialization = serialization)
+    ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = serialization, force_saveat = true)
     seed = _laplace_seed(rng, rng_seed)
     ebe_cache = _init_laplace_eval_cache(length(batch_infos), Float64)
     cache_opts = LaplaceCacheOptions(0.0)
@@ -587,7 +564,7 @@ function _identifiability_report(dm::DataModel,
         fd_rel_step::Real = 1e-3,
         fd_max_tries::Int = 8)
     fe = dm.model.fixed.fixed
-    θ_at_u, at_sym = _select_point(fe, at, :start, fit_point)
+    θ_at_u, at_sym = _select_point(fe, at, fit_point)
     prep = _prepare_ident_point(fe, θ_at_u, constants)
 
     obj_only = nothing

@@ -213,7 +213,7 @@ function _simulate_obs(dm::DataModel,
         vals = Vector{Float64}(undef, length(obs_rows))
         hmm_prev_state = 0
         for (j, row) in enumerate(obs_rows)
-            vary = _varying_at_plot(dm, ind, j, row)
+            vary = _varying_at(dm, ind, j, row)
             η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only = true)
             obs = sol_accessors === nothing ?
                   calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
@@ -247,7 +247,7 @@ function _representative_dist(dm::DataModel, obs_name::Symbol, x_axis_feature)
         sol, compiled = _solve_dense_individual(dm, ind, θ, η_ind)
         sol_accessors = get_de_accessors_builder(dm.model.de.de)(sol, compiled)
     end
-    vary = _varying_at_plot(dm, ind, 1, obs_rows[1])
+    vary = _varying_at(dm, ind, 1, obs_rows[1])
     if dm.model.de.de === nothing && x_axis_feature !== nothing
         vary = merge(vary, (t = 0.0,))
     end

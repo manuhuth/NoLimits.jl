@@ -86,13 +86,6 @@ function _rebuild_dm(dm_ref::DataModel, rows::Vector{Int})
         serialization = cfg.serialization)
 end
 
-function _cv_empty_obs_df(has_loss::Bool)
-    df = DataFrame(fold = Int[], individual = [], time = Float64[], outcome = Symbol[],
-        obs = Float64[], loglikelihood = Float64[], predicted_mean = Float64[])
-    has_loss && insertcols!(df, :loss => [])
-    return df
-end
-
 function _cv_has_re_support(res::FitResult)
     r = res.result
     return r isa LaplaceResult || r isa GHQuadratureResult ||
@@ -102,6 +95,8 @@ end
 # Only RE-aware fitting methods accept the constants_re kwarg.
 _cv_method_accepts_constants_re(::FittingMethod) = false
 _cv_method_accepts_constants_re(::Laplace) = true
+_cv_method_accepts_constants_re(::FOCEI) = true
+_cv_method_accepts_constants_re(::GHQuadrature) = true
 _cv_method_accepts_constants_re(::MCEM) = true
 _cv_method_accepts_constants_re(::SAEM) = true
 _cv_method_accepts_constants_re(::MCMC) = true
@@ -229,13 +224,7 @@ function _eval_individual_obs(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCac
             y_raw = getfield(obs_series, col)[i]
             dist = getproperty(obs, col)
 
-            is_hmm = dist isa ContinuousTimeDiscreteStatesHMM ||
-                     dist isa DiscreteTimeDiscreteStatesHMM ||
-                     dist isa MVContinuousTimeDiscreteStatesHMM ||
-                     dist isa MVDiscreteTimeDiscreteStatesHMM ||
-                     dist isa DiscreteTimeObservedStatesMarkovModel ||
-                     dist isa ContinuousTimeObservedStatesMarkovModel ||
-                     dist isa CoarsedObservedStatesMarkovModel
+            is_hmm = _is_hmm_dist(dist)
 
             if is_hmm
                 # HMM filter state must be maintained across obs — mirrors
@@ -255,43 +244,7 @@ function _eval_individual_obs(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCac
                     hs[j] = true
                 end
                 init_p = hi[j]
-                dist_up = if dist isa ContinuousTimeDiscreteStatesHMM
-                    ContinuousTimeDiscreteStatesHMM(
-                        dist.transition_matrix, dist.emission_dists,
-                        Distributions.Categorical(init_p; check_args = false), dist.Δt;
-                        propagation_mode = dist.propagation_mode)
-                elseif dist isa MVContinuousTimeDiscreteStatesHMM
-                    MVContinuousTimeDiscreteStatesHMM(
-                        dist.transition_matrix, dist.emission_dists,
-                        Distributions.Categorical(init_p; check_args = false), dist.Δt;
-                        propagation_mode = dist.propagation_mode)
-                elseif dist isa MVDiscreteTimeDiscreteStatesHMM
-                    MVDiscreteTimeDiscreteStatesHMM(
-                        dist.transition_matrix, dist.emission_dists,
-                        Distributions.Categorical(init_p; check_args = false))
-                elseif dist isa DiscreteTimeObservedStatesMarkovModel
-                    DiscreteTimeObservedStatesMarkovModel(dist.transition_matrix,
-                        Distributions.Categorical(init_p; check_args = false), dist.state_labels)
-                elseif dist isa ContinuousTimeObservedStatesMarkovModel
-                    ContinuousTimeObservedStatesMarkovModel(dist.transition_matrix,
-                        Distributions.Categorical(init_p; check_args = false), dist.Δt,
-                        dist.state_labels; propagation_mode = dist.propagation_mode)
-                elseif dist isa CoarsedObservedStatesMarkovModel &&
-                       dist.base_dist isa DiscreteTimeObservedStatesMarkovModel
-                    bd = dist.base_dist
-                    coarsed(DiscreteTimeObservedStatesMarkovModel(bd.transition_matrix,
-                        Distributions.Categorical(init_p; check_args = false), bd.state_labels))
-                elseif dist isa CoarsedObservedStatesMarkovModel &&
-                       dist.base_dist isa ContinuousTimeObservedStatesMarkovModel
-                    bd = dist.base_dist
-                    coarsed(ContinuousTimeObservedStatesMarkovModel(bd.transition_matrix,
-                        Distributions.Categorical(init_p; check_args = false), bd.Δt,
-                        bd.state_labels; propagation_mode = bd.propagation_mode))
-                else
-                    DiscreteTimeDiscreteStatesHMM(
-                        dist.transition_matrix, dist.emission_dists,
-                        Distributions.Categorical(init_p; check_args = false))
-                end
+                dist_up = _hmm_pin_initial_probs(dist, init_p)
                 hmm_priors === nothing && (hmm_priors = Dict{Symbol, Any}())
                 prior = get(hmm_priors::Dict{Symbol, Any}, col, nothing)
                 dist_use = try

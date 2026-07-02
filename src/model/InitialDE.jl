@@ -48,91 +48,6 @@ Return the names of the ODE states for which initial conditions are declared.
 """
 get_initialde_names(i::InitialDE) = i.meta.names
 
-function _initialde_is_identifier(sym::Symbol)
-    return Base.isidentifier(sym)
-end
-
-function _initialde_call_name(f)
-    if f isa Symbol
-        return f
-    elseif f isa GlobalRef
-        return f.name
-    elseif f isa Expr && f.head == :.
-        last = f.args[end]
-        last isa QuoteNode && (last = last.value)
-        return last isa Symbol ? last : nothing
-    end
-    return nothing
-end
-
-function _initialde_collect_call_symbols(ex, out::Set{Symbol})
-    ex isa Expr || return out
-    if ex.head == :call
-        f = ex.args[1]
-        if f isa Symbol && _initialde_is_identifier(f)
-            push!(out, f)
-        end
-        for arg in ex.args[2:end]
-            _initialde_collect_call_symbols(arg, out)
-        end
-        return out
-    elseif ex.head == :ref
-        _initialde_collect_call_symbols(ex.args[1], out)
-        return out
-    else
-        for arg in ex.args
-            _initialde_collect_call_symbols(arg, out)
-        end
-        return out
-    end
-end
-
-function _initialde_collect_var_symbols(ex, out::Set{Symbol})
-    ex isa Symbol && return (push!(out, ex); out)
-    ex isa Expr || return out
-    if ex.head == :call
-        for arg in ex.args[2:end]
-            _initialde_collect_var_symbols(arg, out)
-        end
-        return out
-    elseif ex.head == :ref
-        _initialde_collect_var_symbols(ex.args[1], out)
-        return out
-    elseif ex.head == :.
-        _initialde_collect_var_symbols(ex.args[1], out)
-        return out
-    else
-        for arg in ex.args
-            _initialde_collect_var_symbols(arg, out)
-        end
-        return out
-    end
-end
-
-function _initialde_collect_property_bases(ex, out::Set{Symbol})
-    ex isa Expr || return out
-    if ex.head == :.
-        base = ex.args[1]
-        base isa Symbol && push!(out, base)
-        _initialde_collect_property_bases(base, out)
-        return out
-    end
-    for arg in ex.args
-        _initialde_collect_property_bases(arg, out)
-    end
-    return out
-end
-
-function _initialde_forbidden_symbol(ex)
-    ex isa Symbol && (ex == :t || ex == :ξ) && return ex
-    ex isa Expr || return nothing
-    for arg in ex.args
-        found = _initialde_forbidden_symbol(arg)
-        found === nothing || return found
-    end
-    return nothing
-end
-
 function _parse_initialde(block::Expr)
     block.head == :block || error("@initialDE expects a begin ... end block.")
     names = Symbol[]
@@ -147,7 +62,7 @@ function _parse_initialde(block::Expr)
         lhs isa Symbol || error("Left-hand side must be a symbol in @initialDE block.")
         lhs in seen && error("Duplicate initial DE name: $(lhs).")
         rhs isa LineNumberNode && error("Invalid right-hand side in @initialDE block.")
-        forbidden = _initialde_forbidden_symbol(rhs)
+        forbidden = _macro_forbidden_symbol(rhs)
         forbidden === nothing || error("@initialDE uses forbidden symbol $(forbidden).")
         push!(seen, lhs)
         push!(names, lhs)
@@ -177,9 +92,9 @@ macro initialDE(block)
     var_syms = Set{Symbol}()
     prop_syms = Set{Symbol}()
     for ex in exprs
-        _initialde_collect_call_symbols(ex, call_syms)
-        _initialde_collect_var_symbols(ex, var_syms)
-        _initialde_collect_property_bases(ex, prop_syms)
+        _macro_collect_call_symbols(ex, call_syms)
+        _macro_collect_var_symbols(ex, var_syms)
+        _macro_collect_property_bases(ex, prop_syms)
     end
 
     delete!(var_syms, :fixed_effects)
@@ -250,16 +165,22 @@ function get_initialde_builder(i::InitialDE,
     fun_syms = Set([s
                     for s in call_syms
                     if !(isdefined(Base, s) || isdefined(@__MODULE__, s))])
-    prop_syms_expr = Expr(:call, :Set, Expr(:vect, QuoteNode.(collect(prop_syms))...))
 
-    binds_vars = [quote
-                      if $(QuoteNode(sym)) in $prop_syms_expr
+    # `sym in prop_syms` is decidable at generation time — emit the chosen branch
+    # directly. (The old code carried the membership test into the generated function
+    # as `sym in Set([...])`, allocating a fresh Set per symbol on every builder call;
+    # the initial-state builder runs per individual per objective evaluation. Mirrors
+    # the identical fix in PreDE.jl and RandomEffects.jl.)
+    binds_vars = [if sym in prop_syms
+                      quote
                           if hasproperty(constant_covariates, $(QuoteNode(sym)))
                               $(sym) = getproperty(constant_covariates, $(QuoteNode(sym)))
                           else
                               error("Unknown symbol $(string($(QuoteNode(sym)))) in initialDE.")
                           end
-                      else
+                      end
+                  else
+                      quote
                           if hasproperty(preDE, $(QuoteNode(sym)))
                               $(sym) = getproperty(preDE, $(QuoteNode(sym)))
                           elseif hasproperty(random_effects, $(QuoteNode(sym)))

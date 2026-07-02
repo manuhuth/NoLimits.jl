@@ -233,23 +233,15 @@ function _fit_model(dm::DataModel, method::VI, args...;
         @debug "theta_0_untransformed is currently not used by VI unless turing_kwargs provides q_init."
     end
 
-    cache = serialization isa SciMLBase.EnsembleThreads ?
-            build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-        nthreads = Threads.maxthreadid(), force_saveat = true) :
-            build_ll_cache(
-        dm; ode_args = ode_args, ode_kwargs = ode_kwargs, force_saveat = true)
+    cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = serialization, force_saveat = true)
 
     free_names_t = Tuple(free_names)
     priors_nt = NamedTuple{free_names_t}(Tuple(getfield(priors, n) for n in free_names))
     fname = _build_turing_model(fixed_names, free_names)
     model_fn = Base.invokelatest(getfield, @__MODULE__, fname)
     model = Base.invokelatest(model_fn, dm, cache, serialization, priors_nt, constants)
-    f_old = model.f
-    f_wrap = (fargs...) -> Base.invokelatest(f_old, fargs...)
-    miss = typeof(model).parameters[4]
-    threaded = typeof(model).parameters[8]
-    model = DynamicPPL.Model{threaded, miss}(
-        f_wrap, model.args, model.defaults, model.context)
+    model = _invokelatest_model(model)
 
     max_iter = Int(get(method.turing_kwargs, :max_iter, 1000))
     max_iter >= 1 || error("VI requires max_iter >= 1.")

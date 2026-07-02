@@ -160,43 +160,6 @@ function _eq_latex_block(lines::Vector{Expr}; numbered::Bool = false)
         "\$\\begin{aligned}\n" * body * "\n\\end{aligned}\$"; parse = false)
 end
 
-function _eq_try_display(block)
-    try
-        display(block)
-        return true
-    catch
-        return false
-    end
-end
-
-function _eq_try_render(block)
-    if displayable(MIME("juliavscode/html"))
-        try
-            Latexify.render(block, MIME("juliavscode/html"))
-            return true
-        catch
-        end
-    end
-
-    if displayable(MIME("image/svg+xml"))
-        try
-            Latexify.render(block, MIME("image/svg"); callshow = true, open = false)
-            return true
-        catch
-        end
-    end
-
-    if Sys.which("lualatex") !== nothing
-        try
-            Latexify.render(block)
-            return true
-        catch
-        end
-    end
-
-    return false
-end
-
 function get_equation_lines(m::Model)
     lines = Expr[]
 

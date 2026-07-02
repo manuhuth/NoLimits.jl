@@ -1,21 +1,3 @@
-function _plot_wald_closed_form!(p, kind::Symbol, μ::Float64, v::Float64,
-        style::PlotStyle; show_legend::Bool, npts::Int = 300)
-    xy = _wald_density_xy(kind, μ, v; npts = npts)
-    if xy === nothing
-        vline!(p, [μ];
-            color = style.color_primary,
-            linewidth = style.line_width_primary,
-            label = show_legend ? "Approx. Density" : "")
-        return nothing
-    end
-    x, y = xy
-    plot!(p, x, y;
-        color = style.color_primary,
-        linewidth = style.line_width_primary,
-        label = show_legend ? "Approx. Density" : "")
-    return (x, y)
-end
-
 function _plot_density_interval_fill!(p,
         x::AbstractVector{<:Real},
         y::AbstractVector{<:Real},

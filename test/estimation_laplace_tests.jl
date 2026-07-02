@@ -352,3 +352,16 @@ end
     @test res_tdist isa FitResult
     @test NoLimits.get_objective(res_default) != NoLimits.get_objective(res_tdist)
 end
+
+@testset "Laplace penalty enters objective AND gradient" begin
+    dm = fx_re_dm()
+    res_unpen = fit_model(dm, NoLimits.Laplace())
+    res_pen = fit_model(dm, NoLimits.Laplace(); penalty = (a = 1.0e6,))
+    a_unpen = NoLimits.get_params(res_unpen; scale = :untransformed).a
+    a_pen = NoLimits.get_params(res_pen; scale = :untransformed).a
+    # The ridge penalty w·a² with a huge weight must pull â to ≈ 0. With the
+    # historical bug the reported gradient lacked the penalty term, so the
+    # optimizer stalled at (or walked toward) the unpenalized optimum.
+    @test abs(a_pen) < 0.05
+    @test abs(a_pen) < abs(a_unpen)
+end

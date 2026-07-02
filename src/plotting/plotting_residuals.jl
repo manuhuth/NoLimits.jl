@@ -12,7 +12,6 @@ using Random
 using Statistics
 
 const _RESIDUAL_ALLOWED = Set([:pit, :quantile, :raw, :pearson, :logscore])
-const _RESIDUAL_PLOT_ALLOWED = Set([:pit, :quantile, :raw, :pearson, :logscore])
 
 @inline function _residual_metric_column(metric::Symbol)
     if metric == :pit
@@ -54,8 +53,8 @@ function _validate_residual_metrics(residuals)
 end
 
 function _validate_plot_metric(metric::Symbol)
-    metric in _RESIDUAL_PLOT_ALLOWED ||
-        error("Unknown residual metric $(metric). Allowed: $(_RESIDUAL_PLOT_ALLOWED).")
+    metric in _RESIDUAL_ALLOWED ||
+        error("Unknown residual metric $(metric). Allowed: $(_RESIDUAL_ALLOWED).")
     return metric
 end
 
@@ -271,10 +270,6 @@ function _residual_row(; individual_idx::Int,
         draw, n_draws)
 end
 
-function _maybe_with_mcmc_warmup(res::FitResult, mcmc_warmup::Union{Nothing, Int})
-    return _with_posterior_warmup(res, mcmc_warmup)
-end
-
 function _ensure_obs_cache_nonmcmc(res::FitResult,
         dm::DataModel,
         cache::Union{Nothing, PlotCache},
@@ -367,7 +362,7 @@ function get_residuals(res::FitResult;
 
     if is_mcmc
         mcmc_draws >= 1 || error("mcmc_draws must be >= 1.")
-        res_use = _maybe_with_mcmc_warmup(res, mcmc_warmup)
+        res_use = _with_posterior_warmup(res, mcmc_warmup)
         θ_draws, η_draws, _ = _posterior_drawn_params(
             res_use, dm, constants_re_use, params, mcmc_draws, rng)
         n_draws = length(θ_draws)
@@ -396,6 +391,33 @@ function get_residuals(res::FitResult;
 
             for obs_name in obs_list
                 yvals = getfield(ind.series.obs, obs_name)
+                # Full forward pass over ALL rows per draw, so HMM outcomes are
+                # conditioned on the filtered posterior from the preceding
+                # observations — mirrors the non-MCMC path below; for non-HMM
+                # outcomes `_apply_hmm_filter!` is a passthrough. `obs_idx`
+                # subsets the filtered distributions afterwards.
+                dists_by_draw = Vector{Vector{Any}}(undef, n_draws)
+                for d in 1:n_draws
+                    θ = θ_draws[d]
+                    η_ind = η_draws[d][i]
+                    sol_accessors = sol_accessors_draw[d]
+                    hmm_priors_d = Dict{Symbol, Any}()
+                    d_vec = Vector{Any}(undef, length(obs_rows_all))
+                    for j in eachindex(obs_rows_all)
+                        row_j = obs_rows_all[j]
+                        vary_j = _varying_at(dm, ind, j, row_j)
+                        η_row_j = _row_random_effects_at(
+                            dm, i, j, η_ind, rowwise_re; obs_only = true)
+                        obs_j = sol_accessors === nothing ?
+                                calculate_formulas_obs(
+                            dm.model, θ, η_row_j, ind.const_cov, vary_j) :
+                                calculate_formulas_obs(
+                            dm.model, θ, η_row_j, ind.const_cov, vary_j, sol_accessors)
+                        d_vec[j] = _apply_hmm_filter!(hmm_priors_d, obs_name,
+                            getproperty(obs_j, obs_name), yvals[j])
+                    end
+                    dists_by_draw[d] = d_vec
+                end
                 for j in obs_idx
                     row = obs_rows_all[j]
                     id_val = dm.df[row, dm.config.primary_id]
@@ -411,20 +433,8 @@ function get_residuals(res::FitResult;
                     ls_vals = Vector{Union{Missing, Float64}}(undef, n_draws)
 
                     for d in 1:n_draws
-                        θ = θ_draws[d]
-                        η_ind = η_draws[d][i]
-                        sol_accessors = sol_accessors_draw[d]
-                        vary = _varying_at_plot(dm, ind, j, row)
-                        η_row = _row_random_effects_at(
-                            dm, i, j, η_ind, rowwise_re; obs_only = true)
-                        obs = sol_accessors === nothing ?
-                              calculate_formulas_obs(
-                            dm.model, θ, η_row, ind.const_cov, vary) :
-                              calculate_formulas_obs(
-                            dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
-                        dist = getproperty(obs, obs_name)
                         met = _compute_residual_metrics(
-                            dist, yval, residual_list, fitted_stat,
+                            dists_by_draw[d][j], yval, residual_list, fitted_stat,
                             randomize_discrete, cdf_fallback_mc, rng)
                         fitted_vals[d] = met.fitted
                         pit_vals[d] = met.pit
@@ -515,7 +525,7 @@ function get_residuals(res::FitResult;
                     d_vec = Vector{Any}(undef, length(obs_rows_all))
                     for j in eachindex(obs_rows_all)
                         row_j = obs_rows_all[j]
-                        vary_j = _varying_at_plot(dm, ind, j, row_j)
+                        vary_j = _varying_at(dm, ind, j, row_j)
                         η_row_j = _row_random_effects_at(
                             dm, i, j, η_ind, rowwise_re; obs_only = true)
                         obs_j = sol_accessors === nothing ?
@@ -626,12 +636,6 @@ function get_residuals(dm::DataModel;
         cdf_fallback_mc = cdf_fallback_mc, ode_args = ode_args, ode_kwargs = ode_kwargs,
         mcmc_draws = mcmc_draws, mcmc_warmup = mcmc_warmup, mcmc_quantiles = mcmc_quantiles,
         rng = rng, return_draw_level = return_draw_level)
-end
-
-function _residual_kde_xy(
-        vals::Vector{Float64}; bandwidth::Union{Nothing, Float64} = nothing)
-    kd = bandwidth === nothing ? kde(vals) : kde(vals; bandwidth = bandwidth)
-    return kd.x, kd.density
 end
 
 function _acf_for_series(v::Vector{Float64}, max_lag::Int)

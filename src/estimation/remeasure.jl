@@ -106,6 +106,20 @@ Dual-compatible for scalar Normal RE. MvNormal is Dual-compatible if and
 only if the Cholesky decomposition in `PDMat` supports the element type
 (holds for Float64; may require Phase 2 for Dual θ with MvNormal priors).
 """
+
+# Lower-Cholesky factor of a covariance. PDMat stores the pre-computed Cholesky —
+# extract it instead of recomputing (also the Dual-compatible route when `Σ.chol`
+# exists). Fallback: jittered Cholesky of the raw matrix; this path fails when θ
+# carries ForwardDiff.Dual tags and the covariance was built via PDMat (LAPACK) —
+# Phase 2 will add a custom Cholesky rule.
+function _lower_chol_from_cov(Σ)
+    if Σ isa Distributions.PDMats.PDMat && isdefined(Σ, :chol)
+        return Matrix(Σ.chol.L)
+    end
+    Σ_mat = Σ isa AbstractMatrix ? Σ : Matrix(Σ)
+    return Matrix(cholesky(Symmetric(Σ_mat + 1e-12 * I)).L)
+end
+
 function build_gaussian_re_from_batch(
         batch_info::_LaplaceBatchInfo,
         θ::ComponentArray,
@@ -145,20 +159,7 @@ function build_gaussian_re_from_batch(
                 L_k = reshape([Distributions.std(dist)], 1, 1)  # [T;;]  — 1×1
             elseif dist isa Distributions.MvNormal
                 μ_k = Vector(Distributions.mean(dist))
-                # L is the lower-Cholesky factor of the covariance.
-                # PDMat stores the pre-computed Cholesky; extract it to avoid
-                # recomputing and for Dual compatibility when dist.Σ.chol exists.
-                Σ = dist.Σ
-                if Σ isa Distributions.PDMats.PDMat && isdefined(Σ, :chol)
-                    L_k = Matrix(Σ.chol.L)
-                else
-                    # Fallback: compute Cholesky from the raw matrix.
-                    # Note: this path fails when θ carries ForwardDiff.Dual tags
-                    # and the covariance matrix was built via PDMat (uses LAPACK).
-                    # Phase 2 will add a custom Cholesky rule to handle this.
-                    Σ_mat = Σ isa AbstractMatrix ? Σ : Matrix(Σ)
-                    L_k = Matrix(cholesky(Symmetric(Σ_mat + 1e-12 * I)).L)
-                end
+                L_k = _lower_chol_from_cov(dist.Σ)
             else
                 error(
                     "GHQuadrature Phase 1 supports only Normal and MvNormal " *
@@ -335,13 +336,7 @@ function build_re_measure_from_batch(
 
             elseif dist isa Distributions.MvNormal
                 μ_k = Vector(Distributions.mean(dist))
-                Σ = dist.Σ
-                if Σ isa Distributions.PDMats.PDMat && isdefined(Σ, :chol)
-                    L_k = Matrix(Σ.chol.L)
-                else
-                    Σ_mat = Σ isa AbstractMatrix ? Σ : Matrix(Σ)
-                    L_k = Matrix(cholesky(Symmetric(Σ_mat + 1e-12 * I)).L)
-                end
+                L_k = _lower_chol_from_cov(dist.Σ)
                 push!(μ_segs, μ_k)
                 push!(L_diags, L_k)
                 let μ = μ_k, L = L_k
@@ -354,13 +349,7 @@ function build_re_measure_from_batch(
                 has_npf = true
                 d_inner = dist.normal
                 μ_k = Vector(Distributions.mean(d_inner))
-                Σ = d_inner.Σ
-                if Σ isa Distributions.PDMats.PDMat && isdefined(Σ, :chol)
-                    L_k = Matrix(Σ.chol.L)
-                else
-                    Σ_mat = Σ isa AbstractMatrix ? Σ : Matrix(Σ)
-                    L_k = Matrix(cholesky(Symmetric(Σ_mat + 1e-12 * I)).L)
-                end
+                L_k = _lower_chol_from_cov(d_inner.Σ)
                 push!(μ_segs, μ_k)
                 push!(L_diags, L_k)
                 let μ = μ_k, L = L_k
@@ -374,13 +363,7 @@ function build_re_measure_from_batch(
                 has_npf = true
                 d_inner = dist.normal
                 μ_k = Vector(Distributions.mean(d_inner))
-                Σ = d_inner.Σ
-                if Σ isa Distributions.PDMats.PDMat && isdefined(Σ, :chol)
-                    L_k = Matrix(Σ.chol.L)
-                else
-                    Σ_mat = Σ isa AbstractMatrix ? Σ : Matrix(Σ)
-                    L_k = Matrix(cholesky(Symmetric(Σ_mat + 1e-12 * I)).L)
-                end
+                L_k = _lower_chol_from_cov(d_inner.Σ)
                 push!(μ_segs, μ_k)
                 push!(L_diags, L_k)
                 let μ = μ_k, L = L_k
@@ -710,8 +693,7 @@ function build_centered_re_measure(
     S = LowerTriangular(inv(Matrix(L)))
     log_det_S = -sum(log, diag(L))
     re_prior_logf = b -> _re_prior_logf_batch(dm, batch_info, θu, b, const_cache, ll_cache)
-    return CenteredREMeasure(
-        Vector{T}(b_star), S, T(log_det_S), re_prior_logf, batch_info.n_b)
+    return CenteredREMeasure(b_star, S, T(log_det_S), re_prior_logf, batch_info.n_b)
 end
 
 # ---------------------------------------------------------------------------

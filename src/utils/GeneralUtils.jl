@@ -6,10 +6,6 @@ export rowsoftmax
 using ForwardDiff
 import DiffEqBase
 
-function dir(x)
-    return fieldnames(typeof(x))
-end
-
 """
     rowsoftmax(L::AbstractMatrix) -> AbstractMatrix
 

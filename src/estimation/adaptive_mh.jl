@@ -545,16 +545,13 @@ end
 # Compute full ind_ll / re_lp vectors (used at init and warm-start)
 # ---------------------------------------------------------------------------
 
-function _amh_compute_full_ll(dm::DataModel, info::_LaplaceBatchInfo,
-        θ_re::ComponentArray, b::Vector{Float64},
-        const_cache::LaplaceConstantsCache, cache::_LLCache,
-        blocks::Vector{_REAdaptBlock},
-        dists_builder, model_funs, helpers)
-    n_inds = length(info.inds)
-    n_lp = isempty(blocks) ? 0 : blocks[end].lp_offset + blocks[end].n_levels
-    ind_ll = Vector{Float64}(undef, n_inds)
-    re_lp = Vector{Float64}(undef, n_lp)
-
+# Shared fill of the per-individual likelihood and per-level RE log-prior vectors;
+# returns their total. Serves both the fresh-vector init path and the in-place
+# post-M-step recompute.
+function _amh_fill_ll!(ind_ll::Vector{Float64}, re_lp::Vector{Float64},
+        dm::DataModel, info::_LaplaceBatchInfo, θ_re::ComponentArray,
+        b::Vector{Float64}, const_cache::LaplaceConstantsCache, cache::_LLCache,
+        blocks::Vector{_REAdaptBlock}, dists_builder, model_funs, helpers)
     # Per-individual likelihoods
     for (j, ind_global) in enumerate(info.inds)
         η_ind = _build_eta_ind(dm, ind_global, info, b, const_cache, θ_re)
@@ -575,7 +572,20 @@ function _amh_compute_full_ll(dm::DataModel, info::_LaplaceBatchInfo,
         end
     end
 
-    logp = sum(ind_ll) + sum(re_lp)
+    return sum(ind_ll) + sum(re_lp)
+end
+
+function _amh_compute_full_ll(dm::DataModel, info::_LaplaceBatchInfo,
+        θ_re::ComponentArray, b::Vector{Float64},
+        const_cache::LaplaceConstantsCache, cache::_LLCache,
+        blocks::Vector{_REAdaptBlock},
+        dists_builder, model_funs, helpers)
+    n_inds = length(info.inds)
+    n_lp = isempty(blocks) ? 0 : blocks[end].lp_offset + blocks[end].n_levels
+    ind_ll = Vector{Float64}(undef, n_inds)
+    re_lp = Vector{Float64}(undef, n_lp)
+    logp = _amh_fill_ll!(ind_ll, re_lp, dm, info, θ_re, b, const_cache, cache,
+        blocks, dists_builder, model_funs, helpers)
     return ind_ll, re_lp, logp
 end
 
@@ -586,32 +596,9 @@ function _amh_recompute_ll_cache!(state::_AdaptiveMHState,
         const_cache::LaplaceConstantsCache,
         cache::_LLCache)
     dists_builder = get_create_random_effect_distribution(dm.model.random.random)
-    model_funs = cache.model_funs
-    helpers = cache.helpers
-    b = state.b_current
-
-    # Per-individual likelihoods
-    for (j, ind_global) in enumerate(info.inds)
-        η_ind = _build_eta_ind(dm, ind_global, info, b, const_cache, θ_re)
-        state.ind_ll[j] = _loglikelihood_individual(dm, ind_global, θ_re, η_ind, cache)
-    end
-
-    # Per-level RE log-priors
-    for block in state.blocks
-        re_info = info.re_info[block.ri]
-        for li in 1:(block.n_levels)
-            lp_idx = block.lp_offset + li
-            level_id = re_info.map.levels[li]
-            const_cov = dm.individuals[re_info.reps[li]].const_cov
-            dists = dists_builder(θ_re, const_cov, model_funs, helpers)
-            dist = getproperty(dists, block.re_name)
-            v = _re_value_from_b(re_info, level_id, b)
-            state.re_lp[block.lp_offset + li] = (v === nothing) ? 0.0 :
-                                                Float64(logpdf(dist, v))
-        end
-    end
-
-    state.logp = sum(state.ind_ll) + sum(state.re_lp)
+    state.logp = _amh_fill_ll!(state.ind_ll, state.re_lp, dm, info, θ_re,
+        state.b_current, const_cache, cache, state.blocks, dists_builder,
+        cache.model_funs, cache.helpers)
 end
 
 # ---------------------------------------------------------------------------
@@ -811,6 +798,6 @@ function _mcem_sample_batch(dm::DataModel, info::_LaplaceBatchInfo,
         return (zeros(eltype(θ), nb, 0), state, zeros(eltype(θ), nb))
     end
 
-    lastb = vec(samples[:, end])
+    lastb = samples[:, end]
     return (samples, state, lastb)
 end

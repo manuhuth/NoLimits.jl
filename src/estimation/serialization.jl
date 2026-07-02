@@ -243,8 +243,7 @@ function _strip_fit_result(res::FitResult; include_data::Bool = false)
 end
 
 _strip_partial_result(r::FitResult) = _strip_fit_result(r; include_data = false)
-_strip_partial_result(::Nothing) = nothing
-_strip_partial_result(r) = nothing  # unknown type; drop silently
+_strip_partial_result(r) = nothing  # Nothing or unknown type; drop silently
 
 function _strip_fit_result(res::MultistartFitResult; include_data::Bool = false)
     saved_ok = SavedFitResult[_strip_fit_result(r; include_data = false)
@@ -352,11 +351,10 @@ function _reconstruct_fit_result(saved::SavedFitResult, model, dm)
         dm_r, (dm_r, saved.method), fkw)
 end
 
-_reconstruct_partial_result(::Nothing, model, dm) = nothing
 function _reconstruct_partial_result(r::SavedFitResult, model, dm)
     _reconstruct_fit_result(r, model, dm)
 end
-_reconstruct_partial_result(_, model, dm) = nothing
+_reconstruct_partial_result(_, model, dm) = nothing  # Nothing or unknown type
 
 function _reconstruct_multistart(saved::SavedMultistartFitResult, model, dm)
     dm_r = _resolve_dm(saved.df, saved.data_model_config, model, dm)

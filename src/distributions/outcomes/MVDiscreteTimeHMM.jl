@@ -125,6 +125,22 @@ function Distributions.pdf(hmm::MVDiscreteTimeDiscreteStatesHMM, y::AbstractVect
     exp(logpdf(hmm, y))
 end
 
+# Combined accessor sharing the one-step propagation AND the per-state emission
+# log-densities between the likelihood and posterior; reuses the EXACT per-state
+# ops of `logpdf`/`posterior_hidden_states` above (bit-identical).
+function _hmm_logpdf_and_posterior(hmm::MVDiscreteTimeDiscreteStatesHMM,
+        y::AbstractVector)
+    p = transpose(hmm.transition_matrix) * hmm.initial_dist.p
+    s = sum(p)
+    dists = hmm.emission_dists
+    pt = _hmm_probs_tuple(p, dists)
+    ls = map(d -> _mv_emission_logpdf(d, y), dists)
+    lp = _hmm_logsumexp(map((pi, l) -> log(pi / s) + l, pt, ls))
+    u = map((pi, l) -> (pi / s) * exp(l), pt, ls)
+    su = sum(u)
+    return lp, [ui / su for ui in u]
+end
+
 function Distributions.rand(rng::AbstractRNG, hmm::MVDiscreteTimeDiscreteStatesHMM)
     state = rand(rng, Categorical(probabilities_hidden_states(hmm)))
     return _mv_emission_rand(rng, hmm.emission_dists[state])

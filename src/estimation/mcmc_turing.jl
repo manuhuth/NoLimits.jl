@@ -7,7 +7,20 @@ using SciMLBase
 using ComponentArrays
 using Distributions
 using Random
-using DynamicPPL
+
+# Rebuild a DynamicPPL model with its evaluator wrapped in `invokelatest`, so models
+# generated via runtime `eval` (world-age ahead of the caller) can be sampled. The
+# [4]/[8] type-parameter positions are DynamicPPL.Model's `missings`/`threaded`
+# parameters — centralized here (also used by VI) so a DynamicPPL bump is a
+# one-line fix.
+function _invokelatest_model(model)
+    f_old = model.f
+    f_wrap = (fargs...) -> Base.invokelatest(f_old, fargs...)
+    miss = typeof(model).parameters[4]
+    threaded = typeof(model).parameters[8]
+    return DynamicPPL.Model{threaded, miss}(
+        f_wrap, model.args, model.defaults, model.context)
+end
 
 const _MCMC_MODEL_CACHE = Dict{Tuple{Tuple{Vararg{Symbol}}, Tuple{Vararg{Symbol}}}, Symbol}()
 const _MCMC_MODEL_CACHE_RE = Dict{
@@ -370,11 +383,8 @@ function _fit_model(dm::DataModel, method::MCMC, args...;
         end
     end
 
-    cache = serialization isa SciMLBase.EnsembleThreads ?
-            build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-        nthreads = Threads.maxthreadid(), force_saveat = true) :
-            build_ll_cache(
-        dm; ode_args = ode_args, ode_kwargs = ode_kwargs, force_saveat = true)
+    cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = serialization, force_saveat = true)
 
     free_names_t = Tuple(free_names)
     θ_template = get_θ0_untransformed(fe)
@@ -449,12 +459,7 @@ function _fit_model(dm::DataModel, method::MCMC, args...;
         model = Base.invokelatest(model_fn, dm, cache, serialization, priors_nt, constants,
             re_names, re_meta, fixed_maps, const_covs, const_re_info)
     end
-    f_old = model.f
-    f_wrap = (args...) -> Base.invokelatest(f_old, args...)
-    miss = typeof(model).parameters[4]
-    threaded = typeof(model).parameters[8]
-    model = DynamicPPL.Model{threaded, miss}(
-        f_wrap, model.args, model.defaults, model.context)
+    model = _invokelatest_model(model)
     sampler = method.sampler
     sampler_defaults = _mcmc_sampler_defaults(sampler)
     n_samples = get(method.turing_kwargs, :n_samples, sampler_defaults.n_samples)

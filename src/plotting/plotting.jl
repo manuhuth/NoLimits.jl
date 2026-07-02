@@ -95,17 +95,11 @@ const COLOR_PRIMARY = "#0072B2"
 const COLOR_SECONDARY = "#E69F00"
 const COLOR_ACCENT = "#009E73"
 const COLOR_DARK = "#2C3E50"
-const COLOR_LIGHT_GRAY = "#7F8C8D"
 const COLOR_ERROR = "#D55E00"
-const COLOR_DATA = "#0072B2"
-const COLOR_PREDICTION = "#2C3E50"
-const COLOR_DENSITY = "#E69F00"
 const COLOR_CI = "#56B4E9"
 const COLOR_REFERENCE = "#2C3E50"
 
 const DEFAULT_PLOT_COLS = 3
-const BASE_SUBPLOT_WIDTH = 350
-const BASE_SUBPLOT_HEIGHT = 280
 const MIN_FIGURE_WIDTH = 400
 const MAX_FIGURE_WIDTH = 1800
 const MIN_FIGURE_HEIGHT = 300
@@ -340,28 +334,6 @@ function _callbacks_hash(dm::DataModel)
     return acc
 end
 
-function _varying_at_plot(dm::DataModel, ind::Individual, idx::Int, row::Int)
-    pairs = Pair{Symbol, Any}[]
-    vary = ind.series.vary
-    if hasproperty(vary, :t)
-        push!(pairs, :t => getproperty(vary, :t)[idx])
-    else
-        push!(pairs, :t => dm.df[row, dm.config.time_col])
-    end
-    for name in keys(vary)
-        name == :t && continue
-        v = getfield(vary, name)
-        if v isa AbstractVector
-            push!(pairs, name => v[idx])
-        elseif v isa NamedTuple
-            sub = _covariate_vector(NamedTuple{keys(v)}(Tuple(getfield(v, k)[idx]
-            for k in keys(v))))
-            push!(pairs, name => sub)
-        end
-    end
-    return merge(NamedTuple(pairs), ind.series.dyn)
-end
-
 function _solve_dense_individual(dm::DataModel,
         ind::Individual,
         θ::ComponentArray,
@@ -507,7 +479,7 @@ function _mcmc_draw_indices(chain::Chains, n_adapt::Int, max_draws::Int, rng::Ab
     idxs = collect(start_idx:n_iter)
     n_keep = min(length(idxs), max_draws)
     n_keep == length(idxs) && return idxs
-    return Random.randperm(rng, length(idxs))[1:n_keep] .|> i -> idxs[i]
+    return idxs[Random.randperm(rng, length(idxs))[1:n_keep]]
 end
 
 function _mcmc_param_index_map(chain::Chains)
@@ -1083,13 +1055,10 @@ function _default_random_effects(res::FitResult,
     end
 
     if res.result isa MCEMResult
-        ode_args = haskey(res.fit_kwargs, :ode_args) ? getfield(res.fit_kwargs, :ode_args) :
-                   ()
-        ode_kwargs = haskey(res.fit_kwargs, :ode_kwargs) ?
-                     getfield(res.fit_kwargs, :ode_kwargs) : NamedTuple()
-        serialization = haskey(res.fit_kwargs, :serialization) ?
-                        getfield(res.fit_kwargs, :serialization) : EnsembleSerial()
-        rng_use = haskey(res.fit_kwargs, :rng) ? getfield(res.fit_kwargs, :rng) : rng
+        ode_args = _fit_kw(res, :ode_args, ())
+        ode_kwargs = _fit_kw(res, :ode_kwargs, NamedTuple())
+        serialization = _fit_kw(res, :serialization, EnsembleSerial())
+        rng_use = _fit_kw(res, :rng, rng)
         ll_cache = build_ll_cache(
             dm; ode_args = ode_args, ode_kwargs = ode_kwargs, serialization = serialization)
         bstars = res.result.eb_modes
@@ -1105,13 +1074,10 @@ function _default_random_effects(res::FitResult,
     if res.result isa SAEMResult
         constants_re = _saem_anneal_constants_re(
             dm, θ, _saem_anneal_names(res), constants_re)
-        ode_args = haskey(res.fit_kwargs, :ode_args) ? getfield(res.fit_kwargs, :ode_args) :
-                   ()
-        ode_kwargs = haskey(res.fit_kwargs, :ode_kwargs) ?
-                     getfield(res.fit_kwargs, :ode_kwargs) : NamedTuple()
-        serialization = haskey(res.fit_kwargs, :serialization) ?
-                        getfield(res.fit_kwargs, :serialization) : EnsembleSerial()
-        rng_use = haskey(res.fit_kwargs, :rng) ? getfield(res.fit_kwargs, :rng) : rng
+        ode_args = _fit_kw(res, :ode_args, ())
+        ode_kwargs = _fit_kw(res, :ode_kwargs, NamedTuple())
+        serialization = _fit_kw(res, :serialization, EnsembleSerial())
+        rng_use = _fit_kw(res, :rng, rng)
         ll_cache = build_ll_cache(
             dm; ode_args = ode_args, ode_kwargs = ode_kwargs, serialization = serialization)
         bstars = res.result.eb_modes
@@ -1181,23 +1147,16 @@ function _default_random_effects_from_dm(dm::DataModel,
         dist = getproperty(dists_builder(θ, const_cov, model_funs, helpers), re)
         dim = dist isa Distributions.UnivariateDistribution ? 1 : length(dist)
         level_dims[re] = dim
+        # `dist` is level-invariant — compute the (possibly expensive) mean once;
+        # dim > 1 still stores a fresh copy per level (same aliasing as before).
+        v0 = try
+            Distributions.mean(dist)
+        catch
+            dim == 1 ? 0.0 : zeros(Float64, dim)
+        end
         re_map = Dict{Any, Any}()
         for lvl in levels_free
-            if dim == 1
-                v = try
-                    Distributions.mean(dist)
-                catch
-                    0.0
-                end
-                re_map[lvl] = v
-            else
-                v = try
-                    Distributions.mean(dist)
-                catch
-                    zeros(Float64, dim)
-                end
-                re_map[lvl] = Vector{Float64}(v)
-            end
+            re_map[lvl] = dim == 1 ? v0 : Vector{Float64}(v0)
         end
         level_vals[re] = re_map
     end
@@ -1310,7 +1269,7 @@ function build_plot_cache(res::FitResult;
             dists_i = Vector{NamedTuple}(undef, length(obs_rows))
             hmm_priors = Dict{Symbol, Any}()
             for (j, row) in enumerate(obs_rows)
-                vary = _varying_at_plot(dm, ind, j, row)
+                vary = _varying_at(dm, ind, j, row)
                 η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only = true)
                 obs = sol_accessors === nothing ?
                       calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
@@ -1381,7 +1340,7 @@ function build_plot_cache(dm::DataModel;
             dists_i = Vector{NamedTuple}(undef, length(obs_rows))
             hmm_priors = Dict{Symbol, Any}()
             for (j, row) in enumerate(obs_rows)
-                vary = _varying_at_plot(dm, ind, j, row)
+                vary = _varying_at(dm, ind, j, row)
                 η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only = true)
                 obs = sol_accessors === nothing ?
                       calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :

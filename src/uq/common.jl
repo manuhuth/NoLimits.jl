@@ -5,10 +5,6 @@ using LinearAlgebra
 using Random
 using Statistics
 
-@inline function _fit_kw(res::FitResult, key::Symbol, default)
-    return haskey(res.fit_kwargs, key) ? getfield(res.fit_kwargs, key) : default
-end
-
 @inline function _method_symbol(method::FittingMethod)
     method isa MLE && return :mle
     method isa MAP && return :map

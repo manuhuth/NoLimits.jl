@@ -190,78 +190,6 @@ end
 """
 RandomEffect(dist; column::Symbol) = RandomEffectDecl(dist, column)
 
-function _re_is_identifier(sym::Symbol)
-    return Base.isidentifier(sym)
-end
-
-function _re_collect_call_symbols(ex, out::Set{Symbol})
-    ex isa Expr || return out
-    if ex.head == :call
-        f = ex.args[1]
-        if f isa Symbol && _re_is_identifier(f)
-            push!(out, f)
-        end
-        for arg in ex.args[2:end]
-            _re_collect_call_symbols(arg, out)
-        end
-        return out
-    elseif ex.head == :ref
-        _re_collect_call_symbols(ex.args[1], out)
-        return out
-    else
-        for arg in ex.args
-            _re_collect_call_symbols(arg, out)
-        end
-        return out
-    end
-end
-
-function _re_collect_var_symbols(ex, out::Set{Symbol})
-    ex isa Symbol && return (push!(out, ex); out)
-    ex isa Expr || return out
-    if ex.head == :call
-        for arg in ex.args[2:end]
-            _re_collect_var_symbols(arg, out)
-        end
-        return out
-    elseif ex.head == :ref
-        _re_collect_var_symbols(ex.args[1], out)
-        return out
-    elseif ex.head == :.
-        _re_collect_var_symbols(ex.args[1], out)
-        return out
-    else
-        for arg in ex.args
-            _re_collect_var_symbols(arg, out)
-        end
-        return out
-    end
-end
-
-function _re_collect_property_bases(ex, out::Set{Symbol})
-    ex isa Expr || return out
-    if ex.head == :.
-        base = ex.args[1]
-        base isa Symbol && push!(out, base)
-        _re_collect_property_bases(base, out)
-        return out
-    end
-    for arg in ex.args
-        _re_collect_property_bases(arg, out)
-    end
-    return out
-end
-
-function _re_forbidden_symbol(ex)
-    ex isa Symbol && (ex == :t || ex == :ξ) && return ex
-    ex isa Expr || return nothing
-    for arg in ex.args
-        found = _re_forbidden_symbol(arg)
-        found === nothing || return found
-    end
-    return nothing
-end
-
 function _re_ctor_name(fn)
     if fn === :RandomEffect
         return :RandomEffect
@@ -341,7 +269,7 @@ function _parse_random_effects(block::Expr)
 
         dist, column = _re_parse_call_args(rhs, lhs)
 
-        forbidden = _re_forbidden_symbol(dist)
+        forbidden = _macro_forbidden_symbol(dist)
         forbidden === nothing ||
             error("RandomEffect $(lhs) uses forbidden symbol $(forbidden).")
 
@@ -400,13 +328,13 @@ macro randomEffects(block)
         local_call = Set{Symbol}()
         local_var = Set{Symbol}()
         local_prop = Set{Symbol}()
-        _re_collect_call_symbols(ex, local_call)
-        _re_collect_var_symbols(ex, local_var)
-        _re_collect_property_bases(ex, local_prop)
+        _macro_collect_call_symbols(ex, local_call)
+        _macro_collect_var_symbols(ex, local_var)
+        _macro_collect_property_bases(ex, local_prop)
 
-        _re_collect_call_symbols(ex, call_syms)
-        _re_collect_var_symbols(ex, var_syms)
-        _re_collect_property_bases(ex, prop_syms)
+        _macro_collect_call_symbols(ex, call_syms)
+        _macro_collect_var_symbols(ex, var_syms)
+        _macro_collect_property_bases(ex, prop_syms)
 
         delete!(local_var, :fixed_effects)
         delete!(local_var, :constant_features_i)

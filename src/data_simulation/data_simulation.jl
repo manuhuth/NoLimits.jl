@@ -84,6 +84,54 @@ function _sampled_random_effects_for_individual(dm::DataModel, idx::Int, re_samp
     return ComponentArray(NamedTuple(nt_pairs))
 end
 
+# Shared DE setup for the two per-individual simulators: build the compiled
+# context, solve the individual's ODE problem, and return the solution accessors
+# (`nothing` for non-DE models). Draws no randomness, so factoring this out of
+# the simulators leaves their RNG streams unchanged.
+function _simulate_sol_accessors(dm::DataModel, idx::Int, θ, η)
+    model = dm.model
+    model.de.de === nothing && return nothing
+    ind = dm.individuals[idx]
+    const_cov = ind.const_cov
+    pre = calculate_prede(model, θ, η, const_cov)
+    pc = (;
+        fixed_effects = θ,
+        random_effects = η,
+        constant_covariates = const_cov,
+        varying_covariates = merge((t = ind.series.vary.t[1],), ind.series.dyn),
+        helpers = get_helper_funs(model),
+        model_funs = get_model_funs(model),
+        preDE = pre
+    )
+    compiled = get_de_compiler(model.de.de)(pc)
+    u0 = calculate_initial_state(model, θ, η, const_cov)
+    cb = nothing
+    infusion_rates = nothing
+    if ind.callbacks !== nothing
+        _apply_initial_events!(u0, ind.callbacks)
+        cb = ind.callbacks.callback
+        infusion_rates = ind.callbacks.infusion_rates
+    end
+    f!_use = _with_infusion(get_de_f!(model.de.de), infusion_rates)
+    prob = ODEProblem(f!_use, u0, ind.tspan, compiled)
+    solver_cfg = get_solver_config(model)
+    alg = solver_cfg.alg === nothing ? Tsit5() : solver_cfg.alg
+    if ind.saveat === nothing
+        solve_kwargs = _ode_solve_kwargs(
+            solver_cfg.kwargs, NamedTuple(), (dense = true,))
+        sol = cb === nothing ?
+              solve(prob, alg, solver_cfg.args...; solve_kwargs...) :
+              solve(prob, alg, solver_cfg.args...; solve_kwargs..., callback = cb)
+    else
+        solve_kwargs = _ode_solve_kwargs(solver_cfg.kwargs, NamedTuple(),
+            (saveat = ind.saveat, save_everystep = false, dense = false))
+        sol = cb === nothing ?
+              solve(prob, alg, solver_cfg.args...; solve_kwargs...) :
+              solve(prob, alg, solver_cfg.args...; solve_kwargs..., callback = cb)
+    end
+    return get_de_accessors_builder(model.de.de)(sol, compiled)
+end
+
 function _simulate_individual!(
         df::DataFrame, dm::DataModel, idx::Int, θ, re_samples, rng, replace_missings::Bool)
     model = dm.model
@@ -92,47 +140,7 @@ function _simulate_individual!(
     const_cov = ind.const_cov
 
     η = _sampled_random_effects_for_individual(dm, idx, re_samples)
-
-    sol_accessors = nothing
-    if model.de.de !== nothing
-        pre = calculate_prede(model, θ, η, const_cov)
-        pc = (;
-            fixed_effects = θ,
-            random_effects = η,
-            constant_covariates = const_cov,
-            varying_covariates = merge((t = ind.series.vary.t[1],), ind.series.dyn),
-            helpers = get_helper_funs(model),
-            model_funs = get_model_funs(model),
-            preDE = pre
-        )
-        compiled = get_de_compiler(model.de.de)(pc)
-        u0 = calculate_initial_state(model, θ, η, const_cov)
-        cb = nothing
-        infusion_rates = nothing
-        if ind.callbacks !== nothing
-            _apply_initial_events!(u0, ind.callbacks)
-            cb = ind.callbacks.callback
-            infusion_rates = ind.callbacks.infusion_rates
-        end
-        f!_use = _with_infusion(get_de_f!(model.de.de), infusion_rates)
-        prob = ODEProblem(f!_use, u0, ind.tspan, compiled)
-        solver_cfg = get_solver_config(model)
-        alg = solver_cfg.alg === nothing ? Tsit5() : solver_cfg.alg
-        if ind.saveat === nothing
-            solve_kwargs = _ode_solve_kwargs(
-                solver_cfg.kwargs, NamedTuple(), (dense = true,))
-            sol = cb === nothing ?
-                  solve(prob, alg, solver_cfg.args...; solve_kwargs...) :
-                  solve(prob, alg, solver_cfg.args...; solve_kwargs..., callback = cb)
-        else
-            solve_kwargs = _ode_solve_kwargs(solver_cfg.kwargs, NamedTuple(),
-                (saveat = ind.saveat, save_everystep = false, dense = false))
-            sol = cb === nothing ?
-                  solve(prob, alg, solver_cfg.args...; solve_kwargs...) :
-                  solve(prob, alg, solver_cfg.args...; solve_kwargs..., callback = cb)
-        end
-        sol_accessors = get_de_accessors_builder(model.de.de)(sol, compiled)
-    end
+    sol_accessors = _simulate_sol_accessors(dm, idx, θ, η)
 
     obs_cols = dm.config.obs_cols
     rowwise_re = _needs_rowwise_random_effects(dm, idx; obs_only = true)
@@ -178,47 +186,7 @@ function _simulate_individual_values(
     const_cov = ind.const_cov
 
     η = _sampled_random_effects_for_individual(dm, idx, re_samples)
-
-    sol_accessors = nothing
-    if model.de.de !== nothing
-        pre = calculate_prede(model, θ, η, const_cov)
-        pc = (;
-            fixed_effects = θ,
-            random_effects = η,
-            constant_covariates = const_cov,
-            varying_covariates = merge((t = ind.series.vary.t[1],), ind.series.dyn),
-            helpers = get_helper_funs(model),
-            model_funs = get_model_funs(model),
-            preDE = pre
-        )
-        compiled = get_de_compiler(model.de.de)(pc)
-        u0 = calculate_initial_state(model, θ, η, const_cov)
-        cb = nothing
-        infusion_rates = nothing
-        if ind.callbacks !== nothing
-            _apply_initial_events!(u0, ind.callbacks)
-            cb = ind.callbacks.callback
-            infusion_rates = ind.callbacks.infusion_rates
-        end
-        f!_use = _with_infusion(get_de_f!(model.de.de), infusion_rates)
-        prob = ODEProblem(f!_use, u0, ind.tspan, compiled)
-        solver_cfg = get_solver_config(model)
-        alg = solver_cfg.alg === nothing ? Tsit5() : solver_cfg.alg
-        if ind.saveat === nothing
-            solve_kwargs = _ode_solve_kwargs(
-                solver_cfg.kwargs, NamedTuple(), (dense = true,))
-            sol = cb === nothing ?
-                  solve(prob, alg, solver_cfg.args...; solve_kwargs...) :
-                  solve(prob, alg, solver_cfg.args...; solve_kwargs..., callback = cb)
-        else
-            solve_kwargs = _ode_solve_kwargs(solver_cfg.kwargs, NamedTuple(),
-                (saveat = ind.saveat, save_everystep = false, dense = false))
-            sol = cb === nothing ?
-                  solve(prob, alg, solver_cfg.args...; solve_kwargs...) :
-                  solve(prob, alg, solver_cfg.args...; solve_kwargs..., callback = cb)
-        end
-        sol_accessors = get_de_accessors_builder(model.de.de)(sol, compiled)
-    end
+    sol_accessors = _simulate_sol_accessors(dm, idx, θ, η)
 
     obs_cols = dm.config.obs_cols
     out = Dict{Symbol, Vector{Any}}()

@@ -12,12 +12,6 @@ using Distributions
 @inline _is_hmm_dist(::ContinuousTimeObservedStatesMarkovModel) = true
 @inline _is_hmm_dist(::CoarsedObservedStatesMarkovModel) = true
 
-# Trait: true only for fully-observed Markov models (one-hot posterior update).
-@inline _is_observed_markov(::Any) = false
-@inline _is_observed_markov(::DiscreteTimeObservedStatesMarkovModel) = true
-@inline _is_observed_markov(::ContinuousTimeObservedStatesMarkovModel) = true
-@inline _is_observed_markov(::CoarsedObservedStatesMarkovModel) = true
-
 function _hmm_onehot_prior(n_states::Int, state::Int)
     probs = zeros(Float64, n_states)
     probs[state] = 1.0
@@ -172,11 +166,61 @@ end
 @inline _hmm_with_prior(dist, prior_probs) = prior_probs === nothing ? dist :
                                              _hmm_with_initial_probs(dist, prior_probs)
 
-@inline _hmm_predicted_probs(dist, prior_probs = nothing) = probabilities_hidden_states(_hmm_with_prior(
-    dist, prior_probs))
-
-@inline _hmm_posterior_probs(dist, y, prior_probs = nothing) = posterior_hidden_states(
-    _hmm_with_prior(dist, prior_probs), y)
+# Rebuild an HMM/Markov outcome distribution with `init_p` as its initial
+# hidden-state probabilities, WITHOUT validating them (`check_args=false`): the
+# likelihood/CV filters pass posteriors that can degenerate to NaN/Inf at extreme
+# parameter values during optimizer exploration, and callers guard the resulting
+# logpdf with isfinite instead. Distinct from `_hmm_with_initial_probs`, which
+# validates. Shared by `_loglikelihood_rows_hmm` (common.jl) and the CV row filter
+# (cv.jl); the branch order mirrors the historical inline chains.
+function _hmm_pin_initial_probs(dist, init_p)
+    if dist isa ContinuousTimeDiscreteStatesHMM
+        ContinuousTimeDiscreteStatesHMM(
+            dist.transition_matrix, dist.emission_dists,
+            Distributions.Categorical(init_p; check_args = false), dist.Δt;
+            propagation_mode = dist.propagation_mode)
+    elseif dist isa MVContinuousTimeDiscreteStatesHMM
+        MVContinuousTimeDiscreteStatesHMM(
+            dist.transition_matrix, dist.emission_dists,
+            Distributions.Categorical(init_p; check_args = false), dist.Δt;
+            propagation_mode = dist.propagation_mode)
+    elseif dist isa MVDiscreteTimeDiscreteStatesHMM
+        MVDiscreteTimeDiscreteStatesHMM(
+            dist.transition_matrix, dist.emission_dists,
+            Distributions.Categorical(init_p; check_args = false))
+    elseif dist isa DiscreteTimeObservedStatesMarkovModel
+        DiscreteTimeObservedStatesMarkovModel(dist.transition_matrix,
+            Distributions.Categorical(init_p; check_args = false),
+            dist.state_labels)
+    elseif dist isa ContinuousTimeObservedStatesMarkovModel
+        ContinuousTimeObservedStatesMarkovModel(dist.transition_matrix,
+            Distributions.Categorical(init_p; check_args = false),
+            dist.Δt, dist.state_labels;
+            propagation_mode = dist.propagation_mode)
+    elseif dist isa CoarsedObservedStatesMarkovModel &&
+           dist.base_dist isa DiscreteTimeObservedStatesMarkovModel
+        base_dist = dist.base_dist
+        coarsed(DiscreteTimeObservedStatesMarkovModel(
+            base_dist.transition_matrix,
+            Distributions.Categorical(init_p; check_args = false),
+            base_dist.state_labels
+        ))
+    elseif dist isa CoarsedObservedStatesMarkovModel &&
+           dist.base_dist isa ContinuousTimeObservedStatesMarkovModel
+        base_dist = dist.base_dist
+        coarsed(ContinuousTimeObservedStatesMarkovModel(
+            base_dist.transition_matrix,
+            Distributions.Categorical(init_p; check_args = false),
+            base_dist.Δt,
+            base_dist.state_labels;
+            propagation_mode = base_dist.propagation_mode
+        ))
+    else
+        DiscreteTimeDiscreteStatesHMM(
+            dist.transition_matrix, dist.emission_dists,
+            Distributions.Categorical(init_p; check_args = false))
+    end
+end
 
 @inline function _sample_hmm_hidden_state(rng::AbstractRNG, dist)
     probs = _sanitize_hmm_probs(probabilities_hidden_states(dist))

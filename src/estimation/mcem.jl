@@ -131,18 +131,6 @@ function MCEM_IS(; n_samples::Int = 500,
     return MCEM_IS(n_samples, proposal, adapt, warm_start_mcmc_iters, mcmc_warmup)
 end
 
-# Backward-compatible internal alias (kept for reference in constructor logic)
-struct MCEMOptions{S, K, SS, W, V, P}
-    sampler::S
-    turing_kwargs::K
-    sample_schedule::SS
-    warm_start::W
-    verbose::V
-    progress::P
-    store_diagnostics::Bool
-    diagnostics_every::Int
-end
-
 struct EMOptions{T}
     maxiters::Int
     rtol_theta::T
@@ -510,7 +498,7 @@ function _extract_b_samples(chain, info::_LaplaceBatchInfo, re_names::Vector{Sym
     sym_names = Symbol.(String.(names))
     vals = Tuple(arr[end, i, end] for i in 1:length(sym_names))
     last_params = NamedTuple{Tuple(sym_names)}(vals)
-    last_b = vec(samples[:, end])
+    last_b = samples[:, end]
     return (samples, last_params, last_b)
 end
 
@@ -611,7 +599,7 @@ function _mcem_sample_batch(dm, info, θ, const_cache, cache, sampler, turing_kw
     if size(samples, 2) == 0
         return (zeros(eltype(θ), nb, 0), lastp, zeros(eltype(θ), nb))
     end
-    lastb = vec(samples[:, end])
+    lastb = samples[:, end]
     return (samples, lastp, lastb)
 end
 
@@ -663,6 +651,29 @@ function _is_init_proposal_blocks(dm::DataModel,
         )
     end
     return blocks
+end
+
+# Prior-mean initial RE vector for one batch, retrying with up to 10 prior draws
+# when the prior mean has a non-finite log-joint. Shared MCEM/SAEM pre-loop seed;
+# `method_label` only flavors the error message.
+function _em_seed_batch_b(dm::DataModel, info::_LaplaceBatchInfo, θ0_u,
+        const_cache::LaplaceConstantsCache, cache_init, rng::AbstractRNG,
+        re_names, bi::Int, method_label::String)
+    b_init = _re_prior_mean_b(dm, info, θ0_u, const_cache, cache_init, re_names)
+    logf = _laplace_logf_batch(dm, info, θ0_u, b_init, const_cache, cache_init)
+    isfinite(logf) && return b_init
+    for _ in 1:10
+        samp, _ = _is_prior_sample_batch(
+            dm, info, θ0_u, const_cache, cache_init, rng, 1, re_names)
+        b_cand = samp[:, 1]
+        if isfinite(_laplace_logf_batch(
+            dm, info, θ0_u, b_cand, const_cache, cache_init))
+            return b_cand
+        end
+    end
+    error("$(method_label): Cannot find valid initial random effects for batch $bi after 10 tries. " *
+          "Initial fixed-effect parameters likely produce -Inf log-likelihood. " *
+          "Try different starting values.")
 end
 
 # Draw n_samples from the prior proposal for a single batch.
@@ -854,7 +865,7 @@ function _is_gaussian_sample_batch(dm::DataModel,
                 if re_info.is_scalar
                     η_val = η isa AbstractVector ? η[1] : Float64(η)
                     b[first(r)] = η_val
-                    z_val = dim == 1 ? z[1] : z[1]
+                    z_val = z[1]
                     qs = q_scalar[ri]
                     if qs === nothing
                         qs = Normal(μ[1], sqrt(max(block.C[1, 1], 1e-14)))
@@ -1138,19 +1149,6 @@ function _mcem_Q(dm::DataModel,
         weights_by_batch; serialization = serialization, q_cache = q_cache)
 end
 
-function _mcem_Q(dm::DataModel,
-        batch_infos::Vector{_LaplaceBatchInfo},
-        θ::ComponentVector,
-        const_cache::LaplaceConstantsCache,
-        ll_cache,
-        samples_by_batch::AbstractVector{<:AbstractMatrix},
-        weights_by_batch::Union{Nothing, AbstractVector{<:AbstractVector}} = nothing;
-        serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        q_cache::Union{Nothing, _MCEMQCache} = nothing)
-    return _mcem_Q_array(dm, batch_infos, θ, const_cache, ll_cache, samples_by_batch,
-        weights_by_batch; serialization = serialization, q_cache = q_cache)
-end
-
 # Q2 counterpart to _mcem_Q: evaluates only log p(η|θ_re) — no ODE calls.
 # Used for the Q2 M-step (parameters that appear only in RE distribution expressions).
 function _mcem_Q2(dm::DataModel,
@@ -1284,11 +1282,8 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
     constants_re = _normalize_constants_re(dm, constants_re)
     const_cache = _build_constants_cache(dm, constants_re)
     pairing, batch_infos, _ = _build_laplace_batch_infos(dm, constants_re)
-    ll_cache = serialization isa SciMLBase.EnsembleThreads ?
-               build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-        nthreads = Threads.maxthreadid(), force_saveat = true) :
-               build_ll_cache(
-        dm; ode_args = ode_args, ode_kwargs = ode_kwargs, force_saveat = true)
+    ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = serialization, force_saveat = true)
 
     θt_free = ComponentArray(NamedTuple{Tuple(free_names)}(Tuple(getproperty(θ0_t, n)
     for n in free_names)))
@@ -1325,27 +1320,8 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
         for bi in 1:length(batch_infos)
             info = batch_infos[bi]
             info.n_b == 0 && continue
-            b_init = _re_prior_mean_b(dm, info, θ0_u, const_cache, cache_init, re_names)
-            logf = _laplace_logf_batch(dm, info, θ0_u, b_init, const_cache, cache_init)
-            if !isfinite(logf)
-                b_init = nothing
-                for _ in 1:10
-                    samp, _ = _is_prior_sample_batch(
-                        dm, info, θ0_u, const_cache, cache_init,
-                        rng, 1, re_names)
-                    b_cand = samp[:, 1]
-                    if isfinite(_laplace_logf_batch(
-                        dm, info, θ0_u, b_cand, const_cache, cache_init))
-                        b_init = b_cand
-                        break
-                    end
-                end
-                if b_init === nothing
-                    error("MCEM: Cannot find valid initial random effects for batch $bi after 10 tries. " *
-                          "Initial fixed-effect parameters likely produce -Inf log-likelihood. " *
-                          "Try different starting values.")
-                end
-            end
+            b_init = _em_seed_batch_b(
+                dm, info, θ0_u, const_cache, cache_init, rng, re_names, bi, "MCEM")
             last_params[bi] = _b_to_last_params(b_init, info, re_names)
         end
     end
@@ -1511,10 +1487,8 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
                     isfinite(Q2val) || return T(Inf)
                     return -Q2val
                 end
-                lb_q2 = collect(ComponentArray(NamedTuple{Tuple(q2_free_now)}(
-                    Tuple(getproperty(lower_t_q2_all, n) for n in q2_free_now))))
-                ub_q2 = collect(ComponentArray(NamedTuple{Tuple(q2_free_now)}(
-                    Tuple(getproperty(upper_t_q2_all, n) for n in q2_free_now))))
+                lb_q2 = collect(_ca_subset(lower_t_q2_all, q2_free_now))
+                ub_q2 = collect(_ca_subset(upper_t_q2_all, q2_free_now))
                 use_bounds_q2 = !(all(isinf, lb_q2) && all(isinf, ub_q2))
                 θ0_q2 = collect(θt_q2)
                 optf_q2 = OptimizationFunction(obj_q2, method.adtype)
@@ -1551,7 +1525,7 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
 
         obj_cache = (θ = Ref{Any}(nothing), obj = Ref{Any}(nothing))
         function obj_only(θt, p)
-            any(isnan.(θt)) && return Inf
+            any(isnan, θt) && return Inf
             θt_free_loc = θt isa ComponentArray ? θt : ComponentArray(θt, axs_free_iter)
             θt_vec = θt_free_loc
             use_cache = !(eltype(θt_free_loc) <: ForwardDiff.Dual)
@@ -1580,14 +1554,8 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
         optf = OptimizationFunction(obj_only, method.adtype)
         lower_t, upper_t = get_bounds_transformed(fe)
 
-        lower_t_free_iter = ComponentArray(NamedTuple{Tuple(free_names_q1)}(Tuple(getproperty(
-                                                                                      lower_t,
-                                                                                      n)
-        for n in free_names_q1)))
-        upper_t_free_iter = ComponentArray(NamedTuple{Tuple(free_names_q1)}(Tuple(getproperty(
-                                                                                      upper_t,
-                                                                                      n)
-        for n in free_names_q1)))
+        lower_t_free_iter = _ca_subset(lower_t, free_names_q1)
+        upper_t_free_iter = _ca_subset(upper_t, free_names_q1)
         lower_t_free_vec = collect(lower_t_free_iter)
         upper_t_free_vec = collect(upper_t_free_iter)
         use_bounds = !(all(isinf, lower_t_free_vec) && all(isinf, upper_t_free_vec))
@@ -1599,14 +1567,10 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
             lb_m = method.lb
             ub_m = method.ub
             if lb_m isa ComponentArray
-                lb_m = ComponentArray(NamedTuple{Tuple(free_names_q1)}(Tuple(getproperty(
-                                                                                 lb_m, n)
-                for n in free_names_q1)))
+                lb_m = _ca_subset(lb_m, free_names_q1)
             end
             if ub_m isa ComponentArray
-                ub_m = ComponentArray(NamedTuple{Tuple(free_names_q1)}(Tuple(getproperty(
-                                                                                 ub_m, n)
-                for n in free_names_q1)))
+                ub_m = _ca_subset(ub_m, free_names_q1)
             end
             lb_m = lb_m === nothing ? lower_t_free_vec : collect(lb_m)
             ub_m = ub_m === nothing ? upper_t_free_vec : collect(ub_m)

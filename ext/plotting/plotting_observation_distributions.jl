@@ -113,7 +113,7 @@ function plot_observation_distributions(res::FitResult;
                             sol_accessors = get_de_accessors_builder(dm.model.de.de)(
                                 sol, compiled)
                         end
-                        vary = _varying_at_plot(dm, ind, j, row)
+                        vary = _varying_at(dm, ind, j, row)
                         η_row = _row_random_effects_at(
                             dm, i, j, η_ind, rowwise_re; obs_only = true)
                         obs = sol_accessors === nothing ?
@@ -225,7 +225,7 @@ function plot_observation_distributions(res::FitResult;
                     dist = if cache_obs_dists && cache.obs_dists !== nothing
                         getproperty(cache.obs_dists[i][j], obs_name)
                     else
-                        vary = _varying_at_plot(dm, ind, j, row)
+                        vary = _varying_at(dm, ind, j, row)
                         η_row = _row_random_effects_at(
                             dm, i, j, η_ind, rowwise_re; obs_only = true)
                         obs = sol_accessors === nothing ?

@@ -215,7 +215,7 @@ function _model_find_block(block::Expr, head::Symbol)
         stmt isa Expr || continue
         stmt.head == :macrocall || continue
         name = stmt.args[1]
-        if name === Symbol("@", head) || (name isa Symbol && name == Symbol("@", head))
+        if name === Symbol("@", head)
             return stmt
         elseif name isa GlobalRef && name.name == Symbol("@", head)
             return stmt
