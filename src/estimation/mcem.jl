@@ -1047,7 +1047,11 @@ _use_mcmc_this_iter(iter::Int, es::MCEM_IS) = iter <= es.warm_start_mcmc_iters
 _mcmc_e_step(es::MCEM_MCMC) = es
 _mcmc_e_step(es::MCEM_IS) = es.mcmc_warmup
 
-function _mcem_Q_array(dm::DataModel,
+# Sample-averaged per-batch log-density. `logf_fn` selects the density:
+# `_laplace_logf_batch` (full log-joint) for the Q step, `_re_logpdf_batch`
+# (RE prior only, no ODE work) for the Q2 step. Julia specializes on the
+# function argument, so both wrappers compile to the historical bodies.
+function _mcem_Q_core(logf_fn::F, dm::DataModel,
         batch_infos::Vector{_LaplaceBatchInfo},
         θ::ComponentArray,
         const_cache::LaplaceConstantsCache,
@@ -1055,14 +1059,14 @@ function _mcem_Q_array(dm::DataModel,
         samples_by_batch::AbstractVector{<:AbstractMatrix},
         weights_by_batch::Union{Nothing, AbstractVector{<:AbstractVector}} = nothing;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        q_cache::Union{Nothing, _MCEMQCache} = nothing)
+        q_cache::Union{Nothing, _MCEMQCache} = nothing) where {F}
     Tθ = eltype(θ)
     total = zero(Tθ)
     # Constant-RE batches (n_b == 0): logf is independent of samples — evaluate once.
     ll_cache_c = ll_cache isa Vector ? ll_cache[1] : ll_cache
     for (bi, info) in enumerate(batch_infos)
         info.n_b > 0 && continue
-        logf = _laplace_logf_batch(dm, info, θ, Tθ[], const_cache, ll_cache_c)
+        logf = logf_fn(dm, info, θ, Tθ[], const_cache, ll_cache_c)
         !isfinite(logf) && return Tθ(Inf)
         total += logf
     end
@@ -1093,7 +1097,7 @@ function _mcem_Q_array(dm::DataModel,
                 tctx = _safe_theta_ctx(dm, info, θ, cache_c)
                 for s in 1:size(samples, 2)
                     b = view(samples, :, s)
-                    logf = _laplace_logf_batch(
+                    logf = logf_fn(
                         dm, info, θ, b, const_cache, cache_c; tctx = tctx)
                     !isfinite(logf) && (bad[] = true; break)
                     w = ws === nothing ? one(Tθ) : Tθ(ws[s])
@@ -1121,7 +1125,7 @@ function _mcem_Q_array(dm::DataModel,
             tctx = _safe_theta_ctx(dm, info, θ, ll_cache_local)
             for s in 1:size(samples, 2)
                 b = view(samples, :, s)
-                logf = _laplace_logf_batch(
+                logf = logf_fn(
                     dm, info, θ, b, const_cache, ll_cache_local; tctx = tctx)
                 !isfinite(logf) && return Tθ(Inf)
                 w = ws === nothing ? one(Tθ) : Tθ(ws[s])
@@ -1134,6 +1138,20 @@ function _mcem_Q_array(dm::DataModel,
         end
     end
     return total
+end
+
+function _mcem_Q_array(dm::DataModel,
+        batch_infos::Vector{_LaplaceBatchInfo},
+        θ::ComponentArray,
+        const_cache::LaplaceConstantsCache,
+        ll_cache,
+        samples_by_batch::AbstractVector{<:AbstractMatrix},
+        weights_by_batch::Union{Nothing, AbstractVector{<:AbstractVector}} = nothing;
+        serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
+        q_cache::Union{Nothing, _MCEMQCache} = nothing)
+    return _mcem_Q_core(_laplace_logf_batch, dm, batch_infos, θ, const_cache,
+        ll_cache, samples_by_batch, weights_by_batch;
+        serialization = serialization, q_cache = q_cache)
 end
 
 function _mcem_Q(dm::DataModel,
@@ -1159,69 +1177,9 @@ function _mcem_Q2(dm::DataModel,
         samples_by_batch::AbstractVector{<:AbstractMatrix},
         weights_by_batch::Union{Nothing, AbstractVector{<:AbstractVector}} = nothing;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads())
-    Tθ = eltype(θ)
-    total = zero(Tθ)
-    # Constant-RE batches: RE prior is deterministic — evaluate once outside the sample loop.
-    ll_cache_c = ll_cache isa Vector ? ll_cache[1] : ll_cache
-    for (bi, info) in enumerate(batch_infos)
-        info.n_b > 0 && continue
-        logf = _re_logpdf_batch(dm, info, θ, Tθ[], const_cache, ll_cache_c)
-        !isfinite(logf) && return Tθ(Inf)
-        total += logf
-    end
-    if serialization isa SciMLBase.EnsembleThreads
-        nthreads = Threads.maxthreadid()
-        caches = _mcem_thread_caches(dm, ll_cache, nthreads)
-        partial_obj = Vector{Tθ}(undef, length(batch_infos))
-        fill!(partial_obj, zero(Tθ))
-        bad = Threads.Atomic{Bool}(false)
-        # Chunk-indexed cache assignment (see Q-step above): `caches[Threads.threadid()]`
-        # is unsafe under task migration.
-        n_chunks = length(caches)
-        Threads.@threads for chunk in 1:n_chunks
-            cache_c = caches[chunk]
-            for bi in chunk:n_chunks:length(batch_infos)
-                bad[] && break
-                batch_infos[bi].n_b == 0 && continue
-                info = batch_infos[bi]
-                samples = samples_by_batch[bi]
-                ws = weights_by_batch === nothing ? nothing : weights_by_batch[bi]
-                acc = zero(Tθ)
-                for s in 1:size(samples, 2)
-                    b = view(samples, :, s)
-                    logf = _re_logpdf_batch(dm, info, θ, b, const_cache, cache_c)
-                    !isfinite(logf) && (bad[] = true; break)
-                    w = ws === nothing ? one(Tθ) : Tθ(ws[s])
-                    acc += w * logf
-                end
-                bad[] && break
-                ws === nothing && (acc /= size(samples, 2))
-                partial_obj[bi] = acc
-            end
-        end
-        bad[] && return Tθ(Inf)
-        @inbounds for bi in eachindex(batch_infos)
-            total += partial_obj[bi]
-        end
-    else
-        ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
-        for (bi, info) in enumerate(batch_infos)
-            info.n_b == 0 && continue
-            samples = samples_by_batch[bi]
-            ws = weights_by_batch === nothing ? nothing : weights_by_batch[bi]
-            acc = zero(Tθ)
-            for s in 1:size(samples, 2)
-                b = view(samples, :, s)
-                logf = _re_logpdf_batch(dm, info, θ, b, const_cache, ll_cache_local)
-                !isfinite(logf) && return Tθ(Inf)
-                w = ws === nothing ? one(Tθ) : Tθ(ws[s])
-                acc += w * logf
-            end
-            ws === nothing && (acc /= size(samples, 2))
-            total += acc
-        end
-    end
-    return total
+    return _mcem_Q_core(_re_logpdf_batch, dm, batch_infos, θ, const_cache,
+        ll_cache, samples_by_batch, weights_by_batch;
+        serialization = serialization)
 end
 
 function _fit_model(dm::DataModel, method::MCEM, args...;

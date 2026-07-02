@@ -750,174 +750,6 @@ end
 # 8. Fit drivers.
 # -------------------------------------------------------------------------------------
 
-function _fit_focei(dm::DataModel, method, args, fit_kwargs;
-        constants::NamedTuple,
-        constants_re::NamedTuple,
-        penalty::NamedTuple,
-        ode_args::Tuple,
-        ode_kwargs::NamedTuple,
-        serialization::SciMLBase.EnsembleAlgorithm,
-        rng::AbstractRNG,
-        theta_0_untransformed::Union{Nothing, ComponentArray},
-        store_data_model::Bool)
-    re_names = get_re_names(dm.model.random.random)
-    isempty(re_names) &&
-        error("FOCEI requires random effects. Use MLE/MAP for fixed-effects models.")
-    fe = dm.model.fixed.fixed
-    fixed_names = get_names(fe)
-    isempty(fixed_names) && error("FOCEI requires at least one fixed effect.")
-    fixed_set = Set(fixed_names)
-    for name in keys(constants)
-        name in fixed_set || error("Unknown constant parameter $(name).")
-    end
-    all(name in keys(constants) for name in fixed_names) &&
-        error("FOCEI requires at least one free fixed effect. Remove constants or add a fixed/random effect.")
-
-    free_names = [n for n in fixed_names if !(n in keys(constants))]
-    θ0_u = get_θ0_untransformed(fe)
-    if theta_0_untransformed !== nothing
-        for n in fixed_names
-            hasproperty(theta_0_untransformed, n) ||
-                error("theta_0_untransformed is missing parameter $(n).")
-        end
-        θ0_u = theta_0_untransformed
-    end
-
-    transform = get_transform(fe)
-    θ0_t = transform(θ0_u)
-    inv_transform = get_inverse_transform(fe)
-    θ_const_u = deepcopy(θ0_u)
-    _apply_constants!(θ_const_u, constants)
-    θ_const_t = transform(θ_const_u)
-
-    _focei_validate_distributions(dm; ode_args = ode_args, ode_kwargs = ode_kwargs)
-
-    inner_opts = _resolve_inner_options(method.inner, dm)
-    multistart_opts = _resolve_multistart_options(method.multistart, inner_opts)
-
-    _, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re)
-    ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-        serialization = serialization, force_saveat = true)
-    n_batches = length(batch_infos)
-    Tθ = eltype(θ0_t)
-    ebe_cache = _init_laplace_eval_cache(n_batches, Tθ)
-
-    θ0_free_t = θ0_t[free_names]
-    axs_free = getaxes(θ0_free_t)
-    axs_full = getaxes(θ_const_t)
-
-    hmode = _FOCEIHess(method.interaction)
-    has_penalty = !isempty(keys(penalty))
-    T0 = eltype(θ0_free_t)
-    obj_cache = _LaplaceObjCache{T0, ComponentArray}(nothing, T0(Inf),
-        ComponentArray(zeros(T0, length(θ0_free_t)), axs_free), false)
-
-    function obj_only(θt, p)
-        θt_free = θt isa ComponentArray ? θt : ComponentArray(θt, axs_free)
-        cached_obj = _laplace_obj_cache_lookup_obj(
-            obj_cache, θt_free, method.cache.theta_tol)
-        cached_obj !== nothing && return cached_obj
-        T = eltype(θt_free)
-        infT = convert(T, Inf)
-        θt_full = ComponentArray(T.(θ_const_t), axs_full)
-        for name in free_names
-            setproperty!(θt_full, name, getproperty(θt_free, name))
-        end
-        θu = inv_transform(θt_full)
-        obj = _laplace_objective_only(
-            dm, batch_infos, θu, const_cache, ll_cache, ebe_cache;
-            inner = inner_opts, hessian = method.hessian,
-            cache_opts = method.cache, multistart = multistart_opts,
-            rng = rng, serialization = serialization, hmode = hmode)
-        !isfinite(obj) && return infT
-        has_penalty && (obj += _penalty_value(θu, penalty))
-        _laplace_obj_cache_set_obj!(obj_cache, θt_free, obj)
-        return obj
-    end
-
-    function obj_grad(θt, p)
-        θt_free = θt isa ComponentArray ? θt : ComponentArray(θt, axs_free)
-        cached = _laplace_obj_cache_lookup(obj_cache, θt_free, method.cache.theta_tol)
-        cached !== nothing && return cached
-        T = eltype(θt_free)
-        infT = convert(T, Inf)
-        zgrad = ComponentArray(zeros(T, length(θt_free)), axs_free)
-        θt_full = ComponentArray(T.(θ_const_t), axs_full)
-        for name in free_names
-            setproperty!(θt_full, name, getproperty(θt_free, name))
-        end
-        θu = inv_transform(θt_full)
-        obj, grad_full, _ = _laplace_objective_and_grad(
-            dm, batch_infos, θu, const_cache, ll_cache, ebe_cache;
-            inner = inner_opts, hessian = method.hessian,
-            cache_opts = method.cache, multistart = multistart_opts,
-            rng = rng, serialization = serialization, hmode = hmode)
-        !isfinite(obj) && return (infT, zgrad)
-        grad_u = grad_full
-        if has_penalty
-            obj += _penalty_value(θu, penalty)
-            grad_u = grad_u .+ ForwardDiff.gradient(x -> _penalty_value(x, penalty), θu)
-        end
-        grad_t_ca = apply_inv_jacobian_T(inv_transform, θt_full, grad_u)
-        grad_free = similar(θt_free)
-        for name in free_names
-            setproperty!(grad_free, name, getproperty(grad_t_ca, name))
-        end
-        # NaN gradient → treat as non-finite objective so the line search backtracks.
-        any(isnan, grad_free) && return (infT, zgrad)
-        _laplace_obj_cache_set_obj_grad!(obj_cache, θt_free, obj, grad_free)
-        return (obj, grad_free)
-    end
-
-    optf = OptimizationFunction(obj_only, method.adtype;
-        grad = (G, θt, p) -> (G .= obj_grad(θt, p)[2]))
-    lower_t, upper_t = get_bounds_transformed(fe)
-    lower_t_free = lower_t[free_names]
-    upper_t_free = upper_t[free_names]
-    use_bounds = !method.ignore_model_bounds &&
-                 !(all(isinf, lower_t_free) && all(isinf, upper_t_free))
-    user_bounds = method.lb !== nothing || method.ub !== nothing
-    if user_bounds && !isempty(keys(constants))
-        @info "Bounds for constant parameters are ignored." constants=collect(keys(constants))
-    end
-    if user_bounds
-        lb = method.lb
-        ub = method.ub
-        lb isa ComponentArray && (lb = lb[free_names])
-        ub isa ComponentArray && (ub = ub[free_names])
-    else
-        lb = lower_t_free
-        ub = upper_t_free
-    end
-    use_bounds = use_bounds || user_bounds
-    prob = use_bounds ? OptimizationProblem(optf, θ0_free_t; lb = lb, ub = ub) :
-           OptimizationProblem(optf, θ0_free_t)
-    sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
-
-    θ_hat_t_raw = sol.u
-    θ_hat_t_free = θ_hat_t_raw isa ComponentArray ? θ_hat_t_raw :
-                   ComponentArray(θ_hat_t_raw, axs_free)
-    T = eltype(θ_hat_t_free)
-    θ_hat_t = ComponentArray(T.(θ_const_t), axs_full)
-    for name in free_names
-        setproperty!(θ_hat_t, name, getproperty(θ_hat_t_free, name))
-    end
-    θ_hat_u = inv_transform(θ_hat_t)
-
-    summary = FitSummary(sol.objective, sol.retcode == SciMLBase.ReturnCode.Success,
-        FitParameters(θ_hat_t, θ_hat_u),
-        NamedTuple())
-    diagnostics = FitDiagnostics(
-        (;), (optimizer = method.optimizer,), (retcode = sol.retcode,), NamedTuple())
-    niter = hasproperty(sol, :stats) && hasproperty(sol.stats, :iterations) ?
-            sol.stats.iterations : missing
-    raw = hasproperty(sol, :original) ? sol.original : sol
-    result = LaplaceResult(
-        sol, sol.objective, niter, raw, NamedTuple(), ebe_cache.bstar_cache.b_star)
-    return FitResult(method, result, summary, diagnostics,
-        store_data_model ? dm : nothing, args, fit_kwargs)
-end
-
 function _fit_model(dm::DataModel, method::FOCEI, args...;
         constants::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple(),
@@ -931,8 +763,29 @@ function _fit_model(dm::DataModel, method::FOCEI, args...;
     fit_kwargs = (constants = constants, constants_re = constants_re, penalty = penalty,
         ode_args = ode_args, ode_kwargs = ode_kwargs, serialization = serialization,
         rng = rng, theta_0_untransformed = theta_0_untransformed, store_data_model = store_data_model)
-    return _fit_focei(dm, method, args, fit_kwargs;
+    re_names = get_re_names(dm.model.random.random)
+    isempty(re_names) &&
+        error("FOCEI requires random effects. Use MLE/MAP for fixed-effects models.")
+    fe = dm.model.fixed.fixed
+    fixed_names = get_names(fe)
+    isempty(fixed_names) && error("FOCEI requires at least one fixed effect.")
+    fixed_set = Set(fixed_names)
+    for name in keys(constants)
+        name in fixed_set || error("Unknown constant parameter $(name).")
+    end
+    all(name in keys(constants) for name in fixed_names) &&
+        error("FOCEI requires at least one free fixed effect. Remove constants or add a fixed/random effect.")
+
+    # Shared driver (laplace.jl): FOCEI is Laplace with the Gauss-Newton /
+    # Fisher-information inner Hessian, a hard NaN-backtrack policy, no
+    # BlackBoxOptim support, and the closed-form-information outcome check.
+    return _fit_laplace_family(dm, method, _FOCEIHess(method.interaction), args,
+        fit_kwargs,
+        d -> _focei_validate_distributions(d; ode_args = ode_args,
+            ode_kwargs = ode_kwargs);
+        nan_recovery = :backtrack, allow_bbo = false,
         constants = constants, constants_re = constants_re, penalty = penalty,
         ode_args = ode_args, ode_kwargs = ode_kwargs, serialization = serialization,
-        rng = rng, theta_0_untransformed = theta_0_untransformed, store_data_model = store_data_model)
+        rng = rng, theta_0_untransformed = theta_0_untransformed,
+        store_data_model = store_data_model)
 end

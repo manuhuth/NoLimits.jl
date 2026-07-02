@@ -1,5 +1,4 @@
 using LinearAlgebra
-using Parameters
 using Distributions
 using Lux
 using SimpleChains
@@ -57,7 +56,7 @@ A scalar real-valued fixed-effect parameter block.
   for `scale=:log` does NOT count as explicit and does not trigger this.
 - `calculate_se::Bool = true`: whether to include this parameter in standard-error calculations.
 """
-@with_kw struct RealNumber{T <: Real} <: AbstractParameterBlock
+Base.@kwdef struct RealNumber{T <: Real} <: AbstractParameterBlock
     name::Symbol = :unnamed
     value::T
     scale::Symbol = :identity
@@ -117,7 +116,7 @@ A vector of real-valued fixed-effect parameters with per-element scale options.
   The `EPSILON` lower auto-applied for `:log` elements does NOT count as explicit.
 - `calculate_se::Bool = true`: whether to include this parameter in standard-error calculations.
 """
-@with_kw struct RealVector{T <: Real, VT <: AbstractVector{T}} <: AbstractParameterBlock
+Base.@kwdef struct RealVector{T <: Real, VT <: AbstractVector{T}} <: AbstractParameterBlock
     name::Symbol = :unnamed
     value::VT
     scale::Vector{Symbol} = fill(:identity, length(value))
@@ -197,7 +196,8 @@ automatically satisfied.
 - `prior = Priorless()`: a `Distributions.Distribution` (e.g. `Wishart`) or `Priorless()`.
 - `calculate_se::Bool = false`: whether to include this parameter in standard-error calculations.
 """
-@with_kw struct RealPSDMatrix{T <: Real, MT <: AbstractMatrix{T}} <: AbstractParameterBlock
+Base.@kwdef struct RealPSDMatrix{T <: Real, MT <: AbstractMatrix{T}} <:
+                   AbstractParameterBlock
     name::Symbol = :unnamed
     value::MT
     scale::Symbol = :cholesky
@@ -242,8 +242,8 @@ log scale.
 - `prior = Priorless()`: a `Distributions.Distribution` or `Priorless()`.
 - `calculate_se::Bool = false`: whether to include this parameter in standard-error calculations.
 """
-@with_kw struct RealDiagonalMatrix{T <: Real, VT <: AbstractVector{T}} <:
-                AbstractParameterBlock
+Base.@kwdef struct RealDiagonalMatrix{T <: Real, VT <: AbstractVector{T}} <:
+                   AbstractParameterBlock
     name::Symbol = :unnamed
     value::VT
     scale::Symbol = :identity
@@ -301,8 +301,8 @@ the fixed-effects `ComponentArray`.
   the number of parameters, or a multivariate `Distribution` with matching `length`.
 - `calculate_se::Bool = false`: whether to include this parameter in standard-error calculations.
 """
-@with_kw struct NNParameters{T <: Real, VT <: AbstractVector{T}, C, R} <:
-                AbstractParameterBlock
+Base.@kwdef struct NNParameters{T <: Real, VT <: AbstractVector{T}, C, R} <:
+                   AbstractParameterBlock
     name::Symbol = :unnamed
     function_name::Symbol
     chain::C
@@ -379,8 +379,8 @@ base distribution. Parameters are stored as a flat real vector.
 - `prior = Priorless()`: `Priorless()`, a `Vector{Distribution}`, or a multivariate `Distribution`.
 - `calculate_se::Bool = false`: whether to include this parameter in standard-error calculations.
 """
-@with_kw struct NPFParameter{T <: Real, VT <: AbstractVector{T}, R, BD} <:
-                AbstractParameterBlock
+Base.@kwdef struct NPFParameter{T <: Real, VT <: AbstractVector{T}, R, BD} <:
+                   AbstractParameterBlock
     name::Symbol = :unnamed
     n_input::Int
     n_layers::Int
@@ -450,8 +450,8 @@ are initialized to zero. Inside model blocks the spline is evaluated as
 - `prior = Priorless()`: `Priorless()`, a `Vector{Distribution}`, or a multivariate `Distribution`.
 - `calculate_se::Bool = false`: whether to include this parameter in standard-error calculations.
 """
-@with_kw struct SplineParameters{T <: Real, VT <: AbstractVector{T}} <:
-                AbstractParameterBlock
+Base.@kwdef struct SplineParameters{T <: Real, VT <: AbstractVector{T}} <:
+                   AbstractParameterBlock
     name::Symbol = :unnamed
     function_name::Symbol
     knots::Vector{T}
@@ -501,8 +501,8 @@ the tree is called as `function_name(x, θ_slice)`.
 - `prior = Priorless()`: `Priorless()`, a `Vector{Distribution}`, or a multivariate `Distribution`.
 - `calculate_se::Bool = false`: whether to include this parameter in standard-error calculations.
 """
-@with_kw struct SoftTreeParameters{T <: Real, VT <: AbstractVector{T}, R} <:
-                AbstractParameterBlock
+Base.@kwdef struct SoftTreeParameters{T <: Real, VT <: AbstractVector{T}, R} <:
+                   AbstractParameterBlock
     name::Symbol = :unnamed
     function_name::Symbol
     input_dim::Int
@@ -558,8 +558,8 @@ maps the simplex to `k-1` unconstrained reals.
 - `prior = Priorless()`: a `Distributions.Distribution` or `Priorless()`.
 - `calculate_se::Bool = true`: whether to include this parameter in standard-error calculations.
 """
-@with_kw struct ProbabilityVector{T <: Real, VT <: AbstractVector{T}} <:
-                AbstractParameterBlock
+Base.@kwdef struct ProbabilityVector{T <: Real, VT <: AbstractVector{T}} <:
+                   AbstractParameterBlock
     name::Symbol = :unnamed
     value::VT
     scale::Symbol = :stickbreak
@@ -606,8 +606,8 @@ stick-breaking transform, yielding `n*(n-1)` unconstrained reals.
 - `prior = Priorless()`: a `Distributions.Distribution` or `Priorless()`.
 - `calculate_se::Bool = true`: whether to include this parameter in standard-error calculations.
 """
-@with_kw struct DiscreteTransitionMatrix{T <: Real, MT <: AbstractMatrix{T}} <:
-                AbstractParameterBlock
+Base.@kwdef struct DiscreteTransitionMatrix{T <: Real, MT <: AbstractMatrix{T}} <:
+                   AbstractParameterBlock
     name::Symbol = :unnamed
     value::MT
     scale::Symbol = :stickbreakrows
@@ -664,8 +664,8 @@ and is not an independent free parameter.
 - `prior = Priorless()`: a `Distributions.Distribution` or `Priorless()`.
 - `calculate_se::Bool = true`: whether to include this parameter in standard-error calculations.
 """
-@with_kw struct ContinuousTransitionMatrix{T <: Real, MT <: AbstractMatrix{T}} <:
-                AbstractParameterBlock
+Base.@kwdef struct ContinuousTransitionMatrix{T <: Real, MT <: AbstractMatrix{T}} <:
+                   AbstractParameterBlock
     name::Symbol = :unnamed
     value::MT
     scale::Symbol = :lograterows

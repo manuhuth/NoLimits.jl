@@ -2349,7 +2349,13 @@ function _saem_store_weight_sum(store::_SAEMSampleStore)
     return s
 end
 
-function _saem_Q(dm::DataModel,
+# Weighted ring-buffer average of a per-batch log-density. `logf_fn` selects the
+# density: `_laplace_logf_batch` (full log-joint) for Q, `_re_logpdf_batch` (RE
+# prior only, no ODE work) for Q2. Julia specializes on the function argument,
+# so both wrappers compile to exactly the historical per-density bodies.
+# `q_cache` optionally reuses the per-batch accumulator between calls (the Q
+# M-step objective); Q2 passes `nothing` and gets a fresh vector.
+function _saem_Q_core(logf_fn::F, dm::DataModel,
         batch_infos::Vector{_LaplaceBatchInfo},
         θ::ComponentArray,
         const_cache::LaplaceConstantsCache,
@@ -2357,7 +2363,7 @@ function _saem_Q(dm::DataModel,
         store::_SAEMSampleStore;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         q_cache::Union{Nothing, _SAEMQCache} = nothing,
-        anneal_sds::NamedTuple = NamedTuple())
+        anneal_sds::NamedTuple = NamedTuple()) where {F}
     total = zero(eltype(θ))
     store.len == 0 && return total
     # Compute weight sum once (Float64) for renormalization; guard against degenerate store.
@@ -2374,7 +2380,7 @@ function _saem_Q(dm::DataModel,
     ll_cache_c = ll_cache isa Vector ? ll_cache[1] : ll_cache
     for (bi, info) in enumerate(batch_infos)
         info.n_b > 0 && continue
-        logf = _laplace_logf_batch(
+        logf = logf_fn(
             dm, info, θ, Tθ[], const_cache, ll_cache_c; anneal_sds = anneal_sds)
         !isfinite(logf) && return Tθ(Inf)
         const_total += logf
@@ -2407,7 +2413,7 @@ function _saem_Q(dm::DataModel,
                     w = store.weights[h]
                     snap = store.snaps[h][bi]
                     h = h == cap ? 1 : h + 1
-                    logf = _laplace_logf_batch(dm, info, θ, snap, const_cache, cache_c;
+                    logf = logf_fn(dm, info, θ, snap, const_cache, cache_c;
                         anneal_sds = anneal_sds, tctx = tctx)
                     !isfinite(logf) && (bad[] = true; break)
                     acc += w * logf
@@ -2434,7 +2440,7 @@ function _saem_Q(dm::DataModel,
                 w = store.weights[h]
                 snap = store.snaps[h][bi]
                 h = h == cap ? 1 : h + 1
-                logf = _laplace_logf_batch(dm, info, θ, snap, const_cache, ll_cache_local;
+                logf = logf_fn(dm, info, θ, snap, const_cache, ll_cache_local;
                     anneal_sds = anneal_sds, tctx = tctx)
                 !isfinite(logf) && return Tθ(Inf)
                 acc += w * logf
@@ -2443,6 +2449,20 @@ function _saem_Q(dm::DataModel,
         end
         return const_total + weighted_total / weight_sum
     end
+end
+
+function _saem_Q(dm::DataModel,
+        batch_infos::Vector{_LaplaceBatchInfo},
+        θ::ComponentArray,
+        const_cache::LaplaceConstantsCache,
+        ll_cache,
+        store::_SAEMSampleStore;
+        serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
+        q_cache::Union{Nothing, _SAEMQCache} = nothing,
+        anneal_sds::NamedTuple = NamedTuple())
+    return _saem_Q_core(_laplace_logf_batch, dm, batch_infos, θ, const_cache,
+        ll_cache, store; serialization = serialization, q_cache = q_cache,
+        anneal_sds = anneal_sds)
 end
 
 # Observation log-likelihood E[log p(y|η,θ)] averaged over the ring buffer.
@@ -2470,6 +2490,26 @@ end
 
 # Evaluate Q from only the current iteration's samples (b_current).
 # Used when mstep_sa_on_params=true: O(N) vs O(q_store_max × N) for _saem_Q.
+# Shared core, parameterized like `_saem_Q_core` (Q vs Q2 density).
+function _saem_Q_current_core(logf_fn::F, dm::DataModel,
+        batch_infos::Vector{_LaplaceBatchInfo},
+        θ::ComponentArray,
+        const_cache::LaplaceConstantsCache,
+        ll_cache,
+        b_current::AbstractVector;
+        anneal_sds::NamedTuple = NamedTuple()) where {F}
+    total = zero(eltype(θ))
+    ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
+    for (bi, info) in enumerate(batch_infos)
+        snap = info.n_b == 0 ? eltype(θ)[] : b_current[bi]
+        logf = logf_fn(dm, info, θ, snap, const_cache, ll_cache_local;
+            anneal_sds = anneal_sds)
+        !isfinite(logf) && return typeof(total)(Inf)
+        total += logf
+    end
+    return total
+end
+
 function _saem_Q_current(dm::DataModel,
         batch_infos::Vector{_LaplaceBatchInfo},
         θ::ComponentArray,
@@ -2478,16 +2518,8 @@ function _saem_Q_current(dm::DataModel,
         b_current::AbstractVector;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         anneal_sds::NamedTuple = NamedTuple())
-    total = zero(eltype(θ))
-    ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
-    for (bi, info) in enumerate(batch_infos)
-        snap = info.n_b == 0 ? eltype(θ)[] : b_current[bi]
-        logf = _laplace_logf_batch(dm, info, θ, snap, const_cache, ll_cache_local;
-            anneal_sds = anneal_sds)
-        !isfinite(logf) && return typeof(total)(Inf)
-        total += logf
-    end
-    return total
+    return _saem_Q_current_core(_laplace_logf_batch, dm, batch_infos, θ,
+        const_cache, ll_cache, b_current; anneal_sds = anneal_sds)
 end
 
 # Q2 counterpart to _saem_Q: evaluates only log p(η|θ_re), averaged over the ring buffer.
@@ -2500,82 +2532,8 @@ function _saem_Q2(dm::DataModel,
         store::_SAEMSampleStore;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         anneal_sds::NamedTuple = NamedTuple())
-    total = zero(eltype(θ))
-    store.len == 0 && return total
-    weight_sum = _saem_store_weight_sum(store)
-    weight_sum < 1e-300 && return total
-    h_start = store.head
-    active_len = store.len
-    cap = store.capacity
-    Tθ = eltype(θ)
-    # Constant-RE batches: RE prior is deterministic — add once outside the weight-normalized average.
-    const_total = zero(Tθ)
-    ll_cache_c = ll_cache isa Vector ? ll_cache[1] : ll_cache
-    for (bi, info) in enumerate(batch_infos)
-        info.n_b > 0 && continue
-        logf = _re_logpdf_batch(
-            dm, info, θ, Tθ[], const_cache, ll_cache_c; anneal_sds = anneal_sds)
-        !isfinite(logf) && return Tθ(Inf)
-        const_total += logf
-    end
-    if serialization isa SciMLBase.EnsembleThreads
-        nthreads = Threads.maxthreadid()
-        caches = _saem_thread_caches(dm, ll_cache, nthreads)
-        partial_obj = Vector{Tθ}(undef, length(batch_infos))
-        fill!(partial_obj, zero(Tθ))
-        bad = Threads.Atomic{Bool}(false)
-        # Chunk-indexed cache assignment: `caches[Threads.threadid()]` is unsafe under
-        # task migration (two tasks may share a slot and race on its buffers).
-        n_chunks = length(caches)
-        Threads.@threads for chunk in 1:n_chunks
-            cache_c = caches[chunk]
-            for bi in chunk:n_chunks:length(batch_infos)
-                bad[] && break
-                batch_infos[bi].n_b == 0 && continue
-                info = batch_infos[bi]
-                acc = zero(Tθ)
-                h = h_start
-                tctx = _safe_theta_ctx(dm, info, θ, cache_c)
-                @inbounds for _ in 1:active_len
-                    w = store.weights[h]
-                    snap = store.snaps[h][bi]
-                    h = h == cap ? 1 : h + 1
-                    logf = _re_logpdf_batch(dm, info, θ, snap, const_cache, cache_c;
-                        anneal_sds = anneal_sds, tctx = tctx)
-                    !isfinite(logf) && (bad[] = true; break)
-                    acc += w * logf
-                end
-                bad[] && break
-                partial_obj[bi] = acc
-            end
-        end
-        bad[] && return Tθ(Inf)
-        weighted_total = zero(Tθ)
-        @inbounds for bi in eachindex(batch_infos)
-            weighted_total += partial_obj[bi]
-        end
-        return const_total + weighted_total / weight_sum
-    else
-        ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
-        weighted_total = zero(Tθ)
-        for (bi, info) in enumerate(batch_infos)
-            info.n_b == 0 && continue
-            acc = zero(Tθ)
-            h = h_start
-            tctx = _safe_theta_ctx(dm, info, θ, ll_cache_local)
-            @inbounds for _ in 1:active_len
-                w = store.weights[h]
-                snap = store.snaps[h][bi]
-                h = h == cap ? 1 : h + 1
-                logf = _re_logpdf_batch(dm, info, θ, snap, const_cache, ll_cache_local;
-                    anneal_sds = anneal_sds, tctx = tctx)
-                !isfinite(logf) && return Tθ(Inf)
-                acc += w * logf
-            end
-            weighted_total += acc
-        end
-        return const_total + weighted_total / weight_sum
-    end
+    return _saem_Q_core(_re_logpdf_batch, dm, batch_infos, θ, const_cache,
+        ll_cache, store; serialization = serialization, anneal_sds = anneal_sds)
 end
 
 # Q2 counterpart to _saem_Q_current: uses only the current iteration's samples.
@@ -2588,16 +2546,8 @@ function _saem_Q2_current(dm::DataModel,
         b_current::AbstractVector;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         anneal_sds::NamedTuple = NamedTuple())
-    total = zero(eltype(θ))
-    ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
-    for (bi, info) in enumerate(batch_infos)
-        snap = info.n_b == 0 ? eltype(θ)[] : b_current[bi]
-        logf = _re_logpdf_batch(dm, info, θ, snap, const_cache, ll_cache_local;
-            anneal_sds = anneal_sds)
-        !isfinite(logf) && return typeof(total)(Inf)
-        total += logf
-    end
-    return total
+    return _saem_Q_current_core(_re_logpdf_batch, dm, batch_infos, θ,
+        const_cache, ll_cache, b_current; anneal_sds = anneal_sds)
 end
 
 # Return indices (into batch_infos) from `updated` whose current RE sample gives a

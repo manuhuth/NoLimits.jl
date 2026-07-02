@@ -2648,6 +2648,32 @@ function _fit_model(dm::DataModel, method::Laplace, args...;
     all(name in keys(constants) for name in fixed_names) &&
         error("Laplace requires at least one free fixed effect. Remove constants or specify a fixed effect or random effect.")
 
+    return _fit_laplace_family(dm, method, _ExactHess(), args, fit_kwargs,
+        _ -> nothing;
+        nan_recovery = method.nan_recovery, allow_bbo = true,
+        constants = constants, constants_re = constants_re, penalty = penalty,
+        ode_args = ode_args, ode_kwargs = ode_kwargs, serialization = serialization,
+        rng = rng, theta_0_untransformed = theta_0_untransformed,
+        store_data_model = store_data_model)
+end
+
+# Shared optimizer driver for the Laplace family: exact-Hessian Laplace and
+# FOCEI/FOCE run the same marginal-likelihood machinery and differ only in the
+# inner Hessian mode (`hmode`), the gradient NaN-recovery policy, BlackBoxOptim
+# support, and an optional post-transform validation hook (FOCEI's closed-form
+# Fisher-information outcome check). Method-specific validation and error
+# messages stay in the `_fit_model` wrappers.
+function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_kwargs,
+        validate_post_transform::V;
+        nan_recovery::Symbol,
+        allow_bbo::Bool,
+        constants::NamedTuple, constants_re::NamedTuple, penalty::NamedTuple,
+        ode_args::Tuple, ode_kwargs::NamedTuple,
+        serialization::SciMLBase.EnsembleAlgorithm, rng::AbstractRNG,
+        theta_0_untransformed::Union{Nothing, ComponentArray},
+        store_data_model::Bool) where {V}
+    fe = dm.model.fixed.fixed
+    fixed_names = get_names(fe)
     free_names = [n for n in fixed_names if !(n in keys(constants))]
     θ0_u = get_θ0_untransformed(fe)
     if theta_0_untransformed !== nothing
@@ -2664,10 +2690,13 @@ function _fit_model(dm::DataModel, method::Laplace, args...;
     θ_const_u = deepcopy(θ0_u)
     _apply_constants!(θ_const_u, constants)
     θ_const_t = transform(θ_const_u)
+
+    validate_post_transform(dm)
+
     inner_opts = _resolve_inner_options(method.inner, dm)
     multistart_opts = _resolve_multistart_options(method.multistart, inner_opts)
 
-    pairing, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re)
+    _, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re)
     ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
         serialization = serialization, force_saveat = true)
     n_batches = length(batch_infos)
@@ -2703,7 +2732,8 @@ function _fit_model(dm::DataModel, method::Laplace, args...;
             cache_opts = method.cache,
             multistart = multistart_opts,
             rng = rng,
-            serialization = serialization)
+            serialization = serialization,
+            hmode = hmode)
         !isfinite(obj) && return infT
         has_penalty && (obj += _penalty_value(θu, penalty))
         _laplace_obj_cache_set_obj!(obj_cache, θt_free, obj)
@@ -2731,7 +2761,8 @@ function _fit_model(dm::DataModel, method::Laplace, args...;
             cache_opts = method.cache,
             multistart = multistart_opts,
             rng = rng,
-            serialization = serialization)
+            serialization = serialization,
+            hmode = hmode)
         !isfinite(obj) && return (infT, ComponentArray(zeros(T, length(θt_free)), axs_free))
         grad_u = grad_full
         if has_penalty
@@ -2747,7 +2778,7 @@ function _fit_model(dm::DataModel, method::Laplace, args...;
             setproperty!(grad_free, name, getproperty(grad_t_ca, name))
         end
         if any(isnan, grad_free)
-            if method.nan_recovery === :fd
+            if nan_recovery === :fd
                 for i in eachindex(grad_free)
                     ε = max(1e-5, 1e-5 * abs(θt_free[i]))
                     θp = copy(θt_free)
@@ -2759,7 +2790,7 @@ function _fit_model(dm::DataModel, method::Laplace, args...;
                     grad_free[i] = (isfinite(fp) && isfinite(fm)) ? (fp - fm) / (2ε) :
                                    zero(T)
                 end
-            elseif method.nan_recovery !== :nan
+            elseif nan_recovery !== :nan
                 # :backtrack (default) — treat NaN gradient as non-finite objective to force backtracking
                 return (infT, ComponentArray(zeros(T, length(θt_free)), axs_free))
             end
@@ -2798,10 +2829,11 @@ function _fit_model(dm::DataModel, method::Laplace, args...;
         ub = upper_t_free
     end
     use_bounds = use_bounds || user_bounds
-    if parentmodule(typeof(method.optimizer)) === OptimizationBBO && !use_bounds
+    if allow_bbo && parentmodule(typeof(method.optimizer)) === OptimizationBBO &&
+       !use_bounds
         error("BlackBoxOptim methods require finite bounds. Add lower/upper bounds in @fixedEffects (on transformed scale) or pass them via Laplace(lb=..., ub=...). A quick helper is default_bounds_from_start(dm; margin=...).")
     end
-    if parentmodule(typeof(method.optimizer)) === OptimizationBBO
+    if allow_bbo && parentmodule(typeof(method.optimizer)) === OptimizationBBO
         # Intersect user-provided bounds with model hard bounds so BBO
         # never proposes parameter values that violate model constraints.
         # (BBO ignores x0 and uses a random population within [lb,ub].)

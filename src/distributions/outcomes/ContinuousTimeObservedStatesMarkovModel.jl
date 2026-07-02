@@ -94,14 +94,23 @@ function probabilities_hidden_states(dist::ContinuousTimeObservedStatesMarkovMod
         mode = dist.propagation_mode)
 end
 
+# ─── Shared observed-states interface (DT + CT) ──────────────────────────────
+# Everything below the propagation kernel is identical for the discrete- and
+# continuous-time observed-states models: the state IS the observation, so
+# posterior/logpdf/moments only touch `state_labels`, `n_states`, and
+# `probabilities_hidden_states(dist)` (the per-type propagation). Defined once
+# against the Union — this file is included after both types exist.
+const _ObservedStatesMarkovModel = Union{
+    DiscreteTimeObservedStatesMarkovModel, ContinuousTimeObservedStatesMarkovModel}
+
 """
-    posterior_hidden_states(dist::ContinuousTimeObservedStatesMarkovModel, y)
+    posterior_hidden_states(dist, y)
 
 For a scalar observed state `y`, returns the one-hot posterior after observing that state.
 
 Returns a zero vector if the observation label is not found.
 """
-function posterior_hidden_states(dist::ContinuousTimeObservedStatesMarkovModel, y)
+function posterior_hidden_states(dist::_ObservedStatesMarkovModel, y)
     idx = _omm_scalar_observation_index(dist.state_labels, y)
     p = probabilities_hidden_states(dist)
     T = eltype(p)
@@ -112,14 +121,16 @@ function posterior_hidden_states(dist::ContinuousTimeObservedStatesMarkovModel, 
 end
 
 function posterior_hidden_states(
-        dist::ContinuousTimeObservedStatesMarkovModel, y::AbstractVector)
+        dist::_ObservedStatesMarkovModel, y::AbstractVector)
     _omm_scalar_observation_index(dist.state_labels, y)
     return zeros(eltype(probabilities_hidden_states(dist)), dist.n_states)
 end
 
-# Combined accessor sharing the single `exp(QΔt)` propagation between logpdf and
-# posterior; reuses the EXACT ops of the methods above (bit-identical).
-function _hmm_logpdf_and_posterior(dist::ContinuousTimeObservedStatesMarkovModel, y)
+# Combined accessor sharing the single propagation (`exp(QΔt)` for CT, one
+# transition step for DT) between logpdf and posterior; reuses the EXACT ops of
+# the methods above (bit-identical — the one-hot posterior does not depend on p
+# beyond its eltype).
+function _hmm_logpdf_and_posterior(dist::_ObservedStatesMarkovModel, y)
     idx = _omm_scalar_observation_index(dist.state_labels, y)
     p = probabilities_hidden_states(dist)
     T = eltype(p)
@@ -130,14 +141,14 @@ function _hmm_logpdf_and_posterior(dist::ContinuousTimeObservedStatesMarkovModel
 end
 
 function _hmm_logpdf_and_posterior(
-        dist::ContinuousTimeObservedStatesMarkovModel, y::AbstractVector)
+        dist::_ObservedStatesMarkovModel, y::AbstractVector)
     _omm_scalar_observation_index(dist.state_labels, y)
     return (-Inf, zeros(eltype(probabilities_hidden_states(dist)), dist.n_states))
 end
 
 # --- Distributions.jl interface ---
 
-function Distributions.logpdf(dist::ContinuousTimeObservedStatesMarkovModel, y)
+function Distributions.logpdf(dist::_ObservedStatesMarkovModel, y)
     idx = _omm_scalar_observation_index(dist.state_labels, y)
     idx === nothing && return -Inf
     p = probabilities_hidden_states(dist)
@@ -145,82 +156,84 @@ function Distributions.logpdf(dist::ContinuousTimeObservedStatesMarkovModel, y)
 end
 
 function Distributions.logpdf(
-        dist::ContinuousTimeObservedStatesMarkovModel, y::AbstractVector)
+        dist::_ObservedStatesMarkovModel, y::AbstractVector)
     _omm_scalar_observation_index(dist.state_labels, y)
     return -Inf
 end
 
-Distributions.pdf(dist::ContinuousTimeObservedStatesMarkovModel, y) = exp(logpdf(dist, y))
+Distributions.pdf(dist::_ObservedStatesMarkovModel, y) = exp(logpdf(dist, y))
 
 # --- Aqua ambiguity disambiguation -------------------------------------------
-# This type is a `Distribution{Univariate,Discrete}`, and its scalar-label
+# These types are `Distribution{Univariate,Discrete}`, and their scalar-label
 # `logpdf`/`pdf` take an untyped `y` (labels may be non-`Real`). That is
 # ambiguous with Distributions' generic array overloads (0-dim, n-dim, nested)
 # and `pdf(::UnivariateDistribution, ::Real)`. Real scalars and 1-d vectors
 # already dispatch to the methods above; these forward the remaining array
 # shapes to the untyped handler (via `invoke`, to avoid self-recursion) so
 # behavior is identical — the observation pipeline never constructs them.
-function Distributions.logpdf(dist::ContinuousTimeObservedStatesMarkovModel,
+# (The Union stays STRICTLY more specific than the foreign methods' abstract
+# first argument, so no crossed-specificity ambiguities arise.)
+function Distributions.logpdf(dist::_ObservedStatesMarkovModel,
         y::AbstractArray{<:Real, 0})
     invoke(
-        Distributions.logpdf, Tuple{ContinuousTimeObservedStatesMarkovModel, Any}, dist, y)
+        Distributions.logpdf, Tuple{_ObservedStatesMarkovModel, Any}, dist, y)
 end
-function Distributions.logpdf(dist::ContinuousTimeObservedStatesMarkovModel,
+function Distributions.logpdf(dist::_ObservedStatesMarkovModel,
         y::AbstractArray{<:Real})
     invoke(
-        Distributions.logpdf, Tuple{ContinuousTimeObservedStatesMarkovModel, Any}, dist, y)
+        Distributions.logpdf, Tuple{_ObservedStatesMarkovModel, Any}, dist, y)
 end
-function Distributions.logpdf(dist::ContinuousTimeObservedStatesMarkovModel,
+function Distributions.logpdf(dist::_ObservedStatesMarkovModel,
         y::AbstractArray{<:AbstractArray{<:Real, 0}})
     invoke(
-        Distributions.logpdf, Tuple{ContinuousTimeObservedStatesMarkovModel, Any}, dist, y)
+        Distributions.logpdf, Tuple{_ObservedStatesMarkovModel, Any}, dist, y)
 end
-function Distributions.pdf(dist::ContinuousTimeObservedStatesMarkovModel, y::Real)
+function Distributions.pdf(dist::_ObservedStatesMarkovModel, y::Real)
     exp(logpdf(dist, y))
 end
-function Distributions.pdf(dist::ContinuousTimeObservedStatesMarkovModel,
+function Distributions.pdf(dist::_ObservedStatesMarkovModel,
         y::AbstractArray{<:Real, 0})
     exp(logpdf(dist, y))
 end
-function Distributions.pdf(dist::ContinuousTimeObservedStatesMarkovModel,
+function Distributions.pdf(dist::_ObservedStatesMarkovModel,
         y::AbstractArray{<:Real})
     exp(logpdf(dist, y))
 end
-function Distributions.pdf(dist::ContinuousTimeObservedStatesMarkovModel,
+function Distributions.pdf(dist::_ObservedStatesMarkovModel,
         y::AbstractArray{<:AbstractArray{<:Real, 0}})
     exp(logpdf(dist, y))
 end
 
-function Distributions.rand(rng::AbstractRNG, dist::ContinuousTimeObservedStatesMarkovModel)
+function Distributions.rand(rng::AbstractRNG, dist::_ObservedStatesMarkovModel)
     p = probabilities_hidden_states(dist)
     idx = rand(rng, Categorical(p))
     return dist.state_labels[idx]
 end
 
 # mean/var/cdf only defined for numeric (Real) label types
-function Distributions.mean(dist::ContinuousTimeObservedStatesMarkovModel{
-        M, D, T}) where {M, D, T}
+function Distributions.mean(dist::_ObservedStatesMarkovModel)
+    T = eltype(dist.state_labels)
     T <: Real || throw(ArgumentError(
-        "mean is not defined for ContinuousTimeObservedStatesMarkovModel with label type $T. " *
+        "mean is not defined for $(nameof(typeof(dist))) with label type $T. " *
         "Only Real-valued labels are supported."))
     p = probabilities_hidden_states(dist)
     return sum(p[k] * dist.state_labels[k] for k in 1:(dist.n_states))
 end
 
-function Distributions.var(dist::ContinuousTimeObservedStatesMarkovModel{
-        M, D, T}) where {M, D, T}
+function Distributions.var(dist::_ObservedStatesMarkovModel)
+    T = eltype(dist.state_labels)
     T <: Real || throw(ArgumentError(
-        "var is not defined for ContinuousTimeObservedStatesMarkovModel with label type $T. " *
+        "var is not defined for $(nameof(typeof(dist))) with label type $T. " *
         "Only Real-valued labels are supported."))
     p = probabilities_hidden_states(dist)
     μ = sum(p[k] * dist.state_labels[k] for k in 1:(dist.n_states))
     return sum(p[k] * (dist.state_labels[k] - μ)^2 for k in 1:(dist.n_states))
 end
 
-function Distributions.cdf(
-        dist::ContinuousTimeObservedStatesMarkovModel{M, D, T}, y::Real) where {M, D, T}
+function Distributions.cdf(dist::_ObservedStatesMarkovModel, y::Real)
+    T = eltype(dist.state_labels)
     T <: Real || throw(ArgumentError(
-        "cdf is not defined for ContinuousTimeObservedStatesMarkovModel with label type $T. " *
+        "cdf is not defined for $(nameof(typeof(dist))) with label type $T. " *
         "Only Real-valued labels are supported."))
     p = probabilities_hidden_states(dist)
     return sum((p[k] for k in 1:(dist.n_states) if dist.state_labels[k] <= y);
@@ -231,4 +244,4 @@ function Distributions.params(dist::ContinuousTimeObservedStatesMarkovModel)
     (dist.transition_matrix, dist.initial_dist, dist.Δt, dist.state_labels)
 end
 
-Base.length(dist::ContinuousTimeObservedStatesMarkovModel) = 1
+Base.length(dist::_ObservedStatesMarkovModel) = 1
