@@ -25,6 +25,7 @@ the docstring attached to the corresponding function, type, or macro.
 RealNumber
 RealVector
 RealPSDMatrix
+RealLiePSDMatrix
 RealDiagonalMatrix
 ProbabilityVector
 DiscreteTransitionMatrix

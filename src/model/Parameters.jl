@@ -9,8 +9,8 @@ using FunctionChains
 using Turing: Flat
 
 export AbstractParameterBlock
-export RealNumber, RealVector, RealPSDMatrix, RealDiagonalMatrix, NNParameters,
-       NPFParameter, SoftTreeParameters, SplineParameters
+export RealNumber, RealVector, RealPSDMatrix, RealLiePSDMatrix, RealDiagonalMatrix,
+       NNParameters, NPFParameter, SoftTreeParameters, SplineParameters
 export ProbabilityVector, DiscreteTransitionMatrix, ContinuousTransitionMatrix
 export Priorless
 
@@ -28,7 +28,7 @@ struct Priorless end
 Abstract base type for all parameter block types used in `@fixedEffects`.
 
 Concrete subtypes: [`RealNumber`](@ref), [`RealVector`](@ref),
-[`RealPSDMatrix`](@ref), [`RealDiagonalMatrix`](@ref),
+[`RealPSDMatrix`](@ref), [`RealLiePSDMatrix`](@ref), [`RealDiagonalMatrix`](@ref),
 [`ProbabilityVector`](@ref), [`DiscreteTransitionMatrix`](@ref),
 [`ContinuousTransitionMatrix`](@ref), [`NNParameters`](@ref),
 [`SoftTreeParameters`](@ref), [`SplineParameters`](@ref),
@@ -221,6 +221,164 @@ function RealPSDMatrix(value::AbstractMatrix{<:Real}; name::Symbol = :unnamed,
     _is_psd(v) ||
         error("Invalid initial value for parameter $(name). Expected symmetric positive semi-definite matrix; got matrix with min eigenvalue $(minimum(eigen(Symmetric(v)).values)).")
     return RealPSDMatrix{T, typeof(v)}(name, v, scale, prior, calculate_se)
+end
+
+"""
+    RealLiePSDMatrix(value; blocks, fix_eigenvalues, eigenvalue_lower, eigenvalue_upper, name, scale, prior, calculate_se)
+    RealLiePSDMatrix(; log_eigenvalues, angles, blocks, fix_eigenvalues, eigenvalue_lower, eigenvalue_upper, name, prior, calculate_se)
+
+A symmetric positive-definite matrix parameter block using the Lie-algebraic
+parameterization of Stapor (2020, PhD thesis, §5.3). The matrix is described by its
+eigendecomposition `Σ = U * diag(exp λ) * Uᵀ` with `U = exp(A)` and `A = Σₘ αₘ Aₘ`
+antisymmetric. The free parameters are the `n` log-eigenvalues `λ` (optimized on ℝ, so
+eigenvalues stay strictly positive) and the `nA = n*(n-1)/2` rotation coefficients `α`
+(one per index pair `(i, j)`, `i < j`).
+
+Unlike [`RealPSDMatrix`](@ref) (`:cholesky`/`:expm`), the eigenvalues are exposed
+directly, so box bounds on the spectrum are supported through
+`eigenvalue_lower`/`eigenvalue_upper`. Constraining the eigenvalues keeps the matrix
+well-conditioned at optimization start points, which reduces ODE-integration failure
+when the matrix parameterizes a random-effect covariance.
+
+## Structured covariances (block-diagonal / fixed eigenvalues)
+
+Because each rotation coefficient `αₘ` couples exactly one pair of dimensions, setting the
+cross-block coefficients to zero makes `A` — and hence `exp(A)` and `Σ` — block-diagonal.
+Passing `blocks` therefore enforces a block-diagonal covariance *without constrained
+optimization*: the cross-block coefficients are removed from the optimizer entirely. Fixed
+eigenvalues (`fix_eigenvalues`) are likewise dropped from the optimizer and pinned at their
+initial values. The transformed (optimizer) vector then contains only the free
+`(λ, α)` entries.
+
+# Arguments
+- `value::AbstractMatrix{<:Real}`: initial symmetric positive-definite matrix. When
+  `blocks` is given, `value` must be block-diagonal (cross-block entries ≈ 0).
+
+# Keyword Arguments
+- `log_eigenvalues::AbstractVector{<:Real}`, `angles::AbstractVector{<:Real}`:
+  alternative to `value` — build the matrix directly from the `n` log-eigenvalues and
+  the `n*(n-1)/2` rotation coefficients. Cross-block angles are zeroed if `blocks` is set.
+- `blocks::Union{Nothing, AbstractVector{<:Integer}} = nothing`: length-`n` block membership
+  labels. Dimensions sharing a label form one covariance block; cross-block correlations are
+  fixed to zero. `nothing` (or a single label) means a full covariance.
+- `fix_eigenvalues = Int[]`: dimension indices `1:n` whose eigenvalue is held fixed at its
+  initial value (block-order, ascending within each block). Removed from the optimizer.
+- `eigenvalue_lower`, `eigenvalue_upper`: box bounds on the eigenvalues (a scalar, broadcast
+  to all `n`, or a length-`n` vector), indexed by dimension. `eigenvalue_lower` defaults to
+  `0.0` (unbounded below) and `eigenvalue_upper` to `Inf` (unbounded above).
+- `name::Symbol = :unnamed`: parameter name (injected automatically by `@fixedEffects`).
+- `scale::Symbol = :lie`: reparameterization. Must be in `LIE_PSD_SCALES` (`:lie`).
+- `prior = Priorless()`: a matrix-variate `Distributions.Distribution` (e.g.
+  `InverseWishart`) evaluated on the natural-scale matrix, or `Priorless()`.
+- `calculate_se::Bool = false`: whether to include this parameter in standard-error
+  calculations.
+"""
+struct RealLiePSDMatrix{T <: Real, MT <: AbstractMatrix{T}} <: AbstractParameterBlock
+    name::Symbol
+    value::MT
+    scale::Symbol
+    prior::Any
+    calculate_se::Bool
+    eigenvalue_lower::Vector{Float64}
+    eigenvalue_upper::Vector{Float64}
+    blocks::Vector{Int}
+    fixed_eigenvalues::Vector{Int}
+end
+
+# Normalize scalar-or-vector eigenvalue bounds to length-n Float64 vectors and validate.
+# `lower` of 0 means "unbounded below" (maps to log(EPSILON) = -Inf); `upper` of Inf
+# means "unbounded above". Bounds live on the natural (eigenvalue) scale.
+function _normalize_eig_bounds(lower, upper, n::Int, name::Symbol)
+    lo = lower isa AbstractVector ? collect(Float64, lower) : fill(Float64(lower), n)
+    up = upper isa AbstractVector ? collect(Float64, upper) : fill(Float64(upper), n)
+    length(lo) == n ||
+        error("eigenvalue_lower for $(name) must have length $(n); got $(length(lo)).")
+    length(up) == n ||
+        error("eigenvalue_upper for $(name) must have length $(n); got $(length(up)).")
+    for i in 1:n
+        (isfinite(lo[i]) && lo[i] >= 0) ||
+            error("eigenvalue_lower[$(i)] for $(name) must be finite and ≥ 0; got $(lo[i]).")
+        up[i] >= lo[i] ||
+            error("eigenvalue_upper[$(i)] for $(name) must be ≥ eigenvalue_lower[$(i)]; got upper=$(up[i]), lower=$(lo[i]).")
+    end
+    return lo, up
+end
+
+# Normalize `blocks` to a length-n Int vector and validate `fix_eigenvalues` indices.
+function _normalize_lie_structure(blocks, fix_eigenvalues, n::Int, name::Symbol)
+    blk = if blocks === nothing
+        ones(Int, n)
+    else
+        length(blocks) == n ||
+            error("blocks for $(name) must have length $(n); got $(length(blocks)).")
+        collect(Int, blocks)
+    end
+    fixed = collect(Int, fix_eigenvalues)
+    for i in fixed
+        (1 <= i <= n) ||
+            error("fix_eigenvalues index $(i) for $(name) is out of range 1:$(n).")
+    end
+    return blk, sort(unique(fixed))
+end
+
+# When `blocks` groups dimensions, the initial matrix must be block-diagonal so that its
+# recovered cross-block rotation coefficients are zero.
+function _validate_block_diagonal(v::AbstractMatrix, blk::Vector{Int}, name::Symbol)
+    n = size(v, 1)
+    scale = maximum(abs, v) + one(eltype(v))
+    for i in 1:n, j in 1:n
+        if blk[i] != blk[j] && abs(v[i, j]) > sqrt(eps(Float64)) * scale
+            error("RealLiePSDMatrix($(name)): `value` must be block-diagonal for the given `blocks`; entry ($(i),$(j)) couples different blocks but is $(v[i, j]).")
+        end
+    end
+    return nothing
+end
+
+function RealLiePSDMatrix(value::AbstractMatrix{<:Real}; name::Symbol = :unnamed,
+        scale::Symbol = :lie, prior = Priorless(), calculate_se::Bool = false,
+        eigenvalue_lower = 0.0, eigenvalue_upper = Inf, blocks = nothing,
+        fix_eigenvalues = Int[])
+    _check_prior(prior, name)
+    scale in LIE_PSD_SCALES ||
+        error("Invalid scale for parameter $(name). Expected one of $(LIE_PSD_SCALES); got $(scale).")
+    size(value, 1) == size(value, 2) ||
+        error("Invalid value for parameter $(name). Expected a square matrix; got size $(size(value)).")
+    T = eltype(value) <: AbstractFloat ? eltype(value) : Float64
+    v = T.(value)
+    _is_psd(v) ||
+        error("Invalid initial value for parameter $(name). Expected symmetric positive semi-definite matrix; got matrix with min eigenvalue $(minimum(eigen(Symmetric(v)).values)).")
+    lo, up = _normalize_eig_bounds(eigenvalue_lower, eigenvalue_upper, size(v, 1), name)
+    blk, fixed = _normalize_lie_structure(blocks, fix_eigenvalues, size(v, 1), name)
+    blocks !== nothing && _validate_block_diagonal(v, blk, name)
+    return RealLiePSDMatrix{T, typeof(v)}(
+        name, v, scale, prior, calculate_se, lo, up, blk, fixed)
+end
+
+function RealLiePSDMatrix(; log_eigenvalues::AbstractVector{<:Real},
+        angles::AbstractVector{<:Real} = Float64[], name::Symbol = :unnamed,
+        prior = Priorless(), calculate_se::Bool = false,
+        eigenvalue_lower = 0.0, eigenvalue_upper = Inf, blocks = nothing,
+        fix_eigenvalues = Int[])
+    n = length(log_eigenvalues)
+    n >= 1 ||
+        error("RealLiePSDMatrix($(name)): requires at least one log-eigenvalue.")
+    nA = n * (n - 1) ÷ 2
+    length(angles) == nA ||
+        error("RealLiePSDMatrix($(name)): expected $(nA) angles for n=$(n); got $(length(angles)).")
+    ang = Float64.(collect(angles))
+    # Zero any cross-block angles so the constructed matrix is exactly block-diagonal.
+    if blocks !== nothing
+        blk, = _normalize_lie_structure(blocks, Int[], n, name)
+        for (k, (i, j)) in enumerate(_lie_pairs(n))
+            blk[i] != blk[j] && (ang[k] = 0.0)
+        end
+    end
+    t = vcat(Float64.(collect(log_eigenvalues)), ang)
+    value = liepsd_inverse(t)
+    return RealLiePSDMatrix(value; name = name, scale = :lie, prior = prior,
+        calculate_se = calculate_se, eigenvalue_lower = eigenvalue_lower,
+        eigenvalue_upper = eigenvalue_upper, blocks = blocks,
+        fix_eigenvalues = fix_eigenvalues)
 end
 
 """

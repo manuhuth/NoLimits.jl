@@ -36,6 +36,7 @@ NoLimits provides parameter types for scalars, vectors, structured matrices, and
 | `RealNumber` | Scalar parameter | scalar `Real` |
 | `RealVector` | Vector parameter with per-element scale | `Vector{<:Real}` |
 | `RealPSDMatrix` | Symmetric positive semi-definite matrix | square `Matrix` |
+| `RealLiePSDMatrix` | Symmetric positive-definite matrix with eigenvalue bounds and optional block structure | square `Matrix` |
 | `RealDiagonalMatrix` | Diagonal matrix | diagonal entries `Vector` |
 | `ProbabilityVector` | Probability simplex of length k≥2 | `Vector` summing to 1 |
 | `DiscreteTransitionMatrix` | n×n row-stochastic matrix (n≥2) | row-stochastic `Matrix` |
@@ -91,11 +92,30 @@ The behavior of each scale option is summarized below:
 - **`:logit` scale** applies the logit transform (`log(x/(1-x))`, clamped to `[-20, 20]`) and is supported for `RealNumber` and `RealVector`. Use this for parameters that must lie in `(0, 1)`, such as probabilities. The inverse is the sigmoid function. The initial value must be strictly between 0 and 1; the constructor errors otherwise. Bounds are enforced implicitly via clamping - no explicit `lower`/`upper` are needed.
 - **`:cholesky`** (for `RealPSDMatrix`) parameterizes the matrix via its Cholesky factor with log-transformed diagonal entries.
 - **`:expm`** (for `RealPSDMatrix`) parameterizes the matrix via matrix logarithm/exponential, storing only the upper-triangular elements.
+- **`:lie`** (for `RealLiePSDMatrix`) parameterizes the matrix via its eigendecomposition Σ = exp(A) diag(exp λ) exp(A)ᵀ, with log-eigenvalues λ and an antisymmetric A built from rotation coefficients. Because the eigenvalues are exposed directly, box bounds on the spectrum are supported (`eigenvalue_lower`/`eigenvalue_upper`). Setting `blocks` fixes cross-block rotation coefficients to zero, enforcing a block-diagonal covariance without constrained optimization; `fix_eigenvalues` pins individual eigenvalues. Fixed coefficients are dropped from the optimizer.
 - **`:stickbreak`** (for `ProbabilityVector`) maps a k-probability simplex to k-1 unconstrained reals via the logistic stick-breaking transform. Each element νᵢ = pᵢ/(1-Σⱼ<ᵢ pⱼ) is passed through logit. The last probability is determined and not stored. Silently normalizes the initial value if the sum is within 1e-6 of 1.
 - **`:stickbreakrows`** (for `DiscreteTransitionMatrix`) applies the stick-breaking transform independently to each row of an n×n row-stochastic matrix, yielding n*(n-1) unconstrained parameters.
 - **`:lograterows`** (for `ContinuousTransitionMatrix`) maps each off-diagonal entry of a rate matrix to its logarithm, yielding n*(n-1) unconstrained reals. The diagonal is always recomputed as minus the row sum and is never stored as a free parameter. Initial off-diagonal values must be non-negative.
 
 For `RealVector`, scales can be mixed per element by passing a `Vector{Symbol}`, e.g. `scale=[:logit, :log, :identity]`. Mixed vectors use an elementwise dispatch that applies each element's transform independently.
+
+## Choosing a Covariance Parameterization
+
+`RealPSDMatrix` (`:cholesky`, `:expm`) and `RealLiePSDMatrix` (`:lie`) all represent a full covariance, but they differ in cost, conditioning, and what structure they can enforce. The guidance below reflects both benchmarking and the Lie parameterization's design intent.
+
+- **Default: `RealPSDMatrix(:cholesky)`.** For an ordinary random-effect covariance with no special requirements, log-Cholesky is the cheapest map and the best-conditioned under optimization. `:expm` is a reasonable alternative with no clear advantage.
+- **`RealLiePSDMatrix` without bounds or blocks is not recommended for a full matrix.** It costs more per gradient than Cholesky and conditions worse as the dimension grows, because a full rotation's coefficients are not uniquely identified.
+- **Use `RealLiePSDMatrix` with eigenvalue bounds when the covariance drives an ODE.** When random effects enter ODE initial conditions or rates, an unconstrained Cholesky/matrix-log start can produce an ill-conditioned Σ that makes the solver fail at the first optimization step. Bounding the spectrum with `eigenvalue_lower`/`eigenvalue_upper` keeps every candidate matrix well-conditioned. This is the parameterization's primary motivation (Stapor, 2020).
+- **Use `blocks` for known block structure.** When some random effects are known not to correlate, `blocks` enforces the zeros exactly and removes the cross-block parameters from the optimizer, which reduces the parameter count and speeds up convergence versus fitting a full matrix.
+- **Use `RealDiagonalMatrix` for a diagonal covariance.** It is simpler and cheaper than any full parameterization.
+
+```julia
+# Full covariance driving an ODE: bound the eigenvalues for solver robustness.
+Omega = RealLiePSDMatrix(Matrix(I, 3, 3), eigenvalue_lower=1e-3, eigenvalue_upper=1e3)
+
+# Block-diagonal covariance: random effects 1-2 correlate, 3 is independent.
+Omega_block = RealLiePSDMatrix(Matrix(I, 3, 3), blocks=[1, 1, 2])
+```
 
 ## Example: Learned Function Approximators
 

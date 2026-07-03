@@ -40,6 +40,17 @@ using Distributions
     @test isapprox(Erec, Aexp; rtol = 1e-8, atol = 1e-8)
     @test length(θEt.E) == 3
 
+    # Lie-algebraic transform round-trip on a PSD matrix block.
+    Alie = [3.25 -1.30; -1.30 1.75]
+    θL = ComponentArray((L = Alie,))
+    specsL = [TransformSpec(:L, :lie, (2, 2), nothing)]
+    ftL = ForwardTransform([:L], specsL)
+    itL = InverseTransform([:L], specsL)
+    θLt = ftL(θL)
+    Lrec = itL(θLt).L
+    @test isapprox(Lrec, Alie; rtol = 1e-8, atol = 1e-8)
+    @test length(θLt.L) == 3
+
     # AD check for log transform (ForwardDiff).
     f_log(x) = log_forward(x)
     @test isapprox(ForwardDiff.derivative(f_log, 2.0), 1 / 2.0; rtol = 1e-8, atol = 1e-10)

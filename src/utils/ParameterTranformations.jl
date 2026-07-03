@@ -19,13 +19,34 @@ export stickbreak_forward
 export stickbreak_inverse
 export lograterows_forward
 export lograterows_inverse
+export liepsd_forward
+export liepsd_inverse
 export apply_inv_jacobian_T
+
+# Layout for a structured (block-diagonal and/or fixed-eigenvalue) Lie PSD matrix.
+# `free_idx`/`fixed_idx` partition the positions `1:L` of the full parameter vector
+# `[λ (n); α (nA)]` (L = n(n+1)/2); the transformed (optimizer) vector holds the free
+# entries in `free_idx` order, while `fixed_idx` entries are pinned to `fixed_val`
+# (log-eigenvalues for fixed eigenvalues, `0` for cross-block rotation coefficients).
+struct LiePSDLayout
+    n::Int
+    blocks::Vector{Int}
+    free_idx::Vector{Int}
+    fixed_idx::Vector{Int}
+    fixed_val::Vector{Float64}
+end
 
 struct TransformSpec
     name::Symbol
     kind::Symbol
     size::Tuple{Int, Int}
     mask::Union{Nothing, Vector{Symbol}}
+    lie::Union{Nothing, LiePSDLayout}
+end
+# Backward-compatible 4-arg constructor (all non-Lie specs carry no layout).
+function TransformSpec(name::Symbol, kind::Symbol, size::Tuple{Int, Int},
+        mask::Union{Nothing, Vector{Symbol}})
+    TransformSpec(name, kind, size, mask, nothing)
 end
 
 # `out_axes`/`n_out` (when provided) describe the output ComponentArray layout and
@@ -138,6 +159,10 @@ function _write_forward_spec!(flat::Vector, k::Int, spec::TransformSpec, val)
         return k
     elseif kind === :lograterows
         return _write_flat!(flat, lograterows_forward(val), k)
+    elseif kind === :lie
+        fwd = spec.lie === nothing ? liepsd_forward(val) :
+              _liepsd_forward_layout(val, spec.lie)
+        return _write_flat!(flat, fwd, k)
     else
         return _write_flat!(flat, val, k)
     end
@@ -185,6 +210,10 @@ function _write_inverse_spec!(flat::Vector, k::Int, spec::TransformSpec, val)
     elseif kind === :lograterows
         n = spec.size[1]
         return _write_flat!(flat, lograterows_inverse(val, n), k)
+    elseif kind === :lie
+        inv = spec.lie === nothing ? liepsd_inverse(val) :
+              _liepsd_inverse_layout(val, spec.lie)
+        return _write_flat!(flat, inv, k)
     else
         return _write_flat!(flat, val, k)
     end
@@ -539,6 +568,230 @@ function _upper_tri_vec_grad(G::AbstractMatrix{<:Real})
     return out
 end
 
+# ── Lie-algebraic PSD parameterization (Stapor 2020, §5.3) ────────────────────
+# A symmetric positive-definite matrix is written via its eigendecomposition
+#   Σ = U · diag(exp λ) · Uᵀ,   U = exp(A),   A = Σₘ αₘ Aₘ  (antisymmetric),
+# so the transformed vector is [λ (n) ; α (nA)] with nA = n(n-1)/2 (total n(n+1)/2).
+# The log-eigenvalues λ live on ℝ (eigenvalues stay positive) and can be box-bounded;
+# the rotation coefficients α are unbounded. `exp(A)` for antisymmetric A is a general
+# (non-symmetric) matrix exponential, so it goes through the generic Padé path under
+# ForwardDiff (no eigengap issue, unlike the symmetric `:expm` scale) and needs no
+# `Dual` specialization.
+
+# Recover n from the packed length L = n(n+1)/2.
+function _lie_dim(L::Int)
+    n = (isqrt(8L + 1) - 1) ÷ 2
+    n * (n + 1) ÷ 2 == L ||
+        error("Invalid Lie-parameter length $(L); not of the form n(n+1)/2.")
+    return n
+end
+
+# Antisymmetric matrix from angle coefficients in lexicographic (i<j) order.
+function _lie_antisym(α::AbstractVector, n::Int)
+    A = zeros(eltype(α), n, n)
+    k = 1
+    for i in 1:n
+        for j in (i + 1):n
+            A[i, j] = α[k]
+            A[j, i] = -α[k]
+            k += 1
+        end
+    end
+    return A
+end
+
+# Ordered list of index pairs (i, j), i < j — the enumeration used for the angle block
+# (and matching `_lie_antisym`). Angle k in `1:nA` maps to `_lie_pairs(n)[k]`.
+function _lie_pairs(n::Int)
+    pairs = Tuple{Int, Int}[]
+    for i in 1:n
+        for j in (i + 1):n
+            push!(pairs, (i, j))
+        end
+    end
+    return pairs
+end
+
+"""
+    liepsd_inverse(t::AbstractVector{<:Real}) -> Matrix
+
+Map the packed vector `t = [λ (n); α (n(n-1)/2)]` to the symmetric positive-definite
+matrix `Σ = exp(A) · diag(exp λ) · exp(A)ᵀ`, `A` antisymmetric built from `α`.
+"""
+function liepsd_inverse(t::AbstractVector{<:Real})
+    L = length(t)
+    n = _lie_dim(L)
+    λ = @view t[1:n]
+    α = @view t[(n + 1):L]
+    A = _lie_antisym(collect(α), n)
+    U = exp(A)
+    Σ = U * Diagonal(exp.(λ)) * U'
+    # Wrap in `Symmetric` before densifying to guarantee an exactly Hermitian matrix
+    # (value and ForwardDiff partials) for the stricter `cholesky` inside MvNormal/PDMats.
+    return Matrix(Symmetric(Σ))
+end
+
+# ForwardDiff-aware `liepsd_inverse` (single-level Dual). LinearAlgebra's `exp!` only has
+# a BLAS method, so `exp(::Matrix{Dual})` errors; mirror the `:expm` treatment and build
+# the partials from the block-2×2 Padé Fréchet derivative of the matrix exponential
+# (`_expm_frechet`, general-matrix, no eigengaps). The value is computed with LAPACK on the
+# Float64 antisymmetric matrix. Nested Duals fall back to the generic `<:Real` method above.
+function liepsd_inverse(t::AbstractVector{ForwardDiff.Dual{
+        Tg, V, N}}) where {
+        Tg, V <: AbstractFloat, N}
+    L = length(t)
+    n = _lie_dim(L)
+    tv = ForwardDiff.value.(t)
+    λv = tv[1:n]
+    αv = tv[(n + 1):L]
+    Av = _lie_antisym(αv, n)
+    Uv = exp(Av)                                   # value (LAPACK — no AD here)
+    Dv = Diagonal(exp.(λv))
+    Σv = Matrix(Symmetric(Uv * Dv * Uv'))
+    dΣs = ntuple(N) do k
+        p = ForwardDiff.partials.(t, k)            # length-L seed direction
+        dλ = @view p[1:n]
+        dα = @view p[(n + 1):L]
+        dAk = _lie_antisym(collect(dα), n)
+        _, dUk = _expm_frechet(Av, dAk)            # ∂exp(A)[dA]
+        dDk = Diagonal(exp.(λv) .* collect(dλ))
+        dΣ = dUk * Dv * Uv' + Uv * dDk * Uv' + Uv * Dv * dUk'
+        Matrix(Symmetric(dΣ))
+    end
+    out = Matrix{ForwardDiff.Dual{Tg, V, N}}(undef, n, n)
+    @inbounds for j in 1:n, i in 1:n
+        out[i, j] = ForwardDiff.Dual{Tg}(Σv[i, j], ntuple(k -> dΣs[k][i, j], N)...)
+    end
+    return out
+end
+
+"""
+    liepsd_forward(Σ::AbstractMatrix{<:Real}) -> Vector
+
+Inverse of [`liepsd_inverse`](@ref): recover `[λ; α]` from a symmetric positive-definite
+`Σ` via its eigendecomposition. Runs at model construction on `Float64`.
+"""
+function liepsd_forward(Σ::AbstractMatrix{<:Real})
+    n = size(Σ, 1)
+    Σsym = Matrix(Symmetric((Σ + Σ') / 2))
+    nA = n * (n - 1) ÷ 2
+    # Diagonal fast path: the eigenvector rotation is the identity, so α = 0.
+    if isdiag(Σsym)
+        λ = [log(Σsym[i, i]) for i in 1:n]
+        return vcat(λ, zeros(nA))
+    end
+    F = eigen(Σsym)
+    Λ = F.values
+    U = Matrix(F.vectors)
+    # Ensure U ∈ SO(n) (det +1): a sign flip of one eigenvector leaves Σ unchanged.
+    if det(U) < 0
+        U[:, 1] .= .-U[:, 1]
+    end
+    λ = log.(Λ)
+    Alog = real.(log(U))
+    As = (Alog .- Alog') ./ 2
+    α = [As[i, j] for i in 1:n for j in (i + 1):n]
+    return vcat(λ, α)
+end
+
+# Block-aware forward: recover the full `[λ; α]` vector for a block-diagonal `Σ` by
+# eigendecomposing each block separately. Global `eigen` would mix eigenvectors across
+# blocks and yield nonzero cross-block angles; the block-wise route guarantees the
+# cross-block coefficients are exactly zero (so `Σ` stays block-diagonal under `liepsd_inverse`).
+function _liepsd_forward_blocks(Σ::AbstractMatrix{<:Real}, blocks::Vector{Int})
+    n = size(Σ, 1)
+    Σsym = Matrix(Symmetric((Σ + Σ') / 2))
+    pairs = _lie_pairs(n)
+    pair_index = Dict(pairs[k] => k for k in eachindex(pairs))
+    λ = zeros(Float64, n)
+    α = zeros(Float64, length(pairs))
+    for b in unique(blocks)
+        dims = findall(==(b), blocks)
+        if length(dims) == 1
+            λ[dims[1]] = log(Σsym[dims[1], dims[1]])
+            continue
+        end
+        sub = Matrix(Symmetric(Σsym[dims, dims]))
+        if isdiag(sub)
+            for (loc, d) in enumerate(dims)
+                λ[d] = log(sub[loc, loc])
+            end
+            continue
+        end
+        F = eigen(sub)
+        U = Matrix(F.vectors)
+        det(U) < 0 && (U[:, 1] .= .-U[:, 1])
+        for (loc, d) in enumerate(dims)
+            λ[d] = log(F.values[loc])
+        end
+        Alog = real.(log(U))
+        As = (Alog .- Alog') ./ 2
+        nb = length(dims)
+        for a in 1:nb, c in (a + 1):nb
+            α[pair_index[(dims[a], dims[c])]] = As[a, c]
+        end
+    end
+    return vcat(λ, α)
+end
+
+# Build the structured layout from an initial matrix, block labels and fixed-eigenvalue
+# dimension indices. Returns `nothing` for the unstructured full case (single block, no
+# fixed eigenvalues), which keeps the plain `liepsd_forward`/`liepsd_inverse` fast path.
+function _build_lie_layout(Σ0::AbstractMatrix{<:Real}, blocks::Vector{Int},
+        fixed_eigenvalues::Vector{Int})
+    n = size(Σ0, 1)
+    L = n * (n + 1) ÷ 2
+    single_block = all(==(blocks[1]), blocks)
+    if single_block && isempty(fixed_eigenvalues)
+        return nothing
+    end
+    p_full = _liepsd_forward_blocks(Σ0, blocks)
+    pairs = _lie_pairs(n)
+    fixed_set = Set{Int}()
+    fixed_idx = Int[]
+    fixed_val = Float64[]
+    # Fixed eigenvalues (positions 1:n) pinned at their initial log-eigenvalue.
+    for i in fixed_eigenvalues
+        push!(fixed_idx, i)
+        push!(fixed_val, p_full[i])
+        push!(fixed_set, i)
+    end
+    # Cross-block rotation coefficients (positions n+1:L) pinned at 0.
+    for (k, (i, j)) in enumerate(pairs)
+        if blocks[i] != blocks[j]
+            pos = n + k
+            push!(fixed_idx, pos)
+            push!(fixed_val, 0.0)
+            push!(fixed_set, pos)
+        end
+    end
+    free_idx = [pos for pos in 1:L if !(pos in fixed_set)]
+    order = sortperm(fixed_idx)
+    return LiePSDLayout(n, blocks, free_idx, fixed_idx[order], fixed_val[order])
+end
+
+# Scatter the free transformed vector into the full `[λ; α]` layout (fixed entries pinned)
+# and map to `Σ`. ForwardDiff-transparent: the element type follows `t`, so the pinned
+# Float64 values are promoted to `Dual` (with zero partials) on the AD path.
+function _liepsd_inverse_layout(t::AbstractVector, layout::LiePSDLayout)
+    L = layout.n * (layout.n + 1) ÷ 2
+    p = Vector{eltype(t)}(undef, L)
+    @inbounds for k in eachindex(layout.free_idx)
+        p[layout.free_idx[k]] = t[k]
+    end
+    @inbounds for k in eachindex(layout.fixed_idx)
+        p[layout.fixed_idx[k]] = eltype(t)(layout.fixed_val[k])
+    end
+    return liepsd_inverse(p)
+end
+
+# Forward for the structured case: recover the full block-wise `[λ; α]` and keep the free
+# entries in `free_idx` order.
+function _liepsd_forward_layout(Σ::AbstractMatrix{<:Real}, layout::LiePSDLayout)
+    p_full = _liepsd_forward_blocks(Σ, layout.blocks)
+    return p_full[layout.free_idx]
+end
+
 function apply_inv_jacobian_T(
         it::InverseTransform, θt::ComponentArray, grad_u::ComponentArray)
     names = it.names
@@ -629,6 +882,16 @@ function _inv_jac_spec_val(spec::TransformSpec, θti, gu)
                 end
             end
             return out
+        elseif spec.kind == :lie
+            # θti: free transformed vector; gu: n×n natural gradient w.r.t. Σ.
+            # gₜ[k] = Σ_ij (∂Σ_ij/∂t_k) gu_ij = (Jᵀ vec(gu))[k], with J the Jacobian of the
+            # (possibly structured) inverse map. The transform is Float64 on both gradient
+            # paths that call this (Laplace/FOCEI, identifiability), so ForwardDiff is exact.
+            tvec = collect(Float64, θti)
+            J = spec.lie === nothing ?
+                ForwardDiff.jacobian(liepsd_inverse, tvec) :
+                ForwardDiff.jacobian(t -> _liepsd_inverse_layout(t, spec.lie), tvec)
+            return J' * vec(collect(Float64, gu))
         else
             return gu
         end
@@ -659,6 +922,9 @@ function _transform_vals(
             return _stickbreakrow_forward(val)
         elseif spec.kind == :lograterows
             return lograterows_forward(val)
+        elseif spec.kind == :lie
+            return spec.lie === nothing ? liepsd_forward(val) :
+                   _liepsd_forward_layout(val, spec.lie)
         else
             return val
         end
@@ -693,6 +959,9 @@ function _inverse_vals(
         elseif spec.kind == :lograterows
             n = spec.size[1]
             return lograterows_inverse(val, n)
+        elseif spec.kind == :lie
+            return spec.lie === nothing ? liepsd_inverse(val) :
+                   _liepsd_inverse_layout(val, spec.lie)
         else
             return val
         end

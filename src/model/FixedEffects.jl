@@ -418,7 +418,8 @@ function build_fixed_effects(params::NamedTuple)
         names, specs, getaxes(θ0_transformed), length(θ0_transformed))
     inverse_transform = InverseTransform(
         names, specs, getaxes(θ0_untransformed), length(θ0_untransformed))
-    bounds_transformed = _transform_bounds(bounds_untransformed, names, specs)
+    bounds_transformed = _transform_bounds(
+        bounds_untransformed, names, specs; params = params)
 
     flat_names, _ = _flatten_by_specs(θ0_transformed, names, specs)
 
@@ -453,6 +454,12 @@ function _param_lower(p::RealPSDMatrix)
     return fill(-Inf, size(p.value))
 end
 
+# Natural-scale bounds on the matrix entries are unbounded; the eigenvalue box bounds
+# are applied on the transformed (log-eigenvalue) scale in `_transform_bounds`.
+function _param_lower(p::RealLiePSDMatrix)
+    return fill(-Inf, size(p.value))
+end
+
 function _param_lower(p::RealDiagonalMatrix)
     return fill(-Inf, length(p.value))
 end
@@ -477,6 +484,10 @@ function _param_lower(p::ContinuousTransitionMatrix)
 end
 
 function _param_upper(p::RealPSDMatrix)
+    return fill(Inf, size(p.value))
+end
+
+function _param_upper(p::RealLiePSDMatrix)
     return fill(Inf, size(p.value))
 end
 
@@ -512,6 +523,11 @@ end
 
 function _param_spec(name::Symbol, p::RealPSDMatrix)
     return TransformSpec(name, p.scale, size(p.value), nothing)
+end
+
+function _param_spec(name::Symbol, p::RealLiePSDMatrix)
+    layout = _build_lie_layout(p.value, p.blocks, p.fixed_eigenvalues)
+    return TransformSpec(name, :lie, size(p.value), nothing, layout)
 end
 
 function _param_spec(name::Symbol, p::RealDiagonalMatrix)
@@ -778,7 +794,7 @@ function _flatten_by_specs(
 end
 
 function _transform_bounds(bounds::Tuple{ComponentArray, ComponentArray},
-        names::Vector{Symbol}, specs::Vector{TransformSpec})
+        names::Vector{Symbol}, specs::Vector{TransformSpec}; params = NamedTuple())
     lower, upper = bounds
     lower_pairs = Pair{Symbol, Any}[]
     upper_pairs = Pair{Symbol, Any}[]
@@ -849,6 +865,21 @@ function _transform_bounds(bounds::Tuple{ComponentArray, ComponentArray},
             n = spec.size[1]
             push!(lower_pairs, name => fill(-Inf, n * (n - 1)))
             push!(upper_pairs, name => fill(Inf, n * (n - 1)))
+        elseif spec.kind == :lie
+            # Transformed layout is `[λ (n); α (nA)]` (or, when structured, only the free
+            # entries). Eigenvalue box bounds map through the log to bounds on the λ slots
+            # (0 → -Inf, Inf → Inf); rotation-coefficient (α) slots are unbounded.
+            n = spec.size[1]
+            p = hasproperty(params, name) ? getproperty(params, name) : nothing
+            lo_eig = p isa RealLiePSDMatrix ? p.eigenvalue_lower : fill(0.0, n)
+            up_eig = p isa RealLiePSDMatrix ? p.eigenvalue_upper : fill(Inf, n)
+            _lie_lo(i) = i > n ? -Inf : (lo_eig[i] <= 0 ? -Inf : log(lo_eig[i]))
+            _lie_up(i) = i > n ? Inf : (isinf(up_eig[i]) ? Inf : log(up_eig[i]))
+            slots = spec.lie === nothing ? (1:(n * (n + 1) ÷ 2)) : spec.lie.free_idx
+            l2 = [_lie_lo(i) for i in slots]
+            u2 = [_lie_up(i) for i in slots]
+            push!(lower_pairs, name => l2)
+            push!(upper_pairs, name => u2)
         else
             push!(lower_pairs, name => l)
             push!(upper_pairs, name => u)
