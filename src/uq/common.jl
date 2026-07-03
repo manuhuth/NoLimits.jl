@@ -90,7 +90,21 @@ end
 @inline function _coords_for_param(value, spec::TransformSpec; natural::Bool)
     if value isa Number
         return Float64[value]
-    elseif natural && spec.kind == :expm && value isa AbstractMatrix
+    elseif natural && spec.kind == :lie && spec.lie !== nothing &&
+           value isa AbstractMatrix
+        # Structured Lie covariance: report per free slot — the eigenvalue for a free
+        # log-eigenvalue slot, the coefficient for a free rotation slot. Count equals the
+        # transformed free-parameter count (Wald delta-method stays square).
+        layout = spec.lie
+        p_full = _liepsd_forward_blocks(value, layout.blocks)
+        out = Float64[]
+        for idx in layout.free_idx
+            push!(out, idx <= layout.n ? exp(p_full[idx]) : p_full[idx])
+        end
+        return out
+    elseif natural && (spec.kind == :expm ||
+                       (spec.kind == :lie && spec.lie === nothing)) &&
+           value isa AbstractMatrix
         n = size(value, 1)
         out = Float64[]
         for j in 1:n

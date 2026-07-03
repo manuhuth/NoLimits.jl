@@ -55,6 +55,7 @@ end
             lower = [-Inf, 1e-12], upper = [Inf, Inf])
         Ω = RealPSDMatrix([1.0 0.2; 0.2 1.0], scale = :cholesky)
         E = RealPSDMatrix([1.5 0.1; 0.1 0.8], scale = :expm)
+        G = RealLiePSDMatrix([1.5 0.1; 0.1 0.8])
         p = ProbabilityVector([0.2, 0.3, 0.5])
         P = DiscreteTransitionMatrix([0.9 0.1; 0.2 0.8])
     end

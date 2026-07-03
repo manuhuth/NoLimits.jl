@@ -17,7 +17,13 @@ function _chain_keys_for_free(fe::FixedEffects, free_names::Vector{Symbol})
         spec = spec_map[name]
         if v isa Number
             push!(out, string(name))
-        elseif spec.kind == :expm && v isa AbstractMatrix
+        elseif spec.kind == :lie && spec.lie !== nothing
+            # Structured Lie: one key per free (λ/α) slot, matching the transformed count.
+            for k in eachindex(spec.lie.free_idx)
+                push!(out, string(name, "[", k, "]"))
+            end
+        elseif (spec.kind == :expm ||
+                (spec.kind == :lie && spec.lie === nothing)) && v isa AbstractMatrix
             n = size(v, 1)
             for j in 1:n
                 for i in 1:j

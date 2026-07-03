@@ -2467,7 +2467,8 @@ end
 # `_symmetrize_psd_params` return immediately for the (common) no-PSD case
 # instead of running a boxing `getfield(params, name)` loop on every call.
 @generated function _has_psd_params(::NamedTuple{names, T}) where {names, T}
-    return any(p -> p <: RealPSDMatrix, T.parameters) ? :(true) : :(false)
+    return any(p -> p <: RealPSDMatrix || p <: RealLiePSDMatrix, T.parameters) ?
+           :(true) : :(false)
 end
 
 function _symmetrize_psd_params(θ::ComponentArray, fe::FixedEffects)
@@ -2476,7 +2477,7 @@ function _symmetrize_psd_params(θ::ComponentArray, fe::FixedEffects)
     θsym = θ
     for name in get_names(fe)
         p = getfield(params, name)
-        if p isa RealPSDMatrix
+        if p isa RealPSDMatrix || p isa RealLiePSDMatrix
             A = getproperty(θsym, name)
             if A isa AbstractMatrix
                 Asym = 0.5 .* (A .+ A')

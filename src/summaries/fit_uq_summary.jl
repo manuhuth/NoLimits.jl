@@ -234,7 +234,7 @@ function _fq_value_from_lookup(v0, name::Symbol, spec::TransformSpec, lookup::Fu
         val = lookup(string(name))
         return val === nothing ? v0 : val
     end
-    if spec.kind == :expm && v0 isa AbstractMatrix
+    if (spec.kind == :expm || spec.kind == :lie) && v0 isa AbstractMatrix
         n = size(v0, 1)
         vv = Matrix{Float64}(undef, size(v0)...)
         for j in 1:n

@@ -221,6 +221,24 @@ end
 end
 
 function _uq_psd_re_model(scale::Symbol)
+    if scale === :lie
+        return @Model begin
+            @covariates begin
+                t = Covariate()
+            end
+            @fixedEffects begin
+                a = RealNumber(0.2, calculate_se = false)
+                σ = RealNumber(0.5, scale = :log, calculate_se = false)
+                Ω = RealLiePSDMatrix(Matrix{Float64}(I, 2, 2); calculate_se = true)
+            end
+            @randomEffects begin
+                η = RandomEffect(MvNormal([0.0, 0.0], Ω); column = :ID)
+            end
+            @formulas begin
+                y ~ Normal(a + η[1], σ)
+            end
+        end
+    end
     return @Model begin
         @covariates begin
             t = Covariate()
@@ -247,8 +265,8 @@ function _uq_psd_re_df()
     )
 end
 
-@testset "UQ Wald for Laplace with PSD fixed covariance (cholesky/expm)" begin
-    for (scale, n_coords, seed) in ((:cholesky, 4, 31), (:expm, 3, 32))
+@testset "UQ Wald for Laplace with PSD fixed covariance (cholesky/expm/lie)" begin
+    for (scale, n_coords, seed) in ((:cholesky, 4, 31), (:expm, 3, 32), (:lie, 3, 33))
         model = _uq_psd_re_model(scale)
         dm = DataModel(model, _uq_psd_re_df(); primary_id = :ID, time_col = :t)
         # The default outer optimizer (NLopt.LN_BOBYQA) is derivative-free and

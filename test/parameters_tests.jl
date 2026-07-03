@@ -47,6 +47,15 @@ using Turing: Flat
     @test_throws ErrorException RealPSDMatrix(
         [1.0 0.0; 0.0 1.0]; name = :bad_psd_scale, scale = :foo)
 
+    lie = RealLiePSDMatrix([2.0 0.5; 0.5 1.0]; name = :Ωlie, eigenvalue_lower = 1e-3,
+        eigenvalue_upper = 1e3)
+    @test lie.value == [2.0 0.5; 0.5 1.0]
+    @test lie.scale == :lie
+    @test lie.eigenvalue_lower == [1e-3, 1e-3]
+    @test_throws ErrorException RealLiePSDMatrix([1.0 2.0; 3.0 4.0]; name = :bad_lie)
+    @test_throws ErrorException RealLiePSDMatrix(
+        [1.0 0.0; 0.0 1.0]; name = :bad_lie_scale, scale = :cholesky)
+
     d = RealDiagonalMatrix([1, 2, 3]; name = :d)
     @test d.value == [1.0, 2.0, 3.0]
     @test_throws ErrorException RealDiagonalMatrix([1.0, -2.0]; name = :badd)

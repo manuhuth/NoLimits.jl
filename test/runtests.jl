@@ -117,6 +117,7 @@ const TEST_FILES = [
     "stickbreak_uq_natural_extension_tests.jl",
     "ad_stickbreak_hmm.jl",
     "continuous_transition_matrix_tests.jl",
+    "lie_psd_matrix_tests.jl",
     # Enzyme regression tests (merged from enzyme-compat). proxy = always-on,
     # ForwardDiff-only structural/numeric invariants; smoke = opt-in real Enzyme
     # gradients, no-op unless NOLIMITS_TEST_ENZYME=true (+ Julia>=1.12.5 + Enzyme).
