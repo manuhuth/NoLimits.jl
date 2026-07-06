@@ -2620,10 +2620,11 @@ function _fit_model(dm::DataModel, method::Laplace, args...;
         constants::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple(),
         penalty::NamedTuple = NamedTuple(),
+        extra_objective = nothing,
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        rng::AbstractRNG = Xoshiro(0),
+        rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         store_data_model::Bool = true)
     fit_kwargs = (constants = constants,
@@ -2654,7 +2655,7 @@ function _fit_model(dm::DataModel, method::Laplace, args...;
         constants = constants, constants_re = constants_re, penalty = penalty,
         ode_args = ode_args, ode_kwargs = ode_kwargs, serialization = serialization,
         rng = rng, theta_0_untransformed = theta_0_untransformed,
-        store_data_model = store_data_model)
+        store_data_model = store_data_model, extra_objective = extra_objective)
 end
 
 # Shared optimizer driver for the Laplace family: exact-Hessian Laplace and
@@ -2671,7 +2672,7 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
         ode_args::Tuple, ode_kwargs::NamedTuple,
         serialization::SciMLBase.EnsembleAlgorithm, rng::AbstractRNG,
         theta_0_untransformed::Union{Nothing, ComponentArray},
-        store_data_model::Bool) where {V}
+        store_data_model::Bool, extra_objective = nothing) where {V}
     fe = dm.model.fixed.fixed
     fixed_names = get_names(fe)
     free_names = [n for n in fixed_names if !(n in keys(constants))]
@@ -2707,6 +2708,10 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
     axs_free = getaxes(θ0_free_t)
     axs_full = getaxes(θ_const_t)
     has_penalty = !isempty(keys(penalty))
+    # Optional user-supplied objective term, a function of the natural-scale θu.
+    # Mirrors `penalty` exactly: added to both obj_only and obj_grad, no-op when
+    # `extra_objective === nothing` (default) so existing fits are unaffected.
+    has_extra = extra_objective !== nothing
     T0 = eltype(θ0_free_t)
     obj_cache = _LaplaceObjCache{T0, ComponentArray}(nothing,
         T0(Inf),
@@ -2736,6 +2741,7 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
             hmode = hmode)
         !isfinite(obj) && return infT
         has_penalty && (obj += _penalty_value(θu, penalty))
+        has_extra && (obj += extra_objective(θu))
         _laplace_obj_cache_set_obj!(obj_cache, θt_free, obj)
         return obj
     end
@@ -2771,6 +2777,13 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
             # `obj_only`, which is penalized).
             obj += _penalty_value(θu, penalty)
             grad_u = grad_u .+ ForwardDiff.gradient(x -> _penalty_value(x, penalty), θu)
+        end
+        if has_extra
+            # Same treatment as the penalty: value into both objectives, gradient
+            # into the analytic gradient (the :fd recovery differentiates obj_only,
+            # which already includes the extra term).
+            obj += extra_objective(θu)
+            grad_u = grad_u .+ ForwardDiff.gradient(extra_objective, θu)
         end
         grad_t_ca = apply_inv_jacobian_T(inv_transform, θt_full, grad_u)
         grad_free = similar(θt_free)

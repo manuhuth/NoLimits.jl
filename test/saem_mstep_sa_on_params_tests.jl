@@ -93,7 +93,7 @@ end
                     q_store_max = q_max,
                     mstep_sa_on_params = true,
                     progress = false
-                ))
+                ); rng = MersenneTwister(seed))
         end
 
         res1 = _run(1, 42)

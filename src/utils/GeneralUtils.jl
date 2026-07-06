@@ -93,6 +93,6 @@ end
 @inline function _ode_solve_kwargs(base::NamedTuple,
         extra::NamedTuple = NamedTuple(),
         overrides::NamedTuple = NamedTuple())
-    merged = merge((verbose = _ODE_VERBOSE_SILENT,), base, extra, overrides)
+    merged = merge((verbose = _ODE_VERBOSE_SILENT, maxiters = 5000), base, extra, overrides)
     return _ode_normalize_verbose(merged, merged.verbose)
 end

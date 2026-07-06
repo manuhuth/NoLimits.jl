@@ -495,7 +495,7 @@ end
 function fx_saem()
     _fx(:saem,
         () -> fit_model(fx_re_dm(), NoLimits.SAEM(; maxiters = 2, q_store_max = 2);
-            serialization = _SER))
+            serialization = _SER, rng = Random.Xoshiro(0)))
 end
 function fx_mcem()
     _fx(:mcem,
@@ -503,7 +503,7 @@ function fx_mcem()
             NoLimits.MCEM(; sampler = MH(),
                 turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
                 maxiters = 2);
-            serialization = _SER))
+            serialization = _SER, rng = Random.Xoshiro(0)))
 end
 
 # Bayesian fits (priors required). MCMC supports random effects; VI does not.

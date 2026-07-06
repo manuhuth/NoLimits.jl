@@ -277,6 +277,7 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
         constants::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple(),
         penalty::NamedTuple = NamedTuple(),
+        extra_objective = nothing,
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
@@ -401,7 +402,8 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
             end
             s
         end
-        return -total + convert(T, _penalty_value(θu, penalty))
+        return -total + convert(T, _penalty_value(θu, penalty)) +
+               (extra_objective === nothing ? zero(T) : convert(T, extra_objective(θu)))
     end
 
     # ── Bounds ───────────────────────────────────────────────────────────────

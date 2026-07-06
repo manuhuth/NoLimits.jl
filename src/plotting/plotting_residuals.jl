@@ -1,4 +1,5 @@
 export get_residuals
+export predict
 export plot_residuals
 export plot_residual_distribution
 export plot_residual_qq
@@ -661,4 +662,36 @@ function _acf_for_series(v::Vector{Float64}, max_lag::Int)
         out[lag] = num / denom
     end
     return out
+end
+
+"""
+    predict(res::FitResult, newdata; fitted_stat = mean, kwargs...)
+    predict(res::FitResult, newdata::DataModel; fitted_stat = mean, kwargs...)
+
+Population-level predictions from a fitted model on new data. The model and the
+estimated parameters are taken from `res`, and the random effects are set to
+their population value, so the predictions apply to previously unseen subjects.
+Pass `newdata` either as a `DataFrame`, which is rebuilt into a `DataModel` using
+the fitted model together with the grouping and time columns of the original fit,
+or as a ready-made `DataModel`. Returns a `DataFrame` with the individual
+identifier, the time, the observable, and the predicted response mean in the
+`prediction` column. Additional keyword arguments are forwarded to
+[`get_residuals`](@ref).
+"""
+function predict(res::FitResult, dm_new::DataModel; fitted_stat = mean, kwargs...)
+    θ = NamedTuple(get_params(res; scale = :untransformed))
+    df = get_residuals(dm_new; params = θ, residuals = [:raw],
+        fitted_stat = fitted_stat, kwargs...)
+    return DataFrame(id = df.id, time = df.time,
+        observable = df.observable, prediction = df.fitted)
+end
+
+function predict(res::FitResult, newdata; kwargs...)
+    dm_old = get_data_model(res)
+    dm_old === nothing &&
+        error("predict requires the fit to store its DataModel; refit with " *
+              "store_data_model = true.")
+    dm_new = DataModel(get_model(dm_old), newdata;
+        primary_id = dm_old.config.primary_id, time_col = dm_old.config.time_col)
+    return predict(res, dm_new; kwargs...)
 end

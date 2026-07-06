@@ -28,6 +28,7 @@ struct FormulasIR
     prop_syms::Vector{Symbol}
     time_call_syms::Vector{Symbol}
     lines::Vector{Expr}
+    crossings::Vector{CrossingSpec}
 end
 
 function FormulasIR(det_names::Vector{Symbol},
@@ -39,7 +40,20 @@ function FormulasIR(det_names::Vector{Symbol},
         prop_syms::Vector{Symbol},
         time_call_syms::Vector{Symbol})
     FormulasIR(det_names, det_exprs, obs_names, obs_exprs, call_heads,
-        var_syms, prop_syms, time_call_syms, Expr[])
+        var_syms, prop_syms, time_call_syms, Expr[], CrossingSpec[])
+end
+
+function FormulasIR(det_names::Vector{Symbol},
+        det_exprs::Vector{Expr},
+        obs_names::Vector{Symbol},
+        obs_exprs::Vector{Expr},
+        call_heads::Vector{Symbol},
+        var_syms::Vector{Symbol},
+        prop_syms::Vector{Symbol},
+        time_call_syms::Vector{Symbol},
+        lines::Vector{Expr})
+    FormulasIR(det_names, det_exprs, obs_names, obs_exprs, call_heads,
+        var_syms, prop_syms, time_call_syms, lines, CrossingSpec[])
 end
 
 """
@@ -164,6 +178,25 @@ function get_formulas_time_offsets(
         _collect_time_offsets(ex, name_set, offsets, requires_dense)
     end
     return (unique(offsets), requires_dense[])
+end
+
+# Detect a `crossing_time(...)` first-passage primitive anywhere in the formulas.
+# Such a model must be solved DENSELY (the root-find evaluates the trajectory at
+# arbitrary times); this flag is what gates dense solving to crossing models only.
+function _formulas_expr_has_call(ex, name::Symbol)
+    ex isa Expr || return false
+    (ex.head == :call && ex.args[1] === name) && return true
+    for a in ex.args
+        _formulas_expr_has_call(a, name) && return true
+    end
+    return false
+end
+
+function formulas_has_crossing(f::Formulas)
+    for ex in vcat(f.ir.det_exprs, f.ir.obs_exprs)
+        _formulas_expr_has_call(ex, :crossing_time) && return true
+    end
+    return false
 end
 
 function _formulas_collect_call_symbols(ex, out)
@@ -365,6 +398,35 @@ function _parse_formulas(block::Expr)
     return det_names, det_exprs, obs_names, obs_exprs, lines
 end
 
+# Recognize a crossing-time deterministic node
+# `name = crossing_time(:state, :threshold; tmax = T)` and return
+# `(name, state, threshold, tmax_expr)`, or `nothing` if `rhs` is not one.
+function _formulas_crossing_spec(name::Symbol, rhs)
+    (rhs isa Expr && rhs.head == :call && rhs.args[1] === :crossing_time) || return nothing
+    tmax = :nothing
+    pos = Any[]
+    for a in rhs.args[2:end]
+        if a isa Expr && a.head == :parameters
+            for kw in a.args
+                (kw isa Expr && kw.head == :kw && kw.args[1] === :tmax) &&
+                    (tmax = kw.args[2])
+            end
+        elseif a isa Expr && a.head == :kw && a.args[1] === :tmax
+            tmax = a.args[2]
+        else
+            push!(pos, a)
+        end
+    end
+    length(pos) == 2 ||
+        error("crossing_time expects `crossing_time(:state, :threshold; tmax = T)`.")
+    function _sym(x)
+        x isa QuoteNode ? x.value :
+        (x isa Symbol ? x :
+         error("crossing_time arguments must be symbol literals, e.g. :state."))
+    end
+    return (name, _sym(pos[1]), _sym(pos[2]), tmax)
+end
+
 function _formulas_build_formulas_expr(ir::FormulasIR,
         fixed_names::Vector{Symbol},
         re_names::Vector{Symbol},
@@ -378,6 +440,18 @@ function _formulas_build_formulas_expr(ir::FormulasIR,
         index_sym::Symbol,
         collect_fixed_names::Vector{Symbol} = Symbol[])
     det_exprs = copy(ir.det_exprs)
+    # crossing-time nodes are computed by the solver event callback and merged into
+    # `sol_accessors`; rewrite them to read that value. Done before the bare-state
+    # guard (crossing_time takes symbol-literal args, not x(t) calls).
+    if !isempty(ir.crossings)
+        cross_names = Set(spec.name for spec in ir.crossings)
+        for i in eachindex(ir.det_names)
+            if ir.det_names[i] in cross_names
+                det_exprs[i] = Expr(:call, :getproperty, :sol_accessors,
+                    QuoteNode(ir.det_names[i]))
+            end
+        end
+    end
     obs_exprs = copy(ir.obs_exprs)
     all_exprs = vcat(det_exprs, obs_exprs)
 
@@ -662,6 +736,15 @@ macro formulas(block)
     skip_vars = Set([:Inf, :NaN, :nothing, :missing, :true, :false])
     var_syms = Set([s for s in var_syms if !(s in skip_vars)])
 
+    crossing_specs = Expr[]
+    for i in eachindex(det_names)
+        cs = _formulas_crossing_spec(det_names[i], det_exprs[i])
+        cs === nothing && continue
+        push!(crossing_specs,
+            :(CrossingSpec($(QuoteNode(cs[1])), $(QuoteNode(cs[2])),
+                $(QuoteNode(cs[3])), $(cs[4]))))
+    end
+
     return quote
         meta = FormulasMeta($(Expr(:vect, QuoteNode.(all_names)...)),
             $(Expr(:vect, QuoteNode.(obs_names)...)))
@@ -674,7 +757,8 @@ macro formulas(block)
             $(Expr(:vect, QuoteNode.(collect(var_syms))...)),
             $(Expr(:vect, QuoteNode.(collect(prop_syms))...)),
             $(Expr(:vect, QuoteNode.(collect(time_call_syms))...)),
-            $(Expr(:vect, QuoteNode.(line_exprs)...))
+            $(Expr(:vect, QuoteNode.(line_exprs)...)),
+            $(Expr(:vect, crossing_specs...))
         )
         Formulas(meta, ir)
     end

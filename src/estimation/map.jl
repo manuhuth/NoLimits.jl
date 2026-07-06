@@ -71,10 +71,11 @@ end
 function _fit_model(dm::DataModel, method::MAP, args...;
         constants::NamedTuple = NamedTuple(),
         penalty::NamedTuple = NamedTuple(),
+        extra_objective = nothing,
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        rng::AbstractRNG = Xoshiro(0),
+        rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         store_data_model::Bool = true)
     fe = dm.model.fixed.fixed
@@ -84,7 +85,7 @@ function _fit_model(dm::DataModel, method::MAP, args...;
     has_prior ||
         error("MAP requires priors on fixed effects. Define priors in @fixedEffects (e.g., RealNumber(...; prior=Normal(...))) or use MLE instead.")
 
-    add_term = _MAPTerm(fe)
+    add_term = _combine_add_terms(_MAPTerm(fe), extra_objective)
     fit_kwargs = (constants = constants,
         penalty = penalty,
         ode_args = ode_args,

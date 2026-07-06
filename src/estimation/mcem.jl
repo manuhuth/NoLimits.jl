@@ -1186,10 +1186,11 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
         constants::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple(),
         penalty::NamedTuple = NamedTuple(),
+        extra_objective = nothing,
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        rng::AbstractRNG = Xoshiro(0),
+        rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         store_eb_modes::Bool = true,
         store_data_model::Bool = true)
@@ -1501,6 +1502,7 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
                 weights_by_batch; serialization = serialization, q_cache = q_cache)
             !isfinite(Q) && return Inf
             obj = -Q + _penalty_value(θu, penalty)
+            extra_objective === nothing || (obj += extra_objective(θu))
             !isfinite(obj) && return Inf
             if use_cache
                 obj_cache.θ[] = copy(θt_vec)

@@ -754,10 +754,11 @@ function _fit_model(dm::DataModel, method::FOCEI, args...;
         constants::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple(),
         penalty::NamedTuple = NamedTuple(),
+        extra_objective = nothing,
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        rng::AbstractRNG = Xoshiro(0),
+        rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         store_data_model::Bool = true)
     fit_kwargs = (constants = constants, constants_re = constants_re, penalty = penalty,
@@ -787,5 +788,5 @@ function _fit_model(dm::DataModel, method::FOCEI, args...;
         constants = constants, constants_re = constants_re, penalty = penalty,
         ode_args = ode_args, ode_kwargs = ode_kwargs, serialization = serialization,
         rng = rng, theta_0_untransformed = theta_0_untransformed,
-        store_data_model = store_data_model)
+        store_data_model = store_data_model, extra_objective = extra_objective)
 end

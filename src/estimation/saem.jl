@@ -2674,6 +2674,7 @@ function _saem_builtin_mean_updates(dm::DataModel,
         optim_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         penalty::NamedTuple = NamedTuple(),
+        extra_objective = nothing,
         anneal_sds::NamedTuple = NamedTuple())
     isempty(mean_params) && return NamedTuple()
     if dm.model.de.de === nothing
@@ -2704,6 +2705,7 @@ function _saem_builtin_mean_updates(dm::DataModel,
             serialization = serialization, q_cache = q_cache, anneal_sds = anneal_sds)
         !isfinite(Q) && return Inf
         obj = -Q + _penalty_value(θu, penalty)
+        extra_objective === nothing || (obj += extra_objective(θu))
         !isfinite(obj) && return Inf
         return obj
     end
@@ -2726,10 +2728,11 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
         constants::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple(),
         penalty::NamedTuple = NamedTuple(),
+        extra_objective = nothing,
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        rng::AbstractRNG = Xoshiro(0),
+        rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         store_eb_modes::Bool = true,
         store_data_model::Bool = true)
@@ -3137,6 +3140,7 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                     mean_params, cache, sample_store, transform, inv_transform;
                     optimizer = method.optimizer, optim_kwargs = method.optim_kwargs,
                     serialization = serialization, penalty = penalty,
+                    extra_objective = extra_objective,
                     anneal_sds = anneal_sds)
                 if !isempty(mean_updates)
                     iter_constants = merge(iter_constants, mean_updates)
@@ -3305,6 +3309,7 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                 end
                 !isfinite(Q) && return T(Inf)
                 obj = -Q + _penalty_value(θu, penalty)
+                extra_objective === nothing || (obj += extra_objective(θu))
                 !isfinite(obj) && return T(Inf)
                 if use_cache
                     obj_cache.θ[] = copy(θt_vec)

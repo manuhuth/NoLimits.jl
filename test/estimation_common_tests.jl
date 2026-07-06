@@ -139,8 +139,20 @@ end
     ll_thread = loglikelihood(dm, θ, η_list; serialization = EnsembleThreads())
     ll_thread_cached = loglikelihood(dm, θ, η_list; serialization = EnsembleThreads(),
         cache = build_ll_cache(dm; nthreads = Threads.maxthreadid()))
+    # Regression (single-thread MCMC crash): EnsembleThreads must also accept a
+    # SCALAR `_LLCache`, not only a Vector of per-thread caches. `build_ll_cache`
+    # with the serial default returns one `_LLCache`; passing it with
+    # EnsembleThreads previously threw `MethodError: length(::_LLCache)`. That
+    # branch is only reached when `maxthreadid() == 1` (e.g. a single-thread MCMC
+    # fit), so the suite (run multi-threaded) never exercised it. This assertion
+    # is thread-count-independent.
+    scalar_cache = build_ll_cache(dm)
+    @test scalar_cache isa NoLimits._LLCache
+    ll_thread_scalar = loglikelihood(dm, θ, η_list;
+        serialization = EnsembleThreads(), cache = scalar_cache)
     @test ll_serial == ll_thread
     @test ll_serial == ll_thread_cached
+    @test ll_serial == ll_thread_scalar
 end
 
 @testset "loglikelihood complex (NN/SoftTree/MvNormal/NPF)" begin

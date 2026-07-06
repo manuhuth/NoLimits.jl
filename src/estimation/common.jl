@@ -30,6 +30,7 @@ export get_vi_state
 export sample_posterior
 export get_loglikelihood
 export get_loglikelihood_quadrature
+export get_marginal_likelihood
 export get_laplace_random_effects
 export get_re_covariate_usage
 export compute_shrinkage
@@ -1638,6 +1639,19 @@ function get_loglikelihood_quadrature(res::FitResult;
         mc_integrator = mc_integrator, fallback = fallback)
 end
 
+"""
+    get_marginal_likelihood(dm, res; level = 3, kwargs...) -> Float64
+    get_marginal_likelihood(res; level = 3, kwargs...) -> Float64
+
+Marginal log-likelihood of a fitted random-effects model, obtained by integrating
+the joint density over each individual's random-effect distribution with adaptive
+Gauss-Hermite quadrature. This is the goodness-of-fit metric for models fit by
+Laplace, MCEM, SAEM, or GHQuadrature. It is a convenience alias for
+[`get_loglikelihood_quadrature`](@ref), which is retained for backward
+compatibility; see there for the keyword arguments and supported methods.
+"""
+const get_marginal_likelihood = get_loglikelihood_quadrature
+
 function get_re_covariate_usage(res::FitResult; dm::Union{Nothing, DataModel} = nothing)
     dm === nothing && (dm = res.data_model)
     dm === nothing &&
@@ -1661,6 +1675,15 @@ Fit a model to data using the specified estimation method.
   natural scale. Fixed parameters are removed from the optimizer state.
 - `penalty::NamedTuple = NamedTuple()`: add per-parameter quadratic penalties on the
   natural scale (not available for MCMC).
+- `extra_objective = nothing`: optional user-supplied objective term `θu -> Real`, a
+  function of the natural-scale parameters, added to the negative log-likelihood (and,
+  for gradient-based methods, differentiated via ForwardDiff). Behaves exactly like
+  `penalty`: a no-op when `nothing` (default), so existing fits are unaffected, and
+  honored by the same methods as `penalty` — `MLE`, `MAP`, `Laplace`, `FOCEI`,
+  `SAEM`, `MCEM`, `GHQuadrature`, `Pooled`, `PooledMap` (not `MCMC`/`VI`, which use
+  priors). Intended for adding likelihood terms that depend only on the population
+  parameters (β and the RE covariance D), e.g. population-average or
+  single-cell-snapshot contributions.
 - `ode_args::Tuple = ()`: extra positional arguments forwarded to the ODE solver.
 - `ode_kwargs::NamedTuple = NamedTuple()`: extra keyword arguments forwarded to the ODE solver.
 - `serialization = EnsembleThreads()`: parallelisation strategy.
@@ -1920,20 +1943,74 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
     # u0) — pack once with the promoted type, reuse for template and remake.
     T = promote_type(eltype(θ), eltype(η_ind), eltype(u0))
     p_flat = _flat_pack(compiled.vars, layout, plen, T)
-    prob = cache.prob_templates === nothing ? nothing : cache.prob_templates[idx]
-    if prob === nothing
-        saveat_use = _ll_saveat(cache, idx, ind)
-        prob = _ll_build_prob_template(f!_use, u0, ind.tspan, p_flat, cb, saveat_use)
-        if cache.prob_templates !== nothing
-            cache.prob_templates[idx] = prob
-        end
-    end
-
     u0_T = eltype(u0) === T ? u0 : T.(u0)
-    prob = remake(prob; u0 = u0_T, p = p_flat)
+    crossings = get_formulas_crossings(model.formulas.formulas)
+    if isempty(crossings)
+        prob = cache.prob_templates === nothing ? nothing : cache.prob_templates[idx]
+        if prob === nothing
+            saveat_use = _ll_saveat(cache, idx, ind)
+            prob = _ll_build_prob_template(f!_use, u0, ind.tspan, p_flat, cb, saveat_use)
+            if cache.prob_templates !== nothing
+                cache.prob_templates[idx] = prob
+            end
+        end
+        prob = remake(prob; u0 = u0_T, p = p_flat)
+        sol = _ll_ode_solve_baked(cache, prob)
+        SciMLBase.successful_retcode(sol) || return nothing
+        return get_de_accessors_builder(model.de.de)(sol, compiled)
+    end
+    # Crossing (time-to-event) models: solver-native event detection. The crossing
+    # level depends on θ, so the event callback is rebuilt each solve (not baked into
+    # the cached template); each crossing time is recorded during integration and
+    # merged into the accessors. No dense solve — events fire during ordinary stepping.
+    saveat_use = _ll_saveat(cache, idx, ind)
+    state_names = get_de_states(model.de.de)
+    n_cross = length(crossings)
+    if n_cross == 1
+        # type-stable fast path (the common case, incl. a single apoptosis event):
+        # no Vector{Any} / splat, concrete callback.
+        spec = crossings[1]
+        sidx = findfirst(==(spec.state), state_names)
+        sidx === nothing && error("crossing_time state `$(spec.state)` is not a DE state.")
+        c = _crossing_threshold(spec.threshold, θ, pre)
+        tinit = spec.tmax === nothing ? convert(T, ind.tspan[2]) : convert(T, spec.tmax)
+        r = Ref{T}(tinit)
+        fired = Ref(false)
+        cbk = SciMLBase.DiscreteCallback(_CrossingCondition(sidx, c, fired),
+            _CrossingAffect(sidx, c, r, fired); save_positions = (false, false))
+        cbset = cb === nothing ? cbk : SciMLBase.CallbackSet(cb, cbk)
+        prob = ODEProblem{true, SciMLBase.FullSpecialize}(
+            f!_use, u0_T, ind.tspan, p_flat; _ll_prob_kwargs(cbset, saveat_use)...)
+        sol = _ll_ode_solve_baked(cache, prob)
+        SciMLBase.successful_retcode(sol) || return nothing
+        acc = get_de_accessors_builder(model.de.de)(sol, compiled)
+        return merge(acc, NamedTuple{(spec.name,)}((r[],)))
+    end
+    refs = Vector{Base.RefValue{T}}(undef, n_cross)
+    cross_cbs = Vector{Any}(undef, n_cross)
+    for k in 1:n_cross
+        spec = crossings[k]
+        sidx = findfirst(==(spec.state), state_names)
+        sidx === nothing && error("crossing_time state `$(spec.state)` is not a DE state.")
+        c = _crossing_threshold(spec.threshold, θ, pre)
+        tinit = spec.tmax === nothing ? convert(T, ind.tspan[2]) : convert(T, spec.tmax)
+        r = Ref{T}(tinit)
+        refs[k] = r
+        fired = Ref(false)
+        cross_cbs[k] = SciMLBase.DiscreteCallback(
+            _CrossingCondition(sidx, c, fired), _CrossingAffect(sidx, c, r, fired);
+            save_positions = (false, false))
+    end
+    cbset = cb === nothing ? SciMLBase.CallbackSet(cross_cbs...) :
+            SciMLBase.CallbackSet(cb, cross_cbs...)
+    prob = ODEProblem{true, SciMLBase.FullSpecialize}(
+        f!_use, u0_T, ind.tspan, p_flat; _ll_prob_kwargs(cbset, saveat_use)...)
     sol = _ll_ode_solve_baked(cache, prob)
     SciMLBase.successful_retcode(sol) || return nothing
-    return get_de_accessors_builder(model.de.de)(sol, compiled)
+    acc = get_de_accessors_builder(model.de.de)(sol, compiled)
+    cross_nt = NamedTuple{Tuple(crossings[k].name for k in 1:n_cross)}(
+        Tuple(refs[k][] for k in 1:n_cross))
+    return merge(acc, cross_nt)
 end
 
 function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache)
@@ -2415,8 +2492,9 @@ function loglikelihood(dm::DataModel, θ::ComponentArray, η;
                 throw(ArgumentError("Threaded loglikelihood requires at least $(nthreads) cache entries, got $(length(cache_use))."))
             cache_use
         elseif cache_use isa _LLCache
-            build_ll_cache(
+            built = build_ll_cache(
                 dm; ode_args = ode_args, ode_kwargs = ode_kwargs, nthreads = nthreads)
+            built isa Vector ? built : [built]
         else
             built = build_ll_cache(
                 dm; ode_args = ode_args, ode_kwargs = ode_kwargs, nthreads = nthreads)

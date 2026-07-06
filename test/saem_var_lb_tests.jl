@@ -5,6 +5,7 @@ using Distributions
 using Turing
 using ComponentArrays
 using LinearAlgebra
+using Random
 
 # ── unit tests ────────────────────────────────────────────────────────────────
 
@@ -285,7 +286,7 @@ end
             t0 = 5,
             auto_var_lb = true,
             var_lb_value = 1e-5
-        ))
+        ); rng = Random.Xoshiro(0))
     θ = NoLimits.get_params(res; scale = :untransformed)
     @test Float64(θ.ω) >= 1e-5
     @test Float64(θ.σ) >= 1e-5

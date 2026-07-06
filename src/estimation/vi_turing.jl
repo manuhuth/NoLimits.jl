@@ -165,7 +165,7 @@ function _vi_unlink_draws(res::VIResult, linked::AbstractMatrix)
 end
 
 function sample_posterior(res::VIResult; n_draws::Int = 1000,
-        rng::AbstractRNG = Xoshiro(0), return_names::Bool = false)
+        rng::AbstractRNG = Random.default_rng(), return_names::Bool = false)
     n_draws >= 1 || error("n_draws must be >= 1.")
     raw = rand(rng, res.posterior, n_draws)
     mat = raw isa AbstractVector ? reshape(raw, :, 1) : Matrix(raw)
@@ -184,7 +184,7 @@ function _fit_model(dm::DataModel, method::VI, args...;
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        rng::AbstractRNG = Xoshiro(0),
+        rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         store_data_model::Bool = true)
     fit_kwargs = (constants = constants,

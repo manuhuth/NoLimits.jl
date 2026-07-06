@@ -63,6 +63,19 @@ end
 struct _NoOpTerm end
 @inline (_::_NoOpTerm)(θ) = 0.0
 
+# Combine a method's internal objective term (e.g. the MAP log-prior, or the
+# MLE no-op) with an optional user-supplied `extra_objective(θu)` term. Both are
+# functions of the natural-scale parameters θu and are summed into the objective.
+# When no extra term is supplied the base term is returned unchanged, so the
+# default path is a genuine no-op (identical results to before).
+struct _SumTerms{A, B}
+    a::A
+    b::B
+end
+@inline (s::_SumTerms)(θ) = s.a(θ) + s.b(θ)
+_combine_add_terms(base, ::Nothing) = base
+_combine_add_terms(base, extra) = _SumTerms(base, extra)
+
 function _fit_no_re(dm::DataModel, method;
         constants::NamedTuple,
         penalty::NamedTuple,
@@ -269,10 +282,11 @@ end
 function _fit_model(dm::DataModel, method::MLE, args...;
         constants::NamedTuple = NamedTuple(),
         penalty::NamedTuple = NamedTuple(),
+        extra_objective = nothing,
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        rng::AbstractRNG = Xoshiro(0),
+        rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         store_data_model::Bool = true)
     fit_kwargs = (constants = constants,
@@ -289,7 +303,7 @@ function _fit_model(dm::DataModel, method::MLE, args...;
         ode_args = ode_args,
         ode_kwargs = ode_kwargs,
         serialization = serialization,
-        add_term = _NoOpTerm(),
+        add_term = _combine_add_terms(_NoOpTerm(), extra_objective),
         theta_0_untransformed = theta_0_untransformed,
         store_data_model = store_data_model,
         fit_args = args,

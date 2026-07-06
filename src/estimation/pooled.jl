@@ -179,7 +179,7 @@ function _pooled_finite_or_nothing(f)
 end
 
 function _pooled_plugin_strategies(dm::DataModel, θ::ComponentArray;
-        mc_draws::Int = 256, rng::AbstractRNG = Xoshiro(0))
+        mc_draws::Int = 256, rng::AbstractRNG = Random.default_rng())
     model = get_model(dm)
     lp_cache = dm.re_group_info.laplace_cache
     lp_cache === nothing && error("Pooled() requires a model with random effects.")
@@ -1236,10 +1236,11 @@ end
 function _fit_model(dm::DataModel, method::Pooled, args...;
         constants::NamedTuple = NamedTuple(),
         penalty::NamedTuple = NamedTuple(),
+        extra_objective = nothing,
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        rng::AbstractRNG = Xoshiro(0),
+        rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         store_data_model::Bool = true)
     re_names = get_re_names(dm.model.random.random)
@@ -1251,7 +1252,7 @@ function _fit_model(dm::DataModel, method::Pooled, args...;
         ode_args = ode_args,
         ode_kwargs = ode_kwargs,
         serialization = serialization,
-        add_term = _NoOpTerm(),
+        add_term = _combine_add_terms(_NoOpTerm(), extra_objective),
         rng = rng,
         theta_0_untransformed = theta_0_untransformed,
         store_data_model = store_data_model,
@@ -1261,10 +1262,11 @@ end
 function _fit_model(dm::DataModel, method::PooledMap, args...;
         constants::NamedTuple = NamedTuple(),
         penalty::NamedTuple = NamedTuple(),
+        extra_objective = nothing,
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        rng::AbstractRNG = Xoshiro(0),
+        rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         store_data_model::Bool = true)
     re_names = get_re_names(dm.model.random.random)
@@ -1284,7 +1286,7 @@ function _fit_model(dm::DataModel, method::PooledMap, args...;
         ode_args = ode_args,
         ode_kwargs = ode_kwargs,
         serialization = serialization,
-        add_term = _MAPTerm(fe),
+        add_term = _combine_add_terms(_MAPTerm(fe), extra_objective),
         rng = rng,
         theta_0_untransformed = theta_0_untransformed,
         store_data_model = store_data_model,
