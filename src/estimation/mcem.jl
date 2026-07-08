@@ -1251,8 +1251,14 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
     T0 = eltype(θt_free)
 
     # Detect Q2-only free parameters (appear only in RE distributions, never in obs-side blocks).
-    q2_base_free_names = let p = _partition_q1_q2_names(dm.model, free_names)
-        p.q2
+    # With extra_objective the objective is non-separable in (β,σ) vs D, so route the whole Q2
+    # set into the joint Q1 M-step (exact joint maximizer of Q + extra).
+    q2_base_free_names = if extra_objective === nothing
+        let p = _partition_q1_q2_names(dm.model, free_names)
+            p.q2
+        end
+    else
+        Symbol[]
     end
 
     diag = _MCEMDiagnostics{T0}(Vector{AbstractVector{T0}}(),

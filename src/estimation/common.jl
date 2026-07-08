@@ -1675,13 +1675,17 @@ Fit a model to data using the specified estimation method.
   natural scale. Fixed parameters are removed from the optimizer state.
 - `penalty::NamedTuple = NamedTuple()`: add per-parameter quadratic penalties on the
   natural scale (not available for MCMC).
-- `extra_objective = nothing`: optional user-supplied objective term `θu -> Real`, a
-  function of the natural-scale parameters, added to the negative log-likelihood (and,
-  for gradient-based methods, differentiated via ForwardDiff). Behaves exactly like
-  `penalty`: a no-op when `nothing` (default), so existing fits are unaffected, and
-  honored by the same methods as `penalty` — `MLE`, `MAP`, `Laplace`, `FOCEI`,
-  `SAEM`, `MCEM`, `GHQuadrature`, `Pooled`, `PooledMap` (not `MCMC`/`VI`, which use
-  priors). Intended for adding likelihood terms that depend only on the population
+- `extra_objective = nothing`: optional user-supplied term `θu -> Real`, a function of
+  the natural-scale parameters, expressing extra log-likelihood contributions as a
+  *cost* — added to the negative log-likelihood (and, for gradient-based methods,
+  differentiated via ForwardDiff). A no-op when `nothing` (default), so existing fits
+  are unaffected. Honored by every estimator: the optimization methods (`MLE`, `MAP`,
+  `Laplace`, `FOCEI`, `GHQuadrature`, `SAEM`, `MCEM`, `Pooled`, `PooledMap`) add it to
+  the objective, and `MCMC`/`VI` add it to the Turing target via `@addlogprob!` as
+  `-extra_objective` (i.e. a log-likelihood contribution on the natural scale). Under
+  `SAEM`/`MCEM` the presence of `extra_objective` switches the RE-variance M-step from
+  the closed-form/Q2 path to a single joint numeric M-step so the term also informs the
+  RE covariance `D`. Intended for likelihood terms that depend only on the population
   parameters (β and the RE covariance D), e.g. population-average or
   single-cell-snapshot contributions.
 - `ode_args::Tuple = ()`: extra positional arguments forwarded to the ODE solver.

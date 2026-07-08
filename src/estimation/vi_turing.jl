@@ -186,6 +186,7 @@ function _fit_model(dm::DataModel, method::VI, args...;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
+        extra_objective = nothing,
         store_data_model::Bool = true)
     fit_kwargs = (constants = constants,
         constants_re = constants_re,
@@ -240,7 +241,8 @@ function _fit_model(dm::DataModel, method::VI, args...;
     priors_nt = NamedTuple{free_names_t}(Tuple(getfield(priors, n) for n in free_names))
     fname = _build_turing_model(fixed_names, free_names)
     model_fn = Base.invokelatest(getfield, @__MODULE__, fname)
-    model = Base.invokelatest(model_fn, dm, cache, serialization, priors_nt, constants)
+    model = Base.invokelatest(
+        model_fn, dm, cache, serialization, priors_nt, constants, extra_objective)
     model = _invokelatest_model(model)
 
     max_iter = Int(get(method.turing_kwargs, :max_iter, 1000))
