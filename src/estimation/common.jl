@@ -1970,12 +1970,12 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
     saveat_use = _ll_saveat(cache, idx, ind)
     state_names = get_de_states(model.de.de)
     n_cross = length(crossings)
-    if n_cross == 1
+    if n_cross == 1 && crossings[1].kind === :time
         # type-stable fast path (the common case, incl. a single apoptosis event):
         # no Vector{Any} / splat, concrete callback.
         spec = crossings[1]
         sidx = findfirst(==(spec.state), state_names)
-        sidx === nothing && error("crossing_time state `$(spec.state)` is not a DE state.")
+        sidx === nothing && error("crossing state `$(spec.state)` is not a DE state.")
         c = _crossing_threshold(spec.threshold, θ, pre)
         tinit = spec.tmax === nothing ? convert(T, ind.tspan[2]) : convert(T, spec.tmax)
         r = Ref{T}(tinit)
@@ -1990,30 +1990,46 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
         acc = get_de_accessors_builder(model.de.de)(sol, compiled)
         return merge(acc, NamedTuple{(spec.name,)}((r[],)))
     end
-    refs = Vector{Base.RefValue{T}}(undef, n_cross)
-    cross_cbs = Vector{Any}(undef, n_cross)
+    # General path: attach an event callback only for :time crossings; :rootval
+    # crossings need no callback and are read off the solved trajectory afterwards.
+    sidxs = Vector{Int}(undef, n_cross)
+    thr = Vector{Any}(undef, n_cross)
+    time_refs = Vector{Any}(undef, n_cross)   # Ref{T} for :time, `nothing` for :rootval
+    cross_cbs = Any[]
     for k in 1:n_cross
         spec = crossings[k]
         sidx = findfirst(==(spec.state), state_names)
-        sidx === nothing && error("crossing_time state `$(spec.state)` is not a DE state.")
+        sidx === nothing && error("crossing state `$(spec.state)` is not a DE state.")
         c = _crossing_threshold(spec.threshold, θ, pre)
-        tinit = spec.tmax === nothing ? convert(T, ind.tspan[2]) : convert(T, spec.tmax)
-        r = Ref{T}(tinit)
-        refs[k] = r
-        fired = Ref(false)
-        cross_cbs[k] = SciMLBase.DiscreteCallback(
-            _CrossingCondition(sidx, c, fired), _CrossingAffect(sidx, c, r, fired);
-            save_positions = (false, false))
+        sidxs[k] = sidx
+        thr[k] = c
+        if spec.kind === :time
+            tinit = spec.tmax === nothing ? convert(T, ind.tspan[2]) : convert(T, spec.tmax)
+            r = Ref{T}(tinit)
+            time_refs[k] = r
+            fired = Ref(false)
+            push!(cross_cbs,
+                SciMLBase.DiscreteCallback(_CrossingCondition(sidx, c, fired),
+                    _CrossingAffect(sidx, c, r, fired); save_positions = (false, false)))
+        else
+            time_refs[k] = nothing
+        end
     end
-    cbset = cb === nothing ? SciMLBase.CallbackSet(cross_cbs...) :
-            SciMLBase.CallbackSet(cb, cross_cbs...)
+    cbset = if isempty(cross_cbs)
+        cb
+    elseif cb === nothing
+        SciMLBase.CallbackSet(cross_cbs...)
+    else
+        SciMLBase.CallbackSet(cb, cross_cbs...)
+    end
     prob = ODEProblem{true, SciMLBase.FullSpecialize}(
         f!_use, u0_T, ind.tspan, p_flat; _ll_prob_kwargs(cbset, saveat_use)...)
     sol = _ll_ode_solve_baked(cache, prob)
     SciMLBase.successful_retcode(sol) || return nothing
     acc = get_de_accessors_builder(model.de.de)(sol, compiled)
     cross_nt = NamedTuple{Tuple(crossings[k].name for k in 1:n_cross)}(
-        Tuple(refs[k][] for k in 1:n_cross))
+        Tuple(crossings[k].kind === :time ? time_refs[k][] :
+              _crossing_rootval_from_sol(sol, sidxs[k], thr[k]) for k in 1:n_cross))
     return merge(acc, cross_nt)
 end
 

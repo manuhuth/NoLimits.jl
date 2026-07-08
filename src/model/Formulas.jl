@@ -194,7 +194,8 @@ end
 
 function formulas_has_crossing(f::Formulas)
     for ex in vcat(f.ir.det_exprs, f.ir.obs_exprs)
-        _formulas_expr_has_call(ex, :crossing_time) && return true
+        (_formulas_expr_has_call(ex, :crossing_time) ||
+         _formulas_expr_has_call(ex, :crossing_rootval)) && return true
     end
     return false
 end
@@ -398,11 +399,15 @@ function _parse_formulas(block::Expr)
     return det_names, det_exprs, obs_names, obs_exprs, lines
 end
 
-# Recognize a crossing-time deterministic node
-# `name = crossing_time(:state, :threshold; tmax = T)` and return
-# `(name, state, threshold, tmax_expr)`, or `nothing` if `rhs` is not one.
+# Recognize a crossing deterministic node
+# `name = crossing_time(:state, :threshold; tmax = T)` or
+# `name = crossing_rootval(:state, :threshold; tmax = T)` and return
+# `(name, state, threshold, tmax_expr, kind)`, or `nothing` if `rhs` is not one.
 function _formulas_crossing_spec(name::Symbol, rhs)
-    (rhs isa Expr && rhs.head == :call && rhs.args[1] === :crossing_time) || return nothing
+    (rhs isa Expr && rhs.head == :call &&
+     (rhs.args[1] === :crossing_time || rhs.args[1] === :crossing_rootval)) ||
+        return nothing
+    kind = rhs.args[1] === :crossing_rootval ? :rootval : :time
     tmax = :nothing
     pos = Any[]
     for a in rhs.args[2:end]
@@ -418,13 +423,13 @@ function _formulas_crossing_spec(name::Symbol, rhs)
         end
     end
     length(pos) == 2 ||
-        error("crossing_time expects `crossing_time(:state, :threshold; tmax = T)`.")
+        error("$(rhs.args[1]) expects `$(rhs.args[1])(:state, :threshold; tmax = T)`.")
     function _sym(x)
         x isa QuoteNode ? x.value :
         (x isa Symbol ? x :
-         error("crossing_time arguments must be symbol literals, e.g. :state."))
+         error("$(rhs.args[1]) arguments must be symbol literals, e.g. :state."))
     end
-    return (name, _sym(pos[1]), _sym(pos[2]), tmax)
+    return (name, _sym(pos[1]), _sym(pos[2]), tmax, kind)
 end
 
 function _formulas_build_formulas_expr(ir::FormulasIR,
@@ -742,7 +747,7 @@ macro formulas(block)
         cs === nothing && continue
         push!(crossing_specs,
             :(CrossingSpec($(QuoteNode(cs[1])), $(QuoteNode(cs[2])),
-                $(QuoteNode(cs[3])), $(cs[4]))))
+                $(QuoteNode(cs[3])), $(cs[4]), $(QuoteNode(cs[5])))))
     end
 
     return quote

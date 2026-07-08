@@ -55,6 +55,7 @@ const TEST_FILES = [
     "compact_show_tests.jl",
     "data_simulation_tests.jl",
     "ode_callbacks_tests.jl",
+    "crossing_tests.jl",
     "datasets_tests.jl",
     "logit_scale_parameter_tests.jl",
     "logit_scale_transform_tests.jl",

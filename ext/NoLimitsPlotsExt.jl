@@ -67,7 +67,7 @@ using NoLimits: COLOR_ACCENT, COLOR_CI, COLOR_PRIMARY, COLOR_REFERENCE, COLOR_SE
                 _resolve_observables, _resolve_plot_path, _resolve_re_names,
                 _row_random_effects_at,
                 _sample_random_effects_levels, _simulate_obs, _solve_dense_individual,
-                _standardize_re,
+                _sol_accessors_with_crossings, _standardize_re,
                 _stat_from_dist, _state_emission_marginals, _uq_density_ylabel, _uq_kde_xy,
                 _uq_merge_limits, _uq_param_indices, _uq_param_label,
                 _uq_wald_coord_transforms,

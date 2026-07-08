@@ -1264,8 +1264,8 @@ function build_plot_cache(res::FitResult;
             η_ind = η_vec[i] isa ComponentArray ? η_vec[i] : ComponentArray(η_vec[i])
             rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only = true)
             sol_accessors = dm.model.de.de === nothing ? nothing :
-                            get_de_accessors_builder(dm.model.de.de)(
-                sols[i], compiled_cache[i])
+                            _sol_accessors_with_crossings(
+                dm.model, sols[i], compiled_cache[i], θ, η_ind, ind.const_cov)
             dists_i = Vector{NamedTuple}(undef, length(obs_rows))
             hmm_priors = Dict{Symbol, Any}()
             for (j, row) in enumerate(obs_rows)
@@ -1335,8 +1335,8 @@ function build_plot_cache(dm::DataModel;
             η_ind = η_vec[i] isa ComponentArray ? η_vec[i] : ComponentArray(η_vec[i])
             rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only = true)
             sol_accessors = dm.model.de.de === nothing ? nothing :
-                            get_de_accessors_builder(dm.model.de.de)(
-                sols[i], compiled_cache[i])
+                            _sol_accessors_with_crossings(
+                dm.model, sols[i], compiled_cache[i], θ, η_ind, ind.const_cov)
             dists_i = Vector{NamedTuple}(undef, length(obs_rows))
             hmm_priors = Dict{Symbol, Any}()
             for (j, row) in enumerate(obs_rows)

@@ -1362,6 +1362,7 @@ function DataModel(model,
         amt_col::Symbol = :AMT,
         rate_col::Symbol = :RATE,
         cmt_col::Symbol = :CMT,
+        t0::Union{Nothing, Real} = 0.0,
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial())
     if primary_id === nothing
         re_groups = get_re_groups(model.random.random)
@@ -1424,8 +1425,13 @@ function DataModel(model,
         series = IndividualSeries(obs, vary, dyn)
         const_cov = _build_const_cov(cov, df, rows)
         callbacks = _build_callbacks(model, df, rows, config)
+        # Integration start defaults to `t0` (0.0) so the initial conditions are applied
+        # at t = 0 even when the first observation is later; `t0 = nothing` recovers the
+        # legacy behaviour of starting at the first data time. The lower bound is never
+        # raised above the data (extended down to `t0`, not truncated).
         if isempty(time_offsets)
-            tspan = (minimum(tvals), maximum(tvals))
+            lo = minimum(tvals)
+            tspan = (t0 === nothing ? lo : min(oftype(lo, t0), lo), maximum(tvals))
         else
             extra_min = minimum(time_offsets)
             extra_max = maximum(time_offsets)
@@ -1436,7 +1442,7 @@ function DataModel(model,
                 push!(bad_ids, id_val)
                 bad_tmin[id_val] = tmin
             end
-            tspan = (tmin, tmax)
+            tspan = (t0 === nothing ? tmin : min(oftype(tmin, t0), tmin), tmax)
         end
         re_groups = _build_re_groups(model, df, rows)
         cb_times = callbacks !== nothing ? callbacks.all_times : Float64[]

@@ -384,7 +384,8 @@ function _fit_curve_from_cache(dm::DataModel,
             model_funs = get_model_funs(dm.model),
             preDE = calculate_prede(dm.model, θ, η_ind, ind.const_cov)
         ))
-        sol_accessors = get_de_accessors_builder(dm.model.de.de)(sol, compiled)
+        sol_accessors = _sol_accessors_with_crossings(
+            dm.model, sol, compiled, θ, η_ind, ind.const_cov)
     end
 
     preds = Vector{Float64}(undef, length(x_fit))
@@ -466,7 +467,8 @@ function _collect_pred_series(dm::DataModel, obs_name::Symbol,
         sol_accessors = nothing
         if dm.model.de.de !== nothing
             sol, compiled = _solve_dense_individual(dm, ind, θ, η_ind)
-            sol_accessors = get_de_accessors_builder(dm.model.de.de)(sol, compiled)
+            sol_accessors = _sol_accessors_with_crossings(
+                dm.model, sol, compiled, θ, η_ind, ind.const_cov)
         end
 
         for (j, row) in enumerate(obs_rows)
@@ -520,7 +522,8 @@ function _collect_ipred_series(dm::DataModel, obs_name::Symbol,
         sol_accessors = nothing
         if dm.model.de.de !== nothing
             sol, compiled = _solve_dense_individual(dm, ind, θ, η_ind)
-            sol_accessors = get_de_accessors_builder(dm.model.de.de)(sol, compiled)
+            sol_accessors = _sol_accessors_with_crossings(
+                dm.model, sol, compiled, θ, η_ind, ind.const_cov)
         end
 
         for (j, row) in enumerate(obs_rows)

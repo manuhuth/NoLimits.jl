@@ -385,8 +385,8 @@ function get_residuals(res::FitResult;
                 else
                     sol, compiled = _solve_dense_individual(
                         dm, ind, θ, η_ind; ode_args = ode_args, ode_kwargs = ode_kwargs)
-                    sol_accessors_draw[d] = get_de_accessors_builder(dm.model.de.de)(
-                        sol, compiled)
+                    sol_accessors_draw[d] = _sol_accessors_with_crossings(
+                        dm.model, sol, compiled, θ, η_ind, ind.const_cov)
                 end
             end
 
@@ -514,7 +514,8 @@ function get_residuals(res::FitResult;
                     model_funs = get_model_funs(dm.model),
                     preDE = calculate_prede(dm.model, θ, η_ind, ind.const_cov)
                 ))
-                sol_accessors = get_de_accessors_builder(dm.model.de.de)(sol, compiled)
+                sol_accessors = _sol_accessors_with_crossings(
+                    dm.model, sol, compiled, θ, η_ind, ind.const_cov)
             end
 
             for obs_name in obs_list

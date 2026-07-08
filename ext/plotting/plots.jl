@@ -404,7 +404,8 @@ function plot_fits(res::FitResult;
                 compiled = nothing
                 if dm.model.de.de !== nothing
                     sol, compiled = _solve_dense_individual(dm, ind, θ, η_ind)
-                    sol_accessors = get_de_accessors_builder(dm.model.de.de)(sol, compiled)
+                    sol_accessors = _sol_accessors_with_crossings(
+                        dm.model, sol, compiled, θ, η_ind, ind.const_cov)
                 end
                 if use_dense
                     dists = plot_density ? Vector{Distribution}(undef, length(x_fit)) :
@@ -509,7 +510,8 @@ function plot_fits(res::FitResult;
                     model_funs = get_model_funs(dm.model),
                     preDE = calculate_prede(dm.model, θ, η_ind, ind.const_cov)
                 ))
-                sol_accessors = get_de_accessors_builder(dm.model.de.de)(sol, compiled)
+                sol_accessors = _sol_accessors_with_crossings(
+                    dm.model, sol, compiled, θ, η_ind, ind.const_cov)
             end
 
             n_points = length(use_dense ? x_fit : obs_rows)
@@ -681,7 +683,8 @@ function _plot_hidden_states_impl(dm::DataModel,
             sol = cache = nothing
             sol = dm.model.de.de !== nothing ?
                   _solve_dense_individual(dm, ind, θ_ind, η_ind)[1] : nothing
-            sol_accessors = get_de_accessors_builder(dm.model.de.de)(sol, compiled)
+            sol_accessors = _sol_accessors_with_crossings(
+                dm.model, sol, compiled, θ_ind, η_ind, ind.const_cov)
         end
 
         times = Float64[]
@@ -961,7 +964,8 @@ function _plot_emission_for_individual(dm::DataModel,
         )
         compiled = get_de_compiler(dm.model.de.de)(pc)
         sol = _solve_dense_individual(dm, ind, θ, η_ind)[1]
-        sol_accessors = get_de_accessors_builder(dm.model.de.de)(sol, compiled)
+        sol_accessors = _sol_accessors_with_crossings(
+            dm.model, sol, compiled, θ, η_ind, ind.const_cov)
     end
 
     vary = _varying_at(dm, ind, row_pos, row)
