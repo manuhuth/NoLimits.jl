@@ -208,7 +208,8 @@ function _simulate_obs(dm::DataModel,
         sol_accessors = nothing
         if dm.model.de.de !== nothing
             sol, compiled = _solve_dense_individual(dm, ind, θ, η_ind)
-            sol_accessors = get_de_accessors_builder(dm.model.de.de)(sol, compiled)
+            sol_accessors = _sol_accessors_with_crossings(
+                dm.model, sol, compiled, θ, η_ind, ind.const_cov)
         end
         vals = Vector{Float64}(undef, length(obs_rows))
         hmm_prev_state = 0
@@ -245,7 +246,8 @@ function _representative_dist(dm::DataModel, obs_name::Symbol, x_axis_feature)
     sol_accessors = nothing
     if dm.model.de.de !== nothing
         sol, compiled = _solve_dense_individual(dm, ind, θ, η_ind)
-        sol_accessors = get_de_accessors_builder(dm.model.de.de)(sol, compiled)
+        sol_accessors = _sol_accessors_with_crossings(
+            dm.model, sol, compiled, θ, η_ind, ind.const_cov)
     end
     vary = _varying_at(dm, ind, 1, obs_rows[1])
     if dm.model.de.de === nothing && x_axis_feature !== nothing

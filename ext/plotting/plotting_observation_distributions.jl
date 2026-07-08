@@ -110,8 +110,8 @@ function plot_observation_distributions(res::FitResult;
                         compiled = nothing
                         if dm.model.de.de !== nothing
                             sol, compiled = _solve_dense_individual(dm, ind, θ, η_ind)
-                            sol_accessors = get_de_accessors_builder(dm.model.de.de)(
-                                sol, compiled)
+                            sol_accessors = _sol_accessors_with_crossings(
+                                dm.model, sol, compiled, θ, η_ind, ind.const_cov)
                         end
                         vary = _varying_at(dm, ind, j, row)
                         η_row = _row_random_effects_at(
@@ -219,8 +219,8 @@ function plot_observation_distributions(res::FitResult;
                             model_funs = get_model_funs(dm.model),
                             preDE = calculate_prede(dm.model, θ, η_ind, ind.const_cov)
                         ))
-                        sol_accessors = get_de_accessors_builder(dm.model.de.de)(
-                            sol, compiled)
+                        sol_accessors = _sol_accessors_with_crossings(
+                            dm.model, sol, compiled, θ, η_ind, ind.const_cov)
                     end
                     dist = if cache_obs_dists && cache.obs_dists !== nothing
                         getproperty(cache.obs_dists[i][j], obs_name)
