@@ -125,13 +125,19 @@ function _build_turing_model(fixed_names::Vector{Symbol}, free_names::Vector{Sym
         Expr(:tuple, val_exprs...))
     θ_expr = :(ComponentArray($nt_expr))
     ex = quote
-        @model function $(fname)(dm, cache, serialization, priors, constants)
+        @model function $(fname)(
+                dm, cache, serialization, priors, constants, extra_objective)
             $(assigns...)
             θ = $θ_expr
             θ_re = _symmetrize_psd_params(θ, dm.model.fixed.fixed)
             ll = loglikelihood(
                 dm, θ_re, ComponentArray(); cache = cache, serialization = serialization)
             Turing.@addlogprob! ll
+            # extra_objective is a negative-log-likelihood cost (-J); @addlogprob! adds a
+            # log-density, so add +J = -extra_objective(θ_re) (θ_re is natural-scale).
+            if extra_objective !== nothing
+                Turing.@addlogprob! -extra_objective(θ_re)
+            end
         end
     end
     Core.eval(@__MODULE__, ex)
@@ -225,7 +231,7 @@ function _build_turing_model_re(
 
     ex = quote
         @model function $(fname)(dm, cache, serialization, priors, constants, re_names,
-                re_meta, fixed_maps, const_covs, const_re_info)
+                re_meta, fixed_maps, const_covs, const_re_info, extra_objective)
             $(assigns...)
             θ = $θ_expr
             θ_re = _symmetrize_psd_params(θ, dm.model.fixed.fixed)
@@ -319,6 +325,11 @@ function _build_turing_model_re(
             ll = loglikelihood(
                 dm, θ_re, η_vec; cache = cache, serialization = serialization)
             Turing.@addlogprob! ll
+            # extra_objective is a negative-log-likelihood cost (-J); @addlogprob! adds a
+            # log-density, so add +J = -extra_objective(θ_re) (θ_re is natural-scale).
+            if extra_objective !== nothing
+                Turing.@addlogprob! -extra_objective(θ_re)
+            end
         end
     end
     Core.eval(@__MODULE__, ex)
@@ -344,6 +355,7 @@ function _fit_model(dm::DataModel, method::MCMC, args...;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
+        extra_objective = nothing,
         store_data_model::Bool = true)
     fit_kwargs = (constants = constants,
         constants_re = constants_re,
@@ -393,7 +405,8 @@ function _fit_model(dm::DataModel, method::MCMC, args...;
     if isempty(re_names)
         fname = _build_turing_model(fixed_names, free_names)
         model_fn = Base.invokelatest(getfield, @__MODULE__, fname)
-        model = Base.invokelatest(model_fn, dm, cache, serialization, priors_nt, constants)
+        model = Base.invokelatest(
+            model_fn, dm, cache, serialization, priors_nt, constants, extra_objective)
     else
         fixed_maps = _normalize_constants_re(dm, constants_re)
         # Validate constants_re shape and dimensions before launching Turing.
@@ -457,7 +470,7 @@ function _fit_model(dm::DataModel, method::MCMC, args...;
         fname = _build_turing_model_re(fixed_names, free_names, re_names)
         model_fn = Base.invokelatest(getfield, @__MODULE__, fname)
         model = Base.invokelatest(model_fn, dm, cache, serialization, priors_nt, constants,
-            re_names, re_meta, fixed_maps, const_covs, const_re_info)
+            re_names, re_meta, fixed_maps, const_covs, const_re_info, extra_objective)
     end
     model = _invokelatest_model(model)
     sampler = method.sampler

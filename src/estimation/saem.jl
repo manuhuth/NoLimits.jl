@@ -2837,12 +2837,32 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
             builtin_stats_mode = :none
         end
     end
+    # `extra_objective` couples β and D through the ODE ensemble moments, so the M-step
+    # objective is no longer separable and the closed-form covariance/Q2 split is no longer
+    # exact. Disable the builtin closed-form updates so ω/σ are optimized numerically in the
+    # single joint Q1 M-step (which already adds `extra_objective`).
+    if extra_objective !== nothing
+        if builtin_stats_mode != :none
+            @info "SAEM: extra_objective present — disabling closed-form M-step; all free parameters (means, σ, ω) optimized numerically in the joint M-step."
+            builtin_stats_mode = :none
+        end
+        re_cov_params = NamedTuple()
+        re_mean_params = NamedTuple()
+        resid_var_param = NamedTuple()
+        hmm_emission_params = NamedTuple()
+    end
     has_custom_closed_form = method.saem.suffstats !== nothing &&
                              method.saem.mstep_closed_form !== nothing
     # Detect Q2-only free parameters (appear only in RE distributions, never in obs-side blocks).
     # These are optimized in a cheap separate M-step that skips ODE evaluation entirely.
-    q2_base_free_names = let p = _partition_q1_q2_names(dm.model, base_free_names)
-        p.q2
+    q2_base_free_names = if extra_objective === nothing
+        let p = _partition_q1_q2_names(dm.model, base_free_names)
+            p.q2
+        end
+    else
+        # With extra_objective the objective is non-separable in (β,σ) vs D, so route the
+        # whole Q2 set into the joint Q1 M-step (exact joint maximizer of Q + extra).
+        Symbol[]
     end
     _saem_log_closed_form_plan(
         method.saem.builtin_stats, builtin_stats_mode, builtin_cf_elig,

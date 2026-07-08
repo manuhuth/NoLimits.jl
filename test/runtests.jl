@@ -101,6 +101,7 @@ const TEST_FILES = [
     "saem_mstep_sa_on_params_tests.jl",
     "estimation_multistart_tests.jl",
     "estimation_ghquadrature_tests.jl",
+    "extra_objective_tests.jl",
     "uq_tests.jl",
     "uq_edge_cases_tests.jl",
     # ── B6: HMM / Markov / stickbreak / Enzyme ───────────────────────────────
