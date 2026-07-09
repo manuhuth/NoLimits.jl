@@ -10,11 +10,7 @@ export @fixedEffects
 export get_collect_names
 export FixedEffects
 export logprior
-export get_meta
-export get_values
-export get_bounds
 export get_transforms
-export get_extras
 export get_names
 export get_flat_names
 export get_θ0_untransformed
@@ -74,39 +70,12 @@ struct FixedEffects{E <: FixedEffectsExtras, TR <: FixedEffectsTransforms}
     extras::E
 end
 
-"""    get_meta(fe::FixedEffects) -> FixedEffectsMeta
-
-Return the metadata struct containing parameter names and flat names.
-"""
-get_meta(fe::FixedEffects) = fe.meta
-
-"""
-    get_values(fe::FixedEffects) -> FixedEffectsValues
-
-Return the initial parameter values on both the natural and transformed scales.
-"""
-get_values(fe::FixedEffects) = fe.values
-
-"""
-    get_bounds(fe::FixedEffects) -> FixedEffectsBounds
-
-Return the parameter bounds on both the natural and transformed scales.
-"""
-get_bounds(fe::FixedEffects) = fe.bounds
-
 """
     get_transforms(fe::FixedEffects) -> FixedEffectsTransforms
 
 Return the `ForwardTransform` / `InverseTransform` pair for this parameter block.
 """
 get_transforms(fe::FixedEffects) = fe.transforms
-
-"""
-    get_extras(fe::FixedEffects) -> FixedEffectsExtras
-
-Return the extras struct (priors, SE mask, model functions, raw parameter blocks).
-"""
-get_extras(fe::FixedEffects) = fe.extras
 
 """
     get_names(fe::FixedEffects) -> Vector{Symbol}
@@ -601,19 +570,6 @@ function _simplechain_model_fun(chain)
     end
 end
 
-function _collect_model_fun!(p::NNParameters, model_fun_pairs)
-    if p.chain isa SimpleChain
-        push!(model_fun_pairs, p.function_name => _simplechain_model_fun(p.chain))
-        return nothing
-    end
-    st = Lux.initialstates(Xoshiro(0), p.chain)
-    T = eltype(p.value)
-    ps_axes = _nn_axes_template(p, T)
-    push!(model_fun_pairs,
-        p.function_name => (x, θ) -> first(Lux.apply(
-            p.chain, x, ComponentArray(collect(θ), ps_axes), st)))
-end
-
 function _collect_model_fun!(p::NNParameters, model_fun_pairs, ::Type{T}) where {T}
     if p.chain isa SimpleChain
         push!(model_fun_pairs, p.function_name => _simplechain_model_fun(p.chain))
@@ -651,13 +607,6 @@ function _check_softtree_flat_layout(p::SoftTreeParameters, tree::SoftTree)
     return nothing
 end
 
-function _collect_model_fun!(p::SoftTreeParameters, model_fun_pairs)
-    tree = SoftTree(p.input_dim, p.depth, p.n_output)
-    _check_softtree_flat_layout(p, tree)
-    push!(model_fun_pairs,
-        p.function_name => (x, θ) -> tree(x, softtree_params_from_flat(collect(θ), tree)))
-end
-
 function _collect_model_fun!(p::SoftTreeParameters, model_fun_pairs, ::Type{T}) where {T}
     tree = SoftTree(p.input_dim, p.depth, p.n_output)
     _check_softtree_flat_layout(p, tree)
@@ -669,11 +618,6 @@ function _collect_model_fun!(p::SoftTreeParameters, model_fun_pairs, ::Type{T}) 
             end
             return tree(_to_type(TT, x), softtree_params_from_flat(_to_type(TT, θ), tree))
         end)
-end
-
-function _collect_model_fun!(p::SplineParameters, model_fun_pairs)
-    push!(
-        model_fun_pairs, p.function_name => (x, θ) -> bspline_eval(x, θ, p.knots, p.degree))
 end
 
 function _collect_model_fun!(p::SplineParameters, model_fun_pairs, ::Type{T}) where {T}
@@ -698,12 +642,6 @@ function _check_npf_flat_layout(p::NPFParameter)
     return nothing
 end
 
-function _collect_model_fun!(p::NPFParameter, model_fun_pairs)
-    key = Symbol("NPF_", p.name)
-    q0 = p.base_dist
-    _check_npf_flat_layout(p)
-    push!(model_fun_pairs, key => (θ) -> NormalizingPlanarFlow(θ, p.reconstructor, q0))
-end
 function _collect_model_fun!(p::NPFParameter, model_fun_pairs, ::Type{T}) where {T}
     key = Symbol("NPF_", p.name)
     q0T = _adapt_base_dist(p.base_dist, T)
@@ -738,9 +676,6 @@ function _adapt_base_dist(d::MvNormal, ::Type{T}) where {T}
     MvNormal(T.(mean(d)), Matrix{T}(cov(d)))
 end
 _adapt_base_dist(d, ::Type{T}) where {T} = d
-function _collect_model_fun!(p, model_fun_pairs)
-    return nothing
-end
 function _collect_model_fun!(p, model_fun_pairs, ::Type{T}) where {T}
     return nothing
 end

@@ -469,7 +469,7 @@ end  # @testset "GHQuadrature nodes.jl"
     end
 
     # ----------------------------------------------------------
-    # build_gaussian_re_from_batch: uses a real DataModel
+    # build_re_measure_from_batch (Gaussian path): uses a real DataModel
     # ----------------------------------------------------------
 
     # Helper: build a simple single-group model and DataModel
@@ -500,7 +500,7 @@ end  # @testset "GHQuadrature nodes.jl"
         return model, dm
     end
 
-    @testset "build_gaussian_re_from_batch: Normal RE, single batch" begin
+    @testset "build_re_measure_from_batch: Normal RE, single batch" begin
         model, dm = _make_simple_dm(1.0)
         θ = get_θ0_untransformed(model.fixed.fixed)
         _, batch_infos, const_cache = NoLimits._build_laplace_batch_infos(dm, NamedTuple())
@@ -511,7 +511,7 @@ end  # @testset "GHQuadrature nodes.jl"
         for bi in eachindex(batch_infos)
             info = batch_infos[bi]
             info.n_b == 0 && continue
-            re_m = NoLimits.build_gaussian_re_from_batch(info, θ, const_cache, dm, ll_cache)
+            re_m = NoLimits.build_re_measure_from_batch(info, θ, const_cache, dm, ll_cache)
             @test re_m.n_b == info.n_b
             @test length(re_m.μ) == info.n_b
             @test size(re_m.L) == (info.n_b, info.n_b)
@@ -521,7 +521,7 @@ end  # @testset "GHQuadrature nodes.jl"
         end
     end
 
-    @testset "build_gaussian_re_from_batch: L scales with σ_η" begin
+    @testset "build_re_measure_from_batch: L scales with σ_η" begin
         model, dm = _make_simple_dm(2.5)
         θ = get_θ0_untransformed(model.fixed.fixed)
         _, batch_infos, const_cache = NoLimits._build_laplace_batch_infos(dm, NamedTuple())
@@ -530,7 +530,7 @@ end  # @testset "GHQuadrature nodes.jl"
         for bi in eachindex(batch_infos)
             info = batch_infos[bi]
             info.n_b == 0 && continue
-            re_m = NoLimits.build_gaussian_re_from_batch(info, θ, const_cache, dm, ll_cache)
+            re_m = NoLimits.build_re_measure_from_batch(info, θ, const_cache, dm, ll_cache)
             # For Normal(0.0, σ_η=2.5): L should be [[2.5]]
             @test Matrix(re_m.L)≈2.5 * I(info.n_b) atol=1e-10
         end
@@ -579,7 +579,7 @@ end  # @testset "GHQuadrature nodes.jl"
         results = Float64[]
         for level in 1:4
             info = batch_infos[1]
-            re_m = NoLimits.build_gaussian_re_from_batch(info, θ, const_cache, dm, ll_cache)
+            re_m = NoLimits.build_re_measure_from_batch(info, θ, const_cache, dm, ll_cache)
             sgrid = NoLimits.build_sparse_grid(info.n_b, level)
             lv = NoLimits.batch_loglik_ghq(dm, info, θ, re_m, sgrid, const_cache, ll_cache)
             push!(results, lv)
@@ -607,7 +607,7 @@ end  # @testset "GHQuadrature nodes.jl"
         for bi in eachindex(batch_infos)
             info = batch_infos[bi]
             info.n_b == 0 && continue
-            re_m = NoLimits.build_gaussian_re_from_batch(info, θ, const_cache, dm, ll_cache)
+            re_m = NoLimits.build_re_measure_from_batch(info, θ, const_cache, dm, ll_cache)
             sgrid = NoLimits.build_sparse_grid(info.n_b, 2)
             lv = NoLimits.batch_loglik_ghq(dm, info, θ, re_m, sgrid, const_cache, ll_cache)
             @test lv < 0.0   # log-likelihood should be negative
@@ -1177,90 +1177,12 @@ end  # @testset "GHQuadrature LogNormal RE"
 end  # @testset "GHQuadrature Beta RE"
 
 # ============================================================
-# Phase 3: Additional 1D rules (GL, CC)
-# ============================================================
-
-@testset "Additional 1D quadrature rules" begin
-    _gl_rule = NoLimits._gl_rule
-    _cc_rule = NoLimits._cc_rule
-
-    @testset "GL rule n=1" begin
-        x, lw = _gl_rule(1)
-        @test x≈[0.0] atol=1e-14
-        @test exp(lw[1])≈2.0 atol=1e-12  # weight = interval length
-    end
-
-    @testset "GL rule n=2" begin
-        x, lw = _gl_rule(2)
-        @test sort(x)≈[-1 / sqrt(3), 1 / sqrt(3)] atol=1e-12
-        @test exp.(lw)≈[1.0, 1.0] atol=1e-12
-        @test sum(exp.(lw))≈2.0 atol=1e-12
-    end
-
-    @testset "GL weights sum to 2 for n=1..5" begin
-        for n in 1:5
-            _, lw = _gl_rule(n)
-            @test sum(exp.(lw))≈2.0 atol=1e-12
-        end
-    end
-
-    @testset "GL integrates polynomials exactly" begin
-        # GL with n points is exact for polynomials of degree ≤ 2n-1
-        for n in 2:5
-            x, lw = _gl_rule(n)
-            w = exp.(lw)
-            # ∫₋₁¹ x² dx = 2/3
-            @test sum(w .* x .^ 2)≈2 / 3 atol=1e-12
-            # ∫₋₁¹ x^(2n-1) dx = 0 (odd → 0)
-            @test abs(sum(w .* x .^ (2n - 1))) < 1e-12
-        end
-    end
-
-    @testset "CC rule n=1" begin
-        x, lw = _cc_rule(1)
-        @test sort(x)≈[-1.0, 1.0] atol=1e-14
-        @test sum(exp.(lw))≈2.0 atol=1e-12  # weights sum to interval length
-    end
-
-    @testset "CC rule n=2 (3 nodes)" begin
-        x, lw = _cc_rule(2)
-        @test sort(x)≈[-1.0, 0.0, 1.0] atol=1e-14
-        w = exp.(lw)
-        @test sum(w)≈2.0 atol=1e-12
-        # Endpoint weights 1/3, interior weight 4/3
-        idx0 = argmin(abs.(x))
-        @test w[idx0]≈4 / 3 atol=1e-12
-        @test all(abs.(w[setdiff(1:3, idx0)] .- 1 / 3) .< 1e-12)
-    end
-
-    @testset "CC weights sum to 2 for n=1..5" begin
-        for n in 1:5
-            _, lw = _cc_rule(n)
-            @test sum(exp.(lw))≈2.0 atol=1e-10
-        end
-    end
-
-    @testset "CC integrates polynomials exactly up to degree n" begin
-        for n in 2:5
-            x, lw = _cc_rule(n)
-            w = exp.(lw)
-            # ∫₋₁¹ x^k dx = 0 for k odd, 2/(k+1) for k even
-            for k in 0:n
-                exact = iseven(k) ? 2 / (k + 1) : 0.0
-                @test sum(w .* x .^ k)≈exact atol=1e-10
-            end
-        end
-    end
-end  # @testset "Additional 1D quadrature rules"
-
-# ============================================================
 # Phase 3: Anisotropic grids
 # ============================================================
 
 @testset "Anisotropic sparse grids" begin
     build_tensor_product_grid = NoLimits.build_tensor_product_grid
     get_anisotropic_grid = NoLimits.get_anisotropic_grid
-    n_anisotropic_grid_points = NoLimits.n_anisotropic_grid_points
 
     @testset "tensor product d=1×1 gives d=2 grid" begin
         sg1 = build_sparse_grid(1, 2)  # 2 points
@@ -1288,7 +1210,8 @@ end  # @testset "Additional 1D quadrature rules"
         sg_a = get_anisotropic_grid(dims, levels)
         sg_b = get_anisotropic_grid(dims, levels)  # same key → same object
         @test sg_a === sg_b
-        @test n_anisotropic_grid_points(dims, levels) == size(sg_a.nodes, 2)
+        @test size(sg_a.nodes, 2) ==
+              prod(NoLimits.n_ghq_points(d, l) for (d, l) in zip(dims, levels))
     end
 
     @testset "anisotropic fit with NamedTuple level" begin

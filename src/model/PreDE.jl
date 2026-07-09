@@ -18,8 +18,6 @@ struct PreDEMeta
     lines::Vector{Expr}
 end
 
-PreDEMeta(names::Vector{Symbol}, syms::Vector{Symbol}) = PreDEMeta(names, syms, Expr[])
-
 struct PreDEBuilder
     build::Function
 end

@@ -1,4 +1,3 @@
-export build_ode_params
 export flatten_re_names
 export flatten_re_values
 export rowsoftmax
@@ -36,24 +35,6 @@ const _ODE_VERBOSE_LOUD = pkgversion(DiffEqBase) >= v"7" ?
                           DiffEqBase.SciMLLogging.Standard() : true
 @inline _ode_verbose(v::Bool) = v ? _ODE_VERBOSE_LOUD : _ODE_VERBOSE_SILENT
 @inline _ode_verbose(v) = v   # already a verbosity object — pass through unchanged
-
-function build_ode_params(de, θ;
-        random_effects = ComponentArray(NamedTuple()),
-        constant_covariates = NamedTuple(),
-        varying_covariates = NamedTuple(),
-        helpers = NamedTuple(),
-        model_funs = NamedTuple(),
-        prede_builder = (fe, re, consts, model_funs, helpers) -> NamedTuple(),
-        inverse_transform = identity)
-    return build_de_params(de, θ;
-        random_effects = random_effects,
-        constant_covariates = constant_covariates,
-        varying_covariates = varying_covariates,
-        helpers = helpers,
-        model_funs = model_funs,
-        prede_builder = prede_builder,
-        inverse_transform = inverse_transform)
-end
 
 function flatten_re_names(name::Symbol, val)
     if val isa Number

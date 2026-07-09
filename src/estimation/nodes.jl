@@ -253,81 +253,6 @@ function n_ghq_points(dim::Int, level::Int)
 end
 
 # ---------------------------------------------------------------------------
-# Additional 1D quadrature rules
-# ---------------------------------------------------------------------------
-
-"""
-    _gl_rule(n::Int) -> (nodes::Vector{Float64}, logweights::Vector{Float64})
-
-Compute `n`-point Gauss-Legendre quadrature on [-1, 1] via the Golub-Welsch
-(Jacobi matrix eigenvalue) method.
-
-Convention: ∫₋₁¹ f(x) dx ≈ Σ exp(logweights[k]) * f(nodes[k])
-Weights sum to 2 (the interval length), so `logweights` are log of absolute
-GL weights.
-
-For n=1: single node at 0, logweight = log(2).
-"""
-function _gl_rule(n::Int)
-    if n == 1
-        return [0.0], [log(2.0)]
-    end
-    β = [k / sqrt(4.0 * k^2 - 1.0) for k in 1:(n - 1)]
-    J = SymTridiagonal(zeros(n), β)
-    F = eigen(J)
-    x = F.values                          # GL nodes on (-1, 1)
-    w = 2.0 .* F.vectors[1, :] .^ 2      # GL weights, sum to 2
-    ord = sortperm(x)
-    return x[ord], log.(w[ord])
-end
-
-"""
-    _cc_rule(n::Int) -> (nodes::Vector{Float64}, logweights::Vector{Float64})
-
-Compute `n+1`-point Clenshaw-Curtis quadrature on [-1, 1].  The nodes are the
-`n+1` Chebyshev points of the second kind: `x_j = cos(πj/n)` for `j=0,...,n`.
-Returns nodes sorted in ascending order.
-
-Convention: ∫₋₁¹ f(x) dx ≈ Σ exp(logweights[k]) * f(nodes[k])
-Weights are positive and sum to 2 (the interval length).
-
-For n=1: two-point rule (endpoints ±1, weight 1 each).
-
-Clenshaw-Curtis nodes at level n are a superset of those at all even sub-levels,
-making CC useful for adaptive / nested quadrature (Phase 4).
-"""
-function _cc_rule(n::Int)
-    @assert n>=1 "_cc_rule: n must be ≥ 1"
-
-    if n == 1
-        return [-1.0, 1.0], [log(1.0), log(1.0)]  # two endpoints, w=1 each
-    end
-
-    N = n
-    # Nodes: x_j = cos(πj/N) for j=0,...,N  (x_0=1, x_N=-1)
-    nodes_desc = [cos(π * j / N) for j in 0:N]
-
-    # Weights via the standard explicit formula (Waldvogel 2006):
-    #   w_j = (c_j / N) * (1 - Σ_{l=1}^{floor(N/2)} b_l * cos(2πlj/N) / (4l²-1))
-    # where c_j = 1 if j∈{0,N}, c_j = 2 otherwise;
-    #       b_l = 1 if 2l == N (endpoint of the sum), b_l = 2 otherwise.
-    c = [j == 0 || j == N ? 1.0 : 2.0 for j in 0:N]
-    half = N ÷ 2
-    w = zeros(N + 1)
-    for j in 0:N
-        s = 0.0
-        for l in 1:half
-            b_l = (2l == N) ? 1.0 : 2.0
-            s += b_l * cos(2π * l * j / N) / (4l^2 - 1)
-        end
-        w[j + 1] = (c[j + 1] / N) * (1.0 - s)
-    end
-
-    ord = sortperm(nodes_desc)
-    return nodes_desc[ord], log.(w[ord])
-end
-
-# ---------------------------------------------------------------------------
 # Tensor product of sparse grids (for anisotropic quadrature)
 # ---------------------------------------------------------------------------
 
@@ -415,16 +340,4 @@ function get_anisotropic_grid(dims::Vector{Int}, levels::Vector{Int})
     sg = build_tensor_product_grid(grids)
     _ANISOTROPIC_CACHE[(copy(dims), copy(levels))] = sg
     return sg
-end
-
-"""
-    n_anisotropic_grid_points(dims::Vector{Int}, levels::Vector{Int}) -> Int
-
-Return the total number of quadrature points in the tensor-product anisotropic
-grid: equal to `prod(n_ghq_points(dims[k], levels[k]) for k)`.
-
-Useful for checking grid sizes before fitting with anisotropic levels.
-"""
-function n_anisotropic_grid_points(dims::Vector{Int}, levels::Vector{Int})
-    return size(get_anisotropic_grid(dims, levels).nodes, 2)
 end
