@@ -1,4 +1,7 @@
 using NormalizingFlows, Bijectors, FunctionChains, Functors, Optimisers, Distributions
+# Pin-only: Roots is transitive via Bijectors' planar-layer inverse (find_alpha).
+# Roots 3.0.1+ regressed find_zero convergence (~27% failure); see [compat].
+import Roots
 import StaticArrays
 import Random: AbstractRNG, default_rng
 import Statistics
