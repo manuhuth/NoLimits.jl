@@ -520,12 +520,17 @@ function _build_laplace_batch_infos(dm::DataModel, constants_re::NamedTuple)
     re_names = cache.re_names
     isempty(re_names) && return pairing, _LaplaceBatchInfo[], const_cache
     batch_infos = Vector{_LaplaceBatchInfo}(undef, length(pairing.batches))
+    # ponytail: one shared level→batch-local-index map per RE instead of a fresh
+    # length-nlevels array per batch. Level ids partition across batches (union-find
+    # groups every individual sharing a level), so batches fill disjoint slots and
+    # never collide. Drops construction from O(n_batches × nlevels) to O(nlevels).
+    shared_lti = [zeros(Int, length(cache.re_index[ri].levels))
+                  for ri in eachindex(re_names)]
     for (bi, inds) in enumerate(pairing.batches)
         total_dim = 0
         re_info = Vector{_LaplaceREInfo}(undef, length(re_names))
         for (ri, re) in enumerate(re_names)
-            nlevels = length(cache.re_index[ri].levels)
-            level_to_index = zeros(Int, nlevels)
+            level_to_index = shared_lti[ri]
             levels = Int[]
             reps = Int[]
             for i in inds
