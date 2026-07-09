@@ -450,9 +450,12 @@ function _pred_re_per_individual(dm::DataModel, θ::ComponentArray)
     return η_vec
 end
 
-# Collect (dv, pred, sigma_pred) across all non-missing observations using η_pop.
-function _collect_pred_series(dm::DataModel, obs_name::Symbol,
-        θ::ComponentArray, η_pop::Vector)
+# Collect (dv, pred[, sigma]) across all non-missing observations. With
+# `want_sigma`, also collects the predictive std and keeps only observations whose
+# std is finite and positive (population-prediction path); without it, only the
+# mean is collected (individual-prediction/EBE path).
+function _collect_series(dm::DataModel, obs_name::Symbol,
+        θ::ComponentArray, η::Vector; want_sigma::Bool)
     dv_all = Float64[]
     pred_all = Float64[]
     sigma_all = Float64[]
@@ -461,7 +464,7 @@ function _collect_pred_series(dm::DataModel, obs_name::Symbol,
         ind = dm.individuals[i]
         obs_rows = dm.row_groups.obs_rows[i]
         y_series = getfield(ind.series.obs, obs_name)
-        η_ind = η_pop[i]
+        η_ind = η[i]
         rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only = true)
 
         sol_accessors = nothing
@@ -491,65 +494,32 @@ function _collect_pred_series(dm::DataModel, obs_name::Symbol,
                 NaN
             end
             isfinite(pred_val) || continue
-            sigma_val = try
-                Float64(std(dist))
-            catch
-                NaN
+            if want_sigma
+                sigma_val = try
+                    Float64(std(dist))
+                catch
+                    NaN
+                end
+                (isfinite(sigma_val) && sigma_val > 0) || continue
+                push!(sigma_all, sigma_val)
             end
-            (isfinite(sigma_val) && sigma_val > 0) || continue
 
             push!(dv_all, y)
             push!(pred_all, pred_val)
-            push!(sigma_all, sigma_val)
         end
     end
     return dv_all, pred_all, sigma_all
 end
 
-# Collect (dv, ipred) across all non-missing observations using EBEs.
+# (dv, pred, sigma_pred) using η_pop.
+function _collect_pred_series(dm::DataModel, obs_name::Symbol,
+        θ::ComponentArray, η_pop::Vector)
+    return _collect_series(dm, obs_name, θ, η_pop; want_sigma = true)
+end
+
+# (dv, ipred) using EBEs.
 function _collect_ipred_series(dm::DataModel, obs_name::Symbol,
         θ::ComponentArray, η_ebe::Vector)
-    dv_all = Float64[]
-    ipred_all = Float64[]
-
-    for i in eachindex(dm.individuals)
-        ind = dm.individuals[i]
-        obs_rows = dm.row_groups.obs_rows[i]
-        y_series = getfield(ind.series.obs, obs_name)
-        η_ind = η_ebe[i]
-        rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only = true)
-
-        sol_accessors = nothing
-        if dm.model.de.de !== nothing
-            sol, compiled = _solve_dense_individual(dm, ind, θ, η_ind)
-            sol_accessors = _sol_accessors_with_crossings(
-                dm.model, sol, compiled, θ, η_ind, ind.const_cov)
-        end
-
-        for (j, row) in enumerate(obs_rows)
-            yj = y_series[j]
-            (yj === missing || !(yj isa Real)) && continue
-            y = Float64(yj)
-            isfinite(y) || continue
-
-            vary = _varying_at(dm, ind, j, row)
-            η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only = true)
-            obs_nt = sol_accessors === nothing ?
-                     calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
-                     calculate_formulas_obs(
-                dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
-            dist = getproperty(obs_nt, obs_name)
-
-            ipred_val = try
-                Float64(mean(dist))
-            catch
-                NaN
-            end
-            isfinite(ipred_val) || continue
-
-            push!(dv_all, y)
-            push!(ipred_all, ipred_val)
-        end
-    end
+    dv_all, ipred_all, _ = _collect_series(dm, obs_name, θ, η_ebe; want_sigma = false)
     return dv_all, ipred_all
 end
