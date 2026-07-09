@@ -81,10 +81,13 @@ the mathematical foundations, see [NLME Methodology](nlme-methodology.md).
 If you use NoLimits.jl in your research, please cite the software:
 
 ```bibtex
-@software{NoLimits_jl_2026,
-  title  = {{NoLimits.jl}},
-  author = {Huth, Manuel and Arruda, Jonas and Peiter, Clemens and Gusinow, Roy and Schmid, Nina and Hasenauer, Jan},
-  year   = {2026},
-  url    = {https://github.com/manuhuth/NoLimits.jl}
+@misc{huth2026nolimitsjlflexiblecomposablenonlinear,
+  title         = {NoLimits.jl: Flexible and Composable Nonlinear Mixed-Effects Modeling in Julia},
+  author        = {Manuel Huth and Jonas Arruda and Nina Schmid and Roy Gusinow and Vincent Wieland and Clemens Peiter and Jan Hasenauer},
+  year          = {2026},
+  eprint        = {2606.24427},
+  archivePrefix = {arXiv},
+  primaryClass  = {stat.CO},
+  url           = {https://arxiv.org/abs/2606.24427}
 }
 ```
