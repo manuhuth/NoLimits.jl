@@ -102,6 +102,20 @@ end
         @test isapprox(complete_data_loglikelihood(res; eta = :ebe), got; rtol = 1e-10)
     end
 
+    @testset ":ebe computed from dm + θ (no fit result)" begin
+        res = fit_model(dm, NoLimits.Laplace())
+        θhat = get_params(res; scale = :untransformed)
+        from_res = complete_data_loglikelihood(dm, res; eta = :ebe)
+        # No res: EBEs are recomputed at θhat and must match the fit's modes.
+        computed = complete_data_loglikelihood(dm, θhat; eta = :ebe)
+        @test isapprox(computed, from_res; rtol = 1e-4)
+        # optimizer options are accepted and customizable
+        opts = NoLimits._default_ebe_options()
+        @test isapprox(
+            complete_data_loglikelihood(dm, θhat; eta = :ebe, ebe_options = opts),
+            computed; rtol = 1e-8)
+    end
+
     @testset "invalid eta is rejected" begin
         # top-level key must be an RE name, not a fixed-effect / mean name
         @test_throws ErrorException complete_data_loglikelihood(

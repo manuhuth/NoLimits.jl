@@ -1693,8 +1693,9 @@ grouping level. With no random effects it reduces to the population log-likeliho
   `(; η = (; s1 = 0.2, s2 = -0.1))`;
 - `:mean` — the prior mean of each level's random-effect distribution (median/zero
   fallback when the mean is undefined);
-- `:ebe` — empirical-Bayes estimates from a fit result (requires `res`, or one of the
-  `FitResult` methods).
+- `:ebe` — empirical-Bayes estimates. Taken from `res` when a fit result is given,
+  otherwise computed at `θ` by maximizing each level's posterior mode; the EBE optimizer
+  is set by `ebe_options::EBEOptions` (defaults to the `Laplace()` EBE settings).
 
 `individuals` restricts the sum to a subset (a single id or a vector); both the data and
 the prior terms are then taken only over the selected individuals and their levels.
@@ -1708,6 +1709,7 @@ function complete_data_loglikelihood(dm::DataModel, θ::ComponentArray;
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial(),
+        ebe_options::Union{Nothing, EBEOptions} = nothing,
         rng::AbstractRNG = Random.default_rng())
     re = dm.model.random.random
     re_names = get_re_names(re)
@@ -1736,8 +1738,6 @@ function complete_data_loglikelihood(dm::DataModel, θ::ComponentArray;
         eta in (:mean, :ebe) ||
             error("eta must be :mean, :ebe, or a NamedTuple keyed by a random-effect " *
                   "name; got :$(eta).")
-        eta === :ebe && res === nothing &&
-            error(":ebe requires a fit result; call complete_data_loglikelihood(dm, res).")
     elseif eta isa NamedTuple
         for k in keys(eta)
             k in re_names ||
@@ -1774,7 +1774,18 @@ function complete_data_loglikelihood(dm::DataModel, θ::ComponentArray;
 
     fixed_map = isempty(constants_re) ? nothing : _normalize_constants_re(dm, constants_re)
     ebe_map = if eta === :ebe
-        nt = get_random_effects(dm, res; flatten = false)
+        # From a fit result if given; otherwise compute the EBEs at θ (same machinery
+        # get_random_effects uses to recompute modes), optimizer via `ebe_options`.
+        nt = if res !== nothing
+            get_random_effects(dm, res; flatten = false)
+        else
+            opts = ebe_options === nothing ? _default_ebe_options() : ebe_options
+            ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+                serialization = EnsembleSerial(), force_saveat = true)
+            bstars, batch_infos = _compute_bstars(dm, θs, constants_re, ll_cache, opts, rng)
+            _re_dataframes_from_bstars(dm, batch_infos, bstars;
+                constants_re = constants_re, flatten = false, include_constants = true)
+        end
         map(re_names) do rn
             df = getfield(nt, rn)
             idc = dm.config.primary_id
