@@ -11,9 +11,9 @@ Overview
 Parameter estimates
   parameter      Estimate
   -----------------------
-  phi1             31.232
+  phi1            31.2320
   log_vmax         5.0352
-  phi3            639.912
+  phi3           639.9120
   omega            0.1671
   sigma            0.1125
 

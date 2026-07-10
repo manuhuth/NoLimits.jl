@@ -6,14 +6,14 @@ Overview
   inference                           : bayesian
   scale                               : natural
   objective                           : 0.2621
-  interval level                      : 0.95
+  interval level                      : 0.9500
   parameters shown (reported / total) : 3 / 3
 
 Parameter uncertainty summary
   parameter      Estimate     CrI Lower     CrI Upper
   -------------------------------------
   a               -0.0092       -0.1121        0.0932
-  b                 0.313        0.1727         0.462
+  b                0.3130        0.1727        0.4620
   sigma            0.1736        0.1156        0.2685
 
 Outcome data coverage

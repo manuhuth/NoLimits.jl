@@ -26,7 +26,7 @@ Random-effect distribution types
 
 Individual design diagnostics
   individuals with one observation              : 0
-  global observed time range                    : 0.0 to 24.65
+  global observed time range                    : 0.0000 to 24.6500
   unique observed time points                   : 78
   duplicate (ID, time) observation rows         : 0
   monotonic-time violations (observation order) : 0
@@ -34,22 +34,22 @@ Individual design diagnostics
 Observations per individual
   metric       n          mean            sd           min           q25        median           q75           max
   ----------------------------------------------------------------------------------------------------------------
-  count       12          11.0           0.0          11.0          11.0          11.0          11.0          11.0
+  count       12       11.0000        0.0000       11.0000       11.0000       11.0000       11.0000       11.0000
 
 Time span per individual
   metric       n          mean            sd           min           q25        median           q75           max
   ----------------------------------------------------------------------------------------------------------------
-  span        12       24.1992        0.2439          23.7         24.11        24.195        24.355         24.65
+  span        12       24.1992        0.2439       23.7000       24.1100       24.1950       24.3550       24.6500
 
 Median sampling interval per individual
   metric          n          mean            sd           min           q25        median           q75           max
   -------------------------------------------------------------------------------------------------------------------
-  median_dt      12        1.5092        0.0277         1.445        1.4975        1.5075        1.5312          1.55
+  median_dt      12        1.5092        0.0277        1.4450        1.4975        1.5075        1.5312        1.5500
 
 Outcome descriptive statistics (observation rows)
   Variable       n          mean            sd           min           q25        median           q75           max
   ------------------------------------------------------------------------------------------------------------------
-  y            132        4.9605        2.8564           0.0        2.8775         5.275          7.14          11.4
+  y            132        4.9605        2.8564        0.0000        2.8775        5.2750        7.1400       11.4000
 
 Declared covariates
   name  kind               columns
@@ -60,13 +60,13 @@ Declared covariates
 Covariate descriptive statistics (observation rows)
   Variable       n          mean            sd           min           q25        median           q75           max
   ------------------------------------------------------------------------------------------------------------------
-  t.t          132        5.8946        6.8997           0.0         0.595          3.53           9.0         24.65
-  d.d          132      315.4398       14.3601        267.84       319.365        319.84       319.994        320.65
+  t.t          132        5.8946        6.8997        0.0000        0.5950        3.5300        9.0000       24.6500
+  d.d          132      315.4398       14.3601      267.8400      319.3650      319.8400      319.9940      320.6500
 
 Per-random-effect summary
   random effect  group  dist        levels  rows/level min        median           max
   ----------------------------------------------------------------------------------
-  etaA1          ID     MvNormal        12            11.0          11.0          11.0
-  etaA2          ID     MvNormal        12            11.0          11.0          11.0
-  etaC1          ID     MvNormal        12            11.0          11.0          11.0
-  etaC2          ID     MvNormal        12            11.0          11.0          11.0
+  etaA1          ID     MvNormal        12         11.0000       11.0000       11.0000
+  etaA2          ID     MvNormal        12         11.0000       11.0000       11.0000
+  etaC1          ID     MvNormal        12         11.0000       11.0000       11.0000
+  etaC2          ID     MvNormal        12         11.0000       11.0000       11.0000

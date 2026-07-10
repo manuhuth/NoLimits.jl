@@ -6,16 +6,16 @@ Overview
   inference                           : frequentist
   scale                               : natural
   objective                           : -
-  interval level                      : 0.95
+  interval level                      : 0.9500
   parameters shown (reported / total) : 7 / 7
 
 Parameter uncertainty summary
   parameter      Estimate    Std. Error      CI Lower      CI Upper
   ---------------------------------------------------
   beta0           -0.0769        0.2511       -0.5655        0.3351
-  beta_1           0.5199         0.404       -0.2619        1.1926
+  beta_1           0.5199        0.4040       -0.2619        1.1926
   beta_2          -0.0385        0.3491       -0.6245        0.6125
-  beta_3          -0.2307        0.2097       -0.6067         0.189
+  beta_3          -0.2307        0.2097       -0.6067        0.1890
   beta_4          -0.0428        0.0284       -0.1046        0.0077
   beta_5          -0.0315        0.0379       -0.1057        0.0322
   omega            0.7901        0.4303        0.3728        1.9309

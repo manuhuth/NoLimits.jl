@@ -26,7 +26,7 @@ Random-effect distribution types
 
 Individual design diagnostics
   individuals with one observation              : 0
-  global observed time range                    : 0.0 to 168.0
+  global observed time range                    : 0.0000 to 168.0000
   unique observed time points                   : 6
   duplicate (ID, time) observation rows         : 0
   monotonic-time violations (observation order) : 0
@@ -34,22 +34,22 @@ Individual design diagnostics
 Observations per individual
   metric       n          mean            sd           min           q25        median           q75           max
   ----------------------------------------------------------------------------------------------------------------
-  count       50           6.0           0.0           6.0           6.0           6.0           6.0           6.0
+  count       50        6.0000        0.0000        6.0000        6.0000        6.0000        6.0000        6.0000
 
 Time span per individual
   metric       n          mean            sd           min           q25        median           q75           max
   ----------------------------------------------------------------------------------------------------------------
-  span        50         168.0           0.0         168.0         168.0         168.0         168.0         168.0
+  span        50      168.0000        0.0000      168.0000      168.0000      168.0000      168.0000      168.0000
 
 Median sampling interval per individual
   metric          n          mean            sd           min           q25        median           q75           max
   -------------------------------------------------------------------------------------------------------------------
-  median_dt      50          28.0           0.0          28.0          28.0          28.0          28.0          28.0
+  median_dt      50       28.0000        0.0000       28.0000       28.0000       28.0000       28.0000       28.0000
 
 Outcome descriptive statistics (observation rows)
   Variable       n          mean            sd           min           q25        median           q75           max
   ------------------------------------------------------------------------------------------------------------------
-  Log_VL       300         2.378        1.0243           1.7           1.7         1.885        2.6525          6.28
+  Log_VL       300        2.3780        1.0243        1.7000        1.7000        1.8850        2.6525        6.2800
 
 Declared covariates
   name  kind       columns
@@ -59,12 +59,12 @@ Declared covariates
 Covariate descriptive statistics (observation rows)
   Variable        n          mean            sd           min           q25        median           q75           max
   -------------------------------------------------------------------------------------------------------------------
-  Time.Time     300       74.6667       55.2167           0.0          28.0          70.0         112.0         168.0
+  Time.Time     300       74.6667       55.2167        0.0000       28.0000       70.0000      112.0000      168.0000
 
 Per-random-effect summary
   random effect  group  dist         levels  rows/level min        median           max
   -----------------------------------------------------------------------------------
-  A_i            ID     LogNormal        50             6.0           6.0           6.0
-  B_i            ID     LogNormal        50             6.0           6.0           6.0
-  k1_i           ID     LogNormal        50             6.0           6.0           6.0
-  k2_i           ID     LogNormal        50             6.0           6.0           6.0
+  A_i            ID     LogNormal        50          6.0000        6.0000        6.0000
+  B_i            ID     LogNormal        50          6.0000        6.0000        6.0000
+  k1_i           ID     LogNormal        50          6.0000        6.0000        6.0000
+  k2_i           ID     LogNormal        50          6.0000        6.0000        6.0000

@@ -4,22 +4,22 @@ Overview
   method                              : laplace
   inference                           : frequentist
   scale                               : natural
-  objective                           : 261.9148
-  iterations                          : 49
+  objective                           : 289.8863
+  iterations                          : 0
   parameters shown (reported / total) : 9 / 9
 
 Parameter estimates
   parameter      Estimate
   -----------------------
-  beta_A           8.9221
-  beta_B          -6.6133
-  beta_k1         -2.5989
-  beta_k2          -5.934
-  omega_A        5.928e-8
-  omega_B          0.0057
-  omega_k1         0.3952
-  omega_k2         0.0458
-  sigma            0.6915
+  beta_A           7.7584
+  beta_B           3.0657
+  beta_k1         -2.7412
+  beta_k2         -1.2518
+  omega_A          0.0172
+  omega_B          0.1336
+  omega_k1         0.7766
+  omega_k2         0.3550
+  sigma            0.8714
 
 Outcome data coverage
   outcome       n_obs   n_missing
@@ -30,7 +30,7 @@ Outcome data coverage
 Empirical Bayes random effects summary (across RE levels)
   random effect       n          mean            sd           q25        median           q75
   ---------------------------------------------------------------------------
-  A_i                50     7496.0306     1.171e-10     7496.0306     7496.0306     7496.0306
-  B_i                50        0.0013     9.694e-13        0.0013        0.0013        0.0013
-  k1_i               50        0.0793        0.0283        0.0541        0.0721        0.1071
-  k2_i               50        0.0026     3.523e-11        0.0026        0.0026        0.0026
+  A_i                50     2340.6830        0.5253     2340.3081     2340.7247     2341.0239
+  B_i                50       21.0710        0.0017       21.0699       21.0710       21.0722
+  k1_i               50        0.0668        0.0317        0.0395        0.0571        0.0940
+  k2_i               50        0.2521      8.806e-6        0.2521        0.2521        0.2521

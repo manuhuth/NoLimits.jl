@@ -23,7 +23,7 @@ Random-effect distribution types
 
 Individual design diagnostics
   individuals with one observation              : 0
-  global observed time range                    : 118.0 to 1582.0
+  global observed time range                    : 118.0000 to 1582.0000
   unique observed time points                   : 7
   duplicate (ID, time) observation rows         : 0
   monotonic-time violations (observation order) : 0
@@ -31,22 +31,22 @@ Individual design diagnostics
 Observations per individual
   metric       n          mean            sd           min           q25        median           q75           max
   ----------------------------------------------------------------------------------------------------------------
-  count        5           7.0           0.0           7.0           7.0           7.0           7.0           7.0
+  count        5        7.0000        0.0000        7.0000        7.0000        7.0000        7.0000        7.0000
 
 Time span per individual
   metric       n          mean            sd           min           q25        median           q75           max
   ----------------------------------------------------------------------------------------------------------------
-  span         5        1464.0           0.0        1464.0        1464.0        1464.0        1464.0        1464.0
+  span         5     1464.0000        0.0000     1464.0000     1464.0000     1464.0000     1464.0000     1464.0000
 
 Median sampling interval per individual
   metric          n          mean            sd           min           q25        median           q75           max
   -------------------------------------------------------------------------------------------------------------------
-  median_dt       5         218.5           0.0         218.5         218.5         218.5         218.5         218.5
+  median_dt       5      218.5000        0.0000      218.5000      218.5000      218.5000      218.5000      218.5000
 
 Outcome descriptive statistics (observation rows)
   Variable            n          mean            sd           min           q25        median           q75           max
   -----------------------------------------------------------------------------------------------------------------------
-  circumference      35      115.8571        56.661          30.0          65.5         115.0         161.5         214.0
+  circumference      35      115.8571       56.6610       30.0000       65.5000      115.0000      161.5000      214.0000
 
 Declared covariates
   name  kind       columns
@@ -56,4 +56,4 @@ Declared covariates
 Covariate descriptive statistics (observation rows)
   Variable       n          mean            sd           min           q25        median           q75           max
   ------------------------------------------------------------------------------------------------------------------
-  age.age       35      922.1429       484.787         118.0         484.0        1004.0        1372.0        1582.0
+  age.age       35      922.1429      484.7870      118.0000      484.0000     1004.0000     1372.0000     1582.0000

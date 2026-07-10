@@ -14,7 +14,7 @@ Parameter estimates
   a              192.6876
   k                0.0028
   t0             728.7564
-  σ                22.348
+  σ               22.3480
 
 Outcome data coverage
   outcome             n_obs   n_missing

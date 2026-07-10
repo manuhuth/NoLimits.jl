@@ -23,7 +23,7 @@ Random-effect distribution types
 
 Individual design diagnostics
   individuals with one observation              : 0
-  global observed time range                    : 1.0 to 4.0
+  global observed time range                    : 1.0000 to 4.0000
   unique observed time points                   : 4
   duplicate (ID, time) observation rows         : 0
   monotonic-time violations (observation order) : 0
@@ -31,22 +31,22 @@ Individual design diagnostics
 Observations per individual
   metric       n          mean            sd           min           q25        median           q75           max
   ----------------------------------------------------------------------------------------------------------------
-  count       59           4.0           0.0           4.0           4.0           4.0           4.0           4.0
+  count       59        4.0000        0.0000        4.0000        4.0000        4.0000        4.0000        4.0000
 
 Time span per individual
   metric       n          mean            sd           min           q25        median           q75           max
   ----------------------------------------------------------------------------------------------------------------
-  span        59           3.0           0.0           3.0           3.0           3.0           3.0           3.0
+  span        59        3.0000        0.0000        3.0000        3.0000        3.0000        3.0000        3.0000
 
 Median sampling interval per individual
   metric          n          mean            sd           min           q25        median           q75           max
   -------------------------------------------------------------------------------------------------------------------
-  median_dt      59           1.0           0.0           1.0           1.0           1.0           1.0           1.0
+  median_dt      59        1.0000        0.0000        1.0000        1.0000        1.0000        1.0000        1.0000
 
 Outcome descriptive statistics (observation rows)
   Variable       n          mean            sd           min           q25        median           q75           max
   ------------------------------------------------------------------------------------------------------------------
-  seizures     236        8.2627       12.3302           0.0          2.75           4.0           9.0         102.0
+  seizures     236        8.2627       12.3302        0.0000        2.7500        4.0000        9.0000      102.0000
 
 Declared covariates
   name      kind             columns
@@ -57,14 +57,14 @@ Declared covariates
 Covariate descriptive statistics (observation rows)
   Variable                    n          mean            sd           min           q25        median           q75           max
   -------------------------------------------------------------------------------------------------------------------------------
-  period_f.period_f         236           2.5         1.118           1.0          1.75           2.5          3.25           4.0
+  period_f.period_f         236        2.5000        1.1180        1.0000        1.7500        2.5000        3.2500        4.0000
   x.base_log                236        3.2071        0.7117        1.9459        2.5649        3.1355        3.7377        5.0239
   x.age_log                 236        3.3561        0.2141        2.9444        3.1781        3.3673        3.4965        3.7612
-  x.trt_active              236        0.5254        0.4994           0.0           0.0           1.0           1.0           1.0
-  x.period_centered         236           1.5         1.118           0.0          0.75           1.5          2.25           3.0
-  x.trt_period_centered     236        0.7881        1.1036           0.0           0.0           0.0           2.0           3.0
+  x.trt_active              236        0.5254        0.4994        0.0000        0.0000        1.0000        1.0000        1.0000
+  x.period_centered         236        1.5000        1.1180        0.0000        0.7500        1.5000        2.2500        3.0000
+  x.trt_period_centered     236        0.7881        1.1036        0.0000        0.0000        0.0000        2.0000        3.0000
 
 Per-random-effect summary
   random effect  group    dist      levels  rows/level min        median           max
   ----------------------------------------------------------------------------------
-  eta            Subject  Normal        59             4.0           4.0           4.0
+  eta            Subject  Normal        59          4.0000        4.0000        4.0000

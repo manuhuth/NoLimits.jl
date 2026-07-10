@@ -15,7 +15,7 @@ Parameter estimates
   log_vmax         5.0339
   phi3           639.8539
   omega            0.1719
-  sigma             0.118
+  sigma            0.1180
 
 Outcome data coverage
   outcome             n_obs   n_missing

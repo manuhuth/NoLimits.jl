@@ -13,7 +13,7 @@ Parameter estimates
   -----------------------
   beta0           -1.1335
   beta_1           0.6983
-  beta_2            0.143
+  beta_2           0.1430
   beta_3          -0.2572
   beta_4          -0.0464
   beta_5          -0.0181
@@ -29,4 +29,4 @@ Outcome data coverage
 Empirical Bayes random effects summary (across RE levels)
   random effect       n          mean            sd           q25        median           q75
   ---------------------------------------------------------------------------
-  eta                59        0.2344        0.5379       -0.0228        0.2442          0.43
+  eta                59        0.2344        0.5379       -0.0228        0.2442        0.4300

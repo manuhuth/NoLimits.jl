@@ -12,7 +12,7 @@ Parameter estimates
   parameter      Estimate
   -----------------------
   phi1            31.1846
-  log_vmax          5.035
+  log_vmax         5.0350
   phi3           639.2453
   omega            0.1615
   sigma            0.1054

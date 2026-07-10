@@ -6,7 +6,7 @@ Overview
   inference                           : frequentist
   scale                               : natural
   objective                           : -645.9053
-  interval level                      : 0.95
+  interval level                      : 0.9500
   parameters shown (reported / total) : 8 / 8
 
 Parameter uncertainty summary
@@ -14,7 +14,7 @@ Parameter uncertainty summary
   ---------------------------------------------------
   beta0           -1.1335        1.8818       -4.5512        3.0523
   beta_1           0.6983        0.2004        0.2894        1.0615
-  beta_2            0.143         0.487       -0.8916        1.0095
+  beta_2           0.1430        0.4870       -0.8916        1.0095
   beta_3          -0.2572        0.2114       -0.6218        0.1798
   beta_4          -0.0464        0.0451       -0.1395        0.0356
   beta_5          -0.0181        0.0613       -0.1276        0.0905
@@ -30,4 +30,4 @@ Outcome data coverage
 Empirical Bayes random effects summary (across RE levels)
   random effect       n          mean            sd           q25        median           q75
   ---------------------------------------------------------------------------
-  eta                59        0.2344        0.5379       -0.0228        0.2442          0.43
+  eta                59        0.2344        0.5379       -0.0228        0.2442        0.4300

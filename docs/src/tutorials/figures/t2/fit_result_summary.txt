@@ -4,20 +4,20 @@ Overview
   method                              : mcem
   inference                           : frequentist
   scale                               : natural
-  objective                           : -145.1806
+  objective                           : -145.5518
   iterations                          : 12
   parameters shown (reported / total) : 7 / 7
 
 Parameter estimates
   parameter      Estimate
   -----------------------
-  tka              0.4527
-  tcl              1.0076
-  tv               3.4566
-  omega1           0.4089
-  omega2           0.0708
-  omega3            0.019
-  sigma_eps        0.6943
+  tka              0.4488
+  tcl              1.0094
+  tv               3.4532
+  omega1           0.3954
+  omega2           0.0710
+  omega3           0.0186
+  sigma_eps        0.6979
 
 Outcome data coverage
   outcome       n_obs   n_missing
@@ -28,6 +28,6 @@ Outcome data coverage
 Empirical Bayes random effects summary (across RE levels)
   random effect  component       n          mean            sd           q25        median           q75
   --------------------------------------------------------------------------------------------------
-  eta            eta_1          12       -0.0011        0.5975       -0.4122       -0.0957        0.2514
-  eta            eta_2          12        0.0078        0.2431       -0.1275         0.041        0.1565
-  eta            eta_3          12       -0.0048        0.1182       -0.1011        0.0051        0.0658
+  eta            eta_1          12        0.0004        0.5947       -0.4116       -0.0932        0.2528
+  eta            eta_2          12        0.0070        0.2436       -0.1296        0.0406        0.1559
+  eta            eta_3          12       -0.0025        0.1169       -0.0980        0.0073        0.0676

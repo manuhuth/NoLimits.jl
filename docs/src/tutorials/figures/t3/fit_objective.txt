@@ -1,1 +1,1 @@
-(objective = -565.6734432525224, n_params = 29)
+(objective = -565.2678377620495, n_params = 29)

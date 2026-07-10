@@ -6,17 +6,17 @@ Overview
   inference                           : bayesian
   scale                               : natural
   objective                           : -
-  interval level                      : 0.95
+  interval level                      : 0.9500
   parameters shown (reported / total) : 5 / 5
 
 Parameter uncertainty summary
   parameter      Estimate     CrI Lower     CrI Upper
   -------------------------------------
   phi1            31.1675       28.0572       34.6622
-  log_vmax         5.0377        4.9086         5.181
-  phi3            640.373      610.4249      673.6824
+  log_vmax         5.0377        4.9086        5.1810
+  phi3           640.3730      610.4249      673.6824
   omega            0.1776        0.1037        0.2919
-  sigma            0.1195        0.0964         0.149
+  sigma            0.1195        0.0964        0.1490
 
 Outcome data coverage
   outcome             n_obs   n_missing

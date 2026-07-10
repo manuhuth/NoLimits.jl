@@ -5,20 +5,20 @@ Overview
   source_method                       : mcem
   inference                           : frequentist
   scale                               : natural
-  objective                           : -145.1806
-  interval level                      : 0.95
+  objective                           : -145.5518
+  interval level                      : 0.9500
   parameters shown (reported / total) : 7 / 7
 
 Parameter uncertainty summary
   parameter      Estimate    Std. Error      CI Lower      CI Upper
   ---------------------------------------------------
-  tka              0.4527        0.2018        0.0776        0.8783
-  tcl              1.0076        0.0922        0.8316         1.188
-  tv               3.4566        0.0489        3.3578        3.5499
-  omega1           0.4089         0.224        0.1818        1.0375
-  omega2           0.0708         0.042        0.0287        0.1952
-  omega3            0.019        0.0137        0.0069        0.0559
-  sigma_eps        0.6943        0.0485        0.6099        0.7916
+  tka              0.4488        0.1966        0.0683        0.8228
+  tcl              1.0094        0.0918        0.8316        1.1903
+  tv               3.4532        0.0487        3.3496        3.5517
+  omega1           0.3954        0.2166        0.1694        0.9821
+  omega2           0.0710        0.0418        0.0297        0.1883
+  omega3           0.0186        0.0137        0.0064        0.0560
+  sigma_eps        0.6979        0.0490        0.6117        0.7955
 
 Outcome data coverage
   outcome       n_obs   n_missing
@@ -29,6 +29,6 @@ Outcome data coverage
 Empirical Bayes random effects summary (across RE levels)
   random effect  component       n          mean            sd           q25        median           q75
   --------------------------------------------------------------------------------------------------
-  eta            eta_1          12       -0.0011        0.5975       -0.4122       -0.0957        0.2514
-  eta            eta_2          12        0.0078        0.2431       -0.1275         0.041        0.1565
-  eta            eta_3          12       -0.0048        0.1182       -0.1011        0.0051        0.0658
+  eta            eta_1          12        0.0004        0.5947       -0.4116       -0.0932        0.2528
+  eta            eta_2          12        0.0070        0.2436       -0.1296        0.0406        0.1559
+  eta            eta_3          12       -0.0025        0.1169       -0.0980        0.0073        0.0676

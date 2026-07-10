@@ -6,17 +6,17 @@ Overview
   inference                           : frequentist
   scale                               : natural
   objective                           : -157.2603
-  interval level                      : 0.95
+  interval level                      : 0.9500
   parameters shown (reported / total) : 5 / 5
 
 Parameter uncertainty summary
   parameter      Estimate    Std. Error      CI Lower      CI Upper
   ---------------------------------------------------
-  phi1             31.232        1.7088       27.9719       34.4279
+  phi1            31.2320        1.7088       27.9719       34.4279
   log_vmax         5.0352        0.0809        4.8605        5.1967
-  phi3            639.912       15.6013      610.6768      674.6063
+  phi3           639.9120       15.6013      610.6768      674.6063
   omega            0.1671        0.0636        0.0896        0.3405
-  sigma            0.1125         0.015        0.0867        0.1445
+  sigma            0.1125        0.0150        0.0867        0.1445
 
 Outcome data coverage
   outcome             n_obs   n_missing
