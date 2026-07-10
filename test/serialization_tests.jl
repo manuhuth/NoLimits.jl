@@ -268,7 +268,7 @@ end
     expected_nres = nrow(get_residuals(res))
 
     script = """
-    using NoLimits, Distributions, DataFrames, Plots
+    using NoLimits, Distributions, DataFrames, CairoMakie
     model = @Model begin
         @fixedEffects begin
             a = RealNumber(1.0)
@@ -298,7 +298,7 @@ end
     @test strip(lines[end - 3]) == "mle"
     @test parse(Float64, strip(lines[end - 2]))≈expected_ll atol=1e-8
     @test parse(Int, strip(lines[end - 1])) == expected_nres
-    @test occursin("Plot", strip(lines[end]))  # plot_fits returns a Plots.Plot
+    @test occursin("Figure", strip(lines[end]))  # plot_fits returns a Makie.Figure
 end
 
 @testset "Cross-session Laplace: params + RE + LL" begin
@@ -316,7 +316,7 @@ end
     expected_n_ids = nrow(expected_re.η)
 
     script = """
-    using NoLimits, Distributions, DataFrames, Plots
+    using NoLimits, Distributions, DataFrames, CairoMakie
     model = @Model begin
         @fixedEffects begin
             a = RealNumber(1.0)
@@ -350,5 +350,5 @@ end
     @test strip(lines[end - 3]) == "laplace"
     @test parse(Float64, strip(lines[end - 2]))≈expected_ll atol=1e-8
     @test parse(Int, strip(lines[end - 1])) == expected_n_ids
-    @test occursin("Plot", strip(lines[end]))  # plot_fits returns a Plots.Plot
+    @test occursin("Figure", strip(lines[end]))  # plot_fits returns a Makie.Figure
 end

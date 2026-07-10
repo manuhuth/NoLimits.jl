@@ -1,6 +1,6 @@
 using Test
 using NoLimits
-using Plots
+using CairoMakie
 using DataFrames
 using Distributions
 using Random

@@ -4,7 +4,7 @@ using DataFrames
 using Distributions
 using Turing
 using Random
-using Plots
+using CairoMakie
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Integration file: plotting, caching, VPC, residuals, observation distributions.
