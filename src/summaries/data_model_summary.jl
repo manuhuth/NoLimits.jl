@@ -171,16 +171,8 @@ function _obs_time_values(dm::DataModel, obs_rows::Vector{Int})
     return vals
 end
 
-function _format_float(x::Float64)
-    if isnan(x)
-        return "NaN"
-    end
-    ax = abs(x)
-    if ax >= 1e4 || (ax > 0 && ax < 1e-3)
-        return string(round(x; sigdigits = 4))
-    end
-    return string(round(x; digits = 4))
-end
+# Fixed 4-decimal formatting, shared with the fit/UQ summaries (see `_fq_fmt_num`).
+_format_float(x::Float64) = _fq_fmt_num(x)
 
 function _print_key_values(io::IO, title::String, rows::AbstractVector{<:Pair})
     println(io, title)
