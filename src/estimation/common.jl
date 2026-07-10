@@ -35,6 +35,7 @@ export get_laplace_random_effects
 export get_re_covariate_usage
 export compute_shrinkage
 export loglikelihood
+export complete_data_loglikelihood
 export build_ll_cache
 export MCIntegrator
 
@@ -1657,6 +1658,196 @@ function get_re_covariate_usage(res::FitResult; dm::Union{Nothing, DataModel} = 
     dm === nothing &&
         error("This fit result does not store a DataModel; pass dm=... to get_re_covariate_usage.")
     return get_re_covariate_usage(dm)
+end
+
+# Map a user-supplied individual id (or a vector of them) to integer indices into
+# `dm.individuals`. `nothing` selects every individual. Coercion falls back to a
+# string-equality match so `:s1` / "s1" both resolve regardless of the id column type.
+function _cdll_id_to_index(dm::DataModel, id)
+    haskey(dm.id_index, id) && return dm.id_index[id]
+    for (k, v) in dm.id_index
+        string(k) == string(id) && return v
+    end
+    error("Unknown individual id $(repr(id)). Known ids: $(collect(keys(dm.id_index))).")
+end
+
+function _cdll_select(dm::DataModel, individuals)
+    n = length(dm.individuals)
+    individuals === nothing && return collect(1:n)
+    ids = individuals isa AbstractVector ? individuals : [individuals]
+    return [_cdll_id_to_index(dm, id) for id in ids]
+end
+
+"""
+    complete_data_loglikelihood(dm, θ; eta, individuals, constants_re, res,
+                                ode_args, ode_kwargs, serialization, rng) -> Real
+    complete_data_loglikelihood(dm, res::FitResult; eta = :ebe, kwargs...) -> Real
+    complete_data_loglikelihood(res::FitResult; eta = :ebe, kwargs...) -> Real
+
+Joint (complete-data) log-density `ln p(y, η | θ)` for a random-effects model: the
+per-individual observation log-likelihood plus the random-effect prior summed once per
+grouping level. With no random effects it reduces to the population log-likelihood.
+
+`eta` supplies the random-effect values to plug in:
+- a `NamedTuple` keyed by random-effect name, then by grouping-level id, e.g.
+  `(; η = (; s1 = 0.2, s2 = -0.1))`;
+- `:mean` — the prior mean of each level's random-effect distribution (median/zero
+  fallback when the mean is undefined);
+- `:ebe` — empirical-Bayes estimates from a fit result (requires `res`, or one of the
+  `FitResult` methods).
+
+`individuals` restricts the sum to a subset (a single id or a vector); both the data and
+the prior terms are then taken only over the selected individuals and their levels.
+Differentiable in `θ` via ForwardDiff.
+"""
+function complete_data_loglikelihood(dm::DataModel, θ::ComponentArray;
+        eta = :mean,
+        res::Union{Nothing, FitResult} = nothing,
+        individuals = nothing,
+        constants_re::NamedTuple = NamedTuple(),
+        ode_args::Tuple = (),
+        ode_kwargs::NamedTuple = NamedTuple(),
+        serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial(),
+        rng::AbstractRNG = Random.default_rng())
+    re = dm.model.random.random
+    re_names = get_re_names(re)
+    θs = _symmetrize_psd_params(θ, dm.model.fixed.fixed)
+    sel = _cdll_select(dm, individuals)
+
+    # Build one serial cache; the data term is summed per selected individual so that
+    # the `individuals` subset is honored (matches loglikelihood for the full set).
+    cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = EnsembleSerial())
+    cache = cache isa Vector ? cache[1] : cache
+
+    if isempty(re_names)
+        T = eltype(θs)
+        η_empty = ComponentArray()
+        ll = zero(T)
+        for i in sel
+            lli = _loglikelihood_individual(dm, i, θs, η_empty, cache)
+            isfinite(lli) || return T(-Inf)
+            ll += lli
+        end
+        return ll
+    end
+
+    if eta isa Symbol
+        eta in (:mean, :ebe) ||
+            error("eta must be :mean, :ebe, or a NamedTuple keyed by a random-effect " *
+                  "name; got :$(eta).")
+        eta === :ebe && res === nothing &&
+            error(":ebe requires a fit result; call complete_data_loglikelihood(dm, res).")
+    elseif eta isa NamedTuple
+        for k in keys(eta)
+            k in re_names ||
+                error("eta key :$(k) is not a random effect. Random effects: $(re_names).")
+        end
+    else
+        error("eta must be :mean, :ebe, or a NamedTuple; got $(typeof(eta)).")
+    end
+
+    re_cache = dm.re_group_info.laplace_cache
+    re_cache === nothing &&
+        error("complete_data_loglikelihood requires random-effect grouping information.")
+    dists_builder = get_create_random_effect_distribution(re)
+    model_funs = get_model_funs(dm.model)
+    helpers = get_helper_funs(dm.model)
+    level_values = dm.re_group_info.values
+    n = length(dm.individuals)
+
+    # Representative individual for each (re, level) — its const_cov builds the level's
+    # RE distribution (RE-distribution covariates are constant within a level).
+    rep_ind = [Dict{Int, Int}() for _ in re_names]
+    for i in 1:n, ri in eachindex(re_names)
+        for li in re_cache.ind_level_ids[i][ri]
+            haskey(rep_ind[ri], li) || (rep_ind[ri][li] = i)
+        end
+    end
+
+    # Per-level RE distribution (built once; carries θ, so it is Dual under AD).
+    level_dist = [Dict{Int, Any}() for _ in re_names]
+    for ri in eachindex(re_names), (li, rep) in rep_ind[ri]
+        dists = dists_builder(θs, dm.individuals[rep].const_cov, model_funs, helpers)
+        level_dist[ri][li] = getproperty(dists, re_names[ri])
+    end
+
+    fixed_map = isempty(constants_re) ? nothing : _normalize_constants_re(dm, constants_re)
+    ebe_map = if eta === :ebe
+        nt = get_random_effects(dm, res; flatten = false)
+        map(re_names) do rn
+            df = getfield(nt, rn)
+            idc = dm.config.primary_id
+            valc = first(c for c in propertynames(df) if c != idc)
+            Dict(Symbol(string(row[idc])) => row[valc] for row in eachrow(df))
+        end
+    else
+        nothing
+    end
+
+    # η value for (re index ri, level index li).
+    getval = function (ri, li)
+        rn = re_names[ri]
+        levval = getproperty(level_values, rn)[li]
+        if fixed_map !== nothing && haskey(fixed_map, rn) &&
+           haskey(fixed_map[rn], levval)
+            return fixed_map[rn][levval]
+        elseif eta isa NamedTuple
+            return getproperty(getproperty(eta, rn), Symbol(string(levval)))
+        elseif eta === :mean
+            return _re_mean_or_zero(
+                level_dist[ri][li], re_cache.dims[ri], re_cache.is_scalar[ri])
+        else # :ebe
+            return ebe_map[ri][Symbol(string(levval))]
+        end
+    end
+
+    # Per-individual η ComponentArray (one grouping level per individual per RE).
+    function build_eta_i(i)
+        pairs = Pair{Symbol, Any}[]
+        for (ri, rn) in enumerate(re_names)
+            push!(pairs, rn => getval(ri, re_cache.ind_level_ids[i][ri][1]))
+        end
+        return ComponentArray(NamedTuple(pairs))
+    end
+
+    Tη = eltype(build_eta_i(sel[1]))
+    T = promote_type(eltype(θs), Tη)
+    data_ll = zero(T)
+    for i in sel
+        lli = _loglikelihood_individual(dm, i, θs, build_eta_i(i), cache)
+        isfinite(lli) || return T(-Inf)
+        data_ll += lli
+    end
+
+    # Prior: each selected grouping level once.
+    prior_ll = zero(T)
+    seen = Set{Tuple{Int, Int}}()
+    for i in sel, ri in eachindex(re_names)
+        for li in re_cache.ind_level_ids[i][ri]
+            (ri, li) in seen && continue
+            push!(seen, (ri, li))
+            prior_ll += logpdf(level_dist[ri][li], getval(ri, li))
+        end
+    end
+
+    return data_ll + prior_ll
+end
+
+function complete_data_loglikelihood(dm::DataModel, res::FitResult;
+        eta = :ebe, constants_re::NamedTuple = NamedTuple(), kwargs...)
+    constants_re = _res_constants_re(res, constants_re)
+    θu = get_params(res; scale = :untransformed)
+    return complete_data_loglikelihood(
+        dm, θu; eta = eta, res = res, constants_re = constants_re, kwargs...)
+end
+
+function complete_data_loglikelihood(res::FitResult; eta = :ebe, kwargs...)
+    dm = res.data_model
+    dm === nothing &&
+        error("This fit result does not store a DataModel; call " *
+              "complete_data_loglikelihood(dm, res) instead.")
+    return complete_data_loglikelihood(dm, res; eta = eta, kwargs...)
 end
 
 """
