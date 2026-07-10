@@ -15,7 +15,7 @@ We use the Theophylline dataset (12 subjects) in a flat format where the dose `d
 
 ```julia
 using NoLimits
-using Plots
+using CairoMakie
 using CSV
 using DataFrames
 using Distributions

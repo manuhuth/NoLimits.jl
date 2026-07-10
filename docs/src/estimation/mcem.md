@@ -265,7 +265,7 @@ diag.ess_hist  # Vector{Float64} - effective sample size per iteration
 The ESS is a per-iteration summary of proposal quality. Values close to `n_samples` indicate that the proposal closely approximates the posterior; low values indicate weight degeneracy (proposal too wide or misaligned).
 
 ```julia
-using Plots
+using CairoMakie
 plot(diag.Q_hist,   label="Q", xlabel="iteration")
 plot(diag.ess_hist, label="ESS", xlabel="iteration")
 ```

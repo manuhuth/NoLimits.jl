@@ -15,7 +15,7 @@ We use the Theophylline dataset (12 subjects, concentration over time) in a flat
 
 ```julia
 using NoLimits
-using Plots
+using CairoMakie
 using CSV
 using DataFrames
 using Distributions

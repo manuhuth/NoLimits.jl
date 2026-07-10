@@ -131,7 +131,7 @@ This example fits an exponential-decay model with a subject-level random interce
 approximation. The snippet is self-contained — copy it into a Julia session and run.
 
 ```julia
-using NoLimits, DataFrames, Distributions, Plots
+using NoLimits, DataFrames, Distributions, CairoMakie
 
 model = @Model begin
     @fixedEffects begin

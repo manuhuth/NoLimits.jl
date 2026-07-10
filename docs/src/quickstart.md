@@ -86,7 +86,7 @@ get_random_effects(res)                 # empirical Bayes estimates per subject
 ## 5. Visualize the fit
 
 ```julia
-using Plots
+using CairoMakie
 
 plot_fits(res)
 ```

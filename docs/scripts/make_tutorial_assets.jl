@@ -2,13 +2,12 @@
 # tutorials. Each tutorial function mirrors the corresponding markdown EXACTLY so
 # that the embedded assets match the code a reader would run.
 #
-# Usage:
-#   julia --project=. docs/scripts/make_tutorial_assets.jl            # all tutorials
-#   julia --project=. docs/scripts/make_tutorial_assets.jl t1 t2 t8   # selected
+# Usage (CairoMakie comes from the docs env, NoLimits and the rest from the package
+# env, stacked via JULIA_LOAD_PATH):
+#   JULIA_LOAD_PATH="@:docs:@stdlib" julia --project=. docs/scripts/make_tutorial_assets.jl            # all
+#   JULIA_LOAD_PATH="@:docs:@stdlib" julia --project=. docs/scripts/make_tutorial_assets.jl t1 t2 t8   # selected
 #
 # Assets are written to docs/src/tutorials/figures/<slug>/.
-
-ENV["GKSwstype"] = "100"  # headless GR backend (no display required)
 
 using NoLimits
 using CSV
@@ -21,7 +20,7 @@ using OrdinaryDiffEq
 using SciMLBase
 using SimpleChains
 using Turing
-using Plots
+using CairoMakie
 
 const DOCS_ROOT = normpath(joinpath(@__DIR__, ".."))
 const TUT_DIR = joinpath(DOCS_ROOT, "src", "tutorials")

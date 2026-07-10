@@ -122,8 +122,8 @@ Build and preview locally:
 # one-time: resolve the docs environment and dev-install the package into it
 julia --project=docs -e 'using Pkg; Pkg.develop(path="."); Pkg.instantiate()'
 
-# build the site (set GKSwstype=100 for the headless GR backend used by Plots.jl)
-GKSwstype=100 julia --project=docs docs/make.jl
+# build the site (CairoMakie renders headlessly, no display setup needed)
+julia --project=docs docs/make.jl
 
 # preview the built site (a local build writes the rendered site to docs/build/1)
 julia --project=docs -e 'using LiveServer; LiveServer.serve(dir="docs/build/1")'

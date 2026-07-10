@@ -15,7 +15,7 @@ We load the MASS `epil` dataset (one row per subject-period) and derive the anal
 
 ```julia
 using NoLimits
-using Plots
+using CairoMakie
 using CSV
 using DataFrames
 using Distributions

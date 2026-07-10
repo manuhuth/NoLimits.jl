@@ -4,12 +4,15 @@ using DocumenterCitations
 
 push!(LOAD_PATH, joinpath(@__DIR__, ".."))
 using NoLimits
-# Load the Plots extension so its plot_* method docstrings resolve for the @docs
-# blocks in api.md (the drawing functions live in ext/NoLimitsPlotsExt.jl).
-using Plots
-const NoLimitsPlotsExt = Base.get_extension(NoLimits, :NoLimitsPlotsExt)
-NoLimitsPlotsExt === nothing &&
-    error("NoLimitsPlotsExt failed to load; ensure Plots.jl is available")
+# Load the Makie extension so its plot_* method docstrings resolve for the @docs
+# blocks in api.md (the drawing functions live in ext/NoLimitsMakieExt.jl).
+using CairoMakie
+# Makie also exports `RealVector`; the explicit import disambiguates the bare name so
+# the `@docs` block and `@ref` links in api.md resolve to the NoLimits binding.
+using NoLimits: RealVector
+const NoLimitsMakieExt = Base.get_extension(NoLimits, :NoLimitsMakieExt)
+NoLimitsMakieExt === nothing &&
+    error("NoLimitsMakieExt failed to load; ensure CairoMakie.jl is available")
 
 bib = CitationBibliography(
     joinpath(@__DIR__, "src", "references.bib");
@@ -19,7 +22,7 @@ bib = CitationBibliography(
 makedocs(;
     sitename = "NoLimits.jl",
     authors = "Manuel Huth, Jonas Arruda, Clemens Peiter, Roy Gusinow, Nina Schmid, Jan Hasenauer",
-    modules = [NoLimits, NoLimitsPlotsExt],
+    modules = [NoLimits, NoLimitsMakieExt],
     checkdocs = :none,
     plugins = [bib],
     format = DocumenterVitepress.MarkdownVitepress(;

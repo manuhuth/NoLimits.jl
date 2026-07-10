@@ -15,7 +15,7 @@ The Orange tree dataset (Draper and Smith, 1981; R's `datasets`) records trunk c
 
 ```julia
 using NoLimits
-using Plots
+using CairoMakie
 using CSV
 using DataFrames
 using Distributions

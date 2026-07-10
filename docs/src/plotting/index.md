@@ -27,7 +27,8 @@ The following model and data are used throughout this page. The model specifies 
 
 ```@example plotting_overview
 using NoLimits
-using Plots
+using CairoMakie
+CairoMakie.activate!(type = "png")
 using DataFrames
 using Distributions
 using Random
