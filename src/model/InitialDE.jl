@@ -1,6 +1,5 @@
 export @initialDE
 export InitialDE
-export get_initialde_meta
 export get_initialde_names
 export get_initialde_builder
 
@@ -33,13 +32,6 @@ struct InitialDE
     meta::InitialDEMeta
     ir::InitialDEIR
 end
-
-"""
-    get_initialde_meta(i::InitialDE) -> InitialDEMeta
-
-Return the metadata struct (state names).
-"""
-get_initialde_meta(i::InitialDE) = i.meta
 
 """
     get_initialde_names(i::InitialDE) -> Vector{Symbol}

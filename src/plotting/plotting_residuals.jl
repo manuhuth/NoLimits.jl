@@ -81,34 +81,6 @@ function _resolve_residual_observables(dm::DataModel, observables)
     return obs_list
 end
 
-function _resolve_residual_individuals(dm::DataModel, individuals_idx)
-    n = length(dm.individuals)
-    if individuals_idx === nothing
-        return collect(1:n)
-    end
-    ids = individuals_idx isa AbstractVector ? collect(individuals_idx) : [individuals_idx]
-    if all(x -> x isa Integer && 1 <= x <= n, ids)
-        return Int.(ids)
-    end
-    out = Int[]
-    for id in ids
-        haskey(dm.id_index, id) || error("Unknown individual id $(id).")
-        push!(out, dm.id_index[id])
-    end
-    return out
-end
-
-function _resolve_residual_obs_rows(obs_rows, obs_rows_all)
-    if obs_rows === nothing
-        return collect(1:length(obs_rows_all))
-    end
-    idxs = obs_rows isa AbstractVector ? collect(obs_rows) : [obs_rows]
-    for idx in idxs
-        1 <= idx <= length(obs_rows_all) || error("obs_rows index $(idx) out of bounds.")
-    end
-    return idxs
-end
-
 @inline function _to_float_or_missing(v)
     if ismissing(v)
         return missing
@@ -346,7 +318,7 @@ function get_residuals(res::FitResult;
     constants_re_use = _res_constants_re(res, constants_re)
     residual_list = _validate_residual_metrics(residuals)
     obs_list = _resolve_residual_observables(dm, observables)
-    inds = _resolve_residual_individuals(dm, individuals_idx)
+    inds = _resolve_individuals(dm, individuals_idx; default_all = true)
     qvec = sort(Float64.(collect(mcmc_quantiles)))
     (length(qvec) >= 2 && all(0 .<= qvec .<= 100)) ||
         error("mcmc_quantiles must be in [0,100] with length >= 2.")
@@ -372,7 +344,7 @@ function get_residuals(res::FitResult;
         for i in inds
             ind = dm.individuals[i]
             obs_rows_all = dm.row_groups.obs_rows[i]
-            obs_idx = _resolve_residual_obs_rows(obs_rows, obs_rows_all)
+            obs_idx = _resolve_obs_rows(obs_rows, obs_rows_all)
             xvals = _get_x_values(dm, ind, obs_rows_all, x_axis_use)
             rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only = true)
 
@@ -496,7 +468,7 @@ function get_residuals(res::FitResult;
         for i in inds
             ind = dm.individuals[i]
             obs_rows_all = dm.row_groups.obs_rows[i]
-            obs_idx = _resolve_residual_obs_rows(obs_rows, obs_rows_all)
+            obs_idx = _resolve_obs_rows(obs_rows, obs_rows_all)
             xvals = _get_x_values(dm, ind, obs_rows_all, x_axis_use)
             rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only = true)
 

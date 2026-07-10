@@ -166,7 +166,7 @@ function Base.show(io::IO, ::MIME"text/plain", c::ParameterComparison)
     end
     if !isempty(c.notes)
         println(io)
-        _fq_print_key_values(
+        _print_key_values(
             io, "Notes", [string("note ", i) => c.notes[i] for i in eachindex(c.notes)])
     end
 end

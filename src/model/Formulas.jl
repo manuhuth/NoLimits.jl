@@ -31,31 +31,6 @@ struct FormulasIR
     crossings::Vector{CrossingSpec}
 end
 
-function FormulasIR(det_names::Vector{Symbol},
-        det_exprs::Vector{Expr},
-        obs_names::Vector{Symbol},
-        obs_exprs::Vector{Expr},
-        call_heads::Vector{Symbol},
-        var_syms::Vector{Symbol},
-        prop_syms::Vector{Symbol},
-        time_call_syms::Vector{Symbol})
-    FormulasIR(det_names, det_exprs, obs_names, obs_exprs, call_heads,
-        var_syms, prop_syms, time_call_syms, Expr[], CrossingSpec[])
-end
-
-function FormulasIR(det_names::Vector{Symbol},
-        det_exprs::Vector{Expr},
-        obs_names::Vector{Symbol},
-        obs_exprs::Vector{Expr},
-        call_heads::Vector{Symbol},
-        var_syms::Vector{Symbol},
-        prop_syms::Vector{Symbol},
-        time_call_syms::Vector{Symbol},
-        lines::Vector{Expr})
-    FormulasIR(det_names, det_exprs, obs_names, obs_exprs, call_heads,
-        var_syms, prop_syms, time_call_syms, lines, CrossingSpec[])
-end
-
 """
     Formulas
 

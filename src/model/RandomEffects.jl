@@ -2,7 +2,6 @@ export @randomEffects
 export get_re_dist_exprs
 export RandomEffects
 export RandomEffect
-export get_re_meta
 export get_re_names
 export get_re_groups
 export get_re_types
@@ -43,20 +42,6 @@ struct RandomEffects{B <: RandomEffectsBuilders}
     meta::RandomEffectsMeta
     builders::B
 end
-
-"""
-    get_re_meta(re::RandomEffects) -> RandomEffectsMeta
-
-Return the metadata struct for the random effects.
-"""
-get_re_meta(re::RandomEffects) = re.meta
-
-"""
-    get_re_builders(re::RandomEffects) -> RandomEffectsBuilders
-
-Return the builders struct containing the distribution-constructor and logpdf functions.
-"""
-get_re_builders(re::RandomEffects) = re.builders
 
 """
     get_re_names(re::RandomEffects) -> Vector{Symbol}

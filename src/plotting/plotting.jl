@@ -600,6 +600,47 @@ function _mcmc_random_effects_means(res::FitResult,
     return η_vec
 end
 
+# Assemble one individual's random-effects ComponentArray from its RE grouping
+# values. `dims[re]` is the RE dimension; a level present in `fixed_maps[re]` is pinned
+# to that value, otherwise `get_free_value(re, lvl, dim)` supplies it. Shared by the
+# MCMC/VI posterior-draw reconstructions and the DataModel default-mean path.
+function _assemble_individual_eta(ind, re_names, dims, fixed_maps, get_free_value)
+    nt_pairs = Pair{Symbol, Any}[]
+    for re in re_names
+        fixed = haskey(fixed_maps, re) ? getfield(fixed_maps, re) : Dict{Any, Any}()
+        dim = get(dims, re, 1)
+        g = getfield(ind.re_groups, re)
+        if g isa AbstractVector
+            if length(g) == 1
+                lvl = g[1]
+                v = haskey(fixed, lvl) ? fixed[lvl] : get_free_value(re, lvl, dim)
+                push!(nt_pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
+            else
+                vals_re = dim == 1 ? Vector{Float64}(undef, length(g)) :
+                          Vector{Vector{Float64}}(undef, length(g))
+                for (gi, lvl) in pairs(g)
+                    v = haskey(fixed, lvl) ? fixed[lvl] : get_free_value(re, lvl, dim)
+                    vals_re[gi] = dim == 1 ? v : Vector{Float64}(v)
+                end
+                push!(nt_pairs, re => vals_re)
+            end
+        else
+            v = haskey(fixed, g) ? fixed[g] : get_free_value(re, g, dim)
+            push!(nt_pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
+        end
+    end
+    return ComponentArray(NamedTuple(nt_pairs))
+end
+
+# Per-RE map from a free level to its index within `levels_free` (used to look up the
+# posterior coordinate for that level).
+function _lvl_to_idx_by_re(re_names, re_meta)
+    return Dict{Symbol, Dict{Any, Int}}(re => Dict{Any, Int}(
+                                            re_meta[re].levels_free[i] => i
+                                        for i in eachindex(re_meta[re].levels_free))
+    for re in re_names)
+end
+
 function _mcmc_drawn_params(res::FitResult,
         dm::DataModel,
         constants_re::NamedTuple,
@@ -717,6 +758,9 @@ function _mcmc_drawn_params(res::FitResult,
         return out
     end
 
+    dims = Dict{Symbol, Int}(re => re_meta[re].dim for re in re_names)
+    lvl_to_idx_by_re = _lvl_to_idx_by_re(re_names, re_meta)
+
     θ_draws = Vector{ComponentArray}(undef, length(draw_idxs))
     η_draws = Vector{Vector{ComponentArray}}(undef, length(draw_idxs))
     for (k, iter_idx) in enumerate(draw_idxs)
@@ -752,61 +796,16 @@ function _mcmc_drawn_params(res::FitResult,
         θ = _apply_param_overrides(θ, overrides)
         θ_draws[k] = θ
 
+        get_free_value = function (re, lvl, dim)
+            li = get(lvl_to_idx_by_re[re], lvl, 0)
+            li == 0 && error("Missing random effect value for $(re) level $(lvl).")
+            v = _get_re_value(re, li, dim, iter_idx, chain_idx)
+            return v === nothing ? (dim == 1 ? 0.0 : zeros(dim)) : v
+        end
         η_vec = Vector{ComponentArray}(undef, length(dm.individuals))
         for (i, ind) in enumerate(dm.individuals)
-            nt_pairs = Pair{Symbol, Any}[]
-            for re in re_names
-                fixed = haskey(fixed_maps, re) ? getfield(fixed_maps, re) : Dict{Any, Any}()
-                meta = re_meta[re]
-                dim = meta.dim
-                levels_free = meta.levels_free
-                lvl_to_idx = Dict{Any, Int}((levels_free[i] => i)
-                for i in eachindex(levels_free))
-                g = getfield(ind.re_groups, re)
-                if g isa AbstractVector
-                    if length(g) == 1
-                        lvl = g[1]
-                        if haskey(fixed, lvl)
-                            v = fixed[lvl]
-                        else
-                            li = get(lvl_to_idx, lvl, 0)
-                            li == 0 &&
-                                error("Missing random effect value for $(re) level $(lvl).")
-                            v = _get_re_value(re, li, dim, iter_idx, chain_idx)
-                            v === nothing && (v = dim == 1 ? 0.0 : zeros(dim))
-                        end
-                        push!(nt_pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
-                    else
-                        vals_re = dim == 1 ? Vector{Float64}(undef, length(g)) :
-                                  Vector{Vector{Float64}}(undef, length(g))
-                        for (gi, lvl) in pairs(g)
-                            if haskey(fixed, lvl)
-                                v = fixed[lvl]
-                            else
-                                li = get(lvl_to_idx, lvl, 0)
-                                li == 0 &&
-                                    error("Missing random effect value for $(re) level $(lvl).")
-                                v = _get_re_value(re, li, dim, iter_idx, chain_idx)
-                                v === nothing && (v = dim == 1 ? 0.0 : zeros(dim))
-                            end
-                            vals_re[gi] = dim == 1 ? v : Vector{Float64}(v)
-                        end
-                        push!(nt_pairs, re => vals_re)
-                    end
-                else
-                    if haskey(fixed, g)
-                        v = fixed[g]
-                    else
-                        li = get(lvl_to_idx, g, 0)
-                        li == 0 &&
-                            error("Missing random effect value for $(re) level $(g).")
-                        v = _get_re_value(re, li, dim, iter_idx, chain_idx)
-                        v === nothing && (v = dim == 1 ? 0.0 : zeros(dim))
-                    end
-                    push!(nt_pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
-                end
-            end
-            η_vec[i] = ComponentArray(NamedTuple(nt_pairs))
+            η_vec[i] = _assemble_individual_eta(
+                ind, re_names, dims, fixed_maps, get_free_value)
         end
         η_draws[k] = η_vec
     end
@@ -927,6 +926,9 @@ function _vi_drawn_params(res::FitResult,
         return out
     end
 
+    dims = Dict{Symbol, Int}(re => re_meta[re].dim for re in re_names)
+    lvl_to_idx_by_re = _lvl_to_idx_by_re(re_names, re_meta)
+
     n_draws = size(draws, 1)
     θ_draws = Vector{ComponentArray}(undef, n_draws)
     η_draws = Vector{Vector{ComponentArray}}(undef, n_draws)
@@ -962,61 +964,16 @@ function _vi_drawn_params(res::FitResult,
         θ = _apply_param_overrides(ComponentArray(NamedTuple(fe_pairs)), overrides)
         θ_draws[k] = θ
 
+        get_free_value = function (re, lvl, dim)
+            li = get(lvl_to_idx_by_re[re], lvl, 0)
+            li == 0 && error("Missing random effect value for $(re) level $(lvl).")
+            v = _get_re_value(re, li, dim, row)
+            return v === nothing ? (dim == 1 ? 0.0 : zeros(dim)) : v
+        end
         η_vec = Vector{ComponentArray}(undef, length(dm.individuals))
         for (i, ind) in enumerate(dm.individuals)
-            nt_pairs = Pair{Symbol, Any}[]
-            for re in re_names
-                fixed = haskey(fixed_maps, re) ? getfield(fixed_maps, re) : Dict{Any, Any}()
-                meta = re_meta[re]
-                dim = meta.dim
-                levels_free = meta.levels_free
-                lvl_to_idx = Dict{Any, Int}((levels_free[j] => j)
-                for j in eachindex(levels_free))
-                g = getfield(ind.re_groups, re)
-                if g isa AbstractVector
-                    if length(g) == 1
-                        lvl = g[1]
-                        if haskey(fixed, lvl)
-                            v = fixed[lvl]
-                        else
-                            li = get(lvl_to_idx, lvl, 0)
-                            li == 0 &&
-                                error("Missing random effect value for $(re) level $(lvl).")
-                            v = _get_re_value(re, li, dim, row)
-                            v === nothing && (v = dim == 1 ? 0.0 : zeros(dim))
-                        end
-                        push!(nt_pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
-                    else
-                        vals_re = dim == 1 ? Vector{Float64}(undef, length(g)) :
-                                  Vector{Vector{Float64}}(undef, length(g))
-                        for (gi, lvl) in pairs(g)
-                            if haskey(fixed, lvl)
-                                v = fixed[lvl]
-                            else
-                                li = get(lvl_to_idx, lvl, 0)
-                                li == 0 &&
-                                    error("Missing random effect value for $(re) level $(lvl).")
-                                v = _get_re_value(re, li, dim, row)
-                                v === nothing && (v = dim == 1 ? 0.0 : zeros(dim))
-                            end
-                            vals_re[gi] = dim == 1 ? v : Vector{Float64}(v)
-                        end
-                        push!(nt_pairs, re => vals_re)
-                    end
-                else
-                    if haskey(fixed, g)
-                        v = fixed[g]
-                    else
-                        li = get(lvl_to_idx, g, 0)
-                        li == 0 &&
-                            error("Missing random effect value for $(re) level $(g).")
-                        v = _get_re_value(re, li, dim, row)
-                        v === nothing && (v = dim == 1 ? 0.0 : zeros(dim))
-                    end
-                    push!(nt_pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
-                end
-            end
-            η_vec[i] = ComponentArray(NamedTuple(nt_pairs))
+            η_vec[i] = _assemble_individual_eta(
+                ind, re_names, dims, fixed_maps, get_free_value)
         end
         η_draws[k] = η_vec
     end
@@ -1162,32 +1119,10 @@ function _default_random_effects_from_dm(dm::DataModel,
     end
 
     η_vec = Vector{ComponentArray}(undef, length(dm.individuals))
+    get_free_value = (re, lvl, dim) -> level_vals[re][lvl]
     for (i, ind) in enumerate(dm.individuals)
-        nt_pairs = Pair{Symbol, Any}[]
-        for re in re_names
-            fixed = haskey(fixed_maps, re) ? getfield(fixed_maps, re) : Dict{Any, Any}()
-            dim = get(level_dims, re, 1)
-            g = getfield(ind.re_groups, re)
-            if g isa AbstractVector
-                if length(g) == 1
-                    lvl = g[1]
-                    v = haskey(fixed, lvl) ? fixed[lvl] : level_vals[re][lvl]
-                    push!(nt_pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
-                else
-                    vals_re = dim == 1 ? Vector{Float64}(undef, length(g)) :
-                              Vector{Vector{Float64}}(undef, length(g))
-                    for (gi, lvl) in pairs(g)
-                        v = haskey(fixed, lvl) ? fixed[lvl] : level_vals[re][lvl]
-                        vals_re[gi] = dim == 1 ? v : Vector{Float64}(v)
-                    end
-                    push!(nt_pairs, re => vals_re)
-                end
-            else
-                v = haskey(fixed, g) ? fixed[g] : level_vals[re][g]
-                push!(nt_pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
-            end
-        end
-        η_vec[i] = ComponentArray(NamedTuple(nt_pairs))
+        η_vec[i] = _assemble_individual_eta(
+            ind, re_names, level_dims, fixed_maps, get_free_value)
     end
     return η_vec
 end
@@ -1240,7 +1175,17 @@ function build_plot_cache(res::FitResult;
     θ = _apply_param_overrides(θ, params)
     chain = _is_posterior_draw_fit(res) ? θ_chain[2] : nothing
     η_vec = _default_random_effects(res, dm, constants_re, θ, rng, mcmc_draws)
+    return _fill_plot_cache(dm, θ, η_vec, chain, constants_re, cache_obs_dists,
+        ode_args, ode_kwargs)
+end
 
+# Shared body of the two build_plot_cache methods: dense-solve each individual (if
+# the model has a DE), optionally pre-compute (HMM-filtered) observation distributions,
+# and package everything into a PlotCache. Callers differ only in how θ/η_vec/chain are
+# obtained (chain is `nothing` for the DataModel entry point).
+function _fill_plot_cache(dm::DataModel, θ::ComponentArray, η_vec, chain,
+        constants_re::NamedTuple, cache_obs_dists::Bool, ode_args::Tuple,
+        ode_kwargs::NamedTuple)
     sols = Vector{Any}(undef, length(dm.individuals))
     compiled_cache = Vector{Any}(undef, length(dm.individuals))
     if dm.model.de.de !== nothing
@@ -1311,59 +1256,6 @@ function build_plot_cache(dm::DataModel;
     θ = get_θ0_untransformed(dm.model.fixed.fixed)
     θ = _apply_param_overrides(θ, params)
     η_vec = _default_random_effects_from_dm(dm, constants_re, θ)
-
-    sols = Vector{Any}(undef, length(dm.individuals))
-    compiled_cache = Vector{Any}(undef, length(dm.individuals))
-    if dm.model.de.de !== nothing
-        for i in eachindex(dm.individuals)
-            ind = dm.individuals[i]
-            η_ind = η_vec[i] isa ComponentArray ? η_vec[i] : ComponentArray(η_vec[i])
-            sol, compiled = _solve_dense_individual(
-                dm, ind, θ, η_ind; ode_args = ode_args, ode_kwargs = ode_kwargs)
-            sols[i] = sol
-            compiled_cache[i] = compiled
-        end
-    end
-
-    obs_dists = nothing
-    if cache_obs_dists
-        obs_names_all = get_formulas_meta(dm.model.formulas.formulas).obs_names
-        obs_dists = Vector{Vector{NamedTuple}}(undef, length(dm.individuals))
-        for i in eachindex(dm.individuals)
-            ind = dm.individuals[i]
-            obs_rows = dm.row_groups.obs_rows[i]
-            η_ind = η_vec[i] isa ComponentArray ? η_vec[i] : ComponentArray(η_vec[i])
-            rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only = true)
-            sol_accessors = dm.model.de.de === nothing ? nothing :
-                            _sol_accessors_with_crossings(
-                dm.model, sols[i], compiled_cache[i], θ, η_ind, ind.const_cov)
-            dists_i = Vector{NamedTuple}(undef, length(obs_rows))
-            hmm_priors = Dict{Symbol, Any}()
-            for (j, row) in enumerate(obs_rows)
-                vary = _varying_at(dm, ind, j, row)
-                η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only = true)
-                obs = sol_accessors === nothing ?
-                      calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
-                      calculate_formulas_obs(
-                    dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
-                filtered_pairs = Pair{Symbol, Any}[]
-                for col in obs_names_all
-                    d = getproperty(obs, col)
-                    if _is_hmm_dist(d)
-                        y_val = getfield(ind.series.obs, col)[j]
-                        push!(filtered_pairs,
-                            col => _apply_hmm_filter!(hmm_priors, col, d, y_val))
-                    end
-                end
-                dists_i[j] = isempty(filtered_pairs) ? obs :
-                             merge(obs, NamedTuple(filtered_pairs))
-            end
-            obs_dists[i] = dists_i
-        end
-    end
-
-    sig = _plot_signature(dm, θ, constants_re, get_solver_config(dm.model),
-        _callbacks_hash(dm), cache_obs_dists)
-    meta = (constants_re = constants_re, cache_obs_dists = cache_obs_dists)
-    return PlotCache(sig, sols, obs_dists, nothing, θ, η_vec, meta)
+    return _fill_plot_cache(dm, θ, η_vec, nothing, constants_re, cache_obs_dists,
+        ode_args, ode_kwargs)
 end

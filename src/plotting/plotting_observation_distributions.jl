@@ -3,10 +3,10 @@ export plot_observation_distributions
 using Distributions
 using Random
 
-function _resolve_individuals(dm::DataModel, individuals_idx)
+function _resolve_individuals(dm::DataModel, individuals_idx; default_all::Bool = false)
     n = length(dm.individuals)
     if individuals_idx === nothing
-        return [1]
+        return default_all ? collect(1:n) : [1]
     end
     ids = individuals_idx isa AbstractVector ? collect(individuals_idx) : [individuals_idx]
     if all(x -> x isa Integer && 1 <= x <= n, ids)

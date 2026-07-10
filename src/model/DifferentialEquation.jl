@@ -30,13 +30,6 @@ struct DifferentialEquationMeta
     lines::Vector{Expr}
 end
 
-function DifferentialEquationMeta(state_names::Vector{Symbol},
-        signal_names::Vector{Symbol},
-        var_syms::Vector{Symbol},
-        fun_syms::Vector{Symbol})
-    DifferentialEquationMeta(state_names, signal_names, var_syms, fun_syms, Expr[])
-end
-
 # Parameterized on the (concrete RuntimeGeneratedFunction) field types so the
 # RGF types propagate through `DEBundle{D,...}` (D = typeof(de)) into the Model /
 # DataModel type. Without the parameters these fields are abstract `::Function`,
@@ -69,13 +62,6 @@ end
 Return the metadata struct (state names, signal names, variable and function symbols).
 """
 get_de_meta(de::DifferentialEquation) = de.meta
-
-"""
-    get_de_builders(de::DifferentialEquation) -> DifferentialEquationBuilders
-
-Return the builders struct (compile, f!, f functions).
-"""
-get_de_builders(de::DifferentialEquation) = de.builders
 
 """
     get_de_states(de::DifferentialEquation) -> Vector{Symbol}

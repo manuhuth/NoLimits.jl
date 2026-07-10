@@ -90,17 +90,6 @@ function _fq_fmt_objective(x)
     return _fq_fmt_num(x)
 end
 
-function _fq_print_key_values(io::IO, title::String, rows::AbstractVector{<:Pair})
-    println(io, title)
-    isempty(rows) && (println(io, "  (none)"); return)
-    keys_str = [string(first(r)) for r in rows]
-    w = maximum(length, keys_str)
-    for (i, r) in enumerate(rows)
-        v = last(r)
-        println(io, "  ", rpad(keys_str[i], w), " : ", v)
-    end
-end
-
 function _fq_scale_symbol(scale::Symbol)
     scale in (:natural, :transformed) || error("scale must be :natural or :transformed.")
     return scale
@@ -592,11 +581,6 @@ function summarize(res::FitResult;
     )
 end
 
-function _fq_uq_scale(scale::Symbol)
-    scale in (:natural, :transformed) || error("scale must be :natural or :transformed.")
-    return scale
-end
-
 function _fq_uq_base_vectors(uq::UQResult; scale::Symbol = :natural)
     est = get_uq_estimates(uq; scale = scale, as_component = false)
     ints = get_uq_intervals(uq; scale = scale, as_component = false)
@@ -617,7 +601,7 @@ function _fq_uq_interval_label(uq::UQResult)
 end
 
 function summarize(uq::UQResult; scale::Symbol = :natural)
-    scale = _fq_uq_scale(scale)
+    scale = _fq_scale_symbol(scale)
     inference = _fq_inference_from_uq(uq)
     base = _fq_uq_base_vectors(uq; scale = scale)
     level = base.ints === nothing ? nothing : base.ints.level
@@ -667,7 +651,7 @@ function summarize(res::FitResult, uq::UQResult;
         scale::Symbol = :natural,
         include_non_se::Bool = false,
         constants_re::NamedTuple = NamedTuple())
-    scale = _fq_uq_scale(scale)
+    scale = _fq_scale_symbol(scale)
     dm = get_data_model(res)
     dm === nothing && error("summarize(fit, uq) requires fit to store DataModel.")
 
@@ -854,7 +838,7 @@ Base.show(io::IO, s::UQResultSummary) = show(io, MIME"text/plain"(), s)
 function Base.show(io::IO, ::MIME"text/plain", s::FitResultSummary)
     println(io, "FitResultSummary")
     println(io, repeat("═", 96))
-    _fq_print_key_values(io,
+    _print_key_values(io,
         "Overview",
         [
             "method" => s.method,
@@ -874,7 +858,7 @@ function Base.show(io::IO, ::MIME"text/plain", s::FitResultSummary)
     end
     if !isempty(s.notes)
         println(io)
-        _fq_print_key_values(
+        _print_key_values(
             io, "Notes", [string("note ", i) => s.notes[i] for i in eachindex(s.notes)])
     end
 end
@@ -884,7 +868,7 @@ function Base.show(io::IO, ::MIME"text/plain", s::UQResultSummary)
     println(io, repeat("═", 96))
     show_se = s.inference != :bayesian
     level_str = s.level === nothing ? "-" : _fq_fmt_num(s.level)
-    _fq_print_key_values(io,
+    _print_key_values(io,
         "Overview",
         [
             "backend" => s.backend,
@@ -909,7 +893,7 @@ function Base.show(io::IO, ::MIME"text/plain", s::UQResultSummary)
     end
     if !isempty(s.notes)
         println(io)
-        _fq_print_key_values(
+        _print_key_values(
             io, "Notes", [string("note ", i) => s.notes[i] for i in eachindex(s.notes)])
     end
 end
