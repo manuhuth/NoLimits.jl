@@ -65,19 +65,27 @@ end
 
 @inline _fq_fmt_missing(x) = x === nothing ? "-" : x
 
+# Fixed 4-decimal string that keeps trailing zeros (e.g. 1.5 -> "1.5000"), built with
+# integer scaling so no Printf dependency is needed.
+function _fixed4(xv::Float64)
+    scaled = round(Int64, abs(xv) * 10_000)
+    ip, fp = divrem(scaled, 10_000)
+    s = string(ip) * "." * lpad(string(fp), 4, '0')
+    return (signbit(xv) && scaled != 0) ? "-" * s : s
+end
+
 function _fq_fmt_num(x)
     x === nothing && return "-"
     x isa Missing && return "-"
     x isa Real || return string(x)
     xv = Float64(x)
-    if !isfinite(xv)
-        return string(xv)
-    end
-    ax = abs(xv)
-    if ax >= 1e4 || (ax > 0 && ax < 1e-3)
+    isfinite(xv) || return string(xv)
+    # Nonzero values that would collapse to 0.0000 at 4 decimals, or are too large for
+    # fixed-point Int64 scaling, keep 4 significant digits so no information is lost.
+    if xv != 0 && (round(xv; digits = 4) == 0 || abs(xv) >= 1e14)
         return string(round(xv; sigdigits = 4))
     end
-    return string(round(xv; digits = 4))
+    return _fixed4(xv)
 end
 
 function _fq_fmt_objective(x)
