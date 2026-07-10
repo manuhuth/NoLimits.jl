@@ -226,6 +226,56 @@ end
         prior = MvNormal(zeros(2), I)).prior isa MvNormal
 end
 
+@testset "RealNumber :logit — construction" begin
+    # Valid values
+    p = RealNumber(0.5; scale = :logit)
+    @test p.value ≈ 0.5
+    @test p.scale === :logit
+
+    p2 = RealNumber(0.01; scale = :logit)
+    @test p2.value ≈ 0.01
+
+    p3 = RealNumber(0.99; scale = :logit)
+    @test p3.value ≈ 0.99
+end
+
+@testset "RealNumber :logit — constructor errors" begin
+    # Boundary values: 0 and 1 are invalid (open interval)
+    @test_throws ErrorException RealNumber(0.0; scale = :logit)
+    @test_throws ErrorException RealNumber(1.0; scale = :logit)
+    # Out-of-range values
+    @test_throws ErrorException RealNumber(-0.1; scale = :logit)
+    @test_throws ErrorException RealNumber(1.1; scale = :logit)
+    @test_throws ErrorException RealNumber(2.0; scale = :logit)
+end
+
+@testset "RealVector :logit — uniform scale" begin
+    v = RealVector([0.2, 0.5, 0.8]; scale = [:logit, :logit, :logit])
+    @test v.scale == [:logit, :logit, :logit]
+    @test all(v.value .≈ [0.2, 0.5, 0.8])
+end
+
+@testset "RealVector :logit — constructor errors" begin
+    # Invalid value for a logit-scaled element
+    @test_throws ErrorException RealVector([0.0, 0.5]; scale = [:logit, :logit])
+    @test_throws ErrorException RealVector([0.5, 1.0]; scale = [:logit, :logit])
+    @test_throws ErrorException RealVector([1.5, 0.5]; scale = [:logit, :logit])
+end
+
+@testset "RealVector :logit — mixed scales (elementwise)" begin
+    # Mixed [:logit, :log, :identity] — logit element must be in (0,1),
+    # log element must be positive
+    v = RealVector([0.3, 2.0, -1.0]; scale = [:logit, :log, :identity])
+    @test v.scale == [:logit, :log, :identity]
+    @test v.value ≈ [0.3, 2.0, -1.0]
+
+    # Invalid logit element in mixed vector
+    @test_throws ErrorException RealVector(
+        [0.0, 2.0, -1.0]; scale = [:logit, :log, :identity])
+    @test_throws ErrorException RealVector(
+        [1.0, 2.0, -1.0]; scale = [:logit, :log, :identity])
+end
+
 @testset "NPFParameter seeded initialization is reproducible" begin
     p1 = NPFParameter(2, 3; name = :ψ, seed = 7)
     p2 = NPFParameter(2, 3; name = :ψ, seed = 7)

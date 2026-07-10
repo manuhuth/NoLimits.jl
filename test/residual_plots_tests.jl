@@ -41,32 +41,9 @@ using Random
 end
 
 @testset "residuals with constants_re inherited from fit result" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(0.1)
-            σ = RealNumber(0.3, scale = :log)
-        end
-        @covariates begin
-            t = Covariate()
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 0.5); column = :ID)
-        end
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
+    res = fx_constre_laplace()
 
-    df = DataFrame(ID = [:A, :A, :B, :B, :C, :C], t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, 0.1, 0.15, 0.25])
-    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    constants_re = (; η = (; B = 0.0))
-    res = fit_model(dm,
-        NoLimits.Laplace(;
-            optim_kwargs = (maxiters = 2,), multistart_n = 2, multistart_k = 2);
-        constants_re = constants_re)
-
-    @test nrow(get_residuals(res)) == nrow(df)
+    @test nrow(get_residuals(res)) == nrow(fx_constre_df())
     @test plot_residuals(res) !== nothing
 end
 
@@ -163,25 +140,9 @@ end
 end
 
 @testset "residuals use row-specific random effects for varying non-ODE groups" begin
-    model = @Model begin
-        @fixedEffects begin
-            σ = RealNumber(1.0e-6, scale = :log)
-        end
-        @covariates begin
-            t = Covariate()
-        end
-        @randomEffects begin
-            η_year = RandomEffect(Normal(0.0, 1.0); column = :YEAR)
-        end
-        @formulas begin
-            y ~ Normal(η_year, σ)
-        end
-    end
-    df = DataFrame(ID = [1, 1, 1, 2, 2], YEAR = [:A, :B, :B, :A, :C],
-        t = [0.0, 1.0, 2.0, 0.0, 1.0], y = [0.1, 0.4, 0.4, 0.1, 0.3])
-    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    constants_re = (; η_year = (; A = 0.1, B = 0.4, C = 0.3))
-    cache = build_plot_cache(dm; constants_re = constants_re, cache_obs_dists = true)
+    dm = fx_varyre_dm()
+    cache = build_plot_cache(
+        dm; constants_re = fx_varyre_constants_re(), cache_obs_dists = true)
     rdf = get_residuals(dm; cache = cache, cache_obs_dists = true, residuals = [:raw])
     sort!(rdf, :row)
     @test Float64.(rdf.fitted) ≈ [0.1, 0.4, 0.4, 0.1, 0.3]
@@ -234,4 +195,22 @@ end
     @test ls[3] ≈ -logpdf(d3f, y[3])
     # Guard that filtering actually matters for this data (keeps the test sharp).
     @test !(ls[2] ≈ -logpdf(dists[2], y[2]))
+end
+
+@testset "GOF and diagnostic plots (Laplace RE fit)" begin
+    # Moved from coverage_gap_tests.jl (path coverage for GOF/diagnostic plots).
+    dm = fx_fixre_dm()
+    res = fx_fixre_laplace()
+
+    @test plot_dv_pred(res) !== nothing
+    @test plot_dv_ipred(res) !== nothing
+    @test plot_wres_pred(res) !== nothing
+    @test plot_shrinkage(res) !== nothing
+    @test plot_observed_profiles(res) !== nothing
+    @test plot_observed_profiles(dm) !== nothing
+
+    # compute_shrinkage is the data path behind plot_shrinkage
+    shrink = NoLimits.compute_shrinkage(res)
+    @test haskey(shrink, :η)
+    @test isfinite(shrink.η.shrinkage)
 end

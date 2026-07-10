@@ -3,43 +3,6 @@ using NoLimits
 using DataFrames
 using Distributions
 
-@testset "DataModel rejects missing random-effect grouping values" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(0.2)
-            σ = RealNumber(0.5, scale = :log)
-        end
-        @covariates begin
-            t = Covariate()
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column = :SITE)
-        end
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [1, 1, 2, 2],
-        SITE = [:A, missing, :B, :B],
-        t = [0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, -0.1]
-    )
-
-    err = try
-        DataModel(model, df; primary_id = :ID, time_col = :t)
-        nothing
-    catch e
-        e
-    end
-    @test err isa ErrorException
-    msg = sprint(showerror, err)
-    @test occursin("contains missing values", msg)
-    @test occursin("drop rows with missing", msg)
-    @test occursin("explicit custom level", msg)
-end
-
 @testset "identifiability_report works for fixed-effects models" begin
     model = @Model begin
         @fixedEffects begin

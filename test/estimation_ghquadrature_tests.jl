@@ -1047,134 +1047,203 @@ end  # @testset "GHQuadrature parallelization (EnsembleThreads)"
 end  # @testset "GHQuadrature node deduplication"
 
 # ============================================================
-# LogNormalRE and BoundedRE (Beta) transport maps
+# Non-Gaussian RE families: transport maps (LogNormal, Beta, Gamma,
+# Exponential, Weibull, TDist) and the generic
+# ContinuousUnivariateDistribution fallback (Laplace, InverseGamma).
+# One @Model per family; shared fit / EB / validation shell below.
 # ============================================================
 
-@testset "GHQuadrature LogNormal RE" begin
-
-    # LogNormal(μ_log, σ_log): η = exp(μ_log + σ_log * z), logcorrection = 0.
-    # The push-forward of N(0,1) under this map is LogNormal(μ_log, σ_log),
-    # so GH weights absorb the prior exactly — same as GaussianRE.
-
-    @testset "fit_model with LogNormal RE — basic" begin
-        rng = MersenneTwister(42)
-        n_id = 12
-        n_obs = 5
-
-        # True parameters: η ~ LogNormal(0, 0.5), y ~ Normal(a * η, σ)
-        a_true = 2.0
-        σ_true = 0.3
-        ω_true = 0.5  # σ parameter of LogNormal (log-scale std)
-
-        ids = repeat(1:n_id, inner = n_obs)
-        η_i = exp.(ω_true .* randn(rng, n_id))
-        yobs = a_true .* η_i[ids] .+ σ_true .* randn(rng, n_id * n_obs)
-        tobs = repeat(1:n_obs, n_id) .* 1.0
-
-        df = DataFrame(ID = ids, t = tobs, y = yobs)
-        dm = DataModel(_GHQ_LOGN_MODEL, df; primary_id = :ID, time_col = :t)
-
-        # Level 2 should work
-        res = fit_model(
-            dm, NoLimits.GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,)))
-
-        @test NoLimits.get_converged(res) isa Bool
-        p = NoLimits.get_params(res; scale = :untransformed)
-        @test NoLimits.get_objective(res) < 1e6
-
-        # a should be in reasonable ballpark
-        @test abs(p.a - a_true) < 1.5
+# ℝ-supported generic fallback (identity transport) — hits the generic branch.
+const _GHQ_LAPL_MODEL = @Model begin
+    @fixedEffects begin
+        a = RealNumber(1.0)
+        σ = RealNumber(0.2, scale = :log)
+        b = RealNumber(0.5, scale = :log)
     end
-
-    @testset "get_random_effects for LogNormal RE" begin
-        rng = MersenneTwister(7)
-        n_id = 8
-        ids = repeat(1:n_id, inner = 4)
-        η_i = exp.(0.4 .* randn(rng, n_id))
-        yobs = 1.5 .* η_i[ids] .+ 0.2 .* randn(rng, length(ids))
-        tobs = repeat(1:4, n_id) .* 1.0
-
-        df = DataFrame(ID = ids, t = tobs, y = yobs)
-        dm = DataModel(_GHQ_LOGN_MODEL, df; primary_id = :ID, time_col = :t)
-        res = fit_model(
-            dm, NoLimits.GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,)))
-
-        re = NoLimits.get_random_effects(dm, res)
-        @test re isa NamedTuple
-        @test haskey(re, :η)
-        @test nrow(re.η) == n_id
+    @covariates begin
+        t = Covariate()
     end
-
-    @testset "validation allows LogNormal" begin
-        df = DataFrame(ID = [1, 1], t = [1.0, 2.0], y = [1.0, 1.1])
-        dm = DataModel(_GHQ_LOGN_MODEL, df; primary_id = :ID, time_col = :t)
-        # Should not throw
-        @test_nowarn NoLimits._ghq_validate_re_distributions(dm)
+    @randomEffects begin
+        η = RandomEffect(Distributions.Laplace(0.0, b); column = :ID)
     end
-end  # @testset "GHQuadrature LogNormal RE"
-
-@testset "GHQuadrature Beta RE" begin
-
-    # Beta(α, β): η = logistic(z), z ~ N(0,1) reference.
-    # logcorrection = logpdf(Beta(α,β), logistic(z)) + log(logistic(z))
-    #               + log(1 - logistic(z)) + z²/2 + log(2π)/2
-
-    @testset "fit_model with Beta RE — basic" begin
-        rng = MersenneTwister(99)
-        n_id = 14
-        n_obs = 4
-
-        # True parameters: η ~ Beta(2, 5), y ~ Normal(a + b*η, σ)
-        a_true = 0.5
-        b_true = 2.0
-        σ_true = 0.2
-        α_true = 2.0
-        β_true = 5.0
-
-        ids = repeat(1:n_id, inner = n_obs)
-        η_i = rand(rng, Beta(α_true, β_true), n_id)
-        yobs = a_true .+ b_true .* η_i[ids] .+ σ_true .* randn(rng, n_id * n_obs)
-        tobs = repeat(1:n_obs, n_id) .* 1.0
-
-        df = DataFrame(ID = ids, t = tobs, y = yobs)
-        dm = DataModel(_GHQ_BETA_MODEL, df; primary_id = :ID, time_col = :t)
-
-        res = fit_model(
-            dm, NoLimits.GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,)))
-
-        @test NoLimits.get_converged(res) isa Bool
-        p = NoLimits.get_params(res; scale = :untransformed)
-        @test NoLimits.get_objective(res) < 1e6
+    @formulas begin
+        y ~ Normal(a + η, σ)
     end
+end
 
-    @testset "get_random_effects for Beta RE" begin
-        rng = MersenneTwister(55)
-        n_id = 8
-        ids = repeat(1:n_id, inner = 5)
-        η_i = rand(rng, Beta(2.0, 4.0), n_id)
-        yobs = 1.0 .+ 2.0 .* η_i[ids] .+ 0.15 .* randn(rng, length(ids))
-        tobs = repeat(1:5, n_id) .* 1.0
-
-        df = DataFrame(ID = ids, t = tobs, y = yobs)
-        dm = DataModel(_GHQ_BETA_MODEL, df; primary_id = :ID, time_col = :t)
-        res = fit_model(
-            dm, NoLimits.GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,)))
-
-        re = NoLimits.get_random_effects(dm, res)
-        @test re isa NamedTuple
-        @test haskey(re, :η)
-        @test nrow(re.η) == n_id
-        # Beta RE EB modes should be in (0, 1)
-        # Column is :η_1 (flatten of 1-element vector transform output)
-        @test all(0.0 .< re.η.η_1 .< 1.0)
+# (0,∞)-supported generic fallback (exp transport) — hits the generic branch.
+const _GHQ_INVG_MODEL = @Model begin
+    @fixedEffects begin
+        a = RealNumber(1.5)
+        σ = RealNumber(0.3, scale = :log)
+        α = RealNumber(3.0, scale = :log)
+        β = RealNumber(2.0, scale = :log)
     end
-
-    @testset "validation allows Beta" begin
-        df = DataFrame(ID = [1, 1], t = [1.0, 2.0], y = [0.5, 0.6])
-        dm = DataModel(_GHQ_BETA_MODEL, df; primary_id = :ID, time_col = :t)
-        @test_nowarn NoLimits._ghq_validate_re_distributions(dm)
+    @covariates begin
+        t = Covariate()
     end
-end  # @testset "GHQuadrature Beta RE"
+    @randomEffects begin
+        η = RandomEffect(InverseGamma(α, β); column = :ID)
+    end
+    @formulas begin
+        y ~ Normal(a * η, σ)
+    end
+end
+
+# Assertion sets shared by several families.
+function _ghq_family_fit_checks(res, dm)
+    @test NoLimits.get_converged(res) isa Bool
+    p = NoLimits.get_params(res; scale = :untransformed)
+    @test NoLimits.get_objective(res) < 1e6
+end
+
+function _ghq_family_re_checks(re, n_id)
+    @test re isa NamedTuple && haskey(re, :η)
+    @test nrow(re.η) == n_id
+end
+
+# One entry per family. `fit`/`re` share the data-gen shell (per-id η via
+# `eta`, iid N(0,1) noise mixed in by `y`); `nothing` skips that part.
+const _GHQ_RE_FAMILY_CASES = [
+    # LogNormal(0, ω): push-forward of N(0,1) with logcorrection = 0, so GH
+    # weights absorb the prior exactly — same as GaussianRE.
+    (label = "LogNormal", model = _GHQ_LOGN_MODEL,
+        fit = (seed = 42, n_id = 12, n_obs = 5,
+            eta = (rng, n) -> exp.(0.5 .* randn(rng, n)),
+            y = (η, ε) -> 2.0 .* η .+ 0.3 .* ε,
+            check = (res, dm) -> begin
+                _ghq_family_fit_checks(res, dm)
+                p = NoLimits.get_params(res; scale = :untransformed)
+                @test abs(p.a - 2.0) < 1.5  # a_true ballpark
+            end),
+        re = (seed = 7, n_id = 8, n_obs = 4,
+            eta = (rng, n) -> exp.(0.4 .* randn(rng, n)),
+            y = (η, ε) -> 1.5 .* η .+ 0.2 .* ε,
+            check = (re, n_id) -> begin
+                @test re isa NamedTuple
+                @test haskey(re, :η)
+                @test nrow(re.η) == n_id
+            end),
+        valid_y = [1.0, 1.1]),
+    # Beta(α, β): logistic transport of N(0,1).
+    (label = "Beta", model = _GHQ_BETA_MODEL,
+        fit = (seed = 99, n_id = 14, n_obs = 4,
+            eta = (rng, n) -> rand(rng, Beta(2.0, 5.0), n),
+            y = (η, ε) -> 0.5 .+ 2.0 .* η .+ 0.2 .* ε,
+            check = _ghq_family_fit_checks),
+        re = (seed = 55, n_id = 8, n_obs = 5,
+            eta = (rng, n) -> rand(rng, Beta(2.0, 4.0), n),
+            y = (η, ε) -> 1.0 .+ 2.0 .* η .+ 0.15 .* ε,
+            check = (re, n_id) -> begin
+                @test re isa NamedTuple
+                @test haskey(re, :η)
+                @test nrow(re.η) == n_id
+                # EB modes in (0, 1); column :η_1 (flatten of 1-elem output)
+                @test all(0.0 .< re.η.η_1 .< 1.0)
+            end),
+        valid_y = [0.5, 0.6]),
+    (label = "Gamma", model = _GHQ_GAMMA_MODEL,
+        fit = (seed = 301, n_id = 14, n_obs = 4,
+            eta = (rng, n) -> rand(rng, Gamma(3.0, 0.5), n),
+            y = (η, ε) -> 2.0 .* η .+ 0.3 .* ε,
+            check = _ghq_family_fit_checks),
+        re = (seed = 302, n_id = 8, n_obs = 4,
+            eta = (rng, n) -> rand(rng, Gamma(2.0, 1.0), n),
+            y = (η, ε) -> 1.5 .* η .+ 0.2 .* ε,
+            check = _ghq_family_re_checks),
+        valid_y = [1.0, 1.5]),
+    (label = "Exponential", model = _GHQ_EXP_MODEL,
+        fit = (seed = 401, n_id = 12, n_obs = 4,
+            eta = (rng, n) -> rand(rng, Exponential(1 / 2.0), n),
+            y = (η, ε) -> 1.5 .* η .+ 0.3 .* ε,
+            check = (res, dm) -> begin
+                @test NoLimits.get_converged(res) isa Bool
+                p = NoLimits.get_params(res; scale = :untransformed)
+            end),
+        re = (seed = 402, n_id = 8, n_obs = 4,
+            eta = (rng, n) -> rand(rng, Exponential(0.5), n),
+            y = (η, ε) -> 2.0 .* η .+ 0.2 .* ε,
+            check = nothing),
+        valid_y = nothing),
+    (label = "Weibull", model = _GHQ_WEIB_MODEL,
+        fit = (seed = 501, n_id = 14, n_obs = 4,
+            eta = (rng, n) -> rand(rng, Weibull(2.0, 1.5), n),
+            y = (η, ε) -> 1.0 .* η .+ 0.3 .* ε,
+            check = _ghq_family_fit_checks),
+        re = (seed = 502, n_id = 8, n_obs = 4,
+            eta = (rng, n) -> rand(rng, Weibull(2.0, 1.0), n),
+            y = (η, ε) -> η .+ 0.2 .* ε,
+            check = nothing),
+        valid_y = nothing),
+    # TDist(ν): heavy-tailed, ℝ-supported — identity transport.
+    (label = "TDist", model = _GHQ_TDIST_MODEL,
+        fit = (seed = 601, n_id = 14, n_obs = 4,
+            eta = (rng, n) -> rand(rng, TDist(5.0), n),
+            y = (η, ε) -> 1.0 .+ η .+ 0.3 .* ε,
+            check = _ghq_family_fit_checks),
+        re = (seed = 602, n_id = 8, n_obs = 5,
+            eta = (rng, n) -> rand(rng, TDist(4.0), n),
+            y = (η, ε) -> 0.5 .+ η .+ 0.2 .* ε,
+            check = _ghq_family_re_checks),
+        valid_y = nothing),
+    (label = "Laplace", model = _GHQ_LAPL_MODEL,
+        fit = (seed = 701, n_id = 12, n_obs = 4,
+            eta = (rng, n) -> rand(rng, Distributions.Laplace(0.0, 0.5), n),
+            y = (η, ε) -> 1.0 .+ η .+ 0.2 .* ε,
+            check = (res, dm) -> begin
+                @test NoLimits.get_converged(res) isa Bool
+            end),
+        re = nothing,
+        valid_y = nothing),
+    # InverseGamma: fit + EB extraction smoke test (no assertions originally).
+    (label = "InverseGamma", model = _GHQ_INVG_MODEL,
+        fit = (seed = 702, n_id = 12, n_obs = 4,
+            eta = (rng, n) -> rand(rng, InverseGamma(3.0, 2.0), n),
+            y = (η, ε) -> 1.5 .* η .+ 0.3 .* ε,
+            check = (res, dm) -> NoLimits.get_random_effects(dm, res)),
+        re = nothing,
+        valid_y = nothing)
+]
+
+# Data-gen shell shared by the fit and EB runs of every family.
+function _ghq_family_dm(model, spec)
+    rng = MersenneTwister(spec.seed)
+    ids = repeat(1:(spec.n_id), inner = spec.n_obs)
+    η_i = spec.eta(rng, spec.n_id)
+    yobs = spec.y(η_i[ids], randn(rng, spec.n_id * spec.n_obs))
+    tobs = repeat(1:(spec.n_obs), spec.n_id) .* 1.0
+    df = DataFrame(ID = ids, t = tobs, y = yobs)
+    return DataModel(model, df; primary_id = :ID, time_col = :t)
+end
+
+for c in _GHQ_RE_FAMILY_CASES
+    @testset "GHQuadrature $(c.label) RE" begin
+        @testset "fit_model with $(c.label) RE" begin
+            dm = _ghq_family_dm(c.model, c.fit)
+            res = fit_model(
+                dm, NoLimits.GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,)))
+            c.fit.check(res, dm)
+        end
+
+        if c.re !== nothing
+            @testset "get_random_effects for $(c.label) RE" begin
+                dm = _ghq_family_dm(c.model, c.re)
+                res = fit_model(dm,
+                    NoLimits.GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,)))
+                re = NoLimits.get_random_effects(dm, res)
+                c.re.check === nothing || c.re.check(re, c.re.n_id)
+            end
+        end
+
+        if c.valid_y !== nothing
+            @testset "validation allows $(c.label)" begin
+                df = DataFrame(ID = [1, 1], t = [1.0, 2.0], y = c.valid_y)
+                dm = DataModel(c.model, df; primary_id = :ID, time_col = :t)
+                @test_nowarn NoLimits._ghq_validate_re_distributions(dm)
+            end
+        end
+    end
+end
 
 # ============================================================
 # Phase 3: Anisotropic grids
@@ -1262,247 +1331,6 @@ end  # @testset "GHQuadrature Beta RE"
         @test NoLimits.get_converged(res) isa Bool
     end
 end  # @testset "Anisotropic sparse grids"
-
-# ============================================================
-# Gamma, Exponential, Weibull, TDist RE distributions
-# ============================================================
-
-@testset "GHQuadrature Gamma RE" begin
-    @testset "fit_model with Gamma RE" begin
-        rng = MersenneTwister(301)
-        n_id = 14
-        n_obs = 4
-        α_true = 3.0
-        θ_true = 0.5
-        a_true = 2.0
-        σ_true = 0.3
-        ids = repeat(1:n_id, inner = n_obs)
-        η_i = rand(rng, Gamma(α_true, θ_true), n_id)
-        yobs = a_true .* η_i[ids] .+ σ_true .* randn(rng, n_id * n_obs)
-        tobs = repeat(1:n_obs, n_id) .* 1.0
-
-        df = DataFrame(ID = ids, t = tobs, y = yobs)
-        dm = DataModel(_GHQ_GAMMA_MODEL, df; primary_id = :ID, time_col = :t)
-        res = fit_model(
-            dm, NoLimits.GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,)))
-
-        @test NoLimits.get_converged(res) isa Bool
-        p = NoLimits.get_params(res; scale = :untransformed)
-        @test NoLimits.get_objective(res) < 1e6
-    end
-
-    @testset "get_random_effects for Gamma RE" begin
-        rng = MersenneTwister(302)
-        n_id = 8
-        ids = repeat(1:n_id, inner = 4)
-        η_i = rand(rng, Gamma(2.0, 1.0), n_id)
-        yobs = 1.5 .* η_i[ids] .+ 0.2 .* randn(rng, length(ids))
-        tobs = repeat(1:4, n_id) .* 1.0
-
-        df = DataFrame(ID = ids, t = tobs, y = yobs)
-        dm = DataModel(_GHQ_GAMMA_MODEL, df; primary_id = :ID, time_col = :t)
-        res = fit_model(
-            dm, NoLimits.GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,)))
-
-        re = NoLimits.get_random_effects(dm, res)
-        @test re isa NamedTuple && haskey(re, :η)
-        @test nrow(re.η) == n_id
-        # Gamma RE should be positive
-    end
-
-    @testset "validation allows Gamma" begin
-        df = DataFrame(ID = [1, 1], t = [1.0, 2.0], y = [1.0, 1.5])
-        dm = DataModel(_GHQ_GAMMA_MODEL, df; primary_id = :ID, time_col = :t)
-        @test_nowarn NoLimits._ghq_validate_re_distributions(dm)
-    end
-end  # @testset "GHQuadrature Gamma RE"
-
-@testset "GHQuadrature Exponential RE" begin
-    @testset "fit_model with Exponential RE" begin
-        rng = MersenneTwister(401)
-        n_id = 12
-        n_obs = 4
-        λ_true = 2.0
-        a_true = 1.5
-        σ_true = 0.3
-        ids = repeat(1:n_id, inner = n_obs)
-        η_i = rand(rng, Exponential(1 / λ_true), n_id)
-        yobs = a_true .* η_i[ids] .+ σ_true .* randn(rng, n_id * n_obs)
-        tobs = repeat(1:n_obs, n_id) .* 1.0
-
-        df = DataFrame(ID = ids, t = tobs, y = yobs)
-        dm = DataModel(_GHQ_EXP_MODEL, df; primary_id = :ID, time_col = :t)
-        res = fit_model(
-            dm, NoLimits.GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,)))
-
-        @test NoLimits.get_converged(res) isa Bool
-        p = NoLimits.get_params(res; scale = :untransformed)
-    end
-
-    @testset "get_random_effects for Exponential RE are positive" begin
-        rng = MersenneTwister(402)
-        n_id = 8
-        ids = repeat(1:n_id, inner = 4)
-        η_i = rand(rng, Exponential(0.5), n_id)
-        yobs = 2.0 .* η_i[ids] .+ 0.2 .* randn(rng, length(ids))
-        tobs = repeat(1:4, n_id) .* 1.0
-        df = DataFrame(ID = ids, t = tobs, y = yobs)
-        dm = DataModel(_GHQ_EXP_MODEL, df; primary_id = :ID, time_col = :t)
-        res = fit_model(
-            dm, NoLimits.GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,)))
-        re = NoLimits.get_random_effects(dm, res)
-    end
-end  # @testset "GHQuadrature Exponential RE"
-
-@testset "GHQuadrature Weibull RE" begin
-    @testset "fit_model with Weibull RE" begin
-        rng = MersenneTwister(501)
-        n_id = 14
-        n_obs = 4
-        α_true = 2.0
-        θ_true = 1.5
-        a_true = 1.0
-        σ_true = 0.3
-        ids = repeat(1:n_id, inner = n_obs)
-        η_i = rand(rng, Weibull(α_true, θ_true), n_id)
-        yobs = a_true .* η_i[ids] .+ σ_true .* randn(rng, n_id * n_obs)
-        tobs = repeat(1:n_obs, n_id) .* 1.0
-
-        df = DataFrame(ID = ids, t = tobs, y = yobs)
-        dm = DataModel(_GHQ_WEIB_MODEL, df; primary_id = :ID, time_col = :t)
-        res = fit_model(
-            dm, NoLimits.GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,)))
-
-        @test NoLimits.get_converged(res) isa Bool
-        p = NoLimits.get_params(res; scale = :untransformed)
-        @test NoLimits.get_objective(res) < 1e6
-    end
-
-    @testset "get_random_effects for Weibull RE are positive" begin
-        rng = MersenneTwister(502)
-        n_id = 8
-        ids = repeat(1:n_id, inner = 4)
-        η_i = rand(rng, Weibull(2.0, 1.0), n_id)
-        yobs = η_i[ids] .+ 0.2 .* randn(rng, length(ids))
-        tobs = repeat(1:4, n_id) .* 1.0
-        df = DataFrame(ID = ids, t = tobs, y = yobs)
-        dm = DataModel(_GHQ_WEIB_MODEL, df; primary_id = :ID, time_col = :t)
-        res = fit_model(
-            dm, NoLimits.GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,)))
-        re = NoLimits.get_random_effects(dm, res)
-    end
-end  # @testset "GHQuadrature Weibull RE"
-
-@testset "GHQuadrature TDist RE" begin
-    @testset "fit_model with TDist RE" begin
-        # TDist(ν): heavy-tailed, ℝ-supported.  Identity transport.
-        rng = MersenneTwister(601)
-        n_id = 14
-        n_obs = 4
-        ν_true = 5.0
-        a_true = 1.0
-        σ_true = 0.3
-        ids = repeat(1:n_id, inner = n_obs)
-        η_i = rand(rng, TDist(ν_true), n_id)
-        yobs = a_true .+ η_i[ids] .+ σ_true .* randn(rng, n_id * n_obs)
-        tobs = repeat(1:n_obs, n_id) .* 1.0
-
-        df = DataFrame(ID = ids, t = tobs, y = yobs)
-        dm = DataModel(_GHQ_TDIST_MODEL, df; primary_id = :ID, time_col = :t)
-        res = fit_model(
-            dm, NoLimits.GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,)))
-
-        @test NoLimits.get_converged(res) isa Bool
-        p = NoLimits.get_params(res; scale = :untransformed)
-        @test NoLimits.get_objective(res) < 1e6
-    end
-
-    @testset "get_random_effects for TDist RE" begin
-        rng = MersenneTwister(602)
-        n_id = 8
-        ids = repeat(1:n_id, inner = 5)
-        η_i = rand(rng, TDist(4.0), n_id)
-        yobs = 0.5 .+ η_i[ids] .+ 0.2 .* randn(rng, length(ids))
-        tobs = repeat(1:5, n_id) .* 1.0
-        df = DataFrame(ID = ids, t = tobs, y = yobs)
-        dm = DataModel(_GHQ_TDIST_MODEL, df; primary_id = :ID, time_col = :t)
-        res = fit_model(
-            dm, NoLimits.GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,)))
-        re = NoLimits.get_random_effects(dm, res)
-        @test re isa NamedTuple && haskey(re, :η)
-        @test nrow(re.η) == n_id
-    end
-end  # @testset "GHQuadrature TDist RE"
-
-@testset "GHQuadrature generic ContinuousUnivariateDistribution fallback" begin
-
-    # Laplace(μ, b): ℝ-supported, identity transport — hits generic branch
-    @testset "Laplace RE (ℝ-supported generic)" begin
-        rng = MersenneTwister(701)
-        n_id = 12
-        n_obs = 4
-        ids = repeat(1:n_id, inner = n_obs)
-        η_i = rand(rng, Distributions.Laplace(0.0, 0.5), n_id)
-        yobs = 1.0 .+ η_i[ids] .+ 0.2 .* randn(rng, n_id * n_obs)
-        tobs = repeat(1:n_obs, n_id) .* 1.0
-
-        model = @Model begin
-            @fixedEffects begin
-                a = RealNumber(1.0)
-                σ = RealNumber(0.2, scale = :log)
-                b = RealNumber(0.5, scale = :log)
-            end
-            @covariates begin
-                t = Covariate()
-            end
-            @randomEffects begin
-                η = RandomEffect(Distributions.Laplace(0.0, b); column = :ID)
-            end
-            @formulas begin
-                y ~ Normal(a + η, σ)
-            end
-        end
-        df = DataFrame(ID = ids, t = tobs, y = yobs)
-        dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-        res = fit_model(
-            dm, NoLimits.GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,)))
-        @test NoLimits.get_converged(res) isa Bool
-    end
-
-    # InverseGamma(α, β): (0,∞)-supported, exp transport — hits generic branch
-    @testset "InverseGamma RE (ℝ⁺-supported generic)" begin
-        rng = MersenneTwister(702)
-        n_id = 12
-        n_obs = 4
-        ids = repeat(1:n_id, inner = n_obs)
-        η_i = rand(rng, InverseGamma(3.0, 2.0), n_id)
-        yobs = 1.5 .* η_i[ids] .+ 0.3 .* randn(rng, n_id * n_obs)
-        tobs = repeat(1:n_obs, n_id) .* 1.0
-
-        model = @Model begin
-            @fixedEffects begin
-                a = RealNumber(1.5)
-                σ = RealNumber(0.3, scale = :log)
-                α = RealNumber(3.0, scale = :log)
-                β = RealNumber(2.0, scale = :log)
-            end
-            @covariates begin
-                t = Covariate()
-            end
-            @randomEffects begin
-                η = RandomEffect(InverseGamma(α, β); column = :ID)
-            end
-            @formulas begin
-                y ~ Normal(a * η, σ)
-            end
-        end
-        df = DataFrame(ID = ids, t = tobs, y = yobs)
-        dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-        res = fit_model(
-            dm, NoLimits.GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,)))
-        re = NoLimits.get_random_effects(dm, res)
-    end
-end  # @testset "GHQuadrature generic ContinuousUnivariateDistribution fallback"
 
 # ============================================================
 # Progressive refinement: level::Vector{Int}

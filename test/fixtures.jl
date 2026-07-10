@@ -584,3 +584,100 @@ function fx_uq_laplace()
         () -> compute_uq(
             fx_laplace(); n_draws = 30, serialization = _SER, rng = Random.Xoshiro(12)))
 end
+
+# ── Scalar RE with fixed sd (no ω parameter): y ~ Normal(a + η, σ) ────────────
+function fx_fixre_model()
+    _fx(:fixre_model,
+        () -> @Model begin
+            @fixedEffects begin
+                a = RealNumber(0.2)
+                σ = RealNumber(0.3, scale = :log)
+            end
+            @covariates begin
+                t = Covariate()
+            end
+            @randomEffects begin
+                η = RandomEffect(Normal(0.0, 0.5); column = :ID)
+            end
+            @formulas begin
+                y ~ Normal(a + η, σ)
+            end
+        end)
+end
+function fx_fixre_dm()
+    _fx(:fixre_dm,
+        () -> DataModel(fx_fixre_model(), fx_re_df(); primary_id = :ID, time_col = :t))
+end
+function fx_fixre_laplace()
+    _fx(:fixre_laplace,
+        () -> fit_model(fx_fixre_dm(), NoLimits.Laplace(; optim_kwargs = (maxiters = 3,));
+            serialization = _SER))
+end
+
+# ── Scalar RE on symbol IDs (A/B/C); Laplace fit pins η(B) via constants_re ──
+function fx_constre_df()
+    _fx(:constre_df,
+        () -> DataFrame(
+            ID = [:A, :A, :B, :B, :C, :C], t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+            y = [0.1, 0.2, 0.0, 0.1, 0.15, 0.25]))
+end
+function fx_constre_model()
+    _fx(:constre_model,
+        () -> @Model begin
+            @fixedEffects begin
+                a = RealNumber(0.1)
+                σ = RealNumber(0.3, scale = :log)
+            end
+            @covariates begin
+                t = Covariate()
+            end
+            @randomEffects begin
+                η = RandomEffect(Normal(0.0, 0.5); column = :ID)
+            end
+            @formulas begin
+                y ~ Normal(a + η, σ)
+            end
+        end)
+end
+function fx_constre_dm()
+    _fx(:constre_dm,
+        () -> DataModel(
+            fx_constre_model(), fx_constre_df(); primary_id = :ID, time_col = :t))
+end
+function fx_constre_laplace()
+    _fx(:constre_laplace,
+        () -> fit_model(fx_constre_dm(),
+            NoLimits.Laplace(;
+                optim_kwargs = (maxiters = 2,), multistart_n = 2, multistart_k = 2);
+            constants_re = (; η = (; B = 0.0)), serialization = _SER))
+end
+
+# ── Non-ODE RE grouped on :YEAR (varies within individuals) ──────────────────
+function fx_varyre_model()
+    _fx(:varyre_model,
+        () -> @Model begin
+            @fixedEffects begin
+                σ = RealNumber(1.0e-6, scale = :log)
+            end
+            @covariates begin
+                t = Covariate()
+            end
+            @randomEffects begin
+                η_year = RandomEffect(Normal(0.0, 1.0); column = :YEAR)
+            end
+            @formulas begin
+                y ~ Normal(η_year, σ)
+            end
+        end)
+end
+function fx_varyre_df()
+    _fx(:varyre_df,
+        () -> DataFrame(ID = [1, 1, 1, 2, 2], YEAR = [:A, :B, :B, :A, :C],
+            t = [0.0, 1.0, 2.0, 0.0, 1.0], y = [0.1, 0.4, 0.4, 0.1, 0.3]))
+end
+function fx_varyre_dm()
+    _fx(:varyre_dm,
+        () -> DataModel(fx_varyre_model(), fx_varyre_df(); primary_id = :ID, time_col = :t))
+end
+# Level values matching fx_varyre_df's y exactly (σ ≈ 0): plots recover them.
+fx_varyre_constants_re() = (; η_year = (; A = 0.1, B = 0.4, C = 0.3))
