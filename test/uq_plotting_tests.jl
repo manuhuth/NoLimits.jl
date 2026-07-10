@@ -5,6 +5,17 @@ using Plots
 using Random
 using Statistics
 
+# Hand-built UQResults below differ in only a few slots; override just those.
+# Transformed-scale values default onto the natural-scale slots (and vice versa
+# for the paired kwargs), matching the symmetric constructions they replace.
+function make_uq(; backend = :wald, source = :mle, names = [:a], names_natural = nothing,
+        est_t = [0.0], est_n = est_t, ints_t = nothing, ints_n = ints_t,
+        vcov_t = nothing, vcov_n = vcov_t, draws_t = nothing, draws_n = draws_t,
+        diagnostics = (; vcov = :hessian))
+    UQResult(backend, source, names, names_natural, est_t, est_n, ints_t, ints_n,
+        vcov_t, vcov_n, draws_t, draws_n, diagnostics)
+end
+
 @testset "UQ distribution plotting with draws" begin
     rng = Random.Xoshiro(101)
     draws = randn(rng, 300, 2)
@@ -14,21 +25,8 @@ using Statistics
     ints = UQIntervals(0.95, lower, upper)
     V = Matrix(I, 2, 2)
 
-    uq = UQResult(
-        :wald,
-        :mle,
-        [:a, :σ],
-        nothing,
-        est,
-        est,
-        ints,
-        ints,
-        V,
-        V,
-        draws,
-        draws,
-        (; vcov = :hessian)
-    )
+    uq = make_uq(; names = [:a, :σ], est_t = est, ints_t = ints, vcov_t = V,
+        draws_t = draws)
 
     p_all = @test_logs (:info, r"sampling \+ KDE") plot_uq_distributions(
         uq; scale = :natural)
@@ -57,21 +55,8 @@ end
     est = vec(mean(draws; dims = 1))
     ints = UQIntervals(0.95, [-1.2, -1.0], [1.2, 1.0])
     V = Matrix(I, 2, 2)
-    uq = UQResult(
-        :wald,
-        :mle,
-        [:a, :σ],
-        nothing,
-        est,
-        est,
-        ints,
-        ints,
-        V,
-        V,
-        draws,
-        draws,
-        (; vcov = :hessian)
-    )
+    uq = make_uq(; names = [:a, :σ], est_t = est, ints_t = ints, vcov_t = V,
+        draws_t = draws)
     p_hist = plot_uq_distributions(uq; plot_type = :histogram, scale = :natural, ncols = 1)
     @test p_hist !== nothing
     @test p_hist.subplots[1][:yaxis][:guide] == "Wald Histogram Density"
@@ -84,21 +69,8 @@ end
     est = vec(mean(draws; dims = 1))
     ints = UQIntervals(0.95, [-1.5, -1.2], [1.5, 1.2])
     V = Matrix(I, 2, 2)
-    uq = UQResult(
-        :wald,
-        :mle,
-        [:a, :β_1],
-        nothing,
-        est,
-        est,
-        ints,
-        ints,
-        V,
-        V,
-        draws,
-        draws,
-        (; vcov = :hessian)
-    )
+    uq = make_uq(; names = [:a, :β_1], est_t = est, ints_t = ints, vcov_t = V,
+        draws_t = draws)
     p = plot_uq_distributions(uq; scale = :natural, parameters = [:a], ncols = 1)
     @test p.subplots[1][:xaxis][:guide] == "a"
     @test p.subplots[1][:title] == "a"
@@ -106,42 +78,16 @@ end
 
 @testset "UQ distribution plotting uses analytic Wald density on transformed scale" begin
     ints = UQIntervals(0.95, [-0.6], [0.8])
-    uq = UQResult(
-        :wald,
-        :mle,
-        [:a],
-        nothing,
-        [0.1],
-        [0.1],
-        ints,
-        ints,
-        reshape([0.25], 1, 1),
-        reshape([0.25], 1, 1),
-        nothing,
-        nothing,
-        (; vcov = :hessian)
-    )
+    uq = make_uq(; est_t = [0.1], ints_t = ints, vcov_t = reshape([0.25], 1, 1))
     p = plot_uq_distributions(uq; scale = :transformed, ncols = 1)
     @test p !== nothing
     @test p.subplots[1][:yaxis][:guide] == "Wald Approximate Density"
 end
 
 @testset "UQ distribution plotting uses analytic Wald densities on natural scale for identity/log transforms" begin
-    uq = UQResult(
-        :wald,
-        :mle,
-        [:a, :σ],
-        nothing,
-        [0.2, -1.0],
-        [0.2, exp(-1.0)],
-        nothing,
-        nothing,
-        [0.04 0.0; 0.0 0.09],
-        nothing,
-        nothing,
-        nothing,
-        (; vcov = :hessian, coordinate_transforms = [:identity, :log])
-    )
+    uq = make_uq(; names = [:a, :σ], est_t = [0.2, -1.0], est_n = [0.2, exp(-1.0)],
+        vcov_t = [0.04 0.0; 0.0 0.09], vcov_n = nothing,
+        diagnostics = (; vcov = :hessian, coordinate_transforms = [:identity, :log]))
     p = plot_uq_distributions(uq; scale = :natural, ncols = 1)
     @test p !== nothing
     @test p.subplots[1][:yaxis][:guide] == "Wald Approximate Density"
@@ -150,21 +96,9 @@ end
 @testset "UQ distribution plotting fallback line uses current plot scale" begin
     σ_t = -0.5
     σ_n = exp(σ_t)
-    uq = UQResult(
-        :wald,
-        :mle,
-        [:σ],
-        nothing,
-        [σ_t],
-        [σ_n],
-        nothing,
-        nothing,
-        reshape([-1e-6], 1, 1),
-        nothing,
-        nothing,
-        nothing,
-        (; vcov = :hessian, coordinate_transforms = [:log])
-    )
+    uq = make_uq(; names = [:σ], est_t = [σ_t], est_n = [σ_n],
+        vcov_t = reshape([-1e-6], 1, 1), vcov_n = nothing,
+        diagnostics = (; vcov = :hessian, coordinate_transforms = [:log]))
     p = plot_uq_distributions(uq;
         scale = :natural,
         ncols = 1,
@@ -180,21 +114,8 @@ end
     rng = Random.Xoshiro(121)
     draws_n = randn(rng, 300, 1) .* 0.2 .+ 1.0
     ints = UQIntervals(0.95, [0.7], [1.3])
-    uq = UQResult(
-        :wald,
-        :mle,
-        [:a],
-        nothing,
-        [0.0],
-        [1.0],
-        ints,
-        ints,
-        reshape([0.04], 1, 1),
-        reshape([0.04], 1, 1),
-        nothing,
-        draws_n,
-        (; vcov = :hessian)
-    )
+    uq = make_uq(; est_t = [0.0], est_n = [1.0], ints_t = ints,
+        vcov_t = reshape([0.04], 1, 1), draws_n = draws_n)
     p = @test_logs (:info, r"sampling \+ KDE") plot_uq_distributions(
         uq; scale = :natural, ncols = 1)
     @test p !== nothing
@@ -203,21 +124,8 @@ end
 
 @testset "UQ distribution plotting errors when draws are unavailable" begin
     ints = UQIntervals(0.95, [0.1], [0.4])
-    uq_profile = UQResult(
-        :profile,
-        :mle,
-        [:a],
-        nothing,
-        [0.2],
-        [0.2],
-        ints,
-        ints,
-        nothing,
-        nothing,
-        nothing,
-        nothing,
-        (;)
-    )
+    uq_profile = make_uq(; backend = :profile, est_t = [0.2], ints_t = ints,
+        diagnostics = (;))
     @test_throws ErrorException plot_uq_distributions(uq_profile)
     @test_throws ErrorException plot_uq_distributions(uq_profile; plot_type = :histogram)
 end
@@ -228,21 +136,7 @@ end
     est = [10.0]
     ints = UQIntervals(0.95, [-1.5], [1.5])
     V = reshape([1.0], 1, 1)
-    uq = UQResult(
-        :wald,
-        :mle,
-        [:a],
-        nothing,
-        est,
-        est,
-        ints,
-        ints,
-        V,
-        V,
-        draws,
-        draws,
-        (; vcov = :hessian)
-    )
+    uq = make_uq(; est_t = est, ints_t = ints, vcov_t = V, draws_t = draws)
 
     p_density = @test_logs (:info, r"sampling \+ KDE") plot_uq_distributions(
         uq; scale = :natural, ncols = 1)

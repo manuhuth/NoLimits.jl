@@ -106,3 +106,58 @@ using LinearAlgebra
     @test occursin(raw"\eta^{\left(2\right)}", txt_vec_latex)
     @test !occursin(raw"\eta\left( 1 \right)", txt_vec_latex)
 end
+
+@testset "Equation display rendering paths" begin
+    # Moved from coverage_gap_tests.jl.
+    # Model with prede + DE + formulas exercises the full latex block builder.
+    model = @Model begin
+        @fixedEffects begin
+            k = RealNumber(0.5, scale = :log)
+            σ = RealNumber(0.3, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @preDifferentialEquation begin
+            r = k + 1.0
+        end
+        @DifferentialEquation begin
+            D(x1) ~ -r * x1
+        end
+        @initialDE begin
+            x1 = 1.0
+        end
+        @formulas begin
+            mu = x1(t)
+            y ~ Normal(mu, σ)
+        end
+    end
+
+    # latex=true (no io) returns a rendered block object via _eq_latex_block
+    block = NoLimits.show_equations(model; latex = true)
+    @test block !== nothing
+
+    block_num = NoLimits.show_equations(model; latex = true, numbered = true)
+    @test block_num !== nothing
+
+    # latex=false (no io) returns a String via the plain renderer
+    plain = NoLimits.show_equations(model; latex = false)
+    @test plain isa AbstractString
+    @test occursin("x1", plain)
+
+    # Formulas-only model exercises get_equation_lines without prede/DE
+    model2 = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.2)
+            σ = RealNumber(0.3, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @formulas begin
+            y ~ Normal(a, σ)
+        end
+    end
+    lines2 = NoLimits.get_equation_lines(model2)
+    @test !isempty(lines2)
+end

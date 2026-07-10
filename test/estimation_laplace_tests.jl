@@ -10,11 +10,28 @@ using Distributions
 using ComponentArrays
 using LinearAlgebra
 using Random
+using SciMLBase
+using OrdinaryDiffEq
 
-# Consolidated Laplace tests (merges the former estimation_laplace and
-# estimation_laplace_fit files). Standard structures
+# Consolidated Laplace tests (merges the former estimation_laplace,
+# estimation_laplace_fit, estimation_hutchinson and estimation_newton_inner
+# files). Standard structures
 # reuse the shared fixtures (fit/model built once); bespoke @Models are kept only
 # where a test specifically exercises that structure or an error path.
+
+# Fresh Laplace EBE cache scaffold (shared by the FD-gradient and Hutchinson tests).
+function _make_laplace_ebe_cache(T::Type, n_batches::Int)
+    bstar_cache = NoLimits._LaplaceBStarCache(
+        [Vector{T}() for _ in 1:n_batches], falses(n_batches))
+    grad_cache = NoLimits._LaplaceGradCache([Vector{T}() for _ in 1:n_batches],
+        fill(T(NaN), n_batches),
+        [Vector{T}() for _ in 1:n_batches],
+        falses(n_batches))
+    ad_cache = NoLimits._init_laplace_ad_cache(n_batches)
+    hess_cache = NoLimits._init_laplace_hess_cache(T, n_batches)
+    return NoLimits._LaplaceCache(
+        nothing, bstar_cache, grad_cache, ad_cache, hess_cache)
+end
 
 # Shared Laplace objective-gradient-vs-finite-differences check (generic in the
 # model, so it runs against shared archetype DataModels).
@@ -22,18 +39,7 @@ function _laplace_grad_matches_fd(dm; rtol, atol)
     _, batch_infos, const_cache = NoLimits._build_laplace_batch_infos(dm, NamedTuple())
     ll_cache = build_ll_cache(dm)
     θ0 = get_θ0_untransformed(NoLimits.get_model(dm).fixed.fixed)
-    Tθ = eltype(θ0)
-    n_batches = length(batch_infos)
-    bstar_cache = NoLimits._LaplaceBStarCache(
-        [Vector{Tθ}() for _ in 1:n_batches], falses(n_batches))
-    grad_cache = NoLimits._LaplaceGradCache([Vector{Tθ}() for _ in 1:n_batches],
-        fill(Tθ(NaN), n_batches),
-        [Vector{Tθ}() for _ in 1:n_batches],
-        falses(n_batches))
-    ad_cache = NoLimits._init_laplace_ad_cache(n_batches)
-    hess_cache = NoLimits._init_laplace_hess_cache(Tθ, n_batches)
-    ebe_cache = NoLimits._LaplaceCache(
-        nothing, bstar_cache, grad_cache, ad_cache, hess_cache)
+    ebe_cache = _make_laplace_ebe_cache(eltype(θ0), length(batch_infos))
     inner = NoLimits.LaplaceInnerOptions(
         OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking()),
         (maxiters = 50,), Optimization.AutoForwardDiff(), 1e-6)
@@ -364,4 +370,216 @@ end
     # optimizer stalled at (or walked toward) the unpenalized optimum.
     @test abs(a_pen) < 0.05
     @test abs(a_pen) < abs(a_unpen)
+end
+
+# ── Hutchinson logdet-gradient option (folded from estimation_hutchinson) ────
+
+@testset "Hutchinson logdet gradient approximates trace" begin
+    Random.seed!(1234)
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+
+        @fixedEffects begin
+            a = RealNumber(0.2)
+            σ = RealNumber(0.5, scale = :log)
+        end
+
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, 1.0); column = :ID)
+        end
+
+        @formulas begin
+            y ~ Normal(a + η, σ)
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 2, 2],
+        t = [0.0, 1.0, 0.0, 1.0],
+        y = [0.1, 0.2, 0.0, -0.1]
+    )
+
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    pairing, batch_infos, const_cache = NoLimits._build_laplace_batch_infos(
+        dm, NamedTuple())
+    ll_cache = build_ll_cache(dm)
+    θu = get_θ0_untransformed(model.fixed.fixed)
+    ebe_cache = _make_laplace_ebe_cache(eltype(θu), length(batch_infos))
+
+    info = batch_infos[1]
+    b = NoLimits._laplace_default_b0(dm, info, θu, const_cache, ll_cache)
+
+    res_exact = NoLimits._laplace_grad_batch(
+        dm, info, θu, b, const_cache, ll_cache, ebe_cache.ad_cache, 1;
+        use_trace_logdet_grad = true,
+        use_hutchinson = false)
+    res_hutch = NoLimits._laplace_grad_batch(
+        dm, info, θu, b, const_cache, ll_cache, ebe_cache.ad_cache, 1;
+        use_trace_logdet_grad = true,
+        use_hutchinson = true,
+        hutchinson_n = 16)
+
+    denom = max(norm(res_exact.grad), eps())
+    rel_err = norm(res_hutch.grad - res_exact.grad) / denom
+    @test rel_err < 0.6
+end
+
+@testset "Hutchinson gradients are driven by passed rng" begin
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+
+        @fixedEffects begin
+            a = RealNumber(0.2)
+            σ = RealNumber(0.3, scale = :log)
+        end
+
+        @randomEffects begin
+            η1 = RandomEffect(Normal(0.0, 1.0); column = :ID)
+            η2 = RandomEffect(Normal(0.0, 1.0); column = :ID)
+        end
+
+        @formulas begin
+            y ~ Normal(a + η1 + η2, σ)
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 2, 2, 3, 3, 4, 4],
+        t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+        y = [0.1, 0.2, 0.0, -0.1, 0.3, 0.2, 0.05, -0.05]
+    )
+
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    _, batch_infos, const_cache = NoLimits._build_laplace_batch_infos(dm, NamedTuple())
+    ll_cache = build_ll_cache(dm)
+    θu = get_θ0_untransformed(model.fixed.fixed)
+    method = NoLimits.Laplace(; use_hutchinson = true, hutchinson_n = 1)
+
+    function eval_grad(global_seed::Int, rng_seed::Int)
+        Random.seed!(global_seed)
+        ebe_cache = _make_laplace_ebe_cache(eltype(θu), length(batch_infos))
+        _, g, _ = NoLimits._laplace_objective_and_grad(
+            dm, batch_infos, θu, const_cache, ll_cache, ebe_cache;
+            inner = method.inner,
+            hessian = method.hessian,
+            cache_opts = method.cache,
+            multistart = method.multistart,
+            rng = MersenneTwister(rng_seed))
+        return collect(g)
+    end
+
+    g1 = eval_grad(1, 123)
+    g2 = eval_grad(2, 123)
+    g3 = eval_grad(1, 999)
+
+    @test isapprox(g1, g2; atol = 1e-12, rtol = 1e-12)
+    @test maximum(abs.(g1 .- g3)) > 1e-6
+end
+
+# ── NewtonInner inner optimizer (folded from estimation_newton_inner) ────────
+# NewtonInner is an OPT-IN inner-EBE optimizer: the default (LBFGS via
+# Optimization.jl) is unchanged. These tests check that (1) the option produces
+# the same fits as the default within inner-solver tolerance, (2) the
+# `max_dim` fallback reproduces the default path exactly, and (3) the inner
+# solutions themselves agree at matching gradient tolerances.
+
+function _newton_test_dm()
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.8)
+            b = RealNumber(0.3)
+            ω = RealNumber(0.5, scale = :log)
+            σ = RealNumber(0.4, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+            x = ConstantCovariateVector([:Age])
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, ω); column = :ID)
+        end
+        @formulas begin
+            lin = a + b * x.Age + η
+            y ~ Normal(lin, σ)
+        end
+    end
+    rng = Xoshiro(11)
+    rows = NamedTuple[]
+    for i in 1:40
+        age = 0.5 + 0.05 * (i % 20)
+        ηi = 0.4 * randn(rng)
+        for j in 1:6
+            t = (j - 1) * 0.5
+            y = 0.8 + 0.3 * age + ηi + 0.4 * randn(rng)
+            push!(rows, (ID = i, t = t, Age = age, y = y))
+        end
+    end
+    return DataModel(model, DataFrame(rows); primary_id = :ID, time_col = :t)
+end
+
+@testset "NewtonInner inner solver (opt-in)" begin
+    dm = _newton_test_dm()
+
+    @testset "inner solve agrees with the default optimizer" begin
+        llc = NoLimits.build_ll_cache(dm; force_saveat = true)
+        _, binfos, ccache = NoLimits._build_laplace_batch_infos(dm, NamedTuple())
+        θ = NoLimits.get_θ0_untransformed(get_model(dm).fixed.fixed)
+        adc = NoLimits._init_laplace_ad_cache(length(binfos))
+        for bi in (1, 5, 17)
+            info = binfos[bi]
+            b0 = zeros(info.n_b)
+            sol_def = NoLimits._laplace_solve_batch!(dm, info, θ, ccache, llc, adc, bi, b0)
+            sol_new = NoLimits._laplace_solve_batch!(dm, info, θ, ccache, llc, adc, bi, b0;
+                optimizer = NewtonInner())
+            @test sol_new isa NoLimits._NewtonSol
+            @test sol_new.converged
+            @test NoLimits._laplace_sol_grad_norm(sol_new) <= 1e-8
+            @test collect(sol_new.u)≈collect(sol_def.u) atol=1e-6
+            @test NoLimits._laplace_sol_logf(sol_new)≈NoLimits._laplace_sol_logf(sol_def) atol=1e-8
+        end
+    end
+
+    @testset "Laplace fit matches default within tolerance" begin
+        res_def = fit_model(dm, NoLimits.Laplace(optim_kwargs = (maxiters = 40,));
+            serialization = EnsembleSerial(), rng = Xoshiro(3))
+        res_new = fit_model(dm,
+            NoLimits.Laplace(optim_kwargs = (maxiters = 40,),
+                inner_optimizer = NewtonInner());
+            serialization = EnsembleSerial(), rng = Xoshiro(3))
+        @test isfinite(get_objective(res_new))
+        @test get_objective(res_new)≈get_objective(res_def) rtol=1e-6 atol=1e-6
+        # Qualified: MCMCChains (loaded by earlier files in the same batch
+        # subprocess) also exports a `get_params`, making the bare name ambiguous.
+        @test collect(NoLimits.get_params(res_new;
+            scale = :transformed))≈
+        collect(NoLimits.get_params(res_def; scale = :transformed)) rtol=1e-3 atol=1e-3
+        eta_def = get_random_effects(dm, res_def, :η)
+        eta_new = get_random_effects(dm, res_new, :η)
+        @test eta_new≈eta_def atol=1e-4
+    end
+
+    @testset "FOCEI fit matches default within tolerance" begin
+        res_def = fit_model(dm, NoLimits.FOCEI(optim_kwargs = (maxiters = 40,));
+            serialization = EnsembleSerial(), rng = Xoshiro(3))
+        res_new = fit_model(dm,
+            NoLimits.FOCEI(optim_kwargs = (maxiters = 40,),
+                inner_optimizer = NewtonInner());
+            serialization = EnsembleSerial(), rng = Xoshiro(3))
+        @test isfinite(get_objective(res_new))
+        @test get_objective(res_new)≈get_objective(res_def) rtol=1e-6 atol=1e-6
+    end
+
+    @testset "max_dim fallback reproduces the default path" begin
+        res_def = fit_model(dm, NoLimits.Laplace(optim_kwargs = (maxiters = 15,));
+            serialization = EnsembleSerial(), rng = Xoshiro(3))
+        res_fb = fit_model(dm,
+            NoLimits.Laplace(optim_kwargs = (maxiters = 15,),
+                inner_optimizer = NewtonInner(max_dim = 0));
+            serialization = EnsembleSerial(), rng = Xoshiro(3))
+        @test get_objective(res_fb)≈get_objective(res_def) rtol=1e-10 atol=1e-10
+    end
 end

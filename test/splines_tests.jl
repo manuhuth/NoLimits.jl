@@ -3,6 +3,8 @@ using NoLimits
 using DataFrames
 using Distributions
 using DataInterpolations
+using DifferentiationInterface
+using ForwardDiff
 
 @testset "Splines" begin
     knots = [0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0]
@@ -203,4 +205,16 @@ end
     )
 
     @test_throws ErrorException DataModel(model, df_bad; primary_id = :ID, time_col = :t)
+end
+
+@testset "Spline AD" begin
+    # AD through spline coefficients (params).
+    knots = [0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0]
+    coeffs = [0.1, 0.2, 0.3, 0.4]
+    x = 0.25
+
+    f(v) = bspline_eval(x, v, knots, 2)
+
+    val_fwd, grad_fwd = value_and_gradient(f, AutoForwardDiff(), coeffs)
+    @test length(grad_fwd) == length(coeffs)
 end

@@ -135,51 +135,18 @@ end
 end
 
 @testset "plot_vpc constants_re and unsupported serialization" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(0.1)
-            σ = RealNumber(0.3, scale = :log)
-        end
-        @covariates begin
-            t = Covariate()
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 0.5); column = :ID)
-        end
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-    df = DataFrame(ID = [:A, :A, :B, :B, :C, :C], t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, 0.1, 0.15, 0.25])
-    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    constants_re = (; η = (; B = 0.0))
-    res = fit_model(dm,
-        NoLimits.Laplace(;
-            optim_kwargs = (maxiters = 2,), multistart_n = 2, multistart_k = 2);
-        constants_re = constants_re)
+    res = fx_constre_laplace()
     @test plot_vpc(res; n_simulations = 5, n_bins = 2) !== nothing
     @test_throws ArgumentError plot_vpc(res; serialization = :unsupported)
 end
 
+@testset "plot_vpc on a Laplace RE fit" begin
+    # Moved from coverage_gap_tests.jl (path coverage for the RE-fit VPC branch).
+    @test plot_vpc(fx_fixre_laplace(); n_simulations = 20, seed = 7) !== nothing
+end
+
 @testset "plot_vpc internals use row-specific random effects for varying non-ODE groups" begin
-    model = @Model begin
-        @fixedEffects begin
-            σ = RealNumber(1.0e-6, scale = :log)
-        end
-        @covariates begin
-            t = Covariate()
-        end
-        @randomEffects begin
-            η_year = RandomEffect(Normal(0.0, 1.0); column = :YEAR)
-        end
-        @formulas begin
-            y ~ Normal(η_year, σ)
-        end
-    end
-    df = DataFrame(ID = [1, 1, 1, 2, 2], YEAR = [:A, :B, :B, :A, :C],
-        t = [0.0, 1.0, 2.0, 0.0, 1.0], y = [0.1, 0.4, 0.4, 0.1, 0.3])
-    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    dm = fx_varyre_dm()
     θ = NoLimits.get_θ0_untransformed(dm.model.fixed.fixed)
     level_vals = Dict{Symbol, Dict{Any, Any}}(:η_year => Dict{Any, Any}(
         :A => 0.1, :B => 0.4, :C => 0.3))

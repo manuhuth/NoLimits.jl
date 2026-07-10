@@ -152,29 +152,7 @@ end
 end
 
 @testset "plot_observation_distributions inherits constants_re from fit result" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(0.1)
-            σ = RealNumber(0.3, scale = :log)
-        end
-        @covariates begin
-            t = Covariate()
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 0.5); column = :ID)
-        end
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-    df = DataFrame(ID = [:A, :A, :B, :B, :C, :C], t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, 0.1, 0.15, 0.25])
-    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    constants_re = (; η = (; B = 0.0))
-    res = fit_model(dm,
-        NoLimits.Laplace(;
-            optim_kwargs = (maxiters = 2,), multistart_n = 2, multistart_k = 2);
-        constants_re = constants_re)
+    res = fx_constre_laplace()
     @test plot_observation_distributions(
         res; individuals_idx = 1, obs_rows = 1, observables = :y) !== nothing
 end
@@ -205,24 +183,13 @@ end
 end
 
 @testset "plot_observation_distributions supports varying non-ODE random-effect groups" begin
-    model = @Model begin
-        @fixedEffects begin
-            σ = RealNumber(1.0e-6, scale = :log)
-        end
-        @covariates begin
-            t = Covariate()
-        end
-        @randomEffects begin
-            η_year = RandomEffect(Normal(0.0, 1.0); column = :YEAR)
-        end
-        @formulas begin
-            y ~ Normal(η_year, σ)
-        end
-    end
-    df = DataFrame(ID = [1, 1, 1, 2, 2], YEAR = [:A, :B, :B, :A, :C],
-        t = [0.0, 1.0, 2.0, 0.0, 1.0], y = [0.1, 0.4, 0.4, 0.1, 0.3])
-    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    constants_re = (; η_year = (; A = 0.1, B = 0.4, C = 0.3))
-    @test plot_observation_distributions(dm; individuals_idx = [1, 2], obs_rows = [1, 2],
-        observables = :y, constants_re = constants_re) !== nothing
+    @test plot_observation_distributions(fx_varyre_dm();
+        individuals_idx = [1, 2], obs_rows = [1, 2],
+        observables = :y, constants_re = fx_varyre_constants_re()) !== nothing
+end
+
+@testset "plot_observation_distributions on a Laplace RE fit" begin
+    # Moved from coverage_gap_tests.jl (path coverage for the RE-fit branch).
+    @test plot_observation_distributions(fx_fixre_laplace()) !== nothing
+    @test plot_observation_distributions(fx_fixre_dm()) !== nothing
 end
