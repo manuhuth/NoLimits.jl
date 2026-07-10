@@ -378,6 +378,31 @@ function get_params(res::FitResult; scale::Symbol = :both)
 end
 
 """
+    get_θ0_untransformed(dm::DataModel) -> ComponentArray
+    get_θ0_transformed(dm::DataModel) -> ComponentArray
+
+The model's initial fixed-effect values on the natural / optimization scale.
+Convenience for `get_θ0_*(get_model(dm).fixed.fixed)`.
+"""
+get_θ0_untransformed(dm::DataModel) = get_θ0_untransformed(get_model(dm).fixed.fixed)
+get_θ0_transformed(dm::DataModel) = get_θ0_transformed(get_model(dm).fixed.fixed)
+
+"""
+    get_params(dm::DataModel; scale=:both)
+
+The model's initial fixed-effect values, mirroring `get_params(res; scale)`: `:both`
+returns a [`FitParameters`](@ref), `:transformed`/`:untransformed` a `ComponentArray`.
+"""
+function get_params(dm::DataModel; scale::Symbol = :both)
+    fe = get_model(dm).fixed.fixed
+    scale === :both &&
+        return FitParameters(get_θ0_transformed(fe), get_θ0_untransformed(fe))
+    scale === :transformed && return get_θ0_transformed(fe)
+    scale === :untransformed && return get_θ0_untransformed(fe)
+    error("scale must be :both, :transformed, or :untransformed.")
+end
+
+"""
     get_chain(res::FitResult) -> MCMCChains.Chains
 
 Return the MCMC chain. Only valid for results produced by [`MCMC`](@ref).

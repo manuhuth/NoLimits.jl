@@ -116,6 +116,17 @@ end
             computed; rtol = 1e-8)
     end
 
+    @testset "DataModel parameter accessors" begin
+        fe = get_model(dm).fixed.fixed
+        @test get_θ0_untransformed(dm) == get_θ0_untransformed(fe)
+        @test get_θ0_transformed(dm) == get_θ0_transformed(fe)
+        @test get_params(dm; scale = :untransformed) == get_θ0_untransformed(fe)
+        @test get_params(dm; scale = :transformed) == get_θ0_transformed(fe)
+        p = get_params(dm)  # :both
+        @test p.untransformed == get_θ0_untransformed(fe)
+        @test p.transformed == get_θ0_transformed(fe)
+    end
+
     @testset "invalid eta is rejected" begin
         # top-level key must be an RE name, not a fixed-effect / mean name
         @test_throws ErrorException complete_data_loglikelihood(
