@@ -7,7 +7,9 @@ using CairoMakie
 # Note: "plot_data and plot_fits basic", "plot_fits MCMC", "plot_fits VI"
 # have been moved to integration_plotting.jl (shared fixtures).
 
-_first_axis(fig) = first(a for a in fig.content if a isa Axis)
+# Qualified: ComponentArrays (loaded by sibling test files in the same batch) also
+# exports Axis.
+_first_axis(fig) = first(a for a in fig.content if a isa CairoMakie.Axis)
 function _series_labels(fig)
     plots = _first_axis(fig).scene.plots
     raw = [CairoMakie.Makie.to_value(get(plt.attributes, :label, nothing)) for plt in plots]
@@ -256,12 +258,12 @@ end
 
     @test plot_data(res; marginal_layout = :single) !== nothing
     p_data_vector = plot_data(res; marginal_layout = :vector)
-    @test isa(p_data_vector, Vector{Figure})
+    @test isa(p_data_vector, Vector{CairoMakie.Figure})
     @test length(p_data_vector) == n_marginals
 
     @test plot_fits(res; marginal_layout = :single) !== nothing
     p_fits_vector = plot_fits(res; marginal_layout = :vector)
-    @test isa(p_fits_vector, Vector{Figure})
+    @test isa(p_fits_vector, Vector{CairoMakie.Figure})
     @test length(p_fits_vector) == n_marginals
 
     n_inds = length(unique(df.ID))
@@ -269,19 +271,20 @@ end
     @test plot_hidden_states(dm) !== nothing
 
     p_hidden_vector = plot_hidden_states(res; figure_layout = :vector)
-    @test isa(p_hidden_vector, Vector{Figure})
+    @test isa(p_hidden_vector, Vector{CairoMakie.Figure})
     @test length(p_hidden_vector) == n_inds
     @test length(plot_hidden_states(res; figure_layout = :vector, individuals_idx = 1)) == 1
-    @test isa(plot_hidden_states(dm; figure_layout = :vector), Vector{Figure})
+    @test isa(plot_hidden_states(dm; figure_layout = :vector), Vector{CairoMakie.Figure})
 
     @test plot_emission_distributions(res, time_idx = 1, ncols = 1) !== nothing
     @test plot_emission_distributions(res; time_idx = 2) !== nothing
     @test plot_emission_distributions(res; time_point = 1.0) !== nothing
     p_emission_vector = plot_emission_distributions(res; figure_layout = :vector)
-    @test isa(p_emission_vector, Vector{Figure})
+    @test isa(p_emission_vector, Vector{CairoMakie.Figure})
     @test length(p_emission_vector) == n_inds
     @test plot_emission_distributions(dm) !== nothing
-    @test isa(plot_emission_distributions(dm; figure_layout = :vector), Vector{Figure})
+    @test isa(
+        plot_emission_distributions(dm; figure_layout = :vector), Vector{CairoMakie.Figure})
 end
 
 @testset "plot_fits supports varying non-ODE random-effect groups" begin

@@ -5,7 +5,9 @@ using CairoMakie
 using Random
 using Statistics
 
-_first_axis(fig) = first(a for a in fig.content if a isa Axis)
+# Qualified: ComponentArrays (loaded by sibling test files in the same batch) also
+# exports Axis.
+_first_axis(fig) = first(a for a in fig.content if a isa CairoMakie.Axis)
 function _axis_xlims(fig)
     ax = _first_axis(fig)
     lims = CairoMakie.Makie.to_value(ax.limits)[1]
