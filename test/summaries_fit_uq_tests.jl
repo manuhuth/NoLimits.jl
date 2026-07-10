@@ -251,3 +251,24 @@ end
     @test occursin("CrI Lower", txt_comb)
     @test !occursin("NaN", txt_comb)
 end
+
+@testset "summarize numeric formatting: fixed 4 decimals" begin
+    f = NoLimits._fq_fmt_num
+    # non-integer floats always show exactly 4 decimals, trailing zeros kept
+    @test f(1.5) == "1.5000"
+    @test f(2.0) == "2.0000"
+    @test f(0.13) == "0.1300"
+    @test f(1.23456) == "1.2346"
+    @test f(-0.13) == "-0.1300"
+    @test f(0.0) == "0.0000"
+    @test f(12345.678) == "12345.6780"
+    # values that would collapse to 0.0000 keep 4 significant digits instead
+    @test f(1.0e-5) != "0.0000"
+    @test occursin("e", f(1.0e-5))
+    # sentinels / non-reals pass through
+    @test f(nothing) == "-"
+    @test f(missing) == "-"
+    @test f(NaN) == "NaN"
+    # the data-model summary shares the same formatter
+    @test NoLimits._format_float(0.5) == "0.5000"
+end
