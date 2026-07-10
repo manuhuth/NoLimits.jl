@@ -87,25 +87,8 @@ _transform_buffer_len(re::GaussianRE) = re.n_b
 _transform_buffer_len(::AbstractREMeasure) = 0
 
 # ---------------------------------------------------------------------------
-# Build GaussianRE from a batch at current θ
+# Cholesky helper for Gaussian RE covariances
 # ---------------------------------------------------------------------------
-
-"""
-    build_gaussian_re_from_batch(batch_info, θ, const_cache, dm, ll_cache) -> GaussianRE
-
-Construct the batch-level Gaussian RE measure for sparse-grid quadrature by
-extracting prior means and Cholesky factors from the RE distributions implied
-by the fixed-effects vector θ.
-
-Only `Normal` and `MvNormal` RE distributions are supported in Phase 1.
-Any other distribution type raises an informative error directing the user
-to use `Laplace` instead or wait for Phase 2.
-
-`θ` may carry ForwardDiff.Dual tags; all operations are non-mutating and
-Dual-compatible for scalar Normal RE. MvNormal is Dual-compatible if and
-only if the Cholesky decomposition in `PDMat` supports the element type
-(holds for Float64; may require Phase 2 for Dual θ with MvNormal priors).
-"""
 
 # Lower-Cholesky factor of a covariance. PDMat stores the pre-computed Cholesky —
 # extract it instead of recomputing (also the Dual-compatible route when `Σ.chol`
@@ -118,82 +101,6 @@ function _lower_chol_from_cov(Σ)
     end
     Σ_mat = Σ isa AbstractMatrix ? Σ : Matrix(Σ)
     return Matrix(cholesky(Symmetric(Σ_mat + 1e-12 * I)).L)
-end
-
-function build_gaussian_re_from_batch(
-        batch_info::_LaplaceBatchInfo,
-        θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
-        dm::DataModel,
-        ll_cache::_LLCache
-)
-    n_b = batch_info.n_b
-    n_b == 0 &&
-        error("build_gaussian_re_from_batch: batch has n_b == 0 (no free RE levels).")
-
-    θ_re = _symmetrize_psd_params(θ, dm.model.fixed.fixed)
-    dists_b = get_create_random_effect_distribution(dm.model.random.random)
-    model_funs = ll_cache.model_funs
-    helpers = ll_cache.helpers
-    re_cache = dm.re_group_info.laplace_cache
-    re_names = re_cache.re_names
-
-    # Collect (range, μ_seg, L_seg) for each free RE level
-    μ_segs = Vector{Any}()
-    L_diags = Vector{Any}()
-    all_ranges = UnitRange{Int}[]
-
-    for (ri, re) in enumerate(re_names)
-        info = batch_info.re_info[ri]
-        isempty(info.map.levels) && continue
-        for (li, level_id) in enumerate(info.map.levels)
-            rep_idx = info.reps[li]
-            const_cov = dm.individuals[rep_idx].const_cov
-            dists = dists_b(θ_re, const_cov, model_funs, helpers)
-            dist = getproperty(dists, re)
-            range = info.ranges[li]
-            push!(all_ranges, range)
-
-            if dist isa Distributions.Normal
-                μ_k = [Distributions.mean(dist)]   # [T]  — 1-vector
-                L_k = reshape([Distributions.std(dist)], 1, 1)  # [T;;]  — 1×1
-            elseif dist isa Distributions.MvNormal
-                μ_k = Vector(Distributions.mean(dist))
-                L_k = _lower_chol_from_cov(dist.Σ)
-            else
-                error(
-                    "GHQuadrature Phase 1 supports only Normal and MvNormal " *
-                    "random effects. Found distribution of type " *
-                    "$(typeof(dist)) for RE '$(re)'. " *
-                    "Use Laplace for non-Gaussian RE distributions, or " *
-                    "wait for GHQuadrature Phase 2 which will add transport " *
-                    "maps for arbitrary distributions."
-                )
-            end
-            push!(μ_segs, μ_k)
-            push!(L_diags, L_k)
-        end
-    end
-
-    # Infer element type from accumulated segments (handles Dual promotion)
-    T = mapreduce(eltype, promote_type, μ_segs; init = Float64)
-    T = mapreduce(eltype, promote_type, L_diags; init = T)
-
-    # Assemble μ_full (concatenated means)
-    μ_full = Vector{T}(undef, n_b)
-    for (range, μ_k) in zip(all_ranges, μ_segs)
-        μ_full[range] .= μ_k
-    end
-
-    # Assemble block-diagonal L_full
-    L_full = zeros(T, n_b, n_b)
-    for (range, L_k) in zip(all_ranges, L_diags)
-        L_full[range, range] = L_k
-    end
-
-    return GaussianRE{T, LowerTriangular{T, Matrix{T}}}(
-        μ_full, LowerTriangular(L_full), n_b
-    )
 end
 
 # ---------------------------------------------------------------------------
@@ -284,7 +191,7 @@ inside the correction closure. ForwardDiff compatibility depends on the distribu
 own logpdf implementation (works for all standard Distributions.jl types).
 
 **ForwardDiff compatibility:** All segment types support Dual θ. `MvNormal` has the
-same `PDMat` caveat as in `build_gaussian_re_from_batch`.
+same `PDMat` caveat as `_lower_chol_from_cov`.
 """
 function build_re_measure_from_batch(
         batch_info::_LaplaceBatchInfo,

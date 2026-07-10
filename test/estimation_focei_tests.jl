@@ -275,8 +275,20 @@ end
 
 @testset "MvNormal expected information: closed form ≡ vech-basis reference" begin
     # `_focei_expected_information(::MvNormal)` computes the covariance block in
-    # closed form; `_focei_vech_basis` is retained as the reference definition of
-    # the vech convention. Pin their equivalence (and the zero cross blocks).
+    # closed form; `vech_basis` below is the reference definition of the vech
+    # convention. Pin their equivalence (and the zero cross blocks).
+    # Symmetric single-entry basis matrices in vech (upper-tri, column-major) order.
+    vech_basis = function (k)
+        bases = Matrix{Float64}[]
+        for j in 1:k, i in 1:j
+            E = zeros(Float64, k, k)
+            E[i, j] += 1.0
+            E[j, i] += 1.0
+            i == j && (E[i, j] = 1.0)  # diagonal entry appears once
+            push!(bases, E)
+        end
+        return bases
+    end
     for k in (1, 2, 3, 4), seed in 1:2
         A = randn(Xoshiro(10k + seed), k, k)
         d = MvNormal(randn(Xoshiro(seed), k), Symmetric(A * A' + k * I))
@@ -284,7 +296,7 @@ end
         Σ = Matrix(cov(d))
         P = inv(Σ)
         nv = k * (k + 1) ÷ 2
-        bases = NL._focei_vech_basis(k)
+        bases = vech_basis(k)
         Fcov_ref = [0.5 * tr(P * bases[a] * P * bases[b]) for a in 1:nv, b in 1:nv]
         @test size(F) == (k + nv, k + nv)
         @test isapprox(F[1:k, 1:k], P; rtol = 1e-12)

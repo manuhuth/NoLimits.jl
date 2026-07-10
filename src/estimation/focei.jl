@@ -182,22 +182,6 @@ function _focei_paramcount(d::MvNormal)
     k = length(d)
     return k + k * (k + 1) ÷ 2
 end
-# Symmetric single-entry basis matrices in vech (upper-triangle, column-major) order.
-# Retained as the reference definition of the vech convention used by the closed-form
-# `_focei_expected_information(::MvNormal)` below (and by its test); not on a hot path.
-function _focei_vech_basis(k::Int)
-    bases = Matrix{Float64}[]
-    for j in 1:k
-        for i in 1:j
-            E = zeros(Float64, k, k)
-            E[i, j] += 1.0
-            E[j, i] += 1.0
-            i == j && (E[i, j] = 1.0)  # diagonal entry appears once
-            push!(bases, E)
-        end
-    end
-    return bases
-end
 function _focei_expected_information(d::MvNormal)
     # Covariance block in closed form. With B_a = E_ij + E_ji (i<j) or E_ii (i==j),
     # tr(P E_rs P E_uv) = P[v,r]·P[s,u], so
