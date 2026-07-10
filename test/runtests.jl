@@ -65,6 +65,7 @@ const TEST_FILES = [
     "integration_plotting.jl",
     # ── B4: estimation core (shares fx_nore/re/mg/mvn/mvnp/ode/pois/bern) ────
     "estimation_common_tests.jl",
+    "complete_data_loglikelihood_tests.jl",
     "accessors_tests.jl",
     "serialization_tests.jl",
     "estimation_mle_tests.jl",
