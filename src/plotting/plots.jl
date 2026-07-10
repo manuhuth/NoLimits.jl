@@ -224,36 +224,6 @@ function _collect_scalar_series(x, y)
     return xs, ys
 end
 
-"""
-    plot_hidden_states(res::FitResult; dm, observable, individuals_idx, x_axis_feature,
-                       shared_x_axis, shared_y_axis, ncols, style, kwargs_subplot,
-                       kwargs_layout, save_path, plot_path, params, constants_re,
-                       mcmc_draws, rng) -> Plots.Plot
-
-    plot_hidden_states(dm::DataModel; observable, individuals_idx, x_axis_feature,
-                       shared_x_axis, shared_y_axis, ncols, style, kwargs_subplot,
-                       kwargs_layout, save_path, plot_path, params, constants_re,
-                       rng) -> Plots.Plot
-
-Plot the posterior hidden-state probabilities implied by a multivariate discrete-time
-HMM observable. Each individual panel displays a stacked bar for each time point.
-
-# Keyword Arguments
-- `dm::Union{Nothing, DataModel} = nothing`: data model (inferred from `res` by default).
-- `observable`: name of the multivariate outcome column.
-- `individuals_idx`: indices or IDs of individuals to include, or `nothing` for all.
-- `x_axis_feature::Union{Symbol, Nothing} = nothing`: covariate for the x-axis.
-- `shared_x_axis::Bool = true`, `shared_y_axis::Bool = true`: share axis ranges.
-- `ncols::Int = 3`: number of subplot columns.
-- `figure_layout::Symbol = :single`: `:single` returns one combined figure with one subplot per individual, `:vector` produces a vector of figures (one per individual) while still arranging data by individuals.
-- `style::PlotStyle = PlotStyle()`: visual style configuration.
-- `kwargs_subplot`, `kwargs_layout`: extra keyword arguments for subplots and layout.
-- `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
-- `params::NamedTuple = NamedTuple()`, `constants_re::NamedTuple = NamedTuple()`: overrides.
-- `mcmc_draws::Int = 1`: draws for estimating random effects (ignored for most fits).
-- `rng::AbstractRNG = Random.default_rng()`: random-number generator.
-"""
-
 function _resolve_emission_row(dm::DataModel,
         obs_rows::Vector{Int},
         time_idx::Union{Nothing, Int},

@@ -15,7 +15,6 @@ using ComponentArrays
 using Distributions
 using MCMCChains
 using OrdinaryDiffEq
-using Measures
 using Random
 using SciMLBase
 using Statistics
@@ -28,8 +27,7 @@ using Statistics
                comparison_default_linestyle, comparison_line_styles, marker_size,
                marker_size_small, marker_alpha, marker_stroke_width,
                marker_size_pmf, marker_stroke_width_pmf,
-               base_subplot_width, base_subplot_height,
-               left_margin, bottom_margin)
+               base_subplot_width, base_subplot_height, figure_padding)
 
 Visual style configuration for all NoLimits plotting functions.
 
@@ -51,12 +49,11 @@ All plotting functions accept a `style::PlotStyle` keyword argument. Construct a
 - `comparison_default_linestyle`, `comparison_line_styles`: line style overrides for
   `plot_fits_comparison`.
 - `marker_size`, `marker_size_small`, `marker_alpha`, `marker_stroke_width`: marker
-  appearance for continuous outcomes.
-- `marker_size_pmf`, `marker_stroke_width_pmf`: marker appearance for discrete outcomes.
-- `left_margin`: left margin per subplot to ensure y-axis labels are not clipped
-  (default: `10mm`).
-- `bottom_margin`: bottom margin per subplot to ensure x-axis labels are not clipped
-  (default: `8mm`).
+  appearance for continuous outcomes. Sizes are in Makie screen units (px at
+  `px_per_unit = 1`).
+- `marker_size_pmf`, `marker_stroke_width_pmf`: marker appearance for discrete outcomes,
+  in the same Makie screen units.
+- `figure_padding::Int`: outer padding around the figure in px (default: `10`).
 """
 Base.@kwdef struct PlotStyle
     color_primary::String = "#0072B2"
@@ -77,18 +74,17 @@ Base.@kwdef struct PlotStyle
     line_width_secondary::Float64 = 1.5
     comparison_default_linestyle::Symbol = :solid
     comparison_line_styles::Dict{String, Symbol} = Dict{String, Symbol}()
-    marker_size::Int = 5
-    marker_size_small::Int = 3
+    marker_size::Int = 10
+    marker_size_small::Int = 6
     marker_alpha::Float64 = 0.7
     marker_stroke_width::Float64 = 0.5
-    marker_size_pmf::Int = 6
+    marker_size_pmf::Int = 12
     marker_stroke_width_pmf::Float64 = 1.2
 
     base_subplot_width::Int = 350
     base_subplot_height::Int = 280
 
-    left_margin::typeof(1mm) = PLOT_LEFT_MARGIN
-    bottom_margin::typeof(1mm) = PLOT_BOTTOM_MARGIN
+    figure_padding::Int = 10
 end
 
 const COLOR_PRIMARY = "#0072B2"
@@ -104,9 +100,6 @@ const MIN_FIGURE_WIDTH = 400
 const MAX_FIGURE_WIDTH = 1800
 const MIN_FIGURE_HEIGHT = 300
 const MAX_FIGURE_HEIGHT = 2400
-const PLOT_MARGIN = 3mm
-const PLOT_LEFT_MARGIN = 10mm
-const PLOT_BOTTOM_MARGIN = 8mm
 const DEFAULT_DPI = 300
 
 function calculate_plot_size(nplots::Int, ncols::Int, style::PlotStyle = PlotStyle())
@@ -121,23 +114,48 @@ function calculate_plot_size(nplots::Int, ncols::Int, style::PlotStyle = PlotSty
     return (width, height)
 end
 
-function default_plot_kwargs(style::PlotStyle = PlotStyle())
+function default_axis_kwargs(style::PlotStyle = PlotStyle())
     return (
-        framestyle = :box,
-        grid = :y,
-        gridalpha = 0.3,
-        gridlinewidth = 0.5,
-        foreground_color_grid = :gray,
-        legend = :best,
-        titlefontsize = style.font_size_title,
-        guidefontsize = style.font_size_label,
-        tickfontsize = style.font_size_tick,
-        legendfontsize = style.font_size_legend,
-        margin = PLOT_MARGIN,
-        left_margin = style.left_margin,
-        bottom_margin = style.bottom_margin,
-        fontfamily = style.font_family
+        xgridvisible = false,
+        ygridvisible = true,
+        ygridcolor = (:gray, 0.3),
+        ygridwidth = 0.5,
+        titlesize = style.font_size_title,
+        xlabelsize = style.font_size_label,
+        ylabelsize = style.font_size_label,
+        xticklabelsize = style.font_size_tick,
+        yticklabelsize = style.font_size_tick
     )
+end
+
+# Uniform-bin histogram (centers/heights/width) so the drawing layer can size axes
+# without reading rendered series back; normalization ∈ (:probability, :pdf, :none).
+function _histogram_xy(vals::AbstractVector{<:Real}; bins::Int, normalization::Symbol)
+    n = length(vals)
+    lo, hi = extrema(vals)
+    if lo == hi
+        lo -= 0.5
+        hi += 0.5
+    end
+    edges = range(lo, hi; length = bins + 1)
+    binwidth = step(edges)
+    counts = zeros(Int, bins)
+    for v in vals
+        k = searchsortedlast(edges, v)
+        k = clamp(k, 1, bins)
+        counts[k] += 1
+    end
+    heights = if normalization == :probability
+        counts ./ n
+    elseif normalization == :pdf
+        counts ./ (n * binwidth)
+    elseif normalization == :none
+        float.(counts)
+    else
+        throw(ArgumentError("normalization must be :probability, :pdf, or :none, got $(normalization)"))
+    end
+    centers = [(edges[i] + edges[i + 1]) / 2 for i in 1:bins]
+    return (centers = centers, heights = heights, width = binwidth)
 end
 
 function _axis_label(label)

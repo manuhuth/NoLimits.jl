@@ -1,9 +1,10 @@
-# Public plotting API. The drawing implementations live in the Plots extension
-# (ext/NoLimitsPlotsExt.jl) and load automatically when Plots.jl is imported
-# alongside NoLimits. Without Plots these are method-less stubs; calling one raises a
-# MethodError carrying a hint to load Plots (registered in `__init__` below). The
-# Plots-free pieces (PlotStyle, PlotCache, get_residuals, build_plot_cache and their
-# helpers) live in the core module, in the other plotting/*.jl files.
+# Public plotting API. The drawing implementations live in the Makie extension
+# (ext/NoLimitsMakieExt.jl) and load automatically when a Makie backend (e.g.
+# CairoMakie) is imported alongside NoLimits. Without Makie these are method-less
+# stubs; calling one raises a MethodError carrying a hint to load Makie (registered
+# in `__init__` below). The Makie-free pieces (PlotStyle, PlotCache, get_residuals,
+# build_plot_cache and their helpers) live in the core module, in the other
+# plotting/*.jl files.
 
 const _PLOT_API_FUNCTIONS = (:plot_data, :plot_observed_profiles, :plot_fits,
     :plot_fits_comparison, :plot_multistart_waterfall,
@@ -49,11 +50,12 @@ function __init__()
     Base.Experimental.register_error_hint(MethodError) do io, exc, _argtypes, _kwargs
         f = exc.f
         if f isa Function && nameof(f) in _PLOT_API_FUNCTIONS &&
-           Base.get_extension(@__MODULE__, :NoLimitsPlotsExt) === nothing
+           Base.get_extension(@__MODULE__, :NoLimitsMakieExt) === nothing
             print(io,
                 "\n\nNoLimits plotting functions live in a package extension that loads ",
-                "when Plots.jl is available. Run `using Plots` alongside `using NoLimits` ",
-                "to enable `", nameof(f), "` and the other `plot_*` functions.")
+                "when Makie.jl is available. Run `using CairoMakie` (or another Makie ",
+                "backend) alongside `using NoLimits` to enable `", nameof(f),
+                "` and the other plotting functions.")
         end
     end
     return nothing
