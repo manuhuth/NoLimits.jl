@@ -36,6 +36,7 @@ export get_re_covariate_usage
 export compute_shrinkage
 export loglikelihood
 export complete_data_loglikelihood
+export complete_data_loglikelihood_per_individual
 export build_ll_cache
 export MCIntegrator
 
@@ -1703,30 +1704,11 @@ function _cdll_select(dm::DataModel, individuals)
     return [_cdll_id_to_index(dm, id) for id in ids]
 end
 
-"""
-    complete_data_loglikelihood(dm, θ; eta, individuals, constants_re, res,
-                                ode_args, ode_kwargs, serialization, rng) -> Real
-    complete_data_loglikelihood(dm, res::FitResult; eta = :ebe, kwargs...) -> Real
-    complete_data_loglikelihood(res::FitResult; eta = :ebe, kwargs...) -> Real
-
-Joint (complete-data) log-density `ln p(y, η | θ)` for a random-effects model: the
-per-individual observation log-likelihood plus the random-effect prior summed once per
-grouping level. With no random effects it reduces to the population log-likelihood.
-
-`eta` supplies the random-effect values to plug in:
-- a `NamedTuple` keyed by random-effect name, then by grouping-level id, e.g.
-  `(; η = (; s1 = 0.2, s2 = -0.1))`;
-- `:mean` — the prior mean of each level's random-effect distribution (median/zero
-  fallback when the mean is undefined);
-- `:ebe` — empirical-Bayes estimates. Taken from `res` when a fit result is given,
-  otherwise computed at `θ` by maximizing each level's posterior mode; the EBE optimizer
-  is set by `ebe_options::EBEOptions` (defaults to the `Laplace()` EBE settings).
-
-`individuals` restricts the sum to a subset (a single id or a vector); both the data and
-the prior terms are then taken only over the selected individuals and their levels.
-Differentiable in `θ` via ForwardDiff.
-"""
-function complete_data_loglikelihood(dm::DataModel, θ::ComponentArray;
+# Shared core: returns (primary-id values, per-individual complete-data log-densities)
+# for the selected individuals. Each grouping level's RE prior is attributed once, to the
+# first selected individual in that level, so the per-individual values sum to the scalar
+# complete_data_loglikelihood.
+function _cdll_terms(dm::DataModel, θ::ComponentArray;
         eta = :mean,
         res::Union{Nothing, FitResult} = nothing,
         individuals = nothing,
@@ -1740,9 +1722,8 @@ function complete_data_loglikelihood(dm::DataModel, θ::ComponentArray;
     re_names = get_re_names(re)
     θs = _symmetrize_psd_params(θ, dm.model.fixed.fixed)
     sel = _cdll_select(dm, individuals)
+    id_of(i) = dm.df[dm.row_groups.obs_rows[i][1], dm.config.primary_id]
 
-    # Build one serial cache; the data term is summed per selected individual so that
-    # the `individuals` subset is honored (matches loglikelihood for the full set).
     cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
         serialization = EnsembleSerial())
     cache = cache isa Vector ? cache[1] : cache
@@ -1750,13 +1731,9 @@ function complete_data_loglikelihood(dm::DataModel, θ::ComponentArray;
     if isempty(re_names)
         T = eltype(θs)
         η_empty = ComponentArray()
-        ll = zero(T)
-        for i in sel
-            lli = _loglikelihood_individual(dm, i, θs, η_empty, cache)
-            isfinite(lli) || return T(-Inf)
-            ll += lli
-        end
-        return ll
+        ids = [id_of(i) for i in sel]
+        vals = T[_loglikelihood_individual(dm, i, θs, η_empty, cache) for i in sel]
+        return ids, vals
     end
 
     if eta isa Symbol
@@ -1849,25 +1826,68 @@ function complete_data_loglikelihood(dm::DataModel, θ::ComponentArray;
 
     Tη = eltype(build_eta_i(sel[1]))
     T = promote_type(eltype(θs), Tη)
-    data_ll = zero(T)
-    for i in sel
-        lli = _loglikelihood_individual(dm, i, θs, build_eta_i(i), cache)
-        isfinite(lli) || return T(-Inf)
-        data_ll += lli
-    end
-
-    # Prior: each selected grouping level once.
-    prior_ll = zero(T)
+    # Each individual: its data term + the prior of any level it is first to claim, so the
+    # per-individual values sum to the total complete-data log-density.
+    ids = [id_of(i) for i in sel]
+    vals = Vector{T}(undef, length(sel))
     seen = Set{Tuple{Int, Int}}()
-    for i in sel, ri in eachindex(re_names)
-        for li in re_cache.ind_level_ids[i][ri]
+    for (k, i) in enumerate(sel)
+        v = _loglikelihood_individual(dm, i, θs, build_eta_i(i), cache)
+        for ri in eachindex(re_names), li in re_cache.ind_level_ids[i][ri]
             (ri, li) in seen && continue
             push!(seen, (ri, li))
-            prior_ll += logpdf(level_dist[ri][li], getval(ri, li))
+            v += logpdf(level_dist[ri][li], getval(ri, li))
         end
+        vals[k] = v
     end
+    return ids, vals
+end
 
-    return data_ll + prior_ll
+"""
+    complete_data_loglikelihood(dm, θ; eta, individuals, constants_re, res,
+                                ode_args, ode_kwargs, serialization, ebe_options, rng) -> Real
+    complete_data_loglikelihood(dm, res::FitResult; eta = :ebe, kwargs...) -> Real
+    complete_data_loglikelihood(res::FitResult; eta = :ebe, kwargs...) -> Real
+
+Joint (complete-data) log-density `ln p(y, η | θ)` for a random-effects model: the
+per-individual observation log-likelihood plus the random-effect prior summed once per
+grouping level. With no random effects it reduces to the population log-likelihood.
+
+`eta` supplies the random-effect values to plug in:
+- a `NamedTuple` keyed by random-effect name, then by grouping-level id, e.g.
+  `(; η = (; s1 = 0.2, s2 = -0.1))`;
+- `:mean` — the prior mean of each level's random-effect distribution (median/zero
+  fallback when the mean is undefined);
+- `:ebe` — empirical-Bayes estimates. Taken from `res` when a fit result is given,
+  otherwise computed at `θ` by maximizing each level's posterior mode; the EBE optimizer
+  is set by `ebe_options::EBEOptions` (defaults to the `Laplace()` EBE settings).
+
+`individuals` restricts the sum to a subset (a single id or a vector); both the data and
+the prior terms are then taken only over the selected individuals and their levels.
+Differentiable in `θ` via ForwardDiff. See
+[`complete_data_loglikelihood_per_individual`](@ref) for the per-subject breakdown.
+"""
+function complete_data_loglikelihood(dm::DataModel, θ::ComponentArray; kwargs...)
+    _, vals = _cdll_terms(dm, θ; kwargs...)
+    return isempty(vals) ? zero(eltype(θ)) : sum(vals)
+end
+
+"""
+    complete_data_loglikelihood_per_individual(dm, θ; kwargs...) -> DataFrame
+    complete_data_loglikelihood_per_individual(dm, res::FitResult; eta = :ebe, kwargs...)
+    complete_data_loglikelihood_per_individual(res::FitResult; eta = :ebe, kwargs...)
+
+Per-individual breakdown of [`complete_data_loglikelihood`](@ref) (same arguments): a
+`DataFrame` with the `primary_id` column and a `:complete_data_loglikelihood` column
+giving, for each selected individual, its observation log-likelihood plus the
+random-effect prior of any grouping level it is the first to contribute. The values sum
+to `complete_data_loglikelihood` called with the same arguments. Useful for inspecting
+per-subject fit before running an estimation.
+"""
+function complete_data_loglikelihood_per_individual(dm::DataModel, θ::ComponentArray;
+        kwargs...)
+    ids, vals = _cdll_terms(dm, θ; kwargs...)
+    return DataFrame(get_primary_id(dm) => ids, :complete_data_loglikelihood => vals)
 end
 
 function complete_data_loglikelihood(dm::DataModel, res::FitResult;
@@ -1884,6 +1904,22 @@ function complete_data_loglikelihood(res::FitResult; eta = :ebe, kwargs...)
         error("This fit result does not store a DataModel; call " *
               "complete_data_loglikelihood(dm, res) instead.")
     return complete_data_loglikelihood(dm, res; eta = eta, kwargs...)
+end
+
+function complete_data_loglikelihood_per_individual(dm::DataModel, res::FitResult;
+        eta = :ebe, constants_re::NamedTuple = NamedTuple(), kwargs...)
+    constants_re = _res_constants_re(res, constants_re)
+    θu = get_params(res; scale = :untransformed)
+    return complete_data_loglikelihood_per_individual(
+        dm, θu; eta = eta, res = res, constants_re = constants_re, kwargs...)
+end
+
+function complete_data_loglikelihood_per_individual(res::FitResult; eta = :ebe, kwargs...)
+    dm = res.data_model
+    dm === nothing &&
+        error("This fit result does not store a DataModel; call " *
+              "complete_data_loglikelihood_per_individual(dm, res) instead.")
+    return complete_data_loglikelihood_per_individual(dm, res; eta = eta, kwargs...)
 end
 
 """

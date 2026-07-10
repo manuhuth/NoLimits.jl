@@ -114,6 +114,33 @@ end
         @test isapprox(
             complete_data_loglikelihood(dm, θhat; eta = :ebe, ebe_options = opts),
             computed; rtol = 1e-8)
+        # pre-fit sanity check: at the starting values, moving RE from the prior mean
+        # to the per-individual EBEs cannot lower the joint density.
+        θ0 = get_θ0_untransformed(dm)
+        ebe0 = complete_data_loglikelihood(dm, θ0; eta = :ebe)
+        @test isfinite(ebe0)
+        @test ebe0 >= complete_data_loglikelihood(dm, θ0; eta = :mean)
+    end
+
+    @testset "per-individual decomposition sums to the scalar" begin
+        eta = (; η = (; s1 = 0.2, s2 = -0.1))
+        per = complete_data_loglikelihood_per_individual(dm, θ; eta = eta)
+        @test nrow(per) == 2
+        @test Set(per.ID) == Set([:s1, :s2])
+        total = complete_data_loglikelihood(dm, θ; eta = eta)
+        @test isapprox(sum(per.complete_data_loglikelihood), total; rtol = 1e-12)
+        # one row per selected individual; matches the manual per-subject joint
+        per1 = complete_data_loglikelihood_per_individual(
+            dm, θ; eta = eta, individuals = :s1)
+        @test nrow(per1) == 1
+        @test per1.ID[1] == :s1
+        exp1 = _cdll_manual(df, a, σ, ση, Dict(:s1 => 0.2, :s2 => -0.1); ids = [:s1])
+        @test isapprox(per1.complete_data_loglikelihood[1], exp1; rtol = 1e-10)
+        # FitResult overload agrees with the (dm, θ) form at fitted params
+        res = fit_model(dm, NoLimits.Laplace())
+        perr = complete_data_loglikelihood_per_individual(res; eta = :ebe)
+        @test isapprox(sum(perr.complete_data_loglikelihood),
+            complete_data_loglikelihood(res; eta = :ebe); rtol = 1e-10)
     end
 
     @testset "DataModel parameter accessors" begin
@@ -155,4 +182,18 @@ end
             dm2, θ2, ComponentArray(); serialization = NoLimits.EnsembleSerial())
         @test isapprox(got, exp; rtol = 1e-10)
     end
+end
+
+# A normalizing-flow random effect exercises the :ebe-without-fit path on a non-Gaussian
+# RE distribution (the EBE optimizer is the same machinery Laplace uses). Reuses the
+# shared fx_npf fixture (a known-good NPF model).
+@testset "complete_data_loglikelihood :ebe without a fit — NPF random effect" begin
+    npf_dm = fx_npf_dm()
+    θ0 = get_θ0_untransformed(npf_dm)
+    ebe = complete_data_loglikelihood(npf_dm, θ0; eta = :ebe)
+    @test isfinite(ebe)
+    @test ebe >= complete_data_loglikelihood(npf_dm, θ0; eta = :mean)
+    # per-individual breakdown sums to the scalar
+    per = complete_data_loglikelihood_per_individual(npf_dm, θ0; eta = :ebe)
+    @test isapprox(sum(per.complete_data_loglikelihood), ebe; rtol = 1e-8)
 end
