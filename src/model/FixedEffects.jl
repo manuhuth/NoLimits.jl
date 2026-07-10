@@ -262,6 +262,22 @@ function _with_name_kw(rhs::Expr, name::Symbol)
     end
 end
 
+# Parameter-block constructors owned by NoLimits. The macro resolves these call heads
+# to this module so models build even when another loaded package (e.g. Makie, which
+# exports `RealVector`) puts a same-named binding into the caller's namespace.
+const _PARAM_BLOCK_CTORS = (:RealNumber, :RealVector, :RealPSDMatrix, :RealLiePSDMatrix,
+    :RealDiagonalMatrix, :ProbabilityVector, :DiscreteTransitionMatrix,
+    :ContinuousTransitionMatrix, :NNParameters, :SoftTreeParameters, :SplineParameters,
+    :NPFParameter)
+
+function _qualify_ctor_head(ex::Expr)
+    head = ex.args[1]
+    if head isa Symbol && head in _PARAM_BLOCK_CTORS
+        return Expr(:call, GlobalRef(@__MODULE__, head), ex.args[2:end]...)
+    end
+    return ex
+end
+
 function _parse_fixed_effects(block::Expr)
     block.head == :block || error("@fixedEffects expects a begin ... end block.")
     names = Symbol[]
@@ -275,7 +291,7 @@ function _parse_fixed_effects(block::Expr)
         rhs isa Expr && rhs.head == :call ||
             error("Right-hand side must be a constructor call in @fixedEffects block.")
         push!(names, lhs)
-        push!(exprs, _with_name_kw(rhs, lhs))
+        push!(exprs, _qualify_ctor_head(_with_name_kw(rhs, lhs)))
     end
     return names, exprs
 end
