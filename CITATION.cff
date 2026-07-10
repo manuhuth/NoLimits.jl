@@ -26,7 +26,7 @@ authors:
   - family-names: "Hasenauer"
     given-names: "Jan"
     affiliation: "Bonn Center for Mathematical Life Sciences, University of Bonn"
-version: "0.1.0"
+version: "0.2.0"
 license: MIT
 repository-code: "https://github.com/manuhuth/NoLimits.jl"
 url: "https://manuhuth.github.io/NoLimits.jl/"
