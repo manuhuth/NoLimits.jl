@@ -78,3 +78,10 @@ end
     J = ForwardDiff.jacobian(v -> vec(rowsoftmax(reshape(v, 3, 3))), vec(L))
     @test all(isfinite, J)
 end
+
+@testset "Helpers mutation warnings" begin
+    # Mutating helpers should emit warnings (reverse-mode AD compatibility).
+    @test_logs (:warn,) @eval @helpers begin
+        bump!(x) = (y = copy(x); push!(y, 1.0); y)
+    end
+end

@@ -6,8 +6,7 @@ using Turing
 
 # Note: "Plot cache (non-ODE)" and "Plot cache (RE non-ODE, Laplace)"
 # have been moved to integration_plotting.jl (shared fixtures). The testsets
-# below consume the shared fx_* fixture models/fits; only the varying-groups
-# testset keeps a bespoke model (it asserts numeric means under constants_re).
+# below consume the shared fx_* fixture models/fits.
 
 @testset "Plot cache (RE ODE, Laplace)" begin
     dm = fx_ode_dm()
@@ -67,26 +66,9 @@ end
 end
 
 @testset "Plot cache uses row-specific random effects for varying non-ODE groups" begin
-    model = @Model begin
-        @fixedEffects begin
-            σ = RealNumber(1.0e-6, scale = :log)
-        end
-        @covariates begin
-            t = Covariate()
-        end
-        @randomEffects begin
-            η_year = RandomEffect(Normal(0.0, 1.0); column = :YEAR)
-        end
-        @formulas begin
-            y ~ Normal(η_year, σ)
-        end
-    end
-
-    df = DataFrame(ID = [1, 1, 1, 2, 2], YEAR = [:A, :B, :B, :A, :C],
-        t = [0.0, 1.0, 2.0, 0.0, 1.0], y = [0.1, 0.4, 0.4, 0.1, 0.3])
-    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    constants_re = (; η_year = (; A = 0.1, B = 0.4, C = 0.3))
-    cache = build_plot_cache(dm; constants_re = constants_re, cache_obs_dists = true)
+    dm = fx_varyre_dm()
+    cache = build_plot_cache(
+        dm; constants_re = fx_varyre_constants_re(), cache_obs_dists = true)
 
     @test cache.random_effects[1].η_year ≈ [0.1, 0.4]
     @test cache.random_effects[2].η_year ≈ [0.1, 0.3]

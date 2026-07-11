@@ -341,6 +341,171 @@ end
     end
 end
 
+# ── custom suffstats/q_from_stats (merged from estimation_saem_suffstats_tests.jl) ──
+
+@testset "SAEM sufficient stats (linear Gaussian)" begin
+    dm = fx_re_dm()
+
+    function suffstats(dm, batch_infos, b_current, θ, constants_re)
+        # simple quadratic stats for demo
+        s1 = 0.0
+        s2 = 0.0
+        for (bi, info) in enumerate(batch_infos)
+            b = b_current[bi]
+            s1 += sum(b)
+            s2 += sum(b .* b)
+        end
+        return (; s1, s2)
+    end
+
+    q_from_stats = (s, θ, dm) -> -0.5 * (s.s1^2 + s.s2^2)
+
+    res = fit_model(dm,
+        NoLimits.SAEM(; sampler = MH(),
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
+            suffstats = suffstats,
+            q_from_stats = q_from_stats))
+    @test res isa FitResult
+end
+
+@testset "SAEM sufficient stats (nonlinear Gaussian)" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.2)
+            c = RealNumber(0.1)
+            σ = RealNumber(0.5, scale = :log)
+            τ = RealNumber(0.4, scale = :log)
+        end
+
+        @covariates begin
+            t = Covariate()
+            x = Covariate()
+        end
+
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, τ); column = :ID)
+        end
+
+        @formulas begin
+            μ = exp(a + c * x + η)
+            y ~ Normal(μ, σ)
+        end
+    end
+
+    df = DataFrame(
+        ID = [:A, :A, :B, :B],
+        t = [0.0, 1.0, 0.0, 1.0],
+        x = [0.1, 0.2, 0.15, 0.3],
+        y = [1.0, 1.05, 1.02, 1.08]
+    )
+
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+
+    function suffstats(dm, batch_infos, b_current, θ, constants_re)
+        s1 = 0.0
+        s2 = 0.0
+        for (bi, info) in enumerate(batch_infos)
+            b = b_current[bi]
+            s1 += sum(b)
+            s2 += sum(b .* b)
+        end
+        return (; s1, s2)
+    end
+
+    q_from_stats = (s, θ, dm) -> -0.5 * (s.s1^2 + s.s2^2)
+
+    res = fit_model(dm,
+        NoLimits.SAEM(; sampler = MH(),
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
+            suffstats = suffstats,
+            q_from_stats = q_from_stats))
+    @test res isa FitResult
+end
+
+# MvLogNormal / MvLogitNormal models with parameterized mean + PSD covariance,
+# shared by the default-sampler and builtin-stats testsets below. (Kept in the
+# merge: saem_mh_kernel covers these families only with AdaptiveNoLimitsMH and
+# literal means, so neither the default SaemixMH fit nor the parameterized-mean
+# closed-form update is exercised elsewhere.)
+const _SFX_MVLN_MODEL = @Model begin
+    @fixedEffects begin
+        μ = RealVector([0.0, 0.0])
+        Ω = RealPSDMatrix(Matrix(I, 2, 2); scale = :cholesky)
+        σ = RealNumber(0.3, scale = :log)
+    end
+    @covariates begin
+        t = Covariate()
+    end
+    @randomEffects begin
+        η = RandomEffect(MvLogNormal(μ, Ω); column = :ID)
+    end
+    @formulas begin
+        y ~ Normal(η[1], σ)
+    end
+end
+
+const _SFX_MVLIT_MODEL = @Model begin
+    @fixedEffects begin
+        μ = RealVector([0.0, 0.0])
+        Ω = RealPSDMatrix(Matrix(I, 2, 2); scale = :cholesky)
+        σ = RealNumber(0.1, scale = :log)
+    end
+    @covariates begin
+        t = Covariate()
+    end
+    @randomEffects begin
+        η = RandomEffect(MvLogitNormal(μ, Ω); column = :ID)
+    end
+    @formulas begin
+        y ~ Normal(η[1], σ)
+    end
+end
+
+@testset "SAEM default sampler + RealPSDMatrix: MvLogNormal and MvLogitNormal RE" begin
+    n_id = 8
+    ids = repeat(1:n_id, inner = 3)
+    ts = repeat([0.0, 0.5, 1.0], n_id)
+    Omega_true = [1.0 0.4; 0.4 1.0]
+
+    # MvLogNormal with default SaemixMH
+    etas_ln = exp.(rand(MvNormal([0.0, 0.0], Omega_true), n_id))
+    df_ln = DataFrame(ID = ids, t = ts, y = etas_ln[1, ids] .+ 0.3 .* randn(length(ids)))
+    dm_ln = DataModel(_SFX_MVLN_MODEL, df_ln; primary_id = :ID, time_col = :t)
+    res_ln = fit_model(dm_ln, NoLimits.SAEM(maxiters = 3, progress = false))
+    @test res_ln isa FitResult
+    @test isfinite(NoLimits.get_params(res_ln; scale = :untransformed).σ)
+
+    # MvLogitNormal with default SaemixMH
+    etas_lit = rand(MvLogitNormal([0.0, 0.0], Omega_true), n_id)
+    df_lit = DataFrame(ID = ids, t = ts, y = etas_lit[1, ids] .+ 0.05 .* randn(length(ids)))
+    dm_lit = DataModel(_SFX_MVLIT_MODEL, df_lit; primary_id = :ID, time_col = :t)
+    res_lit = fit_model(dm_lit, NoLimits.SAEM(maxiters = 3, progress = false))
+    @test res_lit isa FitResult
+    @test isfinite(NoLimits.get_params(res_lit; scale = :untransformed).σ)
+end
+
+@testset "SAEM builtin stats MvLogNormal and MvLogitNormal RE" begin
+    # MvLogNormal: samples in (0,∞)^d, M-step transforms with log
+    df_ln = DataFrame(
+        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [1.2, 1.3, 0.8, 0.9])
+    dm_ln = DataModel(_SFX_MVLN_MODEL, df_ln; primary_id = :ID, time_col = :t)
+    res_ln = fit_model(dm_ln,
+        NoLimits.SAEM(;
+            sampler = AdaptiveNoLimitsMH(adapt_start = 2), maxiters = 3, mcmc_steps = 5, progress = false))
+    @test res_ln isa FitResult
+    @test isfinite(NoLimits.get_params(res_ln; scale = :untransformed).σ)
+
+    # MvLogitNormal: samples in (0,1)^d, M-step transforms with logit
+    df_lit = DataFrame(
+        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [0.4, 0.45, 0.55, 0.5])
+    dm_lit = DataModel(_SFX_MVLIT_MODEL, df_lit; primary_id = :ID, time_col = :t)
+    res_lit = fit_model(dm_lit,
+        NoLimits.SAEM(;
+            sampler = AdaptiveNoLimitsMH(adapt_start = 2), maxiters = 3, mcmc_steps = 5, progress = false))
+    @test res_lit isa FitResult
+    @test isfinite(NoLimits.get_params(res_lit; scale = :untransformed).σ)
+end
+
 @testset "SAEM basic (random effects)" begin
     dm = _SAEM_DM_S
     res = fit_model(dm,
@@ -351,23 +516,28 @@ end
     @test NoLimits.get_converged(res) isa Bool
 end
 
-@testset "SAEM serial vs threaded is reproducible" begin
+@testset "SAEM/MCEM serial vs threaded is reproducible" begin
     Threads.nthreads() < 2 && return
 
     dm = _SAEM_DM_S
-    method = NoLimits.SAEM(; sampler = MH(),
-        turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false, verbose = false),
-        maxiters = 2,
-        mcmc_steps = 1,
-        q_store_max = 2,
-        progress = false)
-    res_serial = fit_model(
-        dm, method; serialization = EnsembleSerial(), rng = MersenneTwister(123))
-    res_threads = fit_model(
-        dm, method; serialization = EnsembleThreads(), rng = MersenneTwister(123))
-    @test res_serial.summary.objective == res_threads.summary.objective
-    @test collect(NoLimits.get_params(res_serial, scale = :untransformed)) ==
-          collect(NoLimits.get_params(res_threads, scale = :untransformed))
+    tk = (n_samples = 2, n_adapt = 2, progress = false, verbose = false)
+    for (label, method) in (
+        ("SAEM",
+            NoLimits.SAEM(; sampler = MH(), turing_kwargs = tk, maxiters = 2,
+                mcmc_steps = 1, q_store_max = 2, progress = false)),
+        ("MCEM",
+            NoLimits.MCEM(; sampler = MH(), turing_kwargs = tk, maxiters = 2,
+                progress = false)))
+        @testset "$label" begin
+            res_serial = fit_model(
+                dm, method; serialization = EnsembleSerial(), rng = MersenneTwister(123))
+            res_threads = fit_model(
+                dm, method; serialization = EnsembleThreads(), rng = MersenneTwister(123))
+            @test res_serial.summary.objective == res_threads.summary.objective
+            @test collect(NoLimits.get_params(res_serial, scale = :untransformed)) ==
+                  collect(NoLimits.get_params(res_threads, scale = :untransformed))
+        end
+    end
 end
 
 @testset "SAEM basic with NUTS" begin
@@ -379,34 +549,37 @@ end
     @test res isa FitResult
 end
 
-@testset "SAEM convergence requires both parameter and Q stabilization" begin
+@testset "SAEM/MCEM convergence requires both parameter and Q stabilization" begin
     dm = _SAEM_DM_S
-    res = fit_model(dm,
-        NoLimits.SAEM(;
-            sampler = MH(),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-            maxiters = 2,
-            t0 = 0,
-            consecutive_params = 1,
-            atol_theta = Inf,
-            rtol_theta = Inf,
-            atol_Q = 0.0,
-            rtol_Q = 0.0,
-            q_store_max = 2
-        ))
-    # If stopping used only parameter tolerance, this would stop after 1 iteration.
-    @test res.result.iterations == 2
+    tk = (n_samples = 2, n_adapt = 2, progress = false)
+    stall = (; maxiters = 2, consecutive_params = 1, atol_theta = Inf,
+        rtol_theta = Inf, atol_Q = 0.0, rtol_Q = 0.0)
+    for (label, method) in (
+        ("SAEM",
+            NoLimits.SAEM(; sampler = MH(), turing_kwargs = tk, t0 = 0,
+                q_store_max = 2, stall...)),
+        ("MCEM", NoLimits.MCEM(; sampler = MH(), turing_kwargs = tk, stall...)))
+        @testset "$label" begin
+            res = fit_model(dm, method)
+            # If stopping used only parameter tolerance, this would stop after 1 iteration.
+            @test res.result.iterations == 2
+        end
+    end
 end
 
-@testset "SAEM multiple RE groups" begin
+@testset "SAEM/MCEM multiple RE groups" begin
     dm = fx_mg_dm()
-    res = fit_model(dm,
-        NoLimits.SAEM(;
-            sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-            SAEM_FAST...))
-    @test res isa FitResult
-    re = NoLimits.get_random_effects(dm, res)
-    @test !isempty(re)
+    tk = (n_samples = 2, n_adapt = 2, progress = false)
+    for (label, method) in (
+        ("SAEM", NoLimits.SAEM(; sampler = MH(), turing_kwargs = tk, SAEM_FAST...)),
+        ("MCEM", NoLimits.MCEM(; sampler = MH(), turing_kwargs = tk, maxiters = 2)))
+        @testset "$label" begin
+            res = fit_model(dm, method)
+            @test res isa FitResult
+            re = NoLimits.get_random_effects(dm, res)
+            @test !isempty(re)
+        end
+    end
 end
 
 @testset "SAEM constants_re" begin
@@ -1227,105 +1400,128 @@ end
     @test res isa FitResult
 end
 
-@testset "SAEM threaded helper cache preserves ODE options" begin
+@testset "SAEM/MCEM threaded helper cache preserves ODE options" begin
     # fx_ode_model already has saveat_mode = :saveat in its solver config.
     dm = fx_ode_dm()
     ll_cache = build_ll_cache(dm; ode_kwargs = (abstol = 1e-8, reltol = 1e-7))
-    threaded = NoLimits._saem_thread_caches(dm, ll_cache, 2)
-    @test length(threaded) == 2
-    @test all(c -> c.ode_args == ll_cache.ode_args, threaded)
-    @test all(c -> c.ode_kwargs == ll_cache.ode_kwargs, threaded)
-end
-
-@testset "SAEM thread RNGs are reproducible from passed rng" begin
-    r1 = NoLimits._saem_thread_rngs(MersenneTwister(42), 3)
-    r2 = NoLimits._saem_thread_rngs(MersenneTwister(42), 3)
-    r3 = NoLimits._saem_thread_rngs(MersenneTwister(99), 3)
-    s1 = [rand(r, Float64) for r in r1]
-    s2 = [rand(r, Float64) for r in r2]
-    s3 = [rand(r, Float64) for r in r3]
-    @test s1 == s2
-    @test s1 != s3
-end
-
-@testset "SAEM final EBE rescue options are configurable" begin
-    method = NoLimits.SAEM(;
-        ebe_rescue_on_high_grad = false,
-        ebe_rescue_multistart_n = 2,
-        ebe_rescue_multistart_k = 2,
-        ebe_rescue_max_rounds = 7,
-        ebe_rescue_grad_tol = 1e-5
-    )
-    @test method.saem.ebe_rescue.enabled == false
-    @test method.saem.ebe_rescue.multistart_n == 2
-    @test method.saem.ebe_rescue.multistart_k == 2
-    @test method.saem.ebe_rescue.max_rounds == 7
-    @test method.saem.ebe_rescue.grad_tol == 1e-5
-end
-
-@testset "SAEM get_random_effects recomputes EB modes with rescue options" begin
-    method = NoLimits.SAEM(;
-        sampler = MH(),
-        turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-        q_store_max = 2,
-        maxiters = 2,
-        mcmc_steps = 1,
-        t0 = 1,
-        ebe_rescue_on_high_grad = true,
-        ebe_rescue_multistart_n = 2,
-        ebe_rescue_multistart_k = 2,
-        ebe_rescue_max_rounds = 2,
-        ebe_rescue_grad_tol = 1e-7
-    )
-    res = fit_model(_SAEM_DM_S, method; store_eb_modes = false)
-    re = NoLimits.get_random_effects(_SAEM_DM_S, res)
-    @test haskey(re, :η)
-    @test nrow(re.η) == 2  # 2 unique IDs in _SAEM_DM_S
-end
-
-@testset "SAEM constants_re: fixed-RE individuals contribute observations to Q" begin
-    # When constants_re pins one individual's RE, the other individual's observations must
-    # still influence the M-step objective. We verify this by checking that:
-    # (a) the fit converges without error,
-    # (b) the Q-function value is strictly smaller (worse) when that individual is excluded
-    #     from the data entirely vs. pinning its RE.
-    fast = (maxiters = 3, t0 = 1, kappa = 0.6, mcmc_steps = 1, q_store_max = 2)
-    rng = Xoshiro(42)
-    method = NoLimits.SAEM(;
-        sampler = MH(), turing_kwargs = (n_samples = 3, n_adapt = 2, progress = false),
-        fast...
-    )
-    # Fit with RE for :A pinned to 0.0 — :B should still contribute its observations.
-    res = fit_model(_SAEM_DM_S, method; constants_re = (; η = (; A = 0.0,)), rng = rng)
-    @test res isa NoLimits.FitResult
-    @test isfinite(NoLimits.get_objective(res))
-
-    # The Q function at the estimated θ must be finite and include both individuals.
-    # Build the internal Q for the result to check it does not return Inf.
-    θu = NoLimits.get_params(res; scale = :untransformed)
-    _, batch_infos, const_cache = NoLimits._build_laplace_batch_infos(
-        _SAEM_DM_S, (; η = (; A = 0.0,)))
-    ll_cache = NoLimits.build_ll_cache(_SAEM_DM_S)
-    # Manually evaluate logf for the constant-RE batch with an empty b — must be finite.
-    for (bi, info) in enumerate(batch_infos)
-        if info.n_b == 0
-            logf = NoLimits._laplace_logf_batch(
-                _SAEM_DM_S, info, θu, Float64[], const_cache, ll_cache)
-            @test isfinite(logf)
+    for (label, thread_caches) in (("SAEM", NoLimits._saem_thread_caches),
+        ("MCEM", NoLimits._mcem_thread_caches))
+        @testset "$label" begin
+            threaded = thread_caches(dm, ll_cache, 2)
+            @test length(threaded) == 2
+            @test all(c -> c.ode_args == ll_cache.ode_args, threaded)
+            @test all(c -> c.ode_kwargs == ll_cache.ode_kwargs, threaded)
         end
     end
 end
 
-@testset "SAEM constants_re: all RE constant — fit runs and objective is finite" begin
+@testset "SAEM/MCEM thread RNGs are reproducible from passed rng" begin
+    for (label, thread_rngs) in (("SAEM", NoLimits._saem_thread_rngs),
+        ("MCEM", NoLimits._mcem_thread_rngs))
+        @testset "$label" begin
+            r1 = thread_rngs(MersenneTwister(42), 3)
+            r2 = thread_rngs(MersenneTwister(42), 3)
+            r3 = thread_rngs(MersenneTwister(99), 3)
+            s1 = [rand(r, Float64) for r in r1]
+            s2 = [rand(r, Float64) for r in r2]
+            s3 = [rand(r, Float64) for r in r3]
+            @test s1 == s2
+            @test s1 != s3
+        end
+    end
+end
+
+@testset "SAEM/MCEM final EBE rescue options are configurable" begin
+    rescue_kwargs = (; ebe_rescue_on_high_grad = false, ebe_rescue_multistart_n = 2,
+        ebe_rescue_multistart_k = 2, ebe_rescue_max_rounds = 7,
+        ebe_rescue_grad_tol = 1e-5)
+    saem = NoLimits.SAEM(; rescue_kwargs...)
+    mcem = NoLimits.MCEM(; rescue_kwargs...)
+    for (label, rescue) in (("SAEM", saem.saem.ebe_rescue), ("MCEM", mcem.ebe_rescue))
+        @testset "$label" begin
+            @test rescue.enabled == false
+            @test rescue.multistart_n == 2
+            @test rescue.multistart_k == 2
+            @test rescue.max_rounds == 7
+            @test rescue.grad_tol == 1e-5
+        end
+    end
+end
+
+@testset "SAEM/MCEM get_random_effects recomputes EB modes with rescue options" begin
+    tk = (n_samples = 2, n_adapt = 2, progress = false)
+    rescue_kwargs = (; ebe_rescue_on_high_grad = true, ebe_rescue_multistart_n = 2,
+        ebe_rescue_multistart_k = 2, ebe_rescue_max_rounds = 2,
+        ebe_rescue_grad_tol = 1e-7)
+    for (label, method) in (
+        ("SAEM",
+            NoLimits.SAEM(; sampler = MH(), turing_kwargs = tk, q_store_max = 2,
+                maxiters = 2, mcmc_steps = 1, t0 = 1, rescue_kwargs...)),
+        ("MCEM",
+            NoLimits.MCEM(; sampler = MH(), turing_kwargs = tk, maxiters = 2,
+                rescue_kwargs...)))
+        @testset "$label" begin
+            res = fit_model(_SAEM_DM_S, method; store_eb_modes = false)
+            re = NoLimits.get_random_effects(_SAEM_DM_S, res)
+            @test haskey(re, :η)
+            @test nrow(re.η) == 2  # 2 unique IDs in _SAEM_DM_S
+        end
+    end
+end
+
+@testset "SAEM/MCEM constants_re: fixed-RE individuals contribute observations to Q" begin
+    # When constants_re pins one individual's RE, the other individual's observations must
+    # still influence the M-step objective: the fit completes with a finite objective and
+    # logf for the constant-RE batch (empty b) stays finite.
+    tk = (n_samples = 3, n_adapt = 2, progress = false)
+    for (label, method, rng) in (
+        ("SAEM",
+            NoLimits.SAEM(; sampler = MH(), turing_kwargs = tk, maxiters = 3,
+                t0 = 1, kappa = 0.6, mcmc_steps = 1, q_store_max = 2),
+            Xoshiro(42)),
+        ("MCEM",
+            NoLimits.MCEM(; sampler = MH(), turing_kwargs = tk, maxiters = 3),
+            Xoshiro(7)))
+        @testset "$label" begin
+            # Fit with RE for :A pinned to 0.0 — :B should still contribute its observations.
+            res = fit_model(
+                _SAEM_DM_S, method; constants_re = (; η = (; A = 0.0,)), rng = rng)
+            @test res isa NoLimits.FitResult
+            @test isfinite(NoLimits.get_objective(res))
+
+            # Manually evaluate logf for the constant-RE batch with an empty b — must be finite.
+            θu = NoLimits.get_params(res; scale = :untransformed)
+            _, batch_infos, const_cache = NoLimits._build_laplace_batch_infos(
+                _SAEM_DM_S, (; η = (; A = 0.0,)))
+            ll_cache = NoLimits.build_ll_cache(_SAEM_DM_S)
+            for (bi, info) in enumerate(batch_infos)
+                if info.n_b == 0
+                    logf = NoLimits._laplace_logf_batch(
+                        _SAEM_DM_S, info, θu, Float64[], const_cache, ll_cache)
+                    @test isfinite(logf)
+                end
+            end
+        end
+    end
+end
+
+@testset "SAEM/MCEM constants_re: all RE constant — fit runs and objective is finite" begin
     # When all RE levels are constant the entire model reduces to a fixed-effects evaluation
     # on the M-step.  The fit should complete without error and yield a finite objective.
-    fast = (maxiters = 3, t0 = 1, kappa = 0.6, mcmc_steps = 1, q_store_max = 2)
-    method = NoLimits.SAEM(;
-        sampler = MH(), turing_kwargs = (n_samples = 3, n_adapt = 2, progress = false),
-        fast...
-    )
-    res = fit_model(
-        _SAEM_DM_S, method; constants_re = (; η = (; A = 0.0, B = 0.0)), rng = Xoshiro(1))
-    @test res isa NoLimits.FitResult
-    @test isfinite(NoLimits.get_objective(res))
+    tk = (n_samples = 3, n_adapt = 2, progress = false)
+    for (label, method, rng) in (
+        ("SAEM",
+            NoLimits.SAEM(; sampler = MH(), turing_kwargs = tk, maxiters = 3,
+                t0 = 1, kappa = 0.6, mcmc_steps = 1, q_store_max = 2),
+            Xoshiro(1)),
+        ("MCEM",
+            NoLimits.MCEM(; sampler = MH(), turing_kwargs = tk, maxiters = 3),
+            Xoshiro(8)))
+        @testset "$label" begin
+            res = fit_model(
+                _SAEM_DM_S, method; constants_re = (; η = (; A = 0.0, B = 0.0)), rng = rng)
+            @test res isa NoLimits.FitResult
+            @test isfinite(NoLimits.get_objective(res))
+        end
+    end
 end

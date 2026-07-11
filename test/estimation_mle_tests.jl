@@ -3,9 +3,13 @@ using NoLimits
 using DataFrames
 using Distributions
 using ComponentArrays
+using LinearAlgebra
 using OptimizationBBO
 using OptimizationOptimisers
 using OptimizationOptimJL
+
+# Shared MLE/MAP testsets: models carry priors (MLE ignores them, MAP requires them).
+const MLE_MAP_METHODS = (("MLE", NoLimits.MLE()), ("MAP", NoLimits.MAP()))
 
 @testset "MLE non-ODE" begin
     res = fx_mle()                        # shared no-RE MLE fit
@@ -13,11 +17,11 @@ using OptimizationOptimJL
     @test NoLimits.get_params(res; scale = :untransformed) isa ComponentArray
 end
 
-@testset "MLE ODE" begin
+let
     model = @Model begin
         @fixedEffects begin
-            a = RealNumber(0.2)
-            σ = RealNumber(0.3, scale = :log)
+            a = RealNumber(0.2; prior = Normal(0.0, 1.0))
+            σ = RealNumber(0.3, scale = :log, prior = LogNormal(0.0, 0.5))
         end
 
         @covariates begin
@@ -45,9 +49,14 @@ end
 
     model_saveat = set_solver_config(model; saveat_mode = :saveat)
     dm = DataModel(model_saveat, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm, NoLimits.MLE())
 
-    @test res isa FitResult
+    for (label, method) in MLE_MAP_METHODS
+        @testset "$label ODE" begin
+            res = fit_model(dm, method)
+
+            @test res isa FitResult
+        end
+    end
 end
 
 @testset "MLE ODE with parameterized initial state" begin
@@ -122,15 +131,15 @@ end
     @test_throws ErrorException fit_model(dm, NoLimits.MLE())
 end
 
-@testset "MLE requires a free fixed effect" begin
+let
     model = @Model begin
         @covariates begin
             t = Covariate()
         end
 
         @fixedEffects begin
-            a = RealNumber(0.2)
-            σ = RealNumber(0.3, scale = :log)
+            a = RealNumber(0.2, prior = Normal(0.0, 1.0))
+            σ = RealNumber(0.3, scale = :log, prior = LogNormal(0.0, 0.5))
         end
 
         @formulas begin
@@ -145,15 +154,20 @@ end
     )
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    @test_throws ErrorException fit_model(
-        dm, NoLimits.MLE(); constants = (a = 0.2, σ = 0.3))
+
+    for (label, method) in MLE_MAP_METHODS
+        @testset "$label requires a free fixed effect" begin
+            @test_throws ErrorException fit_model(
+                dm, method; constants = (a = 0.2, σ = 0.3))
+        end
+    end
 end
 
-@testset "MLE fixed vector parameters" begin
+let
     model = @Model begin
         @fixedEffects begin
-            β = RealVector([0.2, -0.1])
-            σ = RealNumber(0.3, scale = :log)
+            β = RealVector([0.2, -0.1], prior = MvNormal(zeros(2), LinearAlgebra.I))
+            σ = RealNumber(0.3, scale = :log, prior = LogNormal(0.0, 0.5))
         end
 
         @covariates begin
@@ -175,20 +189,25 @@ end
     )
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm, NoLimits.MLE())
 
-    @test res isa FitResult
+    for (label, method) in MLE_MAP_METHODS
+        @testset "$label fixed vector parameters" begin
+            res = fit_model(dm, method)
+
+            @test res isa FitResult
+        end
+    end
 end
 
-@testset "MLE respects bounds (σ lower bound)" begin
+let
     model = @Model begin
         @covariates begin
             t = Covariate()
         end
 
         @fixedEffects begin
-            a = RealNumber(0.1)
-            σ = RealNumber(0.5; lower = 0.3, scale = :identity)
+            a = RealNumber(0.1; prior = Normal(0.0, 1.0))
+            σ = RealNumber(0.5; lower = 0.3, scale = :identity, prior = LogNormal(0.0, 0.5))
         end
 
         @formulas begin
@@ -203,21 +222,26 @@ end
     )
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm, NoLimits.MLE())
 
-    θu = NoLimits.get_params(res; scale = :untransformed)
-    @test θu.σ >= 0.3
+    for (label, method) in MLE_MAP_METHODS
+        @testset "$label respects bounds (σ lower bound)" begin
+            res = fit_model(dm, method)
+
+            θu = NoLimits.get_params(res; scale = :untransformed)
+            @test θu.σ >= 0.3
+        end
+    end
 end
 
-@testset "MLE constants" begin
+let
     model = @Model begin
         @covariates begin
             t = Covariate()
         end
 
         @fixedEffects begin
-            a = RealNumber(0.1)
-            σ = RealNumber(0.5, scale = :log)
+            a = RealNumber(0.1; prior = Normal(0.0, 1.0))
+            σ = RealNumber(0.5, scale = :log, prior = LogNormal(0.0, 0.5))
         end
 
         @formulas begin
@@ -232,10 +256,15 @@ end
     )
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm, NoLimits.MLE(); constants = (a = 0.0,))
 
-    θu = NoLimits.get_params(res; scale = :untransformed)
-    @test θu.a == 0.0
+    for (label, method) in MLE_MAP_METHODS
+        @testset "$label constants" begin
+            res = fit_model(dm, method; constants = (a = 0.0,))
+
+            θu = NoLimits.get_params(res; scale = :untransformed)
+            @test θu.a == 0.0
+        end
+    end
 end
 
 @testset "MLE penalties" begin
@@ -487,14 +516,14 @@ end
     θu = NoLimits.get_params(res; scale = :untransformed)
 end
 
-@testset "MLE handles +Inf objective in AD path" begin
+let
     model = @Model begin
         @covariates begin
             t = Covariate()
         end
 
         @fixedEffects begin
-            a = RealNumber(0.0)
+            a = RealNumber(0.0, prior = Uniform(0.1, 1.0))
         end
 
         @formulas begin
@@ -509,8 +538,15 @@ end
     )
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
 
-    @test res isa FitResult
-    @test !isfinite(NoLimits.get_objective(res))
+    for (label, method) in (
+        ("MLE", NoLimits.MLE(; optim_kwargs = (maxiters = 2,))),
+        ("MAP", NoLimits.MAP(; optim_kwargs = (maxiters = 2,))))
+        @testset "$label handles +Inf objective in AD path" begin
+            res = fit_model(dm, method)
+
+            @test res isa FitResult
+            @test !isfinite(NoLimits.get_objective(res))
+        end
+    end
 end

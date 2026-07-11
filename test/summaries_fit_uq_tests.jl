@@ -2,7 +2,6 @@ using Test
 using NoLimits
 using DataFrames
 using Distributions
-using Random
 using Turing: MH
 
 @testset "Fit/UQ summaries (frequentist, fixed effects only)" begin
@@ -178,59 +177,6 @@ end
 
     s_fit = summarize(res)
     @test s_fit isa FitResultSummary
-    @test s_fit.inference == :bayesian
-    @test occursin("Posterior random effects summary", s_fit.random_effect_label)
-    @test s_fit.n_obs_total == 4
-    @test s_fit.n_missing_total == 0
-    txt_fit = sprint(show, MIME"text/plain"(), s_fit)
-    @test occursin("objective", txt_fit)
-    @test !occursin("NaN", txt_fit)
-
-    uq = compute_uq(res; method = :chain, mcmc_draws = 20)
-    s_comb = summarize(res, uq)
-    @test s_comb isa UQResultSummary
-    @test s_comb.inference == :bayesian
-    @test s_comb.interval_label == "CrI"
-    @test s_comb.n_parameters_reported == 2
-    txt_comb = sprint(show, MIME"text/plain"(), s_comb)
-    @test occursin("CrI Lower", txt_comb)
-    @test !occursin("NaN", txt_comb)
-end
-
-@testset "Fit/UQ summaries (bayesian MCMC with random effects)" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(0.2; prior = Normal(0.0, 1.0), calculate_se = true)
-            σ = RealNumber(
-                0.4; scale = :log, prior = LogNormal(0.0, 0.5), calculate_se = true)
-        end
-
-        @covariates begin
-            t = Covariate()
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column = :ID)
-        end
-
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [1, 1, 2, 2],
-        t = [0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.3, -0.1, 0.0]
-    )
-
-    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    res = fit_model(
-        dm, MCMC(; turing_kwargs = (n_samples = 30, n_adapt = 10, progress = false));
-        rng = Random.Xoshiro(710))
-
-    s_fit = summarize(res)
-    @test s_fit isa FitResultSummary
     @test s_fit.method == :mcmc
     @test s_fit.inference == :bayesian
     @test occursin("Posterior random effects summary", s_fit.random_effect_label)
@@ -240,8 +186,8 @@ end
     @test occursin("objective", txt_fit)
     @test !occursin("NaN", txt_fit)
 
-    uq = compute_uq(
-        res; method = :chain, mcmc_draws = 20, mcmc_warmup = 5, rng = Random.Xoshiro(711))
+    # Explicit mcmc_warmup exercises the user-supplied warmup path (clamped to chain).
+    uq = compute_uq(res; method = :chain, mcmc_draws = 20, mcmc_warmup = 5)
     s_comb = summarize(res, uq)
     @test s_comb isa UQResultSummary
     @test s_comb.inference == :bayesian

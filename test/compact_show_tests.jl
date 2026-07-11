@@ -1,33 +1,12 @@
 using Test
 using NoLimits
-using DataFrames
-using Distributions
 
+# Uses the shared fixture model/dm/fit/UQ (fixtures.jl); assertions are structural.
 @testset "Compact show methods for core structs" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(0.2, calculate_se = true)
-            sigma = RealNumber(0.3, scale = :log, calculate_se = true)
-        end
-
-        @covariates begin
-            t = Covariate()
-        end
-
-        @formulas begin
-            y ~ Normal(a + 0.1 * t, sigma)
-        end
-    end
-
-    df = DataFrame(
-        ID = [1, 1, 2, 2],
-        t = [0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, 0.1]
-    )
-    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    res = fit_model(
-        dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)); store_data_model = true)
-    uq = compute_uq(res; method = :wald, n_draws = 30)
+    model = fx_nore_model()
+    dm = fx_nore_dm()
+    res = fx_mle()
+    uq = fx_uq_mle()
 
     txt_model = sprint(show, model)
     @test startswith(txt_model, "Model(")

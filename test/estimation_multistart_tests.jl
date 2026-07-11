@@ -3,6 +3,7 @@ using NoLimits
 using DataFrames
 using Distributions
 using ComponentArrays
+using Random
 using Turing
 using MCMCChains
 using SciMLBase
@@ -330,4 +331,20 @@ end
     re = NoLimits.get_random_effects(res)
     @test haskey(re, :η_id)
     @test haskey(re, :η_site)
+end
+
+@testset "Multistart EBE screening (random effects)" begin
+    # Moved from coverage_gap_tests.jl (path coverage for screening = :ebe).
+    ms = NoLimits.Multistart(
+        dists = (; a = Normal(0.0, 1.0)),
+        n_draws_requested = 4,
+        n_draws_used = 2,
+        screening = :ebe,
+        ebe_maxiters = 3,
+        progress = false,
+        rng = Random.Xoshiro(1)
+    )
+    res = fit_model(ms, fx_fixre_dm(), NoLimits.Laplace(; optim_kwargs = (maxiters = 2,)))
+    @test length(NoLimits.get_multistart_results(res)) >= 1
+    @test NoLimits.get_multistart_best(res) !== nothing
 end

@@ -71,21 +71,9 @@ end
     @test NoLimits.get_converged(res) isa Bool
 end
 
-@testset "MCEM serial vs threaded is reproducible" begin
-    Threads.nthreads() < 2 && return
-
-    method = NoLimits.MCEM(; sampler = MH(),
-        turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false, verbose = false),
-        maxiters = 2,
-        progress = false)
-    res_serial = fit_model(
-        _MCEM_DM2, method; serialization = EnsembleSerial(), rng = MersenneTwister(123))
-    res_threads = fit_model(
-        _MCEM_DM2, method; serialization = EnsembleThreads(), rng = MersenneTwister(123))
-    @test res_serial.summary.objective == res_threads.summary.objective
-    @test collect(NoLimits.get_params(res_serial, scale = :untransformed)) ==
-          collect(NoLimits.get_params(res_threads, scale = :untransformed))
-end
+# NOTE: testsets shared line-for-line with SAEM (serial-vs-threaded reproducibility,
+# convergence stabilization, multiple RE groups, thread caches/RNGs, EBE rescue,
+# constants_re) live as parameterized "SAEM/MCEM …" loops in estimation_saem_tests.jl.
 
 @testset "MCEM basic with NUTS" begin
     res = fit_model(_MCEM_DM2,
@@ -93,33 +81,6 @@ end
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2))
     @test res isa FitResult
-end
-
-@testset "MCEM convergence requires both parameter and Q stabilization" begin
-    res = fit_model(_MCEM_DM2,
-        NoLimits.MCEM(;
-            sampler = MH(),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-            maxiters = 2,
-            consecutive_params = 1,
-            atol_theta = Inf,
-            rtol_theta = Inf,
-            atol_Q = 0.0,
-            rtol_Q = 0.0
-        ))
-    # If stopping used only parameter tolerance, this would stop after 1 iteration.
-    @test res.result.iterations == 2
-end
-
-@testset "MCEM multiple RE groups" begin
-    dm = fx_mg_dm()
-    res = fit_model(dm,
-        NoLimits.MCEM(;
-            sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-            maxiters = 2))
-    @test res isa FitResult
-    re = NoLimits.get_random_effects(dm, res)
-    @test !isempty(re)
 end
 
 @testset "MCEM constants_re" begin
@@ -204,27 +165,6 @@ end
     @test res isa FitResult
 end
 
-@testset "MCEM threaded helper cache preserves ODE options" begin
-    # fx_ode_model already has saveat_mode = :saveat in its solver config.
-    dm = fx_ode_dm()
-    ll_cache = build_ll_cache(dm; ode_kwargs = (abstol = 1e-8, reltol = 1e-7))
-    threaded = NoLimits._mcem_thread_caches(dm, ll_cache, 2)
-    @test length(threaded) == 2
-    @test all(c -> c.ode_args == ll_cache.ode_args, threaded)
-    @test all(c -> c.ode_kwargs == ll_cache.ode_kwargs, threaded)
-end
-
-@testset "MCEM thread RNGs are reproducible from passed rng" begin
-    r1 = NoLimits._mcem_thread_rngs(MersenneTwister(42), 3)
-    r2 = NoLimits._mcem_thread_rngs(MersenneTwister(42), 3)
-    r3 = NoLimits._mcem_thread_rngs(MersenneTwister(99), 3)
-    s1 = [rand(r, Float64) for r in r1]
-    s2 = [rand(r, Float64) for r in r2]
-    s3 = [rand(r, Float64) for r in r3]
-    @test s1 == s2
-    @test s1 != s3
-end
-
 @testset "MCEM non-normal Poisson outcome" begin
     res = fit_model(fx_pois_dm(),
         NoLimits.MCEM(; sampler = MH(),
@@ -232,70 +172,4 @@ end
             maxiters = 2))
     @test res isa FitResult
     @test NoLimits.get_converged(res) isa Bool
-end
-
-@testset "MCEM final EBE rescue options are configurable" begin
-    method = NoLimits.MCEM(;
-        ebe_rescue_on_high_grad = false,
-        ebe_rescue_multistart_n = 2,
-        ebe_rescue_multistart_k = 2,
-        ebe_rescue_max_rounds = 9,
-        ebe_rescue_grad_tol = 1e-5
-    )
-    @test method.ebe_rescue.enabled == false
-    @test method.ebe_rescue.multistart_n == 2
-    @test method.ebe_rescue.multistart_k == 2
-    @test method.ebe_rescue.max_rounds == 9
-    @test method.ebe_rescue.grad_tol == 1e-5
-end
-
-@testset "MCEM get_random_effects recomputes EB modes with rescue options" begin
-    method = NoLimits.MCEM(;
-        sampler = MH(),
-        turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-        maxiters = 2,
-        ebe_rescue_on_high_grad = true,
-        ebe_rescue_multistart_n = 2,
-        ebe_rescue_multistart_k = 2,
-        ebe_rescue_max_rounds = 2,
-        ebe_rescue_grad_tol = 1e-7
-    )
-    res = fit_model(_MCEM_DM2, method; store_eb_modes = false)
-    re = NoLimits.get_random_effects(_MCEM_DM2, res)
-    @test haskey(re, :η)
-    @test nrow(re.η) == 2
-end
-
-@testset "MCEM constants_re: fixed-RE individuals contribute observations to Q" begin
-    dm = _MCEM_DM2
-    method = NoLimits.MCEM(;
-        sampler = MH(), turing_kwargs = (n_samples = 3, n_adapt = 2, progress = false), maxiters = 3
-    )
-    # Pin :A's RE to 0.0 — individual :B must still contribute its observations.
-    res = fit_model(dm, method; constants_re = (; η = (; A = 0.0,)), rng = Xoshiro(7))
-    @test res isa NoLimits.FitResult
-    @test isfinite(NoLimits.get_objective(res))
-
-    # Verify logf for constant-RE batch is finite (observations included).
-    θu = NoLimits.get_params(res; scale = :untransformed)
-    _, batch_infos, const_cache = NoLimits._build_laplace_batch_infos(
-        dm, (; η = (; A = 0.0,)))
-    ll_cache = NoLimits.build_ll_cache(dm)
-    for (bi, info) in enumerate(batch_infos)
-        if info.n_b == 0
-            logf = NoLimits._laplace_logf_batch(
-                dm, info, θu, Float64[], const_cache, ll_cache)
-            @test isfinite(logf)
-        end
-    end
-end
-
-@testset "MCEM constants_re: all RE constant — fit runs and objective is finite" begin
-    method = NoLimits.MCEM(;
-        sampler = MH(), turing_kwargs = (n_samples = 3, n_adapt = 2, progress = false), maxiters = 3
-    )
-    res = fit_model(
-        _MCEM_DM2, method; constants_re = (; η = (; A = 0.0, B = 0.0)), rng = Xoshiro(8))
-    @test res isa NoLimits.FitResult
-    @test isfinite(NoLimits.get_objective(res))
 end

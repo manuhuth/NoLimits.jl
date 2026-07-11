@@ -3,6 +3,8 @@ using NoLimits
 using DataFrames
 using Distributions
 using CairoMakie
+using Random
+using Turing: MH
 
 # Note: "plot_data and plot_fits basic", "plot_fits MCMC", "plot_fits VI"
 # have been moved to integration_plotting.jl (shared fixtures).
@@ -288,33 +290,36 @@ end
 end
 
 @testset "plot_fits supports varying non-ODE random-effect groups" begin
-    model = @Model begin
-        @fixedEffects begin
-            σ = RealNumber(1.0e-6, scale = :log)
-        end
+    @test plot_fits(fx_varyre_dm(); constants_re = fx_varyre_constants_re(),
+        plot_density = true) !== nothing
+end
 
-        @covariates begin
-            t = Covariate()
-        end
+@testset "EM trajectory plots (MCEM with diagnostics)" begin
+    # Moved from coverage_gap_tests.jl (path coverage for plot_em_trajectories).
+    res = fit_model(fx_fixre_dm(),
+        NoLimits.MCEM(;
+            sampler = MH(),
+            turing_kwargs = (n_samples = 10, n_adapt = 3, progress = false),
+            maxiters = 3,
+            store_diagnostics = true
+        ))
+    p = plot_em_trajectories(res)
+    @test p !== nothing
+    # transformed-scale variant exercises the no-DataModel branch
+    @test plot_em_trajectories(res; scale = :transformed) !== nothing
+end
 
-        @randomEffects begin
-            η_year = RandomEffect(Normal(0.0, 1.0); column = :YEAR)
-        end
-
-        @formulas begin
-            y ~ Normal(η_year, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [1, 1, 1, 2, 2],
-        YEAR = [:A, :B, :B, :A, :C],
-        t = [0.0, 1.0, 2.0, 0.0, 1.0],
-        y = [0.1, 0.4, 0.4, 0.1, 0.3]
-    )
-
-    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    constants_re = (; η_year = (; A = 0.1, B = 0.4, C = 0.3))
-
-    @test plot_fits(dm; constants_re = constants_re, plot_density = true) !== nothing
+@testset "VI posterior-draw prediction plots (no RE)" begin
+    # Moved from coverage_gap_tests.jl. VI rejects random-effects models, so
+    # exercise the VI posterior-draw plot path (_vi_drawn_params) with a
+    # fixed-effects-only model + priors.
+    df = DataFrame(ID = repeat(1:4, inner = 3), t = repeat(0.0:2.0, 4),
+        y = [0.2 + 0.05 * i + 0.03 * j for i in 1:4 for j in 0:2])
+    dm = DataModel(fx_nore_prior_model(), df; primary_id = :ID, time_col = :t)
+    res = fit_model(dm, NoLimits.VI(;
+            turing_kwargs = (max_iter = 30, progress = false));
+        rng = Random.Xoshiro(3))
+    @test plot_fits(res) !== nothing
+    # posterior-draw band -> _vi_drawn_params
+    @test plot_fits(res; plot_mcmc_quantiles = true, mcmc_draws = 5) !== nothing
 end

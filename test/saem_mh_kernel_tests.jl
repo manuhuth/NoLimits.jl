@@ -10,6 +10,7 @@ using ComponentArrays
 using LinearAlgebra
 using Random
 using SciMLBase
+using Turing
 
 # One scalar-RE model shared by all scalar recovery/warm-start/kernel testsets;
 # each testset builds its own simulated data (cheap) on this one compiled model.
@@ -448,4 +449,107 @@ end
         );
         serialization = EnsembleThreads(),
         rng = MersenneTwister(991))
+end
+
+# ---------------------------------------------------------------------------
+# mstep_sa_on_params=true — capacity-1 ring buffer + E-step retry
+# (Merged from saem_mstep_sa_on_params_tests.jl; its _mstep_sa_dm was the same
+# model/data generator as _mh_scalar_dm with the values fixed below.)
+# ---------------------------------------------------------------------------
+
+function _mstep_sa_dm(rng, n_id, inner)
+    _mh_scalar_dm(rng; n_id = n_id, inner = inner,
+        true_a = 1.5, true_σ = 0.4, true_τ = 0.6, tmax = 1.5)
+end
+
+@testset "mstep_sa_on_params tests" begin
+    @testset "MH() sampler with E-step retries — finite objective" begin
+        rng = MersenneTwister(7)
+        dm = _mstep_sa_dm(rng, 20, 4)
+
+        res = fit_model(dm,
+            SAEM(
+                sampler = MH(),
+                maxiters = 2,
+                t0 = 10,
+                mcmc_steps = 5,
+                q_store_max = 2,
+                mstep_sa_on_params = true,
+                max_estep_retries = 3,
+                retry_mcmc_steps = 1,
+                progress = false
+            ))
+
+        saem_diag = NoLimits.get_diagnostics(res).notes.diagnostics
+        @test count(isfinite, saem_diag.Q_hist) >= length(saem_diag.Q_hist) ÷ 2
+    end
+
+    @testset "SaemixMH sampler — finite objective" begin
+        rng = MersenneTwister(17)
+        dm = _mstep_sa_dm(rng, 20, 4)
+
+        res = fit_model(dm,
+            SAEM(
+                sampler = SaemixMH(n_kern1 = 2, n_kern2 = 2),
+                maxiters = 2,
+                mcmc_steps = 1,
+                q_store_max = 2,
+                mstep_sa_on_params = true,
+                progress = false
+            ))
+    end
+
+    @testset "q_store_max ignored — same trajectory as q_store_max=2" begin
+        function _run(q_max, seed)
+            rng = MersenneTwister(seed)
+            dm = _mstep_sa_dm(rng, 15, 3)
+            fit_model(dm,
+                SAEM(
+                    sampler = SaemixMH(n_kern1 = 2, n_kern2 = 2),
+                    maxiters = 2,
+                    mcmc_steps = 1,
+                    q_store_max = q_max,
+                    mstep_sa_on_params = true,
+                    progress = false
+                ); rng = MersenneTwister(seed))
+        end
+
+        res1 = _run(1, 42)
+        res2 = _run(50, 42)
+
+        # Identical RNG seed → identical trajectory regardless of q_store_max.
+        @test NoLimits.get_objective(res1) == NoLimits.get_objective(res2)
+        p1 = collect(NoLimits.get_params(res1; scale = :transformed))
+        p2 = collect(NoLimits.get_params(res2; scale = :transformed))
+        @test p1 == p2
+    end
+
+    @testset "partial-numerical (re_cov_params closed-form + numerical mean)" begin
+        rng = MersenneTwister(13)
+        dm = _mstep_sa_dm(rng, 20, 4)
+
+        res = fit_model(dm,
+            SAEM(
+                sampler = SaemixMH(n_kern1 = 2, n_kern2 = 2),
+                maxiters = 2,
+                mcmc_steps = 1,
+                q_store_max = 2,
+                mstep_sa_on_params = true,
+                re_cov_params = (; η = :τ),
+                progress = false
+            ))
+
+        params = NoLimits.get_params(res; scale = :untransformed)
+        @test 0.05 < params.σ < 5.0
+        @test 0.05 < params.τ < 5.0
+    end
+
+    @testset "constructor validation — max_estep_retries and retry_mcmc_steps" begin
+        @test_throws Exception SAEM(max_estep_retries = -1)
+        @test_throws Exception SAEM(retry_mcmc_steps = 0)
+        s = SAEM(mstep_sa_on_params = true, max_estep_retries = 5, retry_mcmc_steps = 2,
+            progress = false)
+        @test s.saem.max_estep_retries == 5
+        @test s.saem.retry_mcmc_steps == 2
+    end
 end
