@@ -35,6 +35,7 @@ makedocs(;
         "Getting Started" => [
             "Installation" => "installation.md",
             "Quickstart" => "quickstart.md",
+            "Migrating to v0.2 (Makie)" => "migration-v0.2-makie.md",
             "Capabilities" => "capabilities.md",
             "NLME Methodology" => "nlme-methodology.md"
         ],
