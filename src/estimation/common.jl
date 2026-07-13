@@ -519,6 +519,49 @@ end
     return m
 end
 
+# Windowed half-mean drift stopping test (SAEM auto-stop). Splits the window into an
+# older and a newer half; passes when every coordinate's half-mean drift is within
+# max(atol, rtol * scale, 2 * mc_se). mc_se is the Monte-Carlo standard error of the
+# half-mean difference (from the within-half variance): pure sampling noise passes,
+# a genuine trend does not. atol == rtol == 0 disables the test entirely.
+# Returns (pass, drift, scale) with drift = ‖m₂ − m₁‖∞ and scale = max(1, ‖m₁‖∞).
+function _half_window_test(win::Vector{<:AbstractVector}, atol::Real, rtol::Real)
+    half = length(win) ÷ 2
+    m1 = sum(@view win[1:half]) / half
+    m2 = sum(@view win[(end - half + 1):end]) / half
+    T = eltype(m1)
+    drift = _maxabsdiff(m2, m1)
+    scale = max(one(T), _maxabs(m1))
+    (atol > 0 || rtol > 0) || return false, drift, scale
+    pass = true
+    for j in eachindex(m1)
+        v = zero(T)
+        for k in 1:half
+            v += (win[k][j] - m1[j])^2 + (win[end - half + k][j] - m2[j])^2
+        end
+        se = sqrt(2 * v / (2 * half - 2) / half)
+        pass &= abs(m2[j] - m1[j]) <= max(T(atol), T(rtol) * scale, 2 * se)
+    end
+    return pass, drift, scale
+end
+
+# Scalar-trajectory variant (Q history); any non-finite value fails with a NaN drift.
+function _half_window_test(win::Vector{<:Real}, atol::Real, rtol::Real)
+    T = eltype(win)
+    all(isfinite, win) || return false, T(NaN), one(T)
+    half = length(win) ÷ 2
+    h1 = @view win[1:half]
+    h2 = @view win[(end - half + 1):end]
+    m1 = sum(h1) / half
+    m2 = sum(h2) / half
+    drift = abs(m2 - m1)
+    scale = max(one(T), abs(m1))
+    (atol > 0 || rtol > 0) || return false, drift, scale
+    v = (sum(abs2, h1 .- m1) + sum(abs2, h2 .- m2)) / (2 * half - 2)
+    se = sqrt(2 * v / half)
+    return drift <= max(T(atol), T(rtol) * scale, 2 * se), drift, scale
+end
+
 @inline function _spawn_child_rngs(rng::AbstractRNG, n::Int)
     n <= 0 && return Random.Xoshiro[]
     seeds = rand(rng, UInt64, n)

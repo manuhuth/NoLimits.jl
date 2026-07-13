@@ -549,22 +549,88 @@ end
     @test res isa FitResult
 end
 
+@testset "_half_window_test" begin
+    # Flat noise: drift stays within the MC-noise floor, so the test passes.
+    pass, d, s = NoLimits._half_window_test([1.0, 1.01, 0.99, 1.0], 1e-4, 1e-3)
+    @test pass
+    @test d ≈ 0.01
+    @test s ≈ 1.005
+    # Clear trend fails: drift far exceeds both tolerance and noise floor.
+    pass, d, _ = NoLimits._half_window_test(collect(1.0:0.1:1.7), 1e-4, 1e-3)
+    @test !pass
+    @test d ≈ 0.4
+    # Non-finite value: hard fail with NaN drift.
+    pass, d, _ = NoLimits._half_window_test([1.0, Inf, 1.0, 1.0], 1e-4, 1e-3)
+    @test !pass
+    @test isnan(d)
+    # atol == rtol == 0 disables the test regardless of the noise floor.
+    pass, _, _ = NoLimits._half_window_test([1.0, 1.01, 0.99, 1.0], 0.0, 0.0)
+    @test !pass
+    # Inf tolerance always passes; odd window ignores the middle element.
+    pass, d, _ = NoLimits._half_window_test([0.0, 0.0, 100.0, 1.0, 1.0], Inf, 0.0)
+    @test pass
+    @test d ≈ 1.0
+    # Vector windows: a single noiseless trending coordinate blocks the pass.
+    pass, d, s = NoLimits._half_window_test(
+        [[1.0, 10.0], [1.0, 10.0], [1.0, 12.0], [1.0, 12.0]], 1e-4, 1e-3)
+    @test !pass
+    @test d ≈ 2.0
+    @test s ≈ 10.0
+    # Scale floor of 1 for small-magnitude trajectories.
+    _, _, s = NoLimits._half_window_test([0.1, 0.1, 0.2, 0.2], 1e-4, 1e-3)
+    @test s == 1.0
+end
+
 @testset "SAEM/MCEM convergence requires both parameter and Q stabilization" begin
     dm = _SAEM_DM_S
     tk = (n_samples = 2, n_adapt = 2, progress = false)
-    stall = (; maxiters = 2, consecutive_params = 1, atol_theta = Inf,
-        rtol_theta = Inf, atol_Q = 0.0, rtol_Q = 0.0)
-    for (label, method) in (
-        ("SAEM",
-            NoLimits.SAEM(; sampler = MH(), turing_kwargs = tk, t0 = 0,
-                q_store_max = 2, stall...)),
-        ("MCEM", NoLimits.MCEM(; sampler = MH(), turing_kwargs = tk, stall...)))
-        @testset "$label" begin
-            res = fit_model(dm, method)
-            # If stopping used only parameter tolerance, this would stop after 1 iteration.
-            @test res.result.iterations == 2
-        end
+    @testset "SAEM" begin
+        # θ drift passes as soon as the window fills (Inf tolerance) but Q never does
+        # (zero tolerance): without the Q gate this would stop at iteration 4.
+        res = fit_model(dm,
+            NoLimits.SAEM(; sampler = MH(), turing_kwargs = tk, sa_burnin_iters = 0,
+                t0 = 0, q_store_max = 2, maxiters = 8, convergence_window = 4,
+                consecutive_params = 1, atol_theta = Inf, rtol_theta = Inf,
+                atol_Q = 0.0, rtol_Q = 0.0))
+        @test res.result.iterations == 8
+        @test !NoLimits.get_converged(res)
     end
+    @testset "MCEM" begin
+        res = fit_model(dm,
+            NoLimits.MCEM(; sampler = MH(), turing_kwargs = tk, maxiters = 2,
+                consecutive_params = 1, atol_theta = Inf, rtol_theta = Inf,
+                atol_Q = 0.0, rtol_Q = 0.0))
+        # If stopping used only parameter tolerance, this would stop after 1 iteration.
+        @test res.result.iterations == 2
+    end
+end
+
+@testset "SAEM windowed drift test triggers early stop" begin
+    # Inf tolerances make every post-window-fill check pass, so the stop point is
+    # deterministic: stabilization (t0=5) + window fill (10) + consecutive (2) - 1.
+    res = fit_model(_SAEM_DM_S,
+        NoLimits.SAEM(; sampler = MH(),
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
+            sa_burnin_iters = 0, t0 = 5, maxiters = 100, mcmc_steps = 1,
+            q_store_max = 2, convergence_window = 10, consecutive_params = 2,
+            atol_theta = Inf, rtol_theta = Inf, atol_Q = Inf, rtol_Q = Inf))
+    @test NoLimits.get_converged(res)
+    @test 16 <= res.result.iterations < 100
+    diag = NoLimits.get_notes(res).diagnostics
+    @test isnan(diag.drift_θ[1])  # window not yet full
+    @test isfinite(diag.drift_θ[end])
+    @test isfinite(diag.drift_Q[end])
+end
+
+@testset "SAEM no early stop before drift window fills" begin
+    res = fit_model(_SAEM_DM_S,
+        NoLimits.SAEM(; sampler = MH(),
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
+            sa_burnin_iters = 0, t0 = 0, maxiters = 6, mcmc_steps = 1,
+            q_store_max = 2, convergence_window = 10, consecutive_params = 1,
+            atol_theta = Inf, rtol_theta = Inf, atol_Q = Inf, rtol_Q = Inf))
+    @test !NoLimits.get_converged(res)
+    @test res.result.iterations == 6
 end
 
 @testset "SAEM/MCEM multiple RE groups" begin
