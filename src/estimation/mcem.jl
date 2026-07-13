@@ -138,6 +138,7 @@ struct EMOptions{T}
     rtol_Q::T
     atol_Q::T
     consecutive_params::Int
+    convergence_window::Int
 end
 
 """
@@ -171,9 +172,19 @@ fixed effects.
 - `diagnostics_every::Int = 1`: when `store_diagnostics=true`, store only every n-th
   iteration. E.g. `diagnostics_every=10` keeps one snapshot per 10 iterations.
 - `maxiters::Int = 100`: maximum number of EM iterations.
-- `rtol_theta`, `atol_theta`: relative/absolute convergence tolerance on fixed effects.
-- `rtol_Q`, `atol_Q`: relative/absolute convergence tolerance on the Q-function.
-- `consecutive_params::Int = 3`: consecutive iterations satisfying tolerance to converge.
+- `rtol_theta = 1e-3`, `atol_theta = 1e-4`: convergence tolerances on fixed effects
+  (transformed scale). Each coordinate's drift between the two half-window means of the
+  last `convergence_window` iterates must satisfy
+  `drift ≤ max(atol, rtol * scale, 2 * mc_se)`, where `scale` is the max-abs older-half
+  mean (floored at 1) and `mc_se` is the Monte-Carlo standard error of the half-mean
+  difference estimated from the window itself. Set both to `0` to disable early stopping.
+- `rtol_Q = 1e-3`, `atol_Q = 1e-4`: same windowed drift test applied to the Q-function
+  history; any non-finite Q in the window fails the check.
+- `consecutive_params::Int = 3`: consecutive iterations on which both the θ and the Q
+  drift tests must pass before the fit stops early.
+- `convergence_window::Int = 20`: window length (≥ 4; compared halves have length
+  `convergence_window ÷ 2`) for the drift tests, so the earliest possible stop is
+  iteration `convergence_window + consecutive_params - 1`.
 - `ebe_optimizer`, `ebe_optim_kwargs`, `ebe_adtype`, `ebe_grad_tol`: EBE inner optimizer.
 - `ebe_multistart_n`, `ebe_multistart_k` (default 1), `ebe_multistart_max_rounds`,
   `ebe_multistart_sampling`: multistart settings for EBE mode computation.
@@ -211,11 +222,12 @@ function MCEM(;
         verbose = false,
         progress = true,
         maxiters = 100,
-        rtol_theta = 1e-4,
-        atol_theta = 1e-6,
-        rtol_Q = 1e-4,
-        atol_Q = 1e-6,
+        rtol_theta = 1e-3,
+        atol_theta = 1e-4,
+        rtol_Q = 1e-3,
+        atol_Q = 1e-4,
         consecutive_params = 3,
+        convergence_window::Int = 20,
         ebe_optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking()),
         ebe_optim_kwargs = NamedTuple(),
         ebe_adtype = Optimization.AutoForwardDiff(),
@@ -237,13 +249,16 @@ function MCEM(;
 )
     diagnostics_every >= 1 ||
         error("MCEM: diagnostics_every must be ≥ 1. Got: $diagnostics_every")
+    convergence_window >= 4 ||
+        error("MCEM: convergence_window must be ≥ 4. Got: $convergence_window")
     # When e_step is not provided, build MCEM_MCMC from legacy kwargs (backward compat)
     e_step_actual = if e_step === nothing
         MCEM_MCMC(sampler, turing_kwargs, sample_schedule, warm_start)
     else
         e_step
     end
-    em = EMOptions(maxiters, rtol_theta, atol_theta, rtol_Q, atol_Q, consecutive_params)
+    em = EMOptions(maxiters, rtol_theta, atol_theta, rtol_Q, atol_Q, consecutive_params,
+        convergence_window)
     ebe = EBEOptions(ebe_optimizer, ebe_optim_kwargs, ebe_adtype, ebe_grad_tol,
         ebe_multistart_n, ebe_multistart_k, ebe_multistart_max_rounds,
         ebe_multistart_sampling)
@@ -277,6 +292,8 @@ mutable struct _MCEMDiagnostics{T}
     dθ_rel::Vector{T}
     dQ_abs::Vector{T}
     dQ_rel::Vector{T}
+    drift_θ::Vector{T}
+    drift_Q::Vector{T}
     samples::Vector{Int}
     ess_hist::Vector{Float64}   # mean ESS across batches; NaN for MCMC iterations
 end
@@ -1267,6 +1284,8 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
         Vector{T0}(),
         Vector{T0}(),
         Vector{T0}(),
+        Vector{T0}(),
+        Vector{T0}(),
         Int[],
         Float64[])
 
@@ -1307,10 +1326,15 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
     param_streak = 0
     q_streak = 0
     converged = false
+    # Trajectory windows for the half-mean drift stopping test (see SAEM docs).
+    conv_window = method.em.convergence_window
+    θ_window = Vector{T0}[]
+    Q_window = T0[]
     progress_bar = ProgressMeter.Progress(method.em.maxiters; desc = "MCEM",
         enabled = method.progress)
 
     for iter in 1:(method.em.maxiters)
+        mstep_skipped = false
         θt_curr = θ_prev isa ComponentArray ? θ_prev : ComponentArray(θ_prev, axs_free)
         θt_full_curr = ComponentArray(T0.(θ_const_t), axs_full)
 
@@ -1556,6 +1580,7 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
 
         if any(!isfinite, sol.u)
             @warn "MCEM M-step iter $iter: optimizer returned non-finite parameters; skipping update."
+            mstep_skipped = true
             θu_new = θu_curr
             Q_new = Q_prev
         else
@@ -1585,6 +1610,24 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
         dQ_abs = abs(Q_new - Q_prev)
         dQ_rel = dQ_abs / max(T0(1.0), abs(Q_prev))
 
+        # Stopping test: drift between half-window means of the trajectory
+        # (MC-noise robust, unlike successive differences). See the SAEM docs.
+        push!(θ_window, collect(θ_prev_new))
+        push!(Q_window, Q_new)
+        if length(θ_window) > conv_window
+            popfirst!(θ_window)
+            popfirst!(Q_window)
+        end
+        window_full = length(θ_window) == conv_window
+        passθ, driftθ, _ = window_full ?
+                           _half_window_test(θ_window, method.em.atol_theta,
+            method.em.rtol_theta) : (false, T0(NaN), one(T0))
+        passQ, driftQ, _ = window_full ?
+                           _half_window_test(Q_window, method.em.atol_Q,
+            method.em.rtol_Q) : (false, T0(NaN), one(T0))
+        pass_θ = passθ && !mstep_skipped
+        pass_Q = passQ && !mstep_skipped
+
         if method.store_diagnostics && iter % method.diagnostics_every == 0
             push!(diag.θ_hist, θ_prev_new)
         end
@@ -1593,10 +1636,12 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
         push!(diag.dθ_rel, dθ_rel)
         push!(diag.dQ_abs, dQ_abs)
         push!(diag.dQ_rel, dQ_rel)
+        push!(diag.drift_θ, driftθ)
+        push!(diag.drift_Q, driftQ)
         push!(diag.samples, S_diag)
 
         if method.verbose
-            @info "MCEM iteration" iter=iter samples=S_diag Q=Q_new dθ_abs=dθ_abs dθ_rel=dθ_rel dQ_abs=dQ_abs dQ_rel=dQ_rel
+            @info "MCEM iteration" iter=iter samples=S_diag Q=Q_new dθ_abs=dθ_abs dθ_rel=dθ_rel dQ_abs=dQ_abs dQ_rel=dQ_rel drift_θ=driftθ drift_Q=driftQ
         end
         ProgressMeter.next!(progress_bar;
             showvalues = [(:iter, iter), (:samples, S_diag), (:Q, Q_new)])
@@ -1605,17 +1650,8 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
         Q_prev = Q_new
         θu_last = θu_new
 
-        if dθ_abs <= method.em.atol_theta && dθ_rel <= method.em.rtol_theta
-            param_streak += 1
-        else
-            param_streak = 0
-        end
-        if isfinite(dQ_abs) && isfinite(dQ_rel) &&
-           dQ_abs <= method.em.atol_Q && dQ_rel <= method.em.rtol_Q
-            q_streak += 1
-        else
-            q_streak = 0
-        end
+        param_streak = pass_θ ? param_streak + 1 : 0
+        q_streak = pass_Q ? q_streak + 1 : 0
         if param_streak >= method.em.consecutive_params &&
            q_streak >= method.em.consecutive_params
             converged = true
@@ -1634,7 +1670,9 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
     diagnostics = FitDiagnostics((;), (optimizer = method.optimizer,),
         (em_iters = length(diag.Q_hist),
             dθ_abs = isempty(diag.dθ_abs) ? T0(NaN) : diag.dθ_abs[end],
-            dQ_abs = isempty(diag.dQ_abs) ? T0(NaN) : diag.dQ_abs[end]),
+            dQ_abs = isempty(diag.dQ_abs) ? T0(NaN) : diag.dQ_abs[end],
+            drift_θ = isempty(diag.drift_θ) ? T0(NaN) : diag.drift_θ[end],
+            drift_Q = isempty(diag.drift_Q) ? T0(NaN) : diag.drift_Q[end]),
         NamedTuple())
     last_b_candidates = @isdefined(samples_by_batch) ? samples_by_batch : nothing
     eb_modes = store_eb_modes ?

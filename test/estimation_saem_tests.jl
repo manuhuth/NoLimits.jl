@@ -596,12 +596,14 @@ end
         @test !NoLimits.get_converged(res)
     end
     @testset "MCEM" begin
+        # Same discrimination for MCEM: θ passes once its window fills (iteration 4)
+        # but Q never does, so the fit must run to maxiters.
         res = fit_model(dm,
-            NoLimits.MCEM(; sampler = MH(), turing_kwargs = tk, maxiters = 2,
-                consecutive_params = 1, atol_theta = Inf, rtol_theta = Inf,
-                atol_Q = 0.0, rtol_Q = 0.0))
-        # If stopping used only parameter tolerance, this would stop after 1 iteration.
-        @test res.result.iterations == 2
+            NoLimits.MCEM(; sampler = MH(), turing_kwargs = tk, maxiters = 8,
+                convergence_window = 4, consecutive_params = 1,
+                atol_theta = Inf, rtol_theta = Inf, atol_Q = 0.0, rtol_Q = 0.0))
+        @test res.result.iterations == 8
+        @test !NoLimits.get_converged(res)
     end
 end
 

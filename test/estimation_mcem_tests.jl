@@ -62,6 +62,33 @@ const _MCEM_DM4 = DataModel(_MCEM_MODEL,
     @test method.ebe_rescue.sampling == :lhs
 end
 
+@testset "MCEM windowed drift test triggers early stop" begin
+    # Inf tolerances make every post-window-fill check pass, so the stop point is
+    # deterministic: window fill (4) + consecutive (2) - 1 = iteration 5.
+    res = fit_model(_MCEM_DM2,
+        NoLimits.MCEM(;
+            sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
+            maxiters = 30, convergence_window = 4, consecutive_params = 2,
+            atol_theta = Inf, rtol_theta = Inf, atol_Q = Inf, rtol_Q = Inf,
+            progress = false))
+    @test NoLimits.get_converged(res)
+    @test 5 <= res.result.iterations < 30
+    diag = res.result.notes.diagnostics
+    @test isnan(diag.drift_θ[1])  # window not yet full
+    @test isfinite(diag.drift_θ[end])
+end
+
+@testset "MCEM no early stop before drift window fills" begin
+    res = fit_model(_MCEM_DM2,
+        NoLimits.MCEM(;
+            sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
+            maxiters = 3, convergence_window = 4, consecutive_params = 1,
+            atol_theta = Inf, rtol_theta = Inf, atol_Q = Inf, rtol_Q = Inf,
+            progress = false))
+    @test !NoLimits.get_converged(res)
+    @test res.result.iterations == 3
+end
+
 @testset "MCEM basic (random effects)" begin
     res = fit_model(_MCEM_DM2,
         NoLimits.MCEM(;
