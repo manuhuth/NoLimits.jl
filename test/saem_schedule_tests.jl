@@ -8,7 +8,7 @@ using Turing
 
 @testset "SA schedule: _saem_gamma_schedule robbins_monro" begin
     # maxiters=2, sa_burnin_iters=0, t0=5 (t0 > maxiters, so only stabilization phase runs)
-    opts = NoLimits.SAEM(; t0 = 5, kappa = 0.65, maxiters = 2).saem
+    opts = NoLimits.SAEM(; sa_burnin_iters = 0, t0 = 5, kappa = 0.65, maxiters = 2).saem
 
     @test opts.sa_schedule === :robbins_monro
 
@@ -64,14 +64,20 @@ end
 end
 
 @testset "SA schedule: _saem_schedule_phase labels" begin
-    # Default: sa_burnin_iters=0, t0=maxiters÷2 — no burn-in, stabilization then decay
+    # Default: sa_burnin_iters=6, t0=maxiters÷2 — burn-in, stabilization, then decay
     opts_rm = NoLimits.SAEM().saem
     @test opts_rm.t0 == opts_rm.maxiters ÷ 2
-    @test NoLimits._saem_schedule_phase(1, opts_rm) === :robbins_monro        # stabilization
-    @test NoLimits._saem_schedule_phase(opts_rm.t0, opts_rm) === :robbins_monro        # last stabilization
-    @test NoLimits._saem_schedule_phase(opts_rm.t0 + 1, opts_rm) === :robbins_monro_decay  # first decay
+    @test opts_rm.sa_burnin_iters == 6
+    @test NoLimits._saem_schedule_phase(1, opts_rm) === :burnin
+    @test NoLimits._saem_schedule_phase(opts_rm.sa_burnin_iters, opts_rm) === :burnin
+    @test NoLimits._saem_schedule_phase(opts_rm.sa_burnin_iters + 1, opts_rm) ===
+          :robbins_monro   # first stabilization
+    @test NoLimits._saem_schedule_phase(opts_rm.sa_burnin_iters + opts_rm.t0, opts_rm) ===
+          :robbins_monro   # last stabilization
+    @test NoLimits._saem_schedule_phase(
+        opts_rm.sa_burnin_iters + opts_rm.t0 + 1, opts_rm) === :robbins_monro_decay
 
-    opts_rm_short = NoLimits.SAEM(; maxiters = 2).saem
+    opts_rm_short = NoLimits.SAEM(; maxiters = 2, sa_burnin_iters = 0).saem
     @test opts_rm_short.t0 == 1
     @test NoLimits._saem_schedule_phase(opts_rm_short.t0, opts_rm_short) === :robbins_monro
     @test NoLimits._saem_schedule_phase(opts_rm_short.t0 + 1, opts_rm_short) ===
@@ -98,9 +104,14 @@ end
 end
 
 @testset "SA schedule: _saem_past_stabilization_phase" begin
-    opts_rm = NoLimits.SAEM(; t0 = 5).saem
+    opts_rm = NoLimits.SAEM(; sa_burnin_iters = 0, t0 = 5).saem
     @test !NoLimits._saem_past_stabilization_phase(5, opts_rm)
     @test NoLimits._saem_past_stabilization_phase(6, opts_rm)
+
+    # Burn-in shifts the stabilization boundary
+    opts_rm_bi = NoLimits.SAEM(; sa_burnin_iters = 3, t0 = 5).saem
+    @test !NoLimits._saem_past_stabilization_phase(8, opts_rm_bi)
+    @test NoLimits._saem_past_stabilization_phase(9, opts_rm_bi)
 
     opts_tp = NoLimits.SAEM(; sa_schedule = :two_phase,
         sa_burnin_iters = 2, sa_phase1_iters = 3).saem
@@ -116,9 +127,11 @@ end
     s = (a = 1.0, b = 2.0)
     s_new = (a = 5.0, b = 6.0)
 
-    # γ = 0: must return s unchanged (burn-in), including when s is nothing
+    # γ = 0: must return s unchanged (burn-in) once seeded
     @test NoLimits._saem_stats_update(s, s_new, 0.0) === s
-    @test NoLimits._saem_stats_update(nothing, s_new, 0.0) === nothing
+    # s = nothing always seeds with s_new, even at γ = 0: the M-step objective and
+    # Q evaluation consume the stats from iteration 1
+    @test NoLimits._saem_stats_update(nothing, s_new, 0.0) === s_new
 
     # γ > 0 with s=nothing: seeds with s_new (unchanged behavior)
     @test NoLimits._saem_stats_update(nothing, s_new, 1.0) === s_new
@@ -174,14 +187,14 @@ function _sched_dm()
 end
 
 @testset "SA schedule: default robbins_monro regression" begin
-    # maxiters=2, t0=1 → stabilization iter 1, decay iter 2
+    # maxiters=2, sa_burnin_iters=0, t0=1 → stabilization iter 1, decay iter 2
     # phase3_total = 2 - 0 - 1 = 1; γ at iter 2: ((1-1)/1)^0.65 = 0
     dm = _sched_dm()
     res = fit_model(dm,
         NoLimits.SAEM(;
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-            maxiters = 2, t0 = 1, kappa = 0.65,
+            maxiters = 2, sa_burnin_iters = 0, t0 = 1, kappa = 0.65,
             progress = false, q_store_max = 2, builtin_stats = :none
         ))
     conv = NoLimits.get_diagnostics(res).convergence

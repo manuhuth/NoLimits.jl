@@ -47,12 +47,13 @@ end
     targets3 = NoLimits._saem_build_sa_anneal_targets(NamedTuple(), re_cov, re_fam3, 0.9)
     @test isempty(keys(targets3))
 
-    # MvNormal RE → NOT auto-detected
+    # MvNormal RE → auto-detected (multivariate Gaussian families included)
     re_fam4 = (; eta = :mvnormal)
     targets4 = NoLimits._saem_build_sa_anneal_targets(NamedTuple(), re_cov, re_fam4, 0.9)
-    @test isempty(keys(targets4))
+    @test haskey(targets4, :sigma_eta)
+    @test targets4.sigma_eta ≈ 0.9
 
-    # Multiple REs, only Normal/LogNormal picked
+    # Multiple REs, Gaussian families picked, others skipped
     re_cov5 = (; eta1 = :s1, eta2 = :s2, eta3 = :s3)
     re_fam5 = (; eta1 = :normal, eta2 = :exponential, eta3 = :lognormal)
     targets5 = NoLimits._saem_build_sa_anneal_targets(NamedTuple(), re_cov5, re_fam5, 0.9)
@@ -132,8 +133,8 @@ end
     opts = NoLimits.SAEM().saem
     @test isempty(keys(opts.sa_anneal_targets))
     @test opts.sa_anneal_schedule == :exponential
-    @test opts.sa_anneal_iters == 0
-    @test opts.sa_anneal_alpha == 0.9
+    @test opts.sa_anneal_iters == opts.t0   # defaults to the resolved t0
+    @test opts.sa_anneal_alpha == 0.95
     @test opts.sa_anneal_fn === nothing
 end
 

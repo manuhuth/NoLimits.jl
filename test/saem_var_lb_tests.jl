@@ -288,8 +288,9 @@ end
             var_lb_value = 1e-5
         ); rng = Random.Xoshiro(0))
     θ = NoLimits.get_params(res; scale = :untransformed)
-    @test Float64(θ.ω) >= 1e-5
-    @test Float64(θ.σ) >= 1e-5
+    # exp(log(1e-5)) < 1e-5 by 2 ulps: allow the log-scale transform round-trip.
+    @test Float64(θ.ω) >= 1e-5 * (1 - 1e-12)
+    @test Float64(θ.σ) >= 1e-5 * (1 - 1e-12)
     @test isfinite(NoLimits.get_objective(res))
 end
 
