@@ -283,6 +283,7 @@ end
         SAEM(
             sampler = SaemixMH(n_kern1 = 2, n_kern2 = 2),
             maxiters = 2,
+            sa_burnin_iters = 0,
             mcmc_steps = 1,
             q_store_max = 2,
             progress = false
@@ -343,6 +344,7 @@ end
         SAEM(
             sampler = SaemixMH(n_kern1 = 2, n_kern2 = 2),
             maxiters = 2,
+            sa_burnin_iters = 0,
             mcmc_steps = 1,
             q_store_max = 2,
             builtin_mean = :glm,
