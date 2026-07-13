@@ -34,6 +34,7 @@ struct SAEMOptions{
     rtol_Q::Float64
     atol_Q::Float64
     consecutive_params::Int
+    convergence_window::Int
     suffstats::F1
     q_from_stats::F2
     mstep_closed_form::F3
@@ -305,7 +306,8 @@ end
     SAEM(; optimizer, optim_kwargs, adtype, sampler, turing_kwargs, update_schedule,
            warm_start, verbose, progress, mcmc_steps, q_store_max, q_store_epsilon,
            q_store_min, t0, kappa, maxiters,
-           rtol_theta, atol_theta, rtol_Q, atol_Q, consecutive_params, suffstats,
+           rtol_theta, atol_theta, rtol_Q, atol_Q, consecutive_params,
+           convergence_window, suffstats,
            q_from_stats, mstep_closed_form, builtin_stats, builtin_mean,
            resid_var_param, re_cov_params, re_mean_params, ebe_optimizer,
            ebe_optim_kwargs, ebe_adtype, ebe_grad_tol, ebe_multistart_n,
@@ -361,9 +363,22 @@ or closed-form updates (when `builtin_stats` is enabled).
   `maxiters ÷ 2` (150 with the default `maxiters=300`).
 - `kappa::Float64 = 0.65`: step-size decay exponent for the Robbins-Monro schedule.
 - `maxiters::Int = 300`: maximum number of SAEM iterations.
-- `rtol_theta`, `atol_theta`: relative/absolute convergence tolerance on fixed effects.
-- `rtol_Q`, `atol_Q`: relative/absolute convergence tolerance on the Q-function.
-- `consecutive_params::Int = 4`: consecutive iterations satisfying tolerance to converge.
+- `rtol_theta = 1e-3`, `atol_theta = 1e-4`: convergence tolerances on fixed effects
+  (transformed scale). Each coordinate's drift between the two half-window means of the
+  last `convergence_window` iterates must satisfy
+  `drift ≤ max(atol, rtol * scale, 2 * mc_se)`, where `scale` is the max-abs older-half
+  mean (floored at 1) and `mc_se` is the Monte-Carlo standard error of the half-mean
+  difference estimated from the window itself — drift indistinguishable from sampling
+  noise passes. Set both tolerances to `0` to disable early stopping.
+- `rtol_Q = 1e-3`, `atol_Q = 1e-4`: same windowed drift test applied to the Q-function
+  history; any non-finite Q in the window fails the check.
+- `consecutive_params::Int = 4`: consecutive iterations on which both the θ and the Q
+  drift tests must pass before the fit stops early.
+- `convergence_window::Int = 50`: window length (≥ 4; compared halves have length
+  `convergence_window ÷ 2`) for the drift tests. The window collects only
+  post-stabilization iterates (after burn-in plus `t0` for `:robbins_monro`, after
+  phase 1 for `:two_phase`) outside any active SA-anneal clamp, so the earliest possible
+  stop is `convergence_window + consecutive_params` iterations after stabilization ends.
 - `suffstats`: custom sufficient statistics function, or `nothing` to use the built-in.
 - `q_from_stats`: custom Q-function from sufficient statistics, or `nothing`.
 - `mstep_closed_form`: custom closed-form M-step function, or `nothing`.
@@ -419,11 +434,12 @@ function SAEM(;
         maxiters = 300,
         t0 = nothing,
         kappa = 0.65,
-        rtol_theta = 5e-5,
-        atol_theta = 5e-7,
-        rtol_Q = 5e-5,
-        atol_Q = 5e-7,
+        rtol_theta = 1e-3,
+        atol_theta = 1e-4,
+        rtol_Q = 1e-3,
+        atol_Q = 1e-4,
         consecutive_params = 4,
+        convergence_window::Int = 50,
         suffstats = nothing,
         q_from_stats = nothing,
         mstep_closed_form = nothing,
@@ -490,6 +506,8 @@ function SAEM(;
         error("SAEM: obsLL_every must be ≥ 1. Got: $obsLL_every")
     diagnostics_every >= 1 ||
         error("SAEM: diagnostics_every must be ≥ 1. Got: $diagnostics_every")
+    convergence_window >= 4 ||
+        error("SAEM: convergence_window must be ≥ 4. Got: $convergence_window")
     resolved_t0 = isnothing(t0) ? (maxiters ÷ 2) : t0
     resolved_sa_anneal_iters = isnothing(sa_anneal_iters) ? resolved_t0 : sa_anneal_iters
     ebe_rescue = EBERescueOptions(
@@ -501,6 +519,7 @@ function SAEM(;
         sampler, turing_kwargs, update_schedule, warm_start, verbose, progress,
         resolved_mcmc_steps, q_store_max, q_store_epsilon, q_store_min, resolved_t0, kappa,
         maxiters, rtol_theta, atol_theta, rtol_Q, atol_Q, consecutive_params,
+        convergence_window,
         suffstats, q_from_stats, mstep_closed_form,
         builtin_stats, builtin_mean, resid_var_param, re_cov_params, re_mean_params,
         ebe_optimizer, ebe_optim_kwargs, ebe_adtype, ebe_grad_tol,
@@ -548,6 +567,8 @@ mutable struct _SAEMDiagnostics{T}
     dθ_rel::Vector{T}
     dQ_abs::Vector{T}
     dQ_rel::Vector{T}
+    drift_θ::Vector{T}
+    drift_Q::Vector{T}
     gamma::Vector{T}
     batches::Vector{Vector{Int}}
     schedule_phase::Vector{Symbol}
@@ -651,7 +672,8 @@ function _saem_build_sa_anneal_targets(user_targets::NamedTuple, re_cov_params::
     for re_name in keys(re_cov_params)
         haskey(re_family_map, re_name) || continue
         family = getproperty(re_family_map, re_name)
-        (family === :normal || family === :lognormal) || continue
+        family in (:normal, :lognormal, :mvnormal, :mvlognormal, :mvlogitnormal) ||
+            continue
         cov_sym = getproperty(re_cov_params, re_name)
         cov_sym isa Symbol || continue
         cov_sym in seen && continue
@@ -795,8 +817,10 @@ function _saem_apply_var_lb_to_constants(constants::NamedTuple, targets, lb_valu
 end
 
 function _saem_stats_update(s, s_new, γ)
-    γ == 0.0 && return s
+    # Seed before the γ gate: burn-in iterations (γ = 0) must not leave s = nothing,
+    # the M-step objective and Q evaluation consume it from iteration 1.
     s === nothing && return s_new
+    γ == 0.0 && return s
     if s isa NamedTuple && s_new isa NamedTuple
         keys(s) == keys(s_new) || error("sufficient statistics keys mismatch.")
         vals = map((a, b) -> a + γ * (b - a), s, s_new)
@@ -2911,6 +2935,8 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
         Vector{T0}(),
         Vector{T0}(),
         Vector{T0}(),
+        Vector{T0}(),
+        Vector{T0}(),
         Vector{Vector{Int}}(),
         Vector{Symbol}(),
         Vector{Int}(),
@@ -2996,6 +3022,10 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
     param_streak = 0
     q_streak = 0
     converged = false
+    # Post-stabilization trajectory windows for the half-mean drift stopping test.
+    conv_window = method.saem.convergence_window
+    θ_window = Vector{T0}[]
+    Q_window = T0[]
     progress = ProgressMeter.Progress(
         method.saem.maxiters; desc = "SAEM", enabled = method.saem.progress)
 
@@ -3033,6 +3063,7 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
     for iter in 1:(method.saem.maxiters)
         γ = _saem_gamma_schedule(iter, method.saem)
         sched_phase = _saem_schedule_phase(iter, method.saem)
+        mstep_skipped = false
         updated = _saem_batches!(q_cache.batches_buf, method.saem.update_schedule,
             length(batch_infos), iter, rng)
 
@@ -3396,6 +3427,7 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                 sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
                 if any(!isfinite, sol.u)
                     @warn "SAEM M-step iter $iter: optimizer returned non-finite parameters; skipping update."
+                    mstep_skipped = true
                 else
                     θ_hat_t_raw = sol.u
                     θ_hat_t_free = θ_hat_t_raw isa ComponentArray ? θ_hat_t_raw :
@@ -3456,6 +3488,26 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
         dQ_abs = abs(Q_new - Q_prev)
         dQ_rel = dQ_abs / max(T0(1.0), abs(Q_prev))
 
+        # Stopping test: drift between half-window means of the post-stabilization
+        # trajectory (MC-noise robust, unlike successive differences).
+        if _saem_past_stabilization_phase(iter, method.saem) && !anneal_was_active
+            push!(θ_window, collect(θ_full_vec))
+            push!(Q_window, Q_new)
+            if length(θ_window) > conv_window
+                popfirst!(θ_window)
+                popfirst!(Q_window)
+            end
+        end
+        window_full = length(θ_window) == conv_window
+        passθ, driftθ, _ = window_full ?
+                           _half_window_test(θ_window, method.saem.atol_theta,
+            method.saem.rtol_theta) : (false, T0(NaN), one(T0))
+        passQ, driftQ, _ = window_full ?
+                           _half_window_test(Q_window, method.saem.atol_Q,
+            method.saem.rtol_Q) : (false, T0(NaN), one(T0))
+        pass_θ = passθ && !mstep_skipped
+        pass_Q = passQ && !mstep_skipped
+
         if method.saem.store_diagnostics && iter % method.saem.diagnostics_every == 0
             push!(diag.θ_hist, copy(θt_full))
         end
@@ -3464,6 +3516,8 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
         push!(diag.dθ_rel, dθ_rel)
         push!(diag.dQ_abs, dQ_abs)
         push!(diag.dQ_rel, dQ_rel)
+        push!(diag.drift_θ, driftθ)
+        push!(diag.drift_Q, driftQ)
         push!(diag.gamma, T0(γ))
         push!(diag.batches, collect(updated))
         push!(diag.schedule_phase, sched_phase)
@@ -3489,7 +3543,7 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
             push!(diag.obsLL_hist, obsLL_new)
         end
         if method.saem.verbose
-            @info "SAEM iteration" iter=iter γ=γ Q=Q_new obsLL=obsLL_new dθ_abs=dθ_abs dθ_rel=dθ_rel dQ_abs=dQ_abs dQ_rel=dQ_rel
+            @info "SAEM iteration" iter=iter γ=γ Q=Q_new obsLL=obsLL_new dθ_abs=dθ_abs dθ_rel=dθ_rel dQ_abs=dQ_abs dQ_rel=dQ_rel drift_θ=driftθ drift_Q=driftQ
         end
         ProgressMeter.next!(progress;
             showvalues = [(:iter, iter), (:gamma, γ), (:Q, Q_new), (:obsLL, obsLL_new)])
@@ -3498,19 +3552,9 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
         θ_prev_full = θ_full_vec
         Q_prev = Q_new
 
-        if dθ_abs <= method.saem.atol_theta && dθ_rel <= method.saem.rtol_theta
-            param_streak += 1
-        else
-            param_streak = 0
-        end
-        if isfinite(dQ_abs) && isfinite(dQ_rel) &&
-           dQ_abs <= method.saem.atol_Q && dQ_rel <= method.saem.rtol_Q
-            q_streak += 1
-        else
-            q_streak = 0
-        end
-        if _saem_past_stabilization_phase(iter, method.saem) &&
-           param_streak >= method.saem.consecutive_params &&
+        param_streak = pass_θ ? param_streak + 1 : 0
+        q_streak = pass_Q ? q_streak + 1 : 0
+        if param_streak >= method.saem.consecutive_params &&
            q_streak >= method.saem.consecutive_params
             converged = true
             break
@@ -3545,6 +3589,7 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
     diagnostics = FitDiagnostics((;), (optimizer = method.optimizer,),
         (saem_iters = length(diag.Q_hist),
             dθ_abs = diag.dθ_abs[end], dQ_abs = diag.dQ_abs[end],
+            drift_θ = diag.drift_θ[end], drift_Q = diag.drift_Q[end],
             gamma = diag.gamma,
             schedule_phase = diag.schedule_phase,
             n_chains_used = diag.n_chains_used,
