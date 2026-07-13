@@ -89,7 +89,7 @@ method = NoLimits.SAEM(;
 
     # SA schedule
     sa_schedule=:robbins_monro,
-    sa_burnin_iters=0,
+    sa_burnin_iters=6,
     maxiters=300,
     t0=maxiters ÷ 2,
     kappa=0.65,
@@ -105,8 +105,8 @@ method = NoLimits.SAEM(;
     # SA variance annealing
     sa_anneal_targets=NamedTuple(),
     sa_anneal_schedule=:exponential,
-    sa_anneal_iters=0,
-    sa_anneal_alpha=0.9,
+    sa_anneal_iters=nothing,   # resolves to t0
+    sa_anneal_alpha=0.95,
     sa_anneal_fn=nothing,
 
     # Variance lower bound
@@ -270,7 +270,7 @@ The SA gain sequence `γ_t ∈ [0, 1]` controls how aggressively new samples upd
 
 where `phase3_total = maxiters - sa_burnin_iters - t0` and `k3 = iter - sa_burnin_iters - t0`.
 
-- `sa_burnin_iters::Int = 0`: iterations before SA updates begin. During burn-in no SA smoothing is performed and no samples are stored.
+- `sa_burnin_iters::Int = 6`: iterations before SA updates begin. During burn-in no SA smoothing is performed and no samples are stored.
 - `t0::Int = maxiters ÷ 2`: length of the stabilization phase (γ = 1). Defaults to `nothing`, which resolves to `maxiters ÷ 2` (i.e. `150` at the default `maxiters=300`).
 - `kappa::Float64 = 0.65`: decay exponent controlling how quickly γ falls off after stabilization.
 
@@ -303,14 +303,14 @@ Running multiple independent MCMC chains per batch and averaging their samples b
 
 After each M-step, scalar variance and SD parameters for RE distributions can be clamped to a decaying lower floor. This prevents variance parameters from collapsing to near-zero too early in the run (when the E-step is still mixing poorly), while allowing them to reach their optimal value once the chain has warmed up.
 
-The floor starts at `alpha × initial_value` and decays to zero over `sa_anneal_iters` iterations.
+The floor starts at `alpha × initial_value` and decays to zero over `sa_anneal_iters` iterations, which by default matches the SA stabilization length `t0`.
 
 - `sa_anneal_targets::NamedTuple = NamedTuple()`: explicit mapping of fixed-effect name to `alpha` value, e.g., `(; τ = 0.9)`. When empty, targets are auto-detected from `re_cov_params` for Normal and LogNormal RE families.
 - `sa_anneal_schedule::Symbol = :exponential`: shape of the floor decay.
   - `:exponential`: `floor = alpha × init × exp(-3 × frac)`.
   - `:linear`: `floor = alpha × init × (1 - frac)`.
-- `sa_anneal_iters::Int = 0`: number of iterations over which the floor is active. If zero, defaults to `0.3 × maxiters`.
-- `sa_anneal_alpha::Float64 = 0.9`: fraction of the initial parameter value used as the starting floor (auto-detection mode only; explicit `sa_anneal_targets` carry their own alpha per entry).
+- `sa_anneal_iters = nothing`: number of iterations over which the floor is active. Defaults to `nothing`, which resolves to `t0` (the SA stabilization length). Pass an explicit `0` to fall back to `0.3 × maxiters`.
+- `sa_anneal_alpha::Float64 = 0.95`: fraction of the initial parameter value used as the starting floor (auto-detection mode only; explicit `sa_anneal_targets` carry their own alpha per entry).
 - `sa_anneal_fn`: reserved for future use (not active).
 
 SA variance annealing is distinct from `anneal_to_fixed`. The latter collapses an RE entirely into a fixed effect by shrinking its prior SD to zero; SA variance annealing only prevents its estimated variance from hitting zero prematurely during optimization.

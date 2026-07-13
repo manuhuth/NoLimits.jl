@@ -453,7 +453,7 @@ function SAEM(;
         anneal_min_sd = 1e-5,
         mstep_sa_on_params::Bool = true,
         sa_schedule::Symbol = :robbins_monro,
-        sa_burnin_iters::Int = 0,
+        sa_burnin_iters::Int = 6,
         sa_phase1_iters::Int = 200,
         sa_phase2_kappa::Float64 = -1.0,
         sa_schedule_fn = nothing,
@@ -462,8 +462,8 @@ function SAEM(;
         small_n_chain_target::Int = 50,
         sa_anneal_targets::NamedTuple = NamedTuple(),
         sa_anneal_schedule::Symbol = :exponential,
-        sa_anneal_iters::Int = 0,
-        sa_anneal_alpha::Float64 = 0.9,
+        sa_anneal_iters = nothing,
+        sa_anneal_alpha::Float64 = 0.95,
         sa_anneal_fn = nothing,
         auto_var_lb::Bool = true,
         var_lb_value::Float64 = 1e-5,
@@ -491,6 +491,7 @@ function SAEM(;
     diagnostics_every >= 1 ||
         error("SAEM: diagnostics_every must be ≥ 1. Got: $diagnostics_every")
     resolved_t0 = isnothing(t0) ? (maxiters ÷ 2) : t0
+    resolved_sa_anneal_iters = isnothing(sa_anneal_iters) ? resolved_t0 : sa_anneal_iters
     ebe_rescue = EBERescueOptions(
         ebe_rescue_on_high_grad, ebe_rescue_multistart_n, ebe_rescue_multistart_k,
         ebe_rescue_max_rounds, ebe_rescue_grad_tol, ebe_rescue_multistart_sampling)
@@ -509,7 +510,8 @@ function SAEM(;
         anneal_to_fixed, anneal_schedule, anneal_min_sd, mstep_sa_on_params,
         sa_schedule, sa_burnin_iters, sa_phase1_iters, sa_phase2_kappa, sa_schedule_fn,
         n_chains, auto_small_n_chains, small_n_chain_target,
-        sa_anneal_targets, sa_anneal_schedule, sa_anneal_iters, sa_anneal_alpha, sa_anneal_fn,
+        sa_anneal_targets, sa_anneal_schedule, resolved_sa_anneal_iters, sa_anneal_alpha,
+        sa_anneal_fn,
         auto_var_lb, var_lb_value, max_estep_retries, retry_mcmc_steps,
         store_obsLL, obsLL_every, store_diagnostics, diagnostics_every)
     SAEM(optimizer, optim_kwargs, adtype, saem, lb, ub)
