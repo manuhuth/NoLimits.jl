@@ -5,6 +5,7 @@ using Distributions
 using Turing
 using ComponentArrays
 using LinearAlgebra
+using Random
 
 # ── unit tests ────────────────────────────────────────────────────────────────
 
@@ -354,4 +355,31 @@ end
     # First 3 iters should have clamp active (some of them may clamp, some may not)
     # Just verify the diagnostics vector has the right length
     @test length(conv.anneal_active) == length(conv.gamma)
+end
+
+@testset "SA anneal: closed-form variance floored in returned params" begin
+    # Regression: on the built-in closed-form Gaussian M-step path the RE variance is a
+    # constant (θ_const_t), not a free param, so the floor must be applied there — else the
+    # returned estimate (and next-iteration sampling) escape the floor while diagnostics
+    # show it clamped. With uninformative data the closed-form update collapses omega toward
+    # zero, so the floor binds hard and the returned variance must sit at/above it.
+    Random.seed!(20260714)
+    dm = _anneal_dm_mvnormal()
+    maxiters, aiters, alpha = 4, 200, 0.9
+    res = fit_model(dm,
+        NoLimits.SAEM(;
+            sampler = SaemixMH(),
+            maxiters = maxiters, t0 = maxiters, progress = false, q_store_max = 2,
+            builtin_stats = :auto,
+            store_diagnostics = true, diagnostics_every = 1,
+            sa_anneal_iters = aiters, sa_anneal_alpha = alpha,
+            sa_anneal_schedule = :exponential, sa_anneal_targets = (; omega = alpha)))
+    θ = NoLimits.get_params(res; scale = :untransformed)
+    floor_final = NoLimits._saem_sa_anneal_floor_scalar(
+        0.5, alpha, (maxiters - 1) / (aiters - 1), :exponential)
+    @test all(collect(θ.omega) .>= floor_final - 1e-8)
+    # Returned params must agree with the last (floored) diagnostics snapshot — the
+    # plot-vs-get_params discrepancy that surfaced this bug.
+    diag = NoLimits.get_notes(res).diagnostics
+    @test collect(θ.omega) ≈ exp.(collect(diag.θ_hist[end].omega))
 end

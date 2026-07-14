@@ -3217,6 +3217,12 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
         # O3: reuse pre-allocated buffer instead of deepcopy each iteration
         copyto!(θ_const_u_work, θ0_u)
         _apply_constants!(θ_const_u_work, iter_constants)
+        # sa_anneal floor for closed-form constants (the free-param clamp below misses them)
+        if do_sa_anneal
+            θ_const_u_work = _saem_apply_sa_anneal_clamp(θ_const_u_work,
+                sa_anneal_targets_eff, sa_anneal_initial_vals, iter, sa_anneal_iters_eff,
+                method.saem.sa_anneal_alpha, method.saem.sa_anneal_schedule)
+        end
         θ_const_t_iter = transform(θ_const_u_work)
         axs_full_iter = getaxes(θ_const_t_iter)
         base_free_names = free_names_iter
@@ -3296,6 +3302,13 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                     axs_free = getaxes(θt_free)
                     copyto!(θ_const_u_work, θ0_u)
                     _apply_constants!(θ_const_u_work, iter_constants)
+                    # sa_anneal floor for closed-form constants (Q2 path; mirrors site above)
+                    if do_sa_anneal
+                        θ_const_u_work = _saem_apply_sa_anneal_clamp(θ_const_u_work,
+                            sa_anneal_targets_eff, sa_anneal_initial_vals, iter,
+                            sa_anneal_iters_eff, method.saem.sa_anneal_alpha,
+                            method.saem.sa_anneal_schedule)
+                    end
                     θ_const_t_iter = transform(θ_const_u_work)
                     axs_full_iter = getaxes(θ_const_t_iter)
                     base_free_names = free_names_iter
