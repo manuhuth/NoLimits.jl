@@ -50,6 +50,12 @@ end
     @test NoLimits._phi_expm1(0.0) ≈ 1.0
     @test NoLimits._phi_expm1(1e-6)≈expm1(1e-6) / 1e-6 rtol=1e-9
     @test NoLimits._phi_expm1(0.5)≈expm1(0.5) / 0.5 rtol=1e-12
+    # Bateman divided difference (e^{pΔ}-e^{qΔ})/(p-q): distinct, confluent, and
+    # near-confluent (the sinh form must stay stable through p = q — no 1/(p-q)).
+    p, q, Δ2 = -1.2, -0.4, 2.0
+    @test NoLimits._cf_expdd(p, q, Δ2)≈(exp(p * Δ2) - exp(q * Δ2)) / (p - q) rtol=1e-12
+    @test NoLimits._cf_expdd(-0.5, -0.5, 3.0)≈3.0 * exp(-0.5 * 3.0) rtol=1e-12
+    @test NoLimits._cf_expdd(-0.5, -0.5 + 1e-10, 3.0)≈3.0 * exp(-0.5 * 3.0) rtol=1e-6
 end
 
 @testset "closed-form eligibility detection" begin
@@ -69,7 +75,8 @@ end
     cf_plan(m) = get_closed_form_plan(DataModel(m, df; primary_id = :ID, time_col = :t))
     ineligible(m) = !cf_plan(m).eligible
 
-    # coupled (off-diagonal, constant A) → eligible as a general :linear system
+    # sequential 2-state chain, zero upstream forcing → Bateman (1-cmt oral), which
+    # is scalar-fast and therefore stays in :auto.
     coupled = set_solver_config(
         (@Model begin
             @fixedEffects begin
@@ -94,7 +101,39 @@ end
             end
         end); saveat_mode = :saveat)
     @test cf_plan(coupled).eligible
-    @test cf_plan(coupled).mode === :linear
+    @test cf_plan(coupled).mode === :bateman
+
+    # bidirectional 2-cmt (central ↔ peripheral) → genuinely :linear (not
+    # triangular). Eligible under :all, but :auto keeps it numerical (the dense
+    # matrix-exp path is exact but not faster than the numerical solve here).
+    function twocmt(cf)
+        set_solver_config((@Model begin
+                @fixedEffects begin
+                    k10 = RealNumber(0.5, scale = :log)
+                    k12 = RealNumber(0.3, scale = :log)
+                    k21 = RealNumber(0.2, scale = :log)
+                    σ = RealNumber(0.3, scale = :log)
+                end
+                @covariates begin
+                    t = Covariate()
+                end
+                @DifferentialEquation begin
+                    D(x1) ~ -(k10 + k12) * x1 + k21 * x2
+                    D(x2) ~ k12 * x1 - k21 * x2
+                end
+                @initialDE begin
+                    x1 = 1.0
+                    x2 = 0.0
+                end
+                @formulas begin
+                    y ~ Normal(x1(t), σ)
+                end
+            end);
+            saveat_mode = :saveat, closed_form = cf)
+    end
+    @test cf_plan(twocmt(:all)).mode === :linear
+    @test cf_plan(twocmt(:all)).eligible
+    @test !cf_plan(twocmt(:auto)).eligible   # :auto keeps general-linear numerical
 
     # nonlinear in state
     @test ineligible(set_solver_config(
@@ -213,9 +252,9 @@ end
     collect(NoLimits.get_params(res_off; scale = :untransformed)) rtol=1e-4
 end
 
-@testset "closed-form fit matches numerical (linear chain, MLE)" begin
-    # Coupled two-compartment chain (:linear mode via matrix-exp action). Exercises
-    # the general-linear path and its ForwardDiff gradient (fit is gradient-driven).
+@testset "closed-form fit matches numerical (Bateman chain, MLE)" begin
+    # Sequential two-compartment chain (:bateman mode — scalar Bateman closed form).
+    # Exercises the scalar chain path and its ForwardDiff gradient (fit-driven).
     function chain(cf)
         m = @Model begin
             @fixedEffects begin
@@ -243,7 +282,7 @@ end
     df = DataFrame(ID = [1, 1, 1, 2, 2, 2], t = [0.0, 1.0, 2.0, 0.0, 1.0, 2.0],
         y = [0.2, 0.35, 0.3, 0.25, 0.4, 0.28])
     dm_cf = DataModel(chain(:auto), df; primary_id = :ID, time_col = :t)
-    @test get_closed_form_plan(dm_cf).mode === :linear
+    @test get_closed_form_plan(dm_cf).mode === :bateman
     dm_off = DataModel(chain(:off), df; primary_id = :ID, time_col = :t)
     res_cf = fit_model(dm_cf, NoLimits.MLE())
     res_off = fit_model(dm_off, NoLimits.MLE())
@@ -333,11 +372,14 @@ end
     df = DataFrame(ID = [1, 1, 1, 1, 2, 2, 2, 2],
         t = [0.5, 1.0, 2.0, 4.0, 0.5, 1.0, 2.0, 4.0],
         y = [0.4, 0.6, 0.7, 0.5, 0.45, 0.62, 0.68, 0.52])
-    dm_cf = DataModel(pkpd(:auto), df; primary_id = :ID, time_col = :t)
+    # partial (linear/nonlinear split) is opt-in via :all (not in the fast :auto set)
+    dm_cf = DataModel(pkpd(:all), df; primary_id = :ID, time_col = :t)
     plan = get_closed_form_plan(dm_cf)
     @test plan.eligible
     @test plan.cf_states == [1]          # only the linear PK state is closed-form
     @test length(plan.cf_states) < plan.n # partial (hybrid) solve
+    @test !get_closed_form_plan(DataModel(pkpd(:auto), df; primary_id = :ID,
+        time_col = :t)).eligible          # :auto keeps the split numerical
     dm_off = DataModel(pkpd(:off), df; primary_id = :ID, time_col = :t)
     r = fit_model(dm_off, NoLimits.MLE())
     @test NoLimits.get_loglikelihood(dm_cf, r)≈NoLimits.get_loglikelihood(dm_off, r) rtol=1e-5
@@ -345,7 +387,7 @@ end
     # Stiff solver: the hybrid's reduced problem uses a clock state so it stays
     # autonomous and the ForwardDiff objective gradient does not nest Duals through
     # the implicit solver's time-gradient. The fit must run (not error) and agree.
-    dm_cf_s = DataModel(pkpd(:auto; alg = Rodas5P()), df; primary_id = :ID, time_col = :t)
+    dm_cf_s = DataModel(pkpd(:all; alg = Rodas5P()), df; primary_id = :ID, time_col = :t)
     dm_off_s = DataModel(pkpd(:off; alg = Rodas5P()), df; primary_id = :ID, time_col = :t)
     r_s = fit_model(dm_off_s, NoLimits.MLE())
     @test isfinite(NoLimits.get_objective(fit_model(dm_cf_s, NoLimits.MLE())))

@@ -1502,20 +1502,28 @@ function get_closed_form_plan(dm::DataModel)
     cached = dm.closed_form_plan[]
     cached === nothing || return cached
     model = dm.model
-    plan = if model.de.de === nothing
+    mode = model.de.de === nothing ? :off : get_solver_config(model).closed_form
+    plan = if mode === :off
         _NO_CLOSED_FORM
     else
-        mode = get_solver_config(model).closed_form
-        if mode === :off
-            _NO_CLOSED_FORM
+        p = _detect_closed_form(model)
+        # Fast scalar closed forms (measurably faster than numerical): whole-system
+        # diagonal, and the two-state sequential Bateman case (1-cmt oral).
+        fast = _cf_is_whole(p) && (p.mode === :diagonal || p.mode === :bateman)
+        if mode === :auto
+            # Default: only the scalar-fast cases. General-linear/hybrid closed form is
+            # exact but (for small dense systems) not faster on the gradient — opt-in.
+            fast ? p : _NO_CLOSED_FORM
+        elseif mode === :all
+            p            # opt-in: also general-linear and linear/nonlinear splits
+        elseif mode === :diagonal
+            (_cf_is_whole(p) && p.mode === :diagonal) ? p :
+            error("closed_form=:diagonal requires the whole ODE system to be diagonal, " *
+                  "constant-coefficient linear with constant forcing, but this " *
+                  "@DifferentialEquation is not. Use closed_form=:auto (also covers the " *
+                  "Bateman 1-cmt-oral case), :all, or :off.")
         else
-            p = _detect_closed_form(model)
-            (mode === :diagonal && !(_cf_is_whole(p) && p.mode === :diagonal)) &&
-                error("closed_form=:diagonal requires the whole ODE system to be diagonal, " *
-                      "constant-coefficient linear with constant forcing, but this " *
-                      "@DifferentialEquation is not. Use closed_form=:auto (accepts general " *
-                      "linear systems and linear/nonlinear splits) or :off to disable it.")
-            p
+            error("closed_form must be :auto, :off, :all, or :diagonal; got $(repr(mode)).")
         end
     end
     dm.closed_form_plan[] = plan

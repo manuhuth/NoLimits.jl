@@ -69,11 +69,16 @@ Configuration for the ODE solver used when integrating the `@DifferentialEquatio
   - `:saveat` — save only at observation + event + formula-offset times.
   - `:auto` — resolves to `:saveat` unless non-constant time offsets require `:dense`.
 - `closed_form::Symbol`: closed-form linear-ODE fast path (see [`ClosedFormPlan`](@ref)).
-  The eligibility proof is exact (symbolic), so any eligible system is solved analytically.
-  - `:auto` — use the closed form when the system is provably diagonal-linear with constant
-    forcing; integrate numerically otherwise.
+  Eligibility is proven symbolically (exact, over all parameters).
+  - `:auto` (default) — use the closed form only for the scalar-fast cases: a whole-system
+    diagonal constant-coefficient linear ODE, or the two-state sequential Bateman case
+    (1-cmt oral, depot → central). Both are faster than numerical integration; integrate
+    numerically otherwise.
   - `:off` — always integrate numerically.
-  - `:diagonal` — require eligibility; error if the system is not diagonal-linear.
+  - `:all` — additionally use the closed form for general/triangular linear systems and
+    linear/nonlinear splits. Exact, but for small dense systems not necessarily faster than
+    the numerical solver on the gradient — opt in when exactness matters.
+  - `:diagonal` — require a whole-system diagonal linear ODE; error otherwise.
 
 Constructed by the `@Model` macro with defaults and updated via [`set_solver_config`](@ref).
 """

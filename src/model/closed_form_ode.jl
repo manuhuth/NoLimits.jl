@@ -4,7 +4,6 @@ using Symbolics
 import SciMLBase
 import ForwardDiff
 import Distributions
-using ExponentialAction: expv
 
 # ---------------------------------------------------------------------------
 # Closed-form linear ODE fast path (Tier 0: diagonal, constant-coefficient A).
@@ -24,8 +23,10 @@ Result of the build-time symbolic analysis of a `@DifferentialEquation` block.
 `eligible == true` means the system is constant-coefficient linear in its states
 with constant forcing, so numerical integration can be replaced by a closed form.
 `mode` records the family: `:diagonal` (decoupled — per-state scalar closed form),
-`:linear` (general/triangular constant `A` — matrix-exponential action), or
-`:none` when ineligible. `n` is the number of states.
+`:bateman` (two-state sequential, e.g. 1-cmt oral — scalar Bateman form), `:linear`
+(general/triangular constant `A` — dense matrix exponential), or `:none` when
+ineligible. `n` is the number of states. `:diagonal`/`:bateman` are scalar-fast;
+`:linear` is exact but, for small dense systems, not necessarily faster than numerical.
 """
 struct ClosedFormPlan
     mode::Symbol
@@ -161,6 +162,7 @@ function _detect_closed_form(model)
         # forcing? If so record its state dependencies (which svars it uses).
         candidate = falses(n)
         deps = [Int[] for _ in 1:n]
+        syms = Vector{Any}(nothing, n)
         for i in 1:n
             haskey(state_rhs, states[i]) || continue
             try
@@ -178,6 +180,7 @@ function _detect_closed_form(model)
                 _cf_depends_on(Symbolics.substitute(si, subs), svars, _t_cf) && continue  # time-varying forcing
                 candidate[i] = true
                 deps[i] = d
+                syms[i] = si
             catch e
                 e isa _NotClosedForm || rethrow(e)
             end
@@ -199,7 +202,17 @@ function _detect_closed_form(model)
         cf_states = findall(inblock)
         isempty(cf_states) && return _NO_CLOSED_FORM
         offdiagonal = any(i -> any(j -> j != i, deps[i]), cf_states)
-        return ClosedFormPlan(offdiagonal ? :linear : :diagonal, true, n, cf_states)
+        mode = offdiagonal ? :linear : :diagonal
+        # Bateman special case: whole 2-state system, one state independent (upstream)
+        # with zero forcing driving the other — the ubiquitous 1-cmt oral (depot →
+        # central). Solved by fast scalar exponentials, so it stays in `:auto`.
+        if mode === :linear && length(cf_states) == n == 2
+            up = !(2 in deps[1]) ? 1 : (!(1 in deps[2]) ? 2 : 0)
+            if up != 0 && _cf_is_zero(Symbolics.substitute(syms[up], subs))
+                mode = :bateman
+            end
+        end
+        return ClosedFormPlan(mode, true, n, cf_states)
     catch e
         e isa _NotClosedForm && return _NO_CLOSED_FORM
         rethrow(e)
@@ -222,6 +235,22 @@ end
 # regular as a→0.
 @inline _cf_state_value(a, b, x0, Δ) = x0 + Δ * (a * x0 + b) * _phi_expm1(a * Δ)
 
+# sinh(x)/x with the smooth x→0 limit (even Taylor). Underlies the divided
+# difference below, which is what makes the ka ≈ ke case numerically stable.
+@inline function _sinhc(x)
+    abs(x) < 1e-3 && return @evalpoly(x*x, 1.0, inv(6.0), inv(120.0), inv(5040.0))
+    return sinh(x) / x
+end
+
+# Divided difference (exp(pΔ) − exp(qΔ)) / (p − q), evaluated as
+# exp(mΔ)·Δ·sinhc(dΔ) with m=(p+q)/2, d=(p−q)/2 — no 1/(p−q) cancellation, so it is
+# stable through and at p = q (the confluent limit Δ·exp(pΔ)). The Bateman kernel.
+@inline function _cf_expdd(p, q, Δ)
+    m = (p + q) / 2
+    d = (p - q) / 2
+    return exp(m * Δ) * Δ * _sinhc(d * Δ)
+end
+
 # Augmented matrix `[A b; 0 0]` whose exponential action advances `x' = A x + b`
 # (last row 0 keeps the appended constant 1 fixed). Constant within an event-free
 # segment, so it is built once per segment and reused across that segment's grid.
@@ -234,21 +263,61 @@ function _cf_augmented(A, b)
     return M
 end
 
+# Dense matrix exponential of the small (compartment-sized) augmented matrix,
+# stable at confluent/repeated eigenvalues (e.g. ka ≈ ke) — unlike `A⁻¹`/divided-
+# difference forms. ForwardDiff-safe: value via the Float64 `exp`, each partial via
+# the block-2×2 Padé Fréchet derivative (`_expm_frechet`); a `Dual` specialization
+# is needed because `exp(::Matrix{Dual})` has no method. Nested Duals fall back to
+# the generic path. (Used only on the opt-in `:linear`/hybrid path — for a small
+# dense system the numerical solver is hard to beat on the gradient, so `:auto`
+# does not route general-linear systems here; see `get_closed_form_plan`.)
+_cf_matexp(M::AbstractMatrix{<:AbstractFloat}) = exp(M)
+function _cf_matexp(M::AbstractMatrix{ForwardDiff.Dual{
+        Tg, V, N}}) where {
+        Tg, V <: AbstractFloat, N}
+    Mv = ForwardDiff.value.(M)
+    Ev = exp(Mv)
+    dEs = ntuple(N) do k
+        _, F = _expm_frechet(Mv, ForwardDiff.partials.(M, k))
+        F
+    end
+    out = Matrix{ForwardDiff.Dual{Tg, V, N}}(undef, size(M))
+    @inbounds for j in axes(M, 2), i in axes(M, 1)
+        out[i, j] = ForwardDiff.Dual{Tg}(Ev[i, j], ntuple(k -> dEs[k][i, j], N)...)
+    end
+    return out
+end
+
 # Propagate a linear system `x' = A x + b` over `Δ` from `x0` via the augmented
-# matrix-exponential action `exp([A b; 0 0]·Δ)·[x0; 1]` (ExponentialAction.expv).
-# Handles general/triangular `A`, repeated eigenvalues, and singular `A`; no
-# `A⁻¹`. ForwardDiff-safe (single Dual level: `A`, `b`, `x0` carry the Duals).
+# matrix exponential `exp([A b; 0 0]·Δ)·[x0; 1]` (the last row keeps the appended
+# 1 fixed). Handles general/triangular `A`, repeated eigenvalues, and singular `A`
+# with no `A⁻¹`. ForwardDiff-safe (single Dual level: `A`, `b`, `x0` carry Duals).
 function _cf_expv(A, b, x0, Δ)
     n = length(x0)
     v = vcat(x0, one(eltype(x0)))
-    return expv(Δ, _cf_augmented(A, b), v)[1:n]
+    return (_cf_matexp(_cf_augmented(A, b) .* Δ) * v)[1:n]
 end
 
-# Advance `x' = A x + b` over `Δ` from `x0`: per-state scalar (:diagonal) or the
-# matrix-exp action (:linear).
+# Two-state sequential (Bateman) closed form: one state (`u`) is independent with
+# zero forcing (`xu' = au·xu`), the other (`d`) is driven by it
+# (`xd' = c·xu + ad·xd + bd`). Scalar exponentials + the stable divided difference
+# — fast and exact, including ka ≈ ke. `A[1,2] == 0` ⇒ state 1 is upstream.
+@inline function _cf_bateman(A, b, x0, Δ)
+    u = iszero(A[1, 2]) ? 1 : 2
+    d = 3 - u
+    au = A[u, u]
+    ad = A[d, d]
+    xu = _cf_state_value(au, b[u], x0[u], Δ)
+    xd = _cf_state_value(ad, b[d], x0[d], Δ) + A[d, u] * x0[u] * _cf_expdd(au, ad, Δ)
+    return u == 1 ? [xu, xd] : [xd, xu]
+end
+
+# Advance `x' = A x + b` over `Δ` from `x0`: per-state scalar (:diagonal), the
+# two-state sequential scalar form (:bateman), or the matrix-exp action (:linear).
 function _cf_propagate(mode::Symbol, A, b, x0, Δ)
     mode === :diagonal &&
         return [_cf_state_value(A[i, i], b[i], x0[i], Δ) for i in eachindex(x0)]
+    mode === :bateman && return _cf_bateman(A, b, x0, Δ)
     return _cf_expv(A, b, x0, Δ)
 end
 
@@ -263,17 +332,7 @@ end
 # start vector are constant per segment, so they are built once per segment and
 # reused across that segment's grid points (avoids rebuilding them per point).
 function _cf_materialize(mode::Symbol, A, seg_t, seg_x0, seg_b, grid)
-    n = length(seg_x0[1])
-    if mode === :diagonal
-        return [_cf_state_vector(mode, A, seg_t, seg_x0, seg_b, tk) for tk in grid]
-    end
-    Ms = [_cf_augmented(A, b) for b in seg_b]
-    vs = [vcat(x0, one(eltype(x0))) for x0 in seg_x0]
-    return [begin
-                k = max(searchsortedlast(seg_t, tk), 1)
-                expv(tk - seg_t[k], Ms[k], vs[k])[1:n]
-            end
-            for tk in grid]
+    return [_cf_state_vector(mode, A, seg_t, seg_x0, seg_b, tk) for tk in grid]
 end
 
 """
