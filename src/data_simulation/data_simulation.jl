@@ -112,6 +112,15 @@ function _simulate_sol_accessors(dm::DataModel, idx::Int, θ, η)
         cb = ind.callbacks.callback
         infusion_rates = ind.callbacks.infusion_rates
     end
+    plan = get_closed_form_plan(dm)
+    if plan.eligible && (_cf_is_whole(plan) || cb === nothing)
+        solver_cfg = get_solver_config(model)
+        cf_alg = solver_cfg.alg === nothing ? Tsit5() : solver_cfg.alg
+        sol = _cf_dispatch_solve(model, compiled, u0, ind.tspan, ind.saveat, plan,
+            ind.callbacks, cf_alg, solver_cfg.args,
+            _ode_solve_kwargs(solver_cfg.kwargs, NamedTuple(), NamedTuple()))
+        sol !== nothing && return get_de_accessors_builder(model.de.de)(sol, compiled)
+    end
     f!_use = _with_infusion(get_de_f!(model.de.de), infusion_rates)
     prob = ODEProblem(f!_use, u0, ind.tspan, compiled)
     solver_cfg = get_solver_config(model)

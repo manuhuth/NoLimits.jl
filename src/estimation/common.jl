@@ -2162,6 +2162,7 @@ mutable struct _LLCache{H, M, S, A, O, K, P, V, SA}
     prob_templates::P
     vary_cache::V
     saveat_cache::SA
+    closed_form_plan::ClosedFormPlan
 end
 
 # `_is_hmm_dist` (the 7 HMM-family outcome types) is defined in
@@ -2211,6 +2212,97 @@ function _ll_ode_solve_baked(cache::_LLCache, prob)
     return solve(prob, cache.alg, cache.ode_args...; solve_kwargs...)
 end
 
+# ── Hybrid closed-form / numerical solve (decoupled-subset mixing) ───────────
+# When only a self-contained linear subset of states is closed-form eligible
+# (`plan.cf_states ⊊ 1:n`), solve that subset analytically and integrate the rest
+# numerically with a reduced RHS that reads the closed-form states at each `t`.
+
+# Reduced out-of-place RHS over the numerical states `n_idx`, plus an appended
+# clock state τ (`dτ/dt = 1`). Time enters only through τ (a state), so the reduced
+# problem is autonomous — this avoids the stiff-solver time-gradient AD that would
+# otherwise nest Dual numbers (the excluded closed-form states are read at τ, and
+# the full RHS is evaluated at τ). The closed-form block values are recomputed at τ
+# (not looked up on the grid) so their τ-derivative is exact for the solver Jacobian.
+struct _CFReducedRHS{F, C, S}
+    f::F
+    compiled::C
+    L_sol::S
+    cf_states::Vector{Int}
+    n_idx::Vector{Int}
+    n::Int
+end
+function (r::_CFReducedRHS)(dw, w, p, t)
+    nN = length(r.n_idx)
+    τ = w[nN + 1]
+    L = r.L_sol
+    Lvals = _cf_state_vector(L.mode, L.A, L.seg_t, L.seg_x0, L.seg_b, τ)
+    u = similar(w, r.n)
+    @inbounds for a in 1:nN
+        u[r.n_idx[a]] = w[a]
+    end
+    @inbounds for a in eachindex(r.cf_states)
+        u[r.cf_states[a]] = Lvals[a]
+    end
+    du = r.f(u, r.compiled, τ)
+    @inbounds for a in 1:nN
+        dw[a] = du[r.n_idx[a]]
+    end
+    @inbounds dw[nN + 1] = one(eltype(w))
+    return nothing
+end
+
+# Solution-shaped combiner: closed-form subset + numerical remainder, indexed by
+# global state number. Routes each state to its solver via a precomputed map.
+struct _CFHybridSolution{L, N}
+    L_sol::L
+    N_sol::N
+    is_L::Vector{Bool}
+    local_idx::Vector{Int}
+end
+@inline function (s::_CFHybridSolution)(t; idxs::Integer)
+    return s.is_L[idxs] ? s.L_sol(t; idxs = s.local_idx[idxs]) :
+           _de_state_at(s.N_sol, s.local_idx[idxs], t)
+end
+SciMLBase.successful_retcode(s::_CFHybridSolution) = SciMLBase.successful_retcode(s.N_sol)
+
+function _cf_hybrid_solve(model, compiled, u0, tspan, saveat, plan::ClosedFormPlan,
+        alg, ode_args, solve_kwargs)
+    cf = plan.cf_states
+    n = plan.n
+    n_idx = [i for i in 1:n if !(i in cf)]
+    L_sol = _closed_form_solve_de(
+        model, compiled, u0, tspan, saveat, float(tspan[1]), plan.mode; idxs = cf)
+    L_sol === nothing && return nothing
+    # Append the clock state τ(0) = t0 (see `_CFReducedRHS`).
+    u0N = vcat(collect(u0)[n_idx], float(tspan[1]))
+    g! = _CFReducedRHS(get_de_f(model.de.de), compiled, L_sol, cf, n_idx, n)
+    prob = ODEProblem(g!, u0N, tspan, nothing)
+    kw = saveat === nothing ? merge(solve_kwargs, (; dense = true)) :
+         merge(solve_kwargs, (; saveat = saveat, save_everystep = false, dense = false))
+    N_sol = solve(prob, alg, ode_args...; kw...)
+    SciMLBase.successful_retcode(N_sol) || return nothing
+    is_L = fill(false, n)
+    local_idx = zeros(Int, n)
+    for (a, gi) in enumerate(cf)
+        is_L[gi] = true
+        local_idx[gi] = a
+    end
+    for (a, gi) in enumerate(n_idx)
+        local_idx[gi] = a
+    end
+    return _CFHybridSolution(L_sol, N_sol, is_L, local_idx)
+end
+
+# Pick the closed-form path once the caller has verified the plan applies
+# (`plan.eligible`, and either whole-system or event-free for the partial case).
+function _cf_dispatch_solve(model, compiled, u0, tspan, saveat, plan::ClosedFormPlan,
+        events, alg, ode_args, solve_kwargs)
+    _cf_is_whole(plan) && return _closed_form_solve_de(
+        model, compiled, u0, tspan, saveat, float(tspan[1]), plan.mode; events = events)
+    return _cf_hybrid_solve(
+        model, compiled, u0, tspan, saveat, plan, alg, ode_args, solve_kwargs)
+end
+
 # Shared DE-solve scaffolding for the per-individual evaluators
 # (`_loglikelihood_individual`, `_resid_stats_individual*`, the FOCEI obs
 # collectors, and the CV row collector). `pre` is the precomputed preDE
@@ -2256,6 +2348,17 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
     u0_T = eltype(u0) === T ? u0 : T.(u0)
     crossings = get_formulas_crossings(model.formulas.formulas)
     if isempty(crossings)
+        # Closed-form fast path: diagonal-linear system with no mid-trajectory events
+        # (t0 doses already folded into u0). Analytic states over the saveat grid.
+        plan = cache.closed_form_plan
+        if plan.eligible && (_cf_is_whole(plan) || cb === nothing)
+            saveat_use = _ll_saveat(cache, idx, ind)
+            sol = _cf_dispatch_solve(model, compiled, u0_T, ind.tspan, saveat_use, plan,
+                ind.callbacks, cache.alg, cache.ode_args,
+                _ode_solve_kwargs(cache.solver_cfg.kwargs, cache.ode_kwargs, NamedTuple()))
+            sol === nothing && return nothing
+            return get_de_accessors_builder(model.de.de)(sol, compiled)
+        end
         prob = cache.prob_templates === nothing ? nothing : cache.prob_templates[idx]
         if prob === nothing
             saveat_use = _ll_saveat(cache, idx, ind)
@@ -2749,7 +2852,8 @@ function _build_ll_cache_single(dm::DataModel;
         ode_kwargs,
         prob_templates,
         vary_cache,
-        saveat_cache)
+        saveat_cache,
+        get_closed_form_plan(dm))
 end
 
 function _build_fit_saveat_cache(dm::DataModel, force_saveat::Bool)
