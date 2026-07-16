@@ -503,7 +503,7 @@ end  # @testset "GHQuadrature nodes.jl"
     @testset "build_re_measure_from_batch: Normal RE, single batch" begin
         model, dm = _make_simple_dm(1.0)
         θ = get_θ0_untransformed(model.fixed.fixed)
-        _, batch_infos, const_cache = NoLimits._build_laplace_batch_infos(dm, NamedTuple())
+        _, batch_infos, const_cache = NoLimits._build_re_batch_infos(dm, NamedTuple())
         ll_cache = build_ll_cache(dm)
 
         # With the default θ (σ_η=1), all 3 individuals should be in independent batches
@@ -524,7 +524,7 @@ end  # @testset "GHQuadrature nodes.jl"
     @testset "build_re_measure_from_batch: L scales with σ_η" begin
         model, dm = _make_simple_dm(2.5)
         θ = get_θ0_untransformed(model.fixed.fixed)
-        _, batch_infos, const_cache = NoLimits._build_laplace_batch_infos(dm, NamedTuple())
+        _, batch_infos, const_cache = NoLimits._build_re_batch_infos(dm, NamedTuple())
         ll_cache = build_ll_cache(dm)
 
         for bi in eachindex(batch_infos)
@@ -573,7 +573,7 @@ end  # @testset "GHQuadrature nodes.jl"
         df = DataFrame(ID = [1], t = [0.0], y = [y_val])
         dm = DataModel(model, df; primary_id = :ID, time_col = :t)
         θ = get_θ0_untransformed(model.fixed.fixed)
-        _, batch_infos, const_cache = NoLimits._build_laplace_batch_infos(dm, NamedTuple())
+        _, batch_infos, const_cache = NoLimits._build_re_batch_infos(dm, NamedTuple())
         ll_cache = build_ll_cache(dm)
 
         results = Float64[]
@@ -601,7 +601,7 @@ end  # @testset "GHQuadrature nodes.jl"
     @testset "batch_loglik_ghq: returns finite value for simple model" begin
         model, dm = _make_simple_dm(1.0)
         θ = get_θ0_untransformed(model.fixed.fixed)
-        _, batch_infos, const_cache = NoLimits._build_laplace_batch_infos(dm, NamedTuple())
+        _, batch_infos, const_cache = NoLimits._build_re_batch_infos(dm, NamedTuple())
         ll_cache = build_ll_cache(dm)
 
         for bi in eachindex(batch_infos)
@@ -725,7 +725,7 @@ end
         θ0_u = NoLimits.get_θ0_untransformed(fe)
         θ0_t = transform(θ0_u)
 
-        _, batch_infos, const_cache = NoLimits._build_laplace_batch_infos(
+        _, batch_infos, const_cache = NoLimits._build_re_batch_infos(
             dm_small, NamedTuple())
         ll_cache = NoLimits.build_ll_cache(dm_small; force_saveat = true)
         for d in unique(info.n_b for info in batch_infos)
@@ -830,7 +830,7 @@ end  # @testset "GHQuadrature ghquadrature.jl"
         θ0_u_re = NoLimits.get_inverse_transform(fe)(θ0_t)
         θ_re = NoLimits._symmetrize_psd_params(θ0_u_re, fe)
 
-        _, batch_infos, const_cache = NoLimits._build_laplace_batch_infos(
+        _, batch_infos, const_cache = NoLimits._build_re_batch_infos(
             dm_npf, NamedTuple())
         ll_cache = NoLimits.build_ll_cache(dm_npf; force_saveat = true)
 
@@ -858,7 +858,7 @@ end  # @testset "GHQuadrature ghquadrature.jl"
         fe = dm_gauss.model.fixed.fixed
         θ0_u = NoLimits.get_θ0_untransformed(fe)
         θ_re = NoLimits._symmetrize_psd_params(θ0_u, fe)
-        _, batch_infos, const_cache = NoLimits._build_laplace_batch_infos(
+        _, batch_infos, const_cache = NoLimits._build_re_batch_infos(
             dm_gauss, NamedTuple())
         ll_cache = NoLimits.build_ll_cache(dm_gauss; force_saveat = true)
         bi = batch_infos[1]

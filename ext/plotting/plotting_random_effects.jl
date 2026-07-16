@@ -80,13 +80,13 @@ function plot_random_effects_pdf(res::FitResult;
 
     θ_base = _is_posterior_draw_fit(res) ? _posterior_fixed_means(res, dm)[1] :
              get_params(res; scale = :untransformed)
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
-    model_funs = get_model_funs(dm.model)
-    helpers = get_helper_funs(dm.model)
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
+    model_funs = get_model_funs(get_model(dm))
+    helpers = get_helper_funs(get_model(dm))
 
     θ_draws_cache = nothing
     for re in re_list
-        const_cov = dm.individuals[1].const_cov
+        const_cov = get_const_cov(get_individuals(dm)[1])
         dist0 = getproperty(dists_builder(θ_base, const_cov, model_funs, helpers), re)
         dim = dist0 isa Distributions.UnivariateDistribution ? 1 :
               length(vec(rand(rng, dist0)))
@@ -320,7 +320,7 @@ function plot_random_effects_scatter(res::FitResult;
         return _save_plot!(combine_plots([p]; ncols = 1, style = style), save_path)
     end
     if x_covariate !== nothing
-        cov = dm.model.covariates.covariates
+        cov = get_covariates(get_model(dm))
         x_covariate in cov.constants || error("x_covariate must be a constant covariate.")
     end
 
@@ -342,7 +342,7 @@ function plot_random_effects_scatter(res::FitResult;
             for (k, lvl) in enumerate(lvls_use)
                 haskey(ebe_map, lvl) || continue
                 ind_idx = level_to_ind[lvl]
-                const_cov = dm.individuals[ind_idx].const_cov
+                const_cov = get_const_cov(get_individuals(dm)[ind_idx])
                 xv = if x_covariate === nothing
                     lvl isa Number ? Float64(lvl) : Float64(k)
                 else
@@ -433,7 +433,7 @@ function plot_random_effect_pairplot(res::FitResult;
     end
 
     # Group by RE column (same IDs).
-    re_groups = get_re_groups(dm.model.random.random)
+    re_groups = get_re_groups(get_random(get_model(dm)))
     group_map = Dict{Symbol, Vector{Symbol}}()
     for r in re_list
         col = getfield(re_groups, r)
@@ -587,9 +587,9 @@ function plot_random_effect_distributions(res::FitResult;
 
     θ_base = _is_posterior_draw_fit(res) ? _posterior_fixed_means(res, dm)[1] :
              get_params(res; scale = :untransformed)
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
-    model_funs = get_model_funs(dm.model)
-    helpers = get_helper_funs(dm.model)
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
+    model_funs = get_model_funs(get_model(dm))
+    helpers = get_helper_funs(get_model(dm))
 
     for re in re_list
         level_to_ind = _level_to_individual(dm, re)
@@ -603,7 +603,7 @@ function plot_random_effect_distributions(res::FitResult;
         for lvl in lvls_use
             haskey(ebe_map, lvl) || continue
             ind_idx = level_to_ind[lvl]
-            const_cov = dm.individuals[ind_idx].const_cov
+            const_cov = get_const_cov(get_individuals(dm)[ind_idx])
             dist = getproperty(dists_builder(θ_base, const_cov, model_funs, helpers), re)
             vals = ebe_map[lvl]
             for (ci, comp_name) in enumerate(value_cols)
@@ -615,8 +615,8 @@ function plot_random_effect_distributions(res::FitResult;
                         # Flow: approximate marginal via sampling + KDE/hist.
                         title = show_comp ?
                                 string(
-                            re, " | ", dm.config.primary_id, "=", lvl, " | ", comp_name) :
-                                string(re, " | ", dm.config.primary_id, "=", lvl)
+                            re, " | ", get_primary_id(dm), "=", lvl, " | ", comp_name) :
+                                string(re, " | ", get_primary_id(dm), "=", lvl)
                         p = create_styled_plot(title = title, xlabel = "Random Effect",
                             ylabel = "Probability Density",
                             style = style, kwargs_subplot...)
@@ -766,8 +766,8 @@ function plot_random_effect_distributions(res::FitResult;
                 end
                 title = show_comp ?
                         string(
-                    re, " | ", dm.config.primary_id, "=", lvl, " | ", comp_name) :
-                        string(re, " | ", dm.config.primary_id, "=", lvl)
+                    re, " | ", get_primary_id(dm), "=", lvl, " | ", comp_name) :
+                        string(re, " | ", get_primary_id(dm), "=", lvl)
                 p = create_styled_plot(title = title, xlabel = "Random Effect",
                     ylabel = "Probability Density", style = style, kwargs_subplot...)
                 ebe_label = is_mcmc ? "posterior mean" : "EBE"
@@ -907,9 +907,9 @@ function plot_random_effect_pit(res::FitResult;
 
     θ_base = _is_posterior_draw_fit(res) ? _posterior_fixed_means(res, dm)[1] :
              get_params(res; scale = :untransformed)
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
-    model_funs = get_model_funs(dm.model)
-    helpers = get_helper_funs(dm.model)
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
+    model_funs = get_model_funs(get_model(dm))
+    helpers = get_helper_funs(get_model(dm))
 
     for re in re_list
         level_to_ind = _level_to_individual(dm, re)
@@ -931,7 +931,7 @@ function plot_random_effect_pit(res::FitResult;
                     θ = θ_draws[d]
                     for lvl in lvls_use
                         ind_idx = level_to_ind[lvl]
-                        const_cov = dm.individuals[ind_idx].const_cov
+                        const_cov = get_const_cov(get_individuals(dm)[ind_idx])
                         dist_d = getproperty(
                             dists_builder(θ, const_cov, model_funs, helpers), re)
                         dist_use = dist_d isa Distributions.MultivariateDistribution ?
@@ -1092,7 +1092,7 @@ function plot_random_effect_pit(res::FitResult;
                 for lvl in lvls
                     haskey(ebe_map, lvl) || continue
                     ind_idx = level_to_ind[lvl]
-                    const_cov = dm.individuals[ind_idx].const_cov
+                    const_cov = get_const_cov(get_individuals(dm)[ind_idx])
                     dist = getproperty(
                         dists_builder(θ_base, const_cov, model_funs, helpers), re)
                     dist_use = dist isa Distributions.MultivariateDistribution ?
@@ -1238,9 +1238,9 @@ function plot_random_effect_standardized(res::FitResult;
     re_list = _resolve_re_names(dm, re_names)
     θ_base = _is_posterior_draw_fit(res) ? _posterior_fixed_means(res, dm)[1] :
              get_params(res; scale = :untransformed)
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
-    model_funs = get_model_funs(dm.model)
-    helpers = get_helper_funs(dm.model)
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
+    model_funs = get_model_funs(get_model(dm))
+    helpers = get_helper_funs(get_model(dm))
 
     plots = Vector{Any}()
     for re in re_list
@@ -1257,7 +1257,7 @@ function plot_random_effect_standardized(res::FitResult;
             for lvl in lvls_use
                 haskey(ebe_map, lvl) || continue
                 ind_idx = level_to_ind[lvl]
-                const_cov = dm.individuals[ind_idx].const_cov
+                const_cov = get_const_cov(get_individuals(dm)[ind_idx])
                 dist = getproperty(
                     dists_builder(θ_base, const_cov, model_funs, helpers), re)
                 z = _standardize_re(
@@ -1347,15 +1347,15 @@ function plot_random_effect_standardized_scatter(res::FitResult;
     _require_re_supported(res)
     re_list = _resolve_re_names(dm, re_names)
     if x_covariate !== nothing
-        cov = dm.model.covariates.covariates
+        cov = get_covariates(get_model(dm))
         x_covariate in cov.constants || error("x_covariate must be a constant covariate.")
     end
 
     θ_base = _is_posterior_draw_fit(res) ? _posterior_fixed_means(res, dm)[1] :
              get_params(res; scale = :untransformed)
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
-    model_funs = get_model_funs(dm.model)
-    helpers = get_helper_funs(dm.model)
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
+    model_funs = get_model_funs(get_model(dm))
+    helpers = get_helper_funs(get_model(dm))
 
     plots = Vector{Any}()
     xlims_val = nothing
@@ -1375,7 +1375,7 @@ function plot_random_effect_standardized_scatter(res::FitResult;
             for (k, lvl) in enumerate(lvls_use)
                 haskey(ebe_map, lvl) || continue
                 ind_idx = level_to_ind[lvl]
-                const_cov = dm.individuals[ind_idx].const_cov
+                const_cov = get_const_cov(get_individuals(dm)[ind_idx])
                 dist = getproperty(
                     dists_builder(θ_base, const_cov, model_funs, helpers), re)
                 z = _standardize_re(

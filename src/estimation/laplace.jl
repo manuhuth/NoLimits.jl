@@ -16,12 +16,6 @@ using Distributions
 using StaticArrays
 using ProgressMeter
 
-struct LaplaceConstantsCache{M, S, V}
-    is_const::M
-    scalar_vals::S
-    vector_vals::V
-end
-
 struct LaplaceADCache{G, H, O, B}
     grad_cfg::G
     hess_cfg::H
@@ -129,104 +123,18 @@ end
            err isa DomainError || err isa ArgumentError
 end
 
-function _normalize_constants_re(dm::DataModel, constants_re::NamedTuple)
-    isempty(constants_re) && return NamedTuple()
-    re_names = get_re_names(dm.model.random.random)
-    isempty(re_names) && return NamedTuple()
-    values = dm.re_group_info.values
-    pairs = Pair{Symbol, Any}[]
-    for re in re_names
-        haskey(constants_re, re) || continue
-        spec = getfield(constants_re, re)
-        if spec isa NamedTuple || spec isa AbstractDict
-            # Keep as-is; Base.pairs works for any key type. Avoid (; spec...)
-            # which fails when keys are not Symbols (e.g. integer group levels).
-        elseif spec isa Base.Iterators.Pairs
-            spec = NamedTuple(spec)
-        elseif spec isa Pair
-            spec = NamedTuple((spec,))
-        else
-            error("constants_re for $(re) must be a NamedTuple of level => value.")
-        end
-        vals = getfield(values, re)
-        dict = Dict{Any, Any}()
-        col = getfield(get_re_groups(dm.model.random.random), re)
-        for (k, v) in Base.pairs(spec)
-            matched = false
-            for gv in vals
-                if gv == k ||
-                   (gv isa AbstractString && k isa Symbol && Symbol(gv) == k) ||
-                   (gv isa Symbol && k isa AbstractString && Symbol(k) == gv)
-                    dict[gv] = v
-                    matched = true
-                    break
-                end
-            end
-            matched ||
-                error("constants_re for $(re) includes level $(k) not found in column $(col). The value must be present in that column.")
-        end
-        push!(pairs, re => dict)
-    end
-    return NamedTuple(pairs)
-end
-
-function _build_constants_cache(dm::DataModel, constants_re::NamedTuple)
-    cache = dm.re_group_info.laplace_cache
-    cache === nothing && return LaplaceConstantsCache(
-        BitVector[], Vector{Vector{Float64}}(), Vector{Vector{Vector{Float64}}}())
-    re_names = cache.re_names
-    nre = length(re_names)
-    is_const = Vector{BitVector}(undef, nre)
-    scalar_vals = Vector{Vector{Float64}}(undef, nre)
-    vector_vals = Vector{Vector{Vector{Float64}}}(undef, nre)
-    for (ri, re) in enumerate(re_names)
-        levels = cache.re_index[ri].levels
-        is_const[ri] = falses(length(levels))
-        if cache.is_scalar[ri]
-            scalar_vals[ri] = Vector{Float64}(undef, length(levels))
-            vector_vals[ri] = Vector{Vector{Float64}}(undef, 0)
-        else
-            scalar_vals[ri] = Float64[]
-            vector_vals[ri] = Vector{Vector{Float64}}(undef, length(levels))
-        end
-    end
-    for (ri, re) in enumerate(re_names)
-        haskey(constants_re, re) || continue
-        cmap = getfield(constants_re, re)
-        idx_map = cache.re_index[ri].level_to_index
-        for (k, v) in pairs(cmap)
-            idx = get(idx_map, k, 0)
-            idx == 0 &&
-                error("constants_re for $(re) includes level $(k) not found in column $(getfield(get_re_groups(dm.model.random.random), re)). The value must be present in that column.")
-            is_const[ri][idx] = true
-            if cache.is_scalar[ri]
-                v isa Number ||
-                    error("constants_re for $(re) level $(k) must be a scalar number.")
-                scalar_vals[ri][idx] = Float64(v)
-            else
-                v isa AbstractVector ||
-                    error("constants_re for $(re) level $(k) must be a vector.")
-                length(v) == cache.dims[ri] ||
-                    error("constants_re for $(re) level $(k) must have length $(cache.dims[ri]).")
-                vector_vals[ri][idx] = Float64.(v)
-            end
-        end
-    end
-    return LaplaceConstantsCache(is_const, scalar_vals, vector_vals)
-end
-
 # ── SAEM anneal-to-fixed helpers ─────────────────────────────────────────────
 
 function _saem_anneal_names(res::FitResult)
-    res.result isa SAEMResult || return ()
-    if res.method isa _SavedFittingMethod
+    get_result(res) isa SAEMResult || return ()
+    if get_method(res) isa _SavedFittingMethod
         notes = res.result.notes
         if notes isa NamedTuple && hasproperty(notes, :anneal_to_fixed)
             return notes.anneal_to_fixed
         end
         return ()
     end
-    return res.method.saem.anneal_to_fixed
+    return get_method(res).saem.anneal_to_fixed
 end
 
 # For each annealed RE, compute the prior-distribution mean per group level at
@@ -237,23 +145,23 @@ function _saem_anneal_constants_re(dm::DataModel,
         anneal_names,
         constants_re::NamedTuple)
     isempty(anneal_names) && return constants_re
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
-    helpers = get_helper_funs(dm.model)
-    model_funs = get_model_funs(dm.model)
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
+    helpers = get_helper_funs(get_model(dm))
+    model_funs = get_model_funs(get_model(dm))
 
     level_means = Dict{Symbol, Dict{Any, Any}}()
     for name in anneal_names
         level_means[Symbol(name)] = Dict{Any, Any}()
     end
 
-    for ind in dm.individuals
+    for ind in get_individuals(dm)
         for name in anneal_names
             sym = Symbol(name)
             # re_groups stores a Vector of unique levels for that individual
-            gvec = getfield(ind.re_groups, sym)
+            gvec = getfield(get_re_groups(ind), sym)
             for gv in gvec
                 haskey(level_means[sym], gv) && continue
-                dists = dists_builder(θu, ind.const_cov, model_funs, helpers)
+                dists = dists_builder(θu, get_const_cov(ind), model_funs, helpers)
                 dist = getfield(dists, sym)
                 level_means[sym][gv] = Distributions.mean(dist)
             end
@@ -267,59 +175,6 @@ function _saem_anneal_constants_re(dm::DataModel,
         push!(pairs, sym => level_means[sym])
     end
     return NamedTuple(pairs)
-end
-
-function _build_laplace_batches(dm::DataModel, const_cache::LaplaceConstantsCache)
-    cache = dm.re_group_info.laplace_cache
-    cache === nothing && return dm.pairing
-    re_names = cache.re_names
-    isempty(re_names) && return dm.pairing
-    n = length(dm.individuals)
-    n == 0 && return PairingInfo(Int[], Vector{Vector{Int}}())
-    uf = UnionFind(n)
-    for ri in eachindex(re_names)
-        const_mask = const_cache.is_const[ri]
-        seen = zeros(Int, length(const_mask))
-        for i in 1:n
-            ids = cache.ind_level_ids[i][ri]
-            for id in ids
-                const_mask[id] && continue
-                first = seen[id]
-                if first != 0
-                    _uf_union!(uf, i, first)
-                else
-                    seen[id] = i
-                end
-            end
-        end
-    end
-    batch_ids = [_uf_find(uf, i) for i in 1:n]
-    batches_dict = Dict{Int, Vector{Int}}()
-    for i in 1:n
-        push!(get!(batches_dict, batch_ids[i], Int[]), i)
-    end
-    batches = collect(values(batches_dict))
-    sort!(batches, by = b -> length(b))
-    return PairingInfo(batch_ids, batches)
-end
-
-struct _LaplaceREMap{L, M}
-    levels::L
-    level_to_index::M
-end
-
-struct _LaplaceREInfo{A, R, P}
-    map::A
-    ranges::R
-    reps::P
-    dim::Int
-    is_scalar::Bool
-end
-
-struct _LaplaceBatchInfo{B, R}
-    inds::B
-    re_info::R
-    n_b::Int
 end
 
 struct _LaplaceBStarCache{T, B}
@@ -511,79 +366,6 @@ function _init_laplace_eval_cache(n_batches::Int, T::Type{<:Real})
     return _LaplaceCache(nothing, bstar_cache, grad_cache, ad_cache, hess_cache)
 end
 
-function _build_laplace_batch_infos(dm::DataModel, constants_re::NamedTuple)
-    constants_re = _normalize_constants_re(dm, constants_re)
-    const_cache = _build_constants_cache(dm, constants_re)
-    pairing = _build_laplace_batches(dm, const_cache)
-    cache = dm.re_group_info.laplace_cache
-    cache === nothing && return pairing, _LaplaceBatchInfo[], const_cache
-    re_names = cache.re_names
-    isempty(re_names) && return pairing, _LaplaceBatchInfo[], const_cache
-    batch_infos = Vector{_LaplaceBatchInfo}(undef, length(pairing.batches))
-    # ponytail: one shared level→batch-local-index map per RE instead of a fresh
-    # length-nlevels array per batch. Level ids partition across batches (union-find
-    # groups every individual sharing a level), so batches fill disjoint slots and
-    # never collide. Drops construction from O(n_batches × nlevels) to O(nlevels).
-    shared_lti = [zeros(Int, length(cache.re_index[ri].levels))
-                  for ri in eachindex(re_names)]
-    for (bi, inds) in enumerate(pairing.batches)
-        total_dim = 0
-        re_info = Vector{_LaplaceREInfo}(undef, length(re_names))
-        for (ri, re) in enumerate(re_names)
-            level_to_index = shared_lti[ri]
-            levels = Int[]
-            reps = Int[]
-            for i in inds
-                ids = cache.ind_level_ids[i][ri]
-                for id in ids
-                    const_cache.is_const[ri][id] && continue
-                    if level_to_index[id] == 0
-                        push!(levels, id)
-                        push!(reps, i)
-                        level_to_index[id] = length(levels)
-                    end
-                end
-            end
-            ranges = Vector{UnitRange{Int}}(undef, length(levels))
-            dim = cache.dims[ri]
-            is_scalar = cache.is_scalar[ri]
-            for li in eachindex(levels)
-                ranges[li] = (total_dim + 1):(total_dim + dim)
-                total_dim += dim
-            end
-            map = _LaplaceREMap(levels, level_to_index)
-            re_info[ri] = _LaplaceREInfo(map, ranges, reps, dim, is_scalar)
-        end
-        # Narrow `re_info` to a concrete eltype before storing it. The `undef`
-        # scratch buffer above has the abstract `_LaplaceREInfo` eltype, which makes
-        # `_LaplaceBatchInfo.re_info` abstract — so every `batch_info.re_info[ri]`
-        # field access on the per-row EBE hot path (`_build_eta_ind_fast`,
-        # `_laplace_logf_batch`, the grad/Hessian assembly) boxes and dynamic-
-        # dispatches. All entries share one concrete type, so `identity.` narrows
-        # the eltype with no data copy (same element objects); it auto-falls back to
-        # an abstract eltype if a future config ever mixes element types. The outer
-        # `batch_infos::Vector{_LaplaceBatchInfo}` stays abstract on purpose (the
-        # per-batch dispatch is amortized once per batch, and ~25 signatures across
-        # the estimators annotate `::Vector{_LaplaceBatchInfo}`).
-        batch_infos[bi] = _LaplaceBatchInfo(inds, identity.(re_info), total_dim)
-    end
-    return pairing, batch_infos, const_cache
-end
-
-@inline function _re_value_from_b(info::_LaplaceREInfo, level_id::Int, b)
-    idx = info.map.level_to_index[level_id]
-    idx == 0 && return nothing
-    r = info.ranges[idx]
-    # Only genuinely univariate REs collapse to a scalar value. A length-1
-    # multivariate RE (e.g. 1-D MvNormal) must stay a 1-vector so that its
-    # logpdf/mean operate on a vector.
-    if info.is_scalar
-        return b[first(r)]
-    else
-        return view(b, r)
-    end
-end
-
 function _re_start_value(dist, dim::Int, T)
     if dim == 1
         v = 0.0
@@ -700,50 +482,51 @@ end
 # logf evaluation returns -Inf and the optimizer backtracks instead of the whole
 # fit crashing (mirrors the `_laplace_logf_batch` exception policy).
 function _laplace_default_b0(dm::DataModel,
-        batch_info::_LaplaceBatchInfo,
+        batch_info::REBatchInfo,
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         cache::_LLCache;
         tctx = nothing)
     try
         return _laplace_default_b0_impl(dm, batch_info, θ, const_cache, cache; tctx = tctx)
     catch err
         if _is_numeric_error(err)
-            return zeros(eltype(θ), max(batch_info.n_b, 0))
+            return zeros(eltype(θ), max(get_n_b(batch_info), 0))
         end
         rethrow(err)
     end
 end
 
 function _laplace_default_b0_impl(dm::DataModel,
-        batch_info::_LaplaceBatchInfo,
+        batch_info::REBatchInfo,
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         cache::_LLCache;
         tctx = nothing)
-    nb = batch_info.n_b
+    nb = get_n_b(batch_info)
     nb == 0 && return Float64[]
     T = eltype(θ)
     b0 = zeros(T, nb)
     model_funs = cache.model_funs
     helpers = cache.helpers
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
-    θ_re = tctx === nothing ? _symmetrize_psd_params(θ, dm.model.fixed.fixed) : tctx.θ_re
-    cache = dm.re_group_info.laplace_cache
-    re_names = cache.re_names
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
+    θ_re = tctx === nothing ? _symmetrize_psd_params(θ, get_fixed(get_model(dm))) :
+           tctx.θ_re
+    cache = get_laplace_cache(get_re_group_info(dm))
+    re_names = get_re_names(cache)
     for (ri, re) in enumerate(re_names)
-        info = batch_info.re_info[ri]
-        isempty(info.map.levels) && continue
-        for (li, _) in enumerate(info.map.levels)
-            rep_idx = info.reps[li]
+        info = get_re_info(batch_info)[ri]
+        isempty(get_levels(get_re_map(info))) && continue
+        for (li, _) in enumerate(get_levels(get_re_map(info)))
+            rep_idx = get_reps(info)[li]
             dists = tctx === nothing ?
                     dists_builder(
-                θ_re, dm.individuals[rep_idx].const_cov, model_funs, helpers) :
+                θ_re, get_const_cov(get_individuals(dm)[rep_idx]), model_funs, helpers) :
                     tctx.dists[ri][li]
             dist = getproperty(dists, re)
-            start = _re_start_value(dist, info.dim, T)
-            r = info.ranges[li]
-            if info.is_scalar || info.dim == 1
+            start = _re_start_value(dist, get_dim(info), T)
+            r = get_ranges(info)[li]
+            if get_is_scalar(info) || get_dim(info) == 1
                 b0[first(r)] = start
             else
                 b0[r] .= start
@@ -754,9 +537,9 @@ function _laplace_default_b0_impl(dm::DataModel,
 end
 
 function _laplace_sample_b0s(dm::DataModel,
-        batch_info::_LaplaceBatchInfo,
+        batch_info::REBatchInfo,
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         cache::_LLCache,
         rng::AbstractRNG,
         n::Int,
@@ -765,7 +548,7 @@ function _laplace_sample_b0s(dm::DataModel,
     n <= 0 && return Vector{Vector{eltype(θ)}}()
     _resolve_multistart_sampling(sampling, "inner multistart sampling")
     T = eltype(θ)
-    nb = batch_info.n_b
+    nb = get_n_b(batch_info)
     nb == 0 && return [T[] for _ in 1:n]
     # On a numerically degenerate θ (see `_laplace_default_b0`) keep the zero
     # candidates instead of crashing — the logf screening discards bad starts.
@@ -781,36 +564,37 @@ function _laplace_sample_b0s(dm::DataModel,
 end
 
 function _laplace_sample_b0s_impl(dm::DataModel,
-        batch_info::_LaplaceBatchInfo,
+        batch_info::REBatchInfo,
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         cache::_LLCache,
         rng::AbstractRNG,
         n::Int,
         sampling::Symbol;
         tctx = nothing)
     T = eltype(θ)
-    nb = batch_info.n_b
+    nb = get_n_b(batch_info)
     b0s = [zeros(T, nb) for _ in 1:n]
     model_funs = cache.model_funs
     helpers = cache.helpers
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
-    θ_re = tctx === nothing ? _symmetrize_psd_params(θ, dm.model.fixed.fixed) : tctx.θ_re
-    cache = dm.re_group_info.laplace_cache
-    re_names = cache.re_names
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
+    θ_re = tctx === nothing ? _symmetrize_psd_params(θ, get_fixed(get_model(dm))) :
+           tctx.θ_re
+    cache = get_laplace_cache(get_re_group_info(dm))
+    re_names = get_re_names(cache)
     for (ri, re) in enumerate(re_names)
-        info = batch_info.re_info[ri]
-        isempty(info.map.levels) && continue
-        for (li, _) in enumerate(info.map.levels)
-            rep_idx = info.reps[li]
+        info = get_re_info(batch_info)[ri]
+        isempty(get_levels(get_re_map(info))) && continue
+        for (li, _) in enumerate(get_levels(get_re_map(info)))
+            rep_idx = get_reps(info)[li]
             dists = tctx === nothing ?
                     dists_builder(
-                θ_re, dm.individuals[rep_idx].const_cov, model_funs, helpers) :
+                θ_re, get_const_cov(get_individuals(dm)[rep_idx]), model_funs, helpers) :
                     tctx.dists[ri][li]
             dist = getproperty(dists, re)
-            r = info.ranges[li]
+            r = get_ranges(info)[li]
             dim = length(r)
-            if info.is_scalar
+            if get_is_scalar(info)
                 draws = sampling === :lhs ? _laplace_lhs_draws_univariate(dist, n, rng) :
                         nothing
                 draws === nothing && (draws = [rand(rng, dist) for _ in 1:n])
@@ -850,9 +634,9 @@ end
 @inline function _laplace_gradb_cached!(cache::_LaplaceCache,
         bi::Int,
         dm::DataModel,
-        info::_LaplaceBatchInfo,
+        info::REBatchInfo,
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         ll_cache::_LLCache,
         b;
         tctx = nothing)
@@ -897,172 +681,34 @@ end
     return (gradb, logf)
 end
 
-function _build_eta_ind(dm::DataModel,
-        ind_idx::Int,
-        batch_info::_LaplaceBatchInfo,
-        b,
-        const_cache::LaplaceConstantsCache,
-        θ::ComponentArray)
-    cache = dm.re_group_info.laplace_cache
-    template = cache.eta_template
-    if template !== nothing
-        return _build_eta_ind_fast(template, ind_idx, batch_info, b, const_cache, cache)
-    end
-    # Slow path: heterogeneous case (some individuals have multiple levels per RE group).
-    re_names = cache.re_names
-    nt_pairs = Pair{Symbol, Any}[]
-    T = eltype(b)
-    for (ri, re) in enumerate(re_names)
-        info = batch_info.re_info[ri]
-        ids = cache.ind_level_ids[ind_idx][ri]
-        const_mask = const_cache.is_const[ri]
-        const_scalars = const_cache.scalar_vals[ri]
-        const_vectors = const_cache.vector_vals[ri]
-        if length(ids) == 1
-            id = ids[1]
-            if const_mask[id]
-                if info.is_scalar
-                    v = const_scalars[id]
-                    push!(nt_pairs, re => T(v))
-                else
-                    v = const_vectors[id]
-                    push!(nt_pairs, re => T.(v))
-                end
-            else
-                v = _re_value_from_b(info, id, b)
-                v === nothing &&
-                    error("Missing random effect value for $(re) level $(cache.re_index[ri].levels[id]).")
-                if info.is_scalar
-                    push!(nt_pairs, re => T(v))
-                else
-                    push!(nt_pairs, re => Vector{T}(v))
-                end
-            end
-        else
-            if info.is_scalar
-                vals = Vector{T}(undef, length(ids))
-            else
-                vals = Vector{Vector{T}}(undef, length(ids))
-            end
-            for (gi, id) in pairs(ids)
-                if const_mask[id]
-                    if info.is_scalar
-                        v = const_scalars[id]
-                        vals[gi] = T(v)
-                    else
-                        v = const_vectors[id]
-                        vals[gi] = T.(v)
-                    end
-                else
-                    v = _re_value_from_b(info, id, b)
-                    v === nothing &&
-                        error("Missing random effect value for $(re) level $(cache.re_index[ri].levels[id]).")
-                    if info.is_scalar
-                        vals[gi] = T(v)
-                    else
-                        vals[gi] = Vector{T}(v)
-                    end
-                end
-            end
-            push!(nt_pairs, re => vals)
-        end
-    end
-    nt = NamedTuple(nt_pairs)
-    return ComponentArray(nt)
-end
-
-# In-place variant for hot loops that evaluate many η per batch (e.g. one per
-# quadrature node): writes into a caller-owned buffer and wraps it with the
-# template axes. The returned ComponentArray aliases `vals`, so callers must
-# consume it before the next call reuses the buffer.
-function _build_eta_ind_fast!(vals::Vector{T},
-        template::ComponentArray{Float64},
-        ind_idx::Int,
-        batch_info::_LaplaceBatchInfo,
-        b,
-        const_cache::LaplaceConstantsCache,
-        cache) where {T}
-    re_names = cache.re_names
-    out_pos = 1
-    for (ri, re) in enumerate(re_names)
-        info = batch_info.re_info[ri]
-        id = cache.ind_level_ids[ind_idx][ri][1]
-        const_mask = const_cache.is_const[ri]
-        if const_mask[id]
-            if info.is_scalar
-                @inbounds vals[out_pos] = T(const_cache.scalar_vals[ri][id])
-                out_pos += 1
-            else
-                cv = const_cache.vector_vals[ri][id]
-                d = info.dim
-                @inbounds for k in 1:d
-                    vals[out_pos + k - 1] = T(cv[k])
-                end
-                out_pos += d
-            end
-        else
-            b_idx = info.map.level_to_index[id]
-            b_idx == 0 &&
-                error("Missing random effect value for $(re) level $(cache.re_index[ri].levels[id]).")
-            r = info.ranges[b_idx]
-            if info.is_scalar
-                @inbounds vals[out_pos] = b[first(r)]
-                out_pos += 1
-            else
-                d = info.dim
-                r_start = first(r)
-                @inbounds for k in 1:d
-                    vals[out_pos + k - 1] = b[r_start + k - 1]
-                end
-                out_pos += d
-            end
-        end
-    end
-    return ComponentArray(vals, getaxes(template))
-end
-
-# Fast path for `_build_eta_ind`: used when every individual has exactly one RE level
-# per RE group (the common case, e.g. `column=:ID`). Avoids Pair{Symbol,Any}[] boxing
-# by filling a flat Vector{T} and wrapping it with pre-computed axes.
-function _build_eta_ind_fast(template::ComponentArray{Float64},
-        ind_idx::Int,
-        batch_info::_LaplaceBatchInfo,
-        b,
-        const_cache::LaplaceConstantsCache,
-        cache)
-    vals = Vector{eltype(b)}(undef, length(template))
-    return _build_eta_ind_fast!(
-        vals, template, ind_idx, batch_info, b, const_cache, cache)
-end
-
 # Evaluates log p(η_const | θ) for all constant RE levels in the batch.
 # Each unique constant level contributes exactly once (deduplicated via `seen`).
 function _const_re_prior_logf(dm::DataModel,
-        batch_info::_LaplaceBatchInfo,
+        batch_info::REBatchInfo,
         θ_re::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         cache::_LLCache;
         anneal_sds::NamedTuple = NamedTuple())
     isempty(const_cache.is_const) && return zero(eltype(θ_re))
     T = eltype(θ_re)
     ll = zero(T)
-    re_cache = dm.re_group_info.laplace_cache
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
+    re_cache = get_laplace_cache(get_re_group_info(dm))
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     has_anneal = !isempty(anneal_sds)
-    for (ri, re) in enumerate(re_cache.re_names)
+    for (ri, re) in enumerate(get_re_names(re_cache))
         const_mask = const_cache.is_const[ri]
         any(const_mask) || continue
         seen = falses(length(const_mask))
-        for i in batch_info.inds
-            for id in re_cache.ind_level_ids[i][ri]
+        for i in get_inds(batch_info)
+            for id in get_ind_level_ids(re_cache)[i][ri]
                 (const_mask[id] && !seen[id]) || continue
                 seen[id] = true
-                dists = dists_builder(θ_re, dm.individuals[i].const_cov,
+                dists = dists_builder(θ_re, get_const_cov(get_individuals(dm)[i]),
                     cache.model_funs, cache.helpers)
                 dist = getproperty(dists, re)
                 has_anneal && haskey(anneal_sds, re) &&
                     (dist = _saem_apply_anneal_dist(dist, getfield(anneal_sds, re)))
-                v = re_cache.is_scalar[ri] ?
+                v = get_is_scalar(re_cache)[ri] ?
                     T(const_cache.scalar_vals[ri][id]) :
                     T.(const_cache.vector_vals[ri][id])
                 lp = logpdf(dist, v)
@@ -1080,8 +726,8 @@ end
 # failures as a -Inf log-density so callers backtrack instead of crashing. The try/catch is
 # free on the non-throwing path, so the hot-path performance of the impl is preserved.
 function _laplace_logf_batch(
-        dm::DataModel, batch_info::_LaplaceBatchInfo, θ::ComponentArray,
-        b, const_cache::LaplaceConstantsCache, cache::_LLCache;
+        dm::DataModel, batch_info::REBatchInfo, θ::ComponentArray,
+        b, const_cache::REConstantsCache, cache::_LLCache;
         anneal_sds::NamedTuple = NamedTuple(), tctx = nothing)
     try
         return _laplace_logf_batch_impl(dm, batch_info, θ, b, const_cache, cache;
@@ -1128,21 +774,22 @@ struct _LaplaceThetaCtx{TH, D, L}
 end
 
 function _build_theta_ctx(dm::DataModel,
-        batch_info::_LaplaceBatchInfo,
+        batch_info::REBatchInfo,
         θ::ComponentArray,
         cache::_LLCache)
-    θ_re = _symmetrize_psd_params(θ, dm.model.fixed.fixed)
-    builder = get_create_random_effect_distribution(dm.model.random.random)
+    θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
+    builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = cache.model_funs
     helpers = cache.helpers
-    dists = [[builder(θ_re, dm.individuals[rinfo.reps[li]].const_cov, model_funs, helpers)
-              for li in eachindex(rinfo.map.levels)]
-             for rinfo in batch_info.re_info]
+    dists = [[builder(θ_re, get_const_cov(get_individuals(dm)[get_reps(rinfo)[li]]),
+                  model_funs, helpers)
+              for li in eachindex(get_levels(get_re_map(rinfo)))]
+             for rinfo in get_re_info(batch_info)]
     return _LaplaceThetaCtx(θ_re, dists, nothing)
 end
 
 @inline function _re_all_gaussian(dm::DataModel)
-    types = get_re_types(dm.model.random.random)
+    types = get_re_types(get_random(get_model(dm)))
     return all(s -> s === :Normal || s === :MvNormal, values(types))
 end
 
@@ -1153,8 +800,8 @@ end
 # exactly zero — matching the dual partials the per-call path would produce.
 function _ctx_with_prior_hess(tctx::_LaplaceThetaCtx,
         dm::DataModel,
-        batch_info::_LaplaceBatchInfo,
-        const_cache::LaplaceConstantsCache,
+        batch_info::REBatchInfo,
+        const_cache::REConstantsCache,
         cache::_LLCache,
         b)
     _re_all_gaussian(dm) || return tctx
@@ -1168,7 +815,7 @@ end
 # into -Inf), instead of letting the throw escape a path that was previously
 # protected only inside the evaluation.
 function _safe_theta_ctx(dm::DataModel,
-        batch_info::_LaplaceBatchInfo,
+        batch_info::REBatchInfo,
         θ::ComponentArray,
         cache::_LLCache)
     try
@@ -1185,9 +832,9 @@ end
 # cached prior Hessian when the REs are all Gaussian. (`hmode` is untyped here
 # because `_HessMode` is defined further down this file.)
 function _objective_theta_ctx(dm::DataModel,
-        batch_info::_LaplaceBatchInfo,
+        batch_info::REBatchInfo,
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         cache::_LLCache,
         b,
         hmode)
@@ -1205,53 +852,67 @@ function _objective_theta_ctx(dm::DataModel,
     end
 end
 
-function _laplace_logf_batch_impl(dm::DataModel,
-        batch_info::_LaplaceBatchInfo,
-        θ::ComponentArray,
-        b,
-        const_cache::LaplaceConstantsCache,
-        cache::_LLCache;
-        anneal_sds::NamedTuple = NamedTuple(),
-        tctx = nothing)
-    T_ll = promote_type(eltype(θ), eltype(b))
+# Free-level RE prior term log p(η_free | θ_re) for a batch. Shared by the Laplace/FOCEI/SAEM
+# joint (`_laplace_logf_batch_impl`), the Q2 M-step (`_re_logpdf_batch`), and the AGHQ
+# logcorrection (`_re_prior_logf_batch`). Uses `_logpdf_re_static` so the logpdf stays
+# statically dispatched (Enzyme forward-mode BLAS safe); the anneal branch keeps dynamic
+# getproperty, matching the previous per-function behaviour.
+function _re_free_prior_logf(dm::DataModel, batch_info::REBatchInfo, θ_re::ComponentArray,
+        b, cache::_LLCache; anneal_sds::NamedTuple = NamedTuple(), tctx = nothing)
+    T_ll = promote_type(eltype(θ_re), eltype(b))
     ll = zero(T_ll)
     model_funs = cache.model_funs
     helpers = cache.helpers
-    θ_re = tctx === nothing ? _symmetrize_psd_params(θ, dm.model.fixed.fixed) : tctx.θ_re
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
-    # random-effects prior term (free levels only)
-    re_cache = dm.re_group_info.laplace_cache
-    re_names = re_cache.re_names
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
+    re_cache = get_laplace_cache(get_re_group_info(dm))
+    re_names = get_re_names(re_cache)
     has_anneal = !isempty(anneal_sds)
     for (ri, re) in enumerate(re_names)
-        info = batch_info.re_info[ri]
-        isempty(info.map.levels) && continue
-        for (li, level_id) in enumerate(info.map.levels)
-            rep_idx = info.reps[li]
+        info = get_re_info(batch_info)[ri]
+        isempty(get_levels(get_re_map(info))) && continue
+        for (li, level_id) in enumerate(get_levels(get_re_map(info)))
+            rep_idx = get_reps(info)[li]
             dists = tctx === nothing ?
-                    dists_builder(
-                θ_re, dm.individuals[rep_idx].const_cov, model_funs, helpers) :
-                    tctx.dists[ri][li]
+                    dists_builder(θ_re, get_const_cov(get_individuals(dm)[rep_idx]),
+                model_funs, helpers) : tctx.dists[ri][li]
             v = _re_value_from_b(info, level_id, b)
             v === nothing && continue
             lp = if has_anneal && haskey(anneal_sds, re)
-                dist = _saem_apply_anneal_dist(
-                    getproperty(dists, re), getfield(anneal_sds, re))
+                dist = _saem_apply_anneal_dist(getproperty(dists, re),
+                    getfield(anneal_sds, re))
                 convert(T_ll, logpdf(dist, v))
             else
                 _logpdf_re_static(keys(dists), values(dists), re, v, T_ll)
             end
-            isfinite(lp) || return -Inf
+            isfinite(lp) || return T_ll(-Inf)
             ll += lp
         end
     end
+    return ll
+end
+
+function _laplace_logf_batch_impl(dm::DataModel,
+        batch_info::REBatchInfo,
+        θ::ComponentArray,
+        b,
+        const_cache::REConstantsCache,
+        cache::_LLCache;
+        anneal_sds::NamedTuple = NamedTuple(),
+        tctx = nothing)
+    T_ll = promote_type(eltype(θ), eltype(b))
+    θ_re = tctx === nothing ? _symmetrize_psd_params(θ, get_fixed(get_model(dm))) :
+           tctx.θ_re
+    # random-effects prior term (free levels)
+    ll = _re_free_prior_logf(dm, batch_info, θ_re, b, cache;
+        anneal_sds = anneal_sds, tctx = tctx)
+    !isfinite(ll) && return T_ll(-Inf)
     # constant-RE prior term
     const_ll = _const_re_prior_logf(
         dm, batch_info, θ_re, const_cache, cache; anneal_sds = anneal_sds)
     !isfinite(const_ll) && return T_ll(-Inf)
     ll += const_ll
     # likelihood term
-    for i in batch_info.inds
+    for i in get_inds(batch_info)
         η_ind = _build_eta_ind(dm, i, batch_info, b, const_cache, θ_re)
         lli = _loglikelihood_individual(dm, i, θ_re, η_ind, cache)
         !isfinite(lli) && return -Inf
@@ -1265,82 +926,35 @@ end
 # likelihood.  Used by the Q2 M-step optimizer to update parameters that appear only in
 # random-effect distribution expressions.
 function _re_logpdf_batch(dm::DataModel,
-        batch_info::_LaplaceBatchInfo,
+        batch_info::REBatchInfo,
         θ::ComponentArray,
         b,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         cache::_LLCache;
         anneal_sds::NamedTuple = NamedTuple(),
         tctx = nothing)
     T_ll = promote_type(eltype(θ), eltype(b))
-    ll = zero(T_ll)
-    model_funs = cache.model_funs
-    helpers = cache.helpers
-    θ_re = tctx === nothing ? _symmetrize_psd_params(θ, dm.model.fixed.fixed) : tctx.θ_re
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
-    re_cache = dm.re_group_info.laplace_cache
-    re_names = re_cache.re_names
-    has_anneal = !isempty(anneal_sds)
-    for (ri, re) in enumerate(re_names)
-        info = batch_info.re_info[ri]
-        isempty(info.map.levels) && continue
-        for (li, level_id) in enumerate(info.map.levels)
-            rep_idx = info.reps[li]
-            dists = tctx === nothing ?
-                    dists_builder(
-                θ_re, dm.individuals[rep_idx].const_cov, model_funs, helpers) :
-                    tctx.dists[ri][li]
-            dist = getproperty(dists, re)
-            if has_anneal && haskey(anneal_sds, re)
-                dist = _saem_apply_anneal_dist(dist, getfield(anneal_sds, re))
-            end
-            v = _re_value_from_b(info, level_id, b)
-            v === nothing && continue
-            lp = logpdf(dist, v)
-            isfinite(lp) || return T_ll(-Inf)
-            ll += lp
-        end
-    end
-    # constant-RE prior term
+    θ_re = tctx === nothing ? _symmetrize_psd_params(θ, get_fixed(get_model(dm))) :
+           tctx.θ_re
+    ll = _re_free_prior_logf(dm, batch_info, θ_re, b, cache;
+        anneal_sds = anneal_sds, tctx = tctx)
+    !isfinite(ll) && return T_ll(-Inf)
     const_ll = _const_re_prior_logf(
         dm, batch_info, θ_re, const_cache, cache; anneal_sds = anneal_sds)
     !isfinite(const_ll) && return T_ll(-Inf)
-    ll += const_ll
-    return ll
+    return ll + const_ll
 end
 
 # Returns only the RE prior log-density term for a batch (no observation likelihood).
 # Used by build_centered_re_measure for the AGHQ logcorrection.
 function _re_prior_logf_batch(dm::DataModel,
-        batch_info::_LaplaceBatchInfo,
+        batch_info::REBatchInfo,
         θ::ComponentArray,
         b,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         ll_cache::_LLCache)
-    T_ll = promote_type(eltype(θ), eltype(b))
-    ll = zero(T_ll)
-    model_funs = ll_cache.model_funs
-    helpers = ll_cache.helpers
-    θ_re = _symmetrize_psd_params(θ, dm.model.fixed.fixed)
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
-    re_cache = dm.re_group_info.laplace_cache
-    re_names = re_cache.re_names
-    for (ri, re) in enumerate(re_names)
-        info = batch_info.re_info[ri]
-        isempty(info.map.levels) && continue
-        for (li, level_id) in enumerate(info.map.levels)
-            rep_idx = info.reps[li]
-            const_cov = dm.individuals[rep_idx].const_cov
-            dists = dists_builder(θ_re, const_cov, model_funs, helpers)
-            dist = getproperty(dists, re)
-            v = _re_value_from_b(info, level_id, b)
-            v === nothing && continue
-            lp = logpdf(dist, v)
-            isfinite(lp) || return -Inf
-            ll += lp
-        end
-    end
-    return ll
+    θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
+    return _re_free_prior_logf(dm, batch_info, θ_re, b, ll_cache)
 end
 
 """
@@ -1396,9 +1010,9 @@ end
 # logf. Returns a `_NewtonSol`; `converged=false` signals the caller to fall
 # back to the default quasi-Newton path.
 function _newton_inner_solve(dm::DataModel,
-        batch_info::_LaplaceBatchInfo,
+        batch_info::REBatchInfo,
         θ_val::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         cache::_LLCache,
         ad_cache::LaplaceADCache,
         bi::Int,
@@ -1459,9 +1073,9 @@ end
 @inline _laplace_sol_grad_norm(sol::_NewtonSol) = sol.g_norm
 
 function _laplace_solve_batch!(dm::DataModel,
-        batch_info::_LaplaceBatchInfo,
+        batch_info::REBatchInfo,
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         cache::_LLCache,
         ad_cache::LaplaceADCache,
         bi::Int,
@@ -1470,7 +1084,7 @@ function _laplace_solve_batch!(dm::DataModel,
         optim_kwargs::NamedTuple = NamedTuple(),
         adtype = Optimization.AutoForwardDiff(),
         tctx = nothing)
-    nb = batch_info.n_b
+    nb = get_n_b(batch_info)
     nb == 0 && return Float64[]
     θ_val = _laplace_floatize(θ)
     T = eltype(θ_val)
@@ -1552,9 +1166,9 @@ end
 function _laplace_compute_bstar_batch!(cache::_LaplaceCache,
         bi::Int,
         dm::DataModel,
-        info::_LaplaceBatchInfo,
+        info::REBatchInfo,
         θ_val::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         ll_cache::_LLCache;
         optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
         optim_kwargs::NamedTuple = NamedTuple(),
@@ -1563,7 +1177,7 @@ function _laplace_compute_bstar_batch!(cache::_LaplaceCache,
         multistart = LaplaceMultistartOptions(0, 0, grad_tol, 5, :lhs),
         rng::AbstractRNG = Random.default_rng(),
         mcmc_candidates::Union{Nothing, AbstractMatrix} = nothing)
-    nb = info.n_b
+    nb = get_n_b(info)
     if nb == 0
         b_slot = cache.bstar_cache.b_star[bi]
         if !isempty(b_slot)
@@ -1761,9 +1375,9 @@ end
 
 function _laplace_get_bstar!(cache::_LaplaceCache,
         dm::DataModel,
-        batch_infos::Vector{_LaplaceBatchInfo},
+        batch_infos::Vector{REBatchInfo},
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         ll_cache;
         optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
         optim_kwargs::NamedTuple = NamedTuple(),
@@ -1788,7 +1402,7 @@ function _laplace_get_bstar!(cache::_LaplaceCache,
         fill!(cache.grad_cache.last_valid, false)
     end
     total_inds = sum(
-        max(0, info.n_b)
+        max(0, get_n_b(info))
         for (bi, info) in enumerate(batch_infos)
         if active_batches === nothing || bi ∈ active_batches;
         init = 0)
@@ -1824,8 +1438,8 @@ function _laplace_get_bstar!(cache::_LaplaceCache,
                     rng = batch_rngs[bi],
                     mcmc_candidates = mcmc_candidates_by_batch === nothing ? nothing :
                                       mcmc_candidates_by_batch[bi])
-                new_count = Threads.atomic_add!(ind_counter, max(0, info.n_b)) +
-                            max(0, info.n_b)
+                new_count = Threads.atomic_add!(ind_counter, max(0, get_n_b(info))) +
+                            max(0, get_n_b(info))
                 ProgressMeter.update!(p, new_count)
             end
         end
@@ -1844,7 +1458,7 @@ function _laplace_get_bstar!(cache::_LaplaceCache,
                 rng = batch_rngs[bi],
                 mcmc_candidates = mcmc_candidates_by_batch === nothing ? nothing :
                                   mcmc_candidates_by_batch[bi])
-            ind_done += max(0, info.n_b)
+            ind_done += max(0, get_n_b(info))
             ProgressMeter.update!(p, ind_done)
         end
     end
@@ -1856,10 +1470,10 @@ function _laplace_get_bstar!(cache::_LaplaceCache,
 end
 
 function _laplace_hessian_b(dm::DataModel,
-        batch_info::_LaplaceBatchInfo,
+        batch_info::REBatchInfo,
         θ::ComponentArray,
         b,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         cache::_LLCache,
         ad_cache::Union{Nothing, LaplaceADCache},
         bi::Int;
@@ -1909,8 +1523,8 @@ end
 # `negH = -H` / Cholesky / trace-gradient machinery is identical.
 abstract type _HessMode end
 struct _ExactHess <: _HessMode end
-@inline _build_hess_b(::_ExactHess, dm::DataModel, batch_info::_LaplaceBatchInfo, θ, b,
-const_cache::LaplaceConstantsCache, cache::_LLCache,
+@inline _build_hess_b(::_ExactHess, dm::DataModel, batch_info::REBatchInfo, θ, b,
+const_cache::REConstantsCache, cache::_LLCache,
 ad_cache::Union{Nothing, LaplaceADCache}, bi::Int;
 ctx::AbstractString = "", tctx = nothing) = _laplace_hessian_b(
     dm, batch_info, θ, b, const_cache, cache, ad_cache, bi; ctx = ctx, tctx = tctx)
@@ -1936,10 +1550,10 @@ function _laplace_cholesky_negH(
 end
 
 function _laplace_logdet_negH(dm::DataModel,
-        batch_info::_LaplaceBatchInfo,
+        batch_info::REBatchInfo,
         θ::ComponentArray,
         b,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         cache::_LLCache,
         ad_cache::Union{Nothing, LaplaceADCache},
         bi::Int;
@@ -1953,7 +1567,7 @@ function _laplace_logdet_negH(dm::DataModel,
         use_cache::Bool = false,
         hmode::_HessMode = _ExactHess(),
         tctx = nothing)
-    if batch_info.n_b == 0
+    if get_n_b(batch_info) == 0
         T = eltype(θ)
         H = zeros(T, 0, 0)
         return (zero(T), H, nothing)
@@ -2000,10 +1614,10 @@ function _laplace_logdet_negH(dm::DataModel,
 end
 
 function _laplace_grad_batch(dm::DataModel,
-        batch_info::_LaplaceBatchInfo,
+        batch_info::REBatchInfo,
         θ::ComponentArray,
         b,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         cache::_LLCache,
         ad_cache::Union{Nothing, LaplaceADCache},
         bi::Int;
@@ -2017,7 +1631,7 @@ function _laplace_grad_batch(dm::DataModel,
         hutchinson_n::Int = 8,
         rng::AbstractRNG = Random.default_rng(),
         hmode::_HessMode = _ExactHess())
-    nb = batch_info.n_b
+    nb = get_n_b(batch_info)
     if nb == 0
         logf = _laplace_logf_batch(dm, batch_info, θ, b, const_cache, cache)
         grad = ForwardDiff.gradient(
@@ -2219,7 +1833,8 @@ struct LaplaceCacheOptions{T}
     theta_tol::T
 end
 
-@inline _default_inner_grad_tol(dm::DataModel) = dm.model.de.de === nothing ? 1e-8 : 1e-2
+@inline _default_inner_grad_tol(dm::DataModel) = get_de(get_model(dm)) === nothing ? 1e-8 :
+                                                 1e-2
 
 @inline function _resolve_inner_options(inner::LaplaceInnerOptions, dm::DataModel)
     gt = inner.grad_tol
@@ -2427,9 +2042,9 @@ end
 end
 
 function _laplace_objective_and_grad(dm::DataModel,
-        batch_infos::Vector{_LaplaceBatchInfo},
+        batch_infos::Vector{REBatchInfo},
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         ll_cache,
         ebe_cache::_LaplaceCache;
         inner::LaplaceInnerOptions,
@@ -2487,7 +2102,8 @@ function _laplace_objective_and_grad(dm::DataModel,
                     bad[] = true
                     break
                 end
-                obj_by_batch[bi] = res.logf + 0.5 * info.n_b * log(2π) - 0.5 * res.logdet
+                obj_by_batch[bi] = res.logf + 0.5 * get_n_b(info) * log(2π) -
+                                   0.5 * res.logdet
                 @views grad_by_batch[:, bi] .= res.grad
             end
         end
@@ -2515,7 +2131,7 @@ function _laplace_objective_and_grad(dm::DataModel,
                 rng = batch_rngs[bi],
                 hmode = hmode)
             res.logf == -Inf && return (infT, ComponentArray(grad, axs), bstars)
-            total += res.logf + 0.5 * info.n_b * log(2π) - 0.5 * res.logdet
+            total += res.logf + 0.5 * get_n_b(info) * log(2π) - 0.5 * res.logdet
             grad .+= res.grad
         end
         return (-total, ComponentArray(-grad, axs), bstars)
@@ -2523,9 +2139,9 @@ function _laplace_objective_and_grad(dm::DataModel,
 end
 
 function _laplace_objective_only(dm::DataModel,
-        batch_infos::Vector{_LaplaceBatchInfo},
+        batch_infos::Vector{REBatchInfo},
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         ll_cache,
         ebe_cache::_LaplaceCache;
         inner::LaplaceInnerOptions,
@@ -2583,7 +2199,7 @@ function _laplace_objective_only(dm::DataModel,
                     hmode = hmode,
                     tctx = tctx)
                 logdet == Inf && (bad[] = true; break)
-                obj_by_batch[bi] = logf + 0.5 * info.n_b * log(2π) - 0.5 * logdet
+                obj_by_batch[bi] = logf + 0.5 * get_n_b(info) * log(2π) - 0.5 * logdet
             end
         end
         bad[] && return infT
@@ -2615,7 +2231,7 @@ function _laplace_objective_only(dm::DataModel,
                 hmode = hmode,
                 tctx = tctx)
             logdet == Inf && return infT
-            total += logf + 0.5 * info.n_b * log(2π) - 0.5 * logdet
+            total += logf + 0.5 * get_n_b(info) * log(2π) - 0.5 * logdet
         end
     end
     return -total
@@ -2641,10 +2257,10 @@ function _fit_model(dm::DataModel, method::Laplace, args...;
         rng = rng,
         theta_0_untransformed = theta_0_untransformed,
         store_data_model = store_data_model)
-    re_names = get_re_names(dm.model.random.random)
+    re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) &&
         error("Laplace requires random effects. Use MLE/MAP for fixed-effects models.")
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     fixed_names = get_names(fe)
     isempty(fixed_names) && error("Laplace requires at least one fixed effect.")
     fixed_set = Set(fixed_names)
@@ -2678,7 +2294,7 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
         serialization::SciMLBase.EnsembleAlgorithm, rng::AbstractRNG,
         theta_0_untransformed::Union{Nothing, ComponentArray},
         store_data_model::Bool, extra_objective = nothing) where {V}
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     fixed_names = get_names(fe)
     free_names = [n for n in fixed_names if !(n in keys(constants))]
     θ0_u = get_θ0_untransformed(fe)
@@ -2702,7 +2318,7 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
     inner_opts = _resolve_inner_options(method.inner, dm)
     multistart_opts = _resolve_multistart_options(method.multistart, inner_opts)
 
-    _, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re)
+    _, batch_infos, const_cache = _build_re_batch_infos(dm, constants_re)
     ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
         serialization = serialization, force_saveat = true)
     n_batches = length(batch_infos)

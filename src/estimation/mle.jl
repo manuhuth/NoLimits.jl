@@ -87,11 +87,11 @@ function _fit_no_re(dm::DataModel, method;
         store_data_model::Bool = true,
         fit_args::Tuple = (),
         fit_kwargs::NamedTuple = NamedTuple())
-    re_names = get_re_names(dm.model.random.random)
+    re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) ||
         error("This method is only valid for models without random effects. Use Laplace, SAEM, or MCMC for random-effects models.")
 
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     fixed_names = get_names(fe)
     isempty(fixed_names) && error("This method requires at least one fixed effect.")
     fixed_set = Set(fixed_names)
@@ -248,7 +248,7 @@ too wide or absent.
 - `margin::Real = 1.0`: half-width of the symmetric box on the transformed scale.
 """
 function default_bounds_from_start(dm::DataModel; margin::Real = 1.0)
-    θ = get_θ0_transformed(dm.model.fixed.fixed)
+    θ = get_θ0_transformed(get_fixed(get_model(dm)))
     lower = deepcopy(θ)
     upper = deepcopy(θ)
     lower .= θ .- margin

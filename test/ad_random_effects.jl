@@ -60,7 +60,7 @@ using LinearAlgebra
         η_dot = RandomEffect(Normal(dotp(xv, b), σ); column = :id)
     end
 
-    create = get_create_random_effect_distribution(re)
+    create = create_random_effect_distribution(re)
     logpdf_fn = get_re_logpdf(re)
     re_vals = ComponentArray(η_t = 0.2, η_skew = 0.1,
         η_lap = 0.3,
@@ -96,7 +96,7 @@ end
         a = RandomEffect(Normal(μ, σ); column = :id)
         b = RandomEffect(Gamma(α, β); column = :id)
     end
-    create = get_create_random_effect_distribution(re)
+    create = create_random_effect_distribution(re)
     logpdf_fn = get_re_logpdf(re)
     dists = create(
         inverse_transform(fixed_effects0), NamedTuple(), model_funs, NamedTuple())
@@ -128,7 +128,7 @@ end
         flow = RandomEffect(NormalizingPlanarFlow(ψ); column = :id)
         uni = RandomEffect(Normal(μ[1], σ); column = :id)
     end
-    create = get_create_random_effect_distribution(re)
+    create = create_random_effect_distribution(re)
     logpdf_fn = get_re_logpdf(re)
     dists = create(
         inverse_transform(fixed_effects0), NamedTuple(), model_funs, NamedTuple())

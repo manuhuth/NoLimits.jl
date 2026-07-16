@@ -78,7 +78,7 @@ function _fit_model(dm::DataModel, method::MAP, args...;
         rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         store_data_model::Bool = true)
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     priors = get_priors(fe)
     has_prior = !isempty(keys(priors)) &&
                 any(!(getfield(priors, k) isa Priorless) for k in keys(priors))

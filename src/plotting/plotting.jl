@@ -306,19 +306,20 @@ function _apply_param_overrides(θ::ComponentArray, overrides::NamedTuple)
     return θ_use
 end
 
-@inline _is_posterior_draw_fit(res::FitResult) = (res.result isa MCMCResult ||
-                                                  res.result isa VIResult)
+@inline _is_posterior_draw_fit(res::FitResult) = (get_result(res) isa MCMCResult ||
+                                                  get_result(res) isa VIResult)
 
 function _with_posterior_warmup(res::FitResult, mcmc_warmup::Union{Nothing, Int})
-    if !(res.result isa MCMCResult) || mcmc_warmup === nothing
+    if !(get_result(res) isa MCMCResult) || mcmc_warmup === nothing
         return res
     end
-    conv = res.diagnostics.convergence
+    conv = get_diagnostics(res).convergence
     conv = merge(conv, (n_adapt = mcmc_warmup,))
-    return FitResult(res.method, res.result, res.summary,
+    return FitResult(get_method(res), get_result(res), get_summary(res),
         FitDiagnostics(
-            res.diagnostics.timing, res.diagnostics.optimizer, conv, res.diagnostics.notes),
-        res.data_model, res.fit_args, res.fit_kwargs)
+            get_diagnostics(res).timing, get_diagnostics(res).optimizer, conv,
+            get_diagnostics(res).notes),
+        get_data_model(res), get_fit_args(res), get_fit_kwargs(res))
 end
 
 function _plot_signature(dm::DataModel,
@@ -327,9 +328,11 @@ function _plot_signature(dm::DataModel,
         solver_cfg,
         callbacks_hash::UInt,
         cache_obs_dists::Bool)
-    h = hash(typeof(dm.model))
-    h = hash(dm.model.de.de === nothing ? Symbol[] : get_de_states(dm.model.de.de), h)
-    h = hash(get_formulas_meta(dm.model.formulas.formulas).obs_names, h)
+    h = hash(typeof(get_model(dm)))
+    h = hash(
+        get_de(get_model(dm)) === nothing ? Symbol[] : get_de_states(get_de(get_model(dm))),
+        h)
+    h = hash(get_formulas_meta(get_formulas(get_model(dm))).obs_names, h)
     h = hash(θ, h)
     h = hash(constants_re, h)
     h = hash(typeof(solver_cfg.alg), h)
@@ -342,11 +345,11 @@ end
 
 function _callbacks_hash(dm::DataModel)
     acc = UInt(0)
-    for ind in dm.individuals
-        if ind.callbacks === nothing
+    for ind in get_individuals(dm)
+        if get_callbacks(ind) === nothing
             acc = hash(nothing, acc)
         else
-            acc = hash(ind.callbacks, acc)
+            acc = hash(get_callbacks(ind), acc)
         end
     end
     return acc
@@ -358,38 +361,22 @@ function _solve_dense_individual(dm::DataModel,
         η_ind::ComponentArray;
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple())
-    model = dm.model
-    pre = calculate_prede(model, θ, η_ind, ind.const_cov)
-    pc = (;
-        fixed_effects = θ,
-        random_effects = η_ind,
-        constant_covariates = ind.const_cov,
-        varying_covariates = merge((t = ind.series.vary.t[1],), ind.series.dyn),
-        helpers = get_helper_funs(model),
-        model_funs = get_model_funs(model),
-        preDE = pre
-    )
-    compiled = get_de_compiler(model.de.de)(pc)
-    u0 = calculate_initial_state(model, θ, η_ind, ind.const_cov)
-    f! = get_de_f!(model.de.de)
-    cb = nothing
-    infusion_rates = nothing
-    if ind.callbacks !== nothing
-        _apply_initial_events!(u0, ind.callbacks)
-        cb = ind.callbacks.callback
-        infusion_rates = ind.callbacks.infusion_rates
-        f! = _plot_with_infusion(f!, infusion_rates)
-    end
+    model = get_model(dm)
+    pre = calculate_prede(model, θ, η_ind, get_const_cov(ind))
+    compiled, u0, cb, infusion_rates = _solve_preamble(
+        dm, ind, θ, η_ind, pre, get_helper_funs(model), get_model_funs(model))
+    f! = get_de_f!(get_de(model))
+    infusion_rates === nothing || (f! = _plot_with_infusion(f!, infusion_rates))
     plan = get_closed_form_plan(dm)
-    if plan.eligible && (_cf_is_whole(plan) || cb === nothing)
+    if is_cf_eligible(plan) && (_cf_is_whole(plan) || cb === nothing)
         solver_cfg = get_solver_config(model)
         cf_alg = solver_cfg.alg === nothing ? Tsit5() : solver_cfg.alg
-        sol = _cf_dispatch_solve(model, compiled, u0, ind.tspan, nothing, plan,
-            ind.callbacks, cf_alg, solver_cfg.args,
+        sol = _cf_dispatch_solve(model, compiled, u0, get_tspan(ind), nothing, plan,
+            get_callbacks(ind), cf_alg, solver_cfg.args,
             _ode_solve_kwargs(solver_cfg.kwargs, ode_kwargs, NamedTuple()))
         sol !== nothing && return sol, compiled
     end
-    prob = ODEProblem(f!, u0, ind.tspan, compiled)
+    prob = ODEProblem(f!, u0, get_tspan(ind), compiled)
     solver_cfg = get_solver_config(model)
     alg = solver_cfg.alg === nothing ? Tsit5() : solver_cfg.alg
     solve_kwargs = _ode_solve_kwargs(solver_cfg.kwargs, ode_kwargs, (dense = true,))
@@ -419,8 +406,8 @@ end
 function _coordwise_fixed_from_means(dm::DataModel,
         means::Dict{Symbol, Float64},
         source::AbstractString)
-    fe_names = get_names(dm.model.fixed.fixed)
-    θ0_u = get_θ0_untransformed(dm.model.fixed.fixed)
+    fe_names = get_names(get_fixed(get_model(dm)))
+    θ0_u = get_θ0_untransformed(get_fixed(get_model(dm)))
     pairs = Pair{Symbol, Any}[]
     for name in fe_names
         if haskey(means, name)
@@ -486,9 +473,9 @@ function _posterior_fixed_means(res::FitResult,
         dm::DataModel;
         max_draws::Int = typemax(Int),
         rng::AbstractRNG = Random.default_rng())
-    if res.result isa MCMCResult
+    if get_result(res) isa MCMCResult
         return _mcmc_fixed_means(res, dm; max_draws = max_draws, rng = rng)
-    elseif res.result isa VIResult
+    elseif get_result(res) isa VIResult
         return _vi_fixed_means(res, dm; max_draws = max_draws, rng = rng)
     end
     return get_params(res; scale = :untransformed), nothing
@@ -527,14 +514,14 @@ function _mcmc_random_effects_means(res::FitResult,
     chain = get_chain(res)
     n_adapt = _mcmc_warmup(res)
     means = _mcmc_param_means(chain; n_adapt = n_adapt, max_draws = max_draws, rng = rng)
-    re_names = get_re_names(dm.model.random.random)
-    isempty(re_names) && return Vector{ComponentArray}(undef, length(dm.individuals))
+    re_names = get_re_names(get_random(get_model(dm)))
+    isempty(re_names) && return Vector{ComponentArray}(undef, length(get_individuals(dm)))
 
     fixed_maps = _normalize_constants_re(dm, constants_re)
-    re_values = dm.re_group_info.values
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
-    model_funs = get_model_funs(dm.model)
-    helpers = get_helper_funs(dm.model)
+    re_values = get_re_group_info(dm).values
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
+    model_funs = get_model_funs(get_model(dm))
+    helpers = get_helper_funs(get_model(dm))
 
     level_means = Dict{Symbol, Dict{Any, Any}}()
     level_dims = Dict{Symbol, Int}()
@@ -553,11 +540,11 @@ function _mcmc_random_effects_means(res::FitResult,
             continue
         end
         rep_idx = findfirst(
-            ind -> (getfield(ind.re_groups, re) isa AbstractVector ?
-                    (getfield(ind.re_groups, re)[1] in levels_free) :
-                    (getfield(ind.re_groups, re) in levels_free)),
-            dm.individuals)
-        const_cov = dm.individuals[rep_idx].const_cov
+            ind -> (getfield(get_re_groups(ind), re) isa AbstractVector ?
+                    (getfield(get_re_groups(ind), re)[1] in levels_free) :
+                    (getfield(get_re_groups(ind), re) in levels_free)),
+            get_individuals(dm))
+        const_cov = get_const_cov(get_individuals(dm)[rep_idx])
         dist = getproperty(dists_builder(θ, const_cov, model_funs, helpers), re)
         dim = dist isa Distributions.UnivariateDistribution ? 1 : length(dist)
         level_dims[re] = dim
@@ -584,11 +571,11 @@ function _mcmc_random_effects_means(res::FitResult,
         level_means[re] = re_map
     end
 
-    η_vec = Vector{ComponentArray}(undef, length(dm.individuals))
-    for (i, ind) in enumerate(dm.individuals)
+    η_vec = Vector{ComponentArray}(undef, length(get_individuals(dm)))
+    for (i, ind) in enumerate(get_individuals(dm))
         nt_pairs = Pair{Symbol, Any}[]
         for re in re_names
-            g = getfield(ind.re_groups, re)
+            g = getfield(get_re_groups(ind), re)
             fixed = haskey(fixed_maps, re) ? getfield(fixed_maps, re) : Dict{Any, Any}()
             dim = get(level_dims, re, 1)
             if g isa AbstractVector
@@ -636,7 +623,7 @@ function _assemble_individual_eta(ind, re_names, dims, fixed_maps, get_free_valu
     for re in re_names
         fixed = haskey(fixed_maps, re) ? getfield(fixed_maps, re) : Dict{Any, Any}()
         dim = get(dims, re, 1)
-        g = getfield(ind.re_groups, re)
+        g = getfield(get_re_groups(ind), re)
         if g isa AbstractVector
             if length(g) == 1
                 lvl = g[1]
@@ -682,13 +669,13 @@ function _mcmc_drawn_params(res::FitResult,
     vals = Array(chain)
     n_chains = size(vals, 3)
 
-    fe_names = get_names(dm.model.fixed.fixed)
-    re_names = get_re_names(dm.model.random.random)
+    fe_names = get_names(get_fixed(get_model(dm)))
+    re_names = get_re_names(get_random(get_model(dm)))
     fixed_maps = _normalize_constants_re(dm, constants_re)
-    re_values = dm.re_group_info.values
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
-    model_funs = get_model_funs(dm.model)
-    helpers = get_helper_funs(dm.model)
+    re_values = get_re_group_info(dm).values
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
+    model_funs = get_model_funs(get_model(dm))
+    helpers = get_helper_funs(get_model(dm))
     isempty(draw_idxs) && error("No MCMC draws available after warmup.")
     rep_iter = first(draw_idxs)
     rep_chain = 1
@@ -698,7 +685,7 @@ function _mcmc_drawn_params(res::FitResult,
             push!(fe_pairs_rep,
                 name => _mcmc_param_value(vals, rep_iter, idx_map[name], rep_chain))
         else
-            val0 = getproperty(get_θ0_untransformed(dm.model.fixed.fixed), name)
+            val0 = getproperty(get_θ0_untransformed(get_fixed(get_model(dm))), name)
             if val0 isa AbstractArray
                 vals_rep = similar(val0, Float64)
                 for idx in CartesianIndices(val0)
@@ -735,11 +722,11 @@ function _mcmc_drawn_params(res::FitResult,
             continue
         end
         rep_idx = findfirst(
-            ind -> (getfield(ind.re_groups, re) isa AbstractVector ?
-                    (getfield(ind.re_groups, re)[1] in levels_free) :
-                    (getfield(ind.re_groups, re) in levels_free)),
-            dm.individuals)
-        const_cov = dm.individuals[rep_idx].const_cov
+            ind -> (getfield(get_re_groups(ind), re) isa AbstractVector ?
+                    (getfield(get_re_groups(ind), re)[1] in levels_free) :
+                    (getfield(get_re_groups(ind), re) in levels_free)),
+            get_individuals(dm))
+        const_cov = get_const_cov(get_individuals(dm)[rep_idx])
         dist = getproperty(dists_builder(θ_rep, const_cov, model_funs, helpers), re)
         dim = dist isa Distributions.UnivariateDistribution ? 1 : length(dist)
         re_meta[re] = (levels_free = levels_free, dim = dim)
@@ -798,7 +785,7 @@ function _mcmc_drawn_params(res::FitResult,
                 push!(fe_pairs,
                     name => _mcmc_param_value(vals, iter_idx, idx_map[name], chain_idx))
             else
-                val0 = getproperty(get_θ0_untransformed(dm.model.fixed.fixed), name)
+                val0 = getproperty(get_θ0_untransformed(get_fixed(get_model(dm))), name)
                 if val0 isa AbstractArray
                     vals_draw = similar(val0, Float64)
                     for idx in CartesianIndices(val0)
@@ -829,8 +816,8 @@ function _mcmc_drawn_params(res::FitResult,
             v = _get_re_value(re, li, dim, iter_idx, chain_idx)
             return v === nothing ? (dim == 1 ? 0.0 : zeros(dim)) : v
         end
-        η_vec = Vector{ComponentArray}(undef, length(dm.individuals))
-        for (i, ind) in enumerate(dm.individuals)
+        η_vec = Vector{ComponentArray}(undef, length(get_individuals(dm)))
+        for (i, ind) in enumerate(get_individuals(dm))
             η_vec[i] = _assemble_individual_eta(
                 ind, re_names, dims, fixed_maps, get_free_value)
         end
@@ -856,13 +843,13 @@ function _vi_drawn_params(res::FitResult,
         idx_map[string(n)] = i
     end
 
-    fe_names = get_names(dm.model.fixed.fixed)
-    re_names = get_re_names(dm.model.random.random)
+    fe_names = get_names(get_fixed(get_model(dm)))
+    re_names = get_re_names(get_random(get_model(dm)))
     fixed_maps = _normalize_constants_re(dm, constants_re)
-    re_values = dm.re_group_info.values
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
-    model_funs = get_model_funs(dm.model)
-    helpers = get_helper_funs(dm.model)
+    re_values = get_re_group_info(dm).values
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
+    model_funs = get_model_funs(get_model(dm))
+    helpers = get_helper_funs(get_model(dm))
 
     rep_row = @view draws[1, :]
     fe_pairs_rep = Pair{Symbol, Any}[]
@@ -872,7 +859,7 @@ function _vi_drawn_params(res::FitResult,
         if idx != 0
             push!(fe_pairs_rep, name => Float64(rep_row[idx]))
         else
-            val0 = getproperty(get_θ0_untransformed(dm.model.fixed.fixed), name)
+            val0 = getproperty(get_θ0_untransformed(get_fixed(get_model(dm))), name)
             if val0 isa AbstractArray
                 vals_rep = similar(val0, Float64)
                 for ci in CartesianIndices(val0)
@@ -909,11 +896,11 @@ function _vi_drawn_params(res::FitResult,
             continue
         end
         rep_idx = findfirst(
-            ind -> (getfield(ind.re_groups, re) isa AbstractVector ?
-                    (getfield(ind.re_groups, re)[1] in levels_free) :
-                    (getfield(ind.re_groups, re) in levels_free)),
-            dm.individuals)
-        const_cov = dm.individuals[rep_idx].const_cov
+            ind -> (getfield(get_re_groups(ind), re) isa AbstractVector ?
+                    (getfield(get_re_groups(ind), re)[1] in levels_free) :
+                    (getfield(get_re_groups(ind), re) in levels_free)),
+            get_individuals(dm))
+        const_cov = get_const_cov(get_individuals(dm)[rep_idx])
         dist = getproperty(dists_builder(θ_rep, const_cov, model_funs, helpers), re)
         dim = dist isa Distributions.UnivariateDistribution ? 1 : length(dist)
         re_meta[re] = (levels_free = levels_free, dim = dim)
@@ -967,7 +954,7 @@ function _vi_drawn_params(res::FitResult,
             if idx != 0
                 push!(fe_pairs, name => Float64(row[idx]))
             else
-                val0 = getproperty(get_θ0_untransformed(dm.model.fixed.fixed), name)
+                val0 = getproperty(get_θ0_untransformed(get_fixed(get_model(dm))), name)
                 if val0 isa AbstractArray
                     vals_draw = similar(val0, Float64)
                     for ci in CartesianIndices(val0)
@@ -997,8 +984,8 @@ function _vi_drawn_params(res::FitResult,
             v = _get_re_value(re, li, dim, row)
             return v === nothing ? (dim == 1 ? 0.0 : zeros(dim)) : v
         end
-        η_vec = Vector{ComponentArray}(undef, length(dm.individuals))
-        for (i, ind) in enumerate(dm.individuals)
+        η_vec = Vector{ComponentArray}(undef, length(get_individuals(dm)))
+        for (i, ind) in enumerate(get_individuals(dm))
             η_vec[i] = _assemble_individual_eta(
                 ind, re_names, dims, fixed_maps, get_free_value)
         end
@@ -1013,9 +1000,9 @@ function _posterior_drawn_params(res::FitResult,
         overrides::NamedTuple,
         max_draws::Int,
         rng::AbstractRNG)
-    if res.result isa MCMCResult
+    if get_result(res) isa MCMCResult
         return _mcmc_drawn_params(res, dm, constants_re, overrides, max_draws, rng)
-    elseif res.result isa VIResult
+    elseif get_result(res) isa VIResult
         return _vi_drawn_params(res, dm, constants_re, overrides, max_draws, rng)
     end
     error("Posterior draws are supported only for MCMC and VI fit results.")
@@ -1027,85 +1014,45 @@ function _default_random_effects(res::FitResult,
         θ::ComponentArray,
         rng::AbstractRNG,
         mcmc_draws::Int)
-    re_names = get_re_names(dm.model.random.random)
-    isempty(re_names) && return fill(ComponentArray(NamedTuple()), length(dm.individuals))
+    re_names = get_re_names(get_random(get_model(dm)))
+    isempty(re_names) &&
+        return fill(ComponentArray(NamedTuple()), length(get_individuals(dm)))
 
-    if res.result isa LaplaceResult || res.result isa GHQuadratureResult
-        _, batch_infos, _ = _build_laplace_batch_infos(dm, constants_re)
-        bstars = res.result.eb_modes
-        length(bstars) == length(batch_infos) ||
-            error("Laplace-style EB modes do not match number of batches.")
-        return _eta_from_eb(dm, batch_infos, bstars, constants_re, θ)
+    # Laplace/GHQ/MCEM/SAEM all resolve EB modes identically to the estimation-side
+    # switchboard — delegate to it (θ/rng threaded through for plotting param-overrides).
+    if get_result(res) isa LaplaceResult || get_result(res) isa GHQuadratureResult ||
+       get_result(res) isa MCEMResult || get_result(res) isa SAEMResult
+        bstars, batch_infos, _, _, _, cre = _resolve_bstars_for_re(
+            dm, res, constants_re; θ = θ, rng = rng)
+        return _eta_from_eb(dm, batch_infos, bstars, cre, θ)
     end
 
-    if res.result isa MCEMResult
-        ode_args = _fit_kw(res, :ode_args, ())
-        ode_kwargs = _fit_kw(res, :ode_kwargs, NamedTuple())
-        serialization = _fit_kw(res, :serialization, EnsembleSerial())
-        rng_use = _fit_kw(res, :rng, rng)
-        ll_cache = build_ll_cache(
-            dm; ode_args = ode_args, ode_kwargs = ode_kwargs, serialization = serialization)
-        bstars = res.result.eb_modes
-        if bstars === nothing
-            bstars, batch_infos = _compute_bstars(
-                dm, θ, constants_re, ll_cache, res.method.ebe, rng_use;
-                rescue = res.method.ebe_rescue)
-        else
-            _, batch_infos, _ = _build_laplace_batch_infos(dm, constants_re)
-        end
-        return _eta_from_eb(dm, batch_infos, bstars, constants_re, θ)
-    end
-    if res.result isa SAEMResult
-        constants_re = _saem_anneal_constants_re(
-            dm, θ, _saem_anneal_names(res), constants_re)
-        ode_args = _fit_kw(res, :ode_args, ())
-        ode_kwargs = _fit_kw(res, :ode_kwargs, NamedTuple())
-        serialization = _fit_kw(res, :serialization, EnsembleSerial())
-        rng_use = _fit_kw(res, :rng, rng)
-        ll_cache = build_ll_cache(
-            dm; ode_args = ode_args, ode_kwargs = ode_kwargs, serialization = serialization)
-        bstars = res.result.eb_modes
-        if bstars === nothing
-            # Fall back to default SAEM EBE options for loaded results
-            _saem_cfg = res.method isa _SavedFittingMethod ? SAEM() : res.method
-            ebe = EBEOptions(_saem_cfg.saem.ebe_optimizer,
-                _saem_cfg.saem.ebe_optim_kwargs, _saem_cfg.saem.ebe_adtype,
-                _saem_cfg.saem.ebe_grad_tol, _saem_cfg.saem.ebe_multistart_n, _saem_cfg.saem.ebe_multistart_k,
-                _saem_cfg.saem.ebe_multistart_max_rounds, _saem_cfg.saem.ebe_multistart_sampling)
-            bstars, batch_infos = _compute_bstars(
-                dm, θ, constants_re, ll_cache, ebe, rng_use;
-                rescue = _saem_cfg.saem.ebe_rescue)
-        else
-            _, batch_infos, _ = _build_laplace_batch_infos(dm, constants_re)
-        end
-        return _eta_from_eb(dm, batch_infos, bstars, constants_re, θ)
-    end
-
-    if res.result isa MCMCResult
+    if get_result(res) isa MCMCResult
         return _mcmc_random_effects_means(
             res, dm, constants_re, θ; max_draws = mcmc_draws, rng = rng)
     end
     # NB: VI is rejected for random-effects models at fit time, so a VIResult can
     # never reach here with non-empty `re_names`; no VI branch is needed.
 
-    if res.result isa PooledResult
-        return res.result.eta_vec
+    if get_result(res) isa PooledResult
+        return get_eta_vec(get_result(res))
     end
 
-    return fill(ComponentArray(NamedTuple()), length(dm.individuals))
+    return fill(ComponentArray(NamedTuple()), length(get_individuals(dm)))
 end
 
 function _default_random_effects_from_dm(dm::DataModel,
         constants_re::NamedTuple,
         θ::ComponentArray)
-    re_names = get_re_names(dm.model.random.random)
-    isempty(re_names) && return fill(ComponentArray(NamedTuple()), length(dm.individuals))
+    re_names = get_re_names(get_random(get_model(dm)))
+    isempty(re_names) &&
+        return fill(ComponentArray(NamedTuple()), length(get_individuals(dm)))
 
     fixed_maps = _normalize_constants_re(dm, constants_re)
-    re_values = dm.re_group_info.values
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
-    model_funs = get_model_funs(dm.model)
-    helpers = get_helper_funs(dm.model)
+    re_values = get_re_group_info(dm).values
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
+    model_funs = get_model_funs(get_model(dm))
+    helpers = get_helper_funs(get_model(dm))
 
     level_vals = Dict{Symbol, Dict{Any, Any}}()
     level_dims = Dict{Symbol, Int}()
@@ -1123,11 +1070,11 @@ function _default_random_effects_from_dm(dm::DataModel,
             continue
         end
         rep_idx = findfirst(
-            ind -> (getfield(ind.re_groups, re) isa AbstractVector ?
-                    (getfield(ind.re_groups, re)[1] in levels_free) :
-                    (getfield(ind.re_groups, re) in levels_free)),
-            dm.individuals)
-        const_cov = dm.individuals[rep_idx].const_cov
+            ind -> (getfield(get_re_groups(ind), re) isa AbstractVector ?
+                    (getfield(get_re_groups(ind), re)[1] in levels_free) :
+                    (getfield(get_re_groups(ind), re) in levels_free)),
+            get_individuals(dm))
+        const_cov = get_const_cov(get_individuals(dm)[rep_idx])
         dist = getproperty(dists_builder(θ, const_cov, model_funs, helpers), re)
         dim = dist isa Distributions.UnivariateDistribution ? 1 : length(dist)
         level_dims[re] = dim
@@ -1145,9 +1092,9 @@ function _default_random_effects_from_dm(dm::DataModel,
         level_vals[re] = re_map
     end
 
-    η_vec = Vector{ComponentArray}(undef, length(dm.individuals))
+    η_vec = Vector{ComponentArray}(undef, length(get_individuals(dm)))
     get_free_value = (re, lvl, dim) -> level_vals[re][lvl]
-    for (i, ind) in enumerate(dm.individuals)
+    for (i, ind) in enumerate(get_individuals(dm))
         η_vec[i] = _assemble_individual_eta(
             ind, re_names, level_dims, fixed_maps, get_free_value)
     end
@@ -1213,11 +1160,11 @@ end
 function _fill_plot_cache(dm::DataModel, θ::ComponentArray, η_vec, chain,
         constants_re::NamedTuple, cache_obs_dists::Bool, ode_args::Tuple,
         ode_kwargs::NamedTuple)
-    sols = Vector{Any}(undef, length(dm.individuals))
-    compiled_cache = Vector{Any}(undef, length(dm.individuals))
-    if dm.model.de.de !== nothing
-        for i in eachindex(dm.individuals)
-            ind = dm.individuals[i]
+    sols = Vector{Any}(undef, length(get_individuals(dm)))
+    compiled_cache = Vector{Any}(undef, length(get_individuals(dm)))
+    if get_de(get_model(dm)) !== nothing
+        for i in eachindex(get_individuals(dm))
+            ind = get_individuals(dm)[i]
             η_ind = η_vec[i] isa ComponentArray ? η_vec[i] : ComponentArray(η_vec[i])
             sol, compiled = _solve_dense_individual(
                 dm, ind, θ, η_ind; ode_args = ode_args, ode_kwargs = ode_kwargs)
@@ -1228,30 +1175,31 @@ function _fill_plot_cache(dm::DataModel, θ::ComponentArray, η_vec, chain,
 
     obs_dists = nothing
     if cache_obs_dists
-        obs_names_all = get_formulas_meta(dm.model.formulas.formulas).obs_names
-        obs_dists = Vector{Vector{NamedTuple}}(undef, length(dm.individuals))
-        for i in eachindex(dm.individuals)
-            ind = dm.individuals[i]
-            obs_rows = dm.row_groups.obs_rows[i]
+        obs_names_all = get_formulas_meta(get_formulas(get_model(dm))).obs_names
+        obs_dists = Vector{Vector{NamedTuple}}(undef, length(get_individuals(dm)))
+        for i in eachindex(get_individuals(dm))
+            ind = get_individuals(dm)[i]
+            obs_rows = get_obs_rows(get_row_groups(dm))[i]
             η_ind = η_vec[i] isa ComponentArray ? η_vec[i] : ComponentArray(η_vec[i])
             rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only = true)
-            sol_accessors = dm.model.de.de === nothing ? nothing :
+            sol_accessors = get_de(get_model(dm)) === nothing ? nothing :
                             _sol_accessors_with_crossings(
-                dm.model, sols[i], compiled_cache[i], θ, η_ind, ind.const_cov)
+                get_model(dm), sols[i], compiled_cache[i], θ, η_ind, get_const_cov(ind))
             dists_i = Vector{NamedTuple}(undef, length(obs_rows))
             hmm_priors = Dict{Symbol, Any}()
             for (j, row) in enumerate(obs_rows)
                 vary = _varying_at(dm, ind, j, row)
                 η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only = true)
                 obs = sol_accessors === nothing ?
-                      calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
                       calculate_formulas_obs(
-                    dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
+                    get_model(dm), θ, η_row, get_const_cov(ind), vary) :
+                      calculate_formulas_obs(
+                    get_model(dm), θ, η_row, get_const_cov(ind), vary, sol_accessors)
                 filtered_pairs = Pair{Symbol, Any}[]
                 for col in obs_names_all
                     d = getproperty(obs, col)
                     if _is_hmm_dist(d)
-                        y_val = getfield(ind.series.obs, col)[j]
+                        y_val = getfield(get_obs(get_series(ind)), col)[j]
                         push!(filtered_pairs,
                             col => _apply_hmm_filter!(hmm_priors, col, d, y_val))
                     end
@@ -1263,7 +1211,7 @@ function _fill_plot_cache(dm::DataModel, θ::ComponentArray, η_vec, chain,
         end
     end
 
-    sig = _plot_signature(dm, θ, constants_re, get_solver_config(dm.model),
+    sig = _plot_signature(dm, θ, constants_re, get_solver_config(get_model(dm)),
         _callbacks_hash(dm), cache_obs_dists)
     meta = (constants_re = constants_re, cache_obs_dists = cache_obs_dists)
     return PlotCache(sig, sols, obs_dists, chain, θ, η_vec, meta)
@@ -1280,7 +1228,7 @@ function build_plot_cache(dm::DataModel;
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
         rng::AbstractRNG = Random.default_rng())
-    θ = get_θ0_untransformed(dm.model.fixed.fixed)
+    θ = get_θ0_untransformed(get_fixed(get_model(dm)))
     θ = _apply_param_overrides(θ, params)
     η_vec = _default_random_effects_from_dm(dm, constants_re, θ)
     return _fill_plot_cache(dm, θ, η_vec, nothing, constants_re, cache_obs_dists,

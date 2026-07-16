@@ -77,9 +77,9 @@ get_spec(r::CVResult) = r.spec
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
 function _rebuild_dm(dm_ref::DataModel, rows::Vector{Int})
-    df_sub = dm_ref.df[rows, :]
+    df_sub = get_df(dm_ref)[rows, :]
     cfg = dm_ref.config
-    return DataModel(dm_ref.model, df_sub;
+    return DataModel(get_model(dm_ref), df_sub;
         primary_id = cfg.primary_id, time_col = cfg.time_col,
         evid_col = cfg.evid_col, amt_col = cfg.amt_col,
         rate_col = cfg.rate_col, cmt_col = cfg.cmt_col,
@@ -87,7 +87,7 @@ function _rebuild_dm(dm_ref::DataModel, rows::Vector{Int})
 end
 
 function _cv_has_re_support(res::FitResult)
-    r = res.result
+    r = get_result(res)
     return r isa LaplaceResult || r isa GHQuadratureResult ||
            r isa MCEMResult || r isa SAEMResult
 end
@@ -122,7 +122,7 @@ function cross_validate(dm::DataModel, n_folds::Int;
         rng::AbstractRNG = Random.default_rng())
     n_folds >= 2 || error("n_folds must be ≥ 2, got $n_folds")
     kind ∈ (:id, :observation) || error("kind must be :id or :observation, got $kind")
-    n = length(dm.individuals)
+    n = length(get_individuals(dm))
     n >= n_folds || error("n_folds ($n_folds) exceeds number of individuals ($n)")
 
     train_rows = Vector{Vector{Int}}(undef, n_folds)
@@ -137,15 +137,15 @@ function cross_validate(dm::DataModel, n_folds::Int;
         for f in 1:n_folds
             test_inds = findall(==(f), fold_of)
             train_inds = findall(!=(f), fold_of)
-            test_rows[f] = sort(vcat((dm.row_groups.rows[i] for i in test_inds)...))
-            train_rows[f] = sort(vcat((dm.row_groups.rows[i] for i in train_inds)...))
+            test_rows[f] = sort(vcat((get_rows(get_row_groups(dm))[i] for i in test_inds)...))
+            train_rows[f] = sort(vcat((get_rows(get_row_groups(dm))[i] for i in train_inds)...))
         end
     else  # :observation
         test_sets = [Int[] for _ in 1:n_folds]
         train_sets = [Int[] for _ in 1:n_folds]
         for i in 1:n
-            all_i = dm.row_groups.rows[i]
-            obs_i = dm.row_groups.obs_rows[i]
+            all_i = get_rows(get_row_groups(dm))[i]
+            obs_i = get_obs_rows(get_row_groups(dm))[i]
             event_i = setdiff(all_i, obs_i)
             perm = shuffle(rng, 1:length(obs_i))
             obs_shuffled = obs_i[perm]
@@ -182,33 +182,33 @@ end
 # Returns empty DataFrame on ODE failure; records NaN for non-finite logpdf.
 function _eval_individual_obs(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache,
         loss::Union{Nothing, Function})
-    model = dm.model
-    ind = dm.individuals[idx]
-    obs_rows = dm.row_groups.obs_rows[idx]
+    model = get_model(dm)
+    ind = get_individuals(dm)[idx]
+    obs_rows = get_obs_rows(get_row_groups(dm))[idx]
     isempty(obs_rows) && return DataFrame()
-    const_cov = ind.const_cov
-    obs_series = ind.series.obs
+    const_cov = get_const_cov(ind)
+    obs_series = get_obs(get_series(ind))
     vary_cache = cache.vary_cache === nothing ? nothing : cache.vary_cache[idx]
     η_ind isa NamedTuple && (η_ind = ComponentArray(η_ind))
 
     # ODE solving — shared scaffolding with _loglikelihood_individual (the preDE
     # NamedTuple is computed once and reused for the compile context and u0).
     sol_accessors = nothing
-    if model.de.de !== nothing
+    if get_de(model) !== nothing
         pre = calculate_prede(model, θ, η_ind, const_cov)
         sol_accessors = _ll_solve_de(dm, idx, θ, η_ind, cache, pre)
         sol_accessors === nothing && return DataFrame()
     end
 
-    obs_cols = dm.config.obs_cols
+    obs_cols = get_obs_cols(dm)
     rowwise_re = _needs_rowwise_random_effects(dm, idx; obs_only = true)
     T_el = promote_type(eltype(θ), eltype(η_ind))
     T_hmm = T_el
     hmm_priors = nothing
     hmm_seen = nothing
     hmm_init = nothing
-    time_vec = _get_col(dm.df, dm.config.time_col)[obs_rows]
-    id_val = dm.df[dm.row_groups.rows[idx][1], dm.config.primary_id]
+    time_vec = _get_col(get_df(dm), get_time_col(dm))[obs_rows]
+    id_val = get_df(dm)[get_rows(get_row_groups(dm))[idx][1], get_primary_id(dm)]
 
     rows_out = NamedTuple[]
 
@@ -318,7 +318,7 @@ end
 function _cv_collect_obs(dm_test, θu, η_vec, ll_cache_test, loss)
     dfs = DataFrame[]
     empty_eta = ComponentArray()
-    for j in 1:length(dm_test.individuals)
+    for j in 1:length(get_individuals(dm_test))
         η_j = η_vec === nothing ? empty_eta : η_vec[j]
         df = _eval_individual_obs(dm_test, j, θu, η_j, ll_cache_test, loss)
         isempty(df) || push!(dfs, df)
@@ -354,7 +354,7 @@ end
 # each RE distribution at that individual's constant covariates.
 function _cv_prior_mean_eta(
         dm, j, θu, dists_builder, model_funs, helpers, re_names, ref_eta)
-    const_cov = dm.individuals[j].const_cov
+    const_cov = get_const_cov(get_individuals(dm)[j])
     dists = dists_builder(θu, const_cov, model_funs, helpers)
     nt = NamedTuple((re => _re_prior_mean_or_zero(getproperty(dists, re),
                          getproperty(ref_eta, re))
@@ -366,7 +366,7 @@ end
 # plug-in η evaluated from their own covariates with the strategies resolved by
 # the training fit (replays demotions and fixed Monte-Carlo draws exactly).
 function _cv_evaluate_pooled(dm_test, res_train, θu, ll_cache_test, loss)
-    η_test = _compute_pooled_etas(dm_test, θu, res_train.result.strategies)
+    η_test = _compute_pooled_etas(dm_test, θu, get_result(res_train).strategies)
     return _cv_collect_obs(dm_test, θu, η_test, ll_cache_test, loss)
 end
 
@@ -378,22 +378,22 @@ function _cv_evaluate_ebe(dm_train, dm_test, res_train, θu, ll_cache_test, loss
         dm_train, res_train, constants_re)
     η_train_vec = _eta_from_eb(dm_train, batch_infos, bstars, const_cache, θu)
     re_to_eta = Dict{Any, ComponentArray}(
-        dm_train.individuals[i].re_groups => η_train_vec[i]
-    for i in 1:length(dm_train.individuals))
+        get_re_groups(get_individuals(dm_train)[i]) => η_train_vec[i]
+    for i in 1:length(get_individuals(dm_train)))
     ref_eta = η_train_vec[1]
-    dists_builder = get_create_random_effect_distribution(dm_test.model.random.random)
-    model_funs_test = get_model_funs(dm_test.model)
-    helpers_test = get_helper_funs(dm_test.model)
-    re_names = get_re_names(dm_test.model.random.random)
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm_test)))
+    model_funs_test = get_model_funs(get_model(dm_test))
+    helpers_test = get_helper_funs(get_model(dm_test))
+    re_names = get_re_names(get_random(get_model(dm_test)))
     mean_eta_cache = Dict{Int, ComponentArray}()
-    η_test = [haskey(re_to_eta, dm_test.individuals[j].re_groups) ?
-              re_to_eta[dm_test.individuals[j].re_groups] :
+    η_test = [haskey(re_to_eta, get_re_groups(get_individuals(dm_test)[j])) ?
+              re_to_eta[get_re_groups(get_individuals(dm_test)[j])] :
               get!(
                   () -> _cv_prior_mean_eta(dm_test, j, θu, dists_builder,
                       model_funs_test, helpers_test,
                       re_names, ref_eta),
                   mean_eta_cache, j)
-              for j in 1:length(dm_test.individuals)]
+              for j in 1:length(get_individuals(dm_test))]
     return _cv_collect_obs(dm_test, θu, η_test, ll_cache_test, loss)
 end
 
@@ -409,8 +409,8 @@ function _cv_evaluate_mc(dm_train, dm_test, res_train, θu, ll_cache_test, loss,
     # Lookup: test individual re_groups → (batch_idx, train_ind_idx)
     re_to_train = Dict{Any, Tuple{Int, Int}}()
     for (bi, info) in enumerate(batch_infos)
-        for i in info.inds
-            re_to_train[dm_train.individuals[i].re_groups] = (bi, i)
+        for i in get_inds(info)
+            re_to_train[get_re_groups(get_individuals(dm_train)[i])] = (bi, i)
         end
     end
     ref_eta = η_train_vec[1]
@@ -421,11 +421,11 @@ function _cv_evaluate_mc(dm_train, dm_test, res_train, θu, ll_cache_test, loss,
         const_cache, ll_cache_train, res_train, n_mc_samples, rng) : nothing
 
     # RE distribution builder — used for unseen :montecarlo draws and :mean plug-in.
-    dists_builder = get_create_random_effect_distribution(dm_test.model.random.random)
-    model_funs_test = get_model_funs(dm_test.model)
-    helpers_test = get_helper_funs(dm_test.model)
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm_test)))
+    model_funs_test = get_model_funs(get_model(dm_test))
+    helpers_test = get_helper_funs(get_model(dm_test))
 
-    n_test = length(dm_test.individuals)
+    n_test = length(get_individuals(dm_test))
     sample_rngs = _spawn_child_rngs(rng, n_mc_samples)
 
     # Prior-mean η for unseen individuals under :mean — identical across samples.
@@ -439,8 +439,8 @@ function _cv_evaluate_mc(dm_train, dm_test, res_train, θu, ll_cache_test, loss,
     for s in 1:n_mc_samples
         srng = sample_rngs[s]
         for j in 1:n_test
-            ind_j = dm_test.individuals[j]
-            key = ind_j.re_groups
+            ind_j = get_individuals(dm_test)[j]
+            key = get_re_groups(ind_j)
             tinfo = get(re_to_train, key, nothing)
             is_seen = tinfo !== nothing
 
@@ -453,7 +453,8 @@ function _cv_evaluate_mc(dm_train, dm_test, res_train, θu, ll_cache_test, loss,
                 η_train_vec[tinfo[2]]
             elseif unseen_re_mode == :montecarlo
                 dists = get!(
-                    () -> dists_builder(θu, ind_j.const_cov, model_funs_test, helpers_test),
+                    () -> dists_builder(
+                        θu, get_const_cov(ind_j), model_funs_test, helpers_test),
                     unseen_dists_cache, j)
                 ComponentArray(NamedTuple((re => rand(srng, getproperty(dists, re))
                 for re in re_names)))
@@ -595,14 +596,14 @@ function fit_cv(cv_spec::CVSpec, method::FittingMethod, args...;
             dm_test; ode_args = ode_args, ode_kwargs = ode_kwargs,
             serialization = EnsembleSerial(), force_saveat = true)
 
-        re_names = get_re_names(dm_train.model.random.random)
+        re_names = get_re_names(get_random(get_model(dm_train)))
         has_re = !isempty(re_names)
 
         cr = _res_constants_re(res_train, constants_re)
 
         obs_df = if !has_re
             _cv_collect_obs(dm_test, θu, nothing, ll_cache_test, loss)
-        elseif res_train.result isa PooledResult
+        elseif get_result(res_train) isa PooledResult
             # Pooled/PooledMap: plug-in η from each test individual's covariates
             _cv_evaluate_pooled(dm_test, res_train, θu, ll_cache_test, loss)
         elseif !_cv_has_re_support(res_train)

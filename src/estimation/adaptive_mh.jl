@@ -453,15 +453,15 @@ end
 # Build per-level individual index: level_inds[li] = batch-local ind indices
 # ---------------------------------------------------------------------------
 
-function _amh_build_level_inds(info::_LaplaceBatchInfo, ri::Int,
+function _amh_build_level_inds(info::REBatchInfo, ri::Int,
         laplace_cache)::Vector{Vector{Int}}
-    re_info = info.re_info[ri]
-    n_levels = length(re_info.map.levels)
+    re_info = get_re_info(info)[ri]
+    n_levels = length(get_levels(get_re_map(re_info)))
     level_inds = [Int[] for _ in 1:n_levels]
-    for (j, ind_global) in enumerate(info.inds)
-        ids_j = laplace_cache.ind_level_ids[ind_global][ri]
+    for (j, ind_global) in enumerate(get_inds(info))
+        ids_j = get_ind_level_ids(laplace_cache)[ind_global][ri]
         for id in ids_j
-            li = re_info.map.level_to_index[id]
+            li = get_level_to_index(get_re_map(re_info))[id]
             li == 0 && continue   # constant level — not in b
             push!(level_inds[li], j)
         end
@@ -473,36 +473,36 @@ end
 # State initialization
 # ---------------------------------------------------------------------------
 
-function _amh_init_state(dm::DataModel, info::_LaplaceBatchInfo,
+function _amh_init_state(dm::DataModel, info::REBatchInfo,
         θ::ComponentArray, re_names::Vector{Symbol},
-        const_cache::LaplaceConstantsCache, cache::_LLCache,
+        const_cache::REConstantsCache, cache::_LLCache,
         sampler::AdaptiveNoLimitsMH, rng::AbstractRNG)
-    nb = info.n_b
+    nb = get_n_b(info)
     b_current = zeros(Float64, nb)
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
-    re_types = get_re_types(dm.model.random.random)
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
+    re_types = get_re_types(get_random(get_model(dm)))
     model_funs = cache.model_funs
     helpers = cache.helpers
-    θ_re = _symmetrize_psd_params(θ, dm.model.fixed.fixed)
-    laplace_cache = dm.re_group_info.laplace_cache
+    θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
+    laplace_cache = get_laplace_cache(get_re_group_info(dm))
     blocks = _REAdaptBlock[]
     lp_offset = 0
 
     for (ri, re_name) in enumerate(re_names)
-        re_info = info.re_info[ri]
-        levels = re_info.map.levels
+        re_info = get_re_info(info)[ri]
+        levels = get_levels(get_re_map(re_info))
         n_levels = length(levels)
-        dim = re_info.dim
+        dim = get_dim(re_info)
         n_levels == 0 && continue
 
         # Sample from prior to initialize b
         for (li, _) in enumerate(levels)
-            const_cov = dm.individuals[re_info.reps[li]].const_cov
+            const_cov = get_const_cov(get_individuals(dm)[get_reps(re_info)[li]])
             dists = dists_builder(θ_re, const_cov, model_funs, helpers)
             dist = getproperty(dists, re_name)
             val = rand(rng, dist)
-            r = re_info.ranges[li]
-            if re_info.is_scalar
+            r = get_ranges(re_info)[li]
+            if get_is_scalar(re_info)
                 v = val isa AbstractVector ? val[1] : val
                 b_current[first(r)] = Float64(v)
             else
@@ -511,7 +511,7 @@ function _amh_init_state(dm::DataModel, info::_LaplaceBatchInfo,
         end
 
         # Representative distribution for initial proposal covariance
-        const_cov_rep = dm.individuals[re_info.reps[1]].const_cov
+        const_cov_rep = get_const_cov(get_individuals(dm)[get_reps(re_info)[1]])
         dists_rep = dists_builder(θ_re, const_cov_rep, model_funs, helpers)
         dist_rep = getproperty(dists_rep, re_name)
         re_type = get(re_types, re_name, :Unknown)
@@ -549,22 +549,22 @@ end
 # returns their total. Serves both the fresh-vector init path and the in-place
 # post-M-step recompute.
 function _amh_fill_ll!(ind_ll::Vector{Float64}, re_lp::Vector{Float64},
-        dm::DataModel, info::_LaplaceBatchInfo, θ_re::ComponentArray,
-        b::Vector{Float64}, const_cache::LaplaceConstantsCache, cache::_LLCache,
+        dm::DataModel, info::REBatchInfo, θ_re::ComponentArray,
+        b::Vector{Float64}, const_cache::REConstantsCache, cache::_LLCache,
         blocks::Vector{_REAdaptBlock}, dists_builder, model_funs, helpers)
     # Per-individual likelihoods
-    for (j, ind_global) in enumerate(info.inds)
+    for (j, ind_global) in enumerate(get_inds(info))
         η_ind = _build_eta_ind(dm, ind_global, info, b, const_cache, θ_re)
         ind_ll[j] = _loglikelihood_individual(dm, ind_global, θ_re, η_ind, cache)
     end
 
     # Per-level RE log-priors
     for block in blocks
-        re_info = info.re_info[block.ri]
+        re_info = get_re_info(info)[block.ri]
         for li in 1:(block.n_levels)
             lp_idx = block.lp_offset + li
-            level_id = re_info.map.levels[li]
-            const_cov = dm.individuals[re_info.reps[li]].const_cov
+            level_id = get_levels(get_re_map(re_info))[li]
+            const_cov = get_const_cov(get_individuals(dm)[get_reps(re_info)[li]])
             dists = dists_builder(θ_re, const_cov, model_funs, helpers)
             dist = getproperty(dists, block.re_name)
             v = _re_value_from_b(re_info, level_id, b)
@@ -575,12 +575,12 @@ function _amh_fill_ll!(ind_ll::Vector{Float64}, re_lp::Vector{Float64},
     return sum(ind_ll) + sum(re_lp)
 end
 
-function _amh_compute_full_ll(dm::DataModel, info::_LaplaceBatchInfo,
+function _amh_compute_full_ll(dm::DataModel, info::REBatchInfo,
         θ_re::ComponentArray, b::Vector{Float64},
-        const_cache::LaplaceConstantsCache, cache::_LLCache,
+        const_cache::REConstantsCache, cache::_LLCache,
         blocks::Vector{_REAdaptBlock},
         dists_builder, model_funs, helpers)
-    n_inds = length(info.inds)
+    n_inds = length(get_inds(info))
     n_lp = isempty(blocks) ? 0 : blocks[end].lp_offset + blocks[end].n_levels
     ind_ll = Vector{Float64}(undef, n_inds)
     re_lp = Vector{Float64}(undef, n_lp)
@@ -591,11 +591,11 @@ end
 
 # Recompute caches in-place after an M-step (θ changed, b_current unchanged).
 function _amh_recompute_ll_cache!(state::_AdaptiveMHState,
-        dm::DataModel, info::_LaplaceBatchInfo,
+        dm::DataModel, info::REBatchInfo,
         θ_re::ComponentArray,   # pre-symmetrized by the caller
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         cache::_LLCache)
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     state.logp = _amh_fill_ll!(state.ind_ll, state.re_lp, dm, info, θ_re,
         state.b_current, const_cache, cache, state.blocks, dists_builder,
         cache.model_funs, cache.helpers)
@@ -606,31 +606,31 @@ end
 # ---------------------------------------------------------------------------
 
 function _amh_step!(state::_AdaptiveMHState, dm::DataModel,
-        info::_LaplaceBatchInfo, θ_re::ComponentArray,
-        const_cache::LaplaceConstantsCache, cache::_LLCache,
+        info::REBatchInfo, θ_re::ComponentArray,
+        const_cache::REConstantsCache, cache::_LLCache,
         sampler::AdaptiveNoLimitsMH, rng::AbstractRNG;
         anneal_sds::NamedTuple = NamedTuple())
     # θ_re is pre-symmetrized once per E-step by the caller (this used to re-copy the
     # PSD blocks of θ on every one of the ~n_samples steps per E-step).
     b = state.b_current
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = cache.model_funs
     helpers = cache.helpers
     has_anneal = !isempty(anneal_sds)
 
     for block in state.blocks
-        re_info = info.re_info[block.ri]
+        re_info = get_re_info(info)[block.ri]
         n_levels = block.n_levels
         n_levels == 0 && continue
 
         for li in 1:n_levels
-            r = re_info.ranges[li]
+            r = get_ranges(re_info)[li]
             lp_idx = block.lp_offset + li
 
             # ------------------------------------------------------------------
             # 1. Save current value, propose in z-space
             # ------------------------------------------------------------------
-            if re_info.is_scalar
+            if get_is_scalar(re_info)
                 η_curr = b[first(r)]
                 old_val = η_curr          # scalar copy
             else
@@ -643,7 +643,7 @@ function _amh_step!(state::_AdaptiveMHState, dm::DataModel,
             η_prop = _amh_bij_inverse(block.re_type, z_prop)
 
             # Write proposal into b in-place
-            if re_info.is_scalar
+            if get_is_scalar(re_info)
                 b[first(r)] = Float64(η_prop isa AbstractVector ? η_prop[1] : η_prop)
             else
                 b[r] .= Float64.(η_prop)
@@ -652,13 +652,13 @@ function _amh_step!(state::_AdaptiveMHState, dm::DataModel,
             # ------------------------------------------------------------------
             # 2. RE log-prior at proposal (cheap: single logpdf)
             # ------------------------------------------------------------------
-            const_cov = dm.individuals[re_info.reps[li]].const_cov
+            const_cov = get_const_cov(get_individuals(dm)[get_reps(re_info)[li]])
             dists = dists_builder(θ_re, const_cov, model_funs, helpers)
             dist = getproperty(dists, block.re_name)
             if has_anneal && haskey(anneal_sds, block.re_name)
                 dist = _saem_apply_anneal_dist(dist, getfield(anneal_sds, block.re_name))
             end
-            η_for_lp = re_info.is_scalar ? b[first(r)] : b[r]
+            η_for_lp = get_is_scalar(re_info) ? b[first(r)] : b[r]
             new_re_lp = Float64(logpdf(dist, η_for_lp))
             old_re_lp = state.re_lp[lp_idx]
             delta_re = new_re_lp - old_re_lp
@@ -676,7 +676,7 @@ function _amh_step!(state::_AdaptiveMHState, dm::DataModel,
                     # ---- Fast path (no allocation) ----
                     j = affected[1]
                     old_ll_j = state.ind_ll[j]
-                    ind_global = info.inds[j]
+                    ind_global = get_inds(info)[j]
                     η_ind = _build_eta_ind(dm, ind_global, info, b, const_cache, θ_re)
                     new_ll_j = _loglikelihood_individual(dm, ind_global, θ_re, η_ind, cache)
                     if isfinite(new_ll_j)
@@ -699,7 +699,7 @@ function _amh_step!(state::_AdaptiveMHState, dm::DataModel,
                     delta_ind = 0.0
                     all_fin = true
                     for (k, j) in enumerate(affected)
-                        ind_global = info.inds[j]
+                        ind_global = get_inds(info)[j]
                         η_ind = _build_eta_ind(dm, ind_global, info, b,
                             const_cache, θ_re)
                         new_lls[k] = _loglikelihood_individual(dm, ind_global,
@@ -733,7 +733,7 @@ function _amh_step!(state::_AdaptiveMHState, dm::DataModel,
 
             # Restore b on reject
             if !accepted
-                if re_info.is_scalar
+                if get_is_scalar(re_info)
                     b[first(r)] = Float64(old_val)
                 else
                     b[r] .= old_val
@@ -743,7 +743,7 @@ function _amh_step!(state::_AdaptiveMHState, dm::DataModel,
             # ------------------------------------------------------------------
             # 4. Haario update with the current (accepted or unchanged) z value
             # ------------------------------------------------------------------
-            z_now = if re_info.is_scalar
+            z_now = if get_is_scalar(re_info)
                 _amh_bij_forward(block.re_type, b[first(r)])
             else
                 _amh_bij_forward(block.re_type, Vector{Float64}(b[r]))
@@ -757,15 +757,15 @@ end
 # _mcem_sample_batch dispatch for AdaptiveNoLimitsMH
 # ---------------------------------------------------------------------------
 
-function _mcem_sample_batch(dm::DataModel, info::_LaplaceBatchInfo,
+function _mcem_sample_batch(dm::DataModel, info::REBatchInfo,
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache, cache::_LLCache,
+        const_cache::REConstantsCache, cache::_LLCache,
         sampler::AdaptiveNoLimitsMH, turing_kwargs::NamedTuple,
         rng::AbstractRNG, re_names::Vector{Symbol},
         warm_start, last_params;
         anneal_sds::NamedTuple = NamedTuple(),
         outer_iter::Int = 1)
-    nb = info.n_b
+    nb = get_n_b(info)
     if nb == 0
         return (zeros(eltype(θ), 0, 0), nothing, eltype(θ)[])
     end
@@ -773,7 +773,7 @@ function _mcem_sample_batch(dm::DataModel, info::_LaplaceBatchInfo,
 
     # θ is constant across the whole E-step — symmetrize the PSD blocks ONCE here and
     # thread θ_re into the per-step kernel and the resync (each re-copied θ otherwise).
-    θ_re = _symmetrize_psd_params(θ, dm.model.fixed.fixed)
+    θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
 
     # Restore adaptation state or initialize from prior
     state = if warm_start && last_params isa _AdaptiveMHState

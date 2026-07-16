@@ -69,7 +69,7 @@ end
 end
 
 function _resolve_residual_observables(dm::DataModel, observables)
-    obs = get_formulas_meta(dm.model.formulas.formulas).obs_names
+    obs = get_formulas_meta(get_formulas(get_model(dm))).obs_names
     if observables === nothing
         return collect(obs)
     end
@@ -326,7 +326,7 @@ function get_residuals(res::FitResult;
     qhi = qvec[end] / 100
 
     x_axis_use = x_axis_feature
-    if dm.model.de.de === nothing
+    if get_de(get_model(dm)) === nothing
         x_axis_use = _require_varying_covariate(dm, x_axis_feature)
     end
 
@@ -342,8 +342,8 @@ function get_residuals(res::FitResult;
         isempty(θ_draws) && error("No posterior draws available for residual computation.")
 
         for i in inds
-            ind = dm.individuals[i]
-            obs_rows_all = dm.row_groups.obs_rows[i]
+            ind = get_individuals(dm)[i]
+            obs_rows_all = get_obs_rows(get_row_groups(dm))[i]
             obs_idx = _resolve_obs_rows(obs_rows, obs_rows_all)
             xvals = _get_x_values(dm, ind, obs_rows_all, x_axis_use)
             rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only = true)
@@ -352,18 +352,18 @@ function get_residuals(res::FitResult;
             for d in 1:n_draws
                 θ = θ_draws[d]
                 η_ind = η_draws[d][i]
-                if dm.model.de.de === nothing
+                if get_de(get_model(dm)) === nothing
                     sol_accessors_draw[d] = nothing
                 else
                     sol, compiled = _solve_dense_individual(
                         dm, ind, θ, η_ind; ode_args = ode_args, ode_kwargs = ode_kwargs)
                     sol_accessors_draw[d] = _sol_accessors_with_crossings(
-                        dm.model, sol, compiled, θ, η_ind, ind.const_cov)
+                        get_model(dm), sol, compiled, θ, η_ind, get_const_cov(ind))
                 end
             end
 
             for obs_name in obs_list
-                yvals = getfield(ind.series.obs, obs_name)
+                yvals = getfield(get_obs(get_series(ind)), obs_name)
                 # Full forward pass over ALL rows per draw, so HMM outcomes are
                 # conditioned on the filtered posterior from the preceding
                 # observations — mirrors the non-MCMC path below; for non-HMM
@@ -383,9 +383,9 @@ function get_residuals(res::FitResult;
                             dm, i, j, η_ind, rowwise_re; obs_only = true)
                         obs_j = sol_accessors === nothing ?
                                 calculate_formulas_obs(
-                            dm.model, θ, η_row_j, ind.const_cov, vary_j) :
+                            get_model(dm), θ, η_row_j, get_const_cov(ind), vary_j) :
                                 calculate_formulas_obs(
-                            dm.model, θ, η_row_j, ind.const_cov, vary_j, sol_accessors)
+                            get_model(dm), θ, η_row_j, get_const_cov(ind), vary_j, sol_accessors)
                         d_vec[j] = _apply_hmm_filter!(hmm_priors_d, obs_name,
                             getproperty(obs_j, obs_name), yvals[j])
                     end
@@ -393,8 +393,8 @@ function get_residuals(res::FitResult;
                 end
                 for j in obs_idx
                     row = obs_rows_all[j]
-                    id_val = dm.df[row, dm.config.primary_id]
-                    tval = _to_float_or_missing(dm.df[row, dm.config.time_col])
+                    id_val = get_df(dm)[row, get_primary_id(dm)]
+                    tval = _to_float_or_missing(get_df(dm)[row, get_time_col(dm)])
                     xval = _to_float_or_missing(xvals[j])
                     yval = _to_float_or_missing(yvals[j])
 
@@ -466,8 +466,8 @@ function get_residuals(res::FitResult;
                      cache)
 
         for i in inds
-            ind = dm.individuals[i]
-            obs_rows_all = dm.row_groups.obs_rows[i]
+            ind = get_individuals(dm)[i]
+            obs_rows_all = get_obs_rows(get_row_groups(dm))[i]
             obs_idx = _resolve_obs_rows(obs_rows, obs_rows_all)
             xvals = _get_x_values(dm, ind, obs_rows_all, x_axis_use)
             rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only = true)
@@ -475,23 +475,24 @@ function get_residuals(res::FitResult;
             θ = cache_use.params
             η_ind = cache_use.random_effects[i]
             sol_accessors = nothing
-            if dm.model.de.de !== nothing
+            if get_de(get_model(dm)) !== nothing
                 sol = cache_use.sols[i]
-                compiled = get_de_compiler(dm.model.de.de)((;
+                compiled = get_de_compiler(get_de(get_model(dm)))((;
                     fixed_effects = θ,
                     random_effects = η_ind,
-                    constant_covariates = ind.const_cov,
-                    varying_covariates = merge((t = ind.series.vary.t[1],), ind.series.dyn),
-                    helpers = get_helper_funs(dm.model),
-                    model_funs = get_model_funs(dm.model),
-                    preDE = calculate_prede(dm.model, θ, η_ind, ind.const_cov)
+                    constant_covariates = get_const_cov(ind),
+                    varying_covariates = merge(
+                        (t = get_vary(get_series(ind)).t[1],), get_dyn(get_series(ind))),
+                    helpers = get_helper_funs(get_model(dm)),
+                    model_funs = get_model_funs(get_model(dm)),
+                    preDE = calculate_prede(get_model(dm), θ, η_ind, get_const_cov(ind))
                 ))
                 sol_accessors = _sol_accessors_with_crossings(
-                    dm.model, sol, compiled, θ, η_ind, ind.const_cov)
+                    get_model(dm), sol, compiled, θ, η_ind, get_const_cov(ind))
             end
 
             for obs_name in obs_list
-                yvals = getfield(ind.series.obs, obs_name)
+                yvals = getfield(get_obs(get_series(ind)), obs_name)
                 # Non-cache path: do a full forward pass through all rows for HMM filtering,
                 # storing filtered dists so obs_idx subsets get the correct filtered state.
                 row_dists_res = if cache_use.obs_dists === nothing
@@ -504,9 +505,9 @@ function get_residuals(res::FitResult;
                             dm, i, j, η_ind, rowwise_re; obs_only = true)
                         obs_j = sol_accessors === nothing ?
                                 calculate_formulas_obs(
-                            dm.model, θ, η_row_j, ind.const_cov, vary_j) :
+                            get_model(dm), θ, η_row_j, get_const_cov(ind), vary_j) :
                                 calculate_formulas_obs(
-                            dm.model, θ, η_row_j, ind.const_cov, vary_j, sol_accessors)
+                            get_model(dm), θ, η_row_j, get_const_cov(ind), vary_j, sol_accessors)
                         d_vec[j] = _apply_hmm_filter!(hmm_priors_res, obs_name,
                             getproperty(obs_j, obs_name), yvals[j])
                     end
@@ -516,8 +517,8 @@ function get_residuals(res::FitResult;
                 end
                 for j in obs_idx
                     row = obs_rows_all[j]
-                    id_val = dm.df[row, dm.config.primary_id]
-                    tval = _to_float_or_missing(dm.df[row, dm.config.time_col])
+                    id_val = get_df(dm)[row, get_primary_id(dm)]
+                    tval = _to_float_or_missing(get_df(dm)[row, get_time_col(dm)])
                     xval = _to_float_or_missing(xvals[j])
                     yval = _to_float_or_missing(yvals[j])
 
@@ -745,21 +746,21 @@ function _validate_predict_re_mode(res::FitResult, dm::DataModel, re_mode::Symbo
     re_mode in (:population, :ebe, :reestimate, :marginal) ||
         error("predict: re_mode must be :population, :ebe, :reestimate, or :marginal; " *
               "got :$re_mode.")
-    isempty(get_re_names(dm.model.random.random)) &&
+    isempty(get_re_names(get_random(get_model(dm)))) &&
         error("predict: re_mode=:$re_mode requires a model with random effects; " *
               "use re_mode=:population.")
     _is_posterior_draw_fit(res) &&
         error("predict: re_mode=:$re_mode is not supported for MCMC/VI posterior-draw " *
               "fits; use re_mode=:population (it integrates the posterior draws).")
     if re_mode == :reestimate
-        (res.result isa LaplaceResult || res.result isa MCEMResult ||
-         res.result isa SAEMResult) ||
+        (get_result(res) isa LaplaceResult || get_result(res) isa MCEMResult ||
+         get_result(res) isa SAEMResult) ||
             error("predict: re_mode=:reestimate requires a Laplace, FOCEI, MCEM, or SAEM " *
                   "fit (GHQuadrature is unsupported); use re_mode=:ebe instead.")
     else
         _cv_has_re_support(res) ||
             error("predict: re_mode=:$re_mode requires a Laplace, FOCEI, GHQuadrature, " *
-                  "MCEM, or SAEM fit; got $(typeof(res.result)).")
+                  "MCEM, or SAEM fit; got $(typeof(get_result(res))).")
     end
     return nothing
 end
@@ -776,10 +777,10 @@ function _predict_eta_ebe(res::FitResult, dm_new::DataModel, θ::ComponentArray,
     bstars, batch_infos, θu, const_cache, _, _ = _resolve_bstars_for_re(
         dm_old, res, constants_re)
     η_train = _eta_from_eb(dm_old, batch_infos, bstars, const_cache, θu)
-    re_to_eta = Dict{Any, ComponentArray}(dm_old.individuals[i].re_groups => η_train[i]
-    for i in 1:length(dm_old.individuals))
-    for j in 1:length(dm_new.individuals)
-        key = dm_new.individuals[j].re_groups
+    re_to_eta = Dict{Any, ComponentArray}(get_re_groups(get_individuals(dm_old)[i]) => η_train[i]
+    for i in 1:length(get_individuals(dm_old)))
+    for j in 1:length(get_individuals(dm_new))
+        key = get_re_groups(get_individuals(dm_new)[j])
         haskey(re_to_eta, key) && (η_vec[j] = re_to_eta[key])
     end
     return η_vec
@@ -799,18 +800,18 @@ function _predict_marginal(res::FitResult, dm_new::DataModel, θ::ComponentArray
         dm_old, res, constants_re)
     re_to_train = Dict{Any, Tuple{Int, Int}}()
     for (bi, info) in enumerate(batch_infos)
-        for i in info.inds
-            re_to_train[dm_old.individuals[i].re_groups] = (bi, i)
+        for i in get_inds(info)
+            re_to_train[get_re_groups(get_individuals(dm_old)[i])] = (bi, i)
         end
     end
     bstars_per_sample = _sample_conditional_bstars(dm_old, batch_infos, bstars, θu,
         const_cache, ll_cache_train, res, marginal_draws, rng)
-    dists_builder = get_create_random_effect_distribution(dm_new.model.random.random)
-    model_funs = get_model_funs(dm_new.model)
-    helpers = get_helper_funs(dm_new.model)
-    re_names = get_re_names(dm_new.model.random.random)
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm_new)))
+    model_funs = get_model_funs(get_model(dm_new))
+    helpers = get_helper_funs(get_model(dm_new))
+    re_names = get_re_names(get_random(get_model(dm_new)))
     sample_rngs = _spawn_child_rngs(rng, marginal_draws)
-    n_new = length(dm_new.individuals)
+    n_new = length(get_individuals(dm_new))
 
     sum_acc = Float64[]
     cnt_acc = Int[]
@@ -821,14 +822,14 @@ function _predict_marginal(res::FitResult, dm_new::DataModel, θ::ComponentArray
         srng = sample_rngs[s]
         η_vec = Vector{ComponentArray}(undef, n_new)
         for j in 1:n_new
-            tinfo = get(re_to_train, dm_new.individuals[j].re_groups, nothing)
+            tinfo = get(re_to_train, get_re_groups(get_individuals(dm_new)[j]), nothing)
             η_vec[j] = if tinfo !== nothing
                 bi, ti = tinfo
                 ComponentArray(_build_eta_ind(dm_old, ti, batch_infos[bi],
                     bstars_per_sample[s][bi], const_cache, θu))
             else
                 dists = dists_builder(
-                    θu, dm_new.individuals[j].const_cov, model_funs, helpers)
+                    θu, get_const_cov(get_individuals(dm_new)[j]), model_funs, helpers)
                 ComponentArray(NamedTuple((re => rand(srng, getproperty(dists, re))
                 for re in re_names)))
             end

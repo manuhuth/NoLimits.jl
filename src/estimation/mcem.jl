@@ -325,15 +325,15 @@ function _build_mcem_batch_model(re_names::Vector{Symbol})
         ranges_sym = Symbol(re, :_ranges)
         vals_sym = Symbol(re, :_vals)
         push!(re_val_syms, vals_sym)
-        meta_get = :(info.re_info[$ri])
-        levels_get = :(getproperty(getproperty($meta_sym, :map), :levels))
-        reps_get = :(getproperty($meta_sym, :reps))
-        ranges_get = :(getproperty($meta_sym, :ranges))
-        is_scalar = :(getproperty($meta_sym, :is_scalar))
+        meta_get = :(get_re_info(info)[$ri])
+        levels_get = :(get_levels(get_re_map($meta_sym)))
+        reps_get = :(get_reps($meta_sym))
+        ranges_get = :(get_ranges($meta_sym))
+        is_scalar = :(get_is_scalar($meta_sym))
         scalar_block = quote
             local nlvls = length($levels_sym)
             if nlvls > 0
-                const_cov = dm.individuals[$reps_sym[1]].const_cov
+                const_cov = get_const_cov(get_individuals(dm)[$reps_sym[1]])
                 dists = dists_builder(θ_re, const_cov, model_funs, helpers)
                 dist = getproperty(dists, $re_q)
                 if _has_anneal && haskey(anneal_sds, $re_q)
@@ -343,7 +343,7 @@ function _build_mcem_batch_model(re_names::Vector{Symbol})
                 local $vals_sym = Vector{typeof(v1)}(undef, nlvls)
                 $vals_sym[1] = v1
                 for j in 2:nlvls
-                    const_cov = dm.individuals[$reps_sym[j]].const_cov
+                    const_cov = get_const_cov(get_individuals(dm)[$reps_sym[j]])
                     dists = dists_builder(θ_re, const_cov, model_funs, helpers)
                     dist = getproperty(dists, $re_q)
                     if _has_anneal && haskey(anneal_sds, $re_q)
@@ -358,7 +358,7 @@ function _build_mcem_batch_model(re_names::Vector{Symbol})
         vector_block = quote
             local nlvls = length($levels_sym)
             if nlvls > 0
-                const_cov = dm.individuals[$reps_sym[1]].const_cov
+                const_cov = get_const_cov(get_individuals(dm)[$reps_sym[1]])
                 dists = dists_builder(θ_re, const_cov, model_funs, helpers)
                 dist = getproperty(dists, $re_q)
                 if _has_anneal && haskey(anneal_sds, $re_q)
@@ -368,7 +368,7 @@ function _build_mcem_batch_model(re_names::Vector{Symbol})
                 local $vals_sym = Vector{typeof(v1)}(undef, nlvls)
                 $vals_sym[1] = v1
                 for j in 2:nlvls
-                    const_cov = dm.individuals[$reps_sym[j]].const_cov
+                    const_cov = get_const_cov(get_individuals(dm)[$reps_sym[j]])
                     dists = dists_builder(θ_re, const_cov, model_funs, helpers)
                     dist = getproperty(dists, $re_q)
                     if _has_anneal && haskey(anneal_sds, $re_q)
@@ -396,8 +396,8 @@ function _build_mcem_batch_model(re_names::Vector{Symbol})
 
     ex = quote
         @model function $(fname)(dm, info, θ, const_cache, cache, anneal_sds = NamedTuple())
-            θ_re = _symmetrize_psd_params(θ, dm.model.fixed.fixed)
-            dists_builder = get_create_random_effect_distribution(dm.model.random.random)
+            θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
+            dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
             model_funs = cache.model_funs
             helpers = cache.helpers
             _has_anneal = !isempty(anneal_sds)
@@ -415,16 +415,16 @@ function _build_mcem_batch_model(re_names::Vector{Symbol})
                 end
             end
 
-            nb = info.n_b
+            nb = get_n_b(info)
             b = Vector{Tb}(undef, nb)
             for (ri, re) in enumerate($re_names)
-                meta = info.re_info[ri]
-                levels = getproperty(getproperty(meta, :map), :levels)
-                ranges = meta.ranges
+                meta = get_re_info(info)[ri]
+                levels = get_levels(get_re_map(meta))
+                ranges = get_ranges(meta)
                 vals = getproperty(re_samples, re)
                 for (li, _) in enumerate(levels)
                     r = ranges[li]
-                    if meta.is_scalar
+                    if get_is_scalar(meta)
                         b[first(r)] = vals[li]
                     else
                         b[r] .= vals[li]
@@ -433,7 +433,7 @@ function _build_mcem_batch_model(re_names::Vector{Symbol})
             end
 
             ll = zero(Tb)
-            for i in info.inds
+            for i in get_inds(info)
                 η_ind = _build_eta_ind(dm, i, info, b, const_cache, θ)
                 lli = _loglikelihood_individual(dm, i, θ, η_ind, cache)
                 if !isfinite(lli)
@@ -452,8 +452,8 @@ function _build_mcem_batch_model(re_names::Vector{Symbol})
     return fname
 end
 
-function _extract_b_samples(chain, info::_LaplaceBatchInfo, re_names::Vector{Symbol})
-    nb = info.n_b
+function _extract_b_samples(chain, info::REBatchInfo, re_names::Vector{Symbol})
+    nb = get_n_b(info)
     nb == 0 && return (zeros(Float64, 0, 0), Float64[], Float64[])
     names = MCMCChains.names(chain, :parameters)
     name_to_idx = Dict{String, Int}()
@@ -481,12 +481,12 @@ function _extract_b_samples(chain, info::_LaplaceBatchInfo, re_names::Vector{Sym
         for t in 1:iters
             b = view(samples, :, col)
             for (ri, re) in enumerate(re_names)
-                meta = info.re_info[ri]
-                levels = getproperty(getproperty(meta, :map), :levels)
-                ranges = meta.ranges
+                meta = get_re_info(info)[ri]
+                levels = get_levels(get_re_map(meta))
+                ranges = get_ranges(meta)
                 for li in eachindex(levels)
                     r = ranges[li]
-                    if meta.is_scalar
+                    if get_is_scalar(meta)
                         key = string(re, "_vals[", li, "]")
                         idx = get(name_to_idx, key, 0)
                         if idx == 0 && li == 1
@@ -520,24 +520,24 @@ function _extract_b_samples(chain, info::_LaplaceBatchInfo, re_names::Vector{Sym
 end
 
 function _re_dists_for_info(dm::DataModel,
-        info::_LaplaceBatchInfo,
+        info::REBatchInfo,
         θ::ComponentArray,
         cache::_LLCache)
     model_funs = cache.model_funs
     helpers = cache.helpers
-    θ_re = _symmetrize_psd_params(θ, dm.model.fixed.fixed)
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
-    cache_re = dm.re_group_info.laplace_cache
-    re_names = cache_re.re_names
+    θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
+    cache_re = get_laplace_cache(get_re_group_info(dm))
+    re_names = get_re_names(cache_re)
     pairs = Vector{Pair{Symbol, Vector{Distributions.Distribution}}}(
         undef, length(re_names))
     for (ri, re) in enumerate(re_names)
-        info_re = info.re_info[ri]
-        levels = getproperty(getproperty(info_re, :map), :levels)
+        info_re = get_re_info(info)[ri]
+        levels = get_levels(get_re_map(info_re))
         dists = Vector{Distributions.Distribution}(undef, length(levels))
         for (li, level) in enumerate(levels)
-            rep_idx = info_re.reps[li]
-            const_cov = dm.individuals[rep_idx].const_cov
+            rep_idx = get_reps(info_re)[li]
+            const_cov = get_const_cov(get_individuals(dm)[rep_idx])
             d = dists_builder(θ_re, const_cov, model_funs, helpers)
             dists[li] = getproperty(d, re)
         end
@@ -547,23 +547,23 @@ function _re_dists_for_info(dm::DataModel,
 end
 
 function _filter_b_samples_by_prior(dm::DataModel,
-        info::_LaplaceBatchInfo,
+        info::REBatchInfo,
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         cache::_LLCache,
         samples::AbstractMatrix)
     size(samples, 2) == 0 && return samples
     dists_by_re = _re_dists_for_info(dm, info, θ, cache)
     keep = trues(size(samples, 2))
-    re_names = dm.re_group_info.laplace_cache.re_names
+    re_names = get_re_names(get_laplace_cache(get_re_group_info(dm)))
     for s in 1:size(samples, 2)
         b = view(samples, :, s)
         ok = true
         for (ri, re) in enumerate(re_names)
-            info_re = info.re_info[ri]
-            isempty(info_re.map.levels) && continue
+            info_re = get_re_info(info)[ri]
+            isempty(get_levels(get_re_map(info_re))) && continue
             dists = getproperty(dists_by_re, re)
-            for (li, level_id) in enumerate(info_re.map.levels)
+            for (li, level_id) in enumerate(get_levels(get_re_map(info_re)))
                 v = _re_value_from_b(info_re, level_id, b)
                 v === nothing && continue
                 lp = logpdf(dists[li], v)
@@ -588,7 +588,7 @@ function _mcem_sample_batch(dm, info, θ, const_cache, cache, sampler, turing_kw
     if sampler isa SaemixMH
         error("SAEM internal error: SaemixMH dispatched to generic _mcem_sample_batch with cache type $(typeof(cache)). This usually means a threaded SAEM path passed a cache vector instead of a per-thread cache.")
     end
-    nb = info.n_b
+    nb = get_n_b(info)
     if nb == 0
         return (zeros(eltype(θ), 0, 0), Float64[], eltype(θ)[])
     end
@@ -629,26 +629,26 @@ end
 # lp_offset and level_inds are set to dummy values — they are only used by
 # _amh_step_block! (MH path), not by _amh_haario_update! (reused here).
 function _is_init_proposal_blocks(dm::DataModel,
-        info::_LaplaceBatchInfo,
+        info::REBatchInfo,
         θ::ComponentArray,
         cache::_LLCache,
         re_names::Vector{Symbol},
         re_types::NamedTuple;
         init_scale::Float64 = 1.0,
         eps_reg::Float64 = 1e-6)
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = cache.model_funs
     helpers = cache.helpers
     blocks = Vector{_REAdaptBlock}(undef, length(re_names))
     for (ri, re) in enumerate(re_names)
-        re_info = info.re_info[ri]
-        dim = re_info.dim
-        n_levels = length(re_info.map.levels)
+        re_info = get_re_info(info)[ri]
+        dim = get_dim(re_info)
+        n_levels = length(get_levels(get_re_map(re_info)))
         re_type = getproperty(re_types, re)
         # Get representative distribution from first active level
         dist = if n_levels > 0
-            rep_idx = re_info.reps[1]
-            const_cov = dm.individuals[rep_idx].const_cov
+            rep_idx = get_reps(re_info)[1]
+            const_cov = get_const_cov(get_individuals(dm)[rep_idx])
             dists = dists_builder(θ, const_cov, model_funs, helpers)
             getproperty(dists, re)
         else
@@ -673,8 +673,8 @@ end
 # Prior-mean initial RE vector for one batch, retrying with up to 10 prior draws
 # when the prior mean has a non-finite log-joint. Shared MCEM/SAEM pre-loop seed;
 # `method_label` only flavors the error message.
-function _em_seed_batch_b(dm::DataModel, info::_LaplaceBatchInfo, θ0_u,
-        const_cache::LaplaceConstantsCache, cache_init, rng::AbstractRNG,
+function _em_seed_batch_b(dm::DataModel, info::REBatchInfo, θ0_u,
+        const_cache::REConstantsCache, cache_init, rng::AbstractRNG,
         re_names, bi::Int, method_label::String)
     b_init = _re_prior_mean_b(dm, info, θ0_u, const_cache, cache_init, re_names)
     logf = _laplace_logf_batch(dm, info, θ0_u, b_init, const_cache, cache_init)
@@ -696,18 +696,18 @@ end
 # Draw n_samples from the prior proposal for a single batch.
 # Returns (samples::Matrix{Float64}(n_b, n_samples), log_qs::Vector{Float64}).
 function _is_prior_sample_batch(dm::DataModel,
-        info::_LaplaceBatchInfo,
+        info::REBatchInfo,
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         cache::_LLCache,
         rng::AbstractRNG,
         n_samples::Int,
         re_names::Vector{Symbol})
-    nb = info.n_b
+    nb = get_n_b(info)
     if nb == 0
         return (zeros(Float64, 0, n_samples), zeros(Float64, n_samples))
     end
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = cache.model_funs
     helpers = cache.helpers
     # Hoist the per-level prior distributions out of the sample loop: they depend
@@ -715,16 +715,16 @@ function _is_prior_sample_batch(dm::DataModel,
     # n_samples draws. Rebuilding the full RE NamedTuple plus the runtime-Symbol
     # `getproperty` per draw measured 2.2× slower at the 500-sample default.
     dist_table = [begin
-                      re_info = info.re_info[ri]
+                      re_info = get_re_info(info)[ri]
                       # `map(identity, ...)` narrows the Any-inferred comprehension to a
                       # concrete eltype for single-family REs → typed rand/logpdf below.
                       map(identity,
                           [getproperty(
                                dists_builder(θ,
-                                   dm.individuals[re_info.reps[li]].const_cov,
+                                   get_const_cov(get_individuals(dm)[get_reps(re_info)[li]]),
                                    model_funs, helpers),
                                re)
-                           for li in eachindex(re_info.map.levels)])
+                           for li in eachindex(get_levels(get_re_map(re_info)))])
                   end
                   for (ri, re) in enumerate(re_names)]
     samples = Matrix{Float64}(undef, nb, n_samples)
@@ -733,15 +733,15 @@ function _is_prior_sample_batch(dm::DataModel,
         b = view(samples, :, m)
         lq = 0.0
         for (ri, re) in enumerate(re_names)
-            re_info = info.re_info[ri]
-            levels = re_info.map.levels
+            re_info = get_re_info(info)[ri]
+            levels = get_levels(get_re_map(re_info))
             isempty(levels) && continue
             dists_ri = dist_table[ri]
             for (li, _) in enumerate(levels)
-                r = re_info.ranges[li]
+                r = get_ranges(re_info)[li]
                 dist = dists_ri[li]
                 draw = rand(rng, dist)
-                if re_info.is_scalar
+                if get_is_scalar(re_info)
                     b[first(r)] = draw isa AbstractVector ? draw[1] : Float64(draw)
                     lq += logpdf(dist, b[first(r)])
                 else
@@ -758,22 +758,22 @@ end
 # Build a b vector at the prior mean (or median fallback) for each RE level in a batch.
 # Used to initialize b_current and Turing's starting state before the main SAEM/MCEM loop.
 function _re_prior_mean_b(dm::DataModel,
-        info::_LaplaceBatchInfo,
+        info::REBatchInfo,
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         cache::_LLCache,
         re_names::Vector{Symbol})
-    nb = info.n_b
+    nb = get_n_b(info)
     b = zeros(Float64, nb)
     nb == 0 && return b
     dists_by_re = _re_dists_for_info(dm, info, θ, cache)
     for (ri, re) in enumerate(re_names)
-        meta = info.re_info[ri]
-        levels = meta.map.levels
+        meta = get_re_info(info)[ri]
+        levels = get_levels(get_re_map(meta))
         isempty(levels) && continue
         dists = getproperty(dists_by_re, re)
         for (li, _) in enumerate(levels)
-            r = meta.ranges[li]
+            r = get_ranges(meta)[li]
             dist = dists[li]
             # Try mean, then median — both are generic Distributions.jl API
             val = try
@@ -791,7 +791,7 @@ function _re_prior_mean_b(dm::DataModel,
                 end
             end
             val === nothing && continue   # leave b at 0 for this level
-            if meta.is_scalar
+            if get_is_scalar(meta)
                 b[first(r)] = val isa Number ? Float64(val) : Float64(val[1])
             else
                 v = val isa AbstractVector ? val : [val]
@@ -809,15 +809,15 @@ end
 # Key names match those produced by `_extract_b_samples`: level 1 → `η_v1` (or `η_v1[k]`
 # for vectors), level li>1 → `η_vals[li]` (or `η_vals[li][k]` for vectors).
 function _b_to_last_params(b::AbstractVector,
-        info::_LaplaceBatchInfo,
+        info::REBatchInfo,
         re_names::Vector{Symbol})
     pairs = Pair{Symbol, Float64}[]
     for (ri, re) in enumerate(re_names)
-        meta = info.re_info[ri]
-        levels = meta.map.levels
+        meta = get_re_info(info)[ri]
+        levels = get_levels(get_re_map(meta))
         for (li, _) in enumerate(levels)
-            r = meta.ranges[li]
-            if meta.is_scalar
+            r = get_ranges(meta)[li]
+            if get_is_scalar(meta)
                 key = li == 1 ? Symbol(re, :_v1) : Symbol(string(re, "_vals[", li, "]"))
                 push!(pairs, key => Float64(b[first(r)]))
             else
@@ -841,13 +841,13 @@ end
 # sampling from the initial covariance (blocks.μ_run starts at zero = prior mean
 # in z-space for symmetric distributions like Normal).
 function _is_gaussian_sample_batch(dm::DataModel,
-        info::_LaplaceBatchInfo,
+        info::REBatchInfo,
         rng::AbstractRNG,
         n_samples::Int,
         re_names::Vector{Symbol},
         re_types::NamedTuple,
         blocks::Vector{_REAdaptBlock})
-    nb = info.n_b
+    nb = get_n_b(info)
     if nb == 0
         return (zeros(Float64, 0, n_samples), zeros(Float64, n_samples))
     end
@@ -865,8 +865,8 @@ function _is_gaussian_sample_batch(dm::DataModel,
         b = view(samples, :, m)
         lq = 0.0
         for (ri, re) in enumerate(re_names)
-            re_info = info.re_info[ri]
-            levels = re_info.map.levels
+            re_info = get_re_info(info)[ri]
+            levels = get_levels(get_re_map(re_info))
             isempty(levels) && continue
             block = blocks[ri]
             re_type = getproperty(re_types, re)
@@ -874,12 +874,12 @@ function _is_gaussian_sample_batch(dm::DataModel,
             μ = block.μ_run
             dim = block.dim
             for li in eachindex(levels)
-                r = re_info.ranges[li]
+                r = get_ranges(re_info)[li]
                 # Draw z ~ N(μ, C) in bijected space
                 z = _amh_propose(rng, μ, L)
                 # Back-transform to natural space
                 η = _amh_bij_inverse(re_type, dim == 1 ? z[1] : z)
-                if re_info.is_scalar
+                if get_is_scalar(re_info)
                     η_val = η isa AbstractVector ? η[1] : Float64(η)
                     b[first(r)] = η_val
                     z_val = z[1]
@@ -917,9 +917,9 @@ end
 # log_ws[m] = log p(y, b_m | θ_k) - log_qs[m], then log-normalized (logsumexp = 0).
 # Returns (log_ws::Vector{Float64}, ess::Float64).
 function _is_compute_log_weights(dm::DataModel,
-        info::_LaplaceBatchInfo,
+        info::REBatchInfo,
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         cache::_LLCache,
         samples::AbstractMatrix,
         log_qs::AbstractVector{Float64})
@@ -955,7 +955,7 @@ end
 # Pooling across all levels within the batch is intentional — they share the proposal.
 function _is_update_blocks!(blocks::Vector{_REAdaptBlock},
         samples::AbstractMatrix,
-        info::_LaplaceBatchInfo,
+        info::REBatchInfo,
         re_names::Vector{Symbol},
         re_types::NamedTuple,
         adapt_start::Int,
@@ -970,8 +970,8 @@ function _is_update_blocks!(blocks::Vector{_REAdaptBlock},
         exp.(log_ws)                            # already log-normalized → sum ≈ 1
     end
     for (ri, re) in enumerate(re_names)
-        re_info = info.re_info[ri]
-        levels = re_info.map.levels
+        re_info = get_re_info(info)[ri]
+        levels = get_levels(get_re_map(re_info))
         isempty(levels) && continue
         block = blocks[ri]
         re_type = getproperty(re_types, re)
@@ -986,8 +986,8 @@ function _is_update_blocks!(blocks::Vector{_REAdaptBlock},
             b = view(samples, :, m)
             for li in eachindex(levels)
                 k += 1
-                r = re_info.ranges[li]
-                η = re_info.is_scalar ? b[first(r)] : Vector{Float64}(view(b, r))
+                r = get_ranges(re_info)[li]
+                η = get_is_scalar(re_info) ? b[first(r)] : Vector{Float64}(view(b, r))
                 z = _amh_bij_forward(re_type, η)
                 z_v = dim == 1 ? Float64(z isa AbstractVector ? z[1] : z) : nothing
                 if dim == 1
@@ -1024,9 +1024,9 @@ end
 # Unified IS E-step dispatcher for a single batch.
 # Returns (samples, log_ws, ess) — log_ws are log-normalized weights.
 function _is_sample_batch(dm::DataModel,
-        info::_LaplaceBatchInfo,
+        info::REBatchInfo,
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         cache::_LLCache,
         rng::AbstractRNG,
         re_names::Vector{Symbol},
@@ -1069,9 +1069,9 @@ _mcmc_e_step(es::MCEM_IS) = es.mcmc_warmup
 # (RE prior only, no ODE work) for the Q2 step. Julia specializes on the
 # function argument, so both wrappers compile to the historical bodies.
 function _mcem_Q_core(logf_fn::F, dm::DataModel,
-        batch_infos::Vector{_LaplaceBatchInfo},
+        batch_infos::Vector{REBatchInfo},
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         ll_cache,
         samples_by_batch::AbstractVector{<:AbstractMatrix},
         weights_by_batch::Union{Nothing, AbstractVector{<:AbstractVector}} = nothing;
@@ -1082,7 +1082,7 @@ function _mcem_Q_core(logf_fn::F, dm::DataModel,
     # Constant-RE batches (n_b == 0): logf is independent of samples — evaluate once.
     ll_cache_c = ll_cache isa Vector ? ll_cache[1] : ll_cache
     for (bi, info) in enumerate(batch_infos)
-        info.n_b > 0 && continue
+        get_n_b(info) > 0 && continue
         logf = logf_fn(dm, info, θ, Tθ[], const_cache, ll_cache_c)
         !isfinite(logf) && return Tθ(Inf)
         total += logf
@@ -1104,7 +1104,7 @@ function _mcem_Q_core(logf_fn::F, dm::DataModel,
             cache_c = caches[chunk]
             for bi in chunk:n_chunks:length(batch_infos)
                 bad[] && break
-                batch_infos[bi].n_b == 0 && continue
+                get_n_b(batch_infos[bi]) == 0 && continue
                 info = batch_infos[bi]
                 samples = samples_by_batch[bi]
                 ws = weights_by_batch === nothing ? nothing : weights_by_batch[bi]
@@ -1135,7 +1135,7 @@ function _mcem_Q_core(logf_fn::F, dm::DataModel,
     else
         ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
         for (bi, info) in enumerate(batch_infos)
-            info.n_b == 0 && continue
+            get_n_b(info) == 0 && continue
             samples = samples_by_batch[bi]
             ws = weights_by_batch === nothing ? nothing : weights_by_batch[bi]
             acc = zero(Tθ)
@@ -1158,9 +1158,9 @@ function _mcem_Q_core(logf_fn::F, dm::DataModel,
 end
 
 function _mcem_Q_array(dm::DataModel,
-        batch_infos::Vector{_LaplaceBatchInfo},
+        batch_infos::Vector{REBatchInfo},
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         ll_cache,
         samples_by_batch::AbstractVector{<:AbstractMatrix},
         weights_by_batch::Union{Nothing, AbstractVector{<:AbstractVector}} = nothing;
@@ -1172,9 +1172,9 @@ function _mcem_Q_array(dm::DataModel,
 end
 
 function _mcem_Q(dm::DataModel,
-        batch_infos::Vector{_LaplaceBatchInfo},
+        batch_infos::Vector{REBatchInfo},
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         ll_cache,
         samples_by_batch::AbstractVector{<:AbstractMatrix},
         weights_by_batch::Union{Nothing, AbstractVector{<:AbstractVector}} = nothing;
@@ -1187,9 +1187,9 @@ end
 # Q2 counterpart to _mcem_Q: evaluates only log p(η|θ_re) — no ODE calls.
 # Used for the Q2 M-step (parameters that appear only in RE distribution expressions).
 function _mcem_Q2(dm::DataModel,
-        batch_infos::Vector{_LaplaceBatchInfo},
+        batch_infos::Vector{REBatchInfo},
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         ll_cache,
         samples_by_batch::AbstractVector{<:AbstractMatrix},
         weights_by_batch::Union{Nothing, AbstractVector{<:AbstractVector}} = nothing;
@@ -1221,10 +1221,10 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
         theta_0_untransformed = theta_0_untransformed,
         store_eb_modes = store_eb_modes,
         store_data_model = store_data_model)
-    re_names = get_re_names(dm.model.random.random)
+    re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) &&
         error("MCEM requires random effects. Use MLE/MAP for fixed-effects models.")
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     priors = get_priors(fe)
     if any(!(getfield(priors, k) isa Priorless) for k in keys(priors))
         @info "MCEM ignores fixed-effect priors. Use MAP/MCMC for prior-aware inference."
@@ -1257,7 +1257,7 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
 
     constants_re = _normalize_constants_re(dm, constants_re)
     const_cache = _build_constants_cache(dm, constants_re)
-    pairing, batch_infos, _ = _build_laplace_batch_infos(dm, constants_re)
+    pairing, batch_infos, _ = _build_re_batch_infos(dm, constants_re)
     ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
         serialization = serialization, force_saveat = true)
 
@@ -1271,7 +1271,7 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
     # With extra_objective the objective is non-separable in (β,σ) vs D, so route the whole Q2
     # set into the joint Q1 M-step (exact joint maximizer of Q + extra).
     q2_base_free_names = if extra_objective === nothing
-        let p = _partition_q1_q2_names(dm.model, free_names)
+        let p = _partition_q1_q2_names(get_model(dm), free_names)
             p.q2
         end
     else
@@ -1303,7 +1303,7 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
     let cache_init = ll_cache isa Vector ? ll_cache[1] : ll_cache
         for bi in 1:length(batch_infos)
             info = batch_infos[bi]
-            info.n_b == 0 && continue
+            get_n_b(info) == 0 && continue
             b_init = _em_seed_batch_b(
                 dm, info, θ0_u, const_cache, cache_init, rng, re_names, bi, "MCEM")
             last_params[bi] = _b_to_last_params(b_init, info, re_names)
@@ -1311,7 +1311,7 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
     end
 
     # IS proposal blocks — one Vector{_REAdaptBlock} per batch (only for MCEM_IS)
-    re_types = get_re_types(dm.model.random.random)
+    re_types = get_re_types(get_random(get_model(dm)))
     ll_cache_single = ll_cache isa Vector ? ll_cache[1] : ll_cache
     proposal_blocks = if method.e_step isa MCEM_IS
         [_is_init_proposal_blocks(dm, batch_infos[bi], θ0_u, ll_cache_single, re_names,

@@ -54,7 +54,7 @@ function plot_observation_distributions(res::FitResult;
     constants_re_use = _res_constants_re(res, constants_re)
     obs_list = _resolve_observables(dm, observables)
     inds = _resolve_individuals(dm, individuals_idx)
-    if dm.model.de.de === nothing
+    if get_de(get_model(dm)) === nothing
         x_axis_feature = _require_varying_covariate(dm, x_axis_feature)
     end
 
@@ -81,21 +81,21 @@ function plot_observation_distributions(res::FitResult;
     end
 
     for i in inds
-        ind = dm.individuals[i]
-        obs_rows_all = dm.row_groups.obs_rows[i]
+        ind = get_individuals(dm)[i]
+        obs_rows_all = get_obs_rows(get_row_groups(dm))[i]
         obs_idx = _resolve_obs_rows(obs_rows, obs_rows_all)
         rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only = true)
 
         for obs_name in obs_list
             for j in obs_idx
                 row = obs_rows_all[j]
-                y_obs = getfield(ind.series.obs, obs_name)[j]
+                y_obs = getfield(get_obs(get_series(ind)), obs_name)[j]
                 has_obs_val = y_obs isa Number && isfinite(float(y_obs))
-                tval = dm.df[row, dm.config.time_col]
+                tval = get_df(dm)[row, get_time_col(dm)]
                 p = create_styled_plot(;
                     title = string(
-                        dm.config.primary_id, ": ", dm.df[row, dm.config.primary_id], ", ",
-                        dm.config.time_col, ": ", tval),
+                        get_primary_id(dm), ": ", get_df(dm)[row, get_primary_id(dm)], ", ",
+                        get_time_col(dm), ": ", tval),
                     xlabel = _axis_label(obs_name),
                     ylabel = "Probability Density",
                     style = style,
@@ -109,19 +109,19 @@ function plot_observation_distributions(res::FitResult;
                         η_ind = η_draws[d][i]
                         sol_accessors = nothing
                         compiled = nothing
-                        if dm.model.de.de !== nothing
+                        if get_de(get_model(dm)) !== nothing
                             sol, compiled = _solve_dense_individual(dm, ind, θ, η_ind)
                             sol_accessors = _sol_accessors_with_crossings(
-                                dm.model, sol, compiled, θ, η_ind, ind.const_cov)
+                                get_model(dm), sol, compiled, θ, η_ind, get_const_cov(ind))
                         end
                         vary = _varying_at(dm, ind, j, row)
                         η_row = _row_random_effects_at(
                             dm, i, j, η_ind, rowwise_re; obs_only = true)
                         obs = sol_accessors === nothing ?
                               calculate_formulas_obs(
-                            dm.model, θ, η_row, ind.const_cov, vary) :
+                            get_model(dm), θ, η_row, get_const_cov(ind), vary) :
                               calculate_formulas_obs(
-                            dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
+                            get_model(dm), θ, η_row, get_const_cov(ind), vary, sol_accessors)
                         dists[d] = getproperty(obs, obs_name)
                     end
 
@@ -211,20 +211,21 @@ function plot_observation_distributions(res::FitResult;
                     θ = cache.params
                     η_ind = cache.random_effects[i]
                     sol_accessors = nothing
-                    if dm.model.de.de !== nothing
+                    if get_de(get_model(dm)) !== nothing
                         sol = cache.sols[i]
-                        compiled = get_de_compiler(dm.model.de.de)((;
+                        compiled = get_de_compiler(get_de(get_model(dm)))((;
                             fixed_effects = θ,
                             random_effects = η_ind,
-                            constant_covariates = ind.const_cov,
+                            constant_covariates = get_const_cov(ind),
                             varying_covariates = merge(
-                                (t = ind.series.vary.t[1],), ind.series.dyn),
-                            helpers = get_helper_funs(dm.model),
-                            model_funs = get_model_funs(dm.model),
-                            preDE = calculate_prede(dm.model, θ, η_ind, ind.const_cov)
+                                (t = get_vary(get_series(ind)).t[1],), get_dyn(get_series(ind))),
+                            helpers = get_helper_funs(get_model(dm)),
+                            model_funs = get_model_funs(get_model(dm)),
+                            preDE = calculate_prede(
+                                get_model(dm), θ, η_ind, get_const_cov(ind))
                         ))
                         sol_accessors = _sol_accessors_with_crossings(
-                            dm.model, sol, compiled, θ, η_ind, ind.const_cov)
+                            get_model(dm), sol, compiled, θ, η_ind, get_const_cov(ind))
                     end
                     dist = if cache_obs_dists && cache.obs_dists !== nothing
                         getproperty(cache.obs_dists[i][j], obs_name)
@@ -234,9 +235,9 @@ function plot_observation_distributions(res::FitResult;
                             dm, i, j, η_ind, rowwise_re; obs_only = true)
                         obs = sol_accessors === nothing ?
                               calculate_formulas_obs(
-                            dm.model, θ, η_row, ind.const_cov, vary) :
+                            get_model(dm), θ, η_row, get_const_cov(ind), vary) :
                               calculate_formulas_obs(
-                            dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
+                            get_model(dm), θ, η_row, get_const_cov(ind), vary, sol_accessors)
                         getproperty(obs, obs_name)
                     end
 

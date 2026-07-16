@@ -41,7 +41,7 @@ Enzyme.API.strictAliasing!(false)
         y = randn(rng, 12) .* 0.3 .+ 0.5
     )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    _, batch_infos, const_cache = NoLimits._build_laplace_batch_infos(dm, NamedTuple())
+    _, batch_infos, const_cache = NoLimits._build_re_batch_infos(dm, NamedTuple())
     ll_cache = NoLimits.build_ll_cache(dm)
     info = batch_infos[1]
     θu = get_θ0_untransformed(dm.model.fixed.fixed)

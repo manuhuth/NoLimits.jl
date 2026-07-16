@@ -6,6 +6,12 @@ export get_helper_funs
 export get_solver_config
 export set_solver_config
 export get_source
+export get_fixed
+export get_random
+export get_de
+export get_prede
+export get_initial
+export get_formulas
 export calculate_prede
 export calculate_initial_state
 export calculate_formulas_all
@@ -302,6 +308,62 @@ end
 Return the [`ODESolverConfig`](@ref) controlling how the ODE is solved.
 """
 get_solver_config(m::Model) = m.de.solver
+
+@inline get_alg(c::ODESolverConfig) = c.alg
+@inline get_solver_kwargs(c::ODESolverConfig) = c.kwargs
+@inline get_solver_args(c::ODESolverConfig) = c.args
+@inline get_saveat_mode(c::ODESolverConfig) = c.saveat_mode
+@inline get_closed_form(c::ODESolverConfig) = c.closed_form
+
+"""
+    get_fixed(m::Model) -> FixedEffects
+
+Return the fixed-effects block (the parsed `@fixedEffects` definitions).
+"""
+@inline get_fixed(m::Model) = m.fixed.fixed
+
+"""
+    get_random(m::Model) -> RandomEffects
+
+Return the random-effects block (the parsed `@randomEffects` definitions).
+"""
+@inline get_random(m::Model) = m.random.random
+
+"""
+    get_de(m::Model)
+
+Return the differential-equation block, or `nothing` for a non-ODE model.
+"""
+@inline get_de(m::Model) = m.de.de
+
+"""
+    get_prede(m::Model)
+
+Return the pre-differential-equation block (the `@preDifferentialEquation` definitions).
+"""
+@inline get_prede(m::Model) = m.de.prede
+
+"""
+    get_initial(m::Model)
+
+Return the initial-condition block (the `@initialDE` definitions).
+"""
+@inline get_initial(m::Model) = m.de.initial
+
+"""
+    get_formulas(m::Model) -> Formulas
+
+Return the formulas block (the parsed `@formulas` definitions).
+"""
+@inline get_formulas(m::Model) = m.formulas.formulas
+
+"""
+    get_covariates(m::Model) -> Covariates
+
+Return the covariates block. See also `get_covariates(dm::DataModel, name)` for
+per-individual constant-covariate values.
+"""
+@inline get_covariates(m::Model) = m.covariates.covariates
 
 """
     set_solver_config(m::Model, cfg::ODESolverConfig) -> Model

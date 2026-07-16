@@ -13,7 +13,7 @@ function _plot_data_dm(dm::DataModel;
         save_path::Union{Nothing, String} = nothing,
         marginal_idx::Union{Nothing, Int} = nothing)
     obs_name = _get_observable(dm, nothing)
-    inds = individuals_idx === nothing ? collect(eachindex(dm.individuals)) :
+    inds = individuals_idx === nothing ? collect(eachindex(get_individuals(dm))) :
            collect(individuals_idx)
     (is_mv, n_marginals) = _obs_multivariate_info(dm, obs_name)
     marginal_colors = _marginal_colors(n_marginals, style)
@@ -22,12 +22,12 @@ function _plot_data_dm(dm::DataModel;
     xlims = nothing
     ylims = nothing
     for (k, i) in enumerate(inds)
-        ind = dm.individuals[i]
-        obs_rows = dm.row_groups.obs_rows[i]
+        ind = get_individuals(dm)[i]
+        obs_rows = get_obs_rows(get_row_groups(dm))[i]
         x = _get_x_values(dm, ind, obs_rows, x_axis_feature)
-        y = getfield(ind.series.obs, obs_name)
+        y = getfield(get_obs(get_series(ind)), obs_name)
         title_id = string(
-            dm.config.primary_id, ": ", dm.df[obs_rows[1], dm.config.primary_id])
+            get_primary_id(dm), ": ", get_df(dm)[obs_rows[1], get_primary_id(dm)])
         _kw249 = merge(
             (xlabel = x_axis_feature === nothing ? "Time" : _axis_label(x_axis_feature),
                 ylabel = _axis_label(obs_name)),
@@ -278,7 +278,7 @@ function plot_fits(res::FitResult;
         (1 <= marginal_idx <= n_marginals) ||
             error("marginal_idx must be between 1 and $(n_marginals).")
     end
-    inds = individuals_idx === nothing ? collect(eachindex(dm.individuals)) :
+    inds = individuals_idx === nothing ? collect(eachindex(get_individuals(dm))) :
            collect(individuals_idx)
 
     if cache === nothing
@@ -358,19 +358,19 @@ function plot_fits(res::FitResult;
     _default_xlabel = x_axis_feature === nothing ? "Time" : _axis_label(x_axis_feature)
     _default_ylabel = get(kwargs_subplot, :ylabel, _axis_label(obs_name))
     for (k, i) in enumerate(inds)
-        ind = dm.individuals[i]
-        obs_rows = dm.row_groups.obs_rows[i]
-        use_dense = dm.model.de.de !== nothing &&
+        ind = get_individuals(dm)[i]
+        obs_rows = get_obs_rows(get_row_groups(dm))[i]
+        use_dense = get_de(get_model(dm)) !== nothing &&
                     _can_dense_plot(dm) &&
-                    (x_axis_feature === nothing || x_axis_feature == dm.config.time_col)
+                    (x_axis_feature === nothing || x_axis_feature == get_time_col(dm))
         x_obs = _get_x_values(dm, ind, obs_rows, x_axis_feature)
         x_fit = use_dense ? _dense_time_grid(ind) : x_obs
         x_density = use_dense ? x_fit : x_obs
-        y_obs = getfield(ind.series.obs, obs_name)
+        y_obs = getfield(get_obs(get_series(ind)), obs_name)
         x_obs_plot, y_obs_plot = is_mv ? (nothing, nothing) :
                                  _collect_scalar_series(x_obs, y_obs)
         title_id = string(
-            dm.config.primary_id, ": ", dm.df[obs_rows[1], dm.config.primary_id])
+            get_primary_id(dm), ": ", get_df(dm)[obs_rows[1], get_primary_id(dm)])
         is_leftmost = (k - 1) % ncols == 0
         _ylabel = is_leftmost ? _default_ylabel : ""
         # computed ylabel wins over kwargs_subplot (leftmost-column override); merge dedups.
@@ -408,10 +408,10 @@ function plot_fits(res::FitResult;
                 η_ind = η_draws[d][i]
                 sol_accessors = nothing
                 compiled = nothing
-                if dm.model.de.de !== nothing
+                if get_de(get_model(dm)) !== nothing
                     sol, compiled = _solve_dense_individual(dm, ind, θ, η_ind)
                     sol_accessors = _sol_accessors_with_crossings(
-                        dm.model, sol, compiled, θ, η_ind, ind.const_cov)
+                        get_model(dm), sol, compiled, θ, η_ind, get_const_cov(ind))
                 end
                 if use_dense
                     dists = plot_density ? Vector{Distribution}(undef, length(x_fit)) :
@@ -419,7 +419,7 @@ function plot_fits(res::FitResult;
                     for (j, t) in enumerate(x_fit)
                         vary = (t = t,)
                         obs = calculate_formulas_obs(
-                            dm.model, θ, η_ind, ind.const_cov, vary, sol_accessors)
+                            get_model(dm), θ, η_ind, get_const_cov(ind), vary, sol_accessors)
                         dist = getproperty(obs, obs_name)
                         preds[d, j] = _stat_from_dist(dist, plot_func)
                         if plot_density
@@ -427,7 +427,7 @@ function plot_fits(res::FitResult;
                         end
                     end
                 else
-                    y_obs_series_mcmc = getfield(ind.series.obs, obs_name)
+                    y_obs_series_mcmc = getfield(get_obs(get_series(ind)), obs_name)
                     hmm_priors_draw = Dict{Symbol, Any}()
                     dists = Vector{Distribution}(undef, length(obs_rows))
                     for (j, row) in enumerate(obs_rows)
@@ -436,9 +436,9 @@ function plot_fits(res::FitResult;
                             dm, i, j, η_ind, rowwise_re; obs_only = true)
                         obs = sol_accessors === nothing ?
                               calculate_formulas_obs(
-                            dm.model, θ, η_row, ind.const_cov, vary) :
+                            get_model(dm), θ, η_row, get_const_cov(ind), vary) :
                               calculate_formulas_obs(
-                            dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
+                            get_model(dm), θ, η_row, get_const_cov(ind), vary, sol_accessors)
                         dist = _apply_hmm_filter!(hmm_priors_draw, obs_name,
                             getproperty(obs, obs_name), y_obs_series_mcmc[j])
                         dists[j] = dist
@@ -508,19 +508,20 @@ function plot_fits(res::FitResult;
             η_ind = cache.random_effects[i]
             rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only = true)
             sol_accessors = nothing
-            if dm.model.de.de !== nothing
+            if get_de(get_model(dm)) !== nothing
                 sol = cache.sols[i]
-                compiled = get_de_compiler(dm.model.de.de)((;
+                compiled = get_de_compiler(get_de(get_model(dm)))((;
                     fixed_effects = θ,
                     random_effects = η_ind,
-                    constant_covariates = ind.const_cov,
-                    varying_covariates = merge((t = ind.series.vary.t[1],), ind.series.dyn),
-                    helpers = get_helper_funs(dm.model),
-                    model_funs = get_model_funs(dm.model),
-                    preDE = calculate_prede(dm.model, θ, η_ind, ind.const_cov)
+                    constant_covariates = get_const_cov(ind),
+                    varying_covariates = merge(
+                        (t = get_vary(get_series(ind)).t[1],), get_dyn(get_series(ind))),
+                    helpers = get_helper_funs(get_model(dm)),
+                    model_funs = get_model_funs(get_model(dm)),
+                    preDE = calculate_prede(get_model(dm), θ, η_ind, get_const_cov(ind))
                 ))
                 sol_accessors = _sol_accessors_with_crossings(
-                    dm.model, sol, compiled, θ, η_ind, ind.const_cov)
+                    get_model(dm), sol, compiled, θ, η_ind, get_const_cov(ind))
             end
 
             n_points = length(use_dense ? x_fit : obs_rows)
@@ -539,7 +540,7 @@ function plot_fits(res::FitResult;
                 for (j, t) in enumerate(x_fit)
                     vary = (t = t,)
                     obs = calculate_formulas_obs(
-                        dm.model, θ, η_ind, ind.const_cov, vary, sol_accessors)
+                        get_model(dm), θ, η_ind, get_const_cov(ind), vary, sol_accessors)
                     dist = getproperty(obs, obs_name)
                     if is_mv
                         mean_vec = _stat_from_dist(dist, plot_func)
@@ -566,16 +567,17 @@ function plot_fits(res::FitResult;
                             (min(ylims[1], y_min), max(ylims[2], y_max))
                 end
             else
-                y_obs_series = getfield(ind.series.obs, obs_name)
+                y_obs_series = getfield(get_obs(get_series(ind)), obs_name)
                 hmm_priors = Dict{Symbol, Any}()
                 for (j, row) in enumerate(obs_rows)
                     vary = _varying_at(dm, ind, j, row)
                     η_row = _row_random_effects_at(
                         dm, i, j, η_ind, rowwise_re; obs_only = true)
                     obs = sol_accessors === nothing ?
-                          calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
                           calculate_formulas_obs(
-                        dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
+                        get_model(dm), θ, η_row, get_const_cov(ind), vary) :
+                          calculate_formulas_obs(
+                        get_model(dm), θ, η_row, get_const_cov(ind), vary, sol_accessors)
                     dist = _apply_hmm_filter!(
                         hmm_priors, obs_name, getproperty(obs, obs_name), y_obs_series[j])
                     if is_mv
@@ -658,17 +660,17 @@ function _plot_hidden_states_impl(dm::DataModel,
         kwargs_layout,
         save_path::Union{Nothing, String},
         individuals_idx = nothing)
-    inds = individuals_idx === nothing ? collect(eachindex(dm.individuals)) :
+    inds = individuals_idx === nothing ? collect(eachindex(get_individuals(dm))) :
            collect(individuals_idx)
     plots = Vector{Any}(undef, length(inds))
     xlims = nothing
     ylims = nothing
     for (k, i) in enumerate(inds)
-        ind = dm.individuals[i]
-        obs_rows = dm.row_groups.obs_rows[i]
+        ind = get_individuals(dm)[i]
+        obs_rows = get_obs_rows(get_row_groups(dm))[i]
         x_vals = _get_x_values(dm, ind, obs_rows, x_axis_feature)
         title_id = string(
-            dm.config.primary_id, ": ", dm.df[obs_rows[1], dm.config.primary_id])
+            get_primary_id(dm), ": ", get_df(dm)[obs_rows[1], get_primary_id(dm)])
         _kw870 = merge(
             (xlabel = x_axis_feature === nothing ? "Time" : _axis_label(x_axis_feature),
                 ylabel = "Hidden-state probability"),
@@ -678,25 +680,26 @@ function _plot_hidden_states_impl(dm::DataModel,
         η_ind = η_vec[i]
         rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only = true)
         sol_accessors = nothing
-        if dm.model.de.de !== nothing
+        if get_de(get_model(dm)) !== nothing
             sol = nothing
             compiled = nothing
-            pre = calculate_prede(dm.model, θ_ind, η_ind, ind.const_cov)
+            pre = calculate_prede(get_model(dm), θ_ind, η_ind, get_const_cov(ind))
             pc = (;
                 fixed_effects = θ_ind,
                 random_effects = η_ind,
-                constant_covariates = ind.const_cov,
-                varying_covariates = merge((t = ind.series.vary.t[1],), ind.series.dyn),
-                helpers = get_helper_funs(dm.model),
-                model_funs = get_model_funs(dm.model),
+                constant_covariates = get_const_cov(ind),
+                varying_covariates = merge(
+                    (t = get_vary(get_series(ind)).t[1],), get_dyn(get_series(ind))),
+                helpers = get_helper_funs(get_model(dm)),
+                model_funs = get_model_funs(get_model(dm)),
                 preDE = pre
             )
-            compiled = get_de_compiler(dm.model.de.de)(pc)
+            compiled = get_de_compiler(get_de(get_model(dm)))(pc)
             sol = cache = nothing
-            sol = dm.model.de.de !== nothing ?
+            sol = get_de(get_model(dm)) !== nothing ?
                   _solve_dense_individual(dm, ind, θ_ind, η_ind)[1] : nothing
             sol_accessors = _sol_accessors_with_crossings(
-                dm.model, sol, compiled, θ_ind, η_ind, ind.const_cov)
+                get_model(dm), sol, compiled, θ_ind, η_ind, get_const_cov(ind))
         end
 
         times = Float64[]
@@ -707,13 +710,14 @@ function _plot_hidden_states_impl(dm::DataModel,
             vary = _varying_at(dm, ind, j, row)
             η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only = true)
             obs = sol_accessors === nothing ?
-                  calculate_formulas_obs(dm.model, θ_ind, η_row, ind.const_cov, vary) :
                   calculate_formulas_obs(
-                dm.model, θ_ind, η_row, ind.const_cov, vary, sol_accessors)
+                get_model(dm), θ_ind, η_row, get_const_cov(ind), vary) :
+                  calculate_formulas_obs(
+                get_model(dm), θ_ind, η_row, get_const_cov(ind), vary, sol_accessors)
             dist = getproperty(obs, obs_name)
             dist isa MVDiscreteTimeDiscreteStatesHMM ||
                 error("Observable $(obs_name) must be MVDiscreteTimeDiscreteStatesHMM.")
-            y_val = getfield(ind.series.obs, obs_name)[j]
+            y_val = getfield(get_obs(get_series(ind)), obs_name)[j]
             prior = get(hmm_priors_hs, obs_name, nothing)
             dist_filtered = _hmm_with_prior(dist, prior)
             if y_val === missing
@@ -835,7 +839,7 @@ function plot_hidden_states(res::FitResult;
     θ = get_params(res; scale = :untransformed)
     θ = _apply_param_overrides(θ, params)
     η_vec = _default_random_effects(res, dm, constants_re_use, θ, rng, mcmc_draws)
-    inds = individuals_idx === nothing ? collect(eachindex(dm.individuals)) :
+    inds = individuals_idx === nothing ? collect(eachindex(get_individuals(dm))) :
            collect(individuals_idx)
 
     if figure_layout == :vector
@@ -900,10 +904,10 @@ function plot_hidden_states(dm::DataModel;
     (is_mv, _) = _obs_multivariate_info(dm, obs_name)
     is_mv || error("plot_hidden_states requires a multivariate observable.")
 
-    θ = get_θ0_untransformed(dm.model.fixed.fixed)
+    θ = get_θ0_untransformed(get_fixed(get_model(dm)))
     θ = _apply_param_overrides(θ, params)
     η_vec = _default_random_effects_from_dm(dm, constants_re, θ)
-    inds = individuals_idx === nothing ? collect(eachindex(dm.individuals)) :
+    inds = individuals_idx === nothing ? collect(eachindex(get_individuals(dm))) :
            collect(individuals_idx)
 
     if figure_layout == :vector
@@ -951,37 +955,39 @@ function _plot_emission_for_individual(dm::DataModel,
         style::PlotStyle,
         kwargs_subplot,
         state_ncols::Int)
-    ind = dm.individuals[ind_idx]
-    obs_rows = dm.row_groups.obs_rows[ind_idx]
+    ind = get_individuals(dm)[ind_idx]
+    obs_rows = get_obs_rows(get_row_groups(dm))[ind_idx]
     row_pos = findfirst(==(row), obs_rows)
     row_pos === nothing &&
         error("Observation row $(row) not found for individual $(ind_idx).")
 
     sol_accessors = nothing
-    if dm.model.de.de !== nothing
+    if get_de(get_model(dm)) !== nothing
         compiled = nothing
-        pre = calculate_prede(dm.model, θ, η_ind, ind.const_cov)
+        pre = calculate_prede(get_model(dm), θ, η_ind, get_const_cov(ind))
         pc = (;
             fixed_effects = θ,
             random_effects = η_ind,
-            constant_covariates = ind.const_cov,
-            varying_covariates = merge((t = ind.series.vary.t[1],), ind.series.dyn),
-            helpers = get_helper_funs(dm.model),
-            model_funs = get_model_funs(dm.model),
+            constant_covariates = get_const_cov(ind),
+            varying_covariates = merge(
+                (t = get_vary(get_series(ind)).t[1],), get_dyn(get_series(ind))),
+            helpers = get_helper_funs(get_model(dm)),
+            model_funs = get_model_funs(get_model(dm)),
             preDE = pre
         )
-        compiled = get_de_compiler(dm.model.de.de)(pc)
+        compiled = get_de_compiler(get_de(get_model(dm)))(pc)
         sol = _solve_dense_individual(dm, ind, θ, η_ind)[1]
         sol_accessors = _sol_accessors_with_crossings(
-            dm.model, sol, compiled, θ, η_ind, ind.const_cov)
+            get_model(dm), sol, compiled, θ, η_ind, get_const_cov(ind))
     end
 
     vary = _varying_at(dm, ind, row_pos, row)
     rowwise_re = _needs_rowwise_random_effects(dm, ind_idx; obs_only = true)
     η_row = _row_random_effects_at(dm, ind_idx, row_pos, η_ind, rowwise_re; obs_only = true)
     obs = sol_accessors === nothing ?
-          calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
-          calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
+          calculate_formulas_obs(get_model(dm), θ, η_row, get_const_cov(ind), vary) :
+          calculate_formulas_obs(
+        get_model(dm), θ, η_row, get_const_cov(ind), vary, sol_accessors)
     dist = getproperty(obs, obs_name)
     dist isa MVDiscreteTimeDiscreteStatesHMM ||
         error("Observable $(obs_name) must be MVDiscreteTimeDiscreteStatesHMM.")
@@ -1053,20 +1059,20 @@ function _plot_emission_impl(dm::DataModel,
         kwargs_layout,
         save_path::Union{Nothing, String},
         figure_layout::Symbol)
-    inds = individuals_idx === nothing ? collect(eachindex(dm.individuals)) :
+    inds = individuals_idx === nothing ? collect(eachindex(get_individuals(dm))) :
            collect(individuals_idx)
     groups = Vector{MakiePanelGroup}(undef, length(inds))
     xlims = nothing
     ylims = nothing
-    time_col_use = time_col === nothing ? dm.config.time_col : time_col
+    time_col_use = time_col === nothing ? get_time_col(dm) : time_col
     state_ncols = min(3, DEFAULT_PLOT_COLS)
 
     for (k, i) in enumerate(inds)
-        ind = dm.individuals[i]
-        obs_rows = dm.row_groups.obs_rows[i]
+        ind = get_individuals(dm)[i]
+        obs_rows = get_obs_rows(get_row_groups(dm))[i]
         row = _resolve_emission_row(dm, obs_rows, time_idx, time_point, time_col_use)
-        title_id = string(dm.config.primary_id, ": ", dm.df[row, dm.config.primary_id])
-        time_val = dm.df[row, time_col_use]
+        title_id = string(get_primary_id(dm), ": ", get_df(dm)[row, get_primary_id(dm)])
+        time_val = get_df(dm)[row, time_col_use]
         time_label = string(time_val)
         record = _plot_emission_for_individual(dm,
             obs_name,
@@ -1200,7 +1206,7 @@ function plot_emission_distributions(dm::DataModel;
     (is_mv, _) = _obs_multivariate_info(dm, obs_name)
     is_mv || error("plot_emission_distributions requires a multivariate observable.")
 
-    θ = get_θ0_untransformed(dm.model.fixed.fixed)
+    θ = get_θ0_untransformed(get_fixed(get_model(dm)))
     θ = _apply_param_overrides(θ, params)
     η_vec = _default_random_effects_from_dm(dm, constants_re, θ)
 
@@ -1302,7 +1308,7 @@ function _plot_fits_comparison_impl(fits::AbstractVector{<:FitResult},
     dm_ref = _validate_same_data_model_for_comparison(dms)
 
     obs_name = _get_observable(dm_ref, observable)
-    inds = individuals_idx === nothing ? collect(eachindex(dm_ref.individuals)) :
+    inds = individuals_idx === nothing ? collect(eachindex(get_individuals(dm_ref))) :
            collect(individuals_idx)
     caches = [build_plot_cache(fits[j]; dm = dms[j], cache_obs_dists = false)
               for j in eachindex(fits)]
@@ -1312,13 +1318,13 @@ function _plot_fits_comparison_impl(fits::AbstractVector{<:FitResult},
     xlims = nothing
     ylims = nothing
     for (k, i) in enumerate(inds)
-        ind = dm_ref.individuals[i]
-        obs_rows = dm_ref.row_groups.obs_rows[i]
+        ind = get_individuals(dm_ref)[i]
+        obs_rows = get_obs_rows(get_row_groups(dm_ref))[i]
         x_obs = _get_x_values(dm_ref, ind, obs_rows, x_axis_feature)
-        y_obs = getfield(ind.series.obs, obs_name)
+        y_obs = getfield(get_obs(get_series(ind)), obs_name)
         x_obs_plot, y_obs_plot = _collect_scalar_series(x_obs, y_obs)
-        title_id = string(dm_ref.config.primary_id, ": ",
-            dm_ref.df[obs_rows[1], dm_ref.config.primary_id])
+        title_id = string(get_primary_id(dm_ref), ": ",
+            get_df(dm_ref)[obs_rows[1], get_primary_id(dm_ref)])
         _kw1619 = merge(
             (xlabel = x_axis_feature === nothing ? "Time" : _axis_label(x_axis_feature),
                 ylabel = _axis_label(obs_name)),
@@ -1449,7 +1455,7 @@ function plot_observed_profiles(dm::DataModel;
         plot_path::Union{Nothing, String} = nothing)
     save_path = _resolve_plot_path(save_path, plot_path)
     obs_name = _get_observable(dm, observable)
-    inds = individuals_idx === nothing ? collect(eachindex(dm.individuals)) :
+    inds = individuals_idx === nothing ? collect(eachindex(get_individuals(dm))) :
            collect(individuals_idx)
 
     _kw_op = merge(
@@ -1460,10 +1466,10 @@ function plot_observed_profiles(dm::DataModel;
     p.legend_position = :none
 
     for i in inds
-        ind = dm.individuals[i]
-        obs_rows = dm.row_groups.obs_rows[i]
+        ind = get_individuals(dm)[i]
+        obs_rows = get_obs_rows(get_row_groups(dm))[i]
         x = _get_x_values(dm, ind, obs_rows, x_axis_feature)
-        y = getfield(ind.series.obs, obs_name)
+        y = getfield(get_obs(get_series(ind)), obs_name)
         xs, ys = _collect_scalar_series(x, y)
         isempty(xs) && continue
         order = sortperm(xs)
@@ -1575,6 +1581,8 @@ line is overlaid for reference.
 - `kwargs_layout`: additional Makie `Figure` attributes forwarded to the layout.
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
 - `plot_path::Union{Nothing, String} = nothing`: alias for `save_path`.
+- `return_panel::Bool = false`: return the built panel instead of a `Figure`, for
+  composing several diagnostics into one figure via `combine_plots`.
 """
 function plot_dv_ipred(res::FitResult;
         dm::Union{Nothing, DataModel} = nothing,
@@ -1583,7 +1591,8 @@ function plot_dv_ipred(res::FitResult;
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing)
+        plot_path::Union{Nothing, String} = nothing,
+        return_panel::Bool = false)
     dm = _get_dm(res, dm)
     save_path = _resolve_plot_path(save_path, plot_path)
     obs_name = _get_observable(dm, observable)
@@ -1608,6 +1617,7 @@ function plot_dv_ipred(res::FitResult;
         linewidth = style.line_width_secondary, label = "", style = style)
     _set_limits!(p; xlim = lims, ylim = lims)
 
+    return_panel && return p
     fig = combine_plots([p]; ncols = 1, style = style, kwargs_layout...)
     return _save_plot!(fig, save_path)
 end
@@ -1630,6 +1640,8 @@ zero reference line is overlaid.
 - `kwargs_layout`: additional Makie `Figure` attributes forwarded to the layout.
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
 - `plot_path::Union{Nothing, String} = nothing`: alias for `save_path`.
+- `return_panel::Bool = false`: return the built panel instead of a `Figure`, for
+  composing several diagnostics into one figure via `combine_plots`.
 """
 function plot_wres_pred(res::FitResult;
         dm::Union{Nothing, DataModel} = nothing,
@@ -1638,7 +1650,8 @@ function plot_wres_pred(res::FitResult;
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing)
+        plot_path::Union{Nothing, String} = nothing,
+        return_panel::Bool = false)
     dm = _get_dm(res, dm)
     save_path = _resolve_plot_path(save_path, plot_path)
     obs_name = _get_observable(dm, observable)
@@ -1663,6 +1676,7 @@ function plot_wres_pred(res::FitResult;
         color = style.color_reference, linewidth = style.line_width_secondary, label = "")
     _set_limits!(p; xlim = (pred_lo, pred_hi), ylim = (wres_lo, wres_hi))
 
+    return_panel && return p
     fig = combine_plots([p]; ncols = 1, style = style, kwargs_layout...)
     return _save_plot!(fig, save_path)
 end

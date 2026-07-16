@@ -194,22 +194,22 @@ own logpdf implementation (works for all standard Distributions.jl types).
 same `PDMat` caveat as `_lower_chol_from_cov`.
 """
 function build_re_measure_from_batch(
-        batch_info::_LaplaceBatchInfo,
+        batch_info::REBatchInfo,
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         dm::DataModel,
         ll_cache::_LLCache
 )
-    n_b = batch_info.n_b
+    n_b = get_n_b(batch_info)
     n_b == 0 &&
         error("build_re_measure_from_batch: batch has n_b == 0 (no free RE levels).")
 
-    θ_re = _symmetrize_psd_params(θ, dm.model.fixed.fixed)
-    dists_b = get_create_random_effect_distribution(dm.model.random.random)
+    θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
+    dists_b = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = ll_cache.model_funs
     helpers = ll_cache.helpers
-    re_cache = dm.re_group_info.laplace_cache
-    re_names = re_cache.re_names
+    re_cache = get_laplace_cache(get_re_group_info(dm))
+    re_names = get_re_names(re_cache)
 
     # Accumulators shared with GaussianRE fast path
     μ_segs = Vector{Any}()
@@ -221,14 +221,14 @@ function build_re_measure_from_batch(
     has_correction = false
 
     for (ri, re) in enumerate(re_names)
-        info = batch_info.re_info[ri]
-        isempty(info.map.levels) && continue
-        for (li, _) in enumerate(info.map.levels)
-            rep_idx = info.reps[li]
-            const_cov = dm.individuals[rep_idx].const_cov
+        info = get_re_info(batch_info)[ri]
+        isempty(get_levels(get_re_map(info))) && continue
+        for (li, _) in enumerate(get_levels(get_re_map(info)))
+            rep_idx = get_reps(info)[li]
+            const_cov = get_const_cov(get_individuals(dm)[rep_idx])
             dists = dists_b(θ_re, const_cov, model_funs, helpers)
             dist = getproperty(dists, re)
-            range = info.ranges[li]
+            range = get_ranges(info)[li]
             push!(all_ranges, range)
 
             if dist isa Distributions.Normal
@@ -580,7 +580,7 @@ for example by falling back to a sampling-based marginal likelihood estimator.
 """
 function build_centered_re_measure(
         b_star::AbstractVector,
-        batch_info::_LaplaceBatchInfo,
+        batch_info::REBatchInfo,
         bi::Int,
         θu::ComponentArray,
         const_cache,
@@ -600,7 +600,7 @@ function build_centered_re_measure(
     S = LowerTriangular(inv(Matrix(L)))
     log_det_S = -sum(log, diag(L))
     re_prior_logf = b -> _re_prior_logf_batch(dm, batch_info, θu, b, const_cache, ll_cache)
-    return CenteredREMeasure(b_star, S, T(log_det_S), re_prior_logf, batch_info.n_b)
+    return CenteredREMeasure(b_star, S, T(log_det_S), re_prior_logf, get_n_b(batch_info))
 end
 
 # ---------------------------------------------------------------------------
@@ -621,7 +621,7 @@ Called once at the start of `_fit_model(::GHQuadrature, ...)` before any
 expensive computation.
 """
 function _ghq_validate_re_distributions(dm::DataModel)
-    re = dm.model.random.random
+    re = get_random(get_model(dm))
     re_t = get_re_types(re)
     isempty(re_t) && return
 

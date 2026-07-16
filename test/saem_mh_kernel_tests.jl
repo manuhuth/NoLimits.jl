@@ -238,7 +238,7 @@ function _saemixmh_retry_setup(; seed = 123, n_id = 24, inner = 4)
     rng = MersenneTwister(seed)
     dm = _mh_scalar_dm(rng; n_id = n_id, inner = inner,
         true_a = 1.5, true_σ = 0.4, true_τ = 0.6, tmax = 1.5)
-    _, batch_infos, const_cache = NoLimits._build_laplace_batch_infos(dm, NamedTuple())
+    _, batch_infos, const_cache = NoLimits._build_re_batch_infos(dm, NamedTuple())
     θ = get_θ0_untransformed(dm.model.fixed.fixed)
     ll_cache = NoLimits.build_ll_cache(dm; nthreads = Threads.maxthreadid())
     re_names = get_re_names(dm.model.random.random)

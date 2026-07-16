@@ -37,7 +37,7 @@ function _build_uq_obj_no_re(res::FitResult,
         serialization_use::SciMLBase.EnsembleAlgorithm)
     dm = get_data_model(res)
     method = get_method(res)
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     free_names = _free_fixed_names(fe, constants_use)
     θ_hat_u = get_params(res; scale = :untransformed)
     transform = get_transform(fe)
@@ -103,7 +103,7 @@ function _build_uq_obj_re(res::FitResult,
         rng::AbstractRNG)
     dm = get_data_model(res)
     method = get_method(res)
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     free_names = _free_fixed_names(fe, constants_use)
     θ_hat_u = get_params(res; scale = :untransformed)
     transform = get_transform(fe)
@@ -119,7 +119,7 @@ function _build_uq_obj_re(res::FitResult,
     xhat_full = Float64.(collect(θ_hat_free_t))
 
     ll_cache = _build_ll_cache_uq(dm, ode_args_use, ode_kwargs_use, serialization_use)
-    _, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re_use)
+    _, batch_infos, const_cache = _build_re_batch_infos(dm, constants_re_use)
     ebe_cache = _init_laplace_eval_cache(length(batch_infos), Float64)
     cache_opts = LaplaceCacheOptions(0.0)
     use_penalty = !isempty(keys(penalty_use))

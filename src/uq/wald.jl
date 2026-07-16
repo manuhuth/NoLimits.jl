@@ -73,7 +73,7 @@ function _compute_uq_wald_no_re(res::FitResult;
     serialization_use = serialization === nothing ?
                         _fit_kw(res, :serialization, EnsembleSerial()) : serialization
 
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     free_names = _free_fixed_names(fe, constants_use)
     isempty(free_names) &&
         error("No free fixed effects are available for UQ after applying constants.")
@@ -108,7 +108,7 @@ function _compute_uq_wald_no_re(res::FitResult;
     use_prior = method isa MAP || method isa PooledMap
     # Pooled: η is the plug-in value of the RE distributions — a function of θ that
     # must be recomputed inside the objective so the Hessian carries the chain rule.
-    pooled_strategies = is_pooled ? res.result.strategies : nothing
+    pooled_strategies = is_pooled ? get_result(res).strategies : nothing
     eta_for = function (θu)
         is_pooled || return ComponentArray()
         return _compute_pooled_etas(dm, θu, pooled_strategies)
@@ -170,7 +170,7 @@ function _compute_uq_wald_no_re(res::FitResult;
     elseif vcov == :sandwich
         ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
         B = zeros(Float64, length(active_idx), length(active_idx))
-        for i in eachindex(dm.individuals)
+        for i in eachindex(get_individuals(dm))
             obj_i = function (x_active::AbstractVector)
                 θu = _θu_from_active(x_active)
                 η = try
@@ -298,7 +298,7 @@ function _compute_uq_wald_re(res::FitResult;
     # Hessian — so it keeps the caller's serialization.)
     serialization_use = SciMLBase.EnsembleSerial()
 
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     free_names = _free_fixed_names(fe, constants_use)
     isempty(free_names) &&
         error("No free fixed effects are available for UQ after applying constants.")
@@ -329,7 +329,7 @@ function _compute_uq_wald_re(res::FitResult;
     xhat_active = xhat_full[active_idx]
 
     ll_cache = _build_ll_cache_uq(dm, ode_args_use, ode_kwargs_use, serialization_use)
-    _, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re_use)
+    _, batch_infos, const_cache = _build_re_batch_infos(dm, constants_re_use)
     ebe_cache = _init_laplace_eval_cache(length(batch_infos), Float64)
     cache_opts = LaplaceCacheOptions(0.0)
     use_penalty = !isempty(keys(penalty_use))
@@ -412,7 +412,7 @@ function _compute_uq_wald_re(res::FitResult;
     elseif vcov == :sandwich
         B = zeros(Float64, length(active_idx), length(active_idx))
         for (bi, info) in enumerate(batch_infos)
-            info_single = _LaplaceBatchInfo[info]
+            info_single = REBatchInfo[info]
             ebe_cache_i = _init_laplace_eval_cache(1, Float64)
             seed_i = seed + UInt64(bi)
             obj_b = function (x_active::AbstractVector)

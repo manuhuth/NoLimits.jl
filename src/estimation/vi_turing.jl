@@ -197,7 +197,7 @@ function _fit_model(dm::DataModel, method::VI, args...;
         rng = rng,
         theta_0_untransformed = theta_0_untransformed,
         store_data_model = store_data_model)
-    re_names = get_re_names(dm.model.random.random)
+    re_names = get_re_names(get_random(get_model(dm)))
     if !isempty(re_names)
         error(
             "VI is not supported for models with random effects. " *
@@ -208,7 +208,7 @@ function _fit_model(dm::DataModel, method::VI, args...;
     isempty(keys(penalty)) ||
         error("VI does not support penalty terms. Use priors and MAP instead.")
 
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     _warn_if_scaled_params(fe; method_name = "VI")
     priors = get_priors(fe)
     fixed_names = get_names(fe)
@@ -299,7 +299,7 @@ function _fit_model(dm::DataModel, method::VI, args...;
 
     varinfo = DynamicPPL.VarInfo(model)
     coord_names = _vi_coord_names(varinfo)
-    obs = dm.df[:, dm.config.obs_cols]
+    obs = get_df(dm)[:, get_obs_cols(dm)]
     summary = FitSummary(final_elbo, converged,
         FitParameters(ComponentArray(), ComponentArray()),
         NamedTuple())

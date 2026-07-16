@@ -37,6 +37,11 @@ end
 
 const _NO_CLOSED_FORM = ClosedFormPlan(:none, false, 0, Int[])
 
+@inline get_cf_mode(p::ClosedFormPlan) = p.mode
+@inline is_cf_eligible(p::ClosedFormPlan) = p.eligible
+@inline get_cf_n(p::ClosedFormPlan) = p.n
+@inline get_cf_states(p::ClosedFormPlan) = p.cf_states
+
 # Whole system solved in closed form (as opposed to a decoupled linear subset).
 _cf_is_whole(p::ClosedFormPlan) = p.eligible && length(p.cf_states) == p.n
 

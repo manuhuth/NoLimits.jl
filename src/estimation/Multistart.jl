@@ -231,7 +231,7 @@ function _sample_param(
 end
 
 function _collect_param_dists(dm::DataModel, ms::Multistart)
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     priors = get_priors(fe)
     names = get_names(fe)
     pairs = Pair{Symbol, Any}[]
@@ -249,7 +249,7 @@ function _collect_param_dists(dm::DataModel, ms::Multistart)
 end
 
 function _multistart_initials(dm::DataModel, ms::Multistart)
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     θ0_u = get_θ0_untransformed(fe)
     dists = _collect_param_dists(dm, ms)
     bounds = get_bounds_untransformed(fe)
@@ -315,20 +315,20 @@ function _re_mean_or_zero(dist, dim::Int, is_scalar::Bool)
 end
 
 function _build_mean_eta(dm::DataModel, θu::ComponentArray)
-    re_cache = dm.re_group_info.laplace_cache
-    (re_cache === nothing || isempty(re_cache.re_names)) && return ComponentArray()
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
-    model_funs = get_model_funs(dm.model)
-    helpers = get_helper_funs(dm.model)
-    n = length(dm.individuals)
+    re_cache = get_laplace_cache(get_re_group_info(dm))
+    (re_cache === nothing || isempty(get_re_names(re_cache))) && return ComponentArray()
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
+    model_funs = get_model_funs(get_model(dm))
+    helpers = get_helper_funs(get_model(dm))
+    n = length(get_individuals(dm))
     etas = Vector{ComponentArray}(undef, n)
     for i in 1:n
-        const_cov = dm.individuals[i].const_cov
+        const_cov = get_const_cov(get_individuals(dm)[i])
         dists = dists_builder(θu, const_cov, model_funs, helpers)
         pairs = Pair{Symbol, Any}[]
-        for (ri, re) in enumerate(re_cache.re_names)
-            dim = re_cache.dims[ri]
-            is_scalar = re_cache.is_scalar[ri]
+        for (ri, re) in enumerate(get_re_names(re_cache))
+            dim = get_dims(re_cache)[ri]
+            is_scalar = get_is_scalar(re_cache)[ri]
             dist = getproperty(dists, re)
             push!(pairs, re => _re_mean_or_zero(dist, dim, is_scalar))
         end
@@ -341,26 +341,27 @@ end
 # for each candidate θu.  Returns (etas, joint_score) where joint_score is the total
 # joint log-density at the EBEs (used as the screening score).
 function _build_ebe_eta(dm::DataModel, θu::ComponentArray, ll_cache; maxiters::Int = 30)
-    re_cache = dm.re_group_info.laplace_cache
-    (re_cache === nothing || isempty(re_cache.re_names)) && return (ComponentArray(), 0.0)
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
-    re_logpdf_fn = get_re_logpdf(dm.model.random.random)
-    model_funs = get_model_funs(dm.model)
-    helpers = get_helper_funs(dm.model)
-    re_names = re_cache.re_names
+    re_cache = get_laplace_cache(get_re_group_info(dm))
+    (re_cache === nothing || isempty(get_re_names(re_cache))) &&
+        return (ComponentArray(), 0.0)
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
+    re_logpdf_fn = get_re_logpdf(get_random(get_model(dm)))
+    model_funs = get_model_funs(get_model(dm))
+    helpers = get_helper_funs(get_model(dm))
+    re_names = get_re_names(re_cache)
     re_names_tuple = Tuple(re_names)
     optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0))
-    n = length(dm.individuals)
+    n = length(get_individuals(dm))
     etas = Vector{ComponentArray}(undef, n)
     joint_score = 0.0
     for i in 1:n
-        const_cov = dm.individuals[i].const_cov
+        const_cov = get_const_cov(get_individuals(dm)[i])
         dists = dists_builder(θu, const_cov, model_funs, helpers)
         # Build prior mean as starting point
         pairs = Pair{Symbol, Any}[]
         for (ri, re) in enumerate(re_names)
-            dim = re_cache.dims[ri]
-            is_scalar = re_cache.is_scalar[ri]
+            dim = get_dims(re_cache)[ri]
+            is_scalar = get_is_scalar(re_cache)[ri]
             dist = getproperty(dists, re)
             push!(pairs, re => _re_mean_or_zero(dist, dim, is_scalar))
         end

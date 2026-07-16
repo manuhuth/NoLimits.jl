@@ -4,7 +4,7 @@ using Distributions
 using Random
 
 function _resolve_individuals(dm::DataModel, individuals_idx; default_all::Bool = false)
-    n = length(dm.individuals)
+    n = length(get_individuals(dm))
     if individuals_idx === nothing
         return default_all ? collect(1:n) : [1]
     end
@@ -32,7 +32,7 @@ function _resolve_obs_rows(obs_rows, obs_rows_all)
 end
 
 function _resolve_observables(dm::DataModel, observables)
-    obs = get_formulas_meta(dm.model.formulas.formulas).obs_names
+    obs = get_formulas_meta(get_formulas(get_model(dm))).obs_names
     if observables === nothing
         length(obs) > 1 &&
             @warn "Multiple observables found; using the first." observable=obs[1]

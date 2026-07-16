@@ -31,6 +31,8 @@ predictive percentile bands stratified by x-axis bins.
 - `constants_re::NamedTuple = NamedTuple()`: random-effect constants.
 - `mcmc_draws::Int = 1000`, `mcmc_warmup`: MCMC draw settings.
 - `style::PlotStyle = PlotStyle()`: visual style configuration.
+- `return_panel::Bool = false`: with a single observable, return the built panel instead
+  of a `Figure`, for composing several diagnostics into one figure via `combine_plots`.
 """
 function plot_vpc(res::FitResult;
         dm::Union{Nothing, DataModel} = nothing,
@@ -48,6 +50,7 @@ function plot_vpc(res::FitResult;
         kwargs_plot = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
         plot_path::Union{Nothing, String} = nothing,
+        return_panel::Bool = false,
         obs_percentiles_mode::Symbol = :pooled,
         bandwidth::Union{Nothing, Float64} = nothing,
         obs_percentiles_method::Symbol = :kernel,
@@ -69,13 +72,13 @@ function plot_vpc(res::FitResult;
     serialization === nothing ||
         throw(ArgumentError("`serialization` is not supported by `plot_vpc`."))
     constants_re_use = _res_constants_re(res, constants_re)
-    model = dm.model
-    if model.de.de === nothing
+    model = get_model(dm)
+    if get_de(model) === nothing
         x_axis_feature = _require_varying_covariate(dm, x_axis_feature)
     end
 
     rng = Random.MersenneTwister(seed)
-    obs_names = get_formulas_meta(model.formulas.formulas).obs_names
+    obs_names = get_formulas_meta(get_formulas(model)).obs_names
     observables === nothing && (observables = obs_names)
     percentiles = sort(Float64.(collect(percentiles)))
     (length(percentiles) >= 2 && all(0 .<= percentiles .<= 100)) ||
@@ -93,10 +96,10 @@ function plot_vpc(res::FitResult;
         all_x = Float64[]
         all_y = Float64[]
         all_x_bins = Float64[]
-        x_by_ind = Vector{Vector{Float64}}(undef, length(dm.individuals))
-        y_by_ind = Vector{Vector{Float64}}(undef, length(dm.individuals))
-        for (i, ind) in enumerate(dm.individuals)
-            obs_rows = dm.row_groups.obs_rows[i]
+        x_by_ind = Vector{Vector{Float64}}(undef, length(get_individuals(dm)))
+        y_by_ind = Vector{Vector{Float64}}(undef, length(get_individuals(dm)))
+        for (i, ind) in enumerate(get_individuals(dm))
+            obs_rows = get_obs_rows(get_row_groups(dm))[i]
             x_all_i, x_i, y_i = _collect_observed_xy(
                 ind, dm, obs_rows, obs_name, x_axis_feature)
             append!(all_x_bins, x_all_i)
@@ -279,6 +282,11 @@ function plot_vpc(res::FitResult;
         _set_limits!(p; xlim = _pad_limits(minimum(x_for_bins), maximum(x_for_bins)))
     end
 
+    if return_panel
+        length(plots) == 1 ||
+            error("return_panel requires a single observable; pass `observables = :name`.")
+        return only(plots)
+    end
     p = combine_plots(plots; ncols = ncols, style = style, kwargs_plot...)
     return _save_plot!(p, save_path)
 end
