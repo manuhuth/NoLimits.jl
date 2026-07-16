@@ -241,23 +241,23 @@ end
     res = fit_model(dm, NoLimits.Laplace())
 
     # :population — random effect at the prior mean → one prediction level for all rows.
-    pop = predict(res, df)
+    pop = NoLimits.predict(res, df)
     @test nrow(pop) == nrow(df)
     @test length(unique(round.(pop.prediction; digits = 6))) == 1
 
     # :ebe — reuse the training EBE → IPRED tracks each subject's level.
-    ebe = predict(res, df; re_mode = :ebe)
+    ebe = NoLimits.predict(res, df; re_mode = :ebe)
     @test nrow(ebe) == nrow(df)
     ebe_by_id = combine(groupby(ebe, :id), :prediction => mean => :m)
     @test ebe_by_id.m[1] > ebe_by_id.m[2] > ebe_by_id.m[3]
     @test !isapprox(ebe.prediction[1], pop.prediction[1]; atol = 1e-2)
 
     # :reestimate on the training data reproduces the stored EBEs.
-    reest = predict(res, df; re_mode = :reestimate)
+    reest = NoLimits.predict(res, df; re_mode = :reestimate)
     @test isapprox(collect(reest.prediction), collect(ebe.prediction); atol = 5e-2)
 
     # :marginal integrates the conditional posterior for seen subjects → tracks :ebe.
-    marg = predict(res, df; re_mode = :marginal, marginal_draws = 100,
+    marg = NoLimits.predict(res, df; re_mode = :marginal, marginal_draws = 100,
         rng = MersenneTwister(1))
     @test nrow(marg) == nrow(df)
     @test isapprox(collect(marg.prediction), collect(ebe.prediction); atol = 0.1)
@@ -265,9 +265,9 @@ end
     # Unseen subject with only missing outcomes: rows are kept, and :ebe/:marginal
     # fall back to the population value (prior mean / prior draws).
     df_new = DataFrame(ID = [99, 99], t = [0.0, 1.0], y = [missing, missing])
-    pop_new = predict(res, df_new)
-    ebe_new = predict(res, df_new; re_mode = :ebe)
-    marg_new = predict(res, df_new; re_mode = :marginal, marginal_draws = 100,
+    pop_new = NoLimits.predict(res, df_new)
+    ebe_new = NoLimits.predict(res, df_new; re_mode = :ebe)
+    marg_new = NoLimits.predict(res, df_new; re_mode = :marginal, marginal_draws = 100,
         rng = MersenneTwister(2))
     @test nrow(ebe_new) == 2
     @test isapprox(collect(ebe_new.prediction), collect(pop_new.prediction); atol = 1e-8)
@@ -289,6 +289,6 @@ end
     dm_fo = DataModel(model_fo, DataFrame(ID = [1, 1], t = [0.0, 1.0], y = [1.0, 1.1]);
         primary_id = :ID, time_col = :t)
     res_fo = fit_model(dm_fo, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
-    @test_throws ErrorException predict(res_fo, get_df(dm_fo); re_mode = :ebe)
-    @test_throws ErrorException predict(res, df; re_mode = :nonsense)
+    @test_throws ErrorException NoLimits.predict(res_fo, get_df(dm_fo); re_mode = :ebe)
+    @test_throws ErrorException NoLimits.predict(res, df; re_mode = :nonsense)
 end
