@@ -68,6 +68,17 @@ Configuration for the ODE solver used when integrating the `@DifferentialEquatio
   - `:dense` — full dense solution (required for non-constant time offsets in formulas).
   - `:saveat` — save only at observation + event + formula-offset times.
   - `:auto` — resolves to `:saveat` unless non-constant time offsets require `:dense`.
+- `closed_form::Symbol`: closed-form linear-ODE fast path (see [`ClosedFormPlan`](@ref)).
+  Eligibility is proven symbolically (exact, over all parameters).
+  - `:auto` (default) — use the closed form only for the scalar-fast cases: a whole-system
+    diagonal constant-coefficient linear ODE, or the two-state sequential Bateman case
+    (1-cmt oral, depot → central). Both are faster than numerical integration; integrate
+    numerically otherwise.
+  - `:off` — always integrate numerically.
+  - `:all` — additionally use the closed form for general/triangular linear systems and
+    linear/nonlinear splits. Exact, but for small dense systems not necessarily faster than
+    the numerical solver on the gradient — opt in when exactness matters.
+  - `:diagonal` — require a whole-system diagonal linear ODE; error otherwise.
 
 Constructed by the `@Model` macro with defaults and updated via [`set_solver_config`](@ref).
 """
@@ -76,9 +87,10 @@ struct ODESolverConfig{A, K, T}
     kwargs::K
     args::T
     saveat_mode::Symbol
+    closed_form::Symbol
 end
 
-ODESolverConfig() = ODESolverConfig(nothing, NamedTuple(), (), :dense)
+ODESolverConfig() = ODESolverConfig(nothing, NamedTuple(), (), :dense, :auto)
 
 """
     DEBundle{D, I, P, S, B}
@@ -304,6 +316,7 @@ arguments and replaces the existing configuration.
 - `kwargs = NamedTuple()`: keyword arguments forwarded to `solve`.
 - `args = ()`: positional arguments forwarded to `solve`.
 - `saveat_mode::Symbol = :dense`: save-time mode (`:dense`, `:saveat`, or `:auto`).
+- `closed_form::Symbol = :auto`: closed-form linear-ODE fast path (`:auto`, `:off`, `:diagonal`).
 """
 function set_solver_config(m::Model, cfg::ODESolverConfig)
     de_bundle = DEBundle(m.de.de, m.de.initial, m.de.prede, cfg, m.de.initial_builder)
@@ -312,8 +325,9 @@ function set_solver_config(m::Model, cfg::ODESolverConfig)
 end
 
 function set_solver_config(m::Model; alg = nothing, kwargs = NamedTuple(),
-        args = (), saveat_mode::Symbol = :dense)
-    return set_solver_config(m, ODESolverConfig(alg, kwargs, args, saveat_mode))
+        args = (), saveat_mode::Symbol = :dense, closed_form::Symbol = :auto)
+    return set_solver_config(
+        m, ODESolverConfig(alg, kwargs, args, saveat_mode, closed_form))
 end
 
 function _default_prede_builder()

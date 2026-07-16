@@ -6,6 +6,7 @@ using ComponentArrays
 using ForwardDiff
 using Random
 using Lux
+using OrdinaryDiffEq
 using Enzyme
 
 Enzyme.API.strictAliasing!(false)
@@ -59,4 +60,51 @@ Enzyme.API.strictAliasing!(false)
     g_rev = collect(Enzyme.gradient(
         set_runtime_activity(Enzyme.Reverse), Const(f), copy(b))[1])
     @test isapprox(g_rev, g_fd; rtol = 1e-6, atol = 1e-10)
+end
+
+@testset "Enzyme smoke: diagonal closed-form ODE marginal loglik (fwd + rev)" begin
+    # First real-Enzyme validation of the ODE path: a diagonal linear ODE solved in
+    # closed form has NO solver/adjoint, so Enzyme differentiates pure arithmetic and
+    # matches ForwardDiff to ~machine precision. (:linear/hybrid closed-form and the
+    # numerical solve are NOT covered here — see the closed-form Enzyme notes.)
+    model = @Model begin
+        @fixedEffects begin
+            k = RealNumber(0.8, scale = :log)
+            a = RealNumber(1.2)
+            σ = RealNumber(0.3, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @DifferentialEquation begin
+            D(x1) ~ -k * x1
+        end
+        @initialDE begin
+            x1 = a
+        end
+        @formulas begin
+            y ~ Normal(x1(t), σ)
+        end
+    end
+    model = set_solver_config(model; saveat_mode = :saveat, closed_form = :auto)
+    df = DataFrame(ID = repeat(1:2, inner = 3), t = repeat([0.0, 0.5, 1.0], outer = 2),
+        y = abs.(randn(Xoshiro(1), 6)) .+ 0.5)
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    @test get_closed_form_plan(dm).mode === :diagonal
+    cache = NoLimits.build_ll_cache(dm)
+    θu = get_θ0_untransformed(dm.model.fixed.fixed)
+    ax = getaxes(θu)
+    x0 = collect(θu)
+    f = let dm = dm, cache = cache, ax = ax
+        xv -> NoLimits.loglikelihood(dm, ComponentArray(xv, ax), ComponentArray();
+            cache = cache, serialization = NoLimits.EnsembleSerial())
+    end
+    g_fd = ForwardDiff.gradient(f, x0)
+    @test all(isfinite, g_fd)
+    g_fwd = collect(Enzyme.gradient(
+        set_runtime_activity(Enzyme.Forward), Const(f), copy(x0))[1])
+    @test isapprox(g_fwd, g_fd; rtol = 1e-6, atol = 1e-9)
+    g_rev = collect(Enzyme.gradient(
+        set_runtime_activity(Enzyme.Reverse), Const(f), copy(x0))[1])
+    @test isapprox(g_rev, g_fd; rtol = 1e-6, atol = 1e-9)
 end

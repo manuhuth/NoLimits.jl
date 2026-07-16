@@ -10,6 +10,7 @@ export get_primary_id
 export get_row_groups
 export get_re_group_info
 export get_re_indices
+export get_closed_form_plan
 
 using DataInterpolations
 using DiffEqCallbacks
@@ -126,7 +127,15 @@ struct EventCallbacks{C, R, RS, B}
     # Used by the plotting layer to ensure the dense time grid includes these times
     # so that short infusions are not missed when tspan >> infusion duration.
     all_times::Vector{Float64}
+    # Per-event-time schedules keyed by event time. The numerical path replays them
+    # through the callback closure; the closed-form path reads them directly to build
+    # event-free segments (bolus/reset state jumps, infusion folded into the forcing).
+    bolus_by_time::Dict{Float64, Vector{Float64}}
+    reset_by_time::Dict{Float64, Vector{Tuple{Int, Float64}}}
+    rate_delta_by_time::Dict{Float64, Vector{Float64}}
 end
+
+_cf_f64keys(d) = Dict{Float64, valtype(d)}(Float64(k) => v for (k, v) in d)
 
 """
     DataModel{M, D, I, P, C, K, G, R}
@@ -149,6 +158,9 @@ struct DataModel{M, D, I, P, C, K, G, R}
     id_index::K
     row_groups::G
     re_group_info::R
+    # Lazily-computed closed-form eligibility (see `get_closed_form_plan`). Mutable
+    # cache slot only; the DataModel is otherwise immutable.
+    closed_form_plan::Base.RefValue{Union{Nothing, ClosedFormPlan}}
 end
 
 function _nl_datamodel_show_line(dm::DataModel)
@@ -1119,7 +1131,9 @@ function _build_callbacks(model, df, rows, config::DataModelConfig)
     bolus_out = isempty(init_bolus_pairs) ? nothing : init_bolus_pairs
     (cb === nothing && resets_out === nothing && bolus_out === nothing) && return nothing
     return EventCallbacks(
-        cb, infusion_rates, copy(infusion_rates), resets_out, bolus_out, times)
+        cb, infusion_rates, copy(infusion_rates), resets_out, bolus_out, times,
+        _cf_f64keys(bolus_by_time), _cf_f64keys(reset_by_time),
+        _cf_f64keys(rate_delta_by_time))
 end
 
 @inline function _apply_initial_events!(u0, callbacks::EventCallbacks)
@@ -1465,8 +1479,8 @@ function DataModel(model,
     id_index = Dict{Any, Int}((keys_sorted[i] => i) for i in eachindex(keys_sorted))
     row_groups = RowGroups(groups, obs_groups)
     re_group_info = _build_re_group_info(model, df, individuals, row_groups)
-    return DataModel(
-        model, df, individuals, pairing, config, id_index, row_groups, re_group_info)
+    return DataModel(model, df, individuals, pairing, config, id_index, row_groups,
+        re_group_info, Base.RefValue{Union{Nothing, ClosedFormPlan}}(nothing))
 end
 
 """
@@ -1475,6 +1489,46 @@ end
 Return the [`Model`](@ref) stored in the `DataModel`.
 """
 get_model(dm::DataModel) = dm.model
+
+"""
+    get_closed_form_plan(dm::DataModel) -> ClosedFormPlan
+
+Return the closed-form linear-ODE eligibility plan for `dm`, computing it lazily on
+first call and caching it. Honors `get_solver_config(get_model(dm)).closed_form`
+(`:off` disables detection; `:diagonal` errors when the system is not eligible).
+See [`ClosedFormPlan`](@ref).
+"""
+function get_closed_form_plan(dm::DataModel)
+    cached = dm.closed_form_plan[]
+    cached === nothing || return cached
+    model = dm.model
+    mode = model.de.de === nothing ? :off : get_solver_config(model).closed_form
+    plan = if mode === :off
+        _NO_CLOSED_FORM
+    else
+        p = _detect_closed_form(model)
+        # Fast scalar closed forms (measurably faster than numerical): whole-system
+        # diagonal, and the two-state sequential Bateman case (1-cmt oral).
+        fast = _cf_is_whole(p) && (p.mode === :diagonal || p.mode === :bateman)
+        if mode === :auto
+            # Default: only the scalar-fast cases. General-linear/hybrid closed form is
+            # exact but (for small dense systems) not faster on the gradient — opt-in.
+            fast ? p : _NO_CLOSED_FORM
+        elseif mode === :all
+            p            # opt-in: also general-linear and linear/nonlinear splits
+        elseif mode === :diagonal
+            (_cf_is_whole(p) && p.mode === :diagonal) ? p :
+            error("closed_form=:diagonal requires the whole ODE system to be diagonal, " *
+                  "constant-coefficient linear with constant forcing, but this " *
+                  "@DifferentialEquation is not. Use closed_form=:auto (also covers the " *
+                  "Bateman 1-cmt-oral case), :all, or :off.")
+        else
+            error("closed_form must be :auto, :off, :all, or :diagonal; got $(repr(mode)).")
+        end
+    end
+    dm.closed_form_plan[] = plan
+    return plan
+end
 
 """
     get_df(dm::DataModel) -> DataFrame

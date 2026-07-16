@@ -380,6 +380,15 @@ function _solve_dense_individual(dm::DataModel,
         infusion_rates = ind.callbacks.infusion_rates
         f! = _plot_with_infusion(f!, infusion_rates)
     end
+    plan = get_closed_form_plan(dm)
+    if plan.eligible && (_cf_is_whole(plan) || cb === nothing)
+        solver_cfg = get_solver_config(model)
+        cf_alg = solver_cfg.alg === nothing ? Tsit5() : solver_cfg.alg
+        sol = _cf_dispatch_solve(model, compiled, u0, ind.tspan, nothing, plan,
+            ind.callbacks, cf_alg, solver_cfg.args,
+            _ode_solve_kwargs(solver_cfg.kwargs, ode_kwargs, NamedTuple()))
+        sol !== nothing && return sol, compiled
+    end
     prob = ODEProblem(f!, u0, ind.tspan, compiled)
     solver_cfg = get_solver_config(model)
     alg = solver_cfg.alg === nothing ? Tsit5() : solver_cfg.alg

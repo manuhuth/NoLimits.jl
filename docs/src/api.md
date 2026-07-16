@@ -59,6 +59,7 @@ RandomEffect
 ```@docs
 Model
 ODESolverConfig
+ClosedFormPlan
 set_solver_config
 get_model_funs
 get_helper_funs
@@ -105,6 +106,7 @@ get_model
 get_row_groups
 get_re_group_info
 get_re_indices
+get_closed_form_plan
 ```
 
 ### Summaries

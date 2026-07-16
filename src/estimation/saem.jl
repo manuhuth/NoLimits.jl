@@ -1660,6 +1660,14 @@ function _saem_stats_sol_accessors(dm::DataModel, idx::Int, θ, η_ind, cache::_
         cb = ind.callbacks.callback
         infusion_rates = ind.callbacks.infusion_rates
     end
+    plan = cache.closed_form_plan
+    if plan.eligible && (_cf_is_whole(plan) || cb === nothing)
+        sol = _cf_dispatch_solve(model, compiled, u0, ind.tspan,
+            _ll_saveat(cache, idx, ind), plan, ind.callbacks, cache.alg, cache.ode_args,
+            _ode_solve_kwargs(cache.solver_cfg.kwargs, cache.ode_kwargs, NamedTuple()))
+        sol === nothing && return (nothing, false)
+        return (get_de_accessors_builder(model.de.de)(sol, compiled), true)
+    end
     # Flat-vector solve parameters via DERHSFlat — must match the
     # _loglikelihood_individual template layout (shared cache.prob_templates).
     layout, plen = _flat_layout(compiled.vars)

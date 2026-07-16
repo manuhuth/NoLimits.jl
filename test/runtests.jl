@@ -36,6 +36,7 @@ const TEST_FILES = [
     "prede_tests.jl",
     "differential_equation_tests.jl",
     "ode_solve_tests.jl",
+    "closed_form_ode_tests.jl",
     "formulas_tests.jl",
     "initialde_tests.jl",
     # ── B2: model / data layer ───────────────────────────────────────────────

@@ -158,6 +158,9 @@ end
     end
     df = DataFrame(ID = repeat(1:2, inner = 3), t = repeat([0.0, 0.5, 1.0], outer = 2),
         y = abs.(randn(Xoshiro(1), 6)) .+ 0.5)
+    # This test inspects the numerical DERHSFlat solve template; the model is linear
+    # so force the numerical path (closed_form defaults to :auto and would bypass it).
+    model = set_solver_config(model; closed_form = :off)
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     θu = get_θ0_untransformed(dm.model.fixed.fixed)
     # fitting-path cache (force_saveat=true, as in _fit_no_re/laplace): saveat baked
