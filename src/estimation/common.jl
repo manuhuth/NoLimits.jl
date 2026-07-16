@@ -1178,6 +1178,31 @@ function _sample_mcmc_bstars_raw(dm::DataModel, batch_infos, bstars, θu, const_
     return bstars_per_sample
 end
 
+# Draw n_samples from the conditional posterior of the random effects for every
+# batch, dispatching on the fit type: Laplace/GHQuadrature use the Gaussian Laplace
+# approximation, MCEM/SAEM reuse the E-step MCMC kernel. Shared by fit_cv's
+# :conditional CV path and predict's :marginal mode.
+function _sample_conditional_bstars(dm::DataModel, batch_infos, bstars, θu, const_cache,
+        ll_cache, res::FitResult, n_samples::Int, rng::AbstractRNG)
+    lcl = ll_cache isa Vector ? ll_cache[1] : ll_cache
+    if res.result isa LaplaceResult || res.result isa GHQuadratureResult
+        return _sample_laplace_bstars_raw(dm, batch_infos, bstars, θu, const_cache, lcl;
+            n_samples = n_samples, rng = rng)
+    elseif res.result isa MCEMResult || res.result isa SAEMResult
+        method_sampler, method_tkwargs = if res.result isa MCEMResult
+            es = _mcmc_e_step(res.method.e_step)
+            es === nothing ? (SaemixMH(), NamedTuple()) : (es.sampler, es.turing_kwargs)
+        else
+            (res.method.saem.sampler, res.method.saem.turing_kwargs)
+        end
+        return _sample_mcmc_bstars_raw(dm, batch_infos, bstars, θu, const_cache, lcl,
+            get_re_names(dm.model.random.random), method_sampler, method_tkwargs;
+            n_samples = n_samples, n_adapt = 200, rng = rng, warm_start = true)
+    end
+    return error("Conditional random-effect sampling requires Laplace, GHQuadrature, " *
+                 "MCEM, or SAEM; got $(typeof(res.result)).")
+end
+
 function _sample_re_mcmc_path(dm::DataModel, res::FitResult, constants_re::NamedTuple,
         bstars, batch_infos, θu, const_cache, ll_cache,
         sampler, base_turing_kwargs;
