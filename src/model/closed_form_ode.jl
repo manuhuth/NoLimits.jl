@@ -375,7 +375,7 @@ Extracts the (constant) linear system exactly from the out-of-place RHS —
 `b = f(0)` and `A[:, j] = f(eⱼ) − b` — keeping θ/η at a single Dual level (the
 probes are plain `Float64`). `mode` selects the per-state scalar form
 (`:diagonal`) or the matrix-exponential action (`:linear`). `events` (an
-[`EventCallbacks`](@ref) or `nothing`) splits the trajectory into event-free
+`EventCallbacks` or `nothing`) splits the trajectory into event-free
 segments with bolus/reset state jumps and infusion folded into the forcing.
 Returns `nothing` on non-finite coefficients (mirrors a failed numerical solve).
 `saveat === nothing` materializes a dense grid for `.t`/`.u`.
