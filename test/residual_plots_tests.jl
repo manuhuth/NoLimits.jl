@@ -214,3 +214,81 @@ end
     @test haskey(shrink, :η)
     @test isfinite(shrink.η.shrinkage)
 end
+
+@testset "predict re_mode (population/ebe/reestimate/marginal)" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            σ = RealNumber(0.4, scale = :log)
+            ω = RealNumber(0.7, scale = :log)
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, ω); column = :ID)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @formulas begin
+            y ~ Normal(a + η, σ)
+        end
+    end
+
+    # Three subjects with clearly separated levels so the EBEs are non-zero.
+    df = DataFrame(ID = repeat([1, 2, 3]; inner = 3),
+        t = repeat([0.0, 1.0, 2.0]; outer = 3),
+        y = [2.9, 3.1, 3.0, 0.9, 1.1, 1.0, -1.1, -0.9, -1.0])
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    res = fit_model(dm, NoLimits.Laplace())
+
+    # :population — random effect at the prior mean → one prediction level for all rows.
+    pop = NoLimits.predict(res, df)
+    @test nrow(pop) == nrow(df)
+    @test length(unique(round.(pop.prediction; digits = 6))) == 1
+
+    # :ebe — reuse the training EBE → IPRED tracks each subject's level.
+    ebe = NoLimits.predict(res, df; re_mode = :ebe)
+    @test nrow(ebe) == nrow(df)
+    ebe_by_id = combine(groupby(ebe, :id), :prediction => mean => :m)
+    @test ebe_by_id.m[1] > ebe_by_id.m[2] > ebe_by_id.m[3]
+    @test !isapprox(ebe.prediction[1], pop.prediction[1]; atol = 1e-2)
+
+    # :reestimate on the training data reproduces the stored EBEs.
+    reest = NoLimits.predict(res, df; re_mode = :reestimate)
+    @test isapprox(collect(reest.prediction), collect(ebe.prediction); atol = 5e-2)
+
+    # :marginal integrates the conditional posterior for seen subjects → tracks :ebe.
+    marg = NoLimits.predict(res, df; re_mode = :marginal, marginal_draws = 100,
+        rng = MersenneTwister(1))
+    @test nrow(marg) == nrow(df)
+    @test isapprox(collect(marg.prediction), collect(ebe.prediction); atol = 0.1)
+
+    # Unseen subject with only missing outcomes: rows are kept, and :ebe/:marginal
+    # fall back to the population value (prior mean / prior draws).
+    df_new = DataFrame(ID = [99, 99], t = [0.0, 1.0], y = [missing, missing])
+    pop_new = NoLimits.predict(res, df_new)
+    ebe_new = NoLimits.predict(res, df_new; re_mode = :ebe)
+    marg_new = NoLimits.predict(res, df_new; re_mode = :marginal, marginal_draws = 100,
+        rng = MersenneTwister(2))
+    @test nrow(ebe_new) == 2
+    @test isapprox(collect(ebe_new.prediction), collect(pop_new.prediction); atol = 1e-8)
+    @test isapprox(collect(marg_new.prediction), collect(pop_new.prediction); atol = 0.3)
+
+    # Unsupported combinations error clearly.
+    model_fo = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            σ = RealNumber(0.4, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @formulas begin
+            y ~ Normal(a, σ)
+        end
+    end
+    dm_fo = DataModel(model_fo, DataFrame(ID = [1, 1], t = [0.0, 1.0], y = [1.0, 1.1]);
+        primary_id = :ID, time_col = :t)
+    res_fo = fit_model(dm_fo, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
+    @test_throws ErrorException NoLimits.predict(res_fo, get_df(dm_fo); re_mode = :ebe)
+    @test_throws ErrorException NoLimits.predict(res, df; re_mode = :nonsense)
+end
