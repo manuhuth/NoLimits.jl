@@ -416,31 +416,9 @@ function _cv_evaluate_mc(dm_train, dm_test, res_train, θu, ll_cache_test, loss,
     ref_eta = η_train_vec[1]
 
     # Conditional samples for seen individuals (Laplace or MCMC path)
-    bstars_per_sample = nothing
-    if seen_re_mode == :conditional
-        if res_train.result isa LaplaceResult ||
-           res_train.result isa GHQuadratureResult
-            lcl = ll_cache_train isa Vector ? ll_cache_train[1] : ll_cache_train
-            bstars_per_sample = _sample_laplace_bstars_raw(
-                dm_train, batch_infos, bstars, θu, const_cache, lcl;
-                n_samples = n_mc_samples, rng = rng)
-        elseif res_train.result isa MCEMResult || res_train.result isa SAEMResult
-            lcl = ll_cache_train isa Vector ? ll_cache_train[1] : ll_cache_train
-            method_sampler, method_tkwargs = if res_train.result isa MCEMResult
-                es = _mcmc_e_step(res_train.method.e_step)
-                es === nothing ? (SaemixMH(), NamedTuple()) : (es.sampler, es.turing_kwargs)
-            else
-                (res_train.method.saem.sampler, res_train.method.saem.turing_kwargs)
-            end
-            bstars_per_sample = _sample_mcmc_bstars_raw(
-                dm_train, batch_infos, bstars, θu, const_cache, lcl,
-                get_re_names(dm_train.model.random.random), method_sampler, method_tkwargs;
-                n_samples = n_mc_samples, n_adapt = 200, rng = rng, warm_start = true)
-        else
-            error("seen_re_mode=:conditional requires Laplace, MCEM, or SAEM. " *
-                  "Got: $(typeof(res_train.result))")
-        end
-    end
+    bstars_per_sample = seen_re_mode == :conditional ?
+                        _sample_conditional_bstars(dm_train, batch_infos, bstars, θu,
+        const_cache, ll_cache_train, res_train, n_mc_samples, rng) : nothing
 
     # RE distribution builder — used for unseen :montecarlo draws and :mean plug-in.
     dists_builder = get_create_random_effect_distribution(dm_test.model.random.random)

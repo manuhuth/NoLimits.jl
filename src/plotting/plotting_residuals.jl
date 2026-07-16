@@ -638,25 +638,88 @@ function _acf_for_series(v::Vector{Float64}, max_lag::Int)
 end
 
 """
-    predict(res::FitResult, newdata; fitted_stat = mean, kwargs...)
-    predict(res::FitResult, newdata::DataModel; fitted_stat = mean, kwargs...)
+    predict(res::FitResult, newdata; re_mode = :population, fitted_stat = mean, kwargs...)
+    predict(res::FitResult, newdata::DataModel; re_mode = :population, fitted_stat = mean, kwargs...)
 
-Population-level predictions from a fitted model on new data. The model and the
-estimated parameters are taken from `res`, and the random effects are set to
-their population value, so the predictions apply to previously unseen subjects.
-Pass `newdata` either as a `DataFrame`, which is rebuilt into a `DataModel` using
-the fitted model together with the grouping and time columns of the original fit,
-or as a ready-made `DataModel`. Returns a `DataFrame` with the individual
-identifier, the time, the observable, and the predicted response mean in the
-`prediction` column. Additional keyword arguments are forwarded to
-[`get_residuals`](@ref).
+Predict the response on new data from a fitted model. The fixed effects are taken
+from `res`; how the random effects are chosen is controlled by `re_mode`:
+
+- `:population` (default): random effects at their prior mean (the typical-subject
+  "PRED"), so the predictions apply to previously unseen subjects.
+- `:ebe`: reuse the empirical-Bayes estimate from the fit for any subject whose
+  random-effect grouping signature is present in the training data (the individual
+  "IPRED"); subjects not seen in training fall back to the population value.
+- `:reestimate`: compute a fresh empirical-Bayes estimate on `newdata` while holding
+  the fitted fixed effects, so new subjects that carry their own observations get an
+  individual prediction.
+- `:marginal`: integrate the random effects out by Monte Carlo. For seen subjects the
+  conditional posterior is sampled, for unseen subjects the prior is sampled, and the
+  prediction is the average conditional mean over `marginal_draws` draws.
+
+Matching in `:ebe`/`:marginal` is on the whole random-effect grouping signature, so in
+a hierarchical model a subject with a new primary id counts as unseen even if it shares
+a known upper level. `:ebe`/`:reestimate`/`:marginal` need a random-effects method
+(Laplace, FOCEI, GHQuadrature, MCEM, or SAEM; `:reestimate` excludes GHQuadrature) and
+are not available for MCMC/VI posterior-draw fits (whose `:population` path already
+integrates the posterior).
+
+Pass `newdata` as a `DataFrame`, rebuilt into a `DataModel` using the fitted model and
+the grouping, time and event columns of the original fit, or as a ready-made
+`DataModel`. Returns a `DataFrame` with the individual identifier, the time, the
+observable, and the predicted response in the `prediction` column. Extra keyword
+arguments are forwarded to [`get_residuals`](@ref).
+
+# Keyword Arguments
+- `re_mode::Symbol = :population`: random-effect strategy (see above).
+- `fitted_stat = mean`: summary of the predicted observation distribution (`:marginal`
+  is exact only for the mean).
+- `constants_re::NamedTuple = NamedTuple()`: fix random-effect levels on the natural scale.
+- `marginal_draws::Int = 100`: Monte Carlo draws for `re_mode = :marginal`.
+- `reestimate_kwargs::NamedTuple = NamedTuple()`: forwarded to [`reestimate_ebes`](@ref).
+- `rng::AbstractRNG = Random.default_rng()`: random source for `:marginal`.
 """
-function predict(res::FitResult, dm_new::DataModel; fitted_stat = mean, kwargs...)
-    θ = NamedTuple(get_params(res; scale = :untransformed))
-    df = get_residuals(dm_new; params = θ, residuals = [:raw],
-        fitted_stat = fitted_stat, kwargs...)
-    return DataFrame(id = df.id, time = df.time,
-        observable = df.observable, prediction = df.fitted)
+function predict(res::FitResult, dm_new::DataModel;
+        re_mode::Symbol = :population,
+        fitted_stat = mean,
+        constants_re::NamedTuple = NamedTuple(),
+        marginal_draws::Int = 100,
+        reestimate_kwargs::NamedTuple = NamedTuple(),
+        rng::AbstractRNG = Random.default_rng(),
+        ode_args::Tuple = (),
+        ode_kwargs::NamedTuple = NamedTuple(),
+        kwargs...)
+    θ = get_params(res; scale = :untransformed)
+    if re_mode == :population
+        df = get_residuals(dm_new; params = NamedTuple(θ), residuals = [:raw],
+            fitted_stat = fitted_stat, constants_re = constants_re,
+            ode_args = ode_args, ode_kwargs = ode_kwargs, kwargs...)
+        return _prediction_frame(df.id, df.time, df.observable, df.fitted)
+    end
+    _validate_predict_re_mode(res, dm_new, re_mode)
+    if re_mode == :marginal
+        return _predict_marginal(res, dm_new, θ; fitted_stat = fitted_stat,
+            constants_re = constants_re, marginal_draws = marginal_draws, rng = rng,
+            ode_args = ode_args, ode_kwargs = ode_kwargs, kwargs...)
+    end
+    if re_mode == :reestimate
+        re_kw = merge(
+            (constants_re = constants_re, ode_args = ode_args,
+                ode_kwargs = ode_kwargs),
+            reestimate_kwargs)
+        res2 = reestimate_ebes(dm_new, res; re_kw...)
+        df = get_residuals(res2; dm = dm_new, params = NamedTuple(θ), residuals = [:raw],
+            fitted_stat = fitted_stat, constants_re = constants_re,
+            ode_args = ode_args, ode_kwargs = ode_kwargs, kwargs...)
+        return _prediction_frame(df.id, df.time, df.observable, df.fitted)
+    end
+    # :ebe
+    η_vec = _predict_eta_ebe(res, dm_new, θ, constants_re)
+    cache = _fill_plot_cache(dm_new, θ, η_vec, nothing, constants_re, true,
+        ode_args, ode_kwargs)
+    df = get_residuals(dm_new; cache = cache, params = NamedTuple(θ), residuals = [:raw],
+        fitted_stat = fitted_stat, constants_re = constants_re,
+        ode_args = ode_args, ode_kwargs = ode_kwargs, kwargs...)
+    return _prediction_frame(df.id, df.time, df.observable, df.fitted)
 end
 
 function predict(res::FitResult, newdata; kwargs...)
@@ -664,7 +727,128 @@ function predict(res::FitResult, newdata; kwargs...)
     dm_old === nothing &&
         error("predict requires the fit to store its DataModel; refit with " *
               "store_data_model = true.")
+    cfg = dm_old.config
     dm_new = DataModel(get_model(dm_old), newdata;
-        primary_id = dm_old.config.primary_id, time_col = dm_old.config.time_col)
+        primary_id = cfg.primary_id, time_col = cfg.time_col,
+        evid_col = cfg.evid_col, amt_col = cfg.amt_col,
+        rate_col = cfg.rate_col, cmt_col = cfg.cmt_col,
+        serialization = cfg.serialization)
     return predict(res, dm_new; kwargs...)
+end
+
+function _prediction_frame(id, time, observable, prediction)
+    DataFrame(id = id, time = time, observable = observable, prediction = prediction)
+end
+
+# Validate that re_mode is supported for this fit; :population is handled before this.
+function _validate_predict_re_mode(res::FitResult, dm::DataModel, re_mode::Symbol)
+    re_mode in (:population, :ebe, :reestimate, :marginal) ||
+        error("predict: re_mode must be :population, :ebe, :reestimate, or :marginal; " *
+              "got :$re_mode.")
+    isempty(get_re_names(dm.model.random.random)) &&
+        error("predict: re_mode=:$re_mode requires a model with random effects; " *
+              "use re_mode=:population.")
+    _is_posterior_draw_fit(res) &&
+        error("predict: re_mode=:$re_mode is not supported for MCMC/VI posterior-draw " *
+              "fits; use re_mode=:population (it integrates the posterior draws).")
+    if re_mode == :reestimate
+        (res.result isa LaplaceResult || res.result isa MCEMResult ||
+         res.result isa SAEMResult) ||
+            error("predict: re_mode=:reestimate requires a Laplace, FOCEI, MCEM, or SAEM " *
+                  "fit (GHQuadrature is unsupported); use re_mode=:ebe instead.")
+    else
+        _cv_has_re_support(res) ||
+            error("predict: re_mode=:$re_mode requires a Laplace, FOCEI, GHQuadrature, " *
+                  "MCEM, or SAEM fit; got $(typeof(res.result)).")
+    end
+    return nothing
+end
+
+# Build the per-individual η for :ebe — training EBE for seen subjects (matched on the
+# whole re_groups signature), RE prior mean for the rest. Mirrors _cv_evaluate_ebe.
+function _predict_eta_ebe(res::FitResult, dm_new::DataModel, θ::ComponentArray,
+        constants_re::NamedTuple)
+    dm_old = get_data_model(res)
+    dm_old === nothing &&
+        error("predict: re_mode=:ebe requires the fit to store its DataModel; " *
+              "refit with store_data_model = true.")
+    η_vec = _default_random_effects_from_dm(dm_new, constants_re, θ)
+    bstars, batch_infos, θu, const_cache, _, _ = _resolve_bstars_for_re(
+        dm_old, res, constants_re)
+    η_train = _eta_from_eb(dm_old, batch_infos, bstars, const_cache, θu)
+    re_to_eta = Dict{Any, ComponentArray}(dm_old.individuals[i].re_groups => η_train[i]
+    for i in 1:length(dm_old.individuals))
+    for j in 1:length(dm_new.individuals)
+        key = dm_new.individuals[j].re_groups
+        haskey(re_to_eta, key) && (η_vec[j] = re_to_eta[key])
+    end
+    return η_vec
+end
+
+# Monte-Carlo marginal prediction: integrate the conditional posterior for seen
+# subjects and the prior for unseen subjects, averaging the per-draw predicted means.
+function _predict_marginal(res::FitResult, dm_new::DataModel, θ::ComponentArray;
+        fitted_stat, constants_re::NamedTuple, marginal_draws::Int,
+        rng::AbstractRNG, ode_args::Tuple, ode_kwargs::NamedTuple, kwargs...)
+    marginal_draws >= 1 || error("predict: marginal_draws must be >= 1.")
+    dm_old = get_data_model(res)
+    dm_old === nothing &&
+        error("predict: re_mode=:marginal requires the fit to store its DataModel; " *
+              "refit with store_data_model = true.")
+    bstars, batch_infos, θu, const_cache, ll_cache_train, _ = _resolve_bstars_for_re(
+        dm_old, res, constants_re)
+    re_to_train = Dict{Any, Tuple{Int, Int}}()
+    for (bi, info) in enumerate(batch_infos)
+        for i in info.inds
+            re_to_train[dm_old.individuals[i].re_groups] = (bi, i)
+        end
+    end
+    bstars_per_sample = _sample_conditional_bstars(dm_old, batch_infos, bstars, θu,
+        const_cache, ll_cache_train, res, marginal_draws, rng)
+    dists_builder = get_create_random_effect_distribution(dm_new.model.random.random)
+    model_funs = get_model_funs(dm_new.model)
+    helpers = get_helper_funs(dm_new.model)
+    re_names = get_re_names(dm_new.model.random.random)
+    sample_rngs = _spawn_child_rngs(rng, marginal_draws)
+    n_new = length(dm_new.individuals)
+
+    sum_acc = Float64[]
+    cnt_acc = Int[]
+    id_col = nothing
+    time_col = nothing
+    obs_col = nothing
+    for s in 1:marginal_draws
+        srng = sample_rngs[s]
+        η_vec = Vector{ComponentArray}(undef, n_new)
+        for j in 1:n_new
+            tinfo = get(re_to_train, dm_new.individuals[j].re_groups, nothing)
+            η_vec[j] = if tinfo !== nothing
+                bi, ti = tinfo
+                ComponentArray(_build_eta_ind(dm_old, ti, batch_infos[bi],
+                    bstars_per_sample[s][bi], const_cache, θu))
+            else
+                dists = dists_builder(
+                    θu, dm_new.individuals[j].const_cov, model_funs, helpers)
+                ComponentArray(NamedTuple((re => rand(srng, getproperty(dists, re))
+                for re in re_names)))
+            end
+        end
+        cache = _fill_plot_cache(dm_new, θ, η_vec, nothing, constants_re, true,
+            ode_args, ode_kwargs)
+        df = get_residuals(dm_new; cache = cache, params = NamedTuple(θ),
+            residuals = [:raw], fitted_stat = fitted_stat, constants_re = constants_re,
+            ode_args = ode_args, ode_kwargs = ode_kwargs, kwargs...)
+        if isempty(sum_acc)
+            sum_acc = zeros(Float64, nrow(df))
+            cnt_acc = zeros(Int, nrow(df))
+            id_col, time_col, obs_col = df.id, df.time, df.observable
+        end
+        for r in 1:length(sum_acc)
+            fr = df.fitted[r]
+            ismissing(fr) || (sum_acc[r] += fr; cnt_acc[r] += 1)
+        end
+    end
+    prediction = [cnt_acc[r] > 0 ? sum_acc[r] / cnt_acc[r] : missing
+                  for r in 1:length(sum_acc)]
+    return _prediction_frame(id_col, time_col, obs_col, prediction)
 end
