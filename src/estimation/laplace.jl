@@ -729,12 +729,19 @@ function _laplace_logf_batch(
         dm::DataModel, batch_info::REBatchInfo, θ::ComponentArray,
         b, const_cache::REConstantsCache, cache::_LLCache;
         anneal_sds::NamedTuple = NamedTuple(), tctx = nothing)
+    T = promote_type(eltype(θ), eltype(b))
     try
-        return _laplace_logf_batch_impl(dm, batch_info, θ, b, const_cache, cache;
-            anneal_sds = anneal_sds, tctx = tctx)
+        # The RE-prior terms box through the RE-distribution RGF (`dists_builder` returns
+        # `Any`, a codegen-level limit shared with `calculate_prede`), so the impl infers
+        # `Any`. Pin the batch log-density to `T` here so the differentiated M-step Q
+        # objective (`acc += w*logf` in the Q-core) stays concrete. AD-safe: `convert` is
+        # identity when the value is already `T`, an AD-correct zero-partial lift otherwise.
+        return convert(T,
+            _laplace_logf_batch_impl(dm, batch_info, θ, b, const_cache,
+                cache; anneal_sds = anneal_sds, tctx = tctx))::T
     catch err
         if _is_numeric_error(err)
-            return convert(promote_type(eltype(θ), eltype(b)), -Inf)
+            return convert(T, -Inf)::T
         end
         rethrow(err)
     end
@@ -942,7 +949,9 @@ function _re_logpdf_batch(dm::DataModel,
     const_ll = _const_re_prior_logf(
         dm, batch_info, θ_re, const_cache, cache; anneal_sds = anneal_sds)
     !isfinite(const_ll) && return T_ll(-Inf)
-    return ll + const_ll
+    # Pin to `T_ll`: the prior terms box through the RE-distribution RGF (`Any`), and the
+    # Q2 M-step optimizer differentiates this objective. AD-safe convert (see above).
+    return convert(T_ll, ll + const_ll)::T_ll
 end
 
 # Returns only the RE prior log-density term for a batch (no observation likelihood).

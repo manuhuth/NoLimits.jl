@@ -326,6 +326,28 @@ function _cf_propagate(mode::Symbol, A, b, x0, Δ)
     return _cf_expv(A, b, x0, Δ)
 end
 
+# In-place `_cf_propagate`: writes the advanced state into `out`. Used by
+# `_cf_materialize` to fill a preallocated grid matrix column-by-column, which removes
+# the fresh per-grid-point state vector (the dominant closed-form allocation). The
+# scalar formulas are identical to `_cf_propagate`/`_cf_bateman`, so results are
+# bit-identical; only the storage differs.
+function _cf_propagate!(out, mode::Symbol, A, b, x0, Δ)
+    if mode === :diagonal
+        @inbounds for i in eachindex(x0)
+            out[i] = _cf_state_value(A[i, i], b[i], x0[i], Δ)
+        end
+    elseif mode === :bateman
+        u = iszero(A[1, 2]) ? 1 : 2
+        d = 3 - u
+        @inbounds out[u] = _cf_state_value(A[u, u], b[u], x0[u], Δ)
+        @inbounds out[d] = _cf_state_value(A[d, d], b[d], x0[d], Δ) +
+                           A[d, u] * x0[u] * _cf_expdd(A[u, u], A[d, d], Δ)
+    else
+        out .= _cf_expv(A, b, x0, Δ)  # :linear (opt-in): matrix-exp action, rare
+    end
+    return out
+end
+
 # Full state vector at time `t`: locate its segment (event-free interval), then
 # propagate from that segment's start state with its constant forcing.
 function _cf_state_vector(mode::Symbol, A, seg_t, seg_x0, seg_b, t)
@@ -333,11 +355,21 @@ function _cf_state_vector(mode::Symbol, A, seg_t, seg_x0, seg_b, t)
     return _cf_propagate(mode, A, seg_b[k], seg_x0[k], t - seg_t[k])
 end
 
-# Materialize the state on a whole grid. For `:linear` the augmented matrix and
-# start vector are constant per segment, so they are built once per segment and
-# reused across that segment's grid points (avoids rebuilding them per point).
+# Materialize the state on a whole grid into an `m × length(grid)` matrix (state ×
+# time), one column per grid point. Storing a matrix (a single allocation) instead of a
+# `Vector{Vector}` (one vector per grid point) removes the dominant closed-form
+# allocation; `_cf_propagate!` fills each column in place. Segment lookup and the scalar
+# formulas are unchanged, so the values are bit-identical to the old comprehension.
 function _cf_materialize(mode::Symbol, A, seg_t, seg_x0, seg_b, grid)
-    return [_cf_state_vector(mode, A, seg_t, seg_x0, seg_b, tk) for tk in grid]
+    m = length(seg_x0[1])
+    T = eltype(seg_x0[1])
+    U = Matrix{T}(undef, m, length(grid))
+    @inbounds for kk in eachindex(grid)
+        tk = grid[kk]
+        k = max(searchsortedlast(seg_t, tk), 1)
+        _cf_propagate!(view(U, :, kk), mode, A, seg_b[k], seg_x0[k], tk - seg_t[k])
+    end
+    return U
 end
 
 """
@@ -348,7 +380,8 @@ Solution-shaped object returned by the closed-form fast path. Not an
 accessor. `mode` is `:diagonal` (per-state scalar closed form) or `:linear`
 (matrix-exponential action). The trajectory is piecewise over event-free
 segments (`seg_t`/`seg_x0`/`seg_b`); with no events there is a single segment.
-Carries a materialized `t`/`u` grid for lookup, inspection, and plotting.
+Carries a materialized `t`/`u` grid (state × time matrix) for lookup, inspection,
+and plotting.
 """
 struct ClosedFormLinearSolution{T}
     mode::Symbol
@@ -358,14 +391,14 @@ struct ClosedFormLinearSolution{T}
     seg_x0::Vector{Vector{T}}
     seg_b::Vector{Vector{T}}
     t::Vector{Float64}
-    u::Vector{Vector{T}}
+    u::Matrix{T}
 end
 
 @inline function (s::ClosedFormLinearSolution)(t; idxs::Integer)
     # Exact-time grid lookup first (every :saveat eval time is on the grid), which
     # avoids recomputing the matrix-exp action per state in :linear mode.
     i = searchsortedfirst(s.t, t)
-    (i <= length(s.t) && @inbounds(s.t[i]==t)) && return @inbounds s.u[i][idxs]
+    (i <= length(s.t) && @inbounds(s.t[i]==t)) && return @inbounds s.u[idxs, i]
     return _cf_state_vector(s.mode, s.A, s.seg_t, s.seg_x0, s.seg_b, t)[idxs]
 end
 
@@ -401,8 +434,9 @@ function _closed_form_solve_de(model, compiled, u0::AbstractVector, tspan, savea
     # A[a,b] = ∂f_{idxs[a]}/∂u_{idxs[b]} = f(e_{idxs[b]})[idxs[a]] − b. For a self-
     # contained subset the excluded states are zero in the probe (they don't feed in).
     A = Matrix{T}(undef, m, m)
+    ej = zeros(Float64, n)   # reused across columns (fill! resets each probe)
     for b in 1:m
-        ej = zeros(Float64, n)
+        fill!(ej, 0.0)
         ej[idxs[b]] = 1.0
         col = collect(f(ej, compiled, t0f))
         for a in 1:m
