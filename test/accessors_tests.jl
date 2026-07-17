@@ -54,6 +54,13 @@ end
     end
     @test sort(unique(NL.sample_random_effects(fx_laplace(); n_samples = 5).η.sample)) ==
           collect(1:5)
+
+    # get_random_effect_distribution rebuilds the fitted population distribution p(b | θ̂).
+    d_re = NL.get_random_effect_distribution(fx_laplace(), :η)
+    @test d_re isa Normal
+    @test_throws ErrorException NL.get_random_effect_distribution(fx_laplace(), :nope)
+    @test_throws ErrorException NL.get_random_effect_distribution(fx_laplace(), :η;
+        individual = 0)
 end
 
 @testset "Accessors: random-effects covariate usage" begin

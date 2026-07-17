@@ -90,15 +90,15 @@ Returns `-Inf` (promoting to the accumulator type) if:
 """
 function batch_loglik_ghq(
         dm::DataModel,
-        batch_info::_LaplaceBatchInfo,
+        batch_info::REBatchInfo,
         θ::ComponentArray,
         re_measure::AbstractREMeasure,
         sgrid::GHQuadratureNodes{Float64},
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         ll_cache::_LLCache
 )
     R = size(sgrid.nodes, 2)
-    θ_re = _symmetrize_psd_params(θ, dm.model.fixed.fixed)
+    θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
 
     # Determine accumulator element type from the RE measure.
     # When θ carries ForwardDiff.Dual tags, re_measure.μ has Dual elements,
@@ -110,8 +110,8 @@ function batch_loglik_ghq(
     # Per-node η construction reuses one buffer when the fast-path template
     # exists (one RE level per group per individual) — the wrapped η is
     # consumed inside the node iteration before the buffer is overwritten.
-    re_cache = dm.re_group_info.laplace_cache
-    template = re_cache === nothing ? nothing : re_cache.eta_template
+    re_cache = get_laplace_cache(get_re_group_info(dm))
+    template = re_cache === nothing ? nothing : get_eta_template(re_cache)
     η_buf = template === nothing ? nothing : Vector{T}(undef, length(template))
     # Same lifetime contract for the transformed node: `b_r` is consumed (copied
     # into η) inside the iteration, so `transform!` reuses one buffer instead of
@@ -125,7 +125,7 @@ function batch_loglik_ghq(
         # Sum conditional log-likelihoods over all individuals in batch
         cond = zero(T)
         valid = true
-        for i in batch_info.inds
+        for i in get_inds(batch_info)
             η_i = η_buf === nothing ?
                   _build_eta_ind(dm, i, batch_info, b_r, const_cache, θ_re) :
                   _build_eta_ind_fast!(
@@ -182,16 +182,16 @@ Internally reuses `_is_prior_sample_batch` (from mcem.jl) for prior sampling.
 """
 function batch_loglik_mc_prior(
         dm::DataModel,
-        batch_info::_LaplaceBatchInfo,
+        batch_info::REBatchInfo,
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         ll_cache::_LLCache,
         n_samples::Int,
         rng::AbstractRNG
 )
-    batch_info.n_b == 0 &&
+    get_n_b(batch_info) == 0 &&
         error("batch_loglik_mc_prior: called with n_b == 0; no RE to integrate.")
-    re_names = get_re_names(dm.model.random.random)
+    re_names = get_re_names(get_random(get_model(dm)))
 
     # Draw b_r ~ p(b|θ) and get log_qs[r] = log p(b_r|θ)
     samples, log_qs = _is_prior_sample_batch(
@@ -238,19 +238,19 @@ The default sampler (when `sampler === nothing`) is `MH()`.
 """
 function batch_loglik_mc_turing(
         dm::DataModel,
-        batch_info::_LaplaceBatchInfo,
+        batch_info::REBatchInfo,
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         ll_cache::_LLCache,
         n_samples::Int,
         sampler,
         n_warmup::Int,
         rng::AbstractRNG
 )
-    batch_info.n_b == 0 &&
+    get_n_b(batch_info) == 0 &&
         error("batch_loglik_mc_turing: called with n_b == 0; no RE to integrate.")
-    n_b = batch_info.n_b
-    re_names = get_re_names(dm.model.random.random)
+    n_b = get_n_b(batch_info)
+    re_names = get_re_names(get_random(get_model(dm)))
 
     # Step 1: Run MCMC to collect posterior samples for fitting the proposal.
     # n_warmup steps are used for adaptation; then max(n_warmup, 50) are kept for proposal fitting.
@@ -315,9 +315,9 @@ Dispatch to the appropriate MC batch log-likelihood estimator based on `mc.mode`
 """
 function _batch_loglik_from_mc(
         dm::DataModel,
-        batch_info::_LaplaceBatchInfo,
+        batch_info::REBatchInfo,
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         ll_cache::_LLCache,
         mc::MCIntegrator,
         fallback_rng::AbstractRNG

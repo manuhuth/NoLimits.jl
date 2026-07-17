@@ -180,7 +180,7 @@ The parsed random-effects object exposes accessor functions for its components. 
 - `get_re_names` - vector of random-effect names.
 - `get_re_groups` - NamedTuple mapping each effect to its grouping column.
 
-The remaining accessors (`get_re_types`, `get_re_syms`, `get_re_dist_exprs`, `get_create_random_effect_distribution`, `get_re_logpdf`) provide lower-level access to distribution metadata and runtime builders; their signatures are documented in the [API reference](../api.md).
+The remaining accessors (`get_re_types`, `get_re_syms`, `get_re_dist_exprs`, `create_random_effect_distribution`, `get_re_logpdf`) provide lower-level access to distribution metadata and runtime builders; their signatures are documented in the [API reference](../api.md).
 
 ## Grouping and Data Requirements
 

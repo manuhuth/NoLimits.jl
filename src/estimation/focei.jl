@@ -237,11 +237,11 @@ end
 # `rows_f!(out, obs_f, ctx, sol_acc, const_cov, obs_series, vrows, obs_cols)`.
 function _focei_collect_obs!(rows_f!::RF, out::Vector, dm::DataModel, idx::Int,
         θ, η_ind, cache::_LLCache) where {RF}
-    model = dm.model
-    ind = dm.individuals[idx]
-    obs_rows = dm.row_groups.obs_rows[idx]
-    const_cov = ind.const_cov
-    obs_series = ind.series.obs
+    model = get_model(dm)
+    ind = get_individuals(dm)[idx]
+    obs_rows = get_obs_rows(get_row_groups(dm))[idx]
+    const_cov = get_const_cov(ind)
+    obs_series = get_obs(get_series(ind))
     vary_cache = cache.vary_cache === nothing ? nothing : cache.vary_cache[idx]
     if η_ind isa NamedTuple
         η_ind = ComponentArray(η_ind)
@@ -249,16 +249,16 @@ function _focei_collect_obs!(rows_f!::RF, out::Vector, dm::DataModel, idx::Int,
 
     sol_accessors = nothing
     pre = nothing
-    if model.de.de !== nothing
+    if get_de(model) !== nothing
         pre = calculate_prede(model, θ, η_ind, const_cov)
         sol_accessors = _ll_solve_de(dm, idx, θ, η_ind, cache, pre)
         sol_accessors === nothing && return false
     end
 
-    obs_cols = dm.config.obs_cols
+    obs_cols = get_obs_cols(dm)
     if _needs_rowwise_random_effects(dm, idx; obs_only = true)
         # Per-row η selection (rare; non-DE only).
-        t_obs = vary_cache === nothing ? _get_col(dm.df, dm.config.time_col)[obs_rows] :
+        t_obs = vary_cache === nothing ? _get_col(get_df(dm), get_time_col(dm))[obs_rows] :
                 nothing
         isempty(obs_rows) && return true
         row_tmpl = _row_re_template(dm, idx, 1, η_ind; obs_only = true)
@@ -281,8 +281,9 @@ function _focei_collect_obs!(rows_f!::RF, out::Vector, dm::DataModel, idx::Int,
     ctx = (; fixed_effects = θ, random_effects = η_ind, prede = pre,
         helpers = cache.helpers, model_funs = cache.model_funs)
     vrows = vary_cache !== nothing ? vary_cache :
-            _build_vary_cache_individual(ind.series.vary, ind.series.dyn,
-        _get_col(dm.df, dm.config.time_col)[obs_rows],
+            _build_vary_cache_individual(
+        get_vary(get_series(ind)), get_dyn(get_series(ind)),
+        _get_col(get_df(dm), get_time_col(dm))[obs_rows],
         length(obs_rows))
     sol_acc = sol_accessors === nothing ? NamedTuple() : sol_accessors
     rows_f!(out, model.formulas.obs, ctx, sol_acc, const_cov, obs_series, vrows, obs_cols)
@@ -320,10 +321,10 @@ end
 # `_focei_expected_information` call in the Hessian assembly dispatches statically —
 # measured ~50× on `_focei_data_term` vs iterating the boxed `Vector{Any}`.
 function _focei_obs_dists_batch(
-        dm::DataModel, batch_info::_LaplaceBatchInfo, θ_re::ComponentArray,
-        b, const_cache::LaplaceConstantsCache, cache::_LLCache)
+        dm::DataModel, batch_info::REBatchInfo, θ_re::ComponentArray,
+        b, const_cache::REConstantsCache, cache::_LLCache)
     out = Vector{Any}()
-    for i in batch_info.inds
+    for i in get_inds(batch_info)
         η_ind = _build_eta_ind(dm, i, batch_info, b, const_cache, θ_re)
         ok = _focei_collect_obs_dists!(out, dm, i, θ_re, η_ind, cache)
         ok || return Vector{Any}()
@@ -336,11 +337,11 @@ end
 # duals once per Jacobian chunk; the old Vector{Any}-of-dists + reduce(vcat)
 # route boxed every distribution and re-allocated the stack repeatedly).
 function _focei_obs_params_batch(
-        dm::DataModel, batch_info::_LaplaceBatchInfo, θ_re::ComponentArray,
-        b, const_cache::LaplaceConstantsCache, cache::_LLCache)
+        dm::DataModel, batch_info::REBatchInfo, θ_re::ComponentArray,
+        b, const_cache::REConstantsCache, cache::_LLCache)
     T = promote_type(eltype(θ_re), eltype(b))
     out = Vector{T}()
-    for i in batch_info.inds
+    for i in get_inds(batch_info)
         η_ind = _build_eta_ind(dm, i, batch_info, b, const_cache, θ_re)
         ok = _focei_collect_obs!(_focei_rows_push!, out, dm, i, θ_re, η_ind, cache)
         ok || return Vector{T}()
@@ -377,41 +378,41 @@ end
 # the zero vector so the subsequent evaluations return -Inf and the optimizer
 # backtracks instead of crashing the fit (mirrors `_laplace_logf_batch`).
 function _focei_prior_mean_b(
-        dm::DataModel, batch_info::_LaplaceBatchInfo, θ_re::ComponentArray,
-        const_cache::LaplaceConstantsCache, cache::_LLCache)
+        dm::DataModel, batch_info::REBatchInfo, θ_re::ComponentArray,
+        const_cache::REConstantsCache, cache::_LLCache)
     try
         return _focei_prior_mean_b_impl(dm, batch_info, θ_re, const_cache, cache)
     catch err
         if _is_numeric_error(err)
-            return zeros(eltype(θ_re), batch_info.n_b)
+            return zeros(eltype(θ_re), get_n_b(batch_info))
         end
         rethrow(err)
     end
 end
 
 function _focei_prior_mean_b_impl(
-        dm::DataModel, batch_info::_LaplaceBatchInfo, θ_re::ComponentArray,
-        const_cache::LaplaceConstantsCache, cache::_LLCache)
-    nb = batch_info.n_b
+        dm::DataModel, batch_info::REBatchInfo, θ_re::ComponentArray,
+        const_cache::REConstantsCache, cache::_LLCache)
+    nb = get_n_b(batch_info)
     T = eltype(θ_re)
     m = zeros(T, nb)
     model_funs = cache.model_funs
     helpers = cache.helpers
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
-    re_cache = dm.re_group_info.laplace_cache
-    for (ri, re) in enumerate(re_cache.re_names)
-        info = batch_info.re_info[ri]
-        isempty(info.map.levels) && continue
-        for (li, level_id) in enumerate(info.map.levels)
-            idx = info.map.level_to_index[level_id]
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
+    re_cache = get_laplace_cache(get_re_group_info(dm))
+    for (ri, re) in enumerate(get_re_names(re_cache))
+        info = get_re_info(batch_info)[ri]
+        isempty(get_levels(get_re_map(info))) && continue
+        for (li, level_id) in enumerate(get_levels(get_re_map(info)))
+            idx = get_level_to_index(get_re_map(info))[level_id]
             idx == 0 && continue
-            rep_idx = info.reps[li]
-            const_cov = dm.individuals[rep_idx].const_cov
+            rep_idx = get_reps(info)[li]
+            const_cov = get_const_cov(get_individuals(dm)[rep_idx])
             dists = dists_builder(θ_re, const_cov, model_funs, helpers)
             dist = getproperty(dists, re)
-            r = info.ranges[idx]
+            r = get_ranges(info)[idx]
             mv = mean(dist)
-            if info.is_scalar
+            if get_is_scalar(info)
                 m[first(r)] = mv isa AbstractVector ? mv[1] : mv
             else
                 for (k, rr) in enumerate(r)
@@ -538,26 +539,27 @@ end
 # (e.g. a negative state driving a fractional power, or a negative scale) is turned into
 # a NaN Hessian. That makes the Cholesky/log-det fail and the marginal -Inf, so the outer
 # optimizer backtracks instead of crashing the whole fit — matching Laplace's behavior.
-function _focei_negH_batch(dm::DataModel, batch_info::_LaplaceBatchInfo, θ, b,
-        const_cache::LaplaceConstantsCache, cache::_LLCache;
+function _focei_negH_batch(dm::DataModel, batch_info::REBatchInfo, θ, b,
+        const_cache::REConstantsCache, cache::_LLCache;
         interaction::Bool, tctx = nothing)
     try
         return _focei_negH_batch_impl(dm, batch_info, θ, b, const_cache, cache;
             interaction = interaction, tctx = tctx)
     catch err
         if _is_numeric_error(err)
-            nb = batch_info.n_b
+            nb = get_n_b(batch_info)
             return fill(convert(promote_type(eltype(θ), eltype(b)), NaN), nb, nb)
         end
         rethrow(err)
     end
 end
 
-function _focei_negH_batch_impl(dm::DataModel, batch_info::_LaplaceBatchInfo, θ, b,
-        const_cache::LaplaceConstantsCache, cache::_LLCache;
+function _focei_negH_batch_impl(dm::DataModel, batch_info::REBatchInfo, θ, b,
+        const_cache::REConstantsCache, cache::_LLCache;
         interaction::Bool, tctx = nothing)
-    θ_re = tctx === nothing ? _symmetrize_psd_params(θ, dm.model.fixed.fixed) : tctx.θ_re
-    nb = batch_info.n_b
+    θ_re = tctx === nothing ? _symmetrize_psd_params(θ, get_fixed(get_model(dm))) :
+           tctx.θ_re
+    nb = get_n_b(batch_info)
     T = promote_type(eltype(θ_re), eltype(b))
     nb == 0 && return zeros(T, 0, 0)
 
@@ -609,8 +611,8 @@ struct _FOCEIHess <: _HessMode
     interaction::Bool
 end
 
-@inline function _build_hess_b(m::_FOCEIHess, dm::DataModel, batch_info::_LaplaceBatchInfo,
-        θ, b, const_cache::LaplaceConstantsCache, cache::_LLCache,
+@inline function _build_hess_b(m::_FOCEIHess, dm::DataModel, batch_info::REBatchInfo,
+        θ, b, const_cache::REConstantsCache, cache::_LLCache,
         ad_cache::Union{Nothing, LaplaceADCache}, bi::Int;
         ctx::AbstractString = "", tctx = nothing)
     return -_focei_negH_batch(dm, batch_info, θ, b, const_cache, cache;
@@ -707,15 +709,15 @@ end
 
 function _focei_validate_distributions(
         dm::DataModel; ode_args::Tuple, ode_kwargs::NamedTuple)
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     θ0 = get_θ0_untransformed(fe)
     θ_re = _symmetrize_psd_params(θ0, fe)
-    _, batch_infos, const_cache = _build_laplace_batch_infos(dm, NamedTuple())
+    _, batch_infos, const_cache = _build_re_batch_infos(dm, NamedTuple())
     ll_cache = build_ll_cache(
         dm; ode_args = ode_args, ode_kwargs = ode_kwargs, force_saveat = true)
     for info in batch_infos
-        info.n_b == 0 && continue
-        b0 = zeros(Float64, info.n_b)
+        get_n_b(info) == 0 && continue
+        b0 = zeros(Float64, get_n_b(info))
         dists = _focei_obs_dists_batch(dm, info, θ_re, b0, const_cache, ll_cache)
         isempty(dists) && continue
         for d in dists
@@ -748,10 +750,10 @@ function _fit_model(dm::DataModel, method::FOCEI, args...;
     fit_kwargs = (constants = constants, constants_re = constants_re, penalty = penalty,
         ode_args = ode_args, ode_kwargs = ode_kwargs, serialization = serialization,
         rng = rng, theta_0_untransformed = theta_0_untransformed, store_data_model = store_data_model)
-    re_names = get_re_names(dm.model.random.random)
+    re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) &&
         error("FOCEI requires random effects. Use MLE/MAP for fixed-effects models.")
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     fixed_names = get_names(fe)
     isempty(fixed_names) && error("FOCEI requires at least one fixed effect.")
     fixed_set = Set(fixed_names)

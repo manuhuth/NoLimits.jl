@@ -1559,7 +1559,7 @@ end
 
             # Manually evaluate logf for the constant-RE batch with an empty b — must be finite.
             θu = NoLimits.get_params(res; scale = :untransformed)
-            _, batch_infos, const_cache = NoLimits._build_laplace_batch_infos(
+            _, batch_infos, const_cache = NoLimits._build_re_batch_infos(
                 _SAEM_DM_S, (; η = (; A = 0.0,)))
             ll_cache = NoLimits.build_ll_cache(_SAEM_DM_S)
             for (bi, info) in enumerate(batch_infos)

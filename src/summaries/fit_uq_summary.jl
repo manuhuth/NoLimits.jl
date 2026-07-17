@@ -138,8 +138,8 @@ function _fq_try_outcome_coverage(res::FitResult)
     rows = NamedTuple[]
     n_obs_total = 0
     n_missing_total = 0
-    for col in dm.config.obs_cols
-        v = getproperty(dm.df, col)
+    for col in get_obs_cols(dm)
+        v = getproperty(get_df(dm), col)
         miss = count(ismissing, v)
         obs = length(v) - miss
         n_obs_total += obs
@@ -150,12 +150,12 @@ function _fq_try_outcome_coverage(res::FitResult)
 end
 
 function _fq_role_by_parent(model::Model)
-    fe = model.fixed.fixed
+    fe = get_fixed(model)
     fixed_names = get_names(fe)
     fixed_set = Set(fixed_names)
 
     re_parents = Set{Symbol}()
-    re_model = model.random.random
+    re_model = get_random(model)
     re_names = get_re_names(re_model)
     re_syms = get_re_syms(re_model)
     for re in re_names
@@ -164,7 +164,7 @@ function _fq_role_by_parent(model::Model)
         end
     end
 
-    ir = get_formulas_ir(model.formulas.formulas)
+    ir = get_formulas_ir(get_formulas(model))
     formula_syms = Set{Symbol}(vcat(ir.var_syms, ir.prop_syms))
     formula_parents = Set([s for s in fixed_names if s in formula_syms])
 
@@ -272,7 +272,7 @@ function _fq_fixed_point_estimate_from_lookup(fe::FixedEffects,
 end
 
 function _fq_mcmc_fixed_point_estimate(res::FitResult, dm::DataModel)
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     constants = _fit_kw(res, :constants, NamedTuple())
 
     chain = get_chain(res)
@@ -292,7 +292,7 @@ function _fq_mcmc_fixed_point_estimate(res::FitResult, dm::DataModel)
 end
 
 function _fq_vi_fixed_point_estimate(res::FitResult, dm::DataModel; n_draws::Int = 1000)
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     constants = _fit_kw(res, :constants, NamedTuple())
     n_draws >= 1 || error("n_draws must be >= 1.")
     draw_pack = sample_posterior(
@@ -316,7 +316,7 @@ function _fq_vi_fixed_point_estimate(res::FitResult, dm::DataModel; n_draws::Int
 end
 
 function _fq_fit_component_estimates(res::FitResult, dm::DataModel, scale::Symbol)
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     method = get_method(res)
     if method isa MCMC
         θu = _fq_mcmc_fixed_point_estimate(res, dm)
@@ -348,8 +348,8 @@ function _fq_fit_parameter_rows(res::FitResult;
     dm = get_data_model(res)
     dm === nothing && return (NamedTuple[], 0, 0,
         ["Parameter table unavailable: FitResult does not store DataModel."])
-    model = dm.model
-    fe = model.fixed.fixed
+    model = get_model(dm)
+    fe = get_fixed(model)
 
     flat_names = get_flat_names(fe)
     parent_names = _flat_parent_names(fe)
@@ -473,7 +473,7 @@ function _fq_re_rows_from_component_medians(by_key::Dict{
 end
 
 function _fq_mcmc_random_effect_rows(res::FitResult, dm::DataModel)
-    re_names = get_re_names(dm.model.random.random)
+    re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) && return NamedTuple[]
     re_set = Set(re_names)
 
@@ -495,7 +495,7 @@ function _fq_mcmc_random_effect_rows(res::FitResult, dm::DataModel)
 end
 
 function _fq_vi_random_effect_rows(res::FitResult, dm::DataModel; n_draws::Int = 1000)
-    re_names = get_re_names(dm.model.random.random)
+    re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) && return NamedTuple[]
     re_set = Set(re_names)
     n_draws >= 1 || error("n_draws must be >= 1.")
@@ -520,7 +520,7 @@ function _fq_random_effect_block(res::FitResult; constants_re::NamedTuple = Name
     dm = get_data_model(res)
     dm === nothing && return ("Random effects summary unavailable", NamedTuple[],
         ["Random-effects summary unavailable: FitResult does not store DataModel."])
-    if isempty(get_re_names(dm.model.random.random))
+    if isempty(get_re_names(get_random(get_model(dm))))
         return ("Random effects summary", NamedTuple[], String[])
     end
 
@@ -663,8 +663,8 @@ function summarize(res::FitResult, uq::UQResult;
     dm = get_data_model(res)
     dm === nothing && error("summarize(fit, uq) requires fit to store DataModel.")
 
-    fe = dm.model.fixed.fixed
-    model = dm.model
+    fe = get_fixed(get_model(dm))
+    model = get_model(dm)
     flat_names = get_flat_names(fe)
     parent_names = _flat_parent_names(fe)
     se_mask = get_se_mask(fe)

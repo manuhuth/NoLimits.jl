@@ -59,7 +59,7 @@ end
 
 @testset "FOCEI negH equals exact Laplace Hessian (linear-Gaussian)" begin
     dm = fx_re_dm()                       # shared scalar-RE linear-Gaussian model
-    _, batch_infos, const_cache = NL._build_laplace_batch_infos(dm, NamedTuple())
+    _, batch_infos, const_cache = NL._build_re_batch_infos(dm, NamedTuple())
     ll_cache = NL.build_ll_cache(dm; force_saveat = true)
     θu = NL.get_θ0_untransformed(fx_re_model().fixed.fixed)
 
@@ -135,7 +135,7 @@ end
 
     df = DataFrame(ID = [1, 1], t = [0.0, 1.0], y = [1.3, 1.1])
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    _, batch_infos, const_cache = NL._build_laplace_batch_infos(dm, NamedTuple())
+    _, batch_infos, const_cache = NL._build_re_batch_infos(dm, NamedTuple())
     ll_cache = NL.build_ll_cache(dm; force_saveat = true)
     θu = NL.get_θ0_untransformed(dm.model.fixed.fixed)
     info = batch_infos[1]
@@ -169,7 +169,7 @@ end
     method = NL.FOCEI(multistart_n = 1, multistart_k = 1)
     inner_opts = NL._resolve_inner_options(method.inner, dm)
     ms_opts = NL._resolve_multistart_options(method.multistart, inner_opts)
-    _, batch_infos, const_cache = NL._build_laplace_batch_infos(dm, NamedTuple())
+    _, batch_infos, const_cache = NL._build_re_batch_infos(dm, NamedTuple())
     ll_cache = NL.build_ll_cache(dm; force_saveat = true)
     nb_ = length(batch_infos)
     mkcache() = NL._LaplaceCache(nothing,
@@ -255,7 +255,7 @@ end
     df = DataFrame(
         ID = repeat(1:6, inner = 3), t = repeat(0:2, 6), y = randn(18) .* 0.3 .+ 0.5)
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    _, batch_infos, const_cache = NL._build_laplace_batch_infos(dm, NamedTuple())
+    _, batch_infos, const_cache = NL._build_re_batch_infos(dm, NamedTuple())
     ll_cache = NL.build_ll_cache(dm; force_saveat = true)
     θu = NL.get_θ0_untransformed(dm.model.fixed.fixed)
     info = batch_infos[1]
@@ -325,7 +325,7 @@ end
     df = DataFrame(ID = repeat(1:4, inner = 3), t = repeat(0:2, 4),
         y = randn(Xoshiro(3), 12) .* 0.3 .+ 0.2)
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    _, batch_infos, const_cache = NL._build_laplace_batch_infos(dm, NamedTuple())
+    _, batch_infos, const_cache = NL._build_re_batch_infos(dm, NamedTuple())
     ll_cache = NL.build_ll_cache(dm)
     θu = NL.get_θ0_untransformed(dm.model.fixed.fixed)
     info = batch_infos[1]

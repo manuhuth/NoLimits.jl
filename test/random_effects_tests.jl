@@ -58,7 +58,7 @@ using NoLimits
     @test get_re_groups(re).η_mv == :site
     @test get_re_types(re).η_mv == :MvNormal
 
-    create = get_create_random_effect_distribution(re)
+    create = create_random_effect_distribution(re)
     dists = create(fixed_effects, constant_features_i, model_funs, helper_functions)
     re_vals = ComponentArray(η_normal = 0.0, η_beta = 0.5, η_mv = zeros(3),
         η_flow = rand(dists.η_flow),
@@ -88,7 +88,7 @@ using NoLimits
     re_npf = @randomEffects begin
         η_flow = RandomEffect(NormalizingPlanarFlow(ψ); column = :id)
     end
-    create_npf = get_create_random_effect_distribution(re_npf)
+    create_npf = create_random_effect_distribution(re_npf)
     dists_npf = create_npf(fixed_effects, constant_features_i, model_funs)
     @test dists_npf.η_flow isa NormalizingPlanarFlow
 
@@ -151,7 +151,7 @@ end
         η_dot = RandomEffect(Normal(dotp(xv, b), σ); column = :id)
     end
 
-    create = get_create_random_effect_distribution(re)
+    create = create_random_effect_distribution(re)
     dists = create(fixed_effects, constant_features_i, model_funs, helper_functions)
     re_vals = ComponentArray(η_cauchy = 1.0, η_t = 0.0, η_skew = 0.0,
         η_lap = 0.0, η_logit = 0.5, η_nn = 1.0,
@@ -205,7 +205,7 @@ end
         a = RandomEffect(Normal(μ, σ); column = :id)
         b = RandomEffect(Gamma(α, β); column = :id)
     end
-    create = get_create_random_effect_distribution(re)
+    create = create_random_effect_distribution(re)
     dists = create(fixed_effects, NamedTuple(), model_funs, NamedTuple())
     re_vals = ComponentArray(a = 0.0, b = 1.0)
     total = get_re_logpdf(re)(dists, re_vals)

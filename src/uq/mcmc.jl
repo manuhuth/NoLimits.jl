@@ -66,7 +66,7 @@ function _compute_uq_chain(res::FitResult;
 
     constants_use = constants === nothing ? _fit_kw(res, :constants, NamedTuple()) :
                     constants
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     free_names = _free_fixed_names(fe, constants_use)
     isempty(free_names) &&
         error("No free fixed effects are available for UQ after applying constants.")

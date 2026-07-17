@@ -70,14 +70,14 @@ function _compute_uq_mcmc_refit(res::FitResult;
     serialization_use = serialization === nothing ?
                         _fit_kw(res, :serialization, EnsembleSerial()) : serialization
 
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     free_names = _free_fixed_names(fe, constants_user)
     θ_hat_u = get_params(res; scale = :untransformed)
     constants_all = _mcmc_refit_constants(fe, θ_hat_u, constants_user, free_names)
     sampled_fixed_names = [n for n in free_names if !(n in keys(constants_all))]
     _validate_mcmc_refit_priors(fe, sampled_fixed_names)
 
-    if isempty(sampled_fixed_names) && isempty(get_re_names(dm.model.random.random))
+    if isempty(sampled_fixed_names) && isempty(get_re_names(get_random(get_model(dm))))
         error("mcmc_refit requires at least one sampled parameter. With current constants/calculate_se settings there are no sampled fixed or random effects.")
     end
 

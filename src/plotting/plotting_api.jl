@@ -15,7 +15,8 @@ const _PLOT_API_FUNCTIONS = (:plot_data, :plot_observed_profiles, :plot_fits,
     :plot_residual_acf, :plot_uq_distributions, :plot_random_effects_pdf,
     :plot_random_effects_scatter, :plot_random_effect_pairplot,
     :plot_random_effect_distributions, :plot_random_effect_pit,
-    :plot_random_effect_standardized, :plot_random_effect_standardized_scatter)
+    :plot_random_effect_standardized, :plot_random_effect_standardized_scatter,
+    :combine_plots)
 
 function plot_data end
 function plot_observed_profiles end
@@ -45,6 +46,11 @@ function plot_random_effect_distributions end
 function plot_random_effect_pit end
 function plot_random_effect_standardized end
 function plot_random_effect_standardized_scatter end
+
+# Layout primitive: lay out a vector of panels (returned by the diagnostics with
+# `return_panel = true`) into one multi-panel figure. Method lives in the Makie extension.
+function combine_plots end
+export combine_plots
 
 function __init__()
     Base.Experimental.register_error_hint(MethodError) do io, exc, _argtypes, _kwargs

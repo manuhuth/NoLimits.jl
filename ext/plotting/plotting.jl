@@ -378,7 +378,7 @@ function plot_multistart_fixed_effect_variability(res::MultistartFitResult;
     k_best >= 1 || error("k_best must be >= 1.")
 
     dm_use = _multistart_data_model(res, dm)
-    fe = dm_use.model.fixed.fixed
+    fe = get_fixed(get_model(dm_use))
     fe_names = get_names(fe) # declaration order
     fe_params = get_params(fe)
 
@@ -597,7 +597,7 @@ function plot_em_trajectories(res::FitResult;
         dm_use === nothing &&
             error("scale=:untransformed requires the DataModel. Re-fit with " *
                   "store_data_model=true (the default), or pass dm=... explicitly.")
-        full_inv = get_inverse_transform(dm_use.model.fixed.fixed)
+        full_inv = get_inverse_transform(get_fixed(get_model(dm_use)))
         hist_names = collect(keys(diag.θ_hist[1]))
         name_to_idx = Dict(full_inv.names[i] => i for i in eachindex(full_inv.names))
         valid_idxs = [name_to_idx[n] for n in hist_names if haskey(name_to_idx, n)]
@@ -606,7 +606,7 @@ function plot_em_trajectories(res::FitResult;
         θ_vals = [restricted_inv(θ_t) for θ_t in diag.θ_hist]
 
         # Determine parameter declaration order from the DataModel.
-        all_fe_names = get_names(dm_use.model.fixed.fixed)
+        all_fe_names = get_names(get_fixed(get_model(dm_use)))
         free_fe_names = [n for n in all_fe_names if n in Set(hist_names)]
     else
         θ_vals = diag.θ_hist

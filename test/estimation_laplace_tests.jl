@@ -36,7 +36,7 @@ end
 # Shared Laplace objective-gradient-vs-finite-differences check (generic in the
 # model, so it runs against shared archetype DataModels).
 function _laplace_grad_matches_fd(dm; rtol, atol)
-    _, batch_infos, const_cache = NoLimits._build_laplace_batch_infos(dm, NamedTuple())
+    _, batch_infos, const_cache = NoLimits._build_re_batch_infos(dm, NamedTuple())
     ll_cache = build_ll_cache(dm)
     θ0 = get_θ0_untransformed(NoLimits.get_model(dm).fixed.fixed)
     ebe_cache = _make_laplace_ebe_cache(eltype(θ0), length(batch_infos))
@@ -100,16 +100,16 @@ end
     dm = fx_mg_dm()
     @test length(get_batches(dm)) == 2
     @test all(length.(get_batches(dm)) .== 2)
-    laplace_pairing, _, _ = NoLimits._build_laplace_batch_infos(
+    laplace_pairing, _, _ = NoLimits._build_re_batch_infos(
         dm, (; η_site = (; A = 0.2)))
     @test sort(length.(laplace_pairing.batches)) == [1, 1, 2]
-    @test_throws ErrorException NoLimits._build_laplace_batch_infos(
+    @test_throws ErrorException NoLimits._build_re_batch_infos(
         dm, (; η_site = (; Z = 1.0)))
 end
 
 @testset "Laplace batch info with multiple groups and multivariate REs" begin
     dm = fx_mvn_dm()
-    pairing, batch_infos, const_cache = NoLimits._build_laplace_batch_infos(
+    pairing, batch_infos, const_cache = NoLimits._build_re_batch_infos(
         dm, NamedTuple())
     @test length(pairing.batches) == 2
     @test all(info -> info.n_b == 6, batch_infos)
@@ -126,7 +126,7 @@ end
 
 @testset "Laplace builds local eta vectors for individuals spanning RE levels" begin
     dm = fx_mg_dm()
-    _, batch_infos, const_cache = NoLimits._build_laplace_batch_infos(dm, NamedTuple())
+    _, batch_infos, const_cache = NoLimits._build_re_batch_infos(dm, NamedTuple())
     θ = get_θ0_untransformed(fx_mg_model().fixed.fixed)
     info = batch_infos[1]
     b = collect(range(0.1, 0.2; length = info.n_b))
@@ -156,7 +156,7 @@ end
     df = DataFrame(ID = [1, 1, 2, 2], SITE = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0],
         Age = [10.0, 10.0, 20.0, 20.0], y = zeros(4))
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    pairing, batch_infos, _ = NoLimits._build_laplace_batch_infos(dm, NamedTuple())
+    pairing, batch_infos, _ = NoLimits._build_re_batch_infos(dm, NamedTuple())
     @test length(pairing.batches) == 2
     info = batch_infos[1]
     @test info.n_b == 1
@@ -167,7 +167,7 @@ end
         ll += NoLimits._loglikelihood_individual(
             dm, i, θ, ComponentArray((; η_site = 0.0)), cache)
     end
-    dists_builder = get_create_random_effect_distribution(model.random.random)
+    dists_builder = create_random_effect_distribution(model.random.random)
     model_funs = get_model_funs(model)
     helpers = get_helper_funs(model)
     prior_sum = 0.0
@@ -208,7 +208,7 @@ end
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     constants_re = NamedTuple{(:η_id, :η_site)}((
         NamedTuple{(:id1,)}((0.3,)), NamedTuple{(:A,)}((-0.2,))))
-    pairing, batch_infos, _ = NoLimits._build_laplace_batch_infos(dm, constants_re)
+    pairing, batch_infos, _ = NoLimits._build_re_batch_infos(dm, constants_re)
     @test length(pairing.batches) == 2
     @test sort(length.(pairing.batches)) == [1, 1]
     @test sort([info.n_b for info in batch_infos]) == [0, 2]
@@ -402,7 +402,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    pairing, batch_infos, const_cache = NoLimits._build_laplace_batch_infos(
+    pairing, batch_infos, const_cache = NoLimits._build_re_batch_infos(
         dm, NamedTuple())
     ll_cache = build_ll_cache(dm)
     θu = get_θ0_untransformed(model.fixed.fixed)
@@ -454,7 +454,7 @@ end
     )
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    _, batch_infos, const_cache = NoLimits._build_laplace_batch_infos(dm, NamedTuple())
+    _, batch_infos, const_cache = NoLimits._build_re_batch_infos(dm, NamedTuple())
     ll_cache = build_ll_cache(dm)
     θu = get_θ0_untransformed(model.fixed.fixed)
     method = NoLimits.Laplace(; use_hutchinson = true, hutchinson_n = 1)
@@ -526,7 +526,7 @@ end
 
     @testset "inner solve agrees with the default optimizer" begin
         llc = NoLimits.build_ll_cache(dm; force_saveat = true)
-        _, binfos, ccache = NoLimits._build_laplace_batch_infos(dm, NamedTuple())
+        _, binfos, ccache = NoLimits._build_re_batch_infos(dm, NamedTuple())
         θ = NoLimits.get_θ0_untransformed(get_model(dm).fixed.fixed)
         adc = NoLimits._init_laplace_ad_cache(length(binfos))
         for bi in (1, 5, 17)

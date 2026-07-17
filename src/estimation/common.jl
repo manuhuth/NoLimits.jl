@@ -8,6 +8,7 @@ export fit_model
 export get_summary
 export get_params
 export get_random_effects
+export get_random_effect_distribution
 export sample_random_effects
 export reestimate_ebes
 export get_diagnostics
@@ -148,7 +149,8 @@ function MCIntegrator(;
     return MCIntegrator(n_samples, mode, sampler, n_warmup, rng)
 end
 
-@inline _default_ebe_grad_tol(dm::DataModel) = dm.model.de.de === nothing ? 1e-4 : 1e-2
+@inline _default_ebe_grad_tol(dm::DataModel) = get_de(get_model(dm)) === nothing ? 1e-4 :
+                                               1e-2
 
 @inline function _resolve_multistart_sampling(sampling, what::AbstractString)
     (sampling === :lhs || sampling === :random) || error("$(what) must be :lhs or :random.")
@@ -312,7 +314,7 @@ get_fit_kwargs(res::FitResult) = res.fit_kwargs
 # Stored fit keyword with a default — shared by the RE/loglikelihood accessors,
 # plotting, and the UQ entry points.
 @inline function _fit_kw(res::FitResult, key::Symbol, default)
-    return haskey(res.fit_kwargs, key) ? getfield(res.fit_kwargs, key) : default
+    return haskey(get_fit_kwargs(res), key) ? getfield(get_fit_kwargs(res), key) : default
 end
 
 function _nl_fmt_compact_value(x)
@@ -334,7 +336,7 @@ _nl_method_name(m) = nameof(typeof(m))
 _nl_method_name(m::_SavedFittingMethod) = Symbol(uppercase(string(m.kind)) * "_loaded")
 
 function _nl_fitresult_show_line(res::FitResult)
-    method_name = _nl_method_name(res.method)
+    method_name = _nl_method_name(get_method(res))
     objective_str = _nl_fmt_compact_value(get_objective(res))
     converged = get_converged(res)
     n_params = try
@@ -342,7 +344,7 @@ function _nl_fitresult_show_line(res::FitResult)
     catch
         "?"
     end
-    dm_state = res.data_model === nothing ? "not_stored" : "stored"
+    dm_state = get_data_model(res) === nothing ? "not_stored" : "stored"
     return "FitResult(method=$(method_name), objective=$(objective_str), converged=$(converged), n_params=$(n_params), data_model=$(dm_state))"
 end
 
@@ -353,8 +355,8 @@ end
 
 function _res_constants_re(res::FitResult, constants_re::NamedTuple)
     isempty(constants_re) || return constants_re
-    if haskey(res.fit_kwargs, :constants_re)
-        return getfield(res.fit_kwargs, :constants_re)
+    if haskey(get_fit_kwargs(res), :constants_re)
+        return getfield(get_fit_kwargs(res), :constants_re)
     end
     return constants_re
 end
@@ -371,7 +373,7 @@ Return the estimated parameter vector.
   - `:untransformed` — the natural-scale `ComponentArray`.
 """
 function get_params(res::FitResult; scale::Symbol = :both)
-    params = res.summary.params
+    params = get_summary(res).params
     scale === :both && return params
     scale === :transformed && return params.transformed
     scale === :untransformed && return params.untransformed
@@ -385,8 +387,8 @@ end
 The model's initial fixed-effect values on the natural / optimization scale.
 Convenience for `get_θ0_*(get_model(dm).fixed.fixed)`.
 """
-get_θ0_untransformed(dm::DataModel) = get_θ0_untransformed(get_model(dm).fixed.fixed)
-get_θ0_transformed(dm::DataModel) = get_θ0_transformed(get_model(dm).fixed.fixed)
+get_θ0_untransformed(dm::DataModel) = get_θ0_untransformed(get_fixed(get_model(dm)))
+get_θ0_transformed(dm::DataModel) = get_θ0_transformed(get_fixed(get_model(dm)))
 
 """
     get_params(dm::DataModel; scale=:both)
@@ -395,7 +397,7 @@ The model's initial fixed-effect values, mirroring `get_params(res; scale)`: `:b
 returns a [`FitParameters`](@ref), `:transformed`/`:untransformed` a `ComponentArray`.
 """
 function get_params(dm::DataModel; scale::Symbol = :both)
-    fe = get_model(dm).fixed.fixed
+    fe = get_fixed(get_model(dm))
     scale === :both &&
         return FitParameters(get_θ0_transformed(fe), get_θ0_untransformed(fe))
     scale === :transformed && return get_θ0_transformed(fe)
@@ -409,7 +411,7 @@ end
 Return the MCMC chain. Only valid for results produced by [`MCMC`](@ref).
 """
 function get_chain(res::FitResult)
-    return get_chain(res.result)
+    return get_chain(get_result(res))
 end
 
 get_chain(::MethodResult) = error("Chain access not supported for this method.")
@@ -420,21 +422,21 @@ get_chain(::MethodResult) = error("Chain access not supported for this method.")
 Return the number of optimizer iterations. Valid for optimization-based methods
 (MLE, MAP, Laplace, MCEM, SAEM).
 """
-get_iterations(res::FitResult) = get_iterations(res.result)
+get_iterations(res::FitResult) = get_iterations(get_result(res))
 
 """
     get_raw(res::FitResult)
 
 Return the raw method-specific result object (e.g. the Optim.jl result for MLE/MAP).
 """
-get_raw(res::FitResult) = get_raw(res.result)
+get_raw(res::FitResult) = get_raw(get_result(res))
 
 """
     get_notes(res::FitResult) -> String or Nothing
 
 Return any method-specific string notes attached to the result.
 """
-get_notes(res::FitResult) = get_notes(res.result)
+get_notes(res::FitResult) = get_notes(get_result(res))
 
 """
     get_closed_form_mstep_used(res::FitResult) -> Bool
@@ -445,56 +447,56 @@ Currently this is method-specific metadata populated by methods that support
 closed-form M-step paths (e.g. SAEM). Methods without this concept return
 `false`.
 """
-get_closed_form_mstep_used(res::FitResult) = get_closed_form_mstep_used(res.result)
+get_closed_form_mstep_used(res::FitResult) = get_closed_form_mstep_used(get_result(res))
 
 """
     get_observed(res::FitResult)
 
 Return the observed data used during MCMC sampling. Only valid for MCMC results.
 """
-get_observed(res::FitResult) = get_observed(res.result)
+get_observed(res::FitResult) = get_observed(get_result(res))
 
 """
     get_sampler(res::FitResult)
 
 Return the sampler object (e.g. `NUTS`) used for MCMC. Only valid for MCMC results.
 """
-get_sampler(res::FitResult) = get_sampler(res.result)
+get_sampler(res::FitResult) = get_sampler(get_result(res))
 
 """
     get_n_samples(res::FitResult) -> Int
 
 Return the number of MCMC samples drawn. Only valid for MCMC results.
 """
-get_n_samples(res::FitResult) = get_n_samples(res.result)
+get_n_samples(res::FitResult) = get_n_samples(get_result(res))
 
 """
     get_variational_posterior(res::FitResult)
 
 Return the variational posterior object for VI fits.
 """
-get_variational_posterior(res::FitResult) = get_variational_posterior(res.result)
+get_variational_posterior(res::FitResult) = get_variational_posterior(get_result(res))
 
 """
     get_vi_trace(res::FitResult)
 
 Return per-iteration VI trace information.
 """
-get_vi_trace(res::FitResult) = get_vi_trace(res.result)
+get_vi_trace(res::FitResult) = get_vi_trace(get_result(res))
 
 """
     get_vi_state(res::FitResult)
 
 Return the final VI optimizer state.
 """
-get_vi_state(res::FitResult) = get_vi_state(res.result)
+get_vi_state(res::FitResult) = get_vi_state(get_result(res))
 
 """
     sample_posterior(res::FitResult; n_draws, rng)
 
 Draw posterior samples from methods that expose a posterior sampler (e.g. VI).
 """
-sample_posterior(res::FitResult; kwargs...) = sample_posterior(res.result; kwargs...)
+sample_posterior(res::FitResult; kwargs...) = sample_posterior(get_result(res); kwargs...)
 
 @inline function _maxabs(v::AbstractVector)
     m = zero(eltype(v))
@@ -581,6 +583,10 @@ function get_notes(res::MethodResult)
     error("notes not available for this method.")
 end
 get_closed_form_mstep_used(::MethodResult) = false
+
+# EB modes and plug-in eta vectors stored on the method-specific results.
+get_eb_modes(r::MethodResult) = r.eb_modes
+get_eta_vec(r::MethodResult) = r.eta_vec
 function get_observed(res::MethodResult)
     hasproperty(res, :observed) ? res.observed :
     error("observed data not available for this method.")
@@ -608,13 +614,13 @@ function _re_dataframes_from_bstars(dm::DataModel,
         constants_re::NamedTuple = NamedTuple(),
         flatten::Bool = true,
         include_constants::Bool = true)
-    cache = dm.re_group_info.laplace_cache
+    cache = get_laplace_cache(get_re_group_info(dm))
     cache === nothing && return NamedTuple()
-    re_names = cache.re_names
+    re_names = get_re_names(cache)
     isempty(re_names) && return NamedTuple()
     length(bstars) == length(batch_infos) ||
         error("EB modes do not match number of batches.")
-    re_groups = get_re_groups(dm.model.random.random)
+    re_groups = get_re_groups(get_random(get_model(dm)))
     fixed_maps = _normalize_constants_re(dm, constants_re)
     const_cache = _build_constants_cache(dm, fixed_maps)
 
@@ -626,8 +632,8 @@ function _re_dataframes_from_bstars(dm::DataModel,
     for (bi, info) in enumerate(batch_infos)
         b = bstars[bi]
         for (ri, re) in enumerate(re_names)
-            rei = info.re_info[ri]
-            for lvl_id in rei.map.levels
+            rei = get_re_info(info)[ri]
+            for lvl_id in get_levels(get_re_map(rei))
                 v = _re_value_from_b(rei, lvl_id, b)
                 v === nothing && continue
                 re_level_vals[re][lvl_id] = v
@@ -639,20 +645,20 @@ function _re_dataframes_from_bstars(dm::DataModel,
     out_pairs = Pair{Symbol, Any}[]
     for (ri, re) in enumerate(re_names)
         col = getfield(re_groups, re)
-        levels_all = cache.re_index[ri].levels
+        levels_all = get_re_index(cache)[ri].levels
         level_ids = collect(1:length(levels_all))
         free_vals = re_level_vals[re]
         const_mask = const_cache.is_const[ri]
         const_scalars = const_cache.scalar_vals[ri]
         const_vectors = const_cache.vector_vals[ri]
-        is_scalar = cache.is_scalar[ri]
+        is_scalar = get_is_scalar(cache)[ri]
 
         # determine dimension
         dim = 1
         for info in batch_infos
-            rei = info.re_info[ri]
-            if rei.dim > 0
-                dim = rei.dim
+            rei = get_re_info(info)[ri]
+            if get_dim(rei) > 0
+                dim = get_dim(rei)
                 break
             end
         end
@@ -714,13 +720,13 @@ function get_laplace_random_effects(dm::DataModel,
         constants_re::NamedTuple = NamedTuple(),
         flatten::Bool = true,
         include_constants::Bool = true)
-    (res.result isa LaplaceResult || res.result isa GHQuadratureResult) ||
+    (get_result(res) isa LaplaceResult || get_result(res) isa GHQuadratureResult) ||
         error("Laplace-style random-effects accessor requires a Laplace or GHQuadrature fit result.")
     constants_re = _res_constants_re(res, constants_re)
-    re_names = get_re_names(dm.model.random.random)
+    re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) && return NamedTuple()
-    _, batch_infos, _ = _build_laplace_batch_infos(dm, constants_re)
-    bstars = res.result.eb_modes
+    _, batch_infos, _ = _build_re_batch_infos(dm, constants_re)
+    bstars = get_eb_modes(get_result(res))
     return _re_dataframes_from_bstars(dm, batch_infos, bstars; constants_re = constants_re,
         flatten = flatten, include_constants = include_constants)
 end
@@ -729,7 +735,7 @@ function get_laplace_random_effects(res::FitResult;
         constants_re::NamedTuple = NamedTuple(),
         flatten::Bool = true,
         include_constants::Bool = true)
-    dm = res.data_model
+    dm = get_data_model(res)
     dm === nothing &&
         error("This fit result does not store a DataModel; call get_laplace_random_effects(dm, res) instead.")
     return get_laplace_random_effects(
@@ -745,10 +751,10 @@ function _eta_from_eb(dm::DataModel,
     if const_cache isa NamedTuple
         const_cache = _build_constants_cache(dm, const_cache)
     end
-    η_vec = Vector{ComponentArray}(undef, length(dm.individuals))
+    η_vec = Vector{ComponentArray}(undef, length(get_individuals(dm)))
     for (bi, info) in enumerate(batch_infos)
         b = bstars[bi]
-        for i in info.inds
+        for i in get_inds(info)
             nt = _build_eta_ind(dm, i, info, b, const_cache, θ)
             η_vec[i] = ComponentArray(nt)
         end
@@ -766,12 +772,12 @@ function _compute_mcmc_candidates(dm::DataModel,
         n_adapt::Int,
         rng::AbstractRNG,
         active_batch_indices = nothing)
-    re_names = get_re_names(dm.model.random.random)
+    re_names = get_re_names(get_random(get_model(dm)))
     ll_local = ll_cache isa AbstractVector ? ll_cache[1] : ll_cache
     turing_kwargs = (n_samples = n_samples, n_adapt = n_adapt, progress = false)
     active_set = active_batch_indices === nothing ? nothing : Set(active_batch_indices)
     return map(enumerate(batch_infos)) do (bi, info)
-        if info.n_b == 0 || (active_set !== nothing && !(bi ∈ active_set))
+        if get_n_b(info) == 0 || (active_set !== nothing && !(bi ∈ active_set))
             return Matrix{Float64}(undef, 0, 0)
         end
         samples, _, _ = _mcem_sample_batch(dm, info, θu, const_cache, ll_local,
@@ -794,7 +800,7 @@ function _compute_bstars(dm::DataModel,
         active_batch_indices::Union{Nothing, AbstractVector{Int}} = nothing)
     ebe = _resolve_ebe_options(ebe, dm)
     rescue = _resolve_ebe_rescue_options(rescue, ebe.grad_tol, dm)
-    _, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re)
+    _, batch_infos, const_cache = _build_re_batch_infos(dm, constants_re)
     T = eltype(θu)
     n_batches = length(batch_infos)
     ebe_cache = _init_laplace_eval_cache(n_batches, T)
@@ -806,7 +812,7 @@ function _compute_bstars(dm::DataModel,
     function _batch_grad_norms()
         norms = Vector{Float64}(undef, n_batches)
         for (bi, info) in enumerate(batch_infos)
-            if info.n_b == 0 || (active_set !== nothing && !(bi ∈ active_set))
+            if get_n_b(info) == 0 || (active_set !== nothing && !(bi ∈ active_set))
                 norms[bi] = 0.0
                 continue
             end
@@ -887,14 +893,14 @@ function get_random_effects(dm::DataModel,
         flatten::Bool = true,
         include_constants::Bool = true)
     constants_re = _res_constants_re(res, constants_re)
-    if res.result isa LaplaceResult || res.result isa GHQuadratureResult
+    if get_result(res) isa LaplaceResult || get_result(res) isa GHQuadratureResult
         return get_laplace_random_effects(
             dm, res; constants_re = constants_re, flatten = flatten,
             include_constants = include_constants)
     end
-    if res.result isa MCEMResult
+    if get_result(res) isa MCEMResult
         θu = get_params(res; scale = :untransformed)
-        bstars = res.result.eb_modes
+        bstars = get_eb_modes(get_result(res))
         if bstars === nothing
             # Only the recompute path needs the fit kwargs and a likelihood cache
             # (an O(rows) build) — stored modes skip both.
@@ -905,20 +911,20 @@ function get_random_effects(dm::DataModel,
             ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
                 serialization = serialization, force_saveat = true)
             bstars, batch_infos = _compute_bstars(
-                dm, θu, constants_re, ll_cache, res.method.ebe, rng;
-                rescue = res.method.ebe_rescue)
+                dm, θu, constants_re, ll_cache, get_method(res).ebe, rng;
+                rescue = get_method(res).ebe_rescue)
         else
-            _, batch_infos, _ = _build_laplace_batch_infos(dm, constants_re)
+            _, batch_infos, _ = _build_re_batch_infos(dm, constants_re)
         end
         return _re_dataframes_from_bstars(
             dm, batch_infos, bstars; constants_re = constants_re,
             flatten = flatten, include_constants = include_constants)
     end
-    if res.result isa SAEMResult
+    if get_result(res) isa SAEMResult
         θu = get_params(res; scale = :untransformed)
         constants_re = _saem_anneal_constants_re(
             dm, θu, _saem_anneal_names(res), constants_re)
-        bstars = res.result.eb_modes
+        bstars = get_eb_modes(get_result(res))
         if bstars === nothing
             # Only the recompute path needs the fit kwargs and a likelihood cache
             # (an O(rows) build) — stored modes skip both.
@@ -929,7 +935,8 @@ function get_random_effects(dm::DataModel,
             ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
                 serialization = serialization, force_saveat = true)
             # When the result was loaded from disk, fall back to defaults from a vanilla SAEM().
-            _saem_opts = res.method isa _SavedFittingMethod ? SAEM().saem : res.method.saem
+            _saem_opts = get_method(res) isa _SavedFittingMethod ? SAEM().saem :
+                         get_method(res).saem
             ebe = EBEOptions(_saem_opts.ebe_optimizer,
                 _saem_opts.ebe_optim_kwargs, _saem_opts.ebe_adtype,
                 _saem_opts.ebe_grad_tol, _saem_opts.ebe_multistart_n, _saem_opts.ebe_multistart_k,
@@ -937,14 +944,14 @@ function get_random_effects(dm::DataModel,
             bstars, batch_infos = _compute_bstars(dm, θu, constants_re, ll_cache, ebe, rng;
                 rescue = _saem_opts.ebe_rescue)
         else
-            _, batch_infos, _ = _build_laplace_batch_infos(dm, constants_re)
+            _, batch_infos, _ = _build_re_batch_infos(dm, constants_re)
         end
         return _re_dataframes_from_bstars(
             dm, batch_infos, bstars; constants_re = constants_re,
             flatten = flatten, include_constants = include_constants)
     end
-    if res.result isa PooledResult
-        return _pooled_re_dataframes(dm, res.result.eta_vec; flatten = flatten)
+    if get_result(res) isa PooledResult
+        return _pooled_re_dataframes(dm, get_eta_vec(get_result(res)); flatten = flatten)
     end
     error("Random-effects access not supported for this method.")
 end
@@ -953,7 +960,7 @@ function get_random_effects(res::FitResult;
         constants_re::NamedTuple = NamedTuple(),
         flatten::Bool = true,
         include_constants::Bool = true)
-    dm = res.data_model
+    dm = get_data_model(res)
     dm === nothing &&
         error("This fit result does not store a DataModel; call get_random_effects(dm, res) instead.")
     return get_random_effects(dm, res; constants_re = constants_re, flatten = flatten,
@@ -975,13 +982,13 @@ function get_random_effects(dm::DataModel, res::FitResult, re::Symbol;
         include_constants = include_constants)
     haskey(nt, re) || error("Random effect :$(re) not found. Available: $(keys(nt)).")
     df = getfield(nt, re)
-    id_col = dm.config.primary_id
+    id_col = get_primary_id(dm)
     val_cols = [c for c in propertynames(df) if c != id_col]
     length(val_cols) == 1 ||
         error("Random effect :$(re) is multivariate ($(length(val_cols)) components); use get_random_effects(res) to access the full DataFrame.")
     val_col = val_cols[1]
-    id_order = [dm.df[dm.row_groups.obs_rows[i][1], id_col]
-                for i in 1:length(dm.individuals)]
+    id_order = [get_df(dm)[get_obs_rows(get_row_groups(dm))[i][1], id_col]
+                for i in 1:length(get_individuals(dm))]
     id_to_val = Dict(row[id_col] => row[val_col] for row in eachrow(df))
     return [id_to_val[id] for id in id_order]
 end
@@ -989,65 +996,95 @@ end
 function get_random_effects(res::FitResult, re::Symbol;
         constants_re::NamedTuple = NamedTuple(),
         include_constants::Bool = true)
-    dm = res.data_model
+    dm = get_data_model(res)
     dm === nothing &&
         error("This fit result does not store a DataModel; call get_random_effects(dm, res, re) instead.")
     return get_random_effects(
         dm, res, re; constants_re = constants_re, include_constants = include_constants)
 end
 
-function _resolve_bstars_for_re(dm::DataModel, res::FitResult, constants_re::NamedTuple)
-    if res.result isa LaplaceResult || res.result isa GHQuadratureResult
-        θu = get_params(res; scale = :untransformed)
+"""
+    get_random_effect_distribution(res::FitResult, re::Symbol; individual = 1) -> Distribution
+
+Return the fitted population distribution of random effect `re` at the estimated
+parameters, ``p(b \\mid \\hat\\theta)``: the distribution toward which the empirical
+Bayes estimates from [`get_random_effects`](@ref) are shrunk.
+
+When `re`'s distribution depends on constant covariates (e.g. an allometric mean),
+`individual` (a 1-based index into the individuals of `dm`, matching the ordering of
+`get_random_effects`) selects whose covariates instantiate it. The choice is
+irrelevant for covariate-free effects.
+"""
+function get_random_effect_distribution(res::FitResult, re::Symbol; individual::Integer = 1)
+    dm = get_data_model(res)
+    dm === nothing &&
+        error("This fit result does not store a DataModel; refit with include_data so the distribution can be rebuilt.")
+    n = length(get_individuals(dm))
+    1 <= individual <= n ||
+        error("individual = $(individual) is out of range 1:$(n).")
+    θ = get_params(res; scale = :untransformed)
+    dists = build_re_dists(
+        get_model(dm), θ, get_const_cov(get_individuals(dm)[individual]))
+    haskey(dists, re) ||
+        error("Random effect :$(re) not found. Available: $(keys(dists)).")
+    return getproperty(dists, re)
+end
+
+function _resolve_bstars_for_re(dm::DataModel, res::FitResult, constants_re::NamedTuple;
+        θ = nothing, rng::AbstractRNG = Random.default_rng())
+    if get_result(res) isa LaplaceResult || get_result(res) isa GHQuadratureResult
+        θu = θ === nothing ? get_params(res; scale = :untransformed) : θ
         ode_args = _fit_kw(res, :ode_args, ())
         ode_kwargs = _fit_kw(res, :ode_kwargs, NamedTuple())
         serialization = _fit_kw(res, :serialization, EnsembleThreads())
         ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
             serialization = serialization, force_saveat = true)
-        _, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re)
-        return res.result.eb_modes, batch_infos, θu, const_cache, ll_cache, constants_re
+        _, batch_infos, const_cache = _build_re_batch_infos(dm, constants_re)
+        return get_eb_modes(get_result(res)), batch_infos, θu, const_cache, ll_cache,
+        constants_re
     end
-    if res.result isa MCEMResult
-        θu = get_params(res; scale = :untransformed)
+    if get_result(res) isa MCEMResult
+        θu = θ === nothing ? get_params(res; scale = :untransformed) : θ
         ode_args = _fit_kw(res, :ode_args, ())
         ode_kwargs = _fit_kw(res, :ode_kwargs, NamedTuple())
         serialization = _fit_kw(res, :serialization, EnsembleThreads())
-        rng = _fit_kw(res, :rng, Random.default_rng())
+        rng = _fit_kw(res, :rng, rng)
         ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
             serialization = serialization, force_saveat = true)
-        bstars = res.result.eb_modes
+        bstars = get_eb_modes(get_result(res))
         if bstars === nothing
             bstars, batch_infos = _compute_bstars(
-                dm, θu, constants_re, ll_cache, res.method.ebe, rng;
-                rescue = res.method.ebe_rescue)
-            _, _, const_cache = _build_laplace_batch_infos(dm, constants_re)
+                dm, θu, constants_re, ll_cache, get_method(res).ebe, rng;
+                rescue = get_method(res).ebe_rescue)
+            _, _, const_cache = _build_re_batch_infos(dm, constants_re)
         else
-            _, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re)
+            _, batch_infos, const_cache = _build_re_batch_infos(dm, constants_re)
         end
         return bstars, batch_infos, θu, const_cache, ll_cache, constants_re
     end
-    if res.result isa SAEMResult
-        θu = get_params(res; scale = :untransformed)
+    if get_result(res) isa SAEMResult
+        θu = θ === nothing ? get_params(res; scale = :untransformed) : θ
         constants_re = _saem_anneal_constants_re(
             dm, θu, _saem_anneal_names(res), constants_re)
         ode_args = _fit_kw(res, :ode_args, ())
         ode_kwargs = _fit_kw(res, :ode_kwargs, NamedTuple())
         serialization = _fit_kw(res, :serialization, EnsembleThreads())
-        rng = _fit_kw(res, :rng, Random.default_rng())
+        rng = _fit_kw(res, :rng, rng)
         ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
             serialization = serialization, force_saveat = true)
-        bstars = res.result.eb_modes
+        bstars = get_eb_modes(get_result(res))
         if bstars === nothing
-            _saem_opts = res.method isa _SavedFittingMethod ? SAEM().saem : res.method.saem
+            _saem_opts = get_method(res) isa _SavedFittingMethod ? SAEM().saem :
+                         get_method(res).saem
             ebe = EBEOptions(_saem_opts.ebe_optimizer,
                 _saem_opts.ebe_optim_kwargs, _saem_opts.ebe_adtype,
                 _saem_opts.ebe_grad_tol, _saem_opts.ebe_multistart_n, _saem_opts.ebe_multistart_k,
                 _saem_opts.ebe_multistart_max_rounds, _saem_opts.ebe_multistart_sampling)
             bstars, batch_infos = _compute_bstars(dm, θu, constants_re, ll_cache, ebe, rng;
                 rescue = _saem_opts.ebe_rescue)
-            _, _, const_cache = _build_laplace_batch_infos(dm, constants_re)
+            _, _, const_cache = _build_re_batch_infos(dm, constants_re)
         else
-            _, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re)
+            _, batch_infos, const_cache = _build_re_batch_infos(dm, constants_re)
         end
         return bstars, batch_infos, θu, const_cache, ll_cache, constants_re
     end
@@ -1090,7 +1127,7 @@ function _sample_laplace_bstars_raw(dm::DataModel, batch_infos, bstars, θu, con
     n_batches = length(batch_infos)
     chols = Vector{Any}(undef, n_batches)
     for (bi, info) in enumerate(batch_infos)
-        if info.n_b == 0
+        if get_n_b(info) == 0
             chols[bi] = nothing
             continue
         end
@@ -1110,11 +1147,11 @@ function _sample_laplace_bstars_raw(dm::DataModel, batch_infos, bstars, θu, con
         for bi in 1:n_batches
             info = batch_infos[bi]
             b0 = bstars[bi]
-            if info.n_b == 0
+            if get_n_b(info) == 0
                 sampled[bi] = b0
                 continue
             end
-            z = randn(rng, eltype(b0), info.n_b)
+            z = randn(rng, eltype(b0), get_n_b(info))
             sampled[bi] = b0 .+ (chols[bi].U \ z)
         end
         bstars_per_sample[s] = sampled
@@ -1153,7 +1190,7 @@ function _sample_mcmc_bstars_raw(dm::DataModel, batch_infos, bstars, θu, const_
     last_params = Vector{Any}(undef, n_batches)
     for bi in 1:n_batches
         info = batch_infos[bi]
-        last_params[bi] = info.n_b == 0 ? nothing :
+        last_params[bi] = get_n_b(info) == 0 ? nothing :
                           _b_to_last_params(bstars[bi], info, re_names)
     end
     bstars_per_sample = Vector{Vector{Any}}(undef, n_samples)
@@ -1163,7 +1200,7 @@ function _sample_mcmc_bstars_raw(dm::DataModel, batch_infos, bstars, θu, const_
         sweep_kwargs = s == 1 ? tkwargs : tkwargs_noadapt
         for bi in 1:n_batches
             info = batch_infos[bi]
-            if info.n_b == 0
+            if get_n_b(info) == 0
                 sampled[bi] = bstars[bi]
                 continue
             end
@@ -1185,22 +1222,22 @@ end
 function _sample_conditional_bstars(dm::DataModel, batch_infos, bstars, θu, const_cache,
         ll_cache, res::FitResult, n_samples::Int, rng::AbstractRNG)
     lcl = ll_cache isa Vector ? ll_cache[1] : ll_cache
-    if res.result isa LaplaceResult || res.result isa GHQuadratureResult
+    if get_result(res) isa LaplaceResult || get_result(res) isa GHQuadratureResult
         return _sample_laplace_bstars_raw(dm, batch_infos, bstars, θu, const_cache, lcl;
             n_samples = n_samples, rng = rng)
-    elseif res.result isa MCEMResult || res.result isa SAEMResult
-        method_sampler, method_tkwargs = if res.result isa MCEMResult
-            es = _mcmc_e_step(res.method.e_step)
+    elseif get_result(res) isa MCEMResult || get_result(res) isa SAEMResult
+        method_sampler, method_tkwargs = if get_result(res) isa MCEMResult
+            es = _mcmc_e_step(get_method(res).e_step)
             es === nothing ? (SaemixMH(), NamedTuple()) : (es.sampler, es.turing_kwargs)
         else
-            (res.method.saem.sampler, res.method.saem.turing_kwargs)
+            (get_method(res).saem.sampler, get_method(res).saem.turing_kwargs)
         end
         return _sample_mcmc_bstars_raw(dm, batch_infos, bstars, θu, const_cache, lcl,
-            get_re_names(dm.model.random.random), method_sampler, method_tkwargs;
+            get_re_names(get_random(get_model(dm))), method_sampler, method_tkwargs;
             n_samples = n_samples, n_adapt = 200, rng = rng, warm_start = true)
     end
     return error("Conditional random-effect sampling requires Laplace, GHQuadrature, " *
-                 "MCEM, or SAEM; got $(typeof(res.result)).")
+                 "MCEM, or SAEM; got $(typeof(get_result(res))).")
 end
 
 function _sample_re_mcmc_path(dm::DataModel, res::FitResult, constants_re::NamedTuple,
@@ -1209,7 +1246,7 @@ function _sample_re_mcmc_path(dm::DataModel, res::FitResult, constants_re::Named
         n_samples::Int, n_adapt::Int, rng::AbstractRNG,
         warm_start::Bool, flatten::Bool, include_constants::Bool)
     ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
-    re_names = get_re_names(dm.model.random.random)
+    re_names = get_re_names(get_random(get_model(dm)))
     bstars_per_sample = _sample_mcmc_bstars_raw(dm, batch_infos, bstars, θu, const_cache,
         ll_cache_local, re_names, sampler,
         base_turing_kwargs;
@@ -1280,7 +1317,7 @@ function sample_random_effects(dm::DataModel,
         dm, res, constants_re)
     isempty(batch_infos) && return NamedTuple()
 
-    if res.result isa LaplaceResult || res.result isa GHQuadratureResult
+    if get_result(res) isa LaplaceResult || get_result(res) isa GHQuadratureResult
         return _sample_re_laplace_path(dm, res, constants_re,
             bstars, batch_infos, θu, const_cache, ll_cache;
             n_samples = n_samples, rng = rng,
@@ -1292,13 +1329,13 @@ function sample_random_effects(dm::DataModel,
     # MCMC path for MCEM / SAEM. Prefer the sampler stored on the method;
     # fall back to SaemixMH() when the result was loaded from disk or the
     # method has no usable MCMC sampler (e.g. pure-IS MCEM).
-    method_sampler, method_tkwargs = if res.method isa _SavedFittingMethod
+    method_sampler, method_tkwargs = if get_method(res) isa _SavedFittingMethod
         (nothing, NamedTuple())
-    elseif res.result isa MCEMResult
-        es = _mcmc_e_step(res.method.e_step)
+    elseif get_result(res) isa MCEMResult
+        es = _mcmc_e_step(get_method(res).e_step)
         es === nothing ? (nothing, NamedTuple()) : (es.sampler, es.turing_kwargs)
-    elseif res.result isa SAEMResult
-        (res.method.saem.sampler, res.method.saem.turing_kwargs)
+    elseif get_result(res) isa SAEMResult
+        (get_method(res).saem.sampler, get_method(res).saem.turing_kwargs)
     else
         error("Random-effects sampling not supported for this method.")
     end
@@ -1326,7 +1363,7 @@ function sample_random_effects(res::FitResult;
         warm_start::Bool = true,
         sampler = nothing,
         turing_kwargs::NamedTuple = NamedTuple())
-    dm = res.data_model
+    dm = get_data_model(res)
     dm === nothing &&
         error("This fit result does not store a DataModel; call sample_random_effects(dm, res) instead.")
     return sample_random_effects(dm, res; n_samples = n_samples, rng = rng,
@@ -1402,8 +1439,8 @@ function reestimate_ebes(dm::DataModel,
         ode_kwargs::NamedTuple = NamedTuple(),
         rng::AbstractRNG = Random.default_rng(),
         progress::Bool = false)
-    supported = res.result isa LaplaceResult ||
-                res.result isa MCEMResult || res.result isa SAEMResult
+    supported = get_result(res) isa LaplaceResult ||
+                get_result(res) isa MCEMResult || get_result(res) isa SAEMResult
     supported || error("reestimate_ebes is not supported for this fitting method.")
     sampling_sym = ebe_multistart_sampling == :mcmc ? :lhs : ebe_multistart_sampling
     ebe = EBEOptions(ebe_optimizer, ebe_optim_kwargs, ebe_adtype, ebe_grad_tol,
@@ -1414,17 +1451,17 @@ function reestimate_ebes(dm::DataModel,
         ebe_rescue_grad_tol, ebe_rescue_multistart_sampling)
     θu = get_params(res; scale = :untransformed)
     constants_re = _res_constants_re(res, constants_re)
-    if res.result isa SAEMResult
+    if get_result(res) isa SAEMResult
         constants_re = _saem_anneal_constants_re(
             dm, θu, _saem_anneal_names(res), constants_re)
     end
     ll_cache = build_ll_cache(
         dm; ode_args = ode_args, ode_kwargs = ode_kwargs, force_saveat = true)
     # Compute batch structure once; derive active batch set if individuals are specified.
-    _, batch_infos_pre, const_cache_pre = _build_laplace_batch_infos(dm, constants_re)
+    _, batch_infos_pre, const_cache_pre = _build_re_batch_infos(dm, constants_re)
     active_batch_indices = if individuals !== nothing
         ind_indices = Set(dm.id_index[id] for id in individuals if haskey(dm.id_index, id))
-        findall(bi -> any(i ∈ ind_indices for i in batch_infos_pre[bi].inds),
+        findall(bi -> any(i ∈ ind_indices for i in get_inds(batch_infos_pre[bi])),
             eachindex(batch_infos_pre))
     else
         nothing
@@ -1442,7 +1479,7 @@ function reestimate_ebes(dm::DataModel,
         mcmc_candidates_by_batch = mcmc_candidates,
         active_batch_indices = active_batch_indices)
     new_eb_modes = if individuals !== nothing
-        existing = res.result.eb_modes
+        existing = get_eb_modes(get_result(res))
         if existing !== nothing && length(existing) == length(bstars)
             active_set = Set(active_batch_indices)
             merged = copy(existing)
@@ -1456,19 +1493,19 @@ function reestimate_ebes(dm::DataModel,
     else
         bstars
     end
-    return _with_result(res, _with_eb_modes(res.result, new_eb_modes))
+    return _with_result(res, _with_eb_modes(get_result(res), new_eb_modes))
 end
 
 function reestimate_ebes(res::FitResult; kwargs...)
-    dm = res.data_model
+    dm = get_data_model(res)
     dm === nothing &&
         error("This fit result does not store a DataModel; call reestimate_ebes(dm, res) instead.")
     return reestimate_ebes(dm, res; kwargs...)
 end
 
 function _with_result(res::FitResult, new_result)
-    return FitResult(res.method, new_result, res.summary, res.diagnostics,
-        res.data_model, res.fit_args, res.fit_kwargs)
+    return FitResult(get_method(res), new_result, get_summary(res), get_diagnostics(res),
+        get_data_model(res), get_fit_args(res), get_fit_kwargs(res))
 end
 
 """
@@ -1496,24 +1533,24 @@ function get_loglikelihood(dm::DataModel,
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads())
     constants_re = _res_constants_re(res, constants_re)
     θu = get_params(res; scale = :untransformed)
-    if res.result isa MLEResult || res.result isa MAPResult
+    if get_result(res) isa MLEResult || get_result(res) isa MAPResult
         return loglikelihood(dm, θu, ComponentArray(); ode_args = ode_args,
             ode_kwargs = ode_kwargs, serialization = serialization)
-    elseif res.result isa LaplaceResult
-        pairing, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re)
-        bstars = res.result.eb_modes
+    elseif get_result(res) isa LaplaceResult
+        pairing, batch_infos, const_cache = _build_re_batch_infos(dm, constants_re)
+        bstars = get_eb_modes(get_result(res))
         length(bstars) == length(batch_infos) ||
             error("Laplace-style EB modes do not match number of batches.")
         η_vec = _eta_from_eb(dm, batch_infos, bstars, const_cache, θu)
         return loglikelihood(dm, θu, η_vec; ode_args = ode_args,
             ode_kwargs = ode_kwargs, serialization = serialization)
-    elseif res.result isa GHQuadratureResult
+    elseif get_result(res) isa GHQuadratureResult
         # Re-evaluate the sparse-grid marginal log-likelihood at the estimated θ.
-        level = res.method.level
+        level = get_method(res).level
         ll_cache = build_ll_cache(
             dm; ode_args = ode_args, ode_kwargs = ode_kwargs, force_saveat = true)
-        _, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re)
-        θu_re = _symmetrize_psd_params(θu, dm.model.fixed.fixed)
+        _, batch_infos, const_cache = _build_re_batch_infos(dm, constants_re)
+        θu_re = _symmetrize_psd_params(θu, get_fixed(get_model(dm)))
         total = 0.0
         for info in batch_infos
             bll = _ghq_batch_ll(dm, info, θu_re, const_cache, ll_cache, level)
@@ -1521,8 +1558,8 @@ function get_loglikelihood(dm::DataModel,
             total += bll
         end
         return total
-    elseif res.result isa PooledResult
-        return loglikelihood(dm, θu, res.result.eta_vec; ode_args = ode_args,
+    elseif get_result(res) isa PooledResult
+        return loglikelihood(dm, θu, get_eta_vec(get_result(res)); ode_args = ode_args,
             ode_kwargs = ode_kwargs, serialization = serialization)
     else
         error("loglikelihood accessor not supported for this method.")
@@ -1534,7 +1571,7 @@ function get_loglikelihood(res::FitResult;
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads())
-    dm = res.data_model
+    dm = get_data_model(res)
     dm === nothing &&
         error("This fit result does not store a DataModel; call get_loglikelihood(dm, res) instead.")
     return get_loglikelihood(dm, res; constants_re = constants_re, ode_args = ode_args,
@@ -1613,14 +1650,14 @@ function get_loglikelihood_quadrature(dm::DataModel,
         jitter::Float64 = 1e-6,
         mc_integrator::Union{Nothing, MCIntegrator} = nothing,
         fallback::Union{Nothing, MCIntegrator} = MCIntegrator())
-    if res.result isa MCMCResult
+    if get_result(res) isa MCMCResult
         error("get_loglikelihood_quadrature: MCMC results are not supported.")
     end
-    if res.result isa MLEResult || res.result isa MAPResult
+    if get_result(res) isa MLEResult || get_result(res) isa MAPResult
         error("get_loglikelihood_quadrature: MLE/MAP models have no random effects. " *
               "Use get_loglikelihood instead, which already returns the exact marginal log-likelihood.")
     end
-    if res.result isa PooledResult
+    if get_result(res) isa PooledResult
         error("get_loglikelihood_quadrature: Pooled/PooledMap results have fixed RE. " *
               "Use get_loglikelihood instead.")
     end
@@ -1629,10 +1666,10 @@ function get_loglikelihood_quadrature(dm::DataModel,
     θu = get_params(res; scale = :untransformed)
     # Upcast to Float64 if needed (SAEM stores Float32; Hessian computation requires Float64)
     θu = eltype(θu) === Float64 ? θu : ComponentArray(Float64.(θu), getaxes(θu))
-    θu_re = _symmetrize_psd_params(θu, dm.model.fixed.fixed)
+    θu_re = _symmetrize_psd_params(θu, get_fixed(get_model(dm)))
     # For SAEM with anneal_to_fixed, rebuild the annealed constants_re from the final θ
-    # so that _build_laplace_batch_infos sees the correct n_b (matching stored eb_modes).
-    if res.result isa SAEMResult &&
+    # so that _build_re_batch_infos sees the correct n_b (matching stored eb_modes).
+    if get_result(res) isa SAEMResult &&
        hasproperty(res.result.notes, :anneal_to_fixed) &&
        !isempty(res.result.notes.anneal_to_fixed)
         constants_re = _saem_anneal_constants_re(
@@ -1640,17 +1677,17 @@ function get_loglikelihood_quadrature(dm::DataModel,
             constants_re)
     end
 
-    _, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re)
+    _, batch_infos, const_cache = _build_re_batch_infos(dm, constants_re)
     ll_cache = build_ll_cache(
         dm; ode_args = ode_args, ode_kwargs = ode_kwargs, force_saveat = true)
 
     # Resolve EBE modes: use stored ones if available and matching, else compute.
     # Not needed when mc_integrator is set (pure MC path skips EBE/Hessian entirely).
     bstars = if mc_integrator === nothing
-        if hasproperty(res.result, :eb_modes) &&
-           res.result.eb_modes !== nothing &&
-           length(res.result.eb_modes) == length(batch_infos)
-            res.result.eb_modes
+        if hasproperty(get_result(res), :eb_modes) &&
+           get_eb_modes(get_result(res)) !== nothing &&
+           length(get_eb_modes(get_result(res))) == length(batch_infos)
+            get_eb_modes(get_result(res))
         else
             ebe = ebe_options === nothing ? _default_ebe_options() : ebe_options
             bstars_new, _ = _compute_bstars(dm, θu, constants_re, ll_cache, ebe, rng)
@@ -1667,10 +1704,10 @@ function get_loglikelihood_quadrature(dm::DataModel,
 
     total = 0.0
     for (bi, info) in enumerate(batch_infos)
-        if info.n_b == 0
+        if get_n_b(info) == 0
             s = 0.0
             empty_b = Float64[]
-            for i in info.inds
+            for i in get_inds(info)
                 η_i = _build_eta_ind(dm, i, info, empty_b, const_cache, θu_re)
                 lli = _loglikelihood_individual(dm, i, θu_re, η_i, ll_cache)
                 !isfinite(lli) && return -Inf
@@ -1688,7 +1725,7 @@ function get_loglikelihood_quadrature(dm::DataModel,
                     b_star, info, bi, θu_re, const_cache, dm, ll_cache;
                     jitter = jitter)
                 if re_measure !== nothing
-                    sgrid = level isa Int ? get_sparse_grid(info.n_b, level) :
+                    sgrid = level isa Int ? get_sparse_grid(get_n_b(info), level) :
                             _build_anisotropic_batch_grid(dm, info, level)
                     batch_loglik_ghq(
                         dm, info, θu_re, re_measure, sgrid, const_cache, ll_cache)
@@ -1723,7 +1760,7 @@ function get_loglikelihood_quadrature(res::FitResult;
         jitter::Float64 = 1e-6,
         mc_integrator::Union{Nothing, MCIntegrator} = nothing,
         fallback::Union{Nothing, MCIntegrator} = MCIntegrator())
-    dm = res.data_model
+    dm = get_data_model(res)
     dm === nothing &&
         error("This fit result does not store a DataModel; call get_loglikelihood_quadrature(dm, res) instead.")
     return get_loglikelihood_quadrature(
@@ -1748,7 +1785,7 @@ compatibility; see there for the keyword arguments and supported methods.
 const get_marginal_likelihood = get_loglikelihood_quadrature
 
 function get_re_covariate_usage(res::FitResult; dm::Union{Nothing, DataModel} = nothing)
-    dm === nothing && (dm = res.data_model)
+    dm === nothing && (dm = get_data_model(res))
     dm === nothing &&
         error("This fit result does not store a DataModel; pass dm=... to get_re_covariate_usage.")
     return get_re_covariate_usage(dm)
@@ -1766,7 +1803,7 @@ function _cdll_id_to_index(dm::DataModel, id)
 end
 
 function _cdll_select(dm::DataModel, individuals)
-    n = length(dm.individuals)
+    n = length(get_individuals(dm))
     individuals === nothing && return collect(1:n)
     ids = individuals isa AbstractVector ? individuals : [individuals]
     return [_cdll_id_to_index(dm, id) for id in ids]
@@ -1786,11 +1823,11 @@ function _cdll_terms(dm::DataModel, θ::ComponentArray;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial(),
         ebe_options::Union{Nothing, EBEOptions} = nothing,
         rng::AbstractRNG = Random.default_rng())
-    re = dm.model.random.random
+    re = get_random(get_model(dm))
     re_names = get_re_names(re)
-    θs = _symmetrize_psd_params(θ, dm.model.fixed.fixed)
+    θs = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
     sel = _cdll_select(dm, individuals)
-    id_of(i) = dm.df[dm.row_groups.obs_rows[i][1], dm.config.primary_id]
+    id_of(i) = get_df(dm)[get_obs_rows(get_row_groups(dm))[i][1], get_primary_id(dm)]
 
     cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
         serialization = EnsembleSerial())
@@ -1817,20 +1854,20 @@ function _cdll_terms(dm::DataModel, θ::ComponentArray;
         error("eta must be :mean, :ebe, or a NamedTuple; got $(typeof(eta)).")
     end
 
-    re_cache = dm.re_group_info.laplace_cache
+    re_cache = get_laplace_cache(get_re_group_info(dm))
     re_cache === nothing &&
         error("complete_data_loglikelihood requires random-effect grouping information.")
-    dists_builder = get_create_random_effect_distribution(re)
-    model_funs = get_model_funs(dm.model)
-    helpers = get_helper_funs(dm.model)
-    level_values = dm.re_group_info.values
-    n = length(dm.individuals)
+    dists_builder = create_random_effect_distribution(re)
+    model_funs = get_model_funs(get_model(dm))
+    helpers = get_helper_funs(get_model(dm))
+    level_values = get_re_group_info(dm).values
+    n = length(get_individuals(dm))
 
     # Representative individual for each (re, level) — its const_cov builds the level's
     # RE distribution (RE-distribution covariates are constant within a level).
     rep_ind = [Dict{Int, Int}() for _ in re_names]
     for i in 1:n, ri in eachindex(re_names)
-        for li in re_cache.ind_level_ids[i][ri]
+        for li in get_ind_level_ids(re_cache)[i][ri]
             haskey(rep_ind[ri], li) || (rep_ind[ri][li] = i)
         end
     end
@@ -1838,7 +1875,8 @@ function _cdll_terms(dm::DataModel, θ::ComponentArray;
     # Per-level RE distribution (built once; carries θ, so it is Dual under AD).
     level_dist = [Dict{Int, Any}() for _ in re_names]
     for ri in eachindex(re_names), (li, rep) in rep_ind[ri]
-        dists = dists_builder(θs, dm.individuals[rep].const_cov, model_funs, helpers)
+        dists = dists_builder(
+            θs, get_const_cov(get_individuals(dm)[rep]), model_funs, helpers)
         level_dist[ri][li] = getproperty(dists, re_names[ri])
     end
 
@@ -1858,7 +1896,7 @@ function _cdll_terms(dm::DataModel, θ::ComponentArray;
         end
         map(re_names) do rn
             df = getfield(nt, rn)
-            idc = dm.config.primary_id
+            idc = get_primary_id(dm)
             valc = first(c for c in propertynames(df) if c != idc)
             Dict(Symbol(string(row[idc])) => row[valc] for row in eachrow(df))
         end
@@ -1877,7 +1915,7 @@ function _cdll_terms(dm::DataModel, θ::ComponentArray;
             return getproperty(getproperty(eta, rn), Symbol(string(levval)))
         elseif eta === :mean
             return _re_mean_or_zero(
-                level_dist[ri][li], re_cache.dims[ri], re_cache.is_scalar[ri])
+                level_dist[ri][li], get_dims(re_cache)[ri], get_is_scalar(re_cache)[ri])
         else # :ebe
             return ebe_map[ri][Symbol(string(levval))]
         end
@@ -1887,7 +1925,7 @@ function _cdll_terms(dm::DataModel, θ::ComponentArray;
     function build_eta_i(i)
         pairs = Pair{Symbol, Any}[]
         for (ri, rn) in enumerate(re_names)
-            push!(pairs, rn => getval(ri, re_cache.ind_level_ids[i][ri][1]))
+            push!(pairs, rn => getval(ri, get_ind_level_ids(re_cache)[i][ri][1]))
         end
         return ComponentArray(NamedTuple(pairs))
     end
@@ -1901,7 +1939,7 @@ function _cdll_terms(dm::DataModel, θ::ComponentArray;
     seen = Set{Tuple{Int, Int}}()
     for (k, i) in enumerate(sel)
         v = _loglikelihood_individual(dm, i, θs, build_eta_i(i), cache)
-        for ri in eachindex(re_names), li in re_cache.ind_level_ids[i][ri]
+        for ri in eachindex(re_names), li in get_ind_level_ids(re_cache)[i][ri]
             (ri, li) in seen && continue
             push!(seen, (ri, li))
             v += logpdf(level_dist[ri][li], getval(ri, li))
@@ -1967,7 +2005,7 @@ function complete_data_loglikelihood(dm::DataModel, res::FitResult;
 end
 
 function complete_data_loglikelihood(res::FitResult; eta = :ebe, kwargs...)
-    dm = res.data_model
+    dm = get_data_model(res)
     dm === nothing &&
         error("This fit result does not store a DataModel; call " *
               "complete_data_loglikelihood(dm, res) instead.")
@@ -1983,7 +2021,7 @@ function complete_data_loglikelihood_per_individual(dm::DataModel, res::FitResul
 end
 
 function complete_data_loglikelihood_per_individual(res::FitResult; eta = :ebe, kwargs...)
-    dm = res.data_model
+    dm = get_data_model(res)
     dm === nothing &&
         error("This fit result does not store a DataModel; call " *
               "complete_data_loglikelihood_per_individual(dm, res) instead.")
@@ -2070,15 +2108,15 @@ end
 end
 
 function _varying_at(dm::DataModel, ind::Individual, idx::Int, t_obs)
-    return _vary_row(ind.series.vary, ind.series.dyn, t_obs, idx)
+    return _vary_row(get_vary(get_series(ind)), get_dyn(get_series(ind)), t_obs, idx)
 end
 
 @inline function _needs_rowwise_random_effects(
         dm::DataModel, idx::Int; obs_only::Bool = true)
-    dm.model.de.de !== nothing && return false
-    re_names = get_re_names(dm.model.random.random)
+    get_de(get_model(dm)) !== nothing && return false
+    re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) && return false
-    info = dm.re_group_info.index_by_individual
+    info = get_re_group_info(dm).index_by_individual
     for re in re_names
         re_info = getfield(info, re)
         positions = obs_only ? re_info.unique_pos_obs[idx] : re_info.unique_pos_all[idx]
@@ -2108,14 +2146,14 @@ function _row_random_effects_at(dm::DataModel,
         rowwise_re::Bool;
         obs_only::Bool = true)
     rowwise_re || return η_ind
-    re_names = get_re_names(dm.model.random.random)
+    re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) && return η_ind
-    ind = dm.individuals[idx]
-    info = dm.re_group_info.index_by_individual
+    ind = get_individuals(dm)[idx]
+    info = get_re_group_info(dm).index_by_individual
     nt_pairs = Pair{Symbol, Any}[]
     for re in re_names
         η_re = getproperty(η_ind, re)
-        nlevels = length(getfield(ind.re_groups, re))
+        nlevels = length(getfield(get_re_groups(ind), re))
         if nlevels <= 1
             push!(nt_pairs, re => η_re)
             continue
@@ -2148,14 +2186,14 @@ end
 
 function _row_random_effects_fill(dm::DataModel, idx::Int, row_idx::Int,
         η_ind::ComponentArray, tmpl::_RowREFill; obs_only::Bool = true)
-    re_names = get_re_names(dm.model.random.random)
-    ind = dm.individuals[idx]
-    info = dm.re_group_info.index_by_individual
+    re_names = get_re_names(get_random(get_model(dm)))
+    ind = get_individuals(dm)[idx]
+    info = get_re_group_info(dm).index_by_individual
     vals = Vector{eltype(η_ind)}(undef, tmpl.len)
     pos = 1
     for re in re_names
         η_re = getproperty(η_ind, re)
-        nlevels = length(getfield(ind.re_groups, re))
+        nlevels = length(getfield(get_re_groups(ind), re))
         sel = if nlevels <= 1
             η_re
         else
@@ -2190,6 +2228,17 @@ mutable struct _LLCache{H, M, S, A, O, K, P, V, SA}
     closed_form_plan::ClosedFormPlan
 end
 
+@inline get_helpers(c::_LLCache) = c.helpers
+@inline get_model_funs(c::_LLCache) = c.model_funs
+@inline get_solver_cfg(c::_LLCache) = c.solver_cfg
+@inline get_alg(c::_LLCache) = c.alg
+@inline get_ode_args(c::_LLCache) = c.ode_args
+@inline get_ode_kwargs(c::_LLCache) = c.ode_kwargs
+@inline get_prob_templates(c::_LLCache) = c.prob_templates
+@inline get_vary_cache(c::_LLCache) = c.vary_cache
+@inline get_saveat_cache(c::_LLCache) = c.saveat_cache
+@inline get_closed_form_plan(c::_LLCache) = c.closed_form_plan
+
 # `_is_hmm_dist` (the 7 HMM-family outcome types) is defined in
 # distributions/outcomes/_HMMSimulationUtils.jl.
 @inline function _row_has_hmm_dist(obs, obs_cols)
@@ -2200,7 +2249,7 @@ end
 end
 
 @inline function _ll_saveat(cache::_LLCache, idx::Int, ind::Individual)
-    cache.saveat_cache === nothing && return ind.saveat
+    cache.saveat_cache === nothing && return get_saveat(ind)
     return cache.saveat_cache[idx]
 end
 
@@ -2292,15 +2341,15 @@ SciMLBase.successful_retcode(s::_CFHybridSolution) = SciMLBase.successful_retcod
 
 function _cf_hybrid_solve(model, compiled, u0, tspan, saveat, plan::ClosedFormPlan,
         alg, ode_args, solve_kwargs)
-    cf = plan.cf_states
-    n = plan.n
+    cf = get_cf_states(plan)
+    n = get_cf_n(plan)
     n_idx = [i for i in 1:n if !(i in cf)]
     L_sol = _closed_form_solve_de(
-        model, compiled, u0, tspan, saveat, float(tspan[1]), plan.mode; idxs = cf)
+        model, compiled, u0, tspan, saveat, float(tspan[1]), get_cf_mode(plan); idxs = cf)
     L_sol === nothing && return nothing
     # Append the clock state τ(0) = t0 (see `_CFReducedRHS`).
     u0N = vcat(collect(u0)[n_idx], float(tspan[1]))
-    g! = _CFReducedRHS(get_de_f(model.de.de), compiled, L_sol, cf, n_idx, n)
+    g! = _CFReducedRHS(get_de_f(get_de(model)), compiled, L_sol, cf, n_idx, n)
     prob = ODEProblem(g!, u0N, tspan, nothing)
     kw = saveat === nothing ? merge(solve_kwargs, (; dense = true)) :
          merge(solve_kwargs, (; saveat = saveat, save_everystep = false, dense = false))
@@ -2323,7 +2372,8 @@ end
 function _cf_dispatch_solve(model, compiled, u0, tspan, saveat, plan::ClosedFormPlan,
         events, alg, ode_args, solve_kwargs)
     _cf_is_whole(plan) && return _closed_form_solve_de(
-        model, compiled, u0, tspan, saveat, float(tspan[1]), plan.mode; events = events)
+        model, compiled, u0, tspan, saveat, float(tspan[1]),
+        get_cf_mode(plan); events = events)
     return _cf_hybrid_solve(
         model, compiled, u0, tspan, saveat, plan, alg, ode_args, solve_kwargs)
 end
@@ -2334,28 +2384,41 @@ end
 # NamedTuple — row-constant, reused for the compile context and the initial
 # state instead of being re-derived inside each call. Returns the sol_accessors
 # NamedTuple, or `nothing` when the solve failed.
-function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
-    model = dm.model
-    ind = dm.individuals[idx]
-    const_cov = ind.const_cov
+# Shared per-individual solve preamble for `_ll_solve_de` (estimation, flat-p tail) and
+# `_solve_dense_individual` (plotting, dense tail): builds the compile context, compiles the
+# DE, forms u0 from `pre`, and extracts the event callback + infusion rates. The divergent
+# solve tails (flat-p templates + saveat + crossings vs dense) stay at each call site.
+@inline function _solve_preamble(
+        dm::DataModel, ind::Individual, θ, η_ind, pre, helpers, model_funs)
+    model = get_model(dm)
+    const_cov = get_const_cov(ind)
     pc = (;
         fixed_effects = θ,
         random_effects = η_ind,
         constant_covariates = const_cov,
-        varying_covariates = merge((t = ind.series.vary.t[1],), ind.series.dyn),
-        helpers = cache.helpers,
-        model_funs = cache.model_funs,
+        varying_covariates = merge(
+            (t = get_vary(get_series(ind)).t[1],), get_dyn(get_series(ind))),
+        helpers = helpers,
+        model_funs = model_funs,
         preDE = pre
     )
-    compiled = get_de_compiler(model.de.de)(pc)
+    compiled = get_de_compiler(get_de(model))(pc)
     u0 = _initial_state_with_pre(model, θ, η_ind, const_cov, pre)
     cb = nothing
     infusion_rates = nothing
-    if ind.callbacks !== nothing
-        _apply_initial_events!(u0, ind.callbacks)
-        cb = ind.callbacks.callback
-        infusion_rates = ind.callbacks.infusion_rates
+    if get_callbacks(ind) !== nothing
+        _apply_initial_events!(u0, get_callbacks(ind))
+        cb = get_callback(get_callbacks(ind))
+        infusion_rates = get_infusion_rates(get_callbacks(ind))
     end
+    return compiled, u0, cb, infusion_rates
+end
+
+function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
+    model = get_model(dm)
+    ind = get_individuals(dm)[idx]
+    compiled, u0, cb, infusion_rates = _solve_preamble(
+        dm, ind, θ, η_ind, pre, cache.helpers, cache.model_funs)
     # Solve parameters travel as a flat numeric Vector (DERHSFlat adapter):
     # plain-vector `prob.p` is the only carrier Enzyme's reverse adjoint route
     # handles correctly. Same generated RHS kernel — numerically equivalent
@@ -2365,29 +2428,31 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
     # individual, so caching the adapter inside the problem template is sound.
     layout, plen = _flat_layout(compiled.vars)
     f!_use = _with_infusion(
-        DERHSFlat(get_de_f!(model.de.de), layout, compiled.funs), infusion_rates)
+        DERHSFlat(get_de_f!(get_de(model)), layout, compiled.funs), infusion_rates)
     # T must cover the vars eltype too (η/θ can enter the RHS without entering
     # u0) — pack once with the promoted type, reuse for template and remake.
     T = promote_type(eltype(θ), eltype(η_ind), eltype(u0))
     p_flat = _flat_pack(compiled.vars, layout, plen, T)
     u0_T = eltype(u0) === T ? u0 : T.(u0)
-    crossings = get_formulas_crossings(model.formulas.formulas)
+    crossings = get_formulas_crossings(get_formulas(model))
     if isempty(crossings)
         # Closed-form fast path: diagonal-linear system with no mid-trajectory events
         # (t0 doses already folded into u0). Analytic states over the saveat grid.
         plan = cache.closed_form_plan
-        if plan.eligible && (_cf_is_whole(plan) || cb === nothing)
+        if is_cf_eligible(plan) && (_cf_is_whole(plan) || cb === nothing)
             saveat_use = _ll_saveat(cache, idx, ind)
-            sol = _cf_dispatch_solve(model, compiled, u0_T, ind.tspan, saveat_use, plan,
-                ind.callbacks, cache.alg, cache.ode_args,
+            sol = _cf_dispatch_solve(
+                model, compiled, u0_T, get_tspan(ind), saveat_use, plan,
+                get_callbacks(ind), cache.alg, cache.ode_args,
                 _ode_solve_kwargs(cache.solver_cfg.kwargs, cache.ode_kwargs, NamedTuple()))
             sol === nothing && return nothing
-            return get_de_accessors_builder(model.de.de)(sol, compiled)
+            return get_de_accessors_builder(get_de(model))(sol, compiled)
         end
         prob = cache.prob_templates === nothing ? nothing : cache.prob_templates[idx]
         if prob === nothing
             saveat_use = _ll_saveat(cache, idx, ind)
-            prob = _ll_build_prob_template(f!_use, u0, ind.tspan, p_flat, cb, saveat_use)
+            prob = _ll_build_prob_template(
+                f!_use, u0, get_tspan(ind), p_flat, cb, saveat_use)
             if cache.prob_templates !== nothing
                 cache.prob_templates[idx] = prob
             end
@@ -2395,14 +2460,14 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
         prob = remake(prob; u0 = u0_T, p = p_flat)
         sol = _ll_ode_solve_baked(cache, prob)
         SciMLBase.successful_retcode(sol) || return nothing
-        return get_de_accessors_builder(model.de.de)(sol, compiled)
+        return get_de_accessors_builder(get_de(model))(sol, compiled)
     end
     # Crossing (time-to-event) models: solver-native event detection. The crossing
     # level depends on θ, so the event callback is rebuilt each solve (not baked into
     # the cached template); each crossing time is recorded during integration and
     # merged into the accessors. No dense solve — events fire during ordinary stepping.
     saveat_use = _ll_saveat(cache, idx, ind)
-    state_names = get_de_states(model.de.de)
+    state_names = get_de_states(get_de(model))
     n_cross = length(crossings)
     if n_cross == 1 && crossings[1].kind === :time
         # type-stable fast path (the common case, incl. a single apoptosis event):
@@ -2411,17 +2476,18 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
         sidx = findfirst(==(spec.state), state_names)
         sidx === nothing && error("crossing state `$(spec.state)` is not a DE state.")
         c = _crossing_threshold(spec.threshold, θ, pre)
-        tinit = spec.tmax === nothing ? convert(T, ind.tspan[2]) : convert(T, spec.tmax)
+        tinit = spec.tmax === nothing ? convert(T, get_tspan(ind)[2]) :
+                convert(T, spec.tmax)
         r = Ref{T}(tinit)
         fired = Ref(false)
         cbk = SciMLBase.DiscreteCallback(_CrossingCondition(sidx, c, fired),
             _CrossingAffect(sidx, c, r, fired); save_positions = (false, false))
         cbset = cb === nothing ? cbk : SciMLBase.CallbackSet(cb, cbk)
         prob = ODEProblem{true, SciMLBase.FullSpecialize}(
-            f!_use, u0_T, ind.tspan, p_flat; _ll_prob_kwargs(cbset, saveat_use)...)
+            f!_use, u0_T, get_tspan(ind), p_flat; _ll_prob_kwargs(cbset, saveat_use)...)
         sol = _ll_ode_solve_baked(cache, prob)
         SciMLBase.successful_retcode(sol) || return nothing
-        acc = get_de_accessors_builder(model.de.de)(sol, compiled)
+        acc = get_de_accessors_builder(get_de(model))(sol, compiled)
         return merge(acc, NamedTuple{(spec.name,)}((r[],)))
     end
     # General path: attach an event callback only for :time crossings; :rootval
@@ -2438,7 +2504,8 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
         sidxs[k] = sidx
         thr[k] = c
         if spec.kind === :time
-            tinit = spec.tmax === nothing ? convert(T, ind.tspan[2]) : convert(T, spec.tmax)
+            tinit = spec.tmax === nothing ? convert(T, get_tspan(ind)[2]) :
+                    convert(T, spec.tmax)
             r = Ref{T}(tinit)
             time_refs[k] = r
             fired = Ref(false)
@@ -2457,10 +2524,10 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
         SciMLBase.CallbackSet(cb, cross_cbs...)
     end
     prob = ODEProblem{true, SciMLBase.FullSpecialize}(
-        f!_use, u0_T, ind.tspan, p_flat; _ll_prob_kwargs(cbset, saveat_use)...)
+        f!_use, u0_T, get_tspan(ind), p_flat; _ll_prob_kwargs(cbset, saveat_use)...)
     sol = _ll_ode_solve_baked(cache, prob)
     SciMLBase.successful_retcode(sol) || return nothing
-    acc = get_de_accessors_builder(model.de.de)(sol, compiled)
+    acc = get_de_accessors_builder(get_de(model))(sol, compiled)
     cross_nt = NamedTuple{Tuple(crossings[k].name for k in 1:n_cross)}(
         Tuple(crossings[k].kind === :time ? time_refs[k][] :
               _crossing_rootval_from_sol(sol, sidxs[k], thr[k]) for k in 1:n_cross))
@@ -2468,11 +2535,11 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
 end
 
 function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache)
-    model = dm.model
-    ind = dm.individuals[idx]
-    obs_rows = dm.row_groups.obs_rows[idx]
-    const_cov = ind.const_cov
-    obs_series = ind.series.obs
+    model = get_model(dm)
+    ind = get_individuals(dm)[idx]
+    obs_rows = get_obs_rows(get_row_groups(dm))[idx]
+    const_cov = get_const_cov(ind)
+    obs_series = get_obs(get_series(ind))
     vary_cache = cache.vary_cache === nothing ? nothing : cache.vary_cache[idx]
     if η_ind isa NamedTuple
         η_ind = ComponentArray(η_ind)
@@ -2480,7 +2547,7 @@ function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_
 
     sol_accessors = nothing
     pre = nothing
-    if model.de.de !== nothing
+    if get_de(model) !== nothing
         pre = calculate_prede(model, θ, η_ind, const_cov)
         sol_accessors = _ll_solve_de(dm, idx, θ, η_ind, cache, pre)
         sol_accessors === nothing && return -Inf
@@ -2499,14 +2566,15 @@ function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_
     ctx = (; fixed_effects = θ, random_effects = η_ind, prede = pre,
         helpers = cache.helpers, model_funs = cache.model_funs)
     vrows = vary_cache !== nothing ? vary_cache :
-            _build_vary_cache_individual(ind.series.vary, ind.series.dyn,
-        _get_col(dm.df, dm.config.time_col)[obs_rows],
+            _build_vary_cache_individual(
+        get_vary(get_series(ind)), get_dyn(get_series(ind)),
+        _get_col(get_df(dm), get_time_col(dm))[obs_rows],
         length(obs_rows))
     sol_acc = sol_accessors === nothing ? NamedTuple() : sol_accessors
     T_el = promote_type(eltype(θ), eltype(η_ind))
     return _ll_rows_obs(dm, idx, θ, η_ind, cache, sol_accessors,
         model.formulas.obs, ctx, sol_acc, const_cov, obs_series,
-        vrows, dm.config.obs_cols, T_el)
+        vrows, get_obs_cols(dm), T_el)
 end
 
 # Row loop of `_loglikelihood_individual` behind a function barrier: every
@@ -2548,16 +2616,17 @@ end
 # re-selected per row, so the formula context cannot be hoisted.
 function _loglikelihood_individual_rowwise(dm::DataModel, idx::Int, θ, η_ind,
         cache::_LLCache, sol_accessors)
-    model = dm.model
-    ind = dm.individuals[idx]
-    obs_rows = dm.row_groups.obs_rows[idx]
+    model = get_model(dm)
+    ind = get_individuals(dm)[idx]
+    obs_rows = get_obs_rows(get_row_groups(dm))[idx]
     T_el = promote_type(eltype(θ), eltype(η_ind))
     isempty(obs_rows) && return zero(T_el)
-    const_cov = ind.const_cov
-    obs_series = ind.series.obs
-    obs_cols = dm.config.obs_cols
+    const_cov = get_const_cov(ind)
+    obs_series = get_obs(get_series(ind))
+    obs_cols = get_obs_cols(dm)
     vary_cache = cache.vary_cache === nothing ? nothing : cache.vary_cache[idx]
-    t_obs = vary_cache === nothing ? _get_col(dm.df, dm.config.time_col)[obs_rows] : nothing
+    t_obs = vary_cache === nothing ? _get_col(get_df(dm), get_time_col(dm))[obs_rows] :
+            nothing
     # `_row_re_template` derives its axes from the deliberately-boxing
     # `_row_random_effects_at`, so `row_tmpl` is statically `_RowREFill{Any}`.
     # Pass it into the row loop behind a function barrier (`tmpl::TM` type
@@ -2580,7 +2649,7 @@ end
 function _ll_rows_obs_rowwise(dm::DataModel, idx::Int, model::M, θ, η_ind,
         cache::_LLCache, sol_accessors, const_cov::CC, obs_series::OS, obs_cols,
         vary_cache, ind, t_obs, tmpl::TM, ::Type{T}) where {M, CC, OS, TM, T}
-    obs_rows = dm.row_groups.obs_rows[idx]
+    obs_rows = get_obs_rows(get_row_groups(dm))[idx]
     ll = zero(T)
     for i in eachindex(obs_rows)
         vary = vary_cache === nothing ? _varying_at(dm, ind, i, t_obs) : vary_cache[i]
@@ -2615,13 +2684,13 @@ end
 # function reverse-mode-AD-friendly and avoid hashing on the HMM hot path.
 function _loglikelihood_rows_hmm(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache,
         sol_accessors, i_start::Int)
-    model = dm.model
-    ind = dm.individuals[idx]
-    obs_rows = dm.row_groups.obs_rows[idx]
-    const_cov = ind.const_cov
-    obs_series = ind.series.obs
+    model = get_model(dm)
+    ind = get_individuals(dm)[idx]
+    obs_rows = get_obs_rows(get_row_groups(dm))[idx]
+    const_cov = get_const_cov(ind)
+    obs_series = get_obs(get_series(ind))
     vary_cache = cache.vary_cache === nothing ? nothing : cache.vary_cache[idx]
-    obs_cols = dm.config.obs_cols
+    obs_cols = get_obs_cols(dm)
     rowwise_re = _needs_rowwise_random_effects(dm, idx; obs_only = true)
     T_hmm = promote_type(eltype(θ), eltype(η_ind))
     n_cols = length(obs_cols)
@@ -2637,7 +2706,8 @@ function _loglikelihood_rows_hmm(dm::DataModel, idx::Int, θ, η_ind, cache::_LL
           (; fixed_effects = θ, random_effects = η_ind, prede = pre,
         helpers = cache.helpers, model_funs = cache.model_funs)
     sol_acc = sol_accessors === nothing ? NamedTuple() : sol_accessors
-    t_obs = vary_cache === nothing ? _get_col(dm.df, dm.config.time_col)[obs_rows] : nothing
+    t_obs = vary_cache === nothing ? _get_col(get_df(dm), get_time_col(dm))[obs_rows] :
+            nothing
     row_tmpl = rowwise_re ? _row_re_template(dm, idx, i_start, η_ind; obs_only = true) :
                nothing
     ll = zero(T_hmm)
@@ -2722,11 +2792,11 @@ function _loglikelihood_rows_hmm(dm::DataModel, idx::Int, θ, η_ind, cache::_LL
 end
 
 function _resid_stats_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache)
-    model = dm.model
-    ind = dm.individuals[idx]
-    obs_rows = dm.row_groups.obs_rows[idx]
-    const_cov = ind.const_cov
-    obs_series = ind.series.obs
+    model = get_model(dm)
+    ind = get_individuals(dm)[idx]
+    obs_rows = get_obs_rows(get_row_groups(dm))[idx]
+    const_cov = get_const_cov(ind)
+    obs_series = get_obs(get_series(ind))
     vary_cache = cache.vary_cache === nothing ? nothing : cache.vary_cache[idx]
     if η_ind isa NamedTuple
         η_ind = ComponentArray(η_ind)
@@ -2734,7 +2804,7 @@ function _resid_stats_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_LL
 
     sol_accessors = nothing
     pre = nothing
-    if model.de.de !== nothing
+    if get_de(model) !== nothing
         pre = calculate_prede(model, θ, η_ind, const_cov)
         sol_accessors = _ll_solve_de(dm, idx, θ, η_ind, cache, pre)
         sol_accessors === nothing &&
@@ -2743,8 +2813,8 @@ function _resid_stats_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_LL
 
     resid_ss = zero(promote_type(eltype(θ), Float64))
     resid_n = 0
-    obs_cols = dm.config.obs_cols
-    time_col = vary_cache === nothing ? _get_col(dm.df, dm.config.time_col)[obs_rows] :
+    obs_cols = get_obs_cols(dm)
+    time_col = vary_cache === nothing ? _get_col(get_df(dm), get_time_col(dm))[obs_rows] :
                nothing
     rowwise_re = _needs_rowwise_random_effects(dm, idx; obs_only = true)
     # Row-constant formula context, hoisted as in `_loglikelihood_individual`;
@@ -2832,11 +2902,12 @@ function _build_vary_cache_individual(vary::NamedTuple, dyn::NamedTuple, t_obs,
 end
 
 function _build_vary_cache(dm::DataModel)
-    return map(eachindex(dm.individuals)) do i
-        ind = dm.individuals[i]
-        obs_rows = dm.row_groups.obs_rows[i]
-        t_obs = _get_col(dm.df, dm.config.time_col)[obs_rows]
-        _build_vary_cache_individual(ind.series.vary, ind.series.dyn, t_obs,
+    return map(eachindex(get_individuals(dm))) do i
+        ind = get_individuals(dm)[i]
+        obs_rows = get_obs_rows(get_row_groups(dm))[i]
+        t_obs = _get_col(get_df(dm), get_time_col(dm))[obs_rows]
+        _build_vary_cache_individual(
+            get_vary(get_series(ind)), get_dyn(get_series(ind)), t_obs,
             length(obs_rows))
     end
 end
@@ -2860,17 +2931,17 @@ function _build_ll_cache_single(dm::DataModel;
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
         force_saveat::Bool = false)
-    solver_cfg = get_solver_config(dm.model)
+    solver_cfg = get_solver_config(get_model(dm))
     alg = solver_cfg.alg === nothing ? Tsit5() : solver_cfg.alg
-    prob_templates = dm.model.de.de === nothing ? nothing :
-                     Vector{Any}(undef, length(dm.individuals))
+    prob_templates = get_de(get_model(dm)) === nothing ? nothing :
+                     Vector{Any}(undef, length(get_individuals(dm)))
     if prob_templates !== nothing
         fill!(prob_templates, nothing)
     end
     vary_cache = _build_vary_cache(dm)
     saveat_cache = _build_fit_saveat_cache(dm, force_saveat)
-    return _LLCache(get_helper_funs(dm.model),
-        get_model_funs(dm.model),
+    return _LLCache(get_helper_funs(get_model(dm)),
+        get_model_funs(get_model(dm)),
         solver_cfg,
         alg,
         ode_args,
@@ -2882,19 +2953,19 @@ function _build_ll_cache_single(dm::DataModel;
 end
 
 function _build_fit_saveat_cache(dm::DataModel, force_saveat::Bool)
-    (!force_saveat || dm.model.de.de === nothing) && return nothing
-    state_names = get_de_states(dm.model.de.de)
-    signal_names = get_de_signals(dm.model.de.de)
+    (!force_saveat || get_de(get_model(dm)) === nothing) && return nothing
+    state_names = get_de_states(get_de(get_model(dm)))
+    signal_names = get_de_signals(get_de(get_model(dm)))
     time_offsets, requires_dense = get_formulas_time_offsets(
-        dm.model.formulas.formulas, state_names, signal_names)
+        get_formulas(get_model(dm)), state_names, signal_names)
     requires_dense && return nothing
-    out = Vector{Any}(undef, length(dm.individuals))
-    for i in eachindex(dm.individuals)
-        ind = dm.individuals[i]
-        if ind.saveat === nothing
-            rows = dm.row_groups.rows[i]
-            obs_rows = dm.row_groups.obs_rows[i]
-            tvals = _get_col(dm.df, dm.config.time_col)[obs_rows]
+    out = Vector{Any}(undef, length(get_individuals(dm)))
+    for i in eachindex(get_individuals(dm))
+        ind = get_individuals(dm)[i]
+        if get_saveat(ind) === nothing
+            rows = get_rows(get_row_groups(dm))[i]
+            obs_rows = get_obs_rows(get_row_groups(dm))[i]
+            tvals = _get_col(get_df(dm), get_time_col(dm))[obs_rows]
             if !isempty(time_offsets)
                 expanded = Float64[]
                 for t in tvals
@@ -2904,16 +2975,17 @@ function _build_fit_saveat_cache(dm::DataModel, force_saveat::Bool)
                 end
                 tvals = expanded
             end
-            if dm.config.evid_col !== nothing
-                evid = _get_col(dm.df, dm.config.evid_col)[rows]
+            if get_evid_col(dm) !== nothing
+                evid = _get_col(get_df(dm), get_evid_col(dm))[rows]
                 evt_idx = findall(!=(0), evid)
                 if !isempty(evt_idx)
-                    tvals = vcat(tvals, _get_col(dm.df, dm.config.time_col)[rows][evt_idx])
+                    tvals = vcat(
+                        tvals, _get_col(get_df(dm), get_time_col(dm))[rows][evt_idx])
                 end
             end
             out[i] = sort(unique(tvals))
         else
-            out[i] = ind.saveat
+            out[i] = get_saveat(ind)
         end
     end
     return out
@@ -2928,7 +3000,7 @@ function loglikelihood(dm::DataModel, θ::ComponentArray, η;
     # below, and reassigning a captured variable boxes it (`Core.Box`) — which made
     # every `η[i]` lookup and the whole serial loop dynamically typed (measured
     # ~1 KB/individual of boxing overhead on a 16 B/individual evaluation).
-    θs = _symmetrize_psd_params(θ, dm.model.fixed.fixed)
+    θs = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
     # A shared NamedTuple η would otherwise be converted to a ComponentArray inside
     # EVERY `_loglikelihood_individual` call (measured 15× on simple models) —
     # convert once up front. (Vector-of-NamedTuple elements are used once each, so
@@ -2937,7 +3009,7 @@ function loglikelihood(dm::DataModel, θ::ComponentArray, η;
     cache_use = cache === nothing ?
                 build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
         serialization = serialization) : cache
-    n = length(dm.individuals)
+    n = length(get_individuals(dm))
     η_eltype = ηs isa Vector ? (isempty(ηs) ? Float64 : eltype(first(ηs))) : eltype(ηs)
     T = promote_type(eltype(θs), η_eltype)
     if serialization isa SciMLBase.EnsembleThreads
@@ -3107,10 +3179,10 @@ expressions and therefore belongs entirely to Q2 (the RE-distribution term of th
 complete-data log-likelihood), enabling a cheaper M-step that skips ODE evaluation.
 """
 function _compute_obs_fe_syms(model)
-    fe_names = Set(get_names(model.fixed.fixed))
+    fe_names = Set(get_names(get_fixed(model)))
     syms = Set{Symbol}()
     # @formulas — FormulasIR.var_syms contains all variable symbols
-    union!(syms, filter(∈(fe_names), model.formulas.formulas.ir.var_syms))
+    union!(syms, filter(∈(fe_names), get_formulas(model).ir.var_syms))
     de = model.de
     if de !== nothing
         # @preDifferentialEquation
@@ -3143,7 +3215,7 @@ Returns a NamedTuple `(q1=..., q2=...)` preserving the original order of `free_n
 """
 function _partition_q1_q2_names(model, free_names::Vector{Symbol})
     obs_fe = _compute_obs_fe_syms(model)
-    re_syms_map = get_re_syms(model.random.random)
+    re_syms_map = get_re_syms(get_random(model))
     re_fe_syms = Set{Symbol}()
     for (_, syms) in Base.pairs(re_syms_map)
         union!(re_fe_syms, syms)
@@ -3188,10 +3260,10 @@ function compute_shrinkage(res::FitResult;
 
     θ = get_params(res; scale = :untransformed)
     constants_re = _res_constants_re(res, constants_re)
-    re_names = get_re_names(dm_use.model.random.random)
-    dists_builder = get_create_random_effect_distribution(dm_use.model.random.random)
-    model_funs = get_model_funs(dm_use.model)
-    helpers = get_helper_funs(dm_use.model)
+    re_names = get_re_names(get_random(get_model(dm_use)))
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm_use)))
+    model_funs = get_model_funs(get_model(dm_use))
+    helpers = get_helper_funs(get_model(dm_use))
 
     pairs = Pair{Symbol, NamedTuple}[]
     for re in re_names
@@ -3201,18 +3273,18 @@ function compute_shrinkage(res::FitResult;
         catch
             continue
         end
-        length(ebes) == length(dm_use.individuals) || continue
+        length(ebes) == length(get_individuals(dm_use)) || continue
 
         etas = Float64[]
         sigma = NaN
         valid = true
 
-        for i in eachindex(dm_use.individuals)
-            ind = dm_use.individuals[i]
+        for i in eachindex(get_individuals(dm_use))
+            ind = get_individuals(dm_use)[i]
             ebe = Float64(ebes[i])
             isfinite(ebe) || continue
 
-            dists = dists_builder(θ, ind.const_cov, model_funs, helpers)
+            dists = dists_builder(θ, get_const_cov(ind), model_funs, helpers)
             hasfield(typeof(dists), re) || (valid = false; break)
             dist_i = getfield(dists, re)
 

@@ -108,9 +108,9 @@ mutable struct _SAEMSampleStore
 end
 
 function _init_saem_sample_store(capacity::Int, q_epsilon::Float64, q_min::Int,
-        batch_infos::Vector{_LaplaceBatchInfo})
+        batch_infos::Vector{REBatchInfo})
     weights = zeros(Float64, capacity)
-    snaps = [[zeros(Float64, info.n_b) for info in batch_infos] for _ in 1:capacity]
+    snaps = [[zeros(Float64, get_n_b(info)) for info in batch_infos] for _ in 1:capacity]
     return _SAEMSampleStore(weights, snaps, 1, 1, 0, capacity, q_epsilon, q_min)
 end
 
@@ -153,7 +153,7 @@ function _saem_validate_anneal(anneal_to_fixed, anneal_schedule, dm, θ_const_u)
     isempty(anneal_to_fixed) && return NamedTuple()
     anneal_schedule in (:exponential, :linear, :gamma) ||
         error("anneal_schedule must be :exponential, :linear, or :gamma. Got: $(anneal_schedule)")
-    re = dm.model.random.random
+    re = get_random(get_model(dm))
     re_names_set = Set(get_re_names(re))
     re_dist_exprs = get_re_dist_exprs(re)
     names = Symbol[]
@@ -161,10 +161,10 @@ function _saem_validate_anneal(anneal_to_fixed, anneal_schedule, dm, θ_const_u)
     # Precompute initial distributions — needed to extract sd0 for MvNormal entries.
     # The distribution builder expects natural (untransformed) parameters.
     dists_ref = let
-        dists_builder = get_create_random_effect_distribution(re)
-        model_funs = get_model_funs(dm.model)
-        helpers = get_helper_funs(dm.model)
-        dists_builder(θ_const_u, dm.individuals[1].const_cov, model_funs, helpers)
+        dists_builder = create_random_effect_distribution(re)
+        model_funs = get_model_funs(get_model(dm))
+        helpers = get_helper_funs(get_model(dm))
+        dists_builder(θ_const_u, get_const_cov(get_individuals(dm)[1]), model_funs, helpers)
     end
     for name in anneal_to_fixed
         name isa Symbol || error("anneal_to_fixed: entries must be Symbols. Got: $name")
@@ -221,10 +221,10 @@ end
 const _saem_thread_caches = _mcem_thread_caches
 
 function _saem_sample_batches!(dm::DataModel,
-        batch_infos::Vector{_LaplaceBatchInfo},
+        batch_infos::Vector{REBatchInfo},
         batches::AbstractVector{Int},
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         ll_cache,
         sampler,
         turing_kwargs,
@@ -975,7 +975,7 @@ function _saem_parse_hmm_emission_target_expr(
 end
 
 function _saem_autodetect_hmm_emission_params(dm::DataModel, fixed_set::Set{Symbol})
-    ir = get_formulas_ir(dm.model.formulas.formulas)
+    ir = get_formulas_ir(get_formulas(get_model(dm)))
     assign_map = _saem_formulas_assignment_map(ir)
     pairs = Pair{Symbol, Any}[]
 
@@ -996,7 +996,7 @@ function _saem_autodetect_hmm_emission_params(dm::DataModel, fixed_set::Set{Symb
 end
 
 function _saem_hmm_has_direct_transition_target(dm::DataModel, fixed_set::Set{Symbol})
-    ir = get_formulas_ir(dm.model.formulas.formulas)
+    ir = get_formulas_ir(get_formulas(get_model(dm)))
     assign_map = _saem_formulas_assignment_map(ir)
     for ex in ir.obs_exprs
         cname = _saem_call_name(ex)
@@ -1183,7 +1183,7 @@ function _saem_parse_outcome_builtin_target(dist_expr, fixed_set::Set{Symbol})
 end
 
 function _saem_autodetect_resid_var_param(dm::DataModel, fixed_set::Set{Symbol})
-    ir = get_formulas_ir(dm.model.formulas.formulas)
+    ir = get_formulas_ir(get_formulas(get_model(dm)))
     obs_names = ir.obs_names
     obs_exprs = ir.obs_exprs
     pairs = Pair{Symbol, Any}[]
@@ -1206,7 +1206,7 @@ function _saem_autodetect_resid_var_param(dm::DataModel, fixed_set::Set{Symbol})
 end
 
 function _saem_hmm_outcome_names(dm::DataModel)
-    ir = get_formulas_ir(dm.model.formulas.formulas)
+    ir = get_formulas_ir(get_formulas(get_model(dm)))
     hmm = Symbol[]
     for (obs, ex) in zip(ir.obs_names, ir.obs_exprs)
         _saem_is_hmm_call_name(_saem_call_name(ex)) && push!(hmm, obs)
@@ -1215,7 +1215,7 @@ function _saem_hmm_outcome_names(dm::DataModel)
 end
 
 function _saem_autodetect_gaussian_re(dm::DataModel, fixed_names::Vector{Symbol})
-    re_model = dm.model.random.random
+    re_model = get_random(get_model(dm))
     re_names = get_re_names(re_model)
     isempty(re_names) && return nothing
     fixed_set = Set(fixed_names)
@@ -1266,7 +1266,7 @@ function _saem_builtin_closed_form_eligibility(dm::DataModel,
         resid_var_param,
         hmm_emission_params::NamedTuple = NamedTuple())
     re_targets = _saem_builtin_re_targets(re_cov_params, re_mean_params)
-    obs_targets = _saem_outcome_targets(dm.config.obs_cols, resid_var_param)
+    obs_targets = _saem_outcome_targets(get_obs_cols(dm), resid_var_param)
     all_outcome_targets = Symbol[collect(keys(obs_targets))...]
     hmm_outcomes_vec = _saem_hmm_outcome_names(dm)
     hmm_set = Set{Symbol}(hmm_outcomes_vec)
@@ -1298,7 +1298,7 @@ function _saem_builtin_closed_form_eligibility(dm::DataModel,
     !isempty(hmm_emission_targets_unsupported) &&
         push!(reasons, :hmm_emission_mapping_not_supported_builtin)
     has_direct_transition_target = _saem_hmm_has_direct_transition_target(
-        dm, Set(get_names(dm.model.fixed.fixed)))
+        dm, Set(get_names(get_fixed(get_model(dm)))))
     has_direct_transition_target &&
         push!(reasons, :hmm_transition_mapping_not_supported_builtin)
 
@@ -1334,7 +1334,7 @@ end
 
 function _saem_prune_hmm_outcome_targets(dm::DataModel, resid_var_param, hmm_outcomes)
     isempty(hmm_outcomes) && return resid_var_param
-    obs_targets = _saem_outcome_targets(dm.config.obs_cols, resid_var_param)
+    obs_targets = _saem_outcome_targets(get_obs_cols(dm), resid_var_param)
     isempty(keys(obs_targets)) && return NamedTuple()
 
     hmm_set = Set{Symbol}(Symbol.(collect(hmm_outcomes)))
@@ -1347,15 +1347,15 @@ function _saem_prune_hmm_outcome_targets(dm::DataModel, resid_var_param, hmm_out
     if isempty(kept)
         return NamedTuple()
     end
-    if resid_var_param isa Symbol && length(kept) == length(dm.config.obs_cols)
+    if resid_var_param isa Symbol && length(kept) == length(get_obs_cols(dm))
         return resid_var_param
     end
     return NamedTuple(kept)
 end
 
 function _saem_re_family_map(dm::DataModel)
-    re_names = get_re_names(dm.model.random.random)
-    re_dists = get_re_dist_exprs(dm.model.random.random)
+    re_names = get_re_names(get_random(get_model(dm)))
+    re_dists = get_re_dist_exprs(get_random(get_model(dm)))
     pairs = Pair{Symbol, Symbol}[]
     for re in re_names
         family = :unsupported
@@ -1636,58 +1636,17 @@ end
 # layout is shared through `cache.prob_templates`, so every user of the templates
 # must pack identically). Returns `(sol_accessors, ok)`; `(nothing, true)` for
 # non-DE models, `(nothing, false)` on a failed solve.
+# SAEM sufficient-statistics solve. Delegates to the shared per-individual DE solve
+# (`_ll_solve_de`: closed-form gate + flat-p template solve, shared prob_templates),
+# returning `(sol_accessors, ok)`. Equivalent to the previous inline copy — u0 matches
+# (`_ll_solve_de` folds the same `pre` via `_initial_state_with_pre`, as
+# `calculate_initial_state` does) — and additionally supports crossing models for free.
 function _saem_stats_sol_accessors(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache)
-    model = dm.model
-    model.de.de === nothing && return (nothing, true)
-    ind = dm.individuals[idx]
-    const_cov = ind.const_cov
-    pre = calculate_prede(model, θ, η_ind, const_cov)
-    pc = (;
-        fixed_effects = θ,
-        random_effects = η_ind,
-        constant_covariates = const_cov,
-        varying_covariates = merge((t = ind.series.vary.t[1],), ind.series.dyn),
-        helpers = cache.helpers,
-        model_funs = cache.model_funs,
-        preDE = pre
-    )
-    compiled = get_de_compiler(model.de.de)(pc)
-    u0 = calculate_initial_state(model, θ, η_ind, const_cov)
-    cb = nothing
-    infusion_rates = nothing
-    if ind.callbacks !== nothing
-        _apply_initial_events!(u0, ind.callbacks)
-        cb = ind.callbacks.callback
-        infusion_rates = ind.callbacks.infusion_rates
-    end
-    plan = cache.closed_form_plan
-    if plan.eligible && (_cf_is_whole(plan) || cb === nothing)
-        sol = _cf_dispatch_solve(model, compiled, u0, ind.tspan,
-            _ll_saveat(cache, idx, ind), plan, ind.callbacks, cache.alg, cache.ode_args,
-            _ode_solve_kwargs(cache.solver_cfg.kwargs, cache.ode_kwargs, NamedTuple()))
-        sol === nothing && return (nothing, false)
-        return (get_de_accessors_builder(model.de.de)(sol, compiled), true)
-    end
-    # Flat-vector solve parameters via DERHSFlat — must match the
-    # _loglikelihood_individual template layout (shared cache.prob_templates).
-    layout, plen = _flat_layout(compiled.vars)
-    f!_use = _with_infusion(
-        DERHSFlat(get_de_f!(model.de.de), layout, compiled.funs), infusion_rates)
-    Tprob = promote_type(eltype(θ), eltype(η_ind), eltype(u0))
-    p_flat = _flat_pack(compiled.vars, layout, plen, Tprob)
-    prob = cache.prob_templates === nothing ? nothing : cache.prob_templates[idx]
-    if prob === nothing
-        saveat_use = _ll_saveat(cache, idx, ind)
-        prob = _ll_build_prob_template(f!_use, u0, ind.tspan, p_flat, cb, saveat_use)
-        if cache.prob_templates !== nothing
-            cache.prob_templates[idx] = prob
-        end
-    end
-
-    prob = remake(prob; u0 = Tprob.(u0), p = p_flat)
-    sol = _ll_ode_solve_baked(cache, prob)
-    SciMLBase.successful_retcode(sol) || return (nothing, false)
-    return (get_de_accessors_builder(model.de.de)(sol, compiled), true)
+    get_de(get_model(dm)) === nothing && return (nothing, true)
+    pre = calculate_prede(
+        get_model(dm), θ, η_ind, get_const_cov(get_individuals(dm)[idx]))
+    sol_accessors = _ll_solve_de(dm, idx, θ, η_ind, cache, pre)
+    return sol_accessors === nothing ? (nothing, false) : (sol_accessors, true)
 end
 
 function _saem_collect_hmm_stats_individual(dm::DataModel,
@@ -1698,11 +1657,11 @@ function _saem_collect_hmm_stats_individual(dm::DataModel,
         hmm_emission_params::NamedTuple)
     isempty(keys(hmm_emission_params)) && return (NamedTuple(), true)
 
-    model = dm.model
-    ind = dm.individuals[idx]
-    obs_rows = dm.row_groups.obs_rows[idx]
-    const_cov = ind.const_cov
-    obs_series = ind.series.obs
+    model = get_model(dm)
+    ind = get_individuals(dm)[idx]
+    obs_rows = get_obs_rows(get_row_groups(dm))[idx]
+    const_cov = get_const_cov(ind)
+    obs_series = get_obs(get_series(ind))
     vary_cache = cache.vary_cache === nothing ? nothing : cache.vary_cache[idx]
 
     sol_accessors, solve_ok = _saem_stats_sol_accessors(dm, idx, θ, η_ind, cache)
@@ -1719,7 +1678,7 @@ function _saem_collect_hmm_stats_individual(dm::DataModel,
     seq_y = NamedTuple{emi_cols}(ntuple(_ -> Vector{Any}(undef, n_rows),
         length(emi_cols)))
 
-    time_col = _get_col(dm.df, dm.config.time_col)[obs_rows]
+    time_col = _get_col(get_df(dm), get_time_col(dm))[obs_rows]
     rowwise_re = _needs_rowwise_random_effects(dm, idx; obs_only = true)
     η_ind isa NamedTuple && (η_ind = ComponentArray(η_ind))
     row_tmpl = rowwise_re && n_rows > 0 ?
@@ -1819,19 +1778,19 @@ function _saem_collect_outcome_stats_individual(dm::DataModel,
         rng::AbstractRNG)
     isempty(keys(obs_targets)) && return (NamedTuple(), true)
 
-    model = dm.model
-    ind = dm.individuals[idx]
-    obs_rows = dm.row_groups.obs_rows[idx]
-    const_cov = ind.const_cov
-    obs_series = ind.series.obs
+    model = get_model(dm)
+    ind = get_individuals(dm)[idx]
+    obs_rows = get_obs_rows(get_row_groups(dm))[idx]
+    const_cov = get_const_cov(ind)
+    obs_series = get_obs(get_series(ind))
     vary_cache = cache.vary_cache === nothing ? nothing : cache.vary_cache[idx]
 
     sol_accessors, solve_ok = _saem_stats_sol_accessors(dm, idx, θ, η_ind, cache)
     solve_ok || return (NamedTuple(), false)
 
     Tstats = promote_type(eltype(θ), Float64)
-    obs_cols = dm.config.obs_cols
-    time_col = _get_col(dm.df, dm.config.time_col)[obs_rows]
+    obs_cols = get_obs_cols(dm)
+    time_col = _get_col(get_df(dm), get_time_col(dm))[obs_rows]
     # Concrete value type (every family emits the same stat shape): an Any-valued
     # Dict would box one freshly-built stat NamedTuple per observation row per
     # SAEM iteration on the default closed-form-stats path.
@@ -1867,10 +1826,10 @@ function _saem_collect_outcome_stats_individual(dm::DataModel,
 end
 
 function _saem_builtin_collect_current_stats(dm::DataModel,
-        batch_infos::Vector{_LaplaceBatchInfo},
+        batch_infos::Vector{REBatchInfo},
         b_current::AbstractVector,
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         resid_var_param,
         hmm_emission_params::NamedTuple,
         re_cov_params::NamedTuple,
@@ -1879,8 +1838,8 @@ function _saem_builtin_collect_current_stats(dm::DataModel,
         ll_cache::_LLCache,
         rng::AbstractRNG)
     Tθ = promote_type(eltype(θ), Float64)
-    cache = dm.re_group_info.laplace_cache
-    re_names = cache.re_names
+    cache = get_laplace_cache(get_re_group_info(dm))
+    re_names = get_re_names(cache)
     re_pairs = Pair{Symbol, Any}[]
     for re in _saem_builtin_re_targets(re_cov_params, re_mean_params)
         ri = findfirst(==(re), re_names)
@@ -1892,8 +1851,8 @@ function _saem_builtin_collect_current_stats(dm::DataModel,
         nvals = 0
         for (bi, info) in enumerate(batch_infos)
             b = b_current[bi]
-            rei = info.re_info[ri]
-            for lvl_id in rei.map.levels
+            rei = get_re_info(info)[ri]
+            for lvl_id in get_levels(get_re_map(rei))
                 v = _re_value_from_b(rei, lvl_id, b)
                 v === nothing && continue
                 raw = v isa Number ? Tθ[v] : Tθ.(collect(v))
@@ -1929,14 +1888,14 @@ function _saem_builtin_collect_current_stats(dm::DataModel,
     end
     re_stats = NamedTuple(re_pairs)
 
-    obs_targets = _saem_outcome_targets(dm.config.obs_cols, resid_var_param)
+    obs_targets = _saem_outcome_targets(get_obs_cols(dm), resid_var_param)
     outcome_pairs = Pair{Symbol, Any}[]
     if !isempty(keys(obs_targets))
         obs_acc = Dict{Symbol, Any}()
         all_supported = true
         for (bi, info) in enumerate(batch_infos)
             b = b_current[bi]
-            for i in info.inds
+            for i in get_inds(info)
                 η_ind = _build_eta_ind(dm, i, info, b, const_cache, θ)
                 stats_i, ok = _saem_collect_outcome_stats_individual(
                     dm, i, θ, η_ind, ll_cache, obs_targets, rng)
@@ -1959,7 +1918,7 @@ function _saem_builtin_collect_current_stats(dm::DataModel,
             all_supported || break
         end
         if all_supported
-            for col in dm.config.obs_cols
+            for col in get_obs_cols(dm)
                 haskey(obs_acc, col) && push!(outcome_pairs, col => obs_acc[col])
             end
         end
@@ -1970,7 +1929,7 @@ function _saem_builtin_collect_current_stats(dm::DataModel,
         all_supported = true
         for (bi, info) in enumerate(batch_infos)
             b = b_current[bi]
-            for i in info.inds
+            for i in get_inds(info)
                 η_ind = _build_eta_ind(dm, i, info, b, const_cache, θ)
                 stats_i, ok = _saem_collect_hmm_stats_individual(
                     dm, i, θ, η_ind, ll_cache, hmm_emission_params)
@@ -2390,9 +2349,9 @@ end
 # `q_cache` optionally reuses the per-batch accumulator between calls (the Q
 # M-step objective); Q2 passes `nothing` and gets a fresh vector.
 function _saem_Q_core(logf_fn::F, dm::DataModel,
-        batch_infos::Vector{_LaplaceBatchInfo},
+        batch_infos::Vector{REBatchInfo},
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         ll_cache,
         store::_SAEMSampleStore;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
@@ -2413,7 +2372,7 @@ function _saem_Q_core(logf_fn::F, dm::DataModel,
     const_total = zero(Tθ)
     ll_cache_c = ll_cache isa Vector ? ll_cache[1] : ll_cache
     for (bi, info) in enumerate(batch_infos)
-        info.n_b > 0 && continue
+        get_n_b(info) > 0 && continue
         logf = logf_fn(
             dm, info, θ, Tθ[], const_cache, ll_cache_c; anneal_sds = anneal_sds)
         !isfinite(logf) && return Tθ(Inf)
@@ -2436,7 +2395,7 @@ function _saem_Q_core(logf_fn::F, dm::DataModel,
             cache_c = caches[chunk]
             for bi in chunk:n_chunks:length(batch_infos)
                 bad[] && break
-                batch_infos[bi].n_b == 0 && continue
+                get_n_b(batch_infos[bi]) == 0 && continue
                 info = batch_infos[bi]
                 acc = zero(Tθ)
                 h = h_start
@@ -2466,7 +2425,7 @@ function _saem_Q_core(logf_fn::F, dm::DataModel,
         ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
         weighted_total = zero(Tθ)
         for (bi, info) in enumerate(batch_infos)
-            info.n_b == 0 && continue
+            get_n_b(info) == 0 && continue
             acc = zero(Tθ)
             h = h_start
             tctx = _safe_theta_ctx(dm, info, θ, ll_cache_local)
@@ -2486,9 +2445,9 @@ function _saem_Q_core(logf_fn::F, dm::DataModel,
 end
 
 function _saem_Q(dm::DataModel,
-        batch_infos::Vector{_LaplaceBatchInfo},
+        batch_infos::Vector{REBatchInfo},
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         ll_cache,
         store::_SAEMSampleStore;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
@@ -2502,17 +2461,17 @@ end
 # Observation log-likelihood E[log p(y|η,θ)] averaged over the ring buffer.
 # Used for progress display only — cheaper than recomputing Q (no RE prior term).
 function _saem_obsLL(dm::DataModel,
-        batch_infos::Vector{_LaplaceBatchInfo},
+        batch_infos::Vector{REBatchInfo},
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         ll_cache,
         b_current::AbstractVector)
     total = 0.0
     cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
-    θ_re = _symmetrize_psd_params(θ, dm.model.fixed.fixed)
+    θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
     for (bi, info) in enumerate(batch_infos)
         b = b_current[bi]
-        for i in info.inds
+        for i in get_inds(info)
             η_ind = _build_eta_ind(dm, i, info, b, const_cache, θ_re)
             lli = _loglikelihood_individual(dm, i, θ_re, η_ind, cache_local)
             isfinite(lli) || continue
@@ -2526,16 +2485,16 @@ end
 # Used when mstep_sa_on_params=true: O(N) vs O(q_store_max × N) for _saem_Q.
 # Shared core, parameterized like `_saem_Q_core` (Q vs Q2 density).
 function _saem_Q_current_core(logf_fn::F, dm::DataModel,
-        batch_infos::Vector{_LaplaceBatchInfo},
+        batch_infos::Vector{REBatchInfo},
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         ll_cache,
         b_current::AbstractVector;
         anneal_sds::NamedTuple = NamedTuple()) where {F}
     total = zero(eltype(θ))
     ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
     for (bi, info) in enumerate(batch_infos)
-        snap = info.n_b == 0 ? eltype(θ)[] : b_current[bi]
+        snap = get_n_b(info) == 0 ? eltype(θ)[] : b_current[bi]
         logf = logf_fn(dm, info, θ, snap, const_cache, ll_cache_local;
             anneal_sds = anneal_sds)
         !isfinite(logf) && return typeof(total)(Inf)
@@ -2545,9 +2504,9 @@ function _saem_Q_current_core(logf_fn::F, dm::DataModel,
 end
 
 function _saem_Q_current(dm::DataModel,
-        batch_infos::Vector{_LaplaceBatchInfo},
+        batch_infos::Vector{REBatchInfo},
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         ll_cache,
         b_current::AbstractVector;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
@@ -2559,9 +2518,9 @@ end
 # Q2 counterpart to _saem_Q: evaluates only log p(η|θ_re), averaged over the ring buffer.
 # Used for the Q2 M-step (parameters that appear only in RE distribution expressions).
 function _saem_Q2(dm::DataModel,
-        batch_infos::Vector{_LaplaceBatchInfo},
+        batch_infos::Vector{REBatchInfo},
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         ll_cache,
         store::_SAEMSampleStore;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
@@ -2573,9 +2532,9 @@ end
 # Q2 counterpart to _saem_Q_current: uses only the current iteration's samples.
 # Used for the Q2 M-step when mstep_sa_on_params=true.
 function _saem_Q2_current(dm::DataModel,
-        batch_infos::Vector{_LaplaceBatchInfo},
+        batch_infos::Vector{REBatchInfo},
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         ll_cache,
         b_current::AbstractVector;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
@@ -2587,11 +2546,11 @@ end
 # Return indices (into batch_infos) from `updated` whose current RE sample gives a
 # non-finite log-likelihood at θ. Used by the E-step retry mechanism.
 function _saem_bad_batches(dm::DataModel,
-        batch_infos::Vector{_LaplaceBatchInfo},
+        batch_infos::Vector{REBatchInfo},
         updated::AbstractVector{Int},
         θ::ComponentArray,
         b_current::AbstractVector,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         ll_cache;
         anneal_sds::NamedTuple = NamedTuple())
     bad = Int[]
@@ -2665,26 +2624,27 @@ function _saem_log_closed_form_plan(requested_mode::Symbol,
 end
 
 function _saem_glm_supported(dm::DataModel,
-        batch_infos::Vector{_LaplaceBatchInfo},
+        batch_infos::Vector{REBatchInfo},
         b_current::AbstractVector,
         θ::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         ll_cache::_LLCache)
-    model = dm.model
+    model = get_model(dm)
 
     allowed = Union{Normal, Bernoulli, Poisson, Exponential}
     for (bi, info) in enumerate(batch_infos)
         b = b_current[bi]
-        for i in info.inds
-            ind = dm.individuals[i]
-            obs_rows = dm.row_groups.obs_rows[i]
+        for i in get_inds(info)
+            ind = get_individuals(dm)[i]
+            obs_rows = get_obs_rows(get_row_groups(dm))[i]
             rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only = true)
             for j in eachindex(obs_rows)
-                v = _varying_at(dm, ind, j, _get_col(dm.df, dm.config.time_col)[obs_rows])
+                v = _varying_at(
+                    dm, ind, j, _get_col(get_df(dm), get_time_col(dm))[obs_rows])
                 η_ind = _build_eta_ind(dm, i, info, b, const_cache, θ)
                 η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only = true)
-                obs = calculate_formulas_obs(model, θ, η_row, ind.const_cov, v)
-                for col in dm.config.obs_cols
+                obs = calculate_formulas_obs(model, θ, η_row, get_const_cov(ind), v)
+                for col in get_obs_cols(dm)
                     dist = getproperty(obs, col)
                     dist isa allowed || return false
                 end
@@ -2695,10 +2655,10 @@ function _saem_glm_supported(dm::DataModel,
 end
 
 function _saem_builtin_mean_updates(dm::DataModel,
-        batch_infos::Vector{_LaplaceBatchInfo},
+        batch_infos::Vector{REBatchInfo},
         b_current::AbstractVector,
         θu_curr::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         mean_params::Vector{Symbol},
         ll_cache::_LLCache,
         sample_store::_SAEMSampleStore,
@@ -2711,7 +2671,7 @@ function _saem_builtin_mean_updates(dm::DataModel,
         extra_objective = nothing,
         anneal_sds::NamedTuple = NamedTuple())
     isempty(mean_params) && return NamedTuple()
-    if dm.model.de.de === nothing
+    if get_de(get_model(dm)) === nothing
         _saem_glm_supported(dm, batch_infos, b_current, θu_curr, const_cache, ll_cache) ||
             return NamedTuple()
     end
@@ -2780,10 +2740,10 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
         theta_0_untransformed = theta_0_untransformed,
         store_eb_modes = store_eb_modes,
         store_data_model = store_data_model)
-    re_names = get_re_names(dm.model.random.random)
+    re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) &&
         error("SAEM requires random effects. Use MLE/MAP for fixed-effects models.")
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     priors = get_priors(fe)
     if any(!(getfield(priors, k) isa Priorless) for k in keys(priors))
         @info "SAEM ignores fixed-effect priors. Use MAP/MCMC for prior-aware inference."
@@ -2816,7 +2776,7 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
 
     fixed_maps = _normalize_constants_re(dm, constants_re)
     const_cache = _build_constants_cache(dm, fixed_maps)
-    pairing, batch_infos, _ = _build_laplace_batch_infos(dm, fixed_maps)
+    pairing, batch_infos, _ = _build_re_batch_infos(dm, fixed_maps)
     ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
         serialization = serialization, force_saveat = true)
 
@@ -2890,7 +2850,7 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
     # Detect Q2-only free parameters (appear only in RE distributions, never in obs-side blocks).
     # These are optimized in a cheap separate M-step that skips ODE evaluation entirely.
     q2_base_free_names = if extra_objective === nothing
-        let p = _partition_q1_q2_names(dm.model, base_free_names)
+        let p = _partition_q1_q2_names(get_model(dm), base_free_names)
             p.q2
         end
     else
@@ -2902,8 +2862,8 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
         method.saem.builtin_stats, builtin_stats_mode, builtin_cf_elig,
         re_cov_params, re_mean_params, resid_var_param, hmm_emission_params,
         has_custom_closed_form, base_free_names, q2_base_free_names)
-    let obs_targets = _saem_outcome_targets(dm.config.obs_cols, resid_var_param),
-        ir = get_formulas_ir(dm.model.formulas.formulas)
+    let obs_targets = _saem_outcome_targets(get_obs_cols(dm), resid_var_param),
+        ir = get_formulas_ir(get_formulas(get_model(dm)))
 
         censored_cols = [obs
                          for (obs, ex) in zip(ir.obs_names, ir.obs_exprs)
@@ -2965,8 +2925,9 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
         [copy(_lcp_init) for _ in 1:length(batch_infos)]
     end
     batch_rngs = _saem_thread_rngs(rng, length(batch_infos))
-    b_current = [zeros(T0, info.n_b) for info in batch_infos]
-    b_chains = [[zeros(T0, info.n_b) for _ in 1:effective_n_chains] for info in batch_infos]
+    b_current = [zeros(T0, get_n_b(info)) for info in batch_infos]
+    b_chains = [[zeros(T0, get_n_b(info)) for _ in 1:effective_n_chains]
+                for info in batch_infos]
 
     # Precompute SA annealing targets (auto or user-provided).
     # Run a separate auto-detection pass independent of builtin_stats so that
@@ -3054,7 +3015,7 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
     let cache_init = ll_cache isa Vector ? ll_cache[1] : ll_cache
         for bi in 1:length(batch_infos)
             info = batch_infos[bi]
-            info.n_b == 0 && continue
+            get_n_b(info) == 0 && continue
             b_init = _em_seed_batch_b(
                 dm, info, θ0_u, const_cache, cache_init, rng, re_names, bi, "SAEM")
             b_current[bi] .= b_init

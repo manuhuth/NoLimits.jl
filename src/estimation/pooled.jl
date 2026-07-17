@@ -181,16 +181,16 @@ end
 function _pooled_plugin_strategies(dm::DataModel, θ::ComponentArray;
         mc_draws::Int = 256, rng::AbstractRNG = Random.default_rng())
     model = get_model(dm)
-    lp_cache = dm.re_group_info.laplace_cache
+    lp_cache = get_laplace_cache(get_re_group_info(dm))
     lp_cache === nothing && error("Pooled() requires a model with random effects.")
-    re_names = lp_cache.re_names
+    re_names = get_re_names(lp_cache)
     isempty(re_names) && error("Pooled() requires at least one random effect.")
-    dists_builder = get_create_random_effect_distribution(model.random.random)
+    dists_builder = create_random_effect_distribution(get_random(model))
     model_funs = get_model_funs(model)
     helpers = get_helper_funs(model)
     ind = first(get_individuals(dm))
-    θs = _symmetrize_psd_params(θ, model.fixed.fixed)
-    dists = dists_builder(θs, ind.const_cov, model_funs, helpers)
+    θs = _symmetrize_psd_params(θ, get_fixed(model))
+    dists = dists_builder(θs, get_const_cov(ind), model_funs, helpers)
     strategies = Any[]
     for re in re_names
         dist = getproperty(dists, re)
@@ -253,25 +253,25 @@ end
 
 function _compute_pooled_etas(dm::DataModel, θ::ComponentArray, strategies)
     model = get_model(dm)
-    lp_cache = dm.re_group_info.laplace_cache
+    lp_cache = get_laplace_cache(get_re_group_info(dm))
     lp_cache === nothing && error("Pooled() requires a model with random effects.")
-    re_names = lp_cache.re_names
+    re_names = get_re_names(lp_cache)
     isempty(re_names) && error("Pooled() requires at least one random effect.")
-    dists_builder = get_create_random_effect_distribution(model.random.random)
+    dists_builder = create_random_effect_distribution(get_random(model))
     model_funs = get_model_funs(model)
     helpers = get_helper_funs(model)
     individuals = get_individuals(dm)
-    θs = _symmetrize_psd_params(θ, model.fixed.fixed)
+    θs = _symmetrize_psd_params(θ, get_fixed(model))
     T = eltype(θs)
     n = length(individuals)
-    template = lp_cache.eta_template
+    template = get_eta_template(lp_cache)
     # The pooled plug-in yields a SCALAR for every dim-1 RE, while the template
     # axes keep vector-valued dim-1 REs (e.g. a 1-input planar flow) as
     # 1-element vector components — formulas written against the scalar shape
     # (`sat(η)`) would break. Only take the fast path when the shapes agree.
     template_compatible = template !== nothing &&
                           all(
-        ri -> (lp_cache.dims[ri] == 1) == lp_cache.is_scalar[ri], eachindex(re_names))
+        ri -> (get_dims(lp_cache)[ri] == 1) == get_is_scalar(lp_cache)[ri], eachindex(re_names))
     if template_compatible
         # Fast path (one RE level per group per individual): fill a flat vector and
         # wrap it with the precomputed axes — same trick as `_build_eta_ind_fast`.
@@ -281,8 +281,8 @@ function _compute_pooled_etas(dm::DataModel, θ::ComponentArray, strategies)
         # evaluation, per individual.
         axs = getaxes(template)
         ηlen = length(template)
-        dims = lp_cache.dims
-        return [_pooled_fill_ind_eta(dists_builder, θs, individuals[i].const_cov,
+        dims = get_dims(lp_cache)
+        return [_pooled_fill_ind_eta(dists_builder, θs, get_const_cov(individuals[i]),
                     model_funs, helpers, re_names, dims, strategies, T, axs, ηlen)
                 for i in 1:n]
     end
@@ -294,9 +294,10 @@ function _compute_pooled_etas(dm::DataModel, θ::ComponentArray, strategies)
     # route boxed every plug-in value on every objective evaluation (measured ~50×
     # per individual under ForwardDiff).
     ind1 = individuals[1]
-    dists1 = dists_builder(θs, ind1.const_cov, model_funs, helpers)
+    dists1 = dists_builder(θs, get_const_cov(ind1), model_funs, helpers)
     probe_vals = map(enumerate(re_names)) do (ri, re)
-        _pooled_eta_value(getproperty(dists1, re), lp_cache.dims[ri], strategies[ri], T)
+        _pooled_eta_value(
+            getproperty(dists1, re), get_dims(lp_cache)[ri], strategies[ri], T)
     end
     proto = ComponentArray(NamedTuple{Tuple(re_names)}(Tuple(probe_vals)))
     axs = getaxes(proto)
@@ -306,8 +307,8 @@ function _compute_pooled_etas(dm::DataModel, θ::ComponentArray, strategies)
     # expression references none, its plug-in value is individual-invariant and the
     # probe value is reused for everyone — `_pooled_eta_value` can be expensive
     # (e.g. the NPF MC plug-in evaluates the flow once per stored draw).
-    re_syms = get_re_syms(model.random.random)
-    const_names = model.covariates.covariates.constants
+    re_syms = get_re_syms(get_random(model))
+    const_names = get_covariates(model).constants
     invariant = map(re -> isempty(intersect(getfield(re_syms, re), const_names)),
         re_names)
     return [begin
@@ -319,11 +320,11 @@ function _compute_pooled_etas(dm::DataModel, θ::ComponentArray, strategies)
                     end
                 else
                     ind = individuals[i]
-                    dists = dists_builder(θs, ind.const_cov, model_funs, helpers)
+                    dists = dists_builder(θs, get_const_cov(ind), model_funs, helpers)
                     for (ri, re) in enumerate(re_names)
                         val = invariant[ri] ? probe_vals[ri] :
                               _pooled_eta_value(getproperty(dists, re),
-                            lp_cache.dims[ri], strategies[ri], T)
+                            get_dims(lp_cache)[ri], strategies[ri], T)
                         pos = _pooled_fill_eta!(vals, pos, val)
                     end
                 end
@@ -363,18 +364,18 @@ end
 # strategy for ForwardDiff-safety in isolation.
 function _pooled_stacked_means_single(dm::DataModel, θ::ComponentArray, strategy, ri::Int)
     model = get_model(dm)
-    lp_cache = dm.re_group_info.laplace_cache
-    re = lp_cache.re_names[ri]
-    dists_builder = get_create_random_effect_distribution(model.random.random)
+    lp_cache = get_laplace_cache(get_re_group_info(dm))
+    re = get_re_names(lp_cache)[ri]
+    dists_builder = create_random_effect_distribution(get_random(model))
     model_funs = get_model_funs(model)
     helpers = get_helper_funs(model)
     individuals = get_individuals(dm)
-    θs = _symmetrize_psd_params(θ, model.fixed.fixed)
+    θs = _symmetrize_psd_params(θ, get_fixed(model))
     T = eltype(θs)
     out = T[]
     for i in 1:length(individuals)
-        dists = dists_builder(θs, individuals[i].const_cov, model_funs, helpers)
-        val = _pooled_eta_value(getproperty(dists, re), lp_cache.dims[ri], strategy, T)
+        dists = dists_builder(θs, get_const_cov(individuals[i]), model_funs, helpers)
+        val = _pooled_eta_value(getproperty(dists, re), get_dims(lp_cache)[ri], strategy, T)
         val isa AbstractVector ? append!(out, val) : push!(out, val)
     end
     return out
@@ -407,11 +408,11 @@ function _pooled_dual_safe_strategies(dm::DataModel, θ_user_u::ComponentArray,
         θ_user_t::ComponentArray, inv_transform,
         strategies_in, mc_draws::Int, rng::AbstractRNG)
     model = get_model(dm)
-    lp_cache = dm.re_group_info.laplace_cache
-    re_names = lp_cache.re_names
-    dists_builder = get_create_random_effect_distribution(model.random.random)
-    θs = _symmetrize_psd_params(θ_user_u, model.fixed.fixed)
-    dists = dists_builder(θs, first(get_individuals(dm)).const_cov,
+    lp_cache = get_laplace_cache(get_re_group_info(dm))
+    re_names = get_re_names(lp_cache)
+    dists_builder = create_random_effect_distribution(get_random(model))
+    θs = _symmetrize_psd_params(θ_user_u, get_fixed(model))
+    dists = dists_builder(θs, get_const_cov(first(get_individuals(dm))),
         get_model_funs(model), get_helper_funs(model))
     axs = getaxes(θ_user_t)
     θ0_vec = _pooled_flat(θ_user_t)
@@ -447,18 +448,18 @@ end
 
 function _pooled_spread_kinds(dm::DataModel, θ::ComponentArray)
     model = get_model(dm)
-    lp_cache = dm.re_group_info.laplace_cache
-    re_names = lp_cache.re_names
-    dists_builder = get_create_random_effect_distribution(model.random.random)
+    lp_cache = get_laplace_cache(get_re_group_info(dm))
+    re_names = get_re_names(lp_cache)
+    dists_builder = create_random_effect_distribution(get_random(model))
     model_funs = get_model_funs(model)
     helpers = get_helper_funs(model)
     ind = first(get_individuals(dm))
-    θs = _symmetrize_psd_params(θ, model.fixed.fixed)
-    dists = dists_builder(θs, ind.const_cov, model_funs, helpers)
+    θs = _symmetrize_psd_params(θ, get_fixed(model))
+    dists = dists_builder(θs, get_const_cov(ind), model_funs, helpers)
     kinds = Symbol[]
     for (ri, re) in enumerate(re_names)
         dist = getproperty(dists, re)
-        kind = if lp_cache.dims[ri] == 1
+        kind = if get_dims(lp_cache)[ri] == 1
             if _pooled_finite_or_nothing(() -> var(dist)) !== nothing
                 :var
             elseif _pooled_finite_or_nothing(() -> quantile(dist, 0.75) -
@@ -492,17 +493,17 @@ end
 
 function _pooled_stacked_spreads(dm::DataModel, θ::ComponentArray, kinds)
     model = get_model(dm)
-    lp_cache = dm.re_group_info.laplace_cache
-    re_names = lp_cache.re_names
-    dists_builder = get_create_random_effect_distribution(model.random.random)
+    lp_cache = get_laplace_cache(get_re_group_info(dm))
+    re_names = get_re_names(lp_cache)
+    dists_builder = create_random_effect_distribution(get_random(model))
     model_funs = get_model_funs(model)
     helpers = get_helper_funs(model)
     individuals = get_individuals(dm)
-    θs = _symmetrize_psd_params(θ, model.fixed.fixed)
+    θs = _symmetrize_psd_params(θ, get_fixed(model))
     T = eltype(θs)
     out = T[]
     for i in 1:length(individuals)
-        dists = dists_builder(θs, individuals[i].const_cov, model_funs, helpers)
+        dists = dists_builder(θs, get_const_cov(individuals[i]), model_funs, helpers)
         for (ri, re) in enumerate(re_names)
             append!(out, _pooled_spread_value(getproperty(dists, re), kinds[ri], T))
         end
@@ -517,23 +518,23 @@ end
 # kept free, so over-collection only errs toward not freezing.
 function _pooled_structural_syms(model)
     syms = Set{Symbol}()
-    ir = get_formulas_ir(model.formulas.formulas)
+    ir = get_formulas_ir(get_formulas(model))
     union!(syms, ir.var_syms)
     union!(syms, ir.prop_syms)
-    de = model.de.de
+    de = get_de(model)
     if de !== nothing
         m = get_de_meta(de)
         union!(syms, m.var_syms)
         union!(syms, m.fun_syms)
     end
-    initial = model.de.initial
+    initial = get_initial(model)
     if initial !== nothing
         ir_init = initial.ir
         union!(syms, ir_init.var_syms)
         union!(syms, ir_init.prop_syms)
         union!(syms, ir_init.call_syms)
     end
-    prede = model.de.prede
+    prede = get_prede(model)
     if prede !== nothing
         union!(syms, get_prede_meta(prede).syms)
     end
@@ -541,7 +542,7 @@ function _pooled_structural_syms(model)
 end
 
 function _pooled_re_dist_syms(model)
-    re_syms_nt = get_re_syms(model.random.random)
+    re_syms_nt = get_re_syms(get_random(model))
     return reduce((s, v) -> union(s, v), values(re_syms_nt); init = Set{Symbol}())
 end
 
@@ -644,7 +645,7 @@ function _pooled_partition(dm::DataModel, method, θ_user_t::ComponentArray,
         inv_transform, constants::NamedTuple, strategies,
         rng::AbstractRNG)
     model = get_model(dm)
-    fe_names = get_names(model.fixed.fixed)
+    fe_names = get_names(get_fixed(model))
     re_syms = _pooled_re_dist_syms(model)
     structural = _pooled_structural_syms(model)
     force_free = Set(method.force_free)
@@ -727,8 +728,8 @@ function _pooled_partition(dm::DataModel, method, θ_user_t::ComponentArray,
         if Js_spread === nothing || all(size(J, 1) == 0 for J in Js_spread)
             append!(frozen_unverified, frozen_dispersion)
         else
-            re_syms_nt = get_re_syms(model.random.random)
-            re_names = dm.re_group_info.laplace_cache.re_names
+            re_syms_nt = get_re_syms(get_random(model))
+            re_names = get_re_names(get_laplace_cache(get_re_group_info(dm)))
             for n in frozen_dispersion
                 moves_spread = any(norm(J[:, rel_frozen[n]]) > _pooled_zero_tol(J)
                 for J in Js_spread)
@@ -862,17 +863,17 @@ end
 
 function _pooled_re_dataframes(dm::DataModel, η_vec::Vector{<:ComponentArray};
         flatten::Bool = true)
-    lp_cache = dm.re_group_info.laplace_cache
+    lp_cache = get_laplace_cache(get_re_group_info(dm))
     lp_cache === nothing && return NamedTuple()
-    re_names = lp_cache.re_names
+    re_names = get_re_names(lp_cache)
     isempty(re_names) && return NamedTuple()
-    re_groups = get_re_groups(dm.model.random.random)
+    re_groups = get_re_groups(get_random(get_model(dm)))
 
     # (ri, lvl_id) → first individual index with that level
     level_to_ind = Dict{Tuple{Int, Int}, Int}()
     for i in 1:length(η_vec)
         for ri in 1:length(re_names)
-            ids = lp_cache.ind_level_ids[i][ri]
+            ids = get_ind_level_ids(lp_cache)[i][ri]
             isempty(ids) && continue
             key = (ri, ids[1])
             haskey(level_to_ind, key) || (level_to_ind[key] = i)
@@ -882,8 +883,8 @@ function _pooled_re_dataframes(dm::DataModel, η_vec::Vector{<:ComponentArray};
     out_pairs = Pair{Symbol, Any}[]
     for (ri, re) in enumerate(re_names)
         col = getfield(re_groups, re)
-        levels_all = lp_cache.re_index[ri].levels
-        dim = lp_cache.dims[ri]
+        levels_all = get_re_index(lp_cache)[ri].levels
+        dim = get_dims(lp_cache)[ri]
 
         rows = Any[]
         vals_flat = Vector{Vector{Any}}()
@@ -928,7 +929,7 @@ function _fit_pooled(dm::DataModel, method;
         store_data_model::Bool = true,
         fit_args::Tuple = ())
     model = get_model(dm)
-    fe = model.fixed.fixed
+    fe = get_fixed(model)
     fixed_names = get_names(fe)
     isempty(fixed_names) && error("This method requires at least one fixed effect.")
     fixed_set = Set(fixed_names)
@@ -1034,7 +1035,7 @@ function _fit_pooled(dm::DataModel, method;
 
     η_hat = _compute_pooled_etas(dm, θ_hat_u, strategies)
 
-    re_names = dm.re_group_info.laplace_cache.re_names
+    re_names = get_re_names(get_laplace_cache(get_re_group_info(dm)))
     notes = (;
         plugin = NamedTuple{Tuple(re_names)}(Tuple(map(_pooled_plugin_label, strategies))),
         structural_in_re = Tuple(part.structural_in_re),
@@ -1201,7 +1202,7 @@ function _pooled_init_theta(dm::DataModel, method, pooled_init,
         fit_options::NamedTuple, kwargs_nt::NamedTuple)
     (method isa Pooled || method isa PooledMap) &&
         error("pooled_init is not supported when the fitted method is Pooled/PooledMap.")
-    isempty(get_re_names(dm.model.random.random)) &&
+    isempty(get_re_names(get_random(get_model(dm)))) &&
         error("pooled_init requires a model with random effects.")
     pooled_method = if pooled_init === true
         _default_pooled_init_method()
@@ -1243,7 +1244,7 @@ function _fit_model(dm::DataModel, method::Pooled, args...;
         rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         store_data_model::Bool = true)
-    re_names = get_re_names(dm.model.random.random)
+    re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) && error("Pooled() requires a model with random effects. " *
           "Use MLE() for fixed-effects-only models.")
     return _fit_pooled(dm, method;
@@ -1269,11 +1270,11 @@ function _fit_model(dm::DataModel, method::PooledMap, args...;
         rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         store_data_model::Bool = true)
-    re_names = get_re_names(dm.model.random.random)
+    re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) && error("PooledMap() requires a model with random effects. " *
           "Use MAP() for fixed-effects-only models.")
 
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     priors = get_priors(fe)
     has_prior = !isempty(keys(priors)) &&
                 any(!(getfield(priors, k) isa Priorless) for k in keys(priors))

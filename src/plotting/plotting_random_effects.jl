@@ -12,14 +12,14 @@ using Random
 using Statistics
 
 function _require_re_supported(res::FitResult)
-    if res.result isa MLEResult || res.result isa MAPResult
+    if get_result(res) isa MLEResult || get_result(res) isa MAPResult
         @warn "Random-effects diagnostics are not available for MLE/MAP."
         error("Random-effects diagnostics require Laplace/MCEM/SAEM/MCMC.")
     end
 end
 
 function _resolve_re_names(dm::DataModel, re_names)
-    names = get_re_names(dm.model.random.random)
+    names = get_re_names(get_random(get_model(dm)))
     isempty(names) && error("Model has no random effects.")
     re_list = re_names === nothing ? names :
               (re_names isa AbstractVector ? collect(re_names) : [re_names])
@@ -31,7 +31,7 @@ end
 
 function _fit_constants_re(res::FitResult)
     if hasproperty(res, :fit_kwargs)
-        kw = res.fit_kwargs
+        kw = get_fit_kwargs(res)
         return haskey(kw, :constants_re) ? getfield(kw, :constants_re) : NamedTuple()
     end
     return NamedTuple()
@@ -48,14 +48,14 @@ function _filter_re_without_covariates(res::FitResult, re_list)
 end
 
 function _resolve_levels(dm::DataModel, re::Symbol, levels, individuals_idx)
-    levels_all = getfield(dm.re_group_info.values, re)
+    levels_all = getfield(get_re_group_info(dm).values, re)
     if individuals_idx !== nothing
         inds = _resolve_individuals(dm, individuals_idx)
-        re_groups = get_re_groups(dm.model.random.random)
+        re_groups = get_re_groups(get_random(get_model(dm)))
         col = getfield(re_groups, re)
         selected = Set{Any}()
         for i in inds
-            g = getfield(dm.individuals[i].re_groups, re)
+            g = getfield(get_re_groups(get_individuals(dm)[i]), re)
             if g isa AbstractVector
                 for lvl in g
                     push!(selected, lvl)
@@ -78,8 +78,8 @@ end
 
 function _level_to_individual(dm::DataModel, re::Symbol)
     map = Dict{Any, Int}()
-    for (i, ind) in enumerate(dm.individuals)
-        g = getfield(ind.re_groups, re)
+    for (i, ind) in enumerate(get_individuals(dm))
+        g = getfield(get_re_groups(ind), re)
         if g isa AbstractVector
             for lvl in g
                 haskey(map, lvl) || (map[lvl] = i)
@@ -97,7 +97,7 @@ function _ebe_by_level(dm::DataModel, res::FitResult, re::Symbol)
     re_df = get_random_effects(
         dm, res; constants_re = constants_re, flatten = true, include_constants = false)
     df = getproperty(re_df, re)
-    re_groups = get_re_groups(dm.model.random.random)
+    re_groups = get_re_groups(get_random(get_model(dm)))
     col = Symbol(getfield(re_groups, re))
     levels = df[!, col]
     value_cols = [c for c in names(df) if Symbol(c) != col]
@@ -110,8 +110,8 @@ end
 
 function _level_values_from_eta(dm::DataModel, re::Symbol, η_vec::Vector{ComponentArray})
     out = Dict{Any, Vector{Float64}}()
-    for (i, ind) in enumerate(dm.individuals)
-        g = getfield(ind.re_groups, re)
+    for (i, ind) in enumerate(get_individuals(dm))
+        g = getfield(get_re_groups(ind), re)
         v = getproperty(η_vec[i], re)
         if g isa AbstractVector
             if length(g) == 1

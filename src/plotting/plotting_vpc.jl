@@ -5,11 +5,11 @@ using Random
 using StatsFuns
 
 function _require_varying_covariate(dm::DataModel, x_axis_feature)
-    cov = dm.model.covariates.covariates
+    cov = get_covariates(get_model(dm))
     if x_axis_feature === nothing
-        return dm.config.time_col
+        return get_time_col(dm)
     end
-    if x_axis_feature == dm.config.time_col
+    if x_axis_feature == get_time_col(dm)
         return x_axis_feature
     end
     x_axis_feature in cov.varying ||
@@ -63,7 +63,7 @@ function _collect_observed_xy(ind::Individual,
         obs_name::Symbol,
         x_axis_feature)
     x_raw = _vpc_x_values(dm, ind, obs_rows, x_axis_feature)
-    y_raw = getfield(ind.series.obs, obs_name)
+    y_raw = getfield(get_obs(get_series(ind)), obs_name)
     x_all = Float64[]
     x_obs = Float64[]
     y_obs = Float64[]
@@ -124,8 +124,8 @@ end
 
 function _re_level_reps(dm::DataModel, re::Symbol)
     reps = Dict{Any, Int}()
-    for (i, ind) in enumerate(dm.individuals)
-        g = getfield(ind.re_groups, re)
+    for (i, ind) in enumerate(get_individuals(dm))
+        g = getfield(get_re_groups(ind), re)
         if g isa AbstractVector
             for gv in g
                 haskey(reps, gv) || (reps[gv] = i)
@@ -141,13 +141,13 @@ function _sample_random_effects_levels(dm::DataModel,
         θ::ComponentArray,
         constants_re::NamedTuple,
         rng::AbstractRNG)
-    re_names = get_re_names(dm.model.random.random)
+    re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) && return Dict{Symbol, Dict{Any, Any}}()
     fixed_maps = _normalize_constants_re(dm, constants_re)
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
-    model_funs = get_model_funs(dm.model)
-    helpers = get_helper_funs(dm.model)
-    values = dm.re_group_info.values
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
+    model_funs = get_model_funs(get_model(dm))
+    helpers = get_helper_funs(get_model(dm))
+    values = get_re_values(get_re_group_info(dm))
     out = Dict{Symbol, Dict{Any, Any}}()
     for re in re_names
         reps = _re_level_reps(dm, re)
@@ -158,7 +158,7 @@ function _sample_random_effects_levels(dm::DataModel,
                 level_vals[lvl] = fixed[lvl]
             else
                 rep = reps[lvl]
-                const_cov = dm.individuals[rep].const_cov
+                const_cov = get_const_cov(get_individuals(dm)[rep])
                 dist = getproperty(dists_builder(θ, const_cov, model_funs, helpers), re)
                 level_vals[lvl] = rand(rng, dist)
             end
@@ -169,12 +169,12 @@ function _sample_random_effects_levels(dm::DataModel,
 end
 
 function _eta_vec_from_levels(dm::DataModel, level_vals::Dict{Symbol, Dict{Any, Any}})
-    re_names = get_re_names(dm.model.random.random)
-    η_vec = Vector{ComponentArray}(undef, length(dm.individuals))
-    for (i, ind) in enumerate(dm.individuals)
+    re_names = get_re_names(get_random(get_model(dm)))
+    η_vec = Vector{ComponentArray}(undef, length(get_individuals(dm)))
+    for (i, ind) in enumerate(get_individuals(dm))
         pairs = Pair{Symbol, Any}[]
         for re in re_names
-            g = getfield(ind.re_groups, re)
+            g = getfield(get_re_groups(ind), re)
             vals = level_vals[re]
             if g isa AbstractVector
                 if length(g) == 1
@@ -197,19 +197,19 @@ function _simulate_obs(dm::DataModel,
         obs_name::Symbol,
         rng::AbstractRNG,
         x_axis_feature)
-    sim_vals = Vector{Vector{Float64}}(undef, length(dm.individuals))
-    sim_x = Vector{Vector{Float64}}(undef, length(dm.individuals))
-    for (i, ind) in enumerate(dm.individuals)
-        obs_rows = dm.row_groups.obs_rows[i]
+    sim_vals = Vector{Vector{Float64}}(undef, length(get_individuals(dm)))
+    sim_x = Vector{Vector{Float64}}(undef, length(get_individuals(dm)))
+    for (i, ind) in enumerate(get_individuals(dm))
+        obs_rows = get_obs_rows(get_row_groups(dm))[i]
         x = _vpc_x_values(dm, ind, obs_rows, x_axis_feature)
         sim_x[i] = Float64.(x)
         η_ind = η_vec[i]
         rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only = true)
         sol_accessors = nothing
-        if dm.model.de.de !== nothing
+        if get_de(get_model(dm)) !== nothing
             sol, compiled = _solve_dense_individual(dm, ind, θ, η_ind)
             sol_accessors = _sol_accessors_with_crossings(
-                dm.model, sol, compiled, θ, η_ind, ind.const_cov)
+                get_model(dm), sol, compiled, θ, η_ind, get_const_cov(ind))
         end
         vals = Vector{Float64}(undef, length(obs_rows))
         hmm_prev_state = 0
@@ -217,9 +217,10 @@ function _simulate_obs(dm::DataModel,
             vary = _varying_at(dm, ind, j, row)
             η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only = true)
             obs = sol_accessors === nothing ?
-                  calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
                   calculate_formulas_obs(
-                dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
+                get_model(dm), θ, η_row, get_const_cov(ind), vary) :
+                  calculate_formulas_obs(
+                get_model(dm), θ, η_row, get_const_cov(ind), vary, sol_accessors)
             dist = getproperty(obs, obs_name)
             if _is_hmm_dist(dist)
                 state = hmm_prev_state == 0 ?
@@ -237,25 +238,26 @@ function _simulate_obs(dm::DataModel,
 end
 
 function _representative_dist(dm::DataModel, obs_name::Symbol, x_axis_feature)
-    θ = get_θ0_untransformed(dm.model.fixed.fixed)
+    θ = get_θ0_untransformed(get_fixed(get_model(dm)))
     η_vec = _default_random_effects_from_dm(dm, NamedTuple(), θ)
-    ind = dm.individuals[1]
-    obs_rows = dm.row_groups.obs_rows[1]
+    ind = get_individuals(dm)[1]
+    obs_rows = get_obs_rows(get_row_groups(dm))[1]
     η_ind = η_vec[1]
     rowwise_re = _needs_rowwise_random_effects(dm, 1; obs_only = true)
     sol_accessors = nothing
-    if dm.model.de.de !== nothing
+    if get_de(get_model(dm)) !== nothing
         sol, compiled = _solve_dense_individual(dm, ind, θ, η_ind)
         sol_accessors = _sol_accessors_with_crossings(
-            dm.model, sol, compiled, θ, η_ind, ind.const_cov)
+            get_model(dm), sol, compiled, θ, η_ind, get_const_cov(ind))
     end
     vary = _varying_at(dm, ind, 1, obs_rows[1])
-    if dm.model.de.de === nothing && x_axis_feature !== nothing
+    if get_de(get_model(dm)) === nothing && x_axis_feature !== nothing
         vary = merge(vary, (t = 0.0,))
     end
     η_row = _row_random_effects_at(dm, 1, 1, η_ind, rowwise_re; obs_only = true)
     obs = sol_accessors === nothing ?
-          calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
-          calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
+          calculate_formulas_obs(get_model(dm), θ, η_row, get_const_cov(ind), vary) :
+          calculate_formulas_obs(
+        get_model(dm), θ, η_row, get_const_cov(ind), vary, sol_accessors)
     return getproperty(obs, obs_name)
 end

@@ -15,11 +15,11 @@ end
 
 function _varying_at(dm::DataModel, ind::Individual, idx::Int, row::Int)
     pairs = Pair{Symbol, Any}[]
-    vary = ind.series.vary
+    vary = get_vary(get_series(ind))
     if hasproperty(vary, :t)
         push!(pairs, :t => getproperty(vary, :t)[idx])
     else
-        push!(pairs, :t => dm.df[row, dm.config.time_col])
+        push!(pairs, :t => get_df(dm)[row, get_time_col(dm)])
     end
     for name in keys(vary)
         name == :t && continue
@@ -32,7 +32,7 @@ function _varying_at(dm::DataModel, ind::Individual, idx::Int, row::Int)
             push!(pairs, name => sub)
         end
     end
-    return merge(NamedTuple(pairs), ind.series.dyn)
+    return merge(NamedTuple(pairs), get_dyn(get_series(ind)))
 end
 
 function _rngs_for_serialization(rng, serialization)
@@ -44,14 +44,14 @@ function _rngs_for_serialization(rng, serialization)
 end
 
 function _sampled_random_effects_for_individual(dm::DataModel, idx::Int, re_samples)
-    re_names = get_re_names(dm.model.random.random)
+    re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) && return ComponentArray(NamedTuple())
-    ind = dm.individuals[idx]
-    info = dm.re_group_info.index_by_individual
+    ind = get_individuals(dm)[idx]
+    info = get_re_group_info(dm).index_by_individual
     nt_pairs = Pair{Symbol, Any}[]
     for re in re_names
         re_info = getfield(info, re)
-        nlevels = length(getfield(ind.re_groups, re))
+        nlevels = length(getfield(get_re_groups(ind), re))
         local_level_ids = fill(0, nlevels)
         level_ids_all = re_info.level_ids_all[idx]
         unique_pos_all = re_info.unique_pos_all[idx]
@@ -89,43 +89,45 @@ end
 # (`nothing` for non-DE models). Draws no randomness, so factoring this out of
 # the simulators leaves their RNG streams unchanged.
 function _simulate_sol_accessors(dm::DataModel, idx::Int, θ, η)
-    model = dm.model
-    model.de.de === nothing && return nothing
-    ind = dm.individuals[idx]
-    const_cov = ind.const_cov
+    model = get_model(dm)
+    get_de(model) === nothing && return nothing
+    ind = get_individuals(dm)[idx]
+    const_cov = get_const_cov(ind)
     pre = calculate_prede(model, θ, η, const_cov)
     pc = (;
         fixed_effects = θ,
         random_effects = η,
         constant_covariates = const_cov,
-        varying_covariates = merge((t = ind.series.vary.t[1],), ind.series.dyn),
+        varying_covariates = merge(
+            (t = get_vary(get_series(ind)).t[1],), get_dyn(get_series(ind))),
         helpers = get_helper_funs(model),
         model_funs = get_model_funs(model),
         preDE = pre
     )
-    compiled = get_de_compiler(model.de.de)(pc)
+    compiled = get_de_compiler(get_de(model))(pc)
     u0 = calculate_initial_state(model, θ, η, const_cov)
     cb = nothing
     infusion_rates = nothing
-    if ind.callbacks !== nothing
-        _apply_initial_events!(u0, ind.callbacks)
-        cb = ind.callbacks.callback
-        infusion_rates = ind.callbacks.infusion_rates
+    if get_callbacks(ind) !== nothing
+        _apply_initial_events!(u0, get_callbacks(ind))
+        cb = get_callback(get_callbacks(ind))
+        infusion_rates = get_infusion_rates(get_callbacks(ind))
     end
     plan = get_closed_form_plan(dm)
-    if plan.eligible && (_cf_is_whole(plan) || cb === nothing)
+    if is_cf_eligible(plan) && (_cf_is_whole(plan) || cb === nothing)
         solver_cfg = get_solver_config(model)
         cf_alg = solver_cfg.alg === nothing ? Tsit5() : solver_cfg.alg
-        sol = _cf_dispatch_solve(model, compiled, u0, ind.tspan, ind.saveat, plan,
-            ind.callbacks, cf_alg, solver_cfg.args,
+        sol = _cf_dispatch_solve(
+            model, compiled, u0, get_tspan(ind), get_saveat(ind), plan,
+            get_callbacks(ind), cf_alg, solver_cfg.args,
             _ode_solve_kwargs(solver_cfg.kwargs, NamedTuple(), NamedTuple()))
-        sol !== nothing && return get_de_accessors_builder(model.de.de)(sol, compiled)
+        sol !== nothing && return get_de_accessors_builder(get_de(model))(sol, compiled)
     end
-    f!_use = _with_infusion(get_de_f!(model.de.de), infusion_rates)
-    prob = ODEProblem(f!_use, u0, ind.tspan, compiled)
+    f!_use = _with_infusion(get_de_f!(get_de(model)), infusion_rates)
+    prob = ODEProblem(f!_use, u0, get_tspan(ind), compiled)
     solver_cfg = get_solver_config(model)
     alg = solver_cfg.alg === nothing ? Tsit5() : solver_cfg.alg
-    if ind.saveat === nothing
+    if get_saveat(ind) === nothing
         solve_kwargs = _ode_solve_kwargs(
             solver_cfg.kwargs, NamedTuple(), (dense = true,))
         sol = cb === nothing ?
@@ -133,25 +135,25 @@ function _simulate_sol_accessors(dm::DataModel, idx::Int, θ, η)
               solve(prob, alg, solver_cfg.args...; solve_kwargs..., callback = cb)
     else
         solve_kwargs = _ode_solve_kwargs(solver_cfg.kwargs, NamedTuple(),
-            (saveat = ind.saveat, save_everystep = false, dense = false))
+            (saveat = get_saveat(ind), save_everystep = false, dense = false))
         sol = cb === nothing ?
               solve(prob, alg, solver_cfg.args...; solve_kwargs...) :
               solve(prob, alg, solver_cfg.args...; solve_kwargs..., callback = cb)
     end
-    return get_de_accessors_builder(model.de.de)(sol, compiled)
+    return get_de_accessors_builder(get_de(model))(sol, compiled)
 end
 
 function _simulate_individual!(
         df::DataFrame, dm::DataModel, idx::Int, θ, re_samples, rng, replace_missings::Bool)
-    model = dm.model
-    ind = dm.individuals[idx]
-    obs_rows = dm.row_groups.obs_rows[idx]
-    const_cov = ind.const_cov
+    model = get_model(dm)
+    ind = get_individuals(dm)[idx]
+    obs_rows = get_obs_rows(get_row_groups(dm))[idx]
+    const_cov = get_const_cov(ind)
 
     η = _sampled_random_effects_for_individual(dm, idx, re_samples)
     sol_accessors = _simulate_sol_accessors(dm, idx, θ, η)
 
-    obs_cols = dm.config.obs_cols
+    obs_cols = get_obs_cols(dm)
     rowwise_re = _needs_rowwise_random_effects(dm, idx; obs_only = true)
     hmm_states = Dict{Symbol, Int}()
     for (i, row) in enumerate(obs_rows)
@@ -189,15 +191,15 @@ end
 
 function _simulate_individual_values(
         dm::DataModel, idx::Int, θ, re_samples, rng, replace_missings::Bool)
-    model = dm.model
-    ind = dm.individuals[idx]
-    obs_rows = dm.row_groups.obs_rows[idx]
-    const_cov = ind.const_cov
+    model = get_model(dm)
+    ind = get_individuals(dm)[idx]
+    obs_rows = get_obs_rows(get_row_groups(dm))[idx]
+    const_cov = get_const_cov(ind)
 
     η = _sampled_random_effects_for_individual(dm, idx, re_samples)
     sol_accessors = _simulate_sol_accessors(dm, idx, θ, η)
 
-    obs_cols = dm.config.obs_cols
+    obs_cols = get_obs_cols(dm)
     out = Dict{Symbol, Vector{Any}}()
     for col in obs_cols
         out[col] = Vector{Any}(undef, length(obs_rows))
@@ -219,13 +221,13 @@ function _simulate_individual_values(
                         _sample_hmm_hidden_state(rng, dist) :
                         _sample_hmm_hidden_state(rng, dist, prev_state)
                 hmm_states[col] = state
-                if !replace_missings && ismissing(dm.df[row, col])
+                if !replace_missings && ismissing(get_df(dm)[row, col])
                     out[col][i] = nothing
                     continue
                 end
                 val = _hmm_emission_rand(rng, dist, state)
             else
-                if !replace_missings && ismissing(dm.df[row, col])
+                if !replace_missings && ismissing(get_df(dm)[row, col])
                     out[col][i] = nothing
                     continue
                 end
@@ -241,8 +243,8 @@ function _simulate_individual_values(
 end
 
 function _warn_bad_value(dm::DataModel, row::Int, col::Symbol, dist, val)
-    id_val = dm.df[row, dm.config.primary_id]
-    t_val = dm.df[row, dm.config.time_col]
+    id_val = get_df(dm)[row, get_primary_id(dm)]
+    t_val = get_df(dm)[row, get_time_col(dm)]
     dist_str = string(typeof(dist))
     param_str = ""
     try
@@ -256,17 +258,17 @@ function _warn_bad_value(dm::DataModel, row::Int, col::Symbol, dist, val)
 end
 
 function _sample_random_effects(dm::DataModel, rng, θ)
-    model = dm.model
-    re_names = get_re_names(model.random.random)
+    model = get_model(dm)
+    re_names = get_re_names(get_random(model))
     isempty(re_names) && return Dict{Symbol, Any}()
-    re_groups = get_re_groups(model.random.random)
-    re_values = dm.re_group_info.values
-    re_index_by_row = dm.re_group_info.index_by_row
-    cov = model.covariates.covariates
+    re_groups = get_re_groups(get_random(model))
+    re_values = get_re_group_info(dm).values
+    re_index_by_row = get_re_group_info(dm).index_by_row
+    cov = get_covariates(model)
 
     model_funs = get_model_funs(model)
     helpers = get_helper_funs(model)
-    create = get_create_random_effect_distribution(model.random.random)
+    create = create_random_effect_distribution(get_random(model))
 
     samples = Dict{Symbol, Vector{Any}}()
     for re in re_names
@@ -280,7 +282,7 @@ function _sample_random_effects(dm::DataModel, rng, θ)
         vals = Vector{Any}(undef, length(group_vals))
         for gidx in eachindex(group_vals)
             row_idx = first_row[gidx]
-            const_cov = _build_const_cov_from_row(cov, dm.df, row_idx)
+            const_cov = _build_const_cov_from_row(cov, get_df(dm), row_idx)
             dists = create(θ, const_cov, model_funs, helpers)
             vals[gidx] = rand(rng, getproperty(dists, re))
         end
@@ -290,9 +292,9 @@ function _sample_random_effects(dm::DataModel, rng, θ)
 end
 
 function _attach_random_effects!(df::DataFrame, dm::DataModel, re_samples)
-    re_names = get_re_names(dm.model.random.random)
+    re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) && return nothing
-    index_by_row = dm.re_group_info.index_by_row
+    index_by_row = get_re_group_info(dm).index_by_row
     for re in re_names
         vals = re_samples[re]
         idxs = getfield(index_by_row, re)
@@ -314,7 +316,7 @@ function _attach_random_effects!(df::DataFrame, dm::DataModel, re_samples)
 end
 
 function _resolve_sim_theta(dm::DataModel, theta_untransformed)
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     if theta_untransformed === nothing
         return get_θ0_untransformed(fe)
     end
@@ -352,7 +354,7 @@ function simulate_data(dm::DataModel; rng = Random.default_rng(),
         replace_missings::Bool = false,
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial(),
         theta_untransformed = nothing)
-    df = deepcopy(dm.df)
+    df = deepcopy(get_df(dm))
     θ = _resolve_sim_theta(dm, theta_untransformed)
 
     re_samples = _sample_random_effects(dm, rng, θ)
@@ -366,7 +368,7 @@ function simulate_data(dm::DataModel; rng = Random.default_rng(),
         n_chunks = length(rngs)
         Threads.@threads for c in 1:n_chunks
             rng_c = rngs[c]
-            for i in c:n_chunks:length(dm.individuals)
+            for i in c:n_chunks:length(get_individuals(dm))
                 _simulate_individual!(df, dm, i, θ, re_samples, rng_c, replace_missings)
             end
         end
@@ -377,9 +379,9 @@ function simulate_data(dm::DataModel; rng = Random.default_rng(),
                 _simulate_individual_values(
                     dm, i, θ, re_samples, local_rng, replace_missings)
             end,
-            collect(eachindex(dm.individuals)))
+            collect(eachindex(get_individuals(dm))))
         for (obs_rows, out) in parts
-            for col in dm.config.obs_cols
+            for col in get_obs_cols(dm)
                 vals = out[col]
                 for (j, row) in enumerate(obs_rows)
                     vals[j] === nothing && continue
@@ -388,7 +390,7 @@ function simulate_data(dm::DataModel; rng = Random.default_rng(),
             end
         end
     else
-        for i in eachindex(dm.individuals)
+        for i in eachindex(get_individuals(dm))
             _simulate_individual!(df, dm, i, θ, re_samples, rng, replace_missings)
         end
     end
@@ -423,7 +425,7 @@ function simulate_data_model(dm::DataModel; rng = Random.default_rng(),
         serialization = serialization,
         theta_untransformed = theta_untransformed)
     cfg = dm.config
-    return DataModel(dm.model, df_sim;
+    return DataModel(get_model(dm), df_sim;
         primary_id = cfg.primary_id,
         time_col = cfg.time_col,
         evid_col = cfg.evid_col,

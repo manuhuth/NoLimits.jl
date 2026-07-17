@@ -93,7 +93,8 @@ function compute_uq(res::FitResult;
         if interval == :profile
             :profile
         else
-            (res.result isa MCMCResult || res.result isa VIResult) ? :chain : :wald
+            (get_result(res) isa MCMCResult || get_result(res) isa VIResult) ? :chain :
+            :wald
         end
     else
         method

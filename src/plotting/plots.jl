@@ -15,7 +15,7 @@ function _get_dm(res, dm::Union{Nothing, DataModel})
 end
 
 function _get_observable(dm::DataModel, observable)
-    obs = get_formulas_meta(dm.model.formulas.formulas).obs_names
+    obs = get_formulas_meta(get_formulas(get_model(dm))).obs_names
     if observable === nothing
         length(obs) > 1 &&
             @warn "Multiple observables found; using the first." observable=obs[1]
@@ -26,33 +26,33 @@ function _get_observable(dm::DataModel, observable)
 end
 
 function _time_values(dm::DataModel, ind::Individual, obs_rows::Vector{Int})
-    vary = ind.series.vary
-    if hasproperty(vary, dm.config.time_col)
-        vals = getfield(vary, dm.config.time_col)
+    vary = get_vary(get_series(ind))
+    if hasproperty(vary, get_time_col(dm))
+        vals = getfield(vary, get_time_col(dm))
         vals isa AbstractVector && return vals
     end
     if hasproperty(vary, :t)
         vals = getfield(vary, :t)
         vals isa AbstractVector && return vals
     end
-    return dm.df[obs_rows, dm.config.time_col]
+    return get_df(dm)[obs_rows, get_time_col(dm)]
 end
 
 function _get_x_values(
         dm::DataModel, ind::Individual, obs_rows::Vector{Int}, x_axis_feature)
-    if dm.model.de.de !== nothing
+    if get_de(get_model(dm)) !== nothing
         return _time_values(dm, ind, obs_rows)
     end
     if x_axis_feature === nothing
         return _time_values(dm, ind, obs_rows)
     end
-    cov = dm.model.covariates.covariates
-    if x_axis_feature == dm.config.time_col
+    cov = get_covariates(get_model(dm))
+    if x_axis_feature == get_time_col(dm)
         return _time_values(dm, ind, obs_rows)
     end
     x_axis_feature in cov.varying ||
         error("x_axis_feature must be a varying covariate. Got $(x_axis_feature).")
-    v = getfield(ind.series.vary, x_axis_feature)
+    v = getfield(get_vary(get_series(ind)), x_axis_feature)
     if v isa AbstractVector
         return v
     elseif v isa NamedTuple
@@ -65,21 +65,21 @@ function _get_x_values(
 end
 
 function _dense_time_grid(ind::Individual; n::Int = 200)
-    t0, t1 = ind.tspan
+    t0, t1 = get_tspan(ind)
     base = collect(range(t0, t1; length = n))
     # Include all callback fire times (infusion starts, stops, bolus, resets) so that
     # short infusions whose stop time falls between uniform grid points are not missed.
     # Without this, a 1-day infusion in a 400-day tspan (grid step ~2 days) would be
     # invisible and V would appear to peak at t≈2 instead of t=1.
-    if ind.callbacks !== nothing && !isempty(ind.callbacks.all_times)
-        return sort!(unique!(vcat(base, ind.callbacks.all_times)))
+    if get_callbacks(ind) !== nothing && !isempty(get_callbacks(ind).all_times)
+        return sort!(unique!(vcat(base, get_callbacks(ind).all_times)))
     end
     return base
 end
 
 function _can_dense_plot(dm::DataModel)
-    cov = dm.model.covariates.covariates
-    return all(v -> v == dm.config.time_col, cov.varying)
+    cov = get_covariates(get_model(dm))
+    return all(v -> v == get_time_col(dm), cov.varying)
 end
 
 function _stat_from_dist(dist, f)
@@ -174,8 +174,8 @@ function _float_if_real(x)
 end
 
 function _obs_multivariate_info(dm::DataModel, obs_name::Symbol)
-    for ind in dm.individuals
-        y = getfield(ind.series.obs, obs_name)
+    for ind in get_individuals(dm)
+        y = getfield(get_obs(get_series(ind)), obs_name)
         for val in y
             val === missing && continue
             return val isa AbstractVector ? (true, length(val)) : (false, 1)
@@ -236,7 +236,7 @@ function _resolve_emission_row(dm::DataModel,
         return obs_rows[time_idx]
     end
     if time_point !== nothing
-        vals = dm.df[obs_rows, time_col]
+        vals = get_df(dm)[obs_rows, time_col]
         numeric = [ismissing(v) ? missing : float(v) for v in vals]
         has_missing = any(ismissing, numeric)
         has_missing &&
@@ -288,13 +288,13 @@ function _same_data_model_for_fits(dm1::DataModel, dm2::DataModel)
     cfg1.serialization == cfg2.serialization || return false
     cfg1.saveat_mode == cfg2.saveat_mode || return false
 
-    length(dm1.individuals) == length(dm2.individuals) || return false
-    dm1.row_groups.obs_rows == dm2.row_groups.obs_rows || return false
-    get_formulas_meta(dm1.model.formulas.formulas).obs_names ==
-    get_formulas_meta(dm2.model.formulas.formulas).obs_names || return false
+    length(get_individuals(dm1)) == length(get_individuals(dm2)) || return false
+    get_obs_rows(get_row_groups(dm1)) == get_obs_rows(get_row_groups(dm2)) || return false
+    get_formulas_meta(get_formulas(get_model(dm1))).obs_names ==
+    get_formulas_meta(get_formulas(get_model(dm2))).obs_names || return false
 
-    propertynames(dm1.df) == propertynames(dm2.df) || return false
-    return isequal(dm1.df, dm2.df)
+    propertynames(get_df(dm1)) == propertynames(get_df(dm2)) || return false
+    return isequal(get_df(dm1), get_df(dm2))
 end
 
 function _validate_same_data_model_for_comparison(dms::AbstractVector{<:DataModel})
@@ -332,30 +332,31 @@ function _fit_curve_from_cache(dm::DataModel,
         obs_name::Symbol,
         x_axis_feature::Union{Nothing, Symbol},
         plot_func)
-    ind = dm.individuals[ind_idx]
-    obs_rows = dm.row_groups.obs_rows[ind_idx]
-    use_dense = dm.model.de.de !== nothing &&
+    ind = get_individuals(dm)[ind_idx]
+    obs_rows = get_obs_rows(get_row_groups(dm))[ind_idx]
+    use_dense = get_de(get_model(dm)) !== nothing &&
                 _can_dense_plot(dm) &&
-                (x_axis_feature === nothing || x_axis_feature == dm.config.time_col)
+                (x_axis_feature === nothing || x_axis_feature == get_time_col(dm))
     x_obs = _get_x_values(dm, ind, obs_rows, x_axis_feature)
     x_fit = use_dense ? _dense_time_grid(ind) : x_obs
 
     θ = cache.params
     η_ind = cache.random_effects[ind_idx]
     sol_accessors = nothing
-    if dm.model.de.de !== nothing
+    if get_de(get_model(dm)) !== nothing
         sol = cache.sols[ind_idx]
-        compiled = get_de_compiler(dm.model.de.de)((;
+        compiled = get_de_compiler(get_de(get_model(dm)))((;
             fixed_effects = θ,
             random_effects = η_ind,
-            constant_covariates = ind.const_cov,
-            varying_covariates = merge((t = ind.series.vary.t[1],), ind.series.dyn),
-            helpers = get_helper_funs(dm.model),
-            model_funs = get_model_funs(dm.model),
-            preDE = calculate_prede(dm.model, θ, η_ind, ind.const_cov)
+            constant_covariates = get_const_cov(ind),
+            varying_covariates = merge(
+                (t = get_vary(get_series(ind)).t[1],), get_dyn(get_series(ind))),
+            helpers = get_helper_funs(get_model(dm)),
+            model_funs = get_model_funs(get_model(dm)),
+            preDE = calculate_prede(get_model(dm), θ, η_ind, get_const_cov(ind))
         ))
         sol_accessors = _sol_accessors_with_crossings(
-            dm.model, sol, compiled, θ, η_ind, ind.const_cov)
+            get_model(dm), sol, compiled, θ, η_ind, get_const_cov(ind))
     end
 
     preds = Vector{Float64}(undef, length(x_fit))
@@ -364,20 +365,21 @@ function _fit_curve_from_cache(dm::DataModel,
         for (j, t) in enumerate(x_fit)
             vary = (t = t,)
             obs = calculate_formulas_obs(
-                dm.model, θ, η_ind, ind.const_cov, vary, sol_accessors)
+                get_model(dm), θ, η_ind, get_const_cov(ind), vary, sol_accessors)
             preds[j] = _stat_from_dist(getproperty(obs, obs_name), plot_func)
         end
     else
-        y_obs_series_cmp = getfield(ind.series.obs, obs_name)
+        y_obs_series_cmp = getfield(get_obs(get_series(ind)), obs_name)
         hmm_priors_cmp = Dict{Symbol, Any}()
         for (j, row) in enumerate(obs_rows)
             vary = _varying_at(dm, ind, j, row)
             η_row = _row_random_effects_at(
                 dm, ind_idx, j, η_ind, rowwise_re; obs_only = true)
             obs = sol_accessors === nothing ?
-                  calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
                   calculate_formulas_obs(
-                dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
+                get_model(dm), θ, η_row, get_const_cov(ind), vary) :
+                  calculate_formulas_obs(
+                get_model(dm), θ, η_row, get_const_cov(ind), vary, sol_accessors)
             dist = _apply_hmm_filter!(
                 hmm_priors_cmp, obs_name, getproperty(obs, obs_name), y_obs_series_cmp[j])
             preds[j] = _stat_from_dist(dist, plot_func)
@@ -387,18 +389,20 @@ function _fit_curve_from_cache(dm::DataModel,
 end
 
 function _pred_re_per_individual(dm::DataModel, θ::ComponentArray)
-    re_names = get_re_names(dm.model.random.random)
-    isempty(re_names) && return fill(ComponentArray(NamedTuple()), length(dm.individuals))
+    re_names = get_re_names(get_random(get_model(dm)))
+    isempty(re_names) &&
+        return fill(ComponentArray(NamedTuple()), length(get_individuals(dm)))
 
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
-    model_funs = get_model_funs(dm.model)
-    helpers = get_helper_funs(dm.model)
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
+    model_funs = get_model_funs(get_model(dm))
+    helpers = get_helper_funs(get_model(dm))
 
-    η_vec = Vector{ComponentArray}(undef, length(dm.individuals))
-    for (i, ind) in enumerate(dm.individuals)
+    η_vec = Vector{ComponentArray}(undef, length(get_individuals(dm)))
+    for (i, ind) in enumerate(get_individuals(dm))
         nt_pairs = Pair{Symbol, Any}[]
         for re in re_names
-            dist = getproperty(dists_builder(θ, ind.const_cov, model_funs, helpers), re)
+            dist = getproperty(
+                dists_builder(θ, get_const_cov(ind), model_funs, helpers), re)
             if dist isa Distributions.UnivariateDistribution
                 v = try
                     Float64(Distributions.mean(dist))
@@ -430,18 +434,18 @@ function _collect_series(dm::DataModel, obs_name::Symbol,
     pred_all = Float64[]
     sigma_all = Float64[]
 
-    for i in eachindex(dm.individuals)
-        ind = dm.individuals[i]
-        obs_rows = dm.row_groups.obs_rows[i]
-        y_series = getfield(ind.series.obs, obs_name)
+    for i in eachindex(get_individuals(dm))
+        ind = get_individuals(dm)[i]
+        obs_rows = get_obs_rows(get_row_groups(dm))[i]
+        y_series = getfield(get_obs(get_series(ind)), obs_name)
         η_ind = η[i]
         rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only = true)
 
         sol_accessors = nothing
-        if dm.model.de.de !== nothing
+        if get_de(get_model(dm)) !== nothing
             sol, compiled = _solve_dense_individual(dm, ind, θ, η_ind)
             sol_accessors = _sol_accessors_with_crossings(
-                dm.model, sol, compiled, θ, η_ind, ind.const_cov)
+                get_model(dm), sol, compiled, θ, η_ind, get_const_cov(ind))
         end
 
         for (j, row) in enumerate(obs_rows)
@@ -453,9 +457,10 @@ function _collect_series(dm::DataModel, obs_name::Symbol,
             vary = _varying_at(dm, ind, j, row)
             η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only = true)
             obs_nt = sol_accessors === nothing ?
-                     calculate_formulas_obs(dm.model, θ, η_row, ind.const_cov, vary) :
                      calculate_formulas_obs(
-                dm.model, θ, η_row, ind.const_cov, vary, sol_accessors)
+                get_model(dm), θ, η_row, get_const_cov(ind), vary) :
+                     calculate_formulas_obs(
+                get_model(dm), θ, η_row, get_const_cov(ind), vary, sol_accessors)
             dist = getproperty(obs_nt, obs_name)
 
             pred_val = try

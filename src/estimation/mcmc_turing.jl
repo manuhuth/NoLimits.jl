@@ -129,7 +129,7 @@ function _build_turing_model(fixed_names::Vector{Symbol}, free_names::Vector{Sym
                 dm, cache, serialization, priors, constants, extra_objective)
             $(assigns...)
             θ = $θ_expr
-            θ_re = _symmetrize_psd_params(θ, dm.model.fixed.fixed)
+            θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
             ll = loglikelihood(
                 dm, θ_re, ComponentArray(); cache = cache, serialization = serialization)
             Turing.@addlogprob! ll
@@ -151,11 +151,12 @@ function _mcmc_const_re_prior(dm::DataModel, θ_re::ComponentArray, const_re_inf
         model_funs, helpers)
     T = eltype(θ_re)
     ll = zero(T)
-    dists_builder = get_create_random_effect_distribution(dm.model.random.random)
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     for (re, info) in Base.pairs(const_re_info)
         isempty(info.vals) && continue
         for (val, rep) in zip(info.vals, info.reps)
-            dists = dists_builder(θ_re, dm.individuals[rep].const_cov, model_funs, helpers)
+            dists = dists_builder(
+                θ_re, get_const_cov(get_individuals(dm)[rep]), model_funs, helpers)
             dist = getfield(dists, re)
             v = val isa AbstractVector ? T.(val) : T(val)
             lp = logpdf(dist, v)
@@ -234,24 +235,24 @@ function _build_turing_model_re(
                 re_meta, fixed_maps, const_covs, const_re_info, extra_objective)
             $(assigns...)
             θ = $θ_expr
-            θ_re = _symmetrize_psd_params(θ, dm.model.fixed.fixed)
+            θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
             T = eltype(θ)
-            dists_builder = get_create_random_effect_distribution(dm.model.random.random)
-            model_funs = get_model_funs(dm.model)
-            helpers = get_helper_funs(dm.model)
+            dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
+            model_funs = get_model_funs(get_model(dm))
+            helpers = get_helper_funs(get_model(dm))
 
             $sample_blocks
             Turing.@addlogprob! _mcmc_const_re_prior(
                 dm, θ_re, const_re_info, model_funs, helpers)
             re_samples = $re_samples_expr
 
-            η_vec = Vector{ComponentArray}(undef, length(dm.individuals))
-            for i in eachindex(dm.individuals)
+            η_vec = Vector{ComponentArray}(undef, length(get_individuals(dm)))
+            for i in eachindex(get_individuals(dm))
                 nt_pairs = Pair{Symbol, Any}[]
-                ind = dm.individuals[i]
+                ind = get_individuals(dm)[i]
                 for re in re_names
                     meta = getproperty(re_meta, re)
-                    g = getfield(ind.re_groups, re)
+                    g = getfield(get_re_groups(ind), re)
                     fixed = haskey(fixed_maps, re) ? getfield(fixed_maps, re) : nothing
                     levels = meta.levels
                     lvl_to_idx = meta.level_to_index
@@ -366,11 +367,11 @@ function _fit_model(dm::DataModel, method::MCMC, args...;
         rng = rng,
         theta_0_untransformed = theta_0_untransformed,
         store_data_model = store_data_model)
-    re_names = get_re_names(dm.model.random.random)
+    re_names = get_re_names(get_random(get_model(dm)))
     isempty(keys(penalty)) ||
         error("MCMC does not support penalty terms. Use priors and MAP instead.")
 
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     _warn_if_scaled_params(fe; method_name = "MCMC")
     priors = get_priors(fe)
     fixed_names = get_names(fe)
@@ -411,16 +412,16 @@ function _fit_model(dm::DataModel, method::MCMC, args...;
         fixed_maps = _normalize_constants_re(dm, constants_re)
         # Validate constants_re shape and dimensions before launching Turing.
         _build_constants_cache(dm, fixed_maps)
-        const_covs = [ind.const_cov for ind in dm.individuals]
-        dists_builder = get_create_random_effect_distribution(dm.model.random.random)
-        model_funs = get_model_funs(dm.model)
-        helpers = get_helper_funs(dm.model)
+        const_covs = [get_const_cov(ind) for ind in get_individuals(dm)]
+        dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
+        model_funs = get_model_funs(get_model(dm))
+        helpers = get_helper_funs(get_model(dm))
         re_pairs = Pair{Symbol, Any}[]
         const_re_info_pairs = Pair{Symbol, Any}[]
         for re in re_names
             reps_map = Dict{Any, Int}()
-            for (i, ind) in enumerate(dm.individuals)
-                g = getfield(ind.re_groups, re)
+            for (i, ind) in enumerate(get_individuals(dm))
+                g = getfield(get_re_groups(ind), re)
                 if g isa AbstractVector
                     for gv in g
                         haskey(reps_map, gv) || (reps_map[gv] = i)
@@ -429,7 +430,7 @@ function _fit_model(dm::DataModel, method::MCMC, args...;
                     haskey(reps_map, g) || (reps_map[g] = i)
                 end
             end
-            levels_all = getfield(dm.re_group_info.values, re)
+            levels_all = getfield(get_re_group_info(dm).values, re)
             fixed = haskey(fixed_maps, re) ? getfield(fixed_maps, re) : Dict{Any, Any}()
             levels_free = Any[]
             reps = Int[]
@@ -499,7 +500,7 @@ function _fit_model(dm::DataModel, method::MCMC, args...;
         (turing_kwargs = merge(turing_kwargs, (chain_type = MCMCChains.Chains,)))
     chain = Turing.sample(rng, model, sampler, n_samples; adapt = n_adapt, turing_kwargs...)
 
-    obs = dm.df[:, dm.config.obs_cols]
+    obs = get_df(dm)[:, get_obs_cols(dm)]
     summary = FitSummary(NaN, missing,
         FitParameters(ComponentArray(), ComponentArray()),
         NamedTuple())

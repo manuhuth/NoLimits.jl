@@ -6,7 +6,7 @@ export get_re_names
 export get_re_groups
 export get_re_types
 export get_re_syms
-export get_create_random_effect_distribution
+export create_random_effect_distribution
 export get_re_logpdf
 
 using ComponentArrays
@@ -82,7 +82,7 @@ expression as parsed from the `@randomEffects` block.
 get_re_dist_exprs(re::RandomEffects) = re.meta.re_dist_exprs
 
 """
-    get_create_random_effect_distribution(re::RandomEffects) -> Function
+    create_random_effect_distribution(re::RandomEffects) -> Function
 
 Return the distribution-builder function with signature:
 
@@ -91,7 +91,7 @@ Return the distribution-builder function with signature:
 
 The returned `NamedTuple` maps each random-effect name to its instantiated distribution.
 """
-get_create_random_effect_distribution(re::RandomEffects) = re.builders.create_random_effect_distribution
+create_random_effect_distribution(re::RandomEffects) = re.builders.create_random_effect_distribution
 
 """
     get_re_logpdf(re::RandomEffects) -> Function

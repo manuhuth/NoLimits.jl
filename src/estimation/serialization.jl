@@ -194,22 +194,22 @@ end
 
 function _strip_method_result(r::LaplaceResult)
     SavedLaplaceResult(
-        _strip_solution(r.solution), r.objective, r.iterations, r.notes, r.eb_modes)
+        _strip_solution(r.solution), r.objective, r.iterations, r.notes, get_eb_modes(r))
 end
 
 function _strip_method_result(r::MCEMResult)
     SavedMCEMResult(
-        _strip_solution(r.solution), r.objective, r.iterations, r.notes, r.eb_modes)
+        _strip_solution(r.solution), r.objective, r.iterations, r.notes, get_eb_modes(r))
 end
 
 function _strip_method_result(r::SAEMResult)
     SavedSAEMResult(
-        _strip_solution(r.solution), r.objective, r.iterations, r.notes, r.eb_modes)
+        _strip_solution(r.solution), r.objective, r.iterations, r.notes, get_eb_modes(r))
 end
 
 function _strip_method_result(r::GHQuadratureResult)
     SavedGHQuadratureResult(
-        _strip_solution(r.solution), r.objective, r.iterations, r.notes, r.eb_modes)
+        _strip_solution(r.solution), r.objective, r.iterations, r.notes, get_eb_modes(r))
 end
 
 function _strip_method_result(r::MCMCResult)
@@ -224,17 +224,17 @@ end
 
 function _strip_fit_result(res::FitResult; include_data::Bool = false)
     # Strip optimizer from diagnostics (it may hold Optim.jl internal state)
-    diag = FitDiagnostics(res.diagnostics.timing, nothing,
-        res.diagnostics.convergence, res.diagnostics.notes)
-    fkw = _strip_fit_kwargs(res.fit_kwargs)
-    dm = res.data_model
-    df = (include_data && dm !== nothing) ? dm.df : nothing
+    diag = FitDiagnostics(get_diagnostics(res).timing, nothing,
+        get_diagnostics(res).convergence, get_diagnostics(res).notes)
+    fkw = _strip_fit_kwargs(get_fit_kwargs(res))
+    dm = get_data_model(res)
+    df = (include_data && dm !== nothing) ? get_df(dm) : nothing
     config = (include_data && dm !== nothing) ? _build_saved_config(dm) : nothing
     return SavedFitResult(
         _SERIALIZATION_FORMAT_VERSION,
-        _strip_fitting_method(res.method),
-        _strip_method_result(res.result),
-        res.summary,
+        _strip_fitting_method(get_method(res)),
+        _strip_method_result(get_result(res)),
+        get_summary(res),
         diag,
         fkw,
         df,
@@ -251,12 +251,13 @@ function _strip_fit_result(res::MultistartFitResult; include_data::Bool = false)
     saved_err = [_strip_partial_result(r) for r in res.results_err]
     err_strs = String[sprint(showerror, e) for e in res.errors_err]
     # Take df/config from the best result's data_model
-    best_dm = isempty(res.results_ok) ? nothing : res.results_ok[res.best_idx].data_model
-    df = (include_data && best_dm !== nothing) ? best_dm.df : nothing
+    best_dm = isempty(res.results_ok) ? nothing :
+              get_data_model(res.results_ok[res.best_idx])
+    df = (include_data && best_dm !== nothing) ? get_df(best_dm) : nothing
     config = (include_data && best_dm !== nothing) ? _build_saved_config(best_dm) : nothing
     return SavedMultistartFitResult(
         _SERIALIZATION_FORMAT_VERSION,
-        _strip_fitting_method(res.method),   # store stub, not full method
+        _strip_fitting_method(get_method(res)),   # store stub, not full method
         saved_ok,
         saved_err,
         res.starts_ok,

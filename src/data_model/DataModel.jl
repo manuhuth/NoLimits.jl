@@ -11,6 +11,17 @@ export get_row_groups
 export get_re_group_info
 export get_re_indices
 export get_closed_form_plan
+export get_time_col
+export get_obs_cols
+export get_evid_col
+export get_series
+export get_const_cov
+export get_callbacks
+export get_tspan
+export get_saveat
+export get_obs
+export get_vary
+export get_dyn
 
 using DataInterpolations
 using DiffEqCallbacks
@@ -134,6 +145,16 @@ struct EventCallbacks{C, R, RS, B}
     reset_by_time::Dict{Float64, Vector{Tuple{Int, Float64}}}
     rate_delta_by_time::Dict{Float64, Vector{Float64}}
 end
+
+@inline get_callback(e::EventCallbacks) = e.callback
+@inline get_infusion_rates(e::EventCallbacks) = e.infusion_rates
+@inline get_init_infusion_rates(e::EventCallbacks) = e.init_infusion_rates
+@inline get_init_resets(e::EventCallbacks) = e.init_resets
+@inline get_init_bolus(e::EventCallbacks) = e.init_bolus
+@inline get_all_times(e::EventCallbacks) = e.all_times
+@inline get_bolus_by_time(e::EventCallbacks) = e.bolus_by_time
+@inline get_reset_by_time(e::EventCallbacks) = e.reset_by_time
+@inline get_rate_delta_by_time(e::EventCallbacks) = e.rate_delta_by_time
 
 _cf_f64keys(d) = Dict{Float64, valtype(d)}(Float64(k) => v for (k, v) in d)
 
@@ -568,7 +589,7 @@ function _probe_random_effects(model, const_cov::NamedTuple)
     re_names = get_re_names(model.random.random)
     isempty(re_names) && return ComponentArray()
     θ0 = get_θ0_untransformed(model.fixed.fixed)
-    dists_builder = get_create_random_effect_distribution(model.random.random)
+    dists_builder = create_random_effect_distribution(model.random.random)
     dists = dists_builder(θ0, const_cov, get_model_funs(model), get_helper_funs(model))
     rng = Random.MersenneTwister(0)
     pairs = Pair{Symbol, Any}[]
@@ -1304,7 +1325,7 @@ function _build_laplace_re_cache(model, individuals, values_nt)
         θ0 = get_θ0_untransformed(fe)
         model_funs = get_model_funs(model)
         helpers = get_helper_funs(model)
-        dists_builder = get_create_random_effect_distribution(model.random.random)
+        dists_builder = create_random_effect_distribution(model.random.random)
         const_cov = individuals[1].const_cov
         dists = dists_builder(θ0, const_cov, model_funs, helpers)
         for (ri, re) in enumerate(re_names)
@@ -1582,6 +1603,111 @@ Return the `REGroupInfo` struct containing random-effect level values and per-ro
 level indices, plus per-individual row-level assignments.
 """
 get_re_group_info(dm::DataModel) = dm.re_group_info
+
+"""
+    get_time_col(dm::DataModel) -> Symbol
+
+Return the time column name.
+"""
+@inline get_time_col(dm::DataModel) = dm.config.time_col
+
+"""
+    get_obs_cols(dm::DataModel) -> Vector{Symbol}
+
+Return the observation (outcome) column names.
+"""
+@inline get_obs_cols(dm::DataModel) = dm.config.obs_cols
+
+"""
+    get_evid_col(dm::DataModel) -> Union{Nothing, Symbol}
+
+Return the EVID column name (event handling), or `nothing` when events are disabled.
+"""
+@inline get_evid_col(dm::DataModel) = dm.config.evid_col
+
+# ── Individual accessors ─────────────────────────────────────────────────────
+
+"""
+    get_series(ind::Individual) -> IndividualSeries
+
+Return the per-individual data series (observations, varying and dynamic covariates).
+"""
+@inline get_series(ind::Individual) = ind.series
+
+"""
+    get_const_cov(ind::Individual) -> NamedTuple
+
+Return the individual's constant covariates.
+"""
+@inline get_const_cov(ind::Individual) = ind.const_cov
+
+"""
+    get_callbacks(ind::Individual)
+
+Return the individual's event callbacks (`EventCallbacks`), or `nothing`.
+"""
+@inline get_callbacks(ind::Individual) = ind.callbacks
+
+"""
+    get_tspan(ind::Individual) -> Tuple
+
+Return the individual's integration time span `(t_min, t_max)`.
+"""
+@inline get_tspan(ind::Individual) = ind.tspan
+
+"""
+    get_saveat(ind::Individual)
+
+Return the individual's `saveat` grid, or `nothing` for dense saving.
+"""
+@inline get_saveat(ind::Individual) = ind.saveat
+
+# Per-individual random-effect grouping levels (distinct from
+# `get_re_groups(re::RandomEffects)`, which maps RE names to grouping columns).
+@inline get_re_groups(ind::Individual) = ind.re_groups
+
+# ── IndividualSeries accessors ───────────────────────────────────────────────
+
+"""
+    get_obs(s::IndividualSeries) -> NamedTuple
+
+Return the observation series.
+"""
+@inline get_obs(s::IndividualSeries) = s.obs
+
+"""
+    get_vary(s::IndividualSeries) -> NamedTuple
+
+Return the time-varying covariate series.
+"""
+@inline get_vary(s::IndividualSeries) = s.vary
+
+"""
+    get_dyn(s::IndividualSeries) -> NamedTuple
+
+Return the dynamic (interpolated) covariate series.
+"""
+@inline get_dyn(s::IndividualSeries) = s.dyn
+
+# ── RowGroups / REGroupInfo / LaplaceRECache accessors (internal) ─────────────
+
+@inline get_rows(rg::RowGroups) = rg.rows
+@inline get_obs_rows(rg::RowGroups) = rg.obs_rows
+
+@inline get_re_values(rgi::REGroupInfo) = rgi.values
+@inline get_index_by_row(rgi::REGroupInfo) = rgi.index_by_row
+@inline get_index_by_individual(rgi::REGroupInfo) = rgi.index_by_individual
+@inline get_representative_row_by_level(rgi::REGroupInfo) = rgi.representative_row_by_level
+@inline get_laplace_cache(rgi::REGroupInfo) = rgi.laplace_cache
+
+# LaplaceRECache field accessors (hot path). `get_re_names`/`get_dims` are dispatched
+# on the cache type here, distinct from their `RandomEffects` methods.
+@inline get_re_names(c::LaplaceRECache) = c.re_names
+@inline get_dims(c::LaplaceRECache) = c.dims
+@inline get_is_scalar(c::LaplaceRECache) = c.is_scalar
+@inline get_ind_level_ids(c::LaplaceRECache) = c.ind_level_ids
+@inline get_re_index(c::LaplaceRECache) = c.re_index
+@inline get_eta_template(c::LaplaceRECache) = c.eta_template
 
 function _find_individual_index(dm::DataModel, ind::Individual)
     for i in eachindex(dm.individuals)

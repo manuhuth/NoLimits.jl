@@ -91,10 +91,10 @@ function _descriptive_stats(values)
 end
 
 function _collect_obs_rows(dm::DataModel)
-    n = sum(length, dm.row_groups.obs_rows)
+    n = sum(length, get_obs_rows(get_row_groups(dm)))
     out = Vector{Int}(undef, n)
     k = 1
-    for rows in dm.row_groups.obs_rows
+    for rows in get_obs_rows(get_row_groups(dm))
         for r in rows
             out[k] = r
             k += 1
@@ -161,7 +161,7 @@ function _covariate_kind_and_columns(p)
 end
 
 function _obs_time_values(dm::DataModel, obs_rows::Vector{Int})
-    tcol = getproperty(dm.df, dm.config.time_col)
+    tcol = getproperty(get_df(dm), get_time_col(dm))
     vals = Float64[]
     for r in obs_rows
         v = tcol[r]
@@ -257,29 +257,29 @@ end
 function summarize(dm::DataModel)
     obs_rows = _collect_obs_rows(dm)
     n_obs_rows = length(obs_rows)
-    n_individuals = length(dm.individuals)
-    n_rows_total = length(getproperty(dm.df, dm.config.primary_id))
-    has_events = dm.config.evid_col !== nothing
+    n_individuals = length(get_individuals(dm))
+    n_rows_total = length(getproperty(get_df(dm), get_primary_id(dm)))
+    has_events = get_evid_col(dm) !== nothing
     n_event_rows = has_events ? max(n_rows_total - n_obs_rows, 0) : 0
-    model_type = dm.model.de.de === nothing ? :non_ode : :ode
+    model_type = get_de(get_model(dm)) === nothing ? :non_ode : :ode
 
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     n_fixed_effects = length(get_names(fe))
 
-    cov = dm.model.covariates.covariates
+    cov = get_covariates(get_model(dm))
     n_covariates = length(cov.names)
     n_covariates_varying = length(cov.varying)
     n_covariates_constant = length(cov.constants)
     n_covariates_dynamic = length(cov.dynamic)
 
-    formulas = dm.model.formulas.formulas
+    formulas = get_formulas(get_model(dm))
     ir = get_formulas_ir(formulas)
     obs_names = ir.obs_names
     n_outcomes = length(obs_names)
     outcome_dist_types = _namedtuple_from_symbols(
         obs_names, [_distribution_type_from_expr(ex) for ex in ir.obs_exprs])
 
-    re_model = dm.model.random.random
+    re_model = get_random(get_model(dm))
     re_names = get_re_names(re_model)
     n_random_effects = length(re_names)
     re_types = _resolve_re_distribution_types(re_model)
@@ -289,8 +289,8 @@ function summarize(dm::DataModel)
     obs_per_ind = Float64[]
     time_spans = Float64[]
     median_dts = Float64[]
-    tcol = getproperty(dm.df, dm.config.time_col)
-    for rows in dm.row_groups.obs_rows
+    tcol = getproperty(get_df(dm), get_time_col(dm))
+    for rows in get_obs_rows(get_row_groups(dm))
         push!(obs_per_ind, Float64(length(rows)))
         if isempty(rows)
             push!(time_spans, NaN)
@@ -322,7 +322,7 @@ function summarize(dm::DataModel)
     global_time_max = isempty(obs_t) ? NaN : maximum(obs_t)
     n_unique_obs_times = length(unique(obs_t))
 
-    idcol = getproperty(dm.df, dm.config.primary_id)
+    idcol = getproperty(get_df(dm), get_primary_id(dm))
     n_duplicate_id_time_obs = 0
     seen = Set{Tuple{Any, Any}}()
     for r in obs_rows
@@ -335,7 +335,7 @@ function summarize(dm::DataModel)
     end
 
     n_monotonic_time_violations = 0
-    for rows in dm.row_groups.obs_rows
+    for rows in get_obs_rows(get_row_groups(dm))
         for j in 2:length(rows)
             if tcol[rows[j]] < tcol[rows[j - 1]]
                 n_monotonic_time_violations += 1
@@ -345,8 +345,8 @@ function summarize(dm::DataModel)
 
     # Outcome descriptive stats on observation rows only
     outcome_stats = NamedTuple[]
-    for obs in dm.config.obs_cols
-        col = getproperty(dm.df, obs)
+    for obs in get_obs_cols(dm)
+        col = getproperty(get_df(dm), obs)
         vals = col[obs_rows]
         push!(outcome_stats, (; name = obs, stats = _descriptive_stats(vals)))
     end
@@ -361,7 +361,7 @@ function summarize(dm::DataModel)
         push!(covariate_declarations,
             (; name = cname, kind = kind, columns = cols, constant_on = constant_on))
         for colname in cols
-            col = getproperty(dm.df, colname)
+            col = getproperty(get_df(dm), colname)
             vals = col[obs_rows]
             st = _descriptive_stats(vals)
             if st.n == 0
@@ -376,8 +376,8 @@ function summarize(dm::DataModel)
     # Per-random-effect summary
     random_effect_summaries = NamedTuple[]
     if n_random_effects > 0
-        values_nt = dm.re_group_info.values
-        index_nt = dm.re_group_info.index_by_row
+        values_nt = get_re_values(get_re_group_info(dm))
+        index_nt = get_index_by_row(get_re_group_info(dm))
         for re in re_names
             levels = getfield(values_nt, re)
             n_levels = length(levels)

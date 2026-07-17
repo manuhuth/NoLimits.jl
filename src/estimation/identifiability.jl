@@ -103,7 +103,7 @@ struct IdentifiabilityReport{U, T, S}
     settings::S
 end
 
-@inline _has_random_effects(dm::DataModel) = !isempty(get_re_names(dm.model.random.random))
+@inline _has_random_effects(dm::DataModel) = !isempty(get_re_names(get_random(get_model(dm))))
 
 function _ident_method_symbol(method)
     method isa MLE && return :mle
@@ -138,7 +138,7 @@ function _validate_ident_method(dm::DataModel, method)
         error("Unsupported method $(typeof(method)) for identifiability diagnostics.")
     end
 
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     fixed_names = get_names(fe)
     isempty(fixed_names) &&
         error("identifiability_report requires at least one fixed effect.")
@@ -335,17 +335,17 @@ function _gradient_fd_from_obj(obj_fun::Function,
     return g
 end
 
-function _laplace_batch_labels(dm::DataModel, info::_LaplaceBatchInfo)
-    cache = dm.re_group_info.laplace_cache
+function _laplace_batch_labels(dm::DataModel, info::REBatchInfo)
+    cache = get_laplace_cache(get_re_group_info(dm))
     cache === nothing && return String[]
     labels = String[]
-    for (ri, re) in enumerate(cache.re_names)
-        re_info = info.re_info[ri]
-        levels_all = cache.re_index[ri].levels
-        for (li, level_id) in enumerate(re_info.map.levels)
+    for (ri, re) in enumerate(get_re_names(cache))
+        re_info = get_re_info(info)[ri]
+        levels_all = get_re_index(cache)[ri].levels
+        for (li, level_id) in enumerate(get_levels(get_re_map(re_info)))
             level = levels_all[level_id]
-            r = re_info.ranges[li]
-            if re_info.is_scalar
+            r = get_ranges(re_info)[li]
+            if get_is_scalar(re_info)
                 push!(labels, string(re, "[", level, "]"))
             else
                 for k in 1:length(r)
@@ -360,8 +360,8 @@ end
 function _build_re_information(dm::DataModel,
         method::Laplace,
         θu::ComponentArray,
-        batch_infos::Vector{_LaplaceBatchInfo},
-        const_cache::LaplaceConstantsCache,
+        batch_infos::Vector{REBatchInfo},
+        const_cache::REConstantsCache,
         ll_cache,
         ebe_cache::_LaplaceCache,
         seed::UInt64;
@@ -384,7 +384,7 @@ function _build_re_information(dm::DataModel,
     out = RandomEffectInformation[]
     hess_opts = method.hessian
     for (bi, info) in enumerate(batch_infos)
-        nb = info.n_b
+        nb = get_n_b(info)
         labels = _laplace_batch_labels(dm, info)
         nb == 0 && begin
             push!(out,
@@ -476,7 +476,7 @@ function _build_laplace_objective(dm::DataModel,
         rng_seed::Union{Nothing, UInt64} = nothing,
         atol::Real = 1e-8,
         rtol::Real = sqrt(eps(Float64)))
-    _, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re)
+    _, batch_infos, const_cache = _build_re_batch_infos(dm, constants_re)
     ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
         serialization = serialization, force_saveat = true)
     seed = _laplace_seed(rng, rng_seed)
@@ -563,7 +563,7 @@ function _identifiability_report(dm::DataModel,
         fd_abs_step::Real = 1e-4,
         fd_rel_step::Real = 1e-3,
         fd_max_tries::Int = 8)
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     θ_at_u, at_sym = _select_point(fe, at, fit_point)
     prep = _prepare_ident_point(fe, θ_at_u, constants)
 
@@ -759,15 +759,15 @@ function identifiability_report(res::FitResult;
         fd_abs_step::Real = 1e-4,
         fd_rel_step::Real = 1e-3,
         fd_max_tries::Int = 8)
-    dm = res.data_model
+    dm = get_data_model(res)
     dm === nothing &&
         error("This fit result does not store a DataModel; call identifiability_report(dm, ...) instead.")
 
     method_use = if method === :fit
-        if res.method isa MLE || res.method isa MAP || res.method isa Laplace
-            res.method
+        if get_method(res) isa MLE || get_method(res) isa MAP || get_method(res) isa Laplace
+            get_method(res)
         else
-            @warn "identifiability_report does not have a direct objective for $(typeof(res.method)); using method=:auto."
+            @warn "identifiability_report does not have a direct objective for $(typeof(get_method(res))); using method=:auto."
             :auto
         end
     else
@@ -776,7 +776,7 @@ function identifiability_report(res::FitResult;
     method_use = _resolve_ident_method(dm, method_use)
     _validate_ident_method(dm, method_use)
 
-    fitkw = res.fit_kwargs
+    fitkw = get_fit_kwargs(res)
     constants_use = constants === nothing ?
                     (haskey(fitkw, :constants) ? getfield(fitkw, :constants) :
                      NamedTuple()) : constants

@@ -140,17 +140,17 @@ For batches with `n_b == 0` (all RE are constant), returns the sum of
 individual conditional log-likelihoods directly.
 """
 function _ghq_batch_ll(dm::DataModel,
-        info::_LaplaceBatchInfo,
+        info::REBatchInfo,
         θu_re::ComponentArray,
-        const_cache::LaplaceConstantsCache,
+        const_cache::REConstantsCache,
         ll_cache::_LLCache,
         level)   # Int or NamedTuple
     T = eltype(θu_re)
-    if info.n_b == 0
+    if get_n_b(info) == 0
         # All RE are constant — no integration needed.
         total = zero(T)
         empty_b = T[]
-        for i in info.inds
+        for i in get_inds(info)
             η_i = _build_eta_ind(dm, i, info, empty_b, const_cache, θu_re)
             lli = _loglikelihood_individual(dm, i, θu_re, η_i, ll_cache)
             !isfinite(lli) && return T(-Inf)
@@ -163,7 +163,7 @@ function _ghq_batch_ll(dm::DataModel,
 
     # Select grid: isotropic (Int) or anisotropic (NamedTuple)
     sgrid = if level isa Int
-        get_sparse_grid(info.n_b, level)
+        get_sparse_grid(get_n_b(info), level)
     else
         _build_anisotropic_batch_grid(dm, info, level)
     end
@@ -194,14 +194,14 @@ Returns the concatenated tensor-product grid over all RE groups that have
 free levels (non-zero dimension) in this batch.
 """
 function _build_anisotropic_batch_grid(
-        dm::DataModel, info::_LaplaceBatchInfo, level::NamedTuple)
-    re_names = dm.re_group_info.laplace_cache.re_names
+        dm::DataModel, info::REBatchInfo, level::NamedTuple)
+    re_names = get_re_names(get_laplace_cache(get_re_group_info(dm)))
     dims = Int[]
     levels = Int[]
     for (ri, re_name) in enumerate(re_names)
-        re_info = info.re_info[ri]
+        re_info = get_re_info(info)[ri]
         # Total free RE dimension for this RE group in this batch
-        total_dim = sum(length(r) for r in re_info.ranges; init = 0)
+        total_dim = sum(length(r) for r in get_ranges(re_info); init = 0)
         total_dim == 0 && continue
         l = haskey(level, re_name) ? getproperty(level, re_name) : 1
         push!(dims, total_dim)
@@ -244,13 +244,13 @@ end
 # Pre-build all grids needed for this fit so concurrent use is thread-safe.
 function _prepopulate_ghq_cache(dm::DataModel, batch_infos, level)
     if level isa Int
-        for d in unique(info.n_b for info in batch_infos)
+        for d in unique(get_n_b(info) for info in batch_infos)
             d > 0 && get_sparse_grid(d, level)
         end
     else
         # Anisotropic: build the per-batch tensor-product grids
         for info in batch_infos
-            info.n_b > 0 && _build_anisotropic_batch_grid(dm, info, level)
+            get_n_b(info) > 0 && _build_anisotropic_batch_grid(dm, info, level)
         end
     end
 end
@@ -258,9 +258,9 @@ end
 # Return true if any batch grid exceeds `threshold` points.
 function _any_batch_too_large(dm::DataModel, batch_infos, level, threshold::Int)
     for info in batch_infos
-        info.n_b == 0 && continue
+        get_n_b(info) == 0 && continue
         npts = if level isa Int
-            n_ghq_points(info.n_b, level)
+            n_ghq_points(get_n_b(info), level)
         else
             size(_build_anisotropic_batch_grid(dm, info, level).nodes, 2)
         end
@@ -295,13 +295,13 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
         store_data_model = store_data_model)
 
     # ── Validate ────────────────────────────────────────────────────────────
-    re_names = get_re_names(dm.model.random.random)
+    re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) &&
         error("GHQuadrature requires random effects. Use MLE/MAP for fixed-effects-only models.")
 
     _ghq_validate_re_distributions(dm)
 
-    fe = dm.model.fixed.fixed
+    fe = get_fixed(get_model(dm))
     fixed_names = get_names(fe)
     isempty(fixed_names) && error("GHQuadrature requires at least one fixed effect.")
     fixed_set = Set(fixed_names)
@@ -334,7 +334,7 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
     multistart_opts = _resolve_multistart_options(method.multistart, inner_opts)
 
     # ── Infrastructure ───────────────────────────────────────────────────────
-    pairing, batch_infos, const_cache = _build_laplace_batch_infos(dm, constants_re)
+    pairing, batch_infos, const_cache = _build_re_batch_infos(dm, constants_re)
 
     ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
         serialization = serialization, force_saveat = true)
@@ -366,7 +366,7 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
         θt_full = _ghq_merge_full(
             θ_const_t_vec, free_idx, ComponentArrays.getdata(θt_free), axs_full)
         θu = inv_transform(θt_full)
-        θu_re = _symmetrize_psd_params(θu, dm.model.fixed.fixed)
+        θu_re = _symmetrize_psd_params(θu, get_fixed(get_model(dm)))
 
         total = if ll_cache isa AbstractVector
             results = Vector{T}(undef, length(batch_infos))
