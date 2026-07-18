@@ -138,12 +138,12 @@ exponential action). `cf_states == 1:n` means the whole system is closed-form.
 Anything untraceable is conservatively excluded (numerical is always correct).
 """
 function _detect_closed_form(model)
-    de = model.de.de
+    de = get_de(model)
     de === nothing && return _NO_CLOSED_FORM
     # Crossing (time-to-event) models need solver-native event detection and
     # derivative interpolation on the trajectory, which the closed-form solution
     # object does not provide — keep them on the numerical path.
-    isempty(get_formulas_crossings(model.formulas.formulas)) || return _NO_CLOSED_FORM
+    isempty(get_formulas_crossings(get_formulas(model))) || return _NO_CLOSED_FORM
     states = get_de_states(de)
     n = length(states)
     n == 0 && return _NO_CLOSED_FORM
@@ -303,17 +303,24 @@ function _cf_expv(A, b, x0, Δ)
     return (_cf_matexp(_cf_augmented(A, b) .* Δ) * v)[1:n]
 end
 
-# Two-state sequential (Bateman) closed form: one state (`u`) is independent with
+# Two-state sequential (Bateman) scalar kernel: one state (`u`) is independent with
 # zero forcing (`xu' = au·xu`), the other (`d`) is driven by it
-# (`xd' = c·xu + ad·xd + bd`). Scalar exponentials + the stable divided difference
-# — fast and exact, including ka ≈ ke. `A[1,2] == 0` ⇒ state 1 is upstream.
-@inline function _cf_bateman(A, b, x0, Δ)
+# (`xd' = c·xu + ad·xd + bd`). Returns the indices and scalar values so the out-of-
+# place and in-place forms share one op order. `A[1,2] == 0` ⇒ state 1 is upstream.
+@inline function _cf_bateman_ud(A, b, x0, Δ)
     u = iszero(A[1, 2]) ? 1 : 2
     d = 3 - u
     au = A[u, u]
     ad = A[d, d]
     xu = _cf_state_value(au, b[u], x0[u], Δ)
     xd = _cf_state_value(ad, b[d], x0[d], Δ) + A[d, u] * x0[u] * _cf_expdd(au, ad, Δ)
+    return u, d, xu, xd
+end
+
+# Bateman closed form as a vector: scalar exponentials + the stable divided
+# difference, fast and exact including ka ≈ ke.
+@inline function _cf_bateman(A, b, x0, Δ)
+    u, d, xu, xd = _cf_bateman_ud(A, b, x0, Δ)
     return u == 1 ? [xu, xd] : [xd, xu]
 end
 
@@ -337,11 +344,9 @@ function _cf_propagate!(out, mode::Symbol, A, b, x0, Δ)
             out[i] = _cf_state_value(A[i, i], b[i], x0[i], Δ)
         end
     elseif mode === :bateman
-        u = iszero(A[1, 2]) ? 1 : 2
-        d = 3 - u
-        @inbounds out[u] = _cf_state_value(A[u, u], b[u], x0[u], Δ)
-        @inbounds out[d] = _cf_state_value(A[d, d], b[d], x0[d], Δ) +
-                           A[d, u] * x0[u] * _cf_expdd(A[u, u], A[d, d], Δ)
+        u, d, xu, xd = _cf_bateman_ud(A, b, x0, Δ)
+        @inbounds out[u] = xu
+        @inbounds out[d] = xd
     else
         out .= _cf_expv(A, b, x0, Δ)  # :linear (opt-in): matrix-exp action, rare
     end
@@ -420,16 +425,15 @@ Returns `nothing` on non-finite coefficients (mirrors a failed numerical solve).
 """
 function _closed_form_solve_de(model, compiled, u0::AbstractVector, tspan, saveat,
         t0::Real, mode::Symbol; events = nothing, idxs = eachindex(u0))
-    de = model.de.de
+    de = get_de(model)
     f = get_de_f(de)
     n = length(u0)
     m = length(idxs)
     t0f = float(t0)
     z = zeros(Float64, n)
-    b_full = collect(f(z, compiled, t0f))
-    cu0 = collect(u0)
+    b_full = f(z, compiled, t0f)
     b_base = [b_full[idxs[a]] for a in 1:m]
-    x0 = [cu0[idxs[a]] for a in 1:m]
+    x0 = [u0[idxs[a]] for a in 1:m]
     T = promote_type(eltype(b_base), eltype(x0))
     # A[a,b] = ∂f_{idxs[a]}/∂u_{idxs[b]} = f(e_{idxs[b]})[idxs[a]] − b. For a self-
     # contained subset the excluded states are zero in the probe (they don't feed in).
@@ -438,7 +442,7 @@ function _closed_form_solve_de(model, compiled, u0::AbstractVector, tspan, savea
     for b in 1:m
         fill!(ej, 0.0)
         ej[idxs[b]] = 1.0
-        col = collect(f(ej, compiled, t0f))
+        col = f(ej, compiled, t0f)
         for a in 1:m
             @inbounds A[a, b] = col[idxs[a]] - b_full[idxs[a]]
         end

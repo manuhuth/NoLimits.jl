@@ -29,14 +29,6 @@ const _RESIDUAL_ALLOWED = Set([:pit, :quantile, :raw, :pearson, :logscore])
     error("Unknown residual metric $(metric).")
 end
 
-@inline function _residual_qlo_column(metric::Symbol)
-    return Symbol(string(_residual_metric_column(metric)), "_qlo")
-end
-
-@inline function _residual_qhi_column(metric::Symbol)
-    return Symbol(string(_residual_metric_column(metric)), "_qhi")
-end
-
 function _validate_residual_metrics(residuals)
     if residuals isa Symbol
         res = [residuals]
@@ -477,18 +469,7 @@ function get_residuals(res::FitResult;
             sol_accessors = nothing
             if get_de(get_model(dm)) !== nothing
                 sol = cache_use.sols[i]
-                compiled = get_de_compiler(get_de(get_model(dm)))((;
-                    fixed_effects = θ,
-                    random_effects = η_ind,
-                    constant_covariates = get_const_cov(ind),
-                    varying_covariates = merge(
-                        (t = get_vary(get_series(ind)).t[1],), get_dyn(get_series(ind))),
-                    helpers = get_helper_funs(get_model(dm)),
-                    model_funs = get_model_funs(get_model(dm)),
-                    preDE = calculate_prede(get_model(dm), θ, η_ind, get_const_cov(ind))
-                ))
-                sol_accessors = _sol_accessors_with_crossings(
-                    get_model(dm), sol, compiled, θ, η_ind, get_const_cov(ind))
+                sol_accessors = _sol_accessors_from_cached(dm, ind, sol, θ, η_ind)
             end
 
             for obs_name in obs_list
@@ -715,7 +696,7 @@ function predict(res::FitResult, dm_new::DataModel;
     end
     # :ebe
     η_vec = _predict_eta_ebe(res, dm_new, θ, constants_re)
-    cache = _fill_plot_cache(dm_new, θ, η_vec, nothing, constants_re, true,
+    cache = _fill_plot_cache(dm_new, θ, η_vec, constants_re, true,
         ode_args, ode_kwargs)
     df = get_residuals(dm_new; cache = cache, params = NamedTuple(θ), residuals = [:raw],
         fitted_stat = fitted_stat, constants_re = constants_re,
@@ -834,7 +815,7 @@ function _predict_marginal(res::FitResult, dm_new::DataModel, θ::ComponentArray
                 for re in re_names)))
             end
         end
-        cache = _fill_plot_cache(dm_new, θ, η_vec, nothing, constants_re, true,
+        cache = _fill_plot_cache(dm_new, θ, η_vec, constants_re, true,
             ode_args, ode_kwargs)
         df = get_residuals(dm_new; cache = cache, params = NamedTuple(θ),
             residuals = [:raw], fitted_stat = fitted_stat, constants_re = constants_re,

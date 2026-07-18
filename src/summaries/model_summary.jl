@@ -137,33 +137,24 @@ function _ms_interp_name(itp)
     return i === nothing ? s : s[1:(i - 1)]
 end
 
-function _ms_cov_summary(p)
-    if p isa Covariate
-        return (kind = :Covariate, columns = Symbol[p.column],
-            constant_on = Symbol[], interpolation = "-")
-    elseif p isa CovariateVector
-        return (kind = :CovariateVector, columns = collect(p.columns),
-            constant_on = Symbol[], interpolation = "-")
-    elseif p isa ConstantCovariate
-        return (kind = :ConstantCovariate, columns = Symbol[p.column],
-            constant_on = collect(p.constant_on), interpolation = "-")
-    elseif p isa ConstantCovariateVector
-        return (kind = :ConstantCovariateVector, columns = collect(p.columns),
-            constant_on = collect(p.constant_on), interpolation = "-")
-    elseif p isa DynamicCovariate
-        interp = _ms_interp_name(p.interpolation)
-        return (kind = :DynamicCovariate, columns = Symbol[p.column],
-            constant_on = Symbol[], interpolation = interp)
+# Interpolation label; only dynamic covariates carry one, everything else is "-".
+# The kind/columns/constant_on dispatch is shared via `_covariate_kind_and_columns`.
+function _ms_cov_interpolation(p)
+    if p isa DynamicCovariate
+        return _ms_interp_name(p.interpolation)
     elseif p isa DynamicCovariateVector
         names = String[]
         for itp in p.interpolations
             push!(names, _ms_interp_name(itp))
         end
-        return (kind = :DynamicCovariateVector, columns = collect(p.columns),
-            constant_on = Symbol[], interpolation = join(unique(names), ", "))
+        return join(unique(names), ", ")
     end
-    return (kind = Symbol(nameof(typeof(p))), columns = Symbol[],
-        constant_on = Symbol[], interpolation = "-")
+    return "-"
+end
+
+function _ms_cov_summary(p)
+    kind, columns, constant_on = _covariate_kind_and_columns(p)
+    return (; kind, columns, constant_on, interpolation = _ms_cov_interpolation(p))
 end
 
 function _ms_join_syms(xs::Vector{Symbol})
@@ -189,12 +180,12 @@ method for interactive inspection.
 - `constants_re::NamedTuple = NamedTuple()`: constants for random-effects reporting.
 """
 function summarize(m::Model)
-    has_prede = m.de.prede !== nothing
-    has_de = m.de.de !== nothing
-    has_initialde = m.de.initial !== nothing
+    has_prede = get_prede(m) !== nothing
+    has_de = get_de(m) !== nothing
+    has_initialde = get_initial(m) !== nothing
     model_type = has_de ? :ode : :non_ode
 
-    fe = m.fixed.fixed
+    fe = get_fixed(m)
     fe_names = get_names(fe)
     fe_params = get_params(fe)
     n_fixed_effect_blocks = length(fe_names)
@@ -218,7 +209,7 @@ function summarize(m::Model)
             ))
     end
 
-    re_model = m.random.random
+    re_model = get_random(m)
     re_names = get_re_names(re_model)
     re_groups = get_re_groups(re_model)
     re_types = _resolve_re_distribution_types(re_model)
@@ -231,7 +222,7 @@ function summarize(m::Model)
     n_random_effects = length(re_names)
     n_random_effect_group_columns = length(unique([getfield(re_groups, n) for n in re_names]))
 
-    cov = m.covariates.covariates
+    cov = get_covariates(m)
     covariate_summaries = NamedTuple[]
     for cname in cov.names
         p = getfield(cov.params, cname)
@@ -246,16 +237,16 @@ function summarize(m::Model)
             ))
     end
 
-    formulas = m.formulas.formulas
+    formulas = get_formulas(m)
     ir = get_formulas_ir(formulas)
     outcome_dist_types = _namedtuple_from_symbols(
         ir.obs_names, [_distribution_type_from_expr(ex) for ex in ir.obs_exprs])
 
-    helper_names = Symbol[collect(keys(m.helpers.funcs))...]
+    helper_names = Symbol[collect(keys(get_helper_funs(m)))...]
     required_states = copy(m.formulas.required_states)
     required_signals = copy(m.formulas.required_signals)
-    de_states = has_de ? copy(get_de_states(m.de.de)) : Symbol[]
-    de_signals = has_de ? copy(get_de_signals(m.de.de)) : Symbol[]
+    de_states = has_de ? copy(get_de_states(get_de(m))) : Symbol[]
+    de_signals = has_de ? copy(get_de_signals(get_de(m))) : Symbol[]
 
     return ModelSummary(
         model_type,

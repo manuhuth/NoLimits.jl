@@ -17,11 +17,6 @@ function _require_varying_covariate(dm::DataModel, x_axis_feature)
     return x_axis_feature
 end
 
-function _vpc_x_values(
-        dm::DataModel, ind::Individual, obs_rows::Vector{Int}, x_axis_feature)
-    return _get_x_values(dm, ind, obs_rows, x_axis_feature)
-end
-
 function _bin_edges_quantile(x::Vector{Float64}, n_bins::Int)
     x_min = minimum(x)
     x_max = maximum(x)
@@ -62,7 +57,7 @@ function _collect_observed_xy(ind::Individual,
         obs_rows::Vector{Int},
         obs_name::Symbol,
         x_axis_feature)
-    x_raw = _vpc_x_values(dm, ind, obs_rows, x_axis_feature)
+    x_raw = _get_x_values(dm, ind, obs_rows, x_axis_feature)
     y_raw = getfield(get_obs(get_series(ind)), obs_name)
     x_all = Float64[]
     x_obs = Float64[]
@@ -147,13 +142,13 @@ function _sample_random_effects_levels(dm::DataModel,
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = get_model_funs(get_model(dm))
     helpers = get_helper_funs(get_model(dm))
-    values = get_re_values(get_re_group_info(dm))
+    re_values = get_re_values(get_re_group_info(dm))
     out = Dict{Symbol, Dict{Any, Any}}()
     for re in re_names
         reps = _re_level_reps(dm, re)
         fixed = haskey(fixed_maps, re) ? getfield(fixed_maps, re) : Dict{Any, Any}()
         level_vals = Dict{Any, Any}()
-        for lvl in getfield(values, re)
+        for lvl in getfield(re_values, re)
             if haskey(fixed, lvl)
                 level_vals[lvl] = fixed[lvl]
             else
@@ -201,7 +196,7 @@ function _simulate_obs(dm::DataModel,
     sim_x = Vector{Vector{Float64}}(undef, length(get_individuals(dm)))
     for (i, ind) in enumerate(get_individuals(dm))
         obs_rows = get_obs_rows(get_row_groups(dm))[i]
-        x = _vpc_x_values(dm, ind, obs_rows, x_axis_feature)
+        x = _get_x_values(dm, ind, obs_rows, x_axis_feature)
         sim_x[i] = Float64.(x)
         η_ind = η_vec[i]
         rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only = true)

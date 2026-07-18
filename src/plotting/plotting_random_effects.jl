@@ -48,7 +48,7 @@ function _filter_re_without_covariates(res::FitResult, re_list)
 end
 
 function _resolve_levels(dm::DataModel, re::Symbol, levels, individuals_idx)
-    levels_all = getfield(get_re_group_info(dm).values, re)
+    levels_all = getfield(get_re_values(get_re_group_info(dm)), re)
     if individuals_idx !== nothing
         inds = _resolve_individuals(dm, individuals_idx)
         re_groups = get_re_groups(get_random(get_model(dm)))

@@ -52,16 +52,23 @@ function probabilities_hidden_states(dist::CoarsedObservedStatesMarkovModel)
     probabilities_hidden_states(dist.base_dist)
 end
 
+# Total hidden-state mass over the compatible observed labels; shared by the
+# posterior/logpdf/combined paths below (same left-fold order — bit-identical).
+function _coarsed_mass(p, idxs)
+    mass = zero(eltype(p))
+    for idx in idxs
+        mass += p[idx]
+    end
+    return mass
+end
+
 function posterior_hidden_states(dist::CoarsedObservedStatesMarkovModel, y::AbstractVector)
     idxs = _omm_coarsed_observation_indices(dist.base_dist.state_labels, y)
     p = probabilities_hidden_states(dist.base_dist)
     T = eltype(p)
     post = zeros(T, dist.base_dist.n_states)
     isempty(idxs) && return post
-    mass = zero(T)
-    for idx in idxs
-        mass += p[idx]
-    end
+    mass = _coarsed_mass(p, idxs)
     (isfinite(mass) && mass > zero(T)) || return post
     inv_mass = inv(mass)
     for idx in idxs
@@ -86,10 +93,7 @@ function _hmm_logpdf_and_posterior(
     T = eltype(p)
     post = zeros(T, dist.base_dist.n_states)
     isempty(idxs) && return (-Inf, post)
-    mass = zero(T)
-    for idx in idxs
-        mass += p[idx]
-    end
+    mass = _coarsed_mass(p, idxs)
     (isfinite(mass) && mass > zero(T)) || return (-Inf, post)
     inv_mass = inv(mass)
     for idx in idxs
@@ -108,10 +112,7 @@ function Distributions.logpdf(dist::CoarsedObservedStatesMarkovModel, y::Abstrac
     idxs = _omm_coarsed_observation_indices(dist.base_dist.state_labels, y)
     isempty(idxs) && return -Inf
     p = probabilities_hidden_states(dist.base_dist)
-    mass = zero(eltype(p))
-    for idx in idxs
-        mass += p[idx]
-    end
+    mass = _coarsed_mass(p, idxs)
     (isfinite(mass) && mass > zero(eltype(p))) || return -Inf
     return log(mass)
 end

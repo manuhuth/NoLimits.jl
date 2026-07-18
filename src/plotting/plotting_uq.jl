@@ -39,10 +39,6 @@ end
     return "KDE Density"
 end
 
-@inline function _uq_param_label(name::Symbol)
-    return string(name)
-end
-
 @inline function _uq_wald_coord_transforms(uq::UQResult)
     d = get_uq_diagnostics(uq)
     if d isa NamedTuple && haskey(d, :coordinate_transforms)

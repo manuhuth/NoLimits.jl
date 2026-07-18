@@ -314,6 +314,18 @@ function _re_mean_or_zero(dist, dim::Int, is_scalar::Bool)
     end
 end
 
+# Prior-mean plug-in η as a ComponentArray: each RE at `mean` (0/zeros fallback).
+function _prior_mean_eta(dists, re_cache)
+    pairs = Pair{Symbol, Any}[]
+    for (ri, re) in enumerate(get_re_names(re_cache))
+        dim = get_dims(re_cache)[ri]
+        is_scalar = get_is_scalar(re_cache)[ri]
+        dist = getproperty(dists, re)
+        push!(pairs, re => _re_mean_or_zero(dist, dim, is_scalar))
+    end
+    return ComponentArray(NamedTuple(pairs))
+end
+
 function _build_mean_eta(dm::DataModel, θu::ComponentArray)
     re_cache = get_laplace_cache(get_re_group_info(dm))
     (re_cache === nothing || isempty(get_re_names(re_cache))) && return ComponentArray()
@@ -325,14 +337,7 @@ function _build_mean_eta(dm::DataModel, θu::ComponentArray)
     for i in 1:n
         const_cov = get_const_cov(get_individuals(dm)[i])
         dists = dists_builder(θu, const_cov, model_funs, helpers)
-        pairs = Pair{Symbol, Any}[]
-        for (ri, re) in enumerate(get_re_names(re_cache))
-            dim = get_dims(re_cache)[ri]
-            is_scalar = get_is_scalar(re_cache)[ri]
-            dist = getproperty(dists, re)
-            push!(pairs, re => _re_mean_or_zero(dist, dim, is_scalar))
-        end
-        etas[i] = ComponentArray(NamedTuple(pairs))
+        etas[i] = _prior_mean_eta(dists, re_cache)
     end
     return etas
 end
@@ -357,15 +362,8 @@ function _build_ebe_eta(dm::DataModel, θu::ComponentArray, ll_cache; maxiters::
     for i in 1:n
         const_cov = get_const_cov(get_individuals(dm)[i])
         dists = dists_builder(θu, const_cov, model_funs, helpers)
-        # Build prior mean as starting point
-        pairs = Pair{Symbol, Any}[]
-        for (ri, re) in enumerate(re_names)
-            dim = get_dims(re_cache)[ri]
-            is_scalar = get_is_scalar(re_cache)[ri]
-            dist = getproperty(dists, re)
-            push!(pairs, re => _re_mean_or_zero(dist, dim, is_scalar))
-        end
-        η0_i = ComponentArray(NamedTuple(pairs))
+        # Prior mean as the inner-optimization starting point.
+        η0_i = _prior_mean_eta(dists, re_cache)
         axs = getaxes(η0_i)
         η0_flat = Vector(η0_i)
         if isempty(η0_flat)

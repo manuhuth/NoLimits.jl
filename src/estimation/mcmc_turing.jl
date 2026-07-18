@@ -108,12 +108,11 @@ end
     end
 end
 
-function _build_turing_model(fixed_names::Vector{Symbol}, free_names::Vector{Symbol})
-    key = (Tuple(fixed_names), Tuple(free_names))
-    if haskey(_MCMC_MODEL_CACHE, key)
-        return _MCMC_MODEL_CACHE[key]
-    end
-    fname = gensym(:_mcmc_model)
+# Shared θ-reconstruction metaprogramming for both MCMC model builders: sample the
+# free fixed effects from their priors, merge with the constants, and rebuild the
+# full fixed-effect ComponentArray in declaration order.
+function _mcmc_theta_reconstruction(
+        fixed_names::Vector{Symbol}, free_names::Vector{Symbol})
     assigns = [:($(n) ~ getfield(priors, $(QuoteNode(n)))) for n in free_names]
     free_nt = Expr(:call,
         Expr(:curly, :NamedTuple, Expr(:tuple, QuoteNode.(free_names)...)),
@@ -124,6 +123,28 @@ function _build_turing_model(fixed_names::Vector{Symbol}, free_names::Vector{Sym
         Expr(:curly, :NamedTuple, Expr(:tuple, QuoteNode.(fixed_names)...)),
         Expr(:tuple, val_exprs...))
     θ_expr = :(ComponentArray($nt_expr))
+    return assigns, θ_expr
+end
+
+# Shared MCMC model epilogue (spliced into both @model bodies): add the batch
+# log-likelihood, then the optional extra_objective. extra_objective is a
+# negative-log-likelihood cost (-J); @addlogprob! adds a log-density, so add
+# +J = -extra_objective(θ_re) (θ_re is natural-scale).
+function _mcmc_addlogprob_epilogue()
+    return (:(Turing.@addlogprob! ll),
+        :(if extra_objective !== nothing
+            Turing.@addlogprob! -extra_objective(θ_re)
+        end))
+end
+
+function _build_turing_model(fixed_names::Vector{Symbol}, free_names::Vector{Symbol})
+    key = (Tuple(fixed_names), Tuple(free_names))
+    if haskey(_MCMC_MODEL_CACHE, key)
+        return _MCMC_MODEL_CACHE[key]
+    end
+    fname = gensym(:_mcmc_model)
+    assigns, θ_expr = _mcmc_theta_reconstruction(fixed_names, free_names)
+    epilogue = _mcmc_addlogprob_epilogue()
     ex = quote
         @model function $(fname)(
                 dm, cache, serialization, priors, constants, extra_objective)
@@ -132,12 +153,7 @@ function _build_turing_model(fixed_names::Vector{Symbol}, free_names::Vector{Sym
             θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
             ll = loglikelihood(
                 dm, θ_re, ComponentArray(); cache = cache, serialization = serialization)
-            Turing.@addlogprob! ll
-            # extra_objective is a negative-log-likelihood cost (-J); @addlogprob! adds a
-            # log-density, so add +J = -extra_objective(θ_re) (θ_re is natural-scale).
-            if extra_objective !== nothing
-                Turing.@addlogprob! -extra_objective(θ_re)
-            end
+            $(epilogue...)
         end
     end
     Core.eval(@__MODULE__, ex)
@@ -174,16 +190,8 @@ function _build_turing_model_re(
         return _MCMC_MODEL_CACHE_RE[key]
     end
     fname = gensym(:_mcmc_model_re)
-    assigns = [:($(n) ~ getfield(priors, $(QuoteNode(n)))) for n in free_names]
-    free_nt = Expr(:call,
-        Expr(:curly, :NamedTuple, Expr(:tuple, QuoteNode.(free_names)...)),
-        Expr(:tuple, free_names...))
-    θ_nt = :(merge($free_nt, constants))
-    val_exprs = [:(getfield($θ_nt, $(QuoteNode(n)))) for n in fixed_names]
-    nt_expr = Expr(:call,
-        Expr(:curly, :NamedTuple, Expr(:tuple, QuoteNode.(fixed_names)...)),
-        Expr(:tuple, val_exprs...))
-    θ_expr = :(ComponentArray($nt_expr))
+    assigns, θ_expr = _mcmc_theta_reconstruction(fixed_names, free_names)
+    epilogue = _mcmc_addlogprob_epilogue()
     sample_blocks = Expr(:block)
     re_val_syms = Symbol[]
     for re in re_names
@@ -325,12 +333,7 @@ function _build_turing_model_re(
 
             ll = loglikelihood(
                 dm, θ_re, η_vec; cache = cache, serialization = serialization)
-            Turing.@addlogprob! ll
-            # extra_objective is a negative-log-likelihood cost (-J); @addlogprob! adds a
-            # log-density, so add +J = -extra_objective(θ_re) (θ_re is natural-scale).
-            if extra_objective !== nothing
-                Turing.@addlogprob! -extra_objective(θ_re)
-            end
+            $(epilogue...)
         end
     end
     Core.eval(@__MODULE__, ex)

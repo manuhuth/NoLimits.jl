@@ -212,32 +212,6 @@ function _build_anisotropic_batch_grid(
 end
 
 # ---------------------------------------------------------------------------
-# Positional free/constants merge (mirrors mle.jl): the flat positions of the
-# free parameters inside the full transformed vector are precomputed once, so
-# the per-evaluation merge is plain positional indexing. The old per-name
-# `setproperty!` loop dispatches on runtime Symbols, which Enzyme's runtime
-# rules reject and which costs a fresh ComponentArray + dynamic writes per call.
-# ---------------------------------------------------------------------------
-function _ghq_free_idx(θ_const_t::ComponentArray, θ0_free_t::ComponentArray)
-    lab_full = ComponentArrays.labels(θ_const_t)
-    lab_free = ComponentArrays.labels(θ0_free_t)
-    pos_full = Dict{String, Int}(lab_full[i] => i for i in eachindex(lab_full))
-    return Int[pos_full[l] for l in lab_free]
-end
-
-function _ghq_merge_full(θ_const_t_vec::Vector, free_idx::Vector{Int}, v_free, axs_full)
-    T = eltype(v_free)
-    full = Vector{T}(undef, length(θ_const_t_vec))
-    @inbounds for i in eachindex(full)
-        full[i] = θ_const_t_vec[i]
-    end
-    @inbounds for k in eachindex(free_idx)
-        full[free_idx[k]] = v_free[k]
-    end
-    return ComponentArray(full, axs_full)
-end
-
-# ---------------------------------------------------------------------------
 # Cache pre-population helpers
 # ---------------------------------------------------------------------------
 
@@ -305,9 +279,7 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
     fixed_names = get_names(fe)
     isempty(fixed_names) && error("GHQuadrature requires at least one fixed effect.")
     fixed_set = Set(fixed_names)
-    for name in keys(constants)
-        name in fixed_set || error("Unknown constant parameter $(name).")
-    end
+    _validate_constant_names(fixed_set, constants)
     all(name in keys(constants) for name in fixed_names) &&
         error("GHQuadrature requires at least one free fixed effect.")
 
@@ -355,7 +327,7 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
     θ0_free_t = θ0_t[free_names]
     axs_free = getaxes(θ0_free_t)
     axs_full = getaxes(θ_const_t)
-    free_idx = _ghq_free_idx(θ_const_t, θ0_free_t)
+    free_idx = _free_idx(θ_const_t, θ0_free_t)
     θ_const_t_vec = collect(θ_const_t)
 
     function obj(θt, p)
@@ -363,7 +335,7 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
         T = eltype(θt_free)
         infT = convert(T, Inf)
 
-        θt_full = _ghq_merge_full(
+        θt_full = _merge_free_into_full(
             θ_const_t_vec, free_idx, ComponentArrays.getdata(θt_free), axs_full)
         θu = inv_transform(θt_full)
         θu_re = _symmetrize_psd_params(θu, get_fixed(get_model(dm)))
@@ -455,7 +427,7 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
     θ_hat_t_raw = sol.u
     θ_hat_t_free = θ_hat_t_raw isa ComponentArray ?
                    θ_hat_t_raw : ComponentArray(θ_hat_t_raw, axs_free)
-    θ_hat_t = _ghq_merge_full(
+    θ_hat_t = _merge_free_into_full(
         θ_const_t_vec, free_idx, ComponentArrays.getdata(θ_hat_t_free), axs_full)
     θ_hat_u = inv_transform(θ_hat_t)
 

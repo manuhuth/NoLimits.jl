@@ -95,7 +95,7 @@ struct SavedMCMCResult{C, N, O}
 end
 
 # The VI posterior (AdvancedVI distribution) is plain data and saved directly.
-# `state` and `varinfo` are dropped; `get_vi_state` returns `nothing` after loading.
+# `state` is dropped; `get_vi_state` returns `nothing` after loading.
 struct SavedVIResult{Q, T, N, O, C}
     posterior::Q
     trace::T
@@ -306,11 +306,11 @@ function _reconstruct_method_result(s::SavedMCMCResult)
     MCMCResult(s.chain, _SavedSamplerStub(s.sampler_kind), s.n_samples, s.notes, s.observed)
 end
 
-# VIResult: state=nothing, varinfo=nothing, model=nothing — not reconstructable from disk.
+# VIResult: state=nothing, model=nothing — not reconstructable from disk.
 # (Without the model, `sample_posterior` cannot unlink draws and returns them as-is.)
 function _reconstruct_method_result(s::SavedVIResult)
     VIResult(s.posterior, s.trace, nothing, s.n_iter, s.max_iter,
-        s.final_elbo, s.converged, s.notes, s.observed, nothing, s.coord_names, nothing)
+        s.final_elbo, s.converged, s.notes, s.observed, s.coord_names, nothing)
 end
 
 function _reconstruct_fit_kwargs(kw::NamedTuple)
@@ -380,7 +380,7 @@ Non-serializable fields are stripped automatically:
 - Runtime-generated functions in `DataModel` (closures from the `@Model` macro)
 - Optimization solver cache in `raw` (`get_raw` returns `nothing` after loading)
 - MCMC `sampler` (replaced with a `_SavedSamplerStub` on load)
-- VI `state` and `varinfo` (`get_vi_state` returns `nothing` after loading)
+- VI `state` (`get_vi_state` returns `nothing` after loading)
 - `rng` from `fit_kwargs` (defaults to `Random.default_rng()` on load)
 - Diagnostic `optimizer` field
 

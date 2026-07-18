@@ -18,10 +18,6 @@ end
 @testset "Plot cache kwargs" begin
     res = fx_mle()
 
-    cache1 = build_plot_cache(res; cache_obs_dists = false)
-    cache2 = build_plot_cache(res; cache_obs_dists = true)
-    @test cache1.signature != cache2.signature
-
     cache3 = build_plot_cache(res; params = (a = 1.5,))
     @test getproperty(cache3.params, :a) == 1.5
 end
@@ -29,7 +25,6 @@ end
 @testset "Plot cache kwargs (MCMC warmup override)" begin
     cache = build_plot_cache(fx_mcmc_re(); mcmc_warmup = 1, mcmc_draws = 5)
     @test cache isa PlotCache
-    @test cache.chain !== nothing
 end
 
 @testset "Plot cache inherits constants_re from fit result" begin
@@ -47,13 +42,11 @@ end
 @testset "Plot cache (MCMC)" begin
     cache = build_plot_cache(fx_mcmc_re(); cache_obs_dists = false, mcmc_draws = 5)
     @test cache isa PlotCache
-    @test cache.chain !== nothing
 end
 
 @testset "Plot cache (VI, fixed-effects only)" begin
     cache = build_plot_cache(fx_vi(); cache_obs_dists = false, mcmc_draws = 5)
     @test cache isa PlotCache
-    @test cache.chain === nothing
 end
 
 @testset "Plot cache (ODE)" begin

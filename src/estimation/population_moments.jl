@@ -77,12 +77,13 @@ end
 @inline _pm_scalar_or(v, j) = v isa Number ? v : v[j]
 
 # additive-Gaussian negative log-likelihood of an observed moment vector vs prediction,
-# with per-entry or scalar noise standard deviation σ.
-function _pm_gauss_nll(obs, pred, σ)
+# with per-entry or scalar noise standard deviation σ. `offset` is added to each
+# prediction entry (the measurement-variance add-on), avoiding a per-eval temporary.
+function _pm_gauss_nll(obs, pred, σ; offset = 0.0)
     acc = zero(eltype(pred))
     @inbounds for j in eachindex(obs)
         s = _pm_scalar_or(σ, j)
-        r = (obs[j] - pred[j]) / s
+        r = (obs[j] - (pred[j] + offset)) / s
         acc += log(2π * s^2) + r^2
     end
     return 0.5 * acc
@@ -142,8 +143,7 @@ function population_moment_term(; simulate, re_half, samples::AbstractMatrix,
             nll += _pm_gauss_nll(mean, μrep, sd_mean)
         end
         if has_var
-            Σtot = [Σ[j] + meas_var for j in eachindex(Σ)]
-            nll += _pm_gauss_nll(var, Σtot, sd_var)
+            nll += _pm_gauss_nll(var, Σ, sd_var; offset = meas_var)
         end
         return nll
     end

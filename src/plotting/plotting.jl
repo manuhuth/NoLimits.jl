@@ -253,21 +253,18 @@ function _multistart_data_model(res::MultistartFitResult, dm::Union{Nothing, Dat
 end
 
 """
-    PlotCache{S, O, C, P, R, M}
+    PlotCache{S, O, P, R}
 
 Pre-computed plotting cache for efficient repeated rendering of model predictions.
 
 Create via [`build_plot_cache`](@ref) and pass to `plot_fits` via the `cache` keyword
 argument to avoid re-solving the ODE or re-evaluating formulas on each call.
 """
-struct PlotCache{S, O, C, P, R, M}
-    signature::UInt
+struct PlotCache{S, O, P, R}
     sols::Vector{S}
     obs_dists::O
-    chain::C
     params::P
     random_effects::R
-    meta::M
 end
 
 # Apply HMM forward-filter step for one observable column.
@@ -322,39 +319,6 @@ function _with_posterior_warmup(res::FitResult, mcmc_warmup::Union{Nothing, Int}
         get_data_model(res), get_fit_args(res), get_fit_kwargs(res))
 end
 
-function _plot_signature(dm::DataModel,
-        θ::ComponentArray,
-        constants_re::NamedTuple,
-        solver_cfg,
-        callbacks_hash::UInt,
-        cache_obs_dists::Bool)
-    h = hash(typeof(get_model(dm)))
-    h = hash(
-        get_de(get_model(dm)) === nothing ? Symbol[] : get_de_states(get_de(get_model(dm))),
-        h)
-    h = hash(get_formulas_meta(get_formulas(get_model(dm))).obs_names, h)
-    h = hash(θ, h)
-    h = hash(constants_re, h)
-    h = hash(typeof(solver_cfg.alg), h)
-    h = hash(solver_cfg.args, h)
-    h = hash(solver_cfg.kwargs, h)
-    h = hash(callbacks_hash, h)
-    h = hash(cache_obs_dists, h)
-    return h
-end
-
-function _callbacks_hash(dm::DataModel)
-    acc = UInt(0)
-    for ind in get_individuals(dm)
-        if get_callbacks(ind) === nothing
-            acc = hash(nothing, acc)
-        else
-            acc = hash(get_callbacks(ind), acc)
-        end
-    end
-    return acc
-end
-
 function _solve_dense_individual(dm::DataModel,
         ind::Individual,
         θ::ComponentArray,
@@ -389,6 +353,24 @@ function _solve_dense_individual(dm::DataModel,
     return sol, compiled
 end
 
+# Rebuild the compiled DE parameters for a cached (dense) solution and wrap it in
+# crossing-aware solution accessors. Callers guard on `get_de(...) !== nothing` before
+# fetching the cached solution, so this assumes the model has a DE.
+function _sol_accessors_from_cached(dm::DataModel, ind::Individual, sol, θ, η_ind)
+    compiled = get_de_compiler(get_de(get_model(dm)))((;
+        fixed_effects = θ,
+        random_effects = η_ind,
+        constant_covariates = get_const_cov(ind),
+        varying_covariates = merge(
+            (t = get_vary(get_series(ind)).t[1],), get_dyn(get_series(ind))),
+        helpers = get_helper_funs(get_model(dm)),
+        model_funs = get_model_funs(get_model(dm)),
+        preDE = calculate_prede(get_model(dm), θ, η_ind, get_const_cov(ind))
+    ))
+    return _sol_accessors_with_crossings(
+        get_model(dm), sol, compiled, θ, η_ind, get_const_cov(ind))
+end
+
 function _mcmc_param_means(chain::Chains;
         n_adapt::Int = 0,
         max_draws::Int = typemax(Int),
@@ -403,24 +385,27 @@ function _mcmc_param_means(chain::Chains;
     return Dict{Symbol, Float64}((names_all[i] => means[i]) for i in eachindex(names_all))
 end
 
-function _coordwise_fixed_from_means(dm::DataModel,
-        means::Dict{Symbol, Float64},
-        source::AbstractString)
+# Reconstruct a fixed-effect ComponentArray coordinate-by-coordinate. `lookup(key)`
+# maps a coordinate key string ("name" for scalars, "name[i,j]" for array elements) to
+# its value, or `nothing` when absent — in which case the initial value is used and a
+# `source`-tagged warning is emitted. Shared by the MCMC/VI mean and draw paths.
+function _coordwise_fixed_from_means(dm::DataModel, source::AbstractString, lookup)
     fe_names = get_names(get_fixed(get_model(dm)))
     θ0_u = get_θ0_untransformed(get_fixed(get_model(dm)))
     pairs = Pair{Symbol, Any}[]
     for name in fe_names
-        if haskey(means, name)
-            push!(pairs, name => means[name])
+        v = lookup(string(name))
+        if v !== nothing
+            push!(pairs, name => v)
         else
             val0 = getproperty(θ0_u, name)
             if val0 isa AbstractArray
                 vals = similar(val0, Float64)
                 for idx in CartesianIndices(val0)
                     idx_txt = join(Tuple(idx), ",")
-                    key = Symbol("$(name)[$(idx_txt)]")
-                    if haskey(means, key)
-                        vals[idx] = means[key]
+                    ve = lookup(string(name, "[", idx_txt, "]"))
+                    if ve !== nothing
+                        vals[idx] = ve
                     else
                         @warn "$(source) is missing fixed effect element; falling back to initial value." name=name index=Tuple(idx)
                         vals[idx] = Float64(val0[idx])
@@ -436,6 +421,40 @@ function _coordwise_fixed_from_means(dm::DataModel,
     return ComponentArray(NamedTuple(pairs))
 end
 
+# Per-RE metadata for the plotting posterior/default-mean reconstructions: the free
+# grouping levels (those not pinned by `fixed_maps`) and the RE dimension, computed from
+# one representative individual. Calls `dists_builder` once per RE with free levels, in
+# `re_names` order; RE with no free levels get dim 1 and a `nothing` dist. The returned
+# NamedTuples carry the representative `dist` for callers that need its mean.
+function _re_free_meta(dm::DataModel, θ::ComponentArray, fixed_maps, re_names,
+        dists_builder, model_funs, helpers)
+    re_values = get_re_values(get_re_group_info(dm))
+    meta = Dict{Symbol, NamedTuple}()
+    for re in re_names
+        levels_all = getfield(re_values, re)
+        fixed = haskey(fixed_maps, re) ? getfield(fixed_maps, re) : Dict{Any, Any}()
+        levels_free = Any[]
+        for lvl in levels_all
+            haskey(fixed, lvl) && continue
+            push!(levels_free, lvl)
+        end
+        if isempty(levels_free)
+            meta[re] = (levels_free = levels_free, dim = 1, dist = nothing)
+            continue
+        end
+        rep_idx = findfirst(
+            ind -> (getfield(get_re_groups(ind), re) isa AbstractVector ?
+                    (getfield(get_re_groups(ind), re)[1] in levels_free) :
+                    (getfield(get_re_groups(ind), re) in levels_free)),
+            get_individuals(dm))
+        const_cov = get_const_cov(get_individuals(dm)[rep_idx])
+        dist = getproperty(dists_builder(θ, const_cov, model_funs, helpers), re)
+        dim = dist isa Distributions.UnivariateDistribution ? 1 : length(dist)
+        meta[re] = (levels_free = levels_free, dim = dim, dist = dist)
+    end
+    return meta
+end
+
 function _mcmc_fixed_means(res::FitResult,
         dm::DataModel;
         max_draws::Int = typemax(Int),
@@ -443,7 +462,8 @@ function _mcmc_fixed_means(res::FitResult,
     chain = get_chain(res)
     n_adapt = _mcmc_warmup(res)
     means = _mcmc_param_means(chain; n_adapt = n_adapt, max_draws = max_draws, rng = rng)
-    θ = _coordwise_fixed_from_means(dm, means, "MCMC chain")
+    θ = _coordwise_fixed_from_means(dm, "MCMC chain",
+        key -> (sym = Symbol(key); haskey(means, sym) ? means[sym] : nothing))
     return θ, chain
 end
 
@@ -465,7 +485,8 @@ function _vi_fixed_means(res::FitResult,
         max_draws::Int = typemax(Int),
         rng::AbstractRNG = Random.default_rng())
     means = _vi_param_means(res; max_draws = max_draws, rng = rng)
-    θ = _coordwise_fixed_from_means(dm, means, "VI posterior")
+    θ = _coordwise_fixed_from_means(dm, "VI posterior",
+        key -> (sym = Symbol(key); haskey(means, sym) ? means[sym] : nothing))
     return θ, nothing
 end
 
@@ -518,35 +539,21 @@ function _mcmc_random_effects_means(res::FitResult,
     isempty(re_names) && return Vector{ComponentArray}(undef, length(get_individuals(dm)))
 
     fixed_maps = _normalize_constants_re(dm, constants_re)
-    re_values = get_re_group_info(dm).values
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = get_model_funs(get_model(dm))
     helpers = get_helper_funs(get_model(dm))
 
+    re_meta = _re_free_meta(dm, θ, fixed_maps, re_names, dists_builder, model_funs, helpers)
     level_means = Dict{Symbol, Dict{Any, Any}}()
     level_dims = Dict{Symbol, Int}()
     for re in re_names
-        levels_all = getfield(re_values, re)
-        fixed = haskey(fixed_maps, re) ? getfield(fixed_maps, re) : Dict{Any, Any}()
-        levels_free = Any[]
-        for lvl in levels_all
-            haskey(fixed, lvl) && continue
-            push!(levels_free, lvl)
-        end
-
+        levels_free = re_meta[re].levels_free
         if isempty(levels_free)
             level_means[re] = Dict{Any, Any}()
             level_dims[re] = 1
             continue
         end
-        rep_idx = findfirst(
-            ind -> (getfield(get_re_groups(ind), re) isa AbstractVector ?
-                    (getfield(get_re_groups(ind), re)[1] in levels_free) :
-                    (getfield(get_re_groups(ind), re) in levels_free)),
-            get_individuals(dm))
-        const_cov = get_const_cov(get_individuals(dm)[rep_idx])
-        dist = getproperty(dists_builder(θ, const_cov, model_funs, helpers), re)
-        dim = dist isa Distributions.UnivariateDistribution ? 1 : length(dist)
+        dim = re_meta[re].dim
         level_dims[re] = dim
         re_map = Dict{Any, Any}()
         for (i, lvl) in enumerate(levels_free)
@@ -669,68 +676,23 @@ function _mcmc_drawn_params(res::FitResult,
     vals = Array(chain)
     n_chains = size(vals, 3)
 
-    fe_names = get_names(get_fixed(get_model(dm)))
     re_names = get_re_names(get_random(get_model(dm)))
     fixed_maps = _normalize_constants_re(dm, constants_re)
-    re_values = get_re_group_info(dm).values
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = get_model_funs(get_model(dm))
     helpers = get_helper_funs(get_model(dm))
     isempty(draw_idxs) && error("No MCMC draws available after warmup.")
     rep_iter = first(draw_idxs)
     rep_chain = 1
-    fe_pairs_rep = Pair{Symbol, Any}[]
-    for name in fe_names
-        if haskey(idx_map, name)
-            push!(fe_pairs_rep,
-                name => _mcmc_param_value(vals, rep_iter, idx_map[name], rep_chain))
-        else
-            val0 = getproperty(get_θ0_untransformed(get_fixed(get_model(dm))), name)
-            if val0 isa AbstractArray
-                vals_rep = similar(val0, Float64)
-                for idx in CartesianIndices(val0)
-                    idx_txt = join(Tuple(idx), ",")
-                    key = Symbol("$(name)[$(idx_txt)]")
-                    if haskey(idx_map, key)
-                        vals_rep[idx] = _mcmc_param_value(
-                            vals, rep_iter, idx_map[key], rep_chain)
-                    else
-                        @warn "MCMC chain is missing fixed effect element; falling back to initial value." name=name index=Tuple(idx)
-                        vals_rep[idx] = Float64(val0[idx])
-                    end
-                end
-                push!(fe_pairs_rep, name => vals_rep)
-            else
-                @warn "MCMC chain is missing fixed effect; falling back to initial value." name=name
-                push!(fe_pairs_rep, name => val0)
-            end
-        end
-    end
-    θ_rep = _apply_param_overrides(ComponentArray(NamedTuple(fe_pairs_rep)), overrides)
+    θ_rep = _apply_param_overrides(
+        _coordwise_fixed_from_means(dm, "MCMC chain",
+            key -> (sym = Symbol(key);
+            haskey(idx_map, sym) ?
+            _mcmc_param_value(vals, rep_iter, idx_map[sym], rep_chain) : nothing)),
+        overrides)
 
-    re_meta = Dict{Symbol, Any}()
-    for re in re_names
-        levels_all = getfield(re_values, re)
-        fixed = haskey(fixed_maps, re) ? getfield(fixed_maps, re) : Dict{Any, Any}()
-        levels_free = Any[]
-        for lvl in levels_all
-            haskey(fixed, lvl) && continue
-            push!(levels_free, lvl)
-        end
-        if isempty(levels_free)
-            re_meta[re] = (levels_free = levels_free, dim = 1)
-            continue
-        end
-        rep_idx = findfirst(
-            ind -> (getfield(get_re_groups(ind), re) isa AbstractVector ?
-                    (getfield(get_re_groups(ind), re)[1] in levels_free) :
-                    (getfield(get_re_groups(ind), re) in levels_free)),
-            get_individuals(dm))
-        const_cov = get_const_cov(get_individuals(dm)[rep_idx])
-        dist = getproperty(dists_builder(θ_rep, const_cov, model_funs, helpers), re)
-        dim = dist isa Distributions.UnivariateDistribution ? 1 : length(dist)
-        re_meta[re] = (levels_free = levels_free, dim = dim)
-    end
+    re_meta = _re_free_meta(
+        dm, θ_rep, fixed_maps, re_names, dists_builder, model_funs, helpers)
 
     function _get_re_value(re, li, dim, iter_idx, chain_idx)
         if dim == 1
@@ -779,35 +741,13 @@ function _mcmc_drawn_params(res::FitResult,
     η_draws = Vector{Vector{ComponentArray}}(undef, length(draw_idxs))
     for (k, iter_idx) in enumerate(draw_idxs)
         chain_idx = rand(rng, 1:n_chains)
-        fe_pairs = Pair{Symbol, Any}[]
-        for name in fe_names
-            if haskey(idx_map, name)
-                push!(fe_pairs,
-                    name => _mcmc_param_value(vals, iter_idx, idx_map[name], chain_idx))
-            else
-                val0 = getproperty(get_θ0_untransformed(get_fixed(get_model(dm))), name)
-                if val0 isa AbstractArray
-                    vals_draw = similar(val0, Float64)
-                    for idx in CartesianIndices(val0)
-                        idx_txt = join(Tuple(idx), ",")
-                        key = Symbol("$(name)[$(idx_txt)]")
-                        if haskey(idx_map, key)
-                            vals_draw[idx] = _mcmc_param_value(
-                                vals, iter_idx, idx_map[key], chain_idx)
-                        else
-                            @warn "MCMC chain is missing fixed effect element; falling back to initial value." name=name index=Tuple(idx)
-                            vals_draw[idx] = Float64(val0[idx])
-                        end
-                    end
-                    push!(fe_pairs, name => vals_draw)
-                else
-                    @warn "MCMC chain is missing fixed effect; falling back to initial value." name=name
-                    push!(fe_pairs, name => val0)
-                end
-            end
-        end
-        θ = ComponentArray(NamedTuple(fe_pairs))
-        θ = _apply_param_overrides(θ, overrides)
+        θ = _apply_param_overrides(
+            _coordwise_fixed_from_means(dm, "MCMC chain",
+                key -> (sym = Symbol(key);
+                haskey(idx_map, sym) ?
+                _mcmc_param_value(vals, iter_idx, idx_map[sym], chain_idx) :
+                nothing)),
+            overrides)
         θ_draws[k] = θ
 
         get_free_value = function (re, lvl, dim)
@@ -843,68 +783,21 @@ function _vi_drawn_params(res::FitResult,
         idx_map[string(n)] = i
     end
 
-    fe_names = get_names(get_fixed(get_model(dm)))
     re_names = get_re_names(get_random(get_model(dm)))
     fixed_maps = _normalize_constants_re(dm, constants_re)
-    re_values = get_re_group_info(dm).values
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = get_model_funs(get_model(dm))
     helpers = get_helper_funs(get_model(dm))
 
     rep_row = @view draws[1, :]
-    fe_pairs_rep = Pair{Symbol, Any}[]
-    for name in fe_names
-        key = string(name)
-        idx = _lookup_chain_index(idx_map, key)
-        if idx != 0
-            push!(fe_pairs_rep, name => Float64(rep_row[idx]))
-        else
-            val0 = getproperty(get_θ0_untransformed(get_fixed(get_model(dm))), name)
-            if val0 isa AbstractArray
-                vals_rep = similar(val0, Float64)
-                for ci in CartesianIndices(val0)
-                    idx_txt = join(Tuple(ci), ",")
-                    k = string(name, "[", idx_txt, "]")
-                    j = _lookup_chain_index(idx_map, k)
-                    if j != 0
-                        vals_rep[ci] = Float64(rep_row[j])
-                    else
-                        @warn "VI posterior is missing fixed effect element; falling back to initial value." name=name index=Tuple(ci)
-                        vals_rep[ci] = Float64(val0[ci])
-                    end
-                end
-                push!(fe_pairs_rep, name => vals_rep)
-            else
-                @warn "VI posterior is missing fixed effect; falling back to initial value." name=name
-                push!(fe_pairs_rep, name => val0)
-            end
-        end
-    end
-    θ_rep = _apply_param_overrides(ComponentArray(NamedTuple(fe_pairs_rep)), overrides)
+    θ_rep = _apply_param_overrides(
+        _coordwise_fixed_from_means(dm, "VI posterior",
+            key -> (idx = _lookup_chain_index(idx_map, key);
+            idx != 0 ? Float64(rep_row[idx]) : nothing)),
+        overrides)
 
-    re_meta = Dict{Symbol, Any}()
-    for re in re_names
-        levels_all = getfield(re_values, re)
-        fixed = haskey(fixed_maps, re) ? getfield(fixed_maps, re) : Dict{Any, Any}()
-        levels_free = Any[]
-        for lvl in levels_all
-            haskey(fixed, lvl) && continue
-            push!(levels_free, lvl)
-        end
-        if isempty(levels_free)
-            re_meta[re] = (levels_free = levels_free, dim = 1)
-            continue
-        end
-        rep_idx = findfirst(
-            ind -> (getfield(get_re_groups(ind), re) isa AbstractVector ?
-                    (getfield(get_re_groups(ind), re)[1] in levels_free) :
-                    (getfield(get_re_groups(ind), re) in levels_free)),
-            get_individuals(dm))
-        const_cov = get_const_cov(get_individuals(dm)[rep_idx])
-        dist = getproperty(dists_builder(θ_rep, const_cov, model_funs, helpers), re)
-        dim = dist isa Distributions.UnivariateDistribution ? 1 : length(dist)
-        re_meta[re] = (levels_free = levels_free, dim = dim)
-    end
+    re_meta = _re_free_meta(
+        dm, θ_rep, fixed_maps, re_names, dists_builder, model_funs, helpers)
 
     function _get_re_value(re, li, dim, row)
         if dim == 1
@@ -948,34 +841,11 @@ function _vi_drawn_params(res::FitResult,
     η_draws = Vector{Vector{ComponentArray}}(undef, n_draws)
     for k in 1:n_draws
         row = @view draws[k, :]
-        fe_pairs = Pair{Symbol, Any}[]
-        for name in fe_names
-            idx = _lookup_chain_index(idx_map, string(name))
-            if idx != 0
-                push!(fe_pairs, name => Float64(row[idx]))
-            else
-                val0 = getproperty(get_θ0_untransformed(get_fixed(get_model(dm))), name)
-                if val0 isa AbstractArray
-                    vals_draw = similar(val0, Float64)
-                    for ci in CartesianIndices(val0)
-                        idx_txt = join(Tuple(ci), ",")
-                        key = string(name, "[", idx_txt, "]")
-                        j = _lookup_chain_index(idx_map, key)
-                        if j != 0
-                            vals_draw[ci] = Float64(row[j])
-                        else
-                            @warn "VI posterior is missing fixed effect element; falling back to initial value." name=name index=Tuple(ci)
-                            vals_draw[ci] = Float64(val0[ci])
-                        end
-                    end
-                    push!(fe_pairs, name => vals_draw)
-                else
-                    @warn "VI posterior is missing fixed effect; falling back to initial value." name=name
-                    push!(fe_pairs, name => val0)
-                end
-            end
-        end
-        θ = _apply_param_overrides(ComponentArray(NamedTuple(fe_pairs)), overrides)
+        θ = _apply_param_overrides(
+            _coordwise_fixed_from_means(dm, "VI posterior",
+                key -> (idx = _lookup_chain_index(idx_map, key);
+                idx != 0 ? Float64(row[idx]) : nothing)),
+            overrides)
         θ_draws[k] = θ
 
         get_free_value = function (re, lvl, dim)
@@ -1049,39 +919,26 @@ function _default_random_effects_from_dm(dm::DataModel,
         return fill(ComponentArray(NamedTuple()), length(get_individuals(dm)))
 
     fixed_maps = _normalize_constants_re(dm, constants_re)
-    re_values = get_re_group_info(dm).values
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = get_model_funs(get_model(dm))
     helpers = get_helper_funs(get_model(dm))
 
+    re_meta = _re_free_meta(dm, θ, fixed_maps, re_names, dists_builder, model_funs, helpers)
     level_vals = Dict{Symbol, Dict{Any, Any}}()
     level_dims = Dict{Symbol, Int}()
     for re in re_names
-        levels_all = getfield(re_values, re)
-        fixed = haskey(fixed_maps, re) ? getfield(fixed_maps, re) : Dict{Any, Any}()
-        levels_free = Any[]
-        for lvl in levels_all
-            haskey(fixed, lvl) && continue
-            push!(levels_free, lvl)
-        end
+        levels_free = re_meta[re].levels_free
         if isempty(levels_free)
             level_vals[re] = Dict{Any, Any}()
             level_dims[re] = 1
             continue
         end
-        rep_idx = findfirst(
-            ind -> (getfield(get_re_groups(ind), re) isa AbstractVector ?
-                    (getfield(get_re_groups(ind), re)[1] in levels_free) :
-                    (getfield(get_re_groups(ind), re) in levels_free)),
-            get_individuals(dm))
-        const_cov = get_const_cov(get_individuals(dm)[rep_idx])
-        dist = getproperty(dists_builder(θ, const_cov, model_funs, helpers), re)
-        dim = dist isa Distributions.UnivariateDistribution ? 1 : length(dist)
+        dim = re_meta[re].dim
         level_dims[re] = dim
         # `dist` is level-invariant — compute the (possibly expensive) mean once;
         # dim > 1 still stores a fresh copy per level (same aliasing as before).
         v0 = try
-            Distributions.mean(dist)
+            Distributions.mean(re_meta[re].dist)
         catch
             dim == 1 ? 0.0 : zeros(Float64, dim)
         end
@@ -1147,17 +1004,15 @@ function build_plot_cache(res::FitResult;
               _posterior_fixed_means(res, dm; max_draws = mcmc_draws, rng = rng) : nothing
     θ = _is_posterior_draw_fit(res) ? θ_chain[1] : get_params(res; scale = :untransformed)
     θ = _apply_param_overrides(θ, params)
-    chain = _is_posterior_draw_fit(res) ? θ_chain[2] : nothing
     η_vec = _default_random_effects(res, dm, constants_re, θ, rng, mcmc_draws)
-    return _fill_plot_cache(dm, θ, η_vec, chain, constants_re, cache_obs_dists,
+    return _fill_plot_cache(dm, θ, η_vec, constants_re, cache_obs_dists,
         ode_args, ode_kwargs)
 end
 
 # Shared body of the two build_plot_cache methods: dense-solve each individual (if
 # the model has a DE), optionally pre-compute (HMM-filtered) observation distributions,
-# and package everything into a PlotCache. Callers differ only in how θ/η_vec/chain are
-# obtained (chain is `nothing` for the DataModel entry point).
-function _fill_plot_cache(dm::DataModel, θ::ComponentArray, η_vec, chain,
+# and package everything into a PlotCache. Callers differ only in how θ/η_vec are obtained.
+function _fill_plot_cache(dm::DataModel, θ::ComponentArray, η_vec,
         constants_re::NamedTuple, cache_obs_dists::Bool, ode_args::Tuple,
         ode_kwargs::NamedTuple)
     sols = Vector{Any}(undef, length(get_individuals(dm)))
@@ -1211,10 +1066,7 @@ function _fill_plot_cache(dm::DataModel, θ::ComponentArray, η_vec, chain,
         end
     end
 
-    sig = _plot_signature(dm, θ, constants_re, get_solver_config(get_model(dm)),
-        _callbacks_hash(dm), cache_obs_dists)
-    meta = (constants_re = constants_re, cache_obs_dists = cache_obs_dists)
-    return PlotCache(sig, sols, obs_dists, chain, θ, η_vec, meta)
+    return PlotCache(sols, obs_dists, θ, η_vec)
 end
 
 function build_plot_cache(res::MultistartFitResult; kwargs...)
@@ -1231,6 +1083,6 @@ function build_plot_cache(dm::DataModel;
     θ = get_θ0_untransformed(get_fixed(get_model(dm)))
     θ = _apply_param_overrides(θ, params)
     η_vec = _default_random_effects_from_dm(dm, constants_re, θ)
-    return _fill_plot_cache(dm, θ, η_vec, nothing, constants_re, cache_obs_dists,
+    return _fill_plot_cache(dm, θ, η_vec, constants_re, cache_obs_dists,
         ode_args, ode_kwargs)
 end

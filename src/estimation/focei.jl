@@ -65,6 +65,18 @@ function _focei_expected_information(d)
 end
 _focei_paramcount(d) = length(_focei_params(d))
 
+# Full (diagonal) Fisher information assembled from the per-element weights in
+# `_focei_diag_information`, so those values live in one place. Returns a fresh
+# mutable matrix (the FOCE dispersion mask edits it in place).
+function _focei_diag_matrix(w::Tuple)
+    n = length(w)
+    M = zeros(eltype(w), n, n)
+    for k in 1:n
+        M[k, k] = w[k]
+    end
+    return M
+end
+
 # --- location-scale families with a frozen dispersion parameter (the "I" in FOCEI) ---
 
 # Normal(μ, σ): ℐ = diag(1/σ², 2/σ²)
@@ -72,22 +84,14 @@ _focei_is_supported(::Normal) = true
 _focei_params(d::Normal) = [d.μ, d.σ]
 _focei_paramcount(::Normal) = 2
 _focei_dispersion_indices(::Normal) = [2]
-function _focei_expected_information(d::Normal)
-    iv = inv(d.σ * d.σ)
-    z = zero(iv)
-    return [iv z; z 2iv]
-end
+_focei_expected_information(d::Normal) = _focei_diag_matrix(_focei_diag_information(d))
 
 # LogNormal(μ, σ): same information as Normal in (μ, σ) — invariant to the y↦exp data map.
 _focei_is_supported(::LogNormal) = true
 _focei_params(d::LogNormal) = [d.μ, d.σ]
 _focei_paramcount(::LogNormal) = 2
 _focei_dispersion_indices(::LogNormal) = [2]
-function _focei_expected_information(d::LogNormal)
-    iv = inv(d.σ * d.σ)
-    z = zero(iv)
-    return [iv z; z 2iv]
-end
+_focei_expected_information(d::LogNormal) = _focei_diag_matrix(_focei_diag_information(d))
 
 # Laplace(μ, b): ℐ = diag(1/b², 1/b²)   (Distributions stores the scale as field θ)
 _focei_is_supported(::Distributions.Laplace) = true
@@ -95,9 +99,7 @@ _focei_params(d::Distributions.Laplace) = [d.μ, d.θ]
 _focei_paramcount(::Distributions.Laplace) = 2
 _focei_dispersion_indices(::Distributions.Laplace) = [2]
 function _focei_expected_information(d::Distributions.Laplace)
-    ib = inv(d.θ * d.θ)
-    z = zero(ib)
-    return [ib z; z ib]
+    return _focei_diag_matrix(_focei_diag_information(d))
 end
 
 # Cauchy(μ, σ): ℐ = diag(1/2σ², 1/2σ²)
@@ -105,11 +107,7 @@ _focei_is_supported(::Cauchy) = true
 _focei_params(d::Cauchy) = [d.μ, d.σ]
 _focei_paramcount(::Cauchy) = 2
 _focei_dispersion_indices(::Cauchy) = [2]
-function _focei_expected_information(d::Cauchy)
-    ih = inv(2 * d.σ * d.σ)
-    z = zero(ih)
-    return [ih z; z ih]
-end
+_focei_expected_information(d::Cauchy) = _focei_diag_matrix(_focei_diag_information(d))
 
 # --- single-parameter families (FOCE ≡ FOCEI; no dispersion to freeze) ---
 
@@ -117,31 +115,39 @@ end
 _focei_is_supported(::Exponential) = true
 _focei_params(d::Exponential) = [d.θ]
 _focei_paramcount(::Exponential) = 1
-_focei_expected_information(d::Exponential) = fill(inv(d.θ * d.θ), 1, 1)
+function _focei_expected_information(d::Exponential)
+    return _focei_diag_matrix(_focei_diag_information(d))
+end
 
 # Poisson(λ): ℐ = 1/λ
 _focei_is_supported(::Poisson) = true
 _focei_params(d::Poisson) = [d.λ]
 _focei_paramcount(::Poisson) = 1
-_focei_expected_information(d::Poisson) = fill(inv(d.λ), 1, 1)
+_focei_expected_information(d::Poisson) = _focei_diag_matrix(_focei_diag_information(d))
 
 # Bernoulli(p): ℐ = 1/(p(1-p))
 _focei_is_supported(::Bernoulli) = true
 _focei_params(d::Bernoulli) = [d.p]
 _focei_paramcount(::Bernoulli) = 1
-_focei_expected_information(d::Bernoulli) = fill(inv(d.p * (one(d.p) - d.p)), 1, 1)
+function _focei_expected_information(d::Bernoulli)
+    return _focei_diag_matrix(_focei_diag_information(d))
+end
 
 # Binomial(n, p): n fixed; ℐ_pp = n/(p(1-p)).  Only p is a differentiated parameter.
 _focei_is_supported(::Binomial) = true
 _focei_params(d::Binomial) = [d.p]
 _focei_paramcount(::Binomial) = 1
-_focei_expected_information(d::Binomial) = fill(d.n * inv(d.p * (one(d.p) - d.p)), 1, 1)
+function _focei_expected_information(d::Binomial)
+    return _focei_diag_matrix(_focei_diag_information(d))
+end
 
 # Geometric(p): ℐ = 1/(p²(1-p))
 _focei_is_supported(::Geometric) = true
 _focei_params(d::Geometric) = [d.p]
 _focei_paramcount(::Geometric) = 1
-_focei_expected_information(d::Geometric) = fill(inv(d.p * d.p * (one(d.p) - d.p)), 1, 1)
+function _focei_expected_information(d::Geometric)
+    return _focei_diag_matrix(_focei_diag_information(d))
+end
 
 # --- two-parameter families without a clean location/dispersion split (FOCE ≡ FOCEI) ---
 

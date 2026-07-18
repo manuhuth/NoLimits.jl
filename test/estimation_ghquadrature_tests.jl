@@ -1105,8 +1105,9 @@ end
 # One entry per family. `fit`/`re` share the data-gen shell (per-id η via
 # `eta`, iid N(0,1) noise mixed in by `y`); `nothing` skips that part.
 const _GHQ_RE_FAMILY_CASES = [
-    # LogNormal(0, ω): push-forward of N(0,1) with logcorrection = 0, so GH
-    # weights absorb the prior exactly — same as GaussianRE.
+    # LogNormal(0, ω): η = exp(ω z), z ~ N(0,1). The exp transport is nonlinear
+    # (CompositeRE segment_fn), NOT the linear GaussianRE path; logcorrection = 0
+    # only because the push-forward is exactly LogNormal (needs has_npf=true).
     (label = "LogNormal", model = _GHQ_LOGN_MODEL,
         fit = (seed = 42, n_id = 12, n_obs = 5,
             eta = (rng, n) -> exp.(0.5 .* randn(rng, n)),

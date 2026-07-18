@@ -35,12 +35,12 @@ end
 VI(; turing_kwargs = NamedTuple()) = VI(turing_kwargs)
 
 """
-    VIResult{Q, T, S, N, O, V, C, M} <: MethodResult
+    VIResult{Q, T, S, N, O, C, M} <: MethodResult
 
 Method-specific result from a [`VI`](@ref) fit. Stores the variational posterior,
 optimization trace/state, ELBO summary, and observed data.
 """
-struct VIResult{Q, T, S, N, O, V, C, M} <: MethodResult
+struct VIResult{Q, T, S, N, O, C, M} <: MethodResult
     posterior::Q
     trace::T
     state::S
@@ -50,7 +50,6 @@ struct VIResult{Q, T, S, N, O, V, C, M} <: MethodResult
     converged::Bool
     notes::N
     observed::O
-    varinfo::V
     coord_names::C
     model::M       # DynamicPPL model used for VI; needed to unlink posterior draws to
     # natural space. `nothing` after deserialization (draws stay linked).
@@ -312,7 +311,7 @@ function _fit_model(dm::DataModel, method::VI, args...;
             convergence_rtol = conv_rtol,
             convergence_atol = conv_atol))
     result = VIResult(posterior, trace, state, n_iter, max_iter, final_elbo, converged,
-        NamedTuple(), obs, varinfo, coord_names, model)
+        NamedTuple(), obs, coord_names, model)
     return FitResult(method, result, summary, diagnostics,
         store_data_model ? dm : nothing, args, fit_kwargs)
 end

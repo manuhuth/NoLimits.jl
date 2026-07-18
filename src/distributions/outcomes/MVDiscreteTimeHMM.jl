@@ -1,6 +1,6 @@
 export MVDiscreteTimeDiscreteStatesHMM
 
-using Distributions, LinearAlgebra, Random, Lux
+using Distributions, LinearAlgebra, Random
 
 """
     MVDiscreteTimeDiscreteStatesHMM(transition_matrix, emission_dists, initial_dist)
@@ -102,7 +102,9 @@ function posterior_hidden_states(hmm::MVDiscreteTimeDiscreteStatesHMM, y::Abstra
     s = sum(p)
     dists = hmm.emission_dists
     pt = _hmm_probs_tuple(p, dists)
-    u = map((pi, d) -> (pi / s) * exp(_mv_emission_logpdf(d, y)), pt, dists)
+    obs_idx = findall(!ismissing, y)
+    y_obs = [y[m] for m in obs_idx]
+    u = map((pi, d) -> (pi / s) * exp(_mv_emission_logpdf(d, y, obs_idx, y_obs)), pt, dists)
     su = sum(u)
     return [ui / su for ui in u]
 end
@@ -117,7 +119,9 @@ function Distributions.logpdf(hmm::MVDiscreteTimeDiscreteStatesHMM, y::AbstractV
     s = sum(p)
     dists = hmm.emission_dists
     pt = _hmm_probs_tuple(p, dists)
-    xs = map((pi, d) -> log(pi / s) + _mv_emission_logpdf(d, y), pt, dists)
+    obs_idx = findall(!ismissing, y)
+    y_obs = [y[m] for m in obs_idx]
+    xs = map((pi, d) -> log(pi / s) + _mv_emission_logpdf(d, y, obs_idx, y_obs), pt, dists)
     return _hmm_logsumexp(xs)
 end
 
@@ -134,7 +138,9 @@ function _hmm_logpdf_and_posterior(hmm::MVDiscreteTimeDiscreteStatesHMM,
     s = sum(p)
     dists = hmm.emission_dists
     pt = _hmm_probs_tuple(p, dists)
-    ls = map(d -> _mv_emission_logpdf(d, y), dists)
+    obs_idx = findall(!ismissing, y)
+    y_obs = [y[m] for m in obs_idx]
+    ls = map(d -> _mv_emission_logpdf(d, y, obs_idx, y_obs), dists)
     lp = _hmm_logsumexp(map((pi, l) -> log(pi / s) + l, pt, ls))
     u = map((pi, l) -> (pi / s) * exp(l), pt, ls)
     su = sum(u)

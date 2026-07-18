@@ -57,13 +57,8 @@ function _build_uq_obj_no_re(res::FitResult,
     use_prior = method isa MAP
 
     function obj_full(x::AbstractVector)
-        θt_free = ComponentArray(x, axs_free)
-        T = eltype(θt_free)
-        θt_full = ComponentArray(T.(θ_const_t), axs_full)
-        for name in free_names
-            setproperty!(θt_full, name, getproperty(θt_free, name))
-        end
-        θu = _as_component_array(inv_transform(θt_full))
+        θu = _theta_u_from_free_t(
+            x, axs_free, θ_const_t, axs_full, free_names, inv_transform)
         ll = loglikelihood(
             dm, θu, ComponentArray(); cache = ll_cache, serialization = serialization_use)
         ll == -Inf && return Inf
@@ -126,13 +121,8 @@ function _build_uq_obj_re(res::FitResult,
     seed = rand(rng, UInt64)
 
     function obj_full(x::AbstractVector)
-        θt_free = ComponentArray(x, axs_free)
-        T = eltype(θt_free)
-        θt_full = ComponentArray(T.(θ_const_t), axs_full)
-        for name in free_names
-            setproperty!(θt_full, name, getproperty(θt_free, name))
-        end
-        θu = _as_component_array(inv_transform(θt_full))
+        θu = _theta_u_from_free_t(
+            x, axs_free, θ_const_t, axs_full, free_names, inv_transform)
 
         obj = if method isa GHQuadrature
             ll_cache_local = ll_cache isa AbstractVector ? ll_cache[1] : ll_cache
@@ -201,16 +191,13 @@ function _compute_uq_profile(res::FitResult;
         error("Profile UQ is currently supported for MLE, MAP, Laplace, and GHQuadrature fit results.")
     end
 
-    constants_use = constants === nothing ? _fit_kw(res, :constants, NamedTuple()) :
-                    constants
-    constants_re_use = constants_re === nothing ?
-                       _fit_kw(res, :constants_re, NamedTuple()) : constants_re
-    penalty_use = penalty === nothing ? _fit_kw(res, :penalty, NamedTuple()) : penalty
-    ode_args_use = ode_args === nothing ? _fit_kw(res, :ode_args, ()) : ode_args
-    ode_kwargs_use = ode_kwargs === nothing ? _fit_kw(res, :ode_kwargs, NamedTuple()) :
-                     ode_kwargs
-    serialization_use = serialization === nothing ?
-                        _fit_kw(res, :serialization, EnsembleSerial()) : serialization
+    constants_use = _resolve_fit_kw(res, constants, :constants, NamedTuple())
+    constants_re_use = _resolve_fit_kw(res, constants_re, :constants_re, NamedTuple())
+    penalty_use = _resolve_fit_kw(res, penalty, :penalty, NamedTuple())
+    ode_args_use = _resolve_fit_kw(res, ode_args, :ode_args, ())
+    ode_kwargs_use = _resolve_fit_kw(res, ode_kwargs, :ode_kwargs, NamedTuple())
+    serialization_use = _resolve_fit_kw(
+        res, serialization, :serialization, EnsembleSerial())
 
     ctx = if method isa MLE || method isa MAP
         _build_uq_obj_no_re(res, constants_use, penalty_use, ode_args_use,
@@ -322,24 +309,16 @@ function _compute_uq_profile(res::FitResult;
         if isfinite(lower_prof_t[j])
             x_work[active_idx] .= xhat_active
             x_work[active_idx[j]] = lower_prof_t[j]
-            θt_free_j = ComponentArray(x_work, axs_free)
-            θt_full_j = ComponentArray(eltype(θt_free_j).(θ_const_t), axs_full)
-            for name in free_names
-                setproperty!(θt_full_j, name, getproperty(θt_free_j, name))
-            end
-            θu_j = _as_component_array(inv_transform(θt_full_j))
+            θu_j = _theta_u_from_free_t(
+                x_work, axs_free, θ_const_t, axs_full, free_names, inv_transform)
             coords_u_j = _coords_on_transformed_layout(fe, θu_j, free_names; natural = true)
             lower_prof_n[j] = coords_u_j[active_idx[j]]
         end
         if isfinite(upper_prof_t[j])
             x_work[active_idx] .= xhat_active
             x_work[active_idx[j]] = upper_prof_t[j]
-            θt_free_j = ComponentArray(x_work, axs_free)
-            θt_full_j = ComponentArray(eltype(θt_free_j).(θ_const_t), axs_full)
-            for name in free_names
-                setproperty!(θt_full_j, name, getproperty(θt_free_j, name))
-            end
-            θu_j = _as_component_array(inv_transform(θt_full_j))
+            θu_j = _theta_u_from_free_t(
+                x_work, axs_free, θ_const_t, axs_full, free_names, inv_transform)
             coords_u_j = _coords_on_transformed_layout(fe, θu_j, free_names; natural = true)
             upper_prof_n[j] = coords_u_j[active_idx[j]]
         end

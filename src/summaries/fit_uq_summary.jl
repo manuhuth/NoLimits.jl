@@ -63,8 +63,6 @@ struct UQResultSummary
     notes::Vector{String}
 end
 
-@inline _fq_fmt_missing(x) = x === nothing ? "-" : x
-
 # Fixed 4-decimal string that keeps trailing zeros (e.g. 1.5 -> "1.5000"), built with
 # integer scaling so no Printf dependency is needed.
 function _fixed4(xv::Float64)
@@ -101,10 +99,6 @@ end
 function _fq_scale_symbol(scale::Symbol)
     scale in (:natural, :transformed) || error("scale must be :natural or :transformed.")
     return scale
-end
-
-function _fq_method_symbol(res::FitResult)
-    return _method_symbol(get_method(res))
 end
 
 @inline _fq_inference_from_method(method::FittingMethod) = (method isa MCMC ||
@@ -184,12 +178,6 @@ end
     return "General/Outcome"
 end
 
-function _fq_mcmc_warmup(res::FitResult)
-    diag = get_diagnostics(res)
-    conv = hasproperty(diag, :convergence) ? getproperty(diag, :convergence) : NamedTuple()
-    return hasproperty(conv, :n_adapt) ? Int(getproperty(conv, :n_adapt)) : 0
-end
-
 function _fq_chain_array(chain)
     arr = Array(chain)
     if ndims(arr) == 2
@@ -199,13 +187,16 @@ function _fq_chain_array(chain)
     return arr
 end
 
-function _fq_chain_idx_map(chain)
-    names = MCMCChains.names(chain, :parameters)
+function _fq_names_idx_map(names)
     idx_map = Dict{String, Int}()
     for (i, n) in enumerate(names)
         idx_map[string(n)] = i
     end
     return idx_map
+end
+
+function _fq_chain_idx_map(chain)
+    return _fq_names_idx_map(MCMCChains.names(chain, :parameters))
 end
 
 function _fq_chain_values(arr, var_idx::Int, warmup::Int)
@@ -214,16 +205,6 @@ function _fq_chain_values(arr, var_idx::Int, warmup::Int)
     vals = vec(arr[first_keep:end, var_idx, :])
     isempty(vals) && error("No post-warmup MCMC draws available.")
     return Float64.(vals)
-end
-
-function _fq_spec_map(fe::FixedEffects)
-    names = get_names(fe)
-    specs = get_transforms(fe).forward.specs
-    out = Dict{Symbol, TransformSpec}()
-    for i in eachindex(names)
-        out[names[i]] = specs[i]
-    end
-    return out
 end
 
 function _fq_value_from_lookup(v0, name::Symbol, spec::TransformSpec, lookup::Function)
@@ -258,7 +239,7 @@ function _fq_fixed_point_estimate_from_lookup(fe::FixedEffects,
         constants::NamedTuple,
         lookup::Function)
     θu = deepcopy(get_θ0_untransformed(fe))
-    spec_map = _fq_spec_map(fe)
+    spec_map = _spec_map(fe)
     for name in get_names(fe)
         if haskey(constants, name)
             setproperty!(θu, name, getfield(constants, name))
@@ -271,23 +252,29 @@ function _fq_fixed_point_estimate_from_lookup(fe::FixedEffects,
     return _as_component_array(θu)
 end
 
-function _fq_mcmc_fixed_point_estimate(res::FitResult, dm::DataModel)
-    fe = get_fixed(get_model(dm))
-    constants = _fit_kw(res, :constants, NamedTuple())
-
-    chain = get_chain(res)
-    arr = _fq_chain_array(chain)
-    warmup = _fq_mcmc_warmup(res)
-    idx_map = _fq_chain_idx_map(chain)
+# Memoised name -> median lookup over a name/index map; `median_at(idx)` returns the
+# median of the posterior draws for that column. Shared by the MCMC and VI paths.
+function _fq_median_lookup(idx_map, median_at::F) where {F}
     med_cache = Dict{Int, Float64}()
-    lookup = key -> begin
+    return key -> begin
         idx = _lookup_chain_index(idx_map, key)
         idx == 0 && return nothing
         if !haskey(med_cache, idx)
-            med_cache[idx] = Float64(median(_fq_chain_values(arr, idx, warmup)))
+            med_cache[idx] = median_at(idx)
         end
         return med_cache[idx]
     end
+end
+
+function _fq_mcmc_fixed_point_estimate(res::FitResult, dm::DataModel)
+    fe = get_fixed(get_model(dm))
+    constants = _fit_kw(res, :constants, NamedTuple())
+    chain = get_chain(res)
+    arr = _fq_chain_array(chain)
+    warmup = _uq_mcmc_warmup(res)
+    idx_map = _fq_chain_idx_map(chain)
+    lookup = _fq_median_lookup(
+        idx_map, idx -> Float64(median(_fq_chain_values(arr, idx, warmup))))
     return _fq_fixed_point_estimate_from_lookup(fe, constants, lookup)
 end
 
@@ -298,48 +285,46 @@ function _fq_vi_fixed_point_estimate(res::FitResult, dm::DataModel; n_draws::Int
     draw_pack = sample_posterior(
         res; n_draws = n_draws, rng = Random.Xoshiro(0x4f13), return_names = true)
     draws = draw_pack.draws
-    names = draw_pack.names
-    idx_map = Dict{String, Int}()
-    for (i, n) in enumerate(names)
-        idx_map[string(n)] = i
-    end
-    med_cache = Dict{Int, Float64}()
-    lookup = key -> begin
-        idx = _lookup_chain_index(idx_map, key)
-        idx == 0 && return nothing
-        if !haskey(med_cache, idx)
-            med_cache[idx] = Float64(median(@view draws[:, idx]))
-        end
-        return med_cache[idx]
-    end
+    idx_map = _fq_names_idx_map(draw_pack.names)
+    lookup = _fq_median_lookup(idx_map, idx -> Float64(median(@view draws[:, idx])))
     return _fq_fixed_point_estimate_from_lookup(fe, constants, lookup)
+end
+
+function _fq_posterior_coords(fe, θu, scale::Symbol)
+    if scale == :natural
+        return _coords_on_transformed_layout(fe, θu, get_names(fe); natural = true)
+    end
+    θt = get_transform(fe)(θu)
+    return _coords_on_transformed_layout(fe, θt, get_names(fe); natural = false)
 end
 
 function _fq_fit_component_estimates(res::FitResult, dm::DataModel, scale::Symbol)
     fe = get_fixed(get_model(dm))
     method = get_method(res)
-    if method isa MCMC
-        θu = _fq_mcmc_fixed_point_estimate(res, dm)
-        if scale == :natural
-            return _coords_on_transformed_layout(fe, θu, get_names(fe); natural = true)
-        else
-            θt = get_transform(fe)(θu)
-            return _coords_on_transformed_layout(fe, θt, get_names(fe); natural = false)
-        end
-    elseif method isa VI
-        θu = _fq_vi_fixed_point_estimate(res, dm)
-        if scale == :natural
-            return _coords_on_transformed_layout(fe, θu, get_names(fe); natural = true)
-        else
-            θt = get_transform(fe)(θu)
-            return _coords_on_transformed_layout(fe, θt, get_names(fe); natural = false)
-        end
-    else
-        θ = scale == :natural ? get_params(res; scale = :untransformed) :
-            get_params(res; scale = :transformed)
-        return _coords_on_transformed_layout(
-            fe, θ, get_names(fe); natural = (scale == :natural))
+    if method isa MCMC || method isa VI
+        θu = method isa MCMC ? _fq_mcmc_fixed_point_estimate(res, dm) :
+             _fq_vi_fixed_point_estimate(res, dm)
+        return _fq_posterior_coords(fe, θu, scale)
     end
+    θ = scale == :natural ? get_params(res; scale = :untransformed) :
+        get_params(res; scale = :transformed)
+    return _coords_on_transformed_layout(
+        fe, θ, get_names(fe); natural = (scale == :natural))
+end
+
+# Shared fixed-effect layout (names, parent map, SE mask, roles, point estimates) used
+# by both the fit-only and fit+UQ parameter tables.
+function _fq_fit_layout(res::FitResult, dm::DataModel, scale::Symbol)
+    model = get_model(dm)
+    fe = get_fixed(model)
+    flat_names = get_flat_names(fe)
+    parent_names = _flat_parent_names(fe)
+    se_mask = get_se_mask(fe)
+    roles_by_parent = _fq_role_by_parent(model)
+    estimates = _fq_fit_component_estimates(res, dm, scale)
+    length(estimates) == length(flat_names) ||
+        error("Internal summary error: estimate layout mismatch.")
+    return (; flat_names, parent_names, se_mask, roles_by_parent, estimates)
 end
 
 function _fq_fit_parameter_rows(res::FitResult;
@@ -348,33 +333,23 @@ function _fq_fit_parameter_rows(res::FitResult;
     dm = get_data_model(res)
     dm === nothing && return (NamedTuple[], 0, 0,
         ["Parameter table unavailable: FitResult does not store DataModel."])
-    model = get_model(dm)
-    fe = get_fixed(model)
-
-    flat_names = get_flat_names(fe)
-    parent_names = _flat_parent_names(fe)
-    se_mask = get_se_mask(fe)
-    roles_by_parent = _fq_role_by_parent(model)
-    estimates = _fq_fit_component_estimates(res, dm, scale)
-    length(estimates) == length(flat_names) ||
-        error("Internal summary error: estimate layout mismatch.")
+    lay = _fq_fit_layout(res, dm, scale)
 
     rows = NamedTuple[]
-    for i in eachindex(flat_names)
-        if !include_non_se && !se_mask[i]
+    for i in eachindex(lay.flat_names)
+        if !include_non_se && !lay.se_mask[i]
             continue
         end
-        p = parent_names[i]
-        role = get(roles_by_parent, p, :General_Outcome)
+        role = get(lay.roles_by_parent, lay.parent_names[i], :General_Outcome)
         push!(rows,
             (;
-                parameter = flat_names[i],
+                parameter = lay.flat_names[i],
                 role = _fq_role_label(role),
-                estimate = estimates[i],
-                calculate_se = se_mask[i]
+                estimate = lay.estimates[i],
+                calculate_se = lay.se_mask[i]
             ))
     end
-    return (rows, length(flat_names), count(identity, se_mask), String[])
+    return (rows, length(lay.flat_names), count(identity, lay.se_mask), String[])
 end
 
 function _fq_re_stats_rows_from_df_nt(re_nt::NamedTuple)
@@ -385,15 +360,7 @@ function _fq_re_stats_rows_from_df_nt(re_nt::NamedTuple)
         length(cols) <= 1 && continue
         n_comp = length(cols) - 1
         for c in cols[2:end]
-            vals = Float64[]
-            for v in df[!, c]
-                if v === missing
-                    continue
-                elseif v isa Real
-                    push!(vals, Float64(v))
-                end
-            end
-            st = _descriptive_stats(vals)
+            st = _descriptive_stats(df[!, c])
             push!(rows,
                 (;
                     random_effect = string(re),
@@ -472,26 +439,29 @@ function _fq_re_rows_from_component_medians(by_key::Dict{
     return rows
 end
 
+# Group per-level posterior medians by (random effect, dim) from an iterable of
+# (chain-name, index) pairs; `median_at(idx)` yields the median for that index.
+function _fq_re_rows_from_named_medians(re_set, name_index_pairs, median_at::F) where {F}
+    by_key = Dict{Tuple{Symbol, Int}, Vector{Float64}}()
+    for (name, idx) in name_index_pairs
+        parsed = _fq_parse_re_chain_name(name, re_set)
+        parsed === nothing && continue
+        re, _, dim = parsed
+        push!(get!(by_key, (re, dim), Float64[]), median_at(idx))
+    end
+    return _fq_re_rows_from_component_medians(by_key)
+end
+
 function _fq_mcmc_random_effect_rows(res::FitResult, dm::DataModel)
     re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) && return NamedTuple[]
     re_set = Set(re_names)
-
     chain = get_chain(res)
     arr = _fq_chain_array(chain)
-    warmup = _fq_mcmc_warmup(res)
+    warmup = _uq_mcmc_warmup(res)
     idx_map = _fq_chain_idx_map(chain)
-
-    by_key = Dict{Tuple{Symbol, Int}, Vector{Float64}}()
-    for (k, idx) in pairs(idx_map)
-        parsed = _fq_parse_re_chain_name(k, re_set)
-        parsed === nothing && continue
-        re, _, dim = parsed
-        med = median(_fq_chain_values(arr, idx, warmup))
-        push!(get!(by_key, (re, dim), Float64[]), med)
-    end
-
-    return _fq_re_rows_from_component_medians(by_key)
+    return _fq_re_rows_from_named_medians(
+        re_set, pairs(idx_map), idx -> median(_fq_chain_values(arr, idx, warmup)))
 end
 
 function _fq_vi_random_effect_rows(res::FitResult, dm::DataModel; n_draws::Int = 1000)
@@ -502,18 +472,9 @@ function _fq_vi_random_effect_rows(res::FitResult, dm::DataModel; n_draws::Int =
     draw_pack = sample_posterior(
         res; n_draws = n_draws, rng = Random.Xoshiro(0x6a07), return_names = true)
     draws = draw_pack.draws
-    names = draw_pack.names
-
-    by_key = Dict{Tuple{Symbol, Int}, Vector{Float64}}()
-    for (j, n) in enumerate(names)
-        parsed = _fq_parse_re_chain_name(string(n), re_set)
-        parsed === nothing && continue
-        re, _, dim = parsed
-        med = Float64(median(@view draws[:, j]))
-        push!(get!(by_key, (re, dim), Float64[]), med)
-    end
-
-    return _fq_re_rows_from_component_medians(by_key)
+    return _fq_re_rows_from_named_medians(
+        re_set, ((string(n), j) for (j, n) in enumerate(draw_pack.names)),
+        j -> Float64(median(@view draws[:, j])))
 end
 
 function _fq_random_effect_block(res::FitResult; constants_re::NamedTuple = NamedTuple())
@@ -568,7 +529,7 @@ function summarize(res::FitResult;
     append!(notes, notes3)
 
     return FitResultSummary(
-        _fq_method_symbol(res),
+        _method_symbol(get_method(res)),
         inference,
         scale,
         get_objective(res),
@@ -663,15 +624,12 @@ function summarize(res::FitResult, uq::UQResult;
     dm = get_data_model(res)
     dm === nothing && error("summarize(fit, uq) requires fit to store DataModel.")
 
-    fe = get_fixed(get_model(dm))
-    model = get_model(dm)
-    flat_names = get_flat_names(fe)
-    parent_names = _flat_parent_names(fe)
-    se_mask = get_se_mask(fe)
-    roles_by_parent = _fq_role_by_parent(model)
-    fit_est = _fq_fit_component_estimates(res, dm, scale)
-    length(fit_est) == length(flat_names) ||
-        error("Internal summary error: estimate layout mismatch.")
+    lay = _fq_fit_layout(res, dm, scale)
+    flat_names = lay.flat_names
+    parent_names = lay.parent_names
+    se_mask = lay.se_mask
+    roles_by_parent = lay.roles_by_parent
+    fit_est = lay.estimates
 
     base = _fq_uq_base_vectors(uq; scale = scale)
     uq_names = get_uq_parameter_names(uq)

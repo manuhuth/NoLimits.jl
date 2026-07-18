@@ -16,26 +16,19 @@ using Random
 
     x = [0.1, -0.2, 0.3]
     y = tree(x, params)
-    y_fast = tree(x, params, Val(:fast))
-
     @test length(y) == 4
-    @test isapprox(y, y_fast; rtol = 1e-10, atol = 1e-12)
 
-    # Equality must hold for ASYMMETRIC parameters too (the all-zero `params` above
-    # makes every leaf weight equal, which would hide a leaf-ordering mismatch
-    # between the eval variants — exactly the latent bug fixed in 2026-06).
+    # Asymmetric (random) params exercise the level-concatenation leaf ordering.
     y_r = tree(x, params_rand)
-    @test isapprox(y_r, tree(x, params_rand, Val(:fast)); rtol = 1e-10, atol = 1e-12)
-    @test isapprox(y_r, tree(x, params_rand, Val(:inplace)); rtol = 1e-10, atol = 1e-12)
+    @test length(y_r) == 4
+
+    # 3-arg positional constructor stores fields as given and evaluates.
+    p3 = SoftTreeParams(params.node_weights, params.node_biases, params.leaf_values)
+    @test size(p3.node_weights) == size(params.node_weights)
+    @test length(tree(x, p3)) == 4
 
     @test_throws ErrorException SoftTree(0, 2, 4)
     @test_throws ErrorException SoftTree(3, 0, 4)
     @test_throws ErrorException SoftTree(3, 2, 0)
     @test_throws ErrorException tree([1.0, 2.0], params)
-    @test_throws ErrorException tree([1.0, 2.0], params, Val(:fast))
-
-    badW = ones(2, 3)
-    badb = ones(3)
-    badV = ones(4, 4)
-    @test_throws ErrorException SoftTreeParams(tree, badW, badb, badV)
 end

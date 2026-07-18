@@ -1,6 +1,5 @@
 export @initialDE
 export InitialDE
-export get_initialde_names
 export get_initialde_builder
 
 using ComponentArrays
@@ -32,13 +31,6 @@ struct InitialDE
     meta::InitialDEMeta
     ir::InitialDEIR
 end
-
-"""
-    get_initialde_names(i::InitialDE) -> Vector{Symbol}
-
-Return the names of the ODE states for which initial conditions are declared.
-"""
-get_initialde_names(i::InitialDE) = i.meta.names
 
 function _parse_initialde(block::Expr)
     block.head == :block || error("@initialDE expects a begin ... end block.")

@@ -119,7 +119,7 @@ function plot_uq_distributions(uq::UQResult;
         mixed_wald = mixed_wald, plot_type = plot_type)
     kde_fallback_params = Symbol[]
     for (k, j) in enumerate(idx)
-        pname = _uq_param_label(names[j])
+        pname = string(names[j])
         p = create_styled_plot(; title = pname,
             xlabel = pname,
             ylabel = y_label,
