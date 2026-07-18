@@ -2572,9 +2572,17 @@ function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_
         length(obs_rows))
     sol_acc = sol_accessors === nothing ? NamedTuple() : sol_accessors
     T_el = promote_type(eltype(θ), eltype(η_ind))
-    return _ll_rows_obs(dm, idx, θ, η_ind, cache, sol_accessors,
-        model.formulas.obs, ctx, sol_acc, const_cov, obs_series,
-        vrows, get_obs_cols(dm), T_el)
+    # For ODE models the per-row `obs` is inferred `Any` (the preDE/formula RGFs and
+    # `_ll_solve_de`'s `Union{Nothing,NamedTuple}` accessors are not inferrable), so
+    # `_ll_rows_obs` returns `Any`. The value is always a real scalar of type `T_el`;
+    # `convert` pins the return so `_loglikelihood_individual` (and `_laplace_logf_batch`)
+    # is concrete and callers stop boxing the likelihood. `convert` (not a `::T_el`
+    # assert) is AD-safe: under ForwardDiff/Enzyme it is identity when the value is
+    # already `T_el` (bit-identical) and a correct zero-partial lift otherwise.
+    return convert(T_el,
+        _ll_rows_obs(dm, idx, θ, η_ind, cache, sol_accessors,
+            model.formulas.obs, ctx, sol_acc, const_cov, obs_series,
+            vrows, get_obs_cols(dm), T_el))::T_el
 end
 
 # Row loop of `_loglikelihood_individual` behind a function barrier: every
@@ -2636,8 +2644,15 @@ function _loglikelihood_individual_rowwise(dm::DataModel, idx::Int, θ, η_ind,
     # barrier every per-row `calculate_formulas_obs`/`getproperty`/`logpdf` boxed
     # through `Any`.)
     row_tmpl = _row_re_template(dm, idx, 1, η_ind; obs_only = true)
-    return _ll_rows_obs_rowwise(dm, idx, model, θ, η_ind, cache, sol_accessors,
-        const_cov, obs_series, obs_cols, vary_cache, ind, t_obs, row_tmpl, T_el)
+    # The rowwise row loop still boxes through the `_RowREFill{Any}` template axes
+    # (concrete axes would need a type-stable runtime-keyed ComponentArray), so its
+    # result is inferred `Any`. `convert` pins it to `T_el`, collapsing
+    # `_loglikelihood_individual`'s branch union to a concrete type so callers stop
+    # boxing the LL. AD-safe (identity under ForwardDiff/Enzyme when already `T_el`).
+    return convert(T_el,
+        _ll_rows_obs_rowwise(dm, idx, model, θ, η_ind, cache,
+            sol_accessors, const_cov, obs_series, obs_cols, vary_cache, ind, t_obs,
+            row_tmpl, T_el))::T_el
 end
 
 # Row loop of `_loglikelihood_individual_rowwise` behind a function barrier: with
