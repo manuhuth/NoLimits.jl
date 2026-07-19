@@ -9,107 +9,111 @@ using Test
 # batches. Each subprocess includes fixtures.jl fresh (lazy/memoized), so the
 # only added cost is repeated `using NoLimits` (~tens of seconds per batch).
 #
-# Set NL_BATCHES to override the batch count (default below).
-
-# Ordered into fixture-affine contiguous blocks: batches are contiguous chunks
-# of this list and fixtures (fixtures.jl) memoize per subprocess, so files that
-# share fx_* models/fits should land in the same batch.
-const TEST_FILES = [
-    # ── B1: unit / AD (no fixtures) ──────────────────────────────────────────
-    "aqua_tests.jl",
-    "softtrees_tests.jl",
-    "ad_softtree.jl",
-    "ad_flow.jl",
-    "ad_random_effects.jl",
-    "ad_fixed_prede.jl",
-    "ad_differential_equation.jl",
-    "ad_ode_solve.jl",
-    "ad_model_full.jl",
-    "helpers_tests.jl",
-    "parameters_tests.jl",
-    "simplechains_nn_tests.jl",
-    "transform_tests.jl",
-    "fixed_effects_tests.jl",
-    "splines_tests.jl",
-    "covariates_tests.jl",
-    "random_effects_tests.jl",
-    "prede_tests.jl",
-    "differential_equation_tests.jl",
-    "ode_solve_tests.jl",
-    "closed_form_ode_tests.jl",
-    "formulas_tests.jl",
-    "initialde_tests.jl",
+# Batches ARE the fixture-affine groups below (one subprocess each). fixtures.jl
+# memoizes per subprocess, so keeping a group whole builds its shared fx_* models
+# and fits ONCE instead of once per straddling batch. Set NL_BATCHES to force a
+# flat N-way split instead (bounds per-process memory harder, but re-runs shared
+# fits across the split). Groups are capped near ~15 files so per-process
+# compiled-code memory stays within the known-good envelope.
+const TEST_GROUPS = [
+    # ── B1a: unit / AD (no fixtures) ─────────────────────────────────────────
+    ["aqua_tests.jl",
+        "softtrees_tests.jl",
+        "ad_softtree.jl",
+        "ad_flow.jl",
+        "ad_random_effects.jl",
+        "ad_fixed_prede.jl",
+        "ad_differential_equation.jl",
+        "ad_ode_solve.jl",
+        "ad_model_full.jl",
+        "helpers_tests.jl",
+        "parameters_tests.jl",
+        "simplechains_nn_tests.jl"],
+    # ── B1b: unit / AD (no fixtures) ─────────────────────────────────────────
+    ["transform_tests.jl",
+        "fixed_effects_tests.jl",
+        "splines_tests.jl",
+        "covariates_tests.jl",
+        "random_effects_tests.jl",
+        "prede_tests.jl",
+        "differential_equation_tests.jl",
+        "ode_solve_tests.jl",
+        "closed_form_ode_tests.jl",
+        "formulas_tests.jl",
+        "initialde_tests.jl"],
     # ── B2: model / data layer ───────────────────────────────────────────────
-    "model_macro_tests.jl",
-    "model_tests.jl",
-    "equation_display_tests.jl",
-    "data_model_tests.jl",
-    "identifiability_tests.jl",
-    "data_model_ode_tests.jl",
-    "summaries_data_model_tests.jl",
-    "summaries_model_tests.jl",
-    "summaries_fit_uq_tests.jl",
-    "summaries_parameter_comparison_tests.jl",
-    "compact_show_tests.jl",
-    "data_simulation_tests.jl",
-    "ode_callbacks_tests.jl",
-    "crossing_tests.jl",
-    "datasets_tests.jl",
+    ["model_macro_tests.jl",
+        "model_tests.jl",
+        "equation_display_tests.jl",
+        "data_model_tests.jl",
+        "identifiability_tests.jl",
+        "data_model_ode_tests.jl",
+        "summaries_data_model_tests.jl",
+        "summaries_model_tests.jl",
+        "summaries_fit_uq_tests.jl",
+        "summaries_parameter_comparison_tests.jl",
+        "compact_show_tests.jl",
+        "data_simulation_tests.jl",
+        "ode_callbacks_tests.jl",
+        "crossing_tests.jl",
+        "datasets_tests.jl"],
     # ── B3: plotting (shares fx_nore/re/ode/pois/bern/npf/npf2/recov + fits) ─
-    "plot_cache_tests.jl",
-    "plotting_functions_tests.jl",
-    "vpc_tests.jl",
-    "plot_observation_distributions_tests.jl",
-    "residual_plots_tests.jl",
-    "plot_random_effects_tests.jl",
-    "uq_plotting_tests.jl",
-    "integration_plotting.jl",
+    ["plot_cache_tests.jl",
+        "plotting_functions_tests.jl",
+        "vpc_tests.jl",
+        "plot_observation_distributions_tests.jl",
+        "residual_plots_tests.jl",
+        "plot_random_effects_tests.jl",
+        "uq_plotting_tests.jl",
+        "integration_plotting.jl"],
     # ── B4: estimation core (shares fx_nore/re/mg/mvn/mvnp/ode/pois/bern) ────
-    "estimation_common_tests.jl",
-    "complete_data_loglikelihood_tests.jl",
-    "accessors_tests.jl",
-    "serialization_tests.jl",
-    "estimation_mle_tests.jl",
-    "estimation_map_tests.jl",
-    "estimation_vi_tests.jl",
-    "estimation_mcmc_tests.jl",
-    "estimation_mcmc_re_tests.jl",
-    "estimation_laplace_tests.jl",
-    "estimation_focei_tests.jl",
-    "estimation_pooled_tests.jl",
-    "estimation_cv_tests.jl",
+    ["estimation_common_tests.jl",
+        "complete_data_loglikelihood_tests.jl",
+        "accessors_tests.jl",
+        "serialization_tests.jl",
+        "estimation_mle_tests.jl",
+        "estimation_map_tests.jl",
+        "estimation_vi_tests.jl",
+        "estimation_mcmc_tests.jl",
+        "estimation_mcmc_re_tests.jl",
+        "estimation_laplace_tests.jl",
+        "estimation_focei_tests.jl",
+        "estimation_pooled_tests.jl",
+        "estimation_cv_tests.jl"],
     # ── B5: EM / quadrature / UQ ─────────────────────────────────────────────
-    "estimation_mcem_tests.jl",
-    "estimation_mcem_is_tests.jl",
-    "estimation_saem_tests.jl",
-    "saem_mh_kernel_tests.jl",
-    "estimation_saem_autodetect_tests.jl",
-    "saem_schedule_tests.jl",
-    "saem_multichain_tests.jl",
-    "saem_sa_anneal_tests.jl",
-    "saem_var_lb_tests.jl",
-    "estimation_multistart_tests.jl",
-    "estimation_ghquadrature_tests.jl",
-    "extra_objective_tests.jl",
-    "uq_tests.jl",
-    "uq_edge_cases_tests.jl",
+    ["estimation_mcem_tests.jl",
+        "estimation_mcem_is_tests.jl",
+        "estimation_saem_tests.jl",
+        "saem_mh_kernel_tests.jl",
+        "estimation_saem_autodetect_tests.jl",
+        "saem_schedule_tests.jl",
+        "saem_multichain_tests.jl",
+        "saem_sa_anneal_tests.jl",
+        "saem_var_lb_tests.jl",
+        "estimation_multistart_tests.jl",
+        "estimation_ghquadrature_tests.jl",
+        "extra_objective_tests.jl",
+        "uq_tests.jl",
+        "uq_edge_cases_tests.jl"],
     # ── B6: HMM / Markov / stickbreak / Enzyme ───────────────────────────────
-    "hmm_continuous_tests.jl",
-    "hmm_discrete_time_tests.jl",
-    "hmm_estimation_method_matrix_tests.jl",
-    "hmm_mv_tests.jl",
-    "markov_observed_states_tests.jl",
-    "stickbreak_tests.jl",
-    "stickbreak_uq_natural_extension_tests.jl",
-    "ad_stickbreak_hmm.jl",
-    "continuous_transition_matrix_tests.jl",
-    "lie_psd_matrix_tests.jl",
     # Enzyme regression tests (merged from enzyme-compat). proxy = always-on,
     # ForwardDiff-only structural/numeric invariants; smoke = opt-in real Enzyme
     # gradients, no-op unless NOLIMITS_TEST_ENZYME=true (+ Julia>=1.12.5 + Enzyme).
-    "enzyme_compat_proxy_tests.jl",
-    "enzyme_smoke_tests.jl"
+    ["hmm_continuous_tests.jl",
+        "hmm_discrete_time_tests.jl",
+        "hmm_estimation_method_matrix_tests.jl",
+        "hmm_mv_tests.jl",
+        "markov_observed_states_tests.jl",
+        "stickbreak_tests.jl",
+        "stickbreak_uq_natural_extension_tests.jl",
+        "ad_stickbreak_hmm.jl",
+        "continuous_transition_matrix_tests.jl",
+        "lie_psd_matrix_tests.jl",
+        "enzyme_compat_proxy_tests.jl",
+        "enzyme_smoke_tests.jl"]
 ]
+
+const TEST_FILES = reduce(vcat, TEST_GROUPS)
 
 # --- Orchestrate sequential subprocess batches -----------------------------
 
@@ -128,11 +132,10 @@ else
     filter(in(Set(requested)), TEST_FILES)
 end
 
-const N_BATCHES = parse(Int, get(ENV, "NL_BATCHES", "6"))
-
-# Contiguous split of TEST_FILES into N_BATCHES near-equal chunks (order
-# preserved). Batches run sequentially, so the split only bounds per-process
-# memory — balance isn't needed for wall-clock.
+# Contiguous split of TEST_FILES into n near-equal chunks (order preserved).
+# Only used when NL_BATCHES forces a flat split; the default path batches by the
+# fixture-affine TEST_GROUPS instead. Batches run sequentially, so the split only
+# bounds per-process memory — balance isn't needed for wall-clock.
 function _chunks(items, n)
     n = min(n, length(items))
     q, r = divrem(length(items), n)
@@ -175,7 +178,15 @@ function _child_flags()
     flags
 end
 
-const _BATCHES = _chunks(_SELECTED_FILES, N_BATCHES)
+# Default: one batch per fixture-affine group (built-once fx_* per subprocess).
+# NL_BATCHES=N overrides with a flat N-way split of the selected files.
+const _NB = strip(get(ENV, "NL_BATCHES", ""))
+const _BATCHES = if isempty(_NB)
+    _sel = Set(_SELECTED_FILES)
+    filter(!isempty, [filter(in(_sel), g) for g in TEST_GROUPS])
+else
+    _chunks(_SELECTED_FILES, parse(Int, _NB))
+end
 const _PROJECT = dirname(Base.active_project())
 const _BATCH_SCRIPT = joinpath(@__DIR__, "run_batch.jl")
 

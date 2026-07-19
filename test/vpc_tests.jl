@@ -110,26 +110,9 @@ end
 end
 
 @testset "plot_vpc MCMC random effects" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(0.2, prior = Normal(0.0, 1.0))
-            σ = RealNumber(0.3, scale = :log, prior = LogNormal(0.0, 0.5))
-        end
-        @covariates begin
-            t = Covariate()
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 0.5); column = :ID)
-        end
-        @formulas begin
-            y ~ Normal(a * t + η, σ)
-        end
-    end
-    df = DataFrame(ID = [1, 1, 2, 2, 3, 3], t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, -0.1, 0.05, 0.1])
-    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    res = fit_model(
-        dm, MCMC(; turing_kwargs = (n_samples = 10, n_adapt = 5, progress = false)))
+    # fx_mcmc_re is a scalar-RE MCMC fit (priors, 20 samples): exercises the
+    # MCMC-RE VPC branch incl. mcmc_draws/mcmc_warmup.
+    res = fx_mcmc_re()
     @test plot_vpc(res; n_simulations = 5, n_bins = 3, mcmc_draws = 5, mcmc_warmup = 3) !==
           nothing
 end
