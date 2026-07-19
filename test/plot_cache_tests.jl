@@ -28,11 +28,10 @@ end
 end
 
 @testset "Plot cache inherits constants_re from fit result" begin
-    dm = fx_recov_dm()
-    constants_re = (; η = (; B = 0.0))
-    res = fit_model(dm,
-        NoLimits.Laplace(; optim_kwargs = (maxiters = 2,));
-        constants_re = constants_re)
+    # fx_constre_laplace was fit with constants_re = (; η = (; B = 0.0)); the cache
+    # must inherit it and pin η(B) to 0.
+    res = fx_constre_laplace()
+    dm = fx_constre_dm()
 
     cache = build_plot_cache(res)
     @test cache isa PlotCache

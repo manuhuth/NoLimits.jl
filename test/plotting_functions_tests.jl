@@ -3,7 +3,6 @@ using NoLimits
 using DataFrames
 using Distributions
 using CairoMakie
-using Random
 using Turing: MH
 
 # Note: "plot_data and plot_fits basic", "plot_fits MCMC", "plot_fits VI"
@@ -90,12 +89,8 @@ end
 end
 
 @testset "plot_fits inherits constants_re from fit result" begin
-    constants_re = (; η = (; B = 0.0))
-    res = fit_model(fx_recov_dm(),
-        NoLimits.Laplace(; optim_kwargs = (maxiters = 2,));
-        constants_re = constants_re)
-
-    @test plot_fits(res) !== nothing
+    # fx_constre_laplace is a Laplace fit built with constants_re = (; η = (; B = 0.0)).
+    @test plot_fits(fx_constre_laplace()) !== nothing
 end
 
 @testset "plot_multistart_waterfall basic" begin
@@ -310,15 +305,9 @@ end
 end
 
 @testset "VI posterior-draw prediction plots (no RE)" begin
-    # Moved from coverage_gap_tests.jl. VI rejects random-effects models, so
-    # exercise the VI posterior-draw plot path (_vi_drawn_params) with a
-    # fixed-effects-only model + priors.
-    df = DataFrame(ID = repeat(1:4, inner = 3), t = repeat(0.0:2.0, 4),
-        y = [0.2 + 0.05 * i + 0.03 * j for i in 1:4 for j in 0:2])
-    dm = DataModel(fx_nore_prior_model(), df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm, NoLimits.VI(;
-            turing_kwargs = (max_iter = 30, progress = false));
-        rng = Random.Xoshiro(3))
+    # VI rejects random-effects models; fx_vi is a fixed-effects-only VI fit that
+    # exercises the VI posterior-draw plot path (_vi_drawn_params).
+    res = fx_vi()
     @test plot_fits(res) !== nothing
     # posterior-draw band -> _vi_drawn_params
     @test plot_fits(res; plot_mcmc_quantiles = true, mcmc_draws = 5) !== nothing

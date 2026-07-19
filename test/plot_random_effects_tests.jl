@@ -3,7 +3,6 @@ using NoLimits
 using CairoMakie
 using DataFrames
 using Distributions
-using Random
 using Turing
 
 # ── Shared fixtures: build each unique model type once so testsets share JIT compilation ──
@@ -229,10 +228,8 @@ end
 end
 
 @testset "plot_random_effects Laplace constants_re" begin
-    dm = _PRE_CONST_RE_DM
-    constants_re = (; η = (; B = 0.0))
-    res = fit_model(
-        dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 2,)); constants_re = constants_re)
+    # fx_constre_laplace pins η(B) via constants_re = (; η = (; B = 0.0)).
+    res = fx_constre_laplace()
 
     p_dist = plot_random_effect_distributions(res)
     @test p_dist !== nothing
@@ -505,31 +502,10 @@ end
     @test plot_random_effect_pairplot(res) !== nothing
 end
 
-# ── Moved from coverage_gap_tests.jl ──────────────────────────────────────────
-# Prior-equipped scalar-RE model (fixed RE sd) for posterior-prediction paths.
-const _PRE_GAP_PRIOR_MODEL = @Model begin
-    @fixedEffects begin
-        a = RealNumber(0.2, prior = Normal(0.0, 1.0))
-        σ = RealNumber(0.3, scale = :log, prior = LogNormal(0.0, 0.5))
-    end
-    @covariates begin
-        t = Covariate()
-    end
-    @randomEffects begin
-        η = RandomEffect(Normal(0.0, 0.5); column = :ID)
-    end
-    @formulas begin
-        y ~ Normal(a + η, σ)
-    end
-end
-
 @testset "RE posterior prediction plots (MCMC)" begin
-    dm = DataModel(_PRE_GAP_PRIOR_MODEL, fx_re_df(); primary_id = :ID, time_col = :t)
-
-    res_mcmc = fit_model(dm,
-        NoLimits.MCMC(;
-            turing_kwargs = (n_samples = 20, n_adapt = 10, progress = false));
-        rng = Random.Xoshiro(1))
+    # fx_mcmc_re is a scalar-RE MCMC fit (priors, 20 samples) — enough for the
+    # default-mean and posterior-draw paths below.
+    res_mcmc = fx_mcmc_re()
     # default path -> _mcmc_random_effects_means
     @test plot_fits(res_mcmc) !== nothing
     # posterior-draw path -> _mcmc_drawn_params
