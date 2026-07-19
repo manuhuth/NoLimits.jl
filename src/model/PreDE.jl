@@ -153,9 +153,7 @@ macro preDifferentialEquation(block)
                      for s in call_syms
                      if !(isdefined(Base, s) || isdefined(Distributions, s) ||
                           isdefined(@__MODULE__, s))])
-    var_syms = Set([s for s in var_syms if Base.isidentifier(s)])
-    skip_vars = Set([:Inf, :NaN, :nothing, :missing, :true, :false])
-    var_syms = Set([s for s in var_syms if !(s in skip_vars)])
+    var_syms = _macro_filter_var_syms(var_syms)
 
     # `sym in prop_syms` is decidable at macro-expansion time — emit the chosen
     # branch directly. (The old code carried the membership test into the generated

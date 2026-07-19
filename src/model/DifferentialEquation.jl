@@ -745,9 +745,7 @@ macro DifferentialEquation(block)
     call_syms = Set([s
                      for s in call_syms
                      if !(isdefined(Base, s) || isdefined(@__MODULE__, s))])
-    var_syms = Set([s for s in var_syms if Base.isidentifier(s)])
-    skip_vars = Set([:Inf, :NaN, :nothing, :missing, :true, :false])
-    var_syms = Set([s for s in var_syms if !(s in skip_vars)])
+    var_syms = _macro_filter_var_syms(var_syms)
 
     var_syms_no_states = Set([s
                               for s in var_syms

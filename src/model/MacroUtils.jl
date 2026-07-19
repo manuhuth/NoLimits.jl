@@ -104,6 +104,17 @@ function _macro_collect_property_bases(ex, out::Set{Symbol})
     return out
 end
 
+# Trailing var-symbol filter shared verbatim by @preDifferentialEquation,
+# @DifferentialEquation, @initialDE, and @formulas: drop non-identifiers and the
+# literal keyword symbols. The preceding delete!/call-symbol filters differ per
+# macro and stay inline at each call site.
+function _macro_filter_var_syms(var_syms::Set{Symbol})
+    var_syms = Set([s for s in var_syms if Base.isidentifier(s)])
+    skip_vars = Set([:Inf, :NaN, :nothing, :missing, :true, :false])
+    var_syms = Set([s for s in var_syms if !(s in skip_vars)])
+    return var_syms
+end
+
 function _macro_forbidden_symbol(ex)
     ex isa Symbol && (ex == :t || ex == :ξ) && return ex
     ex isa Expr || return nothing

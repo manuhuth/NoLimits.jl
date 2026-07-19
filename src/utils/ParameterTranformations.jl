@@ -496,6 +496,38 @@ function expm_inverse(T::AbstractMatrix{<:Real})
     return Matrix(Symmetric(exp(Symmetric(T))))
 end
 
+# Recursively strip ForwardDiff.Dual levels to the underlying float (used only for the
+# non-differentiated scaling-and-squaring count in `_matexp`).
+_scalar_value(x::Real) = float(x)
+_scalar_value(x::ForwardDiff.Dual) = _scalar_value(ForwardDiff.value(x))
+
+# Matrix exponential dispatched on eltype: BLAS-exact `exp` for Blas floats (keeps the
+# value and single-level Fréchet paths bit-identical), and a Dual-generic scaling-and-
+# squaring Padé (Higham degree 13; only +, *, \, I) for Dual eltypes, which arise only at
+# 2nd+ ForwardDiff order (nested Hessian) where `exp(::Matrix{Dual})` has no BLAS method.
+_matexp(M::AbstractMatrix{<:LinearAlgebra.BlasFloat}) = exp(M)
+
+function _matexp(M::AbstractMatrix{<:Real})
+    b = (64764752532480000.0, 32382376266240000.0, 7771770303897600.0,
+        1187353796428800.0, 129060195264000.0, 10559470521600.0, 670442572800.0,
+        33522128640.0, 1323241920.0, 40840800.0, 960960.0, 16380.0, 182.0, 1.0)
+    nrm = opnorm(_scalar_value.(M), 1)
+    s = nrm > 5.371920351148152 ? ceil(Int, log2(nrm / 5.371920351148152)) : 0
+    A = M ./ 2.0^s
+    A2 = A * A
+    A4 = A2 * A2
+    A6 = A2 * A4
+    Uodd = A * (A6 * (b[14] * A6 + b[12] * A4 + b[10] * A2) +
+            b[8] * A6 + b[6] * A4 + b[4] * A2 + b[2] * I)
+    Veven = A6 * (b[13] * A6 + b[11] * A4 + b[9] * A2) +
+            b[7] * A6 + b[5] * A4 + b[3] * A2 + b[1] * I
+    P = (Veven - Uodd) \ (Veven + Uodd)
+    for _ in 1:s
+        P = P * P
+    end
+    return P
+end
+
 function _expm_frechet(A::AbstractMatrix{<:Real}, E::AbstractMatrix{<:Real})
     n = size(A, 1)
     size(A, 2) == n || error("A must be square.")
@@ -503,7 +535,7 @@ function _expm_frechet(A::AbstractMatrix{<:Real}, E::AbstractMatrix{<:Real})
     TT = promote_type(eltype(A), eltype(E))
     Z = zeros(TT, n, n)
     M = [Matrix{TT}(A) Matrix{TT}(E); Z Matrix{TT}(A)]
-    EM = exp(M)
+    EM = _matexp(M)
     return EM[1:n, 1:n], EM[1:n, (n + 1):(2n)]
 end
 
@@ -529,6 +561,29 @@ function expm_inverse(T::AbstractMatrix{ForwardDiff.Dual{
         Ek = 0.5 .* (Pk .+ Pk')                      # symmetric seed direction
         _, F = _expm_frechet(Sv, Ek)
         Matrix(Symmetric(F))                          # symmetric Fréchet derivative
+    end
+    out = Matrix{ForwardDiff.Dual{Tg, V, N}}(undef, n, n)
+    @inbounds for j in 1:n, i in 1:n
+        out[i, j] = ForwardDiff.Dual{Tg}(Mv[i, j], ntuple(k -> dMs[k][i, j], N)...)
+    end
+    return out
+end
+
+# Nested Duals (2nd+-order ForwardDiff, e.g. a Hessian through the transform): recurse on
+# the value (bottoming out at the Float64 eigen leaf, so the value stays bit-identical) and
+# take each partial via the Padé Fréchet derivative, whose inner matrix-exp routes through
+# the Dual-generic `_matexp`. Removes the finite-difference Hessian fallback for `:expm`.
+function expm_inverse(T::AbstractMatrix{ForwardDiff.Dual{
+        Tg, V, N}}) where {Tg, V <: ForwardDiff.Dual, N}
+    n = size(T, 1)
+    Tv = ForwardDiff.value.(T)
+    Sv = 0.5 .* (Tv .+ Tv')
+    Mv = expm_inverse(Tv)
+    dMs = ntuple(N) do k
+        Pk = ForwardDiff.partials.(T, k)
+        Ek = 0.5 .* (Pk .+ Pk')
+        _, F = _expm_frechet(Sv, Ek)
+        Matrix(Symmetric(F))
     end
     out = Matrix{ForwardDiff.Dual{Tg, V, N}}(undef, n, n)
     @inbounds for j in 1:n, i in 1:n
@@ -576,9 +631,9 @@ end
 # so the transformed vector is [λ (n) ; α (nA)] with nA = n(n-1)/2 (total n(n+1)/2).
 # The log-eigenvalues λ live on ℝ (eigenvalues stay positive) and can be box-bounded;
 # the rotation coefficients α are unbounded. `exp(A)` for antisymmetric A is a general
-# (non-symmetric) matrix exponential, so it goes through the generic Padé path under
-# ForwardDiff (no eigengap issue, unlike the symmetric `:expm` scale) and needs no
-# `Dual` specialization.
+# (non-symmetric) matrix exponential with no eigengap issue (unlike the symmetric `:expm`
+# scale); its single- and nested-Dual derivatives are built from the Padé Fréchet block
+# below (`_expm_frechet`, routed through the Dual-generic `_matexp`).
 
 # Recover n from the packed length L = n(n+1)/2.
 function _lie_dim(L::Int)
@@ -657,6 +712,36 @@ function liepsd_inverse(t::AbstractVector{ForwardDiff.Dual{
         dα = @view p[(n + 1):L]
         dAk = _lie_antisym(dα, n)
         _, dUk = _expm_frechet(Av, dAk)            # ∂exp(A)[dA]
+        dDk = Diagonal(exp.(λv) .* dλ)
+        dΣ = dUk * Dv * Uv' + Uv * dDk * Uv' + Uv * Dv * dUk'
+        Matrix(Symmetric(dΣ))
+    end
+    out = Matrix{ForwardDiff.Dual{Tg, V, N}}(undef, n, n)
+    @inbounds for j in 1:n, i in 1:n
+        out[i, j] = ForwardDiff.Dual{Tg}(Σv[i, j], ntuple(k -> dΣs[k][i, j], N)...)
+    end
+    return out
+end
+
+# Nested Duals (2nd+-order ForwardDiff): recurse on the value (bottoming out at the Float64
+# LAPACK leaf) and build each partial via the Padé Fréchet derivative through `_matexp`.
+function liepsd_inverse(t::AbstractVector{ForwardDiff.Dual{
+        Tg, V, N}}) where {Tg, V <: ForwardDiff.Dual, N}
+    L = length(t)
+    n = _lie_dim(L)
+    tv = ForwardDiff.value.(t)
+    Σv = liepsd_inverse(tv)
+    λv = @view tv[1:n]
+    αv = @view tv[(n + 1):L]
+    Av = _lie_antisym(αv, n)
+    Uv = _matexp(Av)
+    Dv = Diagonal(exp.(λv))
+    dΣs = ntuple(N) do k
+        p = ForwardDiff.partials.(t, k)
+        dλ = @view p[1:n]
+        dα = @view p[(n + 1):L]
+        dAk = _lie_antisym(dα, n)
+        _, dUk = _expm_frechet(Av, dAk)
         dDk = Diagonal(exp.(λv) .* dλ)
         dΣ = dUk * Dv * Uv' + Uv * dDk * Uv' + Uv * Dv * dUk'
         Matrix(Symmetric(dΣ))

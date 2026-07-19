@@ -606,6 +606,14 @@ function _validate_constant_names(fixed_set, constants::NamedTuple)
     return nothing
 end
 
+# True when the model's fixed effects declare at least one non-`Priorless` prior
+# (the priors-present check MAP/PooledMap require). Mirrors the previous inline logic.
+function _has_fixed_priors(fe)
+    priors = get_priors(fe)
+    return !isempty(keys(priors)) &&
+           any(!(getfield(priors, k) isa Priorless) for k in keys(priors))
+end
+
 # Resolve the transformed free-parameter optimizer bounds shared by the fixed-effect
 # fit drivers (MLE/MAP/Pooled/GHQuadrature/Laplace/FOCEI and the SAEM/MCEM M-step).
 # Coerces user lb/ub (scalar / NamedTuple / ComponentArray / vector) onto the
