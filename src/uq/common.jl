@@ -396,6 +396,9 @@ function _hessian_from_objective(obj::Function,
     if backend_use == :forwarddiff
         try
             H = ForwardDiff.hessian(obj, x0)
+            all(isfinite, H) ||
+                error("ForwardDiff Hessian has non-finite entries (e.g. a NaN " *
+                      "covariance derivative at repeated eigenvalues).")
             return Matrix{Float64}(0.5 .* (H .+ H')), :forwarddiff
         catch err
             @warn "ForwardDiff Hessian failed in compute_uq; falling back to finite-difference Hessian from gradients." error=sprint(

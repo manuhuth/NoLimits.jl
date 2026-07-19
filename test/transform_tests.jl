@@ -283,3 +283,42 @@ end
     @test isapprox(jac.v[2], fd2; rtol = 1e-5, atol = 1e-8)
     @test isapprox(jac.v[3], fd3; rtol = 1e-10)
 end
+
+@testset "matrix-exp transforms — 2nd-order ForwardDiff (nested Duals)" begin
+    # Regression: a Hessian through the :expm/:lie covariance transform flows nested Duals;
+    # this was NaN at repeated eigenvalues (Omega = I) for :expm and errored for :lie. The
+    # nested-Dual specialization makes both finite, symmetric, and exact to FD-of-gradient.
+    function fd_hess(f, x; h = 1e-6)
+        m = length(x)
+        H = zeros(m, m)
+        for j in 1:m
+            xp = copy(x)
+            xp[j] += h
+            xm = copy(x)
+            xm[j] -= h
+            H[:, j] = (ForwardDiff.gradient(f, xp) .- ForwardDiff.gradient(f, xm)) ./ (2h)
+        end
+        return 0.5 .* (H .+ H')
+    end
+
+    # BLAS passthrough must stay bit-identical to `exp` (value/gradient goldens rely on it).
+    A = [0.1 0.4; -0.4 0.2]
+    @test NoLimits._matexp(A) == exp(A)
+
+    n = 2
+    g_expm(v) = sum(abs2, NoLimits.expm_inverse(NoLimits._sym_from_upper(v, n)))
+    for v0 in ([0.0, 0.0, 0.0], [0.3, -0.2, 0.5])   # Omega = I (degenerate), off-degeneracy
+        H = ForwardDiff.hessian(g_expm, v0)
+        @test all(isfinite, H)
+        @test isapprox(H, H'; atol = 1e-10)
+        @test isapprox(H, fd_hess(g_expm, v0); rtol = 1e-6, atol = 1e-7)
+    end
+
+    h_lie(t) = sum(abs2, NoLimits.liepsd_inverse(t))
+    for t0 in ([0.0, 0.0, 0.0], [0.2, -0.1, 0.4])
+        H = ForwardDiff.hessian(h_lie, t0)
+        @test all(isfinite, H)
+        @test isapprox(H, H'; atol = 1e-10)
+        @test isapprox(H, fd_hess(h_lie, t0); rtol = 1e-6, atol = 1e-7)
+    end
+end

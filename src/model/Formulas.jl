@@ -659,9 +659,7 @@ macro formulas(block)
                     for s in call_heads
                     if !(isdefined(Base, s) || isdefined(Distributions, s) ||
                          isdefined(@__MODULE__, s))])
-    var_syms = Set([s for s in var_syms if Base.isidentifier(s)])
-    skip_vars = Set([:Inf, :NaN, :nothing, :missing, :true, :false])
-    var_syms = Set([s for s in var_syms if !(s in skip_vars)])
+    var_syms = _macro_filter_var_syms(var_syms)
 
     crossing_specs = Expr[]
     for i in eachindex(det_names)
