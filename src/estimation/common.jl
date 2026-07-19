@@ -606,6 +606,64 @@ function _validate_constant_names(fixed_set, constants::NamedTuple)
     return nothing
 end
 
+# Resolve the transformed free-parameter optimizer bounds shared by the fixed-effect
+# fit drivers (MLE/MAP/Pooled/GHQuadrature/Laplace/FOCEI and the SAEM/MCEM M-step).
+# Coerces user lb/ub (scalar / NamedTuple / ComponentArray / vector) onto the
+# free-name subset, falls back to the model hard bounds, and applies the
+# BlackBoxOptim finite-bounds + model-intersection + start-clamp rules.
+# `ignore_model_bounds`/`allow_bbo`/`emit_info` are args (not read off the method)
+# because SAEM/MCEM have no `ignore_model_bounds` field, FOCEI has no BBO support,
+# and Pooled suppresses the warning after refit round 1. Returns
+# (lb, ub, use_bounds, θ0_init).
+function _resolve_optim_bounds(fe, free_names, θ0_free_t, optimizer, user_lb, user_ub,
+        effective_constants::NamedTuple; ignore_model_bounds::Bool = false,
+        allow_bbo::Bool = true, emit_info::Bool = true,
+        method_label::AbstractString = "this method")
+    lower_t, upper_t = get_bounds_transformed(fe)
+    lower_vec = collect(_ca_subset(lower_t, free_names))
+    upper_vec = collect(_ca_subset(upper_t, free_names))
+    use_bounds = !ignore_model_bounds &&
+                 !(all(isinf, lower_vec) && all(isinf, upper_vec))
+    normalize_bound = function (bound, fallback)
+        bound === nothing && return fallback
+        if bound isa Number
+            length(fallback) == 1 ||
+                error("Scalar bounds are only valid when there is one free parameter.")
+            return [bound]
+        end
+        if bound isa ComponentArray || bound isa NamedTuple
+            b = bound isa ComponentArray ? bound : ComponentArray(bound)
+            return collect(_ca_subset(b, free_names))
+        end
+        return collect(bound)
+    end
+    user_bounds = user_lb !== nothing || user_ub !== nothing
+    if user_bounds && !isempty(keys(effective_constants)) && emit_info
+        @info "Bounds for constant parameters are ignored." constants=collect(keys(effective_constants))
+    end
+    lb = user_bounds ? normalize_bound(user_lb, lower_vec) : lower_vec
+    ub = user_bounds ? normalize_bound(user_ub, upper_vec) : upper_vec
+    use_bounds = use_bounds || user_bounds
+    is_bbo = allow_bbo && parentmodule(typeof(optimizer)) === OptimizationBBO
+    if is_bbo && !use_bounds
+        error("BlackBoxOptim methods require finite bounds. Add lower/upper bounds in " *
+              "@fixedEffects (on transformed scale) or pass them via " *
+              "$(method_label)(lb=..., ub=...). A quick helper is " *
+              "default_bounds_from_start(dm; margin=...).")
+    end
+    if is_bbo && !(all(isfinite, lb) && all(isfinite, ub))
+        error("BlackBoxOptim methods require finite lower and upper bounds for all free parameters.")
+    end
+    if is_bbo
+        lb = map((u, m) -> isfinite(m) ? max(u, m) : u, collect(lb), lower_vec)
+        ub = map((u, m) -> isfinite(m) ? min(u, m) : u, collect(ub), upper_vec)
+        θ0_init = clamp.(collect(θ0_free_t), lb, ub)
+    else
+        θ0_init = θ0_free_t
+    end
+    return lb, ub, use_bounds, θ0_init
+end
+
 function get_iterations(res::MethodResult)
     hasproperty(res, :iterations) ? res.iterations :
     error("iterations not available for this method.")

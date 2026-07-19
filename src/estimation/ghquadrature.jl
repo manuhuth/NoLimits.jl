@@ -380,44 +380,9 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
 
     # ── Bounds ───────────────────────────────────────────────────────────────
     optf = OptimizationFunction(obj, method.adtype)
-    lower_t, upper_t = get_bounds_transformed(fe)
-    lower_t_free = lower_t[free_names]
-    upper_t_free = upper_t[free_names]
-    lower_t_free_vec = collect(lower_t_free)
-    upper_t_free_vec = collect(upper_t_free)
-
-    use_bounds = !method.ignore_model_bounds &&
-                 !(all(isinf, lower_t_free_vec) && all(isinf, upper_t_free_vec))
-    user_bounds = method.lb !== nothing || method.ub !== nothing
-    if user_bounds && !isempty(keys(constants))
-        @info "Bounds for constant parameters are ignored." constants=collect(keys(constants))
-    end
-    if user_bounds
-        lb = method.lb
-        ub = method.ub
-        lb isa ComponentArray && (lb = lb[free_names])
-        ub isa ComponentArray && (ub = ub[free_names])
-    else
-        lb = lower_t_free_vec
-        ub = upper_t_free_vec
-    end
-    use_bounds = use_bounds || user_bounds
-
-    if parentmodule(typeof(method.optimizer)) === OptimizationBBO && !use_bounds
-        error("BlackBoxOptim methods require finite bounds. Add lower/upper bounds " *
-              "in @fixedEffects (on transformed scale) or pass them via " *
-              "GHQuadrature(lb=..., ub=...). A quick helper is " *
-              "default_bounds_from_start(dm; margin=...).")
-    end
-    if parentmodule(typeof(method.optimizer)) === OptimizationBBO
-        model_lb_v = lower_t_free_vec
-        model_ub_v = upper_t_free_vec
-        lb = map((u, m) -> isfinite(m) ? max(u, m) : u, collect(lb), model_lb_v)
-        ub = map((u, m) -> isfinite(m) ? min(u, m) : u, collect(ub), model_ub_v)
-        θ0_init = clamp.(collect(θ0_free_t), lb, ub)
-    else
-        θ0_init = θ0_free_t
-    end
+    lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
+        fe, free_names, θ0_free_t, method.optimizer, method.lb, method.ub, constants;
+        ignore_model_bounds = method.ignore_model_bounds, method_label = "GHQuadrature")
 
     prob = use_bounds ? OptimizationProblem(optf, θ0_init; lb = lb, ub = ub) :
            OptimizationProblem(optf, θ0_init)

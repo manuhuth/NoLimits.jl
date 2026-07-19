@@ -2340,6 +2340,10 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
     θ0_free_t = θ0_t[free_names]
     axs_free = getaxes(θ0_free_t)
     axs_full = getaxes(θ_const_t)
+    # Positional free-into-full merge (Enzyme-safe; avoids the per-name setproperty!
+    # loop). free_idx/θ_const_t_vec are fit-constant, so compute them once here.
+    θ_const_t_vec = collect(θ_const_t)
+    free_idx = _free_idx(θ_const_t, θ0_free_t)
     has_penalty = !isempty(keys(penalty))
     # Optional user-supplied objective term, a function of the natural-scale θu.
     # Mirrors `penalty` exactly: added to both obj_only and obj_grad, no-op when
@@ -2358,10 +2362,7 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
         cached_obj !== nothing && return cached_obj
         T = eltype(θt_free)
         infT = convert(T, Inf)
-        θt_full = ComponentArray(T.(θ_const_t), axs_full)
-        for name in free_names
-            setproperty!(θt_full, name, getproperty(θt_free, name))
-        end
+        θt_full = _merge_free_into_full(θ_const_t_vec, free_idx, θt_free, axs_full)
         θu = inv_transform(θt_full)
         obj = _laplace_objective_only(
             dm, batch_infos, θu, const_cache, ll_cache, ebe_cache;
@@ -2388,10 +2389,7 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
         end
         T = eltype(θt_free)
         infT = convert(T, Inf)
-        θt_full = ComponentArray(T.(θ_const_t), axs_full)
-        for name in free_names
-            setproperty!(θt_full, name, getproperty(θt_free, name))
-        end
+        θt_full = _merge_free_into_full(θ_const_t_vec, free_idx, θt_free, axs_full)
         θu = inv_transform(θt_full)
         obj, grad_full, bstars = _laplace_objective_and_grad(
             dm, batch_infos, θu, const_cache, ll_cache, ebe_cache;
@@ -2452,45 +2450,10 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
             grad = obj_grad(θt, p)[2]
             G .= grad
         end)
-    lower_t, upper_t = get_bounds_transformed(fe)
-    lower_t_free = lower_t[free_names]
-    upper_t_free = upper_t[free_names]
-    use_bounds = !method.ignore_model_bounds &&
-                 !(all(isinf, lower_t_free) && all(isinf, upper_t_free))
-    user_bounds = method.lb !== nothing || method.ub !== nothing
-    if user_bounds && !isempty(keys(constants))
-        @info "Bounds for constant parameters are ignored." constants=collect(keys(constants))
-    end
-    if user_bounds
-        lb = method.lb
-        ub = method.ub
-        if lb isa ComponentArray
-            lb = lb[free_names]
-        end
-        if ub isa ComponentArray
-            ub = ub[free_names]
-        end
-    else
-        lb = lower_t_free
-        ub = upper_t_free
-    end
-    use_bounds = use_bounds || user_bounds
-    if allow_bbo && parentmodule(typeof(method.optimizer)) === OptimizationBBO &&
-       !use_bounds
-        error("BlackBoxOptim methods require finite bounds. Add lower/upper bounds in @fixedEffects (on transformed scale) or pass them via Laplace(lb=..., ub=...). A quick helper is default_bounds_from_start(dm; margin=...).")
-    end
-    if allow_bbo && parentmodule(typeof(method.optimizer)) === OptimizationBBO
-        # Intersect user-provided bounds with model hard bounds so BBO
-        # never proposes parameter values that violate model constraints.
-        # (BBO ignores x0 and uses a random population within [lb,ub].)
-        model_lb_v = collect(lower_t_free)
-        model_ub_v = collect(upper_t_free)
-        lb = map((u, m) -> isfinite(m) ? max(u, m) : u, collect(lb), model_lb_v)
-        ub = map((u, m) -> isfinite(m) ? min(u, m) : u, collect(ub), model_ub_v)
-        θ0_init = clamp.(collect(θ0_free_t), lb, ub)
-    else
-        θ0_init = θ0_free_t
-    end
+    lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
+        fe, free_names, θ0_free_t, method.optimizer, method.lb, method.ub, constants;
+        ignore_model_bounds = method.ignore_model_bounds, allow_bbo = allow_bbo,
+        method_label = "Laplace")
     prob = use_bounds ? OptimizationProblem(optf, θ0_init; lb = lb, ub = ub) :
            OptimizationProblem(optf, θ0_init)
     sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)

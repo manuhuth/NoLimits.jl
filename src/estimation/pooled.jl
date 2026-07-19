@@ -1116,47 +1116,10 @@ function _pooled_solve(dm::DataModel, method, θ_start_u::ComponentArray,
     end
 
     optf = OptimizationFunction(obj, method.adtype)
-    lower_t, upper_t = get_bounds_transformed(fe)
-    lower_t_free = _ca_subset(lower_t, free_names)
-    upper_t_free = _ca_subset(upper_t, free_names)
-    lower_t_free_vec = collect(lower_t_free)
-    upper_t_free_vec = collect(upper_t_free)
-    use_bounds = !method.ignore_model_bounds &&
-                 !(all(isinf, lower_t_free_vec) && all(isinf, upper_t_free_vec))
-    normalize_bound = function (bound, fallback)
-        bound === nothing && return fallback
-        bound isa Number && (length(fallback) == 1 ||
-            error("Scalar bounds are only valid when there is one free parameter.");
-        return [bound])
-        if bound isa ComponentArray || bound isa NamedTuple
-            b = bound isa ComponentArray ? bound : ComponentArray(bound)
-            b = _ca_subset(b, free_names)
-            return collect(b)
-        end
-        return collect(bound)
-    end
-    user_bounds = method.lb !== nothing || method.ub !== nothing
-    if user_bounds && !isempty(keys(merged_constants)) && info_bounds
-        @info "Bounds for constant parameters are ignored." constants=collect(keys(merged_constants))
-    end
-    lb = user_bounds ? normalize_bound(method.lb, lower_t_free_vec) : lower_t_free_vec
-    ub = user_bounds ? normalize_bound(method.ub, upper_t_free_vec) : upper_t_free_vec
-    use_bounds = use_bounds || user_bounds
-    if parentmodule(typeof(method.optimizer)) === OptimizationBBO && !use_bounds
-        error("BlackBoxOptim requires finite bounds. Pass them via Pooled(lb=..., ub=...) " *
-              "or use default_bounds_from_start(dm; margin=...).")
-    end
-    if parentmodule(typeof(method.optimizer)) === OptimizationBBO &&
-       !(all(isfinite, lb) && all(isfinite, ub))
-        error("BlackBoxOptim requires finite lower and upper bounds for all free parameters.")
-    end
-    if parentmodule(typeof(method.optimizer)) === OptimizationBBO
-        lb = map((u, m) -> isfinite(m) ? max(u, m) : u, collect(lb), lower_t_free_vec)
-        ub = map((u, m) -> isfinite(m) ? min(u, m) : u, collect(ub), upper_t_free_vec)
-        θ0_init = clamp.(collect(θ0_free_t), lb, ub)
-    else
-        θ0_init = θ0_free_t
-    end
+    lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
+        fe, free_names, θ0_free_t, method.optimizer, method.lb, method.ub, merged_constants;
+        ignore_model_bounds = method.ignore_model_bounds, emit_info = info_bounds,
+        method_label = "Pooled")
     prob = use_bounds ? OptimizationProblem(optf, θ0_init; lb = lb, ub = ub) :
            OptimizationProblem(optf, θ0_init)
     sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
