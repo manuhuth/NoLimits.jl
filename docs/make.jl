@@ -86,6 +86,7 @@ makedocs(;
             "Fixed-Effects: Variational Inference" => "tutorials/fixed-effects-vi.md",
             "Hidden & Observed Markov Models" => "tutorials/markov-models-observed-hidden-coarsed.md"
         ],
+        "Method-Developer API" => "method-developer-api.md",
         "Developers Guide" => "developers-guide.md",
         "How to Contribute" => "how-to-contribute.md",
         "References" => "references.md",

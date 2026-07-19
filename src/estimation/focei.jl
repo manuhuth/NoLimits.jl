@@ -65,6 +65,13 @@ function _focei_expected_information(d)
 end
 _focei_paramcount(d) = length(_focei_params(d))
 
+# Public names for the closed-form Fisher-information registry: a reusable asset for any
+# first-order / FOCE-style method and for analytic uncertainty quantification.
+const expected_information = _focei_expected_information
+const outcome_parameters = _focei_params
+const dispersion_indices = _focei_dispersion_indices
+const has_expected_information = _focei_is_supported
+
 # Full (diagonal) Fisher information assembled from the per-element weights in
 # `_focei_diag_information`, so those values live in one place. Returns a fresh
 # mutable matrix (the FOCE dispersion mask edits it in place).
@@ -613,14 +620,14 @@ end
 # FOCEI marginal and its gradient are computed through the same fast code path.
 # -------------------------------------------------------------------------------------
 
-struct _FOCEIHess <: _HessMode
+struct FisherInformationCurvature <: AbstractCurvature
     interaction::Bool
 end
+const _FOCEIHess = FisherInformationCurvature
 
-@inline function _build_hess_b(m::_FOCEIHess, dm::DataModel, batch_info::REBatchInfo,
-        θ, b, const_cache::REConstantsCache, cache::_LLCache,
-        ad_cache::Union{Nothing, LaplaceADCache}, bi::Int;
-        ctx::AbstractString = "", tctx = nothing)
+@inline function inner_curvature(m::FisherInformationCurvature, dm::DataModel,
+        batch_info::REBatchInfo, θ, b, const_cache::REConstantsCache, cache::_LLCache,
+        ws::CurvatureWorkspace; ctx::AbstractString = "", tctx = nothing)
     return -_focei_negH_batch(dm, batch_info, θ, b, const_cache, cache;
         interaction = m.interaction, tctx = tctx)
 end

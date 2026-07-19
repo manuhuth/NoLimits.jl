@@ -189,15 +189,16 @@ function default_bounds_from_start(dm::DataModel; margin::Real = 1.0)
     return (lower, upper)
 end
 
-function _apply_constants!(θ, constants::NamedTuple)
+function apply_constants!(θ, constants::NamedTuple)
     for name in keys(constants)
         val = getfield(constants, name)
         setproperty!(θ, name, val)
     end
     return θ
 end
+const _apply_constants! = apply_constants!
 
-function _penalty_value(θ, penalty::NamedTuple)
+function penalty_value(θ, penalty::NamedTuple)
     isempty(keys(penalty)) && return 0.0
     acc = 0.0
     for name in keys(penalty)
@@ -211,6 +212,7 @@ function _penalty_value(θ, penalty::NamedTuple)
     end
     return acc
 end
+const _penalty_value = penalty_value
 
 function _fit_model(dm::DataModel, method::MLE, args...;
         constants::NamedTuple = NamedTuple(),

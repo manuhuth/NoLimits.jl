@@ -777,13 +777,14 @@ end
 # Correctness contract: a context is valid only for the θ it was built from and
 # must not cross a θ change — every use below builds it locally inside a scope
 # where θ is fixed (one inner solve, one gradient, one Hessian, one batch term).
-struct _LaplaceThetaCtx{TH, D, L}
+struct BatchThetaContext{TH, D, L}
     θ_re::TH
     dists::D          # Vector (per RE) of Vector (per free level) of builder NamedTuples
     prior_hess::L     # nothing, or cached Λ (all-Gaussian REs only)
 end
+const _LaplaceThetaCtx = BatchThetaContext
 
-function _build_theta_ctx(dm::DataModel,
+function build_batch_theta_context(dm::DataModel,
         batch_info::REBatchInfo,
         θ::ComponentArray,
         cache::_LLCache)
@@ -797,6 +798,7 @@ function _build_theta_ctx(dm::DataModel,
              for rinfo in get_re_info(batch_info)]
     return _LaplaceThetaCtx(θ_re, dists, nothing)
 end
+const _build_theta_ctx = build_batch_theta_context
 
 @inline function _re_all_gaussian(dm::DataModel)
     types = get_re_types(get_random(get_model(dm)))
@@ -1528,18 +1530,41 @@ function _laplace_hessian_b(dm::DataModel,
     return H
 end
 
-# Pluggable Hessian builder for the inner negative Hessian of the log-joint.
-# `_ExactHess` uses the full second-order AD Hessian (the Laplace default); FOCEI plugs
-# in the Gauss-Newton / expected-information Hessian (defined in focei.jl).  Both return
-# `H = ∇²_b log f`, i.e. the (typically negative-definite) raw Hessian, so the downstream
-# `negH = -H` / Cholesky / trace-gradient machinery is identical.
-abstract type _HessMode end
-struct _ExactHess <: _HessMode end
-@inline _build_hess_b(::_ExactHess, dm::DataModel, batch_info::REBatchInfo, θ, b,
+# Pluggable curvature for the inner Hessian of the log-joint - the public method-developer
+# seam. A curvature returns `H = ∇²_b log f` (typically negative-definite); the downstream
+# `negH = -H` / Cholesky / trace-gradient machinery is identical for every curvature.
+# `ExactHessianCurvature` is the full second-order AD Hessian (Laplace default);
+# `FisherInformationCurvature` (focei.jl) plugs in the Gauss-Newton / expected-information
+# Hessian. Add a new curvature by implementing `inner_curvature(::YourCurvature, …)`.
+abstract type AbstractCurvature end
+const _HessMode = AbstractCurvature
+
+struct ExactHessianCurvature <: AbstractCurvature end
+const _ExactHess = ExactHessianCurvature
+
+# Opaque workspace holding the internal AD cache + batch index, kept off `inner_curvature`'s
+# public signature so the API does not commit to those caching representations.
+struct CurvatureWorkspace{A}
+    ad_cache::A
+    bi::Int
+end
+CurvatureWorkspace(; ad_cache = nothing, bi::Int = 1) = CurvatureWorkspace(ad_cache, bi)
+
+@inline function inner_curvature(::ExactHessianCurvature, dm::DataModel,
+        batch_info::REBatchInfo, θ, b, const_cache::REConstantsCache, cache::_LLCache,
+        ws::CurvatureWorkspace; ctx::AbstractString = "", tctx = nothing)
+    return _laplace_hessian_b(dm, batch_info, θ, b, const_cache, cache,
+        ws.ad_cache, ws.bi; ctx = ctx, tctx = tctx)
+end
+
+# Internal shim: the fit machinery calls `_build_hess_b(mode, …, ad_cache, bi)`; route it
+# through the public `inner_curvature` seam so third-party curvatures are picked up too.
+@inline _build_hess_b(mode::AbstractCurvature, dm::DataModel, batch_info::REBatchInfo, θ, b,
 const_cache::REConstantsCache, cache::_LLCache,
 ad_cache::Union{Nothing, LaplaceADCache}, bi::Int;
-ctx::AbstractString = "", tctx = nothing) = _laplace_hessian_b(
-    dm, batch_info, θ, b, const_cache, cache, ad_cache, bi; ctx = ctx, tctx = tctx)
+ctx::AbstractString = "", tctx = nothing) = inner_curvature(
+    mode, dm, batch_info, θ, b, const_cache, cache,
+    CurvatureWorkspace(ad_cache, bi); ctx = ctx, tctx = tctx)
 
 function _laplace_cholesky_negH(
         H::AbstractMatrix; jitter = 1e-6, max_tries = 6, growth = 10.0,
