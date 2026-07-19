@@ -138,57 +138,9 @@ function _fit_no_re(dm::DataModel, method;
     end
 
     optf = OptimizationFunction(obj, method.adtype)
-    lower_t, upper_t = get_bounds_transformed(fe)
-    lower_t_free = _ca_subset(lower_t, free_names)
-    upper_t_free = _ca_subset(upper_t, free_names)
-    lower_t_free_vec = collect(lower_t_free)
-    upper_t_free_vec = collect(upper_t_free)
-    use_bounds = !method.ignore_model_bounds &&
-                 !(all(isinf, lower_t_free_vec) && all(isinf, upper_t_free_vec))
-    normalize_bound = function (bound, fallback)
-        if bound === nothing
-            return fallback
-        elseif bound isa Number
-            length(fallback) == 1 ||
-                error("Scalar bounds are only valid when there is one free parameter.")
-            return [bound]
-        end
-        if bound isa ComponentArray || bound isa NamedTuple
-            bound_ca = bound isa ComponentArray ? bound : ComponentArray(bound)
-            bound_ca = _ca_subset(bound_ca, free_names)
-            return collect(bound_ca)
-        end
-        return collect(bound)
-    end
-    user_bounds = method.lb !== nothing || method.ub !== nothing
-    if user_bounds && !isempty(keys(constants))
-        @info "Bounds for constant parameters are ignored." constants=collect(keys(constants))
-    end
-    if user_bounds
-        lb = normalize_bound(method.lb, lower_t_free_vec)
-        ub = normalize_bound(method.ub, upper_t_free_vec)
-    else
-        lb = lower_t_free_vec
-        ub = upper_t_free_vec
-    end
-    use_bounds = use_bounds || user_bounds
-    if parentmodule(typeof(method.optimizer)) === OptimizationBBO && !use_bounds
-        error("BlackBoxOptim methods require finite bounds. Add lower/upper bounds in @fixedEffects (on transformed scale) or pass them via MLE(lb=..., ub=...). A quick helper is default_bounds_from_start(dm; margin=...).")
-    end
-    if parentmodule(typeof(method.optimizer)) === OptimizationBBO &&
-       !(all(isfinite, lb) && all(isfinite, ub))
-        error("BlackBoxOptim methods require finite lower and upper bounds for all free parameters.")
-    end
-    if parentmodule(typeof(method.optimizer)) === OptimizationBBO
-        # Intersect user-provided bounds with model hard bounds so BBO
-        # never proposes parameter values that violate model constraints.
-        # (BBO ignores x0 and uses a random population within [lb,ub].)
-        lb = map((u, m) -> isfinite(m) ? max(u, m) : u, collect(lb), lower_t_free_vec)
-        ub = map((u, m) -> isfinite(m) ? min(u, m) : u, collect(ub), upper_t_free_vec)
-        θ0_init = clamp.(collect(θ0_free_t), lb, ub)
-    else
-        θ0_init = θ0_free_t
-    end
+    lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
+        fe, free_names, θ0_free_t, method.optimizer, method.lb, method.ub, constants;
+        ignore_model_bounds = method.ignore_model_bounds, method_label = "MLE")
     prob = use_bounds ? OptimizationProblem(optf, θ0_init; lb = lb, ub = ub) :
            OptimizationProblem(optf, θ0_init)
     sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)

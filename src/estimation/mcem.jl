@@ -1457,7 +1457,6 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
         mstep_constants = constants
         let q2_free_now = [n for n in q2_base_free_names if n ∉ keys(mstep_constants)]
             if !isempty(q2_free_now)
-                lower_t_q2_all, upper_t_q2_all = get_bounds_transformed(fe)
                 θt_q2 = ComponentArray(NamedTuple{Tuple(q2_free_now)}(
                     Tuple(getproperty(θt_full_curr, n) for n in q2_free_now)))
                 axs_q2 = getaxes(θt_q2)
@@ -1476,10 +1475,9 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
                     isfinite(Q2val) || return T(Inf)
                     return -Q2val
                 end
-                lb_q2 = collect(_ca_subset(lower_t_q2_all, q2_free_now))
-                ub_q2 = collect(_ca_subset(upper_t_q2_all, q2_free_now))
-                use_bounds_q2 = !(all(isinf, lb_q2) && all(isinf, ub_q2))
-                θ0_q2 = collect(θt_q2)
+                lb_q2, ub_q2, use_bounds_q2, θ0_q2 = _resolve_optim_bounds(
+                    fe, q2_free_now, collect(θt_q2), method.optimizer, nothing,
+                    nothing, NamedTuple(); allow_bbo = false)
                 optf_q2 = OptimizationFunction(obj_q2, method.adtype)
                 prob_q2 = use_bounds_q2 ?
                           OptimizationProblem(optf_q2, θ0_q2; lb = lb_q2, ub = ub_q2) :
@@ -1542,38 +1540,10 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
         end
 
         optf = OptimizationFunction(obj_only, method.adtype)
-        lower_t, upper_t = get_bounds_transformed(fe)
-
-        lower_t_free_iter = _ca_subset(lower_t, free_names_q1)
-        upper_t_free_iter = _ca_subset(upper_t, free_names_q1)
-        lower_t_free_vec = collect(lower_t_free_iter)
-        upper_t_free_vec = collect(upper_t_free_iter)
-        use_bounds = !(all(isinf, lower_t_free_vec) && all(isinf, upper_t_free_vec))
-        user_bounds = method.lb !== nothing || method.ub !== nothing
-        if user_bounds && !isempty(keys(constants))
-            @info "Bounds for constant parameters are ignored." constants=collect(keys(constants))
-        end
-        if user_bounds
-            lb_m = method.lb
-            ub_m = method.ub
-            if lb_m isa ComponentArray
-                lb_m = _ca_subset(lb_m, free_names_q1)
-            end
-            if ub_m isa ComponentArray
-                ub_m = _ca_subset(ub_m, free_names_q1)
-            end
-            lb_m = lb_m === nothing ? lower_t_free_vec : collect(lb_m)
-            ub_m = ub_m === nothing ? upper_t_free_vec : collect(ub_m)
-        else
-            lb_m = lower_t_free_vec
-            ub_m = upper_t_free_vec
-        end
-        use_bounds = use_bounds || user_bounds
-        if parentmodule(typeof(method.optimizer)) === OptimizationBBO && !use_bounds
-            error("BlackBoxOptim methods require finite bounds. Add lower/upper bounds in @fixedEffects (on transformed scale) or pass them via MCEM(lb=..., ub=...). A quick helper is default_bounds_from_start(dm; margin=...).")
-        end
-        θ0_init = collect(θt_free_iter)
-        prob = use_bounds ? OptimizationProblem(optf, θ0_init; lb = lb_m, ub = ub_m) :
+        lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
+            fe, free_names_q1, collect(θt_free_iter), method.optimizer, method.lb,
+            method.ub, constants; method_label = "MCEM")
+        prob = use_bounds ? OptimizationProblem(optf, θ0_init; lb = lb, ub = ub) :
                OptimizationProblem(optf, θ0_init)
 
         sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
