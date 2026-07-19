@@ -283,9 +283,10 @@ function build_re_measure_from_batch(
                 push!(correction_fns, nothing)
 
             elseif dist isa Distributions.LogNormal
-                # η = exp(μ_log + σ_log * z), z ~ N(0,1)
-                # Push-forward of N(0,1) under this map IS LogNormal(μ_log, σ_log),
-                # so the GH weights integrate exactly and logcorrection = 0.
+                # η = exp(μ_log + σ_log * z), z ~ N(0,1).  The exp transport needs the
+                # CompositeRE segment_fn (has_npf); the linear GaussianRE fast path would
+                # otherwise apply μ + L z. Push-forward IS LogNormal, correction = 0.
+                has_npf = true
                 μ_log, σ_log = Distributions.params(dist)
                 push!(μ_segs, [μ_log])
                 push!(L_diags, reshape([σ_log], 1, 1))
@@ -614,8 +615,9 @@ Throw an informative error if the model contains random effects whose
 distribution type cannot be handled by GHQuadrature.
 
 GHQuadrature supports all `ContinuousUnivariateDistribution` types (via explicit
-or generic transport maps) plus `MvNormal` and `NormalizingPlanarFlow`.
-Discrete distributions and unsupported multivariate types are rejected here.
+or generic transport maps) plus `MvNormal`, `MvLogNormal`, `MvLogitNormal`, and
+`NormalizingPlanarFlow`. Discrete distributions and unsupported multivariate
+types are rejected here.
 
 Called once at the start of `_fit_model(::GHQuadrature, ...)` before any
 expensive computation.
@@ -631,7 +633,7 @@ function _ghq_validate_re_distributions(dm::DataModel)
     explicitly_unsupported = (
         :Bernoulli, :Binomial, :Categorical, :DiscreteUniform, :Geometric,
         :Hypergeometric, :NegativeBinomial, :Poisson, :Skellam,
-        :Dirichlet, :Multinomial, :MvLogNormal
+        :Dirichlet, :Multinomial
     )
     bad = Symbol[]
     for (name, dtype) in Base.pairs(re_t)
@@ -646,8 +648,9 @@ function _ghq_validate_re_distributions(dm::DataModel)
             "GHQuadrature does not support discrete or unsupported multivariate " *
             "RE distributions.\n" *
             "Unsupported RE(s): $(names_str) (type(s): $(types_str)).\n" *
-            "GHQuadrature supports all continuous univariate distributions, " *
-            "MvNormal, and NormalizingPlanarFlow."
+            "GHQuadrature supports all continuous univariate distributions " *
+            "(e.g. LogNormal, Beta), MvNormal, MvLogNormal, MvLogitNormal, " *
+            "and NormalizingPlanarFlow."
         )
     end
 end

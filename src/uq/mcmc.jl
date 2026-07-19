@@ -3,13 +3,7 @@ using Random
 using Statistics
 
 function _chain_keys_for_free(fe::FixedEffects, free_names::Vector{Symbol})
-    all_names = get_names(fe)
-    specs = get_transforms(fe).forward.specs
-    spec_map = Dict{Symbol, TransformSpec}()
-    for i in eachindex(all_names)
-        spec_map[all_names[i]] = specs[i]
-    end
-
+    spec_map = _spec_map(fe)
     θ0_u = get_θ0_untransformed(fe)
     out = String[]
     for name in free_names
@@ -27,6 +21,28 @@ function _chain_keys_for_free(fe::FixedEffects, free_names::Vector{Symbol})
             n = size(v, 1)
             for j in 1:n
                 for i in 1:j
+                    push!(out, string(name, "[", i, ",", j, "]"))
+                end
+            end
+        elseif spec.kind == :stickbreak && v isa AbstractVector
+            # Drop last (determined) probability; first k-1 natural components.
+            for i in 1:(length(v) - 1)
+                push!(out, string(name, "[", i, "]"))
+            end
+        elseif spec.kind == :stickbreakrows && v isa AbstractMatrix
+            # Drop last column of each row; n*(n-1) components in row-major order.
+            n = size(v, 1)
+            for i in 1:n
+                for j in 1:(n - 1)
+                    push!(out, string(name, "[", i, ",", j, "]"))
+                end
+            end
+        elseif spec.kind == :lograterows && v isa AbstractMatrix
+            # Off-diagonal entries in row-major order.
+            n = size(v, 1)
+            for i in 1:n
+                for j in 1:n
+                    i == j && continue
                     push!(out, string(name, "[", i, ",", j, "]"))
                 end
             end
@@ -64,8 +80,7 @@ function _compute_uq_chain(res::FitResult;
     dm === nothing &&
         error("This fit result does not store a DataModel; pass store_data_model=true when fitting.")
 
-    constants_use = constants === nothing ? _fit_kw(res, :constants, NamedTuple()) :
-                    constants
+    constants_use = _resolve_fit_kw(res, constants, :constants, NamedTuple())
     fe = get_fixed(get_model(dm))
     free_names = _free_fixed_names(fe, constants_use)
     isempty(free_names) &&

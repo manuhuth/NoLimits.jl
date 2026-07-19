@@ -233,14 +233,6 @@ function logprior(priors::NamedTuple, θ::ComponentArray)
     return total
 end
 
-function logprior(pd::Distribution, θ::ComponentArray)
-    return logpdf(pd, θ)
-end
-
-function logprior(pd::Distribution, θ::AbstractVector)
-    return logpdf(pd, θ)
-end
-
 function _with_name_kw(rhs::Expr, name::Symbol)
     if rhs.head != :call
         return rhs
@@ -406,7 +398,7 @@ function build_fixed_effects(params::NamedTuple)
     bounds_transformed = _transform_bounds(
         bounds_untransformed, names, specs; params = params)
 
-    flat_names, _ = _flatten_by_specs(θ0_transformed, names, specs)
+    flat_names = _flatten_by_specs(θ0_transformed, names, specs)
 
     # Keep untransformed values/bounds in top-level (name -> value) shape.
 
@@ -710,38 +702,32 @@ end
 function _flatten_by_specs(
         θ::ComponentArray, names::Vector{Symbol}, specs::Vector{TransformSpec})
     flat_names = Symbol[]
-    flat_vals = Float64[]
 
     for (i, name) in enumerate(names)
         spec = specs[i]
         val = θ[name]
         if spec.kind == :cholesky
-            mat = reshape(val, spec.size...)
             for r in 1:spec.size[1]
                 for c in 1:spec.size[2]
                     push!(flat_names, Symbol(name, "_", r, "_", c))
-                    push!(flat_vals, mat[r, c])
                 end
             end
         elseif val isa AbstractMatrix
             for r in 1:size(val, 1)
                 for c in 1:size(val, 2)
                     push!(flat_names, Symbol(name, "_", r, "_", c))
-                    push!(flat_vals, val[r, c])
                 end
             end
         elseif val isa AbstractVector
             for j in eachindex(val)
                 push!(flat_names, Symbol(name, "_", j))
-                push!(flat_vals, val[j])
             end
         else
             push!(flat_names, name)
-            push!(flat_vals, val)
         end
     end
 
-    return flat_names, flat_vals
+    return flat_names
 end
 
 function _transform_bounds(bounds::Tuple{ComponentArray, ComponentArray},

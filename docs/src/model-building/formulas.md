@@ -335,4 +335,4 @@ Here `delta_t` is a time-varying covariate holding the elapsed time since the pr
 
 ## Related APIs
 
-Programmatic access to the internal representation and evaluation of formulas is provided by `get_formulas_meta`, `get_formulas_ir`, `get_formulas_builders`, `get_formulas_all`, `get_formulas_obs`, and `get_formulas_time_offsets`. Full signatures are in the [API reference](../api.md).
+Programmatic access to the internal representation and evaluation of formulas is provided by `get_formulas_meta`, `get_formulas_ir`, `get_formulas_builders`, and `get_formulas_time_offsets`. Full signatures are in the [API reference](../api.md).

@@ -9,30 +9,14 @@ using SciMLBase
 using ComponentArrays
 using Distributed
 
-function _build_const_cov_from_row(covariates, df, row_idx::Int)
-    return _build_const_cov(covariates, df, [row_idx])
-end
-
+# Row-indexed variant of `_vary_row` (common.jl): when the time column is not a
+# varying covariate, the fallback reads it from the data frame at `row`.
 function _varying_at(dm::DataModel, ind::Individual, idx::Int, row::Int)
-    pairs = Pair{Symbol, Any}[]
     vary = get_vary(get_series(ind))
-    if hasproperty(vary, :t)
-        push!(pairs, :t => getproperty(vary, :t)[idx])
-    else
-        push!(pairs, :t => get_df(dm)[row, get_time_col(dm)])
-    end
-    for name in keys(vary)
-        name == :t && continue
-        v = getfield(vary, name)
-        if v isa AbstractVector
-            push!(pairs, name => v[idx])
-        elseif v isa NamedTuple
-            sub = _covariate_vector(NamedTuple{keys(v)}(Tuple(getfield(v, k)[idx]
-            for k in keys(v))))
-            push!(pairs, name => sub)
-        end
-    end
-    return merge(NamedTuple(pairs), get_dyn(get_series(ind)))
+    t_val = hasproperty(vary, :t) ? vary.t[idx] : get_df(dm)[row, get_time_col(dm)]
+    rest = Base.structdiff(vary, NamedTuple{(:t,)})
+    vals = map(v -> _vary_value_at(v, idx), rest)
+    return merge((t = t_val,), vals, get_dyn(get_series(ind)))
 end
 
 function _rngs_for_serialization(rng, serialization)
@@ -143,16 +127,17 @@ function _simulate_sol_accessors(dm::DataModel, idx::Int, θ, η)
     return get_de_accessors_builder(get_de(model))(sol, compiled)
 end
 
-function _simulate_individual!(
-        df::DataFrame, dm::DataModel, idx::Int, θ, re_samples, rng, replace_missings::Bool)
+# Shared per-(i, row, col) simulation body for both individual simulators. `check_df`
+# supplies the missing-status source, `store(col, i, row, val)` records a drawn value,
+# and `on_missing(col, i, row)` runs when a masked entry is skipped. The HMM hidden-state
+# draw and `hmm_states` update happen before the missing check to keep the RNG stream
+# identical whether or not an entry is masked.
+function _simulate_obs_rows!(dm::DataModel, idx::Int, θ, η, sol_accessors, rng,
+        replace_missings::Bool, check_df, store, on_missing)
     model = get_model(dm)
     ind = get_individuals(dm)[idx]
     obs_rows = get_obs_rows(get_row_groups(dm))[idx]
     const_cov = get_const_cov(ind)
-
-    η = _sampled_random_effects_for_individual(dm, idx, re_samples)
-    sol_accessors = _simulate_sol_accessors(dm, idx, θ, η)
-
     obs_cols = get_obs_cols(dm)
     rowwise_re = _needs_rowwise_random_effects(dm, idx; obs_only = true)
     hmm_states = Dict{Symbol, Int}()
@@ -170,12 +155,14 @@ function _simulate_individual!(
                         _sample_hmm_hidden_state(rng, dist) :
                         _sample_hmm_hidden_state(rng, dist, prev_state)
                 hmm_states[col] = state
-                if !replace_missings && ismissing(df[row, col])
+                if !replace_missings && ismissing(check_df[row, col])
+                    on_missing(col, i, row)
                     continue
                 end
                 val = _hmm_emission_rand(rng, dist, state)
             else
-                if !replace_missings && ismissing(df[row, col])
+                if !replace_missings && ismissing(check_df[row, col])
+                    on_missing(col, i, row)
                     continue
                 end
                 val = rand(rng, dist)
@@ -183,62 +170,36 @@ function _simulate_individual!(
             if val isa Number && (isnan(val) || isinf(val))
                 _warn_bad_value(dm, row, col, dist, val)
             end
-            df[row, col] = val
+            store(col, i, row, val)
         end
     end
     return nothing
 end
 
+function _simulate_individual!(
+        df::DataFrame, dm::DataModel, idx::Int, θ, re_samples, rng, replace_missings::Bool)
+    η = _sampled_random_effects_for_individual(dm, idx, re_samples)
+    sol_accessors = _simulate_sol_accessors(dm, idx, θ, η)
+    _simulate_obs_rows!(dm, idx, θ, η, sol_accessors, rng, replace_missings, df,
+        (col, i, row, val) -> (df[row, col] = val),
+        (col, i, row) -> nothing)
+    return nothing
+end
+
 function _simulate_individual_values(
         dm::DataModel, idx::Int, θ, re_samples, rng, replace_missings::Bool)
-    model = get_model(dm)
-    ind = get_individuals(dm)[idx]
-    obs_rows = get_obs_rows(get_row_groups(dm))[idx]
-    const_cov = get_const_cov(ind)
-
     η = _sampled_random_effects_for_individual(dm, idx, re_samples)
     sol_accessors = _simulate_sol_accessors(dm, idx, θ, η)
 
-    obs_cols = get_obs_cols(dm)
+    obs_rows = get_obs_rows(get_row_groups(dm))[idx]
     out = Dict{Symbol, Vector{Any}}()
-    for col in obs_cols
+    for col in get_obs_cols(dm)
         out[col] = Vector{Any}(undef, length(obs_rows))
     end
 
-    rowwise_re = _needs_rowwise_random_effects(dm, idx; obs_only = true)
-    hmm_states = Dict{Symbol, Int}()
-    for (i, row) in enumerate(obs_rows)
-        vary = _varying_at(dm, ind, i, row)
-        η_row = _row_random_effects_at(dm, idx, i, η, rowwise_re; obs_only = true)
-        obs = sol_accessors === nothing ?
-              calculate_formulas_obs(model, θ, η_row, const_cov, vary) :
-              calculate_formulas_obs(model, θ, η_row, const_cov, vary, sol_accessors)
-        for col in obs_cols
-            dist = getproperty(obs, col)
-            if _is_hmm_dist(dist)
-                prev_state = get(hmm_states, col, 0)
-                state = prev_state == 0 ?
-                        _sample_hmm_hidden_state(rng, dist) :
-                        _sample_hmm_hidden_state(rng, dist, prev_state)
-                hmm_states[col] = state
-                if !replace_missings && ismissing(get_df(dm)[row, col])
-                    out[col][i] = nothing
-                    continue
-                end
-                val = _hmm_emission_rand(rng, dist, state)
-            else
-                if !replace_missings && ismissing(get_df(dm)[row, col])
-                    out[col][i] = nothing
-                    continue
-                end
-                val = rand(rng, dist)
-            end
-            if val isa Number && (isnan(val) || isinf(val))
-                _warn_bad_value(dm, row, col, dist, val)
-            end
-            out[col][i] = val
-        end
-    end
+    _simulate_obs_rows!(dm, idx, θ, η, sol_accessors, rng, replace_missings, get_df(dm),
+        (col, i, row, val) -> (out[col][i] = val),
+        (col, i, row) -> (out[col][i] = nothing))
     return obs_rows, out
 end
 
@@ -282,7 +243,7 @@ function _sample_random_effects(dm::DataModel, rng, θ)
         vals = Vector{Any}(undef, length(group_vals))
         for gidx in eachindex(group_vals)
             row_idx = first_row[gidx]
-            const_cov = _build_const_cov_from_row(cov, get_df(dm), row_idx)
+            const_cov = _build_const_cov(cov, get_df(dm), [row_idx])
             dists = create(θ, const_cov, model_funs, helpers)
             vals[gidx] = rand(rng, getproperty(dists, re))
         end

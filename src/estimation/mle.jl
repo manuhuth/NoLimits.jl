@@ -95,9 +95,7 @@ function _fit_no_re(dm::DataModel, method;
     fixed_names = get_names(fe)
     isempty(fixed_names) && error("This method requires at least one fixed effect.")
     fixed_set = Set(fixed_names)
-    for name in keys(constants)
-        name in fixed_set || error("Unknown constant parameter $(name).")
-    end
+    _validate_constant_names(fixed_set, constants)
     all(name in keys(constants) for name in fixed_names) &&
         error("This method requires at least one free fixed effect. Remove constants or specify a fixed effect or random effect.")
     free_names = [n for n in fixed_names if !(n in keys(constants))]
@@ -122,31 +120,14 @@ function _fit_no_re(dm::DataModel, method;
     θ0_free_t = ComponentArray(NamedTuple{Tuple(free_names)}(Tuple(getproperty(θ0_t, n)
     for n in free_names)))
     axs = getaxes(θ0_free_t)
-    # Precompute the flat positions of the free parameters inside the full
-    # transformed vector. The free/constants merge inside `obj` is then plain
-    # positional indexing — the old per-name `setproperty!` loop dispatches on
-    # runtime Symbols, which Enzyme's runtime rules reject
-    # (`AssertionError: x.indices == dx.indices` on the shadow views).
-    free_idx = let lab_full = ComponentArrays.labels(θ_const_t),
-        lab_free = ComponentArrays.labels(θ0_free_t)
-
-        pos_full = Dict{String, Int}(lab_full[i] => i for i in eachindex(lab_full))
-        Int[pos_full[l] for l in lab_free]
-    end
+    free_idx = _free_idx(θ_const_t, θ0_free_t)
     θ_const_t_vec = collect(θ_const_t)
     axs_full = getaxes(θ_const_t)
     function obj(θt, p)
         v_free = θt isa ComponentArray ? ComponentArrays.getdata(θt) : θt
         T = eltype(v_free)
         infT = convert(T, Inf)
-        full = Vector{T}(undef, length(θ_const_t_vec))
-        @inbounds for i in eachindex(full)
-            full[i] = θ_const_t_vec[i]
-        end
-        @inbounds for k in eachindex(free_idx)
-            full[free_idx[k]] = v_free[k]
-        end
-        θt_full = ComponentArray(full, axs_full)
+        θt_full = _merge_free_into_full(θ_const_t_vec, free_idx, v_free, axs_full)
         θu = inv_transform(θt_full)
         add = add_term(θu)
         add == Inf && return infT

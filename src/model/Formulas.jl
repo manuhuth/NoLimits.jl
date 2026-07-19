@@ -3,8 +3,6 @@ export get_formulas_ir
 export Formulas
 export get_formulas_meta
 export get_formulas_builders
-export get_formulas_all
-export get_formulas_obs
 export get_formulas_time_offsets
 export get_formulas_lines
 
@@ -14,7 +12,6 @@ using Distributions
 RuntimeGeneratedFunctions.init(@__MODULE__)
 
 struct FormulasMeta
-    all_names::Vector{Symbol}
     obs_names::Vector{Symbol}
 end
 
@@ -47,8 +44,7 @@ end
 """
     get_formulas_meta(f::Formulas) -> FormulasMeta
 
-Return the metadata struct with `all_names` (deterministic + observation names) and
-`obs_names` (observation names only).
+Return the metadata struct with `obs_names` (observation names only).
 """
 get_formulas_meta(f::Formulas) = f.meta
 
@@ -153,26 +149,6 @@ function get_formulas_time_offsets(
         _collect_time_offsets(ex, name_set, offsets, requires_dense)
     end
     return (unique(offsets), requires_dense[])
-end
-
-# Detect a `crossing_time(...)` first-passage primitive anywhere in the formulas.
-# Such a model must be solved DENSELY (the root-find evaluates the trajectory at
-# arbitrary times); this flag is what gates dense solving to crossing models only.
-function _formulas_expr_has_call(ex, name::Symbol)
-    ex isa Expr || return false
-    (ex.head == :call && ex.args[1] === name) && return true
-    for a in ex.args
-        _formulas_expr_has_call(a, name) && return true
-    end
-    return false
-end
-
-function formulas_has_crossing(f::Formulas)
-    for ex in vcat(f.ir.det_exprs, f.ir.obs_exprs)
-        (_formulas_expr_has_call(ex, :crossing_time) ||
-         _formulas_expr_has_call(ex, :crossing_rootval)) && return true
-    end
-    return false
 end
 
 function _formulas_collect_call_symbols(ex, out)
@@ -633,34 +609,6 @@ function get_formulas_builders(f::Formulas;
 end
 
 """
-    get_formulas_all(f::Formulas, ctx, sol_accessors, const_cov_i, vary_cov; kwargs...) -> NamedTuple
-
-Evaluate all formula nodes (deterministic and observation) and return a `NamedTuple`
-mapping every defined name to its value.
-
-`kwargs` are forwarded to [`get_formulas_builders`](@ref) to supply namespace context.
-"""
-function get_formulas_all(f::Formulas, ctx, sol_accessors,
-        constant_covariates_i, varying_covariates; kwargs...)
-    (form_all_rgf, _, _, _) = get_formulas_builders(f; kwargs...)
-    return form_all_rgf(ctx, sol_accessors, constant_covariates_i, varying_covariates)
-end
-
-"""
-    get_formulas_obs(f::Formulas, ctx, sol_accessors, const_cov_i, vary_cov; kwargs...) -> NamedTuple
-
-Evaluate only the observation nodes (`y ~ dist`) and return a `NamedTuple` mapping
-each observation name to its distribution.
-
-`kwargs` are forwarded to [`get_formulas_builders`](@ref) to supply namespace context.
-"""
-function get_formulas_obs(f::Formulas, ctx, sol_accessors,
-        constant_covariates_i, varying_covariates; kwargs...)
-    (_, form_obs_rgf, _, _) = get_formulas_builders(f; kwargs...)
-    return form_obs_rgf(ctx, sol_accessors, constant_covariates_i, varying_covariates)
-end
-
-"""
     @formulas begin
         name = expr          # deterministic node
         outcome ~ dist(...)  # observation node
@@ -687,7 +635,6 @@ The `@formulas` block is required in every `@Model`.
 """
 macro formulas(block)
     det_names, det_exprs, obs_names, obs_exprs, line_exprs = _parse_formulas(block)
-    all_names = vcat(det_names, obs_names)
     all_exprs = vcat(det_exprs, obs_exprs)
     det_set = Set(det_names)
 
@@ -726,8 +673,7 @@ macro formulas(block)
     end
 
     return quote
-        meta = FormulasMeta($(Expr(:vect, QuoteNode.(all_names)...)),
-            $(Expr(:vect, QuoteNode.(obs_names)...)))
+        meta = FormulasMeta($(Expr(:vect, QuoteNode.(obs_names)...)))
         ir = FormulasIR(
             $(Expr(:vect, QuoteNode.(det_names)...)),
             $(Expr(:vect, QuoteNode.(det_exprs)...)),

@@ -516,7 +516,8 @@ end
 # which has no eigengaps), then reassemble the `Dual`. This matches the reverse-mode Jacobian
 # the transform already uses and yields finite, exactly-symmetric derivatives, so the
 # reconstructed covariance is accepted by the (stricter) `cholesky` inside MvNormal/PDMats.
-# Nested Duals fall back to the generic `<:Real` method above.
+# Single-level Duals only; second-order ForwardDiff (Hessian) falls back to finite
+# differences.
 function expm_inverse(T::AbstractMatrix{ForwardDiff.Dual{
         Tg, V, N}}) where {Tg, V <: AbstractFloat, N}
     n = size(T, 1)
@@ -549,7 +550,8 @@ function _sym_from_upper(v::AbstractVector{<:Real}, n::Int)
                     idx += 1
                     val
                 else
-                    v[(j - 1) * j ÷ 2 + i]
+                    # mirror element T[j,i] (j<i) is upper-tri, packed at this index
+                    v[(i - 1) * i ÷ 2 + j]
                 end
             end
             for i in 1:n, j in 1:n]
@@ -623,7 +625,7 @@ function liepsd_inverse(t::AbstractVector{<:Real})
     n = _lie_dim(L)
     λ = @view t[1:n]
     α = @view t[(n + 1):L]
-    A = _lie_antisym(collect(α), n)
+    A = _lie_antisym(α, n)
     U = exp(A)
     Σ = U * Diagonal(exp.(λ)) * U'
     # Wrap in `Symmetric` before densifying to guarantee an exactly Hermitian matrix
@@ -635,7 +637,8 @@ end
 # a BLAS method, so `exp(::Matrix{Dual})` errors; mirror the `:expm` treatment and build
 # the partials from the block-2×2 Padé Fréchet derivative of the matrix exponential
 # (`_expm_frechet`, general-matrix, no eigengaps). The value is computed with LAPACK on the
-# Float64 antisymmetric matrix. Nested Duals fall back to the generic `<:Real` method above.
+# Float64 antisymmetric matrix. Single-level Duals only; second-order ForwardDiff
+# (Hessian) falls back to finite differences.
 function liepsd_inverse(t::AbstractVector{ForwardDiff.Dual{
         Tg, V, N}}) where {
         Tg, V <: AbstractFloat, N}
@@ -652,9 +655,9 @@ function liepsd_inverse(t::AbstractVector{ForwardDiff.Dual{
         p = ForwardDiff.partials.(t, k)            # length-L seed direction
         dλ = @view p[1:n]
         dα = @view p[(n + 1):L]
-        dAk = _lie_antisym(collect(dα), n)
+        dAk = _lie_antisym(dα, n)
         _, dUk = _expm_frechet(Av, dAk)            # ∂exp(A)[dA]
-        dDk = Diagonal(exp.(λv) .* collect(dλ))
+        dDk = Diagonal(exp.(λv) .* dλ)
         dΣ = dUk * Dv * Uv' + Uv * dDk * Uv' + Uv * Dv * dUk'
         Matrix(Symmetric(dΣ))
     end

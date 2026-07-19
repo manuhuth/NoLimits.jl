@@ -72,7 +72,7 @@ using NoLimits: COLOR_ACCENT, COLOR_CI, COLOR_PRIMARY, COLOR_REFERENCE, COLOR_SE
                 _sample_random_effects_levels, _simulate_obs, _solve_dense_individual,
                 _sol_accessors_with_crossings, _standardize_re,
                 _stat_from_dist, _state_emission_marginals, _uq_density_ylabel, _uq_kde_xy,
-                _uq_merge_limits, _uq_param_indices, _uq_param_label,
+                _uq_merge_limits, _uq_param_indices,
                 _uq_wald_coord_transforms,
                 _validate_plot_metric, _validate_same_data_model_for_comparison,
                 _varying_at,

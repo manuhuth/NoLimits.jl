@@ -94,19 +94,24 @@ function _eq_plain_string(ex::Expr)
     return _eq_show_plain_piece(ex_clean)
 end
 
+# LaTeX for a derivative-state assignment `D(x) ~ rhs` -> `\dot{x}(t) = rhs`, or
+# `nothing` when `ex_clean` is not such an assignment.
+function _eq_derivative_latex_line(ex_clean::Expr)
+    ex_clean.head == :(=) || return nothing
+    lhs = ex_clean.args[1]
+    rhs = ex_clean.args[2]
+    st = _eq_derivative_state(lhs)
+    st === nothing && return nothing
+    lhs_tex = _eq_show_latex_piece(st)
+    rhs_tex = _eq_show_latex_piece(rhs)
+    line = "\\dot{" * lhs_tex * "}(t) = " * rhs_tex
+    return _eq_apply_vector_component_notation(line, ex_clean)
+end
+
 function _eq_latex_string(ex::Expr)
     ex_clean = _eq_assignment_expr(_eq_clean_expr(ex))
-    if ex_clean.head == :(=)
-        lhs = ex_clean.args[1]
-        rhs = ex_clean.args[2]
-        st = _eq_derivative_state(lhs)
-        if st !== nothing
-            lhs_tex = _eq_show_latex_piece(st)
-            rhs_tex = _eq_show_latex_piece(rhs)
-            line = "\\dot{" * lhs_tex * "}(t) = " * rhs_tex
-            return _eq_apply_vector_component_notation(line, ex_clean)
-        end
-    end
+    dl = _eq_derivative_latex_line(ex_clean)
+    dl === nothing || return dl
     try
         line = String(Latexify.latexify(ex_clean))
         return _eq_apply_vector_component_notation(line, ex_clean)
@@ -117,17 +122,8 @@ end
 
 function _eq_latex_line(ex::Expr)
     ex_clean = _eq_assignment_expr(_eq_clean_expr(ex))
-    if ex_clean.head == :(=)
-        lhs = ex_clean.args[1]
-        rhs = ex_clean.args[2]
-        st = _eq_derivative_state(lhs)
-        if st !== nothing
-            lhs_tex = _eq_show_latex_piece(st)
-            rhs_tex = _eq_show_latex_piece(rhs)
-            line = "\\dot{" * lhs_tex * "}(t) = " * rhs_tex
-            return _eq_apply_vector_component_notation(line, ex_clean)
-        end
-    end
+    dl = _eq_derivative_latex_line(ex_clean)
+    dl === nothing || return dl
     try
         line = String(Latexify.latexraw(ex_clean))
         return _eq_apply_vector_component_notation(line, ex_clean)

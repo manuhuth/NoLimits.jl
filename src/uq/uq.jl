@@ -100,15 +100,6 @@ function compute_uq(res::FitResult;
         method
     end
 
-    if interval != :auto
-        if backend == :chain && !(interval in (:equaltail, :chain))
-            error("For chain-based UQ, interval must be :auto, :equaltail, or :chain.")
-        elseif backend == :wald && !(interval in (:wald, :normal, :auto))
-            error("For Wald UQ, interval must be :auto, :wald, or :normal.")
-        elseif backend == :profile && !(interval in (:profile, :auto))
-            error("For profile UQ, interval must be :auto or :profile.")
-        end
-    end
     if backend == :wald
         vcov in (:hessian, :sandwich) ||
             error("For Wald UQ, vcov must be :hessian or :sandwich.")

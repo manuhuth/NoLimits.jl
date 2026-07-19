@@ -1,6 +1,73 @@
 using LinearAlgebra
 using Random
 
+# Shared Wald finalize tail: project the raw covariance to PSD, draw from the Gaussian
+# approximation, map draws back to the natural scale, extend any stickbreak coordinates,
+# and assemble the UQResult. `extra_diag` carries method-specific diagnostics (e.g.
+# `approximation_method`) inserted between `vcov` and `pseudo_inverse`.
+function _finalize_wald_uqresult(fe, θ_hat_t, θ_hat_u, free_names, active_idx,
+        active_names, active_kinds, θu_from_active, Vt_raw, backend_used, vcov,
+        pseudo_inverse, n_draws, level, rng, method_sym, extra_diag)
+    Vt, vcov_diag = _project_psd_covariance(Vt_raw)
+
+    θ_coords_t = _coords_on_transformed_layout(fe, θ_hat_t, free_names; natural = false)
+    θ_coords_u = _coords_on_transformed_layout(fe, θ_hat_u, free_names; natural = true)
+    est_t = θ_coords_t[active_idx]
+    est_n = θ_coords_u[active_idx]
+
+    draws_t = _sample_gaussian_draws(rng, est_t, Vt, n_draws)
+    draws_n = Matrix{Float64}(undef, size(draws_t, 1), size(draws_t, 2))
+    for i in 1:size(draws_t, 1)
+        θu_i = θu_from_active(@view(draws_t[i, :]))
+        coords_u_i = _coords_on_transformed_layout(fe, θu_i, free_names; natural = true)
+        draws_n[i, :] .= coords_u_i[active_idx]
+    end
+
+    intervals_t = _intervals_from_draws(draws_t, level)
+    intervals_n = _intervals_from_draws(draws_n, level)
+
+    ext = _extend_natural_stickbreak(fe, free_names, active_names, active_kinds,
+        est_n, draws_n, intervals_n)
+    names_n = ext !== nothing ? ext[1] : nothing
+    est_n_use = ext !== nothing ? ext[2] : est_n
+    draws_n_use = ext !== nothing ? ext[3] : draws_n
+    intervals_n_use = ext !== nothing ? ext[4] : intervals_n
+    Vn_use = draws_n_use !== nothing ? _cov_from_draws(draws_n_use) :
+             _cov_from_draws(draws_n)
+
+    diag = merge(
+        (;
+            hessian_backend = backend_used,
+            hessian_reduced = true,
+            inactive_fixed_effects_held_constant = true,
+            vcov = vcov
+        ),
+        extra_diag,
+        (;
+            pseudo_inverse = pseudo_inverse,
+            n_draws = n_draws,
+            n_active_parameters = length(active_idx),
+            coordinate_transforms = active_kinds
+        ),
+        vcov_diag)
+
+    return UQResult(
+        :wald,
+        method_sym,
+        active_names,
+        names_n,
+        est_t,
+        est_n_use,
+        intervals_t,
+        intervals_n_use,
+        Vt,
+        Vn_use,
+        draws_t,
+        draws_n_use,
+        diag
+    )
+end
+
 @inline function _is_re_laplace_family(method::FittingMethod)
     return method isa Laplace
 end
@@ -64,14 +131,12 @@ function _compute_uq_wald_no_re(res::FitResult;
                   "fixing them via constants."
     end
 
-    constants_use = constants === nothing ? _fit_kw(res, :constants, NamedTuple()) :
-                    constants
-    penalty_use = penalty === nothing ? _fit_kw(res, :penalty, NamedTuple()) : penalty
-    ode_args_use = ode_args === nothing ? _fit_kw(res, :ode_args, ()) : ode_args
-    ode_kwargs_use = ode_kwargs === nothing ? _fit_kw(res, :ode_kwargs, NamedTuple()) :
-                     ode_kwargs
-    serialization_use = serialization === nothing ?
-                        _fit_kw(res, :serialization, EnsembleSerial()) : serialization
+    constants_use = _resolve_fit_kw(res, constants, :constants, NamedTuple())
+    penalty_use = _resolve_fit_kw(res, penalty, :penalty, NamedTuple())
+    ode_args_use = _resolve_fit_kw(res, ode_args, :ode_args, ())
+    ode_kwargs_use = _resolve_fit_kw(res, ode_kwargs, :ode_kwargs, NamedTuple())
+    serialization_use = _resolve_fit_kw(
+        res, serialization, :serialization, EnsembleSerial())
 
     fe = get_fixed(get_model(dm))
     free_names = _free_fixed_names(fe, constants_use)
@@ -118,13 +183,8 @@ function _compute_uq_wald_no_re(res::FitResult;
         T = eltype(x_active)
         x_full = T.(xhat_full)
         x_full[active_idx] .= x_active
-        θt_free = ComponentArray(x_full, axs_free)
-        T = eltype(θt_free)
-        θt_full = ComponentArray(T.(θ_const_t), axs_full)
-        for name in free_names
-            setproperty!(θt_full, name, getproperty(θt_free, name))
-        end
-        return _as_component_array(inv_transform(θt_full))
+        return _theta_u_from_free_t(
+            x_full, axs_free, θ_const_t, axs_full, free_names, inv_transform)
     end
 
     function obj_active(x_active::AbstractVector)
@@ -194,65 +254,15 @@ function _compute_uq_wald_no_re(res::FitResult;
             B .+= g * g'
         end
         B = 0.5 .* (B .+ B')
-        Matrix{Float64}(0.5 .* ((bread * B * bread') .+ (bread * B * bread')'))
+        M = bread * B * bread'
+        Matrix{Float64}(0.5 .* (M .+ M'))
     else
         error("Unsupported vcov=$(vcov). Use :hessian or :sandwich.")
     end
-    Vt, vcov_diag = _project_psd_covariance(Vt_raw)
 
-    θ_coords_t = _coords_on_transformed_layout(fe, θ_hat_t, free_names; natural = false)
-    θ_coords_u = _coords_on_transformed_layout(fe, θ_hat_u, free_names; natural = true)
-    est_t = θ_coords_t[active_idx]
-    est_n = θ_coords_u[active_idx]
-
-    draws_t = _sample_gaussian_draws(rng, est_t, Vt, n_draws)
-    draws_n = Matrix{Float64}(undef, size(draws_t, 1), size(draws_t, 2))
-    for i in 1:size(draws_t, 1)
-        θu_i = _θu_from_active(@view(draws_t[i, :]))
-        coords_u_i = _coords_on_transformed_layout(fe, θu_i, free_names; natural = true)
-        draws_n[i, :] .= coords_u_i[active_idx]
-    end
-
-    intervals_t = _intervals_from_draws(draws_t, level)
-    intervals_n = _intervals_from_draws(draws_n, level)
-    Vn = _cov_from_draws(draws_n)
-
-    ext = _extend_natural_stickbreak(fe, free_names, active_names, active_kinds,
-        est_n, draws_n, intervals_n)
-    names_n = ext !== nothing ? ext[1] : nothing
-    est_n_use = ext !== nothing ? ext[2] : est_n
-    draws_n_use = ext !== nothing ? ext[3] : draws_n
-    intervals_n_use = ext !== nothing ? ext[4] : intervals_n
-    Vn_use = draws_n_use !== nothing ? _cov_from_draws(draws_n_use) : Vn
-
-    diag = merge(
-        (;
-            hessian_backend = backend_used,
-            hessian_reduced = true,
-            inactive_fixed_effects_held_constant = true,
-            vcov = vcov,
-            pseudo_inverse = pseudo_inverse,
-            n_draws = n_draws,
-            n_active_parameters = length(active_idx),
-            coordinate_transforms = active_kinds
-        ),
-        vcov_diag)
-
-    return UQResult(
-        :wald,
-        _method_symbol(method),
-        active_names,
-        names_n,
-        est_t,
-        est_n_use,
-        intervals_t,
-        intervals_n_use,
-        Vt,
-        Vn_use,
-        draws_t,
-        draws_n_use,
-        diag
-    )
+    return _finalize_wald_uqresult(fe, θ_hat_t, θ_hat_u, free_names, active_idx,
+        active_names, active_kinds, _θu_from_active, Vt_raw, backend_used, vcov,
+        pseudo_inverse, n_draws, level, rng, _method_symbol(method), NamedTuple())
 end
 
 function _compute_uq_wald_re(res::FitResult;
@@ -281,14 +291,11 @@ function _compute_uq_wald_re(res::FitResult;
         re_approx = re_approx,
         re_approx_method = re_approx_method)
 
-    constants_use = constants === nothing ? _fit_kw(res, :constants, NamedTuple()) :
-                    constants
-    constants_re_use = constants_re === nothing ?
-                       _fit_kw(res, :constants_re, NamedTuple()) : constants_re
-    penalty_use = penalty === nothing ? _fit_kw(res, :penalty, NamedTuple()) : penalty
-    ode_args_use = ode_args === nothing ? _fit_kw(res, :ode_args, ()) : ode_args
-    ode_kwargs_use = ode_kwargs === nothing ? _fit_kw(res, :ode_kwargs, NamedTuple()) :
-                     ode_kwargs
+    constants_use = _resolve_fit_kw(res, constants, :constants, NamedTuple())
+    constants_re_use = _resolve_fit_kw(res, constants_re, :constants_re, NamedTuple())
+    penalty_use = _resolve_fit_kw(res, penalty, :penalty, NamedTuple())
+    ode_args_use = _resolve_fit_kw(res, ode_args, :ode_args, ())
+    ode_kwargs_use = _resolve_fit_kw(res, ode_kwargs, :ode_kwargs, NamedTuple())
     # Force SERIAL evaluation of the random-effects Laplace objective (EB solve + inner
     # logdet/Hessian) used to build the covariance. The threaded per-batch inner Hessian
     # is non-deterministic run-to-run (it produces a varying Wald covariance) — the
@@ -343,13 +350,8 @@ function _compute_uq_wald_re(res::FitResult;
         T = eltype(x_active)
         x_full = T.(xhat_full)
         x_full[active_idx] .= x_active
-        θt_free = ComponentArray(x_full, axs_free)
-        T = eltype(θt_free)
-        θt_full = ComponentArray(T.(θ_const_t), axs_full)
-        for name in free_names
-            setproperty!(θt_full, name, getproperty(θt_free, name))
-        end
-        return _as_component_array(inv_transform(θt_full))
+        return _theta_u_from_free_t(
+            x_full, axs_free, θ_const_t, axs_full, free_names, inv_transform)
     end
 
     function obj_active(x_active::AbstractVector)
@@ -443,64 +445,14 @@ function _compute_uq_wald_re(res::FitResult;
             B .+= g * g'
         end
         B = 0.5 .* (B .+ B')
-        Matrix{Float64}(0.5 .* ((bread * B * bread') .+ (bread * B * bread')'))
+        M = bread * B * bread'
+        Matrix{Float64}(0.5 .* (M .+ M'))
     else
         error("Unsupported vcov=$(vcov). Use :hessian or :sandwich.")
     end
-    Vt, vcov_diag = _project_psd_covariance(Vt_raw)
 
-    θ_coords_t = _coords_on_transformed_layout(fe, θ_hat_t, free_names; natural = false)
-    θ_coords_u = _coords_on_transformed_layout(fe, θ_hat_u, free_names; natural = true)
-    est_t = θ_coords_t[active_idx]
-    est_n = θ_coords_u[active_idx]
-
-    draws_t = _sample_gaussian_draws(rng, est_t, Vt, n_draws)
-    draws_n = Matrix{Float64}(undef, size(draws_t, 1), size(draws_t, 2))
-    for i in 1:size(draws_t, 1)
-        θu_i = _θu_from_active(@view(draws_t[i, :]))
-        coords_u_i = _coords_on_transformed_layout(fe, θu_i, free_names; natural = true)
-        draws_n[i, :] .= coords_u_i[active_idx]
-    end
-
-    intervals_t = _intervals_from_draws(draws_t, level)
-    intervals_n = _intervals_from_draws(draws_n, level)
-    Vn = _cov_from_draws(draws_n)
-
-    ext = _extend_natural_stickbreak(fe, free_names, active_names, active_kinds,
-        est_n, draws_n, intervals_n)
-    names_n = ext !== nothing ? ext[1] : nothing
-    est_n_use = ext !== nothing ? ext[2] : est_n
-    draws_n_use = ext !== nothing ? ext[3] : draws_n
-    intervals_n_use = ext !== nothing ? ext[4] : intervals_n
-    Vn_use = draws_n_use !== nothing ? _cov_from_draws(draws_n_use) : Vn
-
-    diag = merge(
-        (;
-            hessian_backend = backend_used,
-            hessian_reduced = true,
-            inactive_fixed_effects_held_constant = true,
-            vcov = vcov,
-            approximation_method = _method_symbol(approx_method),
-            pseudo_inverse = pseudo_inverse,
-            n_draws = n_draws,
-            n_active_parameters = length(active_idx),
-            coordinate_transforms = active_kinds
-        ),
-        vcov_diag)
-
-    return UQResult(
-        :wald,
-        _method_symbol(source_method),
-        active_names,
-        names_n,
-        est_t,
-        est_n_use,
-        intervals_t,
-        intervals_n_use,
-        Vt,
-        Vn_use,
-        draws_t,
-        draws_n_use,
-        diag
-    )
+    return _finalize_wald_uqresult(fe, θ_hat_t, θ_hat_u, free_names, active_idx,
+        active_names, active_kinds, _θu_from_active, Vt_raw, backend_used, vcov,
+        pseudo_inverse, n_draws, level, rng, _method_symbol(source_method),
+        (; approximation_method = _method_symbol(approx_method)))
 end

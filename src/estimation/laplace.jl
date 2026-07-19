@@ -705,13 +705,16 @@ function _const_re_prior_logf(dm::DataModel,
                 seen[id] = true
                 dists = dists_builder(θ_re, get_const_cov(get_individuals(dm)[i]),
                     cache.model_funs, cache.helpers)
-                dist = getproperty(dists, re)
-                has_anneal && haskey(anneal_sds, re) &&
-                    (dist = _saem_apply_anneal_dist(dist, getfield(anneal_sds, re)))
                 v = get_is_scalar(re_cache)[ri] ?
                     T(const_cache.scalar_vals[ri][id]) :
                     T.(const_cache.vector_vals[ri][id])
-                lp = logpdf(dist, v)
+                lp = if has_anneal && haskey(anneal_sds, re)
+                    dist = _saem_apply_anneal_dist(getproperty(dists, re),
+                        getfield(anneal_sds, re))
+                    convert(T, logpdf(dist, v))
+                else
+                    _logpdf_re_static(keys(dists), values(dists), re, v, T)
+                end
                 isfinite(lp) || return T(-Inf)
                 ll += lp
             end

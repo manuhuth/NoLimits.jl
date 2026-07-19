@@ -1,6 +1,6 @@
 export MVContinuousTimeDiscreteStatesHMM
 
-using Distributions, ExponentialAction, LinearAlgebra, Random, Lux
+using Distributions, ExponentialAction, LinearAlgebra, Random
 
 """
     MVContinuousTimeDiscreteStatesHMM(transition_matrix, emission_dists, initial_dist, Δt)
@@ -107,7 +107,9 @@ function posterior_hidden_states(hmm::MVContinuousTimeDiscreteStatesHMM, y::Abst
     p_hidden = probabilities_hidden_states(hmm)
     dists = hmm.emission_dists
     pt = _hmm_probs_tuple(p_hidden, dists)
-    u = map((pi, d) -> pi * exp(_mv_emission_logpdf(d, y)), pt, dists)
+    obs_idx = findall(!ismissing, y)
+    y_obs = [y[m] for m in obs_idx]
+    u = map((pi, d) -> pi * exp(_mv_emission_logpdf(d, y, obs_idx, y_obs)), pt, dists)
     su = sum(u)
     return [ui / su for ui in u]
 end
@@ -120,7 +122,9 @@ function _hmm_logpdf_and_posterior(hmm::MVContinuousTimeDiscreteStatesHMM,
     p_hidden = probabilities_hidden_states(hmm)
     dists = hmm.emission_dists
     pt = _hmm_probs_tuple(p_hidden, dists)
-    ls = map(d -> _mv_emission_logpdf(d, y), dists)
+    obs_idx = findall(!ismissing, y)
+    y_obs = [y[m] for m in obs_idx]
+    ls = map(d -> _mv_emission_logpdf(d, y, obs_idx, y_obs), dists)
     lp = _hmm_logsumexp(map((pi, l) -> log(pi) + l, pt, ls))
     u = map((pi, l) -> pi * exp(l), pt, ls)
     su = sum(u)
@@ -136,7 +140,9 @@ function Distributions.logpdf(hmm::MVContinuousTimeDiscreteStatesHMM, y::Abstrac
     p_hidden = probabilities_hidden_states(hmm)
     dists = hmm.emission_dists
     pt = _hmm_probs_tuple(p_hidden, dists)
-    xs = map((pi, d) -> log(pi) + _mv_emission_logpdf(d, y), pt, dists)
+    obs_idx = findall(!ismissing, y)
+    y_obs = [y[m] for m in obs_idx]
+    xs = map((pi, d) -> log(pi) + _mv_emission_logpdf(d, y, obs_idx, y_obs), pt, dists)
     return _hmm_logsumexp(xs)
 end
 

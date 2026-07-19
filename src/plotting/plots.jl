@@ -14,13 +14,12 @@ function _get_dm(res, dm::Union{Nothing, DataModel})
     return dm
 end
 
+# Single-observable resolver: `nothing` -> the first observable (warning when several
+# exist), otherwise validate the requested scalar. Shares the `nothing` branch with the
+# list-valued `_resolve_observables`.
 function _get_observable(dm::DataModel, observable)
+    observable === nothing && return _resolve_observables(dm, nothing)[1]
     obs = get_formulas_meta(get_formulas(get_model(dm))).obs_names
-    if observable === nothing
-        length(obs) > 1 &&
-            @warn "Multiple observables found; using the first." observable=obs[1]
-        return obs[1]
-    end
     observable in obs || error("Observable $(observable) not found. Available: $(obs).")
     return observable
 end
@@ -345,18 +344,7 @@ function _fit_curve_from_cache(dm::DataModel,
     sol_accessors = nothing
     if get_de(get_model(dm)) !== nothing
         sol = cache.sols[ind_idx]
-        compiled = get_de_compiler(get_de(get_model(dm)))((;
-            fixed_effects = θ,
-            random_effects = η_ind,
-            constant_covariates = get_const_cov(ind),
-            varying_covariates = merge(
-                (t = get_vary(get_series(ind)).t[1],), get_dyn(get_series(ind))),
-            helpers = get_helper_funs(get_model(dm)),
-            model_funs = get_model_funs(get_model(dm)),
-            preDE = calculate_prede(get_model(dm), θ, η_ind, get_const_cov(ind))
-        ))
-        sol_accessors = _sol_accessors_with_crossings(
-            get_model(dm), sol, compiled, θ, η_ind, get_const_cov(ind))
+        sol_accessors = _sol_accessors_from_cached(dm, ind, sol, θ, η_ind)
     end
 
     preds = Vector{Float64}(undef, length(x_fit))

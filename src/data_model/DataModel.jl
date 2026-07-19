@@ -480,6 +480,11 @@ function _check_constant_within_group(df, group_col::Symbol, cov_cols::Vector{Sy
     return bad
 end
 
+function _constant_on_of(p)
+    (p isa ConstantCovariate || p isa ConstantCovariateVector) && return p.constant_on
+    return Symbol[]
+end
+
 function _validate_re_group_constants(model, df, covariates)
     re_names = get_re_names(model.random.random)
     isempty(re_names) && return nothing
@@ -494,8 +499,7 @@ function _validate_re_group_constants(model, df, covariates)
         cov_cols = Symbol[]
         for dep in deps
             p = getfield(covariates.params, dep)
-            constant_on = p isa ConstantCovariate ? p.constant_on :
-                          (p isa ConstantCovariateVector ? p.constant_on : Symbol[])
+            constant_on = _constant_on_of(p)
             if !(group_col in constant_on)
                 error("RandomEffect $(re) uses constant covariate $(dep), but $(dep) is not declared constant_on for group $(group_col).")
             end
@@ -530,8 +534,7 @@ function _validate_constant_covariates_primary(model, df, primary_id::Symbol, co
         end
 
         # Must be constant within each constant_on group, if specified
-        constant_on = p isa ConstantCovariate ? p.constant_on :
-                      (p isa ConstantCovariateVector ? p.constant_on : Symbol[])
+        constant_on = _constant_on_of(p)
         for grp in constant_on
             bad = _check_constant_within_group(df, grp, cov_cols)
             if !isempty(bad)
@@ -561,15 +564,27 @@ function _validate_prede_random_effects(model, primary_id::Symbol)
     return nothing
 end
 
-function _validate_re_dist_covariates(model, covariates)
-    re = model.random.random
-    re_syms = get_re_syms(re)
+# Per-RE covariate symbols used in each random effect's distribution (sorted).
+# Operates on (re, covariates) directly so validators can run before a DataModel exists.
+function _re_used_covariates(re, covariates)
     cov_syms = Set(vcat(covariates.names, covariates.flat_names, covariates.constants,
         covariates.varying, covariates.dynamic))
-    const_syms = Set(covariates.constants)
+    re_syms = get_re_syms(re)
+    pairs = Pair{Symbol, Vector{Symbol}}[]
     for r in get_re_names(re)
         syms = getfield(re_syms, r)
         used = sort([s for s in syms if s in cov_syms])
+        push!(pairs, r => used)
+    end
+    return NamedTuple(pairs)
+end
+
+function _validate_re_dist_covariates(model, covariates)
+    re = model.random.random
+    used_map = _re_used_covariates(re, covariates)
+    const_syms = Set(covariates.constants)
+    for r in get_re_names(re)
+        used = getfield(used_map, r)
         bad = [s for s in used if !(s in const_syms)]
         if !isempty(bad)
             error("Random effect $(r) uses non-constant covariates $(bad) in its distribution. Only ConstantCovariate is allowed in random-effect distributions.")
@@ -603,24 +618,8 @@ end
 function _probe_varying_covariates(covariates, df, rows, obs_row::Int, time_col::Symbol)
     vary = _build_vary_cov(covariates, df, rows, [obs_row], time_col, true)
     dyn = _build_dyn_cov(covariates, df, rows, time_col)
-    pairs = Pair{Symbol, Any}[]
-    if hasproperty(vary, :t)
-        push!(pairs, :t => getproperty(vary, :t)[1])
-    else
-        push!(pairs, :t => _get_col(df, time_col)[obs_row])
-    end
-    for name in keys(vary)
-        name == :t && continue
-        v = getfield(vary, name)
-        if v isa AbstractVector
-            push!(pairs, name => v[1])
-        elseif v isa NamedTuple
-            sub = _covariate_vector(NamedTuple{keys(v)}(Tuple(getfield(v, k)[1]
-            for k in keys(v))))
-            push!(pairs, name => sub)
-        end
-    end
-    return merge(NamedTuple(pairs), dyn)
+    t_obs = _get_col(df, time_col)[[obs_row]]
+    return _vary_row(vary, dyn, t_obs, 1)
 end
 
 function _probe_first_observation_distributions(model,
@@ -682,17 +681,7 @@ function _supports_row_varying_re_groups(model,
 end
 
 function get_re_covariate_usage(dm::DataModel)
-    re = dm.model.random.random
-    cov = dm.model.covariates.covariates
-    cov_syms = Set(vcat(cov.names, cov.flat_names, cov.constants, cov.varying, cov.dynamic))
-    re_syms = get_re_syms(re)
-    pairs = Pair{Symbol, Vector{Symbol}}[]
-    for r in get_re_names(re)
-        syms = getfield(re_syms, r)
-        used = sort([s for s in syms if s in cov_syms])
-        push!(pairs, r => used)
-    end
-    return NamedTuple(pairs)
+    return _re_used_covariates(dm.model.random.random, dm.model.covariates.covariates)
 end
 
 function _validate_re_group_within_primary(model, df, config::DataModelConfig)
@@ -1012,49 +1001,17 @@ function _build_callbacks(model, df, rows, config::DataModelConfig)
         error("CMT values must use a single style per DataFrame (all indices or all names). Mixed types were found.")
     end
 
-    function _levenshtein(a::AbstractString, b::AbstractString)
-        la = lastindex(a)
-        lb = lastindex(b)
-        da = collect(a)
-        db = collect(b)
-        m = length(da)
-        n = length(db)
-        dp = Vector{Int}(undef, n + 1)
-        for j in 0:n
-            dp[j + 1] = j
-        end
-        for i in 1:m
-            prev = dp[1]
-            dp[1] = i
-            for j in 1:n
-                temp = dp[j + 1]
-                cost = da[i] == db[j] ? 0 : 1
-                dp[j + 1] = min(dp[j + 1] + 1, dp[j] + 1, prev + cost)
-                prev = temp
-            end
-        end
-        return dp[n + 1]
-    end
-
-    function _suggest_states(name::Symbol)
-        target = String(name)
-        scores = [(s, _levenshtein(target, String(s))) for s in state_names]
-        sort!(scores, by = x -> x[2])
-        top = first(scores, min(3, length(scores)))
-        return join([String(s[1]) for s in top], ", ")
-    end
-
     function _resolve_cmt(v)
         if v isa Integer
             return Int(v)
         elseif v isa Symbol
             haskey(state_map, v) ||
-                error("CMT $(v) does not match any state. Closest matches: $(_suggest_states(v)).")
+                error("CMT $(v) does not match any state. Available states: $(join(state_names, ", ")).")
             return state_map[v]
         elseif v isa AbstractString
             sym = Symbol(v)
             haskey(state_map, sym) ||
-                error("CMT $(v) does not match any state. Closest matches: $(_suggest_states(sym)).")
+                error("CMT $(v) does not match any state. Available states: $(join(state_names, ", ")).")
             return state_map[sym]
         else
             error("CMT values must be Int, Symbol, or String; got $(typeof(v)).")

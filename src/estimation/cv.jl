@@ -473,8 +473,9 @@ function _cv_evaluate_mc(dm_train, dm_test, res_train, θu, ll_cache_test, loss,
     # Aggregate across samples: logsumexp for loglikelihood, mean for predicted_mean/loss
     result_dfs = DataFrame[]
     for j in 1:n_test
-        base_df = all_dfs[1][j]
-        isempty(base_df) && continue
+        s0 = findfirst(s -> !isempty(all_dfs[s][j]), 1:n_mc_samples)
+        s0 === nothing && continue
+        base_df = all_dfs[s0][j]
         n_rows = nrow(base_df)
 
         ll_acc = fill(-Inf, n_rows)

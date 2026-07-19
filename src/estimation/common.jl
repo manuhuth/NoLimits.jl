@@ -570,6 +570,42 @@ end
     return [Random.Xoshiro(seeds[i]) for i in 1:n]
 end
 
+# ---------------------------------------------------------------------------
+# Positional free/constants merge (shared by the optimization drivers): the flat
+# positions of the free parameters inside the full transformed vector are
+# precomputed once, so the per-evaluation merge is plain positional indexing.
+# The old per-name `setproperty!` loop dispatches on runtime Symbols, which
+# Enzyme's runtime rules reject and which costs a fresh ComponentArray + dynamic
+# writes per call.
+# ---------------------------------------------------------------------------
+function _free_idx(θ_const_t::ComponentArray, θ0_free_t::ComponentArray)
+    lab_full = ComponentArrays.labels(θ_const_t)
+    lab_free = ComponentArrays.labels(θ0_free_t)
+    pos_full = Dict{String, Int}(lab_full[i] => i for i in eachindex(lab_full))
+    return Int[pos_full[l] for l in lab_free]
+end
+
+function _merge_free_into_full(
+        θ_const_t_vec::Vector, free_idx::Vector{Int}, v_free, axs_full)
+    T = eltype(v_free)
+    full = Vector{T}(undef, length(θ_const_t_vec))
+    @inbounds for i in eachindex(full)
+        full[i] = θ_const_t_vec[i]
+    end
+    @inbounds for k in eachindex(free_idx)
+        full[free_idx[k]] = v_free[k]
+    end
+    return ComponentArray(full, axs_full)
+end
+
+# Every key in `constants` must name a declared fixed effect.
+function _validate_constant_names(fixed_set, constants::NamedTuple)
+    for name in keys(constants)
+        name in fixed_set || error("Unknown constant parameter $(name).")
+    end
+    return nothing
+end
+
 function get_iterations(res::MethodResult)
     hasproperty(res, :iterations) ? res.iterations :
     error("iterations not available for this method.")
@@ -2419,6 +2455,23 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
     ind = get_individuals(dm)[idx]
     compiled, u0, cb, infusion_rates = _solve_preamble(
         dm, ind, θ, η_ind, pre, cache.helpers, cache.model_funs)
+    # T must cover the vars eltype too (η/θ can enter the RHS without entering
+    # u0) — pack once with the promoted type, reuse for template and remake.
+    T = promote_type(eltype(θ), eltype(η_ind), eltype(u0))
+    u0_T = eltype(u0) === T ? u0 : T.(u0)
+    crossings = get_formulas_crossings(get_formulas(model))
+    # Closed-form fast path: diagonal-linear system with no mid-trajectory events
+    # (t0 doses already folded into u0). Analytic states over the saveat grid.
+    plan = cache.closed_form_plan
+    if isempty(crossings) && is_cf_eligible(plan) && (_cf_is_whole(plan) || cb === nothing)
+        saveat_use = _ll_saveat(cache, idx, ind)
+        sol = _cf_dispatch_solve(
+            model, compiled, u0_T, get_tspan(ind), saveat_use, plan,
+            get_callbacks(ind), cache.alg, cache.ode_args,
+            _ode_solve_kwargs(cache.solver_cfg.kwargs, cache.ode_kwargs, NamedTuple()))
+        sol === nothing && return nothing
+        return get_de_accessors_builder(get_de(model))(sol, compiled)
+    end
     # Solve parameters travel as a flat numeric Vector (DERHSFlat adapter):
     # plain-vector `prob.p` is the only carrier Enzyme's reverse adjoint route
     # handles correctly. Same generated RHS kernel — numerically equivalent
@@ -2426,28 +2479,12 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
     # can shift adaptive step sequences by ~1e-15; well inside solver tolerance).
     # `funs` (interpolants/model funs/helpers) are evaluation-constant per
     # individual, so caching the adapter inside the problem template is sound.
+    # Built only here: the closed-form early-return above needs none of them.
     layout, plen = _flat_layout(compiled.vars)
     f!_use = _with_infusion(
         DERHSFlat(get_de_f!(get_de(model)), layout, compiled.funs), infusion_rates)
-    # T must cover the vars eltype too (η/θ can enter the RHS without entering
-    # u0) — pack once with the promoted type, reuse for template and remake.
-    T = promote_type(eltype(θ), eltype(η_ind), eltype(u0))
     p_flat = _flat_pack(compiled.vars, layout, plen, T)
-    u0_T = eltype(u0) === T ? u0 : T.(u0)
-    crossings = get_formulas_crossings(get_formulas(model))
     if isempty(crossings)
-        # Closed-form fast path: diagonal-linear system with no mid-trajectory events
-        # (t0 doses already folded into u0). Analytic states over the saveat grid.
-        plan = cache.closed_form_plan
-        if is_cf_eligible(plan) && (_cf_is_whole(plan) || cb === nothing)
-            saveat_use = _ll_saveat(cache, idx, ind)
-            sol = _cf_dispatch_solve(
-                model, compiled, u0_T, get_tspan(ind), saveat_use, plan,
-                get_callbacks(ind), cache.alg, cache.ode_args,
-                _ode_solve_kwargs(cache.solver_cfg.kwargs, cache.ode_kwargs, NamedTuple()))
-            sol === nothing && return nothing
-            return get_de_accessors_builder(get_de(model))(sol, compiled)
-        end
         prob = cache.prob_templates === nothing ? nothing : cache.prob_templates[idx]
         if prob === nothing
             saveat_use = _ll_saveat(cache, idx, ind)
@@ -2585,6 +2622,21 @@ function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_
             vrows, get_obs_cols(dm), T_el))::T_el
 end
 
+# Per-column observation accumulation shared by the non-HMM row loops. Fetches y
+# for `col`, skips missing (ll unchanged), evaluates the logpdf via the
+# `_fast_logpdf`-then-`logpdf` fallback, and guards finiteness — returning the
+# updated ll or `T(-Inf)` as a non-finite sentinel the caller propagates.
+# @inline keeps static dispatch (no boxing) so callers match the hand-inlined path.
+@inline function _accum_obs_col(ll::T, obs, obs_series, col, i) where {T}
+    y = getfield(obs_series, col)[i]
+    y === missing && return ll
+    dist = getproperty(obs, col)
+    v = _fast_logpdf(dist, y)
+    v === nothing && (v = logpdf(dist, y))
+    isfinite(v) || return T(-Inf)
+    return ll + v
+end
+
 # Row loop of `_loglikelihood_individual` behind a function barrier: every
 # argument arrives concretely typed, so the formulas RGF call, the observation
 # field accesses, and the logpdf evaluations all dispatch statically.
@@ -2605,15 +2657,8 @@ function _ll_rows_obs(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, sol_
             return ll + ll_hmm
         end
         for col in obs_cols
-            y = getfield(obs_series, col)[i]
-            y === missing && continue
-            dist = getproperty(obs, col)
-            v = _fast_logpdf(dist, y)
-            v === nothing && (v = logpdf(dist, y))
-            if !isfinite(v)
-                return T(-Inf)
-            end
-            ll += v
+            ll = _accum_obs_col(ll, obs, obs_series, col, i)
+            isfinite(ll) || return T(-Inf)
         end
     end
     return ll
@@ -2678,15 +2723,8 @@ function _ll_rows_obs_rowwise(dm::DataModel, idx::Int, model::M, θ, η_ind,
             return ll + ll_hmm
         end
         for col in obs_cols
-            y = getfield(obs_series, col)[i]
-            y === missing && continue
-            dist = getproperty(obs, col)
-            v = _fast_logpdf(dist, y)
-            v === nothing && (v = logpdf(dist, y))
-            if !isfinite(v)
-                return T(-Inf)
-            end
-            ll += v
+            ll = _accum_obs_col(ll, obs, obs_series, col, i)
+            isfinite(ll) || return T(-Inf)
         end
     end
     return ll
@@ -2758,7 +2796,7 @@ function _loglikelihood_rows_hmm(dm::DataModel, idx::Int, θ, η_ind, cache::_LL
                     _hmm_with_prior(dist_up, prior)
                 catch err
                     if err isa DomainError || err isa ArgumentError
-                        return -Inf
+                        return T_hmm(-Inf)
                     end
                     rethrow(err)
                 end
@@ -2767,7 +2805,7 @@ function _loglikelihood_rows_hmm(dm::DataModel, idx::Int, θ, η_ind, cache::_LL
                         probabilities_hidden_states(dist_use)
                     catch err
                         if err isa DomainError || err isa ArgumentError
-                            return -Inf
+                            return T_hmm(-Inf)
                         end
                         rethrow(err)
                     end
@@ -2782,23 +2820,20 @@ function _loglikelihood_rows_hmm(dm::DataModel, idx::Int, θ, η_ind, cache::_LL
                     _hmm_logpdf_and_posterior(dist_use, y)
                 catch err
                     if err isa DomainError || err isa ArgumentError
-                        return -Inf
+                        return T_hmm(-Inf)
                     end
                     rethrow(err)
                 end
                 v = lp_post[1]
                 if !isfinite(v)
-                    return -Inf
+                    return T_hmm(-Inf)
                 end
                 hmm_priors[j] = lp_post[2]
                 hmm_has_prior[j] = true
             else
-                y === missing && continue
-                v = _fast_logpdf(dist, y)
-                v === nothing && (v = logpdf(dist, y))
-                if !isfinite(v)
-                    return -Inf
-                end
+                ll = _accum_obs_col(ll, obs, obs_series, col, i)
+                isfinite(ll) || return T_hmm(-Inf)
+                continue
             end
             ll += v
         end
@@ -3112,75 +3147,6 @@ function _symmetrize_psd_params(θ::ComponentArray, fe::FixedEffects)
         end
     end
     return θsym
-end
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Shared closed-form M-step helpers (SAEM and MCEM).
-#
-# The canonical implementations live in saem.jl (_saem_* names) and are
-# resolved at call-time (after the full module is loaded).  These thin
-# wrappers give MCEM a stable, non-SAEM-prefixed API to call.
-# ─────────────────────────────────────────────────────────────────────────────
-
-@inline _autodetect_gaussian_re(dm::DataModel, fixed_names) = _saem_autodetect_gaussian_re(
-    dm, fixed_names)
-
-@inline _re_family_map(dm::DataModel) = _saem_re_family_map(dm)
-
-@inline _builtin_re_targets(re_cov_params::NamedTuple, re_mean_params::NamedTuple) = _saem_builtin_re_targets(
-    re_cov_params, re_mean_params)
-
-@inline _outcome_targets(obs_cols, resid_var_param) = _saem_outcome_targets(
-    obs_cols, resid_var_param)
-
-@inline _builtin_closed_form_eligibility(dm::DataModel,
-re_cov_params::NamedTuple,
-re_mean_params::NamedTuple,
-resid_var_param,
-hmm_emission_params::NamedTuple = NamedTuple()) = _saem_builtin_closed_form_eligibility(
-    dm, re_cov_params, re_mean_params,
-    resid_var_param, hmm_emission_params)
-
-@inline _builtin_updates_from_stats(dm::DataModel,
-θ::ComponentArray,
-stats,
-resid_var_param,
-hmm_emission_params::NamedTuple,
-re_cov_params::NamedTuple,
-re_mean_params::NamedTuple) = _saem_builtin_updates_from_smoothed_stats(
-    dm, θ, stats, resid_var_param,
-    hmm_emission_params,
-    re_cov_params, re_mean_params)
-
-@inline _clamp_constants_to_bounds(constants::NamedTuple, fe::FixedEffects) = _saem_clamp_constants_to_bounds(
-    constants, fe)
-
-function _log_closed_form_plan(method_name::String,
-        elig,
-        re_cov_params::NamedTuple,
-        re_mean_params::NamedTuple,
-        resid_var_param,
-        has_custom_closed_form::Bool,
-        base_free_names::Vector{Symbol})
-    cf_syms = Symbol[]
-    for v in values(re_cov_params)
-        _saem_collect_target_symbols!(cf_syms, v)
-    end
-    for v in values(re_mean_params)
-        _saem_collect_target_symbols!(cf_syms, v)
-    end
-    _saem_collect_target_symbols!(cf_syms, resid_var_param)
-    cf_set = Set(cf_syms)
-    if has_custom_closed_form
-        union!(cf_set, base_free_names)
-    end
-    numeric_params = [n for n in base_free_names if !(n in cf_set)]
-    if isempty(numeric_params)
-        @info "$(method_name): all parameters handled by closed-form M-step; numeric optimizer inactive."
-    else
-        @info "$(method_name): closed-form M-step active. Numerically optimized parameters: $(numeric_params)"
-    end
-    return nothing
 end
 
 """

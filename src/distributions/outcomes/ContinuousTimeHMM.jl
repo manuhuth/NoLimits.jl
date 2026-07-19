@@ -1,8 +1,7 @@
 export ContinuousTimeDiscreteStatesHMM
 
-using Distributions, ExponentialAction, Random, Lux
-import Distributions: pdf, logpdf, rand, mean, var, median, quantile, mode, cdf, support,
-                      params
+using Distributions, ExponentialAction, Random
+import Distributions: pdf, logpdf, rand, mean, var, median, quantile, cdf, params
 import ForwardDiff
 
 function _ct_hmm_validate_mode(mode::Symbol)

@@ -60,15 +60,12 @@ function _compute_uq_mcmc_refit(res::FitResult;
     src_method isa MCMC &&
         error("mcmc_refit is intended for non-MCMC fits. Use method=:chain for MCMC results.")
 
-    constants_user = constants === nothing ? _fit_kw(res, :constants, NamedTuple()) :
-                     constants
-    constants_re_use = constants_re === nothing ?
-                       _fit_kw(res, :constants_re, NamedTuple()) : constants_re
-    ode_args_use = ode_args === nothing ? _fit_kw(res, :ode_args, ()) : ode_args
-    ode_kwargs_use = ode_kwargs === nothing ? _fit_kw(res, :ode_kwargs, NamedTuple()) :
-                     ode_kwargs
-    serialization_use = serialization === nothing ?
-                        _fit_kw(res, :serialization, EnsembleSerial()) : serialization
+    constants_user = _resolve_fit_kw(res, constants, :constants, NamedTuple())
+    constants_re_use = _resolve_fit_kw(res, constants_re, :constants_re, NamedTuple())
+    ode_args_use = _resolve_fit_kw(res, ode_args, :ode_args, ())
+    ode_kwargs_use = _resolve_fit_kw(res, ode_kwargs, :ode_kwargs, NamedTuple())
+    serialization_use = _resolve_fit_kw(
+        res, serialization, :serialization, EnsembleSerial())
 
     fe = get_fixed(get_model(dm))
     free_names = _free_fixed_names(fe, constants_user)

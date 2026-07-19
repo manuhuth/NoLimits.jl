@@ -160,13 +160,11 @@ function DynamicCovariate(column::Symbol; interpolation = LinearInterpolation)
 end
 
 function ConstantCovariate(column::Symbol; constant_on = Symbol[])
-    constant_on = constant_on isa Symbol ? [constant_on] : collect(constant_on)
-    return ConstantCovariate(column, constant_on)
+    return ConstantCovariate(column, _normalize_constant_on(constant_on))
 end
 
 function ConstantCovariateVector(columns::Vector{Symbol}; constant_on = Symbol[])
-    constant_on = constant_on isa Symbol ? [constant_on] : collect(constant_on)
-    return ConstantCovariateVector(columns, constant_on)
+    return ConstantCovariateVector(columns, _normalize_constant_on(constant_on))
 end
 
 function DynamicCovariateVector(columns::Vector{Symbol};
@@ -311,10 +309,6 @@ function _rewrite_univariate_covariate(lhs::Symbol, rhs::Expr)
     if ctor !== nothing
         # Disallow explicit column naming; LHS provides the column.
         has_kwargs = _covariate_has_kwargs(rhs)
-        if ctor === :Covariate
-            has_kwargs &&
-                error("Covariate does not accept keyword arguments; use DynamicCovariate(...; interpolation=...).")
-        end
         # No positional args allowed (the macro injects the column).
         positional = [arg
                       for arg in rhs.args[2:end]

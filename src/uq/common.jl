@@ -21,6 +21,22 @@ function _validate_level(level::Real)
     return Float64(level)
 end
 
+# Resolve a UQ fit keyword: use the caller override when given, else the stored fit value.
+@inline function _resolve_fit_kw(res::FitResult, val, key::Symbol, default)
+    return val === nothing ? _fit_kw(res, key, default) : val
+end
+
+# Map each fixed-effect name to its transform spec.
+function _spec_map(fe::FixedEffects)
+    all_names = get_names(fe)
+    specs = get_transforms(fe).forward.specs
+    spec_map = Dict{Symbol, TransformSpec}()
+    for i in eachindex(all_names)
+        spec_map[all_names[i]] = specs[i]
+    end
+    return spec_map
+end
+
 function _free_fixed_names(fe::FixedEffects, constants::NamedTuple)
     fixed_names = get_names(fe)
     fixed_set = Set(fixed_names)
@@ -64,12 +80,7 @@ end
 
 function _flat_transform_kinds_for_free(fe::FixedEffects, free_names::Vector{Symbol})
     θt = get_θ0_transformed(fe)
-    all_names = get_names(fe)
-    specs = get_transforms(fe).forward.specs
-    spec_map = Dict{Symbol, TransformSpec}()
-    for i in eachindex(all_names)
-        spec_map[all_names[i]] = specs[i]
-    end
+    spec_map = _spec_map(fe)
 
     out = Symbol[]
     for name in free_names
@@ -146,16 +157,25 @@ end
     return θ isa ComponentArray ? θ : ComponentArray(θ)
 end
 
+# Rebuild the untransformed ComponentArray from a full free-coordinate vector on the
+# transformed scale. Element type comes from the free vector (its Duals); the held
+# constant coordinates are overlaid before the inverse transform is applied.
+function _theta_u_from_free_t(x_free, axs_free, θ_const_t, axs_full, free_names,
+        inv_transform)
+    θt_free = ComponentArray(x_free, axs_free)
+    T = eltype(θt_free)
+    θt_full = ComponentArray(T.(θ_const_t), axs_full)
+    for name in free_names
+        setproperty!(θt_full, name, getproperty(θt_free, name))
+    end
+    return _as_component_array(inv_transform(θt_full))
+end
+
 function _coords_on_transformed_layout(fe::FixedEffects,
         θ,
         names::Vector{Symbol};
         natural::Bool = false)
-    all_names = get_names(fe)
-    specs = get_transforms(fe).forward.specs
-    spec_map = Dict{Symbol, TransformSpec}()
-    for i in eachindex(all_names)
-        spec_map[all_names[i]] = specs[i]
-    end
+    spec_map = _spec_map(fe)
     out = Float64[]
     for name in names
         hasproperty(θ, name) || error("Parameter vector is missing $(name).")
@@ -181,10 +201,7 @@ function _extend_natural_stickbreak(
     has_sb = any(k -> k == :stickbreak || k == :stickbreakrows, active_kinds)
     has_sb || return nothing
 
-    all_fe_names = get_names(fe)
-    all_specs = get_transforms(fe).forward.specs
-    spec_map = Dict{Symbol, TransformSpec}(all_fe_names[i] => all_specs[i]
-    for i in eachindex(all_fe_names))
+    spec_map = _spec_map(fe)
     params_nt = get_params(fe)
     θt = get_θ0_transformed(fe)
 
@@ -409,10 +426,8 @@ function _gradient_from_objective(obj::Function,
     end
 end
 
-@inline function _uq_mcmc_warmup(res::FitResult)
-    conv = get_diagnostics(res).convergence
-    if conv isa NamedTuple && haskey(conv, :n_adapt)
-        return Int(getfield(conv, :n_adapt))
-    end
-    return 0
+function _uq_mcmc_warmup(res::FitResult)
+    diag = get_diagnostics(res)
+    conv = hasproperty(diag, :convergence) ? getproperty(diag, :convergence) : NamedTuple()
+    return hasproperty(conv, :n_adapt) ? Int(getproperty(conv, :n_adapt)) : 0
 end

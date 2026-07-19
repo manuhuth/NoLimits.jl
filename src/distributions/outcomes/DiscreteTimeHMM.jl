@@ -97,6 +97,21 @@ function Distributions.logpdf(hmm::DiscreteTimeDiscreteStatesHMM, y::Real)
     return _hmm_logsumexp(xs)
 end
 
+# Combined accessor sharing the one-step propagation (p, s, pt) between the
+# likelihood and the posterior; the per-state pdf/logpdf calls stay separate, so
+# this is bit-identical to calling `logpdf`/`posterior_hidden_states` above. The
+# generic fallback in `_HMMUtils.jl` recomputes the propagation matvec twice.
+function _hmm_logpdf_and_posterior(hmm::DiscreteTimeDiscreteStatesHMM, y::Real)
+    p = transpose(hmm.transition_matrix) * hmm.initial_dist.p
+    s = sum(p)
+    dists = hmm.emission_dists
+    pt = _hmm_probs_tuple(p, dists)
+    lp = _hmm_logsumexp(map((pi, d) -> log(pi / s) + logpdf(d, y), pt, dists))
+    u = map((pi, d) -> (pi / s) * pdf(d, y), pt, dists)
+    su = sum(u)
+    return lp, [ui / su for ui in u]
+end
+
 function Distributions.rand(rng::AbstractRNG, hmm::DiscreteTimeDiscreteStatesHMM)
     state = rand(rng, Categorical(probabilities_hidden_states(hmm)))
     return rand(rng, hmm.emission_dists[state])

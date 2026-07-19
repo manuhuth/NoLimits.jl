@@ -306,7 +306,7 @@ end
             e
         end
         @test err isa ErrorException
-        @test occursin("Closest matches", sprint(showerror, err))
+        @test occursin("Available states", sprint(showerror, err))
     end
 end
 
