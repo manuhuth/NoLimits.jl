@@ -2318,23 +2318,10 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
         theta_0_untransformed::Union{Nothing, ComponentArray},
         store_data_model::Bool, extra_objective = nothing) where {V}
     fe = get_fixed(get_model(dm))
-    fixed_names = get_names(fe)
-    free_names = [n for n in fixed_names if !(n in keys(constants))]
-    θ0_u = get_θ0_untransformed(fe)
-    if theta_0_untransformed !== nothing
-        for n in fixed_names
-            hasproperty(theta_0_untransformed, n) ||
-                error("theta_0_untransformed is missing parameter $(n).")
-        end
-        θ0_u = theta_0_untransformed
-    end
-
-    transform = get_transform(fe)
-    θ0_t = transform(θ0_u)
-    inv_transform = get_inverse_transform(fe)
-    θ_const_u = deepcopy(θ0_u)
-    _apply_constants!(θ_const_u, constants)
-    θ_const_t = transform(θ_const_u)
+    layout = free_parameter_layout(fe; constants = constants,
+        theta0_untransformed = theta_0_untransformed)
+    free_names = layout.free_names
+    inv_transform = layout.inv_transform
 
     validate_post_transform(dm)
 
@@ -2345,16 +2332,14 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
     ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
         serialization = serialization, force_saveat = true)
     n_batches = length(batch_infos)
-    Tθ = eltype(θ0_t)
+    Tθ = eltype(layout.θ0_free_t)
     ebe_cache = _init_laplace_eval_cache(n_batches, Tθ)
 
-    θ0_free_t = θ0_t[free_names]
-    axs_free = getaxes(θ0_free_t)
-    axs_full = getaxes(θ_const_t)
-    # Positional free-into-full merge (Enzyme-safe; avoids the per-name setproperty!
-    # loop). free_idx/θ_const_t_vec are fit-constant, so compute them once here.
-    θ_const_t_vec = collect(θ_const_t)
-    free_idx = _free_idx(θ_const_t, θ0_free_t)
+    θ0_free_t = layout.θ0_free_t
+    axs_free = layout.axs
+    axs_full = layout.axs_full
+    θ_const_t_vec = layout.θ_const_t_vec
+    free_idx = layout.free_idx
     has_penalty = !isempty(keys(penalty))
     # Optional user-supplied objective term, a function of the natural-scale θu.
     # Mirrors `penalty` exactly: added to both obj_only and obj_grad, no-op when
@@ -2469,19 +2454,8 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
            OptimizationProblem(optf, θ0_init)
     sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
 
-    θ_hat_t_raw = sol.u
-    θ_hat_t_free = θ_hat_t_raw isa ComponentArray ? θ_hat_t_raw :
-                   ComponentArray(θ_hat_t_raw, axs_free)
-    T = eltype(θ_hat_t_free)
-    θ_hat_t = ComponentArray(T.(θ_const_t), axs_full)
-    for name in free_names
-        setproperty!(θ_hat_t, name, getproperty(θ_hat_t_free, name))
-    end
-    θ_hat_u = inv_transform(θ_hat_t)
-
     summary = FitSummary(sol.objective, sol.retcode == SciMLBase.ReturnCode.Success,
-        FitParameters(θ_hat_t, θ_hat_u),
-        NamedTuple())
+        resolve_fitted_parameters(layout, sol.u), NamedTuple())
     diagnostics = FitDiagnostics(
         (;), (optimizer = method.optimizer,), (retcode = sol.retcode,), NamedTuple())
     niter = hasproperty(sol, :stats) && hasproperty(sol.stats, :iterations) ?

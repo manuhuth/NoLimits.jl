@@ -269,24 +269,10 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
     all(name in keys(constants) for name in fixed_names) &&
         error("GHQuadrature requires at least one free fixed effect.")
 
-    free_names = [n for n in fixed_names if !(n in keys(constants))]
-
-    # ── Starting point ───────────────────────────────────────────────────────
-    θ0_u = get_θ0_untransformed(fe)
-    if theta_0_untransformed !== nothing
-        for n in fixed_names
-            hasproperty(theta_0_untransformed, n) ||
-                error("theta_0_untransformed is missing parameter $(n).")
-        end
-        θ0_u = theta_0_untransformed
-    end
-
-    transform = get_transform(fe)
-    inv_transform = get_inverse_transform(fe)
-    θ0_t = transform(θ0_u)
-    θ_const_u = deepcopy(θ0_u)
-    _apply_constants!(θ_const_u, constants)
-    θ_const_t = transform(θ_const_u)
+    layout = free_parameter_layout(fe; constants = constants,
+        theta0_untransformed = theta_0_untransformed)
+    free_names = layout.free_names
+    inv_transform = layout.inv_transform
 
     inner_opts = _resolve_inner_options(method.inner, dm)
     multistart_opts = _resolve_multistart_options(method.multistart, inner_opts)
@@ -306,15 +292,15 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
 
     # EB-mode cache (used post-hoc for get_random_effects).
     n_batches = length(batch_infos)
-    Tθ = eltype(θ0_t)
+    Tθ = eltype(layout.θ0_free_t)
     ebe_cache = _init_laplace_eval_cache(n_batches, Tθ)
 
     # ── Objective ────────────────────────────────────────────────────────────
-    θ0_free_t = θ0_t[free_names]
-    axs_free = getaxes(θ0_free_t)
-    axs_full = getaxes(θ_const_t)
-    free_idx = _free_idx(θ_const_t, θ0_free_t)
-    θ_const_t_vec = collect(θ_const_t)
+    θ0_free_t = layout.θ0_free_t
+    axs_free = layout.axs
+    axs_full = layout.axs_full
+    free_idx = layout.free_idx
+    θ_const_t_vec = layout.θ_const_t_vec
 
     function obj(θt, p)
         θt_free = θt isa ComponentArray ? θt : ComponentArray(θt, axs_free)

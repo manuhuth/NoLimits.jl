@@ -515,6 +515,79 @@ it with the analytic (envelope + trace-estimator) θ-gradient. Swap only the `cu
 """
 const fit_laplace_family = _fit_laplace_family
 
+# ── Objective factory: shared fit setup/teardown ─────────────────────────────
+
+"""
+    NLFreeLayout
+
+Per-fit parameter bookkeeping shared by the optimization drivers: the free (non-constant)
+fixed-effect names, the transform/inverse-transform, the constants-applied transformed vector,
+and the free↔full index map. Build with [`free_parameter_layout`](@ref); consume with
+[`resolve_fitted_parameters`](@ref) and the transformed-scale objective helpers.
+"""
+struct NLFreeLayout{FN, TR, IT, TC, V, AF, F0, AX}
+    free_names::FN
+    transform::TR
+    inv_transform::IT
+    θ_const_t::TC
+    θ_const_t_vec::V
+    axs_full::AF
+    θ0_free_t::F0
+    free_idx::Vector{Int}
+    axs::AX
+end
+
+"""
+    free_parameter_layout(fe::FixedEffects; constants=NamedTuple(), theta0_untransformed=nothing) -> NLFreeLayout
+
+Resolve the free fixed effects (those not in `constants`), the transform pair, the
+constants-applied transformed vector, the free parameters' initial transformed values, and the
+free→full index map. `theta0_untransformed` overrides the model's initial natural-scale values.
+"""
+function free_parameter_layout(fe::FixedEffects; constants::NamedTuple = NamedTuple(),
+        theta0_untransformed = nothing)
+    fixed_names = get_names(fe)
+    free_names = [n for n in fixed_names if !(n in keys(constants))]
+    θ0_u = get_θ0_untransformed(fe)
+    if theta0_untransformed !== nothing
+        for n in fixed_names
+            hasproperty(theta0_untransformed, n) ||
+                error("theta_0_untransformed is missing parameter $(n).")
+        end
+        θ0_u = theta0_untransformed
+    end
+    transform = get_transform(fe)
+    inv_transform = get_inverse_transform(fe)
+    θ0_t = transform(θ0_u)
+    θ_const_u = deepcopy(θ0_u)
+    apply_constants!(θ_const_u, constants)
+    θ_const_t = transform(θ_const_u)
+    θ0_free_t = ComponentArray(NamedTuple{Tuple(free_names)}(
+        Tuple(getproperty(θ0_t, n) for n in free_names)))
+    return NLFreeLayout(free_names, transform, inv_transform, θ_const_t,
+        collect(θ_const_t), getaxes(θ_const_t), θ0_free_t,
+        free_parameter_indices(θ_const_t, θ0_free_t), getaxes(θ0_free_t))
+end
+
+"""
+    resolve_fitted_parameters(layout::NLFreeLayout, θ_hat_free_t) -> FitParameters
+
+Overlay the optimizer's free-parameter solution onto the constants and return the fitted
+`FitParameters` (transformed + natural scale).
+"""
+function resolve_fitted_parameters(layout::NLFreeLayout, θ_hat_free_t)
+    θ_hat_t_free = θ_hat_free_t isa ComponentArray ? θ_hat_free_t :
+                   ComponentArray(θ_hat_free_t, layout.axs)
+    T = eltype(θ_hat_t_free)
+    θ_hat_t = ComponentArray(T.(layout.θ_const_t), layout.axs_full)
+    for name in layout.free_names
+        setproperty!(θ_hat_t, name, getproperty(θ_hat_t_free, name))
+    end
+    return FitParameters(θ_hat_t, layout.inv_transform(θ_hat_t))
+end
+
+export NLFreeLayout, free_parameter_layout, resolve_fitted_parameters
+
 # ── Change-of-variables (unconstrained ↔ natural) ────────────────────────────
 
 """
