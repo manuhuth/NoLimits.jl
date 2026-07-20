@@ -134,20 +134,21 @@ struct _REMap{L, M}
     level_to_index::M
 end
 
-struct _REInfo{A, R, P}
+struct RELevelInfo{A, R, P}
     map::A
     ranges::R
     reps::P
     dim::Int
     is_scalar::Bool
 end
+const _REInfo = RELevelInfo
 
 struct REBatchInfo{B, R}
     inds::B
     re_info::R
     n_b::Int
 end
-function _build_re_batch_infos(dm::DataModel, constants_re::NamedTuple)
+function build_re_batch_infos(dm::DataModel, constants_re::NamedTuple)
     constants_re = _normalize_constants_re(dm, constants_re)
     const_cache = _build_constants_cache(dm, constants_re)
     pairing = _build_re_batches(dm, const_cache)
@@ -205,8 +206,9 @@ function _build_re_batch_infos(dm::DataModel, constants_re::NamedTuple)
     end
     return pairing, batch_infos, const_cache
 end
+const _build_re_batch_infos = build_re_batch_infos
 
-@inline function _re_value_from_b(info::_REInfo, level_id::Int, b)
+@inline function random_effect_value(info::RELevelInfo, level_id::Int, b)
     idx = info.map.level_to_index[level_id]
     idx == 0 && return nothing
     r = info.ranges[idx]
@@ -219,7 +221,9 @@ end
         return view(b, r)
     end
 end
-function _build_eta_ind(dm::DataModel,
+const _re_value_from_b = random_effect_value
+
+function build_eta_individual(dm::DataModel,
         ind_idx::Int,
         batch_info::REBatchInfo,
         b,
@@ -292,6 +296,7 @@ function _build_eta_ind(dm::DataModel,
     nt = NamedTuple(nt_pairs)
     return ComponentArray(nt)
 end
+const _build_eta_ind = build_eta_individual
 
 # In-place variant for hot loops that evaluate many η per batch (e.g. one per
 # quadrature node): writes into a caller-owned buffer and wraps it with the
@@ -370,6 +375,16 @@ end
 
 @inline get_levels(m::_REMap) = m.levels
 @inline get_level_to_index(m::_REMap) = m.level_to_index
+
+# ── Public batch/level accessors (developer API; thin covers over the internals) ──
+@inline get_batch_individuals(info::REBatchInfo) = get_inds(info)
+@inline get_batch_re_info(info::REBatchInfo) = get_re_info(info)
+@inline get_batch_re_dim(info::REBatchInfo) = get_n_b(info)
+@inline get_re_levels(li::RELevelInfo) = get_levels(get_re_map(li))
+@inline get_re_ranges(li::RELevelInfo) = get_ranges(li)
+@inline get_re_reps(li::RELevelInfo) = get_reps(li)
+@inline get_re_dim(li::RELevelInfo) = get_dim(li)
+@inline get_re_is_scalar(li::RELevelInfo) = get_is_scalar(li)
 
 export build_re_dists
 

@@ -158,14 +158,8 @@ Multistart
 ### Result Types
 
 ```@docs
-MLEResult
-MAPResult
-LaplaceResult
-GHQuadratureResult
-MCEMResult
-SAEMResult
+StandardOptimizationResult
 MCMCResult
-PooledResult
 MultistartFitResult
 ```
 

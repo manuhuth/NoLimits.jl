@@ -777,13 +777,14 @@ end
 # Correctness contract: a context is valid only for the θ it was built from and
 # must not cross a θ change — every use below builds it locally inside a scope
 # where θ is fixed (one inner solve, one gradient, one Hessian, one batch term).
-struct _LaplaceThetaCtx{TH, D, L}
+struct BatchThetaContext{TH, D, L}
     θ_re::TH
     dists::D          # Vector (per RE) of Vector (per free level) of builder NamedTuples
     prior_hess::L     # nothing, or cached Λ (all-Gaussian REs only)
 end
+const _LaplaceThetaCtx = BatchThetaContext
 
-function _build_theta_ctx(dm::DataModel,
+function build_batch_theta_context(dm::DataModel,
         batch_info::REBatchInfo,
         θ::ComponentArray,
         cache::_LLCache)
@@ -797,6 +798,7 @@ function _build_theta_ctx(dm::DataModel,
              for rinfo in get_re_info(batch_info)]
     return _LaplaceThetaCtx(θ_re, dists, nothing)
 end
+const _build_theta_ctx = build_batch_theta_context
 
 @inline function _re_all_gaussian(dm::DataModel)
     types = get_re_types(get_random(get_model(dm)))
@@ -1528,18 +1530,41 @@ function _laplace_hessian_b(dm::DataModel,
     return H
 end
 
-# Pluggable Hessian builder for the inner negative Hessian of the log-joint.
-# `_ExactHess` uses the full second-order AD Hessian (the Laplace default); FOCEI plugs
-# in the Gauss-Newton / expected-information Hessian (defined in focei.jl).  Both return
-# `H = ∇²_b log f`, i.e. the (typically negative-definite) raw Hessian, so the downstream
-# `negH = -H` / Cholesky / trace-gradient machinery is identical.
-abstract type _HessMode end
-struct _ExactHess <: _HessMode end
-@inline _build_hess_b(::_ExactHess, dm::DataModel, batch_info::REBatchInfo, θ, b,
+# Pluggable curvature for the inner Hessian of the log-joint - the public method-developer
+# seam. A curvature returns `H = ∇²_b log f` (typically negative-definite); the downstream
+# `negH = -H` / Cholesky / trace-gradient machinery is identical for every curvature.
+# `ExactHessianCurvature` is the full second-order AD Hessian (Laplace default);
+# `FisherInformationCurvature` (focei.jl) plugs in the Gauss-Newton / expected-information
+# Hessian. Add a new curvature by implementing `inner_curvature(::YourCurvature, …)`.
+abstract type AbstractCurvature end
+const _HessMode = AbstractCurvature
+
+struct ExactHessianCurvature <: AbstractCurvature end
+const _ExactHess = ExactHessianCurvature
+
+# Opaque workspace holding the internal AD cache + batch index, kept off `inner_curvature`'s
+# public signature so the API does not commit to those caching representations.
+struct CurvatureWorkspace{A}
+    ad_cache::A
+    bi::Int
+end
+CurvatureWorkspace(; ad_cache = nothing, bi::Int = 1) = CurvatureWorkspace(ad_cache, bi)
+
+@inline function inner_curvature(::ExactHessianCurvature, dm::DataModel,
+        batch_info::REBatchInfo, θ, b, const_cache::REConstantsCache, cache::_LLCache,
+        ws::CurvatureWorkspace; ctx::AbstractString = "", tctx = nothing)
+    return _laplace_hessian_b(dm, batch_info, θ, b, const_cache, cache,
+        ws.ad_cache, ws.bi; ctx = ctx, tctx = tctx)
+end
+
+# Internal shim: the fit machinery calls `_build_hess_b(mode, …, ad_cache, bi)`; route it
+# through the public `inner_curvature` seam so third-party curvatures are picked up too.
+@inline _build_hess_b(mode::AbstractCurvature, dm::DataModel, batch_info::REBatchInfo, θ, b,
 const_cache::REConstantsCache, cache::_LLCache,
 ad_cache::Union{Nothing, LaplaceADCache}, bi::Int;
-ctx::AbstractString = "", tctx = nothing) = _laplace_hessian_b(
-    dm, batch_info, θ, b, const_cache, cache, ad_cache, bi; ctx = ctx, tctx = tctx)
+ctx::AbstractString = "", tctx = nothing) = inner_curvature(
+    mode, dm, batch_info, θ, b, const_cache, cache,
+    CurvatureWorkspace(ad_cache, bi); ctx = ctx, tctx = tctx)
 
 function _laplace_cholesky_negH(
         H::AbstractMatrix; jitter = 1e-6, max_tries = 6, growth = 10.0,
@@ -1969,21 +1994,7 @@ function Laplace(;
         ms, lb, ub, ignore_model_bounds, nan_recovery)
 end
 
-"""
-    LaplaceResult{S, O, I, R, N, B} <: MethodResult
-
-Method-specific result from a [`Laplace`](@ref) fit. Stores the solution, objective value,
-iteration count, raw solver result, optional notes, and empirical-Bayes mode estimates
-for each individual.
-"""
-struct LaplaceResult{S, O, I, R, N, B} <: MethodResult
-    solution::S
-    objective::O
-    iterations::I
-    raw::R
-    notes::N
-    eb_modes::B
-end
+# LaplaceResult is a StandardOptimizationResult{:laplace} alias + constructor (see common.jl).
 
 mutable struct _LaplaceObjCache{T, G}
     θ::Union{Nothing, AbstractVector{T}}
@@ -2307,23 +2318,10 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
         theta_0_untransformed::Union{Nothing, ComponentArray},
         store_data_model::Bool, extra_objective = nothing) where {V}
     fe = get_fixed(get_model(dm))
-    fixed_names = get_names(fe)
-    free_names = [n for n in fixed_names if !(n in keys(constants))]
-    θ0_u = get_θ0_untransformed(fe)
-    if theta_0_untransformed !== nothing
-        for n in fixed_names
-            hasproperty(theta_0_untransformed, n) ||
-                error("theta_0_untransformed is missing parameter $(n).")
-        end
-        θ0_u = theta_0_untransformed
-    end
-
-    transform = get_transform(fe)
-    θ0_t = transform(θ0_u)
-    inv_transform = get_inverse_transform(fe)
-    θ_const_u = deepcopy(θ0_u)
-    _apply_constants!(θ_const_u, constants)
-    θ_const_t = transform(θ_const_u)
+    layout = free_parameter_layout(fe; constants = constants,
+        theta0_untransformed = theta_0_untransformed)
+    free_names = layout.free_names
+    inv_transform = layout.inv_transform
 
     validate_post_transform(dm)
 
@@ -2334,16 +2332,14 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
     ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
         serialization = serialization, force_saveat = true)
     n_batches = length(batch_infos)
-    Tθ = eltype(θ0_t)
+    Tθ = eltype(layout.θ0_free_t)
     ebe_cache = _init_laplace_eval_cache(n_batches, Tθ)
 
-    θ0_free_t = θ0_t[free_names]
-    axs_free = getaxes(θ0_free_t)
-    axs_full = getaxes(θ_const_t)
-    # Positional free-into-full merge (Enzyme-safe; avoids the per-name setproperty!
-    # loop). free_idx/θ_const_t_vec are fit-constant, so compute them once here.
-    θ_const_t_vec = collect(θ_const_t)
-    free_idx = _free_idx(θ_const_t, θ0_free_t)
+    θ0_free_t = layout.θ0_free_t
+    axs_free = layout.axs
+    axs_full = layout.axs_full
+    θ_const_t_vec = layout.θ_const_t_vec
+    free_idx = layout.free_idx
     has_penalty = !isempty(keys(penalty))
     # Optional user-supplied objective term, a function of the natural-scale θu.
     # Mirrors `penalty` exactly: added to both obj_only and obj_grad, no-op when
@@ -2458,19 +2454,8 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
            OptimizationProblem(optf, θ0_init)
     sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
 
-    θ_hat_t_raw = sol.u
-    θ_hat_t_free = θ_hat_t_raw isa ComponentArray ? θ_hat_t_raw :
-                   ComponentArray(θ_hat_t_raw, axs_free)
-    T = eltype(θ_hat_t_free)
-    θ_hat_t = ComponentArray(T.(θ_const_t), axs_full)
-    for name in free_names
-        setproperty!(θ_hat_t, name, getproperty(θ_hat_t_free, name))
-    end
-    θ_hat_u = inv_transform(θ_hat_t)
-
     summary = FitSummary(sol.objective, sol.retcode == SciMLBase.ReturnCode.Success,
-        FitParameters(θ_hat_t, θ_hat_u),
-        NamedTuple())
+        resolve_fitted_parameters(layout, sol.u), NamedTuple())
     diagnostics = FitDiagnostics(
         (;), (optimizer = method.optimizer,), (retcode = sol.retcode,), NamedTuple())
     niter = hasproperty(sol, :stats) && hasproperty(sol.stats, :iterations) ?

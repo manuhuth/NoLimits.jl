@@ -30,6 +30,12 @@ struct GHQuadratureNodes{T <: AbstractFloat}
     signs::Vector{Int8}
 end
 
+@inline get_nodes(g::GHQuadratureNodes) = g.nodes
+@inline get_logweights(g::GHQuadratureNodes) = g.logweights
+@inline get_signs(g::GHQuadratureNodes) = g.signs
+@inline get_dimension(g::GHQuadratureNodes) = g.dim
+@inline get_level(g::GHQuadratureNodes) = g.level
+
 # ---------------------------------------------------------------------------
 # 1D Gauss-Hermite rule (probabilist's convention)
 # ---------------------------------------------------------------------------

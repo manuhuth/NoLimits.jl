@@ -536,21 +536,7 @@ function SAEM(;
     SAEM(optimizer, optim_kwargs, adtype, saem, lb, ub)
 end
 
-"""
-    SAEMResult{S, O, I, R, N, B} <: MethodResult
-
-Method-specific result from a [`SAEM`](@ref) fit. Stores the solution, objective value,
-iteration count, raw solver result, optional notes, and final empirical-Bayes mode
-estimates for each individual.
-"""
-struct SAEMResult{S, O, I, R, N, B} <: MethodResult
-    solution::S
-    objective::O
-    iterations::I
-    raw::R
-    notes::N
-    eb_modes::B
-end
+# SAEMResult is a StandardOptimizationResult{:saem} alias (see common.jl).
 
 function get_closed_form_mstep_used(res::SAEMResult)
     notes = res.notes

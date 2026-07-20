@@ -84,6 +84,81 @@ Abstract base type for the method-specific result structs stored inside
 """
 abstract type MethodResult end
 
+"""
+    StandardOptimizationResult{Kind, ...} <: MethodResult
+
+Unified result type for the optimization-based estimators. `Kind` is a `Symbol` type parameter
+identifying the method (`:mle`, `:map`, `:laplace`, `:ghquadrature`, `:saem`, `:mcem`,
+`:pooled`); the historical per-method names (`MLEResult`, `LaplaceResult`, ...) are type aliases
+of it, so `res isa LaplaceResult` and dispatch on `::LaplaceResult` behave exactly as before.
+Fields: `solution`, `objective`, `iterations`, `raw`, `notes`, plus the optional `eb_modes`
+(random-effect modes), `eta_vec`, and `strategies` (`nothing` when a method does not use them).
+"""
+struct StandardOptimizationResult{Kind, S, O, I, R, N, B, E, St} <: MethodResult
+    solution::S
+    objective::O
+    iterations::I
+    raw::R
+    notes::N
+    eb_modes::B
+    eta_vec::E
+    strategies::St
+end
+
+const MLEResult{S, O, I, R, N} = StandardOptimizationResult{
+    :mle, S, O, I, R, N, Nothing, Nothing, Nothing}
+const MAPResult{S, O, I, R, N} = StandardOptimizationResult{
+    :map, S, O, I, R, N, Nothing, Nothing, Nothing}
+const LaplaceResult{S, O, I, R, N, B} = StandardOptimizationResult{
+    :laplace, S, O, I, R, N, B, Nothing, Nothing}
+const GHQuadratureResult{S, O, I, R, N, B} = StandardOptimizationResult{
+    :ghquadrature, S, O, I, R, N, B, Nothing, Nothing}
+const SAEMResult{S, O, I, R, N, B} = StandardOptimizationResult{
+    :saem, S, O, I, R, N, B, Nothing, Nothing}
+const MCEMResult{S, O, I, R, N, B} = StandardOptimizationResult{
+    :mcem, S, O, I, R, N, B, Nothing, Nothing}
+const PooledResult{S, O, I, R, N, E, St} = StandardOptimizationResult{
+    :pooled, S, O, I, R, N, Nothing, E, St}
+
+# Constructors preserving each method's historical positional signature.
+function MLEResult(
+        solution::S, objective::O, iterations::I, raw::R, notes::N) where {S, O, I, R, N}
+    StandardOptimizationResult{:mle, S, O, I, R, N, Nothing, Nothing, Nothing}(
+        solution, objective, iterations, raw, notes, nothing, nothing, nothing)
+end
+function MAPResult(
+        solution::S, objective::O, iterations::I, raw::R, notes::N) where {S, O, I, R, N}
+    StandardOptimizationResult{:map, S, O, I, R, N, Nothing, Nothing, Nothing}(
+        solution, objective, iterations, raw, notes, nothing, nothing, nothing)
+end
+function LaplaceResult(solution::S, objective::O, iterations::I, raw::R, notes::N,
+        eb_modes::B) where {S, O, I, R, N, B}
+    StandardOptimizationResult{:laplace, S, O, I, R, N, B, Nothing, Nothing}(
+        solution, objective, iterations, raw, notes, eb_modes, nothing, nothing)
+end
+function GHQuadratureResult(solution::S, objective::O, iterations::I, raw::R, notes::N,
+        eb_modes::B) where {S, O, I, R, N, B}
+    StandardOptimizationResult{:ghquadrature, S, O, I, R, N, B, Nothing, Nothing}(
+        solution, objective, iterations, raw, notes, eb_modes, nothing, nothing)
+end
+function SAEMResult(solution::S, objective::O, iterations::I, raw::R, notes::N,
+        eb_modes::B) where {S, O, I, R, N, B}
+    StandardOptimizationResult{:saem, S, O, I, R, N, B, Nothing, Nothing}(
+        solution, objective, iterations, raw, notes, eb_modes, nothing, nothing)
+end
+function MCEMResult(solution::S, objective::O, iterations::I, raw::R, notes::N,
+        eb_modes::B) where {S, O, I, R, N, B}
+    StandardOptimizationResult{:mcem, S, O, I, R, N, B, Nothing, Nothing}(
+        solution, objective, iterations, raw, notes, eb_modes, nothing, nothing)
+end
+function PooledResult(solution::S, objective::O, iterations::I, raw::R, notes::N,
+        eta_vec::E, strategies::St) where {S, O, I, R, N, E, St}
+    StandardOptimizationResult{:pooled, S, O, I, R, N, Nothing, E, St}(
+        solution, objective, iterations, raw, notes, nothing, eta_vec, strategies)
+end
+
+export StandardOptimizationResult
+
 struct EBEOptions{O, K, A, T}
     optimizer::O
     optim_kwargs::K
@@ -578,14 +653,15 @@ end
 # Enzyme's runtime rules reject and which costs a fresh ComponentArray + dynamic
 # writes per call.
 # ---------------------------------------------------------------------------
-function _free_idx(θ_const_t::ComponentArray, θ0_free_t::ComponentArray)
+function free_parameter_indices(θ_const_t::ComponentArray, θ0_free_t::ComponentArray)
     lab_full = ComponentArrays.labels(θ_const_t)
     lab_free = ComponentArrays.labels(θ0_free_t)
     pos_full = Dict{String, Int}(lab_full[i] => i for i in eachindex(lab_full))
     return Int[pos_full[l] for l in lab_free]
 end
+const _free_idx = free_parameter_indices
 
-function _merge_free_into_full(
+function merge_free_parameters(
         θ_const_t_vec::Vector, free_idx::Vector{Int}, v_free, axs_full)
     T = eltype(v_free)
     full = Vector{T}(undef, length(θ_const_t_vec))
@@ -597,6 +673,7 @@ function _merge_free_into_full(
     end
     return ComponentArray(full, axs_full)
 end
+const _merge_free_into_full = merge_free_parameters
 
 # Every key in `constants` must name a declared fixed effect.
 function _validate_constant_names(fixed_set, constants::NamedTuple)
@@ -604,6 +681,11 @@ function _validate_constant_names(fixed_set, constants::NamedTuple)
         name in fixed_set || error("Unknown constant parameter $(name).")
     end
     return nothing
+end
+
+# Public entry: validate constant keys against a model's declared fixed effects.
+function validate_constant_names(fe::FixedEffects, constants::NamedTuple)
+    _validate_constant_names(Set(get_names(fe)), constants)
 end
 
 # True when the model's fixed effects declare at least one non-`Priorless` prior
@@ -623,7 +705,7 @@ end
 # because SAEM/MCEM have no `ignore_model_bounds` field, FOCEI has no BBO support,
 # and Pooled suppresses the warning after refit round 1. Returns
 # (lb, ub, use_bounds, θ0_init).
-function _resolve_optim_bounds(fe, free_names, θ0_free_t, optimizer, user_lb, user_ub,
+function resolve_optimizer_bounds(fe, free_names, θ0_free_t, optimizer, user_lb, user_ub,
         effective_constants::NamedTuple; ignore_model_bounds::Bool = false,
         allow_bbo::Bool = true, emit_info::Bool = true,
         method_label::AbstractString = "this method")
@@ -671,6 +753,7 @@ function _resolve_optim_bounds(fe, free_names, θ0_free_t, optimizer, user_lb, u
     end
     return lb, ub, use_bounds, θ0_init
 end
+const _resolve_optim_bounds = resolve_optimizer_bounds
 
 function get_iterations(res::MethodResult)
     hasproperty(res, :iterations) ? res.iterations :
@@ -845,7 +928,7 @@ function get_laplace_random_effects(res::FitResult;
         include_constants = include_constants)
 end
 
-function _eta_from_eb(dm::DataModel,
+function eta_from_modes(dm::DataModel,
         batch_infos::Vector,
         bstars::Vector,
         const_cache,
@@ -863,6 +946,7 @@ function _eta_from_eb(dm::DataModel,
     end
     return η_vec
 end
+const _eta_from_eb = eta_from_modes
 
 function _compute_mcmc_candidates(dm::DataModel,
         batch_infos::Vector,
@@ -1694,6 +1778,28 @@ function _default_ebe_options()
 end
 
 """
+    EBEOptions(; optimizer, optim_kwargs, adtype, grad_tol=:auto, multistart_n=50,
+              multistart_k=10, max_rounds=1, sampling=:lhs) -> EBEOptions
+
+Empirical-Bayes mode-finder settings (the same options the `Laplace()` EBE step uses), for
+`empirical_bayes`/`posterior_moments`/`laplace_marginal`. `grad_tol=:auto` resolves to a
+data-scaled tolerance.
+"""
+function EBEOptions(;
+        optimizer = OptimizationOptimJL.LBFGS(
+            linesearch = LineSearches.BackTracking(maxstep = 1.0)),
+        optim_kwargs = NamedTuple(),
+        adtype = Optimization.AutoForwardDiff(),
+        grad_tol = :auto,
+        multistart_n::Int = 50,
+        multistart_k::Int = 10,
+        max_rounds::Int = 1,
+        sampling::Symbol = :lhs)
+    return EBEOptions(optimizer, optim_kwargs, adtype, grad_tol,
+        multistart_n, multistart_k, max_rounds, sampling)
+end
+
+"""
     get_loglikelihood_quadrature(dm, res; level=3, constants_re, ode_args, ode_kwargs,
                                   serialization, ebe_options, rng, jitter,
                                   mc_integrator, fallback) -> Float64
@@ -2329,6 +2435,7 @@ mutable struct _LLCache{H, M, S, A, O, K, P, V, SA}
     saveat_cache::SA
     closed_form_plan::ClosedFormPlan
 end
+const LikelihoodCache = _LLCache
 
 @inline get_helpers(c::_LLCache) = c.helpers
 @inline get_model_funs(c::_LLCache) = c.model_funs
@@ -3028,7 +3135,7 @@ function _build_vary_cache(dm::DataModel)
     end
 end
 
-function build_ll_cache(dm::DataModel;
+function build_likelihood_cache(dm::DataModel;
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial(),
@@ -3042,6 +3149,7 @@ function build_ll_cache(dm::DataModel;
     return [_build_ll_cache_single(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
                 force_saveat = force_saveat) for _ in 1:nthreads]
 end
+const build_ll_cache = build_likelihood_cache
 
 function _build_ll_cache_single(dm::DataModel;
         ode_args::Tuple = (),
@@ -3185,14 +3293,23 @@ function loglikelihood(dm::DataModel, θ::ComponentArray, η;
 end
 
 # Compile-time check whether any fixed effect is a RealPSDMatrix: lets
-# `_symmetrize_psd_params` return immediately for the (common) no-PSD case
+# `symmetrize_psd_parameters` return immediately for the (common) no-PSD case
 # instead of running a boxing `getfield(params, name)` loop on every call.
 @generated function _has_psd_params(::NamedTuple{names, T}) where {names, T}
     return any(p -> p <: RealPSDMatrix || p <: RealLiePSDMatrix, T.parameters) ?
            :(true) : :(false)
 end
 
-function _symmetrize_psd_params(θ::ComponentArray, fe::FixedEffects)
+"""
+    symmetrize_psd_parameters(θ, fe::FixedEffects) -> ComponentArray
+    symmetrize_psd_parameters(dm::DataModel, θ) -> ComponentArray
+
+Symmetrize each PSD-matrix fixed-effect block of natural-scale `θ` to `0.5(A + Aᵀ)`.
+Idempotent, and a zero-alloc no-op when the model has no PSD parameters. Public
+primitives apply it once at their outer boundary so the natural-scale-θ contract
+holds; private per-batch/per-individual kernels assume a pre-symmetrized `θ_re`.
+"""
+function symmetrize_psd_parameters(θ::ComponentArray, fe::FixedEffects)
     params = get_params(fe)
     _has_psd_params(params) || return θ
     θsym = θ
@@ -3214,6 +3331,10 @@ function _symmetrize_psd_params(θ::ComponentArray, fe::FixedEffects)
     end
     return θsym
 end
+function symmetrize_psd_parameters(dm::DataModel, θ::ComponentArray)
+    symmetrize_psd_parameters(θ, get_fixed(get_model(dm)))
+end
+const _symmetrize_psd_params = symmetrize_psd_parameters
 
 """
     _compute_obs_fe_syms(model) -> Set{Symbol}
