@@ -366,25 +366,7 @@ end
         g = ForwardDiff.gradient(
             z -> logabsdetjac(it, ComponentArray(z, getaxes(θt))), collect(θt))
         @test all(isfinite, g)
-        # structured scale is not yet supported
-        m2 = @Model begin
-            @fixedEffects begin
-                Ω = RealPSDMatrix([1.0 0.0; 0.0 1.0], scale = :cholesky)
-                σ = RealNumber(0.5, scale = :log)
-            end
-            @covariates begin
-                t = Covariate()
-            end
-            @randomEffects begin
-                η = RandomEffect(MvNormal(zeros(2), Ω); column = :ID)
-            end
-            @formulas begin
-                y ~ Normal(η[1], σ)
-            end
-        end
-        fe2 = NoLimits.get_fixed(m2)
-        it2 = NoLimits.get_inverse_transform(fe2)
-        θt2 = NoLimits.get_transform(fe2)(NoLimits.get_θ0_untransformed(fe2))
-        @test_throws ErrorException logabsdetjac(it2, θt2)
+        # structured scales (cholesky/expm/stickbreak/stickbreakrows/lograterows/lie)
+        # are covered in test/logabsdetjac_tests.jl
     end
 end

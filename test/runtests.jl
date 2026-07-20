@@ -110,6 +110,7 @@ const TEST_GROUPS = [
         "ad_stickbreak_hmm.jl",
         "continuous_transition_matrix_tests.jl",
         "lie_psd_matrix_tests.jl",
+        "logabsdetjac_tests.jl",
         "enzyme_compat_proxy_tests.jl",
         "enzyme_smoke_tests.jl"]
 ]
