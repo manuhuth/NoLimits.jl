@@ -106,21 +106,7 @@ end
 # Result struct
 # ---------------------------------------------------------------------------
 
-"""
-    GHQuadratureResult{S, O, I, R, N, B} <: MethodResult
-
-Method-specific result from a [`GHQuadrature`](@ref) fit.  Stores the solution,
-objective value, iteration count, raw solver result, optional notes, and
-empirical-Bayes mode estimates for each batch (used by `get_random_effects`).
-"""
-struct GHQuadratureResult{S, O, I, R, N, B} <: MethodResult
-    solution::S
-    objective::O
-    iterations::I
-    raw::R
-    notes::N
-    eb_modes::B
-end
+# GHQuadratureResult is a StandardOptimizationResult{:ghquadrature} alias (see common.jl).
 
 # ---------------------------------------------------------------------------
 # Internal: evaluate sparse-grid marginal log-likelihood for one batch

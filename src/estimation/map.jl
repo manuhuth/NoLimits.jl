@@ -45,19 +45,7 @@ function MAP(;
     MAP(optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds)
 end
 
-"""
-    MAPResult{S, O, I, R, N} <: MethodResult
-
-Method-specific result from a [`MAP`](@ref) fit. Stores the solution, objective value,
-iteration count, raw Optimization.jl result, and optional notes.
-"""
-struct MAPResult{S, O, I, R, N} <: MethodResult
-    solution::S
-    objective::O
-    iterations::I
-    raw::R
-    notes::N
-end
+# MAPResult is a StandardOptimizationResult{:map} alias + constructor (see common.jl).
 
 struct _MAPTerm{F}
     fe::F

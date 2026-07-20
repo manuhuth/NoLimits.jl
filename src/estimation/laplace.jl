@@ -1994,21 +1994,7 @@ function Laplace(;
         ms, lb, ub, ignore_model_bounds, nan_recovery)
 end
 
-"""
-    LaplaceResult{S, O, I, R, N, B} <: MethodResult
-
-Method-specific result from a [`Laplace`](@ref) fit. Stores the solution, objective value,
-iteration count, raw solver result, optional notes, and empirical-Bayes mode estimates
-for each individual.
-"""
-struct LaplaceResult{S, O, I, R, N, B} <: MethodResult
-    solution::S
-    objective::O
-    iterations::I
-    raw::R
-    notes::N
-    eb_modes::B
-end
+# LaplaceResult is a StandardOptimizationResult{:laplace} alias + constructor (see common.jl).
 
 mutable struct _LaplaceObjCache{T, G}
     θ::Union{Nothing, AbstractVector{T}}

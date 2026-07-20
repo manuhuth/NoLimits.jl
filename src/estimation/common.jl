@@ -84,6 +84,81 @@ Abstract base type for the method-specific result structs stored inside
 """
 abstract type MethodResult end
 
+"""
+    StandardOptimizationResult{Kind, ...} <: MethodResult
+
+Unified result type for the optimization-based estimators. `Kind` is a `Symbol` type parameter
+identifying the method (`:mle`, `:map`, `:laplace`, `:ghquadrature`, `:saem`, `:mcem`,
+`:pooled`); the historical per-method names (`MLEResult`, `LaplaceResult`, ...) are type aliases
+of it, so `res isa LaplaceResult` and dispatch on `::LaplaceResult` behave exactly as before.
+Fields: `solution`, `objective`, `iterations`, `raw`, `notes`, plus the optional `eb_modes`
+(random-effect modes), `eta_vec`, and `strategies` (`nothing` when a method does not use them).
+"""
+struct StandardOptimizationResult{Kind, S, O, I, R, N, B, E, St} <: MethodResult
+    solution::S
+    objective::O
+    iterations::I
+    raw::R
+    notes::N
+    eb_modes::B
+    eta_vec::E
+    strategies::St
+end
+
+const MLEResult{S, O, I, R, N} = StandardOptimizationResult{
+    :mle, S, O, I, R, N, Nothing, Nothing, Nothing}
+const MAPResult{S, O, I, R, N} = StandardOptimizationResult{
+    :map, S, O, I, R, N, Nothing, Nothing, Nothing}
+const LaplaceResult{S, O, I, R, N, B} = StandardOptimizationResult{
+    :laplace, S, O, I, R, N, B, Nothing, Nothing}
+const GHQuadratureResult{S, O, I, R, N, B} = StandardOptimizationResult{
+    :ghquadrature, S, O, I, R, N, B, Nothing, Nothing}
+const SAEMResult{S, O, I, R, N, B} = StandardOptimizationResult{
+    :saem, S, O, I, R, N, B, Nothing, Nothing}
+const MCEMResult{S, O, I, R, N, B} = StandardOptimizationResult{
+    :mcem, S, O, I, R, N, B, Nothing, Nothing}
+const PooledResult{S, O, I, R, N, E, St} = StandardOptimizationResult{
+    :pooled, S, O, I, R, N, Nothing, E, St}
+
+# Constructors preserving each method's historical positional signature.
+function MLEResult(
+        solution::S, objective::O, iterations::I, raw::R, notes::N) where {S, O, I, R, N}
+    StandardOptimizationResult{:mle, S, O, I, R, N, Nothing, Nothing, Nothing}(
+        solution, objective, iterations, raw, notes, nothing, nothing, nothing)
+end
+function MAPResult(
+        solution::S, objective::O, iterations::I, raw::R, notes::N) where {S, O, I, R, N}
+    StandardOptimizationResult{:map, S, O, I, R, N, Nothing, Nothing, Nothing}(
+        solution, objective, iterations, raw, notes, nothing, nothing, nothing)
+end
+function LaplaceResult(solution::S, objective::O, iterations::I, raw::R, notes::N,
+        eb_modes::B) where {S, O, I, R, N, B}
+    StandardOptimizationResult{:laplace, S, O, I, R, N, B, Nothing, Nothing}(
+        solution, objective, iterations, raw, notes, eb_modes, nothing, nothing)
+end
+function GHQuadratureResult(solution::S, objective::O, iterations::I, raw::R, notes::N,
+        eb_modes::B) where {S, O, I, R, N, B}
+    StandardOptimizationResult{:ghquadrature, S, O, I, R, N, B, Nothing, Nothing}(
+        solution, objective, iterations, raw, notes, eb_modes, nothing, nothing)
+end
+function SAEMResult(solution::S, objective::O, iterations::I, raw::R, notes::N,
+        eb_modes::B) where {S, O, I, R, N, B}
+    StandardOptimizationResult{:saem, S, O, I, R, N, B, Nothing, Nothing}(
+        solution, objective, iterations, raw, notes, eb_modes, nothing, nothing)
+end
+function MCEMResult(solution::S, objective::O, iterations::I, raw::R, notes::N,
+        eb_modes::B) where {S, O, I, R, N, B}
+    StandardOptimizationResult{:mcem, S, O, I, R, N, B, Nothing, Nothing}(
+        solution, objective, iterations, raw, notes, eb_modes, nothing, nothing)
+end
+function PooledResult(solution::S, objective::O, iterations::I, raw::R, notes::N,
+        eta_vec::E, strategies::St) where {S, O, I, R, N, E, St}
+    StandardOptimizationResult{:pooled, S, O, I, R, N, Nothing, E, St}(
+        solution, objective, iterations, raw, notes, nothing, eta_vec, strategies)
+end
+
+export StandardOptimizationResult
+
 struct EBEOptions{O, K, A, T}
     optimizer::O
     optim_kwargs::K

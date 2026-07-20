@@ -46,19 +46,7 @@ function MLE(;
     MLE(optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds)
 end
 
-"""
-    MLEResult{S, O, I, R, N} <: MethodResult
-
-Method-specific result from an [`MLE`](@ref) fit. Stores the solution, objective value,
-iteration count, raw Optimization.jl result, and optional notes.
-"""
-struct MLEResult{S, O, I, R, N} <: MethodResult
-    solution::S
-    objective::O
-    iterations::I
-    raw::R
-    notes::N
-end
+# MLEResult is a StandardOptimizationResult{:mle} alias + constructor (see common.jl).
 
 struct _NoOpTerm end
 @inline (_::_NoOpTerm)(θ) = 0.0

@@ -129,27 +129,7 @@ function PooledMap(;
         force_free, refreeze_check, identifiable_only, n_probes, mc_draws)
 end
 
-"""
-    PooledResult{S, O, I, R, N, E} <: MethodResult
-
-Method-specific result from a [`Pooled`](@ref) or [`PooledMap`](@ref) fit. Stores the
-optimization solution plus the per-individual plug-in random effects evaluated at the
-fitted fixed effects. The `notes` field records the plug-in strategy per random effect
-and the freeze classification (`frozen_dispersion`, `frozen_collinear`, `frozen_inert`,
-`frozen_unverified`, `weakly_identified`, `unfrozen_by_invariance`, `unfrozen_postfit`,
-`postfit_violations`). The `strategies` field stores the resolved per-RE plug-in
-strategies (including any fixed Monte-Carlo base draws) so downstream consumers — e.g.
-Wald UQ — can replay the exact plug-in map η(θ).
-"""
-struct PooledResult{S, O, I, R, N, E, St} <: MethodResult
-    solution::S
-    objective::O
-    iterations::I
-    raw::R
-    notes::N
-    eta_vec::E      # Vector{ComponentArray} — per-individual plug-in η at the optimum
-    strategies::St  # per-RE plug-in strategies used by the fit
-end
+# PooledResult is a StandardOptimizationResult{:pooled} alias + constructor (see common.jl).
 
 # ─── plug-in strategies ───────────────────────────────────────────────────────────
 #

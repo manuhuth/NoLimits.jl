@@ -269,21 +269,7 @@ function MCEM(;
         lb, ub, verbose, progress, store_diagnostics, diagnostics_every)
 end
 
-"""
-    MCEMResult{S, O, I, R, N, B} <: MethodResult
-
-Method-specific result from a [`MCEM`](@ref) fit. Stores the solution, objective value,
-iteration count, raw solver result, optional notes, and final empirical-Bayes mode
-estimates for each individual.
-"""
-struct MCEMResult{S, O, I, R, N, B} <: MethodResult
-    solution::S
-    objective::O
-    iterations::I
-    raw::R
-    notes::N
-    eb_modes::B
-end
+# MCEMResult is a StandardOptimizationResult{:mcem} alias (see common.jl).
 
 mutable struct _MCEMDiagnostics{T}
     θ_hist::Vector{AbstractVector{T}}
