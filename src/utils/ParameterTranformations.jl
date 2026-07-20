@@ -880,6 +880,175 @@ function _liepsd_forward_layout(Σ::AbstractMatrix{<:Real}, layout::LiePSDLayout
     return p_full[layout.free_idx]
 end
 
+# ── Change-of-variables: per-block log|det ∂(natural)/∂(free)| ────────────────
+
+_block_eltype(block) = block isa Number ? typeof(float(block)) : eltype(block)
+_block_scalars(block) = block isa Number ? (block,) : block
+_sum_block(block) = sum(_block_scalars(block))
+
+# vech: lower-triangular entries, column-major (n(n+1)/2 of them).
+_vech_lower(M::AbstractMatrix) = [M[i, j] for j in axes(M, 2) for i in j:size(M, 1)]
+
+# Dispatch one TransformSpec's block to its correction. Scalar scales use closed
+# forms; structured scales differentiate their minimal (square) inverse map.
+function _block_logabsdetjac(spec::TransformSpec, block)
+    kind = spec.kind
+    if kind === :identity
+        return zero(_block_eltype(block))
+    elseif kind === :log
+        return _sum_block(block)
+    elseif kind === :logit
+        return _logabsdetjac_logit(block)
+    elseif kind === :elementwise
+        return _logabsdetjac_elementwise(spec, block)
+    elseif kind === :cholesky
+        return _logabsdetjac_cholesky(block)
+    elseif kind === :expm
+        return _logabsdetjac_expm(block)
+    elseif kind === :stickbreak
+        return _logabsdetjac_stickbreak(block)
+    elseif kind === :stickbreakrows
+        return _logabsdetjac_stickbreakrows(block)
+    elseif kind === :lograterows
+        return _logabsdetjac_lograterows(block)
+    elseif kind === :lie
+        return _logabsdetjac_liepsd(spec, block)
+    else
+        error("logabsdetjac: unhandled scale :$(kind).")
+    end
+end
+
+# Scalar / diagonal closed forms. :log -> sum z (dexp/dz = exp z); :logit -> sum log sigma(1-sigma).
+function _logabsdetjac_logit(block)
+    s = zero(_block_eltype(block))
+    for z in _block_scalars(block)
+        sig = logit_inverse(z)
+        s += log(sig) + log(one(sig) - sig)
+    end
+    return s
+end
+
+function _logabsdetjac_elementwise(spec::TransformSpec, block)
+    mask = spec.mask
+    s = zero(_block_eltype(block))
+    @inbounds for j in eachindex(block)
+        m = mask[j]
+        if m === :log
+            s += block[j]
+        elseif m === :logit
+            sig = logit_inverse(block[j])
+            s += log(sig) + log(one(sig) - sig)
+        end
+    end
+    return s
+end
+
+# Rebuild a lower-triangular matrix from its column-major free coords (i >= j).
+function _lower_from_free(zf::AbstractVector{S}, n::Int) where {S}
+    T = zeros(S, n, n)
+    k = 1
+    @inbounds for j in 1:n
+        for i in j:n
+            T[i, j] = zf[k]
+            k += 1
+        end
+    end
+    return T
+end
+
+# :cholesky block is the n x n log-Cholesky factor; free coords = its lower triangle,
+# minimal natural = vech(Sigma). Square d x d map, differentiated with ForwardDiff.
+function _logabsdetjac_cholesky(block)
+    v = vec(collect(block))
+    n = isqrt(length(v))
+    n * n == length(v) ||
+        error("cholesky block length $(length(v)) is not a perfect square.")
+    T = reshape(v, n, n)
+    zf = [T[i, j] for j in 1:n for i in j:n]
+    f = z -> _vech_lower(cholesky_inverse(_lower_from_free(z, n)))
+    return logabsdet(ForwardDiff.jacobian(f, zf))[1]
+end
+
+# :expm block is the upper-tri vector of the symmetric matrix log Sigma; minimal
+# natural = vech(Sigma). Square map z -> vech(exp(sym T)), differentiated with ForwardDiff.
+function _logabsdetjac_expm(block)
+    zf = collect(block)
+    n = _lie_dim(length(zf))
+    f = z -> _upper_tri_vec(expm_inverse(_sym_from_upper(z, n)))
+    return logabsdet(ForwardDiff.jacobian(f, zf))[1]
+end
+
+# :stickbreak block is k-1 logits. The inverse map is lower-triangular, so the
+# correction has the closed form sum_i [log sigma_i + log(1-sigma_i) + sum_{j<i} log(1-sigma_j)].
+function _logabsdetjac_stickbreak(block)
+    T = promote_type(eltype(block), Float64)
+    total = zero(T)
+    logrem = zero(T)
+    @inbounds for i in eachindex(block)
+        sig = logit_inverse(T(block[i]))
+        total += log(sig) + log(one(T) - sig) + logrem
+        logrem += log(one(T) - sig)
+    end
+    return total
+end
+
+# :stickbreakrows block is n independent k=n simplex rows (row i at
+# ((i-1)(n-1)+1):(i(n-1))). Block-diagonal Jacobian -> sum of per-row stickbreak terms.
+function _logabsdetjac_stickbreakrows(block)
+    z = collect(block)
+    L = length(z)
+    n = round(Int, (1 + sqrt(1 + 4L)) / 2)
+    n * (n - 1) == L ||
+        error("stickbreakrows block length $L is not of the form n(n-1).")
+    k1 = n - 1
+    total = zero(promote_type(eltype(z), Float64))
+    @inbounds for i in 1:n
+        total += _logabsdetjac_stickbreak(view(z, ((i - 1) * k1 + 1):(i * k1)))
+    end
+    return total
+end
+
+# :lograterows block IS the free vector of n(n-1) log off-diagonal rates; the minimal
+# natural coords are exp.(block), Jacobian Diagonal(exp.(block)) -> correction = sum(block).
+_logabsdetjac_lograterows(block) = _sum_block(block)
+
+# Pick d vech indices so the minimal-natural map z(dim d) -> selected vech is square.
+function _liepsd_minimal_sel(n::Int, d::Int, layout, invmap, z)
+    layout === nothing && return collect(1:d)
+    within = Int[]
+    k = 1
+    for j in 1:n, i in j:n
+        layout.blocks[i] == layout.blocks[j] && push!(within, k)
+        k += 1
+    end
+    length(within) == d && return within
+    # General case (fixed eigenvalues): the submanifold is not axis-aligned, so pick d
+    # independent vech rows via column-pivoted QR on the value-Jacobian. The selection
+    # is a piecewise-constant integer set, so floatize (no derivative flows through it).
+    zf = Float64.(_scalar_value.(z))
+    Jfull = ForwardDiff.jacobian(t -> _vech_lower(invmap(t)), zf)
+    F = qr(Matrix(transpose(Jfull)), ColumnNorm())
+    return sort(F.p[1:d])
+end
+
+# :lie block. `spec.lie` carries the optional layout. Map z -> selected-vech(Sigma) is made
+# square by choosing d minimal-natural coords (all vech unstructured/block-diagonal;
+# a QR-pivoted subset for fixed eigenvalues). Differentiated with ForwardDiff.
+function _logabsdetjac_liepsd(spec::TransformSpec, block)
+    layout = spec.lie
+    z = collect(block)
+    invmap = layout === nothing ? liepsd_inverse :
+             (t -> _liepsd_inverse_layout(t, layout))
+    n = layout === nothing ? _lie_dim(length(z)) : layout.n
+    d = length(z)
+    sel = _liepsd_minimal_sel(n, d, layout, invmap, z)
+    f = t -> _vech_lower(invmap(t))[sel]
+    J = ForwardDiff.jacobian(f, z)
+    size(J, 1) == size(J, 2) ||
+        error("_logabsdetjac_liepsd: non-square minimal Jacobian $(size(J)).")
+    return logabsdet(J)[1]
+end
+
 function apply_inv_jacobian_T(
         it::InverseTransform, θt::ComponentArray, grad_u::ComponentArray)
     names = it.names

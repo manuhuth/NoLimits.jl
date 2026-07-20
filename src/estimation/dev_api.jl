@@ -595,23 +595,21 @@ export NLFreeLayout, free_parameter_layout, resolve_fitted_parameters
 
 Log absolute determinant of the Jacobian of the inverse parameter transform (unconstrained →
 natural) at the transformed point `θt` - the change-of-variables correction for a density
-placed on the unconstrained optimizer scale. Computed by differentiating the actual inverse
-map, so bounded `:logit` and mixed scales are handled exactly. Structured matrix/simplex
-scales (`:cholesky`/`:expm`/`:stickbreak`/`:stickbreakrows`/`:lograterows`/`:liepsd`) are not
-yet supported (their natural parametrization is higher-dimensional than the free vector).
+placed on the unconstrained optimizer scale. Summed block-by-block over fixed effects: scalar
+scales (`:identity`/`:log`/`:logit`/`:elementwise`) use their closed form, and the structured
+matrix/simplex scales (`:cholesky`/`:expm`/`:stickbreak`/`:stickbreakrows`/`:lograterows`/`:lie`)
+differentiate their minimal square inverse map. ForwardDiff-safe, including nested AD.
+
+For `:lie` with fixed eigenvalues the correction is chart-dependent (the fixed-eigenvalue
+submanifold is not axis-aligned); it is self-consistent for use as a change-of-variables term
+in a single optimization, but is not a chart-invariant number.
 """
 function logabsdetjac(it::InverseTransform, θt::ComponentArray)
-    structured = (:cholesky, :expm, :stickbreak, :stickbreakrows, :lograterows, :liepsd)
-    for spec in it.specs
-        spec.kind in structured &&
-            error("logabsdetjac is not yet implemented for the :$(spec.kind) scale " *
-                  "(supported: identity/log/logit/elementwise).")
-    end
     v = ComponentArrays.getdata(θt)
     isempty(v) && return zero(eltype(v))
-    ax = getaxes(θt)
-    J = ForwardDiff.jacobian(z -> ComponentArrays.getdata(it(ComponentArray(z, ax))), v)
-    size(J, 1) == size(J, 2) ||
-        error("logabsdetjac: non-square Jacobian ($(size(J))); a structured scale slipped through.")
-    return logabsdet(J)[1]
+    total = zero(eltype(v))
+    for spec in it.specs
+        total += _block_logabsdetjac(spec, getproperty(θt, spec.name))
+    end
+    return total
 end
