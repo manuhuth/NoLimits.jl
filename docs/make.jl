@@ -84,7 +84,8 @@ makedocs(;
             "Left-Censored Nonlinear Model (Laplace)" => "tutorials/mixed-effects-left-censored-virload50-laplace.md",
             "Fixed-Effects: MLE & MAP" => "tutorials/fixed-effects-nonlinear-mle-map.md",
             "Fixed-Effects: Variational Inference" => "tutorials/fixed-effects-vi.md",
-            "Hidden & Observed Markov Models" => "tutorials/markov-models-observed-hidden-coarsed.md"
+            "Hidden & Observed Markov Models" => "tutorials/markov-models-observed-hidden-coarsed.md",
+            "Building Custom Estimators" => "tutorials/building-custom-estimators.md"
         ],
         "Method-Developer API" => "method-developer-api.md",
         "Developers Guide" => "developers-guide.md",

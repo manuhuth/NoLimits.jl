@@ -586,7 +586,7 @@ function resolve_fitted_parameters(layout::NLFreeLayout, θ_hat_free_t)
     return FitParameters(θ_hat_t, layout.inv_transform(θ_hat_t))
 end
 
-export NLFreeLayout, free_parameter_layout, resolve_fitted_parameters
+export NLFreeLayout, free_parameter_layout, resolve_fitted_parameters, build_fit_result
 
 # ── Change-of-variables (unconstrained ↔ natural) ────────────────────────────
 

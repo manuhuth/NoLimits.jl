@@ -213,6 +213,90 @@ UQResultSummary
 default_bounds_from_start
 ```
 
+## Method-Developer API
+
+Primitives for building new estimation methods on top of NoLimits.jl. See the
+[Method-Developer API](method-developer-api.md) page for the contracts and worked examples.
+
+### Contracts and transforms
+
+```@docs
+symmetrize_psd_parameters
+logabsdetjac
+```
+
+### Random-effect batching
+
+```@docs
+build_re_batch_infos
+REBatchInfo
+get_batch_individuals
+get_batch_re_info
+get_batch_re_dim
+build_eta_individual
+eta_from_modes
+build_likelihood_cache
+```
+
+### Density primitives
+
+```@docs
+solve_individual
+obs_distributions
+hmm_filter_step!
+conditional_loglikelihood
+joint_loglikelihood
+re_logprior
+joint_loglikelihood_gradient
+joint_loglikelihood_hessian
+```
+
+### Posterior, empirical Bayes, and sampling
+
+```@docs
+empirical_bayes
+posterior_moments
+laplace_marginal
+ghq_marginal
+sample_eta
+EtaPosteriorSample
+EBEOptions
+```
+
+### Curvature seam
+
+```@docs
+AbstractCurvature
+ExactHessianCurvature
+FisherInformationCurvature
+inner_curvature
+CurvatureWorkspace
+```
+
+### Fitting drivers and objective factory
+
+```@docs
+fit_method
+fit_fixed_effects
+fit_laplace_family
+free_parameter_layout
+NLFreeLayout
+resolve_fitted_parameters
+build_fit_result
+uq_family
+```
+
+### Sparse-grid quadrature
+
+```@docs
+GHQuadratureNodes
+build_sparse_grid
+get_sparse_grid
+build_tensor_product_grid
+get_anisotropic_grid
+n_ghq_points
+```
+
 ## Uncertainty Quantification
 
 ```@docs

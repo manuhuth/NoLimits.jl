@@ -143,11 +143,31 @@ struct RELevelInfo{A, R, P}
 end
 const _REInfo = RELevelInfo
 
+"""
+    REBatchInfo
+
+Descriptor for one random-effect *batch* - the group of individuals tied together by shared
+random-effect levels (transitive union-find). It carries the member individual indices, the
+per-random-effect level structure, and the flat natural-scale batch dimension `n_b`. Build the
+vector of batches with `build_re_batch_infos`; read one with `get_batch_individuals`,
+`get_batch_re_info`, and `get_batch_re_dim`.
+"""
 struct REBatchInfo{B, R}
     inds::B
     re_info::R
     n_b::Int
 end
+
+"""
+    build_re_batch_infos(dm, constants_re) -> (pairing, batch_infos, const_cache)
+
+Group the individuals of `dm` into independent random-effect *batches* and return the batch
+descriptors. Individuals sharing any random-effect level are placed in the same batch by a
+transitive union-find, so distinct batches are statistically independent given the fixed
+effects. `batch_infos` is a `Vector{REBatchInfo}`; `const_cache` is the `REConstantsCache` of
+levels fixed through `constants_re` (pass `NamedTuple()` for none). This is the entry point for
+walking the random-effect structure when assembling a custom estimator.
+"""
 function build_re_batch_infos(dm::DataModel, constants_re::NamedTuple)
     constants_re = _normalize_constants_re(dm, constants_re)
     const_cache = _build_constants_cache(dm, constants_re)
@@ -223,6 +243,14 @@ const _build_re_batch_infos = build_re_batch_infos
 end
 const _re_value_from_b = random_effect_value
 
+"""
+    build_eta_individual(dm, ind_idx, batch_info, b, const_cache, θ) -> ComponentArray
+
+Assemble the natural-scale random-effect `ComponentArray` `η` for individual `ind_idx` from the
+flat per-batch vector `b` (length `get_batch_re_dim(batch_info)`); levels fixed through
+`const_cache` are spliced in. Use it to evaluate per-individual quantities from a batch-level
+random-effect vector.
+"""
 function build_eta_individual(dm::DataModel,
         ind_idx::Int,
         batch_info::REBatchInfo,
@@ -377,8 +405,25 @@ end
 @inline get_level_to_index(m::_REMap) = m.level_to_index
 
 # ── Public batch/level accessors (developer API; thin covers over the internals) ──
+"""
+    get_batch_individuals(batch_info) -> individual indices
+
+Indices (into `get_individuals(dm)`) of the individuals belonging to `batch_info`.
+"""
 @inline get_batch_individuals(info::REBatchInfo) = get_inds(info)
+
+"""
+    get_batch_re_info(batch_info) -> Vector{RELevelInfo}
+
+Per-random-effect level descriptors for `batch_info` (one `RELevelInfo` per random-effect name).
+"""
 @inline get_batch_re_info(info::REBatchInfo) = get_re_info(info)
+
+"""
+    get_batch_re_dim(batch_info) -> Int
+
+Length of the flat natural-scale random-effect vector `b` for `batch_info`.
+"""
 @inline get_batch_re_dim(info::REBatchInfo) = get_n_b(info)
 @inline get_re_levels(li::RELevelInfo) = get_levels(get_re_map(li))
 @inline get_re_ranges(li::RELevelInfo) = get_ranges(li)

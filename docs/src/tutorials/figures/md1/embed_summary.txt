@@ -1,0 +1,27 @@
+FitResultSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  method                              : closedformem
+  inference                           : frequentist
+  scale                               : natural
+  objective                           : 163.0049
+  iterations                          : 30
+  parameters shown (reported / total) : 3 / 3
+
+Parameter estimates
+  parameter      Estimate
+  -----------------------
+  a                1.0729
+  σ                0.5046
+  ω                0.5351
+
+Outcome data coverage
+  outcome       n_obs   n_missing
+  -------------------------------
+  y               180           0
+  TOTAL           180           0
+
+Empirical Bayes random effects summary (across RE levels)
+  random effect       n          mean            sd           q25        median           q75
+  ---------------------------------------------------------------------------
+  η                  30        0.0010        0.4993       -0.3620       -0.0156        0.3483
