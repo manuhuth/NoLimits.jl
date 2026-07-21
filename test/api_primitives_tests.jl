@@ -56,7 +56,7 @@ end
 
 # Protocol demo (plan Skeleton A): a new marginal-RE method = a custom curvature plugged
 # into `fit_laplace_family`. Reuses the diagonal curvature above; the result is a
-# `LaplaceResult`, so it is first-class across get_random_effects / get_loglikelihood.
+# `FrequentistREResult`, so it is first-class across get_random_effects / get_loglikelihood.
 struct APITestDiagonalLaplace <: NoLimits.FittingMethod
     base::NoLimits.Laplace
 end
@@ -85,10 +85,13 @@ end
 APITestClosedFormEM(; n_iter = 5) = APITestClosedFormEM(n_iter)
 NoLimits.uq_family(::APITestClosedFormEM) = :wald_re
 function NoLimits.fit_method(dm, m::APITestClosedFormEM, args...;
-        constants_re = NamedTuple(), store_data_model = true, kwargs...)
+        constants_re = NamedTuple(), store_data_model = true,
+        theta_0_untransformed = nothing, kwargs...)
     fe = NoLimits.get_fixed(NoLimits.get_model(dm))
     inv_transform = NoLimits.get_inverse_transform(fe)
-    θ = NoLimits.get_θ0_untransformed(fe)
+    # honour Multistart / pooled_init starts (the theta_0_untransformed contract)
+    θ = theta_0_untransformed === nothing ? NoLimits.get_θ0_untransformed(fe) :
+        copy(theta_0_untransformed)
     θt0 = NoLimits.get_transform(fe)(θ)
     _, batches, cc = NoLimits.build_re_batch_infos(dm, constants_re)
     cache = NoLimits.build_likelihood_cache(dm; force_saveat = true)
@@ -117,11 +120,15 @@ function NoLimits.fit_method(dm, m::APITestClosedFormEM, args...;
         θ = inv_transform(ComponentArray(sol.u, getaxes(θt0)))
         obj = -negQ(collect(NoLimits.get_transform(fe)(θ)), nothing)
     end
-    return build_fit_result(dm, m, θ; kind = :laplace, objective = obj,
+    return build_fit_result(dm, m, θ; kind = :frequentist_re, objective = obj,
         iterations = m.n_iter,
         eb_modes = NoLimits.empirical_bayes(dm, θ; constants_re = constants_re),
         store_data_model = store_data_model, fit_args = args)
 end
+
+# Protocol demo (Skeleton D): a custom Bayesian estimator that keeps its own method type and
+# packages a posterior chain via the chain method of build_fit_result.
+struct APITestBayes <: NoLimits.FittingMethod end
 
 @testset "dev-API primitives" begin
     @testset "public names alias the internals (===)" begin
@@ -296,14 +303,15 @@ end
               size(NoLimits.get_nodes(g), 2)
         @test NoLimits.get_level(g) == 3
 
-        # sample_eta: Laplace-Gaussian IS (exact for the linear-Gaussian model)
+        # sample_random_effect_draws: Laplace-Gaussian IS (exact for the linear-Gaussian model)
         res = fx_laplace()
         θhat = NoLimits.get_params(res; scale = :untransformed)
         bstars = NoLimits.empirical_bayes(
             dm, θhat; serialization = NoLimits.EnsembleSerial())
-        s = NoLimits.sample_eta(dm, θhat, infos[1], bstars[1]; n_samples = 400,
+        s = NoLimits.sample_random_effect_draws(
+            dm, θhat, infos[1], bstars[1]; n_samples = 400,
             const_cache = cc, cache = cache, rng = MersenneTwister(1))
-        @test s isa NoLimits.EtaPosteriorSample
+        @test s isa NoLimits.RandomEffectPosteriorSample
         D = NoLimits.get_draws(s)
         lw = NoLimits.get_log_weights(s)
         @test size(D) == (NoLimits.get_batch_re_dim(infos[1]), 400)
@@ -312,14 +320,15 @@ end
         @test D * w≈bstars[1] atol=0.15
         @test NoLimits.get_ess(s) > 100
 
-        # sample_eta :mcmc wraps Turing directly
-        smc = NoLimits.sample_eta(dm, θhat, infos[1], Float64[]; method = :mcmc,
+        # sample_random_effect_draws :mcmc wraps Turing directly
+        smc = NoLimits.sample_random_effect_draws(
+            dm, θhat, infos[1], Float64[]; method = :mcmc,
             sampler = MH(), n_samples = 40, n_adapt = 10, const_cache = cc, cache = cache,
             rng = MersenneTwister(2))
-        @test smc isa NoLimits.EtaPosteriorSample
+        @test smc isa NoLimits.RandomEffectPosteriorSample
         @test size(NoLimits.get_draws(smc), 1) == NoLimits.get_batch_re_dim(infos[1])
         @test NoLimits.get_log_weights(smc) === nothing
-        @test_throws ErrorException NoLimits.sample_eta(
+        @test_throws ErrorException NoLimits.sample_random_effect_draws(
             dm, θhat, infos[1], Float64[]; method = :mcmc, const_cache = cc, cache = cache)
     end
 
@@ -383,8 +392,8 @@ end
         dm = fx_re_dm()
         res = fit_model(dm, APITestDiagonalLaplace(; optim_kwargs = (maxiters = 3,));
             serialization = NoLimits.EnsembleSerial())
-        # a custom curvature method produces a LaplaceResult -> first-class accessors
-        @test NoLimits.get_result(res) isa NoLimits.LaplaceResult
+        # a custom curvature method produces a FrequentistREResult -> first-class accessors
+        @test NoLimits.get_result(res) isa NoLimits.FrequentistREResult
         @test NoLimits.get_random_effects(dm, res) isa NamedTuple
         @test isfinite(NoLimits.get_loglikelihood(dm, res))
         @test NoLimits.get_params(res; scale = :untransformed) isa ComponentArray
@@ -431,7 +440,7 @@ end
         # first-class result that keeps its own method type
         @test res isa NoLimits.FitResult
         @test NoLimits.get_method(res) isa APITestClosedFormEM
-        @test NoLimits.get_result(res) isa NoLimits.LaplaceResult      # kind = :laplace
+        @test NoLimits.get_result(res) isa NoLimits.FrequentistREResult      # kind = :frequentist_re
         @test NoLimits.get_params(res; scale = :untransformed) isa ComponentArray
         @test NoLimits.get_params(res; scale = :transformed) isa ComponentArray
         @test NoLimits.get_random_effects(dm, res) isa NamedTuple
@@ -444,5 +453,68 @@ end
         res_ridge = fit_model(fx_nore_dm(), RidgeMLE(; λ = 1.0);
             serialization = NoLimits.EnsembleSerial())
         @test_throws ErrorException compute_uq(res_ridge; method = :wald)
+    end
+
+    @testset "custom estimator: multistart/pooled_init/save + kind validation" begin
+        dm = fx_re_dm()
+        fe = NoLimits.get_fixed(NoLimits.get_model(dm))
+        θ0 = NoLimits.get_θ0_untransformed(fe)
+
+        # theta_0_untransformed is honoured: different starts -> different 1-step fits
+        θa = copy(θ0)
+        θa.a = θ0.a + 0.5
+        r1 = fit_model(dm, APITestClosedFormEM(; n_iter = 1);
+            theta_0_untransformed = θ0, serialization = NoLimits.EnsembleSerial())
+        r2 = fit_model(dm, APITestClosedFormEM(; n_iter = 1);
+            theta_0_untransformed = θa, serialization = NoLimits.EnsembleSerial())
+        @test !(NoLimits.get_params(r1; scale = :untransformed) ≈
+                NoLimits.get_params(r2; scale = :untransformed))
+
+        # Multistart delivers its starts through the same kwarg
+        ms = NoLimits.Multistart(dists = (; a = Normal(0.0, 1.0)),
+            n_draws_requested = 2, n_draws_used = 2, rng = Random.Xoshiro(3))
+        res_ms = fit_model(ms, dm, APITestClosedFormEM(; n_iter = 1);
+            serialization = NoLimits.EnsembleSerial())
+        objs = NoLimits.get_objective.(NoLimits.get_multistart_results(res_ms))
+        @test length(objs) == 2 && length(unique(objs)) == 2
+
+        # pooled_init warm start reaches the custom method
+        res_pi = fit_model(dm, APITestClosedFormEM(; n_iter = 1); pooled_init = true,
+            serialization = NoLimits.EnsembleSerial())
+        @test isfinite(NoLimits.get_objective(res_pi))
+
+        # save/load roundtrip (generic _strip_fitting_method covers custom methods)
+        path = tempname() * ".jld2"
+        NoLimits.save_fit(path, r1)
+        r1b = NoLimits.load_fit(path; dm = dm)
+        @test NoLimits.get_objective(r1b) ≈ NoLimits.get_objective(r1)
+        @test NoLimits.get_params(r1b; scale = :untransformed) ≈
+              NoLimits.get_params(r1; scale = :untransformed)
+
+        # kind validation errors at build time, not deep in an accessor
+        @test_throws ErrorException build_fit_result(dm, APITestClosedFormEM(), θ0;
+            kind = :laplace, objective = 0.0)
+        @test_throws ErrorException build_fit_result(dm, APITestClosedFormEM(), θ0;
+            kind = :frequentist, objective = 0.0, eb_modes = [zeros(1)])
+    end
+
+    @testset "custom Bayesian estimator: build_fit_result(chain)" begin
+        base = fx_mcmc()                       # built-in MCMC fit; reuse its chain + dm
+        dm = NoLimits.get_data_model(base)
+        chain = NoLimits.get_chain(base)
+
+        res = build_fit_result(dm, APITestBayes(), chain;
+            sampler = NoLimits.get_sampler(base), n_samples = NoLimits.get_n_samples(base))
+
+        # first-class Bayesian result that keeps its own method type
+        @test res isa NoLimits.FitResult
+        @test NoLimits.get_method(res) isa APITestBayes
+        @test NoLimits.get_result(res) isa NoLimits.MCMCResult
+        @test NoLimits.get_chain(res) === chain
+        @test NoLimits.get_observed(res) !== nothing
+        # summarize reports Bayesian inference (routed on the result, not the method type)
+        @test NoLimits.summarize(res).inference == :bayesian
+        # chain UQ works without the method being a built-in MCMC/VI
+        @test compute_uq(res; method = :chain) isa NoLimits.UQResult
     end
 end

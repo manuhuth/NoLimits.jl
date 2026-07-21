@@ -580,7 +580,8 @@ function get_residuals(dm::DataModel;
     end
 
     dummy_params = cache_use.params
-    res = FitResult(MLE(), MLEResult(NamedTuple(), 0.0, 0, NamedTuple(), NamedTuple()),
+    res = FitResult(
+        MLE(), FrequentistResult(NamedTuple(), 0.0, 0, NamedTuple(), NamedTuple()),
         FitSummary(0.0, true, FitParameters(dummy_params, dummy_params), NamedTuple()),
         FitDiagnostics((;), (;), (;), (;)), dm, (), (constants_re = constants_re,))
 
@@ -734,7 +735,7 @@ function _validate_predict_re_mode(res::FitResult, dm::DataModel, re_mode::Symbo
         error("predict: re_mode=:$re_mode is not supported for MCMC/VI posterior-draw " *
               "fits; use re_mode=:population (it integrates the posterior draws).")
     if re_mode == :reestimate
-        (get_result(res) isa LaplaceResult || get_result(res) isa MCEMResult ||
+        (get_result(res) isa FrequentistREResult || get_result(res) isa MCEMResult ||
          get_result(res) isa SAEMResult) ||
             error("predict: re_mode=:reestimate requires a Laplace, FOCEI, MCEM, or SAEM " *
                   "fit (GHQuadrature is unsupported); use re_mode=:ebe instead.")

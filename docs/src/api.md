@@ -258,8 +258,8 @@ empirical_bayes
 posterior_moments
 laplace_marginal
 ghq_marginal
-sample_eta
-EtaPosteriorSample
+sample_random_effect_draws
+RandomEffectPosteriorSample
 EBEOptions
 ```
 

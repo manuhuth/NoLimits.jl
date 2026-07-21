@@ -1,5 +1,5 @@
 export Laplace
-export LaplaceResult
+export FrequentistREResult
 export NewtonInner
 
 using ForwardDiff
@@ -2025,7 +2025,7 @@ function Laplace(;
         ms, lb, ub, ignore_model_bounds, nan_recovery)
 end
 
-# LaplaceResult is a StandardOptimizationResult{:laplace} alias + constructor (see common.jl).
+# FrequentistREResult is a StandardOptimizationResult{:frequentist_re} alias + constructor (see common.jl).
 
 mutable struct _LaplaceObjCache{T, G}
     θ::Union{Nothing, AbstractVector{T}}
@@ -2492,7 +2492,7 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
     niter = hasproperty(sol, :stats) && hasproperty(sol.stats, :iterations) ?
             sol.stats.iterations : missing
     raw = hasproperty(sol, :original) ? sol.original : sol
-    result = LaplaceResult(
+    result = FrequentistREResult(
         sol, sol.objective, niter, raw, NamedTuple(), ebe_cache.bstar_cache.b_star)
     return FitResult(method, result, summary, diagnostics,
         store_data_model ? dm : nothing, args, fit_kwargs)
@@ -2507,7 +2507,7 @@ function _laplace_floatize(θ::ComponentArray)
     return ComponentArray(Float64.(vals), getaxes(θ))
 end
 
-function _with_eb_modes(result::LaplaceResult, eb_modes)
-    return LaplaceResult(result.solution, result.objective, result.iterations,
+function _with_eb_modes(result::FrequentistREResult, eb_modes)
+    return FrequentistREResult(result.solution, result.objective, result.iterations,
         result.raw, result.notes, eb_modes)
 end

@@ -1,5 +1,5 @@
 export MLE
-export MLEResult
+export FrequentistResult
 export default_bounds_from_start
 
 using Optimization
@@ -46,7 +46,7 @@ function MLE(;
     MLE(optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds)
 end
 
-# MLEResult is a StandardOptimizationResult{:mle} alias + constructor (see common.jl).
+# FrequentistResult is a StandardOptimizationResult{:frequentist} alias + constructor (see common.jl).
 
 struct _NoOpTerm end
 @inline (_::_NoOpTerm)(θ) = 0.0
@@ -125,7 +125,7 @@ function _fit_no_re(dm::DataModel, method;
     niter = hasproperty(sol, :stats) && hasproperty(sol.stats, :iterations) ?
             sol.stats.iterations : missing
     raw = hasproperty(sol, :original) ? sol.original : sol
-    result = MLEResult(sol, sol.objective, niter, raw, NamedTuple())
+    result = FrequentistResult(sol, sol.objective, niter, raw, NamedTuple())
     return FitResult(method, result, summary, diagnostics,
         store_data_model ? dm : nothing, fit_args, fit_kwargs)
 end

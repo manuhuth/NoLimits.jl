@@ -12,9 +12,9 @@ Overview
 Parameter uncertainty summary
   parameter      Estimate    Std. Error      CI Lower      CI Upper
   ---------------------------------------------------
-  a                1.0729        0.1023        0.8780        1.2691
-  σ                0.5046        0.0283        0.4517        0.5638
-  ω                0.5351        0.0812        0.3973        0.7188
+  a                1.0729        0.1056        0.8751        1.2844
+  σ                0.5046        0.0290        0.4496        0.5639
+  ω                0.5351        0.0824        0.4019        0.7262
 
 Outcome data coverage
   outcome       n_obs   n_missing
@@ -25,4 +25,4 @@ Outcome data coverage
 Empirical Bayes random effects summary (across RE levels)
   random effect       n          mean            sd           q25        median           q75
   ---------------------------------------------------------------------------
-  η                  30        0.0010        0.4993       -0.3620       -0.0156        0.3483
+  b                  30        0.0010        0.4993       -0.3620       -0.0156        0.3483

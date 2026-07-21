@@ -28,8 +28,9 @@ export solve_individual, obs_distributions, hmm_filter_step!, conditional_loglik
        joint_loglikelihood, re_logprior, joint_loglikelihood_gradient,
        joint_loglikelihood_hessian
 # Posterior / empirical Bayes / marginal / sampling
-export empirical_bayes, posterior_moments, laplace_marginal, ghq_marginal, sample_eta,
-       EtaPosteriorSample, get_draws, get_log_weights, get_ess, EBEOptions
+export empirical_bayes, posterior_moments, laplace_marginal, ghq_marginal,
+       sample_random_effect_draws,
+       RandomEffectPosteriorSample, get_draws, get_log_weights, get_ess, EBEOptions
 # Fisher-information registry
 export expected_information, outcome_parameters, dispersion_indices,
        has_expected_information
@@ -379,26 +380,26 @@ function ghq_marginal(dm::DataModel, θ::ComponentArray;
 end
 
 """
-    EtaPosteriorSample{D, W, E}
+    RandomEffectPosteriorSample{D, W, E}
 
 Posterior draws of a batch's random effects. `draws` is an `n_b × n_samples` matrix (columns
 are natural-scale `b` draws); `log_weights` are importance log-weights (`nothing` for
 unweighted draws); `ess` is the effective sample size. Access with `get_draws`,
 `get_log_weights`, `get_ess`.
 """
-struct EtaPosteriorSample{D, W, E}
+struct RandomEffectPosteriorSample{D, W, E}
     draws::D
     log_weights::W
     ess::E
     method::Symbol
 end
-@inline get_draws(s::EtaPosteriorSample) = s.draws
-@inline get_log_weights(s::EtaPosteriorSample) = s.log_weights
-@inline get_ess(s::EtaPosteriorSample) = s.ess
+@inline get_draws(s::RandomEffectPosteriorSample) = s.draws
+@inline get_log_weights(s::RandomEffectPosteriorSample) = s.log_weights
+@inline get_ess(s::RandomEffectPosteriorSample) = s.ess
 
 """
-    sample_eta(dm, θ, batch::REBatchInfo, b_star; method=:importance, sampler=nothing, n_samples=100, n_adapt=50, const_cache, cache=nothing, rng=Random.default_rng()) -> EtaPosteriorSample
-    sample_eta(dm, θ; method=:importance, sampler=nothing, n_samples=100, constants_re=NamedTuple(), rng=Random.default_rng(), ...) -> Vector{EtaPosteriorSample}
+    sample_random_effect_draws(dm, θ, batch::REBatchInfo, b_star; method=:importance, sampler=nothing, n_samples=100, n_adapt=50, const_cache, cache=nothing, rng=Random.default_rng()) -> RandomEffectPosteriorSample
+    sample_random_effect_draws(dm, θ; method=:importance, sampler=nothing, n_samples=100, constants_re=NamedTuple(), rng=Random.default_rng(), ...) -> Vector{RandomEffectPosteriorSample}
 
 Draw from the random-effect posterior `p(η | y, θ)`.
 
@@ -412,7 +413,8 @@ Draw from the random-effect posterior `p(η | y, θ)`.
 
 The population form finds the modes (for `:importance`) and returns one sample per batch.
 """
-function sample_eta(dm::DataModel, θ::ComponentArray, batch::REBatchInfo, b_star;
+function sample_random_effect_draws(
+        dm::DataModel, θ::ComponentArray, batch::REBatchInfo, b_star;
         method::Symbol = :importance, sampler = nothing, n_samples::Int = 100,
         n_adapt::Int = 50, const_cache::REConstantsCache, cache = nothing,
         rng::AbstractRNG = Random.default_rng())
@@ -421,22 +423,23 @@ function sample_eta(dm::DataModel, θ::ComponentArray, batch::REBatchInfo, b_sta
     n_b = get_batch_re_dim(batch)
     if method === :mcmc
         sampler === nothing &&
-            error("sample_eta(method=:mcmc) requires a Turing `sampler`, e.g. MH() or NUTS().")
+            error("sample_random_effect_draws(method=:mcmc) requires a Turing `sampler`, e.g. MH() or NUTS().")
         n_b == 0 &&
-            return EtaPosteriorSample(zeros(eltype(θ_re), 0, 0), nothing, nothing, :mcmc)
+            return RandomEffectPosteriorSample(
+                zeros(eltype(θ_re), 0, 0), nothing, nothing, :mcmc)
         re_names = get_re_names(get_random(get_model(dm)))
         tkw = (n_samples = n_samples, n_adapt = n_adapt, progress = false)
         samples, _, _ = _mcem_sample_batch(
             dm, batch, θ_re, const_cache, c, sampler, tkw, rng, re_names, false, nothing)
-        return EtaPosteriorSample(samples, nothing, nothing, :mcmc)
+        return RandomEffectPosteriorSample(samples, nothing, nothing, :mcmc)
     elseif method === :importance
         n_b == 0 &&
-            return EtaPosteriorSample(zeros(0, n_samples), zeros(n_samples),
+            return RandomEffectPosteriorSample(zeros(0, n_samples), zeros(n_samples),
                 Float64(n_samples), :importance)
         _, Σ = posterior_moments(
             dm, θ_re, batch, b_star; const_cache = const_cache, cache = c)
         Σ === nothing &&
-            return EtaPosteriorSample(zeros(n_b, 0), Float64[], 0.0, :importance)
+            return RandomEffectPosteriorSample(zeros(n_b, 0), Float64[], 0.0, :importance)
         q = MvNormal(collect(float.(b_star)), Symmetric(Matrix(Σ)))
         draws = Matrix{Float64}(undef, n_b, n_samples)
         logw = Vector{Float64}(undef, n_samples)
@@ -450,12 +453,12 @@ function sample_eta(dm::DataModel, θ::ComponentArray, batch::REBatchInfo, b_sta
         w = exp.(logw .- maximum(logw))
         sw = sum(w)
         ess = sw > 0 ? sw^2 / sum(abs2, w) : 0.0
-        return EtaPosteriorSample(draws, logw, ess, :importance)
+        return RandomEffectPosteriorSample(draws, logw, ess, :importance)
     end
-    error("Unknown sample_eta method $(method); use :importance or :mcmc.")
+    error("Unknown sample_random_effect_draws method $(method); use :importance or :mcmc.")
 end
 
-function sample_eta(dm::DataModel, θ::ComponentArray;
+function sample_random_effect_draws(dm::DataModel, θ::ComponentArray;
         method::Symbol = :importance, sampler = nothing, n_samples::Int = 100,
         n_adapt::Int = 50, constants_re::NamedTuple = NamedTuple(),
         ode_args::Tuple = (), ode_kwargs::NamedTuple = NamedTuple(),
@@ -467,7 +470,8 @@ function sample_eta(dm::DataModel, θ::ComponentArray;
         c = build_likelihood_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
             serialization = EnsembleSerial(), force_saveat = true)
         _, infos, cc = build_re_batch_infos(dm, constants_re)
-        return [sample_eta(dm, θ_re, infos[bi], eltype(θ_re)[]; method = :mcmc,
+        return [sample_random_effect_draws(
+                    dm, θ_re, infos[bi], eltype(θ_re)[]; method = :mcmc,
                     sampler = sampler, n_samples = n_samples, n_adapt = n_adapt,
                     const_cache = cc, cache = c, rng = rng) for bi in eachindex(infos)]
     end
@@ -475,7 +479,8 @@ function sample_eta(dm::DataModel, θ::ComponentArray;
         constants_re = constants_re, ebe_options = ebe_options, rescue = rescue,
         ode_args = ode_args, ode_kwargs = ode_kwargs, serialization = serialization,
         rng = rng)
-    return [sample_eta(dm, θ_re, infos[bi], bstars[bi]; method = :importance,
+    return [sample_random_effect_draws(
+                dm, θ_re, infos[bi], bstars[bi]; method = :importance,
                 n_samples = n_samples, const_cache = cc, cache = cache, rng = rng)
             for bi in eachindex(infos)]
 end

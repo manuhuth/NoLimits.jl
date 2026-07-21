@@ -73,8 +73,11 @@ function _compute_uq_chain(res::FitResult;
         default_draws::Int,
         rng::AbstractRNG)
     method = get_method(res)
-    (method isa MCMC || method isa VI) ||
-        error("Chain UQ requires an MCMC or VI fit result.")
+    # Chain UQ only needs the posterior chain, which the result carries - so route on the
+    # result type (a custom Bayesian method packaged via build_fit_result is first-class here).
+    (method isa MCMC || method isa VI ||
+     get_result(res) isa MCMCResult || get_result(res) isa VIResult) ||
+        error("Chain UQ requires a posterior-chain fit result (MCMC/VI or an MCMCResult).")
 
     dm = get_data_model(res)
     dm === nothing &&
@@ -100,7 +103,7 @@ function _compute_uq_chain(res::FitResult;
 
     draws_n = Matrix{Float64}(undef, 0, 0)
     diag = NamedTuple()
-    if method isa MCMC
+    if method isa MCMC || get_result(res) isa MCMCResult
         chain = get_chain(res)
         names = MCMCChains.names(chain, :parameters)
         idx_map = Dict{String, Int}()

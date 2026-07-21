@@ -834,10 +834,11 @@ end
 # ----------------------------------------------------------------------------- #
 
 # Top-level so they mirror the markdown a reader copies (Part 2 + Part 3).
-function closed_form_em(dm; n_iter = 30)
+function closed_form_em(dm; θ_start = get_θ0_untransformed(get_fixed(get_model(dm))),
+        n_iter = 30)
     fe = get_fixed(get_model(dm))
     inv_transform = get_inverse_transform(fe)
-    θ = get_θ0_untransformed(fe)
+    θ = copy(θ_start)
     θt0 = get_transform(fe)(θ)
 
     _, batches, cc = build_re_batch_infos(dm, NamedTuple())
@@ -883,9 +884,12 @@ end
 ClosedFormEM(; n_iter = 30) = ClosedFormEM(n_iter)
 NoLimits.uq_family(::ClosedFormEM) = :wald_re
 function NoLimits.fit_method(dm, m::ClosedFormEM, args...;
-        constants_re = NamedTuple(), store_data_model = true, kwargs...)
-    θ, _ = closed_form_em(dm; n_iter = m.n_iter)
-    return build_fit_result(dm, m, θ; kind = :laplace,
+        constants_re = NamedTuple(), store_data_model = true,
+        theta_0_untransformed = nothing, kwargs...)
+    θ0 = theta_0_untransformed === nothing ?
+         get_θ0_untransformed(get_fixed(get_model(dm))) : theta_0_untransformed
+    θ, _ = closed_form_em(dm; θ_start = θ0, n_iter = m.n_iter)
+    return build_fit_result(dm, m, θ; kind = :frequentist_re,
         objective = -laplace_marginal(dm, θ), iterations = m.n_iter,
         eb_modes = empirical_bayes(dm, θ; constants_re = constants_re),
         store_data_model = store_data_model, fit_args = args)
@@ -894,7 +898,7 @@ end
 function tutorial_md1()
     slug = "md1"
 
-    # ── Part 1: Monte-Carlo EM ────────────────────────────────────────────────
+    # ── Part 1: Monte-Carlo EM with a Metropolis-Hastings E-step ──────────────
     model = @Model begin
         @fixedEffects begin
             a = RealNumber(1.0)
@@ -905,10 +909,10 @@ function tutorial_md1()
             t = Covariate()
         end
         @randomEffects begin
-            η = RandomEffect(Normal(0.0, ω); column = :ID)
+            b = RandomEffect(Normal(0.0, ω); column = :ID)
         end
         @formulas begin
-            y ~ Normal(a + η, σ)
+            y ~ Normal(a + b, σ)
         end
     end
 
@@ -919,10 +923,19 @@ function tutorial_md1()
     dm = simulate_data_model(DataModel(model, df; primary_id = :ID, time_col = :t);
         rng = MersenneTwister(42))
 
-    function mcem_from_scratch(dm; n_iter = 25, n_samples = 300, rng = MersenneTwister(0))
+    # Start the optimiser away from the data-generating values (a = 1, σ = ω = 0.5)
+    # so the EM path has somewhere to travel and convergence is visible.
+    θ0 = get_θ0_untransformed(get_fixed(get_model(dm)))
+    θ_start = copy(θ0)
+    θ_start.a = 0.0
+    θ_start.σ = 1.0
+    θ_start.ω = 1.0
+
+    function mcem_from_scratch(dm; θ_start, n_iter = 20, n_samples = 100,
+            rng = MersenneTwister(0))
         fe = get_fixed(get_model(dm))
         inv_transform = get_inverse_transform(fe)
-        θ = get_θ0_untransformed(fe)
+        θ = copy(θ_start)
         θt0 = get_transform(fe)(θ)
 
         _, batches, cc = build_re_batch_infos(dm, NamedTuple())
@@ -930,27 +943,25 @@ function tutorial_md1()
         history = [NamedTuple(θ)]
 
         for _ in 1:n_iter
-            # E-step: one importance sample per batch, drawn once and held fixed.
-            samples = sample_eta(
-                dm, θ; method = :importance, n_samples = n_samples, rng = rng)
+            # E-step: Metropolis-Hastings draws from the exact conditional posterior
+            # p(b | y, θ). MH returns unweighted draws, so the Q-function is a plain
+            # average over them (no importance weights).
+            samples = sample_random_effect_draws(dm, θ; method = :mcmc,
+                sampler = MH(), n_samples = n_samples, rng = rng)
             draws = [get_draws(s) for s in samples]
-            weights = map(samples) do s
-                w = exp.(get_log_weights(s) .- maximum(get_log_weights(s)))
-                w ./ sum(w)
-            end
 
-            # Q(θ) = Σ_batch Σ_draw w · joint_loglikelihood. The joint carries the RE
+            # Q(θ) = Σ_batch mean_draw joint_loglikelihood. The joint carries the RE
             # prior, so a, σ and ω are all updated in this one M-step.
             function negQ(θt_vec, _)
                 θn = symmetrize_psd_parameters(dm,
                     inv_transform(ComponentArray(θt_vec, getaxes(θt0))))
                 acc = zero(eltype(θt_vec))
                 for bi in eachindex(batches)
-                    D, w = draws[bi], weights[bi]
+                    D = draws[bi]
+                    n_draw = size(D, 2)
                     for m in axes(D, 2)
-                        acc += w[m] *
-                               joint_loglikelihood(dm, batches[bi], θn, view(D, :, m);
-                            const_cache = cc, cache = cache)
+                        acc += joint_loglikelihood(dm, batches[bi], θn, view(D, :, m);
+                            const_cache = cc, cache = cache) / n_draw
                     end
                 end
                 return -acc
@@ -965,19 +976,19 @@ function tutorial_md1()
         return θ, history
     end
 
-    θ_mcem, hist_mcem = mcem_from_scratch(dm)
+    θ_mcem, hist_mcem = mcem_from_scratch(dm; θ_start = θ_start)
     txt(slug, "mcem_params", NamedTuple(θ_mcem))
 
     res_mcem = fit_model(dm, MCEM(; maxiters = 25);
         serialization = EnsembleSerial(), rng = MersenneTwister(1))
     txt(slug, "mcem_builtin", get_params(res_mcem; scale = :untransformed))
 
+    ref = get_params(res_mcem; scale = :untransformed)
     fig1 = Figure(size = (620, 380))
     ax = CairoMakie.Axis(fig1[1, 1]; xlabel = "EM iteration", ylabel = "estimate")
     its = 0:(length(hist_mcem) - 1)
     lines!(ax, its, [h.σ for h in hist_mcem]; label = "σ")
     lines!(ax, its, [h.ω for h in hist_mcem]; label = "ω")
-    ref = get_params(res_mcem; scale = :untransformed)
     hlines!(ax, [ref.σ, ref.ω]; color = :gray, linestyle = :dash)
     axislegend(ax)
     save(fig(slug, "p_mcem"), fig1)
@@ -995,10 +1006,10 @@ function tutorial_md1()
             x = Covariate()
         end
         @randomEffects begin
-            η = RandomEffect(Normal(0.0, ω); column = :ID)
+            b = RandomEffect(Normal(0.0, ω); column = :ID)
         end
         @formulas begin
-            y ~ Normal(η + NN1([x], ζ)[1], σ)
+            y ~ Normal(b + NN1([x], ζ)[1], σ)
         end
     end
 
@@ -1011,23 +1022,56 @@ function tutorial_md1()
         DataModel(nn_model, df_nn; primary_id = :ID, time_col = :t);
         rng = MersenneTwister(7))
 
-    θ_cf, hist_cf = closed_form_em(dm_nn)
+    # DGP parameters (θ0_nn.ζ draws the true effect curve); start the fit off them.
+    θ0_nn = get_θ0_untransformed(get_fixed(get_model(dm_nn)))
+    θ_start_nn = copy(θ0_nn)
+    θ_start_nn.σ = 1.0
+    θ_start_nn.ω = 1.0
+
+    θ_cf, hist_cf = closed_form_em(dm_nn; θ_start = θ_start_nn)
     txt(slug, "cfem_params", (σ = NamedTuple(θ_cf).σ, ω = NamedTuple(θ_cf).ω))
 
     res_lap = fit_model(dm_nn, NoLimits.Laplace(); serialization = EnsembleSerial())
     p = get_params(res_lap; scale = :untransformed)
     txt(slug, "cfem_laplace", (σ = p.σ, ω = p.ω))
 
-    fig2 = Figure(size = (620, 380))
-    ax2 = CairoMakie.Axis(fig2[1, 1]; xlabel = "EM iteration", ylabel = "estimate")
-    its2 = 0:(length(hist_cf) - 1)
-    lines!(ax2, its2, [h.σ for h in hist_cf]; label = "σ")
-    lines!(ax2, its2, [h.ω for h in hist_cf]; label = "ω")
-    hlines!(ax2, [p.σ, p.ω]; color = :gray, linestyle = :dash)
-    axislegend(ax2)
-    save(fig(slug, "p_cfem"), fig2)
+    # Recovered effect function against the covariate x: fitted NN1(x; ζ̂) vs the
+    # data-generating NN1(x; ζ_true), over the observed data.
+    funs = get_model_funs(nn_model)
+    sim_nn = get_df(dm_nn)
+    xs = collect(range(minimum(sim_nn.x), maximum(sim_nn.x); length = 200))
+    fitted = [funs.NN1([xi], θ_cf.ζ)[1] for xi in xs]
+    truef = [funs.NN1([xi], θ0_nn.ζ)[1] for xi in xs]
 
-    # ── Part 3: embedding the estimator in fit_model ──────────────────────────
+    fig2 = Figure(size = (620, 380))
+    ax2 = CairoMakie.Axis(fig2[1, 1]; xlabel = "x", ylabel = "y")
+    scatter!(ax2, sim_nn.x, sim_nn.y; color = (:gray, 0.5), markersize = 6, label = "data")
+    lines!(ax2, xs, truef; color = :black, linestyle = :dash, label = "true f(x)")
+    lines!(ax2, xs, fitted; color = :dodgerblue, linewidth = 2, label = "fitted f(x)")
+    axislegend(ax2; position = :rb)
+    save(fig(slug, "p_fit_x"), fig2)
+
+    # ── Part 3: Closed-form EM vs Monte-Carlo EM on the same model ─────────────
+    # The Part-1 linear model is also linear-Gaussian, so closed_form_em applies to
+    # `dm` directly. Both target the same Q-function: MH-MCEM approximates it by
+    # sampling (a noisy path), the closed-form EM evaluates it exactly (a smooth one).
+    θ_cf_lin, hist_cf_lin = closed_form_em(dm; θ_start = θ_start, n_iter = 25)
+    txt(slug, "compare",
+        (mh_mcem = NamedTuple(θ_mcem),
+            closed_form = NamedTuple(θ_cf_lin),
+            builtin_mcem = get_params(res_mcem; scale = :untransformed)))
+
+    fig3 = Figure(size = (620, 380))
+    ax3 = CairoMakie.Axis(fig3[1, 1]; xlabel = "EM iteration", ylabel = "σ estimate")
+    lines!(ax3, 0:(length(hist_cf_lin) - 1), [h.σ for h in hist_cf_lin];
+        color = :seagreen, linewidth = 2, label = "closed-form EM")
+    lines!(ax3, 0:(length(hist_mcem) - 1), [h.σ for h in hist_mcem];
+        color = :dodgerblue, label = "MH Monte-Carlo EM")
+    hlines!(ax3, [ref.σ]; color = :gray, linestyle = :dash, label = "built-in MCEM")
+    axislegend(ax3)
+    save(fig(slug, "p_compare"), fig3)
+
+    # ── Part 4: embedding the estimator in fit_model ──────────────────────────
     res_embed = fit_model(dm, ClosedFormEM(; n_iter = 30); serialization = EnsembleSerial())
     txt(slug, "embed_summary", NoLimits.summarize(res_embed))
     uq_embed = compute_uq(res_embed; method = :wald, pseudo_inverse = true)

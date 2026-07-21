@@ -36,7 +36,7 @@ Every function here obeys two conventions:
 | Data / batching | `build_re_batch_infos`, `get_batch_individuals`, `get_batch_re_info`, `get_batch_re_dim`, `build_eta_individual`, `eta_from_modes`, `build_likelihood_cache` |
 | Forward map | `solve_individual`, `obs_distributions`, `hmm_filter_step!` |
 | Densities | `conditional_loglikelihood`, `joint_loglikelihood`, `re_logprior`, `joint_loglikelihood_gradient`, `joint_loglikelihood_hessian` |
-| Posterior / empirical Bayes | `empirical_bayes`, `posterior_moments`, `sample_eta` |
+| Posterior / empirical Bayes | `empirical_bayes`, `posterior_moments`, `sample_random_effect_draws` |
 | Marginals | `laplace_marginal`, `ghq_marginal` |
 | Curvature seam | `AbstractCurvature`, `ExactHessianCurvature`, `FisherInformationCurvature`, `inner_curvature` |
 | Fitting drivers | `fit_method`, `fit_fixed_effects`, `fit_laplace_family` |
@@ -53,6 +53,11 @@ A new estimator is a `struct MyMethod <: FittingMethod` plus one method,
 means `fit_model`, `Multistart`, and every result accessor (`get_params`, `get_objective`,
 `get_random_effects`, `get_loglikelihood`, uncertainty quantification) work automatically,
 because the shared drivers below build the same result types the built-in methods use.
+
+One contract to honour: `Multistart` and `pooled_init` deliver their starting points through the
+`theta_0_untransformed` keyword of `fit_method`. The shared drivers handle it for you; a
+hand-rolled `fit_method` that swallows it in `kwargs...` silently ignores every start, so accept
+it and use it as the initial `θ` (see the tutorial's `ClosedFormEM`).
 
 ### A fixed-effects method
 
@@ -117,8 +122,32 @@ end
 res = fit_model(dm, DiagonalLaplace())       # get_random_effects/get_loglikelihood all work
 ```
 
-Because `fit_laplace_family` returns a `LaplaceResult`, the method is first-class across the
+Because `fit_laplace_family` returns a `FrequentistREResult`, the method is first-class across the
 random-effects accessors without any further wiring.
+
+### A Bayesian method
+
+A Bayesian estimator produces a posterior *chain* rather than a point estimate, so it packages
+its result with the chain method of `build_fit_result`. The estimator brings its own chain (from
+whatever sampler it runs); `build_fit_result` wraps it in the same result a built-in `MCMC` fit
+returns, so `get_chain`, chain-based uncertainty (`compute_uq(res; method=:chain)`),
+posterior-predictive plotting, and `summarize` (which reports `inference: bayesian`) all work -
+the method keeps its own type.
+
+```julia
+struct MyBayes <: FittingMethod end
+
+function NoLimits.fit_method(dm, m::MyBayes, args...; kwargs...)
+    chain = run_my_sampler(dm)                      # your sampler returns an MCMCChains.Chains
+    return build_fit_result(dm, m, chain; sampler = :my_sampler, n_samples = size(chain, 1))
+end
+
+res = fit_model(dm, MyBayes())                       # get_chain / compute_uq(:chain) / summarize
+```
+
+As with the built-in `MCMC` fit, the point-estimate `get_params` slot is empty; the posterior
+summaries (medians, credible intervals) are computed from the chain by `summarize` and
+`compute_uq`.
 
 ## Assembling an objective directly
 
@@ -138,7 +167,7 @@ marginal = sum(laplace_marginal(dm, θ, batches[i], b_stars[i];
 ```
 
 `joint_loglikelihood_gradient` / `joint_loglikelihood_hessian` give the inner `∇_b` / `∇²_b`,
-and `sample_eta` draws from the random-effect posterior (Laplace-Gaussian importance sampling by
+and `sample_random_effect_draws` draws from the random-effect posterior (Laplace-Gaussian importance sampling by
 default, or `method = :mcmc` for a Turing sampler).
 
 ## Stability

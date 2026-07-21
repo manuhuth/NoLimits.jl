@@ -88,9 +88,9 @@ abstract type MethodResult end
     StandardOptimizationResult{Kind, ...} <: MethodResult
 
 Unified result type for the optimization-based estimators. `Kind` is a `Symbol` type parameter
-identifying the method (`:mle`, `:map`, `:laplace`, `:ghquadrature`, `:saem`, `:mcem`,
-`:pooled`); the historical per-method names (`MLEResult`, `LaplaceResult`, ...) are type aliases
-of it, so `res isa LaplaceResult` and dispatch on `::LaplaceResult` behave exactly as before.
+identifying the result category (`:frequentist`, `:map`, `:frequentist_re`, `:ghquadrature`, `:saem`,
+`:mcem`, `:pooled`); the historical per-method names (`FrequentistResult`, `FrequentistREResult`, ...) are type aliases
+of it, so `res isa FrequentistREResult` and dispatch on `::FrequentistREResult` behave exactly as before.
 Fields: `solution`, `objective`, `iterations`, `raw`, `notes`, plus the optional `eb_modes`
 (random-effect modes), `eta_vec`, and `strategies` (`nothing` when a method does not use them).
 """
@@ -105,12 +105,12 @@ struct StandardOptimizationResult{Kind, S, O, I, R, N, B, E, St} <: MethodResult
     strategies::St
 end
 
-const MLEResult{S, O, I, R, N} = StandardOptimizationResult{
-    :mle, S, O, I, R, N, Nothing, Nothing, Nothing}
+const FrequentistResult{S, O, I, R, N} = StandardOptimizationResult{
+    :frequentist, S, O, I, R, N, Nothing, Nothing, Nothing}
 const MAPResult{S, O, I, R, N} = StandardOptimizationResult{
     :map, S, O, I, R, N, Nothing, Nothing, Nothing}
-const LaplaceResult{S, O, I, R, N, B} = StandardOptimizationResult{
-    :laplace, S, O, I, R, N, B, Nothing, Nothing}
+const FrequentistREResult{S, O, I, R, N, B} = StandardOptimizationResult{
+    :frequentist_re, S, O, I, R, N, B, Nothing, Nothing}
 const GHQuadratureResult{S, O, I, R, N, B} = StandardOptimizationResult{
     :ghquadrature, S, O, I, R, N, B, Nothing, Nothing}
 const SAEMResult{S, O, I, R, N, B} = StandardOptimizationResult{
@@ -121,9 +121,9 @@ const PooledResult{S, O, I, R, N, E, St} = StandardOptimizationResult{
     :pooled, S, O, I, R, N, Nothing, E, St}
 
 # Constructors preserving each method's historical positional signature.
-function MLEResult(
+function FrequentistResult(
         solution::S, objective::O, iterations::I, raw::R, notes::N) where {S, O, I, R, N}
-    StandardOptimizationResult{:mle, S, O, I, R, N, Nothing, Nothing, Nothing}(
+    StandardOptimizationResult{:frequentist, S, O, I, R, N, Nothing, Nothing, Nothing}(
         solution, objective, iterations, raw, notes, nothing, nothing, nothing)
 end
 function MAPResult(
@@ -131,9 +131,9 @@ function MAPResult(
     StandardOptimizationResult{:map, S, O, I, R, N, Nothing, Nothing, Nothing}(
         solution, objective, iterations, raw, notes, nothing, nothing, nothing)
 end
-function LaplaceResult(solution::S, objective::O, iterations::I, raw::R, notes::N,
+function FrequentistREResult(solution::S, objective::O, iterations::I, raw::R, notes::N,
         eb_modes::B) where {S, O, I, R, N, B}
-    StandardOptimizationResult{:laplace, S, O, I, R, N, B, Nothing, Nothing}(
+    StandardOptimizationResult{:frequentist_re, S, O, I, R, N, B, Nothing, Nothing}(
         solution, objective, iterations, raw, notes, eb_modes, nothing, nothing)
 end
 function GHQuadratureResult(solution::S, objective::O, iterations::I, raw::R, notes::N,
@@ -343,7 +343,7 @@ struct FitResult{M <: FittingMethod, R <: MethodResult, S, D, DM, A, K}
 end
 
 """
-    build_fit_result(dm, method, θ; kind=:mle, objective, converged=true, iterations=missing,
+    build_fit_result(dm, method, θ; kind=:frequentist, objective, converged=true, iterations=missing,
                      eb_modes=nothing, eta_vec=nothing, strategies=nothing, solution=nothing,
                      raw=nothing, notes=NamedTuple(), optimizer=nothing,
                      convergence=NamedTuple(), timing=NamedTuple(),
@@ -358,18 +358,21 @@ developers.
 the model's transform and PSD blocks are symmetrised, so `get_params(res; scale=…)` works on
 either scale. `kind` selects the result routing:
 
-  - `:mle` / `:map` - fixed-effects methods (no random effects).
-  - `:laplace` / `:mcem` / `:saem` / `:ghquadrature` - random-effect methods; pass `eb_modes` as
-    the per-batch modes (e.g. from [`empirical_bayes`](@ref), aligned to `build_re_batch_infos`
+  - `:frequentist` / `:map` - fixed-effects methods (no random effects).
+  - `:frequentist_re` / `:mcem` / `:saem` / `:ghquadrature` - random-effect methods; pass `eb_modes`
+    as the per-batch modes (e.g. from [`empirical_bayes`](@ref), aligned to `build_re_batch_infos`
     order) so `get_random_effects`, `get_loglikelihood`, and plotting resolve the random effects.
   - `:pooled` - plugged-in random effects supplied through `eta_vec`.
 
-Reusing `:laplace` gives the widest random-effect accessor coverage. Note that `compute_uq`
+Reusing `:frequentist_re` gives the widest random-effect accessor coverage. Note that `compute_uq`
 routes on the `method` *type*; to inherit Wald/profile intervals either pass a built-in `method`
 instance (e.g. `Laplace()`) or define the `uq_family` trait for your method type.
+
+For a Bayesian estimator that produces a posterior chain rather than a point estimate, use the
+`build_fit_result(dm, method, chain::MCMCChains.Chains; …)` method instead.
 """
 function build_fit_result(dm::DataModel, method::FittingMethod, θ::ComponentArray;
-        kind::Symbol = :mle,
+        kind::Symbol = :frequentist,
         objective::Real,
         converged::Bool = true,
         iterations = missing,
@@ -385,6 +388,14 @@ function build_fit_result(dm::DataModel, method::FittingMethod, θ::ComponentArr
         store_data_model::Bool = true,
         fit_args::Tuple = (),
         fit_kwargs = NamedTuple())
+    re_kinds = (:frequentist_re, :ghquadrature, :saem, :mcem)
+    kind in (:frequentist, :map, :pooled) || kind in re_kinds ||
+        error("build_fit_result: unknown kind :$kind. Valid kinds: :frequentist, :map, " *
+              ":frequentist_re, :ghquadrature, :saem, :mcem, :pooled.")
+    eb_modes === nothing || kind in re_kinds ||
+        error("build_fit_result: eb_modes requires a random-effect kind $(re_kinds).")
+    eta_vec === nothing || kind === :pooled ||
+        error("build_fit_result: eta_vec requires kind = :pooled.")
     fe = get_fixed(get_model(dm))
     θ_sym = symmetrize_psd_parameters(dm, θ)
     θt = get_transform(fe)(θ_sym)
@@ -414,7 +425,7 @@ get_diagnostics(res::FitResult) = res.diagnostics
 """
     get_result(res::FitResult) -> MethodResult
 
-Return the method-specific [`MethodResult`](@ref) subtype (e.g. `MLEResult`, `MCMCResult`).
+Return the method-specific [`MethodResult`](@ref) subtype (e.g. `FrequentistResult`, `MCMCResult`).
 """
 get_result(res::FitResult) = res.result
 
@@ -969,7 +980,7 @@ function get_laplace_random_effects(dm::DataModel,
         constants_re::NamedTuple = NamedTuple(),
         flatten::Bool = true,
         include_constants::Bool = true)
-    (get_result(res) isa LaplaceResult || get_result(res) isa GHQuadratureResult) ||
+    (get_result(res) isa FrequentistREResult || get_result(res) isa GHQuadratureResult) ||
         error("Laplace-style random-effects accessor requires a Laplace or GHQuadrature fit result.")
     constants_re = _res_constants_re(res, constants_re)
     re_names = get_re_names(get_random(get_model(dm)))
@@ -1149,7 +1160,7 @@ function get_random_effects(dm::DataModel,
         flatten::Bool = true,
         include_constants::Bool = true)
     constants_re = _res_constants_re(res, constants_re)
-    if get_result(res) isa LaplaceResult || get_result(res) isa GHQuadratureResult
+    if get_result(res) isa FrequentistREResult || get_result(res) isa GHQuadratureResult
         return get_laplace_random_effects(
             dm, res; constants_re = constants_re, flatten = flatten,
             include_constants = include_constants)
@@ -1288,7 +1299,7 @@ end
 
 function _resolve_bstars_for_re(dm::DataModel, res::FitResult, constants_re::NamedTuple;
         θ = nothing, rng::AbstractRNG = Random.default_rng())
-    if get_result(res) isa LaplaceResult || get_result(res) isa GHQuadratureResult
+    if get_result(res) isa FrequentistREResult || get_result(res) isa GHQuadratureResult
         θu = θ === nothing ? get_params(res; scale = :untransformed) : θ
         ode_args = _fit_kw(res, :ode_args, ())
         ode_kwargs = _fit_kw(res, :ode_kwargs, NamedTuple())
@@ -1478,7 +1489,7 @@ end
 function _sample_conditional_bstars(dm::DataModel, batch_infos, bstars, θu, const_cache,
         ll_cache, res::FitResult, n_samples::Int, rng::AbstractRNG)
     lcl = ll_cache isa Vector ? ll_cache[1] : ll_cache
-    if get_result(res) isa LaplaceResult || get_result(res) isa GHQuadratureResult
+    if get_result(res) isa FrequentistREResult || get_result(res) isa GHQuadratureResult
         return _sample_laplace_bstars_raw(dm, batch_infos, bstars, θu, const_cache, lcl;
             n_samples = n_samples, rng = rng)
     elseif get_result(res) isa MCEMResult || get_result(res) isa SAEMResult
@@ -1573,7 +1584,7 @@ function sample_random_effects(dm::DataModel,
         dm, res, constants_re)
     isempty(batch_infos) && return NamedTuple()
 
-    if get_result(res) isa LaplaceResult || get_result(res) isa GHQuadratureResult
+    if get_result(res) isa FrequentistREResult || get_result(res) isa GHQuadratureResult
         return _sample_re_laplace_path(dm, res, constants_re,
             bstars, batch_infos, θu, const_cache, ll_cache;
             n_samples = n_samples, rng = rng,
@@ -1695,7 +1706,7 @@ function reestimate_ebes(dm::DataModel,
         ode_kwargs::NamedTuple = NamedTuple(),
         rng::AbstractRNG = Random.default_rng(),
         progress::Bool = false)
-    supported = get_result(res) isa LaplaceResult ||
+    supported = get_result(res) isa FrequentistREResult ||
                 get_result(res) isa MCEMResult || get_result(res) isa SAEMResult
     supported || error("reestimate_ebes is not supported for this fitting method.")
     sampling_sym = ebe_multistart_sampling == :mcmc ? :lhs : ebe_multistart_sampling
@@ -1789,10 +1800,10 @@ function get_loglikelihood(dm::DataModel,
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads())
     constants_re = _res_constants_re(res, constants_re)
     θu = get_params(res; scale = :untransformed)
-    if get_result(res) isa MLEResult || get_result(res) isa MAPResult
+    if get_result(res) isa FrequentistResult || get_result(res) isa MAPResult
         return loglikelihood(dm, θu, ComponentArray(); ode_args = ode_args,
             ode_kwargs = ode_kwargs, serialization = serialization)
-    elseif get_result(res) isa LaplaceResult
+    elseif get_result(res) isa FrequentistREResult
         pairing, batch_infos, const_cache = _build_re_batch_infos(dm, constants_re)
         bstars = get_eb_modes(get_result(res))
         length(bstars) == length(batch_infos) ||
@@ -1931,7 +1942,7 @@ function get_loglikelihood_quadrature(dm::DataModel,
     if get_result(res) isa MCMCResult
         error("get_loglikelihood_quadrature: MCMC results are not supported.")
     end
-    if get_result(res) isa MLEResult || get_result(res) isa MAPResult
+    if get_result(res) isa FrequentistResult || get_result(res) isa MAPResult
         error("get_loglikelihood_quadrature: MLE/MAP models have no random effects. " *
               "Use get_loglikelihood instead, which already returns the exact marginal log-likelihood.")
     end

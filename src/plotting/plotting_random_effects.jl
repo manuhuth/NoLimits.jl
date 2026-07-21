@@ -12,7 +12,7 @@ using Random
 using Statistics
 
 function _require_re_supported(res::FitResult)
-    if get_result(res) isa MLEResult || get_result(res) isa MAPResult
+    if get_result(res) isa FrequentistResult || get_result(res) isa MAPResult
         @warn "Random-effects diagnostics are not available for MLE/MAP."
         error("Random-effects diagnostics require Laplace/MCEM/SAEM/MCMC.")
     end

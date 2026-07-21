@@ -35,7 +35,7 @@ end
 end
 
 @testset "Accessors: random-effects methods" begin
-    # get_random_effects works for every RE estimator (all share LaplaceResult-style EB modes).
+    # get_random_effects works for every RE estimator (all share FrequentistREResult-style EB modes).
     for res in (fx_laplace(), fx_focei(), fx_ghq(), fx_mcem(), fx_saem())
         @test !isempty(NL.get_random_effects(res))
     end

@@ -38,7 +38,7 @@ end
 # The `raw` field (SciMLBase.OptimizationSolution) is always dropped because its
 # `cache` field contains closures.  After loading, `get_raw(res)` returns `nothing`.
 
-struct SavedMLEResult{S, O, I, N}
+struct SavedFrequentistResult{S, O, I, N}
     solution::S
     objective::O
     iterations::I
@@ -52,7 +52,7 @@ struct SavedMAPResult{S, O, I, N}
     notes::N
 end
 
-struct SavedLaplaceResult{S, O, I, N, B}
+struct SavedFrequentistREResult{S, O, I, N, B}
     solution::S
     objective::O
     iterations::I
@@ -139,14 +139,11 @@ end
 # FittingMethod structs contain optimizer/sampler objects with bare Function fields
 # that JLD2 cannot serialize cleanly.  Replace them with a lightweight stub.
 
-_strip_fitting_method(::MLE) = _SavedFittingMethod(:mle)
-_strip_fitting_method(::MAP) = _SavedFittingMethod(:map)
-_strip_fitting_method(::Laplace) = _SavedFittingMethod(:laplace)
-_strip_fitting_method(::MCEM) = _SavedFittingMethod(:mcem)
-_strip_fitting_method(::SAEM) = _SavedFittingMethod(:saem)
-_strip_fitting_method(::MCMC) = _SavedFittingMethod(:mcmc)
-_strip_fitting_method(::GHQuadrature) = _SavedFittingMethod(:ghquadrature)
-_strip_fitting_method(::VI) = _SavedFittingMethod(:vi)
+# Generic: the stub kind is the lowercased type name (:mle, :focei, :closedformem, ...),
+# so every FittingMethod - built-in or custom - is saveable.
+function _strip_fitting_method(m::FittingMethod)
+    _SavedFittingMethod(Symbol(lowercase(string(nameof(typeof(m))))))
+end
 _strip_fitting_method(m::_SavedFittingMethod) = m  # idempotent
 
 # ─── Strip helpers ────────────────────────────────────────────────────────────
@@ -184,16 +181,16 @@ function _strip_fit_kwargs(kw::NamedTuple)
     return merge(kept, (; serialization_kind = ser_kind))
 end
 
-function _strip_method_result(r::MLEResult)
-    SavedMLEResult(_strip_solution(r.solution), r.objective, r.iterations, r.notes)
+function _strip_method_result(r::FrequentistResult)
+    SavedFrequentistResult(_strip_solution(r.solution), r.objective, r.iterations, r.notes)
 end
 
 function _strip_method_result(r::MAPResult)
     SavedMAPResult(_strip_solution(r.solution), r.objective, r.iterations, r.notes)
 end
 
-function _strip_method_result(r::LaplaceResult)
-    SavedLaplaceResult(
+function _strip_method_result(r::FrequentistREResult)
+    SavedFrequentistREResult(
         _strip_solution(r.solution), r.objective, r.iterations, r.notes, get_eb_modes(r))
 end
 
@@ -278,16 +275,16 @@ function _symbol_to_serialization(sym::Symbol)
     return EnsembleSerial()
 end
 
-function _reconstruct_method_result(s::SavedMLEResult)
-    MLEResult(s.solution, s.objective, s.iterations, nothing, s.notes)
+function _reconstruct_method_result(s::SavedFrequentistResult)
+    FrequentistResult(s.solution, s.objective, s.iterations, nothing, s.notes)
 end
 
 function _reconstruct_method_result(s::SavedMAPResult)
     MAPResult(s.solution, s.objective, s.iterations, nothing, s.notes)
 end
 
-function _reconstruct_method_result(s::SavedLaplaceResult)
-    LaplaceResult(s.solution, s.objective, s.iterations, nothing, s.notes, s.eb_modes)
+function _reconstruct_method_result(s::SavedFrequentistREResult)
+    FrequentistREResult(s.solution, s.objective, s.iterations, nothing, s.notes, s.eb_modes)
 end
 
 function _reconstruct_method_result(s::SavedMCEMResult)
