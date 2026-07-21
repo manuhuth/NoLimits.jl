@@ -245,21 +245,22 @@ solve_individual
 obs_distributions
 hmm_filter_step!
 conditional_loglikelihood
-joint_loglikelihood
+complete_data_loglikelihood
+complete_data_loglikelihood_per_individual
 re_logprior
-joint_loglikelihood_gradient
-joint_loglikelihood_hessian
+complete_data_loglikelihood_gradient
+complete_data_loglikelihood_hessian
 ```
 
 ### Posterior, empirical Bayes, and sampling
 
 ```@docs
 empirical_bayes
-posterior_moments
+empirical_bayes_covariance
 laplace_marginal
 ghq_marginal
-sample_eta
-EtaPosteriorSample
+sample_random_effect_draws
+RandomEffectPosteriorSample
 EBEOptions
 ```
 
@@ -284,6 +285,16 @@ NLFreeLayout
 resolve_fitted_parameters
 build_fit_result
 uq_family
+```
+
+### Fit context (convenience layer)
+
+```@docs
+FitContext
+build_fit_context
+get_batch_infos
+initial_parameters
+optimize_parameters
 ```
 
 ### Sparse-grid quadrature

@@ -300,9 +300,10 @@ end
 
 function _fq_fit_component_estimates(res::FitResult, dm::DataModel, scale::Symbol)
     fe = get_fixed(get_model(dm))
-    method = get_method(res)
-    if method isa MCMC || method isa VI
-        θu = method isa MCMC ? _fq_mcmc_fixed_point_estimate(res, dm) :
+    # Route on the result the estimator produced: a posterior chain (MCMCResult/VIResult)
+    # reports the point estimate from the chain, so a custom Bayesian method is first-class.
+    if get_result(res) isa MCMCResult || get_result(res) isa VIResult
+        θu = get_result(res) isa MCMCResult ? _fq_mcmc_fixed_point_estimate(res, dm) :
              _fq_vi_fixed_point_estimate(res, dm)
         return _fq_posterior_coords(fe, θu, scale)
     end
@@ -486,12 +487,12 @@ function _fq_random_effect_block(res::FitResult; constants_re::NamedTuple = Name
     end
 
     method = get_method(res)
-    if method isa MCMC
+    if get_result(res) isa MCMCResult
         rows = _fq_mcmc_random_effect_rows(res, dm)
         label = "Posterior random effects summary (chain medians across draws)"
         return (label, rows,
             isempty(rows) ? ["No random-effects chain coordinates detected."] : String[])
-    elseif method isa VI
+    elseif get_result(res) isa VIResult
         rows = _fq_vi_random_effect_rows(res, dm)
         label = "Posterior random effects summary (VI posterior medians across draws)"
         return (label, rows,
@@ -516,7 +517,10 @@ function summarize(res::FitResult;
         constants_re::NamedTuple = NamedTuple())
     scale = _fq_scale_symbol(scale)
     method = get_method(res)
-    inference = _fq_inference_from_method(method)
+    # Inference kind follows the result the estimator produced (a posterior chain is Bayesian
+    # regardless of the method type), falling back to the method for point-estimate results.
+    inference = (get_result(res) isa MCMCResult || get_result(res) isa VIResult) ?
+                :bayesian : _fq_inference_from_method(method)
 
     param_rows, n_total, n_eligible, notes1 = _fq_fit_parameter_rows(
         res; scale = scale, include_non_se = include_non_se)

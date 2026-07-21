@@ -890,7 +890,7 @@ function _default_random_effects(res::FitResult,
 
     # Laplace/GHQ/MCEM/SAEM all resolve EB modes identically to the estimation-side
     # switchboard — delegate to it (θ/rng threaded through for plotting param-overrides).
-    if get_result(res) isa LaplaceResult || get_result(res) isa GHQuadratureResult ||
+    if get_result(res) isa FrequentistREResult || get_result(res) isa GHQuadratureResult ||
        get_result(res) isa MCEMResult || get_result(res) isa SAEMResult
         bstars, batch_infos, _, _, _, cre = _resolve_bstars_for_re(
             dm, res, constants_re; θ = θ, rng = rng)

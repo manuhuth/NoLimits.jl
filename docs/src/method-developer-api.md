@@ -35,16 +35,18 @@ Every function here obeys two conventions:
 |---|---|
 | Data / batching | `build_re_batch_infos`, `get_batch_individuals`, `get_batch_re_info`, `get_batch_re_dim`, `build_eta_individual`, `eta_from_modes`, `build_likelihood_cache` |
 | Forward map | `solve_individual`, `obs_distributions`, `hmm_filter_step!` |
-| Densities | `conditional_loglikelihood`, `joint_loglikelihood`, `re_logprior`, `joint_loglikelihood_gradient`, `joint_loglikelihood_hessian` |
-| Posterior / empirical Bayes | `empirical_bayes`, `posterior_moments`, `sample_eta` |
+| Densities | `conditional_loglikelihood`, `complete_data_loglikelihood`, `re_logprior`, `complete_data_loglikelihood_gradient`, `complete_data_loglikelihood_hessian` |
+| Posterior / empirical Bayes | `empirical_bayes`, `empirical_bayes_covariance`, `sample_random_effect_draws` |
 | Marginals | `laplace_marginal`, `ghq_marginal` |
 | Curvature seam | `AbstractCurvature`, `ExactHessianCurvature`, `FisherInformationCurvature`, `inner_curvature` |
 | Fitting drivers | `fit_method`, `fit_fixed_effects`, `fit_laplace_family` |
 | Transforms | `ForwardTransform`, `InverseTransform`, `apply_inv_jacobian_T`, `logabsdetjac` |
 
-Full signatures are in the [API reference](api.md). The identity `joint_loglikelihood ==
-conditional_loglikelihood + re_logprior` holds at batch scale, and `posterior_moments` returns
-the Laplace covariance `Σ = (−H)⁻¹` at the empirical-Bayes mode.
+Full signatures are in the [API reference](api.md). The identity `complete_data_loglikelihood ==
+conditional_loglikelihood + re_logprior` holds at batch scale. `empirical_bayes` returns the
+posterior modes alone (no Hessian is computed), and `empirical_bayes_covariance` adds the
+curvature covariance `Σ = (−H)⁻¹` at those modes - together the Laplace approximation
+`N(b*, Σ)` to the random-effect posterior.
 
 ## Building a new fitting method
 
@@ -53,6 +55,48 @@ A new estimator is a `struct MyMethod <: FittingMethod` plus one method,
 means `fit_model`, `Multistart`, and every result accessor (`get_params`, `get_objective`,
 `get_random_effects`, `get_loglikelihood`, uncertainty quantification) work automatically,
 because the shared drivers below build the same result types the built-in methods use.
+
+One contract to honour: `Multistart` and `pooled_init` deliver their starting points through the
+`theta_0_untransformed` keyword of `fit_method`. The shared drivers handle it for you; a
+hand-rolled `fit_method` that swallows it in `kwargs...` silently ignores every start, so accept
+it and use it as the initial `θ` (see the tutorial's `ClosedFormEM`).
+
+### The quick path: `FitContext`
+
+For a hand-rolled iterative method, `build_fit_context(dm; constants_re)` performs the setup
+every fitting loop needs, once: the random-effect batch structure (`build_re_batch_infos`), the
+constant-RE cache, and the likelihood evaluation cache (`build_likelihood_cache`). The context
+is θ-independent - build it once per fit and reuse it across all iterations; parameters flow
+through every call. With a context, the primitives lose their cache keywords and address batches
+by index, `optimize_parameters` runs an M-step from an objective written purely in natural-scale
+parameters (the transformed-scale round trip and PSD symmetrisation are handled), and
+`build_fit_result(ctx, …)` fills `eb_modes` automatically:
+
+```julia
+function NoLimits.fit_method(dm, m::MyEM, args...; theta_0_untransformed = nothing, kwargs...)
+    ctx = build_fit_context(dm)
+    θ = something(theta_0_untransformed, initial_parameters(ctx))
+    for _ in 1:m.n_iter
+        modes = empirical_bayes(ctx, θ)                     # E-step: posterior modes ...
+        covs = empirical_bayes_covariance(ctx, θ, modes)    # ... and their covariance
+        θ, _ = optimize_parameters(ctx; θ_start = θ) do θn  # M-step, natural scale
+            -sum(complete_data_loglikelihood(ctx, bi, θn, modes[bi]) +
+                 0.5 * tr(covs[bi] * complete_data_loglikelihood_hessian(ctx, bi, θn, modes[bi]))
+                 for bi in eachindex(get_batch_infos(ctx)))
+        end
+    end
+    return build_fit_result(ctx, m, θ; kind = :frequentist_re,
+        objective = -laplace_marginal(ctx, θ))
+end
+```
+
+Every context call is a thin cover forwarding to the corresponding cache-explicit primitive
+with the context's stored objects - results are identical, and the explicit layer below remains
+the full-control path (own caches per thread, `BatchThetaContext` amortisation, custom bounds).
+Note that the population primitives called with a bare `dm` (e.g. `empirical_bayes(dm, θ)`)
+rebuild the caches on every call - inside a loop, prefer the context forms or the explicit
+layer. See the [Building Custom Estimators](tutorials/building-custom-estimators.md) tutorial
+for the full walkthrough.
 
 ### A fixed-effects method
 
@@ -117,8 +161,32 @@ end
 res = fit_model(dm, DiagonalLaplace())       # get_random_effects/get_loglikelihood all work
 ```
 
-Because `fit_laplace_family` returns a `LaplaceResult`, the method is first-class across the
+Because `fit_laplace_family` returns a `FrequentistREResult`, the method is first-class across the
 random-effects accessors without any further wiring.
+
+### A Bayesian method
+
+A Bayesian estimator produces a posterior *chain* rather than a point estimate, so it packages
+its result with the chain method of `build_fit_result`. The estimator brings its own chain (from
+whatever sampler it runs); `build_fit_result` wraps it in the same result a built-in `MCMC` fit
+returns, so `get_chain`, chain-based uncertainty (`compute_uq(res; method=:chain)`),
+posterior-predictive plotting, and `summarize` (which reports `inference: bayesian`) all work -
+the method keeps its own type.
+
+```julia
+struct MyBayes <: FittingMethod end
+
+function NoLimits.fit_method(dm, m::MyBayes, args...; kwargs...)
+    chain = run_my_sampler(dm)                      # your sampler returns an MCMCChains.Chains
+    return build_fit_result(dm, m, chain; sampler = :my_sampler, n_samples = size(chain, 1))
+end
+
+res = fit_model(dm, MyBayes())                       # get_chain / compute_uq(:chain) / summarize
+```
+
+As with the built-in `MCMC` fit, the point-estimate `get_params` slot is empty; the posterior
+summaries (medians, credible intervals) are computed from the chain by `summarize` and
+`compute_uq`.
 
 ## Assembling an objective directly
 
@@ -137,8 +205,8 @@ marginal = sum(laplace_marginal(dm, θ, batches[i], b_stars[i];
                for i in eachindex(batches))
 ```
 
-`joint_loglikelihood_gradient` / `joint_loglikelihood_hessian` give the inner `∇_b` / `∇²_b`,
-and `sample_eta` draws from the random-effect posterior (Laplace-Gaussian importance sampling by
+`complete_data_loglikelihood_gradient` / `complete_data_loglikelihood_hessian` give the inner `∇_b` / `∇²_b`,
+and `sample_random_effect_draws` draws from the random-effect posterior (Laplace-Gaussian importance sampling by
 default, or `method = :mcmc` for a Turing sampler).
 
 ## Stability

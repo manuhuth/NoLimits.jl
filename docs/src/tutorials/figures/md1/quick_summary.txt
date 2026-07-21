@@ -1,20 +1,19 @@
-UQResultSummary
+FitResultSummary
 ════════════════════════════════════════════════════════════════════════════════════════════════
 Overview
-  backend                             : wald
-  source_method                       : closedformem
+  method                              : myem
   inference                           : frequentist
   scale                               : natural
-  objective                           : 163.0049
-  interval level                      : 0.9500
+  objective                           : 163.0051
+  iterations                          : 25
   parameters shown (reported / total) : 3 / 3
 
-Parameter uncertainty summary
-  parameter      Estimate    Std. Error      CI Lower      CI Upper
-  ---------------------------------------------------
-  a                1.0729        0.1080        0.8576        1.2812
-  σ                0.5046        0.0299        0.4523        0.5687
-  ω                0.5351        0.0798        0.4001        0.7119
+Parameter estimates
+  parameter      Estimate
+  -----------------------
+  a                1.0718
+  σ                0.5046
+  ω                0.5351
 
 Outcome data coverage
   outcome       n_obs   n_missing
@@ -25,4 +24,4 @@ Outcome data coverage
 Empirical Bayes random effects summary (across RE levels)
   random effect       n          mean            sd           q25        median           q75
   ---------------------------------------------------------------------------
-  b                  30        0.0010        0.4993       -0.3620       -0.0156        0.3483
+  b                  30        0.0020        0.4993       -0.3610       -0.0145        0.3493

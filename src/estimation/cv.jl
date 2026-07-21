@@ -88,7 +88,7 @@ end
 
 function _cv_has_re_support(res::FitResult)
     r = get_result(res)
-    return r isa LaplaceResult || r isa GHQuadratureResult ||
+    return r isa FrequentistREResult || r isa GHQuadratureResult ||
            r isa MCEMResult || r isa SAEMResult
 end
 

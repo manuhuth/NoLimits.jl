@@ -2,39 +2,47 @@
 
 NoLimits.jl exposes the statistical building blocks of its fitters - the complete-data
 likelihood, the random-effect posterior, and the fitting drivers - as public, semver-stable
-functions, so a new estimator can be assembled without touching package internals. This
-tutorial builds two estimators from scratch on those primitives: a general Monte-Carlo EM that
-draws random effects with `sample_eta`, and a closed-form-posterior EM for a linear-Gaussian
-neural-network model whose exact posterior is available through `posterior_moments`. Each is
-checked against a built-in fitter. See the [Method-Developer API](../method-developer-api.md)
-page for the primitive reference and the two contracts (natural-scale parameters, batches as the
-random-effect currency).
+functions, so a new estimator can be assembled without touching package internals. Part 1 builds
+a complete, `fit_model`-ready estimator in a few lines on the `FitContext` convenience layer.
+The rest of the tutorial opens that box on the fine-grained, cache-explicit primitives: a
+Monte-Carlo EM that draws the random effects with `sample_random_effect_draws`, a
+closed-form-posterior EM for a linear-Gaussian neural-network model built on `empirical_bayes`
+and `empirical_bayes_covariance`, a head-to-head comparison of the two, and the full embedding
+contract.
+The fine-grained loops start from deliberately wrong parameters so the convergence is real, and
+every estimator is checked against a built-in fitter. See the
+[Method-Developer API](../method-developer-api.md) page for the primitive reference and the two
+contracts (natural-scale parameters, batches as the random-effect currency).
 
 ## What You Will Learn
 
+- How `build_fit_context` and `optimize_parameters` give a complete custom estimator in a few
+  lines, with caches, transforms, and result packaging handled for you.
 - How to walk the random-effect batch structure with `build_re_batch_infos` and score the
-  complete-data density with `joint_loglikelihood`.
-- How to run a Monte-Carlo E-step with `sample_eta` and a numeric M-step with Optimization.jl.
-- How the exact Gaussian posterior from `posterior_moments` gives a sampling-free E-step.
-- How to check a hand-written estimator against a built-in method.
+  complete-data density with `complete_data_loglikelihood` - the cache-explicit layer underneath.
+- How to run a Monte-Carlo E-step by drawing the random effects from their exact conditional
+  posterior with `sample_random_effect_draws` (Metropolis-Hastings), and a numeric M-step with
+  Optimization.jl.
+- How the exact Gaussian posterior from `empirical_bayes` (modes) and
+  `empirical_bayes_covariance` (covariance) gives a sampling-free E-step, and how the two EMs
+  compare on the same model.
 - How to embed a custom estimator in `fit_model` with `build_fit_result` and `uq_family` so it
   plots, transforms, and reports uncertainty like a built-in fitter.
 
-## Part 1: Monte-Carlo EM
+## Part 1: A Complete Estimator in a Few Lines
 
-Monte-Carlo EM alternates an E-step - drawing `η` from its posterior at the current `θ` - with
-an M-step that maximises the expected complete-data log-likelihood. `sample_eta` supplies the
-draws and `joint_loglikelihood` is the per-draw density; because the joint already carries the
-random-effect prior, one M-step over all parameters updates the fixed effects and the
-random-effect variance together. See [MCEM](../estimation/mcem.md) for the production fitter.
-
-### Model and Data
+The quickest way to a working estimator is the `FitContext` convenience layer. We define a
+random-intercept model, simulate data from it, and implement a closed-form-posterior EM (the
+algorithm is derived in Part 3) as a `FittingMethod` that `fit_model` can drive.
 
 ```julia
 using NoLimits
 using Optimization, OptimizationOptimJL, LineSearches
-using ComponentArrays, Distributions, DataFrames, Random
+using ComponentArrays, Distributions, DataFrames, Random, LinearAlgebra
+using Turing: MH
 using CairoMakie
+
+Random.seed!(1)
 
 model = @Model begin
     @fixedEffects begin
@@ -46,10 +54,10 @@ model = @Model begin
         t = Covariate()
     end
     @randomEffects begin
-        η = RandomEffect(Normal(0.0, ω); column=:ID)
+        b = RandomEffect(Normal(0.0, ω); column=:ID)
     end
     @formulas begin
-        y ~ Normal(a + η, σ)
+        y ~ Normal(a + b, σ)
     end
 end
 
@@ -63,17 +71,130 @@ dm = simulate_data_model(DataModel(model, df; primary_id=:ID, time_col=:t);
     rng=MersenneTwister(42))
 ```
 
-### The EM Loop
-
-The random-effect draws are taken once per iteration and held fixed while `θ` is optimised - the
-mode-finding inside `sample_eta` is not differentiable in `θ`, so it must sit outside the M-step
-objective. Importance weights are self-normalised with a `softmax`.
+The whole estimator is one struct and one `fit_method`:
 
 ```julia
-function mcem_from_scratch(dm; n_iter=25, n_samples=300, rng=MersenneTwister(0))
+struct MyEM <: FittingMethod
+    n_iter::Int
+end
+MyEM(; n_iter=25) = MyEM(n_iter)
+NoLimits.uq_family(::MyEM) = :wald_re      # inherit random-effect Wald intervals
+
+function NoLimits.fit_method(dm, m::MyEM, args...; theta_0_untransformed=nothing, kwargs...)
+    ctx = build_fit_context(dm)
+    θ = something(theta_0_untransformed, initial_parameters(ctx))
+    for _ in 1:m.n_iter
+        modes = empirical_bayes(ctx, θ)                    # E-step: posterior modes b* ...
+        covs = empirical_bayes_covariance(ctx, θ, modes)   # ... and covariance Σ = (−H)⁻¹
+        θ, _ = optimize_parameters(ctx; θ_start=θ) do θn   # M-step, natural scale
+            -sum(complete_data_loglikelihood(ctx, bi, θn, modes[bi]) +
+                 0.5 * tr(covs[bi] * complete_data_loglikelihood_hessian(ctx, bi, θn, modes[bi]))
+                 for bi in eachindex(get_batch_infos(ctx)))
+        end
+    end
+    return build_fit_result(ctx, m, θ; kind=:frequentist_re,
+        objective=-laplace_marginal(ctx, θ), iterations=m.n_iter)
+end
+
+res_quick = fit_model(dm, MyEM())
+NoLimits.summarize(res_quick)
+```
+
+```text
+FitResultSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  method                              : myem
+  inference                           : frequentist
+  scale                               : natural
+  objective                           : 163.0051
+  iterations                          : 25
+  parameters shown (reported / total) : 3 / 3
+
+Parameter estimates
+  parameter      Estimate
+  -----------------------
+  a                1.0718
+  σ                0.5046
+  ω                0.5351
+
+Outcome data coverage
+  outcome       n_obs   n_missing
+  -------------------------------
+  y               180           0
+  TOTAL           180           0
+
+Empirical Bayes random effects summary (across RE levels)
+  random effect       n          mean            sd           q25        median           q75
+  ---------------------------------------------------------------------------
+  b                  30        0.0020        0.4993       -0.3610       -0.0145        0.3493
+```
+
+What each piece does:
+
+- **`build_fit_context(dm)`** performs, once, the setup every fitting loop needs: it groups the
+  individuals into independent random-effect *batches* (individuals sharing a random-effect
+  level always land in the same batch), caches the levels fixed through `constants_re`, and
+  builds the likelihood evaluation cache (solver configuration, templates, buffers) that the
+  density primitives reuse instead of rebuilding state on every call. The context is
+  θ-independent - build it once per fit and reuse it across all iterations; parameters flow
+  through every call. With a context in hand, the primitives lose their cache arguments and
+  address batches by index: `complete_data_loglikelihood(ctx, bi, θ, b)`,
+  `empirical_bayes(ctx, θ)`, `laplace_marginal(ctx, θ)`, and so on.
+- **`empirical_bayes(ctx, θ)`** and **`empirical_bayes_covariance(ctx, θ, modes)`** are the
+  E-step: the posterior modes `b*` and the curvature covariance `Σ = (−H)⁻¹` - together the
+  exact Gaussian posterior `N(b*, Σ)` of each batch's random effects (exact because this model
+  is linear in `b`; Part 3 treats the general case). When only the modes are needed, call
+  `empirical_bayes` alone - no Hessian is computed.
+- **`optimize_parameters(ctx) do θn ... end`** is the M-step: the objective is written purely in
+  natural-scale parameters, and the transformed-scale round trip (log/logit transforms,
+  `ComponentArray` reassembly, PSD symmetrisation, the back-transform of the optimum) is handled
+  internally - `σ` and `ω` stay positive without any code in the objective.
+- **`build_fit_result(ctx, …)`** packages `θ` into the same `FitResult` the built-in fitters
+  return - `eb_modes` is filled automatically for random-effect kinds - so `get_params`,
+  `get_random_effects`, `plot_fits`, and `compute_uq` all work on `res_quick` (Part 5 shows
+  them and explains each argument).
+- `theta_0_untransformed` is the one contract to honour: `Multistart` and `pooled_init` deliver
+  their starting points through it.
+
+Every context call forwards to a cache-explicit primitive with the context's stored objects -
+nothing is hidden, and the explicit layer remains available for full control. The rest of the
+tutorial works on that layer.
+
+## Part 2: Monte-Carlo EM on the Explicit Primitives
+
+Monte-Carlo EM alternates an E-step - drawing the random effects `b` from their posterior at the
+current `θ` - with an M-step that maximises the expected complete-data log-likelihood.
+`sample_random_effect_draws` supplies the draws and `complete_data_loglikelihood` is the per-draw density.
+Because the joint already carries the random-effect prior, one M-step over all parameters updates
+the fixed effects and the random-effect variance together. This time the caches, transforms, and
+batch structure are threaded by hand - full control over every evaluation. See
+[MCEM](../estimation/mcem.md) for the production fitter.
+
+The data (from Part 1) are simulated from `a = 1`, `σ = ω = 0.5`. To make the fit a real test
+rather than a no-op, the optimiser is started away from those values, so the EM path has
+somewhere to travel.
+
+```julia
+θ0 = get_θ0_untransformed(get_fixed(get_model(dm)))
+θ_start = copy(θ0)
+θ_start.a = 0.0
+θ_start.σ = 1.0
+θ_start.ω = 1.0
+```
+
+### The EM Loop
+
+Each E-step draws the random effects from their exact conditional posterior `p(b | y, θ)` with a
+Metropolis-Hastings sampler. Because MH returns unweighted draws from that posterior, the
+Q-function is a plain average over them - no importance weights, which would only be needed if the
+draws came from a different proposal. The draws are held fixed while `θ` is optimised.
+
+```julia
+function mcem_from_scratch(dm; θ_start, n_iter=20, n_samples=100, rng=MersenneTwister(0))
     fe = get_fixed(get_model(dm))
     inv_transform = get_inverse_transform(fe)
-    θ = get_θ0_untransformed(fe)
+    θ = copy(θ_start)
     θt0 = get_transform(fe)(θ)
 
     _, batches, cc = build_re_batch_infos(dm, NamedTuple())
@@ -81,25 +202,23 @@ function mcem_from_scratch(dm; n_iter=25, n_samples=300, rng=MersenneTwister(0))
     history = [NamedTuple(θ)]
 
     for _ in 1:n_iter
-        # E-step: one importance sample per batch, drawn once and held fixed.
-        samples = sample_eta(dm, θ; method=:importance, n_samples=n_samples, rng=rng)
+        # E-step: Metropolis-Hastings draws from the exact conditional posterior p(b | y, θ).
+        samples = sample_random_effect_draws(dm, θ; method=:mcmc, sampler=MH(),
+            n_samples=n_samples, rng=rng)
         draws = [get_draws(s) for s in samples]
-        weights = map(samples) do s
-            w = exp.(get_log_weights(s) .- maximum(get_log_weights(s)))
-            w ./ sum(w)
-        end
 
-        # Q(θ) = Σ_batch Σ_draw w · joint_loglikelihood. The joint carries the RE
-        # prior, so a, σ and ω are all updated in this one M-step.
+        # Q(θ) = Σ_batch mean_draw complete_data_loglikelihood. The joint carries the RE prior,
+        # so a, σ and ω are all updated in this one M-step.
         function negQ(θt_vec, _)
             θn = symmetrize_psd_parameters(dm,
                 inv_transform(ComponentArray(θt_vec, getaxes(θt0))))
             acc = zero(eltype(θt_vec))
             for bi in eachindex(batches)
-                D, w = draws[bi], weights[bi]
+                D = draws[bi]
+                n_draw = size(D, 2)
                 for m in axes(D, 2)
-                    acc += w[m] * joint_loglikelihood(dm, batches[bi], θn, view(D, :, m);
-                        const_cache=cc, cache=cache)
+                    acc += complete_data_loglikelihood(dm, batches[bi], θn, view(D, :, m);
+                        const_cache=cc, cache=cache) / n_draw
                 end
             end
             return -acc
@@ -114,12 +233,12 @@ function mcem_from_scratch(dm; n_iter=25, n_samples=300, rng=MersenneTwister(0))
     return θ, history
 end
 
-θ_mcem, hist_mcem = mcem_from_scratch(dm)
+θ_mcem, hist_mcem = mcem_from_scratch(dm; θ_start=θ_start)
 NamedTuple(θ_mcem)
 ```
 
 ```text
-(a = 1.0781994511103565, σ = 0.5051571731472654, ω = 0.5359268668902755)
+(a = 1.0292461861307223, σ = 0.5188422506428074, ω = 0.5323302070226873)
 ```
 
 ### Check Against the Built-in Fitter
@@ -137,25 +256,26 @@ ComponentVector{Float64}(a = 1.0714777759110046, σ = 0.50458546245996, ω = 0.5
 ### Convergence
 
 ```julia
+ref = get_params(res_mcem; scale=:untransformed)
 fig1 = Figure(size=(620, 380))
 ax = CairoMakie.Axis(fig1[1, 1]; xlabel="EM iteration", ylabel="estimate")
 its = 0:(length(hist_mcem) - 1)
 lines!(ax, its, [h.σ for h in hist_mcem]; label="σ")
 lines!(ax, its, [h.ω for h in hist_mcem]; label="ω")
-ref = get_params(res_mcem; scale=:untransformed)
 hlines!(ax, [ref.σ, ref.ω]; color=:gray, linestyle=:dash)
 axislegend(ax)
 fig1
 ```
 
-![Monte-Carlo EM parameter trajectories converging to the built-in MCEM estimates (dashed); the residual jitter is Monte-Carlo noise in the E-step.](figures/md1/p_mcem.png)
+![Monte-Carlo EM parameter trajectories climbing from the deliberately wrong start to the built-in MCEM estimates (dashed); the residual jitter is Monte-Carlo noise in the Metropolis-Hastings E-step.](figures/md1/p_mcem.png)
 
-## Part 2: Closed-Form-Posterior EM
+## Part 3: Closed-Form-Posterior EM
 
-When the model is linear in the random effect with Gaussian noise, `y = η + f(x) + e`, the
-random-effect posterior is exactly Gaussian, so the E-step needs no sampling: `posterior_moments`
-returns the exact posterior mean (the mode) and covariance `Σ = (−H)⁻¹`. Here `f` is a neural
-network of a covariate. The joint is quadratic in `η`, so its expectation under the posterior is
+When the model is linear in the random effect with Gaussian noise, `y = b + f(x) + e`, the
+random-effect posterior is exactly Gaussian, so the E-step needs no sampling: `empirical_bayes`
+returns the exact posterior mean (the mode) and `empirical_bayes_covariance` its covariance
+`Σ = (−H)⁻¹`. Here `f` is a neural
+network of a covariate. The joint is quadratic in `b`, so its expectation under the posterior is
 also closed-form - the mode value plus a trace correction - giving a fully deterministic EM. See
 [Laplace](../estimation/laplace.md), which is exact for this model class.
 
@@ -176,10 +296,10 @@ nn_model = @Model begin
         x = Covariate()
     end
     @randomEffects begin
-        η = RandomEffect(Normal(0.0, ω); column=:ID)
+        b = RandomEffect(Normal(0.0, ω); column=:ID)
     end
     @formulas begin
-        y ~ Normal(η + NN1([x], ζ)[1], σ)
+        y ~ Normal(b + NN1([x], ζ)[1], σ)
     end
 end
 
@@ -195,18 +315,29 @@ dm_nn = simulate_data_model(DataModel(nn_model, df_nn; primary_id=:ID, time_col=
     rng=MersenneTwister(7))
 ```
 
+As in Part 2, the data-generating parameters are captured (their `ζ` traces the true effect curve
+below) and the fit is started off them.
+
+```julia
+θ0_nn = get_θ0_untransformed(get_fixed(get_model(dm_nn)))
+θ_start_nn = copy(θ0_nn)
+θ_start_nn.σ = 1.0
+θ_start_nn.ω = 1.0
+```
+
 ### The Closed-Form EM Loop
 
 The expected complete-data log-likelihood of a quadratic joint under a Gaussian posterior is
 `Q(θ) = joint(θ, m) + ½·tr(Σ · ∇²_b joint(θ, m))`; the trace term accounts exactly for the
-posterior spread of `η`. `joint_loglikelihood_hessian` supplies `∇²_b joint`, and both moments
-come from `posterior_moments` at the previous `θ`.
+posterior spread of `b`. `complete_data_loglikelihood_hessian` supplies `∇²_b joint`, and the
+moments come from `empirical_bayes` / `empirical_bayes_covariance` at the previous `θ`. The same
+off-truth `θ_start` is threaded in.
 
 ```julia
-function closed_form_em(dm; n_iter=30)
+function closed_form_em(dm; θ_start=get_θ0_untransformed(get_fixed(get_model(dm))), n_iter=30)
     fe = get_fixed(get_model(dm))
     inv_transform = get_inverse_transform(fe)
-    θ = get_θ0_untransformed(fe)
+    θ = copy(θ_start)
     θt0 = get_transform(fe)(θ)
 
     _, batches, cc = build_re_batch_infos(dm, NamedTuple())
@@ -214,8 +345,10 @@ function closed_form_em(dm; n_iter=30)
     history = [(σ=NamedTuple(θ).σ, ω=NamedTuple(θ).ω)]
 
     for _ in 1:n_iter
-        # E-step: exact Gaussian posterior per batch (mode = mean, Σ = (−H)⁻¹). No sampling.
-        pm = posterior_moments(dm, θ)
+        # E-step: exact Gaussian posterior per batch - modes b* (= mean here), then Σ = (−H)⁻¹.
+        modes = empirical_bayes(dm, θ)
+        covs = [empirical_bayes_covariance(dm, θ, batches[bi], modes[bi];
+                    const_cache=cc, cache=cache) for bi in eachindex(batches)]
 
         # M-step: exact expected complete-data log-likelihood for a quadratic joint,
         # Q(θ) = Σ_batch [ joint(θ, m) + ½·tr(Σ · ∇²_b joint(θ, m)) ].
@@ -224,10 +357,10 @@ function closed_form_em(dm; n_iter=30)
                 inv_transform(ComponentArray(θt_vec, getaxes(θt0))))
             acc = zero(eltype(θt_vec))
             for bi in eachindex(batches)
-                m, Σ = pm[bi]
+                m, Σ = modes[bi], covs[bi]
                 Σ === nothing && continue
-                jl = joint_loglikelihood(dm, batches[bi], θn, m; const_cache=cc, cache=cache)
-                H = joint_loglikelihood_hessian(dm, batches[bi], θn, m;
+                jl = complete_data_loglikelihood(dm, batches[bi], θn, m; const_cache=cc, cache=cache)
+                H = complete_data_loglikelihood_hessian(dm, batches[bi], θn, m;
                     const_cache=cc, cache=cache)
                 acc += jl + 0.5 * tr(Σ * H)
             end
@@ -243,12 +376,12 @@ function closed_form_em(dm; n_iter=30)
     return θ, history
 end
 
-θ_cf, hist_cf = closed_form_em(dm_nn)
+θ_cf, hist_cf = closed_form_em(dm_nn; θ_start=θ_start_nn)
 (σ=NamedTuple(θ_cf).σ, ω=NamedTuple(θ_cf).ω)
 ```
 
 ```text
-(σ = 0.38353881249002136, ω = 0.49985413359255987)
+(σ = 0.3829952239980635, ω = 0.5022677891478675)
 ```
 
 ### Check Against Laplace
@@ -266,28 +399,70 @@ p = get_params(res_lap; scale=:untransformed)
 (σ = 0.39119644390127634, ω = 0.5052622384835134)
 ```
 
-### Convergence
+### The Recovered Effect Function
+
+The estimator's job is to recover the concentration-effect function `f(x)`, so the informative
+plot is against the covariate `x`: the fitted `NN1(x; ζ̂)` against the data-generating
+`NN1(x; ζ_true)`, over the observed data. `get_model_funs` returns the callable `NN1`, and
+`get_df` returns the simulated data.
 
 ```julia
+funs = get_model_funs(nn_model)
+sim_nn = get_df(dm_nn)
+xs = collect(range(minimum(sim_nn.x), maximum(sim_nn.x); length=200))
+fitted = [funs.NN1([xi], θ_cf.ζ)[1] for xi in xs]
+truef = [funs.NN1([xi], θ0_nn.ζ)[1] for xi in xs]
+
 fig2 = Figure(size=(620, 380))
-ax2 = CairoMakie.Axis(fig2[1, 1]; xlabel="EM iteration", ylabel="estimate")
-its2 = 0:(length(hist_cf) - 1)
-lines!(ax2, its2, [h.σ for h in hist_cf]; label="σ")
-lines!(ax2, its2, [h.ω for h in hist_cf]; label="ω")
-hlines!(ax2, [p.σ, p.ω]; color=:gray, linestyle=:dash)
-axislegend(ax2)
+ax2 = CairoMakie.Axis(fig2[1, 1]; xlabel="x", ylabel="y")
+scatter!(ax2, sim_nn.x, sim_nn.y; color=(:gray, 0.5), markersize=6, label="data")
+lines!(ax2, xs, truef; color=:black, linestyle=:dash, label="true f(x)")
+lines!(ax2, xs, fitted; color=:dodgerblue, linewidth=2, label="fitted f(x)")
+axislegend(ax2; position=:rb)
 fig2
 ```
 
-![Closed-form-posterior EM parameter trajectories converging smoothly to the Laplace estimates (dashed); with no Monte-Carlo E-step the path is deterministic.](figures/md1/p_cfem.png)
+![The closed-form EM recovers the data-generating effect function: fitted `NN1(x)` (solid) against the true curve (dashed), over the observed data.](figures/md1/p_fit_x.png)
 
-## Part 3: Embedding in `fit_model`
+## Part 4: Closed-Form EM vs Monte-Carlo EM
 
-The loops above return a bare `θ`. Wrapping one as a `FittingMethod` makes it first-class:
-`fit_model` returns a `FitResult` that transforms, plots, and quantifies uncertainty like any
-built-in fitter. `build_fit_result` packages the fit in a single call, and the `uq_family` trait
-opts the method into Wald intervals while keeping its own type. We reuse `closed_form_em` from
-Part 2 and apply it to the linear model `dm` from Part 1.
+The Part 1 linear model is also linear in its random effect with Gaussian noise, so
+`closed_form_em` applies to `dm` directly. Both estimators target the same Q-function: the
+Monte-Carlo EM approximates it by sampling the posterior (a noisy path), while the closed-form EM
+evaluates it exactly (a smooth, deterministic path). Run from the same off-truth start, they land
+on the same estimate, which the built-in MCEM confirms.
+
+```julia
+θ_cf_lin, hist_cf_lin = closed_form_em(dm; θ_start=θ_start, n_iter=25)
+(mh_mcem=NamedTuple(θ_mcem), closed_form=NamedTuple(θ_cf_lin),
+    builtin_mcem=get_params(res_mcem; scale=:untransformed))
+```
+
+```text
+(mh_mcem = (a = 1.0292461861307223, σ = 0.5188422506428074, ω = 0.5323302070226873), closed_form = (a = 0.9131841937538951, σ = 0.5039160288038839, ω = 0.5672973299638003), builtin_mcem = (a = 1.0714777759110046, σ = 0.50458546245996, ω = 0.5359827297425421))
+```
+
+```julia
+fig3 = Figure(size=(620, 380))
+ax3 = CairoMakie.Axis(fig3[1, 1]; xlabel="EM iteration", ylabel="σ estimate")
+lines!(ax3, 0:(length(hist_cf_lin) - 1), [h.σ for h in hist_cf_lin];
+    color=:seagreen, linewidth=2, label="closed-form EM")
+lines!(ax3, 0:(length(hist_mcem) - 1), [h.σ for h in hist_mcem];
+    color=:dodgerblue, label="MH Monte-Carlo EM")
+hlines!(ax3, [ref.σ]; color=:gray, linestyle=:dash, label="built-in MCEM")
+axislegend(ax3)
+fig3
+```
+
+![The two hand-written EMs on the same model: the closed-form E-step gives a deterministic, smooth path, while the Metropolis-Hastings E-step jitters around it; both converge to the built-in MCEM estimate (dashed).](figures/md1/p_compare.png)
+
+## Part 5: Embedding, Fine-Grained
+
+The explicit loops above return a bare `θ`. Wrapping one as a `FittingMethod` makes it
+first-class, exactly as `MyEM` was in Part 1 - but here every argument is spelled out, on the
+explicit primitives. `build_fit_result` packages the fit in a single call, and the `uq_family`
+trait opts the method into Wald intervals while keeping its own type. We reuse `closed_form_em`
+from Part 3 and apply it to the linear model `dm` from Part 1.
 
 ```julia
 struct ClosedFormEM <: FittingMethod
@@ -306,7 +481,7 @@ is short:
 function NoLimits.fit_method(dm, m::ClosedFormEM, args...; kwargs...)
     θ, _ = closed_form_em(dm; n_iter=m.n_iter)
     return build_fit_result(dm, m, θ;
-        kind=:laplace,                       # result routing: makes a LaplaceResult
+        kind=:frequentist_re,                # result routing: a frequentist result with REs
         objective=-laplace_marginal(dm, θ),  # value reported by get_objective / summaries
         eb_modes=empirical_bayes(dm, θ))     # random-effect modes the accessors resolve
 end
@@ -315,28 +490,34 @@ end
 Why each of the three is needed:
 
 - `kind` is the routing tag. `build_fit_result` produces a `StandardOptimizationResult{kind}`,
-  and `get_random_effects`, `get_loglikelihood`, and `plot_fits` dispatch on it. `:laplace`
-  makes a `LaplaceResult`, whose accessors read the random effects from `eb_modes`; the default
-  `:mle` has no random-effect branch, so `get_random_effects` would error.
+  and `get_random_effects`, `get_loglikelihood`, and `plot_fits` dispatch on it. `:frequentist_re`
+  makes a `FrequentistREResult` - a frequentist result that carries random effects - whose
+  accessors read them from `eb_modes`; the default `:frequentist` has no random-effect branch, so
+  `get_random_effects` would error.
 - `objective` is the number `get_objective` returns and the summaries display. The EM maximises
   the marginal likelihood, so we report its negative, `-laplace_marginal(dm, θ)` - the marginal
   log-likelihood with the random effects integrated out (a Laplace approximation, exact for this
   linear-Gaussian model). Reporting it this way puts the objective on the same scale as
   `fit_model(dm, Laplace())`. It plays no part in the fitting itself, only in reporting.
 - `eb_modes` are the per-batch random-effect modes from `empirical_bayes`; together with
-  `kind=:laplace` they are what the accessors and plots resolve the random effects from.
+  `kind=:frequentist_re` they are what the accessors and plots resolve the random effects from.
 
 A production method also forwards the options `fit_model` passes through - `store_data_model`
 (whether to keep `dm` in the result, so `plot_fits(res)`/`compute_uq(res)` work without re-passing
-it) and `constants_re` (fixed random-effect levels) - and records the iteration count. That is
-the form used below:
+it), `constants_re` (fixed random-effect levels), and `theta_0_untransformed` (the starting point;
+`Multistart` and `pooled_init` deliver their starts through it, so a method that ignores it would
+run every multistart from the same point) - and records the iteration count. That is the form used
+below:
 
 ```julia
 function NoLimits.fit_method(dm, m::ClosedFormEM, args...;
-        constants_re=NamedTuple(), store_data_model=true, kwargs...)
-    θ, _ = closed_form_em(dm; n_iter=m.n_iter)
+        constants_re=NamedTuple(), store_data_model=true,
+        theta_0_untransformed=nothing, kwargs...)
+    θ0 = theta_0_untransformed === nothing ?
+         get_θ0_untransformed(get_fixed(get_model(dm))) : theta_0_untransformed
+    θ, _ = closed_form_em(dm; θ_start=θ0, n_iter=m.n_iter)
     return build_fit_result(dm, m, θ;
-        kind=:laplace,
+        kind=:frequentist_re,
         objective=-laplace_marginal(dm, θ),
         iterations=m.n_iter,
         eb_modes=empirical_bayes(dm, θ; constants_re=constants_re),
@@ -379,7 +560,7 @@ Outcome data coverage
 Empirical Bayes random effects summary (across RE levels)
   random effect       n          mean            sd           q25        median           q75
   ---------------------------------------------------------------------------
-  η                  30        0.0010        0.4993       -0.3620       -0.0156        0.3483
+  b                  30        0.0010        0.4993       -0.3620       -0.0156        0.3483
 ```
 
 Wald intervals come straight from `compute_uq`; the `uq_family` trait routes it to the
@@ -405,9 +586,9 @@ Overview
 Parameter uncertainty summary
   parameter      Estimate    Std. Error      CI Lower      CI Upper
   ---------------------------------------------------
-  a                1.0729        0.1023        0.8780        1.2691
-  σ                0.5046        0.0283        0.4517        0.5638
-  ω                0.5351        0.0812        0.3973        0.7188
+  a                1.0729        0.1080        0.8576        1.2812
+  σ                0.5046        0.0299        0.4523        0.5687
+  ω                0.5351        0.0798        0.4001        0.7119
 
 Outcome data coverage
   outcome       n_obs   n_missing
@@ -418,7 +599,7 @@ Outcome data coverage
 Empirical Bayes random effects summary (across RE levels)
   random effect       n          mean            sd           q25        median           q75
   ---------------------------------------------------------------------------
-  η                  30        0.0010        0.4993       -0.3620       -0.0156        0.3483
+  b                  30        0.0010        0.4993       -0.3620       -0.0156        0.3483
 ```
 
 Predictions plot exactly as for a built-in fit.
@@ -432,12 +613,19 @@ p_embed
 
 ## Summary
 
-- `build_re_batch_infos` and `joint_loglikelihood` express the complete-data likelihood directly,
+- `build_fit_context` + `optimize_parameters` are the quick path: caches, transforms, and result
+  packaging handled in a handful of lines, with every context call forwarding to a cache-explicit
+  primitive.
+- `build_re_batch_infos` and `complete_data_loglikelihood` express the complete-data likelihood directly,
   so a bespoke fitting loop needs no access to package internals.
-- `sample_eta` gives a Monte-Carlo E-step for any model; `posterior_moments` gives an exact,
-  sampling-free E-step whenever the random-effect posterior is Gaussian.
-- Both hand-written EMs recover the built-in estimates, and their parameters are ordinary
-  natural-scale `ComponentArray`s.
+- `sample_random_effect_draws` gives a Monte-Carlo E-step for any model by drawing the random
+  effects from their exact conditional posterior; `empirical_bayes` +
+  `empirical_bayes_covariance` give an exact, sampling-free E-step whenever that posterior is
+  Gaussian. On a shared linear-Gaussian model the two agree, the closed-form path being
+  deterministic and the Monte-Carlo one noisy.
+- Both hand-written EMs recover the built-in estimates from a deliberately wrong start, and their
+  parameters are ordinary natural-scale `ComponentArray`s.
 - `build_fit_result` turns an estimate into the same `FitResult` the built-in fitters return, so
-  a custom method inherits every accessor, plot, and transform; the `uq_family` trait adds Wald
-  uncertainty while the method keeps its own type.
+  a custom method inherits every accessor, plot, and transform; `kind=:frequentist_re` selects the
+  frequentist-with-random-effects result, and the `uq_family` trait adds Wald uncertainty while
+  the method keeps its own type.

@@ -2,6 +2,7 @@ export MCMC
 export MCMCResult
 
 using Turing
+import MCMCChains
 using DynamicPPL
 using SciMLBase
 using ComponentArrays
@@ -89,6 +90,40 @@ struct MCMCResult{C, S, A, N, O} <: MethodResult
 end
 
 get_chain(res::MCMCResult) = res.chain
+
+"""
+    build_fit_result(dm, method, chain::MCMCChains.Chains; sampler, n_samples, n_adapt=0,
+                     observed=<observed columns of dm>, notes=NamedTuple(),
+                     store_data_model=true, fit_args=(), fit_kwargs=NamedTuple()) -> FitResult
+
+Bayesian counterpart of [`build_fit_result`](@ref): package a posterior `chain` from a custom
+Bayesian estimator into the same first-class `FitResult` a built-in `MCMC` fit returns, so
+`get_chain`, `get_observed`, chain-based uncertainty (`compute_uq(res; method=:chain)`),
+posterior-predictive plotting, and `summarize` (which reports `inference: bayesian`) all work.
+The estimator brings its own `chain`; this only packages it - it does not run a sampler.
+
+Mirrors the built-in MCMC path exactly: the point-estimate slot is empty (so `get_params`
+returns empty - posterior summaries come from the chain via `summarize`/`compute_uq`), and
+`observed` defaults to the model's observed-outcome columns. Pass `n_adapt` when the chain
+still contains adaptation draws - summaries and chain UQ drop that many warm-up rows by
+default. `fit_kwargs` (e.g. `(constants = …,)`) is stored on the result so `compute_uq`
+resolves the same settings the fit used. Dispatch is on the `chain` argument, so the
+frequentist `build_fit_result(dm, method, θ; kind=…)` is unaffected.
+"""
+function build_fit_result(dm::DataModel, method::FittingMethod, chain::MCMCChains.Chains;
+        sampler, n_samples::Integer, n_adapt::Integer = 0,
+        observed = get_df(dm)[:, get_obs_cols(dm)],
+        notes = NamedTuple(),
+        store_data_model::Bool = true,
+        fit_args::Tuple = (), fit_kwargs = NamedTuple())
+    result = MCMCResult(chain, sampler, n_samples, notes, observed)
+    summary = FitSummary(NaN, missing,
+        FitParameters(ComponentArray(), ComponentArray()), notes)
+    diagnostics = FitDiagnostics(
+        (;), (sampler = sampler,), (n_samples = n_samples, n_adapt = n_adapt), notes)
+    return FitResult(method, result, summary, diagnostics,
+        store_data_model ? dm : nothing, fit_args, fit_kwargs)
+end
 
 @inline function _mcmc_sampler_kind(sampler)
     sampler isa NUTS && return :nuts

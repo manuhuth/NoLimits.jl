@@ -325,7 +325,8 @@ end
 function plot_observation_distributions(dm::DataModel; kwargs...)
     constants_re = haskey(kwargs, :constants_re) ? kwargs[:constants_re] : NamedTuple()
     cache = build_plot_cache(dm; constants_re = constants_re, cache_obs_dists = false)
-    res = FitResult(MLE(), MLEResult(NamedTuple(), 0.0, 0, NamedTuple(), NamedTuple()),
+    res = FitResult(
+        MLE(), FrequentistResult(NamedTuple(), 0.0, 0, NamedTuple(), NamedTuple()),
         FitSummary(
             0.0, true, FitParameters(ComponentArray(), ComponentArray()), NamedTuple()),
         FitDiagnostics((;), (;), (;), (;)), dm, (), NamedTuple())
