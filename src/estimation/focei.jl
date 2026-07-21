@@ -620,6 +620,13 @@ end
 # FOCEI marginal and its gradient are computed through the same fast code path.
 # -------------------------------------------------------------------------------------
 
+"""
+    FisherInformationCurvature(interaction::Bool) <: AbstractCurvature
+
+Curvature that replaces the inner Hessian with the expected-information (Gauss-Newton) form
+`Σ Jᵀ ℐ(φ) J − ∇²log π` - positive-definite by construction and one AD order cheaper than the
+exact Hessian. `interaction=true` gives FOCEI, `false` gives FOCE. See also `FOCEI`.
+"""
 struct FisherInformationCurvature <: AbstractCurvature
     interaction::Bool
 end

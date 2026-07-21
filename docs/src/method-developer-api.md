@@ -7,8 +7,10 @@ likelihood, the random-effect prior, the joint and marginal densities, empirical
 and covariances, and posterior sampling - as composable, documented, semver-stable functions.
 
 For using the package to fit models, see the [Quickstart](quickstart.md) and
-[Estimation](estimation/index.md) pages. For contributing to the package internals, see the
-[Developers Guide](developers-guide.md).
+[Estimation](estimation/index.md) pages. For a step-by-step walkthrough that builds two working
+estimators from these primitives - a Monte-Carlo EM and a closed-form-posterior EM - see the
+[Building Custom Estimators](tutorials/building-custom-estimators.md) tutorial. For contributing
+to the package internals, see the [Developers Guide](developers-guide.md).
 
 ## Two contracts
 
@@ -40,7 +42,7 @@ Every function here obeys two conventions:
 | Fitting drivers | `fit_method`, `fit_fixed_effects`, `fit_laplace_family` |
 | Transforms | `ForwardTransform`, `InverseTransform`, `apply_inv_jacobian_T`, `logabsdetjac` |
 
-Each has a reference entry in the [API](api.md). The identity `joint_loglikelihood ==
+Full signatures are in the [API reference](api.md). The identity `joint_loglikelihood ==
 conditional_loglikelihood + re_logprior` holds at batch scale, and `posterior_moments` returns
 the Laplace covariance `Σ = (−H)⁻¹` at the empirical-Bayes mode.
 

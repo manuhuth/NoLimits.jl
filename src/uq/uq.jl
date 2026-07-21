@@ -1,6 +1,31 @@
-export compute_uq
+export compute_uq, uq_family
 
 using Random
+
+"""
+    uq_family(method::FittingMethod) -> Symbol
+
+Routing trait telling `compute_uq` which Wald backend a fitting method uses: `:wald_no_re`
+(fixed-effects Hessian) or `:wald_re` (random-effects Laplace-marginal Hessian); `:none`
+(the default) means no built-in Wald UQ. A custom method embedded through `fit_method` opts
+into Wald/profile intervals by defining, for example,
+`NoLimits.uq_family(::MyMethod) = :wald_re`. A `:wald_re` method's covariance is built from
+the Laplace marginal at the estimate (override the approximation with the `re_approx_method`
+keyword of `compute_uq`). This lets a custom estimator keep its own method type and still
+inherit uncertainty quantification.
+"""
+uq_family(::FittingMethod) = :none
+uq_family(::MLE) = :wald_no_re
+uq_family(::MAP) = :wald_no_re
+uq_family(::Pooled) = :wald_no_re
+uq_family(::PooledMap) = :wald_no_re
+uq_family(::Laplace) = :wald_re
+uq_family(::FOCEI) = :wald_re
+uq_family(::MCEM) = :wald_re
+uq_family(::SAEM) = :wald_re
+uq_family(::GHQuadrature) = :wald_re
+uq_family(::MCMC) = :chain
+uq_family(::VI) = :chain
 
 """
     compute_uq(res::FitResult; method, interval, vcov, re_approx, re_approx_method,
@@ -115,8 +140,8 @@ function compute_uq(res::FitResult;
             rng = rng)
     elseif backend == :wald
         src_method = get_method(res)
-        if src_method isa MLE || src_method isa MAP ||
-           src_method isa Pooled || src_method isa PooledMap
+        fam = uq_family(src_method)
+        if fam == :wald_no_re
             return _compute_uq_wald_no_re(res;
                 level = level_use,
                 vcov = vcov,
@@ -132,9 +157,7 @@ function compute_uq(res::FitResult;
                 ode_kwargs = ode_kwargs,
                 serialization = serialization,
                 rng = rng)
-        elseif src_method isa Laplace || src_method isa FOCEI ||
-               src_method isa MCEM || src_method isa SAEM ||
-               src_method isa GHQuadrature
+        elseif fam == :wald_re
             return _compute_uq_wald_re(res;
                 level = level_use,
                 vcov = vcov,
@@ -154,7 +177,9 @@ function compute_uq(res::FitResult;
                 serialization = serialization,
                 rng = rng)
         else
-            error("Wald UQ is currently supported for MLE, MAP, Pooled, PooledMap, Laplace, FOCEI, MCEM, SAEM, and GHQuadrature fit results.")
+            error("Wald UQ is not available for a $(typeof(src_method)) fit. Built-in support: " *
+                  "MLE, MAP, Pooled, PooledMap, Laplace, FOCEI, MCEM, SAEM, GHQuadrature. A custom " *
+                  "method can opt in via NoLimits.uq_family(::YourMethod) = :wald_no_re or :wald_re.")
         end
     elseif backend == :profile
         return _compute_uq_profile(res;

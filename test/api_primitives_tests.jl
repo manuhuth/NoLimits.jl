@@ -77,6 +77,52 @@ function NoLimits.fit_method(
         store_data_model = store_data_model, extra_objective = extra_objective)
 end
 
+# Protocol demo (Skeleton C): a bespoke iterative estimator that keeps its OWN method type,
+# packages the result with `build_fit_result`, and opts into Wald UQ via `uq_family`.
+struct APITestClosedFormEM <: NoLimits.FittingMethod
+    n_iter::Int
+end
+APITestClosedFormEM(; n_iter = 5) = APITestClosedFormEM(n_iter)
+NoLimits.uq_family(::APITestClosedFormEM) = :wald_re
+function NoLimits.fit_method(dm, m::APITestClosedFormEM, args...;
+        constants_re = NamedTuple(), store_data_model = true, kwargs...)
+    fe = NoLimits.get_fixed(NoLimits.get_model(dm))
+    inv_transform = NoLimits.get_inverse_transform(fe)
+    θ = NoLimits.get_θ0_untransformed(fe)
+    θt0 = NoLimits.get_transform(fe)(θ)
+    _, batches, cc = NoLimits.build_re_batch_infos(dm, constants_re)
+    cache = NoLimits.build_likelihood_cache(dm; force_saveat = true)
+    obj = 0.0
+    for _ in 1:(m.n_iter)
+        pm = NoLimits.posterior_moments(dm, θ)
+        function negQ(θt_vec, _)
+            θn = NoLimits.symmetrize_psd_parameters(dm,
+                inv_transform(ComponentArray(θt_vec, getaxes(θt0))))
+            acc = zero(eltype(θt_vec))
+            for bi in eachindex(batches)
+                mb, Σ = pm[bi]
+                Σ === nothing && continue
+                jl = NoLimits.joint_loglikelihood(dm, batches[bi], θn, mb;
+                    const_cache = cc, cache = cache)
+                H = NoLimits.joint_loglikelihood_hessian(dm, batches[bi], θn, mb;
+                    const_cache = cc, cache = cache)
+                acc += jl + 0.5 * tr(Σ * H)
+            end
+            return -acc
+        end
+        prob = OptimizationProblem(
+            OptimizationFunction(negQ, Optimization.AutoForwardDiff()),
+            collect(NoLimits.get_transform(fe)(θ)))
+        sol = Optimization.solve(prob, OptimizationOptimJL.LBFGS(); maxiters = 30)
+        θ = inv_transform(ComponentArray(sol.u, getaxes(θt0)))
+        obj = -negQ(collect(NoLimits.get_transform(fe)(θ)), nothing)
+    end
+    return build_fit_result(dm, m, θ; kind = :laplace, objective = obj,
+        iterations = m.n_iter,
+        eb_modes = NoLimits.empirical_bayes(dm, θ; constants_re = constants_re),
+        store_data_model = store_data_model, fit_args = args)
+end
+
 @testset "dev-API primitives" begin
     @testset "public names alias the internals (===)" begin
         @test NoLimits.symmetrize_psd_parameters === NoLimits._symmetrize_psd_params
@@ -368,5 +414,35 @@ end
         @test all(isfinite, g)
         # structured scales (cholesky/expm/stickbreak/stickbreakrows/lograterows/lie)
         # are covered in test/logabsdetjac_tests.jl
+    end
+
+    @testset "custom estimator: build_fit_result + uq_family" begin
+        # built-in uq_family defaults are preserved
+        @test NoLimits.uq_family(NoLimits.MLE()) == :wald_no_re
+        @test NoLimits.uq_family(NoLimits.Laplace()) == :wald_re
+        @test NoLimits.uq_family(NoLimits.MCMC()) == :chain
+        # a custom method with no declared family has no built-in Wald UQ
+        @test NoLimits.uq_family(RidgeMLE()) == :none
+        @test NoLimits.uq_family(APITestClosedFormEM()) == :wald_re
+
+        dm = fx_re_dm()
+        res = fit_model(dm, APITestClosedFormEM(; n_iter = 5);
+            serialization = NoLimits.EnsembleSerial())
+        # first-class result that keeps its own method type
+        @test res isa NoLimits.FitResult
+        @test NoLimits.get_method(res) isa APITestClosedFormEM
+        @test NoLimits.get_result(res) isa NoLimits.LaplaceResult      # kind = :laplace
+        @test NoLimits.get_params(res; scale = :untransformed) isa ComponentArray
+        @test NoLimits.get_params(res; scale = :transformed) isa ComponentArray
+        @test NoLimits.get_random_effects(dm, res) isa NamedTuple
+        @test isfinite(NoLimits.get_loglikelihood(dm, res))
+        @test NoLimits.build_plot_cache(res) !== nothing
+        # UQ works through the trait, without masquerading as a built-in method
+        @test compute_uq(res; method = :wald, pseudo_inverse = true) isa NoLimits.UQResult
+
+        # a custom method without uq_family raises an informative error (not a wrong answer)
+        res_ridge = fit_model(fx_nore_dm(), RidgeMLE(; λ = 1.0);
+            serialization = NoLimits.EnsembleSerial())
+        @test_throws ErrorException compute_uq(res_ridge; method = :wald)
     end
 end

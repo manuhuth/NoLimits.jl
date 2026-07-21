@@ -84,8 +84,10 @@ function _resolve_wald_re_approx_method(source_method::FittingMethod;
         return source_method
     end
 
-    if !(source_method isa MCEM || source_method isa SAEM)
-        error("Wald UQ for random-effects models currently supports Laplace, FOCEI, MCEM, SAEM, and GHQuadrature.")
+    if !(source_method isa MCEM || source_method isa SAEM ||
+         uq_family(source_method) == :wald_re)
+        error("Wald UQ for random-effects models currently supports Laplace, FOCEI, MCEM, " *
+              "SAEM, GHQuadrature, or a method with uq_family == :wald_re.")
     end
 
     if re_approx_method !== nothing
@@ -121,8 +123,9 @@ function _compute_uq_wald_no_re(res::FitResult;
         error("This fit result does not store a DataModel; pass store_data_model=true when fitting.")
     method = get_method(res)
     is_pooled = method isa Pooled || method isa PooledMap
-    (method isa MLE || method isa MAP || is_pooled) ||
-        error("This Wald path supports MLE, MAP, Pooled, and PooledMap fits.")
+    (method isa MLE || method isa MAP || is_pooled || uq_family(method) == :wald_no_re) ||
+        error("This Wald path supports MLE, MAP, Pooled, PooledMap, or a method with " *
+              "uq_family == :wald_no_re.")
     if is_pooled
         wk = get_notes(res).weakly_identified
         isempty(wk) ||

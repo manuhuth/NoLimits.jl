@@ -1536,20 +1536,51 @@ end
 # `ExactHessianCurvature` is the full second-order AD Hessian (Laplace default);
 # `FisherInformationCurvature` (focei.jl) plugs in the Gauss-Newton / expected-information
 # Hessian. Add a new curvature by implementing `inner_curvature(::YourCurvature, …)`.
+"""
+    AbstractCurvature
+
+Curvature seam for marginal-likelihood methods. A curvature supplies the inner Hessian
+`H = ∇²_b log f(b)` used to assemble the Laplace/FOCEI marginal; everything else (the
+empirical-Bayes solve, the log-determinant, the θ-gradient, threading) is shared.
+`ExactHessianCurvature` is the Laplace default; `FisherInformationCurvature` is the FOCEI/FOCE
+expected-information form. Define a new marginal method by subtyping this and implementing
+`inner_curvature`, then delegating `fit_method` to `fit_laplace_family`.
+"""
 abstract type AbstractCurvature end
 const _HessMode = AbstractCurvature
 
+"""
+    ExactHessianCurvature() <: AbstractCurvature
+
+Curvature that uses the full second-order automatic-differentiation Hessian `H = ∇²_b log f` -
+the exact Laplace approximation, and the default curvature.
+"""
 struct ExactHessianCurvature <: AbstractCurvature end
 const _ExactHess = ExactHessianCurvature
 
-# Opaque workspace holding the internal AD cache + batch index, kept off `inner_curvature`'s
-# public signature so the API does not commit to those caching representations.
+"""
+    CurvatureWorkspace(; ad_cache=nothing, bi=1)
+
+Opaque handle passed to `inner_curvature`, bundling the internal AD cache and the batch index.
+It is kept off the public signature so the API does not commit to those caching
+representations; a custom curvature forwards it unchanged when delegating to the built-in
+`inner_curvature(ExactHessianCurvature(), …)`.
+"""
 struct CurvatureWorkspace{A}
     ad_cache::A
     bi::Int
 end
 CurvatureWorkspace(; ad_cache = nothing, bi::Int = 1) = CurvatureWorkspace(ad_cache, bi)
 
+"""
+    inner_curvature(curvature, dm, batch_info, θ, b, const_cache, cache, ws;
+                    ctx="", tctx=nothing) -> Matrix
+
+Return the inner Hessian `H = ∇²_b log f(b)` for one batch under `curvature` (negative-definite
+near a mode; the posterior precision is `-H`). This is the single method a new
+`AbstractCurvature` implements; `ExactHessianCurvature` and `FisherInformationCurvature` are the
+reference implementations. `ws` is an opaque `CurvatureWorkspace`.
+"""
 @inline function inner_curvature(::ExactHessianCurvature, dm::DataModel,
         batch_info::REBatchInfo, θ, b, const_cache::REConstantsCache, cache::_LLCache,
         ws::CurvatureWorkspace; ctx::AbstractString = "", tctx = nothing)

@@ -21,6 +21,11 @@ using SciMLBase
 using SimpleChains
 using Turing
 using CairoMakie
+using Optimization
+using OptimizationOptimJL
+using LineSearches
+using Lux
+using ComponentArrays
 
 const DOCS_ROOT = normpath(joinpath(@__DIR__, ".."))
 const TUT_DIR = joinpath(DOCS_ROOT, "src", "tutorials")
@@ -825,14 +830,224 @@ function tutorial9()
 end
 
 # ----------------------------------------------------------------------------- #
+# Tutorial md1: Building custom estimators on the method-developer API
+# ----------------------------------------------------------------------------- #
+
+# Top-level so they mirror the markdown a reader copies (Part 2 + Part 3).
+function closed_form_em(dm; n_iter = 30)
+    fe = get_fixed(get_model(dm))
+    inv_transform = get_inverse_transform(fe)
+    θ = get_θ0_untransformed(fe)
+    θt0 = get_transform(fe)(θ)
+
+    _, batches, cc = build_re_batch_infos(dm, NamedTuple())
+    cache = build_likelihood_cache(dm; force_saveat = true)
+    history = [(σ = NamedTuple(θ).σ, ω = NamedTuple(θ).ω)]
+
+    for _ in 1:n_iter
+        # E-step: exact Gaussian posterior per batch (mode = mean, Σ = (−H)⁻¹). No sampling.
+        pm = posterior_moments(dm, θ)
+
+        # M-step: exact expected complete-data log-likelihood for a quadratic joint,
+        # Q(θ) = Σ_batch [ joint(θ, m) + ½·tr(Σ · ∇²_b joint(θ, m)) ].
+        function negQ(θt_vec, _)
+            θn = symmetrize_psd_parameters(dm,
+                inv_transform(ComponentArray(θt_vec, getaxes(θt0))))
+            acc = zero(eltype(θt_vec))
+            for bi in eachindex(batches)
+                m, Σ = pm[bi]
+                Σ === nothing && continue
+                jl = joint_loglikelihood(dm, batches[bi], θn, m;
+                    const_cache = cc, cache = cache)
+                H = joint_loglikelihood_hessian(dm, batches[bi], θn, m;
+                    const_cache = cc, cache = cache)
+                acc += jl + 0.5 * tr(Σ * H)
+            end
+            return -acc
+        end
+
+        prob = OptimizationProblem(OptimizationFunction(negQ, AutoForwardDiff()),
+            collect(get_transform(fe)(θ)))
+        sol = solve(prob, LBFGS(linesearch = BackTracking()); iterations = 50)
+        θ = inv_transform(ComponentArray(sol.u, getaxes(θt0)))
+        push!(history, (σ = NamedTuple(θ).σ, ω = NamedTuple(θ).ω))
+    end
+    return θ, history
+end
+
+# A bespoke estimator embedded in fit_model: keeps its own type, packages the result
+# with build_fit_result, and opts into Wald UQ via the uq_family trait.
+struct ClosedFormEM <: FittingMethod
+    n_iter::Int
+end
+ClosedFormEM(; n_iter = 30) = ClosedFormEM(n_iter)
+NoLimits.uq_family(::ClosedFormEM) = :wald_re
+function NoLimits.fit_method(dm, m::ClosedFormEM, args...;
+        constants_re = NamedTuple(), store_data_model = true, kwargs...)
+    θ, _ = closed_form_em(dm; n_iter = m.n_iter)
+    return build_fit_result(dm, m, θ; kind = :laplace,
+        objective = -laplace_marginal(dm, θ), iterations = m.n_iter,
+        eb_modes = empirical_bayes(dm, θ; constants_re = constants_re),
+        store_data_model = store_data_model, fit_args = args)
+end
+
+function tutorial_md1()
+    slug = "md1"
+
+    # ── Part 1: Monte-Carlo EM ────────────────────────────────────────────────
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            σ = RealNumber(0.5, scale = :log)
+            ω = RealNumber(0.5, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, ω); column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(a + η, σ)
+        end
+    end
+
+    n_id, n_obs = 30, 6
+    df = DataFrame(ID = repeat(1:n_id; inner = n_obs),
+        t = repeat(collect(range(0.0, 1.0; length = n_obs)), n_id),
+        y = zeros(n_id * n_obs))
+    dm = simulate_data_model(DataModel(model, df; primary_id = :ID, time_col = :t);
+        rng = MersenneTwister(42))
+
+    function mcem_from_scratch(dm; n_iter = 25, n_samples = 300, rng = MersenneTwister(0))
+        fe = get_fixed(get_model(dm))
+        inv_transform = get_inverse_transform(fe)
+        θ = get_θ0_untransformed(fe)
+        θt0 = get_transform(fe)(θ)
+
+        _, batches, cc = build_re_batch_infos(dm, NamedTuple())
+        cache = build_likelihood_cache(dm; force_saveat = true)
+        history = [NamedTuple(θ)]
+
+        for _ in 1:n_iter
+            # E-step: one importance sample per batch, drawn once and held fixed.
+            samples = sample_eta(
+                dm, θ; method = :importance, n_samples = n_samples, rng = rng)
+            draws = [get_draws(s) for s in samples]
+            weights = map(samples) do s
+                w = exp.(get_log_weights(s) .- maximum(get_log_weights(s)))
+                w ./ sum(w)
+            end
+
+            # Q(θ) = Σ_batch Σ_draw w · joint_loglikelihood. The joint carries the RE
+            # prior, so a, σ and ω are all updated in this one M-step.
+            function negQ(θt_vec, _)
+                θn = symmetrize_psd_parameters(dm,
+                    inv_transform(ComponentArray(θt_vec, getaxes(θt0))))
+                acc = zero(eltype(θt_vec))
+                for bi in eachindex(batches)
+                    D, w = draws[bi], weights[bi]
+                    for m in axes(D, 2)
+                        acc += w[m] *
+                               joint_loglikelihood(dm, batches[bi], θn, view(D, :, m);
+                            const_cache = cc, cache = cache)
+                    end
+                end
+                return -acc
+            end
+
+            prob = OptimizationProblem(OptimizationFunction(negQ, AutoForwardDiff()),
+                collect(get_transform(fe)(θ)))
+            sol = solve(prob, LBFGS(linesearch = BackTracking()); iterations = 50)
+            θ = inv_transform(ComponentArray(sol.u, getaxes(θt0)))
+            push!(history, NamedTuple(θ))
+        end
+        return θ, history
+    end
+
+    θ_mcem, hist_mcem = mcem_from_scratch(dm)
+    txt(slug, "mcem_params", NamedTuple(θ_mcem))
+
+    res_mcem = fit_model(dm, MCEM(; maxiters = 25);
+        serialization = EnsembleSerial(), rng = MersenneTwister(1))
+    txt(slug, "mcem_builtin", get_params(res_mcem; scale = :untransformed))
+
+    fig1 = Figure(size = (620, 380))
+    ax = CairoMakie.Axis(fig1[1, 1]; xlabel = "EM iteration", ylabel = "estimate")
+    its = 0:(length(hist_mcem) - 1)
+    lines!(ax, its, [h.σ for h in hist_mcem]; label = "σ")
+    lines!(ax, its, [h.ω for h in hist_mcem]; label = "ω")
+    ref = get_params(res_mcem; scale = :untransformed)
+    hlines!(ax, [ref.σ, ref.ω]; color = :gray, linestyle = :dash)
+    axislegend(ax)
+    save(fig(slug, "p_mcem"), fig1)
+
+    # ── Part 2: Closed-form-posterior EM (linear-Gaussian NN model) ────────────
+    chain = Chain(Dense(1, 6, tanh), Dense(6, 1))
+    nn_model = @Model begin
+        @fixedEffects begin
+            ζ = NNParameters(chain; function_name = :NN1, calculate_se = false)
+            σ = RealNumber(0.4, scale = :log)
+            ω = RealNumber(0.5, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+            x = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, ω); column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(η + NN1([x], ζ)[1], σ)
+        end
+    end
+
+    rng = MersenneTwister(1)
+    m_id, m_obs = 25, 8
+    df_nn = DataFrame(ID = repeat(1:m_id; inner = m_obs),
+        t = repeat(collect(range(0.0, 1.0; length = m_obs)), m_id),
+        x = randn(rng, m_id * m_obs), y = zeros(m_id * m_obs))
+    dm_nn = simulate_data_model(
+        DataModel(nn_model, df_nn; primary_id = :ID, time_col = :t);
+        rng = MersenneTwister(7))
+
+    θ_cf, hist_cf = closed_form_em(dm_nn)
+    txt(slug, "cfem_params", (σ = NamedTuple(θ_cf).σ, ω = NamedTuple(θ_cf).ω))
+
+    res_lap = fit_model(dm_nn, NoLimits.Laplace(); serialization = EnsembleSerial())
+    p = get_params(res_lap; scale = :untransformed)
+    txt(slug, "cfem_laplace", (σ = p.σ, ω = p.ω))
+
+    fig2 = Figure(size = (620, 380))
+    ax2 = CairoMakie.Axis(fig2[1, 1]; xlabel = "EM iteration", ylabel = "estimate")
+    its2 = 0:(length(hist_cf) - 1)
+    lines!(ax2, its2, [h.σ for h in hist_cf]; label = "σ")
+    lines!(ax2, its2, [h.ω for h in hist_cf]; label = "ω")
+    hlines!(ax2, [p.σ, p.ω]; color = :gray, linestyle = :dash)
+    axislegend(ax2)
+    save(fig(slug, "p_cfem"), fig2)
+
+    # ── Part 3: embedding the estimator in fit_model ──────────────────────────
+    res_embed = fit_model(dm, ClosedFormEM(; n_iter = 30); serialization = EnsembleSerial())
+    txt(slug, "embed_summary", NoLimits.summarize(res_embed))
+    uq_embed = compute_uq(res_embed; method = :wald, pseudo_inverse = true)
+    txt(slug, "embed_uq", NoLimits.summarize(res_embed, uq_embed))
+    plot_fits(res_embed; observable = :y, individuals_idx = [1, 2], ncols = 2,
+        save_path = fig(slug, "p_embed"))
+    return nothing
+end
+
+# ----------------------------------------------------------------------------- #
 const TUTORIALS = Dict(
     "t1" => tutorial1, "t2" => tutorial2, "t3" => tutorial3, "t4" => tutorial4,
-    "t5" => tutorial5, "t6" => tutorial6, "fe1" => tutorial8, "fe2" => tutorial9
+    "t5" => tutorial5, "t6" => tutorial6, "fe1" => tutorial8, "fe2" => tutorial9,
+    "md1" => tutorial_md1
 )
 
 function main()
     mkpath(FIG_ROOT)
-    requested = isempty(ARGS) ? ["t1", "t2", "t5", "t6", "fe1", "fe2", "t3", "t4"] : ARGS
+    requested = isempty(ARGS) ? ["t1", "t2", "t5", "t6", "fe1", "fe2", "t3", "t4", "md1"] :
+                ARGS
     for key in requested
         haskey(TUTORIALS, key) || (@warn "Unknown tutorial key: $key"; continue)
         @info "==== Generating assets for $key ===="

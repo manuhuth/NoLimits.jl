@@ -157,6 +157,15 @@ function PooledResult(solution::S, objective::O, iterations::I, raw::R, notes::N
         solution, objective, iterations, raw, notes, nothing, eta_vec, strategies)
 end
 
+# Outer constructor parametrised only on `Kind` (a Symbol), inferring the field types.
+# Lets a custom estimator build a result of any kind without spelling out all type params.
+function StandardOptimizationResult{Kind}(solution::S, objective::O, iterations::I, raw::R,
+        notes::N, eb_modes::B, eta_vec::E,
+        strategies::St) where {Kind, S, O, I, R, N, B, E, St}
+    return StandardOptimizationResult{Kind, S, O, I, R, N, B, E, St}(
+        solution, objective, iterations, raw, notes, eb_modes, eta_vec, strategies)
+end
+
 export StandardOptimizationResult
 
 struct EBEOptions{O, K, A, T}
@@ -331,6 +340,61 @@ struct FitResult{M <: FittingMethod, R <: MethodResult, S, D, DM, A, K}
     data_model::DM
     fit_args::A
     fit_kwargs::K
+end
+
+"""
+    build_fit_result(dm, method, θ; kind=:mle, objective, converged=true, iterations=missing,
+                     eb_modes=nothing, eta_vec=nothing, strategies=nothing, solution=nothing,
+                     raw=nothing, notes=NamedTuple(), optimizer=nothing,
+                     convergence=NamedTuple(), timing=NamedTuple(),
+                     store_data_model=true, fit_args=(), fit_kwargs=NamedTuple()) -> FitResult
+
+Package a fitted estimate into the first-class [`FitResult`](@ref) that `fit_model` returns, so a
+custom `fit_method` inherits every accessor, plot, transform, and (where applicable) uncertainty
+backend without re-implementing the wrapping. This is the one-call finalizer for method
+developers.
+
+`θ` is the natural-scale fixed-effect `ComponentArray`; both parameter scales are filled in from
+the model's transform and PSD blocks are symmetrised, so `get_params(res; scale=…)` works on
+either scale. `kind` selects the result routing:
+
+  - `:mle` / `:map` - fixed-effects methods (no random effects).
+  - `:laplace` / `:mcem` / `:saem` / `:ghquadrature` - random-effect methods; pass `eb_modes` as
+    the per-batch modes (e.g. from [`empirical_bayes`](@ref), aligned to `build_re_batch_infos`
+    order) so `get_random_effects`, `get_loglikelihood`, and plotting resolve the random effects.
+  - `:pooled` - plugged-in random effects supplied through `eta_vec`.
+
+Reusing `:laplace` gives the widest random-effect accessor coverage. Note that `compute_uq`
+routes on the `method` *type*; to inherit Wald/profile intervals either pass a built-in `method`
+instance (e.g. `Laplace()`) or define the `uq_family` trait for your method type.
+"""
+function build_fit_result(dm::DataModel, method::FittingMethod, θ::ComponentArray;
+        kind::Symbol = :mle,
+        objective::Real,
+        converged::Bool = true,
+        iterations = missing,
+        eb_modes = nothing,
+        eta_vec = nothing,
+        strategies = nothing,
+        solution = nothing,
+        raw = nothing,
+        notes = NamedTuple(),
+        optimizer = nothing,
+        convergence = NamedTuple(),
+        timing = NamedTuple(),
+        store_data_model::Bool = true,
+        fit_args::Tuple = (),
+        fit_kwargs = NamedTuple())
+    fe = get_fixed(get_model(dm))
+    θ_sym = symmetrize_psd_parameters(dm, θ)
+    θt = get_transform(fe)(θ_sym)
+    params = FitParameters(θt, θ_sym)
+    result = StandardOptimizationResult{kind}(
+        solution, objective, iterations, raw, notes, eb_modes, eta_vec, strategies)
+    summary = FitSummary(objective, converged, params, notes)
+    diagnostics = FitDiagnostics(timing, (; optimizer = optimizer), convergence, notes)
+    return FitResult(method, result, summary, diagnostics,
+        store_data_model ? dm : nothing, fit_args, fit_kwargs)
 end
 
 """
@@ -928,6 +992,12 @@ function get_laplace_random_effects(res::FitResult;
         include_constants = include_constants)
 end
 
+"""
+    eta_from_modes(dm, batch_infos, bstars, const_cache, θ) -> Vector{ComponentArray}
+
+Map a vector of per-batch random-effect modes `bstars` (aligned with `batch_infos`, e.g. the
+output of `empirical_bayes`) to one natural-scale `η` `ComponentArray` per individual.
+"""
 function eta_from_modes(dm::DataModel,
         batch_infos::Vector,
         bstars::Vector,
@@ -3135,6 +3205,15 @@ function _build_vary_cache(dm::DataModel)
     end
 end
 
+"""
+    build_likelihood_cache(dm; ode_args=(), ode_kwargs=NamedTuple(),
+                           serialization=EnsembleSerial(), force_saveat=false, nthreads=1)
+
+Build the reusable evaluation cache (solver config, templates, buffers) shared by the density
+primitives. Pass it as the `cache` keyword to `solve_individual`, `conditional_loglikelihood`,
+`joint_loglikelihood` and the other batch primitives to avoid rebuilding it on every call; use
+`force_saveat=true` when fitting iteratively.
+"""
 function build_likelihood_cache(dm::DataModel;
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
