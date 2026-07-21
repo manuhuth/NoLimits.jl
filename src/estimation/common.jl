@@ -3222,7 +3222,7 @@ end
 
 Build the reusable evaluation cache (solver config, templates, buffers) shared by the density
 primitives. Pass it as the `cache` keyword to `solve_individual`, `conditional_loglikelihood`,
-`joint_loglikelihood` and the other batch primitives to avoid rebuilding it on every call; use
+`complete_data_loglikelihood` and the other batch primitives to avoid rebuilding it on every call; use
 `force_saveat=true` when fitting iteratively.
 """
 function build_likelihood_cache(dm::DataModel;

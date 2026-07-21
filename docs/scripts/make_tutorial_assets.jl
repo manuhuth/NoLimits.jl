@@ -858,9 +858,9 @@ function closed_form_em(dm; θ_start = get_θ0_untransformed(get_fixed(get_model
             for bi in eachindex(batches)
                 m, Σ = pm[bi]
                 Σ === nothing && continue
-                jl = joint_loglikelihood(dm, batches[bi], θn, m;
+                jl = complete_data_loglikelihood(dm, batches[bi], θn, m;
                     const_cache = cc, cache = cache)
-                H = joint_loglikelihood_hessian(dm, batches[bi], θn, m;
+                H = complete_data_loglikelihood_hessian(dm, batches[bi], θn, m;
                     const_cache = cc, cache = cache)
                 acc += jl + 0.5 * tr(Σ * H)
             end
@@ -890,8 +890,9 @@ function NoLimits.fit_method(dm, m::MyEM, args...; theta_0_untransformed = nothi
     for _ in 1:(m.n_iter)
         pm = posterior_moments(ctx, θ)                # E-step: exact posterior N(b*, Σ)
         θ, _ = optimize_parameters(ctx; θ_start = θ) do θn      # M-step, natural scale
-            -sum(joint_loglikelihood(ctx, bi, θn, pm[bi][1]) +
-                 0.5 * tr(pm[bi][2] * joint_loglikelihood_hessian(ctx, bi, θn, pm[bi][1]))
+            -sum(complete_data_loglikelihood(ctx, bi, θn, pm[bi][1]) +
+                 0.5 * tr(pm[bi][2] *
+                    complete_data_loglikelihood_hessian(ctx, bi, θn, pm[bi][1]))
             for bi in eachindex(get_batch_infos(ctx)))
         end
     end
@@ -920,6 +921,7 @@ end
 
 function tutorial_md1()
     slug = "md1"
+    Random.seed!(1)
 
     # ── Part 1: Monte-Carlo EM with a Metropolis-Hastings E-step ──────────────
     model = @Model begin
@@ -977,7 +979,7 @@ function tutorial_md1()
                 sampler = MH(), n_samples = n_samples, rng = rng)
             draws = [get_draws(s) for s in samples]
 
-            # Q(θ) = Σ_batch mean_draw joint_loglikelihood. The joint carries the RE
+            # Q(θ) = Σ_batch mean_draw complete_data_loglikelihood. The joint carries the RE
             # prior, so a, σ and ω are all updated in this one M-step.
             function negQ(θt_vec, _)
                 θn = symmetrize_psd_parameters(dm,
@@ -987,7 +989,8 @@ function tutorial_md1()
                     D = draws[bi]
                     n_draw = size(D, 2)
                     for m in axes(D, 2)
-                        acc += joint_loglikelihood(dm, batches[bi], θn, view(D, :, m);
+                        acc += complete_data_loglikelihood(
+                            dm, batches[bi], θn, view(D, :, m);
                             const_cache = cc, cache = cache) / n_draw
                     end
                 end

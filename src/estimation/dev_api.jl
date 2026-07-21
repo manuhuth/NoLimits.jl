@@ -25,8 +25,8 @@ export build_re_batch_infos, REBatchInfo, REConstantsCache, RELevelInfo,
        build_batch_theta_context
 # Evaluation primitives
 export solve_individual, obs_distributions, hmm_filter_step!, conditional_loglikelihood,
-       joint_loglikelihood, re_logprior, joint_loglikelihood_gradient,
-       joint_loglikelihood_hessian
+       complete_data_loglikelihood, re_logprior, complete_data_loglikelihood_gradient,
+       complete_data_loglikelihood_hessian
 # Posterior / empirical Bayes / marginal / sampling
 export empirical_bayes, posterior_moments, laplace_marginal, ghq_marginal,
        sample_random_effect_draws,
@@ -113,7 +113,7 @@ end
 
 Random-effect prior log-density `log p(η | θ)` summed over the (free and constant) grouping
 levels, deduplicated per level. No ODE. θ is natural-scale and symmetrized here.
-`joint_loglikelihood == conditional_loglikelihood + re_logprior` at batch scale.
+`complete_data_loglikelihood == conditional_loglikelihood + re_logprior` at batch scale.
 """
 function re_logprior(dm::DataModel, batch::REBatchInfo, θ::ComponentArray, b;
         const_cache::REConstantsCache, cache = nothing,
@@ -132,26 +132,24 @@ function re_logprior(dm::DataModel, idx::Integer, θ::ComponentArray, η; cache 
 end
 
 """
-    joint_loglikelihood(dm, θ; kwargs...) -> Real                          # population
-    joint_loglikelihood(dm, idx::Integer, θ, η; cache=nothing)            # one individual
-    joint_loglikelihood(dm, batch::REBatchInfo, θ, b; const_cache, cache=nothing, anneal_sds=NamedTuple(), tctx=nothing)  # one batch
+    complete_data_loglikelihood(dm, idx::Integer, θ, η; cache=nothing)            # one individual
+    complete_data_loglikelihood(dm, batch::REBatchInfo, θ, b; const_cache, cache=nothing, anneal_sds=NamedTuple(), tctx=nothing)  # one batch
 
-Complete-data log-joint `log p(y, η | θ) = log p(y | θ, η) + log p(η | θ)`. The batch form is
-canonical (the object an empirical-Bayes solver maximizes); the population form is
-`complete_data_loglikelihood`. The per-individual form double-counts a shared grouping
-level's prior in crossed designs, so prefer the batch form for fitting. θ is symmetrized here.
+Complete-data log-joint `log p(y, η | θ) = log p(y | θ, η) + log p(η | θ)` at one individual or
+one batch. The batch form is canonical (the object an empirical-Bayes solver maximizes); the
+per-individual form double-counts a shared grouping level's prior in crossed designs, so prefer
+the batch form for fitting. θ is symmetrized here. The population form (summing over all
+individuals, with η supplied or resolved from a fit) is documented above.
 """
-joint_loglikelihood(dm::DataModel, θ::ComponentArray; kwargs...) = complete_data_loglikelihood(
-    dm, θ; kwargs...)
-
-function joint_loglikelihood(dm::DataModel, batch::REBatchInfo, θ::ComponentArray, b;
+function complete_data_loglikelihood(
+        dm::DataModel, batch::REBatchInfo, θ::ComponentArray, b;
         const_cache::REConstantsCache, cache = nothing,
         anneal_sds::NamedTuple = NamedTuple(), tctx = nothing)
     return _laplace_logf_batch(dm, batch, θ, b, const_cache, _dev_ll_cache(dm, cache);
         anneal_sds = anneal_sds, tctx = tctx)
 end
 
-function joint_loglikelihood(
+function complete_data_loglikelihood(
         dm::DataModel, idx::Integer, θ::ComponentArray, η; cache = nothing)
     c = _dev_ll_cache(dm, cache)
     return conditional_loglikelihood(dm, idx, θ, η; cache = c) +
@@ -159,12 +157,12 @@ function joint_loglikelihood(
 end
 
 """
-    joint_loglikelihood_gradient(dm, batch::REBatchInfo, θ, b; const_cache, cache=nothing) -> Vector
+    complete_data_loglikelihood_gradient(dm, batch::REBatchInfo, θ, b; const_cache, cache=nothing) -> Vector
 
 `∇_b log p(y, η | θ)` at the natural-scale batch RE vector `b`, via ForwardDiff. For a single
 independent subject, build a singleton batch with `build_re_batch_infos`.
 """
-function joint_loglikelihood_gradient(
+function complete_data_loglikelihood_gradient(
         dm::DataModel, batch::REBatchInfo, θ::ComponentArray, b;
         const_cache::REConstantsCache, cache = nothing)
     f = _LaplaceLogfBatch(dm, batch, θ, const_cache, _dev_ll_cache(dm, cache))
@@ -172,14 +170,14 @@ function joint_loglikelihood_gradient(
 end
 
 """
-    joint_loglikelihood_hessian(dm, batch::REBatchInfo, θ, b; const_cache, cache=nothing, curvature=ExactHessianCurvature()) -> Matrix
+    complete_data_loglikelihood_hessian(dm, batch::REBatchInfo, θ, b; const_cache, cache=nothing, curvature=ExactHessianCurvature()) -> Matrix
 
 Hessian `H = ∇²_b log p(y, η | θ)` (negative-definite near a mode; the posterior precision is
 `-H`). The caller owns `-H`/Cholesky/logdet. `curvature` selects the approximation:
 `ExactHessianCurvature()` (default, full second-order AD) or `FisherInformationCurvature(interaction)`
 (FOCEI/FOCE Gauss-Newton). Implement `inner_curvature(::YourCurvature, …)` to add your own.
 """
-function joint_loglikelihood_hessian(
+function complete_data_loglikelihood_hessian(
         dm::DataModel, batch::REBatchInfo, θ::ComponentArray, b;
         const_cache::REConstantsCache, cache = nothing,
         curvature::AbstractCurvature = ExactHessianCurvature())
@@ -446,7 +444,7 @@ function sample_random_effect_draws(
         for r in 1:n_samples
             b_r = rand(rng, q)
             @inbounds draws[:, r] = b_r
-            logp = joint_loglikelihood(
+            logp = complete_data_loglikelihood(
                 dm, batch, θ_re, b_r; const_cache = const_cache, cache = c)
             @inbounds logw[r] = logp - logpdf(q, b_r)
         end
@@ -665,7 +663,7 @@ With a context, the primitives lose their cache arguments and address batches by
 
     ctx = build_fit_context(dm)
     θ   = initial_parameters(ctx)
-    joint_loglikelihood(ctx, bi, θ, b)          # == joint_loglikelihood(dm, batches[bi], θ, b;
+    complete_data_loglikelihood(ctx, bi, θ, b)          # == complete_data_loglikelihood(dm, batches[bi], θ, b;
                                                 #      const_cache=cc, cache=cache)
     posterior_moments(ctx, θ)                   # one (b*, Σ) per batch, reusing ctx caches
     empirical_bayes(ctx, θ)                     # per-batch modes b*
@@ -705,8 +703,8 @@ point of a fitting loop (replace it with `theta_0_untransformed` when the caller
 initial_parameters(ctx::FitContext) = copy(get_θ0_untransformed(get_fixed(get_model(ctx.dm))))
 
 # Batch-index covers over the density primitives.
-for f in (:conditional_loglikelihood, :re_logprior, :joint_loglikelihood,
-    :joint_loglikelihood_gradient, :joint_loglikelihood_hessian)
+for f in (:conditional_loglikelihood, :re_logprior, :complete_data_loglikelihood,
+    :complete_data_loglikelihood_gradient, :complete_data_loglikelihood_hessian)
     @eval @inline function $f(ctx::FitContext, bi::Integer, θ::ComponentArray, b; kwargs...)
         return $f(ctx.dm, ctx.batch_infos[bi], θ, b;
             const_cache = ctx.const_cache, cache = ctx.cache, kwargs...)
@@ -791,7 +789,7 @@ handled here, so bounded parameters (`scale=:log`, `:logit`, matrix scales) need
 in `f_natural`. Do-block friendly:
 
     θ̂, sol = optimize_parameters(ctx; θ_start=θ) do θn
-        -sum(joint_loglikelihood(ctx, bi, θn, modes[bi]) for bi in eachindex(get_batch_infos(ctx)))
+        -sum(complete_data_loglikelihood(ctx, bi, θn, modes[bi]) for bi in eachindex(get_batch_infos(ctx)))
     end
 
 `ponytail:` optimizes all fixed effects; apply `constants`/bounds via the explicit

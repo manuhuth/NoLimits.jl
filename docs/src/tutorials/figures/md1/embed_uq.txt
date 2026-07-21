@@ -12,9 +12,9 @@ Overview
 Parameter uncertainty summary
   parameter      Estimate    Std. Error      CI Lower      CI Upper
   ---------------------------------------------------
-  a                1.0729        0.1049        0.8687        1.2759
-  σ                0.5046        0.0293        0.4523        0.5647
-  ω                0.5351        0.0800        0.3979        0.7153
+  a                1.0729        0.1080        0.8576        1.2812
+  σ                0.5046        0.0299        0.4523        0.5687
+  ω                0.5351        0.0798        0.4001        0.7119
 
 Outcome data coverage
   outcome       n_obs   n_missing

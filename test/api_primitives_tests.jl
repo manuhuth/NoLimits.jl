@@ -105,9 +105,9 @@ function NoLimits.fit_method(dm, m::APITestClosedFormEM, args...;
             for bi in eachindex(batches)
                 mb, Σ = pm[bi]
                 Σ === nothing && continue
-                jl = NoLimits.joint_loglikelihood(dm, batches[bi], θn, mb;
+                jl = NoLimits.complete_data_loglikelihood(dm, batches[bi], θn, mb;
                     const_cache = cc, cache = cache)
-                H = NoLimits.joint_loglikelihood_hessian(dm, batches[bi], θn, mb;
+                H = NoLimits.complete_data_loglikelihood_hessian(dm, batches[bi], θn, mb;
                     const_cache = cc, cache = cache)
                 acc += jl + 0.5 * tr(Σ * H)
             end
@@ -163,25 +163,26 @@ struct APITestBayes <: NoLimits.FittingMethod end
 
         b = fill(0.3, NoLimits.get_batch_re_dim(batch))
         # batch joint is a pure cover of _laplace_logf_batch -> bit-identical
-        @test NoLimits.joint_loglikelihood(
+        @test NoLimits.complete_data_loglikelihood(
             dm, batch, θ, b; const_cache = cc, cache = cache) ===
               NoLimits._laplace_logf_batch(dm, batch, θ, b, cc, cache)
         # joint == conditional + re_logprior
-        j = NoLimits.joint_loglikelihood(dm, batch, θ, b; const_cache = cc, cache = cache)
+        j = NoLimits.complete_data_loglikelihood(
+            dm, batch, θ, b; const_cache = cc, cache = cache)
         cll = NoLimits.conditional_loglikelihood(
             dm, batch, θ, b; const_cache = cc, cache = cache)
         rlp = NoLimits.re_logprior(dm, batch, θ, b; const_cache = cc, cache = cache)
         @test j≈cll + rlp atol=1e-10
         # ∇_b: ForwardDiff cover vs finite differences
-        g = NoLimits.joint_loglikelihood_gradient(
+        g = NoLimits.complete_data_loglikelihood_gradient(
             dm, batch, θ, b; const_cache = cc, cache = cache)
         gfd = FiniteDifferences.grad(central_fdm(5, 1),
-            bb -> NoLimits.joint_loglikelihood(
+            bb -> NoLimits.complete_data_loglikelihood(
                 dm, batch, θ, bb; const_cache = cc, cache = cache),
             b)[1]
         @test g≈gfd atol=1e-6
         # ∇²_b: pure cover -> bit-identical, symmetric
-        H = NoLimits.joint_loglikelihood_hessian(
+        H = NoLimits.complete_data_loglikelihood_hessian(
             dm, batch, θ, b; const_cache = cc, cache = cache)
         @test H == NoLimits._laplace_hessian_b(dm, batch, θ, b, cc, cache, nothing, 1)
         @test H ≈ transpose(H)
@@ -200,15 +201,16 @@ struct APITestBayes <: NoLimits.FittingMethod end
         batch = argmax(NoLimits.get_batch_re_dim, infos)
         @test NoLimits.get_batch_re_dim(batch) >= 2
         b = fill(0.2, NoLimits.get_batch_re_dim(batch))
-        j = NoLimits.joint_loglikelihood(dm, batch, θ, b; const_cache = cc, cache = cache)
+        j = NoLimits.complete_data_loglikelihood(
+            dm, batch, θ, b; const_cache = cc, cache = cache)
         cll = NoLimits.conditional_loglikelihood(
             dm, batch, θ, b; const_cache = cc, cache = cache)
         rlp = NoLimits.re_logprior(dm, batch, θ, b; const_cache = cc, cache = cache)
         @test j≈cll + rlp atol=1e-10
-        g = NoLimits.joint_loglikelihood_gradient(
+        g = NoLimits.complete_data_loglikelihood_gradient(
             dm, batch, θ, b; const_cache = cc, cache = cache)
         gfd = FiniteDifferences.grad(central_fdm(5, 1),
-            bb -> NoLimits.joint_loglikelihood(
+            bb -> NoLimits.complete_data_loglikelihood(
                 dm, batch, θ, bb; const_cache = cc, cache = cache),
             b)[1]
         @test g≈gfd atol=1e-6
@@ -246,7 +248,7 @@ struct APITestBayes <: NoLimits.FittingMethod end
         @test length(bstars) == length(infos)
         # EB modes maximize the joint: ∇_b ≈ 0
         maxg = maximum(eachindex(infos)) do bi
-            g = NoLimits.joint_loglikelihood_gradient(
+            g = NoLimits.complete_data_loglikelihood_gradient(
                 dm, infos[bi], θhat, bstars[bi]; const_cache = cc, cache = cache)
             isempty(g) ? 0.0 : maximum(abs, g)
         end
@@ -255,7 +257,7 @@ struct APITestBayes <: NoLimits.FittingMethod end
         # posterior_moments: Σ = (−H)⁻¹
         b1, Σ1 = NoLimits.posterior_moments(
             dm, θhat, infos[1], bstars[1]; const_cache = cc, cache = cache)
-        H1 = NoLimits.joint_loglikelihood_hessian(
+        H1 = NoLimits.complete_data_loglikelihood_hessian(
             dm, infos[1], θhat, bstars[1]; const_cache = cc, cache = cache)
         @test Σ1 ≈ transpose(Σ1)
         @test -H1 * Σ1≈Matrix(I, size(Σ1)...) atol=1e-6
@@ -344,12 +346,14 @@ struct APITestBayes <: NoLimits.FittingMethod end
         @test NoLimits._FOCEIHess === NoLimits.FisherInformationCurvature
 
         # exact curvature via the seam is bit-identical to the internal Hessian
-        @test NoLimits.joint_loglikelihood_hessian(dm, infos[1], θ, b; const_cache = cc,
+        @test NoLimits.complete_data_loglikelihood_hessian(
+            dm, infos[1], θ, b; const_cache = cc,
             cache = cache, curvature = NoLimits.ExactHessianCurvature()) ==
               NoLimits._laplace_hessian_b(dm, infos[1], θ, b, cc, cache, nothing, 1)
 
         # FOCEI curvature routes through the seam; −H is PD by construction
-        Hfoc = NoLimits.joint_loglikelihood_hessian(dm, infos[1], θ, b; const_cache = cc,
+        Hfoc = NoLimits.complete_data_loglikelihood_hessian(
+            dm, infos[1], θ, b; const_cache = cc,
             cache = cache, curvature = NoLimits.FisherInformationCurvature(true))
         @test Hfoc == NoLimits.inner_curvature(NoLimits.FisherInformationCurvature(true),
             dm, infos[1], θ, b, cc, cache, NoLimits.CurvatureWorkspace())
@@ -369,9 +373,10 @@ struct APITestBayes <: NoLimits.FittingMethod end
         cachex = NoLimits.build_likelihood_cache(dmx; force_saveat = true)
         bxb = argmax(NoLimits.get_batch_re_dim, infosx)
         bx = fill(0.1, NoLimits.get_batch_re_dim(bxb))
-        Hfull = NoLimits.joint_loglikelihood_hessian(
+        Hfull = NoLimits.complete_data_loglikelihood_hessian(
             dmx, bxb, θx, bx; const_cache = ccx, cache = cachex)
-        Hdiag = NoLimits.joint_loglikelihood_hessian(dmx, bxb, θx, bx; const_cache = ccx,
+        Hdiag = NoLimits.complete_data_loglikelihood_hessian(
+            dmx, bxb, θx, bx; const_cache = ccx,
             cache = cachex, curvature = APITestDiagCurvature())
         @test size(Hfull, 1) >= 2
         @test Hdiag == Matrix(Diagonal(diag(Hfull)))
@@ -507,15 +512,16 @@ struct APITestBayes <: NoLimits.FittingMethod end
         b = zeros(NoLimits.get_batch_re_dim(infos[1]))
 
         # context calls are bit-identical to the explicit cache-threaded calls
-        @test joint_loglikelihood(ctx, 1, θ, b) ===
-              joint_loglikelihood(dm, infos[1], θ, b; const_cache = cc, cache = cache)
+        @test complete_data_loglikelihood(ctx, 1, θ, b) ===
+              complete_data_loglikelihood(
+            dm, infos[1], θ, b; const_cache = cc, cache = cache)
         @test conditional_loglikelihood(ctx, 1, θ, b) ===
               conditional_loglikelihood(
             dm, infos[1], θ, b; const_cache = cc, cache = cache)
         @test re_logprior(ctx, 1, θ, b) ===
               re_logprior(dm, infos[1], θ, b; const_cache = cc, cache = cache)
-        @test joint_loglikelihood_hessian(ctx, 1, θ, b) ==
-              joint_loglikelihood_hessian(
+        @test complete_data_loglikelihood_hessian(ctx, 1, θ, b) ==
+              complete_data_loglikelihood_hessian(
             dm, infos[1], θ, b; const_cache = cc, cache = cache)
 
         # population forms reuse the ctx caches and align with the batch structure
@@ -533,7 +539,7 @@ struct APITestBayes <: NoLimits.FittingMethod end
         modes = NoLimits.empirical_bayes(ctx, θ; rng = Random.MersenneTwister(2))
         θ̂, sol = optimize_parameters(ctx; θ_start = θ,
             optim_kwargs = (; iterations = 30)) do θn
-            -sum(joint_loglikelihood(ctx, bi, θn, modes[bi])
+            -sum(complete_data_loglikelihood(ctx, bi, θn, modes[bi])
             for bi in eachindex(get_batch_infos(ctx)))
         end
         @test θ̂ isa ComponentArray && isfinite(sol.objective)

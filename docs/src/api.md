@@ -245,10 +245,10 @@ solve_individual
 obs_distributions
 hmm_filter_step!
 conditional_loglikelihood
-joint_loglikelihood
+complete_data_loglikelihood
 re_logprior
-joint_loglikelihood_gradient
-joint_loglikelihood_hessian
+complete_data_loglikelihood_gradient
+complete_data_loglikelihood_hessian
 ```
 
 ### Posterior, empirical Bayes, and sampling

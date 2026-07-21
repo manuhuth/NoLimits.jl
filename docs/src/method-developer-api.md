@@ -35,14 +35,14 @@ Every function here obeys two conventions:
 |---|---|
 | Data / batching | `build_re_batch_infos`, `get_batch_individuals`, `get_batch_re_info`, `get_batch_re_dim`, `build_eta_individual`, `eta_from_modes`, `build_likelihood_cache` |
 | Forward map | `solve_individual`, `obs_distributions`, `hmm_filter_step!` |
-| Densities | `conditional_loglikelihood`, `joint_loglikelihood`, `re_logprior`, `joint_loglikelihood_gradient`, `joint_loglikelihood_hessian` |
+| Densities | `conditional_loglikelihood`, `complete_data_loglikelihood`, `re_logprior`, `complete_data_loglikelihood_gradient`, `complete_data_loglikelihood_hessian` |
 | Posterior / empirical Bayes | `empirical_bayes`, `posterior_moments`, `sample_random_effect_draws` |
 | Marginals | `laplace_marginal`, `ghq_marginal` |
 | Curvature seam | `AbstractCurvature`, `ExactHessianCurvature`, `FisherInformationCurvature`, `inner_curvature` |
 | Fitting drivers | `fit_method`, `fit_fixed_effects`, `fit_laplace_family` |
 | Transforms | `ForwardTransform`, `InverseTransform`, `apply_inv_jacobian_T`, `logabsdetjac` |
 
-Full signatures are in the [API reference](api.md). The identity `joint_loglikelihood ==
+Full signatures are in the [API reference](api.md). The identity `complete_data_loglikelihood ==
 conditional_loglikelihood + re_logprior` holds at batch scale, and `posterior_moments` returns
 the Laplace covariance `Σ = (−H)⁻¹` at the empirical-Bayes mode.
 
@@ -77,8 +77,8 @@ function NoLimits.fit_method(dm, m::MyEM, args...; theta_0_untransformed = nothi
     for _ in 1:m.n_iter
         pm = posterior_moments(ctx, θ)                     # E-step at the current θ
         θ, _ = optimize_parameters(ctx; θ_start = θ) do θn  # M-step, natural scale
-            -sum(joint_loglikelihood(ctx, bi, θn, pm[bi][1]) +
-                 0.5 * tr(pm[bi][2] * joint_loglikelihood_hessian(ctx, bi, θn, pm[bi][1]))
+            -sum(complete_data_loglikelihood(ctx, bi, θn, pm[bi][1]) +
+                 0.5 * tr(pm[bi][2] * complete_data_loglikelihood_hessian(ctx, bi, θn, pm[bi][1]))
                  for bi in eachindex(get_batch_infos(ctx)))
         end
     end
@@ -202,7 +202,7 @@ marginal = sum(laplace_marginal(dm, θ, batches[i], b_stars[i];
                for i in eachindex(batches))
 ```
 
-`joint_loglikelihood_gradient` / `joint_loglikelihood_hessian` give the inner `∇_b` / `∇²_b`,
+`complete_data_loglikelihood_gradient` / `complete_data_loglikelihood_hessian` give the inner `∇_b` / `∇²_b`,
 and `sample_random_effect_draws` draws from the random-effect posterior (Laplace-Gaussian importance sampling by
 default, or `method = :mcmc` for a Turing sampler).
 

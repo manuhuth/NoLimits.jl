@@ -18,7 +18,7 @@ contracts (natural-scale parameters, batches as the random-effect currency).
 - How `build_fit_context` and `optimize_parameters` give a complete custom estimator in a few
   lines, with caches, transforms, and result packaging handled for you.
 - How to walk the random-effect batch structure with `build_re_batch_infos` and score the
-  complete-data density with `joint_loglikelihood` - the cache-explicit layer underneath.
+  complete-data density with `complete_data_loglikelihood` - the cache-explicit layer underneath.
 - How to run a Monte-Carlo E-step by drawing the random effects from their exact conditional
   posterior with `sample_random_effect_draws` (Metropolis-Hastings), and a numeric M-step with
   Optimization.jl.
@@ -39,6 +39,8 @@ using Optimization, OptimizationOptimJL, LineSearches
 using ComponentArrays, Distributions, DataFrames, Random, LinearAlgebra
 using Turing: MH
 using CairoMakie
+
+Random.seed!(1)
 
 model = @Model begin
     @fixedEffects begin
@@ -82,8 +84,8 @@ function NoLimits.fit_method(dm, m::MyEM, args...; theta_0_untransformed=nothing
     for _ in 1:m.n_iter
         pm = posterior_moments(ctx, θ)                # E-step: exact posterior N(b*, Σ)
         θ, _ = optimize_parameters(ctx; θ_start=θ) do θn      # M-step, natural scale
-            -sum(joint_loglikelihood(ctx, bi, θn, pm[bi][1]) +
-                 0.5 * tr(pm[bi][2] * joint_loglikelihood_hessian(ctx, bi, θn, pm[bi][1]))
+            -sum(complete_data_loglikelihood(ctx, bi, θn, pm[bi][1]) +
+                 0.5 * tr(pm[bi][2] * complete_data_loglikelihood_hessian(ctx, bi, θn, pm[bi][1]))
                  for bi in eachindex(get_batch_infos(ctx)))
         end
     end
@@ -134,7 +136,7 @@ What each piece does:
   density primitives reuse instead of rebuilding state on every call. The context is
   θ-independent - build it once per fit and reuse it across all iterations; parameters flow
   through every call. With a context in hand, the primitives lose their cache arguments and
-  address batches by index: `joint_loglikelihood(ctx, bi, θ, b)`, `posterior_moments(ctx, θ)`,
+  address batches by index: `complete_data_loglikelihood(ctx, bi, θ, b)`, `posterior_moments(ctx, θ)`,
   `laplace_marginal(ctx, θ)`, and so on.
 - **`posterior_moments(ctx, θ)`** is the E-step: the exact Gaussian posterior `N(b*, Σ)` of each
   batch's random effects (exact because this model is linear in `b`; Part 3 treats the general
@@ -158,7 +160,7 @@ tutorial works on that layer.
 
 Monte-Carlo EM alternates an E-step - drawing the random effects `b` from their posterior at the
 current `θ` - with an M-step that maximises the expected complete-data log-likelihood.
-`sample_random_effect_draws` supplies the draws and `joint_loglikelihood` is the per-draw density.
+`sample_random_effect_draws` supplies the draws and `complete_data_loglikelihood` is the per-draw density.
 Because the joint already carries the random-effect prior, one M-step over all parameters updates
 the fixed effects and the random-effect variance together. This time the caches, transforms, and
 batch structure are threaded by hand - full control over every evaluation. See
@@ -200,7 +202,7 @@ function mcem_from_scratch(dm; θ_start, n_iter=20, n_samples=100, rng=MersenneT
             n_samples=n_samples, rng=rng)
         draws = [get_draws(s) for s in samples]
 
-        # Q(θ) = Σ_batch mean_draw joint_loglikelihood. The joint carries the RE prior,
+        # Q(θ) = Σ_batch mean_draw complete_data_loglikelihood. The joint carries the RE prior,
         # so a, σ and ω are all updated in this one M-step.
         function negQ(θt_vec, _)
             θn = symmetrize_psd_parameters(dm,
@@ -210,7 +212,7 @@ function mcem_from_scratch(dm; θ_start, n_iter=20, n_samples=100, rng=MersenneT
                 D = draws[bi]
                 n_draw = size(D, 2)
                 for m in axes(D, 2)
-                    acc += joint_loglikelihood(dm, batches[bi], θn, view(D, :, m);
+                    acc += complete_data_loglikelihood(dm, batches[bi], θn, view(D, :, m);
                         const_cache=cc, cache=cache) / n_draw
                 end
             end
@@ -321,7 +323,7 @@ below) and the fit is started off them.
 
 The expected complete-data log-likelihood of a quadratic joint under a Gaussian posterior is
 `Q(θ) = joint(θ, m) + ½·tr(Σ · ∇²_b joint(θ, m))`; the trace term accounts exactly for the
-posterior spread of `b`. `joint_loglikelihood_hessian` supplies `∇²_b joint`, and both moments
+posterior spread of `b`. `complete_data_loglikelihood_hessian` supplies `∇²_b joint`, and both moments
 come from `posterior_moments` at the previous `θ`. The same off-truth `θ_start` is threaded in.
 
 ```julia
@@ -348,8 +350,8 @@ function closed_form_em(dm; θ_start=get_θ0_untransformed(get_fixed(get_model(d
             for bi in eachindex(batches)
                 m, Σ = pm[bi]
                 Σ === nothing && continue
-                jl = joint_loglikelihood(dm, batches[bi], θn, m; const_cache=cc, cache=cache)
-                H = joint_loglikelihood_hessian(dm, batches[bi], θn, m;
+                jl = complete_data_loglikelihood(dm, batches[bi], θn, m; const_cache=cc, cache=cache)
+                H = complete_data_loglikelihood_hessian(dm, batches[bi], θn, m;
                     const_cache=cc, cache=cache)
                 acc += jl + 0.5 * tr(Σ * H)
             end
@@ -575,9 +577,9 @@ Overview
 Parameter uncertainty summary
   parameter      Estimate    Std. Error      CI Lower      CI Upper
   ---------------------------------------------------
-  a                1.0729        0.1049        0.8687        1.2759
-  σ                0.5046        0.0293        0.4523        0.5647
-  ω                0.5351        0.0800        0.3979        0.7153
+  a                1.0729        0.1080        0.8576        1.2812
+  σ                0.5046        0.0299        0.4523        0.5687
+  ω                0.5351        0.0798        0.4001        0.7119
 
 Outcome data coverage
   outcome       n_obs   n_missing
@@ -605,7 +607,7 @@ p_embed
 - `build_fit_context` + `optimize_parameters` are the quick path: caches, transforms, and result
   packaging handled in a handful of lines, with every context call forwarding to a cache-explicit
   primitive.
-- `build_re_batch_infos` and `joint_loglikelihood` express the complete-data likelihood directly,
+- `build_re_batch_infos` and `complete_data_loglikelihood` express the complete-data likelihood directly,
   so a bespoke fitting loop needs no access to package internals.
 - `sample_random_effect_draws` gives a Monte-Carlo E-step for any model by drawing the random
   effects from their exact conditional posterior; `posterior_moments` gives an exact,
