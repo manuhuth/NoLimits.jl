@@ -246,6 +246,7 @@ obs_distributions
 hmm_filter_step!
 conditional_loglikelihood
 complete_data_loglikelihood
+complete_data_loglikelihood_per_individual
 re_logprior
 complete_data_loglikelihood_gradient
 complete_data_loglikelihood_hessian
