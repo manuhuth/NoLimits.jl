@@ -59,6 +59,42 @@ One contract to honour: `Multistart` and `pooled_init` deliver their starting po
 hand-rolled `fit_method` that swallows it in `kwargs...` silently ignores every start, so accept
 it and use it as the initial `θ` (see the tutorial's `ClosedFormEM`).
 
+### The quick path: `FitContext`
+
+For a hand-rolled iterative method, `build_fit_context(dm; constants_re)` performs the setup
+every fitting loop needs, once: the random-effect batch structure (`build_re_batch_infos`), the
+constant-RE cache, and the likelihood evaluation cache (`build_likelihood_cache`). The context
+is θ-independent - build it once per fit and reuse it across all iterations; parameters flow
+through every call. With a context, the primitives lose their cache keywords and address batches
+by index, `optimize_parameters` runs an M-step from an objective written purely in natural-scale
+parameters (the transformed-scale round trip and PSD symmetrisation are handled), and
+`build_fit_result(ctx, …)` fills `eb_modes` automatically:
+
+```julia
+function NoLimits.fit_method(dm, m::MyEM, args...; theta_0_untransformed = nothing, kwargs...)
+    ctx = build_fit_context(dm)
+    θ = something(theta_0_untransformed, initial_parameters(ctx))
+    for _ in 1:m.n_iter
+        pm = posterior_moments(ctx, θ)                     # E-step at the current θ
+        θ, _ = optimize_parameters(ctx; θ_start = θ) do θn  # M-step, natural scale
+            -sum(joint_loglikelihood(ctx, bi, θn, pm[bi][1]) +
+                 0.5 * tr(pm[bi][2] * joint_loglikelihood_hessian(ctx, bi, θn, pm[bi][1]))
+                 for bi in eachindex(get_batch_infos(ctx)))
+        end
+    end
+    return build_fit_result(ctx, m, θ; kind = :frequentist_re,
+        objective = -laplace_marginal(ctx, θ))
+end
+```
+
+Every context call is a thin cover forwarding to the corresponding cache-explicit primitive
+with the context's stored objects - results are identical, and the explicit layer below remains
+the full-control path (own caches per thread, `BatchThetaContext` amortisation, custom bounds).
+Note that the population primitives called with a bare `dm` (e.g. `posterior_moments(dm, θ)`)
+rebuild the caches on every call - inside a loop, prefer the context forms or the explicit
+layer. See the [Building Custom Estimators](tutorials/building-custom-estimators.md) tutorial
+for the full walkthrough.
+
 ### A fixed-effects method
 
 Delegate to `fit_fixed_effects` with a natural-scale `objective_term` added to the negative

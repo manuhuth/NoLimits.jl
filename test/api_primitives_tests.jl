@@ -498,6 +498,54 @@ struct APITestBayes <: NoLimits.FittingMethod end
             kind = :frequentist, objective = 0.0, eb_modes = [zeros(1)])
     end
 
+    @testset "FitContext convenience tier" begin
+        dm = fx_re_dm()
+        ctx = build_fit_context(dm)
+        θ = initial_parameters(ctx)
+        _, infos, cc = NoLimits.build_re_batch_infos(dm, NamedTuple())
+        cache = NoLimits.build_likelihood_cache(dm; force_saveat = true)
+        b = zeros(NoLimits.get_batch_re_dim(infos[1]))
+
+        # context calls are bit-identical to the explicit cache-threaded calls
+        @test joint_loglikelihood(ctx, 1, θ, b) ===
+              joint_loglikelihood(dm, infos[1], θ, b; const_cache = cc, cache = cache)
+        @test conditional_loglikelihood(ctx, 1, θ, b) ===
+              conditional_loglikelihood(
+            dm, infos[1], θ, b; const_cache = cc, cache = cache)
+        @test re_logprior(ctx, 1, θ, b) ===
+              re_logprior(dm, infos[1], θ, b; const_cache = cc, cache = cache)
+        @test joint_loglikelihood_hessian(ctx, 1, θ, b) ==
+              joint_loglikelihood_hessian(
+            dm, infos[1], θ, b; const_cache = cc, cache = cache)
+
+        # population forms reuse the ctx caches and align with the batch structure
+        pm = posterior_moments(ctx, θ)
+        @test length(pm) == length(get_batch_infos(ctx))
+        @test pm[1][2] isa Matrix
+        @test isfinite(laplace_marginal(ctx, θ))
+        @test isfinite(ghq_marginal(ctx, θ))
+        s = sample_random_effect_draws(ctx, θ; n_samples = 30,
+            rng = Random.MersenneTwister(1))
+        @test length(s) == length(get_batch_infos(ctx))
+        @test size(NoLimits.get_draws(s[1]), 2) == 30
+
+        # optimize_parameters: natural-scale objective, transformed-scale solve
+        modes = NoLimits.empirical_bayes(ctx, θ; rng = Random.MersenneTwister(2))
+        θ̂, sol = optimize_parameters(ctx; θ_start = θ,
+            optim_kwargs = (; iterations = 30)) do θn
+            -sum(joint_loglikelihood(ctx, bi, θn, modes[bi])
+            for bi in eachindex(get_batch_infos(ctx)))
+        end
+        @test θ̂ isa ComponentArray && isfinite(sol.objective)
+        @test θ̂.σ > 0 && θ̂.ω > 0        # log-scale bounds respected via the transform
+
+        # ctx build_fit_result fills eb_modes automatically for RE kinds
+        res = build_fit_result(ctx, APITestClosedFormEM(), θ̂; kind = :frequentist_re,
+            objective = sol.objective)
+        @test NoLimits.get_eb_modes(NoLimits.get_result(res)) !== nothing
+        @test NoLimits.get_random_effects(dm, res) isa NamedTuple
+    end
+
     @testset "custom Bayesian estimator: build_fit_result(chain)" begin
         base = fx_mcmc()                       # built-in MCMC fit; reuse its chain + dm
         dm = NoLimits.get_data_model(base)

@@ -618,3 +618,215 @@ function logabsdetjac(it::InverseTransform, θt::ComponentArray)
     end
     return total
 end
+
+# ── FitContext: the convenience tier over the explicit primitives ────────────────
+# Thin covers only - every context method forwards to the cache-explicit primitive
+# above with the context's stored caches, so results are identical and the explicit
+# API remains the full-control path.
+
+export FitContext, build_fit_context, initial_parameters, get_batch_infos,
+       optimize_parameters
+
+"""
+    FitContext
+
+Reusable workspace for writing a custom estimator without threading caches by hand. Holds the
+`DataModel`, the random-effect batch descriptors, the constant-RE cache, and one likelihood
+evaluation cache. Build it once per fit with [`build_fit_context`](@ref); every context method
+forwards to the corresponding cache-explicit primitive with these stored objects, so results
+are identical to the explicit calls.
+"""
+struct FitContext{D, B, C, K}
+    dm::D
+    batch_infos::B
+    const_cache::C
+    cache::K
+    constants_re::NamedTuple
+end
+
+"""
+    build_fit_context(dm; constants_re=NamedTuple(), ode_args=(), ode_kwargs=NamedTuple())
+        -> FitContext
+
+Build the workspace a custom estimator iterates on. This performs, once, the setup every
+hand-written fitting loop needs:
+
+  - `build_re_batch_infos(dm, constants_re)` - the random-effect batch descriptors and the
+    cache of levels fixed through `constants_re`;
+  - `build_likelihood_cache(dm; force_saveat=true)` - the solver/template cache the density
+    primitives reuse instead of rebuilding state on every call.
+
+The context is θ-independent: build it once per fit and reuse it across all iterations (the
+population primitives called with a bare `dm`, e.g. `posterior_moments(dm, θ)`, rebuild these
+caches on every call - inside a loop, prefer the context forms). Rebuild the context only when
+`dm` or `constants_re` change. It does not store parameters; θ flows through every call.
+
+With a context, the primitives lose their cache arguments and address batches by index:
+
+    ctx = build_fit_context(dm)
+    θ   = initial_parameters(ctx)
+    joint_loglikelihood(ctx, bi, θ, b)          # == joint_loglikelihood(dm, batches[bi], θ, b;
+                                                #      const_cache=cc, cache=cache)
+    posterior_moments(ctx, θ)                   # one (b*, Σ) per batch, reusing ctx caches
+    empirical_bayes(ctx, θ)                     # per-batch modes b*
+    laplace_marginal(ctx, θ)                    # marginal log-likelihood at θ
+    sample_random_effect_draws(ctx, θ)          # posterior draws per batch
+    θ̂, sol = optimize_parameters(f, ctx)        # natural-scale objective, handled transforms
+    build_fit_result(ctx, method, θ̂; kind=:frequentist_re, objective=...)  # eb_modes=:auto
+
+The evaluation cache is single-threaded (`ponytail:` serial cache; pass the explicit primitives
+your own per-thread caches when parallelising a custom loop).
+"""
+function build_fit_context(dm::DataModel;
+        constants_re::NamedTuple = NamedTuple(),
+        ode_args::Tuple = (), ode_kwargs::NamedTuple = NamedTuple())
+    _, infos, cc = build_re_batch_infos(dm, constants_re)
+    cache = build_likelihood_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        force_saveat = true)
+    return FitContext(dm, infos, cc, cache, constants_re)
+end
+
+"""
+    get_batch_infos(ctx::FitContext) -> Vector{REBatchInfo}
+
+The context's random-effect batch descriptors; batch indices `bi` passed to the context
+primitives index into this vector.
+"""
+@inline get_batch_infos(ctx::FitContext) = ctx.batch_infos
+
+@inline get_data_model(ctx::FitContext) = ctx.dm
+
+"""
+    initial_parameters(ctx::FitContext) -> ComponentArray
+
+A fresh copy of the model's natural-scale initial fixed effects - the conventional starting
+point of a fitting loop (replace it with `theta_0_untransformed` when the caller supplies one).
+"""
+initial_parameters(ctx::FitContext) = copy(get_θ0_untransformed(get_fixed(get_model(ctx.dm))))
+
+# Batch-index covers over the density primitives.
+for f in (:conditional_loglikelihood, :re_logprior, :joint_loglikelihood,
+    :joint_loglikelihood_gradient, :joint_loglikelihood_hessian)
+    @eval @inline function $f(ctx::FitContext, bi::Integer, θ::ComponentArray, b; kwargs...)
+        return $f(ctx.dm, ctx.batch_infos[bi], θ, b;
+            const_cache = ctx.const_cache, cache = ctx.cache, kwargs...)
+    end
+end
+
+@inline function ghq_marginal(ctx::FitContext, bi::Integer, θ::ComponentArray; level = 3)
+    return ghq_marginal(ctx.dm, θ, ctx.batch_infos[bi]; level = level,
+        const_cache = ctx.const_cache, cache = ctx.cache)
+end
+
+function ghq_marginal(ctx::FitContext, θ::ComponentArray; level = 3)
+    isempty(ctx.batch_infos) && return zero(eltype(θ))
+    return sum(ghq_marginal(ctx, bi, θ; level = level)
+    for bi in eachindex(ctx.batch_infos))
+end
+
+# Population forms reusing the context caches (the bare-`dm` forms rebuild them per call).
+function empirical_bayes(ctx::FitContext, θ::ComponentArray;
+        ebe_options::EBEOptions = EBEOptions(), rescue = nothing,
+        rng::AbstractRNG = Random.default_rng())
+    θ_re = symmetrize_psd_parameters(θ, get_fixed(get_model(ctx.dm)))
+    bstars, _ = _compute_bstars(
+        ctx.dm, θ_re, ctx.constants_re, ctx.cache, ebe_options, rng;
+        rescue = rescue)
+    return bstars
+end
+
+function posterior_moments(ctx::FitContext, θ::ComponentArray;
+        curvature::AbstractCurvature = ExactHessianCurvature(),
+        ebe_options::EBEOptions = EBEOptions(), rescue = nothing,
+        rng::AbstractRNG = Random.default_rng(), kwargs...)
+    bstars = empirical_bayes(ctx, θ; ebe_options = ebe_options, rescue = rescue, rng = rng)
+    return [posterior_moments(ctx.dm, θ, ctx.batch_infos[bi], bstars[bi];
+                const_cache = ctx.const_cache, cache = ctx.cache,
+                curvature = curvature, kwargs...)
+            for bi in eachindex(ctx.batch_infos)]
+end
+
+function laplace_marginal(ctx::FitContext, θ::ComponentArray;
+        curvature::AbstractCurvature = ExactHessianCurvature(),
+        ebe_options::EBEOptions = EBEOptions(), rescue = nothing,
+        rng::AbstractRNG = Random.default_rng(), kwargs...)
+    isempty(ctx.batch_infos) && return zero(eltype(θ))
+    bstars = empirical_bayes(ctx, θ; ebe_options = ebe_options, rescue = rescue, rng = rng)
+    return sum(laplace_marginal(ctx.dm, θ, ctx.batch_infos[bi], bstars[bi];
+                   const_cache = ctx.const_cache, cache = ctx.cache,
+                   curvature = curvature, kwargs...)
+    for bi in eachindex(ctx.batch_infos))
+end
+
+function sample_random_effect_draws(ctx::FitContext, θ::ComponentArray;
+        method::Symbol = :importance, sampler = nothing, n_samples::Int = 100,
+        n_adapt::Int = 50, ebe_options::EBEOptions = EBEOptions(), rescue = nothing,
+        rng::AbstractRNG = Random.default_rng())
+    if method === :mcmc
+        return [sample_random_effect_draws(
+                    ctx.dm, θ, ctx.batch_infos[bi], eltype(θ)[]; method = :mcmc,
+                    sampler = sampler, n_samples = n_samples, n_adapt = n_adapt,
+                    const_cache = ctx.const_cache, cache = ctx.cache, rng = rng)
+                for bi in eachindex(ctx.batch_infos)]
+    end
+    bstars = empirical_bayes(ctx, θ; ebe_options = ebe_options, rescue = rescue, rng = rng)
+    return [sample_random_effect_draws(
+                ctx.dm, θ, ctx.batch_infos[bi], bstars[bi]; method = method,
+                n_samples = n_samples, const_cache = ctx.const_cache, cache = ctx.cache,
+                rng = rng) for bi in eachindex(ctx.batch_infos)]
+end
+
+"""
+    optimize_parameters(f_natural, ctx::FitContext;
+                        θ_start=initial_parameters(ctx),
+                        optimizer=LBFGS(linesearch=BackTracking()),
+                        adtype=AutoForwardDiff(), optim_kwargs=NamedTuple())
+        -> (θ̂::ComponentArray, sol)
+
+Minimise an objective written purely in **natural-scale** parameters. `f_natural(θ)` receives a
+symmetrised natural-scale `ComponentArray` and returns the value to minimise (a negative
+log-likelihood, negative Q-function, ...). The unconstrained-scale round trip - transform,
+`ComponentArray` reassembly, PSD symmetrisation, and the back-transform of the optimum - is
+handled here, so bounded parameters (`scale=:log`, `:logit`, matrix scales) need no attention
+in `f_natural`. Do-block friendly:
+
+    θ̂, sol = optimize_parameters(ctx; θ_start=θ) do θn
+        -sum(joint_loglikelihood(ctx, bi, θn, modes[bi]) for bi in eachindex(get_batch_infos(ctx)))
+    end
+
+`ponytail:` optimizes all fixed effects; apply `constants`/bounds via the explicit
+`free_parameter_layout`/`resolve_optimizer_bounds` path when needed.
+"""
+function optimize_parameters(f_natural, ctx::FitContext;
+        θ_start::ComponentArray = initial_parameters(ctx),
+        optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking()),
+        adtype = Optimization.AutoForwardDiff(),
+        optim_kwargs::NamedTuple = NamedTuple())
+    dm = ctx.dm
+    fe = get_fixed(get_model(dm))
+    inv_transform = get_inverse_transform(fe)
+    θt0 = get_transform(fe)(θ_start)
+    axs = getaxes(θt0)
+    obj = (θt_vec, _) -> f_natural(symmetrize_psd_parameters(
+        dm, inv_transform(ComponentArray(θt_vec, axs))))
+    prob = OptimizationProblem(OptimizationFunction(obj, adtype), collect(θt0))
+    sol = Optimization.solve(prob, optimizer; optim_kwargs...)
+    θ̂ = symmetrize_psd_parameters(dm, inv_transform(ComponentArray(sol.u, axs)))
+    return θ̂, sol
+end
+
+"""
+    build_fit_result(ctx::FitContext, method, θ; kind=:frequentist, objective,
+                     eb_modes=:auto, kwargs...) -> FitResult
+
+Context form of [`build_fit_result`](@ref). `eb_modes = :auto` computes the per-batch
+empirical-Bayes modes via `empirical_bayes(ctx, θ)` for random-effect kinds (and stores
+`nothing` for fixed-effects kinds), so the common case needs no extra call.
+"""
+function build_fit_result(ctx::FitContext, method::FittingMethod, θ::ComponentArray;
+        kind::Symbol = :frequentist, eb_modes = :auto, kwargs...)
+    modes = eb_modes === :auto ?
+            (kind in (:frequentist_re, :ghquadrature, :saem, :mcem) ?
+             empirical_bayes(ctx, θ) : nothing) : eb_modes
+    return build_fit_result(ctx.dm, method, θ; kind = kind, eb_modes = modes, kwargs...)
+end

@@ -286,6 +286,16 @@ build_fit_result
 uq_family
 ```
 
+### Fit context (convenience layer)
+
+```@docs
+FitContext
+build_fit_context
+get_batch_infos
+initial_parameters
+optimize_parameters
+```
+
 ### Sparse-grid quadrature
 
 ```@docs

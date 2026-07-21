@@ -876,6 +876,29 @@ function closed_form_em(dm; θ_start = get_θ0_untransformed(get_fixed(get_model
     return θ, history
 end
 
+# Part 1 quick path: a complete estimator on the FitContext convenience layer.
+struct MyEM <: FittingMethod
+    n_iter::Int
+end
+MyEM(; n_iter = 25) = MyEM(n_iter)
+NoLimits.uq_family(::MyEM) = :wald_re      # inherit random-effect Wald intervals
+
+function NoLimits.fit_method(dm, m::MyEM, args...; theta_0_untransformed = nothing,
+        kwargs...)
+    ctx = build_fit_context(dm)
+    θ = something(theta_0_untransformed, initial_parameters(ctx))
+    for _ in 1:(m.n_iter)
+        pm = posterior_moments(ctx, θ)                # E-step: exact posterior N(b*, Σ)
+        θ, _ = optimize_parameters(ctx; θ_start = θ) do θn      # M-step, natural scale
+            -sum(joint_loglikelihood(ctx, bi, θn, pm[bi][1]) +
+                 0.5 * tr(pm[bi][2] * joint_loglikelihood_hessian(ctx, bi, θn, pm[bi][1]))
+            for bi in eachindex(get_batch_infos(ctx)))
+        end
+    end
+    return build_fit_result(ctx, m, θ; kind = :frequentist_re,
+        objective = -laplace_marginal(ctx, θ), iterations = m.n_iter)
+end
+
 # A bespoke estimator embedded in fit_model: keeps its own type, packages the result
 # with build_fit_result, and opts into Wald UQ via the uq_family trait.
 struct ClosedFormEM <: FittingMethod
@@ -922,6 +945,10 @@ function tutorial_md1()
         y = zeros(n_id * n_obs))
     dm = simulate_data_model(DataModel(model, df; primary_id = :ID, time_col = :t);
         rng = MersenneTwister(42))
+
+    # ── Part 1: quick path (FitContext) ───────────────────────────────────────
+    res_quick = fit_model(dm, MyEM())
+    txt(slug, "quick_summary", NoLimits.summarize(res_quick))
 
     # Start the optimiser away from the data-generating values (a = 1, σ = ω = 0.5)
     # so the EM path has somewhere to travel and convergence is visible.
