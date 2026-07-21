@@ -255,7 +255,7 @@ complete_data_loglikelihood_hessian
 
 ```@docs
 empirical_bayes
-posterior_moments
+empirical_bayes_covariance
 laplace_marginal
 ghq_marginal
 sample_random_effect_draws

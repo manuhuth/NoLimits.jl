@@ -6,8 +6,9 @@ functions, so a new estimator can be assembled without touching package internal
 a complete, `fit_model`-ready estimator in a few lines on the `FitContext` convenience layer.
 The rest of the tutorial opens that box on the fine-grained, cache-explicit primitives: a
 Monte-Carlo EM that draws the random effects with `sample_random_effect_draws`, a
-closed-form-posterior EM for a linear-Gaussian neural-network model built on
-`posterior_moments`, a head-to-head comparison of the two, and the full embedding contract.
+closed-form-posterior EM for a linear-Gaussian neural-network model built on `empirical_bayes`
+and `empirical_bayes_covariance`, a head-to-head comparison of the two, and the full embedding
+contract.
 The fine-grained loops start from deliberately wrong parameters so the convergence is real, and
 every estimator is checked against a built-in fitter. See the
 [Method-Developer API](../method-developer-api.md) page for the primitive reference and the two
@@ -22,8 +23,9 @@ contracts (natural-scale parameters, batches as the random-effect currency).
 - How to run a Monte-Carlo E-step by drawing the random effects from their exact conditional
   posterior with `sample_random_effect_draws` (Metropolis-Hastings), and a numeric M-step with
   Optimization.jl.
-- How the exact Gaussian posterior from `posterior_moments` gives a sampling-free E-step, and how
-  the two EMs compare on the same model.
+- How the exact Gaussian posterior from `empirical_bayes` (modes) and
+  `empirical_bayes_covariance` (covariance) gives a sampling-free E-step, and how the two EMs
+  compare on the same model.
 - How to embed a custom estimator in `fit_model` with `build_fit_result` and `uq_family` so it
   plots, transforms, and reports uncertainty like a built-in fitter.
 
@@ -82,10 +84,11 @@ function NoLimits.fit_method(dm, m::MyEM, args...; theta_0_untransformed=nothing
     ctx = build_fit_context(dm)
     θ = something(theta_0_untransformed, initial_parameters(ctx))
     for _ in 1:m.n_iter
-        pm = posterior_moments(ctx, θ)                # E-step: exact posterior N(b*, Σ)
-        θ, _ = optimize_parameters(ctx; θ_start=θ) do θn      # M-step, natural scale
-            -sum(complete_data_loglikelihood(ctx, bi, θn, pm[bi][1]) +
-                 0.5 * tr(pm[bi][2] * complete_data_loglikelihood_hessian(ctx, bi, θn, pm[bi][1]))
+        modes = empirical_bayes(ctx, θ)                    # E-step: posterior modes b* ...
+        covs = empirical_bayes_covariance(ctx, θ, modes)   # ... and covariance Σ = (−H)⁻¹
+        θ, _ = optimize_parameters(ctx; θ_start=θ) do θn   # M-step, natural scale
+            -sum(complete_data_loglikelihood(ctx, bi, θn, modes[bi]) +
+                 0.5 * tr(covs[bi] * complete_data_loglikelihood_hessian(ctx, bi, θn, modes[bi]))
                  for bi in eachindex(get_batch_infos(ctx)))
         end
     end
@@ -136,11 +139,13 @@ What each piece does:
   density primitives reuse instead of rebuilding state on every call. The context is
   θ-independent - build it once per fit and reuse it across all iterations; parameters flow
   through every call. With a context in hand, the primitives lose their cache arguments and
-  address batches by index: `complete_data_loglikelihood(ctx, bi, θ, b)`, `posterior_moments(ctx, θ)`,
-  `laplace_marginal(ctx, θ)`, and so on.
-- **`posterior_moments(ctx, θ)`** is the E-step: the exact Gaussian posterior `N(b*, Σ)` of each
-  batch's random effects (exact because this model is linear in `b`; Part 3 treats the general
-  case).
+  address batches by index: `complete_data_loglikelihood(ctx, bi, θ, b)`,
+  `empirical_bayes(ctx, θ)`, `laplace_marginal(ctx, θ)`, and so on.
+- **`empirical_bayes(ctx, θ)`** and **`empirical_bayes_covariance(ctx, θ, modes)`** are the
+  E-step: the posterior modes `b*` and the curvature covariance `Σ = (−H)⁻¹` - together the
+  exact Gaussian posterior `N(b*, Σ)` of each batch's random effects (exact because this model
+  is linear in `b`; Part 3 treats the general case). When only the modes are needed, call
+  `empirical_bayes` alone - no Hessian is computed.
 - **`optimize_parameters(ctx) do θn ... end`** is the M-step: the objective is written purely in
   natural-scale parameters, and the transformed-scale round trip (log/logit transforms,
   `ComponentArray` reassembly, PSD symmetrisation, the back-transform of the optimum) is handled
@@ -267,8 +272,9 @@ fig1
 ## Part 3: Closed-Form-Posterior EM
 
 When the model is linear in the random effect with Gaussian noise, `y = b + f(x) + e`, the
-random-effect posterior is exactly Gaussian, so the E-step needs no sampling: `posterior_moments`
-returns the exact posterior mean (the mode) and covariance `Σ = (−H)⁻¹`. Here `f` is a neural
+random-effect posterior is exactly Gaussian, so the E-step needs no sampling: `empirical_bayes`
+returns the exact posterior mean (the mode) and `empirical_bayes_covariance` its covariance
+`Σ = (−H)⁻¹`. Here `f` is a neural
 network of a covariate. The joint is quadratic in `b`, so its expectation under the posterior is
 also closed-form - the mode value plus a trace correction - giving a fully deterministic EM. See
 [Laplace](../estimation/laplace.md), which is exact for this model class.
@@ -323,8 +329,9 @@ below) and the fit is started off them.
 
 The expected complete-data log-likelihood of a quadratic joint under a Gaussian posterior is
 `Q(θ) = joint(θ, m) + ½·tr(Σ · ∇²_b joint(θ, m))`; the trace term accounts exactly for the
-posterior spread of `b`. `complete_data_loglikelihood_hessian` supplies `∇²_b joint`, and both moments
-come from `posterior_moments` at the previous `θ`. The same off-truth `θ_start` is threaded in.
+posterior spread of `b`. `complete_data_loglikelihood_hessian` supplies `∇²_b joint`, and the
+moments come from `empirical_bayes` / `empirical_bayes_covariance` at the previous `θ`. The same
+off-truth `θ_start` is threaded in.
 
 ```julia
 function closed_form_em(dm; θ_start=get_θ0_untransformed(get_fixed(get_model(dm))), n_iter=30)
@@ -338,8 +345,10 @@ function closed_form_em(dm; θ_start=get_θ0_untransformed(get_fixed(get_model(d
     history = [(σ=NamedTuple(θ).σ, ω=NamedTuple(θ).ω)]
 
     for _ in 1:n_iter
-        # E-step: exact Gaussian posterior per batch (mode = mean, Σ = (−H)⁻¹). No sampling.
-        pm = posterior_moments(dm, θ)
+        # E-step: exact Gaussian posterior per batch - modes b* (= mean here), then Σ = (−H)⁻¹.
+        modes = empirical_bayes(dm, θ)
+        covs = [empirical_bayes_covariance(dm, θ, batches[bi], modes[bi];
+                    const_cache=cc, cache=cache) for bi in eachindex(batches)]
 
         # M-step: exact expected complete-data log-likelihood for a quadratic joint,
         # Q(θ) = Σ_batch [ joint(θ, m) + ½·tr(Σ · ∇²_b joint(θ, m)) ].
@@ -348,7 +357,7 @@ function closed_form_em(dm; θ_start=get_θ0_untransformed(get_fixed(get_model(d
                 inv_transform(ComponentArray(θt_vec, getaxes(θt0))))
             acc = zero(eltype(θt_vec))
             for bi in eachindex(batches)
-                m, Σ = pm[bi]
+                m, Σ = modes[bi], covs[bi]
                 Σ === nothing && continue
                 jl = complete_data_loglikelihood(dm, batches[bi], θn, m; const_cache=cc, cache=cache)
                 H = complete_data_loglikelihood_hessian(dm, batches[bi], θn, m;
@@ -610,9 +619,10 @@ p_embed
 - `build_re_batch_infos` and `complete_data_loglikelihood` express the complete-data likelihood directly,
   so a bespoke fitting loop needs no access to package internals.
 - `sample_random_effect_draws` gives a Monte-Carlo E-step for any model by drawing the random
-  effects from their exact conditional posterior; `posterior_moments` gives an exact,
-  sampling-free E-step whenever that posterior is Gaussian. On a shared linear-Gaussian model the
-  two agree, the closed-form path being deterministic and the Monte-Carlo one noisy.
+  effects from their exact conditional posterior; `empirical_bayes` +
+  `empirical_bayes_covariance` give an exact, sampling-free E-step whenever that posterior is
+  Gaussian. On a shared linear-Gaussian model the two agree, the closed-form path being
+  deterministic and the Monte-Carlo one noisy.
 - Both hand-written EMs recover the built-in estimates from a deliberately wrong start, and their
   parameters are ordinary natural-scale `ComponentArray`s.
 - `build_fit_result` turns an estimate into the same `FitResult` the built-in fitters return, so

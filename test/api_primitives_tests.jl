@@ -97,13 +97,14 @@ function NoLimits.fit_method(dm, m::APITestClosedFormEM, args...;
     cache = NoLimits.build_likelihood_cache(dm; force_saveat = true)
     obj = 0.0
     for _ in 1:(m.n_iter)
-        pm = NoLimits.posterior_moments(dm, θ)
+        modes = NoLimits.empirical_bayes(dm, θ)
+        covs = NoLimits.empirical_bayes_covariance(dm, θ, modes)
         function negQ(θt_vec, _)
             θn = NoLimits.symmetrize_psd_parameters(dm,
                 inv_transform(ComponentArray(θt_vec, getaxes(θt0))))
             acc = zero(eltype(θt_vec))
             for bi in eachindex(batches)
-                mb, Σ = pm[bi]
+                mb, Σ = modes[bi], covs[bi]
                 Σ === nothing && continue
                 jl = NoLimits.complete_data_loglikelihood(dm, batches[bi], θn, mb;
                     const_cache = cc, cache = cache)
@@ -254,8 +255,8 @@ struct APITestBayes <: NoLimits.FittingMethod end
         end
         @test maxg < 1e-6
 
-        # posterior_moments: Σ = (−H)⁻¹
-        b1, Σ1 = NoLimits.posterior_moments(
+        # empirical_bayes_covariance: Σ = (−H)⁻¹
+        Σ1 = NoLimits.empirical_bayes_covariance(
             dm, θhat, infos[1], bstars[1]; const_cache = cc, cache = cache)
         H1 = NoLimits.complete_data_loglikelihood_hessian(
             dm, infos[1], θhat, bstars[1]; const_cache = cc, cache = cache)
@@ -359,8 +360,8 @@ struct APITestBayes <: NoLimits.FittingMethod end
             dm, infos[1], θ, b, cc, cache, NoLimits.CurvatureWorkspace())
         @test isposdef(-Hfoc)
 
-        # curvature kwarg threads through posterior_moments / laplace_marginal
-        _, Σf = NoLimits.posterior_moments(dm, θ, infos[1], b; const_cache = cc,
+        # curvature kwarg threads through empirical_bayes_covariance / laplace_marginal
+        Σf = NoLimits.empirical_bayes_covariance(dm, θ, infos[1], b; const_cache = cc,
             cache = cache, curvature = NoLimits.FisherInformationCurvature(true))
         @test Σf ≈ transpose(Σf)
         @test isfinite(NoLimits.laplace_marginal(dm, θ, infos[1], b; const_cache = cc,
@@ -525,9 +526,14 @@ struct APITestBayes <: NoLimits.FittingMethod end
             dm, infos[1], θ, b; const_cache = cc, cache = cache)
 
         # population forms reuse the ctx caches and align with the batch structure
-        pm = posterior_moments(ctx, θ)
-        @test length(pm) == length(get_batch_infos(ctx))
-        @test pm[1][2] isa Matrix
+        modes = empirical_bayes(ctx, θ; rng = Random.MersenneTwister(3))
+        covs = empirical_bayes_covariance(ctx, θ, modes)
+        @test length(modes) == length(covs) == length(get_batch_infos(ctx))
+        @test covs[1] isa Matrix
+        # the ctx batch-index form matches the explicit call
+        @test empirical_bayes_covariance(ctx, 1, θ, modes[1]) ==
+              empirical_bayes_covariance(
+            dm, θ, infos[1], modes[1]; const_cache = cc, cache = cache)
         @test isfinite(laplace_marginal(ctx, θ))
         @test isfinite(ghq_marginal(ctx, θ))
         s = sample_random_effect_draws(ctx, θ; n_samples = 30,

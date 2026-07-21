@@ -36,15 +36,17 @@ Every function here obeys two conventions:
 | Data / batching | `build_re_batch_infos`, `get_batch_individuals`, `get_batch_re_info`, `get_batch_re_dim`, `build_eta_individual`, `eta_from_modes`, `build_likelihood_cache` |
 | Forward map | `solve_individual`, `obs_distributions`, `hmm_filter_step!` |
 | Densities | `conditional_loglikelihood`, `complete_data_loglikelihood`, `re_logprior`, `complete_data_loglikelihood_gradient`, `complete_data_loglikelihood_hessian` |
-| Posterior / empirical Bayes | `empirical_bayes`, `posterior_moments`, `sample_random_effect_draws` |
+| Posterior / empirical Bayes | `empirical_bayes`, `empirical_bayes_covariance`, `sample_random_effect_draws` |
 | Marginals | `laplace_marginal`, `ghq_marginal` |
 | Curvature seam | `AbstractCurvature`, `ExactHessianCurvature`, `FisherInformationCurvature`, `inner_curvature` |
 | Fitting drivers | `fit_method`, `fit_fixed_effects`, `fit_laplace_family` |
 | Transforms | `ForwardTransform`, `InverseTransform`, `apply_inv_jacobian_T`, `logabsdetjac` |
 
 Full signatures are in the [API reference](api.md). The identity `complete_data_loglikelihood ==
-conditional_loglikelihood + re_logprior` holds at batch scale, and `posterior_moments` returns
-the Laplace covariance `Σ = (−H)⁻¹` at the empirical-Bayes mode.
+conditional_loglikelihood + re_logprior` holds at batch scale. `empirical_bayes` returns the
+posterior modes alone (no Hessian is computed), and `empirical_bayes_covariance` adds the
+curvature covariance `Σ = (−H)⁻¹` at those modes - together the Laplace approximation
+`N(b*, Σ)` to the random-effect posterior.
 
 ## Building a new fitting method
 
@@ -75,10 +77,11 @@ function NoLimits.fit_method(dm, m::MyEM, args...; theta_0_untransformed = nothi
     ctx = build_fit_context(dm)
     θ = something(theta_0_untransformed, initial_parameters(ctx))
     for _ in 1:m.n_iter
-        pm = posterior_moments(ctx, θ)                     # E-step at the current θ
+        modes = empirical_bayes(ctx, θ)                     # E-step: posterior modes ...
+        covs = empirical_bayes_covariance(ctx, θ, modes)    # ... and their covariance
         θ, _ = optimize_parameters(ctx; θ_start = θ) do θn  # M-step, natural scale
-            -sum(complete_data_loglikelihood(ctx, bi, θn, pm[bi][1]) +
-                 0.5 * tr(pm[bi][2] * complete_data_loglikelihood_hessian(ctx, bi, θn, pm[bi][1]))
+            -sum(complete_data_loglikelihood(ctx, bi, θn, modes[bi]) +
+                 0.5 * tr(covs[bi] * complete_data_loglikelihood_hessian(ctx, bi, θn, modes[bi]))
                  for bi in eachindex(get_batch_infos(ctx)))
         end
     end
@@ -90,7 +93,7 @@ end
 Every context call is a thin cover forwarding to the corresponding cache-explicit primitive
 with the context's stored objects - results are identical, and the explicit layer below remains
 the full-control path (own caches per thread, `BatchThetaContext` amortisation, custom bounds).
-Note that the population primitives called with a bare `dm` (e.g. `posterior_moments(dm, θ)`)
+Note that the population primitives called with a bare `dm` (e.g. `empirical_bayes(dm, θ)`)
 rebuild the caches on every call - inside a loop, prefer the context forms or the explicit
 layer. See the [Building Custom Estimators](tutorials/building-custom-estimators.md) tutorial
 for the full walkthrough.

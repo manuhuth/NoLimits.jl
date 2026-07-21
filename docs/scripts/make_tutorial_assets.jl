@@ -846,8 +846,10 @@ function closed_form_em(dm; θ_start = get_θ0_untransformed(get_fixed(get_model
     history = [(σ = NamedTuple(θ).σ, ω = NamedTuple(θ).ω)]
 
     for _ in 1:n_iter
-        # E-step: exact Gaussian posterior per batch (mode = mean, Σ = (−H)⁻¹). No sampling.
-        pm = posterior_moments(dm, θ)
+        # E-step: exact Gaussian posterior per batch - modes b* (= mean here), then Σ = (−H)⁻¹.
+        modes = empirical_bayes(dm, θ)
+        covs = [empirical_bayes_covariance(dm, θ, batches[bi], modes[bi];
+                    const_cache = cc, cache = cache) for bi in eachindex(batches)]
 
         # M-step: exact expected complete-data log-likelihood for a quadratic joint,
         # Q(θ) = Σ_batch [ joint(θ, m) + ½·tr(Σ · ∇²_b joint(θ, m)) ].
@@ -856,7 +858,7 @@ function closed_form_em(dm; θ_start = get_θ0_untransformed(get_fixed(get_model
                 inv_transform(ComponentArray(θt_vec, getaxes(θt0))))
             acc = zero(eltype(θt_vec))
             for bi in eachindex(batches)
-                m, Σ = pm[bi]
+                m, Σ = modes[bi], covs[bi]
                 Σ === nothing && continue
                 jl = complete_data_loglikelihood(dm, batches[bi], θn, m;
                     const_cache = cc, cache = cache)
@@ -888,11 +890,12 @@ function NoLimits.fit_method(dm, m::MyEM, args...; theta_0_untransformed = nothi
     ctx = build_fit_context(dm)
     θ = something(theta_0_untransformed, initial_parameters(ctx))
     for _ in 1:(m.n_iter)
-        pm = posterior_moments(ctx, θ)                # E-step: exact posterior N(b*, Σ)
-        θ, _ = optimize_parameters(ctx; θ_start = θ) do θn      # M-step, natural scale
-            -sum(complete_data_loglikelihood(ctx, bi, θn, pm[bi][1]) +
-                 0.5 * tr(pm[bi][2] *
-                    complete_data_loglikelihood_hessian(ctx, bi, θn, pm[bi][1]))
+        modes = empirical_bayes(ctx, θ)                    # E-step: posterior modes b* ...
+        covs = empirical_bayes_covariance(ctx, θ, modes)   # ... and covariance Σ = (−H)⁻¹
+        θ, _ = optimize_parameters(ctx; θ_start = θ) do θn  # M-step, natural scale
+            -sum(complete_data_loglikelihood(ctx, bi, θn, modes[bi]) +
+                 0.5 * tr(covs[bi] *
+                    complete_data_loglikelihood_hessian(ctx, bi, θn, modes[bi]))
             for bi in eachindex(get_batch_infos(ctx)))
         end
     end

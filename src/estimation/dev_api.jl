@@ -28,7 +28,7 @@ export solve_individual, obs_distributions, hmm_filter_step!, conditional_loglik
        complete_data_loglikelihood, re_logprior, complete_data_loglikelihood_gradient,
        complete_data_loglikelihood_hessian
 # Posterior / empirical Bayes / marginal / sampling
-export empirical_bayes, posterior_moments, laplace_marginal, ghq_marginal,
+export empirical_bayes, empirical_bayes_covariance, laplace_marginal, ghq_marginal,
        sample_random_effect_draws,
        RandomEffectPosteriorSample, get_draws, get_log_weights, get_ess, EBEOptions
 # Fisher-information registry
@@ -281,36 +281,43 @@ function empirical_bayes(dm::DataModel, θ::ComponentArray, idx::Integer; kwargs
 end
 
 """
-    posterior_moments(dm, θ, batch, b_star; const_cache, cache=nothing, jitter=1e-6, max_tries=6, adaptive=false, scale_factor=0.0) -> (b_star, Σ)
-    posterior_moments(dm, θ; kwargs...) -> Vector
+    empirical_bayes_covariance(dm, θ, batch, b_star; const_cache, cache=nothing, curvature=ExactHessianCurvature(), jitter=1e-6, max_tries=6, adaptive=false, scale_factor=0.0) -> Union{Matrix, Nothing}
+    empirical_bayes_covariance(dm, θ, bstars::AbstractVector; constants_re=NamedTuple(), kwargs...) -> Vector
 
-Posterior mode and Laplace covariance `Σ = (−H)⁻¹` (natural b-space) of the random effects.
-The batch form takes a mode `b_star` (e.g. from [`empirical_bayes`](@ref)); the population form
-finds the modes first and returns one `(b_star, Σ)` per batch. `Σ` is `nothing` when `−H` is not
-positive definite after jitter.
+Curvature-based covariance `Σ = (−H)⁻¹` (natural b-space) of the random effects at an
+empirical-Bayes mode, with `H = ∇²_b log p(y, b | θ)`. Together with the mode from
+[`empirical_bayes`](@ref) this defines the Laplace (Gaussian) approximation `N(b*, Σ)` to the
+random-effect posterior `p(b | y, θ)` - exact when the model is linear in `b` with Gaussian
+noise. The batch form takes one mode `b_star` and returns its `Σ`; the vector form takes the
+per-batch modes (aligned with `build_re_batch_infos` order) and returns one `Σ` per batch.
+Call [`empirical_bayes`](@ref) alone when only the modes are needed - the Hessian is never
+computed there. `Σ` is `nothing` when `−H` is not positive definite after jitter.
 """
-function posterior_moments(dm::DataModel, θ::ComponentArray, batch::REBatchInfo, b_star;
+function empirical_bayes_covariance(
+        dm::DataModel, θ::ComponentArray, batch::REBatchInfo, b_star;
         const_cache::REConstantsCache, cache = nothing,
         curvature::AbstractCurvature = ExactHessianCurvature(), jitter = 1e-6,
         max_tries::Int = 6, adaptive::Bool = false, scale_factor = 0.0)
     c = _dev_ll_cache(dm, cache)
-    _, _, chol = _laplace_logdet_negH(dm, batch, θ, b_star, const_cache, c, nothing, 1;
+    θ_re = symmetrize_psd_parameters(θ, get_fixed(get_model(dm)))
+    _, _, chol = _laplace_logdet_negH(dm, batch, θ_re, b_star, const_cache, c, nothing, 1;
         jitter = jitter, max_tries = max_tries, adaptive = adaptive,
         scale_factor = scale_factor, hmode = curvature)
-    (chol === nothing || chol.info != 0) && return (b_star, nothing)
-    return (b_star, Matrix(inv(chol)))
+    (chol === nothing || chol.info != 0) && return nothing
+    return Matrix(inv(chol))
 end
 
-function posterior_moments(dm::DataModel, θ::ComponentArray;
-        constants_re::NamedTuple = NamedTuple(),
-        curvature::AbstractCurvature = ExactHessianCurvature(), jitter = 1e-6,
-        max_tries::Int = 6, adaptive::Bool = false, scale_factor = 0.0, kwargs...)
-    bstars, infos, cc, θ_re, cache = _empirical_bayes_batches(
-        dm, θ; constants_re = constants_re, kwargs...)
-    return [posterior_moments(dm, θ_re, infos[bi], bstars[bi]; const_cache = cc,
-                cache = cache, curvature = curvature, jitter = jitter,
-                max_tries = max_tries, adaptive = adaptive, scale_factor = scale_factor)
-            for bi in eachindex(infos)]
+function empirical_bayes_covariance(
+        dm::DataModel, θ::ComponentArray, bstars::AbstractVector;
+        constants_re::NamedTuple = NamedTuple(), ode_args::Tuple = (),
+        ode_kwargs::NamedTuple = NamedTuple(), kwargs...)
+    cache = build_likelihood_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        force_saveat = true)
+    _, infos, cc = build_re_batch_infos(dm, constants_re)
+    length(bstars) == length(infos) ||
+        error("empirical_bayes_covariance: got $(length(bstars)) modes for $(length(infos)) batches.")
+    return [empirical_bayes_covariance(dm, θ, infos[bi], bstars[bi]; const_cache = cc,
+                cache = cache, kwargs...) for bi in eachindex(infos)]
 end
 
 """
@@ -402,7 +409,8 @@ end
 Draw from the random-effect posterior `p(η | y, θ)`.
 
 - `method=:importance` (default, Turing-free): Laplace-Gaussian importance sampling - a Gaussian
-  proposal centered at the mode `b_star` with covariance `(−H)⁻¹` ([`posterior_moments`](@ref)),
+  proposal centered at the mode `b_star` with covariance `(−H)⁻¹`
+  ([`empirical_bayes_covariance`](@ref)),
   reweighted by `log p(y, η | θ) − log q(η)` (exact/uniform weights for linear-Gaussian models).
   Populates `log_weights`/`ess`.
 - `method=:mcmc`: draws directly from the exact posterior with a Turing `sampler` (required, e.g.
@@ -434,7 +442,7 @@ function sample_random_effect_draws(
         n_b == 0 &&
             return RandomEffectPosteriorSample(zeros(0, n_samples), zeros(n_samples),
                 Float64(n_samples), :importance)
-        _, Σ = posterior_moments(
+        Σ = empirical_bayes_covariance(
             dm, θ_re, batch, b_star; const_cache = const_cache, cache = c)
         Σ === nothing &&
             return RandomEffectPosteriorSample(zeros(n_b, 0), Float64[], 0.0, :importance)
@@ -655,7 +663,7 @@ hand-written fitting loop needs:
     primitives reuse instead of rebuilding state on every call.
 
 The context is θ-independent: build it once per fit and reuse it across all iterations (the
-population primitives called with a bare `dm`, e.g. `posterior_moments(dm, θ)`, rebuild these
+population primitives called with a bare `dm`, e.g. `empirical_bayes(dm, θ)`, rebuild these
 caches on every call - inside a loop, prefer the context forms). Rebuild the context only when
 `dm` or `constants_re` change. It does not store parameters; θ flows through every call.
 
@@ -665,8 +673,8 @@ With a context, the primitives lose their cache arguments and address batches by
     θ   = initial_parameters(ctx)
     complete_data_loglikelihood(ctx, bi, θ, b)          # == complete_data_loglikelihood(dm, batches[bi], θ, b;
                                                 #      const_cache=cc, cache=cache)
-    posterior_moments(ctx, θ)                   # one (b*, Σ) per batch, reusing ctx caches
-    empirical_bayes(ctx, θ)                     # per-batch modes b*
+    empirical_bayes(ctx, θ)                     # per-batch modes b* (no Hessian computed)
+    empirical_bayes_covariance(ctx, θ, modes)   # per-batch Σ = (−H)⁻¹ at the modes
     laplace_marginal(ctx, θ)                    # marginal log-likelihood at θ
     sample_random_effect_draws(ctx, θ)          # posterior draws per batch
     θ̂, sol = optimize_parameters(f, ctx)        # natural-scale objective, handled transforms
@@ -733,14 +741,17 @@ function empirical_bayes(ctx::FitContext, θ::ComponentArray;
     return bstars
 end
 
-function posterior_moments(ctx::FitContext, θ::ComponentArray;
-        curvature::AbstractCurvature = ExactHessianCurvature(),
-        ebe_options::EBEOptions = EBEOptions(), rescue = nothing,
-        rng::AbstractRNG = Random.default_rng(), kwargs...)
-    bstars = empirical_bayes(ctx, θ; ebe_options = ebe_options, rescue = rescue, rng = rng)
-    return [posterior_moments(ctx.dm, θ, ctx.batch_infos[bi], bstars[bi];
-                const_cache = ctx.const_cache, cache = ctx.cache,
-                curvature = curvature, kwargs...)
+@inline function empirical_bayes_covariance(
+        ctx::FitContext, bi::Integer, θ::ComponentArray, b_star; kwargs...)
+    return empirical_bayes_covariance(ctx.dm, θ, ctx.batch_infos[bi], b_star;
+        const_cache = ctx.const_cache, cache = ctx.cache, kwargs...)
+end
+
+function empirical_bayes_covariance(
+        ctx::FitContext, θ::ComponentArray, bstars::AbstractVector; kwargs...)
+    length(bstars) == length(ctx.batch_infos) ||
+        error("empirical_bayes_covariance: got $(length(bstars)) modes for $(length(ctx.batch_infos)) batches.")
+    return [empirical_bayes_covariance(ctx, bi, θ, bstars[bi]; kwargs...)
             for bi in eachindex(ctx.batch_infos)]
 end
 

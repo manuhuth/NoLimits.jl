@@ -1863,7 +1863,7 @@ end
               multistart_k=10, max_rounds=1, sampling=:lhs) -> EBEOptions
 
 Empirical-Bayes mode-finder settings (the same options the `Laplace()` EBE step uses), for
-`empirical_bayes`/`posterior_moments`/`laplace_marginal`. `grad_tol=:auto` resolves to a
+`empirical_bayes`/`empirical_bayes_covariance`/`laplace_marginal`. `grad_tol=:auto` resolves to a
 data-scaled tolerance.
 """
 function EBEOptions(;
