@@ -1254,7 +1254,8 @@ function plot_fits(dm::DataModel;
     save_path = _resolve_plot_path(save_path, plot_path)
     cache = build_plot_cache(dm; params = params, constants_re = constants_re,
         cache_obs_dists = cache_obs_dists, rng = rng)
-    res = FitResult(MLE(), FrequentistResult(NamedTuple(), 0.0, 0, NamedTuple(), NamedTuple()),
+    res = FitResult(
+        MLE(), FrequentistResult(NamedTuple(), 0.0, 0, NamedTuple(), NamedTuple()),
         FitSummary(
             0.0, true, FitParameters(ComponentArray(), ComponentArray()), NamedTuple()),
         FitDiagnostics((;), (;), (;), (;)), dm, (), NamedTuple())
