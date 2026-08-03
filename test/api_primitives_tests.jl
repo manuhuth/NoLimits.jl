@@ -619,4 +619,21 @@ end
     @test !ok(Hbad; jitter = jit)
     cok, _ = NoLimits._laplace_cholesky_negH(-Matrix(Diagonal([2.0, 3.0])); jitter = jit)
     @test 2 * sum(log, diag(cok.U))≈log(6.0) rtol=1e-6
+
+    # The threshold has to be the jitter the protected Cholesky actually adds. With the
+    # adaptive jitter that Laplace/FOCEI use by default, that makes the verdict depend on
+    # the conditioning of -H rather than on the units the data happens to be in.
+    Hfine = -Matrix(Diagonal([1.0, 1.0, 1e-4]))   # cond 1e4
+    Hdeg = -Matrix(Diagonal([1.0, 1.0, 1e-9]))    # cond 1e9
+    for s in (1.0, 1e3, 1e6)
+        @test ok(s .* Hfine; jitter = jit, adaptive = true, scale_factor = jit)
+        @test !ok(s .* Hdeg; jitter = jit, adaptive = true, scale_factor = jit)
+    end
+    # Against the bare jitter the degenerate matrix is accepted once the data is scaled up
+    # -- the unit-dependence the shared effective jitter removes.
+    @test ok(1e6 .* Hdeg; jitter = jit)
+    @test !ok(1e6 .* Hdeg; jitter = jit, adaptive = true, scale_factor = jit)
+    # Guard and factorization derive the threshold from the same helper.
+    @test NoLimits._effective_jitter(-(1e6 .* Hdeg), jit, true, jit)≈2e6 / 3 * jit rtol=1e-6
+    @test NoLimits._effective_jitter(-(1e6 .* Hdeg), jit, false, jit) == jit
 end
