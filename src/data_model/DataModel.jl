@@ -1452,7 +1452,11 @@ function DataModel(model,
     # type-stable, which Enzyme reverse mode requires: dynamic getfield on the abstract
     # eltype routes through Enzyme's runtime fallback, which cannot shadow-accumulate
     # into immutable structs (`setfield!: immutable struct ... cannot be changed`).
-    individuals = map(identity, individuals)
+    # A Union, not `map(identity, ...)`: subjects can differ in callback type (some have
+    # no dose events), and `map` widens to the typejoin `Individual{...} where CB`, which
+    # dispatches dynamically. `Union{T} === T`, so homogeneous data is unaffected.
+    individuals = isempty(individuals) ? individuals :
+                  convert(Vector{Union{unique(map(typeof, individuals))...}}, individuals)
     pairing = _build_pairing(individuals, model)
     id_index = Dict{Any, Int}((keys_sorted[i] => i) for i in eachindex(keys_sorted))
     row_groups = RowGroups(groups, obs_groups)

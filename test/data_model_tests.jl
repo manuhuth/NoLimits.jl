@@ -1649,3 +1649,51 @@ end
     @test isequal(ind.series.obs.y, Union{Missing, Float64}[1.0, missing, 1.2])
     @test isequal(ind.series.obs.z, Union{Missing, Float64}[2.1, 2.0, missing])
 end
+
+# Subjects that differ in dose events get different concrete `Individual` types. `map`
+# would widen those to the typejoin `Individual{...} where CB`, which is abstract and
+# dispatches dynamically on every field access; a Union is union-split instead.
+@testset "individuals eltype stays union-split with mixed dosing" begin
+    model = @Model begin
+        @fixedEffects begin
+            ke = RealNumber(0.5, scale = :log)
+            σ = RealNumber(0.3, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, 1.0); column = :ID)
+        end
+        @DifferentialEquation begin
+            D(A) ~ -ke * exp(η) * A
+        end
+        @initialDE begin
+            A = 0.0
+        end
+        @formulas begin
+            y ~ Normal(A(t), σ)
+        end
+    end
+    # ID 1 and 2 are dosed; ID 3 never is, so its callbacks differ in type.
+    df = DataFrame(
+        ID = [1, 1, 1, 2, 2, 2, 3, 3],
+        t = [0.0, 1.0, 2.0, 0.0, 1.0, 2.0, 1.0, 2.0],
+        EVID = [1, 0, 0, 1, 0, 0, 0, 0],
+        AMT = [10.0, 0.0, 0.0, 5.0, 0.0, 0.0, 0.0, 0.0],
+        RATE = zeros(8),
+        CMT = ones(Int, 8),
+        y = Union{Missing, Float64}[missing, 1.0, 0.8, missing, 0.6, 0.4, 0.2, 0.1]
+    )
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t, evid_col = :EVID,
+        amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT)
+    inds = get_individuals(dm)
+    E = eltype(inds)
+    @test length(unique(map(typeof, inds))) > 1      # the case actually arose
+    @test !isa(E, UnionAll)                          # not widened to the typejoin
+    @test isa(E, Union)
+    # Homogeneous data must still land on a single concrete type (Union{T} === T).
+    dm1 = DataModel(model, df[df.ID .<= 2, :]; primary_id = :ID, time_col = :t,
+        evid_col = :EVID, amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT)
+    @test isconcretetype(eltype(get_individuals(dm1)))
+end
