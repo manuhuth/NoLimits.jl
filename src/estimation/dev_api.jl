@@ -340,6 +340,13 @@ function laplace_marginal(dm::DataModel, θ::ComponentArray, batch::REBatchInfo,
         dm, batch, θ, b_star, const_cache, c, nothing, 1;
         jitter = jitter, max_tries = max_tries, adaptive = adaptive,
         scale_factor = scale_factor, hmode = curvature)
+    # `_laplace_logdet_negH` already returns Inf for a degenerate or non-factorizable -H,
+    # which makes the result -Inf; warn here (a reporting path) rather than in the hot loop.
+    if isinf(logdet_negH)
+        @warn "laplace_marginal: the Laplace expansion is invalid at b* (-H degenerate or " *
+              "not factorizable; b* may not be a true mode). Returning -Inf."
+        return convert(typeof(logf), -Inf)
+    end
     n_b = get_batch_re_dim(batch)
     return logf + (n_b / 2) * log(2 * pi) - logdet_negH / 2
 end

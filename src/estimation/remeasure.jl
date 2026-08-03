@@ -595,6 +595,9 @@ function build_centered_re_measure(
     b_star = Vector{Float64}(b_star)
     T = Float64
     H = _laplace_hessian_b(dm, batch_info, θu, b_star, const_cache, ll_cache, nothing, bi)
+    # A jitter-only-definite -H would set the quadrature scale from the regularisation;
+    # `nothing` routes the caller to MC sampling, which cannot exceed the ceiling.
+    negH_definite_without_jitter(H; jitter = jitter) || return nothing
     chol, _ = _laplace_cholesky_negH(H; jitter = jitter, max_tries = max_tries)
     (chol === nothing || chol.info != 0) && return nothing
     L = chol.L  # lower triangular, L*L' = -H

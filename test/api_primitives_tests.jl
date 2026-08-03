@@ -578,3 +578,62 @@ struct APITestBayes <: NoLimits.FittingMethod end
         @test compute_uq(res; method = :chain) isa NoLimits.UQResult
     end
 end
+
+# The Laplace/AGHQ marginal is only defined at a genuine interior mode. If `-H` is
+# positive definite only because `jitter` was added, the `-½logdet(-H)` term is set by
+# the regularisation (~1/jitter) and inflates the marginal without bound -- it can then
+# exceed the exact ceiling -n/2·log(2πσ²) that the true marginal must respect.
+@testset "negH_definite_without_jitter guards the Laplace marginal" begin
+    jit = 1e-6
+    ok = NoLimits.negH_definite_without_jitter
+
+    # -H = I is comfortably definite; H is the raw Hessian, so pass -I.
+    @test ok(-Matrix(1.0I, 3, 3); jitter = jit)
+    # Zero-dimensional batch: nothing to check.
+    @test ok(zeros(0, 0); jitter = jit)
+
+    # Exactly the failure mode observed in practice: one eigenvalue at/below the jitter,
+    # so only the regularisation makes the Cholesky succeed.
+    for λ in (0.0, jit / 10, jit)
+        H = -Matrix(Diagonal([1.0, 1.0, λ]))
+        @test !ok(H; jitter = jit)
+    end
+    # Just above the jitter must still pass, so the guard is not over-eager.
+    @test ok(-Matrix(Diagonal([1.0, 1.0, 10 * jit])); jitter = jit)
+
+    # Indefinite (b* is a saddle, not a maximum) and non-finite entries are rejected.
+    @test !ok(-Matrix(Diagonal([1.0, -2.0])); jitter = jit)
+    @test !ok(-Matrix(Diagonal([1.0, NaN])); jitter = jit)
+
+    # Duals are judged on their primal values, so the objective and its gradient agree
+    # about which points are admissible.
+    @test !ok(ForwardDiff.Dual.(-Matrix(Diagonal([1.0, 1.0, 0.0])), 1.0); jitter = jit)
+    @test ok(ForwardDiff.Dual.(-Matrix(1.0I, 3, 3), 1.0); jitter = jit)
+
+    # The jittered Cholesky *succeeds* on the singular case -- which is exactly why the
+    # determinant alone cannot be trusted and this predicate is needed. A healthy -H is
+    # untouched and still gives the exact log-det.
+    Hbad = -Matrix(Diagonal([1.0, 1.0, 0.0]))
+    cbad, _ = NoLimits._laplace_cholesky_negH(Hbad; jitter = jit)
+    @test cbad !== nothing && cbad.info == 0
+    @test !ok(Hbad; jitter = jit)
+    cok, _ = NoLimits._laplace_cholesky_negH(-Matrix(Diagonal([2.0, 3.0])); jitter = jit)
+    @test 2 * sum(log, diag(cok.U))≈log(6.0) rtol=1e-6
+
+    # The threshold has to be the jitter the protected Cholesky actually adds. With the
+    # adaptive jitter that Laplace/FOCEI use by default, that makes the verdict depend on
+    # the conditioning of -H rather than on the units the data happens to be in.
+    Hfine = -Matrix(Diagonal([1.0, 1.0, 1e-4]))   # cond 1e4
+    Hdeg = -Matrix(Diagonal([1.0, 1.0, 1e-9]))    # cond 1e9
+    for s in (1.0, 1e3, 1e6)
+        @test ok(s .* Hfine; jitter = jit, adaptive = true, scale_factor = jit)
+        @test !ok(s .* Hdeg; jitter = jit, adaptive = true, scale_factor = jit)
+    end
+    # Against the bare jitter the degenerate matrix is accepted once the data is scaled up
+    # -- the unit-dependence the shared effective jitter removes.
+    @test ok(1e6 .* Hdeg; jitter = jit)
+    @test !ok(1e6 .* Hdeg; jitter = jit, adaptive = true, scale_factor = jit)
+    # Guard and factorization derive the threshold from the same helper.
+    @test NoLimits._effective_jitter(-(1e6 .* Hdeg), jit, true, jit)≈2e6 / 3 * jit rtol=1e-6
+    @test NoLimits._effective_jitter(-(1e6 .* Hdeg), jit, false, jit) == jit
+end

@@ -707,8 +707,9 @@ function _flatten_by_specs(
         spec = specs[i]
         val = θ[name]
         if spec.kind == :cholesky
-            for r in 1:spec.size[1]
-                for c in 1:spec.size[2]
+            # Lower triangle only, column-major -- must match `_vech_lower`.
+            for c in 1:spec.size[2]
+                for r in c:spec.size[1]
                     push!(flat_names, Symbol(name, "_", r, "_", c))
                 end
             end
@@ -782,9 +783,10 @@ function _transform_bounds(bounds::Tuple{ComponentArray, ComponentArray},
             push!(lower_pairs, name => l2)
             push!(upper_pairs, name => u2)
         elseif spec.kind == :cholesky
-            n1, n2 = spec.size
-            push!(lower_pairs, name => fill(-Inf, n1 * n2))
-            push!(upper_pairs, name => fill(Inf, n1 * n2))
+            n1, _ = spec.size
+            n = n1 * (n1 + 1) ÷ 2
+            push!(lower_pairs, name => fill(-Inf, n))
+            push!(upper_pairs, name => fill(Inf, n))
         elseif spec.kind == :expm
             n1, n2 = spec.size
             n = n1 * (n1 + 1) ÷ 2

@@ -71,12 +71,12 @@ _spec_for(it, name) = it.specs[findfirst(s -> s.name == name, it.specs)]
         end
         it, θt = _it_theta(NoLimits.get_fixed(m))
         spec = _spec_for(it, :Ω)
-        blk = collect(getproperty(θt, :Ω))  # flat n^2 log-Cholesky factor
+        # The block IS the lower-triangular free coords of the log-Cholesky factor.
+        blk = collect(getproperty(θt, :Ω))
         n = 2
-        Tmat = reshape(blk, n, n)
+        @test length(blk) == n * (n + 1) ÷ 2
         gmin = z -> vechL(cholesky_inverse(lower_from_free(z, n)))
-        z0 = [Tmat[i, j] for j in 1:n for i in j:n]  # lower-tri free coords
-        @test _block_logabsdetjac(spec, blk)≈fd_ref(gmin, z0) atol=1e-6
+        @test _block_logabsdetjac(spec, blk)≈fd_ref(gmin, blk) atol=1e-6
         @test logabsdetjac(it, θt)≈_block_logabsdetjac(spec, blk) + log(0.5) atol=1e-6
         @test all(isfinite, ForwardDiff.gradient(z -> _block_logabsdetjac(spec, z), blk))
     end

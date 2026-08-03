@@ -491,6 +491,7 @@ plot_em_trajectories
 sample_random_effects
 sample_posterior
 reestimate_ebes
+get_marginal_likelihood
 get_loglikelihood_quadrature
 compute_shrinkage
 compare_parameters

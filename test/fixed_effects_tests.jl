@@ -193,7 +193,8 @@ end
     end
     θt_chol = get_transform(fe_chol)(get_θ0_untransformed(fe_chol))
     @test θt_chol.Ω isa AbstractVector
-    @test length(θt_chol.Ω) == 4
+    # Lower triangle only: n(n+1)/2 free coords, not the full n^2 factor.
+    @test length(θt_chol.Ω) == 3
     θrt_chol = get_inverse_transform(fe_chol)(θt_chol)
     @test isapprox(θrt_chol.Ω, get_θ0_untransformed(fe_chol).Ω; rtol = 1e-6, atol = 1e-8)
     @test !get_params(fe_chol).Ω.calculate_se

@@ -1597,24 +1597,51 @@ ctx::AbstractString = "", tctx = nothing) = inner_curvature(
     mode, dm, batch_info, θ, b, const_cache, cache,
     CurvatureWorkspace(ad_cache, bi); ctx = ctx, tctx = tctx)
 
+# The jitter `_laplace_cholesky_negH` will actually add. Shared with
+# `negH_definite_without_jitter` so the guard and the factorization agree on the threshold.
+function _effective_jitter(Hneg::AbstractMatrix, jitter, adaptive, scale_factor)
+    adaptive || return jitter
+    scale = mean(abs.(diag(Hneg)))
+    scale = isfinite(scale) ? scale : one(real(eltype(Hneg)))
+    return max(jitter, scale_factor * scale)
+end
+
 function _laplace_cholesky_negH(
         H::AbstractMatrix; jitter = 1e-6, max_tries = 6, growth = 10.0,
         adaptive = false, scale_factor = 0.0)
     n = size(H, 1)
     Hneg = Symmetric(-H)
     chol = nothing
-    jit = jitter
-    if adaptive
-        scale = mean(abs.(diag(Hneg)))
-        scale = isfinite(scale) ? scale : one(real(eltype(Hneg)))
-        jit = max(jit, scale_factor * scale)
-    end
+    jit = _effective_jitter(Hneg, jitter, adaptive, scale_factor)
     for _ in 1:max_tries
         chol = cholesky(Hneg + jit * I, check = false)
         chol.info == 0 && return (chol, jit)
         jit *= growth
     end
     return (chol, jit)
+end
+
+"""
+    negH_definite_without_jitter(H; jitter=1e-6, adaptive=false, scale_factor=0.0) -> Bool
+
+Is `-H` positive definite without the diagonal jitter that `_laplace_cholesky_negH`
+adds to force a Cholesky? Validity precondition for a Laplace/AGHQ marginal: if only the
+jitter makes it definite, the `-½·logdet(-H)` term measures the regularisation
+(posterior variance `~1/jitter`) instead of curvature and inflates the marginal past its
+exact ceiling `-n/2·log(2πσ²)`. Tested on primal values so the objective and its gradient
+agree on admissibility.
+
+`adaptive`/`scale_factor` must mirror what the protected `_laplace_cholesky_negH` call
+uses, so the threshold is the jitter actually added. With the adaptive default the test is
+scale-free (a curvature vs the problem's own diagonal scale); comparing against the bare
+`jitter` instead would make admissibility depend on the units of the data.
+"""
+function negH_definite_without_jitter(H::AbstractMatrix; jitter::Real = 1e-6,
+        adaptive::Bool = false, scale_factor::Real = 0.0)
+    size(H, 1) == 0 && return true
+    Hneg = -_scalar_value.(H)
+    all(isfinite, Hneg) || return false
+    return eigmin(Symmetric(Hneg)) > _effective_jitter(Hneg, jitter, adaptive, scale_factor)
 end
 
 function _laplace_logdet_negH(dm::DataModel,
@@ -1660,10 +1687,14 @@ function _laplace_logdet_negH(dm::DataModel,
     end
     H = _build_hess_b(hmode, dm, batch_info, θ, b, const_cache,
         cache, ad_cache, bi; ctx = ctx, tctx = tctx)
+    infT = convert(eltype(H), Inf)
+    # Inf here makes the marginal -Inf, so the optimizer backtracks out of a degenerate
+    # region instead of climbing the jitter artifact. Same jitter the Cholesky below adds.
+    negH_definite_without_jitter(H; jitter = jitter, adaptive = adaptive,
+        scale_factor = scale_factor) || return (infT, H, nothing)
     chol, _ = _laplace_cholesky_negH(
         H; jitter = jitter, max_tries = max_tries, growth = growth,
         adaptive = adaptive, scale_factor = scale_factor)
-    infT = convert(eltype(H), Inf)
     chol === nothing && return (infT, H, nothing)
     chol.info == 0 || return (infT, H, chol)
     logdet = 2 * sum(log, diag(chol.U))
@@ -1944,6 +1975,16 @@ random effects.
 # Keyword Arguments
 - `optimizer`: outer Optimization.jl optimizer. Defaults to `NLopt.LN_BOBYQA()`
   (derivative-free; requires a stopping criterion, supplied by the default `maxiters`).
+  It was the most reliable choice across a six-model tutorial benchmark, but it can
+  stall on a correlated `RealPSDMatrix` block whose optimum sits near the
+  positive-definite boundary - on `pheno_sd` it stopped ~140 `-2LL` units short,
+  leaving one covariance entry at its initial value. If a covariance estimate comes
+  back suspiciously close to its start, retry with
+  `optimizer = OptimizationOptimJL.NelderMead()` or `NLopt.LN_SBPLX()` and compare
+  marginal likelihoods via [`get_marginal_likelihood`](@ref). Neither alternative is a
+  safe blanket default: on the same benchmark NelderMead lost ~800 `-2LL` units on a
+  16-compartment PBPK model and diverged on a joint PK/PD fit, and SBPLX ran a
+  proportional-error parameter away to a degenerate optimum on a myelosuppression model.
 - `optim_kwargs::NamedTuple = (; maxiters = 1000)`: keyword arguments for the outer `solve` call.
 - `adtype`: AD backend for the outer optimizer. Defaults to `AutoForwardDiff()`.
 - `inner_optimizer`: inner optimizer for computing EBE modes. Defaults to `LBFGS`.
