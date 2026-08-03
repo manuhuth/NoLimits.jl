@@ -1617,6 +1617,52 @@ function _laplace_cholesky_negH(
     return (chol, jit)
 end
 
+"""
+    negH_definite_without_jitter(H; jitter=1e-6) -> Bool
+
+Is `-H` positive definite on its own, i.e. without the diagonal `jitter` that
+[`_laplace_cholesky_negH`](@ref) adds to force a Cholesky?
+
+This is a validity precondition for any Laplace- or AGHQ-based marginal likelihood.
+Those approximations expand around a mode and contribute a `-½·logdet(-H)` term; if
+`-H` is only positive definite because `jitter` was added, the implied posterior
+variance is `~1/jitter` (an artifact of the regularisation, not of the data) and that
+term inflates the "marginal" without bound. The result can then exceed the exact
+ceiling `log p(y|θ) ≤ -n/2·log(2πσ²)` that holds for an additive-Gaussian endpoint,
+because the marginal is a prior-weighted average of conditional densities and each
+Gaussian factor is at most `1/(σ√(2π))`.
+
+Both the fitting objective and the reporting paths use this to reject such a batch
+(log-det `Inf`, hence marginal `-Inf`) instead of returning a plausible-looking number,
+so the outer optimizer backtracks out of degenerate regions rather than being rewarded
+for finding them.
+
+This complements, and is orthogonal to, the existing `nan_recovery` machinery: that
+fires on non-finite values and thrown exceptions, whereas a degenerate Hessian here is
+perfectly finite and throws nothing.
+
+The test is applied to the *primal* values, so the value and gradient paths agree
+(deciding the branch on a Dual's derivative would let the objective and its gradient
+disagree about whether a point is admissible). Cost is one small symmetric eigensolve
+per batch, negligible against building `H` itself.
+"""
+function negH_definite_without_jitter(H::AbstractMatrix; jitter::Real = 1e-6)
+    n = size(H, 1)
+    n == 0 && return true
+    Hneg = Matrix{Float64}(undef, n, n)
+    @inbounds for j in 1:n, i in 1:n
+        v = _scalar_value(H[i, j])
+        isfinite(v) || return false
+        Hneg[i, j] = -v
+    end
+    λmin = try
+        eigmin(Symmetric(Hneg))
+    catch
+        return false
+    end
+    return isfinite(λmin) && λmin > jitter
+end
+
 function _laplace_logdet_negH(dm::DataModel,
         batch_info::REBatchInfo,
         θ::ComponentArray,
@@ -1660,10 +1706,16 @@ function _laplace_logdet_negH(dm::DataModel,
     end
     H = _build_hess_b(hmode, dm, batch_info, θ, b, const_cache,
         cache, ad_cache, bi; ctx = ctx, tctx = tctx)
+    infT = convert(eltype(H), Inf)
+    # Reject a batch whose -H is positive definite only thanks to `jitter`. The Cholesky
+    # below would otherwise succeed on the regularisation alone, making the log-det
+    # -n_b*log(jitter) rather than a curvature, which inflates the Laplace/FOCEI marginal
+    # by (n_b/2)*log(1/jitter) per batch. Returning Inf makes the marginal -Inf so the
+    # outer optimizer backtracks instead of climbing that artifact.
+    negH_definite_without_jitter(H; jitter = jitter) || return (infT, H, nothing)
     chol, _ = _laplace_cholesky_negH(
         H; jitter = jitter, max_tries = max_tries, growth = growth,
         adaptive = adaptive, scale_factor = scale_factor)
-    infT = convert(eltype(H), Inf)
     chol === nothing && return (infT, H, nothing)
     chol.info == 0 || return (infT, H, chol)
     logdet = 2 * sum(log, diag(chol.U))
@@ -1944,6 +1996,16 @@ random effects.
 # Keyword Arguments
 - `optimizer`: outer Optimization.jl optimizer. Defaults to `NLopt.LN_BOBYQA()`
   (derivative-free; requires a stopping criterion, supplied by the default `maxiters`).
+  It was the most reliable choice across a six-model tutorial benchmark, but it can
+  stall on a correlated `RealPSDMatrix` block whose optimum sits near the
+  positive-definite boundary - on `pheno_sd` it stopped ~140 `-2LL` units short,
+  leaving one covariance entry at its initial value. If a covariance estimate comes
+  back suspiciously close to its start, retry with
+  `optimizer = OptimizationOptimJL.NelderMead()` or `NLopt.LN_SBPLX()` and compare
+  marginal likelihoods via [`get_marginal_likelihood`](@ref). Neither alternative is a
+  safe blanket default: on the same benchmark NelderMead lost ~800 `-2LL` units on a
+  16-compartment PBPK model and diverged on a joint PK/PD fit, and SBPLX ran a
+  proportional-error parameter away to a degenerate optimum on a myelosuppression model.
 - `optim_kwargs::NamedTuple = (; maxiters = 1000)`: keyword arguments for the outer `solve` call.
 - `adtype`: AD backend for the outer optimizer. Defaults to `AutoForwardDiff()`.
 - `inner_optimizer`: inner optimizer for computing EBE modes. Defaults to `LBFGS`.

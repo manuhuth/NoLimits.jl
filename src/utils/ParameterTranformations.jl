@@ -140,7 +140,16 @@ function _write_forward_spec!(flat::Vector, k::Int, spec::TransformSpec, val)
         end
         return k
     elseif kind === :cholesky
-        return _write_flat!(flat, cholesky_forward(val), k)
+        # Only the lower triangle is free (`_vech_lower` order); the strict upper
+        # triangle of a Cholesky factor is structurally zero, so storing it would
+        # hand the optimizer n(n-1)/2 exactly-flat directions.
+        M = cholesky_forward(val)
+        n = size(M, 1)
+        for j in 1:n, i in j:n
+            flat[k] = M[i, j]
+            k += 1
+        end
+        return k
     elseif kind === :expm
         M = expm_forward(val)
         n = size(M, 1)
@@ -197,8 +206,8 @@ function _write_inverse_spec!(flat::Vector, k::Int, spec::TransformSpec, val)
         end
         return k
     elseif kind === :cholesky
-        n1, n2 = spec.size
-        return _write_flat!(flat, cholesky_inverse(reshape(val, n1, n2)), k)
+        n1, _ = spec.size
+        return _write_flat!(flat, cholesky_inverse(_lower_from_free(val, n1)), k)
     elseif kind === :expm
         n1, _ = spec.size
         return _write_flat!(flat, expm_inverse(_sym_from_upper(val, n1)), k)
@@ -956,15 +965,11 @@ function _lower_from_free(zf::AbstractVector{S}, n::Int) where {S}
     return T
 end
 
-# :cholesky block is the n x n log-Cholesky factor; free coords = its lower triangle,
-# minimal natural = vech(Sigma). Square d x d map, differentiated with ForwardDiff.
+# :cholesky block is the lower triangle of the log-Cholesky factor (n(n+1)/2 free
+# coords); minimal natural = vech(Sigma). Square d x d map, differentiated with ForwardDiff.
 function _logabsdetjac_cholesky(block)
-    v = vec(collect(block))
-    n = isqrt(length(v))
-    n * n == length(v) ||
-        error("cholesky block length $(length(v)) is not a perfect square.")
-    T = reshape(v, n, n)
-    zf = [T[i, j] for j in 1:n for i in j:n]
+    zf = collect(block)
+    n = _lie_dim(length(zf))
     f = z -> _vech_lower(cholesky_inverse(_lower_from_free(z, n)))
     return logabsdet(ForwardDiff.jacobian(f, zf))[1]
 end
@@ -1080,7 +1085,7 @@ function _inv_jac_spec_val(spec::TransformSpec, θti, gu)
                     for j in eachindex(θti)]
         elseif spec.kind == :cholesky
             n1, n2 = spec.size
-            T = reshape(θti, n1, n2)
+            T = _lower_from_free(θti, n1)
             L = Matrix(LowerTriangular(T))
             d = diag(L)
             Lexp = L - Diagonal(d) + Diagonal(exp.(d))
@@ -1097,7 +1102,7 @@ function _inv_jac_spec_val(spec::TransformSpec, θti, gu)
                     end
                 end
             end
-            return vec(grad_T)
+            return _vech_lower(grad_T)
         elseif spec.kind == :expm
             n1, n2 = spec.size
             T = _sym_from_upper(θti, n1)
@@ -1168,8 +1173,7 @@ function _transform_vals(
         elseif spec.kind == :elementwise
             return [_scalar_forward(spec.mask[j], val[j]) for j in eachindex(val)]
         elseif spec.kind == :cholesky
-            T = cholesky_forward(val)
-            return vec(T)
+            return _vech_lower(cholesky_forward(val))
         elseif spec.kind == :expm
             T = expm_forward(val)
             return _upper_tri_vec(T)
@@ -1201,9 +1205,8 @@ function _inverse_vals(
         elseif spec.kind == :elementwise
             return [_scalar_inverse(spec.mask[j], val[j]) for j in eachindex(val)]
         elseif spec.kind == :cholesky
-            n1, n2 = spec.size
-            T = reshape(val, n1, n2)
-            return cholesky_inverse(T)
+            n1, _ = spec.size
+            return cholesky_inverse(_lower_from_free(val, n1))
         elseif spec.kind == :expm
             n1, n2 = spec.size
             T = _sym_from_upper(val, n1)

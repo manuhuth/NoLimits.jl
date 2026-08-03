@@ -595,6 +595,12 @@ function build_centered_re_measure(
     b_star = Vector{Float64}(b_star)
     T = Float64
     H = _laplace_hessian_b(dm, batch_info, θu, b_star, const_cache, ll_cache, nothing, bi)
+    # Reject a batch whose -H only becomes positive definite through `jitter`: the
+    # quadrature scale would then be set by the regularisation (~1/jitter) rather than
+    # by the posterior curvature, and the resulting marginal is not trustworthy. The
+    # caller treats `nothing` as "AGHQ unavailable" and falls back to MC sampling,
+    # which estimates the marginal directly and so cannot exceed its analytic maximum.
+    negH_definite_without_jitter(H; jitter = jitter) || return nothing
     chol, _ = _laplace_cholesky_negH(H; jitter = jitter, max_tries = max_tries)
     (chol === nothing || chol.info != 0) && return nothing
     L = chol.L  # lower triangular, L*L' = -H

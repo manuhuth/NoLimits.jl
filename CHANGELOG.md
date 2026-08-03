@@ -1,6 +1,32 @@
 # Changelog
 
-## v0.2.0
+## Unreleased
+
+### Bug fixes
+
+- Laplace- and FOCEI-based marginal likelihoods no longer report values obtained from a
+  degenerate empirical-Bayes Hessian. When `-H` at the EB mode was positive definite only
+  because the Cholesky `jitter` had been added, the `-½·logdet(-H)` term was set by the
+  regularisation rather than by posterior curvature and inflated the marginal by
+  `(n_b/2)·log(1/jitter)` per batch. Reported log-likelihoods could exceed the exact
+  ceiling `-n/2·log(2πσ²)` that a marginal must satisfy, silently and with
+  `converged = true`, which corrupted model comparison, AIC and BIC. Such a batch is now
+  rejected: the fitting objectives return `-Inf` so the outer optimizer backtracks out of
+  the degenerate region instead of being rewarded for finding it, `laplace_marginal`
+  warns and returns `-Inf`, and `get_marginal_likelihood` falls back to MC integration.
+  This complements the existing `nan_recovery` machinery, which only fires on non-finite
+  values and thrown exceptions. Well-conditioned fits are bit-unchanged.
+- The transformed `:cholesky` block occupied `n²` slots instead of `n(n+1)/2`, so the
+  strict upper triangle of the log-Cholesky factor — which has no effect on the
+  reconstructed matrix — was handed to the optimizer as `n(n-1)/2` exactly-flat
+  directions. It now stores the lower triangle only, matching `:expm` and `:lie`. This
+  changes the length and layout of the transformed vector, of `get_flat_names`, and of
+  Wald UQ coordinates for `RealPSDMatrix(scale = :cholesky)` parameters.
+
+### Other changes
+
+- `FOCEI` accepts BlackBoxOptim optimizers, on the same terms as `Laplace`: finite bounds
+  on every free parameter are required and the start is clamped into the box.
 
 ### Breaking changes
 

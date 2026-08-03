@@ -784,13 +784,15 @@ function _fit_model(dm::DataModel, method::FOCEI, args...;
         error("FOCEI requires at least one free fixed effect. Remove constants or add a fixed/random effect.")
 
     # Shared driver (laplace.jl): FOCEI is Laplace with the Gauss-Newton /
-    # Fisher-information inner Hessian, a hard NaN-backtrack policy, no
-    # BlackBoxOptim support, and the closed-form-information outcome check.
+    # Fisher-information inner Hessian, a hard NaN-backtrack policy, and the
+    # closed-form-information outcome check. BlackBoxOptim is allowed on the same
+    # terms as Laplace: it is derivative-free and only needs the objective, so the
+    # finite-bounds validation and start clamping in `resolve_optimizer_bounds` apply.
     return _fit_laplace_family(dm, method, _FOCEIHess(method.interaction), args,
         fit_kwargs,
         d -> _focei_validate_distributions(d; ode_args = ode_args,
             ode_kwargs = ode_kwargs);
-        nan_recovery = :backtrack, allow_bbo = false,
+        nan_recovery = :backtrack, allow_bbo = true,
         constants = constants, constants_re = constants_re, penalty = penalty,
         ode_args = ode_args, ode_kwargs = ode_kwargs, serialization = serialization,
         rng = rng, theta_0_untransformed = theta_0_untransformed,

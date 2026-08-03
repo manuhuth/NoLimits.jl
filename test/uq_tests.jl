@@ -266,7 +266,9 @@ function _uq_psd_re_df()
 end
 
 @testset "UQ Wald for Laplace with PSD fixed covariance (cholesky/expm/lie)" begin
-    for (scale, n_coords, seed) in ((:cholesky, 4, 31), (:expm, 3, 32), (:lie, 3, 33))
+    # n_coords is the transformed free-coordinate count: n(n+1)/2 = 3 for a 2x2 in
+    # every PSD scale (:cholesky stores the lower triangle, :expm the upper, :lie [λ; α]).
+    for (scale, n_coords, seed) in ((:cholesky, 3, 31), (:expm, 3, 32), (:lie, 3, 33))
         model = _uq_psd_re_model(scale)
         dm = DataModel(model, _uq_psd_re_df(); primary_id = :ID, time_col = :t)
         # The default outer optimizer (NLopt.LN_BOBYQA) is derivative-free and
