@@ -336,18 +336,15 @@ function laplace_marginal(dm::DataModel, θ::ComponentArray, batch::REBatchInfo,
         max_tries::Int = 6, adaptive::Bool = false, scale_factor = 0.0)
     c = _dev_ll_cache(dm, cache)
     logf = _laplace_logf_batch(dm, batch, θ, b_star, const_cache, c)
-    logdet_negH, H, _ = _laplace_logdet_negH(
+    logdet_negH, _, _ = _laplace_logdet_negH(
         dm, batch, θ, b_star, const_cache, c, nothing, 1;
         jitter = jitter, max_tries = max_tries, adaptive = adaptive,
         scale_factor = scale_factor, hmode = curvature)
-    # The expansion is only valid at a genuine interior mode. If -H needs `jitter` to be
-    # positive definite, `-logdet_negH/2` is dominated by the regularisation and inflates
-    # the result without bound (it can exceed -n/2 log(2*pi*sigma^2), which the true
-    # marginal cannot). Report -Inf rather than a plausible-looking number.
-    if !negH_definite_without_jitter(H; jitter = jitter)
-        @warn "laplace_marginal: -H at b* is not positive definite without jitter; the " *
-              "Laplace expansion is invalid here (b* may not be a true mode, or the " *
-              "posterior is near-flat). Returning -Inf."
+    # `_laplace_logdet_negH` already returns Inf for a degenerate or non-factorizable -H,
+    # which makes the result -Inf; warn here (a reporting path) rather than in the hot loop.
+    if isinf(logdet_negH)
+        @warn "laplace_marginal: the Laplace expansion is invalid at b* (-H degenerate or " *
+              "not factorizable; b* may not be a true mode). Returning -Inf."
         return convert(typeof(logf), -Inf)
     end
     n_b = get_batch_re_dim(batch)

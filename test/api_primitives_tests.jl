@@ -605,34 +605,18 @@ end
     @test !ok(-Matrix(Diagonal([1.0, -2.0])); jitter = jit)
     @test !ok(-Matrix(Diagonal([1.0, NaN])); jitter = jit)
 
-    # A jittered Cholesky still *succeeds* on the singular case -- which is exactly why
-    # the determinant alone cannot be trusted and this predicate is needed.
-    Hbad = -Matrix(Diagonal([1.0, 1.0, 0.0]))
-    chol, _ = NoLimits._laplace_cholesky_negH(Hbad; jitter = jit)
-    @test chol !== nothing && chol.info == 0
-    @test !ok(Hbad; jitter = jit)
-
     # Duals are judged on their primal values, so the objective and its gradient agree
     # about which points are admissible.
     @test !ok(ForwardDiff.Dual.(-Matrix(Diagonal([1.0, 1.0, 0.0])), 1.0); jitter = jit)
     @test ok(ForwardDiff.Dual.(-Matrix(1.0I, 3, 3), 1.0); jitter = jit)
-end
 
-# The guard lives in the shared `_laplace_logdet_negH`, so it reaches both the Laplace and
-# FOCEI fitting objectives: a degenerate batch yields log-det Inf -> marginal -Inf, which
-# makes the outer optimizer backtrack instead of climbing the jitter artifact. Healthy
-# Hessians must be unaffected.
-@testset "degenerate -H yields a non-finite log-det (both fitting objectives)" begin
-    jit = 1e-6
-    # Singular: the jittered Cholesky still succeeds, so only the guard can catch it.
+    # The jittered Cholesky *succeeds* on the singular case -- which is exactly why the
+    # determinant alone cannot be trusted and this predicate is needed. A healthy -H is
+    # untouched and still gives the exact log-det.
     Hbad = -Matrix(Diagonal([1.0, 1.0, 0.0]))
     cbad, _ = NoLimits._laplace_cholesky_negH(Hbad; jitter = jit)
-    @test cbad !== nothing && cbad.info == 0          # would have been accepted
-    @test !NoLimits.negH_definite_without_jitter(Hbad; jitter = jit)
-
-    # Healthy: accepted, and the log-det matches the exact value for a diagonal -H.
-    Hok = -Matrix(Diagonal([2.0, 3.0]))
-    @test NoLimits.negH_definite_without_jitter(Hok; jitter = jit)
-    cok, _ = NoLimits._laplace_cholesky_negH(Hok; jitter = jit)
-    @test 2 * sum(log, diag(cok.U))≈log(2.0 * 3.0) rtol=1e-6
+    @test cbad !== nothing && cbad.info == 0
+    @test !ok(Hbad; jitter = jit)
+    cok, _ = NoLimits._laplace_cholesky_negH(-Matrix(Diagonal([2.0, 3.0])); jitter = jit)
+    @test 2 * sum(log, diag(cok.U))≈log(6.0) rtol=1e-6
 end
