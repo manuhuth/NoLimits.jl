@@ -16,6 +16,11 @@
   warns and returns `-Inf`, and `get_marginal_likelihood` falls back to MC integration.
   This complements the existing `nan_recovery` machinery, which only fires on non-finite
   values and thrown exceptions. Well-conditioned fits are bit-unchanged.
+  The rejection threshold is the jitter the protected Cholesky actually adds, so with the
+  default `adaptive_jitter = true` it is the curvature of `-H` relative to the problem's
+  own diagonal scale. Previously it was compared against the bare `jitter`, which made
+  admissibility depend on the units the data was recorded in: the same degenerate
+  posterior was rejected in one unit system and accepted in another.
 - The transformed `:cholesky` block occupied `n²` slots instead of `n(n+1)/2`, so the
   strict upper triangle of the log-Cholesky factor — which has no effect on the
   reconstructed matrix — was handed to the optimizer as `n(n-1)/2` exactly-flat
