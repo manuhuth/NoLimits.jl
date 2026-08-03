@@ -27,6 +27,14 @@
 
 - `FOCEI` accepts BlackBoxOptim optimizers, on the same terms as `Laplace`: finite bounds
   on every free parameter are required and the start is clamped into the box.
+- `Optimization` is capped below 5.7. Optimization 5.7.0 stopped exporting the
+  `SciMLBase` module name, and `LikelihoodProfiler` (up to its current 1.5.3) relies on
+  that export: it imports only individual names via
+  `@reexport import SciMLBase: ...` yet defines `SciMLBase.remake`, so it fails to
+  precompile with `UndefVarError: SciMLBase not defined in LikelihoodProfiler`. That broke
+  every fresh dependency resolve, including CI, the docs build and Aqua's
+  persistent-tasks probe. The cap can be lifted once LikelihoodProfiler imports
+  `SciMLBase` itself.
 
 ### Breaking changes
 
