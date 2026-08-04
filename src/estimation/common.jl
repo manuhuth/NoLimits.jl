@@ -3293,7 +3293,7 @@ function _build_ll_cache_single(dm::DataModel;
         ode_kwargs::NamedTuple = NamedTuple(),
         force_saveat::Bool = false)
     solver_cfg = get_solver_config(get_model(dm))
-    alg = solver_cfg.alg === nothing ? Tsit5() : solver_cfg.alg
+    alg = _resolve_ode_alg(solver_cfg.alg)
     prob_templates = get_de(get_model(dm)) === nothing ? nothing :
                      Vector{Any}(undef, length(get_individuals(dm)))
     if prob_templates !== nothing
