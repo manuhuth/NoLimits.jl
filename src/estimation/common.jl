@@ -830,14 +830,73 @@ function resolve_optimizer_bounds(fe, free_names, θ0_free_t, optimizer, user_lb
 end
 const _resolve_optim_bounds = resolve_optimizer_bounds
 
-# Per-coordinate first-step size for the outer optimizer. NLopt (and Optim's NelderMead)
-# scale each coordinate's first step by that coordinate's own value, so a transformed
-# coordinate starting near zero is effectively frozen: pheno's log-Cholesky `log L22`
-# starts at -5e-5 and has to reach -2.03, i.e. 40,000 initial steps, and the fit stops
-# 39 loglik units short. Optimizing the scaled offset `z` with `θt = θt0 + s .* z` and
-# `z0 = 0` gives every coordinate a first step of `s`. Coordinates with |x0| >= 1 keep
-# exactly the step they get today; only the degenerate ones change.
-_precondition_scale(θ0_free_t) = max.(abs.(collect(θ0_free_t)), one(eltype(θ0_free_t)))
+# Per-coordinate first-step size for the outer optimizer, chosen from how the coordinate
+# is *parameterized* rather than from its magnitude — nlmixr2's `scaleC` idea ("keep the
+# derivatives similar on a log scale to have similar gradient sizes"), read off the
+# `TransformSpec` we already carry.
+#
+# NLopt (and Optim's NelderMead) size each coordinate's first step by that coordinate's own
+# value, which fails at both ends: a coordinate starting near zero is frozen (pheno's
+# log-Cholesky `log L22` starts at -5e-5 and must reach -2.03, i.e. 40,000 initial steps),
+# while a log-scale coordinate at log(0.001) = -6.9 gets a first step of 6.9, a factor-1000
+# probe. Optimizing `θt = θt0 + s .* z` from `z0 = 0` replaces both with a sane step:
+#   * a coordinate that already lives in log/logit space (`:log`, `:logit`, the Cholesky /
+#     expm / Lie matrix coordinates, the stick-breaking and log-rate ones) has natural
+#     scale 1 — a unit step there is a factor-e move in the natural parameter;
+#   * only `:identity` coordinates carry the parameter's own units, so they keep a
+#     magnitude-proportional step, floored at 1 so a near-zero start cannot freeze.
+# A too-large first step is recoverable (the optimizer shrinks it); a too-small one is not.
+# Fixed effects the model itself exponentiates (`cl = exp(tcl + η)`, the standard PK
+# idiom): log-scale by convention even though the declared block is `:identity`, so their
+# natural step is 1 — this is nlmixr2 assigning `scaleC = 1` to "parameters in an
+# exponential", read off our stored model source instead of their parsed model.
+# ponytail: `exp` only. nlmixr2 also special-cases powers, boxCox/yeoJohnson, factorials
+# and natural-scale residual-error parameters; add those if a model turns out to need them.
+function _exponentiated_symbols(ex, out::Set{Symbol} = Set{Symbol}())
+    ex isa Expr || return out
+    if ex.head === :call && !isempty(ex.args) && ex.args[1] === :exp
+        for a in ex.args[2:end]
+            _macro_collect_var_symbols(a, out)
+        end
+    end
+    for a in ex.args
+        _exponentiated_symbols(a, out)
+    end
+    return out
+end
+
+function _model_exponentiated_symbols(model)
+    out = Set{Symbol}()
+    src = get_source(model)
+    src === nothing && return out
+    # `:fixed` is skipped on purpose: it holds the declarations, where an `exp` would be
+    # part of an initial value rather than of the model.
+    for k in (:prede, :de, :initial, :formulas, :random)
+        hasproperty(src, k) && _exponentiated_symbols(getproperty(src, k), out)
+    end
+    return out
+end
+
+function _precondition_scale(model, free_names, θ0_free_t)
+    T = eltype(θ0_free_t)
+    ft = get_transform(get_fixed(model))
+    spec_of = Dict(ft.names[i] => ft.specs[i] for i in eachindex(ft.names))
+    log_by_use = _model_exponentiated_symbols(model)
+    s = T[]
+    for n in free_names
+        v = getproperty(θ0_free_t, n)
+        vals = v isa Number ? T[v] : collect(vec(v))
+        sp = get(spec_of, n, nothing)
+        kinds = (sp !== nothing && sp.kind === :elementwise && sp.mask !== nothing) ?
+                sp.mask : fill(sp === nothing ? :identity : sp.kind, length(vals))
+        natural = !(n in log_by_use)
+        for i in eachindex(vals)
+            push!(s,
+                (natural && kinds[i] === :identity) ? max(abs(vals[i]), one(T)) : one(T))
+        end
+    end
+    return s
+end
 
 function get_iterations(res::MethodResult)
     hasproperty(res, :iterations) ? res.iterations :

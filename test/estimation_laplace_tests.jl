@@ -589,9 +589,6 @@ end
 # log-Cholesky diagonal (≈ -ε²/2) effectively frozen. Preconditioning gives every
 # coordinate a first step of at least 1, so the covariance block can actually move.
 @testset "preconditioning frees a near-zero transformed coordinate" begin
-    @test NoLimits._precondition_scale([0.0, -5.0e-5, 0.01, -4.8, 2.3]) ==
-          [1.0, 1.0, 1.0, 4.8, 2.3]
-
     model = @Model begin
         @fixedEffects begin
             tcl = RealNumber(log(0.05))
@@ -628,4 +625,56 @@ end
     # Preconditioning must never do worse, and it must move Ω[2,2] off its start.
     @test NoLimits.get_objective(on) <= NoLimits.get_objective(off) + 1e-8
     @test abs(Ω_on[2, 2] - 1.0) > abs(Ω_off[2, 2] - 1.0)
+end
+
+# Preconditioning rescales the outer variable, so the gradient handed to the optimizer
+# must carry the per-coordinate factor: G_z[i] = s[i] * G_θ[i]. Both fits below start at
+# the same θ0 (z = 0 maps to θ0), so the two gradients are taken at the identical point
+# and a factor missing on any single coordinate shows up as a ratio != s[i].
+@testset "preconditioned gradient carries the per-coordinate factor" begin
+    model = @Model begin
+        @fixedEffects begin
+            tcl = RealNumber(log(0.05))
+            tv = RealNumber(log(1.0))
+            Ω = RealPSDMatrix([1.0 0.01; 0.01 1.0], scale = :cholesky)
+            σ = RealNumber(0.2, scale = :log)
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @randomEffects begin
+            η = RandomEffect(MvNormal(zeros(2), Ω); column = :ID)
+        end
+
+        @formulas begin
+            cp = exp(tcl + η[1]) / exp(tv + η[2])
+            y ~ Normal(cp, σ)
+        end
+    end
+
+    rng = Xoshiro(11)
+    df = DataFrame(ID = repeat(1:15; inner = 4), t = repeat([0.5, 1.0, 2.0, 4.0], 15),
+        y = 0.05 .* exp.(0.3 .* randn(rng, 60)))
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    lay_pc = NoLimits.free_parameter_layout(NoLimits.get_fixed(NoLimits.get_model(dm)))
+    s = NoLimits._precondition_scale(
+        NoLimits.get_model(dm), lay_pc.free_names, lay_pc.θ0_free_t)
+
+    first_gradient = pc -> begin
+        res = fit_model(dm,
+            NoLimits.Laplace(; precondition = pc,
+                optimizer = OptimizationOptimJL.LBFGS(
+                    linesearch = LineSearches.BackTracking()),
+                optim_kwargs = (; maxiters = 1, store_trace = true,
+                    extended_trace = true));
+            rng = Xoshiro(1))
+        collect(NoLimits.get_raw(res).trace[1].metadata["g(x)"])
+    end
+
+    g_off = first_gradient(false)
+    g_on = first_gradient(true)
+    @test length(g_on) == length(s)
+    @test all(isapprox(g_on[i] / g_off[i], s[i]; rtol = 1e-6) for i in eachindex(g_off))
 end

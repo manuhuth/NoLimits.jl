@@ -2429,7 +2429,7 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
     # raw transformed vector exactly as it did before preconditioning existed.
     θ0_pc = method.precondition ? collect(θ0_free_t) :
             zeros(eltype(θ0_free_t), length(θ0_free_t))
-    s_pc = method.precondition ? _precondition_scale(θ0_free_t) :
+    s_pc = method.precondition ? _precondition_scale(get_model(dm), free_names, θ0_free_t) :
            ones(eltype(θ0_free_t), length(θ0_free_t))
     function _θt_from_z(z)
         ComponentArray(
@@ -2550,6 +2550,8 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
     niter = hasproperty(sol, :stats) && hasproperty(sol.stats, :iterations) ?
             sol.stats.iterations : missing
     raw = hasproperty(sol, :original) ? sol.original : sol
+    # `sol.u` is the preconditioned offset z, not θ (provenance only — the fitted
+    # parameters live in `summary`, and serialization keeps just this vector).
     result = FrequentistREResult(
         sol, sol.objective, niter, raw, NamedTuple(), ebe_cache.bstar_cache.b_star)
     return FitResult(method, result, summary, diagnostics,
