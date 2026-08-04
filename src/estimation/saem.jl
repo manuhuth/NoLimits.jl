@@ -3522,11 +3522,19 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
         builtin_stats_mode_effective = builtin_stats_mode,
         builtin_stats_closed_form_eligibility = builtin_cf_elig,
         anneal_to_fixed = method.saem.anneal_to_fixed)
-    summary = FitSummary(Q_prev, converged,
+    # Q is non-finite whenever the E-step's random-effect sample lands where the model
+    # cannot be evaluated. That is a per-iteration accident, so reporting the last such
+    # value as the fit's objective hides an otherwise usable fit behind an `Inf`.
+    n_nonfinite_Q = count(!isfinite, diag.Q_hist)
+    last_finite_Q = findlast(isfinite, diag.Q_hist)
+    Q_report = (isfinite(Q_prev) || last_finite_Q === nothing) ? Q_prev :
+               diag.Q_hist[last_finite_Q]
+    summary = FitSummary(Q_report, converged,
         FitParameters(θ_hat_t, θ_hat_u),
         notes)
     diagnostics = FitDiagnostics((;), (optimizer = method.optimizer,),
         (saem_iters = length(diag.Q_hist),
+            n_nonfinite_Q = n_nonfinite_Q,
             dθ_abs = diag.dθ_abs[end], dQ_abs = diag.dQ_abs[end],
             drift_θ = diag.drift_θ[end], drift_Q = diag.drift_Q[end],
             gamma = diag.gamma,
@@ -3550,7 +3558,7 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
         progress = method.saem.progress,
         progress_desc = "SAEM Final EBE",
         mcmc_candidates_by_batch = last_b_candidates)[1] : nothing
-    result = SAEMResult(nothing, Q_prev, length(diag.Q_hist), nothing, notes, eb_modes)
+    result = SAEMResult(nothing, Q_report, length(diag.Q_hist), nothing, notes, eb_modes)
     return FitResult(method, result, summary, diagnostics,
         store_data_model ? dm : nothing, args, fit_kwargs)
 end

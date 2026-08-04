@@ -1620,11 +1620,18 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
     θ_hat_u = θu_last
     θ_hat_t = transform(θ_hat_u)
 
-    summary = FitSummary(Q_prev, converged,
+    # See the SAEM driver: a non-finite Q is a per-iteration accident of the E-step
+    # sample, so the last finite value is the fit's objective.
+    n_nonfinite_Q = count(!isfinite, diag.Q_hist)
+    last_finite_Q = findlast(isfinite, diag.Q_hist)
+    Q_report = (isfinite(Q_prev) || last_finite_Q === nothing) ? Q_prev :
+               diag.Q_hist[last_finite_Q]
+    summary = FitSummary(Q_report, converged,
         FitParameters(θ_hat_t, θ_hat_u),
         NamedTuple())
     diagnostics = FitDiagnostics((;), (optimizer = method.optimizer,),
         (em_iters = length(diag.Q_hist),
+            n_nonfinite_Q = n_nonfinite_Q,
             dθ_abs = isempty(diag.dθ_abs) ? T0(NaN) : diag.dθ_abs[end],
             dQ_abs = isempty(diag.dQ_abs) ? T0(NaN) : diag.dQ_abs[end],
             drift_θ = isempty(diag.drift_θ) ? T0(NaN) : diag.drift_θ[end],
@@ -1640,7 +1647,7 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
 
     notes = (diagnostics = diag,)
 
-    result = MCEMResult(nothing, Q_prev, length(diag.Q_hist), nothing, notes, eb_modes)
+    result = MCEMResult(nothing, Q_report, length(diag.Q_hist), nothing, notes, eb_modes)
     return FitResult(method, result, summary, diagnostics,
         store_data_model ? dm : nothing, args, fit_kwargs)
 end

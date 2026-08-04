@@ -114,14 +114,7 @@ end
         ctx = "grad_logdet_b")[1]
 end
 
-# Exception classes that signal a numerically-degenerate point (rather than a
-# programming error): callers treat these as objective = Inf / cache-fallback
-# during optimizer exploration instead of rethrowing.
-@inline function _is_numeric_error(err)
-    return err isa LinearAlgebra.PosDefException ||
-           err isa LinearAlgebra.SingularException ||
-           err isa DomainError || err isa ArgumentError
-end
+# `_is_numeric_error` lives in utils/GeneralUtils.jl (needed by common.jl too).
 
 # ── SAEM anneal-to-fixed helpers ─────────────────────────────────────────────
 

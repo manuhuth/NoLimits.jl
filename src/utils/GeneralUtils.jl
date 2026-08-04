@@ -77,3 +77,12 @@ end
     merged = merge((verbose = _ODE_VERBOSE_SILENT, maxiters = 5000), base, extra, overrides)
     return _ode_normalize_verbose(merged, merged.verbose)
 end
+
+# Exception classes that signal a numerically-degenerate point (rather than a
+# programming error): callers treat these as objective = Inf / likelihood = -Inf
+# during optimizer exploration instead of rethrowing.
+@inline function _is_numeric_error(err)
+    return err isa LinearAlgebra.PosDefException ||
+           err isa LinearAlgebra.SingularException ||
+           err isa DomainError || err isa ArgumentError
+end

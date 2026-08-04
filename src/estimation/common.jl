@@ -2370,6 +2370,7 @@ function fit_model(dm::DataModel, method::FittingMethod, args...;
         pooled_init = false,
         fit_options_pooled_init::NamedTuple = NamedTuple(),
         kwargs...)
+    _reset_numeric_warnings!()
     if pooled_init === false
         isempty(fit_options_pooled_init) ||
             @warn "fit_options_pooled_init is ignored because pooled_init is false."
@@ -2576,6 +2577,32 @@ function _ll_ode_solve_baked(cache::_LLCache, prob)
     return solve(prob, cache.alg, cache.ode_args...; solve_kwargs...)
 end
 
+# One-shot warning flags, reset per `fit_model` call. Atomics rather than the logger's
+# own `maxlog`: these sites fire from inside `Threads.@threads` regions, and `maxlog`
+# bookkeeping mutates an unsynchronized Dict in the logger.
+# ponytail: one warning per fit, not a rate. Per-fit counters if users need the rate.
+const _WARNED_SOLVE_DROP = Threads.Atomic{Bool}(false)
+const _WARNED_NUMERIC_ERROR = Threads.Atomic{Bool}(false)
+
+@inline function _reset_numeric_warnings!()
+    _WARNED_SOLVE_DROP[] = false
+    _WARNED_NUMERIC_ERROR[] = false
+    return nothing
+end
+
+# A dropped solve returns `nothing`, which the callers turn into a -Inf likelihood: the
+# optimizer needs a value, not an exception. Warn once so the drop is not invisible — a
+# fit can otherwise report `Inf` with no hint that most of its solves aborted.
+function _ll_drop_solve(retcode)
+    if !Threads.atomic_cas!(_WARNED_SOLVE_DROP, false, true)
+        @warn "ODE solve failed (retcode $(retcode)); the log-likelihood is -Inf at this " *
+              "parameter/random-effect value. If the fit behaves badly, raise the step " *
+              "budget or use a stiff solver, e.g. set_solver_config(model; " *
+              "alg=AutoTsit5(Rodas5P()), kwargs=(; maxiters=10^5)). Warned once per fit."
+    end
+    return nothing
+end
+
 # ── Hybrid closed-form / numerical solve (decoupled-subset mixing) ───────────
 # When only a self-contained linear subset of states is closed-form eligible
 # (`plan.cf_states ⊊ 1:n`), solve that subset analytically and integrate the rest
@@ -2636,7 +2663,7 @@ function _cf_hybrid_solve(model, compiled, u0, tspan, saveat, plan::ClosedFormPl
     n_idx = [i for i in 1:n if !(i in cf)]
     L_sol = _closed_form_solve_de(
         model, compiled, u0, tspan, saveat, float(tspan[1]), get_cf_mode(plan); idxs = cf)
-    L_sol === nothing && return nothing
+    L_sol === nothing && return _ll_drop_solve(:closed_form_failed)
     # Append the clock state τ(0) = t0 (see `_CFReducedRHS`).
     u0N = vcat(collect(u0)[n_idx], float(tspan[1]))
     g! = _CFReducedRHS(get_de_f(get_de(model)), compiled, L_sol, cf, n_idx, n)
@@ -2644,7 +2671,7 @@ function _cf_hybrid_solve(model, compiled, u0, tspan, saveat, plan::ClosedFormPl
     kw = saveat === nothing ? merge(solve_kwargs, (; dense = true)) :
          merge(solve_kwargs, (; saveat = saveat, save_everystep = false, dense = false))
     N_sol = solve(prob, alg, ode_args...; kw...)
-    SciMLBase.successful_retcode(N_sol) || return nothing
+    SciMLBase.successful_retcode(N_sol) || return _ll_drop_solve(N_sol.retcode)
     is_L = fill(false, n)
     local_idx = zeros(Int, n)
     for (a, gi) in enumerate(cf)
@@ -2723,7 +2750,7 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
             model, compiled, u0_T, get_tspan(ind), saveat_use, plan,
             get_callbacks(ind), cache.alg, cache.ode_args,
             _ode_solve_kwargs(cache.solver_cfg.kwargs, cache.ode_kwargs, NamedTuple()))
-        sol === nothing && return nothing
+        sol === nothing && return _ll_drop_solve(:closed_form_failed)
         return get_de_accessors_builder(get_de(model))(sol, compiled)
     end
     # Solve parameters travel as a flat numeric Vector (DERHSFlat adapter):
@@ -2750,7 +2777,7 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
         end
         prob = remake(prob; u0 = u0_T, p = p_flat)
         sol = _ll_ode_solve_baked(cache, prob)
-        SciMLBase.successful_retcode(sol) || return nothing
+        SciMLBase.successful_retcode(sol) || return _ll_drop_solve(sol.retcode)
         return get_de_accessors_builder(get_de(model))(sol, compiled)
     end
     # Crossing (time-to-event) models: solver-native event detection. The crossing
@@ -2777,7 +2804,7 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
         prob = ODEProblem{true, SciMLBase.FullSpecialize}(
             f!_use, u0_T, get_tspan(ind), p_flat; _ll_prob_kwargs(cbset, saveat_use)...)
         sol = _ll_ode_solve_baked(cache, prob)
-        SciMLBase.successful_retcode(sol) || return nothing
+        SciMLBase.successful_retcode(sol) || return _ll_drop_solve(sol.retcode)
         acc = get_de_accessors_builder(get_de(model))(sol, compiled)
         return merge(acc, NamedTuple{(spec.name,)}((r[],)))
     end
@@ -2817,7 +2844,7 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
     prob = ODEProblem{true, SciMLBase.FullSpecialize}(
         f!_use, u0_T, get_tspan(ind), p_flat; _ll_prob_kwargs(cbset, saveat_use)...)
     sol = _ll_ode_solve_baked(cache, prob)
-    SciMLBase.successful_retcode(sol) || return nothing
+    SciMLBase.successful_retcode(sol) || return _ll_drop_solve(sol.retcode)
     acc = get_de_accessors_builder(get_de(model))(sol, compiled)
     cross_nt = NamedTuple{Tuple(crossings[k].name for k in 1:n_cross)}(
         Tuple(crossings[k].kind === :time ? time_refs[k][] :
@@ -2825,7 +2852,27 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
     return merge(acc, cross_nt)
 end
 
+# Every estimator's likelihood routes through here, so this is the one place that turns a
+# numeric error raised by the model itself — `log`/`sqrt` of an out-of-domain value in
+# @formulas or in the DE right-hand side — into the same -Inf a failed solve gives, rather
+# than an exception that kills the fit (the SAEM/MCEM E-step has no handler of its own).
+# The guard sits in this thin wrapper, not around the body, so the hot path is untouched.
 function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache)
+    try
+        return __loglikelihood_individual(dm, idx, θ, η_ind, cache)
+    catch err
+        _is_numeric_error(err) || rethrow(err)
+        if !Threads.atomic_cas!(_WARNED_NUMERIC_ERROR, false, true)
+            @warn "A numeric error ($(nameof(typeof(err)))) was raised while evaluating " *
+                  "the likelihood; treating this point as -Inf. Check the domains of " *
+                  "`log`, `sqrt` and `^` in @formulas / @DifferentialEquation. " *
+                  "Warned once per fit."
+        end
+        return -Inf
+    end
+end
+
+function __loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache)
     model = get_model(dm)
     ind = get_individuals(dm)[idx]
     obs_rows = get_obs_rows(get_row_groups(dm))[idx]
