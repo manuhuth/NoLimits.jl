@@ -1597,22 +1597,18 @@ ctx::AbstractString = "", tctx = nothing) = inner_curvature(
     mode, dm, batch_info, θ, b, const_cache, cache,
     CurvatureWorkspace(ad_cache, bi); ctx = ctx, tctx = tctx)
 
-# The jitter `_laplace_cholesky_negH` will actually add. Shared with
-# `negH_definite_without_jitter` so the guard and the factorization agree on the threshold.
-function _effective_jitter(Hneg::AbstractMatrix, jitter, adaptive, scale_factor)
-    adaptive || return jitter
-    scale = mean(abs.(diag(Hneg)))
-    scale = isfinite(scale) ? scale : one(real(eltype(Hneg)))
-    return max(jitter, scale_factor * scale)
-end
-
 function _laplace_cholesky_negH(
         H::AbstractMatrix; jitter = 1e-6, max_tries = 6, growth = 10.0,
         adaptive = false, scale_factor = 0.0)
     n = size(H, 1)
     Hneg = Symmetric(-H)
     chol = nothing
-    jit = _effective_jitter(Hneg, jitter, adaptive, scale_factor)
+    jit = jitter
+    if adaptive
+        scale = mean(abs.(diag(Hneg)))
+        scale = isfinite(scale) ? scale : one(real(eltype(Hneg)))
+        jit = max(jit, scale_factor * scale)
+    end
     for _ in 1:max_tries
         chol = cholesky(Hneg + jit * I, check = false)
         chol.info == 0 && return (chol, jit)
@@ -1622,26 +1618,28 @@ function _laplace_cholesky_negH(
 end
 
 """
-    negH_definite_without_jitter(H; jitter=1e-6, adaptive=false, scale_factor=0.0) -> Bool
+    negH_definite_without_jitter(H; rtol=1e-8) -> Bool
 
-Is `-H` positive definite without the diagonal jitter that `_laplace_cholesky_negH`
-adds to force a Cholesky? Validity precondition for a Laplace/AGHQ marginal: if only the
-jitter makes it definite, the `-½·logdet(-H)` term measures the regularisation
-(posterior variance `~1/jitter`) instead of curvature and inflates the marginal past its
-exact ceiling `-n/2·log(2πσ²)`. Tested on primal values so the objective and its gradient
-agree on admissibility.
+Is `-H` positive definite with every curvature direction informative, i.e. without relying
+on the diagonal jitter `_laplace_cholesky_negH` adds to force a Cholesky? Validity
+precondition for a Laplace/AGHQ marginal: when a direction carries no curvature, the
+`-½·logdet(-H)` term measures the regularisation (posterior variance `~1/jitter`) rather
+than the data, and inflates the marginal past its exact ceiling `-n/2·log(2πσ²)`.
 
-`adaptive`/`scale_factor` must mirror what the protected `_laplace_cholesky_negH` call
-uses, so the threshold is the jitter actually added. With the adaptive default the test is
-scale-free (a curvature vs the problem's own diagonal scale); comparing against the bare
-`jitter` instead would make admissibility depend on the units of the data.
+The test is *relative* (`λmin > rtol·λmax`), so it is invariant to the units the data is
+recorded in. An absolute floor is not: comparing against the bare `jitter` makes the same
+posterior admissible in one unit system and degenerate in another, and comparing against
+the adaptive jitter `max(jitter, scale_factor·mean|diag|)` additionally rejects
+well-conditioned Hessians merely for having a large diagonal — which stalls the outer
+optimizer at its starting values. Applied to primal values so the objective and its
+gradient agree on admissibility.
 """
-function negH_definite_without_jitter(H::AbstractMatrix; jitter::Real = 1e-6,
-        adaptive::Bool = false, scale_factor::Real = 0.0)
+function negH_definite_without_jitter(H::AbstractMatrix; rtol::Real = 1e-8)
     size(H, 1) == 0 && return true
     Hneg = -_scalar_value.(H)
     all(isfinite, Hneg) || return false
-    return eigmin(Symmetric(Hneg)) > _effective_jitter(Hneg, jitter, adaptive, scale_factor)
+    λ = eigvals(Symmetric(Hneg))          # ascending; catches λmin <= 0 too
+    return first(λ) > rtol * last(λ)
 end
 
 function _laplace_logdet_negH(dm::DataModel,
@@ -1689,9 +1687,8 @@ function _laplace_logdet_negH(dm::DataModel,
         cache, ad_cache, bi; ctx = ctx, tctx = tctx)
     infT = convert(eltype(H), Inf)
     # Inf here makes the marginal -Inf, so the optimizer backtracks out of a degenerate
-    # region instead of climbing the jitter artifact. Same jitter the Cholesky below adds.
-    negH_definite_without_jitter(H; jitter = jitter, adaptive = adaptive,
-        scale_factor = scale_factor) || return (infT, H, nothing)
+    # region instead of climbing the jitter artifact.
+    negH_definite_without_jitter(H) || return (infT, H, nothing)
     chol, _ = _laplace_cholesky_negH(
         H; jitter = jitter, max_tries = max_tries, growth = growth,
         adaptive = adaptive, scale_factor = scale_factor)
