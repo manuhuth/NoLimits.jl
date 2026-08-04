@@ -100,7 +100,7 @@ function _simulate_sol_accessors(dm::DataModel, idx::Int, θ, η)
     plan = get_closed_form_plan(dm)
     if is_cf_eligible(plan) && (_cf_is_whole(plan) || cb === nothing)
         solver_cfg = get_solver_config(model)
-        cf_alg = solver_cfg.alg === nothing ? Tsit5() : solver_cfg.alg
+        cf_alg = _resolve_ode_alg(solver_cfg.alg)
         sol = _cf_dispatch_solve(
             model, compiled, u0, get_tspan(ind), get_saveat(ind), plan,
             get_callbacks(ind), cf_alg, solver_cfg.args,
@@ -110,7 +110,7 @@ function _simulate_sol_accessors(dm::DataModel, idx::Int, θ, η)
     f!_use = _with_infusion(get_de_f!(get_de(model)), infusion_rates)
     prob = ODEProblem(f!_use, u0, get_tspan(ind), compiled)
     solver_cfg = get_solver_config(model)
-    alg = solver_cfg.alg === nothing ? Tsit5() : solver_cfg.alg
+    alg = _resolve_ode_alg(solver_cfg.alg)
     if get_saveat(ind) === nothing
         solve_kwargs = _ode_solve_kwargs(
             solver_cfg.kwargs, NamedTuple(), (dense = true,))

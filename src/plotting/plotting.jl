@@ -334,7 +334,7 @@ function _solve_dense_individual(dm::DataModel,
     plan = get_closed_form_plan(dm)
     if is_cf_eligible(plan) && (_cf_is_whole(plan) || cb === nothing)
         solver_cfg = get_solver_config(model)
-        cf_alg = solver_cfg.alg === nothing ? Tsit5() : solver_cfg.alg
+        cf_alg = _resolve_ode_alg(solver_cfg.alg)
         sol = _cf_dispatch_solve(model, compiled, u0, get_tspan(ind), nothing, plan,
             get_callbacks(ind), cf_alg, solver_cfg.args,
             _ode_solve_kwargs(solver_cfg.kwargs, ode_kwargs, NamedTuple()))
@@ -342,7 +342,7 @@ function _solve_dense_individual(dm::DataModel,
     end
     prob = ODEProblem(f!, u0, get_tspan(ind), compiled)
     solver_cfg = get_solver_config(model)
-    alg = solver_cfg.alg === nothing ? Tsit5() : solver_cfg.alg
+    alg = _resolve_ode_alg(solver_cfg.alg)
     solve_kwargs = _ode_solve_kwargs(solver_cfg.kwargs, ode_kwargs, (dense = true,))
     if cb === nothing
         sol = solve(prob, alg, solver_cfg.args..., ode_args...; solve_kwargs...)
