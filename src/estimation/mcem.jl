@@ -1620,13 +1620,10 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
     θ_hat_u = θu_last
     θ_hat_t = transform(θ_hat_u)
 
-    # See the SAEM driver: a non-finite Q is a per-iteration accident of the E-step
-    # sample, so the last finite value is the fit's objective.
+    # See the SAEM driver: a non-finite Q is reported as-is so the objective always
+    # belongs to the returned parameters; the count records how often it happened.
     n_nonfinite_Q = count(!isfinite, diag.Q_hist)
-    last_finite_Q = findlast(isfinite, diag.Q_hist)
-    Q_report = (isfinite(Q_prev) || last_finite_Q === nothing) ? Q_prev :
-               diag.Q_hist[last_finite_Q]
-    summary = FitSummary(Q_report, converged,
+    summary = FitSummary(Q_prev, converged,
         FitParameters(θ_hat_t, θ_hat_u),
         NamedTuple())
     diagnostics = FitDiagnostics((;), (optimizer = method.optimizer,),
@@ -1647,7 +1644,7 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
 
     notes = (diagnostics = diag,)
 
-    result = MCEMResult(nothing, Q_report, length(diag.Q_hist), nothing, notes, eb_modes)
+    result = MCEMResult(nothing, Q_prev, length(diag.Q_hist), nothing, notes, eb_modes)
     return FitResult(method, result, summary, diagnostics,
         store_data_model ? dm : nothing, args, fit_kwargs)
 end

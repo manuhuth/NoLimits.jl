@@ -1997,8 +1997,11 @@ random effects.
 - `theta_tol::Float64 = 0.0`: fixed-effect change tolerance for EBE caching.
 - `lb`, `ub`: bounds on the transformed fixed-effect scale, or `nothing`.
 - `precondition::Bool = true`: optimize the scaled offset `z` with
-  `θ_transformed = θ0 + s .* z`, `s = max.(abs.(θ0), 1)`, so every coordinate gets a
-  first step of at least 1 on the transformed scale. Without it the derivative-free
+  `θ_transformed = θ0 + s .* z`, where `s` is 1 for every coordinate that already lives in
+  log/logit space (`:log`, `:logit`, `:cholesky`, `:expm`, `:lie`, the diagonal-log,
+  stick-breaking and log-rate coordinates, and any `:identity` parameter the model itself
+  exponentiates) and `max(abs(θ0), 1)` for a genuinely natural-scale `:identity`
+  coordinate, so every coordinate gets a first step of at least 1. Without it the derivative-free
   optimizers size each coordinate's first step by that coordinate's own value, which
   freezes a coordinate that starts near zero (a `:log` parameter at 1, a Cholesky
   diagonal at 1 with a small off-diagonal). Set `false` to restore the raw behaviour.

@@ -93,6 +93,11 @@ identifying the result category (`:frequentist`, `:map`, `:frequentist_re`, `:gh
 of it, so `res isa FrequentistREResult` and dispatch on `::FrequentistREResult` behave exactly as before.
 Fields: `solution`, `objective`, `iterations`, `raw`, `notes`, plus the optional `eb_modes`
 (random-effect modes), `eta_vec`, and `strategies` (`nothing` when a method does not use them).
+
+`solution` is the optimizer's own object, kept for provenance: it holds only the free
+parameters in optimizer coordinates, which for Laplace/FOCEI with `precondition = true` is
+the preconditioned offset `z` rather than the transformed θ. Use
+[`get_params`](@ref) for parameters.
 """
 struct StandardOptimizationResult{Kind, S, O, I, R, N, B, E, St} <: MethodResult
     solution::S
