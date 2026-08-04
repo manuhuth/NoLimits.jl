@@ -1495,3 +1495,55 @@ end  # @testset "GHQuadrature progressive refinement"
             fallback = MCIntegrator(n_samples = 2, mode = :prior))
     end
 end  # @testset "get_loglikelihood_quadrature MC sampling"
+
+# The adaptive-quadrature measure must whiten the integrand: with -H = L*L', the scaling
+# matrix S has to satisfy S*S' = (-H)^{-1}, equivalently S'(-H)S = I. `inv(L)` is also
+# lower triangular and has the same determinant, so getting this wrong left the Laplace
+# term (level 1, single node at z=0) exact while every multi-node rule integrated a
+# sheared integrand -- AGHQ then failed to converge in the quadrature level.
+@testset "AGHQ measure whitens the integrand (S'(-H)S = I)" begin
+    model = @Model begin
+        @fixedEffects begin
+            tcl = RealNumber(log(0.05))
+            tv = RealNumber(log(1.0))
+            Ω = RealPSDMatrix([0.2 0.05; 0.05 0.15], scale = :cholesky)
+            σ = RealNumber(0.2, scale = :log)
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @randomEffects begin
+            η = RandomEffect(MvNormal(zeros(2), Ω); column = :ID)
+        end
+
+        @formulas begin
+            cp = exp(tcl + η[1]) / exp(tv + η[2])
+            y ~ Normal(cp, σ)
+        end
+    end
+
+    rng = Xoshiro(4)
+    df = DataFrame(ID = repeat(1:10; inner = 4), t = repeat([0.5, 1.0, 2.0, 4.0], 10),
+        y = 0.05 .* exp.(0.3 .* randn(rng, 40)))
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    θ = get_θ0_untransformed(NoLimits.get_fixed(NoLimits.get_model(dm)))
+    θ_re = NoLimits.symmetrize_psd_parameters(θ, NoLimits.get_fixed(NoLimits.get_model(dm)))
+
+    _, infos, cc = NoLimits.build_re_batch_infos(dm, NamedTuple())
+    cache = NoLimits.build_likelihood_cache(dm; force_saveat = true)
+    bstars = NoLimits.empirical_bayes(dm, θ; rng = Xoshiro(2))
+
+    for bi in 1:3
+        rm = NoLimits.build_centered_re_measure(
+            bstars[bi], infos[bi], bi, θ_re, cc, dm, cache)
+        @test rm !== nothing
+        H = NoLimits._laplace_hessian_b(dm, infos[bi], θ_re,
+            Vector{Float64}(bstars[bi]), cc, cache, nothing, bi)
+        A = rm.S' * (-H) * rm.S
+        @test isapprox(A, I(size(A, 1)); rtol = 1e-6, atol = 1e-6)
+        # the determinant was already right with the wrong factor, so assert the shape
+        @test isapprox(rm.S * rm.S', inv(-H); rtol = 1e-6, atol = 1e-8)
+    end
+end
