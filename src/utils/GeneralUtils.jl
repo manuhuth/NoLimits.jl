@@ -78,6 +78,15 @@ end
     return _ode_normalize_verbose(merged, merged.verbose)
 end
 
+# The integrator used when a model declares no `alg`. Auto-switching rather than plain
+# `Tsit5()`: on a stiff stretch (TMDD quasi-steady-state, PBPK) an explicit method needs
+# more steps than the budget allows, and the solve is then dropped to a -Inf likelihood.
+# Measured over the six nlmixr2 benchmark models: 2.4x faster in aggregate than Tsit5
+# (mavoglurant 3.7x) at a relative log-likelihood difference of ~1e-7, and it removes
+# nimo's MaxIters failures entirely. `Rodas5P` rather than `Rosenbrock23` as the stiff
+# partner — same speed, three orders of magnitude more accurate here.
+@inline _resolve_ode_alg(alg) = alg === nothing ? AutoTsit5(Rodas5P()) : alg
+
 # Exception classes that signal a numerically-degenerate point (rather than a
 # programming error): callers treat these as objective = Inf / likelihood = -Inf
 # during optimizer exploration instead of rethrowing.
