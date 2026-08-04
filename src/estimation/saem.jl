@@ -3522,11 +3522,18 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
         builtin_stats_mode_effective = builtin_stats_mode,
         builtin_stats_closed_form_eligibility = builtin_cf_elig,
         anneal_to_fixed = method.saem.anneal_to_fixed)
+    # A non-finite Q means the E-step's sample landed where the model cannot be evaluated.
+    # Report it as-is: substituting an earlier finite Q would pair an objective from one
+    # iteration with the parameters of another (the closed-form M-step keeps updating θ
+    # even while Q is non-finite), and callers such as Multistart rely on a non-finite
+    # objective to rank such a run last. The count below says how often it happened.
+    n_nonfinite_Q = count(!isfinite, diag.Q_hist)
     summary = FitSummary(Q_prev, converged,
         FitParameters(θ_hat_t, θ_hat_u),
         notes)
     diagnostics = FitDiagnostics((;), (optimizer = method.optimizer,),
         (saem_iters = length(diag.Q_hist),
+            n_nonfinite_Q = n_nonfinite_Q,
             dθ_abs = diag.dθ_abs[end], dQ_abs = diag.dQ_abs[end],
             drift_θ = diag.drift_θ[end], drift_Q = diag.drift_Q[end],
             gamma = diag.gamma,

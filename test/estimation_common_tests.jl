@@ -573,3 +573,38 @@ end
     @test NoLimits._needs_rowwise_random_effects(dm, 2; obs_only = true)
     @test ll≈ll_expected atol=1e-12
 end
+
+# A numeric error raised by the model itself (here `log` of a negative argument) must
+# degrade to a -Inf likelihood, not kill the fit: the SAEM/MCEM E-step has no handler of
+# its own, so an out-of-domain random-effect draw used to abort the whole run.
+@testset "numeric error in the model degrades to -Inf" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            σ = RealNumber(0.5)
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, 1.0); column = :ID)
+        end
+
+        @formulas begin
+            y ~ Normal(log(a + η), σ)
+        end
+    end
+
+    df = DataFrame(ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0],
+        y = [0.1, 0.2, 0.15, 0.25])
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    θ = get_θ0_untransformed(NoLimits.get_fixed(NoLimits.get_model(dm)))
+
+    ok = NoLimits.conditional_loglikelihood(dm, 1, θ, ComponentArray(η = 0.0))
+    @test isfinite(ok)
+    # a + η = 1 - 2 < 0 -> log throws inside the formula
+    bad = NoLimits.conditional_loglikelihood(dm, 1, θ, ComponentArray(η = -2.0))
+    @test bad == -Inf
+end

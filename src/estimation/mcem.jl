@@ -1620,11 +1620,15 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
     θ_hat_u = θu_last
     θ_hat_t = transform(θ_hat_u)
 
+    # See the SAEM driver: a non-finite Q is reported as-is so the objective always
+    # belongs to the returned parameters; the count records how often it happened.
+    n_nonfinite_Q = count(!isfinite, diag.Q_hist)
     summary = FitSummary(Q_prev, converged,
         FitParameters(θ_hat_t, θ_hat_u),
         NamedTuple())
     diagnostics = FitDiagnostics((;), (optimizer = method.optimizer,),
         (em_iters = length(diag.Q_hist),
+            n_nonfinite_Q = n_nonfinite_Q,
             dθ_abs = isempty(diag.dθ_abs) ? T0(NaN) : diag.dθ_abs[end],
             dQ_abs = isempty(diag.dQ_abs) ? T0(NaN) : diag.dQ_abs[end],
             drift_θ = isempty(diag.drift_θ) ? T0(NaN) : diag.drift_θ[end],
