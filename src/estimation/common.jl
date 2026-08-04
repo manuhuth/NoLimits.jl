@@ -830,6 +830,15 @@ function resolve_optimizer_bounds(fe, free_names, θ0_free_t, optimizer, user_lb
 end
 const _resolve_optim_bounds = resolve_optimizer_bounds
 
+# Per-coordinate first-step size for the outer optimizer. NLopt (and Optim's NelderMead)
+# scale each coordinate's first step by that coordinate's own value, so a transformed
+# coordinate starting near zero is effectively frozen: pheno's log-Cholesky `log L22`
+# starts at -5e-5 and has to reach -2.03, i.e. 40,000 initial steps, and the fit stops
+# 39 loglik units short. Optimizing the scaled offset `z` with `θt = θt0 + s .* z` and
+# `z0 = 0` gives every coordinate a first step of `s`. Coordinates with |x0| >= 1 keep
+# exactly the step they get today; only the degenerate ones change.
+_precondition_scale(θ0_free_t) = max.(abs.(collect(θ0_free_t)), one(eltype(θ0_free_t)))
+
 function get_iterations(res::MethodResult)
     hasproperty(res, :iterations) ? res.iterations :
     error("iterations not available for this method.")

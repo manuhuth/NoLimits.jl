@@ -646,7 +646,7 @@ end
 """
     FOCEI(; interaction=true, optimizer, optim_kwargs, adtype, inner_*, multistart_*,
             jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale, theta_tol,
-            lb, ub, ignore_model_bounds) <: FittingMethod
+            lb, ub, ignore_model_bounds, precondition) <: FittingMethod
 
 First-Order Conditional Estimation with Interaction for random-effects models.
 
@@ -666,7 +666,8 @@ Supported outcome families: `Normal`, `LogNormal`, `Laplace`, `Cauchy`, `Exponen
 Markov / Markov outcome models and any family without a registered Fisher information are
 not supported — use [`Laplace`](@ref) for those.
 
-Keyword arguments mirror [`Laplace`](@ref); the only addition is `interaction::Bool=true`.
+Keyword arguments mirror [`Laplace`](@ref) (including `precondition`); the only
+addition is `interaction::Bool=true`.
 """
 struct FOCEI{O, K, A, IO, HO, CO, MS, L, U} <: FittingMethod
     optimizer::O
@@ -679,6 +680,7 @@ struct FOCEI{O, K, A, IO, HO, CO, MS, L, U} <: FittingMethod
     lb::L
     ub::U
     ignore_model_bounds::Bool
+    precondition::Bool
     interaction::Bool
 end
 
@@ -707,7 +709,8 @@ function FOCEI(; interaction::Bool = true,
         theta_tol = 0.0,
         lb = nothing,
         ub = nothing,
-        ignore_model_bounds = false)
+        ignore_model_bounds = false,
+        precondition = true)
     inner = inner_options === nothing ?
             LaplaceInnerOptions(
         inner_optimizer, inner_kwargs, inner_adtype, inner_grad_tol) : inner_options
@@ -720,7 +723,7 @@ function FOCEI(; interaction::Bool = true,
          LaplaceMultistartOptions(multistart_n, multistart_k, multistart_grad_tol,
         multistart_max_rounds, multistart_sampling) : multistart_options
     FOCEI(optimizer, optim_kwargs, adtype, inner, hess, cache,
-        ms, lb, ub, ignore_model_bounds, interaction)
+        ms, lb, ub, ignore_model_bounds, precondition, interaction)
 end
 
 # -------------------------------------------------------------------------------------

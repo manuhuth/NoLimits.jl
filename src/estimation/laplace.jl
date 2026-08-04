@@ -1996,6 +1996,14 @@ random effects.
 - `hutchinson_n::Int = 8`: number of Rademacher vectors for the Hutchinson estimator.
 - `theta_tol::Float64 = 0.0`: fixed-effect change tolerance for EBE caching.
 - `lb`, `ub`: bounds on the transformed fixed-effect scale, or `nothing`.
+- `precondition::Bool = true`: optimize the scaled offset `z` with
+  `θ_transformed = θ0 + s .* z`, `s = max.(abs.(θ0), 1)`, so every coordinate gets a
+  first step of at least 1 on the transformed scale. Without it the derivative-free
+  optimizers size each coordinate's first step by that coordinate's own value, which
+  freezes a coordinate that starts near zero (a `:log` parameter at 1, a Cholesky
+  diagonal at 1 with a small off-diagonal). Set `false` to restore the raw behaviour.
+  Note that with preconditioning on, the optimizer object behind [`get_raw`](@ref) works
+  in `z`; the fitted parameters from [`get_params`](@ref) are on the usual scales.
 """
 struct Laplace{O, K, A, IO, HO, CO, MS, L, U} <: FittingMethod
     optimizer::O
@@ -2008,6 +2016,7 @@ struct Laplace{O, K, A, IO, HO, CO, MS, L, U} <: FittingMethod
     lb::L
     ub::U
     ignore_model_bounds::Bool
+    precondition::Bool
     nan_recovery::Symbol   # :backtrack (default; NaN grad → non-finite objective), :fd (finite-difference gradient fallback), or :nan (propagate NaN to the optimizer)
 end
 
@@ -2040,6 +2049,7 @@ function Laplace(;
         lb = nothing,
         ub = nothing,
         ignore_model_bounds = false,
+        precondition = true,
         nan_recovery = :backtrack)
     inner = inner_options === nothing ?
             LaplaceInnerOptions(
@@ -2053,7 +2063,7 @@ function Laplace(;
          LaplaceMultistartOptions(multistart_n, multistart_k, multistart_grad_tol,
         multistart_max_rounds, multistart_sampling) : multistart_options
     Laplace(optimizer, optim_kwargs, adtype, inner, hess, cache,
-        ms, lb, ub, ignore_model_bounds, nan_recovery)
+        ms, lb, ub, ignore_model_bounds, precondition, nan_recovery)
 end
 
 # FrequentistREResult is a StandardOptimizationResult{:frequentist_re} alias + constructor (see common.jl).
@@ -2413,8 +2423,22 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
         ComponentArray(zeros(T0, length(θ0_free_t)), axs_free),
         false)
 
-    function obj_only(θt, p)
-        θt_free = θt isa ComponentArray ? θt : ComponentArray(θt, axs_free)
+    # The optimizer works on the preconditioned offset z (see `_precondition_scale`);
+    # everything downstream of these two maps stays on the transformed θ scale.
+    # `precondition = false` makes both maps the identity, i.e. the optimizer sees the
+    # raw transformed vector exactly as it did before preconditioning existed.
+    θ0_pc = method.precondition ? collect(θ0_free_t) :
+            zeros(eltype(θ0_free_t), length(θ0_free_t))
+    s_pc = method.precondition ? _precondition_scale(θ0_free_t) :
+           ones(eltype(θ0_free_t), length(θ0_free_t))
+    function _θt_from_z(z)
+        ComponentArray(
+            θ0_pc .+ s_pc .* (z isa ComponentArray ? ComponentArrays.getdata(z) : z), axs_free)
+    end
+    _z_from_θt(θt) = (collect(θt) .- θ0_pc) ./ s_pc
+
+    function obj_only(z, p)
+        θt_free = _θt_from_z(z)
         cached_obj = _laplace_obj_cache_lookup_obj(
             obj_cache, θt_free, method.cache.theta_tol)
         cached_obj !== nothing && return cached_obj
@@ -2438,8 +2462,8 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
         return obj
     end
 
-    function obj_grad(θt, p)
-        θt_free = θt isa ComponentArray ? θt : ComponentArray(θt, axs_free)
+    function obj_grad(z, p)
+        θt_free = _θt_from_z(z)
         θt_vec = θt_free
         cached = _laplace_obj_cache_lookup(obj_cache, θt_vec, method.cache.theta_tol)
         if cached !== nothing
@@ -2487,8 +2511,8 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
                     θp[i] += ε
                     θm = copy(θt_free)
                     θm[i] -= ε
-                    fp = obj_only(θp, nothing)
-                    fm = obj_only(θm, nothing)
+                    fp = obj_only(_z_from_θt(θp), nothing)
+                    fm = obj_only(_z_from_θt(θm), nothing)
                     grad_free[i] = (isfinite(fp) && isfinite(fm)) ? (fp - fm) / (2ε) :
                                    zero(T)
                 end
@@ -2504,20 +2528,23 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
 
     optf = OptimizationFunction(obj_only,
         method.adtype;
-        grad = (G, θt, p) -> begin
-            grad = obj_grad(θt, p)[2]
-            G .= grad
+        grad = (G, z, p) -> begin
+            # chain rule for θt = θt0 + s .* z
+            G .= s_pc .* obj_grad(z, p)[2]
         end)
     lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
         fe, free_names, θ0_free_t, method.optimizer, method.lb, method.ub, constants;
         ignore_model_bounds = method.ignore_model_bounds, allow_bbo = allow_bbo,
         method_label = "Laplace")
-    prob = use_bounds ? OptimizationProblem(optf, θ0_init; lb = lb, ub = ub) :
-           OptimizationProblem(optf, θ0_init)
+    z0 = _z_from_θt(θ0_init)
+    lb_z = (collect(lb) .- θ0_pc) ./ s_pc
+    ub_z = (collect(ub) .- θ0_pc) ./ s_pc
+    prob = use_bounds ? OptimizationProblem(optf, z0; lb = lb_z, ub = ub_z) :
+           OptimizationProblem(optf, z0)
     sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
 
     summary = FitSummary(sol.objective, sol.retcode == SciMLBase.ReturnCode.Success,
-        resolve_fitted_parameters(layout, sol.u), NamedTuple())
+        resolve_fitted_parameters(layout, _θt_from_z(sol.u)), NamedTuple())
     diagnostics = FitDiagnostics(
         (;), (optimizer = method.optimizer,), (retcode = sol.retcode,), NamedTuple())
     niter = hasproperty(sol, :stats) && hasproperty(sol.stats, :iterations) ?
