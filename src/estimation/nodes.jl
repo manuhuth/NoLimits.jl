@@ -198,18 +198,22 @@ function build_sparse_grid(dim::Int, level::Int)
             run_end += 1
         end
 
-        # Accumulate the combined signed weight for this node.
-        combined_w = 0.0
-        for i in r:run_end
-            ri = perm[i]
-            combined_w += all_signs[ri] * exp(all_lw[ri])
-        end
-
-        # Keep only if the combined weight is non-negligible.
-        if abs(combined_w) > eps(Float64)
+        # Combine the run's signed weights in LOG space. Exponentiating first loses the
+        # outer nodes of a high-order rule twice over: 1-D Gauss-Hermite log-weights run to
+        # about -z^2 (~ -400 at |z| ~ 20), so `exp` underflows to 0, and an absolute
+        # `> eps()` cutoff then discarded whatever survived. Both truncated the domain,
+        # which matters because the adaptive-quadrature logcorrection adds +||z||^2/2 and
+        # cancels exactly the Gaussian damping — a 1e-16 weight there still contributes
+        # O(1). The weights are carried as logs for precisely this reason.
+        idx = @view perm[r:run_end]
+        lw_run = [all_lw[i] for i in idx]
+        sg_run = [all_signs[i] for i in idx]
+        lw_combined, sign_combined = signed_logsumexp(lw_run, sg_run)
+        # Keep unless the terms cancel to rounding level relative to the largest of them.
+        if isfinite(lw_combined) && lw_combined > maximum(lw_run) + log(8 * eps(Float64))
             push!(dedup_nodes, copy(nodes_mat[:, perm[r]]))
-            push!(dedup_lw, log(abs(combined_w)))
-            push!(dedup_signs, combined_w > 0.0 ? Int8(1) : Int8(-1))
+            push!(dedup_lw, lw_combined)
+            push!(dedup_signs, sign_combined)
         end
 
         r = run_end + 1
