@@ -96,6 +96,84 @@ end
     _laplace_grad_matches_fd(fx_mg_dm(); rtol = 2e-3, atol = 2e-3)
 end
 
+# The outer gradient the OPTIMIZER receives: on the transformed free-parameter scale, at the
+# package defaults, for a given curvature. Distinct from `_laplace_grad_matches_fd` above in
+# three ways that each hid a defect:
+#   * transformed scale, so a `RealPSDMatrix` is covered (perturbing Ω[1,2] on the natural
+#     scale breaks symmetry and the Cholesky fails, so the natural-scale check cannot);
+#   * `method.hessian` verbatim, i.e. the default ADAPTIVE jitter rather than a fixed one;
+#   * parameterised by curvature, so FOCEI/FOCE's Fisher information is checked too.
+function _outer_grad_matches_fd_t(dm, method, hmode; rtol, h = 3e-4)
+    fe = NoLimits.get_fixed(NoLimits.get_model(dm))
+    layout = NoLimits.free_parameter_layout(fe)
+    inner = NoLimits._resolve_inner_options(method.inner, dm)
+    ms = NoLimits._resolve_multistart_options(method.multistart, inner)
+    _, binfos, const_cache = NoLimits._build_re_batch_infos(dm, NamedTuple())
+    llc = build_ll_cache(dm; force_saveat = true)
+    kw = (; inner = inner, hessian = method.hessian, cache_opts = method.cache,
+        multistart = ms, serialization = SciMLBase.EnsembleSerial(), hmode = hmode)
+    fresh() = NoLimits._init_laplace_eval_cache(length(binfos), Float64)
+    θu_of = θt -> layout.inv_transform(NoLimits._merge_free_into_full(
+        layout.θ_const_t_vec, layout.free_idx,
+        ComponentArray(collect(θt), layout.axs), layout.axs_full))
+    obj = θt -> NoLimits._laplace_objective_only(dm, binfos, θu_of(θt), const_cache,
+        llc, fresh(); rng = Random.Xoshiro(0), kw...)
+
+    θt0 = collect(layout.θ0_free_t)
+    θt_full = NoLimits._merge_free_into_full(layout.θ_const_t_vec, layout.free_idx,
+        layout.θ0_free_t, layout.axs_full)
+    _, g_u, _ = NoLimits._laplace_objective_and_grad(dm, binfos, θu_of(θt0), const_cache,
+        llc, fresh(); rng = Random.Xoshiro(0), kw...)
+    g_t = NoLimits.apply_inv_jacobian_T(layout.inv_transform, θt_full, g_u)
+    g_free = similar(layout.θ0_free_t)
+    for name in layout.free_names
+        setproperty!(g_free, name, getproperty(g_t, name))
+    end
+    fd = map(eachindex(θt0)) do i
+        θp = copy(θt0)
+        θp[i] += h
+        θm = copy(θt0)
+        θm[i] -= h
+        (obj(θp) - obj(θm)) / (2h)
+    end
+    @test all(isfinite, collect(g_free))
+    @test isapprox(collect(g_free), fd; rtol = rtol)
+end
+
+@testset "outer gradient matches FD at the defaults (nonlinear in η)" begin
+    # Nonlinear in η, so the Fisher-information curvature genuinely differs from the exact
+    # Hessian (~4-6% here). Every pre-existing gradient check uses a model LINEAR in η with a
+    # Gaussian outcome, where the two coincide exactly and a surrogate curvature is right by
+    # accident -- which is why FOCEI's db*/dθ term could use the wrong one unnoticed.
+    df = DataFrame(ID = repeat(1:5, inner = 4), t = repeat(0.0:3.0, 5),
+        y = [1.35, 1.10, 0.92, 0.81, 1.62, 1.28, 1.05, 0.90,
+            1.18, 0.99, 0.85, 0.74, 1.90, 1.47, 1.19, 1.02,
+            1.05, 0.88, 0.77, 0.68])
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.3)
+            b = RealNumber(0.25, scale = :log)
+            σ = RealNumber(0.08, scale = :log)
+            Ω = RealPSDMatrix([1.0 0.95; 0.95 1.0], scale = :cholesky)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(MvNormal(zeros(2), Ω); column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(exp(a + η[1]) * exp(-exp(b + η[2]) * t), σ)
+        end
+    end
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    _outer_grad_matches_fd_t(dm, NoLimits.Laplace(), NoLimits._ExactHess(); rtol = 2e-3)
+    _outer_grad_matches_fd_t(
+        dm, NoLimits.FOCEI(), NoLimits._FOCEIHess(true); rtol = 2e-3)
+    _outer_grad_matches_fd_t(dm, NoLimits.FOCEI(interaction = false),
+        NoLimits._FOCEIHess(false); rtol = 2e-3)
+end
+
 @testset "Laplace batching with constant RE levels" begin
     dm = fx_mg_dm()
     @test length(get_batches(dm)) == 2

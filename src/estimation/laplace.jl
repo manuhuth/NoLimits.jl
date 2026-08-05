@@ -1593,9 +1593,16 @@ ctx::AbstractString = "", tctx = nothing) = inner_curvature(
 function _laplace_cholesky_negH(
         H::AbstractMatrix; jitter = 1e-6, max_tries = 6, growth = 10.0,
         adaptive = false, scale_factor = 0.0)
-    n = size(H, 1)
     Hneg = Symmetric(-H)
-    chol = nothing
+    # Un-jittered first. Any jitter surviving into the returned factor makes the
+    # log-determinant a function of `jit` as well as of θ and b, while
+    # `_laplace_grad_batch` differentiates logdet(-H + jit*I) as if `jit` were constant
+    # and uses the same factor for db*/dθ, which needs the unregularised Hessian. With
+    # the adaptive jitter (jit ≈ scale_factor·mean|diag(-H)|) that error is large enough
+    # to break a gradient-based outer optimizer. Regularisation stays as a fallback for a
+    # genuinely indefinite -H, where the alternative is no factor at all.
+    chol = cholesky(Hneg, check = false)
+    chol.info == 0 && return (chol, zero(jitter))
     jit = jitter
     if adaptive
         scale = mean(abs.(diag(Hneg)))
@@ -1884,9 +1891,28 @@ function _laplace_grad_batch(dm::DataModel,
         grad_logdet_b = buf.grad_logdet_b
     end
 
-    # db*/dθ = (-H)^{-1} * ∂g/∂θ
-    #Hneg = Symmetric(-H)
-    dbdθ = chol \ Gθ
+    # db*/dθ = (-H_exact)^{-1} ∂g/∂θ. The implicit function theorem differentiates the
+    # stationarity condition ∇_b logf(b*, θ) = 0, which is a property of logf alone, so the
+    # EXACT inner Hessian is required even when the logdet term uses a surrogate curvature.
+    # FOCEI's Fisher information is within ~1% of the exact Hessian on pheno, but the
+    # correction it feeds below is a difference of large nearly-cancelling terms, so that 1%
+    # showed up as a 240% error in the outer gradient — enough to make a gradient-based outer
+    # optimizer diverge while the derivative-free default was unaffected.
+    chol_b = chol
+    if !(hmode isa _ExactHess)
+        H_ex = try
+            _laplace_hessian_b(dm, batch_info, θ, b, const_cache, cache, ad_cache, bi;
+                ctx = "dbdtheta", tctx = tctx0)
+        catch err
+            _is_numeric_error(err) ? nothing : rethrow(err)
+        end
+        if H_ex !== nothing && negH_definite_without_jitter(H_ex)
+            c, _ = _laplace_cholesky_negH(H_ex; jitter = jitter, max_tries = max_tries,
+                growth = growth, adaptive = adaptive, scale_factor = scale_factor)
+            (c === nothing || c.info != 0) || (chol_b = c)
+        end
+    end
+    dbdθ = chol_b \ Gθ
     corr = vec(grad_logdet_b' * dbdθ)
     grad = grad_logf .- 0.5 .* (grad_logdet_θ .+ corr)
     return (logf = logf, logdet = logdet, grad = ComponentArray(grad, axs))
@@ -1986,11 +2012,16 @@ random effects.
 - `multistart_grad_tol`: gradient tolerance for multistart refinement.
 - `multistart_max_rounds::Int = 1`: maximum multistart refinement rounds.
 - `multistart_sampling::Symbol = :lhs`: inner multistart sampling strategy (`:lhs` or `:random`).
-- `jitter::Float64 = 1e-6`: initial diagonal jitter added to ensure Hessian PD.
+- `jitter::Float64 = 1e-6`: diagonal jitter used to rescue a Cholesky of `-H` that fails
+  without it. A positive-definite `-H` is always factorized untouched, so on a healthy
+  problem none of the jitter keywords has any effect: a jitter that survived into the
+  factor would bias `logdet(-H)` and make the analytic outer gradient inconsistent with
+  the objective, since the gradient treats the jitter as constant.
 - `max_tries::Int = 6`: maximum attempts to regularize the Hessian.
 - `jitter_growth::Float64 = 10.0`: multiplicative growth factor for jitter on each retry.
-- `adaptive_jitter::Bool = true`: whether to adapt jitter magnitude based on scale.
-- `jitter_scale::Float64 = 1e-6`: scale for the adaptive jitter.
+- `adaptive_jitter::Bool = true`: scale the rescue jitter by `mean|diag(-H)|` so it is
+  unit-invariant. Only consulted when the un-jittered Cholesky has already failed.
+- `jitter_scale::Float64 = 1e-6`: proportionality factor for the adaptive jitter.
 - `use_trace_logdet_grad::Bool = true`: use trace estimator for log-determinant gradient.
 - `use_hutchinson::Bool = false`: use Hutchinson estimator instead of Cholesky for log-det.
 - `hutchinson_n::Int = 8`: number of Rademacher vectors for the Hutchinson estimator.

@@ -4,6 +4,28 @@
 
 ### Bug fixes
 
+- The analytic outer gradient of the `Laplace` and `FOCEI` marginal objectives was wrong,
+  which made a gradient-based outer optimizer perform far worse than the derivative-free
+  default instead of better. Two independent causes, both invisible to `LN_BOBYQA`:
+  - A positive-definite `-H` was factorized with the Cholesky `jitter` added
+    unconditionally rather than only as a rescue. With the default
+    `adaptive_jitter = true, jitter_scale = 1e-6` that jitter is proportional to
+    `mean|diag(-H)|`, so the objective was `logdet(-H + δ(θ,b)·I)` while the analytic
+    gradient differentiated it as if `δ` were constant, and the same regularized factor was
+    reused for the implicit `db*/dθ` solve. On a badly scaled start `δ` reached 9% of
+    `λmin(-H)`. `-H` is now factorized untouched whenever it is definite, so the objective
+    is the actual Laplace marginal and its gradient is consistent with it. The jitter
+    keywords are retained and still rescue an indefinite `-H`. This also makes the AGHQ
+    quadrature scale, the conditional-covariance draws behind VPC/CV, and the inner Newton
+    step exact rather than regularized.
+  - `db*/dθ` was obtained by solving with whatever curvature the log-det term used. Under
+    `FOCEI`/FOCE that is the Fisher-information surrogate, but `b*` is the mode of
+    `log f`, so the implicit function theorem requires the exact inner Hessian. The
+    surrogate is within ~1% of it, yet the correction it feeds is a difference of large
+    nearly-cancelling terms, so the outer gradient came out wrong by up to 240%. FOCEI/FOCE
+    now solve that system with the exact Hessian, falling back to the surrogate if the
+    exact `-H` is indefinite. `Laplace` is unaffected and pays nothing; the FOCEI objective
+    stays first-order and only its gradient costs ~1.4% more.
 - Laplace- and FOCEI-based marginal likelihoods no longer report values obtained from a
   degenerate empirical-Bayes Hessian. When `-H` at the EB mode was positive definite only
   because the Cholesky `jitter` had been added, the `-½·logdet(-H)` term was set by the
