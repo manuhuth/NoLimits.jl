@@ -33,6 +33,7 @@ struct MAP{O, K, A, L, U} <: FittingMethod
     lb::L
     ub::U
     ignore_model_bounds::Bool
+    precondition::Bool
 end
 
 function MAP(;
@@ -41,8 +42,9 @@ function MAP(;
         adtype = Optimization.AutoForwardDiff(),
         lb = nothing,
         ub = nothing,
-        ignore_model_bounds = false)
-    MAP(optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds)
+        ignore_model_bounds = false,
+        precondition = true)
+    MAP(optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds, precondition)
 end
 
 # MAPResult is a StandardOptimizationResult{:map} alias + constructor (see common.jl).

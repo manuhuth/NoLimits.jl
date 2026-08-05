@@ -68,6 +68,7 @@ struct GHQuadrature{LV, O, K, A, IO, MS, L, U} <: FittingMethod
     lb::L
     ub::U
     ignore_model_bounds::Bool
+    precondition::Bool
 end
 
 function GHQuadrature(;
@@ -88,7 +89,8 @@ function GHQuadrature(;
         multistart_sampling = :lhs,
         lb = nothing,
         ub = nothing,
-        ignore_model_bounds = false
+        ignore_model_bounds = false,
+        precondition = true
 )
     inner = inner_options === nothing ?
             LaplaceInnerOptions(
@@ -98,8 +100,8 @@ function GHQuadrature(;
          LaplaceMultistartOptions(multistart_n, multistart_k, multistart_grad_tol,
         multistart_max_rounds, multistart_sampling) :
          multistart_options
-    GHQuadrature(
-        level, optimizer, optim_kwargs, adtype, inner, ms, lb, ub, ignore_model_bounds)
+    GHQuadrature(level, optimizer, optim_kwargs, adtype, inner, ms, lb, ub,
+        ignore_model_bounds, precondition)
 end
 
 # ---------------------------------------------------------------------------
@@ -302,8 +304,12 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
     free_idx = layout.free_idx
     θ_const_t_vec = layout.θ_const_t_vec
 
-    function obj(θt, p)
-        θt_free = θt isa ComponentArray ? θt : ComponentArray(θt, axs_free)
+    # The optimizer works on the preconditioned offset z; everything below stays on θt.
+    θ0_pc, s_pc, _θt_from_z, _z_from_θt = _precondition_maps(
+        get_model(dm), free_names, θ0_free_t, axs_free, _precondition_on(method))
+
+    function obj(z, p)
+        θt_free = _θt_from_z(z)
         T = eltype(θt_free)
         infT = convert(T, Inf)
 
@@ -356,12 +362,16 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
         fe, free_names, θ0_free_t, method.optimizer, method.lb, method.ub, constants;
         ignore_model_bounds = method.ignore_model_bounds, method_label = "GHQuadrature")
 
-    prob = use_bounds ? OptimizationProblem(optf, θ0_init; lb = lb, ub = ub) :
-           OptimizationProblem(optf, θ0_init)
+    z0 = _z_from_θt(θ0_init)
+    lb_z = _z_from_θt(lb)
+    ub_z = _z_from_θt(ub)
+    prob = use_bounds ? OptimizationProblem(optf, z0; lb = lb_z, ub = ub_z) :
+           OptimizationProblem(optf, z0)
     sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
 
     # ── Extract solution ─────────────────────────────────────────────────────
-    θ_hat_t_raw = sol.u
+    # Mapped back here so both consumers below (the post-hoc EB modes and `FitParameters`) see θt.
+    θ_hat_t_raw = _θt_from_z(sol.u)
     θ_hat_t_free = θ_hat_t_raw isa ComponentArray ?
                    θ_hat_t_raw : ComponentArray(θ_hat_t_raw, axs_free)
     θ_hat_t = _merge_free_into_full(
@@ -416,7 +426,7 @@ function _fit_model(dm::DataModel, method::GHQuadrature, args...;
         inner = GHQuadrature(lv,
             method.optimizer, method.optim_kwargs, method.adtype,
             method.inner, method.multistart, method.lb, method.ub,
-            method.ignore_model_bounds)
+            method.ignore_model_bounds, method.precondition)
         res = _fit_model_scalar(dm, inner, args...; theta_0_untransformed = θ0, kwargs...)
         θ0 = get_params(res; scale = :untransformed)
     end
