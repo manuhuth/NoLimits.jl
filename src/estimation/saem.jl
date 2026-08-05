@@ -418,7 +418,7 @@ struct SAEM{O, K, A, SO, L, U} <: FittingMethod
 end
 
 function SAEM(;
-        optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking()),
+        optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
         optim_kwargs = (; iterations = 10, g_abstol = 1e-4, f_reltol = 1e-6),
         adtype = Optimization.AutoForwardDiff(),
         sampler = SaemixMH(),
@@ -448,7 +448,7 @@ function SAEM(;
         resid_var_param = :σ,
         re_cov_params = NamedTuple(),
         re_mean_params = NamedTuple(),
-        ebe_optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking()),
+        ebe_optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
         ebe_optim_kwargs = NamedTuple(),
         ebe_adtype = Optimization.AutoForwardDiff(),
         ebe_grad_tol = :auto,
@@ -2650,7 +2650,7 @@ function _saem_builtin_mean_updates(dm::DataModel,
         sample_store::_SAEMSampleStore,
         transform,
         inv_transform;
-        optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking()),
+        optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
         optim_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         penalty::NamedTuple = NamedTuple(),

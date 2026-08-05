@@ -37,7 +37,7 @@ struct MLE{O, K, A, L, U} <: FittingMethod
 end
 
 function MLE(;
-        optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking()),
+        optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
         optim_kwargs = NamedTuple(),
         adtype = Optimization.AutoForwardDiff(),
         lb = nothing,

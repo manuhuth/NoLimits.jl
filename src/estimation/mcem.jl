@@ -211,7 +211,7 @@ struct MCEM{O, K, A, ES, EO, EB, ER, L, U} <: FittingMethod
 end
 
 function MCEM(;
-        optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking()),
+        optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
         optim_kwargs = (; iterations = 50, g_abstol = 1e-4, f_reltol = 1e-6),
         adtype = Optimization.AutoForwardDiff(),
         e_step = nothing,
@@ -228,7 +228,7 @@ function MCEM(;
         atol_Q = 1e-4,
         consecutive_params = 3,
         convergence_window::Int = 20,
-        ebe_optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking()),
+        ebe_optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
         ebe_optim_kwargs = NamedTuple(),
         ebe_adtype = Optimization.AutoForwardDiff(),
         ebe_grad_tol = :auto,

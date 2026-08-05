@@ -72,7 +72,7 @@ end
 
 function GHQuadrature(;
         level = 3,  # Int or NamedTuple for anisotropic levels
-        optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking()),
+        optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
         optim_kwargs = NamedTuple(),
         adtype = Optimization.AutoForwardDiff(),
         inner_options = nothing,
