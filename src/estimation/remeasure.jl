@@ -556,7 +556,7 @@ For a Gaussian prior this reduces to `logcorrection = 0` as expected.
 struct CenteredREMeasure{T <: Number, LT <: LowerTriangular{T, Matrix{T}}, F} <:
        AbstractREMeasure
     b_star::Vector{T}    # EBE mode (free RE space)
-    S::LT           # chol(-H)^{-1}: S*S' ≈ posterior covariance
+    S::LT           # chol((-H)^{-1}).L, so S*S' = posterior covariance
     log_det_S::T            # log|det(S)|
     re_prior_logf::F            # closure: b -> Σ_levels log p(b_level | θ)
     n_b::Int
@@ -601,8 +601,18 @@ function build_centered_re_measure(
     chol, _ = _laplace_cholesky_negH(H; jitter = jitter, max_tries = max_tries)
     (chol === nothing || chol.info != 0) && return nothing
     L = chol.L  # lower triangular, L*L' = -H
-    S = LowerTriangular(inv(Matrix(L)))
-    log_det_S = -sum(log, diag(L))
+    # The struct's invariant is S*S' = (-H)^{-1}, which is what whitens the integrand
+    # (S'(-H)S = I). That is the lower Cholesky factor of the INVERSE, not inv(L):
+    # inv(L) is also lower triangular and has the same determinant, so it kept the
+    # Laplace term exact (level 1 has its single node at z = 0, where S is irrelevant)
+    # while every multi-node rule integrated a sheared integrand. AGHQ then failed to
+    # converge in the quadrature level — on pheno it read 895.9 at level 3 against a
+    # true 972.79, and wandered non-monotonically with level.
+    Σ = inv(chol)
+    cS = cholesky(Symmetric(Σ); check = false)
+    issuccess(cS) || return nothing
+    S = LowerTriangular(Matrix(cS.L))
+    log_det_S = -sum(log, diag(L))  # |det S| = 1/sqrt(det(-H)) either way
     re_prior_logf = b -> _re_prior_logf_batch(dm, batch_info, θu, b, const_cache, ll_cache)
     return CenteredREMeasure(b_star, S, T(log_det_S), re_prior_logf, get_n_b(batch_info))
 end
