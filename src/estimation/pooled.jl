@@ -64,6 +64,7 @@ struct Pooled{O, K, A, L, U} <: FittingMethod
     identifiable_only::Bool
     n_probes::Int
     mc_draws::Int
+    precondition::Bool
 end
 
 function Pooled(;
@@ -77,12 +78,13 @@ function Pooled(;
         refreeze_check::Symbol = :warn,
         identifiable_only::Bool = true,
         n_probes::Int = 3,
-        mc_draws::Int = 256)
+        mc_draws::Int = 256,
+        precondition::Bool = true)
     refreeze_check in (:warn, :refit) || error("refreeze_check must be :warn or :refit.")
     n_probes >= 1 || error("n_probes must be >= 1.")
     mc_draws >= 1 || error("mc_draws must be >= 1.")
     return Pooled(optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds,
-        force_free, refreeze_check, identifiable_only, n_probes, mc_draws)
+        force_free, refreeze_check, identifiable_only, n_probes, mc_draws, precondition)
 end
 
 """
@@ -108,6 +110,7 @@ struct PooledMap{O, K, A, L, U} <: FittingMethod
     identifiable_only::Bool
     n_probes::Int
     mc_draws::Int
+    precondition::Bool
 end
 
 function PooledMap(;
@@ -121,12 +124,13 @@ function PooledMap(;
         refreeze_check::Symbol = :warn,
         identifiable_only::Bool = true,
         n_probes::Int = 3,
-        mc_draws::Int = 256)
+        mc_draws::Int = 256,
+        precondition::Bool = true)
     refreeze_check in (:warn, :refit) || error("refreeze_check must be :warn or :refit.")
     n_probes >= 1 || error("n_probes must be >= 1.")
     mc_draws >= 1 || error("mc_draws must be >= 1.")
     return PooledMap(optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds,
-        force_free, refreeze_check, identifiable_only, n_probes, mc_draws)
+        force_free, refreeze_check, identifiable_only, n_probes, mc_draws, precondition)
 end
 
 # PooledResult is a StandardOptimizationResult{:pooled} alias + constructor (see common.jl).
@@ -1073,8 +1077,14 @@ function _pooled_solve(dm::DataModel, method, θ_start_u::ComponentArray,
     free_idx = _free_idx(θ_const_t, θ0_free_t)
     θ_const_t_vec = collect(θ_const_t)
     axs_full = getaxes(θ_const_t)
-    function obj(θt, p)
-        v_free = θt isa ComponentArray ? ComponentArrays.getdata(θt) : θt
+    # Built here, not in `_fit_pooled`: the refit loop re-derives the free set each round, so a
+    # hoisted scale vector would be stale from round 2 and silently misaligned against the
+    # coordinates. The frozen-set DETECTION above stays on raw transformed coordinates - scaling
+    # it would change which parameters get frozen, which is a semantic change, not a port.
+    θ0_pc, s_pc, _θt_from_z, _z_from_θt = _precondition_maps(
+        get_model(dm), free_names, θ0_free_t, axs, _precondition_on(method))
+    function obj(z, p)
+        v_free = ComponentArrays.getdata(_θt_from_z(z))
         T = eltype(v_free)
         infT = convert(T, Inf)
         θt_full = _merge_free_into_full(θ_const_t_vec, free_idx, v_free, axs_full)
@@ -1100,11 +1110,14 @@ function _pooled_solve(dm::DataModel, method, θ_start_u::ComponentArray,
         fe, free_names, θ0_free_t, method.optimizer, method.lb, method.ub, merged_constants;
         ignore_model_bounds = method.ignore_model_bounds, emit_info = info_bounds,
         method_label = "Pooled")
-    prob = use_bounds ? OptimizationProblem(optf, θ0_init; lb = lb, ub = ub) :
-           OptimizationProblem(optf, θ0_init)
+    z0 = _z_from_θt(θ0_init)
+    lb_z = _z_from_θt(lb)
+    ub_z = _z_from_θt(ub)
+    prob = use_bounds ? OptimizationProblem(optf, z0; lb = lb_z, ub = ub_z) :
+           OptimizationProblem(optf, z0)
     sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
 
-    θ_hat_t_raw = sol.u
+    θ_hat_t_raw = _θt_from_z(sol.u)
     θ_hat_t_free = θ_hat_t_raw isa ComponentArray ?
                    θ_hat_t_raw : ComponentArray(θ_hat_t_raw, axs)
     T = eltype(θ_hat_t_free)

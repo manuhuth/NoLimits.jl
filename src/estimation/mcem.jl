@@ -208,6 +208,7 @@ struct MCEM{O, K, A, ES, EO, EB, ER, L, U} <: FittingMethod
     progress::Bool
     store_diagnostics::Bool
     diagnostics_every::Int
+    precondition::Bool
 end
 
 function MCEM(;
@@ -245,7 +246,8 @@ function MCEM(;
         lb = nothing,
         ub = nothing,
         store_diagnostics::Bool = false,
-        diagnostics_every::Int = 1
+        diagnostics_every::Int = 1,
+        precondition::Bool = true
 )
     diagnostics_every >= 1 ||
         error("MCEM: diagnostics_every must be ≥ 1. Got: $diagnostics_every")
@@ -266,7 +268,7 @@ function MCEM(;
         ebe_rescue_multistart_k, ebe_rescue_max_rounds,
         ebe_rescue_grad_tol, ebe_rescue_multistart_sampling)
     MCEM(optimizer, optim_kwargs, adtype, e_step_actual, em, ebe, ebe_rescue,
-        lb, ub, verbose, progress, store_diagnostics, diagnostics_every)
+        lb, ub, verbose, progress, store_diagnostics, diagnostics_every, precondition)
 end
 
 # MCEMResult is a StandardOptimizationResult{:mcem} alias (see common.jl).
@@ -1446,9 +1448,13 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
                 θt_q2 = ComponentArray(NamedTuple{Tuple(q2_free_now)}(
                     Tuple(getproperty(θt_full_curr, n) for n in q2_free_now)))
                 axs_q2 = getaxes(θt_q2)
-                function obj_q2(ψt, p)
-                    any(isnan, ψt) && return eltype(ψt)(Inf)
-                    ψt_ca = ψt isa ComponentArray ? ψt : ComponentArray(ψt, axs_q2)
+                # Anchored at the CURRENT iterate, not the initial theta: the anchor's job is to
+                # put the start at z = 0, and the free set is not invariant across EM iterations.
+                _, _, _q2_from_z, _z_from_q2 = _precondition_maps(
+                    get_model(dm), q2_free_now, θt_q2, axs_q2, _precondition_on(method))
+                function obj_q2(z, p)
+                    any(isnan, z) && return eltype(z)(Inf)
+                    ψt_ca = _q2_from_z(z)
                     T = eltype(ψt_ca)
                     θt_full_q2 = ComponentArray(T.(collect(θt_full_curr)), axs_full)
                     for name in q2_free_now
@@ -1465,13 +1471,17 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
                     fe, q2_free_now, collect(θt_q2), method.optimizer, nothing,
                     nothing, NamedTuple(); allow_bbo = false)
                 optf_q2 = OptimizationFunction(obj_q2, method.adtype)
+                z0_q2 = _z_from_q2(θ0_q2)
                 prob_q2 = use_bounds_q2 ?
-                          OptimizationProblem(optf_q2, θ0_q2; lb = lb_q2, ub = ub_q2) :
-                          OptimizationProblem(optf_q2, θ0_q2)
+                          OptimizationProblem(optf_q2, z0_q2;
+                    lb = _z_from_q2(lb_q2), ub = _z_from_q2(ub_q2)) :
+                          OptimizationProblem(optf_q2, z0_q2)
                 sol_q2 = Optimization.solve(
                     prob_q2, method.optimizer; method.optim_kwargs...)
                 if all(isfinite, sol_q2.u)
-                    θt_q2_opt = ComponentArray(sol_q2.u, axs_q2)
+                    # Mapped back before it is frozen into `mstep_constants` as a natural-scale
+                    # value; a missed back-map here yields plausible wrong numbers, not an error.
+                    θt_q2_opt = _q2_from_z(sol_q2.u)
                     θt_full_q2_opt = ComponentArray(collect(θt_full_curr), axs_full)
                     for name in q2_free_now
                         setproperty!(θt_full_q2_opt, name, getproperty(θt_q2_opt, name))
@@ -1496,10 +1506,17 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
             Tuple(getproperty(θt_full_curr, n) for n in free_names_q1)))
         axs_free_iter = getaxes(θt_free_iter)
 
+        # Anchored at the current iterate, as for Q2 above.
+        _, _, _θt_from_z, _z_from_θt = _precondition_maps(
+            get_model(dm), free_names_q1, θt_free_iter, axs_free_iter,
+            _precondition_on(method))
+        # Keyed on θt, not z, and the cache must stay INSIDE this loop: with a per-iteration
+        # anchor, z = 0 means a different θt each iteration, so a hoisted cache would return
+        # iteration 1's objective forever and report instant convergence with no error.
         obj_cache = (θ = Ref{Any}(nothing), obj = Ref{Any}(nothing))
-        function obj_only(θt, p)
-            any(isnan, θt) && return Inf
-            θt_free_loc = θt isa ComponentArray ? θt : ComponentArray(θt, axs_free_iter)
+        function obj_only(z, p)
+            any(isnan, z) && return Inf
+            θt_free_loc = _θt_from_z(z)
             θt_vec = θt_free_loc
             use_cache = !(eltype(θt_free_loc) <: ForwardDiff.Dual)
             if use_cache && obj_cache.θ[] !== nothing &&
@@ -1529,8 +1546,10 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
         lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
             fe, free_names_q1, collect(θt_free_iter), method.optimizer, method.lb,
             method.ub, constants; method_label = "MCEM")
-        prob = use_bounds ? OptimizationProblem(optf, θ0_init; lb = lb, ub = ub) :
-               OptimizationProblem(optf, θ0_init)
+        z0 = _z_from_θt(θ0_init)
+        prob = use_bounds ?
+               OptimizationProblem(optf, z0; lb = _z_from_θt(lb), ub = _z_from_θt(ub)) :
+               OptimizationProblem(optf, z0)
 
         sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
 
@@ -1540,9 +1559,7 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
             θu_new = θu_curr
             Q_new = Q_prev
         else
-            θ_hat_t_raw = sol.u
-            θ_hat_t_free = θ_hat_t_raw isa ComponentArray ? θ_hat_t_raw :
-                           ComponentArray(θ_hat_t_raw, axs_free_iter)
+            θ_hat_t_free = _θt_from_z(sol.u)
 
             θt_full_new = ComponentArray(eltype(θ_hat_t_free).(θ_const_t_q1), axs_full_q1)
             for name in free_names_q1
