@@ -2474,6 +2474,19 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
         ComponentArray(zeros(T0, length(θ0_free_t)), axs_free),
         false)
 
+    # Infeasible points are reported as a large FINITE value, not `Inf`. A line search cannot
+    # interpolate through a non-finite function value - `BackTracking(order = 3)` fits a cubic
+    # through its trial values - so it abandons the search instead of shrinking the step, and the
+    # optimizer stops at iteration 1 with a descent step still available. Measured on pheno: the
+    # `Inf` return stops five different gradient optimizers dead, while a finite wall reaches
+    # BOBYQA's optimum exactly. Anchored on the last feasible objective so it is always well
+    # above anything attainable, whatever the model's scale.
+    wall_ref = Ref{Union{Nothing, T0}}(nothing)
+    function _infeasible(::Type{T}) where {T}
+        wall_ref[] === nothing ? T(1e10) :
+        T(wall_ref[] + abs(wall_ref[]) + 1e6)
+    end
+
     # The optimizer works on the preconditioned offset z; everything downstream of these two
     # maps stays on the transformed θ scale.
     θ0_pc, s_pc, _θt_from_z, _z_from_θt = _precondition_maps(
@@ -2485,7 +2498,6 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
             obj_cache, θt_free, method.cache.theta_tol)
         cached_obj !== nothing && return cached_obj
         T = eltype(θt_free)
-        infT = convert(T, Inf)
         θt_full = _merge_free_into_full(θ_const_t_vec, free_idx, θt_free, axs_full)
         θu = inv_transform(θt_full)
         obj = _laplace_objective_only(
@@ -2497,9 +2509,10 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
             rng = rng,
             serialization = serialization,
             hmode = hmode)
-        !isfinite(obj) && return infT
+        !isfinite(obj) && return _infeasible(T)
         has_penalty && (obj += _penalty_value(θu, penalty))
         has_extra && (obj += extra_objective(θu))
+        obj isa T0 && isfinite(obj) && (wall_ref[] = obj)
         _laplace_obj_cache_set_obj!(obj_cache, θt_free, obj)
         return obj
     end
