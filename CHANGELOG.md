@@ -52,6 +52,16 @@
 
 ### Other changes
 
+- `Laplace` and `FOCEI` now document that a gradient-based outer optimizer must cap its
+  line-search step. With the outer gradient corrected (see above) it is usable, and on the widest
+  benchmark model it beats the derivative-free default by ~536 `-2LL` units - but the gradient's
+  coordinates can span four orders of magnitude at a poorly scaled start, so an uncapped unit
+  first step overflows into the region where the marginal is not finite. `BackTracking(maxstep =
+  1.0)`, the convention the inner optimizer has always used, takes `pheno_sd` from `-2LL` 6038 to
+  973.44 (the BOBYQA optimum) and converges in 91 s instead of exhausting `maxiters` in 623 s.
+  Finite `lb`/`ub` are an alternative - they route through `Fminbox`, whose barrier keeps
+  iterates interior - but are ~300x slower for the same answer. Do not combine a step cap with a
+  shrunken `alphaguess`; the two starve each other.
 - `FOCEI` accepts BlackBoxOptim optimizers, on the same terms as `Laplace`: finite bounds
   on every free parameter are required and the start is clamped into the box.
 - `Optimization` is capped below 5.7. Optimization 5.7.0 stopped exporting the

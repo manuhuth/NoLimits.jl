@@ -36,7 +36,7 @@ struct MAP{O, K, A, L, U} <: FittingMethod
 end
 
 function MAP(;
-        optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking()),
+        optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
         optim_kwargs = NamedTuple(),
         adtype = Optimization.AutoForwardDiff(),
         lb = nothing,

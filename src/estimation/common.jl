@@ -903,6 +903,27 @@ function _precondition_scale(model, free_names, θ0_free_t)
     return s
 end
 
+# Single definition of the optimizer reparameterization θt = θ0_pc + s_pc .* z, shared by every
+# numerical driver. `on = false` makes both maps the identity, so a fit is bit-identical to one
+# from before preconditioning existed. Note `z_from_θt` is also the bounds map: mapping `lb`/`ub`
+# is the same affine operation, so no driver hand-writes the formula a second time.
+# One return path on purpose — a two-branch return would make the closure types a Union at every
+# call site and put a dynamic dispatch inside the objective.
+function _precondition_maps(model, free_names, θ0_free_t, axs, on::Bool)
+    T = eltype(θ0_free_t)
+    θ0_pc = on ? collect(θ0_free_t) : zeros(T, length(θ0_free_t))
+    s_pc = on ? _precondition_scale(model, free_names, θ0_free_t) :
+           ones(T, length(θ0_free_t))
+    θt_from_z = z -> ComponentArray(
+        θ0_pc .+ s_pc .* (z isa ComponentArray ? ComponentArrays.getdata(z) : z), axs)
+    z_from_θt = θt -> (collect(θt) .- θ0_pc) ./ s_pc
+    return θ0_pc, s_pc, θt_from_z, z_from_θt
+end
+
+# `fit_fixed_effects` and `fit_laplace_family` are public and accept arbitrary user
+# `FittingMethod`s, which need not carry the field.
+@inline _precondition_on(method) = hasproperty(method, :precondition) && method.precondition
+
 function get_iterations(res::MethodResult)
     hasproperty(res, :iterations) ? res.iterations :
     error("iterations not available for this method.")

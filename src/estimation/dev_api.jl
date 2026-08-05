@@ -795,7 +795,7 @@ end
 """
     optimize_parameters(f_natural, ctx::FitContext;
                         θ_start=initial_parameters(ctx),
-                        optimizer=LBFGS(linesearch=BackTracking()),
+                        optimizer=LBFGS(linesearch=BackTracking(maxstep=1.0)),
                         adtype=AutoForwardDiff(), optim_kwargs=NamedTuple())
         -> (θ̂::ComponentArray, sol)
 
@@ -815,7 +815,7 @@ in `f_natural`. Do-block friendly:
 """
 function optimize_parameters(f_natural, ctx::FitContext;
         θ_start::ComponentArray = initial_parameters(ctx),
-        optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking()),
+        optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
         adtype = Optimization.AutoForwardDiff(),
         optim_kwargs::NamedTuple = NamedTuple())
     dm = ctx.dm
