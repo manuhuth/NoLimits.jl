@@ -23,8 +23,28 @@ function _finalize_wald_uqresult(fe, θ_hat_t, θ_hat_u, free_names, active_idx,
         draws_n[i, :] .= coords_u_i[active_idx]
     end
 
+    # A Wald draw is Gaussian on the TRANSFORMED scale, so pushing it through the inverse
+    # transform can overflow when a coordinate is weakly identified: `exp` of a wide
+    # log-Cholesky draw is `Inf`, and `Inf - Inf` is `NaN`. Those rows used to flow straight into
+    # the natural-scale covariance and quantiles, so `get_uq_vcov()` returned an all-NaN matrix
+    # (its default is `scale = :natural`) and the intervals threw on quantiles of NaN. The
+    # transformed-scale covariance is unaffected and stays exact; only the natural-scale
+    # summaries drop the offending rows, and the count is reported so it cannot pass unnoticed.
+    finite_rows = [all(isfinite, @view(draws_n[i, :])) for i in 1:size(draws_n, 1)]
+    n_nonfinite = count(!, finite_rows)
+    n_nonfinite == length(finite_rows) &&
+        error("Wald natural-scale summaries unavailable: all $(n_nonfinite) draws overflowed " *
+              "when mapped to the natural scale, which means the estimate is only weakly " *
+              "identified in at least one coordinate. The transformed-scale covariance is " *
+              "still available via get_uq_vcov(uq; scale = :transformed).")
+    n_nonfinite > 0 &&
+        @warn "Excluding non-finite Wald draws from the natural-scale summaries." n_nonfinite n_total=length(finite_rows)
+    # `draws_n` itself is kept whole: `get_uq_draws` should report what was drawn, and a user
+    # inspecting the draws should see the overflow rather than find rows silently missing.
+    draws_n_fin = n_nonfinite > 0 ? draws_n[finite_rows, :] : draws_n
+
     intervals_t = _intervals_from_draws(draws_t, level)
-    intervals_n = _intervals_from_draws(draws_n, level)
+    intervals_n = _intervals_from_draws(draws_n_fin, level)
 
     ext = _extend_natural_stickbreak(fe, free_names, active_names, active_kinds,
         est_n, draws_n, intervals_n)
@@ -32,8 +52,10 @@ function _finalize_wald_uqresult(fe, θ_hat_t, θ_hat_u, free_names, active_idx,
     est_n_use = ext !== nothing ? ext[2] : est_n
     draws_n_use = ext !== nothing ? ext[3] : draws_n
     intervals_n_use = ext !== nothing ? ext[4] : intervals_n
-    Vn_use = draws_n_use !== nothing ? _cov_from_draws(draws_n_use) :
-             _cov_from_draws(draws_n)
+    # Covariance from the finite rows only, of whatever the stickbreak extension produced.
+    Vn_src = draws_n_use !== nothing ? draws_n_use : draws_n
+    Vn_rows = [all(isfinite, @view(Vn_src[i, :])) for i in 1:size(Vn_src, 1)]
+    Vn_use = _cov_from_draws(all(Vn_rows) ? Vn_src : Vn_src[Vn_rows, :])
 
     diag = merge(
         (;
@@ -46,6 +68,7 @@ function _finalize_wald_uqresult(fe, θ_hat_t, θ_hat_u, free_names, active_idx,
         (;
             pseudo_inverse = pseudo_inverse,
             n_draws = n_draws,
+            n_draws_nonfinite_natural = n_nonfinite,
             n_active_parameters = length(active_idx),
             coordinate_transforms = active_kinds
         ),
