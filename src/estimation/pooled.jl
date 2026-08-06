@@ -15,7 +15,8 @@ using Statistics
 
 """
     Pooled(; optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds,
-           force_free, refreeze_check, identifiable_only, n_probes, mc_draws) <: FittingMethod
+           force_free, refreeze_check, identifiable_only, n_probes, mc_draws,
+           precondition) <: FittingMethod
 
 Pooled estimation for models with random effects. Each individual's random effects are
 set to the **plug-in value of their RE distribution** (mean, falling back to median; a
@@ -41,6 +42,13 @@ evaluated.
 - `adtype`: AD backend. Defaults to `AutoForwardDiff()`.
 - `lb`/`ub`: bounds on the transformed scale, or `nothing` to use model-declared bounds.
 - `ignore_model_bounds::Bool = false`: ignore bounds declared in `@fixedEffects`.
+- `precondition::Bool = true`: optimize the scaled offset `z` with
+  `θ_transformed = θ0 + s .* z`, so every fit starts at `z = 0` and no coordinate can be
+  frozen by an unlucky starting value. `s` is 1 for any coordinate already in log/logit
+  space and `max(abs(θ0), 1)` for a genuinely natural-scale `:identity` coordinate. Set
+  `false` to optimize the transformed vector directly, which reproduces pre-0.2 results
+  bit-for-bit. Note that with preconditioning on, the optimizer object behind
+  [`get_raw`](@ref) works in `z`; [`get_params`](@ref) always returns the usual scales.
 - `force_free::Vector{Symbol} = Symbol[]`: parameter names exempt from auto-freezing.
 - `refreeze_check::Symbol = :warn`: post-fit sensitivity re-check at the optimum;
   `:warn` records violations in the notes, `:refit` unfreezes violators and continues
@@ -89,7 +97,8 @@ end
 
 """
     PooledMap(; optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds,
-              force_free, refreeze_check, identifiable_only, n_probes, mc_draws) <: FittingMethod
+              force_free, refreeze_check, identifiable_only, n_probes, mc_draws,
+              precondition) <: FittingMethod
 
 Like [`Pooled`](@ref), but adds the log-prior of the fixed effects to the objective
 (MAP on the data likelihood with RE plugged in at their distributional means). Requires

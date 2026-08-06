@@ -149,7 +149,7 @@ end
            ebe_grad_tol, ebe_multistart_n, ebe_multistart_k, ebe_multistart_max_rounds,
            ebe_multistart_sampling, ebe_rescue_on_high_grad, ebe_rescue_multistart_n,
            ebe_rescue_multistart_k, ebe_rescue_max_rounds, ebe_rescue_grad_tol,
-           ebe_rescue_multistart_sampling, lb, ub) <: FittingMethod
+           ebe_rescue_multistart_sampling, lb, ub, precondition) <: FittingMethod
 
 Monte Carlo Expectation-Maximization for random-effects models. At each EM iteration the
 E-step draws random effects; the M-step maximizes the Monte Carlo Q-function over the
@@ -193,6 +193,13 @@ fixed effects.
   `ebe_rescue_multistart_sampling`: rescue multistart settings when an EBE mode has a
   high gradient norm. Disabled by default.
 - `lb`, `ub`: bounds on the transformed fixed-effect scale, or `nothing`.
+- `precondition::Bool = true`: optimize the scaled offset `z` with
+  `θ_transformed = θ0 + s .* z`, so every fit starts at `z = 0` and no coordinate can be
+  frozen by an unlucky starting value. `s` is 1 for any coordinate already in log/logit
+  space and `max(abs(θ0), 1)` for a genuinely natural-scale `:identity` coordinate. Set
+  `false` to optimize the transformed vector directly, which reproduces pre-0.2 results
+  bit-for-bit. Note that with preconditioning on, the optimizer object behind
+  [`get_raw`](@ref) works in `z`; [`get_params`](@ref) always returns the usual scales.
 """
 struct MCEM{O, K, A, ES, EO, EB, ER, L, U} <: FittingMethod
     optimizer::O

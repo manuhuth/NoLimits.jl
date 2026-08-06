@@ -11,7 +11,8 @@ using LineSearches
 using OptimizationBBO
 
 """
-    MLE(; optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds) <: FittingMethod
+    MLE(; optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds,
+    precondition) <: FittingMethod
 
 Maximum Likelihood Estimation for models without random effects.
 
@@ -26,6 +27,13 @@ Maximum Likelihood Estimation for models without random effects.
 - `ub`: upper bounds on the transformed parameter scale, or `nothing`.
 - `ignore_model_bounds::Bool = false`: if `true`, ignore the bounds declared in
   `@fixedEffects` (explicit `lb`/`ub` still apply).
+- `precondition::Bool = true`: optimize the scaled offset `z` with
+  `θ_transformed = θ0 + s .* z`, so every fit starts at `z = 0` and no coordinate can be
+  frozen by an unlucky starting value. `s` is 1 for any coordinate already in log/logit
+  space and `max(abs(θ0), 1)` for a genuinely natural-scale `:identity` coordinate. Set
+  `false` to optimize the transformed vector directly, which reproduces pre-0.2 results
+  bit-for-bit. Note that with preconditioning on, the optimizer object behind
+  [`get_raw`](@ref) works in `z`; [`get_params`](@ref) always returns the usual scales.
 """
 struct MLE{O, K, A, L, U} <: FittingMethod
     optimizer::O

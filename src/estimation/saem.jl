@@ -314,7 +314,7 @@ end
            ebe_multistart_k, ebe_multistart_max_rounds, ebe_multistart_sampling,
            ebe_rescue_on_high_grad, ebe_rescue_multistart_n, ebe_rescue_multistart_k,
            ebe_rescue_max_rounds, ebe_rescue_grad_tol, ebe_rescue_multistart_sampling,
-           lb, ub) <: FittingMethod
+           lb, ub, precondition) <: FittingMethod
 
 Stochastic Approximation Expectation-Maximization for random-effects models. SAEM
 maintains a stochastic approximation of the sufficient statistics using a decreasing
@@ -393,6 +393,13 @@ or closed-form updates (when `builtin_stats` is enabled).
 - `ebe_rescue_on_high_grad` (default `false`), `ebe_rescue_*`: rescue multistart settings
   when an EBE mode has a high gradient norm. Disabled by default.
 - `lb`, `ub`: bounds on the transformed fixed-effect scale, or `nothing`.
+- `precondition::Bool = true`: optimize the scaled offset `z` with
+  `θ_transformed = θ0 + s .* z`, so every fit starts at `z = 0` and no coordinate can be
+  frozen by an unlucky starting value. `s` is 1 for any coordinate already in log/logit
+  space and `max(abs(θ0), 1)` for a genuinely natural-scale `:identity` coordinate. Set
+  `false` to optimize the transformed vector directly, which reproduces pre-0.2 results
+  bit-for-bit. Note that with preconditioning on, the optimizer object behind
+  [`get_raw`](@ref) works in `z`; [`get_params`](@ref) always returns the usual scales.
 - `mstep_sa_on_params::Bool = true`: if `true`, the numerical M-step uses only the
   current iteration's random-effect samples (not the ring buffer) as the objective,
   and applies a Robbins-Monro parameter update

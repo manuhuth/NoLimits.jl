@@ -9,7 +9,8 @@ using Random
 using LineSearches
 
 """
-    MAP(; optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds) <: FittingMethod
+    MAP(; optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds,
+    precondition) <: FittingMethod
 
 Maximum A Posteriori estimation for models without random effects.
 Requires prior distributions on at least one free fixed effect.
@@ -25,6 +26,13 @@ Requires prior distributions on at least one free fixed effect.
 - `ub`: upper bounds on the transformed parameter scale, or `nothing`.
 - `ignore_model_bounds::Bool = false`: when `true`, ignore bounds declared in
   `@fixedEffects` unless explicit `lb`/`ub` are passed.
+- `precondition::Bool = true`: optimize the scaled offset `z` with
+  `θ_transformed = θ0 + s .* z`, so every fit starts at `z = 0` and no coordinate can be
+  frozen by an unlucky starting value. `s` is 1 for any coordinate already in log/logit
+  space and `max(abs(θ0), 1)` for a genuinely natural-scale `:identity` coordinate. Set
+  `false` to optimize the transformed vector directly, which reproduces pre-0.2 results
+  bit-for-bit. Note that with preconditioning on, the optimizer object behind
+  [`get_raw`](@ref) works in `z`; [`get_params`](@ref) always returns the usual scales.
 """
 struct MAP{O, K, A, L, U} <: FittingMethod
     optimizer::O

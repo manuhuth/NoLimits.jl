@@ -50,7 +50,37 @@
   changes the length and layout of the transformed vector, of `get_flat_names`, and of
   Wald UQ coordinates for `RealPSDMatrix(scale = :cholesky)` parameters.
 
+- Wald UQ no longer returns `NaN` natural-scale summaries when a transformed-scale draw
+  overflows. `wald_uq` draws from a Gaussian on the transformed scale and pushes each draw
+  through the inverse transform; for a covariance parameter that transform is exponential, so
+  a wide-but-legitimate transformed covariance (`max(diag) ~ 1e12` for `:cholesky` and
+  `:lie`, versus `~1e4` for `:expm`) sends draws to `Inf`, and a single one poisoned every
+  natural-scale interval, standard error and correlation. Non-finite draws are now excluded
+  from the natural-scale summaries with a warning naming how many were dropped, recorded in
+  the new `n_draws_nonfinite_natural` diagnostic, and an error is raised only if every draw
+  is non-finite. `get_uq_draws` still returns all requested draws untouched. The
+  transformed-scale summaries were never affected.
+- `wald_uq` now errors with an actionable message instead of producing a silently meaningless
+  covariance when the objective Hessian at the estimate contains non-finite entries, which
+  `pinv` otherwise propagates into every reported quantity.
+
 ### Other changes
+
+- All nine optimization-based methods (`MLE`, `MAP`, `Laplace`, `FOCEI`, `GHQuadrature`,
+  `SAEM`, `MCEM`, `Pooled`, `PooledMap`) now precondition the outer problem by default,
+  via a new `precondition::Bool = true` keyword. The optimizer works in a scaled offset
+  `θ_transformed = θ0 + s .* z` and therefore always starts from `z = 0`, with `s = 1` for
+  coordinates already in log/logit space and `s = max(abs(θ0), 1)` for genuinely
+  natural-scale `:identity` coordinates. This removes a failure mode in which a coordinate
+  whose starting value was near zero could not move at all, because several optimizers size
+  their initial trial step relative to `abs(x0)`. Set `precondition = false` to optimize the
+  transformed vector directly, which reproduces earlier results bit-for-bit. With
+  preconditioning on, the optimizer object returned by `get_raw` works in `z`; `get_params`
+  is unaffected. `SAEM` and `MCEM` re-anchor `θ0` at the current iterate each M-step.
+- Optimization-based methods that can return a non-finite objective now hand the optimizer a
+  large finite value derived from the best objective seen so far, rather than `Inf`. A line
+  search cannot read a slope from `Inf`, so an overflowing trial step used to abort the fit at
+  its starting value; it now backtracks out of the infeasible region.
 
 - `Laplace` and `FOCEI` now document that a gradient-based outer optimizer must cap its
   line-search step. With the outer gradient corrected (see above) it is usable, and on the widest

@@ -21,7 +21,7 @@ using LineSearches
                  inner_options, inner_optimizer, inner_kwargs, inner_adtype,
                  inner_grad_tol, multistart_options, multistart_n, multistart_k,
                  multistart_grad_tol, multistart_max_rounds, multistart_sampling,
-                 lb, ub, ignore_model_bounds) <: FittingMethod
+                 lb, ub, ignore_model_bounds, precondition) <: FittingMethod
 
 Sparse-grid (Smolyak) quadrature for NLME marginal likelihood estimation.
 
@@ -57,6 +57,13 @@ forward pass: the objective is fully differentiable by `AutoForwardDiff`.
   falls back to model-declared bounds.
 - `ignore_model_bounds::Bool = false`: if `true`, model-declared parameter
   bounds are ignored (user-supplied `lb`/`ub` still apply).
+- `precondition::Bool = true`: optimize the scaled offset `z` with
+  `θ_transformed = θ0 + s .* z`, so every fit starts at `z = 0` and no coordinate can be
+  frozen by an unlucky starting value. `s` is 1 for any coordinate already in log/logit
+  space and `max(abs(θ0), 1)` for a genuinely natural-scale `:identity` coordinate. Set
+  `false` to optimize the transformed vector directly, which reproduces pre-0.2 results
+  bit-for-bit. Note that with preconditioning on, the optimizer object behind
+  [`get_raw`](@ref) works in `z`; [`get_params`](@ref) always returns the usual scales.
 """
 struct GHQuadrature{LV, O, K, A, IO, MS, L, U} <: FittingMethod
     level::LV   # Int (isotropic) or NamedTuple (anisotropic per-RE-group)
