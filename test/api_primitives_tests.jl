@@ -619,6 +619,20 @@ end
     cok, _ = NoLimits._laplace_cholesky_negH(-Matrix(Diagonal([2.0, 3.0])); jitter = 1e-6)
     @test 2 * sum(log, diag(cok.U))≈log(6.0) rtol=1e-6
 
+    # A positive-definite -H must be factorised untouched, whatever the jitter settings. The
+    # default `adaptive_jitter` is proportional to mean|diag(-H)|, so on a wide spectrum it
+    # inflated the log-det of a perfectly healthy Hessian (0.51 nats here). That biased the
+    # marginal AND broke the analytic outer gradient, which treats the jitter as constant --
+    # invisible to the derivative-free default optimizer, fatal to a gradient-based one.
+    Hwide = -Matrix(Diagonal([1e6, 1e6, 1.0]))
+    for kw in ((; adaptive = true, scale_factor = 1e-6),
+        (; adaptive = false, scale_factor = 0.0))
+        cw, jitw = NoLimits._laplace_cholesky_negH(Hwide; jitter = 1e-6, kw...)
+        @test cw.info == 0
+        @test iszero(jitw)
+        @test 2 * sum(log, diag(cw.U))≈logdet(-Hwide) rtol=1e-12
+    end
+
     # Unit-invariance: the verdict follows conditioning, not scale. A relative threshold
     # gives this for free; both absolute floors previously tried did not.
     Hfine = -Matrix(Diagonal([1.0, 1.0, 1e-4]))    # cond 1e4  -> informative
