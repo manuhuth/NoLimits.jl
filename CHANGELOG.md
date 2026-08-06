@@ -50,8 +50,59 @@
   changes the length and layout of the transformed vector, of `get_flat_names`, and of
   Wald UQ coordinates for `RealPSDMatrix(scale = :cholesky)` parameters.
 
+- Wald UQ no longer returns `NaN` natural-scale summaries when a transformed-scale draw
+  overflows. `wald_uq` draws from a Gaussian on the transformed scale and pushes each draw
+  through the inverse transform; for a covariance parameter that transform is exponential, so
+  a wide-but-legitimate transformed covariance (`max(diag) ~ 1e12` for `:cholesky` and
+  `:lie`, versus `~1e4` for `:expm`) sends draws to `Inf`, and a single one poisoned every
+  natural-scale interval, standard error and correlation. Non-finite draws are now excluded
+  from the natural-scale summaries with a warning naming how many were dropped, recorded in
+  the new `n_draws_nonfinite_natural` diagnostic, and an error is raised only if every draw
+  is non-finite. `get_uq_draws` still returns all requested draws untouched. The
+  transformed-scale summaries were never affected.
+- `wald_uq` now errors with an actionable message instead of producing a silently meaningless
+  covariance when the objective Hessian at the estimate contains non-finite entries, which
+  `pinv` otherwise propagates into every reported quantity.
+
+- `GHQuadrature` no longer throws `MethodError: no method matching Float64(::ForwardDiff.Dual)`
+  when its outer optimizer uses automatic differentiation. `batch_loglik_ghq` took its
+  accumulator element type from the random-effects measure alone, on the assumption that a
+  Dual-tagged `θ` always yields a Dual-valued measure. That fails for a random effect declared
+  with fixed hyperparameters (e.g. `RandomEffect(Normal(0.0, 1.0))`), whose measure carries no
+  `θ` and stays `Float64` while the conditional log-likelihoods being summed into it are Dual.
+  The accumulator is now promoted against `θ` as well. The bug predates this release but was
+  unreachable while the default outer optimizer was derivative-free; it would have surfaced as
+  soon as the default became gradient-based. Non-AD fits and models whose measure does depend
+  on `θ` are bit-unchanged, since `promote_type` is the identity in both cases.
+
 ### Other changes
 
+- All nine optimization-based methods (`MLE`, `MAP`, `Laplace`, `FOCEI`, `GHQuadrature`,
+  `SAEM`, `MCEM`, `Pooled`, `PooledMap`) now precondition the outer problem by default,
+  via a new `precondition::Bool = true` keyword. The optimizer works in a scaled offset
+  `θ_transformed = θ0 + s .* z` and therefore always starts from `z = 0`, with `s = 1` for
+  coordinates already in log/logit space and `s = max(abs(θ0), 1)` for genuinely
+  natural-scale `:identity` coordinates. This removes a failure mode in which a coordinate
+  whose starting value was near zero could not move at all, because several optimizers size
+  their initial trial step relative to `abs(x0)`. Set `precondition = false` to optimize the
+  transformed vector directly, which reproduces earlier results bit-for-bit. With
+  preconditioning on, the optimizer object returned by `get_raw` works in `z`; `get_params`
+  is unaffected. `SAEM` and `MCEM` re-anchor `θ0` at the current iterate each M-step.
+- Optimization-based methods that can return a non-finite objective now hand the optimizer a
+  large finite value derived from the best objective seen so far, rather than `Inf`. A line
+  search cannot read a slope from `Inf`, so an overflowing trial step used to abort the fit at
+  its starting value; it now backtracks out of the infeasible region.
+
+- `Laplace` and `FOCEI` now document that a gradient-based outer optimizer must cap its
+  line-search step. With the outer gradient corrected (see above) it is usable, and on the widest
+  benchmark model it beats the derivative-free default by ~536 `-2LL` units - but the gradient's
+  coordinates can span four orders of magnitude at a poorly scaled start, so an uncapped unit
+  first step overflows into the region where the marginal is not finite. `BackTracking(maxstep =
+  1.0)`, the convention the inner optimizer has always used, takes `pheno_sd` from `-2LL` 6038 to
+  973.44 (the BOBYQA optimum) and converges in 91 s instead of exhausting `maxiters` in 623 s.
+  Finite `lb`/`ub` are an alternative - they route through `Fminbox`, whose barrier keeps
+  iterates interior - but are ~300x slower for the same answer. Do not combine a step cap with a
+  shrunken `alphaguess`; the two starve each other.
 - `FOCEI` accepts BlackBoxOptim optimizers, on the same terms as `Laplace`: finite bounds
   on every free parameter are required and the start is clamped into the box.
 - `Optimization` is capped below 5.7. Optimization 5.7.0 stopped exporting the

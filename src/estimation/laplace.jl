@@ -598,7 +598,7 @@ function _laplace_sample_b0s_impl(dm::DataModel,
                             error("Expected scalar random effect for $(re), got vector of length $(length(v)).")
                         v = v[1]
                     end
-                    b0s[i][first(r)] = T(v)
+                    b0s[i][first(r)] = convert(T, v)
                 end
             else
                 draws = (sampling === :lhs &&
@@ -610,7 +610,7 @@ function _laplace_sample_b0s_impl(dm::DataModel,
                 for i in 1:n
                     v = draws[i]
                     if v isa Number
-                        b0s[i][r] .= T(v)
+                        b0s[i][r] .= convert(T, v)
                     else
                         vv = vec(v)
                         length(vv) == dim ||
@@ -1981,7 +1981,7 @@ end
               multistart_grad_tol, multistart_max_rounds, multistart_sampling,
               jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale,
               use_trace_logdet_grad, use_hutchinson, hutchinson_n, theta_tol,
-              lb, ub) <: FittingMethod
+              lb, ub, precondition) <: FittingMethod
 
 Laplace approximation with Empirical Bayes Estimates (EBE) for random-effects models.
 The outer optimizer maximizes the Laplace-approximated marginal likelihood over the
@@ -1989,18 +1989,34 @@ fixed effects, while the inner optimizer computes per-individual MAP estimates o
 random effects.
 
 # Keyword Arguments
-- `optimizer`: outer Optimization.jl optimizer. Defaults to `NLopt.LN_BOBYQA()`
-  (derivative-free; requires a stopping criterion, supplied by the default `maxiters`).
-  It was the most reliable choice across a six-model tutorial benchmark, but it can
-  stall on a correlated `RealPSDMatrix` block whose optimum sits near the
-  positive-definite boundary - on `pheno_sd` it stopped ~140 `-2LL` units short,
-  leaving one covariance entry at its initial value. If a covariance estimate comes
-  back suspiciously close to its start, retry with
-  `optimizer = OptimizationOptimJL.NelderMead()` or `NLopt.LN_SBPLX()` and compare
-  marginal likelihoods via [`get_marginal_likelihood`](@ref). Neither alternative is a
-  safe blanket default: on the same benchmark NelderMead lost ~800 `-2LL` units on a
-  16-compartment PBPK model and diverged on a joint PK/PD fit, and SBPLX ran a
-  proportional-error parameter away to a degenerate optimum on a myelosuppression model.
+- `optimizer`: outer Optimization.jl optimizer. Defaults to
+  `OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0))`, which uses
+  the analytic marginal gradient.
+
+  **The `maxstep` cap is load-bearing, not decoration.** The gradient is exact, but its
+  coordinates can span four orders of magnitude at a poorly scaled start - on `pheno_sd`, where
+  `add_err` starts at 0.1 against data in the 5-50 range, the `add_err` coordinate is ~4e4
+  against 6-49 for the rest. An uncapped unit first step overflows into the region where the
+  marginal is not finite and the fit fails (`-2LL` 6038 against 973.44 with the cap). Keep the
+  cap if you swap the line search. Two things that do *not* work: combining the cap with a
+  shrunken `alphaguess`, and `alphaguess = InitialStatic(scaled = true)` on its own - the latter
+  terminates after 6 iterations on `warfarin`, 378 `-2LL` units short.
+
+  Measured against the previous `NLopt.LN_BOBYQA()` default across six published tutorial models
+  x both methods (12 fits, AGHQ marginal `-2LL`, warm timings): **better or equal likelihood on
+  11 of 12 cells, net 573 units better, and 1.8-5.9x faster on 11 of 12** (median 2.9x, total
+  939 s -> 470 s). The gains concentrate on the hardest models - `warfarin` Laplace by 522 units,
+  `mavoglurant` Laplace by 24, `nimo` by 9-20 - which is where a derivative-free search over many
+  correlated coordinates struggles most. The one cell where the old default wins is `mavoglurant`
+  FOCEI, by 7.9 units, and it is 3.6x slower there.
+
+  `NLopt.LN_BOBYQA()` remains a reasonable fallback if a fit misbehaves, being derivative-free
+  and needing no step control; it requires a stopping criterion, supplied by the default
+  `maxiters`. `OptimizationOptimJL.NelderMead()` and `NLopt.LN_SBPLX()` are also available but
+  neither is safe as a blanket choice: on the same benchmark NelderMead lost ~800 `-2LL` units on
+  a 16-compartment PBPK model and diverged on a joint PK/PD fit, and SBPLX ran a
+  proportional-error parameter away to a degenerate optimum on a myelosuppression model. Compare
+  candidates with [`get_marginal_likelihood`](@ref), which is method-independent.
 - `optim_kwargs::NamedTuple = (; maxiters = 1000)`: keyword arguments for the outer `solve` call.
 - `adtype`: AD backend for the outer optimizer. Defaults to `AutoForwardDiff()`.
 - `inner_optimizer`: inner optimizer for computing EBE modes. Defaults to `LBFGS`.
@@ -2055,7 +2071,8 @@ struct Laplace{O, K, A, IO, HO, CO, MS, L, U} <: FittingMethod
 end
 
 function Laplace(;
-        optimizer = NLopt.LN_BOBYQA(),
+        optimizer = OptimizationOptimJL.LBFGS(
+            linesearch = LineSearches.BackTracking(maxstep = 1.0)),
         optim_kwargs = (; maxiters = 1000),
         adtype = Optimization.AutoForwardDiff(),
         inner_options = nothing,
@@ -2457,19 +2474,23 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
         ComponentArray(zeros(T0, length(θ0_free_t)), axs_free),
         false)
 
-    # The optimizer works on the preconditioned offset z (see `_precondition_scale`);
-    # everything downstream of these two maps stays on the transformed θ scale.
-    # `precondition = false` makes both maps the identity, i.e. the optimizer sees the
-    # raw transformed vector exactly as it did before preconditioning existed.
-    θ0_pc = method.precondition ? collect(θ0_free_t) :
-            zeros(eltype(θ0_free_t), length(θ0_free_t))
-    s_pc = method.precondition ? _precondition_scale(get_model(dm), free_names, θ0_free_t) :
-           ones(eltype(θ0_free_t), length(θ0_free_t))
-    function _θt_from_z(z)
-        ComponentArray(
-            θ0_pc .+ s_pc .* (z isa ComponentArray ? ComponentArrays.getdata(z) : z), axs_free)
+    # Infeasible points are reported as a large FINITE value, not `Inf`. A line search cannot
+    # interpolate through a non-finite function value - `BackTracking(order = 3)` fits a cubic
+    # through its trial values - so it abandons the search instead of shrinking the step, and the
+    # optimizer stops at iteration 1 with a descent step still available. Measured on pheno: the
+    # `Inf` return stops five different gradient optimizers dead, while a finite wall reaches
+    # BOBYQA's optimum exactly. Anchored on the last feasible objective so it is always well
+    # above anything attainable, whatever the model's scale.
+    wall_ref = Ref{Union{Nothing, T0}}(nothing)
+    function _infeasible(::Type{T}) where {T}
+        wall_ref[] === nothing ? T(1e10) :
+        T(wall_ref[] + abs(wall_ref[]) + 1e6)
     end
-    _z_from_θt(θt) = (collect(θt) .- θ0_pc) ./ s_pc
+
+    # The optimizer works on the preconditioned offset z; everything downstream of these two
+    # maps stays on the transformed θ scale.
+    θ0_pc, s_pc, _θt_from_z, _z_from_θt = _precondition_maps(
+        get_model(dm), free_names, θ0_free_t, axs_free, _precondition_on(method))
 
     function obj_only(z, p)
         θt_free = _θt_from_z(z)
@@ -2477,7 +2498,6 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
             obj_cache, θt_free, method.cache.theta_tol)
         cached_obj !== nothing && return cached_obj
         T = eltype(θt_free)
-        infT = convert(T, Inf)
         θt_full = _merge_free_into_full(θ_const_t_vec, free_idx, θt_free, axs_full)
         θu = inv_transform(θt_full)
         obj = _laplace_objective_only(
@@ -2489,9 +2509,10 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
             rng = rng,
             serialization = serialization,
             hmode = hmode)
-        !isfinite(obj) && return infT
+        !isfinite(obj) && return _infeasible(T)
         has_penalty && (obj += _penalty_value(θu, penalty))
         has_extra && (obj += extra_objective(θu))
+        obj isa T0 && isfinite(obj) && (wall_ref[] = obj)
         _laplace_obj_cache_set_obj!(obj_cache, θt_free, obj)
         return obj
     end
@@ -2571,8 +2592,8 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
         ignore_model_bounds = method.ignore_model_bounds, allow_bbo = allow_bbo,
         method_label = "Laplace")
     z0 = _z_from_θt(θ0_init)
-    lb_z = (collect(lb) .- θ0_pc) ./ s_pc
-    ub_z = (collect(ub) .- θ0_pc) ./ s_pc
+    lb_z = _z_from_θt(lb)
+    ub_z = _z_from_θt(ub)
     prob = use_bounds ? OptimizationProblem(optf, z0; lb = lb_z, ub = ub_z) :
            OptimizationProblem(optf, z0)
     sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)

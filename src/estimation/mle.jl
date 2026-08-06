@@ -11,7 +11,8 @@ using LineSearches
 using OptimizationBBO
 
 """
-    MLE(; optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds) <: FittingMethod
+    MLE(; optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds,
+    precondition) <: FittingMethod
 
 Maximum Likelihood Estimation for models without random effects.
 
@@ -26,6 +27,13 @@ Maximum Likelihood Estimation for models without random effects.
 - `ub`: upper bounds on the transformed parameter scale, or `nothing`.
 - `ignore_model_bounds::Bool = false`: if `true`, ignore the bounds declared in
   `@fixedEffects` (explicit `lb`/`ub` still apply).
+- `precondition::Bool = true`: optimize the scaled offset `z` with
+  `θ_transformed = θ0 + s .* z`, so every fit starts at `z = 0` and no coordinate can be
+  frozen by an unlucky starting value. `s` is 1 for any coordinate already in log/logit
+  space and `max(abs(θ0), 1)` for a genuinely natural-scale `:identity` coordinate. Set
+  `false` to optimize the transformed vector directly, which reproduces pre-0.2 results
+  bit-for-bit. Note that with preconditioning on, the optimizer object behind
+  [`get_raw`](@ref) works in `z`; [`get_params`](@ref) always returns the usual scales.
 """
 struct MLE{O, K, A, L, U} <: FittingMethod
     optimizer::O
@@ -34,16 +42,18 @@ struct MLE{O, K, A, L, U} <: FittingMethod
     lb::L
     ub::U
     ignore_model_bounds::Bool
+    precondition::Bool
 end
 
 function MLE(;
-        optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking()),
+        optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
         optim_kwargs = NamedTuple(),
         adtype = Optimization.AutoForwardDiff(),
         lb = nothing,
         ub = nothing,
-        ignore_model_bounds = false)
-    MLE(optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds)
+        ignore_model_bounds = false,
+        precondition = true)
+    MLE(optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds, precondition)
 end
 
 # FrequentistResult is a StandardOptimizationResult{:frequentist} alias + constructor (see common.jl).
@@ -96,8 +106,12 @@ function _fit_no_re(dm::DataModel, method;
     θ0_free_t = layout.θ0_free_t
     cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
         serialization = serialization, force_saveat = true)
-    function obj(θt, p)
-        v_free = θt isa ComponentArray ? ComponentArrays.getdata(θt) : θt
+    # The optimizer works on the preconditioned offset z. No explicit gradient is supplied here,
+    # so `adtype` differentiates through the affine map and applies the chain rule itself.
+    θ0_pc, s_pc, _θt_from_z, _z_from_θt = _precondition_maps(
+        get_model(dm), free_names, θ0_free_t, layout.axs, _precondition_on(method))
+    function obj(z, p)
+        v_free = ComponentArrays.getdata(_θt_from_z(z))
         T = eltype(v_free)
         infT = convert(T, Inf)
         θt_full = _merge_free_into_full(θ_const_t_vec, free_idx, v_free, axs_full)
@@ -114,12 +128,15 @@ function _fit_no_re(dm::DataModel, method;
     lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
         fe, free_names, θ0_free_t, method.optimizer, method.lb, method.ub, constants;
         ignore_model_bounds = method.ignore_model_bounds, method_label = "MLE")
-    prob = use_bounds ? OptimizationProblem(optf, θ0_init; lb = lb, ub = ub) :
-           OptimizationProblem(optf, θ0_init)
+    z0 = _z_from_θt(θ0_init)
+    lb_z = _z_from_θt(lb)
+    ub_z = _z_from_θt(ub)
+    prob = use_bounds ? OptimizationProblem(optf, z0; lb = lb_z, ub = ub_z) :
+           OptimizationProblem(optf, z0)
     sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
 
     summary = FitSummary(sol.objective, sol.retcode == SciMLBase.ReturnCode.Success,
-        resolve_fitted_parameters(layout, sol.u), NamedTuple())
+        resolve_fitted_parameters(layout, _θt_from_z(sol.u)), NamedTuple())
     diagnostics = FitDiagnostics(
         (;), (optimizer = method.optimizer,), (retcode = sol.retcode,), NamedTuple())
     niter = hasproperty(sol, :stats) && hasproperty(sol.stats, :iterations) ?

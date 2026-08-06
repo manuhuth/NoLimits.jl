@@ -666,6 +666,9 @@ Supported outcome families: `Normal`, `LogNormal`, `Laplace`, `Cauchy`, `Exponen
 Markov / Markov outcome models and any family without a registered Fisher information are
 not supported — use [`Laplace`](@ref) for those.
 
+A gradient-based outer optimizer must cap its line-search step; see the `optimizer` entry in
+[`Laplace`](@ref) for why and for the measured numbers.
+
 Keyword arguments mirror [`Laplace`](@ref) (including `precondition`); the only
 addition is `interaction::Bool=true`.
 """
@@ -685,7 +688,8 @@ struct FOCEI{O, K, A, IO, HO, CO, MS, L, U} <: FittingMethod
 end
 
 function FOCEI(; interaction::Bool = true,
-        optimizer = NLopt.LN_BOBYQA(),
+        optimizer = OptimizationOptimJL.LBFGS(
+            linesearch = LineSearches.BackTracking(maxstep = 1.0)),
         optim_kwargs = (; maxiters = 1000),
         adtype = Optimization.AutoForwardDiff(),
         inner_options = nothing,

@@ -302,17 +302,17 @@ function build_eta_individual(dm::DataModel,
                 if const_mask[id]
                     if info.is_scalar
                         v = const_scalars[id]
-                        vals[gi] = T(v)
+                        vals[gi] = convert(T, v)
                     else
                         v = const_vectors[id]
-                        vals[gi] = T.(v)
+                        vals[gi] = convert.(T, v)
                     end
                 else
                     v = _re_value_from_b(info, id, b)
                     v === nothing &&
                         error("Missing random effect value for $(re) level $(cache.re_index[ri].levels[id]).")
                     if info.is_scalar
-                        vals[gi] = T(v)
+                        vals[gi] = convert(T, v)
                     else
                         vals[gi] = Vector{T}(v)
                     end

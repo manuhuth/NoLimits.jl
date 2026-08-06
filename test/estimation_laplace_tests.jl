@@ -695,14 +695,30 @@ end
         y = 0.05 .* exp.(0.4 .* randn(rng, 48)))
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
 
-    on = fit_model(dm, NoLimits.Laplace(); rng = Xoshiro(1))
-    off = fit_model(dm, NoLimits.Laplace(; precondition = false); rng = Xoshiro(1))
+    # BOBYQA is pinned, not defaulted: this test exercises a DERIVATIVE-FREE pathology - such an
+    # optimizer sizes each coordinate's first step by that coordinate's own value, so a
+    # coordinate starting near zero never moves, and preconditioning is what frees it. The
+    # default optimizer is gradient-based and does not size steps that way, so leaving the
+    # optimizer implicit would silently stop testing the thing this testset is named after.
+    bob = NoLimits.NLopt.LN_BOBYQA()
+    on = fit_model(dm, NoLimits.Laplace(; optimizer = bob); rng = Xoshiro(1))
+    off = fit_model(
+        dm, NoLimits.Laplace(; optimizer = bob, precondition = false); rng = Xoshiro(1))
     Ω_on = NoLimits.get_params(on; scale = :untransformed).Ω
     Ω_off = NoLimits.get_params(off; scale = :untransformed).Ω
 
     # Preconditioning must never do worse, and it must move Ω[2,2] off its start.
     @test NoLimits.get_objective(on) <= NoLimits.get_objective(off) + 1e-8
     @test abs(Ω_on[2, 2] - 1.0) > abs(Ω_off[2, 2] - 1.0)
+
+    # The gradient-based default does not size steps by |x0|, so preconditioning neither frees
+    # nor freezes a coordinate there - it must simply not disturb the fit. Asserted two-sided on
+    # purpose: which of two optimizer parameterizations lands infinitesimally lower is arbitrary
+    # (they agree to ~1e-8 relative here), so a one-sided inequality would fail on a coin flip.
+    on_d = fit_model(dm, NoLimits.Laplace(); rng = Xoshiro(1))
+    off_d = fit_model(dm, NoLimits.Laplace(; precondition = false); rng = Xoshiro(1))
+    @test isfinite(NoLimits.get_objective(on_d))
+    @test NoLimits.get_objective(on_d)≈NoLimits.get_objective(off_d) rtol=1e-4
 end
 
 # Preconditioning rescales the outer variable, so the gradient handed to the optimizer

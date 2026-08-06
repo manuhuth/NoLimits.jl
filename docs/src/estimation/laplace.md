@@ -53,7 +53,7 @@ res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=100,)))
 
 ## Constructor Options
 
-The `Laplace` constructor exposes options that control the outer fixed-effects optimization, the inner EB optimization, Hessian stabilization, and the computational strategy for log-determinant gradients. Most users will only need to adjust a few of these; the defaults are chosen to work well across a range of model types.
+The `Laplace` constructor exposes options that control the outer fixed-effects optimization, the inner EB optimization, Hessian stabilization, and the computational strategy for log-determinant gradients. Most users will only need to adjust a few of these; the defaults are chosen to work well across a range of model types. The values in the example below are illustrative overrides, not the shipped defaults - see *Repository-verified behavior* further down for those.
 
 ```julia
 using Optimization
@@ -126,8 +126,9 @@ Practical implications:
 
 - Outer optimizer (`optimizer`, `optim_kwargs`, `adtype`)
   - Runs once at the top level.
-  - Can use derivative-free methods (default `NLopt.LN_BOBYQA()`), local gradient methods, or global methods.
-  - Note: NLopt optimizers interpret `optim_kwargs.maxiters` as a cap on the number of function *evaluations* (`maxeval`), not outer iterations; reaching it yields `retcode = MaxIters` (reported as not converged).
+  - Defaults to the local-gradient `OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep=1.0))`. Derivative-free methods (e.g. `NLopt.LN_BOBYQA()`) and global methods are also supported.
+  - The line-search step cap matters: an uncapped unit first step can overshoot into the region where the marginal is not finite. Keep `maxstep` if you substitute another line search.
+  - Note: if you switch to an NLopt optimizer, it interprets `optim_kwargs.maxiters` as a cap on the number of function *evaluations* (`maxeval`), not outer iterations; reaching it yields `retcode = MaxIters` (reported as not converged).
   - If using BlackBoxOptim (`OptimizationBBO.*`), finite bounds are required.
 - Inner optimizer (`inner_optimizer`, `inner_kwargs`, `inner_adtype`, `inner_grad_tol`)
   - Runs repeatedly across batches and across outer iterations.
@@ -136,7 +137,7 @@ Practical implications:
 
 Repository-verified behavior:
 
-- Default outer optimizer is `NLopt.LN_BOBYQA()` (capped at `maxiters=1000` function evaluations); the default inner optimizer is `OptimizationOptimJL.LBFGS(...)`.
+- Default outer optimizer is `OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep=1.0))`; the default inner optimizer is the same. The outer problem is preconditioned by default (`precondition=true`), so the optimizer works in a scaled offset that starts at zero; see the [`Laplace`](@ref) API entry.
 - Outer BlackBoxOptim is supported with finite bounds (`lb`, `ub`); without bounds, an error is raised.
 
 Examples:
@@ -148,7 +149,7 @@ using OptimizationBBO
 using LineSearches
 
 # 1) Local-gradient LBFGS for both outer and inner
-#    (the outer default is the derivative-free NLopt.LN_BOBYQA(); this overrides it with LBFGS)
+#    (close to the defaults; the shipped default also caps the line search with maxstep=1.0)
 laplace_local = NoLimits.Laplace(;
     optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
     inner_optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),

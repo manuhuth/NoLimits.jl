@@ -314,7 +314,7 @@ end
            ebe_multistart_k, ebe_multistart_max_rounds, ebe_multistart_sampling,
            ebe_rescue_on_high_grad, ebe_rescue_multistart_n, ebe_rescue_multistart_k,
            ebe_rescue_max_rounds, ebe_rescue_grad_tol, ebe_rescue_multistart_sampling,
-           lb, ub) <: FittingMethod
+           lb, ub, precondition) <: FittingMethod
 
 Stochastic Approximation Expectation-Maximization for random-effects models. SAEM
 maintains a stochastic approximation of the sufficient statistics using a decreasing
@@ -393,6 +393,13 @@ or closed-form updates (when `builtin_stats` is enabled).
 - `ebe_rescue_on_high_grad` (default `false`), `ebe_rescue_*`: rescue multistart settings
   when an EBE mode has a high gradient norm. Disabled by default.
 - `lb`, `ub`: bounds on the transformed fixed-effect scale, or `nothing`.
+- `precondition::Bool = true`: optimize the scaled offset `z` with
+  `θ_transformed = θ0 + s .* z`, so every fit starts at `z = 0` and no coordinate can be
+  frozen by an unlucky starting value. `s` is 1 for any coordinate already in log/logit
+  space and `max(abs(θ0), 1)` for a genuinely natural-scale `:identity` coordinate. Set
+  `false` to optimize the transformed vector directly, which reproduces pre-0.2 results
+  bit-for-bit. Note that with preconditioning on, the optimizer object behind
+  [`get_raw`](@ref) works in `z`; [`get_params`](@ref) always returns the usual scales.
 - `mstep_sa_on_params::Bool = true`: if `true`, the numerical M-step uses only the
   current iteration's random-effect samples (not the ring buffer) as the objective,
   and applies a Robbins-Monro parameter update
@@ -415,10 +422,11 @@ struct SAEM{O, K, A, SO, L, U} <: FittingMethod
     saem::SO
     lb::L
     ub::U
+    precondition::Bool
 end
 
 function SAEM(;
-        optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking()),
+        optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
         optim_kwargs = (; iterations = 10, g_abstol = 1e-4, f_reltol = 1e-6),
         adtype = Optimization.AutoForwardDiff(),
         sampler = SaemixMH(),
@@ -448,7 +456,7 @@ function SAEM(;
         resid_var_param = :σ,
         re_cov_params = NamedTuple(),
         re_mean_params = NamedTuple(),
-        ebe_optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking()),
+        ebe_optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
         ebe_optim_kwargs = NamedTuple(),
         ebe_adtype = Optimization.AutoForwardDiff(),
         ebe_grad_tol = :auto,
@@ -488,7 +496,8 @@ function SAEM(;
         store_obsLL::Bool = false,
         obsLL_every::Int = 1,
         store_diagnostics::Bool = false,
-        diagnostics_every::Int = 1)
+        diagnostics_every::Int = 1,
+        precondition::Bool = true)
     q_store_max >= 1 ||
         error("SAEM: q_store_max must be ≥ 1. Got: $q_store_max")
     0 <= q_store_min <= q_store_max ||
@@ -533,7 +542,7 @@ function SAEM(;
         sa_anneal_fn,
         auto_var_lb, var_lb_value, max_estep_retries, retry_mcmc_steps,
         store_obsLL, obsLL_every, store_diagnostics, diagnostics_every)
-    SAEM(optimizer, optim_kwargs, adtype, saem, lb, ub)
+    SAEM(optimizer, optim_kwargs, adtype, saem, lb, ub, precondition)
 end
 
 # SAEMResult is a StandardOptimizationResult{:saem} alias (see common.jl).
@@ -2650,7 +2659,7 @@ function _saem_builtin_mean_updates(dm::DataModel,
         sample_store::_SAEMSampleStore,
         transform,
         inv_transform;
-        optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking()),
+        optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
         optim_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         penalty::NamedTuple = NamedTuple(),
@@ -3197,9 +3206,13 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                 # would box them (`Core.Box`) inside every objective evaluation.
                 θt_full_q2_base = θt_full_curr
                 axs_full_q2 = axs_full_iter
-                function obj_q2(ψt, p)
-                    any(isnan, ψt) && return eltype(ψt)(Inf)
-                    ψt_ca = ψt isa ComponentArray ? ψt : ComponentArray(ψt, axs_q2)
+                # Anchored at the current iterate: the anchor's job is to put the start at
+                # z = 0, and the free set is not invariant across SAEM iterations.
+                _, _, _q2_from_z, _z_from_q2 = _precondition_maps(
+                    get_model(dm), q2_free_now, θt_q2, axs_q2, _precondition_on(method))
+                function obj_q2(z, p)
+                    any(isnan, z) && return eltype(z)(Inf)
+                    ψt_ca = _q2_from_z(z)
                     T = eltype(ψt_ca)
                     θt_full_q2 = ComponentArray(T.(collect(θt_full_q2_base)), axs_full_q2)
                     for name in q2_free_now
@@ -3222,13 +3235,16 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                     fe, q2_free_now, collect(θt_q2), method.optimizer, nothing,
                     nothing, NamedTuple(); allow_bbo = false)
                 optf_q2 = OptimizationFunction(obj_q2, method.adtype)
+                z0_q2 = _z_from_q2(θ0_q2)
                 prob_q2 = use_bounds_q2 ?
-                          OptimizationProblem(optf_q2, θ0_q2; lb = lb_q2, ub = ub_q2) :
-                          OptimizationProblem(optf_q2, θ0_q2)
+                          OptimizationProblem(optf_q2, z0_q2;
+                    lb = _z_from_q2(lb_q2), ub = _z_from_q2(ub_q2)) :
+                          OptimizationProblem(optf_q2, z0_q2)
                 sol_q2 = Optimization.solve(
                     prob_q2, method.optimizer; method.optim_kwargs...)
                 if all(isfinite, sol_q2.u)
-                    θt_q2_opt = ComponentArray(sol_q2.u, axs_q2)
+                    # Mapped back before the SA damping below, which must act on θt.
+                    θt_q2_opt = _q2_from_z(sol_q2.u)
                     if method.saem.mstep_sa_on_params
                         θt_q2_before = collect(θt_q2)
                         θt_q2_opt = ComponentArray(
@@ -3297,10 +3313,14 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
             axs_full_obj = axs_full_iter
             free_names_obj = free_names_iter
             axs_free_obj = axs_free
-            function obj_only(θt, p)
-                any(isnan, θt) && return eltype(θt)(Inf)
-                θt_free_loc = θt isa ComponentArray ? θt :
-                              ComponentArray(θt, axs_free_obj)
+            # Anchored at the current iterate, as for Q2. The objective cache below is keyed on
+            # θt and lives inside this loop; with a per-iteration anchor, z = 0 means a different
+            # θt each iteration, so hoisting the cache would make it permanently stale.
+            _, _, _θt_from_z, _z_from_θt = _precondition_maps(
+                get_model(dm), free_names_iter, θt_free, axs_free, _precondition_on(method))
+            function obj_only(z, p)
+                any(isnan, z) && return eltype(z)(Inf)
+                θt_free_loc = _θt_from_z(z)
                 θt_vec = θt_free_loc
                 use_cache = !(eltype(θt_free_loc) <: ForwardDiff.Dual)
                 if use_cache && obj_cache.θ[] !== nothing &&
@@ -3341,8 +3361,12 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
             lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
                 fe, free_names_iter, collect(θt_free), method.optimizer,
                 method.lb, method.ub, constants; method_label = "SAEM")
-            prob = use_bounds ? OptimizationProblem(optf, θ0_init; lb = lb, ub = ub) :
-                   OptimizationProblem(optf, θ0_init)
+            # z-space problem only; `lb`/`ub` stay on the θt scale below, where the closed-form
+            # M-step clamps with them directly.
+            z0 = _z_from_θt(θ0_init)
+            prob = use_bounds ?
+                   OptimizationProblem(optf, z0; lb = _z_from_θt(lb), ub = _z_from_θt(ub)) :
+                   OptimizationProblem(optf, z0)
             if method.saem.suffstats !== nothing &&
                method.saem.mstep_closed_form !== nothing
                 closed_form_custom_used = true
@@ -3368,9 +3392,8 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                     @warn "SAEM M-step iter $iter: optimizer returned non-finite parameters; skipping update."
                     mstep_skipped = true
                 else
-                    θ_hat_t_raw = sol.u
-                    θ_hat_t_free = θ_hat_t_raw isa ComponentArray ? θ_hat_t_raw :
-                                   ComponentArray(θ_hat_t_raw, axs_free)
+                    # Mapped back before the SA damping below, which must act on θt.
+                    θ_hat_t_free = _θt_from_z(sol.u)
                     if method.saem.mstep_sa_on_params
                         # SA update: θ_new = θ_old + γ*(θ̂ − θ_old)
                         θt_free = ComponentArray(

@@ -239,7 +239,7 @@ Covariate descriptive statistics (observation rows)
 
 ## Step 4: Fit with MLE and MAP
 
-Each `fit_model` call runs the default L-BFGS optimizer from the declared initial values. (L-BFGS is the default numerical optimizer for `MLE`, `MAP`, and the EM/quadrature methods; the marginal-likelihood random-effects methods [`Laplace`](../estimation/laplace.md) and [`FOCEI`](../estimation/focei.md) instead default their *outer* fixed-effects optimization to the derivative-free `NLopt.LN_BOBYQA()`.) MLE and MAP differ only in the objective: MLE uses the log-likelihood, MAP adds the log-prior, which can stabilize weakly identified parameters (see [MLE / MAP](../estimation/mle.md)).
+Each `fit_model` call runs the default L-BFGS optimizer from the declared initial values. (L-BFGS with a step-capped backtracking line search is the default numerical optimizer for every optimization-based method, including the marginal-likelihood random-effects methods [`Laplace`](../estimation/laplace.md) and [`FOCEI`](../estimation/focei.md).) MLE and MAP differ only in the objective: MLE uses the log-likelihood, MAP adds the log-prior, which can stabilize weakly identified parameters (see [MLE / MAP](../estimation/mle.md)).
 
 ```julia
 res_mle = fit_model(dm, mle_method; serialization=serialization, rng=Random.Xoshiro(41))
