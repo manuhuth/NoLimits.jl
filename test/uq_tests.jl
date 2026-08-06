@@ -271,15 +271,15 @@ end
     for (scale, n_coords, seed) in ((:cholesky, 3, 31), (:expm, 3, 32), (:lie, 3, 33))
         model = _uq_psd_re_model(scale)
         dm = DataModel(model, _uq_psd_re_df(); primary_id = :ID, time_col = :t)
-        # The default outer optimizer (NLopt.LN_BOBYQA) is derivative-free and
-        # unconstrained; on this weakly-identified PSD covariance it wanders into a
-        # degenerate region and the Wald vcov comes out NaN. Pin the gradient-based
-        # LBFGS these finiteness/symmetry checks were calibrated against.
+        # This PSD covariance is weakly identified, so the Wald Hessian is only finite at a
+        # properly converged estimate - at a degenerate point it is NaN and `compute_uq` now
+        # says so rather than returning NaN silently. The step cap is what keeps the fit out of
+        # that region; a 2-iteration fit used to land somewhere usable only because the
+        # unconditional Hessian jitter was regularising the log-det.
         res = fit_model(dm,
             NoLimits.Laplace(;
                 optimizer = OptimizationOptimJL.LBFGS(
-                    linesearch = LineSearches.BackTracking()),
-                optim_kwargs = (maxiters = 2,)))
+                    linesearch = LineSearches.BackTracking(maxstep = 1.0))))
 
         uq = compute_uq(res; method = :wald, pseudo_inverse = true,
             n_draws = 40, rng = Random.Xoshiro(seed))

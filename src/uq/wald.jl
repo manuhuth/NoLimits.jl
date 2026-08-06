@@ -216,6 +216,14 @@ function _compute_uq_wald_no_re(res::FitResult;
         fd_rel_step = fd_rel_step,
         fd_max_tries = fd_max_tries)
     H_active = 0.5 .* (H_active .+ H_active')
+    # `pinv` of a non-finite matrix returns all-NaN without throwing, so without this the caller
+    # gets NaN standard errors and no explanation. Same principle as rejecting a jitter-only
+    # definite Hessian: report that the covariance is unavailable rather than fabricate one.
+    all(isfinite, H_active) ||
+        error("Wald covariance unavailable: the objective Hessian at the estimate is not " *
+              "finite (backend $(backend_used)). The fit is at a point where the marginal " *
+              "is not differentiable - typically a degenerate random-effect covariance or an " *
+              "unconverged fit. Check the fit converged, or use method = :profile / :mcmc.")
 
     bread = try
         pseudo_inverse ? pinv(H_active) : inv(H_active)
