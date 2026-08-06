@@ -2465,6 +2465,8 @@ function fit_model(dm::DataModel, method::FittingMethod, args...;
         fit_options_pooled_init::NamedTuple = NamedTuple(),
         kwargs...)
     _reset_numeric_warnings!()
+    _warn_degenerate_soft_trees(
+        dm, get(NamedTuple(kwargs), :theta_0_untransformed, nothing))
     if pooled_init === false
         isempty(fit_options_pooled_init) ||
             @warn "fit_options_pooled_init is ignored because pooled_init is false."
@@ -2677,6 +2679,25 @@ end
 # ponytail: one warning per fit, not a rate. Per-fit counters if users need the rate.
 const _WARNED_SOLVE_DROP = Threads.Atomic{Bool}(false)
 const _WARNED_NUMERIC_ERROR = Threads.Atomic{Bool}(false)
+
+# A soft tree whose leaf values are all equal sits at a symmetry saddle: the output is
+# `Σ P(leaf) * v`, so `∂output/∂split = v * ∂(Σ P)/∂split = 0` exactly, and a gradient-based
+# optimizer can never move the splits — it reports success having trained a constant. The
+# package's own init is random, so this state only arises from a hand-written start
+# (`θ0.Γ .= 0` to warm-start at the identity correction).
+function _warn_degenerate_soft_trees(dm::DataModel, θ_start)
+    params = get_params(get_model(dm).fixed.fixed)
+    for name in keys(params)
+        p = getfield(params, name)
+        p isa SoftTreeParameters || continue
+        v = θ_start === nothing ? p.value : getproperty(θ_start, name)
+        n_leaf = p.n_output * 2^p.depth
+        leaves = @view v[(length(v) - n_leaf + 1):end]
+        all(isequal(first(leaves)), leaves) || continue
+        @warn "Soft tree $(name) starts with all $(n_leaf) leaf values equal to $(first(leaves)). The split parameters have exactly zero gradient there, so a gradient-based optimizer cannot train them and the tree stays a constant (absorbed into the surrounding model). Give the leaves a small zero-mean spread instead — e.g. `θ0.$(name)[(end - $(n_leaf) + 1):end] .= 0.05 .* [(-1.0)^i for i in 1:$(n_leaf)]` — which keeps the output at $(first(leaves)) while making the splits trainable." maxlog=1
+    end
+    return nothing
+end
 
 @inline function _reset_numeric_warnings!()
     _WARNED_SOLVE_DROP[] = false
