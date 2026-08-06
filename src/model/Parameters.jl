@@ -446,10 +446,14 @@ the fixed-effects `ComponentArray`.
 # Arguments
 - `chain`: the neural-network architecture, either a `Lux.Chain` or a
   `SimpleChains.SimpleChain`. The `SimpleChain` backend gives much lower allocation and
-  faster forward passes for small CPU MLPs and is fully ForwardDiff-compatible, so it works
-  with every ForwardDiff-based fitting method (MLE/MAP/Laplace/FOCEI/SAEM/MCEM/…). Output
-  shape and the call convention are identical for both backends, so a `SimpleChain` is a
-  drop-in replacement for a `Lux.Chain`.
+  faster forward passes for small CPU MLPs, and works with every ForwardDiff-based fitting
+  method (MLE/MAP/Laplace/FOCEI/SAEM/MCEM/…). SimpleChains' own nested-`Dual` support stops
+  short of the depth a Laplace or FOCEI marginal gradient reaches under an implicit ODE
+  solver, so deeper element types are evaluated through an equivalent plain-Julia pass over
+  the same flat parameters; that covers `TurboDense` and `Activation` chains, and any other
+  SimpleChains layer must use a `Lux.Chain` for those fits. Output shape and the call
+  convention are identical for both backends, so a `SimpleChain` is a drop-in replacement
+  for a `Lux.Chain`.
 
 # Keyword Arguments
 - `name::Symbol = :unnamed`: parameter name (injected automatically by `@fixedEffects`).
