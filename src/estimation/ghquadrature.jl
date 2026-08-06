@@ -149,7 +149,7 @@ function _ghq_batch_ll(dm::DataModel,
             η_i = _build_eta_ind(dm, i, info, empty_b, const_cache, θu_re)
             lli = _loglikelihood_individual(dm, i, θu_re, η_i, ll_cache)
             !isfinite(lli) && return T(-Inf)
-            total += T(lli)
+            total += convert(T, lli)
         end
         const_ll = _const_re_prior_logf(dm, info, θu_re, const_cache, ll_cache)
         !isfinite(const_ll) && return T(-Inf)
@@ -344,7 +344,9 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
                         Threads.atomic_or!(bad, true)
                         results[bi] = zero(T)
                     else
-                        results[bi] = T(bll)
+                        # `convert`, not `T(bll)`: when `T` is a Dual and `bll` is the same
+                        # Dual type, the constructor tries `Float64(::Dual)` and throws.
+                        results[bi] = convert(T, bll)
                     end
                 end
             end

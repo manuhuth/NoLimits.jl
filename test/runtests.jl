@@ -93,6 +93,7 @@ const TEST_GROUPS = [
         "saem_var_lb_tests.jl",
         "estimation_multistart_tests.jl",
         "estimation_ghquadrature_tests.jl",
+        "estimation_precondition_tests.jl",
         "extra_objective_tests.jl",
         "uq_tests.jl",
         "uq_edge_cases_tests.jl"],

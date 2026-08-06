@@ -100,10 +100,10 @@ function batch_loglik_ghq(
     R = size(sgrid.nodes, 2)
     θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
 
-    # Determine accumulator element type from the RE measure.
-    # When θ carries ForwardDiff.Dual tags, re_measure.μ has Dual elements,
-    # so T = Dual. The Array{T} allocation handles type promotion.
-    T = eltype(re_measure)
+    # Accumulator element type. The RE measure alone is not enough: a random effect declared
+    # with fixed hyperparameters (e.g. `Normal(0.0, 1.0)`) carries no θ, so its measure stays
+    # Float64 while the conditional log-likelihoods below are Dual under AD. Promote against θ.
+    T = promote_type(eltype(re_measure), eltype(θ_re))
 
     a_vals = Vector{T}(undef, R)
 
@@ -135,7 +135,7 @@ function batch_loglik_ghq(
                 valid = false
                 break
             end
-            cond += T(lli)
+            cond += convert(T, lli)
         end
 
         a_vals[r] = if valid

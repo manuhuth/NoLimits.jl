@@ -64,6 +64,17 @@
   covariance when the objective Hessian at the estimate contains non-finite entries, which
   `pinv` otherwise propagates into every reported quantity.
 
+- `GHQuadrature` no longer throws `MethodError: no method matching Float64(::ForwardDiff.Dual)`
+  when its outer optimizer uses automatic differentiation. `batch_loglik_ghq` took its
+  accumulator element type from the random-effects measure alone, on the assumption that a
+  Dual-tagged `θ` always yields a Dual-valued measure. That fails for a random effect declared
+  with fixed hyperparameters (e.g. `RandomEffect(Normal(0.0, 1.0))`), whose measure carries no
+  `θ` and stays `Float64` while the conditional log-likelihoods being summed into it are Dual.
+  The accumulator is now promoted against `θ` as well. The bug predates this release but was
+  unreachable while the default outer optimizer was derivative-free; it would have surfaced as
+  soon as the default became gradient-based. Non-AD fits and models whose measure does depend
+  on `θ` are bit-unchanged, since `promote_type` is the identity in both cases.
+
 ### Other changes
 
 - All nine optimization-based methods (`MLE`, `MAP`, `Laplace`, `FOCEI`, `GHQuadrature`,

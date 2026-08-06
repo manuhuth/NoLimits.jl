@@ -598,7 +598,7 @@ function _laplace_sample_b0s_impl(dm::DataModel,
                             error("Expected scalar random effect for $(re), got vector of length $(length(v)).")
                         v = v[1]
                     end
-                    b0s[i][first(r)] = T(v)
+                    b0s[i][first(r)] = convert(T, v)
                 end
             else
                 draws = (sampling === :lhs &&
@@ -610,7 +610,7 @@ function _laplace_sample_b0s_impl(dm::DataModel,
                 for i in 1:n
                     v = draws[i]
                     if v isa Number
-                        b0s[i][r] .= T(v)
+                        b0s[i][r] .= convert(T, v)
                     else
                         vv = vec(v)
                         length(vv) == dim ||
