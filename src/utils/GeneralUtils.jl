@@ -4,6 +4,7 @@ export rowsoftmax
 
 using ForwardDiff
 import DiffEqBase
+import Roots
 
 """
     rowsoftmax(L::AbstractMatrix) -> AbstractMatrix
@@ -93,5 +94,6 @@ end
 @inline function _is_numeric_error(err)
     return err isa LinearAlgebra.PosDefException ||
            err isa LinearAlgebra.SingularException ||
-           err isa DomainError || err isa ArgumentError
+           err isa DomainError || err isa ArgumentError ||
+           err isa Roots.ConvergenceFailed
 end
