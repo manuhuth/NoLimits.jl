@@ -1,6 +1,9 @@
 using Test
 using NoLimits
 using Random
+using ForwardDiff
+using DataFrames: DataFrame
+using Distributions: Normal
 
 @testset "SoftTree" begin
     # Validate parameter shapes, forward pass, and error handling.
@@ -31,4 +34,57 @@ using Random
     @test_throws ErrorException SoftTree(3, 0, 4)
     @test_throws ErrorException SoftTree(3, 2, 0)
     @test_throws ErrorException tree([1.0, 2.0], params)
+end
+
+# A soft tree whose leaf values are all equal is a symmetry saddle: the split parameters have
+# exactly zero gradient, so a gradient-based optimizer trains a constant and reports success.
+# `fit_model` warns about that start; the package's own random init must not trip it.
+@testset "degenerate soft-tree start is flagged" begin
+    fe = @fixedEffects begin
+        Γ = SoftTreeParameters(1, 3; function_name = :ST, seed = 0, calculate_se = false)
+    end
+    ST = get_model_funs(fe).ST
+    n_int, n_leaf = 2^3 - 1, 2^3
+    splits = 1:(2 * n_int)
+
+    # The mechanism itself: equal leaves => zero split gradient, whatever the splits are.
+    obj(g) = sum(abs2, [ST([c], g)[1] - 0.3c for c in range(0.0, 3.0; length = 9)])
+    g_flat = zeros(2 * n_int + n_leaf)
+    @test all(iszero, ForwardDiff.gradient(obj, g_flat)[splits])
+
+    # Zero-mean leaves keep the output identical but make the splits trainable.
+    g_ok = copy(g_flat)
+    g_ok[(2 * n_int + 1):end] .= 0.05 .* [(-1.0)^i for i in 1:n_leaf]
+    @test ST([1.5], g_ok)[1]≈ST([1.5], g_flat)[1] atol=1e-12
+    @test any(!iszero, ForwardDiff.gradient(obj, g_ok)[splits])
+
+    df = DataFrame(ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0], y = [1.0, 1.1, 0.9, 1.0])
+    model = @Model begin
+        @fixedEffects begin
+            σ = RealNumber(0.5, scale = :log)
+            Γ = SoftTreeParameters(1, 2; function_name = :ST, calculate_se = false)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @formulas begin
+            y ~ Normal(ST([t], Γ)[1], σ)
+        end
+    end
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    method = NoLimits.MLE(optim_kwargs = (; iterations = 1))
+
+    θ_bad = deepcopy(get_θ0_untransformed(model.fixed.fixed))
+    θ_bad.Γ .= 0.0
+    warned(f) = any(l -> occursin("Soft tree", string(l.message)),
+        first(Test.collect_test_logs(f)))
+
+    @test warned(() -> fit_model(dm, method; theta_0_untransformed = θ_bad))
+
+    # Default (random) init and a symmetry-broken start must stay silent.
+    @test !warned(() -> fit_model(dm, method))
+    θ_ok = deepcopy(get_θ0_untransformed(model.fixed.fixed))
+    θ_ok.Γ .= 0.0
+    θ_ok.Γ[(end - 3):end] .= 0.05 .* [(-1.0)^i for i in 1:4]
+    @test !warned(() -> fit_model(dm, method; theta_0_untransformed = θ_ok))
 end

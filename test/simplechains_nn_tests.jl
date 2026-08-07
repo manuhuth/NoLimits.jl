@@ -5,7 +5,7 @@ using Lux
 # exports (e.g. `relu`, which Lux also exports) into Main, and because the batch runner shares
 # one process across files, that makes `relu`/etc. ambiguous for every later test file that
 # uses them unqualified. (Same rationale as the `using Turing: MH` note in fixtures.jl.)
-using SimpleChains: SimpleChain, static, TurboDense, numparam
+using SimpleChains: SimpleChain, static, TurboDense, Activation, Flatten, numparam
 using DataFrames
 using Distributions
 using ComponentArrays
@@ -163,4 +163,96 @@ end
     x = [0.2, 0.5]
     @test mf.SC(x, collect(θ0.ζ_sc))[1] isa Real
     @test mf.LX(x, collect(θ0.ζ_lx))[1] isa Real
+end
+
+# Regression: SimpleChains returns its output as a value only while the forward scratch fits in
+# its MAXSTACK; past that it returns a view over a per-task buffer that the next call to the same
+# chain reallocates. Both triggers below are silently wrong without `_sc_value`: a wide output
+# needs no AD at all, and ForwardDiff nesting inflates the scratch as 8*prod(N_i+1).
+@testset "SimpleChains output does not alias the reused scratch buffer" begin
+    cases = ((SimpleChain(static(1), TurboDense(tanh, 6), TurboDense(identity, 64)), 1),
+        (SimpleChain(static(8), TurboDense(tanh, 2048), TurboDense(identity, 1)), 8))
+    for (chain, nin) in cases
+        fe = @fixedEffects begin
+            zeta = NNParameters(chain; function_name = :NN1, seed = 0, calculate_se = false)
+        end
+        mf = get_model_funs(fe)
+        p = collect(get_θ0_untransformed(fe).zeta)
+
+        held = mf.NN1(fill(0.5, nin), p)
+        snapshot = collect(held)
+        mf.NN1(fill(-2.0, nin), p)          # reuses (and may reallocate) the scratch buffer
+        @test collect(held) == snapshot     # the earlier result must still be its own value
+    end
+end
+
+@testset "SimpleChains nested-AD agreement with a plain reference" begin
+    # 1 -> 6 tanh -> 1 tanh over SimpleChains' flat layout [vec(W1); b1; vec(W2); b2].
+    chain = SimpleChain(static(1), TurboDense(tanh, 6), TurboDense(tanh, 1))
+    fe = @fixedEffects begin
+        zeta = NNParameters(chain; function_name = :NN1, seed = 5, calculate_se = false)
+    end
+    mf = get_model_funs(fe)
+    p = collect(get_θ0_untransformed(fe).zeta)
+    reference = function (z, theta)
+        W1 = reshape(view(theta, 1:6), 6, 1)
+        W2 = reshape(view(theta, 13:18), 1, 6)
+        h = tanh.(W1 * [z] .+ view(theta, 7:12))
+        return tanh.(W2 * h .+ view(theta, 19:19))[1]
+    end
+    @test isapprox(mf.NN1([0.7], p)[1], reference(0.7, p); rtol = 1e-10)
+
+    # Nested derivatives to the depth a Laplace outer gradient under an implicit solver reaches.
+    nest(f, n) = n == 0 ? f : (z -> ForwardDiff.derivative(nest(f, n - 1), z))
+    for n in 1:4
+        got = nest(z -> mf.NN1([z], p)[1], n)(0.7)
+        want = nest(z -> reference(z, p), n)(0.7)
+        @test isfinite(got)
+        @test isapprox(got, want; rtol = 1e-6)
+    end
+end
+
+@testset "SimpleChains deep-AD fallback covers bias-free and Activation layers" begin
+    cases = (SimpleChain(static(2), TurboDense{false}(tanh, 4), TurboDense(identity, 1)),
+        SimpleChain(static(2), TurboDense(identity, 4), Activation(tanh),
+            TurboDense(identity, 1)))
+    nest(f, n) = n == 0 ? f : (z -> ForwardDiff.derivative(nest(f, n - 1), z))
+    for chain in cases
+        fe = @fixedEffects begin
+            zeta = NNParameters(chain; function_name = :NN1, seed = 0, calculate_se = false)
+        end
+        mf = get_model_funs(fe)
+        p = collect(get_θ0_untransformed(fe).zeta)
+        x = [0.3, -0.2]
+        # Shallow path unchanged; the build-time layout check already ran inside @fixedEffects.
+        @test mf.NN1(x, p)[1] isa Real
+        # Deep AD takes the fallback and must stay finite where SimpleChains does not.
+        @test isfinite(nest(z -> mf.NN1(x .+ z, p)[1], 4)(0.0))
+    end
+end
+
+@testset "SimpleChains architectures outside the fallback: shallow ok, deep refused" begin
+    chain = SimpleChain(static(4), Flatten(1), TurboDense(identity, 1))
+    fe = @fixedEffects begin
+        zeta = NNParameters(chain; function_name = :NN1, seed = 0, calculate_se = false)
+    end
+    mf = get_model_funs(fe)
+    p = collect(get_θ0_untransformed(fe).zeta)
+    x = [0.1, 0.2, 0.3, 0.4]
+
+    # Unchanged on the paths it already worked on.
+    @test mf.NN1(x, p)[1] isa Real
+    @test all(isfinite, ForwardDiff.gradient(v -> mf.NN1(x, v)[1], p))
+
+    # Deep AD is refused with an actionable message rather than returning garbage.
+    nest(f, n) = n == 0 ? f : (z -> ForwardDiff.derivative(nest(f, n - 1), z))
+    err = try
+        nest(z -> mf.NN1(x .+ z, p)[1], 4)(0.0)
+        nothing
+    catch e
+        sprint(showerror, e)
+    end
+    @test err !== nothing
+    @test occursin("zeta", err)
+    @test occursin("Lux.Chain", err)
 end

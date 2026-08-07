@@ -22,8 +22,12 @@ Both are declared in `@fixedEffects` and exposed as callable model functions thr
     `NNParameters` accepts either a Lux `Chain` or a SimpleChains `SimpleChain`. The call
     convention and output are identical, so the two are drop-in interchangeable.
     `SimpleChain` is purpose-built for small CPU networks and gives noticeably faster,
-    lower-allocation forward passes and gradients; because it is fully ForwardDiff-compatible
-    it works with every ForwardDiff-based estimator (MLE, MAP, Laplace, FOCEI, SAEM, MCEM, …).
+    lower-allocation forward passes and gradients, and it works with every ForwardDiff-based
+    estimator (MLE, MAP, Laplace, FOCEI, SAEM, MCEM, …). Fits that differentiate the network
+    more deeply than SimpleChains' own nested-`Dual` support reaches - a Laplace or FOCEI
+    marginal gradient under an implicit ODE solver, or a Wald standard error on top of one -
+    evaluate it through an equivalent plain-Julia pass instead. That covers `TurboDense` and
+    `Activation` chains; for any other SimpleChains layer, use a Lux `Chain` in those fits.
 
     ```julia
     using SimpleChains
