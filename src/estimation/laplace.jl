@@ -930,7 +930,34 @@ end
 # Evaluates log p(η | θ_re) for all free RE levels in the batch — no ODE, no observation
 # likelihood.  Used by the Q2 M-step optimizer to update parameters that appear only in
 # random-effect distribution expressions.
+# The likelihood's numeric-error guard (`_loglikelihood_individual`) does not cover this: the
+# RE prior is evaluated outside it, and an invertible-flow prior can legitimately fail on a bad
+# proposal — `Bijectors.find_alpha` raises when its bracket degenerates. That is a point worth
+# `-Inf` and rejecting, not an exception that kills the fit, which is what the SAEM/MCEM E-step
+# has no handler for. Thin wrapper, as in `_loglikelihood_individual`, so the hot path is
+# untouched.
 function _re_logpdf_batch(dm::DataModel,
+        batch_info::REBatchInfo,
+        θ::ComponentArray,
+        b,
+        const_cache::REConstantsCache,
+        cache::_LLCache;
+        anneal_sds::NamedTuple = NamedTuple(),
+        tctx = nothing)
+    try
+        return __re_logpdf_batch(dm, batch_info, θ, b, const_cache, cache;
+            anneal_sds = anneal_sds, tctx = tctx)
+    catch err
+        _is_numeric_error(err) || rethrow(err)
+        if !Threads.atomic_cas!(_WARNED_NUMERIC_ERROR, false, true)
+            @warn "A numeric error ($(nameof(typeof(err)))) was raised while evaluating " *
+                  "the random-effect prior; treating this point as -Inf. Warned once per fit."
+        end
+        return convert(promote_type(eltype(θ), eltype(b)), -Inf)
+    end
+end
+
+function __re_logpdf_batch(dm::DataModel,
         batch_info::REBatchInfo,
         θ::ComponentArray,
         b,

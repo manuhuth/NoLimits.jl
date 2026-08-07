@@ -6,6 +6,7 @@ using ComponentArrays
 using Lux
 using ForwardDiff
 using SciMLBase
+using Roots
 using DataInterpolations
 using LinearAlgebra
 
@@ -607,4 +608,47 @@ end
     # a + η = 1 - 2 < 0 -> log throws inside the formula
     bad = NoLimits.conditional_loglikelihood(dm, 1, θ, ComponentArray(η = -2.0))
     @test bad == -Inf
+end
+
+# The sibling of the above for the RE prior: `_loglikelihood_individual`'s guard does not cover
+# it, so before this guard an invertible-flow prior failing on a bad proposal killed the whole
+# fit (a normalizing-flow SAEM fit died outright) instead of scoring the point -Inf.
+@testset "numeric error in the RE prior degrades to -Inf" begin
+    # `Roots.ConvergenceFailed` is what an invertible-flow prior raises when its bracketing
+    # root-find gives up, and it is not a subtype of any other whitelisted error.
+    @test NoLimits._is_numeric_error(Roots.ConvergenceFailed("failed"))
+    @test NoLimits._is_numeric_error(DomainError(-1.0, "x"))
+    @test NoLimits._is_numeric_error(ArgumentError("x"))
+    @test !NoLimits._is_numeric_error(MethodError(sqrt, (nothing,)))
+
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            σ = RealNumber(0.5)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            # `sqrt(a)` throws once the optimizer pushes `a` negative, inside the RE prior
+            η = RandomEffect(Normal(0.0, sqrt(a)); column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(a + η, σ)
+        end
+    end
+    df = DataFrame(ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0],
+        y = [0.1, 0.2, 0.15, 0.25])
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    θ = get_θ0_untransformed(NoLimits.get_fixed(NoLimits.get_model(dm)))
+    _, infos, cc = NoLimits.build_re_batch_infos(dm, NamedTuple())
+    cache = NoLimits.build_likelihood_cache(dm; force_saveat = true)
+    batch = infos[1]
+    b = fill(0.0, NoLimits.get_batch_re_dim(batch))
+
+    @test isfinite(NoLimits.re_logprior(dm, batch, θ, b; const_cache = cc, cache = cache))
+
+    θ_bad = deepcopy(θ)
+    θ_bad.a = -1.0                      # sqrt(-1) throws inside the RE distribution
+    @test NoLimits.re_logprior(dm, batch, θ_bad, b; const_cache = cc, cache = cache) == -Inf
 end
