@@ -96,6 +96,9 @@ end
 # Invariant: active slots in age order are head, head+1, ..., head+len-1 (all mod capacity,
 # 1-based). After each push, entries whose SA weight falls below q_epsilon are pruned from
 # the oldest end (subject to the q_min floor). Retained weights are normalized in _saem_Q.
+# Each E-step chain is stored as its OWN entry with weight γ/n_chains. Never store the
+# average of the chains' η: second moments of an average are deflated by the within-
+# posterior variance, which makes RE variance estimates decay geometrically to zero.
 mutable struct _SAEMSampleStore
     weights::Vector{Float64}                          # [slot] weight, preallocated
     snaps::Vector{Vector{Vector{Float64}}}            # [slot][batch] re-values, preallocated
@@ -114,7 +117,7 @@ function _init_saem_sample_store(capacity::Int, q_epsilon::Float64, q_min::Int,
     return _SAEMSampleStore(weights, snaps, 1, 1, 0, capacity, q_epsilon, q_min)
 end
 
-function _saem_store_push!(store::_SAEMSampleStore, b_current, γ::Float64)
+function _saem_store_push!(store::_SAEMSampleStore, b_chains, γ::Float64, n_chains::Int)
     γ == 0.0 && return store
     one_minus_γ = 1.0 - γ
     # Scale all active weights in-place, iterating from head (wrapping)
@@ -123,21 +126,24 @@ function _saem_store_push!(store::_SAEMSampleStore, b_current, γ::Float64)
         store.weights[h] *= one_minus_γ
         h = h == store.capacity ? 1 : h + 1
     end
-    # If full, evict oldest by advancing head (len stays at capacity)
-    if store.len == store.capacity
-        store.head = store.head == store.capacity ? 1 : store.head + 1
-    else
-        store.len += 1
+    # Write one entry per chain, splitting this iteration's SA weight evenly
+    γ_chain = γ / n_chains
+    for c in 1:n_chains
+        # If full, evict oldest by advancing head (len stays at capacity)
+        if store.len == store.capacity
+            store.head = store.head == store.capacity ? 1 : store.head + 1
+        else
+            store.len += 1
+        end
+        idx = store.next_idx
+        store.weights[idx] = γ_chain
+        snaps_slot = store.snaps[idx]
+        @inbounds for bi in eachindex(b_chains)
+            snap = snaps_slot[bi]
+            isempty(snap) || copyto!(snap, b_chains[bi][c])
+        end
+        store.next_idx = store.next_idx == store.capacity ? 1 : store.next_idx + 1
     end
-    # Write new entry to next_idx
-    idx = store.next_idx
-    store.weights[idx] = γ
-    snaps_slot = store.snaps[idx]
-    @inbounds for bi in eachindex(b_current)
-        snap = snaps_slot[bi]
-        isempty(snap) || copyto!(snap, b_current[bi])
-    end
-    store.next_idx = store.next_idx == store.capacity ? 1 : store.next_idx + 1
     # Prune entries below q_epsilon from the oldest end (subject to q_min floor)
     @inbounds while store.len > store.q_min &&
                     store.weights[store.head] < store.q_epsilon
@@ -631,23 +637,14 @@ function _saem_effective_chains(n_chains::Int, auto::Bool, target::Int, n_batche
     return n_chains
 end
 
+# b_current is a point summary (chain 1's sample) used only for display (_saem_obsLL)
+# and the GLM support check. Sufficient statistics and Q evaluations must consume every
+# chain via b_chains: averaging the chains' η before computing second moments deflates
+# RE variances by the within-posterior variance and collapses them geometrically to zero.
 function _saem_update_b_current!(b_current::Vector, b_chains::Vector,
-        batch_indices::AbstractVector{Int}, n_chains::Int)
-    if n_chains == 1
-        @inbounds for bi in batch_indices
-            b_current[bi] = b_chains[bi][1]
-        end
-    else
-        inv_nc = 1.0 / n_chains
-        @inbounds for bi in batch_indices
-            chains = b_chains[bi]
-            b = b_current[bi]
-            fill!(b, 0.0)
-            for c in 1:n_chains
-                b .+= chains[c]
-            end
-            b .*= inv_nc
-        end
+        batch_indices::AbstractVector{Int})
+    @inbounds for bi in batch_indices
+        b_current[bi] = b_chains[bi][1]
     end
     return b_current
 end
@@ -1820,9 +1817,14 @@ function _saem_collect_outcome_stats_individual(dm::DataModel,
     return (NamedTuple(pairs), true)
 end
 
+# Collect this iteration's sufficient statistics from EVERY chain's sample. Each chain
+# is a separate E-step draw: second moments must include the across-chain dispersion,
+# so the chains' η are never averaged before the moments are formed (doing so deflates
+# RE variance estimates by the within-posterior variance and collapses them to zero).
 function _saem_builtin_collect_current_stats(dm::DataModel,
         batch_infos::Vector{REBatchInfo},
-        b_current::AbstractVector,
+        b_chains::AbstractVector,
+        n_chains::Int,
         θ::ComponentArray,
         const_cache::REConstantsCache,
         resid_var_param,
@@ -1844,8 +1846,8 @@ function _saem_builtin_collect_current_stats(dm::DataModel,
         sum_x = nothing
         sum_xx = nothing
         nvals = 0
-        for (bi, info) in enumerate(batch_infos)
-            b = b_current[bi]
+        for (bi, info) in enumerate(batch_infos), c in 1:n_chains
+            b = b_chains[bi][c]
             rei = get_re_info(info)[ri]
             for lvl_id in get_levels(get_re_map(rei))
                 v = _re_value_from_b(rei, lvl_id, b)
@@ -1888,8 +1890,8 @@ function _saem_builtin_collect_current_stats(dm::DataModel,
     if !isempty(keys(obs_targets))
         obs_acc = Dict{Symbol, Any}()
         all_supported = true
-        for (bi, info) in enumerate(batch_infos)
-            b = b_current[bi]
+        for (bi, info) in enumerate(batch_infos), c in 1:n_chains
+            b = b_chains[bi][c]
             for i in get_inds(info)
                 η_ind = _build_eta_ind(dm, i, info, b, const_cache, θ)
                 stats_i, ok = _saem_collect_outcome_stats_individual(
@@ -1922,8 +1924,8 @@ function _saem_builtin_collect_current_stats(dm::DataModel,
     if !isempty(keys(hmm_emission_params))
         hmm_acc = Dict{Symbol, Any}()
         all_supported = true
-        for (bi, info) in enumerate(batch_infos)
-            b = b_current[bi]
+        for (bi, info) in enumerate(batch_infos), c in 1:n_chains
+            b = b_chains[bi][c]
             for i in get_inds(info)
                 η_ind = _build_eta_ind(dm, i, info, b, const_cache, θ)
                 stats_i, ok = _saem_collect_hmm_stats_individual(
@@ -2476,24 +2478,36 @@ function _saem_obsLL(dm::DataModel,
     return total
 end
 
-# Evaluate Q from only the current iteration's samples (b_current).
-# Used when mstep_sa_on_params=true: O(N) vs O(q_store_max × N) for _saem_Q.
-# Shared core, parameterized like `_saem_Q_core` (Q vs Q2 density).
+# Evaluate Q from only the current iteration's samples (all chains in b_chains).
+# Used when mstep_sa_on_params=true: O(N × n_chains) vs O(q_store_max × N) for _saem_Q.
+# Shared core, parameterized like `_saem_Q_core` (Q vs Q2 density). Each chain is a
+# separate E-step draw, so Q is the chain average of the log-densities.
 function _saem_Q_current_core(logf_fn::F, dm::DataModel,
         batch_infos::Vector{REBatchInfo},
         θ::ComponentArray,
         const_cache::REConstantsCache,
         ll_cache,
-        b_current::AbstractVector;
+        b_chains::AbstractVector,
+        n_chains::Int;
         anneal_sds::NamedTuple = NamedTuple()) where {F}
     total = zero(eltype(θ))
     ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
+    inv_nc = one(total) / n_chains
     for (bi, info) in enumerate(batch_infos)
-        snap = get_n_b(info) == 0 ? eltype(θ)[] : b_current[bi]
-        logf = logf_fn(dm, info, θ, snap, const_cache, ll_cache_local;
-            anneal_sds = anneal_sds)
-        !isfinite(logf) && return typeof(total)(Inf)
-        total += logf
+        if get_n_b(info) == 0
+            # Chain-independent contribution — evaluate once at full weight.
+            logf = logf_fn(dm, info, θ, eltype(θ)[], const_cache, ll_cache_local;
+                anneal_sds = anneal_sds)
+            !isfinite(logf) && return typeof(total)(Inf)
+            total += logf
+            continue
+        end
+        for c in 1:n_chains
+            logf = logf_fn(dm, info, θ, b_chains[bi][c], const_cache, ll_cache_local;
+                anneal_sds = anneal_sds)
+            !isfinite(logf) && return typeof(total)(Inf)
+            total += inv_nc * logf
+        end
     end
     return total
 end
@@ -2503,11 +2517,12 @@ function _saem_Q_current(dm::DataModel,
         θ::ComponentArray,
         const_cache::REConstantsCache,
         ll_cache,
-        b_current::AbstractVector;
+        b_chains::AbstractVector,
+        n_chains::Int;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         anneal_sds::NamedTuple = NamedTuple())
     return _saem_Q_current_core(_laplace_logf_batch, dm, batch_infos, θ,
-        const_cache, ll_cache, b_current; anneal_sds = anneal_sds)
+        const_cache, ll_cache, b_chains, n_chains; anneal_sds = anneal_sds)
 end
 
 # Q2 counterpart to _saem_Q: evaluates only log p(η|θ_re), averaged over the ring buffer.
@@ -2531,32 +2546,40 @@ function _saem_Q2_current(dm::DataModel,
         θ::ComponentArray,
         const_cache::REConstantsCache,
         ll_cache,
-        b_current::AbstractVector;
+        b_chains::AbstractVector,
+        n_chains::Int;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         anneal_sds::NamedTuple = NamedTuple())
     return _saem_Q_current_core(_re_logpdf_batch, dm, batch_infos, θ,
-        const_cache, ll_cache, b_current; anneal_sds = anneal_sds)
+        const_cache, ll_cache, b_chains, n_chains; anneal_sds = anneal_sds)
 end
 
-# Return indices (into batch_infos) from `updated` whose current RE sample gives a
-# non-finite log-likelihood at θ. Used by the E-step retry mechanism.
+# Return indices (into batch_infos) from `updated` whose current RE samples give a
+# non-finite log-likelihood at θ. A batch is bad if ANY chain's sample is non-finite,
+# since Q_current averages over all chains. Used by the E-step retry mechanism.
 function _saem_bad_batches(dm::DataModel,
         batch_infos::Vector{REBatchInfo},
         updated::AbstractVector{Int},
         θ::ComponentArray,
-        b_current::AbstractVector,
+        b_chains::AbstractVector,
+        n_chains::Int,
         const_cache::REConstantsCache,
         ll_cache;
         anneal_sds::NamedTuple = NamedTuple())
     bad = Int[]
     ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
     @inbounds for bi in updated
-        snap = b_current[bi]
-        isempty(snap) && continue
-        logf = _laplace_logf_batch(
-            dm, batch_infos[bi], θ, snap, const_cache, ll_cache_local;
-            anneal_sds = anneal_sds)
-        isfinite(logf) || push!(bad, bi)
+        chains = b_chains[bi]
+        (isempty(chains) || isempty(chains[1])) && continue
+        for c in 1:n_chains
+            logf = _laplace_logf_batch(
+                dm, batch_infos[bi], θ, chains[c], const_cache, ll_cache_local;
+                anneal_sds = anneal_sds)
+            if !isfinite(logf)
+                push!(bad, bi)
+                break
+            end
+        end
     end
     return bad
 end
@@ -2962,11 +2985,14 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
     var_lb_eff = min(method.saem.anneal_min_sd, method.saem.var_lb_value)
 
     # O2+O4+O5: preallocated ring buffer for SA sample history
-    # When mstep_sa_on_params=true the M-step reads only b_current, so the ring buffer is
-    # never used for optimization — capacity=1 minimizes memory while keeping Q_new valid.
-    _store_capacity = method.saem.mstep_sa_on_params ? 1 : method.saem.q_store_max
+    # When mstep_sa_on_params=true the M-step reads only the current iteration's chains,
+    # so the ring buffer is never used for optimization — one slot per chain minimizes
+    # memory while keeping Q_new valid. Capacity scales with the chain count so the SA
+    # memory horizon (in iterations) is independent of effective_n_chains.
+    _store_capacity = (method.saem.mstep_sa_on_params ? 1 : method.saem.q_store_max) *
+                      effective_n_chains
     sample_store = _init_saem_sample_store(_store_capacity, method.saem.q_store_epsilon,
-        min(method.saem.q_store_min, _store_capacity), batch_infos)
+        min(method.saem.q_store_min * effective_n_chains, _store_capacity), batch_infos)
     s = nothing
     builtin_stats_state = nothing
     closed_form_builtin_used = false
@@ -3055,14 +3081,23 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
             re_names, method.saem.warm_start, last_chain_params, b_chains,
             effective_n_chains, serialization;
             anneal_sds = anneal_sds, outer_iter = iter)
-        _saem_update_b_current!(b_current, b_chains, updated, effective_n_chains)
+        _saem_update_b_current!(b_current, b_chains, updated)
 
         if method.saem.suffstats !== nothing
-            s_new = method.saem.suffstats(dm, batch_infos, b_current, θu_curr, fixed_maps)
+            # Average the sufficient STATISTICS over chains (running mean via
+            # _saem_stats_update with weight 1/c) — never average the η draws
+            # themselves, which deflates second moments.
+            s_new = nothing
+            for c in 1:effective_n_chains
+                b_chain_c = [b_chains[bi][c] for bi in eachindex(batch_infos)]
+                s_c = method.saem.suffstats(dm, batch_infos, b_chain_c, θu_curr,
+                    fixed_maps)
+                s_new = _saem_stats_update(s_new, s_c, 1.0 / c)
+            end
             s = _saem_stats_update(s, s_new, γ)
         else
             # O2+O4+O5: push into ring buffer in-place (no allocation, no Array shifts)
-            _saem_store_push!(sample_store, b_current, γ)
+            _saem_store_push!(sample_store, b_chains, γ, effective_n_chains)
         end
 
         # E-step retry: when mstep_sa_on_params=true the M-step objective is Q_current,
@@ -3072,8 +3107,8 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
         if method.saem.mstep_sa_on_params && method.saem.max_estep_retries > 0 &&
            method.saem.suffstats === nothing
             for _retry in 1:(method.saem.max_estep_retries)
-                bad = _saem_bad_batches(dm, batch_infos, updated, θu_curr, b_current,
-                    const_cache, ll_cache; anneal_sds = anneal_sds)
+                bad = _saem_bad_batches(dm, batch_infos, updated, θu_curr, b_chains,
+                    effective_n_chains, const_cache, ll_cache; anneal_sds = anneal_sds)
                 isempty(bad) && break
                 if method.saem.verbose
                     @info "SAEM retrying bad batches" iter=iter retry=_retry bad_batches=bad
@@ -3083,8 +3118,8 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                     re_names, method.saem.warm_start, last_chain_params, b_chains,
                     effective_n_chains, serialization;
                     anneal_sds = anneal_sds, outer_iter = iter)
-                _saem_update_b_current!(b_current, b_chains, bad, effective_n_chains)
-                _saem_store_push!(sample_store, b_current, γ)
+                _saem_update_b_current!(b_current, b_chains, bad)
+                _saem_store_push!(sample_store, b_chains, γ, effective_n_chains)
             end
         end
 
@@ -3092,7 +3127,8 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
         iter_constants = constants
         if builtin_stats_mode == :closed_form
             cache = ll_cache isa Vector ? ll_cache[1] : ll_cache
-            curr_stats = _saem_builtin_collect_current_stats(dm, batch_infos, b_current,
+            curr_stats = _saem_builtin_collect_current_stats(dm, batch_infos, b_chains,
+                effective_n_chains,
                 ComponentArray(θu_curr, getaxes(θu_curr)), const_cache,
                 resid_var_param, hmm_emission_params,
                 re_cov_params, re_mean_params,
@@ -3103,6 +3139,11 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                 dm, ComponentArray(θu_curr, getaxes(θu_curr)),
                 builtin_stats_state, resid_var_param, hmm_emission_params,
                 re_cov_params, re_mean_params)
+            # User-supplied constants always win over builtin closed-form updates.
+            for k in keys(constants)
+                haskey(updates, k) &&
+                    (updates = Base.structdiff(updates, NamedTuple{(k,)}((nothing,))))
+            end
             if !isempty(updates)
                 closed_form_builtin_used = true
                 # annealing always wins: strip cov targets for annealed REs
@@ -3221,7 +3262,7 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                     θu_q2 = inv_transform(θt_full_q2)
                     Q2val = if method.saem.mstep_sa_on_params
                         _saem_Q2_current(dm, batch_infos, θu_q2, const_cache, ll_cache,
-                            b_current; serialization = serialization,
+                            b_chains, effective_n_chains; serialization = serialization,
                             anneal_sds = anneal_sds)
                     else
                         _saem_Q2(dm, batch_infos, θu_q2, const_cache, ll_cache,
@@ -3340,7 +3381,8 @@ function _fit_model(dm::DataModel, method::SAEM, args...;
                        method.saem.q_from_stats !== nothing
                     method.saem.q_from_stats(s, θu, dm)
                 elseif method.saem.mstep_sa_on_params
-                    _saem_Q_current(dm, batch_infos, θu, const_cache, ll_cache, b_current;
+                    _saem_Q_current(dm, batch_infos, θu, const_cache, ll_cache,
+                        b_chains, effective_n_chains;
                         serialization = serialization, anneal_sds = anneal_sds)
                 else
                     _saem_Q(dm, batch_infos, θu, const_cache, ll_cache, sample_store;

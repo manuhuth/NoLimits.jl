@@ -4,6 +4,23 @@
 
 ### Bug fixes
 
+- SAEM with more than one E-step chain collapsed every random-effect variance
+  geometrically to the `1e-5` floor, independent of the data, the sampler, the
+  starting values, and the M-step mode. The chains' η draws were AVERAGED into a
+  single pseudo-sample (`b_current`) before the sufficient statistics and Q
+  objectives were formed; the second moment of an average of `C` posterior draws is
+  `Ω²·(1 − B(1 − 1/C))` (`B` = shrinkage fraction) instead of `Ω²`, whose only fixed
+  point is `Ω = 0`. Because `auto_small_n_chains = true` silently raises the chain
+  count whenever there are fewer than `small_n_chain_target` (50) batches, every
+  small-dataset SAEM fit was affected. Chains are now consumed as separate draws
+  everywhere: the closed-form sufficient statistics accumulate over all chains, the
+  ring buffer stores one entry per chain with weight `γ/n_chains`,
+  `Q_current`/`Q2_current` average the log-densities over chains, custom `suffstats`
+  are evaluated per chain and averaged, and the E-step retry check flags a batch if
+  any chain is non-finite. Single-chain fits are unchanged.
+- The builtin closed-form M-step silently overwrote user-supplied `constants`
+  (e.g. `constants = (; Omega = 0.6)` still updated `Omega` every iteration).
+  Constants now always win over closed-form updates.
 - The analytic outer gradient of the `Laplace` and `FOCEI` marginal objectives was wrong,
   which made a gradient-based outer optimizer perform far worse than the derivative-free
   default instead of better. Two independent causes, both invisible to `LN_BOBYQA`:
