@@ -150,15 +150,15 @@ end
         [[zeros(Float64, 1) for _ in 1:n_batches] for _ in 1:capacity],
         1, 1, 0, capacity, 1e-10, 0
     )
-    b = [zeros(Float64, 1), zeros(Float64, 1)]
+    b_chains = [[zeros(Float64, 1)], [zeros(Float64, 1)]]   # [batch][chain]
 
     # γ = 0: store stays empty
-    NoLimits._saem_store_push!(store, b, 0.0)
+    NoLimits._saem_store_push!(store, b_chains, 0.0, 1)
     @test store.len == 0
     @test store.next_idx == 1
 
     # γ = 1: store gains one entry
-    NoLimits._saem_store_push!(store, b, 1.0)
+    NoLimits._saem_store_push!(store, b_chains, 1.0, 1)
     @test store.len == 1
     @test store.weights[1] == 1.0
 end
