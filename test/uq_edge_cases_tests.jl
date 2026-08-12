@@ -167,8 +167,6 @@ const _UQE_FLOW_MAP_CONSTANTS = (ψ = _UQE_FLOW_MAP_θ0.ψ,)
         profile_method = :LIN_EXTRAPOL,
         profile_scan_width = 0.8,
         profile_max_iter = 200,
-        profile_scan_tol = 1e-2,
-        profile_loss_tol = 1e-2,
         rng = Random.Xoshiro(202))
     @test get_uq_source_method(uq_profile) == :mle
     @test get_uq_parameter_names(uq_profile) == [:β_1, :β_2, :a, :σ]

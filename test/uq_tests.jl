@@ -329,8 +329,6 @@ end
         profile_method = :LIN_EXTRAPOL,
         profile_scan_width = 1.0,
         profile_max_iter = 80,
-        profile_scan_tol = 1e-2,
-        profile_loss_tol = 1e-2,
         rng = Random.Xoshiro(9))
     @test get_uq_backend(uq) == :profile
     @test get_uq_source_method(uq) == :mle
@@ -344,6 +342,13 @@ end
     @test all(isnothing, d.errors)
     @test all(==(:Identifiable), d.left_status)
     @test all(==(:Identifiable), d.right_status)
+
+    # The 0.x-only CICO tolerances are ignored, and say so instead of pretending to act.
+    @test_logs (:warn, r"profile_scan_tol") NoLimits._warn_removed_profile_kw(
+        :profile_scan_tol, 1e-2)
+    @test_logs (:warn, r"profile_loss_tol") NoLimits._warn_removed_profile_kw(
+        :profile_loss_tol, 1e-2)
+    @test_logs NoLimits._warn_removed_profile_kw(:profile_scan_tol, nothing)
 end
 
 @testset "UQ profile for Laplace" begin
@@ -377,8 +382,6 @@ end
         profile_method = :LIN_EXTRAPOL,
         profile_scan_width = 0.8,
         profile_max_iter = 80,
-        profile_scan_tol = 1e-2,
-        profile_loss_tol = 1e-2,
         rng = Random.Xoshiro(10))
     @test get_uq_backend(uq) == :profile
     @test get_uq_source_method(uq) == :laplace
