@@ -1877,8 +1877,9 @@ end
 
 Compute the marginal log-likelihood at the estimated parameter values.
 
-For MLE/MAP results, evaluates the population log-likelihood. For Laplace-style
-results, evaluates using the EB modes stored in the result.
+For MLE/MAP results, evaluates the population log-likelihood. For random-effect
+results (Laplace/FOCEI/SAEM/MCEM), evaluates using the EB modes stored in the
+result, recomputing them when the fit was run with `store_eb_modes = false`.
 
 # Keyword Arguments
 - `constants_re::NamedTuple = NamedTuple()`: random effects fixed at given values.
@@ -1897,11 +1898,12 @@ function get_loglikelihood(dm::DataModel,
     if get_result(res) isa FrequentistResult || get_result(res) isa MAPResult
         return loglikelihood(dm, θu, ComponentArray(); ode_args = ode_args,
             ode_kwargs = ode_kwargs, serialization = serialization)
-    elseif get_result(res) isa FrequentistREResult
-        pairing, batch_infos, const_cache = _build_re_batch_infos(dm, constants_re)
-        bstars = get_eb_modes(get_result(res))
-        length(bstars) == length(batch_infos) ||
-            error("Laplace-style EB modes do not match number of batches.")
+    elseif get_result(res) isa FrequentistREResult || get_result(res) isa SAEMResult ||
+           get_result(res) isa MCEMResult
+        # SAEM/MCEM store the same EB modes as Laplace/FOCEI; the shared resolver also
+        # covers unstored modes and SAEM's annealed RE constants.
+        bstars, batch_infos, θu, const_cache, _, _ = _resolve_bstars_for_re(
+            dm, res, constants_re)
         η_vec = _eta_from_eb(dm, batch_infos, bstars, const_cache, θu)
         return loglikelihood(dm, θu, η_vec; ode_args = ode_args,
             ode_kwargs = ode_kwargs, serialization = serialization)
