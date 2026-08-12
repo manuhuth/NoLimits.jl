@@ -163,6 +163,24 @@ end
     @test ll1 ≈ ll2
 end
 
+# ── Pooled ────────────────────────────────────────────────────────────────────
+
+@testset "Serialization Pooled" begin
+    model = _simple_model_with_re()
+    df = _df_with_re()
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    res = fit_model(dm, NoLimits.Pooled())
+
+    path = tempname() * ".jld2"
+    save_fit(path, res)
+    res2 = load_fit(path; dm = dm)
+
+    @test get_objective(res) ≈ get_objective(res2)
+    @test NoLimits.get_params(res).untransformed ≈ NoLimits.get_params(res2).untransformed
+    @test get_random_effects(dm, res).η == get_random_effects(res2).η
+    @test get_loglikelihood(dm, res) ≈ get_loglikelihood(res2)
+end
+
 # ── MCMC ──────────────────────────────────────────────────────────────────────
 
 @testset "Serialization MCMC" begin
