@@ -166,12 +166,14 @@ const _UQE_FLOW_MAP_CONSTANTS = (ψ = _UQE_FLOW_MAP_θ0.ψ,)
         method = :profile,
         profile_method = :LIN_EXTRAPOL,
         profile_scan_width = 0.8,
-        profile_max_iter = 12,
+        profile_max_iter = 200,
         profile_scan_tol = 1e-2,
         profile_loss_tol = 1e-2,
         rng = Random.Xoshiro(202))
     @test get_uq_source_method(uq_profile) == :mle
     @test get_uq_parameter_names(uq_profile) == [:β_1, :β_2, :a, :σ]
+    # A backend that cannot run at all records an error per coordinate and NaN bounds (#139).
+    @test all(isnothing, get_uq_diagnostics(uq_profile).errors)
 
     uq_refit = compute_uq(res_mle;
         method = :mcmc_refit,

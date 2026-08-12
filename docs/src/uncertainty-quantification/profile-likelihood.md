@@ -41,14 +41,14 @@ uq_profile = compute_uq(
 
 The following parameters govern the profile-likelihood algorithm and are exposed through `compute_uq`:
 
-- `profile_method` (default `:LIN_EXTRAPOL`): the profiling algorithm used by LikelihoodProfiler.jl.
+- `profile_method` (default `:LIN_EXTRAPOL`): how the profiler proposes the next profile point. `:LIN_EXTRAPOL` extrapolates all parameters from the last two points, `:SINGLE_AXIS` extrapolates only the profiled parameter, and `:FIXED_STEP` disables adaptive stepping. The LikelihoodProfiler 0.x values `:CICO_ONE_PASS` and `:QUADR_EXTRAPOL` no longer exist and are rejected.
 - `profile_scan_width` (must be positive): search window around the point estimate, specified in transformed-coordinate units and subject to parameter bounds.
-- `profile_scan_tol`: tolerance for the scanning phase of the profiler.
-- `profile_loss_tol`: tolerance on the objective function difference used to determine the interval boundary.
-- `profile_local_alg` (default `:LN_NELDERMEAD`): local optimization algorithm applied near interval endpoints.
-- `profile_max_iter`: maximum number of iterations for the local optimizer.
-- `profile_ftol_abs`: absolute function tolerance for the local optimizer.
-- `profile_kwargs`: additional keyword arguments forwarded directly to the underlying profiler call.
+- `profile_scan_tol`: smallest step the profiler takes along the profiled coordinate, which sets the resolution of the located endpoint.
+- `profile_loss_tol`: smallest objective increase targeted per profile step.
+- `profile_local_alg` (default `:LN_NELDERMEAD`): NLopt algorithm used to re-optimize the remaining parameters at each profile point. Derivative-free algorithms are required, since the profiled objective is evaluated without automatic differentiation.
+- `profile_max_iter`: maximum number of iterations for that inner optimizer.
+- `profile_ftol_abs`: absolute function tolerance for that inner optimizer.
+- `profile_kwargs`: additional keyword arguments forwarded to `LikelihoodProfiler.solve` (for example `maxiters` or `verbose`).
 
 In practice, `profile_scan_width` determines how far from the estimate the profiler searches. If intervals appear truncated, increasing this value or raising `profile_max_iter` may help the profiler locate the true boundary.
 
@@ -112,8 +112,8 @@ Because profile likelihood characterizes uncertainty by tracing the objective fu
 
 - **Algorithm settings:** `profile_method`, tolerances, and local algorithm used.
 - **Objective values:** `loss_at_estimate` and `loss_critical` (the threshold corresponding to the requested confidence level).
-- **Per-parameter endpoint status:** `left_status` and `right_status` indicate whether each boundary was successfully located.
-- **Per-parameter endpoint counters:** `left_counter` and `right_counter` report the number of profiler evaluations at each boundary.
+- **Per-parameter endpoint status:** `left_status` and `right_status` indicate whether each boundary was successfully located (`:Identifiable`, `:NonIdentifiable`, `:MaxIters`, `:Failure`, or `:ERROR` if the profiler itself threw).
+- **Per-parameter endpoint counters:** `left_counter` and `right_counter` report the number of profiler evaluations at each boundary, or `-1` when the profiler does not report them.
 - **Endpoint availability:** `endpoint_found` flags whether both interval endpoints were determined.
 - **Per-parameter errors:** `errors` captures any profiler-level issues encountered during computation.
 

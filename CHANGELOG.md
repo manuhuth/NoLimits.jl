@@ -4,6 +4,18 @@
 
 ### Bug fixes
 
+- `compute_uq(res; method = :profile)` returned all-`NaN` intervals under every
+  resolvable LikelihoodProfiler version. The backend called the 0.x
+  `LikelihoodProfiler.get_interval`, which 1.x removed, and the per-parameter
+  `try`/`catch` turned the resulting `UndefVarError` into a silent `NaN` plus an entry
+  in the `errors` diagnostic. Profile UQ now uses the 1.x
+  `ProfileLikelihoodProblem` / `solve` / `endpoints` interface, and a coordinate whose
+  interval cannot be computed warns instead of failing silently. `profile_method`
+  selects the 1.x stepper (`:LIN_EXTRAPOL`, `:SINGLE_AXIS`, `:FIXED_STEP`); the 0.x
+  values `:CICO_ONE_PASS` and `:QUADR_EXTRAPOL` are rejected with an explanatory error.
+  `[compat]` now states `LikelihoodProfiler = "1.5"`; the previous `"0.3.3, 1"` range
+  advertised a 0.x path that has not been resolvable since the `OptimizationNLopt`
+  floor moved to NLopt 1.x.
 - SAEM with more than one E-step chain collapsed every random-effect variance
   geometrically to the `1e-5` floor, independent of the data, the sampler, the
   starting values, and the M-step mode. The chains' η draws were AVERAGED into a

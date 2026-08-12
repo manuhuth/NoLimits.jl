@@ -8,6 +8,19 @@ using LinearAlgebra
 using OptimizationOptimJL
 using NoLimits.LineSearches
 
+# Profile intervals must be real numbers that bracket the estimate on both scales.
+function _assert_profile_interval(uq)
+    for scale in (:natural, :transformed)
+        est = get_uq_estimates(uq; scale = scale, as_component = false)
+        ints = get_uq_intervals(uq; scale = scale, as_component = false)
+        @test ints !== nothing
+        @test all(isfinite, ints.lower)
+        @test all(isfinite, ints.upper)
+        @test all(ints.lower .< est .< ints.upper)
+    end
+    @test all(get_uq_diagnostics(uq).endpoint_found)
+end
+
 # ── Shared models (UQ assertions need specific calculate_se flag patterns, so
 # these stay local rather than using the fx_ fixtures; each distinct flag
 # pattern is compiled once and shared across the testsets that use it.) ──────
@@ -322,11 +335,15 @@ end
     @test get_uq_backend(uq) == :profile
     @test get_uq_source_method(uq) == :mle
     @test get_uq_parameter_names(uq) == [:a]
-    ints = get_uq_intervals(uq; as_component = false)
-    @test ints !== nothing
+    # A dead profiler backend returns NaN bounds and still passes `ints !== nothing`,
+    # which is how the LikelihoodProfiler 0.x -> 1.x API break went unnoticed (#139).
+    _assert_profile_interval(uq)
     d = get_uq_diagnostics(uq)
     @test haskey(d, :profile_method)
     @test d.profile_method == :LIN_EXTRAPOL
+    @test all(isnothing, d.errors)
+    @test all(==(:Identifiable), d.left_status)
+    @test all(==(:Identifiable), d.right_status)
 end
 
 @testset "UQ profile for Laplace" begin
@@ -366,8 +383,7 @@ end
     @test get_uq_backend(uq) == :profile
     @test get_uq_source_method(uq) == :laplace
     @test get_uq_parameter_names(uq) == [:a]
-    ints = get_uq_intervals(uq; as_component = false)
-    @test ints !== nothing
+    _assert_profile_interval(uq)
 end
 
 @testset "UQ mcmc_refit for MLE" begin
