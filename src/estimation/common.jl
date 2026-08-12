@@ -2279,9 +2279,11 @@ function _cdll_terms(dm::DataModel, θ::ComponentArray;
             _re_dataframes_from_bstars(dm, batch_infos, bstars;
                 constants_re = constants_re, flatten = false, include_constants = true)
         end
+        # Each RE frame is keyed by ITS OWN grouping column, not by `primary_id`.
+        re_groups = get_re_groups(re)
         map(re_names) do rn
             df = getfield(nt, rn)
-            idc = get_primary_id(dm)
+            idc = getfield(re_groups, rn)
             valc = first(c for c in propertynames(df) if c != idc)
             Dict(Symbol(string(row[idc])) => row[valc] for row in eachrow(df))
         end
@@ -2306,11 +2308,14 @@ function _cdll_terms(dm::DataModel, θ::ComponentArray;
         end
     end
 
-    # Per-individual η ComponentArray (one grouping level per individual per RE).
+    # Per-individual η ComponentArray: one entry per grouping level the individual
+    # belongs to (a crossed design gives several), in the per-individual level order
+    # the row-wise η lookup indexes.
     function build_eta_i(i)
         pairs = Pair{Symbol, Any}[]
         for (ri, rn) in enumerate(re_names)
-            push!(pairs, rn => getval(ri, get_ind_level_ids(re_cache)[i][ri][1]))
+            lvl_vals = [getval(ri, li) for li in get_ind_level_ids(re_cache)[i][ri]]
+            push!(pairs, rn => length(lvl_vals) == 1 ? lvl_vals[1] : lvl_vals)
         end
         return ComponentArray(NamedTuple(pairs))
     end
