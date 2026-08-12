@@ -113,9 +113,8 @@ end
             push!(out, idx <= layout.n ? exp(p_full[idx]) : p_full[idx])
         end
         return out
-    elseif natural &&
-           (spec.kind == :expm || spec.kind == :cholesky ||
-            (spec.kind == :lie && spec.lie === nothing)) &&
+    elseif natural && (spec.kind == :expm ||
+                       (spec.kind == :lie && spec.lie === nothing)) &&
            value isa AbstractMatrix
         n = size(value, 1)
         out = Float64[]
