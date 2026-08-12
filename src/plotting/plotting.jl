@@ -1016,7 +1016,7 @@ function build_plot_cache(res::FitResult;
     dm === nothing && (dm = get_data_model(res))
     dm === nothing &&
         error("This fit result does not store a DataModel; pass dm=... to build_plot_cache.")
-    constants_re = _res_constants_re(res, constants_re)
+    constants_re = _res_constants_re(res, constants_re, dm)
 
     if _is_posterior_draw_fit(res)
         mcmc_draws >= 1 || error("mcmc_draws must be >= 1.")

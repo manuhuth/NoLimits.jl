@@ -508,12 +508,15 @@ function Base.show(io::IO, ::MIME"text/plain", res::FitResult)
     print(io, _nl_fitresult_show_line(res))
 end
 
-function _res_constants_re(res::FitResult, constants_re::NamedTuple)
+# Constants inherited from the fit. Pass `dm` when it may differ from the fitted data
+# (predict/plot on new data): levels that data lacks are dropped instead of throwing.
+function _res_constants_re(res::FitResult, constants_re::NamedTuple,
+        dm::Union{Nothing, DataModel} = nothing)
     isempty(constants_re) || return constants_re
-    if haskey(get_fit_kwargs(res), :constants_re)
-        return getfield(get_fit_kwargs(res), :constants_re)
-    end
-    return constants_re
+    haskey(get_fit_kwargs(res), :constants_re) || return constants_re
+    inherited = getfield(get_fit_kwargs(res), :constants_re)
+    dm === nothing && return inherited
+    return _normalize_constants_re(dm, inherited; strict = false)
 end
 
 # Chain-based fits (MCMC/VI) run no optimizer, so their point-estimate slot starts empty.
@@ -1409,6 +1412,9 @@ end
 
 function _resolve_bstars_for_re(dm::DataModel, res::FitResult, constants_re::NamedTuple;
         θ = nothing, rng::AbstractRNG = Random.default_rng())
+    # The stored EB modes were computed with the fit's constants_re; the batch layout
+    # must match them, so inherit it when the caller passed none.
+    constants_re = _res_constants_re(res, constants_re)
     if get_result(res) isa FrequentistREResult || get_result(res) isa GHQuadratureResult
         θu = θ === nothing ? get_params(res; scale = :untransformed) : θ
         ode_args = _fit_kw(res, :ode_args, ())
@@ -1827,7 +1833,7 @@ function reestimate_ebes(dm::DataModel,
         ebe_rescue_multistart_k, ebe_rescue_max_rounds,
         ebe_rescue_grad_tol, ebe_rescue_multistart_sampling)
     θu = get_params(res; scale = :untransformed)
-    constants_re = _res_constants_re(res, constants_re)
+    constants_re = _res_constants_re(res, constants_re, dm)
     if get_result(res) isa SAEMResult
         constants_re = _saem_anneal_constants_re(
             dm, θu, _saem_anneal_names(res), constants_re)
