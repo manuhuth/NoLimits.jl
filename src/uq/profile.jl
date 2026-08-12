@@ -5,17 +5,21 @@ using Random
 
 # LikelihoodProfiler 1.x replaced the 0.x algorithm symbols by stepper objects; the
 # historical `profile_method` names are kept as the user-facing selector.
-function _profile_stepper(profile_method::Symbol, scan_tol::Real, loss_tol::Real)
+function _profile_stepper(profile_method::Symbol)
     profile_method === :FIXED_STEP && return LikelihoodProfiler.FixedStep()
-    control = LikelihoodProfiler.ObjectiveStepControl(;
-        min_x_step = Float64(scan_tol), min_obj_step = Float64(loss_tol))
     profile_method === :LIN_EXTRAPOL &&
         return LikelihoodProfiler.AdaptiveStep(;
-            predictor = LikelihoodProfiler.LinearPredictor(), controller = control)
+            predictor = LikelihoodProfiler.LinearPredictor())
     profile_method === :SINGLE_AXIS &&
         return LikelihoodProfiler.AdaptiveStep(;
-            predictor = LikelihoodProfiler.SingleAxisPredictor(), controller = control)
+            predictor = LikelihoodProfiler.SingleAxisPredictor())
     error("Unsupported profile_method $(profile_method). Supported values are :LIN_EXTRAPOL, :SINGLE_AXIS and :FIXED_STEP; the LikelihoodProfiler 0.x values :CICO_ONE_PASS and :QUADR_EXTRAPOL no longer exist.")
+end
+
+_warn_removed_profile_kw(::Symbol, ::Nothing) = nothing
+function _warn_removed_profile_kw(name::Symbol, value)
+    @warn "`$(name) = $(value)` is ignored and deprecated. It was a CICO scan tolerance of the LikelihoodProfiler 0.x backend and has no equivalent in the 1.x profiler; nothing is substituted for it. Drop the keyword; use `profile_scan_width`, `profile_max_iter` and `profile_ftol_abs` to control the profile search."
+    return nothing
 end
 
 function _profile_optimizer(profile_local_alg::Symbol)
@@ -201,8 +205,8 @@ function _compute_uq_profile(res::FitResult;
         serialization::Union{Nothing, SciMLBase.EnsembleAlgorithm},
         profile_method::Symbol,
         profile_scan_width::Real,
-        profile_scan_tol::Real,
-        profile_loss_tol::Real,
+        profile_scan_tol::Union{Nothing, Real},
+        profile_loss_tol::Union{Nothing, Real},
         profile_local_alg::Symbol,
         profile_max_iter::Int,
         profile_ftol_abs::Real,
@@ -216,6 +220,9 @@ function _compute_uq_profile(res::FitResult;
          method isa GHQuadrature)
         error("Profile UQ is currently supported for MLE, MAP, Laplace, and GHQuadrature fit results.")
     end
+
+    _warn_removed_profile_kw(:profile_scan_tol, profile_scan_tol)
+    _warn_removed_profile_kw(:profile_loss_tol, profile_loss_tol)
 
     constants_use = _resolve_fit_kw(res, constants, :constants, NamedTuple())
     constants_re_use = _resolve_fit_kw(res, constants_re, :constants_re, NamedTuple())
@@ -283,7 +290,7 @@ function _compute_uq_profile(res::FitResult;
         OptimizationFunction((x, _p) -> obj_active(collect(x))), copy(xhat_active);
         lb = collect(lb_coords), ub = collect(ub_coords))
     profiler = LikelihoodProfiler.OptimizationProfiler(;
-        stepper = _profile_stepper(profile_method, profile_scan_tol, profile_loss_tol),
+        stepper = _profile_stepper(profile_method),
         optimizer = _profile_optimizer(profile_local_alg),
         optimizer_opts = (;
             maxiters = profile_max_iter, abstol = Float64(profile_ftol_abs)))
@@ -353,8 +360,6 @@ function _compute_uq_profile(res::FitResult;
     diag = (;
         profile_method = profile_method,
         profile_scan_width = Float64(profile_scan_width),
-        profile_scan_tol = Float64(profile_scan_tol),
-        profile_loss_tol = Float64(profile_loss_tol),
         profile_local_alg = profile_local_alg,
         profile_max_iter = profile_max_iter,
         profile_ftol_abs = Float64(profile_ftol_abs),

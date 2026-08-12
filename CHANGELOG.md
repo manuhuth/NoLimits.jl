@@ -13,6 +13,10 @@
   interval cannot be computed warns instead of failing silently. `profile_method`
   selects the 1.x stepper (`:LIN_EXTRAPOL`, `:SINGLE_AXIS`, `:FIXED_STEP`); the 0.x
   values `:CICO_ONE_PASS` and `:QUADR_EXTRAPOL` are rejected with an explanatory error.
+  `compute_uq`'s `profile_scan_tol` and `profile_loss_tol` are deprecated and ignored -
+  they were CICO scan tolerances of the 0.x backend with no 1.x counterpart, so passing
+  either warns rather than being remapped onto a different control, and both are gone
+  from the profile diagnostics.
   `[compat]` now states `LikelihoodProfiler = "1.5"`; the previous `"0.3.3, 1"` range
   advertised a 0.x path that has not been resolvable since the `OptimizationNLopt`
   floor moved to NLopt 1.x.

@@ -30,8 +30,6 @@ uq_profile = compute_uq(
     level=0.95,
     profile_method=:LIN_EXTRAPOL,
     profile_scan_width=1.0,
-    profile_scan_tol=1e-2,
-    profile_loss_tol=1e-2,
     profile_max_iter=300,
     rng=Random.Xoshiro(1),
 )
@@ -43,12 +41,12 @@ The following parameters govern the profile-likelihood algorithm and are exposed
 
 - `profile_method` (default `:LIN_EXTRAPOL`): how the profiler proposes the next profile point. `:LIN_EXTRAPOL` extrapolates all parameters from the last two points, `:SINGLE_AXIS` extrapolates only the profiled parameter, and `:FIXED_STEP` disables adaptive stepping. The LikelihoodProfiler 0.x values `:CICO_ONE_PASS` and `:QUADR_EXTRAPOL` no longer exist and are rejected.
 - `profile_scan_width` (must be positive): search window around the point estimate, specified in transformed-coordinate units and subject to parameter bounds.
-- `profile_scan_tol`: smallest step the profiler takes along the profiled coordinate, which sets the resolution of the located endpoint.
-- `profile_loss_tol`: smallest objective increase targeted per profile step.
 - `profile_local_alg` (default `:LN_NELDERMEAD`): NLopt algorithm used to re-optimize the remaining parameters at each profile point. Derivative-free algorithms are required, since the profiled objective is evaluated without automatic differentiation.
 - `profile_max_iter`: maximum number of iterations for that inner optimizer.
 - `profile_ftol_abs`: absolute function tolerance for that inner optimizer.
 - `profile_kwargs`: additional keyword arguments forwarded to `LikelihoodProfiler.solve` (for example `maxiters` or `verbose`).
+
+`profile_scan_tol` and `profile_loss_tol` are deprecated and ignored. They configured the CICO scan of the LikelihoodProfiler 0.x backend, which has no counterpart in 1.x; passing either warns and nothing is substituted for it.
 
 In practice, `profile_scan_width` determines how far from the estimate the profiler searches. If intervals appear truncated, increasing this value or raising `profile_max_iter` may help the profiler locate the true boundary.
 
@@ -117,4 +115,4 @@ Because profile likelihood characterizes uncertainty by tracing the objective fu
 - **Endpoint availability:** `endpoint_found` flags whether both interval endpoints were determined.
 - **Per-parameter errors:** `errors` captures any profiler-level issues encountered during computation.
 
-These diagnostics are essential for identifying incomplete or numerically unstable intervals. If an interval endpoint was not found, common remedies include widening `profile_scan_width`, increasing `profile_max_iter`, or relaxing `profile_loss_tol`.
+These diagnostics are essential for identifying incomplete or numerically unstable intervals. If an interval endpoint was not found, common remedies include widening `profile_scan_width`, increasing `profile_max_iter`, or relaxing `profile_ftol_abs`.
