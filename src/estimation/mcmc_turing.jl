@@ -143,6 +143,12 @@ end
     end
 end
 
+# Turing's `~` takes a single distribution, so a per-element prior vector (accepted on
+# NN/SoftTree/NPF blocks) has to become one product distribution -- the same conversion
+# `_logprior_eval` already does on the MAP path.
+_turing_prior(prior) = prior
+_turing_prior(prior::AbstractVector{<:Distribution}) = product_distribution(prior)
+
 # Shared θ-reconstruction metaprogramming for both MCMC model builders: sample the
 # free fixed effects from their priors, merge with the constants, and rebuild the
 # full fixed-effect ComponentArray in declaration order.
@@ -439,7 +445,8 @@ function _fit_model(dm::DataModel, method::MCMC, args...;
 
     free_names_t = Tuple(free_names)
     θ_template = get_θ0_untransformed(fe)
-    priors_nt = NamedTuple{free_names_t}(Tuple(getfield(priors, n) for n in free_names))
+    priors_nt = NamedTuple{free_names_t}(Tuple(_turing_prior(getfield(priors, n))
+    for n in free_names))
     model = nothing
     if isempty(re_names)
         fname = _build_turing_model(fixed_names, free_names)

@@ -237,7 +237,8 @@ function _fit_model(dm::DataModel, method::VI, args...;
         serialization = serialization, force_saveat = true)
 
     free_names_t = Tuple(free_names)
-    priors_nt = NamedTuple{free_names_t}(Tuple(getfield(priors, n) for n in free_names))
+    priors_nt = NamedTuple{free_names_t}(Tuple(_turing_prior(getfield(priors, n))
+    for n in free_names))
     fname = _build_turing_model(fixed_names, free_names)
     model_fn = Base.invokelatest(getfield, @__MODULE__, fname)
     model = Base.invokelatest(
