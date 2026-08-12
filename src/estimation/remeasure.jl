@@ -578,6 +578,11 @@ and scaling by the inverse Cholesky of the negative log-posterior Hessian at b*.
 Returns `nothing` if the Cholesky factorization of `-H` fails (e.g. due to a
 near-flat or indefinite Hessian). The caller is responsible for handling this case,
 for example by falling back to a sampling-based marginal likelihood estimator.
+
+`θ_prior` supplies the parameters used inside the prior term of the correction. It
+defaults to `θu` and only differs on the AD path, where `θu` is the Float64 value
+(b*, H and S are frozen w.r.t. the outer derivative) while `θ_prior` still carries
+the `Dual` tags the gradient has to flow through.
 """
 function build_centered_re_measure(
         b_star::AbstractVector,
@@ -588,7 +593,8 @@ function build_centered_re_measure(
         dm::DataModel,
         ll_cache::_LLCache;
         jitter::Float64 = 1e-6,
-        max_tries::Int = 6
+        max_tries::Int = 6,
+        θ_prior::ComponentArray = θu
 )
     # Always work in Float64: SAEM stores eb_modes as Float32, and the Hessian
     # computation promotes to Float64 regardless, so T must be Float64.
@@ -613,7 +619,8 @@ function build_centered_re_measure(
     issuccess(cS) || return nothing
     S = LowerTriangular(Matrix(cS.L))
     log_det_S = -sum(log, diag(L))  # |det S| = 1/sqrt(det(-H)) either way
-    re_prior_logf = b -> _re_prior_logf_batch(dm, batch_info, θu, b, const_cache, ll_cache)
+    re_prior_logf = b -> _re_prior_logf_batch(
+        dm, batch_info, θ_prior, b, const_cache, ll_cache)
     return CenteredREMeasure(b_star, S, T(log_det_S), re_prior_logf, get_n_b(batch_info))
 end
 

@@ -30,8 +30,12 @@ Approximates the batch marginal likelihood via
     log L_batch ≈ signed_logsumexp_r [ log|W_r| + Σᵢ ℓᵢ(μ + Lzᵣ, θ) ]
 
 where `{(zᵣ, Wᵣ)}` are Smolyak–Gauss-Hermite quadrature nodes/weights at the
-requested `level`.  Unlike `Laplace`, there is no inner optimization during the
-forward pass: the objective is fully differentiable by `AutoForwardDiff`.
+requested `level`.  The rule is *adaptive* for Gaussian random effects: like
+`Laplace` it solves for the empirical-Bayes mode of each batch, then centers and
+whitens the nodes there.  Non-Gaussian random effects keep the prior-centered
+transport-map rule, which needs a higher `level` for the same accuracy.
+`level = 1` is a single-node rule whose value is the Laplace approximation but
+whose gradient is not; use `Laplace()` for that, and `level ≥ 3` here.
 
 # Keyword Arguments
 - `level = 3`: Smolyak accuracy level.  May be:
@@ -122,7 +126,7 @@ end
 # ---------------------------------------------------------------------------
 
 """
-    _ghq_batch_ll(dm, info, θu_re, const_cache, ll_cache, level) -> T
+    _ghq_batch_ll(dm, info, θu_re, const_cache, ll_cache, level, b_star = nothing) -> T
 
 Evaluate the batch marginal log-likelihood using the sparse grid at `level`.
 
@@ -130,6 +134,9 @@ Evaluate the batch marginal log-likelihood using the sparse grid at `level`.
 - `level::NamedTuple`: anisotropic — maps RE name to level; RE groups not
   mentioned default to level 1.  The batch grid is the tensor product of
   per-RE-group Smolyak grids.
+- `b_star`: precomputed empirical-Bayes mode for this batch (adaptive
+  quadrature).  `nothing` solves for it here; pass a warm-started mode when the
+  caller already runs an EBE pass over all batches.
 
 For batches with `n_b == 0` (all RE are constant), returns the sum of
 individual conditional log-likelihoods directly.
@@ -139,7 +146,8 @@ function _ghq_batch_ll(dm::DataModel,
         θu_re::ComponentArray,
         const_cache::REConstantsCache,
         ll_cache::_LLCache,
-        level)   # Int or NamedTuple
+        level,   # Int or NamedTuple
+        b_star = nothing)
     T = eltype(θu_re)
     if get_n_b(info) == 0
         # All RE are constant — no integration needed.
@@ -167,7 +175,9 @@ function _ghq_batch_ll(dm::DataModel,
     # parameters hit numerical limits (e.g. Beta with α→0 due to underflow).
     # Treat these as invalid parameter regions and return -Inf.
     re_measure = try
-        build_re_measure_from_batch(info, θu_re, const_cache, dm, ll_cache)
+        m = build_re_measure_from_batch(info, θu_re, const_cache, dm, ll_cache)
+        mc = _ghq_adaptive_measure(dm, info, θu_re, const_cache, ll_cache, m, b_star)
+        mc === nothing ? m : mc
     catch e
         e isa DomainError && return T(-Inf)
         rethrow(e)
@@ -176,6 +186,48 @@ function _ghq_batch_ll(dm::DataModel,
     const_ll = _const_re_prior_logf(dm, info, θu_re, const_cache, ll_cache)
     (!isfinite(ghq_ll) || !isfinite(const_ll)) && return T(-Inf)
     return ghq_ll + T(const_ll)
+end
+
+# Empirical-Bayes mode of one batch, standalone (own single-slot EBE cache, cold start).
+function _ghq_bstar_batch(dm::DataModel, info::REBatchInfo, θ_val::ComponentArray,
+        const_cache::REConstantsCache, ll_cache::_LLCache)
+    cache = _init_laplace_eval_cache(1, Float64)
+    _laplace_compute_bstar_batch!(cache, 1, dm, info, θ_val, const_cache, ll_cache)
+    b = cache.bstar_cache.b_star[1]
+    return isempty(b) ? nothing : b
+end
+
+"""
+    _ghq_adaptive_measure(dm, info, θu_re, const_cache, ll_cache, prior_measure, b_star)
+
+Upgrade a prior-centered batch measure to the adaptive (AGHQ) one: nodes centered
+at the empirical-Bayes mode and whitened by the posterior curvature there.
+
+This is what makes the rule usable. Centered on the prior, the integrand is a
+likelihood bump far narrower than the prior, and the signed Smolyak weights make
+the estimate oscillate and drift *away* from the true integral as the level rises,
+regularly turning the batch marginal negative (issue #98). Centered on the mode it
+converges at level 1-3.
+
+Returns `nothing` (keep the prior-centered measure) when the batch is not purely
+Gaussian — `CenteredREMeasure` places nodes anywhere in ℝ^n_b, which only stays
+inside the random-effect support when every RE in the batch is `Normal`/`MvNormal`
+— or when the mode/curvature is unavailable.
+"""
+function _ghq_adaptive_measure(dm::DataModel, info::REBatchInfo,
+        θu_re::ComponentArray, const_cache::REConstantsCache, ll_cache::_LLCache,
+        prior_measure::AbstractREMeasure, b_star)
+    prior_measure isa GaussianRE || return nothing
+    # b*, H and S are frozen w.r.t. the outer AD: at a converged rule the value no
+    # longer depends on where the nodes sit, so the dropped ∂/∂b*, ∂/∂S terms are of
+    # the order of the quadrature error. `θ_prior` keeps the RE-prior term of the
+    # correction differentiable in θ.
+    θ_val = _laplace_floatize(θu_re)
+    b = b_star === nothing ?
+        _ghq_bstar_batch(dm, info, θ_val, const_cache, ll_cache) : b_star
+    (b === nothing || length(b) != get_n_b(info)) && return nothing
+    return build_centered_re_measure(b, info, 1, θ_val, const_cache, dm, ll_cache;
+        θ_prior = θu_re)
 end
 
 """
@@ -344,6 +396,18 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
         θu = inv_transform(θt_full)
         θu_re = _symmetrize_psd_params(θu, get_fixed(get_model(dm)))
 
+        # One warm-started EBE pass per θ feeds the adaptive quadrature centers; the
+        # per-batch fallback inside `_ghq_batch_ll` would cold-start every solve.
+        bstars = _laplace_get_bstar!(ebe_cache, dm, batch_infos,
+            _laplace_floatize(θu_re), const_cache, ll_cache;
+            optimizer = inner_opts.optimizer,
+            optim_kwargs = inner_opts.kwargs,
+            adtype = inner_opts.adtype,
+            grad_tol = inner_opts.grad_tol,
+            multistart = multistart_opts,
+            rng = rng,
+            serialization = serialization)
+
         total = if ll_cache isa AbstractVector
             results = Vector{T}(undef, length(batch_infos))
             bad = Threads.Atomic{Bool}(false)
@@ -358,7 +422,7 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
                         continue
                     end
                     bll = _ghq_batch_ll(dm, batch_infos[bi], θu_re, const_cache,
-                        cache_c, method.level)
+                        cache_c, method.level, bstars[bi])
                     if bll == -Inf
                         Threads.atomic_or!(bad, true)
                         results[bi] = zero(T)
@@ -373,8 +437,9 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
             sum(results)
         else
             s = zero(T)
-            for info in batch_infos
-                bll = _ghq_batch_ll(dm, info, θu_re, const_cache, ll_cache, method.level)
+            for (bi, info) in enumerate(batch_infos)
+                bll = _ghq_batch_ll(dm, info, θu_re, const_cache, ll_cache,
+                    method.level, bstars[bi])
                 bll == -Inf && return infT
                 s += bll
             end

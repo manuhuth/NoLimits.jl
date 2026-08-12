@@ -1023,10 +1023,10 @@ end  # @testset "GHQuadrature mcmc_refit UQ"
     @testset "EnsembleThreads matches EnsembleSerial objective" begin
         res_serial = fit_model(
             dm_par, GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,));
-            serialization = EnsembleSerial())
+            serialization = NoLimits.EnsembleSerial())
         res_threaded = fit_model(
             dm_par, GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,));
-            serialization = EnsembleThreads())
+            serialization = NoLimits.EnsembleThreads())
 
         # Objectives should agree within numerical tolerance (same deterministic quadrature)
         @test abs(get_objective(res_serial) - get_objective(res_threaded)) < 1.0
@@ -1581,5 +1581,98 @@ end  # @testset "get_loglikelihood_quadrature MC sampling"
         @test isapprox(A, I(size(A, 1)); rtol = 1e-6, atol = 1e-6)
         # the determinant was already right with the wrong factor, so assert the shape
         @test isapprox(rm.S * rm.S', inv(-H); rtol = 1e-6, atol = 1e-8)
+    end
+end
+
+# Issue #98: the quadrature was centered on the RE prior, whose scale is far wider
+# than the batch posterior. The signed Smolyak weights then drift away from the
+# integral as the level rises and regularly flip the batch marginal negative,
+# which the caller turns into -Inf (objective Inf, singular Wald Hessian, no
+# recovery). The rule is now centered on the EB mode.
+@testset "GHQuadrature is adaptive (issue #98)" begin
+    ri_model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(2.0)
+            b = RealNumber(-0.5)
+            σ = RealNumber(0.3, scale = :log)
+            Ω = RealPSDMatrix([0.4 0.15; 0.15 0.25], scale = :cholesky)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(MvNormal(zeros(2), Ω); column = :ID)
+        end
+        @formulas begin
+            mu = (a + η[1]) + (b + η[2]) * t
+            y ~ Normal(mu, σ)
+        end
+    end
+
+    ts = collect(range(0.0, 2.0; length = 8))
+    function _ri_df(nid)
+        rng = Xoshiro(1)
+        Ω = [0.4 0.15; 0.15 0.25]
+        ID = String[]
+        T = Float64[]
+        Y = Float64[]
+        for i in 1:nid
+            e = rand(rng, MvNormal(zeros(2), Ω))
+            for tt in ts
+                push!(ID, "s$i")
+                push!(T, tt)
+                push!(Y, (2.0 + e[1]) + (-0.5 + e[2]) * tt + 0.3 * randn(rng))
+            end
+        end
+        return DataFrame(ID = ID, t = T, y = Y)
+    end
+
+    @testset "batch marginal matches the exact linear-Gaussian value" begin
+        dm = DataModel(ri_model, _ri_df(6); primary_id = :ID, time_col = :t)
+        fe = NoLimits.get_fixed(NoLimits.get_model(dm))
+        θ = NoLimits.get_θ0_untransformed(fe)
+        θ_re = NoLimits._symmetrize_psd_params(θ, fe)
+        _, infos, cc = NoLimits._build_re_batch_infos(dm, NamedTuple())
+        cache = NoLimits.build_ll_cache(dm; force_saveat = true)
+        cache = cache isa AbstractVector ? cache[1] : cache
+
+        # y_i ~ N(a .+ b .* t, σ²I + Z Ω Z') for this model, so the marginal is exact.
+        Z = hcat(ones(length(ts)), ts)
+        V = Symmetric(0.3^2 * Matrix(I, length(ts), length(ts)) +
+                      Z * [0.4 0.15; 0.15 0.25] * Z')
+        rows = NoLimits.get_row_groups(dm).obs_rows
+        for bi in 1:3
+            inds = NoLimits.get_inds(infos[bi])
+            @test length(inds) == 1
+            y = NoLimits.get_df(dm).y[rows[only(inds)]]
+            exact = logpdf(MvNormal(2.0 .- 0.5 .* ts, V), Vector{Float64}(y))
+            for level in (3, 5)
+                bll = NoLimits._ghq_batch_ll(dm, infos[bi], θ_re, cc, cache, level)
+                @test isfinite(bll)
+                @test isapprox(bll, exact; rtol = 1e-5)
+            end
+        end
+    end
+
+    @testset "fit recovers what Laplace recovers, with a finite objective" begin
+        dm = DataModel(ri_model, _ri_df(30); primary_id = :ID, time_col = :t)
+        θ0 = NoLimits.get_θ0_untransformed(NoLimits.get_fixed(ri_model))
+        θ0 = ComponentArray(copy(θ0), getaxes(θ0))
+        θ0.a = 1.0
+        θ0.b = 0.0
+        θ0.σ = 1.0
+        θ0.Ω = [1.0 0.0; 0.0 1.0]
+        kw = (; theta_0_untransformed = θ0, serialization = NoLimits.EnsembleSerial())
+        res_l = fit_model(dm, NoLimits.Laplace(); kw...)
+        res_g = fit_model(dm, NoLimits.GHQuadrature(level = 5); kw...)
+
+        @test isfinite(get_objective(res_g))
+        p_l = get_params(res_l; scale = :untransformed)
+        p_g = get_params(res_g; scale = :untransformed)
+        # This model is linear-Gaussian, so Laplace is exact and adaptive
+        # quadrature must reproduce it at any level.
+        @test isapprox(p_g.σ, p_l.σ; rtol = 0.02)
+        @test isapprox(p_g.Ω, p_l.Ω; rtol = 0.15)
+        @test isapprox(get_objective(res_g), get_objective(res_l); rtol = 1e-4)
     end
 end
