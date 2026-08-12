@@ -196,6 +196,22 @@ function _build_turing_model(fixed_names::Vector{Symbol}, free_names::Vector{Sym
     return fname
 end
 
+# Turing's counterpart of the frequentist RE-prior guard (`_re_logpdf_batch`): a proposal for
+# which the RE distribution constructor throws — `sqrt` of a negative variance, a non-PD Ω —
+# must be rejected, not kill the sampler. Returns `nothing` so the caller scores the draw -Inf.
+function _mcmc_re_dist(dists_builder, θ_re, const_cov, model_funs, helpers, re::Symbol)
+    try
+        return getproperty(dists_builder(θ_re, const_cov, model_funs, helpers), re)
+    catch err
+        _is_numeric_error(err) || rethrow(err)
+        if !Threads.atomic_cas!(_WARNED_NUMERIC_ERROR, false, true)
+            @warn "A numeric error ($(nameof(typeof(err)))) was raised while building the " *
+                  "random-effect distribution; rejecting this proposal. Warned once per fit."
+        end
+        return nothing
+    end
+end
+
 # Evaluates log p(η_const | θ) for all constant RE levels passed via const_re_info.
 # const_re_info: NamedTuple mapping RE name → (vals::Vector, reps::Vector{Int})
 function _mcmc_const_re_prior(dm::DataModel, θ_re::ComponentArray, const_re_info,
@@ -206,9 +222,9 @@ function _mcmc_const_re_prior(dm::DataModel, θ_re::ComponentArray, const_re_inf
     for (re, info) in Base.pairs(const_re_info)
         isempty(info.vals) && continue
         for (val, rep) in zip(info.vals, info.reps)
-            dists = dists_builder(
-                θ_re, get_const_cov(get_individuals(dm)[rep]), model_funs, helpers)
-            dist = getfield(dists, re)
+            dist = _mcmc_re_dist(dists_builder,
+                θ_re, get_const_cov(get_individuals(dm)[rep]), model_funs, helpers, re)
+            dist === nothing && return convert(T, -Inf)
             v = val isa AbstractVector ? T.(val) : T(val)
             lp = logpdf(dist, v)
             isfinite(lp) || return T(-Inf)
@@ -241,22 +257,34 @@ function _build_turing_model_re(
         reps_get = :(getproperty($meta_sym, :reps))
         is_scalar = :(getproperty($meta_sym, :is_scalar))
         dim = :(getproperty($meta_sym, :dim))
+        # On a rejected proposal the variable still has to be sampled (a skipped `~` leaves it
+        # out of the VarInfo), so it draws from a placeholder and `re_reject` scores -Inf.
         scalar_block = quote
             local $vals_sym = Vector{T}(undef, length($levels_sym))
             for j in eachindex($levels_sym)
                 const_cov = const_covs[$reps_sym[j]]
-                dists = dists_builder(θ_re, const_cov, model_funs, helpers)
-                dist = getproperty(dists, $re_q)
-                $vals_sym[j] ~ dist
+                dist = _mcmc_re_dist(
+                    dists_builder, θ_re, const_cov, model_funs, helpers, $re_q)
+                if dist === nothing
+                    re_reject = true
+                    $vals_sym[j] ~ Normal(zero(T), one(T))
+                else
+                    $vals_sym[j] ~ dist
+                end
             end
         end
         vector_block = quote
             local $vals_sym = Vector{Vector{T}}(undef, length($levels_sym))
             for j in eachindex($levels_sym)
                 const_cov = const_covs[$reps_sym[j]]
-                dists = dists_builder(θ_re, const_cov, model_funs, helpers)
-                dist = getproperty(dists, $re_q)
-                $vals_sym[j] ~ dist
+                dist = _mcmc_re_dist(
+                    dists_builder, θ_re, const_cov, model_funs, helpers, $re_q)
+                if dist === nothing
+                    re_reject = true
+                    $vals_sym[j] ~ MvNormal(zeros(T, $dim), Diagonal(ones(T, $dim)))
+                else
+                    $vals_sym[j] ~ dist
+                end
             end
         end
         push!(sample_blocks.args, :(local $meta_sym = $meta_get))
@@ -283,8 +311,13 @@ function _build_turing_model_re(
             dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
             model_funs = get_model_funs(get_model(dm))
             helpers = get_helper_funs(get_model(dm))
+            re_reject = false
 
             $sample_blocks
+            if re_reject
+                Turing.@addlogprob! -Inf
+                return nothing
+            end
             Turing.@addlogprob! _mcmc_const_re_prior(
                 dm, θ_re, const_re_info, model_funs, helpers)
             re_samples = $re_samples_expr
