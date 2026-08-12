@@ -714,7 +714,7 @@ function predict(res::FitResult, newdata; kwargs...)
     dm_new = DataModel(get_model(dm_old), newdata;
         primary_id = cfg.primary_id, time_col = cfg.time_col,
         evid_col = cfg.evid_col, amt_col = cfg.amt_col,
-        rate_col = cfg.rate_col, cmt_col = cfg.cmt_col,
+        rate_col = cfg.rate_col, cmt_col = cfg.cmt_col, t0 = cfg.t0,
         serialization = cfg.serialization)
     return predict(res, dm_new; kwargs...)
 end
