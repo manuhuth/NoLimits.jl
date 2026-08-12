@@ -231,6 +231,9 @@ function _get_col(df, name::Symbol)
     return getproperty(df, name)
 end
 
+# Row numbers valid for every column of the frame (see _check_constant_within_group).
+_row_indices(col) = Base.OneTo(length(col))
+
 function _require_cols(df, cols::Vector{Symbol})
     for c in cols
         hasproperty(df, c) ||
@@ -467,7 +470,9 @@ function _check_constant_within_group(df, group_col::Symbol, cov_cols::Vector{Sy
     refs = Dict{Any, Int}()
     bad = Dict{Any, Vector{Symbol}}()
     gcol = _get_col(df, group_col)
-    for i in eachindex(gcol)
+    # Plain row numbers: eachindex of a chunked column (CSV's ChainedVector) yields
+    # column-specific index objects that must not be used on the covariate columns.
+    for i in _row_indices(gcol)
         g = gcol[i]
         if !haskey(refs, g)
             refs[g] = i
@@ -733,7 +738,7 @@ function _validate_re_group_identifiability(model, df, config::DataModelConfig)
     isempty(re_names) && return
     re_groups = get_re_groups(model.random.random)
     obs_rows = if config.evid_col === nothing
-        eachindex(_get_col(df, config.primary_id))
+        _row_indices(_get_col(df, config.primary_id))
     else
         evid = _get_col(df, config.evid_col)
         findall(==(0), evid)
