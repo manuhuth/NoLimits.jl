@@ -5,6 +5,9 @@ using Distributions
 using ComponentArrays
 using OrdinaryDiffEq
 using Random
+using ForwardDiff
+using FiniteDifferences
+using LinearAlgebra
 
 # Two-state decoupled diagonal-linear PK-flavored model (constant forcing on x2),
 # no random effects → fit with MLE. Built once, reused across the oracle tests.
@@ -439,6 +442,91 @@ end
     r_s = fit_model(dm_off_s, NoLimits.MLE())
     @test isfinite(NoLimits.get_objective(fit_model(dm_cf_s, NoLimits.MLE())))
     @test NoLimits.get_loglikelihood(dm_cf_s, r_s)≈NoLimits.get_loglikelihood(dm_off_s, r_s) rtol=1e-4
+end
+
+# Bidirectional two-compartment (genuinely `:linear`, so opt-in via `closed_form = :all`)
+# with a random effect on clearance. The Laplace inner Hessian drives nested Duals
+# through `_cf_matexp`.
+function _cf_twocmt_re_model(cf::Symbol)
+    m = @Model begin
+        @fixedEffects begin
+            k10 = RealNumber(0.5, scale = :log)
+            k12 = RealNumber(0.3, scale = :log)
+            k21 = RealNumber(0.2, scale = :log)
+            ω = RealNumber(0.3, scale = :log)
+            σ = RealNumber(0.05, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, ω); column = :ID)
+        end
+        @DifferentialEquation begin
+            D(x1) ~ -(k10 * exp(η) + k12) * x1 + k21 * x2
+            D(x2) ~ k12 * x1 - k21 * x2
+        end
+        @initialDE begin
+            x1 = 1.0
+            x2 = 0.0
+        end
+        @formulas begin
+            y ~ Normal(x1(t), σ)
+        end
+    end
+    return set_solver_config(m; saveat_mode = :saveat, closed_form = cf)
+end
+
+function _cf_twocmt_re_df()
+    ts = [0.5, 1.0, 2.0]
+    rates = [0.45, 0.75, 0.6, 0.95, 0.55]   # between-ID spread keeps ω identified
+    noise = [0.01, -0.02, 0.015, -0.01, 0.02, -0.015, 0.005, 0.01, -0.02, 0.012,
+        -0.008, 0.018, -0.011, 0.007, -0.016]
+    return DataFrame(ID = repeat(1:length(rates), inner = length(ts)),
+        t = repeat(ts, length(rates)),
+        y = vec([0.9 * exp(-r * t) for t in ts, r in rates]) .+ noise)
+end
+
+@testset "closed-form :linear under nested Duals" begin
+    # Derivative correctness of `_cf_matexp` at 1st and 2nd ForwardDiff order.
+    A(p) = [-(p[1] + p[2]) p[3] p[4]; p[2] -p[3] 0.0; 0.0 0.0 0.0]
+    w = [0.3, -0.7, 1.1, 0.2, 0.9, -0.4, 0.5, 0.15, -0.25]
+    f(p) = sum(vec(NoLimits._cf_matexp(A(p) .* 1.7)) .* w)
+    p0 = [0.5, 0.3, 0.2, 0.4]
+    fd = central_fdm(5, 1)
+    @test ForwardDiff.gradient(f, p0)≈FiniteDifferences.grad(fd, f, p0)[1] rtol=1e-6 atol=1e-9
+    H = ForwardDiff.hessian(f, p0)
+    H_fd = FiniteDifferences.jacobian(fd, x -> ForwardDiff.gradient(f, x), p0)[1]
+    @test H≈H_fd rtol=1e-6 atol=1e-9
+    @test H ≈ H'
+
+    # Nested-Dual value and first partials match the Float64 and single-Dual paths.
+    Mv = A(p0) .* 1.7
+    d1 = ForwardDiff.Dual{:t1}.(Mv, 1.0)
+    E2 = NoLimits._cf_matexp(ForwardDiff.Dual{:t2}.(d1, 1.0))
+    @test ForwardDiff.value.(ForwardDiff.value.(E2)) ≈ exp(Mv)
+    @test ForwardDiff.partials.(ForwardDiff.value.(E2), 1) ≈
+          ForwardDiff.partials.(NoLimits._cf_matexp(d1), 1)
+
+    # Laplace fit (nested Duals in the inner Hessian) and Wald UQ on that fit.
+    df = _cf_twocmt_re_df()
+    dm_all = DataModel(_cf_twocmt_re_model(:all), df; primary_id = :ID, time_col = :t)
+    dm_off = DataModel(_cf_twocmt_re_model(:off), df; primary_id = :ID, time_col = :t)
+    @test get_closed_form_plan(dm_all).mode === :linear
+    # k12/k21 held fixed: with only x1 observed they sit on a flat ridge, which would
+    # make the two optimizer paths land far apart for no path-related reason.
+    cst = (k12 = 0.3, k21 = 0.2)
+    res_all = fit_model(dm_all, NoLimits.Laplace(); constants = cst)
+    res_off = fit_model(dm_off, NoLimits.Laplace(); constants = cst)
+    @test NoLimits.get_objective(res_all)≈NoLimits.get_objective(res_off) rtol=1e-4
+    @test collect(NoLimits.get_params(res_all;
+        scale = :untransformed))≈
+    collect(NoLimits.get_params(res_off; scale = :untransformed)) rtol=1e-2
+    # Same params, both paths: isolates the closed-form solve from optimizer noise.
+    @test NoLimits.get_loglikelihood(dm_all,
+        res_off)≈NoLimits.get_loglikelihood(dm_off, res_off) rtol=1e-5
+    @test compute_uq(res_all; method = :wald, n_draws = 20,
+        rng = Random.Xoshiro(11)) !== nothing
 end
 
 @testset "closed-form and numerical simulate agree" begin
