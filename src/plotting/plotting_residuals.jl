@@ -307,7 +307,7 @@ function get_residuals(res::FitResult;
         rng::AbstractRNG = Random.default_rng(),
         return_draw_level::Bool = false)
     dm = _get_dm(res, dm)
-    constants_re_use = _res_constants_re(res, constants_re)
+    constants_re_use = _res_constants_re(res, constants_re, dm)
     residual_list = _validate_residual_metrics(residuals)
     obs_list = _resolve_residual_observables(dm, observables)
     inds = _resolve_individuals(dm, individuals_idx; default_all = true)

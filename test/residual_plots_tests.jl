@@ -47,6 +47,45 @@ end
     @test plot_residuals(res) !== nothing
 end
 
+# Regression for #106: string-valued RE levels (Symbol keys in constants_re) broke
+# every downstream consumer of a constants_re fit; new data lacking the level must
+# ignore that constant rather than error.
+@testset "constants_re with string levels: residuals and predict" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.1)
+            σ = RealNumber(0.3, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, 0.5); column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(a + η + 0.2 * t, σ)
+        end
+    end
+    df = DataFrame(ID = repeat(["id_001", "id_002", "id_003"], inner = 2),
+        t = repeat([0.0, 1.0], outer = 3),
+        y = [0.1, 0.3, 0.0, 0.25, 0.15, 0.35])
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 2,));
+        constants_re = (; η = (; id_001 = 0.0)),
+        serialization = NoLimits.EnsembleSerial())
+
+    η_df = get_random_effects(res).η
+    @test η_df[η_df.ID .== "id_001", :η_1][1] == 0.0
+    @test nrow(get_residuals(res)) == nrow(df)
+
+    df_wo = df[df.ID .!= "id_001", :]
+    for mode in (:population, :ebe, :reestimate, :marginal)
+        @test nrow(NoLimits.predict(res, df; re_mode = mode)) == nrow(df)
+        # The pinned level is absent here — it must be ignored, not fatal.
+        @test nrow(NoLimits.predict(res, df_wo; re_mode = mode)) == nrow(df_wo)
+    end
+end
+
 @testset "residuals MCMC summary and draw-level outputs" begin
     res = fx_mcmc()                       # shared no-RE MCMC fit
     df = fx_nore_df()
