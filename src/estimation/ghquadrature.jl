@@ -188,8 +188,7 @@ present in `level` default to level 1.
 Returns the concatenated tensor-product grid over all RE groups that have
 free levels (non-zero dimension) in this batch.
 """
-function _build_anisotropic_batch_grid(
-        dm::DataModel, info::REBatchInfo, level::NamedTuple)
+function _anisotropic_dims_levels(dm::DataModel, info::REBatchInfo, level::NamedTuple)
     re_names = get_re_names(get_laplace_cache(get_re_group_info(dm)))
     dims = Int[]
     levels = Int[]
@@ -202,6 +201,12 @@ function _build_anisotropic_batch_grid(
         push!(dims, total_dim)
         push!(levels, l)
     end
+    return dims, levels
+end
+
+function _build_anisotropic_batch_grid(
+        dm::DataModel, info::REBatchInfo, level::NamedTuple)
+    dims, levels = _anisotropic_dims_levels(dm, info, level)
     isempty(dims) && error("_build_anisotropic_batch_grid: no free RE dimensions found")
     return get_anisotropic_grid(dims, levels)
 end
@@ -224,18 +229,35 @@ function _prepopulate_ghq_cache(dm::DataModel, batch_infos, level)
     end
 end
 
-# Return true if any batch grid exceeds `threshold` points.
-function _any_batch_too_large(dm::DataModel, batch_infos, level, threshold::Int)
-    for info in batch_infos
+# Node-count upper bound for a batch grid, without building it.
+function _batch_grid_bound(dm::DataModel, info::REBatchInfo, level)
+    level isa Int && return ghq_points_bound(get_n_b(info), level)
+    dims, levels = _anisotropic_dims_levels(dm, info, level)
+    return prod(ghq_points_bound(d, l) for (d, l) in zip(dims, levels); init = 1.0)
+end
+
+# Hard ceiling: above this the grid cannot be built (it is one likelihood
+# evaluation per node, and the grid itself runs into tens of GB).
+const GHQ_MAX_NODES = 1_000_000
+
+# Warn above `threshold` nodes, refuse above `GHQ_MAX_NODES`. Must run BEFORE any
+# grid is built — building the grid is what exhausts memory on oversized batches.
+function _check_batch_grid_sizes(dm::DataModel, batch_infos, level, threshold::Int,
+        ctx::AbstractString)
+    for (bi, info) in enumerate(batch_infos)
         get_n_b(info) == 0 && continue
-        npts = if level isa Int
-            n_ghq_points(get_n_b(info), level)
-        else
-            size(_build_anisotropic_batch_grid(dm, info, level).nodes, 2)
+        npts = _batch_grid_bound(dm, info, level)
+        if npts > GHQ_MAX_NODES
+            error("$ctx: RE batch $bi has joint random-effect dimension " *
+                  "$(get_n_b(info)) and needs ~$(round(npts, sigdigits = 3)) " *
+                  "quadrature nodes at level $level (limit $GHQ_MAX_NODES). " *
+                  "Reduce `level`, split the batch, or use Laplace/FOCEI/SAEM.")
         end
-        npts > threshold && return true
+        npts > threshold &&
+            @warn "$ctx: RE batch $bi needs ~$(round(Int, npts)) quadrature nodes. " *
+                  "Consider reducing `level` or checking your RE batch structure."
     end
-    return false
+    return nothing
 end
 
 # ---------------------------------------------------------------------------
@@ -293,11 +315,8 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
         serialization = serialization, force_saveat = true)
 
     # Pre-populate sparse-grid cache for all unique free-RE dimensions.
+    _check_batch_grid_sizes(dm, batch_infos, method.level, 10_000, "GHQuadrature")
     _prepopulate_ghq_cache(dm, batch_infos, method.level)
-    if _any_batch_too_large(dm, batch_infos, method.level, 10_000)
-        @warn "GHQuadrature: one or more batches have > 10,000 quadrature nodes. " *
-              "Consider reducing `level` or checking your RE batch structure."
-    end
 
     # EB-mode cache (used post-hoc for get_random_effects).
     n_batches = length(batch_infos)

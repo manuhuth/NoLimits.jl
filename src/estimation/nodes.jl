@@ -250,6 +250,26 @@ function get_sparse_grid(dim::Int, level::Int)
 end
 
 """
+    ghq_points_bound(dim::Int, level::Int) -> Float64
+
+Upper bound on the number of points of the Smolyak sparse grid for `dim`
+dimensions at accuracy `level`, computed in O(dim * level^2) WITHOUT building
+the grid (`n_ghq_points` builds it, which is exactly what explodes for large
+`dim`). The bound is the pre-deduplication point count, as a `Float64` because
+it overflows `Int` for large batches.
+"""
+function ghq_points_bound(dim::Int, level::Int)
+    dim <= 0 && return 0.0
+    # f[j+1] = Σ over multi-indices α ∈ {1,…}^d with |α| = d + j of Π α_i,
+    # since the order-k 1-D rule contributes k nodes. Recurse over dimensions.
+    f = [Float64(1 + j) for j in 0:(level - 1)]
+    for _ in 2:dim
+        f = [sum(Float64(1 + e) * f[j - e + 1] for e in 0:j) for j in 0:(level - 1)]
+    end
+    return sum(f)
+end
+
+"""
     n_ghq_points(dim::Int, level::Int) -> Int
 
 Return the number of quadrature points (after deduplication) in the Smolyak
