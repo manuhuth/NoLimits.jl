@@ -102,11 +102,11 @@ Bayesian estimator into the same first-class `FitResult` a built-in `MCMC` fit r
 posterior-predictive plotting, and `summarize` (which reports `inference: bayesian`) all work.
 The estimator brings its own `chain`; this only packages it - it does not run a sampler.
 
-Mirrors the built-in MCMC path exactly: the point-estimate slot is empty (so `get_params`
-returns empty - posterior summaries come from the chain via `summarize`/`compute_uq`), and
-`observed` defaults to the model's observed-outcome columns. Pass `n_adapt` when the chain
-still contains adaptation draws - summaries and chain UQ drop that many warm-up rows by
-default. `fit_kwargs` (e.g. `(constants = …,)`) is stored on the result so `compute_uq`
+Mirrors the built-in MCMC path exactly: the point-estimate slot is filled with the
+posterior mean of the fixed effects (richer posterior summaries come from the chain via
+`summarize`/`compute_uq`), and `observed` defaults to the model's observed-outcome
+columns. Pass `n_adapt` when the chain still contains adaptation draws - summaries and
+chain UQ drop that many warm-up rows by default. `fit_kwargs` (e.g. `(constants = …,)`) is stored on the result so `compute_uq`
 resolves the same settings the fit used. Dispatch is on the `chain` argument, so the
 frequentist `build_fit_result(dm, method, θ; kind=…)` is unaffected.
 """
@@ -117,12 +117,28 @@ function build_fit_result(dm::DataModel, method::FittingMethod, chain::MCMCChain
         store_data_model::Bool = true,
         fit_args::Tuple = (), fit_kwargs = NamedTuple())
     result = MCMCResult(chain, sampler, n_samples, notes, observed)
-    summary = FitSummary(NaN, missing,
+    summary = FitSummary(_mcmc_objective(chain, n_adapt), missing,
         FitParameters(ComponentArray(), ComponentArray()), notes)
     diagnostics = FitDiagnostics(
         (;), (sampler = sampler,), (n_samples = n_samples, n_adapt = n_adapt), notes)
-    return FitResult(method, result, summary, diagnostics,
+    res = FitResult(method, result, summary, diagnostics,
         store_data_model ? dm : nothing, fit_args, fit_kwargs)
+    return _with_posterior_params(res, dm; rng = Random.default_rng())
+end
+
+# Objective for a posterior chain: the mean negative log posterior density over the
+# post-warmup draws, so `get_objective` keeps the "lower is better" sign convention of
+# the optimization methods. NaN when the sampler records no log-density column.
+function _mcmc_objective(chain::MCMCChains.Chains, n_adapt::Integer)
+    internals = MCMCChains.names(chain, :internals)
+    key = :lp in internals ? :lp : (:logjoint in internals ? :logjoint : nothing)
+    key === nothing && return NaN
+    arr = Array(getfield(MCMCChains.get(chain, key), key))
+    vals = ndims(arr) == 1 ? reshape(arr, :, 1) : arr
+    n_iter = size(vals, 1)
+    rows = (min(Int(n_adapt), n_iter - 1) + 1):n_iter
+    finite = filter(isfinite, vec(vals[rows, :]))
+    return isempty(finite) ? NaN : -mean(finite)
 end
 
 @inline function _mcmc_sampler_kind(sampler)
@@ -539,12 +555,13 @@ function _fit_model(dm::DataModel, method::MCMC, args...;
     chain = Turing.sample(rng, model, sampler, n_samples; adapt = n_adapt, turing_kwargs...)
 
     obs = get_df(dm)[:, get_obs_cols(dm)]
-    summary = FitSummary(NaN, missing,
+    summary = FitSummary(_mcmc_objective(chain, n_adapt), missing,
         FitParameters(ComponentArray(), ComponentArray()),
         NamedTuple())
     diagnostics = FitDiagnostics(
         (;), (sampler = sampler,), (n_samples = n_samples, n_adapt = n_adapt), NamedTuple())
     result = MCMCResult(chain, sampler, n_samples, NamedTuple(), obs)
-    return FitResult(method, result, summary, diagnostics,
+    res = FitResult(method, result, summary, diagnostics,
         store_data_model ? dm : nothing, args, fit_kwargs)
+    return _with_posterior_params(res, dm; rng = rng)
 end

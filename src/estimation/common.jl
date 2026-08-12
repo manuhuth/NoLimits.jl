@@ -516,10 +516,26 @@ function _res_constants_re(res::FitResult, constants_re::NamedTuple)
     return constants_re
 end
 
+# Chain-based fits (MCMC/VI) run no optimizer, so their point-estimate slot starts empty.
+# Fill it with the posterior mean of the fixed effects — the point estimate every
+# downstream consumer of `get_params` needs. Constants come from the fit's own kwargs;
+# they are pinned, not sampled, so they are never looked up in the chain.
+function _with_posterior_params(res::FitResult, dm::DataModel; rng::AbstractRNG)
+    θ_u, _ = _posterior_fixed_means(
+        res, dm; rng = rng, overrides = _fit_kw(res, :constants, NamedTuple()))
+    fe = get_fixed(get_model(dm))
+    params = FitParameters(get_transform(fe)(θ_u), θ_u)
+    s = get_summary(res)
+    summary = FitSummary(s.objective, s.converged, params, s.notes)
+    return FitResult(get_method(res), get_result(res), summary, get_diagnostics(res),
+        get_data_model(res), get_fit_args(res), get_fit_kwargs(res))
+end
+
 """
     get_params(res::FitResult; scale=:both) -> FitParameters or ComponentArray
 
-Return the estimated parameter vector.
+Return the estimated parameter vector. For chain-based fits (`MCMC`/`VI`) this is the
+posterior mean of the fixed effects.
 
 # Keyword Arguments
 - `scale::Symbol = :both`: which scale to return.

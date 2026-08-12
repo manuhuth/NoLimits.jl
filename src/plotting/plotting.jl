@@ -385,16 +385,32 @@ function _mcmc_param_means(chain::Chains;
     return Dict{Symbol, Float64}((names_all[i] => means[i]) for i in eachindex(names_all))
 end
 
+# Probe `lookup` with every accepted spelling of a coordinate key (see
+# `_chain_key_variants`), so MCMCChains' "name[1, 1]" matches the flat "name[1,1]".
+@inline function _lookup_coord(lookup, key::AbstractString)
+    for k in _chain_key_variants(key)
+        v = lookup(k)
+        v === nothing || return v
+    end
+    return nothing
+end
+
 # Reconstruct a fixed-effect ComponentArray coordinate-by-coordinate. `lookup(key)`
 # maps a coordinate key string ("name" for scalars, "name[i,j]" for array elements) to
 # its value, or `nothing` when absent — in which case the initial value is used and a
-# `source`-tagged warning is emitted. Shared by the MCMC/VI mean and draw paths.
-function _coordwise_fixed_from_means(dm::DataModel, source::AbstractString, lookup)
+# `source`-tagged warning is emitted. Names in `overrides` bypass the lookup (constants
+# never appear in a chain). Shared by the MCMC/VI mean and draw paths.
+function _coordwise_fixed_from_means(dm::DataModel, source::AbstractString, lookup;
+        overrides::NamedTuple = NamedTuple())
     fe_names = get_names(get_fixed(get_model(dm)))
     θ0_u = get_θ0_untransformed(get_fixed(get_model(dm)))
     pairs = Pair{Symbol, Any}[]
     for name in fe_names
-        v = lookup(string(name))
+        if haskey(overrides, name)
+            push!(pairs, name => getfield(overrides, name))
+            continue
+        end
+        v = _lookup_coord(lookup, string(name))
         if v !== nothing
             push!(pairs, name => v)
         else
@@ -403,7 +419,7 @@ function _coordwise_fixed_from_means(dm::DataModel, source::AbstractString, look
                 vals = similar(val0, Float64)
                 for idx in CartesianIndices(val0)
                     idx_txt = join(Tuple(idx), ",")
-                    ve = lookup(string(name, "[", idx_txt, "]"))
+                    ve = _lookup_coord(lookup, string(name, "[", idx_txt, "]"))
                     if ve !== nothing
                         vals[idx] = ve
                     else
@@ -458,12 +474,14 @@ end
 function _mcmc_fixed_means(res::FitResult,
         dm::DataModel;
         max_draws::Int = typemax(Int),
-        rng::AbstractRNG = Random.default_rng())
+        rng::AbstractRNG = Random.default_rng(),
+        overrides::NamedTuple = NamedTuple())
     chain = get_chain(res)
     n_adapt = _mcmc_warmup(res)
     means = _mcmc_param_means(chain; n_adapt = n_adapt, max_draws = max_draws, rng = rng)
     θ = _coordwise_fixed_from_means(dm, "MCMC chain",
-        key -> (sym = Symbol(key); haskey(means, sym) ? means[sym] : nothing))
+        key -> (sym = Symbol(key); haskey(means, sym) ? means[sym] : nothing);
+        overrides = overrides)
     return θ, chain
 end
 
@@ -483,21 +501,26 @@ end
 function _vi_fixed_means(res::FitResult,
         dm::DataModel;
         max_draws::Int = typemax(Int),
-        rng::AbstractRNG = Random.default_rng())
+        rng::AbstractRNG = Random.default_rng(),
+        overrides::NamedTuple = NamedTuple())
     means = _vi_param_means(res; max_draws = max_draws, rng = rng)
     θ = _coordwise_fixed_from_means(dm, "VI posterior",
-        key -> (sym = Symbol(key); haskey(means, sym) ? means[sym] : nothing))
+        key -> (sym = Symbol(key); haskey(means, sym) ? means[sym] : nothing);
+        overrides = overrides)
     return θ, nothing
 end
 
 function _posterior_fixed_means(res::FitResult,
         dm::DataModel;
         max_draws::Int = typemax(Int),
-        rng::AbstractRNG = Random.default_rng())
+        rng::AbstractRNG = Random.default_rng(),
+        overrides::NamedTuple = NamedTuple())
     if get_result(res) isa MCMCResult
-        return _mcmc_fixed_means(res, dm; max_draws = max_draws, rng = rng)
+        return _mcmc_fixed_means(
+            res, dm; max_draws = max_draws, rng = rng, overrides = overrides)
     elseif get_result(res) isa VIResult
-        return _vi_fixed_means(res, dm; max_draws = max_draws, rng = rng)
+        return _vi_fixed_means(
+            res, dm; max_draws = max_draws, rng = rng, overrides = overrides)
     end
     return get_params(res; scale = :untransformed), nothing
 end
