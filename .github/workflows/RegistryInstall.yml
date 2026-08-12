@@ -1,0 +1,34 @@
+name: Registry install
+
+# CI builds the working tree, whose [compat] is whatever Project.toml says today.
+# The version already published to the General registry keeps the bounds it was
+# registered with, so an upstream release can break `Pkg.add("NoLimits")` while
+# every PR stays green (see #133: Optimization 5.7 dropped the SciMLBase
+# re-export that LikelihoodProfiler 1.x relies on). This job installs the
+# PUBLISHED package into a clean environment and loads it.
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+jobs:
+  install:
+    name: fresh install of the registered version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: julia-actions/setup-julia@v3
+        with:
+          # Latest release, not the pinned CI version: a new user gets whatever
+          # is current. Revisit if julia compat is widened (#37).
+          version: "1"
+      # No checkout and no cache on purpose: this must resolve against the
+      # registry exactly as a new user's machine would.
+      - name: Pkg.add and load
+        run: |
+          julia --color=yes -e '
+            using Pkg
+            Pkg.activate(; temp = true)
+            Pkg.add("NoLimits")
+            Pkg.status()
+            using NoLimits
+            @info "loaded NoLimits" version = pkgversion(NoLimits)'
