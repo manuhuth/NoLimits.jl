@@ -199,6 +199,40 @@ end
     @test res_map isa FitResult
 end
 
+@testset "MCMC/VI accept Vector{Distribution} priors on flat blocks" begin
+    # A per-element prior vector is valid on NN/SoftTree/NPF blocks but is not a
+    # distribution Turing's `~` accepts; it must be turned into a product distribution.
+    st = SoftTreeParameters(1, 2; function_name = :ST1)
+    st_prior = fill(Normal(0.0, 1.0), length(st.value))
+
+    model = @Model begin
+        @fixedEffects begin
+            Γ = SoftTreeParameters(
+                1, 2; function_name = :ST1, calculate_se = false, prior = st_prior)
+            σ = RealNumber(0.5, scale = :log, prior = LogNormal(0.0, 0.5))
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @formulas begin
+            y ~ Normal(ST1([t], Γ)[1], σ)
+        end
+    end
+
+    df = DataFrame(ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0],
+        y = [0.1, 0.3, 0.05, 0.35])
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+
+    res = fit_model(dm,
+        NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)))
+    @test NoLimits.get_chain(res) isa MCMCChains.Chains
+
+    res_vi = fit_model(dm, NoLimits.VI(; turing_kwargs = (max_iter = 2,)))
+    @test NoLimits.get_variational_posterior(res_vi) !== nothing
+end
+
 @testset "MCMC ODE with NN/SoftTree/Spline (fixed blocks)" begin
     chain = Chain(Dense(1, 3, tanh), Dense(3, 1))
     knots = collect(range(0.0, 1.0; length = 4))
