@@ -82,7 +82,7 @@ function _rebuild_dm(dm_ref::DataModel, rows::Vector{Int})
     return DataModel(get_model(dm_ref), df_sub;
         primary_id = cfg.primary_id, time_col = cfg.time_col,
         evid_col = cfg.evid_col, amt_col = cfg.amt_col,
-        rate_col = cfg.rate_col, cmt_col = cfg.cmt_col,
+        rate_col = cfg.rate_col, cmt_col = cfg.cmt_col, t0 = cfg.t0,
         serialization = cfg.serialization)
 end
 

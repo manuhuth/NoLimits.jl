@@ -1593,3 +1593,26 @@ end
         end
     end
 end
+
+# Issue #105: get_loglikelihood errored on SAEM/MCEM results although documented
+# as supported.
+@testset "SAEM/MCEM get_loglikelihood" begin
+    tk = (n_samples = 2, n_adapt = 2, progress = false)
+    for (label, method) in (
+        ("SAEM", NoLimits.SAEM(; sampler = MH(), turing_kwargs = tk, SAEM_FAST...)),
+        ("MCEM", NoLimits.MCEM(; sampler = MH(), turing_kwargs = tk, maxiters = 2)))
+        @testset "$label" begin
+            res = fit_model(_SAEM_DM_S, method)
+            θ = NoLimits.get_params(res; scale = :untransformed)
+            re = NoLimits.get_random_effects(_SAEM_DM_S, res).η
+            ηs = Dict(re.ID .=> re.η_1)
+            manual = sum(logpdf(Normal(θ.a + ηs[id], θ.σ), y)
+            for (id, y) in zip(_SAEM_DF_S.ID, _SAEM_DF_S.y))
+            @test NoLimits.get_loglikelihood(res)≈manual rtol=1e-8
+
+            # EB modes not stored: must recompute rather than throw
+            res2 = fit_model(_SAEM_DM_S, method; store_eb_modes = false)
+            @test isfinite(NoLimits.get_loglikelihood(res2))
+        end
+    end
+end

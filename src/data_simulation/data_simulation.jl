@@ -393,5 +393,6 @@ function simulate_data_model(dm::DataModel; rng = Random.default_rng(),
         amt_col = cfg.amt_col,
         rate_col = cfg.rate_col,
         cmt_col = cfg.cmt_col,
+        t0 = cfg.t0,
         serialization = serialization)
 end

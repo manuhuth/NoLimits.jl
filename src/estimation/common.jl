@@ -508,18 +508,37 @@ function Base.show(io::IO, ::MIME"text/plain", res::FitResult)
     print(io, _nl_fitresult_show_line(res))
 end
 
-function _res_constants_re(res::FitResult, constants_re::NamedTuple)
+# Constants inherited from the fit. Pass `dm` when it may differ from the fitted data
+# (predict/plot on new data): levels that data lacks are dropped instead of throwing.
+function _res_constants_re(res::FitResult, constants_re::NamedTuple,
+        dm::Union{Nothing, DataModel} = nothing)
     isempty(constants_re) || return constants_re
-    if haskey(get_fit_kwargs(res), :constants_re)
-        return getfield(get_fit_kwargs(res), :constants_re)
-    end
-    return constants_re
+    haskey(get_fit_kwargs(res), :constants_re) || return constants_re
+    inherited = getfield(get_fit_kwargs(res), :constants_re)
+    dm === nothing && return inherited
+    return _normalize_constants_re(dm, inherited; strict = false)
+end
+
+# Chain-based fits (MCMC/VI) run no optimizer, so their point-estimate slot starts empty.
+# Fill it with the posterior mean of the fixed effects — the point estimate every
+# downstream consumer of `get_params` needs. Constants come from the fit's own kwargs;
+# they are pinned, not sampled, so they are never looked up in the chain.
+function _with_posterior_params(res::FitResult, dm::DataModel; rng::AbstractRNG)
+    θ_u, _ = _posterior_fixed_means(
+        res, dm; rng = rng, overrides = _fit_kw(res, :constants, NamedTuple()))
+    fe = get_fixed(get_model(dm))
+    params = FitParameters(get_transform(fe)(θ_u), θ_u)
+    s = get_summary(res)
+    summary = FitSummary(s.objective, s.converged, params, s.notes)
+    return FitResult(get_method(res), get_result(res), summary, get_diagnostics(res),
+        get_data_model(res), get_fit_args(res), get_fit_kwargs(res))
 end
 
 """
     get_params(res::FitResult; scale=:both) -> FitParameters or ComponentArray
 
-Return the estimated parameter vector.
+Return the estimated parameter vector. For chain-based fits (`MCMC`/`VI`) this is the
+posterior mean of the fixed effects.
 
 # Keyword Arguments
 - `scale::Symbol = :both`: which scale to return.
@@ -1393,6 +1412,9 @@ end
 
 function _resolve_bstars_for_re(dm::DataModel, res::FitResult, constants_re::NamedTuple;
         θ = nothing, rng::AbstractRNG = Random.default_rng())
+    # The stored EB modes were computed with the fit's constants_re; the batch layout
+    # must match them, so inherit it when the caller passed none.
+    constants_re = _res_constants_re(res, constants_re)
     if get_result(res) isa FrequentistREResult || get_result(res) isa GHQuadratureResult
         θu = θ === nothing ? get_params(res; scale = :untransformed) : θ
         ode_args = _fit_kw(res, :ode_args, ())
@@ -1811,7 +1833,7 @@ function reestimate_ebes(dm::DataModel,
         ebe_rescue_multistart_k, ebe_rescue_max_rounds,
         ebe_rescue_grad_tol, ebe_rescue_multistart_sampling)
     θu = get_params(res; scale = :untransformed)
-    constants_re = _res_constants_re(res, constants_re)
+    constants_re = _res_constants_re(res, constants_re, dm)
     if get_result(res) isa SAEMResult
         constants_re = _saem_anneal_constants_re(
             dm, θu, _saem_anneal_names(res), constants_re)
@@ -1877,8 +1899,9 @@ end
 
 Compute the marginal log-likelihood at the estimated parameter values.
 
-For MLE/MAP results, evaluates the population log-likelihood. For Laplace-style
-results, evaluates using the EB modes stored in the result.
+For MLE/MAP results, evaluates the population log-likelihood. For random-effect
+results (Laplace/FOCEI/SAEM/MCEM), evaluates using the EB modes stored in the
+result, recomputing them when the fit was run with `store_eb_modes = false`.
 
 # Keyword Arguments
 - `constants_re::NamedTuple = NamedTuple()`: random effects fixed at given values.
@@ -1897,11 +1920,12 @@ function get_loglikelihood(dm::DataModel,
     if get_result(res) isa FrequentistResult || get_result(res) isa MAPResult
         return loglikelihood(dm, θu, ComponentArray(); ode_args = ode_args,
             ode_kwargs = ode_kwargs, serialization = serialization)
-    elseif get_result(res) isa FrequentistREResult
-        pairing, batch_infos, const_cache = _build_re_batch_infos(dm, constants_re)
-        bstars = get_eb_modes(get_result(res))
-        length(bstars) == length(batch_infos) ||
-            error("Laplace-style EB modes do not match number of batches.")
+    elseif get_result(res) isa FrequentistREResult || get_result(res) isa SAEMResult ||
+           get_result(res) isa MCEMResult
+        # SAEM/MCEM store the same EB modes as Laplace/FOCEI; the shared resolver also
+        # covers unstored modes and SAEM's annealed RE constants.
+        bstars, batch_infos, θu, const_cache, _, _ = _resolve_bstars_for_re(
+            dm, res, constants_re)
         η_vec = _eta_from_eb(dm, batch_infos, bstars, const_cache, θu)
         return loglikelihood(dm, θu, η_vec; ode_args = ode_args,
             ode_kwargs = ode_kwargs, serialization = serialization)
@@ -2080,9 +2104,9 @@ function get_loglikelihood_quadrature(dm::DataModel,
         nothing
     end
 
-    if mc_integrator === nothing && _any_batch_too_large(dm, batch_infos, level, 10_000)
-        @warn "get_loglikelihood_quadrature: one or more batches have > 10,000 quadrature nodes. " *
-              "Consider reducing `level` or checking your RE batch structure."
+    if mc_integrator === nothing
+        _check_batch_grid_sizes(
+            dm, batch_infos, level, 10_000, "get_loglikelihood_quadrature")
     end
 
     total = 0.0
@@ -2277,9 +2301,11 @@ function _cdll_terms(dm::DataModel, θ::ComponentArray;
             _re_dataframes_from_bstars(dm, batch_infos, bstars;
                 constants_re = constants_re, flatten = false, include_constants = true)
         end
+        # Each RE frame is keyed by ITS OWN grouping column, not by `primary_id`.
+        re_groups = get_re_groups(re)
         map(re_names) do rn
             df = getfield(nt, rn)
-            idc = get_primary_id(dm)
+            idc = getfield(re_groups, rn)
             valc = first(c for c in propertynames(df) if c != idc)
             Dict(Symbol(string(row[idc])) => row[valc] for row in eachrow(df))
         end
@@ -2304,11 +2330,14 @@ function _cdll_terms(dm::DataModel, θ::ComponentArray;
         end
     end
 
-    # Per-individual η ComponentArray (one grouping level per individual per RE).
+    # Per-individual η ComponentArray: one entry per grouping level the individual
+    # belongs to (a crossed design gives several), in the per-individual level order
+    # the row-wise η lookup indexes.
     function build_eta_i(i)
         pairs = Pair{Symbol, Any}[]
         for (ri, rn) in enumerate(re_names)
-            push!(pairs, rn => getval(ri, get_ind_level_ids(re_cache)[i][ri][1]))
+            lvl_vals = [getval(ri, li) for li in get_ind_level_ids(re_cache)[i][ri]]
+            push!(pairs, rn => length(lvl_vals) == 1 ? lvl_vals[1] : lvl_vals)
         end
         return ComponentArray(NamedTuple(pairs))
     end
@@ -3656,8 +3685,9 @@ Shrinkage is defined as `1 - SD(eta) / omega`, where `eta_i = f(EBE_i) - mu_i` i
 individual-level random-effect residual, `mu_i` is the covariate-adjusted population mean
 for individual `i`, and `omega` is the estimated standard deviation of the RE distribution.
 For `LogNormal` random effects the transformation is `f(x) = log(x)`; for `Normal` it is
-the identity; for all other distributions the linear deviation from the population mean is
-used.
+the identity; for all other univariate distributions the linear deviation from the
+population mean is used. Random effects whose distribution has no analytic mean/standard
+deviation (e.g. `NormalizingPlanarFlow`) are omitted from the result with a warning.
 
 A value near 0 indicates that EBEs carry individual information. Values above 0.3–0.4
 signal that EBEs are pulled toward the population mean and should not be interpreted as
@@ -3715,9 +3745,15 @@ function compute_shrinkage(res::FitResult;
             elseif dist_i isa Normal
                 eta_i = ebe - dist_i.μ
                 sigma = dist_i.σ
-            else
+            elseif dist_i isa UnivariateDistribution
                 eta_i = ebe - mean(dist_i)
                 sigma = std(dist_i)
+            else
+                # No analytic mean/std (e.g. NormalizingPlanarFlow): shrinkage undefined.
+                @warn "compute_shrinkage: skipping random effect $re; " *
+                      "$(nameof(typeof(dist_i))) has no analytic mean/standard deviation."
+                valid = false
+                break
             end
             push!(etas, eta_i)
         end

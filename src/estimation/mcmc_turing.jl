@@ -102,11 +102,11 @@ Bayesian estimator into the same first-class `FitResult` a built-in `MCMC` fit r
 posterior-predictive plotting, and `summarize` (which reports `inference: bayesian`) all work.
 The estimator brings its own `chain`; this only packages it - it does not run a sampler.
 
-Mirrors the built-in MCMC path exactly: the point-estimate slot is empty (so `get_params`
-returns empty - posterior summaries come from the chain via `summarize`/`compute_uq`), and
-`observed` defaults to the model's observed-outcome columns. Pass `n_adapt` when the chain
-still contains adaptation draws - summaries and chain UQ drop that many warm-up rows by
-default. `fit_kwargs` (e.g. `(constants = …,)`) is stored on the result so `compute_uq`
+Mirrors the built-in MCMC path exactly: the point-estimate slot is filled with the
+posterior mean of the fixed effects (richer posterior summaries come from the chain via
+`summarize`/`compute_uq`), and `observed` defaults to the model's observed-outcome
+columns. Pass `n_adapt` when the chain still contains adaptation draws - summaries and
+chain UQ drop that many warm-up rows by default. `fit_kwargs` (e.g. `(constants = …,)`) is stored on the result so `compute_uq`
 resolves the same settings the fit used. Dispatch is on the `chain` argument, so the
 frequentist `build_fit_result(dm, method, θ; kind=…)` is unaffected.
 """
@@ -117,12 +117,28 @@ function build_fit_result(dm::DataModel, method::FittingMethod, chain::MCMCChain
         store_data_model::Bool = true,
         fit_args::Tuple = (), fit_kwargs = NamedTuple())
     result = MCMCResult(chain, sampler, n_samples, notes, observed)
-    summary = FitSummary(NaN, missing,
+    summary = FitSummary(_mcmc_objective(chain, n_adapt), missing,
         FitParameters(ComponentArray(), ComponentArray()), notes)
     diagnostics = FitDiagnostics(
         (;), (sampler = sampler,), (n_samples = n_samples, n_adapt = n_adapt), notes)
-    return FitResult(method, result, summary, diagnostics,
+    res = FitResult(method, result, summary, diagnostics,
         store_data_model ? dm : nothing, fit_args, fit_kwargs)
+    return _with_posterior_params(res, dm; rng = Random.default_rng())
+end
+
+# Objective for a posterior chain: the mean negative log posterior density over the
+# post-warmup draws, so `get_objective` keeps the "lower is better" sign convention of
+# the optimization methods. NaN when the sampler records no log-density column.
+function _mcmc_objective(chain::MCMCChains.Chains, n_adapt::Integer)
+    internals = MCMCChains.names(chain, :internals)
+    key = :lp in internals ? :lp : (:logjoint in internals ? :logjoint : nothing)
+    key === nothing && return NaN
+    arr = Array(getfield(MCMCChains.get(chain, key), key))
+    vals = ndims(arr) == 1 ? reshape(arr, :, 1) : arr
+    n_iter = size(vals, 1)
+    rows = (min(Int(n_adapt), n_iter - 1) + 1):n_iter
+    finite = filter(isfinite, vec(vals[rows, :]))
+    return isempty(finite) ? NaN : -mean(finite)
 end
 
 @inline function _mcmc_sampler_kind(sampler)
@@ -142,6 +158,12 @@ end
         return (n_samples = 1000, n_adapt = 500)
     end
 end
+
+# Turing's `~` takes a single distribution, so a per-element prior vector (accepted on
+# NN/SoftTree/NPF blocks) has to become one product distribution -- the same conversion
+# `_logprior_eval` already does on the MAP path.
+_turing_prior(prior) = prior
+_turing_prior(prior::AbstractVector{<:Distribution}) = product_distribution(prior)
 
 # Shared θ-reconstruction metaprogramming for both MCMC model builders: sample the
 # free fixed effects from their priors, merge with the constants, and rebuild the
@@ -196,6 +218,22 @@ function _build_turing_model(fixed_names::Vector{Symbol}, free_names::Vector{Sym
     return fname
 end
 
+# Turing's counterpart of the frequentist RE-prior guard (`_re_logpdf_batch`): a proposal for
+# which the RE distribution constructor throws — `sqrt` of a negative variance, a non-PD Ω —
+# must be rejected, not kill the sampler. Returns `nothing` so the caller scores the draw -Inf.
+function _mcmc_re_dist(dists_builder, θ_re, const_cov, model_funs, helpers, re::Symbol)
+    try
+        return getproperty(dists_builder(θ_re, const_cov, model_funs, helpers), re)
+    catch err
+        _is_numeric_error(err) || rethrow(err)
+        if !Threads.atomic_cas!(_WARNED_NUMERIC_ERROR, false, true)
+            @warn "A numeric error ($(nameof(typeof(err)))) was raised while building the " *
+                  "random-effect distribution; rejecting this proposal. Warned once per fit."
+        end
+        return nothing
+    end
+end
+
 # Evaluates log p(η_const | θ) for all constant RE levels passed via const_re_info.
 # const_re_info: NamedTuple mapping RE name → (vals::Vector, reps::Vector{Int})
 function _mcmc_const_re_prior(dm::DataModel, θ_re::ComponentArray, const_re_info,
@@ -206,9 +244,9 @@ function _mcmc_const_re_prior(dm::DataModel, θ_re::ComponentArray, const_re_inf
     for (re, info) in Base.pairs(const_re_info)
         isempty(info.vals) && continue
         for (val, rep) in zip(info.vals, info.reps)
-            dists = dists_builder(
-                θ_re, get_const_cov(get_individuals(dm)[rep]), model_funs, helpers)
-            dist = getfield(dists, re)
+            dist = _mcmc_re_dist(dists_builder,
+                θ_re, get_const_cov(get_individuals(dm)[rep]), model_funs, helpers, re)
+            dist === nothing && return convert(T, -Inf)
             v = val isa AbstractVector ? T.(val) : T(val)
             lp = logpdf(dist, v)
             isfinite(lp) || return T(-Inf)
@@ -241,22 +279,34 @@ function _build_turing_model_re(
         reps_get = :(getproperty($meta_sym, :reps))
         is_scalar = :(getproperty($meta_sym, :is_scalar))
         dim = :(getproperty($meta_sym, :dim))
+        # On a rejected proposal the variable still has to be sampled (a skipped `~` leaves it
+        # out of the VarInfo), so it draws from a placeholder and `re_reject` scores -Inf.
         scalar_block = quote
             local $vals_sym = Vector{T}(undef, length($levels_sym))
             for j in eachindex($levels_sym)
                 const_cov = const_covs[$reps_sym[j]]
-                dists = dists_builder(θ_re, const_cov, model_funs, helpers)
-                dist = getproperty(dists, $re_q)
-                $vals_sym[j] ~ dist
+                dist = _mcmc_re_dist(
+                    dists_builder, θ_re, const_cov, model_funs, helpers, $re_q)
+                if dist === nothing
+                    re_reject = true
+                    $vals_sym[j] ~ Normal(zero(T), one(T))
+                else
+                    $vals_sym[j] ~ dist
+                end
             end
         end
         vector_block = quote
             local $vals_sym = Vector{Vector{T}}(undef, length($levels_sym))
             for j in eachindex($levels_sym)
                 const_cov = const_covs[$reps_sym[j]]
-                dists = dists_builder(θ_re, const_cov, model_funs, helpers)
-                dist = getproperty(dists, $re_q)
-                $vals_sym[j] ~ dist
+                dist = _mcmc_re_dist(
+                    dists_builder, θ_re, const_cov, model_funs, helpers, $re_q)
+                if dist === nothing
+                    re_reject = true
+                    $vals_sym[j] ~ MvNormal(zeros(T, $dim), Diagonal(ones(T, $dim)))
+                else
+                    $vals_sym[j] ~ dist
+                end
             end
         end
         push!(sample_blocks.args, :(local $meta_sym = $meta_get))
@@ -283,8 +333,13 @@ function _build_turing_model_re(
             dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
             model_funs = get_model_funs(get_model(dm))
             helpers = get_helper_funs(get_model(dm))
+            re_reject = false
 
             $sample_blocks
+            if re_reject
+                Turing.@addlogprob! -Inf
+                return nothing
+            end
             Turing.@addlogprob! _mcmc_const_re_prior(
                 dm, θ_re, const_re_info, model_funs, helpers)
             re_samples = $re_samples_expr
@@ -439,7 +494,8 @@ function _fit_model(dm::DataModel, method::MCMC, args...;
 
     free_names_t = Tuple(free_names)
     θ_template = get_θ0_untransformed(fe)
-    priors_nt = NamedTuple{free_names_t}(Tuple(getfield(priors, n) for n in free_names))
+    priors_nt = NamedTuple{free_names_t}(Tuple(_turing_prior(getfield(priors, n))
+    for n in free_names))
     model = nothing
     if isempty(re_names)
         fname = _build_turing_model(fixed_names, free_names)
@@ -539,12 +595,13 @@ function _fit_model(dm::DataModel, method::MCMC, args...;
     chain = Turing.sample(rng, model, sampler, n_samples; adapt = n_adapt, turing_kwargs...)
 
     obs = get_df(dm)[:, get_obs_cols(dm)]
-    summary = FitSummary(NaN, missing,
+    summary = FitSummary(_mcmc_objective(chain, n_adapt), missing,
         FitParameters(ComponentArray(), ComponentArray()),
         NamedTuple())
     diagnostics = FitDiagnostics(
         (;), (sampler = sampler,), (n_samples = n_samples, n_adapt = n_adapt), NamedTuple())
     result = MCMCResult(chain, sampler, n_samples, NamedTuple(), obs)
-    return FitResult(method, result, summary, diagnostics,
+    res = FitResult(method, result, summary, diagnostics,
         store_data_model ? dm : nothing, args, fit_kwargs)
+    return _with_posterior_params(res, dm; rng = rng)
 end

@@ -244,6 +244,19 @@ end
     return ComponentArray(vals, axs)
 end
 
+# η for one individual in a crossed design: the plug-in value repeated once per
+# grouping level the individual belongs to (row lookups index per level).
+function _pooled_crossed_ind_eta(dists_builder, θs, const_cov, model_funs, helpers,
+        re_names, dims, strategies, ::Type{T}, nlev) where {T}
+    dists = dists_builder(θs, const_cov, model_funs, helpers)
+    nt_pairs = Pair{Symbol, Any}[]
+    for (ri, re) in enumerate(re_names)
+        v = _pooled_eta_value(getproperty(dists, re), dims[ri], strategies[ri], T)
+        push!(nt_pairs, re => nlev[ri] == 1 ? v : fill(v, nlev[ri]))
+    end
+    return ComponentArray(NamedTuple(nt_pairs))
+end
+
 function _compute_pooled_etas(dm::DataModel, θ::ComponentArray, strategies)
     model = get_model(dm)
     lp_cache = get_laplace_cache(get_re_group_info(dm))
@@ -278,6 +291,15 @@ function _compute_pooled_etas(dm::DataModel, θ::ComponentArray, strategies)
         return [_pooled_fill_ind_eta(dists_builder, θs, get_const_cov(individuals[i]),
                     model_funs, helpers, re_names, dims, strategies, T, axs, ηlen)
                 for i in 1:n]
+    end
+    # Crossed designs: an individual can span several levels of a grouping column, so
+    # the η shape differs per individual and no shared axes exist.
+    level_ids = get_ind_level_ids(lp_cache)
+    if any(i -> any(ids -> length(ids) > 1, level_ids[i]), 1:n)
+        dims = get_dims(lp_cache)
+        return [_pooled_crossed_ind_eta(dists_builder, θs, get_const_cov(individuals[i]),
+                    model_funs, helpers, re_names, dims, strategies, T,
+                    map(length, level_ids[i])) for i in 1:n]
     end
     # Heterogeneous-shape path (e.g. a dim-1 NPF RE kept as a 1-vector): probe the
     # plug-in SHAPES once with the first individual to build the output axes (the
@@ -862,14 +884,15 @@ function _pooled_re_dataframes(dm::DataModel, η_vec::Vector{<:ComponentArray};
     isempty(re_names) && return NamedTuple()
     re_groups = get_re_groups(get_random(get_model(dm)))
 
-    # (ri, lvl_id) → first individual index with that level
-    level_to_ind = Dict{Tuple{Int, Int}, Int}()
+    # (ri, lvl_id) → (first individual with that level, its position within that
+    # individual's levels — crossed designs put several levels on one individual)
+    level_to_ind = Dict{Tuple{Int, Int}, Tuple{Int, Int}}()
     for i in 1:length(η_vec)
         for ri in 1:length(re_names)
-            ids = get_ind_level_ids(lp_cache)[i][ri]
-            isempty(ids) && continue
-            key = (ri, ids[1])
-            haskey(level_to_ind, key) || (level_to_ind[key] = i)
+            for (pos, lvl) in enumerate(get_ind_level_ids(lp_cache)[i][ri])
+                key = (ri, lvl)
+                haskey(level_to_ind, key) || (level_to_ind[key] = (i, pos))
+            end
         end
     end
 
@@ -882,9 +905,11 @@ function _pooled_re_dataframes(dm::DataModel, η_vec::Vector{<:ComponentArray};
         rows = Any[]
         vals_flat = Vector{Vector{Any}}()
         for (lvl_id, lvl_val) in enumerate(levels_all)
-            i = get(level_to_ind, (ri, lvl_id), 0)
+            i, pos = get(level_to_ind, (ri, lvl_id), (0, 0))
             i == 0 && continue
-            val = getproperty(η_vec[i], re)
+            comp = getproperty(η_vec[i], re)
+            nlev = length(get_ind_level_ids(lp_cache)[i][ri])
+            val = nlev == 1 ? comp : comp[pos]
             push!(rows, lvl_val)
             if flatten
                 push!(vals_flat, val isa Number ? [val] : collect(vec(val)))

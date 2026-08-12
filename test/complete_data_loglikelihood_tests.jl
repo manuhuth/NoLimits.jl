@@ -197,3 +197,71 @@ end
     per = complete_data_loglikelihood_per_individual(npf_dm, θ0; eta = :ebe)
     @test isapprox(sum(per.complete_data_loglikelihood), ebe; rtol = 1e-8)
 end
+
+# Crossed grouping columns (:ID and :RATER, rotating assignment): an individual spans
+# several levels of the second grouping column, so its η carries one entry per level.
+@testset "crossed random-effect groups" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            b = RealNumber(0.5)
+            σ = RealNumber(0.3, scale = :log)
+            ω_id = RealNumber(0.4, scale = :log)
+            ω_r = RealNumber(0.2, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η_id = RandomEffect(Normal(0.0, ω_id); column = :ID)
+            η_rater = RandomEffect(Normal(0.0, ω_r); column = :RATER)
+        end
+        @formulas begin
+            y ~ Normal(a + b * t + η_id + η_rater, σ)
+        end
+    end
+    nid, nr = 12, 3
+    rows = NamedTuple[]
+    for i in 1:nid, k in 1:4
+        push!(rows,
+            (ID = Symbol("s", i), RATER = Symbol("r", mod1(i + k, nr)),
+                t = Float64(k), y = 1.0 + 0.4k + 0.1 * (i - 6) + 0.05 * k * i))
+    end
+    df = DataFrame(rows)
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    θ = get_θ0_untransformed(dm)
+
+    # ln p(y, η | θ) with η supplied per level.
+    function manual(ηid, ηr)
+        ll = sum(logpdf(Normal(θ.a + θ.b * r.t + ηid[r.ID] + ηr[r.RATER], θ.σ), r.y)
+        for r in eachrow(df))
+        ll += sum(logpdf(Normal(0.0, θ.ω_id), v) for v in values(ηid))
+        return ll + sum(logpdf(Normal(0.0, θ.ω_r), v) for v in values(ηr))
+    end
+
+    ηid = Dict(Symbol("s", i) => 0.05 * (i - 6) for i in 1:nid)
+    ηr = Dict(Symbol("r", j) => 0.1 * j for j in 1:nr)
+    eta = (; η_id = NamedTuple(k => v for (k, v) in ηid),
+        η_rater = NamedTuple(k => v for (k, v) in ηr))
+    @test isapprox(complete_data_loglikelihood(dm, θ; eta = eta), manual(ηid, ηr);
+        rtol = 1e-10)
+
+    zeros_id = Dict(k => 0.0 for k in keys(ηid))
+    zeros_r = Dict(k => 0.0 for k in keys(ηr))
+    mean_ll = complete_data_loglikelihood(dm, θ; eta = :mean)
+    @test isapprox(mean_ll, manual(zeros_id, zeros_r); rtol = 1e-10)
+
+    ebe_ll = complete_data_loglikelihood(dm, θ; eta = :ebe)
+    @test isfinite(ebe_ll)
+    @test ebe_ll >= mean_ll
+    per = complete_data_loglikelihood_per_individual(dm, θ; eta = :ebe)
+    @test nrow(per) == nid
+    @test isapprox(sum(per.complete_data_loglikelihood), ebe_ll; rtol = 1e-8)
+
+    # The naive-pooled plug-in path shares the η construction.
+    res = fit_model(dm, NoLimits.Pooled())
+    @test isfinite(NoLimits.get_objective(res))
+    re_df = get_random_effects(res)
+    @test nrow(re_df.η_id) == nid
+    @test nrow(re_df.η_rater) == nr
+end

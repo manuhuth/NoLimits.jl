@@ -435,3 +435,51 @@ end
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 end
+
+# Turing sibling of the frequentist RE-prior guard (#96): a proposal whose RE distribution
+# constructor throws must be rejected, not kill the sampler (#108).
+@testset "MCMC RE prior that throws is rejected" begin
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+
+        @fixedEffects begin
+            a = RealNumber(1.0, prior = Normal(0.0, 1.0))
+            σ = RealNumber(0.5, scale = :log, prior = LogNormal(0.0, 0.5))
+        end
+
+        @randomEffects begin
+            # sqrt(a) throws as soon as the sampler proposes a negative `a`
+            η = RandomEffect(Normal(0.0, sqrt(a)); column = :ID)
+        end
+
+        @formulas begin
+            y ~ Normal(a + η, σ)
+        end
+    end
+
+    dm = DataModel(model,
+        DataFrame(ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0],
+            y = [0.1, 0.2, 0.0, -0.1]);
+        primary_id = :ID, time_col = :t)
+
+    m = NoLimits.get_model(dm)
+    builder = NoLimits.create_random_effect_distribution(NoLimits.get_random(m))
+    θ = get_θ0_untransformed(NoLimits.get_fixed(m))
+    cc = NoLimits.get_const_cov(NoLimits.get_individuals(dm)[1])
+    mf = NoLimits.get_model_funs(m)
+    hp = NoLimits.get_helper_funs(m)
+    @test builder !== nothing
+    @test NoLimits._mcmc_re_dist(builder, θ, cc, mf, hp, :η) isa Normal
+    θ_bad = deepcopy(θ)
+    θ_bad.a = -1.0
+    @test NoLimits._mcmc_re_dist(builder, θ_bad, cc, mf, hp, :η) === nothing
+
+    res = fit_model(dm,
+        NoLimits.MCMC(; sampler = MH(),
+            turing_kwargs = (n_samples = 20, n_adapt = 5, progress = false));
+        rng = MersenneTwister(1), theta_0_untransformed = θ)
+    @test res isa FitResult
+    @test NoLimits.get_chain(res) isa MCMCChains.Chains
+end

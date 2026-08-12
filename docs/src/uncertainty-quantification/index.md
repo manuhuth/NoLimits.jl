@@ -84,18 +84,17 @@ uq_profile = compute_uq(
     level=0.95,
     profile_method=:LIN_EXTRAPOL,
     profile_scan_width=3.0,
-    profile_scan_tol=1e-3,
-    profile_loss_tol=1e-3,
 )
 ```
 
 Key options:
 
 - `profile_method`
-- `profile_scan_width`, `profile_scan_tol`
-- `profile_loss_tol`
+- `profile_scan_width`
 - `profile_local_alg`, `profile_max_iter`, `profile_ftol_abs`
 - `profile_kwargs`
+
+`profile_scan_tol` and `profile_loss_tol` are deprecated and ignored - see [Profile Likelihood](profile-likelihood.md).
 
 ### MCMC Refit (`method=:mcmc_refit`)
 

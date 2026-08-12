@@ -32,6 +32,7 @@ struct _SavedDataModelConfig
     rate_col::Symbol
     cmt_col::Symbol
     serialization_kind::Symbol   # :serial / :threads / :distributed
+    t0::Union{Nothing, Float64}
 end
 
 # ─── Per-method saved result structs ─────────────────────────────────────────
@@ -82,6 +83,24 @@ struct SavedGHQuadratureResult{S, O, I, N, B}
     iterations::I
     notes::N
     eb_modes::B
+end
+
+# Fallback for every other StandardOptimizationResult kind (:pooled and custom
+# kinds registered through build_fit_result); keeps all three optional payloads.
+struct SavedStandardResult{Kind, S, O, I, N, B, E, St}
+    solution::S
+    objective::O
+    iterations::I
+    notes::N
+    eb_modes::B
+    eta_vec::E
+    strategies::St
+end
+
+function SavedStandardResult{Kind}(solution::S, objective::O, iterations::I, notes::N,
+        eb_modes::B, eta_vec::E, strategies::St) where {Kind, S, O, I, N, B, E, St}
+    SavedStandardResult{Kind, S, O, I, N, B, E, St}(
+        solution, objective, iterations, notes, eb_modes, eta_vec, strategies)
 end
 
 # MCMCChains.Chains is plain array data and serializes directly with JLD2.
@@ -169,7 +188,8 @@ function _build_saved_config(dm::DataModel)
         cfg.amt_col,
         cfg.rate_col,
         cfg.cmt_col,
-        _ensemble_to_symbol(cfg.serialization)
+        _ensemble_to_symbol(cfg.serialization),
+        cfg.t0 === nothing ? nothing : float(cfg.t0)
     )
 end
 
@@ -207,6 +227,11 @@ end
 function _strip_method_result(r::GHQuadratureResult)
     SavedGHQuadratureResult(
         _strip_solution(r.solution), r.objective, r.iterations, r.notes, get_eb_modes(r))
+end
+
+function _strip_method_result(r::StandardOptimizationResult{Kind}) where {Kind}
+    SavedStandardResult{Kind}(_strip_solution(r.solution), r.objective, r.iterations,
+        r.notes, r.eb_modes, r.eta_vec, r.strategies)
 end
 
 function _strip_method_result(r::MCMCResult)
@@ -299,6 +324,11 @@ function _reconstruct_method_result(s::SavedGHQuadratureResult)
     GHQuadratureResult(s.solution, s.objective, s.iterations, nothing, s.notes, s.eb_modes)
 end
 
+function _reconstruct_method_result(s::SavedStandardResult{Kind}) where {Kind}
+    StandardOptimizationResult{Kind}(s.solution, s.objective, s.iterations, nothing,
+        s.notes, s.eb_modes, s.eta_vec, s.strategies)
+end
+
 function _reconstruct_method_result(s::SavedMCMCResult)
     MCMCResult(s.chain, _SavedSamplerStub(s.sampler_kind), s.n_samples, s.notes, s.observed)
 end
@@ -326,6 +356,7 @@ function _reconstruct_data_model(df, config::_SavedDataModelConfig, model)
         amt_col = config.amt_col,
         rate_col = config.rate_col,
         cmt_col = config.cmt_col,
+        t0 = config.t0,
         serialization = _symbol_to_serialization(config.serialization_kind))
 end
 

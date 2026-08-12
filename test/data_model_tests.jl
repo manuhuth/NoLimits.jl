@@ -4,6 +4,7 @@ using DataFrames
 using Distributions
 using SciMLBase
 using DataInterpolations
+using SentinelArrays: ChainedVector
 
 @testset "row-varying RE capability detection" begin
     df_basic = DataFrame(
@@ -1307,6 +1308,57 @@ end
     @test_throws ErrorException DataModel(model_saveat, df; primary_id = :ID, time_col = :t)
 end
 
+@testset "DataModel errors on offsets below dynamic covariate support" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.1)
+            σ = RealNumber(0.5)
+        end
+
+        @covariates begin
+            t = Covariate()
+            w1 = DynamicCovariate(; interpolation = LinearInterpolation)
+        end
+
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, 1.0); column = :ID)
+        end
+
+        @DifferentialEquation begin
+            D(x1) ~ -a * x1 + w1(t)
+        end
+
+        @initialDE begin
+            x1 = 1.0
+        end
+
+        @formulas begin
+            y ~ Normal(x1(t - 0.5), σ)
+        end
+    end
+
+    # rows start at t = 0.5, so t_first + offset = 0.0 clears the negative-time check,
+    # but the interpolants have no support below 0.5.
+    df = DataFrame(
+        ID = [1, 1, 1],
+        t = [0.5, 1.0, 2.0],
+        w1 = [1.0, 1.2, 1.4],
+        y = [1.0, 1.1, 1.2]
+    )
+
+    model_saveat = set_solver_config(model; saveat_mode = :saveat)
+    err = try
+        DataModel(model_saveat, df; primary_id = :ID, time_col = :t)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ErrorException
+    @test occursin("dynamic covariate support", err.msg)
+    @test occursin("-0.5", err.msg)
+    @test occursin("[0.5, 2.0]", err.msg)
+end
+
 @testset "DataModel pairing creates multiple batches" begin
     model = @Model begin
         @fixedEffects begin
@@ -1696,4 +1748,42 @@ end
     dm1 = DataModel(model, df[df.ID .<= 2, :]; primary_id = :ID, time_col = :t,
         evid_col = :EVID, amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT)
     @test isconcretetype(eltype(get_individuals(dm1)))
+end
+
+@testset "chunked (ChainedVector) columns from CSV" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            σ = RealNumber(0.5)
+        end
+
+        @covariates begin
+            t = Covariate()
+            w = ConstantCovariate(; constant_on = :id)
+        end
+
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, 1.0); column = :id)
+        end
+
+        @formulas begin
+            y ~ Normal(a + w + η, σ)
+        end
+    end
+
+    cols = (id = [["a", "a"], ["b", "b"]], t = [[0.0, 1.0], [0.0, 1.0]],
+        w = [[1.0, 1.0], [2.0, 2.0]], y = [[1.0, 1.1], [0.9, 1.0]])
+    df_chained = DataFrame(map(ChainedVector, cols); copycols = false)
+    df_plain = DataFrame(map(c -> reduce(vcat, c), cols))
+    @test df_chained.id isa ChainedVector
+
+    dm_chained = DataModel(model, df_chained; primary_id = :id, time_col = :t)
+    dm_plain = DataModel(model, df_plain; primary_id = :id, time_col = :t)
+    inds_plain = get_individuals(dm_plain)
+    @test length(get_individuals(dm_chained)) == length(inds_plain)
+    for (i, ind) in enumerate(get_individuals(dm_chained))
+        @test get_const_cov(ind) == get_const_cov(inds_plain[i])
+        @test get_re_groups(ind) == get_re_groups(inds_plain[i])
+        @test get_obs(get_series(ind)) == get_obs(get_series(inds_plain[i]))
+    end
 end

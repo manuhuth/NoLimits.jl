@@ -66,9 +66,11 @@ Four backends are supported:
   for VI, `mcmc_draws` is the posterior sample count (`mcmc_warmup` ignored).
 - `constants`, `constants_re`, `penalty`, `ode_args`, `ode_kwargs`, `serialization`:
   forwarded to objective evaluations (default: inherit from the source fit result).
-- `profile_method`, `profile_scan_width`, `profile_scan_tol`, `profile_loss_tol`,
-  `profile_local_alg`, `profile_max_iter`, `profile_ftol_abs`, `profile_kwargs`:
-  LikelihoodProfiler.jl profile-likelihood settings.
+- `profile_method`, `profile_scan_width`, `profile_local_alg`, `profile_max_iter`,
+  `profile_ftol_abs`, `profile_kwargs`: LikelihoodProfiler.jl profile-likelihood settings.
+- `profile_scan_tol`, `profile_loss_tol`: deprecated and ignored. They were CICO scan
+  tolerances of the LikelihoodProfiler 0.x backend and have no 1.x equivalent; passing
+  either warns.
 - `mcmc_method`, `mcmc_sampler`, `mcmc_turing_kwargs`, `mcmc_adtype`, `mcmc_fit_kwargs`:
   MCMC backend settings.
 - `rng::AbstractRNG = Random.default_rng()`: random-number generator.
@@ -99,8 +101,8 @@ function compute_uq(res::FitResult;
         serialization::Union{Nothing, SciMLBase.EnsembleAlgorithm} = nothing,
         profile_method::Symbol = :LIN_EXTRAPOL,
         profile_scan_width::Real = 3.0,
-        profile_scan_tol::Real = 1e-3,
-        profile_loss_tol::Real = 1e-3,
+        profile_scan_tol::Union{Nothing, Real} = nothing,
+        profile_loss_tol::Union{Nothing, Real} = nothing,
         profile_local_alg::Symbol = :LN_NELDERMEAD,
         profile_max_iter::Int = 10_000,
         profile_ftol_abs::Real = 1e-3,

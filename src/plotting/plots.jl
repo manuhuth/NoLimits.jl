@@ -286,6 +286,7 @@ function _same_data_model_for_fits(dm1::DataModel, dm2::DataModel)
     cfg1.obs_cols == cfg2.obs_cols || return false
     cfg1.serialization == cfg2.serialization || return false
     cfg1.saveat_mode == cfg2.saveat_mode || return false
+    cfg1.t0 == cfg2.t0 || return false
 
     length(get_individuals(dm1)) == length(get_individuals(dm2)) || return false
     get_obs_rows(get_row_groups(dm1)) == get_obs_rows(get_row_groups(dm2)) || return false

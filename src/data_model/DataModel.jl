@@ -14,6 +14,7 @@ export get_closed_form_plan
 export get_time_col
 export get_obs_cols
 export get_evid_col
+export get_t0
 export get_series
 export get_const_cov
 export get_callbacks
@@ -30,10 +31,10 @@ using Distributions
 using Random
 
 """
-    DataModelConfig{S}
+    DataModelConfig{S, T}
 
 Configuration struct for a [`DataModel`](@ref), storing column names, serialization
-algorithm, and save-time mode.
+algorithm, save-time mode, and the integration start time.
 
 # Fields
 - `primary_id::Symbol`: primary individual-grouping column.
@@ -45,8 +46,9 @@ algorithm, and save-time mode.
 - `obs_cols::Vector{Symbol}`: observation outcome column names.
 - `serialization::S`: SciML ensemble algorithm (e.g. `EnsembleSerial()`, `EnsembleThreads()`).
 - `saveat_mode::Symbol`: `:dense` or `:saveat` (resolved from `:auto` at construction time).
+- `t0::T`: integration start time, or `nothing` to start at each individual's first data time.
 """
-struct DataModelConfig{S}
+struct DataModelConfig{S, T}
     primary_id::Symbol
     time_col::Symbol
     evid_col::Union{Nothing, Symbol}
@@ -56,6 +58,7 @@ struct DataModelConfig{S}
     obs_cols::Vector{Symbol}
     serialization::S
     saveat_mode::Symbol
+    t0::T
 end
 
 struct RowGroups{R, O}
@@ -227,6 +230,9 @@ end
 function _get_col(df, name::Symbol)
     return getproperty(df, name)
 end
+
+# Row numbers valid for every column of the frame (see _check_constant_within_group).
+_row_indices(col) = Base.OneTo(length(col))
 
 function _require_cols(df, cols::Vector{Symbol})
     for c in cols
@@ -464,7 +470,9 @@ function _check_constant_within_group(df, group_col::Symbol, cov_cols::Vector{Sy
     refs = Dict{Any, Int}()
     bad = Dict{Any, Vector{Symbol}}()
     gcol = _get_col(df, group_col)
-    for i in eachindex(gcol)
+    # Plain row numbers: eachindex of a chunked column (CSV's ChainedVector) yields
+    # column-specific index objects that must not be used on the covariate columns.
+    for i in _row_indices(gcol)
         g = gcol[i]
         if !haskey(refs, g)
             refs[g] = i
@@ -730,7 +738,7 @@ function _validate_re_group_identifiability(model, df, config::DataModelConfig)
     isempty(re_names) && return
     re_groups = get_re_groups(model.random.random)
     obs_rows = if config.evid_col === nothing
-        eachindex(_get_col(df, config.primary_id))
+        _row_indices(_get_col(df, config.primary_id))
     else
         evid = _get_col(df, config.evid_col)
         findall(==(0), evid)
@@ -1343,6 +1351,8 @@ observation counts, and saveat-mode resolution.
 - `amt_col::Symbol = :AMT`: AMT column (dose amounts, used when `evid_col` is set).
 - `rate_col::Symbol = :RATE`: RATE column (infusion rates, used when `evid_col` is set).
 - `cmt_col::Symbol = :CMT`: CMT column (compartment index or name, used when `evid_col` is set).
+- `t0::Union{Nothing, Real} = 0.0`: integration start time. `nothing` starts each
+  individual's integration at its first data time.
 - `serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial()`: parallelisation
   strategy for ODE solving. Use `EnsembleThreads()` for multi-threaded evaluation.
 """
@@ -1373,7 +1383,7 @@ function DataModel(model,
         error("Unknown saveat_mode $(saveat_mode). Use :dense, :saveat, or :auto.")
     saveat_mode = saveat_mode == :auto ? :saveat : saveat_mode
     config = DataModelConfig(primary_id, time_col, evid_col, amt_col, rate_col,
-        cmt_col, obs_cols, serialization, saveat_mode)
+        cmt_col, obs_cols, serialization, saveat_mode, t0)
     _validate_schema(model, df, config)
     _validate_observed_markov_coarsed_usage(model, df, config)
 
@@ -1395,6 +1405,11 @@ function DataModel(model,
     if saveat_mode != :dense && requires_dense
         error("Formulas include non-constant time offsets for DE states/signals. Use saveat_mode=:dense or rewrite formulas to use constant offsets.")
     end
+    # Dynamic covariates used inside the DE are interpolated over an individual's row
+    # times only, so the integration span must not start below that support.
+    de_fun_syms = model.de.de === nothing ? Symbol[] : get_de_meta(model.de.de).fun_syms
+    de_dyn = sort!(collect(intersect(Set(cov.dynamic), Set(de_fun_syms))))
+    off_min = isempty(time_offsets) ? 0.0 : minimum(time_offsets)
     keys_sorted, groups = _group_indices(df, primary_id)
     individuals = Vector{Individual}(undef, length(groups))
     obs_groups = Vector{Vector{Int}}(undef, length(groups))
@@ -1435,6 +1450,9 @@ function DataModel(model,
                 bad_tmin[id_val] = tmin
             end
             tspan = (t0 === nothing ? tmin : min(oftype(tmin, t0), tmin), tmax)
+        end
+        if !isempty(de_dyn) && tspan[1] < minimum(tvals)
+            error("Formulas request times earlier than the dynamic covariate support for individual $(keys_sorted[i]): the integration span starts at t=$(tspan[1]) (smallest formula time offset $(off_min)), but the dynamic covariate(s) $(join(de_dyn, ", ")) used in @DifferentialEquation are only supported on [$(minimum(tvals)), $(maximum(tvals))] and cannot be extrapolated. Add covariate rows covering t=$(tspan[1]), or change the formula offset (or t0) so that the integration starts at or after $(minimum(tvals)).")
         end
         re_groups = _build_re_groups(model, df, rows)
         cb_times = callbacks !== nothing ? callbacks.all_times : Float64[]
@@ -1585,6 +1603,14 @@ Return the observation (outcome) column names.
 Return the EVID column name (event handling), or `nothing` when events are disabled.
 """
 @inline get_evid_col(dm::DataModel) = dm.config.evid_col
+
+"""
+    get_t0(dm::DataModel) -> Union{Nothing, Real}
+
+Return the integration start time, or `nothing` when integration starts at each
+individual's first data time.
+"""
+@inline get_t0(dm::DataModel) = dm.config.t0
 
 # ── Individual accessors ─────────────────────────────────────────────────────
 

@@ -16,7 +16,7 @@ function _chain_keys_for_free(fe::FixedEffects, free_names::Vector{Symbol})
             for k in eachindex(spec.lie.free_idx)
                 push!(out, string(name, "[", k, "]"))
             end
-        elseif (spec.kind == :expm ||
+        elseif (spec.kind == :expm || spec.kind == :cholesky ||
                 (spec.kind == :lie && spec.lie === nothing)) && v isa AbstractMatrix
             n = size(v, 1)
             for j in 1:n
@@ -56,12 +56,17 @@ function _chain_keys_for_free(fe::FixedEffects, free_names::Vector{Symbol})
     return out
 end
 
+# Accepted spellings of one coordinate key. MCMCChains prints matrix indices as
+# "Ω[1, 1]" while the package's flat-name convention writes "Ω[1,1]"; the single
+# naming authority is this variant list, used by every chain/posterior lookup.
+@inline function _chain_key_variants(key::AbstractString)
+    return (String(key), replace(key, "," => ", "), replace(key, " " => ""))
+end
+
 @inline function _lookup_chain_index(idx_map::Dict{String, Int}, key::String)
-    haskey(idx_map, key) && return idx_map[key]
-    key2 = replace(key, "," => ", ")
-    haskey(idx_map, key2) && return idx_map[key2]
-    key3 = replace(key, " " => "")
-    haskey(idx_map, key3) && return idx_map[key3]
+    for k in _chain_key_variants(key)
+        haskey(idx_map, k) && return idx_map[k]
+    end
     return 0
 end
 

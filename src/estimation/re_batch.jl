@@ -10,7 +10,8 @@ struct REConstantsCache{M, S, V}
     scalar_vals::S
     vector_vals::V
 end
-function _normalize_constants_re(dm::DataModel, constants_re::NamedTuple)
+function _normalize_constants_re(dm::DataModel, constants_re::NamedTuple;
+        strict::Bool = true)
     isempty(constants_re) && return NamedTuple()
     re_names = get_re_names(dm.model.random.random)
     isempty(re_names) && return NamedTuple()
@@ -43,8 +44,13 @@ function _normalize_constants_re(dm::DataModel, constants_re::NamedTuple)
                     break
                 end
             end
-            matched ||
-                error("constants_re for $(re) includes level $(k) not found in column $(col). The value must be present in that column.")
+            # `strict = false` (constants inherited from a fit, applied to other data)
+            # skips a level this data lacks; the constant simply has nothing to pin.
+            if !matched
+                strict &&
+                    error("constants_re for $(re) includes level $(k) not found in column $(col). The value must be present in that column.")
+                @warn "constants_re for $(re) includes level $(k), which is absent from column $(col); ignoring it." maxlog=1
+            end
         end
         push!(pairs, re => dict)
     end
@@ -52,6 +58,9 @@ function _normalize_constants_re(dm::DataModel, constants_re::NamedTuple)
 end
 
 function _build_constants_cache(dm::DataModel, constants_re::NamedTuple)
+    # Normalize here (idempotent) so callers holding the raw user-facing
+    # `constants_re` — level keys as Symbols, data levels as Strings — still match.
+    constants_re = _normalize_constants_re(dm, constants_re)
     cache = dm.re_group_info.laplace_cache
     cache === nothing && return REConstantsCache(
         BitVector[], Vector{Vector{Float64}}(), Vector{Vector{Vector{Float64}}}())

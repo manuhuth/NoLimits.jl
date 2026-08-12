@@ -1,7 +1,9 @@
 using Test
 using NoLimits
+using ComponentArrays
 using DataFrames
 using Distributions
+using LinearAlgebra
 using Turing
 using MCMCChains
 using Lux
@@ -199,6 +201,40 @@ end
     @test res_map isa FitResult
 end
 
+@testset "MCMC/VI accept Vector{Distribution} priors on flat blocks" begin
+    # A per-element prior vector is valid on NN/SoftTree/NPF blocks but is not a
+    # distribution Turing's `~` accepts; it must be turned into a product distribution.
+    st = SoftTreeParameters(1, 2; function_name = :ST1)
+    st_prior = fill(Normal(0.0, 1.0), length(st.value))
+
+    model = @Model begin
+        @fixedEffects begin
+            Γ = SoftTreeParameters(
+                1, 2; function_name = :ST1, calculate_se = false, prior = st_prior)
+            σ = RealNumber(0.5, scale = :log, prior = LogNormal(0.0, 0.5))
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @formulas begin
+            y ~ Normal(ST1([t], Γ)[1], σ)
+        end
+    end
+
+    df = DataFrame(ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0],
+        y = [0.1, 0.3, 0.05, 0.35])
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+
+    res = fit_model(dm,
+        NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)))
+    @test NoLimits.get_chain(res) isa MCMCChains.Chains
+
+    res_vi = fit_model(dm, NoLimits.VI(; turing_kwargs = (max_iter = 2,)))
+    @test NoLimits.get_variational_posterior(res_vi) !== nothing
+end
+
 @testset "MCMC ODE with NN/SoftTree/Spline (fixed blocks)" begin
     chain = Chain(Dense(1, 3, tanh), Dense(3, 1))
     knots = collect(range(0.0, 1.0; length = 4))
@@ -298,4 +334,48 @@ end
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
     @test NoLimits.get_observed(res).y == df.y
+end
+
+@testset "MCMC params keep the full fixed-effect layout (#99)" begin
+    model = @Model begin
+        @fixedEffects begin
+            β = RealVector([0.5, 0.2]; prior = MvNormal(zeros(2), LinearAlgebra.I(2)))
+            Ω = RealPSDMatrix([1.0 0.0; 0.0 1.0]; calculate_se = true,
+                prior = InverseWishart(4.0, Matrix(1.0 * LinearAlgebra.I, 2, 2)))
+            σ = RealNumber(0.5; scale = :log, prior = LogNormal(0.0, 0.5))
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(MvNormal(zeros(2), Ω); column = :ID)
+        end
+        @formulas begin
+            mu = β[1] + η[1] + (β[2] + η[2]) * t
+            y ~ Normal(mu, σ)
+        end
+    end
+
+    df = DataFrame(ID = repeat(1:4, inner = 3), t = repeat([0.0, 1.0, 2.0], 4),
+        y = [1.0, 1.4, 2.1, 0.8, 1.5, 2.4, 1.2, 1.7, 2.0, 0.9, 1.3, 1.9])
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+
+    logger = Test.TestLogger()
+    res = Base.CoreLogging.with_logger(logger) do
+        fit_model(dm,
+            NoLimits.MCMC(; sampler = MH(),
+                turing_kwargs = (n_samples = 30, n_adapt = 5, progress = false)))
+    end
+    @test !any(r -> occursin("missing fixed effect", r.message), logger.logs)
+
+    θ = NoLimits.get_params(res; scale = :untransformed)
+    res_l = fit_model(dm, NoLimits.Laplace())
+    @test ComponentArrays.labels(θ) ==
+          ComponentArrays.labels(NoLimits.get_params(res_l; scale = :untransformed))
+    @test all(isfinite, θ)
+    @test isfinite(NoLimits.get_objective(res))
+
+    # Same chain-key layout feeds chain UQ (#100): 2 β + 3 Ω cholesky coords + σ.
+    uq = compute_uq(res; method = :chain, mcmc_draws = 10, rng = Random.Xoshiro(99))
+    @test length(get_uq_parameter_names(uq)) == 6
 end

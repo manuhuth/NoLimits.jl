@@ -47,6 +47,45 @@ end
     @test plot_residuals(res) !== nothing
 end
 
+# Regression for #106: string-valued RE levels (Symbol keys in constants_re) broke
+# every downstream consumer of a constants_re fit; new data lacking the level must
+# ignore that constant rather than error.
+@testset "constants_re with string levels: residuals and predict" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.1)
+            σ = RealNumber(0.3, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, 0.5); column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(a + η + 0.2 * t, σ)
+        end
+    end
+    df = DataFrame(ID = repeat(["id_001", "id_002", "id_003"], inner = 2),
+        t = repeat([0.0, 1.0], outer = 3),
+        y = [0.1, 0.3, 0.0, 0.25, 0.15, 0.35])
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 2,));
+        constants_re = (; η = (; id_001 = 0.0)),
+        serialization = NoLimits.EnsembleSerial())
+
+    η_df = get_random_effects(res).η
+    @test η_df[η_df.ID .== "id_001", :η_1][1] == 0.0
+    @test nrow(get_residuals(res)) == nrow(df)
+
+    df_wo = df[df.ID .!= "id_001", :]
+    for mode in (:population, :ebe, :reestimate, :marginal)
+        @test nrow(NoLimits.predict(res, df; re_mode = mode)) == nrow(df)
+        # The pinned level is absent here — it must be ignored, not fatal.
+        @test nrow(NoLimits.predict(res, df_wo; re_mode = mode)) == nrow(df_wo)
+    end
+end
+
 @testset "residuals MCMC summary and draw-level outputs" begin
     res = fx_mcmc()                       # shared no-RE MCMC fit
     df = fx_nore_df()
@@ -197,6 +236,67 @@ end
     @test !(ls[2] ≈ -logpdf(dists[2], y[2]))
 end
 
+@testset "HMM logscore sum matches the conditional loglik (missing rows)" begin
+    model = @Model begin
+        @fixedEffects begin
+            P = DiscreteTransitionMatrix([0.8 0.2; 0.3 0.7])
+            π0 = ProbabilityVector([0.5, 0.5])
+            μ = RealVector([-0.5, 1.5])
+            σk = RealVector([0.7, 0.7]; scale = [:log, :log])
+            ω = RealNumber(0.5; scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, ω); column = :ID)
+        end
+        @formulas begin
+            y ~ DiscreteTimeDiscreteStatesHMM(P,
+                (Normal(μ[1] + η, σk[1]), Normal(μ[2] + η, σk[2])),
+                Categorical(π0))
+        end
+    end
+
+    rng = Xoshiro(20260812)
+    P_true = [0.9 0.1; 0.2 0.8]
+    rows = NamedTuple[]
+    for id in 1:4
+        η = 0.3 * randn(rng)
+        miss = shuffle(rng, collect(2:8))[1:2]     # missing mid-sequence, never first
+        s = rand(rng, Distributions.Categorical([0.7, 0.3]))
+        for k in 1:8
+            s = rand(rng, Distributions.Categorical(P_true[s, :]))
+            y = k in miss ? missing : [-1.0, 2.0][s] + η + [0.5, 0.6][s] * randn(rng)
+            push!(rows, (; ID = "id_$id", t = Float64(k), y = y))
+        end
+    end
+    df = DataFrame(rows)
+    @test count(ismissing, df.y) == 8
+
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 3,)))
+
+    rdf = get_residuals(res; residuals = [:logscore])
+    ls = sum(skipmissing(rdf.logscore))
+    # logscore is the NEGATIVE filtered log predictive density, so its sum is the
+    # conditional loglik at the EB modes with the sign flipped.
+    @test isapprox(-ls, get_loglikelihood(res); atol = 1.0e-6)
+    # Sharpness: unfiltered scoring would be a different number entirely.
+    cache = build_plot_cache(res)
+    θ = cache.params
+    η_ind = cache.random_effects[1]
+    ind = get_individuals(dm)[1]
+    obs_rows = NoLimits.get_row_groups(dm).obs_rows[1]
+    y1 = get_obs(get_series(ind)).y
+    unfiltered = sum(logpdf(
+                         calculate_formulas_obs(model, θ, η_ind, ind.const_cov,
+                             NoLimits._varying_at(dm, ind, j, obs_rows[j])).y, y1[j])
+    for j in eachindex(obs_rows) if y1[j] !== missing)
+    ls1 = sum(skipmissing(rdf[rdf.individual_idx .== 1, :logscore]))
+    @test !isapprox(-ls1, unfiltered; atol = 1.0e-3)
+end
+
 @testset "GOF and diagnostic plots (Laplace RE fit)" begin
     # Moved from coverage_gap_tests.jl (path coverage for GOF/diagnostic plots).
     dm = fx_fixre_dm()
@@ -213,6 +313,12 @@ end
     shrink = NoLimits.compute_shrinkage(res)
     @test haskey(shrink, :η)
     @test isfinite(shrink.η.shrinkage)
+end
+
+@testset "compute_shrinkage skips planar-flow REs instead of crashing (#109)" begin
+    shrink = @test_logs (:warn, r"no analytic mean") NoLimits.compute_shrinkage(fx_npf_laplace())
+    @test isempty(shrink)
+    @test_throws ErrorException plot_shrinkage(fx_npf_laplace())
 end
 
 @testset "predict re_mode (population/ebe/reestimate/marginal)" begin
@@ -256,11 +362,18 @@ end
     reest = NoLimits.predict(res, df; re_mode = :reestimate)
     @test isapprox(collect(reest.prediction), collect(ebe.prediction); atol = 5e-2)
 
-    # :marginal integrates the conditional posterior for seen subjects → tracks :ebe.
-    marg = NoLimits.predict(res, df; re_mode = :marginal, marginal_draws = 100,
+    # :marginal integrates the RE prior, so on a linear mean-zero-RE model it matches
+    # :population up to Monte-Carlo error that shrinks with marginal_draws (issue #103).
+    marg = NoLimits.predict(res, df; re_mode = :marginal, marginal_draws = 800,
         rng = MersenneTwister(1))
+    marg_few = NoLimits.predict(res, df; re_mode = :marginal, marginal_draws = 25,
+        rng = MersenneTwister(1))
+    dev = maximum(abs.(collect(marg.prediction) .- collect(pop.prediction)))
+    dev_few = maximum(abs.(collect(marg_few.prediction) .- collect(pop.prediction)))
     @test nrow(marg) == nrow(df)
-    @test isapprox(collect(marg.prediction), collect(ebe.prediction); atol = 0.1)
+    @test dev < 0.3
+    @test dev < dev_few
+    @test !isapprox(collect(marg.prediction), collect(ebe.prediction); atol = 0.5)
 
     # Unseen subject with only missing outcomes: rows are kept, and :ebe/:marginal
     # fall back to the population value (prior mean / prior draws).
@@ -291,4 +404,39 @@ end
     res_fo = fit_model(dm_fo, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
     @test_throws ErrorException NoLimits.predict(res_fo, get_df(dm_fo); re_mode = :ebe)
     @test_throws ErrorException NoLimits.predict(res, df; re_mode = :nonsense)
+end
+
+@testset "predict on new data inherits the DataModel t0" begin
+    model = @Model begin
+        @fixedEffects begin
+            A = RealNumber(2.0)
+            k = RealNumber(0.2, scale = :log)
+            σ = RealNumber(0.1, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @DifferentialEquation begin
+            D(x1) ~ -k * x1
+        end
+        @initialDE begin
+            x1 = A
+        end
+        @formulas begin
+            y ~ Normal(x1(t), σ)
+        end
+    end
+
+    # First observation well after 0 so t0 shifts the integration start.
+    df = DataFrame(ID = repeat([1, 2]; inner = 3),
+        t = repeat([5.0, 6.0, 7.0]; outer = 2),
+        y = [0.75, 0.62, 0.50, 0.70, 0.58, 0.47])
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t, t0 = nothing)
+    @test get_t0(dm) === nothing
+    res = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 5,)))
+
+    in_sample = NoLimits.predict(res, dm)
+    on_newdata = NoLimits.predict(res, df)
+    @test isapprox(collect(on_newdata.prediction), collect(in_sample.prediction);
+        atol = 1e-8)
 end

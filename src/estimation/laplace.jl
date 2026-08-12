@@ -2641,7 +2641,9 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
 end
 
 @inline _laplace_value(x) = x
-@inline _laplace_value(x::ForwardDiff.Dual) = ForwardDiff.value(x)
+# Recursive: a Hessian pass hands down Dual-over-Dual, and peeling one level only
+# still leaves a `Float64(::Dual)` for the caller.
+@inline _laplace_value(x::ForwardDiff.Dual) = _laplace_value(ForwardDiff.value(x))
 
 function _laplace_floatize(θ::ComponentArray)
     eltype(θ) === Float64 && return θ

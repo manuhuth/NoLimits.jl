@@ -124,6 +124,10 @@ end
             end
         end
         return out
+    elseif natural && spec.kind == :cholesky && value isa AbstractMatrix
+        # Lower triangle, column-major -- the `_vech_lower` order the transformed
+        # coordinates and `get_flat_names` both use.
+        return Float64.(_vech_lower(value))
     elseif natural && spec.kind == :stickbreak && value isa AbstractVector
         # Drop last (determined) probability; return first k-1 components.
         return Float64.(value[1:(end - 1)])

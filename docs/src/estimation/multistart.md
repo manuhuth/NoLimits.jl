@@ -101,7 +101,7 @@ Starting points are constructed as follows:
   - the fixed-effect prior, if one is defined;
   - otherwise, the parameter retains its default value across all starts.
 
-All sampled values are validated against the natural-scale bounds of each parameter. If any sampled value violates its bounds, an error is raised before fitting begins.
+Sampling distributions are bounded to the natural-scale bounds of each parameter before drawing, whether they come from `dists` or from a prior: a univariate distribution that puts mass outside the bounds is truncated to them, and a multivariate one is replaced by its per-coordinate truncated marginals (dropping the joint correlation). Both cases emit a warning naming the parameter and its bounds. If a distribution has no mass at all inside the bounds, an error is raised before fitting begins, as is any sampled value that still violates its bounds.
 
 ## Distribution Inputs
 
