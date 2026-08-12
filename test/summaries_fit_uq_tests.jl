@@ -198,6 +198,76 @@ end
     @test !occursin("NaN", txt_comb)
 end
 
+@testset "natural-scale coords match the flat layout for every block kind" begin
+    fe = @fixedEffects begin
+        a = RealNumber(1.0)
+        b = RealVector([0.5, 2.0], scale = [:identity, :log])
+        Ωc = RealPSDMatrix([1.0 0.2; 0.2 1.0], scale = :cholesky)
+        Ωe = RealPSDMatrix([1.0 0.1; 0.1 2.0], scale = :expm)
+        Ωl = RealLiePSDMatrix([1.0 0.0; 0.0 2.0], scale = :lie)
+        D = RealDiagonalMatrix([1.0, 2.0], scale = :log)
+        p = ProbabilityVector([0.3, 0.3, 0.4])
+        P = DiscreteTransitionMatrix([0.7 0.3; 0.4 0.6])
+        Q = ContinuousTransitionMatrix([-0.5 0.5; 0.2 -0.2])
+    end
+
+    θu = NoLimits.get_θ0_untransformed(fe)
+    θt = NoLimits.get_transform(fe)(θu)
+    parents = NoLimits._flat_parent_names(fe)
+    spec_map = NoLimits._spec_map(fe)
+    for name in NoLimits.get_names(fe)
+        spec = spec_map[name]
+        n_nat = length(NoLimits._coords_for_param(
+            getproperty(θu, name), spec; natural = true))
+        n_tr = length(NoLimits._coords_for_param(
+            getproperty(θt, name), spec; natural = false))
+        @test n_nat == n_tr == count(==(name), parents)
+    end
+    # :cholesky reports the lower triangle column-major, matching `get_flat_names`.
+    @test NoLimits._coords_for_param(θu.Ωc, spec_map[:Ωc]; natural = true) ==
+          [1.0, 0.2, 1.0]
+end
+
+@testset "summarize works with a matrix parameter block" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.2)
+            Ω = RealPSDMatrix([1.0 0.2; 0.2 1.0], scale = :cholesky, calculate_se = true)
+            σ = RealNumber(0.4; scale = :log)
+        end
+
+        @covariates begin
+            t = Covariate()
+        end
+
+        @randomEffects begin
+            η = RandomEffect(MvNormal(zeros(2), Ω); column = :ID)
+        end
+
+        @formulas begin
+            y ~ Normal(a + η[1] + η[2] * t, σ)
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 2, 2, 3, 3],
+        t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+        y = [1.2, 1.4, 0.9, 1.0, 1.6, 1.5]
+    )
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 2,)))
+
+    s_fit = summarize(res)
+    @test s_fit isa FitResultSummary
+    @test s_fit.n_parameters_total == 5   # a, Ω (3 lower-tri coords), σ
+    rows = s_fit.parameter_rows
+    @test [r.parameter for r in rows if startswith(string(r.parameter), "Ω")] ==
+          [:Ω_1_1, :Ω_2_1, :Ω_2_2]
+    Ω_hat = NoLimits.get_params(res; scale = :untransformed).Ω
+    @test [r.estimate for r in rows if startswith(string(r.parameter), "Ω")] ≈
+          [Ω_hat[1, 1], Ω_hat[2, 1], Ω_hat[2, 2]]
+end
+
 @testset "summarize numeric formatting: fixed 4 decimals" begin
     f = NoLimits._fq_fmt_num
     # non-integer floats always show exactly 4 decimals, trailing zeros kept
