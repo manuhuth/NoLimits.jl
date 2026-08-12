@@ -340,6 +340,53 @@ end
     @test a≈b rtol=1e-4
 end
 
+@testset "closed-form Bateman with a forced upstream compartment (#112)" begin
+    # An infusion event dosing the DEPOT adds constant forcing to the upstream state,
+    # which the Bateman kernel (initial-value propagation only) cannot represent — it
+    # must fall back to the matrix-exp form. Tight solver tolerances so the comparison
+    # measures the closed form, not solver error.
+    function oral(cf)
+        m = @Model begin
+            @fixedEffects begin
+                ka = RealNumber(0.7, scale = :log)
+                ke = RealNumber(0.2, scale = :log)
+                σ = RealNumber(5.0, scale = :log)
+            end
+            @covariates begin
+                t = Covariate()
+            end
+            @DifferentialEquation begin
+                D(depot) ~ -ka * depot
+                D(central) ~ ka * depot - ke * central
+            end
+            @initialDE begin
+                depot = 0.0
+                central = 0.0
+            end
+            @formulas begin
+                y ~ Normal(central(t), σ)
+            end
+        end
+        set_solver_config(m; alg = Vern9(), saveat_mode = :saveat, closed_form = cf,
+            kwargs = (; reltol = 1e-12, abstol = 1e-12))
+    end
+    # bolus at t0 (depot), infusion into the depot at t=6, reset of central at t=12
+    df = DataFrame(ID = fill(1, 7), t = [0.0, 2.0, 4.0, 6.0, 8.0, 12.0, 16.0],
+        EVID = [1, 0, 0, 1, 0, 2, 0], AMT = [100.0, 0, 0, 30.0, 0, 5.0, 0],
+        RATE = [0.0, 0, 0, 10.0, 0, 0, 0], CMT = [1, 1, 1, 1, 1, 2, 1],
+        y = [missing, 60.0, 40.0, missing, 25.0, missing, 20.0])
+    kw = (; primary_id = :ID, time_col = :t, evid_col = :EVID, amt_col = :AMT,
+        rate_col = :RATE, cmt_col = :CMT)
+    dm_cf = DataModel(oral(:auto), df; kw...)
+    dm_off = DataModel(oral(:off), df; kw...)
+    @test get_closed_form_plan(dm_cf).mode === :bateman
+    θ = get_θ0_untransformed(get_fixed(get_model(dm_cf)))
+    η = ComponentArray(NamedTuple())
+    ll_cf = NoLimits.conditional_loglikelihood(dm_cf, 1, θ, η)
+    ll_off = NoLimits.conditional_loglikelihood(dm_off, 1, θ, η)
+    @test ll_cf≈ll_off atol=1e-8
+end
+
 @testset "closed-form/numerical split (partial)" begin
     # Linear PK compartment x1 (closed-form) driving a nonlinear PD state x2
     # (numerical, reads x1(t) from the closed form). Compare marginal loglik at

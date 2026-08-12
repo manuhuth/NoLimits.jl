@@ -324,12 +324,22 @@ end
     return u == 1 ? [xu, xd] : [xd, xu]
 end
 
+# The `:bateman` kernel only propagates the upstream state's *initial value* into the
+# downstream state, so it is exact only while the upstream state is unforced. Detection
+# proves that for the model RHS, but an infusion event adds forcing at run time, so those
+# segments fall back to the exact matrix-exponential form.
+@inline function _cf_segment_mode(mode::Symbol, A, b)
+    mode === :bateman || return mode
+    return iszero(b[iszero(A[1, 2]) ? 1 : 2]) ? :bateman : :linear
+end
+
 # Advance `x' = A x + b` over `Δ` from `x0`: per-state scalar (:diagonal), the
 # two-state sequential scalar form (:bateman), or the matrix-exp action (:linear).
 function _cf_propagate(mode::Symbol, A, b, x0, Δ)
-    mode === :diagonal &&
+    m = _cf_segment_mode(mode, A, b)
+    m === :diagonal &&
         return [_cf_state_value(A[i, i], b[i], x0[i], Δ) for i in eachindex(x0)]
-    mode === :bateman && return _cf_bateman(A, b, x0, Δ)
+    m === :bateman && return _cf_bateman(A, b, x0, Δ)
     return _cf_expv(A, b, x0, Δ)
 end
 
@@ -339,16 +349,17 @@ end
 # scalar formulas are identical to `_cf_propagate`/`_cf_bateman`, so results are
 # bit-identical; only the storage differs.
 function _cf_propagate!(out, mode::Symbol, A, b, x0, Δ)
-    if mode === :diagonal
+    m = _cf_segment_mode(mode, A, b)
+    if m === :diagonal
         @inbounds for i in eachindex(x0)
             out[i] = _cf_state_value(A[i, i], b[i], x0[i], Δ)
         end
-    elseif mode === :bateman
+    elseif m === :bateman
         u, d, xu, xd = _cf_bateman_ud(A, b, x0, Δ)
         @inbounds out[u] = xu
         @inbounds out[d] = xd
     else
-        out .= _cf_expv(A, b, x0, Δ)  # :linear (opt-in): matrix-exp action, rare
+        out .= _cf_expv(A, b, x0, Δ)  # :linear (opt-in / forced upstream): matrix-exp
     end
     return out
 end
