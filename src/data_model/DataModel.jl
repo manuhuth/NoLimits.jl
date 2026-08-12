@@ -1395,6 +1395,11 @@ function DataModel(model,
     if saveat_mode != :dense && requires_dense
         error("Formulas include non-constant time offsets for DE states/signals. Use saveat_mode=:dense or rewrite formulas to use constant offsets.")
     end
+    # Dynamic covariates used inside the DE are interpolated over an individual's row
+    # times only, so the integration span must not start below that support.
+    de_fun_syms = model.de.de === nothing ? Symbol[] : get_de_meta(model.de.de).fun_syms
+    de_dyn = sort!(collect(intersect(Set(cov.dynamic), Set(de_fun_syms))))
+    off_min = isempty(time_offsets) ? 0.0 : minimum(time_offsets)
     keys_sorted, groups = _group_indices(df, primary_id)
     individuals = Vector{Individual}(undef, length(groups))
     obs_groups = Vector{Vector{Int}}(undef, length(groups))
@@ -1435,6 +1440,9 @@ function DataModel(model,
                 bad_tmin[id_val] = tmin
             end
             tspan = (t0 === nothing ? tmin : min(oftype(tmin, t0), tmin), tmax)
+        end
+        if !isempty(de_dyn) && tspan[1] < minimum(tvals)
+            error("Formulas request times earlier than the dynamic covariate support for individual $(keys_sorted[i]): the integration span starts at t=$(tspan[1]) (smallest formula time offset $(off_min)), but the dynamic covariate(s) $(join(de_dyn, ", ")) used in @DifferentialEquation are only supported on [$(minimum(tvals)), $(maximum(tvals))] and cannot be extrapolated. Add covariate rows covering t=$(tspan[1]), or change the formula offset (or t0) so that the integration starts at or after $(minimum(tvals)).")
         end
         re_groups = _build_re_groups(model, df, rows)
         cb_times = callbacks !== nothing ? callbacks.all_times : Float64[]

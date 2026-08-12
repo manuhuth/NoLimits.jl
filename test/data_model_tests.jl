@@ -1307,6 +1307,57 @@ end
     @test_throws ErrorException DataModel(model_saveat, df; primary_id = :ID, time_col = :t)
 end
 
+@testset "DataModel errors on offsets below dynamic covariate support" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.1)
+            σ = RealNumber(0.5)
+        end
+
+        @covariates begin
+            t = Covariate()
+            w1 = DynamicCovariate(; interpolation = LinearInterpolation)
+        end
+
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, 1.0); column = :ID)
+        end
+
+        @DifferentialEquation begin
+            D(x1) ~ -a * x1 + w1(t)
+        end
+
+        @initialDE begin
+            x1 = 1.0
+        end
+
+        @formulas begin
+            y ~ Normal(x1(t - 0.5), σ)
+        end
+    end
+
+    # rows start at t = 0.5, so t_first + offset = 0.0 clears the negative-time check,
+    # but the interpolants have no support below 0.5.
+    df = DataFrame(
+        ID = [1, 1, 1],
+        t = [0.5, 1.0, 2.0],
+        w1 = [1.0, 1.2, 1.4],
+        y = [1.0, 1.1, 1.2]
+    )
+
+    model_saveat = set_solver_config(model; saveat_mode = :saveat)
+    err = try
+        DataModel(model_saveat, df; primary_id = :ID, time_col = :t)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ErrorException
+    @test occursin("dynamic covariate support", err.msg)
+    @test occursin("-0.5", err.msg)
+    @test occursin("[0.5, 2.0]", err.msg)
+end
+
 @testset "DataModel pairing creates multiple batches" begin
     model = @Model begin
         @fixedEffects begin
