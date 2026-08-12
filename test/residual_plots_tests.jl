@@ -71,11 +71,11 @@ end
         y = [0.1, 0.3, 0.0, 0.25, 0.15, 0.35])
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     res = fit_model(dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 2,));
-        constants_re = (; η = (; id_001 = 0.0)),
+        constants_re = (; η = (; id_001 = 0.6)),
         serialization = NoLimits.EnsembleSerial())
 
     η_df = get_random_effects(res).η
-    @test η_df[η_df.ID .== "id_001", :η_1][1] == 0.0
+    @test η_df[η_df.ID .== "id_001", :η_1][1] == 0.6
     @test nrow(get_residuals(res)) == nrow(df)
 
     df_wo = df[df.ID .!= "id_001", :]
@@ -84,6 +84,14 @@ end
         # The pinned level is absent here — it must be ignored, not fatal.
         @test nrow(NoLimits.predict(res, df_wo; re_mode = mode)) == nrow(df_wo)
     end
+
+    # Regression for #147: :population must apply the fit's own constants_re, not just
+    # :ebe. Before the fix it fell back to the RE's prior mean (0.0) for id_001 instead
+    # of the pinned 0.6, diverging from :ebe by exactly that offset.
+    pop_df = NoLimits.predict(res, df; re_mode = :population)
+    ebe_df = NoLimits.predict(res, df; re_mode = :ebe)
+    @test isapprox(pop_df.prediction[pop_df.id .== "id_001"],
+        ebe_df.prediction[ebe_df.id .== "id_001"]; atol = 1e-8)
 end
 
 @testset "residuals MCMC summary and draw-level outputs" begin
