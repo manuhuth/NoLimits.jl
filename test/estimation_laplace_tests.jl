@@ -1,5 +1,6 @@
 using Test
 using DataFrames
+using DataInterpolations
 using NoLimits
 using FiniteDifferences
 using LineSearches
@@ -309,6 +310,62 @@ end
     @test rs.summary.objective == rt.summary.objective
     @test collect(NoLimits.get_params(rs, scale = :untransformed)) ==
           collect(NoLimits.get_params(rt, scale = :untransformed))
+end
+
+@testset "Laplace serial == threaded with dynamic covariates (#115)" begin
+    # Dynamic-covariate interpolants and a DE signal read per-individual state that the
+    # threaded path must not share across tasks.
+    if Threads.nthreads() < 2
+        @info "skipped: needs Threads.nthreads() > 1"
+        @test true
+        return
+    end
+    model = @Model begin
+        @fixedEffects begin
+            k = RealNumber(0.5; scale = :log)
+            α = RealNumber(0.2)
+            ω = RealNumber(0.4; scale = :log)
+            σ = RealNumber(0.3; scale = :log)
+            σ2 = RealNumber(0.1; scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+            w = DynamicCovariate(; interpolation = LinearInterpolation)
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, ω); column = :ID)
+        end
+        @DifferentialEquation begin
+            s(t) = x1 / (1 + x1)
+            D(x1) ~ -k * x1 + α * w(t)
+        end
+        @initialDE begin
+            x1 = exp(η)
+        end
+        @formulas begin
+            y ~ Normal(x1(t), σ)
+            y2 ~ Normal(s(t), σ2)
+        end
+    end
+    rng = MersenneTwister(4)
+    rows = NamedTuple[]
+    for i in 1:8
+        η = 0.3 * randn(rng)
+        for tt in 0.0:0.5:2.0
+            x = exp(η - 0.4 * tt)
+            obs = tt > 0.0
+            push!(rows,
+                (; ID = "id_$i", t = tt, w = 0.5 + rand(rng),
+                    y = obs ? x + 0.2 * randn(rng) : missing,
+                    y2 = obs ? x / (1 + x) + 0.05 * randn(rng) : missing))
+        end
+    end
+    dm = DataModel(model, DataFrame(rows); primary_id = :ID, time_col = :t)
+    method = NoLimits.Laplace(; optim_kwargs = (maxiters = 3,))
+    obj(ser) = NoLimits.get_objective(
+        fit_model(dm, method; serialization = ser, rng = MersenneTwister(99)))
+    o_serial = obj(EnsembleSerial())
+    @test isapprox(obj(EnsembleThreads()), o_serial; rtol = 1e-10)
 end
 
 @testset "Laplace fit with BlackBoxOptim requires bounds" begin
