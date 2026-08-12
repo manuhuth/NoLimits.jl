@@ -1,6 +1,32 @@
 using LikelihoodProfiler
+using OptimizationNLopt
 using Distributions
 using Random
+
+# LikelihoodProfiler 1.x replaced the 0.x algorithm symbols by stepper objects; the
+# historical `profile_method` names are kept as the user-facing selector.
+function _profile_stepper(profile_method::Symbol, scan_tol::Real, loss_tol::Real)
+    profile_method === :FIXED_STEP && return LikelihoodProfiler.FixedStep()
+    control = LikelihoodProfiler.ObjectiveStepControl(;
+        min_x_step = Float64(scan_tol), min_obj_step = Float64(loss_tol))
+    profile_method === :LIN_EXTRAPOL &&
+        return LikelihoodProfiler.AdaptiveStep(;
+            predictor = LikelihoodProfiler.LinearPredictor(), controller = control)
+    profile_method === :SINGLE_AXIS &&
+        return LikelihoodProfiler.AdaptiveStep(;
+            predictor = LikelihoodProfiler.SingleAxisPredictor(), controller = control)
+    error("Unsupported profile_method $(profile_method). Supported values are :LIN_EXTRAPOL, :SINGLE_AXIS and :FIXED_STEP; the LikelihoodProfiler 0.x values :CICO_ONE_PASS and :QUADR_EXTRAPOL no longer exist.")
+end
+
+function _profile_optimizer(profile_local_alg::Symbol)
+    isdefined(NLopt, profile_local_alg) ||
+        error("Unknown profile_local_alg $(profile_local_alg); expected an NLopt algorithm such as :LN_NELDERMEAD.")
+    return getfield(NLopt, profile_local_alg)()
+end
+
+# LikelihoodProfiler 1.x does not populate per-branch solver stats, so report -1 (unknown).
+_profile_fevals(::Nothing) = -1
+_profile_fevals(s) = s.fevals > 0 ? s.fevals : -1
 
 @inline function _profile_scan_bounds(x0::Float64, lb::Float64, ub::Float64, width::Float64)
     width > 0 || error("profile_scan_width must be positive.")
@@ -235,12 +261,13 @@ function _compute_uq_profile(res::FitResult;
     obj0 = obj_active(xhat_active)
     isfinite(obj0) ||
         error("Objective at fitted parameters is not finite; profile UQ cannot proceed.")
-    loss_crit = obj0 + 0.5 * quantile(Chisq(1), level)
+    # The objective is -loglik, so the profile threshold is half the χ² quantile.
+    threshold = 0.5 * quantile(Chisq(1), level)
+    loss_crit = obj0 + threshold
 
     lower_t, upper_t = get_bounds_transformed(fe)
     lb_coords = _coords_on_transformed_layout(fe, lower_t, free_names; natural = false)[active_idx]
     ub_coords = _coords_on_transformed_layout(fe, upper_t, free_names; natural = false)[active_idx]
-    theta_bounds = [(lb_coords[j], ub_coords[j]) for j in eachindex(lb_coords)]
 
     p = length(xhat_active)
     lower_prof_t = fill(NaN, p)
@@ -252,49 +279,46 @@ function _compute_uq_profile(res::FitResult;
     endpoint_found = falses(p)
     errors = Vector{Union{Nothing, String}}(undef, p)
 
+    optprob = OptimizationProblem(
+        OptimizationFunction((x, _p) -> obj_active(collect(x))), copy(xhat_active);
+        lb = collect(lb_coords), ub = collect(ub_coords))
+    profiler = LikelihoodProfiler.OptimizationProfiler(;
+        stepper = _profile_stepper(profile_method, profile_scan_tol, profile_loss_tol),
+        optimizer = _profile_optimizer(profile_local_alg),
+        optimizer_opts = (;
+            maxiters = profile_max_iter, abstol = Float64(profile_ftol_abs)))
+
     for j in 1:p
         errors[j] = nothing
-        bounds_j = theta_bounds[j]
-        scan_bounds_j = _profile_scan_bounds(
-            xhat_active[j], bounds_j[1], bounds_j[2], Float64(profile_scan_width))
-        interval = try
-            LikelihoodProfiler.get_interval(
-                copy(xhat_active),
-                j,
-                obj_active,
-                profile_method;
-                loss_crit = loss_crit,
-                scale = fill(:direct, p),
-                theta_bounds = theta_bounds,
-                scan_bounds = scan_bounds_j,
-                scan_tol = Float64(profile_scan_tol),
-                loss_tol = Float64(profile_loss_tol),
-                local_alg = profile_local_alg,
-                max_iter = profile_max_iter,
-                ftol_abs = Float64(profile_ftol_abs),
-                profile_kwargs...
-            )
+        scan_lo, scan_hi = _profile_scan_bounds(
+            xhat_active[j], lb_coords[j], ub_coords[j], Float64(profile_scan_width))
+        sol = try
+            plprob = LikelihoodProfiler.ProfileLikelihoodProblem(
+                optprob, copy(xhat_active); idxs = j,
+                profile_lower = scan_lo, profile_upper = scan_hi, threshold = threshold)
+            solve(plprob, profiler; profile_kwargs...)
         catch err
             errors[j] = sprint(showerror, err)
             left_status[j] = :ERROR
             right_status[j] = :ERROR
+            @warn "Profile UQ failed for $(active_names[j]); its interval is NaN." error=errors[j]
             continue
         end
 
-        left = interval.result[1]
-        right = interval.result[2]
-        left_status[j] = left.status
-        right_status[j] = right.status
-        left_counter[j] = left.counter
-        right_counter[j] = right.counter
+        curve = sol[1]
+        rc = LikelihoodProfiler.retcodes(curve)
+        ep = LikelihoodProfiler.endpoints(curve)
+        st = LikelihoodProfiler.stats(curve)
+        left_status[j] = rc.left
+        right_status[j] = rc.right
+        left_counter[j] = _profile_fevals(st.left)
+        right_counter[j] = _profile_fevals(st.right)
 
-        if left.value !== nothing
-            lower_prof_t[j] = Float64(left.value)
-        end
-        if right.value !== nothing
-            upper_prof_t[j] = Float64(right.value)
-        end
+        ep.left === nothing || (lower_prof_t[j] = Float64(ep.left))
+        ep.right === nothing || (upper_prof_t[j] = Float64(ep.right))
         endpoint_found[j] = isfinite(lower_prof_t[j]) && isfinite(upper_prof_t[j])
+        endpoint_found[j] ||
+            @warn "Profile UQ did not locate both endpoints for $(active_names[j]); try a larger profile_scan_width or profile_max_iter." left_status=rc.left right_status=rc.right
     end
 
     θ_coords_t = _coords_on_transformed_layout(fe, θ_hat_t, free_names; natural = false)
