@@ -215,6 +215,12 @@ end
     @test isfinite(shrink.η.shrinkage)
 end
 
+@testset "compute_shrinkage skips planar-flow REs instead of crashing (#109)" begin
+    shrink = @test_logs (:warn, r"no analytic mean") NoLimits.compute_shrinkage(fx_npf_laplace())
+    @test isempty(shrink)
+    @test_throws ErrorException plot_shrinkage(fx_npf_laplace())
+end
+
 @testset "predict re_mode (population/ebe/reestimate/marginal)" begin
     model = @Model begin
         @fixedEffects begin

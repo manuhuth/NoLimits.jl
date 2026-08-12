@@ -3658,8 +3658,9 @@ Shrinkage is defined as `1 - SD(eta) / omega`, where `eta_i = f(EBE_i) - mu_i` i
 individual-level random-effect residual, `mu_i` is the covariate-adjusted population mean
 for individual `i`, and `omega` is the estimated standard deviation of the RE distribution.
 For `LogNormal` random effects the transformation is `f(x) = log(x)`; for `Normal` it is
-the identity; for all other distributions the linear deviation from the population mean is
-used.
+the identity; for all other univariate distributions the linear deviation from the
+population mean is used. Random effects whose distribution has no analytic mean/standard
+deviation (e.g. `NormalizingPlanarFlow`) are omitted from the result with a warning.
 
 A value near 0 indicates that EBEs carry individual information. Values above 0.3–0.4
 signal that EBEs are pulled toward the population mean and should not be interpreted as
@@ -3717,9 +3718,15 @@ function compute_shrinkage(res::FitResult;
             elseif dist_i isa Normal
                 eta_i = ebe - dist_i.μ
                 sigma = dist_i.σ
-            else
+            elseif dist_i isa UnivariateDistribution
                 eta_i = ebe - mean(dist_i)
                 sigma = std(dist_i)
+            else
+                # No analytic mean/std (e.g. NormalizingPlanarFlow): shrinkage undefined.
+                @warn "compute_shrinkage: skipping random effect $re; " *
+                      "$(nameof(typeof(dist_i))) has no analytic mean/standard deviation."
+                valid = false
+                break
             end
             push!(etas, eta_i)
         end
