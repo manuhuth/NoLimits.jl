@@ -262,11 +262,18 @@ end
     reest = NoLimits.predict(res, df; re_mode = :reestimate)
     @test isapprox(collect(reest.prediction), collect(ebe.prediction); atol = 5e-2)
 
-    # :marginal integrates the conditional posterior for seen subjects → tracks :ebe.
-    marg = NoLimits.predict(res, df; re_mode = :marginal, marginal_draws = 100,
+    # :marginal integrates the RE prior, so on a linear mean-zero-RE model it matches
+    # :population up to Monte-Carlo error that shrinks with marginal_draws (issue #103).
+    marg = NoLimits.predict(res, df; re_mode = :marginal, marginal_draws = 800,
         rng = MersenneTwister(1))
+    marg_few = NoLimits.predict(res, df; re_mode = :marginal, marginal_draws = 25,
+        rng = MersenneTwister(1))
+    dev = maximum(abs.(collect(marg.prediction) .- collect(pop.prediction)))
+    dev_few = maximum(abs.(collect(marg_few.prediction) .- collect(pop.prediction)))
     @test nrow(marg) == nrow(df)
-    @test isapprox(collect(marg.prediction), collect(ebe.prediction); atol = 0.1)
+    @test dev < 0.3
+    @test dev < dev_few
+    @test !isapprox(collect(marg.prediction), collect(ebe.prediction); atol = 0.5)
 
     # Unseen subject with only missing outcomes: rows are kept, and :ebe/:marginal
     # fall back to the population value (prior mean / prior draws).

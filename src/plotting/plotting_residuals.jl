@@ -635,11 +635,13 @@ from `res`; how the random effects are chosen is controlled by `re_mode`:
 - `:reestimate`: compute a fresh empirical-Bayes estimate on `newdata` while holding
   the fitted fixed effects, so new subjects that carry their own observations get an
   individual prediction.
-- `:marginal`: integrate the random effects out by Monte Carlo. For seen subjects the
-  conditional posterior is sampled, for unseen subjects the prior is sampled, and the
-  prediction is the average conditional mean over `marginal_draws` draws.
+- `:marginal`: integrate the random effects out over their prior by Monte Carlo — the
+  prediction is the average conditional mean over `marginal_draws` prior draws. This
+  is subject-agnostic like `:population` and differs from it only through the
+  nonlinearity of the model (`E[f(η)]` vs `f(E[η])`); use `:ebe`/`:reestimate` for
+  subject-specific predictions.
 
-Matching in `:ebe`/`:marginal` is on the whole random-effect grouping signature, so in
+Matching in `:ebe` is on the whole random-effect grouping signature, so in
 a hierarchical model a subject with a new primary id counts as unseen even if it shares
 a known upper level. `:ebe`/`:reestimate`/`:marginal` need a random-effects method
 (Laplace, FOCEI, GHQuadrature, MCEM, or SAEM; `:reestimate` excludes GHQuadrature) and
@@ -680,7 +682,7 @@ function predict(res::FitResult, dm_new::DataModel;
     end
     _validate_predict_re_mode(res, dm_new, re_mode)
     if re_mode == :marginal
-        return _predict_marginal(res, dm_new, θ; fitted_stat = fitted_stat,
+        return _predict_marginal(dm_new, θ; fitted_stat = fitted_stat,
             constants_re = constants_re, marginal_draws = marginal_draws, rng = rng,
             ode_args = ode_args, ode_kwargs = ode_kwargs, kwargs...)
     end
@@ -768,32 +770,21 @@ function _predict_eta_ebe(res::FitResult, dm_new::DataModel, θ::ComponentArray,
     return η_vec
 end
 
-# Monte-Carlo marginal prediction: integrate the conditional posterior for seen
-# subjects and the prior for unseen subjects, averaging the per-draw predicted means.
-function _predict_marginal(res::FitResult, dm_new::DataModel, θ::ComponentArray;
+# Monte-Carlo marginal prediction: integrate the random effects over their prior,
+# averaging the per-draw predicted means.
+function _predict_marginal(dm_new::DataModel, θ::ComponentArray;
         fitted_stat, constants_re::NamedTuple, marginal_draws::Int,
         rng::AbstractRNG, ode_args::Tuple, ode_kwargs::NamedTuple, kwargs...)
     marginal_draws >= 1 || error("predict: marginal_draws must be >= 1.")
-    dm_old = get_data_model(res)
-    dm_old === nothing &&
-        error("predict: re_mode=:marginal requires the fit to store its DataModel; " *
-              "refit with store_data_model = true.")
-    bstars, batch_infos, θu, const_cache, ll_cache_train, _ = _resolve_bstars_for_re(
-        dm_old, res, constants_re)
-    re_to_train = Dict{Any, Tuple{Int, Int}}()
-    for (bi, info) in enumerate(batch_infos)
-        for i in get_inds(info)
-            re_to_train[get_re_groups(get_individuals(dm_old)[i])] = (bi, i)
-        end
-    end
-    bstars_per_sample = _sample_conditional_bstars(dm_old, batch_infos, bstars, θu,
-        const_cache, ll_cache_train, res, marginal_draws, rng)
     dists_builder = create_random_effect_distribution(get_random(get_model(dm_new)))
     model_funs = get_model_funs(get_model(dm_new))
     helpers = get_helper_funs(get_model(dm_new))
     re_names = get_re_names(get_random(get_model(dm_new)))
     sample_rngs = _spawn_child_rngs(rng, marginal_draws)
     n_new = length(get_individuals(dm_new))
+    # θ is fixed, so each individual's RE priors are the same for every draw.
+    dists_vec = [dists_builder(θ, get_const_cov(get_individuals(dm_new)[j]),
+                     model_funs, helpers) for j in 1:n_new]
 
     sum_acc = Float64[]
     cnt_acc = Int[]
@@ -804,17 +795,9 @@ function _predict_marginal(res::FitResult, dm_new::DataModel, θ::ComponentArray
         srng = sample_rngs[s]
         η_vec = Vector{ComponentArray}(undef, n_new)
         for j in 1:n_new
-            tinfo = get(re_to_train, get_re_groups(get_individuals(dm_new)[j]), nothing)
-            η_vec[j] = if tinfo !== nothing
-                bi, ti = tinfo
-                ComponentArray(_build_eta_ind(dm_old, ti, batch_infos[bi],
-                    bstars_per_sample[s][bi], const_cache, θu))
-            else
-                dists = dists_builder(
-                    θu, get_const_cov(get_individuals(dm_new)[j]), model_funs, helpers)
-                ComponentArray(NamedTuple((re => rand(srng, getproperty(dists, re))
-                for re in re_names)))
-            end
+            η_vec[j] = ComponentArray(NamedTuple((re => rand(srng,
+                                                      getproperty(dists_vec[j], re))
+            for re in re_names)))
         end
         cache = _fill_plot_cache(dm_new, θ, η_vec, constants_re, true,
             ode_args, ode_kwargs)
