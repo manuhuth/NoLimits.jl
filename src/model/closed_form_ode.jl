@@ -272,11 +272,14 @@ end
 # stable at confluent/repeated eigenvalues (e.g. ka ≈ ke) — unlike `A⁻¹`/divided-
 # difference forms. ForwardDiff-safe: value via the Float64 `exp`, each partial via
 # the block-2×2 Padé Fréchet derivative (`_expm_frechet`); a `Dual` specialization
-# is needed because `exp(::Matrix{Dual})` has no method. Nested Duals fall back to
-# the generic path. (Used only on the opt-in `:linear`/hybrid path — for a small
-# dense system the numerical solver is hard to beat on the gradient, so `:auto`
-# does not route general-linear systems here; see `get_closed_form_plan`.)
+# is needed because `exp(::Matrix{Dual})` has no method. Nested Duals (Laplace/FOCEI
+# inner Hessians, Wald UQ) route through the Dual-generic Padé `_matexp`, which
+# propagates derivatives at any nesting depth. (Used only on the opt-in `:linear`/
+# hybrid path — for a small dense system the numerical solver is hard to beat on the
+# gradient, so `:auto` does not route general-linear systems here; see
+# `get_closed_form_plan`.)
 _cf_matexp(M::AbstractMatrix{<:AbstractFloat}) = exp(M)
+_cf_matexp(M::AbstractMatrix{<:Real}) = _matexp(M)
 function _cf_matexp(M::AbstractMatrix{ForwardDiff.Dual{
         Tg, V, N}}) where {
         Tg, V <: AbstractFloat, N}
