@@ -305,3 +305,38 @@ end
     @test_throws ErrorException NoLimits.predict(res_fo, get_df(dm_fo); re_mode = :ebe)
     @test_throws ErrorException NoLimits.predict(res, df; re_mode = :nonsense)
 end
+
+@testset "predict on new data inherits the DataModel t0" begin
+    model = @Model begin
+        @fixedEffects begin
+            A = RealNumber(2.0)
+            k = RealNumber(0.2, scale = :log)
+            σ = RealNumber(0.1, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @DifferentialEquation begin
+            D(x1) ~ -k * x1
+        end
+        @initialDE begin
+            x1 = A
+        end
+        @formulas begin
+            y ~ Normal(x1(t), σ)
+        end
+    end
+
+    # First observation well after 0 so t0 shifts the integration start.
+    df = DataFrame(ID = repeat([1, 2]; inner = 3),
+        t = repeat([5.0, 6.0, 7.0]; outer = 2),
+        y = [0.75, 0.62, 0.50, 0.70, 0.58, 0.47])
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t, t0 = nothing)
+    @test get_t0(dm) === nothing
+    res = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 5,)))
+
+    in_sample = NoLimits.predict(res, dm)
+    on_newdata = NoLimits.predict(res, df)
+    @test isapprox(collect(on_newdata.prediction), collect(in_sample.prediction);
+        atol = 1e-8)
+end

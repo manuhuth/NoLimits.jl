@@ -14,6 +14,7 @@ export get_closed_form_plan
 export get_time_col
 export get_obs_cols
 export get_evid_col
+export get_t0
 export get_series
 export get_const_cov
 export get_callbacks
@@ -30,10 +31,10 @@ using Distributions
 using Random
 
 """
-    DataModelConfig{S}
+    DataModelConfig{S, T}
 
 Configuration struct for a [`DataModel`](@ref), storing column names, serialization
-algorithm, and save-time mode.
+algorithm, save-time mode, and the integration start time.
 
 # Fields
 - `primary_id::Symbol`: primary individual-grouping column.
@@ -45,8 +46,9 @@ algorithm, and save-time mode.
 - `obs_cols::Vector{Symbol}`: observation outcome column names.
 - `serialization::S`: SciML ensemble algorithm (e.g. `EnsembleSerial()`, `EnsembleThreads()`).
 - `saveat_mode::Symbol`: `:dense` or `:saveat` (resolved from `:auto` at construction time).
+- `t0::T`: integration start time, or `nothing` to start at each individual's first data time.
 """
-struct DataModelConfig{S}
+struct DataModelConfig{S, T}
     primary_id::Symbol
     time_col::Symbol
     evid_col::Union{Nothing, Symbol}
@@ -56,6 +58,7 @@ struct DataModelConfig{S}
     obs_cols::Vector{Symbol}
     serialization::S
     saveat_mode::Symbol
+    t0::T
 end
 
 struct RowGroups{R, O}
@@ -1343,6 +1346,8 @@ observation counts, and saveat-mode resolution.
 - `amt_col::Symbol = :AMT`: AMT column (dose amounts, used when `evid_col` is set).
 - `rate_col::Symbol = :RATE`: RATE column (infusion rates, used when `evid_col` is set).
 - `cmt_col::Symbol = :CMT`: CMT column (compartment index or name, used when `evid_col` is set).
+- `t0::Union{Nothing, Real} = 0.0`: integration start time. `nothing` starts each
+  individual's integration at its first data time.
 - `serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial()`: parallelisation
   strategy for ODE solving. Use `EnsembleThreads()` for multi-threaded evaluation.
 """
@@ -1373,7 +1378,7 @@ function DataModel(model,
         error("Unknown saveat_mode $(saveat_mode). Use :dense, :saveat, or :auto.")
     saveat_mode = saveat_mode == :auto ? :saveat : saveat_mode
     config = DataModelConfig(primary_id, time_col, evid_col, amt_col, rate_col,
-        cmt_col, obs_cols, serialization, saveat_mode)
+        cmt_col, obs_cols, serialization, saveat_mode, t0)
     _validate_schema(model, df, config)
     _validate_observed_markov_coarsed_usage(model, df, config)
 
@@ -1593,6 +1598,14 @@ Return the observation (outcome) column names.
 Return the EVID column name (event handling), or `nothing` when events are disabled.
 """
 @inline get_evid_col(dm::DataModel) = dm.config.evid_col
+
+"""
+    get_t0(dm::DataModel) -> Union{Nothing, Real}
+
+Return the integration start time, or `nothing` when integration starts at each
+individual's first data time.
+"""
+@inline get_t0(dm::DataModel) = dm.config.t0
 
 # ── Individual accessors ─────────────────────────────────────────────────────
 
