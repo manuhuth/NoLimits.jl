@@ -29,6 +29,29 @@ end
     @test all(s -> s.σ == starts[1].σ, starts) # σ not sampled, stays fixed
 end
 
+@testset "Multistart supplied dists are truncated to bounds" begin
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+
+        @fixedEffects begin
+            a = RealNumber(0.2; lower = -1.0, upper = 1.0, scale = :identity)
+        end
+
+        @formulas begin
+            y ~ Normal(a, 1.0)
+        end
+    end
+    df = DataFrame(ID = [:A, :A], t = [0.0, 1.0], y = [0.1, 0.2])
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    ms = NoLimits.Multistart(
+        dists = (; a = Normal(0.8, 1.0)), n_draws_requested = 6, n_draws_used = 6)
+    starts = @test_logs (:warn, r"supplied sampling distribution for a") match_mode=:any NoLimits._multistart_initials(
+        dm, ms)
+    @test all(s -> -1.0 <= s.a <= 1.0, starts)
+end
+
 @testset "Multistart bounds violation" begin
     model = @Model begin
         @covariates begin
@@ -78,7 +101,8 @@ end
     )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     ms = NoLimits.Multistart(n_draws_requested = 8, n_draws_used = 8, progress = false)
-    starts = NoLimits._multistart_initials(dm, ms)
+    starts = @test_logs (:warn, r"prior-derived sampling distribution for β") match_mode=:any NoLimits._multistart_initials(
+        dm, ms)
     @test length(starts) == 8
     @test all(s -> s.β[2] > 0 && s.σ > 0, starts)
     res = fit_model(ms, dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
