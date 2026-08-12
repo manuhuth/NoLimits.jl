@@ -359,6 +359,14 @@ end
         end
     end
 
+    @testset "ghq_points_bound bounds the grid without building it" begin
+        for d in 1:4, L in 1:3
+            @test NoLimits.ghq_points_bound(d, L) >= NoLimits.n_ghq_points(d, L)
+        end
+        # Returns instantly for a batch whose grid would need tens of GB.
+        @test NoLimits.ghq_points_bound(65, 5) > NoLimits.GHQ_MAX_NODES
+    end
+
     # ----------------------------------------------------------
     # Cache: second call returns the same object
     # ----------------------------------------------------------
@@ -791,6 +799,34 @@ end
         res = fit_model(dm, GHQuadrature(level = 1; optim_kwargs = (maxiters = 2,));
             constants = (a = 1.0,))
         params = NoLimits.get_params(res; scale = :untransformed)
+    end
+
+    # ── oversized batch refused before any grid is built ──────────────────────
+    @testset "oversized joint RE batch is refused fast" begin
+        model = @Model begin
+            @fixedEffects begin
+                a = RealNumber(1.0)
+                σ = RealNumber(0.5, scale = :log)
+            end
+            @covariates begin
+                t = Covariate()
+            end
+            @randomEffects begin
+                η_id = RandomEffect(Normal(0.0, 1.0); column = :ID)
+                η_site = RandomEffect(Normal(0.0, 1.0); column = :SITE)
+            end
+            @formulas begin
+                y ~ Normal(a + η_id + η_site, σ)
+            end
+        end
+        # 40 IDs crossed with one SITE -> a single batch of joint dimension 41.
+        ids = repeat(1:40; inner = 2)
+        df_big = DataFrame(ID = ids, SITE = fill(:A, length(ids)),
+            t = repeat([0.0, 1.0], 40), y = 0.1 .* ids)
+        dm_big = DataModel(model, df_big; primary_id = :ID, time_col = :t)
+        t0 = time()
+        @test_throws ErrorException fit_model(dm_big, GHQuadrature(level = 5))
+        @test time() - t0 < 60   # refused, not ground to death building the grid
     end
 
     # ── store_data_model=false ────────────────────────────────────────────────

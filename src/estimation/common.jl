@@ -2082,9 +2082,9 @@ function get_loglikelihood_quadrature(dm::DataModel,
         nothing
     end
 
-    if mc_integrator === nothing && _any_batch_too_large(dm, batch_infos, level, 10_000)
-        @warn "get_loglikelihood_quadrature: one or more batches have > 10,000 quadrature nodes. " *
-              "Consider reducing `level` or checking your RE batch structure."
+    if mc_integrator === nothing
+        _check_batch_grid_sizes(
+            dm, batch_infos, level, 10_000, "get_loglikelihood_quadrature")
     end
 
     total = 0.0
