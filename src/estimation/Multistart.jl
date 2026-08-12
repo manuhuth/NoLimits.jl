@@ -28,7 +28,9 @@ fully optimized.
 
 # Keyword Arguments
 - `dists::NamedTuple = NamedTuple()`: per-parameter sampling distributions, keyed by
-  fixed-effect name. Parameters without an entry use their prior, if available.
+  fixed-effect name. Parameters without an entry use their prior, if available. Both are
+  bounded to the parameter's declared natural-scale bounds before sampling (truncation,
+  or per-coordinate truncated marginals for a multivariate distribution), with a warning.
 - `n_draws_requested::Int = 100`: number of candidate starting points to sample.
 - `n_draws_used::Int = 50`: number of candidates to fully optimize after screening.
 - `sampling::Symbol = :random`: sampling strategy for starting points: `:random` or `:lhs`
@@ -230,20 +232,77 @@ function _sample_param(
     return [_fix_matrix(rand(rng, dist)) for _ in 1:n]
 end
 
-function _collect_param_dists(dm::DataModel, ms::Multistart)
+_bound_at(b, idx) = b isa Number ? b : b[idx]
+
+function _mass_outside(d, lo, hi)
+    below = isfinite(lo) ? cdf(d, lo) : 0.0
+    above = isfinite(hi) ? ccdf(d, hi) : 0.0
+    return below + above
+end
+
+function _truncate_to_bounds(name::Symbol, d, lo, hi)
+    (d isa UnivariateDistribution && (isfinite(lo) || isfinite(hi))) || return d
+    outside = _mass_outside(d, lo, hi)
+    outside <= 1e-10 && return d
+    outside >= 1.0 &&
+        error("Multistart sampling for $(name): the sampling distribution $(d) has no " *
+              "probability mass inside the declared bounds [$(lo), $(hi)]. Pass a `dists` " *
+              "entry that overlaps the bounds.")
+    return truncated(d; lower = isfinite(lo) ? lo : nothing,
+        upper = isfinite(hi) ? hi : nothing)
+end
+
+function _warn_bounded(warn::Bool, name::Symbol, source::AbstractString, lo, hi,
+        marginalised::Bool)
+    warn || return nothing
+    extra = marginalised ?
+            " Draws are taken from per-coordinate truncated marginals, so the joint correlation is dropped." :
+            ""
+    @warn "Multistart: the $(source) sampling distribution for $(name) puts mass outside the declared bounds; draws are truncated to the bounds.$(extra)" parameter=name lower=lo upper=hi
+end
+
+# Keep draws inside the parameter's declared range (a :log coordinate must stay
+# positive). A multivariate distribution degrades to per-coordinate truncated marginals
+# only when its bounds actually bind; otherwise the joint distribution is kept.
+function _bound_dist(name::Symbol, p, value, lo, hi, source::AbstractString, warn::Bool)
+    if p isa AbstractArray
+        out = [_truncate_to_bounds(name, p[j], _bound_at(lo, j), _bound_at(hi, j))
+               for j in eachindex(p)]
+        any(j -> out[j] !== p[j], eachindex(p)) &&
+            _warn_bounded(warn, name, source, lo, hi, false)
+        return out
+    end
+    if value isa Number
+        out = _truncate_to_bounds(name, p, lo, hi)
+        out === p || _warn_bounded(warn, name, source, lo, hi, false)
+        return out
+    end
+    (value isa AbstractVector && (any(isfinite, lo) || any(isfinite, hi))) || return p
+    marg = [_laplace_marginal_mvnormal(p, j) for j in eachindex(value)]
+    any(isnothing, marg) && return p
+    out = [_truncate_to_bounds(name, marg[j], _bound_at(lo, j), _bound_at(hi, j))
+           for j in eachindex(value)]
+    any(j -> out[j] !== marg[j], eachindex(out)) || return p
+    _warn_bounded(warn, name, source, lo, hi, true)
+    return out
+end
+
+function _collect_param_dists(dm::DataModel, ms::Multistart; warn::Bool = true)
     fe = get_fixed(get_model(dm))
     priors = get_priors(fe)
     names = get_names(fe)
+    θ0_u = get_θ0_untransformed(fe)
+    lower, upper = get_bounds_untransformed(fe)
     pairs = Pair{Symbol, Any}[]
     for name in names
-        if haskey(ms.dists, name)
-            push!(pairs, name => getfield(ms.dists, name))
-        else
-            p = hasproperty(priors, name) ? getfield(priors, name) : Priorless()
-            if !(p isa Priorless)
-                push!(pairs, name => p)
-            end
-        end
+        user = haskey(ms.dists, name)
+        p = user ? getfield(ms.dists, name) :
+            (hasproperty(priors, name) ? getfield(priors, name) : Priorless())
+        p isa Priorless && continue
+        source = user ? "supplied" : "prior-derived"
+        push!(pairs,
+            name => _bound_dist(name, p, getproperty(θ0_u, name), getproperty(lower, name),
+                getproperty(upper, name), source, warn))
     end
     return NamedTuple(pairs)
 end
@@ -522,7 +581,7 @@ function fit_model(ms::Multistart, dm::DataModel, method::FittingMethod, args...
     all_starts = _multistart_initials(dm, ms)
     n_req = length(all_starts)
     n_used = min(ms.n_draws_used, n_req)
-    varied = collect(keys(_collect_param_dists(dm, ms)))
+    varied = collect(keys(_collect_param_dists(dm, ms; warn = false)))
     varied_str = isempty(varied) ? "none" : join(string.(varied), ", ")
 
     if n_req > n_used

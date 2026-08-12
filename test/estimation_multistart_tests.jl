@@ -29,6 +29,29 @@ end
     @test all(s -> s.σ == starts[1].σ, starts) # σ not sampled, stays fixed
 end
 
+@testset "Multistart supplied dists are truncated to bounds" begin
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+
+        @fixedEffects begin
+            a = RealNumber(0.2; lower = -1.0, upper = 1.0, scale = :identity)
+        end
+
+        @formulas begin
+            y ~ Normal(a, 1.0)
+        end
+    end
+    df = DataFrame(ID = [:A, :A], t = [0.0, 1.0], y = [0.1, 0.2])
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    ms = NoLimits.Multistart(
+        dists = (; a = Normal(0.8, 1.0)), n_draws_requested = 6, n_draws_used = 6)
+    starts = @test_logs (:warn, r"supplied sampling distribution for a") match_mode=:any NoLimits._multistart_initials(
+        dm, ms)
+    @test all(s -> -1.0 <= s.a <= 1.0, starts)
+end
+
 @testset "Multistart bounds violation" begin
     model = @Model begin
         @covariates begin
@@ -53,6 +76,38 @@ end
         dists = (; a = Normal(10.0, 0.1)), n_draws_requested = 2, n_draws_used = 2)
     @test_throws ErrorException fit_model(
         ms, dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
+end
+
+@testset "Multistart default sampling respects bounds" begin
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+
+        @fixedEffects begin
+            β = RealVector([0.5, 0.5]; scale = [:identity, :log],
+                lower = [-Inf, 1e-12], prior = MvNormal(zeros(2), I))
+            σ = RealNumber(0.5; scale = :log, prior = Normal(0.0, 1.0))
+        end
+
+        @formulas begin
+            y ~ Normal(β[1] + β[2] * t, σ)
+        end
+    end
+    df = DataFrame(
+        ID = [:A, :A, :B, :B],
+        t = [0.0, 1.0, 0.0, 1.0],
+        y = [0.1, 0.2, 0.0, -0.1]
+    )
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    ms = NoLimits.Multistart(n_draws_requested = 8, n_draws_used = 8, progress = false)
+    starts = @test_logs (:warn, r"prior-derived sampling distribution for β") match_mode=:any NoLimits._multistart_initials(
+        dm, ms)
+    @test length(starts) == 8
+    @test all(s -> s.β[2] > 0 && s.σ > 0, starts)
+    res = fit_model(ms, dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
+    @test length(NoLimits.get_multistart_results(res)) +
+          length(NoLimits.get_multistart_failed_results(res)) == 8
 end
 
 @testset "Multistart MAP" begin
