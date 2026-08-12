@@ -197,6 +197,67 @@ end
     @test !(ls[2] ≈ -logpdf(dists[2], y[2]))
 end
 
+@testset "HMM logscore sum matches the conditional loglik (missing rows)" begin
+    model = @Model begin
+        @fixedEffects begin
+            P = DiscreteTransitionMatrix([0.8 0.2; 0.3 0.7])
+            π0 = ProbabilityVector([0.5, 0.5])
+            μ = RealVector([-0.5, 1.5])
+            σk = RealVector([0.7, 0.7]; scale = [:log, :log])
+            ω = RealNumber(0.5; scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, ω); column = :ID)
+        end
+        @formulas begin
+            y ~ DiscreteTimeDiscreteStatesHMM(P,
+                (Normal(μ[1] + η, σk[1]), Normal(μ[2] + η, σk[2])),
+                Categorical(π0))
+        end
+    end
+
+    rng = Xoshiro(20260812)
+    P_true = [0.9 0.1; 0.2 0.8]
+    rows = NamedTuple[]
+    for id in 1:4
+        η = 0.3 * randn(rng)
+        miss = shuffle(rng, collect(2:8))[1:2]     # missing mid-sequence, never first
+        s = rand(rng, Distributions.Categorical([0.7, 0.3]))
+        for k in 1:8
+            s = rand(rng, Distributions.Categorical(P_true[s, :]))
+            y = k in miss ? missing : [-1.0, 2.0][s] + η + [0.5, 0.6][s] * randn(rng)
+            push!(rows, (; ID = "id_$id", t = Float64(k), y = y))
+        end
+    end
+    df = DataFrame(rows)
+    @test count(ismissing, df.y) == 8
+
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 3,)))
+
+    rdf = get_residuals(res; residuals = [:logscore])
+    ls = sum(skipmissing(rdf.logscore))
+    # logscore is the NEGATIVE filtered log predictive density, so its sum is the
+    # conditional loglik at the EB modes with the sign flipped.
+    @test isapprox(-ls, get_loglikelihood(res); atol = 1.0e-6)
+    # Sharpness: unfiltered scoring would be a different number entirely.
+    cache = build_plot_cache(res)
+    θ = cache.params
+    η_ind = cache.random_effects[1]
+    ind = get_individuals(dm)[1]
+    obs_rows = NoLimits.get_row_groups(dm).obs_rows[1]
+    y1 = get_obs(get_series(ind)).y
+    unfiltered = sum(logpdf(
+                         calculate_formulas_obs(model, θ, η_ind, ind.const_cov,
+                             NoLimits._varying_at(dm, ind, j, obs_rows[j])).y, y1[j])
+    for j in eachindex(obs_rows) if y1[j] !== missing)
+    ls1 = sum(skipmissing(rdf[rdf.individual_idx .== 1, :logscore]))
+    @test !isapprox(-ls1, unfiltered; atol = 1.0e-3)
+end
+
 @testset "GOF and diagnostic plots (Laplace RE fit)" begin
     # Moved from coverage_gap_tests.jl (path coverage for GOF/diagnostic plots).
     dm = fx_fixre_dm()

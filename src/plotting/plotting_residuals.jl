@@ -284,6 +284,17 @@ Compute residuals for each observation and return a `DataFrame`.
 - `mcmc_quantiles::Vector = [5, 95]`: percentiles for MCMC residual uncertainty bands.
 - `rng::AbstractRNG = Random.default_rng()`: random-number generator.
 - `return_draw_level::Bool = false`: if `true`, return draw-level residuals for MCMC.
+
+# `:logscore` sign and relation to `get_loglikelihood`
+
+`logscore` is the **negative** log predictive density of the observation,
+`-logpdf(dist, y)` (smaller is better), so `-sum(skipmissing(rdf.logscore))` is the
+conditional log-likelihood at the random effects the residuals were evaluated at. For
+HMM-family outcomes `dist` is the forward-filtered distribution, so this identity holds
+through `missing` rows as well. On Laplace/FOCEI/SAEM/MCEM/Pooled fits it therefore
+matches `get_loglikelihood(res)` (which also conditions on the EB modes) to round-off;
+on `GHQuadrature` fits `get_loglikelihood` returns the *marginal* likelihood, which
+integrates over the random effects and is a different quantity.
 """
 function get_residuals(res::FitResult;
         dm::Union{Nothing, DataModel} = nothing,
