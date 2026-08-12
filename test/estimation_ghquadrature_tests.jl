@@ -1631,8 +1631,9 @@ end
         res_g = fit_model(dm, NoLimits.GHQuadrature(level = 5); kw...)
 
         @test isfinite(get_objective(res_g))
-        p_l = get_params(res_l; scale = :untransformed)
-        p_g = get_params(res_g; scale = :untransformed)
+        # qualified: MCMCChains also exports get_params, ambiguous when batched
+        p_l = NoLimits.get_params(res_l; scale = :untransformed)
+        p_g = NoLimits.get_params(res_g; scale = :untransformed)
         # This model is linear-Gaussian, so Laplace is exact and adaptive
         # quadrature must reproduce it at any level.
         @test isapprox(p_g.σ, p_l.σ; rtol = 0.02)
