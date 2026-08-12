@@ -55,6 +55,37 @@ end
         ms, dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
 end
 
+@testset "Multistart default sampling respects bounds" begin
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+
+        @fixedEffects begin
+            β = RealVector([0.5, 0.5]; scale = [:identity, :log],
+                lower = [-Inf, 1e-12], prior = MvNormal(zeros(2), I))
+            σ = RealNumber(0.5; scale = :log, prior = Normal(0.0, 1.0))
+        end
+
+        @formulas begin
+            y ~ Normal(β[1] + β[2] * t, σ)
+        end
+    end
+    df = DataFrame(
+        ID = [:A, :A, :B, :B],
+        t = [0.0, 1.0, 0.0, 1.0],
+        y = [0.1, 0.2, 0.0, -0.1]
+    )
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    ms = NoLimits.Multistart(n_draws_requested = 8, n_draws_used = 8, progress = false)
+    starts = NoLimits._multistart_initials(dm, ms)
+    @test length(starts) == 8
+    @test all(s -> s.β[2] > 0 && s.σ > 0, starts)
+    res = fit_model(ms, dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
+    @test length(NoLimits.get_multistart_results(res)) +
+          length(NoLimits.get_multistart_failed_results(res)) == 8
+end
+
 @testset "Multistart MAP" begin
     ms = NoLimits.Multistart(n_draws_requested = 4, n_draws_used = 3)
     res = fit_model(ms, fx_nore_prior_dm(), NoLimits.MAP(; optim_kwargs = (maxiters = 2,)))

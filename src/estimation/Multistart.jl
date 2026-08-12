@@ -230,18 +230,45 @@ function _sample_param(
     return [_fix_matrix(rand(rng, dist)) for _ in 1:n]
 end
 
+_bound_at(b, idx) = b isa Number ? b : b[idx]
+
+function _truncate_to_bounds(d, lo, hi)
+    (d isa UnivariateDistribution && (isfinite(lo) || isfinite(hi))) || return d
+    return truncated(d; lower = isfinite(lo) ? lo : nothing,
+        upper = isfinite(hi) ? hi : nothing)
+end
+
+# Keep prior-derived draws inside the parameter's declared range (a :log coordinate
+# must stay positive). A multivariate prior degrades to per-coordinate truncated
+# marginals; correlation in the start points is not worth preserving here.
+function _bound_default_dist(p, value, lo, hi)
+    p isa AbstractArray && return [_truncate_to_bounds(p[j], _bound_at(lo, j),
+                _bound_at(hi, j)) for j in eachindex(p)]
+    value isa Number && return _truncate_to_bounds(p, lo, hi)
+    (value isa AbstractVector && (any(isfinite, lo) || any(isfinite, hi))) || return p
+    marg = [_laplace_marginal_mvnormal(p, j) for j in eachindex(value)]
+    any(isnothing, marg) && return p
+    return [_truncate_to_bounds(marg[j], _bound_at(lo, j), _bound_at(hi, j))
+            for j in eachindex(value)]
+end
+
 function _collect_param_dists(dm::DataModel, ms::Multistart)
     fe = get_fixed(get_model(dm))
     priors = get_priors(fe)
     names = get_names(fe)
+    θ0_u = get_θ0_untransformed(fe)
+    lower, upper = get_bounds_untransformed(fe)
     pairs = Pair{Symbol, Any}[]
     for name in names
         if haskey(ms.dists, name)
+            # User-supplied dists are used verbatim; an out-of-bounds draw stays an error.
             push!(pairs, name => getfield(ms.dists, name))
         else
             p = hasproperty(priors, name) ? getfield(priors, name) : Priorless()
             if !(p isa Priorless)
-                push!(pairs, name => p)
+                push!(pairs,
+                    name => _bound_default_dist(p, getproperty(θ0_u, name),
+                        getproperty(lower, name), getproperty(upper, name)))
             end
         end
     end
