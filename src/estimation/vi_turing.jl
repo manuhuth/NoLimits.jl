@@ -118,19 +118,27 @@ function _vi_converged(
     return maximum(deltas) <= atol + rtol * scale
 end
 
-function _vi_coord_names(varinfo)
+function _vi_coord_names(varinfo, θ0_u::ComponentArray)
     # DynamicPPL >=0.41 removed `syms`, the `varinfo.metadata` layout, and `varinfo[vn]`.
     # Build per-coordinate names from `keys(varinfo)` (the VarNames, in VarInfo order)
     # expanded by each variable's internal (flattened) length — matching the flat order
-    # AdvancedVI uses for the variational parameters.
+    # AdvancedVI uses for the variational parameters. Array-valued blocks are spelled
+    # with their Cartesian index ("Ω[1,1]"), the coordinate-key convention every chain
+    # consumer looks up; `getindex_internal` flattens column-major, as does
+    # `CartesianIndices`.
     names = Symbol[]
     for vn in keys(varinfo)
-        val = DynamicPPL.getindex_internal(varinfo, vn)
-        n = length(val)
+        base = string(vn)
+        n = length(DynamicPPL.getindex_internal(varinfo, vn))
+        sym = Symbol(base)
+        val = hasproperty(θ0_u, sym) ? getproperty(θ0_u, sym) : nothing
         if n == 1
-            push!(names, Symbol(string(vn)))
+            push!(names, sym)
+        elseif val isa AbstractArray && length(val) == n
+            for idx in CartesianIndices(val)
+                push!(names, Symbol(base, "[", join(Tuple(idx), ","), "]"))
+            end
         else
-            base = string(vn)
             for i in 1:n
                 push!(names, Symbol(base, "[", i, "]"))
             end
@@ -148,19 +156,20 @@ function _vi_unlink_draws(res::VIResult, linked::AbstractMatrix)
     model = res.model
     vil = DynamicPPL.link(DynamicPPL.VarInfo(model), model)
     ks = collect(keys(vil))
-    out = similar(linked)
-    @inbounds for r in axes(linked, 1)
+    out = nothing
+    for r in axes(linked, 1)
         z = collect(@view linked[r, :])
         vn = DynamicPPL.invlink!!(DynamicPPL.unflatten!!(deepcopy(vil), z), model)
-        pos = 1
+        vals = Float64[]
         for k in ks
-            for x in DynamicPPL.getindex_internal(vn, k)
-                out[r, pos] = x
-                pos += 1
-            end
+            append!(vals, DynamicPPL.getindex_internal(vn, k))
         end
+        # The constrained space can be wider than the linked one (a PSD block links to
+        # its n(n+1)/2 free coordinates), so size the output from the unlinked row.
+        out === nothing && (out = Matrix{Float64}(undef, size(linked, 1), length(vals)))
+        out[r, :] .= vals
     end
-    return out
+    return out === nothing ? linked : out
 end
 
 function sample_posterior(res::VIResult; n_draws::Int = 1000,
@@ -298,7 +307,7 @@ function _fit_model(dm::DataModel, method::VI, args...;
         trace, max_iter; window = conv_window, rtol = conv_rtol, atol = conv_atol)
 
     varinfo = DynamicPPL.VarInfo(model)
-    coord_names = _vi_coord_names(varinfo)
+    coord_names = _vi_coord_names(varinfo, get_θ0_untransformed(fe))
     obs = get_df(dm)[:, get_obs_cols(dm)]
     summary = FitSummary(final_elbo, converged,
         FitParameters(ComponentArray(), ComponentArray()),
@@ -313,6 +322,7 @@ function _fit_model(dm::DataModel, method::VI, args...;
             convergence_atol = conv_atol))
     result = VIResult(posterior, trace, state, n_iter, max_iter, final_elbo, converged,
         NamedTuple(), obs, coord_names, model)
-    return FitResult(method, result, summary, diagnostics,
+    res = FitResult(method, result, summary, diagnostics,
         store_data_model ? dm : nothing, args, fit_kwargs)
+    return _with_posterior_params(res, dm; rng = rng)
 end
