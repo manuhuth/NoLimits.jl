@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.2.1
+
 ### Bug fixes
 
 - `compute_uq(res; method = :profile)` returned all-`NaN` intervals under every
