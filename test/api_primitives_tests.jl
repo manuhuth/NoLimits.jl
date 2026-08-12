@@ -279,6 +279,42 @@ struct APITestBayes <: NoLimits.FittingMethod end
             dm, θhat, 1; serialization = NoLimits.EnsembleSerial()) isa ComponentArray
     end
 
+    # Issue #116: per-individual quantities must key off identity, not row position, so
+    # permuting/relabelling individuals may only change the order of the outer sum.
+    @testset "per-individual terms are position-independent" begin
+        df = fx_re_df()
+        ids = unique(df.ID)
+        perm = [4, 1, 6, 2, 5, 3]
+        subs = DataFrame[]
+        for (j, p) in enumerate(perm)
+            sub = df[df.ID .== ids[p], :]
+            sub.ID = fill("P$j", nrow(sub))
+            push!(subs, sub)
+        end
+        dfp = reduce(vcat, subs)
+        model = fx_re_model()
+        dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+        dmp = DataModel(model, dfp; primary_id = :ID, time_col = :t)
+        θ = NoLimits.get_θ0_untransformed(NoLimits.get_fixed(model))
+        ctx = NoLimits.build_fit_context(dm)
+        ctxp = NoLimits.build_fit_context(dmp)
+        infos = NoLimits.get_batch_infos(ctx)
+        infosp = NoLimits.get_batch_infos(ctxp)
+        bs = NoLimits.empirical_bayes(ctx, θ)
+        bsp = NoLimits.empirical_bayes(ctxp, θ)
+        @test length(infosp) == length(infos)
+        # batch order need not follow individual order: match batches through the
+        # individual each one holds, mapped back through the permutation.
+        batch_of = Dict(first(NoLimits.get_inds(infos[i])) => i for i in eachindex(infos))
+        lm(d, c, info, b) = NoLimits.laplace_marginal(
+            d, θ, info, b; const_cache = c.const_cache, cache = c.cache)
+        for j in eachindex(infosp)
+            i = batch_of[perm[first(NoLimits.get_inds(infosp[j]))]]
+            @test bsp[j] == bs[i]
+            @test lm(dmp, ctxp, infosp[j], bsp[j]) === lm(dm, ctx, infos[i], bs[i])
+        end
+    end
+
     @testset "quadrature marginal / Fisher info / posterior sampling" begin
         dm = fx_re_dm()
         θ = NoLimits.get_θ0_untransformed(NoLimits.get_fixed(NoLimits.get_model(dm)))
