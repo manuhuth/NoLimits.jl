@@ -125,9 +125,21 @@ const TEST_FILES = reduce(vcat, TEST_GROUPS)
 # NoLimits). This is the supported way to run single files now that test-only
 # deps live in test/Project.toml, e.g.:
 #   NL_TEST_FILES="aqua_tests.jl" julia --project -e 'using Pkg; Pkg.test()'
+# CI shards by fixture-affine group: NL_TEST_GROUP=i runs only TEST_GROUPS[i], so
+# the groups run as parallel jobs instead of ~2.5h of sequential batches.
+const _GROUP = strip(get(ENV, "NL_TEST_GROUP", ""))
+const _GROUP_FILES = if isempty(_GROUP)
+    TEST_FILES
+else
+    i = parse(Int, _GROUP)
+    checkbounds(Bool, TEST_GROUPS, i) ||
+        error("NL_TEST_GROUP=$i out of range 1:$(length(TEST_GROUPS))")
+    TEST_GROUPS[i]
+end
+
 const _FILTER = strip(get(ENV, "NL_TEST_FILES", ""))
 const _SELECTED_FILES = if isempty(_FILTER)
-    TEST_FILES
+    _GROUP_FILES
 else
     requested = strip.(split(_FILTER, ","))
     unknown = setdiff(requested, TEST_FILES)
