@@ -1,6 +1,9 @@
 export save_fit, load_fit
 
-import JLD2
+# The stripping/reconstruction machinery below is plain Julia; only the two file
+# operations touch JLD2, and those live in NoLimitsJLD2Ext.
+function _jld2_save end
+function _jld2_load end
 using Logging: with_logger, NullLogger
 using SciMLBase: EnsembleSerial, EnsembleThreads, EnsembleDistributed
 using Random: default_rng
@@ -424,9 +427,10 @@ The path string.
 """
 function save_fit(path::AbstractString, res::Union{FitResult, MultistartFitResult};
         include_data::Bool = false)
+    _require_ext(:NoLimitsJLD2Ext, :JLD2, "save_fit")
     stripped = _strip_fit_result(res; include_data = include_data)
     with_logger(NullLogger()) do
-        JLD2.jldsave(path; saved = stripped)
+        _jld2_save(path, stripped)
     end
     return path
 end
@@ -462,8 +466,9 @@ functions.
 [`save_fit`](@ref)
 """
 function load_fit(path::AbstractString; model = nothing, dm = nothing)
+    _require_ext(:NoLimitsJLD2Ext, :JLD2, "load_fit")
     saved = with_logger(NullLogger()) do
-        JLD2.load(path, "saved")
+        _jld2_load(path)
     end
     saved.format_version == _SERIALIZATION_FORMAT_VERSION ||
         error("Unsupported SavedFitResult format version $(saved.format_version). " *

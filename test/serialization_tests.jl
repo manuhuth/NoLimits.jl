@@ -1,5 +1,6 @@
 using Test
 using NoLimits
+using JLD2
 using DataFrames
 using Distributions
 using ComponentArrays
@@ -286,7 +287,7 @@ end
     expected_nres = nrow(get_residuals(res))
 
     script = """
-    using NoLimits, Distributions, DataFrames, CairoMakie
+    using NoLimits, Distributions, DataFrames, CairoMakie, JLD2
     model = @Model begin
         @fixedEffects begin
             a = RealNumber(1.0)
@@ -307,8 +308,9 @@ end
     script_path = tempname() * ".jl"
     write(script_path, script)
 
-    project_dir = pkgdir(NoLimits)
-    out = readchomp(`$(Base.julia_cmd()) --project=$(project_dir) $(script_path)`)
+    # The test environment, not the package's own: JLD2 (load_fit) and CairoMakie
+    # (plot_fits) are optional deps of NoLimits and live only here.
+    out = readchomp(`$(Base.julia_cmd()) --project=$(Base.active_project()) $(script_path)`)
     lines = split(strip(out), '\n'; keepempty = false)
 
     @test length(lines) >= 5
@@ -334,7 +336,7 @@ end
     expected_n_ids = nrow(expected_re.η)
 
     script = """
-    using NoLimits, Distributions, DataFrames, CairoMakie
+    using NoLimits, Distributions, DataFrames, CairoMakie, JLD2
     model = @Model begin
         @fixedEffects begin
             a = RealNumber(1.0)
@@ -359,8 +361,9 @@ end
     script_path = tempname() * ".jl"
     write(script_path, script)
 
-    project_dir = pkgdir(NoLimits)
-    out = readchomp(`$(Base.julia_cmd()) --project=$(project_dir) $(script_path)`)
+    # The test environment, not the package's own: JLD2 (load_fit) and CairoMakie
+    # (plot_fits) are optional deps of NoLimits and live only here.
+    out = readchomp(`$(Base.julia_cmd()) --project=$(Base.active_project()) $(script_path)`)
     lines = split(strip(out), '\n'; keepempty = false)
 
     @test length(lines) >= 5

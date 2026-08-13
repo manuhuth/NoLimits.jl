@@ -1,6 +1,9 @@
 export load_warfarin_from_monolix
 
-using CSV, Downloads, Statistics
+using Downloads, Statistics
+
+# Delimited-file parsing, implemented in NoLimitsCSVExt.
+function _csv_read_tsv end
 import DataFrames: DataFrame, rename!, transform!, groupby, combine, leftjoin,
                    unstack, unique, nrow, select!
 
@@ -61,6 +64,7 @@ Returns a `DataFrame` with columns:
 Monolix suite tutorial datasets. See https://monolixsuite.slp-software.com for details.
 """
 function load_warfarin_from_monolix()
+    _require_ext(:NoLimitsCSVExt, :CSV, "load_warfarin_from_monolix")
     local path
     try
         path = Downloads.download(_WARFARIN_MONOLIX_URL)
@@ -74,6 +78,6 @@ Check your internet connection and re-run.
 Original error: $(sprint(showerror, err))
 """)
     end
-    df_raw = CSV.read(path, DataFrame; delim = '\t', missingstring = ".")
+    df_raw = _csv_read_tsv(path)
     return _prepare_warfarin_df(df_raw)
 end

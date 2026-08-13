@@ -1,5 +1,6 @@
 using Test
 using NoLimits
+using Latexify
 using Distributions
 using LinearAlgebra
 

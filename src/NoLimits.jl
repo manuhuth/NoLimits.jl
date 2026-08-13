@@ -1,6 +1,7 @@
 module NoLimits
 
 include("Constants.jl")
+include("utils/extensions.jl")
 include("distributions/outcomes/_HMMUtils.jl")
 include("distributions/outcomes/ContinuousTimeHMM.jl")
 include("distributions/outcomes/DiscreteTimeHMM.jl")

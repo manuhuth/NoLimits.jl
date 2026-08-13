@@ -1,35 +1,17 @@
-using LikelihoodProfiler
 using Distributions
 using Random
 
-# LikelihoodProfiler 1.x replaced the 0.x algorithm symbols by stepper objects; the
-# historical `profile_method` names are kept as the user-facing selector.
-function _profile_stepper(profile_method::Symbol)
-    profile_method === :FIXED_STEP && return LikelihoodProfiler.FixedStep()
-    profile_method === :LIN_EXTRAPOL &&
-        return LikelihoodProfiler.AdaptiveStep(;
-            predictor = LikelihoodProfiler.LinearPredictor())
-    profile_method === :SINGLE_AXIS &&
-        return LikelihoodProfiler.AdaptiveStep(;
-            predictor = LikelihoodProfiler.SingleAxisPredictor())
-    error("Unsupported profile_method $(profile_method). Supported values are :LIN_EXTRAPOL, :SINGLE_AXIS and :FIXED_STEP; the LikelihoodProfiler 0.x values :CICO_ONE_PASS and :QUADR_EXTRAPOL no longer exist.")
-end
+# The profiler itself and one profile solve, implemented in NoLimitsLikelihoodProfilerExt.
+# `_profile_run` returns `(; left, right, left_status, right_status, left_fevals,
+# right_fevals)` so the surrounding bookkeeping stays free of LikelihoodProfiler types.
+function _profile_profiler end
+function _profile_run end
 
 _warn_removed_profile_kw(::Symbol, ::Nothing) = nothing
 function _warn_removed_profile_kw(name::Symbol, value)
     @warn "`$(name) = $(value)` is ignored and deprecated. It was a CICO scan tolerance of the LikelihoodProfiler 0.x backend and has no equivalent in the 1.x profiler; nothing is substituted for it. Drop the keyword; use `profile_scan_width`, `profile_max_iter` and `profile_ftol_abs` to control the profile search."
     return nothing
 end
-
-function _profile_optimizer(profile_local_alg::Symbol)
-    isdefined(NLopt, profile_local_alg) ||
-        error("Unknown profile_local_alg $(profile_local_alg); expected an NLopt algorithm such as :LN_NELDERMEAD.")
-    return getfield(NLopt, profile_local_alg)()
-end
-
-# LikelihoodProfiler 1.x does not populate per-branch solver stats, so report -1 (unknown).
-_profile_fevals(::Nothing) = -1
-_profile_fevals(s) = s.fevals > 0 ? s.fevals : -1
 
 @inline function _profile_scan_bounds(x0::Float64, lb::Float64, ub::Float64, width::Float64)
     width > 0 || error("profile_scan_width must be positive.")
@@ -211,6 +193,8 @@ function _compute_uq_profile(res::FitResult;
         profile_ftol_abs::Real,
         profile_kwargs::NamedTuple,
         rng::AbstractRNG)
+    _require_ext(:NoLimitsLikelihoodProfilerExt, (:LikelihoodProfiler, :OptimizationNLopt),
+        "uq(...; method = :profile)")
     dm = get_data_model(res)
     dm === nothing &&
         error("This fit result does not store a DataModel; pass store_data_model=true when fitting.")
@@ -288,21 +272,16 @@ function _compute_uq_profile(res::FitResult;
     optprob = OptimizationProblem(
         OptimizationFunction((x, _p) -> obj_active(collect(x))), copy(xhat_active);
         lb = collect(lb_coords), ub = collect(ub_coords))
-    profiler = LikelihoodProfiler.OptimizationProfiler(;
-        stepper = _profile_stepper(profile_method),
-        optimizer = _profile_optimizer(profile_local_alg),
-        optimizer_opts = (;
-            maxiters = profile_max_iter, abstol = Float64(profile_ftol_abs)))
+    profiler = _profile_profiler(
+        profile_method, profile_local_alg, profile_max_iter, Float64(profile_ftol_abs))
 
     for j in 1:p
         errors[j] = nothing
         scan_lo, scan_hi = _profile_scan_bounds(
             xhat_active[j], lb_coords[j], ub_coords[j], Float64(profile_scan_width))
-        sol = try
-            plprob = LikelihoodProfiler.ProfileLikelihoodProblem(
-                optprob, copy(xhat_active); idxs = j,
-                profile_lower = scan_lo, profile_upper = scan_hi, threshold = threshold)
-            solve(plprob, profiler; profile_kwargs...)
+        r = try
+            _profile_run(profiler, optprob, xhat_active, j, scan_lo, scan_hi,
+                threshold, profile_kwargs)
         catch err
             errors[j] = sprint(showerror, err)
             left_status[j] = :ERROR
@@ -311,20 +290,16 @@ function _compute_uq_profile(res::FitResult;
             continue
         end
 
-        curve = sol[1]
-        rc = LikelihoodProfiler.retcodes(curve)
-        ep = LikelihoodProfiler.endpoints(curve)
-        st = LikelihoodProfiler.stats(curve)
-        left_status[j] = rc.left
-        right_status[j] = rc.right
-        left_counter[j] = _profile_fevals(st.left)
-        right_counter[j] = _profile_fevals(st.right)
+        left_status[j] = r.left_status
+        right_status[j] = r.right_status
+        left_counter[j] = r.left_fevals
+        right_counter[j] = r.right_fevals
 
-        ep.left === nothing || (lower_prof_t[j] = Float64(ep.left))
-        ep.right === nothing || (upper_prof_t[j] = Float64(ep.right))
+        r.left === nothing || (lower_prof_t[j] = Float64(r.left))
+        r.right === nothing || (upper_prof_t[j] = Float64(r.right))
         endpoint_found[j] = isfinite(lower_prof_t[j]) && isfinite(upper_prof_t[j])
         endpoint_found[j] ||
-            @warn "Profile UQ did not locate both endpoints for $(active_names[j]); try a larger profile_scan_width or profile_max_iter." left_status=rc.left right_status=rc.right
+            @warn "Profile UQ did not locate both endpoints for $(active_names[j]); try a larger profile_scan_width or profile_max_iter." left_status=r.left_status right_status=r.right_status
     end
 
     θ_coords_t = _coords_on_transformed_layout(fe, θ_hat_t, free_names; natural = false)

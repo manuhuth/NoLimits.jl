@@ -1,5 +1,6 @@
 using Test
 using NoLimits
+using JLD2
 using DataFrames
 using Distributions
 using ComponentArrays
