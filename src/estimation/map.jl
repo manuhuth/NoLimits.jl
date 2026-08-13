@@ -81,6 +81,7 @@ function _fit_model(dm::DataModel, method::MAP, args...;
     has_prior ||
         error("MAP requires priors on free fixed effects. Define priors in @fixedEffects (e.g., RealNumber(...; prior=Normal(...))), drop the prior-carrying parameters from `constants`, or use MLE instead.")
 
+    _warn_unbounded_prior_at_bounds(fe)
     add_term = _combine_add_terms(_MAPTerm(fe), extra_objective)
     fit_kwargs = (constants = constants,
         penalty = penalty,

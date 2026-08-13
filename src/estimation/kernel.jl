@@ -148,10 +148,10 @@ function batch_loglik_ghq(
     log_val, result_sign = signed_logsumexp(a_vals, sgrid.signs)
 
     if result_sign < 0
-        @warn "GHQuadrature: batch marginal likelihood estimate is negative " *
-              "(signed logsumexp returned negative result). " *
-              "This indicates numerical instability — consider reducing `level` " *
-              "or checking your model specification."
+        @warn "GHQuadrature: batch marginal likelihood estimate is negative "*
+              "(signed logsumexp returned negative result). "*
+              "This indicates numerical instability — consider reducing `level` "*
+              "or checking your model specification." maxlog=1
         return T(-Inf)
     end
 

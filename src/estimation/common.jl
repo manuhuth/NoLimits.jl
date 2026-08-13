@@ -787,6 +787,100 @@ function validate_constant_names(fe::FixedEffects, constants::NamedTuple)
     _validate_constant_names(Set(get_names(fe)), constants)
 end
 
+# Natural-scale domain of a scalar scale kind, or `nothing` when the kind has no
+# simple element-wise domain (matrix/simplex parameterizations).
+function _scale_domain(kind::Symbol)
+    kind === :log ? ("positive values", >(0.0)) :
+    kind === :logit ? ("values in (0, 1)", x -> 0.0 < x < 1.0) :
+    nothing
+end
+
+function _validate_constant_domain(name::Symbol, spec::TransformSpec, val)
+    if spec.kind === :elementwise && spec.mask !== nothing
+        v = collect(val)
+        for j in eachindex(spec.mask)
+            _validate_constant_domain(
+                name, TransformSpec(name, spec.mask[j], (1, 1), nothing),
+                v[j])
+        end
+        return nothing
+    end
+    dom = _scale_domain(spec.kind)
+    dom === nothing && return nothing
+    desc, ok = dom
+    all(ok, val) ||
+        error("Invalid constant $(name)=$(val): scale :$(spec.kind) requires $(desc) on the " *
+              "natural (untransformed) scale.")
+    return nothing
+end
+
+# Validate the per-parameter `constants=` / `penalty=` overrides passed to `fit_model`
+# before any transform or objective math runs, so a bad name or an out-of-domain value
+# reports itself here instead of as a raw `DomainError`/`FieldError` from deep inside
+# the optimizer (issue #169).
+function _validate_fit_overrides(dm::DataModel, kwargs::NamedTuple)
+    constants = get(kwargs, :constants, NamedTuple())
+    penalty = get(kwargs, :penalty, NamedTuple())
+    (isempty(keys(constants)) && isempty(keys(penalty))) && return nothing
+    fe = get_fixed(get_model(dm))
+    fixed_set = Set(get_names(fe))
+    _validate_constant_names(fixed_set, constants)
+    for name in keys(penalty)
+        name in fixed_set || error("Unknown penalty parameter $(name).")
+    end
+    if !isempty(keys(constants))
+        ft = get_transform(fe)
+        for (i, name) in enumerate(ft.names)
+            haskey(constants, name) &&
+                _validate_constant_domain(name, ft.specs[i], getfield(constants, name))
+        end
+    end
+    return nothing
+end
+
+# The objective's `isinf(add) && return Inf` short-circuit returns a `Dual` whose partials
+# are all zero, so an infeasible STARTING point looks to the optimizer like a zero-gradient
+# optimum and gets reported as converged. Reject it here instead (issue #165).
+function _check_add_term_at_start(add_term, θ_start_u)
+    add0 = add_term(θ_start_u)
+    isfinite(add0) && return nothing
+    reason = add0 == Inf ?
+             "the starting values have zero prior density (outside the prior support)" :
+             "the prior density is unbounded at the starting values (improper mode)"
+    error("Objective is not finite at the starting parameter values: $(reason). " *
+          "Move the initial values into the interior of the prior support " *
+          "(or pass theta_0_untransformed=...).")
+end
+
+# A prior with unbounded density at a declared bound (e.g. Beta(0.5, 0.5) on [0, 1]) has no
+# interior posterior mode: the optimizer walks to the bound, the objective keeps improving,
+# and it reports Success at a degenerate point. Say so upfront - it cannot be fixed by
+# clamping, only by a different prior or bound (issue #165).
+function _warn_unbounded_prior_at_bounds(fe)
+    priors = get_priors(fe)
+    lower, upper = get_bounds_untransformed(fe)
+    for name in keys(priors)
+        prior = getfield(priors, name)
+        prior isa Priorless && continue
+        prior isa Distributions.UnivariateDistribution || continue
+        for (what, b) in (("lower", lower[name]), ("upper", upper[name]))
+            b isa Real && isfinite(b) || continue
+            lp = try
+                logpdf(prior, b)
+            catch
+                continue
+            end
+            lp == Inf &&
+                @warn "Parameter $(name): the prior density is unbounded at the $(what) " *
+                      "bound $(b), so the posterior has no interior mode there. MAP will " *
+                      "drive $(name) to the bound and report convergence at a degenerate " *
+                      "point. Use a prior that is bounded on the closure of the domain, or " *
+                      "tighten the bound."
+        end
+    end
+    return nothing
+end
+
 # True when at least one *free* fixed effect declares a non-`Priorless` prior (the
 # priors-present check MAP/PooledMap require). A prior on a `constants=` parameter is
 # only an additive offset, so it must not satisfy the gate.
@@ -2510,6 +2604,7 @@ function fit_model(dm::DataModel, method::FittingMethod, args...;
         fit_options_pooled_init::NamedTuple = NamedTuple(),
         kwargs...)
     _reset_numeric_warnings!()
+    _validate_fit_overrides(dm, NamedTuple(kwargs))
     _warn_degenerate_soft_trees(
         dm, get(NamedTuple(kwargs), :theta_0_untransformed, nothing))
     if pooled_init === false

@@ -1799,3 +1799,35 @@ end
         @test maximum(abs.(collect(pa) .- collect(pb))) <= 1e-6
     end
 end
+
+# #176: adaptive centering is skipped when a crossed batch is not purely Gaussian, and the
+# prior-centered Smolyak rule's signed weights used to turn the batch marginal negative at
+# level >= 2 - reported as an Inf objective for the whole fit.
+@testset "mixed Gaussian/non-Gaussian crossed batch stays finite" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.5)
+            σ = RealNumber(0.3, scale = :log)
+            ω_id = RealNumber(0.5, scale = :log)
+            α = RealNumber(2.0, scale = :log)
+            β = RealNumber(2.0, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η_id = RandomEffect(Normal(0.0, ω_id); column = :ID)
+            η_site = RandomEffect(Beta(α, β); column = :SITE)
+        end
+        @formulas begin
+            y ~ Normal(a + η_id + (η_site - 0.5), σ)
+        end
+    end
+    rng = Xoshiro(42)
+    df = DataFrame(ID = repeat(1:6, inner = 2), SITE = repeat(1:6, inner = 2),
+        t = repeat([0.0, 1.0], 6), y = rand(rng, 12) .+ 0.5)
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    res = fit_model(dm, GHQuadrature(level = 3, optim_kwargs = (maxiters = 5,));
+        rng = Xoshiro(42))
+    @test isfinite(get_objective(res))
+end

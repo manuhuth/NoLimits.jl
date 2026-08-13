@@ -322,3 +322,16 @@ end
         @test isapprox(H, fd_hess(h_lie, t0); rtol = 1e-6, atol = 1e-7)
     end
 end
+
+# #167: logit_forward clamps to ±LOGIT_CLAMP, so the declared transformed bounds must not
+# describe a region the transform can never reach, and an unrepresentable value must say so.
+@testset "logit clamp is visible to bounds and declarations" begin
+    fe = @fixedEffects begin
+        p = RealNumber(0.5; scale = :logit, lower = 1e-15, upper = 1 - 1e-15)
+    end
+    lo, up = NoLimits.get_bounds_transformed(fe)
+    @test lo.p == NoLimits.logit_forward(1e-15) == -NoLimits.LOGIT_CLAMP
+    @test up.p == NoLimits.logit_forward(1 - 1e-15) == NoLimits.LOGIT_CLAMP
+
+    @test_logs (:warn,) match_mode=:any RealNumber(1e-10; name = :q, scale = :logit)
+end

@@ -635,3 +635,12 @@ end
     @test all(isfinite.(x))
     @test all(y .>= 0.0)
 end
+
+# #173: pinv's default rank tolerance mapped a near-zero singular value to 0, so a weakly
+# identified direction was reported as near-zero variance - falsely precise. It must be large.
+@testset "Wald bread keeps weakly identified directions large" begin
+    H = [1.0 1.0; 1.0 1.0+1e-10]
+    B = NoLimits._wald_pinv(H, [:a, :b])
+    @test diag(B)[2] > 1e8
+    @test isapprox(B, inv(H); rtol = 1e-3)
+end

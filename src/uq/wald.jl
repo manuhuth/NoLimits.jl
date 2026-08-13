@@ -1,6 +1,46 @@
 using LinearAlgebra
 using Random
 
+# Pseudo-inverse of the objective Hessian for the Wald "bread" matrix.
+#
+# `pinv`'s default rank tolerance maps a near-zero singular value to 0 rather than to a
+# large reciprocal, so a weakly identified direction came out with near-zero variance -
+# falsely precise, the exact opposite of what a standard error must convey (issue #173).
+# Keep every nonzero singular value so such a direction yields a LARGE variance, and only
+# drop the exactly singular ones (which is what makes this usable where `inv` throws).
+function _wald_pinv(H::AbstractMatrix, active_names)
+    F = svd(H)
+    n = length(F.S)
+    smax = n == 0 ? 0.0 : maximum(F.S)
+    tol = eps(Float64) * smax * maximum(size(H))
+    weak = findall(<(tol), F.S)
+    if !isempty(weak)
+        # Name the parameters loading most on the (near-)null directions - those are the
+        # ones whose reported SE is now large because they are not identified by the data.
+        loads = length(active_names) == n ?
+                [active_names[argmax(abs.(view(F.V, :, j)))] for j in weak] : active_names
+        @warn "Wald covariance: the objective Hessian is (near-)singular in "*
+              "$(length(weak)) direction(s); the standard errors for these parameters are "*
+              "large because they are only weakly identified. Consider reparameterizing or "*
+              "fixing them via `constants=`." parameters=unique(loads) smallest_singular_value=minimum(F.S)
+    end
+    Sinv = [s > 0 ? inv(s) : zero(s) for s in F.S]
+    return F.V * Diagonal(Sinv) * F.U'
+end
+
+function _wald_bread(H::AbstractMatrix, pseudo_inverse::Bool, active_names)
+    bread = try
+        pseudo_inverse ? _wald_pinv(H, active_names) : inv(H)
+    catch err
+        pseudo_inverse ||
+            error("Failed to invert Hessian for Wald covariance. Consider pseudo_inverse=true. Original error: $(sprint(showerror, err))")
+        @warn "Falling back to pseudo-inverse for Hessian inversion in UQ." error=sprint(
+            showerror, err)
+        _wald_pinv(H, active_names)
+    end
+    return Matrix{Float64}(0.5 .* (bread .+ bread'))
+end
+
 # Shared Wald finalize tail: project the raw covariance to PSD, draw from the Gaussian
 # approximation, map draws back to the natural scale, extend any stickbreak coordinates,
 # and assemble the UQResult. `extra_diag` carries method-specific diagnostics (e.g.
@@ -252,16 +292,7 @@ function _compute_uq_wald_no_re(res::FitResult;
               "is not differentiable - typically a degenerate random-effect covariance or an " *
               "unconverged fit. Check the fit converged, or use method = :profile / :mcmc.")
 
-    bread = try
-        pseudo_inverse ? pinv(H_active) : inv(H_active)
-    catch err
-        pseudo_inverse ||
-            error("Failed to invert Hessian for Wald covariance. Consider pseudo_inverse=true. Original error: $(sprint(showerror, err))")
-        @warn "Falling back to pseudo-inverse for Hessian inversion in UQ." error=sprint(
-            showerror, err)
-        pinv(H_active)
-    end
-    bread = Matrix{Float64}(0.5 .* (bread .+ bread'))
+    bread = _wald_bread(H_active, pseudo_inverse, active_names)
 
     Vt_raw = if vcov == :hessian
         copy(bread)
@@ -436,16 +467,7 @@ function _compute_uq_wald_re(res::FitResult;
         fd_max_tries = fd_max_tries)
     H_active = 0.5 .* (H_active .+ H_active')
 
-    bread = try
-        pseudo_inverse ? pinv(H_active) : inv(H_active)
-    catch err
-        pseudo_inverse ||
-            error("Failed to invert Hessian for Wald covariance. Consider pseudo_inverse=true. Original error: $(sprint(showerror, err))")
-        @warn "Falling back to pseudo-inverse for Hessian inversion in UQ." error=sprint(
-            showerror, err)
-        pinv(H_active)
-    end
-    bread = Matrix{Float64}(0.5 .* (bread .+ bread'))
+    bread = _wald_bread(H_active, pseudo_inverse, active_names)
 
     Vt_raw = if vcov == :hessian
         copy(bread)

@@ -174,15 +174,33 @@ function _ghq_batch_ll(dm::DataModel,
     # build_re_measure_from_batch may throw DomainError when distribution
     # parameters hit numerical limits (e.g. Beta with α→0 due to underflow).
     # Treat these as invalid parameter regions and return -Inf.
+    adaptive = true
     re_measure = try
         m = build_re_measure_from_batch(info, θu_re, const_cache, dm, ll_cache)
         mc = _ghq_adaptive_measure(dm, info, θu_re, const_cache, ll_cache, m, b_star)
-        mc === nothing ? m : mc
+        adaptive = mc !== nothing
+        adaptive ? mc : m
     catch e
         e isa DomainError && return T(-Inf)
         rethrow(e)
     end
     ghq_ll = batch_loglik_ghq(dm, info, θu_re, re_measure, sgrid, const_cache, ll_cache)
+    # Adaptive centering is skipped for batches that are not purely Gaussian, and the
+    # prior-centered rule's signed Smolyak weights can turn the batch marginal negative at
+    # level >= 2 (issue #98), which used to surface as an `Inf` objective for the whole fit
+    # (issue #176). The level-1 rule has only positive weights, so fall back to it rather
+    # than declaring the batch impossible.
+    if !isfinite(ghq_ll) && !adaptive && get_n_b(info) > 0
+        grid1 = get_sparse_grid(get_n_b(info), 1)
+        if grid1 !== sgrid
+            @warn "GHQuadrature: the prior-centered rule was numerically unstable for a "*
+                  "non-Gaussian random-effect batch; falling back to the level-1 rule for "*
+                  "this batch. Pass a lower `level`, or use SAEM/MCEM for a more accurate "*
+                  "marginal." maxlog=1
+            ghq_ll = batch_loglik_ghq(
+                dm, info, θu_re, re_measure, grid1, const_cache, ll_cache)
+        end
+    end
     const_ll = _const_re_prior_logf(dm, info, θu_re, const_cache, ll_cache)
     (!isfinite(ghq_ll) || !isfinite(const_ll)) && return T(-Inf)
     return ghq_ll + T(const_ll)

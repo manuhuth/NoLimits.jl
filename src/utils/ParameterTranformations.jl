@@ -268,15 +268,15 @@ function log_inverse(x::Real)
 end
 
 function logit_forward(x::Real)
-    return clamp(log(x / (1 - x)), -20.0, 20.0)
+    return clamp(log(x / (1 - x)), -LOGIT_CLAMP, LOGIT_CLAMP)
 end
 
 function logit_inverse(x::Real)
-    return Lux.sigmoid(clamp(x, -20.0, 20.0))
+    return Lux.sigmoid(clamp(x, -LOGIT_CLAMP, LOGIT_CLAMP))
 end
 
 @inline function _logit_inv_jacobian(x::Real)
-    abs(x) >= 20.0 && return zero(x)
+    abs(x) >= LOGIT_CLAMP && return zero(x)
     s = logit_inverse(x)
     return s * (one(s) - s)
 end
