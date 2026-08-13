@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.2.2
+
 ### Bug fixes
 
 - `predict(res, dm_new; re_mode = :reestimate, reestimate_kwargs = (individuals = [...],))`
