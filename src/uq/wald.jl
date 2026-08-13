@@ -30,7 +30,10 @@ function _finalize_wald_uqresult(fe, θ_hat_t, θ_hat_u, free_names, active_idx,
     # (its default is `scale = :natural`) and the intervals threw on quantiles of NaN. The
     # transformed-scale covariance is unaffected and stays exact; only the natural-scale
     # summaries drop the offending rows, and the count is reported so it cannot pass unnoticed.
-    finite_rows = [all(isfinite, @view(draws_n[i, :])) for i in 1:size(draws_n, 1)]
+    # `_wald_usable_draw_row` rejects rows that are merely too large to square, not just the
+    # non-finite ones - see its definition for why an `isfinite` test alone was not enough.
+    finite_rows = [_wald_usable_draw_row(@view(draws_n[i, :]), n_draws)
+                   for i in 1:size(draws_n, 1)]
     n_nonfinite = count(!, finite_rows)
     n_nonfinite == length(finite_rows) &&
         error("Wald natural-scale summaries unavailable: all $(n_nonfinite) draws overflowed " *
@@ -54,7 +57,8 @@ function _finalize_wald_uqresult(fe, θ_hat_t, θ_hat_u, free_names, active_idx,
     intervals_n_use = ext !== nothing ? ext[4] : intervals_n
     # Covariance from the finite rows only, of whatever the stickbreak extension produced.
     Vn_src = draws_n_use !== nothing ? draws_n_use : draws_n
-    Vn_rows = [all(isfinite, @view(Vn_src[i, :])) for i in 1:size(Vn_src, 1)]
+    Vn_rows = [_wald_usable_draw_row(@view(Vn_src[i, :]), n_draws)
+               for i in 1:size(Vn_src, 1)]
     Vn_use = _cov_from_draws(all(Vn_rows) ? Vn_src : Vn_src[Vn_rows, :])
 
     diag = merge(
