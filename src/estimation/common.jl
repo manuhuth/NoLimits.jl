@@ -1792,8 +1792,11 @@ Supported methods: `Laplace`, `MCEM`, `SAEM`.
 - `ebe_rescue_multistart_sampling::Symbol`: sampling for rescue (default: `:lhs`).
 - `constants_re::NamedTuple`: fix specific RE levels at given values (natural scale).
 - `individuals`: `nothing` (all) or a vector of primary IDs. When provided, only batches
-  containing at least one listed individual are re-optimized; the remaining batches retain
-  the `eb_modes` already stored in `res`. Co-batch individuals are always re-optimized.
+  containing at least one listed individual are re-optimized; co-batch individuals are
+  always re-optimized. The remaining batches retain the `eb_modes` already stored in
+  `res` when `dm` is the fit's own stored DataModel, and fall back to the population
+  value (RE prior mean) on any other `dm`, where the stored modes have no positional
+  meaning.
 - `ode_args::Tuple`, `ode_kwargs::NamedTuple`: forwarded to the ODE solver.
 - `rng::AbstractRNG`: random number generator.
 - `progress::Bool`: show progress bar (default: `false`).
@@ -1863,14 +1866,26 @@ function reestimate_ebes(dm::DataModel,
         active_batch_indices = active_batch_indices)
     new_eb_modes = if individuals !== nothing
         existing = get_eb_modes(get_result(res))
-        if existing !== nothing && length(existing) == length(bstars)
-            active_set = Set(active_batch_indices)
+        active_set = Set(active_batch_indices)
+        # The stored-mode merge is positional, so it is only valid on the very
+        # DataModel the fit stored; on any other dm the training modes would leak
+        # into whichever individuals happen to occupy the same batch slot (#146).
+        if dm === get_data_model(res) && existing !== nothing &&
+           length(existing) == length(bstars)
             merged = copy(existing)
             for bi in active_set
                 merged[bi] = bstars[bi]
             end
             merged
         else
+            # Unrequested batches were skipped by _compute_bstars (empty b);
+            # give them the population default (RE prior mean) instead.
+            ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
+            for bi in eachindex(bstars)
+                bi ∈ active_set && continue
+                bstars[bi] = _laplace_default_b0(
+                    dm, batch_infos[bi], θu, const_cache_pre, ll_cache_local)
+            end
             bstars
         end
     else

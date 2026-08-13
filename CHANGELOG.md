@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Bug fixes
+
+- `predict(res, dm_new; re_mode = :reestimate, reestimate_kwargs = (individuals = [...],))`
+  leaked the training fit's empirical-Bayes estimates into every individual of `dm_new`
+  that was not named in `individuals`, matched purely by batch position (#146). The
+  stored-mode merge now applies only when the passed DataModel is the fit's own stored
+  one; on any other DataModel, unrequested individuals get the population value
+  (random-effect prior mean), so their predictions match `re_mode = :population`.
+- `predict(res, dm_new::DataModel)` silently integrated ODEs from `t0 = 0.0` when
+  `dm_new` was built without repeating the fit's `t0` (#148). The integration start is
+  baked into each individual's time span at DataModel construction, so `predict` now
+  raises an informative error on a `t0` mismatch instead of returning wrong numbers;
+  the DataFrame path already reused the fit's `t0` (#130) and is unchanged.
+- `predict(res, newdata; re_mode = :marginal)` threw an uninformative `BoundsError` on
+  models with crossed random-effect groups whenever a grouping column varies within an
+  individual (#152). Monte-Carlo draws are now made per free random-effect level and
+  assembled per individual with the same shape logic as `re_mode = :population`, which
+  also makes individuals sharing a level share its draw within a draw and keeps
+  `constants_re`-fixed levels at their fixed values.
+
 ## v0.2.1
 
 ### Bug fixes
