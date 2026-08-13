@@ -1098,6 +1098,7 @@ function _pooled_solve(dm::DataModel, method, θ_start_u::ComponentArray,
 
     θ_const_u = deepcopy(θ_start_u)
     _apply_constants!(θ_const_u, merged_constants)
+    _check_add_term_at_start(add_term, θ_const_u)
     θ_const_t = transform(θ_const_u)
     θ0_t = transform(θ_start_u)
 
@@ -1124,7 +1125,7 @@ function _pooled_solve(dm::DataModel, method, θ_start_u::ComponentArray,
         θt_full = _merge_free_into_full(θ_const_t_vec, free_idx, v_free, axs_full)
         θu = inv_transform(θt_full)
         add = add_term(θu)
-        add == Inf && return infT
+        isinf(add) && return infT
         η_loc = if recompute_eta
             try
                 _compute_pooled_etas(dm, θu, strategies)

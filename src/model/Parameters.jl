@@ -14,6 +14,18 @@ export RealNumber, RealVector, RealPSDMatrix, RealLiePSDMatrix, RealDiagonalMatr
 export ProbabilityVector, DiscreteTransitionMatrix, ContinuousTransitionMatrix
 export Priorless
 
+# The logit transform clamps to ±LOGIT_CLAMP, so a value or finite bound whose log-odds
+# exceed that limit cannot be represented: the forward transform saturates and the inverse
+# maps back to a different number. Say so at declaration instead of corrupting it silently
+# (issue #167).
+function _warn_logit_unrepresentable(name, what, x)
+    (x <= 0 || x >= 1 || abs(log(x / (1 - x))) <= LOGIT_CLAMP) && return nothing
+    @warn "Parameter $(name): $(what) $(x) is outside the range representable on the " *
+          ":logit scale (|logit(x)| ≤ $(LOGIT_CLAMP)); it saturates at " *
+          "$(sign(x - 0.5) * LOGIT_CLAMP) and will not round-trip to $(x)."
+    return nothing
+end
+
 """
     Priorless()
 
@@ -82,6 +94,9 @@ function RealNumber(value::Real; name::Symbol = :unnamed, scale::Symbol = :ident
     if scale == :logit
         (value > 0 && value < 1) ||
             error("Invalid initial value for parameter $(name). Expected value ∈ (0, 1) for scale :logit; got value=$(value).")
+        _warn_logit_unrepresentable(name, "initial value", value)
+        isfinite(lower) && _warn_logit_unrepresentable(name, "lower bound", lower)
+        isfinite(upper) && _warn_logit_unrepresentable(name, "upper bound", upper)
     end
     T = value isa AbstractFloat ? typeof(value) : Float64
     v = T(value)
@@ -145,8 +160,16 @@ function RealVector(value::AbstractVector{<:Real};
         lower = map((l, sc) -> (sc == :log && l == -Inf) ? EPSILON : l, lower, s)
     end
     for (idx, (sc, vi)) in enumerate(zip(s, value))
-        if sc == :logit && !(vi > 0 && vi < 1)
-            error("Invalid initial value for parameter $(name) at index $(idx). Expected value ∈ (0, 1) for scale :logit; got value=$(vi).")
+        if sc == :logit
+            (vi > 0 && vi < 1) ||
+                error("Invalid initial value for parameter $(name) at index $(idx). Expected value ∈ (0, 1) for scale :logit; got value=$(vi).")
+            _warn_logit_unrepresentable(name, "initial value at index $(idx)", vi)
+            li = lower isa AbstractVector ? lower[idx] : lower
+            ui = upper isa AbstractVector ? upper[idx] : upper
+            isfinite(li) &&
+                _warn_logit_unrepresentable(name, "lower bound at index $(idx)", li)
+            isfinite(ui) &&
+                _warn_logit_unrepresentable(name, "upper bound at index $(idx)", ui)
         end
     end
 

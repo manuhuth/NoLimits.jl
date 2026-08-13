@@ -316,6 +316,14 @@ function _project_psd_covariance(cov_mat::Matrix{Float64})
     V = Matrix{Float64}(0.5 .* (V .+ V'))
     min_raw = isempty(vals_raw) ? 0.0 : minimum(vals_raw)
     min_used = isempty(vals) ? 0.0 : minimum(vals)
+    # Clipping a negative eigenvalue to zero shrinks the variance along that direction, so a
+    # weakly identified parameter can come out looking precise. Never do that silently
+    # (issue #173).
+    n_clipped > 0 &&
+        @warn "Wald covariance was projected to the nearest PSD matrix: $(n_clipped) "*
+              "negative eigenvalue(s) clipped to zero (most negative $(min_raw)). Standard "*
+              "errors along those directions are shrunk toward zero and understate the true "*
+              "uncertainty; prefer method = :profile / :mcmc for those parameters." maxlog=3
     diag = (;
         vcov_projected = n_clipped > 0,
         vcov_min_eig_raw = min_raw,

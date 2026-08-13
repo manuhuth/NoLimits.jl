@@ -265,6 +265,17 @@ let
             @test θu.a == 0.0
         end
     end
+
+    # #169: invalid overrides report themselves at call time, not as a raw DomainError /
+    # FieldError from deep inside the objective.
+    @testset "override validation" begin
+        @test_throws ErrorException fit_model(dm, NoLimits.MLE(); constants = (σ = -1.0,))
+        @test_throws ErrorException fit_model(dm, NoLimits.MLE(); penalty = (bb = 1.0,))
+        # #165: σ = 0 has zero LogNormal prior density; the objective's Inf short-circuit
+        # would hand the optimizer a zero gradient and it would report convergence there.
+        @test_throws ErrorException fit_model(dm, NoLimits.MAP();
+            theta_0_untransformed = ComponentArray(a = 0.1, σ = 0.0))
+    end
 end
 
 @testset "MLE penalties" begin
@@ -539,14 +550,18 @@ let
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
 
-    for (label, method) in (
-        ("MLE", NoLimits.MLE(; optim_kwargs = (maxiters = 2,))),
-        ("MAP", NoLimits.MAP(; optim_kwargs = (maxiters = 2,))))
-        @testset "$label handles +Inf objective in AD path" begin
-            res = fit_model(dm, method)
+    @testset "MLE handles +Inf objective in AD path" begin
+        res = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
 
-            @test res isa FitResult
-            @test !isfinite(NoLimits.get_objective(res))
-        end
+        @test res isa FitResult
+        @test !isfinite(NoLimits.get_objective(res))
+    end
+
+    # #165: a = 0 lies outside the Uniform(0.1, 1.0) prior support, so the MAP objective is
+    # +Inf with zero AD partials there - the optimizer used to read that as a converged
+    # optimum. It must be refused instead of "fitted".
+    @testset "MAP rejects a start outside the prior support" begin
+        @test_throws ErrorException fit_model(
+            dm, NoLimits.MAP(; optim_kwargs = (maxiters = 2,)))
     end
 end

@@ -98,6 +98,7 @@ function _fit_no_re(dm::DataModel, method;
         error("This method requires at least one free fixed effect. Remove constants or specify a fixed effect or random effect.")
     layout = free_parameter_layout(fe; constants = constants,
         theta0_untransformed = theta_0_untransformed)
+    _check_add_term_at_start(add_term, layout.inv_transform(layout.θ_const_t))
     free_names = layout.free_names
     inv_transform = layout.inv_transform
     θ_const_t_vec = layout.θ_const_t_vec
@@ -117,7 +118,7 @@ function _fit_no_re(dm::DataModel, method;
         θt_full = _merge_free_into_full(θ_const_t_vec, free_idx, v_free, axs_full)
         θu = inv_transform(θt_full)
         add = add_term(θu)
-        add == Inf && return infT
+        isinf(add) && return infT
         ll = loglikelihood(
             dm, θu, ComponentArray(); cache = cache, serialization = serialization)
         ll == -Inf && return infT

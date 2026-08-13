@@ -846,13 +846,13 @@ function _transform_bounds(bounds::Tuple{ComponentArray, ComponentArray},
             end
         elseif spec.kind == :logit
             if l isa AbstractArray
-                l2 = map(x -> (isinf(x) || x <= 0) ? -Inf : log(x / (1 - x)), l)
-                u2 = map(x -> (isinf(x) || x >= 1) ? Inf : log(x / (1 - x)), u)
+                l2 = map(x -> (isinf(x) || x <= 0) ? -Inf : logit_forward(x), l)
+                u2 = map(x -> (isinf(x) || x >= 1) ? Inf : logit_forward(x), u)
                 push!(lower_pairs, name => l2)
                 push!(upper_pairs, name => u2)
             else
-                l2 = (isinf(l) || l <= 0) ? -Inf : log(l / (1 - l))
-                u2 = (isinf(u) || u >= 1) ? Inf : log(u / (1 - u))
+                l2 = (isinf(l) || l <= 0) ? -Inf : logit_forward(l)
+                u2 = (isinf(u) || u >= 1) ? Inf : logit_forward(u)
                 push!(lower_pairs, name => l2)
                 push!(upper_pairs, name => u2)
             end
@@ -867,8 +867,8 @@ function _transform_bounds(bounds::Tuple{ComponentArray, ComponentArray},
                 elseif mask[j] === :logit
                     lj = l2[j]
                     uj = u2[j]
-                    l2[j] = (isinf(lj) || lj <= 0) ? -Inf : log(lj / (1 - lj))
-                    u2[j] = (isinf(uj) || uj >= 1) ? Inf : log(uj / (1 - uj))
+                    l2[j] = (isinf(lj) || lj <= 0) ? -Inf : logit_forward(lj)
+                    u2[j] = (isinf(uj) || uj >= 1) ? Inf : logit_forward(uj)
                 end
             end
             push!(lower_pairs, name => l2)
