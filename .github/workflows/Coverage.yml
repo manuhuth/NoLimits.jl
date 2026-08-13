@@ -2,7 +2,8 @@ name: Coverage
 
 # Coverage instrumentation is ~4x slower than a plain test run, so it is kept
 # OUT of the PR gate (CI.yml) and runs here: on pushes to main and on demand.
-# Single, non-blocking job (no sharding); uploads the merged lcov to Codecov.
+# Sharded like CI.yml; each shard uploads its lcov and Codecov merges all
+# uploads for the commit. Non-blocking (fail_ci_if_error: false).
 
 on:
   push:
@@ -15,19 +16,28 @@ concurrency:
 
 jobs:
   coverage:
-    name: coverage (Julia 1.12, ubuntu)
+    name: coverage shard ${{ matrix.group }}
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
         with:
           version: "1.12"
+      # Shared cache family across shards; see the note in CI.yml. Kept
+      # separate from the test cache (julia-cov) as before.
       - uses: julia-actions/cache@v3
         with:
           cache-name: julia-cov
+          include-matrix: "false"
       - uses: julia-actions/julia-buildpkg@v1
       - name: Run tests with coverage
+        env:
+          NL_TEST_GROUP: ${{ matrix.group }}
         run: julia --color=yes --project=. -e 'using Pkg; Pkg.test(; coverage=true, julia_args=["--check-bounds=auto"])'
       - uses: julia-actions/julia-processcoverage@v1
       - uses: codecov/codecov-action@v7
