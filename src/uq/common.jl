@@ -344,6 +344,16 @@ function _sample_gaussian_draws(rng::AbstractRNG,
     return permutedims(X)
 end
 
+# A natural-scale Wald draw need not reach `Inf` to poison the summaries: a finite `1e159`
+# squares to `Inf` in the covariance sum, so an `isfinite` test alone still let
+# `get_uq_vcov()` return an all-`Inf` matrix (#159). The bound is the largest magnitude
+# whose squared deviations still sum over `n_draws` rows without overflowing; `NaN`/`Inf`
+# fail the comparison too, so this one predicate subsumes the finiteness test.
+function _wald_usable_draw_row(row, n_draws::Int)
+    lim = sqrt(floatmax(Float64) / max(n_draws, 1)) / 2
+    return all(x -> abs(x) < lim, row)
+end
+
 function _cov_from_draws(draws::Matrix{Float64})
     n, p = size(draws)
     p == 0 && return zeros(Float64, 0, 0)
