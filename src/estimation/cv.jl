@@ -277,10 +277,10 @@ function _eval_individual_obs(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCac
                         NaN
                     end
                     (individual = id_val, time = t_i, outcome = col,
-                        obs = Float64(y_raw), loglikelihood = lp, predicted_mean = NaN, loss = lv)
+                        obs = _cv_obs_float(y_raw), loglikelihood = lp, predicted_mean = NaN, loss = lv)
                 else
                     (individual = id_val, time = t_i, outcome = col,
-                        obs = Float64(y_raw), loglikelihood = lp, predicted_mean = NaN)
+                        obs = _cv_obs_float(y_raw), loglikelihood = lp, predicted_mean = NaN)
                 end
                 push!(rows_out, row)
             else
@@ -300,10 +300,10 @@ function _eval_individual_obs(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCac
                         NaN
                     end
                     (individual = id_val, time = t_i, outcome = col,
-                        obs = Float64(y_raw), loglikelihood = lp, predicted_mean = pm, loss = lv)
+                        obs = _cv_obs_float(y_raw), loglikelihood = lp, predicted_mean = pm, loss = lv)
                 else
                     (individual = id_val, time = t_i, outcome = col,
-                        obs = Float64(y_raw), loglikelihood = lp, predicted_mean = pm)
+                        obs = _cv_obs_float(y_raw), loglikelihood = lp, predicted_mean = pm)
                 end
                 push!(rows_out, row)
             end
@@ -330,6 +330,10 @@ end
 # scalar or vector component of a reference η). Tries the distribution mean, then
 # the median, then zero — mirroring `_re_start_value`, so non-zero-mean RE priors
 # (Beta, Gumbel, LogNormal, …) are honored rather than collapsed to zero.
+# Vector-valued observations (multivariate outcomes) have no scalar `obs` column
+# entry; the loglikelihood/loss columns still carry their information.
+_cv_obs_float(y) = y isa Number ? Float64(y) : NaN
+
 function _re_prior_mean_or_zero(dist, ref)
     v = try
         _re_mean(dist)
