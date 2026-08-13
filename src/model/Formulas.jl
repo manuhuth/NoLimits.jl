@@ -556,30 +556,6 @@ function _formulas_build_formulas_expr(ir::FormulasIR,
     return (all_expr, obs_expr, required_states, required_signals)
 end
 
-"""
-    get_formulas_builders(f::Formulas; fixed_names, random_names, prede_names,
-                          const_cov_names, varying_cov_names, helper_names,
-                          model_fun_names, state_names, signal_names,
-                          index_sym) -> (all_fn, obs_fn, req_states, req_signals)
-
-Compile the formula expressions into two runtime-generated functions and return them
-together with lists of required DE states and signals.
-
-# Returns
-- `all_fn`: function `(ctx, sol_accessors, const_cov_i, vary_cov) -> NamedTuple`
-  evaluating all deterministic and observation nodes.
-- `obs_fn`: function `(ctx, sol_accessors, const_cov_i, vary_cov) -> NamedTuple`
-  evaluating observation nodes only.
-- `req_states::Vector{Symbol}`: DE state names that are accessed in the formulas.
-- `req_signals::Vector{Symbol}`: derived signal names that are accessed in the formulas.
-
-# Keyword Arguments
-- `fixed_names`, `random_names`, `prede_names`, `const_cov_names`, `varying_cov_names`:
-  symbol lists from each model namespace.
-- `helper_names`, `model_fun_names`: callable symbol lists.
-- `state_names`, `signal_names`: DE state and signal names for time-call rewriting.
-- `index_sym::Symbol = :t`: the varying-covariates key used to extract the current time.
-"""
 # Rewrite call heads and dot-path bases that the @Model caller's module defines but
 # NoLimits does not (user-loaded modules/types) into GlobalRefs, so the generated
 # functions can use them while all NoLimits-visible names keep their old resolution.
@@ -618,6 +594,30 @@ function _qcg(ex::Expr, mod::Module, locals::Set{Symbol})
     return Expr(ex.head, map(a -> _qcg(a, mod, locals), ex.args)...)
 end
 
+"""
+    get_formulas_builders(f::Formulas; fixed_names, random_names, prede_names,
+                          const_cov_names, varying_cov_names, helper_names,
+                          model_fun_names, state_names, signal_names,
+                          index_sym) -> (all_fn, obs_fn, req_states, req_signals)
+
+Compile the formula expressions into two runtime-generated functions and return them
+together with lists of required DE states and signals.
+
+# Returns
+- `all_fn`: function `(ctx, sol_accessors, const_cov_i, vary_cov) -> NamedTuple`
+  evaluating all deterministic and observation nodes.
+- `obs_fn`: function `(ctx, sol_accessors, const_cov_i, vary_cov) -> NamedTuple`
+  evaluating observation nodes only.
+- `req_states::Vector{Symbol}`: DE state names that are accessed in the formulas.
+- `req_signals::Vector{Symbol}`: derived signal names that are accessed in the formulas.
+
+# Keyword Arguments
+- `fixed_names`, `random_names`, `prede_names`, `const_cov_names`, `varying_cov_names`:
+  symbol lists from each model namespace.
+- `helper_names`, `model_fun_names`: callable symbol lists.
+- `state_names`, `signal_names`: DE state and signal names for time-call rewriting.
+- `index_sym::Symbol = :t`: the varying-covariates key used to extract the current time.
+"""
 function get_formulas_builders(f::Formulas;
         fixed_names::Vector{Symbol} = Symbol[],
         collect_fixed_names::Vector{Symbol} = Symbol[],
