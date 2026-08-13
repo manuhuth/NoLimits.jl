@@ -356,14 +356,14 @@ function _re_mean_or_zero(dist, dim::Int, is_scalar::Bool)
     if is_scalar || dim == 1
         v = 0.0
         try
-            v = Float64(mean(dist))
+            v = Float64(_re_mean(dist))
         catch
         end
         return v
     else
         v = zeros(dim)
         try
-            m = mean(dist)
+            m = _re_mean(dist)
             if m isa AbstractVector && length(m) == dim
                 v = Float64.(m)
             end

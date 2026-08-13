@@ -332,7 +332,7 @@ end
 # (Beta, Gumbel, LogNormal, …) are honored rather than collapsed to zero.
 function _re_prior_mean_or_zero(dist, ref)
     v = try
-        Distributions.mean(dist)
+        _re_mean(dist)
     catch
         nothing
     end

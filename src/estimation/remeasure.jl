@@ -497,11 +497,36 @@ function build_re_measure_from_batch(
                 push!(μ_segs, nothing)
                 push!(L_diags, nothing)
 
+            elseif _re_marginals(dist) !== nothing
+                # Generic multivariate with known marginals (e.g. Copulas.SklarDist):
+                # componentwise η_i = Q_i(Φ(z_i)) pushes N(0,I) forward to the product
+                # of the marginals, so the correction is exactly the log copula density.
+                has_npf = true
+                has_correction = true
+                let d = dist, ms = _re_marginals(dist)
+                    transport = z_k -> [Distributions.quantile(ms[i],
+                                            Distributions.cdf(
+                                                Distributions.Normal(), z_k[i]))
+                                        for i in eachindex(ms)]
+                    push!(segment_fns, transport)
+                    push!(correction_fns,
+                        z_k -> begin
+                            η = transport(z_k)
+                            Distributions.logpdf(d, η) -
+                            sum(Distributions.logpdf(ms[i], η[i])
+                            for i in eachindex(ms))
+                        end)
+                end
+                push!(μ_segs, nothing)
+                push!(L_diags, nothing)
+
             else
                 error(
                     "build_re_measure_from_batch: unsupported RE distribution type " *
                     "$(typeof(dist)) for RE '$(re)'. " *
-                    "Supported: Normal, MvNormal, MvLogNormal, MvLogitNormal, LogNormal, Beta, NormalizingPlanarFlow."
+                    "Supported: Normal, MvNormal, MvLogNormal, MvLogitNormal, LogNormal, Beta, " *
+                    "NormalizingPlanarFlow, univariate continuous distributions, and " *
+                    "multivariate distributions with known marginals (e.g. Copulas.SklarDist)."
                 )
             end
         end

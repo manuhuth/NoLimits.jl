@@ -187,7 +187,7 @@ function _pooled_plugin_strategies(dm::DataModel, θ::ComponentArray;
     strategies = Any[]
     for re in re_names
         dist = getproperty(dists, re)
-        strat = if _pooled_finite_or_nothing(() -> mean(dist)) !== nothing
+        strat = if _pooled_finite_or_nothing(() -> _re_mean(dist)) !== nothing
             :mean
         elseif _pooled_finite_or_nothing(() -> median(dist)) !== nothing
             :median
@@ -204,7 +204,7 @@ end
 function _pooled_eta_value(dist, dim::Int, strategy, ::Type{T}) where {T}
     local v
     if strategy === :mean
-        v = mean(dist)
+        v = _re_mean(dist)
     elseif strategy === :median
         v = median(dist)
     elseif strategy isa _PooledMCPlugin

@@ -424,7 +424,7 @@ function _focei_prior_mean_b_impl(
             dists = dists_builder(θ_re, const_cov, model_funs, helpers)
             dist = getproperty(dists, re)
             r = get_ranges(info)[idx]
-            mv = mean(dist)
+            mv = _re_mean(dist)
             if get_is_scalar(info)
                 m[first(r)] = mv isa AbstractVector ? mv[1] : mv
             else
