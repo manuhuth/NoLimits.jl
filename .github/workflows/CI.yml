@@ -9,6 +9,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Pkgimages embed native code for the machine that precompiled them, and the
+# runner fleet mixes CPU generations - without a pinned multi-target, a depot
+# cache saved on one VM is ~fully invalid on the next (observed: 785 of 827
+# deps recompiled, 16 min, on a freshly restored cache). This is the official
+# Julia x86_64 binary target string, so cached pkgimages load on any runner.
+env:
+  JULIA_CPU_TARGET: "generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1)"
+
 jobs:
   # One job per fixture-affine group in test/runtests.jl (NL_TEST_GROUP=i). The
   # groups used to run as sequential subprocess batches inside a single job,

@@ -14,6 +14,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Cross-runner-portable pkgimages; see the note in CI.yml.
+env:
+  JULIA_CPU_TARGET: "generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1)"
+
 jobs:
   coverage:
     name: coverage shard ${{ matrix.group }}
