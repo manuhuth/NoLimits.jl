@@ -248,7 +248,7 @@ function _uq_psd_re_model(scale::Symbol)
                 η = RandomEffect(MvNormal([0.0, 0.0], Ω); column = :ID)
             end
             @formulas begin
-                y ~ Normal(a + η[1], σ)
+                y ~ Normal(a + η[1] + η[2] * t, σ)
             end
         end
     end
@@ -265,17 +265,16 @@ function _uq_psd_re_model(scale::Symbol)
             η = RandomEffect(MvNormal([0.0, 0.0], Ω); column = :ID)
         end
         @formulas begin
-            y ~ Normal(a + η[1], σ)
+            y ~ Normal(a + η[1] + η[2] * t, σ)
         end
     end
 end
 
-# 12 subjects x 3 observations. A 2x2 random-effect covariance has 3 free coordinates and
-# cannot be identified from the 3 subjects this fixture used to carry, so its Wald Hessian was
-# near-singular by construction: the test passed only because a 2-iteration fit and the
-# unconditional Cholesky jitter together kept it away from the boundary. With the covariance
-# actually identified, the Hessian exists and the testset asserts what it is named for - that
-# Wald works in every PSD scale - rather than a knife-edge.
+# 12 subjects x 3 observations, random intercept AND random slope: with only `η[1]` in the
+# formula the second random effect never reached the likelihood, so two of the three Ω
+# coordinates were structurally unidentified and their Wald variance was ~1e12 - draws then
+# overflowed on the natural scale and `get_uq_vcov` was a coin flip on where the optimizer
+# landed (#159). Both effects must enter the observation for the covariance to be estimable.
 function _uq_psd_re_df()
     ids = [Symbol("S", i) for i in 1:12]
     y = [0.10, 0.21, 0.32, 0.02, -0.08, -0.15, 0.15, 0.19, 0.27, -0.05, 0.04, 0.11,
@@ -290,11 +289,9 @@ end
     for (scale, n_coords, seed) in ((:cholesky, 3, 31), (:expm, 3, 32), (:lie, 3, 33))
         model = _uq_psd_re_model(scale)
         dm = DataModel(model, _uq_psd_re_df(); primary_id = :ID, time_col = :t)
-        # This PSD covariance is weakly identified, so the Wald Hessian is only finite at a
-        # properly converged estimate - at a degenerate point it is NaN and `compute_uq` now
-        # says so rather than returning NaN silently. The step cap is what keeps the fit out of
-        # that region; a 2-iteration fit used to land somewhere usable only because the
-        # unconditional Hessian jitter was regularising the log-det.
+        # The Wald Hessian is only finite at a properly converged estimate - at a degenerate
+        # point it is NaN and `compute_uq` says so rather than returning NaN silently. The step
+        # cap is what keeps the fit out of that region.
         res = fit_model(dm,
             NoLimits.Laplace(;
                 optimizer = OptimizationOptimJL.LBFGS(
@@ -313,6 +310,17 @@ end
         @test isapprox(V, V'; rtol = 1e-10, atol = 1e-10)
         @test size(get_uq_draws(uq)) == (40, n_coords)
     end
+end
+
+@testset "Wald natural-scale draw filter rejects unsquarable rows" begin
+    # Row observed in the #159 reproduction: every entry is finite, so the old `isfinite`
+    # filter kept it, and 4.19e159 squared is Inf - which made get_uq_vcov() all-Inf.
+    row = [5.152933056233719e158, 1.4685718986792252e159, 4.185389947927327e159]
+    @test all(isfinite, row)
+    @test !NoLimits._wald_usable_draw_row(row, 40)
+    @test NoLimits._wald_usable_draw_row([0.0134, -4.48e-7, 1.49e-11], 40)
+    @test !NoLimits._wald_usable_draw_row([Inf, 0.0, 0.0], 40)
+    @test !NoLimits._wald_usable_draw_row([NaN, 0.0, 0.0], 40)
 end
 
 @testset "UQ profile for MLE" begin
