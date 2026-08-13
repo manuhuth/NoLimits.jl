@@ -1677,3 +1677,125 @@ end
         @test isapprox(get_objective(res_g), get_objective(res_l); rtol = 1e-4)
     end
 end
+
+# Issue #151: on ill-conditioned batches the adaptive rule was rejected by the
+# *Laplace* admissibility test (λmin > 1e-8·λmax), which sent those batches back to
+# the prior-centered rule of #98; its signed sum turns negative, the batch marginal
+# becomes -Inf and the whole objective +Inf. That cliff amplified the 1e-16
+# reduction-order noise of a threaded/permuted run into an O(1) objective gap.
+@testset "GHQuadrature is order-invariant on ill-conditioned data (issue #151)" begin
+    ill_model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            b = RealNumber(0.0)
+            σ = RealNumber(0.5, scale = :log)
+            Ω = RealPSDMatrix([0.3 0.0; 0.0 0.3], scale = :cholesky)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(MvNormal(zeros(2), Ω); column = :ID)
+        end
+        @formulas begin
+            mu = (a + η[1]) + (b + η[2]) * t
+            y ~ Normal(mu, σ)
+        end
+    end
+
+    # Mimics stress model M18: times over 1e-3..5e3, |y| over ~4 orders, 1-obs ids
+    # alongside one heavily observed id, Ω eigenvalues 0.25 vs 1e-6.
+    Ω_true = [0.25 2.0e-4; 2.0e-4 1.0e-6]
+    function _ill_df()
+        rng = Xoshiro(151)
+        L = cholesky(Symmetric(Ω_true)).L
+        rows = NamedTuple[]
+        function add!(id, n)
+            η = L * randn(rng, 2)
+            for _ in 1:n
+                t = 10.0^(rand(rng) * (log10(5000.0) + 3.0) - 3.0)
+                μ = (5.0 + η[1]) + (-0.002 + η[2]) * t
+                push!(rows, (; ID = id, t = t, y = μ + 0.3 * randn(rng)))
+            end
+        end
+        add!("id_01", 40)
+        for i in 2:9
+            add!("id_" * lpad(string(i), 2, '0'), 1)
+        end
+        for i in 10:24
+            add!("id_" * lpad(string(i), 2, '0'), 8)
+        end
+        df = DataFrame(rows)
+        return df[randperm(Xoshiro(3), nrow(df)), :]
+    end
+
+    df = _ill_df()
+    method = NoLimits.GHQuadrature(level = 3)
+
+    @testset "ill-conditioned but definite -H keeps the adaptive rule" begin
+        # One observation at a large time: -H = inv(Ω) + (1/σ²)[1 t; t t²] is positive
+        # definite but has condition number ≫ 1e8, which the Laplace test rejects.
+        df1 = DataFrame(ID = ["a"], t = [5000.0], y = [-5.0])
+        dm1 = DataModel(ill_model, df1; primary_id = :ID, time_col = :t)
+        θ0 = get_θ0_untransformed(NoLimits.get_fixed(NoLimits.get_model(dm1)))
+        θ = ComponentArray(copy(θ0), getaxes(θ0))
+        θ.σ = 0.3
+        θ.Ω = [4.0 0.0; 0.0 4.0]
+        θ_re = NoLimits.symmetrize_psd_parameters(
+            θ, NoLimits.get_fixed(NoLimits.get_model(dm1)))
+        _, infos, cc = NoLimits.build_re_batch_infos(dm1, NamedTuple())
+        cache = NoLimits.build_likelihood_cache(dm1; force_saveat = true)
+        bstars = NoLimits.empirical_bayes(dm1, θ; rng = Xoshiro(2))
+        H = NoLimits._laplace_hessian_b(dm1, infos[1], θ_re,
+            Vector{Float64}(bstars[1]), cc, cache, nothing, 1)
+        @test !NoLimits.negH_definite_without_jitter(H)   # what used to force the fallback
+        rm = NoLimits.build_centered_re_measure(
+            bstars[1], infos[1], 1, θ_re, cc, dm1, cache)
+        @test rm !== nothing
+        @test isapprox(rm.S' * (-H) * rm.S, I(2); rtol = 1e-6, atol = 1e-6)
+        @test isfinite(NoLimits._ghq_batch_ll(dm1, infos[1], θ_re, cc, cache, 3, bstars[1]))
+    end
+
+    @testset "serial == threaded" begin
+        if Threads.nthreads() < 2
+            @info "skipped: needs Threads.nthreads() > 1"
+            @test true
+            return
+        end
+        dm_s = DataModel(ill_model, df; primary_id = :ID, time_col = :t,
+            serialization = NoLimits.EnsembleSerial())
+        dm_t = DataModel(ill_model, df; primary_id = :ID, time_col = :t,
+            serialization = NoLimits.EnsembleThreads())
+        o_s = get_objective(fit_model(
+            dm_s, method; serialization = NoLimits.EnsembleSerial()))
+        o_t = get_objective(fit_model(
+            dm_t, method; serialization = NoLimits.EnsembleThreads()))
+        @test isfinite(o_s)
+        @test isapprox(o_s, o_t; rtol = 1e-6)
+    end
+
+    @testset "permuting and relabelling individuals" begin
+        dm = DataModel(ill_model, df; primary_id = :ID, time_col = :t,
+            serialization = NoLimits.EnsembleSerial())
+        ids = unique(df.ID)
+        perm = randperm(Xoshiro(7), length(ids))
+        relabel = Dict(ids[i] => "z" * lpad(string(perm[i]), 3, '0')
+        for i in eachindex(ids))
+        df2 = copy(df)
+        df2.ID = [relabel[i] for i in df.ID]
+        df2 = df2[sortperm(df2.ID), :]
+        dm2 = DataModel(ill_model, df2; primary_id = :ID, time_col = :t,
+            serialization = NoLimits.EnsembleSerial())
+        kw = (; serialization = NoLimits.EnsembleSerial())
+        res_a = fit_model(dm, method; kw...)
+        res_b = fit_model(dm2, method; kw...)
+        oa = get_objective(res_a)
+        ob = get_objective(res_b)
+        @test isfinite(oa)
+        @test abs(oa - ob) <= 1e-8 * max(abs(oa), 1.0)
+        # qualified: MCMCChains also exports get_params, ambiguous when batched
+        pa = NoLimits.get_params(res_a; scale = :untransformed)
+        pb = NoLimits.get_params(res_b; scale = :untransformed)
+        @test maximum(abs.(collect(pa) .- collect(pb))) <= 1e-6
+    end
+end

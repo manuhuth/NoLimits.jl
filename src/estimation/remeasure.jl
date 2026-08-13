@@ -575,9 +575,10 @@ Base.eltype(::CenteredREMeasure{T}) where {T} = T
 Build a `CenteredREMeasure` for AGHQ, centering the quadrature nodes at `b_star`
 and scaling by the inverse Cholesky of the negative log-posterior Hessian at b*.
 
-Returns `nothing` if the Cholesky factorization of `-H` fails (e.g. due to a
-near-flat or indefinite Hessian). The caller is responsible for handling this case,
-for example by falling back to a sampling-based marginal likelihood estimator.
+Returns `nothing` if `-H` does not factor without jitter, i.e. if it is indefinite
+(`b_star` is not a mode). Ill-conditioning alone is fine — `S` only places the nodes.
+The caller is responsible for handling `nothing`, for example by falling back to a
+sampling-based marginal likelihood estimator.
 
 `θ_prior` supplies the parameters used inside the prior term of the correction. It
 defaults to `θu` and only differs on the AD path, where `θu` is the Float64 value
@@ -601,11 +602,15 @@ function build_centered_re_measure(
     b_star = Vector{Float64}(b_star)
     T = Float64
     H = _laplace_hessian_b(dm, batch_info, θu, b_star, const_cache, ll_cache, nothing, bi)
-    # A jitter-only-definite -H would set the quadrature scale from the regularisation;
-    # `nothing` routes the caller to MC sampling, which cannot exceed the ceiling.
-    negH_definite_without_jitter(H) || return nothing
-    chol, _ = _laplace_cholesky_negH(H; jitter = jitter, max_tries = max_tries)
-    (chol === nothing || chol.info != 0) && return nothing
+    # S only places the nodes — the change-of-variables correction compensates any
+    # invertible scaling exactly — so the admissibility test is plain definiteness of -H,
+    # not the relative-conditioning test `negH_definite_without_jitter` applies to the
+    # Laplace *value* (where 1/jitter would masquerade as a posterior variance). Rejecting
+    # a merely ill-conditioned -H sent well-behaved batches back to the prior-centered
+    # rule of issue #98, whose signed sum turns negative, which makes the objective jump
+    # to +Inf for those θ (issue #151).
+    chol, used_jitter = _laplace_cholesky_negH(H; jitter = jitter, max_tries = max_tries)
+    (chol === nothing || chol.info != 0 || !iszero(used_jitter)) && return nothing
     L = chol.L  # lower triangular, L*L' = -H
     # The struct's invariant is S*S' = (-H)^{-1}, which is what whitens the integrand
     # (S'(-H)S = I). That is the lower Cholesky factor of the INVERSE, not inv(L):
