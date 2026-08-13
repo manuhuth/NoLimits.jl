@@ -787,12 +787,13 @@ function validate_constant_names(fe::FixedEffects, constants::NamedTuple)
     _validate_constant_names(Set(get_names(fe)), constants)
 end
 
-# True when the model's fixed effects declare at least one non-`Priorless` prior
-# (the priors-present check MAP/PooledMap require). Mirrors the previous inline logic.
-function _has_fixed_priors(fe)
+# True when at least one *free* fixed effect declares a non-`Priorless` prior (the
+# priors-present check MAP/PooledMap require). A prior on a `constants=` parameter is
+# only an additive offset, so it must not satisfy the gate.
+function _has_fixed_priors(fe, constants::NamedTuple = NamedTuple())
     priors = get_priors(fe)
-    return !isempty(keys(priors)) &&
-           any(!(getfield(priors, k) isa Priorless) for k in keys(priors))
+    return any(k -> !(k in keys(constants)) && !(getfield(priors, k) isa Priorless),
+        keys(priors))
 end
 
 # Resolve the transformed free-parameter optimizer bounds shared by the fixed-effect

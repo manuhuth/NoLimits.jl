@@ -271,6 +271,13 @@ function _validate_schema(model, df, config::DataModelConfig)
             _check_missing(_get_col(df, config.amt_col)[evt_idx], config.amt_col)
             _check_missing(_get_col(df, config.rate_col)[evt_idx], config.rate_col)
             _check_missing(_get_col(df, config.cmt_col)[evt_idx], config.cmt_col)
+            # Without a DE block, EVID only excludes rows from the observations -- the
+            # dose amounts have nowhere to go (#174).
+            if model.de.de === nothing &&
+               (any(!=(0), _get_col(df, config.amt_col)[evt_idx]) ||
+                any(!=(0), _get_col(df, config.rate_col)[evt_idx]))
+                @warn "Model has no @DifferentialEquation block, so the nonzero $(config.amt_col)/$(config.rate_col) values on $(config.evid_col) event rows are ignored; those rows only drop out of the observations."
+            end
         end
     end
 
@@ -1034,6 +1041,10 @@ function _build_callbacks(model, df, rows, config::DataModelConfig)
         cmt_i = _resolve_cmt(cmt[i])
         (1 <= cmt_i <= n_states) ||
             error("CMT $(cmt_i) is out of bounds for $(n_states) ODE states.")
+        # RATE only sets infusion speed; AMT sets dose direction (NONMEM convention).
+        if ev == 1 && rate_i != 0.0 && amt_i != 0.0 && sign(rate_i) != sign(amt_i)
+            error("Infusion event at time $(t) has AMT=$(amt_i) and RATE=$(rate_i) with opposite signs. RATE must share AMT's sign.")
+        end
 
         if ev == 1
             if t == t0

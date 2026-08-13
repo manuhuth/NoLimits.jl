@@ -146,6 +146,13 @@ using OrdinaryDiffEq
         ll_second = NoLimits.loglikelihood(dm_evt, θ, ComponentArray())
         @test isfinite(ll_first)
         @test ll_first == ll_second
+
+        # A RATE opposing AMT would silently reverse the dose direction (#170).
+        df_bad = copy(df_evt)
+        df_bad.RATE = [0.0, -0.5, 0.0]
+        @test_throws ErrorException DataModel(model, df_bad; primary_id = :ID,
+            time_col = :t, evid_col = :EVID, amt_col = :AMT, rate_col = :RATE,
+            cmt_col = :CMT)
     end
 
     @testset "Reset" begin

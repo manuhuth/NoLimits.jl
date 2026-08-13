@@ -1248,9 +1248,10 @@ function _fit_model(dm::DataModel, method::PooledMap, args...;
           "Use MAP() for fixed-effects-only models.")
 
     fe = get_fixed(get_model(dm))
-    has_prior = _has_fixed_priors(fe)
-    has_prior || error("PooledMap() requires priors on fixed effects. Define priors in " *
-          "@fixedEffects (e.g. RealNumber(...; prior=Normal(...))) or use Pooled() instead.")
+    has_prior = _has_fixed_priors(fe, constants)
+    has_prior ||
+        error("PooledMap() requires priors on free fixed effects. Define priors in " *
+              "@fixedEffects (e.g. RealNumber(...; prior=Normal(...))) or use Pooled() instead.")
 
     return _fit_pooled(dm, method;
         constants = constants,

@@ -77,9 +77,9 @@ function _fit_model(dm::DataModel, method::MAP, args...;
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         store_data_model::Bool = true)
     fe = get_fixed(get_model(dm))
-    has_prior = _has_fixed_priors(fe)
+    has_prior = _has_fixed_priors(fe, constants)
     has_prior ||
-        error("MAP requires priors on fixed effects. Define priors in @fixedEffects (e.g., RealNumber(...; prior=Normal(...))) or use MLE instead.")
+        error("MAP requires priors on free fixed effects. Define priors in @fixedEffects (e.g., RealNumber(...; prior=Normal(...))), drop the prior-carrying parameters from `constants`, or use MLE instead.")
 
     add_term = _combine_add_terms(_MAPTerm(fe), extra_objective)
     fit_kwargs = (constants = constants,

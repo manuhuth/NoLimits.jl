@@ -275,6 +275,12 @@ end
     ind1 = get_individual(dm, 1)
     @test ind1.series.obs.y == [1.1, 1.2]
     @test ind1.callbacks === nothing
+
+    # Without a DE block the dose amounts go nowhere -- warn instead of silently
+    # dropping them (#174).
+    @test_logs (:warn, r"no @DifferentialEquation") match_mode=:any DataModel(model, df;
+        primary_id = :ID, time_col = :t, evid_col = :EVID,
+        amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT)
 end
 
 @testset "DataModel serialization config (EnsembleThreads)" begin
