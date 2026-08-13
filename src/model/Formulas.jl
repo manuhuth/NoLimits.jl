@@ -580,6 +580,44 @@ together with lists of required DE states and signals.
 - `state_names`, `signal_names`: DE state and signal names for time-call rewriting.
 - `index_sym::Symbol = :t`: the varying-covariates key used to extract the current time.
 """
+# Rewrite call heads and dot-path bases that the @Model caller's module defines but
+# NoLimits does not (user-loaded modules/types) into GlobalRefs, so the generated
+# functions can use them while all NoLimits-visible names keep their old resolution.
+# Names bound inside the generated function (arguments, covariate/node binds) are
+# excluded so same-named globals at the call site cannot hijack them.
+function _qualify_context_globals(ex, mod::Module)
+    (mod === @__MODULE__) && return ex
+    locals = Set{Symbol}()
+    _collect_assigned_syms!(locals, ex)
+    if ex isa Expr && ex.head == :function && ex.args[1] isa Expr
+        for a in ex.args[1].args
+            a isa Symbol && push!(locals, a)
+        end
+    end
+    return _qcg(ex, mod, locals)
+end
+_collect_assigned_syms!(::Set{Symbol}, ex) = nothing
+function _collect_assigned_syms!(s::Set{Symbol}, ex::Expr)
+    ex.head == :(=) && ex.args[1] isa Symbol && push!(s, ex.args[1])
+    foreach(a -> _collect_assigned_syms!(s, a), ex.args)
+    return nothing
+end
+_qcg(ex, ::Module, ::Set{Symbol}) = ex
+@inline function _qcg_sym(s::Symbol, mod::Module, locals::Set{Symbol})
+    s in locals && return s
+    !isdefined(@__MODULE__, s) && isdefined(mod, s) ? GlobalRef(mod, s) : s
+end
+function _qcg(ex::Expr, mod::Module, locals::Set{Symbol})
+    if ex.head == :call && ex.args[1] isa Symbol
+        return Expr(:call, _qcg_sym(ex.args[1], mod, locals),
+            map(a -> _qcg(a, mod, locals), ex.args[2:end])...)
+    elseif ex.head == :. && ex.args[1] isa Symbol
+        return Expr(:., _qcg_sym(ex.args[1], mod, locals),
+            map(a -> _qcg(a, mod, locals), ex.args[2:end])...)
+    end
+    return Expr(ex.head, map(a -> _qcg(a, mod, locals), ex.args)...)
+end
+
 function get_formulas_builders(f::Formulas;
         fixed_names::Vector{Symbol} = Symbol[],
         collect_fixed_names::Vector{Symbol} = Symbol[],
@@ -603,10 +641,13 @@ function get_formulas_builders(f::Formulas;
         collect_fixed_names
     )
 
-    # Names resolve in `context_module` (the @Model call site), so formulas may
-    # reference modules/types the user has loaded (e.g. Copulas.SklarDist).
-    form_all_rgf = RuntimeGeneratedFunction(@__MODULE__, context_module, form_all_expr)
-    form_obs_rgf = RuntimeGeneratedFunction(@__MODULE__, context_module, form_obs_expr)
+    # Globals only the @Model call site defines (e.g. Copulas.SklarDist) are
+    # qualified to `context_module`; everything else keeps resolving in NoLimits,
+    # so formulas relying on NoLimits-visible names (logistic, ...) still work.
+    form_all_expr = _qualify_context_globals(form_all_expr, context_module)
+    form_obs_expr = _qualify_context_globals(form_obs_expr, context_module)
+    form_all_rgf = RuntimeGeneratedFunction(@__MODULE__, @__MODULE__, form_all_expr)
+    form_obs_rgf = RuntimeGeneratedFunction(@__MODULE__, @__MODULE__, form_obs_expr)
 
     return (form_all_rgf, form_obs_rgf, req_states, req_signals)
 end
