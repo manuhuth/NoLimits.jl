@@ -9,28 +9,89 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Pkgimages embed native code for the machine that precompiled them, and the
+# runner fleet mixes CPU generations - without a pinned multi-target, a depot
+# cache saved on one VM is ~fully invalid on the next (observed: 785 of 827
+# deps recompiled, 16 min, on a freshly restored cache). This is the official
+# Julia x86_64 binary target string, so cached pkgimages load on any runner.
+env:
+  JULIA_CPU_TARGET: "generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1)"
+
 jobs:
-  # Single-job test run (no sharding, no coverage). The suite shares model
-  # fixtures (test/fixtures.jl) to keep distinct-model compilation down.
-  # Coverage is measured separately (Coverage.yml) since instrumentation is ~4x
-  # slower and would blow past this gate's budget.
-  test:
-    name: test (Julia 1.12, ubuntu)
+  # One job per fixture-affine group in test/runtests.jl (NL_TEST_GROUP=i). The
+  # groups used to run as sequential subprocess batches inside a single job,
+  # which made the gate ~2.5h and, with branch protection's `strict`, forced
+  # every queued PR to re-run against a moved base.
+  shard:
+    name: test shard ${{ matrix.group }}
     runs-on: ubuntu-latest
-    # The suite runs as sequential subprocess batches (test/runtests.jl) at -O0,
-    # which bounds memory (no stall) but is compile-bound on ~577 distinct
-    # @Models, so on GitHub's 2-vCPU runner the full run is long (~2.5h). No
-    # timeout-minutes is set, so the job uses GitHub's default 6h cap; batching
-    # precludes a real hang, so an explicit shorter limit would only cause
-    # spurious cancellations.
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: "1.12"
+      # Shard depots are identical, so all shards share ONE cache family:
+      # per-matrix keys would hold 7 near-identical multi-GB caches against
+      # the repo's 10GB limit and evict each other. The save key includes the
+      # run id, so within a run the first finished shard saves and the rest
+      # no-op; delete-old-caches prunes prior runs.
+      - uses: julia-actions/cache@v3
+        with:
+          cache-name: julia-test
+          include-matrix: "false"
+      - uses: julia-actions/julia-buildpkg@v1
+      # --check-bounds=auto reuses buildpkg's cached precompile instead of
+      # forcing Pkg.test's default --check-bounds=yes full recompile.
+      - name: Run tests
+        env:
+          NL_TEST_GROUP: ${{ matrix.group }}
+        run: julia --color=yes --project=. -e 'using Pkg; Pkg.test(; julia_args=["--check-bounds=auto"])'
+
+  # The serial-vs-EnsembleThreads() invariance oracles only mean something with
+  # more than one thread, and the rest of CI runs single-threaded on purpose:
+  # the whole suite threaded would expose the known unlocalized threaded-Laplace
+  # race repo-wide. So exactly the two files carrying those oracles run threaded
+  # here. This is the guard that would have caught #151 (GHQ objective differing
+  # by 0.62-0.74 relative between serial and threaded).
+  threaded:
+    name: test threaded (invariance oracles)
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
         with:
           version: "1.12"
       - uses: julia-actions/cache@v3
+        with:
+          cache-name: julia-test
       - uses: julia-actions/julia-buildpkg@v1
-      # --check-bounds=auto reuses buildpkg's cached precompile instead of
-      # forcing Pkg.test's default --check-bounds=yes full recompile.
-      - name: Run tests
+      - name: Run invariance oracles with 4 threads
+        env:
+          JULIA_NUM_THREADS: "4"
+          NL_TEST_FILES: "estimation_common_tests.jl,api_primitives_tests.jl,estimation_ghquadrature_tests.jl"
         run: julia --color=yes --project=. -e 'using Pkg; Pkg.test(; julia_args=["--check-bounds=auto"])'
+
+  # Aggregator. Keeps the exact check name branch protection requires, so the
+  # shard count can change without touching the protection settings. Fails if
+  # any dependency failed, was cancelled, or was skipped - `needs.*.result` must
+  # be checked explicitly, since a failed dependency otherwise just skips this
+  # job, and a skipped required check reads as "not run" rather than "failed".
+  test:
+    name: test (Julia 1.12, ubuntu)
+    runs-on: ubuntu-latest
+    needs: [shard, threaded]
+    if: always()
+    steps:
+      - name: Check results
+        run: |
+          failed=0
+          for r in "shard:${{ needs.shard.result }}" "threaded:${{ needs.threaded.result }}"; do
+            echo "$r"
+            [ "${r#*:}" = "success" ] || failed=1
+          done
+          [ "$failed" = "0" ] || exit 1
+          echo "all shards and the threaded oracles passed"

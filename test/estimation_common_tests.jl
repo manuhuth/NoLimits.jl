@@ -652,3 +652,90 @@ end
     θ_bad.a = -1.0                      # sqrt(-1) throws inside the RE distribution
     @test NoLimits.re_logprior(dm, batch, θ_bad, b; const_cache = cc, cache = cache) == -Inf
 end
+
+# ── Invariance oracles ───────────────────────────────────────────────────────
+#
+# Properties that hold whatever the fit's quality is, so the fixtures stay tiny
+# and the tolerance sits on the INVARIANCE rather than on the estimate. These are
+# the cheap CI stand-ins for oracles that until now only the external stress run
+# (533 cells, hours on a cluster) checked. GHQuadrature's own serial-vs-threaded
+# and permutation guards live in estimation_ghquadrature_tests.jl (#151).
+
+const _INV_SER = NoLimits.EnsembleSerial()
+
+@testset "objective is invariant to EnsembleSerial vs EnsembleThreads" begin
+    # Issue #151: GHQuadrature accumulated batch marginals in completion order under
+    # EnsembleThreads, so its objective moved with the thread schedule (relative gaps
+    # up to 0.74). Nothing in the suite asserted this for any estimator.
+    if Threads.nthreads() < 2
+        @info "SKIPPED serial-vs-threaded invariance: needs Threads.nthreads() > 1, " *
+              "got $(Threads.nthreads()). Run julia with `-t auto` to exercise it."
+        @test true
+    else
+        # Serial arm = the shared fixture fit, so the method must mirror fixtures.jl.
+        cases = (
+            ("MLE", fx_mle(), fx_nore_dm(),
+                NoLimits.MLE(; optim_kwargs = (maxiters = 3,))),
+            ("MAP", fx_map(), fx_nore_prior_dm(),
+                NoLimits.MAP(; optim_kwargs = (maxiters = 3,))),
+            ("Laplace", fx_laplace(), fx_re_dm(),
+                NoLimits.Laplace(; optim_kwargs = (maxiters = 3,))),
+            ("FOCEI", fx_focei(), fx_re_dm(),
+                NoLimits.FOCEI(; multistart_n = 1, multistart_k = 1,
+                    optim_kwargs = (maxiters = 3,))),
+            ("Pooled", fx_pooled(), fx_re_dm(),
+                NoLimits.Pooled(; optim_kwargs = (maxiters = 3,))))
+        # rtol: MLE/MAP/FOCEI/Pooled came out bit-identical over repeats, but the
+        # threaded Laplace intermittently drifts (worst observed 9e-10 relative) --
+        # the thread schedule perturbs the EB modes and the outer optimizer walks a
+        # marginally different path from there. #151-class breakage is O(0.1).
+        for (name, res_serial, dm, method) in cases
+            @testset "$name" begin
+                res_threaded = fit_model(dm, method; serialization = EnsembleThreads())
+                @test isapprox(get_objective(res_serial), get_objective(res_threaded);
+                    rtol = 1e-6)
+            end
+        end
+    end
+end
+
+@testset "marginal-likelihood accessor agrees with the fit objective" begin
+    # Issue #98: the GHQ fit integrated against the mode-centred measure while the
+    # accessor still used the prior-centred one, whose signed Smolyak sum drifts with
+    # the level and can turn negative. Pinning the two together catches that directly.
+    res_g = fx_ghq()                       # GHQuadrature(level = 2), no penalty
+    ml2 = get_marginal_likelihood(res_g; level = 2, serialization = _INV_SER)
+    @test isapprox(ml2, -get_objective(res_g); rtol = 1e-10)
+    # AGHQ is exact for this linear-Gaussian fixture at any level; the prior-centred
+    # rule of #98 drifted away as the level rose.
+    @test isapprox(get_marginal_likelihood(res_g; level = 3, serialization = _INV_SER),
+        ml2; rtol = 1e-8)
+
+    # Laplace: the accessor re-solves the EB modes instead of reusing the fit's, and
+    # -½logdet(-H(b*)) is not stationary in b*, so the gap tracks the mode tolerance
+    # (measured 1.9e-10 relative at -O0). A #98-shaped measure mismatch is O(1).
+    res_l = fx_laplace()
+    θ_l = NoLimits.get_params(res_l; scale = :untransformed)
+    @test isapprox(NoLimits.laplace_marginal(fx_re_dm(), θ_l; serialization = _INV_SER),
+        -get_objective(res_l); rtol = 1e-6)
+end
+
+@testset "objectives are finite at the fitted estimate" begin
+    # 32 GHQuadrature cells of the external stress run reported `Inf` objectives while
+    # CI stayed green, because nothing here asserted finiteness on a good fixture.
+    for (name, res) in (("MLE", fx_mle()), ("MAP", fx_map()), ("VI", fx_vi()),
+        ("Pooled", fx_pooled()), ("Laplace", fx_laplace()), ("FOCEI", fx_focei()),
+        ("GHQuadrature", fx_ghq()), ("SAEM", fx_saem()), ("MCEM", fx_mcem()))
+        @testset "$name" begin
+            @test isfinite(get_objective(res))
+        end
+    end
+    for (name, res) in (("Laplace", fx_laplace()), ("FOCEI", fx_focei()),
+        ("GHQuadrature", fx_ghq()), ("SAEM", fx_saem()), ("MCEM", fx_mcem()))
+        @testset "$name likelihoods" begin
+            @test isfinite(get_loglikelihood(res))
+            @test isfinite(get_marginal_likelihood(
+                res; level = 2, serialization = _INV_SER))
+        end
+    end
+end

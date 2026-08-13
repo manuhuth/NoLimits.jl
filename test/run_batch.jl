@@ -15,7 +15,8 @@ include(joinpath(@__DIR__, "fixtures.jl"))
 # A failing @test inside an inner @testset is recorded (not thrown); the
 # outermost @testset throws a TestSetException at the end if anything failed,
 # which makes this subprocess exit non-zero so the orchestrator sees it.
-@testset "batch" begin
+# verbose: print per-file times in the summary (shard balancing depends on them)
+@testset "batch" verbose=true begin
     for f in ARGS
         @testset "$f" begin
             include(joinpath(@__DIR__, f))

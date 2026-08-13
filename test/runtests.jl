@@ -66,7 +66,10 @@ const TEST_GROUPS = [
         "plot_random_effects_tests.jl",
         "uq_plotting_tests.jl",
         "integration_plotting.jl"],
-    # ── B4: estimation core (shares fx_nore/re/mg/mvn/mvnp/ode/pois/bern) ────
+    # B4/B5 are split for CI wall-clock (per-file times measured 2026-08-13,
+    # local arm64 -O0): each sub-group re-builds the shared fixtures it touches,
+    # trading a little total CPU for a much shorter slowest shard.
+    # ── B4a: estimation API + samplers + cv (~6m local) ─────────────────────
     ["estimation_common_tests.jl",
         "complete_data_loglikelihood_tests.jl",
         "api_primitives_tests.jl",
@@ -77,23 +80,26 @@ const TEST_GROUPS = [
         "estimation_vi_tests.jl",
         "estimation_mcmc_tests.jl",
         "estimation_mcmc_re_tests.jl",
-        "estimation_laplace_tests.jl",
-        "estimation_focei_tests.jl",
-        "estimation_pooled_tests.jl",
         "estimation_cv_tests.jl"],
-    # ── B5: EM / quadrature / UQ ─────────────────────────────────────────────
-    ["estimation_mcem_tests.jl",
-        "estimation_mcem_is_tests.jl",
-        "estimation_saem_tests.jl",
+    # ── B4b: Laplace-family estimators (~7.4m local: laplace 4m09) ──────────
+    ["estimation_laplace_tests.jl",
+        "estimation_focei_tests.jl",
+        "estimation_pooled_tests.jl"],
+    # ── B5a: SAEM (~6.4m local) ──────────────────────────────────────────────
+    ["estimation_saem_tests.jl",
         "saem_mh_kernel_tests.jl",
         "estimation_saem_autodetect_tests.jl",
         "saem_schedule_tests.jl",
         "saem_multichain_tests.jl",
         "saem_sa_anneal_tests.jl",
-        "saem_var_lb_tests.jl",
+        "saem_var_lb_tests.jl"],
+    # ── B5b: quadrature / multistart / precondition (~7m local) ─────────────
+    ["estimation_ghquadrature_tests.jl",
         "estimation_multistart_tests.jl",
-        "estimation_ghquadrature_tests.jl",
-        "estimation_precondition_tests.jl",
+        "estimation_precondition_tests.jl"],
+    # ── B5c: MCEM / UQ / extra objective (~6m local) ────────────────────────
+    ["estimation_mcem_tests.jl",
+        "estimation_mcem_is_tests.jl",
         "extra_objective_tests.jl",
         "uq_tests.jl",
         "uq_edge_cases_tests.jl"],
@@ -125,9 +131,21 @@ const TEST_FILES = reduce(vcat, TEST_GROUPS)
 # NoLimits). This is the supported way to run single files now that test-only
 # deps live in test/Project.toml, e.g.:
 #   NL_TEST_FILES="aqua_tests.jl" julia --project -e 'using Pkg; Pkg.test()'
+# CI shards by fixture-affine group: NL_TEST_GROUP=i runs only TEST_GROUPS[i], so
+# the groups run as parallel jobs instead of ~2.5h of sequential batches.
+const _GROUP = strip(get(ENV, "NL_TEST_GROUP", ""))
+const _GROUP_FILES = if isempty(_GROUP)
+    TEST_FILES
+else
+    i = parse(Int, _GROUP)
+    checkbounds(Bool, TEST_GROUPS, i) ||
+        error("NL_TEST_GROUP=$i out of range 1:$(length(TEST_GROUPS))")
+    TEST_GROUPS[i]
+end
+
 const _FILTER = strip(get(ENV, "NL_TEST_FILES", ""))
 const _SELECTED_FILES = if isempty(_FILTER)
-    TEST_FILES
+    _GROUP_FILES
 else
     requested = strip.(split(_FILTER, ","))
     unknown = setdiff(requested, TEST_FILES)

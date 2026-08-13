@@ -131,6 +131,18 @@ end
 # packages a posterior chain via the chain method of build_fit_result.
 struct APITestBayes <: NoLimits.FittingMethod end
 
+# Rebuild `df` with its individuals reordered by `perm` AND relabelled to strings, so a
+# quantity that keys off row position instead of identity cannot come out unchanged.
+function permute_relabel_ids(df::DataFrame, perm::Vector{Int}; prefix::String = "P")
+    ids = unique(df.ID)
+    subs = [let sub = df[df.ID .== ids[p], :]
+                sub.ID = fill("$(prefix)$(j)", nrow(sub))
+                sub
+            end
+            for (j, p) in enumerate(perm)]
+    return reduce(vcat, subs)
+end
+
 @testset "dev-API primitives" begin
     @testset "public names alias the internals (===)" begin
         @test NoLimits.symmetrize_psd_parameters === NoLimits._symmetrize_psd_params
@@ -283,15 +295,8 @@ struct APITestBayes <: NoLimits.FittingMethod end
     # permuting/relabelling individuals may only change the order of the outer sum.
     @testset "per-individual terms are position-independent" begin
         df = fx_re_df()
-        ids = unique(df.ID)
         perm = [4, 1, 6, 2, 5, 3]
-        subs = DataFrame[]
-        for (j, p) in enumerate(perm)
-            sub = df[df.ID .== ids[p], :]
-            sub.ID = fill("P$j", nrow(sub))
-            push!(subs, sub)
-        end
-        dfp = reduce(vcat, subs)
+        dfp = permute_relabel_ids(df, perm)
         model = fx_re_model()
         dm = DataModel(model, df; primary_id = :ID, time_col = :t)
         dmp = DataModel(model, dfp; primary_id = :ID, time_col = :t)
@@ -308,11 +313,26 @@ struct APITestBayes <: NoLimits.FittingMethod end
         batch_of = Dict(first(NoLimits.get_inds(infos[i])) => i for i in eachindex(infos))
         lm(d, c, info, b) = NoLimits.laplace_marginal(
             d, θ, info, b; const_cache = c.const_cache, cache = c.cache)
+        gm(d, c, info) = NoLimits.ghq_marginal(
+            d, θ, info; level = 2, const_cache = c.const_cache, cache = c.cache)
         for j in eachindex(infosp)
             i = batch_of[perm[first(NoLimits.get_inds(infosp[j]))]]
             @test bsp[j] == bs[i]
             @test lm(dmp, ctxp, infosp[j], bsp[j]) === lm(dm, ctx, infos[i], bs[i])
+            # Issue #151 at the primitive level: the adaptive quadrature rule must be
+            # placed from the batch's own data, not from where the batch happens to sit.
+            @test gm(dmp, ctxp, infosp[j]) === gm(dm, ctx, infos[i])
         end
+
+        # The other half of the oracle: only the ORDER of the outer sum may change,
+        # so the population objective at a fixed θ is invariant up to reassociation.
+        ser = NoLimits.EnsembleSerial()
+        @test NoLimits.laplace_marginal(dmp, θ;
+            serialization = ser)≈
+        NoLimits.laplace_marginal(dm, θ; serialization = ser) rtol=1e-12
+        @test NoLimits.ghq_marginal(
+            dmp, θ; level = 2)≈
+        NoLimits.ghq_marginal(dm, θ; level = 2) rtol=1e-12
     end
 
     @testset "quadrature marginal / Fisher info / posterior sampling" begin

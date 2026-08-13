@@ -59,8 +59,6 @@ using DataInterpolations
     affect!(integrator) = (integrator.u[1] = integrator.u[1])
     cb = ContinuousCallback(condition, affect!)
 
-    inverse_transform = get_inverse_transform(model.fixed.fixed)
-
     function objective_fd(θt)
         pre = calculate_prede(model, θt, η, const_covariates_i)
         pc = (;
@@ -82,45 +80,9 @@ using DataInterpolations
         return logpdf(obs.obs, 1.0)
     end
 
-    function objective_zyg(θt)
-        f!_local = (du, u, θp, t) -> begin
-            fe = inverse_transform(ComponentArray((a = θp[1], b = θp[2], σ = θp[3])))
-            pre = calculate_prede(model, fe, η, const_covariates_i)
-            pc = (;
-                fixed_effects = fe,
-                random_effects = η,
-                constant_covariates = const_covariates_i,
-                varying_covariates = varying_covariates,
-                helpers = helpers,
-                model_funs = model_funs,
-                preDE = pre
-            )
-            compiled = get_de_compiler(model.de.de)(pc)
-            get_de_f!(model.de.de)(du, u, compiled, t)
-            return nothing
-        end
-        fe0 = inverse_transform(ComponentArray((a = θt[1], b = θt[2], σ = θt[3])))
-        u0 = calculate_initial_state(model, fe0, η, const_covariates_i)
-        prob = ODEProblem(f!_local, u0, tspan, θt)
-        sol = solve(prob, Tsit5();
-            callback = cb, abstol = 1e-9, reltol = 1e-9)
-        sol_accessors = get_de_accessors_builder(model.de.de)(sol,
-            get_de_compiler(model.de.de)((;
-                fixed_effects = fe0,
-                random_effects = η,
-                constant_covariates = const_covariates_i,
-                varying_covariates = varying_covariates,
-                helpers = helpers,
-                model_funs = model_funs,
-                preDE = calculate_prede(model, fe0, η, const_covariates_i)
-            )))
-        obs = calculate_formulas_obs(
-            model, fe0, η, const_covariates_i, varying_covariates, sol_accessors)
-        return logpdf(obs.obs, 1.0)
-    end
-
     θ0 = get_θ0_transformed(model.fixed.fixed)
 
     grad_fwd = ForwardDiff.gradient(objective_fd, θ0)
     grad_fd = FiniteDifferences.grad(FiniteDifferences.central_fdm(5, 1), objective_fd, θ0)
+    @test isapprox(grad_fwd, grad_fd[1]; rtol = 1e-5, atol = 1e-8)
 end
