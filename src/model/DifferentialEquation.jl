@@ -15,8 +15,6 @@ using RuntimeGeneratedFunctions
 import SciMLStructures: isscimlstructure, ismutablescimlstructure, canonicalize, hasportion
 using SciMLStructures
 using Functors
-import SciMLSensitivity: recursive_copyto!, recursive_add!, recursive_sub!, recursive_neg!,
-                         allocate_vjp
 import SciMLBase
 import StaticArrays
 
@@ -236,22 +234,6 @@ Functors.@leaf DEStaticContext
 Functors.@leaf DEParams
 Functors.functor(p::DEParams) = ((), _ -> p)
 Functors.functor(p::DEStaticContext) = ((), _ -> p)
-
-function recursive_copyto!(y::AbstractArray, x::DEParams)
-    copyto!(y, vcat(collect(x.θ), collect(x.η)))
-end
-recursive_copyto!(y::DEParams, x::DEParams) = (copyto!(y.θ, x.θ);
-copyto!(y.η, x.η);
-y)
-recursive_neg!(x::DEParams) = (x.θ .*= -1; x.η .*= -1; x)
-recursive_add!(y::DEParams, x::DEParams) = (y.θ .+= x.θ;
-y.η .+= x.η;
-y)
-recursive_sub!(y::DEParams, x::DEParams) = (y.θ .-= x.θ;
-y.η .-= x.η;
-y)
-allocate_vjp(λ::AbstractArray, x::DEParams) = fill!(similar(λ, length(x)), zero(eltype(λ)))
-allocate_vjp(x::DEParams) = zero(vcat(collect(x.θ), collect(x.η)))
 
 function Base.getproperty(p::DEParams, s::Symbol)
     if s === :vars

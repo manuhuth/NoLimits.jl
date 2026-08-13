@@ -6,7 +6,6 @@ export GHQuadratureResult
 
 using Optimization
 using OptimizationOptimJL
-using OptimizationBBO
 using SciMLBase
 using ComponentArrays
 using Random

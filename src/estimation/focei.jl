@@ -2,7 +2,6 @@ export FOCEI
 
 using Optimization
 using OptimizationOptimJL
-using OptimizationNLopt
 using SciMLBase
 using ComponentArrays
 using Random

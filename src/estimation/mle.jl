@@ -8,7 +8,6 @@ using SciMLBase
 using ComponentArrays
 using Random
 using LineSearches
-using OptimizationBBO
 
 """
     MLE(; optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds,

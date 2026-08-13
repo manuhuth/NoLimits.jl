@@ -71,8 +71,8 @@ function _collect_observed_xy(ind::Individual,
         yv === missing && continue
         if !(yv isa Real)
             yv isa AbstractVector &&
-                @warn "Vector-valued (multivariate) observations are not supported "*
-                "in VPC and are skipped." maxlog=1
+                @warn "Vector-valued (multivariate) observations are not supported " *
+                      "in VPC and are skipped." maxlog=1
             continue
         end
         yf = Float64(yv)

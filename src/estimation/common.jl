@@ -928,7 +928,9 @@ function resolve_optimizer_bounds(fe, free_names, θ0_free_t, optimizer, user_lb
     lb = user_bounds ? normalize_bound(user_lb, lower_vec) : lower_vec
     ub = user_bounds ? normalize_bound(user_ub, upper_vec) : upper_vec
     use_bounds = use_bounds || user_bounds
-    is_bbo = allow_bbo && parentmodule(typeof(optimizer)) === OptimizationBBO
+    # Match by module name so OptimizationBBO stays out of this package's dependencies;
+    # only a user who actually passes a BBO optimizer needs it installed.
+    is_bbo = allow_bbo && nameof(parentmodule(typeof(optimizer))) === :OptimizationBBO
     if is_bbo && !use_bounds
         error("BlackBoxOptim methods require finite bounds. Add lower/upper bounds in " *
               "@fixedEffects (on transformed scale) or pass them via " *

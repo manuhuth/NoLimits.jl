@@ -4,7 +4,7 @@ using Lux
 using SimpleChains
 using Optimisers
 using Random
-using NormalizingFlows
+using Bijectors: PlanarLayer
 using FunctionChains
 using Turing: Flat
 

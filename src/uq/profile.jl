@@ -1,5 +1,4 @@
 using LikelihoodProfiler
-using OptimizationNLopt
 using Distributions
 using Random
 
