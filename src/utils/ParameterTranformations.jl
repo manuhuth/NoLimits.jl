@@ -1,5 +1,5 @@
 using LinearAlgebra
-using Lux
+using StatsFuns: logistic
 import ForwardDiff
 
 using ComponentArrays
@@ -272,7 +272,7 @@ function logit_forward(x::Real)
 end
 
 function logit_inverse(x::Real)
-    return Lux.sigmoid(clamp(x, -LOGIT_CLAMP, LOGIT_CLAMP))
+    return logistic(clamp(x, -LOGIT_CLAMP, LOGIT_CLAMP))
 end
 
 @inline function _logit_inv_jacobian(x::Real)
