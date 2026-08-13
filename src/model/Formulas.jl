@@ -591,7 +591,8 @@ function get_formulas_builders(f::Formulas;
         model_fun_names::Vector{Symbol} = Symbol[],
         state_names::Vector{Symbol} = Symbol[],
         signal_names::Vector{Symbol} = Symbol[],
-        index_sym::Symbol = :t)
+        index_sym::Symbol = :t,
+        context_module::Module = @__MODULE__)
     (form_all_expr, form_obs_expr, req_states, req_signals) = _formulas_build_formulas_expr(
         f.ir,
         fixed_names, random_names, prede_names,
@@ -602,8 +603,10 @@ function get_formulas_builders(f::Formulas;
         collect_fixed_names
     )
 
-    form_all_rgf = RuntimeGeneratedFunction(@__MODULE__, @__MODULE__, form_all_expr)
-    form_obs_rgf = RuntimeGeneratedFunction(@__MODULE__, @__MODULE__, form_obs_expr)
+    # Names resolve in `context_module` (the @Model call site), so formulas may
+    # reference modules/types the user has loaded (e.g. Copulas.SklarDist).
+    form_all_rgf = RuntimeGeneratedFunction(@__MODULE__, context_module, form_all_expr)
+    form_obs_rgf = RuntimeGeneratedFunction(@__MODULE__, context_module, form_obs_expr)
 
     return (form_all_rgf, form_obs_rgf, req_states, req_signals)
 end

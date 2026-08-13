@@ -680,7 +680,8 @@ macro Model(block)
             helper_names = $(helper_names_var),
             model_fun_names = $(model_fun_names_var),
             state_names = $(state_names_var),
-            signal_names = $(signal_names_var)
+            signal_names = $(signal_names_var),
+            context_module = $(__module__)
         )
 
         local $(formulas_bundle_var) = FormulasBundle(
