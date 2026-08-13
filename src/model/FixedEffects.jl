@@ -778,6 +778,11 @@ function _logprior_eval(prior::Distribution, val)
     return logpdf(prior, val)
 end
 
+# RealDiagonalMatrix stores only the diagonal; matrix-variate priors need the n x n form.
+function _logprior_eval(prior::MatrixDistribution, val::AbstractVector)
+    return logpdf(prior, Matrix(Diagonal(val)))
+end
+
 function _logprior_eval(prior::AbstractVector{<:Distribution}, val::AbstractVector)
     length(prior) == length(val) ||
         error("Prior length mismatch. Expected $(length(val)); got $(length(prior)).")

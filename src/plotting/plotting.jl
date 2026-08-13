@@ -934,6 +934,14 @@ function _default_random_effects(res::FitResult,
     return fill(ComponentArray(NamedTuple()), length(get_individuals(dm)))
 end
 
+# Population mean for RE distributions without an analytic `mean` (e.g. planar flows).
+# Fixed seed so predictions stay reproducible across calls.
+function _mc_mean(dist, dim::Int; n::Int = 2000)
+    draws = rand(Xoshiro(0), dist, n)
+    m = draws isa AbstractMatrix ? vec(mean(draws; dims = 2)) : [mean(draws)]
+    return dim == 1 ? m[1] : m
+end
+
 function _default_random_effects_from_dm(dm::DataModel,
         constants_re::NamedTuple,
         θ::ComponentArray)
@@ -963,7 +971,9 @@ function _default_random_effects_from_dm(dm::DataModel,
         v0 = try
             Distributions.mean(re_meta[re].dist)
         catch
-            dim == 1 ? 0.0 : zeros(Float64, dim)
+            @warn "Random effect $(re): its distribution has no analytic mean; "*
+            "using a Monte Carlo estimate of the population value." maxlog=1
+            _mc_mean(re_meta[re].dist, dim)
         end
         re_map = Dict{Any, Any}()
         for lvl in levels_free

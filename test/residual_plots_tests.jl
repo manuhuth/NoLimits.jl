@@ -394,6 +394,10 @@ end
     @test isapprox(collect(ebe_new.prediction), collect(pop_new.prediction); atol = 1e-8)
     @test isapprox(collect(marg_new.prediction), collect(pop_new.prediction); atol = 0.3)
 
+    # RE distributions without an analytic mean used to fall back to a hard zero (#175).
+    @test NoLimits._mc_mean(Normal(3.0, 1.0), 1)≈3.0 atol=0.1
+    @test NoLimits._mc_mean(MvNormal([2.0, -1.0], [1.0 0.0; 0.0 1.0]), 2)≈[2.0, -1.0] atol=0.1
+
     # Unsupported combinations error clearly.
     model_fo = @Model begin
         @fixedEffects begin
