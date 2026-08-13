@@ -408,8 +408,11 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
             rng = rng,
             serialization = serialization)
 
-        total = if ll_cache isa AbstractVector
-            results = Vector{T}(undef, length(batch_infos))
+        # Both branches fill the same per-batch vector and reduce it with the same
+        # `sum`, so the objective is bit-identical under `EnsembleSerial` and
+        # `EnsembleThreads` instead of differing by the accumulation order (#151).
+        results = Vector{T}(undef, length(batch_infos))
+        if ll_cache isa AbstractVector
             bad = Threads.Atomic{Bool}(false)
             # Chunk-indexed cache assignment — `Threads.threadid()` indexing is
             # unsafe under task migration (two tasks could share one cache slot).
@@ -434,17 +437,15 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
                 end
             end
             bad[] && return infT
-            sum(results)
         else
-            s = zero(T)
             for (bi, info) in enumerate(batch_infos)
                 bll = _ghq_batch_ll(dm, info, θu_re, const_cache, ll_cache,
                     method.level, bstars[bi])
                 bll == -Inf && return infT
-                s += bll
+                results[bi] = convert(T, bll)
             end
-            s
         end
+        total = sum(results)
         return -total + convert(T, _penalty_value(θu, penalty)) +
                (extra_objective === nothing ? zero(T) : convert(T, extra_objective(θu)))
     end
