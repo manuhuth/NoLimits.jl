@@ -686,6 +686,7 @@ function predict(res::FitResult, dm_new::DataModel;
         kwargs...)
     θ = get_params(res; scale = :untransformed)
     if re_mode == :population
+        constants_re = _res_constants_re(res, constants_re, dm_new)
         df = get_residuals(dm_new; params = NamedTuple(θ), residuals = [:raw],
             fitted_stat = fitted_stat, constants_re = constants_re,
             ode_args = ode_args, ode_kwargs = ode_kwargs, kwargs...)
