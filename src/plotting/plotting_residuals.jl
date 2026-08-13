@@ -684,6 +684,15 @@ function predict(res::FitResult, dm_new::DataModel;
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
         kwargs...)
+    # t0 is baked into every individual's tspan at DataModel construction, so a
+    # dm_new built with a different t0 silently integrates from the wrong start (#148).
+    dm_old = get_data_model(res)
+    if dm_old !== nothing && !isequal(get_t0(dm_old), get_t0(dm_new))
+        error("predict: dm_new was built with t0 = $(get_t0(dm_new)), but the fit " *
+              "used t0 = $(get_t0(dm_old)). Rebuild it as DataModel(...; t0 = " *
+              "$(get_t0(dm_old))), or pass the new data as a DataFrame, which " *
+              "reuses the fit's t0 automatically.")
+    end
     θ = get_params(res; scale = :untransformed)
     if re_mode == :population
         constants_re = _res_constants_re(res, constants_re, dm_new)
@@ -792,11 +801,17 @@ function _predict_marginal(dm_new::DataModel, θ::ComponentArray;
     model_funs = get_model_funs(get_model(dm_new))
     helpers = get_helper_funs(get_model(dm_new))
     re_names = get_re_names(get_random(get_model(dm_new)))
+    # Draw one value per free RE level and assemble per individual (same shape logic
+    # as :population). A per-individual scalar draw breaks crossed designs where a
+    # grouping column varies within an individual (#152), and drawing by level also
+    # shares a draw between individuals on the same level and keeps constants_re
+    # levels fixed.
+    fixed_maps = _normalize_constants_re(dm_new, constants_re)
+    re_meta = _re_free_meta(
+        dm_new, θ, fixed_maps, re_names, dists_builder, model_funs, helpers)
+    level_dims = Dict{Symbol, Int}(re => re_meta[re].dim for re in re_names)
     sample_rngs = _spawn_child_rngs(rng, marginal_draws)
     n_new = length(get_individuals(dm_new))
-    # θ is fixed, so each individual's RE priors are the same for every draw.
-    dists_vec = [dists_builder(θ, get_const_cov(get_individuals(dm_new)[j]),
-                     model_funs, helpers) for j in 1:n_new]
 
     sum_acc = Float64[]
     cnt_acc = Int[]
@@ -805,11 +820,20 @@ function _predict_marginal(dm_new::DataModel, θ::ComponentArray;
     obs_col = nothing
     for s in 1:marginal_draws
         srng = sample_rngs[s]
+        level_vals = Dict{Symbol, Dict{Any, Any}}()
+        for re in re_names
+            m = Dict{Any, Any}()
+            for lvl in re_meta[re].levels_free
+                m[lvl] = rand(srng, re_meta[re].dist)
+            end
+            level_vals[re] = m
+        end
+        get_free_value = (re, lvl, dim) -> level_vals[re][lvl]
         η_vec = Vector{ComponentArray}(undef, n_new)
         for j in 1:n_new
-            η_vec[j] = ComponentArray(NamedTuple((re => rand(srng,
-                                                      getproperty(dists_vec[j], re))
-            for re in re_names)))
+            η_vec[j] = _assemble_individual_eta(
+                get_individuals(dm_new)[j], re_names, level_dims, fixed_maps,
+                get_free_value)
         end
         cache = _fill_plot_cache(dm_new, θ, η_vec, constants_re, true,
             ode_args, ode_kwargs)

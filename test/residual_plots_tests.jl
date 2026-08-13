@@ -447,4 +447,106 @@ end
     on_newdata = NoLimits.predict(res, df)
     @test isapprox(collect(on_newdata.prediction), collect(in_sample.prediction);
         atol = 1e-8)
+
+    # #148: a manually built DataModel must carry the fit's t0 — the silent default
+    # t0 = 0.0 would integrate from the wrong start.
+    dm5 = DataModel(model, df; primary_id = :ID, time_col = :t, t0 = 5.0)
+    res5 = fit_model(dm5, NoLimits.MLE(; optim_kwargs = (maxiters = 5,)))
+    dm_wrong = DataModel(model, df; primary_id = :ID, time_col = :t)
+    @test_throws "t0 = 5.0" NoLimits.predict(res5, dm_wrong)
+    dm_match = DataModel(model, df; primary_id = :ID, time_col = :t, t0 = 5.0)
+    pred_dm = NoLimits.predict(res5, dm_match)
+    pred_df = NoLimits.predict(res5, df)
+    @test isapprox(collect(pred_dm.prediction), collect(pred_df.prediction); atol = 1e-8)
+end
+
+@testset "reestimate on a new DataModel never leaks training EBEs (#146)" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            σ = RealNumber(0.4, scale = :log)
+            ω = RealNumber(0.7, scale = :log)
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, ω); column = :ID)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @formulas begin
+            y ~ Normal(a + η, σ)
+        end
+    end
+    df = DataFrame(ID = repeat([1, 2, 3]; inner = 3),
+        t = repeat([0.0, 1.0, 2.0]; outer = 3),
+        y = [2.9, 3.1, 3.0, 0.9, 1.1, 1.0, -1.1, -0.9, -1.0])
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    res = fit_model(dm, NoLimits.Laplace())
+
+    # New individuals, same count as training, so the old positional merge would
+    # have copied training EBEs into IDs 12/13 by batch slot.
+    df_new = DataFrame(ID = repeat([11, 12, 13]; inner = 3),
+        t = repeat([0.0, 1.0, 2.0]; outer = 3),
+        y = [2.0, 2.2, 2.1, missing, missing, missing, missing, missing, missing])
+    dm_new = DataModel(model, df_new; primary_id = :ID, time_col = :t)
+    reest = NoLimits.predict(res, dm_new; re_mode = :reestimate,
+        reestimate_kwargs = (individuals = [11],))
+    pop = NoLimits.predict(res, dm_new)
+    for id in (12, 13)
+        @test isapprox(collect(reest[reest.id .== id, :prediction]),
+            collect(pop[pop.id .== id, :prediction]); atol = 1e-8)
+    end
+    @test !isapprox(collect(reest[reest.id .== 11, :prediction]),
+        collect(pop[pop.id .== 11, :prediction]); atol = 1e-3)
+
+    # Same-dm partial reestimate still keeps the stored modes for unrequested batches.
+    res2 = NoLimits.reestimate_ebes(res; individuals = [1])
+    ebe_before = NoLimits.get_random_effects(res)
+    ebe_after = NoLimits.get_random_effects(res2)
+    @test isapprox(Matrix(ebe_before.η[2:3, 2:end]), Matrix(ebe_after.η[2:3, 2:end]);
+        atol = 1e-12)
+end
+
+@testset "predict marginal on crossed RE groups (#152)" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            b = RealNumber(0.5)
+            ω_id = RealNumber(0.5, scale = :log)
+            ω_r = RealNumber(0.5, scale = :log)
+            σ = RealNumber(0.3, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η_id = RandomEffect(Normal(0.0, ω_id); column = :ID)
+            η_rater = RandomEffect(Normal(0.0, ω_r); column = :RATER)
+        end
+        @formulas begin
+            y ~ Normal(a + b * t + η_id + η_rater, σ)
+        end
+    end
+    # The rater rotates within each subject, so RATER varies within ID and each
+    # subject's η_rater needs one entry per level it sees.
+    raters = [:R1, :R2, :R3]
+    mkdf(ids) = DataFrame(
+        ID = repeat(ids, inner = 3),
+        RATER = [raters[mod(i + j, 3) + 1] for i in eachindex(ids) for j in 1:3],
+        t = repeat([0.0, 1.0, 2.0], length(ids)),
+        y = [1.0 + 0.5 * j + 0.1 * i for i in eachindex(ids) for j in 1:3])
+    df = mkdf(["id_$k" for k in 1:6])
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    res = fit_model(dm, NoLimits.Laplace(optim_kwargs = (maxiters = 10,)))
+
+    holdout = mkdf(["new_$k" for k in 1:3])
+    holdout.y = fill(missing, nrow(holdout))
+    pred = NoLimits.predict(res, holdout; re_mode = :marginal, marginal_draws = 10,
+        rng = MersenneTwister(3))
+    @test nrow(pred) == nrow(holdout)
+    @test !any(ismissing, pred.prediction)
+    @test all(isfinite, collect(pred.prediction))
+    # Mean-zero REs enter the mean linearly, so marginal ≈ population up to MC error.
+    pop = NoLimits.predict(res, holdout)
+    @test isapprox(collect(pred.prediction), collect(pop.prediction); atol = 1.0)
 end
