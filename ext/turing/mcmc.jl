@@ -1,14 +1,3 @@
-export MCMC
-export MCMCResult
-
-using Turing
-import MCMCChains
-using DynamicPPL
-using SciMLBase
-using ComponentArrays
-using Distributions
-using Random
-
 # Rebuild a DynamicPPL model with its evaluator wrapped in `invokelatest`, so models
 # generated via runtime `eval` (world-age ahead of the caller) can be sampled. The
 # [4]/[8] type-parameter positions are DynamicPPL.Model's `missings`/`threaded`
@@ -35,177 +24,19 @@ struct _MCMCReMeta{L, M, R}
     is_scalar::Bool
 end
 
-function _warn_if_scaled_params(fe::FixedEffects; method_name::AbstractString = "MCMC")
-    specs = get_transforms(fe).forward.specs
-    ignored = Symbol[]
-    for spec in specs
-        if spec.kind != :identity
-            push!(ignored, spec.name)
-        end
-    end
-    isempty(ignored) ||
-        @debug "$(method_name) uses priors on the natural scale; parameter scale settings are ignored during sampling." ignored_parameters=ignored
-    return nothing
-end
-
-"""
-    MCMC(; sampler, turing_kwargs, adtype, progress) <: FittingMethod
-
-Bayesian sampling via Turing.jl for models with or without random effects.
-All free fixed effects and random effects must have prior distributions.
-
-# Keyword Arguments
-- `sampler`: Turing-compatible sampler. Defaults to `NUTS(0.75)`.
-- `turing_kwargs::NamedTuple = NamedTuple()`: keyword arguments forwarded to `Turing.sample`
-  (e.g. `n_samples`, `n_adapt`).
-- `adtype`: automatic-differentiation backend. Defaults to `AutoForwardDiff()`.
-- `progress::Bool = false`: whether to display a progress bar during sampling.
-"""
-struct MCMC{S, K, A, P} <: FittingMethod
-    sampler::S
-    turing_kwargs::K
-    adtype::A
-    progress::P
-end
-
-function MCMC(; sampler = Turing.NUTS(0.75),
-        turing_kwargs = NamedTuple(),
-        adtype = Turing.AutoForwardDiff(),
-        progress = false)
-    MCMC(sampler, turing_kwargs, adtype, progress)
-end
-
-"""
-    MCMCResult{C, S, A, N, O} <: MethodResult
-
-Method-specific result from a [`MCMC`](@ref) fit. Stores the MCMCChains chain,
-sampler, number of samples, optional notes, and observed data columns.
-"""
-struct MCMCResult{C, S, A, N, O} <: MethodResult
-    chain::C
-    sampler::S
-    n_samples::A
-    notes::N
-    observed::O
-end
-
-get_chain(res::MCMCResult) = res.chain
-
-"""
-    build_fit_result(dm, method, chain::MCMCChains.Chains; sampler, n_samples, n_adapt=0,
-                     observed=<observed columns of dm>, notes=NamedTuple(),
-                     store_data_model=true, fit_args=(), fit_kwargs=NamedTuple()) -> FitResult
-
-Bayesian counterpart of [`build_fit_result`](@ref): package a posterior `chain` from a custom
-Bayesian estimator into the same first-class `FitResult` a built-in `MCMC` fit returns, so
-`get_chain`, `get_observed`, chain-based uncertainty (`compute_uq(res; method=:chain)`),
-posterior-predictive plotting, and `summarize` (which reports `inference: bayesian`) all work.
-The estimator brings its own `chain`; this only packages it - it does not run a sampler.
-
-Mirrors the built-in MCMC path exactly: the point-estimate slot is filled with the
-posterior mean of the fixed effects (richer posterior summaries come from the chain via
-`summarize`/`compute_uq`), and `observed` defaults to the model's observed-outcome
-columns. Pass `n_adapt` when the chain still contains adaptation draws - summaries and
-chain UQ drop that many warm-up rows by default. `fit_kwargs` (e.g. `(constants = …,)`) is stored on the result so `compute_uq`
-resolves the same settings the fit used. Dispatch is on the `chain` argument, so the
-frequentist `build_fit_result(dm, method, θ; kind=…)` is unaffected.
-"""
-function build_fit_result(dm::DataModel, method::FittingMethod, chain::MCMCChains.Chains;
-        sampler, n_samples::Integer, n_adapt::Integer = 0,
-        observed = get_df(dm)[:, get_obs_cols(dm)],
-        notes = NamedTuple(),
-        store_data_model::Bool = true,
-        fit_args::Tuple = (), fit_kwargs = NamedTuple())
-    result = MCMCResult(chain, sampler, n_samples, notes, observed)
-    summary = FitSummary(_mcmc_objective(chain, n_adapt), missing,
-        FitParameters(ComponentArray(), ComponentArray()), notes)
-    diagnostics = FitDiagnostics(
-        (;), (sampler = sampler,), (n_samples = n_samples, n_adapt = n_adapt), notes)
-    res = FitResult(method, result, summary, diagnostics,
-        store_data_model ? dm : nothing, fit_args, fit_kwargs)
-    return _with_posterior_params(res, dm; rng = Random.default_rng())
-end
-
-# Objective for a posterior chain: the mean negative log posterior density over the
-# post-warmup draws, so `get_objective` keeps the "lower is better" sign convention of
-# the optimization methods. NaN when the sampler records no log-density column.
-function _mcmc_objective(chain::MCMCChains.Chains, n_adapt::Integer)
-    internals = MCMCChains.names(chain, :internals)
-    key = :lp in internals ? :lp : (:logjoint in internals ? :logjoint : nothing)
-    key === nothing && return NaN
-    arr = Array(getfield(MCMCChains.get(chain, key), key))
-    vals = ndims(arr) == 1 ? reshape(arr, :, 1) : arr
-    n_iter = size(vals, 1)
-    rows = (min(Int(n_adapt), n_iter - 1) + 1):n_iter
-    finite = filter(isfinite, vec(vals[rows, :]))
-    return isempty(finite) ? NaN : -mean(finite)
-end
-
-@inline function _mcmc_sampler_kind(sampler)
-    sampler isa NUTS && return :nuts
-    sampler isa HMC && return :hmc
-    sampler isa MH && return :mh
-    return :other
-end
+# Refines the `:other` fallback NoLimits defines for samplers it cannot name.
+@inline NoLimits._mcmc_sampler_kind(::NUTS) = :nuts
+@inline NoLimits._mcmc_sampler_kind(::HMC) = :hmc
+@inline NoLimits._mcmc_sampler_kind(::MH) = :mh
 
 @inline function _mcmc_sampler_defaults(sampler)
-    kind = _mcmc_sampler_kind(sampler)
+    kind = NoLimits._mcmc_sampler_kind(sampler)
     if kind == :mh
         return (n_samples = 2500, n_adapt = 0)
     elseif kind == :hmc
         return (n_samples = 1500, n_adapt = 750)
     else
         return (n_samples = 1000, n_adapt = 500)
-    end
-end
-
-# Turing's `~` takes a single distribution, so a per-element prior vector (accepted on
-# NN/SoftTree/NPF blocks) has to become one product distribution -- the same conversion
-# `_logprior_eval` already does on the MAP path.
-_turing_prior(prior, name::Symbol) = prior
-function _turing_prior(prior::AbstractVector{<:Distribution}, name::Symbol)
-    return product_distribution(prior)
-end
-_turing_prior(prior::MatrixDistribution, name::Symbol) = _SafeMatrixPrior(prior, name)
-
-# A proposal can push a matrix-variate prior's argument onto the positive-definite
-# boundary, where Distributions' `logpdf` throws a factorization error instead of
-# returning -Inf and kills the sampler. Wrapping keeps the throw inside NoLimits and
-# scores the draw -Inf so it is rejected — the same contract as `_mcmc_re_dist`.
-struct _SafeMatrixPrior{D <: MatrixDistribution} <: ContinuousMatrixDistribution
-    d::D
-    name::Symbol
-end
-
-Base.size(p::_SafeMatrixPrior) = size(p.d)
-Distributions.insupport(p::_SafeMatrixPrior, x::AbstractMatrix{<:Real}) = insupport(p.d, x)
-function Distributions._rand!(rng::AbstractRNG, p::_SafeMatrixPrior, x::AbstractMatrix)
-    return Distributions._rand!(rng, p.d, x)
-end
-Bijectors.bijector(p::_SafeMatrixPrior) = Bijectors.bijector(p.d)
-
-# Linking is the one thing the wrapper cannot inherit: Bijectors dispatches the
-# constrained↔unconstrained maps on the concrete distribution type. `VectorBijectors` is
-# the Bijectors 0.16 interface; on 0.15 `bijector` above is the whole story.
-if isdefined(Bijectors, :VectorBijectors)
-    for f in (:from_linked_vec, :to_linked_vec, :linked_vec_length, :linked_optic_vec)
-        @eval function Bijectors.VectorBijectors.$f(p::_SafeMatrixPrior)
-            return Bijectors.VectorBijectors.$f(p.d)
-        end
-    end
-end
-
-function Distributions._logpdf(p::_SafeMatrixPrior, x::AbstractMatrix{<:Real})
-    try
-        return logpdf(p.d, x)
-    catch err
-        _is_numeric_error(err) || rethrow(err)
-        if !Threads.atomic_cas!(_WARNED_NUMERIC_ERROR, false, true)
-            @warn "A numeric error ($(nameof(typeof(err)))) was raised while evaluating " *
-                  "the prior of $(p.name) (a $(nameof(typeof(p.d)))); rejecting this " *
-                  "proposal. Warned once per fit."
-        end
-        return convert(float(eltype(x)), -Inf)
     end
 end
 
@@ -252,7 +83,7 @@ function _build_turing_model(fixed_names::Vector{Symbol}, free_names::Vector{Sym
             $(assigns...)
             θ = $θ_expr
             θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
-            ll = loglikelihood(
+            ll = NoLimits.loglikelihood(
                 dm, θ_re, ComponentArray(); cache = cache, serialization = serialization)
             $(epilogue...)
         end
@@ -476,7 +307,7 @@ function _build_turing_model_re(
                 η_vec[i] = ComponentArray(NamedTuple(nt_pairs))
             end
 
-            ll = loglikelihood(
+            ll = NoLimits.loglikelihood(
                 dm, θ_re, η_vec; cache = cache, serialization = serialization)
             $(epilogue...)
         end
@@ -495,7 +326,7 @@ function _set_turing_adbackend!(adtype)
     return nothing
 end
 
-function _fit_model(dm::DataModel, method::MCMC, args...;
+function NoLimits._mcmc_fit_impl(dm::DataModel, method::MCMC, args...;
         constants::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple(),
         penalty::NamedTuple = NamedTuple(),
@@ -623,7 +454,9 @@ function _fit_model(dm::DataModel, method::MCMC, args...;
             re_names, re_meta, fixed_maps, const_covs, const_re_info, extra_objective)
     end
     model = _invokelatest_model(model)
-    sampler = method.sampler
+    # `nothing` is the Turing-free sentinel MCMC() carries; resolve it here.
+    sampler = method.sampler === nothing ? Turing.NUTS(0.75) : method.sampler
+    adtype = method.adtype === nothing ? Turing.AutoForwardDiff() : method.adtype
     sampler_defaults = _mcmc_sampler_defaults(sampler)
     n_samples = get(method.turing_kwargs, :n_samples, sampler_defaults.n_samples)
     n_adapt = get(method.turing_kwargs, :n_adapt, sampler_defaults.n_adapt)
@@ -641,7 +474,7 @@ function _fit_model(dm::DataModel, method::MCMC, args...;
         @debug "theta_0_untransformed ignored because turing_kwargs already specifies initial_params."
     end
 
-    _set_turing_adbackend!(method.adtype)
+    _set_turing_adbackend!(adtype)
     # Turing >=0.45 defaults to FlexiChains; keep the historical MCMCChains.Chains return
     # type (consumed by get_chain, UQ, summaries, serialization, plotting). A user can still
     # opt into a different chain type via turing_kwargs.
