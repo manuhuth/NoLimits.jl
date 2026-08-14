@@ -110,12 +110,13 @@ The MCMC refit can be configured in two ways. Either pass a fully configured met
 
 Or configure the sampler through individual keyword arguments:
 
-- `mcmc_sampler` - the sampling algorithm (defaults to Turing's NUTS sampler).
+- `mcmc_sampler` - the sampling algorithm (`nothing`, the default, resolves to Turing's `NUTS(0.75)`).
 - `mcmc_turing_kwargs` - keyword arguments forwarded to Turing's sampling call.
 - `mcmc_adtype` - automatic differentiation backend for the sampler.
 - `mcmc_fit_kwargs` - additional keyword arguments for the underlying `fit_model` call.
 
-When no explicit configuration is provided, defaults from `NoLimits.MCMC` are used with a NUTS sampler.
+When no explicit configuration is provided, defaults from `NoLimits.MCMC` are used with a
+NUTS sampler. The MCMC refit runs a `MCMC` fit, so it requires `using Turing`.
 
 ## Returned Quantities
 

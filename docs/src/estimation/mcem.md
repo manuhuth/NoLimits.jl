@@ -13,19 +13,24 @@ MCEM supports two E-step implementations, controlled by the `e_step` argument.
 
 ### MCMC E-step (`MCEM_MCMC`)
 
-The default strategy. Draws samples from the exact conditional distribution `p(b | y, θ)` using [Turing.jl](https://turinglang.org/).
+The default strategy. Draws samples from the exact conditional distribution `p(b | y, θ)`
+with an MCMC kernel. The default kernel is the native `SaemixMH`, so this path needs no
+Turing; passing a [Turing.jl](https://turinglang.org/) sampler such as `NUTS()` or `MH()`
+requires `using Turing`.
 
 ```julia
 NoLimits.MCEM_MCMC(;
-    sampler        = Turing.NUTS(0.75),
+    sampler        = SaemixMH(),
     turing_kwargs  = NamedTuple(),
-    sample_schedule = 250,
+    sample_schedule = 100,
     warm_start     = true,
 )
 ```
 
-- `sampler` - Turing sampler. Common choices: `MH()`, `NUTS(...)`.
-- `turing_kwargs` - forwarded to Turing; the keys `n_samples` and `n_adapt` are interpreted explicitly.
+- `sampler` - E-step kernel. Native (no Turing): `SaemixMH()`, `AdaptiveNoLimitsMH()`.
+  Turing samplers such as `MH()` or `NUTS(...)` need `using Turing`. Before v0.2.3 this
+  defaulted to `NUTS(0.75)` with `sample_schedule = 250`.
+- `turing_kwargs` - forwarded to Turing; the keys `n_samples` and `n_adapt` are interpreted explicitly. Ignored by the native samplers.
 - `sample_schedule` - number of MCMC samples per iteration; accepts an integer, a vector (iteration-indexed), or a function `iter -> n_samples`.
 - `warm_start` - when `true`, reuses previous latent-state values as chain initialization.
 
@@ -189,9 +194,9 @@ method = NoLimits.MCEM(;
     e_step=NoLimits.MCEM_MCMC(),          # or MCEM_IS(...)
 
     # Backward-compatible MCMC shorthand (passed to MCEM_MCMC internally)
-    # sampler=Turing.NUTS(0.75),
+    # sampler=SaemixMH(),
     # turing_kwargs=NamedTuple(),
-    # sample_schedule=250,
+    # sample_schedule=100,
     # warm_start=true,
 
     # M-step
