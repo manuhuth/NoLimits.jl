@@ -22,7 +22,7 @@ using LinearAlgebra
 
 using NoLimits: NoLimits,
                 DataModel, FitDiagnostics, FitParameters, FitResult, FitSummary,
-                MCEM, MCMC, MCMCResult, Model, Priorless, SAEM, SaemixMH, VI, VIResult,
+                MCEM, MCMC, MCMCResult, Model, Priorless, SAEM, VI, VIResult,
                 REBatchInfo,
                 _WARNED_NUMERIC_ERROR, _as_namedtuple, _build_constants_cache,
                 _build_eta_ind, _extract_b_samples, _filter_b_samples_by_prior,
