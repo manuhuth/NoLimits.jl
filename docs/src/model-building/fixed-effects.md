@@ -119,7 +119,7 @@ Omega_block = RealLiePSDMatrix(Matrix(I, 3, 3), blocks=[1, 1, 2])
 
 ## Example: Learned Function Approximators
 
-Neural networks, soft decision trees, and B-splines can be declared as fixed effects and are automatically exposed as callable model functions. This enables flexible, data-driven components within an otherwise parametric model specification. `NNParameters` accepts either a Lux `Chain` or a SimpleChains `SimpleChain` - see [Function Approximators](universal-function-approximators.md) for the trade-offs (SimpleChains is faster and lower-allocation under ForwardDiff).
+Neural networks, soft decision trees, and B-splines can be declared as fixed effects and are automatically exposed as callable model functions. This enables flexible, data-driven components within an otherwise parametric model specification. `NNParameters` accepts either a Lux `Chain` or a SimpleChains `SimpleChain` - see [Function Approximators](universal-function-approximators.md) for the trade-offs (SimpleChains is faster and lower-allocation under ForwardDiff). Both backends are [optional dependencies](../installation.md#Optional-Dependencies): install the one you want and load it alongside NoLimits, as in the example below. `SoftTreeParameters` and `SplineParameters` need nothing extra.
 
 ```julia
 using NoLimits

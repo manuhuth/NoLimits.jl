@@ -3,6 +3,15 @@
 This page documents the complete public API of NoLimits.jl. Each entry is rendered from
 the docstring attached to the corresponding function, type, or macro.
 
+!!! note "Some entries need an optional dependency"
+    Parts of this API are implemented in package extensions and become available only once
+    the corresponding package is loaded: all `plot_*` functions (a Makie backend),
+    `NNParameters` (Lux or SimpleChains), `save_fit`/`load_fit` (JLD2), profile-likelihood UQ
+    (LikelihoodProfiler and OptimizationNLopt), `show_equations(...; latex = true)`
+    (Latexify), and `load_warfarin_from_monolix` (CSV). Calling one without its package
+    raises an error naming what to install. See
+    [Optional Dependencies](installation.md#Optional-Dependencies).
+
 ## Model Building
 
 ### Macros

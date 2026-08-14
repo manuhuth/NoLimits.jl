@@ -85,6 +85,9 @@ get_random_effects(res)                 # empirical Bayes estimates per subject
 
 ## 5. Visualize the fit
 
+Plotting lives in a package extension, so a Makie backend has to be installed and loaded
+alongside NoLimits: `using Pkg; Pkg.add("CairoMakie")` once, then
+
 ```julia
 using CairoMakie
 
