@@ -9,6 +9,13 @@ The supported parameter constructors are:
 
 Both are declared in `@fixedEffects` and exposed as callable model functions through the `function_name` keyword argument.
 
+!!! note "Lux and SimpleChains are optional dependencies"
+    `SoftTreeParameters`, `SplineParameters` and `NPFParameter` need nothing extra, but the
+    two neural-network backends live in package extensions and are not installed with
+    NoLimits. Add the one you want and load it alongside NoLimits:
+    `using Pkg; Pkg.add("Lux")` then `using Lux` (or the same for `SimpleChains`).
+    Constructing `NNParameters` without a backend loaded raises an error saying so.
+
 !!! note "Other learnable function approximators"
     Neural networks and soft trees are not the only learnable function-approximator
     parameter blocks. B-splines (`SplineParameters`) and normalizing planar flows

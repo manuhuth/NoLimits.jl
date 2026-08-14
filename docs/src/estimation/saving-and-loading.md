@@ -2,10 +2,16 @@
 
 Fit results can be persisted to disk using `save_fit` and reloaded with `load_fit`. Results are stored as [JLD2](https://github.com/JuliaIO/JLD2.jl) files. Because the `DataModel` contains runtime-generated closures (from the `@Model` macro) that cannot be serialized, these are stripped on save and must be reconstructed on load. All numerical content - parameters, objectives, chains, empirical Bayes modes - is preserved exactly.
 
+!!! note "JLD2 is an optional dependency"
+    `save_fit` and `load_fit` live in a package extension, so JLD2 is not installed with
+    NoLimits. Run `using Pkg; Pkg.add("JLD2")` once, then `using JLD2` alongside
+    `using NoLimits`. Calling either function without it raises an error saying so.
+
 ## Basic Usage
 
 ```julia
 using NoLimits
+using JLD2          # enables save_fit / load_fit
 
 res = fit_model(dm, NoLimits.Laplace())
 
