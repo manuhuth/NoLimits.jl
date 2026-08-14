@@ -367,10 +367,16 @@ function _cf_propagate!(out, mode::Symbol, A, b, x0, Δ)
     return out
 end
 
+# Segment holding `t`: the last one starting strictly before `t`, so exactly at an event
+# time the state is the PRE-event value — the numerical path's convention (its callback
+# fires after the save, so `sol(t_event)` is pre-event too). Clamped to the first segment
+# at `t == t0`, where initial events are already folded into `x0`.
+@inline _cf_seg_index(seg_t, t) = max(searchsortedfirst(seg_t, t) - 1, 1)
+
 # Full state vector at time `t`: locate its segment (event-free interval), then
 # propagate from that segment's start state with its constant forcing.
 function _cf_state_vector(mode::Symbol, A, seg_t, seg_x0, seg_b, t)
-    k = max(searchsortedlast(seg_t, t), 1)
+    k = _cf_seg_index(seg_t, t)
     return _cf_propagate(mode, A, seg_b[k], seg_x0[k], t - seg_t[k])
 end
 
@@ -385,7 +391,7 @@ function _cf_materialize(mode::Symbol, A, seg_t, seg_x0, seg_b, grid)
     U = Matrix{T}(undef, m, length(grid))
     @inbounds for kk in eachindex(grid)
         tk = grid[kk]
-        k = max(searchsortedlast(seg_t, tk), 1)
+        k = _cf_seg_index(seg_t, tk)
         _cf_propagate!(view(U, :, kk), mode, A, seg_b[k], seg_x0[k], tk - seg_t[k])
     end
     return U

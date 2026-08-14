@@ -388,6 +388,19 @@ end
     ll_cf = NoLimits.conditional_loglikelihood(dm_cf, 1, θ, η)
     ll_off = NoLimits.conditional_loglikelihood(dm_off, 1, θ, η)
     @test ll_cf≈ll_off atol=1e-8
+    # #153: an observation at the same time as an event (here the EVID=2 reset at t=12,
+    # plus a RATE dose on the DOWNSTREAM compartment) must see the PRE-event state, the
+    # numerical path's convention.
+    df2 = DataFrame(ID = fill(1, 8), t = [0.0, 2.0, 6.0, 6.0, 8.0, 12.0, 12.0, 16.0],
+        EVID = [1, 0, 0, 1, 0, 0, 2, 0], AMT = [100.0, 0, 0, 30.0, 0, 0, 0.0, 0],
+        RATE = [0.0, 0, 0, 15.0, 0, 0, 0, 0], CMT = [1, 1, 1, 2, 1, 1, 2, 1],
+        y = [missing, 60.0, 40.0, missing, 25.0, 22.0, missing, 20.0])
+    dm_cf2 = DataModel(oral(:auto), df2; kw...)
+    dm_off2 = DataModel(oral(:off), df2; kw...)
+    @test get_closed_form_plan(dm_cf2).mode === :bateman
+    @test NoLimits.conditional_loglikelihood(
+        dm_cf2, 1, θ, η)≈
+    NoLimits.conditional_loglikelihood(dm_off2, 1, θ, η) atol=1e-8
 end
 
 @testset "closed-form/numerical split (partial)" begin
