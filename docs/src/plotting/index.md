@@ -4,6 +4,13 @@ Effective model assessment depends on graphical diagnostics that expose patterns
 
 This page contains executable examples that render directly during the documentation build.
 
+!!! note "A Makie backend is required"
+    Every `plot_*` function lives in a package extension that loads when Makie is available.
+    Install a backend once with `using Pkg; Pkg.add("CairoMakie")`, then write
+    `using CairoMakie` alongside `using NoLimits`. Without it the plotting functions are not
+    defined and calling one reports that a Makie backend has to be loaded. See
+    [Optional Dependencies](../installation.md#Optional-Dependencies).
+
 All plotting functions accept a file-path keyword for saving output directly:
 - `save_path="path/to/plot.png"` (existing)
 - `plot_path="path/to/plot.png"` (alias)

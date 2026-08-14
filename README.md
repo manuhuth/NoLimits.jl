@@ -125,6 +125,36 @@ using Pkg
 Pkg.add(url="https://github.com/manuhuth/NoLimits.jl")
 ```
 
+### Optional dependencies
+
+Model building, all estimation methods and cross-validation work with the packages above.
+Several features are kept out of the default install so they do not slow down loading or
+enlarge every environment. Each lives in a package extension: install the package and
+`using` it alongside NoLimits, and the feature appears.
+
+| Feature | Load |
+|---|---|
+| All plotting (`plot_fits`, `plot_vpc`, `plot_residuals`, ...) | `CairoMakie` (or any Makie backend) |
+| Neural networks in models (`NNParameters`) | `Lux`, or `SimpleChains` |
+| Saving and loading fits (`save_fit`, `load_fit`) | `JLD2` |
+| Profile-likelihood UQ (`uq(...; method=:profile)`) | `LikelihoodProfiler` and `OptimizationNLopt` |
+| LaTeX equations (`show_equations(...; latex=true)`) | `Latexify` |
+| Bundled example data (`load_warfarin_from_monolix`) | `CSV` |
+| Copula random effects (`Copulas.SklarDist`) | `Copulas` |
+| Reverse-mode AD through an ODE (`AutoEnzyme`) | `SciMLSensitivity` |
+
+Calling one of these without its package raises an error naming exactly what to install, so
+nothing fails silently. For example:
+
+```julia
+julia> save_fit("fit.jld2", res)
+ERROR: save_fit requires JLD2.jl, which NoLimits declares as an optional dependency
+and therefore does not install or load for you.
+
+    using Pkg; Pkg.add(["JLD2"])
+    using JLD2
+```
+
 ## Quickstart
 
 This example fits an exponential-decay model with a subject-level random intercept by Laplace

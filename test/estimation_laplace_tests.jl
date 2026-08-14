@@ -2,6 +2,8 @@ using Test
 using DataFrames
 using DataInterpolations
 using NoLimits
+using JLD2
+using OptimizationNLopt
 using FiniteDifferences
 using LineSearches
 using OptimizationBBO
@@ -757,7 +759,7 @@ end
     # coordinate starting near zero never moves, and preconditioning is what frees it. The
     # default optimizer is gradient-based and does not size steps that way, so leaving the
     # optimizer implicit would silently stop testing the thing this testset is named after.
-    bob = NoLimits.NLopt.LN_BOBYQA()
+    bob = NLopt.LN_BOBYQA()
     on = fit_model(dm, NoLimits.Laplace(; optimizer = bob); rng = Xoshiro(1))
     off = fit_model(
         dm, NoLimits.Laplace(; optimizer = bob, precondition = false); rng = Xoshiro(1))

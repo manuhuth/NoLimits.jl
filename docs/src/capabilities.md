@@ -21,7 +21,7 @@ NoLimits.jl provides a broad set of modeling, estimation, and diagnostic capabil
 
 ## Machine-Learning Integration
 
-- **Neural-network parameter blocks** (`NNParameters`, backed by either a Lux `Chain` or a SimpleChains `SimpleChain`) can be embedded in formulas, ODE dynamics, initial conditions, and random-effect distribution parameterizations. Neural-ODE-style models arise naturally when learned components appear inside `@DifferentialEquation`. The SimpleChains backend is faster and lower-allocation under ForwardDiff (the default AD).
+- **Neural-network parameter blocks** (`NNParameters`, backed by either a Lux `Chain` or a SimpleChains `SimpleChain`) can be embedded in formulas, ODE dynamics, initial conditions, and random-effect distribution parameterizations. Neural-ODE-style models arise naturally when learned components appear inside `@DifferentialEquation`. The SimpleChains backend is faster and lower-allocation under ForwardDiff (the default AD). Lux and SimpleChains are [optional dependencies](installation.md#Optional-Dependencies), installed and loaded by the user.
 - **Soft decision tree parameter blocks** (`SoftTreeParameters`) provide an alternative differentiable function approximator with the same integration points as neural networks.
 - **Spline parameter blocks** (`SplineParameters`) for smooth, learnable basis-function expansions.
 - All learned components can be used at the population level (fixed effects only) or individualized through full-parameter random effects.

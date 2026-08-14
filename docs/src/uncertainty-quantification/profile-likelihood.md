@@ -5,8 +5,18 @@ Profile-likelihood confidence intervals are constructed by examining how the obj
 In NoLimits.jl, profile-likelihood UQ is accessed through:
 
 ```julia
+using NoLimits
+using LikelihoodProfiler, OptimizationNLopt   # optional dependencies, see below
+
 compute_uq(res; method=:profile, ...)
 ```
+
+!!! note "Two optional dependencies"
+    The profile backend lives in a package extension and needs both LikelihoodProfiler (the
+    scan) and OptimizationNLopt (the local optimizer named by `profile_local_alg`, which
+    defaults to `:LN_NELDERMEAD`). Neither is installed with NoLimits: run
+    `using Pkg; Pkg.add(["LikelihoodProfiler", "OptimizationNLopt"])` once, then `using` both.
+    Requesting `method=:profile` without them raises an error saying exactly this.
 
 The underlying interval computation is performed via [LikelihoodProfiler.jl](https://insysbio.github.io/LikelihoodProfiler.jl/v0.3/).
 

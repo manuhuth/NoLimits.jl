@@ -9,6 +9,9 @@ Often we know a dynamical system's structure — compartments and transfer pathw
 - Fit with default SAEM, stable even at high random-effect dimension.
 - Diagnose the fitted trajectories and observation distributions.
 
+!!! note "Packages this tutorial needs"
+    Besides NoLimits, the code below loads SimpleChains (the neural-network backend), CairoMakie (plotting) and CSV (reading the dataset). All three are [optional dependencies](../installation.md#Optional-Dependencies), so install them first: `using Pkg; Pkg.add(["SimpleChains", "CairoMakie", "CSV"])`.
+
 ## Step 1: Data Setup
 
 We use the Theophylline dataset (12 subjects, concentration over time) in a flat format where the dose `d` enters as a constant covariate — a two-compartment transfer system (depot → central → cleared).

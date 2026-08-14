@@ -1,5 +1,7 @@
 using Test
 using NoLimits
+using OptimizationNLopt
+using LikelihoodProfiler
 using DataFrames
 using Distributions
 using Lux

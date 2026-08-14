@@ -6,8 +6,6 @@ using ForwardDiff
 using LinearAlgebra
 using Optimization
 using OptimizationOptimJL
-using OptimizationBBO
-using OptimizationNLopt
 using LineSearches
 using SciMLBase
 using ComponentArrays

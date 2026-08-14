@@ -1,4 +1,4 @@
-using NormalizingFlows, Bijectors, FunctionChains, Functors, Optimisers, Distributions
+using Bijectors, FunctionChains, Functors, Optimisers, Distributions
 import StaticArrays
 import Random: AbstractRNG, default_rng
 import Statistics
@@ -75,14 +75,14 @@ log p(x) = log q₀(z₀) - Σᵢ log|det(Jfᵢ)|
 - **Identifiability**: Flow parameters and base distribution parameters may trade off
 
 # Implementation Details
-- Uses planar layer architecture from NormalizingFlows.jl
+- Uses the planar layer architecture from Bijectors.jl
 - Parameters are flattened for optimization and reconstructed during evaluation
 - Base distribution is typically `MvNormal(zeros(d), I)`
 - Default initialization: Glorot normal scaled by 1/√n_input
 
 # See Also
 - `NPFParameter` - Parameter specification for flows (in `@fixedEffects`)
-- `PlanarLayer` - Individual transformation layer (from NormalizingFlows.jl)
+- `PlanarLayer` - Individual transformation layer (from Bijectors.jl)
 
 
 # References

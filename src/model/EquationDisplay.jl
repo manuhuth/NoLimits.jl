@@ -1,7 +1,9 @@
 export get_equation_lines
 export show_equations
 
-using Latexify
+# LaTeX rendering, implemented in NoLimitsLatexifyExt. `latex = false` needs neither.
+function _eq_latexraw end
+function _eq_latexify end
 
 @inline _eq_clean_expr(ex::Expr) = Base.remove_linenums!(deepcopy(ex))
 
@@ -32,7 +34,7 @@ end
 
 @inline function _eq_show_latex_piece(x)
     try
-        return String(Latexify.latexraw(x))
+        return String(_eq_latexraw(x))
     catch
         return _eq_show_plain_piece(x)
     end
@@ -113,7 +115,7 @@ function _eq_latex_string(ex::Expr)
     dl = _eq_derivative_latex_line(ex_clean)
     dl === nothing || return dl
     try
-        line = String(Latexify.latexify(ex_clean))
+        line = String(_eq_latexify(ex_clean))
         return _eq_apply_vector_component_notation(line, ex_clean)
     catch
         return _eq_plain_string(ex_clean)
@@ -125,7 +127,7 @@ function _eq_latex_line(ex::Expr)
     dl = _eq_derivative_latex_line(ex_clean)
     dl === nothing || return dl
     try
-        line = String(Latexify.latexraw(ex_clean))
+        line = String(_eq_latexraw(ex_clean))
         return _eq_apply_vector_component_notation(line, ex_clean)
     catch
         s = _eq_latex_string(ex_clean)
@@ -152,7 +154,7 @@ function _eq_latex_block(lines::Vector{Expr}; numbered::Bool = false)
         push!(tex_lines, line)
     end
     body = join(tex_lines, " \\\\\n")
-    return Latexify.latexraw(
+    return _eq_latexraw(
         "\$\\begin{aligned}\n" * body * "\n\\end{aligned}\$"; parse = false)
 end
 
@@ -188,10 +190,13 @@ end
     show_equations([io::IO], m::Model; latex::Bool = true, numbered::Bool = false)
 
 Display a model's equations - preDE assignments, differential equations, and formula
-nodes. With `latex = true` (default) they are rendered as LaTeX via Latexify; otherwise
-they are printed as plain text. Set `numbered = true` to number the equations.
+nodes. With `latex = true` (default) they are rendered as LaTeX via Latexify, which has
+to be loaded alongside NoLimits; otherwise they are printed as plain text and no optional
+dependency is needed. Set `numbered = true` to number the equations.
 """
 function show_equations(io::IO, m::Model; latex::Bool = true, numbered::Bool = false)
+    latex &&
+        _require_ext(:NoLimitsLatexifyExt, :Latexify, "show_equations(...; latex = true)")
     lines = get_equation_lines(m)
     isempty(lines) && return nothing
 
@@ -208,6 +213,8 @@ function show_equations(io::IO, m::Model; latex::Bool = true, numbered::Bool = f
 end
 
 function show_equations(m::Model; latex::Bool = true, numbered::Bool = false)
+    latex &&
+        _require_ext(:NoLimitsLatexifyExt, :Latexify, "show_equations(...; latex = true)")
     lines = get_equation_lines(m)
     isempty(lines) && return nothing
 

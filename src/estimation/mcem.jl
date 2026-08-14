@@ -9,7 +9,6 @@ using SciMLBase
 using ComponentArrays
 using Random
 using LineSearches
-using OptimizationBBO
 using Turing
 using DynamicPPL
 using Distributions

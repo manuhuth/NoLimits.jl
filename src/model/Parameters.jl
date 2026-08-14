@@ -1,10 +1,8 @@
 using LinearAlgebra
 using Distributions
-using Lux
-using SimpleChains
 using Optimisers
 using Random
-using NormalizingFlows
+using Bijectors: PlanarLayer
 using FunctionChains
 using Turing: Flat
 
@@ -499,45 +497,25 @@ Base.@kwdef struct NNParameters{T <: Real, VT <: AbstractVector{T}, C, R} <:
     calculate_se::Bool = false
 end
 
+# Both backends' constructors live in package extensions (NoLimitsLuxExt,
+# NoLimitsSimpleChainsExt): the struct is generic in the chain type, only building one
+# needs Lux or SimpleChains. Reached only when neither is loaded.
 function NNParameters(
         chain; name::Symbol = :unnamed, function_name::Symbol, seed::Integer = 0,
         prior = Priorless(), calculate_se::Bool = false)
-    if !isa(chain, Lux.Chain)
+    # A backend is loaded and still did not match, so the chain type is simply wrong.
+    (Base.get_extension(@__MODULE__, :NoLimitsLuxExt) !== nothing ||
+     Base.get_extension(@__MODULE__, :NoLimitsSimpleChainsExt) !== nothing) &&
         error("Invalid chain for parameter $(name). Expected a `Lux.Chain` or a `SimpleChains.SimpleChain`; got $(typeof(chain)).")
-    end
-    rng = Xoshiro(seed)
-    init_params = Lux.initialparameters(rng, chain)
-    flat, reconstructor = Optimisers.destructure(init_params)
-    T = eltype(flat) <: AbstractFloat ? eltype(flat) : Float64
-    v = T.(flat)
-    l = fill(T(-Inf), length(v))
-    u = fill(T(Inf), length(v))
-    _check_nn_prior(prior, name, length(v))
-    return NNParameters{T, typeof(v), typeof(chain), typeof(reconstructor)}(
-        name, function_name, chain, v, reconstructor, l, u, prior, calculate_se)
-end
+    return error("""
+                 NNParameters (parameter $(name)) needs a network backend: a `Lux.Chain` or a \
+                 `SimpleChains.SimpleChain`. Both are optional dependencies of NoLimits, so \
+                 neither is installed or loaded for you.
 
-"""
-    NNParameters(chain::SimpleChain; name, function_name, seed, prior, calculate_se) -> NNParameters
+                     using Pkg; Pkg.add("Lux")   # or Pkg.add("SimpleChains")
+                     using Lux                   # or using SimpleChains
 
-SimpleChains.jl backend for [`NNParameters`](@ref). A `SimpleChains.SimpleChain` already stores
-its parameters as a flat `Vector`, so they are kept as-is (no `Optimisers.destructure`/`reconstructor`
-round-trip); at runtime the network is evaluated directly as `chain(input, θ_slice)`. Parameters
-are initialized as `Float64`. This backend is ForwardDiff-compatible.
-"""
-function NNParameters(chain::SimpleChain; name::Symbol = :unnamed,
-        function_name::Symbol, seed::Integer = 0,
-        prior = Priorless(), calculate_se::Bool = false)
-    T = Float64
-    v = Vector{T}(SimpleChains.init_params(chain, T; rng = Xoshiro(seed)))
-    l = fill(T(-Inf), length(v))
-    u = fill(T(Inf), length(v))
-    _check_nn_prior(prior, name, length(v))
-    # SimpleChains parameters are already flat; the `reconstructor` field is unused for this
-    # backend (the model-function builder in FixedEffects.jl calls `chain(x, θ)` directly), so
-    # it is set to `identity`.
-    return NNParameters{T, typeof(v), typeof(chain), typeof(identity)}(
-        name, function_name, chain, v, identity, l, u, prior, calculate_se)
+                 Load one alongside NoLimits and retry. (Got a chain of type $(typeof(chain)).)""")
 end
 
 """

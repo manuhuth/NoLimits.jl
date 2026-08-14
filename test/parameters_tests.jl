@@ -5,7 +5,6 @@ using Random
 using Lux
 using LinearAlgebra
 using Optimisers
-using NormalizingFlows
 using FunctionChains
 using Bijectors
 using Turing: Flat
