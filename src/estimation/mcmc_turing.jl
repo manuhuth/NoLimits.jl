@@ -162,8 +162,52 @@ end
 # Turing's `~` takes a single distribution, so a per-element prior vector (accepted on
 # NN/SoftTree/NPF blocks) has to become one product distribution -- the same conversion
 # `_logprior_eval` already does on the MAP path.
-_turing_prior(prior) = prior
-_turing_prior(prior::AbstractVector{<:Distribution}) = product_distribution(prior)
+_turing_prior(prior, name::Symbol) = prior
+function _turing_prior(prior::AbstractVector{<:Distribution}, name::Symbol)
+    return product_distribution(prior)
+end
+_turing_prior(prior::MatrixDistribution, name::Symbol) = _SafeMatrixPrior(prior, name)
+
+# A proposal can push a matrix-variate prior's argument onto the positive-definite
+# boundary, where Distributions' `logpdf` throws a factorization error instead of
+# returning -Inf and kills the sampler. Wrapping keeps the throw inside NoLimits and
+# scores the draw -Inf so it is rejected — the same contract as `_mcmc_re_dist`.
+struct _SafeMatrixPrior{D <: MatrixDistribution} <: ContinuousMatrixDistribution
+    d::D
+    name::Symbol
+end
+
+Base.size(p::_SafeMatrixPrior) = size(p.d)
+Distributions.insupport(p::_SafeMatrixPrior, x::AbstractMatrix{<:Real}) = insupport(p.d, x)
+function Distributions._rand!(rng::AbstractRNG, p::_SafeMatrixPrior, x::AbstractMatrix)
+    return Distributions._rand!(rng, p.d, x)
+end
+Bijectors.bijector(p::_SafeMatrixPrior) = Bijectors.bijector(p.d)
+
+# Linking is the one thing the wrapper cannot inherit: Bijectors dispatches the
+# constrained↔unconstrained maps on the concrete distribution type. `VectorBijectors` is
+# the Bijectors 0.16 interface; on 0.15 `bijector` above is the whole story.
+if isdefined(Bijectors, :VectorBijectors)
+    for f in (:from_linked_vec, :to_linked_vec, :linked_vec_length, :linked_optic_vec)
+        @eval function Bijectors.VectorBijectors.$f(p::_SafeMatrixPrior)
+            return Bijectors.VectorBijectors.$f(p.d)
+        end
+    end
+end
+
+function Distributions._logpdf(p::_SafeMatrixPrior, x::AbstractMatrix{<:Real})
+    try
+        return logpdf(p.d, x)
+    catch err
+        _is_numeric_error(err) || rethrow(err)
+        if !Threads.atomic_cas!(_WARNED_NUMERIC_ERROR, false, true)
+            @warn "A numeric error ($(nameof(typeof(err)))) was raised while evaluating " *
+                  "the prior of $(p.name) (a $(nameof(typeof(p.d)))); rejecting this " *
+                  "proposal. Warned once per fit."
+        end
+        return convert(float(eltype(x)), -Inf)
+    end
+end
 
 # Shared θ-reconstruction metaprogramming for both MCMC model builders: sample the
 # free fixed effects from their priors, merge with the constants, and rebuild the
@@ -505,7 +549,7 @@ function _fit_model(dm::DataModel, method::MCMC, args...;
 
     free_names_t = Tuple(free_names)
     θ_template = get_θ0_untransformed(fe)
-    priors_nt = NamedTuple{free_names_t}(Tuple(_turing_prior(getfield(priors, n))
+    priors_nt = NamedTuple{free_names_t}(Tuple(_turing_prior(getfield(priors, n), n)
     for n in free_names))
     model = nothing
     if isempty(re_names)

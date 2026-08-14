@@ -41,7 +41,6 @@ export complete_data_loglikelihood_per_individual
 export build_ll_cache
 export MCIntegrator
 
-using StatsFuns
 using SpecialFunctions
 using DataFrames
 using Random

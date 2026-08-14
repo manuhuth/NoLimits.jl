@@ -7,7 +7,6 @@ using Distributions
 using OrdinaryDiffEq
 using SciMLBase
 using ComponentArrays
-using Distributed
 
 # Row-indexed variant of `_vary_row` (common.jl): when the time column is not a
 # varying covariate, the fallback reads it from the data frame at `row`.
@@ -186,23 +185,6 @@ function _simulate_individual!(
     return nothing
 end
 
-function _simulate_individual_values(
-        dm::DataModel, idx::Int, θ, re_samples, rng, replace_missings::Bool)
-    η = _sampled_random_effects_for_individual(dm, idx, re_samples)
-    sol_accessors = _simulate_sol_accessors(dm, idx, θ, η)
-
-    obs_rows = get_obs_rows(get_row_groups(dm))[idx]
-    out = Dict{Symbol, Vector{Any}}()
-    for col in get_obs_cols(dm)
-        out[col] = Vector{Any}(undef, length(obs_rows))
-    end
-
-    _simulate_obs_rows!(dm, idx, θ, η, sol_accessors, rng, replace_missings, get_df(dm),
-        (col, i, row, val) -> (out[col][i] = val),
-        (col, i, row) -> (out[col][i] = nothing))
-    return obs_rows, out
-end
-
 function _warn_bad_value(dm::DataModel, row::Int, col::Symbol, dist, val)
     id_val = get_df(dm)[row, get_primary_id(dm)]
     t_val = get_df(dm)[row, get_time_col(dm)]
@@ -333,24 +315,9 @@ function simulate_data(dm::DataModel; rng = Random.default_rng(),
                 _simulate_individual!(df, dm, i, θ, re_samples, rng_c, replace_missings)
             end
         end
-    elseif serialization isa SciMLBase.EnsembleDistributed
-        parts = pmap(
-            i -> begin
-                local_rng = Random.MersenneTwister(rand(rng, UInt))
-                _simulate_individual_values(
-                    dm, i, θ, re_samples, local_rng, replace_missings)
-            end,
-            collect(eachindex(get_individuals(dm))))
-        for (obs_rows, out) in parts
-            for col in get_obs_cols(dm)
-                vals = out[col]
-                for (j, row) in enumerate(obs_rows)
-                    vals[j] === nothing && continue
-                    df[row, col] = vals[j]
-                end
-            end
-        end
     else
+        # ponytail: EnsembleDistributed simulates serially (issue #184) — the `pmap`
+        # branch was untested and worker startup dominates a per-individual simulate.
         for i in eachindex(get_individuals(dm))
             _simulate_individual!(df, dm, i, θ, re_samples, rng, replace_missings)
         end

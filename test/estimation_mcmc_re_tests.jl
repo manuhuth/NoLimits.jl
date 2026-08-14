@@ -482,4 +482,11 @@ end
         rng = MersenneTwister(1), theta_0_untransformed = θ)
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
+
+    # #154: same contract for a matrix-variate FIXED-effect prior — a proposal at the
+    # PD boundary must score -Inf instead of throwing a factorization error.
+    W = Wishart(4.0, [0.25 0.0; 0.0 0.25])
+    pw = NoLimits._turing_prior(W, :Ω)
+    @test logpdf(pw, [0.3 0.0; 0.0 0.3]) ≈ logpdf(W, [0.3 0.0; 0.0 0.3])
+    @test logpdf(pw, [1.0 2.0; 2.0 1.0]) == -Inf
 end
