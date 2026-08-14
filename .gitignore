@@ -1,7 +1,9 @@
-# Julia (test/Manifest.toml IS tracked: pinned so CI's Pkg.test sandbox
-# resolves deterministically and the depot cache stays warm)
+# Julia (test/Manifest.toml and docs/Manifest.toml ARE tracked: pinned so CI's
+# Pkg.test sandbox and the Documenter env resolve deterministically and the
+# depot caches stay warm; refresh them seeded from the root Manifest)
 Manifest.toml
 !/test/Manifest.toml
+!/docs/Manifest.toml
 
 # Documentation
 docs/build/
