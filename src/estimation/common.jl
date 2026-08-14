@@ -2262,6 +2262,12 @@ function get_loglikelihood_quadrature(dm::DataModel,
             bll == -Inf && return -Inf
             total += bll
         end
+        # RE levels fixed via `constants_re` are not integrated over, so their prior
+        # density has to be added explicitly (mirrors `_ghq_batch_ll`). Without it the
+        # returned value is not a log-density in the fixed levels.
+        const_ll = _const_re_prior_logf(dm, info, θu_re, const_cache, ll_cache)
+        !isfinite(const_ll) && return -Inf
+        total += const_ll
     end
     return total
 end
