@@ -6,7 +6,7 @@ Both require `Copulas` to be loaded alongside NoLimits, since it is an optional 
 
 ```julia
 using Pkg; Pkg.add("Copulas")
-using NoLimits, Copulas, Distributions
+using NoLimits, Copulas, Distributions, DataFrames, Random
 ```
 
 ## Copula as a Random-Effect Distribution
@@ -27,7 +27,8 @@ model = @Model begin
 
     @randomEffects begin
         D = RandomEffect(
-            SklarDist(ClaytonCopula(2, 3.0), (Normal(mu1, 0.9), Normal(mu2, 0.6)));
+            Copulas.SklarDist(Copulas.ClaytonCopula(2, 3.0),
+                (Normal(mu1, 0.9), Normal(mu2, 0.6)));
             column=:ID)
     end
 
@@ -38,6 +39,9 @@ end
 ```
 
 `D` is a two-element random effect and is indexed as `D[1]`, `D[2]` exactly like an `MvNormal` one. The copula parameter can be estimated too: declare it as a fixed effect on the log scale and pass it in, as `thc` does in the outcome example below.
+
+!!! note "Qualify Copulas names inside `@randomEffects`"
+    The random-effect distribution builder is compiled into a generated-function module that does not see the `using Copulas` in your script, so `Copulas.SklarDist` and `Copulas.ClaytonCopula` must be written out in full. A bare `SklarDist(...)` builds the model without complaint and then fails with `UndefVarError: SklarDist not defined` when you construct the `DataModel`. `@formulas` resolves against your own scope, so the outcome example below can use the short names.
 
 Estimation works with `Laplace`, `GHQuadrature`, `Pooled`, `MCMC` and the other random-effects methods. Three internals are worth knowing about, because they are what makes the marginals matter more than the copula itself:
 
@@ -82,7 +86,7 @@ truth = SklarDist(ClaytonCopula(2, 2.0), (Normal(0.3, 0.8), Normal(1.2, 0.5)))
 df = DataFrame(vec([(ID=i, t=Float64(j), y=rand(rng, truth)) for i in 1:6, j in 1:4]))
 
 dm = DataModel(model, df; primary_id=:ID, time_col=:t)
-res = fit_model(dm, Laplace())
+res = fit_model(dm, NoLimits.Laplace())
 ```
 
 `get_loglikelihood`, `simulate_data` and `cross_validate` all work on the result, and `simulate_data` returns a `y` column of two-element vectors matching the input shape. `get_residuals` returns one row per observation as usual, but the scalar residual metrics (`pit`, `res_quantile`, `res_raw`, `res_pearson`, `logscore`) are `missing` for vector-valued observations and a warning says so; they have no scalar definition here. Judge fit through the log-likelihood, cross-validation, or dimension-wise plots built from `simulate_data` instead.
