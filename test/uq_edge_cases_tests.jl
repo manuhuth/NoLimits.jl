@@ -7,6 +7,7 @@ using Distributions
 using Lux
 using LinearAlgebra
 using Random
+import Turing   # MCMC/VI need the Turing extension loaded (#36)
 
 _uq_edge_mvprior(n::Int) = MvNormal(zeros(n), Matrix{Float64}(I, n, n))
 

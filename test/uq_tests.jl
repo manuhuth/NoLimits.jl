@@ -9,6 +9,7 @@ using Random
 using LinearAlgebra
 using OptimizationOptimJL
 using NoLimits.LineSearches
+import Turing   # MCMC/VI need the Turing extension loaded (#36)
 
 # Profile intervals must be real numbers that bracket the estimate on both scales.
 function _assert_profile_interval(uq)
