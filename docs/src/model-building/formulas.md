@@ -333,6 +333,43 @@ end
 
 Here `delta_t` is a time-varying covariate holding the elapsed time since the previous observation for each row. The `outcome` column must hold two-element vectors matching the dimension of the `MvNormal` emissions. Partially-missing vectors (e.g. `[1.2, missing]`) are handled by marginalizing the `MvNormal` over the observed index.
 
+## Example: Outcome Distributions from Other Packages
+
+The right-hand side of a `~` statement is ordinary Julia code, and the likelihood only ever calls the generic `Distributions.jl` interface on the result. Any `Distribution` from any package therefore works as an outcome without registration or glue code. [CensoredDistributions.jl](https://github.com/EpiAware/CensoredDistributions.jl), which supplies the interval- and primary-event-censored distributions common in epidemiological delay modelling, is a typical case:
+
+```julia
+using CensoredDistributions
+
+model = @Model begin
+    @fixedEffects begin
+        a = RealNumber(1.0)
+        sigma = RealNumber(0.6; scale=:log)
+        omega = RealNumber(0.4; scale=:log)
+    end
+
+    @covariates begin
+        t = Covariate()
+    end
+
+    @randomEffects begin
+        eta = RandomEffect(Normal(0.0, omega); column=:ID)
+    end
+
+    @formulas begin
+        mu = a + eta + 0.1 * t
+        y ~ interval_censored(Normal(mu, sigma), 1.0)
+    end
+end
+```
+
+This fits with `MLE`, `MAP`, `MCMC`, `Laplace`, `GHQuadrature`, `SAEM`, `MCEM`, `Pooled` and `PooledMap`, and `get_loglikelihood`, `get_random_effects`, `simulate_data` and `get_residuals` all behave as usual. Three caveats apply to any outcome distribution outside the standard families, not just censored ones:
+
+- `FOCEI` builds its Fisher-information surrogate from a fixed list of families and rejects anything outside it with an error naming the supported ones. Use `Laplace` instead, which makes no such assumption.
+- Distributions whose log-density is `-Inf` over part of the parameter space, including censored and truncated ones, can make `VI` diverge, because the ADVI sampler visits those regions during adaptation. The optimization-based methods are unaffected.
+- `get_residuals` fills `res_raw` and `res_pearson`, and `plot_fits` draws its prediction line, from `mean` and `var`. A distribution that defines neither leaves those columns `missing`; `pit`, `res_quantile` and `logscore` need only `cdf` and `logpdf` and remain available.
+
+For the simpler case of censoring at a detection limit, `censored(...)` from `Distributions.jl` needs no extra package. See the [left-censored viral load tutorial](../tutorials/mixed-effects-left-censored-virload50-laplace.md).
+
 ## Related APIs
 
 Programmatic access to the internal representation and evaluation of formulas is provided by `get_formulas_meta`, `get_formulas_ir`, `get_formulas_builders`, and `get_formulas_time_offsets`. Full signatures are in the [API reference](../api.md).
