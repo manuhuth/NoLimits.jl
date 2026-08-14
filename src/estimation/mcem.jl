@@ -56,7 +56,7 @@ end
     AbstractMCEMEStep
 
 Abstract supertype for MCEM E-step strategies. Concrete subtypes:
-- [`MCEM_MCMC`](@ref) — Turing.jl MCMC sampler (default)
+- [`MCEM_MCMC`](@ref) — MCMC sampler (default; `SaemixMH`, needs no Turing)
 - [`MCEM_IS`](@ref)   — Importance Sampling with an adaptive proposal
 """
 abstract type AbstractMCEMEStep end
@@ -64,12 +64,16 @@ abstract type AbstractMCEMEStep end
 """
     MCEM_MCMC(; sampler, turing_kwargs, sample_schedule, warm_start)
 
-MCMC-based E-step for [`MCEM`](@ref). Wraps a Turing.jl-compatible sampler.
+MCMC-based E-step for [`MCEM`](@ref). Accepts the native samplers
+([`SaemixMH`](@ref), [`AdaptiveNoLimitsMH`](@ref)) or any Turing.jl-compatible sampler.
 
 # Keyword Arguments
-- `sampler`: Turing-compatible sampler. Defaults to `NUTS(0.75)`.
-- `turing_kwargs::NamedTuple`: forwarded to `Turing.sample`.
+- `sampler`: Defaults to `SaemixMH()`, which needs no Turing. Turing samplers
+  (`NUTS`, `MH`) require `using Turing`. To restore the pre-0.2.3 default, pass
+  `MCEM_MCMC(sampler = NUTS(0.75), sample_schedule = 250)`.
+- `turing_kwargs::NamedTuple`: forwarded to `Turing.sample`; ignored by the native samplers.
 - `sample_schedule`: samples per E-step — `Int`, `Vector{Int}`, or `Function(iter)->Int`.
+  Defaults to `100`.
 - `warm_start::Bool = true`: initialize sampler from previous iteration's modes.
 """
 struct MCEM_MCMC{S, K, SS} <: AbstractMCEMEStep
@@ -79,9 +83,9 @@ struct MCEM_MCMC{S, K, SS} <: AbstractMCEMEStep
     warm_start::Bool
 end
 
-function MCEM_MCMC(; sampler = Turing.NUTS(0.75),
+function MCEM_MCMC(; sampler = SaemixMH(),
         turing_kwargs = NamedTuple(),
-        sample_schedule = 250,
+        sample_schedule = 100,
         warm_start::Bool = true)
     return MCEM_MCMC(sampler, turing_kwargs, sample_schedule, warm_start)
 end
@@ -160,9 +164,9 @@ fixed effects.
 - `adtype`: AD backend for the M-step. Defaults to `AutoForwardDiff()`.
 - `e_step`: E-step strategy. Either [`MCEM_MCMC`](@ref) or [`MCEM_IS`](@ref). When
   omitted, defaults to `MCEM_MCMC` constructed from the legacy keyword arguments below.
-- `sampler`: (legacy) Turing sampler; used when `e_step` is not provided.
+- `sampler`: (legacy) E-step sampler; used when `e_step` is not provided. Defaults to `SaemixMH()`.
 - `turing_kwargs::NamedTuple`: (legacy) forwarded to `Turing.sample`.
-- `sample_schedule::Int = 250`: (legacy) MCMC samples per E-step iteration.
+- `sample_schedule::Int = 100`: (legacy) MCMC samples per E-step iteration.
 - `warm_start::Bool = true`: (legacy) initialize sampler from previous iteration's modes.
 - `verbose::Bool = false`: print per-iteration diagnostics.
 - `progress::Bool = true`: show a progress bar.
@@ -222,9 +226,9 @@ function MCEM(;
         optim_kwargs = (; iterations = 50, g_abstol = 1e-4, f_reltol = 1e-6),
         adtype = Optimization.AutoForwardDiff(),
         e_step = nothing,
-        sampler = Turing.NUTS(0.75),
+        sampler = SaemixMH(),
         turing_kwargs = NamedTuple(),
-        sample_schedule = 250,
+        sample_schedule = 100,
         warm_start = true,
         verbose = false,
         progress = true,

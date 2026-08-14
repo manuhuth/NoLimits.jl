@@ -697,9 +697,12 @@ function _mcem_sample_batch(dm::DataModel,
     _saemixmh_level_plp!(state.level_plp, state.levels, dm, θ_re, const_cache, cache,
         state.b; anneal_sds = anneal_sds)
 
-    # Run n_samples sweeps: each sweep = n_kern1 kernel-1 steps + n_kern2 kernel-2 steps
+    # Run n_samples sweeps: each sweep = n_kern1 kernel-1 steps + n_kern2 kernel-2 steps.
+    # Every sweep is recorded as a column: SAEM only consumes the last one, but MCEM
+    # averages the whole set to form Q.
     n_sweeps = max(1, get(turing_kwargs, :n_samples, 1))
-    for _ in 1:n_sweeps
+    samples = similar(state.b, nb, n_sweeps)
+    for s in 1:n_sweeps
         _saemixmh_kern1!(state, dm, info, θ_re, const_cache, cache, rng, re_names,
             sampler.n_kern1, anneal_sds)
         _saemixmh_kern2!(state, dm, info, θ_re, const_cache, cache, rng, re_names,
@@ -708,9 +711,9 @@ function _mcem_sample_batch(dm::DataModel,
         _saemixmh_kern3!(state, dm, info, θ_re, const_cache, cache, rng, re_names,
             sampler.n_kern3, outer_iter, sampler.proba_mcmc,
             sampler.stepsize_rw, anneal_sds)
+        @views samples[:, s] .= state.b
     end
 
-    b_out = copy(state.b)
-    # Return: (single-column sample matrix, updated state, last b)
-    return (reshape(b_out, nb, 1), state, b_out)
+    b_out = samples[:, end]
+    return (samples, state, b_out)
 end

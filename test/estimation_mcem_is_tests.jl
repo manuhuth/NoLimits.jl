@@ -35,9 +35,9 @@ const _MIS_DM = DataModel(_MIS_MODEL,
 
 @testset "MCEM_IS struct and MCEM_MCMC struct" begin
     es_mcmc = NoLimits.MCEM_MCMC()
-    @test es_mcmc.sampler isa NUTS
+    @test es_mcmc.sampler isa SaemixMH
     @test es_mcmc.warm_start == true
-    @test es_mcmc.sample_schedule == 250
+    @test es_mcmc.sample_schedule == 100
 
     es_is = NoLimits.MCEM_IS(n_samples = 2, proposal = :prior)
     @test es_is.n_samples == 2
