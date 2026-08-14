@@ -72,36 +72,25 @@ jobs:
   # race repo-wide. So exactly the two files carrying those oracles run threaded
   # here. This is the guard that would have caught #151 (GHQ objective differing
   # by 0.62-0.74 relative between serial and threaded).
-  # Two jobs, not one: ghquadrature alone is ~7 min threaded, so pairing it with
-  # the other oracle files made this the slowest job of the whole workflow.
+  # The GHQ #151 oracle lives in api_primitives_tests.jl (tight serial==threaded
+  # fit comparison), so the full ghquadrature file no longer re-runs here — it
+  # was ~7 min of threaded re-execution of tests that don't touch threading.
   threaded:
-    name: test threaded (${{ matrix.name }})
+    name: test threaded (invariance oracles)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: invariance oracles
-            files: "estimation_common_tests.jl,api_primitives_tests.jl"
-          - name: ghquadrature
-            files: "estimation_ghquadrature_tests.jl"
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
         with:
           version: "1.12"
-      # include-matrix MUST stay "false" now that this job has a matrix:
-      # without it each variant derives a fresh cache key, finds no cache, and
-      # precompiles ~786 deps cold (measured: 36 min instead of ~7).
       - uses: julia-actions/cache@v3
         with:
           cache-name: julia-test
-          include-matrix: "false"
       - uses: julia-actions/julia-buildpkg@v1
       - name: Run invariance oracles with 4 threads
         env:
           JULIA_NUM_THREADS: "4"
-          NL_TEST_FILES: ${{ matrix.files }}
+          NL_TEST_FILES: "estimation_common_tests.jl,api_primitives_tests.jl"
         run: julia --color=yes --project=. -e 'using Pkg; Pkg.test(; julia_args=["--check-bounds=auto"])'
 
   # Aggregator. Keeps the exact check name branch protection requires, so the
