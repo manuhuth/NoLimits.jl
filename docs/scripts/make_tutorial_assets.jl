@@ -11,6 +11,8 @@
 
 using NoLimits
 using CSV
+using CensoredDistributions
+using Copulas
 using DataFrames
 using Distributions
 using Downloads
@@ -714,6 +716,144 @@ function tutorial6()
 end
 
 # ----------------------------------------------------------------------------- #
+# Tutorial 7: Copula random effects, simulate and recover (Laplace)
+# ----------------------------------------------------------------------------- #
+function tutorial7()
+    slug = "t7"
+    Random.seed!(2026)
+
+    truth_model = @Model begin
+        @fixedEffects begin
+            mu1 = RealNumber(0.8, calculate_se = true)
+            mu2 = RealNumber(-0.5, calculate_se = true)
+            s = RealNumber(0.4, scale = :log, calculate_se = true)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            D = RandomEffect(
+                Copulas.SklarDist(Copulas.ClaytonCopula(2, 3.0),
+                    (Normal(mu1, 0.9), Normal(mu2, 0.6)));
+                column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(D[1] + D[2] * t, s)
+        end
+    end
+    txt(slug, "model_summary", NoLimits.summarize(truth_model))
+
+    n_id, n_t = 120, 6
+    template = DataFrame(ID = repeat(1:n_id, inner = n_t),
+        t = repeat(collect(0.0:(n_t - 1)), n_id), y = zeros(n_id * n_t))
+    dm_truth = DataModel(truth_model, template; primary_id = :ID, time_col = :t)
+    dm = simulate_data_model(dm_truth; rng = Random.Xoshiro(20))
+    txt(slug, "df_head", first(get_df(dm), 8))
+    txt(slug, "dm_summary", NoLimits.summarize(dm))
+
+    serialization = SciMLBase.EnsembleThreads()
+    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 300,));
+        serialization = serialization, rng = Random.Xoshiro(11))
+    txt(slug, "res_summary", NoLimits.summarize(res))
+
+    plot_random_effect_pairplot(res; save_path = fig(slug, "p_pair"))
+    plot_fits(res; observable = :y, individuals_idx = [1, 2], ncols = 2,
+        save_path = fig(slug, "p_fit"))
+
+    uq = compute_uq(
+        res; method = :wald, n_draws = 800, level = 0.95, rng = Random.Xoshiro(153))
+    txt(slug, "res_uq_summary", NoLimits.summarize(res, uq))
+    plot_uq_distributions(uq; scale = :natural, plot_type = :density, show_legend = false,
+        save_path = fig(slug, "p_uq"))
+    return nothing
+end
+
+# ----------------------------------------------------------------------------- #
+# Tutorial 8: Interval-censored (binned) outcomes (Laplace)
+# ----------------------------------------------------------------------------- #
+function tutorial_intcens()
+    slug = "t8"
+    Random.seed!(2026)
+
+    model = @Model begin
+        @fixedEffects begin
+            beta0 = RealNumber(12.0, calculate_se = true)
+            beta1 = RealNumber(0.35, scale = :log, calculate_se = true)
+            omega = RealNumber(0.8, scale = :log, calculate_se = true)
+            sigma = RealNumber(0.4, scale = :log, calculate_se = true)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            eta = RandomEffect(Normal(0.0, omega); column = :ID)
+        end
+        @formulas begin
+            mu = (beta0 + eta) * exp(-beta1 * t)
+            y ~ interval_censored(Normal(mu, sigma), 1.0)
+        end
+    end
+    txt(slug, "model_summary", NoLimits.summarize(model))
+
+    n_id, n_t = 60, 6
+    template = DataFrame(ID = repeat(1:n_id, inner = n_t),
+        t = repeat(collect(0.0:(n_t - 1)), n_id), y = zeros(n_id * n_t))
+    dm_truth = DataModel(model, template; primary_id = :ID, time_col = :t)
+    dm = simulate_data_model(dm_truth; rng = Random.Xoshiro(20))
+    txt(slug, "df_head", first(get_df(dm), 8))
+    txt(slug, "dm_summary", NoLimits.summarize(dm))
+
+    serialization = SciMLBase.EnsembleThreads()
+    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 300,));
+        serialization = serialization, rng = Random.Xoshiro(11))
+    txt(slug, "res_summary", NoLimits.summarize(res))
+
+    naive_model = @Model begin
+        @fixedEffects begin
+            beta0 = RealNumber(12.0)
+            beta1 = RealNumber(0.35, scale = :log)
+            omega = RealNumber(0.8, scale = :log)
+            sigma = RealNumber(0.4, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            eta = RandomEffect(Normal(0.0, omega); column = :ID)
+        end
+        @formulas begin
+            mu = (beta0 + eta) * exp(-beta1 * t)
+            y ~ Normal(mu, sigma)
+        end
+    end
+    dm_naive = DataModel(naive_model, get_df(dm); primary_id = :ID, time_col = :t)
+    res_naive = fit_model(dm_naive, NoLimits.Laplace(; optim_kwargs = (maxiters = 300,));
+        serialization = serialization, rng = Random.Xoshiro(11))
+
+    p_cens = NoLimits.get_params(res; scale = :untransformed)
+    p_naive = NoLimits.get_params(res_naive; scale = :untransformed)
+    txt(slug, "comparison",
+        DataFrame(parameter = ["beta0", "beta1", "omega", "sigma"],
+            truth = [12.0, 0.35, 0.8, 0.4],
+            interval_censored = round.(
+                [p_cens.beta0, p_cens.beta1, p_cens.omega, p_cens.sigma]; digits = 4),
+            naive_normal = round.(
+                [p_naive.beta0, p_naive.beta1, p_naive.omega, p_naive.sigma]; digits = 4)))
+
+    plot_fits(res; observable = :y, plot_func = median, individuals_idx = [1, 2],
+        ncols = 2, save_path = fig(slug, "p_fit"))
+    plot_observation_distributions(res; observables = :y, individuals_idx = 1,
+        obs_rows = [1, 2], save_path = fig(slug, "p_obs"))
+
+    uq = compute_uq(
+        res; method = :wald, n_draws = 800, level = 0.95, rng = Random.Xoshiro(153))
+    txt(slug, "res_uq_summary", NoLimits.summarize(res, uq))
+    plot_uq_distributions(uq; scale = :natural, plot_type = :density, show_legend = false,
+        save_path = fig(slug, "p_uq"))
+    return nothing
+end
+
+# ----------------------------------------------------------------------------- #
 # Fixed-Effects Tutorial 1: Nonlinear longitudinal model (MLE + MAP) -- Orange
 # ----------------------------------------------------------------------------- #
 function tutorial8()
@@ -1117,13 +1257,15 @@ end
 # ----------------------------------------------------------------------------- #
 const TUTORIALS = Dict(
     "t1" => tutorial1, "t2" => tutorial2, "t3" => tutorial3, "t4" => tutorial4,
-    "t5" => tutorial5, "t6" => tutorial6, "fe1" => tutorial8, "fe2" => tutorial9,
+    "t5" => tutorial5, "t6" => tutorial6, "t7" => tutorial7,
+    "t8" => tutorial_intcens, "fe1" => tutorial8, "fe2" => tutorial9,
     "md1" => tutorial_md1
 )
 
 function main()
     mkpath(FIG_ROOT)
-    requested = isempty(ARGS) ? ["t1", "t2", "t5", "t6", "fe1", "fe2", "t3", "t4", "md1"] :
+    requested = isempty(ARGS) ?
+                ["t1", "t2", "t5", "t6", "t7", "t8", "fe1", "fe2", "t3", "t4", "md1"] :
                 ARGS
     for key in requested
         haskey(TUTORIALS, key) || (@warn "Unknown tutorial key: $key"; continue)

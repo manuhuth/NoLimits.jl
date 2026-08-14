@@ -145,6 +145,7 @@ Note that `FOCEI` builds its Fisher-information surrogate from a fixed list of o
 
 ## Related Pages
 
+- [Copula random effects tutorial](../tutorials/mixed-effects-copula-random-effects-laplace.md) for a full simulate-and-recover walkthrough with figures.
 - [`@randomEffects`](random-effects.md) for the general random-effect declaration syntax.
 - [`@formulas`](formulas.md) for outcome distributions, including third-party distributions in general.
 - [Installation](../installation.md) for the full list of optional dependencies.

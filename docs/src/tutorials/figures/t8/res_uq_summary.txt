@@ -1,0 +1,29 @@
+UQResultSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  backend                             : wald
+  source_method                       : laplace
+  inference                           : frequentist
+  scale                               : natural
+  objective                           : 325.1568
+  interval level                      : 0.9500
+  parameters shown (reported / total) : 4 / 4
+
+Parameter uncertainty summary
+  parameter      Estimate    Std. Error      CI Lower      CI Upper
+  ---------------------------------------------------
+  beta0           11.8074        0.1198       11.5851       12.0462
+  beta1            0.3480        0.0035        0.3405        0.3550
+  omega            0.8146        0.0920        0.6575        1.0156
+  sigma            0.4212        0.0251        0.3730        0.4720
+
+Outcome data coverage
+  outcome       n_obs   n_missing
+  -------------------------------
+  y               360           0
+  TOTAL           360           0
+
+Empirical Bayes random effects summary (across RE levels)
+  random effect       n          mean            sd           q25        median           q75
+  ---------------------------------------------------------------------------
+  eta                60       -0.0003        0.7392       -0.4437        0.1058        0.4299

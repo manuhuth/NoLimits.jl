@@ -83,6 +83,8 @@ makedocs(;
             "Soft-Tree Differential Equations (SAEM)" => "tutorials/mixed-effects-softtree-saem.md",
             "Count Outcomes: Poisson & NegativeBinomial (MCEM)" => "tutorials/mixed-effects-seizure-counts-poisson-nb-mcem.md",
             "Left-Censored Nonlinear Model (Laplace)" => "tutorials/mixed-effects-left-censored-virload50-laplace.md",
+            "Copula Random Effects (Laplace)" => "tutorials/mixed-effects-copula-random-effects-laplace.md",
+            "Interval-Censored Outcomes (Laplace)" => "tutorials/mixed-effects-interval-censored-binned-laplace.md",
             "Fixed-Effects: MLE & MAP" => "tutorials/fixed-effects-nonlinear-mle-map.md",
             "Fixed-Effects: Variational Inference" => "tutorials/fixed-effects-vi.md",
             "Hidden & Observed Markov Models" => "tutorials/markov-models-observed-hidden-coarsed.md",

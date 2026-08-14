@@ -1,0 +1,64 @@
+DataModelSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  model type                 : non-ODE
+  event-aware                : false
+  individuals                : 120
+  rows (total / obs / event) : 720 / 720 / 0
+  fixed effects (top-level)  : 3
+  outcomes                   : 1
+  covariates (declared)      : 1
+  random effects             : 1
+
+Covariate classes
+  varying  : 1
+  constant : 0
+  dynamic  : 0
+
+Outcome distribution types
+  y => Normal
+
+Random-effect distribution types
+  D => SklarDist
+
+Individual design diagnostics
+  individuals with one observation              : 0
+  global observed time range                    : 0.0000 to 5.0000
+  unique observed time points                   : 6
+  duplicate (ID, time) observation rows         : 0
+  monotonic-time violations (observation order) : 0
+
+Observations per individual
+  metric       n          mean            sd           min           q25        median           q75           max
+  ----------------------------------------------------------------------------------------------------------------
+  count      120        6.0000        0.0000        6.0000        6.0000        6.0000        6.0000        6.0000
+
+Time span per individual
+  metric       n          mean            sd           min           q25        median           q75           max
+  ----------------------------------------------------------------------------------------------------------------
+  span       120        5.0000        0.0000        5.0000        5.0000        5.0000        5.0000        5.0000
+
+Median sampling interval per individual
+  metric          n          mean            sd           min           q25        median           q75           max
+  -------------------------------------------------------------------------------------------------------------------
+  median_dt     120        1.0000        0.0000        1.0000        1.0000        1.0000        1.0000        1.0000
+
+Outcome descriptive statistics (observation rows)
+  Variable       n          mean            sd           min           q25        median           q75           max
+  ------------------------------------------------------------------------------------------------------------------
+  y            720       -0.2679        2.5888      -11.8119       -1.5671        0.2172        1.4160        6.7817
+
+Declared covariates
+  name  kind       columns
+  -------------------------------------
+  t     Covariate  t
+
+Covariate descriptive statistics (observation rows)
+  Variable       n          mean            sd           min           q25        median           q75           max
+  ------------------------------------------------------------------------------------------------------------------
+  t.t          720        2.5000        1.7078        0.0000        1.0000        2.5000        4.0000        5.0000
+
+Per-random-effect summary
+  random effect  group  dist         levels  rows/level min        median           max
+  -----------------------------------------------------------------------------------
+  D              ID     SklarDist       120          6.0000        6.0000        6.0000
