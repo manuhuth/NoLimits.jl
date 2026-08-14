@@ -14,8 +14,12 @@ concurrency:
 # cache saved on one VM is ~fully invalid on the next (observed: 785 of 827
 # deps recompiled, 16 min, on a freshly restored cache). This is the official
 # Julia x86_64 binary target string, so cached pkgimages load on any runner.
+# arm64 rehearsal: the suite is compile-bound, and GitHub's free arm64 runners
+# (Cobalt 100) are substantially faster single-thread than the mixed x86 fleet.
+# The target string is the official Julia aarch64-linux binary target, same
+# rationale as the x86 pin. Separate cache family: arm pkgimages are disjoint.
 env:
-  JULIA_CPU_TARGET: "generic;sandybridge,-xsaveopt,clone_all;haswell,-rdrnd,base(1)"
+  JULIA_CPU_TARGET: "generic;cortex-a57;thunderx2t99;carmel,clone_all;apple-m1,base(3);neoverse-512tvb,base(3)"
 
 jobs:
   # One job per fixture-affine group in test/runtests.jl (NL_TEST_GROUP=i). The
@@ -24,7 +28,7 @@ jobs:
   # every queued PR to re-run against a moved base.
   shard:
     name: test shard ${{ matrix.group }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     strategy:
       fail-fast: false
       matrix:
@@ -41,7 +45,7 @@ jobs:
       # no-op; delete-old-caches prunes prior runs.
       - uses: julia-actions/cache@v3
         with:
-          cache-name: julia-test
+          cache-name: julia-test-arm64
           include-matrix: "false"
       - uses: julia-actions/julia-buildpkg@v1
       # --check-bounds=auto reuses buildpkg's cached precompile instead of
@@ -59,7 +63,7 @@ jobs:
   # by 0.62-0.74 relative between serial and threaded).
   threaded:
     name: test threaded (invariance oracles)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
@@ -67,7 +71,7 @@ jobs:
           version: "1.12"
       - uses: julia-actions/cache@v3
         with:
-          cache-name: julia-test
+          cache-name: julia-test-arm64
       - uses: julia-actions/julia-buildpkg@v1
       - name: Run invariance oracles with 4 threads
         env:
@@ -82,7 +86,7 @@ jobs:
   # job, and a skipped required check reads as "not run" rather than "failed".
   test:
     name: test (Julia 1.12, ubuntu)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     needs: [shard, threaded]
     if: always()
     steps:
