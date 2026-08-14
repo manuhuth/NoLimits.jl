@@ -7,7 +7,6 @@ using SciMLBase
 using ComponentArrays
 using Random
 using LineSearches
-using Turing
 using Distributions
 using LinearAlgebra
 using ProgressMeter

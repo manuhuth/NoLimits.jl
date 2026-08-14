@@ -55,7 +55,7 @@ const _MCEM_DM4 = DataModel(_MCEM_MODEL,
 @testset "MCEM default sampler" begin
     method = NoLimits.MCEM()
     @test method.e_step isa NoLimits.MCEM_MCMC
-    @test method.e_step.sampler isa NUTS
+    @test method.e_step.sampler isa SaemixMH
     @test method.ebe.multistart_n == 50
     @test method.ebe.multistart_k == 1
     @test method.ebe.sampling == :lhs

@@ -5,6 +5,7 @@ using DataFrames
 using Distributions
 using ComponentArrays
 using SciMLBase
+import Turing   # MCMC/VI need the Turing extension loaded (#36)
 
 # ── Shared fixtures ───────────────────────────────────────────────────────────
 

@@ -4,6 +4,11 @@ Variational inference (VI) provides approximate Bayesian inference by optimizing
 
 Compared with `MCMC`, VI is often faster and easier to scale, but it returns an approximation whose quality depends on the selected variational family.
 
+!!! note "Turing is an optional dependency"
+    NoLimits does not install or load Turing for you. Run `Pkg.add("Turing")` and
+    `using Turing` alongside NoLimits; without it, `fit_model(dm, VI())` raises an error
+    naming what to install. See [Optional Dependencies](../installation.md#Optional-Dependencies).
+
 !!! note "VI is fixed-effects only"
     VI is not supported for models with random effects. For full Bayesian inference on
     mixed-effects models use [`MCMC`](mcmc.md) instead. For a worked fixed-effects VI

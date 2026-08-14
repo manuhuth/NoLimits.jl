@@ -4,6 +4,7 @@ using CairoMakie
 using DataFrames
 using Distributions
 using Random
+import Turing   # MCMC/VI need the Turing extension loaded (#36)
 
 # Note: "residual plots basic API (FitResult + DataModel + cache)"
 # has been moved to integration_plotting.jl (shared fixtures).

@@ -1,4 +1,3 @@
-using Turing
 using Random
 
 function _mcmc_refit_method(method::Union{Nothing, MCMC},

@@ -7,6 +7,7 @@ using Distributions
 using Copulas
 using Random
 using Statistics
+import Turing   # MCMC/VI need the Turing extension loaded (#36)
 
 @testset "Copulas.jl interop" begin
     rng = Xoshiro(11)

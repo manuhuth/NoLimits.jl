@@ -1,67 +1,3 @@
-export VI
-export VIResult
-
-using Turing
-using DynamicPPL
-using SciMLBase
-using ComponentArrays
-using Distributions
-using Random
-
-"""
-    VI(; turing_kwargs=NamedTuple()) <: FittingMethod
-
-Variational inference via Turing/AdvancedVI for **fixed-effects-only** models.
-All free fixed effects must have prior distributions.
-
-`turing_kwargs` controls VI behavior and is forwarded to `Turing.vi` after removing
-NoLimits-managed keys:
-- `max_iter::Int` (default: `1000`)
-- `family::Symbol` (`:meanfield` or `:fullrank`, default: `:meanfield`)
-- `q_init` (optional custom variational family)
-- `adtype` (default: `Turing.AutoForwardDiff()`)
-- `progress` / `show_progress` (default: `false`)
-- `convergence_window`, `convergence_rtol`, `convergence_atol` (NoLimits convergence rule)
-
-!!! note
-    VI is not supported for models with random effects. Use `MCMC` for full Bayesian
-    inference on mixed-effects models.
-"""
-struct VI{K} <: FittingMethod
-    turing_kwargs::K
-end
-
-VI(; turing_kwargs = NamedTuple()) = VI(turing_kwargs)
-
-"""
-    VIResult{Q, T, S, N, O, C, M} <: MethodResult
-
-Method-specific result from a [`VI`](@ref) fit. Stores the variational posterior,
-optimization trace/state, ELBO summary, and observed data.
-"""
-struct VIResult{Q, T, S, N, O, C, M} <: MethodResult
-    posterior::Q
-    trace::T
-    state::S
-    n_iter::Int
-    max_iter::Int
-    final_elbo::Float64
-    converged::Bool
-    notes::N
-    observed::O
-    coord_names::C
-    model::M       # DynamicPPL model used for VI; needed to unlink posterior draws to
-    # natural space. `nothing` after deserialization (draws stay linked).
-end
-
-get_variational_posterior(res::VIResult) = res.posterior
-get_vi_trace(res::VIResult) = res.trace
-get_vi_state(res::VIResult) = res.state
-
-@inline _as_namedtuple(x::NamedTuple) = x
-@inline _as_namedtuple(x::Base.Iterators.Pairs) = NamedTuple(x)
-@inline _as_namedtuple(x) = x isa NamedTuple ? x : NamedTuple(x)
-
 function _vi_unpack_output(out)
     # Turing >=0.45 returns a `VIResult` struct (fields `q`, `info`, `state`, `ldf`);
     # older versions returned a 3-tuple `(q, info, state)`. Handle both.
@@ -150,7 +86,7 @@ end
 # `rand(q)` produces under Turing >=0.45 (vi runs with `unconstrained=true`) — back to the
 # natural (constrained) parameter space the consumers expect. Requires the stored model;
 # after deserialization (model === nothing) the linked draws are returned unchanged.
-function _vi_unlink_draws(res::VIResult, linked::AbstractMatrix)
+function NoLimits._vi_unlink_draws(res::VIResult, linked::AbstractMatrix)
     res.model === nothing && return linked
     model = res.model
     vil = DynamicPPL.link(DynamicPPL.VarInfo(model), model)
@@ -171,20 +107,7 @@ function _vi_unlink_draws(res::VIResult, linked::AbstractMatrix)
     return out === nothing ? linked : out
 end
 
-function sample_posterior(res::VIResult; n_draws::Int = 1000,
-        rng::AbstractRNG = Random.default_rng(), return_names::Bool = false)
-    n_draws >= 1 || error("n_draws must be >= 1.")
-    raw = rand(rng, res.posterior, n_draws)
-    mat = raw isa AbstractVector ? reshape(raw, :, 1) : Matrix(raw)
-    linked = Matrix(permutedims(mat))
-    draws = _vi_unlink_draws(res, linked)
-    if return_names
-        return (draws = draws, names = res.coord_names)
-    end
-    return draws
-end
-
-function _fit_model(dm::DataModel, method::VI, args...;
+function NoLimits._vi_fit_impl(dm::DataModel, method::VI, args...;
         constants::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple(),
         penalty::NamedTuple = NamedTuple(),

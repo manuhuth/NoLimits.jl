@@ -4,7 +4,22 @@ using Optimisers
 using Random
 using Bijectors: PlanarLayer
 using FunctionChains
-using Turing: Flat
+
+"""
+    Flat()
+
+Improper flat prior on ℝ: `logpdf ≡ 0`, unbounded support. Used for the unbounded
+elements of a partially bounded `RealVector` prior. Behaviourally identical to
+`Turing.Flat` (which is only a `minimum`/`maximum`/`logpdf`/`rand` shell — neither
+DynamicPPL nor Bijectors special-cases it), defined here so the model-definition path
+does not need Turing loaded.
+"""
+struct Flat <: ContinuousUnivariateDistribution end
+
+Base.minimum(::Flat) = -Inf
+Base.maximum(::Flat) = Inf
+Base.rand(rng::Random.AbstractRNG, ::Flat) = rand(rng)
+Distributions.logpdf(::Flat, x::Real) = zero(x)
 
 export AbstractParameterBlock
 export RealNumber, RealVector, RealPSDMatrix, RealLiePSDMatrix, RealDiagonalMatrix,
@@ -125,7 +140,7 @@ A vector of real-valued fixed-effect parameters with per-element scale options.
   matching length, or `Priorless()`. If left `Priorless()` while at least one element has
   BOTH an explicitly finite `lower` and `upper`, the prior defaults to a product
   distribution: each explicitly bounded element gets `Uniform(lower, upper)` (natural scale)
-  and every other element gets an improper flat prior `Turing.Flat()` (logpdf ≡ 0 over ℝ).
+  and every other element gets an improper flat prior `Flat` (logpdf ≡ 0 over ℝ).
   The `EPSILON` lower auto-applied for `:log` elements does NOT count as explicit.
 - `calculate_se::Bool = true`: whether to include this parameter in standard-error calculations.
 """
@@ -884,7 +899,7 @@ function _default_uniform_prior(prior, explicit::Bool, lower::Real, upper::Real)
 end
 
 # Element-wise version for RealVector: each element with explicitly finite bounds gets a
-# Uniform(lower, upper); the remaining elements get an improper flat prior `Turing.Flat()`
+# Uniform(lower, upper); the remaining elements get an improper flat prior `Flat()`
 # (logpdf ≡ 0 over the whole real line). Only triggers when no prior is set and at least one
 # element is explicitly bounded; the result is a single multivariate prior of matching length.
 # `Flat` is handled by Turing's samplers (NUTS samples it directly and `rand` is defined), so

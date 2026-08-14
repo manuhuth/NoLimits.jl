@@ -7,6 +7,7 @@ using LinearAlgebra
 using Optimisers
 using FunctionChains
 using Bijectors
+using Turing
 using Turing: Flat
 
 @testset "Parameter blocks" begin
@@ -213,7 +214,8 @@ end
     # RealVector mixed: bounded element -> Uniform; unbounded -> improper Flat (logpdf 0).
     v2 = RealVector([0.5, 0.5]; name = :v2, lower = [0.0, -Inf], upper = [1.0, Inf])
     @test length(v2.prior) == 2
-    @test v2.prior.v[2] isa Flat
+    # NoLimits.Flat, not Turing.Flat: this file loads Turing, which shadows the bare name.
+    @test v2.prior.v[2] isa NoLimits.Flat
     @test isfinite(logpdf(v2.prior, [0.5, 12345.0]))
     @test logpdf(v2.prior, [0.5, 12345.0]) == logpdf(v2.prior, [0.5, -9.9e6])
     # The Uniform(0,1) on element 1 contributes 0 and Flat contributes 0 -> total 0.
@@ -223,6 +225,19 @@ end
     @test RealVector([0.5, 0.5]; name = :v3).prior isa NoLimits.Priorless
     @test RealVector([0.5, 0.5]; name = :v4, lower = [0.0, 0.0], upper = [1.0, 1.0],
         prior = MvNormal(zeros(2), I)).prior isa MvNormal
+end
+
+# `NoLimits.Flat` replaced `Turing.Flat` so the model-definition path does not need Turing
+# (#36). DynamicPPL picks bijectors from minimum/maximum and does not special-case its own
+# Flat, so the two must be interchangeable under NUTS down to the last bit.
+@testset "NoLimits.Flat samples identically to Turing.Flat" begin
+    Turing.@model function _flat_demo(flat, y)
+        θ ~ product_distribution([Uniform(0.0, 1.0), flat])
+        y ~ Normal(θ[1] + θ[2], 0.5)
+    end
+    draws(flat) = Array(Turing.sample(MersenneTwister(11), _flat_demo(flat, 1.3),
+        NUTS(20, 0.65), 60; progress = false))
+    @test draws(NoLimits.Flat()) == draws(Flat())
 end
 
 @testset "RealNumber :logit — construction" begin

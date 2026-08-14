@@ -254,7 +254,7 @@ function batch_loglik_mc_turing(
 
     # Step 1: Run MCMC to collect posterior samples for fitting the proposal.
     # n_warmup steps are used for adaptation; then max(n_warmup, 50) are kept for proposal fitting.
-    effective_sampler = sampler === nothing ? Turing.MH() : sampler
+    effective_sampler = sampler === nothing ? AdaptiveNoLimitsMH() : sampler
     n_mcmc = max(n_warmup, 50)
     tkwargs = (n_samples = n_mcmc, n_adapt = n_warmup, progress = false, verbose = false)
     mcmc_samples, _, _ = _mcem_sample_batch(dm, batch_info, θ, const_cache, ll_cache,

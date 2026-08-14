@@ -8,7 +8,8 @@ the docstring attached to the corresponding function, type, or macro.
     the corresponding package is loaded: all `plot_*` functions (a Makie backend),
     `NNParameters` (Lux or SimpleChains), `save_fit`/`load_fit` (JLD2), profile-likelihood UQ
     (LikelihoodProfiler and OptimizationNLopt), `show_equations(...; latex = true)`
-    (Latexify), and `load_warfarin_from_monolix` (CSV). Calling one without its package
+    (Latexify), `load_warfarin_from_monolix` (CSV), and `MCMC`/`VI` fitting plus Turing E-step samplers
+    for `SAEM`/`MCEM` (Turing). Calling one without its package
     raises an error naming what to install. See
     [Optional Dependencies](installation.md#Optional-Dependencies).
 
@@ -158,6 +159,8 @@ MCEM
 MCEM_MCMC
 MCEM_IS
 SAEM
+SaemixMH
+AdaptiveNoLimitsMH
 MCMC
 Pooled
 PooledMap

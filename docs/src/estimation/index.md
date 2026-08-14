@@ -111,6 +111,7 @@ The following example defines a nonlinear mixed-effects model and fits it with L
 using NoLimits
 using DataFrames
 using Distributions
+using Turing        # MCMC needs the Turing extension
 
 model = @Model begin
     @fixedEffects begin

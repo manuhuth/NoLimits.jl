@@ -7,10 +7,16 @@ Markov chain Monte Carlo (MCMC) methods provide a principled approach to Bayesia
 - **Mixed-effects models** with random effects jointly sampled alongside fixed effects
 - **Fixed-effects-only models** where only population-level parameters are inferred
 
+!!! note "Turing is an optional dependency"
+    NoLimits does not install or load Turing for you. Run `Pkg.add("Turing")` and
+    `using Turing` alongside NoLimits; without it, `fit_model(dm, MCMC())` raises an
+    error naming what to install. See [Optional Dependencies](../installation.md#Optional-Dependencies).
+
 ## Applicability
 
 The following conditions must hold to use `MCMC`:
 
+- `Turing` must be installed and loaded.
 - All free fixed effects must have prior distributions assigned.
 - At least one parameter must be sampled: either a free fixed effect, or random effects in a mixed-effects model (even if all fixed effects are held constant via `constants`).
 - Penalty terms are not supported; use `MAP` for penalized estimation instead.

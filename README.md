@@ -127,16 +127,17 @@ Pkg.add(url="https://github.com/manuhuth/NoLimits.jl")
 
 ### Optional dependencies
 
-Model building, all estimation methods and cross-validation work with the packages above.
-Several features are kept out of the default install so they do not slow down loading or
-enlarge every environment. Each lives in a package extension: install the package and
-`using` it alongside NoLimits, and the feature appears.
+Model building, the likelihood-based estimation methods and cross-validation work with the
+packages above. Several features are kept out of the default install so they do not slow
+down loading or enlarge every environment. Each lives in a package extension: install the
+package and `using` it alongside NoLimits, and the feature appears.
 
 | Feature | Load |
 |---|---|
 | All plotting (`plot_fits`, `plot_vpc`, `plot_residuals`, ...) | `CairoMakie` (or any Makie backend) |
 | Neural networks in models (`NNParameters`) | `Lux`, or `SimpleChains` |
 | Saving and loading fits (`save_fit`, `load_fit`) | `JLD2` |
+| Bayesian sampling and variational inference (`MCMC`, `VI`, chain-based UQ, Turing samplers in `SAEM`/`MCEM`) | `Turing` |
 | Profile-likelihood UQ (`uq(...; method=:profile)`) | `LikelihoodProfiler` and `OptimizationNLopt` |
 | LaTeX equations (`show_equations(...; latex=true)`) | `Latexify` |
 | Bundled example data (`load_warfarin_from_monolix`) | `CSV` |
@@ -202,7 +203,7 @@ plot_fits(res)                          # fit vs. data
 ```
 
 Swapping the inference paradigm is a one-line change: `fit_model(dm, SAEM())`, `fit_model(dm, MCEM())`,
-or `fit_model(dm, MCMC())` all fit the *same* model. More examples — neural-ODE models, Markov-model
+or `fit_model(dm, MCMC())` all fit the *same* model (`MCMC` needs `using Turing`). More examples — neural-ODE models, Markov-model
 outcomes, normalizing-flow random effects, count outcomes, censored data, and multi-method
 comparison — are in the [Tutorials](https://manuhuth.github.io/NoLimits.jl/dev/tutorials/mixed-effects-multiple-methods).
 

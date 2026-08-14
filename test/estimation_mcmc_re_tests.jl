@@ -465,16 +465,17 @@ end
         primary_id = :ID, time_col = :t)
 
     m = NoLimits.get_model(dm)
+    _TuringExt = Base.get_extension(NoLimits, :NoLimitsTuringExt)
     builder = NoLimits.create_random_effect_distribution(NoLimits.get_random(m))
     θ = get_θ0_untransformed(NoLimits.get_fixed(m))
     cc = NoLimits.get_const_cov(NoLimits.get_individuals(dm)[1])
     mf = NoLimits.get_model_funs(m)
     hp = NoLimits.get_helper_funs(m)
     @test builder !== nothing
-    @test NoLimits._mcmc_re_dist(builder, θ, cc, mf, hp, :η) isa Normal
+    @test _TuringExt._mcmc_re_dist(builder, θ, cc, mf, hp, :η) isa Normal
     θ_bad = deepcopy(θ)
     θ_bad.a = -1.0
-    @test NoLimits._mcmc_re_dist(builder, θ_bad, cc, mf, hp, :η) === nothing
+    @test _TuringExt._mcmc_re_dist(builder, θ_bad, cc, mf, hp, :η) === nothing
 
     res = fit_model(dm,
         NoLimits.MCMC(; sampler = MH(),

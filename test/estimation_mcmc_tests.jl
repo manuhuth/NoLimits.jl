@@ -11,15 +11,17 @@ using Random
 using SciMLBase
 
 @testset "MCMC sampler-dependent defaults" begin
-    nuts_defaults = NoLimits._mcmc_sampler_defaults(NUTS())
+    # Sampling internals live in NoLimitsTuringExt now (#36).
+    _TuringExt = Base.get_extension(NoLimits, :NoLimitsTuringExt)
+    nuts_defaults = _TuringExt._mcmc_sampler_defaults(NUTS())
     @test nuts_defaults.n_samples == 1000
     @test nuts_defaults.n_adapt == 500
 
-    mh_defaults = NoLimits._mcmc_sampler_defaults(MH())
+    mh_defaults = _TuringExt._mcmc_sampler_defaults(MH())
     @test mh_defaults.n_samples == 2500
     @test mh_defaults.n_adapt == 0
 
-    hmc_defaults = NoLimits._mcmc_sampler_defaults(HMC(0.01, 5))
+    hmc_defaults = _TuringExt._mcmc_sampler_defaults(HMC(0.01, 5))
     @test hmc_defaults.n_samples == 1500
     @test hmc_defaults.n_adapt == 750
 end

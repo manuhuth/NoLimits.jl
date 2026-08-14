@@ -108,9 +108,9 @@ function compute_uq(res::FitResult;
         profile_ftol_abs::Real = 1e-3,
         profile_kwargs::NamedTuple = NamedTuple(),
         mcmc_method::Union{Nothing, MCMC} = nothing,
-        mcmc_sampler = Turing.NUTS(0.75),
+        mcmc_sampler = nothing,
         mcmc_turing_kwargs::NamedTuple = NamedTuple(),
-        mcmc_adtype = Turing.AutoForwardDiff(),
+        mcmc_adtype = nothing,
         mcmc_fit_kwargs::NamedTuple = NamedTuple(),
         rng::AbstractRNG = Random.default_rng())
     level_use = _validate_level(level)
