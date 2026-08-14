@@ -1,5 +1,8 @@
 using LinearAlgebra
-using StatsFuns: logistic
+# Explicit, module-wide: these five StatsFuns names are used unqualified across src/
+# (cv.jl, mcem.jl, adaptive_mh.jl, remeasure.jl, Parameters.jl) - a bare `using StatsFuns`
+# looked dead per file and was not.
+using StatsFuns: logistic, logit, logsumexp, logaddexp, softmax
 import ForwardDiff
 
 using ComponentArrays
