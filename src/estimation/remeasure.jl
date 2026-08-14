@@ -658,11 +658,11 @@ function build_centered_re_measure(
     H = _laplace_hessian_b(dm, batch_info, θu, b_star, const_cache, ll_cache, nothing, bi)
     # S only places the nodes — the change-of-variables correction compensates any
     # invertible scaling exactly — so the admissibility test is plain definiteness of -H,
-    # not the relative-conditioning test `negH_definite_without_jitter` applies to the
-    # Laplace *value* (where 1/jitter would masquerade as a posterior variance). Rejecting
-    # a merely ill-conditioned -H sent well-behaved batches back to the prior-centered
-    # rule of issue #98, whose signed sum turns negative, which makes the objective jump
-    # to +Inf for those θ (issue #151).
+    # which is also what `negH_definite_without_jitter` now applies to the Laplace *value*
+    # (jitter would let 1/jitter masquerade as a posterior variance there). Rejecting a
+    # merely ill-conditioned -H sent well-behaved batches back to the prior-centered rule
+    # of issue #98, whose signed sum turns negative, which makes the objective jump to
+    # +Inf for those θ (issue #151).
     chol, used_jitter = _laplace_cholesky_negH(H; jitter = jitter, max_tries = max_tries)
     (chol === nothing || chol.info != 0 || !iszero(used_jitter)) && return nothing
     L = chol.L  # lower triangular, L*L' = -H

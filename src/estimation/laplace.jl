@@ -1647,28 +1647,28 @@ function _laplace_cholesky_negH(
 end
 
 """
-    negH_definite_without_jitter(H; rtol=1e-8) -> Bool
+    negH_definite_without_jitter(H) -> Bool
 
-Is `-H` positive definite with every curvature direction informative, i.e. without relying
-on the diagonal jitter `_laplace_cholesky_negH` adds to force a Cholesky? Validity
-precondition for a Laplace/AGHQ marginal: when a direction carries no curvature, the
-`-½·logdet(-H)` term measures the regularisation (posterior variance `~1/jitter`) rather
-than the data, and inflates the marginal past its exact ceiling `-n/2·log(2πσ²)`.
+Does `-H` factorize without the diagonal jitter `_laplace_cholesky_negH` adds to force a
+Cholesky? Validity precondition for a Laplace/AGHQ marginal: when a direction carries no
+curvature, the `-½·logdet(-H)` term measures the regularisation (posterior variance
+`~1/jitter`) rather than the data, and inflates the marginal past its exact ceiling
+`-n/2·log(2πσ²)`. An un-jittered Cholesky is exactly that question, and it is the same
+criterion `remeasure.jl` already applies to the AGHQ scaling.
 
-The test is *relative* (`λmin > rtol·λmax`), so it is invariant to the units the data is
-recorded in. An absolute floor is not: comparing against the bare `jitter` makes the same
-posterior admissible in one unit system and degenerate in another, and comparing against
-the adaptive jitter `max(jitter, scale_factor·mean|diag|)` additionally rejects
-well-conditioned Hessians merely for having a large diagonal — which stalls the outer
-optimizer at its starting values. Applied to primal values so the objective and its
-gradient agree on admissibility.
+It replaced a relative eigenvalue test (`λmin > 1e-8·λmax`), which rejected *well-posed*
+batches for being merely ill-conditioned: a single-observation individual at a large time
+has `-H = xxᵀ/σ² + Ω⁻¹` with condition number `~t²`, entirely legitimate. Worse, the
+rejection is a hard `-Inf`, so the outer optimizer climbed until the worst-conditioned
+individual sat exactly on the threshold and then stalled ~1800 nats short of the optimum
+(issue #157). Applied to primal values so the objective and its gradient agree on
+admissibility.
 """
-function negH_definite_without_jitter(H::AbstractMatrix; rtol::Real = 1e-8)
+function negH_definite_without_jitter(H::AbstractMatrix)
     size(H, 1) == 0 && return true
     Hneg = -_scalar_value.(H)
     all(isfinite, Hneg) || return false
-    λ = eigvals(Symmetric(Hneg))          # ascending; catches λmin <= 0 too
-    return first(λ) > rtol * last(λ)
+    return cholesky(Symmetric(Hneg), check = false).info == 0
 end
 
 function _laplace_logdet_negH(dm::DataModel,
