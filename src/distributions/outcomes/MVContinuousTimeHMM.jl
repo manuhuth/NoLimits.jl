@@ -1,6 +1,6 @@
 export MVContinuousTimeDiscreteStatesHMM
 
-using Distributions, ExponentialAction, LinearAlgebra, Random
+using Distributions, LinearAlgebra, Random
 
 """
     MVContinuousTimeDiscreteStatesHMM(transition_matrix, emission_dists, initial_dist, Δt)

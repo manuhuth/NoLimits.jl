@@ -2,7 +2,6 @@ export plot_vpc
 
 using Distributions
 using Random
-using StatsFuns
 
 function _require_varying_covariate(dm::DataModel, x_axis_feature)
     cov = get_covariates(get_model(dm))

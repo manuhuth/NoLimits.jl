@@ -1,6 +1,6 @@
 export ContinuousTimeObservedStatesMarkovModel
 
-using Distributions, ExponentialAction, Random
+using Distributions, Random
 
 """
     ContinuousTimeObservedStatesMarkovModel(transition_matrix, initial_dist, Δt)
