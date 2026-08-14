@@ -104,8 +104,7 @@ const TEST_GROUPS = [
         "saem_var_lb_tests.jl",
         "saem_multichain_tests.jl"],
     # ── G18-G22: quadrature / multistart / MCEM / UQ ─────────────────────────
-    ["estimation_ghquadrature_tests.jl",
-        "copulas_tests.jl"],
+    ["estimation_ghquadrature_tests.jl"],
     ["estimation_multistart_tests.jl",
         "estimation_precondition_tests.jl"],
     ["estimation_mcem_tests.jl",
@@ -132,7 +131,13 @@ const TEST_GROUPS = [
         "enzyme_smoke_tests.jl"],
     # ── G25: RE-plotting part 2 + plotting integration ───────────────────────
     ["plot_random_effects2_tests.jl",
-        "integration_plotting.jl"]
+        "integration_plotting.jl"],
+    # ── G26: GHQ part 2 + copulas ────────────────────────────────────────────
+    ["estimation_ghquadrature2_tests.jl",
+        "copulas_tests.jl"],
+    # ── G27: Aqua persistent-tasks (own lane: its wrapper precompile dies and
+    # retries when it shares a machine budget with anything else) ────────────
+    ["aqua_persistent_tasks_tests.jl"]
 ]
 
 const TEST_FILES = reduce(vcat, TEST_GROUPS)
