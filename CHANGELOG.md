@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Bug fixes
+
+- `Laplace` (and the FOCEI/AGHQ paths sharing its marginal) stopped ~1900 nats short of
+  the optimum on badly scaled data, reporting fixed effects far from the truth while
+  `GHQuadrature` on the same data and start landed at it (#157). The admissibility test
+  guarding the Laplace expansion rejected any empirical-Bayes Hessian with condition
+  number `>= 1e8`, which a single-observation individual at a large time reaches
+  legitimately (`-H = xxᵀ/σ² + Ω⁻¹` is well posed but conditioned like `t²`). Since the
+  rejection is a hard `-Inf`, the outer optimizer climbed until the worst-conditioned
+  individual sat exactly on the threshold and its line search had nowhere left to step.
+  The test is now the un-jittered Cholesky itself - a log-det that measures data rather
+  than the rescue jitter is kept, whatever its conditioning - which is the criterion the
+  adaptive quadrature rule already used.
+
 ## v0.2.2
 
 ### Bug fixes

@@ -639,8 +639,8 @@ end
 # The Laplace/AGHQ marginal is only defined at a genuine interior mode. If a curvature
 # direction is uninformative, the `-½logdet(-H)` term is set by the jitter (~1/jitter) and
 # inflates the marginal without bound -- it can then exceed the exact ceiling
-# -n/2·log(2πσ²) that the true marginal must respect. The test is relative, so the verdict
-# tracks the conditioning of `-H` and never the units the data is recorded in.
+# -n/2·log(2πσ²) that the true marginal must respect. The verdict is the un-jittered
+# Cholesky itself, so a log-det that measures data is kept whatever its conditioning.
 @testset "negH_definite_without_jitter guards the Laplace marginal" begin
     ok = NoLimits.negH_definite_without_jitter
 
@@ -649,13 +649,16 @@ end
     # Zero-dimensional batch: nothing to check.
     @test ok(zeros(0, 0))
 
-    # A direction with no curvature relative to the rest: only the jitter would make the
-    # Cholesky succeed, so the log-det would measure the regularisation.
-    for lam in (0.0, 1e-14, 1e-10)
-        @test !ok(-Matrix(Diagonal([1.0, 1.0, lam])))
+    # A direction with no curvature at all: only the jitter would make the Cholesky
+    # succeed, so the log-det would measure the regularisation.
+    @test !ok(-Matrix(Diagonal([1.0, 1.0, 0.0])))
+    # Issue #157: ill-conditioned but definite must PASS. A 1-obs individual at t = 4e3
+    # has -H = xxᵀ/σ² + Ω⁻¹ with condition number ~t²; the old relative test
+    # (λmin > 1e-8·λmax) called that degenerate, and the resulting -Inf cliff stalled the
+    # outer optimizer ~1800 nats short of the optimum.
+    for lam in (1e-14, 1e-10, 1e-4)
+        @test ok(-Matrix(Diagonal([1.0, 1.0, lam])))
     end
-    # Small but informative curvature must pass, so the guard is not over-eager.
-    @test ok(-Matrix(Diagonal([1.0, 1.0, 1e-4])))
 
     # Indefinite (b* is a saddle, not a maximum) and non-finite entries are rejected.
     @test !ok(-Matrix(Diagonal([1.0, -2.0])))
@@ -690,10 +693,10 @@ end
         @test 2 * sum(log, diag(cw.U))≈logdet(-Hwide) rtol=1e-12
     end
 
-    # Unit-invariance: the verdict follows conditioning, not scale. A relative threshold
-    # gives this for free; both absolute floors previously tried did not.
-    Hfine = -Matrix(Diagonal([1.0, 1.0, 1e-4]))    # cond 1e4  -> informative
-    Hdeg = -Matrix(Diagonal([1.0, 1.0, 1e-12]))    # cond 1e12 -> degenerate
+    # Unit-invariance: the verdict follows definiteness, not scale. The un-jittered
+    # Cholesky gives this for free; both absolute floors previously tried did not.
+    Hfine = -Matrix(Diagonal([1.0, 1.0, 1e-4]))    # informative
+    Hdeg = -Matrix(Diagonal([1.0, 1.0, 0.0]))      # no curvature -> degenerate
     for s in (1e-6, 1.0, 1e3, 1e6)
         @test ok(s .* Hfine)
         @test !ok(s .* Hdeg)
