@@ -718,6 +718,24 @@ end
     θ_l = NoLimits.get_params(res_l; scale = :untransformed)
     @test isapprox(NoLimits.laplace_marginal(fx_re_dm(), θ_l; serialization = _INV_SER),
         -get_objective(res_l); rtol = 1e-6)
+
+    # Issue #171: RE levels pinned via `constants_re` are not integrated over, so their
+    # prior density has to be added back. It was dropped, which made the accessor a
+    # conditional likelihood in those levels (its η-derivative lost the -η prior term).
+    # With every level pinned nothing is left to integrate, so the accessor must equal
+    # the complete-data joint at the same values.
+    res_c = fx_constre_laplace()      # symbol IDs, so RE levels can be pinned
+    dm_c = fx_constre_dm()
+    θ_c = NoLimits.get_params(res_c; scale = :untransformed)
+    re_tab = get_random_effects(dm_c, res_c).η
+    cre = (;
+        η = NamedTuple(Symbol(id) => v
+        for (id, v) in zip(re_tab[!, :ID], re_tab[!, :η_1])))
+    joint = sum(complete_data_loglikelihood(dm_c, i, θ_c, (; η = re_tab[i, :η_1]))
+    for i in 1:length(get_individuals(dm_c)))
+    @test isapprox(
+        get_marginal_likelihood(dm_c, res_c; constants_re = cre, serialization = _INV_SER),
+        joint; rtol = 1e-8)
 end
 
 @testset "objectives are finite at the fitted estimate" begin
