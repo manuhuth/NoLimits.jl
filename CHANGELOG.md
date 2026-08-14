@@ -2,8 +2,23 @@
 
 ## Unreleased
 
+## v0.2.3
+
+### Features
+
+- Turing.jl is now a weak dependency (#36). `using NoLimits` no longer loads it, cutting
+  load time and dependency count; `MCMC`, `VI`, the chain-based UQ refit and the Turing
+  E-step samplers require an explicit `using Turing`. `MCEM`'s default E-step is now the
+  Turing-free `MCEM_MCMC(sampler = SaemixMH(), sample_schedule = 100)` - pass
+  `NUTS(0.75)` / `250` to restore the previous default.
+- Random effects can be given a copula distribution from Copulas.jl (#177), loaded via
+  the `NoLimitsCopulasExt` extension, with adaptive Gauss-Hermite quadrature support.
+
 ### Bug fixes
 
+- `get_marginal_likelihood` omitted the prior density of random-effect levels pinned via
+  `constants_re`, so likelihoods were not comparable across models pinning different
+  levels (#171).
 - `Laplace` (and the FOCEI/AGHQ paths sharing its marginal) stopped ~1900 nats short of
   the optimum on badly scaled data, reporting fixed effects far from the truth while
   `GHQuadrature` on the same data and start landed at it (#157). The admissibility test
