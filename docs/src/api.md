@@ -159,6 +159,8 @@ MCEM
 MCEM_MCMC
 MCEM_IS
 SAEM
+SaemixMH
+AdaptiveNoLimitsMH
 MCMC
 Pooled
 PooledMap

@@ -140,7 +140,7 @@ A vector of real-valued fixed-effect parameters with per-element scale options.
   matching length, or `Priorless()`. If left `Priorless()` while at least one element has
   BOTH an explicitly finite `lower` and `upper`, the prior defaults to a product
   distribution: each explicitly bounded element gets `Uniform(lower, upper)` (natural scale)
-  and every other element gets an improper flat prior [`Flat`](@ref) (logpdf ≡ 0 over ℝ).
+  and every other element gets an improper flat prior `Flat` (logpdf ≡ 0 over ℝ).
   The `EPSILON` lower auto-applied for `:log` elements does NOT count as explicit.
 - `calculate_se::Bool = true`: whether to include this parameter in standard-error calculations.
 """
