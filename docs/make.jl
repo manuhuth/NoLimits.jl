@@ -50,6 +50,7 @@ makedocs(;
             "@DifferentialEquation" => "model-building/differential-equation.md",
             "@initialDE" => "model-building/initial-de.md",
             "@formulas" => "model-building/formulas.md",
+            "Copula Distributions" => "model-building/copulas.md",
             "Function Approximators (NNs + SoftTrees)" => "model-building/universal-function-approximators.md"
         ],
         "Data Model Construction" => "data-model-construction.md",

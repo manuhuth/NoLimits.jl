@@ -757,3 +757,45 @@ end
         end
     end
 end
+
+@testset "censored outcome distributions" begin
+    # Issue #197: any third-party `Distribution` with a `logpdf` works as an outcome
+    # without integration code -- `Distributions.censored` stands in here for
+    # CensoredDistributions.jl, which exercises the same generic dispatch.
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            σ = RealNumber(0.6; scale = :log)
+            ω = RealNumber(0.4; scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, ω); column = :ID)
+        end
+        @formulas begin
+            μ = a + η + 0.1 * t
+            y ~ censored(Normal(μ, σ); upper = 2.0)
+        end
+    end
+    df = DataFrame(ID = repeat(1:6, inner = 3), t = repeat([0.0, 1.0, 2.0], 6),
+        y = [1.0, 1.4, 2.0, 0.7, 1.2, 1.9, 1.3, 2.0, 2.0, 0.9, 1.1, 1.6,
+            1.5, 1.8, 2.0, 0.6, 1.0, 1.7])
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+
+    for (name, method) in (
+        ("Laplace", NoLimits.Laplace(; optim_kwargs = (maxiters = 3,))),
+        ("GHQuadrature",
+            NoLimits.GHQuadrature(; level = 2,
+                optim_kwargs = (maxiters = 3,))),
+        ("Pooled", NoLimits.Pooled(; optim_kwargs = (maxiters = 3,))))
+        @testset "$name" begin
+            @test isfinite(get_objective(fit_model(dm, method)))
+        end
+    end
+
+    # FOCEI dispatches on a fixed family whitelist for its Fisher-information
+    # surrogate, so it rejects censored outcomes by design rather than silently.
+    @test_throws ErrorException fit_model(dm, NoLimits.FOCEI())
+end
