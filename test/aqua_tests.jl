@@ -3,16 +3,16 @@ using NoLimits
 using Aqua
 
 # Aqua.jl static quality assurance (https://juliatesting.github.io/Aqua.jl):
-#   * method ambiguities (kept at zero — see the disambiguation blocks in
-#     src/distributions/outcomes/*ObservedStatesMarkov*.jl)
 #   * unbound type parameters, undefined exports
 #   * project hygiene: stale deps, missing [compat] entries, test-project extras
 #   * type piracy (all Distributions/Base extensions dispatch on owned types)
 #   * persistent tasks blocking precompilation
 # All checks run with defaults and no ignore lists; keep it that way.
+# The method-ambiguity scan lives in aqua_ambiguities_tests.jl: it takes several
+# CI minutes on its own, so it runs as a separate shard.
 @testset "Aqua quality assurance" begin
     # `persistent_tasks` is run separately below, with retries.
-    Aqua.test_all(NoLimits; persistent_tasks = false)
+    Aqua.test_all(NoLimits; persistent_tasks = false, ambiguities = false)
 end
 
 # `Aqua.has_persistent_tasks` builds a wrapper package that loads NoLimits and signals

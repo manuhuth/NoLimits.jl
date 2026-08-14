@@ -22,13 +22,20 @@ jobs:
   # groups used to run as sequential subprocess batches inside a single job,
   # which made the gate ~2.5h and, with branch protection's `strict`, forced
   # every queued PR to re-run against a moved base.
+  # Each matrix entry packs TWO fixture-affine groups; the runner executes them
+  # as concurrent batch subprocesses (NL_BATCH_PARALLEL, 4 vCPUs, ~1 core per
+  # batch), so a job's wall time is max(group), not the sum. Pairs put a heavy
+  # group with a light one; sized from measured per-file times so no group
+  # exceeds ~7 min of content. 12 jobs + 2 threaded stays under the 20-runner
+  # concurrency cap with room for Format/Documenter.
   shard:
     name: test shard ${{ matrix.group }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        group: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        group: ["8,24", "17,21", "18,22", "2,19", "13,14", "6,11",
+                "7,23", "5,16", "4,20", "9,10", "3,12", "1,15"]
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
@@ -49,6 +56,7 @@ jobs:
       - name: Run tests
         env:
           NL_TEST_GROUP: ${{ matrix.group }}
+          NL_BATCH_PARALLEL: "true"
         run: julia --color=yes --project=. -e 'using Pkg; Pkg.test(; julia_args=["--check-bounds=auto"])'
 
   # The serial-vs-EnsembleThreads() invariance oracles only mean something with
@@ -57,9 +65,19 @@ jobs:
   # race repo-wide. So exactly the two files carrying those oracles run threaded
   # here. This is the guard that would have caught #151 (GHQ objective differing
   # by 0.62-0.74 relative between serial and threaded).
+  # Two jobs, not one: ghquadrature alone is ~7 min threaded, so pairing it with
+  # the other oracle files made this the slowest job of the whole workflow.
   threaded:
-    name: test threaded (invariance oracles)
+    name: test threaded (${{ matrix.name }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: invariance oracles
+            files: "estimation_common_tests.jl,api_primitives_tests.jl"
+          - name: ghquadrature
+            files: "estimation_ghquadrature_tests.jl"
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
@@ -72,7 +90,7 @@ jobs:
       - name: Run invariance oracles with 4 threads
         env:
           JULIA_NUM_THREADS: "4"
-          NL_TEST_FILES: "estimation_common_tests.jl,api_primitives_tests.jl,estimation_ghquadrature_tests.jl"
+          NL_TEST_FILES: ${{ matrix.files }}
         run: julia --color=yes --project=. -e 'using Pkg; Pkg.test(; julia_args=["--check-bounds=auto"])'
 
   # Aggregator. Keeps the exact check name branch protection requires, so the

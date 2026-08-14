@@ -25,8 +25,13 @@ jobs:
     timeout-minutes: 180
     strategy:
       fail-fast: false
+      # Same 24 groups as CI.yml, packed two per job SEQUENTIALLY (coverage runs
+      # off the PR gate, so wall time matters less than staying under the
+      # 20-runner concurrency cap; no NL_BATCH_PARALLEL here — instrumented
+      # batches are bigger and two at once would strain the runner's RAM).
       matrix:
-        group: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        group: ["1,2", "3,4", "5,6", "7,8", "9,10", "11,12",
+                "13,14", "15,16", "17,18", "19,20", "21,22", "23,24"]
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
