@@ -864,7 +864,9 @@ end
         bstars = NoLimits.empirical_bayes(dm1, θ; rng = Xoshiro(2))
         H = NoLimits._laplace_hessian_b(dm1, infos[1], θ_re,
             Vector{Float64}(bstars[1]), cc, cache, nothing, 1)
-        @test !NoLimits.negH_definite_without_jitter(H)   # what used to force the fallback
+        # Admissible since #157 too: it factorizes without jitter. The old relative test
+        # (λmin > 1e-8·λmax) rejected it, which is what forced the fallback below.
+        @test NoLimits.negH_definite_without_jitter(H)
         rm = NoLimits.build_centered_re_measure(
             bstars[1], infos[1], 1, θ_re, cc, dm1, cache)
         @test rm !== nothing
