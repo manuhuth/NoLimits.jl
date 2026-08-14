@@ -96,7 +96,8 @@ const TEST_GROUPS = [
     # ── B5b: quadrature / multistart / precondition (~7m local) ─────────────
     ["estimation_ghquadrature_tests.jl",
         "estimation_multistart_tests.jl",
-        "estimation_precondition_tests.jl"],
+        "estimation_precondition_tests.jl",
+        "copulas_tests.jl"],
     # ── B5c: MCEM / UQ / extra objective (~6m local) ────────────────────────
     ["estimation_mcem_tests.jl",
         "estimation_mcem_is_tests.jl",

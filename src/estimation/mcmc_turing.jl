@@ -305,7 +305,18 @@ function _build_turing_model_re(
                     re_reject = true
                     $vals_sym[j] ~ MvNormal(zeros(T, $dim), Diagonal(ones(T, $dim)))
                 else
-                    $vals_sym[j] ~ dist
+                    marg = _re_marginals(dist)
+                    if marg === nothing
+                        $vals_sym[j] ~ dist
+                    else
+                        # No Bijectors linking for the joint (e.g. Copulas.SklarDist):
+                        # sample from the product of marginals (same support, linkable)
+                        # and add the log copula density so the prior stays exact.
+                        base = product_distribution(marg...)
+                        $vals_sym[j] ~ base
+                        Turing.@addlogprob! (logpdf(dist, $vals_sym[j]) -
+                                             logpdf(base, $vals_sym[j]))
+                    end
                 end
             end
         end

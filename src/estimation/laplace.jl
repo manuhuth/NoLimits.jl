@@ -156,7 +156,7 @@ function _saem_anneal_constants_re(dm::DataModel,
                 haskey(level_means[sym], gv) && continue
                 dists = dists_builder(θu, get_const_cov(ind), model_funs, helpers)
                 dist = getfield(dists, sym)
-                level_means[sym][gv] = Distributions.mean(dist)
+                level_means[sym][gv] = _re_mean(dist)
             end
         end
     end
@@ -364,7 +364,7 @@ function _re_start_value(dist, dim::Int, T)
         v = 0.0
         ok = false
         try
-            v = mean(dist)
+            v = _re_mean(dist)
             ok = true
         catch
         end
@@ -384,7 +384,7 @@ function _re_start_value(dist, dim::Int, T)
         v = nothing
         ok = false
         try
-            v = mean(dist)
+            v = _re_mean(dist)
             ok = true
         catch
         end
@@ -426,6 +426,10 @@ end
 end
 
 @inline function _laplace_marginal_mvnormal(dist, i::Int)
+    marg = _re_marginals(dist)
+    if marg !== nothing
+        return i <= length(marg) ? marg[i] : nothing
+    end
     if dist isa Distributions.AbstractMvNormal
         μ = Distributions.mean(dist)
         Σ = Distributions.cov(dist)

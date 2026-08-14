@@ -81,6 +81,9 @@ end
         x = Float64(v)
         return isfinite(x) ? x : missing
     end
+    v isa AbstractVector &&
+        @warn "Vector-valued (multivariate) observations are not supported in scalar "*
+        "residual metrics and are reported as missing." maxlog=1
     return missing
 end
 

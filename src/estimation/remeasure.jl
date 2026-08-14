@@ -132,6 +132,9 @@ struct CompositeRE{T <: Number} <: AbstractREMeasure
     ranges::Vector{UnitRange{Int}}    # z-index range for each segment
     n_b::Int
     has_correction::Bool              # fast-path flag: false if all corrections are nothing
+    unbounded::Bool                   # true iff every RE segment has support ℝ^dk, making
+    # b-space mode-centered AGHQ valid; conservatively false for all pre-existing
+    # transports so only marginals-based (copula) measures opt in
 end
 
 function transform(re::CompositeRE, z::AbstractVector)
@@ -193,6 +196,16 @@ own logpdf implementation (works for all standard Distributions.jl types).
 **ForwardDiff compatibility:** All segment types support Dual θ. `MvNormal` has the
 same `PDMat` caveat as `_lower_chol_from_cov`.
 """
+# Base-to-marginal transport Q(Φ(z)). Normal marginals use the exact affine form;
+# the generic cdf/quantile roundtrip clamps u away from 0/1 so far quadrature nodes
+# (where Φ(z) rounds to exactly 1.0) map to finite values instead of ±Inf.
+@inline _marginal_transport(m::Distributions.Normal, z) = m.μ + m.σ * z
+@inline function _marginal_transport(m, z)
+    u = Distributions.cdf(Distributions.Normal(), z)
+    u = clamp(u, floatmin(Float64), prevfloat(1.0))
+    return Distributions.quantile(m, u)
+end
+
 function build_re_measure_from_batch(
         batch_info::REBatchInfo,
         θ::ComponentArray,
@@ -219,6 +232,7 @@ function build_re_measure_from_batch(
     correction_fns = Any[]
     has_npf = false
     has_correction = false
+    all_unbounded = true
 
     for (ri, re) in enumerate(re_names)
         info = get_re_info(batch_info)[ri]
@@ -230,6 +244,19 @@ function build_re_measure_from_batch(
             dist = getproperty(dists, re)
             range = get_ranges(info)[li]
             push!(all_ranges, range)
+
+            # ℝ-supported segments allow b-space mode-centered AGHQ. Kept false for
+            # the pre-existing non-Gaussian transports (incl. identity/TDist) so
+            # their quadrature behavior is unchanged; only linear-Gaussian and
+            # all-ℝ marginals (copula) segments qualify.
+            seg_marg = _re_marginals(dist)
+            all_unbounded &= dist isa Distributions.Normal ||
+                             dist isa Distributions.MvNormal ||
+                             (seg_marg !== nothing &&
+                              all(
+                                 mi -> Distributions.minimum(mi) == -Inf &&
+                                     Distributions.maximum(mi) == Inf,
+                                 seg_marg))
 
             if dist isa Distributions.Normal
                 μ_k = [Distributions.mean(dist)]
@@ -497,11 +524,37 @@ function build_re_measure_from_batch(
                 push!(μ_segs, nothing)
                 push!(L_diags, nothing)
 
+            elseif _re_marginals(dist) !== nothing
+                # Generic multivariate with known marginals (e.g. Copulas.SklarDist):
+                # componentwise η_i = Q_i(Φ(z_i)) pushes N(0,I) forward to the product
+                # of the marginals, so the correction is exactly the log copula density.
+                has_npf = true
+                has_correction = true
+                let d = dist, ms = _re_marginals(dist)
+                    transport = z_k -> [_marginal_transport(ms[i], z_k[i])
+                                        for i in eachindex(ms)]
+                    push!(segment_fns, transport)
+                    push!(correction_fns,
+                        z_k -> begin
+                            η = transport(z_k)
+                            c = Distributions.logpdf(d, η) -
+                                sum(Distributions.logpdf(ms[i], η[i])
+                            for i in eachindex(ms))
+                            # Far tail nodes can overflow the copula density to
+                            # NaN/Inf; drop the node instead of poisoning the sum.
+                            isfinite(c) ? c : oftype(c, -Inf)
+                        end)
+                end
+                push!(μ_segs, nothing)
+                push!(L_diags, nothing)
+
             else
                 error(
                     "build_re_measure_from_batch: unsupported RE distribution type " *
                     "$(typeof(dist)) for RE '$(re)'. " *
-                    "Supported: Normal, MvNormal, MvLogNormal, MvLogitNormal, LogNormal, Beta, NormalizingPlanarFlow."
+                    "Supported: Normal, MvNormal, MvLogNormal, MvLogitNormal, LogNormal, Beta, " *
+                    "NormalizingPlanarFlow, univariate continuous distributions, and " *
+                    "multivariate distributions with known marginals (e.g. Copulas.SklarDist)."
                 )
             end
         end
@@ -528,7 +581,8 @@ function build_re_measure_from_batch(
         mapreduce(eltype, promote_type, non_nothing_μ; init = eltype(θ_re))
     T = isempty(non_nothing_L) ? T :
         mapreduce(eltype, promote_type, non_nothing_L; init = T)
-    return CompositeRE{T}(segment_fns, correction_fns, all_ranges, n_b, has_correction)
+    return CompositeRE{T}(
+        segment_fns, correction_fns, all_ranges, n_b, has_correction, all_unbounded)
 end
 
 # ---------------------------------------------------------------------------

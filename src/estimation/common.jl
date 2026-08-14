@@ -3729,6 +3729,29 @@ end
 const _symmetrize_psd_params = symmetrize_psd_parameters
 
 """
+    _re_marginals(dist) -> Union{Nothing, Tuple/Vector of univariate distributions}
+
+Extension hook: the univariate marginals of a multivariate RE distribution, or
+`nothing` when unknown. Package extensions (e.g. NoLimitsCopulasExt for
+`Copulas.SklarDist`) add methods; enables generic marginal-quantile transports
+(GHQuadrature), linked sampling (MCMC), and plug-in means without a hard dependency.
+"""
+_re_marginals(::Any) = nothing
+
+"""
+    _re_mean(dist)
+
+`mean(dist)`, falling back to the vector of marginal means when `mean` is not
+defined but `_re_marginals` knows the marginals (exact: a copula never shifts
+its marginals).
+"""
+function _re_mean(dist)
+    m = _re_marginals(dist)
+    m === nothing && return mean(dist)
+    return [mean(mi) for mi in m]
+end
+
+"""
     _compute_obs_fe_syms(model) -> Set{Symbol}
 
 Return the set of fixed-effect names that appear in any observation-side block:

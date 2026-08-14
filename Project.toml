@@ -53,9 +53,11 @@ Symbolics = "0c5d862f-8b57-4792-8d23-62f2024744c7"
 Turing = "fce5fe82-541a-59a6-adf8-730c64b5f9a0"
 
 [weakdeps]
+Copulas = "ae264745-0b69-425e-9d9d-cf662c5eec93"
 Makie = "ee78f7c6-11fb-53f2-987a-cfe4a2b5a57a"
 
 [extensions]
+NoLimitsCopulasExt = "Copulas"
 NoLimitsMakieExt = "Makie"
 
 [compat]
@@ -63,6 +65,7 @@ AdvancedVI = "0.6.2, 0.7"
 Bijectors = "0.15.15, 0.16"
 CSV = "0.10.15"
 ComponentArrays = "0.15"
+Copulas = "0.1.40"
 DataFrames = "1.8.1"
 DataInterpolations = "8, 9.0"
 DiffEqBase = "6.199.0, 7.0.0 - 7.5.5, 7.6"

@@ -69,7 +69,12 @@ function _collect_observed_xy(ind::Individual,
         isfinite(xf) || continue
         push!(x_all, xf)
         yv === missing && continue
-        yv isa Real || continue
+        if !(yv isa Real)
+            yv isa AbstractVector &&
+                @warn "Vector-valued (multivariate) observations are not supported "*
+                "in VPC and are skipped." maxlog=1
+            continue
+        end
         yf = Float64(yv)
         isfinite(yf) || continue
         push!(x_obs, xf)

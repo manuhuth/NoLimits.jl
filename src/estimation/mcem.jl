@@ -772,7 +772,7 @@ function _re_prior_mean_b(dm::DataModel,
             dist = dists[li]
             # Try mean, then median — both are generic Distributions.jl API
             val = try
-                m = Distributions.mean(dist)
+                m = _re_mean(dist)
                 all(isfinite, m isa Number ? (m,) : m) ? m : nothing
             catch
                 nothing

@@ -235,7 +235,8 @@ inside the random-effect support when every RE in the batch is `Normal`/`MvNorma
 function _ghq_adaptive_measure(dm::DataModel, info::REBatchInfo,
         θu_re::ComponentArray, const_cache::REConstantsCache, ll_cache::_LLCache,
         prior_measure::AbstractREMeasure, b_star)
-    prior_measure isa GaussianRE || return nothing
+    prior_measure isa GaussianRE ||
+        (prior_measure isa CompositeRE && prior_measure.unbounded) || return nothing
     # b*, H and S are frozen w.r.t. the outer AD: at a converged rule the value no
     # longer depends on where the nodes sit, so the dropped ∂/∂b*, ∂/∂S terms are of
     # the order of the quadrature error. `θ_prior` keeps the RE-prior term of the
