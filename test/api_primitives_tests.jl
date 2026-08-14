@@ -702,3 +702,30 @@ end
     # is what stalled the pheno fit at its starting values.
     @test ok(1e6 .* -Matrix(1.0I, 3, 3))
 end
+
+# GHQ serial-vs-threaded invariance oracle (the #151 guard). It lives HERE, not
+# in estimation_ghquadrature_tests.jl: this file runs in CI's 4-thread oracle
+# job, so the threaded branch genuinely executes; the full GHQ file runs only
+# in a single-threaded shard, where EnsembleThreads degenerates to serial.
+# Asserted tightly on purpose (#151 was 0.62-0.74 relative): the quadrature is
+# deterministic, so the two paths may differ only by reduction-order noise.
+@testset "GHQuadrature serial == threaded (#151 oracle)" begin
+    if Threads.nthreads() < 2
+        @info "skipped: needs Threads.nthreads() > 1"
+        @test true
+    else
+        dm = fx_re_dm()
+        function ghq_fit(ser)
+            fit_model(dm,
+                NoLimits.GHQuadrature(level = 3; optim_kwargs = (maxiters = 2,));
+                serialization = ser, rng = Random.Xoshiro(1))
+        end
+        rs = ghq_fit(NoLimits.EnsembleSerial())
+        rt = ghq_fit(NoLimits.EnsembleThreads())
+        @test isapprox(NoLimits.get_objective(rs), NoLimits.get_objective(rt);
+            rtol = 1e-8, atol = 1e-10)
+        @test isapprox(collect(NoLimits.get_params(rs; scale = :transformed)),
+            collect(NoLimits.get_params(rt; scale = :transformed));
+            rtol = 1e-8, atol = 1e-10)
+    end
+end

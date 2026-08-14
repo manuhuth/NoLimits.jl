@@ -26,10 +26,17 @@ jobs:
       - uses: julia-actions/cache@v3
 
       # Node.js is provided by DocumenterVitepress via NodeJS_jll — no setup-node step needed.
-      # julia-docdeploy builds with --project=docs/ and dev-installs the package into it.
+      # Explicit steps instead of julia-actions/julia-docdeploy, for two reasons:
+      # (1) docs/Manifest.toml is committed with NoLimits as a path source, so a plain
+      #     instantiate reproduces the env exactly (docdeploy's develop would re-resolve);
+      # (2) the build runs at -O0 — the docs are compile-bound like the test suite (the
+      #     one live @example page fits tiny fixtures), and -O0 cuts the makedocs phase.
       # Deploys via GITHUB_TOKEN (contents: write). Do NOT set DOCUMENTER_KEY unless an
       # SSH deploy key secret of that name actually exists — an empty value forces
       # Documenter onto the SSH path and breaks the deploy.
-      - uses: julia-actions/julia-docdeploy@v1
+      - name: Instantiate docs environment
+        run: julia --project=docs --color=yes -e 'using Pkg; Pkg.instantiate()'
+      - name: Build and deploy docs
+        run: julia --project=docs --color=yes -O0 --min-optlevel=0 docs/make.jl
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -15,22 +15,32 @@ using Test
 # flat N-way split instead (bounds per-process memory harder, but re-runs shared
 # fits across the split). Groups are capped near ~15 files so per-process
 # compiled-code memory stays within the known-good envelope.
+# Sized from measured GH-x86 per-file times (CI run 31788608168, warm cache):
+# every group carries ≤ ~6-7 min of test content so each CI shard finishes
+# under ~9 min wall. The four largest files (aqua ambiguities, laplace, saem,
+# closed_form_ode) are physically split into part-1/part-2 files whose halves
+# sit in different groups — no single file may exceed ~5 min or it becomes the
+# wall-clock floor. Keep each group's opening line as `["...` — parallel.sh and
+# the marvin sbatch derive the group count from that pattern.
 const TEST_GROUPS = [
-    # ── B1a: unit / AD (no fixtures) ─────────────────────────────────────────
-    ["aqua_tests.jl",
-        "softtrees_tests.jl",
+    # ── G1: Aqua ambiguity scan + tiny unit/AD ───────────────────────────────
+    ["aqua_ambiguities_tests.jl",
+        "helpers_tests.jl",
+        "parameters_tests.jl",
         "ad_softtree.jl",
         "ad_flow.jl",
-        "ad_random_effects.jl",
+        "softtrees_tests.jl",
+        "ad_random_effects.jl"],
+    # ── G2: Aqua rest — ALONE: the persistent-tasks check spawns precompile
+    # workers that starve anything sharing the lane ─────────────────────────
+    ["aqua_tests.jl"],
+    # ── G3: AD + model-layer units + closed-form part 1 ──────────────────────
+    ["simplechains_nn_tests.jl",
         "ad_fixed_prede.jl",
         "ad_differential_equation.jl",
         "ad_ode_solve.jl",
         "ad_model_full.jl",
-        "helpers_tests.jl",
-        "parameters_tests.jl",
-        "simplechains_nn_tests.jl"],
-    # ── B1b: unit / AD (no fixtures) ─────────────────────────────────────────
-    ["transform_tests.jl",
+        "transform_tests.jl",
         "fixed_effects_tests.jl",
         "splines_tests.jl",
         "covariates_tests.jl",
@@ -38,10 +48,12 @@ const TEST_GROUPS = [
         "prede_tests.jl",
         "differential_equation_tests.jl",
         "ode_solve_tests.jl",
-        "closed_form_ode_tests.jl",
         "formulas_tests.jl",
-        "initialde_tests.jl"],
-    # ── B2: model / data layer ───────────────────────────────────────────────
+        "initialde_tests.jl",
+        "closed_form_ode_tests.jl"],
+    # ── G4: closed-form part 2 (fit-vs-numerical oracles) ────────────────────
+    ["closed_form_ode2_tests.jl"],
+    # ── G5: model / data layer ───────────────────────────────────────────────
     ["model_macro_tests.jl",
         "model_tests.jl",
         "equation_display_tests.jl",
@@ -57,54 +69,50 @@ const TEST_GROUPS = [
         "ode_callbacks_tests.jl",
         "crossing_tests.jl",
         "datasets_tests.jl"],
-    # ── B3: plotting (shares fx_nore/re/ode/pois/bern/npf/npf2/recov + fits) ─
+    # ── G6-G8: plotting (shares fx_nore/re/ode/pois/bern/npf/npf2/recov) ─────
     ["plot_cache_tests.jl",
         "plotting_functions_tests.jl",
         "vpc_tests.jl",
-        "plot_observation_distributions_tests.jl",
-        "residual_plots_tests.jl",
-        "plot_random_effects_tests.jl",
-        "uq_plotting_tests.jl",
-        "integration_plotting.jl"],
-    # B4/B5 are split for CI wall-clock (per-file times measured 2026-08-13,
-    # local arm64 -O0): each sub-group re-builds the shared fixtures it touches,
-    # trading a little total CPU for a much shorter slowest shard.
-    # ── B4a: estimation API + samplers + cv (~6m local) ─────────────────────
+        "uq_plotting_tests.jl"],
+    ["plot_observation_distributions_tests.jl",
+        "residual_plots_tests.jl"],
+    ["plot_random_effects_tests.jl"],
+    # ── G9-G11: estimation API + samplers + cv ───────────────────────────────
     ["estimation_common_tests.jl",
         "complete_data_loglikelihood_tests.jl",
         "api_primitives_tests.jl",
-        "accessors_tests.jl",
-        "serialization_tests.jl",
+        "accessors_tests.jl"],
+    ["serialization_tests.jl",
         "estimation_mle_tests.jl",
         "estimation_map_tests.jl",
         "estimation_vi_tests.jl",
-        "estimation_mcmc_tests.jl",
-        "estimation_mcmc_re_tests.jl",
         "estimation_cv_tests.jl"],
-    # ── B4b: Laplace-family estimators (~7.4m local: laplace 4m09) ──────────
-    ["estimation_laplace_tests.jl",
-        "estimation_focei_tests.jl",
-        "estimation_pooled_tests.jl"],
-    # ── B5a: SAEM (~6.4m local) ──────────────────────────────────────────────
+    ["estimation_mcmc_tests.jl",
+        "estimation_mcmc_re_tests.jl"],
+    # ── G12-G14: Laplace family ──────────────────────────────────────────────
+    ["estimation_laplace_tests.jl"],
+    ["estimation_laplace2_tests.jl",
+        "estimation_focei_tests.jl"],
+    ["estimation_pooled_tests.jl"],
+    # ── G15-G17: SAEM ────────────────────────────────────────────────────────
     ["estimation_saem_tests.jl",
-        "saem_mh_kernel_tests.jl",
-        "estimation_saem_autodetect_tests.jl",
         "saem_schedule_tests.jl",
-        "saem_multichain_tests.jl",
-        "saem_sa_anneal_tests.jl",
-        "saem_var_lb_tests.jl"],
-    # ── B5b: quadrature / multistart / precondition (~7m local) ─────────────
-    ["estimation_ghquadrature_tests.jl",
-        "estimation_multistart_tests.jl",
-        "estimation_precondition_tests.jl",
-        "copulas_tests.jl"],
-    # ── B5c: MCEM / UQ / extra objective (~6m local) ────────────────────────
+        "estimation_saem_autodetect_tests.jl"],
+    ["estimation_saem2_tests.jl",
+        "saem_sa_anneal_tests.jl"],
+    ["saem_mh_kernel_tests.jl",
+        "saem_var_lb_tests.jl",
+        "saem_multichain_tests.jl"],
+    # ── G18-G22: quadrature / multistart / MCEM / UQ ─────────────────────────
+    ["estimation_ghquadrature_tests.jl"],
+    ["estimation_multistart_tests.jl",
+        "estimation_precondition_tests.jl"],
     ["estimation_mcem_tests.jl",
         "estimation_mcem_is_tests.jl",
-        "extra_objective_tests.jl",
-        "uq_tests.jl",
-        "uq_edge_cases_tests.jl"],
-    # ── B6: HMM / Markov / stickbreak / Enzyme ───────────────────────────────
+        "extra_objective_tests.jl"],
+    ["uq_tests.jl"],
+    ["uq_edge_cases_tests.jl"],
+    # ── G23-G24: HMM / Markov / stickbreak / Enzyme ──────────────────────────
     # Enzyme regression tests (merged from enzyme-compat). proxy = always-on,
     # ForwardDiff-only structural/numeric invariants; smoke = opt-in real Enzyme
     # gradients, no-op unless NOLIMITS_TEST_ENZYME=true (+ Julia>=1.12.5 + Enzyme).
@@ -113,14 +121,23 @@ const TEST_GROUPS = [
         "hmm_estimation_method_matrix_tests.jl",
         "hmm_mv_tests.jl",
         "markov_observed_states_tests.jl",
-        "stickbreak_tests.jl",
+        "ad_stickbreak_hmm.jl"],
+    ["stickbreak_tests.jl",
         "stickbreak_uq_natural_extension_tests.jl",
-        "ad_stickbreak_hmm.jl",
         "continuous_transition_matrix_tests.jl",
         "lie_psd_matrix_tests.jl",
         "logabsdetjac_tests.jl",
         "enzyme_compat_proxy_tests.jl",
-        "enzyme_smoke_tests.jl"]
+        "enzyme_smoke_tests.jl"],
+    # ── G25: RE-plotting part 2 + plotting integration ───────────────────────
+    ["plot_random_effects2_tests.jl",
+        "integration_plotting.jl"],
+    # ── G26: GHQ part 2 + copulas ────────────────────────────────────────────
+    ["estimation_ghquadrature2_tests.jl",
+        "copulas_tests.jl"],
+    # ── G27: Aqua persistent-tasks (own lane: its wrapper precompile dies and
+    # retries when it shares a machine budget with anything else) ────────────
+    ["aqua_persistent_tasks_tests.jl"]
 ]
 
 const TEST_FILES = reduce(vcat, TEST_GROUPS)
@@ -134,14 +151,19 @@ const TEST_FILES = reduce(vcat, TEST_GROUPS)
 #   NL_TEST_FILES="aqua_tests.jl" julia --project -e 'using Pkg; Pkg.test()'
 # CI shards by fixture-affine group: NL_TEST_GROUP=i runs only TEST_GROUPS[i], so
 # the groups run as parallel jobs instead of ~2.5h of sequential batches.
+# NL_TEST_GROUP accepts a comma-separated list ("1,2"): CI packs two groups per
+# runner and launches their batch subprocesses concurrently (NL_BATCH_PARALLEL)
+# to use the otherwise-idle runner cores. Locally the default stays sequential.
 const _GROUP = strip(get(ENV, "NL_TEST_GROUP", ""))
 const _GROUP_FILES = if isempty(_GROUP)
     TEST_FILES
 else
-    i = parse(Int, _GROUP)
-    checkbounds(Bool, TEST_GROUPS, i) ||
-        error("NL_TEST_GROUP=$i out of range 1:$(length(TEST_GROUPS))")
-    TEST_GROUPS[i]
+    idxs = parse.(Int, split(_GROUP, ","))
+    for i in idxs
+        checkbounds(Bool, TEST_GROUPS, i) ||
+            error("NL_TEST_GROUP=$i out of range 1:$(length(TEST_GROUPS))")
+    end
+    reduce(vcat, TEST_GROUPS[idxs])
 end
 
 const _FILTER = strip(get(ENV, "NL_TEST_FILES", ""))
@@ -212,12 +234,29 @@ end
 const _PROJECT = dirname(Base.active_project())
 const _BATCH_SCRIPT = joinpath(@__DIR__, "run_batch.jl")
 
+# NL_BATCH_PARALLEL=true (set by CI) launches all selected batches as concurrent
+# subprocesses instead of sequentially — each batch is single-threaded and the
+# runners have 4 vCPUs, so two lanes nearly halve the job's wall time. Output
+# interleaves, but each batch still prints its own per-file summary at the end.
+# Do NOT enable this for a full local run: every batch is a multi-GB process.
+const _PAR = get(ENV, "NL_BATCH_PARALLEL", "") == "true" && length(_BATCHES) > 1
 let failed = String[]
-    for (i, batch) in enumerate(_BATCHES)
-        @info "=== Test batch $i/$(length(_BATCHES)) ($(length(batch)) files) ===" files=batch
-        cmd = `$(Base.julia_cmd()) $(_child_flags()) --project=$(_PROJECT) $(_BATCH_SCRIPT) $(batch)`
-        ok = success(pipeline(cmd; stdout = stdout, stderr = stderr))
-        ok || push!(failed, "batch $i: " * join(batch, ", "))
+    if _PAR
+        procs = map(enumerate(_BATCHES)) do (i, batch)
+            @info "=== Launching test batch $i/$(length(_BATCHES)) ($(length(batch)) files) ===" files=batch
+            cmd = `$(Base.julia_cmd()) $(_child_flags()) --project=$(_PROJECT) $(_BATCH_SCRIPT) $(batch)`
+            run(pipeline(cmd; stdout = stdout, stderr = stderr); wait = false)
+        end
+        for (i, p) in enumerate(procs)
+            success(p) || push!(failed, "batch $i: " * join(_BATCHES[i], ", "))
+        end
+    else
+        for (i, batch) in enumerate(_BATCHES)
+            @info "=== Test batch $i/$(length(_BATCHES)) ($(length(batch)) files) ===" files=batch
+            cmd = `$(Base.julia_cmd()) $(_child_flags()) --project=$(_PROJECT) $(_BATCH_SCRIPT) $(batch)`
+            ok = success(pipeline(cmd; stdout = stdout, stderr = stderr))
+            ok || push!(failed, "batch $i: " * join(batch, ", "))
+        end
     end
     if !isempty(failed)
         error("Test batches failed:\n  " * join(failed, "\n  "))

@@ -3,37 +3,13 @@ using NoLimits
 using Aqua
 
 # Aqua.jl static quality assurance (https://juliatesting.github.io/Aqua.jl):
-#   * method ambiguities (kept at zero — see the disambiguation blocks in
-#     src/distributions/outcomes/*ObservedStatesMarkov*.jl)
 #   * unbound type parameters, undefined exports
 #   * project hygiene: stale deps, missing [compat] entries, test-project extras
 #   * type piracy (all Distributions/Base extensions dispatch on owned types)
-#   * persistent tasks blocking precompilation
 # All checks run with defaults and no ignore lists; keep it that way.
+# Two checks run in other shards purely for CI wall-clock, at full strength:
+# the method-ambiguity scan (aqua_ambiguities_tests.jl) and the retried
+# persistent-tasks check (aqua_persistent_tasks_tests.jl).
 @testset "Aqua quality assurance" begin
-    # `persistent_tasks` is run separately below, with retries.
-    Aqua.test_all(NoLimits; persistent_tasks = false)
-end
-
-# `Aqua.has_persistent_tasks` builds a wrapper package that loads NoLimits and signals
-# completion by writing `done.log`, then runs `Pkg.precompile(; io = devnull)` on it in a
-# subprocess. It reports a failure when that file never appears — which happens both when a
-# task really does outlive loading AND when the subprocess simply dies (a fresh resolve of
-# ~270 packages inside an already-loaded test process is memory-hungry, and Pkg's output is
-# sent to devnull, so the reason is invisible). The two are indistinguishable from the
-# outside, and the second is sporadic: it has failed once on CI and once on the cluster while
-# passing repeatedly on the same commits everywhere else.
-#
-# A genuine persistent task is deterministic, so retrying separates the cases without
-# weakening the check: a real one fails every attempt, a dead subprocess does not.
-@testset "Aqua persistent tasks (retried)" begin
-    attempts = 3
-    ok = false
-    for i in 1:attempts
-        ok = !Aqua.has_persistent_tasks(Base.PkgId(NoLimits))
-        ok && break
-        i < attempts &&
-            @info "Aqua persistent-tasks check failed on attempt $i/$attempts; retrying (a dead precompile subprocess is reported identically to a real persistent task)."
-    end
-    @test ok
+    Aqua.test_all(NoLimits; persistent_tasks = false, ambiguities = false)
 end
