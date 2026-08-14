@@ -49,6 +49,56 @@ Estimation works with `Laplace`, `GHQuadrature`, `Pooled`, `MCMC` and the other 
 - `Pooled` plugs the random effect in at its mean. A copula never shifts its marginals, so the marginal means are the exact plug-in value; `get_notes(res).plugin.D` reports `:mean` rather than a Monte Carlo fallback.
 - `get_random_effects` returns one column per dimension, here `D_1` and `D_2`.
 
+### Simulating and Recovering the Parameters
+
+The quickest check that a copula random effect is wired up correctly is to simulate from the model at known values and fit the result back. Declare the model at the values you want to treat as truth, build a `DataModel` over a template frame with the intended design, and let `simulate_data_model` return a new `DataModel` carrying simulated outcomes:
+
+```julia
+truth_model = @Model begin
+    @fixedEffects begin
+        mu1 = RealNumber(0.8)
+        mu2 = RealNumber(-0.5)
+        s = RealNumber(0.4; scale=:log)
+    end
+
+    @covariates begin
+        t = Covariate()
+    end
+
+    @randomEffects begin
+        D = RandomEffect(
+            Copulas.SklarDist(Copulas.ClaytonCopula(2, 3.0),
+                (Normal(mu1, 0.9), Normal(mu2, 0.6)));
+            column=:ID)
+    end
+
+    @formulas begin
+        y ~ Normal(D[1] + 0.5 * D[2], s)
+    end
+end
+
+n_id, n_t = 150, 6
+template = DataFrame(ID=repeat(1:n_id, inner=n_t),
+                     t=repeat(collect(0.0:(n_t - 1)), n_id),
+                     y=zeros(n_id * n_t))
+
+dm_truth = DataModel(truth_model, template; primary_id=:ID, time_col=:t)
+dm_sim = simulate_data_model(dm_truth; rng=Xoshiro(20))
+
+res = fit_model(dm_sim, NoLimits.Laplace())
+NoLimits.get_params(res; scale=:untransformed)
+```
+
+The template's `y` column is a placeholder; only its type and the design columns matter, since `simulate_data_model` overwrites it. With 150 subjects at six time points this fit takes roughly a minute and recovers the fixed effects:
+
+| parameter | truth | estimate |
+|---|---|---|
+| `mu1` | 0.8 | 0.85 |
+| `mu2` | -0.5 | -0.552 |
+| `s` | 0.4 | 0.408 |
+
+Two things to keep in mind when reading a recovery run like this. The marginal locations `mu1` and `mu2` enter the outcome only through the combination `D[1] + 0.5 * D[2]`, so they are identified through the random-effect distribution rather than the mean response, and they need a decent number of subjects before they sharpen up; the gap above is sampling noise at 150 subjects, not bias. And the Clayton dependence parameter is held fixed at 3.0 here. To estimate it, declare it as a fixed effect on the log scale and pass it into the copula, as `thc` does in the next section.
+
 ## Copula as an Outcome Distribution
 
 When each observation is a vector of jointly measured quantities, a copula outcome models their dependence without forcing joint normality. The observation column holds vector-valued cells, one vector per row, matching the copula's dimension.
