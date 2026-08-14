@@ -34,7 +34,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        group: ["8,24", "17,21", "18,22", "2,19", "13,14", "6,11",
+        # Group 2 (aqua) runs SOLO: Aqua's persistent-tasks check spawns a
+        # Pkg.precompile subprocess that uses every core — paired with a lane
+        # it both starves the partner and dies/retries under the contention
+        # (measured: multistart 3m04 -> 7m08, aqua 9m50 with a retry).
+        group: ["8,24", "17,21", "18,22", "2", "19", "13,14", "6,11",
                 "7,23", "5,16", "4,20", "9,10", "3,12", "1,15"]
     steps:
       - uses: actions/checkout@v7
@@ -57,6 +61,9 @@ jobs:
         env:
           NL_TEST_GROUP: ${{ matrix.group }}
           NL_BATCH_PARALLEL: "true"
+          # Two lanes x default-4 BLAS threads oversubscribes the 4 vCPUs
+          # (measured ~20-30% inflation on fit-heavy lanes); 2 each fits.
+          OPENBLAS_NUM_THREADS: "2"
         run: julia --color=yes --project=. -e 'using Pkg; Pkg.test(; julia_args=["--check-bounds=auto"])'
 
   # The serial-vs-EnsembleThreads() invariance oracles only mean something with
@@ -83,9 +90,13 @@ jobs:
       - uses: julia-actions/setup-julia@v3
         with:
           version: "1.12"
+      # include-matrix MUST stay "false" now that this job has a matrix:
+      # without it each variant derives a fresh cache key, finds no cache, and
+      # precompiles ~786 deps cold (measured: 36 min instead of ~7).
       - uses: julia-actions/cache@v3
         with:
           cache-name: julia-test
+          include-matrix: "false"
       - uses: julia-actions/julia-buildpkg@v1
       - name: Run invariance oracles with 4 threads
         env:
