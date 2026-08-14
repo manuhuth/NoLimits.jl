@@ -43,6 +43,7 @@ add the package and `using` it alongside NoLimits, and the feature becomes avail
 | Feature | Packages to load |
 |:--------|:-----------------|
 | All plotting functions (`plot_data`, `plot_fits`, `plot_vpc`, `plot_residuals`, `plot_uq_distributions`, ...) | `CairoMakie` (or any other Makie backend) |
+| Bayesian sampling and variational inference (`MCMC`, `VI`, chain-based `uq`, Turing samplers in `SAEM`/`MCEM`) | `Turing` |
 | Neural networks inside models (`NNParameters`) | `Lux`, or `SimpleChains` |
 | Saving and loading fit results (`save_fit`, `load_fit`) | `JLD2` |
 | Profile-likelihood uncertainty quantification (`uq(res; method = :profile)`) | `LikelihoodProfiler` and `OptimizationNLopt` |
@@ -76,6 +77,11 @@ Load it alongside NoLimits and retry.
 
 `show_equations(model; latex = false)` needs no optional package, and `plain` text output is
 always available.
+
+!!! note "Turing samplers"
+    `SAEM` and `MCEM` default to the native `SaemixMH` sampler and need no Turing. Pass
+    `MH()`, `NUTS()` or another Turing sampler and the Turing extension is required.
+    `MCMC` and `VI` always require it.
 
 !!! note "Optimizers"
     Optimizers from `OptimizationBBO` and `OptimizationNLopt` still work with every fitting

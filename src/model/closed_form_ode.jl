@@ -568,3 +568,8 @@ for T in (:ContinuousTimeDiscreteStatesHMM, :DiscreteTimeDiscreteStatesHMM,
         invoke(Distributions.$f, Tuple{$T, AbstractArray}, d, x)
     end
 end
+
+# `Flat` defines only `logpdf(::Flat, ::Real)`, so `::Num` is its single collision.
+function Distributions.logpdf(d::Flat, x::Symbolics.Num)
+    invoke(Distributions.logpdf, Tuple{Flat, Real}, d, x)
+end
