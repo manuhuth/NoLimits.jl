@@ -34,11 +34,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Group 2 (aqua) runs SOLO: Aqua's persistent-tasks check spawns a
-        # Pkg.precompile subprocess that uses every core — paired with a lane
-        # it both starves the partner and dies/retries under the contention
-        # (measured: multistart 3m04 -> 7m08, aqua 9m50 with a retry).
-        group: ["8,24", "17,21", "18,22", "2", "19", "13,14", "6,11",
+        group: ["8,25", "17,21", "18,22", "2,24", "19", "13,14", "6,11",
                 "7,23", "5,16", "4,20", "9,10", "3,12", "1,15"]
     steps:
       - uses: actions/checkout@v7

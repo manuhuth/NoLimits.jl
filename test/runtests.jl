@@ -28,14 +28,15 @@ const TEST_GROUPS = [
         "helpers_tests.jl",
         "parameters_tests.jl",
         "ad_softtree.jl",
-        "ad_flow.jl"],
-    # ── G2: Aqua rest + soft trees + SimpleChains ────────────────────────────
-    ["aqua_tests.jl",
+        "ad_flow.jl",
         "softtrees_tests.jl",
-        "simplechains_nn_tests.jl",
         "ad_random_effects.jl"],
+    # ── G2: Aqua rest — ALONE: the persistent-tasks check spawns precompile
+    # workers that starve anything sharing the lane ─────────────────────────
+    ["aqua_tests.jl"],
     # ── G3: AD + model-layer units + closed-form part 1 ──────────────────────
-    ["ad_fixed_prede.jl",
+    ["simplechains_nn_tests.jl",
+        "ad_fixed_prede.jl",
         "ad_differential_equation.jl",
         "ad_ode_solve.jl",
         "ad_model_full.jl",
@@ -75,8 +76,7 @@ const TEST_GROUPS = [
         "uq_plotting_tests.jl"],
     ["plot_observation_distributions_tests.jl",
         "residual_plots_tests.jl"],
-    ["plot_random_effects_tests.jl",
-        "integration_plotting.jl"],
+    ["plot_random_effects_tests.jl"],
     # ── G9-G11: estimation API + samplers + cv ───────────────────────────────
     ["estimation_common_tests.jl",
         "complete_data_loglikelihood_tests.jl",
@@ -129,7 +129,10 @@ const TEST_GROUPS = [
         "lie_psd_matrix_tests.jl",
         "logabsdetjac_tests.jl",
         "enzyme_compat_proxy_tests.jl",
-        "enzyme_smoke_tests.jl"]
+        "enzyme_smoke_tests.jl"],
+    # ── G25: RE-plotting part 2 + plotting integration ───────────────────────
+    ["plot_random_effects2_tests.jl",
+        "integration_plotting.jl"]
 ]
 
 const TEST_FILES = reduce(vcat, TEST_GROUPS)

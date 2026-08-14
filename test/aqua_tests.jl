@@ -30,7 +30,14 @@ end
     attempts = 3
     ok = false
     for i in 1:attempts
-        ok = !Aqua.has_persistent_tasks(Base.PkgId(NoLimits))
+        # Cap the wrapper's parallel precompile workers: at the default (one per
+        # core) the subprocess OOMs next to the test process and dies without
+        # writing done.log — deterministically on attempt 1, warm on attempt 2 —
+        # so every CI run paid the check twice (confirmed from the CI log's
+        # "done.log was not created, but precompilation exited").
+        ok = withenv("JULIA_NUM_PRECOMPILE_TASKS" => "2") do
+            !Aqua.has_persistent_tasks(Base.PkgId(NoLimits))
+        end
         ok && break
         i < attempts &&
             @info "Aqua persistent-tasks check failed on attempt $i/$attempts; retrying (a dead precompile subprocess is reported identically to a real persistent task)."
