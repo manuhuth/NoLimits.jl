@@ -76,6 +76,9 @@ function MVContinuousTimeDiscreteStatesHMM(
                   "Element 1 has $n_outcomes but element $k has " *
                   "$(_mv_n_outcomes(emission_dists[k])).")
     end
+    Δt >= 0 ||
+        error("Δt must be nonnegative for a continuous-time Markov model; got $(Δt). Check that observation times are sorted within each individual.")
+    _hmm_check_generator_matrix(transition_matrix)
     return MVContinuousTimeDiscreteStatesHMM(
         n_states, n_outcomes, transition_matrix, emission_dists, initial_dist, Δt, propagation_mode)
 end
@@ -102,6 +105,7 @@ Posterior probabilities of hidden states given the length-M observation vector
 `y` (which may contain `missing` entries). Uses all non-missing outcomes jointly.
 """
 function posterior_hidden_states(hmm::MVContinuousTimeDiscreteStatesHMM, y::AbstractVector)
+    _mv_check_obs_length(hmm, y)
     # Tuple-fused per-state weighting/normalization (bit-identical op order);
     # the matrix-exponential propagation remains the dominant cost.
     p_hidden = probabilities_hidden_states(hmm)
@@ -110,8 +114,7 @@ function posterior_hidden_states(hmm::MVContinuousTimeDiscreteStatesHMM, y::Abst
     obs_idx = findall(!ismissing, y)
     y_obs = [y[m] for m in obs_idx]
     u = map((pi, d) -> pi * exp(_mv_emission_logpdf(d, y, obs_idx, y_obs)), pt, dists)
-    su = sum(u)
-    return [ui / su for ui in u]
+    return _hmm_normalize_posterior(u, pt)
 end
 
 # Combined accessor sharing the single matrix-exponential propagation AND the
@@ -119,6 +122,7 @@ end
 # the EXACT per-state ops above (bit-identical).
 function _hmm_logpdf_and_posterior(hmm::MVContinuousTimeDiscreteStatesHMM,
         y::AbstractVector)
+    _mv_check_obs_length(hmm, y)
     p_hidden = probabilities_hidden_states(hmm)
     dists = hmm.emission_dists
     pt = _hmm_probs_tuple(p_hidden, dists)
@@ -127,8 +131,7 @@ function _hmm_logpdf_and_posterior(hmm::MVContinuousTimeDiscreteStatesHMM,
     ls = map(d -> _mv_emission_logpdf(d, y, obs_idx, y_obs), dists)
     lp = _hmm_logsumexp(map((pi, l) -> log(pi) + l, pt, ls))
     u = map((pi, l) -> pi * exp(l), pt, ls)
-    su = sum(u)
-    return lp, [ui / su for ui in u]
+    return lp, _hmm_normalize_posterior(u, pt)
 end
 
 # ---------------------------------------------------------------------------
@@ -136,6 +139,7 @@ end
 # ---------------------------------------------------------------------------
 
 function Distributions.logpdf(hmm::MVContinuousTimeDiscreteStatesHMM, y::AbstractVector)
+    _mv_check_obs_length(hmm, y)
     # Tuple-fused per-state terms (see posterior_hidden_states) — bit-identical.
     p_hidden = probabilities_hidden_states(hmm)
     dists = hmm.emission_dists

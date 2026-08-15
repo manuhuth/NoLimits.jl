@@ -54,6 +54,7 @@ function DiscreteTimeObservedStatesMarkovModel(
     length(state_labels) == n_states ||
         error("length(state_labels) must equal n_states ($n_states), " *
               "got $(length(state_labels)).")
+    _hmm_check_transition_matrix(transition_matrix)
     return DiscreteTimeObservedStatesMarkovModel(
         n_states, transition_matrix, initial_dist, state_labels)
 end

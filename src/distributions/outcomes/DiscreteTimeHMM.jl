@@ -41,6 +41,7 @@ function DiscreteTimeDiscreteStatesHMM(transition_matrix::AbstractMatrix{<:Real}
         error("Number of emission distributions must match number of states.")
     length(initial_dist.p) == n_states ||
         error("Initial distribution size must match number of states.")
+    _hmm_check_transition_matrix(transition_matrix)
     return DiscreteTimeDiscreteStatesHMM(
         n_states, transition_matrix, emission_dists, initial_dist)
 end
@@ -76,8 +77,7 @@ function posterior_hidden_states(hmm::DiscreteTimeDiscreteStatesHMM, y::Real)
     dists = hmm.emission_dists
     pt = _hmm_probs_tuple(p, dists)
     u = map((pi, d) -> (pi / s) * pdf(d, y), pt, dists)
-    su = sum(u)
-    return [ui / su for ui in u]
+    return _hmm_normalize_posterior(u, map(pi -> pi / s, pt))
 end
 
 function Distributions.pdf(hmm::DiscreteTimeDiscreteStatesHMM, y::Real)
@@ -108,8 +108,7 @@ function _hmm_logpdf_and_posterior(hmm::DiscreteTimeDiscreteStatesHMM, y::Real)
     pt = _hmm_probs_tuple(p, dists)
     lp = _hmm_logsumexp(map((pi, d) -> log(pi / s) + logpdf(d, y), pt, dists))
     u = map((pi, d) -> (pi / s) * pdf(d, y), pt, dists)
-    su = sum(u)
-    return lp, [ui / su for ui in u]
+    return lp, _hmm_normalize_posterior(u, map(pi -> pi / s, pt))
 end
 
 function Distributions.rand(rng::AbstractRNG, hmm::DiscreteTimeDiscreteStatesHMM)
@@ -138,9 +137,7 @@ function Distributions.cdf(hmm::DiscreteTimeDiscreteStatesHMM, y::Real)
 end
 
 function Distributions.quantile(hmm::DiscreteTimeDiscreteStatesHMM, p::Real)
-    p_hidden = probabilities_hidden_states(hmm)
-    q = quantile.(hmm.emission_dists, Ref(p))
-    return sum(p_hidden .* q)
+    return _hmm_mixture_quantile(hmm, p)
 end
 
 Distributions.median(hmm::DiscreteTimeDiscreteStatesHMM) = quantile(hmm, 0.5)

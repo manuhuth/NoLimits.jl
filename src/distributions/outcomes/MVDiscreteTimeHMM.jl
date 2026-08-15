@@ -68,6 +68,7 @@ function MVDiscreteTimeDiscreteStatesHMM(
                   "Element 1 has $n_outcomes but element $k has " *
                   "$(_mv_n_outcomes(emission_dists[k])).")
     end
+    _hmm_check_transition_matrix(transition_matrix)
     return MVDiscreteTimeDiscreteStatesHMM(
         n_states, n_outcomes, transition_matrix, emission_dists, initial_dist)
 end
@@ -94,6 +95,7 @@ Posterior probabilities of hidden states given the length-M observation vector
 `y` (which may contain `missing` entries). Uses all non-missing outcomes jointly.
 """
 function posterior_hidden_states(hmm::MVDiscreteTimeDiscreteStatesHMM, y::AbstractVector)
+    _mv_check_obs_length(hmm, y)
     # Tuple-fused twin of the former vector pipeline (same op order — values are
     # bit-identical). `map` over the emission tuple also replaces the runtime
     # `emission_dists[k]` indexing, which dispatched dynamically whenever the
@@ -105,8 +107,7 @@ function posterior_hidden_states(hmm::MVDiscreteTimeDiscreteStatesHMM, y::Abstra
     obs_idx = findall(!ismissing, y)
     y_obs = [y[m] for m in obs_idx]
     u = map((pi, d) -> (pi / s) * exp(_mv_emission_logpdf(d, y, obs_idx, y_obs)), pt, dists)
-    su = sum(u)
-    return [ui / su for ui in u]
+    return _hmm_normalize_posterior(u, map(pi -> pi / s, pt))
 end
 
 # ---------------------------------------------------------------------------
@@ -114,6 +115,7 @@ end
 # ---------------------------------------------------------------------------
 
 function Distributions.logpdf(hmm::MVDiscreteTimeDiscreteStatesHMM, y::AbstractVector)
+    _mv_check_obs_length(hmm, y)
     # Tuple-fused per-state terms (see posterior_hidden_states) — bit-identical.
     p = transpose(hmm.transition_matrix) * hmm.initial_dist.p
     s = sum(p)
@@ -134,6 +136,7 @@ end
 # ops of `logpdf`/`posterior_hidden_states` above (bit-identical).
 function _hmm_logpdf_and_posterior(hmm::MVDiscreteTimeDiscreteStatesHMM,
         y::AbstractVector)
+    _mv_check_obs_length(hmm, y)
     p = transpose(hmm.transition_matrix) * hmm.initial_dist.p
     s = sum(p)
     dists = hmm.emission_dists
@@ -143,8 +146,7 @@ function _hmm_logpdf_and_posterior(hmm::MVDiscreteTimeDiscreteStatesHMM,
     ls = map(d -> _mv_emission_logpdf(d, y, obs_idx, y_obs), dists)
     lp = _hmm_logsumexp(map((pi, l) -> log(pi / s) + l, pt, ls))
     u = map((pi, l) -> (pi / s) * exp(l), pt, ls)
-    su = sum(u)
-    return lp, [ui / su for ui in u]
+    return lp, _hmm_normalize_posterior(u, map(pi -> pi / s, pt))
 end
 
 function Distributions.rand(rng::AbstractRNG, hmm::MVDiscreteTimeDiscreteStatesHMM)

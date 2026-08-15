@@ -83,3 +83,11 @@ _mv_emission_cov(dist::Distribution{Multivariate}) = cov(dist)
 
 _mv_emission_rand(rng, dists::Tuple) = [rand(rng, dists[m]) for m in eachindex(dists)]
 _mv_emission_rand(rng, dist::Distribution{Multivariate}) = rand(rng, dist)
+
+# A wrong-length observation used to surface as a BoundsError from inside an emission
+# distribution (#207).
+@inline function _mv_check_obs_length(hmm, y::AbstractVector)
+    length(y) == hmm.n_outcomes ||
+        error("Multivariate HMM expects an observation vector of length $(hmm.n_outcomes); got length $(length(y)).")
+    return nothing
+end

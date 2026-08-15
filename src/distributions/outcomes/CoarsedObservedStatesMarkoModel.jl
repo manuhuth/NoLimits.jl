@@ -161,8 +161,10 @@ function Distributions.pdf(dist::CoarsedObservedStatesMarkovModel,
     exp(logpdf(dist, y))
 end
 
+# A coarsed observation is set-valued, so a simulated draw is returned as a one-element
+# set rather than the base model's bare label (#213).
 function Distributions.rand(rng::AbstractRNG, dist::CoarsedObservedStatesMarkovModel)
-    rand(rng, dist.base_dist)
+    return [rand(rng, dist.base_dist)]
 end
 
 Distributions.mean(dist::CoarsedObservedStatesMarkovModel) = mean(dist.base_dist)
