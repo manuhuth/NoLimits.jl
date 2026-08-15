@@ -305,6 +305,18 @@ struct FitSummary{O, C, P, N}
     converged::C
     params::P
     notes::N
+
+    # A non-finite objective is never a converged fit, whatever the optimizer's return
+    # code says: NaN/Inf inputs used to surface as `converged=true, objective=Inf`
+    # (#208, #209, #214, #215).
+    function FitSummary(objective::O, converged::C, params::P, notes::N) where {O, C, P, N}
+        if converged === true && objective isa Real && !isfinite(objective)
+            msg = "Objective is $(objective) at the reported estimate; the fit is not usable. Check for non-finite data, starting values, or an out-of-domain distribution argument."
+            new_notes = notes === nothing ? msg : string(notes, " ", msg)
+            return new{O, Bool, P, typeof(new_notes)}(objective, false, params, new_notes)
+        end
+        return new{O, C, P, N}(objective, converged, params, notes)
+    end
 end
 
 """
@@ -835,6 +847,50 @@ function _validate_fit_overrides(dm::DataModel, kwargs::NamedTuple)
         end
     end
     return nothing
+end
+
+# Exceptions raised inside a threaded objective come back wrapped in
+# CompositeException/TaskFailedException, which prints the whole Dual-typed closure
+# signature before the one line that explains the problem (#206). Rethrow the innermost.
+function _nl_unwrap_exception(e)
+    for _ in 1:32
+        if e isa CompositeException && !isempty(e.exceptions)
+            e = first(e.exceptions)
+        elseif e isa TaskFailedException
+            e = e.task.exception
+        else
+            return e
+        end
+    end
+    return e
+end
+
+# `constants`/`penalty` take plain NamedTuples, so users reasonably expect the same of
+# `theta_0_untransformed`; merge one onto the model's declared starting values (#206).
+function _coerce_theta_0(dm::DataModel, θ0)
+    θ0 isa NamedTuple || return θ0
+    fe = get_fixed(get_model(dm))
+    known = Set(get_names(fe))
+    base = copy(get_θ0_untransformed(fe))
+    for (k, v) in Base.pairs(θ0)
+        k in known ||
+            error("Unknown parameter $(k) in theta_0_untransformed. Declared fixed effects: $(join(string.(get_names(fe)), ", ")).")
+        setproperty!(base, k, v)
+    end
+    return base
+end
+
+# A non-finite starting value makes the objective return Inf with zero-valued Dual
+# partials, which the optimizer reports as an immediate converged optimum (#208, #209,
+# #214, #215).
+function _validate_theta_0(dm::DataModel, θ0)
+    θ0 === nothing && return nothing
+    flat = collect(θ0)
+    idx = findfirst(x -> !isfinite(x), flat)
+    idx === nothing && return nothing
+    names = get_flat_names(get_fixed(get_model(dm)))
+    where = length(names) == length(flat) ? string(names[idx]) : "flat index $(idx)"
+    error("Starting value $(where) in theta_0_untransformed is $(flat[idx]). All starting values must be finite.")
 end
 
 # The objective's `isinf(add) && return Inf` short-circuit returns a `Dual` whose partials
@@ -2611,19 +2667,32 @@ function fit_model(dm::DataModel, method::FittingMethod, args...;
         fit_options_pooled_init::NamedTuple = NamedTuple(),
         kwargs...)
     _reset_numeric_warnings!()
-    _validate_fit_overrides(dm, NamedTuple(kwargs))
-    _warn_degenerate_soft_trees(
-        dm, get(NamedTuple(kwargs), :theta_0_untransformed, nothing))
-    if pooled_init === false
-        isempty(fit_options_pooled_init) ||
-            @warn "fit_options_pooled_init is ignored because pooled_init is false."
-        return _fit_model(
-            dm, method, args...; store_data_model = store_data_model, kwargs...)
+    # An all-missing outcome frame fits to objective 0.0 and reports success (#208, #212).
+    _has_observations(dm) ||
+        error("Cannot fit: every observation of $(join(string.(get_obs_cols(dm)), ", ")) is missing (or excluded by the EVID column). At least one observed value is required.")
+    kwargs = NamedTuple(kwargs)
+    if haskey(kwargs, :theta_0_untransformed)
+        kwargs = merge(kwargs,
+            (theta_0_untransformed = _coerce_theta_0(dm, kwargs.theta_0_untransformed),))
+        _validate_theta_0(dm, kwargs.theta_0_untransformed)
     end
-    θ_init = _pooled_init_theta(dm, method, pooled_init, fit_options_pooled_init,
-        NamedTuple(kwargs))
-    kw = merge(NamedTuple(kwargs), (theta_0_untransformed = θ_init,))
-    return _fit_model(dm, method, args...; store_data_model = store_data_model, kw...)
+    _validate_fit_overrides(dm, kwargs)
+    _warn_degenerate_soft_trees(dm, get(kwargs, :theta_0_untransformed, nothing))
+    try
+        if pooled_init === false
+            isempty(fit_options_pooled_init) ||
+                @warn "fit_options_pooled_init is ignored because pooled_init is false."
+            return _fit_model(
+                dm, method, args...; store_data_model = store_data_model, kwargs...)
+        end
+        θ_init = _pooled_init_theta(
+            dm, method, pooled_init, fit_options_pooled_init, kwargs)
+        kw = merge(kwargs, (theta_0_untransformed = θ_init,))
+        return _fit_model(dm, method, args...; store_data_model = store_data_model, kw...)
+    catch e
+        unwrapped = _nl_unwrap_exception(e)
+        unwrapped === e ? rethrow() : throw(unwrapped)
+    end
 end
 
 # Type-stable varying-covariate row construction. Building rows from

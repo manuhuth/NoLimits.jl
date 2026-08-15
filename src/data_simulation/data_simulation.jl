@@ -323,6 +323,13 @@ function simulate_data(dm::DataModel; rng = Random.default_rng(),
         end
     end
 
+    # With the default `replace_missings=false` a frame whose outcomes were mostly
+    # `missing` comes back looking simulated but is not (#212).
+    if !replace_missings
+        skipped = sum(c -> count(ismissing, df[!, c]), get_obs_cols(dm); init = 0)
+        skipped > 0 &&
+            @info "simulate_data left $(skipped) missing observation entries untouched (replace_missings=false). Pass replace_missings=true to simulate them."
+    end
     return df
 end
 

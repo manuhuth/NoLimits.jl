@@ -298,6 +298,15 @@ through `missing` rows as well. On Laplace/FOCEI/SAEM/MCEM/Pooled fits it theref
 matches `get_loglikelihood(res)` (which also conditions on the EB modes) to round-off;
 on `GHQuadrature` fits `get_loglikelihood` returns the *marginal* likelihood, which
 integrates over the random effects and is a different quantity.
+
+# HMM-family outcomes
+
+For HMM / observed-states outcomes every column is an **emission-level** quantity of the
+forward-filtered mixture distribution, not a hidden-state summary: `fitted` is the mixture
+mean (for a Bernoulli emission, a probability near the mixture average, not a state
+probability), and `pit`/`res_*` are the usual mixture-distribution residuals, which for a
+discrete outcome sit on the CDF steps. Use [`plot_hidden_states`](@ref) or
+`posterior_hidden_states` for state-level diagnostics.
 """
 function get_residuals(res::FitResult;
         dm::Union{Nothing, DataModel} = nothing,
@@ -321,6 +330,12 @@ function get_residuals(res::FitResult;
         rng::AbstractRNG = Random.default_rng(),
         return_draw_level::Bool = false)
     dm = _get_dm(res, dm)
+    # Residuals of a fit whose objective is not finite are meaningless and used to fail
+    # with an unrelated internal error from a NaN parameter vector (#212).
+    let obj = get_objective(res)
+        obj isa Real && !isfinite(obj) &&
+            error("Cannot compute residuals: the fit objective is $(obj). Fix the fit (non-finite data, starting values, or an out-of-domain distribution argument) before running diagnostics.")
+    end
     constants_re_use = _res_constants_re(res, constants_re, dm)
     residual_list = _validate_residual_metrics(residuals)
     obs_list = _resolve_residual_observables(dm, observables)
@@ -610,16 +625,20 @@ function get_residuals(dm::DataModel;
 end
 
 function _acf_for_series(v::Vector{Float64}, max_lag::Int)
+    _check_positive_int(max_lag, "max_lag")
     n = length(v)
     out = Vector{Union{Missing, Float64}}(undef, max_lag)
     if n < 2
         fill!(out, missing)
         return out
     end
+    max_lag >= n &&
+        @warn "max_lag=$(max_lag) is not smaller than the series length $(n); lags with fewer than 2 usable pairs are reported as missing." maxlog=1
     μ = mean(v)
     centered = v .- μ
     denom = sum(abs2, centered)
     if denom <= 0
+        @warn "Autocorrelation is undefined for a zero-variance residual series; all lags are missing." maxlog=1
         fill!(out, missing)
         return out
     end

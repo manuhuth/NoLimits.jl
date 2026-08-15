@@ -9,6 +9,9 @@ function _resolve_individuals(dm::DataModel, individuals_idx; default_all::Bool 
         return default_all ? collect(1:n) : [1]
     end
     ids = individuals_idx isa AbstractVector ? collect(individuals_idx) : [individuals_idx]
+    # An empty selection silently produced a blank figure (#210, #216).
+    isempty(ids) &&
+        error("individuals_idx selects no individuals. Pass at least one index or id, or omit the keyword to use all.")
     if all(x -> x isa Integer && 1 <= x <= n, ids)
         return Int.(ids)
     end
@@ -25,6 +28,8 @@ function _resolve_obs_rows(obs_rows, obs_rows_all)
         return collect(1:length(obs_rows_all))
     end
     idxs = obs_rows isa AbstractVector ? collect(obs_rows) : [obs_rows]
+    isempty(idxs) &&
+        error("obs_rows selects no rows. Pass at least one row index, or omit the keyword to use all.")
     for idx in idxs
         1 <= idx <= length(obs_rows_all) || error("obs_rows index $(idx) out of bounds.")
     end
@@ -39,6 +44,8 @@ function _resolve_observables(dm::DataModel, observables)
         return [obs[1]]
     end
     obs_list = observables isa AbstractVector ? collect(observables) : [observables]
+    isempty(obs_list) &&
+        error("observables selects no outcome. Pass at least one observable name, or omit the keyword to use the default.")
     for o in obs_list
         o in obs || error("Observable $(o) not found. Available: $(obs).")
     end

@@ -300,7 +300,11 @@ function _marginal_normal(dist, i::Int)
     return nothing
 end
 
-function _kde_xy(vals; bandwidth = nothing)
+function _kde_xy(vals; bandwidth = nothing, what::AbstractString = "bandwidth")
+    bandwidth === nothing || _check_positive(bandwidth, what)
+    vals = filter(isfinite, vals)
+    length(vals) >= 2 ||
+        error("Cannot estimate a density: fewer than 2 finite values were available.")
     kd = bandwidth === nothing ? kde(vals) : kde(vals; bandwidth = bandwidth)
     return kd.x, kd.density
 end

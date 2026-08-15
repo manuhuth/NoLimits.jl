@@ -669,7 +669,21 @@ macro Model(block)
         local $(signal_names_var) = $(de_var) === nothing ? Symbol[] :
                                     get_de_signals($(de_var))
 
-        local ($(form_all_var), $(form_obs_var), $(req_states_var), $(req_signals_var)) = get_formulas_builders(
+        _validate_model_symbols(
+            $(formulas_var), $(random_var), $(covariates_var), $(fixed_var);
+            fixed_names = $(fixed_names_var),
+            re_names = $(random_names_var),
+            prede_names = $(prede_names_var),
+            const_cov_names = $(const_cov_names_var),
+            varying_cov_names = $(varying_cov_names_var),
+            helper_names = $(helper_names_var),
+            model_fun_names = $(model_fun_names_var),
+            state_names = $(state_names_var),
+            signal_names = $(signal_names_var),
+            context_module = $(__module__))
+
+        local ($(form_all_var), $(form_obs_var), $(req_states_var),
+        $(req_signals_var)) = get_formulas_builders(
             $(formulas_var);
             fixed_names = $(fixed_names_var),
             collect_fixed_names = $(collect_fixed_names_var),

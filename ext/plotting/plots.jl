@@ -13,8 +13,7 @@ function _plot_data_dm(dm::DataModel;
         save_path::Union{Nothing, String} = nothing,
         marginal_idx::Union{Nothing, Int} = nothing)
     obs_name = _get_observable(dm, nothing)
-    inds = individuals_idx === nothing ? collect(eachindex(get_individuals(dm))) :
-           collect(individuals_idx)
+    inds = _resolve_individuals(dm, individuals_idx; default_all = true)
     (is_mv, n_marginals) = _obs_multivariate_info(dm, obs_name)
     marginal_colors = _marginal_colors(n_marginals, style)
 
@@ -266,6 +265,7 @@ function plot_fits(res::FitResult;
         rng::AbstractRNG = Random.default_rng())
     dm = _get_dm(res, dm)
     save_path = _resolve_plot_path(save_path, plot_path)
+    _check_unit_interval(mcmc_quantiles_alpha, "mcmc_quantiles_alpha")
     constants_re_use = _res_constants_re(res, constants_re)
     obs_name = _get_observable(dm, observable)
     (is_mv, detected_n_marginals) = _obs_multivariate_info(dm, obs_name)
@@ -278,8 +278,7 @@ function plot_fits(res::FitResult;
         (1 <= marginal_idx <= n_marginals) ||
             error("marginal_idx must be between 1 and $(n_marginals).")
     end
-    inds = individuals_idx === nothing ? collect(eachindex(get_individuals(dm))) :
-           collect(individuals_idx)
+    inds = _resolve_individuals(dm, individuals_idx; default_all = true)
 
     if cache === nothing
         cache = build_plot_cache(
@@ -654,8 +653,7 @@ function _plot_hidden_states_impl(dm::DataModel,
         kwargs_layout,
         save_path::Union{Nothing, String},
         individuals_idx = nothing)
-    inds = individuals_idx === nothing ? collect(eachindex(get_individuals(dm))) :
-           collect(individuals_idx)
+    inds = _resolve_individuals(dm, individuals_idx; default_all = true)
     plots = Vector{Any}(undef, length(inds))
     xlims = nothing
     ylims = nothing
@@ -833,8 +831,7 @@ function plot_hidden_states(res::FitResult;
     θ = get_params(res; scale = :untransformed)
     θ = _apply_param_overrides(θ, params)
     η_vec = _default_random_effects(res, dm, constants_re_use, θ, rng, mcmc_draws)
-    inds = individuals_idx === nothing ? collect(eachindex(get_individuals(dm))) :
-           collect(individuals_idx)
+    inds = _resolve_individuals(dm, individuals_idx; default_all = true)
 
     if figure_layout == :vector
         plots = Vector{Figure}(undef, length(inds))
@@ -901,8 +898,7 @@ function plot_hidden_states(dm::DataModel;
     θ = get_θ0_untransformed(get_fixed(get_model(dm)))
     θ = _apply_param_overrides(θ, params)
     η_vec = _default_random_effects_from_dm(dm, constants_re, θ)
-    inds = individuals_idx === nothing ? collect(eachindex(get_individuals(dm))) :
-           collect(individuals_idx)
+    inds = _resolve_individuals(dm, individuals_idx; default_all = true)
 
     if figure_layout == :vector
         plots = Vector{Figure}(undef, length(inds))
@@ -1053,8 +1049,7 @@ function _plot_emission_impl(dm::DataModel,
         kwargs_layout,
         save_path::Union{Nothing, String},
         figure_layout::Symbol)
-    inds = individuals_idx === nothing ? collect(eachindex(get_individuals(dm))) :
-           collect(individuals_idx)
+    inds = _resolve_individuals(dm, individuals_idx; default_all = true)
     groups = Vector{MakiePanelGroup}(undef, length(inds))
     xlims = nothing
     ylims = nothing
@@ -1303,8 +1298,7 @@ function _plot_fits_comparison_impl(fits::AbstractVector{<:FitResult},
     dm_ref = _validate_same_data_model_for_comparison(dms)
 
     obs_name = _get_observable(dm_ref, observable)
-    inds = individuals_idx === nothing ? collect(eachindex(get_individuals(dm_ref))) :
-           collect(individuals_idx)
+    inds = _resolve_individuals(dm_ref, individuals_idx; default_all = true)
     caches = [build_plot_cache(fits[j]; dm = dms[j], cache_obs_dists = false)
               for j in eachindex(fits)]
     line_colors = _comparison_line_colors(length(fits), style)
@@ -1450,8 +1444,7 @@ function plot_observed_profiles(dm::DataModel;
         plot_path::Union{Nothing, String} = nothing)
     save_path = _resolve_plot_path(save_path, plot_path)
     obs_name = _get_observable(dm, observable)
-    inds = individuals_idx === nothing ? collect(eachindex(get_individuals(dm))) :
-           collect(individuals_idx)
+    inds = _resolve_individuals(dm, individuals_idx; default_all = true)
 
     _kw_op = merge(
         (xlabel = x_axis_feature === nothing ? "Time" : _axis_label(x_axis_feature),
@@ -1706,6 +1699,7 @@ function plot_shrinkage(res::FitResult;
         save_path::Union{Nothing, String} = nothing,
         plot_path::Union{Nothing, String} = nothing)
     save_path = _resolve_plot_path(save_path, plot_path)
+    _check_unit_interval(threshold, "threshold")
     shrink_nt = compute_shrinkage(res; dm = dm, constants_re = constants_re)
     isempty(shrink_nt) &&
         error("No shrinkage values computed; check that the model has scalar random effects.")

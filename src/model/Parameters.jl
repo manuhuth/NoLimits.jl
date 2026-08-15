@@ -649,6 +649,16 @@ function SplineParameters(knots::AbstractVector{<:Real}; name::Symbol = :unnamed
     n = length(knots) - Int(degree) - 1
     n > 0 ||
         error("Invalid knots/degree for parameter $(name). Expected length(knots) > degree+1; got length(knots)=$(length(knots)), degree=$(degree).")
+    # Knot properties are static, so they are checked here rather than surfacing from
+    # inside an AD-typed objective evaluation (#206, #215).
+    let bad = findfirst(!isfinite, knots)
+        bad === nothing ||
+            error("Invalid knots for parameter $(name): knot $(bad) is $(knots[bad]). All knots must be finite.")
+    end
+    issorted(knots) ||
+        error("Invalid knots for parameter $(name): knots must be sorted non-decreasing; got $(knots).")
+    first(knots) < last(knots) ||
+        error("Invalid knots for parameter $(name): the boundary knots must span a non-empty interval; got [$(first(knots)), $(last(knots))].")
     T = eltype(knots) <: AbstractFloat ? eltype(knots) : Float64
     k = T.(knots)
     v = zeros(T, n)

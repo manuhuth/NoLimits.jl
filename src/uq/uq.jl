@@ -115,6 +115,11 @@ function compute_uq(res::FitResult;
         rng::AbstractRNG = Random.default_rng())
     level_use = _validate_level(level)
     n_draws >= 1 || error("n_draws must be >= 1.")
+    _validate_uq_options(res; interval = interval, fd_abs_step = fd_abs_step,
+        fd_rel_step = fd_rel_step, fd_max_tries = fd_max_tries,
+        mcmc_warmup = mcmc_warmup, mcmc_draws = mcmc_draws, constants = constants,
+        profile_max_iter = profile_max_iter, profile_ftol_abs = profile_ftol_abs,
+        profile_scan_width = profile_scan_width)
 
     backend = if method == :auto
         if interval == :profile

@@ -21,6 +21,39 @@ function _validate_level(level::Real)
     return Float64(level)
 end
 
+const _UQ_INTERVALS = (:auto, :profile)
+
+# Boundary/malformed UQ options used to be accepted silently and either changed the
+# numerical scheme or were clamped without notice (#211).
+function _validate_uq_options(res::FitResult; interval, fd_abs_step, fd_rel_step,
+        fd_max_tries, mcmc_warmup, mcmc_draws, constants, profile_max_iter,
+        profile_ftol_abs, profile_scan_width)
+    interval in _UQ_INTERVALS ||
+        error("Unsupported interval $(interval). Use one of $(_UQ_INTERVALS).")
+    for (name, v) in (("fd_abs_step", fd_abs_step), ("fd_rel_step", fd_rel_step),
+        ("profile_ftol_abs", profile_ftol_abs), ("profile_scan_width", profile_scan_width))
+        (v isa Real && isfinite(v) && v > 0) ||
+            error("$(name) must be finite and > 0. Got $(v).")
+    end
+    fd_max_tries >= 1 || error("fd_max_tries must be >= 1. Got $(fd_max_tries).")
+    profile_max_iter >= 1 ||
+        error("profile_max_iter must be >= 1. Got $(profile_max_iter).")
+    mcmc_warmup === nothing || mcmc_warmup >= 0 ||
+        error("mcmc_warmup must be >= 0. Got $(mcmc_warmup).")
+    mcmc_draws === nothing || mcmc_draws >= 1 ||
+        error("mcmc_draws must be >= 1. Got $(mcmc_draws).")
+    constants === nothing && return nothing
+    dm = get_data_model(res)
+    dm === nothing && return nothing
+    θ = get_θ0_untransformed(get_fixed(get_model(dm)))
+    for (name, val) in Base.pairs(constants)
+        hasproperty(θ, name) || continue
+        (val isa AbstractArray && length(getproperty(θ, name)) == 1) &&
+            error("UQ constant $(name) is an array, but $(name) is a scalar parameter. Pass `$(name) = $(first(val))`.")
+    end
+    return nothing
+end
+
 # Resolve a UQ fit keyword: use the caller override when given, else the stored fit value.
 @inline function _resolve_fit_kw(res::FitResult, val, key::Symbol, default)
     return val === nothing ? _fit_kw(res, key, default) : val

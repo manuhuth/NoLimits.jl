@@ -61,6 +61,9 @@ function ContinuousTimeObservedStatesMarkovModel(
     length(state_labels) == n_states ||
         error("length(state_labels) must equal n_states ($n_states), " *
               "got $(length(state_labels)).")
+    Δt >= 0 ||
+        error("Δt must be nonnegative for a continuous-time Markov model; got $(Δt). Check that observation times are sorted within each individual.")
+    _hmm_check_generator_matrix(transition_matrix)
     return ContinuousTimeObservedStatesMarkovModel(
         n_states, transition_matrix, initial_dist, Δt, state_labels, propagation_mode)
 end
@@ -108,7 +111,10 @@ const _ObservedStatesMarkovModel = Union{
 
 For a scalar observed state `y`, returns the one-hot posterior after observing that state.
 
-Returns a zero vector if the observation label is not found.
+A label that is not in `state_labels` is treated as an impossible observation: `logpdf`
+returns `-Inf` and the posterior is the all-zero vector. This is deliberate, so a single
+unrecognised row does not abort a fit; check `get_residuals`/the objective for `-Inf` if
+you suspect a data-entry mistake.
 """
 function posterior_hidden_states(dist::_ObservedStatesMarkovModel, y)
     idx = _omm_scalar_observation_index(dist.state_labels, y)
@@ -238,6 +244,24 @@ function Distributions.cdf(dist::_ObservedStatesMarkovModel, y::Real)
     p = probabilities_hidden_states(dist)
     return sum((p[k] for k in 1:(dist.n_states) if dist.state_labels[k] <= y);
         init = zero(eltype(p)))
+end
+
+# Without this the generic Distributions fallback tries to iterate the model and reports
+# an unrelated MethodError (#213). Only ordered numeric labels have a quantile.
+function Distributions.quantile(dist::_ObservedStatesMarkovModel, p::Real)
+    T = eltype(dist.state_labels)
+    T <: Real || throw(ArgumentError(
+        "quantile is not defined for $(nameof(typeof(dist))) with label type $T. " *
+        "Only Real-valued labels are supported."))
+    0 <= p <= 1 || throw(DomainError(p, "quantile probability must be in [0, 1]."))
+    order = sortperm(dist.state_labels)
+    probs = probabilities_hidden_states(dist)
+    acc = zero(eltype(probs))
+    for k in order
+        acc += probs[k]
+        acc >= p && return dist.state_labels[k]
+    end
+    return dist.state_labels[last(order)]
 end
 
 function Distributions.params(dist::ContinuousTimeObservedStatesMarkovModel)

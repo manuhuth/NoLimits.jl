@@ -220,6 +220,7 @@ over the computed defaults.
 """
 function combine_plots(panels::Vector; ncols::Int = DEFAULT_PLOT_COLS,
         style::PlotStyle = PlotStyle(), kwargs...)
+    _check_positive_int(ncols, "ncols")
     n = length(panels)
     ncols_use = min(ncols, max(n, 1))
     fig_defaults = (; size = calculate_plot_size(max(n, 1), ncols_use, style),
@@ -576,6 +577,7 @@ function plot_em_trajectories(res::FitResult;
         save_path::Union{Nothing, String} = nothing,
         plot_path::Union{Nothing, String} = nothing)
     save_path = _resolve_plot_path(save_path, plot_path)
+    _check_positive_int(ncols, "ncols")
     scale in (:untransformed, :transformed) ||
         error("scale must be :untransformed or :transformed. Got: $(scale).")
 

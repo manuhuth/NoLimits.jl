@@ -254,6 +254,9 @@ function ContinuousTimeDiscreteStatesHMM(
 )
     _ct_hmm_validate_mode(propagation_mode)
     n_states = size(transition_matrix, 1)
+    Δt >= 0 ||
+        error("Δt must be nonnegative for a continuous-time Markov model; got $(Δt). Check that observation times are sorted within each individual.")
+    _hmm_check_generator_matrix(transition_matrix)
     ContinuousTimeDiscreteStatesHMM(
         n_states, transition_matrix, emission_dists, initial_dist, Δt, propagation_mode)
 end
@@ -282,8 +285,7 @@ function posterior_hidden_states(hmm::ContinuousTimeDiscreteStatesHMM, y::Real)
     dists = hmm.emission_dists
     pt = _hmm_probs_tuple(p_hidden, dists)
     u = map((pi, d) -> pi * pdf(d, y), pt, dists)
-    su = sum(u)
-    return [ui / su for ui in u]
+    return _hmm_normalize_posterior(u, pt)
 end
 
 function Distributions.pdf(hmm::ContinuousTimeDiscreteStatesHMM, y::Real)
@@ -311,8 +313,7 @@ function _hmm_logpdf_and_posterior(hmm::ContinuousTimeDiscreteStatesHMM, y::Real
     pt = _hmm_probs_tuple(p_hidden, dists)
     lp = _hmm_logsumexp(map((pi, d) -> log(pi) + logpdf(d, y), pt, dists))
     u = map((pi, d) -> pi * pdf(d, y), pt, dists)
-    su = sum(u)
-    return lp, [ui / su for ui in u]
+    return lp, _hmm_normalize_posterior(u, pt)
 end
 
 function Distributions.rand(rng::AbstractRNG, hmm::ContinuousTimeDiscreteStatesHMM)
@@ -342,25 +343,7 @@ function Distributions.cdf(hmm::ContinuousTimeDiscreteStatesHMM, y::Real)
 end
 
 function Distributions.quantile(hmm::ContinuousTimeDiscreteStatesHMM, p::Real)
-    @assert 0<p<1 "p must be in (0, 1)"
-
-    # Bound the search using component quantiles
-    lower_bounds = quantile.(hmm.emission_dists, Ref(0.001))
-    upper_bounds = quantile.(hmm.emission_dists, Ref(0.999))
-    lb = minimum(lower_bounds)
-    ub = maximum(upper_bounds)
-
-    # Bisection to find y such that cdf(hmm, y) = p
-    for _ in 1:100
-        mid = (lb + ub) / 2
-        if cdf(hmm, mid) < p
-            lb = mid
-        else
-            ub = mid
-        end
-        abs(ub - lb) < 1e-10 && break
-    end
-    return (lb + ub) / 2
+    return _hmm_mixture_quantile(hmm, p)
 end
 
 Distributions.median(hmm::ContinuousTimeDiscreteStatesHMM) = quantile(hmm, 0.5)

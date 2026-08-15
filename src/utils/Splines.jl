@@ -28,13 +28,19 @@ function bspline_basis(x::Real, knots::AbstractVector{<:Real}, degree::Integer)
     return out
 end
 
+# Strip ForwardDiff Dual to its primal value for error messages only.
+@inline _spline_primal(x::Real) = x
+@inline _spline_primal(x::ForwardDiff.Dual) = _spline_primal(ForwardDiff.value(x))
+
 @inline function _bspline_validate(x::Real, knots::AbstractVector{<:Real}, degree::Integer)
     degree >= 0 || error("degree must be non-negative")
     issorted(knots) || error("knots must be sorted non-decreasing")
     n = length(knots) - degree - 1
     n > 0 || error("Invalid knots/degree: expected length(knots) > degree+1")
-    (x < knots[1] || x > knots[end]) &&
-        error("x out of knot range: expected $(knots[1]) ≤ x ≤ $(knots[end]); got $(x).")
+    # Print the primal value: under ForwardDiff `x` is a Dual whose printed form buries
+    # the offending number in a page of nested type parameters (#215).
+    (isnan(x) || x < knots[1] || x > knots[end]) &&
+        error("Spline input out of knot range: expected $(knots[1]) ≤ x ≤ $(knots[end]); got $(_spline_primal(x)). Extend the knots or clamp the covariate.")
     return n
 end
 

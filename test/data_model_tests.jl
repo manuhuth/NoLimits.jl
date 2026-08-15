@@ -1793,3 +1793,61 @@ end
         @test get_obs(get_series(ind)) == get_obs(get_series(inds_plain[i]))
     end
 end
+
+@testset "DataModel data validation" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            s = RealNumber(0.5)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @formulas begin
+            y ~ Normal(a, s)
+        end
+    end
+    build(df) = DataModel(model, df; primary_id = :ID, time_col = :t)
+
+    @test_throws ErrorException build(DataFrame(ID = Int[], t = Float64[], y = Float64[]))
+    @test_throws ErrorException build(DataFrame(
+        ID = [1, 1], t = [0.0, 1.0], y = [1.0, NaN]))
+    @test_throws ErrorException build(DataFrame(
+        ID = [1, 1], t = [0.0, Inf], y = [1.0, 1.1]))
+    @test_throws ErrorException build(DataFrame(
+        ID = [1, 1], t = ["0", "1"], y = [1.0, 1.1]))
+    # An all-missing outcome frame is a valid simulation target, so it warns at
+    # construction and is refused by fit_model instead.
+    dm_missing = @test_logs (:warn,) match_mode=:any build(DataFrame(
+        ID = [1, 1], t = [0.0, 1.0], y = Union{Missing, Float64}[missing, missing]))
+    @test_throws ErrorException fit_model(dm_missing, NoLimits.MLE())
+    # Duplicate and unsorted timepoints are warnings, not errors.
+    @test_logs (:warn,) match_mode=:any build(DataFrame(
+        ID = [1, 1], t = [0.0, 0.0], y = [1.0, 1.1]))
+    @test_logs (:warn,) match_mode=:any build(DataFrame(
+        ID = [1, 1], t = [1.0, 0.0], y = [1.0, 1.1]))
+
+    model_re = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            s = RealNumber(0.5)
+        end
+        @randomEffects begin
+            eta = RandomEffect(Normal(0.0, 1.0); column = :SITE)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @formulas begin
+            y ~ Normal(a + eta, s)
+        end
+    end
+    msg = try
+        DataModel(model_re, DataFrame(ID = [1, 1], t = [0.0, 1.0], y = [1.0, 1.1]);
+            primary_id = :ID, time_col = :t)
+        ""
+    catch e
+        sprint(showerror, e)
+    end
+    @test occursin("eta", msg) && occursin("SITE", msg)
+end

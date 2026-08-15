@@ -193,7 +193,7 @@ end
         end
 
         @formulas begin
-            y ~ Normal(a + η, σ)
+            y ~ Normal(a, σ)
         end
     end
 

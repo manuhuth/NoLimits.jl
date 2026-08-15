@@ -247,6 +247,8 @@ function _parse_random_effects(block::Expr)
         stmt.head == :(=) || error("Only assignments are allowed in @randomEffects block.")
         lhs, rhs = stmt.args
         lhs isa Symbol || error("Left-hand side must be a symbol in @randomEffects block.")
+        lhs in re_names &&
+            error("Duplicate random effect $(lhs) in @randomEffects block; random-effect names must be unique.")
         rhs isa Expr && rhs.head == :call ||
             error("Right-hand side must be a RandomEffect(...) call.")
         _re_ctor_name(rhs.args[1]) === :RandomEffect ||
