@@ -1,6 +1,6 @@
 # SAEM MH-kernel samplers: AdaptiveNoLimitsMH and SaemixMH.
 # (Merged from saem_adaptive_mh_tests.jl + saem_saemixmh_tests.jl — both built the
-# same scalar-RE model repeatedly; it is shared as _MH_SCALAR_MODEL below.)
+# same scalar-RE model repeatedly; it is now the shared fixture fx_re_model.)
 using Test
 using NoLimits
 using CairoMakie
@@ -12,35 +12,18 @@ using Random
 using SciMLBase
 using Turing
 
-# One scalar-RE model shared by all scalar recovery/warm-start/kernel testsets;
-# each testset builds its own simulated data (cheap) on this one compiled model.
-const _MH_SCALAR_MODEL = @Model begin
-    @fixedEffects begin
-        a = RealNumber(0.5)
-        σ = RealNumber(0.5, scale = :log)
-        τ = RealNumber(0.5, scale = :log)
-    end
-    @covariates begin
-        t = Covariate()
-    end
-    @randomEffects begin
-        η = RandomEffect(Normal(0.0, τ); column = :ID)
-    end
-    @formulas begin
-        y ~ Normal(a + η, σ)
-    end
-end
-
+# All scalar recovery/warm-start/kernel testsets share fx_re_model (RE sd is ω);
+# each testset builds its own simulated data (cheap) on that one compiled model.
 function _mh_scalar_dm(
         rng; n_id = 20, inner = 3, true_a = 1.0, true_σ = 0.3,
-        true_τ = 0.5, tmax = 1.0
+        true_ω = 0.5, tmax = 1.0
     )
     ids = repeat(1:n_id, inner = inner)
     ts = repeat(range(0.0, tmax; length = inner), n_id)
-    ηs = true_τ .* randn(rng, n_id)
+    ηs = true_ω .* randn(rng, n_id)
     ys = true_a .+ ηs[ids] .+ true_σ .* randn(rng, length(ids))
     df = DataFrame(ID = ids, t = ts, y = ys)
-    return DataModel(_MH_SCALAR_MODEL, df; primary_id = :ID, time_col = :t)
+    return DataModel(fx_re_model(), df; primary_id = :ID, time_col = :t)
 end
 
 # ---------------------------------------------------------------------------
@@ -61,7 +44,7 @@ end
 @testset "AdaptiveNoLimitsMH Normal RE recovery" begin
     dm = _mh_scalar_dm(
         MersenneTwister(42); n_id = 20, inner = 3,
-        true_a = 1.0, true_σ = 0.3, true_τ = 0.5
+        true_a = 1.0, true_σ = 0.3, true_ω = 0.5
     )
     res = fit_model(
         dm,
@@ -76,13 +59,13 @@ end
     params = NoLimits.get_params(res; scale = :untransformed)
     @test abs(params.a - 1.0) < 1.0
     @test 0.05 < params.σ < 2.0
-    @test 0.05 < params.τ < 2.0
+    @test 0.05 < params.ω < 2.0
 end
 
 @testset "AdaptiveNoLimitsMH warm-start state persistence" begin
     dm = _mh_scalar_dm(
         MersenneTwister(7); n_id = 10, inner = 2,
-        true_a = 1.0, true_σ = 0.5, true_τ = 0.0
+        true_a = 1.0, true_σ = 0.5, true_ω = 0.0
     )
     res = fit_model(
         dm,
@@ -261,7 +244,7 @@ function _saemixmh_retry_setup(; seed = 123, n_id = 24, inner = 4)
     rng = MersenneTwister(seed)
     dm = _mh_scalar_dm(
         rng; n_id = n_id, inner = inner,
-        true_a = 1.5, true_σ = 0.4, true_τ = 0.6, tmax = 1.5
+        true_a = 1.5, true_σ = 0.4, true_ω = 0.6, tmax = 1.5
     )
     _, batch_infos, const_cache = NoLimits._build_re_batch_infos(dm, NamedTuple())
     θ = get_θ0_untransformed(dm.model.fixed.fixed)
@@ -310,7 +293,7 @@ end
 @testset "SaemixMH Normal RE recovery" begin
     dm = _mh_scalar_dm(
         MersenneTwister(17); n_id = 30, inner = 4,
-        true_a = 2.0, true_σ = 0.4, true_τ = 0.8, tmax = 1.5
+        true_a = 2.0, true_σ = 0.4, true_ω = 0.8, tmax = 1.5
     )
     res = fit_model(
         dm,
@@ -327,7 +310,7 @@ end
     params = NoLimits.get_params(res; scale = :untransformed)
     @test abs(params.a - 2.0) < 0.8
     @test 0.05 < params.σ < 2.0
-    @test 0.05 < params.τ < 2.0
+    @test 0.05 < params.ω < 2.0
 end
 
 @testset "SaemixMH kernel 3 multivariate RE finite objective" begin
@@ -375,7 +358,7 @@ end
 @testset "SaemixMH closed-form M-step recovery" begin
     dm = _mh_scalar_dm(
         MersenneTwister(99); n_id = 20, inner = 4,
-        true_a = 1.5, true_σ = 0.5, true_τ = 0.7, tmax = 1.5
+        true_a = 1.5, true_σ = 0.5, true_ω = 0.7, tmax = 1.5
     )
 
     # With builtin_mean=:glm this triggers the closed-form mean update path
@@ -388,7 +371,7 @@ end
             mcmc_steps = 1,
             q_store_max = 2,
             builtin_mean = :glm,
-            re_cov_params = (; η = :τ),
+            re_cov_params = (; η = :ω),
             progress = false
         )
     )
@@ -396,13 +379,13 @@ end
     params = NoLimits.get_params(res; scale = :untransformed)
     @test abs(params.a - 1.5) < 0.8
     @test 0.05 < params.σ < 2.0
-    @test 0.05 < params.τ < 2.0
+    @test 0.05 < params.ω < 2.0
 end
 
 @testset "SaemixMH warm-start state persists" begin
     dm = _mh_scalar_dm(
         MersenneTwister(55); n_id = 10, inner = 3,
-        true_a = 1.0, true_σ = 0.3, true_τ = 0.0
+        true_a = 1.0, true_σ = 0.3, true_ω = 0.0
     )
     res = fit_model(
         dm,
@@ -484,7 +467,7 @@ end
 
     dm = _mh_scalar_dm(
         MersenneTwister(77); n_id = 30, inner = 4,
-        true_a = 1.5, true_σ = 0.4, true_τ = 0.6, tmax = 1.5
+        true_a = 1.5, true_σ = 0.4, true_ω = 0.6, tmax = 1.5
     )
     res = fit_model(
         dm,
@@ -512,7 +495,7 @@ end
 function _mstep_sa_dm(rng, n_id, inner)
     return _mh_scalar_dm(
         rng; n_id = n_id, inner = inner,
-        true_a = 1.5, true_σ = 0.4, true_τ = 0.6, tmax = 1.5
+        true_a = 1.5, true_σ = 0.4, true_ω = 0.6, tmax = 1.5
     )
 end
 
@@ -596,14 +579,14 @@ end
                 mcmc_steps = 1,
                 q_store_max = 2,
                 mstep_sa_on_params = true,
-                re_cov_params = (; η = :τ),
+                re_cov_params = (; η = :ω),
                 progress = false
             )
         )
 
         params = NoLimits.get_params(res; scale = :untransformed)
         @test 0.05 < params.σ < 5.0
-        @test 0.05 < params.τ < 5.0
+        @test 0.05 < params.ω < 5.0
     end
 
     @testset "constructor validation — max_estep_retries and retry_mcmc_steps" begin

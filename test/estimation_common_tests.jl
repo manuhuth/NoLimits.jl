@@ -286,7 +286,8 @@ end
     ll = loglikelihood(dm, θ, η_list)
 end
 
-@testset "loglikelihood ForwardDiff (fixed effects)" begin
+# Shared softplus scalar-RE model for the two ForwardDiff testsets below.
+softplus_fd_dm = let
     model = @Model begin
         @helpers begin
             softplus(u) = log1p(exp(u))
@@ -309,15 +310,13 @@ end
             y ~ Normal(softplus(a + η), σ)
         end
     end
+    df = DataFrame(ID = [1, 1], t = [0.0, 1.0], y = [1.0, 1.1])
+    DataModel(model, df; primary_id = :ID, time_col = :t)
+end
 
-    df = DataFrame(
-        ID = [1, 1],
-        t = [0.0, 1.0],
-        y = [1.0, 1.1]
-    )
-
-    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    θ = get_θ0_untransformed(model.fixed.fixed)
+@testset "loglikelihood ForwardDiff (fixed effects)" begin
+    dm = softplus_fd_dm
+    θ = get_θ0_untransformed(get_model(dm).fixed.fixed)
     η_list = [ComponentArray((η = 0.1,))]
 
     g = ForwardDiff.gradient(x -> loglikelihood(dm, x, η_list), θ)
@@ -326,37 +325,8 @@ end
 end
 
 @testset "loglikelihood ForwardDiff (random effects)" begin
-    model = @Model begin
-        @helpers begin
-            softplus(u) = log1p(exp(u))
-        end
-
-        @fixedEffects begin
-            a = RealNumber(0.3)
-            σ = RealNumber(0.5)
-        end
-
-        @covariates begin
-            t = Covariate()
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column = :ID)
-        end
-
-        @formulas begin
-            y ~ Normal(softplus(a + η), σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [1, 1],
-        t = [0.0, 1.0],
-        y = [1.0, 1.1]
-    )
-
-    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    θ = get_θ0_untransformed(model.fixed.fixed)
+    dm = softplus_fd_dm
+    θ = get_θ0_untransformed(get_model(dm).fixed.fixed)
     η0 = ComponentArray((η = 0.1,))
 
     g = ForwardDiff.gradient(η -> loglikelihood(dm, θ, [η]), η0)
@@ -365,43 +335,9 @@ end
 end
 
 @testset "loglikelihood ODE ForwardDiff (fixed effects)" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(0.2)
-            σ = RealNumber(0.3)
-        end
-
-        @covariates begin
-            t = Covariate()
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column = :ID)
-        end
-
-        @DifferentialEquation begin
-            D(x1) ~ -a * x1 + η
-        end
-
-        @initialDE begin
-            x1 = 1.0
-        end
-
-        @formulas begin
-            y ~ Normal(x1(t), σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [1, 1],
-        t = [0.0, 1.0],
-        y = [1.0, 0.9]
-    )
-
-    model_saveat = set_solver_config(model; saveat_mode = :saveat)
-    dm = DataModel(model_saveat, df; primary_id = :ID, time_col = :t)
-    θ = get_θ0_untransformed(model_saveat.fixed.fixed)
-    η_list = [ComponentArray((η = 0.1,))]
+    dm = fx_ode_dm()   # two individuals, so η_list has two entries
+    θ = get_θ0_untransformed(get_model(dm).fixed.fixed)
+    η_list = [ComponentArray((η = 0.1,)), ComponentArray((η = -0.1,))]
 
     g = ForwardDiff.gradient(x -> loglikelihood(dm, x, η_list), θ)
     @test g isa ComponentArray
@@ -409,45 +345,11 @@ end
 end
 
 @testset "loglikelihood ODE ForwardDiff (random effects)" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(0.2)
-            σ = RealNumber(0.3)
-        end
-
-        @covariates begin
-            t = Covariate()
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column = :ID)
-        end
-
-        @DifferentialEquation begin
-            D(x1) ~ -a * x1 + η
-        end
-
-        @initialDE begin
-            x1 = 1.0
-        end
-
-        @formulas begin
-            y ~ Normal(x1(t), σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [1, 1],
-        t = [0.0, 1.0],
-        y = [1.0, 0.9]
-    )
-
-    model_saveat = set_solver_config(model; saveat_mode = :saveat)
-    dm = DataModel(model_saveat, df; primary_id = :ID, time_col = :t)
-    θ = get_θ0_untransformed(model_saveat.fixed.fixed)
+    dm = fx_ode_dm()
+    θ = get_θ0_untransformed(get_model(dm).fixed.fixed)
     η0 = ComponentArray((η = 0.1,))
 
-    g = ForwardDiff.gradient(η -> loglikelihood(dm, θ, [η]), η0)
+    g = ForwardDiff.gradient(η -> loglikelihood(dm, θ, [η, η]), η0)
     @test g isa ComponentArray
     @test all(isfinite, collect(g))
 end

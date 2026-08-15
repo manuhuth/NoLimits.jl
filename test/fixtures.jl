@@ -803,6 +803,43 @@ function fx_fixre_laplace()
     )
 end
 
+# ── Tiny scalar RE with unit sd: y ~ Normal(a + η, σ), η ~ Normal(0, 1) ──────
+# The SAEM/MCEM smoke-test workhorse; pair with fx_tiny_re_df() or a custom df.
+function fx_tiny_re_model()
+    return _fx(
+        :tiny_re_model,
+        () -> @Model begin
+            @covariates begin
+                t = Covariate()
+            end
+            @fixedEffects begin
+                a = RealNumber(0.2)
+                σ = RealNumber(0.5, scale = :log)
+            end
+            @randomEffects begin
+                η = RandomEffect(Normal(0.0, 1.0); column = :ID)
+            end
+            @formulas begin
+                y ~ Normal(a + η, σ)
+            end
+        end
+    )
+end
+function fx_tiny_re_df()
+    return _fx(
+        :tiny_re_df,
+        () -> DataFrame(
+            ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [0.1, 0.2, 0.0, -0.1]
+        )
+    )
+end
+function fx_tiny_re_dm()
+    return _fx(
+        :tiny_re_dm,
+        () -> DataModel(fx_tiny_re_model(), fx_tiny_re_df(); primary_id = :ID, time_col = :t)
+    )
+end
+
 # ── Scalar RE on symbol IDs (A/B/C); Laplace fit pins η(B) via constants_re ──
 function fx_constre_df()
     return _fx(
@@ -813,26 +850,8 @@ function fx_constre_df()
         )
     )
 end
-function fx_constre_model()
-    return _fx(
-        :constre_model,
-        () -> @Model begin
-            @fixedEffects begin
-                a = RealNumber(0.1)
-                σ = RealNumber(0.3, scale = :log)
-            end
-            @covariates begin
-                t = Covariate()
-            end
-            @randomEffects begin
-                η = RandomEffect(Normal(0.0, 0.5); column = :ID)
-            end
-            @formulas begin
-                y ~ Normal(a + η, σ)
-            end
-        end
-    )
-end
+# Same structure as fx_fixre_model; only the DataModel (symbol IDs) differs.
+fx_constre_model() = fx_fixre_model()
 function fx_constre_dm()
     return _fx(
         :constre_dm,
@@ -891,3 +910,19 @@ function fx_varyre_dm()
 end
 # Level values matching fx_varyre_df's y exactly (σ ≈ 0): plots recover them.
 fx_varyre_constants_re() = (; η_year = (; A = 0.1, B = 0.4, C = 0.3))
+
+# ── HMM reference filter (shared by the hmm_* test files) ────────────────────
+function _recursive_hmm_loglikelihood(dists, ys)
+    prior = nothing
+    ll = 0.0
+    for (dist, y) in zip(dists, ys)
+        dist_use = prior === nothing ? dist : NoLimits._hmm_with_initial_probs(dist, prior)
+        if ismissing(y)
+            prior = probabilities_hidden_states(dist_use)
+        else
+            ll += logpdf(dist_use, y)
+            prior = posterior_hidden_states(dist_use, y)
+        end
+    end
+    return ll
+end

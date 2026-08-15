@@ -14,7 +14,6 @@ using Random
 import Turing
 
 # Access internal functions via module
-const _gh_rule = NoLimits._gh_rule
 const build_sparse_grid = NoLimits.build_sparse_grid
 
 # ── Shared models (each @Model source block compiles once; data varies per use) ──
@@ -34,49 +33,6 @@ const _GHQ_SCALAR_MODEL = @Model begin
     end
     @formulas begin
         y ~ Normal(a + η, σ)
-    end
-end
-
-# Prior-bearing scalar model for MAP/UQ; prior tightness parameterizable so the
-# "MAP pulls toward prior" testset can reuse the same source block.
-function _ghq_prior_model(; a0 = 1.0, a_prior_sd = 2.0)
-    return @Model begin
-        @fixedEffects begin
-            a = RealNumber(a0; prior = Normal(0.0, a_prior_sd))
-            σ = RealNumber(0.5, scale = :log; prior = LogNormal(0.0, 1.0))
-            ω = RealNumber(1.0, scale = :log; prior = LogNormal(0.0, 1.0))
-        end
-        @covariates begin
-            t = Covariate()
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, ω); column = :ID)
-        end
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-end
-
-# 1-d planar-flow RE with a saturating helper link (priorless; distinct from
-# the prior-bearing fx_npf fixture).
-const _GHQ_NPF_MODEL = @Model begin
-    @helpers begin
-        sat(u) = u / (1 + abs(u))
-    end
-    @fixedEffects begin
-        a = RealNumber(1.0)
-        σ = RealNumber(0.5, scale = :log)
-        ψ = NPFParameter(1, 2; seed = 1, calculate_se = false)
-    end
-    @covariates begin
-        t = Covariate()
-    end
-    @randomEffects begin
-        η = RandomEffect(NormalizingPlanarFlow(ψ); column = :ID)
-    end
-    @formulas begin
-        y ~ Normal(a + sat(η[1]), σ)
     end
 end
 

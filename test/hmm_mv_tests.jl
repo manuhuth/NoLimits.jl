@@ -9,20 +9,6 @@ using LinearAlgebra
 using Random
 using Turing
 
-function _recursive_hmm_loglikelihood(dists, ys)
-    prior = nothing
-    ll = 0.0
-    for (dist, y) in zip(dists, ys)
-        dist_use = prior === nothing ? dist : NoLimits._hmm_with_initial_probs(dist, prior)
-        if ismissing(y)
-            prior = probabilities_hidden_states(dist_use)
-        else
-            ll += logpdf(dist_use, y)
-            prior = posterior_hidden_states(dist_use, y)
-        end
-    end
-    return ll
-end
 
 # Discrete-time transition matrix and continuous-time rate matrix used throughout.
 # Q has stationary distribution [2/3, 1/3].

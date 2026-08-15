@@ -24,6 +24,62 @@ function _pooled_df(;
     return DataFrame(rows)
 end
 
+# shared fixtures — reused across testsets to cut @Model codegen
+_pooled_mean_model = @Model begin
+    @fixedEffects begin
+        μ = RealNumber(0.5)
+        ω = RealNumber(0.5, scale = :log)
+        σ = RealNumber(0.4, scale = :log)
+    end
+    @covariates begin
+        t = Covariate()
+    end
+    @randomEffects begin
+        η = RandomEffect(Normal(μ, ω); column = :ID)
+    end
+    @formulas begin
+        y ~ Normal(η, σ)
+    end
+end
+
+_pooled_agecov_model = @Model begin
+    @fixedEffects begin
+        γ = RealNumber(0.01)
+        ω = RealNumber(0.5, scale = :log)
+        σ = RealNumber(0.4, scale = :log)
+    end
+    @covariates begin
+        t = Covariate()
+        x = ConstantCovariateVector([:Age])
+    end
+    @randomEffects begin
+        η = RandomEffect(Normal(γ * x.Age, ω); column = :ID)
+    end
+    @formulas begin
+        y ~ Normal(η, σ)
+    end
+end
+
+function _pooled_init_model()
+    return @Model begin
+        @fixedEffects begin
+            μ = RealNumber(0.0)
+            ω = RealNumber(0.5, scale = :log)
+            b = RealNumber(0.0)
+            σ = RealNumber(0.4, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(μ, ω); column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(η + b * t, σ)
+        end
+    end
+end
+
 # ─── 1. shared parameter (RE dist + formulas) must be estimated ───────────────────
 
 @testset "pooled shared mean parameter is estimated" begin
@@ -66,23 +122,7 @@ end
 # ─── 2. RE-dist-only mean parameter must be estimated, ω frozen ───────────────────
 
 @testset "pooled RE-only mean parameter is estimated" begin
-    model = @Model begin
-        @fixedEffects begin
-            μ = RealNumber(0.0)
-            ω = RealNumber(0.5, scale = :log)
-            b = RealNumber(0.0)
-            σ = RealNumber(0.4, scale = :log)
-        end
-        @covariates begin
-            t = Covariate()
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(μ, ω); column = :ID)
-        end
-        @formulas begin
-            y ~ Normal(η + b * t, σ)
-        end
-    end
+    model = _pooled_init_model()
     df = _pooled_df(; gen = (id, t, rng) -> 1.2 + 0.5 * t + 0.2 * randn(rng))
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     res = fit_model(dm, NoLimits.Pooled(); serialization = NoLimits.EnsembleSerial())
@@ -112,23 +152,7 @@ end
 # ─── 3. covariate-parameterized RE mean ───────────────────────────────────────────
 
 @testset "pooled covariate-dependent RE mean" begin
-    model = @Model begin
-        @fixedEffects begin
-            γ = RealNumber(0.01)
-            ω = RealNumber(0.5, scale = :log)
-            σ = RealNumber(0.4, scale = :log)
-        end
-        @covariates begin
-            t = Covariate()
-            x = ConstantCovariateVector([:Age])
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(γ * x.Age, ω); column = :ID)
-        end
-        @formulas begin
-            y ~ Normal(η, σ)
-        end
-    end
+    model = _pooled_agecov_model
     df = _pooled_df(; gen = (id, t, rng) -> 0.05 * (20.0 + 2.0 * id) + 0.1 * randn(rng))
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     res = fit_model(dm, NoLimits.Pooled(); serialization = NoLimits.EnsembleSerial())
@@ -404,22 +428,7 @@ end
 # ─── 10. AD gradient through the η(θ) path matches finite differences ─────────────
 
 @testset "pooled AD gradient includes plug-in path" begin
-    model = @Model begin
-        @fixedEffects begin
-            μ = RealNumber(0.4)
-            ω = RealNumber(0.5, scale = :log)
-            σ = RealNumber(0.3, scale = :log)
-        end
-        @covariates begin
-            t = Covariate()
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(μ, ω); column = :ID)
-        end
-        @formulas begin
-            y ~ Normal(η, σ)
-        end
-    end
+    model = _pooled_mean_model
     df = _pooled_df(; n_ids = 6, n_obs = 4, gen = (id, t, rng) -> 0.9 + 0.1 * randn(rng))
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
 
@@ -447,22 +456,7 @@ end
 # ─── 11. user constants override and interact correctly ───────────────────────────
 
 @testset "pooled user constants interplay" begin
-    model = @Model begin
-        @fixedEffects begin
-            μ = RealNumber(0.0)
-            ω = RealNumber(0.5, scale = :log)
-            σ = RealNumber(0.4, scale = :log)
-        end
-        @covariates begin
-            t = Covariate()
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(μ, ω); column = :ID)
-        end
-        @formulas begin
-            y ~ Normal(η, σ)
-        end
-    end
+    model = _pooled_mean_model
     df = _pooled_df(; gen = (id, t, rng) -> 1.0 + 0.1 * randn(rng))
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
 
@@ -480,22 +474,7 @@ end
 # ─── 12. force_free keeps a dispersion parameter free ─────────────────────────────
 
 @testset "pooled force_free" begin
-    model = @Model begin
-        @fixedEffects begin
-            μ = RealNumber(0.5)
-            ω = RealNumber(0.5, scale = :log)
-            σ = RealNumber(0.4, scale = :log)
-        end
-        @covariates begin
-            t = Covariate()
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(μ, ω); column = :ID)
-        end
-        @formulas begin
-            y ~ Normal(η, σ)
-        end
-    end
+    model = _pooled_mean_model
     df = _pooled_df(; gen = (id, t, rng) -> 0.8 + 0.1 * randn(rng))
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     res = fit_model(
@@ -581,26 +560,6 @@ end
 end
 
 # ─── 16. pooled_init warm start for fit_model ─────────────────────────────────────
-
-function _pooled_init_model()
-    return @Model begin
-        @fixedEffects begin
-            μ = RealNumber(0.0)
-            ω = RealNumber(0.5, scale = :log)
-            b = RealNumber(0.0)
-            σ = RealNumber(0.4, scale = :log)
-        end
-        @covariates begin
-            t = Covariate()
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(μ, ω); column = :ID)
-        end
-        @formulas begin
-            y ~ Normal(η + b * t, σ)
-        end
-    end
-end
 
 @testset "pooled_init warm start" begin
     model = _pooled_init_model()
@@ -734,23 +693,7 @@ end
 @testset "pooled cross-validation" begin
     # covariate-dependent RE mean: held-out individuals must get THEIR OWN
     # covariate-driven plug-in, not zero and not a training individual's value
-    model = @Model begin
-        @fixedEffects begin
-            γ = RealNumber(0.01)
-            ω = RealNumber(0.5, scale = :log)
-            σ = RealNumber(0.4, scale = :log)
-        end
-        @covariates begin
-            t = Covariate()
-            x = ConstantCovariateVector([:Age])
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(γ * x.Age, ω); column = :ID)
-        end
-        @formulas begin
-            y ~ Normal(η, σ)
-        end
-    end
+    model = _pooled_agecov_model
     df = _pooled_df(; gen = (id, t, rng) -> 0.05 * (20.0 + 2.0 * id) + 0.1 * randn(rng))
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
 

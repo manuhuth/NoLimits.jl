@@ -51,25 +51,28 @@ using SciMLBase
     @test any(sim.y .!= df.y)
 end
 
-@testset "simulate_data does not simulate events" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(0.3)
-            σ = RealNumber(0.5)
-        end
-
-        @covariates begin
-            t = Covariate()
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column = :ID)
-        end
-
-        @formulas begin
-            y ~ Normal(exp(a + η), σ)
-        end
+# Shared scalar-RE model for the events/simulate_data_model/threading testsets.
+sim_exp_re_model = @Model begin
+    @fixedEffects begin
+        a = RealNumber(0.3)
+        σ = RealNumber(0.5)
     end
+
+    @covariates begin
+        t = Covariate()
+    end
+
+    @randomEffects begin
+        η = RandomEffect(Normal(0.0, 1.0); column = :ID)
+    end
+
+    @formulas begin
+        y ~ Normal(exp(a + η), σ)
+    end
+end
+
+@testset "simulate_data does not simulate events" begin
+    model = sim_exp_re_model
 
     df = DataFrame(
         ID = [1, 1, 1],
@@ -103,24 +106,7 @@ end
 end
 
 @testset "simulate_data_model builds DataModel" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(0.3)
-            σ = RealNumber(0.5)
-        end
-
-        @covariates begin
-            t = Covariate()
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column = :ID)
-        end
-
-        @formulas begin
-            y ~ Normal(exp(a + η), σ)
-        end
-    end
+    model = sim_exp_re_model
 
     df = DataFrame(
         ID = [1, 1],
@@ -435,24 +421,8 @@ end
 end
 
 @testset "simulate_data threading" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(0.3)
-            σ = RealNumber(0.5)
-        end
-
-        @covariates begin
-            t = Covariate()
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column = :SITE)
-        end
-
-        @formulas begin
-            y ~ Normal(exp(a + η), σ)
-        end
-    end
+    # Only checks that threaded simulation runs; RE grouping column is not asserted.
+    model = sim_exp_re_model
 
     df = DataFrame(
         ID = [1, 1, 2, 2],
@@ -469,32 +439,8 @@ end
 end
 
 @testset "simulate_data uses row-specific random effects for varying non-ODE groups" begin
-    model = @Model begin
-        @fixedEffects begin
-            σ = RealNumber(1.0e-6, scale = :log)
-        end
-
-        @covariates begin
-            t = Covariate()
-        end
-
-        @randomEffects begin
-            η_year = RandomEffect(Normal(0.0, 1.0); column = :YEAR)
-        end
-
-        @formulas begin
-            y ~ Normal(η_year, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [1, 1, 1, 2, 2],
-        YEAR = [:A, :B, :B, :A, :C],
-        t = [0.0, 1.0, 2.0, 0.0, 1.0],
-        y = zeros(5)
-    )
-
-    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    # simulate_data overwrites y, so the fixture df's y values are irrelevant.
+    dm = fx_varyre_dm()
     sim = simulate_data(dm; rng = MersenneTwister(21))
 
     @test sim.η_year[1] == sim.η_year[4]

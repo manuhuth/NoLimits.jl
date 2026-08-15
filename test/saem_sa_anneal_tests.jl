@@ -160,29 +160,14 @@ end
 
 # ── helpers for integration tests ─────────────────────────────────────────────
 
+# Normal-RE case reuses fx_re_model (a, σ resid, ω = RE sd, all inits compatible).
 function _anneal_dm_normal()
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-        @fixedEffects begin
-            a = RealNumber(0.2)
-            sigma_y = RealNumber(0.5, scale = :log)
-            sigma_e = RealNumber(0.4, scale = :log)
-        end
-        @randomEffects begin
-            eta = RandomEffect(Normal(0.0, sigma_e); column = :ID)
-        end
-        @formulas begin
-            y ~ Normal(a + eta, sigma_y)
-        end
-    end
     df = DataFrame(
         ID = [:A, :A, :B, :B, :C, :C, :D, :D, :E, :E],
         t = repeat([0.0, 1.0], 5),
         y = randn(10)
     )
-    return DataModel(model, df; primary_id = :ID, time_col = :t)
+    return DataModel(fx_re_model(), df; primary_id = :ID, time_col = :t)
 end
 
 function _anneal_dm_lognormal()
@@ -237,7 +222,7 @@ end
 
 # ── integration tests ─────────────────────────────────────────────────────────
 
-@testset "SA anneal: Normal RE — auto-detected sigma_e floored" begin
+@testset "SA anneal: Normal RE — auto-detected ω floored" begin
     dm = _anneal_dm_normal()
     res = fit_model(
         dm,
@@ -254,8 +239,8 @@ end
     @test all(conv.anneal_active[1:2])
 end
 
-@testset "SA anneal: Normal RE — no clamp when sigma_e starts large" begin
-    # sigma_e starts at 0.4 which is > alpha*0.4 = 0.36, so no clamp applied
+@testset "SA anneal: Normal RE — no clamp when ω starts large" begin
+    # ω starts at 0.4 which is > alpha*0.4 = 0.36, so no clamp applied
     dm = _anneal_dm_normal()
     res = fit_model(
         dm,
@@ -320,26 +305,8 @@ end
 end
 
 @testset "SA anneal: no annealing when targets is empty and re_cov_params is empty" begin
-    # Model with no re_cov_params auto-detectable (no Normal/LogNormal RE with cov param)
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-        @fixedEffects begin
-            a = RealNumber(0.2)
-            σ = RealNumber(0.5, scale = :log)
-        end
-        @randomEffects begin
-            eta = RandomEffect(Normal(0.0, 1.0); column = :ID)  # literal SD, not a param
-        end
-        @formulas begin
-            y ~ Normal(a + eta, σ)
-        end
-    end
-    df = DataFrame(
-        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [0.1, 0.2, 0.0, -0.1]
-    )
-    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    # fx_tiny_re_model: literal RE SD, so nothing is auto-detectable
+    dm = fx_tiny_re_dm()
     res = fit_model(
         dm,
         NoLimits.SAEM(;

@@ -17,18 +17,28 @@ end
 end
 
 @testset "SAEM auto-detect: outcome-only Normal scale" begin
+    # Shared fixture model/df; inits are irrelevant to autodetect.
+    auto_cfg = _auto_cfg(fx_tiny_re_model(), fx_tiny_re_df())
+    @test auto_cfg !== nothing
+    @test auto_cfg.re_cov_params == NamedTuple()
+    @test auto_cfg.re_mean_params == NamedTuple()
+    @test auto_cfg.resid_var_param == :σ
+end
+
+@testset "SAEM auto-detect: scalar RE with parameterized mean and sd" begin
     model = @Model begin
         @covariates begin
             t = Covariate()
         end
 
         @fixedEffects begin
-            a = RealNumber(0.2)
+            a = RealNumber(0.1)
             σ = RealNumber(0.4, scale = :log)
+            τ = RealNumber(0.3, scale = :log)
         end
 
         @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column = :ID)
+            η = RandomEffect(Normal(a, τ); column = :ID)
         end
 
         @formulas begin
@@ -41,8 +51,45 @@ end
     )
     auto_cfg = _auto_cfg(model, df)
     @test auto_cfg !== nothing
-    @test auto_cfg.re_cov_params == NamedTuple()
-    @test auto_cfg.re_mean_params == NamedTuple()
+    @test auto_cfg.re_cov_params == (; η = :τ)
+    @test auto_cfg.re_mean_params == (; η = :a)
+    @test auto_cfg.resid_var_param == :σ
+end
+
+@testset "SAEM auto-detect: MvNormal diagonal with scalar means and variances" begin
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+
+        @fixedEffects begin
+            μ1 = RealNumber(0.1)
+            μ2 = RealNumber(0.2)
+            ω1 = RealNumber(0.5, scale = :log)
+            ω2 = RealNumber(0.4, scale = :log)
+            σ = RealNumber(0.3, scale = :log)
+        end
+
+        @randomEffects begin
+            η = RandomEffect(
+                MvNormal([μ1, μ2], LinearAlgebra.Diagonal([ω1, ω2])); column = :ID
+            )
+        end
+
+        @formulas begin
+            y ~ Normal(η[1], σ)
+        end
+    end
+
+    df = DataFrame(
+        ID = [:A, :A, :B, :B, :C, :C],
+        t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+        y = [0.1, 0.15, 0.2, 0.25, 0.05, 0.1]
+    )
+    auto_cfg = _auto_cfg(model, df)
+    @test auto_cfg !== nothing
+    @test auto_cfg.re_cov_params == (; η = (:ω1, :ω2))
+    @test auto_cfg.re_mean_params == (; η = (:μ1, :μ2))
     @test auto_cfg.resid_var_param == :σ
 end
 

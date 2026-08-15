@@ -8,8 +8,8 @@
 set -u
 cd "$(dirname "$0")/.."
 
-# Group count = TEST_GROUPS elements in runtests.jl (each opens with `["...`).
-total=$(grep -cE '^\s+\["' test/runtests.jl)
+# Group count = TEST_GROUPS elements in runtests.jl (each opens with `[` or `["...`).
+total=$(grep -cE '^\s+\[($|")' test/runtests.jl)
 groups=("$@")
 [ ${#groups[@]} -eq 0 ] && groups=($(seq 1 "$total"))
 
