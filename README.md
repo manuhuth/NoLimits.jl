@@ -31,7 +31,7 @@
     <img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"/>
   </a>
   <a href="https://julialang.org">
-    <img src="https://img.shields.io/badge/Julia-1.12%2B-9558B2.svg?logo=julia&logoColor=white" alt="Julia 1.12+"/>
+    <img src="https://img.shields.io/badge/Julia-1.10%2B-9558B2.svg?logo=julia&logoColor=white" alt="Julia 1.10+"/>
   </a>
   <a href="https://www.repostatus.org/#active">
     <img src="https://www.repostatus.org/badges/latest/active.svg" alt="Project Status: Active"/>
@@ -104,7 +104,7 @@ See [Capabilities](https://manuhuth.github.io/NoLimits.jl/dev/capabilities) for 
 
 ## Installation
 
-NoLimits.jl requires Julia 1.12 or later. It is registered in the Julia General Registry, so
+NoLimits.jl supports Julia 1.10 (the current LTS), 1.11, and 1.12. It is registered in the Julia General Registry, so
 you can install it with:
 
 ```julia

@@ -228,6 +228,10 @@ mutable struct _LaplaceCache{T, B, G, A, H}
     grad_cache::G
     ad_cache::A
     hess_cache::H
+    # explicit inner ctor: the auto outer ctor leaves T unbound for θ_cache=nothing (Aqua, 1.10)
+    function _LaplaceCache{T, B, G, A, H}(θ_cache, bstar_cache, grad_cache, ad_cache, hess_cache) where {T, B, G, A, H}
+        return new{T, B, G, A, H}(θ_cache, bstar_cache, grad_cache, ad_cache, hess_cache)
+    end
 end
 
 function _LaplaceCache(

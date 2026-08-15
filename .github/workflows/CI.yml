@@ -94,6 +94,34 @@ jobs:
           NL_TEST_FILES: "estimation_common_tests.jl,api_primitives_tests.jl"
         run: julia --color=yes --project=. -e 'using Pkg; Pkg.test(; julia_args=["--check-bounds=auto"])'
 
+  # Compat canary for the 1.10 (LTS) floor (#37): one job, three groups (Aqua
+  # compat/deps, estimation API, pooled — the file with 1.10-RNG-sensitive
+  # tolerances). The full 1.10 sweep runs on marvin, not here. Own cache
+  # family: a 1.10 depot shares nothing with the 1.12 shards. The pinned
+  # test/Manifest.toml is 1.12-only and 1.10's Pkg.test sandbox errors on it
+  # ("can not merge projects"), so drop it and re-resolve (~2-6 min) —
+  # accepted for a single job.
+  compat-lts:
+    name: test compat (Julia 1.10)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: "1.10"
+      - uses: julia-actions/cache@v3
+        with:
+          cache-name: julia-test-110
+      - uses: julia-actions/julia-buildpkg@v1
+      - name: Drop 1.12-pinned test manifest
+        run: rm test/Manifest.toml
+      - name: Run tests
+        env:
+          NL_TEST_GROUP: "2,9,14"
+          NL_BATCH_PARALLEL: "true"
+          OPENBLAS_NUM_THREADS: "2"
+        run: julia --color=yes --project=. -e 'using Pkg; Pkg.test(; julia_args=["--check-bounds=auto"])'
+
   # Aggregator. Keeps the exact check name branch protection requires, so the
   # shard count can change without touching the protection settings. Fails if
   # any dependency failed, was cancelled, or was skipped - `needs.*.result` must
@@ -102,13 +130,13 @@ jobs:
   test:
     name: test (Julia 1.12, ubuntu)
     runs-on: ubuntu-latest
-    needs: [shard, threaded]
+    needs: [shard, threaded, compat-lts]
     if: always()
     steps:
       - name: Check results
         run: |
           failed=0
-          for r in "shard:${{ needs.shard.result }}" "threaded:${{ needs.threaded.result }}"; do
+          for r in "shard:${{ needs.shard.result }}" "threaded:${{ needs.threaded.result }}" "compat-lts:${{ needs.compat-lts.result }}"; do
             echo "$r"
             [ "${r#*:}" = "success" ] || failed=1
           done
