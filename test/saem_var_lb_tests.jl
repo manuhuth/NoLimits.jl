@@ -16,7 +16,8 @@ using Random
     θ0_u = ComponentArray(σ_η = 1.0, σ = 0.5, a = 0.0)
 
     targets = NoLimits._saem_build_var_lb_target_set(
-        re_cov_params, re_family_map, resid_var_param, θ0_u)
+        re_cov_params, re_family_map, resid_var_param, θ0_u
+    )
     @test :σ_η in targets
     @test :σ in targets
     @test :a ∉ targets
@@ -29,7 +30,8 @@ end
     θ0_u = ComponentArray(ω = 0.3, a = 1.0)
 
     targets = NoLimits._saem_build_var_lb_target_set(
-        re_cov_params, re_family_map, resid_var_param, θ0_u)
+        re_cov_params, re_family_map, resid_var_param, θ0_u
+    )
     @test :ω in targets
     @test :a ∉ targets
 end
@@ -42,7 +44,8 @@ end
     θ0_u = ComponentArray(Ω = [1.0 0.0; 0.0 1.0])
 
     targets = NoLimits._saem_build_var_lb_target_set(
-        re_cov_params, re_family_map, resid_var_param, θ0_u)
+        re_cov_params, re_family_map, resid_var_param, θ0_u
+    )
     @test isempty(targets)  # matrix params skipped
 end
 
@@ -54,7 +57,8 @@ end
     θ0_u = ComponentArray(σ_η = 1.0)
 
     targets = NoLimits._saem_build_var_lb_target_set(
-        re_cov_params, re_family_map, resid_var_param, θ0_u)
+        re_cov_params, re_family_map, resid_var_param, θ0_u
+    )
     @test :σ_η in targets
 end
 
@@ -65,7 +69,8 @@ end
     θ0_u = ComponentArray(α = 2.0)
 
     targets = NoLimits._saem_build_var_lb_target_set(
-        re_cov_params, re_family_map, resid_var_param, θ0_u)
+        re_cov_params, re_family_map, resid_var_param, θ0_u
+    )
     @test isempty(targets)
 end
 
@@ -76,48 +81,49 @@ end
     θ0_u = ComponentArray(σ1 = 0.5, σ2 = 0.3)
 
     targets = NoLimits._saem_build_var_lb_target_set(
-        re_cov_params, re_family_map, resid_var_param, θ0_u)
+        re_cov_params, re_family_map, resid_var_param, θ0_u
+    )
     @test :σ1 in targets
     @test :σ2 in targets
 end
 
 @testset "_saem_apply_var_lb: scalar clamping" begin
-    θu = ComponentArray(σ = 1e-8, a = 0.5)
-    θu_lb = NoLimits._saem_apply_var_lb(θu, (:σ,), 1e-5)
-    @test θu_lb.σ ≈ 1e-5
+    θu = ComponentArray(σ = 1.0e-8, a = 0.5)
+    θu_lb = NoLimits._saem_apply_var_lb(θu, (:σ,), 1.0e-5)
+    @test θu_lb.σ ≈ 1.0e-5
     @test θu_lb.a ≈ 0.5  # untouched
     @test θu_lb !== θu   # new object returned
 
     # No clamping needed
     θu2 = ComponentArray(σ = 0.5)
-    θu2_lb = NoLimits._saem_apply_var_lb(θu2, (:σ,), 1e-5)
+    θu2_lb = NoLimits._saem_apply_var_lb(θu2, (:σ,), 1.0e-5)
     @test θu2_lb === θu2  # same object — no copy
 end
 
 @testset "_saem_apply_var_lb: vector clamping" begin
-    θu = ComponentArray(ω = [1e-9, 0.3, 1e-10])
-    θu_lb = NoLimits._saem_apply_var_lb(θu, (:ω,), 1e-5)
-    @test θu_lb.ω[1] ≈ 1e-5
+    θu = ComponentArray(ω = [1.0e-9, 0.3, 1.0e-10])
+    θu_lb = NoLimits._saem_apply_var_lb(θu, (:ω,), 1.0e-5)
+    @test θu_lb.ω[1] ≈ 1.0e-5
     @test θu_lb.ω[2] ≈ 0.3
-    @test θu_lb.ω[3] ≈ 1e-5
+    @test θu_lb.ω[3] ≈ 1.0e-5
 end
 
 @testset "_saem_apply_var_lb: empty targets no-op" begin
-    θu = ComponentArray(σ = 1e-9)
-    θu_lb = NoLimits._saem_apply_var_lb(θu, (), 1e-5)
+    θu = ComponentArray(σ = 1.0e-9)
+    θu_lb = NoLimits._saem_apply_var_lb(θu, (), 1.0e-5)
     @test θu_lb === θu
 end
 
 @testset "SAEMOptions: auto_var_lb defaults" begin
     opts = NoLimits.SAEM()
     @test opts.saem.auto_var_lb == true
-    @test opts.saem.var_lb_value == 1e-5
+    @test opts.saem.var_lb_value == 1.0e-5
 end
 
 @testset "SAEMOptions: auto_var_lb explicit override" begin
-    opts = NoLimits.SAEM(auto_var_lb = false, var_lb_value = 1e-6)
+    opts = NoLimits.SAEM(auto_var_lb = false, var_lb_value = 1.0e-6)
     @test opts.saem.auto_var_lb == false
-    @test opts.saem.var_lb_value == 1e-6
+    @test opts.saem.var_lb_value == 1.0e-6
 end
 
 # ── integration tests ─────────────────────────────────────────────────────────
@@ -145,35 +151,39 @@ function _make_normal_re_dm()
         t = repeat([0.0, 1.0, 2.0, 3.0], 5),
         y = 0.5 .+ 0.1 .* randn(20)
     )
-    DataModel(m, df; primary_id = :ID, time_col = :t)
+    return DataModel(m, df; primary_id = :ID, time_col = :t)
 end
 
 @testset "var lb integration: Normal RE — lb prevents collapse" begin
     dm = _make_normal_re_dm()
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         NoLimits.SAEM(;
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2,
             auto_var_lb = true,
-            var_lb_value = 1e-5
-        ))
+            var_lb_value = 1.0e-5
+        )
+    )
     θ = NoLimits.get_params(res; scale = :untransformed)
     # σ_η and σ must stay ≥ 1e-5 after clamping
-    @test Float64(θ.σ_η) >= 1e-5
-    @test Float64(θ.σ) >= 1e-5
+    @test Float64(θ.σ_η) >= 1.0e-5
+    @test Float64(θ.σ) >= 1.0e-5
 end
 
 @testset "var lb integration: auto_var_lb=false — no floor enforced" begin
     # Just checks the run completes without error; no assertion on parameter magnitude
     dm = _make_normal_re_dm()
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         NoLimits.SAEM(;
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2,
             auto_var_lb = false
-        ))
+        )
+    )
     @test NoLimits.get_objective(res) !== nothing
 end
 
@@ -200,17 +210,19 @@ end
         y = 0.8 .+ 0.1 .* randn(16)
     )
     dm = DataModel(m, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         NoLimits.SAEM(;
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2,
             auto_var_lb = true,
-            var_lb_value = 1e-5
-        ))
+            var_lb_value = 1.0e-5
+        )
+    )
     θ = NoLimits.get_params(res; scale = :untransformed)
-    @test Float64(θ.ω) >= 1e-5
-    @test Float64(θ.σ) >= 1e-5
+    @test Float64(θ.ω) >= 1.0e-5
+    @test Float64(θ.σ) >= 1.0e-5
 end
 
 @testset "var lb integration: min rule — anneal_min_sd < var_lb_value" begin
@@ -238,16 +250,18 @@ end
         y = 0.5 .+ 0.1 .* randn(20)
     )
     dm = DataModel(m, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         NoLimits.SAEM(;
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2,
             anneal_to_fixed = (:η,),
-            anneal_min_sd = 1e-6,
+            anneal_min_sd = 1.0e-6,
             auto_var_lb = true,
-            var_lb_value = 1e-5
-        ))
+            var_lb_value = 1.0e-5
+        )
+    )
     @test NoLimits.get_objective(res) !== nothing
 end
 
@@ -278,19 +292,21 @@ end
         y = fill(0.5, 32)   # identical observations → RE variance collapses to 0 immediately
     )
     dm = DataModel(m, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         NoLimits.SAEM(;
             sampler = MH(),
             turing_kwargs = (n_samples = 3, n_adapt = 2, progress = false),
             maxiters = 20,
             t0 = 5,
             auto_var_lb = true,
-            var_lb_value = 1e-5
-        ); rng = Random.Xoshiro(0))
+            var_lb_value = 1.0e-5
+        ); rng = Random.Xoshiro(0)
+    )
     θ = NoLimits.get_params(res; scale = :untransformed)
     # exp(log(1e-5)) < 1e-5 by 2 ulps: allow the log-scale transform round-trip.
-    @test Float64(θ.ω) >= 1e-5 * (1 - 1e-12)
-    @test Float64(θ.σ) >= 1e-5 * (1 - 1e-12)
+    @test Float64(θ.ω) >= 1.0e-5 * (1 - 1.0e-12)
+    @test Float64(θ.σ) >= 1.0e-5 * (1 - 1.0e-12)
     @test isfinite(NoLimits.get_objective(res))
 end
 
@@ -319,14 +335,16 @@ end
         y = 0.5 .+ 0.1 .* randn(20)
     )
     dm = DataModel(_VARLB_MVDIAG_MODEL, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         NoLimits.SAEM(;
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2,
             anneal_to_fixed = (:η,),
-            anneal_min_sd = 1e-5
-        ))
+            anneal_min_sd = 1.0e-5
+        )
+    )
 end
 
 @testset "anneal_to_fixed: MvNormal RE — all schedules accepted" begin
@@ -337,15 +355,17 @@ end
     )
     dm = DataModel(_VARLB_MVDIAG_MODEL, df; primary_id = :ID, time_col = :t)
     for sched in (:exponential, :linear, :gamma)
-        res = fit_model(dm,
+        res = fit_model(
+            dm,
             NoLimits.SAEM(;
                 sampler = MH(),
                 turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
                 maxiters = 2,
                 anneal_to_fixed = (:η,),
                 anneal_schedule = sched,
-                anneal_min_sd = 1e-5
-            ))
+                anneal_min_sd = 1.0e-5
+            )
+        )
     end
 end
 
@@ -380,13 +400,15 @@ end
     )
     dm = DataModel(m, df; primary_id = :ID, time_col = :t)
 
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         NoLimits.SAEM(;
             sampler = MH(),
             turing_kwargs = (n_samples = 3, n_adapt = 2, progress = false),
             maxiters = 10,
             anneal_to_fixed = (:a, :b)
-        ))
+        )
+    )
 
     re = NoLimits.get_random_effects(res)
     θu = NoLimits.get_params(res; scale = :untransformed)
@@ -396,8 +418,8 @@ end
     @test length(unique(re.b.b_1)) == 1
 
     # That value should equal the distribution mean = mu_a / mu_b at estimated θu
-    @test re.a.a_1[1]≈θu.mu_a atol=1e-8
-    @test re.b.b_1[1]≈θu.mu_b atol=1e-8
+    @test re.a.a_1[1] ≈ θu.mu_a atol = 1.0e-8
+    @test re.b.b_1[1] ≈ θu.mu_b atol = 1.0e-8
 end
 
 @testset "anneal_to_fixed EBE: non-annealed RE still varies freely" begin
@@ -426,20 +448,22 @@ end
     )
     dm = DataModel(m, df; primary_id = :ID, time_col = :t)
 
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         NoLimits.SAEM(;
             sampler = MH(),
             turing_kwargs = (n_samples = 3, n_adapt = 2, progress = false),
             maxiters = 10,
             anneal_to_fixed = (:a,)
-        ))
+        )
+    )
 
     re = NoLimits.get_random_effects(res)
     θu = NoLimits.get_params(res; scale = :untransformed)
 
     # Annealed RE: all identical and equal to distribution mean
     @test length(unique(re.a.a_1)) == 1
-    @test re.a.a_1[1]≈θu.mu_a atol=1e-8
+    @test re.a.a_1[1] ≈ θu.mu_a atol = 1.0e-8
 
     # Non-annealed RE: column present for all individuals
     @test :η_1 in propertynames(re.η)
@@ -472,13 +496,15 @@ end
     )
     dm = DataModel(m, df; primary_id = :ID, time_col = :t)
 
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         NoLimits.SAEM(;
             sampler = MH(),
             turing_kwargs = (n_samples = 3, n_adapt = 2, progress = false),
             maxiters = 10,
             anneal_to_fixed = (:η,)
-        ))
+        )
+    )
 
     re = NoLimits.get_random_effects(res)
     θu = NoLimits.get_params(res; scale = :untransformed)
@@ -488,8 +514,8 @@ end
     @test length(unique(re.η.η_2)) == 1
 
     # Values equal the MvNormal mean [mu, mu]
-    @test re.η.η_1[1]≈θu.mu atol=1e-8
-    @test re.η.η_2[1]≈θu.mu atol=1e-8
+    @test re.η.η_1[1] ≈ θu.mu atol = 1.0e-8
+    @test re.η.η_2[1] ≈ θu.mu atol = 1.0e-8
 end
 
 @testset "anneal_to_fixed EBE: notes stores anneal_to_fixed for serialization" begin
@@ -516,13 +542,15 @@ end
     )
     dm = DataModel(m, df; primary_id = :ID, time_col = :t)
 
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         NoLimits.SAEM(;
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 5,
             anneal_to_fixed = (:a,)
-        ))
+        )
+    )
 
     notes = NoLimits.get_notes(res)
     @test hasproperty(notes, :anneal_to_fixed)

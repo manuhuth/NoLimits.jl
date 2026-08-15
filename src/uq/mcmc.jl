@@ -16,8 +16,10 @@ function _chain_keys_for_free(fe::FixedEffects, free_names::Vector{Symbol})
             for k in eachindex(spec.lie.free_idx)
                 push!(out, string(name, "[", k, "]"))
             end
-        elseif (spec.kind == :expm || spec.kind == :cholesky ||
-                (spec.kind == :lie && spec.lie === nothing)) && v isa AbstractMatrix
+        elseif (
+                spec.kind == :expm || spec.kind == :cholesky ||
+                    (spec.kind == :lie && spec.lie === nothing)
+            ) && v isa AbstractMatrix
             n = size(v, 1)
             for j in 1:n
                 for i in 1:j
@@ -70,18 +72,22 @@ end
     return 0
 end
 
-function _compute_uq_chain(res::FitResult;
+function _compute_uq_chain(
+        res::FitResult;
         level::Float64,
         constants::Union{Nothing, NamedTuple},
         mcmc_warmup::Union{Nothing, Int},
         mcmc_draws::Union{Nothing, Int},
         default_draws::Int,
-        rng::AbstractRNG)
+        rng::AbstractRNG
+    )
     method = get_method(res)
     # Chain UQ only needs the posterior chain, which the result carries - so route on the
     # result type (a custom Bayesian method packaged via build_fit_result is first-class here).
-    (method isa MCMC || method isa VI ||
-     get_result(res) isa MCMCResult || get_result(res) isa VIResult) ||
+    (
+        method isa MCMC || method isa VI ||
+            get_result(res) isa MCMCResult || get_result(res) isa VIResult
+    ) ||
         error("Chain UQ requires a posterior-chain fit result (MCMC/VI or an MCMCResult).")
 
     dm = get_data_model(res)
@@ -153,7 +159,7 @@ function _compute_uq_chain(res::FitResult;
         end
         used_draws = length(draw_pairs)
         requested_draws = mcmc_draws === nothing ? available_draws : Int(mcmc_draws)
-        @info "MCMC UQ draws" requested=requested_draws available=available_draws used=used_draws warmup=warmup n_iter=n_iter n_chains=n_chains
+        @info "MCMC UQ draws" requested = requested_draws available = available_draws used = used_draws warmup = warmup n_iter = n_iter n_chains = n_chains
 
         draws_n = Matrix{Float64}(undef, length(draw_pairs), length(active_keys))
         for (i, (it, ch)) in enumerate(draw_pairs)
@@ -174,13 +180,14 @@ function _compute_uq_chain(res::FitResult;
             n_iter = n_iter,
             n_chains = n_chains,
             n_active_parameters = length(active_idx),
-            source = :mcmc_chain
+            source = :mcmc_chain,
         )
     else
         requested_draws = mcmc_draws === nothing ? Int(default_draws) : Int(mcmc_draws)
         requested_draws > 0 || error("mcmc_draws must be positive.")
         vi_draws = sample_posterior(
-            res; n_draws = requested_draws, rng = rng, return_names = true)
+            res; n_draws = requested_draws, rng = rng, return_names = true
+        )
         raw_draws = vi_draws.draws
         coord_names = vi_draws.names
         size(raw_draws, 1) >= 1 || error("VI posterior sampling returned no draws.")
@@ -199,7 +206,7 @@ function _compute_uq_chain(res::FitResult;
         end
 
         n_draws_used = size(draws_n, 1)
-        @info "VI UQ draws" requested=requested_draws used=n_draws_used n_active_parameters=length(active_idx)
+        @info "VI UQ draws" requested = requested_draws used = n_draws_used n_active_parameters = length(active_idx)
         diag = (;
             chain_scale = :natural,
             warmup = 0,
@@ -210,7 +217,7 @@ function _compute_uq_chain(res::FitResult;
             n_iter = missing,
             n_chains = 1,
             n_active_parameters = length(active_idx),
-            source = :vi_posterior
+            source = :vi_posterior,
         )
     end
 

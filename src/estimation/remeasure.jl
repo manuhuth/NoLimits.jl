@@ -80,7 +80,8 @@ function transform!(out::AbstractVector, re::GaussianRE, z::AbstractVector)
     return out
 end
 transform!(out::AbstractVector, re::AbstractREMeasure, z::AbstractVector) = transform(
-    re, z)
+    re, z
+)
 
 # Buffer length needed by `transform!` (0 = fallback path, buffer unused).
 _transform_buffer_len(re::GaussianRE) = re.n_b
@@ -100,7 +101,7 @@ function _lower_chol_from_cov(Σ)
         return Matrix(Σ.chol.L)
     end
     Σ_mat = Σ isa AbstractMatrix ? Σ : Matrix(Σ)
-    return Matrix(cholesky(Symmetric(Σ_mat + 1e-12 * I)).L)
+    return Matrix(cholesky(Symmetric(Σ_mat + 1.0e-12 * I)).L)
 end
 
 # ---------------------------------------------------------------------------
@@ -212,7 +213,7 @@ function build_re_measure_from_batch(
         const_cache::REConstantsCache,
         dm::DataModel,
         ll_cache::_LLCache
-)
+    )
     n_b = get_n_b(batch_info)
     n_b == 0 &&
         error("build_re_measure_from_batch: batch has n_b == 0 (no free RE levels).")
@@ -251,12 +252,15 @@ function build_re_measure_from_batch(
             # all-ℝ marginals (copula) segments qualify.
             seg_marg = _re_marginals(dist)
             all_unbounded &= dist isa Distributions.Normal ||
-                             dist isa Distributions.MvNormal ||
-                             (seg_marg !== nothing &&
-                              all(
-                                 mi -> Distributions.minimum(mi) == -Inf &&
-                                     Distributions.maximum(mi) == Inf,
-                                 seg_marg))
+                dist isa Distributions.MvNormal ||
+                (
+                seg_marg !== nothing &&
+                    all(
+                    mi -> Distributions.minimum(mi) == -Inf &&
+                        Distributions.maximum(mi) == Inf,
+                    seg_marg
+                )
+            )
 
             if dist isa Distributions.Normal
                 μ_k = [Distributions.mean(dist)]
@@ -301,11 +305,13 @@ function build_re_measure_from_batch(
                 push!(μ_segs, μ_k)
                 push!(L_diags, L_k)
                 let μ = μ_k, L = L_k
-                    push!(segment_fns, z_k -> begin
-                        u = μ .+ L * z_k
-                        unnorm = vcat(exp.(u), one(eltype(u)))
-                        unnorm ./ sum(unnorm)
-                    end)
+                    push!(
+                        segment_fns, z_k -> begin
+                            u = μ .+ L * z_k
+                            unnorm = vcat(exp.(u), one(eltype(u)))
+                            unnorm ./ sum(unnorm)
+                        end
+                    )
                 end
                 push!(correction_fns, nothing)
 
@@ -330,23 +336,29 @@ function build_re_measure_from_batch(
                 has_correction = true
                 α_k, β_k = Distributions.params(dist)
                 let a = α_k, b = β_k
-                    push!(segment_fns, z_k -> begin
-                        T_z = eltype(z_k)
-                        [one(T_z) / (one(T_z) + exp(-z_k[1]))]
-                    end)
-                    push!(correction_fns,
+                    push!(
+                        segment_fns, z_k -> begin
+                            T_z = eltype(z_k)
+                            [one(T_z) / (one(T_z) + exp(-z_k[1]))]
+                        end
+                    )
+                    push!(
+                        correction_fns,
                         z_k -> begin
                             zz = z_k[1]
                             T_z = promote_type(eltype(z_k), typeof(a), typeof(b))
                             p = one(T_z) / (one(T_z) + exp(-convert(T_z, zz)))
                             lp = log(p)
                             lmp = log(one(T_z) - p)
-                            (a * lp + b * lmp
-                             -
-                             (loggamma(a) + loggamma(b) - loggamma(a + b))
-                             + zz^2 / 2
-                             + log(convert(T_z, 2π)) / 2)
-                        end)
+                            (
+                                a * lp + b * lmp
+                                    -
+                                    (loggamma(a) + loggamma(b) - loggamma(a + b))
+                                    + zz^2 / 2
+                                    + log(convert(T_z, 2π)) / 2
+                            )
+                        end
+                    )
                 end
                 push!(μ_segs, nothing)
                 push!(L_diags, nothing)
@@ -360,18 +372,20 @@ function build_re_measure_from_batch(
                 α_k, θ_k = Distributions.params(dist)   # shape, scale
                 let a = α_k, b = θ_k
                     push!(segment_fns, z_k -> [exp(z_k[1])])
-                    push!(correction_fns,
+                    push!(
+                        correction_fns,
                         z_k -> begin
                             zz = z_k[1]
                             T_z = promote_type(eltype(z_k), typeof(a), typeof(b))
                             η = exp(convert(T_z, zz))
                             (convert(T_z, a) - one(T_z)) * convert(T_z, zz) -
-                            η / convert(T_z, b) -
-                            loggamma(convert(T_z, a)) -
-                            convert(T_z, a) * log(convert(T_z, b)) +
-                            convert(T_z, zz) + convert(T_z, zz)^2 / 2 +
-                            log(convert(T_z, 2π)) / 2
-                        end)
+                                η / convert(T_z, b) -
+                                loggamma(convert(T_z, a)) -
+                                convert(T_z, a) * log(convert(T_z, b)) +
+                                convert(T_z, zz) + convert(T_z, zz)^2 / 2 +
+                                log(convert(T_z, 2π)) / 2
+                        end
+                    )
                 end
                 push!(μ_segs, nothing)
                 push!(L_diags, nothing)
@@ -384,15 +398,17 @@ function build_re_measure_from_batch(
                 θ_k = Distributions.scale(dist)
                 let b = θ_k
                     push!(segment_fns, z_k -> [exp(z_k[1])])
-                    push!(correction_fns,
+                    push!(
+                        correction_fns,
                         z_k -> begin
                             zz = z_k[1]
                             T_z = promote_type(eltype(z_k), typeof(b))
                             η = exp(convert(T_z, zz))
                             -η / convert(T_z, b) - log(convert(T_z, b)) +
-                            convert(T_z, zz) + convert(T_z, zz)^2 / 2 +
-                            log(convert(T_z, 2π)) / 2
-                        end)
+                                convert(T_z, zz) + convert(T_z, zz)^2 / 2 +
+                                log(convert(T_z, 2π)) / 2
+                        end
+                    )
                 end
                 push!(μ_segs, nothing)
                 push!(L_diags, nothing)
@@ -406,16 +422,18 @@ function build_re_measure_from_batch(
                 α_k, θ_k = Distributions.params(dist)   # shape, scale
                 let a = α_k, b = θ_k
                     push!(segment_fns, z_k -> [exp(z_k[1])])
-                    push!(correction_fns,
+                    push!(
+                        correction_fns,
                         z_k -> begin
                             zz = z_k[1]
                             T_z = promote_type(eltype(z_k), typeof(a), typeof(b))
                             log(convert(T_z, a)) - convert(T_z, a) * log(convert(T_z, b)) +
-                            (convert(T_z, a) - one(T_z)) * convert(T_z, zz) -
-                            (exp(convert(T_z, zz)) / convert(T_z, b))^convert(T_z, a) +
-                            convert(T_z, zz) + convert(T_z, zz)^2 / 2 +
-                            log(convert(T_z, 2π)) / 2
-                        end)
+                                (convert(T_z, a) - one(T_z)) * convert(T_z, zz) -
+                                (exp(convert(T_z, zz)) / convert(T_z, b))^convert(T_z, a) +
+                                convert(T_z, zz) + convert(T_z, zz)^2 / 2 +
+                                log(convert(T_z, 2π)) / 2
+                        end
+                    )
                 end
                 push!(μ_segs, nothing)
                 push!(L_diags, nothing)
@@ -430,16 +448,18 @@ function build_re_measure_from_batch(
                 ν_k = Distributions.dof(dist)
                 let ν = ν_k
                     push!(segment_fns, z_k -> [z_k[1]])
-                    push!(correction_fns,
+                    push!(
+                        correction_fns,
                         z_k -> begin
                             zz = z_k[1]
                             T_z = promote_type(eltype(z_k), typeof(ν))
                             nν = convert(T_z, ν)
                             loggamma((nν + one(T_z)) / 2) - loggamma(nν / 2) -
-                            log(nν * convert(T_z, π)) / 2 -
-                            (nν + one(T_z)) / 2 * log(one(T_z) + convert(T_z, zz)^2 / nν) +
-                            convert(T_z, zz)^2 / 2 + log(convert(T_z, 2π)) / 2
-                        end)
+                                log(nν * convert(T_z, π)) / 2 -
+                                (nν + one(T_z)) / 2 * log(one(T_z) + convert(T_z, zz)^2 / nν) +
+                                convert(T_z, zz)^2 / 2 + log(convert(T_z, 2π)) / 2
+                        end
+                    )
                 end
                 push!(μ_segs, nothing)
                 push!(L_diags, nothing)
@@ -460,39 +480,48 @@ function build_re_measure_from_batch(
                     # Identity transport
                     let d = dist
                         push!(segment_fns, z_k -> [z_k[1]])
-                        push!(correction_fns,
+                        push!(
+                            correction_fns,
                             z_k -> begin
                                 zz = z_k[1]
                                 T_z = eltype(z_k)
                                 Distributions.logpdf(d, zz) +
-                                convert(T_z, zz)^2 / 2 + log(convert(T_z, 2π)) / 2
-                            end)
+                                    convert(T_z, zz)^2 / 2 + log(convert(T_z, 2π)) / 2
+                            end
+                        )
                     end
                 elseif lo == 0 && hi == Inf
                     # Exp transport
                     let d = dist
                         push!(segment_fns, z_k -> [exp(z_k[1])])
-                        push!(correction_fns,
+                        push!(
+                            correction_fns,
                             z_k -> begin
                                 zz = z_k[1]
                                 T_z = eltype(z_k)
                                 η = exp(convert(T_z, zz))
                                 Distributions.logpdf(d, η) +
-                                convert(T_z, zz) + convert(T_z, zz)^2 / 2 +
-                                log(convert(T_z, 2π)) / 2
-                            end)
+                                    convert(T_z, zz) + convert(T_z, zz)^2 / 2 +
+                                    log(convert(T_z, 2π)) / 2
+                            end
+                        )
                     end
                 elseif isfinite(lo) && isfinite(hi)
                     # Scaled logistic transport
                     let d = dist, a = Float64(lo), b_hi = Float64(hi)
-                        push!(segment_fns,
+                        push!(
+                            segment_fns,
                             z_k -> begin
                                 T_z = eltype(z_k)
-                                [convert(T_z, a) +
-                                 (convert(T_z, b_hi) - convert(T_z, a)) /
-                                 (one(T_z) + exp(-z_k[1]))]
-                            end)
-                        push!(correction_fns,
+                                [
+                                    convert(T_z, a) +
+                                        (convert(T_z, b_hi) - convert(T_z, a)) /
+                                        (one(T_z) + exp(-z_k[1])),
+                                ]
+                            end
+                        )
+                        push!(
+                            correction_fns,
                             z_k -> begin
                                 zz = z_k[1]
                                 T_z = eltype(z_k)
@@ -500,15 +529,16 @@ function build_re_measure_from_batch(
                                 η = convert(T_z, a) +
                                     (convert(T_z, b_hi) - convert(T_z, a)) * σz
                                 Distributions.logpdf(d, η) +
-                                log(convert(T_z, b_hi - a)) + log(σz) + log(one(T_z) - σz) +
-                                convert(T_z, zz)^2 / 2 + log(convert(T_z, 2π)) / 2
-                            end)
+                                    log(convert(T_z, b_hi - a)) + log(σz) + log(one(T_z) - σz) +
+                                    convert(T_z, zz)^2 / 2 + log(convert(T_z, 2π)) / 2
+                            end
+                        )
                     end
                 else
                     error(
                         "build_re_measure_from_batch: unsupported support for distribution " *
-                        "$(typeof(dist)) (lo=$lo, hi=$hi). " *
-                        "GHQuadrature supports ℝ, (0,∞), and finite (a,b) supports."
+                            "$(typeof(dist)) (lo=$lo, hi=$hi). " *
+                            "GHQuadrature supports ℝ, (0,∞), and finite (a,b) supports."
                     )
                 end
                 push!(μ_segs, nothing)
@@ -531,19 +561,25 @@ function build_re_measure_from_batch(
                 has_npf = true
                 has_correction = true
                 let d = dist, ms = _re_marginals(dist)
-                    transport = z_k -> [_marginal_transport(ms[i], z_k[i])
-                                        for i in eachindex(ms)]
+                    transport = z_k -> [
+                        _marginal_transport(ms[i], z_k[i])
+                            for i in eachindex(ms)
+                    ]
                     push!(segment_fns, transport)
-                    push!(correction_fns,
+                    push!(
+                        correction_fns,
                         z_k -> begin
                             η = transport(z_k)
                             c = Distributions.logpdf(d, η) -
-                                sum(Distributions.logpdf(ms[i], η[i])
-                            for i in eachindex(ms))
+                                sum(
+                                Distributions.logpdf(ms[i], η[i])
+                                    for i in eachindex(ms)
+                            )
                             # Far tail nodes can overflow the copula density to
                             # NaN/Inf; drop the node instead of poisoning the sum.
                             isfinite(c) ? c : oftype(c, -Inf)
-                        end)
+                        end
+                    )
                 end
                 push!(μ_segs, nothing)
                 push!(L_diags, nothing)
@@ -551,10 +587,10 @@ function build_re_measure_from_batch(
             else
                 error(
                     "build_re_measure_from_batch: unsupported RE distribution type " *
-                    "$(typeof(dist)) for RE '$(re)'. " *
-                    "Supported: Normal, MvNormal, MvLogNormal, MvLogitNormal, LogNormal, Beta, " *
-                    "NormalizingPlanarFlow, univariate continuous distributions, and " *
-                    "multivariate distributions with known marginals (e.g. Copulas.SklarDist)."
+                        "$(typeof(dist)) for RE '$(re)'. " *
+                        "Supported: Normal, MvNormal, MvLogNormal, MvLogitNormal, LogNormal, Beta, " *
+                        "NormalizingPlanarFlow, univariate continuous distributions, and " *
+                        "multivariate distributions with known marginals (e.g. Copulas.SklarDist)."
                 )
             end
         end
@@ -571,7 +607,8 @@ function build_re_measure_from_batch(
             L_full[range, range] = L_k
         end
         return GaussianRE{T, LowerTriangular{T, Matrix{T}}}(
-            μ_full, LowerTriangular(L_full), n_b)
+            μ_full, LowerTriangular(L_full), n_b
+        )
     end
 
     # CompositeRE path: determine element type from non-nothing segments + θ_re
@@ -582,7 +619,8 @@ function build_re_measure_from_batch(
     T = isempty(non_nothing_L) ? T :
         mapreduce(eltype, promote_type, non_nothing_L; init = T)
     return CompositeRE{T}(
-        segment_fns, correction_fns, all_ranges, n_b, has_correction, all_unbounded)
+        segment_fns, correction_fns, all_ranges, n_b, has_correction, all_unbounded
+    )
 end
 
 # ---------------------------------------------------------------------------
@@ -608,7 +646,7 @@ the division by the N(0,I) quadrature measure.
 For a Gaussian prior this reduces to `logcorrection = 0` as expected.
 """
 struct CenteredREMeasure{T <: Number, LT <: LowerTriangular{T, Matrix{T}}, F} <:
-       AbstractREMeasure
+    AbstractREMeasure
     b_star::Vector{T}    # EBE mode (free RE space)
     S::LT           # chol((-H)^{-1}).L, so S*S' = posterior covariance
     log_det_S::T            # log|det(S)|
@@ -619,7 +657,7 @@ end
 transform(re::CenteredREMeasure, z::AbstractVector) = re.b_star + re.S * z
 function logcorrection(re::CenteredREMeasure, z::AbstractVector)
     b = re.b_star + re.S * z
-    re.re_prior_logf(b) + re.log_det_S + 0.5 * sum(abs2, z) + 0.5 * length(z) * log(2π)
+    return re.re_prior_logf(b) + re.log_det_S + 0.5 * sum(abs2, z) + 0.5 * length(z) * log(2π)
 end
 Base.eltype(::CenteredREMeasure{T}) where {T} = T
 
@@ -647,10 +685,10 @@ function build_centered_re_measure(
         const_cache,
         dm::DataModel,
         ll_cache::_LLCache;
-        jitter::Float64 = 1e-6,
+        jitter::Float64 = 1.0e-6,
         max_tries::Int = 6,
         θ_prior::ComponentArray = θu
-)
+    )
     # Always work in Float64: SAEM stores eb_modes as Float32, and the Hessian
     # computation promotes to Float64 regardless, so T must be Float64.
     b_star = Vector{Float64}(b_star)
@@ -679,7 +717,8 @@ function build_centered_re_measure(
     S = LowerTriangular(Matrix(cS.L))
     log_det_S = -sum(log, diag(L))  # |det S| = 1/sqrt(det(-H)) either way
     re_prior_logf = b -> _re_prior_logf_batch(
-        dm, batch_info, θ_prior, b, const_cache, ll_cache)
+        dm, batch_info, θ_prior, b, const_cache, ll_cache
+    )
     return CenteredREMeasure(b_star, S, T(log_det_S), re_prior_logf, get_n_b(batch_info))
 end
 
@@ -712,7 +751,7 @@ function _ghq_validate_re_distributions(dm::DataModel)
     explicitly_unsupported = (
         :Bernoulli, :Binomial, :Categorical, :DiscreteUniform, :Geometric,
         :Hypergeometric, :NegativeBinomial, :Poisson, :Skellam,
-        :Dirichlet, :Multinomial
+        :Dirichlet, :Multinomial,
     )
     bad = Symbol[]
     for (name, dtype) in Base.pairs(re_t)
@@ -720,16 +759,16 @@ function _ghq_validate_re_distributions(dm::DataModel)
             push!(bad, name)
         end
     end
-    if !isempty(bad)
+    return if !isempty(bad)
         names_str = join(string.(bad), ", ")
         types_str = join([string(get_re_types(re)[n]) for n in bad], ", ")
         error(
             "GHQuadrature does not support discrete or unsupported multivariate " *
-            "RE distributions.\n" *
-            "Unsupported RE(s): $(names_str) (type(s): $(types_str)).\n" *
-            "GHQuadrature supports all continuous univariate distributions " *
-            "(e.g. LogNormal, Beta), MvNormal, MvLogNormal, MvLogitNormal, " *
-            "and NormalizingPlanarFlow."
+                "RE distributions.\n" *
+                "Unsupported RE(s): $(names_str) (type(s): $(types_str)).\n" *
+                "GHQuadrature supports all continuous univariate distributions " *
+                "(e.g. LogNormal, Beta), MvNormal, MvLogNormal, MvLogitNormal, " *
+                "and NormalizingPlanarFlow."
         )
     end
 end

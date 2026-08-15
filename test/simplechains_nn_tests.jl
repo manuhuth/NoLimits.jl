@@ -42,14 +42,18 @@ using FiniteDifferences
     nn_pv = NNParameters(chain; function_name = :NN2, seed = 0, prior = fill(Normal(), n))
     @test nn_pv.prior isa AbstractVector{<:Distribution}
     @test_throws ErrorException NNParameters(
-        chain; function_name = :NN3, prior = :not_a_prior)
+        chain; function_name = :NN3, prior = :not_a_prior
+    )
     @test_throws ErrorException NNParameters(
-        chain; function_name = :NN4, prior = fill(Normal(), n - 1))
+        chain; function_name = :NN4, prior = fill(Normal(), n - 1)
+    )
     nn_mvn = NNParameters(
-        chain; function_name = :NN5, seed = 0, prior = MvNormal(zeros(n), I))
+        chain; function_name = :NN5, seed = 0, prior = MvNormal(zeros(n), I)
+    )
     @test nn_mvn.prior isa Distribution
     @test_throws ErrorException NNParameters(
-        chain; function_name = :NN6, prior = MvNormal(zeros(n - 1), I))
+        chain; function_name = :NN6, prior = MvNormal(zeros(n - 1), I)
+    )
 end
 
 @testset "SimpleChains model_fun plumbing + output shape" begin
@@ -69,7 +73,7 @@ end
     out = mf.NN1(x, p)
     @test out isa AbstractVector            # indexable like the Lux Vector output
     @test length(out) == 1
-    @test isapprox(out[1], direct[1]; rtol = 1e-10)
+    @test isapprox(out[1], direct[1]; rtol = 1.0e-10)
     @test mf.NN1(x, p)[1] isa Real          # `NN1(...)[1]` is a scalar usable in formulas
 end
 
@@ -86,18 +90,20 @@ end
     g_fd = ForwardDiff.gradient(v -> mf.NN1(x, v)[1], p)
     g_num = FiniteDifferences.grad(central_fdm(5, 1), v -> mf.NN1(x, v)[1], p)[1]
     @test all(isfinite, g_fd)
-    @test isapprox(g_fd, g_num; rtol = 1e-5, atol = 1e-7)
+    @test isapprox(g_fd, g_num; rtol = 1.0e-5, atol = 1.0e-7)
 
     # Gradient w.r.t. the input also works (Duals flow through both arguments).
     gx_fd = ForwardDiff.gradient(xx -> mf.NN1(xx, p)[1], x)
     gx_num = FiniteDifferences.grad(central_fdm(5, 1), xx -> mf.NN1(xx, p)[1], x)[1]
-    @test isapprox(gx_fd, gx_num; rtol = 1e-5, atol = 1e-7)
+    @test isapprox(gx_fd, gx_num; rtol = 1.0e-5, atol = 1.0e-7)
 end
 
 @testset "SimpleChains end-to-end MLE + Laplace" begin
-    df = DataFrame(ID = [1, 1, 2, 2, 3, 3], t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+    df = DataFrame(
+        ID = [1, 1, 2, 2, 3, 3], t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
         Age = [0.3, 0.3, -0.2, -0.2, 0.1, 0.1], BMI = [0.1, 0.1, 0.4, 0.4, -0.3, -0.3],
-        y = [1.0, 1.1, 0.9, 1.0, 1.2, 1.05])
+        y = [1.0, 1.1, 0.9, 1.0, 1.2, 1.05]
+    )
 
     # Fixed-effects-only NN model -> MLE (ForwardDiff default).
     chain_mle = SimpleChain(static(2), TurboDense(tanh, 4), TurboDense(identity, 1))
@@ -145,8 +151,10 @@ end
 
     # calculate_formulas_obs returns the expected observation distribution.
     θ = get_θ0_untransformed(model_lap.fixed.fixed)
-    obs = calculate_formulas_obs(model_lap, θ, ComponentArray((η = 0.1,)),
-        (x = (Age = 0.3,),), (t = 0.0,))
+    obs = calculate_formulas_obs(
+        model_lap, θ, ComponentArray((η = 0.1,)),
+        (x = (Age = 0.3,),), (t = 0.0,)
+    )
     @test obs.y isa Normal
 end
 
@@ -170,8 +178,10 @@ end
 # chain reallocates. Both triggers below are silently wrong without `_sc_value`: a wide output
 # needs no AD at all, and ForwardDiff nesting inflates the scratch as 8*prod(N_i+1).
 @testset "SimpleChains output does not alias the reused scratch buffer" begin
-    cases = ((SimpleChain(static(1), TurboDense(tanh, 6), TurboDense(identity, 64)), 1),
-        (SimpleChain(static(8), TurboDense(tanh, 2048), TurboDense(identity, 1)), 8))
+    cases = (
+        (SimpleChain(static(1), TurboDense(tanh, 6), TurboDense(identity, 64)), 1),
+        (SimpleChain(static(8), TurboDense(tanh, 2048), TurboDense(identity, 1)), 8),
+    )
     for (chain, nin) in cases
         fe = @fixedEffects begin
             zeta = NNParameters(chain; function_name = :NN1, seed = 0, calculate_se = false)
@@ -200,7 +210,7 @@ end
         h = tanh.(W1 * [z] .+ view(theta, 7:12))
         return tanh.(W2 * h .+ view(theta, 19:19))[1]
     end
-    @test isapprox(mf.NN1([0.7], p)[1], reference(0.7, p); rtol = 1e-10)
+    @test isapprox(mf.NN1([0.7], p)[1], reference(0.7, p); rtol = 1.0e-10)
 
     # Nested derivatives to the depth a Laplace outer gradient under an implicit solver reaches.
     nest(f, n) = n == 0 ? f : (z -> ForwardDiff.derivative(nest(f, n - 1), z))
@@ -208,14 +218,18 @@ end
         got = nest(z -> mf.NN1([z], p)[1], n)(0.7)
         want = nest(z -> reference(z, p), n)(0.7)
         @test isfinite(got)
-        @test isapprox(got, want; rtol = 1e-6)
+        @test isapprox(got, want; rtol = 1.0e-6)
     end
 end
 
 @testset "SimpleChains deep-AD fallback covers bias-free and Activation layers" begin
-    cases = (SimpleChain(static(2), TurboDense{false}(tanh, 4), TurboDense(identity, 1)),
-        SimpleChain(static(2), TurboDense(identity, 4), Activation(tanh),
-            TurboDense(identity, 1)))
+    cases = (
+        SimpleChain(static(2), TurboDense{false}(tanh, 4), TurboDense(identity, 1)),
+        SimpleChain(
+            static(2), TurboDense(identity, 4), Activation(tanh),
+            TurboDense(identity, 1)
+        ),
+    )
     nest(f, n) = n == 0 ? f : (z -> ForwardDiff.derivative(nest(f, n - 1), z))
     for chain in cases
         fe = @fixedEffects begin

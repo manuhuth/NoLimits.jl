@@ -71,17 +71,18 @@ end
     @test NoLimits._saem_schedule_phase(1, opts_rm) === :burnin
     @test NoLimits._saem_schedule_phase(opts_rm.sa_burnin_iters, opts_rm) === :burnin
     @test NoLimits._saem_schedule_phase(opts_rm.sa_burnin_iters + 1, opts_rm) ===
-          :robbins_monro   # first stabilization
+        :robbins_monro   # first stabilization
     @test NoLimits._saem_schedule_phase(opts_rm.sa_burnin_iters + opts_rm.t0, opts_rm) ===
-          :robbins_monro   # last stabilization
+        :robbins_monro   # last stabilization
     @test NoLimits._saem_schedule_phase(
-        opts_rm.sa_burnin_iters + opts_rm.t0 + 1, opts_rm) === :robbins_monro_decay
+        opts_rm.sa_burnin_iters + opts_rm.t0 + 1, opts_rm
+    ) === :robbins_monro_decay
 
     opts_rm_short = NoLimits.SAEM(; maxiters = 2, sa_burnin_iters = 0).saem
     @test opts_rm_short.t0 == 1
     @test NoLimits._saem_schedule_phase(opts_rm_short.t0, opts_rm_short) === :robbins_monro
     @test NoLimits._saem_schedule_phase(opts_rm_short.t0 + 1, opts_rm_short) ===
-          :robbins_monro_decay
+        :robbins_monro_decay
 
     # With burn-in
     opts_rm_bi = NoLimits.SAEM(; sa_burnin_iters = 3, t0 = 5).saem
@@ -91,8 +92,10 @@ end
     @test NoLimits._saem_schedule_phase(8, opts_rm_bi) === :robbins_monro
     @test NoLimits._saem_schedule_phase(9, opts_rm_bi) === :robbins_monro_decay
 
-    opts_tp = NoLimits.SAEM(; sa_schedule = :two_phase,
-        sa_burnin_iters = 2, sa_phase1_iters = 3).saem
+    opts_tp = NoLimits.SAEM(;
+        sa_schedule = :two_phase,
+        sa_burnin_iters = 2, sa_phase1_iters = 3
+    ).saem
     @test NoLimits._saem_schedule_phase(1, opts_tp) === :burnin
     @test NoLimits._saem_schedule_phase(2, opts_tp) === :burnin
     @test NoLimits._saem_schedule_phase(3, opts_tp) === :phase1
@@ -113,8 +116,10 @@ end
     @test !NoLimits._saem_past_stabilization_phase(8, opts_rm_bi)
     @test NoLimits._saem_past_stabilization_phase(9, opts_rm_bi)
 
-    opts_tp = NoLimits.SAEM(; sa_schedule = :two_phase,
-        sa_burnin_iters = 2, sa_phase1_iters = 3).saem
+    opts_tp = NoLimits.SAEM(;
+        sa_schedule = :two_phase,
+        sa_burnin_iters = 2, sa_phase1_iters = 3
+    ).saem
     @test !NoLimits._saem_past_stabilization_phase(5, opts_tp)  # end of phase1
     @test NoLimits._saem_past_stabilization_phase(6, opts_tp)  # first of phase2
 
@@ -148,7 +153,7 @@ end
     store = NoLimits._SAEMSampleStore(
         zeros(Float64, capacity),
         [[zeros(Float64, 1) for _ in 1:n_batches] for _ in 1:capacity],
-        1, 1, 0, capacity, 1e-10, 0
+        1, 1, 0, capacity, 1.0e-10, 0
     )
     b_chains = [[zeros(Float64, 1)], [zeros(Float64, 1)]]   # [batch][chain]
 
@@ -182,7 +187,8 @@ function _sched_dm()
         end
     end
     df = DataFrame(
-        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [0.1, 0.2, 0.0, -0.1])
+        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [0.1, 0.2, 0.0, -0.1]
+    )
     return DataModel(model, df; primary_id = :ID, time_col = :t)
 end
 
@@ -190,13 +196,15 @@ end
     # maxiters=2, sa_burnin_iters=0, t0=1 → stabilization iter 1, decay iter 2
     # phase3_total = 2 - 0 - 1 = 1; γ at iter 2: ((1-1)/1)^0.65 = 0
     dm = _sched_dm()
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         NoLimits.SAEM(;
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2, sa_burnin_iters = 0, t0 = 1, kappa = 0.65,
             progress = false, q_store_max = 2, builtin_stats = :none
-        ))
+        )
+    )
     conv = NoLimits.get_diagnostics(res).convergence
 
     # Phase labels
@@ -210,7 +218,8 @@ end
 
 @testset "SA schedule: two_phase integration" begin
     dm = _sched_dm()
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         NoLimits.SAEM(;
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
@@ -218,7 +227,8 @@ end
             sa_schedule = :two_phase,
             sa_burnin_iters = 1, sa_phase1_iters = 1, sa_phase2_kappa = -1.0,
             progress = false, q_store_max = 2, builtin_stats = :none
-        ))
+        )
+    )
     conv = NoLimits.get_diagnostics(res).convergence
 
     @test conv.schedule_phase[1] === :burnin
@@ -232,14 +242,16 @@ end
 @testset "SA schedule: custom schedule integration" begin
     dm = _sched_dm()
     constant_fn = (iter, _opts) -> 0.5
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         NoLimits.SAEM(;
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2,
             sa_schedule = :custom, sa_schedule_fn = constant_fn,
             progress = false, q_store_max = 2, builtin_stats = :none
-        ))
+        )
+    )
     conv = NoLimits.get_diagnostics(res).convergence
 
     @test all(p === :custom for p in conv.schedule_phase)

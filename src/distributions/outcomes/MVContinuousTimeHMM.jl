@@ -37,11 +37,11 @@ Missing values in the observation vector are handled as follows:
 - `Δt`: time elapsed since the previous observation.
 """
 struct MVContinuousTimeDiscreteStatesHMM{
-    M <: AbstractMatrix{<:Real},
-    E <: Tuple,
-    D <: Distributions.Categorical,
-    T <: Real
-} <: Distribution{Multivariate, Continuous}
+        M <: AbstractMatrix{<:Real},
+        E <: Tuple,
+        D <: Distributions.Categorical,
+        T <: Real,
+    } <: Distribution{Multivariate, Continuous}
     n_states::Int
     n_outcomes::Int
     transition_matrix::M
@@ -58,29 +58,36 @@ function MVContinuousTimeDiscreteStatesHMM(
         Δt::Real,
         ;
         propagation_mode::Symbol = :auto
-)
+    )
     _ct_hmm_validate_mode(propagation_mode)
     n_states = size(transition_matrix, 1)
     size(transition_matrix, 2) == n_states ||
         error("transition_matrix must be square, got $(size(transition_matrix)).")
     length(emission_dists) == n_states ||
-        error("length(emission_dists) must equal n_states ($n_states), " *
-              "got $(length(emission_dists)).")
+        error(
+        "length(emission_dists) must equal n_states ($n_states), " *
+            "got $(length(emission_dists))."
+    )
     length(initial_dist.p) == n_states ||
-        error("length(initial_dist.p) must equal n_states ($n_states), " *
-              "got $(length(initial_dist.p)).")
+        error(
+        "length(initial_dist.p) must equal n_states ($n_states), " *
+            "got $(length(initial_dist.p))."
+    )
     n_outcomes = _mv_n_outcomes(emission_dists[1])
     for k in 2:n_states
         _mv_n_outcomes(emission_dists[k]) == n_outcomes ||
-            error("All emission elements must have the same number of outcomes. " *
-                  "Element 1 has $n_outcomes but element $k has " *
-                  "$(_mv_n_outcomes(emission_dists[k])).")
+            error(
+            "All emission elements must have the same number of outcomes. " *
+                "Element 1 has $n_outcomes but element $k has " *
+                "$(_mv_n_outcomes(emission_dists[k]))."
+        )
     end
     Δt >= 0 ||
         error("Δt must be nonnegative for a continuous-time Markov model; got $(Δt). Check that observation times are sorted within each individual.")
     _hmm_check_generator_matrix(transition_matrix)
     return MVContinuousTimeDiscreteStatesHMM(
-        n_states, n_outcomes, transition_matrix, emission_dists, initial_dist, Δt, propagation_mode)
+        n_states, n_outcomes, transition_matrix, emission_dists, initial_dist, Δt, propagation_mode
+    )
 end
 
 # ---------------------------------------------------------------------------
@@ -95,7 +102,8 @@ time, propagated from `hmm.initial_dist` via `exp(Q · Δt)`.
 """
 function probabilities_hidden_states(hmm::MVContinuousTimeDiscreteStatesHMM)
     return _ct_hmm_probabilities_hidden_states(
-        hmm.transition_matrix, hmm.initial_dist.p, hmm.Δt; mode = hmm.propagation_mode)
+        hmm.transition_matrix, hmm.initial_dist.p, hmm.Δt; mode = hmm.propagation_mode
+    )
 end
 
 """
@@ -120,8 +128,10 @@ end
 # Combined accessor sharing the single matrix-exponential propagation AND the
 # per-state emission log-densities between the likelihood and posterior; reuses
 # the EXACT per-state ops above (bit-identical).
-function _hmm_logpdf_and_posterior(hmm::MVContinuousTimeDiscreteStatesHMM,
-        y::AbstractVector)
+function _hmm_logpdf_and_posterior(
+        hmm::MVContinuousTimeDiscreteStatesHMM,
+        y::AbstractVector
+    )
     _mv_check_obs_length(hmm, y)
     p_hidden = probabilities_hidden_states(hmm)
     dists = hmm.emission_dists
@@ -151,7 +161,7 @@ function Distributions.logpdf(hmm::MVContinuousTimeDiscreteStatesHMM, y::Abstrac
 end
 
 function Distributions.pdf(hmm::MVContinuousTimeDiscreteStatesHMM, y::AbstractVector)
-    exp(logpdf(hmm, y))
+    return exp(logpdf(hmm, y))
 end
 
 function Distributions.rand(rng::AbstractRNG, hmm::MVContinuousTimeDiscreteStatesHMM)
@@ -176,8 +186,10 @@ function Distributions.cov(hmm::MVContinuousTimeDiscreteStatesHMM)
     p = probabilities_hidden_states(hmm)
     μ_k = [_mv_emission_mean(hmm.emission_dists[k]) for k in 1:(hmm.n_states)]
     μ = sum(p[k] * μ_k[k] for k in 1:(hmm.n_states))
-    within = sum(p[k] * Matrix(_mv_emission_cov(hmm.emission_dists[k]))
-    for k in 1:(hmm.n_states))
+    within = sum(
+        p[k] * Matrix(_mv_emission_cov(hmm.emission_dists[k]))
+            for k in 1:(hmm.n_states)
+    )
     between = sum(p[k] * (μ_k[k] - μ) * (μ_k[k] - μ)' for k in 1:(hmm.n_states))
     return within + between
 end
@@ -187,5 +199,5 @@ Distributions.var(hmm::MVContinuousTimeDiscreteStatesHMM) = diag(cov(hmm))
 Base.length(hmm::MVContinuousTimeDiscreteStatesHMM) = hmm.n_outcomes
 
 function Distributions.params(hmm::MVContinuousTimeDiscreteStatesHMM)
-    (hmm.transition_matrix, hmm.emission_dists, hmm.initial_dist, hmm.Δt)
+    return (hmm.transition_matrix, hmm.emission_dists, hmm.initial_dist, hmm.Δt)
 end

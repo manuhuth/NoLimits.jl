@@ -29,11 +29,11 @@ When the observation is `missing`, the predicted state distribution (via `exp(Q�
 propagated forward without a likelihood contribution.
 """
 struct ContinuousTimeObservedStatesMarkovModel{
-    M <: AbstractMatrix{<:Real},
-    D <: Distributions.Categorical,
-    T,
-    Δ <: Real
-} <: Distribution{Univariate, Discrete}
+        M <: AbstractMatrix{<:Real},
+        D <: Distributions.Categorical,
+        T,
+        Δ <: Real,
+    } <: Distribution{Univariate, Discrete}
     n_states::Int
     transition_matrix::M
     initial_dist::D
@@ -50,22 +50,27 @@ function ContinuousTimeObservedStatesMarkovModel(
         Δt::Real,
         state_labels::Vector{T};
         propagation_mode::Symbol = :auto
-) where {T}
+    ) where {T}
     _ct_hmm_validate_mode(propagation_mode)
     n_states = size(transition_matrix, 1)
     size(transition_matrix, 2) == n_states ||
         error("transition_matrix must be square, got $(size(transition_matrix)).")
     length(initial_dist.p) == n_states ||
-        error("length(initial_dist.p) must equal n_states ($n_states), " *
-              "got $(length(initial_dist.p)).")
+        error(
+        "length(initial_dist.p) must equal n_states ($n_states), " *
+            "got $(length(initial_dist.p))."
+    )
     length(state_labels) == n_states ||
-        error("length(state_labels) must equal n_states ($n_states), " *
-              "got $(length(state_labels)).")
+        error(
+        "length(state_labels) must equal n_states ($n_states), " *
+            "got $(length(state_labels))."
+    )
     Δt >= 0 ||
         error("Δt must be nonnegative for a continuous-time Markov model; got $(Δt). Check that observation times are sorted within each individual.")
     _hmm_check_generator_matrix(transition_matrix)
     return ContinuousTimeObservedStatesMarkovModel(
-        n_states, transition_matrix, initial_dist, Δt, state_labels, propagation_mode)
+        n_states, transition_matrix, initial_dist, Δt, state_labels, propagation_mode
+    )
 end
 
 # Default constructor: integer labels 1..n_states
@@ -74,11 +79,12 @@ function ContinuousTimeObservedStatesMarkovModel(
         initial_dist::Distributions.Categorical,
         Δt::Real;
         propagation_mode::Symbol = :auto
-)
+    )
     n_states = size(transition_matrix, 1)
     return ContinuousTimeObservedStatesMarkovModel(
         transition_matrix, initial_dist, Δt, collect(1:n_states);
-        propagation_mode = propagation_mode)
+        propagation_mode = propagation_mode
+    )
 end
 
 @inline _omm_is_observed_markov_dist(::ContinuousTimeObservedStatesMarkovModel) = true
@@ -94,7 +100,8 @@ Marginal prior probabilities of the state at the current observation time, propa
 function probabilities_hidden_states(dist::ContinuousTimeObservedStatesMarkovModel)
     return _ct_hmm_probabilities_hidden_states(
         dist.transition_matrix, dist.initial_dist.p, dist.Δt;
-        mode = dist.propagation_mode)
+        mode = dist.propagation_mode
+    )
 end
 
 # ─── Shared observed-states interface (DT + CT) ──────────────────────────────
@@ -104,7 +111,8 @@ end
 # `probabilities_hidden_states(dist)` (the per-type propagation). Defined once
 # against the Union — this file is included after both types exist.
 const _ObservedStatesMarkovModel = Union{
-    DiscreteTimeObservedStatesMarkovModel, ContinuousTimeObservedStatesMarkovModel}
+    DiscreteTimeObservedStatesMarkovModel, ContinuousTimeObservedStatesMarkovModel,
+}
 
 """
     posterior_hidden_states(dist, y)
@@ -127,7 +135,8 @@ function posterior_hidden_states(dist::_ObservedStatesMarkovModel, y)
 end
 
 function posterior_hidden_states(
-        dist::_ObservedStatesMarkovModel, y::AbstractVector)
+        dist::_ObservedStatesMarkovModel, y::AbstractVector
+    )
     _omm_scalar_observation_index(dist.state_labels, y)
     return zeros(eltype(probabilities_hidden_states(dist)), dist.n_states)
 end
@@ -147,7 +156,8 @@ function _hmm_logpdf_and_posterior(dist::_ObservedStatesMarkovModel, y)
 end
 
 function _hmm_logpdf_and_posterior(
-        dist::_ObservedStatesMarkovModel, y::AbstractVector)
+        dist::_ObservedStatesMarkovModel, y::AbstractVector
+    )
     _omm_scalar_observation_index(dist.state_labels, y)
     return (-Inf, zeros(eltype(probabilities_hidden_states(dist)), dist.n_states))
 end
@@ -162,7 +172,8 @@ function Distributions.logpdf(dist::_ObservedStatesMarkovModel, y)
 end
 
 function Distributions.logpdf(
-        dist::_ObservedStatesMarkovModel, y::AbstractVector)
+        dist::_ObservedStatesMarkovModel, y::AbstractVector
+    )
     _omm_scalar_observation_index(dist.state_labels, y)
     return -Inf
 end
@@ -179,35 +190,50 @@ Distributions.pdf(dist::_ObservedStatesMarkovModel, y) = exp(logpdf(dist, y))
 # behavior is identical — the observation pipeline never constructs them.
 # (The Union stays STRICTLY more specific than the foreign methods' abstract
 # first argument, so no crossed-specificity ambiguities arise.)
-function Distributions.logpdf(dist::_ObservedStatesMarkovModel,
-        y::AbstractArray{<:Real, 0})
-    invoke(
-        Distributions.logpdf, Tuple{_ObservedStatesMarkovModel, Any}, dist, y)
+function Distributions.logpdf(
+        dist::_ObservedStatesMarkovModel,
+        y::AbstractArray{<:Real, 0}
+    )
+    return invoke(
+        Distributions.logpdf, Tuple{_ObservedStatesMarkovModel, Any}, dist, y
+    )
 end
-function Distributions.logpdf(dist::_ObservedStatesMarkovModel,
-        y::AbstractArray{<:Real})
-    invoke(
-        Distributions.logpdf, Tuple{_ObservedStatesMarkovModel, Any}, dist, y)
+function Distributions.logpdf(
+        dist::_ObservedStatesMarkovModel,
+        y::AbstractArray{<:Real}
+    )
+    return invoke(
+        Distributions.logpdf, Tuple{_ObservedStatesMarkovModel, Any}, dist, y
+    )
 end
-function Distributions.logpdf(dist::_ObservedStatesMarkovModel,
-        y::AbstractArray{<:AbstractArray{<:Real, 0}})
-    invoke(
-        Distributions.logpdf, Tuple{_ObservedStatesMarkovModel, Any}, dist, y)
+function Distributions.logpdf(
+        dist::_ObservedStatesMarkovModel,
+        y::AbstractArray{<:AbstractArray{<:Real, 0}}
+    )
+    return invoke(
+        Distributions.logpdf, Tuple{_ObservedStatesMarkovModel, Any}, dist, y
+    )
 end
 function Distributions.pdf(dist::_ObservedStatesMarkovModel, y::Real)
-    exp(logpdf(dist, y))
+    return exp(logpdf(dist, y))
 end
-function Distributions.pdf(dist::_ObservedStatesMarkovModel,
-        y::AbstractArray{<:Real, 0})
-    exp(logpdf(dist, y))
+function Distributions.pdf(
+        dist::_ObservedStatesMarkovModel,
+        y::AbstractArray{<:Real, 0}
+    )
+    return exp(logpdf(dist, y))
 end
-function Distributions.pdf(dist::_ObservedStatesMarkovModel,
-        y::AbstractArray{<:Real})
-    exp(logpdf(dist, y))
+function Distributions.pdf(
+        dist::_ObservedStatesMarkovModel,
+        y::AbstractArray{<:Real}
+    )
+    return exp(logpdf(dist, y))
 end
-function Distributions.pdf(dist::_ObservedStatesMarkovModel,
-        y::AbstractArray{<:AbstractArray{<:Real, 0}})
-    exp(logpdf(dist, y))
+function Distributions.pdf(
+        dist::_ObservedStatesMarkovModel,
+        y::AbstractArray{<:AbstractArray{<:Real, 0}}
+    )
+    return exp(logpdf(dist, y))
 end
 
 function Distributions.rand(rng::AbstractRNG, dist::_ObservedStatesMarkovModel)
@@ -219,18 +245,24 @@ end
 # mean/var/cdf only defined for numeric (Real) label types
 function Distributions.mean(dist::_ObservedStatesMarkovModel)
     T = eltype(dist.state_labels)
-    T <: Real || throw(ArgumentError(
-        "mean is not defined for $(nameof(typeof(dist))) with label type $T. " *
-        "Only Real-valued labels are supported."))
+    T <: Real || throw(
+        ArgumentError(
+            "mean is not defined for $(nameof(typeof(dist))) with label type $T. " *
+                "Only Real-valued labels are supported."
+        )
+    )
     p = probabilities_hidden_states(dist)
     return sum(p[k] * dist.state_labels[k] for k in 1:(dist.n_states))
 end
 
 function Distributions.var(dist::_ObservedStatesMarkovModel)
     T = eltype(dist.state_labels)
-    T <: Real || throw(ArgumentError(
-        "var is not defined for $(nameof(typeof(dist))) with label type $T. " *
-        "Only Real-valued labels are supported."))
+    T <: Real || throw(
+        ArgumentError(
+            "var is not defined for $(nameof(typeof(dist))) with label type $T. " *
+                "Only Real-valued labels are supported."
+        )
+    )
     p = probabilities_hidden_states(dist)
     μ = sum(p[k] * dist.state_labels[k] for k in 1:(dist.n_states))
     return sum(p[k] * (dist.state_labels[k] - μ)^2 for k in 1:(dist.n_states))
@@ -238,21 +270,29 @@ end
 
 function Distributions.cdf(dist::_ObservedStatesMarkovModel, y::Real)
     T = eltype(dist.state_labels)
-    T <: Real || throw(ArgumentError(
-        "cdf is not defined for $(nameof(typeof(dist))) with label type $T. " *
-        "Only Real-valued labels are supported."))
+    T <: Real || throw(
+        ArgumentError(
+            "cdf is not defined for $(nameof(typeof(dist))) with label type $T. " *
+                "Only Real-valued labels are supported."
+        )
+    )
     p = probabilities_hidden_states(dist)
-    return sum((p[k] for k in 1:(dist.n_states) if dist.state_labels[k] <= y);
-        init = zero(eltype(p)))
+    return sum(
+        (p[k] for k in 1:(dist.n_states) if dist.state_labels[k] <= y);
+        init = zero(eltype(p))
+    )
 end
 
 # Without this the generic Distributions fallback tries to iterate the model and reports
 # an unrelated MethodError (#213). Only ordered numeric labels have a quantile.
 function Distributions.quantile(dist::_ObservedStatesMarkovModel, p::Real)
     T = eltype(dist.state_labels)
-    T <: Real || throw(ArgumentError(
-        "quantile is not defined for $(nameof(typeof(dist))) with label type $T. " *
-        "Only Real-valued labels are supported."))
+    T <: Real || throw(
+        ArgumentError(
+            "quantile is not defined for $(nameof(typeof(dist))) with label type $T. " *
+                "Only Real-valued labels are supported."
+        )
+    )
     0 <= p <= 1 || throw(DomainError(p, "quantile probability must be in [0, 1]."))
     order = sortperm(dist.state_labels)
     probs = probabilities_hidden_states(dist)
@@ -265,7 +305,7 @@ function Distributions.quantile(dist::_ObservedStatesMarkovModel, p::Real)
 end
 
 function Distributions.params(dist::ContinuousTimeObservedStatesMarkovModel)
-    (dist.transition_matrix, dist.initial_dist, dist.Δt, dist.state_labels)
+    return (dist.transition_matrix, dist.initial_dist, dist.Δt, dist.state_labels)
 end
 
 Base.length(dist::_ObservedStatesMarkovModel) = 1

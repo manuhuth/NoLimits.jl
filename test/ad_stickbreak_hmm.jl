@@ -16,7 +16,7 @@ using Random
     # -----------------------------------------------------------------------
     # Helper: finite-difference gradient via central differences
     # -----------------------------------------------------------------------
-    function fd_grad(f, x; h = 1e-5)
+    function fd_grad(f, x; h = 1.0e-5)
         g = similar(x, Float64)
         for i in eachindex(x)
             xp, xm = copy(x), copy(x)
@@ -54,8 +54,10 @@ using Random
         df = DataFrame(
             ID = vcat(fill(1, 6), fill(2, 6)),
             t = vcat(1:6, 1:6) .* 1.0,
-            y = [0.1, 0.9, -1.1, 0.2, 1.0, -0.9,
-                0.05, 0.85, -1.05, 0.15, 0.95, -0.95]
+            y = [
+                0.1, 0.9, -1.1, 0.2, 1.0, -0.9,
+                0.05, 0.85, -1.05, 0.15, 0.95, -0.95,
+            ]
         )
         dm = DataModel(model, df; primary_id = :ID, time_col = :t)
 
@@ -85,7 +87,7 @@ using Random
         # pi gradient components should be non-zero (data distinguishes states)
         @test any(!iszero, grad_fd[pi_idx])
         # ForwardDiff and finite differences should agree
-        @test isapprox(grad_fd, grad_num; atol = 1e-4, rtol = 1e-3)
+        @test isapprox(grad_fd, grad_num; atol = 1.0e-4, rtol = 1.0e-3)
     end
 
     # -----------------------------------------------------------------------
@@ -116,8 +118,10 @@ using Random
         df = DataFrame(
             ID = vcat(fill(1, 6), fill(2, 6)),
             t = vcat(1:6, 1:6) .* 1.0,
-            y = [0.1, -0.1, 0.2, 1.9, 2.1, 1.8,
-                -0.2, 0.1, 0.0, 2.0, 1.95, 2.05]
+            y = [
+                0.1, -0.1, 0.2, 1.9, 2.1, 1.8,
+                -0.2, 0.1, 0.0, 2.0, 1.95, 2.05,
+            ]
         )
         dm = DataModel(model, df; primary_id = :ID, time_col = :t)
 
@@ -140,7 +144,7 @@ using Random
         T_idx = 1:2
         @test !all(iszero, grad_fd)
         @test any(!iszero, grad_fd[T_idx])
-        @test isapprox(grad_fd, grad_num; atol = 1e-4, rtol = 1e-3)
+        @test isapprox(grad_fd, grad_num; atol = 1.0e-4, rtol = 1.0e-3)
     end
 
     # -----------------------------------------------------------------------
@@ -170,8 +174,10 @@ using Random
         df = DataFrame(
             ID = vcat(fill(1, 8), fill(2, 8)),
             t = vcat(1:8, 1:8) .* 1.0,
-            y = [0.1, 0.2, -0.1, 2.9, 3.1, 2.8, 0.0, 0.1,
-                -0.1, 0.0, 0.2, 3.0, 2.95, 3.05, 0.1, -0.1]
+            y = [
+                0.1, 0.2, -0.1, 2.9, 3.1, 2.8, 0.0, 0.1,
+                -0.1, 0.0, 0.2, 3.0, 2.95, 3.05, 0.1, -0.1,
+            ]
         )
         dm = DataModel(model, df; primary_id = :ID, time_col = :t)
 
@@ -197,7 +203,7 @@ using Random
         @test !all(iszero, grad_fd)
         @test any(!iszero, grad_fd[pi_idx])
         @test any(!iszero, grad_fd[T_idx])
-        @test isapprox(grad_fd, grad_num; atol = 1e-4, rtol = 1e-3)
+        @test isapprox(grad_fd, grad_num; atol = 1.0e-4, rtol = 1.0e-3)
     end
 
     # -----------------------------------------------------------------------
@@ -227,8 +233,10 @@ using Random
         df = DataFrame(
             ID = vcat(fill(1, 8), fill(2, 8)),
             t = vcat(1:8, 1:8) .* 1.0,
-            y = [0.1, 0.2, -0.1, 1.9, 2.1, 1.8, 0.0, 0.15,
-                -0.2, 0.1, 2.0, 1.95, 2.05, 0.05, -0.1, 0.2]
+            y = [
+                0.1, 0.2, -0.1, 1.9, 2.1, 1.8, 0.0, 0.15,
+                -0.2, 0.1, 2.0, 1.95, 2.05, 0.05, -0.1, 0.2,
+            ]
         )
         dm = DataModel(model, df; primary_id = :ID, time_col = :t)
 
@@ -236,10 +244,10 @@ using Random
 
         params = NoLimits.get_params(res; scale = :untransformed)
         # pi should still be a valid probability vector
-        @test isapprox(sum(params.pi), 1.0; atol = 1e-4)
+        @test isapprox(sum(params.pi), 1.0; atol = 1.0e-4)
         @test all(params.pi .>= 0)
         # T should still be row-stochastic
-        @test isapprox(sum(params.T[1, :]), 1.0; atol = 1e-4)
-        @test isapprox(sum(params.T[2, :]), 1.0; atol = 1e-4)
+        @test isapprox(sum(params.T[1, :]), 1.0; atol = 1.0e-4)
+        @test isapprox(sum(params.T[2, :]), 1.0; atol = 1.0e-4)
     end
 end

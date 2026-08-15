@@ -86,12 +86,15 @@ function Pooled(;
         identifiable_only::Bool = true,
         n_probes::Int = 3,
         mc_draws::Int = 256,
-        precondition::Bool = true)
+        precondition::Bool = true
+    )
     refreeze_check in (:warn, :refit) || error("refreeze_check must be :warn or :refit.")
     n_probes >= 1 || error("n_probes must be >= 1.")
     mc_draws >= 1 || error("mc_draws must be >= 1.")
-    return Pooled(optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds,
-        force_free, refreeze_check, identifiable_only, n_probes, mc_draws, precondition)
+    return Pooled(
+        optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds,
+        force_free, refreeze_check, identifiable_only, n_probes, mc_draws, precondition
+    )
 end
 
 """
@@ -133,12 +136,15 @@ function PooledMap(;
         identifiable_only::Bool = true,
         n_probes::Int = 3,
         mc_draws::Int = 256,
-        precondition::Bool = true)
+        precondition::Bool = true
+    )
     refreeze_check in (:warn, :refit) || error("refreeze_check must be :warn or :refit.")
     n_probes >= 1 || error("n_probes must be >= 1.")
     mc_draws >= 1 || error("mc_draws must be >= 1.")
-    return PooledMap(optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds,
-        force_free, refreeze_check, identifiable_only, n_probes, mc_draws, precondition)
+    return PooledMap(
+        optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds,
+        force_free, refreeze_check, identifiable_only, n_probes, mc_draws, precondition
+    )
 end
 
 # PooledResult is a StandardOptimizationResult{:pooled} alias + constructor (see common.jl).
@@ -170,8 +176,10 @@ function _pooled_finite_or_nothing(f)
     return v !== nothing && all(isfinite, v) ? v : nothing
 end
 
-function _pooled_plugin_strategies(dm::DataModel, θ::ComponentArray;
-        mc_draws::Int = 256, rng::AbstractRNG = Random.default_rng())
+function _pooled_plugin_strategies(
+        dm::DataModel, θ::ComponentArray;
+        mc_draws::Int = 256, rng::AbstractRNG = Random.default_rng()
+    )
     model = get_model(dm)
     lp_cache = get_laplace_cache(get_re_group_info(dm))
     lp_cache === nothing && error("Pooled() requires a model with random effects.")
@@ -230,9 +238,11 @@ end
 # were assigned in BOTH the fast and the heterogeneous branch and captured by the
 # fast-path comprehension, which boxed them (`Core.Box`) and inferred the whole
 # per-individual body as `Any` (a runtime dispatch per individual per objective eval).
-@inline function _pooled_fill_ind_eta(dists_builder::DB, θs::TH, const_cov,
+@inline function _pooled_fill_ind_eta(
+        dists_builder::DB, θs::TH, const_cov,
         model_funs, helpers, re_names, dims, strategies, ::Type{T}, axs::AX,
-        ηlen::Int) where {DB, TH, T, AX}
+        ηlen::Int
+    ) where {DB, TH, T, AX}
     dists = dists_builder(θs, const_cov, model_funs, helpers)
     vals = Vector{T}(undef, ηlen)
     pos = 1
@@ -245,8 +255,10 @@ end
 
 # η for one individual in a crossed design: the plug-in value repeated once per
 # grouping level the individual belongs to (row lookups index per level).
-function _pooled_crossed_ind_eta(dists_builder, θs, const_cov, model_funs, helpers,
-        re_names, dims, strategies, ::Type{T}, nlev) where {T}
+function _pooled_crossed_ind_eta(
+        dists_builder, θs, const_cov, model_funs, helpers,
+        re_names, dims, strategies, ::Type{T}, nlev
+    ) where {T}
     dists = dists_builder(θs, const_cov, model_funs, helpers)
     nt_pairs = Pair{Symbol, Any}[]
     for (ri, re) in enumerate(re_names)
@@ -275,8 +287,9 @@ function _compute_pooled_etas(dm::DataModel, θ::ComponentArray, strategies)
     # 1-element vector components — formulas written against the scalar shape
     # (`sat(η)`) would break. Only take the fast path when the shapes agree.
     template_compatible = template !== nothing &&
-                          all(
-        ri -> (get_dims(lp_cache)[ri] == 1) == get_is_scalar(lp_cache)[ri], eachindex(re_names))
+        all(
+        ri -> (get_dims(lp_cache)[ri] == 1) == get_is_scalar(lp_cache)[ri], eachindex(re_names)
+    )
     if template_compatible
         # Fast path (one RE level per group per individual): fill a flat vector and
         # wrap it with the precomputed axes — same trick as `_build_eta_ind_fast`.
@@ -287,18 +300,26 @@ function _compute_pooled_etas(dm::DataModel, θ::ComponentArray, strategies)
         axs = getaxes(template)
         ηlen = length(template)
         dims = get_dims(lp_cache)
-        return [_pooled_fill_ind_eta(dists_builder, θs, get_const_cov(individuals[i]),
-                    model_funs, helpers, re_names, dims, strategies, T, axs, ηlen)
-                for i in 1:n]
+        return [
+            _pooled_fill_ind_eta(
+                    dists_builder, θs, get_const_cov(individuals[i]),
+                    model_funs, helpers, re_names, dims, strategies, T, axs, ηlen
+                )
+                for i in 1:n
+        ]
     end
     # Crossed designs: an individual can span several levels of a grouping column, so
     # the η shape differs per individual and no shared axes exist.
     level_ids = get_ind_level_ids(lp_cache)
     if any(i -> any(ids -> length(ids) > 1, level_ids[i]), 1:n)
         dims = get_dims(lp_cache)
-        return [_pooled_crossed_ind_eta(dists_builder, θs, get_const_cov(individuals[i]),
+        return [
+            _pooled_crossed_ind_eta(
+                    dists_builder, θs, get_const_cov(individuals[i]),
                     model_funs, helpers, re_names, dims, strategies, T,
-                    map(length, level_ids[i])) for i in 1:n]
+                    map(length, level_ids[i])
+                ) for i in 1:n
+        ]
     end
     # Heterogeneous-shape path (e.g. a dim-1 NPF RE kept as a 1-vector): probe the
     # plug-in SHAPES once with the first individual to build the output axes (the
@@ -311,7 +332,8 @@ function _compute_pooled_etas(dm::DataModel, θ::ComponentArray, strategies)
     dists1 = dists_builder(θs, get_const_cov(ind1), model_funs, helpers)
     probe_vals = map(enumerate(re_names)) do (ri, re)
         _pooled_eta_value(
-            getproperty(dists1, re), get_dims(lp_cache)[ri], strategies[ri], T)
+            getproperty(dists1, re), get_dims(lp_cache)[ri], strategies[ri], T
+        )
     end
     proto = ComponentArray(NamedTuple{Tuple(re_names)}(Tuple(probe_vals)))
     axs = getaxes(proto)
@@ -323,28 +345,34 @@ function _compute_pooled_etas(dm::DataModel, θ::ComponentArray, strategies)
     # (e.g. the NPF MC plug-in evaluates the flow once per stored draw).
     re_syms = get_re_syms(get_random(model))
     const_names = get_covariates(model).constants
-    invariant = map(re -> isempty(intersect(getfield(re_syms, re), const_names)),
-        re_names)
-    return [begin
+    invariant = map(
+        re -> isempty(intersect(getfield(re_syms, re), const_names)),
+        re_names
+    )
+    return [
+        begin
                 vals = Vector{T}(undef, ηlen)
                 pos = 1
                 if i == 1 || all(invariant)
                     for val in probe_vals
                         pos = _pooled_fill_eta!(vals, pos, val)
-                    end
-                else
+                end
+            else
                     ind = individuals[i]
                     dists = dists_builder(θs, get_const_cov(ind), model_funs, helpers)
                     for (ri, re) in enumerate(re_names)
                         val = invariant[ri] ? probe_vals[ri] :
-                              _pooled_eta_value(getproperty(dists, re),
-                            get_dims(lp_cache)[ri], strategies[ri], T)
+                        _pooled_eta_value(
+                            getproperty(dists, re),
+                            get_dims(lp_cache)[ri], strategies[ri], T
+                        )
                         pos = _pooled_fill_eta!(vals, pos, val)
-                    end
                 end
+            end
                 ComponentArray(vals, axs)
             end
-            for i in 1:n]
+            for i in 1:n
+    ]
 end
 
 @inline function _pooled_fill_eta!(vals::Vector, pos::Int, val::Number)
@@ -408,26 +436,30 @@ function _pooled_demote_strategy(strategy, dist, mc_draws::Int, rng::AbstractRNG
         end
         med !== nothing && all(isfinite, med) && return :median
         return is_flow ? _PooledMCPlugin([rand(rng, dist.base.dist) for _ in 1:mc_draws]) :
-               :zero
+            :zero
     elseif strategy === :median
         return is_flow ? _PooledMCPlugin([rand(rng, dist.base.dist) for _ in 1:mc_draws]) :
-               :zero
+            :zero
     end
     return :zero  # MC failed too
 end
 
 # Demote each RE's strategy until its plug-in has finite ForwardDiff derivatives
 # at the start values (or reaches :zero).
-function _pooled_dual_safe_strategies(dm::DataModel, θ_user_u::ComponentArray,
+function _pooled_dual_safe_strategies(
+        dm::DataModel, θ_user_u::ComponentArray,
         θ_user_t::ComponentArray, inv_transform,
-        strategies_in, mc_draws::Int, rng::AbstractRNG)
+        strategies_in, mc_draws::Int, rng::AbstractRNG
+    )
     model = get_model(dm)
     lp_cache = get_laplace_cache(get_re_group_info(dm))
     re_names = get_re_names(lp_cache)
     dists_builder = create_random_effect_distribution(get_random(model))
     θs = _symmetrize_psd_params(θ_user_u, get_fixed(model))
-    dists = dists_builder(θs, get_const_cov(first(get_individuals(dm))),
-        get_model_funs(model), get_helper_funs(model))
+    dists = dists_builder(
+        θs, get_const_cov(first(get_individuals(dm))),
+        get_model_funs(model), get_helper_funs(model)
+    )
     axs = getaxes(θ_user_t)
     θ0_vec = _pooled_flat(θ_user_t)
     idx_all = collect(1:length(θ0_vec))
@@ -445,14 +477,17 @@ function _pooled_dual_safe_strategies(dm::DataModel, θ_user_u::ComponentArray,
             old = _pooled_plugin_label(strategies[ri])
             strategies[ri] = _pooled_demote_strategy(
                 strategies[ri], getproperty(dists, re),
-                mc_draws, rng)
+                mc_draws, rng
+            )
             new = _pooled_plugin_label(strategies[ri])
             @warn "Pooled: plug-in for random effect $(re) demoted from :$(old) to " *
-                  ":$(new) — :$(old) is not ForwardDiff-differentiable at the start " *
-                  "values." *
-                  (strategies[ri] === :zero ?
-                   " The plug-in is now constant zero; its distribution parameters " *
-                   "cannot be estimated by Pooled()." : "")
+                ":$(new) — :$(old) is not ForwardDiff-differentiable at the start " *
+                "values." *
+                (
+                strategies[ri] === :zero ?
+                    " The plug-in is now constant zero; its distribution parameters " *
+                    "cannot be estimated by Pooled()." : ""
+            )
         end
     end
     return Tuple(strategies)
@@ -476,16 +511,18 @@ function _pooled_spread_kinds(dm::DataModel, θ::ComponentArray)
         kind = if get_dims(lp_cache)[ri] == 1
             if _pooled_finite_or_nothing(() -> var(dist)) !== nothing
                 :var
-            elseif _pooled_finite_or_nothing(() -> quantile(dist, 0.75) -
-                                                   quantile(dist, 0.25)) !==
-                   nothing
+            elseif _pooled_finite_or_nothing(
+                    () -> quantile(dist, 0.75) -
+                        quantile(dist, 0.25)
+                ) !==
+                    nothing
                 :iqr
             else
                 :none
             end
         else
             _pooled_finite_or_nothing(() -> vec(Matrix(cov(dist)))) !== nothing ? :cov :
-            :none
+                :none
         end
         push!(kinds, kind)
     end
@@ -575,8 +612,10 @@ end
 
 # Jacobian of f_stack(inv_transform(θt)) w.r.t. the coordinates `idx` of the flat
 # transformed vector, holding all other coordinates at `θ_probe_vec`.
-function _pooled_coord_jacobian(f_stack, θ_probe_vec::Vector{Float64}, axs,
-        inv_transform, idx::Vector{Int})
+function _pooled_coord_jacobian(
+        f_stack, θ_probe_vec::Vector{Float64}, axs,
+        inv_transform, idx::Vector{Int}
+    )
     g = function (x)
         full = Vector{eltype(x)}(θ_probe_vec)
         full[idx] .= x
@@ -586,9 +625,9 @@ function _pooled_coord_jacobian(f_stack, θ_probe_vec::Vector{Float64}, axs,
     return ForwardDiff.jacobian(g, θ_probe_vec[idx])
 end
 
-const _POOLED_ZERO_RTOL = 1e-10
-const _POOLED_RANK_RTOL = 1e-8
-const _POOLED_REDUNDANT_RTOL = 1e-6
+const _POOLED_ZERO_RTOL = 1.0e-10
+const _POOLED_RANK_RTOL = 1.0e-8
+const _POOLED_REDUNDANT_RTOL = 1.0e-6
 
 # Plain flat Vector{Float64} copy of a ComponentArray (collect preserves the CA type).
 _pooled_flat(ca) = copyto!(Vector{Float64}(undef, length(ca)), ca)
@@ -611,21 +650,26 @@ _pooled_zero_tol(J::AbstractMatrix) = _POOLED_ZERO_RTOL * max(1.0, norm(J))
 # Jitter every non-user-constant coordinate; retry with shrinking magnitude if the
 # jittered point cannot evaluate the plug-ins (e.g. invalid distribution parameters
 # on :identity scales).
-function _pooled_probe_points(dm::DataModel, θ0_vec::Vector{Float64}, axs,
+function _pooled_probe_points(
+        dm::DataModel, θ0_vec::Vector{Float64}, axs,
         inv_transform, strategies, jitter_idx::Vector{Int},
-        n_probes::Int, rng::AbstractRNG)
+        n_probes::Int, rng::AbstractRNG
+    )
     evaluable = function (vec)
-        try
+        return try
             m = _pooled_stacked_means(
-                dm, inv_transform(ComponentArray(vec, axs)), strategies)
+                dm, inv_transform(ComponentArray(vec, axs)), strategies
+            )
             all(isfinite, m)
         catch
             false
         end
     end
     evaluable(θ0_vec) ||
-        error("Pooled: random-effect plug-in values cannot be evaluated at the initial " *
-              "fixed effects. Check the @randomEffects distributions at the start values.")
+        error(
+        "Pooled: random-effect plug-in values cannot be evaluated at the initial " *
+            "fixed effects. Check the @randomEffects distributions at the start values."
+    )
     probes = [copy(θ0_vec)]
     for _ in 2:n_probes
         found = false
@@ -655,9 +699,11 @@ end
 #    greedy elimination, later-declared parameters frozen first).
 # Ties go to free: wrong-free is a flat direction, wrong-frozen is a silent bias.
 
-function _pooled_partition(dm::DataModel, method, θ_user_t::ComponentArray,
+function _pooled_partition(
+        dm::DataModel, method, θ_user_t::ComponentArray,
         inv_transform, constants::NamedTuple, strategies,
-        rng::AbstractRNG)
+        rng::AbstractRNG
+    )
     model = get_model(dm)
     fe_names = get_names(get_fixed(model))
     re_syms = _pooled_re_dist_syms(model)
@@ -665,22 +711,27 @@ function _pooled_partition(dm::DataModel, method, θ_user_t::ComponentArray,
     force_free = Set(method.force_free)
     in_re = [n for n in fe_names if n in re_syms]
     structural_in_re = [n for n in in_re if n in structural]
-    candidates = [n
-                  for n in in_re
-                  if !(n in structural) && !haskey(constants, n) && !(n in force_free)]
+    candidates = [
+        n
+            for n in in_re
+            if !(n in structural) && !haskey(constants, n) && !(n in force_free)
+    ]
 
     base = (;
         candidates = Symbol[], frozen_dispersion = Symbol[], frozen_collinear = Symbol[],
         frozen_inert = Symbol[], frozen_unverified = Symbol[], weakly_identified = Symbol[],
-        structural_in_re = structural_in_re, probe_failed = false)
+        structural_in_re = structural_in_re, probe_failed = false,
+    )
     isempty(candidates) && return base
 
     axs = getaxes(θ_user_t)
     ranges = _pooled_param_ranges(θ_user_t, fe_names)
     θ0_vec = _pooled_flat(θ_user_t)
     jitter_idx = vcat([collect(ranges[n]) for n in fe_names if !haskey(constants, n)]...)
-    probes = _pooled_probe_points(dm, θ0_vec, axs, inv_transform, strategies,
-        jitter_idx, method.n_probes, rng)
+    probes = _pooled_probe_points(
+        dm, θ0_vec, axs, inv_transform, strategies,
+        jitter_idx, method.n_probes, rng
+    )
     cand_idx = vcat([collect(ranges[n]) for n in candidates]...)
     rel = Dict{Symbol, UnitRange{Int}}()
     off = 0
@@ -692,8 +743,10 @@ function _pooled_partition(dm::DataModel, method, θ_user_t::ComponentArray,
 
     mean_stack = θu -> _pooled_stacked_means(dm, θu, strategies)
     Js = try
-        all_J = [_pooled_coord_jacobian(mean_stack, p, axs, inv_transform, cand_idx)
-                 for p in probes]
+        all_J = [
+            _pooled_coord_jacobian(mean_stack, p, axs, inv_transform, cand_idx)
+                for p in probes
+        ]
         usable = [J for J in all_J if all(isfinite, J)]
         isempty(usable) ? nothing : usable
     catch
@@ -703,10 +756,12 @@ function _pooled_partition(dm::DataModel, method, θ_user_t::ComponentArray,
         # Plug-in not ForwardDiff-probeable (e.g. a numerically-inverted median).
         # Conservatively freeze all candidates; the objective-invariance check
         # (value-level, no duals) rescues any that do reach the likelihood.
-        return (; candidates = candidates, frozen_dispersion = copy(candidates),
+        return (;
+            candidates = candidates, frozen_dispersion = copy(candidates),
             frozen_collinear = Symbol[], frozen_inert = Symbol[],
             frozen_unverified = copy(candidates), weakly_identified = Symbol[],
-            structural_in_re = structural_in_re, probe_failed = true)
+            structural_in_re = structural_in_re, probe_failed = true,
+        )
     end
 
     # zero-block detection: dead at EVERY probe → dispersion candidate
@@ -731,9 +786,12 @@ function _pooled_partition(dm::DataModel, method, θ_user_t::ComponentArray,
             off += l
         end
         Js_spread = try
-            all_J = [_pooled_coord_jacobian(
-                         spread_stack, p, axs, inv_transform, frozen_idx)
-                     for p in probes]
+            all_J = [
+                _pooled_coord_jacobian(
+                        spread_stack, p, axs, inv_transform, frozen_idx
+                    )
+                    for p in probes
+            ]
             usable = [J for J in all_J if all(isfinite, J)]
             isempty(usable) ? nothing : usable
         catch
@@ -745,20 +803,24 @@ function _pooled_partition(dm::DataModel, method, θ_user_t::ComponentArray,
             re_syms_nt = get_re_syms(get_random(model))
             re_names = get_re_names(get_laplace_cache(get_re_group_info(dm)))
             for n in frozen_dispersion
-                moves_spread = any(norm(J[:, rel_frozen[n]]) > _pooled_zero_tol(J)
-                for J in Js_spread)
+                moves_spread = any(
+                    norm(J[:, rel_frozen[n]]) > _pooled_zero_tol(J)
+                        for J in Js_spread
+                )
                 moves_spread && continue
                 # parameter moves neither plug-in nor spread — inert if some RE
                 # using it has an available spread measure, otherwise unverified
-                has_measure = any(kinds[ri] !== :none && n in re_syms_nt[re]
-                for (ri, re) in enumerate(re_names))
+                has_measure = any(
+                    kinds[ri] !== :none && n in re_syms_nt[re]
+                        for (ri, re) in enumerate(re_names)
+                )
                 push!(has_measure ? frozen_inert : frozen_unverified, n)
             end
         end
         if !isempty(frozen_inert)
             @warn "Pooled: parameter(s) $(join(frozen_inert, ", ")) have no detectable " *
-                  "influence on the random-effect distributions (neither plug-in value " *
-                  "nor spread). They are held constant — check the model specification."
+                "influence on the random-effect distributions (neither plug-in value " *
+                "nor spread). They are held constant — check the model specification."
         end
     end
 
@@ -790,10 +852,12 @@ function _pooled_partition(dm::DataModel, method, θ_user_t::ComponentArray,
         max_rank < ncoords && push!(weakly_identified, n)
     end
 
-    return (; candidates = candidates, frozen_dispersion = frozen_dispersion,
+    return (;
+        candidates = candidates, frozen_dispersion = frozen_dispersion,
         frozen_collinear = frozen_collinear, frozen_inert = frozen_inert,
         frozen_unverified = frozen_unverified, weakly_identified = weakly_identified,
-        structural_in_re = structural_in_re, probe_failed = false)
+        structural_in_re = structural_in_re, probe_failed = false,
+    )
 end
 
 # ─── verification B: end-to-end objective invariance ─────────────────────────────
@@ -803,15 +867,17 @@ end
 # the data log-likelihood is unchanged. Catches both coincidental zero sensitivities
 # and bugs in the detection chain. Collinear-frozen parameters are excluded — they
 # legitimately move the objective and are frozen for redundancy, not deadness.
-function _pooled_invariance_filter(nll_recompute, θ0_vec::Vector{Float64},
-        ranges, frozen::Vector{Symbol}, rng::AbstractRNG)
+function _pooled_invariance_filter(
+        nll_recompute, θ0_vec::Vector{Float64},
+        ranges, frozen::Vector{Symbol}, rng::AbstractRNG
+    )
     isempty(frozen) && return frozen, Symbol[]
     base = nll_recompute(θ0_vec)
     isfinite(base) || return frozen, Symbol[]   # cannot verify at a non-finite start
-    tol = 1e-8 * max(1.0, abs(base))
+    tol = 1.0e-8 * max(1.0, abs(base))
     coords = vcat([collect(ranges[n]) for n in frozen]...)
     invariant = function (idx)
-        for δ in (1e-3, 0.5)
+        for δ in (1.0e-3, 0.5)
             pert = copy(θ0_vec)
             signs = ifelse.(rand(rng, length(idx)) .< 0.5, -1.0, 1.0)
             pert[idx] .+= δ .* signs
@@ -832,11 +898,13 @@ end
 
 # ─── post-fit sensitivity re-check ────────────────────────────────────────────────
 
-function _pooled_postfit_violations(dm::DataModel, θ_hat_t::ComponentArray,
+function _pooled_postfit_violations(
+        dm::DataModel, θ_hat_t::ComponentArray,
         inv_transform, strategies, ranges,
         candidates::Vector{Symbol},
         frozen_dispersion::Vector{Symbol},
-        frozen_collinear::Vector{Symbol})
+        frozen_collinear::Vector{Symbol}
+    )
     (isempty(frozen_dispersion) && isempty(frozen_collinear)) && return Symbol[]
     axs = getaxes(θ_hat_t)
     θhat_vec = _pooled_flat(θ_hat_t)
@@ -861,9 +929,11 @@ function _pooled_postfit_violations(dm::DataModel, θ_hat_t::ComponentArray,
         norm(J[:, rel[n]]) > tol && push!(viol, n)
     end
     if !isempty(frozen_collinear)
-        kept = [n
+        kept = [
+            n
                 for n in candidates
-                if !(n in frozen_dispersion) && !(n in frozen_collinear)]
+                if !(n in frozen_dispersion) && !(n in frozen_collinear)
+        ]
         cols_k = isempty(kept) ? Int[] : vcat([collect(rel[n]) for n in kept]...)
         Jk = J[:, cols_k]
         for n in frozen_collinear
@@ -875,8 +945,10 @@ end
 
 # ─── convert per-individual η to per-level DataFrames ────────────────────────────
 
-function _pooled_re_dataframes(dm::DataModel, η_vec::Vector{<:ComponentArray};
-        flatten::Bool = true)
+function _pooled_re_dataframes(
+        dm::DataModel, η_vec::Vector{<:ComponentArray};
+        flatten::Bool = true
+    )
     lp_cache = get_laplace_cache(get_re_group_info(dm))
     lp_cache === nothing && return NamedTuple()
     re_names = get_re_names(lp_cache)
@@ -925,8 +997,10 @@ function _pooled_re_dataframes(dm::DataModel, η_vec::Vector{<:ComponentArray};
             end
             push!(out_pairs, re => df)
         else
-            push!(out_pairs,
-                re => DataFrame(col => rows, :value => [v[1] for v in vals_flat]))
+            push!(
+                out_pairs,
+                re => DataFrame(col => rows, :value => [v[1] for v in vals_flat])
+            )
         end
     end
     return NamedTuple(out_pairs)
@@ -934,7 +1008,8 @@ end
 
 # ─── shared inner fit ─────────────────────────────────────────────────────────────
 
-function _fit_pooled(dm::DataModel, method;
+function _fit_pooled(
+        dm::DataModel, method;
         constants::NamedTuple,
         penalty::NamedTuple,
         ode_args::Tuple,
@@ -944,7 +1019,8 @@ function _fit_pooled(dm::DataModel, method;
         rng::AbstractRNG,
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         store_data_model::Bool = true,
-        fit_args::Tuple = ())
+        fit_args::Tuple = ()
+    )
     model = get_model(dm)
     fe = get_fixed(model)
     fixed_names = get_names(fe)
@@ -977,15 +1053,23 @@ function _fit_pooled(dm::DataModel, method;
     ranges = _pooled_param_ranges(θ_user_t, fixed_names)
 
     re_dist_syms = _pooled_re_dist_syms(model)
-    strategies = _pooled_plugin_strategies(dm, θ_user_u;
-        mc_draws = method.mc_draws, rng = rng)
-    strategies = _pooled_dual_safe_strategies(dm, θ_user_u, θ_user_t, inv_transform,
-        strategies, method.mc_draws, rng)
-    part = _pooled_partition(dm, method, θ_user_t, inv_transform, constants,
-        strategies, rng)
+    strategies = _pooled_plugin_strategies(
+        dm, θ_user_u;
+        mc_draws = method.mc_draws, rng = rng
+    )
+    strategies = _pooled_dual_safe_strategies(
+        dm, θ_user_u, θ_user_t, inv_transform,
+        strategies, method.mc_draws, rng
+    )
+    part = _pooled_partition(
+        dm, method, θ_user_t, inv_transform, constants,
+        strategies, rng
+    )
 
-    cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-        serialization = serialization, force_saveat = true)
+    cache = build_ll_cache(
+        dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = serialization, force_saveat = true
+    )
 
     # data nll with η recomputed from θ — used by verification B (always the
     # recompute path, so frozen parameters are genuinely exercised through η)
@@ -1003,7 +1087,8 @@ function _fit_pooled(dm::DataModel, method;
 
     frozen_dispersion, unfrozen_by_invariance = _pooled_invariance_filter(
         nll_recompute, _pooled_flat(θ_user_t), ranges,
-        part.frozen_dispersion, rng)
+        part.frozen_dispersion, rng
+    )
     frozen_inert = [n for n in part.frozen_inert if n in frozen_dispersion]
     frozen_unverified = [n for n in part.frozen_unverified if n in frozen_dispersion]
     frozen_collinear = copy(part.frozen_collinear)
@@ -1015,23 +1100,31 @@ function _fit_pooled(dm::DataModel, method;
     postfit_violations = Symbol[]
     local sol, θ_hat_t, θ_hat_u, merged_constants
     for round in 1:max_rounds
-        auto_constants = NamedTuple(n => getproperty(θ0_u, n)
-        for n in vcat(frozen_dispersion, frozen_collinear))
+        auto_constants = NamedTuple(
+            n => getproperty(θ0_u, n)
+                for n in vcat(frozen_dispersion, frozen_collinear)
+        )
         merged_constants = merge(auto_constants, constants)  # user constants win
         all(name in keys(merged_constants) for name in fixed_names) &&
-            error("Pooled() has no free fixed effects to optimize (all are RE " *
-                  "distribution parameters with no likelihood contribution). Add at " *
-                  "least one fixed effect in @formulas or @DifferentialEquation.")
-        sol, θ_hat_t, θ_hat_u = _pooled_solve(dm, method, θ_round_u, merged_constants,
+            error(
+            "Pooled() has no free fixed effects to optimize (all are RE " *
+                "distribution parameters with no likelihood contribution). Add at " *
+                "least one fixed effect in @formulas or @DifferentialEquation."
+        )
+        sol, θ_hat_t, θ_hat_u = _pooled_solve(
+            dm, method, θ_round_u, merged_constants,
             penalty, add_term, cache, serialization,
             strategies, re_dist_syms, fe,
             transform, inv_transform;
-            info_bounds = (round == 1))
-        postfit_violations = _pooled_postfit_violations(dm, θ_hat_t, inv_transform,
+            info_bounds = (round == 1)
+        )
+        postfit_violations = _pooled_postfit_violations(
+            dm, θ_hat_t, inv_transform,
             strategies, ranges,
             part.candidates,
             frozen_dispersion,
-            frozen_collinear)
+            frozen_collinear
+        )
         (isempty(postfit_violations) || method.refreeze_check === :warn) && break
         round == max_rounds && break
         # :refit — unfreeze violators and continue from the current optimum
@@ -1044,8 +1137,8 @@ function _fit_pooled(dm::DataModel, method;
     end
     if !isempty(postfit_violations) && method.refreeze_check === :warn
         @warn "Pooled: frozen parameter(s) $(join(postfit_violations, ", ")) show " *
-              "nonzero plug-in sensitivity at the optimum. Consider refitting with " *
-              "refreeze_check=:refit or force_free."
+            "nonzero plug-in sensitivity at the optimum. Consider refitting with " *
+            "refreeze_check=:refit or force_free."
     end
 
     η_hat = _compute_pooled_etas(dm, θ_hat_u, strategies)
@@ -1062,36 +1155,45 @@ function _fit_pooled(dm::DataModel, method;
         unfrozen_by_invariance = Tuple(unfrozen_by_invariance),
         unfrozen_postfit = Tuple(unfrozen_postfit),
         postfit_violations = Tuple(postfit_violations),
-        probe_failed = part.probe_failed
+        probe_failed = part.probe_failed,
     )
 
-    summary = FitSummary(sol.objective, sol.retcode == SciMLBase.ReturnCode.Success,
-        FitParameters(θ_hat_t, θ_hat_u), NamedTuple())
+    summary = FitSummary(
+        sol.objective, sol.retcode == SciMLBase.ReturnCode.Success,
+        FitParameters(θ_hat_t, θ_hat_u), NamedTuple()
+    )
     diag = FitDiagnostics(
-        (;), (optimizer = method.optimizer,), (retcode = sol.retcode,), NamedTuple())
+        (;), (optimizer = method.optimizer,), (retcode = sol.retcode,), NamedTuple()
+    )
     niter = hasproperty(sol, :stats) && hasproperty(sol.stats, :iterations) ?
-            sol.stats.iterations : missing
+        sol.stats.iterations : missing
     raw = hasproperty(sol, :original) ? sol.original : sol
     result = PooledResult(sol, sol.objective, niter, raw, notes, η_hat, strategies)
-    fit_kwargs = (constants = merged_constants,
+    fit_kwargs = (
+        constants = merged_constants,
         penalty = penalty,
         ode_args = ode_args,
         ode_kwargs = ode_kwargs,
         serialization = serialization,
         rng = rng,
         theta_0_untransformed = theta_0_untransformed,
-        store_data_model = store_data_model)
-    return FitResult(method, result, summary, diag,
-        store_data_model ? dm : nothing, fit_args, fit_kwargs)
+        store_data_model = store_data_model,
+    )
+    return FitResult(
+        method, result, summary, diag,
+        store_data_model ? dm : nothing, fit_args, fit_kwargs
+    )
 end
 
 # One optimization pass over the free fixed effects, with η either recomputed from θ
 # at every objective evaluation (when a free parameter feeds an RE distribution) or
 # precomputed once (fast path — plug-ins cannot move).
-function _pooled_solve(dm::DataModel, method, θ_start_u::ComponentArray,
+function _pooled_solve(
+        dm::DataModel, method, θ_start_u::ComponentArray,
         merged_constants::NamedTuple, penalty::NamedTuple, add_term,
         cache, serialization, strategies, re_dist_syms, fe,
-        transform, inv_transform; info_bounds::Bool = true)
+        transform, inv_transform; info_bounds::Bool = true
+    )
     fixed_names = get_names(fe)
     free_names = [n for n in fixed_names if !(n in keys(merged_constants))]
 
@@ -1104,8 +1206,11 @@ function _pooled_solve(dm::DataModel, method, θ_start_u::ComponentArray,
     recompute_eta = any(n in re_dist_syms for n in free_names)
     η_fixed = recompute_eta ? nothing : _compute_pooled_etas(dm, θ_const_u, strategies)
 
-    θ0_free_t = ComponentArray(NamedTuple{Tuple(free_names)}(
-        Tuple(getproperty(θ0_t, n) for n in free_names)))
+    θ0_free_t = ComponentArray(
+        NamedTuple{Tuple(free_names)}(
+            Tuple(getproperty(θ0_t, n) for n in free_names)
+        )
+    )
     axs = getaxes(θ0_free_t)
 
     free_idx = _free_idx(θ_const_t, θ0_free_t)
@@ -1116,7 +1221,8 @@ function _pooled_solve(dm::DataModel, method, θ_start_u::ComponentArray,
     # coordinates. The frozen-set DETECTION above stays on raw transformed coordinates - scaling
     # it would change which parameters get frozen, which is a semantic change, not a port.
     θ0_pc, s_pc, _θt_from_z, _z_from_θt = _precondition_maps(
-        get_model(dm), free_names, θ0_free_t, axs, _precondition_on(method))
+        get_model(dm), free_names, θ0_free_t, axs, _precondition_on(method)
+    )
     function obj(z, p)
         v_free = ComponentArrays.getdata(_θt_from_z(z))
         T = eltype(v_free)
@@ -1143,17 +1249,18 @@ function _pooled_solve(dm::DataModel, method, θ_start_u::ComponentArray,
     lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
         fe, free_names, θ0_free_t, method.optimizer, method.lb, method.ub, merged_constants;
         ignore_model_bounds = method.ignore_model_bounds, emit_info = info_bounds,
-        method_label = "Pooled")
+        method_label = "Pooled"
+    )
     z0 = _z_from_θt(θ0_init)
     lb_z = _z_from_θt(lb)
     ub_z = _z_from_θt(ub)
     prob = use_bounds ? OptimizationProblem(optf, z0; lb = lb_z, ub = ub_z) :
-           OptimizationProblem(optf, z0)
+        OptimizationProblem(optf, z0)
     sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
 
     θ_hat_t_raw = _θt_from_z(sol.u)
     θ_hat_t_free = θ_hat_t_raw isa ComponentArray ?
-                   θ_hat_t_raw : ComponentArray(θ_hat_t_raw, axs)
+        θ_hat_t_raw : ComponentArray(θ_hat_t_raw, axs)
     T = eltype(θ_hat_t_free)
     θ_hat_t = ComponentArray(T.(θ_const_t), getaxes(θ_const_t))
     for name in free_names
@@ -1171,8 +1278,10 @@ _default_pooled_init_method() = Pooled(; optim_kwargs = (; maxiters = 50))
 # untransformed estimate as the starting point for the actual fit. The pre-fit
 # inherits the shared fit keywords from the main call; `fit_options` overrides them.
 # A failing pre-fit falls back to the unmodified starting point with a warning.
-function _pooled_init_theta(dm::DataModel, method, pooled_init,
-        fit_options::NamedTuple, kwargs_nt::NamedTuple)
+function _pooled_init_theta(
+        dm::DataModel, method, pooled_init,
+        fit_options::NamedTuple, kwargs_nt::NamedTuple
+    )
     (method isa Pooled || method isa PooledMap) &&
         error("pooled_init is not supported when the fitted method is Pooled/PooledMap.")
     isempty(get_re_names(get_random(get_model(dm)))) &&
@@ -1191,15 +1300,15 @@ function _pooled_init_theta(dm::DataModel, method, pooled_init,
         ode_kwargs = get(kwargs_nt, :ode_kwargs, NamedTuple()),
         serialization = get(kwargs_nt, :serialization, EnsembleThreads()),
         theta_0_untransformed = get(kwargs_nt, :theta_0_untransformed, nothing),
-        store_data_model = false
+        store_data_model = false,
     )
     haskey(kwargs_nt, :rng) && (base = merge(base, (rng = kwargs_nt.rng,)))
     pooled_kwargs = merge(base, fit_options)
     res = try
         _fit_model(dm, pooled_method; pooled_kwargs...)
     catch err
-        @warn "pooled_init pre-fit failed; starting the fit from the unmodified "*
-        "initial values." exception=err
+        @warn "pooled_init pre-fit failed; starting the fit from the unmodified " *
+            "initial values." exception = err
         return base.theta_0_untransformed
     end
     return get_params(res; scale = :untransformed)
@@ -1207,7 +1316,8 @@ end
 
 # ─── fit_model dispatches ────────────────────────────────────────────────────────
 
-function _fit_model(dm::DataModel, method::Pooled, args...;
+function _fit_model(
+        dm::DataModel, method::Pooled, args...;
         constants::NamedTuple = NamedTuple(),
         penalty::NamedTuple = NamedTuple(),
         extra_objective = nothing,
@@ -1216,11 +1326,15 @@ function _fit_model(dm::DataModel, method::Pooled, args...;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
-        store_data_model::Bool = true)
+        store_data_model::Bool = true
+    )
     re_names = get_re_names(get_random(get_model(dm)))
-    isempty(re_names) && error("Pooled() requires a model with random effects. " *
-          "Use MLE() for fixed-effects-only models.")
-    return _fit_pooled(dm, method;
+    isempty(re_names) && error(
+        "Pooled() requires a model with random effects. " *
+            "Use MLE() for fixed-effects-only models."
+    )
+    return _fit_pooled(
+        dm, method;
         constants = constants,
         penalty = penalty,
         ode_args = ode_args,
@@ -1230,10 +1344,12 @@ function _fit_model(dm::DataModel, method::Pooled, args...;
         rng = rng,
         theta_0_untransformed = theta_0_untransformed,
         store_data_model = store_data_model,
-        fit_args = args)
+        fit_args = args
+    )
 end
 
-function _fit_model(dm::DataModel, method::PooledMap, args...;
+function _fit_model(
+        dm::DataModel, method::PooledMap, args...;
         constants::NamedTuple = NamedTuple(),
         penalty::NamedTuple = NamedTuple(),
         extra_objective = nothing,
@@ -1242,18 +1358,24 @@ function _fit_model(dm::DataModel, method::PooledMap, args...;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
-        store_data_model::Bool = true)
+        store_data_model::Bool = true
+    )
     re_names = get_re_names(get_random(get_model(dm)))
-    isempty(re_names) && error("PooledMap() requires a model with random effects. " *
-          "Use MAP() for fixed-effects-only models.")
+    isempty(re_names) && error(
+        "PooledMap() requires a model with random effects. " *
+            "Use MAP() for fixed-effects-only models."
+    )
 
     fe = get_fixed(get_model(dm))
     has_prior = _has_fixed_priors(fe, constants)
     has_prior ||
-        error("PooledMap() requires priors on free fixed effects. Define priors in " *
-              "@fixedEffects (e.g. RealNumber(...; prior=Normal(...))) or use Pooled() instead.")
+        error(
+        "PooledMap() requires priors on free fixed effects. Define priors in " *
+            "@fixedEffects (e.g. RealNumber(...; prior=Normal(...))) or use Pooled() instead."
+    )
 
-    return _fit_pooled(dm, method;
+    return _fit_pooled(
+        dm, method;
         constants = constants,
         penalty = penalty,
         ode_args = ode_args,
@@ -1263,5 +1385,6 @@ function _fit_model(dm::DataModel, method::PooledMap, args...;
         rng = rng,
         theta_0_untransformed = theta_0_untransformed,
         store_data_model = store_data_model,
-        fit_args = args)
+        fit_args = args
+    )
 end

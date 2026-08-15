@@ -38,8 +38,10 @@ function _cf_diag2_model(cf::Symbol = :auto)
 end
 
 function _cf_diag2_df()
-    DataFrame(ID = [1, 1, 1, 2, 2, 2], t = [0.0, 1.0, 2.0, 0.0, 1.0, 2.0],
-        y = [1.5, 1.0, 0.8, 1.4, 0.95, 0.75])
+    return DataFrame(
+        ID = [1, 1, 1, 2, 2, 2], t = [0.0, 1.0, 2.0, 0.0, 1.0, 2.0],
+        y = [1.5, 1.0, 0.8, 1.4, 0.95, 0.75]
+    )
 end
 
 # Second half of the closed-form ODE tests (split from closed_form_ode_tests.jl
@@ -48,14 +50,17 @@ end
 @testset "closed-form fit matches numerical (single state, Laplace)" begin
     res_cf = fit_model(fx_ode_dm(), NoLimits.Laplace())
     dm_off = DataModel(
-        set_solver_config(fx_ode_model(); saveat_mode = :saveat,
-            closed_form = :off),
-        fx_ode_df(); primary_id = :ID, time_col = :t)
+        set_solver_config(
+            fx_ode_model(); saveat_mode = :saveat,
+            closed_form = :off
+        ),
+        fx_ode_df(); primary_id = :ID, time_col = :t
+    )
     res_off = fit_model(dm_off, NoLimits.Laplace())
-    @test NoLimits.get_objective(res_cf)≈NoLimits.get_objective(res_off) rtol=1e-5
+    @test NoLimits.get_objective(res_cf) ≈ NoLimits.get_objective(res_off) rtol = 1.0e-5
     p_cf = NoLimits.get_params(res_cf; scale = :untransformed)
     p_off = NoLimits.get_params(res_off; scale = :untransformed)
-    @test collect(p_cf)≈collect(p_off) rtol=1e-4
+    @test collect(p_cf) ≈ collect(p_off) rtol = 1.0e-4
 end
 
 @testset "closed-form fit matches numerical (two-state, MLE)" begin
@@ -64,10 +69,14 @@ end
     dm_off = DataModel(_cf_diag2_model(:off), df; primary_id = :ID, time_col = :t)
     res_cf = fit_model(dm_cf, NoLimits.MLE())
     res_off = fit_model(dm_off, NoLimits.MLE())
-    @test NoLimits.get_objective(res_cf)≈NoLimits.get_objective(res_off) rtol=1e-5
-    @test collect(NoLimits.get_params(res_cf;
-        scale = :untransformed))≈
-    collect(NoLimits.get_params(res_off; scale = :untransformed)) rtol=1e-4
+    @test NoLimits.get_objective(res_cf) ≈ NoLimits.get_objective(res_off) rtol = 1.0e-5
+    @test collect(
+        NoLimits.get_params(
+            res_cf;
+            scale = :untransformed
+        )
+    ) ≈
+        collect(NoLimits.get_params(res_off; scale = :untransformed)) rtol = 1.0e-4
 end
 
 @testset "closed-form fit matches numerical (Bateman chain, MLE)" begin
@@ -97,17 +106,23 @@ end
         end
         set_solver_config(m; saveat_mode = :saveat, closed_form = cf)
     end
-    df = DataFrame(ID = [1, 1, 1, 2, 2, 2], t = [0.0, 1.0, 2.0, 0.0, 1.0, 2.0],
-        y = [0.2, 0.35, 0.3, 0.25, 0.4, 0.28])
+    df = DataFrame(
+        ID = [1, 1, 1, 2, 2, 2], t = [0.0, 1.0, 2.0, 0.0, 1.0, 2.0],
+        y = [0.2, 0.35, 0.3, 0.25, 0.4, 0.28]
+    )
     dm_cf = DataModel(chain(:auto), df; primary_id = :ID, time_col = :t)
     @test get_closed_form_plan(dm_cf).mode === :bateman
     dm_off = DataModel(chain(:off), df; primary_id = :ID, time_col = :t)
     res_cf = fit_model(dm_cf, NoLimits.MLE())
     res_off = fit_model(dm_off, NoLimits.MLE())
-    @test NoLimits.get_objective(res_cf)≈NoLimits.get_objective(res_off) rtol=1e-5
-    @test collect(NoLimits.get_params(res_cf;
-        scale = :untransformed))≈
-    collect(NoLimits.get_params(res_off; scale = :untransformed)) rtol=1e-4
+    @test NoLimits.get_objective(res_cf) ≈ NoLimits.get_objective(res_off) rtol = 1.0e-5
+    @test collect(
+        NoLimits.get_params(
+            res_cf;
+            scale = :untransformed
+        )
+    ) ≈
+        collect(NoLimits.get_params(res_off; scale = :untransformed)) rtol = 1.0e-4
 end
 
 @testset "closed-form matches numerical (PKPD events)" begin
@@ -135,8 +150,10 @@ end
         end
         set_solver_config(m; saveat_mode = :saveat, closed_form = cf)
     end
-    kw = (; primary_id = :ID, time_col = :t, evid_col = :EVID, amt_col = :AMT,
-        rate_col = :RATE, cmt_col = :CMT)
+    kw = (;
+        primary_id = :ID, time_col = :t, evid_col = :EVID, amt_col = :AMT,
+        rate_col = :RATE, cmt_col = :CMT,
+    )
     ll_match(df) = begin
         dm_off = DataModel(pk(:off), df; kw...)
         dm_cf = DataModel(pk(:auto), df; kw...)
@@ -145,17 +162,25 @@ end
         NoLimits.get_loglikelihood(dm_cf, r), NoLimits.get_loglikelihood(dm_off, r)
     end
     # initial (t0) + mid-trajectory bolus
-    a, b = ll_match(DataFrame(ID = [1, 1, 1, 1, 2, 2, 2, 2],
-        t = [0.0, 2.0, 5.0, 8.0, 0.0, 2.0, 5.0, 8.0], EVID = [1, 0, 1, 0, 1, 0, 1, 0],
-        AMT = [100.0, 0, 50.0, 0, 100.0, 0, 50.0, 0], RATE = zeros(8), CMT = fill(1, 8),
-        y = [missing, 60.0, missing, 25.0, missing, 65.0, missing, 28.0]))
-    @test a≈b rtol=1e-4
+    a, b = ll_match(
+        DataFrame(
+            ID = [1, 1, 1, 1, 2, 2, 2, 2],
+            t = [0.0, 2.0, 5.0, 8.0, 0.0, 2.0, 5.0, 8.0], EVID = [1, 0, 1, 0, 1, 0, 1, 0],
+            AMT = [100.0, 0, 50.0, 0, 100.0, 0, 50.0, 0], RATE = zeros(8), CMT = fill(1, 8),
+            y = [missing, 60.0, missing, 25.0, missing, 65.0, missing, 28.0]
+        )
+    )
+    @test a ≈ b rtol = 1.0e-4
     # zero-order infusion over [0, 3]
-    a, b = ll_match(DataFrame(ID = [1, 1, 1, 1, 2, 2, 2, 2],
-        t = [0.0, 2.0, 4.0, 6.0, 0.0, 2.0, 4.0, 6.0], EVID = [1, 0, 0, 0, 1, 0, 0, 0],
-        AMT = [30.0, 0, 0, 0, 30.0, 0, 0, 0], RATE = [10.0, 0, 0, 0, 10.0, 0, 0, 0],
-        CMT = fill(1, 8), y = [missing, 15.0, 12.0, 7.0, missing, 16.0, 13.0, 8.0]))
-    @test a≈b rtol=1e-4
+    a, b = ll_match(
+        DataFrame(
+            ID = [1, 1, 1, 1, 2, 2, 2, 2],
+            t = [0.0, 2.0, 4.0, 6.0, 0.0, 2.0, 4.0, 6.0], EVID = [1, 0, 0, 0, 1, 0, 0, 0],
+            AMT = [30.0, 0, 0, 0, 30.0, 0, 0, 0], RATE = [10.0, 0, 0, 0, 10.0, 0, 0, 0],
+            CMT = fill(1, 8), y = [missing, 15.0, 12.0, 7.0, missing, 16.0, 13.0, 8.0]
+        )
+    )
+    @test a ≈ b rtol = 1.0e-4
 end
 
 @testset "closed-form Bateman with a forced upstream compartment (#112)" begin
@@ -185,16 +210,22 @@ end
                 y ~ Normal(central(t), σ)
             end
         end
-        set_solver_config(m; alg = Vern9(), saveat_mode = :saveat, closed_form = cf,
-            kwargs = (; reltol = 1e-12, abstol = 1e-12))
+        set_solver_config(
+            m; alg = Vern9(), saveat_mode = :saveat, closed_form = cf,
+            kwargs = (; reltol = 1.0e-12, abstol = 1.0e-12)
+        )
     end
     # bolus at t0 (depot), infusion into the depot at t=6, reset of central at t=12
-    df = DataFrame(ID = fill(1, 7), t = [0.0, 2.0, 4.0, 6.0, 8.0, 12.0, 16.0],
+    df = DataFrame(
+        ID = fill(1, 7), t = [0.0, 2.0, 4.0, 6.0, 8.0, 12.0, 16.0],
         EVID = [1, 0, 0, 1, 0, 2, 0], AMT = [100.0, 0, 0, 30.0, 0, 5.0, 0],
         RATE = [0.0, 0, 0, 10.0, 0, 0, 0], CMT = [1, 1, 1, 1, 1, 2, 1],
-        y = [missing, 60.0, 40.0, missing, 25.0, missing, 20.0])
-    kw = (; primary_id = :ID, time_col = :t, evid_col = :EVID, amt_col = :AMT,
-        rate_col = :RATE, cmt_col = :CMT)
+        y = [missing, 60.0, 40.0, missing, 25.0, missing, 20.0]
+    )
+    kw = (;
+        primary_id = :ID, time_col = :t, evid_col = :EVID, amt_col = :AMT,
+        rate_col = :RATE, cmt_col = :CMT,
+    )
     dm_cf = DataModel(oral(:auto), df; kw...)
     dm_off = DataModel(oral(:off), df; kw...)
     @test get_closed_form_plan(dm_cf).mode === :bateman
@@ -202,20 +233,23 @@ end
     η = ComponentArray(NamedTuple())
     ll_cf = NoLimits.conditional_loglikelihood(dm_cf, 1, θ, η)
     ll_off = NoLimits.conditional_loglikelihood(dm_off, 1, θ, η)
-    @test ll_cf≈ll_off atol=1e-8
+    @test ll_cf ≈ ll_off atol = 1.0e-8
     # #153: an observation at the same time as an event (here the EVID=2 reset at t=12,
     # plus a RATE dose on the DOWNSTREAM compartment) must see the PRE-event state, the
     # numerical path's convention.
-    df2 = DataFrame(ID = fill(1, 8), t = [0.0, 2.0, 6.0, 6.0, 8.0, 12.0, 12.0, 16.0],
+    df2 = DataFrame(
+        ID = fill(1, 8), t = [0.0, 2.0, 6.0, 6.0, 8.0, 12.0, 12.0, 16.0],
         EVID = [1, 0, 0, 1, 0, 0, 2, 0], AMT = [100.0, 0, 0, 30.0, 0, 0, 0.0, 0],
         RATE = [0.0, 0, 0, 15.0, 0, 0, 0, 0], CMT = [1, 1, 1, 2, 1, 1, 2, 1],
-        y = [missing, 60.0, 40.0, missing, 25.0, 22.0, missing, 20.0])
+        y = [missing, 60.0, 40.0, missing, 25.0, 22.0, missing, 20.0]
+    )
     dm_cf2 = DataModel(oral(:auto), df2; kw...)
     dm_off2 = DataModel(oral(:off), df2; kw...)
     @test get_closed_form_plan(dm_cf2).mode === :bateman
     @test NoLimits.conditional_loglikelihood(
-        dm_cf2, 1, θ, η)≈
-    NoLimits.conditional_loglikelihood(dm_off2, 1, θ, η) atol=1e-8
+        dm_cf2, 1, θ, η
+    ) ≈
+        NoLimits.conditional_loglikelihood(dm_off2, 1, θ, η) atol = 1.0e-8
 end
 
 @testset "closed-form/numerical split (partial)" begin
@@ -247,20 +281,26 @@ end
         end
         set_solver_config(m; alg = alg, saveat_mode = :saveat, closed_form = cf)
     end
-    df = DataFrame(ID = [1, 1, 1, 1, 2, 2, 2, 2],
+    df = DataFrame(
+        ID = [1, 1, 1, 1, 2, 2, 2, 2],
         t = [0.5, 1.0, 2.0, 4.0, 0.5, 1.0, 2.0, 4.0],
-        y = [0.4, 0.6, 0.7, 0.5, 0.45, 0.62, 0.68, 0.52])
+        y = [0.4, 0.6, 0.7, 0.5, 0.45, 0.62, 0.68, 0.52]
+    )
     # partial (linear/nonlinear split) is opt-in via :all (not in the fast :auto set)
     dm_cf = DataModel(pkpd(:all), df; primary_id = :ID, time_col = :t)
     plan = get_closed_form_plan(dm_cf)
     @test plan.eligible
     @test plan.cf_states == [1]          # only the linear PK state is closed-form
     @test length(plan.cf_states) < plan.n # partial (hybrid) solve
-    @test !get_closed_form_plan(DataModel(pkpd(:auto), df; primary_id = :ID,
-        time_col = :t)).eligible          # :auto keeps the split numerical
+    @test !get_closed_form_plan(
+        DataModel(
+            pkpd(:auto), df; primary_id = :ID,
+            time_col = :t
+        )
+    ).eligible          # :auto keeps the split numerical
     dm_off = DataModel(pkpd(:off), df; primary_id = :ID, time_col = :t)
     r = fit_model(dm_off, NoLimits.MLE())
-    @test NoLimits.get_loglikelihood(dm_cf, r)≈NoLimits.get_loglikelihood(dm_off, r) rtol=1e-5
+    @test NoLimits.get_loglikelihood(dm_cf, r) ≈ NoLimits.get_loglikelihood(dm_off, r) rtol = 1.0e-5
 
     # Stiff solver: the hybrid's reduced problem uses a clock state so it stays
     # autonomous and the ForwardDiff objective gradient does not nest Duals through
@@ -269,7 +309,7 @@ end
     dm_off_s = DataModel(pkpd(:off; alg = Rodas5P()), df; primary_id = :ID, time_col = :t)
     r_s = fit_model(dm_off_s, NoLimits.MLE())
     @test isfinite(NoLimits.get_objective(fit_model(dm_cf_s, NoLimits.MLE())))
-    @test NoLimits.get_loglikelihood(dm_cf_s, r_s)≈NoLimits.get_loglikelihood(dm_off_s, r_s) rtol=1e-4
+    @test NoLimits.get_loglikelihood(dm_cf_s, r_s) ≈ NoLimits.get_loglikelihood(dm_off_s, r_s) rtol = 1.0e-4
 end
 
 # Bidirectional two-compartment (genuinely `:linear`, so opt-in via `closed_form = :all`)
@@ -308,11 +348,15 @@ end
 function _cf_twocmt_re_df()
     ts = [0.5, 1.0, 2.0]
     rates = [0.45, 0.75, 0.6, 0.95, 0.55]   # between-ID spread keeps ω identified
-    noise = [0.01, -0.02, 0.015, -0.01, 0.02, -0.015, 0.005, 0.01, -0.02, 0.012,
-        -0.008, 0.018, -0.011, 0.007, -0.016]
-    return DataFrame(ID = repeat(1:length(rates), inner = length(ts)),
+    noise = [
+        0.01, -0.02, 0.015, -0.01, 0.02, -0.015, 0.005, 0.01, -0.02, 0.012,
+        -0.008, 0.018, -0.011, 0.007, -0.016,
+    ]
+    return DataFrame(
+        ID = repeat(1:length(rates), inner = length(ts)),
         t = repeat(ts, length(rates)),
-        y = vec([0.9 * exp(-r * t) for t in ts, r in rates]) .+ noise)
+        y = vec([0.9 * exp(-r * t) for t in ts, r in rates]) .+ noise
+    )
 end
 
 @testset "closed-form :linear under nested Duals" begin
@@ -322,10 +366,10 @@ end
     f(p) = sum(vec(NoLimits._cf_matexp(A(p) .* 1.7)) .* w)
     p0 = [0.5, 0.3, 0.2, 0.4]
     fd = central_fdm(5, 1)
-    @test ForwardDiff.gradient(f, p0)≈FiniteDifferences.grad(fd, f, p0)[1] rtol=1e-6 atol=1e-9
+    @test ForwardDiff.gradient(f, p0) ≈ FiniteDifferences.grad(fd, f, p0)[1] rtol = 1.0e-6 atol = 1.0e-9
     H = ForwardDiff.hessian(f, p0)
     H_fd = FiniteDifferences.jacobian(fd, x -> ForwardDiff.gradient(f, x), p0)[1]
-    @test H≈H_fd rtol=1e-6 atol=1e-9
+    @test H ≈ H_fd rtol = 1.0e-6 atol = 1.0e-9
     @test H ≈ H'
 
     # Nested-Dual value and first partials match the Float64 and single-Dual paths.
@@ -334,7 +378,7 @@ end
     E2 = NoLimits._cf_matexp(ForwardDiff.Dual{:t2}.(d1, 1.0))
     @test ForwardDiff.value.(ForwardDiff.value.(E2)) ≈ exp(Mv)
     @test ForwardDiff.partials.(ForwardDiff.value.(E2), 1) ≈
-          ForwardDiff.partials.(NoLimits._cf_matexp(d1), 1)
+        ForwardDiff.partials.(NoLimits._cf_matexp(d1), 1)
 
     # Laplace fit (nested Duals in the inner Hessian) and Wald UQ on that fit.
     df = _cf_twocmt_re_df()
@@ -346,15 +390,23 @@ end
     cst = (k12 = 0.3, k21 = 0.2)
     res_all = fit_model(dm_all, NoLimits.Laplace(); constants = cst)
     res_off = fit_model(dm_off, NoLimits.Laplace(); constants = cst)
-    @test NoLimits.get_objective(res_all)≈NoLimits.get_objective(res_off) rtol=1e-4
-    @test collect(NoLimits.get_params(res_all;
-        scale = :untransformed))≈
-    collect(NoLimits.get_params(res_off; scale = :untransformed)) rtol=1e-2
+    @test NoLimits.get_objective(res_all) ≈ NoLimits.get_objective(res_off) rtol = 1.0e-4
+    @test collect(
+        NoLimits.get_params(
+            res_all;
+            scale = :untransformed
+        )
+    ) ≈
+        collect(NoLimits.get_params(res_off; scale = :untransformed)) rtol = 1.0e-2
     # Same params, both paths: isolates the closed-form solve from optimizer noise.
-    @test NoLimits.get_loglikelihood(dm_all,
-        res_off)≈NoLimits.get_loglikelihood(dm_off, res_off) rtol=1e-5
-    @test compute_uq(res_all; method = :wald, n_draws = 20,
-        rng = Random.Xoshiro(11)) !== nothing
+    @test NoLimits.get_loglikelihood(
+        dm_all,
+        res_off
+    ) ≈ NoLimits.get_loglikelihood(dm_off, res_off) rtol = 1.0e-5
+    @test compute_uq(
+        res_all; method = :wald, n_draws = 20,
+        rng = Random.Xoshiro(11)
+    ) !== nothing
 end
 
 @testset "closed-form and numerical simulate agree" begin
@@ -366,5 +418,5 @@ end
     dm_off = DataModel(_cf_diag2_model(:off), df; primary_id = :ID, time_col = :t)
     s_cf = simulate_data(dm_cf; rng = MersenneTwister(1), replace_missings = true)
     s_off = simulate_data(dm_off; rng = MersenneTwister(1), replace_missings = true)
-    @test s_cf.y≈s_off.y rtol=1e-5
+    @test s_cf.y ≈ s_off.y rtol = 1.0e-5
 end

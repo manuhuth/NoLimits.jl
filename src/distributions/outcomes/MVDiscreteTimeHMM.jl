@@ -36,10 +36,10 @@ Missing values in the observation vector are handled as follows:
   computing the emission likelihood.
 """
 struct MVDiscreteTimeDiscreteStatesHMM{
-    M <: AbstractMatrix{<:Real},
-    E <: Tuple,
-    D <: Distributions.Categorical
-} <: Distribution{Multivariate, Continuous}
+        M <: AbstractMatrix{<:Real},
+        E <: Tuple,
+        D <: Distributions.Categorical,
+    } <: Distribution{Multivariate, Continuous}
     n_states::Int
     n_outcomes::Int
     transition_matrix::M
@@ -51,26 +51,33 @@ function MVDiscreteTimeDiscreteStatesHMM(
         transition_matrix::AbstractMatrix{<:Real},
         emission_dists::Tuple,
         initial_dist::Distributions.Categorical
-)
+    )
     n_states = size(transition_matrix, 1)
     size(transition_matrix, 2) == n_states ||
         error("transition_matrix must be square, got $(size(transition_matrix)).")
     length(emission_dists) == n_states ||
-        error("length(emission_dists) must equal n_states ($n_states), " *
-              "got $(length(emission_dists)).")
+        error(
+        "length(emission_dists) must equal n_states ($n_states), " *
+            "got $(length(emission_dists))."
+    )
     length(initial_dist.p) == n_states ||
-        error("length(initial_dist.p) must equal n_states ($n_states), " *
-              "got $(length(initial_dist.p)).")
+        error(
+        "length(initial_dist.p) must equal n_states ($n_states), " *
+            "got $(length(initial_dist.p))."
+    )
     n_outcomes = _mv_n_outcomes(emission_dists[1])
     for k in 2:n_states
         _mv_n_outcomes(emission_dists[k]) == n_outcomes ||
-            error("All emission elements must have the same number of outcomes. " *
-                  "Element 1 has $n_outcomes but element $k has " *
-                  "$(_mv_n_outcomes(emission_dists[k])).")
+            error(
+            "All emission elements must have the same number of outcomes. " *
+                "Element 1 has $n_outcomes but element $k has " *
+                "$(_mv_n_outcomes(emission_dists[k]))."
+        )
     end
     _hmm_check_transition_matrix(transition_matrix)
     return MVDiscreteTimeDiscreteStatesHMM(
-        n_states, n_outcomes, transition_matrix, emission_dists, initial_dist)
+        n_states, n_outcomes, transition_matrix, emission_dists, initial_dist
+    )
 end
 
 # ---------------------------------------------------------------------------
@@ -128,14 +135,16 @@ function Distributions.logpdf(hmm::MVDiscreteTimeDiscreteStatesHMM, y::AbstractV
 end
 
 function Distributions.pdf(hmm::MVDiscreteTimeDiscreteStatesHMM, y::AbstractVector)
-    exp(logpdf(hmm, y))
+    return exp(logpdf(hmm, y))
 end
 
 # Combined accessor sharing the one-step propagation AND the per-state emission
 # log-densities between the likelihood and posterior; reuses the EXACT per-state
 # ops of `logpdf`/`posterior_hidden_states` above (bit-identical).
-function _hmm_logpdf_and_posterior(hmm::MVDiscreteTimeDiscreteStatesHMM,
-        y::AbstractVector)
+function _hmm_logpdf_and_posterior(
+        hmm::MVDiscreteTimeDiscreteStatesHMM,
+        y::AbstractVector
+    )
     _mv_check_obs_length(hmm, y)
     p = transpose(hmm.transition_matrix) * hmm.initial_dist.p
     s = sum(p)
@@ -171,8 +180,10 @@ function Distributions.cov(hmm::MVDiscreteTimeDiscreteStatesHMM)
     p = probabilities_hidden_states(hmm)
     μ_k = [_mv_emission_mean(hmm.emission_dists[k]) for k in 1:(hmm.n_states)]
     μ = sum(p[k] * μ_k[k] for k in 1:(hmm.n_states))
-    within = sum(p[k] * Matrix(_mv_emission_cov(hmm.emission_dists[k]))
-    for k in 1:(hmm.n_states))
+    within = sum(
+        p[k] * Matrix(_mv_emission_cov(hmm.emission_dists[k]))
+            for k in 1:(hmm.n_states)
+    )
     between = sum(p[k] * (μ_k[k] - μ) * (μ_k[k] - μ)' for k in 1:(hmm.n_states))
     return within + between
 end
@@ -182,5 +193,5 @@ Distributions.var(hmm::MVDiscreteTimeDiscreteStatesHMM) = diag(cov(hmm))
 Base.length(hmm::MVDiscreteTimeDiscreteStatesHMM) = hmm.n_outcomes
 
 function Distributions.params(hmm::MVDiscreteTimeDiscreteStatesHMM)
-    (hmm.transition_matrix, hmm.emission_dists, hmm.initial_dist)
+    return (hmm.transition_matrix, hmm.emission_dists, hmm.initial_dist)
 end

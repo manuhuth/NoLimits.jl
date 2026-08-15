@@ -51,8 +51,9 @@ function MLE(;
         lb = nothing,
         ub = nothing,
         ignore_model_bounds = false,
-        precondition = true)
-    MLE(optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds, precondition)
+        precondition = true
+    )
+    return MLE(optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds, precondition)
 end
 
 # FrequentistResult is a StandardOptimizationResult{:frequentist} alias + constructor (see common.jl).
@@ -73,7 +74,8 @@ end
 _combine_add_terms(base, ::Nothing) = base
 _combine_add_terms(base, extra) = _SumTerms(base, extra)
 
-function _fit_no_re(dm::DataModel, method;
+function _fit_no_re(
+        dm::DataModel, method;
         constants::NamedTuple,
         penalty::NamedTuple,
         ode_args::Tuple,
@@ -83,7 +85,8 @@ function _fit_no_re(dm::DataModel, method;
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         store_data_model::Bool = true,
         fit_args::Tuple = (),
-        fit_kwargs::NamedTuple = NamedTuple())
+        fit_kwargs::NamedTuple = NamedTuple()
+    )
     re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) ||
         error("This method is only valid for models without random effects. Use Laplace, SAEM, or MCMC for random-effects models.")
@@ -95,8 +98,10 @@ function _fit_no_re(dm::DataModel, method;
     _validate_constant_names(fixed_set, constants)
     all(name in keys(constants) for name in fixed_names) &&
         error("This method requires at least one free fixed effect. Remove constants or specify a fixed effect or random effect.")
-    layout = free_parameter_layout(fe; constants = constants,
-        theta0_untransformed = theta_0_untransformed)
+    layout = free_parameter_layout(
+        fe; constants = constants,
+        theta0_untransformed = theta_0_untransformed
+    )
     _check_add_term_at_start(add_term, layout.inv_transform(layout.θ_const_t))
     free_names = layout.free_names
     inv_transform = layout.inv_transform
@@ -104,12 +109,15 @@ function _fit_no_re(dm::DataModel, method;
     free_idx = layout.free_idx
     axs_full = layout.axs_full
     θ0_free_t = layout.θ0_free_t
-    cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-        serialization = serialization, force_saveat = true)
+    cache = build_ll_cache(
+        dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = serialization, force_saveat = true
+    )
     # The optimizer works on the preconditioned offset z. No explicit gradient is supplied here,
     # so `adtype` differentiates through the affine map and applies the chain rule itself.
     θ0_pc, s_pc, _θt_from_z, _z_from_θt = _precondition_maps(
-        get_model(dm), free_names, θ0_free_t, layout.axs, _precondition_on(method))
+        get_model(dm), free_names, θ0_free_t, layout.axs, _precondition_on(method)
+    )
     function obj(z, p)
         v_free = ComponentArrays.getdata(_θt_from_z(z))
         T = eltype(v_free)
@@ -119,7 +127,8 @@ function _fit_no_re(dm::DataModel, method;
         add = add_term(θu)
         isinf(add) && return infT
         ll = loglikelihood(
-            dm, θu, ComponentArray(); cache = cache, serialization = serialization)
+            dm, θu, ComponentArray(); cache = cache, serialization = serialization
+        )
         ll == -Inf && return infT
         return -ll + _penalty_value(θu, penalty) + add
     end
@@ -127,24 +136,30 @@ function _fit_no_re(dm::DataModel, method;
     optf = OptimizationFunction(obj, method.adtype)
     lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
         fe, free_names, θ0_free_t, method.optimizer, method.lb, method.ub, constants;
-        ignore_model_bounds = method.ignore_model_bounds, method_label = "MLE")
+        ignore_model_bounds = method.ignore_model_bounds, method_label = "MLE"
+    )
     z0 = _z_from_θt(θ0_init)
     lb_z = _z_from_θt(lb)
     ub_z = _z_from_θt(ub)
     prob = use_bounds ? OptimizationProblem(optf, z0; lb = lb_z, ub = ub_z) :
-           OptimizationProblem(optf, z0)
+        OptimizationProblem(optf, z0)
     sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
 
-    summary = FitSummary(sol.objective, sol.retcode == SciMLBase.ReturnCode.Success,
-        resolve_fitted_parameters(layout, _θt_from_z(sol.u)), NamedTuple())
+    summary = FitSummary(
+        sol.objective, sol.retcode == SciMLBase.ReturnCode.Success,
+        resolve_fitted_parameters(layout, _θt_from_z(sol.u)), NamedTuple()
+    )
     diagnostics = FitDiagnostics(
-        (;), (optimizer = method.optimizer,), (retcode = sol.retcode,), NamedTuple())
+        (;), (optimizer = method.optimizer,), (retcode = sol.retcode,), NamedTuple()
+    )
     niter = hasproperty(sol, :stats) && hasproperty(sol.stats, :iterations) ?
-            sol.stats.iterations : missing
+        sol.stats.iterations : missing
     raw = hasproperty(sol, :original) ? sol.original : sol
     result = FrequentistResult(sol, sol.objective, niter, raw, NamedTuple())
-    return FitResult(method, result, summary, diagnostics,
-        store_data_model ? dm : nothing, fit_args, fit_kwargs)
+    return FitResult(
+        method, result, summary, diagnostics,
+        store_data_model ? dm : nothing, fit_args, fit_kwargs
+    )
 end
 
 """
@@ -195,7 +210,8 @@ function penalty_value(θ, penalty::NamedTuple)
 end
 const _penalty_value = penalty_value
 
-function _fit_model(dm::DataModel, method::MLE, args...;
+function _fit_model(
+        dm::DataModel, method::MLE, args...;
         constants::NamedTuple = NamedTuple(),
         penalty::NamedTuple = NamedTuple(),
         extra_objective = nothing,
@@ -204,16 +220,20 @@ function _fit_model(dm::DataModel, method::MLE, args...;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
-        store_data_model::Bool = true)
-    fit_kwargs = (constants = constants,
+        store_data_model::Bool = true
+    )
+    fit_kwargs = (
+        constants = constants,
         penalty = penalty,
         ode_args = ode_args,
         ode_kwargs = ode_kwargs,
         serialization = serialization,
         rng = rng,
         theta_0_untransformed = theta_0_untransformed,
-        store_data_model = store_data_model)
-    return _fit_no_re(dm, method;
+        store_data_model = store_data_model,
+    )
+    return _fit_no_re(
+        dm, method;
         constants = constants,
         penalty = penalty,
         ode_args = ode_args,
@@ -223,5 +243,6 @@ function _fit_model(dm::DataModel, method::MLE, args...;
         theta_0_untransformed = theta_0_untransformed,
         store_data_model = store_data_model,
         fit_args = args,
-        fit_kwargs = fit_kwargs)
+        fit_kwargs = fit_kwargs
+    )
 end

@@ -37,7 +37,7 @@ makedocs(;
             "Quickstart" => "quickstart.md",
             "Migrating to v0.2 (Makie)" => "migration-v0.2-makie.md",
             "Capabilities" => "capabilities.md",
-            "NLME Methodology" => "nlme-methodology.md"
+            "NLME Methodology" => "nlme-methodology.md",
         ],
         "Model Building" => [
             "Overview" => "model-building/index.md",
@@ -51,7 +51,7 @@ makedocs(;
             "@initialDE" => "model-building/initial-de.md",
             "@formulas" => "model-building/formulas.md",
             "Copula Distributions" => "model-building/copulas.md",
-            "Function Approximators (NNs + SoftTrees)" => "model-building/universal-function-approximators.md"
+            "Function Approximators (NNs + SoftTrees)" => "model-building/universal-function-approximators.md",
         ],
         "Data Model Construction" => "data-model-construction.md",
         "Estimation" => [
@@ -67,13 +67,13 @@ makedocs(;
             "VI" => "estimation/vi.md",
             "Multistart" => "estimation/multistart.md",
             "Cross-Validation" => "estimation/cv.md",
-            "Saving & Loading" => "estimation/saving-and-loading.md"
+            "Saving & Loading" => "estimation/saving-and-loading.md",
         ],
         "Uncertainty Quantification" => [
             "Overview" => "uncertainty-quantification/index.md",
             "Wald" => "uncertainty-quantification/wald.md",
             "Profile likelihood" => "uncertainty-quantification/profile-likelihood.md",
-            "MCMC-based uncertainty" => "uncertainty-quantification/mcmc-based-uncertainty.md"
+            "MCMC-based uncertainty" => "uncertainty-quantification/mcmc-based-uncertainty.md",
         ],
         "Plotting" => "plotting/index.md",
         "Tutorials" => [
@@ -88,13 +88,13 @@ makedocs(;
             "Fixed-Effects: MLE & MAP" => "tutorials/fixed-effects-nonlinear-mle-map.md",
             "Fixed-Effects: Variational Inference" => "tutorials/fixed-effects-vi.md",
             "Hidden & Observed Markov Models" => "tutorials/markov-models-observed-hidden-coarsed.md",
-            "Building Custom Estimators" => "tutorials/building-custom-estimators.md"
+            "Building Custom Estimators" => "tutorials/building-custom-estimators.md",
         ],
         "Method-Developer API" => "method-developer-api.md",
         "Developers Guide" => "developers-guide.md",
         "How to Contribute" => "how-to-contribute.md",
         "References" => "references.md",
-        "API" => "api.md"
+        "API" => "api.md",
     ]
 )
 

@@ -138,8 +138,10 @@ end
 
     ll_serial = loglikelihood(dm, θ, η_list)
     ll_thread = loglikelihood(dm, θ, η_list; serialization = EnsembleThreads())
-    ll_thread_cached = loglikelihood(dm, θ, η_list; serialization = EnsembleThreads(),
-        cache = build_ll_cache(dm; nthreads = Threads.maxthreadid()))
+    ll_thread_cached = loglikelihood(
+        dm, θ, η_list; serialization = EnsembleThreads(),
+        cache = build_ll_cache(dm; nthreads = Threads.maxthreadid())
+    )
     # Regression (single-thread MCMC crash): EnsembleThreads must also accept a
     # SCALAR `_LLCache`, not only a Vector of per-thread caches. `build_ll_cache`
     # with the serial default returns one `_LLCache`; passing it with
@@ -149,8 +151,10 @@ end
     # is thread-count-independent.
     scalar_cache = build_ll_cache(dm)
     @test scalar_cache isa NoLimits._LLCache
-    ll_thread_scalar = loglikelihood(dm, θ, η_list;
-        serialization = EnsembleThreads(), cache = scalar_cache)
+    ll_thread_scalar = loglikelihood(
+        dm, θ, η_list;
+        serialization = EnsembleThreads(), cache = scalar_cache
+    )
     @test ll_serial == ll_thread
     @test ll_serial == ll_thread_cached
     @test ll_serial == ll_thread_scalar
@@ -180,9 +184,11 @@ end
             η_mv = RandomEffect(MvNormal(zeros(2), LinearAlgebra.I); column = :ID)
             η_flow = RandomEffect(NormalizingPlanarFlow(ψ); column = :SITE)
             η_nn = RandomEffect(
-                LogNormal(NN1([x.Age, x.BMI, x.CRP], ζ)[1], 0.2); column = :ID)
+                LogNormal(NN1([x.Age, x.BMI, x.CRP], ζ)[1], 0.2); column = :ID
+            )
             η_st = RandomEffect(
-                Gumbel(ST1([x.Age, x.BMI, x.CRP], Γ)[1], 0.3); column = :SITE)
+                Gumbel(ST1([x.Age, x.BMI, x.CRP], Γ)[1], 0.3); column = :SITE
+            )
         end
 
         @formulas begin
@@ -205,7 +211,7 @@ end
     θ = get_θ0_untransformed(model.fixed.fixed)
     η_list = [
         ComponentArray((η_mv = zeros(2), η_flow = 0.1, η_nn = 0.2, η_st = 0.3)),
-        ComponentArray((η_mv = zeros(2), η_flow = 0.1, η_nn = 0.2, η_st = 0.3))
+        ComponentArray((η_mv = zeros(2), η_flow = 0.1, η_nn = 0.2, η_st = 0.3)),
     ]
 
     ll = loglikelihood(dm, θ, η_list)
@@ -226,7 +232,8 @@ end
             ζ = NNParameters(chain; function_name = :NN1, calculate_se = false)
             Γ = SoftTreeParameters(2, 2; function_name = :ST1, calculate_se = false)
             sp = SplineParameters(
-                knots; function_name = :SP1, degree = 2, calculate_se = false)
+                knots; function_name = :SP1, degree = 2, calculate_se = false
+            )
         end
 
         @covariates begin
@@ -242,7 +249,7 @@ end
 
         @preDifferentialEquation begin
             pre = sat(NN1([x.Age, x.BMI], ζ)[1] + ST1([x.Age, x.BMI], Γ)[1]) +
-                  SP1(x.Age / 100, sp) + η_id
+                SP1(x.Age / 100, sp) + η_id
         end
 
         @DifferentialEquation begin
@@ -273,7 +280,7 @@ end
     θ = get_θ0_untransformed(model_saveat.fixed.fixed)
     η_list = [
         ComponentArray((η_id = 0.1, η_site = -0.1)),
-        ComponentArray((η_id = -0.1, η_site = 0.2))
+        ComponentArray((η_id = -0.1, η_site = 0.2)),
     ]
 
     ll = loglikelihood(dm, θ, η_list)
@@ -479,9 +486,9 @@ end
     μ1 = 1.2
     μ2 = 0.9
     ll_expected = logpdf(Normal(μ1, 0.5), 1.1) +
-                  logpdf(Normal(μ1 + 1.0, 0.7), 2.2) +
-                  logpdf(Normal(μ2 + 1.0, 0.7), 2.0)
-    @test ll≈ll_expected atol=1e-12
+        logpdf(Normal(μ1 + 1.0, 0.7), 2.2) +
+        logpdf(Normal(μ2 + 1.0, 0.7), 2.0)
+    @test ll ≈ ll_expected atol = 1.0e-12
 end
 
 @testset "loglikelihood skips missing scalar observables (ODE regression)" begin
@@ -523,10 +530,10 @@ end
     ll = loglikelihood(dm, θ, ComponentArray())
 
     ll_expected = logpdf(Normal(1.0, 0.2), 1.1) +
-                  logpdf(Normal(2.0, 0.3), 2.05) +
-                  logpdf(Normal(2.0, 0.3), 1.9) +
-                  logpdf(Normal(1.0, 0.2), 0.95)
-    @test ll≈ll_expected atol=1e-12
+        logpdf(Normal(2.0, 0.3), 2.05) +
+        logpdf(Normal(2.0, 0.3), 1.9) +
+        logpdf(Normal(1.0, 0.2), 0.95)
+    @test ll ≈ ll_expected atol = 1.0e-12
 end
 
 @testset "loglikelihood non-ODE uses row-specific random effects for varying groups" begin
@@ -560,19 +567,19 @@ end
     θ = get_θ0_untransformed(model.fixed.fixed)
     η_list = [
         ComponentArray((; η_year = [0.1, 0.4])),
-        ComponentArray((; η_year = [0.1, 0.3]))
+        ComponentArray((; η_year = [0.1, 0.3])),
     ]
 
     ll = loglikelihood(dm, θ, η_list)
     ll_expected = logpdf(Normal(0.1, 0.2), 0.05) +
-                  logpdf(Normal(0.4, 0.2), 0.55) +
-                  logpdf(Normal(0.4, 0.2), 0.35) +
-                  logpdf(Normal(0.1, 0.2), -0.15) +
-                  logpdf(Normal(0.3, 0.2), 0.2)
+        logpdf(Normal(0.4, 0.2), 0.55) +
+        logpdf(Normal(0.4, 0.2), 0.35) +
+        logpdf(Normal(0.1, 0.2), -0.15) +
+        logpdf(Normal(0.3, 0.2), 0.2)
 
     @test NoLimits._needs_rowwise_random_effects(dm, 1; obs_only = true)
     @test NoLimits._needs_rowwise_random_effects(dm, 2; obs_only = true)
-    @test ll≈ll_expected atol=1e-12
+    @test ll ≈ ll_expected atol = 1.0e-12
 end
 
 # A numeric error raised by the model itself (here `log` of a negative argument) must
@@ -598,8 +605,10 @@ end
         end
     end
 
-    df = DataFrame(ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.15, 0.25])
+    df = DataFrame(
+        ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0],
+        y = [0.1, 0.2, 0.15, 0.25]
+    )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     θ = get_θ0_untransformed(NoLimits.get_fixed(NoLimits.get_model(dm)))
 
@@ -637,8 +646,10 @@ end
             y ~ Normal(a + η, σ)
         end
     end
-    df = DataFrame(ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.15, 0.25])
+    df = DataFrame(
+        ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0],
+        y = [0.1, 0.2, 0.15, 0.25]
+    )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     θ = get_θ0_untransformed(NoLimits.get_fixed(NoLimits.get_model(dm)))
     _, infos, cc = NoLimits.build_re_batch_infos(dm, NamedTuple())
@@ -669,22 +680,35 @@ const _INV_SER = NoLimits.EnsembleSerial()
     # up to 0.74). Nothing in the suite asserted this for any estimator.
     if Threads.nthreads() < 2
         @info "SKIPPED serial-vs-threaded invariance: needs Threads.nthreads() > 1, " *
-              "got $(Threads.nthreads()). Run julia with `-t auto` to exercise it."
+            "got $(Threads.nthreads()). Run julia with `-t auto` to exercise it."
         @test true
     else
         # Serial arm = the shared fixture fit, so the method must mirror fixtures.jl.
         cases = (
-            ("MLE", fx_mle(), fx_nore_dm(),
-                NoLimits.MLE(; optim_kwargs = (maxiters = 3,))),
-            ("MAP", fx_map(), fx_nore_prior_dm(),
-                NoLimits.MAP(; optim_kwargs = (maxiters = 3,))),
-            ("Laplace", fx_laplace(), fx_re_dm(),
-                NoLimits.Laplace(; optim_kwargs = (maxiters = 3,))),
-            ("FOCEI", fx_focei(), fx_re_dm(),
-                NoLimits.FOCEI(; multistart_n = 1, multistart_k = 1,
-                    optim_kwargs = (maxiters = 3,))),
-            ("Pooled", fx_pooled(), fx_re_dm(),
-                NoLimits.Pooled(; optim_kwargs = (maxiters = 3,))))
+            (
+                "MLE", fx_mle(), fx_nore_dm(),
+                NoLimits.MLE(; optim_kwargs = (maxiters = 3,)),
+            ),
+            (
+                "MAP", fx_map(), fx_nore_prior_dm(),
+                NoLimits.MAP(; optim_kwargs = (maxiters = 3,)),
+            ),
+            (
+                "Laplace", fx_laplace(), fx_re_dm(),
+                NoLimits.Laplace(; optim_kwargs = (maxiters = 3,)),
+            ),
+            (
+                "FOCEI", fx_focei(), fx_re_dm(),
+                NoLimits.FOCEI(;
+                    multistart_n = 1, multistart_k = 1,
+                    optim_kwargs = (maxiters = 3,)
+                ),
+            ),
+            (
+                "Pooled", fx_pooled(), fx_re_dm(),
+                NoLimits.Pooled(; optim_kwargs = (maxiters = 3,)),
+            ),
+        )
         # rtol: MLE/MAP/FOCEI/Pooled came out bit-identical over repeats, but the
         # threaded Laplace intermittently drifts (worst observed 9e-10 relative) --
         # the thread schedule perturbs the EB modes and the outer optimizer walks a
@@ -692,8 +716,10 @@ const _INV_SER = NoLimits.EnsembleSerial()
         for (name, res_serial, dm, method) in cases
             @testset "$name" begin
                 res_threaded = fit_model(dm, method; serialization = EnsembleThreads())
-                @test isapprox(get_objective(res_serial), get_objective(res_threaded);
-                    rtol = 1e-6)
+                @test isapprox(
+                    get_objective(res_serial), get_objective(res_threaded);
+                    rtol = 1.0e-6
+                )
             end
         end
     end
@@ -705,19 +731,23 @@ end
     # the level and can turn negative. Pinning the two together catches that directly.
     res_g = fx_ghq()                       # GHQuadrature(level = 2), no penalty
     ml2 = get_marginal_likelihood(res_g; level = 2, serialization = _INV_SER)
-    @test isapprox(ml2, -get_objective(res_g); rtol = 1e-10)
+    @test isapprox(ml2, -get_objective(res_g); rtol = 1.0e-10)
     # AGHQ is exact for this linear-Gaussian fixture at any level; the prior-centred
     # rule of #98 drifted away as the level rose.
-    @test isapprox(get_marginal_likelihood(res_g; level = 3, serialization = _INV_SER),
-        ml2; rtol = 1e-8)
+    @test isapprox(
+        get_marginal_likelihood(res_g; level = 3, serialization = _INV_SER),
+        ml2; rtol = 1.0e-8
+    )
 
     # Laplace: the accessor re-solves the EB modes instead of reusing the fit's, and
     # -½logdet(-H(b*)) is not stationary in b*, so the gap tracks the mode tolerance
     # (measured 1.9e-10 relative at -O0). A #98-shaped measure mismatch is O(1).
     res_l = fx_laplace()
     θ_l = NoLimits.get_params(res_l; scale = :untransformed)
-    @test isapprox(NoLimits.laplace_marginal(fx_re_dm(), θ_l; serialization = _INV_SER),
-        -get_objective(res_l); rtol = 1e-6)
+    @test isapprox(
+        NoLimits.laplace_marginal(fx_re_dm(), θ_l; serialization = _INV_SER),
+        -get_objective(res_l); rtol = 1.0e-6
+    )
 
     # Issue #171: RE levels pinned via `constants_re` are not integrated over, so their
     # prior density has to be added back. It was dropped, which made the accessor a
@@ -729,31 +759,44 @@ end
     θ_c = NoLimits.get_params(res_c; scale = :untransformed)
     re_tab = get_random_effects(dm_c, res_c).η
     cre = (;
-        η = NamedTuple(Symbol(id) => v
-        for (id, v) in zip(re_tab[!, :ID], re_tab[!, :η_1])))
-    joint = sum(complete_data_loglikelihood(dm_c, i, θ_c, (; η = re_tab[i, :η_1]))
-    for i in 1:length(get_individuals(dm_c)))
+        η = NamedTuple(
+            Symbol(id) => v
+                for (id, v) in zip(re_tab[!, :ID], re_tab[!, :η_1])
+        ),
+    )
+    joint = sum(
+        complete_data_loglikelihood(dm_c, i, θ_c, (; η = re_tab[i, :η_1]))
+            for i in 1:length(get_individuals(dm_c))
+    )
     @test isapprox(
         get_marginal_likelihood(dm_c, res_c; constants_re = cre, serialization = _INV_SER),
-        joint; rtol = 1e-8)
+        joint; rtol = 1.0e-8
+    )
 end
 
 @testset "objectives are finite at the fitted estimate" begin
     # 32 GHQuadrature cells of the external stress run reported `Inf` objectives while
     # CI stayed green, because nothing here asserted finiteness on a good fixture.
-    for (name, res) in (("MLE", fx_mle()), ("MAP", fx_map()), ("VI", fx_vi()),
-        ("Pooled", fx_pooled()), ("Laplace", fx_laplace()), ("FOCEI", fx_focei()),
-        ("GHQuadrature", fx_ghq()), ("SAEM", fx_saem()), ("MCEM", fx_mcem()))
+    for (name, res) in (
+            ("MLE", fx_mle()), ("MAP", fx_map()), ("VI", fx_vi()),
+            ("Pooled", fx_pooled()), ("Laplace", fx_laplace()), ("FOCEI", fx_focei()),
+            ("GHQuadrature", fx_ghq()), ("SAEM", fx_saem()), ("MCEM", fx_mcem()),
+        )
         @testset "$name" begin
             @test isfinite(get_objective(res))
         end
     end
-    for (name, res) in (("Laplace", fx_laplace()), ("FOCEI", fx_focei()),
-        ("GHQuadrature", fx_ghq()), ("SAEM", fx_saem()), ("MCEM", fx_mcem()))
+    for (name, res) in (
+            ("Laplace", fx_laplace()), ("FOCEI", fx_focei()),
+            ("GHQuadrature", fx_ghq()), ("SAEM", fx_saem()), ("MCEM", fx_mcem()),
+        )
         @testset "$name likelihoods" begin
             @test isfinite(get_loglikelihood(res))
-            @test isfinite(get_marginal_likelihood(
-                res; level = 2, serialization = _INV_SER))
+            @test isfinite(
+                get_marginal_likelihood(
+                    res; level = 2, serialization = _INV_SER
+                )
+            )
         end
     end
 end
@@ -779,17 +822,26 @@ end
             y ~ censored(Normal(μ, σ); upper = 2.0)
         end
     end
-    df = DataFrame(ID = repeat(1:6, inner = 3), t = repeat([0.0, 1.0, 2.0], 6),
-        y = [1.0, 1.4, 2.0, 0.7, 1.2, 1.9, 1.3, 2.0, 2.0, 0.9, 1.1, 1.6,
-            1.5, 1.8, 2.0, 0.6, 1.0, 1.7])
+    df = DataFrame(
+        ID = repeat(1:6, inner = 3), t = repeat([0.0, 1.0, 2.0], 6),
+        y = [
+            1.0, 1.4, 2.0, 0.7, 1.2, 1.9, 1.3, 2.0, 2.0, 0.9, 1.1, 1.6,
+            1.5, 1.8, 2.0, 0.6, 1.0, 1.7,
+        ]
+    )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
 
     for (name, method) in (
-        ("Laplace", NoLimits.Laplace(; optim_kwargs = (maxiters = 3,))),
-        ("GHQuadrature",
-            NoLimits.GHQuadrature(; level = 2,
-                optim_kwargs = (maxiters = 3,))),
-        ("Pooled", NoLimits.Pooled(; optim_kwargs = (maxiters = 3,))))
+            ("Laplace", NoLimits.Laplace(; optim_kwargs = (maxiters = 3,))),
+            (
+                "GHQuadrature",
+                NoLimits.GHQuadrature(;
+                    level = 2,
+                    optim_kwargs = (maxiters = 3,)
+                ),
+            ),
+            ("Pooled", NoLimits.Pooled(; optim_kwargs = (maxiters = 3,))),
+        )
         @testset "$name" begin
             @test isfinite(get_objective(fit_model(dm, method)))
         end

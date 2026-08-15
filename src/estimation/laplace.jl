@@ -31,7 +31,7 @@ struct _LaplaceLogfBatch{DM, INFO, TH, CC, CA, CX}
 end
 
 function _LaplaceLogfBatch(dm, info, θ, const_cache, cache)
-    _LaplaceLogfBatch(dm, info, θ, const_cache, cache, nothing)
+    return _LaplaceLogfBatch(dm, info, θ, const_cache, cache, nothing)
 end
 
 @inline function (f::_LaplaceLogfBatch)(b)
@@ -51,7 +51,8 @@ end
 @inline function (f::_LaplaceLogfBatchParam)(b, p)
     if p isa Tuple
         return -_laplace_logf_batch(
-            f.dm, f.info, p[1], b, f.const_cache, f.cache; tctx = p[2])
+            f.dm, f.info, p[1], b, f.const_cache, f.cache; tctx = p[2]
+        )
     end
     return -_laplace_logf_batch(f.dm, f.info, p, b, f.const_cache, f.cache)
 end
@@ -87,7 +88,8 @@ end
         growth = f.hess.growth,
         adaptive = f.hess.adaptive,
         scale_factor = f.hess.scale_factor,
-        ctx = "grad_logdet_θ")[1]
+        ctx = "grad_logdet_θ"
+    )[1]
 end
 
 struct _LaplaceLogdetB{DM, INFO, TH, CC, CA, H, A}
@@ -109,7 +111,8 @@ end
         growth = f.hess.growth,
         adaptive = f.hess.adaptive,
         scale_factor = f.hess.scale_factor,
-        ctx = "grad_logdet_b")[1]
+        ctx = "grad_logdet_b"
+    )[1]
 end
 
 # `_is_numeric_error` lives in utils/GeneralUtils.jl (needed by common.jl too).
@@ -131,10 +134,12 @@ end
 # For each annealed RE, compute the prior-distribution mean per group level at
 # the final θu, and pin those levels via constants_re so the EBE optimizer
 # excludes them entirely.  User-supplied constants_re entries take precedence.
-function _saem_anneal_constants_re(dm::DataModel,
+function _saem_anneal_constants_re(
+        dm::DataModel,
         θu::ComponentArray,
         anneal_names,
-        constants_re::NamedTuple)
+        constants_re::NamedTuple
+    )
     isempty(anneal_names) && return constants_re
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     helpers = get_helper_funs(get_model(dm))
@@ -225,24 +230,32 @@ mutable struct _LaplaceCache{T, B, G, A, H}
     hess_cache::H
 end
 
-function _LaplaceCache(θ_cache::AbstractVector{T},
+function _LaplaceCache(
+        θ_cache::AbstractVector{T},
         bstar_cache::_LaplaceBStarCache{T, B},
         grad_cache::_LaplaceGradCache{T, L, G, V},
         ad_cache::A,
-        hess_cache::Union{Nothing, _LaplaceHessCache}) where {T, B, L, G, V, A}
-    _LaplaceCache{
-        T, typeof(bstar_cache), typeof(grad_cache), typeof(ad_cache), typeof(hess_cache)}(
-        θ_cache, bstar_cache, grad_cache, ad_cache, hess_cache)
+        hess_cache::Union{Nothing, _LaplaceHessCache}
+    ) where {T, B, L, G, V, A}
+    return _LaplaceCache{
+        T, typeof(bstar_cache), typeof(grad_cache), typeof(ad_cache), typeof(hess_cache),
+    }(
+        θ_cache, bstar_cache, grad_cache, ad_cache, hess_cache
+    )
 end
 
-function _LaplaceCache(θ_cache::Nothing,
+function _LaplaceCache(
+        θ_cache::Nothing,
         bstar_cache::_LaplaceBStarCache{T, B},
         grad_cache::_LaplaceGradCache{T, L, G, V},
         ad_cache::A,
-        hess_cache::Union{Nothing, _LaplaceHessCache}) where {T, B, L, G, V, A}
-    _LaplaceCache{
-        T, typeof(bstar_cache), typeof(grad_cache), typeof(ad_cache), typeof(hess_cache)}(
-        θ_cache, bstar_cache, grad_cache, ad_cache, hess_cache)
+        hess_cache::Union{Nothing, _LaplaceHessCache}
+    ) where {T, B, L, G, V, A}
+    return _LaplaceCache{
+        T, typeof(bstar_cache), typeof(grad_cache), typeof(ad_cache), typeof(hess_cache),
+    }(
+        θ_cache, bstar_cache, grad_cache, ad_cache, hess_cache
+    )
 end
 
 function _init_laplace_ad_cache(n::Int)
@@ -307,10 +320,11 @@ function _vech_weights!(out::AbstractVector, Ainv::AbstractMatrix)
 end
 
 function _get_grad_buffers!(
-        ad_cache::LaplaceADCache, bi::Int, T::Type, nθ::Int, nb::Int, use_trace::Bool)
+        ad_cache::LaplaceADCache, bi::Int, T::Type, nθ::Int, nb::Int, use_trace::Bool
+    )
     entry = ad_cache.buffers[bi]
     if entry === nothing || !(entry isa _LaplaceGradBuffers) || entry.nθ != nθ ||
-       entry.nb != nb || !(eltype(entry.grad_logf) === T)
+            entry.nb != nb || !(eltype(entry.grad_logf) === T)
         grad_logf = Vector{T}(undef, nθ)
         Gθ = Matrix{T}(undef, nb, nθ)
         grad_logdet_θ = Vector{T}(undef, nθ)
@@ -319,10 +333,12 @@ function _get_grad_buffers!(
         Jθ = use_trace ? Matrix{T}(undef, ntri, nθ) : Matrix{T}(undef, 0, 0)
         Jb = use_trace ? Matrix{T}(undef, ntri, nb) : Matrix{T}(undef, 0, 0)
         gradb_tmp = Vector{T}(undef, nb)
-        entry = _LaplaceGradBuffers(grad_logf, Gθ, grad_logdet_θ, grad_logdet_b, Jθ, Jb,
+        entry = _LaplaceGradBuffers(
+            grad_logf, Gθ, grad_logdet_θ, grad_logdet_b, Jθ, Jb,
             nθ, nb, gradb_tmp,
             _FDCfgStore(), _FDCfgStore(), _FDCfgStore(), _FDCfgStore(),
-            _FDCfgStore(), _FDCfgStore(), _FDCfgStore())
+            _FDCfgStore(), _FDCfgStore(), _FDCfgStore()
+        )
         ad_cache.buffers[bi] = entry
     elseif use_trace && (size(entry.Jθ, 1) == 0 || size(entry.Jb, 1) == 0)
         ntri = _ntri(nb)
@@ -348,10 +364,12 @@ end
 # fit entry point that runs the Laplace-family inner problem.
 function _init_laplace_eval_cache(n_batches::Int, T::Type{<:Real})
     bstar_cache = _LaplaceBStarCache([Vector{T}() for _ in 1:n_batches], falses(n_batches))
-    grad_cache = _LaplaceGradCache([Vector{T}() for _ in 1:n_batches],
+    grad_cache = _LaplaceGradCache(
+        [Vector{T}() for _ in 1:n_batches],
         fill(T(NaN), n_batches),
         [Vector{T}() for _ in 1:n_batches],
-        falses(n_batches))
+        falses(n_batches)
+    )
     ad_cache = _init_laplace_ad_cache(n_batches)
     hess_cache = _init_laplace_hess_cache(T, n_batches)
     return _LaplaceCache(nothing, bstar_cache, grad_cache, ad_cache, hess_cache)
@@ -476,12 +494,14 @@ end
 # cholesky scale via exp-underflow). Fall back to a zero start — the subsequent
 # logf evaluation returns -Inf and the optimizer backtracks instead of the whole
 # fit crashing (mirrors the `_laplace_logf_batch` exception policy).
-function _laplace_default_b0(dm::DataModel,
+function _laplace_default_b0(
+        dm::DataModel,
         batch_info::REBatchInfo,
         θ::ComponentArray,
         const_cache::REConstantsCache,
         cache::_LLCache;
-        tctx = nothing)
+        tctx = nothing
+    )
     try
         return _laplace_default_b0_impl(dm, batch_info, θ, const_cache, cache; tctx = tctx)
     catch err
@@ -492,12 +512,14 @@ function _laplace_default_b0(dm::DataModel,
     end
 end
 
-function _laplace_default_b0_impl(dm::DataModel,
+function _laplace_default_b0_impl(
+        dm::DataModel,
         batch_info::REBatchInfo,
         θ::ComponentArray,
         const_cache::REConstantsCache,
         cache::_LLCache;
-        tctx = nothing)
+        tctx = nothing
+    )
     nb = get_n_b(batch_info)
     nb == 0 && return Float64[]
     T = eltype(θ)
@@ -506,7 +528,7 @@ function _laplace_default_b0_impl(dm::DataModel,
     helpers = cache.helpers
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     θ_re = tctx === nothing ? _symmetrize_psd_params(θ, get_fixed(get_model(dm))) :
-           tctx.θ_re
+        tctx.θ_re
     cache = get_laplace_cache(get_re_group_info(dm))
     re_names = get_re_names(cache)
     for (ri, re) in enumerate(re_names)
@@ -515,9 +537,10 @@ function _laplace_default_b0_impl(dm::DataModel,
         for (li, _) in enumerate(get_levels(get_re_map(info)))
             rep_idx = get_reps(info)[li]
             dists = tctx === nothing ?
-                    dists_builder(
-                θ_re, get_const_cov(get_individuals(dm)[rep_idx]), model_funs, helpers) :
-                    tctx.dists[ri][li]
+                dists_builder(
+                    θ_re, get_const_cov(get_individuals(dm)[rep_idx]), model_funs, helpers
+                ) :
+                tctx.dists[ri][li]
             dist = getproperty(dists, re)
             start = _re_start_value(dist, get_dim(info), T)
             r = get_ranges(info)[li]
@@ -531,7 +554,8 @@ function _laplace_default_b0_impl(dm::DataModel,
     return b0
 end
 
-function _laplace_sample_b0s(dm::DataModel,
+function _laplace_sample_b0s(
+        dm::DataModel,
         batch_info::REBatchInfo,
         θ::ComponentArray,
         const_cache::REConstantsCache,
@@ -539,7 +563,8 @@ function _laplace_sample_b0s(dm::DataModel,
         rng::AbstractRNG,
         n::Int,
         sampling::Symbol;
-        tctx = nothing)
+        tctx = nothing
+    )
     n <= 0 && return Vector{Vector{eltype(θ)}}()
     _resolve_multistart_sampling(sampling, "inner multistart sampling")
     T = eltype(θ)
@@ -549,7 +574,8 @@ function _laplace_sample_b0s(dm::DataModel,
     # candidates instead of crashing — the logf screening discards bad starts.
     try
         return _laplace_sample_b0s_impl(
-            dm, batch_info, θ, const_cache, cache, rng, n, sampling; tctx = tctx)
+            dm, batch_info, θ, const_cache, cache, rng, n, sampling; tctx = tctx
+        )
     catch err
         if _is_numeric_error(err)
             return [zeros(T, nb) for _ in 1:n]
@@ -558,7 +584,8 @@ function _laplace_sample_b0s(dm::DataModel,
     end
 end
 
-function _laplace_sample_b0s_impl(dm::DataModel,
+function _laplace_sample_b0s_impl(
+        dm::DataModel,
         batch_info::REBatchInfo,
         θ::ComponentArray,
         const_cache::REConstantsCache,
@@ -566,7 +593,8 @@ function _laplace_sample_b0s_impl(dm::DataModel,
         rng::AbstractRNG,
         n::Int,
         sampling::Symbol;
-        tctx = nothing)
+        tctx = nothing
+    )
     T = eltype(θ)
     nb = get_n_b(batch_info)
     b0s = [zeros(T, nb) for _ in 1:n]
@@ -574,7 +602,7 @@ function _laplace_sample_b0s_impl(dm::DataModel,
     helpers = cache.helpers
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     θ_re = tctx === nothing ? _symmetrize_psd_params(θ, get_fixed(get_model(dm))) :
-           tctx.θ_re
+        tctx.θ_re
     cache = get_laplace_cache(get_re_group_info(dm))
     re_names = get_re_names(cache)
     for (ri, re) in enumerate(re_names)
@@ -583,15 +611,16 @@ function _laplace_sample_b0s_impl(dm::DataModel,
         for (li, _) in enumerate(get_levels(get_re_map(info)))
             rep_idx = get_reps(info)[li]
             dists = tctx === nothing ?
-                    dists_builder(
-                θ_re, get_const_cov(get_individuals(dm)[rep_idx]), model_funs, helpers) :
-                    tctx.dists[ri][li]
+                dists_builder(
+                    θ_re, get_const_cov(get_individuals(dm)[rep_idx]), model_funs, helpers
+                ) :
+                tctx.dists[ri][li]
             dist = getproperty(dists, re)
             r = get_ranges(info)[li]
             dim = length(r)
             if get_is_scalar(info)
                 draws = sampling === :lhs ? _laplace_lhs_draws_univariate(dist, n, rng) :
-                        nothing
+                    nothing
                 draws === nothing && (draws = [rand(rng, dist) for _ in 1:n])
                 for i in 1:n
                     v = draws[i]
@@ -603,11 +632,15 @@ function _laplace_sample_b0s_impl(dm::DataModel,
                     b0s[i][first(r)] = convert(T, v)
                 end
             else
-                draws = (sampling === :lhs &&
-                         (dist isa Distributions.AbstractMvNormal ||
-                          dist isa Distributions.MvLogNormal ||
-                          dist isa Distributions.MvLogitNormal)) ?
-                        _laplace_lhs_draws_mvnormal(dist, n, rng, dim) : nothing
+                draws = (
+                        sampling === :lhs &&
+                        (
+                            dist isa Distributions.AbstractMvNormal ||
+                            dist isa Distributions.MvLogNormal ||
+                            dist isa Distributions.MvLogitNormal
+                        )
+                    ) ?
+                    _laplace_lhs_draws_mvnormal(dist, n, rng, dim) : nothing
                 draws === nothing && (draws = [rand(rng, dist) for _ in 1:n])
                 for i in 1:n
                     v = draws[i]
@@ -626,7 +659,8 @@ function _laplace_sample_b0s_impl(dm::DataModel,
     return b0s
 end
 
-@inline function _laplace_gradb_cached!(cache::_LaplaceCache,
+@inline function _laplace_gradb_cached!(
+        cache::_LaplaceCache,
         bi::Int,
         dm::DataModel,
         info::REBatchInfo,
@@ -634,7 +668,8 @@ end
         const_cache::REConstantsCache,
         ll_cache::_LLCache,
         b;
-        tctx = nothing)
+        tctx = nothing
+    )
     grad_cache = cache.grad_cache
     if grad_cache.last_valid[bi]
         b_last = grad_cache.last_b[bi]
@@ -678,12 +713,14 @@ end
 
 # Evaluates log p(η_const | θ) for all constant RE levels in the batch.
 # Each unique constant level contributes exactly once (deduplicated via `seen`).
-function _const_re_prior_logf(dm::DataModel,
+function _const_re_prior_logf(
+        dm::DataModel,
         batch_info::REBatchInfo,
         θ_re::ComponentArray,
         const_cache::REConstantsCache,
         cache::_LLCache;
-        anneal_sds::NamedTuple = NamedTuple())
+        anneal_sds::NamedTuple = NamedTuple()
+    )
     isempty(const_cache.is_const) && return zero(eltype(θ_re))
     T = eltype(θ_re)
     ll = zero(T)
@@ -698,14 +735,18 @@ function _const_re_prior_logf(dm::DataModel,
             for id in get_ind_level_ids(re_cache)[i][ri]
                 (const_mask[id] && !seen[id]) || continue
                 seen[id] = true
-                dists = dists_builder(θ_re, get_const_cov(get_individuals(dm)[i]),
-                    cache.model_funs, cache.helpers)
+                dists = dists_builder(
+                    θ_re, get_const_cov(get_individuals(dm)[i]),
+                    cache.model_funs, cache.helpers
+                )
                 v = get_is_scalar(re_cache)[ri] ?
                     T(const_cache.scalar_vals[ri][id]) :
                     T.(const_cache.vector_vals[ri][id])
                 lp = if has_anneal && haskey(anneal_sds, re)
-                    dist = _saem_apply_anneal_dist(getproperty(dists, re),
-                        getfield(anneal_sds, re))
+                    dist = _saem_apply_anneal_dist(
+                        getproperty(dists, re),
+                        getfield(anneal_sds, re)
+                    )
                     convert(T, logpdf(dist, v))
                 else
                     _logpdf_re_static(keys(dists), values(dists), re, v, T)
@@ -726,7 +767,8 @@ end
 function _laplace_logf_batch(
         dm::DataModel, batch_info::REBatchInfo, θ::ComponentArray,
         b, const_cache::REConstantsCache, cache::_LLCache;
-        anneal_sds::NamedTuple = NamedTuple(), tctx = nothing)
+        anneal_sds::NamedTuple = NamedTuple(), tctx = nothing
+    )
     T = promote_type(eltype(θ), eltype(b))
     try
         # The RE-prior terms box through the RE-distribution RGF (`dists_builder` returns
@@ -734,9 +776,13 @@ function _laplace_logf_batch(
         # `Any`. Pin the batch log-density to `T` here so the differentiated M-step Q
         # objective (`acc += w*logf` in the Q-core) stays concrete. AD-safe: `convert` is
         # identity when the value is already `T`, an AD-correct zero-partial lift otherwise.
-        return convert(T,
-            _laplace_logf_batch_impl(dm, batch_info, θ, b, const_cache,
-                cache; anneal_sds = anneal_sds, tctx = tctx))::T
+        return convert(
+            T,
+            _laplace_logf_batch_impl(
+                dm, batch_info, θ, b, const_cache,
+                cache; anneal_sds = anneal_sds, tctx = tctx
+            )
+        )::T
     catch err
         if _is_numeric_error(err)
             return convert(T, -Inf)::T
@@ -779,18 +825,26 @@ struct BatchThetaContext{TH, D, L}
 end
 const _LaplaceThetaCtx = BatchThetaContext
 
-function build_batch_theta_context(dm::DataModel,
+function build_batch_theta_context(
+        dm::DataModel,
         batch_info::REBatchInfo,
         θ::ComponentArray,
-        cache::_LLCache)
+        cache::_LLCache
+    )
     θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
     builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = cache.model_funs
     helpers = cache.helpers
-    dists = [[builder(θ_re, get_const_cov(get_individuals(dm)[get_reps(rinfo)[li]]),
-                  model_funs, helpers)
-              for li in eachindex(get_levels(get_re_map(rinfo)))]
-             for rinfo in get_re_info(batch_info)]
+    dists = [
+        [
+                builder(
+                    θ_re, get_const_cov(get_individuals(dm)[get_reps(rinfo)[li]]),
+                    model_funs, helpers
+                )
+                for li in eachindex(get_levels(get_re_map(rinfo)))
+            ]
+            for rinfo in get_re_info(batch_info)
+    ]
     return _LaplaceThetaCtx(θ_re, dists, nothing)
 end
 const _build_theta_ctx = build_batch_theta_context
@@ -805,15 +859,18 @@ end
 # bit-identical to a per-call evaluation; for Gaussian REs the prior is
 # quadratic in b, hence the Hessian is the same at every b and its ∂/∂b is
 # exactly zero — matching the dual partials the per-call path would produce.
-function _ctx_with_prior_hess(tctx::_LaplaceThetaCtx,
+function _ctx_with_prior_hess(
+        tctx::_LaplaceThetaCtx,
         dm::DataModel,
         batch_info::REBatchInfo,
         const_cache::REConstantsCache,
         cache::_LLCache,
-        b)
+        b
+    )
     _re_all_gaussian(dm) || return tctx
     Λ = -ForwardDiff.hessian(
-        _FOCEIPriorLogf(dm, batch_info, tctx.θ_re, const_cache, cache), b)
+        _FOCEIPriorLogf(dm, batch_info, tctx.θ_re, const_cache, cache), b
+    )
     return _LaplaceThetaCtx(tctx.θ_re, tctx.dists, Λ)
 end
 
@@ -821,10 +878,12 @@ end
 # `nothing` (the per-call path, whose logf wrapper turns the same exceptions
 # into -Inf), instead of letting the throw escape a path that was previously
 # protected only inside the evaluation.
-function _safe_theta_ctx(dm::DataModel,
+function _safe_theta_ctx(
+        dm::DataModel,
         batch_info::REBatchInfo,
         θ::ComponentArray,
-        cache::_LLCache)
+        cache::_LLCache
+    )
     try
         return _build_theta_ctx(dm, batch_info, θ, cache)
     catch err
@@ -838,13 +897,15 @@ end
 # Context for one objective/gradient batch term; FOCEI additionally gets the
 # cached prior Hessian when the REs are all Gaussian. (`hmode` is untyped here
 # because `_HessMode` is defined further down this file.)
-function _objective_theta_ctx(dm::DataModel,
+function _objective_theta_ctx(
+        dm::DataModel,
         batch_info::REBatchInfo,
         θ::ComponentArray,
         const_cache::REConstantsCache,
         cache::_LLCache,
         b,
-        hmode)
+        hmode
+    )
     tctx = _safe_theta_ctx(dm, batch_info, θ, cache)
     tctx === nothing && return nothing
     hmode isa _FOCEIHess || return tctx
@@ -864,8 +925,10 @@ end
 # logcorrection (`_re_prior_logf_batch`). Uses `_logpdf_re_static` so the logpdf stays
 # statically dispatched (Enzyme forward-mode BLAS safe); the anneal branch keeps dynamic
 # getproperty, matching the previous per-function behaviour.
-function _re_free_prior_logf(dm::DataModel, batch_info::REBatchInfo, θ_re::ComponentArray,
-        b, cache::_LLCache; anneal_sds::NamedTuple = NamedTuple(), tctx = nothing)
+function _re_free_prior_logf(
+        dm::DataModel, batch_info::REBatchInfo, θ_re::ComponentArray,
+        b, cache::_LLCache; anneal_sds::NamedTuple = NamedTuple(), tctx = nothing
+    )
     T_ll = promote_type(eltype(θ_re), eltype(b))
     ll = zero(T_ll)
     model_funs = cache.model_funs
@@ -880,13 +943,17 @@ function _re_free_prior_logf(dm::DataModel, batch_info::REBatchInfo, θ_re::Comp
         for (li, level_id) in enumerate(get_levels(get_re_map(info)))
             rep_idx = get_reps(info)[li]
             dists = tctx === nothing ?
-                    dists_builder(θ_re, get_const_cov(get_individuals(dm)[rep_idx]),
-                model_funs, helpers) : tctx.dists[ri][li]
+                dists_builder(
+                    θ_re, get_const_cov(get_individuals(dm)[rep_idx]),
+                    model_funs, helpers
+                ) : tctx.dists[ri][li]
             v = _re_value_from_b(info, level_id, b)
             v === nothing && continue
             lp = if has_anneal && haskey(anneal_sds, re)
-                dist = _saem_apply_anneal_dist(getproperty(dists, re),
-                    getfield(anneal_sds, re))
+                dist = _saem_apply_anneal_dist(
+                    getproperty(dists, re),
+                    getfield(anneal_sds, re)
+                )
                 convert(T_ll, logpdf(dist, v))
             else
                 _logpdf_re_static(keys(dists), values(dists), re, v, T_ll)
@@ -898,24 +965,29 @@ function _re_free_prior_logf(dm::DataModel, batch_info::REBatchInfo, θ_re::Comp
     return ll
 end
 
-function _laplace_logf_batch_impl(dm::DataModel,
+function _laplace_logf_batch_impl(
+        dm::DataModel,
         batch_info::REBatchInfo,
         θ::ComponentArray,
         b,
         const_cache::REConstantsCache,
         cache::_LLCache;
         anneal_sds::NamedTuple = NamedTuple(),
-        tctx = nothing)
+        tctx = nothing
+    )
     T_ll = promote_type(eltype(θ), eltype(b))
     θ_re = tctx === nothing ? _symmetrize_psd_params(θ, get_fixed(get_model(dm))) :
-           tctx.θ_re
+        tctx.θ_re
     # random-effects prior term (free levels)
-    ll = _re_free_prior_logf(dm, batch_info, θ_re, b, cache;
-        anneal_sds = anneal_sds, tctx = tctx)
+    ll = _re_free_prior_logf(
+        dm, batch_info, θ_re, b, cache;
+        anneal_sds = anneal_sds, tctx = tctx
+    )
     !isfinite(ll) && return T_ll(-Inf)
     # constant-RE prior term
     const_ll = _const_re_prior_logf(
-        dm, batch_info, θ_re, const_cache, cache; anneal_sds = anneal_sds)
+        dm, batch_info, θ_re, const_cache, cache; anneal_sds = anneal_sds
+    )
     !isfinite(const_ll) && return T_ll(-Inf)
     ll += const_ll
     # likelihood term
@@ -938,43 +1010,52 @@ end
 # `-Inf` and rejecting, not an exception that kills the fit, which is what the SAEM/MCEM E-step
 # has no handler for. Thin wrapper, as in `_loglikelihood_individual`, so the hot path is
 # untouched.
-function _re_logpdf_batch(dm::DataModel,
+function _re_logpdf_batch(
+        dm::DataModel,
         batch_info::REBatchInfo,
         θ::ComponentArray,
         b,
         const_cache::REConstantsCache,
         cache::_LLCache;
         anneal_sds::NamedTuple = NamedTuple(),
-        tctx = nothing)
+        tctx = nothing
+    )
     try
-        return __re_logpdf_batch(dm, batch_info, θ, b, const_cache, cache;
-            anneal_sds = anneal_sds, tctx = tctx)
+        return __re_logpdf_batch(
+            dm, batch_info, θ, b, const_cache, cache;
+            anneal_sds = anneal_sds, tctx = tctx
+        )
     catch err
         _is_numeric_error(err) || rethrow(err)
         if !Threads.atomic_cas!(_WARNED_NUMERIC_ERROR, false, true)
             @warn "A numeric error ($(nameof(typeof(err)))) was raised while evaluating " *
-                  "the random-effect prior; treating this point as -Inf. Warned once per fit."
+                "the random-effect prior; treating this point as -Inf. Warned once per fit."
         end
         return convert(promote_type(eltype(θ), eltype(b)), -Inf)
     end
 end
 
-function __re_logpdf_batch(dm::DataModel,
+function __re_logpdf_batch(
+        dm::DataModel,
         batch_info::REBatchInfo,
         θ::ComponentArray,
         b,
         const_cache::REConstantsCache,
         cache::_LLCache;
         anneal_sds::NamedTuple = NamedTuple(),
-        tctx = nothing)
+        tctx = nothing
+    )
     T_ll = promote_type(eltype(θ), eltype(b))
     θ_re = tctx === nothing ? _symmetrize_psd_params(θ, get_fixed(get_model(dm))) :
-           tctx.θ_re
-    ll = _re_free_prior_logf(dm, batch_info, θ_re, b, cache;
-        anneal_sds = anneal_sds, tctx = tctx)
+        tctx.θ_re
+    ll = _re_free_prior_logf(
+        dm, batch_info, θ_re, b, cache;
+        anneal_sds = anneal_sds, tctx = tctx
+    )
     !isfinite(ll) && return T_ll(-Inf)
     const_ll = _const_re_prior_logf(
-        dm, batch_info, θ_re, const_cache, cache; anneal_sds = anneal_sds)
+        dm, batch_info, θ_re, const_cache, cache; anneal_sds = anneal_sds
+    )
     !isfinite(const_ll) && return T_ll(-Inf)
     # Pin to `T_ll`: the prior terms box through the RE-distribution RGF (`Any`), and the
     # Q2 M-step optimizer differentiates this objective. AD-safe convert (see above).
@@ -983,12 +1064,14 @@ end
 
 # Returns only the RE prior log-density term for a batch (no observation likelihood).
 # Used by build_centered_re_measure for the AGHQ logcorrection.
-function _re_prior_logf_batch(dm::DataModel,
+function _re_prior_logf_batch(
+        dm::DataModel,
         batch_info::REBatchInfo,
         θ::ComponentArray,
         b,
         const_cache::REConstantsCache,
-        ll_cache::_LLCache)
+        ll_cache::_LLCache
+    )
     θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
     return _re_free_prior_logf(dm, batch_info, θ_re, b, ll_cache)
 end
@@ -1025,8 +1108,10 @@ struct NewtonInner
     alpha_min::Float64
 end
 
-function NewtonInner(; max_dim::Int = 32, maxiters::Int = 100, g_abstol::Float64 = 1e-8,
-        alpha_min::Float64 = 1e-4)
+function NewtonInner(;
+        max_dim::Int = 32, maxiters::Int = 100, g_abstol::Float64 = 1.0e-8,
+        alpha_min::Float64 = 1.0e-4
+    )
     # Invalid limits used to be accepted and only misbehave inside the inner solver (#220).
     max_dim >= 0 ||
         error("NewtonInner: max_dim must be >= 0 (0 always uses the fallback path); got $(max_dim).")
@@ -1035,7 +1120,7 @@ function NewtonInner(; max_dim::Int = 32, maxiters::Int = 100, g_abstol::Float64
         error("NewtonInner: g_abstol must be finite and > 0; got $(g_abstol).")
     (isfinite(alpha_min) && alpha_min > 0) ||
         error("NewtonInner: alpha_min must be finite and > 0; got $(alpha_min).")
-    NewtonInner(max_dim, maxiters, g_abstol, alpha_min)
+    return NewtonInner(max_dim, maxiters, g_abstol, alpha_min)
 end
 
 # Minimal solution wrapper for the Newton path, duck-typed for the accessors
@@ -1053,7 +1138,8 @@ end
 # Levenberg-style globalization away from the mode), Armijo backtracking on
 # logf. Returns a `_NewtonSol`; `converged=false` signals the caller to fall
 # back to the default quasi-Newton path.
-function _newton_inner_solve(dm::DataModel,
+function _newton_inner_solve(
+        dm::DataModel,
         batch_info::REBatchInfo,
         θ_val::ComponentArray,
         const_cache::REConstantsCache,
@@ -1062,7 +1148,8 @@ function _newton_inner_solve(dm::DataModel,
         bi::Int,
         b0::Vector{Float64},
         newton::NewtonInner;
-        tctx = nothing)
+        tctx = nothing
+    )
     nb = length(b0)
     # Exception-safe: a degenerate θ falls back to the per-call path inside the
     # logf wrapper (-Inf) instead of throwing out of the inner solve.
@@ -1084,10 +1171,14 @@ function _newton_inner_solve(dm::DataModel,
         gn = maximum(abs, g)
         isfinite(gn) || return _NewtonSol(b, Float64(fval), Inf, false)
         gn <= newton.g_abstol && return _NewtonSol(b, Float64(fval), gn, true)
-        H = _laplace_hessian_b(dm, batch_info, θ_val, b, const_cache, cache, ad_cache, bi;
-            ctx = "newton_inner", tctx = tctx)
-        chol, _ = _laplace_cholesky_negH(H; jitter = 1e-6, max_tries = 8, growth = 10.0,
-            adaptive = true, scale_factor = 1e-6)
+        H = _laplace_hessian_b(
+            dm, batch_info, θ_val, b, const_cache, cache, ad_cache, bi;
+            ctx = "newton_inner", tctx = tctx
+        )
+        chol, _ = _laplace_cholesky_negH(
+            H; jitter = 1.0e-6, max_tries = 8, growth = 10.0,
+            adaptive = true, scale_factor = 1.0e-6
+        )
         (chol === nothing || chol.info != 0) &&
             return _NewtonSol(b, Float64(fval), gn, false)
         Δ = chol \ g
@@ -1098,7 +1189,7 @@ function _newton_inner_solve(dm::DataModel,
         while α >= newton.alpha_min
             @. b_try = b + α * Δ
             f_try = f(b_try)
-            if isfinite(f_try) && f_try >= fval + 1e-4 * α * slope
+            if isfinite(f_try) && f_try >= fval + 1.0e-4 * α * slope
                 b, b_try = b_try, b
                 fval = f_try
                 accepted = true
@@ -1116,7 +1207,8 @@ end
 @inline _laplace_sol_logf(sol::_NewtonSol) = sol.logf
 @inline _laplace_sol_grad_norm(sol::_NewtonSol) = sol.g_norm
 
-function _laplace_solve_batch!(dm::DataModel,
+function _laplace_solve_batch!(
+        dm::DataModel,
         batch_info::REBatchInfo,
         θ::ComponentArray,
         const_cache::REConstantsCache,
@@ -1127,7 +1219,8 @@ function _laplace_solve_batch!(dm::DataModel,
         optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
         optim_kwargs::NamedTuple = NamedTuple(),
         adtype = Optimization.AutoForwardDiff(),
-        tctx = nothing)
+        tctx = nothing
+    )
     nb = get_n_b(batch_info)
     nb == 0 && return Float64[]
     θ_val = _laplace_floatize(θ)
@@ -1148,9 +1241,11 @@ function _laplace_solve_batch!(dm::DataModel,
     optimizer_use = optimizer
     if optimizer isa NewtonInner
         if nb <= optimizer.max_dim
-            nsol = _newton_inner_solve(dm, batch_info, θ_val, const_cache, cache,
+            nsol = _newton_inner_solve(
+                dm, batch_info, θ_val, const_cache, cache,
                 ad_cache, bi, collect(Float64, b0_use), optimizer;
-                tctx = tctx)
+                tctx = tctx
+            )
             nsol.converged && return nsol
             # Stalled/failed Newton: continue into the default quasi-Newton path
             # from the best point found, so the option is never less robust
@@ -1207,7 +1302,8 @@ end
     return cache.bstar_cache.b_star[bi]
 end
 
-function _laplace_compute_bstar_batch!(cache::_LaplaceCache,
+function _laplace_compute_bstar_batch!(
+        cache::_LaplaceCache,
         bi::Int,
         dm::DataModel,
         info::REBatchInfo,
@@ -1217,10 +1313,11 @@ function _laplace_compute_bstar_batch!(cache::_LaplaceCache,
         optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
         optim_kwargs::NamedTuple = NamedTuple(),
         adtype = Optimization.AutoForwardDiff(),
-        grad_tol = 1e-6,
+        grad_tol = 1.0e-6,
         multistart = LaplaceMultistartOptions(0, 0, grad_tol, 5, :lhs),
         rng::AbstractRNG = Random.default_rng(),
-        mcmc_candidates::Union{Nothing, AbstractMatrix} = nothing)
+        mcmc_candidates::Union{Nothing, AbstractMatrix} = nothing
+    )
     nb = get_n_b(info)
     if nb == 0
         b_slot = cache.bstar_cache.b_star[bi]
@@ -1248,9 +1345,11 @@ function _laplace_compute_bstar_batch!(cache::_LaplaceCache,
         b_prev = cache.bstar_cache.b_star[bi]
         if length(b_prev) == nb
             f_prev = _laplace_logf_batch(
-                dm, info, θ_val, b_prev, const_cache, ll_cache; tctx = tctx)
+                dm, info, θ_val, b_prev, const_cache, ll_cache; tctx = tctx
+            )
             f_def = _laplace_logf_batch(
-                dm, info, θ_val, b0_default, const_cache, ll_cache; tctx = tctx)
+                dm, info, θ_val, b0_default, const_cache, ll_cache; tctx = tctx
+            )
             warm_start_usable = isfinite(f_prev)
             if f_prev > f_def
                 b_start = b_prev
@@ -1258,16 +1357,20 @@ function _laplace_compute_bstar_batch!(cache::_LaplaceCache,
         end
     end
     g0, f_start = _laplace_gradb_cached!(
-        cache, bi, dm, info, θ_val, const_cache, ll_cache, b_start; tctx = tctx)
+        cache, bi, dm, info, θ_val, const_cache, ll_cache, b_start; tctx = tctx
+    )
     if !isfinite(f_start)
         best_f = -Inf
         best_b = b_start
         n_try = multistart.n > 0 ? multistart.n : 0
-        b_tries = _laplace_sample_b0s(dm, info, θ_val, const_cache, ll_cache, rng,
-            n_try, multistart.sampling; tctx = tctx)
+        b_tries = _laplace_sample_b0s(
+            dm, info, θ_val, const_cache, ll_cache, rng,
+            n_try, multistart.sampling; tctx = tctx
+        )
         for b_try in b_tries
             f_try = _laplace_logf_batch(
-                dm, info, θ_val, b_try, const_cache, ll_cache; tctx = tctx)
+                dm, info, θ_val, b_try, const_cache, ll_cache; tctx = tctx
+            )
             if f_try > best_f
                 best_f = f_try
                 best_b = b_try
@@ -1277,7 +1380,8 @@ function _laplace_compute_bstar_batch!(cache::_LaplaceCache,
             b_start = best_b
         end
         g0, _ = _laplace_gradb_cached!(
-            cache, bi, dm, info, θ_val, const_cache, ll_cache, b_start; tctx = tctx)
+            cache, bi, dm, info, θ_val, const_cache, ll_cache, b_start; tctx = tctx
+        )
     end
     g0_norm = maximum(abs, g0)
     if !isfinite(g0_norm)
@@ -1292,7 +1396,8 @@ function _laplace_compute_bstar_batch!(cache::_LaplaceCache,
             optimizer = optimizer,
             optim_kwargs = optim_kwargs,
             adtype = adtype,
-            tctx = tctx)
+            tctx = tctx
+        )
     catch err
         if err isa DomainError || err isa ArgumentError || err isa ErrorException
             nothing
@@ -1305,13 +1410,15 @@ function _laplace_compute_bstar_batch!(cache::_LaplaceCache,
         best_f = _laplace_sol_logf(sol_best)
         if !isfinite(best_f)
             best_f = _laplace_logf_batch(
-                dm, info, θ_val, b_best, const_cache, ll_cache; tctx = tctx)
+                dm, info, θ_val, b_best, const_cache, ll_cache; tctx = tctx
+            )
             isfinite(best_f) || (best_f = -Inf)
         end
         g_best_norm = _laplace_sol_grad_norm(sol_best)
         if !isfinite(g_best_norm)
             g_best, _ = _laplace_gradb_cached!(
-                cache, bi, dm, info, θ_val, const_cache, ll_cache, b_best; tctx = tctx)
+                cache, bi, dm, info, θ_val, const_cache, ll_cache, b_best; tctx = tctx
+            )
             g_best_norm = maximum(abs, g_best)
         end
         if !isfinite(g_best_norm)
@@ -1329,9 +1436,9 @@ function _laplace_compute_bstar_batch!(cache::_LaplaceCache,
     # no warm start exists — the first outer evaluation, the final-EBE pass,
     # rescue passes, and `reestimate_ebes` (all of which build fresh b*-caches).
     multistart_allowed = use_mcmc || !warm_start_usable ||
-                         !isfinite(best_f) || !isfinite(g_best_norm)
+        !isfinite(best_f) || !isfinite(g_best_norm)
     if multistart_allowed && g_best_norm > multistart.grad_tol && multistart.k > 0 &&
-       (multistart.n > 0 || use_mcmc)
+            (multistart.n > 0 || use_mcmc)
         n_mcmc_stored = use_mcmc ? size(mcmc_candidates, 2) : 0
         n = use_mcmc ? max(multistart.n, n_mcmc_stored) : multistart.n
         k = multistart.k
@@ -1342,21 +1449,26 @@ function _laplace_compute_bstar_batch!(cache::_LaplaceCache,
                 mcmc_b0s = [mcmc_candidates[:, i] for i in 1:n_mcmc_stored]
                 n_lhs = max(0, multistart.n - n_mcmc_stored)
                 lhs_b0s = n_lhs > 0 ?
-                          _laplace_sample_b0s(dm, info, θ_val, const_cache, ll_cache, rng,
-                    n_lhs, multistart.sampling; tctx = tctx) :
-                          Vector{Vector{eltype(θ_val)}}()
+                    _laplace_sample_b0s(
+                        dm, info, θ_val, const_cache, ll_cache, rng,
+                        n_lhs, multistart.sampling; tctx = tctx
+                    ) :
+                    Vector{Vector{eltype(θ_val)}}()
                 b0s = vcat(mcmc_b0s, lhs_b0s)
                 n = length(b0s)
                 k = min(k, n)
             else
-                b0s = _laplace_sample_b0s(dm, info, θ_val, const_cache, ll_cache,
-                    rng, n, multistart.sampling; tctx = tctx)
+                b0s = _laplace_sample_b0s(
+                    dm, info, θ_val, const_cache, ll_cache,
+                    rng, n, multistart.sampling; tctx = tctx
+                )
             end
             vals = Vector{Tuple{Float64, Vector{eltype(θ_val)}}}(undef, n)
             for s in 1:n
                 b0 = b0s[s]
                 f0 = _laplace_logf_batch(
-                    dm, info, θ_val, b0, const_cache, ll_cache; tctx = tctx)
+                    dm, info, θ_val, b0, const_cache, ll_cache; tctx = tctx
+                )
                 isfinite(f0) || (f0 = -Inf)
                 vals[s] = (f0, b0)
             end
@@ -1372,10 +1484,11 @@ function _laplace_compute_bstar_batch!(cache::_LaplaceCache,
                         optimizer = optimizer,
                         optim_kwargs = optim_kwargs,
                         adtype = adtype,
-                        tctx = tctx)
+                        tctx = tctx
+                    )
                 catch err
                     if err isa DomainError || err isa ArgumentError ||
-                       err isa ErrorException
+                            err isa ErrorException
                         nothing
                     else
                         rethrow(err)
@@ -1386,7 +1499,8 @@ function _laplace_compute_bstar_batch!(cache::_LaplaceCache,
                 f_try = _laplace_sol_logf(sol_try)
                 if !isfinite(f_try)
                     f_try = _laplace_logf_batch(
-                        dm, info, θ_val, b_try, const_cache, ll_cache; tctx = tctx)
+                        dm, info, θ_val, b_try, const_cache, ll_cache; tctx = tctx
+                    )
                 end
                 isfinite(f_try) || (f_try = -Inf)
                 if f_try > best_after_f
@@ -1396,7 +1510,8 @@ function _laplace_compute_bstar_batch!(cache::_LaplaceCache,
                     if !isfinite(g_try_norm)
                         g_try, _ = _laplace_gradb_cached!(
                             cache, bi, dm, info, θ_val, const_cache,
-                            ll_cache, b_try; tctx = tctx)
+                            ll_cache, b_try; tctx = tctx
+                        )
                         g_try_norm = maximum(abs, g_try)
                     end
                     best_after_g_norm = isfinite(g_try_norm) ? g_try_norm : Inf
@@ -1417,7 +1532,8 @@ function _laplace_compute_bstar_batch!(cache::_LaplaceCache,
     return nothing
 end
 
-function _laplace_get_bstar!(cache::_LaplaceCache,
+function _laplace_get_bstar!(
+        cache::_LaplaceCache,
         dm::DataModel,
         batch_infos::Vector{REBatchInfo},
         θ::ComponentArray,
@@ -1426,7 +1542,7 @@ function _laplace_get_bstar!(cache::_LaplaceCache,
         optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
         optim_kwargs::NamedTuple = NamedTuple(),
         adtype = Optimization.AutoForwardDiff(),
-        grad_tol = 1e-6,
+        grad_tol = 1.0e-6,
         theta_tol = 0.0,
         multistart = LaplaceMultistartOptions(0, 0, grad_tol, 5, :lhs),
         rng::AbstractRNG = Random.default_rng(),
@@ -1434,7 +1550,8 @@ function _laplace_get_bstar!(cache::_LaplaceCache,
         progress::Bool = false,
         progress_desc::AbstractString = "EBE",
         mcmc_candidates_by_batch::Union{Nothing, Vector} = nothing,
-        active_batches::Union{Nothing, AbstractSet{Int}} = nothing)
+        active_batches::Union{Nothing, AbstractSet{Int}} = nothing
+    )
     θ_vec = θ
     if cache.θ_cache !== nothing && length(cache.θ_cache) == length(θ_vec)
         maxdiff = _maxabsdiff(θ_vec, cache.θ_cache)
@@ -1447,15 +1564,17 @@ function _laplace_get_bstar!(cache::_LaplaceCache,
     end
     total_inds = sum(
         max(0, get_n_b(info))
-        for (bi, info) in enumerate(batch_infos)
-        if active_batches === nothing || bi ∈ active_batches;
-        init = 0)
+            for (bi, info) in enumerate(batch_infos)
+            if active_batches === nothing || bi ∈ active_batches;
+        init = 0
+    )
     p = ProgressMeter.Progress(
-        total_inds; desc = progress_desc, enabled = progress && total_inds > 0)
+        total_inds; desc = progress_desc, enabled = progress && total_inds > 0
+    )
     θ_val = _laplace_floatize(θ)
     batch_rngs = _laplace_thread_rngs(rng, length(batch_infos))
     use_threaded = serialization isa SciMLBase.EnsembleThreads ||
-                   ll_cache isa AbstractVector
+        ll_cache isa AbstractVector
     if use_threaded
         nthreads = Threads.maxthreadid()
         caches = _laplace_thread_caches(dm, ll_cache, nthreads)
@@ -1481,9 +1600,10 @@ function _laplace_get_bstar!(cache::_LaplaceCache,
                     multistart = multistart,
                     rng = batch_rngs[bi],
                     mcmc_candidates = mcmc_candidates_by_batch === nothing ? nothing :
-                                      mcmc_candidates_by_batch[bi])
+                        mcmc_candidates_by_batch[bi]
+                )
                 new_count = Threads.atomic_add!(ind_counter, max(0, get_n_b(info))) +
-                            max(0, get_n_b(info))
+                    max(0, get_n_b(info))
                 ProgressMeter.update!(p, new_count)
             end
         end
@@ -1501,7 +1621,8 @@ function _laplace_get_bstar!(cache::_LaplaceCache,
                 multistart = multistart,
                 rng = batch_rngs[bi],
                 mcmc_candidates = mcmc_candidates_by_batch === nothing ? nothing :
-                                  mcmc_candidates_by_batch[bi])
+                    mcmc_candidates_by_batch[bi]
+            )
             ind_done += max(0, get_n_b(info))
             ProgressMeter.update!(p, ind_done)
         end
@@ -1513,7 +1634,8 @@ function _laplace_get_bstar!(cache::_LaplaceCache,
     return cache.bstar_cache.b_star
 end
 
-function _laplace_hessian_b(dm::DataModel,
+function _laplace_hessian_b(
+        dm::DataModel,
         batch_info::REBatchInfo,
         θ::ComponentArray,
         b,
@@ -1522,7 +1644,8 @@ function _laplace_hessian_b(dm::DataModel,
         ad_cache::Union{Nothing, LaplaceADCache},
         bi::Int;
         ctx::AbstractString = "",
-        tctx = nothing)
+        tctx = nothing
+    )
     # The θ-context is used only when the caller passes one (from a call site
     # that amortizes it over many evaluations — the inner solve, the
     # objective/gradient batch terms, Q sample loops). Building one here
@@ -1611,26 +1734,33 @@ near a mode; the posterior precision is `-H`). This is the single method a new
 `AbstractCurvature` implements; `ExactHessianCurvature` and `FisherInformationCurvature` are the
 reference implementations. `ws` is an opaque `CurvatureWorkspace`.
 """
-@inline function inner_curvature(::ExactHessianCurvature, dm::DataModel,
+@inline function inner_curvature(
+        ::ExactHessianCurvature, dm::DataModel,
         batch_info::REBatchInfo, θ, b, const_cache::REConstantsCache, cache::_LLCache,
-        ws::CurvatureWorkspace; ctx::AbstractString = "", tctx = nothing)
-    return _laplace_hessian_b(dm, batch_info, θ, b, const_cache, cache,
-        ws.ad_cache, ws.bi; ctx = ctx, tctx = tctx)
+        ws::CurvatureWorkspace; ctx::AbstractString = "", tctx = nothing
+    )
+    return _laplace_hessian_b(
+        dm, batch_info, θ, b, const_cache, cache,
+        ws.ad_cache, ws.bi; ctx = ctx, tctx = tctx
+    )
 end
 
 # Internal shim: the fit machinery calls `_build_hess_b(mode, …, ad_cache, bi)`; route it
 # through the public `inner_curvature` seam so third-party curvatures are picked up too.
 @inline _build_hess_b(
-mode::AbstractCurvature, dm::DataModel, batch_info::REBatchInfo, θ, b,
-const_cache::REConstantsCache, cache::_LLCache,
-ad_cache::Union{Nothing, LaplaceADCache}, bi::Int;
-ctx::AbstractString = "", tctx = nothing) = inner_curvature(
+    mode::AbstractCurvature, dm::DataModel, batch_info::REBatchInfo, θ, b,
+    const_cache::REConstantsCache, cache::_LLCache,
+    ad_cache::Union{Nothing, LaplaceADCache}, bi::Int;
+    ctx::AbstractString = "", tctx = nothing
+) = inner_curvature(
     mode, dm, batch_info, θ, b, const_cache, cache,
-    CurvatureWorkspace(ad_cache, bi); ctx = ctx, tctx = tctx)
+    CurvatureWorkspace(ad_cache, bi); ctx = ctx, tctx = tctx
+)
 
 function _laplace_cholesky_negH(
-        H::AbstractMatrix; jitter = 1e-6, max_tries = 6, growth = 10.0,
-        adaptive = false, scale_factor = 0.0)
+        H::AbstractMatrix; jitter = 1.0e-6, max_tries = 6, growth = 10.0,
+        adaptive = false, scale_factor = 0.0
+    )
     Hneg = Symmetric(-H)
     # Un-jittered first. Any jitter surviving into the returned factor makes the
     # log-determinant a function of `jit` as well as of θ and b, while
@@ -1680,7 +1810,8 @@ function negH_definite_without_jitter(H::AbstractMatrix)
     return cholesky(Symmetric(Hneg), check = false).info == 0
 end
 
-function _laplace_logdet_negH(dm::DataModel,
+function _laplace_logdet_negH(
+        dm::DataModel,
         batch_info::REBatchInfo,
         θ::ComponentArray,
         b,
@@ -1688,7 +1819,7 @@ function _laplace_logdet_negH(dm::DataModel,
         cache::_LLCache,
         ad_cache::Union{Nothing, LaplaceADCache},
         bi::Int;
-        jitter = 1e-6,
+        jitter = 1.0e-6,
         max_tries = 6,
         growth = 10.0,
         adaptive = false,
@@ -1697,7 +1828,8 @@ function _laplace_logdet_negH(dm::DataModel,
         hess_cache::Union{Nothing, _LaplaceHessCache} = nothing,
         use_cache::Bool = false,
         hmode::_HessMode = _ExactHess(),
-        tctx = nothing)
+        tctx = nothing
+    )
     if get_n_b(batch_info) == 0
         T = eltype(θ)
         H = zeros(T, 0, 0)
@@ -1715,21 +1847,26 @@ function _laplace_logdet_negH(dm::DataModel,
                     end
                 end
                 if same
-                    return (hess_cache.last_logdet[bi],
-                        hess_cache.last_H[bi], hess_cache.last_chol[bi])
+                    return (
+                        hess_cache.last_logdet[bi],
+                        hess_cache.last_H[bi], hess_cache.last_chol[bi],
+                    )
                 end
             end
         end
     end
-    H = _build_hess_b(hmode, dm, batch_info, θ, b, const_cache,
-        cache, ad_cache, bi; ctx = ctx, tctx = tctx)
+    H = _build_hess_b(
+        hmode, dm, batch_info, θ, b, const_cache,
+        cache, ad_cache, bi; ctx = ctx, tctx = tctx
+    )
     infT = convert(eltype(H), Inf)
     # Inf here makes the marginal -Inf, so the optimizer backtracks out of a degenerate
     # region instead of climbing the jitter artifact.
     negH_definite_without_jitter(H) || return (infT, H, nothing)
     chol, _ = _laplace_cholesky_negH(
         H; jitter = jitter, max_tries = max_tries, growth = growth,
-        adaptive = adaptive, scale_factor = scale_factor)
+        adaptive = adaptive, scale_factor = scale_factor
+    )
     chol === nothing && return (infT, H, nothing)
     chol.info == 0 || return (infT, H, chol)
     logdet = 2 * sum(log, diag(chol.U))
@@ -1747,7 +1884,8 @@ function _laplace_logdet_negH(dm::DataModel,
     return (logdet, H, chol)
 end
 
-function _laplace_grad_batch(dm::DataModel,
+function _laplace_grad_batch(
+        dm::DataModel,
         batch_info::REBatchInfo,
         θ::ComponentArray,
         b,
@@ -1755,7 +1893,7 @@ function _laplace_grad_batch(dm::DataModel,
         cache::_LLCache,
         ad_cache::Union{Nothing, LaplaceADCache},
         bi::Int;
-        jitter = 1e-6,
+        jitter = 1.0e-6,
         max_tries = 6,
         growth = 10.0,
         adaptive = false,
@@ -1764,12 +1902,14 @@ function _laplace_grad_batch(dm::DataModel,
         use_hutchinson::Bool = false,
         hutchinson_n::Int = 8,
         rng::AbstractRNG = Random.default_rng(),
-        hmode::_HessMode = _ExactHess())
+        hmode::_HessMode = _ExactHess()
+    )
     nb = get_n_b(batch_info)
     if nb == 0
         logf = _laplace_logf_batch(dm, batch_info, θ, b, const_cache, cache)
         grad = ForwardDiff.gradient(
-            θv -> _laplace_logf_batch(dm, batch_info, θv, b, const_cache, cache), θ)
+            θv -> _laplace_logf_batch(dm, batch_info, θv, b, const_cache, cache), θ
+        )
         grad = grad isa ComponentArray ? grad : ComponentArray(grad, getaxes(θ))
         return (logf = logf, logdet = 0.0, grad = grad)
     end
@@ -1806,33 +1946,38 @@ function _laplace_grad_batch(dm::DataModel,
     logdet, H, chol = _laplace_logdet_negH(
         dm, batch_info, θ, b, const_cache, cache, ad_cache, bi;
         jitter = jitter, max_tries = max_tries, growth = growth,
-        adaptive = adaptive, scale_factor = scale_factor, ctx = "logdet", hmode = hmode, tctx = tctx)
+        adaptive = adaptive, scale_factor = scale_factor, ctx = "logdet", hmode = hmode, tctx = tctx
+    )
     infT = convert(eltype(θ), Inf)
     logdet == Inf && return (
-        logf = -Inf, logdet = infT, grad = ComponentArray(zeros(length(θ)), getaxes(θ)))
+        logf = -Inf, logdet = infT, grad = ComponentArray(zeros(length(θ)), getaxes(θ)),
+    )
 
     axs = getaxes(θ)
     θ_vec = θ
     nθ = length(θ_vec)
     nb = length(b)
     buf = ad_cache === nothing ?
-          _LaplaceGradBuffers(Vector{eltype(θ_vec)}(undef, nθ),
-        Matrix{eltype(θ_vec)}(undef, nb, nθ),
-        Vector{eltype(θ_vec)}(undef, nθ),
-        Vector{eltype(θ_vec)}(undef, nb),
-        use_trace_logdet_grad ? Matrix{eltype(θ_vec)}(undef, _ntri(nb), nθ) :
-        Matrix{eltype(θ_vec)}(undef, 0, 0),
-        use_trace_logdet_grad ? Matrix{eltype(θ_vec)}(undef, _ntri(nb), nb) :
-        Matrix{eltype(θ_vec)}(undef, 0, 0),
-        nθ, nb,
-        Vector{eltype(θ_vec)}(undef, nb),
-        _FDCfgStore(), _FDCfgStore(), _FDCfgStore(), _FDCfgStore(),
-        _FDCfgStore(), _FDCfgStore(), _FDCfgStore()) :
-          _get_grad_buffers!(ad_cache, bi, eltype(θ_vec), nθ, nb, use_trace_logdet_grad)
+        _LaplaceGradBuffers(
+            Vector{eltype(θ_vec)}(undef, nθ),
+            Matrix{eltype(θ_vec)}(undef, nb, nθ),
+            Vector{eltype(θ_vec)}(undef, nθ),
+            Vector{eltype(θ_vec)}(undef, nb),
+            use_trace_logdet_grad ? Matrix{eltype(θ_vec)}(undef, _ntri(nb), nθ) :
+            Matrix{eltype(θ_vec)}(undef, 0, 0),
+            use_trace_logdet_grad ? Matrix{eltype(θ_vec)}(undef, _ntri(nb), nb) :
+            Matrix{eltype(θ_vec)}(undef, 0, 0),
+            nθ, nb,
+            Vector{eltype(θ_vec)}(undef, nb),
+            _FDCfgStore(), _FDCfgStore(), _FDCfgStore(), _FDCfgStore(),
+            _FDCfgStore(), _FDCfgStore(), _FDCfgStore()
+        ) :
+        _get_grad_buffers!(ad_cache, bi, eltype(θ_vec), nθ, nb, use_trace_logdet_grad)
     # envelope term
     logf_θ = _LaplaceLogfTheta(dm, batch_info, b, const_cache, cache)
     cfg = _get_fd_cfg!(
-        buf.grad_logf_cfg, logf_θ, θ_vec, () -> ForwardDiff.GradientConfig(logf_θ, θ_vec))
+        buf.grad_logf_cfg, logf_θ, θ_vec, () -> ForwardDiff.GradientConfig(logf_θ, θ_vec)
+    )
     ForwardDiff.gradient!(buf.grad_logf, logf_θ, θ_vec, cfg)
     grad_logf = buf.grad_logf
     # g(b, θ) = ∂ logf / ∂b
@@ -1843,7 +1988,8 @@ function _laplace_grad_batch(dm::DataModel,
         return out
     end
     cfg = _get_fd_cfg!(
-        buf.Gθ_cfg, gθ!, θ_vec, () -> ForwardDiff.JacobianConfig(gθ!, buf.gradb_tmp, θ_vec))
+        buf.Gθ_cfg, gθ!, θ_vec, () -> ForwardDiff.JacobianConfig(gθ!, buf.gradb_tmp, θ_vec)
+    )
     ForwardDiff.jacobian!(buf.Gθ, gθ!, buf.gradb_tmp, θ_vec, cfg)
     Gθ = buf.Gθ
 
@@ -1858,21 +2004,27 @@ function _laplace_grad_batch(dm::DataModel,
             z = rand(rng, (-1, 1), n)
             Az = Ainv * z
             fθ = θv -> begin
-                Hθ = _build_hess_b(hmode, dm, batch_info, θv, b, const_cache,
-                    cache, nothing, bi; ctx = "hutch_dH_dθ")
+                Hθ = _build_hess_b(
+                    hmode, dm, batch_info, θv, b, const_cache,
+                    cache, nothing, bi; ctx = "hutch_dH_dθ"
+                )
                 Hθ * Az
             end
             cfg = _get_fd_cfg!(
-                buf.logdet_θ_cfg, fθ, θ_vec, () -> ForwardDiff.JacobianConfig(fθ, θ_vec))
+                buf.logdet_θ_cfg, fθ, θ_vec, () -> ForwardDiff.JacobianConfig(fθ, θ_vec)
+            )
             Jθv = ForwardDiff.jacobian(fθ, θ_vec, cfg)
             grad_logdet_θ .+= -(Jθv' * z)
             fb = bv -> begin
-                Hb = _build_hess_b(hmode, dm, batch_info, θ, bv, const_cache, cache,
-                    nothing, bi; ctx = "hutch_dH_db", tctx = tctx)
+                Hb = _build_hess_b(
+                    hmode, dm, batch_info, θ, bv, const_cache, cache,
+                    nothing, bi; ctx = "hutch_dH_db", tctx = tctx
+                )
                 Hb * Az
             end
             cfg = _get_fd_cfg!(
-                buf.logdet_b_cfg, fb, b, () -> ForwardDiff.JacobianConfig(fb, b))
+                buf.logdet_b_cfg, fb, b, () -> ForwardDiff.JacobianConfig(fb, b)
+            )
             Jbv = ForwardDiff.jacobian(fb, b, cfg)
             grad_logdet_b .+= -(Jbv' * z)
         end
@@ -1884,47 +2036,63 @@ function _laplace_grad_batch(dm::DataModel,
         weights = Vector{eltype(H)}(undef, _ntri(n))
         _vech_weights!(weights, Ainv)
         fθ = θv -> begin
-            Hθ = _build_hess_b(hmode, dm, batch_info, θv, b, const_cache,
-                cache, nothing, bi; ctx = "trace_dH_dθ")
+            Hθ = _build_hess_b(
+                hmode, dm, batch_info, θv, b, const_cache,
+                cache, nothing, bi; ctx = "trace_dH_dθ"
+            )
             _vech(Hθ)
         end
         cfg = _get_fd_cfg!(
-            buf.Jθ_cfg, fθ, θ_vec, () -> ForwardDiff.JacobianConfig(fθ, θ_vec))
+            buf.Jθ_cfg, fθ, θ_vec, () -> ForwardDiff.JacobianConfig(fθ, θ_vec)
+        )
         ForwardDiff.jacobian!(buf.Jθ, fθ, θ_vec, cfg)
         grad_logdet_θ = -(buf.Jθ' * weights)
 
         fb = bv -> begin
-            Hb = _build_hess_b(hmode, dm, batch_info, θ, bv, const_cache, cache,
-                nothing, bi; ctx = "trace_dH_db", tctx = tctx)
+            Hb = _build_hess_b(
+                hmode, dm, batch_info, θ, bv, const_cache, cache,
+                nothing, bi; ctx = "trace_dH_db", tctx = tctx
+            )
             _vech(Hb)
         end
         cfg = _get_fd_cfg!(buf.Jb_cfg, fb, b, () -> ForwardDiff.JacobianConfig(fb, b))
         ForwardDiff.jacobian!(buf.Jb, fb, b, cfg)
         grad_logdet_b = -(buf.Jb' * weights)
     else
-        logdet_θ = _LaplaceLogdetTheta(dm,
+        logdet_θ = _LaplaceLogdetTheta(
+            dm,
             batch_info,
             b,
             const_cache,
             cache,
-            (; jitter = jitter, max_tries = max_tries, growth = growth,
-                adaptive = adaptive, scale_factor = scale_factor),
-            ad_cache, bi)
-        cfg = _get_fd_cfg!(buf.logdet_θ_cfg, logdet_θ, θ_vec,
-            () -> ForwardDiff.GradientConfig(logdet_θ, θ_vec))
+            (;
+                jitter = jitter, max_tries = max_tries, growth = growth,
+                adaptive = adaptive, scale_factor = scale_factor,
+            ),
+            ad_cache, bi
+        )
+        cfg = _get_fd_cfg!(
+            buf.logdet_θ_cfg, logdet_θ, θ_vec,
+            () -> ForwardDiff.GradientConfig(logdet_θ, θ_vec)
+        )
         ForwardDiff.gradient!(buf.grad_logdet_θ, logdet_θ, θ_vec, cfg)
         grad_logdet_θ = buf.grad_logdet_θ
 
-        logdet_b = _LaplaceLogdetB(dm,
+        logdet_b = _LaplaceLogdetB(
+            dm,
             batch_info,
             θ,
             const_cache,
             cache,
-            (; jitter = jitter, max_tries = max_tries, growth = growth,
-                adaptive = adaptive, scale_factor = scale_factor),
-            ad_cache, bi)
+            (;
+                jitter = jitter, max_tries = max_tries, growth = growth,
+                adaptive = adaptive, scale_factor = scale_factor,
+            ),
+            ad_cache, bi
+        )
         cfg = _get_fd_cfg!(
-            buf.logdet_b_cfg, logdet_b, b, () -> ForwardDiff.GradientConfig(logdet_b, b))
+            buf.logdet_b_cfg, logdet_b, b, () -> ForwardDiff.GradientConfig(logdet_b, b)
+        )
         ForwardDiff.gradient!(buf.grad_logdet_b, logdet_b, b, cfg)
         grad_logdet_b = buf.grad_logdet_b
     end
@@ -1939,14 +2107,18 @@ function _laplace_grad_batch(dm::DataModel,
     chol_b = chol
     if !(hmode isa _ExactHess)
         H_ex = try
-            _laplace_hessian_b(dm, batch_info, θ, b, const_cache, cache, ad_cache, bi;
-                ctx = "dbdtheta", tctx = tctx0)
+            _laplace_hessian_b(
+                dm, batch_info, θ, b, const_cache, cache, ad_cache, bi;
+                ctx = "dbdtheta", tctx = tctx0
+            )
         catch err
             _is_numeric_error(err) ? nothing : rethrow(err)
         end
         if H_ex !== nothing && negH_definite_without_jitter(H_ex)
-            c, _ = _laplace_cholesky_negH(H_ex; jitter = jitter, max_tries = max_tries,
-                growth = growth, adaptive = adaptive, scale_factor = scale_factor)
+            c, _ = _laplace_cholesky_negH(
+                H_ex; jitter = jitter, max_tries = max_tries,
+                growth = growth, adaptive = adaptive, scale_factor = scale_factor
+            )
             (c === nothing || c.info != 0) || (chol_b = c)
         end
     end
@@ -1986,30 +2158,34 @@ struct LaplaceCacheOptions{T}
     theta_tol::T
 end
 
-@inline _default_inner_grad_tol(dm::DataModel) = get_de(get_model(dm)) === nothing ? 1e-8 :
-                                                 1e-2
+@inline _default_inner_grad_tol(dm::DataModel) = get_de(get_model(dm)) === nothing ? 1.0e-8 :
+    1.0e-2
 
 @inline function _resolve_inner_options(inner::LaplaceInnerOptions, dm::DataModel)
     gt = inner.grad_tol
     if gt isa Symbol
         gt === :auto || error("inner_grad_tol must be numeric or :auto.")
         return LaplaceInnerOptions(
-            inner.optimizer, inner.kwargs, inner.adtype, _default_inner_grad_tol(dm))
+            inner.optimizer, inner.kwargs, inner.adtype, _default_inner_grad_tol(dm)
+        )
     end
     return inner
 end
 
 @inline function _resolve_multistart_options(
-        multistart::LaplaceMultistartOptions, inner::LaplaceInnerOptions)
+        multistart::LaplaceMultistartOptions, inner::LaplaceInnerOptions
+    )
     gt = multistart.grad_tol
     sampling = _resolve_multistart_sampling(multistart.sampling, "multistart_sampling")
     if gt isa Symbol
         gt === :auto || error("multistart_grad_tol must be numeric or :auto.")
         return LaplaceMultistartOptions(
-            multistart.n, multistart.k, inner.grad_tol, multistart.max_rounds, sampling)
+            multistart.n, multistart.k, inner.grad_tol, multistart.max_rounds, sampling
+        )
     end
     return LaplaceMultistartOptions(
-        multistart.n, multistart.k, gt, multistart.max_rounds, sampling)
+        multistart.n, multistart.k, gt, multistart.max_rounds, sampling
+    )
 end
 
 """
@@ -2125,7 +2301,8 @@ end
 
 function Laplace(;
         optimizer = OptimizationOptimJL.LBFGS(
-            linesearch = LineSearches.BackTracking(maxstep = 1.0)),
+            linesearch = LineSearches.BackTracking(maxstep = 1.0)
+        ),
         optim_kwargs = (; maxiters = 1000),
         adtype = Optimization.AutoForwardDiff(),
         inner_options = nothing,
@@ -2141,11 +2318,11 @@ function Laplace(;
         multistart_grad_tol = inner_grad_tol,
         multistart_max_rounds = 1,
         multistart_sampling = :lhs,
-        jitter = 1e-6,
+        jitter = 1.0e-6,
         max_tries = 6,
         jitter_growth = 10.0,
         adaptive_jitter = true,
-        jitter_scale = 1e-6,
+        jitter_scale = 1.0e-6,
         use_trace_logdet_grad = true,
         use_hutchinson = false,
         hutchinson_n = 8,
@@ -2154,21 +2331,28 @@ function Laplace(;
         ub = nothing,
         ignore_model_bounds = false,
         precondition = true,
-        nan_recovery = :backtrack)
+        nan_recovery = :backtrack
+    )
     inner = inner_options === nothing ?
-            LaplaceInnerOptions(
-        inner_optimizer, inner_kwargs, inner_adtype, inner_grad_tol) : inner_options
+        LaplaceInnerOptions(
+            inner_optimizer, inner_kwargs, inner_adtype, inner_grad_tol
+        ) : inner_options
     hess = hessian_options === nothing ?
-           LaplaceHessianOptions(
-        jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale,
-        use_trace_logdet_grad, use_hutchinson, hutchinson_n) : hessian_options
+        LaplaceHessianOptions(
+            jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale,
+            use_trace_logdet_grad, use_hutchinson, hutchinson_n
+        ) : hessian_options
     _validate_laplace_hessian_options(hess)
     cache = cache_options === nothing ? LaplaceCacheOptions(theta_tol) : cache_options
     ms = multistart_options === nothing ?
-         LaplaceMultistartOptions(multistart_n, multistart_k, multistart_grad_tol,
-        multistart_max_rounds, multistart_sampling) : multistart_options
-    Laplace(optimizer, optim_kwargs, adtype, inner, hess, cache,
-        ms, lb, ub, ignore_model_bounds, precondition, nan_recovery)
+        LaplaceMultistartOptions(
+            multistart_n, multistart_k, multistart_grad_tol,
+            multistart_max_rounds, multistart_sampling
+        ) : multistart_options
+    return Laplace(
+        optimizer, optim_kwargs, adtype, inner, hess, cache,
+        ms, lb, ub, ignore_model_bounds, precondition, nan_recovery
+    )
 end
 
 # FrequentistREResult is a StandardOptimizationResult{:frequentist_re} alias + constructor (see common.jl).
@@ -2189,7 +2373,8 @@ end
 end
 
 @inline function _laplace_obj_cache_set_obj_grad!(
-        cache::_LaplaceObjCache{T}, θ, obj, grad) where {T}
+        cache::_LaplaceObjCache{T}, θ, obj, grad
+    ) where {T}
     eltype(θ) === T || return nothing
     cache.θ = copy(θ)
     cache.obj = obj
@@ -2199,7 +2384,8 @@ end
 end
 
 @inline function _laplace_obj_cache_lookup(
-        cache::_LaplaceObjCache{T}, θ, theta_tol) where {T}
+        cache::_LaplaceObjCache{T}, θ, theta_tol
+    ) where {T}
     eltype(θ) === T || return nothing
     cache.θ === nothing && return nothing
     cache.has_grad || return nothing
@@ -2211,7 +2397,8 @@ end
 end
 
 @inline function _laplace_obj_cache_lookup_obj(
-        cache::_LaplaceObjCache{T}, θ, theta_tol) where {T}
+        cache::_LaplaceObjCache{T}, θ, theta_tol
+    ) where {T}
     eltype(θ) === T || return nothing
     cache.θ === nothing && return nothing
     maxdiff = _maxabsdiff(θ, cache.θ)
@@ -2226,11 +2413,13 @@ end
         return ll_cache
     end
     caches = if ll_cache isa _LLCache
-        build_ll_cache(dm;
+        build_ll_cache(
+            dm;
             ode_args = ll_cache.ode_args,
             ode_kwargs = ll_cache.ode_kwargs,
             force_saveat = ll_cache.saveat_cache !== nothing,
-            nthreads = nthreads)
+            nthreads = nthreads
+        )
     else
         build_ll_cache(dm; nthreads = nthreads)
     end
@@ -2241,7 +2430,8 @@ end
     return _spawn_child_rngs(rng, nthreads)
 end
 
-function _laplace_objective_and_grad(dm::DataModel,
+function _laplace_objective_and_grad(
+        dm::DataModel,
         batch_infos::Vector{REBatchInfo},
         θ::ComponentArray,
         const_cache::REConstantsCache,
@@ -2253,11 +2443,13 @@ function _laplace_objective_and_grad(dm::DataModel,
         multistart::LaplaceMultistartOptions,
         rng::AbstractRNG,
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        hmode::_HessMode = _ExactHess())
+        hmode::_HessMode = _ExactHess()
+    )
     inner_opts = _resolve_inner_options(inner, dm)
     multistart_opts = _resolve_multistart_options(multistart, inner_opts)
 
-    bstars = _laplace_get_bstar!(ebe_cache, dm, batch_infos, θ, const_cache, ll_cache;
+    bstars = _laplace_get_bstar!(
+        ebe_cache, dm, batch_infos, θ, const_cache, ll_cache;
         optimizer = inner_opts.optimizer,
         optim_kwargs = inner_opts.kwargs,
         adtype = inner_opts.adtype,
@@ -2265,7 +2457,8 @@ function _laplace_objective_and_grad(dm::DataModel,
         theta_tol = cache_opts.theta_tol,
         multistart = multistart_opts,
         rng = rng,
-        serialization = serialization)
+        serialization = serialization
+    )
 
     infT = convert(eltype(θ), Inf)
     grad = zeros(eltype(θ), length(θ))
@@ -2297,13 +2490,14 @@ function _laplace_objective_and_grad(dm::DataModel,
                     use_hutchinson = hessian.use_hutchinson,
                     hutchinson_n = hessian.hutchinson_n,
                     rng = batch_rngs[bi],
-                    hmode = hmode)
+                    hmode = hmode
+                )
                 if res.logf == -Inf
                     bad[] = true
                     break
                 end
                 obj_by_batch[bi] = res.logf + 0.5 * get_n_b(info) * log(2π) -
-                                   0.5 * res.logdet
+                    0.5 * res.logdet
                 @views grad_by_batch[:, bi] .= res.grad
             end
         end
@@ -2329,7 +2523,8 @@ function _laplace_objective_and_grad(dm::DataModel,
                 use_hutchinson = hessian.use_hutchinson,
                 hutchinson_n = hessian.hutchinson_n,
                 rng = batch_rngs[bi],
-                hmode = hmode)
+                hmode = hmode
+            )
             res.logf == -Inf && return (infT, ComponentArray(grad, axs), bstars)
             total += res.logf + 0.5 * get_n_b(info) * log(2π) - 0.5 * res.logdet
             grad .+= res.grad
@@ -2338,7 +2533,8 @@ function _laplace_objective_and_grad(dm::DataModel,
     end
 end
 
-function _laplace_objective_only(dm::DataModel,
+function _laplace_objective_only(
+        dm::DataModel,
         batch_infos::Vector{REBatchInfo},
         θ::ComponentArray,
         const_cache::REConstantsCache,
@@ -2350,11 +2546,13 @@ function _laplace_objective_only(dm::DataModel,
         multistart::LaplaceMultistartOptions,
         rng::AbstractRNG,
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        hmode::_HessMode = _ExactHess())
+        hmode::_HessMode = _ExactHess()
+    )
     inner_opts = _resolve_inner_options(inner, dm)
     multistart_opts = _resolve_multistart_options(multistart, inner_opts)
 
-    bstars = _laplace_get_bstar!(ebe_cache, dm, batch_infos, θ, const_cache, ll_cache;
+    bstars = _laplace_get_bstar!(
+        ebe_cache, dm, batch_infos, θ, const_cache, ll_cache;
         optimizer = inner_opts.optimizer,
         optim_kwargs = inner_opts.kwargs,
         adtype = inner_opts.adtype,
@@ -2362,7 +2560,8 @@ function _laplace_objective_only(dm::DataModel,
         theta_tol = cache_opts.theta_tol,
         multistart = multistart_opts,
         rng = rng,
-        serialization = serialization)
+        serialization = serialization
+    )
     infT = convert(eltype(θ), Inf)
     use_cache = false
     if ebe_cache.θ_cache !== nothing && length(ebe_cache.θ_cache) == length(θ)
@@ -2385,7 +2584,8 @@ function _laplace_objective_only(dm::DataModel,
                 b = bstars[bi]
                 tctx = _objective_theta_ctx(dm, info, θ, const_cache, cache_c, b, hmode)
                 logf = _laplace_logf_batch(
-                    dm, info, θ, b, const_cache, cache_c; tctx = tctx)
+                    dm, info, θ, b, const_cache, cache_c; tctx = tctx
+                )
                 logf == -Inf && (bad[] = true; break)
                 logdet, _, _ = _laplace_logdet_negH(
                     dm, info, θ, b, const_cache, cache_c, nothing, bi;
@@ -2397,7 +2597,8 @@ function _laplace_objective_only(dm::DataModel,
                     hess_cache = ebe_cache.hess_cache,
                     use_cache = use_cache,
                     hmode = hmode,
-                    tctx = tctx)
+                    tctx = tctx
+                )
                 logdet == Inf && (bad[] = true; break)
                 obj_by_batch[bi] = logf + 0.5 * get_n_b(info) * log(2π) - 0.5 * logdet
             end
@@ -2417,7 +2618,8 @@ function _laplace_objective_only(dm::DataModel,
             b = bstars[bi]
             tctx = _objective_theta_ctx(dm, info, θ, const_cache, ll_cache_use, b, hmode)
             logf = _laplace_logf_batch(
-                dm, info, θ, b, const_cache, ll_cache_use; tctx = tctx)
+                dm, info, θ, b, const_cache, ll_cache_use; tctx = tctx
+            )
             logf == -Inf && return infT
             logdet, _, _ = _laplace_logdet_negH(
                 dm, info, θ, b, const_cache, ll_cache_use, ebe_cache.ad_cache, bi;
@@ -2429,7 +2631,8 @@ function _laplace_objective_only(dm::DataModel,
                 hess_cache = ebe_cache.hess_cache,
                 use_cache = use_cache,
                 hmode = hmode,
-                tctx = tctx)
+                tctx = tctx
+            )
             logdet == Inf && return infT
             total += logf + 0.5 * get_n_b(info) * log(2π) - 0.5 * logdet
         end
@@ -2437,7 +2640,8 @@ function _laplace_objective_only(dm::DataModel,
     return -total
 end
 
-function _fit_model(dm::DataModel, method::Laplace, args...;
+function _fit_model(
+        dm::DataModel, method::Laplace, args...;
         constants::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple(),
         penalty::NamedTuple = NamedTuple(),
@@ -2447,8 +2651,10 @@ function _fit_model(dm::DataModel, method::Laplace, args...;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
-        store_data_model::Bool = true)
-    fit_kwargs = (constants = constants,
+        store_data_model::Bool = true
+    )
+    fit_kwargs = (
+        constants = constants,
         constants_re = constants_re,
         penalty = penalty,
         ode_args = ode_args,
@@ -2456,7 +2662,8 @@ function _fit_model(dm::DataModel, method::Laplace, args...;
         serialization = serialization,
         rng = rng,
         theta_0_untransformed = theta_0_untransformed,
-        store_data_model = store_data_model)
+        store_data_model = store_data_model,
+    )
     re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) &&
         error("Laplace requires random effects. Use MLE/MAP for fixed-effects models.")
@@ -2470,13 +2677,15 @@ function _fit_model(dm::DataModel, method::Laplace, args...;
     all(name in keys(constants) for name in fixed_names) &&
         error("Laplace requires at least one free fixed effect. Remove constants or specify a fixed effect or random effect.")
 
-    return _fit_laplace_family(dm, method, _ExactHess(), args, fit_kwargs,
+    return _fit_laplace_family(
+        dm, method, _ExactHess(), args, fit_kwargs,
         _ -> nothing;
         nan_recovery = method.nan_recovery, allow_bbo = true,
         constants = constants, constants_re = constants_re, penalty = penalty,
         ode_args = ode_args, ode_kwargs = ode_kwargs, serialization = serialization,
         rng = rng, theta_0_untransformed = theta_0_untransformed,
-        store_data_model = store_data_model, extra_objective = extra_objective)
+        store_data_model = store_data_model, extra_objective = extra_objective
+    )
 end
 
 # Shared optimizer driver for the Laplace family: exact-Hessian Laplace and
@@ -2485,7 +2694,8 @@ end
 # support, and an optional post-transform validation hook (FOCEI's closed-form
 # Fisher-information outcome check). Method-specific validation and error
 # messages stay in the `_fit_model` wrappers.
-function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_kwargs,
+function _fit_laplace_family(
+        dm::DataModel, method, hmode::_HessMode, args, fit_kwargs,
         validate_post_transform::V;
         nan_recovery::Symbol,
         allow_bbo::Bool,
@@ -2493,10 +2703,13 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
         ode_args::Tuple, ode_kwargs::NamedTuple,
         serialization::SciMLBase.EnsembleAlgorithm, rng::AbstractRNG,
         theta_0_untransformed::Union{Nothing, ComponentArray},
-        store_data_model::Bool, extra_objective = nothing) where {V}
+        store_data_model::Bool, extra_objective = nothing
+    ) where {V}
     fe = get_fixed(get_model(dm))
-    layout = free_parameter_layout(fe; constants = constants,
-        theta0_untransformed = theta_0_untransformed)
+    layout = free_parameter_layout(
+        fe; constants = constants,
+        theta0_untransformed = theta_0_untransformed
+    )
     free_names = layout.free_names
     inv_transform = layout.inv_transform
 
@@ -2506,8 +2719,10 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
     multistart_opts = _resolve_multistart_options(method.multistart, inner_opts)
 
     _, batch_infos, const_cache = _build_re_batch_infos(dm, constants_re)
-    ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-        serialization = serialization, force_saveat = true)
+    ll_cache = build_ll_cache(
+        dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = serialization, force_saveat = true
+    )
     n_batches = length(batch_infos)
     Tθ = eltype(layout.θ0_free_t)
     ebe_cache = _init_laplace_eval_cache(n_batches, Tθ)
@@ -2523,10 +2738,12 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
     # `extra_objective === nothing` (default) so existing fits are unaffected.
     has_extra = extra_objective !== nothing
     T0 = eltype(θ0_free_t)
-    obj_cache = _LaplaceObjCache{T0, ComponentArray}(nothing,
+    obj_cache = _LaplaceObjCache{T0, ComponentArray}(
+        nothing,
         T0(Inf),
         ComponentArray(zeros(T0, length(θ0_free_t)), axs_free),
-        false)
+        false
+    )
 
     # Infeasible points are reported as a large FINITE value, not `Inf`. A line search cannot
     # interpolate through a non-finite function value - `BackTracking(order = 3)` fits a cubic
@@ -2537,19 +2754,21 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
     # above anything attainable, whatever the model's scale.
     wall_ref = Ref{Union{Nothing, T0}}(nothing)
     function _infeasible(::Type{T}) where {T}
-        wall_ref[] === nothing ? T(1e10) :
-        T(wall_ref[] + abs(wall_ref[]) + 1e6)
+        return wall_ref[] === nothing ? T(1.0e10) :
+            T(wall_ref[] + abs(wall_ref[]) + 1.0e6)
     end
 
     # The optimizer works on the preconditioned offset z; everything downstream of these two
     # maps stays on the transformed θ scale.
     θ0_pc, s_pc, _θt_from_z, _z_from_θt = _precondition_maps(
-        get_model(dm), free_names, θ0_free_t, axs_free, _precondition_on(method))
+        get_model(dm), free_names, θ0_free_t, axs_free, _precondition_on(method)
+    )
 
     function obj_only(z, p)
         θt_free = _θt_from_z(z)
         cached_obj = _laplace_obj_cache_lookup_obj(
-            obj_cache, θt_free, method.cache.theta_tol)
+            obj_cache, θt_free, method.cache.theta_tol
+        )
         cached_obj !== nothing && return cached_obj
         T = eltype(θt_free)
         θt_full = _merge_free_into_full(θ_const_t_vec, free_idx, θt_free, axs_full)
@@ -2562,7 +2781,8 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
             multistart = multistart_opts,
             rng = rng,
             serialization = serialization,
-            hmode = hmode)
+            hmode = hmode
+        )
         !isfinite(obj) && return _infeasible(T)
         has_penalty && (obj += _penalty_value(θu, penalty))
         has_extra && (obj += extra_objective(θu))
@@ -2590,7 +2810,8 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
             multistart = multistart_opts,
             rng = rng,
             serialization = serialization,
-            hmode = hmode)
+            hmode = hmode
+        )
         !isfinite(obj) && return (infT, ComponentArray(zeros(T, length(θt_free)), axs_free))
         grad_u = grad_full
         if has_penalty
@@ -2615,7 +2836,7 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
         if any(isnan, grad_free)
             if nan_recovery === :fd
                 for i in eachindex(grad_free)
-                    ε = max(1e-5, 1e-5 * abs(θt_free[i]))
+                    ε = max(1.0e-5, 1.0e-5 * abs(θt_free[i]))
                     θp = copy(θt_free)
                     θp[i] += ε
                     θm = copy(θt_free)
@@ -2623,7 +2844,7 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
                     fp = obj_only(_z_from_θt(θp), nothing)
                     fm = obj_only(_z_from_θt(θm), nothing)
                     grad_free[i] = (isfinite(fp) && isfinite(fm)) ? (fp - fm) / (2ε) :
-                                   zero(T)
+                        zero(T)
                 end
             elseif nan_recovery !== :nan
                 # :backtrack (default) — treat NaN gradient as non-finite objective to force backtracking
@@ -2635,36 +2856,45 @@ function _fit_laplace_family(dm::DataModel, method, hmode::_HessMode, args, fit_
         return (obj, grad_free)
     end
 
-    optf = OptimizationFunction(obj_only,
+    optf = OptimizationFunction(
+        obj_only,
         method.adtype;
         grad = (G, z, p) -> begin
             # chain rule for θt = θt0 + s .* z
             G .= s_pc .* obj_grad(z, p)[2]
-        end)
+        end
+    )
     lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
         fe, free_names, θ0_free_t, method.optimizer, method.lb, method.ub, constants;
         ignore_model_bounds = method.ignore_model_bounds, allow_bbo = allow_bbo,
-        method_label = "Laplace")
+        method_label = "Laplace"
+    )
     z0 = _z_from_θt(θ0_init)
     lb_z = _z_from_θt(lb)
     ub_z = _z_from_θt(ub)
     prob = use_bounds ? OptimizationProblem(optf, z0; lb = lb_z, ub = ub_z) :
-           OptimizationProblem(optf, z0)
+        OptimizationProblem(optf, z0)
     sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
 
-    summary = FitSummary(sol.objective, sol.retcode == SciMLBase.ReturnCode.Success,
-        resolve_fitted_parameters(layout, _θt_from_z(sol.u)), NamedTuple())
+    summary = FitSummary(
+        sol.objective, sol.retcode == SciMLBase.ReturnCode.Success,
+        resolve_fitted_parameters(layout, _θt_from_z(sol.u)), NamedTuple()
+    )
     diagnostics = FitDiagnostics(
-        (;), (optimizer = method.optimizer,), (retcode = sol.retcode,), NamedTuple())
+        (;), (optimizer = method.optimizer,), (retcode = sol.retcode,), NamedTuple()
+    )
     niter = hasproperty(sol, :stats) && hasproperty(sol.stats, :iterations) ?
-            sol.stats.iterations : missing
+        sol.stats.iterations : missing
     raw = hasproperty(sol, :original) ? sol.original : sol
     # `sol.u` is the preconditioned offset z, not θ (provenance only — the fitted
     # parameters live in `summary`, and serialization keeps just this vector).
     result = FrequentistREResult(
-        sol, sol.objective, niter, raw, NamedTuple(), ebe_cache.bstar_cache.b_star)
-    return FitResult(method, result, summary, diagnostics,
-        store_data_model ? dm : nothing, args, fit_kwargs)
+        sol, sol.objective, niter, raw, NamedTuple(), ebe_cache.bstar_cache.b_star
+    )
+    return FitResult(
+        method, result, summary, diagnostics,
+        store_data_model ? dm : nothing, args, fit_kwargs
+    )
 end
 
 @inline _laplace_value(x) = x
@@ -2679,6 +2909,8 @@ function _laplace_floatize(θ::ComponentArray)
 end
 
 function _with_eb_modes(result::FrequentistREResult, eb_modes)
-    return FrequentistREResult(result.solution, result.objective, result.iterations,
-        result.raw, result.notes, eb_modes)
+    return FrequentistREResult(
+        result.solution, result.objective, result.iterations,
+        result.raw, result.notes, eb_modes
+    )
 end

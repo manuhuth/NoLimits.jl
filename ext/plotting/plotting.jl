@@ -29,8 +29,10 @@ end
 Start a new subplot. `kwargs...` are Makie `Axis` attributes (this is where a caller's
 `kwargs_subplot` flows). Nothing is drawn until [`combine_plots`](@ref) materializes it.
 """
-function create_styled_plot(; title = "", xlabel = "", ylabel = "",
-        style::PlotStyle = PlotStyle(), kwargs...)
+function create_styled_plot(;
+        title = "", xlabel = "", ylabel = "",
+        style::PlotStyle = PlotStyle(), kwargs...
+    )
     axis_kwargs = Pair{Symbol, Any}[:title => title, :xlabel => xlabel, :ylabel => ylabel]
     for (k, v) in kwargs
         push!(axis_kwargs, k => v)
@@ -86,14 +88,18 @@ vector/tuple `color` (e.g. a per-point colormap) is used verbatim. Any Makie sca
 attribute passed via `kwargs...` (`markersize`, `marker`, `colormap`, `colorrange`, a
 `color` override, ...) wins over the styled defaults.
 """
-function create_styled_scatter!(p::MakiePanel, x, y; label = "", color = COLOR_PRIMARY,
-        style::PlotStyle = PlotStyle(), kwargs...)
+function create_styled_scatter!(
+        p::MakiePanel, x, y; label = "", color = COLOR_PRIMARY,
+        style::PlotStyle = PlotStyle(), kwargs...
+    )
     lbl = _label(p, label)
     kw = NamedTuple(kwargs)
     col = haskey(kw, :color) ? kw.color : color
     styled_col = col isa Union{AbstractVector, Tuple} ? col : (col, style.marker_alpha)
-    defaults = (; color = styled_col, markersize = style.marker_size,
-        strokewidth = style.marker_stroke_width, strokecolor = :black)
+    defaults = (;
+        color = styled_col, markersize = style.marker_size,
+        strokewidth = style.marker_stroke_width, strokecolor = :black,
+    )
     attrs = merge(defaults, Base.structdiff(kw, NamedTuple{(:color,)}))
     _record!(p, ax -> scatter!(ax, x, y; label = lbl, attrs...))
     return p
@@ -105,8 +111,10 @@ end
 Record a styled `lines!`. `kwargs...` (`linewidth`, `linestyle`, a `color` override, ...)
 win over the styled defaults.
 """
-function create_styled_line!(p::MakiePanel, x, y; label = "", color = COLOR_SECONDARY,
-        style::PlotStyle = PlotStyle(), kwargs...)
+function create_styled_line!(
+        p::MakiePanel, x, y; label = "", color = COLOR_SECONDARY,
+        style::PlotStyle = PlotStyle(), kwargs...
+    )
     lbl = _label(p, label)
     defaults = (; color = color, linewidth = style.line_width_primary)
     attrs = merge(defaults, NamedTuple(kwargs))
@@ -120,14 +128,18 @@ end
 Record a dashed reference line (`hlines!` for `:horizontal`, `vlines!` for `:vertical`).
 A `label` kwarg is routed through [`_label`](@ref); other kwargs pass through.
 """
-function add_reference_line!(p::MakiePanel, value; orientation = :horizontal,
-        color = COLOR_REFERENCE, kwargs...)
+function add_reference_line!(
+        p::MakiePanel, value; orientation = :horizontal,
+        color = COLOR_REFERENCE, kwargs...
+    )
     kw = NamedTuple(kwargs)
     lbl = haskey(kw, :label) ? _label(p, kw.label) : nothing
     rest = Base.structdiff(kw, NamedTuple{(:label,)})
     draw = orientation == :horizontal ? hlines! : vlines!
-    _record!(p,
-        ax -> draw(ax, value; color = color, linestyle = :dash, label = lbl, rest...))
+    _record!(
+        p,
+        ax -> draw(ax, value; color = color, linestyle = :dash, label = lbl, rest...)
+    )
     return p
 end
 
@@ -138,9 +150,13 @@ Record a text annotation at data coordinates `(x, y)`. `halign` (`:right`/`:left
 `:center`) is the horizontal text alignment.
 """
 function add_annotation!(p::MakiePanel, x, y, txt; fontsize = 7, halign = :right)
-    _record!(p,
-        ax -> text!(ax, [float(x)], [float(y)];
-            text = [string(txt)], align = (halign, :center), fontsize = fontsize))
+    _record!(
+        p,
+        ax -> text!(
+            ax, [float(x)], [float(y)];
+            text = [string(txt)], align = (halign, :center), fontsize = fontsize
+        )
+    )
     return p
 end
 
@@ -152,8 +168,10 @@ is the mechanical replacement for the old `histogram!(p, vals; bins, normalize, 
 linecolor)` call. `normalization ∈ (:probability, :pdf, :none)`. Map old `fillcolor` to
 `color` and old `linecolor` to `strokecolor` (passed via `kwargs...`).
 """
-function _hist!(p::MakiePanel, vals; bins::Int = 30, normalization::Symbol = :probability,
-        color = COLOR_PRIMARY, label = "", style::PlotStyle = PlotStyle(), kwargs...)
+function _hist!(
+        p::MakiePanel, vals; bins::Int = 30, normalization::Symbol = :probability,
+        color = COLOR_PRIMARY, label = "", style::PlotStyle = PlotStyle(), kwargs...
+    )
     lbl = _label(p, label)
     h = _histogram_xy(collect(float.(vals)); bins = bins, normalization = normalization)
     defaults = (; color = color, strokewidth = 0, gap = 0, width = h.width)
@@ -191,8 +209,10 @@ function _materialize!(pos, p::MakiePanel, style::PlotStyle)
         # has_labels guards the "no labeled plots" case Makie errors on; the try/catch is
         # a defensive backstop (e.g. only reference lines were labeled).
         try
-            axislegend(ax; position = something(p.legend_position, :rt),
-                unique = true, labelsize = style.font_size_legend)
+            axislegend(
+                ax; position = something(p.legend_position, :rt),
+                unique = true, labelsize = style.font_size_legend
+            )
         catch
         end
     end
@@ -218,14 +238,18 @@ The single materialization point: lay `panels` (MakiePanel and/or MakiePanelGrou
 (this is where a caller's `kwargs_layout` flows); a caller `size`/`figure_padding`/... wins
 over the computed defaults.
 """
-function combine_plots(panels::Vector; ncols::Int = DEFAULT_PLOT_COLS,
-        style::PlotStyle = PlotStyle(), kwargs...)
+function combine_plots(
+        panels::Vector; ncols::Int = DEFAULT_PLOT_COLS,
+        style::PlotStyle = PlotStyle(), kwargs...
+    )
     _check_positive_int(ncols, "ncols")
     n = length(panels)
     ncols_use = min(ncols, max(n, 1))
-    fig_defaults = (; size = calculate_plot_size(max(n, 1), ncols_use, style),
+    fig_defaults = (;
+        size = calculate_plot_size(max(n, 1), ncols_use, style),
         fonts = (; regular = style.font_family, bold = style.font_family),
-        figure_padding = style.figure_padding)
+        figure_padding = style.figure_padding,
+    )
     fig = Figure(; merge(fig_defaults, NamedTuple(kwargs))...)
     for (i, panel) in enumerate(panels)
         row, col = fldmod1(i, ncols_use)
@@ -243,7 +267,7 @@ function _apply_shared_axes!(panels::AbstractVector, xlim, ylim)
 end
 
 function _apply_shared_axes_one!(p::MakiePanel, xlim, ylim)
-    _set_limits!(p; xlim = xlim, ylim = ylim)
+    return _set_limits!(p; xlim = xlim, ylim = ylim)
 end
 
 function _apply_shared_axes_one!(g::MakiePanelGroup, xlim, ylim)
@@ -271,8 +295,10 @@ function _save_plot!(fig::Figure, save_path::Union{Nothing, String})
             Makie.save(save_path, fig)
         end
     catch err
-        error("Saving figures requires a rasterizing Makie backend. Load one first, " *
-              "e.g. `using CairoMakie`. Underlying error: $(err)")
+        error(
+            "Saving figures requires a rasterizing Makie backend. Load one first, " *
+                "e.g. `using CairoMakie`. Underlying error: $(err)"
+        )
     end
     return fig
 end
@@ -291,11 +317,13 @@ Plot the objective values of all successful multistart runs in ascending order
 - `kwargs_subplot`: additional Makie `Axis` attributes forwarded to the subplot.
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot, or `nothing`.
 """
-function plot_multistart_waterfall(res::MultistartFitResult;
+function plot_multistart_waterfall(
+        res::MultistartFitResult;
         style::PlotStyle = PlotStyle(),
         kwargs_subplot = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing)
+        plot_path::Union{Nothing, String} = nothing
+    )
     save_path = _resolve_plot_path(save_path, plot_path)
 
     n_ok = length(res.results_ok)
@@ -310,7 +338,7 @@ function plot_multistart_waterfall(res::MultistartFitResult;
             push!(objectives, float(obj))
             push!(ranks, rank)
         else
-            @warn "Skipping successful multistart run with non-finite objective value." rank=rank objective=obj
+            @warn "Skipping successful multistart run with non-finite objective value." rank = rank objective = obj
         end
     end
 
@@ -326,13 +354,15 @@ function plot_multistart_waterfall(res::MultistartFitResult;
         kwargs_subplot...
     )
     create_styled_scatter!(
-        p, ranks, objectives; label = "", color = style.color_primary, style = style)
+        p, ranks, objectives; label = "", color = style.color_primary, style = style
+    )
     _axis_attrs!(p; xticks = collect(1:length(objectives)))
 
     if n_failed > 0
         add_annotation!(
             p, maximum(ranks), maximum(objectives), "Failed starts omitted: $(n_failed)";
-            fontsize = style.font_size_annotation)
+            fontsize = style.font_size_annotation
+        )
     end
     fig = combine_plots([p]; ncols = 1, style = style)
     return _save_plot!(fig, save_path)
@@ -360,7 +390,8 @@ the lowest objective values.
   entry, if given, sets the figure size instead).
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
 """
-function plot_multistart_fixed_effect_variability(res::MultistartFitResult;
+function plot_multistart_fixed_effect_variability(
+        res::MultistartFitResult;
         dm::Union{Nothing, DataModel} = nothing,
         k_best::Int = 20,
         mode::Symbol = :points,
@@ -371,7 +402,8 @@ function plot_multistart_fixed_effect_variability(res::MultistartFitResult;
         style::PlotStyle = PlotStyle(),
         kwargs_subplot = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing)
+        plot_path::Union{Nothing, String} = nothing
+    )
     save_path = _resolve_plot_path(save_path, plot_path)
     mode in (:points, :quantiles) || error("mode must be :points or :quantiles.")
     scale in (:untransformed, :transformed) ||
@@ -384,9 +416,11 @@ function plot_multistart_fixed_effect_variability(res::MultistartFitResult;
     fe_params = get_params(fe)
 
     include_set = _normalize_top_level_parameter_selection(
-        include_parameters, "include_parameters")
+        include_parameters, "include_parameters"
+    )
     exclude_set = _normalize_top_level_parameter_selection(
-        exclude_parameters, "exclude_parameters")
+        exclude_parameters, "exclude_parameters"
+    )
     known = Set(fe_names)
 
     if include_set !== nothing
@@ -420,7 +454,7 @@ function plot_multistart_fixed_effect_variability(res::MultistartFitResult;
     n_ok >= 1 || error("No successful multistart runs available for plotting.")
     perm = sortperm(res.scores_ok)
     if k_best > n_ok
-        @warn "k_best exceeds successful multistart runs; clipping to available runs." k_best=k_best available=n_ok
+        @warn "k_best exceeds successful multistart runs; clipping to available runs." k_best = k_best available = n_ok
     end
     k_use = min(k_best, n_ok)
     keep = perm[1:k_use]
@@ -435,7 +469,8 @@ function plot_multistart_fixed_effect_variability(res::MultistartFitResult;
     row_labels = String[]
     for pname in selected_order
         lbls_ref, vals_ref = _flatten_param_with_labels(
-            pname, getproperty(θ_list[1], pname))
+            pname, getproperty(θ_list[1], pname)
+        )
         nrows = length(vals_ref)
         nrows >= 1 || continue
 
@@ -443,7 +478,8 @@ function plot_multistart_fixed_effect_variability(res::MultistartFitResult;
         block_vals[:, 1] .= vals_ref
         for col in 2:k_use
             lbls_cur, vals_cur = _flatten_param_with_labels(
-                pname, getproperty(θ_list[col], pname))
+                pname, getproperty(θ_list[col], pname)
+            )
             lbls_cur == lbls_ref ||
                 error("Parameter shape/labels changed across multistarts for $(pname).")
             length(vals_cur) == nrows ||
@@ -462,8 +498,11 @@ function plot_multistart_fixed_effect_variability(res::MultistartFitResult;
     # Drop rows with non-finite values across selected starts.
     keep_rows = [i for i in 1:size(values, 1) if all(isfinite, @view values[i, :])]
     if length(keep_rows) < size(values, 1)
-        @warn "Dropping non-finite parameter coordinates from variability plot." dropped=(size(
-            values, 1) - length(keep_rows))
+        @warn "Dropping non-finite parameter coordinates from variability plot." dropped = (
+            size(
+                values, 1
+            ) - length(keep_rows)
+        )
     end
     isempty(keep_rows) &&
         error("No finite fixed-effect coordinates available for variability plotting.")
@@ -498,12 +537,15 @@ function plot_multistart_fixed_effect_variability(res::MultistartFitResult;
     )
     p.legend_position = :none
     add_reference_line!(
-        p, 0.0; orientation = :vertical, color = style.color_dark, alpha = 0.7, label = "")
+        p, 0.0; orientation = :vertical, color = style.color_dark, alpha = 0.7, label = ""
+    )
 
     if mode == :points
         for i in eachindex(y)
-            create_styled_scatter!(p, vec(@view z[i, :]), fill(y[i], k_use);
-                label = "", color = style.color_primary, style = style)
+            create_styled_scatter!(
+                p, vec(@view z[i, :]), fill(y[i], k_use);
+                label = "", color = style.color_primary, style = style
+            )
         end
     else
         q = sort(Float64.(collect(quantiles)))
@@ -514,11 +556,13 @@ function plot_multistart_fixed_effect_variability(res::MultistartFitResult;
             lo = quantile(zi, q[1])
             mid = quantile(zi, q[2])
             hi = quantile(zi, q[3])
-            create_styled_line!(p, [lo, hi], [y[i], y[i]]; label = "",
+            create_styled_line!(
+                p, [lo, hi], [y[i], y[i]]; label = "",
                 color = style.color_primary, style = style
             )
             create_styled_scatter!(
-                p, [mid], [y[i]]; label = "", color = style.color_secondary, style = style)
+                p, [mid], [y[i]]; label = "", color = style.color_secondary, style = style
+            )
         end
     end
 
@@ -565,7 +609,8 @@ parameter element (e.g. `β[1]`, `β[2]`, `Ω[1,1]`, ...).
 - `kwargs_layout`: additional Makie `Figure` attributes forwarded to the combined layout.
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
 """
-function plot_em_trajectories(res::FitResult;
+function plot_em_trajectories(
+        res::FitResult;
         dm::Union{Nothing, DataModel} = nothing,
         scale::Symbol = :untransformed,
         include_parameters = nothing,
@@ -575,7 +620,8 @@ function plot_em_trajectories(res::FitResult;
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing)
+        plot_path::Union{Nothing, String} = nothing
+    )
     save_path = _resolve_plot_path(save_path, plot_path)
     _check_positive_int(ncols, "ncols")
     scale in (:untransformed, :transformed) ||
@@ -590,21 +636,25 @@ function plot_em_trajectories(res::FitResult;
         error("No parameter trajectory stored. Re-fit with store_diagnostics=true.")
 
     diagnostics_every = method isa SAEM ? method.saem.diagnostics_every :
-                        method.diagnostics_every
+        method.diagnostics_every
     stored_iters = [k * diagnostics_every for k in 1:length(diag.θ_hist)]
 
     # Resolve DataModel and build inverse transform if needed.
     if scale == :untransformed
         dm_use = dm !== nothing ? dm : get_data_model(res)
         dm_use === nothing &&
-            error("scale=:untransformed requires the DataModel. Re-fit with " *
-                  "store_data_model=true (the default), or pass dm=... explicitly.")
+            error(
+            "scale=:untransformed requires the DataModel. Re-fit with " *
+                "store_data_model=true (the default), or pass dm=... explicitly."
+        )
         full_inv = get_inverse_transform(get_fixed(get_model(dm_use)))
         hist_names = collect(keys(diag.θ_hist[1]))
         name_to_idx = Dict(full_inv.names[i] => i for i in eachindex(full_inv.names))
         valid_idxs = [name_to_idx[n] for n in hist_names if haskey(name_to_idx, n)]
-        restricted_inv = InverseTransform(full_inv.names[valid_idxs],
-            full_inv.specs[valid_idxs])
+        restricted_inv = InverseTransform(
+            full_inv.names[valid_idxs],
+            full_inv.specs[valid_idxs]
+        )
         θ_vals = [restricted_inv(θ_t) for θ_t in diag.θ_hist]
 
         # Determine parameter declaration order from the DataModel.
@@ -616,22 +666,30 @@ function plot_em_trajectories(res::FitResult;
     end
 
     # Apply include / exclude filters.
-    include_set = _normalize_top_level_parameter_selection(include_parameters,
-        "include_parameters")
-    exclude_set = _normalize_top_level_parameter_selection(exclude_parameters,
-        "exclude_parameters")
+    include_set = _normalize_top_level_parameter_selection(
+        include_parameters,
+        "include_parameters"
+    )
+    exclude_set = _normalize_top_level_parameter_selection(
+        exclude_parameters,
+        "exclude_parameters"
+    )
     known = Set(free_fe_names)
     if include_set !== nothing
         unknown = [n for n in include_set if !(n in known)]
         isempty(unknown) ||
-            error("Unknown include_parameters: $(unknown). " *
-                  "Available free parameters: $(free_fe_names).")
+            error(
+            "Unknown include_parameters: $(unknown). " *
+                "Available free parameters: $(free_fe_names)."
+        )
     end
     if exclude_set !== nothing
         unknown = [n for n in exclude_set if !(n in known)]
         isempty(unknown) ||
-            error("Unknown exclude_parameters: $(unknown). " *
-                  "Available free parameters: $(free_fe_names).")
+            error(
+            "Unknown exclude_parameters: $(unknown). " *
+                "Available free parameters: $(free_fe_names)."
+        )
     end
     selected_order = if include_set !== nothing
         [n for n in free_fe_names if n in include_set]
@@ -645,16 +703,20 @@ function plot_em_trajectories(res::FitResult;
         error("No parameters selected for plotting after include/exclude filters.")
 
     x_label = diagnostics_every == 1 ? "EM Iteration" :
-              "EM Iteration (×$(diagnostics_every))"
+        "EM Iteration (×$(diagnostics_every))"
 
     panels = MakiePanel[]
 
     # Q-function panel (always uses all iterations, not just stored ones).
     # Plot index 1 is always in column 1, so it gets the ylabel.
-    q_plot = create_styled_plot(; title = "Q Function", xlabel = "EM Iteration",
-        ylabel = "Value", style = style, kwargs_subplot...)
-    create_styled_line!(q_plot, collect(1:length(diag.Q_hist)), Float64.(diag.Q_hist);
-        label = "", color = style.color_primary, style = style)
+    q_plot = create_styled_plot(;
+        title = "Q Function", xlabel = "EM Iteration",
+        ylabel = "Value", style = style, kwargs_subplot...
+    )
+    create_styled_line!(
+        q_plot, collect(1:length(diag.Q_hist)), Float64.(diag.Q_hist);
+        label = "", color = style.color_primary, style = style
+    )
     push!(panels, q_plot)
 
     # One panel per scalar element of each selected parameter block.
@@ -662,32 +724,50 @@ function plot_em_trajectories(res::FitResult;
         first_val = getproperty(θ_vals[1], pname)
         if first_val isa Number
             traj = Float64[float(getproperty(θ, pname)) for θ in θ_vals]
-            push!(panels,
-                create_styled_plot(; title = string(pname), xlabel = x_label,
-                    ylabel = "", style = style, kwargs_subplot...))
-            create_styled_line!(panels[end], stored_iters, traj;
-                label = "", color = style.color_primary, style = style)
+            push!(
+                panels,
+                create_styled_plot(;
+                    title = string(pname), xlabel = x_label,
+                    ylabel = "", style = style, kwargs_subplot...
+                )
+            )
+            create_styled_line!(
+                panels[end], stored_iters, traj;
+                label = "", color = style.color_primary, style = style
+            )
         elseif first_val isa AbstractVector
             n_elem = length(first_val)
             for j in eachindex(first_val)
                 traj = Float64[float(getproperty(θ, pname)[j]) for θ in θ_vals]
                 label = n_elem == 1 ? string(pname) : string(pname, "[", j, "]")
-                push!(panels,
-                    create_styled_plot(; title = label, xlabel = x_label,
-                        ylabel = "", style = style, kwargs_subplot...))
-                create_styled_line!(panels[end], stored_iters, traj;
-                    label = "", color = style.color_primary, style = style)
+                push!(
+                    panels,
+                    create_styled_plot(;
+                        title = label, xlabel = x_label,
+                        ylabel = "", style = style, kwargs_subplot...
+                    )
+                )
+                create_styled_line!(
+                    panels[end], stored_iters, traj;
+                    label = "", color = style.color_primary, style = style
+                )
             end
         elseif first_val isa AbstractMatrix
             for r in axes(first_val, 1)
                 for c in axes(first_val, 2)
                     traj = Float64[float(getproperty(θ, pname)[r, c]) for θ in θ_vals]
                     label = string(pname, "[", r, ",", c, "]")
-                    push!(panels,
-                        create_styled_plot(; title = label, xlabel = x_label,
-                            ylabel = "", style = style, kwargs_subplot...))
-                    create_styled_line!(panels[end], stored_iters, traj;
-                        label = "", color = style.color_primary, style = style)
+                    push!(
+                        panels,
+                        create_styled_plot(;
+                            title = label, xlabel = x_label,
+                            ylabel = "", style = style, kwargs_subplot...
+                        )
+                    )
+                    create_styled_line!(
+                        panels[end], stored_iters, traj;
+                        label = "", color = style.color_primary, style = style
+                    )
                 end
             end
         end

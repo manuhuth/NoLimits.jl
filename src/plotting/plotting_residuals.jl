@@ -66,7 +66,7 @@ function _resolve_residual_observables(dm::DataModel, observables)
         return collect(obs)
     end
     obs_list = observables isa AbstractVector ? Symbol.(collect(observables)) :
-               [Symbol(observables)]
+        [Symbol(observables)]
     for o in obs_list
         o in obs || error("Observable $(o) not found. Available: $(obs).")
     end
@@ -82,8 +82,8 @@ end
         return isfinite(x) ? x : missing
     end
     v isa AbstractVector &&
-        @warn "Vector-valued (multivariate) observations are not supported in scalar "*
-        "residual metrics and are reported as missing." maxlog=1
+        @warn "Vector-valued (multivariate) observations are not supported in scalar " *
+        "residual metrics and are reported as missing." maxlog = 1
     return missing
 end
 
@@ -96,11 +96,13 @@ function _metric_summary(vals::Vector{Union{Missing, Float64}}, qlo::Float64, qh
     return (Float64(m), Float64(lo), Float64(hi))
 end
 
-function _pit_from_dist(dist,
+function _pit_from_dist(
+        dist,
         y::Union{Missing, Float64};
         randomize_discrete::Bool = true,
         cdf_fallback_mc::Int = 0,
-        rng::AbstractRNG = Random.default_rng())
+        rng::AbstractRNG = Random.default_rng()
+    )
     ismissing(y) && return missing
     if applicable(cdf, dist, y)
         if dist isa DiscreteDistribution
@@ -128,13 +130,15 @@ function _pit_from_dist(dist,
     return missing
 end
 
-function _compute_residual_metrics(dist,
+function _compute_residual_metrics(
+        dist,
         y::Union{Missing, Float64},
         residual_list::Vector{Symbol},
         fitted_stat,
         randomize_discrete::Bool,
         cdf_fallback_mc::Int,
-        rng::AbstractRNG)
+        rng::AbstractRNG
+    )
     req = Set(residual_list)
     fitted = try
         v = _stat_from_dist(dist, fitted_stat)
@@ -145,8 +149,10 @@ function _compute_residual_metrics(dist,
 
     pit = missing
     if (:pit in req) || (:quantile in req)
-        pit = _pit_from_dist(dist, y; randomize_discrete = randomize_discrete,
-            cdf_fallback_mc = cdf_fallback_mc, rng = rng)
+        pit = _pit_from_dist(
+            dist, y; randomize_discrete = randomize_discrete,
+            cdf_fallback_mc = cdf_fallback_mc, rng = rng
+        )
     end
 
     res_quantile = missing
@@ -199,11 +205,14 @@ function _compute_residual_metrics(dist,
         end
     end
 
-    return (fitted = fitted, pit = pit, res_quantile = res_quantile,
-        res_raw = res_raw, res_pearson = res_pearson, logscore = logscore)
+    return (
+        fitted = fitted, pit = pit, res_quantile = res_quantile,
+        res_raw = res_raw, res_pearson = res_pearson, logscore = logscore,
+    )
 end
 
-function _residual_row(; individual_idx::Int,
+function _residual_row(;
+        individual_idx::Int,
         id,
         row::Int,
         obs_index::Int,
@@ -228,29 +237,36 @@ function _residual_row(; individual_idx::Int,
         logscore_qlo::Union{Missing, Float64},
         logscore_qhi::Union{Missing, Float64},
         draw::Union{Missing, Int},
-        n_draws::Int)
-    return (; individual_idx, id, row, obs_index, observable, time, x, y, fitted,
+        n_draws::Int
+    )
+    return (;
+        individual_idx, id, row, obs_index, observable, time, x, y, fitted,
         pit, pit_qlo, pit_qhi,
         res_quantile, res_quantile_qlo, res_quantile_qhi,
         res_raw, res_raw_qlo, res_raw_qhi,
         res_pearson, res_pearson_qlo, res_pearson_qhi,
         logscore, logscore_qlo, logscore_qhi,
-        draw, n_draws)
+        draw, n_draws,
+    )
 end
 
-function _ensure_obs_cache_nonmcmc(res::FitResult,
+function _ensure_obs_cache_nonmcmc(
+        res::FitResult,
         dm::DataModel,
         cache::Union{Nothing, PlotCache},
         params::NamedTuple,
         constants_re::NamedTuple,
         ode_args::Tuple,
         ode_kwargs::NamedTuple,
-        rng::AbstractRNG)
+        rng::AbstractRNG
+    )
     if cache !== nothing && cache.obs_dists !== nothing
         return cache
     end
-    return build_plot_cache(res; dm = dm, params = params, constants_re = constants_re,
-        cache_obs_dists = true, ode_args = ode_args, ode_kwargs = ode_kwargs, rng = rng)
+    return build_plot_cache(
+        res; dm = dm, params = params, constants_re = constants_re,
+        cache_obs_dists = true, ode_args = ode_args, ode_kwargs = ode_kwargs, rng = rng
+    )
 end
 
 """
@@ -308,7 +324,8 @@ probability), and `pit`/`res_*` are the usual mixture-distribution residuals, wh
 discrete outcome sit on the CDF steps. Use [`plot_hidden_states`](@ref) or
 `posterior_hidden_states` for state-level diagnostics.
 """
-function get_residuals(res::FitResult;
+function get_residuals(
+        res::FitResult;
         dm::Union{Nothing, DataModel} = nothing,
         cache::Union{Nothing, PlotCache} = nothing,
         observables = nothing,
@@ -328,7 +345,8 @@ function get_residuals(res::FitResult;
         mcmc_warmup::Union{Nothing, Int} = nothing,
         mcmc_quantiles::Vector{<:Real} = [5, 95],
         rng::AbstractRNG = Random.default_rng(),
-        return_draw_level::Bool = false)
+        return_draw_level::Bool = false
+    )
     dm = _get_dm(res, dm)
     # Residuals of a fit whose objective is not finite are meaningless and used to fail
     # with an unrelated internal error from a NaN parameter vector (#212).
@@ -358,7 +376,8 @@ function get_residuals(res::FitResult;
         mcmc_draws >= 1 || error("mcmc_draws must be >= 1.")
         res_use = _with_posterior_warmup(res, mcmc_warmup)
         θ_draws, η_draws, _ = _posterior_drawn_params(
-            res_use, dm, constants_re_use, params, mcmc_draws, rng)
+            res_use, dm, constants_re_use, params, mcmc_draws, rng
+        )
         n_draws = length(θ_draws)
         isempty(θ_draws) && error("No posterior draws available for residual computation.")
 
@@ -377,9 +396,11 @@ function get_residuals(res::FitResult;
                     sol_accessors_draw[d] = nothing
                 else
                     sol, compiled = _solve_dense_individual(
-                        dm, ind, θ, η_ind; ode_args = ode_args, ode_kwargs = ode_kwargs)
+                        dm, ind, θ, η_ind; ode_args = ode_args, ode_kwargs = ode_kwargs
+                    )
                     sol_accessors_draw[d] = _sol_accessors_with_crossings(
-                        get_model(dm), sol, compiled, θ, η_ind, get_const_cov(ind))
+                        get_model(dm), sol, compiled, θ, η_ind, get_const_cov(ind)
+                    )
                 end
             end
 
@@ -401,14 +422,19 @@ function get_residuals(res::FitResult;
                         row_j = obs_rows_all[j]
                         vary_j = _varying_at(dm, ind, j, row_j)
                         η_row_j = _row_random_effects_at(
-                            dm, i, j, η_ind, rowwise_re; obs_only = true)
+                            dm, i, j, η_ind, rowwise_re; obs_only = true
+                        )
                         obs_j = sol_accessors === nothing ?
-                                calculate_formulas_obs(
-                            get_model(dm), θ, η_row_j, get_const_cov(ind), vary_j) :
-                                calculate_formulas_obs(
-                            get_model(dm), θ, η_row_j, get_const_cov(ind), vary_j, sol_accessors)
-                        d_vec[j] = _apply_hmm_filter!(hmm_priors_d, obs_name,
-                            getproperty(obs_j, obs_name), yvals[j])
+                            calculate_formulas_obs(
+                                get_model(dm), θ, η_row_j, get_const_cov(ind), vary_j
+                            ) :
+                            calculate_formulas_obs(
+                                get_model(dm), θ, η_row_j, get_const_cov(ind), vary_j, sol_accessors
+                            )
+                        d_vec[j] = _apply_hmm_filter!(
+                            hmm_priors_d, obs_name,
+                            getproperty(obs_j, obs_name), yvals[j]
+                        )
                     end
                     dists_by_draw[d] = d_vec
                 end
@@ -429,7 +455,8 @@ function get_residuals(res::FitResult;
                     for d in 1:n_draws
                         met = _compute_residual_metrics(
                             dists_by_draw[d][j], yval, residual_list, fitted_stat,
-                            randomize_discrete, cdf_fallback_mc, rng)
+                            randomize_discrete, cdf_fallback_mc, rng
+                        )
                         fitted_vals[d] = met.fitted
                         pit_vals[d] = met.pit
                         q_vals[d] = met.res_quantile
@@ -440,8 +467,10 @@ function get_residuals(res::FitResult;
 
                     if return_draw_level
                         for d in 1:n_draws
-                            push!(rows,
-                                _residual_row(individual_idx = i, id = id_val, row = row,
+                            push!(
+                                rows,
+                                _residual_row(
+                                    individual_idx = i, id = id_val, row = row,
                                     obs_index = j, observable = obs_name,
                                     time = tval, x = xval, y = yval, fitted = fitted_vals[d],
                                     pit = pit_vals[d], pit_qlo = missing, pit_qhi = missing,
@@ -449,7 +478,9 @@ function get_residuals(res::FitResult;
                                     res_raw = raw_vals[d], res_raw_qlo = missing, res_raw_qhi = missing,
                                     res_pearson = pearson_vals[d], res_pearson_qlo = missing, res_pearson_qhi = missing,
                                     logscore = ls_vals[d], logscore_qlo = missing, logscore_qhi = missing,
-                                    draw = d, n_draws = n_draws))
+                                    draw = d, n_draws = n_draws
+                                )
+                            )
                         end
                     else
                         fit_mean = collect(skipmissing(fitted_vals))
@@ -461,8 +492,10 @@ function get_residuals(res::FitResult;
                         p_mean, p_qlo, p_qhi = _metric_summary(pearson_vals, qlo, qhi)
                         ls_mean, ls_qlo, ls_qhi = _metric_summary(ls_vals, qlo, qhi)
 
-                        push!(rows,
-                            _residual_row(individual_idx = i, id = id_val, row = row,
+                        push!(
+                            rows,
+                            _residual_row(
+                                individual_idx = i, id = id_val, row = row,
                                 obs_index = j, observable = obs_name,
                                 time = tval, x = xval, y = yval, fitted = fitted,
                                 pit = pit_mean, pit_qlo = pit_qlo, pit_qhi = pit_qhi,
@@ -470,7 +503,9 @@ function get_residuals(res::FitResult;
                                 res_raw = raw_mean, res_raw_qlo = raw_qlo, res_raw_qhi = raw_qhi,
                                 res_pearson = p_mean, res_pearson_qlo = p_qlo, res_pearson_qhi = p_qhi,
                                 logscore = ls_mean, logscore_qlo = ls_qlo, logscore_qhi = ls_qhi,
-                                draw = missing, n_draws = n_draws))
+                                draw = missing, n_draws = n_draws
+                            )
+                        )
                     end
                 end
             end
@@ -478,13 +513,17 @@ function get_residuals(res::FitResult;
     else
         res_use = res
         cache_use = cache_obs_dists ?
-                    _ensure_obs_cache_nonmcmc(
-            res_use, dm, cache, params, constants_re_use, ode_args, ode_kwargs, rng) :
-                    (cache === nothing ?
-                     build_plot_cache(
-            res_use; dm = dm, params = params, constants_re = constants_re_use,
-            cache_obs_dists = false, ode_args = ode_args, ode_kwargs = ode_kwargs, rng = rng) :
-                     cache)
+            _ensure_obs_cache_nonmcmc(
+                res_use, dm, cache, params, constants_re_use, ode_args, ode_kwargs, rng
+            ) :
+            (
+                cache === nothing ?
+                build_plot_cache(
+                    res_use; dm = dm, params = params, constants_re = constants_re_use,
+                    cache_obs_dists = false, ode_args = ode_args, ode_kwargs = ode_kwargs, rng = rng
+                ) :
+                cache
+            )
 
         for i in inds
             ind = get_individuals(dm)[i]
@@ -512,14 +551,19 @@ function get_residuals(res::FitResult;
                         row_j = obs_rows_all[j]
                         vary_j = _varying_at(dm, ind, j, row_j)
                         η_row_j = _row_random_effects_at(
-                            dm, i, j, η_ind, rowwise_re; obs_only = true)
+                            dm, i, j, η_ind, rowwise_re; obs_only = true
+                        )
                         obs_j = sol_accessors === nothing ?
-                                calculate_formulas_obs(
-                            get_model(dm), θ, η_row_j, get_const_cov(ind), vary_j) :
-                                calculate_formulas_obs(
-                            get_model(dm), θ, η_row_j, get_const_cov(ind), vary_j, sol_accessors)
-                        d_vec[j] = _apply_hmm_filter!(hmm_priors_res, obs_name,
-                            getproperty(obs_j, obs_name), yvals[j])
+                            calculate_formulas_obs(
+                                get_model(dm), θ, η_row_j, get_const_cov(ind), vary_j
+                            ) :
+                            calculate_formulas_obs(
+                                get_model(dm), θ, η_row_j, get_const_cov(ind), vary_j, sol_accessors
+                            )
+                        d_vec[j] = _apply_hmm_filter!(
+                            hmm_priors_res, obs_name,
+                            getproperty(obs_j, obs_name), yvals[j]
+                        )
                     end
                     d_vec
                 else
@@ -538,10 +582,14 @@ function get_residuals(res::FitResult;
                         row_dists_res[j]
                     end
 
-                    met = _compute_residual_metrics(dist, yval, residual_list, fitted_stat,
-                        randomize_discrete, cdf_fallback_mc, rng)
-                    push!(rows,
-                        _residual_row(individual_idx = i, id = id_val, row = row,
+                    met = _compute_residual_metrics(
+                        dist, yval, residual_list, fitted_stat,
+                        randomize_discrete, cdf_fallback_mc, rng
+                    )
+                    push!(
+                        rows,
+                        _residual_row(
+                            individual_idx = i, id = id_val, row = row,
                             obs_index = j, observable = obs_name,
                             time = tval, x = xval, y = yval, fitted = met.fitted,
                             pit = met.pit, pit_qlo = missing, pit_qhi = missing,
@@ -549,36 +597,45 @@ function get_residuals(res::FitResult;
                             res_raw = met.res_raw, res_raw_qlo = missing, res_raw_qhi = missing,
                             res_pearson = met.res_pearson, res_pearson_qlo = missing, res_pearson_qhi = missing,
                             logscore = met.logscore, logscore_qlo = missing, logscore_qhi = missing,
-                            draw = missing, n_draws = 1))
+                            draw = missing, n_draws = 1
+                        )
+                    )
                 end
             end
         end
     end
 
     if isempty(rows)
-        return DataFrame(individual_idx = Int[], id = Any[], row = Int[],
+        return DataFrame(
+            individual_idx = Int[], id = Any[], row = Int[],
             obs_index = Int[], observable = Symbol[],
             time = Union{Missing, Float64}[], x = Union{Missing, Float64}[], y = Union{
-                Missing, Float64}[],
+                Missing, Float64,
+            }[],
             fitted = Union{Missing, Float64}[],
             pit = Union{Missing, Float64}[], pit_qlo = Union{Missing, Float64}[], pit_qhi = Union{
-                Missing, Float64}[],
+                Missing, Float64,
+            }[],
             res_quantile = Union{Missing, Float64}[], res_quantile_qlo = Union{
-                Missing, Float64}[],
+                Missing, Float64,
+            }[],
             res_quantile_qhi = Union{Missing, Float64}[],
             res_raw = Union{Missing, Float64}[], res_raw_qlo = Union{Missing, Float64}[],
             res_raw_qhi = Union{Missing, Float64}[],
             res_pearson = Union{Missing, Float64}[], res_pearson_qlo = Union{
-                Missing, Float64}[],
+                Missing, Float64,
+            }[],
             res_pearson_qhi = Union{Missing, Float64}[],
             logscore = Union{Missing, Float64}[], logscore_qlo = Union{Missing, Float64}[],
             logscore_qhi = Union{Missing, Float64}[],
-            draw = Union{Missing, Int}[], n_draws = Int[])
+            draw = Union{Missing, Int}[], n_draws = Int[]
+        )
     end
     return DataFrame(rows)
 end
 
-function get_residuals(dm::DataModel;
+function get_residuals(
+        dm::DataModel;
         cache::Union{Nothing, PlotCache} = nothing,
         observables = nothing,
         individuals_idx = nothing,
@@ -597,31 +654,39 @@ function get_residuals(dm::DataModel;
         mcmc_warmup::Union{Nothing, Int} = nothing,
         mcmc_quantiles::Vector{<:Real} = [5, 95],
         rng::AbstractRNG = Random.default_rng(),
-        return_draw_level::Bool = false)
+        return_draw_level::Bool = false
+    )
     cache_use = cache
     if cache_use === nothing
-        cache_use = build_plot_cache(dm; params = params, constants_re = constants_re,
-            cache_obs_dists = cache_obs_dists, ode_args = ode_args, ode_kwargs = ode_kwargs, rng = rng)
+        cache_use = build_plot_cache(
+            dm; params = params, constants_re = constants_re,
+            cache_obs_dists = cache_obs_dists, ode_args = ode_args, ode_kwargs = ode_kwargs, rng = rng
+        )
     elseif cache_obs_dists && cache_use.obs_dists === nothing
         # Rebuild obs distribution cache from DataModel inputs (starting parameters), not from a synthetic FitResult.
-        cache_use = build_plot_cache(dm; params = params, constants_re = constants_re,
-            cache_obs_dists = true, ode_args = ode_args, ode_kwargs = ode_kwargs, rng = rng)
+        cache_use = build_plot_cache(
+            dm; params = params, constants_re = constants_re,
+            cache_obs_dists = true, ode_args = ode_args, ode_kwargs = ode_kwargs, rng = rng
+        )
     end
 
     dummy_params = cache_use.params
     res = FitResult(
         MLE(), FrequentistResult(NamedTuple(), 0.0, 0, NamedTuple(), NamedTuple()),
         FitSummary(0.0, true, FitParameters(dummy_params, dummy_params), NamedTuple()),
-        FitDiagnostics((;), (;), (;), (;)), dm, (), (constants_re = constants_re,))
+        FitDiagnostics((;), (;), (;), (;)), dm, (), (constants_re = constants_re,)
+    )
 
-    return get_residuals(res; dm = dm, cache = cache_use, observables = observables,
+    return get_residuals(
+        res; dm = dm, cache = cache_use, observables = observables,
         individuals_idx = individuals_idx, obs_rows = obs_rows,
         x_axis_feature = x_axis_feature, params = params, constants_re = constants_re,
         cache_obs_dists = cache_obs_dists, residuals = residuals,
         fitted_stat = fitted_stat, randomize_discrete = randomize_discrete,
         cdf_fallback_mc = cdf_fallback_mc, ode_args = ode_args, ode_kwargs = ode_kwargs,
         mcmc_draws = mcmc_draws, mcmc_warmup = mcmc_warmup, mcmc_quantiles = mcmc_quantiles,
-        rng = rng, return_draw_level = return_draw_level)
+        rng = rng, return_draw_level = return_draw_level
+    )
 end
 
 function _acf_for_series(v::Vector{Float64}, max_lag::Int)
@@ -633,12 +698,12 @@ function _acf_for_series(v::Vector{Float64}, max_lag::Int)
         return out
     end
     max_lag >= n &&
-        @warn "max_lag=$(max_lag) is not smaller than the series length $(n); lags with fewer than 2 usable pairs are reported as missing." maxlog=1
+        @warn "max_lag=$(max_lag) is not smaller than the series length $(n); lags with fewer than 2 usable pairs are reported as missing." maxlog = 1
     μ = mean(v)
     centered = v .- μ
     denom = sum(abs2, centered)
     if denom <= 0
-        @warn "Autocorrelation is undefined for a zero-variance residual series; all lags are missing." maxlog=1
+        @warn "Autocorrelation is undefined for a zero-variance residual series; all lags are missing." maxlog = 1
         fill!(out, missing)
         return out
     end
@@ -696,7 +761,8 @@ arguments are forwarded to [`get_residuals`](@ref).
 - `reestimate_kwargs::NamedTuple = NamedTuple()`: forwarded to [`reestimate_ebes`](@ref).
 - `rng::AbstractRNG = Random.default_rng()`: random source for `:marginal`.
 """
-function predict(res::FitResult, dm_new::DataModel;
+function predict(
+        res::FitResult, dm_new::DataModel;
         re_mode::Symbol = :population,
         fitted_stat = mean,
         constants_re::NamedTuple = NamedTuple(),
@@ -705,107 +771,146 @@ function predict(res::FitResult, dm_new::DataModel;
         rng::AbstractRNG = Random.default_rng(),
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
-        kwargs...)
+        kwargs...
+    )
     # t0 is baked into every individual's tspan at DataModel construction, so a
     # dm_new built with a different t0 silently integrates from the wrong start (#148).
     dm_old = get_data_model(res)
     if dm_old !== nothing && !isequal(get_t0(dm_old), get_t0(dm_new))
-        error("predict: dm_new was built with t0 = $(get_t0(dm_new)), but the fit " *
-              "used t0 = $(get_t0(dm_old)). Rebuild it as DataModel(...; t0 = " *
-              "$(get_t0(dm_old))), or pass the new data as a DataFrame, which " *
-              "reuses the fit's t0 automatically.")
+        error(
+            "predict: dm_new was built with t0 = $(get_t0(dm_new)), but the fit " *
+                "used t0 = $(get_t0(dm_old)). Rebuild it as DataModel(...; t0 = " *
+                "$(get_t0(dm_old))), or pass the new data as a DataFrame, which " *
+                "reuses the fit's t0 automatically."
+        )
     end
     θ = get_params(res; scale = :untransformed)
     if re_mode == :population
         constants_re = _res_constants_re(res, constants_re, dm_new)
-        df = get_residuals(dm_new; params = NamedTuple(θ), residuals = [:raw],
+        df = get_residuals(
+            dm_new; params = NamedTuple(θ), residuals = [:raw],
             fitted_stat = fitted_stat, constants_re = constants_re,
-            ode_args = ode_args, ode_kwargs = ode_kwargs, kwargs...)
+            ode_args = ode_args, ode_kwargs = ode_kwargs, kwargs...
+        )
         return _prediction_frame(df.id, df.time, df.observable, df.fitted)
     end
     _validate_predict_re_mode(res, dm_new, re_mode)
     if re_mode == :marginal
-        return _predict_marginal(dm_new, θ; fitted_stat = fitted_stat,
+        return _predict_marginal(
+            dm_new, θ; fitted_stat = fitted_stat,
             constants_re = constants_re, marginal_draws = marginal_draws, rng = rng,
-            ode_args = ode_args, ode_kwargs = ode_kwargs, kwargs...)
+            ode_args = ode_args, ode_kwargs = ode_kwargs, kwargs...
+        )
     end
     if re_mode == :reestimate
         re_kw = merge(
-            (constants_re = constants_re, ode_args = ode_args,
-                ode_kwargs = ode_kwargs),
-            reestimate_kwargs)
+            (
+                constants_re = constants_re, ode_args = ode_args,
+                ode_kwargs = ode_kwargs,
+            ),
+            reestimate_kwargs
+        )
         res2 = reestimate_ebes(dm_new, res; re_kw...)
-        df = get_residuals(res2; dm = dm_new, params = NamedTuple(θ), residuals = [:raw],
+        df = get_residuals(
+            res2; dm = dm_new, params = NamedTuple(θ), residuals = [:raw],
             fitted_stat = fitted_stat, constants_re = constants_re,
-            ode_args = ode_args, ode_kwargs = ode_kwargs, kwargs...)
+            ode_args = ode_args, ode_kwargs = ode_kwargs, kwargs...
+        )
         return _prediction_frame(df.id, df.time, df.observable, df.fitted)
     end
     # :ebe
     η_vec = _predict_eta_ebe(res, dm_new, θ, constants_re)
-    cache = _fill_plot_cache(dm_new, θ, η_vec, constants_re, true,
-        ode_args, ode_kwargs)
-    df = get_residuals(dm_new; cache = cache, params = NamedTuple(θ), residuals = [:raw],
+    cache = _fill_plot_cache(
+        dm_new, θ, η_vec, constants_re, true,
+        ode_args, ode_kwargs
+    )
+    df = get_residuals(
+        dm_new; cache = cache, params = NamedTuple(θ), residuals = [:raw],
         fitted_stat = fitted_stat, constants_re = constants_re,
-        ode_args = ode_args, ode_kwargs = ode_kwargs, kwargs...)
+        ode_args = ode_args, ode_kwargs = ode_kwargs, kwargs...
+    )
     return _prediction_frame(df.id, df.time, df.observable, df.fitted)
 end
 
 function predict(res::FitResult, newdata; kwargs...)
     dm_old = get_data_model(res)
     dm_old === nothing &&
-        error("predict requires the fit to store its DataModel; refit with " *
-              "store_data_model = true.")
+        error(
+        "predict requires the fit to store its DataModel; refit with " *
+            "store_data_model = true."
+    )
     cfg = dm_old.config
-    dm_new = DataModel(get_model(dm_old), newdata;
+    dm_new = DataModel(
+        get_model(dm_old), newdata;
         primary_id = cfg.primary_id, time_col = cfg.time_col,
         evid_col = cfg.evid_col, amt_col = cfg.amt_col,
         rate_col = cfg.rate_col, cmt_col = cfg.cmt_col, t0 = cfg.t0,
-        serialization = cfg.serialization)
+        serialization = cfg.serialization
+    )
     return predict(res, dm_new; kwargs...)
 end
 
 function _prediction_frame(id, time, observable, prediction)
-    DataFrame(id = id, time = time, observable = observable, prediction = prediction)
+    return DataFrame(id = id, time = time, observable = observable, prediction = prediction)
 end
 
 # Validate that re_mode is supported for this fit; :population is handled before this.
 function _validate_predict_re_mode(res::FitResult, dm::DataModel, re_mode::Symbol)
     re_mode in (:population, :ebe, :reestimate, :marginal) ||
-        error("predict: re_mode must be :population, :ebe, :reestimate, or :marginal; " *
-              "got :$re_mode.")
+        error(
+        "predict: re_mode must be :population, :ebe, :reestimate, or :marginal; " *
+            "got :$re_mode."
+    )
     isempty(get_re_names(get_random(get_model(dm)))) &&
-        error("predict: re_mode=:$re_mode requires a model with random effects; " *
-              "use re_mode=:population.")
+        error(
+        "predict: re_mode=:$re_mode requires a model with random effects; " *
+            "use re_mode=:population."
+    )
     _is_posterior_draw_fit(res) &&
-        error("predict: re_mode=:$re_mode is not supported for MCMC/VI posterior-draw " *
-              "fits; use re_mode=:population (it integrates the posterior draws).")
+        error(
+        "predict: re_mode=:$re_mode is not supported for MCMC/VI posterior-draw " *
+            "fits; use re_mode=:population (it integrates the posterior draws)."
+    )
     if re_mode == :reestimate
-        (get_result(res) isa FrequentistREResult || get_result(res) isa MCEMResult ||
-         get_result(res) isa SAEMResult) ||
-            error("predict: re_mode=:reestimate requires a Laplace, FOCEI, MCEM, or SAEM " *
-                  "fit (GHQuadrature is unsupported); use re_mode=:ebe instead.")
+        (
+            get_result(res) isa FrequentistREResult || get_result(res) isa MCEMResult ||
+                get_result(res) isa SAEMResult
+        ) ||
+            error(
+            "predict: re_mode=:reestimate requires a Laplace, FOCEI, MCEM, or SAEM " *
+                "fit (GHQuadrature is unsupported); use re_mode=:ebe instead."
+        )
     else
         _cv_has_re_support(res) ||
-            error("predict: re_mode=:$re_mode requires a Laplace, FOCEI, GHQuadrature, " *
-                  "MCEM, or SAEM fit; got $(typeof(get_result(res))).")
+            error(
+            "predict: re_mode=:$re_mode requires a Laplace, FOCEI, GHQuadrature, " *
+                "MCEM, or SAEM fit; got $(typeof(get_result(res)))."
+        )
     end
     return nothing
 end
 
 # Build the per-individual η for :ebe — training EBE for seen subjects (matched on the
 # whole re_groups signature), RE prior mean for the rest. Mirrors _cv_evaluate_ebe.
-function _predict_eta_ebe(res::FitResult, dm_new::DataModel, θ::ComponentArray,
-        constants_re::NamedTuple)
+function _predict_eta_ebe(
+        res::FitResult, dm_new::DataModel, θ::ComponentArray,
+        constants_re::NamedTuple
+    )
     dm_old = get_data_model(res)
     dm_old === nothing &&
-        error("predict: re_mode=:ebe requires the fit to store its DataModel; " *
-              "refit with store_data_model = true.")
+        error(
+        "predict: re_mode=:ebe requires the fit to store its DataModel; " *
+            "refit with store_data_model = true."
+    )
     η_vec = _default_random_effects_from_dm(dm_new, constants_re, θ)
     bstars, batch_infos, θu, const_cache, _, _ = _resolve_bstars_for_re(
-        dm_old, res, constants_re)
+        dm_old, res, constants_re
+    )
     η_train = _eta_from_eb(dm_old, batch_infos, bstars, const_cache, θu)
-    re_to_eta = Dict{Any, ComponentArray}(get_re_groups(get_individuals(dm_old)[i]) => η_train[i]
-    for i in 1:length(get_individuals(dm_old)))
+    re_to_eta = Dict{Any, ComponentArray}(
+        get_re_groups(get_individuals(dm_old)[i]) => η_train[i]
+            for i in 1:length(get_individuals(dm_old))
+    )
     for j in 1:length(get_individuals(dm_new))
         key = get_re_groups(get_individuals(dm_new)[j])
         haskey(re_to_eta, key) && (η_vec[j] = re_to_eta[key])
@@ -815,9 +920,11 @@ end
 
 # Monte-Carlo marginal prediction: integrate the random effects over their prior,
 # averaging the per-draw predicted means.
-function _predict_marginal(dm_new::DataModel, θ::ComponentArray;
+function _predict_marginal(
+        dm_new::DataModel, θ::ComponentArray;
         fitted_stat, constants_re::NamedTuple, marginal_draws::Int,
-        rng::AbstractRNG, ode_args::Tuple, ode_kwargs::NamedTuple, kwargs...)
+        rng::AbstractRNG, ode_args::Tuple, ode_kwargs::NamedTuple, kwargs...
+    )
     marginal_draws >= 1 || error("predict: marginal_draws must be >= 1.")
     dists_builder = create_random_effect_distribution(get_random(get_model(dm_new)))
     model_funs = get_model_funs(get_model(dm_new))
@@ -830,7 +937,8 @@ function _predict_marginal(dm_new::DataModel, θ::ComponentArray;
     # levels fixed.
     fixed_maps = _normalize_constants_re(dm_new, constants_re)
     re_meta = _re_free_meta(
-        dm_new, θ, fixed_maps, re_names, dists_builder, model_funs, helpers)
+        dm_new, θ, fixed_maps, re_names, dists_builder, model_funs, helpers
+    )
     level_dims = Dict{Symbol, Int}(re => re_meta[re].dim for re in re_names)
     sample_rngs = _spawn_child_rngs(rng, marginal_draws)
     n_new = length(get_individuals(dm_new))
@@ -855,13 +963,18 @@ function _predict_marginal(dm_new::DataModel, θ::ComponentArray;
         for j in 1:n_new
             η_vec[j] = _assemble_individual_eta(
                 get_individuals(dm_new)[j], re_names, level_dims, fixed_maps,
-                get_free_value)
+                get_free_value
+            )
         end
-        cache = _fill_plot_cache(dm_new, θ, η_vec, constants_re, true,
-            ode_args, ode_kwargs)
-        df = get_residuals(dm_new; cache = cache, params = NamedTuple(θ),
+        cache = _fill_plot_cache(
+            dm_new, θ, η_vec, constants_re, true,
+            ode_args, ode_kwargs
+        )
+        df = get_residuals(
+            dm_new; cache = cache, params = NamedTuple(θ),
             residuals = [:raw], fitted_stat = fitted_stat, constants_re = constants_re,
-            ode_args = ode_args, ode_kwargs = ode_kwargs, kwargs...)
+            ode_args = ode_args, ode_kwargs = ode_kwargs, kwargs...
+        )
         if isempty(sum_acc)
             sum_acc = zeros(Float64, nrow(df))
             cnt_acc = zeros(Int, nrow(df))
@@ -872,7 +985,9 @@ function _predict_marginal(dm_new::DataModel, θ::ComponentArray;
             ismissing(fr) || (sum_acc[r] += fr; cnt_acc[r] += 1)
         end
     end
-    prediction = [cnt_acc[r] > 0 ? sum_acc[r] / cnt_acc[r] : missing
-                  for r in 1:length(sum_acc)]
+    prediction = [
+        cnt_acc[r] > 0 ? sum_acc[r] / cnt_acc[r] : missing
+            for r in 1:length(sum_acc)
+    ]
     return _prediction_frame(id_col, time_col, obs_col, prediction)
 end

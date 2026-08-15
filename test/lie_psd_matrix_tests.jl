@@ -20,23 +20,27 @@ end
 @testset "RealLiePSDMatrix construction" begin
     @testset "from full matrix" begin
         Σ = [4.0 -1.3; -1.3 1.75]
-        p = RealLiePSDMatrix(Σ; name = :Ω, eigenvalue_lower = 1e-3,
-            eigenvalue_upper = 1e3, calculate_se = true)
+        p = RealLiePSDMatrix(
+            Σ; name = :Ω, eigenvalue_lower = 1.0e-3,
+            eigenvalue_upper = 1.0e3, calculate_se = true
+        )
         @test p.name == :Ω
         @test p.scale == :lie
         @test p.prior isa Priorless
         @test p.calculate_se == true
         @test p.value == Σ
-        @test p.eigenvalue_lower == [1e-3, 1e-3]
-        @test p.eigenvalue_upper == [1e3, 1e3]
+        @test p.eigenvalue_lower == [1.0e-3, 1.0e-3]
+        @test p.eigenvalue_upper == [1.0e3, 1.0e3]
     end
 
     @testset "scalar bounds broadcast; vector bounds honored" begin
         p1 = RealLiePSDMatrix([2.0 0.0; 0.0 3.0]; eigenvalue_lower = 0.1)
         @test p1.eigenvalue_lower == [0.1, 0.1]
         @test p1.eigenvalue_upper == [Inf, Inf]
-        p2 = RealLiePSDMatrix([2.0 0.0; 0.0 3.0]; eigenvalue_lower = [0.1, 0.2],
-            eigenvalue_upper = [10.0, 20.0])
+        p2 = RealLiePSDMatrix(
+            [2.0 0.0; 0.0 3.0]; eigenvalue_lower = [0.1, 0.2],
+            eigenvalue_upper = [10.0, 20.0]
+        )
         @test p2.eigenvalue_lower == [0.1, 0.2]
         @test p2.eigenvalue_upper == [10.0, 20.0]
     end
@@ -48,27 +52,35 @@ end
         @test minimum(eigen(Symmetric(p.value)).values) > 0
         # Recovering (λ, α) and re-expanding reproduces the same matrix.
         t = liepsd_forward(p.value)
-        @test isapprox(liepsd_inverse(t), p.value; atol = 1e-10)
+        @test isapprox(liepsd_inverse(t), p.value; atol = 1.0e-10)
     end
 
     @testset "n = 1 edge (no angles)" begin
         p = RealLiePSDMatrix(reshape([2.5], 1, 1))
         @test size(p.value) == (1, 1)
         p2 = RealLiePSDMatrix(; log_eigenvalues = [log(2.5)], angles = Float64[])
-        @test isapprox(p2.value[1, 1], 2.5; atol = 1e-12)
+        @test isapprox(p2.value[1, 1], 2.5; atol = 1.0e-12)
     end
 
     @testset "invalid inputs error" begin
         @test_throws ErrorException RealLiePSDMatrix([1.0 2.0; 0.0 1.0])   # not PSD
         @test_throws ErrorException RealLiePSDMatrix([1.0 0.0 0.0; 0.0 1.0 0.0])  # non-square
-        @test_throws ErrorException RealLiePSDMatrix([1.0 0.0; 0.0 1.0];
-            scale = :cholesky)                                            # wrong scale
-        @test_throws ErrorException RealLiePSDMatrix([1.0 0.0; 0.0 1.0];
-            eigenvalue_lower = -1.0)                                      # negative lower
-        @test_throws ErrorException RealLiePSDMatrix([1.0 0.0; 0.0 1.0];
-            eigenvalue_lower = 5.0, eigenvalue_upper = 1.0)               # lower > upper
-        @test_throws ErrorException RealLiePSDMatrix(; log_eigenvalues = [0.0, 0.0],
-            angles = [0.1, 0.2])                                         # wrong angle count
+        @test_throws ErrorException RealLiePSDMatrix(
+            [1.0 0.0; 0.0 1.0];
+            scale = :cholesky
+        )                                            # wrong scale
+        @test_throws ErrorException RealLiePSDMatrix(
+            [1.0 0.0; 0.0 1.0];
+            eigenvalue_lower = -1.0
+        )                                      # negative lower
+        @test_throws ErrorException RealLiePSDMatrix(
+            [1.0 0.0; 0.0 1.0];
+            eigenvalue_lower = 5.0, eigenvalue_upper = 1.0
+        )               # lower > upper
+        @test_throws ErrorException RealLiePSDMatrix(;
+            log_eigenvalues = [0.0, 0.0],
+            angles = [0.1, 0.2]
+        )                                         # wrong angle count
     end
 end
 
@@ -82,17 +94,17 @@ end
         Σ = [2.0 0.0; 0.0 3.0]
         t = liepsd_forward(Σ)
         @test t[3] == 0.0                       # single angle is zero
-        @test isapprox(t[1:2], log.([2.0, 3.0]); atol = 1e-14)
-        @test isapprox(liepsd_inverse(t), Σ; atol = 1e-14)
+        @test isapprox(t[1:2], log.([2.0, 3.0]); atol = 1.0e-14)
+        @test isapprox(liepsd_inverse(t), Σ; atol = 1.0e-14)
     end
 
     @testset "thesis example (Fig. 5.6)" begin
-        Σ = [3.25 -1.30; -1.30 1.75]
+        Σ = [3.25 -1.3; -1.3 1.75]
         t = liepsd_forward(Σ)
-        @test isapprox(liepsd_inverse(t), Σ; atol = 1e-12)
+        @test isapprox(liepsd_inverse(t), Σ; atol = 1.0e-12)
         # Eigenvalues are ≈ 1 and 4 (thesis Fig. 5.6 rounds them), so λ ≈ log([1, 4]).
-        @test isapprox(sort(exp.(t[1:2])), sort(eigen(Symmetric(Σ)).values); atol = 1e-10)
-        @test isapprox(sort(exp.(t[1:2])), [1.0, 4.0]; atol = 1e-2)
+        @test isapprox(sort(exp.(t[1:2])), sort(eigen(Symmetric(Σ)).values); atol = 1.0e-10)
+        @test isapprox(sort(exp.(t[1:2])), [1.0, 4.0]; atol = 1.0e-2)
     end
 
     @testset "random SPD, n = 2..5 (non-diagonal, det-fix branch)" begin
@@ -101,7 +113,7 @@ end
                 Σ = _rand_spd(n, rng)
                 t = liepsd_forward(Σ)
                 @test length(t) == n * (n + 1) ÷ 2
-                @test isapprox(liepsd_inverse(t), Σ; atol = 1e-8)
+                @test isapprox(liepsd_inverse(t), Σ; atol = 1.0e-8)
                 @test issymmetric(liepsd_inverse(t))
             end
         end
@@ -124,7 +136,7 @@ end
             g = ForwardDiff.gradient(f, t0)
             @test all(isfinite, g)
             gfd = similar(g)
-            ε = 1e-6
+            ε = 1.0e-6
             for k in 1:L
                 tp = copy(t0)
                 tp[k] += ε
@@ -132,7 +144,7 @@ end
                 tm[k] -= ε
                 gfd[k] = (f(tp) - f(tm)) / (2ε)
             end
-            @test isapprox(g, gfd; atol = 1e-6)
+            @test isapprox(g, gfd; atol = 1.0e-6)
         end
     end
 
@@ -141,8 +153,10 @@ end
         J = ForwardDiff.jacobian(liepsd_inverse, t0)
         @test all(isfinite, J)
         # Dual output must be exactly symmetric in value and partials.
-        td = [ForwardDiff.Dual{:t}(t0[i], ntuple(k -> k == i ? 1.0 : 0.0, L)...)
-              for i in 1:L]
+        td = [
+            ForwardDiff.Dual{:t}(t0[i], ntuple(k -> k == i ? 1.0 : 0.0, L)...)
+                for i in 1:L
+        ]
         Σd = liepsd_inverse(td)
         for i in 1:n, j in 1:n
             @test ForwardDiff.value(Σd[i, j]) == ForwardDiff.value(Σd[j, i])
@@ -164,7 +178,7 @@ end
         G = randn(rng, n, n)                       # raw natural gradient (any G)
         gt = _inv_jac_spec_val(spec, t, G)
         J = ForwardDiff.jacobian(liepsd_inverse, collect(t))
-        @test isapprox(gt, J' * vec(G); atol = 1e-9)
+        @test isapprox(gt, J' * vec(G); atol = 1.0e-9)
     end
 end
 
@@ -173,8 +187,10 @@ end
 # ---------------------------------------------------------------------------
 @testset "RealLiePSDMatrix @fixedEffects integration" begin
     fe = @fixedEffects begin
-        Ω = RealLiePSDMatrix([1.0 0.0; 0.0 1.0]; eigenvalue_lower = 1e-3,
-            eigenvalue_upper = 1e3, calculate_se = true)
+        Ω = RealLiePSDMatrix(
+            [1.0 0.0; 0.0 1.0]; eigenvalue_lower = 1.0e-3,
+            eigenvalue_upper = 1.0e3, calculate_se = true
+        )
     end
 
     specs = get_transforms(fe).forward.specs
@@ -183,16 +199,16 @@ end
 
     # Identity matrix → log-eigenvalues 0, angle 0.
     θ0t = get_θ0_transformed(fe)
-    @test isapprox(collect(θ0t[:Ω]), [0.0, 0.0, 0.0]; atol = 1e-14)
+    @test isapprox(collect(θ0t[:Ω]), [0.0, 0.0, 0.0]; atol = 1.0e-14)
 
     # Untransformed round-trip is the identity matrix.
     θ0u = get_θ0_untransformed(fe)
-    @test isapprox(Matrix(θ0u[:Ω]), [1.0 0.0; 0.0 1.0]; atol = 1e-14)
+    @test isapprox(Matrix(θ0u[:Ω]), [1.0 0.0; 0.0 1.0]; atol = 1.0e-14)
 
     # Transformed bounds: eigenvalue box on the λ block, unbounded α.
     lo, up = get_bounds_transformed(fe)
-    @test isapprox(collect(lo[:Ω]), [log(1e-3), log(1e-3), -Inf]; atol = 1e-12)
-    @test isapprox(collect(up[:Ω]), [log(1e3), log(1e3), Inf]; atol = 1e-12)
+    @test isapprox(collect(lo[:Ω]), [log(1.0e-3), log(1.0e-3), -Inf]; atol = 1.0e-12)
+    @test isapprox(collect(up[:Ω]), [log(1.0e3), log(1.0e3), Inf]; atol = 1.0e-12)
 
     # SE mask covers all n(n+1)/2 transformed entries.
     @test count(get_se_mask(fe)) == 3
@@ -212,7 +228,7 @@ end
 
     coords_nat = _coords_for_param(Matrix(θ0u[:Ω]), spec; natural = true)
     @test length(coords_nat) == 3               # upper triangle of a 2×2
-    @test isapprox(coords_nat, [2.0, 0.5, 1.0]; atol = 1e-12)
+    @test isapprox(coords_nat, [2.0, 0.5, 1.0]; atol = 1.0e-12)
 
     # Count matches transformed coords (Wald delta-method stays square).
     θ0t = get_θ0_transformed(fe)
@@ -230,17 +246,22 @@ end
 
     @testset "construction validates block-diagonal input" begin
         @test_throws ErrorException RealLiePSDMatrix(
-            [2.0 0.5 0.1; 0.5 1.0 0.0;
-             0.1 0.0 3.0]; blocks = [1, 1, 2])           # nonzero cross-block entry
+            [
+                2.0 0.5 0.1; 0.5 1.0 0.0;
+                0.1 0.0 3.0
+            ]; blocks = [1, 1, 2]
+        )           # nonzero cross-block entry
         @test_throws ErrorException RealLiePSDMatrix(Σ0; blocks = [1, 1])   # wrong length
         p = RealLiePSDMatrix(Σ0; blocks = [1, 1, 2])
         @test p.blocks == [1, 1, 2]
     end
 
     fe = @fixedEffects begin
-        Ω = RealLiePSDMatrix([2.0 0.5 0.0; 0.5 1.0 0.0; 0.0 0.0 3.0];
-            blocks = [1, 1, 2], eigenvalue_lower = 1e-3, eigenvalue_upper = 1e3,
-            calculate_se = true)
+        Ω = RealLiePSDMatrix(
+            [2.0 0.5 0.0; 0.5 1.0 0.0; 0.0 0.0 3.0];
+            blocks = [1, 1, 2], eigenvalue_lower = 1.0e-3, eigenvalue_upper = 1.0e3,
+            calculate_se = true
+        )
     end
     θ0t = get_θ0_transformed(fe)
     θ0u = get_θ0_untransformed(fe)
@@ -252,7 +273,7 @@ end
         @test spec.lie !== nothing
         @test spec.lie.fixed_idx == [5, 6]           # cross-block angle positions
         @test spec.lie.fixed_val == [0.0, 0.0]
-        @test isapprox(Matrix(θ0u.Ω), Σ0; atol = 1e-10)
+        @test isapprox(Matrix(θ0u.Ω), Σ0; atol = 1.0e-10)
     end
 
     @testset "block-diagonal structure preserved under any free params" begin
@@ -262,8 +283,8 @@ end
             tp = copy(θ0t)
             tp.Ω .= θ0t.Ω .+ 0.8 .* randn(rng, 4)
             Σp = Matrix(it(tp).Ω)
-            @test abs(Σp[1, 3]) < 1e-12
-            @test abs(Σp[2, 3]) < 1e-12
+            @test abs(Σp[1, 3]) < 1.0e-12
+            @test abs(Σp[2, 3]) < 1.0e-12
             @test minimum(eigen(Symmetric(Σp)).values) > 0
         end
     end
@@ -275,8 +296,9 @@ end
             G = randn(rng, 3, 3)
             gt = _inv_jac_spec_val(spec, collect(t), G)
             J = ForwardDiff.jacobian(
-                x -> NoLimits._liepsd_inverse_layout(x, spec.lie), collect(t))
-            @test isapprox(gt, J' * vec(G); atol = 1e-9)
+                x -> NoLimits._liepsd_inverse_layout(x, spec.lie), collect(t)
+            )
+            @test isapprox(gt, J' * vec(G); atol = 1.0e-9)
         end
     end
 
@@ -291,21 +313,23 @@ end
 
 @testset "RealLiePSDMatrix fixed eigenvalues" begin
     fe = @fixedEffects begin
-        Ω = RealLiePSDMatrix([2.0 0.0; 0.0 3.0]; fix_eigenvalues = [1],
-            calculate_se = true)
+        Ω = RealLiePSDMatrix(
+            [2.0 0.0; 0.0 3.0]; fix_eigenvalues = [1],
+            calculate_se = true
+        )
     end
     θ0t = get_θ0_transformed(fe)
     spec = get_transforms(fe).forward.specs[1]
     @test length(θ0t.Ω) == 2                         # 3 full − 1 fixed eigenvalue
     @test spec.lie.fixed_idx == [1]
-    @test isapprox(spec.lie.fixed_val, [log(2.0)]; atol = 1e-12)
+    @test isapprox(spec.lie.fixed_val, [log(2.0)]; atol = 1.0e-12)
 
     it = get_inverse_transform(fe)
     tp = copy(θ0t)
     tp.Ω .= θ0t.Ω .+ [0.4, 0.3]
     Σp = Matrix(it(tp).Ω)
     # The fixed eigenvalue stays pinned at 2.0 regardless of the free params.
-    @test minimum(abs.(sort(eigen(Symmetric(Σp)).values) .- 2.0)) < 1e-10
+    @test minimum(abs.(sort(eigen(Symmetric(Σp)).values) .- 2.0)) < 1.0e-10
 end
 
 # ---------------------------------------------------------------------------
@@ -318,8 +342,10 @@ end
         @fixedEffects begin
             a = RealNumber(1.0)
             σ = RealNumber(0.5, scale = :log)
-            Ω = RealLiePSDMatrix([1.0 0.0; 0.0 1.0]; eigenvalue_lower = 1e-3,
-                eigenvalue_upper = 1e3)
+            Ω = RealLiePSDMatrix(
+                [1.0 0.0; 0.0 1.0]; eigenvalue_lower = 1.0e-3,
+                eigenvalue_upper = 1.0e3
+            )
         end
         @randomEffects begin
             η = RandomEffect(MvNormal(zeros(2), Ω); column = :ID)
@@ -348,8 +374,10 @@ end
     # FOCEI exercises the analytic Jacobianᵀ path and should agree with Laplace.
     res_foc = fit_model(dm, NoLimits.FOCEI())
     @test NoLimits.get_converged(res_foc)
-    @test isapprox(NoLimits.get_objective(res_lap), NoLimits.get_objective(res_foc);
-        atol = 1e-2)
+    @test isapprox(
+        NoLimits.get_objective(res_lap), NoLimits.get_objective(res_foc);
+        atol = 1.0e-2
+    )
 end
 
 @testset "RealLiePSDMatrix block-diagonal RE covariance end-to-end" begin
@@ -360,8 +388,10 @@ end
         @fixedEffects begin
             a = RealNumber(1.0)
             σ = RealNumber(0.5, scale = :log)
-            Ω = RealLiePSDMatrix(Matrix{Float64}(I, 3, 3); blocks = [1, 1, 2],
-                eigenvalue_lower = 1e-3, eigenvalue_upper = 1e3)
+            Ω = RealLiePSDMatrix(
+                Matrix{Float64}(I, 3, 3); blocks = [1, 1, 2],
+                eigenvalue_lower = 1.0e-3, eigenvalue_upper = 1.0e3
+            )
         end
         @randomEffects begin
             η = RandomEffect(MvNormal(zeros(3), Ω); column = :ID)
@@ -385,7 +415,7 @@ end
     @test NoLimits.get_converged(res)
     Ω_est = Matrix(NoLimits.get_params(res; scale = :untransformed).Ω)
     # The estimated covariance must retain the enforced block-diagonal zeros.
-    @test abs(Ω_est[1, 3]) < 1e-8
-    @test abs(Ω_est[2, 3]) < 1e-8
+    @test abs(Ω_est[1, 3]) < 1.0e-8
+    @test abs(Ω_est[2, 3]) < 1.0e-8
     @test minimum(eigen(Symmetric(Ω_est)).values) > 0
 end

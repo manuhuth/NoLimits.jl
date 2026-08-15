@@ -29,7 +29,7 @@ struct FakeSol end
         random_effects = NamedTuple(),
         prede = NamedTuple(),
         helpers = NamedTuple(),
-        model_funs = NamedTuple()
+        model_funs = NamedTuple(),
     )
     const_covariates_i = (x = (Age = 3.0,),)
     varying_covariates = (t = 0.0,)
@@ -38,8 +38,8 @@ struct FakeSol end
     obs = form_obs(ctx, sol_accessors, const_covariates_i, varying_covariates)
     all = form_all(ctx, sol_accessors, const_covariates_i, varying_covariates)
     @test obs.obs isa Normal
-    @test isapprox(mean(obs.obs), 6.0; rtol = 1e-6, atol = 1e-8)
-    @test isapprox(all.lin, 6.0; rtol = 1e-6, atol = 1e-8)
+    @test isapprox(mean(obs.obs), 6.0; rtol = 1.0e-6, atol = 1.0e-8)
+    @test isapprox(all.lin, 6.0; rtol = 1.0e-6, atol = 1.0e-8)
 end
 
 @testset "Formulas helpers and model_funs" begin
@@ -69,7 +69,7 @@ end
         random_effects = NamedTuple(),
         prede = NamedTuple(),
         helpers = helpers,
-        model_funs = (NN1 = NN1,)
+        model_funs = (NN1 = NN1,),
     )
     const_covariates_i = (x = (Age = 2.0,),)
     varying_covariates = (t = 0.0,)
@@ -78,8 +78,8 @@ end
     obs = form_obs(ctx, sol_accessors, const_covariates_i, varying_covariates)
     all = form_all(ctx, sol_accessors, const_covariates_i, varying_covariates)
     @test obs.obs isa Normal
-    @test isapprox(mean(obs.obs), 6.0; rtol = 1e-6, atol = 1e-8)
-    @test isapprox(all.y, 6.0; rtol = 1e-6, atol = 1e-8)
+    @test isapprox(mean(obs.obs), 6.0; rtol = 1.0e-6, atol = 1.0e-8)
+    @test isapprox(all.y, 6.0; rtol = 1.0e-6, atol = 1.0e-8)
 end
 
 @testset "Formulas varying covariates" begin
@@ -102,7 +102,7 @@ end
         random_effects = NamedTuple(),
         prede = NamedTuple(),
         helpers = NamedTuple(),
-        model_funs = NamedTuple()
+        model_funs = NamedTuple(),
     )
     const_covariates_i = (x = (Age = 2.0,),)
     varying_covariates = (t = 3.0, w1 = 1.0, w2 = (t -> 2.0 * t))
@@ -111,8 +111,8 @@ end
     obs = form_obs(ctx, sol_accessors, const_covariates_i, varying_covariates)
     all = form_all(ctx, sol_accessors, const_covariates_i, varying_covariates)
     @test obs.obs isa Normal
-    @test isapprox(mean(obs.obs), 9.0; rtol = 1e-6, atol = 1e-8)
-    @test isapprox(all.z, 9.0; rtol = 1e-6, atol = 1e-8)
+    @test isapprox(mean(obs.obs), 9.0; rtol = 1.0e-6, atol = 1.0e-8)
+    @test isapprox(all.z, 9.0; rtol = 1.0e-6, atol = 1.0e-8)
 end
 
 @testset "Formulas with DE accessors" begin
@@ -138,7 +138,7 @@ end
         random_effects = NamedTuple(),
         prede = NamedTuple(),
         helpers = NamedTuple(),
-        model_funs = NamedTuple()
+        model_funs = NamedTuple(),
     )
     const_covariates_i = NamedTuple()
     varying_covariates = (t = 1.0,)
@@ -146,8 +146,8 @@ end
     obs = form_obs(ctx, sol_accessors, const_covariates_i, varying_covariates)
     all = form_all(ctx, sol_accessors, const_covariates_i, varying_covariates)
     @test obs.obs isa Normal
-    @test isapprox(mean(obs.obs), 4.0; rtol = 1e-6, atol = 1e-8)
-    @test isapprox(all.y, 4.0; rtol = 1e-6, atol = 1e-8)
+    @test isapprox(mean(obs.obs), 4.0; rtol = 1.0e-6, atol = 1.0e-8)
+    @test isapprox(all.y, 4.0; rtol = 1.0e-6, atol = 1.0e-8)
 end
 
 @testset "Formulas multiple deterministics and observations" begin
@@ -170,7 +170,7 @@ end
         random_effects = NamedTuple(),
         prede = NamedTuple(),
         helpers = NamedTuple(),
-        model_funs = NamedTuple()
+        model_funs = NamedTuple(),
     )
     const_covariates_i = (x = (Age = 3.0,),)
     varying_covariates = (t = 0.0, w1 = 4.0)
@@ -180,10 +180,10 @@ end
     all = form_all(ctx, sol_accessors, const_covariates_i, varying_covariates)
     @test obs.y isa Normal
     @test obs.y2 isa Normal
-    @test isapprox(mean(obs.y), 10.0; rtol = 1e-6, atol = 1e-8)
-    @test isapprox(mean(obs.y2), 4.0; rtol = 1e-6, atol = 1e-8)
-    @test isapprox(all.d1, 4.0; rtol = 1e-6, atol = 1e-8)
-    @test isapprox(all.d2, 10.0; rtol = 1e-6, atol = 1e-8)
+    @test isapprox(mean(obs.y), 10.0; rtol = 1.0e-6, atol = 1.0e-8)
+    @test isapprox(mean(obs.y2), 4.0; rtol = 1.0e-6, atol = 1.0e-8)
+    @test isapprox(all.d1, 4.0; rtol = 1.0e-6, atol = 1.0e-8)
+    @test isapprox(all.d2, 10.0; rtol = 1.0e-6, atol = 1.0e-8)
 end
 
 @testset "Formulas mixed constant and varying covariates" begin
@@ -203,7 +203,7 @@ end
         random_effects = NamedTuple(),
         prede = NamedTuple(),
         helpers = NamedTuple(),
-        model_funs = NamedTuple()
+        model_funs = NamedTuple(),
     )
     const_covariates_i = (x = (Age = 2.0,),)
     varying_covariates = (t = 2.0, w1 = 1.0, w2 = (t -> 2.0 * t), w3 = (t -> t + 1.0))
@@ -212,8 +212,8 @@ end
     obs = form_obs(ctx, sol_accessors, const_covariates_i, varying_covariates)
     all = form_all(ctx, sol_accessors, const_covariates_i, varying_covariates)
     @test obs.obs isa Normal
-    @test isapprox(mean(obs.obs), 10.0; rtol = 1e-6, atol = 1e-8)
-    @test isapprox(all.u, 10.0; rtol = 1e-6, atol = 1e-8)
+    @test isapprox(mean(obs.obs), 10.0; rtol = 1.0e-6, atol = 1.0e-8)
+    @test isapprox(all.u, 10.0; rtol = 1.0e-6, atol = 1.0e-8)
 end
 
 @testset "Formulas helpers, model_funs, and random effects" begin
@@ -241,7 +241,7 @@ end
         random_effects = (η = 0.25,),
         prede = NamedTuple(),
         helpers = helpers,
-        model_funs = (NN1 = NN1,)
+        model_funs = (NN1 = NN1,),
     )
     const_covariates_i = (x = (Age = 3.0,),)
     varying_covariates = (t = 0.0,)
@@ -250,8 +250,8 @@ end
     obs = form_obs(ctx, sol_accessors, const_covariates_i, varying_covariates)
     all = form_all(ctx, sol_accessors, const_covariates_i, varying_covariates)
     @test obs.obs isa Normal
-    @test isapprox(mean(obs.obs), 7.25; rtol = 1e-6, atol = 1e-8)
-    @test isapprox(all.y, 7.25; rtol = 1e-6, atol = 1e-8)
+    @test isapprox(mean(obs.obs), 7.25; rtol = 1.0e-6, atol = 1.0e-8)
+    @test isapprox(all.y, 7.25; rtol = 1.0e-6, atol = 1.0e-8)
 end
 
 @testset "Formulas with DE accessors and covariates" begin
@@ -277,7 +277,7 @@ end
         random_effects = NamedTuple(),
         prede = NamedTuple(),
         helpers = NamedTuple(),
-        model_funs = NamedTuple()
+        model_funs = NamedTuple(),
     )
     const_covariates_i = (x = (Age = 2.0,),)
     varying_covariates = (t = 1.0, w1 = 3.0)
@@ -285,15 +285,17 @@ end
     obs = form_obs(ctx, sol_accessors, const_covariates_i, varying_covariates)
     all = form_all(ctx, sol_accessors, const_covariates_i, varying_covariates)
     @test obs.obs isa Normal
-    @test isapprox(mean(obs.obs), 9.0; rtol = 1e-6, atol = 1e-8)
-    @test isapprox(all.y, 9.0; rtol = 1e-6, atol = 1e-8)
+    @test isapprox(mean(obs.obs), 9.0; rtol = 1.0e-6, atol = 1.0e-8)
+    @test isapprox(all.y, 9.0; rtol = 1.0e-6, atol = 1.0e-8)
 end
 
 @testset "Formulas with HMM outcome" begin
     formulas = @formulas begin
         outcome_1_current ~ ContinuousTimeDiscreteStatesHMM(
-            [-λ12 λ12;
-             λ21 -λ21],
+            [
+                -λ12 λ12;
+                λ21 -λ21
+            ],
             (Bernoulli(p1), Bernoulli(p2)),
             Categorical([0.6, 0.4]),
             delta_t
@@ -311,7 +313,7 @@ end
         random_effects = NamedTuple(),
         prede = NamedTuple(),
         helpers = NamedTuple(),
-        model_funs = NamedTuple()
+        model_funs = NamedTuple(),
     )
     const_covariates_i = NamedTuple()
     varying_covariates = (t = 0.0, delta_t = 1.0)
@@ -325,148 +327,176 @@ end
 
 @testset "Model-build symbol validation" begin
     mk(body) = Core.eval(
-        @__MODULE__, Expr(:macrocall, Symbol("@Model"), LineNumberNode(0),
-            body))
+        @__MODULE__, Expr(
+            :macrocall, Symbol("@Model"), LineNumberNode(0),
+            body
+        )
+    )
     # Undefined symbol in @formulas / @randomEffects.
-    @test_throws ErrorException mk(quote
-        @fixedEffects begin
-            alpha = RealNumber(1.0)
+    @test_throws ErrorException mk(
+        quote
+            @fixedEffects begin
+                alpha = RealNumber(1.0)
+            end
+            @covariates begin
+                t = Covariate()
+            end
+            @formulas begin
+                y ~ Normal(alpah, 1.0)
+            end
         end
-        @covariates begin
-            t = Covariate()
+    )
+    @test_throws ErrorException mk(
+        quote
+            @fixedEffects begin
+                a = RealNumber(1.0)
+            end
+            @covariates begin
+                t = Covariate()
+            end
+            @randomEffects begin
+                eta = RandomEffect(Normal(a, xi); column = :ID)
+            end
+            @formulas begin
+                y ~ Normal(a + eta, 1.0)
+            end
         end
-        @formulas begin
-            y ~ Normal(alpah, 1.0)
-        end
-    end)
-    @test_throws ErrorException mk(quote
-        @fixedEffects begin
-            a = RealNumber(1.0)
-        end
-        @covariates begin
-            t = Covariate()
-        end
-        @randomEffects begin
-            eta = RandomEffect(Normal(a, xi); column = :ID)
-        end
-        @formulas begin
-            y ~ Normal(a + eta, 1.0)
-        end
-    end)
+    )
     # `=` instead of `~` leaves the model without any observation.
-    @test_throws ErrorException mk(quote
-        @fixedEffects begin
-            a = RealNumber(1.0)
+    @test_throws ErrorException mk(
+        quote
+            @fixedEffects begin
+                a = RealNumber(1.0)
+            end
+            @covariates begin
+                t = Covariate()
+            end
+            @formulas begin
+                y = Normal(a, 1.0)
+            end
         end
-        @covariates begin
-            t = Covariate()
-        end
-        @formulas begin
-            y = Normal(a, 1.0)
-        end
-    end)
+    )
     # `t` is reserved for the time variable.
-    @test_throws ErrorException mk(quote
-        @fixedEffects begin
-            t = RealNumber(1.0)
+    @test_throws ErrorException mk(
+        quote
+            @fixedEffects begin
+                t = RealNumber(1.0)
+            end
+            @covariates begin
+                tt = Covariate()
+            end
+            @formulas begin
+                y ~ Normal(t, 1.0)
+            end
         end
-        @covariates begin
-            tt = Covariate()
-        end
-        @formulas begin
-            y ~ Normal(t, 1.0)
-        end
-    end)
+    )
     # Constant covariates may not be called like functions.
-    @test_throws ErrorException mk(quote
-        @fixedEffects begin
-            a = RealNumber(1.0)
+    @test_throws ErrorException mk(
+        quote
+            @fixedEffects begin
+                a = RealNumber(1.0)
+            end
+            @covariates begin
+                t = Covariate()
+                x = ConstantCovariateVector([:Age]; constant_on = :ID)
+            end
+            @formulas begin
+                y ~ Normal(x(t), 1.0)
+            end
         end
-        @covariates begin
-            t = Covariate()
-            x = ConstantCovariateVector([:Age]; constant_on = :ID)
-        end
-        @formulas begin
-            y ~ Normal(x(t), 1.0)
-        end
-    end)
+    )
     # Duplicate random-effect names.
-    @test_throws LoadError mk(quote
-        @fixedEffects begin
-            a = RealNumber(1.0)
+    @test_throws LoadError mk(
+        quote
+            @fixedEffects begin
+                a = RealNumber(1.0)
+            end
+            @covariates begin
+                t = Covariate()
+            end
+            @randomEffects begin
+                eta = RandomEffect(Normal(0.0, 1.0); column = :ID)
+                eta = RandomEffect(Normal(0.0, 1.0); column = :ID)
+            end
+            @formulas begin
+                y ~ Normal(a + eta, 1.0)
+            end
         end
-        @covariates begin
-            t = Covariate()
-        end
-        @randomEffects begin
-            eta = RandomEffect(Normal(0.0, 1.0); column = :ID)
-            eta = RandomEffect(Normal(0.0, 1.0); column = :ID)
-        end
-        @formulas begin
-            y ~ Normal(a + eta, 1.0)
-        end
-    end)
+    )
 end
 
 @testset "Model-build declaration validation" begin
     mk(body) = Core.eval(
-        @__MODULE__, Expr(:macrocall, Symbol("@Model"), LineNumberNode(0),
-            body))
+        @__MODULE__, Expr(
+            :macrocall, Symbol("@Model"), LineNumberNode(0),
+            body
+        )
+    )
     # An observation must be a distribution, not a bare symbol/literal/nothing.
     for rhs in (:a, 1.0, :nothing)
-        @test_throws LoadError mk(quote
+        @test_throws LoadError mk(
+            quote
+                @fixedEffects begin
+                    a = RealNumber(1.0)
+                end
+                @formulas begin
+                    y ~ $rhs
+                end
+            end
+        )
+    end
+    # A deterministic node may legitimately be a literal.
+    @test mk(
+        quote
             @fixedEffects begin
                 a = RealNumber(1.0)
             end
             @formulas begin
-                y ~ $rhs
+                mu = 1.0
+                y ~ Normal(mu, 1.0)
             end
-        end)
-    end
-    # A deterministic node may legitimately be a literal.
-    @test mk(quote
-        @fixedEffects begin
-            a = RealNumber(1.0)
         end
-        @formulas begin
-            mu = 1.0
-            y ~ Normal(mu, 1.0)
-        end
-    end) isa Model
+    ) isa Model
     # RandomEffect needs a distribution too.
-    @test_throws LoadError mk(quote
-        @fixedEffects begin
-            a = RealNumber(1.0)
+    @test_throws LoadError mk(
+        quote
+            @fixedEffects begin
+                a = RealNumber(1.0)
+            end
+            @randomEffects begin
+                eta = RandomEffect(a; column = :ID)
+            end
+            @formulas begin
+                y ~ Normal(a + eta, 1.0)
+            end
         end
-        @randomEffects begin
-            eta = RandomEffect(a; column = :ID)
-        end
-        @formulas begin
-            y ~ Normal(a + eta, 1.0)
-        end
-    end)
+    )
     # Duplicate declarations are named.
-    @test_throws LoadError mk(quote
-        @fixedEffects begin
-            a = RealNumber(1.0)
-            a = RealNumber(2.0)
+    @test_throws LoadError mk(
+        quote
+            @fixedEffects begin
+                a = RealNumber(1.0)
+                a = RealNumber(2.0)
+            end
+            @formulas begin
+                y ~ Normal(a, 1.0)
+            end
         end
-        @formulas begin
-            y ~ Normal(a, 1.0)
+    )
+    @test_throws LoadError mk(
+        quote
+            @fixedEffects begin
+                a = RealNumber(1.0)
+            end
+            @covariates begin
+                x = Covariate()
+                x = ConstantCovariate()
+            end
+            @formulas begin
+                y ~ Normal(a + x, 1.0)
+            end
         end
-    end)
-    @test_throws LoadError mk(quote
-        @fixedEffects begin
-            a = RealNumber(1.0)
-        end
-        @covariates begin
-            x = Covariate()
-            x = ConstantCovariate()
-        end
-        @formulas begin
-            y ~ Normal(a + x, 1.0)
-        end
-    end)
+    )
 end
 
 @testset "Parameter-block and covariate option validation" begin

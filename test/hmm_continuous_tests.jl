@@ -42,12 +42,16 @@ end
             λ21 = exp(λ21_r)
             p1 = 1 / (1 + exp(-p1_r))
             p2 = 1 / (1 + exp(-p2_r))
-            Q = [-λ12 λ12;
-                 λ21 -λ21]
-            y ~ ContinuousTimeDiscreteStatesHMM(Q,
+            Q = [
+                -λ12 λ12;
+                λ21 -λ21
+            ]
+            y ~ ContinuousTimeDiscreteStatesHMM(
+                Q,
                 (Bernoulli(p1), Bernoulli(p2)),
                 Categorical([0.6, 0.4]),
-                dt)
+                dt
+            )
         end
     end
 
@@ -64,13 +68,15 @@ end
 end
 
 @testset "HMM loglikelihood uses recursive filtering" begin
-    Q = [-1.2 1.2 0.0;
-         0.0 -1.0 1.0;
-         0.0 0.0 0.0]
+    Q = [
+        -1.2 1.2 0.0;
+        0.0 -1.0 1.0;
+        0.0 0.0 0.0
+    ]
     emissions = (
         Categorical([1.0, 0.0, 0.0]),
         Categorical([0.0, 1.0, 0.0]),
-        Categorical([0.0, 0.0, 1.0])
+        Categorical([0.0, 0.0, 1.0]),
     )
     init = Categorical([1.0, 0.0, 0.0])
 
@@ -86,13 +92,15 @@ end
 
         @formulas begin
             y ~ ContinuousTimeDiscreteStatesHMM(
-                [-1.2 1.2 0.0;
-                 0.0 -1.0 1.0;
-                 0.0 0.0 0.0],
+                [
+                    -1.2 1.2 0.0;
+                    0.0 -1.0 1.0;
+                    0.0 0.0 0.0
+                ],
                 (
                     Categorical([1.0, 0.0, 0.0]),
                     Categorical([0.0, 1.0, 0.0]),
-                    Categorical([0.0, 0.0, 1.0])
+                    Categorical([0.0, 0.0, 1.0]),
                 ),
                 Categorical([1.0, 0.0, 0.0]),
                 dt
@@ -114,17 +122,19 @@ end
     ll = NoLimits.loglikelihood(dm, θ, ComponentArray())
     expected = _recursive_hmm_loglikelihood(fill(dist, nrow(df)), df.y)
 
-    @test isapprox(ll, expected; atol = 1e-12)
+    @test isapprox(ll, expected; atol = 1.0e-12)
 end
 
 @testset "HMM missing observations still propagate hidden state in loglikelihood" begin
-    Q = [-1.2 1.2 0.0;
-         0.0 -1.0 1.0;
-         0.0 0.0 0.0]
+    Q = [
+        -1.2 1.2 0.0;
+        0.0 -1.0 1.0;
+        0.0 0.0 0.0
+    ]
     emissions = (
         Categorical([1.0, 0.0, 0.0]),
         Categorical([0.0, 1.0, 0.0]),
-        Categorical([0.0, 0.0, 1.0])
+        Categorical([0.0, 0.0, 1.0]),
     )
     init = Categorical([1.0, 0.0, 0.0])
 
@@ -140,13 +150,15 @@ end
 
         @formulas begin
             y ~ ContinuousTimeDiscreteStatesHMM(
-                [-1.2 1.2 0.0;
-                 0.0 -1.0 1.0;
-                 0.0 0.0 0.0],
+                [
+                    -1.2 1.2 0.0;
+                    0.0 -1.0 1.0;
+                    0.0 0.0 0.0
+                ],
                 (
                     Categorical([1.0, 0.0, 0.0]),
                     Categorical([0.0, 1.0, 0.0]),
-                    Categorical([0.0, 0.0, 1.0])
+                    Categorical([0.0, 0.0, 1.0]),
                 ),
                 Categorical([1.0, 0.0, 0.0]),
                 dt
@@ -168,7 +180,7 @@ end
     ll = NoLimits.loglikelihood(dm, θ, ComponentArray())
     expected = _recursive_hmm_loglikelihood(fill(dist, nrow(df)), df.y)
 
-    @test isapprox(ll, expected; atol = 1e-12)
+    @test isapprox(ll, expected; atol = 1.0e-12)
 end
 
 @testset "HMM ForwardDiff" begin
@@ -190,12 +202,16 @@ end
             λ21 = exp(λ21_r)
             p1 = 1 / (1 + exp(-p1_r))
             p2 = 1 / (1 + exp(-p2_r))
-            Q = [-λ12 λ12;
-                 λ21 -λ21]
-            y ~ ContinuousTimeDiscreteStatesHMM(Q,
+            Q = [
+                -λ12 λ12;
+                λ21 -λ21
+            ]
+            y ~ ContinuousTimeDiscreteStatesHMM(
+                Q,
                 (Bernoulli(p1), Bernoulli(p2)),
                 Categorical([0.6, 0.4]),
-                dt)
+                dt
+            )
         end
     end
 
@@ -215,9 +231,9 @@ end
 
 @testset "HMM ForwardDiff remains finite for tiny hidden-state masses" begin
     emissions = (
-        Categorical([0.99999998, 1e-8, 1e-8]),
-        Categorical([1e-8, 0.99999998, 1e-8]),
-        Categorical([1e-8, 1e-8, 0.99999998])
+        Categorical([0.99999998, 1.0e-8, 1.0e-8]),
+        Categorical([1.0e-8, 0.99999998, 1.0e-8]),
+        Categorical([1.0e-8, 1.0e-8, 0.99999998]),
     )
     ys = vcat(fill(2, 5), fill(3, 80))
     dts = vcat([0.0], fill(0.12, length(ys) - 1))
@@ -226,17 +242,20 @@ end
         q12 = exp(-1.4 + x)
         q13 = exp(-2.0 + x)
         q23 = exp(-0.5 + x)
-        Q = [-(q12 + q13) q12 q13;
-             0.0 -q23 q23;
-             0.0 0.0 0.0]
+        Q = [
+            -(q12 + q13) q12 q13;
+            0.0 -q23 q23;
+            0.0 0.0 0.0
+        ]
 
         prior = nothing
         ll = zero(x)
         for i in eachindex(ys)
             dist = ContinuousTimeDiscreteStatesHMM(
-                Q, emissions, Categorical([0.6, 0.3, 0.1]), dts[i])
+                Q, emissions, Categorical([0.6, 0.3, 0.1]), dts[i]
+            )
             dist_use = prior === nothing ? dist :
-                       NoLimits._hmm_with_initial_probs(dist, prior)
+                NoLimits._hmm_with_initial_probs(dist, prior)
             ll += logpdf(dist_use, ys[i])
             prior = posterior_hidden_states(dist_use, ys[i])
         end
@@ -266,12 +285,16 @@ end
             λ21 = exp(λ21_r)
             p1 = 1 / (1 + exp(-p1_r))
             p2 = 1 / (1 + exp(-p2_r))
-            Q = [-λ12 λ12;
-                 λ21 -λ21]
-            y ~ ContinuousTimeDiscreteStatesHMM(Q,
+            Q = [
+                -λ12 λ12;
+                λ21 -λ21
+            ]
+            y ~ ContinuousTimeDiscreteStatesHMM(
+                Q,
                 (Bernoulli(p1), Bernoulli(p2)),
                 Categorical([0.6, 0.4]),
-                dt)
+                dt
+            )
         end
     end
 
@@ -286,7 +309,8 @@ end
     res_mle = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
     res_map = fit_model(dm, NoLimits.MAP(; optim_kwargs = (maxiters = 2,)))
     res_mcmc = fit_model(
-        dm, NoLimits.MCMC(sampler = MH(), turing_kwargs = (; n_samples = 2, n_adapt = 2)))
+        dm, NoLimits.MCMC(sampler = MH(), turing_kwargs = (; n_samples = 2, n_adapt = 2))
+    )
 
     @test res_mle isa FitResult
     @test res_map isa FitResult

@@ -55,7 +55,7 @@ end
     # Zero-mean leaves keep the output identical but make the splits trainable.
     g_ok = copy(g_flat)
     g_ok[(2 * n_int + 1):end] .= 0.05 .* [(-1.0)^i for i in 1:n_leaf]
-    @test ST([1.5], g_ok)[1]≈ST([1.5], g_flat)[1] atol=1e-12
+    @test ST([1.5], g_ok)[1] ≈ ST([1.5], g_flat)[1] atol = 1.0e-12
     @test any(!iszero, ForwardDiff.gradient(obj, g_ok)[splits])
 
     df = DataFrame(ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0], y = [1.0, 1.1, 0.9, 1.0])
@@ -76,8 +76,10 @@ end
 
     θ_bad = deepcopy(get_θ0_untransformed(model.fixed.fixed))
     θ_bad.Γ .= 0.0
-    warned(f) = any(l -> occursin("Soft tree", string(l.message)),
-        first(Test.collect_test_logs(f)))
+    warned(f) = any(
+        l -> occursin("Soft tree", string(l.message)),
+        first(Test.collect_test_logs(f))
+    )
 
     @test warned(() -> fit_model(dm, method; theta_0_untransformed = θ_bad))
 

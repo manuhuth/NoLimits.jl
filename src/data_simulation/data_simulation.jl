@@ -82,10 +82,11 @@ function _simulate_sol_accessors(dm::DataModel, idx::Int, θ, η)
         random_effects = η,
         constant_covariates = const_cov,
         varying_covariates = merge(
-            (t = get_vary(get_series(ind)).t[1],), get_dyn(get_series(ind))),
+            (t = get_vary(get_series(ind)).t[1],), get_dyn(get_series(ind))
+        ),
         helpers = get_helper_funs(model),
         model_funs = get_model_funs(model),
-        preDE = pre
+        preDE = pre,
     )
     compiled = get_de_compiler(get_de(model))(pc)
     u0 = calculate_initial_state(model, θ, η, const_cov)
@@ -103,7 +104,8 @@ function _simulate_sol_accessors(dm::DataModel, idx::Int, θ, η)
         sol = _cf_dispatch_solve(
             model, compiled, u0, get_tspan(ind), get_saveat(ind), plan,
             get_callbacks(ind), cf_alg, solver_cfg.args,
-            _ode_solve_kwargs(solver_cfg.kwargs, NamedTuple(), NamedTuple()))
+            _ode_solve_kwargs(solver_cfg.kwargs, NamedTuple(), NamedTuple())
+        )
         sol !== nothing && return get_de_accessors_builder(get_de(model))(sol, compiled)
     end
     f!_use = _with_infusion(get_de_f!(get_de(model)), infusion_rates)
@@ -112,16 +114,19 @@ function _simulate_sol_accessors(dm::DataModel, idx::Int, θ, η)
     alg = _resolve_ode_alg(solver_cfg.alg)
     if get_saveat(ind) === nothing
         solve_kwargs = _ode_solve_kwargs(
-            solver_cfg.kwargs, NamedTuple(), (dense = true,))
+            solver_cfg.kwargs, NamedTuple(), (dense = true,)
+        )
         sol = cb === nothing ?
-              solve(prob, alg, solver_cfg.args...; solve_kwargs...) :
-              solve(prob, alg, solver_cfg.args...; solve_kwargs..., callback = cb)
+            solve(prob, alg, solver_cfg.args...; solve_kwargs...) :
+            solve(prob, alg, solver_cfg.args...; solve_kwargs..., callback = cb)
     else
-        solve_kwargs = _ode_solve_kwargs(solver_cfg.kwargs, NamedTuple(),
-            (saveat = get_saveat(ind), save_everystep = false, dense = false))
+        solve_kwargs = _ode_solve_kwargs(
+            solver_cfg.kwargs, NamedTuple(),
+            (saveat = get_saveat(ind), save_everystep = false, dense = false)
+        )
         sol = cb === nothing ?
-              solve(prob, alg, solver_cfg.args...; solve_kwargs...) :
-              solve(prob, alg, solver_cfg.args...; solve_kwargs..., callback = cb)
+            solve(prob, alg, solver_cfg.args...; solve_kwargs...) :
+            solve(prob, alg, solver_cfg.args...; solve_kwargs..., callback = cb)
     end
     return get_de_accessors_builder(get_de(model))(sol, compiled)
 end
@@ -131,8 +136,10 @@ end
 # and `on_missing(col, i, row)` runs when a masked entry is skipped. The HMM hidden-state
 # draw and `hmm_states` update happen before the missing check to keep the RNG stream
 # identical whether or not an entry is masked.
-function _simulate_obs_rows!(dm::DataModel, idx::Int, θ, η, sol_accessors, rng,
-        replace_missings::Bool, check_df, store, on_missing)
+function _simulate_obs_rows!(
+        dm::DataModel, idx::Int, θ, η, sol_accessors, rng,
+        replace_missings::Bool, check_df, store, on_missing
+    )
     model = get_model(dm)
     ind = get_individuals(dm)[idx]
     obs_rows = get_obs_rows(get_row_groups(dm))[idx]
@@ -144,15 +151,15 @@ function _simulate_obs_rows!(dm::DataModel, idx::Int, θ, η, sol_accessors, rng
         vary = _varying_at(dm, ind, i, row)
         η_row = _row_random_effects_at(dm, idx, i, η, rowwise_re; obs_only = true)
         obs = sol_accessors === nothing ?
-              calculate_formulas_obs(model, θ, η_row, const_cov, vary) :
-              calculate_formulas_obs(model, θ, η_row, const_cov, vary, sol_accessors)
+            calculate_formulas_obs(model, θ, η_row, const_cov, vary) :
+            calculate_formulas_obs(model, θ, η_row, const_cov, vary, sol_accessors)
         for col in obs_cols
             dist = getproperty(obs, col)
             if _is_hmm_dist(dist)
                 prev_state = get(hmm_states, col, 0)
                 state = prev_state == 0 ?
-                        _sample_hmm_hidden_state(rng, dist) :
-                        _sample_hmm_hidden_state(rng, dist, prev_state)
+                    _sample_hmm_hidden_state(rng, dist) :
+                    _sample_hmm_hidden_state(rng, dist, prev_state)
                 hmm_states[col] = state
                 if !replace_missings && ismissing(check_df[row, col])
                     on_missing(col, i, row)
@@ -176,12 +183,15 @@ function _simulate_obs_rows!(dm::DataModel, idx::Int, θ, η, sol_accessors, rng
 end
 
 function _simulate_individual!(
-        df::DataFrame, dm::DataModel, idx::Int, θ, re_samples, rng, replace_missings::Bool)
+        df::DataFrame, dm::DataModel, idx::Int, θ, re_samples, rng, replace_missings::Bool
+    )
     η = _sampled_random_effects_for_individual(dm, idx, re_samples)
     sol_accessors = _simulate_sol_accessors(dm, idx, θ, η)
-    _simulate_obs_rows!(dm, idx, θ, η, sol_accessors, rng, replace_missings, df,
+    _simulate_obs_rows!(
+        dm, idx, θ, η, sol_accessors, rng, replace_missings, df,
         (col, i, row, val) -> (df[row, col] = val),
-        (col, i, row) -> nothing)
+        (col, i, row) -> nothing
+    )
     return nothing
 end
 
@@ -196,7 +206,7 @@ function _warn_bad_value(dm::DataModel, row::Int, col::Symbol, dist, val)
         param_str = "unavailable"
     end
     kind = isnan(val) ? "NaN" : "Inf"
-    @warn "Invalid simulated value ($(kind))" individual=id_val row=row time=t_val outcome=col distribution=dist_str params=param_str value=val
+    @warn "Invalid simulated value ($(kind))" individual = id_val row = row time = t_val outcome = col distribution = dist_str params = param_str value = val
     return nothing
 end
 
@@ -296,10 +306,12 @@ are left unchanged.
 # Returns
 A copy of `dm.df` with simulated observation values.
 """
-function simulate_data(dm::DataModel; rng = Random.default_rng(),
+function simulate_data(
+        dm::DataModel; rng = Random.default_rng(),
         replace_missings::Bool = false,
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial(),
-        theta_untransformed = nothing)
+        theta_untransformed = nothing
+    )
     df = deepcopy(get_df(dm))
     θ = _resolve_sim_theta(dm, theta_untransformed)
 
@@ -353,17 +365,22 @@ Calls [`simulate_data`](@ref) and constructs a fresh `DataModel` from the result
 - `theta_untransformed = nothing`: fixed-effect parameter vector used for simulation on
   the natural scale. Forwarded to [`simulate_data`](@ref).
 """
-function simulate_data_model(dm::DataModel; rng = Random.default_rng(),
+function simulate_data_model(
+        dm::DataModel; rng = Random.default_rng(),
         replace_missings::Bool = false,
         serialization::SciMLBase.EnsembleAlgorithm = dm.config.serialization,
-        theta_untransformed = nothing)
-    df_sim = simulate_data(dm;
+        theta_untransformed = nothing
+    )
+    df_sim = simulate_data(
+        dm;
         rng = rng,
         replace_missings = replace_missings,
         serialization = serialization,
-        theta_untransformed = theta_untransformed)
+        theta_untransformed = theta_untransformed
+    )
     cfg = dm.config
-    return DataModel(get_model(dm), df_sim;
+    return DataModel(
+        get_model(dm), df_sim;
         primary_id = cfg.primary_id,
         time_col = cfg.time_col,
         evid_col = cfg.evid_col,
@@ -371,5 +388,6 @@ function simulate_data_model(dm::DataModel; rng = Random.default_rng(),
         rate_col = cfg.rate_col,
         cmt_col = cfg.cmt_col,
         t0 = cfg.t0,
-        serialization = serialization)
+        serialization = serialization
+    )
 end

@@ -10,8 +10,10 @@ struct REConstantsCache{M, S, V}
     scalar_vals::S
     vector_vals::V
 end
-function _normalize_constants_re(dm::DataModel, constants_re::NamedTuple;
-        strict::Bool = true)
+function _normalize_constants_re(
+        dm::DataModel, constants_re::NamedTuple;
+        strict::Bool = true
+    )
     isempty(constants_re) && return NamedTuple()
     re_names = get_re_names(dm.model.random.random)
     isempty(re_names) && return NamedTuple()
@@ -37,8 +39,8 @@ function _normalize_constants_re(dm::DataModel, constants_re::NamedTuple;
             matched = false
             for gv in vals
                 if gv == k ||
-                   (gv isa AbstractString && k isa Symbol && Symbol(gv) == k) ||
-                   (gv isa Symbol && k isa AbstractString && Symbol(k) == gv)
+                        (gv isa AbstractString && k isa Symbol && Symbol(gv) == k) ||
+                        (gv isa Symbol && k isa AbstractString && Symbol(k) == gv)
                     dict[gv] = v
                     matched = true
                     break
@@ -49,7 +51,7 @@ function _normalize_constants_re(dm::DataModel, constants_re::NamedTuple;
             if !matched
                 strict &&
                     error("constants_re for $(re) includes level $(k) not found in column $(col). The value must be present in that column.")
-                @warn "constants_re for $(re) includes level $(k), which is absent from column $(col); ignoring it." maxlog=1
+                @warn "constants_re for $(re) includes level $(k), which is absent from column $(col); ignoring it." maxlog = 1
             end
         end
         push!(pairs, re => dict)
@@ -63,7 +65,8 @@ function _build_constants_cache(dm::DataModel, constants_re::NamedTuple)
     constants_re = _normalize_constants_re(dm, constants_re)
     cache = dm.re_group_info.laplace_cache
     cache === nothing && return REConstantsCache(
-        BitVector[], Vector{Vector{Float64}}(), Vector{Vector{Vector{Float64}}}())
+        BitVector[], Vector{Vector{Float64}}(), Vector{Vector{Vector{Float64}}}()
+    )
     re_names = cache.re_names
     nre = length(re_names)
     is_const = Vector{BitVector}(undef, nre)
@@ -190,8 +193,10 @@ function build_re_batch_infos(dm::DataModel, constants_re::NamedTuple)
     # length-nlevels array per batch. Level ids partition across batches (union-find
     # groups every individual sharing a level), so batches fill disjoint slots and
     # never collide. Drops construction from O(n_batches × nlevels) to O(nlevels).
-    shared_lti = [zeros(Int, length(cache.re_index[ri].levels))
-                  for ri in eachindex(re_names)]
+    shared_lti = [
+        zeros(Int, length(cache.re_index[ri].levels))
+            for ri in eachindex(re_names)
+    ]
     for (bi, inds) in enumerate(pairing.batches)
         total_dim = 0
         re_info = Vector{_REInfo}(undef, length(re_names))
@@ -260,12 +265,14 @@ flat per-batch vector `b` (length `get_batch_re_dim(batch_info)`); levels fixed 
 `const_cache` are spliced in. Use it to evaluate per-individual quantities from a batch-level
 random-effect vector.
 """
-function build_eta_individual(dm::DataModel,
+function build_eta_individual(
+        dm::DataModel,
         ind_idx::Int,
         batch_info::REBatchInfo,
         b,
         const_cache::REConstantsCache,
-        θ::ComponentArray)
+        θ::ComponentArray
+    )
     cache = dm.re_group_info.laplace_cache
     template = cache.eta_template
     if template !== nothing
@@ -339,13 +346,15 @@ const _build_eta_ind = build_eta_individual
 # quadrature node): writes into a caller-owned buffer and wraps it with the
 # template axes. The returned ComponentArray aliases `vals`, so callers must
 # consume it before the next call reuses the buffer.
-function _build_eta_ind_fast!(vals::Vector{T},
+function _build_eta_ind_fast!(
+        vals::Vector{T},
         template::ComponentArray{Float64},
         ind_idx::Int,
         batch_info::REBatchInfo,
         b,
         const_cache::REConstantsCache,
-        cache) where {T}
+        cache
+    ) where {T}
     re_names = cache.re_names
     out_pos = 1
     for (ri, re) in enumerate(re_names)
@@ -388,15 +397,18 @@ end
 # Fast path for `_build_eta_ind`: used when every individual has exactly one RE level
 # per RE group (the common case, e.g. `column=:ID`). Avoids Pair{Symbol,Any}[] boxing
 # by filling a flat Vector{T} and wrapping it with pre-computed axes.
-function _build_eta_ind_fast(template::ComponentArray{Float64},
+function _build_eta_ind_fast(
+        template::ComponentArray{Float64},
         ind_idx::Int,
         batch_info::REBatchInfo,
         b,
         const_cache::REConstantsCache,
-        cache)
+        cache
+    )
     vals = Vector{eltype(b)}(undef, length(template))
     return _build_eta_ind_fast!(
-        vals, template, ind_idx, batch_info, b, const_cache, cache)
+        vals, template, ind_idx, batch_info, b, const_cache, cache
+    )
 end
 
 # ── Accessors for the RE-batch structs (used across the estimators) ───────────
@@ -447,5 +459,6 @@ export build_re_dists
 # instead of calling this per iteration.
 @inline function build_re_dists(model, θ, const_cov)
     return create_random_effect_distribution(get_random(model))(
-        θ, const_cov, get_model_funs(model), get_helper_funs(model))
+        θ, const_cov, get_model_funs(model), get_helper_funs(model)
+    )
 end

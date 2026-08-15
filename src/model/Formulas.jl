@@ -104,8 +104,10 @@ function _extract_time_offset(arg)
     return nothing
 end
 
-function _collect_time_offsets(ex, name_set::Set{Symbol}, offsets::Vector{Float64},
-        requires_dense::Base.RefValue{Bool})
+function _collect_time_offsets(
+        ex, name_set::Set{Symbol}, offsets::Vector{Float64},
+        requires_dense::Base.RefValue{Bool}
+    )
     ex isa Expr || return
     if ex.head == :call
         f = ex.args[1]
@@ -140,7 +142,8 @@ Scan the formula expressions for state/signal calls with constant time offsets
 - `signal_names::Vector{Symbol}`: derived signal names.
 """
 function get_formulas_time_offsets(
-        f::Formulas, state_names::Vector{Symbol}, signal_names::Vector{Symbol})
+        f::Formulas, state_names::Vector{Symbol}, signal_names::Vector{Symbol}
+    )
     name_set = Set(vcat(state_names, signal_names))
     isempty(name_set) && return (Float64[], false)
     offsets = Float64[]
@@ -227,8 +230,10 @@ function _formulas_state_used_bare(ex, state::Symbol)
     return false
 end
 
-function _formulas_replace_state_calls(ex, state_syms::Set{Symbol},
-        vc_time_syms::Set{Symbol} = Set{Symbol}())
+function _formulas_replace_state_calls(
+        ex, state_syms::Set{Symbol},
+        vc_time_syms::Set{Symbol} = Set{Symbol}()
+    )
     ex isa Expr || return ex
     if ex.head == :call
         f = ex.args[1]
@@ -239,16 +244,21 @@ function _formulas_replace_state_calls(ex, state_syms::Set{Symbol},
             end
         end
     end
-    return Expr(ex.head,
-        map(arg -> _formulas_replace_state_calls(arg, state_syms, vc_time_syms),
-            ex.args)...)
+    return Expr(
+        ex.head,
+        map(
+            arg -> _formulas_replace_state_calls(arg, state_syms, vc_time_syms),
+            ex.args
+        )...
+    )
 end
 
 # Scan for S(vc) calls where S is a state/signal and vc is a varying covariate.
 # Populates `found_states` with state/signal names and `found_vc` with the vc symbols.
 function _formulas_collect_vc_state_calls!(
         ex, state_syms::Set{Symbol}, vc_syms::Set{Symbol},
-        found_states::Set{Symbol}, found_vc::Set{Symbol})
+        found_states::Set{Symbol}, found_vc::Set{Symbol}
+    )
     ex isa Expr || return
     if ex.head == :call
         f = ex.args[1]
@@ -263,6 +273,7 @@ function _formulas_collect_vc_state_calls!(
     for arg in ex.args
         _formulas_collect_vc_state_calls!(arg, state_syms, vc_syms, found_states, found_vc)
     end
+    return
 end
 
 function _formulas_rewrite_all(ex, fun_syms::Set{Symbol})
@@ -287,20 +298,34 @@ function _formulas_rewrite_calls(ex, helper_syms::Set{Symbol}, model_fun_syms::S
     if ex.head == :call
         f = ex.args[1]
         if f isa Symbol && f in helper_syms
-            return Expr(:call, Expr(:., :helpers, QuoteNode(f)),
-                map(arg -> _formulas_rewrite_calls(arg, helper_syms, model_fun_syms),
-                    ex.args[2:end])...)
+            return Expr(
+                :call, Expr(:., :helpers, QuoteNode(f)),
+                map(
+                    arg -> _formulas_rewrite_calls(arg, helper_syms, model_fun_syms),
+                    ex.args[2:end]
+                )...
+            )
         elseif f isa Symbol && f in model_fun_syms
-            return Expr(:call, Expr(:., :model_funs, QuoteNode(f)),
-                map(arg -> _formulas_rewrite_calls(arg, helper_syms, model_fun_syms),
-                    ex.args[2:end])...)
+            return Expr(
+                :call, Expr(:., :model_funs, QuoteNode(f)),
+                map(
+                    arg -> _formulas_rewrite_calls(arg, helper_syms, model_fun_syms),
+                    ex.args[2:end]
+                )...
+            )
         end
-        return Expr(:call,
-            map(arg -> _formulas_rewrite_calls(arg, helper_syms, model_fun_syms),
-                ex.args)...)
+        return Expr(
+            :call,
+            map(
+                arg -> _formulas_rewrite_calls(arg, helper_syms, model_fun_syms),
+                ex.args
+            )...
+        )
     end
-    return Expr(ex.head,
-        map(arg -> _formulas_rewrite_calls(arg, helper_syms, model_fun_syms), ex.args)...)
+    return Expr(
+        ex.head,
+        map(arg -> _formulas_rewrite_calls(arg, helper_syms, model_fun_syms), ex.args)...
+    )
 end
 
 function _parse_formulas(block::Expr)
@@ -359,8 +384,10 @@ end
 # `name = crossing_rootval(:state, :threshold; tmax = T)` and return
 # `(name, state, threshold, tmax_expr, kind)`, or `nothing` if `rhs` is not one.
 function _formulas_crossing_spec(name::Symbol, rhs)
-    (rhs isa Expr && rhs.head == :call &&
-     (rhs.args[1] === :crossing_time || rhs.args[1] === :crossing_rootval)) ||
+    (
+        rhs isa Expr && rhs.head == :call &&
+            (rhs.args[1] === :crossing_time || rhs.args[1] === :crossing_rootval)
+    ) ||
         return nothing
     kind = rhs.args[1] === :crossing_rootval ? :rootval : :time
     tmax = :nothing
@@ -380,9 +407,11 @@ function _formulas_crossing_spec(name::Symbol, rhs)
     length(pos) == 2 ||
         error("$(rhs.args[1]) expects `$(rhs.args[1])(:state, :threshold; tmax = T)`.")
     function _sym(x)
-        x isa QuoteNode ? x.value :
-        (x isa Symbol ? x :
-         error("$(rhs.args[1]) arguments must be symbol literals, e.g. :state."))
+        return x isa QuoteNode ? x.value :
+            (
+                x isa Symbol ? x :
+                error("$(rhs.args[1]) arguments must be symbol literals, e.g. :state.")
+            )
     end
     # A statically numeric horizon is checkable now; a symbolic one is resolved at solve
     # time and left alone (#222).
@@ -394,7 +423,8 @@ function _formulas_crossing_spec(name::Symbol, rhs)
     return (name, _sym(pos[1]), _sym(pos[2]), tmax, kind)
 end
 
-function _formulas_build_formulas_expr(ir::FormulasIR,
+function _formulas_build_formulas_expr(
+        ir::FormulasIR,
         fixed_names::Vector{Symbol},
         re_names::Vector{Symbol},
         prede_names::Vector{Symbol},
@@ -405,7 +435,8 @@ function _formulas_build_formulas_expr(ir::FormulasIR,
         state_names::Vector{Symbol},
         signal_names::Vector{Symbol},
         index_sym::Symbol,
-        collect_fixed_names::Vector{Symbol} = Symbol[])
+        collect_fixed_names::Vector{Symbol} = Symbol[]
+    )
     det_exprs = copy(ir.det_exprs)
     # crossing-time nodes are computed by the solver event callback and merged into
     # `sol_accessors`; rewrite them to read that value. Done before the bare-state
@@ -414,8 +445,10 @@ function _formulas_build_formulas_expr(ir::FormulasIR,
         cross_names = Set(spec.name for spec in ir.crossings)
         for i in eachindex(ir.det_names)
             if ir.det_names[i] in cross_names
-                det_exprs[i] = Expr(:call, :getproperty, :sol_accessors,
-                    QuoteNode(ir.det_names[i]))
+                det_exprs[i] = Expr(
+                    :call, :getproperty, :sol_accessors,
+                    QuoteNode(ir.det_names[i])
+                )
             end
         end
     end
@@ -435,11 +468,12 @@ function _formulas_build_formulas_expr(ir::FormulasIR,
     # Also recognize S(vc) as a state-time call when vc is a varying covariate.
     vc_time_args = Set{Symbol}()
     let all_state_syms = Set(vcat(state_names, signal_names)),
-        vc_syms_early = Set(varying_cov_names)
+            vc_syms_early = Set(varying_cov_names)
 
         for ex in all_exprs
             _formulas_collect_vc_state_calls!(
-                ex, all_state_syms, vc_syms_early, time_call_syms, vc_time_args)
+                ex, all_state_syms, vc_syms_early, time_call_syms, vc_time_args
+            )
         end
     end
 
@@ -447,15 +481,19 @@ function _formulas_build_formulas_expr(ir::FormulasIR,
     required_signals = [s for s in signal_names if s in time_call_syms]
 
     state_call_syms = Set(vcat(required_states, required_signals))
-    all_exprs = [_formulas_replace_state_calls(ex, state_call_syms, vc_time_args)
-                 for ex in all_exprs]
+    all_exprs = [
+        _formulas_replace_state_calls(ex, state_call_syms, vc_time_args)
+            for ex in all_exprs
+    ]
     det_exprs = all_exprs[1:length(det_exprs)]
     obs_exprs = all_exprs[(length(det_exprs) + 1):end]
 
     helper_syms = Set(helper_names)
     model_fun_syms = Set(model_fun_names)
-    all_exprs = [_formulas_rewrite_calls(ex, helper_syms, model_fun_syms)
-                 for ex in all_exprs]
+    all_exprs = [
+        _formulas_rewrite_calls(ex, helper_syms, model_fun_syms)
+            for ex in all_exprs
+    ]
     det_exprs = all_exprs[1:length(det_exprs)]
     obs_exprs = all_exprs[(length(det_exprs) + 1):end]
 
@@ -472,7 +510,7 @@ function _formulas_build_formulas_expr(ir::FormulasIR,
         in_const = sym in const_cov_set
         in_var = sym in varying_cov_set
         count = (in_fixed ? 1 : 0) + (in_re ? 1 : 0) + (in_pre ? 1 : 0) +
-                (in_const ? 1 : 0) + (in_var ? 1 : 0)
+            (in_const ? 1 : 0) + (in_var ? 1 : 0)
         count > 1 &&
             error("Symbol $(sym) is ambiguous in @formulas (appears in multiple namespaces).")
     end
@@ -520,49 +558,61 @@ function _formulas_build_formulas_expr(ir::FormulasIR,
         push!(binds, :($(s) = getproperty(varying_covariates, $(QuoteNode(s)))))
     end
     for s in implicit_var
-        push!(binds, quote
-            local _v = getproperty(varying_covariates, $(QuoteNode(s)))
-            if _v isa Function
-                $(s) = _v(t)
-            else
-                $(s) = _v
+        push!(
+            binds, quote
+                local _v = getproperty(varying_covariates, $(QuoteNode(s)))
+                if _v isa Function
+                    $(s) = _v(t)
+                else
+                    $(s) = _v
+                end
             end
-        end)
+        )
     end
 
     det_assigns = [:($(ir.det_names[i]) = $(det_exprs[i])) for i in eachindex(ir.det_names)]
     all_vals = vcat([:($(name)) for name in ir.det_names], obs_exprs)
 
-    all_nt = Expr(:call,
-        Expr(:curly, :NamedTuple,
-            Expr(:tuple, QuoteNode.(vcat(ir.det_names, ir.obs_names))...)),
-        Expr(:tuple, all_vals...))
+    all_nt = Expr(
+        :call,
+        Expr(
+            :curly, :NamedTuple,
+            Expr(:tuple, QuoteNode.(vcat(ir.det_names, ir.obs_names))...)
+        ),
+        Expr(:tuple, all_vals...)
+    )
 
-    obs_nt = Expr(:call,
+    obs_nt = Expr(
+        :call,
         Expr(:curly, :NamedTuple, Expr(:tuple, QuoteNode.(ir.obs_names)...)),
-        Expr(:tuple, obs_exprs...))
+        Expr(:tuple, obs_exprs...)
+    )
 
-    all_expr = :(function (ctx, sol_accessors, constant_covariates_i, varying_covariates)
-        fixed_effects = ctx.fixed_effects
-        random_effects = ctx.random_effects
-        prede = ctx.prede
-        helpers = ctx.helpers
-        model_funs = ctx.model_funs
-        $(binds...)
-        $(det_assigns...)
-        return $all_nt
-    end)
+    all_expr = :(
+        function (ctx, sol_accessors, constant_covariates_i, varying_covariates)
+            fixed_effects = ctx.fixed_effects
+            random_effects = ctx.random_effects
+            prede = ctx.prede
+            helpers = ctx.helpers
+            model_funs = ctx.model_funs
+            $(binds...)
+            $(det_assigns...)
+            return $all_nt
+        end
+    )
 
-    obs_expr = :(function (ctx, sol_accessors, constant_covariates_i, varying_covariates)
-        fixed_effects = ctx.fixed_effects
-        random_effects = ctx.random_effects
-        prede = ctx.prede
-        helpers = ctx.helpers
-        model_funs = ctx.model_funs
-        $(binds...)
-        $(det_assigns...)
-        return $obs_nt
-    end)
+    obs_expr = :(
+        function (ctx, sol_accessors, constant_covariates_i, varying_covariates)
+            fixed_effects = ctx.fixed_effects
+            random_effects = ctx.random_effects
+            prede = ctx.prede
+            helpers = ctx.helpers
+            model_funs = ctx.model_funs
+            $(binds...)
+            $(det_assigns...)
+            return $obs_nt
+        end
+    )
 
     return (all_expr, obs_expr, required_states, required_signals)
 end
@@ -592,15 +642,19 @@ end
 _qcg(ex, ::Module, ::Set{Symbol}) = ex
 @inline function _qcg_sym(s::Symbol, mod::Module, locals::Set{Symbol})
     s in locals && return s
-    !isdefined(@__MODULE__, s) && isdefined(mod, s) ? GlobalRef(mod, s) : s
+    return !isdefined(@__MODULE__, s) && isdefined(mod, s) ? GlobalRef(mod, s) : s
 end
 function _qcg(ex::Expr, mod::Module, locals::Set{Symbol})
     if ex.head == :call && ex.args[1] isa Symbol
-        return Expr(:call, _qcg_sym(ex.args[1], mod, locals),
-            map(a -> _qcg(a, mod, locals), ex.args[2:end])...)
+        return Expr(
+            :call, _qcg_sym(ex.args[1], mod, locals),
+            map(a -> _qcg(a, mod, locals), ex.args[2:end])...
+        )
     elseif ex.head == :. && ex.args[1] isa Symbol
-        return Expr(:., _qcg_sym(ex.args[1], mod, locals),
-            map(a -> _qcg(a, mod, locals), ex.args[2:end])...)
+        return Expr(
+            :., _qcg_sym(ex.args[1], mod, locals),
+            map(a -> _qcg(a, mod, locals), ex.args[2:end])...
+        )
     end
     return Expr(ex.head, map(a -> _qcg(a, mod, locals), ex.args)...)
 end
@@ -629,7 +683,8 @@ together with lists of required DE states and signals.
 - `state_names`, `signal_names`: DE state and signal names for time-call rewriting.
 - `index_sym::Symbol = :t`: the varying-covariates key used to extract the current time.
 """
-function get_formulas_builders(f::Formulas;
+function get_formulas_builders(
+        f::Formulas;
         fixed_names::Vector{Symbol} = Symbol[],
         collect_fixed_names::Vector{Symbol} = Symbol[],
         random_names::Vector{Symbol} = Symbol[],
@@ -641,7 +696,8 @@ function get_formulas_builders(f::Formulas;
         state_names::Vector{Symbol} = Symbol[],
         signal_names::Vector{Symbol} = Symbol[],
         index_sym::Symbol = :t,
-        context_module::Module = @__MODULE__)
+        context_module::Module = @__MODULE__
+    )
     (form_all_expr, form_obs_expr, req_states, req_signals) = _formulas_build_formulas_expr(
         f.ir,
         fixed_names, random_names, prede_names,
@@ -710,19 +766,31 @@ macro formulas(block)
         delete!(var_syms, name)
     end
 
-    fun_syms = Set([s
-                    for s in call_heads
-                    if !(isdefined(Base, s) || isdefined(Distributions, s) ||
-                         isdefined(@__MODULE__, s))])
+    fun_syms = Set(
+        [
+            s
+                for s in call_heads
+                if !(
+                    isdefined(Base, s) || isdefined(Distributions, s) ||
+                    isdefined(@__MODULE__, s)
+                )
+        ]
+    )
     var_syms = _macro_filter_var_syms(var_syms)
 
     crossing_specs = Expr[]
     for i in eachindex(det_names)
         cs = _formulas_crossing_spec(det_names[i], det_exprs[i])
         cs === nothing && continue
-        push!(crossing_specs,
-            :(CrossingSpec($(QuoteNode(cs[1])), $(QuoteNode(cs[2])),
-                $(QuoteNode(cs[3])), $(cs[4]), $(QuoteNode(cs[5])))))
+        push!(
+            crossing_specs,
+            :(
+                CrossingSpec(
+                    $(QuoteNode(cs[1])), $(QuoteNode(cs[2])),
+                    $(QuoteNode(cs[3])), $(cs[4]), $(QuoteNode(cs[5]))
+                )
+            )
+        )
     end
 
     return quote

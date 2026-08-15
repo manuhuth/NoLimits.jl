@@ -149,10 +149,16 @@ macro preDifferentialEquation(block)
     delete!(var_syms, :model_funs)
     delete!(var_syms, :helper_functions)
 
-    call_syms = Set([s
-                     for s in call_syms
-                     if !(isdefined(Base, s) || isdefined(Distributions, s) ||
-                          isdefined(@__MODULE__, s))])
+    call_syms = Set(
+        [
+            s
+                for s in call_syms
+                if !(
+                    isdefined(Base, s) || isdefined(Distributions, s) ||
+                    isdefined(@__MODULE__, s)
+                )
+        ]
+    )
     var_syms = _macro_filter_var_syms(var_syms)
 
     # `sym in prop_syms` is decidable at macro-expansion time — emit the chosen
@@ -160,68 +166,85 @@ macro preDifferentialEquation(block)
     # function as `sym in Set([...])`, allocating a fresh Set on every builder
     # invocation; `calculate_prede` runs per individual per objective evaluation.
     # Mirrors the identical fix in RandomEffects.jl.)
-    binds_vars = [if sym in prop_syms
-                      quote
-                          if hasproperty(constant_features_i, $(QuoteNode(sym)))
-                              $(sym) = getproperty(constant_features_i, $(QuoteNode(sym)))
-                          end
-                      end
-                  else
-                      quote
-                          if hasproperty(constant_features_i, $(QuoteNode(sym)))
-                              $(sym) = getproperty(constant_features_i, $(QuoteNode(sym)))
-                          elseif hasproperty(random_effects, $(QuoteNode(sym)))
-                              $(sym) = getproperty(random_effects, $(QuoteNode(sym)))
-                          elseif hasproperty(fixed_effects, $(QuoteNode(sym)))
-                              $(sym) = getproperty(fixed_effects, $(QuoteNode(sym)))
-                          end
-                      end
-                  end
-                  for sym in var_syms]
+    binds_vars = [
+        if sym in prop_syms
+                quote
+                    if hasproperty(constant_features_i, $(QuoteNode(sym)))
+                        $(sym) = getproperty(constant_features_i, $(QuoteNode(sym)))
+                end
+                end
+        else
+                quote
+                    if hasproperty(constant_features_i, $(QuoteNode(sym)))
+                        $(sym) = getproperty(constant_features_i, $(QuoteNode(sym)))
+                elseif hasproperty(random_effects, $(QuoteNode(sym)))
+                        $(sym) = getproperty(random_effects, $(QuoteNode(sym)))
+                elseif hasproperty(fixed_effects, $(QuoteNode(sym)))
+                        $(sym) = getproperty(fixed_effects, $(QuoteNode(sym)))
+                end
+                end
+        end
+            for sym in var_syms
+    ]
 
-    binds_funs = [quote
-                      if hasproperty(model_funs, $(QuoteNode(sym)))
-                          $(sym) = getproperty(model_funs, $(QuoteNode(sym)))
-                      elseif hasproperty(helper_functions, $(QuoteNode(sym)))
-                          $(sym) = getproperty(helper_functions, $(QuoteNode(sym)))
-                      end
-                  end
-                  for sym in call_syms]
+    binds_funs = [
+        quote
+                if hasproperty(model_funs, $(QuoteNode(sym)))
+                    $(sym) = getproperty(model_funs, $(QuoteNode(sym)))
+            elseif hasproperty(helper_functions, $(QuoteNode(sym)))
+                    $(sym) = getproperty(helper_functions, $(QuoteNode(sym)))
+            end
+            end
+            for sym in call_syms
+    ]
 
     assigns = [:($(names[i]) = $(exprs[i])) for i in eachindex(names)]
     ret_expr = Expr(:tuple, (Expr(:(=), names[i], names[i]) for i in eachindex(names))...)
 
-    func_expr = :(function (fixed_effects::ComponentArray,
-            random_effects::ComponentArray,
-            constant_features_i::NamedTuple,
-            model_funs::NamedTuple,
-            helper_functions::NamedTuple)
-        $(binds_vars...)
-        $(binds_funs...)
-        $(assigns...)
-        $ret_expr
-    end)
+    func_expr = :(
+        function (
+                fixed_effects::ComponentArray,
+                random_effects::ComponentArray,
+                constant_features_i::NamedTuple,
+                model_funs::NamedTuple,
+                helper_functions::NamedTuple,
+            )
+            $(binds_vars...)
+            $(binds_funs...)
+            $(assigns...)
+            $ret_expr
+        end
+    )
 
     names_expr = Expr(:vect, QuoteNode.(names)...)
     syms_expr = Expr(:vect, QuoteNode.(collect(var_syms))...)
     lines_expr = Expr(:vect, QuoteNode.(lines)...)
     return quote
         prede_fn = RuntimeGeneratedFunction(
-            @__MODULE__, @__MODULE__, $(QuoteNode(func_expr)))
-        function prede_wrapper(fixed_effects::ComponentArray,
+            @__MODULE__, @__MODULE__, $(QuoteNode(func_expr))
+        )
+        function prede_wrapper(
+                fixed_effects::ComponentArray,
                 random_effects::ComponentArray,
                 constant_features_i::NamedTuple,
-                model_funs::NamedTuple)
-            return prede_fn(fixed_effects, random_effects,
-                constant_features_i, model_funs, NamedTuple())
+                model_funs::NamedTuple
+            )
+            return prede_fn(
+                fixed_effects, random_effects,
+                constant_features_i, model_funs, NamedTuple()
+            )
         end
-        function prede_wrapper(fixed_effects::ComponentArray,
+        function prede_wrapper(
+                fixed_effects::ComponentArray,
                 random_effects::ComponentArray,
                 constant_features_i::NamedTuple,
                 model_funs::NamedTuple,
-                helper_functions::NamedTuple)
-            return prede_fn(fixed_effects, random_effects,
-                constant_features_i, model_funs, helper_functions)
+                helper_functions::NamedTuple
+            )
+            return prede_fn(
+                fixed_effects, random_effects,
+                constant_features_i, model_funs, helper_functions
+            )
         end
         meta = PreDEMeta($names_expr, $syms_expr, $lines_expr)
         builder = PreDEBuilder(prede_wrapper)

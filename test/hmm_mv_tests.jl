@@ -31,10 +31,15 @@ const _Q_MV = [-1.0 1.0; 2.0 -2.0]
 
 # Each variant: (testset label, transition/rate matrix, constructor closure).
 mv_variants = (
-    ("MVDiscreteTimeHMM", _T_MV,
-        (A, em, init) -> MVDiscreteTimeDiscreteStatesHMM(A, em, init)),
-    ("MVContinuousTimeHMM", _Q_MV,
-        (A, em, init) -> MVContinuousTimeDiscreteStatesHMM(A, em, init, 1.0)))
+    (
+        "MVDiscreteTimeHMM", _T_MV,
+        (A, em, init) -> MVDiscreteTimeDiscreteStatesHMM(A, em, init),
+    ),
+    (
+        "MVContinuousTimeHMM", _Q_MV,
+        (A, em, init) -> MVContinuousTimeDiscreteStatesHMM(A, em, init, 1.0),
+    ),
+)
 
 # ---------------------------------------------------------------------------
 # Block A: Standalone struct tests shared by both variants
@@ -54,8 +59,10 @@ for (label, M, mk) in mv_variants
         end
 
         # Joint MvNormal emission mode
-        em_mv = (MvNormal([0.0, 2.0], [1.0 0.0; 0.0 1.0]),
-            MvNormal([3.0, -1.0], [1.0 0.0; 0.0 1.0]))
+        em_mv = (
+            MvNormal([0.0, 2.0], [1.0 0.0; 0.0 1.0]),
+            MvNormal([3.0, -1.0], [1.0 0.0; 0.0 1.0]),
+        )
         hmm_mv = mk(M, em_mv, init)
         @test hmm_mv.n_states == 2
         @test hmm_mv.n_outcomes == 2
@@ -76,7 +83,8 @@ for (label, M, mk) in mv_variants
 
         # Mismatched n_outcomes across states: state 1 has 2, state 2 has 1
         @test_throws ErrorException mk(
-            M, ((Normal(0.0, 1.0), Normal(2.0, 0.5)), (Normal(3.0, 1.0),)), init)
+            M, ((Normal(0.0, 1.0), Normal(2.0, 0.5)), (Normal(3.0, 1.0),)), init
+        )
     end
 
     @testset "$label: logpdf — independent emissions" begin
@@ -86,7 +94,7 @@ for (label, M, mk) in mv_variants
         y = [0.1, 2.1]
 
         lp = logpdf(hmm, y)
-        @test isapprox(exp(lp), pdf(hmm, y); atol = 1e-12)
+        @test isapprox(exp(lp), pdf(hmm, y); atol = 1.0e-12)
 
         # Different y gives different logpdf
         @test logpdf(hmm, [3.1, -0.9]) != lp
@@ -94,23 +102,25 @@ for (label, M, mk) in mv_variants
         # Manual check: p(y|state k) = p(y1|state k) * p(y2|state k) under independence
         p_h = probabilities_hidden_states(hmm)
         p_obs = [pdf(em[k][1], y[1]) * pdf(em[k][2], y[2]) for k in 1:2]
-        @test isapprox(exp(lp), sum(p_h .* p_obs); atol = 1e-10)
+        @test isapprox(exp(lp), sum(p_h .* p_obs); atol = 1.0e-10)
     end
 
     @testset "$label: logpdf — joint MvNormal emissions" begin
-        em_mv = (MvNormal([0.0, 2.0], [1.0 0.0; 0.0 1.0]),
-            MvNormal([3.0, -1.0], [1.0 0.0; 0.0 1.0]))
+        em_mv = (
+            MvNormal([0.0, 2.0], [1.0 0.0; 0.0 1.0]),
+            MvNormal([3.0, -1.0], [1.0 0.0; 0.0 1.0]),
+        )
         init = Categorical([0.6, 0.4])
         hmm = mk(M, em_mv, init)
         y = [0.1, 2.1]
 
         lp = logpdf(hmm, y)
-        @test isapprox(exp(lp), pdf(hmm, y); atol = 1e-12)
+        @test isapprox(exp(lp), pdf(hmm, y); atol = 1.0e-12)
 
         # Manual check
         p_h = probabilities_hidden_states(hmm)
         p_obs = [pdf(em_mv[k], y) for k in 1:2]
-        @test isapprox(exp(lp), sum(p_h .* p_obs); atol = 1e-10)
+        @test isapprox(exp(lp), sum(p_h .* p_obs); atol = 1.0e-10)
     end
 
     @testset "$label: missing — independent, partial" begin
@@ -125,7 +135,7 @@ for (label, M, mk) in mv_variants
         # Equals the logpdf of a mixture over the first outcome only
         p_h = probabilities_hidden_states(hmm)
         p_obs = [pdf(em[k][1], 0.1) for k in 1:2]
-        @test isapprox(exp(lp_partial), sum(p_h .* p_obs); atol = 1e-10)
+        @test isapprox(exp(lp_partial), sum(p_h .* p_obs); atol = 1.0e-10)
     end
 
     @testset "$label: missing — independent, all missing" begin
@@ -133,12 +143,14 @@ for (label, M, mk) in mv_variants
         hmm = mk(M, em, Categorical([0.6, 0.4]))
 
         # All emissions contribute 0 → logsumexp(log p_hidden) = log(1) = 0
-        @test isapprox(logpdf(hmm, [missing, missing]), 0.0; atol = 1e-10)
+        @test isapprox(logpdf(hmm, [missing, missing]), 0.0; atol = 1.0e-10)
     end
 
     @testset "$label: missing — MvNormal, partial" begin
-        em_mv = (MvNormal([0.0, 2.0], [1.0 0.0; 0.0 1.0]),
-            MvNormal([3.0, -1.0], [1.0 0.0; 0.0 1.0]))
+        em_mv = (
+            MvNormal([0.0, 2.0], [1.0 0.0; 0.0 1.0]),
+            MvNormal([3.0, -1.0], [1.0 0.0; 0.0 1.0]),
+        )
         hmm = mk(M, em_mv, Categorical([0.6, 0.4]))
 
         lp_partial = logpdf(hmm, [0.1, missing])
@@ -146,15 +158,17 @@ for (label, M, mk) in mv_variants
         # Manual: marginal of MvNormal(μ, I) over index 1 is Normal(μ[1], 1.0)
         p_h = probabilities_hidden_states(hmm)
         p_obs = [pdf(Normal(em_mv[k].μ[1], 1.0), 0.1) for k in 1:2]
-        @test isapprox(exp(lp_partial), sum(p_h .* p_obs); atol = 1e-10)
+        @test isapprox(exp(lp_partial), sum(p_h .* p_obs); atol = 1.0e-10)
     end
 
     @testset "$label: missing — MvNormal, all missing" begin
-        em_mv = (MvNormal([0.0, 2.0], [1.0 0.0; 0.0 1.0]),
-            MvNormal([3.0, -1.0], [1.0 0.0; 0.0 1.0]))
+        em_mv = (
+            MvNormal([0.0, 2.0], [1.0 0.0; 0.0 1.0]),
+            MvNormal([3.0, -1.0], [1.0 0.0; 0.0 1.0]),
+        )
         hmm = mk(M, em_mv, Categorical([0.6, 0.4]))
 
-        @test isapprox(logpdf(hmm, [missing, missing]), 0.0; atol = 1e-10)
+        @test isapprox(logpdf(hmm, [missing, missing]), 0.0; atol = 1.0e-10)
     end
 
     @testset "$label: missing — non-MvNormal joint throws error" begin
@@ -174,7 +188,8 @@ for (label, M, mk) in mv_variants
         # All missing: posterior equals prior
         p_prior = probabilities_hidden_states(hmm)
         @test isapprox(
-            posterior_hidden_states(hmm, [missing, missing]), p_prior; atol = 1e-10)
+            posterior_hidden_states(hmm, [missing, missing]), p_prior; atol = 1.0e-10
+        )
 
         # Observation at state-1 means → posterior favors state 1
         post1 = posterior_hidden_states(hmm, [0.0, 2.0])
@@ -195,8 +210,10 @@ for (label, M, mk) in mv_variants
         @test all(isfinite, s)
 
         # Joint MvNormal mode
-        em_mv = (MvNormal([0.0, 2.0], [1.0 0.0; 0.0 1.0]),
-            MvNormal([3.0, -1.0], [1.0 0.0; 0.0 1.0]))
+        em_mv = (
+            MvNormal([0.0, 2.0], [1.0 0.0; 0.0 1.0]),
+            MvNormal([3.0, -1.0], [1.0 0.0; 0.0 1.0]),
+        )
         hmm_mv = mk(M, em_mv, Categorical([0.6, 0.4]))
         s_mv = rand(MersenneTwister(42), hmm_mv)
         @test s_mv isa Vector
@@ -216,22 +233,24 @@ for (label, M, mk) in mv_variants
         C = cov(hmm)
         @test C isa Matrix
         @test size(C) == (2, 2)
-        @test isapprox(C, C'; atol = 1e-10)  # symmetric
+        @test isapprox(C, C'; atol = 1.0e-10)  # symmetric
 
         v = var(hmm)
         @test v isa Vector
         @test length(v) == 2
-        @test isapprox(v, diag(C); atol = 1e-10)
+        @test isapprox(v, diag(C); atol = 1.0e-10)
 
         # Joint MvNormal mode
-        em_mv = (MvNormal([0.0, 2.0], [1.0 0.0; 0.0 1.0]),
-            MvNormal([3.0, -1.0], [1.0 0.0; 0.0 1.0]))
+        em_mv = (
+            MvNormal([0.0, 2.0], [1.0 0.0; 0.0 1.0]),
+            MvNormal([3.0, -1.0], [1.0 0.0; 0.0 1.0]),
+        )
         hmm_mv = mk(M, em_mv, Categorical([0.6, 0.4]))
         C_mv = cov(hmm_mv)
         @test C_mv isa Matrix
         @test size(C_mv) == (2, 2)
-        @test isapprox(C_mv, C_mv'; atol = 1e-10)
-        @test isapprox(var(hmm_mv), diag(C_mv); atol = 1e-10)
+        @test isapprox(C_mv, C_mv'; atol = 1.0e-10)
+        @test isapprox(var(hmm_mv), diag(C_mv); atol = 1.0e-10)
     end
 
     @testset "$label: ForwardDiff through logpdf" begin
@@ -240,8 +259,10 @@ for (label, M, mk) in mv_variants
 
         # Differentiate w.r.t. the 4 emission means
         f = x -> begin
-            em = ((Normal(x[1], 1.0), Normal(x[2], 0.5)),
-                (Normal(x[3], 1.0), Normal(x[4], 0.5)))
+            em = (
+                (Normal(x[1], 1.0), Normal(x[2], 0.5)),
+                (Normal(x[3], 1.0), Normal(x[4], 0.5)),
+            )
             logpdf(mk(M, em, init), y)
         end
 
@@ -261,11 +282,11 @@ end
 
     # Identity transition: state distribution is preserved
     hmm_stay = MVDiscreteTimeDiscreteStatesHMM([1.0 0.0; 0.0 1.0], em, init)
-    @test isapprox(probabilities_hidden_states(hmm_stay), [1.0, 0.0]; atol = 1e-12)
+    @test isapprox(probabilities_hidden_states(hmm_stay), [1.0, 0.0]; atol = 1.0e-12)
 
     # Deterministic flip: state 1 becomes state 2
     hmm_flip = MVDiscreteTimeDiscreteStatesHMM([0.0 1.0; 1.0 0.0], em, init)
-    @test isapprox(probabilities_hidden_states(hmm_flip), [0.0, 1.0]; atol = 1e-12)
+    @test isapprox(probabilities_hidden_states(hmm_flip), [0.0, 1.0]; atol = 1.0e-12)
 end
 
 @testset "MVContinuousTimeHMM: probabilities_hidden_states" begin
@@ -275,13 +296,13 @@ end
     # Zero Δt: state distribution is unchanged
     hmm_zero = MVContinuousTimeDiscreteStatesHMM(_Q_MV, em, init, 0.0)
     p_zero = probabilities_hidden_states(hmm_zero)
-    @test isapprox(p_zero, [1.0, 0.0]; atol = 1e-6)
+    @test isapprox(p_zero, [1.0, 0.0]; atol = 1.0e-6)
 
     # Large Δt: approaches stationary distribution [2/3, 1/3]
     hmm_long = MVContinuousTimeDiscreteStatesHMM(_Q_MV, em, init, 50.0)
     p_long = probabilities_hidden_states(hmm_long)
-    @test isapprox(p_long[1], 2 / 3; atol = 1e-4)
-    @test isapprox(p_long[2], 1 / 3; atol = 1e-4)
+    @test isapprox(p_long[1], 2 / 3; atol = 1.0e-4)
+    @test isapprox(p_long[2], 1 / 3; atol = 1.0e-4)
 end
 
 @testset "MVContinuousTimeHMM: Δt affects state probabilities" begin
@@ -342,17 +363,26 @@ end
             dummy = RealNumber(0.0)
         end
         @formulas begin
-            P = [0.6 0.4 0.0;
-                 0.0 0.7 0.3;
-                 0.0 0.0 1.0]
-            e1 = (Categorical([1.0, 0.0, 0.0]),
-                Categorical([1.0, 0.0, 0.0]))
-            e2 = (Categorical([0.0, 1.0, 0.0]),
-                Categorical([0.0, 1.0, 0.0]))
-            e3 = (Categorical([0.0, 0.0, 1.0]),
-                Categorical([0.0, 0.0, 1.0]))
+            P = [
+                0.6 0.4 0.0;
+                0.0 0.7 0.3;
+                0.0 0.0 1.0
+            ]
+            e1 = (
+                Categorical([1.0, 0.0, 0.0]),
+                Categorical([1.0, 0.0, 0.0]),
+            )
+            e2 = (
+                Categorical([0.0, 1.0, 0.0]),
+                Categorical([0.0, 1.0, 0.0]),
+            )
+            e3 = (
+                Categorical([0.0, 0.0, 1.0]),
+                Categorical([0.0, 0.0, 1.0]),
+            )
             y ~ MVDiscreteTimeDiscreteStatesHMM(
-                P, (e1, e2, e3), Categorical([1.0, 0.0, 0.0]))
+                P, (e1, e2, e3), Categorical([1.0, 0.0, 0.0])
+            )
         end
     end
 
@@ -370,13 +400,13 @@ end
         (
             (Categorical([1.0, 0.0, 0.0]), Categorical([1.0, 0.0, 0.0])),
             (Categorical([0.0, 1.0, 0.0]), Categorical([0.0, 1.0, 0.0])),
-            (Categorical([0.0, 0.0, 1.0]), Categorical([0.0, 0.0, 1.0]))
+            (Categorical([0.0, 0.0, 1.0]), Categorical([0.0, 0.0, 1.0])),
         ),
         Categorical([1.0, 0.0, 0.0])
     )
     expected = _recursive_hmm_loglikelihood(fill(dist, nrow(df)), df.y)
 
-    @test isapprox(ll, expected; atol = 1e-12)
+    @test isapprox(ll, expected; atol = 1.0e-12)
 end
 
 @testset "MVDiscreteTimeHMM: missing observations still propagate hidden state" begin
@@ -388,17 +418,26 @@ end
             dummy = RealNumber(0.0)
         end
         @formulas begin
-            P = [0.6 0.4 0.0;
-                 0.0 0.7 0.3;
-                 0.0 0.0 1.0]
-            e1 = (Categorical([1.0, 0.0, 0.0]),
-                Categorical([1.0, 0.0, 0.0]))
-            e2 = (Categorical([0.0, 1.0, 0.0]),
-                Categorical([0.0, 1.0, 0.0]))
-            e3 = (Categorical([0.0, 0.0, 1.0]),
-                Categorical([0.0, 0.0, 1.0]))
+            P = [
+                0.6 0.4 0.0;
+                0.0 0.7 0.3;
+                0.0 0.0 1.0
+            ]
+            e1 = (
+                Categorical([1.0, 0.0, 0.0]),
+                Categorical([1.0, 0.0, 0.0]),
+            )
+            e2 = (
+                Categorical([0.0, 1.0, 0.0]),
+                Categorical([0.0, 1.0, 0.0]),
+            )
+            e3 = (
+                Categorical([0.0, 0.0, 1.0]),
+                Categorical([0.0, 0.0, 1.0]),
+            )
             y ~ MVDiscreteTimeDiscreteStatesHMM(
-                P, (e1, e2, e3), Categorical([1.0, 0.0, 0.0]))
+                P, (e1, e2, e3), Categorical([1.0, 0.0, 0.0])
+            )
         end
     end
 
@@ -416,13 +455,13 @@ end
         (
             (Categorical([1.0, 0.0, 0.0]), Categorical([1.0, 0.0, 0.0])),
             (Categorical([0.0, 1.0, 0.0]), Categorical([0.0, 1.0, 0.0])),
-            (Categorical([0.0, 0.0, 1.0]), Categorical([0.0, 0.0, 1.0]))
+            (Categorical([0.0, 0.0, 1.0]), Categorical([0.0, 0.0, 1.0])),
         ),
         Categorical([1.0, 0.0, 0.0])
     )
     expected = _recursive_hmm_loglikelihood(fill(dist, nrow(df)), df.y)
 
-    @test isapprox(ll, expected; atol = 1e-12)
+    @test isapprox(ll, expected; atol = 1.0e-12)
 end
 
 @testset "MVDiscreteTimeHMM: ForwardDiff through full model" begin
@@ -476,8 +515,10 @@ end
     df = DataFrame(
         ID = [1, 1, 1, 2, 2, 2],
         t = [0.0, 1.0, 2.0, 0.0, 1.0, 2.0],
-        y = [[0.1, 2.1], [0.2, 1.9], [3.1, -0.9],
-            [0.0, 2.2], [2.9, -0.8], [0.1, 2.0]]
+        y = [
+            [0.1, 2.1], [0.2, 1.9], [3.1, -0.9],
+            [0.0, 2.2], [2.9, -0.8], [0.1, 2.0],
+        ]
     )
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
@@ -488,9 +529,13 @@ end
     res_map = fit_model(dm, NoLimits.MAP(optim_kwargs = (; iterations = 5)))
     @test res_map isa FitResult
 
-    res_mcmc = fit_model(dm,
-        NoLimits.MCMC(; sampler = MH(),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)))
+    res_mcmc = fit_model(
+        dm,
+        NoLimits.MCMC(;
+            sampler = MH(),
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+        )
+    )
     @test res_mcmc isa FitResult
     @test NoLimits.get_chain(res_mcmc) isa MCMCChains.Chains
 
@@ -533,13 +578,15 @@ end
 end
 
 @testset "MVContinuousTimeHMM: loglikelihood uses recursive filtering" begin
-    Q = [-1.2 1.2 0.0;
-         0.0 -1.0 1.0;
-         0.0 0.0 0.0]
+    Q = [
+        -1.2 1.2 0.0;
+        0.0 -1.0 1.0;
+        0.0 0.0 0.0
+    ]
     emissions = (
         (Categorical([1.0, 0.0, 0.0]), Categorical([1.0, 0.0, 0.0])),
         (Categorical([0.0, 1.0, 0.0]), Categorical([0.0, 1.0, 0.0])),
-        (Categorical([0.0, 0.0, 1.0]), Categorical([0.0, 0.0, 1.0]))
+        (Categorical([0.0, 0.0, 1.0]), Categorical([0.0, 0.0, 1.0])),
     )
     init = Categorical([1.0, 0.0, 0.0])
 
@@ -554,13 +601,15 @@ end
         end
         @formulas begin
             y ~ MVContinuousTimeDiscreteStatesHMM(
-                [-1.2 1.2 0.0;
-                 0.0 -1.0 1.0;
-                 0.0 0.0 0.0],
+                [
+                    -1.2 1.2 0.0;
+                    0.0 -1.0 1.0;
+                    0.0 0.0 0.0
+                ],
                 (
                     (Categorical([1.0, 0.0, 0.0]), Categorical([1.0, 0.0, 0.0])),
                     (Categorical([0.0, 1.0, 0.0]), Categorical([0.0, 1.0, 0.0])),
-                    (Categorical([0.0, 0.0, 1.0]), Categorical([0.0, 0.0, 1.0]))
+                    (Categorical([0.0, 0.0, 1.0]), Categorical([0.0, 0.0, 1.0])),
                 ),
                 Categorical([1.0, 0.0, 0.0]),
                 dt
@@ -582,17 +631,19 @@ end
     ll = NoLimits.loglikelihood(dm, θ, ComponentArray())
     expected = _recursive_hmm_loglikelihood(fill(dist, nrow(df)), df.y)
 
-    @test isapprox(ll, expected; atol = 1e-12)
+    @test isapprox(ll, expected; atol = 1.0e-12)
 end
 
 @testset "MVContinuousTimeHMM: missing observations still propagate hidden state" begin
-    Q = [-1.2 1.2 0.0;
-         0.0 -1.0 1.0;
-         0.0 0.0 0.0]
+    Q = [
+        -1.2 1.2 0.0;
+        0.0 -1.0 1.0;
+        0.0 0.0 0.0
+    ]
     emissions = (
         (Categorical([1.0, 0.0, 0.0]), Categorical([1.0, 0.0, 0.0])),
         (Categorical([0.0, 1.0, 0.0]), Categorical([0.0, 1.0, 0.0])),
-        (Categorical([0.0, 0.0, 1.0]), Categorical([0.0, 0.0, 1.0]))
+        (Categorical([0.0, 0.0, 1.0]), Categorical([0.0, 0.0, 1.0])),
     )
     init = Categorical([1.0, 0.0, 0.0])
 
@@ -607,13 +658,15 @@ end
         end
         @formulas begin
             y ~ MVContinuousTimeDiscreteStatesHMM(
-                [-1.2 1.2 0.0;
-                 0.0 -1.0 1.0;
-                 0.0 0.0 0.0],
+                [
+                    -1.2 1.2 0.0;
+                    0.0 -1.0 1.0;
+                    0.0 0.0 0.0
+                ],
                 (
                     (Categorical([1.0, 0.0, 0.0]), Categorical([1.0, 0.0, 0.0])),
                     (Categorical([0.0, 1.0, 0.0]), Categorical([0.0, 1.0, 0.0])),
-                    (Categorical([0.0, 0.0, 1.0]), Categorical([0.0, 0.0, 1.0]))
+                    (Categorical([0.0, 0.0, 1.0]), Categorical([0.0, 0.0, 1.0])),
                 ),
                 Categorical([1.0, 0.0, 0.0]),
                 dt
@@ -635,7 +688,7 @@ end
     ll = NoLimits.loglikelihood(dm, θ, ComponentArray())
     expected = _recursive_hmm_loglikelihood(fill(dist, nrow(df)), df.y)
 
-    @test isapprox(ll, expected; atol = 1e-12)
+    @test isapprox(ll, expected; atol = 1.0e-12)
 end
 
 @testset "MVContinuousTimeHMM: ForwardDiff through full model" begin
@@ -693,8 +746,10 @@ end
         ID = [1, 1, 1, 2, 2, 2],
         t = [0.0, 1.0, 2.0, 0.0, 1.0, 2.0],
         dt = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
-        y = [[0.1, 2.1], [0.2, 1.9], [3.1, -0.9],
-            [0.0, 2.2], [2.9, -0.8], [0.1, 2.0]]
+        y = [
+            [0.1, 2.1], [0.2, 1.9], [3.1, -0.9],
+            [0.0, 2.2], [2.9, -0.8], [0.1, 2.0],
+        ]
     )
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
@@ -705,9 +760,13 @@ end
     res_map = fit_model(dm, NoLimits.MAP(optim_kwargs = (; iterations = 5)))
     @test res_map isa FitResult
 
-    res_mcmc = fit_model(dm,
-        NoLimits.MCMC(; sampler = MH(),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)))
+    res_mcmc = fit_model(
+        dm,
+        NoLimits.MCMC(;
+            sampler = MH(),
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+        )
+    )
     @test res_mcmc isa FitResult
     @test NoLimits.get_chain(res_mcmc) isa MCMCChains.Chains
 

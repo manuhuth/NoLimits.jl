@@ -14,14 +14,15 @@ using Random
     @test length(NoLimits.get_vi_trace(res)) > 0
     @test NoLimits.get_vi_state(res) isa NamedTuple
     @test rand(Random.Xoshiro(2), NoLimits.get_variational_posterior(res)) isa
-          AbstractVector
+        AbstractVector
 
     draws = NoLimits.sample_posterior(res; n_draws = 7, rng = Random.Xoshiro(3))
     @test size(draws, 1) == 7
     @test size(draws, 2) >= 2
 
     draws_named = NoLimits.sample_posterior(
-        res; n_draws = 3, rng = Random.Xoshiro(4), return_names = true)
+        res; n_draws = 3, rng = Random.Xoshiro(4), return_names = true
+    )
     @test haskey(draws_named, :draws)
     @test haskey(draws_named, :names)
     @test size(draws_named.draws, 1) == 3
@@ -80,8 +81,10 @@ end
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     err = try
-        fit_model(dm, NoLimits.VI(; turing_kwargs = (max_iter = 5, progress = false));
-            constants = (a = 0.2, σ = 0.5))
+        fit_model(
+            dm, NoLimits.VI(; turing_kwargs = (max_iter = 5, progress = false));
+            constants = (a = 0.2, σ = 0.5)
+        )
         nothing
     catch e
         e
@@ -145,8 +148,10 @@ end
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
 
     err = try
-        fit_model(dm, NoLimits.VI(; turing_kwargs = (max_iter = 5, progress = false));
-            rng = Random.Xoshiro(10))
+        fit_model(
+            dm, NoLimits.VI(; turing_kwargs = (max_iter = 5, progress = false));
+            rng = Random.Xoshiro(10)
+        )
         nothing
     catch e
         e

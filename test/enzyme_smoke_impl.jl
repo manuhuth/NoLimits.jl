@@ -19,7 +19,8 @@ Enzyme.API.strictAliasing!(false)
             σ = RealNumber(0.4, scale = :log)
             ω = RealNumber(0.5, scale = :log)
             Γ = SoftTreeParameters(
-                2, 2; function_name = :ST1, seed = 0, calculate_se = false)
+                2, 2; function_name = :ST1, seed = 0, calculate_se = false
+            )
         end
         @covariates begin
             t = Covariate()
@@ -53,13 +54,19 @@ Enzyme.API.strictAliasing!(false)
     g_fd = ForwardDiff.gradient(f, b)
     @test all(isfinite, g_fd)
 
-    g_fwd = collect(Enzyme.gradient(
-        set_runtime_activity(Enzyme.Forward), Const(f), copy(b))[1])
-    @test isapprox(g_fwd, g_fd; rtol = 1e-6, atol = 1e-10)
+    g_fwd = collect(
+        Enzyme.gradient(
+            set_runtime_activity(Enzyme.Forward), Const(f), copy(b)
+        )[1]
+    )
+    @test isapprox(g_fwd, g_fd; rtol = 1.0e-6, atol = 1.0e-10)
 
-    g_rev = collect(Enzyme.gradient(
-        set_runtime_activity(Enzyme.Reverse), Const(f), copy(b))[1])
-    @test isapprox(g_rev, g_fd; rtol = 1e-6, atol = 1e-10)
+    g_rev = collect(
+        Enzyme.gradient(
+            set_runtime_activity(Enzyme.Reverse), Const(f), copy(b)
+        )[1]
+    )
+    @test isapprox(g_rev, g_fd; rtol = 1.0e-6, atol = 1.0e-10)
 end
 
 @testset "Enzyme smoke: diagonal closed-form ODE marginal loglik (fwd + rev)" begin
@@ -87,8 +94,10 @@ end
         end
     end
     model = set_solver_config(model; saveat_mode = :saveat, closed_form = :auto)
-    df = DataFrame(ID = repeat(1:2, inner = 3), t = repeat([0.0, 0.5, 1.0], outer = 2),
-        y = abs.(randn(Xoshiro(1), 6)) .+ 0.5)
+    df = DataFrame(
+        ID = repeat(1:2, inner = 3), t = repeat([0.0, 0.5, 1.0], outer = 2),
+        y = abs.(randn(Xoshiro(1), 6)) .+ 0.5
+    )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     @test get_closed_form_plan(dm).mode === :diagonal
     cache = NoLimits.build_ll_cache(dm)
@@ -96,15 +105,23 @@ end
     ax = getaxes(θu)
     x0 = collect(θu)
     f = let dm = dm, cache = cache, ax = ax
-        xv -> NoLimits.loglikelihood(dm, ComponentArray(xv, ax), ComponentArray();
-            cache = cache, serialization = NoLimits.EnsembleSerial())
+        xv -> NoLimits.loglikelihood(
+            dm, ComponentArray(xv, ax), ComponentArray();
+            cache = cache, serialization = NoLimits.EnsembleSerial()
+        )
     end
     g_fd = ForwardDiff.gradient(f, x0)
     @test all(isfinite, g_fd)
-    g_fwd = collect(Enzyme.gradient(
-        set_runtime_activity(Enzyme.Forward), Const(f), copy(x0))[1])
-    @test isapprox(g_fwd, g_fd; rtol = 1e-6, atol = 1e-9)
-    g_rev = collect(Enzyme.gradient(
-        set_runtime_activity(Enzyme.Reverse), Const(f), copy(x0))[1])
-    @test isapprox(g_rev, g_fd; rtol = 1e-6, atol = 1e-9)
+    g_fwd = collect(
+        Enzyme.gradient(
+            set_runtime_activity(Enzyme.Forward), Const(f), copy(x0)
+        )[1]
+    )
+    @test isapprox(g_fwd, g_fd; rtol = 1.0e-6, atol = 1.0e-9)
+    g_rev = collect(
+        Enzyme.gradient(
+            set_runtime_activity(Enzyme.Reverse), Const(f), copy(x0)
+        )[1]
+    )
+    @test isapprox(g_rev, g_fd; rtol = 1.0e-6, atol = 1.0e-9)
 end

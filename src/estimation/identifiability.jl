@@ -146,15 +146,17 @@ function _validate_ident_method(dm::DataModel, method)
     if method isa MAP
         priors = get_priors(fe)
         has_prior = !isempty(keys(priors)) &&
-                    any(!(getfield(priors, k) isa Priorless) for k in keys(priors))
+            any(!(getfield(priors, k) isa Priorless) for k in keys(priors))
         has_prior ||
             error("MAP identifiability diagnostics require at least one prior on fixed effects.")
     end
     return nothing
 end
 
-function _select_point(fe::FixedEffects, at,
-        fit_point::Union{Nothing, ComponentArray} = nothing)
+function _select_point(
+        fe::FixedEffects, at,
+        fit_point::Union{Nothing, ComponentArray} = nothing
+    )
     if at isa ComponentArray
         return at, :custom
     elseif at === :start
@@ -170,7 +172,8 @@ function _select_point(fe::FixedEffects, at,
 end
 
 function _prepare_ident_point(
-        fe::FixedEffects, θ_at_u::ComponentArray, constants::NamedTuple)
+        fe::FixedEffects, θ_at_u::ComponentArray, constants::NamedTuple
+    )
     fixed_names = get_names(fe)
     for n in fixed_names
         hasproperty(θ_at_u, n) ||
@@ -204,7 +207,8 @@ function _prepare_ident_point(
     offset - 1 == length(θ_free_t) ||
         error("Internal error while building free-parameter index map.")
 
-    return (; free_names = free_names,
+    return (;
+        free_names = free_names,
         ranges = ranges,
         transform = transform,
         inv_transform = inv_transform,
@@ -212,7 +216,8 @@ function _prepare_ident_point(
         θ_const_t = θ_const_t,
         θ_free_t = θ_free_t,
         axs_free = getaxes(θ_free_t),
-        axs_full = getaxes(θ_const_t))
+        axs_full = getaxes(θ_const_t),
+    )
 end
 
 function _merge_full_theta(θ_const_t, axs_full, θt_free, free_names)
@@ -242,7 +247,8 @@ function _condition_number_from_svals(svals::AbstractVector, tol::Real)
 end
 
 function _null_loadings(
-        v::AbstractVector, free_names::Vector{Symbol}, ranges::Vector{UnitRange{Int}})
+        v::AbstractVector, free_names::Vector{Symbol}, ranges::Vector{UnitRange{Int}}
+    )
     mags = Vector{Float64}(undef, length(free_names))
     total = 0.0
     for i in eachindex(free_names)
@@ -258,10 +264,12 @@ function _null_loadings(
     return NamedTuple{Tuple(free_names)}(Tuple(mags))
 end
 
-function _build_null_directions(H::AbstractMatrix,
+function _build_null_directions(
+        H::AbstractMatrix,
         free_names::Vector{Symbol},
         ranges::Vector{UnitRange{Int}},
-        tol::Real)
+        tol::Real
+    )
     size(H, 1) == 0 && return NullDirection[]
     F = svd(H)
     out = NullDirection[]
@@ -274,11 +282,13 @@ function _build_null_directions(H::AbstractMatrix,
     return out
 end
 
-function _hessian_fd_from_grad(grad_fun::Function,
+function _hessian_fd_from_grad(
+        grad_fun::Function,
         x0::Vector{Float64};
         abs_step::Real,
         rel_step::Real,
-        max_tries::Int)
+        max_tries::Int
+    )
     n = length(x0)
     H = zeros(Float64, n, n)
     for j in 1:n
@@ -306,11 +316,13 @@ function _hessian_fd_from_grad(grad_fun::Function,
     return 0.5 .* (H .+ H')
 end
 
-function _gradient_fd_from_obj(obj_fun::Function,
+function _gradient_fd_from_obj(
+        obj_fun::Function,
         x0::Vector{Float64};
-        abs_step::Real = 1e-6,
-        rel_step::Real = 1e-6,
-        max_tries::Int = 8)
+        abs_step::Real = 1.0e-6,
+        rel_step::Real = 1.0e-6,
+        max_tries::Int = 8
+    )
     n = length(x0)
     g = zeros(Float64, n)
     for j in 1:n
@@ -357,7 +369,8 @@ function _laplace_batch_labels(dm::DataModel, info::REBatchInfo)
     return labels
 end
 
-function _build_re_information(dm::DataModel,
+function _build_re_information(
+        dm::DataModel,
         method::Laplace,
         θu::ComponentArray,
         batch_infos::Vector{REBatchInfo},
@@ -366,13 +379,15 @@ function _build_re_information(dm::DataModel,
         ebe_cache::_LaplaceCache,
         seed::UInt64;
         atol::Real,
-        rtol::Real)
+        rtol::Real
+    )
     isempty(batch_infos) && return RandomEffectInformation[]
     ebe_serialization = ll_cache isa Vector ? SciMLBase.EnsembleThreads() :
-                        SciMLBase.EnsembleSerial()
+        SciMLBase.EnsembleSerial()
     inner_opts = _resolve_inner_options(method.inner, dm)
     multistart_opts = _resolve_multistart_options(method.multistart, inner_opts)
-    bstars = _laplace_get_bstar!(ebe_cache, dm, batch_infos, θu, const_cache, ll_cache;
+    bstars = _laplace_get_bstar!(
+        ebe_cache, dm, batch_infos, θu, const_cache, ll_cache;
         optimizer = inner_opts.optimizer,
         optim_kwargs = inner_opts.kwargs,
         adtype = inner_opts.adtype,
@@ -380,16 +395,20 @@ function _build_re_information(dm::DataModel,
         theta_tol = 0.0,
         multistart = multistart_opts,
         rng = Random.Xoshiro(seed),
-        serialization = ebe_serialization)
+        serialization = ebe_serialization
+    )
     out = RandomEffectInformation[]
     hess_opts = method.hessian
     for (bi, info) in enumerate(batch_infos)
         nb = get_n_b(info)
         labels = _laplace_batch_labels(dm, info)
         nb == 0 && begin
-            push!(out,
+            push!(
+                out,
                 RandomEffectInformation(
-                    bi, 0, labels, Float64[], Float64[], 0, 0, float(atol), 1.0, true))
+                    bi, 0, labels, Float64[], Float64[], 0, 0, float(atol), 1.0, true
+                )
+            )
             continue
         end
         b = bstars[bi]
@@ -403,7 +422,8 @@ function _build_re_information(dm::DataModel,
             scale_factor = hess_opts.scale_factor,
             ctx = "identifiability_re",
             hess_cache = nothing,
-            use_cache = false)
+            use_cache = false
+        )
         A = Symmetric(-H)
         svals = svdvals(Matrix(A))
         eigs = eigvals(A)
@@ -412,23 +432,31 @@ function _build_re_information(dm::DataModel,
         nullity = length(svals) - rank
         cond = _condition_number_from_svals(svals, tol)
         posdef = isempty(eigs) || minimum(eigs) > tol
-        push!(out,
-            RandomEffectInformation(bi, nb, labels, Float64.(svals), Float64.(eigs),
-                rank, nullity, tol, cond, posdef))
+        push!(
+            out,
+            RandomEffectInformation(
+                bi, nb, labels, Float64.(svals), Float64.(eigs),
+                rank, nullity, tol, cond, posdef
+            )
+        )
     end
     return out
 end
 
-function _build_no_re_objective(dm::DataModel,
+function _build_no_re_objective(
+        dm::DataModel,
         method::Union{MLE, MAP},
         prep,
         fe::FixedEffects;
         penalty::NamedTuple = NamedTuple(),
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
-        serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads())
-    ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-        serialization = serialization, force_saveat = true)
+        serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads()
+    )
+    ll_cache = build_ll_cache(
+        dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = serialization, force_saveat = true
+    )
     has_penalty = !isempty(keys(penalty))
     has_prior = method isa MAP
 
@@ -437,7 +465,8 @@ function _build_no_re_objective(dm::DataModel,
         θt_full = _merge_full_theta(prep.θ_const_t, prep.axs_full, θt_free, prep.free_names)
         θu = prep.inv_transform(θt_full)
         ll = loglikelihood(
-            dm, θu, ComponentArray(); cache = ll_cache, serialization = serialization)
+            dm, θu, ComponentArray(); cache = ll_cache, serialization = serialization
+        )
         ll == -Inf && return Inf
         obj = -ll
         if has_prior
@@ -463,7 +492,8 @@ function _build_no_re_objective(dm::DataModel,
     return obj_only, grad_fun, objective_symbol, RandomEffectInformation[]
 end
 
-function _build_laplace_objective(dm::DataModel,
+function _build_laplace_objective(
+        dm::DataModel,
         method::Laplace,
         prep,
         fe::FixedEffects;
@@ -474,11 +504,14 @@ function _build_laplace_objective(dm::DataModel,
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         rng::AbstractRNG = Random.default_rng(),
         rng_seed::Union{Nothing, UInt64} = nothing,
-        atol::Real = 1e-8,
-        rtol::Real = sqrt(eps(Float64)))
+        atol::Real = 1.0e-8,
+        rtol::Real = sqrt(eps(Float64))
+    )
     _, batch_infos, const_cache = _build_re_batch_infos(dm, constants_re)
-    ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-        serialization = serialization, force_saveat = true)
+    ll_cache = build_ll_cache(
+        dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = serialization, force_saveat = true
+    )
     seed = _laplace_seed(rng, rng_seed)
     ebe_cache = _init_laplace_eval_cache(length(batch_infos), Float64)
     cache_opts = LaplaceCacheOptions(0.0)
@@ -498,7 +531,8 @@ function _build_laplace_objective(dm::DataModel,
             cache_opts = cache_opts,
             multistart = multistart_opts,
             rng = Random.Xoshiro(seed),
-            serialization = serialization)
+            serialization = serialization
+        )
         obj == Inf && return (Inf, fill(NaN, length(x_vec)), θu)
 
         if has_penalty
@@ -522,30 +556,36 @@ function _build_laplace_objective(dm::DataModel,
         θt_free = ComponentArray(x, prep.axs_free)
         θt_full = _merge_full_theta(prep.θ_const_t, prep.axs_full, θt_free, prep.free_names)
         θu = prep.inv_transform(θt_full)
-        _build_re_information(dm, method, θu, batch_infos, const_cache, ll_cache,
-            ebe_cache, seed; atol = atol, rtol = rtol)
+        _build_re_information(
+            dm, method, θu, batch_infos, const_cache, ll_cache,
+            ebe_cache, seed; atol = atol, rtol = rtol
+        )
     end
     return obj_only, grad_fun, objective_symbol, re_info_fun
 end
 
-function _compute_hessian(obj_only::Function,
+function _compute_hessian(
+        obj_only::Function,
         grad_fun::Function,
         x0::Vector{Float64};
         backend::Symbol,
         abs_step::Real,
         rel_step::Real,
-        max_tries::Int)
+        max_tries::Int
+    )
     if backend == :forwarddiff
         H = ForwardDiff.hessian(obj_only, x0)
         return 0.5 .* (Float64.(H) .+ Float64.(H'))
     elseif backend == :fd_gradient
         return _hessian_fd_from_grad(
-            grad_fun, x0; abs_step = abs_step, rel_step = rel_step, max_tries = max_tries)
+            grad_fun, x0; abs_step = abs_step, rel_step = rel_step, max_tries = max_tries
+        )
     end
     error("Unknown hessian_backend $(backend). Use :auto, :forwarddiff, or :fd_gradient.")
 end
 
-function _identifiability_report(dm::DataModel,
+function _identifiability_report(
+        dm::DataModel,
         method,
         at,
         fit_point::Union{Nothing, ComponentArray};
@@ -557,12 +597,13 @@ function _identifiability_report(dm::DataModel,
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         rng::AbstractRNG = Random.default_rng(),
         rng_seed::Union{Nothing, UInt64} = nothing,
-        atol::Real = 1e-8,
+        atol::Real = 1.0e-8,
         rtol::Real = sqrt(eps(Float64)),
         hessian_backend::Symbol = :auto,
-        fd_abs_step::Real = 1e-4,
-        fd_rel_step::Real = 1e-3,
-        fd_max_tries::Int = 8)
+        fd_abs_step::Real = 1.0e-4,
+        fd_rel_step::Real = 1.0e-3,
+        fd_max_tries::Int = 8
+    )
     fe = get_fixed(get_model(dm))
     θ_at_u, at_sym = _select_point(fe, at, fit_point)
     prep = _prepare_ident_point(fe, θ_at_u, constants)
@@ -580,7 +621,8 @@ function _identifiability_report(dm::DataModel,
             penalty = penalty,
             ode_args = ode_args,
             ode_kwargs = ode_kwargs,
-            serialization = serialization)
+            serialization = serialization
+        )
         default_backend = :forwarddiff
     else
         obj_only, grad_fun, objective_symbol, re_info_fun = _build_laplace_objective(
@@ -593,7 +635,8 @@ function _identifiability_report(dm::DataModel,
             rng = rng,
             rng_seed = rng_seed,
             atol = atol,
-            rtol = rtol)
+            rtol = rtol
+        )
         default_backend = :fd_gradient
     end
 
@@ -601,21 +644,26 @@ function _identifiability_report(dm::DataModel,
     x0 = Float64.(collect(prep.θ_free_t))
     backend_used = backend
     H = try
-        _compute_hessian(obj_only, grad_fun, x0;
+        _compute_hessian(
+            obj_only, grad_fun, x0;
             backend = backend,
             abs_step = fd_abs_step,
             rel_step = fd_rel_step,
-            max_tries = fd_max_tries)
+            max_tries = fd_max_tries
+        )
     catch err
         if backend == :forwarddiff
-            @warn "ForwardDiff Hessian failed in identifiability_report; falling back to finite-difference Hessian from gradients." error=sprint(
-                showerror, err)
+            @warn "ForwardDiff Hessian failed in identifiability_report; falling back to finite-difference Hessian from gradients." error = sprint(
+                showerror, err
+            )
             backend_used = :fd_gradient
-            _compute_hessian(obj_only, grad_fun, x0;
+            _compute_hessian(
+                obj_only, grad_fun, x0;
                 backend = :fd_gradient,
                 abs_step = fd_abs_step,
                 rel_step = fd_rel_step,
-                max_tries = fd_max_tries)
+                max_tries = fd_max_tries
+            )
         else
             rethrow(err)
         end
@@ -641,10 +689,11 @@ function _identifiability_report(dm::DataModel,
         fd_abs_step = float(fd_abs_step),
         fd_rel_step = float(fd_rel_step),
         fd_max_tries = fd_max_tries,
-        serialization = serialization
+        serialization = serialization,
     )
 
-    return IdentifiabilityReport(_ident_method_symbol(method),
+    return IdentifiabilityReport(
+        _ident_method_symbol(method),
         objective_symbol,
         at_sym,
         prep.θ_const_u,
@@ -660,7 +709,8 @@ function _identifiability_report(dm::DataModel,
         locally_identifiable,
         null_dirs,
         re_info,
-        settings)
+        settings
+    )
 end
 
 """
@@ -703,7 +753,8 @@ used by default (`at=:fit`).
 An [`IdentifiabilityReport`](@ref) with the Hessian, its spectral decomposition, a
 local identifiability verdict, and any null directions.
 """
-function identifiability_report(dm::DataModel;
+function identifiability_report(
+        dm::DataModel;
         method::Union{Symbol, FittingMethod} = :auto,
         at::Union{Symbol, ComponentArray} = :start,
         constants::NamedTuple = NamedTuple(),
@@ -714,15 +765,17 @@ function identifiability_report(dm::DataModel;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         rng::AbstractRNG = Random.default_rng(),
         rng_seed::Union{Nothing, UInt64} = nothing,
-        atol::Real = 1e-8,
+        atol::Real = 1.0e-8,
         rtol::Real = sqrt(eps(Float64)),
         hessian_backend::Symbol = :auto,
-        fd_abs_step::Real = 1e-4,
-        fd_rel_step::Real = 1e-3,
-        fd_max_tries::Int = 8)
+        fd_abs_step::Real = 1.0e-4,
+        fd_rel_step::Real = 1.0e-3,
+        fd_max_tries::Int = 8
+    )
     method_use = _resolve_ident_method(dm, method)
     _validate_ident_method(dm, method_use)
-    return _identifiability_report(dm,
+    return _identifiability_report(
+        dm,
         method_use,
         at,
         nothing;
@@ -739,10 +792,12 @@ function identifiability_report(dm::DataModel;
         hessian_backend = hessian_backend,
         fd_abs_step = fd_abs_step,
         fd_rel_step = fd_rel_step,
-        fd_max_tries = fd_max_tries)
+        fd_max_tries = fd_max_tries
+    )
 end
 
-function identifiability_report(res::FitResult;
+function identifiability_report(
+        res::FitResult;
         method::Union{Symbol, FittingMethod} = :fit,
         at::Union{Symbol, ComponentArray} = :fit,
         constants::Union{Nothing, NamedTuple} = nothing,
@@ -753,12 +808,13 @@ function identifiability_report(res::FitResult;
         serialization::Union{Nothing, SciMLBase.EnsembleAlgorithm} = nothing,
         rng::Union{Nothing, AbstractRNG} = nothing,
         rng_seed::Union{Nothing, UInt64} = nothing,
-        atol::Real = 1e-8,
+        atol::Real = 1.0e-8,
         rtol::Real = sqrt(eps(Float64)),
         hessian_backend::Symbol = :auto,
-        fd_abs_step::Real = 1e-4,
-        fd_rel_step::Real = 1e-3,
-        fd_max_tries::Int = 8)
+        fd_abs_step::Real = 1.0e-4,
+        fd_rel_step::Real = 1.0e-3,
+        fd_max_tries::Int = 8
+    )
     dm = get_data_model(res)
     dm === nothing &&
         error("This fit result does not store a DataModel; call identifiability_report(dm, ...) instead.")
@@ -778,28 +834,37 @@ function identifiability_report(res::FitResult;
 
     fitkw = get_fit_kwargs(res)
     constants_use = constants === nothing ?
-                    (haskey(fitkw, :constants) ? getfield(fitkw, :constants) :
-                     NamedTuple()) : constants
+        (
+            haskey(fitkw, :constants) ? getfield(fitkw, :constants) :
+            NamedTuple()
+        ) : constants
     constants_re_use = constants_re === nothing ?
-                       (haskey(fitkw, :constants_re) ? getfield(fitkw, :constants_re) :
-                        NamedTuple()) : constants_re
+        (
+            haskey(fitkw, :constants_re) ? getfield(fitkw, :constants_re) :
+            NamedTuple()
+        ) : constants_re
     penalty_use = penalty === nothing ?
-                  (haskey(fitkw, :penalty) ? getfield(fitkw, :penalty) : NamedTuple()) :
-                  penalty
+        (haskey(fitkw, :penalty) ? getfield(fitkw, :penalty) : NamedTuple()) :
+        penalty
     ode_args_use = ode_args === nothing ?
-                   (haskey(fitkw, :ode_args) ? getfield(fitkw, :ode_args) : ()) : ode_args
+        (haskey(fitkw, :ode_args) ? getfield(fitkw, :ode_args) : ()) : ode_args
     ode_kwargs_use = ode_kwargs === nothing ?
-                     (haskey(fitkw, :ode_kwargs) ? getfield(fitkw, :ode_kwargs) :
-                      NamedTuple()) : ode_kwargs
+        (
+            haskey(fitkw, :ode_kwargs) ? getfield(fitkw, :ode_kwargs) :
+            NamedTuple()
+        ) : ode_kwargs
     serialization_use = serialization === nothing ?
-                        (haskey(fitkw, :serialization) ? getfield(fitkw, :serialization) :
-                         EnsembleThreads()) : serialization
+        (
+            haskey(fitkw, :serialization) ? getfield(fitkw, :serialization) :
+            EnsembleThreads()
+        ) : serialization
     rng_use = rng === nothing ?
-              (haskey(fitkw, :rng) ? getfield(fitkw, :rng) : Random.default_rng()) : rng
+        (haskey(fitkw, :rng) ? getfield(fitkw, :rng) : Random.default_rng()) : rng
 
     fit_point = get_params(res; scale = :untransformed)
 
-    return _identifiability_report(dm,
+    return _identifiability_report(
+        dm,
         method_use,
         at,
         fit_point;
@@ -816,5 +881,6 @@ function identifiability_report(res::FitResult;
         hessian_backend = hessian_backend,
         fd_abs_step = fd_abs_step,
         fd_rel_step = fd_rel_step,
-        fd_max_tries = fd_max_tries)
+        fd_max_tries = fd_max_tries
+    )
 end

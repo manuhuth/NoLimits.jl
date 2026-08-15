@@ -33,9 +33,11 @@ using SentinelArrays: ChainedVector
     end
 
     @test !NoLimits._has_continuous_time_hmm_outcomes(
-        model_non_ode, df_basic; primary_id = :ID, time_col = :t)
+        model_non_ode, df_basic; primary_id = :ID, time_col = :t
+    )
     @test NoLimits._supports_row_varying_re_groups(
-        model_non_ode, df_basic; primary_id = :ID, time_col = :t)
+        model_non_ode, df_basic; primary_id = :ID, time_col = :t
+    )
 
     model_ode = @Model begin
         @fixedEffects begin
@@ -65,7 +67,8 @@ using SentinelArrays: ChainedVector
     end
 
     @test !NoLimits._supports_row_varying_re_groups(
-        model_ode, df_basic; primary_id = :ID, time_col = :t)
+        model_ode, df_basic; primary_id = :ID, time_col = :t
+    )
 
     model_ct_hmm = @Model begin
         @fixedEffects begin
@@ -86,17 +89,21 @@ using SentinelArrays: ChainedVector
             p1 = 1 / (1 + exp(-p1_r))
             p2 = 1 / (1 + exp(-p2_r))
             Q = [-λ12 λ12; λ21 -λ21]
-            y ~ ContinuousTimeDiscreteStatesHMM(Q,
+            y ~ ContinuousTimeDiscreteStatesHMM(
+                Q,
                 (Bernoulli(p1), Bernoulli(p2)),
                 Categorical([0.6, 0.4]),
-                dt)
+                dt
+            )
         end
     end
 
     @test NoLimits._has_continuous_time_hmm_outcomes(
-        model_ct_hmm, df_basic; primary_id = :ID, time_col = :t)
+        model_ct_hmm, df_basic; primary_id = :ID, time_col = :t
+    )
     @test NoLimits._supports_row_varying_re_groups(
-        model_ct_hmm, df_basic; primary_id = :ID, time_col = :t)
+        model_ct_hmm, df_basic; primary_id = :ID, time_col = :t
+    )
 
     model_ct_hmm_helper = @Model begin
         @helpers begin
@@ -131,9 +138,11 @@ using SentinelArrays: ChainedVector
     end
 
     @test NoLimits._has_continuous_time_hmm_outcomes(
-        model_ct_hmm_helper, df_basic; primary_id = :ID, time_col = :t)
+        model_ct_hmm_helper, df_basic; primary_id = :ID, time_col = :t
+    )
     @test NoLimits._supports_row_varying_re_groups(
-        model_ct_hmm_helper, df_basic; primary_id = :ID, time_col = :t)
+        model_ct_hmm_helper, df_basic; primary_id = :ID, time_col = :t
+    )
 
     model_dt_hmm = @Model begin
         @fixedEffects begin
@@ -152,17 +161,21 @@ using SentinelArrays: ChainedVector
             p22 = 1 / (1 + exp(-p22_r))
             p1 = 1 / (1 + exp(-p1_r))
             p2 = 1 / (1 + exp(-p2_r))
-            P = [p11 (1-p11); (1-p22) p22]
-            y ~ DiscreteTimeDiscreteStatesHMM(P,
+            P = [p11 (1 - p11); (1 - p22) p22]
+            y ~ DiscreteTimeDiscreteStatesHMM(
+                P,
                 (Bernoulli(p1), Bernoulli(p2)),
-                Categorical([0.6, 0.4]))
+                Categorical([0.6, 0.4])
+            )
         end
     end
 
     @test !NoLimits._has_continuous_time_hmm_outcomes(
-        model_dt_hmm, df_basic; primary_id = :ID, time_col = :t)
+        model_dt_hmm, df_basic; primary_id = :ID, time_col = :t
+    )
     @test NoLimits._supports_row_varying_re_groups(
-        model_dt_hmm, df_basic; primary_id = :ID, time_col = :t)
+        model_dt_hmm, df_basic; primary_id = :ID, time_col = :t
+    )
 end
 
 @testset "DataModel without events" begin
@@ -198,9 +211,11 @@ end
         y = [1.0, 1.1, 0.9, 1.0, 1.2]
     )
 
-    dm_varying = DataModel(model, df;
+    dm_varying = DataModel(
+        model, df;
         primary_id = :ID,
-        time_col = :t)
+        time_col = :t
+    )
     @test length(get_individuals(dm_varying)) == 3
     @test length(get_batches(dm_varying)) == 1
 
@@ -213,9 +228,11 @@ end
         y = [1.0, 1.1, 0.9, 1.0, 1.2]
     )
 
-    dm = DataModel(model, df_ok;
+    dm = DataModel(
+        model, df_ok;
         primary_id = :ID,
-        time_col = :t)
+        time_col = :t
+    )
 
     @test length(get_individuals(dm)) == 3
     @test all(ind -> ind.callbacks === nothing, get_individuals(dm))
@@ -263,13 +280,15 @@ end
         y = [missing, 1.1, 1.2, missing, 0.9]
     )
 
-    dm = DataModel(model, df;
+    dm = DataModel(
+        model, df;
         primary_id = :ID,
         time_col = :t,
         evid_col = :EVID,
         amt_col = :AMT,
         rate_col = :RATE,
-        cmt_col = :CMT)
+        cmt_col = :CMT
+    )
 
     @test length(get_individuals(dm)) == 2
     ind1 = get_individual(dm, 1)
@@ -278,9 +297,11 @@ end
 
     # Without a DE block the dose amounts go nowhere -- warn instead of silently
     # dropping them (#174).
-    @test_logs (:warn, r"no @DifferentialEquation") match_mode=:any DataModel(model, df;
+    @test_logs (:warn, r"no @DifferentialEquation") match_mode = :any DataModel(
+        model, df;
         primary_id = :ID, time_col = :t, evid_col = :EVID,
-        amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT)
+        amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT
+    )
 end
 
 @testset "DataModel serialization config (EnsembleThreads)" begin
@@ -310,10 +331,12 @@ end
         y = [1.0, 1.1]
     )
 
-    dm = DataModel(model, df;
+    dm = DataModel(
+        model, df;
         primary_id = :ID,
         time_col = :t,
-        serialization = EnsembleThreads())
+        serialization = EnsembleThreads()
+    )
 
     @test dm.config.serialization isa EnsembleThreads
 end
@@ -346,7 +369,8 @@ end
         y = [1.0, 1.1]
     )
     @test_throws ErrorException DataModel(
-        model, df_missing_time; primary_id = :ID, time_col = :t)
+        model, df_missing_time; primary_id = :ID, time_col = :t
+    )
 
     df_missing_evid_cols = DataFrame(
         ID = [1, 1],
@@ -355,10 +379,12 @@ end
         Age = [30.0, 30.0],
         y = [missing, 1.1]
     )
-    @test_throws ErrorException DataModel(model, df_missing_evid_cols;
+    @test_throws ErrorException DataModel(
+        model, df_missing_evid_cols;
         primary_id = :ID,
         time_col = :t,
-        evid_col = :EVID)
+        evid_col = :EVID
+    )
 end
 
 @testset "DataModel time_col covariate validation" begin
@@ -380,7 +406,8 @@ end
     )
 
     @test_throws ErrorException DataModel(
-        model_missing, df; primary_id = :ID, time_col = :t)
+        model_missing, df; primary_id = :ID, time_col = :t
+    )
 
     model_bad = @Model begin
         @covariates begin
@@ -695,10 +722,12 @@ end
             p1 = 1 / (1 + exp(-p1_r))
             p2 = 1 / (1 + exp(-p2_r))
             Q = [-λ12 λ12; λ21 -λ21]
-            y ~ ContinuousTimeDiscreteStatesHMM(Q,
+            y ~ ContinuousTimeDiscreteStatesHMM(
+                Q,
                 (Bernoulli(p1), Bernoulli(p2)),
                 Categorical([0.6, 0.4]),
-                dt)
+                dt
+            )
         end
     end
 
@@ -736,10 +765,12 @@ end
             p22 = 1 / (1 + exp(-p22_r))
             p1 = 1 / (1 + exp(-p1_r))
             p2 = 1 / (1 + exp(-p2_r))
-            P = [p11 (1-p11); (1-p22) p22]
-            y ~ DiscreteTimeDiscreteStatesHMM(P,
+            P = [p11 (1 - p11); (1 - p22) p22]
+            y ~ DiscreteTimeDiscreteStatesHMM(
+                P,
                 (Bernoulli(p1), Bernoulli(p2)),
-                Categorical([0.6, 0.4]))
+                Categorical([0.6, 0.4])
+            )
         end
     end
 
@@ -1527,7 +1558,8 @@ end
 
     dm = nothing
     @test_logs (:info, r"numeric random-effect grouping levels") (
-        :warn, r"weakly identified") begin
+        :warn, r"weakly identified",
+    ) begin
         dm = DataModel(model, df; primary_id = :OBS, time_col = :t)
     end
     @test dm isa DataModel
@@ -1647,7 +1679,8 @@ end
         y = [0.1, 0.2]
     )
     @test_throws ErrorException DataModel(
-        model_used, df_used_missing; primary_id = :ID, time_col = :t)
+        model_used, df_used_missing; primary_id = :ID, time_col = :t
+    )
 
     model_unused = @Model begin
         @fixedEffects begin
@@ -1743,16 +1776,20 @@ end
         CMT = ones(Int, 8),
         y = Union{Missing, Float64}[missing, 1.0, 0.8, missing, 0.6, 0.4, 0.2, 0.1]
     )
-    dm = DataModel(model, df; primary_id = :ID, time_col = :t, evid_col = :EVID,
-        amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT)
+    dm = DataModel(
+        model, df; primary_id = :ID, time_col = :t, evid_col = :EVID,
+        amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT
+    )
     inds = get_individuals(dm)
     E = eltype(inds)
     @test length(unique(map(typeof, inds))) > 1      # the case actually arose
     @test !isa(E, UnionAll)                          # not widened to the typejoin
     @test isa(E, Union)
     # Homogeneous data must still land on a single concrete type (Union{T} === T).
-    dm1 = DataModel(model, df[df.ID .<= 2, :]; primary_id = :ID, time_col = :t,
-        evid_col = :EVID, amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT)
+    dm1 = DataModel(
+        model, df[df.ID .<= 2, :]; primary_id = :ID, time_col = :t,
+        evid_col = :EVID, amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT
+    )
     @test isconcretetype(eltype(get_individuals(dm1)))
 end
 
@@ -1777,8 +1814,10 @@ end
         end
     end
 
-    cols = (id = [["a", "a"], ["b", "b"]], t = [[0.0, 1.0], [0.0, 1.0]],
-        w = [[1.0, 1.0], [2.0, 2.0]], y = [[1.0, 1.1], [0.9, 1.0]])
+    cols = (
+        id = [["a", "a"], ["b", "b"]], t = [[0.0, 1.0], [0.0, 1.0]],
+        w = [[1.0, 1.0], [2.0, 2.0]], y = [[1.0, 1.1], [0.9, 1.0]],
+    )
     df_chained = DataFrame(map(ChainedVector, cols); copycols = false)
     df_plain = DataFrame(map(c -> reduce(vcat, c), cols))
     @test df_chained.id isa ChainedVector
@@ -1810,22 +1849,40 @@ end
     build(df) = DataModel(model, df; primary_id = :ID, time_col = :t)
 
     @test_throws ErrorException build(DataFrame(ID = Int[], t = Float64[], y = Float64[]))
-    @test_throws ErrorException build(DataFrame(
-        ID = [1, 1], t = [0.0, 1.0], y = [1.0, NaN]))
-    @test_throws ErrorException build(DataFrame(
-        ID = [1, 1], t = [0.0, Inf], y = [1.0, 1.1]))
-    @test_throws ErrorException build(DataFrame(
-        ID = [1, 1], t = ["0", "1"], y = [1.0, 1.1]))
+    @test_throws ErrorException build(
+        DataFrame(
+            ID = [1, 1], t = [0.0, 1.0], y = [1.0, NaN]
+        )
+    )
+    @test_throws ErrorException build(
+        DataFrame(
+            ID = [1, 1], t = [0.0, Inf], y = [1.0, 1.1]
+        )
+    )
+    @test_throws ErrorException build(
+        DataFrame(
+            ID = [1, 1], t = ["0", "1"], y = [1.0, 1.1]
+        )
+    )
     # An all-missing outcome frame is a valid simulation target, so it warns at
     # construction and is refused by fit_model instead.
-    dm_missing = @test_logs (:warn,) match_mode=:any build(DataFrame(
-        ID = [1, 1], t = [0.0, 1.0], y = Union{Missing, Float64}[missing, missing]))
+    dm_missing = @test_logs (:warn,) match_mode = :any build(
+        DataFrame(
+            ID = [1, 1], t = [0.0, 1.0], y = Union{Missing, Float64}[missing, missing]
+        )
+    )
     @test_throws ErrorException fit_model(dm_missing, NoLimits.MLE())
     # Duplicate and unsorted timepoints are warnings, not errors.
-    @test_logs (:warn,) match_mode=:any build(DataFrame(
-        ID = [1, 1], t = [0.0, 0.0], y = [1.0, 1.1]))
-    @test_logs (:warn,) match_mode=:any build(DataFrame(
-        ID = [1, 1], t = [1.0, 0.0], y = [1.0, 1.1]))
+    @test_logs (:warn,) match_mode = :any build(
+        DataFrame(
+            ID = [1, 1], t = [0.0, 0.0], y = [1.0, 1.1]
+        )
+    )
+    @test_logs (:warn,) match_mode = :any build(
+        DataFrame(
+            ID = [1, 1], t = [1.0, 0.0], y = [1.0, 1.1]
+        )
+    )
 
     model_re = @Model begin
         @fixedEffects begin
@@ -1843,8 +1900,10 @@ end
         end
     end
     msg = try
-        DataModel(model_re, DataFrame(ID = [1, 1], t = [0.0, 1.0], y = [1.0, 1.1]);
-            primary_id = :ID, time_col = :t)
+        DataModel(
+            model_re, DataFrame(ID = [1, 1], t = [0.0, 1.0], y = [1.0, 1.1]);
+            primary_id = :ID, time_col = :t
+        )
         ""
     catch e
         sprint(showerror, e)

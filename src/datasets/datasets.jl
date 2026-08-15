@@ -5,17 +5,19 @@ using Downloads, Statistics
 # Delimited-file parsing, implemented in NoLimitsCSVExt.
 function _csv_read_tsv end
 import DataFrames: DataFrame, rename!, transform!, groupby, combine, leftjoin,
-                   unstack, unique, nrow, select!
+    unstack, unique, nrow, select!
 
 const _WARFARIN_MONOLIX_URL = "https://monolixsuite.slp-software.com/__attachments/" *
-                              "a_44285f45df8e1b4242acd496410a6dc60ad42b6b4eded11a2ed4c760015ae9dd/" *
-                              "warfarin_data.txt?cb=71a33cd5079262af4e0b83e495043d52"
+    "a_44285f45df8e1b4242acd496410a6dc60ad42b6b4eded11a2ed4c760015ae9dd/" *
+    "warfarin_data.txt?cb=71a33cd5079262af4e0b83e495043d52"
 
 function _prepare_warfarin_df(df::DataFrame)
     DataFrames.rename!(df, :amt => :d, :time => :t)
 
-    DataFrames.transform!(DataFrames.groupby(df, :id),
-        :d => (x -> coalesce.(x, first(skipmissing(x)))) => :d)
+    DataFrames.transform!(
+        DataFrames.groupby(df, :id),
+        :d => (x -> coalesce.(x, first(skipmissing(x)))) => :d
+    )
 
     df.id = string.(df.id)
 
@@ -69,14 +71,16 @@ function load_warfarin_from_monolix()
     try
         path = Downloads.download(_WARFARIN_MONOLIX_URL)
     catch err
-        error("""
-Failed to download the warfarin dataset.
+        error(
+            """
+            Failed to download the warfarin dataset.
 
-  Source URL: $(_WARFARIN_MONOLIX_URL)
+              Source URL: $(_WARFARIN_MONOLIX_URL)
 
-Check your internet connection and re-run.
-Original error: $(sprint(showerror, err))
-""")
+            Check your internet connection and re-run.
+            Original error: $(sprint(showerror, err))
+            """
+        )
     end
     df_raw = _csv_read_tsv(path)
     return _prepare_warfarin_df(df_raw)

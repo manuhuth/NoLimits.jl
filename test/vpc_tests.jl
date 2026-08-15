@@ -51,8 +51,10 @@ end
         end
     end
 
-    df = DataFrame(ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0], z = [0.1, 0.2, 0.1, 0.2],
-        y = Union{Missing, Float64}[0.15, missing, 0.14, missing])
+    df = DataFrame(
+        ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0], z = [0.1, 0.2, 0.1, 0.2],
+        y = Union{Missing, Float64}[0.15, missing, 0.14, missing]
+    )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     res = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
     @test plot_vpc(res; n_simulations = 5, n_bins = 2) !== nothing
@@ -76,12 +78,18 @@ end
             y ~ Bernoulli(p)
         end
     end
-    df_bern = DataFrame(ID = [1, 1, 2, 2, 3, 3], t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
-        z = [0.1, 0.2, 0.1, 0.2, 0.1, 0.2], y = [0, 1, 0, 1, 0, 1])
+    df_bern = DataFrame(
+        ID = [1, 1, 2, 2, 3, 3], t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+        z = [0.1, 0.2, 0.1, 0.2, 0.1, 0.2], y = [0, 1, 0, 1, 0, 1]
+    )
     dm_bern = DataModel(model_bern, df_bern; primary_id = :ID, time_col = :t)
-    res_bern = fit_model(dm_bern,
-        MCMC(; sampler = MH(),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)))
+    res_bern = fit_model(
+        dm_bern,
+        MCMC(;
+            sampler = MH(),
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+        )
+    )
     @test plot_vpc(res_bern; n_simulations = 5, n_bins = 3, mcmc_draws = 5) !== nothing
 
     model_pois = @Model begin
@@ -100,12 +108,18 @@ end
             y ~ Poisson(λ)
         end
     end
-    df_pois = DataFrame(ID = [1, 1, 2, 2, 3, 3], t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
-        z = [0.1, 0.2, 0.1, 0.2, 0.1, 0.2], y = [1, 2, 1, 2, 1, 3])
+    df_pois = DataFrame(
+        ID = [1, 1, 2, 2, 3, 3], t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+        z = [0.1, 0.2, 0.1, 0.2, 0.1, 0.2], y = [1, 2, 1, 2, 1, 3]
+    )
     dm_pois = DataModel(model_pois, df_pois; primary_id = :ID, time_col = :t)
-    res_pois = fit_model(dm_pois,
-        MCMC(; sampler = MH(),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)))
+    res_pois = fit_model(
+        dm_pois,
+        MCMC(;
+            sampler = MH(),
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+        )
+    )
     @test plot_vpc(res_pois; n_simulations = 5, n_bins = 3, mcmc_draws = 5) !== nothing
 end
 
@@ -114,7 +128,7 @@ end
     # MCMC-RE VPC branch incl. mcmc_draws/mcmc_warmup.
     res = fx_mcmc_re()
     @test plot_vpc(res; n_simulations = 5, n_bins = 3, mcmc_draws = 5, mcmc_warmup = 3) !==
-          nothing
+        nothing
 end
 
 @testset "plot_vpc constants_re and unsupported serialization" begin
@@ -131,12 +145,15 @@ end
 @testset "plot_vpc internals use row-specific random effects for varying non-ODE groups" begin
     dm = fx_varyre_dm()
     θ = NoLimits.get_θ0_untransformed(dm.model.fixed.fixed)
-    level_vals = Dict{Symbol, Dict{Any, Any}}(:η_year => Dict{Any, Any}(
-        :A => 0.1, :B => 0.4, :C => 0.3))
+    level_vals = Dict{Symbol, Dict{Any, Any}}(
+        :η_year => Dict{Any, Any}(
+            :A => 0.1, :B => 0.4, :C => 0.3
+        )
+    )
     η_vec = NoLimits._eta_vec_from_levels(dm, level_vals)
     sim_x, sim_vals = NoLimits._simulate_obs(dm, θ, η_vec, :y, MersenneTwister(1), nothing)
     @test sim_x[1] == [0.0, 1.0, 2.0]
     @test sim_x[2] == [0.0, 1.0]
-    @test sim_vals[1]≈[0.1, 0.4, 0.4] atol=1.0e-3
-    @test sim_vals[2]≈[0.1, 0.3] atol=1.0e-3
+    @test sim_vals[1] ≈ [0.1, 0.4, 0.4] atol = 1.0e-3
+    @test sim_vals[2] ≈ [0.1, 0.3] atol = 1.0e-3
 end

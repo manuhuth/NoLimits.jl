@@ -15,12 +15,14 @@ package(s) the user has to add and load. `pkgs` is a `Symbol` or a tuple of `Sym
     adds = join(("\"$(p)\"" for p in names), ", ")
     uses = join(names, ", ")
     plural = length(names) == 1 ? "an optional dependency" : "optional dependencies"
-    error("""
-          $what requires $(join(string.(names) .* ".jl", ", ", " and ")), \
-          which NoLimits declares as $plural and therefore does not install or load for you.
+    error(
+        """
+        $what requires $(join(string.(names) .* ".jl", ", ", " and ")), \
+        which NoLimits declares as $plural and therefore does not install or load for you.
 
-              using Pkg; Pkg.add([$adds])
-              using $uses
+            using Pkg; Pkg.add([$adds])
+            using $uses
 
-          Load $(length(names) == 1 ? "it" : "them") alongside NoLimits and retry.""")
+        Load $(length(names) == 1 ? "it" : "them") alongside NoLimits and retry."""
+    )
 end

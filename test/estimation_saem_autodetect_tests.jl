@@ -37,7 +37,8 @@ end
     end
 
     df = DataFrame(
-        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [0.1, 0.2, 0.0, -0.1])
+        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [0.1, 0.2, 0.0, -0.1]
+    )
     auto_cfg = _auto_cfg(model, df)
     @test auto_cfg !== nothing
     @test auto_cfg.re_cov_params == NamedTuple()
@@ -160,7 +161,8 @@ end
     end
 
     df = DataFrame(
-        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [1.2, 0.9, 1.1, 1.0])
+        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [1.2, 0.9, 1.1, 1.0]
+    )
     auto_cfg = _auto_cfg(model, df)
     @test auto_cfg !== nothing
     @test auto_cfg.re_cov_params == (; η = :τ)
@@ -189,7 +191,8 @@ end
     end
 
     df = DataFrame(
-        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [1.2, 0.9, 1.1, 1.0])
+        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [1.2, 0.9, 1.1, 1.0]
+    )
     auto_cfg = _auto_cfg(model, df)
     @test auto_cfg !== nothing
     @test auto_cfg.re_cov_params == (; η = :τ)
@@ -217,7 +220,8 @@ end
     end
 
     df = DataFrame(
-        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [0.2, 0.15, -0.1, -0.2])
+        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [0.2, 0.15, -0.1, -0.2]
+    )
     auto_cfg = _auto_cfg(model, df)
     @test auto_cfg !== nothing
     @test auto_cfg.re_mean_params == (; η = :z)
@@ -233,7 +237,7 @@ end
 
         @fixedEffects begin
             μ = RealVector([0.0, 0.0])
-            ω = RealVector([1.0, 1.0], scale = [:log, :log], lower = [1e-6, 1e-6])
+            ω = RealVector([1.0, 1.0], scale = [:log, :log], lower = [1.0e-6, 1.0e-6])
             σ = RealNumber(0.3, scale = :log)
         end
 
@@ -247,7 +251,8 @@ end
     end
 
     df = DataFrame(
-        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [0.2, 0.15, -0.1, -0.2])
+        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [0.2, 0.15, -0.1, -0.2]
+    )
     auto_cfg = _auto_cfg(model, df)
     @test auto_cfg !== nothing
     @test auto_cfg.re_mean_params == (; η = :μ)
@@ -276,7 +281,8 @@ end
     end
 
     df = DataFrame(
-        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [0.2, 0.15, -0.1, -0.2])
+        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [0.2, 0.15, -0.1, -0.2]
+    )
     auto_cfg = _auto_cfg(model, df)
     @test auto_cfg !== nothing
     @test auto_cfg.re_mean_params == NamedTuple()
@@ -300,7 +306,8 @@ end
 
         @randomEffects begin
             η = RandomEffect(
-                MvNormal([μ1, μ2], Diagonal([ω1 + 0.0, ω2 + 0.0])); column = :ID)
+                MvNormal([μ1, μ2], Diagonal([ω1 + 0.0, ω2 + 0.0])); column = :ID
+            )
         end
 
         @formulas begin
@@ -309,7 +316,8 @@ end
     end
 
     df = DataFrame(
-        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [0.2, 0.15, -0.1, -0.2])
+        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [0.2, 0.15, -0.1, -0.2]
+    )
     auto_cfg = _auto_cfg(model, df)
     @test auto_cfg !== nothing
     @test auto_cfg.re_mean_params == (; η = (:μ1, :μ2))
@@ -319,7 +327,8 @@ end
 
 @testset "SAEM auto-detect: MvLogNormal and MvLogitNormal mean+cov detection" begin
     df = DataFrame(
-        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [0.2, 0.15, 0.3, 0.35])
+        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [0.2, 0.15, 0.3, 0.35]
+    )
 
     # MvLogNormal with diagonal cov target
     model_ln = @Model begin
@@ -328,7 +337,7 @@ end
         end
         @fixedEffects begin
             μ = RealVector([0.0, 0.0])
-            ω = RealVector([1.0, 1.0], scale = [:log, :log], lower = [1e-6, 1e-6])
+            ω = RealVector([1.0, 1.0], scale = [:log, :log], lower = [1.0e-6, 1.0e-6])
             σ = RealNumber(0.3, scale = :log)
         end
         @randomEffects begin

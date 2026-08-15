@@ -61,8 +61,10 @@ end
     # The diagonal is stored as a vector; Wishart's logpdf needs the n x n form (#168).
     model = @Model begin
         @fixedEffects begin
-            Σ = RealDiagonalMatrix([1.0, 1.0];
-                prior = Wishart(4.0, Matrix{Float64}(I, 2, 2)))
+            Σ = RealDiagonalMatrix(
+                [1.0, 1.0];
+                prior = Wishart(4.0, Matrix{Float64}(I, 2, 2))
+            )
             a = RealNumber(1.0; prior = Normal(0.0, 1.0))
         end
 

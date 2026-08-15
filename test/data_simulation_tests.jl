@@ -81,13 +81,15 @@ end
         y = [0.2, 1.1, 1.2]
     )
 
-    dm = DataModel(model, df;
+    dm = DataModel(
+        model, df;
         primary_id = :ID,
         time_col = :t,
         evid_col = :EVID,
         amt_col = :AMT,
         rate_col = :RATE,
-        cmt_col = :CMT)
+        cmt_col = :CMT
+    )
     sim = simulate_data(dm; rng = MersenneTwister(3))
 
     @test nrow(sim) == nrow(df)
@@ -267,7 +269,8 @@ end
             ζ = NNParameters(chain; function_name = :NN1, calculate_se = false)
             Γ = SoftTreeParameters(2, 2; function_name = :ST1, calculate_se = false)
             sp = SplineParameters(
-                knots; function_name = :SP1, degree = 2, calculate_se = false)
+                knots; function_name = :SP1, degree = 2, calculate_se = false
+            )
         end
 
         @covariates begin
@@ -283,7 +286,7 @@ end
 
         @preDifferentialEquation begin
             pre = sat(NN1([x.Age, x.BMI], ζ)[1] + ST1([x.Age, x.BMI], Γ)[1]) +
-                  SP1(x.Age / 100, sp) + η_id
+                SP1(x.Age / 100, sp) + η_id
         end
 
         @DifferentialEquation begin
@@ -514,15 +517,17 @@ end
         end
 
         @formulas begin
-            P = [0.6 0.4 0.0;
-                 0.0 0.7 0.3;
-                 0.0 0.0 1.0]
+            P = [
+                0.6 0.4 0.0;
+                0.0 0.7 0.3;
+                0.0 0.0 1.0
+            ]
             y ~ DiscreteTimeDiscreteStatesHMM(
                 P,
                 (
                     Categorical([1.0, 0.0, 0.0]),
                     Categorical([0.0, 1.0, 0.0]),
-                    Categorical([0.0, 0.0, 1.0])
+                    Categorical([0.0, 0.0, 1.0]),
                 ),
                 Categorical([1.0, 0.0, 0.0])
             )
@@ -557,15 +562,17 @@ end
         end
 
         @formulas begin
-            Q = [-1.2 1.2 0.0;
-                 0.0 -1.0 1.0;
-                 0.0 0.0 0.0]
+            Q = [
+                -1.2 1.2 0.0;
+                0.0 -1.0 1.0;
+                0.0 0.0 0.0
+            ]
             y ~ ContinuousTimeDiscreteStatesHMM(
                 Q,
                 (
                     Categorical([1.0, 0.0, 0.0]),
                     Categorical([0.0, 1.0, 0.0]),
-                    Categorical([0.0, 0.0, 1.0])
+                    Categorical([0.0, 0.0, 1.0]),
                 ),
                 Categorical([1.0, 0.0, 0.0]),
                 dt
@@ -624,7 +631,8 @@ end
 
     sim_θ0 = simulate_data(dm; rng = MersenneTwister(42))
     sim_fitted = simulate_data(
-        dm; rng = MersenneTwister(42), theta_untransformed = fitted_theta)
+        dm; rng = MersenneTwister(42), theta_untransformed = fitted_theta
+    )
 
     # One η per individual (constant within ID)
     η_θ0 = [sim_θ0.η[findfirst(==(id), sim_θ0.ID)] for id in 1:n_ind]

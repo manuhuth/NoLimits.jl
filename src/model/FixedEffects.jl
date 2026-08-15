@@ -195,7 +195,7 @@ function get_collect_names(fe::FixedEffects)
     for name in get_names(fe)
         p = getfield(params, name)
         if p isa ProbabilityVector || p isa DiscreteTransitionMatrix ||
-           p isa ContinuousTransitionMatrix
+                p isa ContinuousTransitionMatrix
             push!(names, name)
         end
     end
@@ -216,8 +216,14 @@ end
 # Subset a name-keyed ComponentArray (or any property container) to `names` in
 # order — the standard free-parameter extraction used across the fit entry points.
 @inline function _ca_subset(x, names)
-    return ComponentArray(NamedTuple{Tuple(names)}(Tuple(getproperty(x, n)
-    for n in names)))
+    return ComponentArray(
+        NamedTuple{Tuple(names)}(
+            Tuple(
+                getproperty(x, n)
+                    for n in names
+            )
+        )
+    )
 end
 
 function logprior(priors::NamedTuple, θ::ComponentArray)
@@ -240,7 +246,7 @@ function _with_name_kw(rhs::Expr, name::Symbol)
         return rhs
     end
     has_params = !isempty(rhs.args) && rhs.args[2] isa Expr &&
-                 rhs.args[2].head == :parameters
+        rhs.args[2].head == :parameters
     if has_params
         params = rhs.args[2]
         for arg in params.args
@@ -259,10 +265,12 @@ end
 # Parameter-block constructors owned by NoLimits. The macro resolves these call heads
 # to this module so models build even when another loaded package (e.g. Makie, which
 # exports `RealVector`) puts a same-named binding into the caller's namespace.
-const _PARAM_BLOCK_CTORS = (:RealNumber, :RealVector, :RealPSDMatrix, :RealLiePSDMatrix,
+const _PARAM_BLOCK_CTORS = (
+    :RealNumber, :RealVector, :RealPSDMatrix, :RealLiePSDMatrix,
     :RealDiagonalMatrix, :ProbabilityVector, :DiscreteTransitionMatrix,
     :ContinuousTransitionMatrix, :NNParameters, :SoftTreeParameters, :SplineParameters,
-    :NPFParameter)
+    :NPFParameter,
+)
 
 function _qualify_ctor_head(ex::Expr)
     head = ex.args[1]
@@ -387,7 +395,7 @@ function build_fixed_effects(params::NamedTuple)
     θ0_untransformed = ComponentArray(NamedTuple{Tuple(first.(value_pairs))}(Tuple(last.(value_pairs))))
     bounds_untransformed = (
         ComponentArray(NamedTuple{Tuple(first.(lower_pairs))}(Tuple(last.(lower_pairs)))),
-        ComponentArray(NamedTuple{Tuple(first.(upper_pairs))}(Tuple(last.(upper_pairs))))
+        ComponentArray(NamedTuple{Tuple(first.(upper_pairs))}(Tuple(last.(upper_pairs)))),
     )
 
     # Bootstrap with the legacy (dynamic) transform to learn the output layout, then
@@ -396,11 +404,14 @@ function build_fixed_effects(params::NamedTuple)
     transform0 = ForwardTransform(names, specs)
     θ0_transformed = transform0(θ0_untransformed)
     transform = ForwardTransform(
-        names, specs, getaxes(θ0_transformed), length(θ0_transformed))
+        names, specs, getaxes(θ0_transformed), length(θ0_transformed)
+    )
     inverse_transform = InverseTransform(
-        names, specs, getaxes(θ0_untransformed), length(θ0_untransformed))
+        names, specs, getaxes(θ0_untransformed), length(θ0_untransformed)
+    )
     bounds_transformed = _transform_bounds(
-        bounds_untransformed, names, specs; params = params)
+        bounds_untransformed, names, specs; params = params
+    )
 
     flat_names = _flatten_by_specs(θ0_transformed, names, specs)
 
@@ -426,8 +437,10 @@ _param_value(p::AbstractParameterBlock) = p.value
 
 # Blocks with explicit user-settable bounds store them in `.lower`/`.upper`;
 # the constrained blocks (PSD/diagonal/simplex/transition) derive theirs below.
-const _ExplicitBoundsBlock = Union{RealNumber, RealVector, NNParameters, NPFParameter,
-    SoftTreeParameters, SplineParameters}
+const _ExplicitBoundsBlock = Union{
+    RealNumber, RealVector, NNParameters, NPFParameter,
+    SoftTreeParameters, SplineParameters,
+}
 _param_lower(p::_ExplicitBoundsBlock) = p.lower
 _param_upper(p::_ExplicitBoundsBlock) = p.upper
 
@@ -585,9 +598,11 @@ end
 function _check_softtree_flat_layout(p::SoftTreeParameters, tree::SoftTree)
     p_pos = softtree_params_from_flat(p.value, tree)
     p_ref = p.reconstructor(p.value)
-    (p_pos.node_weights == p_ref.node_weights &&
-     p_pos.node_biases == p_ref.node_biases &&
-     p_pos.leaf_values == p_ref.leaf_values) ||
+    (
+        p_pos.node_weights == p_ref.node_weights &&
+            p_pos.node_biases == p_ref.node_biases &&
+            p_pos.leaf_values == p_ref.leaf_values
+    ) ||
         error("SoftTree parameter $(p.name): positional flat layout does not match the Optimisers.destructure order of the stored value. Cannot build $(p.function_name).")
     return nothing
 end
@@ -595,25 +610,29 @@ end
 function _collect_model_fun!(p::SoftTreeParameters, model_fun_pairs, ::Type{T}) where {T}
     tree = SoftTree(p.input_dim, p.depth, p.n_output)
     _check_softtree_flat_layout(p, tree)
-    push!(model_fun_pairs,
+    return push!(
+        model_fun_pairs,
         p.function_name => (x, θ) -> begin
             TT = promote_type(eltype(θ), _value_type(x))
             if TT === T
                 return tree(_to_type(T, x), softtree_params_from_flat(_to_type(T, θ), tree))
             end
             return tree(_to_type(TT, x), softtree_params_from_flat(_to_type(TT, θ), tree))
-        end)
+        end
+    )
 end
 
 function _collect_model_fun!(p::SplineParameters, model_fun_pairs, ::Type{T}) where {T}
-    push!(model_fun_pairs,
+    return push!(
+        model_fun_pairs,
         p.function_name => (x, θ) -> begin
             TT = promote_type(eltype(θ), _value_type(x))
             if TT === T
                 return bspline_eval(_to_type(T, x), _to_type(T, θ), p.knots, p.degree)
             end
             return bspline_eval(_to_type(TT, x), _to_type(TT, θ), p.knots, p.degree)
-        end)
+        end
+    )
 end
 # The NormalizingPlanarFlow flat-θ constructor rebuilds the planar chain
 # positionally (`_planar_chain_from_flat`) instead of via the stored
@@ -631,7 +650,8 @@ function _collect_model_fun!(p::NPFParameter, model_fun_pairs, ::Type{T}) where 
     key = Symbol("NPF_", p.name)
     q0T = _adapt_base_dist(p.base_dist, T)
     _check_npf_flat_layout(p)
-    push!(model_fun_pairs,
+    return push!(
+        model_fun_pairs,
         key => (θ) -> begin
             TT = eltype(θ)
             if TT === T
@@ -639,7 +659,8 @@ function _collect_model_fun!(p::NPFParameter, model_fun_pairs, ::Type{T}) where 
             end
             q0 = _adapt_base_dist(p.base_dist, TT)
             return NormalizingPlanarFlow(_to_type(TT, θ), p.reconstructor, q0)
-        end)
+        end
+    )
 end
 
 # Adapt base distribution element type for ForwardDiff compatibility.
@@ -650,15 +671,17 @@ end
 # yet implemented for Forward-Mode BLAS calls"); the scalar/diagonal forms use
 # plain dot/loops instead.
 function _adapt_base_dist(
-        d::MvNormal{<:Real, <:Distributions.PDMats.ScalMat}, ::Type{T}) where {T}
-    MvNormal(T.(mean(d)), Distributions.PDMats.ScalMat(length(d), T(d.Σ.value)))
+        d::MvNormal{<:Real, <:Distributions.PDMats.ScalMat}, ::Type{T}
+    ) where {T}
+    return MvNormal(T.(mean(d)), Distributions.PDMats.ScalMat(length(d), T(d.Σ.value)))
 end
 function _adapt_base_dist(
-        d::MvNormal{<:Real, <:Distributions.PDMats.PDiagMat}, ::Type{T}) where {T}
-    MvNormal(T.(mean(d)), Distributions.PDMats.PDiagMat(T.(d.Σ.diag)))
+        d::MvNormal{<:Real, <:Distributions.PDMats.PDiagMat}, ::Type{T}
+    ) where {T}
+    return MvNormal(T.(mean(d)), Distributions.PDMats.PDiagMat(T.(d.Σ.diag)))
 end
 function _adapt_base_dist(d::MvNormal, ::Type{T}) where {T}
-    MvNormal(T.(mean(d)), Matrix{T}(cov(d)))
+    return MvNormal(T.(mean(d)), Matrix{T}(cov(d)))
 end
 _adapt_base_dist(d, ::Type{T}) where {T} = d
 function _collect_model_fun!(p, model_fun_pairs, ::Type{T}) where {T}
@@ -682,7 +705,8 @@ function _logprior_eval(prior::AbstractVector{<:Distribution}, val::AbstractVect
 end
 
 function _flatten_by_specs(
-        θ::ComponentArray, names::Vector{Symbol}, specs::Vector{TransformSpec})
+        θ::ComponentArray, names::Vector{Symbol}, specs::Vector{TransformSpec}
+    )
     flat_names = Symbol[]
 
     for (i, name) in enumerate(names)
@@ -713,8 +737,10 @@ function _flatten_by_specs(
     return flat_names
 end
 
-function _transform_bounds(bounds::Tuple{ComponentArray, ComponentArray},
-        names::Vector{Symbol}, specs::Vector{TransformSpec}; params = NamedTuple())
+function _transform_bounds(
+        bounds::Tuple{ComponentArray, ComponentArray},
+        names::Vector{Symbol}, specs::Vector{TransformSpec}; params = NamedTuple()
+    )
     lower, upper = bounds
     lower_pairs = Pair{Symbol, Any}[]
     upper_pairs = Pair{Symbol, Any}[]
@@ -809,12 +835,14 @@ function _transform_bounds(bounds::Tuple{ComponentArray, ComponentArray},
 
     return (
         ComponentArray(NamedTuple{Tuple(first.(lower_pairs))}(Tuple(last.(lower_pairs)))),
-        ComponentArray(NamedTuple{Tuple(first.(upper_pairs))}(Tuple(last.(upper_pairs))))
+        ComponentArray(NamedTuple{Tuple(first.(upper_pairs))}(Tuple(last.(upper_pairs)))),
     )
 end
 
-function _se_mask(θ::ComponentArray, names::Vector{Symbol},
-        specs::Vector{TransformSpec}, flags::Dict{Symbol, Bool})
+function _se_mask(
+        θ::ComponentArray, names::Vector{Symbol},
+        specs::Vector{TransformSpec}, flags::Dict{Symbol, Bool}
+    )
     mask = Bool[]
     for (i, name) in enumerate(names)
         spec = specs[i]

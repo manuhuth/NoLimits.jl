@@ -37,8 +37,8 @@ using Distributions
     obs = calculate_formulas_obs(model, θ, η, const_covariates_i, varying_covariates)
     all = calculate_formulas_all(model, θ, η, const_covariates_i, varying_covariates)
     @test obs.obs isa Normal
-    @test isapprox(mean(obs.obs), 4.1; rtol = 1e-6, atol = 1e-8)
-    @test isapprox(all.lin, 4.1; rtol = 1e-6, atol = 1e-8)
+    @test isapprox(mean(obs.obs), 4.1; rtol = 1.0e-6, atol = 1.0e-8)
+    @test isapprox(all.lin, 4.1; rtol = 1.0e-6, atol = 1.0e-8)
 end
 
 @testset "Model macro wiring (with DE + initialDE)" begin
@@ -301,7 +301,8 @@ end
     varying_covariates = (t = 0.0,)
 
     @test_throws ErrorException calculate_formulas_obs(
-        model, θ, η, const_covariates_i, varying_covariates)
+        model, θ, η, const_covariates_i, varying_covariates
+    )
 end
 
 @testset "Model macro hygiene" begin
@@ -343,24 +344,26 @@ end
     mod = Core.eval(Main, :(module $mod_name end))
     Core.eval(mod, :(using NoLimits))
     Core.eval(mod, :(using Distributions))
-    ok = Core.eval(mod, quote
-        model = @Model begin
-            @fixedEffects begin
-                a = RealNumber(0.1)
-                σ = RealNumber(0.2, scale = :log)
+    ok = Core.eval(
+        mod, quote
+            model = @Model begin
+                @fixedEffects begin
+                    a = RealNumber(0.1)
+                    σ = RealNumber(0.2, scale = :log)
+                end
+
+                @covariates begin
+                    t = Covariate()
+                end
+
+                @formulas begin
+                    y ~ Normal(a, σ)
+                end
             end
 
-            @covariates begin
-                t = Covariate()
-            end
-
-            @formulas begin
-                y ~ Normal(a, σ)
-            end
+            model isa NoLimits.Model
         end
-
-        model isa NoLimits.Model
-    end)
+    )
 
     @test ok === true
 end
@@ -370,7 +373,8 @@ end
     mod = Core.eval(Main, :(module $mod_name end))
     Core.eval(mod, :(using NoLimits))
     Core.eval(mod, :(using Distributions))
-    ok = Core.eval(mod,
+    ok = Core.eval(
+        mod,
         quote
             re = @randomEffects begin
                 η = RandomEffect(Normal(0.0, 1.0); column = :ID)
@@ -385,7 +389,8 @@ end
             re isa NoLimits.RandomEffects &&
                 pre isa NoLimits.PreDifferentialEquation &&
                 de isa NoLimits.DifferentialEquation
-        end)
+        end
+    )
 
     @test ok === true
 end

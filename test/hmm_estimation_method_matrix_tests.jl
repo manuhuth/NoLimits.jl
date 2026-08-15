@@ -24,11 +24,15 @@ function _re_hmm_scalar_discrete_dm()
         @formulas begin
             p1 = 0.8 / (1 + exp(-clamp(p1_r + η, -2.0, 2.0))) + 0.1
             p2 = 0.8 / (1 + exp(-clamp(p2_r, -2.0, 2.0))) + 0.1
-            P = [0.85 0.15;
-                 0.25 0.75]
-            y ~ DiscreteTimeDiscreteStatesHMM(P,
+            P = [
+                0.85 0.15;
+                0.25 0.75
+            ]
+            y ~ DiscreteTimeDiscreteStatesHMM(
+                P,
                 (Bernoulli(p1), Bernoulli(p2)),
-                Categorical([0.6, 0.4]))
+                Categorical([0.6, 0.4])
+            )
         end
     end
 
@@ -68,8 +72,10 @@ function _re_hmm_mv_continuous_dm()
             p12 = 0.8 / (1 + exp(-clamp(p12_r, -2.0, 2.0))) + 0.1
             p21 = 0.8 / (1 + exp(-clamp(p21_r, -2.0, 2.0))) + 0.1
             p22 = 0.8 / (1 + exp(-clamp(p22_r, -2.0, 2.0))) + 0.1
-            Q = [-λ12 λ12;
-                 λ21 -λ21]
+            Q = [
+                -λ12 λ12;
+                λ21 -λ21
+            ]
             e1 = (Bernoulli(p11), Bernoulli(p12))
             e2 = (Bernoulli(p21), Bernoulli(p22))
             y ~ MVContinuousTimeDiscreteStatesHMM(Q, (e1, e2), Categorical([0.6, 0.4]), dt)
@@ -101,13 +107,16 @@ const _HMM_RE_SMOKE_METHODS = Dict(
     # thoroughly in their own dedicated files.
     :Laplace => () -> NoLimits.Laplace(;
         optim_kwargs = (maxiters = 2,), inner_kwargs = (maxiters = 2,),
-        multistart_n = 2, multistart_k = 2),
+        multistart_n = 2, multistart_k = 2
+    ),
     :MCMC => () -> NoLimits.MCMC(;
-        sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)),
+        sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+    ),
     :SAEM => () -> NoLimits.SAEM(;
         sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
         mcmc_steps = 1, q_store_max = 2, maxiters = 2,
-        progress = false, builtin_stats = :auto)
+        progress = false, builtin_stats = :auto
+    )
 )
 
 # Reduced 4×3 matrix → 5 cells. Per-HMM-type inference (forward filtering,
@@ -120,7 +129,7 @@ const _HMM_RE_SMOKE_METHODS = Dict(
 # inner-opt and SAEM generic-suffstats paths.
 const _HMM_RE_SMOKE_CELLS = [
     ("scalar discrete", _re_hmm_scalar_discrete_dm, (:Laplace, :MCMC, :SAEM)),
-    ("mv continuous", _re_hmm_mv_continuous_dm, (:Laplace, :SAEM))
+    ("mv continuous", _re_hmm_mv_continuous_dm, (:Laplace, :SAEM)),
 ]
 
 for (model_name, dm_builder, methods) in _HMM_RE_SMOKE_CELLS
@@ -129,7 +138,8 @@ for (model_name, dm_builder, methods) in _HMM_RE_SMOKE_CELLS
         for method_name in methods
             @testset "$(method_name)" begin
                 _assert_hmm_method_smoke(
-                    dm, method_name, _HMM_RE_SMOKE_METHODS[method_name]())
+                    dm, method_name, _HMM_RE_SMOKE_METHODS[method_name]()
+                )
             end
         end
     end

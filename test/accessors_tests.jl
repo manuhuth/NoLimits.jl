@@ -19,7 +19,8 @@ const NL = NoLimits
 
     # Without a stored DataModel, get_loglikelihood must error.
     res_nostore = fit_model(
-        fx_nore_dm(), NL.MLE(; optim_kwargs = (maxiters = 2,)); store_data_model = false)
+        fx_nore_dm(), NL.MLE(; optim_kwargs = (maxiters = 2,)); store_data_model = false
+    )
     @test_throws ErrorException NL.get_loglikelihood(res_nostore)
 
     @test_throws ErrorException NL.get_chain(fx_map())
@@ -43,9 +44,11 @@ end
     @test fx_saem().result.eb_modes !== nothing
 
     # sample_random_effects returns n_samples × per-level rows, tagged by :sample.
-    for (res, n, kw) in ((fx_laplace(), 5, ()),
-        (fx_mcem(), 4, (; n_adapt = 2)),
-        (fx_saem(), 3, (; n_adapt = 2)))
+    for (res, n, kw) in (
+            (fx_laplace(), 5, ()),
+            (fx_mcem(), 4, (; n_adapt = 2)),
+            (fx_saem(), 3, (; n_adapt = 2)),
+        )
         base = nrow(NL.get_random_effects(res).η)
         s = NL.sample_random_effects(res; n_samples = n, kw...)
         @test !isempty(s)
@@ -53,14 +56,16 @@ end
         @test nrow(s.η) == n * base
     end
     @test sort(unique(NL.sample_random_effects(fx_laplace(); n_samples = 5).η.sample)) ==
-          collect(1:5)
+        collect(1:5)
 
     # get_random_effect_distribution rebuilds the fitted population distribution p(b | θ̂).
     d_re = NL.get_random_effect_distribution(fx_laplace(), :η)
     @test d_re isa Normal
     @test_throws ErrorException NL.get_random_effect_distribution(fx_laplace(), :nope)
-    @test_throws ErrorException NL.get_random_effect_distribution(fx_laplace(), :η;
-        individual = 0)
+    @test_throws ErrorException NL.get_random_effect_distribution(
+        fx_laplace(), :η;
+        individual = 0
+    )
 end
 
 @testset "Accessors: random-effects covariate usage" begin

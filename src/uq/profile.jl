@@ -21,7 +21,7 @@ end
     right = min(right, x0 + width)
 
     # Keep bounds strictly enclosing x0 for LikelihoodProfiler checks.
-    ϵ = max(1e-8, abs(x0) * 1e-8)
+    ϵ = max(1.0e-8, abs(x0) * 1.0e-8)
     if !(left < x0)
         left = x0 - 10 * ϵ
     end
@@ -40,12 +40,14 @@ end
     return (left, right)
 end
 
-function _build_uq_obj_no_re(res::FitResult,
+function _build_uq_obj_no_re(
+        res::FitResult,
         constants_use::NamedTuple,
         penalty_use::NamedTuple,
         ode_args_use::Tuple,
         ode_kwargs_use::NamedTuple,
-        serialization_use::SciMLBase.EnsembleAlgorithm)
+        serialization_use::SciMLBase.EnsembleAlgorithm
+    )
     dm = get_data_model(res)
     method = get_method(res)
     fe = get_fixed(get_model(dm))
@@ -69,9 +71,11 @@ function _build_uq_obj_no_re(res::FitResult,
 
     function obj_full(x::AbstractVector)
         θu = _theta_u_from_free_t(
-            x, axs_free, θ_const_t, axs_full, free_names, inv_transform)
+            x, axs_free, θ_const_t, axs_full, free_names, inv_transform
+        )
         ll = loglikelihood(
-            dm, θu, ComponentArray(); cache = ll_cache, serialization = serialization_use)
+            dm, θu, ComponentArray(); cache = ll_cache, serialization = serialization_use
+        )
         ll == -Inf && return Inf
 
         obj = -ll
@@ -95,18 +99,20 @@ function _build_uq_obj_no_re(res::FitResult,
         axs_full = axs_full,
         θ_const_t = θ_const_t,
         xhat_full = xhat_full,
-        obj_full = obj_full
+        obj_full = obj_full,
     )
 end
 
-function _build_uq_obj_re(res::FitResult,
+function _build_uq_obj_re(
+        res::FitResult,
         constants_use::NamedTuple,
         constants_re_use::NamedTuple,
         penalty_use::NamedTuple,
         ode_args_use::Tuple,
         ode_kwargs_use::NamedTuple,
         serialization_use::SciMLBase.EnsembleAlgorithm,
-        rng::AbstractRNG)
+        rng::AbstractRNG
+    )
     dm = get_data_model(res)
     method = get_method(res)
     fe = get_fixed(get_model(dm))
@@ -133,27 +139,32 @@ function _build_uq_obj_re(res::FitResult,
 
     function obj_full(x::AbstractVector)
         θu = _theta_u_from_free_t(
-            x, axs_free, θ_const_t, axs_full, free_names, inv_transform)
+            x, axs_free, θ_const_t, axs_full, free_names, inv_transform
+        )
 
         obj = if method isa GHQuadrature
             ll_cache_local = ll_cache isa AbstractVector ? ll_cache[1] : ll_cache
             total = 0.0
             for info in batch_infos
-                bll = _ghq_batch_ll(dm, info,
+                bll = _ghq_batch_ll(
+                    dm, info,
                     _symmetrize_psd_params(θu, fe),
-                    const_cache, ll_cache_local, method.level)
+                    const_cache, ll_cache_local, method.level
+                )
                 bll == -Inf && return Inf
                 total += bll
             end
             -total
         else
-            _laplace_objective_only(dm, batch_infos, θu, const_cache, ll_cache, ebe_cache;
+            _laplace_objective_only(
+                dm, batch_infos, θu, const_cache, ll_cache, ebe_cache;
                 inner = method.inner,
                 hessian = method.hessian,
                 cache_opts = cache_opts,
                 multistart = method.multistart,
                 rng = Random.Xoshiro(seed),
-                serialization = serialization_use)
+                serialization = serialization_use
+            )
         end
         obj == Inf && return Inf
 
@@ -172,11 +183,12 @@ function _build_uq_obj_re(res::FitResult,
         axs_full = axs_full,
         θ_const_t = θ_const_t,
         xhat_full = xhat_full,
-        obj_full = obj_full
+        obj_full = obj_full,
     )
 end
 
-function _compute_uq_profile(res::FitResult;
+function _compute_uq_profile(
+        res::FitResult;
         level::Float64,
         constants::Union{Nothing, NamedTuple},
         constants_re::Union{Nothing, NamedTuple},
@@ -192,15 +204,20 @@ function _compute_uq_profile(res::FitResult;
         profile_max_iter::Int,
         profile_ftol_abs::Real,
         profile_kwargs::NamedTuple,
-        rng::AbstractRNG)
-    _require_ext(:NoLimitsLikelihoodProfilerExt, (:LikelihoodProfiler, :OptimizationNLopt),
-        "uq(...; method = :profile)")
+        rng::AbstractRNG
+    )
+    _require_ext(
+        :NoLimitsLikelihoodProfilerExt, (:LikelihoodProfiler, :OptimizationNLopt),
+        "uq(...; method = :profile)"
+    )
     dm = get_data_model(res)
     dm === nothing &&
         error("This fit result does not store a DataModel; pass store_data_model=true when fitting.")
     method = get_method(res)
-    if !(method isa MLE || method isa MAP || method isa Laplace ||
-         method isa GHQuadrature)
+    if !(
+            method isa MLE || method isa MAP || method isa Laplace ||
+                method isa GHQuadrature
+        )
         error("Profile UQ is currently supported for MLE, MAP, Laplace, and GHQuadrature fit results.")
     end
 
@@ -213,14 +230,19 @@ function _compute_uq_profile(res::FitResult;
     ode_args_use = _resolve_fit_kw(res, ode_args, :ode_args, ())
     ode_kwargs_use = _resolve_fit_kw(res, ode_kwargs, :ode_kwargs, NamedTuple())
     serialization_use = _resolve_fit_kw(
-        res, serialization, :serialization, EnsembleSerial())
+        res, serialization, :serialization, EnsembleSerial()
+    )
 
     ctx = if method isa MLE || method isa MAP
-        _build_uq_obj_no_re(res, constants_use, penalty_use, ode_args_use,
-            ode_kwargs_use, serialization_use)
+        _build_uq_obj_no_re(
+            res, constants_use, penalty_use, ode_args_use,
+            ode_kwargs_use, serialization_use
+        )
     else  # Laplace, GHQuadrature
-        _build_uq_obj_re(res, constants_use, constants_re_use, penalty_use,
-            ode_args_use, ode_kwargs_use, serialization_use, rng)
+        _build_uq_obj_re(
+            res, constants_use, constants_re_use, penalty_use,
+            ode_args_use, ode_kwargs_use, serialization_use, rng
+        )
     end
 
     fe = ctx.fe
@@ -271,22 +293,27 @@ function _compute_uq_profile(res::FitResult;
 
     optprob = OptimizationProblem(
         OptimizationFunction((x, _p) -> obj_active(collect(x))), copy(xhat_active);
-        lb = collect(lb_coords), ub = collect(ub_coords))
+        lb = collect(lb_coords), ub = collect(ub_coords)
+    )
     profiler = _profile_profiler(
-        profile_method, profile_local_alg, profile_max_iter, Float64(profile_ftol_abs))
+        profile_method, profile_local_alg, profile_max_iter, Float64(profile_ftol_abs)
+    )
 
     for j in 1:p
         errors[j] = nothing
         scan_lo, scan_hi = _profile_scan_bounds(
-            xhat_active[j], lb_coords[j], ub_coords[j], Float64(profile_scan_width))
+            xhat_active[j], lb_coords[j], ub_coords[j], Float64(profile_scan_width)
+        )
         r = try
-            _profile_run(profiler, optprob, xhat_active, j, scan_lo, scan_hi,
-                threshold, profile_kwargs)
+            _profile_run(
+                profiler, optprob, xhat_active, j, scan_lo, scan_hi,
+                threshold, profile_kwargs
+            )
         catch err
             errors[j] = sprint(showerror, err)
             left_status[j] = :ERROR
             right_status[j] = :ERROR
-            @warn "Profile UQ failed for $(active_names[j]); its interval is NaN." error=errors[j]
+            @warn "Profile UQ failed for $(active_names[j]); its interval is NaN." error = errors[j]
             continue
         end
 
@@ -299,7 +326,7 @@ function _compute_uq_profile(res::FitResult;
         r.right === nothing || (upper_prof_t[j] = Float64(r.right))
         endpoint_found[j] = isfinite(lower_prof_t[j]) && isfinite(upper_prof_t[j])
         endpoint_found[j] ||
-            @warn "Profile UQ did not locate both endpoints for $(active_names[j]); try a larger profile_scan_width or profile_max_iter." left_status=r.left_status right_status=r.right_status
+            @warn "Profile UQ did not locate both endpoints for $(active_names[j]); try a larger profile_scan_width or profile_max_iter." left_status = r.left_status right_status = r.right_status
     end
 
     θ_coords_t = _coords_on_transformed_layout(fe, θ_hat_t, free_names; natural = false)
@@ -315,7 +342,8 @@ function _compute_uq_profile(res::FitResult;
             x_work[active_idx] .= xhat_active
             x_work[active_idx[j]] = lower_prof_t[j]
             θu_j = _theta_u_from_free_t(
-                x_work, axs_free, θ_const_t, axs_full, free_names, inv_transform)
+                x_work, axs_free, θ_const_t, axs_full, free_names, inv_transform
+            )
             coords_u_j = _coords_on_transformed_layout(fe, θu_j, free_names; natural = true)
             lower_prof_n[j] = coords_u_j[active_idx[j]]
         end
@@ -323,7 +351,8 @@ function _compute_uq_profile(res::FitResult;
             x_work[active_idx] .= xhat_active
             x_work[active_idx[j]] = upper_prof_t[j]
             θu_j = _theta_u_from_free_t(
-                x_work, axs_free, θ_const_t, axs_full, free_names, inv_transform)
+                x_work, axs_free, θ_const_t, axs_full, free_names, inv_transform
+            )
             coords_u_j = _coords_on_transformed_layout(fe, θu_j, free_names; natural = true)
             upper_prof_n[j] = coords_u_j[active_idx[j]]
         end
@@ -344,7 +373,7 @@ function _compute_uq_profile(res::FitResult;
         left_counter = left_counter,
         right_counter = right_counter,
         endpoint_found = endpoint_found,
-        errors = errors
+        errors = errors,
     )
 
     return UQResult(

@@ -40,7 +40,7 @@ end
 # Prior-bearing scalar model for MAP/UQ; prior tightness parameterizable so the
 # "MAP pulls toward prior" testset can reuse the same source block.
 function _ghq_prior_model(; a0 = 1.0, a_prior_sd = 2.0)
-    @Model begin
+    return @Model begin
         @fixedEffects begin
             a = RealNumber(a0; prior = Normal(0.0, a_prior_sd))
             σ = RealNumber(0.5, scale = :log; prior = LogNormal(0.0, 1.0))
@@ -246,12 +246,12 @@ end
 function _ghq_family_fit_checks(res, dm)
     @test NoLimits.get_converged(res) isa Bool
     p = NoLimits.get_params(res; scale = :untransformed)
-    @test NoLimits.get_objective(res) < 1e6
+    return @test NoLimits.get_objective(res) < 1.0e6
 end
 
 function _ghq_family_re_checks(re, n_id)
     @test re isa NamedTuple && haskey(re, :η)
-    @test nrow(re.η) == n_id
+    return @test nrow(re.η) == n_id
 end
 
 # One entry per family. `fit`/`re` share the data-gen shell (per-id η via
@@ -260,31 +260,41 @@ const _GHQ_RE_FAMILY_CASES = [
     # LogNormal(0, ω): η = exp(ω z), z ~ N(0,1). The exp transport is nonlinear
     # (CompositeRE segment_fn), NOT the linear GaussianRE path; logcorrection = 0
     # only because the push-forward is exactly LogNormal (needs has_npf=true).
-    (label = "LogNormal", model = _GHQ_LOGN_MODEL,
-        fit = (seed = 42, n_id = 12, n_obs = 5,
+    (
+        label = "LogNormal", model = _GHQ_LOGN_MODEL,
+        fit = (
+            seed = 42, n_id = 12, n_obs = 5,
             eta = (rng, n) -> exp.(0.5 .* randn(rng, n)),
             y = (η, ε) -> 2.0 .* η .+ 0.3 .* ε,
             check = (res, dm) -> begin
                 _ghq_family_fit_checks(res, dm)
                 p = NoLimits.get_params(res; scale = :untransformed)
                 @test abs(p.a - 2.0) < 1.5  # a_true ballpark
-            end),
-        re = (seed = 7, n_id = 8, n_obs = 4,
+            end
+        ),
+        re = (
+            seed = 7, n_id = 8, n_obs = 4,
             eta = (rng, n) -> exp.(0.4 .* randn(rng, n)),
             y = (η, ε) -> 1.5 .* η .+ 0.2 .* ε,
             check = (re, n_id) -> begin
                 @test re isa NamedTuple
                 @test haskey(re, :η)
                 @test nrow(re.η) == n_id
-            end),
-        valid_y = [1.0, 1.1]),
+            end
+        ),
+        valid_y = [1.0, 1.1],
+    ),
     # Beta(α, β): logistic transport of N(0,1).
-    (label = "Beta", model = _GHQ_BETA_MODEL,
-        fit = (seed = 99, n_id = 14, n_obs = 4,
+    (
+        label = "Beta", model = _GHQ_BETA_MODEL,
+        fit = (
+            seed = 99, n_id = 14, n_obs = 4,
             eta = (rng, n) -> rand(rng, Beta(2.0, 5.0), n),
             y = (η, ε) -> 0.5 .+ 2.0 .* η .+ 0.2 .* ε,
-            check = _ghq_family_fit_checks),
-        re = (seed = 55, n_id = 8, n_obs = 5,
+            check = _ghq_family_fit_checks,
+        ),
+        re = (
+            seed = 55, n_id = 8, n_obs = 5,
             eta = (rng, n) -> rand(rng, Beta(2.0, 4.0), n),
             y = (η, ε) -> 1.0 .+ 2.0 .* η .+ 0.15 .* ε,
             check = (re, n_id) -> begin
@@ -293,69 +303,103 @@ const _GHQ_RE_FAMILY_CASES = [
                 @test nrow(re.η) == n_id
                 # EB modes in (0, 1); column :η_1 (flatten of 1-elem output)
                 @test all(0.0 .< re.η.η_1 .< 1.0)
-            end),
-        valid_y = [0.5, 0.6]),
-    (label = "Gamma", model = _GHQ_GAMMA_MODEL,
-        fit = (seed = 301, n_id = 14, n_obs = 4,
+            end
+        ),
+        valid_y = [0.5, 0.6],
+    ),
+    (
+        label = "Gamma", model = _GHQ_GAMMA_MODEL,
+        fit = (
+            seed = 301, n_id = 14, n_obs = 4,
             eta = (rng, n) -> rand(rng, Gamma(3.0, 0.5), n),
             y = (η, ε) -> 2.0 .* η .+ 0.3 .* ε,
-            check = _ghq_family_fit_checks),
-        re = (seed = 302, n_id = 8, n_obs = 4,
+            check = _ghq_family_fit_checks,
+        ),
+        re = (
+            seed = 302, n_id = 8, n_obs = 4,
             eta = (rng, n) -> rand(rng, Gamma(2.0, 1.0), n),
             y = (η, ε) -> 1.5 .* η .+ 0.2 .* ε,
-            check = _ghq_family_re_checks),
-        valid_y = [1.0, 1.5]),
-    (label = "Exponential", model = _GHQ_EXP_MODEL,
-        fit = (seed = 401, n_id = 12, n_obs = 4,
+            check = _ghq_family_re_checks,
+        ),
+        valid_y = [1.0, 1.5],
+    ),
+    (
+        label = "Exponential", model = _GHQ_EXP_MODEL,
+        fit = (
+            seed = 401, n_id = 12, n_obs = 4,
             eta = (rng, n) -> rand(rng, Exponential(1 / 2.0), n),
             y = (η, ε) -> 1.5 .* η .+ 0.3 .* ε,
             check = (res, dm) -> begin
                 @test NoLimits.get_converged(res) isa Bool
                 p = NoLimits.get_params(res; scale = :untransformed)
-            end),
-        re = (seed = 402, n_id = 8, n_obs = 4,
+            end
+        ),
+        re = (
+            seed = 402, n_id = 8, n_obs = 4,
             eta = (rng, n) -> rand(rng, Exponential(0.5), n),
             y = (η, ε) -> 2.0 .* η .+ 0.2 .* ε,
-            check = nothing),
-        valid_y = nothing),
-    (label = "Weibull", model = _GHQ_WEIB_MODEL,
-        fit = (seed = 501, n_id = 14, n_obs = 4,
+            check = nothing,
+        ),
+        valid_y = nothing,
+    ),
+    (
+        label = "Weibull", model = _GHQ_WEIB_MODEL,
+        fit = (
+            seed = 501, n_id = 14, n_obs = 4,
             eta = (rng, n) -> rand(rng, Weibull(2.0, 1.5), n),
             y = (η, ε) -> 1.0 .* η .+ 0.3 .* ε,
-            check = _ghq_family_fit_checks),
-        re = (seed = 502, n_id = 8, n_obs = 4,
+            check = _ghq_family_fit_checks,
+        ),
+        re = (
+            seed = 502, n_id = 8, n_obs = 4,
             eta = (rng, n) -> rand(rng, Weibull(2.0, 1.0), n),
             y = (η, ε) -> η .+ 0.2 .* ε,
-            check = nothing),
-        valid_y = nothing),
+            check = nothing,
+        ),
+        valid_y = nothing,
+    ),
     # TDist(ν): heavy-tailed, ℝ-supported — identity transport.
-    (label = "TDist", model = _GHQ_TDIST_MODEL,
-        fit = (seed = 601, n_id = 14, n_obs = 4,
+    (
+        label = "TDist", model = _GHQ_TDIST_MODEL,
+        fit = (
+            seed = 601, n_id = 14, n_obs = 4,
             eta = (rng, n) -> rand(rng, TDist(5.0), n),
             y = (η, ε) -> 1.0 .+ η .+ 0.3 .* ε,
-            check = _ghq_family_fit_checks),
-        re = (seed = 602, n_id = 8, n_obs = 5,
+            check = _ghq_family_fit_checks,
+        ),
+        re = (
+            seed = 602, n_id = 8, n_obs = 5,
             eta = (rng, n) -> rand(rng, TDist(4.0), n),
             y = (η, ε) -> 0.5 .+ η .+ 0.2 .* ε,
-            check = _ghq_family_re_checks),
-        valid_y = nothing),
-    (label = "Laplace", model = _GHQ_LAPL_MODEL,
-        fit = (seed = 701, n_id = 12, n_obs = 4,
+            check = _ghq_family_re_checks,
+        ),
+        valid_y = nothing,
+    ),
+    (
+        label = "Laplace", model = _GHQ_LAPL_MODEL,
+        fit = (
+            seed = 701, n_id = 12, n_obs = 4,
             eta = (rng, n) -> rand(rng, Distributions.Laplace(0.0, 0.5), n),
             y = (η, ε) -> 1.0 .+ η .+ 0.2 .* ε,
             check = (res, dm) -> begin
                 @test NoLimits.get_converged(res) isa Bool
-            end),
+            end
+        ),
         re = nothing,
-        valid_y = nothing),
+        valid_y = nothing,
+    ),
     # InverseGamma: fit + EB extraction smoke test (no assertions originally).
-    (label = "InverseGamma", model = _GHQ_INVG_MODEL,
-        fit = (seed = 702, n_id = 12, n_obs = 4,
+    (
+        label = "InverseGamma", model = _GHQ_INVG_MODEL,
+        fit = (
+            seed = 702, n_id = 12, n_obs = 4,
             eta = (rng, n) -> rand(rng, InverseGamma(3.0, 2.0), n),
             y = (η, ε) -> 1.5 .* η .+ 0.3 .* ε,
-            check = (res, dm) -> NoLimits.get_random_effects(dm, res)),
+            check = (res, dm) -> NoLimits.get_random_effects(dm, res),
+        ),
         re = nothing,
-        valid_y = nothing)
+        valid_y = nothing,
+    ),
 ]
 
 # Data-gen shell shared by the fit and EB runs of every family.
@@ -374,15 +418,18 @@ for c in _GHQ_RE_FAMILY_CASES
         @testset "fit_model with $(c.label) RE" begin
             dm = _ghq_family_dm(c.model, c.fit)
             res = fit_model(
-                dm, NoLimits.GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,)))
+                dm, NoLimits.GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,))
+            )
             c.fit.check(res, dm)
         end
 
         if c.re !== nothing
             @testset "get_random_effects for $(c.label) RE" begin
                 dm = _ghq_family_dm(c.model, c.re)
-                res = fit_model(dm,
-                    NoLimits.GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,)))
+                res = fit_model(
+                    dm,
+                    NoLimits.GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,))
+                )
                 re = NoLimits.get_random_effects(dm, res)
                 c.re.check === nothing || c.re.check(re, c.re.n_id)
             end
@@ -420,10 +467,10 @@ end
         tp = build_tensor_product_grid([sg1, sg2])
         # E_{N(0,I₂)}[z₁² + z₂²] = 2
         val = sg_integrate(z -> z[1]^2 + z[2]^2, tp)
-        @test val≈2.0 atol=1e-10
+        @test val ≈ 2.0 atol = 1.0e-10
         # E[z₁² * z₂²] = 1 (independence)
         val2 = sg_integrate(z -> z[1]^2 * z[2]^2, tp)
-        @test val2≈1.0 atol=1e-10
+        @test val2 ≈ 1.0 atol = 1.0e-10
     end
 
     @testset "get_anisotropic_grid caches correctly" begin
@@ -433,7 +480,7 @@ end
         sg_b = get_anisotropic_grid(dims, levels)  # same key → same object
         @test sg_a === sg_b
         @test size(sg_a.nodes, 2) ==
-              prod(NoLimits.n_ghq_points(d, l) for (d, l) in zip(dims, levels))
+            prod(NoLimits.n_ghq_points(d, l) for (d, l) in zip(dims, levels))
     end
 
     @testset "anisotropic fit with NamedTuple level" begin
@@ -450,7 +497,8 @@ end
         # Anisotropic level: η at level 2 (isotropic would use same level for all)
         res_iso = fit_model(dm, GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,)))
         res_aniso = fit_model(
-            dm, GHQuadrature(level = (η = 2,); optim_kwargs = (maxiters = 2,)))
+            dm, GHQuadrature(level = (η = 2,); optim_kwargs = (maxiters = 2,))
+        )
 
         @test NoLimits.get_converged(res_iso) isa Bool
         @test NoLimits.get_converged(res_aniso) isa Bool
@@ -480,7 +528,8 @@ end
 
         # (nonexistent=5,) → η defaults to level 1
         res = fit_model(
-            dm, GHQuadrature(level = (nonexistent = 5,); optim_kwargs = (maxiters = 2,)))
+            dm, GHQuadrature(level = (nonexistent = 5,); optim_kwargs = (maxiters = 2,))
+        )
         @test NoLimits.get_converged(res) isa Bool
     end
 end  # @testset "Anisotropic sparse grids"
@@ -513,7 +562,7 @@ end  # @testset "Anisotropic sparse grids"
         res_scalar = fit_model(dm, GHQuadrature(level = 1; optim_kwargs = (maxiters = 2,)))
         @test NoLimits.get_converged(res_vec) isa Bool
         @test abs(NoLimits.get_objective(res_vec) - NoLimits.get_objective(res_scalar)) <
-              1e-4
+            1.0e-4
     end
 
     @testset "level=[1,2,3] three-stage refinement" begin
@@ -579,11 +628,15 @@ end  # @testset "GHQuadrature progressive refinement"
         # LBFGS fit. The default outer optimizer (NLopt.LN_BOBYQA) reads maxiters as a
         # function-evaluation cap, so 2 evals leave the fit at a degenerate point and the
         # comparisons blow past tolerance. Pin the gradient-based LBFGS here.
-        res = fit_model(dm,
+        res = fit_model(
+            dm,
             NoLimits.Laplace(;
                 optimizer = OptimizationOptimJL.LBFGS(
-                    linesearch = LineSearches.BackTracking()),
-                optim_kwargs = (maxiters = 2,)))
+                    linesearch = LineSearches.BackTracking()
+                ),
+                optim_kwargs = (maxiters = 2,)
+            )
+        )
         return dm, res
     end
 
@@ -605,18 +658,24 @@ end  # @testset "GHQuadrature progressive refinement"
     @testset "prior MC for all batches: finite and close to quadrature" begin
         dm, res = _mc_test_dm()
         ll_ghq = get_loglikelihood_quadrature(res; level = 2, seed = 1)
-        ll_mc = get_loglikelihood_quadrature(res; seed = 1,
-            mc_integrator = MCIntegrator(n_samples = 2, mode = :prior))
+        ll_mc = get_loglikelihood_quadrature(
+            res; seed = 1,
+            mc_integrator = MCIntegrator(n_samples = 2, mode = :prior)
+        )
         # Prior MC should be in the right ballpark (within 15 log units for n_id=10)
         @test abs(ll_mc - ll_ghq) < 15.0
     end
 
     @testset "seed makes result reproducible" begin
         dm, res = _mc_test_dm()
-        ll1 = get_loglikelihood_quadrature(res; seed = 42,
-            mc_integrator = MCIntegrator(n_samples = 2, mode = :prior))
-        ll2 = get_loglikelihood_quadrature(res; seed = 42,
-            mc_integrator = MCIntegrator(n_samples = 2, mode = :prior))
+        ll1 = get_loglikelihood_quadrature(
+            res; seed = 42,
+            mc_integrator = MCIntegrator(n_samples = 2, mode = :prior)
+        )
+        ll2 = get_loglikelihood_quadrature(
+            res; seed = 42,
+            mc_integrator = MCIntegrator(n_samples = 2, mode = :prior)
+        )
         @test ll1 == ll2
     end
 
@@ -627,24 +686,34 @@ end  # @testset "GHQuadrature progressive refinement"
 
     @testset "Turing MC for all batches: finite result" begin
         dm, res = _mc_test_dm(n_id = 8, n_obs = 5, rng = MersenneTwister(901))
-        ll_mc_turing = get_loglikelihood_quadrature(res; seed = 2,
-            mc_integrator = MCIntegrator(n_samples = 2, mode = :turing,
-                sampler = Turing.MH(), n_warmup = 200))
+        ll_mc_turing = get_loglikelihood_quadrature(
+            res; seed = 2,
+            mc_integrator = MCIntegrator(
+                n_samples = 2, mode = :turing,
+                sampler = Turing.MH(), n_warmup = 200
+            )
+        )
     end
 
     @testset "Turing MC close to quadrature" begin
         dm, res = _mc_test_dm(n_id = 10, n_obs = 5, rng = MersenneTwister(903))
         ll_ghq = get_loglikelihood_quadrature(res; level = 2, seed = 3)
-        ll_turing = get_loglikelihood_quadrature(res; seed = 3,
-            mc_integrator = MCIntegrator(n_samples = 2, mode = :turing,
-                sampler = Turing.MH(), n_warmup = 500))
+        ll_turing = get_loglikelihood_quadrature(
+            res; seed = 3,
+            mc_integrator = MCIntegrator(
+                n_samples = 2, mode = :turing,
+                sampler = Turing.MH(), n_warmup = 500
+            )
+        )
         @test abs(ll_turing - ll_ghq) < 2.0
     end
 
     @testset "fallback MCIntegrator path works end-to-end" begin
         dm, res = _mc_test_dm(n_id = 8, n_obs = 4)
-        ll = get_loglikelihood_quadrature(res; seed = 10, jitter = 1e-6,
-            fallback = MCIntegrator(n_samples = 2, mode = :prior))
+        ll = get_loglikelihood_quadrature(
+            res; seed = 10, jitter = 1.0e-6,
+            fallback = MCIntegrator(n_samples = 2, mode = :prior)
+        )
     end
 end  # @testset "get_loglikelihood_quadrature MC sampling"
 
@@ -677,8 +746,10 @@ end  # @testset "get_loglikelihood_quadrature MC sampling"
     end
 
     rng = Xoshiro(4)
-    df = DataFrame(ID = repeat(1:10; inner = 4), t = repeat([0.5, 1.0, 2.0, 4.0], 10),
-        y = 0.05 .* exp.(0.3 .* randn(rng, 40)))
+    df = DataFrame(
+        ID = repeat(1:10; inner = 4), t = repeat([0.5, 1.0, 2.0, 4.0], 10),
+        y = 0.05 .* exp.(0.3 .* randn(rng, 40))
+    )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     θ = get_θ0_untransformed(NoLimits.get_fixed(NoLimits.get_model(dm)))
     θ_re = NoLimits.symmetrize_psd_parameters(θ, NoLimits.get_fixed(NoLimits.get_model(dm)))
@@ -689,14 +760,17 @@ end  # @testset "get_loglikelihood_quadrature MC sampling"
 
     for bi in 1:3
         rm = NoLimits.build_centered_re_measure(
-            bstars[bi], infos[bi], bi, θ_re, cc, dm, cache)
+            bstars[bi], infos[bi], bi, θ_re, cc, dm, cache
+        )
         @test rm !== nothing
-        H = NoLimits._laplace_hessian_b(dm, infos[bi], θ_re,
-            Vector{Float64}(bstars[bi]), cc, cache, nothing, bi)
+        H = NoLimits._laplace_hessian_b(
+            dm, infos[bi], θ_re,
+            Vector{Float64}(bstars[bi]), cc, cache, nothing, bi
+        )
         A = rm.S' * (-H) * rm.S
-        @test isapprox(A, I(size(A, 1)); rtol = 1e-6, atol = 1e-6)
+        @test isapprox(A, I(size(A, 1)); rtol = 1.0e-6, atol = 1.0e-6)
         # the determinant was already right with the wrong factor, so assert the shape
-        @test isapprox(rm.S * rm.S', inv(-H); rtol = 1e-6, atol = 1e-8)
+        @test isapprox(rm.S * rm.S', inv(-H); rtol = 1.0e-6, atol = 1.0e-8)
     end
 end
 
@@ -754,8 +828,10 @@ end
 
         # y_i ~ N(a .+ b .* t, σ²I + Z Ω Z') for this model, so the marginal is exact.
         Z = hcat(ones(length(ts)), ts)
-        V = Symmetric(0.3^2 * Matrix(I, length(ts), length(ts)) +
-                      Z * [0.4 0.15; 0.15 0.25] * Z')
+        V = Symmetric(
+            0.3^2 * Matrix(I, length(ts), length(ts)) +
+                Z * [0.4 0.15; 0.15 0.25] * Z'
+        )
         rows = NoLimits.get_row_groups(dm).obs_rows
         for bi in 1:3
             inds = NoLimits.get_inds(infos[bi])
@@ -765,7 +841,7 @@ end
             for level in (3, 5)
                 bll = NoLimits._ghq_batch_ll(dm, infos[bi], θ_re, cc, cache, level)
                 @test isfinite(bll)
-                @test isapprox(bll, exact; rtol = 1e-5)
+                @test isapprox(bll, exact; rtol = 1.0e-5)
             end
         end
     end
@@ -790,7 +866,7 @@ end
         # quadrature must reproduce it at any level.
         @test isapprox(p_g.σ, p_l.σ; rtol = 0.02)
         @test isapprox(p_g.Ω, p_l.Ω; rtol = 0.15)
-        @test isapprox(get_objective(res_g), get_objective(res_l); rtol = 1e-4)
+        @test isapprox(get_objective(res_g), get_objective(res_l); rtol = 1.0e-4)
     end
 end
 
@@ -858,19 +934,23 @@ end
         θ.σ = 0.3
         θ.Ω = [4.0 0.0; 0.0 4.0]
         θ_re = NoLimits.symmetrize_psd_parameters(
-            θ, NoLimits.get_fixed(NoLimits.get_model(dm1)))
+            θ, NoLimits.get_fixed(NoLimits.get_model(dm1))
+        )
         _, infos, cc = NoLimits.build_re_batch_infos(dm1, NamedTuple())
         cache = NoLimits.build_likelihood_cache(dm1; force_saveat = true)
         bstars = NoLimits.empirical_bayes(dm1, θ; rng = Xoshiro(2))
-        H = NoLimits._laplace_hessian_b(dm1, infos[1], θ_re,
-            Vector{Float64}(bstars[1]), cc, cache, nothing, 1)
+        H = NoLimits._laplace_hessian_b(
+            dm1, infos[1], θ_re,
+            Vector{Float64}(bstars[1]), cc, cache, nothing, 1
+        )
         # Admissible since #157 too: it factorizes without jitter. The old relative test
         # (λmin > 1e-8·λmax) rejected it, which is what forced the fallback below.
         @test NoLimits.negH_definite_without_jitter(H)
         rm = NoLimits.build_centered_re_measure(
-            bstars[1], infos[1], 1, θ_re, cc, dm1, cache)
+            bstars[1], infos[1], 1, θ_re, cc, dm1, cache
+        )
         @test rm !== nothing
-        @test isapprox(rm.S' * (-H) * rm.S, I(2); rtol = 1e-6, atol = 1e-6)
+        @test isapprox(rm.S' * (-H) * rm.S, I(2); rtol = 1.0e-6, atol = 1.0e-6)
         @test isfinite(NoLimits._ghq_batch_ll(dm1, infos[1], θ_re, cc, cache, 3, bstars[1]))
     end
 
@@ -880,41 +960,57 @@ end
             @test true
             return
         end
-        dm_s = DataModel(ill_model, df; primary_id = :ID, time_col = :t,
-            serialization = NoLimits.EnsembleSerial())
-        dm_t = DataModel(ill_model, df; primary_id = :ID, time_col = :t,
-            serialization = NoLimits.EnsembleThreads())
-        o_s = get_objective(fit_model(
-            dm_s, method; serialization = NoLimits.EnsembleSerial()))
-        o_t = get_objective(fit_model(
-            dm_t, method; serialization = NoLimits.EnsembleThreads()))
+        dm_s = DataModel(
+            ill_model, df; primary_id = :ID, time_col = :t,
+            serialization = NoLimits.EnsembleSerial()
+        )
+        dm_t = DataModel(
+            ill_model, df; primary_id = :ID, time_col = :t,
+            serialization = NoLimits.EnsembleThreads()
+        )
+        o_s = get_objective(
+            fit_model(
+                dm_s, method; serialization = NoLimits.EnsembleSerial()
+            )
+        )
+        o_t = get_objective(
+            fit_model(
+                dm_t, method; serialization = NoLimits.EnsembleThreads()
+            )
+        )
         @test isfinite(o_s)
-        @test isapprox(o_s, o_t; rtol = 1e-6)
+        @test isapprox(o_s, o_t; rtol = 1.0e-6)
     end
 
     @testset "permuting and relabelling individuals" begin
-        dm = DataModel(ill_model, df; primary_id = :ID, time_col = :t,
-            serialization = NoLimits.EnsembleSerial())
+        dm = DataModel(
+            ill_model, df; primary_id = :ID, time_col = :t,
+            serialization = NoLimits.EnsembleSerial()
+        )
         ids = unique(df.ID)
         perm = randperm(Xoshiro(7), length(ids))
-        relabel = Dict(ids[i] => "z" * lpad(string(perm[i]), 3, '0')
-        for i in eachindex(ids))
+        relabel = Dict(
+            ids[i] => "z" * lpad(string(perm[i]), 3, '0')
+                for i in eachindex(ids)
+        )
         df2 = copy(df)
         df2.ID = [relabel[i] for i in df.ID]
         df2 = df2[sortperm(df2.ID), :]
-        dm2 = DataModel(ill_model, df2; primary_id = :ID, time_col = :t,
-            serialization = NoLimits.EnsembleSerial())
+        dm2 = DataModel(
+            ill_model, df2; primary_id = :ID, time_col = :t,
+            serialization = NoLimits.EnsembleSerial()
+        )
         kw = (; serialization = NoLimits.EnsembleSerial())
         res_a = fit_model(dm, method; kw...)
         res_b = fit_model(dm2, method; kw...)
         oa = get_objective(res_a)
         ob = get_objective(res_b)
         @test isfinite(oa)
-        @test abs(oa - ob) <= 1e-8 * max(abs(oa), 1.0)
+        @test abs(oa - ob) <= 1.0e-8 * max(abs(oa), 1.0)
         # qualified: MCMCChains also exports get_params, ambiguous when batched
         pa = NoLimits.get_params(res_a; scale = :untransformed)
         pb = NoLimits.get_params(res_b; scale = :untransformed)
-        @test maximum(abs.(collect(pa) .- collect(pb))) <= 1e-6
+        @test maximum(abs.(collect(pa) .- collect(pb))) <= 1.0e-6
     end
 end
 
@@ -942,10 +1038,14 @@ end
         end
     end
     rng = Xoshiro(42)
-    df = DataFrame(ID = repeat(1:6, inner = 2), SITE = repeat(1:6, inner = 2),
-        t = repeat([0.0, 1.0], 6), y = rand(rng, 12) .+ 0.5)
+    df = DataFrame(
+        ID = repeat(1:6, inner = 2), SITE = repeat(1:6, inner = 2),
+        t = repeat([0.0, 1.0], 6), y = rand(rng, 12) .+ 0.5
+    )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm, GHQuadrature(level = 3, optim_kwargs = (maxiters = 5,));
-        rng = Xoshiro(42))
+    res = fit_model(
+        dm, GHQuadrature(level = 3, optim_kwargs = (maxiters = 5,));
+        rng = Xoshiro(42)
+    )
     @test isfinite(get_objective(res))
 end

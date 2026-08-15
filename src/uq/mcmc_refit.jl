@@ -1,17 +1,21 @@
 using Random
 
-function _mcmc_refit_method(method::Union{Nothing, MCMC},
+function _mcmc_refit_method(
+        method::Union{Nothing, MCMC},
         sampler,
         turing_kwargs::NamedTuple,
-        adtype)
+        adtype
+    )
     method !== nothing && return method
     return MCMC(; sampler = sampler, turing_kwargs = turing_kwargs, adtype = adtype)
 end
 
-function _mcmc_refit_constants(fe::FixedEffects,
+function _mcmc_refit_constants(
+        fe::FixedEffects,
         θ_hat_u::ComponentArray,
         constants_user::NamedTuple,
-        free_names::Vector{Symbol})
+        free_names::Vector{Symbol}
+    )
     params = get_params(fe)
     pairs = Pair{Symbol, Any}[]
     for name in keys(constants_user)
@@ -35,9 +39,11 @@ function _validate_mcmc_refit_priors(fe::FixedEffects, sampled_fixed_names::Vect
         getfield(priors, name) isa Priorless &&
             error("mcmc_refit requires priors on sampled fixed effects. Priorless for $(name). Add priors or set calculate_se=false/constant for this parameter.")
     end
+    return
 end
 
-function _compute_uq_mcmc_refit(res::FitResult;
+function _compute_uq_mcmc_refit(
+        res::FitResult;
         level::Float64,
         constants::Union{Nothing, NamedTuple},
         constants_re::Union{Nothing, NamedTuple},
@@ -51,7 +57,8 @@ function _compute_uq_mcmc_refit(res::FitResult;
         mcmc_turing_kwargs::NamedTuple,
         mcmc_adtype,
         mcmc_fit_kwargs::NamedTuple,
-        rng::AbstractRNG)
+        rng::AbstractRNG
+    )
     dm = get_data_model(res)
     dm === nothing &&
         error("This fit result does not store a DataModel; pass store_data_model=true when fitting.")
@@ -64,7 +71,8 @@ function _compute_uq_mcmc_refit(res::FitResult;
     ode_args_use = _resolve_fit_kw(res, ode_args, :ode_args, ())
     ode_kwargs_use = _resolve_fit_kw(res, ode_kwargs, :ode_kwargs, NamedTuple())
     serialization_use = _resolve_fit_kw(
-        res, serialization, :serialization, EnsembleSerial())
+        res, serialization, :serialization, EnsembleSerial()
+    )
 
     fe = get_fixed(get_model(dm))
     free_names = _free_fixed_names(fe, constants_user)
@@ -78,7 +86,8 @@ function _compute_uq_mcmc_refit(res::FitResult;
     end
 
     method_refit = _mcmc_refit_method(
-        mcmc_method, mcmc_sampler, mcmc_turing_kwargs, mcmc_adtype)
+        mcmc_method, mcmc_sampler, mcmc_turing_kwargs, mcmc_adtype
+    )
     fitkw = merge(
         (
             constants = constants_all,
@@ -88,27 +97,32 @@ function _compute_uq_mcmc_refit(res::FitResult;
             serialization = serialization_use,
             rng = rng,
             theta_0_untransformed = θ_hat_u,
-            store_data_model = true
+            store_data_model = true,
         ),
-        mcmc_fit_kwargs)
+        mcmc_fit_kwargs
+    )
     refit_res = fit_model(dm, method_refit; fitkw...)
 
-    uq_chain = _compute_uq_chain(refit_res;
+    uq_chain = _compute_uq_chain(
+        refit_res;
         level = level,
         constants = constants_all,
         mcmc_warmup = mcmc_warmup,
         mcmc_draws = mcmc_draws,
         default_draws = 2000,
-        rng = rng)
+        rng = rng
+    )
 
-    diag = merge(uq_chain.diagnostics,
+    diag = merge(
+        uq_chain.diagnostics,
         (;
             refit_source_method = _method_symbol(src_method),
             refit_sampler = method_refit.sampler,
             refit_turing_kwargs = method_refit.turing_kwargs,
             sampled_fixed_names = sampled_fixed_names,
-            constants_used = collect(keys(constants_all))
-        ))
+            constants_used = collect(keys(constants_all)),
+        )
+    )
 
     return UQResult(
         :mcmc_refit,

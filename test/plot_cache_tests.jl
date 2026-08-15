@@ -60,7 +60,8 @@ end
 @testset "Plot cache uses row-specific random effects for varying non-ODE groups" begin
     dm = fx_varyre_dm()
     cache = build_plot_cache(
-        dm; constants_re = fx_varyre_constants_re(), cache_obs_dists = true)
+        dm; constants_re = fx_varyre_constants_re(), cache_obs_dists = true
+    )
 
     @test cache.random_effects[1].η_year ≈ [0.1, 0.4]
     @test cache.random_effects[2].η_year ≈ [0.1, 0.3]
@@ -69,7 +70,7 @@ end
         Distributions.mean(getproperty(cache.obs_dists[1][2], :y)),
         Distributions.mean(getproperty(cache.obs_dists[1][3], :y)),
         Distributions.mean(getproperty(cache.obs_dists[2][1], :y)),
-        Distributions.mean(getproperty(cache.obs_dists[2][2], :y))
+        Distributions.mean(getproperty(cache.obs_dists[2][2], :y)),
     ]
     @test means ≈ [0.1, 0.4, 0.4, 0.1, 0.3]
 end

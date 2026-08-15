@@ -40,7 +40,7 @@ function _resolve_observables(dm::DataModel, observables)
     obs = get_formulas_meta(get_formulas(get_model(dm))).obs_names
     if observables === nothing
         length(obs) > 1 &&
-            @warn "Multiple observables found; using the first." observable=obs[1]
+            @warn "Multiple observables found; using the first." observable = obs[1]
         return [obs[1]]
     end
     obs_list = observables isa AbstractVector ? collect(observables) : [observables]

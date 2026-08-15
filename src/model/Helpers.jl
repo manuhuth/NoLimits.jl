@@ -87,8 +87,10 @@ macro helpers(block)
     if isempty(defs)
         return esc(:(NamedTuple()))
     end
-    func_vals = [Expr(:(=), def.name, Expr(:->, Expr(:tuple, def.args...), def.body))
-                 for def in defs]
+    func_vals = [
+        Expr(:(=), def.name, Expr(:->, Expr(:tuple, def.args...), def.body))
+            for def in defs
+    ]
     nt_expr = Expr(:tuple, func_vals...)
     return esc(nt_expr)
 end

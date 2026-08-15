@@ -29,11 +29,14 @@ const _PRE_NORM_DF = DataFrame(
     ID = [1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6],
     t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
     Age = [30.0, 30.0, 40.0, 40.0, 35.0, 35.0, 45.0, 45.0, 28.0, 28.0, 55.0, 55.0],
-    y = [0.1, 0.2, 0.0, 0.1, 0.15, 0.25, -0.05, 0.05, 0.2, 0.3, -0.1, 0.0])
+    y = [0.1, 0.2, 0.0, 0.1, 0.15, 0.25, -0.05, 0.05, 0.2, 0.3, -0.1, 0.0]
+)
 const _PRE_NORM_DM = DataModel(
-    _PRE_NORM_MODEL, _PRE_NORM_DF; primary_id = :ID, time_col = :t)
+    _PRE_NORM_MODEL, _PRE_NORM_DF; primary_id = :ID, time_col = :t
+)
 const _PRE_NORM_RES_LAP = fit_model(
-    _PRE_NORM_DM, NoLimits.Laplace(; optim_kwargs = (maxiters = 2,)))
+    _PRE_NORM_DM, NoLimits.Laplace(; optim_kwargs = (maxiters = 2,))
+)
 
 # Group 2: Simple Normal RE, no extra covariates
 # Used by: "single-level RE", "constants_re Laplace", "constants_re MCMC"
@@ -55,17 +58,21 @@ end
 const _PRE_CONST_RE_DF = DataFrame(
     ID = [:A, :A, :B, :B, :C, :C, :D, :D],
     t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
-    y = [0.1, 0.2, 0.0, 0.1, 0.15, 0.25, -0.05, 0.05])
+    y = [0.1, 0.2, 0.0, 0.1, 0.15, 0.25, -0.05, 0.05]
+)
 const _PRE_CONST_RE_DM = DataModel(
-    _PRE_SIMPLE_MODEL, _PRE_CONST_RE_DF; primary_id = :ID, time_col = :t)
+    _PRE_SIMPLE_MODEL, _PRE_CONST_RE_DF; primary_id = :ID, time_col = :t
+)
 
 # NPF (1D and 2D) models and fits come from the shared fixtures
 # (fx_npf_*/fx_npf2_* in fixtures.jl), shared with the estimation tests.
 
 # One MCMC fit of _PRE_NORM_DM with enough samples for the draws/warmup kwargs,
 # shared by both MCMC testsets below.
-const _PRE_NORM_RES_MCMC = fit_model(_PRE_NORM_DM,
-    NoLimits.MCMC(; turing_kwargs = (n_samples = 10, n_adapt = 5, progress = false)))
+const _PRE_NORM_RES_MCMC = fit_model(
+    _PRE_NORM_DM,
+    NoLimits.MCMC(; turing_kwargs = (n_samples = 10, n_adapt = 5, progress = false))
+)
 
 @testset "plot_random_effects Laplace" begin
     dm = _PRE_NORM_DM
@@ -81,15 +88,18 @@ const _PRE_NORM_RES_MCMC = fit_model(_PRE_NORM_DM,
     @test p_std_sc !== nothing
 
     p_pit_hist = plot_random_effect_pit(
-        res; show_hist = true, show_kde = false, show_qq = false)
+        res; show_hist = true, show_kde = false, show_qq = false
+    )
     @test p_pit_hist !== nothing
 
     p_pit_kde = plot_random_effect_pit(
-        res; show_hist = false, show_kde = true, show_qq = false)
+        res; show_hist = false, show_kde = true, show_qq = false
+    )
     @test p_pit_kde !== nothing
 
     p_pit_qq = plot_random_effect_pit(
-        res; show_hist = false, show_kde = false, show_qq = true)
+        res; show_hist = false, show_kde = false, show_qq = true
+    )
     @test p_pit_qq !== nothing
 
     @test_throws ArgumentError plot_random_effect_pit(res; x_covariate = :Age)
@@ -112,8 +122,10 @@ const _PRE_NORM_RES_MCMC = fit_model(_PRE_NORM_DM,
         p_scatter_path = joinpath(tmp, "plot_random_effects_scatter.png")
         p_pair_path = joinpath(tmp, "plot_random_effect_pairplot.png")
         plot_random_effect_distributions(res; plot_path = p_dist_path)
-        plot_random_effect_pit(res; show_hist = true, show_kde = false,
-            show_qq = false, plot_path = p_pit_path)
+        plot_random_effect_pit(
+            res; show_hist = true, show_kde = false,
+            show_qq = false, plot_path = p_pit_path
+        )
         plot_random_effect_standardized(res; show_hist = true, plot_path = p_std_path)
         plot_random_effect_standardized_scatter(res; plot_path = p_std_sc_path)
         plot_random_effects_pdf(res; plot_path = p_pdf_path)
@@ -173,7 +185,8 @@ end
     @test p_std_sc !== nothing
 
     p_pit_hist = plot_random_effect_pit(
-        res; show_hist = true, show_kde = false, show_qq = false)
+        res; show_hist = true, show_kde = false, show_qq = false
+    )
     @test p_pit_hist !== nothing
 end
 
@@ -210,14 +223,17 @@ end
     @test p_dist !== nothing
 
     p_pit_hist = plot_random_effect_pit(
-        res; show_hist = true, show_kde = false, show_qq = false)
+        res; show_hist = true, show_kde = false, show_qq = false
+    )
     @test p_pit_hist !== nothing
 end
 
 @testset "plot_random_effects Laplace single-level RE" begin
-    dm = DataModel(_PRE_SIMPLE_MODEL,
+    dm = DataModel(
+        _PRE_SIMPLE_MODEL,
         DataFrame(ID = [1, 1, 1, 1], t = [0.0, 1.0, 2.0, 3.0], y = [0.1, 0.2, 0.15, 0.25]);
-        primary_id = :ID, time_col = :t)
+        primary_id = :ID, time_col = :t
+    )
     res = fit_model(dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 2,)))
 
     p_dist = plot_random_effect_distributions(res)
@@ -244,8 +260,10 @@ end
             a = RealNumber(0.1, prior = Uniform(0.0, 0.9))
             σ = RealNumber(0.3, scale = :log, prior = Uniform(0.01, 1.0))
             μ = RealVector([0.0, 0.0], prior = filldist(Uniform(-1.0, 1.0), 2))
-            Ω = RealPSDMatrix(Matrix(I, 2, 2), scale = :cholesky,
-                prior = InverseWishart(3, Matrix(I, 2, 2)))
+            Ω = RealPSDMatrix(
+                Matrix(I, 2, 2), scale = :cholesky,
+                prior = InverseWishart(3, Matrix(I, 2, 2))
+            )
         end
 
         @covariates begin
@@ -280,7 +298,8 @@ end
     @test p_std_sc !== nothing
 
     p_pit_hist = plot_random_effect_pit(
-        res; show_hist = true, show_kde = false, show_qq = false)
+        res; show_hist = true, show_kde = false, show_qq = false
+    )
     @test p_pit_hist !== nothing
 end
 
@@ -288,15 +307,18 @@ end
     res = _PRE_NORM_RES_MCMC
 
     p_pit_hist = plot_random_effect_pit(
-        res; mcmc_draws = 5, show_hist = true, show_kde = false, show_qq = false)
+        res; mcmc_draws = 5, show_hist = true, show_kde = false, show_qq = false
+    )
     @test p_pit_hist !== nothing
 
     p_pit_kde = plot_random_effect_pit(
-        res; mcmc_draws = 5, show_hist = false, show_kde = true, show_qq = false)
+        res; mcmc_draws = 5, show_hist = false, show_kde = true, show_qq = false
+    )
     @test p_pit_kde !== nothing
 
     p_pit_qq = plot_random_effect_pit(
-        res; mcmc_draws = 5, show_hist = false, show_kde = false, show_qq = true)
+        res; mcmc_draws = 5, show_hist = false, show_kde = false, show_qq = true
+    )
     @test p_pit_qq !== nothing
 
     p_std_sc = plot_random_effect_standardized_scatter(res)
@@ -318,8 +340,10 @@ end
 @testset "plot_random_effects MCMC draws and warmup kwargs" begin
     res = _PRE_NORM_RES_MCMC
 
-    p_pit_hist = plot_random_effect_pit(res; mcmc_draws = 6, mcmc_warmup = 3,
-        show_hist = true, show_kde = false, show_qq = false)
+    p_pit_hist = plot_random_effect_pit(
+        res; mcmc_draws = 6, mcmc_warmup = 3,
+        show_hist = true, show_kde = false, show_qq = false
+    )
     @test p_pit_hist !== nothing
 
     p_dist = plot_random_effect_distributions(res; mcmc_draws = 6, mcmc_warmup = 3)
@@ -337,21 +361,25 @@ end
     constants_re = (; η = (; B = 0.0))
     res = fit_model(
         dm, NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false));
-        constants_re = constants_re)
+        constants_re = constants_re
+    )
 
     p_dist = plot_random_effect_distributions(
-        res; flow_plot = :kde, flow_samples = 200, mcmc_draws = 5)
+        res; flow_plot = :kde, flow_samples = 200, mcmc_draws = 5
+    )
     @test p_dist !== nothing
 
     p_dist_hist = plot_random_effect_distributions(
-        res; flow_plot = :hist, flow_samples = 200, flow_bins = 10, mcmc_draws = 5)
+        res; flow_plot = :hist, flow_samples = 200, flow_bins = 10, mcmc_draws = 5
+    )
     @test p_dist_hist !== nothing
 
     p_std_sc = plot_random_effect_standardized_scatter(res)
     @test p_std_sc !== nothing
 
     p_pit_hist = plot_random_effect_pit(
-        res; mcmc_draws = 5, show_hist = true, show_kde = false, show_qq = false)
+        res; mcmc_draws = 5, show_hist = true, show_kde = false, show_qq = false
+    )
     @test p_pit_hist !== nothing
 end
 
@@ -362,14 +390,16 @@ end
     @test p_dist !== nothing
 
     p_dist_hist = plot_random_effect_distributions(
-        res; flow_plot = :hist, flow_samples = 50, flow_bins = 10)
+        res; flow_plot = :hist, flow_samples = 50, flow_bins = 10
+    )
     @test p_dist_hist !== nothing
 
     p_std_sc = plot_random_effect_standardized_scatter(res, flow_samples = 50)
     @test p_std_sc !== nothing
 
     p_pit_hist = plot_random_effect_pit(
-        res; show_hist = true, show_kde = false, show_qq = false, flow_samples = 50)
+        res; show_hist = true, show_kde = false, show_qq = false, flow_samples = 50
+    )
     @test p_pit_hist !== nothing
 end
 
@@ -377,7 +407,8 @@ end
     res = fx_npf2_mcmc()
 
     p_dist = plot_random_effect_distributions(
-        res; flow_plot = :kde, flow_samples = 50, mcmc_draws = 5)
+        res; flow_plot = :kde, flow_samples = 50, mcmc_draws = 5
+    )
     @test p_dist !== nothing
 
     p_std_sc = plot_random_effect_standardized_scatter(res; flow_samples = 50)
@@ -408,11 +439,13 @@ end
     res = fx_npf_mcmc()
 
     p_dist = plot_random_effect_distributions(
-        res; flow_plot = :kde, flow_samples = 50, mcmc_draws = 5)
+        res; flow_plot = :kde, flow_samples = 50, mcmc_draws = 5
+    )
     @test p_dist !== nothing
 
     p_dist_hist = plot_random_effect_distributions(
-        res; flow_plot = :hist, flow_samples = 50, flow_bins = 10, mcmc_draws = 5)
+        res; flow_plot = :hist, flow_samples = 50, flow_bins = 10, mcmc_draws = 5
+    )
     @test p_dist_hist !== nothing
 
     p_std = plot_random_effect_standardized(res; flow_samples = 50)
@@ -421,16 +454,22 @@ end
     p_std_sc = plot_random_effect_standardized_scatter(res; flow_samples = 50)
     @test p_std_sc !== nothing
 
-    p_pit_hist = plot_random_effect_pit(res; mcmc_draws = 5, show_hist = true,
-        show_kde = false, show_qq = false, flow_samples = 50)
+    p_pit_hist = plot_random_effect_pit(
+        res; mcmc_draws = 5, show_hist = true,
+        show_kde = false, show_qq = false, flow_samples = 50
+    )
     @test p_pit_hist !== nothing
 
-    p_pit_kde = plot_random_effect_pit(res; mcmc_draws = 5, show_hist = false,
-        show_kde = true, show_qq = false, flow_samples = 50)
+    p_pit_kde = plot_random_effect_pit(
+        res; mcmc_draws = 5, show_hist = false,
+        show_kde = true, show_qq = false, flow_samples = 50
+    )
     @test p_pit_kde !== nothing
 
-    p_pit_qq = plot_random_effect_pit(res; mcmc_draws = 5, show_hist = false,
-        show_kde = false, show_qq = true, flow_samples = 50)
+    p_pit_qq = plot_random_effect_pit(
+        res; mcmc_draws = 5, show_hist = false,
+        show_kde = false, show_qq = true, flow_samples = 50
+    )
     @test p_pit_qq !== nothing
 end
 

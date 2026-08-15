@@ -65,20 +65,23 @@ end
         y = [-0.2, -0.1, 0.0, 0.1, 0.2, -0.3, 0.3, -0.15, 0.12, -0.05]
     )
     dm = nothing
-    @test_logs match_mode=:any (:warn, r"weakly identified") begin
+    @test_logs match_mode = :any (:warn, r"weakly identified") begin
         dm = DataModel(model, df; primary_id = :OBS, time_col = :t)
     end
 
     lap = NoLimits.Laplace(;
-        inner_kwargs = (maxiters = 2,), multistart_n = 2, multistart_k = 2)
-    rep = identifiability_report(dm;
+        inner_kwargs = (maxiters = 2,), multistart_n = 2, multistart_k = 2
+    )
+    rep = identifiability_report(
+        dm;
         method = lap,
         at = :start,
         hessian_backend = :fd_gradient,
-        atol = 1e-8,
-        rtol = 1e-4,
-        fd_abs_step = 1e-4,
-        fd_rel_step = 1e-3)
+        atol = 1.0e-8,
+        rtol = 1.0e-4,
+        fd_abs_step = 1.0e-4,
+        fd_rel_step = 1.0e-3
+    )
     @test rep.method == :laplace
     @test rep.objective == :laplace_likelihood
     @test rep.at == :start

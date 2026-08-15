@@ -32,8 +32,8 @@ end
     p_stay = probabilities_hidden_states(hmm_stay)
     p_flip = probabilities_hidden_states(hmm_flip)
 
-    @test isapprox(p_stay, [1.0, 0.0]; rtol = 0.0, atol = 1e-12)
-    @test isapprox(p_flip, [0.0, 1.0]; rtol = 0.0, atol = 1e-12)
+    @test isapprox(p_stay, [1.0, 0.0]; rtol = 0.0, atol = 1.0e-12)
+    @test isapprox(p_flip, [0.0, 1.0]; rtol = 0.0, atol = 1.0e-12)
     @test pdf(hmm_stay, 1) > pdf(hmm_flip, 1)
 
     post_flip = posterior_hidden_states(hmm_flip, 1)
@@ -51,14 +51,20 @@ end
         end
 
         @formulas begin
-            P = [0.6 0.4 0.0;
-                 0.0 0.7 0.3;
-                 0.0 0.0 1.0]
-            y ~ DiscreteTimeDiscreteStatesHMM(P,
-                (Categorical([1.0, 0.0, 0.0]),
+            P = [
+                0.6 0.4 0.0;
+                0.0 0.7 0.3;
+                0.0 0.0 1.0
+            ]
+            y ~ DiscreteTimeDiscreteStatesHMM(
+                P,
+                (
+                    Categorical([1.0, 0.0, 0.0]),
                     Categorical([0.0, 1.0, 0.0]),
-                    Categorical([0.0, 0.0, 1.0])),
-                Categorical([1.0, 0.0, 0.0]))
+                    Categorical([0.0, 0.0, 1.0]),
+                ),
+                Categorical([1.0, 0.0, 0.0])
+            )
         end
     end
 
@@ -76,13 +82,13 @@ end
         (
             Categorical([1.0, 0.0, 0.0]),
             Categorical([0.0, 1.0, 0.0]),
-            Categorical([0.0, 0.0, 1.0])
+            Categorical([0.0, 0.0, 1.0]),
         ),
         Categorical([1.0, 0.0, 0.0])
     )
     expected = _recursive_hmm_loglikelihood(fill(dist, nrow(df)), df.y)
 
-    @test isapprox(ll, expected; atol = 1e-12)
+    @test isapprox(ll, expected; atol = 1.0e-12)
 end
 
 @testset "Discrete-time HMM missing observations still propagate hidden state" begin
@@ -96,14 +102,20 @@ end
         end
 
         @formulas begin
-            P = [0.6 0.4 0.0;
-                 0.0 0.7 0.3;
-                 0.0 0.0 1.0]
-            y ~ DiscreteTimeDiscreteStatesHMM(P,
-                (Categorical([1.0, 0.0, 0.0]),
+            P = [
+                0.6 0.4 0.0;
+                0.0 0.7 0.3;
+                0.0 0.0 1.0
+            ]
+            y ~ DiscreteTimeDiscreteStatesHMM(
+                P,
+                (
+                    Categorical([1.0, 0.0, 0.0]),
                     Categorical([0.0, 1.0, 0.0]),
-                    Categorical([0.0, 0.0, 1.0])),
-                Categorical([1.0, 0.0, 0.0]))
+                    Categorical([0.0, 0.0, 1.0]),
+                ),
+                Categorical([1.0, 0.0, 0.0])
+            )
         end
     end
 
@@ -121,13 +133,13 @@ end
         (
             Categorical([1.0, 0.0, 0.0]),
             Categorical([0.0, 1.0, 0.0]),
-            Categorical([0.0, 0.0, 1.0])
+            Categorical([0.0, 0.0, 1.0]),
         ),
         Categorical([1.0, 0.0, 0.0])
     )
     expected = _recursive_hmm_loglikelihood(fill(dist, nrow(df)), df.y)
 
-    @test isapprox(ll, expected; atol = 1e-12)
+    @test isapprox(ll, expected; atol = 1.0e-12)
 end
 
 @testset "Discrete-time HMM ForwardDiff" begin
@@ -144,11 +156,15 @@ end
         @formulas begin
             p1 = 1 / (1 + exp(-p1_r))
             p2 = 1 / (1 + exp(-p2_r))
-            P = [0.9 0.1;
-                 0.2 0.8]
-            y ~ DiscreteTimeDiscreteStatesHMM(P,
+            P = [
+                0.9 0.1;
+                0.2 0.8
+            ]
+            y ~ DiscreteTimeDiscreteStatesHMM(
+                P,
                 (Bernoulli(p1), Bernoulli(p2)),
-                Categorical([0.6, 0.4]))
+                Categorical([0.6, 0.4])
+            )
         end
     end
 
@@ -179,11 +195,15 @@ end
         @formulas begin
             p1 = 0.8 / (1 + exp(-p1_r)) + 0.1
             p2 = 0.8 / (1 + exp(-p2_r)) + 0.1
-            P = [0.9 0.1;
-                 0.2 0.8]
-            y ~ DiscreteTimeDiscreteStatesHMM(P,
+            P = [
+                0.9 0.1;
+                0.2 0.8
+            ]
+            y ~ DiscreteTimeDiscreteStatesHMM(
+                P,
                 (Bernoulli(p1), Bernoulli(p2)),
-                Categorical([0.6, 0.4]))
+                Categorical([0.6, 0.4])
+            )
         end
     end
 
@@ -201,11 +221,16 @@ end
     res_map = fit_model(dm, NoLimits.MAP(optim_kwargs = (; iterations = 5)))
     @test res_map isa FitResult
 
-    res_mcmc = fit_model(dm,
-        NoLimits.MCMC(; sampler = MH(),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)))
     res_mcmc = fit_model(
-        dm, NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)))
+        dm,
+        NoLimits.MCMC(;
+            sampler = MH(),
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+        )
+    )
+    res_mcmc = fit_model(
+        dm, NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false))
+    )
     @test res_mcmc isa FitResult
     @test NoLimits.get_chain(res_mcmc) isa MCMCChains.Chains
 
@@ -221,29 +246,36 @@ end
     @test_throws ErrorException DiscreteTimeDiscreteStatesHMM([NaN 0.0; 0.0 1.0], E, C)
     @test_throws ErrorException DiscreteTimeDiscreteStatesHMM([0.0 0.0; 0.0 0.0], E, C)
     @test_throws ErrorException ContinuousTimeDiscreteStatesHMM(
-        [-1.0 -1.0; 2.0 -2.0], E, C, 1.0)
+        [-1.0 -1.0; 2.0 -2.0], E, C, 1.0
+    )
     @test_throws ErrorException ContinuousTimeDiscreteStatesHMM(
-        [-1.0 2.0; 2.0 -2.0], E, C, 1.0)
+        [-1.0 2.0; 2.0 -2.0], E, C, 1.0
+    )
     @test_throws ErrorException ContinuousTimeDiscreteStatesHMM(
-        [-1.0 1.0; 2.0 -2.0], E, C, -1.0)
+        [-1.0 1.0; 2.0 -2.0], E, C, -1.0
+    )
 
     # An observation impossible under every state must not poison the filter with NaNs.
     far = DiscreteTimeDiscreteStatesHMM(
-        [1.0 0.0; 0.0 1.0], (Normal(0.0, 0.1), Normal(10.0, 0.1)), C)
+        [1.0 0.0; 0.0 1.0], (Normal(0.0, 0.1), Normal(10.0, 0.1)), C
+    )
     @test all(isfinite, posterior_hidden_states(far, 1000.0))
 
     # Quantiles of a discrete mixture must land on the support, not between its atoms.
     disc = DiscreteTimeDiscreteStatesHMM(
-        [1.0 0.0; 0.0 1.0], (Categorical([1.0, 0.0]), Categorical([0.0, 1.0])), C)
+        [1.0 0.0; 0.0 1.0], (Categorical([1.0, 0.0]), Categorical([0.0, 1.0])), C
+    )
     @test quantile(disc, 0.5) in (1, 2)
     @test_throws DomainError quantile(disc, -0.1)
     @test_throws DomainError quantile(disc, 1.1)
 
     # Continuous emissions still invert the mixture CDF.
     cont = DiscreteTimeDiscreteStatesHMM([0.8 0.2; 0.1 0.9], E, C)
-    @test cdf(cont, quantile(cont, 0.5))≈0.5 atol=1e-6
+    @test cdf(cont, quantile(cont, 0.5)) ≈ 0.5 atol = 1.0e-6
 
-    mv = MVDiscreteTimeDiscreteStatesHMM([0.8 0.2; 0.1 0.9],
-        ((Normal(0.0, 1.0), Normal(0.0, 1.0)), (Normal(3.0, 1.0), Normal(3.0, 1.0))), C)
+    mv = MVDiscreteTimeDiscreteStatesHMM(
+        [0.8 0.2; 0.1 0.9],
+        ((Normal(0.0, 1.0), Normal(0.0, 1.0)), (Normal(3.0, 1.0), Normal(3.0, 1.0))), C
+    )
     @test_throws ErrorException logpdf(mv, [1.0])
 end

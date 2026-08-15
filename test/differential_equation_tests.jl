@@ -25,13 +25,15 @@ struct FakeSol end
     compile = get_de_compiler(de)
     f! = get_de_f!(de)
     f = get_de_f(de)
-    p = DEContext(ComponentArray(a = 2.0, b = 3.0, c = 1.0),
+    p = DEContext(
+        ComponentArray(a = 2.0, b = 3.0, c = 1.0),
         ComponentArray(),
         NamedTuple(),
         NamedTuple(),
         NamedTuple(),
         NamedTuple(),
-        NamedTuple())
+        NamedTuple()
+    )
     pc = compile(p)
     u = [1.0, 2.0]
     du = similar(u)
@@ -46,13 +48,15 @@ end
     end
     compile = get_de_compiler(de)
     f! = get_de_f!(de)
-    p = DEContext(ComponentArray(a = 2.5),
+    p = DEContext(
+        ComponentArray(a = 2.5),
         ComponentArray(),
         NamedTuple(),
         NamedTuple(),
         NamedTuple(),
         NamedTuple(),
-        NamedTuple())
+        NamedTuple()
+    )
     pc = compile(p)
     u = [0.0]
     du = similar(u)
@@ -77,18 +81,20 @@ end
     end
     compile = get_de_compiler(de)
     f! = get_de_f!(de)
-    p = DEContext(ComponentArray(),
+    p = DEContext(
+        ComponentArray(),
         ComponentArray(),
         NamedTuple(),
         (w1 = t -> 2t,),
         NamedTuple(),
         NamedTuple(),
-        (pre = 1.0,))
+        (pre = 1.0,)
+    )
     pc = compile(p)
     u = [0.0]
     du = similar(u)
     f!(du, u, pc, 0.5)
-    @test isapprox(du[1], sin(0.5) + 2 * 0.5 + 1.0; rtol = 1e-6, atol = 1e-8)
+    @test isapprox(du[1], sin(0.5) + 2 * 0.5 + 1.0; rtol = 1.0e-6, atol = 1.0e-8)
 end
 
 @testset "DifferentialEquation accessors" begin
@@ -97,13 +103,15 @@ end
         D(x1) ~ a * x1
         D(y1) ~ s(t) + 1
     end
-    p = DEContext(ComponentArray(a = 2.0),
+    p = DEContext(
+        ComponentArray(a = 2.0),
         ComponentArray(),
         NamedTuple(),
         NamedTuple(),
         NamedTuple(),
         NamedTuple(),
-        NamedTuple())
+        NamedTuple()
+    )
     pc = get_de_compiler(de)(p)
     accessors = get_de_accessors_builder(de)(FakeSol(), pc)
     @test haskey(accessors, :x1)
@@ -127,13 +135,15 @@ end
         D(x1) ~ a + w1
     end
     compile = get_de_compiler(de)
-    p = DEContext(ComponentArray(a = 1.0),
+    p = DEContext(
+        ComponentArray(a = 1.0),
         ComponentArray(),
         NamedTuple(),
         NamedTuple(),
         NamedTuple(),
         NamedTuple(),
-        NamedTuple())
+        NamedTuple()
+    )
     @test_throws ErrorException compile(p)
 end
 
@@ -177,14 +187,17 @@ end
         sat(u) = u / (1 + abs(u))
     end
     pre = get_prede_builder(prede)(
-        fe0, ComponentArray(), NamedTuple(), NamedTuple(), helper_functions)
-    p = DEContext(fe0,
+        fe0, ComponentArray(), NamedTuple(), NamedTuple(), helper_functions
+    )
+    p = DEContext(
+        fe0,
         ComponentArray(),
         NamedTuple(),
         NamedTuple(),
         helper_functions,
         NamedTuple(),
-        pre)
+        pre
+    )
     pc = get_de_compiler(de)(p)
     du = similar([0.5])
     get_de_f!(de)(du, [0.5], pc, 0.0)

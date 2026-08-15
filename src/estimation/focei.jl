@@ -165,7 +165,7 @@ function _focei_expected_information(d::Gamma)
     a = d.α
     θ = d.θ
     iθ = inv(θ)
-    return [trigamma(a) iθ; iθ a*iθ*iθ]
+    return [trigamma(a) iθ; iθ a * iθ * iθ]
 end
 
 # Beta(α, β): ℐ = [[ψ'(α)-ψ'(α+β), -ψ'(α+β)], [-ψ'(α+β), ψ'(β)-ψ'(α+β)]]
@@ -247,8 +247,10 @@ end
 # formula context, and hand the row loop to `rows_f!` behind a function barrier
 # (mirrors `_loglikelihood_individual`). `rows_f!` is called as
 # `rows_f!(out, obs_f, ctx, sol_acc, const_cov, obs_series, vrows, obs_cols)`.
-function _focei_collect_obs!(rows_f!::RF, out::Vector, dm::DataModel, idx::Int,
-        θ, η_ind, cache::_LLCache) where {RF}
+function _focei_collect_obs!(
+        rows_f!::RF, out::Vector, dm::DataModel, idx::Int,
+        θ, η_ind, cache::_LLCache
+    ) where {RF}
     model = get_model(dm)
     ind = get_individuals(dm)[idx]
     obs_rows = get_obs_rows(get_row_groups(dm))[idx]
@@ -271,15 +273,15 @@ function _focei_collect_obs!(rows_f!::RF, out::Vector, dm::DataModel, idx::Int,
     if _needs_rowwise_random_effects(dm, idx; obs_only = true)
         # Per-row η selection (rare; non-DE only).
         t_obs = vary_cache === nothing ? _get_col(get_df(dm), get_time_col(dm))[obs_rows] :
-                nothing
+            nothing
         isempty(obs_rows) && return true
         row_tmpl = _row_re_template(dm, idx, 1, η_ind; obs_only = true)
         for i in eachindex(obs_rows)
             vary = vary_cache === nothing ? _varying_at(dm, ind, i, t_obs) : vary_cache[i]
             η_row = _row_random_effects_fill(dm, idx, i, η_ind, row_tmpl; obs_only = true)
             obs = sol_accessors === nothing ?
-                  calculate_formulas_obs(model, θ, η_row, const_cov, vary) :
-                  calculate_formulas_obs(model, θ, η_row, const_cov, vary, sol_accessors)
+                calculate_formulas_obs(model, θ, η_row, const_cov, vary) :
+                calculate_formulas_obs(model, θ, η_row, const_cov, vary, sol_accessors)
             for col in obs_cols
                 y = getfield(obs_series, col)[i]
                 y === missing && continue
@@ -290,13 +292,16 @@ function _focei_collect_obs!(rows_f!::RF, out::Vector, dm::DataModel, idx::Int,
     end
 
     pre === nothing && (pre = calculate_prede(model, θ, η_ind, const_cov))
-    ctx = (; fixed_effects = θ, random_effects = η_ind, prede = pre,
-        helpers = cache.helpers, model_funs = cache.model_funs)
+    ctx = (;
+        fixed_effects = θ, random_effects = η_ind, prede = pre,
+        helpers = cache.helpers, model_funs = cache.model_funs,
+    )
     vrows = vary_cache !== nothing ? vary_cache :
-            _build_vary_cache_individual(
-        get_vary(get_series(ind)), get_dyn(get_series(ind)),
-        _get_col(get_df(dm), get_time_col(dm))[obs_rows],
-        length(obs_rows))
+        _build_vary_cache_individual(
+            get_vary(get_series(ind)), get_dyn(get_series(ind)),
+            _get_col(get_df(dm), get_time_col(dm))[obs_rows],
+            length(obs_rows)
+        )
     sol_acc = sol_accessors === nothing ? NamedTuple() : sol_accessors
     rows_f!(out, model.formulas.obs, ctx, sol_acc, const_cov, obs_series, vrows, obs_cols)
     return true
@@ -306,10 +311,13 @@ end
 # native parameters for the typed Jacobian target.
 @inline _focei_collect_push!(out::Vector{Any}, dist) = push!(out, dist)
 @inline _focei_collect_push!(out::Vector{T}, dist) where {T <: Real} = append!(
-    out, _focei_params(dist))
+    out, _focei_params(dist)
+)
 
-function _focei_rows_push!(out::Vector, obs_f::F, ctx::C, sol_acc::SA, const_cov::CC,
-        obs_series::OS, vrows::Vector{V}, obs_cols) where {F, C, SA, CC, OS, V}
+function _focei_rows_push!(
+        out::Vector, obs_f::F, ctx::C, sol_acc::SA, const_cov::CC,
+        obs_series::OS, vrows::Vector{V}, obs_cols
+    ) where {F, C, SA, CC, OS, V}
     for i in eachindex(vrows)
         obs = obs_f(ctx, sol_acc, const_cov, vrows[i])
         for col in obs_cols
@@ -322,8 +330,9 @@ function _focei_rows_push!(out::Vector, obs_f::F, ctx::C, sol_acc::SA, const_cov
 end
 
 function _focei_collect_obs_dists!(
-        out::Vector, dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache)
-    _focei_collect_obs!(_focei_rows_push!, out, dm, idx, θ, η_ind, cache)
+        out::Vector, dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache
+    )
+    return _focei_collect_obs!(_focei_rows_push!, out, dm, idx, θ, η_ind, cache)
 end
 
 # Returns a Vector of the outcome distributions for every (non-missing) observation in
@@ -334,7 +343,8 @@ end
 # measured ~50× on `_focei_data_term` vs iterating the boxed `Vector{Any}`.
 function _focei_obs_dists_batch(
         dm::DataModel, batch_info::REBatchInfo, θ_re::ComponentArray,
-        b, const_cache::REConstantsCache, cache::_LLCache)
+        b, const_cache::REConstantsCache, cache::_LLCache
+    )
     out = Vector{Any}()
     for i in get_inds(batch_info)
         η_ind = _build_eta_ind(dm, i, batch_info, b, const_cache, θ_re)
@@ -350,7 +360,8 @@ end
 # route boxed every distribution and re-allocated the stack repeatedly).
 function _focei_obs_params_batch(
         dm::DataModel, batch_info::REBatchInfo, θ_re::ComponentArray,
-        b, const_cache::REConstantsCache, cache::_LLCache)
+        b, const_cache::REConstantsCache, cache::_LLCache
+    )
     T = promote_type(eltype(θ_re), eltype(b))
     out = Vector{T}()
     for i in get_inds(batch_info)
@@ -369,7 +380,8 @@ struct _FOCEIPhi{DM, INFO, TH, CC, CA}
     cache::CA
 end
 @inline (f::_FOCEIPhi)(b) = _focei_obs_params_batch(
-    f.dm, f.info, f.θ, b, f.const_cache, f.cache)
+    f.dm, f.info, f.θ, b, f.const_cache, f.cache
+)
 
 struct _FOCEIPriorLogf{DM, INFO, TH, CC, CA}
     dm::DM
@@ -379,7 +391,8 @@ struct _FOCEIPriorLogf{DM, INFO, TH, CC, CA}
     cache::CA
 end
 @inline (f::_FOCEIPriorLogf)(b) = _re_prior_logf_batch(
-    f.dm, f.info, f.θ, b, f.const_cache, f.cache)
+    f.dm, f.info, f.θ, b, f.const_cache, f.cache
+)
 
 # -------------------------------------------------------------------------------------
 # 3. Prior mean mᵢ in b-space (FOCE freezes dispersion parameters here).
@@ -391,7 +404,8 @@ end
 # backtracks instead of crashing the fit (mirrors `_laplace_logf_batch`).
 function _focei_prior_mean_b(
         dm::DataModel, batch_info::REBatchInfo, θ_re::ComponentArray,
-        const_cache::REConstantsCache, cache::_LLCache)
+        const_cache::REConstantsCache, cache::_LLCache
+    )
     try
         return _focei_prior_mean_b_impl(dm, batch_info, θ_re, const_cache, cache)
     catch err
@@ -404,7 +418,8 @@ end
 
 function _focei_prior_mean_b_impl(
         dm::DataModel, batch_info::REBatchInfo, θ_re::ComponentArray,
-        const_cache::REConstantsCache, cache::_LLCache)
+        const_cache::REConstantsCache, cache::_LLCache
+    )
     nb = get_n_b(batch_info)
     T = eltype(θ_re)
     m = zeros(T, nb)
@@ -516,7 +531,8 @@ end
 # are built inside, where every type is known (boxing a SubArray through dynamic
 # dispatch costs more than the dispatch itself).
 function _focei_data_term_obs!(
-        H::Matrix, tmp::Matrix, J::Matrix, offset::Int, d, dmj, interaction::Bool)
+        H::Matrix, tmp::Matrix, J::Matrix, offset::Int, d, dmj, interaction::Bool
+    )
     dj = _focei_paramcount(d)
     Jj = view(J, (offset + 1):(offset + dj), :)
     Tj = view(tmp, 1:dj, :)
@@ -551,12 +567,16 @@ end
 # (e.g. a negative state driving a fractional power, or a negative scale) is turned into
 # a NaN Hessian. That makes the Cholesky/log-det fail and the marginal -Inf, so the outer
 # optimizer backtracks instead of crashing the whole fit — matching Laplace's behavior.
-function _focei_negH_batch(dm::DataModel, batch_info::REBatchInfo, θ, b,
+function _focei_negH_batch(
+        dm::DataModel, batch_info::REBatchInfo, θ, b,
         const_cache::REConstantsCache, cache::_LLCache;
-        interaction::Bool, tctx = nothing)
+        interaction::Bool, tctx = nothing
+    )
     try
-        return _focei_negH_batch_impl(dm, batch_info, θ, b, const_cache, cache;
-            interaction = interaction, tctx = tctx)
+        return _focei_negH_batch_impl(
+            dm, batch_info, θ, b, const_cache, cache;
+            interaction = interaction, tctx = tctx
+        )
     catch err
         if _is_numeric_error(err)
             nb = get_n_b(batch_info)
@@ -566,11 +586,13 @@ function _focei_negH_batch(dm::DataModel, batch_info::REBatchInfo, θ, b,
     end
 end
 
-function _focei_negH_batch_impl(dm::DataModel, batch_info::REBatchInfo, θ, b,
+function _focei_negH_batch_impl(
+        dm::DataModel, batch_info::REBatchInfo, θ, b,
         const_cache::REConstantsCache, cache::_LLCache;
-        interaction::Bool, tctx = nothing)
+        interaction::Bool, tctx = nothing
+    )
     θ_re = tctx === nothing ? _symmetrize_psd_params(θ, get_fixed(get_model(dm))) :
-           tctx.θ_re
+        tctx.θ_re
     nb = get_n_b(batch_info)
     T = promote_type(eltype(θ_re), eltype(b))
     nb == 0 && return zeros(T, 0, 0)
@@ -631,11 +653,15 @@ struct FisherInformationCurvature <: AbstractCurvature
 end
 const _FOCEIHess = FisherInformationCurvature
 
-@inline function inner_curvature(m::FisherInformationCurvature, dm::DataModel,
+@inline function inner_curvature(
+        m::FisherInformationCurvature, dm::DataModel,
         batch_info::REBatchInfo, θ, b, const_cache::REConstantsCache, cache::_LLCache,
-        ws::CurvatureWorkspace; ctx::AbstractString = "", tctx = nothing)
-    return -_focei_negH_batch(dm, batch_info, θ, b, const_cache, cache;
-        interaction = m.interaction, tctx = tctx)
+        ws::CurvatureWorkspace; ctx::AbstractString = "", tctx = nothing
+    )
+    return -_focei_negH_batch(
+        dm, batch_info, θ, b, const_cache, cache;
+        interaction = m.interaction, tctx = tctx
+    )
 end
 
 # -------------------------------------------------------------------------------------
@@ -686,9 +712,11 @@ struct FOCEI{O, K, A, IO, HO, CO, MS, L, U} <: FittingMethod
     interaction::Bool
 end
 
-function FOCEI(; interaction::Bool = true,
+function FOCEI(;
+        interaction::Bool = true,
         optimizer = OptimizationOptimJL.LBFGS(
-            linesearch = LineSearches.BackTracking(maxstep = 1.0)),
+            linesearch = LineSearches.BackTracking(maxstep = 1.0)
+        ),
         optim_kwargs = (; maxiters = 1000),
         adtype = Optimization.AutoForwardDiff(),
         inner_options = nothing,
@@ -704,29 +732,36 @@ function FOCEI(; interaction::Bool = true,
         multistart_grad_tol = inner_grad_tol,
         multistart_max_rounds = 1,
         multistart_sampling = :lhs,
-        jitter = 1e-6,
+        jitter = 1.0e-6,
         max_tries = 6,
         jitter_growth = 10.0,
         adaptive_jitter = true,
-        jitter_scale = 1e-6,
+        jitter_scale = 1.0e-6,
         theta_tol = 0.0,
         lb = nothing,
         ub = nothing,
         ignore_model_bounds = false,
-        precondition = true)
+        precondition = true
+    )
     inner = inner_options === nothing ?
-            LaplaceInnerOptions(
-        inner_optimizer, inner_kwargs, inner_adtype, inner_grad_tol) : inner_options
+        LaplaceInnerOptions(
+            inner_optimizer, inner_kwargs, inner_adtype, inner_grad_tol
+        ) : inner_options
     hess = hessian_options === nothing ?
-           LaplaceHessianOptions(
-        jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale, true, false, 8) :
-           hessian_options
+        LaplaceHessianOptions(
+            jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale, true, false, 8
+        ) :
+        hessian_options
     cache = cache_options === nothing ? LaplaceCacheOptions(theta_tol) : cache_options
     ms = multistart_options === nothing ?
-         LaplaceMultistartOptions(multistart_n, multistart_k, multistart_grad_tol,
-        multistart_max_rounds, multistart_sampling) : multistart_options
-    FOCEI(optimizer, optim_kwargs, adtype, inner, hess, cache,
-        ms, lb, ub, ignore_model_bounds, precondition, interaction)
+        LaplaceMultistartOptions(
+            multistart_n, multistart_k, multistart_grad_tol,
+            multistart_max_rounds, multistart_sampling
+        ) : multistart_options
+    return FOCEI(
+        optimizer, optim_kwargs, adtype, inner, hess, cache,
+        ms, lb, ub, ignore_model_bounds, precondition, interaction
+    )
 end
 
 # -------------------------------------------------------------------------------------
@@ -734,13 +769,15 @@ end
 # -------------------------------------------------------------------------------------
 
 function _focei_validate_distributions(
-        dm::DataModel; ode_args::Tuple, ode_kwargs::NamedTuple)
+        dm::DataModel; ode_args::Tuple, ode_kwargs::NamedTuple
+    )
     fe = get_fixed(get_model(dm))
     θ0 = get_θ0_untransformed(fe)
     θ_re = _symmetrize_psd_params(θ0, fe)
     _, batch_infos, const_cache = _build_re_batch_infos(dm, NamedTuple())
     ll_cache = build_ll_cache(
-        dm; ode_args = ode_args, ode_kwargs = ode_kwargs, force_saveat = true)
+        dm; ode_args = ode_args, ode_kwargs = ode_kwargs, force_saveat = true
+    )
     for info in batch_infos
         get_n_b(info) == 0 && continue
         b0 = zeros(Float64, get_n_b(info))
@@ -748,10 +785,12 @@ function _focei_validate_distributions(
         isempty(dists) && continue
         for d in dists
             _focei_is_supported(d) ||
-                error("FOCEI does not support outcome distribution $(typeof(d)). " *
-                      "Supported families: Normal, LogNormal, Laplace, Cauchy, Exponential, " *
-                      "Poisson, Bernoulli, Binomial, Geometric, Gamma, Beta, MvNormal. " *
-                      "Use Laplace for hidden-Markov / unsupported outcomes.")
+                error(
+                "FOCEI does not support outcome distribution $(typeof(d)). " *
+                    "Supported families: Normal, LogNormal, Laplace, Cauchy, Exponential, " *
+                    "Poisson, Bernoulli, Binomial, Geometric, Gamma, Beta, MvNormal. " *
+                    "Use Laplace for hidden-Markov / unsupported outcomes."
+            )
         end
         return nothing  # families are fixed by the formula; one observed batch suffices
     end
@@ -762,7 +801,8 @@ end
 # 8. Fit drivers.
 # -------------------------------------------------------------------------------------
 
-function _fit_model(dm::DataModel, method::FOCEI, args...;
+function _fit_model(
+        dm::DataModel, method::FOCEI, args...;
         constants::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple(),
         penalty::NamedTuple = NamedTuple(),
@@ -772,10 +812,13 @@ function _fit_model(dm::DataModel, method::FOCEI, args...;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
-        store_data_model::Bool = true)
-    fit_kwargs = (constants = constants, constants_re = constants_re, penalty = penalty,
+        store_data_model::Bool = true
+    )
+    fit_kwargs = (
+        constants = constants, constants_re = constants_re, penalty = penalty,
         ode_args = ode_args, ode_kwargs = ode_kwargs, serialization = serialization,
-        rng = rng, theta_0_untransformed = theta_0_untransformed, store_data_model = store_data_model)
+        rng = rng, theta_0_untransformed = theta_0_untransformed, store_data_model = store_data_model,
+    )
     re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) &&
         error("FOCEI requires random effects. Use MLE/MAP for fixed-effects models.")
@@ -794,13 +837,17 @@ function _fit_model(dm::DataModel, method::FOCEI, args...;
     # closed-form-information outcome check. BlackBoxOptim is allowed on the same
     # terms as Laplace: it is derivative-free and only needs the objective, so the
     # finite-bounds validation and start clamping in `resolve_optimizer_bounds` apply.
-    return _fit_laplace_family(dm, method, _FOCEIHess(method.interaction), args,
+    return _fit_laplace_family(
+        dm, method, _FOCEIHess(method.interaction), args,
         fit_kwargs,
-        d -> _focei_validate_distributions(d; ode_args = ode_args,
-            ode_kwargs = ode_kwargs);
+        d -> _focei_validate_distributions(
+            d; ode_args = ode_args,
+            ode_kwargs = ode_kwargs
+        );
         nan_recovery = :backtrack, allow_bbo = true,
         constants = constants, constants_re = constants_re, penalty = penalty,
         ode_args = ode_args, ode_kwargs = ode_kwargs, serialization = serialization,
         rng = rng, theta_0_untransformed = theta_0_untransformed,
-        store_data_model = store_data_model, extra_objective = extra_objective)
+        store_data_model = store_data_model, extra_objective = extra_objective
+    )
 end

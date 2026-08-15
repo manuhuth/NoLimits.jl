@@ -67,8 +67,11 @@ using LinearAlgebra
     @test occursin("x1̇(t) =", txt_plain)
     @test occursin("y = Normal", txt_plain)
 
-    txt_num = sprint(io -> NoLimits.show_equations(
-        io, model; latex = false, numbered = true))
+    txt_num = sprint(
+        io -> NoLimits.show_equations(
+            io, model; latex = false, numbered = true
+        )
+    )
     @test startswith(txt_num, "1.")
     @test occursin("\n2.", txt_num)
 

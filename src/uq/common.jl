@@ -25,13 +25,17 @@ const _UQ_INTERVALS = (:auto, :profile)
 
 # Boundary/malformed UQ options used to be accepted silently and either changed the
 # numerical scheme or were clamped without notice (#211).
-function _validate_uq_options(res::FitResult; interval, fd_abs_step, fd_rel_step,
+function _validate_uq_options(
+        res::FitResult; interval, fd_abs_step, fd_rel_step,
         fd_max_tries, mcmc_warmup, mcmc_draws, constants, profile_max_iter,
-        profile_ftol_abs, profile_scan_width)
+        profile_ftol_abs, profile_scan_width
+    )
     interval in _UQ_INTERVALS ||
         error("Unsupported interval $(interval). Use one of $(_UQ_INTERVALS).")
-    for (name, v) in (("fd_abs_step", fd_abs_step), ("fd_rel_step", fd_rel_step),
-        ("profile_ftol_abs", profile_ftol_abs), ("profile_scan_width", profile_scan_width))
+    for (name, v) in (
+            ("fd_abs_step", fd_abs_step), ("fd_rel_step", fd_rel_step),
+            ("profile_ftol_abs", profile_ftol_abs), ("profile_scan_width", profile_scan_width),
+        )
         (v isa Real && isfinite(v) && v > 0) ||
             error("$(name) must be finite and > 0. Got $(v).")
     end
@@ -135,7 +139,7 @@ end
     if value isa Number
         return Float64[value]
     elseif natural && spec.kind == :lie && spec.lie !== nothing &&
-           value isa AbstractMatrix
+            value isa AbstractMatrix
         # Structured Lie covariance: report per free slot — the eigenvalue for a free
         # log-eigenvalue slot, the coefficient for a free rotation slot. Count equals the
         # transformed free-parameter count (Wald delta-method stays square).
@@ -146,9 +150,11 @@ end
             push!(out, idx <= layout.n ? exp(p_full[idx]) : p_full[idx])
         end
         return out
-    elseif natural && (spec.kind == :expm ||
-                       (spec.kind == :lie && spec.lie === nothing)) &&
-           value isa AbstractMatrix
+    elseif natural && (
+            spec.kind == :expm ||
+                (spec.kind == :lie && spec.lie === nothing)
+        ) &&
+            value isa AbstractMatrix
         n = size(value, 1)
         out = Float64[]
         for j in 1:n
@@ -197,8 +203,10 @@ end
 # Rebuild the untransformed ComponentArray from a full free-coordinate vector on the
 # transformed scale. Element type comes from the free vector (its Duals); the held
 # constant coordinates are overlaid before the inverse transform is applied.
-function _theta_u_from_free_t(x_free, axs_free, θ_const_t, axs_full, free_names,
-        inv_transform)
+function _theta_u_from_free_t(
+        x_free, axs_free, θ_const_t, axs_full, free_names,
+        inv_transform
+    )
     θt_free = ComponentArray(x_free, axs_free)
     T = eltype(θt_free)
     θt_full = ComponentArray(T.(θ_const_t), axs_full)
@@ -208,16 +216,19 @@ function _theta_u_from_free_t(x_free, axs_free, θ_const_t, axs_full, free_names
     return _as_component_array(inv_transform(θt_full))
 end
 
-function _coords_on_transformed_layout(fe::FixedEffects,
+function _coords_on_transformed_layout(
+        fe::FixedEffects,
         θ,
         names::Vector{Symbol};
-        natural::Bool = false)
+        natural::Bool = false
+    )
     spec_map = _spec_map(fe)
     out = Float64[]
     for name in names
         hasproperty(θ, name) || error("Parameter vector is missing $(name).")
         append!(
-            out, _coords_for_param(getproperty(θ, name), spec_map[name]; natural = natural))
+            out, _coords_for_param(getproperty(θ, name), spec_map[name]; natural = natural)
+        )
     end
     return out
 end
@@ -234,7 +245,7 @@ function _extend_natural_stickbreak(
         est_n::Vector{Float64},
         draws_n::Union{Nothing, Matrix{Float64}},
         intervals_n::Union{Nothing, UQIntervals}
-)
+    )
     has_sb = any(k -> k == :stickbreak || k == :stickbreakrows, active_kinds)
     has_sb || return nothing
 
@@ -311,9 +322,11 @@ function _extend_natural_stickbreak(
     end
 
     ext_intervals_n = if intervals_n !== nothing
-        UQIntervals(level,
+        UQIntervals(
+            level,
             vcat(intervals_n.lower, derived_lower),
-            vcat(intervals_n.upper, derived_upper))
+            vcat(intervals_n.upper, derived_upper)
+        )
     else
         nothing
     end
@@ -321,13 +334,17 @@ function _extend_natural_stickbreak(
     return (ext_names, ext_est_n, ext_draws_n, ext_intervals_n)
 end
 
-function _build_ll_cache_uq(dm::DataModel,
+function _build_ll_cache_uq(
+        dm::DataModel,
         ode_args::Tuple,
         ode_kwargs::NamedTuple,
-        serialization::SciMLBase.EnsembleAlgorithm)
+        serialization::SciMLBase.EnsembleAlgorithm
+    )
     if serialization isa SciMLBase.EnsembleThreads
-        return build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-            nthreads = Threads.maxthreadid())
+        return build_ll_cache(
+            dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+            nthreads = Threads.maxthreadid()
+        )
     end
     return build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs)
 end
@@ -353,23 +370,25 @@ function _project_psd_covariance(cov_mat::Matrix{Float64})
     # weakly identified parameter can come out looking precise. Never do that silently
     # (issue #173).
     n_clipped > 0 &&
-        @warn "Wald covariance was projected to the nearest PSD matrix: $(n_clipped) "*
-              "negative eigenvalue(s) clipped to zero (most negative $(min_raw)). Standard "*
-              "errors along those directions are shrunk toward zero and understate the true "*
-              "uncertainty; prefer method = :profile / :mcmc for those parameters." maxlog=3
+        @warn "Wald covariance was projected to the nearest PSD matrix: $(n_clipped) " *
+        "negative eigenvalue(s) clipped to zero (most negative $(min_raw)). Standard " *
+        "errors along those directions are shrunk toward zero and understate the true " *
+        "uncertainty; prefer method = :profile / :mcmc for those parameters." maxlog = 3
     diag = (;
         vcov_projected = n_clipped > 0,
         vcov_min_eig_raw = min_raw,
         vcov_min_eig_used = min_used,
-        vcov_n_eigs_clipped = n_clipped
+        vcov_n_eigs_clipped = n_clipped,
     )
     return V, diag
 end
 
-function _sample_gaussian_draws(rng::AbstractRNG,
+function _sample_gaussian_draws(
+        rng::AbstractRNG,
         mean_vec::Vector{Float64},
         cov_mat::Matrix{Float64},
-        n_draws::Int)
+        n_draws::Int
+    )
     p = length(mean_vec)
     n_draws >= 1 || error("n_draws must be >= 1.")
     p == 0 && return zeros(Float64, n_draws, 0)
@@ -426,12 +445,14 @@ function _intervals_from_draws(draws::Matrix{Float64}, level::Float64)
     return UQIntervals(level, lower, upper)
 end
 
-function _hessian_from_objective(obj::Function,
+function _hessian_from_objective(
+        obj::Function,
         x0::Vector{Float64};
         backend::Symbol = :auto,
-        fd_abs_step::Real = 1e-4,
-        fd_rel_step::Real = 1e-3,
-        fd_max_tries::Int = 8)
+        fd_abs_step::Real = 1.0e-4,
+        fd_rel_step::Real = 1.0e-3,
+        fd_max_tries::Int = 8
+    )
     backend_use = backend == :auto ? :forwarddiff : backend
     backend_use == :forwarddiff || backend_use == :fd_gradient ||
         error("Unsupported Hessian backend $(backend). Use :auto, :forwarddiff, or :fd_gradient.")
@@ -441,10 +462,12 @@ function _hessian_from_objective(obj::Function,
         try
             return Float64.(ForwardDiff.gradient(obj, xv))
         catch
-            return _gradient_fd_from_obj(obj, xv;
+            return _gradient_fd_from_obj(
+                obj, xv;
                 abs_step = fd_abs_step,
                 rel_step = fd_rel_step,
-                max_tries = fd_max_tries)
+                max_tries = fd_max_tries
+            )
         end
     end
 
@@ -452,35 +475,44 @@ function _hessian_from_objective(obj::Function,
         try
             H = ForwardDiff.hessian(obj, x0)
             all(isfinite, H) ||
-                error("ForwardDiff Hessian has non-finite entries (e.g. a NaN " *
-                      "covariance derivative at repeated eigenvalues).")
+                error(
+                "ForwardDiff Hessian has non-finite entries (e.g. a NaN " *
+                    "covariance derivative at repeated eigenvalues)."
+            )
             return Matrix{Float64}(0.5 .* (H .+ H')), :forwarddiff
         catch err
-            @warn "ForwardDiff Hessian failed in compute_uq; falling back to finite-difference Hessian from gradients." error=sprint(
-                showerror, err)
+            @warn "ForwardDiff Hessian failed in compute_uq; falling back to finite-difference Hessian from gradients." error = sprint(
+                showerror, err
+            )
             backend_use = :fd_gradient
         end
     end
 
-    H = _hessian_fd_from_grad(grad_fun, x0;
+    H = _hessian_fd_from_grad(
+        grad_fun, x0;
         abs_step = fd_abs_step,
         rel_step = fd_rel_step,
-        max_tries = fd_max_tries)
+        max_tries = fd_max_tries
+    )
     return Matrix{Float64}(0.5 .* (H .+ H')), :fd_gradient
 end
 
-function _gradient_from_objective(obj::Function,
+function _gradient_from_objective(
+        obj::Function,
         x0::Vector{Float64};
-        fd_abs_step::Real = 1e-6,
-        fd_rel_step::Real = 1e-6,
-        fd_max_tries::Int = 8)
+        fd_abs_step::Real = 1.0e-6,
+        fd_rel_step::Real = 1.0e-6,
+        fd_max_tries::Int = 8
+    )
     try
         return Float64.(ForwardDiff.gradient(obj, x0))
     catch
-        return _gradient_fd_from_obj(obj, x0;
+        return _gradient_fd_from_obj(
+            obj, x0;
             abs_step = fd_abs_step,
             rel_step = fd_rel_step,
-            max_tries = fd_max_tries)
+            max_tries = fd_max_tries
+        )
     end
 end
 

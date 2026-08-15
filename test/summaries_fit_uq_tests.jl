@@ -42,7 +42,7 @@ using Turing: MH
     @test s_fit.n_missing_total == 0
     @test length(s_fit.coverage_rows) == 1
     @test occursin("Empirical Bayes", s_fit.random_effect_label) ||
-          occursin("Random effects summary", s_fit.random_effect_label)
+        occursin("Random effects summary", s_fit.random_effect_label)
     txt_fit = sprint(show, MIME"text/plain"(), s_fit)
     @test occursin("FitResultSummary", txt_fit)
     @test occursin("Outcome data coverage", txt_fit)
@@ -143,7 +143,8 @@ end
         @fixedEffects begin
             a = RealNumber(0.2; prior = Normal(0.0, 1.0), calculate_se = true)
             σ = RealNumber(
-                0.4; scale = :log, prior = LogNormal(0.0, 0.5), calculate_se = true)
+                0.4; scale = :log, prior = LogNormal(0.0, 0.5), calculate_se = true
+            )
         end
 
         @covariates begin
@@ -217,15 +218,21 @@ end
     spec_map = NoLimits._spec_map(fe)
     for name in NoLimits.get_names(fe)
         spec = spec_map[name]
-        n_nat = length(NoLimits._coords_for_param(
-            getproperty(θu, name), spec; natural = true))
-        n_tr = length(NoLimits._coords_for_param(
-            getproperty(θt, name), spec; natural = false))
+        n_nat = length(
+            NoLimits._coords_for_param(
+                getproperty(θu, name), spec; natural = true
+            )
+        )
+        n_tr = length(
+            NoLimits._coords_for_param(
+                getproperty(θt, name), spec; natural = false
+            )
+        )
         @test n_nat == n_tr == count(==(name), parents)
     end
     # :cholesky reports the lower triangle column-major, matching `get_flat_names`.
     @test NoLimits._coords_for_param(θu.Ωc, spec_map[:Ωc]; natural = true) ==
-          [1.0, 0.2, 1.0]
+        [1.0, 0.2, 1.0]
 end
 
 @testset "summarize works with a matrix parameter block" begin
@@ -262,10 +269,10 @@ end
     @test s_fit.n_parameters_total == 5   # a, Ω (3 lower-tri coords), σ
     rows = s_fit.parameter_rows
     @test [r.parameter for r in rows if startswith(string(r.parameter), "Ω")] ==
-          [:Ω_1_1, :Ω_2_1, :Ω_2_2]
+        [:Ω_1_1, :Ω_2_1, :Ω_2_2]
     Ω_hat = NoLimits.get_params(res; scale = :untransformed).Ω
     @test [r.estimate for r in rows if startswith(string(r.parameter), "Ω")] ≈
-          [Ω_hat[1, 1], Ω_hat[2, 1], Ω_hat[2, 2]]
+        [Ω_hat[1, 1], Ω_hat[2, 1], Ω_hat[2, 2]]
 end
 
 @testset "summarize numeric formatting: fixed 4 decimals" begin

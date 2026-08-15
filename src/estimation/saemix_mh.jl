@@ -70,14 +70,16 @@ struct SaemixMH
     rw_init::Float64
 end
 
-function SaemixMH(; n_kern1::Int = 2,
+function SaemixMH(;
+        n_kern1::Int = 2,
         n_kern2::Int = 2,
         n_kern3::Int = 2,
         proba_mcmc::Float64 = 0.4,
         stepsize_rw::Float64 = 0.4,
         rw_init::Float64 = 0.5,
         target_accept = nothing,
-        adapt_rate = nothing)
+        adapt_rate = nothing
+    )
     p_mcmc = isnothing(target_accept) ? proba_mcmc : Float64(target_accept)
     step_rw = isnothing(adapt_rate) ? stepsize_rw : Float64(adapt_rate)
     return SaemixMH(n_kern1, n_kern2, n_kern3, p_mcmc, step_rw, rw_init)
@@ -121,14 +123,16 @@ end
 # ---------------------------------------------------------------------------
 
 # Draw an initial b from the RE priors.
-function _saemixmh_init_b!(b::Vector{Float64},
+function _saemixmh_init_b!(
+        b::Vector{Float64},
         levels::Vector{_SaemixMHLevel},
         dm::DataModel,
         θ::ComponentArray,
         const_cache::REConstantsCache,
         cache::_LLCache,
         rng::AbstractRNG,
-        re_names::Vector{Symbol})
+        re_names::Vector{Symbol}
+    )
     θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = cache.model_funs
@@ -152,13 +156,15 @@ function _saemixmh_init_b!(b::Vector{Float64},
 end
 
 # Compute initial per-individual obs log-likelihood.
-function _saemixmh_init_indiv_ll!(indiv_ll::Vector{Float64},
+function _saemixmh_init_indiv_ll!(
+        indiv_ll::Vector{Float64},
         dm::DataModel,
         batch_info::REBatchInfo,
         θ_re::ComponentArray,   # pre-symmetrized by the caller
         const_cache::REConstantsCache,
         cache::_LLCache,
-        b::Vector{Float64})
+        b::Vector{Float64}
+    )
     for (pos, i) in enumerate(get_inds(batch_info))
         η_ind = _build_eta_ind(dm, i, batch_info, b, const_cache, θ_re)
         indiv_ll[pos] = _loglikelihood_individual(dm, i, θ_re, η_ind, cache)
@@ -166,14 +172,16 @@ function _saemixmh_init_indiv_ll!(indiv_ll::Vector{Float64},
     return indiv_ll
 end
 
-function _saemixmh_level_plp!(level_plp::Vector{Float64},
+function _saemixmh_level_plp!(
+        level_plp::Vector{Float64},
         levels::Vector{_SaemixMHLevel},
         dm::DataModel,
         θ_re::ComponentArray,   # pre-symmetrized by the caller
         const_cache::REConstantsCache,
         cache::_LLCache,
         b::Vector{Float64};
-        anneal_sds::NamedTuple = NamedTuple())
+        anneal_sds::NamedTuple = NamedTuple()
+    )
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = cache.model_funs
     helpers = cache.helpers
@@ -198,9 +206,11 @@ function _saemixmh_level_plp!(level_plp::Vector{Float64},
 end
 
 # Build the _SaemixMHLevel list from batch_info.
-function _saemixmh_build_levels(dm::DataModel,
+function _saemixmh_build_levels(
+        dm::DataModel,
         batch_info::REBatchInfo,
-        re_names::Vector{Symbol})
+        re_names::Vector{Symbol}
+    )
     cache = get_laplace_cache(get_re_group_info(dm))
     re_types = get_re_types(get_random(get_model(dm)))
     levels = _SaemixMHLevel[]
@@ -224,8 +234,10 @@ function _saemixmh_build_levels(dm::DataModel,
                 end
             end
 
-            push!(levels,
-                _SaemixMHLevel(ri, li, range, rep, dim, is_scalar, group_pos, re_type))
+            push!(
+                levels,
+                _SaemixMHLevel(ri, li, range, rep, dim, is_scalar, group_pos, re_type)
+            )
         end
     end
     return levels
@@ -273,13 +285,15 @@ function _saemixmh_zspace_std(dist, re_type::Symbol)::Float64
     end
 end
 
-function _saemixmh_init_domega2(levels::Vector{_SaemixMHLevel},
+function _saemixmh_init_domega2(
+        levels::Vector{_SaemixMHLevel},
         dm::DataModel,
         θ::ComponentArray,
         const_cache::REConstantsCache,
         cache::_LLCache,
         re_names::Vector{Symbol},
-        rw_init::Float64)
+        rw_init::Float64
+    )
     θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = cache.model_funs
@@ -315,14 +329,16 @@ function _saemixmh_init_domega2(levels::Vector{_SaemixMHLevel},
     return domega2
 end
 
-function _saemixmh_init_state(dm::DataModel,
+function _saemixmh_init_state(
+        dm::DataModel,
         batch_info::REBatchInfo,
         θ::ComponentArray,
         const_cache::REConstantsCache,
         cache::_LLCache,
         rng::AbstractRNG,
         re_names::Vector{Symbol},
-        rw_init::Float64)
+        rw_init::Float64
+    )
     nb = get_n_b(batch_info)
     n_inds = length(get_inds(batch_info))
     θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
@@ -337,15 +353,18 @@ function _saemixmh_init_state(dm::DataModel,
     # Scratch for multi-individual levels: sized to the largest level group so the
     # accept/reject step never allocates (was one Vector per proposal per step).
     max_group = isempty(levels) ? 0 : maximum(length(lv.group_pos) for lv in levels)
-    return _SaemixMHState(b, similar(b), indiv_ll, level_plp, levels,
-        domega2, Vector{Float64}(undef, max_group), 0, 0)
+    return _SaemixMHState(
+        b, similar(b), indiv_ll, level_plp, levels,
+        domega2, Vector{Float64}(undef, max_group), 0, 0
+    )
 end
 
 # ---------------------------------------------------------------------------
 # Kernel 1: prior-proposal MH (likelihood-ratio acceptance)
 # ---------------------------------------------------------------------------
 
-function _saemixmh_kern1!(state::_SaemixMHState,
+function _saemixmh_kern1!(
+        state::_SaemixMHState,
         dm::DataModel,
         batch_info::REBatchInfo,
         θ_re::ComponentArray,   # pre-symmetrized once per E-step by the caller
@@ -354,7 +373,8 @@ function _saemixmh_kern1!(state::_SaemixMHState,
         rng::AbstractRNG,
         re_names::Vector{Symbol},
         n_steps::Int,
-        anneal_sds::NamedTuple)
+        anneal_sds::NamedTuple
+    )
     n_steps == 0 && return
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = cache.model_funs
@@ -385,12 +405,16 @@ function _saemixmh_kern1!(state::_SaemixMHState,
             copyto!(b_prop, b)
             r = lv.range
             if lv.dim == 1
-                b_prop[first(r)] = Float64(eta_star isa AbstractVector ? eta_star[1] :
-                                           eta_star)
+                b_prop[first(r)] = Float64(
+                    eta_star isa AbstractVector ? eta_star[1] :
+                        eta_star
+                )
             else
                 for j in 1:(lv.dim)
-                    b_prop[r[j]] = Float64(eta_star isa AbstractVector ? eta_star[j] :
-                                           eta_star)
+                    b_prop[r[j]] = Float64(
+                        eta_star isa AbstractVector ? eta_star[j] :
+                            eta_star
+                    )
                 end
             end
 
@@ -436,7 +460,8 @@ end
 # Kernel 2: per-dimension adaptive random-walk MH (full log-joint acceptance)
 # ---------------------------------------------------------------------------
 
-function _saemixmh_kern2!(state::_SaemixMHState,
+function _saemixmh_kern2!(
+        state::_SaemixMHState,
         dm::DataModel,
         batch_info::REBatchInfo,
         θ_re::ComponentArray,   # pre-symmetrized once per E-step by the caller
@@ -447,7 +472,8 @@ function _saemixmh_kern2!(state::_SaemixMHState,
         n_steps::Int,
         proba_mcmc::Float64,
         stepsize_rw::Float64,
-        anneal_sds::NamedTuple)
+        anneal_sds::NamedTuple
+    )
     n_steps == 0 && return
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = cache.model_funs
@@ -530,7 +556,7 @@ function _saemixmh_kern2!(state::_SaemixMHState,
             nt2[d] == 0 && continue
             accept_rate = nbc2[d] / nt2[d]
             domega2_k[d, 1] *= (1.0 + stepsize_rw * (accept_rate - proba_mcmc))
-            domega2_k[d, 1] = max(domega2_k[d, 1], 1e-8)
+            domega2_k[d, 1] = max(domega2_k[d, 1], 1.0e-8)
         end
     end
     return
@@ -541,7 +567,8 @@ end
     return mod(outer_iter, dim - 1) + 2
 end
 
-function _saemixmh_kern3!(state::_SaemixMHState,
+function _saemixmh_kern3!(
+        state::_SaemixMHState,
         dm::DataModel,
         batch_info::REBatchInfo,
         θ_re::ComponentArray,   # pre-symmetrized once per E-step by the caller
@@ -553,7 +580,8 @@ function _saemixmh_kern3!(state::_SaemixMHState,
         outer_iter::Int,
         proba_mcmc::Float64,
         stepsize_rw::Float64,
-        anneal_sds::NamedTuple)
+        anneal_sds::NamedTuple
+    )
     n_steps == 0 && return
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = cache.model_funs
@@ -650,7 +678,7 @@ function _saemixmh_kern3!(state::_SaemixMHState,
             nt2[coord] == 0 && continue
             accept_rate = nbc2[coord] / nt2[coord]
             domega2_k[coord, nrs2] *= (1.0 + stepsize_rw * (accept_rate - proba_mcmc))
-            domega2_k[coord, nrs2] = max(domega2_k[coord, nrs2], 1e-8)
+            domega2_k[coord, nrs2] = max(domega2_k[coord, nrs2], 1.0e-8)
         end
     end
     return
@@ -660,7 +688,8 @@ end
 # _mcem_sample_batch dispatch
 # ---------------------------------------------------------------------------
 
-function _mcem_sample_batch(dm::DataModel,
+function _mcem_sample_batch(
+        dm::DataModel,
         info::REBatchInfo,
         θ::ComponentArray,
         const_cache::REConstantsCache,
@@ -672,7 +701,8 @@ function _mcem_sample_batch(dm::DataModel,
         warm_start,
         last_params;
         anneal_sds::NamedTuple = NamedTuple(),
-        outer_iter::Int = 1)
+        outer_iter::Int = 1
+    )
     nb = get_n_b(info)
     if nb == 0
         return (zeros(eltype(θ), 0, 0), nothing, eltype(θ)[])
@@ -688,14 +718,17 @@ function _mcem_sample_batch(dm::DataModel,
         last_params
     else
         _saemixmh_init_state(
-            dm, info, θ, const_cache, cache, rng, re_names, sampler.rw_init)
+            dm, info, θ, const_cache, cache, rng, re_names, sampler.rw_init
+        )
     end
 
     # Re-sync indiv_ll and level_plp when θ has changed (e.g. M-step update).
     # We check by recomputing — cheap compared to MCMC itself.
     _saemixmh_init_indiv_ll!(state.indiv_ll, dm, info, θ_re, const_cache, cache, state.b)
-    _saemixmh_level_plp!(state.level_plp, state.levels, dm, θ_re, const_cache, cache,
-        state.b; anneal_sds = anneal_sds)
+    _saemixmh_level_plp!(
+        state.level_plp, state.levels, dm, θ_re, const_cache, cache,
+        state.b; anneal_sds = anneal_sds
+    )
 
     # Run n_samples sweeps: each sweep = n_kern1 kernel-1 steps + n_kern2 kernel-2 steps.
     # Every sweep is recorded as a column: SAEM only consumes the last one, but MCEM
@@ -703,14 +736,20 @@ function _mcem_sample_batch(dm::DataModel,
     n_sweeps = max(1, get(turing_kwargs, :n_samples, 1))
     samples = similar(state.b, nb, n_sweeps)
     for s in 1:n_sweeps
-        _saemixmh_kern1!(state, dm, info, θ_re, const_cache, cache, rng, re_names,
-            sampler.n_kern1, anneal_sds)
-        _saemixmh_kern2!(state, dm, info, θ_re, const_cache, cache, rng, re_names,
+        _saemixmh_kern1!(
+            state, dm, info, θ_re, const_cache, cache, rng, re_names,
+            sampler.n_kern1, anneal_sds
+        )
+        _saemixmh_kern2!(
+            state, dm, info, θ_re, const_cache, cache, rng, re_names,
             sampler.n_kern2, sampler.proba_mcmc, sampler.stepsize_rw,
-            anneal_sds)
-        _saemixmh_kern3!(state, dm, info, θ_re, const_cache, cache, rng, re_names,
+            anneal_sds
+        )
+        _saemixmh_kern3!(
+            state, dm, info, θ_re, const_cache, cache, rng, re_names,
             sampler.n_kern3, outer_iter, sampler.proba_mcmc,
-            sampler.stepsize_rw, anneal_sds)
+            sampler.stepsize_rw, anneal_sds
+        )
         @views samples[:, s] .= state.b
     end
 

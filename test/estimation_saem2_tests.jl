@@ -14,24 +14,28 @@ const SAEM_FAST = (maxiters = 2, t0 = 1, kappa = 0.6, mcmc_steps = 1, q_store_ma
 # ── shared DataModels (built once, reused across most testsets) ───────────────
 # Small: 2 individuals — used by most basic SAEM testsets
 const _SAEM_DF_S = DataFrame(
-    ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [0.1, 0.2, 0.0, -0.1])
+    ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [0.1, 0.2, 0.0, -0.1]
+)
 const _SAEM_DM_S = DataModel(
-    @Model(begin
-        @covariates begin
-            t = Covariate()
+    @Model(
+        begin
+            @covariates begin
+                t = Covariate()
+            end
+            @fixedEffects begin
+                a = RealNumber(0.2)
+                σ = RealNumber(0.5, scale = :log)
+            end
+            @randomEffects begin
+                η = RandomEffect(Normal(0.0, 1.0); column = :ID)
+            end
+            @formulas begin
+                y ~ Normal(a + η, σ)
+            end
         end
-        @fixedEffects begin
-            a = RealNumber(0.2)
-            σ = RealNumber(0.5, scale = :log)
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column = :ID)
-        end
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end),
-    _SAEM_DF_S; primary_id = :ID, time_col = :t)
+    ),
+    _SAEM_DF_S; primary_id = :ID, time_col = :t
+)
 
 # Second half of the SAEM tests (split from estimation_saem_tests.jl for CI
 # shard balance; the halves run in different shards and are self-contained).
@@ -58,20 +62,26 @@ const _SAEM_SEP_MODEL = @Model begin
         y2 ~ Normal(b + η, σ2)
     end
 end
-const _SAEM_SEP_DM = DataModel(_SAEM_SEP_MODEL,
+const _SAEM_SEP_DM = DataModel(
+    _SAEM_SEP_MODEL,
     DataFrame(
         ID = [:A, :A, :B, :B],
         t = [0.0, 1.0, 0.0, 1.0],
         y1 = [0.1, 0.2, 0.0, -0.1],
-        y2 = [0.2, 0.25, 0.05, -0.05]);
-    primary_id = :ID, time_col = :t)
-const _SAEM_SEP_DM_MISSING = DataModel(_SAEM_SEP_MODEL,
+        y2 = [0.2, 0.25, 0.05, -0.05]
+    );
+    primary_id = :ID, time_col = :t
+)
+const _SAEM_SEP_DM_MISSING = DataModel(
+    _SAEM_SEP_MODEL,
     DataFrame(
         ID = [:A, :A, :B, :B],
         t = [0.0, 1.0, 0.0, 1.0],
         y1 = Union{Missing, Float64}[0.1, missing, 0.0, -0.1],
-        y2 = Union{Missing, Float64}[missing, 0.25, 0.05, missing]);
-    primary_id = :ID, time_col = :t)
+        y2 = Union{Missing, Float64}[missing, 0.25, 0.05, missing]
+    );
+    primary_id = :ID, time_col = :t
+)
 
 function _saem_test_create_trans_pi0(eta_hmm, eta_initial)
     n_states = length(eta_initial) + 1
@@ -140,7 +150,8 @@ end
 const _SAEM_HMM2_MODEL = @Model begin
     @helpers begin
         create_trans_pi0(eta_hmm, eta_initial) = _saem_test_create_trans_pi0(
-            eta_hmm, eta_initial)
+            eta_hmm, eta_initial
+        )
     end
     @covariates begin
         t = Covariate()
@@ -154,7 +165,8 @@ const _SAEM_HMM2_MODEL = @Model begin
     end
     @randomEffects begin
         eta_hmm = RandomEffect(
-            MvNormal(mean_transitions, Diagonal(omega_hmm)); column = :ID)
+            MvNormal(mean_transitions, Diagonal(omega_hmm)); column = :ID
+        )
         eta_initial = RandomEffect(Normal(mean_initial, omega_initial); column = :ID)
     end
     @formulas begin
@@ -162,23 +174,33 @@ const _SAEM_HMM2_MODEL = @Model begin
         theta_mat = reshape(eta_theta, 2, 2)
         emissions = ntuple(s -> ntuple(j -> Bernoulli(theta_mat[s, j]), 2), 2)
         y ~ MVDiscreteTimeDiscreteStatesHMM(
-            trans_pi0[1], emissions, Categorical(trans_pi0[2]))
+            trans_pi0[1], emissions, Categorical(trans_pi0[2])
+        )
     end
 end
-const _SAEM_HMM2_DM = DataModel(_SAEM_HMM2_MODEL,
-    DataFrame(ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0],
-        y = [[1, 0], [0, 1], [1, 1], [0, 0]]);
-    primary_id = :ID, time_col = :t)
-const _SAEM_HMM2_DM_MISSING = DataModel(_SAEM_HMM2_MODEL,
-    DataFrame(ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0],
-        y = Any[[1, 0], missing, [1, 1], [0, 0]]);
-    primary_id = :ID, time_col = :t)
+const _SAEM_HMM2_DM = DataModel(
+    _SAEM_HMM2_MODEL,
+    DataFrame(
+        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0],
+        y = [[1, 0], [0, 1], [1, 1], [0, 0]]
+    );
+    primary_id = :ID, time_col = :t
+)
+const _SAEM_HMM2_DM_MISSING = DataModel(
+    _SAEM_HMM2_MODEL,
+    DataFrame(
+        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0],
+        y = Any[[1, 0], missing, [1, 1], [0, 0]]
+    );
+    primary_id = :ID, time_col = :t
+)
 
 let _n_s = 7, _n_o = 9, _n_tr = 42  # 7 states × 6 transitions each
     const global _SAEM_LTS_MODEL = @Model begin
         @helpers begin
             create_trans_pi0(eta_hmm, eta_initial) = _saem_test_create_trans_pi0(
-                eta_hmm, eta_initial)
+                eta_hmm, eta_initial
+            )
         end
         @covariates begin
             t = Covariate()
@@ -189,29 +211,36 @@ let _n_s = 7, _n_o = 9, _n_tr = 42  # 7 states × 6 transitions each
             omega_hmm = RealVector(fill(0.3, _n_tr), scale = fill(:log, _n_tr))
             omega_initial = RealVector(fill(0.3, _n_s - 1), scale = fill(:log, _n_s - 1))
             eta_theta = RealVector(
-                fill(0.5, _n_s * _n_o), scale = fill(:logit, _n_s * _n_o))
+                fill(0.5, _n_s * _n_o), scale = fill(:logit, _n_s * _n_o)
+            )
         end
         @randomEffects begin
             eta_hmm = RandomEffect(
-                MvNormal(mean_transitions, Diagonal(omega_hmm)); column = :ID)
+                MvNormal(mean_transitions, Diagonal(omega_hmm)); column = :ID
+            )
             eta_initial = RandomEffect(
-                MvNormal(mean_initial, Diagonal(omega_initial)); column = :ID)
+                MvNormal(mean_initial, Diagonal(omega_initial)); column = :ID
+            )
         end
         @formulas begin
             trans_pi0 = create_trans_pi0(eta_hmm, eta_initial)
             theta_mat = reshape(eta_theta, 7, 9)
             emissions = ntuple(s -> ntuple(j -> Bernoulli(theta_mat[s, j]), 9), 7)
             y ~ MVDiscreteTimeDiscreteStatesHMM(
-                trans_pi0[1], emissions, Categorical(trans_pi0[2]))
+                trans_pi0[1], emissions, Categorical(trans_pi0[2])
+            )
         end
     end
     const global _SAEM_LTS_DF = DataFrame(
         ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0],
-        y = [[1, 0, 1, 0, 1, 0, 1, 0, 1], [0, 1, 0, 1, 0, 1, 0, 1, 0],
-            [1, 1, 0, 0, 1, 1, 0, 0, 1], [0, 0, 1, 1, 0, 0, 1, 1, 0]]
+        y = [
+            [1, 0, 1, 0, 1, 0, 1, 0, 1], [0, 1, 0, 1, 0, 1, 0, 1, 0],
+            [1, 1, 0, 0, 1, 1, 0, 0, 1], [0, 0, 1, 1, 0, 0, 1, 1, 0],
+        ]
     )
     const global _SAEM_LTS_DM = DataModel(
-        _SAEM_LTS_MODEL, _SAEM_LTS_DF; primary_id = :ID, time_col = :t)
+        _SAEM_LTS_MODEL, _SAEM_LTS_DF; primary_id = :ID, time_col = :t
+    )
 end
 
 @testset "SAEM builtin_stats auto detects LogNormal/Exponential RE + outcomes" begin
@@ -250,18 +279,22 @@ end
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     auto_cfg = NoLimits._saem_autodetect_gaussian_re(
-        dm, NoLimits.get_names(model.fixed.fixed))
+        dm, NoLimits.get_names(model.fixed.fixed)
+    )
     @test auto_cfg !== nothing
     @test auto_cfg.re_cov_params == (; η_ln = :ση, η_exp = :θη)
     @test auto_cfg.re_mean_params == (; η_ln = :μη)
     @test auto_cfg.resid_var_param == (; y_ln = (; μ = :μy, σ = :σy), y_exp = :θy)
 
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         NoLimits.SAEM(;
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             q_store_max = 2,
             maxiters = 2,
-            builtin_stats = :auto))
+            builtin_stats = :auto
+        )
+    )
     @test res isa FitResult
 end
 
@@ -296,7 +329,8 @@ end
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     auto_cfg = NoLimits._saem_autodetect_gaussian_re(
-        dm, NoLimits.get_names(model.fixed.fixed))
+        dm, NoLimits.get_names(model.fixed.fixed)
+    )
     @test auto_cfg !== nothing
     @test auto_cfg.resid_var_param == (; yb = :p, yp = :λ)
 end
@@ -304,11 +338,12 @@ end
 @testset "SAEM builtin_stats classifies HMM closed-form eligibility" begin
     dm_partial = _SAEM_HMM2_DM
     auto_cfg = NoLimits._saem_autodetect_gaussian_re(
-        dm_partial, NoLimits.get_names(_SAEM_HMM2_MODEL.fixed.fixed))
+        dm_partial, NoLimits.get_names(_SAEM_HMM2_MODEL.fixed.fixed)
+    )
     @test auto_cfg !== nothing
     @test auto_cfg.re_cov_params == (; eta_hmm = :omega_hmm, eta_initial = :omega_initial)
     @test auto_cfg.re_mean_params ==
-          (; eta_hmm = :mean_transitions, eta_initial = :mean_initial)
+        (; eta_hmm = :mean_transitions, eta_initial = :mean_initial)
     @test auto_cfg.resid_var_param == NamedTuple()
     @test auto_cfg.hmm_emission_params.y.target == :eta_theta
     @test auto_cfg.hmm_outcomes == (:y,)
@@ -331,7 +366,8 @@ end
     @test elig_partial.hmm_emission_closed_form == :eligible
     @test !(:hmm_latent_state_suffstats_not_available_builtin in elig_partial.reasons)
 
-    res_partial = fit_model(dm_partial,
+    res_partial = fit_model(
+        dm_partial,
         NoLimits.SAEM(;
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
@@ -339,8 +375,10 @@ end
             q_store_max = 2,
             maxiters = 2,
             progress = false,
-            builtin_stats = :auto);
-        store_eb_modes = false)
+            builtin_stats = :auto
+        );
+        store_eb_modes = false
+    )
     notes_partial = NoLimits.get_notes(res_partial)
     @test notes_partial.builtin_stats_mode_effective == :closed_form
     @test notes_partial.builtin_stats_closed_form_eligibility.re_block_eligible
@@ -354,7 +392,8 @@ end
     model_ineligible = @Model begin
         @helpers begin
             create_trans_pi0(eta_hmm, eta_initial) = _saem_test_create_trans_pi0(
-                eta_hmm, eta_initial)
+                eta_hmm, eta_initial
+            )
         end
 
         @covariates begin
@@ -375,19 +414,24 @@ end
             theta_mat = reshape(eta_theta, 2, 2)
             emissions = ntuple(
                 s -> ntuple(j -> Bernoulli(clamp(0.8 * theta_mat[s, j] + 0.1, 0.0, 1.0)), 2),
-                2)
+                2
+            )
             y ~ MVDiscreteTimeDiscreteStatesHMM(
-                trans_pi0[1], emissions, Categorical(trans_pi0[2]))
+                trans_pi0[1], emissions, Categorical(trans_pi0[2])
+            )
         end
     end
 
     dm_ineligible = DataModel(
-        model_ineligible, get_df(_SAEM_HMM2_DM); primary_id = :ID, time_col = :t)
+        model_ineligible, get_df(_SAEM_HMM2_DM); primary_id = :ID, time_col = :t
+    )
     auto_cfg_none = NoLimits._saem_autodetect_gaussian_re(
-        dm_ineligible, NoLimits.get_names(model_ineligible.fixed.fixed))
+        dm_ineligible, NoLimits.get_names(model_ineligible.fixed.fixed)
+    )
     @test auto_cfg_none === nothing
 
-    res_ineligible = fit_model(dm_ineligible,
+    res_ineligible = fit_model(
+        dm_ineligible,
         NoLimits.SAEM(;
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
@@ -395,8 +439,10 @@ end
             q_store_max = 2,
             maxiters = 2,
             progress = false,
-            builtin_stats = :auto);
-        store_eb_modes = false)
+            builtin_stats = :auto
+        );
+        store_eb_modes = false
+    )
     notes_ineligible = NoLimits.get_notes(res_ineligible)
     @test notes_ineligible.builtin_stats_mode_effective == :none
     @test !notes_ineligible.builtin_stats_closed_form_eligibility.has_any_closed_form_block
@@ -440,7 +486,7 @@ end
     dists = [
         DiscreteTimeDiscreteStatesHMM(P, (Bernoulli(0.9), Bernoulli(0.2)), init),
         DiscreteTimeDiscreteStatesHMM(P, (Bernoulli(0.9), Bernoulli(0.2)), init),
-        DiscreteTimeDiscreteStatesHMM(P, (Bernoulli(0.9), Bernoulli(0.2)), init)
+        DiscreteTimeDiscreteStatesHMM(P, (Bernoulli(0.9), Bernoulli(0.2)), init),
     ]
     ys = Union{Missing, Int}[1, missing, 0]
 
@@ -448,12 +494,13 @@ end
     expected = _saem_exact_discrete_hmm_gamma(dists, ys)
 
     @test ok
-    @test isapprox(gamma, expected; atol = 1e-12)
-    @test !isapprox(gamma[:, 1], posterior_hidden_states(dists[1], 1); atol = 1e-6)
+    @test isapprox(gamma, expected; atol = 1.0e-12)
+    @test !isapprox(gamma[:, 1], posterior_hidden_states(dists[1], 1); atol = 1.0e-6)
 end
 
 @testset "SAEM builtin_stats HMM emission handles fully missing rows (regression)" begin
-    res = fit_model(_SAEM_HMM2_DM_MISSING,
+    res = fit_model(
+        _SAEM_HMM2_DM_MISSING,
         NoLimits.SAEM(;
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
@@ -461,8 +508,10 @@ end
             q_store_max = 2,
             maxiters = 2,
             progress = false,
-            builtin_stats = :auto);
-        store_eb_modes = false)
+            builtin_stats = :auto
+        );
+        store_eb_modes = false
+    )
     @test res isa FitResult
     notes = NoLimits.get_notes(res)
     @test notes.builtin_stats_mode_effective == :closed_form
@@ -476,7 +525,7 @@ end
     @test auto_cfg !== nothing
     @test auto_cfg.re_cov_params == (; eta_hmm = :omega_hmm, eta_initial = :omega_initial)
     @test auto_cfg.re_mean_params ==
-          (; eta_hmm = :mean_transitions, eta_initial = :mean_initial)
+        (; eta_hmm = :mean_transitions, eta_initial = :mean_initial)
     @test auto_cfg.resid_var_param == NamedTuple()
     @test auto_cfg.hmm_emission_params.y.target == :eta_theta
     @test auto_cfg.hmm_outcomes == (:y,)
@@ -515,7 +564,8 @@ end
 end
 
 @testset "SAEM builtin_stats runs lts_random_no_cv style model in closed-form-only mode" begin
-    res = fit_model(_SAEM_LTS_DM,
+    res = fit_model(
+        _SAEM_LTS_DM,
         NoLimits.SAEM(;
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
@@ -523,8 +573,10 @@ end
             q_store_max = 2,
             maxiters = 2,
             progress = false,
-            builtin_stats = :auto);
-        store_eb_modes = false)
+            builtin_stats = :auto
+        );
+        store_eb_modes = false
+    )
 
     notes = NoLimits.get_notes(res)
     @test notes.builtin_stats_mode_effective == :closed_form
@@ -565,11 +617,14 @@ end
     )
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         NoLimits.SAEM(;
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             SAEM_FAST...,
-            builtin_mean = :glm))
+            builtin_mean = :glm
+        )
+    )
     @test res isa FitResult
 end
 
@@ -604,54 +659,68 @@ end
     )
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         NoLimits.SAEM(;
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             SAEM_FAST...,
-            builtin_mean = :glm))
+            builtin_mean = :glm
+        )
+    )
     @test res isa FitResult
 end
 
 @testset "SAEM builtin_mean glm (ODE Normal)" begin
-    res = fit_model(fx_ode_dm(),
+    res = fit_model(
+        fx_ode_dm(),
         NoLimits.SAEM(;
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             q_store_max = 2,
             maxiters = 2,
-            builtin_mean = :glm))
+            builtin_mean = :glm
+        )
+    )
     @test res isa FitResult
 end
 
 @testset "SAEM builtin_mean glm + builtin_stats (Normal)" begin
-    res = fit_model(fx_re_dm(),
+    res = fit_model(
+        fx_re_dm(),
         NoLimits.SAEM(;
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             SAEM_FAST...,
             builtin_mean = :glm,
             builtin_stats = :closed_form,
             resid_var_param = :σ,
-            re_cov_params = (; η = :ω)))
+            re_cov_params = (; η = :ω)
+        )
+    )
     @test res isa FitResult
 end
 
 @testset "SAEM builtin_mean glm + builtin_stats (Normal outcomes, separate σ)" begin
-    res = fit_model(_SAEM_SEP_DM,
+    res = fit_model(
+        _SAEM_SEP_DM,
         NoLimits.SAEM(;
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             SAEM_FAST...,
             builtin_mean = :glm,
             builtin_stats = :closed_form,
             resid_var_param = (; y1 = :σ1, y2 = :σ2),
-            re_cov_params = (; η = :τ)))
+            re_cov_params = (; η = :τ)
+        )
+    )
     @test res isa FitResult
 end
 
 @testset "SAEM/MCEM threaded helper cache preserves ODE options" begin
     # fx_ode_model already has saveat_mode = :saveat in its solver config.
     dm = fx_ode_dm()
-    ll_cache = build_ll_cache(dm; ode_kwargs = (abstol = 1e-8, reltol = 1e-7))
-    for (label, thread_caches) in (("SAEM", NoLimits._saem_thread_caches),
-        ("MCEM", NoLimits._mcem_thread_caches))
+    ll_cache = build_ll_cache(dm; ode_kwargs = (abstol = 1.0e-8, reltol = 1.0e-7))
+    for (label, thread_caches) in (
+            ("SAEM", NoLimits._saem_thread_caches),
+            ("MCEM", NoLimits._mcem_thread_caches),
+        )
         @testset "$label" begin
             threaded = thread_caches(dm, ll_cache, 2)
             @test length(threaded) == 2
@@ -662,8 +731,10 @@ end
 end
 
 @testset "SAEM/MCEM thread RNGs are reproducible from passed rng" begin
-    for (label, thread_rngs) in (("SAEM", NoLimits._saem_thread_rngs),
-        ("MCEM", NoLimits._mcem_thread_rngs))
+    for (label, thread_rngs) in (
+            ("SAEM", NoLimits._saem_thread_rngs),
+            ("MCEM", NoLimits._mcem_thread_rngs),
+        )
         @testset "$label" begin
             r1 = thread_rngs(MersenneTwister(42), 3)
             r2 = thread_rngs(MersenneTwister(42), 3)
@@ -678,9 +749,11 @@ end
 end
 
 @testset "SAEM/MCEM final EBE rescue options are configurable" begin
-    rescue_kwargs = (; ebe_rescue_on_high_grad = false, ebe_rescue_multistart_n = 2,
+    rescue_kwargs = (;
+        ebe_rescue_on_high_grad = false, ebe_rescue_multistart_n = 2,
         ebe_rescue_multistart_k = 2, ebe_rescue_max_rounds = 7,
-        ebe_rescue_grad_tol = 1e-5)
+        ebe_rescue_grad_tol = 1.0e-5,
+    )
     saem = NoLimits.SAEM(; rescue_kwargs...)
     mcem = NoLimits.MCEM(; rescue_kwargs...)
     for (label, rescue) in (("SAEM", saem.saem.ebe_rescue), ("MCEM", mcem.ebe_rescue))
@@ -689,23 +762,34 @@ end
             @test rescue.multistart_n == 2
             @test rescue.multistart_k == 2
             @test rescue.max_rounds == 7
-            @test rescue.grad_tol == 1e-5
+            @test rescue.grad_tol == 1.0e-5
         end
     end
 end
 
 @testset "SAEM/MCEM get_random_effects recomputes EB modes with rescue options" begin
     tk = (n_samples = 2, n_adapt = 2, progress = false)
-    rescue_kwargs = (; ebe_rescue_on_high_grad = true, ebe_rescue_multistart_n = 2,
+    rescue_kwargs = (;
+        ebe_rescue_on_high_grad = true, ebe_rescue_multistart_n = 2,
         ebe_rescue_multistart_k = 2, ebe_rescue_max_rounds = 2,
-        ebe_rescue_grad_tol = 1e-7)
+        ebe_rescue_grad_tol = 1.0e-7,
+    )
     for (label, method) in (
-        ("SAEM",
-            NoLimits.SAEM(; sampler = MH(), turing_kwargs = tk, q_store_max = 2,
-                maxiters = 2, mcmc_steps = 1, t0 = 1, rescue_kwargs...)),
-        ("MCEM",
-            NoLimits.MCEM(; sampler = MH(), turing_kwargs = tk, maxiters = 2,
-                rescue_kwargs...)))
+            (
+                "SAEM",
+                NoLimits.SAEM(;
+                    sampler = MH(), turing_kwargs = tk, q_store_max = 2,
+                    maxiters = 2, mcmc_steps = 1, t0 = 1, rescue_kwargs...
+                ),
+            ),
+            (
+                "MCEM",
+                NoLimits.MCEM(;
+                    sampler = MH(), turing_kwargs = tk, maxiters = 2,
+                    rescue_kwargs...
+                ),
+            ),
+        )
         @testset "$label" begin
             res = fit_model(_SAEM_DM_S, method; store_eb_modes = false)
             re = NoLimits.get_random_effects(_SAEM_DM_S, res)
@@ -721,29 +805,39 @@ end
     # logf for the constant-RE batch (empty b) stays finite.
     tk = (n_samples = 3, n_adapt = 2, progress = false)
     for (label, method, rng) in (
-        ("SAEM",
-            NoLimits.SAEM(; sampler = MH(), turing_kwargs = tk, maxiters = 3,
-                t0 = 1, kappa = 0.6, mcmc_steps = 1, q_store_max = 2),
-            Xoshiro(42)),
-        ("MCEM",
-            NoLimits.MCEM(; sampler = MH(), turing_kwargs = tk, maxiters = 3),
-            Xoshiro(7)))
+            (
+                "SAEM",
+                NoLimits.SAEM(;
+                    sampler = MH(), turing_kwargs = tk, maxiters = 3,
+                    t0 = 1, kappa = 0.6, mcmc_steps = 1, q_store_max = 2
+                ),
+                Xoshiro(42),
+            ),
+            (
+                "MCEM",
+                NoLimits.MCEM(; sampler = MH(), turing_kwargs = tk, maxiters = 3),
+                Xoshiro(7),
+            ),
+        )
         @testset "$label" begin
             # Fit with RE for :A pinned to 0.0 — :B should still contribute its observations.
             res = fit_model(
-                _SAEM_DM_S, method; constants_re = (; η = (; A = 0.0,)), rng = rng)
+                _SAEM_DM_S, method; constants_re = (; η = (; A = 0.0)), rng = rng
+            )
             @test res isa NoLimits.FitResult
             @test isfinite(NoLimits.get_objective(res))
 
             # Manually evaluate logf for the constant-RE batch with an empty b — must be finite.
             θu = NoLimits.get_params(res; scale = :untransformed)
             _, batch_infos, const_cache = NoLimits._build_re_batch_infos(
-                _SAEM_DM_S, (; η = (; A = 0.0,)))
+                _SAEM_DM_S, (; η = (; A = 0.0))
+            )
             ll_cache = NoLimits.build_ll_cache(_SAEM_DM_S)
             for (bi, info) in enumerate(batch_infos)
                 if info.n_b == 0
                     logf = NoLimits._laplace_logf_batch(
-                        _SAEM_DM_S, info, θu, Float64[], const_cache, ll_cache)
+                        _SAEM_DM_S, info, θu, Float64[], const_cache, ll_cache
+                    )
                     @test isfinite(logf)
                 end
             end
@@ -756,16 +850,24 @@ end
     # on the M-step.  The fit should complete without error and yield a finite objective.
     tk = (n_samples = 3, n_adapt = 2, progress = false)
     for (label, method, rng) in (
-        ("SAEM",
-            NoLimits.SAEM(; sampler = MH(), turing_kwargs = tk, maxiters = 3,
-                t0 = 1, kappa = 0.6, mcmc_steps = 1, q_store_max = 2),
-            Xoshiro(1)),
-        ("MCEM",
-            NoLimits.MCEM(; sampler = MH(), turing_kwargs = tk, maxiters = 3),
-            Xoshiro(8)))
+            (
+                "SAEM",
+                NoLimits.SAEM(;
+                    sampler = MH(), turing_kwargs = tk, maxiters = 3,
+                    t0 = 1, kappa = 0.6, mcmc_steps = 1, q_store_max = 2
+                ),
+                Xoshiro(1),
+            ),
+            (
+                "MCEM",
+                NoLimits.MCEM(; sampler = MH(), turing_kwargs = tk, maxiters = 3),
+                Xoshiro(8),
+            ),
+        )
         @testset "$label" begin
             res = fit_model(
-                _SAEM_DM_S, method; constants_re = (; η = (; A = 0.0, B = 0.0)), rng = rng)
+                _SAEM_DM_S, method; constants_re = (; η = (; A = 0.0, B = 0.0)), rng = rng
+            )
             @test res isa NoLimits.FitResult
             @test isfinite(NoLimits.get_objective(res))
         end
@@ -777,16 +879,19 @@ end
 @testset "SAEM/MCEM get_loglikelihood" begin
     tk = (n_samples = 2, n_adapt = 2, progress = false)
     for (label, method) in (
-        ("SAEM", NoLimits.SAEM(; sampler = MH(), turing_kwargs = tk, SAEM_FAST...)),
-        ("MCEM", NoLimits.MCEM(; sampler = MH(), turing_kwargs = tk, maxiters = 2)))
+            ("SAEM", NoLimits.SAEM(; sampler = MH(), turing_kwargs = tk, SAEM_FAST...)),
+            ("MCEM", NoLimits.MCEM(; sampler = MH(), turing_kwargs = tk, maxiters = 2)),
+        )
         @testset "$label" begin
             res = fit_model(_SAEM_DM_S, method)
             θ = NoLimits.get_params(res; scale = :untransformed)
             re = NoLimits.get_random_effects(_SAEM_DM_S, res).η
             ηs = Dict(re.ID .=> re.η_1)
-            manual = sum(logpdf(Normal(θ.a + ηs[id], θ.σ), y)
-            for (id, y) in zip(_SAEM_DF_S.ID, _SAEM_DF_S.y))
-            @test NoLimits.get_loglikelihood(res)≈manual rtol=1e-8
+            manual = sum(
+                logpdf(Normal(θ.a + ηs[id], θ.σ), y)
+                    for (id, y) in zip(_SAEM_DF_S.ID, _SAEM_DF_S.y)
+            )
+            @test NoLimits.get_loglikelihood(res) ≈ manual rtol = 1.0e-8
 
             # EB modes not stored: must recompute rather than throw
             res2 = fit_model(_SAEM_DM_S, method; store_eb_modes = false)

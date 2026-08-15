@@ -22,18 +22,20 @@ const NL = NoLimits
     @test NL._focei_expected_information(Binomial(10, 0.4)) ≈ fill(10 / (0.4 * 0.6), 1, 1)
     @test NL._focei_expected_information(Geometric(0.3)) ≈ fill(1 / (0.3^2 * 0.7), 1, 1)
     @test NL._focei_expected_information(Distributions.Laplace(0.0, 0.7)) ≈
-          [1/0.49 0.0; 0.0 1/0.49]
+        [1 / 0.49 0.0; 0.0 1 / 0.49]
     @test NL._focei_expected_information(Cauchy(0.0, 0.5)) ≈ [2.0 0.0; 0.0 2.0]
 
     tab = trigamma(5.0)
     @test NL._focei_expected_information(Gamma(2.0, 1.5)) ≈
-          [trigamma(2.0) 1/1.5; 1/1.5 2.0/1.5^2]
+        [trigamma(2.0) 1 / 1.5; 1 / 1.5 2.0 / 1.5^2]
     @test NL._focei_expected_information(Beta(2.0, 3.0)) ≈
-          [trigamma(2.0)-tab -tab; -tab trigamma(3.0)-tab]
+        [trigamma(2.0) - tab -tab; -tab trigamma(3.0) - tab]
 
     # Symmetry + positive-definiteness.
-    for d in (Normal(1.0, 0.5), Gamma(2.0, 1.5), Beta(2.0, 3.0),
-        Distributions.Laplace(0.0, 0.7), Cauchy(0.0, 0.5))
+    for d in (
+            Normal(1.0, 0.5), Gamma(2.0, 1.5), Beta(2.0, 3.0),
+            Distributions.Laplace(0.0, 0.7), Cauchy(0.0, 0.5),
+        )
         Im = NL._focei_expected_information(d)
         @test Im ≈ transpose(Im)
         @test isposdef(Symmetric(Im))
@@ -54,7 +56,7 @@ const NL = NoLimits
     # Float32 cleanliness of the kernel.
     I32 = NL._focei_expected_information(Normal(0.3f0, 0.5f0))
     @test eltype(I32) == Float32
-    @test I32 ≈ Float32[1/0.25 0.0; 0.0 2/0.25]
+    @test I32 ≈ Float32[1 / 0.25 0.0; 0.0 2 / 0.25]
 end
 
 @testset "FOCEI negH equals exact Laplace Hessian (linear-Gaussian)" begin
@@ -67,11 +69,13 @@ end
         info.n_b == 0 && continue
         b = fill(0.15, info.n_b)
         Hf = NL._focei_negH_batch(
-            dm, info, θu, b, const_cache, ll_cache; interaction = true)
+            dm, info, θu, b, const_cache, ll_cache; interaction = true
+        )
         He = -ForwardDiff.hessian(
-            bb -> NL._laplace_logf_batch(dm, info, θu, bb, const_cache, ll_cache), b)
+            bb -> NL._laplace_logf_batch(dm, info, θu, bb, const_cache, ll_cache), b
+        )
         # FOCEI is exact for a linear-Gaussian model.
-        @test Hf≈He atol=1e-8
+        @test Hf ≈ He atol = 1.0e-8
         @test Hf ≈ transpose(Hf)
         @test isposdef(Symmetric(Hf))
     end
@@ -82,9 +86,12 @@ end
     # shared fx_focei()/fx_laplace() fits (same fx_re_dm) must agree.
     rf = fx_focei()
     rl = fx_laplace()
-    @test NL.get_objective(rf)≈NL.get_objective(rl) atol=1e-3
-    @test collect(NL.get_params(
-        rf; scale = :untransformed))≈collect(NL.get_params(rl; scale = :untransformed)) atol=1e-2
+    @test NL.get_objective(rf) ≈ NL.get_objective(rl) atol = 1.0e-3
+    @test collect(
+        NL.get_params(
+            rf; scale = :untransformed
+        )
+    ) ≈ collect(NL.get_params(rl; scale = :untransformed)) atol = 1.0e-2
     @test rf.result.eb_modes !== nothing
     re = NL.get_random_effects(rf)
     @test re isa NamedTuple && re.η isa DataFrame
@@ -105,7 +112,7 @@ end
     # Hessian, so Wald SEs must match the Laplace ones.
     se_f = sqrt.(diag(NL.get_uq_vcov(uq_f; scale = :transformed)))
     se_l = sqrt.(diag(NL.get_uq_vcov(uq_l; scale = :transformed)))
-    @test se_f≈se_l rtol=5e-2
+    @test se_f ≈ se_l rtol = 5.0e-2
 
     # intervals on natural scale exist for all three parameters
     @test NL.get_uq_intervals(uq_f; scale = :natural) !== nothing
@@ -120,7 +127,7 @@ end
             c = RealNumber(-0.3)
             γ = RealNumber(0.8)
             μη = RealNumber(0.3)
-            ω = RealNumber(0.6, scale = :log, lower = 1e-8, upper = Inf)
+            ω = RealNumber(0.6, scale = :log, lower = 1.0e-8, upper = Inf)
         end
         @covariates begin
             t = Covariate()
@@ -142,24 +149,29 @@ end
     b = [b1]
 
     Hfoce = NL._focei_negH_batch(
-        dm, info, θu, b, const_cache, ll_cache; interaction = false)
+        dm, info, θu, b, const_cache, ll_cache; interaction = false
+    )
     Hfoci = NL._focei_negH_batch(dm, info, θu, b, const_cache, ll_cache; interaction = true)
 
     Λ = 1 / ω0^2
     # 2 observations, ∂μ/∂η = 1, ∂σ/∂η = γσ.
     foce_data = 2 * exp(-2 * (c0 + γ0 * μη0))          # σ frozen at η = mean = μη
     foci_data = 2 * (exp(-2 * (c0 + γ0 * b1)) + 2 * γ0^2)
-    @test Hfoce[1, 1]≈foce_data + Λ atol=1e-6
-    @test Hfoci[1, 1]≈foci_data + Λ atol=1e-6
-    @test !isapprox(Hfoce[1, 1], Hfoci[1, 1]; atol = 1e-3)
+    @test Hfoce[1, 1] ≈ foce_data + Λ atol = 1.0e-6
+    @test Hfoci[1, 1] ≈ foci_data + Λ atol = 1.0e-6
+    @test !isapprox(Hfoce[1, 1], Hfoci[1, 1]; atol = 1.0e-3)
     # Crucially, FOCE froze the dispersion at η = μη, NOT at η = 0.
-    @test !isapprox(Hfoce[1, 1], 2 * exp(-2 * c0) + Λ; atol = 1e-3)
+    @test !isapprox(Hfoce[1, 1], 2 * exp(-2 * c0) + Λ; atol = 1.0e-3)
 
     # FOCE end-to-end fit runs.
-    rf = fit_model(dm,
-        NL.FOCEI(interaction = false, multistart_n = 1,
-            multistart_k = 1, optim_kwargs = (maxiters = 3,));
-        serialization = NL.EnsembleSerial())
+    rf = fit_model(
+        dm,
+        NL.FOCEI(
+            interaction = false, multistart_n = 1,
+            multistart_k = 1, optim_kwargs = (maxiters = 3,)
+        );
+        serialization = NL.EnsembleSerial()
+    )
     @test isfinite(NL.get_objective(rf))
 end
 
@@ -172,12 +184,16 @@ end
     _, batch_infos, const_cache = NL._build_re_batch_infos(dm, NamedTuple())
     ll_cache = NL.build_ll_cache(dm; force_saveat = true)
     nb_ = length(batch_infos)
-    mkcache() = NL._LaplaceCache(nothing,
+    mkcache() = NL._LaplaceCache(
+        nothing,
         NL._LaplaceBStarCache([Float64[] for _ in 1:nb_], falses(nb_)),
-        NL._LaplaceGradCache([Float64[] for _ in 1:nb_], fill(NaN, nb_),
-            [Float64[] for _ in 1:nb_], falses(nb_)),
+        NL._LaplaceGradCache(
+            [Float64[] for _ in 1:nb_], fill(NaN, nb_),
+            [Float64[] for _ in 1:nb_], falses(nb_)
+        ),
         NL._init_laplace_ad_cache(nb_),
-        NL._init_laplace_hess_cache(Float64, nb_))
+        NL._init_laplace_hess_cache(Float64, nb_)
+    )
     hmode = NL._FOCEIHess(true)
     θu = NL.get_θ0_untransformed(fe)
 
@@ -186,13 +202,16 @@ end
     _, g, _ = NL._laplace_objective_and_grad(
         dm, batch_infos, θu, const_cache, ll_cache, mkcache();
         inner = inner_opts, hessian = method.hessian, cache_opts = method.cache, multistart = ms_opts,
-        rng = Xoshiro(0), serialization = NL.EnsembleSerial(), hmode = hmode)
-    obju(x) = NL._laplace_objective_only(dm, batch_infos, ComponentArray(x, getaxes(θu)),
+        rng = Xoshiro(0), serialization = NL.EnsembleSerial(), hmode = hmode
+    )
+    obju(x) = NL._laplace_objective_only(
+        dm, batch_infos, ComponentArray(x, getaxes(θu)),
         const_cache, ll_cache, mkcache();
         inner = inner_opts, hessian = method.hessian, cache_opts = method.cache, multistart = ms_opts,
-        rng = Xoshiro(0), serialization = NL.EnsembleSerial(), hmode = hmode)
+        rng = Xoshiro(0), serialization = NL.EnsembleSerial(), hmode = hmode
+    )
     g_fd = FiniteDifferences.grad(central_fdm(5, 1), obju, collect(θu))[1]
-    @test collect(g)≈g_fd rtol=1e-4
+    @test collect(g) ≈ g_fd rtol = 1.0e-4
     @test all(isfinite, collect(g))
 end
 
@@ -213,7 +232,8 @@ end
             p2 = 0.8 / (1 + exp(-clamp(p2_r, -2.0, 2.0))) + 0.1
             P = [0.85 0.15; 0.25 0.75]
             y ~ DiscreteTimeDiscreteStatesHMM(
-                P, (Bernoulli(p1), Bernoulli(p2)), Categorical([0.6, 0.4]))
+                P, (Bernoulli(p1), Bernoulli(p2)), Categorical([0.6, 0.4])
+            )
         end
     end
     df = DataFrame(ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [0, 1, 1, 0])
@@ -223,9 +243,11 @@ end
 
 @testset "FOCEI fits an ODE model" begin
     # Smoke test: exercise the ODE FOCEI path + accessors on the shared ODE archetype.
-    res = fit_model(fx_ode_dm(),
+    res = fit_model(
+        fx_ode_dm(),
         NL.FOCEI(multistart_n = 1, multistart_k = 1, optim_kwargs = (maxiters = 3,));
-        serialization = NL.EnsembleSerial())
+        serialization = NL.EnsembleSerial()
+    )
     @test isfinite(NL.get_objective(res))
     @test res.result.eb_modes !== nothing
     @test NL.get_random_effects(res) isa NamedTuple
@@ -239,7 +261,7 @@ end
         @fixedEffects begin
             a = RealNumber(0.5)
             c = RealNumber(0.4)
-            ω = RealNumber(0.5, scale = :log, lower = 1e-8, upper = Inf)
+            ω = RealNumber(0.5, scale = :log, lower = 1.0e-8, upper = Inf)
         end
         @covariates begin
             t = Covariate()
@@ -253,23 +275,31 @@ end
     end
     Random.seed!(11)
     df = DataFrame(
-        ID = repeat(1:6, inner = 3), t = repeat(0:2, 6), y = randn(18) .* 0.3 .+ 0.5)
+        ID = repeat(1:6, inner = 3), t = repeat(0:2, 6), y = randn(18) .* 0.3 .+ 0.5
+    )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     _, batch_infos, const_cache = NL._build_re_batch_infos(dm, NamedTuple())
     ll_cache = NL.build_ll_cache(dm; force_saveat = true)
     θu = NL.get_θ0_untransformed(dm.model.fixed.fixed)
     info = batch_infos[1]
-    @test all(isfinite,
+    @test all(
+        isfinite,
         NL._focei_negH_batch(
-            dm, info, θu, [0.0], const_cache, ll_cache; interaction = true))
+            dm, info, θu, [0.0], const_cache, ll_cache; interaction = true
+        )
+    )
     # Must NOT throw at the invalid point — returns NaN so the caller backtracks.
-    @test all(isnan,
+    @test all(
+        isnan,
         NL._focei_negH_batch(
-            dm, info, θu, [-1.0], const_cache, ll_cache; interaction = true))
+            dm, info, θu, [-1.0], const_cache, ll_cache; interaction = true
+        )
+    )
     # A full fit must complete (the optimizer may probe the invalid region).
     res = fit_model(
         dm, NL.FOCEI(multistart_n = 1, multistart_k = 1, optim_kwargs = (maxiters = 4,));
-        serialization = NL.EnsembleSerial())
+        serialization = NL.EnsembleSerial()
+    )
     @test isfinite(NL.get_objective(res))
 end
 
@@ -299,8 +329,8 @@ end
         bases = vech_basis(k)
         Fcov_ref = [0.5 * tr(P * bases[a] * P * bases[b]) for a in 1:nv, b in 1:nv]
         @test size(F) == (k + nv, k + nv)
-        @test isapprox(F[1:k, 1:k], P; rtol = 1e-12)
-        @test isapprox(F[(k + 1):end, (k + 1):end], Fcov_ref; rtol = 1e-12, atol = 1e-12)
+        @test isapprox(F[1:k, 1:k], P; rtol = 1.0e-12)
+        @test isapprox(F[(k + 1):end, (k + 1):end], Fcov_ref; rtol = 1.0e-12, atol = 1.0e-12)
         @test all(iszero, F[1:k, (k + 1):end])
         @test all(iszero, F[(k + 1):end, 1:k])
     end
@@ -322,8 +352,10 @@ end
             y ~ Normal(a + η, σ)
         end
     end
-    df = DataFrame(ID = repeat(1:4, inner = 3), t = repeat(0:2, 4),
-        y = randn(Xoshiro(3), 12) .* 0.3 .+ 0.2)
+    df = DataFrame(
+        ID = repeat(1:4, inner = 3), t = repeat(0:2, 4),
+        y = randn(Xoshiro(3), 12) .* 0.3 .+ 0.2
+    )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     _, batch_infos, const_cache = NL._build_re_batch_infos(dm, NamedTuple())
     ll_cache = NL.build_ll_cache(dm)

@@ -6,7 +6,8 @@
 # build_plot_cache and their helpers) live in the core module, in the other
 # plotting/*.jl files.
 
-const _PLOT_API_FUNCTIONS = (:plot_data, :plot_observed_profiles, :plot_fits,
+const _PLOT_API_FUNCTIONS = (
+    :plot_data, :plot_observed_profiles, :plot_fits,
     :plot_fits_comparison, :plot_multistart_waterfall,
     :plot_multistart_fixed_effect_variability, :plot_em_trajectories, :plot_hidden_states,
     :plot_emission_distributions, :plot_dv_pred, :plot_dv_ipred, :plot_wres_pred,
@@ -16,7 +17,8 @@ const _PLOT_API_FUNCTIONS = (:plot_data, :plot_observed_profiles, :plot_fits,
     :plot_random_effects_scatter, :plot_random_effect_pairplot,
     :plot_random_effect_distributions, :plot_random_effect_pit,
     :plot_random_effect_standardized, :plot_random_effect_standardized_scatter,
-    :combine_plots)
+    :combine_plots,
+)
 
 function plot_data end
 function plot_observed_profiles end
@@ -56,12 +58,14 @@ function __init__()
     Base.Experimental.register_error_hint(MethodError) do io, exc, _argtypes, _kwargs
         f = exc.f
         if f isa Function && nameof(f) in _PLOT_API_FUNCTIONS &&
-           Base.get_extension(@__MODULE__, :NoLimitsMakieExt) === nothing
-            print(io,
+                Base.get_extension(@__MODULE__, :NoLimitsMakieExt) === nothing
+            print(
+                io,
                 "\n\nNoLimits plotting functions live in a package extension that loads ",
                 "when Makie.jl is available. Run `using CairoMakie` (or another Makie ",
                 "backend) alongside `using NoLimits` to enable `", nameof(f),
-                "` and the other plotting functions.")
+                "` and the other plotting functions."
+            )
         end
     end
     return nothing

@@ -11,7 +11,7 @@ using Lux
     chain = Chain(Dense(2, 3, tanh), Dense(3, 1))
     knots = collect(range(0.0, 1.0; length = 5))
     fe = @fixedEffects begin
-        σ = RealNumber(0.4, scale = :log, lower = 1e-12)
+        σ = RealNumber(0.4, scale = :log, lower = 1.0e-12)
         ζ = NNParameters(chain; function_name = :NNB, calculate_se = false)
         Γ = SoftTreeParameters(2, 2; function_name = :STB, calculate_se = false)
         sp = SplineParameters(knots; function_name = :SPB, calculate_se = false)
@@ -36,7 +36,7 @@ using Lux
     hess = ForwardDiff.hessian(f, fixed_effects0)
     @test size(hess, 1) == length(fixed_effects0)
     @test size(hess, 2) == length(fixed_effects0)
-    @test isapprox(hess, hess'; rtol = 1e-6, atol = 1e-8)
+    @test isapprox(hess, hess'; rtol = 1.0e-6, atol = 1.0e-8)
 end
 
 @testset "PreDE AD (simple)" begin
@@ -52,7 +52,8 @@ end
     end
     build = get_prede_builder(prede)
     f(βθ) = build(
-        ComponentArray(β = βθ[1]), random_effects, NamedTuple(), NamedTuple(), helpers).b
+        ComponentArray(β = βθ[1]), random_effects, NamedTuple(), NamedTuple(), helpers
+    ).b
 
     val_fwd, grad_fwd = value_and_gradient(f, AutoForwardDiff(), [1.0])
 end
@@ -80,8 +81,10 @@ end
     end
 
     build = get_prede_builder(prede)
-    f(feθ) = build(inverse_transform(feθ), random_effects,
-        constant_features_i, model_funs, NamedTuple()).total
+    f(feθ) = build(
+        inverse_transform(feθ), random_effects,
+        constant_features_i, model_funs, NamedTuple()
+    ).total
 
     val_fwd, grad_fwd = value_and_gradient(f, AutoForwardDiff(), fixed_effects0)
 end

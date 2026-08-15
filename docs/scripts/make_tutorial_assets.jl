@@ -49,7 +49,7 @@ end
 
 function note_png(slug, name)
     p = fig(slug, name)
-    @info "  fig   -> $(relpath(p, DOCS_ROOT))" exists=isfile(p)
+    @info "  fig   -> $(relpath(p, DOCS_ROOT))" exists = isfile(p)
     return p
 end
 
@@ -73,14 +73,17 @@ function tutorial1()
         end
 
         @fixedEffects begin
-            phi1 = RealNumber(30.0, prior = LogNormal(log(30.0), 0.30), calculate_se = true)
-            log_vmax = RealNumber(5.0, prior = Normal(5.00, 0.35), calculate_se = true)
+            phi1 = RealNumber(30.0, prior = LogNormal(log(30.0), 0.3), calculate_se = true)
+            log_vmax = RealNumber(5.0, prior = Normal(5.0, 0.35), calculate_se = true)
             phi3 = RealNumber(
-                700.0, prior = LogNormal(log(700.0), 0.30), calculate_se = true)
+                700.0, prior = LogNormal(log(700.0), 0.3), calculate_se = true
+            )
             omega = RealNumber(
-                0.3, scale = :log, prior = LogNormal(log(0.155), 0.35), calculate_se = true)
+                0.3, scale = :log, prior = LogNormal(log(0.155), 0.35), calculate_se = true
+            )
             sigma = RealNumber(
-                0.3, scale = :log, prior = LogNormal(log(0.113), 0.30), calculate_se = true)
+                0.3, scale = :log, prior = LogNormal(log(0.113), 0.3), calculate_se = true
+            )
         end
 
         @randomEffects begin
@@ -89,7 +92,7 @@ function tutorial1()
 
         @formulas begin
             mu_raw = phi1 + (vmax_i - phi1) / (1 + exp(-(age - phi3) / 100))
-            mu = softplus(mu_raw) + 1e-6
+            mu = softplus(mu_raw) + 1.0e-6
             circumference ~ LogNormal(log(mu), sigma)
         end
     end
@@ -98,7 +101,8 @@ function tutorial1()
     dm = DataModel(model, df; primary_id = :Tree, time_col = :age)
 
     laplace_method = NoLimits.Laplace(;
-        multistart_n = 0, multistart_k = 0, optim_kwargs = (maxiters = 120,))
+        multistart_n = 0, multistart_k = 0, optim_kwargs = (maxiters = 120,)
+    )
 
     mcem_method = NoLimits.MCEM(;
         maxiters = 20,
@@ -120,13 +124,17 @@ function tutorial1()
     txt(slug, "dm_summary", NoLimits.summarize(dm))
 
     res_laplace = fit_model(
-        dm, laplace_method; serialization = serialization, rng = Random.Xoshiro(11))
+        dm, laplace_method; serialization = serialization, rng = Random.Xoshiro(11)
+    )
     res_mcem = fit_model(
-        dm, mcem_method; serialization = serialization, rng = Random.Xoshiro(12))
+        dm, mcem_method; serialization = serialization, rng = Random.Xoshiro(12)
+    )
     res_saem = fit_model(
-        dm, saem_method; serialization = serialization, rng = Random.Xoshiro(13))
+        dm, saem_method; serialization = serialization, rng = Random.Xoshiro(13)
+    )
     res_mcmc = fit_model(
-        dm, mcmc_method; serialization = serialization, rng = Random.Xoshiro(14))
+        dm, mcmc_method; serialization = serialization, rng = Random.Xoshiro(14)
+    )
 
     txt(slug, "fit_summary_laplace", NoLimits.summarize(res_laplace))
     txt(slug, "fit_summary_mcem", NoLimits.summarize(res_mcem))
@@ -136,7 +144,7 @@ function tutorial1()
     objectives = (
         laplace = NoLimits.get_objective(res_laplace),
         mcem = NoLimits.get_objective(res_mcem),
-        saem = NoLimits.get_objective(res_saem)
+        saem = NoLimits.get_objective(res_saem),
     )
     txt(slug, "objectives", objectives)
 
@@ -148,53 +156,76 @@ function tutorial1()
 
     inds = collect(1:min(2, length(dm.individuals)))
 
-    plot_fits(res_laplace; observable = :circumference, individuals_idx = inds, ncols = 2,
-        shared_x_axis = true, shared_y_axis = true, save_path = fig(slug, "p_fit_laplace"))
-    plot_fits(res_mcem; observable = :circumference, individuals_idx = inds, ncols = 2,
-        shared_x_axis = true, shared_y_axis = true, save_path = fig(slug, "p_fit_mcem"))
-    plot_fits(res_saem; observable = :circumference, individuals_idx = inds, ncols = 2,
-        shared_x_axis = true, shared_y_axis = true, save_path = fig(slug, "p_fit_saem"))
-    plot_fits(res_mcmc; observable = :circumference, individuals_idx = inds, ncols = 2,
+    plot_fits(
+        res_laplace; observable = :circumference, individuals_idx = inds, ncols = 2,
+        shared_x_axis = true, shared_y_axis = true, save_path = fig(slug, "p_fit_laplace")
+    )
+    plot_fits(
+        res_mcem; observable = :circumference, individuals_idx = inds, ncols = 2,
+        shared_x_axis = true, shared_y_axis = true, save_path = fig(slug, "p_fit_mcem")
+    )
+    plot_fits(
+        res_saem; observable = :circumference, individuals_idx = inds, ncols = 2,
+        shared_x_axis = true, shared_y_axis = true, save_path = fig(slug, "p_fit_saem")
+    )
+    plot_fits(
+        res_mcmc; observable = :circumference, individuals_idx = inds, ncols = 2,
         shared_x_axis = true, shared_y_axis = true, plot_mcmc_quantiles = true,
         mcmc_quantiles = [5, 95], mcmc_warmup = 500, mcmc_draws = 300,
-        rng = Random.Xoshiro(201), save_path = fig(slug, "p_fit_mcmc"))
+        rng = Random.Xoshiro(201), save_path = fig(slug, "p_fit_mcmc")
+    )
 
     plot_observation_distributions(
         res_laplace; observables = :circumference, individuals_idx = 1,
-        obs_rows = 1, save_path = fig(slug, "p_obs_laplace"))
+        obs_rows = 1, save_path = fig(slug, "p_obs_laplace")
+    )
     plot_observation_distributions(
         res_mcem; observables = :circumference, individuals_idx = 1,
-        obs_rows = 1, save_path = fig(slug, "p_obs_mcem"))
+        obs_rows = 1, save_path = fig(slug, "p_obs_mcem")
+    )
     plot_observation_distributions(
         res_saem; observables = :circumference, individuals_idx = 1,
-        obs_rows = 1, save_path = fig(slug, "p_obs_saem"))
+        obs_rows = 1, save_path = fig(slug, "p_obs_saem")
+    )
     plot_observation_distributions(
         res_mcmc; observables = :circumference, individuals_idx = 1,
         obs_rows = 1, mcmc_warmup = 500, mcmc_draws = 300,
-        rng = Random.Xoshiro(202), save_path = fig(slug, "p_obs_mcmc"))
+        rng = Random.Xoshiro(202), save_path = fig(slug, "p_obs_mcmc")
+    )
 
     uq_laplace = compute_uq(
         res_laplace; method = :wald, vcov = :hessian, pseudo_inverse = true,
-        serialization = serialization, n_draws = 400, rng = Random.Xoshiro(101))
-    uq_mcem = compute_uq(res_mcem; method = :wald, vcov = :hessian, re_approx = :laplace,
-        pseudo_inverse = true, serialization = serialization, n_draws = 400, rng = Random.Xoshiro(102))
-    uq_saem = compute_uq(res_saem; method = :wald, vcov = :hessian, re_approx = :laplace,
-        pseudo_inverse = true, serialization = serialization, n_draws = 400, rng = Random.Xoshiro(103))
-    uq_mcmc = compute_uq(res_mcmc; method = :chain, serialization = serialization,
-        mcmc_warmup = 500, mcmc_draws = 300, rng = Random.Xoshiro(104))
+        serialization = serialization, n_draws = 400, rng = Random.Xoshiro(101)
+    )
+    uq_mcem = compute_uq(
+        res_mcem; method = :wald, vcov = :hessian, re_approx = :laplace,
+        pseudo_inverse = true, serialization = serialization, n_draws = 400, rng = Random.Xoshiro(102)
+    )
+    uq_saem = compute_uq(
+        res_saem; method = :wald, vcov = :hessian, re_approx = :laplace,
+        pseudo_inverse = true, serialization = serialization, n_draws = 400, rng = Random.Xoshiro(103)
+    )
+    uq_mcmc = compute_uq(
+        res_mcmc; method = :chain, serialization = serialization,
+        mcmc_warmup = 500, mcmc_draws = 300, rng = Random.Xoshiro(104)
+    )
 
     plot_uq_distributions(
         uq_laplace; scale = :natural, plot_type = :density, show_legend = false,
-        save_path = fig(slug, "p_uq_laplace"))
+        save_path = fig(slug, "p_uq_laplace")
+    )
     plot_uq_distributions(
         uq_mcem; scale = :natural, plot_type = :density, show_legend = false,
-        save_path = fig(slug, "p_uq_mcem"))
+        save_path = fig(slug, "p_uq_mcem")
+    )
     plot_uq_distributions(
         uq_saem; scale = :natural, plot_type = :density, show_legend = false,
-        save_path = fig(slug, "p_uq_saem"))
+        save_path = fig(slug, "p_uq_saem")
+    )
     plot_uq_distributions(
         uq_mcmc; scale = :natural, plot_type = :density, show_legend = false,
-        save_path = fig(slug, "p_uq_mcmc"))
+        save_path = fig(slug, "p_uq_mcmc")
+    )
 
     txt(slug, "fit_uq_summary_laplace", NoLimits.summarize(res_laplace, uq_laplace))
     txt(slug, "fit_uq_summary_mcem", NoLimits.summarize(res_mcem, uq_mcem))
@@ -225,7 +256,8 @@ function tutorial2()
             g_sorted = sort(DataFrame(g), :Time)
             for row in eachrow(g_sorted)
                 push!(
-                    df, (id, Float64(row.Time), 0.0, 0, missing, 0.0, Float64(row.conc), 1))
+                    df, (id, Float64(row.Time), 0.0, 0, missing, 0.0, Float64(row.conc), 1)
+                )
             end
         end
         sort!(df, [:id, :t, :_event_order])
@@ -245,13 +277,17 @@ function tutorial2()
             tcl = RealNumber(1.0, prior = Uniform(0.1, 5.0), calculate_se = true)
             tv = RealNumber(3.45, prior = Uniform(0.1, 5.0), calculate_se = true)
             omega1 = RealNumber(
-                1.0, scale = :log, prior = Uniform(0.0, 2.0), calculate_se = true)
+                1.0, scale = :log, prior = Uniform(0.0, 2.0), calculate_se = true
+            )
             omega2 = RealNumber(
-                1.0, scale = :log, prior = Uniform(0.0, 2.0), calculate_se = true)
+                1.0, scale = :log, prior = Uniform(0.0, 2.0), calculate_se = true
+            )
             omega3 = RealNumber(
-                1.0, scale = :log, prior = Uniform(0.0, 2.0), calculate_se = true)
+                1.0, scale = :log, prior = Uniform(0.0, 2.0), calculate_se = true
+            )
             sigma_eps = RealNumber(
-                1.0, scale = :log, prior = Uniform(0.0, 2.0), calculate_se = true)
+                1.0, scale = :log, prior = Uniform(0.0, 2.0), calculate_se = true
+            )
         end
         @randomEffects begin
             eta = RandomEffect(
@@ -277,12 +313,16 @@ function tutorial2()
         end
     end
 
-    model = set_solver_config(model_raw; saveat_mode = :saveat, alg = Tsit5(),
-        kwargs = (abstol = 1e-6, reltol = 1e-6))
+    model = set_solver_config(
+        model_raw; saveat_mode = :saveat, alg = Tsit5(),
+        kwargs = (abstol = 1.0e-6, reltol = 1.0e-6)
+    )
     txt(slug, "model_summary", NoLimits.summarize(model))
 
-    dm = DataModel(model, df; primary_id = :id, time_col = :t, evid_col = :EVID,
-        amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT)
+    dm = DataModel(
+        model, df; primary_id = :id, time_col = :t, evid_col = :EVID,
+        amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT
+    )
     txt(slug, "dm_summary", NoLimits.summarize(dm))
 
     mcem_method = NoLimits.MCEM(;
@@ -295,24 +335,34 @@ function tutorial2()
     serialization = SciMLBase.EnsembleThreads()
 
     res_mcem = fit_model(
-        dm, mcem_method; serialization = serialization, rng = Random.Xoshiro(33))
+        dm, mcem_method; serialization = serialization, rng = Random.Xoshiro(33)
+    )
     txt(slug, "fit_objective", (objective = NoLimits.get_objective(res_mcem),))
     txt(slug, "fit_result_summary", NoLimits.summarize(res_mcem))
 
     params = NoLimits.get_params(res_mcem; scale = :untransformed)
-    txt(slug, "params",
-        (tka = params.tka, tcl = params.tcl, tv = params.tv, sigma_eps = params.sigma_eps))
+    txt(
+        slug, "params",
+        (tka = params.tka, tcl = params.tcl, tv = params.tv, sigma_eps = params.sigma_eps)
+    )
 
-    plot_fits(res_mcem; observable = :y1, individuals_idx = [1, 2], ncols = 2,
-        shared_x_axis = true, shared_y_axis = true, save_path = fig(slug, "p_fit_mcem"))
-    plot_observation_distributions(res_mcem; observables = :y1, individuals_idx = 1,
-        obs_rows = 1, save_path = fig(slug, "p_obs_mcem"))
+    plot_fits(
+        res_mcem; observable = :y1, individuals_idx = [1, 2], ncols = 2,
+        shared_x_axis = true, shared_y_axis = true, save_path = fig(slug, "p_fit_mcem")
+    )
+    plot_observation_distributions(
+        res_mcem; observables = :y1, individuals_idx = 1,
+        obs_rows = 1, save_path = fig(slug, "p_obs_mcem")
+    )
 
-    uq_mcem = compute_uq(res_mcem; method = :wald, vcov = :hessian, re_approx = :laplace,
-        pseudo_inverse = true, serialization = serialization, n_draws = 400, rng = Random.Xoshiro(44))
+    uq_mcem = compute_uq(
+        res_mcem; method = :wald, vcov = :hessian, re_approx = :laplace,
+        pseudo_inverse = true, serialization = serialization, n_draws = 400, rng = Random.Xoshiro(44)
+    )
     plot_uq_distributions(
         uq_mcem; scale = :natural, plot_type = :density, show_legend = false,
-        save_path = fig(slug, "p_uq_mcem"))
+        save_path = fig(slug, "p_uq_mcem")
+    )
     txt(slug, "fit_uq_summary_mcem", NoLimits.summarize(res_mcem, uq_mcem))
     return nothing
 end
@@ -352,7 +402,8 @@ function tutorial3()
         end
         @fixedEffects begin
             sigma = RealNumber(
-                1.0, scale = :log, prior = LogNormal(log(1.0), 0.5), calculate_se = true)
+                1.0, scale = :log, prior = LogNormal(log(1.0), 0.5), calculate_se = true
+            )
             zA1 = NNParameters(chain_A1; function_name = :NNA1, calculate_se = false)
             zA2 = NNParameters(chain_A2; function_name = :NNA2, calculate_se = false)
             zC1 = NNParameters(chain_C1; function_name = :NNC1, calculate_se = false)
@@ -383,8 +434,10 @@ function tutorial3()
         end
     end
 
-    model = set_solver_config(model_raw; saveat_mode = :saveat,
-        alg = AutoTsit5(Rosenbrock23()), kwargs = (abstol = 1e-2, reltol = 1e-2))
+    model = set_solver_config(
+        model_raw; saveat_mode = :saveat,
+        alg = AutoTsit5(Rosenbrock23()), kwargs = (abstol = 1.0e-2, reltol = 1.0e-2)
+    )
     txt(slug, "model_summary", NoLimits.summarize(model))
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
@@ -394,19 +447,26 @@ function tutorial3()
     serialization = SciMLBase.EnsembleThreads()
 
     res_saem = fit_model(
-        dm, saem_method; serialization = serialization, rng = Random.Xoshiro(21))
-    txt(slug,
+        dm, saem_method; serialization = serialization, rng = Random.Xoshiro(21)
+    )
+    txt(
+        slug,
         "fit_objective",
         (
             objective = NoLimits.get_objective(res_saem),
-            n_params = length(NoLimits.get_params(res_saem; scale = :untransformed))
-        ))
+            n_params = length(NoLimits.get_params(res_saem; scale = :untransformed)),
+        )
+    )
     txt(slug, "fit_summary_saem", NoLimits.summarize(res_saem))
 
-    plot_fits(res_saem; observable = :y, individuals_idx = [1, 2], ncols = 2,
-        shared_x_axis = true, shared_y_axis = true, save_path = fig(slug, "p_fit_saem"))
-    plot_observation_distributions(res_saem; observables = :y, individuals_idx = 1,
-        obs_rows = 1, save_path = fig(slug, "p_obs_saem"))
+    plot_fits(
+        res_saem; observable = :y, individuals_idx = [1, 2], ncols = 2,
+        shared_x_axis = true, shared_y_axis = true, save_path = fig(slug, "p_fit_saem")
+    )
+    plot_observation_distributions(
+        res_saem; observables = :y, individuals_idx = 1,
+        obs_rows = 1, save_path = fig(slug, "p_obs_saem")
+    )
     return nothing
 end
 
@@ -440,15 +500,20 @@ function tutorial4()
         end
         @fixedEffects begin
             sigma = RealNumber(
-                1.0, scale = :log, prior = LogNormal(log(1.0), 0.5), calculate_se = true)
+                1.0, scale = :log, prior = LogNormal(log(1.0), 0.5), calculate_se = true
+            )
             gA1 = SoftTreeParameters(
-                1, depth_st; function_name = :STA1, calculate_se = false)
+                1, depth_st; function_name = :STA1, calculate_se = false
+            )
             gA2 = SoftTreeParameters(
-                1, depth_st; function_name = :STA2, calculate_se = false)
+                1, depth_st; function_name = :STA2, calculate_se = false
+            )
             gC1 = SoftTreeParameters(
-                1, depth_st; function_name = :STC1, calculate_se = false)
+                1, depth_st; function_name = :STC1, calculate_se = false
+            )
             gC2 = SoftTreeParameters(
-                1, depth_st; function_name = :STC2, calculate_se = false)
+                1, depth_st; function_name = :STC2, calculate_se = false
+            )
         end
         @randomEffects begin
             etaA1 = RandomEffect(MvNormal(gA1, Diagonal(ones(length(gA1)))); column = :ID)
@@ -475,8 +540,10 @@ function tutorial4()
         end
     end
 
-    model = set_solver_config(model_raw; saveat_mode = :saveat,
-        alg = AutoTsit5(Rosenbrock23()), kwargs = (abstol = 1e-2, reltol = 1e-2))
+    model = set_solver_config(
+        model_raw; saveat_mode = :saveat,
+        alg = AutoTsit5(Rosenbrock23()), kwargs = (abstol = 1.0e-2, reltol = 1.0e-2)
+    )
     txt(slug, "model_summary", NoLimits.summarize(model))
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
@@ -486,19 +553,26 @@ function tutorial4()
     serialization = SciMLBase.EnsembleThreads()
 
     res_saem = fit_model(
-        dm, saem_method; serialization = serialization, rng = Random.Xoshiro(31))
-    txt(slug,
+        dm, saem_method; serialization = serialization, rng = Random.Xoshiro(31)
+    )
+    txt(
+        slug,
         "fit_objective",
         (
             objective = NoLimits.get_objective(res_saem),
-            n_params = length(NoLimits.get_params(res_saem; scale = :untransformed))
-        ))
+            n_params = length(NoLimits.get_params(res_saem; scale = :untransformed)),
+        )
+    )
     txt(slug, "fit_summary_saem", NoLimits.summarize(res_saem))
 
-    plot_fits(res_saem; observable = :y, individuals_idx = [1, 2], ncols = 2,
-        shared_x_axis = true, shared_y_axis = true, save_path = fig(slug, "p_fit_saem"))
-    plot_observation_distributions(res_saem; observables = :y, individuals_idx = 1,
-        obs_rows = 1, save_path = fig(slug, "p_obs_saem"))
+    plot_fits(
+        res_saem; observable = :y, individuals_idx = [1, 2], ncols = 2,
+        shared_x_axis = true, shared_y_axis = true, save_path = fig(slug, "p_fit_saem")
+    )
+    plot_observation_distributions(
+        res_saem; observables = :y, individuals_idx = 1,
+        obs_rows = 1, save_path = fig(slug, "p_obs_saem")
+    )
     return nothing
 end
 
@@ -532,13 +606,19 @@ function tutorial5()
         @helpers begin
             safe_exp(x) = exp(clamp(x, -20.0, 20.0))
             linpred(x, β) = dot(
-                [x.base_log, x.age_log, x.trt_active,
-                    x.period_centered, x.trt_period_centered], β)
+                [
+                    x.base_log, x.age_log, x.trt_active,
+                    x.period_centered, x.trt_period_centered,
+                ], β
+            )
         end
         @covariates begin
             period_f = Covariate()
-            x = CovariateVector([
-                :base_log, :age_log, :trt_active, :period_centered, :trt_period_centered])
+            x = CovariateVector(
+                [
+                    :base_log, :age_log, :trt_active, :period_centered, :trt_period_centered,
+                ]
+            )
         end
         @fixedEffects begin
             beta0 = RealNumber(0.1, calculate_se = true)
@@ -569,17 +649,22 @@ function tutorial5()
     txt(slug, "dm_poisson_summary", NoLimits.summarize(dm_poisson))
 
     res_poisson = fit_model(
-        dm_poisson, mcem_method; serialization = serialization, rng = Random.Xoshiro(21))
+        dm_poisson, mcem_method; serialization = serialization, rng = Random.Xoshiro(21)
+    )
     txt(slug, "res_poisson_summary", NoLimits.summarize(res_poisson))
 
-    plot_fits(res_poisson; observable = :seizures, individuals_idx = [1, 2], ncols = 2,
-        shared_x_axis = true, shared_y_axis = true, save_path = fig(slug, "p_fit_poisson"))
+    plot_fits(
+        res_poisson; observable = :seizures, individuals_idx = [1, 2], ncols = 2,
+        shared_x_axis = true, shared_y_axis = true, save_path = fig(slug, "p_fit_poisson")
+    )
     plot_observation_distributions(
         res_poisson; observables = :seizures, individuals_idx = 1,
-        obs_rows = [1, 2], save_path = fig(slug, "p_obs_poisson"))
+        obs_rows = [1, 2], save_path = fig(slug, "p_obs_poisson")
+    )
 
     uq_poisson = compute_uq(
-        res_poisson; method = :wald, n_draws = 100, level = 0.95, rng = Random.Xoshiro(151))
+        res_poisson; method = :wald, n_draws = 100, level = 0.95, rng = Random.Xoshiro(151)
+    )
     txt(slug, "uq_poisson_summary", NoLimits.summarize(uq_poisson))
     txt(slug, "res_uq_poisson_summary", NoLimits.summarize(res_poisson, uq_poisson))
     plot_uq_distributions(uq_poisson; save_path = fig(slug, "p_uq_poisson"))
@@ -588,13 +673,19 @@ function tutorial5()
         @helpers begin
             safe_exp(x) = exp(clamp(x, -20.0, 20.0))
             linpred(x, β) = dot(
-                [x.base_log, x.age_log, x.trt_active,
-                    x.period_centered, x.trt_period_centered], β)
+                [
+                    x.base_log, x.age_log, x.trt_active,
+                    x.period_centered, x.trt_period_centered,
+                ], β
+            )
         end
         @covariates begin
             period_f = Covariate()
-            x = CovariateVector([
-                :base_log, :age_log, :trt_active, :period_centered, :trt_period_centered])
+            x = CovariateVector(
+                [
+                    :base_log, :age_log, :trt_active, :period_centered, :trt_period_centered,
+                ]
+            )
         end
         @fixedEffects begin
             beta0 = RealNumber(0.1, calculate_se = true)
@@ -608,8 +699,8 @@ function tutorial5()
         @formulas begin
             log_rate = beta0 + linpred(x, beta) + eta
             lambda = safe_exp(log_rate)
-            r = exp(log_r) + 1e-6
-            p = clamp(r / (r + lambda), 1e-8, 1.0 - 1e-8)
+            r = exp(log_r) + 1.0e-6
+            p = clamp(r / (r + lambda), 1.0e-8, 1.0 - 1.0e-8)
             seizures ~ NegativeBinomial(r, p)
         end
     end
@@ -617,27 +708,35 @@ function tutorial5()
 
     dm_nb = DataModel(model_nb, df; primary_id = :Subject, time_col = :period_f)
     res_nb = fit_model(
-        dm_nb, mcem_method; serialization = serialization, rng = Random.Xoshiro(22))
+        dm_nb, mcem_method; serialization = serialization, rng = Random.Xoshiro(22)
+    )
     txt(slug, "dm_nb_summary", NoLimits.summarize(dm_nb))
     txt(slug, "res_nb_summary", NoLimits.summarize(res_nb))
 
-    plot_fits(res_nb; observable = :seizures, individuals_idx = [1, 2], ncols = 2,
-        shared_x_axis = true, shared_y_axis = true, save_path = fig(slug, "p_fit_nb"))
-    plot_observation_distributions(res_nb; observables = :seizures, individuals_idx = 1,
-        obs_rows = [1, 2], save_path = fig(slug, "p_obs_nb"))
+    plot_fits(
+        res_nb; observable = :seizures, individuals_idx = [1, 2], ncols = 2,
+        shared_x_axis = true, shared_y_axis = true, save_path = fig(slug, "p_fit_nb")
+    )
+    plot_observation_distributions(
+        res_nb; observables = :seizures, individuals_idx = 1,
+        obs_rows = [1, 2], save_path = fig(slug, "p_obs_nb")
+    )
 
     uq_nb = compute_uq(
-        res_nb; method = :wald, n_draws = 100, level = 0.95, rng = Random.Xoshiro(152))
+        res_nb; method = :wald, n_draws = 100, level = 0.95, rng = Random.Xoshiro(152)
+    )
     txt(slug, "uq_nb_summary", NoLimits.summarize(uq_nb))
     txt(slug, "res_uq_nb_summary", NoLimits.summarize(res_nb, uq_nb))
     plot_uq_distributions(uq_nb; save_path = fig(slug, "p_uq_nb"))
 
-    txt(slug,
+    txt(
+        slug,
         "objectives",
         (
             poisson_objective = NoLimits.get_objective(res_poisson),
-            nb_objective = NoLimits.get_objective(res_nb)
-        ))
+            nb_objective = NoLimits.get_objective(res_nb),
+        )
+    )
     return nothing
 end
 
@@ -655,12 +754,15 @@ function tutorial6()
     df.Log_VL = Float64.(df.Log_VL)
     df.cens = Int.(df.cens)
     sort!(df, [:ID, :Time])
-    txt(slug,
+    txt(
+        slug,
         "data_overview",
         (
             n_rows = nrow(df), n_subjects = length(unique(df.ID)), n_censored = count(
-                ==(1), df.cens)
-        ))
+                ==(1), df.cens
+            ),
+        )
+    )
 
     model = @Model begin
         @covariates begin
@@ -671,10 +773,10 @@ function tutorial6()
             beta_B = RealNumber(5.0, calculate_se = true)
             beta_k1 = RealNumber(-1.9, calculate_se = true)
             beta_k2 = RealNumber(-5.3, calculate_se = true)
-            omega_A = RealNumber(0.40, scale = :log, calculate_se = true)
-            omega_B = RealNumber(0.40, scale = :log, calculate_se = true)
-            omega_k1 = RealNumber(0.40, scale = :log, calculate_se = true)
-            omega_k2 = RealNumber(0.40, scale = :log, calculate_se = true)
+            omega_A = RealNumber(0.4, scale = :log, calculate_se = true)
+            omega_B = RealNumber(0.4, scale = :log, calculate_se = true)
+            omega_k1 = RealNumber(0.4, scale = :log, calculate_se = true)
+            omega_k2 = RealNumber(0.4, scale = :log, calculate_se = true)
             sigma = RealNumber(0.25, scale = :log, calculate_se = true)
         end
         @randomEffects begin
@@ -692,26 +794,36 @@ function tutorial6()
     txt(slug, "model_summary", NoLimits.summarize(model))
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :Time)
-    laplace_method = NoLimits.Laplace(; optim_kwargs = (maxiters = 400,),
-        inner_kwargs = (maxiters = 150,), multistart_n = 0, multistart_k = 0)
+    laplace_method = NoLimits.Laplace(;
+        optim_kwargs = (maxiters = 400,),
+        inner_kwargs = (maxiters = 150,), multistart_n = 0, multistart_k = 0
+    )
     serialization = SciMLBase.EnsembleThreads()
     txt(slug, "dm_summary", NoLimits.summarize(dm))
 
     res = fit_model(
-        dm, laplace_method; serialization = serialization, rng = Random.Xoshiro(7003))
+        dm, laplace_method; serialization = serialization, rng = Random.Xoshiro(7003)
+    )
     txt(slug, "res_summary", NoLimits.summarize(res))
 
-    plot_fits(res; observable = :Log_VL, individuals_idx = [1, 2], ncols = 2,
-        shared_x_axis = true, shared_y_axis = true, save_path = fig(slug, "p_fit"))
-    plot_observation_distributions(res; observables = :Log_VL, individuals_idx = 1,
-        obs_rows = [1, 2], save_path = fig(slug, "p_obs"))
+    plot_fits(
+        res; observable = :Log_VL, individuals_idx = [1, 2], ncols = 2,
+        shared_x_axis = true, shared_y_axis = true, save_path = fig(slug, "p_fit")
+    )
+    plot_observation_distributions(
+        res; observables = :Log_VL, individuals_idx = 1,
+        obs_rows = [1, 2], save_path = fig(slug, "p_obs")
+    )
 
     uq = compute_uq(
-        res; method = :wald, n_draws = 800, level = 0.95, rng = Random.Xoshiro(153))
+        res; method = :wald, n_draws = 800, level = 0.95, rng = Random.Xoshiro(153)
+    )
     txt(slug, "uq_summary", NoLimits.summarize(uq))
     txt(slug, "res_uq_summary", NoLimits.summarize(res, uq))
-    plot_uq_distributions(uq; scale = :natural, plot_type = :density, show_legend = false,
-        save_path = fig(slug, "p_uq"))
+    plot_uq_distributions(
+        uq; scale = :natural, plot_type = :density, show_legend = false,
+        save_path = fig(slug, "p_uq")
+    )
     return nothing
 end
 
@@ -733,9 +845,12 @@ function tutorial7()
         end
         @randomEffects begin
             D = RandomEffect(
-                Copulas.SklarDist(Copulas.ClaytonCopula(2, 3.0),
-                    (Normal(mu1, 0.9), Normal(mu2, 0.6)));
-                column = :ID)
+                Copulas.SklarDist(
+                    Copulas.ClaytonCopula(2, 3.0),
+                    (Normal(mu1, 0.9), Normal(mu2, 0.6))
+                );
+                column = :ID
+            )
         end
         @formulas begin
             y ~ Normal(D[1] + D[2] * t, s)
@@ -744,27 +859,36 @@ function tutorial7()
     txt(slug, "model_summary", NoLimits.summarize(truth_model))
 
     n_id, n_t = 120, 6
-    template = DataFrame(ID = repeat(1:n_id, inner = n_t),
-        t = repeat(collect(0.0:(n_t - 1)), n_id), y = zeros(n_id * n_t))
+    template = DataFrame(
+        ID = repeat(1:n_id, inner = n_t),
+        t = repeat(collect(0.0:(n_t - 1)), n_id), y = zeros(n_id * n_t)
+    )
     dm_truth = DataModel(truth_model, template; primary_id = :ID, time_col = :t)
     dm = simulate_data_model(dm_truth; rng = Random.Xoshiro(20))
     txt(slug, "df_head", first(get_df(dm), 8))
     txt(slug, "dm_summary", NoLimits.summarize(dm))
 
     serialization = SciMLBase.EnsembleThreads()
-    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 300,));
-        serialization = serialization, rng = Random.Xoshiro(11))
+    res = fit_model(
+        dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 300,));
+        serialization = serialization, rng = Random.Xoshiro(11)
+    )
     txt(slug, "res_summary", NoLimits.summarize(res))
 
     plot_random_effect_pairplot(res; save_path = fig(slug, "p_pair"))
-    plot_fits(res; observable = :y, individuals_idx = [1, 2], ncols = 2,
-        save_path = fig(slug, "p_fit"))
+    plot_fits(
+        res; observable = :y, individuals_idx = [1, 2], ncols = 2,
+        save_path = fig(slug, "p_fit")
+    )
 
     uq = compute_uq(
-        res; method = :wald, n_draws = 800, level = 0.95, rng = Random.Xoshiro(153))
+        res; method = :wald, n_draws = 800, level = 0.95, rng = Random.Xoshiro(153)
+    )
     txt(slug, "res_uq_summary", NoLimits.summarize(res, uq))
-    plot_uq_distributions(uq; scale = :natural, plot_type = :density, show_legend = false,
-        save_path = fig(slug, "p_uq"))
+    plot_uq_distributions(
+        uq; scale = :natural, plot_type = :density, show_legend = false,
+        save_path = fig(slug, "p_uq")
+    )
     return nothing
 end
 
@@ -796,16 +920,20 @@ function tutorial_intcens()
     txt(slug, "model_summary", NoLimits.summarize(model))
 
     n_id, n_t = 60, 6
-    template = DataFrame(ID = repeat(1:n_id, inner = n_t),
-        t = repeat(collect(0.0:(n_t - 1)), n_id), y = zeros(n_id * n_t))
+    template = DataFrame(
+        ID = repeat(1:n_id, inner = n_t),
+        t = repeat(collect(0.0:(n_t - 1)), n_id), y = zeros(n_id * n_t)
+    )
     dm_truth = DataModel(model, template; primary_id = :ID, time_col = :t)
     dm = simulate_data_model(dm_truth; rng = Random.Xoshiro(20))
     txt(slug, "df_head", first(get_df(dm), 8))
     txt(slug, "dm_summary", NoLimits.summarize(dm))
 
     serialization = SciMLBase.EnsembleThreads()
-    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 300,));
-        serialization = serialization, rng = Random.Xoshiro(11))
+    res = fit_model(
+        dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 300,));
+        serialization = serialization, rng = Random.Xoshiro(11)
+    )
     txt(slug, "res_summary", NoLimits.summarize(res))
 
     naive_model = @Model begin
@@ -827,29 +955,44 @@ function tutorial_intcens()
         end
     end
     dm_naive = DataModel(naive_model, get_df(dm); primary_id = :ID, time_col = :t)
-    res_naive = fit_model(dm_naive, NoLimits.Laplace(; optim_kwargs = (maxiters = 300,));
-        serialization = serialization, rng = Random.Xoshiro(11))
+    res_naive = fit_model(
+        dm_naive, NoLimits.Laplace(; optim_kwargs = (maxiters = 300,));
+        serialization = serialization, rng = Random.Xoshiro(11)
+    )
 
     p_cens = NoLimits.get_params(res; scale = :untransformed)
     p_naive = NoLimits.get_params(res_naive; scale = :untransformed)
-    txt(slug, "comparison",
-        DataFrame(parameter = ["beta0", "beta1", "omega", "sigma"],
+    txt(
+        slug, "comparison",
+        DataFrame(
+            parameter = ["beta0", "beta1", "omega", "sigma"],
             truth = [12.0, 0.35, 0.8, 0.4],
             interval_censored = round.(
-                [p_cens.beta0, p_cens.beta1, p_cens.omega, p_cens.sigma]; digits = 4),
+                [p_cens.beta0, p_cens.beta1, p_cens.omega, p_cens.sigma]; digits = 4
+            ),
             naive_normal = round.(
-                [p_naive.beta0, p_naive.beta1, p_naive.omega, p_naive.sigma]; digits = 4)))
+                [p_naive.beta0, p_naive.beta1, p_naive.omega, p_naive.sigma]; digits = 4
+            )
+        )
+    )
 
-    plot_fits(res; observable = :y, plot_func = median, individuals_idx = [1, 2],
-        ncols = 2, save_path = fig(slug, "p_fit"))
-    plot_observation_distributions(res; observables = :y, individuals_idx = 1,
-        obs_rows = [1, 2], save_path = fig(slug, "p_obs"))
+    plot_fits(
+        res; observable = :y, plot_func = median, individuals_idx = [1, 2],
+        ncols = 2, save_path = fig(slug, "p_fit")
+    )
+    plot_observation_distributions(
+        res; observables = :y, individuals_idx = 1,
+        obs_rows = [1, 2], save_path = fig(slug, "p_obs")
+    )
 
     uq = compute_uq(
-        res; method = :wald, n_draws = 800, level = 0.95, rng = Random.Xoshiro(153))
+        res; method = :wald, n_draws = 800, level = 0.95, rng = Random.Xoshiro(153)
+    )
     txt(slug, "res_uq_summary", NoLimits.summarize(res, uq))
-    plot_uq_distributions(uq; scale = :natural, plot_type = :density, show_legend = false,
-        save_path = fig(slug, "p_uq"))
+    plot_uq_distributions(
+        uq; scale = :natural, plot_type = :density, show_legend = false,
+        save_path = fig(slug, "p_uq")
+    )
     return nothing
 end
 
@@ -872,7 +1015,8 @@ function tutorial8()
             k = RealNumber(0.005, prior = Normal(0.005, 0.005), calculate_se = true)
             t0 = RealNumber(700.0, prior = Normal(700.0, 200.0), calculate_se = true)
             σ = RealNumber(
-                25.0, scale = :log, prior = LogNormal(log(25.0), 0.5), calculate_se = true)
+                25.0, scale = :log, prior = LogNormal(log(25.0), 0.5), calculate_se = true
+            )
         end
         @formulas begin
             μ = a / (1 + exp(-k * (age - t0)))
@@ -888,15 +1032,19 @@ function tutorial8()
     txt(slug, "dm_summary", NoLimits.summarize(dm))
 
     res_mle = fit_model(
-        dm, mle_method; serialization = serialization, rng = Random.Xoshiro(41))
+        dm, mle_method; serialization = serialization, rng = Random.Xoshiro(41)
+    )
     res_map = fit_model(
-        dm, map_method; serialization = serialization, rng = Random.Xoshiro(42))
-    txt(slug,
+        dm, map_method; serialization = serialization, rng = Random.Xoshiro(42)
+    )
+    txt(
+        slug,
         "objectives",
         (
             objective_mle = NoLimits.get_objective(res_mle),
-            objective_map = NoLimits.get_objective(res_map)
-        ))
+            objective_map = NoLimits.get_objective(res_map),
+        )
+    )
     txt(slug, "fit_summary_mle", NoLimits.summarize(res_mle))
     txt(slug, "fit_summary_map", NoLimits.summarize(res_map))
 
@@ -905,16 +1053,22 @@ function tutorial8()
     txt(slug, "params", (mle = θ_mle, map = θ_map))
 
     inds = [1, 2]
-    plot_fits(res_mle; observable = :circumference, individuals_idx = inds, ncols = 2,
-        shared_x_axis = true, shared_y_axis = true, save_path = fig(slug, "p_fit_mle"))
-    plot_fits(res_map; observable = :circumference, individuals_idx = inds, ncols = 2,
-        shared_x_axis = true, shared_y_axis = true, save_path = fig(slug, "p_fit_map"))
+    plot_fits(
+        res_mle; observable = :circumference, individuals_idx = inds, ncols = 2,
+        shared_x_axis = true, shared_y_axis = true, save_path = fig(slug, "p_fit_mle")
+    )
+    plot_fits(
+        res_map; observable = :circumference, individuals_idx = inds, ncols = 2,
+        shared_x_axis = true, shared_y_axis = true, save_path = fig(slug, "p_fit_map")
+    )
     plot_observation_distributions(
         res_mle; observables = :circumference, individuals_idx = 1,
-        obs_rows = 1, save_path = fig(slug, "p_obs_mle"))
+        obs_rows = 1, save_path = fig(slug, "p_obs_mle")
+    )
     plot_observation_distributions(
         res_map; observables = :circumference, individuals_idx = 1,
-        obs_rows = 1, save_path = fig(slug, "p_obs_map"))
+        obs_rows = 1, save_path = fig(slug, "p_obs_map")
+    )
     return nothing
 end
 
@@ -928,7 +1082,7 @@ function tutorial9()
     df = DataFrame(
         ID = [:A, :A, :B, :B, :C, :C, :D, :D],
         t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
-        y = [0.10, 0.45, -0.05, 0.20, 0.00, 0.33, -0.08, 0.26]
+        y = [0.1, 0.45, -0.05, 0.2, 0.0, 0.33, -0.08, 0.26]
     )
 
     model = @Model begin
@@ -948,24 +1102,31 @@ function tutorial9()
 
     res_vi = fit_model(
         dm, VI(; turing_kwargs = (max_iter = 350, family = :meanfield, progress = false)),
-        rng = Random.Xoshiro(10))
+        rng = Random.Xoshiro(10)
+    )
 
     txt(slug, "fit_summary", NoLimits.summarize(res_vi))
 
     draws_named = sample_posterior(
-        res_vi; n_draws = 200, rng = Random.Xoshiro(11), return_names = true)
+        res_vi; n_draws = 200, rng = Random.Xoshiro(11), return_names = true
+    )
     txt(slug, "draws", (size(draws_named.draws), first(draws_named.names, 3)))
 
     uq_vi = compute_uq(
-        res_vi; method = :chain, level = 0.95, mcmc_draws = 150, rng = Random.Xoshiro(12))
+        res_vi; method = :chain, level = 0.95, mcmc_draws = 150, rng = Random.Xoshiro(12)
+    )
     txt(slug, "uq_summary", NoLimits.summarize(res_vi, uq_vi))
 
-    plot_fits(res_vi; observable = :y, individuals_idx = [1, 2], ncols = 2,
+    plot_fits(
+        res_vi; observable = :y, individuals_idx = [1, 2], ncols = 2,
         plot_mcmc_quantiles = true, mcmc_draws = 120, rng = Random.Xoshiro(13),
-        save_path = fig(slug, "p_fit_vi"))
-    plot_observation_distributions(res_vi; observables = :y, individuals_idx = 1,
+        save_path = fig(slug, "p_fit_vi")
+    )
+    plot_observation_distributions(
+        res_vi; observables = :y, individuals_idx = 1,
         obs_rows = 1, mcmc_draws = 120, rng = Random.Xoshiro(14),
-        save_path = fig(slug, "p_obs_vi"))
+        save_path = fig(slug, "p_obs_vi")
+    )
     return nothing
 end
 
@@ -974,8 +1135,10 @@ end
 # ----------------------------------------------------------------------------- #
 
 # Top-level so they mirror the markdown a reader copies (Part 2 + Part 3).
-function closed_form_em(dm; θ_start = get_θ0_untransformed(get_fixed(get_model(dm))),
-        n_iter = 30)
+function closed_form_em(
+        dm; θ_start = get_θ0_untransformed(get_fixed(get_model(dm))),
+        n_iter = 30
+    )
     fe = get_fixed(get_model(dm))
     inv_transform = get_inverse_transform(fe)
     θ = copy(θ_start)
@@ -988,29 +1151,41 @@ function closed_form_em(dm; θ_start = get_θ0_untransformed(get_fixed(get_model
     for _ in 1:n_iter
         # E-step: exact Gaussian posterior per batch - modes b* (= mean here), then Σ = (−H)⁻¹.
         modes = empirical_bayes(dm, θ)
-        covs = [empirical_bayes_covariance(dm, θ, batches[bi], modes[bi];
-                    const_cache = cc, cache = cache) for bi in eachindex(batches)]
+        covs = [
+            empirical_bayes_covariance(
+                    dm, θ, batches[bi], modes[bi];
+                    const_cache = cc, cache = cache
+                ) for bi in eachindex(batches)
+        ]
 
         # M-step: exact expected complete-data log-likelihood for a quadratic joint,
         # Q(θ) = Σ_batch [ joint(θ, m) + ½·tr(Σ · ∇²_b joint(θ, m)) ].
         function negQ(θt_vec, _)
-            θn = symmetrize_psd_parameters(dm,
-                inv_transform(ComponentArray(θt_vec, getaxes(θt0))))
+            θn = symmetrize_psd_parameters(
+                dm,
+                inv_transform(ComponentArray(θt_vec, getaxes(θt0)))
+            )
             acc = zero(eltype(θt_vec))
             for bi in eachindex(batches)
                 m, Σ = modes[bi], covs[bi]
                 Σ === nothing && continue
-                jl = complete_data_loglikelihood(dm, batches[bi], θn, m;
-                    const_cache = cc, cache = cache)
-                H = complete_data_loglikelihood_hessian(dm, batches[bi], θn, m;
-                    const_cache = cc, cache = cache)
+                jl = complete_data_loglikelihood(
+                    dm, batches[bi], θn, m;
+                    const_cache = cc, cache = cache
+                )
+                H = complete_data_loglikelihood_hessian(
+                    dm, batches[bi], θn, m;
+                    const_cache = cc, cache = cache
+                )
                 acc += jl + 0.5 * tr(Σ * H)
             end
             return -acc
         end
 
-        prob = OptimizationProblem(OptimizationFunction(negQ, AutoForwardDiff()),
-            collect(get_transform(fe)(θ)))
+        prob = OptimizationProblem(
+            OptimizationFunction(negQ, AutoForwardDiff()),
+            collect(get_transform(fe)(θ))
+        )
         sol = solve(prob, LBFGS(linesearch = BackTracking()); iterations = 50)
         θ = inv_transform(ComponentArray(sol.u, getaxes(θt0)))
         push!(history, (σ = NamedTuple(θ).σ, ω = NamedTuple(θ).ω))
@@ -1025,22 +1200,30 @@ end
 MyEM(; n_iter = 25) = MyEM(n_iter)
 NoLimits.uq_family(::MyEM) = :wald_re      # inherit random-effect Wald intervals
 
-function NoLimits.fit_method(dm, m::MyEM, args...; theta_0_untransformed = nothing,
-        kwargs...)
+function NoLimits.fit_method(
+        dm, m::MyEM, args...; theta_0_untransformed = nothing,
+        kwargs...
+    )
     ctx = build_fit_context(dm)
     θ = something(theta_0_untransformed, initial_parameters(ctx))
     for _ in 1:(m.n_iter)
         modes = empirical_bayes(ctx, θ)                    # E-step: posterior modes b* ...
         covs = empirical_bayes_covariance(ctx, θ, modes)   # ... and covariance Σ = (−H)⁻¹
         θ, _ = optimize_parameters(ctx; θ_start = θ) do θn  # M-step, natural scale
-            -sum(complete_data_loglikelihood(ctx, bi, θn, modes[bi]) +
-                 0.5 * tr(covs[bi] *
-                    complete_data_loglikelihood_hessian(ctx, bi, θn, modes[bi]))
-            for bi in eachindex(get_batch_infos(ctx)))
+            -sum(
+                complete_data_loglikelihood(ctx, bi, θn, modes[bi]) +
+                    0.5 * tr(
+                        covs[bi] *
+                        complete_data_loglikelihood_hessian(ctx, bi, θn, modes[bi])
+                    )
+                    for bi in eachindex(get_batch_infos(ctx))
+            )
         end
     end
-    return build_fit_result(ctx, m, θ; kind = :frequentist_re,
-        objective = -laplace_marginal(ctx, θ), iterations = m.n_iter)
+    return build_fit_result(
+        ctx, m, θ; kind = :frequentist_re,
+        objective = -laplace_marginal(ctx, θ), iterations = m.n_iter
+    )
 end
 
 # A bespoke estimator embedded in fit_model: keeps its own type, packages the result
@@ -1050,16 +1233,20 @@ struct ClosedFormEM <: FittingMethod
 end
 ClosedFormEM(; n_iter = 30) = ClosedFormEM(n_iter)
 NoLimits.uq_family(::ClosedFormEM) = :wald_re
-function NoLimits.fit_method(dm, m::ClosedFormEM, args...;
+function NoLimits.fit_method(
+        dm, m::ClosedFormEM, args...;
         constants_re = NamedTuple(), store_data_model = true,
-        theta_0_untransformed = nothing, kwargs...)
+        theta_0_untransformed = nothing, kwargs...
+    )
     θ0 = theta_0_untransformed === nothing ?
-         get_θ0_untransformed(get_fixed(get_model(dm))) : theta_0_untransformed
+        get_θ0_untransformed(get_fixed(get_model(dm))) : theta_0_untransformed
     θ, _ = closed_form_em(dm; θ_start = θ0, n_iter = m.n_iter)
-    return build_fit_result(dm, m, θ; kind = :frequentist_re,
+    return build_fit_result(
+        dm, m, θ; kind = :frequentist_re,
         objective = -laplace_marginal(dm, θ), iterations = m.n_iter,
         eb_modes = empirical_bayes(dm, θ; constants_re = constants_re),
-        store_data_model = store_data_model, fit_args = args)
+        store_data_model = store_data_model, fit_args = args
+    )
 end
 
 function tutorial_md1()
@@ -1085,11 +1272,15 @@ function tutorial_md1()
     end
 
     n_id, n_obs = 30, 6
-    df = DataFrame(ID = repeat(1:n_id; inner = n_obs),
+    df = DataFrame(
+        ID = repeat(1:n_id; inner = n_obs),
         t = repeat(collect(range(0.0, 1.0; length = n_obs)), n_id),
-        y = zeros(n_id * n_obs))
-    dm = simulate_data_model(DataModel(model, df; primary_id = :ID, time_col = :t);
-        rng = MersenneTwister(42))
+        y = zeros(n_id * n_obs)
+    )
+    dm = simulate_data_model(
+        DataModel(model, df; primary_id = :ID, time_col = :t);
+        rng = MersenneTwister(42)
+    )
 
     # ── Part 1: quick path (FitContext) ───────────────────────────────────────
     res_quick = fit_model(dm, MyEM())
@@ -1103,8 +1294,10 @@ function tutorial_md1()
     θ_start.σ = 1.0
     θ_start.ω = 1.0
 
-    function mcem_from_scratch(dm; θ_start, n_iter = 20, n_samples = 100,
-            rng = MersenneTwister(0))
+    function mcem_from_scratch(
+            dm; θ_start, n_iter = 20, n_samples = 100,
+            rng = MersenneTwister(0)
+        )
         fe = get_fixed(get_model(dm))
         inv_transform = get_inverse_transform(fe)
         θ = copy(θ_start)
@@ -1118,15 +1311,19 @@ function tutorial_md1()
             # E-step: Metropolis-Hastings draws from the exact conditional posterior
             # p(b | y, θ). MH returns unweighted draws, so the Q-function is a plain
             # average over them (no importance weights).
-            samples = sample_random_effect_draws(dm, θ; method = :mcmc,
-                sampler = MH(), n_samples = n_samples, rng = rng)
+            samples = sample_random_effect_draws(
+                dm, θ; method = :mcmc,
+                sampler = MH(), n_samples = n_samples, rng = rng
+            )
             draws = [get_draws(s) for s in samples]
 
             # Q(θ) = Σ_batch mean_draw complete_data_loglikelihood. The joint carries the RE
             # prior, so a, σ and ω are all updated in this one M-step.
             function negQ(θt_vec, _)
-                θn = symmetrize_psd_parameters(dm,
-                    inv_transform(ComponentArray(θt_vec, getaxes(θt0))))
+                θn = symmetrize_psd_parameters(
+                    dm,
+                    inv_transform(ComponentArray(θt_vec, getaxes(θt0)))
+                )
                 acc = zero(eltype(θt_vec))
                 for bi in eachindex(batches)
                     D = draws[bi]
@@ -1134,14 +1331,17 @@ function tutorial_md1()
                     for m in axes(D, 2)
                         acc += complete_data_loglikelihood(
                             dm, batches[bi], θn, view(D, :, m);
-                            const_cache = cc, cache = cache) / n_draw
+                            const_cache = cc, cache = cache
+                        ) / n_draw
                     end
                 end
                 return -acc
             end
 
-            prob = OptimizationProblem(OptimizationFunction(negQ, AutoForwardDiff()),
-                collect(get_transform(fe)(θ)))
+            prob = OptimizationProblem(
+                OptimizationFunction(negQ, AutoForwardDiff()),
+                collect(get_transform(fe)(θ))
+            )
             sol = solve(prob, LBFGS(linesearch = BackTracking()); iterations = 50)
             θ = inv_transform(ComponentArray(sol.u, getaxes(θt0)))
             push!(history, NamedTuple(θ))
@@ -1152,8 +1352,10 @@ function tutorial_md1()
     θ_mcem, hist_mcem = mcem_from_scratch(dm; θ_start = θ_start)
     txt(slug, "mcem_params", NamedTuple(θ_mcem))
 
-    res_mcem = fit_model(dm, MCEM(; maxiters = 25);
-        serialization = EnsembleSerial(), rng = MersenneTwister(1))
+    res_mcem = fit_model(
+        dm, MCEM(; maxiters = 25);
+        serialization = EnsembleSerial(), rng = MersenneTwister(1)
+    )
     txt(slug, "mcem_builtin", get_params(res_mcem; scale = :untransformed))
 
     ref = get_params(res_mcem; scale = :untransformed)
@@ -1188,12 +1390,15 @@ function tutorial_md1()
 
     rng = MersenneTwister(1)
     m_id, m_obs = 25, 8
-    df_nn = DataFrame(ID = repeat(1:m_id; inner = m_obs),
+    df_nn = DataFrame(
+        ID = repeat(1:m_id; inner = m_obs),
         t = repeat(collect(range(0.0, 1.0; length = m_obs)), m_id),
-        x = randn(rng, m_id * m_obs), y = zeros(m_id * m_obs))
+        x = randn(rng, m_id * m_obs), y = zeros(m_id * m_obs)
+    )
     dm_nn = simulate_data_model(
         DataModel(nn_model, df_nn; primary_id = :ID, time_col = :t);
-        rng = MersenneTwister(7))
+        rng = MersenneTwister(7)
+    )
 
     # DGP parameters (θ0_nn.ζ draws the true effect curve); start the fit off them.
     θ0_nn = get_θ0_untransformed(get_fixed(get_model(dm_nn)))
@@ -1229,17 +1434,25 @@ function tutorial_md1()
     # `dm` directly. Both target the same Q-function: MH-MCEM approximates it by
     # sampling (a noisy path), the closed-form EM evaluates it exactly (a smooth one).
     θ_cf_lin, hist_cf_lin = closed_form_em(dm; θ_start = θ_start, n_iter = 25)
-    txt(slug, "compare",
-        (mh_mcem = NamedTuple(θ_mcem),
+    txt(
+        slug, "compare",
+        (
+            mh_mcem = NamedTuple(θ_mcem),
             closed_form = NamedTuple(θ_cf_lin),
-            builtin_mcem = get_params(res_mcem; scale = :untransformed)))
+            builtin_mcem = get_params(res_mcem; scale = :untransformed),
+        )
+    )
 
     fig3 = Figure(size = (620, 380))
     ax3 = CairoMakie.Axis(fig3[1, 1]; xlabel = "EM iteration", ylabel = "σ estimate")
-    lines!(ax3, 0:(length(hist_cf_lin) - 1), [h.σ for h in hist_cf_lin];
-        color = :seagreen, linewidth = 2, label = "closed-form EM")
-    lines!(ax3, 0:(length(hist_mcem) - 1), [h.σ for h in hist_mcem];
-        color = :dodgerblue, label = "MH Monte-Carlo EM")
+    lines!(
+        ax3, 0:(length(hist_cf_lin) - 1), [h.σ for h in hist_cf_lin];
+        color = :seagreen, linewidth = 2, label = "closed-form EM"
+    )
+    lines!(
+        ax3, 0:(length(hist_mcem) - 1), [h.σ for h in hist_mcem];
+        color = :dodgerblue, label = "MH Monte-Carlo EM"
+    )
     hlines!(ax3, [ref.σ]; color = :gray, linestyle = :dash, label = "built-in MCEM")
     axislegend(ax3)
     save(fig(slug, "p_compare"), fig3)
@@ -1249,8 +1462,10 @@ function tutorial_md1()
     txt(slug, "embed_summary", NoLimits.summarize(res_embed))
     uq_embed = compute_uq(res_embed; method = :wald, pseudo_inverse = true)
     txt(slug, "embed_uq", NoLimits.summarize(res_embed, uq_embed))
-    plot_fits(res_embed; observable = :y, individuals_idx = [1, 2], ncols = 2,
-        save_path = fig(slug, "p_embed"))
+    plot_fits(
+        res_embed; observable = :y, individuals_idx = [1, 2], ncols = 2,
+        save_path = fig(slug, "p_embed")
+    )
     return nothing
 end
 
@@ -1265,23 +1480,24 @@ const TUTORIALS = Dict(
 function main()
     mkpath(FIG_ROOT)
     requested = isempty(ARGS) ?
-                ["t1", "t2", "t5", "t6", "t7", "t8", "fe1", "fe2", "t3", "t4", "md1"] :
-                ARGS
+        ["t1", "t2", "t5", "t6", "t7", "t8", "fe1", "fe2", "t3", "t4", "md1"] :
+        ARGS
     for key in requested
         haskey(TUTORIALS, key) || (@warn "Unknown tutorial key: $key"; continue)
         @info "==== Generating assets for $key ===="
         t0 = time()
         try
             TUTORIALS[key]()
-            @info "==== DONE $key in $(round(time() - t0; digits=1))s ===="
+            @info "==== DONE $key in $(round(time() - t0; digits = 1))s ===="
         catch err
-            @error "==== FAILED $key after $(round(time() - t0; digits=1))s ====" exception=(
-                err, catch_backtrace())
+            @error "==== FAILED $key after $(round(time() - t0; digits = 1))s ====" exception = (
+                err, catch_backtrace(),
+            )
         end
         flush(stdout)
         flush(stderr)
     end
-    @info "All requested tutorials processed." fig_root=FIG_ROOT
+    return @info "All requested tutorials processed." fig_root = FIG_ROOT
 end
 
 main()

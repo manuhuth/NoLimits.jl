@@ -37,7 +37,8 @@ function _vi_info_elbos(info)
 end
 
 function _vi_converged(
-        info, max_iter::Int; window::Int = 20, rtol::Float64 = 1e-3, atol::Float64 = 1e-6)
+        info, max_iter::Int; window::Int = 20, rtol::Float64 = 1.0e-3, atol::Float64 = 1.0e-6
+    )
     isempty(info) && return false
     if length(info) < max_iter
         return true
@@ -107,7 +108,8 @@ function NoLimits._vi_unlink_draws(res::VIResult, linked::AbstractMatrix)
     return out === nothing ? linked : out
 end
 
-function NoLimits._vi_fit_impl(dm::DataModel, method::VI, args...;
+function NoLimits._vi_fit_impl(
+        dm::DataModel, method::VI, args...;
         constants::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple(),
         penalty::NamedTuple = NamedTuple(),
@@ -117,8 +119,10 @@ function NoLimits._vi_fit_impl(dm::DataModel, method::VI, args...;
         rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         extra_objective = nothing,
-        store_data_model::Bool = true)
-    fit_kwargs = (constants = constants,
+        store_data_model::Bool = true
+    )
+    fit_kwargs = (
+        constants = constants,
         constants_re = constants_re,
         penalty = penalty,
         ode_args = ode_args,
@@ -126,13 +130,14 @@ function NoLimits._vi_fit_impl(dm::DataModel, method::VI, args...;
         serialization = serialization,
         rng = rng,
         theta_0_untransformed = theta_0_untransformed,
-        store_data_model = store_data_model)
+        store_data_model = store_data_model,
+    )
     re_names = get_re_names(get_random(get_model(dm)))
     if !isempty(re_names)
         error(
             "VI is not supported for models with random effects. " *
-            "Use MCMC for full Bayesian inference on mixed-effects models, or " *
-            "use Laplace/MCEM/SAEM for likelihood-based mixed-effects estimation."
+                "Use MCMC for full Bayesian inference on mixed-effects models, or " *
+                "use Laplace/MCEM/SAEM for likelihood-based mixed-effects estimation."
         )
     end
     isempty(keys(penalty)) ||
@@ -164,16 +169,23 @@ function NoLimits._vi_fit_impl(dm::DataModel, method::VI, args...;
         @debug "theta_0_untransformed is currently not used by VI unless turing_kwargs provides q_init."
     end
 
-    cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-        serialization = serialization, force_saveat = true)
+    cache = build_ll_cache(
+        dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = serialization, force_saveat = true
+    )
 
     free_names_t = Tuple(free_names)
-    priors_nt = NamedTuple{free_names_t}(Tuple(_turing_prior(getfield(priors, n), n)
-    for n in free_names))
+    priors_nt = NamedTuple{free_names_t}(
+        Tuple(
+            _turing_prior(getfield(priors, n), n)
+                for n in free_names
+        )
+    )
     fname = _build_turing_model(fixed_names, free_names)
     model_fn = Base.invokelatest(getfield, @__MODULE__, fname)
     model = Base.invokelatest(
-        model_fn, dm, cache, serialization, priors_nt, constants, extra_objective)
+        model_fn, dm, cache, serialization, priors_nt, constants, extra_objective
+    )
     model = _invokelatest_model(model)
 
     max_iter = Int(get(method.turing_kwargs, :max_iter, 1000))
@@ -182,18 +194,23 @@ function NoLimits._vi_fit_impl(dm::DataModel, method::VI, args...;
     family in (:meanfield, :fullrank) || error("VI family must be :meanfield or :fullrank.")
     q_init = get(method.turing_kwargs, :q_init, nothing)
     adtype = get(method.turing_kwargs, :adtype, Turing.AutoForwardDiff())
-    show_progress = Bool(get(
-        method.turing_kwargs, :show_progress, get(method.turing_kwargs, :progress, false)))
+    show_progress = Bool(
+        get(
+            method.turing_kwargs, :show_progress, get(method.turing_kwargs, :progress, false)
+        )
+    )
     algorithm = get(method.turing_kwargs, :algorithm, nothing)
     conv_window = Int(get(method.turing_kwargs, :convergence_window, 20))
-    conv_rtol = Float64(get(method.turing_kwargs, :convergence_rtol, 1e-3))
-    conv_atol = Float64(get(method.turing_kwargs, :convergence_atol, 1e-6))
+    conv_rtol = Float64(get(method.turing_kwargs, :convergence_rtol, 1.0e-3))
+    conv_atol = Float64(get(method.turing_kwargs, :convergence_atol, 1.0e-6))
     conv_window >= 1 || error("VI convergence_window must be >= 1.")
     conv_rtol >= 0 || error("VI convergence_rtol must be >= 0.")
     conv_atol >= 0 || error("VI convergence_atol must be >= 0.")
 
-    vi_kwargs = Base.structdiff(method.turing_kwargs,
-        (max_iter = 0,
+    vi_kwargs = Base.structdiff(
+        method.turing_kwargs,
+        (
+            max_iter = 0,
             family = :meanfield,
             q_init = nothing,
             adtype = nothing,
@@ -202,7 +219,9 @@ function NoLimits._vi_fit_impl(dm::DataModel, method::VI, args...;
             algorithm = nothing,
             convergence_window = 0,
             convergence_rtol = 0.0,
-            convergence_atol = 0.0))
+            convergence_atol = 0.0,
+        )
+    )
     # Turing >=0.45: `vi(rng, model, family, max_iter)` takes the variational FAMILY as the
     # third argument — a function `(rng, ldf) -> q` (e.g. `q_meanfield_gaussian`). `vi` builds
     # a correctly linked `LogDensityFunction` internally and calls the family on it; the old
@@ -210,41 +229,58 @@ function NoLimits._vi_fit_impl(dm::DataModel, method::VI, args...;
     # user-supplied `q_init` is honored as-is).
     if q_init === nothing
         q_init = family == :meanfield ? Turing.q_meanfield_gaussian :
-                 Turing.q_fullrank_gaussian
+            Turing.q_fullrank_gaussian
     end
 
     _set_turing_adbackend!(adtype)
     out = if algorithm === nothing
-        Turing.vi(rng, model, q_init, max_iter; adtype = adtype,
-            show_progress = show_progress, vi_kwargs...)
+        Turing.vi(
+            rng, model, q_init, max_iter; adtype = adtype,
+            show_progress = show_progress, vi_kwargs...
+        )
     else
-        Turing.vi(rng, model, q_init, max_iter; adtype = adtype,
-            algorithm = algorithm, show_progress = show_progress, vi_kwargs...)
+        Turing.vi(
+            rng, model, q_init, max_iter; adtype = adtype,
+            algorithm = algorithm, show_progress = show_progress, vi_kwargs...
+        )
     end
     posterior, trace, state = _vi_unpack_output(out)
     n_iter = length(trace)
     elbos = _vi_info_elbos(trace)
     final_elbo = isempty(elbos) ? NaN : elbos[end]
     converged = _vi_converged(
-        trace, max_iter; window = conv_window, rtol = conv_rtol, atol = conv_atol)
+        trace, max_iter; window = conv_window, rtol = conv_rtol, atol = conv_atol
+    )
 
     varinfo = DynamicPPL.VarInfo(model)
     coord_names = _vi_coord_names(varinfo, get_θ0_untransformed(fe))
     obs = get_df(dm)[:, get_obs_cols(dm)]
-    summary = FitSummary(final_elbo, converged,
+    summary = FitSummary(
+        final_elbo, converged,
         FitParameters(ComponentArray(), ComponentArray()),
-        NamedTuple())
-    diagnostics = FitDiagnostics((;),
-        (family = family, algorithm = algorithm === nothing ? :default : algorithm,
-            adtype = adtype),
+        NamedTuple()
+    )
+    diagnostics = FitDiagnostics(
+        (;),
+        (
+            family = family, algorithm = algorithm === nothing ? :default : algorithm,
+            adtype = adtype,
+        ),
         (n_iter = n_iter, max_iter = max_iter),
-        (final_elbo = final_elbo,
+        (
+            final_elbo = final_elbo,
             convergence_window = conv_window,
             convergence_rtol = conv_rtol,
-            convergence_atol = conv_atol))
-    result = VIResult(posterior, trace, state, n_iter, max_iter, final_elbo, converged,
-        NamedTuple(), obs, coord_names, model)
-    res = FitResult(method, result, summary, diagnostics,
-        store_data_model ? dm : nothing, args, fit_kwargs)
+            convergence_atol = conv_atol,
+        )
+    )
+    result = VIResult(
+        posterior, trace, state, n_iter, max_iter, final_elbo, converged,
+        NamedTuple(), obs, coord_names, model
+    )
+    res = FitResult(
+        method, result, summary, diagnostics,
+        store_data_model ? dm : nothing, args, fit_kwargs
+    )
     return _with_posterior_params(res, dm; rng = rng)
 end

@@ -101,17 +101,22 @@ function GHQuadrature(;
         ub = nothing,
         ignore_model_bounds = false,
         precondition = true
-)
+    )
     inner = inner_options === nothing ?
-            LaplaceInnerOptions(
-        inner_optimizer, inner_kwargs, inner_adtype, inner_grad_tol) :
-            inner_options
+        LaplaceInnerOptions(
+            inner_optimizer, inner_kwargs, inner_adtype, inner_grad_tol
+        ) :
+        inner_options
     ms = multistart_options === nothing ?
-         LaplaceMultistartOptions(multistart_n, multistart_k, multistart_grad_tol,
-        multistart_max_rounds, multistart_sampling) :
-         multistart_options
-    GHQuadrature(level, optimizer, optim_kwargs, adtype, inner, ms, lb, ub,
-        ignore_model_bounds, precondition)
+        LaplaceMultistartOptions(
+            multistart_n, multistart_k, multistart_grad_tol,
+            multistart_max_rounds, multistart_sampling
+        ) :
+        multistart_options
+    return GHQuadrature(
+        level, optimizer, optim_kwargs, adtype, inner, ms, lb, ub,
+        ignore_model_bounds, precondition
+    )
 end
 
 # ---------------------------------------------------------------------------
@@ -140,13 +145,15 @@ Evaluate the batch marginal log-likelihood using the sparse grid at `level`.
 For batches with `n_b == 0` (all RE are constant), returns the sum of
 individual conditional log-likelihoods directly.
 """
-function _ghq_batch_ll(dm::DataModel,
+function _ghq_batch_ll(
+        dm::DataModel,
         info::REBatchInfo,
         θu_re::ComponentArray,
         const_cache::REConstantsCache,
         ll_cache::_LLCache,
         level,   # Int or NamedTuple
-        b_star = nothing)
+        b_star = nothing
+    )
     T = eltype(θu_re)
     if get_n_b(info) == 0
         # All RE are constant — no integration needed.
@@ -192,12 +199,13 @@ function _ghq_batch_ll(dm::DataModel,
     if !isfinite(ghq_ll) && !adaptive && get_n_b(info) > 0
         grid1 = get_sparse_grid(get_n_b(info), 1)
         if grid1 !== sgrid
-            @warn "GHQuadrature: the prior-centered rule was numerically unstable for a "*
-                  "non-Gaussian random-effect batch; falling back to the level-1 rule for "*
-                  "this batch. Pass a lower `level`, or use SAEM/MCEM for a more accurate "*
-                  "marginal." maxlog=1
+            @warn "GHQuadrature: the prior-centered rule was numerically unstable for a " *
+                "non-Gaussian random-effect batch; falling back to the level-1 rule for " *
+                "this batch. Pass a lower `level`, or use SAEM/MCEM for a more accurate " *
+                "marginal." maxlog = 1
             ghq_ll = batch_loglik_ghq(
-                dm, info, θu_re, re_measure, grid1, const_cache, ll_cache)
+                dm, info, θu_re, re_measure, grid1, const_cache, ll_cache
+            )
         end
     end
     const_ll = _const_re_prior_logf(dm, info, θu_re, const_cache, ll_cache)
@@ -206,8 +214,10 @@ function _ghq_batch_ll(dm::DataModel,
 end
 
 # Empirical-Bayes mode of one batch, standalone (own single-slot EBE cache, cold start).
-function _ghq_bstar_batch(dm::DataModel, info::REBatchInfo, θ_val::ComponentArray,
-        const_cache::REConstantsCache, ll_cache::_LLCache)
+function _ghq_bstar_batch(
+        dm::DataModel, info::REBatchInfo, θ_val::ComponentArray,
+        const_cache::REConstantsCache, ll_cache::_LLCache
+    )
     cache = _init_laplace_eval_cache(1, Float64)
     _laplace_compute_bstar_batch!(cache, 1, dm, info, θ_val, const_cache, ll_cache)
     b = cache.bstar_cache.b_star[1]
@@ -231,9 +241,11 @@ Gaussian — `CenteredREMeasure` places nodes anywhere in ℝ^n_b, which only st
 inside the random-effect support when every RE in the batch is `Normal`/`MvNormal`
 — or when the mode/curvature is unavailable.
 """
-function _ghq_adaptive_measure(dm::DataModel, info::REBatchInfo,
+function _ghq_adaptive_measure(
+        dm::DataModel, info::REBatchInfo,
         θu_re::ComponentArray, const_cache::REConstantsCache, ll_cache::_LLCache,
-        prior_measure::AbstractREMeasure, b_star)
+        prior_measure::AbstractREMeasure, b_star
+    )
     prior_measure isa GaussianRE ||
         (prior_measure isa CompositeRE && prior_measure.unbounded) || return nothing
     # b*, H and S are frozen w.r.t. the outer AD: at a converged rule the value no
@@ -244,8 +256,10 @@ function _ghq_adaptive_measure(dm::DataModel, info::REBatchInfo,
     b = b_star === nothing ?
         _ghq_bstar_batch(dm, info, θ_val, const_cache, ll_cache) : b_star
     (b === nothing || length(b) != get_n_b(info)) && return nothing
-    return build_centered_re_measure(b, info, 1, θ_val, const_cache, dm, ll_cache;
-        θ_prior = θu_re)
+    return build_centered_re_measure(
+        b, info, 1, θ_val, const_cache, dm, ll_cache;
+        θ_prior = θu_re
+    )
 end
 
 """
@@ -275,7 +289,8 @@ function _anisotropic_dims_levels(dm::DataModel, info::REBatchInfo, level::Named
 end
 
 function _build_anisotropic_batch_grid(
-        dm::DataModel, info::REBatchInfo, level::NamedTuple)
+        dm::DataModel, info::REBatchInfo, level::NamedTuple
+    )
     dims, levels = _anisotropic_dims_levels(dm, info, level)
     isempty(dims) && error("_build_anisotropic_batch_grid: no free RE dimensions found")
     return get_anisotropic_grid(dims, levels)
@@ -287,7 +302,7 @@ end
 
 # Pre-build all grids needed for this fit so concurrent use is thread-safe.
 function _prepopulate_ghq_cache(dm::DataModel, batch_infos, level)
-    if level isa Int
+    return if level isa Int
         for d in unique(get_n_b(info) for info in batch_infos)
             d > 0 && get_sparse_grid(d, level)
         end
@@ -312,20 +327,24 @@ const GHQ_MAX_NODES = 1_000_000
 
 # Warn above `threshold` nodes, refuse above `GHQ_MAX_NODES`. Must run BEFORE any
 # grid is built — building the grid is what exhausts memory on oversized batches.
-function _check_batch_grid_sizes(dm::DataModel, batch_infos, level, threshold::Int,
-        ctx::AbstractString)
+function _check_batch_grid_sizes(
+        dm::DataModel, batch_infos, level, threshold::Int,
+        ctx::AbstractString
+    )
     for (bi, info) in enumerate(batch_infos)
         get_n_b(info) == 0 && continue
         npts = _batch_grid_bound(dm, info, level)
         if npts > GHQ_MAX_NODES
-            error("$ctx: RE batch $bi has joint random-effect dimension " *
-                  "$(get_n_b(info)) and needs ~$(round(npts, sigdigits = 3)) " *
-                  "quadrature nodes at level $level (limit $GHQ_MAX_NODES). " *
-                  "Reduce `level`, split the batch, or use Laplace/FOCEI/SAEM.")
+            error(
+                "$ctx: RE batch $bi has joint random-effect dimension " *
+                    "$(get_n_b(info)) and needs ~$(round(npts, sigdigits = 3)) " *
+                    "quadrature nodes at level $level (limit $GHQ_MAX_NODES). " *
+                    "Reduce `level`, split the batch, or use Laplace/FOCEI/SAEM."
+            )
         end
         npts > threshold &&
             @warn "$ctx: RE batch $bi needs ~$(round(Int, npts)) quadrature nodes. " *
-                  "Consider reducing `level` or checking your RE batch structure."
+            "Consider reducing `level` or checking your RE batch structure."
     end
     return nothing
 end
@@ -334,7 +353,8 @@ end
 # _fit_model dispatch
 # ---------------------------------------------------------------------------
 
-function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
+function _fit_model_scalar(
+        dm::DataModel, method::GHQuadrature, args...;
         constants::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple(),
         penalty::NamedTuple = NamedTuple(),
@@ -344,8 +364,10 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
-        store_data_model::Bool = true)
-    fit_kwargs = (constants = constants,
+        store_data_model::Bool = true
+    )
+    fit_kwargs = (
+        constants = constants,
         constants_re = constants_re,
         penalty = penalty,
         ode_args = ode_args,
@@ -353,7 +375,8 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
         serialization = serialization,
         rng = rng,
         theta_0_untransformed = theta_0_untransformed,
-        store_data_model = store_data_model)
+        store_data_model = store_data_model,
+    )
 
     # ── Validate ────────────────────────────────────────────────────────────
     re_names = get_re_names(get_random(get_model(dm)))
@@ -370,8 +393,10 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
     all(name in keys(constants) for name in fixed_names) &&
         error("GHQuadrature requires at least one free fixed effect.")
 
-    layout = free_parameter_layout(fe; constants = constants,
-        theta0_untransformed = theta_0_untransformed)
+    layout = free_parameter_layout(
+        fe; constants = constants,
+        theta0_untransformed = theta_0_untransformed
+    )
     free_names = layout.free_names
     inv_transform = layout.inv_transform
 
@@ -381,8 +406,10 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
     # ── Infrastructure ───────────────────────────────────────────────────────
     pairing, batch_infos, const_cache = _build_re_batch_infos(dm, constants_re)
 
-    ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-        serialization = serialization, force_saveat = true)
+    ll_cache = build_ll_cache(
+        dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = serialization, force_saveat = true
+    )
 
     # Pre-populate sparse-grid cache for all unique free-RE dimensions.
     _check_batch_grid_sizes(dm, batch_infos, method.level, 10_000, "GHQuadrature")
@@ -402,7 +429,8 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
 
     # The optimizer works on the preconditioned offset z; everything below stays on θt.
     θ0_pc, s_pc, _θt_from_z, _z_from_θt = _precondition_maps(
-        get_model(dm), free_names, θ0_free_t, axs_free, _precondition_on(method))
+        get_model(dm), free_names, θ0_free_t, axs_free, _precondition_on(method)
+    )
 
     function obj(z, p)
         θt_free = _θt_from_z(z)
@@ -410,13 +438,15 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
         infT = convert(T, Inf)
 
         θt_full = _merge_free_into_full(
-            θ_const_t_vec, free_idx, ComponentArrays.getdata(θt_free), axs_full)
+            θ_const_t_vec, free_idx, ComponentArrays.getdata(θt_free), axs_full
+        )
         θu = inv_transform(θt_full)
         θu_re = _symmetrize_psd_params(θu, get_fixed(get_model(dm)))
 
         # One warm-started EBE pass per θ feeds the adaptive quadrature centers; the
         # per-batch fallback inside `_ghq_batch_ll` would cold-start every solve.
-        bstars = _laplace_get_bstar!(ebe_cache, dm, batch_infos,
+        bstars = _laplace_get_bstar!(
+            ebe_cache, dm, batch_infos,
             _laplace_floatize(θu_re), const_cache, ll_cache;
             optimizer = inner_opts.optimizer,
             optim_kwargs = inner_opts.kwargs,
@@ -424,7 +454,8 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
             grad_tol = inner_opts.grad_tol,
             multistart = multistart_opts,
             rng = rng,
-            serialization = serialization)
+            serialization = serialization
+        )
 
         # Both branches fill the same per-batch vector and reduce it with the same
         # `sum`, so the objective is bit-identical under `EnsembleSerial` and
@@ -442,8 +473,10 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
                         results[bi] = zero(T)
                         continue
                     end
-                    bll = _ghq_batch_ll(dm, batch_infos[bi], θu_re, const_cache,
-                        cache_c, method.level, bstars[bi])
+                    bll = _ghq_batch_ll(
+                        dm, batch_infos[bi], θu_re, const_cache,
+                        cache_c, method.level, bstars[bi]
+                    )
                     if bll == -Inf
                         Threads.atomic_or!(bad, true)
                         results[bi] = zero(T)
@@ -457,63 +490,77 @@ function _fit_model_scalar(dm::DataModel, method::GHQuadrature, args...;
             bad[] && return infT
         else
             for (bi, info) in enumerate(batch_infos)
-                bll = _ghq_batch_ll(dm, info, θu_re, const_cache, ll_cache,
-                    method.level, bstars[bi])
+                bll = _ghq_batch_ll(
+                    dm, info, θu_re, const_cache, ll_cache,
+                    method.level, bstars[bi]
+                )
                 bll == -Inf && return infT
                 results[bi] = convert(T, bll)
             end
         end
         total = sum(results)
         return -total + convert(T, _penalty_value(θu, penalty)) +
-               (extra_objective === nothing ? zero(T) : convert(T, extra_objective(θu)))
+            (extra_objective === nothing ? zero(T) : convert(T, extra_objective(θu)))
     end
 
     # ── Bounds ───────────────────────────────────────────────────────────────
     optf = OptimizationFunction(obj, method.adtype)
     lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
         fe, free_names, θ0_free_t, method.optimizer, method.lb, method.ub, constants;
-        ignore_model_bounds = method.ignore_model_bounds, method_label = "GHQuadrature")
+        ignore_model_bounds = method.ignore_model_bounds, method_label = "GHQuadrature"
+    )
 
     z0 = _z_from_θt(θ0_init)
     lb_z = _z_from_θt(lb)
     ub_z = _z_from_θt(ub)
     prob = use_bounds ? OptimizationProblem(optf, z0; lb = lb_z, ub = ub_z) :
-           OptimizationProblem(optf, z0)
+        OptimizationProblem(optf, z0)
     sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
 
     # ── Extract solution ─────────────────────────────────────────────────────
     # Mapped back here so both consumers below (the post-hoc EB modes and `FitParameters`) see θt.
     θ_hat_t_raw = _θt_from_z(sol.u)
     θ_hat_t_free = θ_hat_t_raw isa ComponentArray ?
-                   θ_hat_t_raw : ComponentArray(θ_hat_t_raw, axs_free)
+        θ_hat_t_raw : ComponentArray(θ_hat_t_raw, axs_free)
     θ_hat_t = _merge_free_into_full(
-        θ_const_t_vec, free_idx, ComponentArrays.getdata(θ_hat_t_free), axs_full)
+        θ_const_t_vec, free_idx, ComponentArrays.getdata(θ_hat_t_free), axs_full
+    )
     θ_hat_u = inv_transform(θ_hat_t)
 
     # ── Post-hoc EB mode finding (for get_random_effects) ────────────────────
-    _laplace_get_bstar!(ebe_cache, dm, batch_infos, θ_hat_u, const_cache, ll_cache;
+    _laplace_get_bstar!(
+        ebe_cache, dm, batch_infos, θ_hat_u, const_cache, ll_cache;
         optimizer = inner_opts.optimizer,
         optim_kwargs = inner_opts.kwargs,
         adtype = inner_opts.adtype,
         grad_tol = inner_opts.grad_tol,
         multistart = multistart_opts,
         rng = rng,
-        serialization = serialization)
+        serialization = serialization
+    )
 
     # ── Build result ─────────────────────────────────────────────────────────
-    summary = FitSummary(sol.objective,
+    summary = FitSummary(
+        sol.objective,
         sol.retcode == SciMLBase.ReturnCode.Success,
         FitParameters(θ_hat_t, θ_hat_u),
-        NamedTuple())
-    diagnostics = FitDiagnostics((;), (optimizer = method.optimizer,),
-        (retcode = sol.retcode,), NamedTuple())
+        NamedTuple()
+    )
+    diagnostics = FitDiagnostics(
+        (;), (optimizer = method.optimizer,),
+        (retcode = sol.retcode,), NamedTuple()
+    )
     niter = hasproperty(sol, :stats) && hasproperty(sol.stats, :iterations) ?
-            sol.stats.iterations : missing
+        sol.stats.iterations : missing
     raw = hasproperty(sol, :original) ? sol.original : sol
-    result = GHQuadratureResult(sol, sol.objective, niter, raw, NamedTuple(),
-        ebe_cache.bstar_cache.b_star)
-    return FitResult(method, result, summary, diagnostics,
-        store_data_model ? dm : nothing, args, fit_kwargs)
+    result = GHQuadratureResult(
+        sol, sol.objective, niter, raw, NamedTuple(),
+        ebe_cache.bstar_cache.b_star
+    )
+    return FitResult(
+        method, result, summary, diagnostics,
+        store_data_model ? dm : nothing, args, fit_kwargs
+    )
 end
 
 # ---------------------------------------------------------------------------
@@ -521,13 +568,17 @@ end
 # ---------------------------------------------------------------------------
 # The struct is now defined, so this method can reference it safely.
 
-function _fit_model(dm::DataModel, method::GHQuadrature, args...;
+function _fit_model(
+        dm::DataModel, method::GHQuadrature, args...;
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
-        kwargs...)
+        kwargs...
+    )
     level = method.level
-    level isa Vector{Int} || return _fit_model_scalar(dm, method, args...;
+    level isa Vector{Int} || return _fit_model_scalar(
+        dm, method, args...;
         theta_0_untransformed = theta_0_untransformed,
-        kwargs...)
+        kwargs...
+    )
     isempty(level) && error("GHQuadrature: `level` vector must not be empty.")
     all(>(0), level) ||
         error("GHQuadrature: all entries in `level` must be positive integers.")
@@ -535,10 +586,12 @@ function _fit_model(dm::DataModel, method::GHQuadrature, args...;
     θ0 = theta_0_untransformed
     local res
     for lv in level
-        inner = GHQuadrature(lv,
+        inner = GHQuadrature(
+            lv,
             method.optimizer, method.optim_kwargs, method.adtype,
             method.inner, method.multistart, method.lb, method.ub,
-            method.ignore_model_bounds, method.precondition)
+            method.ignore_model_bounds, method.precondition
+        )
         res = _fit_model_scalar(dm, inner, args...; theta_0_untransformed = θ0, kwargs...)
         θ0 = get_params(res; scale = :untransformed)
     end

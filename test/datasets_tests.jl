@@ -27,30 +27,46 @@ using Statistics
 #   missing dv) so it must be dropped by `_prepare_warfarin_df`.
 function _make_raw_warfarin()
     return DataFrame(
-        id = [1, 1, 1, 1,
+        id = [
+            1, 1, 1, 1,
             2, 2, 2,
-            3, 3],
-        time = [0.0, 0.0, 1.0, 1.0,
+            3, 3,
+        ],
+        time = [
+            0.0, 0.0, 1.0, 1.0,
             0.0, 0.0, 1.0,
-            0.0, 1.0],
-        amt = [100.0, missing, missing, missing,
+            0.0, 1.0,
+        ],
+        amt = [
+            100.0, missing, missing, missing,
             50.0, missing, missing,
-            75.0, missing],
-        dv = [missing, 1.0, 2.0, 0.5,
+            75.0, missing,
+        ],
+        dv = [
+            missing, 1.0, 2.0, 0.5,
             missing, 0.8, 1.5,
-            missing, 0.9],
-        dvid = [1, 2, 1, 2,
+            missing, 0.9,
+        ],
+        dvid = [
+            1, 2, 1, 2,
             1, 2, 1,
-            2, 1],
-        wt = [70.0, 70.0, 70.0, 70.0,
+            2, 1,
+        ],
+        wt = [
+            70.0, 70.0, 70.0, 70.0,
             80.0, 80.0, 80.0,
-            90.0, 90.0],
-        sex = [1, 1, 1, 1,
+            90.0, 90.0,
+        ],
+        sex = [
+            1, 1, 1, 1,
             0, 0, 0,
-            1, 1],
-        age = [40.0, 40.0, 40.0, 40.0,
+            1, 1,
+        ],
+        age = [
+            40.0, 40.0, 40.0, 40.0,
             50.0, 50.0, 50.0,
-            60.0, 60.0]
+            60.0, 60.0,
+        ]
     )
 end
 

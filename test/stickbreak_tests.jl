@@ -17,16 +17,18 @@ using Random
     @testset "ProbabilityVector basic construction" begin
         p = ProbabilityVector([0.2, 0.5, 0.3])
         @test p.name == :unnamed
-        @test isapprox(p.value, [0.2, 0.5, 0.3]; atol = 1e-14)
-        @test isapprox(sum(p.value), 1.0; atol = 1e-14)
+        @test isapprox(p.value, [0.2, 0.5, 0.3]; atol = 1.0e-14)
+        @test isapprox(sum(p.value), 1.0; atol = 1.0e-14)
         @test p.scale == :stickbreak
         @test p.prior isa Priorless
         @test p.calculate_se == true
     end
 
     @testset "ProbabilityVector with name and kwargs" begin
-        p = ProbabilityVector([0.1, 0.9]; name = :pi, calculate_se = true,
-            prior = Dirichlet([1.0, 1.0]))
+        p = ProbabilityVector(
+            [0.1, 0.9]; name = :pi, calculate_se = true,
+            prior = Dirichlet([1.0, 1.0])
+        )
         @test p.name == :pi
         @test p.calculate_se == true
         @test p.prior isa Dirichlet
@@ -34,9 +36,9 @@ using Random
 
     @testset "ProbabilityVector silent normalization" begin
         # Sum slightly off from 1 — should be normalized silently
-        v = [0.2, 0.5, 0.3 + 1e-8]
+        v = [0.2, 0.5, 0.3 + 1.0e-8]
         p = ProbabilityVector(v)
-        @test isapprox(sum(p.value), 1.0; atol = 1e-14)
+        @test isapprox(sum(p.value), 1.0; atol = 1.0e-14)
     end
 
     @testset "ProbabilityVector error: length < 2" begin
@@ -62,8 +64,8 @@ using Random
         P = [0.7 0.3; 0.4 0.6]
         A = DiscreteTransitionMatrix(P)
         @test A.name == :unnamed
-        @test isapprox(A.value, P; atol = 1e-14)
-        @test all(isapprox.(sum(A.value; dims = 2), 1.0; atol = 1e-14))
+        @test isapprox(A.value, P; atol = 1.0e-14)
+        @test all(isapprox.(sum(A.value; dims = 2), 1.0; atol = 1.0e-14))
         @test A.scale == :stickbreakrows
         @test A.prior isa Priorless
         @test A.calculate_se == true
@@ -73,14 +75,14 @@ using Random
         P = [0.6 0.3 0.1; 0.1 0.7 0.2; 0.2 0.5 0.3]
         A = DiscreteTransitionMatrix(P; name = :T, calculate_se = true)
         @test A.name == :T
-        @test isapprox(A.value, P; atol = 1e-14)
+        @test isapprox(A.value, P; atol = 1.0e-14)
         @test A.calculate_se == true
     end
 
     @testset "DiscreteTransitionMatrix silent row normalization" begin
-        P = [0.6 0.4+1e-8; 0.3 0.7]
+        P = [0.6 0.4 + 1.0e-8; 0.3 0.7]
         A = DiscreteTransitionMatrix(P)
-        @test all(isapprox.(sum(A.value; dims = 2), 1.0; atol = 1e-14))
+        @test all(isapprox.(sum(A.value; dims = 2), 1.0; atol = 1.0e-14))
     end
 
     @testset "DiscreteTransitionMatrix error: non-square" begin
@@ -101,7 +103,8 @@ using Random
 
     @testset "DiscreteTransitionMatrix error: invalid scale" begin
         @test_throws ErrorException DiscreteTransitionMatrix(
-            [0.5 0.5; 0.4 0.6]; scale = :cholesky)
+            [0.5 0.5; 0.4 0.6]; scale = :cholesky
+        )
     end
 
     # -----------------------------------------------------------------------
@@ -113,12 +116,12 @@ using Random
         end
         @test :pi in get_names(fe)
         θu = get_θ0_untransformed(fe)
-        @test isapprox(θu.pi, [0.2, 0.5, 0.3]; atol = 1e-14)
+        @test isapprox(θu.pi, [0.2, 0.5, 0.3]; atol = 1.0e-14)
         θt = get_θ0_transformed(fe)
         @test length(θt.pi) == 2  # k-1 = 2
         # Round-trip
         θu_rt = get_inverse_transform(fe)(θt)
-        @test isapprox(θu_rt.pi, θu.pi; atol = 1e-10)
+        @test isapprox(θu_rt.pi, θu.pi; atol = 1.0e-10)
     end
 
     @testset "build_fixed_effects DiscreteTransitionMatrix 3x3" begin
@@ -128,12 +131,12 @@ using Random
         end
         @test :T in get_names(fe)
         θu = get_θ0_untransformed(fe)
-        @test isapprox(θu.T, P; atol = 1e-14)
+        @test isapprox(θu.T, P; atol = 1.0e-14)
         θt = get_θ0_transformed(fe)
         @test length(θt.T) == 3 * 2  # n*(n-1) = 6
         # Round-trip
         θu_rt = get_inverse_transform(fe)(θt)
-        @test isapprox(θu_rt.T, P; atol = 1e-10)
+        @test isapprox(θu_rt.T, P; atol = 1.0e-10)
     end
 
     @testset "mixed @fixedEffects with ProbabilityVector and other types" begin
@@ -233,7 +236,7 @@ using Random
 
         # Finite-difference check
         t0 = Vector(θt.pi)
-        h = 1e-6
+        h = 1.0e-6
         J_fd = zeros(4, 3)
         for j in 1:3
             tp = copy(t0)
@@ -245,7 +248,7 @@ using Random
             J_fd[:, j] = (pp .- pm) ./ (2h)
         end
         g_t_fd = J_fd' * [0.5, -1.0, 0.2, 0.7]
-        @test isapprox(result.pi, g_t_fd; rtol = 1e-5, atol = 1e-7)
+        @test isapprox(result.pi, g_t_fd; rtol = 1.0e-5, atol = 1.0e-7)
     end
 
     # -----------------------------------------------------------------------
@@ -265,7 +268,8 @@ using Random
             end
         end
         df = DataFrame(
-            ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0], y = [0.1, 0.2, 0.3, 0.1])
+            ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0], y = [0.1, 0.2, 0.3, 0.1]
+        )
         dm = DataModel(model, df; primary_id = :ID, time_col = :t)
         @test length(get_individuals(dm)) == 2
         # Should be able to get transforms
@@ -289,7 +293,8 @@ using Random
             end
         end
         df = DataFrame(
-            ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0], y = [0.1, 0.2, 0.3, 0.1])
+            ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0], y = [0.1, 0.2, 0.3, 0.1]
+        )
         dm = DataModel(model, df; primary_id = :ID, time_col = :t)
         fe = dm.model.fixed.fixed
         @test :T in get_names(fe)
@@ -309,8 +314,8 @@ end
         @test length(t) == 1
         p2 = stickbreak_inverse(t)
         @test length(p2) == 2
-        @test isapprox(p2, p; atol = 1e-10)
-        @test isapprox(sum(p2), 1.0; atol = 1e-14)
+        @test isapprox(p2, p; atol = 1.0e-10)
+        @test isapprox(sum(p2), 1.0; atol = 1.0e-14)
         @test all(p2 .>= 0)
     end
 
@@ -320,8 +325,8 @@ end
         @test length(t) == 3
         p2 = stickbreak_inverse(t)
         @test length(p2) == 4
-        @test isapprox(p2, p; atol = 1e-10)
-        @test isapprox(sum(p2), 1.0; atol = 1e-14)
+        @test isapprox(p2, p; atol = 1.0e-10)
+        @test isapprox(sum(p2), 1.0; atol = 1.0e-14)
         @test all(p2 .>= 0)
     end
 
@@ -329,16 +334,16 @@ end
         p = [0.01, 0.01, 0.01, 0.01, 0.96]
         t = stickbreak_forward(p)
         p2 = stickbreak_inverse(t)
-        @test isapprox(p2, p; atol = 1e-8)
-        @test isapprox(sum(p2), 1.0; atol = 1e-12)
+        @test isapprox(p2, p; atol = 1.0e-8)
+        @test isapprox(sum(p2), 1.0; atol = 1.0e-12)
     end
 
     @testset "RoundTrip k=3 uniform" begin
         p = [1 / 3, 1 / 3, 1 / 3]
         t = stickbreak_forward(p)
         p2 = stickbreak_inverse(t)
-        @test isapprox(p2, p; atol = 1e-10)
-        @test isapprox(sum(p2), 1.0; atol = 1e-14)
+        @test isapprox(p2, p; atol = 1.0e-10)
+        @test isapprox(sum(p2), 1.0; atol = 1.0e-14)
     end
 
     @testset "Unconstrained space is unrestricted" begin
@@ -346,7 +351,7 @@ end
         for t_val in [-10.0, -1.0, 0.0, 1.0, 10.0, 19.0]
             p = stickbreak_inverse([t_val, 0.0])
             @test all(p .>= 0)
-            @test isapprox(sum(p), 1.0; atol = 1e-12)
+            @test isapprox(sum(p), 1.0; atol = 1.0e-12)
         end
     end
 
@@ -354,15 +359,17 @@ end
     # 2. Row-wise (stickbreakrows) round-trips (internal helpers)
     # -----------------------------------------------------------------------
     @testset "RowWise 3x3 round-trip" begin
-        P = [0.2 0.5 0.3;
-             0.1 0.6 0.3;
-             0.4 0.1 0.5]
+        P = [
+            0.2 0.5 0.3;
+            0.1 0.6 0.3;
+            0.4 0.1 0.5
+        ]
         t = NoLimits._stickbreakrow_forward(P)
         @test length(t) == 3 * 2  # n*(n-1) = 6
         P2 = NoLimits._stickbreakrow_inverse(t, 3)
-        @test isapprox(P2, P; atol = 1e-10)
+        @test isapprox(P2, P; atol = 1.0e-10)
         @test all(P2 .>= 0)
-        @test all(isapprox.(sum(P2; dims = 2), 1.0; atol = 1e-12))
+        @test all(isapprox.(sum(P2; dims = 2), 1.0; atol = 1.0e-12))
     end
 
     @testset "RowWise 2x2 round-trip" begin
@@ -370,7 +377,7 @@ end
         t = NoLimits._stickbreakrow_forward(P)
         @test length(t) == 2  # n*(n-1) = 2
         P2 = NoLimits._stickbreakrow_inverse(t, 2)
-        @test isapprox(P2, P; atol = 1e-10)
+        @test isapprox(P2, P; atol = 1.0e-10)
     end
 
     # -----------------------------------------------------------------------
@@ -386,7 +393,7 @@ end
         θt = ft(θ)
         @test length(θt.p) == 3
         θu = it(θt)
-        @test isapprox(θu.p, p; atol = 1e-10)
+        @test isapprox(θu.p, p; atol = 1.0e-10)
     end
 
     # -----------------------------------------------------------------------
@@ -409,7 +416,7 @@ end
 
         # Finite-difference check: g_t[j] ≈ sum_i J[i,j] * g_u[i]
         # where J[i,j] = ∂p[i]/∂t[j] (k × k-1 Jacobian)
-        h = 1e-6
+        h = 1.0e-6
         J_fd = zeros(3, 2)
         for j in 1:2
             tp = copy(t0)
@@ -421,7 +428,7 @@ end
             J_fd[:, j] = (pp .- pm) ./ (2h)
         end
         g_t_fd = J_fd' * g_u
-        @test isapprox(g_t_analytic, g_t_fd; rtol = 1e-5, atol = 1e-7)
+        @test isapprox(g_t_analytic, g_t_fd; rtol = 1.0e-5, atol = 1.0e-7)
     end
 
     @testset "apply_inv_jacobian_T stickbreakrows 3x3" begin
@@ -437,7 +444,7 @@ end
         g_t_analytic = result.P  # should be 6-vector
 
         # Finite-difference check for row 1 (j-index 1:2 in t0)
-        h = 1e-6
+        h = 1.0e-6
         J_fd_row1 = zeros(3, 2)
         for j in 1:2
             tp = copy(t0)
@@ -449,7 +456,7 @@ end
             J_fd_row1[:, j] = (Pp[1, :] .- Pm[1, :]) ./ (2h)
         end
         g_t_fd_row1 = J_fd_row1' * G_u[1, :]
-        @test isapprox(g_t_analytic[1:2], g_t_fd_row1; rtol = 1e-5, atol = 1e-7)
+        @test isapprox(g_t_analytic[1:2], g_t_fd_row1; rtol = 1.0e-5, atol = 1.0e-7)
     end
 
     # -----------------------------------------------------------------------
@@ -483,7 +490,7 @@ end
         spec = TransformSpec(:p, :stickbreak, (3, 1), nothing)
         coords_n = NoLimits._coords_for_param(p, spec; natural = true)
         @test length(coords_n) == 2
-        @test isapprox(coords_n, p[1:2]; atol = 1e-14)
+        @test isapprox(coords_n, p[1:2]; atol = 1.0e-14)
     end
 
     @testset "_coords_for_param stickbreak transformed" begin
@@ -492,7 +499,7 @@ end
         spec = TransformSpec(:p, :stickbreak, (3, 1), nothing)
         coords_t = NoLimits._coords_for_param(t, spec; natural = false)
         @test length(coords_t) == 2
-        @test isapprox(coords_t, t; atol = 1e-14)
+        @test isapprox(coords_t, t; atol = 1.0e-14)
     end
 
     @testset "_coords_for_param stickbreakrows natural drops last column" begin
@@ -501,7 +508,7 @@ end
         coords_n = NoLimits._coords_for_param(P, spec; natural = true)
         @test length(coords_n) == 6  # n*(n-1) = 6
         expected = [P[1, 1], P[1, 2], P[2, 1], P[2, 2], P[3, 1], P[3, 2]]
-        @test isapprox(coords_n, expected; atol = 1e-14)
+        @test isapprox(coords_n, expected; atol = 1.0e-14)
     end
 
     @testset "_coords_for_param stickbreakrows transformed" begin
@@ -510,7 +517,7 @@ end
         spec = TransformSpec(:P, :stickbreakrows, (3, 3), nothing)
         coords_t = NoLimits._coords_for_param(t, spec; natural = false)
         @test length(coords_t) == 6
-        @test isapprox(coords_t, t; atol = 1e-14)
+        @test isapprox(coords_t, t; atol = 1.0e-14)
     end
 end
 
@@ -606,11 +613,11 @@ end
         @test length(coords_t) == 3 + 6  # (k-1) + n*(n-1) = 3 + 6
 
         # Natural coords for pi should be first k-1 = 3 probabilities
-        @test isapprox(coords_n[1:3], p[1:3]; atol = 1e-14)
+        @test isapprox(coords_n[1:3], p[1:3]; atol = 1.0e-14)
         # Natural coords for T should be first n-1 = 2 cols of each row
-        @test isapprox(coords_n[4:5], P[1, 1:2]; atol = 1e-14)
-        @test isapprox(coords_n[6:7], P[2, 1:2]; atol = 1e-14)
-        @test isapprox(coords_n[8:9], P[3, 1:2]; atol = 1e-14)
+        @test isapprox(coords_n[4:5], P[1, 1:2]; atol = 1.0e-14)
+        @test isapprox(coords_n[6:7], P[2, 1:2]; atol = 1.0e-14)
+        @test isapprox(coords_n[8:9], P[3, 1:2]; atol = 1.0e-14)
     end
 
     # -----------------------------------------------------------------------
@@ -634,14 +641,15 @@ end
             ID = vcat(fill(1, 5), fill(2, 5)),
             t = vcat(1:5, 1:5) .* 1.0,
             y = vcat(
-                randn(MersenneTwister(1), 5) .+ 1.5, randn(MersenneTwister(2), 5) .+ 1.5)
+                randn(MersenneTwister(1), 5) .+ 1.5, randn(MersenneTwister(2), 5) .+ 1.5
+            )
         )
         dm = DataModel(model, df; primary_id = :ID, time_col = :t)
         res = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
         params = NoLimits.get_params(res; scale = :untransformed)
         pi_est = params.pi
         @test length(pi_est) == 3
-        @test isapprox(sum(pi_est), 1.0; atol = 1e-6)
+        @test isapprox(sum(pi_est), 1.0; atol = 1.0e-6)
         @test all(pi_est .>= 0)
     end
 
@@ -662,7 +670,8 @@ end
             ID = vcat(fill(1, 5), fill(2, 5)),
             t = vcat(1:5, 1:5) .* 1.0,
             y = vcat(
-                randn(MersenneTwister(3), 5) .+ 0.7, randn(MersenneTwister(4), 5) .+ 0.7)
+                randn(MersenneTwister(3), 5) .+ 0.7, randn(MersenneTwister(4), 5) .+ 0.7
+            )
         )
         dm = DataModel(model, df; primary_id = :ID, time_col = :t)
         res = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
@@ -670,7 +679,7 @@ end
         T_est = params.T
         @test size(T_est) == (2, 2)
         @test all(T_est .>= 0)
-        @test isapprox(sum(T_est[1, :]), 1.0; atol = 1e-6)
-        @test isapprox(sum(T_est[2, :]), 1.0; atol = 1e-6)
+        @test isapprox(sum(T_est[1, :]), 1.0; atol = 1.0e-6)
+        @test isapprox(sum(T_est[2, :]), 1.0; atol = 1.0e-6)
     end
 end

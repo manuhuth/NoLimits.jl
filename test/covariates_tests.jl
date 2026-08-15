@@ -11,9 +11,12 @@ using ForwardDiff
         x = ConstantCovariateVector([:Age, :gender])
         w1 = DynamicCovariate(interpolation = CubicSpline)
         w2 = ConstantCovariate()
-        z = DynamicCovariateVector([:z1, :z2, :z3],
+        z = DynamicCovariateVector(
+            [:z1, :z2, :z3],
             interpolations = [
-                LinearInterpolation, LinearInterpolation, LinearInterpolation])
+                LinearInterpolation, LinearInterpolation, LinearInterpolation,
+            ]
+        )
         delta_t = Covariate()
     end
 
@@ -72,7 +75,8 @@ end
 @testset "Covariates validation" begin
     # Invalid inputs and shapes are rejected with clear errors.
     @test_throws ErrorException DynamicCovariateVector(
-        [:a, :b]; interpolations = [LinearInterpolation])
+        [:a, :b]; interpolations = [LinearInterpolation]
+    )
 
     @test_throws ErrorException DynamicCovariate(:x, interpolation = Symbol)
 
@@ -184,14 +188,18 @@ end
         lin = x' * β + z' * γ
         obs ~ Normal(lin, σ)
     end
-    (_, form_obs, _, _) = get_formulas_builders(formulas;
-        fixed_names = [:β, :γ, :σ], const_cov_names = [:x], varying_cov_names = [:z])
+    (_, form_obs, _, _) = get_formulas_builders(
+        formulas;
+        fixed_names = [:β, :γ, :σ], const_cov_names = [:x], varying_cov_names = [:z]
+    )
     const_cov = (x = NoLimits._covariate_vector((Age = 30.0, Weight = 70.0)),)
     vary = (t = 0.0, z = NoLimits._covariate_vector((z1 = 2.0, z2 = 5.0)))
     obj = function (p)
-        ctx = (; fixed_effects = (β = p[1:2], γ = p[3:4], σ = 0.4),
+        ctx = (;
+            fixed_effects = (β = p[1:2], γ = p[3:4], σ = 0.4),
             random_effects = NamedTuple(), prede = NamedTuple(),
-            helpers = NamedTuple(), model_funs = NamedTuple())
+            helpers = NamedTuple(), model_funs = NamedTuple(),
+        )
         return mean(form_obs(ctx, NamedTuple(), const_cov, vary).obs)
     end
     p0 = [0.5, -0.2, 1.0, 0.3]

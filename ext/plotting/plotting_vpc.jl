@@ -34,7 +34,8 @@ predictive percentile bands stratified by x-axis bins.
 - `return_panel::Bool = false`: with a single observable, return the built panel instead
   of a `Figure`, for composing several diagnostics into one figure via `combine_plots`.
 """
-function plot_vpc(res::FitResult;
+function plot_vpc(
+        res::FitResult;
         dm::Union{Nothing, DataModel} = nothing,
         n_simulations::Int = 100,
         n_sim::Union{Nothing, Int} = nothing,
@@ -58,7 +59,8 @@ function plot_vpc(res::FitResult;
         mcmc_draws::Int = 1000,
         mcmc_warmup::Union{Nothing, Int} = nothing,
         style::PlotStyle = PlotStyle(),
-        kwargs_subplot = NamedTuple())
+        kwargs_subplot = NamedTuple()
+    )
     dm = _get_dm(res, dm)
     save_path = _resolve_plot_path(save_path, plot_path)
     bandwidth === nothing || _check_positive(bandwidth, "bandwidth")
@@ -102,7 +104,8 @@ function plot_vpc(res::FitResult;
         for (i, ind) in enumerate(get_individuals(dm))
             obs_rows = get_obs_rows(get_row_groups(dm))[i]
             x_all_i, x_i, y_i = _collect_observed_xy(
-                ind, dm, obs_rows, obs_name, x_axis_feature)
+                ind, dm, obs_rows, obs_name, x_axis_feature
+            )
             append!(all_x_bins, x_all_i)
             append!(all_x, x_i)
             append!(all_y, y_i)
@@ -111,9 +114,10 @@ function plot_vpc(res::FitResult;
         end
         x_for_bins = isempty(all_x) ? all_x_bins : all_x
         if isempty(x_for_bins)
-            @warn "No finite x values found for observable; returning empty VPC subplot." observable=obs_name
+            @warn "No finite x values found for observable; returning empty VPC subplot." observable = obs_name
             _kw_vpc = merge(
-                (xlabel = x_label, ylabel = _axis_label(obs_name)), kwargs_subplot)
+                (xlabel = x_label, ylabel = _axis_label(obs_name)), kwargs_subplot
+            )
             plots[oi] = create_styled_plot(; title = "", style = style, _kw_vpc...)
             continue
         end
@@ -129,11 +133,13 @@ function plot_vpc(res::FitResult;
 
         if is_mcmc
             θ_draws, η_draws, _ = _posterior_drawn_params(
-                res, dm, constants_re_use, NamedTuple(), mcmc_draws, rng)
+                res, dm, constants_re_use, NamedTuple(), mcmc_draws, rng
+            )
             n_sim = length(θ_draws)
             for s in 1:n_sim
                 sim_x, sim_vals = _simulate_obs(
-                    dm, θ_draws[s], η_draws[s], obs_name, rng, x_axis_feature)
+                    dm, θ_draws[s], η_draws[s], obs_name, rng, x_axis_feature
+                )
                 xs = reduce(vcat, sim_x)
                 ys = reduce(vcat, sim_vals)
                 append!(sim_x_all, xs)
@@ -155,8 +161,10 @@ function plot_vpc(res::FitResult;
         _kw_vpc = merge((xlabel = x_label, ylabel = _axis_label(obs_name)), kwargs_subplot)
         p = create_styled_plot(; title = "", style = style, _kw_vpc...)
         if show_obs_points && !isempty(all_y)
-            create_styled_scatter!(p, all_x, all_y; color = (style.color_primary, 0.3),
-                label = "obs", style = style)
+            create_styled_scatter!(
+                p, all_x, all_y; color = (style.color_primary, 0.3),
+                label = "obs", style = style
+            )
         end
 
         if show_obs_percentiles && !is_discrete && !isempty(all_y)
@@ -164,32 +172,41 @@ function plot_vpc(res::FitResult;
                 obs_percentiles_mode == :pooled ||
                     error("obs_percentiles_mode=:per_individual is only supported with obs_percentiles_method=:quantile.")
                 bw = bandwidth === nothing ? (maximum(all_x) - minimum(all_x)) / 10 :
-                     bandwidth
+                    bandwidth
                 xgrid = sort(unique(all_x))
                 sm = _kernel_quantiles(all_x, all_y, xgrid, bw, percentiles)
                 for pctl in percentiles
-                    create_styled_line!(p, xgrid, sm[pctl]; color = COLOR_ACCENT,
+                    create_styled_line!(
+                        p, xgrid, sm[pctl]; color = COLOR_ACCENT,
                         linestyle = pctl == median(percentiles) ? :solid : :dot,
-                        label = "", style = style)
+                        label = "", style = style
+                    )
                 end
             elseif obs_percentiles_method == :quantile
                 bins = _assign_bins(all_x, edges)
                 x_centers = [mean(edges[b:(b + 1)]) for b in 1:n_bins_eff]
-                obs_q = Dict{Float64, Vector{Float64}}((p => Vector{Float64}(
-                                                           undef, n_bins_eff))
-                for p in percentiles)
+                obs_q = Dict{Float64, Vector{Float64}}(
+                    (
+                            p => Vector{Float64}(
+                                undef, n_bins_eff
+                            )
+                        )
+                        for p in percentiles
+                )
                 if obs_percentiles_mode == :pooled
                     for b in 1:n_bins_eff
                         vals = all_y[bins .== b]
                         for pctl in percentiles
                             obs_q[pctl][b] = isempty(vals) ? NaN :
-                                             quantile(vals, pctl / 100)
+                                quantile(vals, pctl / 100)
                         end
                     end
                 elseif obs_percentiles_mode == :per_individual
                     for b in 1:n_bins_eff
-                        per_ind_vals = Dict{Float64, Vector{Float64}}((p => Float64[])
-                        for p in percentiles)
+                        per_ind_vals = Dict{Float64, Vector{Float64}}(
+                            (p => Float64[])
+                                for p in percentiles
+                        )
                         for (x, y) in zip(x_by_ind, y_by_ind)
                             bins_ind = _assign_bins(x, edges)
                             vals = y[bins_ind .== b]
@@ -200,7 +217,7 @@ function plot_vpc(res::FitResult;
                         end
                         for pctl in percentiles
                             obs_q[pctl][b] = isempty(per_ind_vals[pctl]) ? NaN :
-                                             mean(per_ind_vals[pctl])
+                                mean(per_ind_vals[pctl])
                         end
                     end
                 else
@@ -209,9 +226,11 @@ function plot_vpc(res::FitResult;
                 for pctl in percentiles
                     x_plot, y_plot = _extend_bin_series(x_centers, obs_q[pctl], edges)
                     lbl = "obs $(pctl)%"
-                    create_styled_line!(p, x_plot, y_plot; color = COLOR_ACCENT,
+                    create_styled_line!(
+                        p, x_plot, y_plot; color = COLOR_ACCENT,
                         linestyle = pctl == median(percentiles) ? :solid : :dot,
-                        label = lbl, style = style)
+                        label = lbl, style = style
+                    )
                 end
             else
                 error("obs_percentiles_method must be :quantile or :kernel.")
@@ -225,11 +244,13 @@ function plot_vpc(res::FitResult;
                 if is_bern
                     p1 = [mean(sim_y_all[bins_sim .== b]) for b in 1:n_bins_eff]
                     x_plot, y_plot = _extend_bin_series(x_centers, p1, edges)
-                    create_styled_scatter!(p, x_plot, y_plot;
+                    create_styled_scatter!(
+                        p, x_plot, y_plot;
                         color = style.color_secondary, marker = :xcross,
                         markersize = style.marker_size_pmf,
                         strokewidth = style.marker_stroke_width_pmf,
-                        label = "sim P(Y=1)", style = style)
+                        label = "sim P(Y=1)", style = style
+                    )
                 else
                     added = false
                     for b in 1:n_bins_eff
@@ -240,11 +261,13 @@ function plot_vpc(res::FitResult;
                         support = collect(lo:hi)
                         probs = [mean(vals .== v) for v in support]
                         lbl = added ? "" : "sim PMF"
-                        create_styled_scatter!(p, fill(x_centers[b], length(support)),
+                        create_styled_scatter!(
+                            p, fill(x_centers[b], length(support)),
                             support; color = probs, colormap = :viridis, marker = :xcross,
                             markersize = style.marker_size_pmf,
                             strokewidth = style.marker_stroke_width_pmf,
-                            label = lbl, style = style)
+                            label = lbl, style = style
+                        )
                         added = true
                     end
                 end
@@ -252,28 +275,38 @@ function plot_vpc(res::FitResult;
                 if bandwidth !== nothing
                     xgrid = collect(LinRange(minimum(sim_x_all), maximum(sim_x_all), 200))
                     sm_sim = _kernel_quantiles(
-                        sim_x_all, sim_y_all, xgrid, bandwidth, percentiles)
+                        sim_x_all, sim_y_all, xgrid, bandwidth, percentiles
+                    )
                     for pctl in percentiles
                         lbl = "sim $(pctl)%"
-                        create_styled_line!(p, xgrid, sm_sim[pctl];
-                            color = COLOR_SECONDARY, label = lbl, style = style)
+                        create_styled_line!(
+                            p, xgrid, sm_sim[pctl];
+                            color = COLOR_SECONDARY, label = lbl, style = style
+                        )
                     end
                 else
-                    sim_q = Dict{Float64, Vector{Float64}}((p => Vector{Float64}(
-                                                               undef, n_bins_eff))
-                    for p in percentiles)
+                    sim_q = Dict{Float64, Vector{Float64}}(
+                        (
+                                p => Vector{Float64}(
+                                    undef, n_bins_eff
+                                )
+                            )
+                            for p in percentiles
+                    )
                     for b in 1:n_bins_eff
                         vals = sim_y_all[bins_sim .== b]
                         for pctl in percentiles
                             sim_q[pctl][b] = isempty(vals) ? NaN :
-                                             quantile(vals, pctl / 100)
+                                quantile(vals, pctl / 100)
                         end
                     end
                     for pctl in percentiles
                         x_plot, y_plot = _extend_bin_series(x_centers, sim_q[pctl], edges)
                         lbl = "sim $(pctl)%"
-                        create_styled_line!(p, x_plot, y_plot;
-                            color = COLOR_SECONDARY, label = lbl, style = style)
+                        create_styled_line!(
+                            p, x_plot, y_plot;
+                            color = COLOR_SECONDARY, label = lbl, style = style
+                        )
                     end
                 end
             end

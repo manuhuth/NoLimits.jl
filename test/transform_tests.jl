@@ -11,14 +11,16 @@ using Distributions
     # Log transform round-trip on scalar and vector.
     names = [:a, :b, :c]
     θ = ComponentArray((a = 1.5, b = 2.0, c = 3.0))
-    specs = [TransformSpec(:a, :log, (1, 1), nothing),
+    specs = [
+        TransformSpec(:a, :log, (1, 1), nothing),
         TransformSpec(:b, :identity, (1, 1), nothing),
-        TransformSpec(:c, :identity, (1, 1), nothing)]
+        TransformSpec(:c, :identity, (1, 1), nothing),
+    ]
     ft = ForwardTransform(collect(names), specs)
     it = InverseTransform(collect(names), specs)
     θt = ft(θ)
-    @test isapprox(θt.a, log(θ.a); rtol = 1e-8, atol = 1e-10)
-    @test isapprox(it(θt).a, θ.a; rtol = 1e-8, atol = 1e-10)
+    @test isapprox(θt.a, log(θ.a); rtol = 1.0e-8, atol = 1.0e-10)
+    @test isapprox(it(θt).a, θ.a; rtol = 1.0e-8, atol = 1.0e-10)
 
     # Cholesky transform round-trip on a PSD matrix block.
     A = [2.0 0.3; 0.3 1.5]
@@ -28,7 +30,7 @@ using Distributions
     itA = InverseTransform([:A], specsA)
     θAt = ftA(θA)
     Arec = itA(θAt).A
-    @test isapprox(Arec, A; rtol = 1e-8, atol = 1e-8)
+    @test isapprox(Arec, A; rtol = 1.0e-8, atol = 1.0e-8)
 
     # Matrix-exponential transform round-trip on a PSD matrix block.
     Aexp = [1.5 0.2; 0.2 1.2]
@@ -38,29 +40,29 @@ using Distributions
     itE = InverseTransform([:E], specsE)
     θEt = ftE(θE)
     Erec = itE(θEt).E
-    @test isapprox(Erec, Aexp; rtol = 1e-8, atol = 1e-8)
+    @test isapprox(Erec, Aexp; rtol = 1.0e-8, atol = 1.0e-8)
     @test length(θEt.E) == 3
 
     # Lie-algebraic transform round-trip on a PSD matrix block.
-    Alie = [3.25 -1.30; -1.30 1.75]
+    Alie = [3.25 -1.3; -1.3 1.75]
     θL = ComponentArray((L = Alie,))
     specsL = [TransformSpec(:L, :lie, (2, 2), nothing)]
     ftL = ForwardTransform([:L], specsL)
     itL = InverseTransform([:L], specsL)
     θLt = ftL(θL)
     Lrec = itL(θLt).L
-    @test isapprox(Lrec, Alie; rtol = 1e-8, atol = 1e-8)
+    @test isapprox(Lrec, Alie; rtol = 1.0e-8, atol = 1.0e-8)
     @test length(θLt.L) == 3
 
     # AD check for log transform (ForwardDiff).
     f_log(x) = log_forward(x)
-    @test isapprox(ForwardDiff.derivative(f_log, 2.0), 1 / 2.0; rtol = 1e-8, atol = 1e-10)
+    @test isapprox(ForwardDiff.derivative(f_log, 2.0), 1 / 2.0; rtol = 1.0e-8, atol = 1.0e-10)
     f_log_vec(v) = log_forward(v[1])
 
     # AD check for cholesky transform on a PSD matrix built from parameters.
     function f_chol(v)
         L = reshape(v, 2, 2)
-        A = L * L' + 1e-3I
+        A = L * L' + 1.0e-3I
         T = cholesky_forward(A)
         return sum(T)
     end
@@ -71,7 +73,7 @@ using Distributions
     # AD check for expm-based transform on a PSD matrix built from parameters.
     function f_expm(v)
         L = reshape(v, 2, 2)
-        A = L * L' + 1e-3I
+        A = L * L' + 1.0e-3I
         T = expm_forward(A)
         return sum(T)
     end
@@ -117,15 +119,15 @@ end
 @testset "logit_forward / logit_inverse basic" begin
     # Round-trips for values strictly inside (0, 1).
     for x in [0.01, 0.1, 0.3, 0.5, 0.7, 0.9, 0.99]
-        @test isapprox(logit_inverse(logit_forward(x)), x; rtol = 1e-8, atol = 1e-10)
+        @test isapprox(logit_inverse(logit_forward(x)), x; rtol = 1.0e-8, atol = 1.0e-10)
     end
 
     # Forward transform returns a finite value.
     @test logit_forward(0.5) ≈ 0.0   # logit(0.5) = 0
 
     # Clamping: very small / large values in (0,1) are clamped on the transformed scale.
-    @test logit_forward(1e-30) == -20.0
-    @test logit_forward(1 - 1e-30) == 20.0
+    @test logit_forward(1.0e-30) == -20.0
+    @test logit_forward(1 - 1.0e-30) == 20.0
 
     # Clamping: transformed values outside [-20, 20] give boundary naturals.
     @test logit_inverse(100.0) == logit_inverse(20.0)
@@ -149,10 +151,10 @@ end
 
     θ = ComponentArray((p = 0.3,))
     θt = ft(θ)
-    @test isapprox(θt.p, logit_forward(0.3); rtol = 1e-10)
+    @test isapprox(θt.p, logit_forward(0.3); rtol = 1.0e-10)
 
     θrt = it(θt)
-    @test isapprox(θrt.p, 0.3; rtol = 1e-8, atol = 1e-10)
+    @test isapprox(θrt.p, 0.3; rtol = 1.0e-8, atol = 1.0e-10)
 end
 
 @testset "logit ForwardTransform / InverseTransform — uniform vector" begin
@@ -164,10 +166,10 @@ end
     v0 = [0.2, 0.5, 0.8]
     θ = ComponentArray((v = v0,))
     θt = ft(θ)
-    @test all(isapprox.(θt.v, logit_forward.(v0); rtol = 1e-10))
+    @test all(isapprox.(θt.v, logit_forward.(v0); rtol = 1.0e-10))
 
     θrt = it(θt)
-    @test isapprox(θrt.v, v0; rtol = 1e-8, atol = 1e-10)
+    @test isapprox(θrt.v, v0; rtol = 1.0e-8, atol = 1.0e-10)
 end
 
 @testset "elementwise ForwardTransform / InverseTransform — mixed [:logit, :log, :identity]" begin
@@ -181,35 +183,35 @@ end
     θ = ComponentArray((v = v0,))
     θt = ft(θ)
 
-    @test isapprox(θt.v[1], logit_forward(0.4); rtol = 1e-10)
-    @test isapprox(θt.v[2], log(2.0); rtol = 1e-10)
-    @test isapprox(θt.v[3], -1.5; rtol = 1e-10)
+    @test isapprox(θt.v[1], logit_forward(0.4); rtol = 1.0e-10)
+    @test isapprox(θt.v[2], log(2.0); rtol = 1.0e-10)
+    @test isapprox(θt.v[3], -1.5; rtol = 1.0e-10)
 
     θrt = it(θt)
-    @test isapprox(θrt.v[1], 0.4; rtol = 1e-8, atol = 1e-10)
-    @test isapprox(θrt.v[2], 2.0; rtol = 1e-8, atol = 1e-10)
-    @test isapprox(θrt.v[3], -1.5; rtol = 1e-10)
+    @test isapprox(θrt.v[1], 0.4; rtol = 1.0e-8, atol = 1.0e-10)
+    @test isapprox(θrt.v[2], 2.0; rtol = 1.0e-8, atol = 1.0e-10)
+    @test isapprox(θrt.v[3], -1.5; rtol = 1.0e-10)
 end
 
 @testset "elementwise ForwardTransform / InverseTransform — [:logit, :identity]" begin
     names = [:a, :b]
     specs = [
         TransformSpec(:a, :logit, (1, 1), nothing),
-        TransformSpec(:b, :elementwise, (2, 1), [:log, :identity])
+        TransformSpec(:b, :elementwise, (2, 1), [:log, :identity]),
     ]
     ft = ForwardTransform(names, specs)
     it = InverseTransform(names, specs)
 
     θ = ComponentArray((a = 0.7, b = [3.0, -0.5]))
     θt = ft(θ)
-    @test isapprox(θt.a, logit_forward(0.7); rtol = 1e-10)
-    @test isapprox(θt.b[1], log(3.0); rtol = 1e-10)
-    @test isapprox(θt.b[2], -0.5; rtol = 1e-10)
+    @test isapprox(θt.a, logit_forward(0.7); rtol = 1.0e-10)
+    @test isapprox(θt.b[1], log(3.0); rtol = 1.0e-10)
+    @test isapprox(θt.b[2], -0.5; rtol = 1.0e-10)
 
     θrt = it(θt)
-    @test isapprox(θrt.a, 0.7; rtol = 1e-8, atol = 1e-10)
-    @test isapprox(θrt.b[1], 3.0; rtol = 1e-8, atol = 1e-10)
-    @test isapprox(θrt.b[2], -0.5; rtol = 1e-10)
+    @test isapprox(θrt.a, 0.7; rtol = 1.0e-8, atol = 1.0e-10)
+    @test isapprox(θrt.b[1], 3.0; rtol = 1.0e-8, atol = 1.0e-10)
+    @test isapprox(θrt.b[2], -0.5; rtol = 1.0e-10)
 end
 
 @testset "apply_inv_jacobian_T — logit" begin
@@ -221,7 +223,7 @@ end
     θt = ComponentArray((p = 0.0,))
     grad_u = ComponentArray((p = 1.0,))
     jac = apply_inv_jacobian_T(it, θt, grad_u)
-    @test isapprox(jac.p, 0.25; rtol = 1e-8)
+    @test isapprox(jac.p, 0.25; rtol = 1.0e-8)
 
     # At x=20, clamping kicks in → zero Jacobian.
     θt_clamp = ComponentArray((p = 20.0,))
@@ -240,11 +242,11 @@ end
     jac = apply_inv_jacobian_T(it, θt, grad_u)
 
     # logit at 0.0: σ(0)*(1-σ(0)) = 0.25
-    @test isapprox(jac.v[1], 0.25; rtol = 1e-8)
+    @test isapprox(jac.v[1], 0.25; rtol = 1.0e-8)
     # log at 1.0: exp(1.0)
-    @test isapprox(jac.v[2], exp(1.0); rtol = 1e-8)
+    @test isapprox(jac.v[2], exp(1.0); rtol = 1.0e-8)
     # identity
-    @test isapprox(jac.v[3], 1.0; rtol = 1e-10)
+    @test isapprox(jac.v[3], 1.0; rtol = 1.0e-10)
 end
 
 @testset "apply_inv_jacobian_T — logit vs finite differences" begin
@@ -260,7 +262,7 @@ end
 
         # Finite diff of logit_inverse.
         fd_jac = central_fdm(5, 1)(logit_inverse, x_val)
-        @test isapprox(jac.p, fd_jac; rtol = 1e-5, atol = 1e-8)
+        @test isapprox(jac.p, fd_jac; rtol = 1.0e-5, atol = 1.0e-8)
     end
 end
 
@@ -279,16 +281,16 @@ end
     fd2 = central_fdm(5, 1)(exp, x_vals[2])
     fd3 = 1.0  # identity
 
-    @test isapprox(jac.v[1], fd1; rtol = 1e-5, atol = 1e-8)
-    @test isapprox(jac.v[2], fd2; rtol = 1e-5, atol = 1e-8)
-    @test isapprox(jac.v[3], fd3; rtol = 1e-10)
+    @test isapprox(jac.v[1], fd1; rtol = 1.0e-5, atol = 1.0e-8)
+    @test isapprox(jac.v[2], fd2; rtol = 1.0e-5, atol = 1.0e-8)
+    @test isapprox(jac.v[3], fd3; rtol = 1.0e-10)
 end
 
 @testset "matrix-exp transforms — 2nd-order ForwardDiff (nested Duals)" begin
     # Regression: a Hessian through the :expm/:lie covariance transform flows nested Duals;
     # this was NaN at repeated eigenvalues (Omega = I) for :expm and errored for :lie. The
     # nested-Dual specialization makes both finite, symmetric, and exact to FD-of-gradient.
-    function fd_hess(f, x; h = 1e-6)
+    function fd_hess(f, x; h = 1.0e-6)
         m = length(x)
         H = zeros(m, m)
         for j in 1:m
@@ -310,16 +312,16 @@ end
     for v0 in ([0.0, 0.0, 0.0], [0.3, -0.2, 0.5])   # Omega = I (degenerate), off-degeneracy
         H = ForwardDiff.hessian(g_expm, v0)
         @test all(isfinite, H)
-        @test isapprox(H, H'; atol = 1e-10)
-        @test isapprox(H, fd_hess(g_expm, v0); rtol = 1e-6, atol = 1e-7)
+        @test isapprox(H, H'; atol = 1.0e-10)
+        @test isapprox(H, fd_hess(g_expm, v0); rtol = 1.0e-6, atol = 1.0e-7)
     end
 
     h_lie(t) = sum(abs2, NoLimits.liepsd_inverse(t))
     for t0 in ([0.0, 0.0, 0.0], [0.2, -0.1, 0.4])
         H = ForwardDiff.hessian(h_lie, t0)
         @test all(isfinite, H)
-        @test isapprox(H, H'; atol = 1e-10)
-        @test isapprox(H, fd_hess(h_lie, t0); rtol = 1e-6, atol = 1e-7)
+        @test isapprox(H, H'; atol = 1.0e-10)
+        @test isapprox(H, fd_hess(h_lie, t0); rtol = 1.0e-6, atol = 1.0e-7)
     end
 end
 
@@ -327,11 +329,11 @@ end
 # describe a region the transform can never reach, and an unrepresentable value must say so.
 @testset "logit clamp is visible to bounds and declarations" begin
     fe = @fixedEffects begin
-        p = RealNumber(0.5; scale = :logit, lower = 1e-15, upper = 1 - 1e-15)
+        p = RealNumber(0.5; scale = :logit, lower = 1.0e-15, upper = 1 - 1.0e-15)
     end
     lo, up = NoLimits.get_bounds_transformed(fe)
-    @test lo.p == NoLimits.logit_forward(1e-15) == -NoLimits.LOGIT_CLAMP
-    @test up.p == NoLimits.logit_forward(1 - 1e-15) == NoLimits.LOGIT_CLAMP
+    @test lo.p == NoLimits.logit_forward(1.0e-15) == -NoLimits.LOGIT_CLAMP
+    @test up.p == NoLimits.logit_forward(1 - 1.0e-15) == NoLimits.LOGIT_CLAMP
 
-    @test_logs (:warn,) match_mode=:any RealNumber(1e-10; name = :q, scale = :logit)
+    @test_logs (:warn,) match_mode = :any RealNumber(1.0e-10; name = :q, scale = :logit)
 end

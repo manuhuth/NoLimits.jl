@@ -76,12 +76,12 @@ using DataInterpolations
 
     y_stats = only(filter(row -> row.name == :y, s.outcome_stats)).stats
     @test y_stats.n == 4
-    @test y_stats.mean≈1.325 atol=1e-12
+    @test y_stats.mean ≈ 1.325 atol = 1.0e-12
 
     # z includes 999 on event rows; stats should use observation rows only.
     z_stats = only(filter(row -> row.name == Symbol("z.z"), s.covariate_stats)).stats
     @test z_stats.n == 4
-    @test z_stats.mean≈2.5 atol=1e-12
+    @test z_stats.mean ≈ 2.5 atol = 1.0e-12
 
     re_id = only(filter(r -> r.name == :η_id, s.random_effect_summaries))
     @test re_id.group == :ID

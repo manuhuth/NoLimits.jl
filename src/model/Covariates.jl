@@ -156,16 +156,18 @@ struct DynamicCovariateVector <: AbstractCovariate
     interpolations::Vector
 end
 
-const ALLOWED_INTERPOLATIONS = Set([
-    ConstantInterpolation,
-    SmoothedConstantInterpolation,
-    LinearInterpolation,
-    QuadraticInterpolation,
-    LagrangeInterpolation,
-    QuadraticSpline,
-    CubicSpline,
-    AkimaInterpolation
-])
+const ALLOWED_INTERPOLATIONS = Set(
+    [
+        ConstantInterpolation,
+        SmoothedConstantInterpolation,
+        LinearInterpolation,
+        QuadraticInterpolation,
+        LagrangeInterpolation,
+        QuadraticSpline,
+        CubicSpline,
+        AkimaInterpolation,
+    ]
+)
 
 function DynamicCovariate(column::Symbol; interpolation = LinearInterpolation)
     _check_interpolation(interpolation, :dynamic_covariate)
@@ -181,8 +183,10 @@ function ConstantCovariateVector(columns::Vector{Symbol}; constant_on = Symbol[]
     return ConstantCovariateVector(columns, _normalize_constant_on(constant_on))
 end
 
-function DynamicCovariateVector(columns::Vector{Symbol};
-        interpolations = fill(LinearInterpolation, length(columns)))
+function DynamicCovariateVector(
+        columns::Vector{Symbol};
+        interpolations = fill(LinearInterpolation, length(columns))
+    )
     _check_covariate_columns(columns, "DynamicCovariateVector")
     length(columns) == length(interpolations) ||
         error("Interpolation length mismatch: expected $(length(columns)); got $(length(interpolations)).")
@@ -255,8 +259,10 @@ function _covariate_ctor_name(fn)
     if fn === :Covariate || fn === :ConstantCovariate || fn === :DynamicCovariate
         return fn
     end
-    if fn isa GlobalRef && (fn.name === :Covariate || fn.name === :ConstantCovariate ||
-        fn.name === :DynamicCovariate)
+    if fn isa GlobalRef && (
+            fn.name === :Covariate || fn.name === :ConstantCovariate ||
+                fn.name === :DynamicCovariate
+        )
         return fn.name
     end
     if fn isa Expr && fn.head == :.
@@ -271,19 +277,21 @@ end
 
 function _covariate_vector_ctor_name(fn)
     if fn === :CovariateVector || fn === :ConstantCovariateVector ||
-       fn === :DynamicCovariateVector
+            fn === :DynamicCovariateVector
         return fn
     end
     if fn isa GlobalRef &&
-       (fn.name === :CovariateVector || fn.name === :ConstantCovariateVector ||
-        fn.name === :DynamicCovariateVector)
+            (
+            fn.name === :CovariateVector || fn.name === :ConstantCovariateVector ||
+                fn.name === :DynamicCovariateVector
+        )
         return fn.name
     end
     if fn isa Expr && fn.head == :.
         last = fn.args[end]
         last isa QuoteNode && (last = last.value)
         if last === :CovariateVector || last === :ConstantCovariateVector ||
-           last === :DynamicCovariateVector
+                last === :DynamicCovariateVector
             return last
         end
     end
@@ -292,7 +300,8 @@ end
 
 function _covariate_has_kwargs(rhs::Expr)
     return any(
-        arg -> arg isa Expr && (arg.head == :kw || arg.head == :parameters), rhs.args)
+        arg -> arg isa Expr && (arg.head == :kw || arg.head == :parameters), rhs.args
+    )
 end
 
 function _covariate_collect_kwargs(rhs::Expr)
@@ -331,9 +340,11 @@ function _rewrite_univariate_covariate(lhs::Symbol, rhs::Expr)
         # Disallow explicit column naming; LHS provides the column.
         has_kwargs = _covariate_has_kwargs(rhs)
         # No positional args allowed (the macro injects the column).
-        positional = [arg
-                      for arg in rhs.args[2:end]
-                      if !(arg isa Expr && (arg.head == :kw || arg.head == :parameters))]
+        positional = [
+            arg
+                for arg in rhs.args[2:end]
+                if !(arg isa Expr && (arg.head == :kw || arg.head == :parameters))
+        ]
         isempty(positional) ||
             error("Do not pass a name to $(ctor); the LHS provides the name.")
         col = QuoteNode(lhs)
@@ -434,7 +445,8 @@ function build_covariates(params::NamedTuple)
     end
 
     return Covariates(
-        names, flat_names, constants, varying, dynamic, interpolations, params)
+        names, flat_names, constants, varying, dynamic, interpolations, params
+    )
 end
 
 function _ensure_interpolation(p::AbstractCovariate, name::Symbol)

@@ -94,8 +94,10 @@ function _cf_to_sym(ex, states::Set{Symbol}, smap, tvar, ctx::_CFCtx)
         op = ex.args[1]
         op isa Symbol && op in (:+, :-, :*, :/, :^) ||
             throw(_NotClosedForm())
-        return _cf_apply_op(op,
-            [_cf_to_sym(a, states, smap, tvar, ctx) for a in ex.args[2:end]])
+        return _cf_apply_op(
+            op,
+            [_cf_to_sym(a, states, smap, tvar, ctx) for a in ex.args[2:end]]
+        )
     end
     throw(_NotClosedForm())
 end
@@ -106,20 +108,24 @@ function _cf_inline_signals(ex, signals::Set{Symbol}, defs, depth::Int)
     depth > 32 && throw(_NotClosedForm())
     ex isa Expr || return ex
     if ex.head === :call && length(ex.args) == 2 && ex.args[1] isa Symbol &&
-       ex.args[1] in signals && (ex.args[2] === :t || ex.args[2] === :ξ)
+            ex.args[1] in signals && (ex.args[2] === :t || ex.args[2] === :ξ)
         haskey(defs, ex.args[1]) || throw(_NotClosedForm())
         return _cf_inline_signals(defs[ex.args[1]], signals, defs, depth + 1)
     end
-    return Expr(ex.head,
-        (_cf_inline_signals(a, signals, defs, depth) for a in ex.args)...)
+    return Expr(
+        ex.head,
+        (_cf_inline_signals(a, signals, defs, depth) for a in ex.args)...
+    )
 end
 
 _cf_is_zero(e) = isequal(Symbolics.expand(e), 0)
 
 function _cf_depends_on(e, svars, tvar)
     for v in Symbolics.get_variables(e)
-        (isequal(v, Symbolics.value(tvar)) ||
-         any(sv -> isequal(v, Symbolics.value(sv)), svars)) && return true
+        (
+            isequal(v, Symbolics.value(tvar)) ||
+                any(sv -> isequal(v, Symbolics.value(sv)), svars)
+        ) && return true
     end
     return false
 end
@@ -231,7 +237,7 @@ end
 # φ(z) = expm1(z)/z with the smooth z→0 limit. The Taylor branch near 0 avoids
 # 0/0 and keeps the value and derivatives continuous for ForwardDiff.
 @inline function _phi_expm1(z)
-    abs(z) < 1e-4 &&
+    abs(z) < 1.0e-4 &&
         return @evalpoly(z, 1.0, 0.5, inv(6.0), inv(24.0), inv(120.0))
     return expm1(z) / z
 end
@@ -243,7 +249,7 @@ end
 # sinh(x)/x with the smooth x→0 limit (even Taylor). Underlies the divided
 # difference below, which is what makes the ka ≈ ke case numerically stable.
 @inline function _sinhc(x)
-    abs(x) < 1e-3 && return @evalpoly(x*x, 1.0, inv(6.0), inv(120.0), inv(5040.0))
+    abs(x) < 1.0e-3 && return @evalpoly(x * x, 1.0, inv(6.0), inv(120.0), inv(5040.0))
     return sinh(x) / x
 end
 
@@ -280,9 +286,15 @@ end
 # `get_closed_form_plan`.)
 _cf_matexp(M::AbstractMatrix{<:AbstractFloat}) = exp(M)
 _cf_matexp(M::AbstractMatrix{<:Real}) = _matexp(M)
-function _cf_matexp(M::AbstractMatrix{ForwardDiff.Dual{
-        Tg, V, N}}) where {
-        Tg, V <: AbstractFloat, N}
+function _cf_matexp(
+        M::AbstractMatrix{
+            ForwardDiff.Dual{
+                Tg, V, N,
+            },
+        }
+    ) where {
+        Tg, V <: AbstractFloat, N,
+    }
     Mv = ForwardDiff.value.(M)
     Ev = exp(Mv)
     dEs = ntuple(N) do k
@@ -423,7 +435,7 @@ end
     # Exact-time grid lookup first (every :saveat eval time is on the grid), which
     # avoids recomputing the matrix-exp action per state in :linear mode.
     i = searchsortedfirst(s.t, t)
-    (i <= length(s.t) && @inbounds(s.t[i]==t)) && return @inbounds s.u[idxs, i]
+    (i <= length(s.t) && @inbounds(s.t[i] == t)) && return @inbounds s.u[idxs, i]
     return _cf_state_vector(s.mode, s.A, s.seg_t, s.seg_x0, s.seg_b, t)[idxs]
 end
 
@@ -443,8 +455,10 @@ segments with bolus/reset state jumps and infusion folded into the forcing.
 Returns `nothing` on non-finite coefficients (mirrors a failed numerical solve).
 `saveat === nothing` materializes a dense grid for `.t`/`.u`.
 """
-function _closed_form_solve_de(model, compiled, u0::AbstractVector, tspan, saveat,
-        t0::Real, mode::Symbol; events = nothing, idxs = eachindex(u0))
+function _closed_form_solve_de(
+        model, compiled, u0::AbstractVector, tspan, saveat,
+        t0::Real, mode::Symbol; events = nothing, idxs = eachindex(u0)
+    )
     de = get_de(model)
     f = get_de_f(de)
     n = length(u0)
@@ -467,21 +481,26 @@ function _closed_form_solve_de(model, compiled, u0::AbstractVector, tspan, savea
             @inbounds A[a, b] = col[idxs[a]] - b_full[idxs[a]]
         end
     end
-    (all(x -> isfinite(ForwardDiff.value(x)), A) &&
-     all(x -> isfinite(ForwardDiff.value(x)), b_base) &&
-     all(x -> isfinite(ForwardDiff.value(x)), x0)) || return nothing
+    (
+        all(x -> isfinite(ForwardDiff.value(x)), A) &&
+            all(x -> isfinite(ForwardDiff.value(x)), b_base) &&
+            all(x -> isfinite(ForwardDiff.value(x)), x0)
+    ) || return nothing
     seg_t, seg_x0, seg_b = _cf_build_segments(
-        mode, A, convert(Vector{T}, b_base), convert(Vector{T}, x0), t0f, tspan, events)
+        mode, A, convert(Vector{T}, b_base), convert(Vector{T}, x0), t0f, tspan, events
+    )
     grid = saveat === nothing ?
-           collect(range(float(tspan[1]), float(tspan[2]); length = 200)) :
-           collect(float.(saveat))
+        collect(range(float(tspan[1]), float(tspan[2]); length = 200)) :
+        collect(float.(saveat))
     uvals = _cf_materialize(mode, A, seg_t, seg_x0, seg_b, grid)
     return ClosedFormLinearSolution{T}(mode, t0f, A, seg_t, seg_x0, seg_b, grid, uvals)
 end
 
 # No events: a single event-free segment spanning the whole solve.
-function _cf_build_segments(mode, A, b_base::Vector{T}, x0::Vector{T}, t0f, tspan,
-        ::Nothing) where {T}
+function _cf_build_segments(
+        mode, A, b_base::Vector{T}, x0::Vector{T}, t0f, tspan,
+        ::Nothing
+    ) where {T}
     return Float64[t0f], Vector{T}[x0], Vector{T}[b_base]
 end
 
@@ -490,8 +509,10 @@ end
 # already folded into `x0`/`init_infusion_rates` by `_apply_initial_events!`. Within
 # each segment `A` and forcing (`b_base + infusion`) are constant; at each event we
 # propagate to it, apply resets then boluses (state jumps), and update the infusion.
-function _cf_build_segments(mode, A, b_base::Vector{T}, x0::Vector{T}, t0f, tspan,
-        events) where {T}
+function _cf_build_segments(
+        mode, A, b_base::Vector{T}, x0::Vector{T}, t0f, tspan,
+        events
+    ) where {T}
     tend = float(tspan[2])
     etimes = sort!(filter(t -> t > t0f && t <= tend, collect(events.all_times)))
     infusion = collect(Float64, events.init_infusion_rates)
@@ -542,34 +563,36 @@ const _CF_SYM_SCALARS = (Symbolics.Num, Symbolics.SymbolicUtils.BasicSymbolic)
 # methods sit on the exact union/type below, so disambiguation must too. All three
 # symbolic argument types (`Num`, `BasicSymbolic`, `Arr`) collide with `::Any`.
 for T in (_ObservedStatesMarkovModel, CoarsedObservedStatesMarkovModel),
-    f in (:pdf, :logpdf, :cdf, :logcdf, :quantile)
+        f in (:pdf, :logpdf, :cdf, :logcdf, :quantile)
 
     for S in _CF_SYM_SCALARS
         @eval function Distributions.$f(d::$T, x::$S)
-            invoke(Distributions.$f, Tuple{$T, Any}, d, x)
+            return invoke(Distributions.$f, Tuple{$T, Any}, d, x)
         end
     end
     @eval function Distributions.$f(d::$T, x::Symbolics.Arr)
-        invoke(Distributions.$f, Tuple{$T, Any}, d, x)
+        return invoke(Distributions.$f, Tuple{$T, Any}, d, x)
     end
 end
 
 # Real-/vector-observation distributions: only `::Num` (<:Real) and `::Arr`
 # collide with their `::Real`/`::AbstractVector` methods.
-for T in (:ContinuousTimeDiscreteStatesHMM, :DiscreteTimeDiscreteStatesHMM,
-        :MVContinuousTimeDiscreteStatesHMM, :MVDiscreteTimeDiscreteStatesHMM,
-        :NormalizingPlanarFlow),
-    f in (:pdf, :logpdf, :cdf, :logcdf, :quantile)
+for T in (
+            :ContinuousTimeDiscreteStatesHMM, :DiscreteTimeDiscreteStatesHMM,
+            :MVContinuousTimeDiscreteStatesHMM, :MVDiscreteTimeDiscreteStatesHMM,
+            :NormalizingPlanarFlow,
+        ),
+        f in (:pdf, :logpdf, :cdf, :logcdf, :quantile)
 
     @eval function Distributions.$f(d::$T, x::Symbolics.Num)
-        invoke(Distributions.$f, Tuple{$T, Real}, d, x)
+        return invoke(Distributions.$f, Tuple{$T, Real}, d, x)
     end
     @eval function Distributions.$f(d::$T, x::Symbolics.Arr)
-        invoke(Distributions.$f, Tuple{$T, AbstractArray}, d, x)
+        return invoke(Distributions.$f, Tuple{$T, AbstractArray}, d, x)
     end
 end
 
 # `Flat` defines only `logpdf(::Flat, ::Real)`, so `::Num` is its single collision.
 function Distributions.logpdf(d::Flat, x::Symbolics.Num)
-    invoke(Distributions.logpdf, Tuple{Flat, Real}, d, x)
+    return invoke(Distributions.logpdf, Tuple{Flat, Real}, d, x)
 end

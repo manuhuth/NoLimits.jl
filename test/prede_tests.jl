@@ -17,7 +17,7 @@ using Lux
     build = get_prede_builder(prede)
     out = build(fixed_effects, random_effects, NamedTuple(), NamedTuple(), helper_functions)
     @test out.a == 3.0
-    @test isapprox(out.b, 3.0 / 4.0; rtol = 1e-6, atol = 1e-8)
+    @test isapprox(out.b, 3.0 / 4.0; rtol = 1.0e-6, atol = 1.0e-8)
 end
 
 @testset "PreDifferentialEquation bindings" begin
@@ -30,7 +30,8 @@ end
     constant_features_i = (x = (Age = 5.0,),)
     build = get_prede_builder(prede)
     out = build(
-        fixed_effects, random_effects, constant_features_i, NamedTuple(), NamedTuple())
+        fixed_effects, random_effects, constant_features_i, NamedTuple(), NamedTuple()
+    )
     @test out.v == 6.0
 end
 
@@ -73,5 +74,6 @@ end
 
     build = get_prede_builder(prede)
     out = build(
-        fixed_effects, random_effects, constant_features_i, model_funs, NamedTuple())
+        fixed_effects, random_effects, constant_features_i, model_funs, NamedTuple()
+    )
 end

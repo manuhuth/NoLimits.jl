@@ -147,7 +147,7 @@ sensitivity analysis").
 @inline function _de_state_at(sol::SciMLBase.AbstractODESolution, idx, t)
     ts = sol.t
     i = searchsortedfirst(ts, t)
-    if i <= length(ts) && @inbounds(ts[i]==t)
+    if i <= length(ts) && @inbounds(ts[i] == t)
         return @inbounds sol.u[i][idx]
     end
     return sol(t; idxs = idx)
@@ -257,20 +257,20 @@ Base.getindex(p::DEParams, i::Int) = i <= length(p.θ) ? p.θ[i] : p.η[i - leng
 # every single iteration step.
 
 function Base.size(t::DETunable)
-    t.mode == :θ ? (length(t.θ),) :
-    t.mode == :η ? (length(t.η),) :
-    (length(t.θ) + length(t.η),)
+    return t.mode == :θ ? (length(t.θ),) :
+        t.mode == :η ? (length(t.η),) :
+        (length(t.θ) + length(t.η),)
 end
 function Base.length(t::DETunable)
-    t.mode == :θ ? length(t.θ) :
-    t.mode == :η ? length(t.η) :
-    length(t.θ) + length(t.η)
+    return t.mode == :θ ? length(t.θ) :
+        t.mode == :η ? length(t.η) :
+        length(t.θ) + length(t.η)
 end
 Base.axes(t::DETunable) = (Base.OneTo(length(t)),)
 function Base.getindex(t::DETunable, i::Int)
-    t.mode == :θ ? t.θ[i] :
-    t.mode == :η ? t.η[i] :
-    (i <= length(t.θ) ? t.θ[i] : t.η[i - length(t.θ)])
+    return t.mode == :θ ? t.θ[i] :
+        t.mode == :η ? t.η[i] :
+        (i <= length(t.θ) ? t.θ[i] : t.η[i - length(t.θ)])
 end
 
 # ---------------------------------------------------------------------------
@@ -319,7 +319,7 @@ _flat_len(v) = 0
 _flat_slot(v::Bool, o::Int) = DEVarConst(v)
 _flat_slot(::Real, o::Int) = DEVarSlot{0}(o, ())
 function _flat_slot(v::AbstractArray{<:Real, N}, o::Int) where {N}
-    eltype(v) === Bool ? DEVarConst(v) : DEVarSlot{N}(o, size(v))
+    return eltype(v) === Bool ? DEVarConst(v) : DEVarSlot{N}(o, size(v))
 end
 _flat_slot(v, o::Int) = DEVarConst(v)
 
@@ -363,14 +363,16 @@ end
 Pack the compiled DE `vars` values into a fresh flat `Vector{T}` following `layout`
 (arrays in column-major order, matching [`_vars_from_flat`](@ref)).
 """
-function _flat_pack(vars::NamedTuple{names}, layout::NamedTuple{names},
-        len::Int, ::Type{T}) where {names, T}
+function _flat_pack(
+        vars::NamedTuple{names}, layout::NamedTuple{names},
+        len::Int, ::Type{T}
+    ) where {names, T}
     p = Vector{T}(undef, len)
     _flat_pack_fill!(p, values(vars), values(layout))
     return p
 end
 function _flat_pack(::NamedTuple{()}, ::NamedTuple{()}, len::Int, ::Type{T}) where {T}
-    Vector{T}(undef, 0)
+    return Vector{T}(undef, 0)
 end
 
 """
@@ -381,7 +383,8 @@ indexing, vectors as views, matrices as reshaped views — zero-copy and type-st
 from the layout type.
 """
 @generated function _vars_from_flat(
-        p::AbstractVector, layout::NamedTuple{names, S}) where {names, S}
+        p::AbstractVector, layout::NamedTuple{names, S}
+    ) where {names, S}
     isempty(names) && return :(NamedTuple())
     exprs = Any[]
     for (i, _) in enumerate(names)
@@ -393,15 +396,28 @@ from the layout type.
             if N == 0
                 push!(exprs, :(@inbounds p[layout[$i].offset]))
             elseif N == 1
-                push!(exprs,
-                    :(@inbounds view(p,
-                        (layout[$i].offset):(layout[$i].offset + layout[$i].dims[1] - 1))))
+                push!(
+                    exprs,
+                    :(
+                        @inbounds view(
+                            p,
+                            (layout[$i].offset):(layout[$i].offset + layout[$i].dims[1] - 1)
+                        )
+                    )
+                )
             else
-                push!(exprs,
-                    :(reshape(
-                        view(p,
-                            (layout[$i].offset):(layout[$i].offset + prod(layout[$i].dims) - 1)),
-                        layout[$i].dims)))
+                push!(
+                    exprs,
+                    :(
+                        reshape(
+                            view(
+                                p,
+                                (layout[$i].offset):(layout[$i].offset + prod(layout[$i].dims) - 1)
+                            ),
+                            layout[$i].dims
+                        )
+                    )
+                )
             end
         end
     end
@@ -433,14 +449,17 @@ end
 function _de_build_compiled(θ::ComponentArray, η::ComponentArray, static::DEStaticContext)
     fe_un = static.inverse_transform(θ)
     prede = static.prede_builder(
-        fe_un, η, static.constant_covariates, static.model_funs, static.helpers)
-    raw = (; fixed_effects = fe_un,
+        fe_un, η, static.constant_covariates, static.model_funs, static.helpers
+    )
+    raw = (;
+        fixed_effects = fe_un,
         random_effects = η,
         constant_covariates = static.constant_covariates,
         varying_covariates = static.varying_covariates,
         helpers = static.helpers,
         model_funs = static.model_funs,
-        preDE = prede)
+        preDE = prede,
+    )
     return static.de_compiler(raw)
 end
 
@@ -463,7 +482,8 @@ Construct a [`DEParams`](@ref) struct suitable for passing to an ODE solver.
 - `inverse_transform`: inverse parameter transform; defaults to `identity`.
 - `tunable::Symbol = :both`: which parameters are tunable (`:θ`, `:η`, or `:both`).
 """
-function build_de_params(de::DifferentialEquation,
+function build_de_params(
+        de::DifferentialEquation,
         θ::ComponentArray;
         random_effects::ComponentArray = ComponentArray(NamedTuple()),
         constant_covariates::NamedTuple = NamedTuple(),
@@ -472,10 +492,13 @@ function build_de_params(de::DifferentialEquation,
         model_funs::NamedTuple = NamedTuple(),
         prede_builder = (fe, re, consts, model_funs, helpers) -> NamedTuple(),
         inverse_transform = identity,
-        tunable::Symbol = :both)
-    static = DEStaticContext(constant_covariates, varying_covariates,
+        tunable::Symbol = :both
+    )
+    static = DEStaticContext(
+        constant_covariates, varying_covariates,
         helpers, model_funs, prede_builder, inverse_transform,
-        get_de_compiler(de), tunable)
+        get_de_compiler(de), tunable
+    )
     tunable in (:θ, :η, :both) || error("tunable must be :θ, :η, or :both.")
     compiled = _de_build_compiled(θ, random_effects, static)
     return DEParams{eltype(θ), typeof(static)}(θ, random_effects, static, compiled)
@@ -572,13 +595,16 @@ function _de_rewrite_symbol(ex, state_map::Dict{Symbol, Int}, var_syms::Set{Symb
 end
 
 function _de_rewrite_all(
-        ex, state_map::Dict{Symbol, Int}, var_syms::Set{Symbol}, fun_syms::Set{Symbol})
+        ex, state_map::Dict{Symbol, Int}, var_syms::Set{Symbol}, fun_syms::Set{Symbol}
+    )
     ex isa Symbol && return _de_rewrite_symbol(ex, state_map, var_syms)
     ex isa Expr || return ex
     if ex.head == :call
         f = ex.args[1]
-        new_args = [_de_rewrite_all(arg, state_map, var_syms, fun_syms)
-                    for arg in ex.args[2:end]]
+        new_args = [
+            _de_rewrite_all(arg, state_map, var_syms, fun_syms)
+                for arg in ex.args[2:end]
+        ]
         if f isa Symbol && f in fun_syms
             return Expr(:call, Expr(:., :funs, QuoteNode(f)), new_args...)
         end
@@ -587,8 +613,10 @@ function _de_rewrite_all(
         base = _de_rewrite_all(ex.args[1], state_map, var_syms, fun_syms)
         return Expr(:., base, ex.args[2])
     else
-        return Expr(ex.head,
-            map(arg -> _de_rewrite_all(arg, state_map, var_syms, fun_syms), ex.args)...)
+        return Expr(
+            ex.head,
+            map(arg -> _de_rewrite_all(arg, state_map, var_syms, fun_syms), ex.args)...
+        )
     end
 end
 
@@ -597,7 +625,7 @@ function _de_replace_signal_calls(ex, names::Set{Symbol})
     if ex.head == :call
         f = ex.args[1]
         if f isa Symbol && f in names && length(ex.args) == 2 &&
-           (ex.args[2] == :t || ex.args[2] == :ξ)
+                (ex.args[2] == :t || ex.args[2] == :ξ)
             return f
         end
     end
@@ -724,132 +752,183 @@ macro DifferentialEquation(block)
     delete!(var_syms, :u)
     delete!(var_syms, :du)
 
-    call_syms = Set([s
-                     for s in call_syms
-                     if !(isdefined(Base, s) || isdefined(@__MODULE__, s))])
+    call_syms = Set(
+        [
+            s
+                for s in call_syms
+                if !(isdefined(Base, s) || isdefined(@__MODULE__, s))
+        ]
+    )
     var_syms = _macro_filter_var_syms(var_syms)
 
-    var_syms_no_states = Set([s
-                              for s in var_syms
-                              if !(s in state_names) && !(s in signal_set)])
+    var_syms_no_states = Set(
+        [
+            s
+                for s in var_syms
+                if !(s in state_names) && !(s in signal_set)
+        ]
+    )
     fun_syms = Set([s for s in call_syms if !(s in signal_set)])
     state_map = Dict{Symbol, Int}((state_names[i] => i) for i in eachindex(state_names))
-    rhs_fast = [_de_rewrite_all(ex, state_map, var_syms_no_states, fun_syms)
-                for ex in rhs_rewritten]
-    signal_fast = [_de_rewrite_all(ex, state_map, var_syms_no_states, fun_syms)
-                   for ex in signal_rewritten]
+    rhs_fast = [
+        _de_rewrite_all(ex, state_map, var_syms_no_states, fun_syms)
+            for ex in rhs_rewritten
+    ]
+    signal_fast = [
+        _de_rewrite_all(ex, state_map, var_syms_no_states, fun_syms)
+            for ex in signal_rewritten
+    ]
 
-    compile_vars = [quote
-                        if hasproperty(preDE, $(QuoteNode(sym)))
-                            getproperty(preDE, $(QuoteNode(sym)))
-                        elseif hasproperty(random_effects, $(QuoteNode(sym)))
-                            getproperty(random_effects, $(QuoteNode(sym)))
-                        elseif hasproperty(fixed_effects, $(QuoteNode(sym)))
-                            getproperty(fixed_effects, $(QuoteNode(sym)))
-                        elseif hasproperty(constant_covariates, $(QuoteNode(sym)))
-                            getproperty(constant_covariates, $(QuoteNode(sym)))
-                        else
-                            error("Unknown symbol $(string($(QuoteNode(sym)))) in DifferentialEquation.")
-                        end
-                    end
-                    for sym in var_syms_no_states]
-    vars_nt = Expr(:call,
+    compile_vars = [
+        quote
+                if hasproperty(preDE, $(QuoteNode(sym)))
+                    getproperty(preDE, $(QuoteNode(sym)))
+            elseif hasproperty(random_effects, $(QuoteNode(sym)))
+                    getproperty(random_effects, $(QuoteNode(sym)))
+            elseif hasproperty(fixed_effects, $(QuoteNode(sym)))
+                    getproperty(fixed_effects, $(QuoteNode(sym)))
+            elseif hasproperty(constant_covariates, $(QuoteNode(sym)))
+                    getproperty(constant_covariates, $(QuoteNode(sym)))
+            else
+                    error("Unknown symbol $(string($(QuoteNode(sym)))) in DifferentialEquation.")
+            end
+            end
+            for sym in var_syms_no_states
+    ]
+    vars_nt = Expr(
+        :call,
         Expr(:curly, :NamedTuple, Expr(:tuple, QuoteNode.(collect(var_syms_no_states))...)),
-        Expr(:tuple, compile_vars...))
+        Expr(:tuple, compile_vars...)
+    )
 
-    compile_funs = [quote
-                        if hasproperty(varying_covariates, $(QuoteNode(sym)))
-                            getproperty(varying_covariates, $(QuoteNode(sym)))
-                        elseif hasproperty(model_funs, $(QuoteNode(sym)))
-                            getproperty(model_funs, $(QuoteNode(sym)))
-                        elseif hasproperty(helper_functions, $(QuoteNode(sym)))
-                            getproperty(helper_functions, $(QuoteNode(sym)))
-                        else
-                            error("Unknown function $(string($(QuoteNode(sym)))) in DifferentialEquation.")
-                        end
-                    end
-                    for sym in fun_syms]
+    compile_funs = [
+        quote
+                if hasproperty(varying_covariates, $(QuoteNode(sym)))
+                    getproperty(varying_covariates, $(QuoteNode(sym)))
+            elseif hasproperty(model_funs, $(QuoteNode(sym)))
+                    getproperty(model_funs, $(QuoteNode(sym)))
+            elseif hasproperty(helper_functions, $(QuoteNode(sym)))
+                    getproperty(helper_functions, $(QuoteNode(sym)))
+            else
+                    error("Unknown function $(string($(QuoteNode(sym)))) in DifferentialEquation.")
+            end
+            end
+            for sym in fun_syms
+    ]
     funs_nt = Expr(
         :call, Expr(:curly, :NamedTuple, Expr(:tuple, QuoteNode.(collect(fun_syms))...)),
-        Expr(:tuple, compile_funs...))
+        Expr(:tuple, compile_funs...)
+    )
 
-    compile_expr = :(function (p)
-        fixed_effects = p.fixed_effects
-        random_effects = p.random_effects
-        constant_covariates = p.constant_covariates
-        varying_covariates = p.varying_covariates
-        helper_functions = p.helpers
-        model_funs = p.model_funs
-        preDE = p.preDE
-        vars = $vars_nt
-        funs = $funs_nt
-        return (vars = vars, funs = funs)
-    end)
+    compile_expr = :(
+        function (p)
+            fixed_effects = p.fixed_effects
+            random_effects = p.random_effects
+            constant_covariates = p.constant_covariates
+            varying_covariates = p.varying_covariates
+            helper_functions = p.helpers
+            model_funs = p.model_funs
+            preDE = p.preDE
+            vars = $vars_nt
+            funs = $funs_nt
+            return (vars = vars, funs = funs)
+        end
+    )
 
     state_binds = [:($(state_names[i]) = u[$i]) for i in eachindex(state_names)]
-    signal_assigns = [:($(signal_names[i]) = $(signal_fast[i]))
-                      for i in eachindex(signal_names)]
+    signal_assigns = [
+        :($(signal_names[i]) = $(signal_fast[i]))
+            for i in eachindex(signal_names)
+    ]
     du_assigns = [:(du[$i] = $(rhs_fast[i])) for i in eachindex(state_names)]
     f_expr = Expr(:vect, rhs_fast...)
 
-    f!_expr = :(function (du::AbstractVector,
-            u::AbstractVector,
-            p,
-            t)
-        vars = p.vars
-        funs = p.funs
-        $(state_binds...)
-        $(signal_assigns...)
-        $(du_assigns...)
-        return nothing
-    end)
+    f!_expr = :(
+        function (
+                du::AbstractVector,
+                u::AbstractVector,
+                p,
+                t,
+            )
+            vars = p.vars
+            funs = p.funs
+            $(state_binds...)
+            $(signal_assigns...)
+            $(du_assigns...)
+            return nothing
+        end
+    )
 
-    f_expr = :(function (u::AbstractVector, p, t)
-        vars = p.vars
-        funs = p.funs
-        $(state_binds...)
-        $(signal_assigns...)
-        return $f_expr
-    end)
+    f_expr = :(
+        function (u::AbstractVector, p, t)
+            vars = p.vars
+            funs = p.funs
+            $(state_binds...)
+            $(signal_assigns...)
+            return $f_expr
+        end
+    )
 
-    state_sol_binds = [:($(state_names[i]) = $(_de_state_at)(sol, $i, t))
-                       for i in eachindex(state_names)]
-    signal_fn_exprs = [:(function (sol, pc, t)
-                           vars = pc.vars
-                           funs = pc.funs
-                           $(state_sol_binds...)
-                           $(signal_assigns[1:i]...)
-                           return $(signal_names[i])
-                       end) for i in eachindex(signal_names)]
+    state_sol_binds = [
+        :($(state_names[i]) = $(_de_state_at)(sol, $i, t))
+            for i in eachindex(state_names)
+    ]
+    signal_fn_exprs = [
+        :(
+                function (sol, pc, t)
+                    vars = pc.vars
+                    funs = pc.funs
+                    $(state_sol_binds...)
+                    $(signal_assigns[1:i]...)
+                    return $(signal_names[i])
+            end
+            ) for i in eachindex(signal_names)
+    ]
     accessor_names = vcat(state_names, signal_names)
     accessor_vals = vcat(
         [:(DEStateAccessor(sol, $i)) for i in eachindex(state_names)],
         [:(DESignalAccessor(sol, pc, signal_fns[$i])) for i in eachindex(signal_names)]
     )
-    accessors_nt = Expr(:call,
+    accessors_nt = Expr(
+        :call,
         Expr(:curly, :NamedTuple, Expr(:tuple, QuoteNode.(accessor_names)...)),
-        Expr(:tuple, accessor_vals...))
+        Expr(:tuple, accessor_vals...)
+    )
     accessors_fn_sym = gensym(:de_accessors_)
-    accessors_expr = :(function $(accessors_fn_sym)(sol, pc)
-        return $accessors_nt
-    end)
+    accessors_expr = :(
+        function $(accessors_fn_sym)(sol, pc)
+            return $accessors_nt
+        end
+    )
 
     state_names_expr = Expr(:vect, QuoteNode.(state_names)...)
     signal_names_expr = Expr(:vect, QuoteNode.(signal_names)...)
     lines_expr = Expr(:vect, QuoteNode.(line_exprs)...)
     return quote
         compile_rgf = RuntimeGeneratedFunction(
-            @__MODULE__, @__MODULE__, $(QuoteNode(compile_expr)))
+            @__MODULE__, @__MODULE__, $(QuoteNode(compile_expr))
+        )
         f!_rgf = RuntimeGeneratedFunction(@__MODULE__, @__MODULE__, $(QuoteNode(f!_expr)))
         f_rgf = RuntimeGeneratedFunction(@__MODULE__, @__MODULE__, $(QuoteNode(f_expr)))
-        meta = DifferentialEquationMeta($state_names_expr, $signal_names_expr,
+        meta = DifferentialEquationMeta(
+            $state_names_expr, $signal_names_expr,
             $(Expr(:vect, map(QuoteNode, collect(var_syms_no_states))...)),
             $(Expr(:vect, map(QuoteNode, collect(fun_syms))...)),
-            $lines_expr)
+            $lines_expr
+        )
         builders = DifferentialEquationBuilders(compile_rgf, f!_rgf, f_rgf)
-        signal_fns = ($([:(RuntimeGeneratedFunction(
-                             @__MODULE__, @__MODULE__, $(QuoteNode(signal_fn_exprs[i]))))
-                         for i in eachindex(signal_fn_exprs)]...),)
+        signal_fns = (
+            $(
+                [
+                    :(
+                            RuntimeGeneratedFunction(
+                                @__MODULE__, @__MODULE__, $(QuoteNode(signal_fn_exprs[i]))
+                            )
+                        )
+                        for i in eachindex(signal_fn_exprs)
+                ]...
+            ),
+        )
         $(accessors_expr)
         DifferentialEquation(meta, builders, $(accessors_fn_sym))
     end

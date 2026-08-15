@@ -51,8 +51,9 @@ function MAP(;
         lb = nothing,
         ub = nothing,
         ignore_model_bounds = false,
-        precondition = true)
-    MAP(optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds, precondition)
+        precondition = true
+    )
+    return MAP(optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds, precondition)
 end
 
 # MAPResult is a StandardOptimizationResult{:map} alias + constructor (see common.jl).
@@ -66,7 +67,8 @@ end
     return -lp
 end
 
-function _fit_model(dm::DataModel, method::MAP, args...;
+function _fit_model(
+        dm::DataModel, method::MAP, args...;
         constants::NamedTuple = NamedTuple(),
         penalty::NamedTuple = NamedTuple(),
         extra_objective = nothing,
@@ -75,7 +77,8 @@ function _fit_model(dm::DataModel, method::MAP, args...;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
-        store_data_model::Bool = true)
+        store_data_model::Bool = true
+    )
     fe = get_fixed(get_model(dm))
     has_prior = _has_fixed_priors(fe, constants)
     has_prior ||
@@ -83,15 +86,18 @@ function _fit_model(dm::DataModel, method::MAP, args...;
 
     _warn_unbounded_prior_at_bounds(fe)
     add_term = _combine_add_terms(_MAPTerm(fe), extra_objective)
-    fit_kwargs = (constants = constants,
+    fit_kwargs = (
+        constants = constants,
         penalty = penalty,
         ode_args = ode_args,
         ode_kwargs = ode_kwargs,
         serialization = serialization,
         rng = rng,
         theta_0_untransformed = theta_0_untransformed,
-        store_data_model = store_data_model)
-    return _fit_no_re(dm, method;
+        store_data_model = store_data_model,
+    )
+    return _fit_no_re(
+        dm, method;
         constants = constants,
         penalty = penalty,
         ode_args = ode_args,
@@ -101,5 +107,6 @@ function _fit_model(dm::DataModel, method::MAP, args...;
         theta_0_untransformed = theta_0_untransformed,
         store_data_model = store_data_model,
         fit_args = args,
-        fit_kwargs = fit_kwargs)
+        fit_kwargs = fit_kwargs
+    )
 end

@@ -31,8 +31,10 @@ const _MH_SCALAR_MODEL = @Model begin
     end
 end
 
-function _mh_scalar_dm(rng; n_id = 20, inner = 3, true_a = 1.0, true_σ = 0.3,
-        true_τ = 0.5, tmax = 1.0)
+function _mh_scalar_dm(
+        rng; n_id = 20, inner = 3, true_a = 1.0, true_σ = 0.3,
+        true_τ = 0.5, tmax = 1.0
+    )
     ids = repeat(1:n_id, inner = inner)
     ts = repeat(range(0.0, tmax; length = inner), n_id)
     ηs = true_τ .* randn(rng, n_id)
@@ -47,25 +49,29 @@ end
 
 @testset "AdaptiveNoLimitsMH constructor" begin
     @test AdaptiveNoLimitsMH() isa AdaptiveNoLimitsMH
-    s = AdaptiveNoLimitsMH(adapt_start = 10, init_scale = 2.0, eps_reg = 1e-4)
+    s = AdaptiveNoLimitsMH(adapt_start = 10, init_scale = 2.0, eps_reg = 1.0e-4)
     @test s.adapt_start == 10
     @test s.init_scale == 2.0
-    @test s.eps_reg == 1e-4
+    @test s.eps_reg == 1.0e-4
     @test_throws ArgumentError AdaptiveNoLimitsMH(adapt_start = -1)
     @test_throws ArgumentError AdaptiveNoLimitsMH(init_scale = 0.0)
     @test_throws ArgumentError AdaptiveNoLimitsMH(eps_reg = 0.0)
 end
 
 @testset "AdaptiveNoLimitsMH Normal RE recovery" begin
-    dm = _mh_scalar_dm(MersenneTwister(42); n_id = 20, inner = 3,
-        true_a = 1.0, true_σ = 0.3, true_τ = 0.5)
-    res = fit_model(dm,
+    dm = _mh_scalar_dm(
+        MersenneTwister(42); n_id = 20, inner = 3,
+        true_a = 1.0, true_σ = 0.3, true_τ = 0.5
+    )
+    res = fit_model(
+        dm,
         SAEM(
             sampler = AdaptiveNoLimitsMH(adapt_start = 5),
             maxiters = 2,
             mcmc_steps = 20,
             progress = false
-        ))
+        )
+    )
 
     params = NoLimits.get_params(res; scale = :untransformed)
     @test abs(params.a - 1.0) < 1.0
@@ -74,16 +80,20 @@ end
 end
 
 @testset "AdaptiveNoLimitsMH warm-start state persistence" begin
-    dm = _mh_scalar_dm(MersenneTwister(7); n_id = 10, inner = 2,
-        true_a = 1.0, true_σ = 0.5, true_τ = 0.0)
-    res = fit_model(dm,
+    dm = _mh_scalar_dm(
+        MersenneTwister(7); n_id = 10, inner = 2,
+        true_a = 1.0, true_σ = 0.5, true_τ = 0.0
+    )
+    res = fit_model(
+        dm,
         SAEM(
             sampler = AdaptiveNoLimitsMH(adapt_start = 2),
             maxiters = 2,
             mcmc_steps = 5,
             progress = false,
             warm_start = true
-        ))
+        )
+    )
     @test NoLimits.get_iterations(res) == 2
 end
 
@@ -115,13 +125,15 @@ end
     end
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         SAEM(
             sampler = AdaptiveNoLimitsMH(adapt_start = 5),
             maxiters = 2,
             mcmc_steps = 10,
             progress = false
-        ))
+        )
+    )
     params = NoLimits.get_params(res; scale = :untransformed)
     @test abs(params.a - 1.0) < 1.5
 end
@@ -153,9 +165,13 @@ end
     end
 
     dm_ln = DataModel(model_ln, df_ln; primary_id = :ID, time_col = :t)
-    res_ln = fit_model(dm_ln,
-        SAEM(sampler = AdaptiveNoLimitsMH(adapt_start = 2),
-            maxiters = 1, mcmc_steps = 5, progress = false))
+    res_ln = fit_model(
+        dm_ln,
+        SAEM(
+            sampler = AdaptiveNoLimitsMH(adapt_start = 2),
+            maxiters = 1, mcmc_steps = 5, progress = false
+        )
+    )
     @test NoLimits.get_converged(res_ln) isa Bool
     @test plot_random_effects_pdf(res_ln) !== nothing
     @test plot_random_effects_scatter(res_ln) !== nothing
@@ -164,7 +180,8 @@ end
     # MvLogitNormal: η ∈ (0,1)^2
     ηs_lit = 1 ./ (1 .+ exp.(randn(rng, n_id, 2)))
     df_lit = DataFrame(
-        ID = ids, t = ts, y = ηs_lit[ids, 1] .+ 0.05 .* randn(rng, length(ids)))
+        ID = ids, t = ts, y = ηs_lit[ids, 1] .+ 0.05 .* randn(rng, length(ids))
+    )
 
     model_lit = @Model begin
         @fixedEffects begin
@@ -183,9 +200,13 @@ end
     end
 
     dm_lit = DataModel(model_lit, df_lit; primary_id = :ID, time_col = :t)
-    res_lit = fit_model(dm_lit,
-        SAEM(sampler = AdaptiveNoLimitsMH(adapt_start = 2),
-            maxiters = 1, mcmc_steps = 5, progress = false))
+    res_lit = fit_model(
+        dm_lit,
+        SAEM(
+            sampler = AdaptiveNoLimitsMH(adapt_start = 2),
+            maxiters = 1, mcmc_steps = 5, progress = false
+        )
+    )
     @test NoLimits.get_converged(res_lit) isa Bool
     @test plot_random_effects_pdf(res_lit) !== nothing
     @test plot_random_effects_scatter(res_lit) !== nothing
@@ -218,13 +239,15 @@ end
     end
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         SAEM(
             sampler = AdaptiveNoLimitsMH(adapt_start = 5),
             maxiters = 2,
             mcmc_steps = 10,
             progress = false
-        ))
+        )
+    )
     params = NoLimits.get_params(res; scale = :untransformed)
     @test 0.0 < params.σ < 2.0
     @test 0.0 < params.σ_η < 2.0
@@ -236,8 +259,10 @@ end
 
 function _saemixmh_retry_setup(; seed = 123, n_id = 24, inner = 4)
     rng = MersenneTwister(seed)
-    dm = _mh_scalar_dm(rng; n_id = n_id, inner = inner,
-        true_a = 1.5, true_σ = 0.4, true_τ = 0.6, tmax = 1.5)
+    dm = _mh_scalar_dm(
+        rng; n_id = n_id, inner = inner,
+        true_a = 1.5, true_σ = 0.4, true_τ = 0.6, tmax = 1.5
+    )
     _, batch_infos, const_cache = NoLimits._build_re_batch_infos(dm, NamedTuple())
     θ = get_θ0_untransformed(dm.model.fixed.fixed)
     ll_cache = NoLimits.build_ll_cache(dm; nthreads = Threads.maxthreadid())
@@ -246,10 +271,14 @@ function _saemixmh_retry_setup(; seed = 123, n_id = 24, inner = 4)
     effective_n_chains = 1
     state_slot = Union{Nothing, NoLimits._SaemixMHState}
     last_chain_params = [state_slot[nothing] for _ in eachindex(batch_infos)]
-    b_chains = [[zeros(eltype(θ), info.n_b) for _ in 1:effective_n_chains]
-                for info in batch_infos]
-    return (; dm, batch_infos, const_cache, θ, ll_cache, re_names, batch_rngs,
-        effective_n_chains, last_chain_params, b_chains)
+    b_chains = [
+        [zeros(eltype(θ), info.n_b) for _ in 1:effective_n_chains]
+            for info in batch_infos
+    ]
+    return (;
+        dm, batch_infos, const_cache, θ, ll_cache, re_names, batch_rngs,
+        effective_n_chains, last_chain_params, b_chains,
+    )
 end
 
 @testset "SaemixMH constructor" begin
@@ -262,8 +291,10 @@ end
     @test s.stepsize_rw == 0.4
     @test s.rw_init == 0.5
 
-    s2 = SaemixMH(n_kern1 = 3, n_kern2 = 1, n_kern3 = 4,
-        proba_mcmc = 0.234, stepsize_rw = 0.5, rw_init = 0.7)
+    s2 = SaemixMH(
+        n_kern1 = 3, n_kern2 = 1, n_kern3 = 4,
+        proba_mcmc = 0.234, stepsize_rw = 0.5, rw_init = 0.7
+    )
     @test s2.n_kern1 == 3
     @test s2.n_kern2 == 1
     @test s2.n_kern3 == 4
@@ -277,9 +308,12 @@ end
 end
 
 @testset "SaemixMH Normal RE recovery" begin
-    dm = _mh_scalar_dm(MersenneTwister(17); n_id = 30, inner = 4,
-        true_a = 2.0, true_σ = 0.4, true_τ = 0.8, tmax = 1.5)
-    res = fit_model(dm,
+    dm = _mh_scalar_dm(
+        MersenneTwister(17); n_id = 30, inner = 4,
+        true_a = 2.0, true_σ = 0.4, true_τ = 0.8, tmax = 1.5
+    )
+    res = fit_model(
+        dm,
         SAEM(
             sampler = SaemixMH(n_kern1 = 2, n_kern2 = 2),
             maxiters = 2,
@@ -287,7 +321,8 @@ end
             mcmc_steps = 1,
             q_store_max = 2,
             progress = false
-        ))
+        )
+    )
 
     params = NoLimits.get_params(res; scale = :untransformed)
     @test abs(params.a - 2.0) < 0.8
@@ -325,22 +360,27 @@ end
     end
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         SAEM(
             sampler = SaemixMH(),
             maxiters = 2,
             mcmc_steps = 1,
             q_store_max = 2,
             progress = false
-        ))
+        )
+    )
 end
 
 @testset "SaemixMH closed-form M-step recovery" begin
-    dm = _mh_scalar_dm(MersenneTwister(99); n_id = 20, inner = 4,
-        true_a = 1.5, true_σ = 0.5, true_τ = 0.7, tmax = 1.5)
+    dm = _mh_scalar_dm(
+        MersenneTwister(99); n_id = 20, inner = 4,
+        true_a = 1.5, true_σ = 0.5, true_τ = 0.7, tmax = 1.5
+    )
 
     # With builtin_mean=:glm this triggers the closed-form mean update path
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         SAEM(
             sampler = SaemixMH(n_kern1 = 2, n_kern2 = 2),
             maxiters = 2,
@@ -350,7 +390,8 @@ end
             builtin_mean = :glm,
             re_cov_params = (; η = :τ),
             progress = false
-        ))
+        )
+    )
 
     params = NoLimits.get_params(res; scale = :untransformed)
     @test abs(params.a - 1.5) < 0.8
@@ -359,16 +400,20 @@ end
 end
 
 @testset "SaemixMH warm-start state persists" begin
-    dm = _mh_scalar_dm(MersenneTwister(55); n_id = 10, inner = 3,
-        true_a = 1.0, true_σ = 0.3, true_τ = 0.0)
-    res = fit_model(dm,
+    dm = _mh_scalar_dm(
+        MersenneTwister(55); n_id = 10, inner = 3,
+        true_a = 1.0, true_σ = 0.3, true_τ = 0.0
+    )
+    res = fit_model(
+        dm,
         SAEM(
             sampler = SaemixMH(),
             maxiters = 2,
             mcmc_steps = 1,
             q_store_max = 2,
             progress = false
-        ))
+        )
+    )
 
     # Diagnostics should report accept counts
     diag = NoLimits.get_diagnostics(res)
@@ -400,7 +445,8 @@ end
 
     @test err isa ErrorException
     @test occursin(
-        "SaemixMH dispatched to generic _mcem_sample_batch", sprint(showerror, err))
+        "SaemixMH dispatched to generic _mcem_sample_batch", sprint(showerror, err)
+    )
 end
 
 @testset "SaemixMH threaded batch sampler uses per-thread caches" begin
@@ -436,9 +482,12 @@ end
 @testset "SaemixMH threaded fit with mstep_sa_on_params stays finite" begin
     Threads.nthreads() < 2 && return
 
-    dm = _mh_scalar_dm(MersenneTwister(77); n_id = 30, inner = 4,
-        true_a = 1.5, true_σ = 0.4, true_τ = 0.6, tmax = 1.5)
-    res = fit_model(dm,
+    dm = _mh_scalar_dm(
+        MersenneTwister(77); n_id = 30, inner = 4,
+        true_a = 1.5, true_σ = 0.4, true_τ = 0.6, tmax = 1.5
+    )
+    res = fit_model(
+        dm,
         SAEM(
             sampler = SaemixMH(n_kern1 = 2, n_kern2 = 2),
             maxiters = 2,
@@ -450,7 +499,8 @@ end
             progress = false
         );
         serialization = EnsembleThreads(),
-        rng = MersenneTwister(991))
+        rng = MersenneTwister(991)
+    )
 end
 
 # ---------------------------------------------------------------------------
@@ -460,8 +510,10 @@ end
 # ---------------------------------------------------------------------------
 
 function _mstep_sa_dm(rng, n_id, inner)
-    _mh_scalar_dm(rng; n_id = n_id, inner = inner,
-        true_a = 1.5, true_σ = 0.4, true_τ = 0.6, tmax = 1.5)
+    return _mh_scalar_dm(
+        rng; n_id = n_id, inner = inner,
+        true_a = 1.5, true_σ = 0.4, true_τ = 0.6, tmax = 1.5
+    )
 end
 
 @testset "mstep_sa_on_params tests" begin
@@ -469,7 +521,8 @@ end
         rng = MersenneTwister(7)
         dm = _mstep_sa_dm(rng, 20, 4)
 
-        res = fit_model(dm,
+        res = fit_model(
+            dm,
             SAEM(
                 sampler = MH(),
                 maxiters = 2,
@@ -480,7 +533,8 @@ end
                 max_estep_retries = 3,
                 retry_mcmc_steps = 1,
                 progress = false
-            ))
+            )
+        )
 
         saem_diag = NoLimits.get_diagnostics(res).notes.diagnostics
         @test count(isfinite, saem_diag.Q_hist) >= length(saem_diag.Q_hist) ÷ 2
@@ -490,7 +544,8 @@ end
         rng = MersenneTwister(17)
         dm = _mstep_sa_dm(rng, 20, 4)
 
-        res = fit_model(dm,
+        res = fit_model(
+            dm,
             SAEM(
                 sampler = SaemixMH(n_kern1 = 2, n_kern2 = 2),
                 maxiters = 2,
@@ -498,14 +553,16 @@ end
                 q_store_max = 2,
                 mstep_sa_on_params = true,
                 progress = false
-            ))
+            )
+        )
     end
 
     @testset "q_store_max ignored — same trajectory as q_store_max=2" begin
         function _run(q_max, seed)
             rng = MersenneTwister(seed)
             dm = _mstep_sa_dm(rng, 15, 3)
-            fit_model(dm,
+            fit_model(
+                dm,
                 SAEM(
                     sampler = SaemixMH(n_kern1 = 2, n_kern2 = 2),
                     maxiters = 2,
@@ -513,7 +570,8 @@ end
                     q_store_max = q_max,
                     mstep_sa_on_params = true,
                     progress = false
-                ); rng = MersenneTwister(seed))
+                ); rng = MersenneTwister(seed)
+            )
         end
 
         res1 = _run(1, 42)
@@ -530,7 +588,8 @@ end
         rng = MersenneTwister(13)
         dm = _mstep_sa_dm(rng, 20, 4)
 
-        res = fit_model(dm,
+        res = fit_model(
+            dm,
             SAEM(
                 sampler = SaemixMH(n_kern1 = 2, n_kern2 = 2),
                 maxiters = 2,
@@ -539,7 +598,8 @@ end
                 mstep_sa_on_params = true,
                 re_cov_params = (; η = :τ),
                 progress = false
-            ))
+            )
+        )
 
         params = NoLimits.get_params(res; scale = :untransformed)
         @test 0.05 < params.σ < 5.0
@@ -549,8 +609,10 @@ end
     @testset "constructor validation — max_estep_retries and retry_mcmc_steps" begin
         @test_throws Exception SAEM(max_estep_retries = -1)
         @test_throws Exception SAEM(retry_mcmc_steps = 0)
-        s = SAEM(mstep_sa_on_params = true, max_estep_retries = 5, retry_mcmc_steps = 2,
-            progress = false)
+        s = SAEM(
+            mstep_sa_on_params = true, max_estep_retries = 5, retry_mcmc_steps = 2,
+            progress = false
+        )
         @test s.saem.max_estep_retries == 5
         @test s.saem.retry_mcmc_steps == 2
     end
