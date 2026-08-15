@@ -554,6 +554,30 @@ function SAEM(;
         error("SAEM: t0 must be ≥ 0. Got: $t0")
     isnothing(mcmc_steps) || mcmc_steps >= 1 ||
         error("SAEM: mcmc_steps must be ≥ 1. Got: $mcmc_steps")
+    _check_turing_kwargs("SAEM", turing_kwargs)
+    sa_schedule in (:robbins_monro, :two_phase, :custom) ||
+        error("SAEM: sa_schedule must be :robbins_monro, :two_phase or :custom. Got: :$sa_schedule")
+    sa_schedule !== :custom || sa_schedule_fn !== nothing ||
+        error("SAEM: sa_schedule=:custom requires sa_schedule_fn.")
+    # γ = k^sa_phase2_kappa with k ≥ 1, so only a negative exponent decays; anything else
+    # is clamped to a constant step, which is not a stochastic-approximation schedule.
+    isfinite(sa_phase2_kappa) && sa_phase2_kappa < 0 ||
+        error("SAEM: sa_phase2_kappa must be a finite negative number. Got: $sa_phase2_kappa")
+    small_n_chain_target >= 1 ||
+        error("SAEM: small_n_chain_target must be ≥ 1. Got: $small_n_chain_target")
+    anneal_min_sd > 0 ||
+        error("SAEM: anneal_min_sd must be > 0. Got: $anneal_min_sd")
+    var_lb_value > 0 ||
+        error("SAEM: var_lb_value must be > 0. Got: $var_lb_value")
+    # 0 is the documented way to disable the annealing floor entirely.
+    isfinite(sa_anneal_alpha) && 0 <= sa_anneal_alpha <= 1 ||
+        error("SAEM: sa_anneal_alpha must be in [0, 1]. Got: $sa_anneal_alpha")
+    sa_anneal_schedule in (:exponential, :linear) ||
+        error("SAEM: sa_anneal_schedule must be :exponential or :linear. Got: :$sa_anneal_schedule")
+    isnothing(sa_anneal_iters) || sa_anneal_iters >= 1 ||
+        error("SAEM: sa_anneal_iters must be ≥ 1. Got: $sa_anneal_iters")
+    isnothing(sa_anneal_fn) ||
+        error("SAEM: sa_anneal_fn is reserved for future use and is not active; passing it would silently do nothing.")
     resolved_t0 = isnothing(t0) ? (maxiters ÷ 2) : t0
     resolved_sa_anneal_iters = isnothing(sa_anneal_iters) ? resolved_t0 : sa_anneal_iters
     ebe_rescue = EBERescueOptions(
@@ -622,7 +646,14 @@ end
 end
 
 function _saem_gamma_schedule(iter::Int, opts::SAEMOptions)
-    opts.sa_schedule === :custom && return opts.sa_schedule_fn(iter, opts)
+    if opts.sa_schedule === :custom
+        γ = opts.sa_schedule_fn(iter, opts)
+        # γ weights the new sufficient statistics against the stored ones; outside [0, 1]
+        # it amplifies Monte-Carlo noise instead of averaging it away (#229).
+        (γ isa Real && isfinite(γ) && 0 <= γ <= 1) ||
+            error("SAEM: sa_schedule_fn returned $(repr(γ)) at iteration $iter; it must be a finite number in [0, 1].")
+        return Float64(γ)
+    end
     if opts.sa_schedule === :robbins_monro
         iter <= opts.sa_burnin_iters && return 0.0
         iter <= opts.sa_burnin_iters + opts.t0 && return 1.0

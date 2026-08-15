@@ -434,15 +434,22 @@ end
 # Demotion ladder: :mean → :median → MC mean (flows) → :zero. Used when a
 # strategy's plug-in is not ForwardDiff-differentiable at the start values
 # (e.g. mean/median of a Normal truncated at Inf produce NaN partials).
-function _pooled_demote_strategy(strategy, dist, mc_draws::Int, rng::AbstractRNG)
+# `dists` holds the RE's distribution for EVERY individual: with covariate-dependent
+# distributions a median can exist for one individual and not for another, and the
+# plug-in has to work for all of them (#229).
+function _pooled_demote_strategy(strategy, dists, mc_draws::Int, rng::AbstractRNG)
+    dist = first(dists)
     is_flow = dist isa NormalizingPlanarFlow
     if strategy === :mean
-        med = try
-            median(dist)
-        catch
-            nothing
+        med_ok = all(dists) do d
+            med = try
+                median(d)
+            catch
+                nothing
+            end
+            return med !== nothing && all(isfinite, med)
         end
-        med !== nothing && all(isfinite, med) && return :median
+        med_ok && return :median
         return is_flow ? _PooledMCPlugin([rand(rng, dist.base.dist) for _ in 1:mc_draws]) :
             :zero
     elseif strategy === :median
@@ -464,10 +471,11 @@ function _pooled_dual_safe_strategies(
     re_names = get_re_names(lp_cache)
     dists_builder = create_random_effect_distribution(get_random(model))
     θs = _symmetrize_psd_params(θ_user_u, get_fixed(model))
-    dists = dists_builder(
-        θs, get_const_cov(first(get_individuals(dm))),
-        get_model_funs(model), get_helper_funs(model)
-    )
+    dists_all = [
+        dists_builder(
+                θs, get_const_cov(ind), get_model_funs(model), get_helper_funs(model)
+            ) for ind in get_individuals(dm)
+    ]
     axs = getaxes(θ_user_t)
     θ0_vec = _pooled_flat(θ_user_t)
     idx_all = collect(1:length(θ0_vec))
@@ -484,7 +492,7 @@ function _pooled_dual_safe_strategies(
             ok && break
             old = _pooled_plugin_label(strategies[ri])
             strategies[ri] = _pooled_demote_strategy(
-                strategies[ri], getproperty(dists, re),
+                strategies[ri], [getproperty(d, re) for d in dists_all],
                 mc_draws, rng
             )
             new = _pooled_plugin_label(strategies[ri])
@@ -510,27 +518,30 @@ function _pooled_spread_kinds(dm::DataModel, θ::ComponentArray)
     dists_builder = create_random_effect_distribution(get_random(model))
     model_funs = get_model_funs(model)
     helpers = get_helper_funs(model)
-    ind = first(get_individuals(dm))
     θs = _symmetrize_psd_params(θ, get_fixed(model))
-    dists = dists_builder(θs, get_const_cov(ind), model_funs, helpers)
+    # The spread measure is evaluated for every individual later on, so it has to exist
+    # for every individual — a covariate-dependent RE distribution can have a finite
+    # variance for the first individual and none for another (#229).
+    dists_all = [
+        dists_builder(θs, get_const_cov(ind), model_funs, helpers)
+            for ind in get_individuals(dm)
+    ]
+    ok(f, re) = all(
+        d -> _pooled_finite_or_nothing(() -> f(getproperty(d, re))) !== nothing,
+        dists_all
+    )
     kinds = Symbol[]
     for (ri, re) in enumerate(re_names)
-        dist = getproperty(dists, re)
         kind = if get_dims(lp_cache)[ri] == 1
-            if _pooled_finite_or_nothing(() -> var(dist)) !== nothing
+            if ok(var, re)
                 :var
-            elseif _pooled_finite_or_nothing(
-                    () -> quantile(dist, 0.75) -
-                        quantile(dist, 0.25)
-                ) !==
-                    nothing
+            elseif ok(d -> quantile(d, 0.75) - quantile(d, 0.25), re)
                 :iqr
             else
                 :none
             end
         else
-            _pooled_finite_or_nothing(() -> vec(Matrix(cov(dist)))) !== nothing ? :cov :
-                :none
+            ok(d -> vec(Matrix(cov(d))), re) ? :cov : :none
         end
         push!(kinds, kind)
     end
@@ -690,8 +701,12 @@ function _pooled_probe_points(
                 break
             end
         end
-        found || push!(probes, copy(θ0_vec))
+        # A failed jitter used to append a copy of the start point; duplicate rows make
+        # the rank/collinearity tests see fewer distinct probes than they think (#229).
+        found || continue
     end
+    length(probes) == n_probes ||
+        @warn "Pooled: only $(length(probes)) of $(n_probes) identifiability probe points could be evaluated; parameters are classified from fewer probes than requested."
     return probes
 end
 

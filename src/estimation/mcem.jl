@@ -81,6 +81,7 @@ struct MCEM_MCMC{S, K, SS} <: AbstractMCEMEStep
 
     function MCEM_MCMC(sampler::S, turing_kwargs::K, sample_schedule::SS, warm_start) where {S, K, SS}
         _check_sample_schedule(sample_schedule)
+        _check_turing_kwargs("MCEM", turing_kwargs)
         return new{S, K, SS}(sampler, turing_kwargs, sample_schedule, warm_start)
     end
 end
@@ -929,19 +930,27 @@ function _is_update_blocks!(
     return
 end
 
-# A user proposal must return `(samples::n_b × n_samples, log_qs::n_samples)` with finite
-# log densities; otherwise the failure surfaces as an opaque error inside weighting (#226).
-function _is_check_proposal_output(out, n_b::Int, n_samples::Int)
+# Every proposal — user-supplied or built in — must produce an `n_b × n_samples` real,
+# finite sample matrix and `n_samples` finite log densities. Non-finite samples reach the
+# likelihood AND the Haario adaptation, where they turn the proposal covariance into NaN
+# for every later iteration, so they are rejected here rather than downstream (#226, #229).
+# Returns the pair with `log_qs` narrowed to `Vector{Float64}`, which is what
+# `_is_compute_log_weights` dispatches on.
+function _is_check_proposal_output(out, n_b::Int, n_samples::Int, what::AbstractString)
     (out isa Tuple && length(out) == 2) ||
-        error("MCEM_IS: the proposal must return a (samples, log_qs) tuple. Got: $(typeof(out))")
+        error("MCEM_IS: $what must return a (samples, log_qs) tuple. Got: $(typeof(out))")
     samples, log_qs = out
     (samples isa AbstractMatrix && size(samples) == (n_b, n_samples)) ||
-        error("MCEM_IS: the proposal must return an $(n_b)×$(n_samples) sample matrix. Got: $(summary(samples))")
-    (log_qs isa AbstractVector && length(log_qs) == n_samples) ||
-        error("MCEM_IS: the proposal must return $(n_samples) log proposal densities. Got: $(summary(log_qs))")
+        error("MCEM_IS: $what must return an $(n_b)×$(n_samples) sample matrix. Got: $(summary(samples))")
+    eltype(samples) <: Real ||
+        error("MCEM_IS: $what returned a sample matrix of $(eltype(samples)); real numbers are required.")
+    all(isfinite, samples) ||
+        error("MCEM_IS: $what returned non-finite random-effect samples.")
+    (log_qs isa AbstractVector{<:Real} && length(log_qs) == n_samples) ||
+        error("MCEM_IS: $what must return $(n_samples) real log proposal densities. Got: $(summary(log_qs))")
     all(isfinite, log_qs) ||
-        error("MCEM_IS: the proposal returned non-finite log proposal densities.")
-    return nothing
+        error("MCEM_IS: $what returned non-finite log proposal densities.")
+    return (samples, convert(Vector{Float64}, log_qs))
 end
 
 # Unified IS E-step dispatcher for a single batch.
@@ -961,26 +970,37 @@ function _is_sample_batch(
     n_samples = e_step.n_samples
     proposal = e_step.proposal
     # Choose sampling strategy
-    samples, log_qs = if proposal === :prior
-        _is_prior_sample_batch(dm, info, θ, const_cache, cache, rng, n_samples, re_names)
-    elseif proposal === :gaussian
-        # Fall back to prior-based initial covariance until blocks have data
-        if isempty(blocks) || blocks[1].n_samples < 2
+    out, what = if proposal === :prior
+        (
             _is_prior_sample_batch(
-                dm, info, θ, const_cache, cache, rng, n_samples,
-                re_names
+                dm, info, θ, const_cache, cache, rng, n_samples, re_names
+            ), "the prior proposal",
+        )
+    elseif proposal === :gaussian
+        # Fall back to prior-based initial covariance until the blocks that actually
+        # carry levels have adapted — gating on blocks[1] alone keeps every effect on
+        # prior sampling whenever the first declared effect has no active level (#229).
+        adapting = [b for b in blocks if b.n_levels > 0 && b.dim > 0]
+        if isempty(adapting) || any(b -> b.n_samples < 2, adapting)
+            (
+                _is_prior_sample_batch(
+                    dm, info, θ, const_cache, cache, rng, n_samples, re_names
+                ), "the prior proposal",
             )
         else
-            _is_gaussian_sample_batch(dm, info, rng, n_samples, re_names, re_types, blocks)
+            (
+                _is_gaussian_sample_batch(
+                    dm, info, rng, n_samples, re_names, re_types, blocks
+                ), "the Gaussian proposal",
+            )
         end
     elseif proposal isa Function
         re_dists = _re_dists_for_info(dm, info, θ, cache)
-        out = proposal(θ, info, re_dists, rng, n_samples)
-        _is_check_proposal_output(out, get_n_b(info), n_samples)
-        out
+        (proposal(θ, info, re_dists, rng, n_samples), "the proposal")
     else
         error("MCEM_IS: unknown proposal type $(repr(proposal)). Use :prior, :gaussian, or a Function.")
     end
+    samples, log_qs = _is_check_proposal_output(out, get_n_b(info), n_samples, what)
     log_ws, ess = _is_compute_log_weights(dm, info, θ, const_cache, cache, samples, log_qs)
     return (samples, log_ws, ess)
 end

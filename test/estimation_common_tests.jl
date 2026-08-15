@@ -875,3 +875,29 @@ end
     @test NoLimits.SAEM(; maxiters = 3) isa NoLimits.SAEM
     @test NoLimits.MCEM(; sample_schedule = [5, 7]) isa NoLimits.MCEM
 end
+
+# Misspelled symbols used to silently select a different algorithm, and out-of-domain
+# schedule/annealing values silently changed the estimator (#229).
+@testset "estimator options reject invalid schedule settings" begin
+    @test_throws ErrorException NoLimits.SAEM(; sa_schedule = :bad)
+    @test_throws ErrorException NoLimits.SAEM(; sa_schedule = :custom)
+    @test_throws ErrorException NoLimits.SAEM(; sa_phase2_kappa = NaN)
+    @test_throws ErrorException NoLimits.SAEM(; sa_phase2_kappa = 1.0)
+    @test_throws ErrorException NoLimits.SAEM(; sa_anneal_schedule = :exponetial)
+    @test_throws ErrorException NoLimits.SAEM(; sa_anneal_alpha = 2.0)
+    @test_throws ErrorException NoLimits.SAEM(; sa_anneal_iters = -5)
+    @test_throws ErrorException NoLimits.SAEM(; small_n_chain_target = 0)
+    @test_throws ErrorException NoLimits.SAEM(; anneal_min_sd = 0.0)
+    @test_throws ErrorException NoLimits.SAEM(; var_lb_value = 0.0)
+    @test_throws ErrorException NoLimits.MCMC(; turing_kwargs = (n_adapt = -1,))
+    @test_throws ErrorException NoLimits.MCMC(; turing_kwargs = (n_samples = 0,))
+    @test_throws ErrorException NoLimits.Laplace(; theta_tol = -1.0)
+    # sa_anneal_alpha = 0 stays valid: it is the documented way to disable annealing.
+    @test NoLimits.SAEM(; sa_anneal_alpha = 0.0) isa NoLimits.SAEM
+
+    # A custom γ schedule is checked where it is used, not just at construction.
+    bad = NoLimits.SAEM(; sa_schedule = :custom, sa_schedule_fn = (i, o) -> 2.0).saem
+    @test_throws ErrorException NoLimits._saem_gamma_schedule(1, bad)
+    good = NoLimits.SAEM(; sa_schedule = :custom, sa_schedule_fn = (i, o) -> 0.25).saem
+    @test NoLimits._saem_gamma_schedule(1, good) == 0.25
+end
