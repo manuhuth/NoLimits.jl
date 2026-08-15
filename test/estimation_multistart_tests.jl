@@ -75,6 +75,17 @@ end
     @test all(s -> -1.0 <= s.a <= 1.0, starts)
 end
 
+# NaN compares false against both bounds, so a NaN draw used to pass the bounds gate,
+# and a mis-sized distribution array failed deep inside sampling (#229).
+@testset "Multistart start validation catches NaN and shape errors" begin
+    @test_throws ErrorException NoLimits._check_bounds(:b, [1.0, NaN], [-Inf, -Inf], [Inf, Inf])
+    @test_throws ErrorException NoLimits._check_bounds(:a, Inf, -Inf, Inf)
+    @test NoLimits._check_bounds(:b, [1.0, 2.0], [-Inf, -Inf], [Inf, Inf]) == true
+    @test_throws ErrorException NoLimits._sample_param(
+        :b, [1.0, 2.0], [Normal(), Normal(), Normal()], 2, :lhs, MersenneTwister(1)
+    )
+end
+
 @testset "Multistart bounds violation" begin
     model = @Model begin
         @covariates begin

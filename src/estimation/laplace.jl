@@ -2156,6 +2156,14 @@ end
 
 struct LaplaceCacheOptions{T}
     theta_tol::T
+
+    # A negative tolerance makes every cache-reuse comparison fail, silently disabling
+    # the EBE/Hessian cache instead of tightening it (#229).
+    function LaplaceCacheOptions(theta_tol::T) where {T}
+        (isfinite(theta_tol) && theta_tol >= 0) ||
+            error("LaplaceCacheOptions: theta_tol must be a finite number ≥ 0. Got: $theta_tol")
+        return new{T}(theta_tol)
+    end
 end
 
 @inline _default_inner_grad_tol(dm::DataModel) = get_de(get_model(dm)) === nothing ? 1.0e-8 :

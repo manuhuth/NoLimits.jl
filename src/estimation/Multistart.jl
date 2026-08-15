@@ -142,21 +142,27 @@ function _lhs_draws_array(dist, n::Int, rng::AbstractRNG, size_hint)
     return out
 end
 
+# NaN compares false against both bounds, so the finiteness test is what keeps a NaN or
+# Inf draw from reaching the optimizer as a start value (#229).
 function _check_bounds(name::Symbol, v, lower, upper)
     if v isa Number
-        if !(v >= lower && v <= upper)
-            error("Multistart sampling for $(name) violates bounds. Use a truncated distribution for sampling.")
+        if !(isfinite(v) && v >= lower && v <= upper)
+            error("Multistart start for $(name) is not finite or violates bounds (got $(v)). Use a truncated distribution for sampling.")
         end
         return
     end
-    bad = findall((v .< lower) .| (v .> upper))
+    bad = findall(@. !isfinite(v) | (v < lower) | (v > upper))
     return isempty(bad) ||
-        error("Multistart sampling for $(name) violates bounds at indices $(bad). Use a truncated distribution for sampling.")
+        error("Multistart start for $(name) is not finite or violates bounds at indices $(bad). Use a truncated distribution for sampling.")
 end
 
 function _sample_param(
         name::Symbol, value, dist, n::Int, sampling::Symbol, rng::AbstractRNG
     )
+    # PSD parameter blocks must be symmetric positive-definite to be transformable at
+    # all, so a sampled matrix is repaired rather than rejected: symmetrized, then
+    # jittered until it factors. The repair is deliberate — a start that cannot be
+    # transformed is not a usable start (#229).
     function _fix_matrix(v)
         if v isa AbstractMatrix && size(v, 1) == size(v, 2)
             v = 0.5 .* (v .+ transpose(v))
@@ -173,6 +179,8 @@ function _sample_param(
     end
 
     if dist isa AbstractArray
+        size(dist) == size(value) ||
+            error("Multistart sampling for $(name): the distribution array has size $(size(dist)) but the parameter has size $(size(value)).")
         # `copy`, not `similar`: coordinates whose distribution is `nothing` keep the
         # model start value instead of holding uninitialized memory (#226).
         samples = [copy(value) for _ in 1:n]
@@ -526,7 +534,7 @@ function _multistart_screen(
     # prior-mean screen there instead of scoring a different model (#226).
     if screening == :ebe && _has_crossed_individuals(dm)
         @warn "Multistart: screening=:ebe does not support crossed random-effect designs (an individual spans several levels); using prior-mean screening instead."
-        screening = :loglik
+        screening = :prior_mean
     end
     # EBE inner optimization is serial per individual; use EnsembleSerial for that path.
     cache_serialization = screening == :ebe ? EnsembleSerial() : serialization
@@ -556,21 +564,16 @@ function _multistart_screen(
     return candidates[idxs], selected_scores
 end
 
+# Runs are ranked by their own objective. A non-finite objective means the run failed;
+# it used to fall back to -loglikelihood, which drops priors/penalties and could rank a
+# degenerate MAP or penalized fit ahead of a valid one (#229).
 function _multistart_score(res::FitResult)
     obj = try
         get_objective(res)
     catch
         NaN
     end
-    if isfinite(obj)
-        return obj
-    end
-    ll = try
-        get_loglikelihood(res)
-    catch
-        NaN
-    end
-    return isfinite(ll) ? -ll : Inf
+    return isfinite(obj) ? obj : Inf
 end
 
 """
@@ -669,6 +672,16 @@ function fit_model(ms::Multistart, dm::DataModel, method::FittingMethod, args...
         @info "Multistart" candidates = n_req selected = n_used varying = varied_str
     end
     if theta_0_user !== nothing
+        # Sampled starts are bounds- and finiteness-checked in `_multistart_initials`;
+        # the explicit one goes through the same gate rather than a second path (#229).
+        bounds = get_bounds_untransformed(get_fixed(get_model(dm)))
+        for name in get_names(get_fixed(get_model(dm)))
+            hasproperty(theta_0_user, name) || continue
+            _check_bounds(
+                name, getproperty(theta_0_user, name),
+                getproperty(bounds[1], name), getproperty(bounds[2], name)
+            )
+        end
         starts = vcat([theta_0_user], starts)
         @info "Multistart: explicit theta_0_untransformed kept as start 1."
     end

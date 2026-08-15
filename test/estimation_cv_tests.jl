@@ -141,6 +141,22 @@ end
     @test all(f -> f ∈ 1:3, os[!, :fold])
 end
 
+# Observation folds split each individual's observations, so the individual count is not
+# the binding constraint — only observations per individual are (#229).
+@testset "cross_validate observation folds are limited by observations, not individuals" begin
+    model = _make_mle_model()
+    df = DataFrame(ID = repeat(1:2; inner = 5), t = repeat(1.0:5.0, 2), y = randn(MersenneTwister(3), 10))
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+
+    cv = cross_validate(dm, 4; kind = :observation, rng = MersenneTwister(4))
+    @test length(cv.test_rows) == 4
+    @test all(!isempty, cv.test_rows)
+    # More folds than any individual has observations would leave folds empty.
+    @test_throws ErrorException cross_validate(dm, 6; kind = :observation)
+    # id folds keep the individual-count requirement.
+    @test_throws ErrorException cross_validate(dm, 3; kind = :id)
+end
+
 @testset "fit_cv observation-wise + MLE: all individuals in both train and test" begin
     model = _make_mle_model()
     df = _make_df()

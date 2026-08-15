@@ -150,7 +150,16 @@ function cross_validate(
     n_folds >= 2 || error("n_folds must be ≥ 2, got $n_folds")
     kind ∈ (:id, :observation) || error("kind must be :id or :observation, got $kind")
     n = length(get_individuals(dm))
-    n >= n_folds || error("n_folds ($n_folds) exceeds number of individuals ($n)")
+    if kind == :id
+        n >= n_folds || error("n_folds ($n_folds) exceeds number of individuals ($n)")
+    else
+        # Observation folds split each individual's observations round-robin, so the
+        # binding constraint is observations per individual, not the individual count
+        # (#229): every fold needs at least one observation to score.
+        max_obs = maximum(length.(get_obs_rows(get_row_groups(dm))); init = 0)
+        max_obs >= n_folds ||
+            error("n_folds ($n_folds) exceeds the largest number of observations for one individual ($max_obs); some folds would be empty.")
+    end
 
     train_rows = Vector{Vector{Int}}(undef, n_folds)
     test_rows = Vector{Vector{Int}}(undef, n_folds)
@@ -501,11 +510,17 @@ function _cv_evaluate_mc(
     )
     η_train_vec = _eta_from_eb(dm_train, batch_infos, bstars, const_cache, θu)
 
-    # Lookup: test individual re_groups → (batch_idx, train_ind_idx)
-    re_to_train = Dict{Any, Tuple{Int, Int}}()
+    # Lookup per random effect and level, not per full level tuple: a crossed test
+    # individual can share one trained level while another of its levels is new, and only
+    # the new one needs the prior (#229). For a non-crossed design this is the same
+    # mapping the whole-tuple lookup produced.
+    level_train = Dict{Tuple{Symbol, Any}, Tuple{Int, Int}}()
     for (bi, info) in enumerate(batch_infos)
         for i in get_inds(info)
-            re_to_train[get_re_groups(get_individuals(dm_train)[i])] = (bi, i)
+            g = get_re_groups(get_individuals(dm_train)[i])
+            for re in re_names
+                level_train[(re, getproperty(g, re))] = (bi, i)
+            end
         end
     end
     ref_eta = η_train_vec[1]
@@ -535,47 +550,51 @@ function _cv_evaluate_mc(
     all_dfs = [Vector{DataFrame}(undef, n_test) for _ in 1:n_mc_samples]
     for s in 1:n_mc_samples
         srng = sample_rngs[s]
+        # Conditional draws are built per training individual, once per sample.
+        cond_cache = Dict{Int, ComponentArray}()
         for j in 1:n_test
             ind_j = get_individuals(dm_test)[j]
-            key = get_re_groups(ind_j)
-            tinfo = get(re_to_train, key, nothing)
-            is_seen = tinfo !== nothing
-
-            η_j = if is_seen && seen_re_mode == :conditional
-                bi, ti = tinfo
-                b_s = bstars_per_sample[s][bi]
-                ComponentArray(
-                    _build_eta_ind(
-                        dm_train, ti, batch_infos[bi], b_s, const_cache, θu
-                    )
+            g = get_re_groups(ind_j)
+            unseen_dists() = get!(
+                () -> dists_builder(
+                    θu, get_const_cov(ind_j), model_funs_test, helpers_test
+                ),
+                unseen_dists_cache, j
+            )
+            prior_eta() = get!(
+                () -> _cv_prior_mean_eta(
+                    dm_test, j, θu, dists_builder,
+                    model_funs_test, helpers_test,
+                    re_names, ref_eta
+                ),
+                mean_eta_cache, j
+            )
+            η_j = ComponentArray(
+                NamedTuple(
+                    map(re_names) do re
+                        tinfo = get(level_train, (re, getproperty(g, re)), nothing)
+                        v = if tinfo !== nothing && seen_re_mode == :conditional
+                            bi, ti = tinfo
+                            η_ti = get!(cond_cache, ti) do
+                                ComponentArray(
+                                    _build_eta_ind(
+                                        dm_train, ti, batch_infos[bi],
+                                        bstars_per_sample[s][bi], const_cache, θu
+                                    )
+                                )
+                            end
+                            getproperty(η_ti, re)
+                        elseif tinfo !== nothing   # :ebe — same for every sample
+                            getproperty(η_train_vec[tinfo[2]], re)
+                        elseif unseen_re_mode == :montecarlo
+                            rand(srng, getproperty(unseen_dists(), re))
+                        else                       # :mean — same for every sample
+                            getproperty(prior_eta(), re)
+                        end
+                        return re => v
+                    end
                 )
-            elseif is_seen   # :ebe — same for every sample
-                η_train_vec[tinfo[2]]
-            elseif unseen_re_mode == :montecarlo
-                dists = get!(
-                    () -> dists_builder(
-                        θu, get_const_cov(ind_j), model_funs_test, helpers_test
-                    ),
-                    unseen_dists_cache, j
-                )
-                ComponentArray(
-                    NamedTuple(
-                        (
-                            re => rand(srng, getproperty(dists, re))
-                                for re in re_names
-                        )
-                    )
-                )
-            else             # :mean — RE prior mean, same for every sample
-                get!(
-                    () -> _cv_prior_mean_eta(
-                        dm_test, j, θu, dists_builder,
-                        model_funs_test, helpers_test,
-                        re_names, ref_eta
-                    ),
-                    mean_eta_cache, j
-                )
-            end
+            )
 
             all_dfs[s][j] = _eval_individual_obs(
                 dm_test, j, θu, η_j, ll_cache_test, loss; score_rows = score_rows
@@ -686,8 +705,11 @@ performance on the held-out test set. All `kwargs` are forwarded to
 With `seen_re_mode=:ebe, unseen_re_mode=:mean` each random effect's level is resolved
 separately, so a crossed test individual keeps the trained value for every level it shares
 with the training fold and falls back to the prior only for genuinely new levels. The
-Monte-Carlo modes (`:conditional`/`:montecarlo`) still resolve on the full level tuple: an
-individual that shares only some of its levels is treated as unseen there.
+Monte-Carlo modes (`:conditional`/`:montecarlo`) resolve levels the same way.
+
+`MCMC`/`VI` fits carry no empirical-Bayes random effects; their test predictions are made at
+zero/population random effects and `seen_re_mode`/`unseen_re_mode` do not apply (a warning is
+emitted). Refit with an EBE-based estimator for random-effect-aware cross-validation.
 
 [`Pooled`](@ref)/[`PooledMap`](@ref) fits evaluate every test individual — seen or
 unseen — at the deterministic plug-in η computed from that individual's covariates
@@ -766,7 +788,10 @@ function fit_cv(
             # Pooled/PooledMap: plug-in η from each test individual's covariates
             _cv_evaluate_pooled(dm_test, res_train, θu, ll_cache_test, loss, score_rows)
         elseif !_cv_has_re_support(res_train)
-            # Method without EBE support (e.g. MCMC) → evaluate at zero RE
+            # MCMC/VI results carry no empirical-Bayes modes, so predictions are made at
+            # the RE prior location. Say so rather than letting seen_re_mode look honored
+            # (#229).
+            @warn "fit_cv: $(nameof(typeof(get_result(res_train)))) fits provide no empirical-Bayes random effects; test predictions use zero/population random effects and seen_re_mode/unseen_re_mode do not apply. Refit with Laplace/FOCEI/GHQuadrature/SAEM/MCEM for random-effect-aware cross-validation." maxlog = 1
             _cv_collect_obs(dm_test, θu, nothing, ll_cache_test, loss, score_rows)
         elseif seen_re_mode == :ebe && unseen_re_mode == :mean
             _cv_evaluate_ebe(
@@ -782,7 +807,13 @@ function fit_cv(
 
         insertcols!(obs_df, 1, :fold => fill(f, nrow(obs_df)))
 
-        ll_finite = filter(!isnan, obs_df[!, :loglikelihood])
+        # A fold can score nothing at all (every outcome missing, every ODE solve
+        # failed): keep the empty frame instead of indexing a column that is not there.
+        ll_all = "loglikelihood" ∈ names(obs_df) ? obs_df[!, :loglikelihood] : Float64[]
+        ll_finite = filter(!isnan, ll_all)
+        n_dropped = length(ll_all) - length(ll_finite)
+        n_dropped == 0 ||
+            @warn "fit_cv: fold $f scored $(length(ll_finite)) of $(length(ll_all)) held-out observations; $(n_dropped) had a non-finite log-likelihood and were dropped from the fold total."
         test_ll = isempty(ll_finite) ? NaN : sum(ll_finite)
 
         fit_res = store_results ? res_train : nothing

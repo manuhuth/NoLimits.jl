@@ -50,12 +50,30 @@ struct MCMC{S, K, A, P} <: FittingMethod
     progress::P
 end
 
+# `n_samples`/`n_adapt` are forwarded verbatim to the sampler, where a non-positive
+# value either errors late or silently produces an empty chain (#229).
+function _check_turing_kwargs(what::AbstractString, turing_kwargs)
+    turing_kwargs isa NamedTuple || return nothing
+    if haskey(turing_kwargs, :n_samples)
+        n = turing_kwargs.n_samples
+        (n isa Integer && n >= 1) ||
+            error("$what: turing_kwargs.n_samples must be an integer ≥ 1. Got: $(repr(n))")
+    end
+    if haskey(turing_kwargs, :n_adapt)
+        n = turing_kwargs.n_adapt
+        (n isa Integer && n >= 0) ||
+            error("$what: turing_kwargs.n_adapt must be an integer ≥ 0. Got: $(repr(n))")
+    end
+    return nothing
+end
+
 function MCMC(;
         sampler = nothing,
         turing_kwargs = NamedTuple(),
         adtype = nothing,
         progress = false
     )
+    _check_turing_kwargs("MCMC", turing_kwargs)
     return MCMC(sampler, turing_kwargs, adtype, progress)
 end
 
@@ -205,7 +223,10 @@ struct VI{K} <: FittingMethod
     turing_kwargs::K
 end
 
-VI(; turing_kwargs = NamedTuple()) = VI(turing_kwargs)
+function VI(; turing_kwargs = NamedTuple())
+    _check_turing_kwargs("VI", turing_kwargs)
+    return VI(turing_kwargs)
+end
 
 """
     VIResult{Q, T, S, N, O, C, M} <: MethodResult
