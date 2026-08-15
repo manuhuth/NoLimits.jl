@@ -92,7 +92,9 @@ function Multistart(; dists = NamedTuple(),
         progress::Bool = true,
         screening::Symbol = :prior_mean,
         ebe_maxiters::Int = 30)
-    n_draws_requested < 0 && error("n_draws_requested must be ≥ 0.")
+    # `0` used to be accepted and then silently expanded to `n_draws_used` (#220).
+    n_draws_requested < 1 &&
+        error("n_draws_requested must be >= 1 (it is the number of candidate starting points to sample); got $(n_draws_requested).")
     n_draws_used < 1 && error("n_draws_used must be ≥ 1.")
     (sampling == :random || sampling == :lhs) || error("sampling must be :random or :lhs.")
     (screening == :prior_mean || screening == :ebe) ||
@@ -301,8 +303,9 @@ function _collect_param_dists(dm::DataModel, ms::Multistart; warn::Bool = true)
         p isa Priorless && continue
         source = user ? "supplied" : "prior-derived"
         push!(pairs,
-            name => _bound_dist(name, p, getproperty(θ0_u, name), getproperty(lower, name),
-                getproperty(upper, name), source, warn))
+            name =>
+                _bound_dist(name, p, getproperty(θ0_u, name), getproperty(lower, name),
+                    getproperty(upper, name), source, warn))
     end
     return NamedTuple(pairs)
 end
@@ -430,9 +433,9 @@ function _build_ebe_eta(dm::DataModel, θu::ComponentArray, ll_cache; maxiters::
             continue
         end
         # Closure: negative joint log-density to minimize
-        neg_logf = let dm = dm, i = i, θu = θu, ll_cache = ll_cache,
-            axs = axs, dists = dists, re_logpdf_fn = re_logpdf_fn,
-            re_names = re_names, re_names_tuple = re_names_tuple
+        neg_logf = let dm = dm, i = i, θu = θu, ll_cache = ll_cache, axs = axs,
+            dists = dists, re_logpdf_fn = re_logpdf_fn, re_names = re_names,
+            re_names_tuple = re_names_tuple
 
             (η_flat, _) -> begin
                 η_i = ComponentArray(η_flat, axs)

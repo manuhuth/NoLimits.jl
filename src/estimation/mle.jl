@@ -160,6 +160,8 @@ too wide or absent.
 - `margin::Real = 1.0`: half-width of the symmetric box on the transformed scale.
 """
 function default_bounds_from_start(dm::DataModel; margin::Real = 1.0)
+    (isfinite(margin) && margin >= 0) ||
+        error("default_bounds_from_start: margin must be finite and non-negative; got $(margin).")
     θ = get_θ0_transformed(get_fixed(get_model(dm)))
     lower = deepcopy(θ)
     upper = deepcopy(θ)

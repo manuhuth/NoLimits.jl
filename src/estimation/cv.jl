@@ -137,8 +137,10 @@ function cross_validate(dm::DataModel, n_folds::Int;
         for f in 1:n_folds
             test_inds = findall(==(f), fold_of)
             train_inds = findall(!=(f), fold_of)
-            test_rows[f] = sort(vcat((get_rows(get_row_groups(dm))[i] for i in test_inds)...))
-            train_rows[f] = sort(vcat((get_rows(get_row_groups(dm))[i] for i in train_inds)...))
+            test_rows[f] = sort(vcat((get_rows(get_row_groups(dm))[i]
+            for i in test_inds)...))
+            train_rows[f] = sort(vcat((get_rows(get_row_groups(dm))[i]
+            for i in train_inds)...))
         end
     else  # :observation
         test_sets = [Int[] for _ in 1:n_folds]
@@ -561,6 +563,22 @@ do not apply and must be left at their defaults.
 
 Returns a [`CVResult`](@ref).
 """
+# Per-observation loss failures degrade to NaN by design (one bad row should not abort a
+# fold), which meant a wrong-arity or non-numeric callback silently produced an all-NaN
+# loss column. Check the contract once, up front, instead (#220).
+function _validate_cv_loss(cv_spec::CVSpec, loss)
+    applicable(loss, Normal(0.0, 1.0), 0.0) ||
+        error("The cv `loss` callback must take two arguments, `(distribution, observation)`, and return a real number; got $(repr(loss)).")
+    probe = try
+        loss(Normal(0.0, 1.0), 0.0)
+    catch e
+        error("The cv `loss` callback threw on a probe call `loss(Normal(0, 1), 0.0)`: $(sprint(showerror, e))")
+    end
+    probe isa Real ||
+        error("The cv `loss` callback must return a real number; a probe call returned $(repr(probe))::$(typeof(probe)).")
+    return nothing
+end
+
 function fit_cv(cv_spec::CVSpec, method::FittingMethod, args...;
         seen_re_mode::Symbol = :ebe,
         unseen_re_mode::Symbol = :mean,
@@ -577,6 +595,9 @@ function fit_cv(cv_spec::CVSpec, method::FittingMethod, args...;
         error("seen_re_mode must be :ebe or :conditional, got $seen_re_mode")
     unseen_re_mode ∈ (:mean, :montecarlo) ||
         error("unseen_re_mode must be :mean or :montecarlo, got $unseen_re_mode")
+    n_mc_samples >= 1 ||
+        error("n_mc_samples must be >= 1; got $(n_mc_samples).")
+    loss === nothing || _validate_cv_loss(cv_spec, loss)
     if method isa Pooled || method isa PooledMap
         (seen_re_mode == :ebe && unseen_re_mode == :mean) ||
             error("Pooled/PooledMap cross-validation evaluates the deterministic plug-in " *
