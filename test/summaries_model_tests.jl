@@ -11,12 +11,15 @@ using DataInterpolations
 
         @fixedEffects begin
             a = RealNumber(0.8; scale = :log, lower = 0.01, calculate_se = true)
-            b = RealVector([0.1, 0.2]; scale = [:identity, :log],
-                lower = [-Inf, 0.01], calculate_se = true)
+            b = RealVector(
+                [0.1, 0.2]; scale = [:identity, :log],
+                lower = [-Inf, 0.01], calculate_se = true
+            )
             σ = RealNumber(0.3; scale = :log)
             Ω = RealPSDMatrix([1.0 0.2; 0.2 1.2]; scale = :cholesky)
             spline = SplineParameters(
-                [0.0, 0.5, 1.0, 1.5, 2.0]; function_name = :spline_fn, degree = 2)
+                [0.0, 0.5, 1.0, 1.5, 2.0]; function_name = :spline_fn, degree = 2
+            )
         end
 
         @covariates begin

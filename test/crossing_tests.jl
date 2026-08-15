@@ -8,7 +8,7 @@ using ForwardDiff
 
 # x(t) = t  (D(x) = k = 1, x0 = 0); crosses `level` at t = level.
 function _crossing_model()
-    @Model begin
+    return @Model begin
         @fixedEffects begin
             k = RealNumber(1.0)
             σ = RealNumber(0.2, scale = :log)
@@ -43,7 +43,8 @@ function _crossing_dm()
         t = [0.0, 0.5, 1.0, 1.5, 2.0, 0.0, 0.25, 0.5],
         y = [0.0, 0.5, 1.0, 1.5, 2.0, 0.0, 0.25, 0.5],
         zt = [missing, missing, missing, missing, 1.0, missing, missing, 0.5],
-        rz = [missing, missing, missing, missing, 0.0, missing, missing, 0.0])
+        rz = [missing, missing, missing, missing, 0.0, missing, missing, 0.0]
+    )
     return DataModel(_crossing_model(), df; primary_id = :ID, time_col = :t)
 end
 
@@ -59,13 +60,13 @@ end
     end
 
     # ind 1 crosses at t = level = 1 → rootvalue 0
-    @test isapprox(accs[1].tc, 1.0; atol = 1e-4)
-    @test isapprox(accs[1].rv, 0.0; atol = 1e-8)
+    @test isapprox(accs[1].tc, 1.0; atol = 1.0e-4)
+    @test isapprox(accs[1].rv, 0.0; atol = 1.0e-8)
 
     # ind 2 never crosses within [0, 0.5] → tc falls back to the horizon (0.5),
     # rootvalue = x(0.5) - level = 0.5 - 1.0 = -0.5
-    @test isapprox(accs[2].tc, 0.5; atol = 1e-4)
-    @test isapprox(accs[2].rv, -0.5; atol = 1e-6)
+    @test isapprox(accs[2].tc, 0.5; atol = 1.0e-4)
+    @test isapprox(accs[2].rv, -0.5; atol = 1.0e-6)
 end
 
 @testset "crossing_rootval likelihood is finite and AD-differentiable" begin
@@ -86,7 +87,7 @@ end
     g = ForwardDiff.gradient(f, tr(θ))
     @test all(isfinite, g)
     # the rootvalue term keeps a gradient w.r.t. the threshold for the non-firing cell
-    @test abs(g.level) > 1e-8
+    @test abs(g.level) > 1.0e-8
 end
 
 @testset "estimation and plotting crossing values agree" begin
@@ -100,8 +101,9 @@ end
         acc_ll = NoLimits._ll_solve_de(dm, i, θ, ηz[i], cache, pre)
         sol, comp = NoLimits._solve_dense_individual(dm, ind, θ, ηz[i])
         acc_pl = NoLimits._sol_accessors_with_crossings(
-            dm.model, sol, comp, θ, ηz[i], ind.const_cov)
-        @test isapprox(acc_ll.tc, acc_pl.tc; atol = 1e-6)
-        @test isapprox(acc_ll.rv, acc_pl.rv; atol = 1e-6)
+            dm.model, sol, comp, θ, ηz[i], ind.const_cov
+        )
+        @test isapprox(acc_ll.tc, acc_pl.tc; atol = 1.0e-6)
+        @test isapprox(acc_ll.rv, acc_pl.rv; atol = 1.0e-6)
     end
 end

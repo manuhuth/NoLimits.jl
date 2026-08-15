@@ -77,8 +77,10 @@ end
 @testset "plot_fits tolerates a statistic the distribution lacks" begin
     # Outcome distributions without `mean` (CensoredDistributions' interval-censored
     # ones) must plot as a gap instead of erroring, here and in the y-limits.
-    @test plot_fits(fx_pois_laplace(); plot_func = d -> error("undefined"),
-        plot_density = false) !== nothing
+    @test plot_fits(
+        fx_pois_laplace(); plot_func = d -> error("undefined"),
+        plot_density = false
+    ) !== nothing
 end
 
 @testset "plot_data discrete" begin
@@ -141,7 +143,7 @@ end
         ID = [1, 1, 2, 2, 3, 3, 4, 4],
         t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
         z = [0.1, 0.2, 0.0, 0.1, -0.1, 0.1, 0.05, 0.15],
-        y = [0.10, 0.16, 0.06, 0.12, 0.03, 0.10, 0.08, 0.14]
+        y = [0.1, 0.16, 0.06, 0.12, 0.03, 0.1, 0.08, 0.14]
     )
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
@@ -155,16 +157,20 @@ end
     res_ms = fit_model(ms, dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
 
     @test plot_multistart_fixed_effect_variability(res_ms; k_best = 3, mode = :points) !==
-          nothing
+        nothing
     @test plot_multistart_fixed_effect_variability(
         res_ms; k_best = 3, mode = :quantiles, quantiles = [0.1, 0.5, 0.9],
-        include_parameters = [:b], exclude_parameters = [:a]) !== nothing
+        include_parameters = [:b], exclude_parameters = [:a]
+    ) !== nothing
     @test plot_multistart_fixed_effect_variability(
-        res_ms; k_best = 3, scale = :transformed) !== nothing
+        res_ms; k_best = 3, scale = :transformed
+    ) !== nothing
     @test_throws ErrorException plot_multistart_fixed_effect_variability(
-        res_ms; mode = :invalid)
+        res_ms; mode = :invalid
+    )
     @test_throws ErrorException plot_multistart_fixed_effect_variability(
-        res_ms; include_parameters = [:missing_parameter])
+        res_ms; include_parameters = [:missing_parameter]
+    )
 
     mktempdir() do tmp
         p_path = joinpath(tmp, "plot_multistart_fixed_effect_variability.png")
@@ -177,7 +183,8 @@ end
     dm = fx_nore_dm()
     res1 = fx_mle()
     res2 = fit_model(
-        dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)); constants = (; a = 0.2))
+        dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)); constants = (; a = 0.2)
+    )
 
     @test plot_fits_comparison(res1) !== nothing
 
@@ -189,7 +196,8 @@ end
     @test "Model 2" in labels_vec
 
     p_nt = plot_fits_comparison(
-        (baseline = res1, constrained = res2); individuals_idx = 1:2)
+        (baseline = res1, constrained = res2); individuals_idx = 1:2
+    )
     @test p_nt !== nothing
     labels_nt = _series_labels(p_nt)
     @test "baseline" in labels_nt
@@ -197,17 +205,19 @@ end
 
     styled = PlotStyle(comparison_line_styles = Dict("baseline" => :dash))
     p_nt_style = plot_fits_comparison(
-        (baseline = res1, constrained = res2); individuals_idx = 1:2, style = styled)
+        (baseline = res1, constrained = res2); individuals_idx = 1:2, style = styled
+    )
     @test p_nt_style !== nothing
     idx_base = findfirst(==("baseline"), _series_labels(p_nt_style))
     @test idx_base !== nothing
     baseline_plt = _first_axis(p_nt_style).scene.plots[idx_base]
     # Makie stores linestyles converted (:dash -> dash pattern vector, :solid -> nothing).
     @test CairoMakie.Makie.to_value(baseline_plt.linestyle) ==
-          CairoMakie.Makie.convert_attribute(:dash, CairoMakie.Makie.key"linestyle"())
+        CairoMakie.Makie.convert_attribute(:dash, CairoMakie.Makie.key"linestyle"())
 
     p_dict = plot_fits_comparison(
-        Dict("first" => res1, "second" => res2); individuals_idx = 1:2)
+        Dict("first" => res1, "second" => res2); individuals_idx = 1:2
+    )
     @test p_dict !== nothing
     labels_dict = _series_labels(p_dict)
     @test "first" in labels_dict
@@ -252,7 +262,7 @@ end
             Union{Missing, Float64}[0.4, 1.9],
             Union{Missing, Float64}[3.0, -1.1],
             Union{Missing, Float64}[2.8, missing],
-            Union{Missing, Float64}[missing, -1.2]
+            Union{Missing, Float64}[missing, -1.2],
         ]
     )
 
@@ -288,23 +298,28 @@ end
     @test length(p_emission_vector) == n_inds
     @test plot_emission_distributions(dm) !== nothing
     @test isa(
-        plot_emission_distributions(dm; figure_layout = :vector), Vector{CairoMakie.Figure})
+        plot_emission_distributions(dm; figure_layout = :vector), Vector{CairoMakie.Figure}
+    )
 end
 
 @testset "plot_fits supports varying non-ODE random-effect groups" begin
-    @test plot_fits(fx_varyre_dm(); constants_re = fx_varyre_constants_re(),
-        plot_density = true) !== nothing
+    @test plot_fits(
+        fx_varyre_dm(); constants_re = fx_varyre_constants_re(),
+        plot_density = true
+    ) !== nothing
 end
 
 @testset "EM trajectory plots (MCEM with diagnostics)" begin
     # Moved from coverage_gap_tests.jl (path coverage for plot_em_trajectories).
-    res = fit_model(fx_fixre_dm(),
+    res = fit_model(
+        fx_fixre_dm(),
         NoLimits.MCEM(;
             sampler = MH(),
             turing_kwargs = (n_samples = 10, n_adapt = 3, progress = false),
             maxiters = 3,
             store_diagnostics = true
-        ))
+        )
+    )
     p = plot_em_trajectories(res)
     @test p !== nothing
     # transformed-scale variant exercises the no-DataModel branch

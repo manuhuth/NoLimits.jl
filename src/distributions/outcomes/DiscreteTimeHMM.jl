@@ -24,17 +24,20 @@ state dynamics.
   likelihood.
 """
 struct DiscreteTimeDiscreteStatesHMM{
-    M <: AbstractMatrix{<:Real}, E <: Tuple, D <: Distributions.Categorical} <:
-       Distribution{Univariate, Continuous}
+        M <: AbstractMatrix{<:Real}, E <: Tuple, D <: Distributions.Categorical,
+    } <:
+    Distribution{Univariate, Continuous}
     n_states::Int
     transition_matrix::M
     emission_dists::E
     initial_dist::D
 end
 
-function DiscreteTimeDiscreteStatesHMM(transition_matrix::AbstractMatrix{<:Real},
+function DiscreteTimeDiscreteStatesHMM(
+        transition_matrix::AbstractMatrix{<:Real},
         emission_dists::Tuple,
-        initial_dist::Distributions.Categorical)
+        initial_dist::Distributions.Categorical
+    )
     n_states = size(transition_matrix, 1)
     size(transition_matrix, 2) == n_states || error("transition_matrix must be square.")
     length(emission_dists) == n_states ||
@@ -43,7 +46,8 @@ function DiscreteTimeDiscreteStatesHMM(transition_matrix::AbstractMatrix{<:Real}
         error("Initial distribution size must match number of states.")
     _hmm_check_transition_matrix(transition_matrix)
     return DiscreteTimeDiscreteStatesHMM(
-        n_states, transition_matrix, emission_dists, initial_dist)
+        n_states, transition_matrix, emission_dists, initial_dist
+    )
 end
 
 """
@@ -142,6 +146,6 @@ end
 
 Distributions.median(hmm::DiscreteTimeDiscreteStatesHMM) = quantile(hmm, 0.5)
 function Distributions.params(hmm::DiscreteTimeDiscreteStatesHMM)
-    (hmm.transition_matrix, hmm.emission_dists, hmm.initial_dist)
+    return (hmm.transition_matrix, hmm.emission_dists, hmm.initial_dist)
 end
 Base.length(hmm::DiscreteTimeDiscreteStatesHMM) = 1

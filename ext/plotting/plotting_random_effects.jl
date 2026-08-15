@@ -28,7 +28,8 @@ showing how well the parametric distribution fits the estimated random-effect va
 - `kwargs_subplot`, `kwargs_layout`: additional Makie `Axis`/`Figure` attributes for
   subplots and layout.
 """
-function plot_random_effects_pdf(res::FitResult;
+function plot_random_effects_pdf(
+        res::FitResult;
         dm::Union{Nothing, DataModel} = nothing,
         re_names = nothing,
         levels = nothing,
@@ -51,7 +52,8 @@ function plot_random_effects_pdf(res::FitResult;
         save_path::Union{Nothing, String} = nothing,
         plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
-        kwargs_layout = NamedTuple())
+        kwargs_layout = NamedTuple()
+    )
     dm = _get_dm(res, dm)
     save_path = _resolve_plot_path(save_path, plot_path)
     _check_unit_interval(mcmc_quantiles_alpha, "mcmc_quantiles_alpha")
@@ -64,8 +66,10 @@ function plot_random_effects_pdf(res::FitResult;
     re_list = _filter_re_without_covariates(res, re_list)
     if isempty(re_list)
         @warn "No random-effect distributions without covariates to plot."
-        p = create_styled_plot(title = "No random-effect distributions to plot.",
-            style = style, kwargs_subplot...)
+        p = create_styled_plot(
+            title = "No random-effect distributions to plot.",
+            style = style, kwargs_subplot...
+        )
         return _save_plot!(combine_plots([p]; ncols = 1, style = style), save_path)
     end
     is_mcmc = _is_posterior_draw_fit(res)
@@ -81,10 +85,10 @@ function plot_random_effects_pdf(res::FitResult;
     xlims_acc = nothing
     ylims = nothing
     merge_limits = (lims, minv, maxv) -> lims === nothing ? (minv, maxv) :
-                                         (min(lims[1], minv), max(lims[2], maxv))
+        (min(lims[1], minv), max(lims[2], maxv))
 
     θ_base = _is_posterior_draw_fit(res) ? _posterior_fixed_means(res, dm)[1] :
-             get_params(res; scale = :untransformed)
+        get_params(res; scale = :untransformed)
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = get_model_funs(get_model(dm))
     helpers = get_helper_funs(get_model(dm))
@@ -94,20 +98,23 @@ function plot_random_effects_pdf(res::FitResult;
         const_cov = get_const_cov(get_individuals(dm)[1])
         dist0 = getproperty(dists_builder(θ_base, const_cov, model_funs, helpers), re)
         dim = dist0 isa Distributions.UnivariateDistribution ? 1 :
-              length(vec(rand(rng, dist0)))
+            length(vec(rand(rng, dist0)))
         value_cols = flatten_re_names(re, zeros(dim))
         show_comp = length(value_cols) > 1
 
         for (ci, comp_name) in enumerate(value_cols)
             title = show_comp ? string(re, " | ", comp_name) : string(re)
-            p = create_styled_plot(title = title, xlabel = "Random Effect",
-                ylabel = "Probability Density", style = style, kwargs_subplot...)
+            p = create_styled_plot(
+                title = title, xlabel = "Random Effect",
+                ylabel = "Probability Density", style = style, kwargs_subplot...
+            )
 
             if is_mcmc
                 if θ_draws_cache === nothing
                     constants_re = _fit_constants_re(res)
                     θ_draws_cache, _, _ = _posterior_drawn_params(
-                        res, dm, constants_re, NamedTuple(), mcmc_draws, rng)
+                        res, dm, constants_re, NamedTuple(), mcmc_draws, rng
+                    )
                 end
                 samples_by_draw = Vector{Vector{Float64}}()
                 grid_list = Vector{Tuple{Vector{Float64}, Vector{Float64}}}()
@@ -115,12 +122,13 @@ function plot_random_effects_pdf(res::FitResult;
                 max_v = -Inf
                 for θd in θ_draws_cache
                     dist_d = getproperty(
-                        dists_builder(θd, const_cov, model_funs, helpers), re)
+                        dists_builder(θd, const_cov, model_funs, helpers), re
+                    )
                     dist_use = dist_d isa Distributions.MultivariateDistribution ?
-                               _marginal_normal(dist_d, ci) : dist_d
+                        _marginal_normal(dist_d, ci) : dist_d
                     if dist_use === nothing
                         if dist_d isa NormalizingPlanarFlow ||
-                           dist_d isa Distributions.MultivariateDistribution
+                                dist_d isa Distributions.MultivariateDistribution
                             samp = if dist_d isa Distributions.UnivariateDistribution
                                 vec(rand(rng, dist_d, flow_samples))
                             else
@@ -142,11 +150,11 @@ function plot_random_effects_pdf(res::FitResult;
                     push!(grid_list, (grid.y, vec(grid.z[:, 1])))
                 end
                 if isempty(samples_by_draw) && isempty(grid_list)
-                    @warn "Skipping RE pdf plot (insufficient draws)." re=re
+                    @warn "Skipping RE pdf plot (insufficient draws)." re = re
                     continue
                 end
                 xgrid = xlims !== nothing ? range(xlims[1], xlims[2]; length = 200) :
-                        range(min_v, max_v; length = 200)
+                    range(min_v, max_v; length = 200)
                 xlims_acc = merge_limits(xlims_acc, min_v, max_v)
                 curves = Vector{Vector{Float64}}()
                 if flow_plot == :hist && !isempty(samples_by_draw)
@@ -157,9 +165,10 @@ function plot_random_effects_pdf(res::FitResult;
                         counts = zeros(Float64, flow_bins)
                         for s in samp
                             idx = s == max_v ? flow_bins :
-                                  clamp(
-                                floor(Int, (s - min_v) / (max_v - min_v) * flow_bins) + 1,
-                                1, flow_bins)
+                                clamp(
+                                    floor(Int, (s - min_v) / (max_v - min_v) * flow_bins) + 1,
+                                    1, flow_bins
+                                )
                             counts[idx] += 1
                         end
                         ssum = sum(counts)
@@ -180,26 +189,38 @@ function plot_random_effects_pdf(res::FitResult;
                 isempty(curves) && continue
                 curves_mat = reduce(hcat, curves)
                 mean_dens = vec(mean(curves_mat; dims = 2))
-                qlo = vec(mapslices(
-                    x -> quantile(x, mcmc_quantiles[1] / 100), curves_mat; dims = 2))
-                qhi = vec(mapslices(
-                    x -> quantile(x, mcmc_quantiles[end] / 100), curves_mat; dims = 2))
-                create_styled_line!(p, xgrid, mean_dens;
-                    color = style.color_secondary, label = "PDF", style = style)
-                create_styled_line!(p, xgrid, qlo; color = style.color_secondary,
-                    alpha = mcmc_quantiles_alpha, linestyle = :dash, label = "", style = style)
-                create_styled_line!(p, xgrid, qhi; color = style.color_secondary,
-                    alpha = mcmc_quantiles_alpha, linestyle = :dash, label = "", style = style)
+                qlo = vec(
+                    mapslices(
+                        x -> quantile(x, mcmc_quantiles[1] / 100), curves_mat; dims = 2
+                    )
+                )
+                qhi = vec(
+                    mapslices(
+                        x -> quantile(x, mcmc_quantiles[end] / 100), curves_mat; dims = 2
+                    )
+                )
+                create_styled_line!(
+                    p, xgrid, mean_dens;
+                    color = style.color_secondary, label = "PDF", style = style
+                )
+                create_styled_line!(
+                    p, xgrid, qlo; color = style.color_secondary,
+                    alpha = mcmc_quantiles_alpha, linestyle = :dash, label = "", style = style
+                )
+                create_styled_line!(
+                    p, xgrid, qhi; color = style.color_secondary,
+                    alpha = mcmc_quantiles_alpha, linestyle = :dash, label = "", style = style
+                )
                 y_max = maximum(vcat(mean_dens, qhi))
                 _set_limits!(p; ylim = (0.0, y_max * 1.05))
                 ylims = merge_limits(ylims, 0.0, y_max)
             else
                 dist = dist0
                 dist_use = dist isa Distributions.MultivariateDistribution ?
-                           _marginal_normal(dist, ci) : dist
+                    _marginal_normal(dist, ci) : dist
                 if dist_use === nothing
                     if dist isa NormalizingPlanarFlow ||
-                       dist isa Distributions.MultivariateDistribution
+                            dist isa Distributions.MultivariateDistribution
                         samp = if dist isa Distributions.UnivariateDistribution
                             vec(rand(rng, dist, flow_samples))
                         else
@@ -208,26 +229,33 @@ function plot_random_effects_pdf(res::FitResult;
                         end
                         length(samp) < 2 && continue
                         if flow_plot == :hist
-                            h = _histogram_xy(samp; bins = flow_bins,
-                                normalization = :probability)
-                            _hist!(p, samp; bins = flow_bins, normalization = :probability,
-                                color = style.color_secondary, label = "PDF")
+                            h = _histogram_xy(
+                                samp; bins = flow_bins,
+                                normalization = :probability
+                            )
+                            _hist!(
+                                p, samp; bins = flow_bins, normalization = :probability,
+                                color = style.color_secondary, label = "PDF"
+                            )
                             y_max = maximum(h.heights)
                             _set_limits!(p; ylim = (0.0, y_max * 1.05))
                             xlims_acc = merge_limits(
-                                xlims_acc, minimum(samp), maximum(samp))
+                                xlims_acc, minimum(samp), maximum(samp)
+                            )
                             ylims = merge_limits(ylims, 0.0, y_max)
                         else
                             xk, yk = _kde_xy(samp; bandwidth = flow_bandwidth)
-                            create_styled_line!(p, xk, yk;
-                                color = style.color_secondary, label = "PDF", style = style)
+                            create_styled_line!(
+                                p, xk, yk;
+                                color = style.color_secondary, label = "PDF", style = style
+                            )
                             y_max = maximum(yk)
                             _set_limits!(p; ylim = (0.0, y_max * 1.05))
                             xlims_acc = merge_limits(xlims_acc, minimum(xk), maximum(xk))
                             ylims = merge_limits(ylims, 0.0, y_max)
                         end
                     else
-                        @warn "Skipping RE pdf plot (missing mean/cov)." re=re
+                        @warn "Skipping RE pdf plot (missing mean/cov)." re = re
                         continue
                     end
                 else
@@ -235,22 +263,33 @@ function plot_random_effects_pdf(res::FitResult;
                         grid = _density_grid_discrete(dist_use, 0.995)
                         grid === nothing && continue
                         lbl = _label(p, "PMF")
-                        _record!(p,
-                            ax -> barplot!(ax, grid.vals, grid.probs;
-                                color = style.color_secondary, label = lbl))
+                        _record!(
+                            p,
+                            ax -> barplot!(
+                                ax, grid.vals, grid.probs;
+                                color = style.color_secondary, label = lbl
+                            )
+                        )
                         xlims_acc = merge_limits(
-                            xlims_acc, minimum(grid.vals), maximum(grid.vals))
+                            xlims_acc, minimum(grid.vals), maximum(grid.vals)
+                        )
                         ylims = merge_limits(
-                            ylims, minimum(grid.probs), maximum(grid.probs))
+                            ylims, minimum(grid.probs), maximum(grid.probs)
+                        )
                     else
-                        grid = _density_grid_continuous([dist_use], x_quantile, 200;
-                            bounds = xlims)
+                        grid = _density_grid_continuous(
+                            [dist_use], x_quantile, 200;
+                            bounds = xlims
+                        )
                         grid === nothing && continue
                         pdf_vals = vec(grid.z[:, 1])
-                        create_styled_line!(p, grid.y, pdf_vals;
-                            color = style.color_secondary, label = "PDF", style = style)
+                        create_styled_line!(
+                            p, grid.y, pdf_vals;
+                            color = style.color_secondary, label = "PDF", style = style
+                        )
                         xlims_acc = merge_limits(
-                            xlims_acc, minimum(grid.y), maximum(grid.y))
+                            xlims_acc, minimum(grid.y), maximum(grid.y)
+                        )
                         ylims = merge_limits(ylims, minimum(pdf_vals), maximum(pdf_vals))
                     end
                 end
@@ -268,12 +307,14 @@ function plot_random_effects_pdf(res::FitResult;
         nothing
     end
     ylim_use = shared_y_axis && ylims !== nothing ? _pad_limits(ylims[1], ylims[2]) :
-               nothing
+        nothing
     _apply_shared_axes!(plots, xlim_use, ylim_use)
     if isempty(plots)
         @warn "No random-effect pdf plots to display."
-        p = create_styled_plot(title = "No random-effect pdf plots to display.",
-            style = style, kwargs_subplot...)
+        p = create_styled_plot(
+            title = "No random-effect pdf plots to display.",
+            style = style, kwargs_subplot...
+        )
         return _save_plot!(combine_plots([p]; ncols = 1, style = style), save_path)
     end
     p = combine_plots(plots; ncols = ncols, style = style, kwargs_layout...)
@@ -300,7 +341,8 @@ covariate or group level index, useful for detecting covariate relationships.
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
 - `kwargs_subplot`, `kwargs_layout`: additional Makie `Axis`/`Figure` attributes.
 """
-function plot_random_effects_scatter(res::FitResult;
+function plot_random_effects_scatter(
+        res::FitResult;
         dm::Union{Nothing, DataModel} = nothing,
         re_names = nothing,
         levels = nothing,
@@ -312,7 +354,8 @@ function plot_random_effects_scatter(res::FitResult;
         save_path::Union{Nothing, String} = nothing,
         plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
-        kwargs_layout = NamedTuple())
+        kwargs_layout = NamedTuple()
+    )
     dm = _get_dm(res, dm)
     save_path = _resolve_plot_path(save_path, plot_path)
     _require_re_supported(res)
@@ -321,7 +364,8 @@ function plot_random_effects_scatter(res::FitResult;
     if isempty(re_list)
         @warn "No random-effect distributions without covariates to plot."
         p = create_styled_plot(
-            title = "No random-effect scatters to plot.", style = style, kwargs_subplot...)
+            title = "No random-effect scatters to plot.", style = style, kwargs_subplot...
+        )
         return _save_plot!(combine_plots([p]; ncols = 1, style = style), save_path)
     end
     if x_covariate !== nothing
@@ -336,8 +380,9 @@ function plot_random_effects_scatter(res::FitResult;
         level_to_ind = _level_to_individual(dm, re)
         lvls = _resolve_levels(dm, re, levels, individuals_idx)
         ebe_map, value_cols = _is_posterior_draw_fit(res) ?
-                              _ebe_by_level_mcmc(
-            dm, res, re, mcmc_draws, Random.default_rng()) : _ebe_by_level(dm, res, re)
+            _ebe_by_level_mcmc(
+                dm, res, re, mcmc_draws, Random.default_rng()
+            ) : _ebe_by_level(dm, res, re)
         show_comp = length(value_cols) > 1
         lvls_use = [lvl for lvl in lvls if haskey(ebe_map, lvl)]
         isempty(lvls_use) && (lvls_use = collect(keys(ebe_map)))
@@ -362,18 +407,21 @@ function plot_random_effects_scatter(res::FitResult;
             end
             title = show_comp ? string(re, " | ", comp_name) : string(re)
             xlabel = x_covariate === nothing ?
-                     (any(lvl -> lvl isa Number, lvls_use) ? "Level" : "Index") :
-                     _axis_label(x_covariate)
+                (any(lvl -> lvl isa Number, lvls_use) ? "Level" : "Index") :
+                _axis_label(x_covariate)
             ylabel = _is_posterior_draw_fit(res) ? "Posterior Mean EBE" :
-                     "Empirical Bayes Estimate (EBE)"
-            p = create_styled_plot(title = title, xlabel = xlabel, ylabel = ylabel,
-                style = style, kwargs_subplot...)
+                "Empirical Bayes Estimate (EBE)"
+            p = create_styled_plot(
+                title = title, xlabel = xlabel, ylabel = ylabel,
+                style = style, kwargs_subplot...
+            )
             create_styled_scatter!(
-                p, xs, ys; label = "", color = style.color_secondary, style = style)
+                p, xs, ys; label = "", color = style.color_secondary, style = style
+            )
             push!(plots, p)
             if !isempty(xs)
                 xlims_val = xlims_val === nothing ? (minimum(xs), maximum(xs)) :
-                            (min(xlims_val[1], minimum(xs)), max(xlims_val[2], maximum(xs)))
+                    (min(xlims_val[1], minimum(xs)), max(xlims_val[2], maximum(xs)))
             end
         end
     end
@@ -381,7 +429,8 @@ function plot_random_effects_scatter(res::FitResult;
     if isempty(plots)
         @warn "No random-effect scatters to plot."
         p = create_styled_plot(
-            title = "No random-effect scatters to plot.", style = style, kwargs_subplot...)
+            title = "No random-effect scatters to plot.", style = style, kwargs_subplot...
+        )
         return _save_plot!(combine_plots([p]; ncols = 1, style = style), save_path)
     end
     if xlims_val !== nothing
@@ -411,7 +460,8 @@ effects, useful for visualizing correlations and joint structure.
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
 - `kwargs_subplot`, `kwargs_layout`: additional Makie `Axis`/`Figure` attributes.
 """
-function plot_random_effect_pairplot(res::FitResult;
+function plot_random_effect_pairplot(
+        res::FitResult;
         dm::Union{Nothing, DataModel} = nothing,
         re_names = nothing,
         levels = nothing,
@@ -424,7 +474,8 @@ function plot_random_effect_pairplot(res::FitResult;
         save_path::Union{Nothing, String} = nothing,
         plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
-        kwargs_layout = NamedTuple())
+        kwargs_layout = NamedTuple()
+    )
     dm = _get_dm(res, dm)
     save_path = _resolve_plot_path(save_path, plot_path)
     _require_re_supported(res)
@@ -433,7 +484,8 @@ function plot_random_effect_pairplot(res::FitResult;
     if isempty(re_list)
         @warn "No random-effect distributions without covariates to plot."
         p = create_styled_plot(
-            title = "No random-effect pairplots to plot.", style = style, kwargs_subplot...)
+            title = "No random-effect pairplots to plot.", style = style, kwargs_subplot...
+        )
         return _save_plot!(combine_plots([p]; ncols = 1, style = style), save_path)
     end
 
@@ -455,8 +507,8 @@ function plot_random_effect_pairplot(res::FitResult;
         comp_names = Dict{Symbol, Vector{Symbol}}()
         for r in res_group
             ebe_map, value_cols = _is_posterior_draw_fit(res) ?
-                                  _ebe_by_level_mcmc(dm, res, r, mcmc_draws, rng) :
-                                  _ebe_by_level(dm, res, r)
+                _ebe_by_level_mcmc(dm, res, r, mcmc_draws, rng) :
+                _ebe_by_level(dm, res, r)
             ebe_maps[r] = ebe_map
             comp_names[r] = Symbol.(value_cols)
         end
@@ -496,25 +548,35 @@ function plot_random_effect_pairplot(res::FitResult;
             for j in 1:nvars
                 idx = (i - 1) * nvars + j
                 if i == j
-                    p = create_styled_plot(title = string(labels[i]), xlabel = "",
-                        ylabel = "", style = style, kwargs_subplot...)
+                    p = create_styled_plot(
+                        title = string(labels[i]), xlabel = "",
+                        ylabel = "", style = style, kwargs_subplot...
+                    )
                     h = _histogram_xy(vals[:, i]; bins = 20, normalization = :probability)
-                    _hist!(p, vals[:, i]; bins = 20, normalization = :probability,
-                        color = style.color_secondary, label = "")
+                    _hist!(
+                        p, vals[:, i]; bins = 20, normalization = :probability,
+                        color = style.color_secondary, label = ""
+                    )
                     y_max = maximum(h.heights)
                     _set_limits!(p; ylim = (0.0, y_max * 1.05))
                     if kde_bandwidth !== nothing
                         xk, yk = _kde_xy(vals[:, i]; bandwidth = kde_bandwidth)
-                        create_styled_line!(p, xk, yk;
-                            color = style.color_secondary, label = "", style = style)
+                        create_styled_line!(
+                            p, xk, yk;
+                            color = style.color_secondary, label = "", style = style
+                        )
                         y_max = max(y_max, maximum(yk))
                         _set_limits!(p; ylim = (0.0, y_max * 1.05))
                     end
                 else
-                    p = create_styled_plot(title = "", xlabel = _axis_label(labels[j]),
-                        ylabel = _axis_label(labels[i]), style = style, kwargs_subplot...)
-                    create_styled_scatter!(p, vals[:, j], vals[:, i]; label = "",
-                        color = style.color_secondary, style = style)
+                    p = create_styled_plot(
+                        title = "", xlabel = _axis_label(labels[j]),
+                        ylabel = _axis_label(labels[i]), style = style, kwargs_subplot...
+                    )
+                    create_styled_scatter!(
+                        p, vals[:, j], vals[:, i]; label = "",
+                        color = style.color_secondary, style = style
+                    )
                 end
                 cell_plots[idx] = p
             end
@@ -525,7 +587,8 @@ function plot_random_effect_pairplot(res::FitResult;
     if isempty(plots)
         @warn "No random-effect pairplots to plot."
         p = create_styled_plot(
-            title = "No random-effect pairplots to plot.", style = style, kwargs_subplot...)
+            title = "No random-effect pairplots to plot.", style = style, kwargs_subplot...
+        )
         return _save_plot!(combine_plots([p]; ncols = 1, style = style), save_path)
     end
     ncols_use = isempty(group_map) ? ncols : max_nvars
@@ -548,7 +611,8 @@ combining the EBE histogram with the parametric prior PDF.
 # Keyword Arguments
 All arguments are identical to [`plot_random_effects_pdf`](@ref).
 """
-function plot_random_effect_distributions(res::FitResult;
+function plot_random_effect_distributions(
+        res::FitResult;
         dm::Union{Nothing, DataModel} = nothing,
         re_names = nothing,
         levels = nothing,
@@ -571,7 +635,8 @@ function plot_random_effect_distributions(res::FitResult;
         save_path::Union{Nothing, String} = nothing,
         plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
-        kwargs_layout = NamedTuple())
+        kwargs_layout = NamedTuple()
+    )
     dm = _get_dm(res, dm)
     save_path = _resolve_plot_path(save_path, plot_path)
     _check_unit_interval(mcmc_quantiles_alpha, "mcmc_quantiles_alpha")
@@ -596,7 +661,7 @@ function plot_random_effect_distributions(res::FitResult;
     θ_draws_cache = nothing
 
     θ_base = _is_posterior_draw_fit(res) ? _posterior_fixed_means(res, dm)[1] :
-             get_params(res; scale = :untransformed)
+        get_params(res; scale = :untransformed)
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = get_model_funs(get_model(dm))
     helpers = get_helper_funs(get_model(dm))
@@ -605,7 +670,7 @@ function plot_random_effect_distributions(res::FitResult;
         level_to_ind = _level_to_individual(dm, re)
         lvls = _resolve_levels(dm, re, levels, individuals_idx)
         ebe_map, value_cols = is_mcmc ? _ebe_by_level_mcmc(dm, res, re, mcmc_draws, rng) :
-                              _ebe_by_level(dm, res, re)
+            _ebe_by_level(dm, res, re)
         show_comp = length(value_cols) > 1
         lvls_use = [lvl for lvl in lvls if haskey(ebe_map, lvl)]
         isempty(lvls_use) && (lvls_use = collect(keys(ebe_map)))
@@ -619,31 +684,36 @@ function plot_random_effect_distributions(res::FitResult;
             for (ci, comp_name) in enumerate(value_cols)
                 val = [vals[ci]]
                 dist_use = dist isa Distributions.MultivariateDistribution ?
-                           _marginal_normal(dist, ci) : dist
+                    _marginal_normal(dist, ci) : dist
                 if dist_use === nothing
                     if dist isa NormalizingPlanarFlow
                         # Flow: approximate marginal via sampling + KDE/hist.
                         title = show_comp ?
-                                string(
-                            re, " | ", get_primary_id(dm), "=", lvl, " | ", comp_name) :
-                                string(re, " | ", get_primary_id(dm), "=", lvl)
-                        p = create_styled_plot(title = title, xlabel = "Random Effect",
+                            string(
+                                re, " | ", get_primary_id(dm), "=", lvl, " | ", comp_name
+                            ) :
+                            string(re, " | ", get_primary_id(dm), "=", lvl)
+                        p = create_styled_plot(
+                            title = title, xlabel = "Random Effect",
                             ylabel = "Probability Density",
-                            style = style, kwargs_subplot...)
+                            style = style, kwargs_subplot...
+                        )
                         ebe_label = is_mcmc ? "posterior mean" : "EBE"
                         if is_mcmc
-                            @info "Flow marginal plotted via sampling (MCMC averaged)." re=re level=lvl samples=flow_samples
+                            @info "Flow marginal plotted via sampling (MCMC averaged)." re = re level = lvl samples = flow_samples
                             if θ_draws_cache === nothing
                                 constants_re = _fit_constants_re(res)
                                 θ_draws_cache, _, _ = _posterior_drawn_params(
-                                    res, dm, constants_re, NamedTuple(), mcmc_draws, rng)
+                                    res, dm, constants_re, NamedTuple(), mcmc_draws, rng
+                                )
                             end
                             samples_by_draw = Vector{Vector{Float64}}()
                             min_v = Inf
                             max_v = -Inf
                             for θd in θ_draws_cache
                                 dist_d = getproperty(
-                                    dists_builder(θd, const_cov, model_funs, helpers), re)
+                                    dists_builder(θd, const_cov, model_funs, helpers), re
+                                )
                                 samp = if dist_d isa Distributions.UnivariateDistribution
                                     vec(rand(dist_d, flow_samples))
                                 else
@@ -656,7 +726,7 @@ function plot_random_effect_distributions(res::FitResult;
                                 push!(samples_by_draw, samp)
                             end
                             if isempty(samples_by_draw)
-                                @warn "Skipping RE flow plot (insufficient samples)." re=re level=lvl
+                                @warn "Skipping RE flow plot (insufficient samples)." re = re level = lvl
                                 continue
                             end
                             if flow_plot == :hist
@@ -667,12 +737,15 @@ function plot_random_effect_distributions(res::FitResult;
                                     counts = zeros(Float64, flow_bins)
                                     for s in samp
                                         idx = s == max_v ? flow_bins :
-                                              clamp(
-                                            floor(Int,
-                                                (s - min_v) / (max_v - min_v) * flow_bins) +
-                                            1,
-                                            1,
-                                            flow_bins)
+                                            clamp(
+                                                floor(
+                                                    Int,
+                                                    (s - min_v) / (max_v - min_v) * flow_bins
+                                                ) +
+                                                1,
+                                                1,
+                                                flow_bins
+                                            )
                                         counts[idx] += 1
                                     end
                                     ssum = sum(counts)
@@ -680,31 +753,45 @@ function plot_random_effect_distributions(res::FitResult;
                                     push!(counts_list, counts ./ ssum)
                                 end
                                 if isempty(counts_list)
-                                    @warn "Skipping RE flow histogram (insufficient samples)." re=re level=lvl
+                                    @warn "Skipping RE flow histogram (insufficient samples)." re = re level = lvl
                                     continue
                                 end
                                 counts_mat = reduce(hcat, counts_list)
                                 mean_counts = vec(mean(counts_mat; dims = 2))
-                                qlo = vec(mapslices(
-                                    x -> quantile(x, mcmc_quantiles[1] / 100),
-                                    counts_mat; dims = 2))
-                                qhi = vec(mapslices(
-                                    x -> quantile(x, mcmc_quantiles[end] / 100),
-                                    counts_mat; dims = 2))
+                                qlo = vec(
+                                    mapslices(
+                                        x -> quantile(x, mcmc_quantiles[1] / 100),
+                                        counts_mat; dims = 2
+                                    )
+                                )
+                                qhi = vec(
+                                    mapslices(
+                                        x -> quantile(x, mcmc_quantiles[end] / 100),
+                                        counts_mat; dims = 2
+                                    )
+                                )
                                 bw = edges[2] - edges[1]
                                 bar_lbl = _label(p, "flow")
-                                _record!(p,
-                                    ax -> barplot!(ax, centers, mean_counts;
+                                _record!(
+                                    p,
+                                    ax -> barplot!(
+                                        ax, centers, mean_counts;
                                         width = bw, gap = 0,
-                                        color = style.color_secondary, label = bar_lbl))
-                                create_styled_line!(p, centers, qlo;
+                                        color = style.color_secondary, label = bar_lbl
+                                    )
+                                )
+                                create_styled_line!(
+                                    p, centers, qlo;
                                     color = style.color_secondary,
                                     alpha = mcmc_quantiles_alpha,
-                                    linestyle = :dash, label = "", style = style)
-                                create_styled_line!(p, centers, qhi;
+                                    linestyle = :dash, label = "", style = style
+                                )
+                                create_styled_line!(
+                                    p, centers, qhi;
                                     color = style.color_secondary,
                                     alpha = mcmc_quantiles_alpha,
-                                    linestyle = :dash, label = "", style = style)
+                                    linestyle = :dash, label = "", style = style
+                                )
                                 y_max = maximum(vcat(mean_counts, qhi))
                                 _set_limits!(p; ylim = (0.0, y_max * 1.05))
                             else
@@ -717,28 +804,40 @@ function plot_random_effect_distributions(res::FitResult;
                                 end
                                 dens_mat = reduce(hcat, dens_list)
                                 mean_dens = vec(mean(dens_mat; dims = 2))
-                                qlo = vec(mapslices(
-                                    x -> quantile(x, mcmc_quantiles[1] / 100),
-                                    dens_mat; dims = 2))
-                                qhi = vec(mapslices(
-                                    x -> quantile(x, mcmc_quantiles[end] / 100),
-                                    dens_mat; dims = 2))
-                                create_styled_line!(p, xgrid, mean_dens;
+                                qlo = vec(
+                                    mapslices(
+                                        x -> quantile(x, mcmc_quantiles[1] / 100),
+                                        dens_mat; dims = 2
+                                    )
+                                )
+                                qhi = vec(
+                                    mapslices(
+                                        x -> quantile(x, mcmc_quantiles[end] / 100),
+                                        dens_mat; dims = 2
+                                    )
+                                )
+                                create_styled_line!(
+                                    p, xgrid, mean_dens;
                                     color = style.color_secondary, label = "flow KDE",
-                                    style = style)
-                                create_styled_line!(p, xgrid, qlo;
+                                    style = style
+                                )
+                                create_styled_line!(
+                                    p, xgrid, qlo;
                                     color = style.color_secondary,
                                     alpha = mcmc_quantiles_alpha,
-                                    linestyle = :dash, label = "", style = style)
-                                create_styled_line!(p, xgrid, qhi;
+                                    linestyle = :dash, label = "", style = style
+                                )
+                                create_styled_line!(
+                                    p, xgrid, qhi;
                                     color = style.color_secondary,
                                     alpha = mcmc_quantiles_alpha,
-                                    linestyle = :dash, label = "", style = style)
+                                    linestyle = :dash, label = "", style = style
+                                )
                                 y_max = maximum(vcat(mean_dens, qhi))
                                 _set_limits!(p; ylim = (0.0, y_max * 1.05))
                             end
                         else
-                            @info "Flow marginal plotted via sampling." re=re level=lvl samples=flow_samples
+                            @info "Flow marginal plotted via sampling." re = re level = lvl samples = flow_samples
                             samples = if dist isa Distributions.UnivariateDistribution
                                 vec(rand(dist, flow_samples))
                             else
@@ -746,71 +845,97 @@ function plot_random_effect_distributions(res::FitResult;
                                 vec(samp[ci, :])
                             end
                             if length(samples) < 2
-                                @warn "Skipping RE flow plot (insufficient samples)." re=re level=lvl
+                                @warn "Skipping RE flow plot (insufficient samples)." re = re level = lvl
                                 continue
                             end
                             if flow_plot == :hist
-                                h = _histogram_xy(samples; bins = flow_bins,
-                                    normalization = :probability)
-                                _hist!(p, samples; bins = flow_bins,
+                                h = _histogram_xy(
+                                    samples; bins = flow_bins,
+                                    normalization = :probability
+                                )
+                                _hist!(
+                                    p, samples; bins = flow_bins,
                                     normalization = :probability,
-                                    color = style.color_secondary, label = "flow")
+                                    color = style.color_secondary, label = "flow"
+                                )
                                 y_max = maximum(h.heights)
                                 _set_limits!(p; ylim = (0.0, y_max * 1.05))
                             else
                                 xk, yk = _kde_xy(samples; bandwidth = flow_bandwidth)
-                                create_styled_line!(p, xk, yk;
+                                create_styled_line!(
+                                    p, xk, yk;
                                     color = style.color_secondary,
-                                    label = "flow KDE", style = style)
+                                    label = "flow KDE", style = style
+                                )
                                 y_max = maximum(yk)
                                 _set_limits!(p; ylim = (0.0, y_max * 1.05))
                             end
                         end
-                        add_reference_line!(p, val[1]; orientation = :vertical,
-                            color = style.color_primary, label = ebe_label)
+                        add_reference_line!(
+                            p, val[1]; orientation = :vertical,
+                            color = style.color_primary, label = ebe_label
+                        )
                         push!(plots, p)
                         continue
                     end
-                    @warn "Skipping RE distribution plot (missing mean/cov)." re=re level=lvl
+                    @warn "Skipping RE distribution plot (missing mean/cov)." re = re level = lvl
                     continue
                 end
                 title = show_comp ?
-                        string(
-                    re, " | ", get_primary_id(dm), "=", lvl, " | ", comp_name) :
-                        string(re, " | ", get_primary_id(dm), "=", lvl)
-                p = create_styled_plot(title = title, xlabel = "Random Effect",
-                    ylabel = "Probability Density", style = style, kwargs_subplot...)
+                    string(
+                        re, " | ", get_primary_id(dm), "=", lvl, " | ", comp_name
+                    ) :
+                    string(re, " | ", get_primary_id(dm), "=", lvl)
+                p = create_styled_plot(
+                    title = title, xlabel = "Random Effect",
+                    ylabel = "Probability Density", style = style, kwargs_subplot...
+                )
                 ebe_label = is_mcmc ? "posterior mean" : "EBE"
                 if dist_use isa DiscreteDistribution
                     grid = _density_grid_discrete(dist_use, 0.995)
                     grid === nothing && error("Unable to build PMF grid for $(re).")
                     lbl = _label(p, "PMF")
-                    _record!(p,
-                        ax -> barplot!(ax, grid.vals, grid.probs;
-                            color = style.color_secondary, label = lbl))
-                    add_reference_line!(p, val[1]; orientation = :vertical,
-                        color = style.color_primary, label = ebe_label)
+                    _record!(
+                        p,
+                        ax -> barplot!(
+                            ax, grid.vals, grid.probs;
+                            color = style.color_secondary, label = lbl
+                        )
+                    )
+                    add_reference_line!(
+                        p, val[1]; orientation = :vertical,
+                        color = style.color_primary, label = ebe_label
+                    )
                     xlim = (minimum(grid.vals), maximum(grid.vals))
                     xlims_acc = xlims_acc === nothing ? xlim :
-                                (min(xlims_acc[1], xlim[1]), max(xlims_acc[2], xlim[2]))
+                        (min(xlims_acc[1], xlim[1]), max(xlims_acc[2], xlim[2]))
                     ylims = ylims === nothing ? (minimum(grid.probs), maximum(grid.probs)) :
-                            (min(ylims[1], minimum(grid.probs)),
-                        max(ylims[2], maximum(grid.probs)))
+                        (
+                            min(ylims[1], minimum(grid.probs)),
+                            max(ylims[2], maximum(grid.probs)),
+                        )
                 else
-                    grid = _density_grid_continuous([dist_use], x_quantile, 200;
-                        bounds = xlims)
+                    grid = _density_grid_continuous(
+                        [dist_use], x_quantile, 200;
+                        bounds = xlims
+                    )
                     grid === nothing && error("Unable to build PDF grid for $(re).")
                     pdf_vals = vec(grid.z[:, 1])
-                    create_styled_line!(p, grid.y, pdf_vals;
-                        color = style.color_secondary, label = "PDF", style = style)
-                    add_reference_line!(p, val[1]; orientation = :vertical,
-                        color = style.color_primary, label = ebe_label)
+                    create_styled_line!(
+                        p, grid.y, pdf_vals;
+                        color = style.color_secondary, label = "PDF", style = style
+                    )
+                    add_reference_line!(
+                        p, val[1]; orientation = :vertical,
+                        color = style.color_primary, label = ebe_label
+                    )
                     xlim = (minimum(grid.y), maximum(grid.y))
                     xlims_acc = xlims_acc === nothing ? xlim :
-                                (min(xlims_acc[1], xlim[1]), max(xlims_acc[2], xlim[2]))
+                        (min(xlims_acc[1], xlim[1]), max(xlims_acc[2], xlim[2]))
                     ylims = ylims === nothing ? (minimum(pdf_vals), maximum(pdf_vals)) :
-                            (
-                        min(ylims[1], minimum(pdf_vals)), max(ylims[2], maximum(pdf_vals)))
+                        (
+                            min(ylims[1], minimum(pdf_vals)), max(ylims[2], maximum(pdf_vals)),
+                        )
                 end
                 push!(plots, p)
             end
@@ -825,13 +950,15 @@ function plot_random_effect_distributions(res::FitResult;
         nothing
     end
     ylim_use = shared_y_axis && ylims !== nothing ? _pad_limits(ylims[1], ylims[2]) :
-               nothing
+        nothing
     _apply_shared_axes!(plots, xlim_use, ylim_use)
 
     if isempty(plots)
         @warn "No random-effect distributions to plot."
-        p = create_styled_plot(title = "No random-effect distributions to plot.",
-            style = style, kwargs_subplot...)
+        p = create_styled_plot(
+            title = "No random-effect distributions to plot.",
+            style = style, kwargs_subplot...
+        )
         return _save_plot!(combine_plots([p]; ncols = 1, style = style), save_path)
     end
     p = combine_plots(plots; ncols = ncols, style = style, kwargs_layout...)
@@ -865,7 +992,8 @@ fitted prior distributions, providing a calibration check for the random-effects
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
 - `kwargs_subplot`, `kwargs_layout`: additional Makie `Axis`/`Figure` attributes.
 """
-function plot_random_effect_pit(res::FitResult;
+function plot_random_effect_pit(
+        res::FitResult;
         dm::Union{Nothing, DataModel} = nothing,
         re_names = nothing,
         levels = nothing,
@@ -888,7 +1016,8 @@ function plot_random_effect_pit(res::FitResult;
         save_path::Union{Nothing, String} = nothing,
         plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
-        kwargs_layout = NamedTuple())
+        kwargs_layout = NamedTuple()
+    )
     dm = _get_dm(res, dm)
     save_path = _resolve_plot_path(save_path, plot_path)
     _check_unit_interval(mcmc_quantiles_alpha, "mcmc_quantiles_alpha")
@@ -899,7 +1028,7 @@ function plot_random_effect_pit(res::FitResult;
         throw(ArgumentError("`x_covariate` is not supported by `plot_random_effect_pit`. Use `plot_random_effects_scatter` or `plot_random_effect_standardized_scatter` instead."))
 
     if (show_hist + show_kde + show_qq) > 1
-        @warn "plot_random_effect_pit expects one plot type at a time; defaulting to histogram." show_hist=show_hist show_kde=show_kde show_qq=show_qq
+        @warn "plot_random_effect_pit expects one plot type at a time; defaulting to histogram." show_hist = show_hist show_kde = show_kde show_qq = show_qq
         show_hist = true
         show_kde = false
         show_qq = false
@@ -917,7 +1046,7 @@ function plot_random_effect_pit(res::FitResult;
     ylims = nothing
 
     θ_base = _is_posterior_draw_fit(res) ? _posterior_fixed_means(res, dm)[1] :
-             get_params(res; scale = :untransformed)
+        get_params(res; scale = :untransformed)
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = get_model_funs(get_model(dm))
     helpers = get_helper_funs(get_model(dm))
@@ -926,7 +1055,7 @@ function plot_random_effect_pit(res::FitResult;
         level_to_ind = _level_to_individual(dm, re)
         lvls = _resolve_levels(dm, re, levels, individuals_idx)
         ebe_map, value_cols = is_mcmc ? _ebe_by_level_mcmc(dm, res, re, mcmc_draws, rng) :
-                              _ebe_by_level(dm, res, re)
+            _ebe_by_level(dm, res, re)
         show_comp = length(value_cols) > 1
         lvls_use = [lvl for lvl in lvls if haskey(ebe_map, lvl)]
         isempty(lvls_use) && (lvls_use = collect(keys(ebe_map)))
@@ -935,7 +1064,8 @@ function plot_random_effect_pit(res::FitResult;
             if is_mcmc
                 constants_re = _fit_constants_re(res)
                 θ_draws, η_draws, _ = _posterior_drawn_params(
-                    res, dm, constants_re, NamedTuple(), mcmc_draws, rng)
+                    res, dm, constants_re, NamedTuple(), mcmc_draws, rng
+                )
                 pits_by_draw = Vector{Vector{Float64}}()
                 for d in eachindex(θ_draws)
                     pits_d = Float64[]
@@ -944,12 +1074,13 @@ function plot_random_effect_pit(res::FitResult;
                         ind_idx = level_to_ind[lvl]
                         const_cov = get_const_cov(get_individuals(dm)[ind_idx])
                         dist_d = getproperty(
-                            dists_builder(θ, const_cov, model_funs, helpers), re)
+                            dists_builder(θ, const_cov, model_funs, helpers), re
+                        )
                         dist_use = dist_d isa Distributions.MultivariateDistribution ?
-                                   _marginal_normal(dist_d, ci) : dist_d
+                            _marginal_normal(dist_d, ci) : dist_d
                         if dist_use === nothing
                             if dist_d isa NormalizingPlanarFlow
-                                @info "Flow PIT via empirical CDF (sampling)." re=re level=lvl samples=flow_samples
+                                @info "Flow PIT via empirical CDF (sampling)." re = re level = lvl samples = flow_samples
                                 v = getproperty(η_draws[d][ind_idx], re)
                                 v_use = v isa Number ? Float64(v) : Float64(v[ci])
                                 samp = if dist_d isa Distributions.UnivariateDistribution
@@ -973,15 +1104,17 @@ function plot_random_effect_pit(res::FitResult;
                     isempty(pits_d) || push!(pits_by_draw, pits_d)
                 end
                 if isempty(pits_by_draw)
-                    @warn "PIT skipped due to missing cdf." re=re component=comp_name
+                    @warn "PIT skipped due to missing cdf." re = re component = comp_name
                     continue
                 end
 
                 title = show_comp ? string(re, " | ", comp_name) : string(re)
                 if show_hist
-                    p_hist = create_styled_plot(title = title * " | PIT hist",
+                    p_hist = create_styled_plot(
+                        title = title * " | PIT hist",
                         xlabel = "PIT", ylabel = "Probability",
-                        style = style, kwargs_subplot...)
+                        style = style, kwargs_subplot...
+                    )
                     nbins = 20
                     edges = range(0.0, 1.0; length = nbins + 1)
                     centers = (edges[1:(end - 1)] .+ edges[2:end]) ./ 2
@@ -991,7 +1124,7 @@ function plot_random_effect_pit(res::FitResult;
                         counts = zeros(Float64, nbins)
                         for p in pits_d
                             idx = p == 1.0 ? nbins :
-                                  clamp(floor(Int, p * nbins) + 1, 1, nbins)
+                                clamp(floor(Int, p * nbins) + 1, 1, nbins)
                             counts[idx] += 1
                         end
                         s = sum(counts)
@@ -999,28 +1132,44 @@ function plot_random_effect_pit(res::FitResult;
                         push!(counts_list, counts ./ s)
                     end
                     if isempty(counts_list)
-                        @warn "Skipping PIT histogram (insufficient PIT values)." re=re component=comp_name
+                        @warn "Skipping PIT histogram (insufficient PIT values)." re = re component = comp_name
                     else
                         counts_mat = reduce(hcat, counts_list)
                         mean_counts = vec(mean(counts_mat; dims = 2))
-                        qlo = vec(mapslices(x -> quantile(x, mcmc_quantiles[1] / 100),
-                            counts_mat; dims = 2))
-                        qhi = vec(mapslices(x -> quantile(x, mcmc_quantiles[end] / 100),
-                            counts_mat; dims = 2))
+                        qlo = vec(
+                            mapslices(
+                                x -> quantile(x, mcmc_quantiles[1] / 100),
+                                counts_mat; dims = 2
+                            )
+                        )
+                        qhi = vec(
+                            mapslices(
+                                x -> quantile(x, mcmc_quantiles[end] / 100),
+                                counts_mat; dims = 2
+                            )
+                        )
                         bw = edges[2] - edges[1]
                         bar_lbl = _label(p_hist, "PIT")
-                        _record!(p_hist,
-                            ax -> barplot!(ax, centers, mean_counts;
+                        _record!(
+                            p_hist,
+                            ax -> barplot!(
+                                ax, centers, mean_counts;
                                 width = bw, gap = 0,
-                                color = style.color_secondary, label = bar_lbl))
-                        create_styled_line!(p_hist, centers, qlo;
+                                color = style.color_secondary, label = bar_lbl
+                            )
+                        )
+                        create_styled_line!(
+                            p_hist, centers, qlo;
                             color = style.color_secondary,
                             alpha = mcmc_quantiles_alpha, linestyle = :dash,
-                            label = "", style = style)
-                        create_styled_line!(p_hist, centers, qhi;
+                            label = "", style = style
+                        )
+                        create_styled_line!(
+                            p_hist, centers, qhi;
                             color = style.color_secondary,
                             alpha = mcmc_quantiles_alpha, linestyle = :dash,
-                            label = "", style = style)
+                            label = "", style = style
+                        )
                         y_max = maximum(vcat(mean_counts, qhi))
                         _set_limits!(p_hist; ylim = (0.0, y_max * 1.05))
                     end
@@ -1029,7 +1178,8 @@ function plot_random_effect_pit(res::FitResult;
                 if show_kde
                     p_kde = create_styled_plot(
                         title = title * " | PIT KDE", xlabel = "PIT", ylabel = "Density",
-                        style = style, kwargs_subplot...)
+                        style = style, kwargs_subplot...
+                    )
                     xgrid = range(0.0, 1.0; length = 200)
                     dens_list = Vector{Vector{Float64}}()
                     for pits_d in pits_by_draw
@@ -1039,34 +1189,49 @@ function plot_random_effect_pit(res::FitResult;
                         push!(dens_list, ygrid)
                     end
                     if isempty(dens_list)
-                        @warn "Skipping PIT KDE (insufficient PIT values)." re=re component=comp_name
+                        @warn "Skipping PIT KDE (insufficient PIT values)." re = re component = comp_name
                     else
                         dens_mat = reduce(hcat, dens_list)
                         mean_dens = vec(mean(dens_mat; dims = 2))
-                        qlo = vec(mapslices(
-                            x -> quantile(x, mcmc_quantiles[1] / 100), dens_mat; dims = 2))
-                        qhi = vec(mapslices(x -> quantile(x, mcmc_quantiles[end] / 100),
-                            dens_mat; dims = 2))
-                        create_styled_line!(p_kde, xgrid, mean_dens;
-                            color = style.color_secondary, label = "KDE", style = style)
-                        create_styled_line!(p_kde, xgrid, qlo;
+                        qlo = vec(
+                            mapslices(
+                                x -> quantile(x, mcmc_quantiles[1] / 100), dens_mat; dims = 2
+                            )
+                        )
+                        qhi = vec(
+                            mapslices(
+                                x -> quantile(x, mcmc_quantiles[end] / 100),
+                                dens_mat; dims = 2
+                            )
+                        )
+                        create_styled_line!(
+                            p_kde, xgrid, mean_dens;
+                            color = style.color_secondary, label = "KDE", style = style
+                        )
+                        create_styled_line!(
+                            p_kde, xgrid, qlo;
                             color = style.color_secondary,
                             alpha = mcmc_quantiles_alpha, linestyle = :dash,
-                            label = "", style = style)
-                        create_styled_line!(p_kde, xgrid, qhi;
+                            label = "", style = style
+                        )
+                        create_styled_line!(
+                            p_kde, xgrid, qhi;
                             color = style.color_secondary,
                             alpha = mcmc_quantiles_alpha, linestyle = :dash,
-                            label = "", style = style)
+                            label = "", style = style
+                        )
                         y_max = maximum(vcat(mean_dens, qhi))
                         _set_limits!(p_kde; ylim = (0.0, y_max * 1.05))
                     end
                     push!(plots, p_kde)
                 end
                 if show_qq
-                    p_qq = create_styled_plot(title = title * " | PIT QQ",
+                    p_qq = create_styled_plot(
+                        title = title * " | PIT QQ",
                         xlabel = "Theoretical Uniform Quantile",
                         ylabel = "Empirical PIT Quantile",
-                        style = style, kwargs_subplot...)
+                        style = style, kwargs_subplot...
+                    )
                     ugrid = range(0.0, 1.0; length = 100)
                     q_list = Vector{Vector{Float64}}()
                     for pits_d in pits_by_draw
@@ -1075,26 +1240,40 @@ function plot_random_effect_pit(res::FitResult;
                         push!(q_list, qvals)
                     end
                     if isempty(q_list)
-                        @warn "Skipping PIT QQ (insufficient PIT values)." re=re component=comp_name
+                        @warn "Skipping PIT QQ (insufficient PIT values)." re = re component = comp_name
                     else
                         qmat = reduce(hcat, q_list)
                         mean_q = vec(mean(qmat; dims = 2))
-                        qlo = vec(mapslices(
-                            x -> quantile(x, mcmc_quantiles[1] / 100), qmat; dims = 2))
-                        qhi = vec(mapslices(
-                            x -> quantile(x, mcmc_quantiles[end] / 100), qmat; dims = 2))
-                        create_styled_line!(p_qq, ugrid, mean_q;
-                            color = style.color_secondary, label = "QQ", style = style)
-                        create_styled_line!(p_qq, ugrid, qlo;
+                        qlo = vec(
+                            mapslices(
+                                x -> quantile(x, mcmc_quantiles[1] / 100), qmat; dims = 2
+                            )
+                        )
+                        qhi = vec(
+                            mapslices(
+                                x -> quantile(x, mcmc_quantiles[end] / 100), qmat; dims = 2
+                            )
+                        )
+                        create_styled_line!(
+                            p_qq, ugrid, mean_q;
+                            color = style.color_secondary, label = "QQ", style = style
+                        )
+                        create_styled_line!(
+                            p_qq, ugrid, qlo;
                             color = style.color_secondary,
                             alpha = mcmc_quantiles_alpha, linestyle = :dash,
-                            label = "", style = style)
-                        create_styled_line!(p_qq, ugrid, qhi;
+                            label = "", style = style
+                        )
+                        create_styled_line!(
+                            p_qq, ugrid, qhi;
                             color = style.color_secondary,
                             alpha = mcmc_quantiles_alpha, linestyle = :dash,
-                            label = "", style = style)
-                        create_styled_line!(p_qq, ugrid, ugrid; color = style.color_dark,
-                            linestyle = :dash, label = "Uniform", style = style)
+                            label = "", style = style
+                        )
+                        create_styled_line!(
+                            p_qq, ugrid, ugrid; color = style.color_dark,
+                            linestyle = :dash, label = "Uniform", style = style
+                        )
                     end
                     push!(plots, p_qq)
                 end
@@ -1105,12 +1284,13 @@ function plot_random_effect_pit(res::FitResult;
                     ind_idx = level_to_ind[lvl]
                     const_cov = get_const_cov(get_individuals(dm)[ind_idx])
                     dist = getproperty(
-                        dists_builder(θ_base, const_cov, model_funs, helpers), re)
+                        dists_builder(θ_base, const_cov, model_funs, helpers), re
+                    )
                     dist_use = dist isa Distributions.MultivariateDistribution ?
-                               _marginal_normal(dist, ci) : dist
+                        _marginal_normal(dist, ci) : dist
                     if dist_use === nothing
                         if dist isa NormalizingPlanarFlow
-                            @info "Flow PIT via empirical CDF (sampling)." re=re level=lvl samples=flow_samples
+                            @info "Flow PIT via empirical CDF (sampling)." re = re level = lvl samples = flow_samples
                             v_use = Float64(ebe_map[lvl][ci])
                             samp = if dist isa Distributions.UnivariateDistribution
                                 vec(rand(dist, flow_samples))
@@ -1130,23 +1310,27 @@ function plot_random_effect_pit(res::FitResult;
                 end
 
                 if isempty(pits)
-                    @warn "PIT skipped due to missing cdf." re=re component=comp_name
+                    @warn "PIT skipped due to missing cdf." re = re component = comp_name
                     continue
                 end
 
                 title = show_comp ? string(re, " | ", comp_name) : string(re)
                 if show_hist
-                    p_hist = create_styled_plot(title = title * " | PIT hist",
+                    p_hist = create_styled_plot(
+                        title = title * " | PIT hist",
                         xlabel = "PIT", ylabel = "Probability",
-                        style = style, kwargs_subplot...)
+                        style = style, kwargs_subplot...
+                    )
                     if length(pits) < 2
-                        @warn "Skipping PIT histogram (insufficient PIT values)." re=re component=comp_name
+                        @warn "Skipping PIT histogram (insufficient PIT values)." re = re component = comp_name
                     else
                         h = _histogram_xy(pits; bins = 20, normalization = :probability)
-                        _hist!(p_hist, pits; bins = 20, normalization = :probability,
+                        _hist!(
+                            p_hist, pits; bins = 20, normalization = :probability,
                             color = style.color_secondary,
                             strokecolor = style.color_secondary, strokewidth = 1,
-                            label = "PIT")
+                            label = "PIT"
+                        )
                         y_max = maximum(h.heights)
                         _set_limits!(p_hist; ylim = (0.0, y_max * 1.05))
                     end
@@ -1155,30 +1339,39 @@ function plot_random_effect_pit(res::FitResult;
                 if show_kde
                     p_kde = create_styled_plot(
                         title = title * " | PIT KDE", xlabel = "PIT", ylabel = "Density",
-                        style = style, kwargs_subplot...)
+                        style = style, kwargs_subplot...
+                    )
                     if length(pits) < 2
-                        @warn "Skipping PIT KDE (insufficient PIT values)." re=re component=comp_name
+                        @warn "Skipping PIT KDE (insufficient PIT values)." re = re component = comp_name
                     else
                         xk, yk = _kde_xy(pits; bandwidth = kde_bandwidth)
-                        create_styled_line!(p_kde, xk, yk;
-                            color = style.color_secondary, label = "KDE", style = style)
+                        create_styled_line!(
+                            p_kde, xk, yk;
+                            color = style.color_secondary, label = "KDE", style = style
+                        )
                     end
                     push!(plots, p_kde)
                 end
                 if show_qq
-                    p_qq = create_styled_plot(title = title * " | PIT QQ",
+                    p_qq = create_styled_plot(
+                        title = title * " | PIT QQ",
                         xlabel = "Theoretical Uniform Quantile",
                         ylabel = "Empirical PIT Quantile",
-                        style = style, kwargs_subplot...)
+                        style = style, kwargs_subplot...
+                    )
                     if length(pits) < 2
-                        @warn "Skipping PIT QQ (insufficient PIT values)." re=re component=comp_name
+                        @warn "Skipping PIT QQ (insufficient PIT values)." re = re component = comp_name
                     else
                         q = sort(pits)
                         u = range(0, 1; length = length(q))
-                        create_styled_scatter!(p_qq, u, q;
-                            color = style.color_secondary, label = "QQ", style = style)
-                        create_styled_line!(p_qq, u, u; color = style.color_dark,
-                            linestyle = :dash, label = "Uniform", style = style)
+                        create_styled_scatter!(
+                            p_qq, u, q;
+                            color = style.color_secondary, label = "QQ", style = style
+                        )
+                        create_styled_line!(
+                            p_qq, u, u; color = style.color_dark,
+                            linestyle = :dash, label = "Uniform", style = style
+                        )
                     end
                     push!(plots, p_qq)
                 end
@@ -1190,13 +1383,14 @@ function plot_random_effect_pit(res::FitResult;
     if shared_x_axis || shared_y_axis
         xlim_use = shared_x_axis ? (0.0, 1.0) : nothing
         ylim_use = shared_y_axis && ylims !== nothing ? _pad_limits(ylims[1], ylims[2]) :
-                   nothing
+            nothing
         _apply_shared_axes!(plots, xlim_use, ylim_use)
     end
     if isempty(plots)
         @warn "No PIT plots to display."
         p = create_styled_plot(
-            title = "No PIT plots to display.", style = style, kwargs_subplot...)
+            title = "No PIT plots to display.", style = style, kwargs_subplot...
+        )
         return _save_plot!(combine_plots([p]; ncols = 1, style = style), save_path)
     end
     p = combine_plots(plots; ncols = ncols, style = style, kwargs_layout...)
@@ -1227,7 +1421,8 @@ outliers or misspecification.
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
 - `kwargs_subplot`, `kwargs_layout`: additional Makie `Axis`/`Figure` attributes.
 """
-function plot_random_effect_standardized(res::FitResult;
+function plot_random_effect_standardized(
+        res::FitResult;
         dm::Union{Nothing, DataModel} = nothing,
         re_names = nothing,
         levels = nothing,
@@ -1242,13 +1437,14 @@ function plot_random_effect_standardized(res::FitResult;
         save_path::Union{Nothing, String} = nothing,
         plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
-        kwargs_layout = NamedTuple())
+        kwargs_layout = NamedTuple()
+    )
     dm = _get_dm(res, dm)
     save_path = _resolve_plot_path(save_path, plot_path)
     _require_re_supported(res)
     re_list = _resolve_re_names(dm, re_names)
     θ_base = _is_posterior_draw_fit(res) ? _posterior_fixed_means(res, dm)[1] :
-             get_params(res; scale = :untransformed)
+        get_params(res; scale = :untransformed)
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = get_model_funs(get_model(dm))
     helpers = get_helper_funs(get_model(dm))
@@ -1258,8 +1454,9 @@ function plot_random_effect_standardized(res::FitResult;
         level_to_ind = _level_to_individual(dm, re)
         lvls = _resolve_levels(dm, re, levels, individuals_idx)
         ebe_map, value_cols = _is_posterior_draw_fit(res) ?
-                              _ebe_by_level_mcmc(
-            dm, res, re, mcmc_draws, Random.default_rng()) : _ebe_by_level(dm, res, re)
+            _ebe_by_level_mcmc(
+                dm, res, re, mcmc_draws, Random.default_rng()
+            ) : _ebe_by_level(dm, res, re)
         show_comp = length(value_cols) > 1
         lvls_use = [lvl for lvl in lvls if haskey(ebe_map, lvl)]
         isempty(lvls_use) && (lvls_use = collect(keys(ebe_map)))
@@ -1270,38 +1467,46 @@ function plot_random_effect_standardized(res::FitResult;
                 ind_idx = level_to_ind[lvl]
                 const_cov = get_const_cov(get_individuals(dm)[ind_idx])
                 dist = getproperty(
-                    dists_builder(θ_base, const_cov, model_funs, helpers), re)
+                    dists_builder(θ_base, const_cov, model_funs, helpers), re
+                )
                 z = _standardize_re(
-                    dist, Float64.(ebe_map[lvl]); flow_samples = flow_samples)
+                    dist, Float64.(ebe_map[lvl]); flow_samples = flow_samples
+                )
                 z === nothing && continue
                 push!(zvals, Float64(z[ci]))
             end
             title = show_comp ? string(re, " | ", comp_name) : string(re)
             y_label = show_hist && show_kde ? "Probability / Density" :
-                      (show_kde ? "Density" : "Probability")
-            p = create_styled_plot(title = title, xlabel = "Standardized EBE",
-                ylabel = y_label, style = style, kwargs_subplot...)
+                (show_kde ? "Density" : "Probability")
+            p = create_styled_plot(
+                title = title, xlabel = "Standardized EBE",
+                ylabel = y_label, style = style, kwargs_subplot...
+            )
             if isempty(zvals)
-                @warn "No standardized values to plot." re=re component=comp_name
+                @warn "No standardized values to plot." re = re component = comp_name
                 continue
             end
             hist_max = nothing
             kde_max = nothing
             if show_hist
                 h = _histogram_xy(zvals; bins = 20, normalization = :probability)
-                _hist!(p, zvals; bins = 20, normalization = :probability,
-                    color = style.color_secondary, label = "z")
+                _hist!(
+                    p, zvals; bins = 20, normalization = :probability,
+                    color = style.color_secondary, label = "z"
+                )
                 hist_max = maximum(h.heights)
             end
             if show_kde
                 xk, yk = _kde_xy(zvals; bandwidth = kde_bandwidth)
-                create_styled_line!(p, xk, yk;
-                    color = style.color_secondary, label = "KDE", style = style)
+                create_styled_line!(
+                    p, xk, yk;
+                    color = style.color_secondary, label = "KDE", style = style
+                )
                 kde_max = maximum(yk)
             end
             if hist_max !== nothing || kde_max !== nothing
                 y_max = hist_max === nothing ? kde_max :
-                        (kde_max === nothing ? hist_max : max(hist_max, kde_max))
+                    (kde_max === nothing ? hist_max : max(hist_max, kde_max))
                 _set_limits!(p; ylim = (0.0, y_max * 1.05))
             end
             push!(plots, p)
@@ -1309,8 +1514,10 @@ function plot_random_effect_standardized(res::FitResult;
     end
     if isempty(plots)
         @warn "No standardized random effects to plot."
-        p = create_styled_plot(title = "No standardized random effects to plot.",
-            style = style, kwargs_subplot...)
+        p = create_styled_plot(
+            title = "No standardized random effects to plot.",
+            style = style, kwargs_subplot...
+        )
         return _save_plot!(combine_plots([p]; ncols = 1, style = style), save_path)
     end
     p = combine_plots(plots; ncols = ncols, style = style, kwargs_layout...)
@@ -1339,7 +1546,8 @@ of the random-effects model.
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
 - `kwargs_subplot`, `kwargs_layout`: additional Makie `Axis`/`Figure` attributes.
 """
-function plot_random_effect_standardized_scatter(res::FitResult;
+function plot_random_effect_standardized_scatter(
+        res::FitResult;
         dm::Union{Nothing, DataModel} = nothing,
         re_names = nothing,
         levels = nothing,
@@ -1352,7 +1560,8 @@ function plot_random_effect_standardized_scatter(res::FitResult;
         save_path::Union{Nothing, String} = nothing,
         plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
-        kwargs_layout = NamedTuple())
+        kwargs_layout = NamedTuple()
+    )
     dm = _get_dm(res, dm)
     save_path = _resolve_plot_path(save_path, plot_path)
     _require_re_supported(res)
@@ -1363,7 +1572,7 @@ function plot_random_effect_standardized_scatter(res::FitResult;
     end
 
     θ_base = _is_posterior_draw_fit(res) ? _posterior_fixed_means(res, dm)[1] :
-             get_params(res; scale = :untransformed)
+        get_params(res; scale = :untransformed)
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = get_model_funs(get_model(dm))
     helpers = get_helper_funs(get_model(dm))
@@ -1374,8 +1583,9 @@ function plot_random_effect_standardized_scatter(res::FitResult;
         level_to_ind = _level_to_individual(dm, re)
         lvls = _resolve_levels(dm, re, levels, individuals_idx)
         ebe_map, value_cols = _is_posterior_draw_fit(res) ?
-                              _ebe_by_level_mcmc(
-            dm, res, re, mcmc_draws, Random.default_rng()) : _ebe_by_level(dm, res, re)
+            _ebe_by_level_mcmc(
+                dm, res, re, mcmc_draws, Random.default_rng()
+            ) : _ebe_by_level(dm, res, re)
         show_comp = length(value_cols) > 1
         lvls_use = [lvl for lvl in lvls if haskey(ebe_map, lvl)]
         isempty(lvls_use) && (lvls_use = collect(keys(ebe_map)))
@@ -1388,9 +1598,11 @@ function plot_random_effect_standardized_scatter(res::FitResult;
                 ind_idx = level_to_ind[lvl]
                 const_cov = get_const_cov(get_individuals(dm)[ind_idx])
                 dist = getproperty(
-                    dists_builder(θ_base, const_cov, model_funs, helpers), re)
+                    dists_builder(θ_base, const_cov, model_funs, helpers), re
+                )
                 z = _standardize_re(
-                    dist, Float64.(ebe_map[lvl]); flow_samples = flow_samples)
+                    dist, Float64.(ebe_map[lvl]); flow_samples = flow_samples
+                )
                 z === nothing && continue
                 xv = if x_covariate === nothing
                     lvl isa Number ? Float64(lvl) : Float64(k)
@@ -1414,21 +1626,25 @@ function plot_random_effect_standardized_scatter(res::FitResult;
             end
             p = create_styled_plot(
                 title = title, xlabel = xlabel, ylabel = "Standardized EBE (z-score)",
-                style = style, kwargs_subplot...)
+                style = style, kwargs_subplot...
+            )
             create_styled_scatter!(
-                p, xs, ys; label = "", color = style.color_secondary, style = style)
+                p, xs, ys; label = "", color = style.color_secondary, style = style
+            )
             push!(plots, p)
             if !isempty(xs)
                 xlims_val = xlims_val === nothing ? (minimum(xs), maximum(xs)) :
-                            (min(xlims_val[1], minimum(xs)), max(xlims_val[2], maximum(xs)))
+                    (min(xlims_val[1], minimum(xs)), max(xlims_val[2], maximum(xs)))
             end
         end
     end
 
     if isempty(plots)
         @warn "No standardized random effects to plot."
-        p = create_styled_plot(title = "No standardized random effects to plot.",
-            style = style, kwargs_subplot...)
+        p = create_styled_plot(
+            title = "No standardized random effects to plot.",
+            style = style, kwargs_subplot...
+        )
         return _save_plot!(combine_plots([p]; ncols = 1, style = style), save_path)
     end
     if xlims_val !== nothing

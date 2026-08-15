@@ -25,7 +25,8 @@ end
 # number of emission distributions: lets logpdf/posterior fuse their per-state
 # work into tuple operations without allocating intermediate vectors.
 @inline _hmm_probs_tuple(p::AbstractVector, ::NTuple{N, Any}) where {N} = ntuple(
-    i -> @inbounds(p[i]), Val(N))
+    i -> @inbounds(p[i]), Val(N)
+)
 
 # Combined per-row HMM accessor: returns (logpdf(d, y), posterior_hidden_states(d, y)).
 # The forward-filter loop in `_loglikelihood_individual` (and cv) needs BOTH every
@@ -43,7 +44,7 @@ end
 # Constructor-time validation of HMM transition/generator matrices. A malformed matrix
 # used to be accepted and then produce silent NaNs inside `probabilities_hidden_states`
 # (#207). The tolerance is loose enough for stick-breaking round-off during fitting.
-const _HMM_ROW_ATOL = 1e-6
+const _HMM_ROW_ATOL = 1.0e-6
 
 function _hmm_check_transition_matrix(M::AbstractMatrix, label = "transition_matrix")
     n = size(M, 1)
@@ -99,8 +100,8 @@ function _hmm_mixture_quantile(hmm, p::Real)
     dists = hmm.emission_dists
     p == 0 && return minimum(map(d -> quantile(d, 0.0), dists))
     p == 1 && return maximum(map(d -> quantile(d, 1.0), dists))
-    lb = minimum(map(d -> quantile(d, 1e-9), dists))
-    ub = maximum(map(d -> quantile(d, 1 - 1e-9), dists))
+    lb = minimum(map(d -> quantile(d, 1.0e-9), dists))
+    ub = maximum(map(d -> quantile(d, 1 - 1.0e-9), dists))
     if all(d -> d isa Distributions.DiscreteUnivariateDistribution, dists)
         lo, hi = floor(Int, lb), ceil(Int, ub)
         while lo < hi
@@ -112,7 +113,7 @@ function _hmm_mixture_quantile(hmm, p::Real)
     for _ in 1:200
         mid = (lb + ub) / 2
         cdf(hmm, mid) < p ? (lb = mid) : (ub = mid)
-        abs(ub - lb) < 1e-10 && break
+        abs(ub - lb) < 1.0e-10 && break
     end
     return (lb + ub) / 2
 end

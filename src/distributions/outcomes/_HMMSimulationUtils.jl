@@ -57,7 +57,8 @@ end
 end
 
 @inline function _hmm_with_initial_state(
-        dist::MVContinuousTimeDiscreteStatesHMM, state::Int)
+        dist::MVContinuousTimeDiscreteStatesHMM, state::Int
+    )
     return MVContinuousTimeDiscreteStatesHMM(
         dist.transition_matrix,
         dist.emission_dists,
@@ -115,7 +116,8 @@ end
 end
 
 @inline function _hmm_with_initial_state(
-        dist::DiscreteTimeObservedStatesMarkovModel, state::Int)
+        dist::DiscreteTimeObservedStatesMarkovModel, state::Int
+    )
     return DiscreteTimeObservedStatesMarkovModel(
         dist.transition_matrix,
         _hmm_onehot_prior(dist.n_states, state),
@@ -133,7 +135,8 @@ end
 end
 
 @inline function _hmm_with_initial_state(
-        dist::ContinuousTimeObservedStatesMarkovModel, state::Int)
+        dist::ContinuousTimeObservedStatesMarkovModel, state::Int
+    )
     return ContinuousTimeObservedStatesMarkovModel(
         dist.transition_matrix,
         _hmm_onehot_prior(dist.n_states, state),
@@ -144,7 +147,8 @@ end
 end
 
 @inline function _hmm_with_initial_probs(
-        dist::ContinuousTimeObservedStatesMarkovModel, probs)
+        dist::ContinuousTimeObservedStatesMarkovModel, probs
+    )
     return ContinuousTimeObservedStatesMarkovModel(
         dist.n_states,
         dist.transition_matrix,
@@ -164,7 +168,7 @@ end
 end
 
 @inline _hmm_with_prior(dist, prior_probs) = prior_probs === nothing ? dist :
-                                             _hmm_with_initial_probs(dist, prior_probs)
+    _hmm_with_initial_probs(dist, prior_probs)
 
 # Rebuild an HMM/Markov outcome distribution with `init_p` as its initial
 # hidden-state probabilities, WITHOUT validating them (`check_args=false`): the
@@ -174,51 +178,63 @@ end
 # validates. Shared by `_loglikelihood_rows_hmm` (common.jl) and the CV row filter
 # (cv.jl); the branch order mirrors the historical inline chains.
 function _hmm_pin_initial_probs(dist, init_p)
-    if dist isa ContinuousTimeDiscreteStatesHMM
+    return if dist isa ContinuousTimeDiscreteStatesHMM
         ContinuousTimeDiscreteStatesHMM(
             dist.transition_matrix, dist.emission_dists,
             Distributions.Categorical(init_p; check_args = false), dist.Δt;
-            propagation_mode = dist.propagation_mode)
+            propagation_mode = dist.propagation_mode
+        )
     elseif dist isa MVContinuousTimeDiscreteStatesHMM
         MVContinuousTimeDiscreteStatesHMM(
             dist.transition_matrix, dist.emission_dists,
             Distributions.Categorical(init_p; check_args = false), dist.Δt;
-            propagation_mode = dist.propagation_mode)
+            propagation_mode = dist.propagation_mode
+        )
     elseif dist isa MVDiscreteTimeDiscreteStatesHMM
         MVDiscreteTimeDiscreteStatesHMM(
             dist.transition_matrix, dist.emission_dists,
-            Distributions.Categorical(init_p; check_args = false))
+            Distributions.Categorical(init_p; check_args = false)
+        )
     elseif dist isa DiscreteTimeObservedStatesMarkovModel
-        DiscreteTimeObservedStatesMarkovModel(dist.transition_matrix,
+        DiscreteTimeObservedStatesMarkovModel(
+            dist.transition_matrix,
             Distributions.Categorical(init_p; check_args = false),
-            dist.state_labels)
+            dist.state_labels
+        )
     elseif dist isa ContinuousTimeObservedStatesMarkovModel
-        ContinuousTimeObservedStatesMarkovModel(dist.transition_matrix,
+        ContinuousTimeObservedStatesMarkovModel(
+            dist.transition_matrix,
             Distributions.Categorical(init_p; check_args = false),
             dist.Δt, dist.state_labels;
-            propagation_mode = dist.propagation_mode)
+            propagation_mode = dist.propagation_mode
+        )
     elseif dist isa CoarsedObservedStatesMarkovModel &&
-           dist.base_dist isa DiscreteTimeObservedStatesMarkovModel
+            dist.base_dist isa DiscreteTimeObservedStatesMarkovModel
         base_dist = dist.base_dist
-        coarsed(DiscreteTimeObservedStatesMarkovModel(
-            base_dist.transition_matrix,
-            Distributions.Categorical(init_p; check_args = false),
-            base_dist.state_labels
-        ))
+        coarsed(
+            DiscreteTimeObservedStatesMarkovModel(
+                base_dist.transition_matrix,
+                Distributions.Categorical(init_p; check_args = false),
+                base_dist.state_labels
+            )
+        )
     elseif dist isa CoarsedObservedStatesMarkovModel &&
-           dist.base_dist isa ContinuousTimeObservedStatesMarkovModel
+            dist.base_dist isa ContinuousTimeObservedStatesMarkovModel
         base_dist = dist.base_dist
-        coarsed(ContinuousTimeObservedStatesMarkovModel(
-            base_dist.transition_matrix,
-            Distributions.Categorical(init_p; check_args = false),
-            base_dist.Δt,
-            base_dist.state_labels;
-            propagation_mode = base_dist.propagation_mode
-        ))
+        coarsed(
+            ContinuousTimeObservedStatesMarkovModel(
+                base_dist.transition_matrix,
+                Distributions.Categorical(init_p; check_args = false),
+                base_dist.Δt,
+                base_dist.state_labels;
+                propagation_mode = base_dist.propagation_mode
+            )
+        )
     else
         DiscreteTimeDiscreteStatesHMM(
             dist.transition_matrix, dist.emission_dists,
-            Distributions.Categorical(init_p; check_args = false))
+            Distributions.Categorical(init_p; check_args = false)
+        )
     end
 end
 
@@ -233,21 +249,28 @@ end
 end
 
 @inline _hmm_emission_rand(rng::AbstractRNG, dist::DiscreteTimeDiscreteStatesHMM, state::Int) = rand(
-    rng, dist.emission_dists[state])
+    rng, dist.emission_dists[state]
+)
 
 @inline _hmm_emission_rand(rng::AbstractRNG, dist::ContinuousTimeDiscreteStatesHMM, state::Int) = rand(
-    rng, dist.emission_dists[state])
+    rng, dist.emission_dists[state]
+)
 
 @inline _hmm_emission_rand(rng::AbstractRNG, dist::MVDiscreteTimeDiscreteStatesHMM, state::Int) = _mv_emission_rand(
-    rng, dist.emission_dists[state])
+    rng, dist.emission_dists[state]
+)
 
 @inline _hmm_emission_rand(rng::AbstractRNG, dist::MVContinuousTimeDiscreteStatesHMM, state::Int) = _mv_emission_rand(
-    rng, dist.emission_dists[state])
+    rng, dist.emission_dists[state]
+)
 
 # For observed-state Markov models the "emission" is the state label itself.
 @inline _hmm_emission_rand(rng::AbstractRNG, dist::DiscreteTimeObservedStatesMarkovModel, state::Int) = dist.state_labels[state]
 
 @inline _hmm_emission_rand(rng::AbstractRNG, dist::ContinuousTimeObservedStatesMarkovModel, state::Int) = dist.state_labels[state]
 
-@inline _hmm_emission_rand(rng::AbstractRNG, dist::CoarsedObservedStatesMarkovModel, state::Int) = [_hmm_emission_rand(
-    rng, dist.base_dist, state)]
+@inline _hmm_emission_rand(rng::AbstractRNG, dist::CoarsedObservedStatesMarkovModel, state::Int) = [
+    _hmm_emission_rand(
+        rng, dist.base_dist, state
+    ),
+]

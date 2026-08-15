@@ -79,17 +79,19 @@ get_spec(r::CVResult) = r.spec
 function _rebuild_dm(dm_ref::DataModel, rows::Vector{Int})
     df_sub = get_df(dm_ref)[rows, :]
     cfg = dm_ref.config
-    return DataModel(get_model(dm_ref), df_sub;
+    return DataModel(
+        get_model(dm_ref), df_sub;
         primary_id = cfg.primary_id, time_col = cfg.time_col,
         evid_col = cfg.evid_col, amt_col = cfg.amt_col,
         rate_col = cfg.rate_col, cmt_col = cfg.cmt_col, t0 = cfg.t0,
-        serialization = cfg.serialization)
+        serialization = cfg.serialization
+    )
 end
 
 function _cv_has_re_support(res::FitResult)
     r = get_result(res)
     return r isa FrequentistREResult || r isa GHQuadratureResult ||
-           r isa MCEMResult || r isa SAEMResult
+        r isa MCEMResult || r isa SAEMResult
 end
 
 # Only RE-aware fitting methods accept the constants_re kwarg.
@@ -117,9 +119,11 @@ Partition `dm` into `n_folds` train/test splits for cross-validation.
 
 Returns a [`CVSpec`](@ref) storing row indices only (not full `DataModel`s).
 """
-function cross_validate(dm::DataModel, n_folds::Int;
+function cross_validate(
+        dm::DataModel, n_folds::Int;
         kind::Symbol = :id,
-        rng::AbstractRNG = Random.default_rng())
+        rng::AbstractRNG = Random.default_rng()
+    )
     n_folds >= 2 || error("n_folds must be ≥ 2, got $n_folds")
     kind ∈ (:id, :observation) || error("kind must be :id or :observation, got $kind")
     n = length(get_individuals(dm))
@@ -137,10 +141,22 @@ function cross_validate(dm::DataModel, n_folds::Int;
         for f in 1:n_folds
             test_inds = findall(==(f), fold_of)
             train_inds = findall(!=(f), fold_of)
-            test_rows[f] = sort(vcat((get_rows(get_row_groups(dm))[i]
-            for i in test_inds)...))
-            train_rows[f] = sort(vcat((get_rows(get_row_groups(dm))[i]
-            for i in train_inds)...))
+            test_rows[f] = sort(
+                vcat(
+                    (
+                        get_rows(get_row_groups(dm))[i]
+                            for i in test_inds
+                    )...
+                )
+            )
+            train_rows[f] = sort(
+                vcat(
+                    (
+                        get_rows(get_row_groups(dm))[i]
+                            for i in train_inds
+                    )...
+                )
+            )
         end
     else  # :observation
         test_sets = [Int[] for _ in 1:n_folds]
@@ -182,8 +198,10 @@ end
 # Mirrors _loglikelihood_individual but collects per-obs rows instead of
 # accumulating. HMM filter state (hmm_priors) is maintained sequentially.
 # Returns empty DataFrame on ODE failure; records NaN for non-finite logpdf.
-function _eval_individual_obs(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache,
-        loss::Union{Nothing, Function})
+function _eval_individual_obs(
+        dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache,
+        loss::Union{Nothing, Function}
+    )
     model = get_model(dm)
     ind = get_individuals(dm)[idx]
     obs_rows = get_obs_rows(get_row_groups(dm))[idx]
@@ -218,8 +236,8 @@ function _eval_individual_obs(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCac
         vary = vary_cache === nothing ? _varying_at(dm, ind, i, time_vec) : vary_cache[i]
         η_row = _row_random_effects_at(dm, idx, i, η_ind, rowwise_re; obs_only = true)
         obs = sol_accessors === nothing ?
-              calculate_formulas_obs(model, θ, η_row, const_cov, vary) :
-              calculate_formulas_obs(model, θ, η_row, const_cov, vary, sol_accessors)
+            calculate_formulas_obs(model, θ, η_row, const_cov, vary) :
+            calculate_formulas_obs(model, θ, η_row, const_cov, vary, sol_accessors)
         t_i = Float64(time_vec[i])
 
         for (j, col) in pairs(obs_cols)
@@ -239,7 +257,7 @@ function _eval_individual_obs(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCac
                 hi = hmm_init::Vector{Vector{T_hmm}}
                 if !hs[j]
                     init_probs = dist isa CoarsedObservedStatesMarkovModel ?
-                                 dist.base_dist.initial_dist.p : dist.initial_dist.p
+                        dist.base_dist.initial_dist.p : dist.initial_dist.p
                     buf = Vector{T_hmm}(undef, length(init_probs))
                     copyto!(buf, init_probs)
                     hi[j] = buf
@@ -278,11 +296,15 @@ function _eval_individual_obs(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCac
                     catch
                         NaN
                     end
-                    (individual = id_val, time = t_i, outcome = col,
-                        obs = _cv_obs_float(y_raw), loglikelihood = lp, predicted_mean = NaN, loss = lv)
+                    (
+                        individual = id_val, time = t_i, outcome = col,
+                        obs = _cv_obs_float(y_raw), loglikelihood = lp, predicted_mean = NaN, loss = lv,
+                    )
                 else
-                    (individual = id_val, time = t_i, outcome = col,
-                        obs = _cv_obs_float(y_raw), loglikelihood = lp, predicted_mean = NaN)
+                    (
+                        individual = id_val, time = t_i, outcome = col,
+                        obs = _cv_obs_float(y_raw), loglikelihood = lp, predicted_mean = NaN,
+                    )
                 end
                 push!(rows_out, row)
             else
@@ -301,11 +323,15 @@ function _eval_individual_obs(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCac
                     catch
                         NaN
                     end
-                    (individual = id_val, time = t_i, outcome = col,
-                        obs = _cv_obs_float(y_raw), loglikelihood = lp, predicted_mean = pm, loss = lv)
+                    (
+                        individual = id_val, time = t_i, outcome = col,
+                        obs = _cv_obs_float(y_raw), loglikelihood = lp, predicted_mean = pm, loss = lv,
+                    )
                 else
-                    (individual = id_val, time = t_i, outcome = col,
-                        obs = _cv_obs_float(y_raw), loglikelihood = lp, predicted_mean = pm)
+                    (
+                        individual = id_val, time = t_i, outcome = col,
+                        obs = _cv_obs_float(y_raw), loglikelihood = lp, predicted_mean = pm,
+                    )
                 end
                 push!(rows_out, row)
             end
@@ -342,11 +368,13 @@ function _re_prior_mean_or_zero(dist, ref)
     catch
         nothing
     end
-    v === nothing && (v = try
-        Distributions.median(dist)
-    catch
-        nothing
-    end)
+    v === nothing && (
+        v = try
+            Distributions.median(dist)
+        catch
+            nothing
+        end
+    )
     if ref isa AbstractVector
         v === nothing && return zeros(Float64, length(ref))
         return v isa AbstractVector ? collect(Float64.(v)) : fill(Float64(v), length(ref))
@@ -359,12 +387,19 @@ end
 # Build a prior-mean η ComponentArray for unseen test individual `j`, evaluating
 # each RE distribution at that individual's constant covariates.
 function _cv_prior_mean_eta(
-        dm, j, θu, dists_builder, model_funs, helpers, re_names, ref_eta)
+        dm, j, θu, dists_builder, model_funs, helpers, re_names, ref_eta
+    )
     const_cov = get_const_cov(get_individuals(dm)[j])
     dists = dists_builder(θu, const_cov, model_funs, helpers)
-    nt = NamedTuple((re => _re_prior_mean_or_zero(getproperty(dists, re),
-                         getproperty(ref_eta, re))
-    for re in re_names))
+    nt = NamedTuple(
+        (
+            re => _re_prior_mean_or_zero(
+                    getproperty(dists, re),
+                    getproperty(ref_eta, re)
+                )
+                for re in re_names
+        )
+    )
     return ComponentArray(nt)
 end
 
@@ -378,38 +413,50 @@ end
 
 # EBE path: pre-build η for each test individual (seen → training EBE,
 # unseen → RE prior mean).
-function _cv_evaluate_ebe(dm_train, dm_test, res_train, θu, ll_cache_test, loss,
-        constants_re)
+function _cv_evaluate_ebe(
+        dm_train, dm_test, res_train, θu, ll_cache_test, loss,
+        constants_re
+    )
     bstars, batch_infos, _, const_cache, _, _ = _resolve_bstars_for_re(
-        dm_train, res_train, constants_re)
+        dm_train, res_train, constants_re
+    )
     η_train_vec = _eta_from_eb(dm_train, batch_infos, bstars, const_cache, θu)
     re_to_eta = Dict{Any, ComponentArray}(
         get_re_groups(get_individuals(dm_train)[i]) => η_train_vec[i]
-    for i in 1:length(get_individuals(dm_train)))
+            for i in 1:length(get_individuals(dm_train))
+    )
     ref_eta = η_train_vec[1]
     dists_builder = create_random_effect_distribution(get_random(get_model(dm_test)))
     model_funs_test = get_model_funs(get_model(dm_test))
     helpers_test = get_helper_funs(get_model(dm_test))
     re_names = get_re_names(get_random(get_model(dm_test)))
     mean_eta_cache = Dict{Int, ComponentArray}()
-    η_test = [haskey(re_to_eta, get_re_groups(get_individuals(dm_test)[j])) ?
-              re_to_eta[get_re_groups(get_individuals(dm_test)[j])] :
-              get!(
-                  () -> _cv_prior_mean_eta(dm_test, j, θu, dists_builder,
-                      model_funs_test, helpers_test,
-                      re_names, ref_eta),
-                  mean_eta_cache, j)
-              for j in 1:length(get_individuals(dm_test))]
+    η_test = [
+        haskey(re_to_eta, get_re_groups(get_individuals(dm_test)[j])) ?
+            re_to_eta[get_re_groups(get_individuals(dm_test)[j])] :
+            get!(
+                () -> _cv_prior_mean_eta(
+                    dm_test, j, θu, dists_builder,
+                    model_funs_test, helpers_test,
+                    re_names, ref_eta
+                ),
+                mean_eta_cache, j
+            )
+            for j in 1:length(get_individuals(dm_test))
+    ]
     return _cv_collect_obs(dm_test, θu, η_test, ll_cache_test, loss)
 end
 
 # MC path: marginalize over the conditional (seen) or prior (unseen) using S MC draws.
 # Aggregates per-obs log-likelihoods via logsumexp and predicted means via arithmetic mean.
-function _cv_evaluate_mc(dm_train, dm_test, res_train, θu, ll_cache_test, loss,
+function _cv_evaluate_mc(
+        dm_train, dm_test, res_train, θu, ll_cache_test, loss,
         seen_re_mode, unseen_re_mode, n_mc_samples, rng, re_names,
-        constants_re)
+        constants_re
+    )
     bstars, batch_infos, _, const_cache, ll_cache_train, _ = _resolve_bstars_for_re(
-        dm_train, res_train, constants_re)
+        dm_train, res_train, constants_re
+    )
     η_train_vec = _eta_from_eb(dm_train, batch_infos, bstars, const_cache, θu)
 
     # Lookup: test individual re_groups → (batch_idx, train_ind_idx)
@@ -423,8 +470,10 @@ function _cv_evaluate_mc(dm_train, dm_test, res_train, θu, ll_cache_test, loss,
 
     # Conditional samples for seen individuals (Laplace or MCMC path)
     bstars_per_sample = seen_re_mode == :conditional ?
-                        _sample_conditional_bstars(dm_train, batch_infos, bstars, θu,
-        const_cache, ll_cache_train, res_train, n_mc_samples, rng) : nothing
+        _sample_conditional_bstars(
+            dm_train, batch_infos, bstars, θu,
+            const_cache, ll_cache_train, res_train, n_mc_samples, rng
+        ) : nothing
 
     # RE distribution builder — used for unseen :montecarlo draws and :mean plug-in.
     dists_builder = create_random_effect_distribution(get_random(get_model(dm_test)))
@@ -453,23 +502,37 @@ function _cv_evaluate_mc(dm_train, dm_test, res_train, θu, ll_cache_test, loss,
             η_j = if is_seen && seen_re_mode == :conditional
                 bi, ti = tinfo
                 b_s = bstars_per_sample[s][bi]
-                ComponentArray(_build_eta_ind(
-                    dm_train, ti, batch_infos[bi], b_s, const_cache, θu))
+                ComponentArray(
+                    _build_eta_ind(
+                        dm_train, ti, batch_infos[bi], b_s, const_cache, θu
+                    )
+                )
             elseif is_seen   # :ebe — same for every sample
                 η_train_vec[tinfo[2]]
             elseif unseen_re_mode == :montecarlo
                 dists = get!(
                     () -> dists_builder(
-                        θu, get_const_cov(ind_j), model_funs_test, helpers_test),
-                    unseen_dists_cache, j)
-                ComponentArray(NamedTuple((re => rand(srng, getproperty(dists, re))
-                for re in re_names)))
+                        θu, get_const_cov(ind_j), model_funs_test, helpers_test
+                    ),
+                    unseen_dists_cache, j
+                )
+                ComponentArray(
+                    NamedTuple(
+                        (
+                            re => rand(srng, getproperty(dists, re))
+                                for re in re_names
+                        )
+                    )
+                )
             else             # :mean — RE prior mean, same for every sample
                 get!(
-                    () -> _cv_prior_mean_eta(dm_test, j, θu, dists_builder,
+                    () -> _cv_prior_mean_eta(
+                        dm_test, j, θu, dists_builder,
                         model_funs_test, helpers_test,
-                        re_names, ref_eta),
-                    mean_eta_cache, j)
+                        re_names, ref_eta
+                    ),
+                    mean_eta_cache, j
+                )
             end
 
             all_dfs[s][j] = _eval_individual_obs(dm_test, j, θu, η_j, ll_cache_test, loss)
@@ -513,11 +576,15 @@ function _cv_evaluate_mc(dm_train, dm_test, res_train, θu, ll_cache_test, loss,
 
         df_out = copy(base_df)
         df_out[!, :loglikelihood] = ll_acc .- log(n_mc_samples)
-        df_out[!, :predicted_mean] = [mean_cnt[r] > 0 ? mean_acc[r] / mean_cnt[r] : NaN
-                                      for r in 1:n_rows]
+        df_out[!, :predicted_mean] = [
+            mean_cnt[r] > 0 ? mean_acc[r] / mean_cnt[r] : NaN
+                for r in 1:n_rows
+        ]
         if loss_acc !== nothing
-            df_out[!, :loss] = [loss_cnt[r] > 0 ? loss_acc[r] / loss_cnt[r] : NaN
-                                for r in 1:n_rows]
+            df_out[!, :loss] = [
+                loss_cnt[r] > 0 ? loss_acc[r] / loss_cnt[r] : NaN
+                    for r in 1:n_rows
+            ]
         end
         push!(result_dfs, df_out)
     end
@@ -579,7 +646,8 @@ do not apply and must be left at their defaults.
 
 Returns a [`CVResult`](@ref).
 """
-function fit_cv(cv_spec::CVSpec, method::FittingMethod, args...;
+function fit_cv(
+        cv_spec::CVSpec, method::FittingMethod, args...;
         seen_re_mode::Symbol = :ebe,
         unseen_re_mode::Symbol = :mean,
         n_mc_samples::Int = 100,
@@ -590,7 +658,8 @@ function fit_cv(cv_spec::CVSpec, method::FittingMethod, args...;
         constants_re::NamedTuple = NamedTuple(),
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
-        kwargs...)
+        kwargs...
+    )
     seen_re_mode ∈ (:ebe, :conditional) ||
         error("seen_re_mode must be :ebe or :conditional, got $seen_re_mode")
     unseen_re_mode ∈ (:mean, :montecarlo) ||
@@ -600,8 +669,10 @@ function fit_cv(cv_spec::CVSpec, method::FittingMethod, args...;
     loss === nothing || _validate_cv_loss(cv_spec, loss)
     if method isa Pooled || method isa PooledMap
         (seen_re_mode == :ebe && unseen_re_mode == :mean) ||
-            error("Pooled/PooledMap cross-validation evaluates the deterministic plug-in " *
-                  "η for every test individual; seen_re_mode/unseen_re_mode do not apply.")
+            error(
+            "Pooled/PooledMap cross-validation evaluates the deterministic plug-in " *
+                "η for every test individual; seen_re_mode/unseen_re_mode do not apply."
+        )
     end
 
     n_folds = cv_spec.n_folds
@@ -614,13 +685,14 @@ function fit_cv(cv_spec::CVSpec, method::FittingMethod, args...;
 
         base_kw = (store_data_model = false, ode_args = ode_args, ode_kwargs = ode_kwargs)
         fit_kw = _cv_method_accepts_constants_re(method) ?
-                 merge(base_kw, (constants_re = constants_re,)) : base_kw
+            merge(base_kw, (constants_re = constants_re,)) : base_kw
         res_train = fit_model(dm_train, method, args...; fit_kw..., kwargs...)
         θu = get_params(res_train; scale = :untransformed)
 
         ll_cache_test = build_ll_cache(
             dm_test; ode_args = ode_args, ode_kwargs = ode_kwargs,
-            serialization = EnsembleSerial(), force_saveat = true)
+            serialization = EnsembleSerial(), force_saveat = true
+        )
 
         re_names = get_re_names(get_random(get_model(dm_train)))
         has_re = !isempty(re_names)
@@ -638,9 +710,11 @@ function fit_cv(cv_spec::CVSpec, method::FittingMethod, args...;
         elseif seen_re_mode == :ebe && unseen_re_mode == :mean
             _cv_evaluate_ebe(dm_train, dm_test, res_train, θu, ll_cache_test, loss, cr)
         else
-            _cv_evaluate_mc(dm_train, dm_test, res_train, θu, ll_cache_test, loss,
+            _cv_evaluate_mc(
+                dm_train, dm_test, res_train, θu, ll_cache_test, loss,
                 seen_re_mode, unseen_re_mode, n_mc_samples,
-                fold_rngs[f], re_names, cr)
+                fold_rngs[f], re_names, cr
+            )
         end
 
         insertcols!(obs_df, 1, :fold => fill(f, nrow(obs_df)))
@@ -666,7 +740,9 @@ function fit_cv(cv_spec::CVSpec, method::FittingMethod, args...;
     ll_vec = [fr.test_loglikelihood for fr in fold_results]
     ll_valid = filter(!isnan, ll_vec)
 
-    return CVResult(cv_spec, fold_results, all_scores,
+    return CVResult(
+        cv_spec, fold_results, all_scores,
         isempty(ll_valid) ? NaN : mean(ll_valid),
-        length(ll_valid) >= 2 ? std(ll_valid) : NaN)
+        length(ll_valid) >= 2 ? std(ll_valid) : NaN
+    )
 end

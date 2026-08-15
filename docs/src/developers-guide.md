@@ -71,11 +71,11 @@ A few conventions are load-bearing and enforced throughout the codebase:
   syntax. Field layout is an implementation detail and may change between versions.
 - **`ComponentArray` construction.** Reuse existing axes with
   `ComponentArray(values, getaxes(existing))` rather than reconstructing axes.
-- **Formatting (JuliaFormatter).** Source, tests, and docs follow the SciML style, pinned in
-  `.JuliaFormatter.toml` (`style = "sciml"`). Run
-  [JuliaFormatter.jl](https://github.com/domluna/JuliaFormatter.jl) v1 before committing
-  (`julia -e 'using JuliaFormatter; format(["src", "test", "docs"])'`), since the `Format` CI job
-  fails on any diff. Use v1 specifically; v2 formats differently and produces spurious diffs.
+- **Formatting (Runic).** Source, tests, and docs are formatted with
+  [Runic.jl](https://github.com/fredrikekre/Runic.jl), which has no configuration, so there is no
+  style file and no room for disagreement. Run it before committing
+  (`julia -e 'using Runic; Runic.main(ARGS)' -- --inplace src test docs ext`), since the `Format`
+  CI job fails on any diff.
 - **Static quality (Aqua.jl).** `test/aqua_tests.jl` runs `Aqua.test_all(NoLimits)` with no
   ignore lists, so contributions must keep method ambiguities at zero, avoid type piracy, and
   give every dependency a `[compat]` entry. It runs as part of the test suite.

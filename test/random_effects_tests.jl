@@ -14,10 +14,10 @@ using NoLimits
         β_x = RealVector([0.3, -0.2], calculate_se = true)
         α_lp1 = RealNumber(2.0)
         α_lp2 = RealNumber(5.0)
-        σ_η = RealNumber(0.7, scale = :log, lower = 1e-12)
+        σ_η = RealNumber(0.7, scale = :log, lower = 1.0e-12)
         μ = RealVector(zeros(3))
         Ω = RealPSDMatrix(Matrix(I, 3, 3), scale = :cholesky)
-        σ_ϵ = RealNumber(0.5, scale = :log, lower = 1e-12)
+        σ_ϵ = RealNumber(0.5, scale = :log, lower = 1.0e-12)
         ζ1 = NNParameters(chain; function_name = :NN1, calculate_se = false)
         Γ = SoftTreeParameters(2, 2; function_name = :ST, calculate_se = false)
         ψ = NPFParameter(1, 3, seed = 1, calculate_se = false)
@@ -29,7 +29,7 @@ using NoLimits
 
     constant_features_i = (
         x = (Age = 1, gender = 1),
-        w2 = (; weight = 80.0)
+        w2 = (; weight = 80.0),
     )
 
     helper_functions = @helpers begin
@@ -53,25 +53,27 @@ using NoLimits
 
     # Accessor coverage for metadata.
     @test get_re_names(re) ==
-          [:η_normal, :η_beta, :η_mv, :η_flow, :η_nn, :η_st, :η_sp, :η_help]
+        [:η_normal, :η_beta, :η_mv, :η_flow, :η_nn, :η_st, :η_sp, :η_help]
     @test get_re_groups(re).η_normal == :id
     @test get_re_groups(re).η_mv == :site
     @test get_re_types(re).η_mv == :MvNormal
 
     create = create_random_effect_distribution(re)
     dists = create(fixed_effects, constant_features_i, model_funs, helper_functions)
-    re_vals = ComponentArray(η_normal = 0.0, η_beta = 0.5, η_mv = zeros(3),
+    re_vals = ComponentArray(
+        η_normal = 0.0, η_beta = 0.5, η_mv = zeros(3),
         η_flow = rand(dists.η_flow),
-        η_nn = 1.0, η_st = 0.5, η_sp = 0.0, η_help = 0.0)
+        η_nn = 1.0, η_st = 0.5, η_sp = 0.0, η_help = 0.0
+    )
     total_lp = get_re_logpdf(re)(dists, re_vals)
     expected = logpdf(dists.η_normal, re_vals.η_normal) +
-               logpdf(dists.η_beta, re_vals.η_beta) +
-               logpdf(dists.η_mv, re_vals.η_mv) +
-               logpdf(dists.η_flow, re_vals.η_flow) +
-               logpdf(dists.η_nn, re_vals.η_nn) +
-               logpdf(dists.η_st, re_vals.η_st) +
-               logpdf(dists.η_sp, re_vals.η_sp) +
-               logpdf(dists.η_help, re_vals.η_help)
+        logpdf(dists.η_beta, re_vals.η_beta) +
+        logpdf(dists.η_mv, re_vals.η_mv) +
+        logpdf(dists.η_flow, re_vals.η_flow) +
+        logpdf(dists.η_nn, re_vals.η_nn) +
+        logpdf(dists.η_st, re_vals.η_st) +
+        logpdf(dists.η_sp, re_vals.η_sp) +
+        logpdf(dists.η_help, re_vals.η_help)
     @test isapprox(total_lp, expected)
 
     @test dists.η_normal isa Normal
@@ -106,9 +108,9 @@ end
         β = RealVector([0.5, -1.2, 0.8])
         b = RealVector([0.2, -0.4, 1.1, 0.7])
         μ = RealNumber(0.0)
-        σ = RealNumber(0.6, scale = :log, lower = 1e-12)
+        σ = RealNumber(0.6, scale = :log, lower = 1.0e-12)
         τ = RealNumber(2.0)
-        ω = RealNumber(1.5, lower = 1e-6)
+        ω = RealNumber(1.5, lower = 1.0e-6)
         ζ2 = NNParameters(chain; function_name = :NN2, calculate_se = false)
         Γ2 = SoftTreeParameters(2, 2; function_name = :ST2, calculate_se = false)
         sp2 = SplineParameters(knots; function_name = :SP2, calculate_se = false)
@@ -121,7 +123,7 @@ end
         x = (Age = 42.0, gender = 0.0, height = 172.0, smoker = 1.0),
         lab = (CRP = 3.2, BMI = 26.5, LDL = 110.0),
         z = 3.0,
-        xv = [1.0, 0.5, -0.25, 2.0]
+        xv = [1.0, 0.5, -0.25, 2.0],
     )
 
     helper_functions = @helpers begin
@@ -137,13 +139,17 @@ end
         η_lap = RandomEffect(Distributions.Laplace(softplus(β[2]), σ); column = :site)
         η_logit = RandomEffect(LogitNormal(clamp01(x.gender + 0.25 + z), ω); column = :id)
         η_nn = RandomEffect(
-            LogNormal(NN2([x.Age, lab.BMI, lab.CRP], ζ2)[1], σ); column = :id)
+            LogNormal(NN2([x.Age, lab.BMI, lab.CRP], ζ2)[1], σ); column = :id
+        )
         η_weib = RandomEffect(
-            Weibull(softplus(β[1]) + 0.1, softplus(β[2]) + 0.1); column = :site)
+            Weibull(softplus(β[1]) + 0.1, softplus(β[2]) + 0.1); column = :site
+        )
         η_gamma = RandomEffect(
-            Gamma(softplus(β[1]) + 0.1, softplus(β[3]) + 0.1); column = :id)
+            Gamma(softplus(β[1]) + 0.1, softplus(β[3]) + 0.1); column = :id
+        )
         η_invg = RandomEffect(
-            InverseGaussian(softplus(β[1]) + 0.1, softplus(β[2]) + 0.1); column = :id)
+            InverseGaussian(softplus(β[1]) + 0.1, softplus(β[2]) + 0.1); column = :id
+        )
         η_trunc = RandomEffect(Truncated(Normal(μ + z, σ), -Inf, 2.5); column = :site)
         η_st = RandomEffect(LogNormal(ST2([x.Age, lab.BMI], Γ2)[1], σ); column = :site)
         η_sp = RandomEffect(Normal(SP2(0.4, sp2), σ); column = :id)
@@ -153,26 +159,28 @@ end
 
     create = create_random_effect_distribution(re)
     dists = create(fixed_effects, constant_features_i, model_funs, helper_functions)
-    re_vals = ComponentArray(η_cauchy = 1.0, η_t = 0.0, η_skew = 0.0,
+    re_vals = ComponentArray(
+        η_cauchy = 1.0, η_t = 0.0, η_skew = 0.0,
         η_lap = 0.0, η_logit = 0.5, η_nn = 1.0,
         η_weib = 1.0, η_gamma = 1.0, η_invg = 1.0,
         η_trunc = 0.0, η_st = 1.0,
-        η_sp = 0.0, η_nn2 = 0.0, η_dot = 0.0)
+        η_sp = 0.0, η_nn2 = 0.0, η_dot = 0.0
+    )
     total_lp = get_re_logpdf(re)(dists, re_vals)
     expected = logpdf(dists.η_cauchy, re_vals.η_cauchy) +
-               logpdf(dists.η_t, re_vals.η_t) +
-               logpdf(dists.η_skew, re_vals.η_skew) +
-               logpdf(dists.η_lap, re_vals.η_lap) +
-               logpdf(dists.η_logit, re_vals.η_logit) +
-               logpdf(dists.η_nn, re_vals.η_nn) +
-               logpdf(dists.η_weib, re_vals.η_weib) +
-               logpdf(dists.η_gamma, re_vals.η_gamma) +
-               logpdf(dists.η_invg, re_vals.η_invg) +
-               logpdf(dists.η_trunc, re_vals.η_trunc) +
-               logpdf(dists.η_st, re_vals.η_st) +
-               logpdf(dists.η_sp, re_vals.η_sp) +
-               logpdf(dists.η_nn2, re_vals.η_nn2) +
-               logpdf(dists.η_dot, re_vals.η_dot)
+        logpdf(dists.η_t, re_vals.η_t) +
+        logpdf(dists.η_skew, re_vals.η_skew) +
+        logpdf(dists.η_lap, re_vals.η_lap) +
+        logpdf(dists.η_logit, re_vals.η_logit) +
+        logpdf(dists.η_nn, re_vals.η_nn) +
+        logpdf(dists.η_weib, re_vals.η_weib) +
+        logpdf(dists.η_gamma, re_vals.η_gamma) +
+        logpdf(dists.η_invg, re_vals.η_invg) +
+        logpdf(dists.η_trunc, re_vals.η_trunc) +
+        logpdf(dists.η_st, re_vals.η_st) +
+        logpdf(dists.η_sp, re_vals.η_sp) +
+        logpdf(dists.η_nn2, re_vals.η_nn2) +
+        logpdf(dists.η_dot, re_vals.η_dot)
     @test isapprox(total_lp, expected)
 
     @test dists.η_cauchy isa Truncated

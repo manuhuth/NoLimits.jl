@@ -128,7 +128,7 @@ function calculate_plot_size(nplots::Int, ncols::Int, style::PlotStyle = PlotSty
     ncols = min(ncols, nplots)
     nrows = ceil(Int, nplots / ncols)
     scale = nplots <= 4 ? 1.0 :
-            nplots <= 9 ? 0.95 : nplots <= 16 ? 0.85 : nplots <= 25 ? 0.75 : 0.65
+        nplots <= 9 ? 0.95 : nplots <= 16 ? 0.85 : nplots <= 25 ? 0.75 : 0.65
     width = round(Int, ncols * style.base_subplot_width * scale)
     height = round(Int, nrows * style.base_subplot_height * scale)
     width = clamp(width, MIN_FIGURE_WIDTH, MAX_FIGURE_WIDTH)
@@ -146,7 +146,7 @@ function default_axis_kwargs(style::PlotStyle = PlotStyle())
         xlabelsize = style.font_size_label,
         ylabelsize = style.font_size_label,
         xticklabelsize = style.font_size_tick,
-        yticklabelsize = style.font_size_tick
+        yticklabelsize = style.font_size_tick,
     )
 end
 
@@ -211,8 +211,10 @@ function _ensure_save_path(save_path::Union{Nothing, String})
     return save_path
 end
 
-function _resolve_plot_path(save_path::Union{Nothing, String},
-        plot_path::Union{Nothing, String})
+function _resolve_plot_path(
+        save_path::Union{Nothing, String},
+        plot_path::Union{Nothing, String}
+    )
     if save_path !== nothing && plot_path !== nothing && save_path != plot_path
         error("Specify only one of save_path or plot_path when saving plots.")
     end
@@ -329,8 +331,10 @@ function _apply_param_overrides(θ::ComponentArray, overrides::NamedTuple)
     return θ_use
 end
 
-@inline _is_posterior_draw_fit(res::FitResult) = (get_result(res) isa MCMCResult ||
-                                                  get_result(res) isa VIResult)
+@inline _is_posterior_draw_fit(res::FitResult) = (
+    get_result(res) isa MCMCResult ||
+        get_result(res) isa VIResult
+)
 
 function _with_posterior_warmup(res::FitResult, mcmc_warmup::Union{Nothing, Int})
     mcmc_warmup === nothing && return res
@@ -345,32 +349,40 @@ function _with_posterior_warmup(res::FitResult, mcmc_warmup::Union{Nothing, Int}
     end
     conv = get_diagnostics(res).convergence
     conv = merge(conv, (n_adapt = mcmc_warmup,))
-    return FitResult(get_method(res), get_result(res), get_summary(res),
+    return FitResult(
+        get_method(res), get_result(res), get_summary(res),
         FitDiagnostics(
             get_diagnostics(res).timing, get_diagnostics(res).optimizer, conv,
-            get_diagnostics(res).notes),
-        get_data_model(res), get_fit_args(res), get_fit_kwargs(res))
+            get_diagnostics(res).notes
+        ),
+        get_data_model(res), get_fit_args(res), get_fit_kwargs(res)
+    )
 end
 
-function _solve_dense_individual(dm::DataModel,
+function _solve_dense_individual(
+        dm::DataModel,
         ind::Individual,
         θ::ComponentArray,
         η_ind::ComponentArray;
         ode_args::Tuple = (),
-        ode_kwargs::NamedTuple = NamedTuple())
+        ode_kwargs::NamedTuple = NamedTuple()
+    )
     model = get_model(dm)
     pre = calculate_prede(model, θ, η_ind, get_const_cov(ind))
     compiled, u0, cb, infusion_rates = _solve_preamble(
-        dm, ind, θ, η_ind, pre, get_helper_funs(model), get_model_funs(model))
+        dm, ind, θ, η_ind, pre, get_helper_funs(model), get_model_funs(model)
+    )
     f! = get_de_f!(get_de(model))
     infusion_rates === nothing || (f! = _plot_with_infusion(f!, infusion_rates))
     plan = get_closed_form_plan(dm)
     if is_cf_eligible(plan) && (_cf_is_whole(plan) || cb === nothing)
         solver_cfg = get_solver_config(model)
         cf_alg = _resolve_ode_alg(solver_cfg.alg)
-        sol = _cf_dispatch_solve(model, compiled, u0, get_tspan(ind), nothing, plan,
+        sol = _cf_dispatch_solve(
+            model, compiled, u0, get_tspan(ind), nothing, plan,
             get_callbacks(ind), cf_alg, solver_cfg.args,
-            _ode_solve_kwargs(solver_cfg.kwargs, ode_kwargs, NamedTuple()))
+            _ode_solve_kwargs(solver_cfg.kwargs, ode_kwargs, NamedTuple())
+        )
         sol !== nothing && return sol, compiled
     end
     prob = ODEProblem(f!, u0, get_tspan(ind), compiled)
@@ -381,7 +393,8 @@ function _solve_dense_individual(dm::DataModel,
         sol = solve(prob, alg, solver_cfg.args..., ode_args...; solve_kwargs...)
     else
         sol = solve(
-            prob, alg, solver_cfg.args..., ode_args...; solve_kwargs..., callback = cb)
+            prob, alg, solver_cfg.args..., ode_args...; solve_kwargs..., callback = cb
+        )
     end
     return sol, compiled
 end
@@ -390,24 +403,30 @@ end
 # crossing-aware solution accessors. Callers guard on `get_de(...) !== nothing` before
 # fetching the cached solution, so this assumes the model has a DE.
 function _sol_accessors_from_cached(dm::DataModel, ind::Individual, sol, θ, η_ind)
-    compiled = get_de_compiler(get_de(get_model(dm)))((;
-        fixed_effects = θ,
-        random_effects = η_ind,
-        constant_covariates = get_const_cov(ind),
-        varying_covariates = merge(
-            (t = get_vary(get_series(ind)).t[1],), get_dyn(get_series(ind))),
-        helpers = get_helper_funs(get_model(dm)),
-        model_funs = get_model_funs(get_model(dm)),
-        preDE = calculate_prede(get_model(dm), θ, η_ind, get_const_cov(ind))
-    ))
+    compiled = get_de_compiler(get_de(get_model(dm)))(
+        (;
+            fixed_effects = θ,
+            random_effects = η_ind,
+            constant_covariates = get_const_cov(ind),
+            varying_covariates = merge(
+                (t = get_vary(get_series(ind)).t[1],), get_dyn(get_series(ind))
+            ),
+            helpers = get_helper_funs(get_model(dm)),
+            model_funs = get_model_funs(get_model(dm)),
+            preDE = calculate_prede(get_model(dm), θ, η_ind, get_const_cov(ind)),
+        )
+    )
     return _sol_accessors_with_crossings(
-        get_model(dm), sol, compiled, θ, η_ind, get_const_cov(ind))
+        get_model(dm), sol, compiled, θ, η_ind, get_const_cov(ind)
+    )
 end
 
-function _mcmc_param_means(chain::Chains;
+function _mcmc_param_means(
+        chain::Chains;
         n_adapt::Int = 0,
         max_draws::Int = typemax(Int),
-        rng::AbstractRNG = Random.default_rng())
+        rng::AbstractRNG = Random.default_rng()
+    )
     max_draws >= 1 || error("max_draws must be >= 1.")
     names_all = MCMCChains.names(chain, :parameters)
     idxs = findall(in(names_all), MCMCChains.names(chain))
@@ -433,8 +452,10 @@ end
 # its value, or `nothing` when absent — in which case the initial value is used and a
 # `source`-tagged warning is emitted. Names in `overrides` bypass the lookup (constants
 # never appear in a chain). Shared by the MCMC/VI mean and draw paths.
-function _coordwise_fixed_from_means(dm::DataModel, source::AbstractString, lookup;
-        overrides::NamedTuple = NamedTuple())
+function _coordwise_fixed_from_means(
+        dm::DataModel, source::AbstractString, lookup;
+        overrides::NamedTuple = NamedTuple()
+    )
     fe_names = get_names(get_fixed(get_model(dm)))
     θ0_u = get_θ0_untransformed(get_fixed(get_model(dm)))
     pairs = Pair{Symbol, Any}[]
@@ -456,13 +477,13 @@ function _coordwise_fixed_from_means(dm::DataModel, source::AbstractString, look
                     if ve !== nothing
                         vals[idx] = ve
                     else
-                        @warn "$(source) is missing fixed effect element; falling back to initial value." name=name index=Tuple(idx)
+                        @warn "$(source) is missing fixed effect element; falling back to initial value." name = name index = Tuple(idx)
                         vals[idx] = Float64(val0[idx])
                     end
                 end
                 push!(pairs, name => vals)
             else
-                @warn "$(source) is missing fixed effect; falling back to initial value." name=name
+                @warn "$(source) is missing fixed effect; falling back to initial value." name = name
                 push!(pairs, name => val0)
             end
         end
@@ -475,8 +496,10 @@ end
 # one representative individual. Calls `dists_builder` once per RE with free levels, in
 # `re_names` order; RE with no free levels get dim 1 and a `nothing` dist. The returned
 # NamedTuples carry the representative `dist` for callers that need its mean.
-function _re_free_meta(dm::DataModel, θ::ComponentArray, fixed_maps, re_names,
-        dists_builder, model_funs, helpers)
+function _re_free_meta(
+        dm::DataModel, θ::ComponentArray, fixed_maps, re_names,
+        dists_builder, model_funs, helpers
+    )
     re_values = get_re_values(get_re_group_info(dm))
     meta = Dict{Symbol, NamedTuple}()
     for re in re_names
@@ -492,10 +515,13 @@ function _re_free_meta(dm::DataModel, θ::ComponentArray, fixed_maps, re_names,
             continue
         end
         rep_idx = findfirst(
-            ind -> (getfield(get_re_groups(ind), re) isa AbstractVector ?
+            ind -> (
+                getfield(get_re_groups(ind), re) isa AbstractVector ?
                     (getfield(get_re_groups(ind), re)[1] in levels_free) :
-                    (getfield(get_re_groups(ind), re) in levels_free)),
-            get_individuals(dm))
+                    (getfield(get_re_groups(ind), re) in levels_free)
+            ),
+            get_individuals(dm)
+        )
         const_cov = get_const_cov(get_individuals(dm)[rep_idx])
         dist = getproperty(dists_builder(θ, const_cov, model_funs, helpers), re)
         dim = dist isa Distributions.UnivariateDistribution ? 1 : length(dist)
@@ -504,56 +530,72 @@ function _re_free_meta(dm::DataModel, θ::ComponentArray, fixed_maps, re_names,
     return meta
 end
 
-function _mcmc_fixed_means(res::FitResult,
+function _mcmc_fixed_means(
+        res::FitResult,
         dm::DataModel;
         max_draws::Int = typemax(Int),
         rng::AbstractRNG = Random.default_rng(),
-        overrides::NamedTuple = NamedTuple())
+        overrides::NamedTuple = NamedTuple()
+    )
     chain = get_chain(res)
     n_adapt = _mcmc_warmup(res)
     means = _mcmc_param_means(chain; n_adapt = n_adapt, max_draws = max_draws, rng = rng)
-    θ = _coordwise_fixed_from_means(dm, "MCMC chain",
+    θ = _coordwise_fixed_from_means(
+        dm, "MCMC chain",
         key -> (sym = Symbol(key); haskey(means, sym) ? means[sym] : nothing);
-        overrides = overrides)
+        overrides = overrides
+    )
     return θ, chain
 end
 
-function _vi_param_means(res::FitResult;
+function _vi_param_means(
+        res::FitResult;
         max_draws::Int = typemax(Int),
-        rng::AbstractRNG = Random.default_rng())
+        rng::AbstractRNG = Random.default_rng()
+    )
     n_draws = max_draws == typemax(Int) ? 1000 : Int(max_draws)
     n_draws >= 1 || error("max_draws must be >= 1.")
     raw = sample_posterior(res; n_draws = n_draws, rng = rng, return_names = true)
     draws = raw.draws
     names = raw.names
     means = vec(mean(draws; dims = 1))
-    return Dict{Symbol, Float64}((Symbol(string(names[i])) => Float64(means[i]))
-    for i in eachindex(names))
+    return Dict{Symbol, Float64}(
+        (Symbol(string(names[i])) => Float64(means[i]))
+            for i in eachindex(names)
+    )
 end
 
-function _vi_fixed_means(res::FitResult,
+function _vi_fixed_means(
+        res::FitResult,
         dm::DataModel;
         max_draws::Int = typemax(Int),
         rng::AbstractRNG = Random.default_rng(),
-        overrides::NamedTuple = NamedTuple())
+        overrides::NamedTuple = NamedTuple()
+    )
     means = _vi_param_means(res; max_draws = max_draws, rng = rng)
-    θ = _coordwise_fixed_from_means(dm, "VI posterior",
+    θ = _coordwise_fixed_from_means(
+        dm, "VI posterior",
         key -> (sym = Symbol(key); haskey(means, sym) ? means[sym] : nothing);
-        overrides = overrides)
+        overrides = overrides
+    )
     return θ, nothing
 end
 
-function _posterior_fixed_means(res::FitResult,
+function _posterior_fixed_means(
+        res::FitResult,
         dm::DataModel;
         max_draws::Int = typemax(Int),
         rng::AbstractRNG = Random.default_rng(),
-        overrides::NamedTuple = NamedTuple())
+        overrides::NamedTuple = NamedTuple()
+    )
     if get_result(res) isa MCMCResult
         return _mcmc_fixed_means(
-            res, dm; max_draws = max_draws, rng = rng, overrides = overrides)
+            res, dm; max_draws = max_draws, rng = rng, overrides = overrides
+        )
     elseif get_result(res) isa VIResult
         return _vi_fixed_means(
-            res, dm; max_draws = max_draws, rng = rng, overrides = overrides)
+            res, dm; max_draws = max_draws, rng = rng, overrides = overrides
+        )
     end
     return get_params(res; scale = :untransformed), nothing
 end
@@ -582,12 +624,14 @@ function _mcmc_param_value(vals, iter_idx::Int, var_idx::Int, chain_idx::Int)
     return vals[iter_idx, var_idx, chain_idx]
 end
 
-function _mcmc_random_effects_means(res::FitResult,
+function _mcmc_random_effects_means(
+        res::FitResult,
         dm::DataModel,
         constants_re::NamedTuple,
         θ::ComponentArray;
         max_draws::Int = typemax(Int),
-        rng::AbstractRNG = Random.default_rng())
+        rng::AbstractRNG = Random.default_rng()
+    )
     chain = get_chain(res)
     n_adapt = _mcmc_warmup(res)
     means = _mcmc_param_means(chain; n_adapt = n_adapt, max_draws = max_draws, rng = rng)
@@ -652,7 +696,7 @@ function _mcmc_random_effects_means(res::FitResult,
                     push!(nt_pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
                 else
                     vals = dim == 1 ? Vector{Float64}(undef, length(g)) :
-                           Vector{Vector{Float64}}(undef, length(g))
+                        Vector{Vector{Float64}}(undef, length(g))
                     for (gi, lvl) in pairs(g)
                         if haskey(fixed, lvl)
                             v = fixed[lvl]
@@ -694,7 +738,7 @@ function _assemble_individual_eta(ind, re_names, dims, fixed_maps, get_free_valu
                 push!(nt_pairs, re => (dim == 1 ? v : Vector{Float64}(v)))
             else
                 vals_re = dim == 1 ? Vector{Float64}(undef, length(g)) :
-                          Vector{Vector{Float64}}(undef, length(g))
+                    Vector{Vector{Float64}}(undef, length(g))
                 for (gi, lvl) in pairs(g)
                     v = haskey(fixed, lvl) ? fixed[lvl] : get_free_value(re, lvl, dim)
                     vals_re[gi] = dim == 1 ? v : Vector{Float64}(v)
@@ -712,18 +756,23 @@ end
 # Per-RE map from a free level to its index within `levels_free` (used to look up the
 # posterior coordinate for that level).
 function _lvl_to_idx_by_re(re_names, re_meta)
-    return Dict{Symbol, Dict{Any, Int}}(re => Dict{Any, Int}(
-                                            re_meta[re].levels_free[i] => i
-                                        for i in eachindex(re_meta[re].levels_free))
-    for re in re_names)
+    return Dict{Symbol, Dict{Any, Int}}(
+        re => Dict{Any, Int}(
+                re_meta[re].levels_free[i] => i
+                for i in eachindex(re_meta[re].levels_free)
+            )
+            for re in re_names
+    )
 end
 
-function _mcmc_drawn_params(res::FitResult,
+function _mcmc_drawn_params(
+        res::FitResult,
         dm::DataModel,
         constants_re::NamedTuple,
         overrides::NamedTuple,
         max_draws::Int,
-        rng::AbstractRNG)
+        rng::AbstractRNG
+    )
     chain = get_chain(res)
     n_adapt = _mcmc_warmup(res)
     draw_idxs = _mcmc_draw_indices(chain, n_adapt, max_draws, rng)
@@ -741,14 +790,20 @@ function _mcmc_drawn_params(res::FitResult,
     rep_iter = first(draw_idxs)
     rep_chain = 1
     θ_rep = _apply_param_overrides(
-        _coordwise_fixed_from_means(dm, "MCMC chain",
-            key -> (sym = Symbol(key);
-            haskey(idx_map, sym) ?
-            _mcmc_param_value(vals, rep_iter, idx_map[sym], rep_chain) : nothing)),
-        overrides)
+        _coordwise_fixed_from_means(
+            dm, "MCMC chain",
+            key -> (
+                sym = Symbol(key);
+                haskey(idx_map, sym) ?
+                    _mcmc_param_value(vals, rep_iter, idx_map[sym], rep_chain) : nothing
+            )
+        ),
+        overrides
+    )
 
     re_meta = _re_free_meta(
-        dm, θ_rep, fixed_maps, re_names, dists_builder, model_funs, helpers)
+        dm, θ_rep, fixed_maps, re_names, dists_builder, model_funs, helpers
+    )
 
     function _get_re_value(re, li, dim, iter_idx, chain_idx)
         if dim == 1
@@ -763,8 +818,9 @@ function _mcmc_drawn_params(res::FitResult,
                 name = Symbol(string(re), "[", li, "][1]")
             end
             if !haskey(idx_map, name)
-                @warn "MCMC chain is missing random effect; using 0.0." name=Symbol(
-                    string(re), "_vals[", li, "]")
+                @warn "MCMC chain is missing random effect; using 0.0." name = Symbol(
+                    string(re), "_vals[", li, "]"
+                )
                 return nothing
             end
             return _mcmc_param_value(vals, iter_idx, idx_map[name], chain_idx)
@@ -782,7 +838,7 @@ function _mcmc_drawn_params(res::FitResult,
                 name = Symbol(string(re), "[", li, "][", j, "]")
             end
             if !haskey(idx_map, name)
-                @warn "MCMC chain is missing random effect element; using 0.0." name=name
+                @warn "MCMC chain is missing random effect element; using 0.0." name = name
                 return nothing
             end
             out[j] = _mcmc_param_value(vals, iter_idx, idx_map[name], chain_idx)
@@ -798,12 +854,17 @@ function _mcmc_drawn_params(res::FitResult,
     for (k, iter_idx) in enumerate(draw_idxs)
         chain_idx = rand(rng, 1:n_chains)
         θ = _apply_param_overrides(
-            _coordwise_fixed_from_means(dm, "MCMC chain",
-                key -> (sym = Symbol(key);
-                haskey(idx_map, sym) ?
-                _mcmc_param_value(vals, iter_idx, idx_map[sym], chain_idx) :
-                nothing)),
-            overrides)
+            _coordwise_fixed_from_means(
+                dm, "MCMC chain",
+                key -> (
+                    sym = Symbol(key);
+                    haskey(idx_map, sym) ?
+                        _mcmc_param_value(vals, iter_idx, idx_map[sym], chain_idx) :
+                        nothing
+                )
+            ),
+            overrides
+        )
         θ_draws[k] = θ
 
         get_free_value = function (re, lvl, dim)
@@ -815,19 +876,22 @@ function _mcmc_drawn_params(res::FitResult,
         η_vec = Vector{ComponentArray}(undef, length(get_individuals(dm)))
         for (i, ind) in enumerate(get_individuals(dm))
             η_vec[i] = _assemble_individual_eta(
-                ind, re_names, dims, fixed_maps, get_free_value)
+                ind, re_names, dims, fixed_maps, get_free_value
+            )
         end
         η_draws[k] = η_vec
     end
     return θ_draws, η_draws, chain
 end
 
-function _vi_drawn_params(res::FitResult,
+function _vi_drawn_params(
+        res::FitResult,
         dm::DataModel,
         constants_re::NamedTuple,
         overrides::NamedTuple,
         max_draws::Int,
-        rng::AbstractRNG)
+        rng::AbstractRNG
+    )
     max_draws >= 1 || error("mcmc_draws must be >= 1.")
     raw = sample_posterior(res; n_draws = max_draws, rng = rng, return_names = true)
     draws = raw.draws
@@ -847,13 +911,19 @@ function _vi_drawn_params(res::FitResult,
 
     rep_row = @view draws[1, :]
     θ_rep = _apply_param_overrides(
-        _coordwise_fixed_from_means(dm, "VI posterior",
-            key -> (idx = _lookup_chain_index(idx_map, key);
-            idx != 0 ? Float64(rep_row[idx]) : nothing)),
-        overrides)
+        _coordwise_fixed_from_means(
+            dm, "VI posterior",
+            key -> (
+                idx = _lookup_chain_index(idx_map, key);
+                idx != 0 ? Float64(rep_row[idx]) : nothing
+            )
+        ),
+        overrides
+    )
 
     re_meta = _re_free_meta(
-        dm, θ_rep, fixed_maps, re_names, dists_builder, model_funs, helpers)
+        dm, θ_rep, fixed_maps, re_names, dists_builder, model_funs, helpers
+    )
 
     function _get_re_value(re, li, dim, row)
         if dim == 1
@@ -864,8 +934,9 @@ function _vi_drawn_params(res::FitResult,
                 (idx = _lookup_chain_index(idx_map, string(re, "_vals[", li, "][1]")))
             idx == 0 && (idx = _lookup_chain_index(idx_map, string(re, "[", li, "][1]")))
             if idx == 0
-                @warn "VI posterior is missing random effect; using 0.0." name=Symbol(
-                    string(re), "_vals[", li, "]")
+                @warn "VI posterior is missing random effect; using 0.0." name = Symbol(
+                    string(re), "_vals[", li, "]"
+                )
                 return nothing
             end
             return Float64(row[idx])
@@ -881,7 +952,7 @@ function _vi_drawn_params(res::FitResult,
             idx == 0 &&
                 (idx = _lookup_chain_index(idx_map, string(re, "[", li, "][", j, "]")))
             if idx == 0
-                @warn "VI posterior is missing random effect element; using 0.0." name=Symbol(k)
+                @warn "VI posterior is missing random effect element; using 0.0." name = Symbol(k)
                 return nothing
             end
             out[j] = Float64(row[idx])
@@ -898,10 +969,15 @@ function _vi_drawn_params(res::FitResult,
     for k in 1:n_draws
         row = @view draws[k, :]
         θ = _apply_param_overrides(
-            _coordwise_fixed_from_means(dm, "VI posterior",
-                key -> (idx = _lookup_chain_index(idx_map, key);
-                idx != 0 ? Float64(row[idx]) : nothing)),
-            overrides)
+            _coordwise_fixed_from_means(
+                dm, "VI posterior",
+                key -> (
+                    idx = _lookup_chain_index(idx_map, key);
+                    idx != 0 ? Float64(row[idx]) : nothing
+                )
+            ),
+            overrides
+        )
         θ_draws[k] = θ
 
         get_free_value = function (re, lvl, dim)
@@ -913,19 +989,22 @@ function _vi_drawn_params(res::FitResult,
         η_vec = Vector{ComponentArray}(undef, length(get_individuals(dm)))
         for (i, ind) in enumerate(get_individuals(dm))
             η_vec[i] = _assemble_individual_eta(
-                ind, re_names, dims, fixed_maps, get_free_value)
+                ind, re_names, dims, fixed_maps, get_free_value
+            )
         end
         η_draws[k] = η_vec
     end
     return θ_draws, η_draws, nothing
 end
 
-function _posterior_drawn_params(res::FitResult,
+function _posterior_drawn_params(
+        res::FitResult,
         dm::DataModel,
         constants_re::NamedTuple,
         overrides::NamedTuple,
         max_draws::Int,
-        rng::AbstractRNG)
+        rng::AbstractRNG
+    )
     if get_result(res) isa MCMCResult
         return _mcmc_drawn_params(res, dm, constants_re, overrides, max_draws, rng)
     elseif get_result(res) isa VIResult
@@ -934,12 +1013,14 @@ function _posterior_drawn_params(res::FitResult,
     error("Posterior draws are supported only for MCMC and VI fit results.")
 end
 
-function _default_random_effects(res::FitResult,
+function _default_random_effects(
+        res::FitResult,
         dm::DataModel,
         constants_re::NamedTuple,
         θ::ComponentArray,
         rng::AbstractRNG,
-        mcmc_draws::Int)
+        mcmc_draws::Int
+    )
     re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) &&
         return fill(ComponentArray(NamedTuple()), length(get_individuals(dm)))
@@ -947,15 +1028,17 @@ function _default_random_effects(res::FitResult,
     # Laplace/GHQ/MCEM/SAEM all resolve EB modes identically to the estimation-side
     # switchboard — delegate to it (θ/rng threaded through for plotting param-overrides).
     if get_result(res) isa FrequentistREResult || get_result(res) isa GHQuadratureResult ||
-       get_result(res) isa MCEMResult || get_result(res) isa SAEMResult
+            get_result(res) isa MCEMResult || get_result(res) isa SAEMResult
         bstars, batch_infos, _, _, _, cre = _resolve_bstars_for_re(
-            dm, res, constants_re; θ = θ, rng = rng)
+            dm, res, constants_re; θ = θ, rng = rng
+        )
         return _eta_from_eb(dm, batch_infos, bstars, cre, θ)
     end
 
     if get_result(res) isa MCMCResult
         return _mcmc_random_effects_means(
-            res, dm, constants_re, θ; max_draws = mcmc_draws, rng = rng)
+            res, dm, constants_re, θ; max_draws = mcmc_draws, rng = rng
+        )
     end
     # NB: VI is rejected for random-effects models at fit time, so a VIResult can
     # never reach here with non-empty `re_names`; no VI branch is needed.
@@ -975,9 +1058,11 @@ function _mc_mean(dist, dim::Int; n::Int = 2000)
     return dim == 1 ? m[1] : m
 end
 
-function _default_random_effects_from_dm(dm::DataModel,
+function _default_random_effects_from_dm(
+        dm::DataModel,
         constants_re::NamedTuple,
-        θ::ComponentArray)
+        θ::ComponentArray
+    )
     re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) &&
         return fill(ComponentArray(NamedTuple()), length(get_individuals(dm)))
@@ -1004,8 +1089,8 @@ function _default_random_effects_from_dm(dm::DataModel,
         v0 = try
             Distributions.mean(re_meta[re].dist)
         catch
-            @warn "Random effect $(re): its distribution has no analytic mean; "*
-            "using a Monte Carlo estimate of the population value." maxlog=1
+            @warn "Random effect $(re): its distribution has no analytic mean; " *
+                "using a Monte Carlo estimate of the population value." maxlog = 1
             _mc_mean(re_meta[re].dist, dim)
         end
         re_map = Dict{Any, Any}()
@@ -1019,7 +1104,8 @@ function _default_random_effects_from_dm(dm::DataModel,
     get_free_value = (re, lvl, dim) -> level_vals[re][lvl]
     for (i, ind) in enumerate(get_individuals(dm))
         η_vec[i] = _assemble_individual_eta(
-            ind, re_names, level_dims, fixed_maps, get_free_value)
+            ind, re_names, level_dims, fixed_maps, get_free_value
+        )
     end
     return η_vec
 end
@@ -1046,7 +1132,8 @@ plotting. Pass the returned [`PlotCache`](@ref) to `plot_fits` via the `cache` k
 - `mcmc_warmup::Union{Nothing, Int} = nothing`: warm-up count override for MCMC.
 - `rng::AbstractRNG = Random.default_rng()`: random-number generator.
 """
-function build_plot_cache(res::FitResult;
+function build_plot_cache(
+        res::FitResult;
         dm::Union{Nothing, DataModel} = nothing,
         params::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple(),
@@ -1055,7 +1142,8 @@ function build_plot_cache(res::FitResult;
         ode_kwargs::NamedTuple = NamedTuple(),
         mcmc_draws::Int = 1000,
         mcmc_warmup::Union{Nothing, Int} = nothing,
-        rng::AbstractRNG = Random.default_rng())
+        rng::AbstractRNG = Random.default_rng()
+    )
     dm === nothing && (dm = get_data_model(res))
     dm === nothing &&
         error("This fit result does not store a DataModel; pass dm=... to build_plot_cache.")
@@ -1067,20 +1155,24 @@ function build_plot_cache(res::FitResult;
     end
 
     θ_chain = _is_posterior_draw_fit(res) ?
-              _posterior_fixed_means(res, dm; max_draws = mcmc_draws, rng = rng) : nothing
+        _posterior_fixed_means(res, dm; max_draws = mcmc_draws, rng = rng) : nothing
     θ = _is_posterior_draw_fit(res) ? θ_chain[1] : get_params(res; scale = :untransformed)
     θ = _apply_param_overrides(θ, params)
     η_vec = _default_random_effects(res, dm, constants_re, θ, rng, mcmc_draws)
-    return _fill_plot_cache(dm, θ, η_vec, constants_re, cache_obs_dists,
-        ode_args, ode_kwargs)
+    return _fill_plot_cache(
+        dm, θ, η_vec, constants_re, cache_obs_dists,
+        ode_args, ode_kwargs
+    )
 end
 
 # Shared body of the two build_plot_cache methods: dense-solve each individual (if
 # the model has a DE), optionally pre-compute (HMM-filtered) observation distributions,
 # and package everything into a PlotCache. Callers differ only in how θ/η_vec are obtained.
-function _fill_plot_cache(dm::DataModel, θ::ComponentArray, η_vec,
+function _fill_plot_cache(
+        dm::DataModel, θ::ComponentArray, η_vec,
         constants_re::NamedTuple, cache_obs_dists::Bool, ode_args::Tuple,
-        ode_kwargs::NamedTuple)
+        ode_kwargs::NamedTuple
+    )
     sols = Vector{Any}(undef, length(get_individuals(dm)))
     compiled_cache = Vector{Any}(undef, length(get_individuals(dm)))
     if get_de(get_model(dm)) !== nothing
@@ -1088,7 +1180,8 @@ function _fill_plot_cache(dm::DataModel, θ::ComponentArray, η_vec,
             ind = get_individuals(dm)[i]
             η_ind = η_vec[i] isa ComponentArray ? η_vec[i] : ComponentArray(η_vec[i])
             sol, compiled = _solve_dense_individual(
-                dm, ind, θ, η_ind; ode_args = ode_args, ode_kwargs = ode_kwargs)
+                dm, ind, θ, η_ind; ode_args = ode_args, ode_kwargs = ode_kwargs
+            )
             sols[i] = sol
             compiled_cache[i] = compiled
         end
@@ -1104,29 +1197,34 @@ function _fill_plot_cache(dm::DataModel, θ::ComponentArray, η_vec,
             η_ind = η_vec[i] isa ComponentArray ? η_vec[i] : ComponentArray(η_vec[i])
             rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only = true)
             sol_accessors = get_de(get_model(dm)) === nothing ? nothing :
-                            _sol_accessors_with_crossings(
-                get_model(dm), sols[i], compiled_cache[i], θ, η_ind, get_const_cov(ind))
+                _sol_accessors_with_crossings(
+                    get_model(dm), sols[i], compiled_cache[i], θ, η_ind, get_const_cov(ind)
+                )
             dists_i = Vector{NamedTuple}(undef, length(obs_rows))
             hmm_priors = Dict{Symbol, Any}()
             for (j, row) in enumerate(obs_rows)
                 vary = _varying_at(dm, ind, j, row)
                 η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only = true)
                 obs = sol_accessors === nothing ?
-                      calculate_formulas_obs(
-                    get_model(dm), θ, η_row, get_const_cov(ind), vary) :
-                      calculate_formulas_obs(
-                    get_model(dm), θ, η_row, get_const_cov(ind), vary, sol_accessors)
+                    calculate_formulas_obs(
+                        get_model(dm), θ, η_row, get_const_cov(ind), vary
+                    ) :
+                    calculate_formulas_obs(
+                        get_model(dm), θ, η_row, get_const_cov(ind), vary, sol_accessors
+                    )
                 filtered_pairs = Pair{Symbol, Any}[]
                 for col in obs_names_all
                     d = getproperty(obs, col)
                     if _is_hmm_dist(d)
                         y_val = getfield(get_obs(get_series(ind)), col)[j]
-                        push!(filtered_pairs,
-                            col => _apply_hmm_filter!(hmm_priors, col, d, y_val))
+                        push!(
+                            filtered_pairs,
+                            col => _apply_hmm_filter!(hmm_priors, col, d, y_val)
+                        )
                     end
                 end
                 dists_i[j] = isempty(filtered_pairs) ? obs :
-                             merge(obs, NamedTuple(filtered_pairs))
+                    merge(obs, NamedTuple(filtered_pairs))
             end
             obs_dists[i] = dists_i
         end
@@ -1139,16 +1237,20 @@ function build_plot_cache(res::MultistartFitResult; kwargs...)
     return build_plot_cache(get_multistart_best(res); kwargs...)
 end
 
-function build_plot_cache(dm::DataModel;
+function build_plot_cache(
+        dm::DataModel;
         params::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple(),
         cache_obs_dists::Bool = false,
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
-        rng::AbstractRNG = Random.default_rng())
+        rng::AbstractRNG = Random.default_rng()
+    )
     θ = get_θ0_untransformed(get_fixed(get_model(dm)))
     θ = _apply_param_overrides(θ, params)
     η_vec = _default_random_effects_from_dm(dm, constants_re, θ)
-    return _fill_plot_cache(dm, θ, η_vec, constants_re, cache_obs_dists,
-        ode_args, ode_kwargs)
+    return _fill_plot_cache(
+        dm, θ, η_vec, constants_re, cache_obs_dists,
+        ode_args, ode_kwargs
+    )
 end

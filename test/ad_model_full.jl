@@ -68,15 +68,16 @@ using DataInterpolations
             varying_covariates = varying_covariates,
             helpers = helpers,
             model_funs = model_funs,
-            preDE = pre
+            preDE = pre,
         )
         compiled = get_de_compiler(model.de.de)(pc)
         u0 = calculate_initial_state(model, θt, η, const_covariates_i)
         prob = ODEProblem(get_de_f!(model.de.de), u0, tspan, compiled)
-        sol = solve(prob, Tsit5(); callback = cb, abstol = 1e-9, reltol = 1e-9)
+        sol = solve(prob, Tsit5(); callback = cb, abstol = 1.0e-9, reltol = 1.0e-9)
         sol_accessors = get_de_accessors_builder(model.de.de)(sol, compiled)
         obs = calculate_formulas_obs(
-            model, θt, η, const_covariates_i, varying_covariates, sol_accessors)
+            model, θt, η, const_covariates_i, varying_covariates, sol_accessors
+        )
         return logpdf(obs.obs, 1.0)
     end
 
@@ -84,5 +85,5 @@ using DataInterpolations
 
     grad_fwd = ForwardDiff.gradient(objective_fd, θ0)
     grad_fd = FiniteDifferences.grad(FiniteDifferences.central_fdm(5, 1), objective_fd, θ0)
-    @test isapprox(grad_fwd, grad_fd[1]; rtol = 1e-5, atol = 1e-8)
+    @test isapprox(grad_fwd, grad_fd[1]; rtol = 1.0e-5, atol = 1.0e-8)
 end

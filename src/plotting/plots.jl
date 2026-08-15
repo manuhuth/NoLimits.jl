@@ -38,7 +38,8 @@ function _time_values(dm::DataModel, ind::Individual, obs_rows::Vector{Int})
 end
 
 function _get_x_values(
-        dm::DataModel, ind::Individual, obs_rows::Vector{Int}, x_axis_feature)
+        dm::DataModel, ind::Individual, obs_rows::Vector{Int}, x_axis_feature
+    )
     if get_de(get_model(dm)) !== nothing
         return _time_values(dm, ind, obs_rows)
     end
@@ -193,13 +194,16 @@ function _marginal_label(obs_name::Symbol, idx::Int)
 end
 
 function _marginal_colors(n::Int, style::PlotStyle)
-    base = [style.color_secondary, style.color_primary, style.color_accent,
-        style.color_dark, style.color_density, style.color_reference]
+    base = [
+        style.color_secondary, style.color_primary, style.color_accent,
+        style.color_dark, style.color_density, style.color_reference,
+    ]
     return [base[mod1(i, length(base))] for i in 1:n]
 end
 
 function _collect_multivariate_series(
-        x, y, n_marginals; marginal_idx::Union{Nothing, Int} = nothing)
+        x, y, n_marginals; marginal_idx::Union{Nothing, Int} = nothing
+    )
     xs = [Vector{Any}() for _ in 1:n_marginals]
     ys = [Vector{Any}() for _ in 1:n_marginals]
     for (xi, yi) in zip(x, y)
@@ -228,11 +232,13 @@ function _collect_scalar_series(x, y)
     return xs, ys
 end
 
-function _resolve_emission_row(dm::DataModel,
+function _resolve_emission_row(
+        dm::DataModel,
         obs_rows::Vector{Int},
         time_idx::Union{Nothing, Int},
         time_point,
-        time_col::Symbol)
+        time_col::Symbol
+    )
     length(obs_rows) == 0 && error("No observation rows found.")
     if time_idx !== nothing
         (1 <= time_idx <= length(obs_rows)) ||
@@ -296,7 +302,7 @@ function _same_data_model_for_fits(dm1::DataModel, dm2::DataModel)
     length(get_individuals(dm1)) == length(get_individuals(dm2)) || return false
     get_obs_rows(get_row_groups(dm1)) == get_obs_rows(get_row_groups(dm2)) || return false
     get_formulas_meta(get_formulas(get_model(dm1))).obs_names ==
-    get_formulas_meta(get_formulas(get_model(dm2))).obs_names || return false
+        get_formulas_meta(get_formulas(get_model(dm2))).obs_names || return false
 
     propertynames(get_df(dm1)) == propertynames(get_df(dm2)) || return false
     return isequal(get_df(dm1), get_df(dm2))
@@ -322,7 +328,7 @@ function _comparison_line_colors(n::Int, style::PlotStyle)
         "#CC79A7",
         "#F0E442",
         "#009E73",
-        "#E69F00"
+        "#E69F00",
     ]
     return [base[mod1(i, length(base))] for i in 1:n]
 end
@@ -331,17 +337,19 @@ function _comparison_line_style(label::String, style::PlotStyle)
     return get(style.comparison_line_styles, label, style.comparison_default_linestyle)
 end
 
-function _fit_curve_from_cache(dm::DataModel,
+function _fit_curve_from_cache(
+        dm::DataModel,
         cache::PlotCache,
         ind_idx::Int,
         obs_name::Symbol,
         x_axis_feature::Union{Nothing, Symbol},
-        plot_func)
+        plot_func
+    )
     ind = get_individuals(dm)[ind_idx]
     obs_rows = get_obs_rows(get_row_groups(dm))[ind_idx]
     use_dense = get_de(get_model(dm)) !== nothing &&
-                _can_dense_plot(dm) &&
-                (x_axis_feature === nothing || x_axis_feature == get_time_col(dm))
+        _can_dense_plot(dm) &&
+        (x_axis_feature === nothing || x_axis_feature == get_time_col(dm))
     x_obs = _get_x_values(dm, ind, obs_rows, x_axis_feature)
     x_fit = use_dense ? _dense_time_grid(ind) : x_obs
 
@@ -359,7 +367,8 @@ function _fit_curve_from_cache(dm::DataModel,
         for (j, t) in enumerate(x_fit)
             vary = (t = t,)
             obs = calculate_formulas_obs(
-                get_model(dm), θ, η_ind, get_const_cov(ind), vary, sol_accessors)
+                get_model(dm), θ, η_ind, get_const_cov(ind), vary, sol_accessors
+            )
             preds[j] = _stat_from_dist(getproperty(obs, obs_name), plot_func)
         end
     else
@@ -368,14 +377,18 @@ function _fit_curve_from_cache(dm::DataModel,
         for (j, row) in enumerate(obs_rows)
             vary = _varying_at(dm, ind, j, row)
             η_row = _row_random_effects_at(
-                dm, ind_idx, j, η_ind, rowwise_re; obs_only = true)
+                dm, ind_idx, j, η_ind, rowwise_re; obs_only = true
+            )
             obs = sol_accessors === nothing ?
-                  calculate_formulas_obs(
-                get_model(dm), θ, η_row, get_const_cov(ind), vary) :
-                  calculate_formulas_obs(
-                get_model(dm), θ, η_row, get_const_cov(ind), vary, sol_accessors)
+                calculate_formulas_obs(
+                    get_model(dm), θ, η_row, get_const_cov(ind), vary
+                ) :
+                calculate_formulas_obs(
+                    get_model(dm), θ, η_row, get_const_cov(ind), vary, sol_accessors
+                )
             dist = _apply_hmm_filter!(
-                hmm_priors_cmp, obs_name, getproperty(obs, obs_name), y_obs_series_cmp[j])
+                hmm_priors_cmp, obs_name, getproperty(obs, obs_name), y_obs_series_cmp[j]
+            )
             preds[j] = _stat_from_dist(dist, plot_func)
         end
     end
@@ -396,7 +409,8 @@ function _pred_re_per_individual(dm::DataModel, θ::ComponentArray)
         nt_pairs = Pair{Symbol, Any}[]
         for re in re_names
             dist = getproperty(
-                dists_builder(θ, get_const_cov(ind), model_funs, helpers), re)
+                dists_builder(θ, get_const_cov(ind), model_funs, helpers), re
+            )
             if dist isa Distributions.UnivariateDistribution
                 v = try
                     Float64(Distributions.mean(dist))
@@ -422,8 +436,10 @@ end
 # `want_sigma`, also collects the predictive std and keeps only observations whose
 # std is finite and positive (population-prediction path); without it, only the
 # mean is collected (individual-prediction/EBE path).
-function _collect_series(dm::DataModel, obs_name::Symbol,
-        θ::ComponentArray, η::Vector; want_sigma::Bool)
+function _collect_series(
+        dm::DataModel, obs_name::Symbol,
+        θ::ComponentArray, η::Vector; want_sigma::Bool
+    )
     dv_all = Float64[]
     pred_all = Float64[]
     sigma_all = Float64[]
@@ -439,7 +455,8 @@ function _collect_series(dm::DataModel, obs_name::Symbol,
         if get_de(get_model(dm)) !== nothing
             sol, compiled = _solve_dense_individual(dm, ind, θ, η_ind)
             sol_accessors = _sol_accessors_with_crossings(
-                get_model(dm), sol, compiled, θ, η_ind, get_const_cov(ind))
+                get_model(dm), sol, compiled, θ, η_ind, get_const_cov(ind)
+            )
         end
 
         for (j, row) in enumerate(obs_rows)
@@ -451,10 +468,12 @@ function _collect_series(dm::DataModel, obs_name::Symbol,
             vary = _varying_at(dm, ind, j, row)
             η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only = true)
             obs_nt = sol_accessors === nothing ?
-                     calculate_formulas_obs(
-                get_model(dm), θ, η_row, get_const_cov(ind), vary) :
-                     calculate_formulas_obs(
-                get_model(dm), θ, η_row, get_const_cov(ind), vary, sol_accessors)
+                calculate_formulas_obs(
+                    get_model(dm), θ, η_row, get_const_cov(ind), vary
+                ) :
+                calculate_formulas_obs(
+                    get_model(dm), θ, η_row, get_const_cov(ind), vary, sol_accessors
+                )
             dist = getproperty(obs_nt, obs_name)
 
             pred_val = try
@@ -481,14 +500,18 @@ function _collect_series(dm::DataModel, obs_name::Symbol,
 end
 
 # (dv, pred, sigma_pred) using η_pop.
-function _collect_pred_series(dm::DataModel, obs_name::Symbol,
-        θ::ComponentArray, η_pop::Vector)
+function _collect_pred_series(
+        dm::DataModel, obs_name::Symbol,
+        θ::ComponentArray, η_pop::Vector
+    )
     return _collect_series(dm, obs_name, θ, η_pop; want_sigma = true)
 end
 
 # (dv, ipred) using EBEs.
-function _collect_ipred_series(dm::DataModel, obs_name::Symbol,
-        θ::ComponentArray, η_ebe::Vector)
+function _collect_ipred_series(
+        dm::DataModel, obs_name::Symbol,
+        θ::ComponentArray, η_ebe::Vector
+    )
     dv_all, ipred_all, _ = _collect_series(dm, obs_name, θ, η_ebe; want_sigma = false)
     return dv_all, ipred_all
 end

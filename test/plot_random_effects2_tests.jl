@@ -17,7 +17,8 @@ function _rnp_df(; n_ids::Int = 10, n_obs_per::Int = 2)
     ID = repeat(ids, inner = n_obs_per)
     t = repeat(collect(0.0:(n_obs_per - 1)), n_ids)
     Center = repeat(
-        vcat(fill(:C1, n_ids ÷ 2), fill(:C2, n_ids - n_ids ÷ 2)), inner = n_obs_per)
+        vcat(fill(:C1, n_ids ÷ 2), fill(:C2, n_ids - n_ids ÷ 2)), inner = n_obs_per
+    )
     y = [0.1 * sin(0.3 * i) + 0.02 * j for (i, j) in zip(1:length(ID), t)]
     return DataFrame(ID = ID, Center = Center, t = t, y = y)
 end
@@ -46,20 +47,27 @@ end
 const _RNP_DM = DataModel(_RNP_MODEL, _rnp_df(); primary_id = :ID, time_col = :t)
 
 const _RNP_TRIO = (
-    plot_random_effects_pdf, plot_random_effects_scatter, plot_random_effect_pairplot)
+    plot_random_effects_pdf, plot_random_effects_scatter, plot_random_effect_pairplot,
+)
 
 @testset "random effects new plots Laplace (multi-id, MVN)" begin
-    res = fit_model(_RNP_DM,
-        NoLimits.Laplace(; use_hutchinson = false, optim_kwargs = (maxiters = 2,)))
+    res = fit_model(
+        _RNP_DM,
+        NoLimits.Laplace(; use_hutchinson = false, optim_kwargs = (maxiters = 2,))
+    )
     for f in _RNP_TRIO
         @test f(res) !== nothing
     end
 end
 
 @testset "random effects new plots MCMC (multi-id, MVN)" begin
-    res = fit_model(_RNP_DM,
-        NoLimits.MCMC(; sampler = NUTS(5, 0.3),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)))
+    res = fit_model(
+        _RNP_DM,
+        NoLimits.MCMC(;
+            sampler = NUTS(5, 0.3),
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+        )
+    )
     for f in _RNP_TRIO
         @test f(res; mcmc_draws = 5) !== nothing
     end
@@ -105,8 +113,10 @@ end
     end
     ids = repeat(1:8, inner = 3)
     tt = repeat(collect(0.0:2.0), 8)
-    df = DataFrame(ID = ids, t = tt,
-        y = [0.2 + 0.05 * i + 0.03 * j for (i, j) in zip(ids, tt)])
+    df = DataFrame(
+        ID = ids, t = tt,
+        y = [0.2 + 0.05 * i + 0.03 * j for (i, j) in zip(ids, tt)]
+    )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     res = fit_model(dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 3,)))
 

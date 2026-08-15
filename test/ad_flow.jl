@@ -30,7 +30,8 @@ using Optimisers
     # Custom base distribution: MvNormal with non-zero mean and non-identity covariance
     q0_custom = MvNormal([0.5, -0.5], [2.0 0.3; 0.3 1.5])
     gθ_custom = ForwardDiff.gradient(
-        θv -> logpdf(NormalizingPlanarFlow(θv, rebuild, q0_custom), x), θ)
+        θv -> logpdf(NormalizingPlanarFlow(θv, rebuild, q0_custom), x), θ
+    )
     @test length(gθ_custom) == length(θ)
     @test all(isfinite, gθ_custom)
 
@@ -46,7 +47,8 @@ using Optimisers
     # MvTDist base: ForwardDiff through theta (passthrough _adapt_base_dist)
     q0_t = MvTDist(3, zeros(n), Matrix{Float64}(I, n, n))
     gθ_t = ForwardDiff.gradient(
-        θv -> logpdf(NormalizingPlanarFlow(θv, rebuild, q0_t), x), θ)
+        θv -> logpdf(NormalizingPlanarFlow(θv, rebuild, q0_t), x), θ
+    )
     @test length(gθ_t) == length(θ)
     @test all(isfinite, gθ_t)
 

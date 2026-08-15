@@ -78,7 +78,8 @@ Four backends are supported:
 # Returns
 A [`UQResult`](@ref) with point estimates, intervals, covariance matrices, and draws.
 """
-function compute_uq(res::FitResult;
+function compute_uq(
+        res::FitResult;
         method::Symbol = :auto,
         interval::Symbol = :auto,
         vcov::Symbol = :hessian,
@@ -87,8 +88,8 @@ function compute_uq(res::FitResult;
         level::Real = 0.95,
         pseudo_inverse::Bool = false,
         hessian_backend::Symbol = :auto,
-        fd_abs_step::Real = 1e-4,
-        fd_rel_step::Real = 1e-3,
+        fd_abs_step::Real = 1.0e-4,
+        fd_rel_step::Real = 1.0e-3,
         fd_max_tries::Int = 8,
         n_draws::Int = 2000,
         mcmc_warmup::Union{Nothing, Int} = nothing,
@@ -105,28 +106,31 @@ function compute_uq(res::FitResult;
         profile_loss_tol::Union{Nothing, Real} = nothing,
         profile_local_alg::Symbol = :LN_NELDERMEAD,
         profile_max_iter::Int = 10_000,
-        profile_ftol_abs::Real = 1e-3,
+        profile_ftol_abs::Real = 1.0e-3,
         profile_kwargs::NamedTuple = NamedTuple(),
         mcmc_method::Union{Nothing, MCMC} = nothing,
         mcmc_sampler = nothing,
         mcmc_turing_kwargs::NamedTuple = NamedTuple(),
         mcmc_adtype = nothing,
         mcmc_fit_kwargs::NamedTuple = NamedTuple(),
-        rng::AbstractRNG = Random.default_rng())
+        rng::AbstractRNG = Random.default_rng()
+    )
     level_use = _validate_level(level)
     n_draws >= 1 || error("n_draws must be >= 1.")
-    _validate_uq_options(res; interval = interval, fd_abs_step = fd_abs_step,
+    _validate_uq_options(
+        res; interval = interval, fd_abs_step = fd_abs_step,
         fd_rel_step = fd_rel_step, fd_max_tries = fd_max_tries,
         mcmc_warmup = mcmc_warmup, mcmc_draws = mcmc_draws, constants = constants,
         profile_max_iter = profile_max_iter, profile_ftol_abs = profile_ftol_abs,
-        profile_scan_width = profile_scan_width)
+        profile_scan_width = profile_scan_width
+    )
 
     backend = if method == :auto
         if interval == :profile
             :profile
         else
             (get_result(res) isa MCMCResult || get_result(res) isa VIResult) ? :chain :
-            :wald
+                :wald
         end
     else
         method
@@ -138,18 +142,21 @@ function compute_uq(res::FitResult;
     end
 
     if backend == :chain
-        return _compute_uq_chain(res;
+        return _compute_uq_chain(
+            res;
             level = level_use,
             constants = constants,
             mcmc_warmup = mcmc_warmup,
             mcmc_draws = mcmc_draws,
             default_draws = n_draws,
-            rng = rng)
+            rng = rng
+        )
     elseif backend == :wald
         src_method = get_method(res)
         fam = uq_family(src_method)
         if fam == :wald_no_re
-            return _compute_uq_wald_no_re(res;
+            return _compute_uq_wald_no_re(
+                res;
                 level = level_use,
                 vcov = vcov,
                 pseudo_inverse = pseudo_inverse,
@@ -163,9 +170,11 @@ function compute_uq(res::FitResult;
                 ode_args = ode_args,
                 ode_kwargs = ode_kwargs,
                 serialization = serialization,
-                rng = rng)
+                rng = rng
+            )
         elseif fam == :wald_re
-            return _compute_uq_wald_re(res;
+            return _compute_uq_wald_re(
+                res;
                 level = level_use,
                 vcov = vcov,
                 re_approx = re_approx,
@@ -182,14 +191,18 @@ function compute_uq(res::FitResult;
                 ode_args = ode_args,
                 ode_kwargs = ode_kwargs,
                 serialization = serialization,
-                rng = rng)
+                rng = rng
+            )
         else
-            error("Wald UQ is not available for a $(typeof(src_method)) fit. Built-in support: " *
-                  "MLE, MAP, Pooled, PooledMap, Laplace, FOCEI, MCEM, SAEM, GHQuadrature. A custom " *
-                  "method can opt in via NoLimits.uq_family(::YourMethod) = :wald_no_re or :wald_re.")
+            error(
+                "Wald UQ is not available for a $(typeof(src_method)) fit. Built-in support: " *
+                    "MLE, MAP, Pooled, PooledMap, Laplace, FOCEI, MCEM, SAEM, GHQuadrature. A custom " *
+                    "method can opt in via NoLimits.uq_family(::YourMethod) = :wald_no_re or :wald_re."
+            )
         end
     elseif backend == :profile
-        return _compute_uq_profile(res;
+        return _compute_uq_profile(
+            res;
             level = level_use,
             constants = constants,
             constants_re = constants_re,
@@ -205,9 +218,11 @@ function compute_uq(res::FitResult;
             profile_max_iter = profile_max_iter,
             profile_ftol_abs = profile_ftol_abs,
             profile_kwargs = profile_kwargs,
-            rng = rng)
+            rng = rng
+        )
     elseif backend == :mcmc_refit
-        return _compute_uq_mcmc_refit(res;
+        return _compute_uq_mcmc_refit(
+            res;
             level = level_use,
             constants = constants,
             constants_re = constants_re,
@@ -221,7 +236,8 @@ function compute_uq(res::FitResult;
             mcmc_turing_kwargs = mcmc_turing_kwargs,
             mcmc_adtype = mcmc_adtype,
             mcmc_fit_kwargs = mcmc_fit_kwargs,
-            rng = rng)
+            rng = rng
+        )
     else
         error("Unsupported UQ method $(backend). Use :auto, :wald, :chain, :profile, or :mcmc_refit.")
     end

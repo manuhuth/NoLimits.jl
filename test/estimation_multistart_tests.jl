@@ -12,7 +12,8 @@ const LD = NoLimits
 
 @testset "Multistart basic (MLE)" begin
     ms = NoLimits.Multistart(
-        dists = (; a = Normal(1.0, 0.2)), n_draws_requested = 4, n_draws_used = 3)
+        dists = (; a = Normal(1.0, 0.2)), n_draws_requested = 4, n_draws_used = 3
+    )
     res = fit_model(ms, fx_nore_dm(), NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
     @test res isa NoLimits.MultistartFitResult
     @test length(NoLimits.get_multistart_results(res)) == 3
@@ -21,8 +22,10 @@ const LD = NoLimits
 end
 
 @testset "Multistart LHS + fixed params" begin
-    ms = NoLimits.Multistart(dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 4,
-        n_draws_used = 3, sampling = :lhs)
+    ms = NoLimits.Multistart(
+        dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 4,
+        n_draws_used = 3, sampling = :lhs
+    )
     res = fit_model(ms, fx_nore_dm(), NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
     starts = NoLimits.get_multistart_starts(res)
     @test length(starts) == 3
@@ -46,9 +49,11 @@ end
     df = DataFrame(ID = [:A, :A], t = [0.0, 1.0], y = [0.1, 0.2])
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     ms = NoLimits.Multistart(
-        dists = (; a = Normal(0.8, 1.0)), n_draws_requested = 6, n_draws_used = 6)
-    starts = @test_logs (:warn, r"supplied sampling distribution for a") match_mode=:any NoLimits._multistart_initials(
-        dm, ms)
+        dists = (; a = Normal(0.8, 1.0)), n_draws_requested = 6, n_draws_used = 6
+    )
+    starts = @test_logs (:warn, r"supplied sampling distribution for a") match_mode = :any NoLimits._multistart_initials(
+        dm, ms
+    )
     @test all(s -> -1.0 <= s.a <= 1.0, starts)
 end
 
@@ -73,9 +78,11 @@ end
     )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     ms = NoLimits.Multistart(
-        dists = (; a = Normal(10.0, 0.1)), n_draws_requested = 2, n_draws_used = 2)
+        dists = (; a = Normal(10.0, 0.1)), n_draws_requested = 2, n_draws_used = 2
+    )
     @test_throws ErrorException fit_model(
-        ms, dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
+        ms, dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,))
+    )
 end
 
 @testset "Multistart default sampling respects bounds" begin
@@ -85,8 +92,10 @@ end
         end
 
         @fixedEffects begin
-            β = RealVector([0.5, 0.5]; scale = [:identity, :log],
-                lower = [-Inf, 1e-12], prior = MvNormal(zeros(2), I))
+            β = RealVector(
+                [0.5, 0.5]; scale = [:identity, :log],
+                lower = [-Inf, 1.0e-12], prior = MvNormal(zeros(2), I)
+            )
             σ = RealNumber(0.5; scale = :log, prior = Normal(0.0, 1.0))
         end
 
@@ -101,13 +110,14 @@ end
     )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     ms = NoLimits.Multistart(n_draws_requested = 8, n_draws_used = 8, progress = false)
-    starts = @test_logs (:warn, r"prior-derived sampling distribution for β") match_mode=:any NoLimits._multistart_initials(
-        dm, ms)
+    starts = @test_logs (:warn, r"prior-derived sampling distribution for β") match_mode = :any NoLimits._multistart_initials(
+        dm, ms
+    )
     @test length(starts) == 8
     @test all(s -> s.β[2] > 0 && s.σ > 0, starts)
     res = fit_model(ms, dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
     @test length(NoLimits.get_multistart_results(res)) +
-          length(NoLimits.get_multistart_failed_results(res)) == 8
+        length(NoLimits.get_multistart_failed_results(res)) == 8
 end
 
 @testset "Multistart MAP" begin
@@ -118,35 +128,47 @@ end
 
 @testset "Multistart Laplace" begin
     ms = NoLimits.Multistart(
-        dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 4, n_draws_used = 3)
+        dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 4, n_draws_used = 3
+    )
     res = fit_model(ms, fx_re_dm(), NoLimits.Laplace(; optim_kwargs = (maxiters = 2,)))
     @test !isempty(NoLimits.get_random_effects(res))
 end
 
 @testset "Multistart MCMC" begin
     ms = NoLimits.Multistart(n_draws_requested = 3, n_draws_used = 2)
-    res = fit_model(ms,
+    res = fit_model(
+        ms,
         fx_nore_prior_dm(),
-        NoLimits.MCMC(; sampler = MH(),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)))
+        NoLimits.MCMC(;
+            sampler = MH(),
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+        )
+    )
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 end
 
 @testset "Multistart MCEM / SAEM" begin
     ms = NoLimits.Multistart(
-        dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 3, n_draws_used = 2)
-    res_mcem = fit_model(ms,
+        dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 3, n_draws_used = 2
+    )
+    res_mcem = fit_model(
+        ms,
         fx_re_dm(),
         NoLimits.MCEM(;
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-            maxiters = 2))
+            maxiters = 2
+        )
+    )
     @test !isempty(NoLimits.get_random_effects(res_mcem))
-    res_saem = fit_model(ms,
+    res_saem = fit_model(
+        ms,
         fx_re_dm(),
         NoLimits.SAEM(;
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             q_store_max = 2,
-            maxiters = 2))
+            maxiters = 2
+        )
+    )
     @test !isempty(NoLimits.get_random_effects(res_saem))
 end
 
@@ -154,8 +176,10 @@ end
     # fx_re_model's η ~ Normal(0, ω) with ω a fixed effect matches the
     # closed-form suffstats mapping re_cov_params = (; η = :ω).
     ms = NoLimits.Multistart(
-        dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 3, n_draws_used = 2)
-    res = fit_model(ms,
+        dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 3, n_draws_used = 2
+    )
+    res = fit_model(
+        ms,
         fx_re_dm(),
         NoLimits.SAEM(;
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
@@ -163,29 +187,38 @@ end
             builtin_stats = :closed_form,
             resid_var_param = :σ,
             re_cov_params = (; η = :ω),
-            maxiters = 2))
+            maxiters = 2
+        )
+    )
     @test !isempty(NoLimits.get_random_effects(res))
 end
 
 @testset "Multistart store_data_model false" begin
     ms = NoLimits.Multistart(
-        dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 2, n_draws_used = 2)
-    res = fit_model(ms, fx_nore_dm(), NoLimits.MLE(; optim_kwargs = (maxiters = 2,));
-        store_data_model = false)
+        dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 2, n_draws_used = 2
+    )
+    res = fit_model(
+        ms, fx_nore_dm(), NoLimits.MLE(; optim_kwargs = (maxiters = 2,));
+        store_data_model = false
+    )
     @test_throws ErrorException NoLimits.get_loglikelihood(res)
 end
 
 @testset "Multistart threading" begin
     Threads.nthreads() > 1 || return
-    ms = NoLimits.Multistart(dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 4,
-        n_draws_used = 3, serialization = EnsembleThreads())
+    ms = NoLimits.Multistart(
+        dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 4,
+        n_draws_used = 3, serialization = EnsembleThreads()
+    )
     res = fit_model(ms, fx_nore_dm(), NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
     @test res isa NoLimits.MultistartFitResult
 end
 
 @testset "Multistart LHS extensive (univariate + priors override)" begin
-    ms = NoLimits.Multistart(dists = (; a = Normal(5.0, 0.1)), n_draws_requested = 6,
-        n_draws_used = 4, sampling = :lhs)
+    ms = NoLimits.Multistart(
+        dists = (; a = Normal(5.0, 0.1)), n_draws_requested = 6,
+        n_draws_used = 4, sampling = :lhs
+    )
     res = fit_model(ms, fx_nore_prior_dm(), NoLimits.MAP(; optim_kwargs = (maxiters = 2,)))
     starts = NoLimits.get_multistart_starts(res)
     @test length(starts) == 4
@@ -214,10 +247,11 @@ end
     )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     dists = (;
-        v = fill(Normal(0.0, 1.0), 3)
+        v = fill(Normal(0.0, 1.0), 3),
     )
     ms = NoLimits.Multistart(
-        dists = dists, n_draws_requested = 6, n_draws_used = 4, sampling = :lhs)
+        dists = dists, n_draws_requested = 6, n_draws_used = 4, sampling = :lhs
+    )
     res = fit_model(ms, dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
     starts = NoLimits.get_multistart_starts(res)
     @test length(starts) == 4
@@ -251,7 +285,7 @@ end
     )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     dists = (;
-        Ω = Wishart(3, Matrix(I, 2, 2))
+        Ω = Wishart(3, Matrix(I, 2, 2)),
     )
     ms = Multistart(dists = dists, n_draws_requested = 6, n_draws_used = 4, sampling = :lhs)
     res = fit_model(ms, dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 2,)))
@@ -289,7 +323,8 @@ end
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     # n_draws_requested > n_draws_used → screening branch exercises _build_mean_eta
     ms = NoLimits.Multistart(
-        dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 4, n_draws_used = 2)
+        dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 4, n_draws_used = 2
+    )
     res = fit_model(ms, dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 2,)))
     @test res isa NoLimits.MultistartFitResult
     @test length(NoLimits.get_multistart_results(res)) == 2
@@ -299,7 +334,8 @@ end
     # RE mean depends on a constant covariate (fx_recov: η ~ Normal(b * Age, 0.5))
     # — means differ per individual. Verifies per-individual eta vector is built.
     ms = NoLimits.Multistart(
-        dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 4, n_draws_used = 2)
+        dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 4, n_draws_used = 2
+    )
     res = fit_model(ms, fx_recov_dm(), NoLimits.Laplace(; optim_kwargs = (maxiters = 2,)))
     @test res isa NoLimits.MultistartFitResult
     re = NoLimits.get_random_effects(res)
@@ -332,7 +368,8 @@ end
     )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     ms = NoLimits.Multistart(
-        dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 4, n_draws_used = 2)
+        dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 4, n_draws_used = 2
+    )
     res = fit_model(ms, dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 2,)))
     @test res isa NoLimits.MultistartFitResult
 end
@@ -340,7 +377,8 @@ end
 @testset "Multistart mean eta: NPF RE (no analytic mean, fallback to 0)" begin
     # NormalizingPlanarFlow has no analytic mean — _build_mean_eta must fall back to 0.0
     ms = NoLimits.Multistart(
-        dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 4, n_draws_used = 2)
+        dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 4, n_draws_used = 2
+    )
     res = fit_model(ms, fx_npf_dm(), NoLimits.Laplace(; optim_kwargs = (maxiters = 2,)))
     @test res isa NoLimits.MultistartFitResult
 end
@@ -348,7 +386,8 @@ end
 @testset "Multistart mean eta: no screening (n_draws_used == n_draws_requested)" begin
     # When all candidates are used, _build_mean_eta is never called — sanity check.
     ms = NoLimits.Multistart(
-        dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 2, n_draws_used = 2)
+        dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 2, n_draws_used = 2
+    )
     res = fit_model(ms, fx_re_dm(), NoLimits.Laplace(; optim_kwargs = (maxiters = 2,)))
     @test res isa NoLimits.MultistartFitResult
     @test length(NoLimits.get_multistart_results(res)) == 2
@@ -380,7 +419,8 @@ end
     )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     ms = NoLimits.Multistart(
-        dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 4, n_draws_used = 2)
+        dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 4, n_draws_used = 2
+    )
     res = fit_model(ms, dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 2,)))
     @test res isa NoLimits.MultistartFitResult
     re = NoLimits.get_random_effects(res)

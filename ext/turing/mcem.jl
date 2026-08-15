@@ -80,15 +80,21 @@ function _build_mcem_batch_model(re_names::Vector{Symbol})
         push!(sample_blocks.args, :(local $levels_sym = $levels_get))
         push!(sample_blocks.args, :(local $reps_sym = $reps_get))
         push!(sample_blocks.args, :(local $ranges_sym = $ranges_get))
-        push!(sample_blocks.args, :(if $is_scalar
-            $scalar_block
-        else
-            $vector_block
-        end))
+        push!(
+            sample_blocks.args, :(
+                if $is_scalar
+                    $scalar_block
+                else
+                    $vector_block
+                end
+            )
+        )
     end
-    re_samples_expr = Expr(:call,
+    re_samples_expr = Expr(
+        :call,
         Expr(:curly, :NamedTuple, Expr(:tuple, QuoteNode.(re_names)...)),
-        Expr(:tuple, re_val_syms...))
+        Expr(:tuple, re_val_syms...)
+    )
 
     ex = quote
         @model function $(fname)(dm, info, θ, const_cache, cache, anneal_sds = NamedTuple())
@@ -148,11 +154,13 @@ function _build_mcem_batch_model(re_names::Vector{Symbol})
     return fname
 end
 
-function NoLimits._mcem_sample_batch_turing(dm, info, θ, const_cache, cache, sampler,
+function NoLimits._mcem_sample_batch_turing(
+        dm, info, θ, const_cache, cache, sampler,
         turing_kwargs, rng,
         re_names, warm_start, last_params;
         anneal_sds::NamedTuple = NamedTuple(),
-        outer_iter::Int = 1)
+        outer_iter::Int = 1
+    )
     nb = get_n_b(info)
     if nb == 0
         return (zeros(eltype(θ), 0, 0), Float64[], eltype(θ)[])
@@ -170,11 +178,15 @@ function NoLimits._mcem_sample_batch_turing(dm, info, θ, const_cache, cache, sa
     tkwargs = merge(tkwargs, (chain_type = MCMCChains.Chains,))
     chain = if warm_start && last_params isa NamedTuple && !isempty(last_params)
         init = DynamicPPL.InitFromParams(last_params)
-        Base.invokelatest(Turing.sample, rng, model, sampler, n_samples;
-            adapt = n_adapt, initial_params = init, tkwargs...)
+        Base.invokelatest(
+            Turing.sample, rng, model, sampler, n_samples;
+            adapt = n_adapt, initial_params = init, tkwargs...
+        )
     else
-        Base.invokelatest(Turing.sample, rng, model, sampler, n_samples;
-            adapt = n_adapt, tkwargs...)
+        Base.invokelatest(
+            Turing.sample, rng, model, sampler, n_samples;
+            adapt = n_adapt, tkwargs...
+        )
     end
     samples, lastp, lastb = _extract_b_samples(chain, info, re_names)
     samples = _filter_b_samples_by_prior(dm, info, θ, const_cache, cache, samples)

@@ -51,11 +51,13 @@ function _weighted_quantile(values::Vector{Float64}, weights::Vector{Float64}, p
     return v[i]
 end
 
-function _collect_observed_xy(ind::Individual,
+function _collect_observed_xy(
+        ind::Individual,
         dm::DataModel,
         obs_rows::Vector{Int},
         obs_name::Symbol,
-        x_axis_feature)
+        x_axis_feature
+    )
     x_raw = _get_x_values(dm, ind, obs_rows, x_axis_feature)
     y_raw = getfield(get_obs(get_series(ind)), obs_name)
     x_all = Float64[]
@@ -70,8 +72,8 @@ function _collect_observed_xy(ind::Individual,
         yv === missing && continue
         if !(yv isa Real)
             yv isa AbstractVector &&
-                @warn "Vector-valued (multivariate) observations are not supported "*
-                "in VPC and are skipped." maxlog=1
+                @warn "Vector-valued (multivariate) observations are not supported " *
+                "in VPC and are skipped." maxlog = 1
             continue
         end
         yf = Float64(yv)
@@ -82,13 +84,17 @@ function _collect_observed_xy(ind::Individual,
     return x_all, x_obs, y_obs
 end
 
-function _kernel_quantiles(x::Vector{Float64},
+function _kernel_quantiles(
+        x::Vector{Float64},
         y::Vector{Float64},
         xgrid::Vector{Float64},
         bandwidth::Float64,
-        percentiles::Vector{Float64})
-    out = Dict{Float64, Vector{Float64}}((p => Vector{Float64}(undef, length(xgrid)))
-    for p in percentiles)
+        percentiles::Vector{Float64}
+    )
+    out = Dict{Float64, Vector{Float64}}(
+        (p => Vector{Float64}(undef, length(xgrid)))
+            for p in percentiles
+    )
     for (i, xg) in enumerate(xgrid)
         w = exp.(-0.5 .* ((x .- xg) ./ bandwidth) .^ 2)
         for p in percentiles
@@ -106,7 +112,7 @@ function _resolve_n_bins(x::Vector{Float64}, n_bins::Union{Nothing, Int})
             return 1
         end
         n_bins > n_unique &&
-            @warn "n_bins exceeds unique x values; reducing bins." requested=n_bins used=n_unique
+            @warn "n_bins exceeds unique x values; reducing bins." requested = n_bins used = n_unique
         return min(n_bins, n_unique)
     end
     n_unique = length(unique(x))
@@ -114,7 +120,8 @@ function _resolve_n_bins(x::Vector{Float64}, n_bins::Union{Nothing, Int})
 end
 
 function _extend_bin_series(
-        x_centers::Vector{Float64}, y::Vector{Float64}, edges::Vector{Float64})
+        x_centers::Vector{Float64}, y::Vector{Float64}, edges::Vector{Float64}
+    )
     length(x_centers) == length(y) || error("Bin series length mismatch.")
     x = [edges[1]; x_centers; edges[end]]
     y_ext = [y[1]; y; y[end]]
@@ -136,10 +143,12 @@ function _re_level_reps(dm::DataModel, re::Symbol)
     return reps
 end
 
-function _sample_random_effects_levels(dm::DataModel,
+function _sample_random_effects_levels(
+        dm::DataModel,
         θ::ComponentArray,
         constants_re::NamedTuple,
-        rng::AbstractRNG)
+        rng::AbstractRNG
+    )
     re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) && return Dict{Symbol, Dict{Any, Any}}()
     fixed_maps = _normalize_constants_re(dm, constants_re)
@@ -190,12 +199,14 @@ function _eta_vec_from_levels(dm::DataModel, level_vals::Dict{Symbol, Dict{Any, 
     return η_vec
 end
 
-function _simulate_obs(dm::DataModel,
+function _simulate_obs(
+        dm::DataModel,
         θ::ComponentArray,
         η_vec::Vector{ComponentArray},
         obs_name::Symbol,
         rng::AbstractRNG,
-        x_axis_feature)
+        x_axis_feature
+    )
     sim_vals = Vector{Vector{Float64}}(undef, length(get_individuals(dm)))
     sim_x = Vector{Vector{Float64}}(undef, length(get_individuals(dm)))
     for (i, ind) in enumerate(get_individuals(dm))
@@ -208,7 +219,8 @@ function _simulate_obs(dm::DataModel,
         if get_de(get_model(dm)) !== nothing
             sol, compiled = _solve_dense_individual(dm, ind, θ, η_ind)
             sol_accessors = _sol_accessors_with_crossings(
-                get_model(dm), sol, compiled, θ, η_ind, get_const_cov(ind))
+                get_model(dm), sol, compiled, θ, η_ind, get_const_cov(ind)
+            )
         end
         vals = Vector{Float64}(undef, length(obs_rows))
         hmm_prev_state = 0
@@ -216,15 +228,17 @@ function _simulate_obs(dm::DataModel,
             vary = _varying_at(dm, ind, j, row)
             η_row = _row_random_effects_at(dm, i, j, η_ind, rowwise_re; obs_only = true)
             obs = sol_accessors === nothing ?
-                  calculate_formulas_obs(
-                get_model(dm), θ, η_row, get_const_cov(ind), vary) :
-                  calculate_formulas_obs(
-                get_model(dm), θ, η_row, get_const_cov(ind), vary, sol_accessors)
+                calculate_formulas_obs(
+                    get_model(dm), θ, η_row, get_const_cov(ind), vary
+                ) :
+                calculate_formulas_obs(
+                    get_model(dm), θ, η_row, get_const_cov(ind), vary, sol_accessors
+                )
             dist = getproperty(obs, obs_name)
             if _is_hmm_dist(dist)
                 state = hmm_prev_state == 0 ?
-                        _sample_hmm_hidden_state(rng, dist) :
-                        _sample_hmm_hidden_state(rng, dist, hmm_prev_state)
+                    _sample_hmm_hidden_state(rng, dist) :
+                    _sample_hmm_hidden_state(rng, dist, hmm_prev_state)
                 hmm_prev_state = state
                 vals[j] = _float_if_real(_hmm_emission_rand(rng, dist, state))
             else
@@ -247,7 +261,8 @@ function _representative_dist(dm::DataModel, obs_name::Symbol, x_axis_feature)
     if get_de(get_model(dm)) !== nothing
         sol, compiled = _solve_dense_individual(dm, ind, θ, η_ind)
         sol_accessors = _sol_accessors_with_crossings(
-            get_model(dm), sol, compiled, θ, η_ind, get_const_cov(ind))
+            get_model(dm), sol, compiled, θ, η_ind, get_const_cov(ind)
+        )
     end
     vary = _varying_at(dm, ind, 1, obs_rows[1])
     if get_de(get_model(dm)) === nothing && x_axis_feature !== nothing
@@ -255,8 +270,9 @@ function _representative_dist(dm::DataModel, obs_name::Symbol, x_axis_feature)
     end
     η_row = _row_random_effects_at(dm, 1, 1, η_ind, rowwise_re; obs_only = true)
     obs = sol_accessors === nothing ?
-          calculate_formulas_obs(get_model(dm), θ, η_row, get_const_cov(ind), vary) :
-          calculate_formulas_obs(
-        get_model(dm), θ, η_row, get_const_cov(ind), vary, sol_accessors)
+        calculate_formulas_obs(get_model(dm), θ, η_row, get_const_cov(ind), vary) :
+        calculate_formulas_obs(
+            get_model(dm), θ, η_row, get_const_cov(ind), vary, sol_accessors
+        )
     return getproperty(obs, obs_name)
 end

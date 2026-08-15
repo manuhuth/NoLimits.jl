@@ -13,7 +13,7 @@ using SciMLSensitivity
     compile = get_de_compiler(de)
     f! = get_de_f!(de)
     fe = @fixedEffects begin
-        a = RealNumber(1.0, scale = :log, lower = 1e-12)
+        a = RealNumber(1.0, scale = :log, lower = 1.0e-12)
     end
     θ0 = get_θ0_transformed(fe)
     inverse_transform = get_inverse_transform(fe)
@@ -21,17 +21,20 @@ using SciMLSensitivity
     tspan = (0.0, 1.0)
 
     fθ_fd(θ) = begin
-        p = build_de_params(de, θ;
+        p = build_de_params(
+            de, θ;
             random_effects = ComponentArray(NamedTuple()),
             constant_covariates = NamedTuple(),
             varying_covariates = NamedTuple(),
             helpers = NamedTuple(),
             model_funs = NamedTuple(),
             prede_builder = (fe, re, consts, model_funs, helpers) -> NamedTuple(),
-            inverse_transform = inverse_transform)
+            inverse_transform = inverse_transform
+        )
         prob = OrdinaryDiffEq.ODEProblem(f!, u0, tspan, p)
         sol = OrdinaryDiffEq.solve(
-            prob, OrdinaryDiffEq.Tsit5(); abstol = 1e-9, reltol = 1e-9)
+            prob, OrdinaryDiffEq.Tsit5(); abstol = 1.0e-9, reltol = 1.0e-9
+        )
         return sol.u[end][1]
     end
 
@@ -40,7 +43,7 @@ using SciMLSensitivity
     hess = ForwardDiff.hessian(fθ_fd, θ0)
     @test size(hess, 1) == length(θ0)
     @test size(hess, 2) == length(θ0)
-    @test isapprox(hess, hess'; rtol = 1e-6, atol = 1e-8)
+    @test isapprox(hess, hess'; rtol = 1.0e-6, atol = 1.0e-8)
 end
 
 @testset "ODE solve AD (transformed params, richer)" begin
@@ -50,8 +53,8 @@ end
         D(x2) ~ -b * x2 + a * x1
     end
     fe = @fixedEffects begin
-        a = RealNumber(0.7, scale = :log, lower = 1e-12)
-        b = RealNumber(0.4, scale = :log, lower = 1e-12)
+        a = RealNumber(0.7, scale = :log, lower = 1.0e-12)
+        b = RealNumber(0.4, scale = :log, lower = 1.0e-12)
     end
     prede = @preDifferentialEquation begin
         pre = a + b
@@ -70,18 +73,22 @@ end
     fθ_fd(θ) = begin
         fe_un = inverse_transform(θ)
         pre = get_prede_builder(prede)(
-            fe_un, ComponentArray(), NamedTuple(), NamedTuple(), helper_functions)
-        p = (; fixed_effects = fe_un,
+            fe_un, ComponentArray(), NamedTuple(), NamedTuple(), helper_functions
+        )
+        p = (;
+            fixed_effects = fe_un,
             random_effects = ComponentArray(),
             constant_covariates = NamedTuple(),
             varying_covariates = NamedTuple(),
             helpers = helper_functions,
             model_funs = NamedTuple(),
-            preDE = pre)
+            preDE = pre,
+        )
         pc = compile(p)
         prob = OrdinaryDiffEq.ODEProblem(de_f!, u0, tspan, pc)
         sol = OrdinaryDiffEq.solve(
-            prob, OrdinaryDiffEq.Tsit5(); abstol = 1e-9, reltol = 1e-9)
+            prob, OrdinaryDiffEq.Tsit5(); abstol = 1.0e-9, reltol = 1.0e-9
+        )
         acc = de_accessors(sol, pc)
         return acc.x1(0.4) + acc.x2(0.4) + acc.s(0.4)
     end
@@ -89,7 +96,7 @@ end
     val_fwd, grad_fwd = value_and_gradient(fθ_fd, AutoForwardDiff(), θ0)
     hess = ForwardDiff.hessian(fθ_fd, θ0)
     @test size(hess) == (length(θ0), length(θ0))
-    @test isapprox(hess, hess'; rtol = 1e-6, atol = 1e-8)
+    @test isapprox(hess, hess'; rtol = 1.0e-6, atol = 1.0e-8)
 end
 
 @testset "ODE solve AD (edge cases)" begin
@@ -100,8 +107,8 @@ end
     end
     f! = get_de_f!(de)
     fe = @fixedEffects begin
-        a = RealNumber(1.0, scale = :log, lower = 1e-12)
-        b = RealNumber(0.5, scale = :log, lower = 1e-12)
+        a = RealNumber(1.0, scale = :log, lower = 1.0e-12)
+        b = RealNumber(0.5, scale = :log, lower = 1.0e-12)
     end
     θ0 = get_θ0_transformed(fe)
     inverse_transform = get_inverse_transform(fe)
@@ -115,17 +122,20 @@ end
     fθ_fd(θ) = begin
         fe_un = inverse_transform(θ)
         pre = get_prede_builder(prede)(fe_un, η, NamedTuple(), NamedTuple(), NamedTuple())
-        p = (; fixed_effects = fe_un,
+        p = (;
+            fixed_effects = fe_un,
             random_effects = η,
             constant_covariates = NamedTuple(),
             varying_covariates = (w1 = t -> 0.1 * t,),
             helpers = NamedTuple(),
             model_funs = NamedTuple(),
-            preDE = pre)
+            preDE = pre,
+        )
         pc = get_de_compiler(de)(p)
         prob = OrdinaryDiffEq.ODEProblem(f!, u0, tspan, pc)
         sol = OrdinaryDiffEq.solve(
-            prob, OrdinaryDiffEq.Tsit5(); abstol = 1e-9, reltol = 1e-9)
+            prob, OrdinaryDiffEq.Tsit5(); abstol = 1.0e-9, reltol = 1.0e-9
+        )
         return sum(sol.u[end])
     end
 
@@ -133,7 +143,7 @@ end
     hess = ForwardDiff.hessian(fθ_fd, θ0)
     @test size(hess, 1) == length(θ0)
     @test size(hess, 2) == length(θ0)
-    @test isapprox(hess, hess'; rtol = 1e-6, atol = 1e-8)
+    @test isapprox(hess, hess'; rtol = 1.0e-6, atol = 1.0e-8)
 end
 
 @testset "ODE solve AD (random effects)" begin
@@ -142,7 +152,7 @@ end
     end
     f! = get_de_f!(de)
     fe = @fixedEffects begin
-        a = RealNumber(1.0, scale = :log, lower = 1e-12)
+        a = RealNumber(1.0, scale = :log, lower = 1.0e-12)
     end
     θ0 = get_θ0_transformed(fe)
     inverse_transform = get_inverse_transform(fe)
@@ -152,17 +162,20 @@ end
     fη_fd(ηv) = begin
         fe_un = inverse_transform(θ0)
         η = ComponentArray(η1 = ηv[1])
-        p = (; fixed_effects = fe_un,
+        p = (;
+            fixed_effects = fe_un,
             random_effects = η,
             constant_covariates = NamedTuple(),
             varying_covariates = (w1 = t -> 0.2 * t,),
             helpers = NamedTuple(),
             model_funs = NamedTuple(),
-            preDE = NamedTuple())
+            preDE = NamedTuple(),
+        )
         pc = get_de_compiler(de)(p)
         prob = OrdinaryDiffEq.ODEProblem(f!, u0, tspan, pc)
         sol = OrdinaryDiffEq.solve(
-            prob, OrdinaryDiffEq.Tsit5(); abstol = 1e-9, reltol = 1e-9)
+            prob, OrdinaryDiffEq.Tsit5(); abstol = 1.0e-9, reltol = 1.0e-9
+        )
         return sol.u[end][1]
     end
 
@@ -178,7 +191,7 @@ end
         D(x2) ~ -(a + η2) * x2 + x1
     end
     fe = @fixedEffects begin
-        a = RealNumber(0.9, scale = :log, lower = 1e-12)
+        a = RealNumber(0.9, scale = :log, lower = 1.0e-12)
     end
     compile = get_de_compiler(de)
     de_f! = get_de_f!(de)
@@ -191,17 +204,20 @@ end
     fη_fd(ηv) = begin
         fe_un = inverse_transform(θ0)
         η = ComponentArray(η1 = ηv[1], η2 = ηv[2])
-        p = (; fixed_effects = fe_un,
+        p = (;
+            fixed_effects = fe_un,
             random_effects = η,
             constant_covariates = NamedTuple(),
             varying_covariates = (w1 = t -> 0.2 * t,),
             helpers = NamedTuple(),
             model_funs = NamedTuple(),
-            preDE = NamedTuple())
+            preDE = NamedTuple(),
+        )
         pc = compile(p)
         prob = OrdinaryDiffEq.ODEProblem(de_f!, u0, tspan, pc)
         sol = OrdinaryDiffEq.solve(
-            prob, OrdinaryDiffEq.Tsit5(); abstol = 1e-9, reltol = 1e-9)
+            prob, OrdinaryDiffEq.Tsit5(); abstol = 1.0e-9, reltol = 1.0e-9
+        )
         acc = de_accessors(sol, pc)
         return acc.x1(0.3) + acc.x2(0.3)
     end

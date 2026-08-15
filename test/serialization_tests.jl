@@ -10,7 +10,7 @@ import Turing   # MCMC/VI need the Turing extension loaded (#36)
 # ── Shared fixtures ───────────────────────────────────────────────────────────
 
 function _simple_model_no_re()
-    @Model begin
+    return @Model begin
         @fixedEffects begin
             a = RealNumber(1.0)
             σ = RealNumber(0.5, scale = :log)
@@ -25,7 +25,7 @@ function _simple_model_no_re()
 end
 
 function _simple_model_with_re()
-    @Model begin
+    return @Model begin
         @fixedEffects begin
             a = RealNumber(1.0)
             σ = RealNumber(0.5, scale = :log)
@@ -43,7 +43,7 @@ function _simple_model_with_re()
 end
 
 function _simple_model_with_priors()
-    @Model begin
+    return @Model begin
         @fixedEffects begin
             a = RealNumber(0.5; prior = Normal(0.0, 1.0))
             σ = RealNumber(0.5; prior = LogNormal(0.0, 0.5))
@@ -58,11 +58,13 @@ function _simple_model_with_priors()
 end
 
 function _df_no_re()
-    DataFrame(ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0], y = [1.0, 1.1, 0.9, 1.0])
+    return DataFrame(ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0], y = [1.0, 1.1, 0.9, 1.0])
 end
 function _df_with_re()
-    DataFrame(ID = [1, 1, 2, 2, 3, 3], t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
-        y = [1.0, 1.1, 0.9, 1.0, 1.2, 1.1])
+    return DataFrame(
+        ID = [1, 1, 2, 2, 3, 3], t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+        y = [1.0, 1.1, 0.9, 1.0, 1.2, 1.1]
+    )
 end
 
 # ── MLE ───────────────────────────────────────────────────────────────────────
@@ -191,7 +193,9 @@ end
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     res = fit_model(
         dm, NoLimits.MCMC(;
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)))
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+        )
+    )
 
     path = tempname() * ".jld2"
     save_fit(path, res)
@@ -209,9 +213,12 @@ end
     model = _simple_model_with_priors()
     df = _df_no_re()
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         NoLimits.VI(;
-            turing_kwargs = (max_iter = 100, family = :meanfield, progress = false)))
+            turing_kwargs = (max_iter = 100, family = :meanfield, progress = false)
+        )
+    )
 
     path = tempname() * ".jld2"
     save_fit(path, res)
@@ -241,10 +248,13 @@ end
         end
     end
     df = DataFrame(
-        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [1.0, 1.1, 0.9, 1.0])
+        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [1.0, 1.1, 0.9, 1.0]
+    )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    ms = NoLimits.Multistart(dists = (; a = Normal(1.0, 0.2)),
-        n_draws_requested = 4, n_draws_used = 3)
+    ms = NoLimits.Multistart(
+        dists = (; a = Normal(1.0, 0.2)),
+        n_draws_requested = 4, n_draws_used = 3
+    )
     res = fit_model(ms, dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
 
     path = tempname() * ".jld2"
@@ -315,9 +325,9 @@ end
     lines = split(strip(out), '\n'; keepempty = false)
 
     @test length(lines) >= 5
-    @test parse(Float64, strip(lines[end - 4]))≈expected_obj atol=1e-10
+    @test parse(Float64, strip(lines[end - 4])) ≈ expected_obj atol = 1.0e-10
     @test strip(lines[end - 3]) == "mle"
-    @test parse(Float64, strip(lines[end - 2]))≈expected_ll atol=1e-8
+    @test parse(Float64, strip(lines[end - 2])) ≈ expected_ll atol = 1.0e-8
     @test parse(Int, strip(lines[end - 1])) == expected_nres
     @test occursin("Figure", strip(lines[end]))  # plot_fits returns a Makie.Figure
 end
@@ -368,9 +378,9 @@ end
     lines = split(strip(out), '\n'; keepempty = false)
 
     @test length(lines) >= 5
-    @test parse(Float64, strip(lines[end - 4]))≈expected_obj atol=1e-10
+    @test parse(Float64, strip(lines[end - 4])) ≈ expected_obj atol = 1.0e-10
     @test strip(lines[end - 3]) == "laplace"
-    @test parse(Float64, strip(lines[end - 2]))≈expected_ll atol=1e-8
+    @test parse(Float64, strip(lines[end - 2])) ≈ expected_ll atol = 1.0e-8
     @test parse(Int, strip(lines[end - 1])) == expected_n_ids
     @test occursin("Figure", strip(lines[end]))  # plot_fits returns a Makie.Figure
 end

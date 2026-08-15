@@ -47,9 +47,11 @@ struct TransformSpec
     lie::Union{Nothing, LiePSDLayout}
 end
 # Backward-compatible 4-arg constructor (all non-Lie specs carry no layout).
-function TransformSpec(name::Symbol, kind::Symbol, size::Tuple{Int, Int},
-        mask::Union{Nothing, Vector{Symbol}})
-    TransformSpec(name, kind, size, mask, nothing)
+function TransformSpec(
+        name::Symbol, kind::Symbol, size::Tuple{Int, Int},
+        mask::Union{Nothing, Vector{Symbol}}
+    )
+    return TransformSpec(name, kind, size, mask, nothing)
 end
 
 # `out_axes`/`n_out` (when provided) describe the output ComponentArray layout and
@@ -173,7 +175,7 @@ function _write_forward_spec!(flat::Vector, k::Int, spec::TransformSpec, val)
         return _write_flat!(flat, lograterows_forward(val), k)
     elseif kind === :lie
         fwd = spec.lie === nothing ? liepsd_forward(val) :
-              _liepsd_forward_layout(val, spec.lie)
+            _liepsd_forward_layout(val, spec.lie)
         return _write_flat!(flat, fwd, k)
     else
         return _write_flat!(flat, val, k)
@@ -224,7 +226,7 @@ function _write_inverse_spec!(flat::Vector, k::Int, spec::TransformSpec, val)
         return _write_flat!(flat, lograterows_inverse(val, n), k)
     elseif kind === :lie
         inv = spec.lie === nothing ? liepsd_inverse(val) :
-              _liepsd_inverse_layout(val, spec.lie)
+            _liepsd_inverse_layout(val, spec.lie)
         return _write_flat!(flat, inv, k)
     else
         return _write_flat!(flat, val, k)
@@ -233,7 +235,8 @@ end
 
 # Legacy dynamic assembly (runtime names; ForwardDiff-compatible, not Enzyme-forward).
 function _assemble_ca(
-        vals, names::Vector{Symbol}, ::Nothing, n_out::Int, ::Type{T}) where {T}
+        vals, names::Vector{Symbol}, ::Nothing, n_out::Int, ::Type{T}
+    ) where {T}
     return ComponentArray(NamedTuple{Tuple(names)}(Tuple(vals)))
 end
 
@@ -241,7 +244,8 @@ end
 # vector (single up-front allocation, assigned-once slots) and wrap it with the
 # precomputed axes.
 function _assemble_ca(
-        vals, names::Vector{Symbol}, out_axes::Tuple, n_out::Int, ::Type{T}) where {T}
+        vals, names::Vector{Symbol}, out_axes::Tuple, n_out::Int, ::Type{T}
+    ) where {T}
     flat = Vector{T}(undef, n_out)
     k = 1
     for v in vals
@@ -520,19 +524,23 @@ _scalar_value(x::ForwardDiff.Dual) = _scalar_value(ForwardDiff.value(x))
 _matexp(M::AbstractMatrix{<:LinearAlgebra.BlasFloat}) = exp(M)
 
 function _matexp(M::AbstractMatrix{<:Real})
-    b = (64764752532480000.0, 32382376266240000.0, 7771770303897600.0,
+    b = (
+        64764752532480000.0, 32382376266240000.0, 7771770303897600.0,
         1187353796428800.0, 129060195264000.0, 10559470521600.0, 670442572800.0,
-        33522128640.0, 1323241920.0, 40840800.0, 960960.0, 16380.0, 182.0, 1.0)
+        33522128640.0, 1323241920.0, 40840800.0, 960960.0, 16380.0, 182.0, 1.0,
+    )
     nrm = opnorm(_scalar_value.(M), 1)
     s = nrm > 5.371920351148152 ? ceil(Int, log2(nrm / 5.371920351148152)) : 0
     A = M ./ 2.0^s
     A2 = A * A
     A4 = A2 * A2
     A6 = A2 * A4
-    Uodd = A * (A6 * (b[14] * A6 + b[12] * A4 + b[10] * A2) +
-            b[8] * A6 + b[6] * A4 + b[4] * A2 + b[2] * I)
+    Uodd = A * (
+        A6 * (b[14] * A6 + b[12] * A4 + b[10] * A2) +
+            b[8] * A6 + b[6] * A4 + b[4] * A2 + b[2] * I
+    )
     Veven = A6 * (b[13] * A6 + b[11] * A4 + b[9] * A2) +
-            b[7] * A6 + b[5] * A4 + b[3] * A2 + b[1] * I
+        b[7] * A6 + b[5] * A4 + b[3] * A2 + b[1] * I
     P = (Veven - Uodd) \ (Veven + Uodd)
     for _ in 1:s
         P = P * P
@@ -562,8 +570,13 @@ end
 # reconstructed covariance is accepted by the (stricter) `cholesky` inside MvNormal/PDMats.
 # Single-level Duals only; second-order ForwardDiff (Hessian) falls back to finite
 # differences.
-function expm_inverse(T::AbstractMatrix{ForwardDiff.Dual{
-        Tg, V, N}}) where {Tg, V <: AbstractFloat, N}
+function expm_inverse(
+        T::AbstractMatrix{
+            ForwardDiff.Dual{
+                Tg, V, N,
+            },
+        }
+    ) where {Tg, V <: AbstractFloat, N}
     n = size(T, 1)
     Tv = ForwardDiff.value.(T)
     Sv = 0.5 .* (Tv .+ Tv')                          # symmetric value
@@ -585,8 +598,13 @@ end
 # the value (bottoming out at the Float64 eigen leaf, so the value stays bit-identical) and
 # take each partial via the Padé Fréchet derivative, whose inner matrix-exp routes through
 # the Dual-generic `_matexp`. Removes the finite-difference Hessian fallback for `:expm`.
-function expm_inverse(T::AbstractMatrix{ForwardDiff.Dual{
-        Tg, V, N}}) where {Tg, V <: ForwardDiff.Dual, N}
+function expm_inverse(
+        T::AbstractMatrix{
+            ForwardDiff.Dual{
+                Tg, V, N,
+            },
+        }
+    ) where {Tg, V <: ForwardDiff.Dual, N}
     n = size(T, 1)
     Tv = ForwardDiff.value.(T)
     Sv = 0.5 .* (Tv .+ Tv')
@@ -611,17 +629,19 @@ end
 
 function _sym_from_upper(v::AbstractVector{<:Real}, n::Int)
     idx = 1
-    return [begin
+    return [
+        begin
                 if i <= j
                     val = v[idx]
                     idx += 1
                     val
-                else
+            else
                     # mirror element T[j,i] (j<i) is upper-tri, packed at this index
                     v[(i - 1) * i ÷ 2 + j]
-                end
             end
-            for i in 1:n, j in 1:n]
+            end
+            for i in 1:n, j in 1:n
+    ]
 end
 
 function _upper_tri_vec_grad(G::AbstractMatrix{<:Real})
@@ -706,9 +726,15 @@ end
 # (`_expm_frechet`, general-matrix, no eigengaps). The value is computed with LAPACK on the
 # Float64 antisymmetric matrix. Single-level Duals only; second-order ForwardDiff
 # (Hessian) falls back to finite differences.
-function liepsd_inverse(t::AbstractVector{ForwardDiff.Dual{
-        Tg, V, N}}) where {
-        Tg, V <: AbstractFloat, N}
+function liepsd_inverse(
+        t::AbstractVector{
+            ForwardDiff.Dual{
+                Tg, V, N,
+            },
+        }
+    ) where {
+        Tg, V <: AbstractFloat, N,
+    }
     L = length(t)
     n = _lie_dim(L)
     tv = ForwardDiff.value.(t)
@@ -737,8 +763,13 @@ end
 
 # Nested Duals (2nd+-order ForwardDiff): recurse on the value (bottoming out at the Float64
 # LAPACK leaf) and build each partial via the Padé Fréchet derivative through `_matexp`.
-function liepsd_inverse(t::AbstractVector{ForwardDiff.Dual{
-        Tg, V, N}}) where {Tg, V <: ForwardDiff.Dual, N}
+function liepsd_inverse(
+        t::AbstractVector{
+            ForwardDiff.Dual{
+                Tg, V, N,
+            },
+        }
+    ) where {Tg, V <: ForwardDiff.Dual, N}
     L = length(t)
     n = _lie_dim(L)
     tv = ForwardDiff.value.(t)
@@ -837,8 +868,10 @@ end
 # Build the structured layout from an initial matrix, block labels and fixed-eigenvalue
 # dimension indices. Returns `nothing` for the unstructured full case (single block, no
 # fixed eigenvalues), which keeps the plain `liepsd_forward`/`liepsd_inverse` fast path.
-function _build_lie_layout(Σ0::AbstractMatrix{<:Real}, blocks::Vector{Int},
-        fixed_eigenvalues::Vector{Int})
+function _build_lie_layout(
+        Σ0::AbstractMatrix{<:Real}, blocks::Vector{Int},
+        fixed_eigenvalues::Vector{Int}
+    )
     n = size(Σ0, 1)
     L = n * (n + 1) ÷ 2
     single_block = all(==(blocks[1]), blocks)
@@ -1046,7 +1079,7 @@ function _logabsdetjac_liepsd(spec::TransformSpec, block)
     layout = spec.lie
     z = collect(block)
     invmap = layout === nothing ? liepsd_inverse :
-             (t -> _liepsd_inverse_layout(t, layout))
+        (t -> _liepsd_inverse_layout(t, layout))
     n = layout === nothing ? _lie_dim(length(z)) : layout.n
     d = length(z)
     sel = _liepsd_minimal_sel(n, d, layout, invmap, z)
@@ -1058,7 +1091,8 @@ function _logabsdetjac_liepsd(spec::TransformSpec, block)
 end
 
 function apply_inv_jacobian_T(
-        it::InverseTransform, θt::ComponentArray, grad_u::ComponentArray)
+        it::InverseTransform, θt::ComponentArray, grad_u::ComponentArray
+    )
     names = it.names
     specs = it.specs
     # Sequential flat fill on the θt layout. The previous `map` collected the
@@ -1069,7 +1103,8 @@ function apply_inv_jacobian_T(
     k = 1
     for i in eachindex(names)
         v = _inv_jac_spec_val(
-            specs[i], getproperty(θt, names[i]), getproperty(grad_u, names[i]))
+            specs[i], getproperty(θt, names[i]), getproperty(grad_u, names[i])
+        )
         k = _write_flat!(flat, v, k)
     end
     k == length(θt) + 1 ||
@@ -1078,14 +1113,16 @@ function apply_inv_jacobian_T(
 end
 
 function _inv_jac_spec_val(spec::TransformSpec, θti, gu)
-    begin
+    return begin
         if spec.kind == :log
             return _safe_log_inv_jac.(gu, θti)
         elseif spec.kind == :logit
             return gu .* _logit_inv_jacobian.(θti)
         elseif spec.kind == :elementwise
-            return [_scalar_inv_jacobian(spec.mask[j], gu[j], θti[j])
-                    for j in eachindex(θti)]
+            return [
+                _scalar_inv_jacobian(spec.mask[j], gu[j], θti[j])
+                    for j in eachindex(θti)
+            ]
         elseif spec.kind == :cholesky
             n1, n2 = spec.size
             T = _lower_from_free(θti, n1)
@@ -1164,7 +1201,8 @@ function _inv_jac_spec_val(spec::TransformSpec, θti, gu)
 end
 
 function _transform_vals(
-        θ::ComponentArray, names::Vector{Symbol}, specs::Vector{TransformSpec})
+        θ::ComponentArray, names::Vector{Symbol}, specs::Vector{TransformSpec}
+    )
     return map(1:length(names)) do i
         name = names[i]
         spec = specs[i]
@@ -1188,7 +1226,7 @@ function _transform_vals(
             return lograterows_forward(val)
         elseif spec.kind == :lie
             return spec.lie === nothing ? liepsd_forward(val) :
-                   _liepsd_forward_layout(val, spec.lie)
+                _liepsd_forward_layout(val, spec.lie)
         else
             return val
         end
@@ -1196,7 +1234,8 @@ function _transform_vals(
 end
 
 function _inverse_vals(
-        θ::ComponentArray, names::Vector{Symbol}, specs::Vector{TransformSpec})
+        θ::ComponentArray, names::Vector{Symbol}, specs::Vector{TransformSpec}
+    )
     return map(1:length(names)) do i
         name = names[i]
         spec = specs[i]
@@ -1224,7 +1263,7 @@ function _inverse_vals(
             return lograterows_inverse(val, n)
         elseif spec.kind == :lie
             return spec.lie === nothing ? liepsd_inverse(val) :
-                   _liepsd_inverse_layout(val, spec.lie)
+                _liepsd_inverse_layout(val, spec.lie)
         else
             return val
         end

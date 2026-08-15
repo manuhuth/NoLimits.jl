@@ -7,7 +7,7 @@ using Random
 # ── Shared fixtures ────────────────────────────────────────────────────────────
 
 function _make_mle_model()
-    @Model begin
+    return @Model begin
         @fixedEffects begin
             a = RealNumber(1.0)
             σ = RealNumber(0.5, scale = :log)
@@ -22,7 +22,7 @@ function _make_mle_model()
 end
 
 function _make_re_model()
-    @Model begin
+    return @Model begin
         @fixedEffects begin
             a = RealNumber(1.0)
             σ = RealNumber(0.5, scale = :log)
@@ -44,7 +44,7 @@ function _make_df()
     ids = repeat(1:6, inner = 3)
     ts = repeat([0.0, 1.0, 2.0], 6)
     ys = 1.0 .+ 0.1 .* randn(MersenneTwister(42), 18)
-    DataFrame(ID = ids, t = ts, y = ys)
+    return DataFrame(ID = ids, t = ts, y = ys)
 end
 
 # ── Tests ──────────────────────────────────────────────────────────────────────
@@ -115,7 +115,8 @@ end
     os = res.obs_scores
     @test os isa DataFrame
     expected_cols = [
-        :fold, :individual, :time, :outcome, :obs, :loglikelihood, :predicted_mean]
+        :fold, :individual, :time, :outcome, :obs, :loglikelihood, :predicted_mean,
+    ]
     @test all(c -> c ∈ names(os), string.(expected_cols))
     @test nrow(os) == nrow(df)   # one row per observation
     @test all(isfinite, skipmissing(os[!, :loglikelihood]))
@@ -128,8 +129,10 @@ end
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
 
     cv = cross_validate(dm, 3; kind = :id, rng = MersenneTwister(20))
-    res = fit_cv(cv, NoLimits.Laplace(); seen_re_mode = :ebe, unseen_re_mode = :mean,
-        rng = MersenneTwister(20))
+    res = fit_cv(
+        cv, NoLimits.Laplace(); seen_re_mode = :ebe, unseen_re_mode = :mean,
+        rng = MersenneTwister(20)
+    )
 
     @test res isa CVResult
     @test isfinite(res.mean_test_loglikelihood)
@@ -205,9 +208,11 @@ end
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
 
     cv = cross_validate(dm, 2; kind = :id, rng = MersenneTwister(70))
-    res = fit_cv(cv, NoLimits.Laplace();
+    res = fit_cv(
+        cv, NoLimits.Laplace();
         seen_re_mode = :conditional, n_mc_samples = 20,
-        rng = MersenneTwister(70))
+        rng = MersenneTwister(70)
+    )
 
     @test res isa CVResult
     @test isfinite(res.mean_test_loglikelihood)
@@ -218,7 +223,7 @@ end
     # Per-fold: sum of per-obs log-likelihoods should match stored test_loglikelihood
     for fr in res.fold_results
         fold_os = fr.obs_scores
-        @test isapprox(sum(fold_os[!, :loglikelihood]), fr.test_loglikelihood; atol = 1e-8)
+        @test isapprox(sum(fold_os[!, :loglikelihood]), fr.test_loglikelihood; atol = 1.0e-8)
     end
 end
 

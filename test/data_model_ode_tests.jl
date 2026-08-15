@@ -71,7 +71,7 @@ end
         varying_covariates = NamedTuple(),
         helpers = get_helper_funs(model_saveat),
         model_funs = get_model_funs(model_saveat),
-        preDE = pre
+        preDE = pre,
     )
     compiled = get_de_compiler(model_saveat.de.de)(pc)
 
@@ -84,7 +84,8 @@ end
     for (i, y) in enumerate(ind.series.obs.y)
         varying_covariates = _varying_at(ind, i)
         obs = calculate_formulas_obs(
-            model_saveat, θ, η, const_covariates_i, varying_covariates, sol_accessors)
+            model_saveat, θ, η, const_covariates_i, varying_covariates, sol_accessors
+        )
         loglik += logpdf(obs.y, y)
     end
     @test isfinite(loglik)
@@ -136,7 +137,7 @@ end
         varying_covariates = NamedTuple(),
         helpers = get_helper_funs(model_saveat),
         model_funs = get_model_funs(model_saveat),
-        preDE = pre
+        preDE = pre,
     )
     compiled = get_de_compiler(model_saveat.de.de)(pc)
 
@@ -149,7 +150,8 @@ end
     for (i, y) in enumerate(ind.series.obs.y)
         varying_covariates = _varying_at(ind, i)
         obs = calculate_formulas_obs(
-            model_saveat, θ, η, const_covariates_i, varying_covariates, sol_accessors)
+            model_saveat, θ, η, const_covariates_i, varying_covariates, sol_accessors
+        )
         loglik += logpdf(obs.y, y)
     end
     @test isfinite(loglik)
@@ -203,7 +205,7 @@ end
         varying_covariates = merge((t = ind.series.vary.t[1],), ind.series.dyn),
         helpers = get_helper_funs(model_saveat),
         model_funs = get_model_funs(model_saveat),
-        preDE = pre
+        preDE = pre,
     )
     compiled = get_de_compiler(model_saveat.de.de)(pc)
 
@@ -216,7 +218,8 @@ end
     for (i, y) in enumerate(ind.series.obs.y)
         varying_covariates = _varying_at(ind, i)
         obs = calculate_formulas_obs(
-            model_saveat, θ, η, const_covariates_i, varying_covariates, sol_accessors)
+            model_saveat, θ, η, const_covariates_i, varying_covariates, sol_accessors
+        )
         loglik += logpdf(obs.y, y)
     end
     @test isfinite(loglik)
@@ -233,7 +236,8 @@ end
             ζ = NNParameters(chain; function_name = :NN1, calculate_se = false)
             Γ = SoftTreeParameters(2, 2; function_name = :ST1, calculate_se = false)
             sp = SplineParameters(
-                knots; function_name = :SP1, degree = 2, calculate_se = false)
+                knots; function_name = :SP1, degree = 2, calculate_se = false
+            )
         end
 
         @covariates begin
@@ -249,7 +253,7 @@ end
 
         @preDifferentialEquation begin
             pre = NN1([x.Age, x.BMI], ζ)[1] + ST1([x.Age, x.BMI], Γ)[1] +
-                  SP1(x.Age / 100, sp) + η_id
+                SP1(x.Age / 100, sp) + η_id
         end
 
         @DifferentialEquation begin
@@ -291,7 +295,7 @@ end
         varying_covariates = merge((t = ind.series.vary.t[1],), ind.series.dyn),
         helpers = get_helper_funs(model_saveat),
         model_funs = get_model_funs(model_saveat),
-        preDE = pre
+        preDE = pre,
     )
     compiled = get_de_compiler(model_saveat.de.de)(pc)
 
@@ -304,7 +308,8 @@ end
     for (i, y) in enumerate(ind.series.obs.y)
         varying_covariates = _varying_at(ind, i)
         obs = calculate_formulas_obs(
-            model_saveat, θ, η, const_covariates_i, varying_covariates, sol_accessors)
+            model_saveat, θ, η, const_covariates_i, varying_covariates, sol_accessors
+        )
         loglik += logpdf(obs.y, y)
     end
     @test isfinite(loglik)
@@ -321,7 +326,8 @@ end
             ζ = NNParameters(chain; function_name = :NN2, calculate_se = false)
             Γ = SoftTreeParameters(2, 2; function_name = :ST2, calculate_se = false)
             sp = SplineParameters(
-                knots; function_name = :SP2, degree = 2, calculate_se = false)
+                knots; function_name = :SP2, degree = 2, calculate_se = false
+            )
         end
 
         @covariates begin
@@ -339,7 +345,7 @@ end
 
         @preDifferentialEquation begin
             pre = NN2([x.Age, x.BMI], ζ)[1] + ST2([x.Age, x.BMI], Γ)[1] +
-                  SP2(x.BMI / 50, sp) + η_id
+                SP2(x.BMI / 50, sp) + η_id
         end
 
         @DifferentialEquation begin
@@ -383,7 +389,7 @@ end
         varying_covariates = merge((t = ind.series.vary.t[1],), ind.series.dyn),
         helpers = get_helper_funs(model_saveat),
         model_funs = get_model_funs(model_saveat),
-        preDE = pre
+        preDE = pre,
     )
     compiled = get_de_compiler(model_saveat.de.de)(pc)
 
@@ -396,7 +402,8 @@ end
     for (i, y) in enumerate(ind.series.obs.y)
         varying_covariates = _varying_at(ind, i)
         obs = calculate_formulas_obs(
-            model_saveat, θ, η, const_covariates_i, varying_covariates, sol_accessors)
+            model_saveat, θ, η, const_covariates_i, varying_covariates, sol_accessors
+        )
         loglik += logpdf(obs.y, y)
     end
     @test isfinite(loglik)
@@ -417,7 +424,8 @@ end
             ζ = NNParameters(chain; function_name = :NN3, calculate_se = false)
             Γ = SoftTreeParameters(2, 2; function_name = :ST3, calculate_se = false)
             sp = SplineParameters(
-                knots; function_name = :SP3, degree = 2, calculate_se = false)
+                knots; function_name = :SP3, degree = 2, calculate_se = false
+            )
         end
 
         @covariates begin
@@ -433,7 +441,7 @@ end
 
         @preDifferentialEquation begin
             pre = sat(NN3([x.Age, x.BMI], ζ)[1] + ST3([x.Age, x.BMI], Γ)[1]) +
-                  SP3(x.Age / 100, sp) + η_id
+                SP3(x.Age / 100, sp) + η_id
         end
 
         @DifferentialEquation begin
@@ -475,7 +483,7 @@ end
         varying_covariates = merge((t = ind.series.vary.t[1],), ind.series.dyn),
         helpers = get_helper_funs(model_saveat),
         model_funs = get_model_funs(model_saveat),
-        preDE = pre
+        preDE = pre,
     )
     compiled = get_de_compiler(model_saveat.de.de)(pc)
 
@@ -488,7 +496,8 @@ end
     for (i, y) in enumerate(ind.series.obs.y)
         varying_covariates = _varying_at(ind, i)
         obs = calculate_formulas_obs(
-            model_saveat, θ, η, const_covariates_i, varying_covariates, sol_accessors)
+            model_saveat, θ, η, const_covariates_i, varying_covariates, sol_accessors
+        )
         loglik += logpdf(obs.y, y)
     end
     @test isfinite(loglik)

@@ -10,11 +10,12 @@ using Functors
 using Optimisers
 using Random: Xoshiro
 import NoLimits: NNParameters, _nn_model_fun, _nn_axes_template, _to_type, _value_type,
-                 _check_nn_prior, Priorless
+    _check_nn_prior, Priorless
 
 function NNParameters(
         chain::Lux.Chain; name::Symbol = :unnamed, function_name::Symbol,
-        seed::Integer = 0, prior = Priorless(), calculate_se::Bool = false)
+        seed::Integer = 0, prior = Priorless(), calculate_se::Bool = false
+    )
     rng = Xoshiro(seed)
     init_params = Lux.initialparameters(rng, chain)
     flat, reconstructor = Optimisers.destructure(init_params)
@@ -24,7 +25,8 @@ function NNParameters(
     u = fill(T(Inf), length(v))
     _check_nn_prior(prior, name, length(v))
     return NNParameters{T, typeof(v), typeof(chain), typeof(reconstructor)}(
-        name, function_name, chain, v, reconstructor, l, u, prior, calculate_se)
+        name, function_name, chain, v, reconstructor, l, u, prior, calculate_se
+    )
 end
 
 function _nn_model_fun(chain::Lux.Chain, p::NNParameters, ::Type{T}) where {T}

@@ -16,7 +16,7 @@ include(joinpath(@__DIR__, "fixtures.jl"))
 # outermost @testset throws a TestSetException at the end if anything failed,
 # which makes this subprocess exit non-zero so the orchestrator sees it.
 # verbose: print per-file times in the summary (shard balancing depends on them)
-@testset "batch" verbose=true begin
+@testset "batch" verbose = true begin
     for f in ARGS
         @testset "$f" begin
             include(joinpath(@__DIR__, f))

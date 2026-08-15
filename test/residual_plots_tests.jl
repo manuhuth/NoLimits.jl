@@ -28,8 +28,10 @@ import Turing   # MCMC/VI need the Turing extension loaded (#36)
         end
     end
 
-    df = DataFrame(ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0], z = [0.2, -0.1, 0.3, 0.0],
-        y_cont = [0.1, 0.0, 0.2, 0.1], y_bin = [1, 0, 1, 0])
+    df = DataFrame(
+        ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0], z = [0.2, -0.1, 0.3, 0.0],
+        y_cont = [0.1, 0.0, 0.2, 0.1], y_bin = [1, 0, 1, 0]
+    )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     res = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
 
@@ -38,7 +40,7 @@ import Turing   # MCMC/VI need the Turing extension loaded (#36)
     @test Set(rdf.observable) == Set([:y_cont, :y_bin])
     @test plot_residual_distribution(res; residual = :pit) !== nothing
     @test plot_residual_pit(res; show_hist = false, show_kde = true, show_qq = false) !==
-          nothing
+        nothing
 end
 
 @testset "residuals with constants_re inherited from fit result" begin
@@ -67,13 +69,17 @@ end
             y ~ Normal(a + η + 0.2 * t, σ)
         end
     end
-    df = DataFrame(ID = repeat(["id_001", "id_002", "id_003"], inner = 2),
+    df = DataFrame(
+        ID = repeat(["id_001", "id_002", "id_003"], inner = 2),
         t = repeat([0.0, 1.0], outer = 3),
-        y = [0.1, 0.3, 0.0, 0.25, 0.15, 0.35])
+        y = [0.1, 0.3, 0.0, 0.25, 0.15, 0.35]
+    )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 2,));
+    res = fit_model(
+        dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 2,));
         constants_re = (; η = (; id_001 = 0.6)),
-        serialization = NoLimits.EnsembleSerial())
+        serialization = NoLimits.EnsembleSerial()
+    )
 
     η_df = get_random_effects(res).η
     @test η_df[η_df.ID .== "id_001", :η_1][1] == 0.6
@@ -91,8 +97,10 @@ end
     # of the pinned 0.6, diverging from :ebe by exactly that offset.
     pop_df = NoLimits.predict(res, df; re_mode = :population)
     ebe_df = NoLimits.predict(res, df; re_mode = :ebe)
-    @test isapprox(pop_df.prediction[pop_df.id .== "id_001"],
-        ebe_df.prediction[ebe_df.id .== "id_001"]; atol = 1e-8)
+    @test isapprox(
+        pop_df.prediction[pop_df.id .== "id_001"],
+        ebe_df.prediction[ebe_df.id .== "id_001"]; atol = 1.0e-8
+    )
 end
 
 @testset "residuals MCMC summary and draw-level outputs" begin
@@ -107,7 +115,8 @@ end
     @test all(.!ismissing.(rdf.pit_qhi))
 
     rdf_draw = get_residuals(
-        res; mcmc_draws = 3, return_draw_level = true, residuals = [:pit])
+        res; mcmc_draws = 3, return_draw_level = true, residuals = [:pit]
+    )
     @test nrow(rdf_draw) == 3 * nrow(df)
     @test all(rdf_draw.n_draws .== 3)
     @test all(.!ismissing.(rdf_draw.draw))
@@ -126,7 +135,8 @@ end
     @test all(.!ismissing.(rdf.pit_qhi))
 
     rdf_draw = get_residuals(
-        res; mcmc_draws = 5, return_draw_level = true, residuals = [:pit])
+        res; mcmc_draws = 5, return_draw_level = true, residuals = [:pit]
+    )
     @test nrow(rdf_draw) == 5 * nrow(df)
     @test all(rdf_draw.n_draws .== 5)
     @test all(.!ismissing.(rdf_draw.draw))
@@ -172,8 +182,10 @@ end
             y ~ Poisson(λ)
         end
     end
-    df = DataFrame(ID = [1, 1, 2, 2, 3, 3], t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
-        z = [0.0, 0.4, 0.2, 0.6, 0.8, 1.0], y = [1, 2, 1, 2, 3, 4])
+    df = DataFrame(
+        ID = [1, 1, 2, 2, 3, 3], t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+        z = [0.0, 0.4, 0.2, 0.6, 0.8, 1.0], y = [1, 2, 1, 2, 3, 4]
+    )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     res = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
 
@@ -184,13 +196,14 @@ end
     @test plot_residual_distribution(res; residual = :pit) !== nothing
     @test plot_residuals(res; residual = :pearson) !== nothing
     @test plot_residual_pit(res; show_hist = true, show_kde = false, show_qq = true) !==
-          nothing
+        nothing
 end
 
 @testset "residuals use row-specific random effects for varying non-ODE groups" begin
     dm = fx_varyre_dm()
     cache = build_plot_cache(
-        dm; constants_re = fx_varyre_constants_re(), cache_obs_dists = true)
+        dm; constants_re = fx_varyre_constants_re(), cache_obs_dists = true
+    )
     rdf = get_residuals(dm; cache = cache, cache_obs_dists = true, residuals = [:raw])
     sort!(rdf, :row)
     @test Float64.(rdf.fitted) ≈ [0.1, 0.4, 0.4, 0.1, 0.3]
@@ -207,30 +220,42 @@ end
             t = Covariate()
         end
         @formulas begin
-            y ~ DiscreteTimeDiscreteStatesHMM([0.8 0.2; 0.3 0.7],
-                (Normal(0.0, σh), Normal(μ2, σh)), Categorical([0.6, 0.4]))
+            y ~ DiscreteTimeDiscreteStatesHMM(
+                [0.8 0.2; 0.3 0.7],
+                (Normal(0.0, σh), Normal(μ2, σh)), Categorical([0.6, 0.4])
+            )
         end
     end
     df = DataFrame(ID = [1, 1, 1], t = [0.0, 1.0, 2.0], y = [3.1, 0.05, 2.9])
     dm = DataModel(hmm_model, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         NoLimits.MCMC(;
-            turing_kwargs = (n_samples = 30, n_adapt = 15, progress = false)))
+            turing_kwargs = (n_samples = 30, n_adapt = 15, progress = false)
+        )
+    )
 
-    dfres = get_residuals(res; residuals = [:logscore], mcmc_draws = 1,
-        rng = Xoshiro(11), return_draw_level = true)
+    dfres = get_residuals(
+        res; residuals = [:logscore], mcmc_draws = 1,
+        rng = Xoshiro(11), return_draw_level = true
+    )
 
     # Replicate the single posterior draw the residual path selects with the
     # same rng, then forward-filter by hand.
     res_use = NoLimits._with_posterior_warmup(res, nothing)
     θd, ηd, _ = NoLimits._posterior_drawn_params(
-        res_use, dm, NamedTuple(), NamedTuple(), 1, Xoshiro(11))
+        res_use, dm, NamedTuple(), NamedTuple(), 1, Xoshiro(11)
+    )
     θ = θd[1]
     η_i = ηd[1][1]
     ind = get_individuals(dm)[1]
     rows = NoLimits.get_row_groups(dm).obs_rows[1]
-    dists = [calculate_formulas_obs(hmm_model, θ, η_i, ind.const_cov,
-                 NoLimits._varying_at(dm, ind, j, rows[j])).y for j in 1:3]
+    dists = [
+        calculate_formulas_obs(
+                hmm_model, θ, η_i, ind.const_cov,
+                NoLimits._varying_at(dm, ind, j, rows[j])
+            ).y for j in 1:3
+    ]
     y = df.y
     post1 = posterior_hidden_states(dists[1], y[1])
     d2f = NoLimits._hmm_with_prior(dists[2], post1)
@@ -261,9 +286,11 @@ end
             η = RandomEffect(Normal(0.0, ω); column = :ID)
         end
         @formulas begin
-            y ~ DiscreteTimeDiscreteStatesHMM(P,
+            y ~ DiscreteTimeDiscreteStatesHMM(
+                P,
                 (Normal(μ[1] + η, σk[1]), Normal(μ[2] + η, σk[2])),
-                Categorical(π0))
+                Categorical(π0)
+            )
         end
     end
 
@@ -298,10 +325,15 @@ end
     ind = get_individuals(dm)[1]
     obs_rows = NoLimits.get_row_groups(dm).obs_rows[1]
     y1 = get_obs(get_series(ind)).y
-    unfiltered = sum(logpdf(
-                         calculate_formulas_obs(model, θ, η_ind, ind.const_cov,
-                             NoLimits._varying_at(dm, ind, j, obs_rows[j])).y, y1[j])
-    for j in eachindex(obs_rows) if y1[j] !== missing)
+    unfiltered = sum(
+        logpdf(
+                calculate_formulas_obs(
+                    model, θ, η_ind, ind.const_cov,
+                    NoLimits._varying_at(dm, ind, j, obs_rows[j])
+                ).y, y1[j]
+            )
+            for j in eachindex(obs_rows) if y1[j] !== missing
+    )
     ls1 = sum(skipmissing(rdf[rdf.individual_idx .== 1, :logscore]))
     @test !isapprox(-ls1, unfiltered; atol = 1.0e-3)
 end
@@ -349,9 +381,11 @@ end
     end
 
     # Three subjects with clearly separated levels so the EBEs are non-zero.
-    df = DataFrame(ID = repeat([1, 2, 3]; inner = 3),
+    df = DataFrame(
+        ID = repeat([1, 2, 3]; inner = 3),
         t = repeat([0.0, 1.0, 2.0]; outer = 3),
-        y = [2.9, 3.1, 3.0, 0.9, 1.1, 1.0, -1.1, -0.9, -1.0])
+        y = [2.9, 3.1, 3.0, 0.9, 1.1, 1.0, -1.1, -0.9, -1.0]
+    )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     res = fit_model(dm, NoLimits.Laplace())
 
@@ -365,18 +399,22 @@ end
     @test nrow(ebe) == nrow(df)
     ebe_by_id = combine(groupby(ebe, :id), :prediction => mean => :m)
     @test ebe_by_id.m[1] > ebe_by_id.m[2] > ebe_by_id.m[3]
-    @test !isapprox(ebe.prediction[1], pop.prediction[1]; atol = 1e-2)
+    @test !isapprox(ebe.prediction[1], pop.prediction[1]; atol = 1.0e-2)
 
     # :reestimate on the training data reproduces the stored EBEs.
     reest = NoLimits.predict(res, df; re_mode = :reestimate)
-    @test isapprox(collect(reest.prediction), collect(ebe.prediction); atol = 5e-2)
+    @test isapprox(collect(reest.prediction), collect(ebe.prediction); atol = 5.0e-2)
 
     # :marginal integrates the RE prior, so on a linear mean-zero-RE model it matches
     # :population up to Monte-Carlo error that shrinks with marginal_draws (issue #103).
-    marg = NoLimits.predict(res, df; re_mode = :marginal, marginal_draws = 800,
-        rng = MersenneTwister(1))
-    marg_few = NoLimits.predict(res, df; re_mode = :marginal, marginal_draws = 25,
-        rng = MersenneTwister(1))
+    marg = NoLimits.predict(
+        res, df; re_mode = :marginal, marginal_draws = 800,
+        rng = MersenneTwister(1)
+    )
+    marg_few = NoLimits.predict(
+        res, df; re_mode = :marginal, marginal_draws = 25,
+        rng = MersenneTwister(1)
+    )
     dev = maximum(abs.(collect(marg.prediction) .- collect(pop.prediction)))
     dev_few = maximum(abs.(collect(marg_few.prediction) .- collect(pop.prediction)))
     @test nrow(marg) == nrow(df)
@@ -389,15 +427,17 @@ end
     df_new = DataFrame(ID = [99, 99], t = [0.0, 1.0], y = [missing, missing])
     pop_new = NoLimits.predict(res, df_new)
     ebe_new = NoLimits.predict(res, df_new; re_mode = :ebe)
-    marg_new = NoLimits.predict(res, df_new; re_mode = :marginal, marginal_draws = 100,
-        rng = MersenneTwister(2))
+    marg_new = NoLimits.predict(
+        res, df_new; re_mode = :marginal, marginal_draws = 100,
+        rng = MersenneTwister(2)
+    )
     @test nrow(ebe_new) == 2
-    @test isapprox(collect(ebe_new.prediction), collect(pop_new.prediction); atol = 1e-8)
+    @test isapprox(collect(ebe_new.prediction), collect(pop_new.prediction); atol = 1.0e-8)
     @test isapprox(collect(marg_new.prediction), collect(pop_new.prediction); atol = 0.3)
 
     # RE distributions without an analytic mean used to fall back to a hard zero (#175).
-    @test NoLimits._mc_mean(Normal(3.0, 1.0), 1)≈3.0 atol=0.1
-    @test NoLimits._mc_mean(MvNormal([2.0, -1.0], [1.0 0.0; 0.0 1.0]), 2)≈[2.0, -1.0] atol=0.1
+    @test NoLimits._mc_mean(Normal(3.0, 1.0), 1) ≈ 3.0 atol = 0.1
+    @test NoLimits._mc_mean(MvNormal([2.0, -1.0], [1.0 0.0; 0.0 1.0]), 2) ≈ [2.0, -1.0] atol = 0.1
 
     # Unsupported combinations error clearly.
     model_fo = @Model begin
@@ -412,8 +452,10 @@ end
             y ~ Normal(a, σ)
         end
     end
-    dm_fo = DataModel(model_fo, DataFrame(ID = [1, 1], t = [0.0, 1.0], y = [1.0, 1.1]);
-        primary_id = :ID, time_col = :t)
+    dm_fo = DataModel(
+        model_fo, DataFrame(ID = [1, 1], t = [0.0, 1.0], y = [1.0, 1.1]);
+        primary_id = :ID, time_col = :t
+    )
     res_fo = fit_model(dm_fo, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
     @test_throws ErrorException NoLimits.predict(res_fo, get_df(dm_fo); re_mode = :ebe)
     @test_throws ErrorException NoLimits.predict(res, df; re_mode = :nonsense)
@@ -441,17 +483,21 @@ end
     end
 
     # First observation well after 0 so t0 shifts the integration start.
-    df = DataFrame(ID = repeat([1, 2]; inner = 3),
+    df = DataFrame(
+        ID = repeat([1, 2]; inner = 3),
         t = repeat([5.0, 6.0, 7.0]; outer = 2),
-        y = [0.75, 0.62, 0.50, 0.70, 0.58, 0.47])
+        y = [0.75, 0.62, 0.5, 0.7, 0.58, 0.47]
+    )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t, t0 = nothing)
     @test get_t0(dm) === nothing
     res = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 5,)))
 
     in_sample = NoLimits.predict(res, dm)
     on_newdata = NoLimits.predict(res, df)
-    @test isapprox(collect(on_newdata.prediction), collect(in_sample.prediction);
-        atol = 1e-8)
+    @test isapprox(
+        collect(on_newdata.prediction), collect(in_sample.prediction);
+        atol = 1.0e-8
+    )
 
     # #148: a manually built DataModel must carry the fit's t0 — the silent default
     # t0 = 0.0 would integrate from the wrong start.
@@ -462,7 +508,7 @@ end
     dm_match = DataModel(model, df; primary_id = :ID, time_col = :t, t0 = 5.0)
     pred_dm = NoLimits.predict(res5, dm_match)
     pred_df = NoLimits.predict(res5, df)
-    @test isapprox(collect(pred_dm.prediction), collect(pred_df.prediction); atol = 1e-8)
+    @test isapprox(collect(pred_dm.prediction), collect(pred_df.prediction); atol = 1.0e-8)
 end
 
 @testset "reestimate on a new DataModel never leaks training EBEs (#146)" begin
@@ -482,34 +528,46 @@ end
             y ~ Normal(a + η, σ)
         end
     end
-    df = DataFrame(ID = repeat([1, 2, 3]; inner = 3),
+    df = DataFrame(
+        ID = repeat([1, 2, 3]; inner = 3),
         t = repeat([0.0, 1.0, 2.0]; outer = 3),
-        y = [2.9, 3.1, 3.0, 0.9, 1.1, 1.0, -1.1, -0.9, -1.0])
+        y = [2.9, 3.1, 3.0, 0.9, 1.1, 1.0, -1.1, -0.9, -1.0]
+    )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     res = fit_model(dm, NoLimits.Laplace())
 
     # New individuals, same count as training, so the old positional merge would
     # have copied training EBEs into IDs 12/13 by batch slot.
-    df_new = DataFrame(ID = repeat([11, 12, 13]; inner = 3),
+    df_new = DataFrame(
+        ID = repeat([11, 12, 13]; inner = 3),
         t = repeat([0.0, 1.0, 2.0]; outer = 3),
-        y = [2.0, 2.2, 2.1, missing, missing, missing, missing, missing, missing])
+        y = [2.0, 2.2, 2.1, missing, missing, missing, missing, missing, missing]
+    )
     dm_new = DataModel(model, df_new; primary_id = :ID, time_col = :t)
-    reest = NoLimits.predict(res, dm_new; re_mode = :reestimate,
-        reestimate_kwargs = (individuals = [11],))
+    reest = NoLimits.predict(
+        res, dm_new; re_mode = :reestimate,
+        reestimate_kwargs = (individuals = [11],)
+    )
     pop = NoLimits.predict(res, dm_new)
     for id in (12, 13)
-        @test isapprox(collect(reest[reest.id .== id, :prediction]),
-            collect(pop[pop.id .== id, :prediction]); atol = 1e-8)
+        @test isapprox(
+            collect(reest[reest.id .== id, :prediction]),
+            collect(pop[pop.id .== id, :prediction]); atol = 1.0e-8
+        )
     end
-    @test !isapprox(collect(reest[reest.id .== 11, :prediction]),
-        collect(pop[pop.id .== 11, :prediction]); atol = 1e-3)
+    @test !isapprox(
+        collect(reest[reest.id .== 11, :prediction]),
+        collect(pop[pop.id .== 11, :prediction]); atol = 1.0e-3
+    )
 
     # Same-dm partial reestimate still keeps the stored modes for unrequested batches.
     res2 = NoLimits.reestimate_ebes(res; individuals = [1])
     ebe_before = NoLimits.get_random_effects(res)
     ebe_after = NoLimits.get_random_effects(res2)
-    @test isapprox(Matrix(ebe_before.η[2:3, 2:end]), Matrix(ebe_after.η[2:3, 2:end]);
-        atol = 1e-12)
+    @test isapprox(
+        Matrix(ebe_before.η[2:3, 2:end]), Matrix(ebe_after.η[2:3, 2:end]);
+        atol = 1.0e-12
+    )
 end
 
 @testset "predict marginal on crossed RE groups (#152)" begin
@@ -539,15 +597,18 @@ end
         ID = repeat(ids, inner = 3),
         RATER = [raters[mod(i + j, 3) + 1] for i in eachindex(ids) for j in 1:3],
         t = repeat([0.0, 1.0, 2.0], length(ids)),
-        y = [1.0 + 0.5 * j + 0.1 * i for i in eachindex(ids) for j in 1:3])
+        y = [1.0 + 0.5 * j + 0.1 * i for i in eachindex(ids) for j in 1:3]
+    )
     df = mkdf(["id_$k" for k in 1:6])
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     res = fit_model(dm, NoLimits.Laplace(optim_kwargs = (maxiters = 10,)))
 
     holdout = mkdf(["new_$k" for k in 1:3])
     holdout.y = fill(missing, nrow(holdout))
-    pred = NoLimits.predict(res, holdout; re_mode = :marginal, marginal_draws = 10,
-        rng = MersenneTwister(3))
+    pred = NoLimits.predict(
+        res, holdout; re_mode = :marginal, marginal_draws = 10,
+        rng = MersenneTwister(3)
+    )
     @test nrow(pred) == nrow(holdout)
     @test !any(ismissing, pred.prediction)
     @test all(isfinite, collect(pred.prediction))

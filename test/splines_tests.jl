@@ -13,7 +13,7 @@ using ForwardDiff
 
     b = bspline_basis(0.25, knots, degree)
     @test length(b) == length(coeffs)
-    @test isapprox(sum(b), 1.0; rtol = 1e-8, atol = 1e-10)
+    @test isapprox(sum(b), 1.0; rtol = 1.0e-8, atol = 1.0e-10)
 
     y = bspline_eval(0.25, coeffs, knots, degree)
     @test y isa Number
@@ -109,17 +109,21 @@ end
     df_one = DataFrame(ID = [1], t = [0.0], w = [1.0], y = [1.0])
     df_two = DataFrame(ID = [1, 1], t = [0.0, 1.0], w = [1.0, 1.2], y = [1.0, 1.1])
 
-    for itp in (SmoothedConstantInterpolation, LinearInterpolation,
-        LagrangeInterpolation, AkimaInterpolation)
+    for itp in (
+            SmoothedConstantInterpolation, LinearInterpolation,
+            LagrangeInterpolation, AkimaInterpolation,
+        )
         model_itp = _model_with_interp(itp)
         @test_throws ErrorException DataModel(
-            model_itp, df_one; primary_id = :ID, time_col = :t)
+            model_itp, df_one; primary_id = :ID, time_col = :t
+        )
     end
 
     for itp in (QuadraticInterpolation, QuadraticSpline, CubicSpline)
         model_itp = _model_with_interp(itp)
         @test_throws ErrorException DataModel(
-            model_itp, df_two; primary_id = :ID, time_col = :t)
+            model_itp, df_two; primary_id = :ID, time_col = :t
+        )
     end
 end
 

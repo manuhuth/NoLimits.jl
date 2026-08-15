@@ -31,26 +31,35 @@ const _MCEM_MODEL = @Model begin
     end
 end
 
-const _MCEM_DM2 = DataModel(_MCEM_MODEL,
+const _MCEM_DM2 = DataModel(
+    _MCEM_MODEL,
     DataFrame(
         ID = [:A, :A, :B, :B],
         t = [0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, -0.1]);
-    primary_id = :ID, time_col = :t)
+        y = [0.1, 0.2, 0.0, -0.1]
+    );
+    primary_id = :ID, time_col = :t
+)
 
-const _MCEM_DM3 = DataModel(_MCEM_MODEL,
+const _MCEM_DM3 = DataModel(
+    _MCEM_MODEL,
     DataFrame(
         ID = [:A, :A, :B, :B, :C, :C],
         t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, -0.1, 0.05, 0.0]);
-    primary_id = :ID, time_col = :t)
+        y = [0.1, 0.2, 0.0, -0.1, 0.05, 0.0]
+    );
+    primary_id = :ID, time_col = :t
+)
 
-const _MCEM_DM4 = DataModel(_MCEM_MODEL,
+const _MCEM_DM4 = DataModel(
+    _MCEM_MODEL,
     DataFrame(
         ID = [:A, :A, :B, :B, :C, :C, :D, :D],
         t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, -0.1, 0.05, 0.0, -0.05, 0.1]);
-    primary_id = :ID, time_col = :t)
+        y = [0.1, 0.2, 0.0, -0.1, 0.05, 0.0, -0.05, 0.1]
+    );
+    primary_id = :ID, time_col = :t
+)
 
 @testset "MCEM default sampler" begin
     method = NoLimits.MCEM()
@@ -65,12 +74,15 @@ end
 @testset "MCEM windowed drift test triggers early stop" begin
     # Inf tolerances make every post-window-fill check pass, so the stop point is
     # deterministic: window fill (4) + consecutive (2) - 1 = iteration 5.
-    res = fit_model(_MCEM_DM2,
+    res = fit_model(
+        _MCEM_DM2,
         NoLimits.MCEM(;
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 30, convergence_window = 4, consecutive_params = 2,
             atol_theta = Inf, rtol_theta = Inf, atol_Q = Inf, rtol_Q = Inf,
-            progress = false))
+            progress = false
+        )
+    )
     @test NoLimits.get_converged(res)
     @test 5 <= res.result.iterations < 30
     diag = res.result.notes.diagnostics
@@ -79,21 +91,27 @@ end
 end
 
 @testset "MCEM no early stop before drift window fills" begin
-    res = fit_model(_MCEM_DM2,
+    res = fit_model(
+        _MCEM_DM2,
         NoLimits.MCEM(;
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 3, convergence_window = 4, consecutive_params = 1,
             atol_theta = Inf, rtol_theta = Inf, atol_Q = Inf, rtol_Q = Inf,
-            progress = false))
+            progress = false
+        )
+    )
     @test !NoLimits.get_converged(res)
     @test res.result.iterations == 3
 end
 
 @testset "MCEM basic (random effects)" begin
-    res = fit_model(_MCEM_DM2,
+    res = fit_model(
+        _MCEM_DM2,
         NoLimits.MCEM(;
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-            maxiters = 2))
+            maxiters = 2
+        )
+    )
     @test res isa FitResult
     @test NoLimits.get_converged(res) isa Bool
 end
@@ -103,70 +121,95 @@ end
 # constants_re) live as parameterized "SAEM/MCEM …" loops in estimation_saem_tests.jl.
 
 @testset "MCEM basic with NUTS" begin
-    res = fit_model(_MCEM_DM2,
-        NoLimits.MCEM(; sampler = NUTS(5, 0.3),
+    res = fit_model(
+        _MCEM_DM2,
+        NoLimits.MCEM(;
+            sampler = NUTS(5, 0.3),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-            maxiters = 2))
+            maxiters = 2
+        )
+    )
     @test res isa FitResult
 end
 
 @testset "MCEM constants_re" begin
-    res = fit_model(_MCEM_DM3,
+    res = fit_model(
+        _MCEM_DM3,
         NoLimits.MCEM(;
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-            maxiters = 2);
-        constants_re = (; η = (; A = 0.0,)))
+            maxiters = 2
+        );
+        constants_re = (; η = (; A = 0.0))
+    )
     @test res isa FitResult
 end
 
 @testset "MCEM constants for fixed effects" begin
-    res = fit_model(_MCEM_DM2,
+    res = fit_model(
+        _MCEM_DM2,
         NoLimits.MCEM(;
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-            maxiters = 2);
-        constants = (a = 0.2,))
+            maxiters = 2
+        );
+        constants = (a = 0.2,)
+    )
     @test res isa FitResult
 end
 
 @testset "MCEM RE distribution with constant covariates" begin
-    res = fit_model(fx_recov_dm(),
+    res = fit_model(
+        fx_recov_dm(),
         NoLimits.MCEM(;
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-            maxiters = 2))
+            maxiters = 2
+        )
+    )
     @test res isa FitResult
 end
 
 @testset "MCEM threaded E-step" begin
-    res = fit_model(_MCEM_DM4,
+    res = fit_model(
+        _MCEM_DM4,
         NoLimits.MCEM(;
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-            maxiters = 2);
-        serialization = EnsembleThreads())
+            maxiters = 2
+        );
+        serialization = EnsembleThreads()
+    )
     @test res isa FitResult
 end
 
 @testset "MCEM multivariate RE" begin
-    res = fit_model(fx_mvnp_dm(),
+    res = fit_model(
+        fx_mvnp_dm(),
         NoLimits.MCEM(;
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-            maxiters = 2))
+            maxiters = 2
+        )
+    )
     @test res isa FitResult
 end
 
 @testset "MCEM multivariate RE with NUTS" begin
-    res = fit_model(fx_mvnp_dm(),
-        NoLimits.MCEM(; sampler = NUTS(5, 0.3),
+    res = fit_model(
+        fx_mvnp_dm(),
+        NoLimits.MCEM(;
+            sampler = NUTS(5, 0.3),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-            maxiters = 2))
+            maxiters = 2
+        )
+    )
     @test res isa FitResult
 end
 
 @testset "MCEM optimizer Adam (OptimizationOptimisers)" begin
-    method = NoLimits.MCEM(optimizer = OptimizationOptimisers.Adam(0.05),
+    method = NoLimits.MCEM(
+        optimizer = OptimizationOptimisers.Adam(0.05),
         optim_kwargs = (; maxiters = 2),
         sampler = MH(),
         turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-        maxiters = 2)
+        maxiters = 2
+    )
     res = fit_model(_MCEM_DM2, method)
     @test res isa FitResult
 end
@@ -179,24 +222,32 @@ end
         sampler = MH(),
         turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
         maxiters = 2,
-        lb = lb, ub = ub)
+        lb = lb, ub = ub
+    )
     res = fit_model(_MCEM_DM2, method)
     @test res isa FitResult
 end
 
 @testset "MCEM with ODE model" begin
-    res = fit_model(fx_ode_dm(),
+    res = fit_model(
+        fx_ode_dm(),
         NoLimits.MCEM(;
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-            maxiters = 2))
+            maxiters = 2
+        )
+    )
     @test res isa FitResult
 end
 
 @testset "MCEM non-normal Poisson outcome" begin
-    res = fit_model(fx_pois_dm(),
-        NoLimits.MCEM(; sampler = MH(),
+    res = fit_model(
+        fx_pois_dm(),
+        NoLimits.MCEM(;
+            sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-            maxiters = 2))
+            maxiters = 2
+        )
+    )
     @test res isa FitResult
     @test NoLimits.get_converged(res) isa Bool
 end

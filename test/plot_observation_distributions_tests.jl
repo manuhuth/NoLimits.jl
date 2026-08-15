@@ -21,12 +21,15 @@ using Lux
             y ~ Normal(a, σ)
         end
     end
-    df = DataFrame(ID = [1, 1, 1, 2, 2, 2], t = [0.0, 0.5, 1.0, 0.0, 0.5, 1.0],
-        y = [0.1, 0.15, 0.2, 0.0, 0.05, 0.1])
+    df = DataFrame(
+        ID = [1, 1, 1, 2, 2, 2], t = [0.0, 0.5, 1.0, 0.0, 0.5, 1.0],
+        y = [0.1, 0.15, 0.2, 0.0, 0.05, 0.1]
+    )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     res = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
     @test plot_observation_distributions(
-        res; individuals_idx = [1, 2], obs_rows = [1, 3], observables = :y) !== nothing
+        res; individuals_idx = [1, 2], obs_rows = [1, 3], observables = :y
+    ) !== nothing
 end
 
 @testset "plot_observation_distributions handles missing selected observation (regression)" begin
@@ -45,10 +48,12 @@ end
     df = DataFrame(ID = [1, 1], t = [0.0, 1.0], y = Union{Missing, Float64}[missing, 0.2])
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     @test plot_observation_distributions(
-        dm; individuals_idx = 1, obs_rows = 1, observables = :y) !== nothing
+        dm; individuals_idx = 1, obs_rows = 1, observables = :y
+    ) !== nothing
     res = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
     @test plot_observation_distributions(
-        res; individuals_idx = 1, obs_rows = 1, observables = :y) !== nothing
+        res; individuals_idx = 1, obs_rows = 1, observables = :y
+    ) !== nothing
 end
 
 @testset "plot_observation_distributions discrete" begin
@@ -69,7 +74,8 @@ end
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     res = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
     @test plot_observation_distributions(
-        res; individuals_idx = 1, obs_rows = 1, observables = :y) !== nothing
+        res; individuals_idx = 1, obs_rows = 1, observables = :y
+    ) !== nothing
 end
 
 @testset "plot_observation_distributions ODE with callbacks" begin
@@ -90,13 +96,18 @@ end
             y ~ Normal(x1(t), σ)
         end
     end
-    df = DataFrame(ID = [1, 1, 1], t = [0.0, 0.5, 1.0], EVID = [1, 0, 0],
+    df = DataFrame(
+        ID = [1, 1, 1], t = [0.0, 0.5, 1.0], EVID = [1, 0, 0],
         AMT = [100.0, 0.0, 0.0], RATE = [0.0, 0.0, 0.0], CMT = [1, 1, 1],
-        y = [missing, 1.0, 1.1])
-    dm = DataModel(model, df; primary_id = :ID, time_col = :t,
-        evid_col = :EVID, amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT)
+        y = [missing, 1.0, 1.1]
+    )
+    dm = DataModel(
+        model, df; primary_id = :ID, time_col = :t,
+        evid_col = :EVID, amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT
+    )
     @test plot_observation_distributions(
-        dm; individuals_idx = 1, obs_rows = 1, observables = :y) !== nothing
+        dm; individuals_idx = 1, obs_rows = 1, observables = :y
+    ) !== nothing
 end
 
 @testset "plot_observation_distributions preDE" begin
@@ -124,7 +135,8 @@ end
     df = DataFrame(ID = [1, 1], t = [0.0, 1.0], y = [1.0, 0.9])
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     @test plot_observation_distributions(
-        dm; individuals_idx = 1, obs_rows = 1, observables = :y) !== nothing
+        dm; individuals_idx = 1, obs_rows = 1, observables = :y
+    ) !== nothing
 end
 
 @testset "plot_observation_distributions NN and SoftTree" begin
@@ -145,16 +157,19 @@ end
         end
     end
     df = DataFrame(
-        ID = [1, 1], t = [0.0, 1.0], Age = [30.0, 30.0], BMI = [20.0, 20.0], y = [0.1, 0.2])
+        ID = [1, 1], t = [0.0, 1.0], Age = [30.0, 30.0], BMI = [20.0, 20.0], y = [0.1, 0.2]
+    )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     @test plot_observation_distributions(
-        dm; individuals_idx = 1, obs_rows = 1, observables = :y) !== nothing
+        dm; individuals_idx = 1, obs_rows = 1, observables = :y
+    ) !== nothing
 end
 
 @testset "plot_observation_distributions inherits constants_re from fit result" begin
     res = fx_constre_laplace()
     @test plot_observation_distributions(
-        res; individuals_idx = 1, obs_rows = 1, observables = :y) !== nothing
+        res; individuals_idx = 1, obs_rows = 1, observables = :y
+    ) !== nothing
 end
 
 @testset "plot_observation_distributions Bernoulli discrete outcome" begin
@@ -172,20 +187,26 @@ end
             y ~ Bernoulli(p)
         end
     end
-    df = DataFrame(ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0],
-        z = [0.1, 0.3, 0.0, 0.2], y = [0, 1, 0, 1])
+    df = DataFrame(
+        ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0],
+        z = [0.1, 0.3, 0.0, 0.2], y = [0, 1, 0, 1]
+    )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     res = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
     @test plot_observation_distributions(
-        res; individuals_idx = 1, obs_rows = 1, observables = :y) !== nothing
+        res; individuals_idx = 1, obs_rows = 1, observables = :y
+    ) !== nothing
     @test plot_observation_distributions(
-        dm; individuals_idx = 1, obs_rows = 1, observables = :y) !== nothing
+        dm; individuals_idx = 1, obs_rows = 1, observables = :y
+    ) !== nothing
 end
 
 @testset "plot_observation_distributions supports varying non-ODE random-effect groups" begin
-    @test plot_observation_distributions(fx_varyre_dm();
+    @test plot_observation_distributions(
+        fx_varyre_dm();
         individuals_idx = [1, 2], obs_rows = [1, 2],
-        observables = :y, constants_re = fx_varyre_constants_re()) !== nothing
+        observables = :y, constants_re = fx_varyre_constants_re()
+    ) !== nothing
 end
 
 @testset "plot_observation_distributions on a Laplace RE fit" begin

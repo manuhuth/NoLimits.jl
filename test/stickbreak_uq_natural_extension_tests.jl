@@ -24,13 +24,14 @@ using Random
 
         # Build fake draws
         rng = MersenneTwister(1)
-        draws_n = [0.25 0.35; 0.30 0.40; 0.35 0.45]  # 3 draws × 2 params
+        draws_n = [0.25 0.35; 0.3 0.4; 0.35 0.45]  # 3 draws × 2 params
 
         intervals_n = NoLimits.UQIntervals(0.95, [0.2, 0.3], [0.4, 0.5])
 
         result = NoLimits._extend_natural_stickbreak(
             fe, free_names, active_names, active_kinds,
-            est_n, draws_n, intervals_n)
+            est_n, draws_n, intervals_n
+        )
 
         @test result !== nothing
         ext_names, ext_est, ext_draws, ext_ints = result
@@ -43,14 +44,14 @@ using Random
 
         # Estimates: derived = 1 - 0.3 - 0.4 = 0.3
         @test length(ext_est) == 3
-        @test isapprox(ext_est[3], 0.3; atol = 1e-12)
-        @test isapprox(sum(ext_est), 1.0; atol = 1e-12)
+        @test isapprox(ext_est[3], 0.3; atol = 1.0e-12)
+        @test isapprox(sum(ext_est), 1.0; atol = 1.0e-12)
 
         # Draws: extended matrix has 3 columns
         @test size(ext_draws) == (3, 3)
         # Each row sums to 1
         for i in 1:3
-            @test isapprox(sum(ext_draws[i, :]), 1.0; atol = 1e-12)
+            @test isapprox(sum(ext_draws[i, :]), 1.0; atol = 1.0e-12)
         end
 
         # Intervals: 3 lower/upper
@@ -58,8 +59,8 @@ using Random
         @test length(ext_ints.upper) == 3
         # Derived interval is from quantile of derived column
         derived_col = 1.0 .- (draws_n[:, 1] .+ draws_n[:, 2])
-        @test isapprox(ext_ints.lower[3], quantile(derived_col, 0.025); atol = 1e-12)
-        @test isapprox(ext_ints.upper[3], quantile(derived_col, 0.975); atol = 1e-12)
+        @test isapprox(ext_ints.lower[3], quantile(derived_col, 0.025); atol = 1.0e-12)
+        @test isapprox(ext_ints.upper[3], quantile(derived_col, 0.975); atol = 1.0e-12)
     end
 
     # -----------------------------------------------------------------------
@@ -76,13 +77,14 @@ using Random
         active_kinds = [:stickbreakrows, :stickbreakrows]
         est_n = [0.8, 0.3]  # T[1,1] and T[2,1]
 
-        draws_n = [0.75 0.28; 0.80 0.30; 0.85 0.32]  # 3 draws × 2
+        draws_n = [0.75 0.28; 0.8 0.3; 0.85 0.32]  # 3 draws × 2
 
         intervals_n = NoLimits.UQIntervals(0.95, [0.6, 0.1], [0.9, 0.5])
 
         result = NoLimits._extend_natural_stickbreak(
             fe, free_names, active_names, active_kinds,
-            est_n, draws_n, intervals_n)
+            est_n, draws_n, intervals_n
+        )
 
         @test result !== nothing
         ext_names, ext_est, ext_draws, ext_ints = result
@@ -93,18 +95,18 @@ using Random
         @test ext_names[4] == :T_4  # T[2,2]
 
         # est: T[1,2] = 1 - 0.8 = 0.2, T[2,2] = 1 - 0.3 = 0.7
-        @test isapprox(ext_est[3], 0.2; atol = 1e-12)
-        @test isapprox(ext_est[4], 0.7; atol = 1e-12)
+        @test isapprox(ext_est[3], 0.2; atol = 1.0e-12)
+        @test isapprox(ext_est[4], 0.7; atol = 1.0e-12)
 
         # Each "row pair" sums to 1
-        @test isapprox(ext_est[1] + ext_est[3], 1.0; atol = 1e-12)  # row 1
-        @test isapprox(ext_est[2] + ext_est[4], 1.0; atol = 1e-12)  # row 2
+        @test isapprox(ext_est[1] + ext_est[3], 1.0; atol = 1.0e-12)  # row 1
+        @test isapprox(ext_est[2] + ext_est[4], 1.0; atol = 1.0e-12)  # row 2
 
         # Draws: 4 columns
         @test size(ext_draws) == (3, 4)
         for i in 1:3
-            @test isapprox(ext_draws[i, 1] + ext_draws[i, 3], 1.0; atol = 1e-12)
-            @test isapprox(ext_draws[i, 2] + ext_draws[i, 4], 1.0; atol = 1e-12)
+            @test isapprox(ext_draws[i, 1] + ext_draws[i, 3], 1.0; atol = 1.0e-12)
+            @test isapprox(ext_draws[i, 2] + ext_draws[i, 4], 1.0; atol = 1.0e-12)
         end
     end
 
@@ -118,7 +120,8 @@ using Random
         result = NoLimits._extend_natural_stickbreak(
             fe, [:a], [:a], [:log],
             [1.0], reshape([1.0; 1.1; 0.9], 3, 1),
-            NoLimits.UQIntervals(0.95, [0.5], [1.5]))
+            NoLimits.UQIntervals(0.95, [0.5], [1.5])
+        )
         @test result === nothing
     end
 
@@ -132,7 +135,8 @@ using Random
         # When calculate_se=false, the active array is empty — no stickbreak coords
         result = NoLimits._extend_natural_stickbreak(
             fe, [:pi], Symbol[], Symbol[],
-            Float64[], nothing, nothing)
+            Float64[], nothing, nothing
+        )
         @test result === nothing
     end
 
@@ -213,7 +217,7 @@ using Random
         @test hasproperty(est_n, :pi_1)
         @test hasproperty(est_n, :pi_2)
         @test hasproperty(est_n, :pi_3)
-        @test isapprox(est_n.pi_1 + est_n.pi_2 + est_n.pi_3, 1.0; atol = 1e-12)
+        @test isapprox(est_n.pi_1 + est_n.pi_2 + est_n.pi_3, 1.0; atol = 1.0e-12)
     end
 
     # -----------------------------------------------------------------------
@@ -222,7 +226,7 @@ using Random
     @testset "Wald UQ ProbabilityVector: natural scale has k elements" begin
         model = @Model begin
             @fixedEffects begin
-                pi = ProbabilityVector([0.35, 0.40, 0.25]; calculate_se = true)
+                pi = ProbabilityVector([0.35, 0.4, 0.25]; calculate_se = true)
                 sigma = RealNumber(0.4; scale = :log, calculate_se = true)
             end
             @covariates begin
@@ -235,8 +239,10 @@ using Random
         df = DataFrame(
             ID = vcat(fill(1, 6), fill(2, 6)),
             t = vcat(1:6, 1:6) .* 1.0,
-            y = vcat(randn(MersenneTwister(1), 6) .+ 1.3,
-                randn(MersenneTwister(2), 6) .+ 1.3)
+            y = vcat(
+                randn(MersenneTwister(1), 6) .+ 1.3,
+                randn(MersenneTwister(2), 6) .+ 1.3
+            )
         )
         dm = DataModel(model, df; primary_id = :ID, time_col = :t)
         res = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
@@ -261,7 +267,7 @@ using Random
 
         # Estimates on natural scale: pi sums to 1
         est_n = get_uq_estimates(uq; scale = :natural)
-        @test isapprox(est_n.pi_1 + est_n.pi_2 + est_n.pi_3, 1.0; atol = 1e-6)
+        @test isapprox(est_n.pi_1 + est_n.pi_2 + est_n.pi_3, 1.0; atol = 1.0e-6)
         @test est_n.pi_1 >= 0
         @test est_n.pi_2 >= 0
         @test est_n.pi_3 >= 0
@@ -272,7 +278,7 @@ using Random
         @test draws_n !== nothing
         @test size(draws_n, 2) == 4
         pi_sum = draws_n[:, 1] .+ draws_n[:, 2] .+ draws_n[:, 4]
-        @test all(isapprox.(pi_sum, 1.0; atol = 1e-10))
+        @test all(isapprox.(pi_sum, 1.0; atol = 1.0e-10))
 
         # Intervals on natural scale: 4 elements
         ints_n = get_uq_intervals(uq; scale = :natural, as_component = false)
@@ -306,8 +312,10 @@ using Random
         df = DataFrame(
             ID = vcat(fill(1, 6), fill(2, 6)),
             t = vcat(1:6, 1:6) .* 1.0,
-            y = vcat(randn(MersenneTwister(3), 6) .+ 0.5,
-                randn(MersenneTwister(4), 6) .+ 0.5)
+            y = vcat(
+                randn(MersenneTwister(3), 6) .+ 0.5,
+                randn(MersenneTwister(4), 6) .+ 0.5
+            )
         )
         dm = DataModel(model, df; primary_id = :ID, time_col = :t)
         res = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
@@ -335,8 +343,8 @@ using Random
         # derived appended last. Row sums: T[1,1]+T[1,2]=1, T[2,1]+T[2,2]=1
         row1_sum = draws_n[:, 1] .+ draws_n[:, 4]
         row2_sum = draws_n[:, 2] .+ draws_n[:, 5]
-        @test all(isapprox.(row1_sum, 1.0; atol = 1e-10))
-        @test all(isapprox.(row2_sum, 1.0; atol = 1e-10))
+        @test all(isapprox.(row1_sum, 1.0; atol = 1.0e-10))
+        @test all(isapprox.(row2_sum, 1.0; atol = 1.0e-10))
 
         # Intervals: 5 elements
         ints_n = get_uq_intervals(uq; scale = :natural, as_component = false)
@@ -363,8 +371,10 @@ using Random
         df = DataFrame(
             ID = vcat(fill(1, 5), fill(2, 5)),
             t = vcat(1:5, 1:5) .* 1.0,
-            y = vcat(randn(MersenneTwister(5), 5) .+ 0.0,
-                randn(MersenneTwister(6), 5) .+ 0.0)
+            y = vcat(
+                randn(MersenneTwister(5), 5) .+ 0.0,
+                randn(MersenneTwister(6), 5) .+ 0.0
+            )
         )
         dm = DataModel(model, df; primary_id = :ID, time_col = :t)
         res = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
@@ -381,13 +391,13 @@ using Random
         @test :pi_3 in names_n
 
         est_n = get_uq_estimates(uq; scale = :natural)
-        @test isapprox(est_n.pi_1 + est_n.pi_2 + est_n.pi_3, 1.0; atol = 1e-6)
+        @test isapprox(est_n.pi_1 + est_n.pi_2 + est_n.pi_3, 1.0; atol = 1.0e-6)
 
         draws_n = get_uq_draws(uq; scale = :natural)
         @test size(draws_n, 2) == 5
         # Column layout: a(1), pi_1(2), pi_2(3), sigma(4), pi_3(5) — derived appended last
         pi_sum = draws_n[:, 2] .+ draws_n[:, 3] .+ draws_n[:, 5]
-        @test all(isapprox.(pi_sum, 1.0; atol = 1e-10))
+        @test all(isapprox.(pi_sum, 1.0; atol = 1.0e-10))
     end
 
     # -----------------------------------------------------------------------
@@ -409,8 +419,10 @@ using Random
         df = DataFrame(
             ID = vcat(fill(1, 5), fill(2, 5)),
             t = vcat(1:5, 1:5) .* 1.0,
-            y = vcat(randn(MersenneTwister(7), 5) .+ 0.5,
-                randn(MersenneTwister(8), 5) .+ 0.5)
+            y = vcat(
+                randn(MersenneTwister(7), 5) .+ 0.5,
+                randn(MersenneTwister(8), 5) .+ 0.5
+            )
         )
         dm = DataModel(model, df; primary_id = :ID, time_col = :t)
         res = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))

@@ -3,22 +3,23 @@ using DataFrames
 using Downloads
 
 function _dataset_download_error_message(
-        dataset_label::AbstractString, url::AbstractString, err)
+        dataset_label::AbstractString, url::AbstractString, err
+    )
     err_txt = sprint(showerror, err)
     return """
-Failed to download dataset $(dataset_label).
+    Failed to download dataset $(dataset_label).
 
-Source URL:
-  $(url)
+    Source URL:
+      $(url)
 
-Fallback guidance:
-1. Verify internet access from your Julia session.
-2. Open the URL in a browser to confirm availability.
-3. Re-run the tutorial block.
+    Fallback guidance:
+    1. Verify internet access from your Julia session.
+    2. Open the URL in a browser to confirm availability.
+    3. Re-run the tutorial block.
 
-Original error:
-  $(err_txt)
-"""
+    Original error:
+      $(err_txt)
+    """
 end
 
 function _to_raw_github_url(url::AbstractString)
@@ -32,7 +33,7 @@ function _read_delimited_file(
         local_path::AbstractString;
         delims::Vector{Char} = [','],
         min_columns::Int = 1
-)
+    )
     local last_err = nothing
     for d in delims
         try
@@ -58,14 +59,15 @@ function _load_table_from_urls(
         drop_row_column::Bool = true,
         delims::Vector{Char} = [','],
         min_columns::Int = 1
-)
+    )
     local errors = String[]
     resolved_urls = unique(_to_raw_github_url.(urls))
     for resolved_url in resolved_urls
         try
             local_path = Downloads.download(resolved_url)
             df = _read_delimited_file(
-                local_path; delims = delims, min_columns = min_columns)
+                local_path; delims = delims, min_columns = min_columns
+            )
             if drop_row_column && (:Row in propertynames(df))
                 select!(df, Not(:Row))
             end
@@ -80,7 +82,8 @@ function _load_table_from_urls(
 end
 
 function _load_rdataset_csv(
-        url::AbstractString; dataset_label::AbstractString = "Rdatasets dataset")
+        url::AbstractString; dataset_label::AbstractString = "Rdatasets dataset"
+    )
     urls = [_to_raw_github_url(url)]
     return _load_table_from_urls(
         urls;
@@ -122,7 +125,7 @@ function load_virload20()
         "https://raw.githubusercontent.com/ecomets/npde30/main/data/virload20.tab",
         "https://github.com/ecomets/npde30/blob/main/data/virload20.tab",
         "https://github.com/ecomets/npde30/raw/main/keep/data/virload20.tab",
-        "https://raw.githubusercontent.com/ecomets/npde30/main/keep/data/virload20.tab"
+        "https://raw.githubusercontent.com/ecomets/npde30/main/keep/data/virload20.tab",
     ]
     return _load_table_from_urls(
         urls;
@@ -139,7 +142,7 @@ function load_virload50()
         "https://raw.githubusercontent.com/ecomets/npde30/main/data/virload50.tab",
         "https://github.com/ecomets/npde30/blob/main/data/virload50.tab",
         "https://github.com/ecomets/npde30/raw/main/keep/data/virload50.tab",
-        "https://raw.githubusercontent.com/ecomets/npde30/main/keep/data/virload50.tab"
+        "https://raw.githubusercontent.com/ecomets/npde30/main/keep/data/virload50.tab",
     ]
     return _load_table_from_urls(
         urls;

@@ -9,12 +9,14 @@ function _invokelatest_model(model)
     miss = typeof(model).parameters[4]
     threaded = typeof(model).parameters[8]
     return DynamicPPL.Model{threaded, miss}(
-        f_wrap, model.args, model.defaults, model.context)
+        f_wrap, model.args, model.defaults, model.context
+    )
 end
 
 const _MCMC_MODEL_CACHE = Dict{Tuple{Tuple{Vararg{Symbol}}, Tuple{Vararg{Symbol}}}, Symbol}()
 const _MCMC_MODEL_CACHE_RE = Dict{
-    Tuple{Tuple{Vararg{Symbol}}, Tuple{Vararg{Symbol}}, Tuple{Vararg{Symbol}}}, Symbol}()
+    Tuple{Tuple{Vararg{Symbol}}, Tuple{Vararg{Symbol}}, Tuple{Vararg{Symbol}}}, Symbol,
+}()
 
 struct _MCMCReMeta{L, M, R}
     levels::L
@@ -44,16 +46,21 @@ end
 # free fixed effects from their priors, merge with the constants, and rebuild the
 # full fixed-effect ComponentArray in declaration order.
 function _mcmc_theta_reconstruction(
-        fixed_names::Vector{Symbol}, free_names::Vector{Symbol})
+        fixed_names::Vector{Symbol}, free_names::Vector{Symbol}
+    )
     assigns = [:($(n) ~ getfield(priors, $(QuoteNode(n)))) for n in free_names]
-    free_nt = Expr(:call,
+    free_nt = Expr(
+        :call,
         Expr(:curly, :NamedTuple, Expr(:tuple, QuoteNode.(free_names)...)),
-        Expr(:tuple, free_names...))
+        Expr(:tuple, free_names...)
+    )
     θ_nt = :(merge($free_nt, constants))
     val_exprs = [:(getfield($θ_nt, $(QuoteNode(n)))) for n in fixed_names]
-    nt_expr = Expr(:call,
+    nt_expr = Expr(
+        :call,
         Expr(:curly, :NamedTuple, Expr(:tuple, QuoteNode.(fixed_names)...)),
-        Expr(:tuple, val_exprs...))
+        Expr(:tuple, val_exprs...)
+    )
     θ_expr = :(ComponentArray($nt_expr))
     return assigns, θ_expr
 end
@@ -63,10 +70,14 @@ end
 # negative-log-likelihood cost (-J); @addlogprob! adds a log-density, so add
 # +J = -extra_objective(θ_re) (θ_re is natural-scale).
 function _mcmc_addlogprob_epilogue()
-    return (:(Turing.@addlogprob! ll),
-        :(if extra_objective !== nothing
-            Turing.@addlogprob! -extra_objective(θ_re)
-        end))
+    return (
+        :(Turing.@addlogprob! ll),
+        :(
+            if extra_objective !== nothing
+                Turing.@addlogprob! -extra_objective(θ_re)
+            end
+        )
+    )
 end
 
 function _build_turing_model(fixed_names::Vector{Symbol}, free_names::Vector{Symbol})
@@ -79,12 +90,14 @@ function _build_turing_model(fixed_names::Vector{Symbol}, free_names::Vector{Sym
     epilogue = _mcmc_addlogprob_epilogue()
     ex = quote
         @model function $(fname)(
-                dm, cache, serialization, priors, constants, extra_objective)
+                dm, cache, serialization, priors, constants, extra_objective
+            )
             $(assigns...)
             θ = $θ_expr
             θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
             ll = NoLimits.loglikelihood(
-                dm, θ_re, ComponentArray(); cache = cache, serialization = serialization)
+                dm, θ_re, ComponentArray(); cache = cache, serialization = serialization
+            )
             $(epilogue...)
         end
     end
@@ -103,7 +116,7 @@ function _mcmc_re_dist(dists_builder, θ_re, const_cov, model_funs, helpers, re:
         _is_numeric_error(err) || rethrow(err)
         if !Threads.atomic_cas!(_WARNED_NUMERIC_ERROR, false, true)
             @warn "A numeric error ($(nameof(typeof(err)))) was raised while building the " *
-                  "random-effect distribution; rejecting this proposal. Warned once per fit."
+                "random-effect distribution; rejecting this proposal. Warned once per fit."
         end
         return nothing
     end
@@ -111,16 +124,20 @@ end
 
 # Evaluates log p(η_const | θ) for all constant RE levels passed via const_re_info.
 # const_re_info: NamedTuple mapping RE name → (vals::Vector, reps::Vector{Int})
-function _mcmc_const_re_prior(dm::DataModel, θ_re::ComponentArray, const_re_info,
-        model_funs, helpers)
+function _mcmc_const_re_prior(
+        dm::DataModel, θ_re::ComponentArray, const_re_info,
+        model_funs, helpers
+    )
     T = eltype(θ_re)
     ll = zero(T)
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     for (re, info) in Base.pairs(const_re_info)
         isempty(info.vals) && continue
         for (val, rep) in zip(info.vals, info.reps)
-            dist = _mcmc_re_dist(dists_builder,
-                θ_re, get_const_cov(get_individuals(dm)[rep]), model_funs, helpers, re)
+            dist = _mcmc_re_dist(
+                dists_builder,
+                θ_re, get_const_cov(get_individuals(dm)[rep]), model_funs, helpers, re
+            )
             dist === nothing && return convert(T, -Inf)
             v = val isa AbstractVector ? T.(val) : T(val)
             lp = logpdf(dist, v)
@@ -132,7 +149,8 @@ function _mcmc_const_re_prior(dm::DataModel, θ_re::ComponentArray, const_re_inf
 end
 
 function _build_turing_model_re(
-        fixed_names::Vector{Symbol}, free_names::Vector{Symbol}, re_names::Vector{Symbol})
+        fixed_names::Vector{Symbol}, free_names::Vector{Symbol}, re_names::Vector{Symbol}
+    )
     key = (Tuple(fixed_names), Tuple(free_names), Tuple(re_names))
     if haskey(_MCMC_MODEL_CACHE_RE, key)
         return _MCMC_MODEL_CACHE_RE[key]
@@ -161,7 +179,8 @@ function _build_turing_model_re(
             for j in eachindex($levels_sym)
                 const_cov = const_covs[$reps_sym[j]]
                 dist = _mcmc_re_dist(
-                    dists_builder, θ_re, const_cov, model_funs, helpers, $re_q)
+                    dists_builder, θ_re, const_cov, model_funs, helpers, $re_q
+                )
                 if dist === nothing
                     re_reject = true
                     $vals_sym[j] ~ Normal(zero(T), one(T))
@@ -175,7 +194,8 @@ function _build_turing_model_re(
             for j in eachindex($levels_sym)
                 const_cov = const_covs[$reps_sym[j]]
                 dist = _mcmc_re_dist(
-                    dists_builder, θ_re, const_cov, model_funs, helpers, $re_q)
+                    dists_builder, θ_re, const_cov, model_funs, helpers, $re_q
+                )
                 if dist === nothing
                     re_reject = true
                     $vals_sym[j] ~ MvNormal(zeros(T, $dim), Diagonal(ones(T, $dim)))
@@ -189,8 +209,10 @@ function _build_turing_model_re(
                         # and add the log copula density so the prior stays exact.
                         base = product_distribution(marg...)
                         $vals_sym[j] ~ base
-                        Turing.@addlogprob! (logpdf(dist, $vals_sym[j]) -
-                                             logpdf(base, $vals_sym[j]))
+                        Turing.@addlogprob! (
+                            logpdf(dist, $vals_sym[j]) -
+                                logpdf(base, $vals_sym[j])
+                        )
                     end
                 end
             end
@@ -198,20 +220,28 @@ function _build_turing_model_re(
         push!(sample_blocks.args, :(local $meta_sym = $meta_get))
         push!(sample_blocks.args, :(local $levels_sym = $levels_get))
         push!(sample_blocks.args, :(local $reps_sym = $reps_get))
-        push!(sample_blocks.args, :(if $is_scalar || $dim == 1
-            $scalar_block
-        else
-            $vector_block
-        end))
+        push!(
+            sample_blocks.args, :(
+                if $is_scalar || $dim == 1
+                    $scalar_block
+                else
+                    $vector_block
+                end
+            )
+        )
     end
 
-    re_samples_expr = Expr(:call,
+    re_samples_expr = Expr(
+        :call,
         Expr(:curly, :NamedTuple, Expr(:tuple, QuoteNode.(re_names)...)),
-        Expr(:tuple, re_val_syms...))
+        Expr(:tuple, re_val_syms...)
+    )
 
     ex = quote
-        @model function $(fname)(dm, cache, serialization, priors, constants, re_names,
-                re_meta, fixed_maps, const_covs, const_re_info, extra_objective)
+        @model function $(fname)(
+                dm, cache, serialization, priors, constants, re_names,
+                re_meta, fixed_maps, const_covs, const_re_info, extra_objective
+            )
             $(assigns...)
             θ = $θ_expr
             θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
@@ -227,7 +257,8 @@ function _build_turing_model_re(
                 return nothing
             end
             Turing.@addlogprob! _mcmc_const_re_prior(
-                dm, θ_re, const_re_info, model_funs, helpers)
+                dm, θ_re, const_re_info, model_funs, helpers
+            )
             re_samples = $re_samples_expr
 
             η_vec = Vector{ComponentArray}(undef, length(get_individuals(dm)))
@@ -256,35 +287,41 @@ function _build_turing_model_re(
                             if scalar_like
                                 push!(nt_pairs, re => v)
                             else
-                                push!(nt_pairs,
-                                    re => (v isa AbstractVector ? collect(v) : [v]))
+                                push!(
+                                    nt_pairs,
+                                    re => (v isa AbstractVector ? collect(v) : [v])
+                                )
                             end
                         else
                             if scalar_like
-                                vals = [begin
+                                vals = [
+                                    begin
                                             if fixed !== nothing && haskey(fixed, gv)
                                                 fixed[gv]
-                                            else
+                                        else
                                                 idx = get(lvl_to_idx, gv, 0)
                                                 idx == 0 &&
-                                                    error("Missing random effect value for $(re) level $(gv).")
+                                                error("Missing random effect value for $(re) level $(gv).")
                                                 samples[idx]
-                                            end
                                         end
-                                        for gv in g]
+                                        end
+                                        for gv in g
+                                ]
                             else
-                                vals = [begin
+                                vals = [
+                                    begin
                                             if fixed !== nothing && haskey(fixed, gv)
                                                 v = fixed[gv]
-                                            else
+                                        else
                                                 idx = get(lvl_to_idx, gv, 0)
                                                 idx == 0 &&
-                                                    error("Missing random effect value for $(re) level $(gv).")
+                                                error("Missing random effect value for $(re) level $(gv).")
                                                 v = samples[idx]
-                                            end
+                                        end
                                             v isa AbstractVector ? collect(v) : [v]
                                         end
-                                        for gv in g]
+                                        for gv in g
+                                ]
                             end
                             push!(nt_pairs, re => vals)
                         end
@@ -308,7 +345,8 @@ function _build_turing_model_re(
             end
 
             ll = NoLimits.loglikelihood(
-                dm, θ_re, η_vec; cache = cache, serialization = serialization)
+                dm, θ_re, η_vec; cache = cache, serialization = serialization
+            )
             $(epilogue...)
         end
     end
@@ -326,7 +364,8 @@ function _set_turing_adbackend!(adtype)
     return nothing
 end
 
-function NoLimits._mcmc_fit_impl(dm::DataModel, method::MCMC, args...;
+function NoLimits._mcmc_fit_impl(
+        dm::DataModel, method::MCMC, args...;
         constants::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple(),
         penalty::NamedTuple = NamedTuple(),
@@ -336,8 +375,10 @@ function NoLimits._mcmc_fit_impl(dm::DataModel, method::MCMC, args...;
         rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         extra_objective = nothing,
-        store_data_model::Bool = true)
-    fit_kwargs = (constants = constants,
+        store_data_model::Bool = true
+    )
+    fit_kwargs = (
+        constants = constants,
         constants_re = constants_re,
         penalty = penalty,
         ode_args = ode_args,
@@ -345,7 +386,8 @@ function NoLimits._mcmc_fit_impl(dm::DataModel, method::MCMC, args...;
         serialization = serialization,
         rng = rng,
         theta_0_untransformed = theta_0_untransformed,
-        store_data_model = store_data_model)
+        store_data_model = store_data_model,
+    )
     re_names = get_re_names(get_random(get_model(dm)))
     isempty(keys(penalty)) ||
         error("MCMC does not support penalty terms. Use priors and MAP instead.")
@@ -375,19 +417,26 @@ function NoLimits._mcmc_fit_impl(dm::DataModel, method::MCMC, args...;
         end
     end
 
-    cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-        serialization = serialization, force_saveat = true)
+    cache = build_ll_cache(
+        dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = serialization, force_saveat = true
+    )
 
     free_names_t = Tuple(free_names)
     θ_template = get_θ0_untransformed(fe)
-    priors_nt = NamedTuple{free_names_t}(Tuple(_turing_prior(getfield(priors, n), n)
-    for n in free_names))
+    priors_nt = NamedTuple{free_names_t}(
+        Tuple(
+            _turing_prior(getfield(priors, n), n)
+                for n in free_names
+        )
+    )
     model = nothing
     if isempty(re_names)
         fname = _build_turing_model(fixed_names, free_names)
         model_fn = Base.invokelatest(getfield, @__MODULE__, fname)
         model = Base.invokelatest(
-            model_fn, dm, cache, serialization, priors_nt, constants, extra_objective)
+            model_fn, dm, cache, serialization, priors_nt, constants, extra_objective
+        )
     else
         fixed_maps = _normalize_constants_re(dm, constants_re)
         # Validate constants_re shape and dimensions before launching Turing.
@@ -434,8 +483,10 @@ function NoLimits._mcmc_fit_impl(dm::DataModel, method::MCMC, args...;
                 dim = is_scalar ? 1 : length(dist)
                 dim == 0 && error("Random effect $(re) has zero dimension.")
             end
-            push!(re_pairs,
-                re => _MCMCReMeta(levels_free, level_to_index, reps, dim, is_scalar))
+            push!(
+                re_pairs,
+                re => _MCMCReMeta(levels_free, level_to_index, reps, dim, is_scalar)
+            )
             # Collect constant-level (val, rep_idx) pairs for this RE.
             const_vals = Any[]
             const_reps = Int[]
@@ -450,8 +501,10 @@ function NoLimits._mcmc_fit_impl(dm::DataModel, method::MCMC, args...;
         const_re_info = NamedTuple(const_re_info_pairs)
         fname = _build_turing_model_re(fixed_names, free_names, re_names)
         model_fn = Base.invokelatest(getfield, @__MODULE__, fname)
-        model = Base.invokelatest(model_fn, dm, cache, serialization, priors_nt, constants,
-            re_names, re_meta, fixed_maps, const_covs, const_re_info, extra_objective)
+        model = Base.invokelatest(
+            model_fn, dm, cache, serialization, priors_nt, constants,
+            re_names, re_meta, fixed_maps, const_covs, const_re_info, extra_objective
+        )
     end
     model = _invokelatest_model(model)
     # `nothing` is the Turing-free sentinel MCMC() carries; resolve it here.
@@ -466,10 +519,15 @@ function NoLimits._mcmc_fit_impl(dm::DataModel, method::MCMC, args...;
     haskey(turing_kwargs, :verbose) ||
         (turing_kwargs = merge(turing_kwargs, (verbose = false,)))
     if theta_0_untransformed !== nothing && !haskey(turing_kwargs, :initial_params)
-        init_nt = NamedTuple{free_names_t}(Tuple(getproperty(theta_0_untransformed, n)
-        for n in free_names))
+        init_nt = NamedTuple{free_names_t}(
+            Tuple(
+                getproperty(theta_0_untransformed, n)
+                    for n in free_names
+            )
+        )
         turing_kwargs = merge(
-            turing_kwargs, (initial_params = DynamicPPL.InitFromParams(init_nt),))
+            turing_kwargs, (initial_params = DynamicPPL.InitFromParams(init_nt),)
+        )
     elseif theta_0_untransformed !== nothing && haskey(turing_kwargs, :initial_params)
         @debug "theta_0_untransformed ignored because turing_kwargs already specifies initial_params."
     end
@@ -483,13 +541,18 @@ function NoLimits._mcmc_fit_impl(dm::DataModel, method::MCMC, args...;
     chain = Turing.sample(rng, model, sampler, n_samples; adapt = n_adapt, turing_kwargs...)
 
     obs = get_df(dm)[:, get_obs_cols(dm)]
-    summary = FitSummary(_mcmc_objective(chain, n_adapt), missing,
+    summary = FitSummary(
+        _mcmc_objective(chain, n_adapt), missing,
         FitParameters(ComponentArray(), ComponentArray()),
-        NamedTuple())
+        NamedTuple()
+    )
     diagnostics = FitDiagnostics(
-        (;), (sampler = sampler,), (n_samples = n_samples, n_adapt = n_adapt), NamedTuple())
+        (;), (sampler = sampler,), (n_samples = n_samples, n_adapt = n_adapt), NamedTuple()
+    )
     result = MCMCResult(chain, sampler, n_samples, NamedTuple(), obs)
-    res = FitResult(method, result, summary, diagnostics,
-        store_data_model ? dm : nothing, args, fit_kwargs)
+    res = FitResult(
+        method, result, summary, diagnostics,
+        store_data_model ? dm : nothing, args, fit_kwargs
+    )
     return _with_posterior_params(res, dm; rng = rng)
 end

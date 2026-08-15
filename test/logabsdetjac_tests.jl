@@ -5,8 +5,8 @@ using LinearAlgebra
 using ForwardDiff
 using FiniteDifferences
 using NoLimits: _block_logabsdetjac, cholesky_inverse, expm_inverse, _sym_from_upper,
-                _upper_tri_vec, stickbreak_inverse, lograterows_inverse, liepsd_inverse,
-                _lie_dim
+    _upper_tri_vec, stickbreak_inverse, lograterows_inverse, liepsd_inverse,
+    _lie_dim
 using Test
 
 # Each golden compares logabsdetjac / _block_logabsdetjac to an INDEPENDENT central
@@ -50,7 +50,7 @@ _spec_for(it, name) = it.specs[findfirst(s -> s.name == name, it.specs)]
             end
         end
         it, θt = _it_theta(NoLimits.get_fixed(m))
-        @test logabsdetjac(it, θt)≈log(1.5) + log(0.3 * 0.7) atol=1e-10
+        @test logabsdetjac(it, θt) ≈ log(1.5) + log(0.3 * 0.7) atol = 1.0e-10
     end
 
     @testset "cholesky" begin
@@ -76,8 +76,8 @@ _spec_for(it, name) = it.specs[findfirst(s -> s.name == name, it.specs)]
         n = 2
         @test length(blk) == n * (n + 1) ÷ 2
         gmin = z -> vechL(cholesky_inverse(lower_from_free(z, n)))
-        @test _block_logabsdetjac(spec, blk)≈fd_ref(gmin, blk) atol=1e-6
-        @test logabsdetjac(it, θt)≈_block_logabsdetjac(spec, blk) + log(0.5) atol=1e-6
+        @test _block_logabsdetjac(spec, blk) ≈ fd_ref(gmin, blk) atol = 1.0e-6
+        @test logabsdetjac(it, θt) ≈ _block_logabsdetjac(spec, blk) + log(0.5) atol = 1.0e-6
         @test all(isfinite, ForwardDiff.gradient(z -> _block_logabsdetjac(spec, z), blk))
     end
 
@@ -102,7 +102,7 @@ _spec_for(it, name) = it.specs[findfirst(s -> s.name == name, it.specs)]
         blk = collect(getproperty(θt, :Ω))
         n = _lie_dim(length(blk))
         gmin = z -> _upper_tri_vec(expm_inverse(_sym_from_upper(z, n)))
-        @test _block_logabsdetjac(spec, blk)≈fd_ref(gmin, blk) atol=1e-6
+        @test _block_logabsdetjac(spec, blk) ≈ fd_ref(gmin, blk) atol = 1.0e-6
         @test all(isfinite, ForwardDiff.gradient(z -> _block_logabsdetjac(spec, z), blk))
     end
 
@@ -124,7 +124,7 @@ _spec_for(it, name) = it.specs[findfirst(s -> s.name == name, it.specs)]
         blk = collect(getproperty(θt, :w))
         k1 = length(blk)
         gmin = z -> stickbreak_inverse(z)[1:k1]
-        @test _block_logabsdetjac(spec, blk)≈fd_ref(gmin, blk) atol=1e-6
+        @test _block_logabsdetjac(spec, blk) ≈ fd_ref(gmin, blk) atol = 1.0e-6
         @test all(isfinite, ForwardDiff.gradient(z -> _block_logabsdetjac(spec, z), blk))
     end
 
@@ -147,9 +147,13 @@ _spec_for(it, name) = it.specs[findfirst(s -> s.name == name, it.specs)]
         blk = collect(getproperty(θt, :Tm))
         n = spec.size[1]
         k1 = n - 1
-        gmin = z -> vcat((stickbreak_inverse(z[((i - 1) * k1 + 1):(i * k1)])[1:k1]
-        for i in 1:n)...)
-        @test _block_logabsdetjac(spec, blk)≈fd_ref(gmin, blk) atol=1e-6
+        gmin = z -> vcat(
+            (
+                stickbreak_inverse(z[((i - 1) * k1 + 1):(i * k1)])[1:k1]
+                    for i in 1:n
+            )...
+        )
+        @test _block_logabsdetjac(spec, blk) ≈ fd_ref(gmin, blk) atol = 1.0e-6
         @test all(isfinite, ForwardDiff.gradient(z -> _block_logabsdetjac(spec, z), blk))
     end
 
@@ -173,8 +177,8 @@ _spec_for(it, name) = it.specs[findfirst(s -> s.name == name, it.specs)]
         n = spec.size[1]
         offdiag(M) = [M[i, j] for i in 1:n for j in 1:n if i != j]
         gmin = z -> offdiag(lograterows_inverse(z, n))
-        @test _block_logabsdetjac(spec, blk)≈fd_ref(gmin, blk) atol=1e-6
-        @test _block_logabsdetjac(spec, blk)≈sum(blk) atol=1e-10  # closed form
+        @test _block_logabsdetjac(spec, blk) ≈ fd_ref(gmin, blk) atol = 1.0e-6
+        @test _block_logabsdetjac(spec, blk) ≈ sum(blk) atol = 1.0e-10  # closed form
     end
 
     @testset "lie (unstructured)" begin
@@ -197,7 +201,7 @@ _spec_for(it, name) = it.specs[findfirst(s -> s.name == name, it.specs)]
         spec = _spec_for(it, :Ω)
         blk = collect(getproperty(θt, :Ω))
         gmin = z -> vechL(liepsd_inverse(z))
-        @test _block_logabsdetjac(spec, blk)≈fd_ref(gmin, blk) atol=1e-6
+        @test _block_logabsdetjac(spec, blk) ≈ fd_ref(gmin, blk) atol = 1.0e-6
         @test all(isfinite, ForwardDiff.gradient(z -> _block_logabsdetjac(spec, z), blk))
     end
 end

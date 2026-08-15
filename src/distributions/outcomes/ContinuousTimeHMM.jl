@@ -5,11 +5,11 @@ import Distributions: pdf, logpdf, rand, mean, var, median, quantile, cdf, param
 import ForwardDiff
 
 function _ct_hmm_validate_mode(mode::Symbol)
-    mode in (:auto, :expv, :pathsum) ||
+    return mode in (:auto, :expv, :pathsum) ||
         error("Invalid CT-HMM propagation mode $(mode). Use one of :auto, :expv, :pathsum.")
 end
 
-function _ct_hmm_adjacency(transition_matrix::AbstractMatrix{<:Real}; atol::Real = 1e-12)
+function _ct_hmm_adjacency(transition_matrix::AbstractMatrix{<:Real}; atol::Real = 1.0e-12)
     n_states = size(transition_matrix, 1)
     adj = [Int[] for _ in 1:n_states]
     for i in 1:n_states
@@ -53,8 +53,8 @@ function _ct_hmm_probabilities_pathsum_dag(
         transition_matrix::AbstractMatrix{<:Real},
         initial_p::AbstractVector{<:Real},
         Δt::Real;
-        atol::Real = 1e-10
-)
+        atol::Real = 1.0e-10
+    )
     n_states = size(transition_matrix, 1)
     adj = _ct_hmm_adjacency(transition_matrix; atol = atol)
     order = _ct_hmm_topological_order(adj)
@@ -166,8 +166,8 @@ function _ct_hmm_probabilities_hidden_states(
         initial_p::AbstractVector{<:Real},
         Δt::Real;
         mode::Symbol = :auto,
-        atol::Real = 1e-10
-)
+        atol::Real = 1.0e-10
+    )
     _ct_hmm_validate_mode(mode)
 
     if mode == :expv
@@ -193,8 +193,10 @@ function _ct_hmm_probabilities_hidden_states(
             return p
         end
         if mode == :pathsum
-            error("propagation_mode=:pathsum requested but path-sum is not applicable " *
-                  "(cyclic graph or numerically degenerate exit rates).")
+            error(
+                "propagation_mode=:pathsum requested but path-sum is not applicable " *
+                    "(cyclic graph or numerically degenerate exit rates)."
+            )
         end
     end
 
@@ -232,11 +234,11 @@ rate matrix (`transition_matrix`). Implements the `Distributions.jl` interface.
 - `Δt::Real`: time elapsed since the previous observation.
 """
 struct ContinuousTimeDiscreteStatesHMM{
-    M <: AbstractMatrix{<:Real},
-    E <: Tuple,
-    D <: Distributions.Categorical,
-    T <: Real
-} <: Distribution{Univariate, Continuous}
+        M <: AbstractMatrix{<:Real},
+        E <: Tuple,
+        D <: Distributions.Categorical,
+        T <: Real,
+    } <: Distribution{Univariate, Continuous}
     n_states::Int
     transition_matrix::M
     emission_dists::E
@@ -251,21 +253,23 @@ function ContinuousTimeDiscreteStatesHMM(
         initial_dist::Distributions.Categorical,
         Δt::Real;
         propagation_mode::Symbol = :auto
-)
+    )
     _ct_hmm_validate_mode(propagation_mode)
     n_states = size(transition_matrix, 1)
     Δt >= 0 ||
         error("Δt must be nonnegative for a continuous-time Markov model; got $(Δt). Check that observation times are sorted within each individual.")
     _hmm_check_generator_matrix(transition_matrix)
-    ContinuousTimeDiscreteStatesHMM(
-        n_states, transition_matrix, emission_dists, initial_dist, Δt, propagation_mode)
+    return ContinuousTimeDiscreteStatesHMM(
+        n_states, transition_matrix, emission_dists, initial_dist, Δt, propagation_mode
+    )
 end
 
 # _ct_hmm_probabilities_hidden_states transposes the rate matrix internally, because
 # expv expects a generator whose columns (not rows) sum to zero.
 function probabilities_hidden_states(hmm::ContinuousTimeDiscreteStatesHMM)
-    _ct_hmm_probabilities_hidden_states(
-        hmm.transition_matrix, hmm.initial_dist.p, hmm.Δt; mode = hmm.propagation_mode)
+    return _ct_hmm_probabilities_hidden_states(
+        hmm.transition_matrix, hmm.initial_dist.p, hmm.Δt; mode = hmm.propagation_mode
+    )
 end
 
 """
@@ -349,7 +353,7 @@ end
 Distributions.median(hmm::ContinuousTimeDiscreteStatesHMM) = quantile(hmm, 0.5)
 
 function Distributions.params(hmm::ContinuousTimeDiscreteStatesHMM)
-    (hmm.transition_matrix, hmm.emission_dists, hmm.initial_dist, hmm.Δt)
+    return (hmm.transition_matrix, hmm.emission_dists, hmm.initial_dist, hmm.Δt)
 end
 
 Base.length(hmm::ContinuousTimeDiscreteStatesHMM) = 1

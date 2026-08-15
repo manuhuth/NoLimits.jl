@@ -12,7 +12,7 @@ probabilities as `base_dist`, but evaluates observation likelihoods by summing o
 compatible observed labels supplied in each set-valued observation.
 """
 struct CoarsedObservedStatesMarkovModel{D <: Distribution{Univariate, Discrete}} <:
-       Distribution{Univariate, Discrete}
+    Distribution{Univariate, Discrete}
     base_dist::D
 end
 
@@ -43,13 +43,13 @@ end
 function coarsed(dist::D) where {D <: Distribution{Univariate, Discrete}}
     _omm_is_observed_markov_dist(dist) || error(
         "coarsed(...) is only defined for observed Markov-model distributions " *
-        "(DiscreteTimeObservedStatesMarkovModel or ContinuousTimeObservedStatesMarkovModel)."
+            "(DiscreteTimeObservedStatesMarkovModel or ContinuousTimeObservedStatesMarkovModel)."
     )
     return CoarsedObservedStatesMarkovModel(dist)
 end
 
 function probabilities_hidden_states(dist::CoarsedObservedStatesMarkovModel)
-    probabilities_hidden_states(dist.base_dist)
+    return probabilities_hidden_states(dist.base_dist)
 end
 
 # Total hidden-state mass over the compatible observed labels; shared by the
@@ -80,14 +80,16 @@ end
 function posterior_hidden_states(dist::CoarsedObservedStatesMarkovModel, y)
     _omm_coarsed_observation_indices(dist.base_dist.state_labels, y)
     return zeros(
-        eltype(probabilities_hidden_states(dist.base_dist)), dist.base_dist.n_states)
+        eltype(probabilities_hidden_states(dist.base_dist)), dist.base_dist.n_states
+    )
 end
 
 # Combined accessor sharing the single base-distribution propagation between logpdf
 # and posterior; reuses the EXACT ops of the methods above (bit-identical). Shares
 # the matrix-exponential when the base is a continuous-time model.
 function _hmm_logpdf_and_posterior(
-        dist::CoarsedObservedStatesMarkovModel, y::AbstractVector)
+        dist::CoarsedObservedStatesMarkovModel, y::AbstractVector
+    )
     idxs = _omm_coarsed_observation_indices(dist.base_dist.state_labels, y)
     p = probabilities_hidden_states(dist.base_dist)
     T = eltype(p)
@@ -104,8 +106,10 @@ end
 
 function _hmm_logpdf_and_posterior(dist::CoarsedObservedStatesMarkovModel, y)
     _omm_coarsed_observation_indices(dist.base_dist.state_labels, y)
-    return (-Inf,
-        zeros(eltype(probabilities_hidden_states(dist.base_dist)), dist.base_dist.n_states))
+    return (
+        -Inf,
+        zeros(eltype(probabilities_hidden_states(dist.base_dist)), dist.base_dist.n_states),
+    )
 end
 
 function Distributions.logpdf(dist::CoarsedObservedStatesMarkovModel, y::AbstractVector)
@@ -132,33 +136,48 @@ Distributions.pdf(dist::CoarsedObservedStatesMarkovModel, y) = exp(logpdf(dist, 
 # array shapes forward to the untyped handler (via `invoke`, to avoid
 # self-recursion), which errors as before — the observation pipeline never
 # constructs the array shapes caught here.
-function Distributions.logpdf(dist::CoarsedObservedStatesMarkovModel,
-        y::AbstractArray{<:Real, 0})
-    invoke(
-        Distributions.logpdf, Tuple{CoarsedObservedStatesMarkovModel, Any}, dist, y)
+function Distributions.logpdf(
+        dist::CoarsedObservedStatesMarkovModel,
+        y::AbstractArray{<:Real, 0}
+    )
+    return invoke(
+        Distributions.logpdf, Tuple{CoarsedObservedStatesMarkovModel, Any}, dist, y
+    )
 end
-function Distributions.logpdf(dist::CoarsedObservedStatesMarkovModel,
-        y::AbstractArray{<:Real})
-    invoke(
-        Distributions.logpdf, Tuple{CoarsedObservedStatesMarkovModel, Any}, dist, y)
+function Distributions.logpdf(
+        dist::CoarsedObservedStatesMarkovModel,
+        y::AbstractArray{<:Real}
+    )
+    return invoke(
+        Distributions.logpdf, Tuple{CoarsedObservedStatesMarkovModel, Any}, dist, y
+    )
 end
-function Distributions.logpdf(dist::CoarsedObservedStatesMarkovModel,
-        y::AbstractArray{<:AbstractArray{<:Real, 0}})
-    invoke(
-        Distributions.logpdf, Tuple{CoarsedObservedStatesMarkovModel, Any}, dist, y)
+function Distributions.logpdf(
+        dist::CoarsedObservedStatesMarkovModel,
+        y::AbstractArray{<:AbstractArray{<:Real, 0}}
+    )
+    return invoke(
+        Distributions.logpdf, Tuple{CoarsedObservedStatesMarkovModel, Any}, dist, y
+    )
 end
 Distributions.pdf(dist::CoarsedObservedStatesMarkovModel, y::Real) = exp(logpdf(dist, y))
-function Distributions.pdf(dist::CoarsedObservedStatesMarkovModel,
-        y::AbstractArray{<:Real, 0})
-    exp(logpdf(dist, y))
+function Distributions.pdf(
+        dist::CoarsedObservedStatesMarkovModel,
+        y::AbstractArray{<:Real, 0}
+    )
+    return exp(logpdf(dist, y))
 end
-function Distributions.pdf(dist::CoarsedObservedStatesMarkovModel,
-        y::AbstractArray{<:Real})
-    exp(logpdf(dist, y))
+function Distributions.pdf(
+        dist::CoarsedObservedStatesMarkovModel,
+        y::AbstractArray{<:Real}
+    )
+    return exp(logpdf(dist, y))
 end
-function Distributions.pdf(dist::CoarsedObservedStatesMarkovModel,
-        y::AbstractArray{<:AbstractArray{<:Real, 0}})
-    exp(logpdf(dist, y))
+function Distributions.pdf(
+        dist::CoarsedObservedStatesMarkovModel,
+        y::AbstractArray{<:AbstractArray{<:Real, 0}}
+    )
+    return exp(logpdf(dist, y))
 end
 
 # A coarsed observation is set-valued, so a simulated draw is returned as a one-element

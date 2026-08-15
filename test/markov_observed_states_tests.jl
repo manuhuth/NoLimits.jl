@@ -30,9 +30,11 @@ end
 # ── CT-only: hidden-state propagation vs matrix exponential ───────────────────
 @testset "CT observed MC: acyclic Q pathsum matches matrix exponential" begin
     λ12, λ13, λ23 = 0.4, 0.2, 0.7
-    Q = [-(λ12 + λ13) λ12 λ13
-         0.0 -λ23 λ23
-         0.0 0.0 0.0]
+    Q = [
+        -(λ12 + λ13) λ12 λ13
+        0.0 -λ23 λ23
+        0.0 0.0 0.0
+    ]
     init = Categorical([1.0, 0.0, 0.0])
     dt = 1.7
 
@@ -41,15 +43,17 @@ end
     p_pathsum = probabilities_hidden_states(dist)
     p_expm = exp(transpose(Q) * dt) * init.p
 
-    @test isapprox(p_pathsum, p_expm; rtol = 1e-9, atol = 1e-10)
-    @test isapprox(sum(p_pathsum), 1.0; atol = 1e-12)
+    @test isapprox(p_pathsum, p_expm; rtol = 1.0e-9, atol = 1.0e-10)
+    @test isapprox(sum(p_pathsum), 1.0; atol = 1.0e-12)
 end
 
 @testset "CT observed MC: cyclic Q auto mode is consistent with matrix exponential" begin
     λ12, λ23, λ31 = 0.4, 0.6, 0.5
-    Q = [-λ12 λ12 0.0
-         0.0 -λ23 λ23
-         λ31 0.0 -λ31]
+    Q = [
+        -λ12 λ12 0.0
+        0.0 -λ23 λ23
+        λ31 0.0 -λ31
+    ]
     init = Categorical([0.7, 0.2, 0.1])
     dt = 0.9
 
@@ -57,18 +61,25 @@ end
     p = probabilities_hidden_states(dist)
     p_expm = exp(transpose(Q) * dt) * init.p
 
-    @test isapprox(p, p_expm; rtol = 1e-10, atol = 1e-12)
+    @test isapprox(p, p_expm; rtol = 1.0e-10, atol = 1.0e-12)
 end
 
 # ── Shared standalone tests ────────────────────────────────────────────────────
 # Each variant: (testset label, constructor closure taking init [+ labels]).
 markov_variants = (
-    ("DT observed MC",
+    (
+        "DT observed MC",
         (init, lbls...) -> DiscreteTimeObservedStatesMarkovModel(
-            [0.8 0.2; 0.3 0.7], init, lbls...)),
-    ("CT observed MC",
+            [0.8 0.2; 0.3 0.7], init, lbls...
+        ),
+    ),
+    (
+        "CT observed MC",
         (init, lbls...) -> ContinuousTimeObservedStatesMarkovModel(
-            [-1.0 1.0; 0.5 -0.5], init, 0.5, lbls...)))
+            [-1.0 1.0; 0.5 -0.5], init, 0.5, lbls...
+        ),
+    ),
+)
 
 for (label, mk) in markov_variants
     @testset "$label: symbol labels" begin
@@ -76,8 +87,8 @@ for (label, mk) in markov_variants
         dist = mk(Categorical([1.0, 0.0]), labels)
 
         p = probabilities_hidden_states(dist)
-        @test isapprox(logpdf(dist, :healthy), log(p[1]); atol = 1e-12)
-        @test isapprox(logpdf(dist, :sick), log(p[2]); atol = 1e-12)
+        @test isapprox(logpdf(dist, :healthy), log(p[1]); atol = 1.0e-12)
+        @test isapprox(logpdf(dist, :sick), log(p[2]); atol = 1.0e-12)
         @test logpdf(dist, :unknown) == -Inf
 
         @test posterior_hidden_states(dist, :healthy) ≈ [1.0, 0.0]
@@ -96,13 +107,13 @@ for (label, mk) in markov_variants
         dist = coarsed(mk(Categorical([1.0, 0.0])))
         p = probabilities_hidden_states(dist)
 
-        @test isapprox(logpdf(dist, [1, 2]), log(1.0); atol = 1e-12)
-        @test isapprox(logpdf(dist, [2, 99]), log(p[2]); atol = 1e-12)
+        @test isapprox(logpdf(dist, [1, 2]), log(1.0); atol = 1.0e-12)
+        @test isapprox(logpdf(dist, [2, 99]), log(p[2]); atol = 1.0e-12)
         @test logpdf(dist, [99, 100]) == -Inf
 
-        @test isapprox(posterior_hidden_states(dist, [1, 2]), p; atol = 1e-12)
-        @test isapprox(posterior_hidden_states(dist, [2, 99]), [0.0, 1.0]; atol = 1e-12)
-        @test isapprox(posterior_hidden_states(dist, [99, 100]), [0.0, 0.0]; atol = 1e-12)
+        @test isapprox(posterior_hidden_states(dist, [1, 2]), p; atol = 1.0e-12)
+        @test isapprox(posterior_hidden_states(dist, [2, 99]), [0.0, 1.0]; atol = 1.0e-12)
+        @test isapprox(posterior_hidden_states(dist, [99, 100]), [0.0, 0.0]; atol = 1.0e-12)
     end
 
     @testset "$label: set-valued observations require coarsed wrapper" begin
@@ -128,22 +139,22 @@ end
 
     # After one step from state 1: [0.8, 0.2]
     p = probabilities_hidden_states(dist)
-    @test isapprox(p, [0.8, 0.2]; atol = 1e-12)
+    @test isapprox(p, [0.8, 0.2]; atol = 1.0e-12)
 
     # After one step from state 2: [0.3, 0.7]
     dist2 = DiscreteTimeObservedStatesMarkovModel(T, Categorical([0.0, 1.0]))
     p2 = probabilities_hidden_states(dist2)
-    @test isapprox(p2, [0.3, 0.7]; atol = 1e-12)
+    @test isapprox(p2, [0.3, 0.7]; atol = 1.0e-12)
 
     # posterior_hidden_states is one-hot
     post1 = posterior_hidden_states(dist, 1)
-    @test isapprox(post1, [1.0, 0.0]; atol = 1e-12)
+    @test isapprox(post1, [1.0, 0.0]; atol = 1.0e-12)
     post2 = posterior_hidden_states(dist, 2)
-    @test isapprox(post2, [0.0, 1.0]; atol = 1e-12)
+    @test isapprox(post2, [0.0, 1.0]; atol = 1.0e-12)
 
     # logpdf is log of predicted probability for the observed state
-    @test isapprox(logpdf(dist, 1), log(0.8); atol = 1e-12)
-    @test isapprox(logpdf(dist, 2), log(0.2); atol = 1e-12)
+    @test isapprox(logpdf(dist, 1), log(0.8); atol = 1.0e-12)
+    @test isapprox(logpdf(dist, 2), log(0.2); atol = 1.0e-12)
 
     # State not in labels → -Inf
     @test logpdf(dist, 99) == -Inf
@@ -154,12 +165,13 @@ end
     dist = DiscreteTimeObservedStatesMarkovModel(T, Categorical([1.0, 0.0]))
     p = probabilities_hidden_states(dist)  # [0.8, 0.2]
 
-    @test isapprox(mean(dist), 0.8 * 1 + 0.2 * 2; atol = 1e-12)
+    @test isapprox(mean(dist), 0.8 * 1 + 0.2 * 2; atol = 1.0e-12)
     @test isapprox(
-        var(dist), 0.8 * (1 - mean(dist))^2 + 0.2 * (2 - mean(dist))^2; atol = 1e-12)
-    @test isapprox(cdf(dist, 1), 0.8; atol = 1e-12)
-    @test isapprox(cdf(dist, 2), 1.0; atol = 1e-12)
-    @test isapprox(cdf(dist, 0), 0.0; atol = 1e-12)
+        var(dist), 0.8 * (1 - mean(dist))^2 + 0.2 * (2 - mean(dist))^2; atol = 1.0e-12
+    )
+    @test isapprox(cdf(dist, 1), 0.8; atol = 1.0e-12)
+    @test isapprox(cdf(dist, 2), 1.0; atol = 1.0e-12)
+    @test isapprox(cdf(dist, 0), 0.0; atol = 1.0e-12)
 end
 
 @testset "CT observed MC: probabilities_hidden_states and posterior_hidden_states" begin
@@ -169,16 +181,16 @@ end
     dist = ContinuousTimeObservedStatesMarkovModel(Q, init, dt)
 
     p = probabilities_hidden_states(dist)
-    @test isapprox(sum(p), 1.0; atol = 1e-12)
+    @test isapprox(sum(p), 1.0; atol = 1.0e-12)
     @test all(>=(0), p)
 
     # posterior is one-hot
-    @test isapprox(posterior_hidden_states(dist, 1), [1.0, 0.0]; atol = 1e-12)
-    @test isapprox(posterior_hidden_states(dist, 2), [0.0, 1.0]; atol = 1e-12)
+    @test isapprox(posterior_hidden_states(dist, 1), [1.0, 0.0]; atol = 1.0e-12)
+    @test isapprox(posterior_hidden_states(dist, 2), [0.0, 1.0]; atol = 1.0e-12)
 
     # logpdf matches log(p[idx])
-    @test isapprox(logpdf(dist, 1), log(p[1]); atol = 1e-12)
-    @test isapprox(logpdf(dist, 2), log(p[2]); atol = 1e-12)
+    @test isapprox(logpdf(dist, 1), log(p[1]); atol = 1.0e-12)
+    @test isapprox(logpdf(dist, 2), log(p[2]); atol = 1.0e-12)
     @test logpdf(dist, 99) == -Inf
 end
 
@@ -187,12 +199,12 @@ end
     dist = ContinuousTimeObservedStatesMarkovModel(Q, Categorical([1.0, 0.0]), 0.5)
     p = probabilities_hidden_states(dist)
 
-    @test isapprox(mean(dist), p[1] * 1 + p[2] * 2; atol = 1e-12)
+    @test isapprox(mean(dist), p[1] * 1 + p[2] * 2; atol = 1.0e-12)
     μ = mean(dist)
-    @test isapprox(var(dist), p[1] * (1 - μ)^2 + p[2] * (2 - μ)^2; atol = 1e-12)
-    @test isapprox(cdf(dist, 1), p[1]; atol = 1e-12)
-    @test isapprox(cdf(dist, 2), 1.0; atol = 1e-12)
-    @test isapprox(cdf(dist, 0), 0.0; atol = 1e-12)
+    @test isapprox(var(dist), p[1] * (1 - μ)^2 + p[2] * (2 - μ)^2; atol = 1.0e-12)
+    @test isapprox(cdf(dist, 1), p[1]; atol = 1.0e-12)
+    @test isapprox(cdf(dist, 2), 1.0; atol = 1.0e-12)
+    @test isapprox(cdf(dist, 0), 0.0; atol = 1.0e-12)
 end
 
 # ── DT integration tests (DataModel plumbing, no dt covariate) ─────────────────
@@ -228,7 +240,7 @@ end
     )
     expected = _recursive_markov_loglikelihood(fill(dist_ref, nrow(df)), df.y)
 
-    @test isapprox(ll, expected; atol = 1e-12)
+    @test isapprox(ll, expected; atol = 1.0e-12)
 end
 
 @testset "DT observed MC: missing observations propagate state" begin
@@ -263,7 +275,7 @@ end
     )
     expected = _recursive_markov_loglikelihood(fill(dist_ref, nrow(df)), df.y)
 
-    @test isapprox(ll, expected; atol = 1e-12)
+    @test isapprox(ll, expected; atol = 1.0e-12)
 end
 
 @testset "DT observed MC: set-valued labels through DataModel" begin
@@ -278,8 +290,11 @@ end
 
         @formulas begin
             T_mat = [0.7 0.3; 0.2 0.8]
-            y ~ coarsed(DiscreteTimeObservedStatesMarkovModel(
-                T_mat, Categorical([0.6, 0.4])))
+            y ~ coarsed(
+                DiscreteTimeObservedStatesMarkovModel(
+                    T_mat, Categorical([0.6, 0.4])
+                )
+            )
         end
     end
 
@@ -293,14 +308,16 @@ end
     θ = get_θ0_untransformed(dm.model.fixed.fixed)
     ll = NoLimits.loglikelihood(dm, θ, ComponentArray())
 
-    dist_ref = coarsed(DiscreteTimeObservedStatesMarkovModel(
-        [0.7 0.3; 0.2 0.8],
-        Categorical([0.6, 0.4])
-    ))
+    dist_ref = coarsed(
+        DiscreteTimeObservedStatesMarkovModel(
+            [0.7 0.3; 0.2 0.8],
+            Categorical([0.6, 0.4])
+        )
+    )
     expected = _recursive_markov_loglikelihood(fill(dist_ref, nrow(df)), df.y)
 
     @test isfinite(ll)
-    @test isapprox(ll, expected; atol = 1e-12)
+    @test isapprox(ll, expected; atol = 1.0e-12)
 end
 
 @testset "DT observed MC: DataModel set-valued labels require coarsed wrapper" begin
@@ -347,8 +364,11 @@ end
 
         @formulas begin
             T_mat = [0.7 0.3; 0.2 0.8]
-            y ~ coarsed(DiscreteTimeObservedStatesMarkovModel(
-                T_mat, Categorical([0.6, 0.4])))
+            y ~ coarsed(
+                DiscreteTimeObservedStatesMarkovModel(
+                    T_mat, Categorical([0.6, 0.4])
+                )
+            )
         end
     end
 
@@ -366,7 +386,8 @@ end
     end
     @test err isa ErrorException
     @test occursin(
-        "all non-missing observations must be AbstractVectors", sprint(showerror, err))
+        "all non-missing observations must be AbstractVectors", sprint(showerror, err)
+    )
 end
 
 @testset "DT observed MC: symbol labels through DataModel" begin
@@ -381,9 +402,11 @@ end
 
         @formulas begin
             T_mat = [0.7 0.3; 0.2 0.8]
-            y ~ DiscreteTimeObservedStatesMarkovModel(T_mat,
+            y ~ DiscreteTimeObservedStatesMarkovModel(
+                T_mat,
                 Categorical([0.6, 0.4]),
-                [:healthy, :sick])
+                [:healthy, :sick]
+            )
         end
     end
 
@@ -404,7 +427,7 @@ end
     )
     expected = _recursive_markov_loglikelihood(fill(dist_ref, 3), df.y)
 
-    @test isapprox(ll, expected; atol = 1e-12)
+    @test isapprox(ll, expected; atol = 1.0e-12)
 end
 
 @testset "DT observed MC: ForwardDiff gradient through transition parameters" begin
@@ -421,8 +444,10 @@ end
         @formulas begin
             p12 = 1 / (1 + exp(-p12_r))
             p21 = 1 / (1 + exp(-p21_r))
-            T_mat = [1-p12 p12;
-                     p21 1-p21]
+            T_mat = [
+                1 - p12 p12;
+                p21 1 - p21
+            ]
             y ~ DiscreteTimeObservedStatesMarkovModel(T_mat, Categorical([0.5, 0.5]))
         end
     end
@@ -455,8 +480,10 @@ end
         @formulas begin
             p12 = 0.8 / (1 + exp(-p12_r)) + 0.1
             p21 = 0.8 / (1 + exp(-p21_r)) + 0.1
-            T_mat = [1-p12 p12;
-                     p21 1-p21]
+            T_mat = [
+                1 - p12 p12;
+                p21 1 - p21
+            ]
             y ~ DiscreteTimeObservedStatesMarkovModel(T_mat, Categorical([0.5, 0.5]))
         end
     end
@@ -475,10 +502,13 @@ end
     res_map = fit_model(dm, NoLimits.MAP(optim_kwargs = (; iterations = 5)))
     @test res_map isa FitResult
 
-    res_mcmc = fit_model(dm,
+    res_mcmc = fit_model(
+        dm,
         NoLimits.MCMC(;
             sampler = MH(),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)))
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+        )
+    )
     @test res_mcmc isa FitResult
     @test NoLimits.get_chain(res_mcmc) isa MCMCChains.Chains
 end
@@ -501,8 +531,10 @@ end
         @formulas begin
             p12 = 0.8 / (1 + exp(-clamp(p12_r + η, -2.0, 2.0))) + 0.1
             p21 = 0.8 / (1 + exp(-clamp(p21_r, -2.0, 2.0))) + 0.1
-            T_mat = [1-p12 p12;
-                     p21 1-p21]
+            T_mat = [
+                1 - p12 p12;
+                p21 1 - p21
+            ]
             y ~ DiscreteTimeObservedStatesMarkovModel(T_mat, Categorical([0.5, 0.5]))
         end
     end
@@ -515,21 +547,27 @@ end
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
 
-    res_lap = fit_model(dm,
+    res_lap = fit_model(
+        dm,
         NoLimits.Laplace(;
             optim_kwargs = (maxiters = 2,),
             inner_kwargs = (maxiters = 2,),
-            multistart_n = 2, multistart_k = 2))
+            multistart_n = 2, multistart_k = 2
+        )
+    )
     @test res_lap isa FitResult
     re = NoLimits.get_random_effects(dm, res_lap)
     @test re isa NamedTuple
 
-    res_saem = fit_model(dm,
+    res_saem = fit_model(
+        dm,
         NoLimits.SAEM(;
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-            mcmc_steps = 1, q_store_max = 2, maxiters = 2, progress = false, builtin_stats = :auto);
-        rng = Random.Xoshiro(42))
+            mcmc_steps = 1, q_store_max = 2, maxiters = 2, progress = false, builtin_stats = :auto
+        );
+        rng = Random.Xoshiro(42)
+    )
     @test res_saem isa FitResult
 end
 
@@ -547,8 +585,10 @@ end
         @formulas begin
             p12 = 0.8 / (1 + exp(-p12_r)) + 0.1
             p21 = 0.8 / (1 + exp(-p21_r)) + 0.1
-            T_mat = [1-p12 p12;
-                     p21 1-p21]
+            T_mat = [
+                1 - p12 p12;
+                p21 1 - p21
+            ]
             y ~ DiscreteTimeObservedStatesMarkovModel(T_mat, Categorical([0.5, 0.5]))
         end
     end
@@ -608,7 +648,7 @@ end
     )
     expected = _recursive_markov_loglikelihood(fill(dist_ref, nrow(df)), df.y)
 
-    @test isapprox(ll, expected; atol = 1e-12)
+    @test isapprox(ll, expected; atol = 1.0e-12)
 end
 
 @testset "CT observed MC: missing observations propagate state" begin
@@ -646,7 +686,7 @@ end
     )
     expected = _recursive_markov_loglikelihood(fill(dist_ref, nrow(df)), df.y)
 
-    @test isapprox(ll, expected; atol = 1e-12)
+    @test isapprox(ll, expected; atol = 1.0e-12)
 end
 
 @testset "CT observed MC: set-valued labels through DataModel" begin
@@ -662,8 +702,11 @@ end
 
         @formulas begin
             Q = [-1.0 1.0; 0.5 -0.5]
-            y ~ coarsed(ContinuousTimeObservedStatesMarkovModel(
-                Q, Categorical([0.6, 0.4]), dt))
+            y ~ coarsed(
+                ContinuousTimeObservedStatesMarkovModel(
+                    Q, Categorical([0.6, 0.4]), dt
+                )
+            )
         end
     end
 
@@ -678,15 +721,17 @@ end
     θ = get_θ0_untransformed(dm.model.fixed.fixed)
     ll = NoLimits.loglikelihood(dm, θ, ComponentArray())
 
-    dist_ref = coarsed(ContinuousTimeObservedStatesMarkovModel(
-        [-1.0 1.0; 0.5 -0.5],
-        Categorical([0.6, 0.4]),
-        1.0
-    ))
+    dist_ref = coarsed(
+        ContinuousTimeObservedStatesMarkovModel(
+            [-1.0 1.0; 0.5 -0.5],
+            Categorical([0.6, 0.4]),
+            1.0
+        )
+    )
     expected = _recursive_markov_loglikelihood(fill(dist_ref, nrow(df)), df.y)
 
     @test isfinite(ll)
-    @test isapprox(ll, expected; atol = 1e-12)
+    @test isapprox(ll, expected; atol = 1.0e-12)
 end
 
 @testset "CT observed MC: DataModel set-valued labels require coarsed wrapper" begin
@@ -736,8 +781,11 @@ end
 
         @formulas begin
             Q = [-1.0 1.0; 0.5 -0.5]
-            y ~ coarsed(ContinuousTimeObservedStatesMarkovModel(
-                Q, Categorical([0.6, 0.4]), dt))
+            y ~ coarsed(
+                ContinuousTimeObservedStatesMarkovModel(
+                    Q, Categorical([0.6, 0.4]), dt
+                )
+            )
         end
     end
 
@@ -756,7 +804,8 @@ end
     end
     @test err isa ErrorException
     @test occursin(
-        "all non-missing observations must be AbstractVectors", sprint(showerror, err))
+        "all non-missing observations must be AbstractVectors", sprint(showerror, err)
+    )
 end
 
 @testset "CT observed MC: ForwardDiff gradient through rate parameters" begin
@@ -796,7 +845,7 @@ end
 
 @testset "CT observed MC: numerical stability — long sequence, small dt" begin
     Q = [-2.0 2.0; 1.0 -1.0]
-    init = Categorical([1.0 - 1e-8, 1e-8])
+    init = Categorical([1.0 - 1.0e-8, 1.0e-8])
     dt = 0.12
 
     dist = ContinuousTimeObservedStatesMarkovModel(Q, init, dt)
@@ -873,10 +922,13 @@ end
     res_map = fit_model(dm, NoLimits.MAP(optim_kwargs = (; iterations = 5)))
     @test res_map isa FitResult
 
-    res_mcmc = fit_model(dm,
+    res_mcmc = fit_model(
+        dm,
         NoLimits.MCMC(;
             sampler = MH(),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)))
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+        )
+    )
     @test res_mcmc isa FitResult
     @test NoLimits.get_chain(res_mcmc) isa MCMCChains.Chains
 end
@@ -914,21 +966,27 @@ end
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
 
-    res_lap = fit_model(dm,
+    res_lap = fit_model(
+        dm,
         NoLimits.Laplace(;
             optim_kwargs = (maxiters = 2,),
             inner_kwargs = (maxiters = 2,),
-            multistart_n = 2, multistart_k = 2))
+            multistart_n = 2, multistart_k = 2
+        )
+    )
     @test res_lap isa FitResult
     re = NoLimits.get_random_effects(dm, res_lap)
     @test re isa NamedTuple
 
-    res_saem = fit_model(dm,
+    res_saem = fit_model(
+        dm,
         NoLimits.SAEM(;
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-            mcmc_steps = 1, q_store_max = 2, maxiters = 2, progress = false, builtin_stats = :auto);
-        rng = Random.Xoshiro(42))
+            mcmc_steps = 1, q_store_max = 2, maxiters = 2, progress = false, builtin_stats = :auto
+        );
+        rng = Random.Xoshiro(42)
+    )
     @test res_saem isa FitResult
 end
 

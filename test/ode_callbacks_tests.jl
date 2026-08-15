@@ -28,25 +28,29 @@ using OrdinaryDiffEq
     end
 
     function _ll(df; use_events::Bool)
-        dm = DataModel(model, df;
+        dm = DataModel(
+            model, df;
             primary_id = :ID,
             time_col = :t,
             evid_col = use_events ? :EVID : nothing,
             amt_col = :AMT,
             rate_col = :RATE,
-            cmt_col = :CMT)
+            cmt_col = :CMT
+        )
         θ = get_θ0_untransformed(model.fixed.fixed)
         return NoLimits.loglikelihood(dm, θ, ComponentArray())
     end
 
     function _solve_with_callbacks(df)
-        dm = DataModel(model, df;
+        dm = DataModel(
+            model, df;
             primary_id = :ID,
             time_col = :t,
             evid_col = :EVID,
             amt_col = :AMT,
             rate_col = :RATE,
-            cmt_col = :CMT)
+            cmt_col = :CMT
+        )
         θ = get_θ0_untransformed(model.fixed.fixed)
         ind = get_individuals(dm)[1]
         η = ComponentArray()
@@ -59,7 +63,7 @@ using OrdinaryDiffEq
             varying_covariates = (t = ind.series.vary.t[1],),
             helpers = get_helper_funs(model),
             model_funs = get_model_funs(model),
-            preDE = pre
+            preDE = pre,
         )
         compiled = get_de_compiler(model.de.de)(pc)
         u0 = calculate_initial_state(model, θ, η, const_cov)
@@ -82,8 +86,8 @@ using OrdinaryDiffEq
         end
         prob = ODEProblem(f!, u0, ind.tspan, compiled)
         sol = cb === nothing ?
-              solve(prob, Tsit5(); dense = true) :
-              solve(prob, Tsit5(); dense = true, callback = cb)
+            solve(prob, Tsit5(); dense = true) :
+            solve(prob, Tsit5(); dense = true, callback = cb)
         return sol
     end
 
@@ -139,8 +143,10 @@ using OrdinaryDiffEq
         # infusion_rates must be reset between solves on the same DataModel —
         # regression test: t=t0 infusion was only initialized once at construction,
         # so the second solve saw infusion_rates=[0] and subsequent solves saw negative rates
-        dm_evt = DataModel(model, df_evt; primary_id = :ID, time_col = :t,
-            evid_col = :EVID, amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT)
+        dm_evt = DataModel(
+            model, df_evt; primary_id = :ID, time_col = :t,
+            evid_col = :EVID, amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT
+        )
         θ = get_θ0_untransformed(model.fixed.fixed)
         ll_first = NoLimits.loglikelihood(dm_evt, θ, ComponentArray())
         ll_second = NoLimits.loglikelihood(dm_evt, θ, ComponentArray())
@@ -150,9 +156,11 @@ using OrdinaryDiffEq
         # A RATE opposing AMT would silently reverse the dose direction (#170).
         df_bad = copy(df_evt)
         df_bad.RATE = [0.0, -0.5, 0.0]
-        @test_throws ErrorException DataModel(model, df_bad; primary_id = :ID,
+        @test_throws ErrorException DataModel(
+            model, df_bad; primary_id = :ID,
             time_col = :t, evid_col = :EVID, amt_col = :AMT, rate_col = :RATE,
-            cmt_col = :CMT)
+            cmt_col = :CMT
+        )
     end
 
     @testset "Reset" begin
@@ -214,13 +222,15 @@ end
         y = [missing, 1.0, 1.1]
     )
 
-    dm = DataModel(model, df;
+    dm = DataModel(
+        model, df;
         primary_id = :ID,
         time_col = :t,
         evid_col = :EVID,
         amt_col = :AMT,
         rate_col = :RATE,
-        cmt_col = :CMT)
+        cmt_col = :CMT
+    )
 
     ind1 = get_individual(dm, 1)
     @test ind1.callbacks !== nothing
@@ -260,13 +270,15 @@ end
             CMT = ["x1", "central"],
             y = [missing, missing]
         )
-        dm = DataModel(model, df;
+        dm = DataModel(
+            model, df;
             primary_id = :ID,
             time_col = :t,
             evid_col = :EVID,
             amt_col = :AMT,
             rate_col = :RATE,
-            cmt_col = :CMT)
+            cmt_col = :CMT
+        )
         ind = get_individuals(dm)[1]
         @test ind.callbacks !== nothing
     end
@@ -281,13 +293,15 @@ end
             CMT = Any["x1", 2],
             y = [missing, missing]
         )
-        @test_throws ErrorException DataModel(model, df;
+        @test_throws ErrorException DataModel(
+            model, df;
             primary_id = :ID,
             time_col = :t,
             evid_col = :EVID,
             amt_col = :AMT,
             rate_col = :RATE,
-            cmt_col = :CMT)
+            cmt_col = :CMT
+        )
     end
 
     @testset "CMT closest-match suggestion" begin
@@ -301,13 +315,15 @@ end
             y = [missing]
         )
         err = try
-            DataModel(model, df;
+            DataModel(
+                model, df;
                 primary_id = :ID,
                 time_col = :t,
                 evid_col = :EVID,
                 amt_col = :AMT,
                 rate_col = :RATE,
-                cmt_col = :CMT)
+                cmt_col = :CMT
+            )
             nothing
         catch e
             e
@@ -353,13 +369,15 @@ end
         y = [missing, 3.0]
     )
 
-    dm = DataModel(model, df;
+    dm = DataModel(
+        model, df;
         primary_id = :ID,
         time_col = :t,
         evid_col = :EVID,
         amt_col = :AMT,
         rate_col = :RATE,
-        cmt_col = :CMT)
+        cmt_col = :CMT
+    )
 
     θ1 = get_θ0_untransformed(model.fixed.fixed)
     θ2 = copy(θ1)
@@ -367,7 +385,7 @@ end
 
     ll1 = NoLimits.loglikelihood(dm, θ1, ComponentArray())
     ll2 = NoLimits.loglikelihood(dm, θ2, ComponentArray())
-    @test abs(ll2 - ll1) > 1e-6
+    @test abs(ll2 - ll1) > 1.0e-6
 end
 
 # Regression test: a 1-day infusion in a long-tspan model (tspan ≈ 300 days)
@@ -413,13 +431,15 @@ end
         y = [missing, 0.0]
     )
 
-    dm = DataModel(model, df;
+    dm = DataModel(
+        model, df;
         primary_id = :ID,
         time_col = :t,
         evid_col = :EVID,
         amt_col = :AMT,
         rate_col = :RATE,
-        cmt_col = :CMT)
+        cmt_col = :CMT
+    )
 
     ind = get_individuals(dm)[1]
 

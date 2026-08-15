@@ -60,7 +60,8 @@ using DataInterpolations
     sol_accessors = get_de_accessors_builder(model.de.de)(sol, pc)
 
     obs = calculate_formulas_obs(
-        model, θ, η, const_covariates_i, varying_covariates, sol_accessors)
+        model, θ, η, const_covariates_i, varying_covariates, sol_accessors
+    )
     @test obs.obs isa Normal
 end
 
@@ -113,18 +114,19 @@ end
         varying_covariates = varying_covariates,
         helpers = get_helper_funs(model),
         model_funs = get_model_funs(model),
-        preDE = pre
+        preDE = pre,
     )
     compiled = get_de_compiler(model.de.de)(pc)
 
     u0 = calculate_initial_state(model, θ, η, const_covariates_i)
     tspan = (0.0, 1.0)
     prob = ODEProblem(get_de_f!(model.de.de), u0, tspan, compiled)
-    sol = solve(prob, Tsit5(); abstol = 1e-9, reltol = 1e-9)
+    sol = solve(prob, Tsit5(); abstol = 1.0e-9, reltol = 1.0e-9)
     sol_accessors = get_de_accessors_builder(model.de.de)(sol, compiled)
 
     obs = calculate_formulas_obs(
-        model, θ, η, const_covariates_i, varying_covariates, sol_accessors)
+        model, θ, η, const_covariates_i, varying_covariates, sol_accessors
+    )
     @test obs.obs isa Normal
 end
 
@@ -186,7 +188,7 @@ end
         varying_covariates = varying_covariates,
         helpers = get_helper_funs(model),
         model_funs = get_model_funs(model),
-        preDE = pre
+        preDE = pre,
     )
     compiled = get_de_compiler(model.de.de)(pc)
 
@@ -198,11 +200,12 @@ end
     cb = ContinuousCallback(condition, affect!)
 
     prob = ODEProblem(get_de_f!(model.de.de), u0, tspan, compiled)
-    sol = solve(prob, Tsit5(); callback = cb, abstol = 1e-9, reltol = 1e-9)
+    sol = solve(prob, Tsit5(); callback = cb, abstol = 1.0e-9, reltol = 1.0e-9)
     sol_accessors = get_de_accessors_builder(model.de.de)(sol, compiled)
 
     obs = calculate_formulas_obs(
-        model, θ, η, const_covariates_i, varying_covariates, sol_accessors)
+        model, θ, η, const_covariates_i, varying_covariates, sol_accessors
+    )
     @test obs.obs isa Normal
 end
 
@@ -220,7 +223,8 @@ end
             ζ = NNParameters(chain; function_name = :NN1, calculate_se = false)
             Γ = SoftTreeParameters(2, 2; function_name = :ST, calculate_se = false)
             sp = SplineParameters(
-                knots; function_name = :SP1, degree = 2, calculate_se = false)
+                knots; function_name = :SP1, degree = 2, calculate_se = false
+            )
             ψ = NPFParameter(1, 3, seed = 1, calculate_se = false)
         end
 
@@ -281,7 +285,7 @@ end
         varying_covariates = varying_covariates,
         helpers = get_helper_funs(model),
         model_funs = get_model_funs(model),
-        preDE = pre
+        preDE = pre,
     )
     compiled = get_de_compiler(model.de.de)(pc)
 
@@ -298,7 +302,8 @@ end
     for (t, y) in zip(t_obs, y_obs)
         varying_covariates = (t = t,)
         obs = calculate_formulas_obs(
-            model, θ, η, const_covariates_i, varying_covariates, sol_accessors)
+            model, θ, η, const_covariates_i, varying_covariates, sol_accessors
+        )
         loglik += logpdf(obs.y, y)
     end
 end
@@ -423,7 +428,7 @@ end
         varying_covariates = varying_covariates,
         helpers = get_helper_funs(model),
         model_funs = get_model_funs(model),
-        preDE = pre
+        preDE = pre,
     )
     compiled = get_de_compiler(model.de.de)(pc)
 
@@ -439,7 +444,8 @@ end
     for (t, y) in zip(t_obs, y_obs)
         varying_covariates = (t = t, w1 = w1_itp)
         obs = calculate_formulas_obs(
-            model, θ, η, const_covariates_i, varying_covariates, sol_accessors)
+            model, θ, η, const_covariates_i, varying_covariates, sol_accessors
+        )
         loglik += logpdf(obs.y, y)
     end
 end

@@ -9,11 +9,13 @@ using Random: Xoshiro
 import ForwardDiff
 import StaticArrays
 import NoLimits: NNParameters, _nn_model_fun, _to_type, _value_type, _check_nn_prior,
-                 Priorless
+    Priorless
 
-function NNParameters(chain::SimpleChain; name::Symbol = :unnamed,
+function NNParameters(
+        chain::SimpleChain; name::Symbol = :unnamed,
         function_name::Symbol, seed::Integer = 0,
-        prior = Priorless(), calculate_se::Bool = false)
+        prior = Priorless(), calculate_se::Bool = false
+    )
     T = Float64
     v = Vector{T}(SimpleChains.init_params(chain, T; rng = Xoshiro(seed)))
     l = fill(T(-Inf), length(v))
@@ -22,7 +24,8 @@ function NNParameters(chain::SimpleChain; name::Symbol = :unnamed,
     # SimpleChains parameters are already flat; the `reconstructor` field is unused for this
     # backend (`_nn_model_fun` calls `chain(x, θ)` directly), so it is set to `identity`.
     return NNParameters{T, typeof(v), typeof(chain), typeof(identity)}(
-        name, function_name, chain, v, identity, l, u, prior, calculate_se)
+        name, function_name, chain, v, identity, l, u, prior, calculate_se
+    )
 end
 
 # SimpleChains backend (NNParameters built from a `SimpleChains.SimpleChain`): parameters are
@@ -66,7 +69,7 @@ function _sc_layer_plan(layer::SimpleChains.TurboDense{B}, nin, offset) where {B
     w = (offset + 1):(offset + nw)
     b = B ? ((offset + nw + 1):(offset + nw + nout)) : (1:0)
     return (f = layer.f, nin = nin, nout = nout, w = w, b = b), nout,
-    offset + nw + length(b)
+        offset + nw + length(b)
 end
 function _sc_layer_plan(layer::SimpleChains.Activation, nin, offset)
     return (f = layer.f, nin = nin, nout = nin, w = 1:0, b = 1:0), nin, offset
@@ -108,7 +111,7 @@ end
 function _check_sc_plan(chain, plan, name::Symbol)
     θ = SimpleChains.init_params(chain, Float64; rng = Xoshiro(0))
     x = [0.25 + 0.1 * i for i in 1:Int(only(SimpleChains.chain_input_dims(chain)))]
-    isapprox(collect(_sc_apply(x, θ, plan)), collect(chain(x, θ)); rtol = 1e-10) ||
+    isapprox(collect(_sc_apply(x, θ, plan)), collect(chain(x, θ)); rtol = 1.0e-10) ||
         error("NN parameter $(name): the plain fallback disagrees with the SimpleChain forward pass; the flat parameter layout is not the expected `[vec(W); b]` per layer.")
     return nothing
 end
@@ -126,7 +129,7 @@ function _simplechain_model_fun(chain, name::Symbol)
     end
 end
 function _nn_model_fun(chain::SimpleChain, p::NNParameters, ::Type{T}) where {T}
-    _simplechain_model_fun(chain, p.name)
+    return _simplechain_model_fun(chain, p.name)
 end
 
 end

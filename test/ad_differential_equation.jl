@@ -13,13 +13,15 @@ using ComponentArrays
     end
     compile = get_de_compiler(de)
     f = get_de_f(de)
-    p = (; fixed_effects = ComponentArray(a = 2.0, b = 3.0, c = 1.0),
+    p = (;
+        fixed_effects = ComponentArray(a = 2.0, b = 3.0, c = 1.0),
         random_effects = ComponentArray(),
         constant_covariates = NamedTuple(),
         varying_covariates = NamedTuple(),
         helpers = NamedTuple(),
         model_funs = NamedTuple(),
-        preDE = NamedTuple())
+        preDE = NamedTuple(),
+    )
     pc = compile(p)
 
     f_u(u) = sum(f(u, pc, 0.5))
@@ -29,7 +31,7 @@ using ComponentArrays
     hess = ForwardDiff.hessian(f_u, u0)
     @test size(hess, 1) == length(u0)
     @test size(hess, 2) == length(u0)
-    @test isapprox(hess, hess'; rtol = 1e-6, atol = 1e-8)
+    @test isapprox(hess, hess'; rtol = 1.0e-6, atol = 1.0e-8)
 end
 
 @testset "DifferentialEquation AD (params, transformed)" begin
@@ -42,31 +44,35 @@ end
     compile = get_de_compiler(de)
     f = get_de_f(de)
     fe = @fixedEffects begin
-        a = RealNumber(2.0, scale = :log, lower = 1e-12)
-        b = RealNumber(3.0, scale = :log, lower = 1e-12)
+        a = RealNumber(2.0, scale = :log, lower = 1.0e-12)
+        b = RealNumber(3.0, scale = :log, lower = 1.0e-12)
         c = RealNumber(1.0, scale = :identity)
     end
     θ0 = get_θ0_transformed(fe)
     inverse_transform = get_inverse_transform(fe)
-    p0 = (; fixed_effects = inverse_transform(θ0),
+    p0 = (;
+        fixed_effects = inverse_transform(θ0),
         random_effects = ComponentArray(),
         constant_covariates = NamedTuple(),
         varying_covariates = NamedTuple(),
         helpers = NamedTuple(),
         model_funs = NamedTuple(),
-        preDE = NamedTuple())
+        preDE = NamedTuple(),
+    )
     pc = compile(p0)
     u0 = [1.0, 2.0]
 
     fθ(θ) = begin
         fe_un = inverse_transform(θ)
-        p = (; fixed_effects = fe_un,
+        p = (;
+            fixed_effects = fe_un,
             random_effects = ComponentArray(),
             constant_covariates = NamedTuple(),
             varying_covariates = NamedTuple(),
             helpers = NamedTuple(),
             model_funs = NamedTuple(),
-            preDE = NamedTuple())
+            preDE = NamedTuple(),
+        )
         pcθ = compile(p)
         sum(f(u0, pcθ, 0.5))
     end
@@ -76,7 +82,7 @@ end
     hess = ForwardDiff.hessian(fθ, θ0)
     @test size(hess, 1) == length(θ0)
     @test size(hess, 2) == length(θ0)
-    @test isapprox(hess, hess'; rtol = 1e-6, atol = 1e-8)
+    @test isapprox(hess, hess'; rtol = 1.0e-6, atol = 1.0e-8)
 end
 
 @testset "DifferentialEquation AD (in-place)" begin
@@ -87,13 +93,15 @@ end
     end
     compile = get_de_compiler(de)
     f! = get_de_f!(de)
-    p = (; fixed_effects = ComponentArray(a = 2.0, b = 3.0, c = 1.0),
+    p = (;
+        fixed_effects = ComponentArray(a = 2.0, b = 3.0, c = 1.0),
         random_effects = ComponentArray(),
         constant_covariates = NamedTuple(),
         varying_covariates = NamedTuple(),
         helpers = NamedTuple(),
         model_funs = NamedTuple(),
-        preDE = NamedTuple())
+        preDE = NamedTuple(),
+    )
     pc = compile(p)
     u0 = [1.0, 2.0]
 
@@ -113,8 +121,8 @@ end
         sat(u) = u / (1 + abs(u))
     end
     fe = @fixedEffects begin
-        a = RealNumber(2.0, scale = :log, lower = 1e-12)
-        b = RealNumber(3.0, scale = :log, lower = 1e-12)
+        a = RealNumber(2.0, scale = :log, lower = 1.0e-12)
+        b = RealNumber(3.0, scale = :log, lower = 1.0e-12)
     end
     prede = @preDifferentialEquation begin
         pre = a + b
@@ -132,14 +140,17 @@ end
     fθ(θ) = begin
         fe_un = inverse_transform(θ)
         pre = get_prede_builder(prede)(
-            fe_un, ComponentArray(), NamedTuple(), NamedTuple(), helpers)
-        p = (; fixed_effects = fe_un,
+            fe_un, ComponentArray(), NamedTuple(), NamedTuple(), helpers
+        )
+        p = (;
+            fixed_effects = fe_un,
             random_effects = ComponentArray(),
             constant_covariates = NamedTuple(),
             varying_covariates = NamedTuple(),
             helpers = helpers,
             model_funs = NamedTuple(),
-            preDE = pre)
+            preDE = pre,
+        )
         pc = get_de_compiler(de)(p)
         sum(get_de_f(de)(u0, pc, 0.0))
     end
@@ -149,5 +160,5 @@ end
     hess = ForwardDiff.hessian(fθ, θ0)
     @test size(hess, 1) == length(θ0)
     @test size(hess, 2) == length(θ0)
-    @test isapprox(hess, hess'; rtol = 1e-6, atol = 1e-8)
+    @test isapprox(hess, hess'; rtol = 1.0e-6, atol = 1.0e-8)
 end

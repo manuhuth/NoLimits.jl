@@ -30,7 +30,8 @@ underlying `r` fixed makes the Monte-Carlo moment estimates a smooth, differenti
 function of the parameters (no resampling noise between optimizer steps).
 """
 fixed_re_normals(n_re::Int, n_samples::Int; rng::AbstractRNG = Random.default_rng()) = randn(
-    rng, n_re, n_samples)
+    rng, n_re, n_samples
+)
 
 """
     ensemble_moments(simulate, θu, re_half, R) -> (μ, Σ)
@@ -124,9 +125,11 @@ and directly informs the random-effect SDs in `re_half`.
 The term is differentiable through `θu` (ForwardDiff), matching how `extra_objective` is
 differentiated by the gradient-based estimators.
 """
-function population_moment_term(; simulate, re_half, samples::AbstractMatrix,
+function population_moment_term(;
+        simulate, re_half, samples::AbstractMatrix,
         mean = nothing, sd_mean = nothing,
-        var = nothing, sd_var = nothing, meas_var = 0.0, postprocess = nothing)
+        var = nothing, sd_var = nothing, meas_var = 0.0, postprocess = nothing
+    )
     has_mean = mean !== nothing
     has_var = var !== nothing
     has_mean || has_var ||

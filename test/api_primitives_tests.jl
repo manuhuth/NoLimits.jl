@@ -18,10 +18,14 @@ using OptimizationOptimJL
 
 # Extension-seam demo: a one-method custom curvature (diagonal of the exact Hessian).
 struct APITestDiagCurvature <: NoLimits.AbstractCurvature end
-function NoLimits.inner_curvature(::APITestDiagCurvature, dm, batch, θ, b, cc, cache, ws;
-        ctx = "", tctx = nothing)
-    H = NoLimits.inner_curvature(NoLimits.ExactHessianCurvature(), dm, batch, θ, b, cc,
-        cache, ws; ctx = ctx, tctx = tctx)
+function NoLimits.inner_curvature(
+        ::APITestDiagCurvature, dm, batch, θ, b, cc, cache, ws;
+        ctx = "", tctx = nothing
+    )
+    H = NoLimits.inner_curvature(
+        NoLimits.ExactHessianCurvature(), dm, batch, θ, b, cc,
+        cache, ws; ctx = ctx, tctx = tctx
+    )
     return Matrix(Diagonal(diag(H)))
 end
 
@@ -36,23 +40,29 @@ struct RidgeMLE{O, K, A, L, U} <: NoLimits.FittingMethod
     ub::U
     ignore_model_bounds::Bool
 end
-function RidgeMLE(; λ = 1.0, optimizer = OptimizationOptimJL.LBFGS(), optim_kwargs = (;),
+function RidgeMLE(;
+        λ = 1.0, optimizer = OptimizationOptimJL.LBFGS(), optim_kwargs = (;),
         adtype = Optimization.AutoForwardDiff(), lb = nothing, ub = nothing,
-        ignore_model_bounds = false)
+        ignore_model_bounds = false
+    )
     return RidgeMLE(λ, optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds)
 end
-function NoLimits.fit_method(dm, m::RidgeMLE, args...; constants = NamedTuple(),
+function NoLimits.fit_method(
+        dm, m::RidgeMLE, args...; constants = NamedTuple(),
         penalty = NamedTuple(), extra_objective = nothing, ode_args = (),
         ode_kwargs = NamedTuple(), serialization = NoLimits.EnsembleSerial(),
         rng = Random.default_rng(), theta_0_untransformed = nothing,
-        store_data_model = true)
+        store_data_model = true
+    )
     ridge = θu -> m.λ * sum(abs2, θu)
-    return NoLimits.fit_fixed_effects(dm, m;
+    return NoLimits.fit_fixed_effects(
+        dm, m;
         objective_term = NoLimits._combine_add_terms(ridge, extra_objective),
         constants = constants, penalty = penalty, ode_args = ode_args,
         ode_kwargs = ode_kwargs, serialization = serialization,
         theta_0_untransformed = theta_0_untransformed, store_data_model = store_data_model,
-        fit_args = args)
+        fit_args = args
+    )
 end
 
 # Protocol demo (plan Skeleton A): a new marginal-RE method = a custom curvature plugged
@@ -66,16 +76,20 @@ function NoLimits.fit_method(
         dm, m::APITestDiagonalLaplace, args...; constants = NamedTuple(),
         constants_re = NamedTuple(), penalty = NamedTuple(), extra_objective = nothing,
         ode_args = (), ode_kwargs = NamedTuple(), serialization = NoLimits.EnsembleThreads(),
-        rng = Random.default_rng(), theta_0_untransformed = nothing, store_data_model = true)
-    fit_kwargs = (; constants, constants_re, penalty, ode_args, ode_kwargs, serialization,
-        rng, theta_0_untransformed, store_data_model)
+        rng = Random.default_rng(), theta_0_untransformed = nothing, store_data_model = true
+    )
+    fit_kwargs = (;
+        constants, constants_re, penalty, ode_args, ode_kwargs, serialization,
+        rng, theta_0_untransformed, store_data_model,
+    )
     return NoLimits.fit_laplace_family(
         dm, m.base, APITestDiagCurvature(), args, fit_kwargs,
         _ -> nothing; nan_recovery = m.base.nan_recovery, allow_bbo = true,
         constants = constants, constants_re = constants_re, penalty = penalty,
         ode_args = ode_args, ode_kwargs = ode_kwargs, serialization = serialization,
         rng = rng, theta_0_untransformed = theta_0_untransformed,
-        store_data_model = store_data_model, extra_objective = extra_objective)
+        store_data_model = store_data_model, extra_objective = extra_objective
+    )
 end
 
 # Protocol demo (Skeleton C): a bespoke iterative estimator that keeps its OWN method type,
@@ -85,9 +99,11 @@ struct APITestClosedFormEM <: NoLimits.FittingMethod
 end
 APITestClosedFormEM(; n_iter = 5) = APITestClosedFormEM(n_iter)
 NoLimits.uq_family(::APITestClosedFormEM) = :wald_re
-function NoLimits.fit_method(dm, m::APITestClosedFormEM, args...;
+function NoLimits.fit_method(
+        dm, m::APITestClosedFormEM, args...;
         constants_re = NamedTuple(), store_data_model = true,
-        theta_0_untransformed = nothing, kwargs...)
+        theta_0_untransformed = nothing, kwargs...
+    )
     fe = NoLimits.get_fixed(NoLimits.get_model(dm))
     inv_transform = NoLimits.get_inverse_transform(fe)
     # honour Multistart / pooled_init starts (the theta_0_untransformed contract)
@@ -101,31 +117,40 @@ function NoLimits.fit_method(dm, m::APITestClosedFormEM, args...;
         modes = NoLimits.empirical_bayes(dm, θ)
         covs = NoLimits.empirical_bayes_covariance(dm, θ, modes)
         function negQ(θt_vec, _)
-            θn = NoLimits.symmetrize_psd_parameters(dm,
-                inv_transform(ComponentArray(θt_vec, getaxes(θt0))))
+            θn = NoLimits.symmetrize_psd_parameters(
+                dm,
+                inv_transform(ComponentArray(θt_vec, getaxes(θt0)))
+            )
             acc = zero(eltype(θt_vec))
             for bi in eachindex(batches)
                 mb, Σ = modes[bi], covs[bi]
                 Σ === nothing && continue
-                jl = NoLimits.complete_data_loglikelihood(dm, batches[bi], θn, mb;
-                    const_cache = cc, cache = cache)
-                H = NoLimits.complete_data_loglikelihood_hessian(dm, batches[bi], θn, mb;
-                    const_cache = cc, cache = cache)
+                jl = NoLimits.complete_data_loglikelihood(
+                    dm, batches[bi], θn, mb;
+                    const_cache = cc, cache = cache
+                )
+                H = NoLimits.complete_data_loglikelihood_hessian(
+                    dm, batches[bi], θn, mb;
+                    const_cache = cc, cache = cache
+                )
                 acc += jl + 0.5 * tr(Σ * H)
             end
             return -acc
         end
         prob = OptimizationProblem(
             OptimizationFunction(negQ, Optimization.AutoForwardDiff()),
-            collect(NoLimits.get_transform(fe)(θ)))
+            collect(NoLimits.get_transform(fe)(θ))
+        )
         sol = Optimization.solve(prob, OptimizationOptimJL.LBFGS(); maxiters = 30)
         θ = inv_transform(ComponentArray(sol.u, getaxes(θt0)))
         obj = -negQ(collect(NoLimits.get_transform(fe)(θ)), nothing)
     end
-    return build_fit_result(dm, m, θ; kind = :frequentist_re, objective = obj,
+    return build_fit_result(
+        dm, m, θ; kind = :frequentist_re, objective = obj,
         iterations = m.n_iter,
         eb_modes = NoLimits.empirical_bayes(dm, θ; constants_re = constants_re),
-        store_data_model = store_data_model, fit_args = args)
+        store_data_model = store_data_model, fit_args = args
+    )
 end
 
 # Protocol demo (Skeleton D): a custom Bayesian estimator that keeps its own method type and
@@ -136,11 +161,13 @@ struct APITestBayes <: NoLimits.FittingMethod end
 # quantity that keys off row position instead of identity cannot come out unchanged.
 function permute_relabel_ids(df::DataFrame, perm::Vector{Int}; prefix::String = "P")
     ids = unique(df.ID)
-    subs = [let sub = df[df.ID .== ids[p], :]
+    subs = [
+        let sub = df[df.ID .== ids[p], :]
                 sub.ID = fill("$(prefix)$(j)", nrow(sub))
                 sub
-            end
-            for (j, p) in enumerate(perm)]
+        end
+            for (j, p) in enumerate(perm)
+    ]
     return reduce(vcat, subs)
 end
 
@@ -178,33 +205,42 @@ end
         b = fill(0.3, NoLimits.get_batch_re_dim(batch))
         # batch joint is a pure cover of _laplace_logf_batch -> bit-identical
         @test NoLimits.complete_data_loglikelihood(
-            dm, batch, θ, b; const_cache = cc, cache = cache) ===
-              NoLimits._laplace_logf_batch(dm, batch, θ, b, cc, cache)
+            dm, batch, θ, b; const_cache = cc, cache = cache
+        ) ===
+            NoLimits._laplace_logf_batch(dm, batch, θ, b, cc, cache)
         # joint == conditional + re_logprior
         j = NoLimits.complete_data_loglikelihood(
-            dm, batch, θ, b; const_cache = cc, cache = cache)
+            dm, batch, θ, b; const_cache = cc, cache = cache
+        )
         cll = NoLimits.conditional_loglikelihood(
-            dm, batch, θ, b; const_cache = cc, cache = cache)
+            dm, batch, θ, b; const_cache = cc, cache = cache
+        )
         rlp = NoLimits.re_logprior(dm, batch, θ, b; const_cache = cc, cache = cache)
-        @test j≈cll + rlp atol=1e-10
+        @test j ≈ cll + rlp atol = 1.0e-10
         # ∇_b: ForwardDiff cover vs finite differences
         g = NoLimits.complete_data_loglikelihood_gradient(
-            dm, batch, θ, b; const_cache = cc, cache = cache)
-        gfd = FiniteDifferences.grad(central_fdm(5, 1),
+            dm, batch, θ, b; const_cache = cc, cache = cache
+        )
+        gfd = FiniteDifferences.grad(
+            central_fdm(5, 1),
             bb -> NoLimits.complete_data_loglikelihood(
-                dm, batch, θ, bb; const_cache = cc, cache = cache),
-            b)[1]
-        @test g≈gfd atol=1e-6
+                dm, batch, θ, bb; const_cache = cc, cache = cache
+            ),
+            b
+        )[1]
+        @test g ≈ gfd atol = 1.0e-6
         # ∇²_b: pure cover -> bit-identical, symmetric
         H = NoLimits.complete_data_loglikelihood_hessian(
-            dm, batch, θ, b; const_cache = cc, cache = cache)
+            dm, batch, θ, b; const_cache = cc, cache = cache
+        )
         @test H == NoLimits._laplace_hessian_b(dm, batch, θ, b, cc, cache, nothing, 1)
         @test H ≈ transpose(H)
         # population conditional is loglikelihood
         η_vec = NoLimits.eta_from_modes(
-            dm, infos, [zeros(NoLimits.get_batch_re_dim(bi)) for bi in infos], cc, θ)
+            dm, infos, [zeros(NoLimits.get_batch_re_dim(bi)) for bi in infos], cc, θ
+        )
         @test NoLimits.conditional_loglikelihood(dm, θ, η_vec) ===
-              NoLimits.loglikelihood(dm, θ, η_vec)
+            NoLimits.loglikelihood(dm, θ, η_vec)
     end
 
     @testset "crossed design (ID x SITE) exercises n_b > 1" begin
@@ -216,18 +252,24 @@ end
         @test NoLimits.get_batch_re_dim(batch) >= 2
         b = fill(0.2, NoLimits.get_batch_re_dim(batch))
         j = NoLimits.complete_data_loglikelihood(
-            dm, batch, θ, b; const_cache = cc, cache = cache)
+            dm, batch, θ, b; const_cache = cc, cache = cache
+        )
         cll = NoLimits.conditional_loglikelihood(
-            dm, batch, θ, b; const_cache = cc, cache = cache)
+            dm, batch, θ, b; const_cache = cc, cache = cache
+        )
         rlp = NoLimits.re_logprior(dm, batch, θ, b; const_cache = cc, cache = cache)
-        @test j≈cll + rlp atol=1e-10
+        @test j ≈ cll + rlp atol = 1.0e-10
         g = NoLimits.complete_data_loglikelihood_gradient(
-            dm, batch, θ, b; const_cache = cc, cache = cache)
-        gfd = FiniteDifferences.grad(central_fdm(5, 1),
+            dm, batch, θ, b; const_cache = cc, cache = cache
+        )
+        gfd = FiniteDifferences.grad(
+            central_fdm(5, 1),
             bb -> NoLimits.complete_data_loglikelihood(
-                dm, batch, θ, bb; const_cache = cc, cache = cache),
-            b)[1]
-        @test g≈gfd atol=1e-6
+                dm, batch, θ, bb; const_cache = cc, cache = cache
+            ),
+            b
+        )[1]
+        @test g ≈ gfd atol = 1.0e-6
     end
 
     @testset "solve_individual + obs_distributions (ODE) reproduce the likelihood" begin
@@ -239,7 +281,7 @@ end
         od = NoLimits.obs_distributions(dm, 1, θ, η)
         yv = NoLimits.get_obs(NoLimits.get_series(NoLimits.get_individuals(dm)[1])).y
         manual = sum(logpdf(od[i].y, yv[i]) for i in eachindex(od) if yv[i] !== missing)
-        @test NoLimits.conditional_loglikelihood(dm, 1, θ, η)≈manual atol=1e-9
+        @test NoLimits.conditional_loglikelihood(dm, 1, θ, η) ≈ manual atol = 1.0e-9
     end
 
     @testset "hmm_filter_step! passes non-HMM through" begin
@@ -258,38 +300,46 @@ end
 
         @test NoLimits.EBEOptions() isa NoLimits.EBEOptions
         bstars = NoLimits.empirical_bayes(
-            dm, θhat; serialization = NoLimits.EnsembleSerial())
+            dm, θhat; serialization = NoLimits.EnsembleSerial()
+        )
         @test length(bstars) == length(infos)
         # EB modes maximize the joint: ∇_b ≈ 0
         maxg = maximum(eachindex(infos)) do bi
             g = NoLimits.complete_data_loglikelihood_gradient(
-                dm, infos[bi], θhat, bstars[bi]; const_cache = cc, cache = cache)
+                dm, infos[bi], θhat, bstars[bi]; const_cache = cc, cache = cache
+            )
             isempty(g) ? 0.0 : maximum(abs, g)
         end
-        @test maxg < 1e-6
+        @test maxg < 1.0e-6
 
         # empirical_bayes_covariance: Σ = (−H)⁻¹
         Σ1 = NoLimits.empirical_bayes_covariance(
-            dm, θhat, infos[1], bstars[1]; const_cache = cc, cache = cache)
+            dm, θhat, infos[1], bstars[1]; const_cache = cc, cache = cache
+        )
         H1 = NoLimits.complete_data_loglikelihood_hessian(
-            dm, infos[1], θhat, bstars[1]; const_cache = cc, cache = cache)
+            dm, infos[1], θhat, bstars[1]; const_cache = cc, cache = cache
+        )
         @test Σ1 ≈ transpose(Σ1)
-        @test -H1 * Σ1≈Matrix(I, size(Σ1)...) atol=1e-6
+        @test -H1 * Σ1 ≈ Matrix(I, size(Σ1)...) atol = 1.0e-6
 
         # laplace_marginal batch equals its assembly; pop reproduces −objective
         lm1 = NoLimits.laplace_marginal(
-            dm, θhat, infos[1], bstars[1]; const_cache = cc, cache = cache)
+            dm, θhat, infos[1], bstars[1]; const_cache = cc, cache = cache
+        )
         logf1 = NoLimits._laplace_logf_batch(dm, infos[1], θhat, bstars[1], cc, cache)
         ldn, _, _ = NoLimits._laplace_logdet_negH(
-            dm, infos[1], θhat, bstars[1], cc, cache, nothing, 1)
+            dm, infos[1], θhat, bstars[1], cc, cache, nothing, 1
+        )
         @test lm1 ==
-              logf1 + (NoLimits.get_batch_re_dim(infos[1]) / 2) * log(2 * pi) - ldn / 2
+            logf1 + (NoLimits.get_batch_re_dim(infos[1]) / 2) * log(2 * pi) - ldn / 2
         lmpop = NoLimits.laplace_marginal(
-            dm, θhat; serialization = NoLimits.EnsembleSerial())
-        @test lmpop≈-NoLimits.get_objective(res) atol=1e-3
+            dm, θhat; serialization = NoLimits.EnsembleSerial()
+        )
+        @test lmpop ≈ -NoLimits.get_objective(res) atol = 1.0e-3
 
         @test NoLimits.empirical_bayes(
-            dm, θhat, 1; serialization = NoLimits.EnsembleSerial()) isa ComponentArray
+            dm, θhat, 1; serialization = NoLimits.EnsembleSerial()
+        ) isa ComponentArray
     end
 
     # Issue #116: per-individual quantities must key off identity, not row position, so
@@ -313,9 +363,11 @@ end
         # individual each one holds, mapped back through the permutation.
         batch_of = Dict(first(NoLimits.get_inds(infos[i])) => i for i in eachindex(infos))
         lm(d, c, info, b) = NoLimits.laplace_marginal(
-            d, θ, info, b; const_cache = c.const_cache, cache = c.cache)
+            d, θ, info, b; const_cache = c.const_cache, cache = c.cache
+        )
         gm(d, c, info) = NoLimits.ghq_marginal(
-            d, θ, info; level = 2, const_cache = c.const_cache, cache = c.cache)
+            d, θ, info; level = 2, const_cache = c.const_cache, cache = c.cache
+        )
         for j in eachindex(infosp)
             i = batch_of[perm[first(NoLimits.get_inds(infosp[j]))]]
             @test bsp[j] == bs[i]
@@ -328,12 +380,15 @@ end
         # The other half of the oracle: only the ORDER of the outer sum may change,
         # so the population objective at a fixed θ is invariant up to reassociation.
         ser = NoLimits.EnsembleSerial()
-        @test NoLimits.laplace_marginal(dmp, θ;
-            serialization = ser)≈
-        NoLimits.laplace_marginal(dm, θ; serialization = ser) rtol=1e-12
+        @test NoLimits.laplace_marginal(
+            dmp, θ;
+            serialization = ser
+        ) ≈
+            NoLimits.laplace_marginal(dm, θ; serialization = ser) rtol = 1.0e-12
         @test NoLimits.ghq_marginal(
-            dmp, θ; level = 2)≈
-        NoLimits.ghq_marginal(dm, θ; level = 2) rtol=1e-12
+            dmp, θ; level = 2
+        ) ≈
+            NoLimits.ghq_marginal(dm, θ; level = 2) rtol = 1.0e-12
     end
 
     @testset "quadrature marginal / Fisher info / posterior sampling" begin
@@ -344,8 +399,9 @@ end
 
         # ghq_marginal batch is a bit-identical cover of _ghq_batch_ll; pop is finite
         @test NoLimits.ghq_marginal(
-            dm, θ, infos[1]; level = 5, const_cache = cc, cache = cache) ===
-              NoLimits._ghq_batch_ll(dm, infos[1], θ, cc, cache, 5)
+            dm, θ, infos[1]; level = 5, const_cache = cc, cache = cache
+        ) ===
+            NoLimits._ghq_batch_ll(dm, infos[1], θ, cc, cache, 5)
         @test isfinite(NoLimits.ghq_marginal(dm, θ; level = 5))
 
         # expected_information registry aliases
@@ -360,36 +416,40 @@ end
         @test g isa NoLimits.GHQuadratureNodes
         @test size(NoLimits.get_nodes(g), 1) == NoLimits.get_dimension(g) == 2
         @test length(NoLimits.get_logweights(g)) == length(NoLimits.get_signs(g)) ==
-              size(NoLimits.get_nodes(g), 2)
+            size(NoLimits.get_nodes(g), 2)
         @test NoLimits.get_level(g) == 3
 
         # sample_random_effect_draws: Laplace-Gaussian IS (exact for the linear-Gaussian model)
         res = fx_laplace()
         θhat = NoLimits.get_params(res; scale = :untransformed)
         bstars = NoLimits.empirical_bayes(
-            dm, θhat; serialization = NoLimits.EnsembleSerial())
+            dm, θhat; serialization = NoLimits.EnsembleSerial()
+        )
         s = NoLimits.sample_random_effect_draws(
             dm, θhat, infos[1], bstars[1]; n_samples = 400,
-            const_cache = cc, cache = cache, rng = MersenneTwister(1))
+            const_cache = cc, cache = cache, rng = MersenneTwister(1)
+        )
         @test s isa NoLimits.RandomEffectPosteriorSample
         D = NoLimits.get_draws(s)
         lw = NoLimits.get_log_weights(s)
         @test size(D) == (NoLimits.get_batch_re_dim(infos[1]), 400)
         w = exp.(lw .- maximum(lw))
         w ./= sum(w)
-        @test D * w≈bstars[1] atol=0.15
+        @test D * w ≈ bstars[1] atol = 0.15
         @test NoLimits.get_ess(s) > 100
 
         # sample_random_effect_draws :mcmc wraps Turing directly
         smc = NoLimits.sample_random_effect_draws(
             dm, θhat, infos[1], Float64[]; method = :mcmc,
             sampler = MH(), n_samples = 40, n_adapt = 10, const_cache = cc, cache = cache,
-            rng = MersenneTwister(2))
+            rng = MersenneTwister(2)
+        )
         @test smc isa NoLimits.RandomEffectPosteriorSample
         @test size(NoLimits.get_draws(smc), 1) == NoLimits.get_batch_re_dim(infos[1])
         @test NoLimits.get_log_weights(smc) === nothing
         @test_throws ErrorException NoLimits.sample_random_effect_draws(
-            dm, θhat, infos[1], Float64[]; method = :mcmc, const_cache = cc, cache = cache)
+            dm, θhat, infos[1], Float64[]; method = :mcmc, const_cache = cc, cache = cache
+        )
     end
 
     @testset "curvature seam" begin
@@ -406,23 +466,33 @@ end
         # exact curvature via the seam is bit-identical to the internal Hessian
         @test NoLimits.complete_data_loglikelihood_hessian(
             dm, infos[1], θ, b; const_cache = cc,
-            cache = cache, curvature = NoLimits.ExactHessianCurvature()) ==
-              NoLimits._laplace_hessian_b(dm, infos[1], θ, b, cc, cache, nothing, 1)
+            cache = cache, curvature = NoLimits.ExactHessianCurvature()
+        ) ==
+            NoLimits._laplace_hessian_b(dm, infos[1], θ, b, cc, cache, nothing, 1)
 
         # FOCEI curvature routes through the seam; −H is PD by construction
         Hfoc = NoLimits.complete_data_loglikelihood_hessian(
             dm, infos[1], θ, b; const_cache = cc,
-            cache = cache, curvature = NoLimits.FisherInformationCurvature(true))
-        @test Hfoc == NoLimits.inner_curvature(NoLimits.FisherInformationCurvature(true),
-            dm, infos[1], θ, b, cc, cache, NoLimits.CurvatureWorkspace())
+            cache = cache, curvature = NoLimits.FisherInformationCurvature(true)
+        )
+        @test Hfoc == NoLimits.inner_curvature(
+            NoLimits.FisherInformationCurvature(true),
+            dm, infos[1], θ, b, cc, cache, NoLimits.CurvatureWorkspace()
+        )
         @test isposdef(-Hfoc)
 
         # curvature kwarg threads through empirical_bayes_covariance / laplace_marginal
-        Σf = NoLimits.empirical_bayes_covariance(dm, θ, infos[1], b; const_cache = cc,
-            cache = cache, curvature = NoLimits.FisherInformationCurvature(true))
+        Σf = NoLimits.empirical_bayes_covariance(
+            dm, θ, infos[1], b; const_cache = cc,
+            cache = cache, curvature = NoLimits.FisherInformationCurvature(true)
+        )
         @test Σf ≈ transpose(Σf)
-        @test isfinite(NoLimits.laplace_marginal(dm, θ, infos[1], b; const_cache = cc,
-            cache = cache, curvature = NoLimits.FisherInformationCurvature(false)))
+        @test isfinite(
+            NoLimits.laplace_marginal(
+                dm, θ, infos[1], b; const_cache = cc,
+                cache = cache, curvature = NoLimits.FisherInformationCurvature(false)
+            )
+        )
 
         # extension seam: a custom curvature plugs in via one `inner_curvature` method
         dmx = fx_mg_dm()
@@ -432,10 +502,12 @@ end
         bxb = argmax(NoLimits.get_batch_re_dim, infosx)
         bx = fill(0.1, NoLimits.get_batch_re_dim(bxb))
         Hfull = NoLimits.complete_data_loglikelihood_hessian(
-            dmx, bxb, θx, bx; const_cache = ccx, cache = cachex)
+            dmx, bxb, θx, bx; const_cache = ccx, cache = cachex
+        )
         Hdiag = NoLimits.complete_data_loglikelihood_hessian(
             dmx, bxb, θx, bx; const_cache = ccx,
-            cache = cachex, curvature = APITestDiagCurvature())
+            cache = cachex, curvature = APITestDiagCurvature()
+        )
         @test size(Hfull, 1) >= 2
         @test Hdiag == Matrix(Diagonal(diag(Hfull)))
     end
@@ -453,8 +525,10 @@ end
 
     @testset "marginal-RE method protocol (DiagonalLaplace skeleton)" begin
         dm = fx_re_dm()
-        res = fit_model(dm, APITestDiagonalLaplace(; optim_kwargs = (maxiters = 3,));
-            serialization = NoLimits.EnsembleSerial())
+        res = fit_model(
+            dm, APITestDiagonalLaplace(; optim_kwargs = (maxiters = 3,));
+            serialization = NoLimits.EnsembleSerial()
+        )
         # a custom curvature method produces a FrequentistREResult -> first-class accessors
         @test NoLimits.get_result(res) isa NoLimits.FrequentistREResult
         @test NoLimits.get_random_effects(dm, res) isa NamedTuple
@@ -480,9 +554,10 @@ end
         it = NoLimits.get_inverse_transform(fe)
         θt = NoLimits.get_transform(fe)(NoLimits.get_θ0_untransformed(fe))
         # log -> log(a); logit(0,1) -> log(σ(1-σ)); identity -> 0
-        @test logabsdetjac(it, θt)≈log(1.5) + log(0.3 * 0.7) atol=1e-8
+        @test logabsdetjac(it, θt) ≈ log(1.5) + log(0.3 * 0.7) atol = 1.0e-8
         g = ForwardDiff.gradient(
-            z -> logabsdetjac(it, ComponentArray(z, getaxes(θt))), collect(θt))
+            z -> logabsdetjac(it, ComponentArray(z, getaxes(θt))), collect(θt)
+        )
         @test all(isfinite, g)
         # structured scales (cholesky/expm/stickbreak/stickbreakrows/lograterows/lie)
         # are covered in test/logabsdetjac_tests.jl
@@ -498,8 +573,10 @@ end
         @test NoLimits.uq_family(APITestClosedFormEM()) == :wald_re
 
         dm = fx_re_dm()
-        res = fit_model(dm, APITestClosedFormEM(; n_iter = 5);
-            serialization = NoLimits.EnsembleSerial())
+        res = fit_model(
+            dm, APITestClosedFormEM(; n_iter = 5);
+            serialization = NoLimits.EnsembleSerial()
+        )
         # first-class result that keeps its own method type
         @test res isa NoLimits.FitResult
         @test NoLimits.get_method(res) isa APITestClosedFormEM
@@ -513,8 +590,10 @@ end
         @test compute_uq(res; method = :wald, pseudo_inverse = true) isa NoLimits.UQResult
 
         # a custom method without uq_family raises an informative error (not a wrong answer)
-        res_ridge = fit_model(fx_nore_dm(), RidgeMLE(; λ = 1.0);
-            serialization = NoLimits.EnsembleSerial())
+        res_ridge = fit_model(
+            fx_nore_dm(), RidgeMLE(; λ = 1.0);
+            serialization = NoLimits.EnsembleSerial()
+        )
         @test_throws ErrorException compute_uq(res_ridge; method = :wald)
     end
 
@@ -526,24 +605,36 @@ end
         # theta_0_untransformed is honoured: different starts -> different 1-step fits
         θa = copy(θ0)
         θa.a = θ0.a + 0.5
-        r1 = fit_model(dm, APITestClosedFormEM(; n_iter = 1);
-            theta_0_untransformed = θ0, serialization = NoLimits.EnsembleSerial())
-        r2 = fit_model(dm, APITestClosedFormEM(; n_iter = 1);
-            theta_0_untransformed = θa, serialization = NoLimits.EnsembleSerial())
-        @test !(NoLimits.get_params(r1; scale = :untransformed) ≈
-                NoLimits.get_params(r2; scale = :untransformed))
+        r1 = fit_model(
+            dm, APITestClosedFormEM(; n_iter = 1);
+            theta_0_untransformed = θ0, serialization = NoLimits.EnsembleSerial()
+        )
+        r2 = fit_model(
+            dm, APITestClosedFormEM(; n_iter = 1);
+            theta_0_untransformed = θa, serialization = NoLimits.EnsembleSerial()
+        )
+        @test !(
+            NoLimits.get_params(r1; scale = :untransformed) ≈
+                NoLimits.get_params(r2; scale = :untransformed)
+        )
 
         # Multistart delivers its starts through the same kwarg
-        ms = NoLimits.Multistart(dists = (; a = Normal(0.0, 1.0)),
-            n_draws_requested = 2, n_draws_used = 2, rng = Random.Xoshiro(3))
-        res_ms = fit_model(ms, dm, APITestClosedFormEM(; n_iter = 1);
-            serialization = NoLimits.EnsembleSerial())
+        ms = NoLimits.Multistart(
+            dists = (; a = Normal(0.0, 1.0)),
+            n_draws_requested = 2, n_draws_used = 2, rng = Random.Xoshiro(3)
+        )
+        res_ms = fit_model(
+            ms, dm, APITestClosedFormEM(; n_iter = 1);
+            serialization = NoLimits.EnsembleSerial()
+        )
         objs = NoLimits.get_objective.(NoLimits.get_multistart_results(res_ms))
         @test length(objs) == 2 && length(unique(objs)) == 2
 
         # pooled_init warm start reaches the custom method
-        res_pi = fit_model(dm, APITestClosedFormEM(; n_iter = 1); pooled_init = true,
-            serialization = NoLimits.EnsembleSerial())
+        res_pi = fit_model(
+            dm, APITestClosedFormEM(; n_iter = 1); pooled_init = true,
+            serialization = NoLimits.EnsembleSerial()
+        )
         @test isfinite(NoLimits.get_objective(res_pi))
 
         # save/load roundtrip (generic _strip_fitting_method covers custom methods)
@@ -552,13 +643,17 @@ end
         r1b = NoLimits.load_fit(path; dm = dm)
         @test NoLimits.get_objective(r1b) ≈ NoLimits.get_objective(r1)
         @test NoLimits.get_params(r1b; scale = :untransformed) ≈
-              NoLimits.get_params(r1; scale = :untransformed)
+            NoLimits.get_params(r1; scale = :untransformed)
 
         # kind validation errors at build time, not deep in an accessor
-        @test_throws ErrorException build_fit_result(dm, APITestClosedFormEM(), θ0;
-            kind = :laplace, objective = 0.0)
-        @test_throws ErrorException build_fit_result(dm, APITestClosedFormEM(), θ0;
-            kind = :frequentist, objective = 0.0, eb_modes = [zeros(1)])
+        @test_throws ErrorException build_fit_result(
+            dm, APITestClosedFormEM(), θ0;
+            kind = :laplace, objective = 0.0
+        )
+        @test_throws ErrorException build_fit_result(
+            dm, APITestClosedFormEM(), θ0;
+            kind = :frequentist, objective = 0.0, eb_modes = [zeros(1)]
+        )
     end
 
     @testset "FitContext convenience tier" begin
@@ -571,16 +666,19 @@ end
 
         # context calls are bit-identical to the explicit cache-threaded calls
         @test complete_data_loglikelihood(ctx, 1, θ, b) ===
-              complete_data_loglikelihood(
-            dm, infos[1], θ, b; const_cache = cc, cache = cache)
+            complete_data_loglikelihood(
+            dm, infos[1], θ, b; const_cache = cc, cache = cache
+        )
         @test conditional_loglikelihood(ctx, 1, θ, b) ===
-              conditional_loglikelihood(
-            dm, infos[1], θ, b; const_cache = cc, cache = cache)
+            conditional_loglikelihood(
+            dm, infos[1], θ, b; const_cache = cc, cache = cache
+        )
         @test re_logprior(ctx, 1, θ, b) ===
-              re_logprior(dm, infos[1], θ, b; const_cache = cc, cache = cache)
+            re_logprior(dm, infos[1], θ, b; const_cache = cc, cache = cache)
         @test complete_data_loglikelihood_hessian(ctx, 1, θ, b) ==
-              complete_data_loglikelihood_hessian(
-            dm, infos[1], θ, b; const_cache = cc, cache = cache)
+            complete_data_loglikelihood_hessian(
+            dm, infos[1], θ, b; const_cache = cc, cache = cache
+        )
 
         # population forms reuse the ctx caches and align with the batch structure
         modes = empirical_bayes(ctx, θ; rng = Random.MersenneTwister(3))
@@ -589,28 +687,37 @@ end
         @test covs[1] isa Matrix
         # the ctx batch-index form matches the explicit call
         @test empirical_bayes_covariance(ctx, 1, θ, modes[1]) ==
-              empirical_bayes_covariance(
-            dm, θ, infos[1], modes[1]; const_cache = cc, cache = cache)
+            empirical_bayes_covariance(
+            dm, θ, infos[1], modes[1]; const_cache = cc, cache = cache
+        )
         @test isfinite(laplace_marginal(ctx, θ))
         @test isfinite(ghq_marginal(ctx, θ))
-        s = sample_random_effect_draws(ctx, θ; n_samples = 30,
-            rng = Random.MersenneTwister(1))
+        s = sample_random_effect_draws(
+            ctx, θ; n_samples = 30,
+            rng = Random.MersenneTwister(1)
+        )
         @test length(s) == length(get_batch_infos(ctx))
         @test size(NoLimits.get_draws(s[1]), 2) == 30
 
         # optimize_parameters: natural-scale objective, transformed-scale solve
         modes = NoLimits.empirical_bayes(ctx, θ; rng = Random.MersenneTwister(2))
-        θ̂, sol = optimize_parameters(ctx; θ_start = θ,
-            optim_kwargs = (; iterations = 30)) do θn
-            -sum(complete_data_loglikelihood(ctx, bi, θn, modes[bi])
-            for bi in eachindex(get_batch_infos(ctx)))
+        θ̂, sol = optimize_parameters(
+            ctx; θ_start = θ,
+            optim_kwargs = (; iterations = 30)
+        ) do θn
+            -sum(
+                complete_data_loglikelihood(ctx, bi, θn, modes[bi])
+                    for bi in eachindex(get_batch_infos(ctx))
+            )
         end
         @test θ̂ isa ComponentArray && isfinite(sol.objective)
         @test θ̂.σ > 0 && θ̂.ω > 0        # log-scale bounds respected via the transform
 
         # ctx build_fit_result fills eb_modes automatically for RE kinds
-        res = build_fit_result(ctx, APITestClosedFormEM(), θ̂; kind = :frequentist_re,
-            objective = sol.objective)
+        res = build_fit_result(
+            ctx, APITestClosedFormEM(), θ̂; kind = :frequentist_re,
+            objective = sol.objective
+        )
         @test NoLimits.get_eb_modes(NoLimits.get_result(res)) !== nothing
         @test NoLimits.get_random_effects(dm, res) isa NamedTuple
     end
@@ -620,8 +727,10 @@ end
         dm = NoLimits.get_data_model(base)
         chain = NoLimits.get_chain(base)
 
-        res = build_fit_result(dm, APITestBayes(), chain;
-            sampler = NoLimits.get_sampler(base), n_samples = NoLimits.get_n_samples(base))
+        res = build_fit_result(
+            dm, APITestBayes(), chain;
+            sampler = NoLimits.get_sampler(base), n_samples = NoLimits.get_n_samples(base)
+        )
 
         # first-class Bayesian result that keeps its own method type
         @test res isa NoLimits.FitResult
@@ -656,7 +765,7 @@ end
     # has -H = xxᵀ/σ² + Ω⁻¹ with condition number ~t²; the old relative test
     # (λmin > 1e-8·λmax) called that degenerate, and the resulting -Inf cliff stalled the
     # outer optimizer ~1800 nats short of the optimum.
-    for lam in (1e-14, 1e-10, 1e-4)
+    for lam in (1.0e-14, 1.0e-10, 1.0e-4)
         @test ok(-Matrix(Diagonal([1.0, 1.0, lam])))
     end
 
@@ -673,37 +782,39 @@ end
     # determinant alone cannot be trusted and this predicate is needed. A healthy -H is
     # untouched and still gives the exact log-det.
     Hbad = -Matrix(Diagonal([1.0, 1.0, 0.0]))
-    cbad, _ = NoLimits._laplace_cholesky_negH(Hbad; jitter = 1e-6)
+    cbad, _ = NoLimits._laplace_cholesky_negH(Hbad; jitter = 1.0e-6)
     @test cbad !== nothing && cbad.info == 0
     @test !ok(Hbad)
-    cok, _ = NoLimits._laplace_cholesky_negH(-Matrix(Diagonal([2.0, 3.0])); jitter = 1e-6)
-    @test 2 * sum(log, diag(cok.U))≈log(6.0) rtol=1e-6
+    cok, _ = NoLimits._laplace_cholesky_negH(-Matrix(Diagonal([2.0, 3.0])); jitter = 1.0e-6)
+    @test 2 * sum(log, diag(cok.U)) ≈ log(6.0) rtol = 1.0e-6
 
     # A positive-definite -H must be factorised untouched, whatever the jitter settings. The
     # default `adaptive_jitter` is proportional to mean|diag(-H)|, so on a wide spectrum it
     # inflated the log-det of a perfectly healthy Hessian (0.51 nats here). That biased the
     # marginal AND broke the analytic outer gradient, which treats the jitter as constant --
     # invisible to the derivative-free default optimizer, fatal to a gradient-based one.
-    Hwide = -Matrix(Diagonal([1e6, 1e6, 1.0]))
-    for kw in ((; adaptive = true, scale_factor = 1e-6),
-        (; adaptive = false, scale_factor = 0.0))
-        cw, jitw = NoLimits._laplace_cholesky_negH(Hwide; jitter = 1e-6, kw...)
+    Hwide = -Matrix(Diagonal([1.0e6, 1.0e6, 1.0]))
+    for kw in (
+            (; adaptive = true, scale_factor = 1.0e-6),
+            (; adaptive = false, scale_factor = 0.0),
+        )
+        cw, jitw = NoLimits._laplace_cholesky_negH(Hwide; jitter = 1.0e-6, kw...)
         @test cw.info == 0
         @test iszero(jitw)
-        @test 2 * sum(log, diag(cw.U))≈logdet(-Hwide) rtol=1e-12
+        @test 2 * sum(log, diag(cw.U)) ≈ logdet(-Hwide) rtol = 1.0e-12
     end
 
     # Unit-invariance: the verdict follows definiteness, not scale. The un-jittered
     # Cholesky gives this for free; both absolute floors previously tried did not.
-    Hfine = -Matrix(Diagonal([1.0, 1.0, 1e-4]))    # informative
+    Hfine = -Matrix(Diagonal([1.0, 1.0, 1.0e-4]))    # informative
     Hdeg = -Matrix(Diagonal([1.0, 1.0, 0.0]))      # no curvature -> degenerate
-    for s in (1e-6, 1.0, 1e3, 1e6)
+    for s in (1.0e-6, 1.0, 1.0e3, 1.0e6)
         @test ok(s .* Hfine)
         @test !ok(s .* Hdeg)
     end
     # Scaling a well-conditioned -H up must not make it inadmissible: that over-rejection
     # is what stalled the pheno fit at its starting values.
-    @test ok(1e6 .* -Matrix(1.0I, 3, 3))
+    @test ok(1.0e6 .* -Matrix(1.0I, 3, 3))
 end
 
 # GHQ serial-vs-threaded invariance oracle (the #151 guard). It lives HERE, not
@@ -719,16 +830,22 @@ end
     else
         dm = fx_re_dm()
         function ghq_fit(ser)
-            fit_model(dm,
+            fit_model(
+                dm,
                 NoLimits.GHQuadrature(level = 3; optim_kwargs = (maxiters = 2,));
-                serialization = ser, rng = Random.Xoshiro(1))
+                serialization = ser, rng = Random.Xoshiro(1)
+            )
         end
         rs = ghq_fit(NoLimits.EnsembleSerial())
         rt = ghq_fit(NoLimits.EnsembleThreads())
-        @test isapprox(NoLimits.get_objective(rs), NoLimits.get_objective(rt);
-            rtol = 1e-8, atol = 1e-10)
-        @test isapprox(collect(NoLimits.get_params(rs; scale = :transformed)),
+        @test isapprox(
+            NoLimits.get_objective(rs), NoLimits.get_objective(rt);
+            rtol = 1.0e-8, atol = 1.0e-10
+        )
+        @test isapprox(
+            collect(NoLimits.get_params(rs; scale = :transformed)),
             collect(NoLimits.get_params(rt; scale = :transformed));
-            rtol = 1e-8, atol = 1e-10)
+            rtol = 1.0e-8, atol = 1.0e-10
+        )
     end
 end

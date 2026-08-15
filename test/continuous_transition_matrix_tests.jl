@@ -10,9 +10,11 @@ using Random
 # Helper: build a valid 3×3 Q-matrix for testing.
 # ---------------------------------------------------------------------------
 function _make_q3()
-    Q = [-0.5 0.3 0.2;
-         0.1 -0.4 0.3;
-         0.2 0.1 -0.3]
+    Q = [
+        -0.5 0.3 0.2;
+        0.1 -0.4 0.3;
+        0.2 0.1 -0.3
+    ]
     return Q
 end
 
@@ -29,24 +31,26 @@ end
         @test p.calculate_se == true
         @test size(p.value) == (3, 3)
         # Off-diagonals preserved
-        @test isapprox(p.value[1, 2], 0.3; atol = 1e-14)
-        @test isapprox(p.value[2, 3], 0.3; atol = 1e-14)
+        @test isapprox(p.value[1, 2], 0.3; atol = 1.0e-14)
+        @test isapprox(p.value[2, 3], 0.3; atol = 1.0e-14)
         # Rows sum to zero
         for i in 1:3
-            @test isapprox(sum(p.value[i, :]), 0.0; atol = 1e-14)
+            @test isapprox(sum(p.value[i, :]), 0.0; atol = 1.0e-14)
         end
     end
 
     @testset "diagonal silently recomputed" begin
         # Provide off-diagonal correctly, diagonal slightly wrong → silently fixed.
-        Q = [-0.49 0.3 0.2;
-             0.1 -0.39 0.3;
-             0.2 0.1 -0.29]
+        Q = [
+            -0.49 0.3 0.2;
+            0.1 -0.39 0.3;
+            0.2 0.1 -0.29
+        ]
         p = ContinuousTransitionMatrix(Q)
         for i in 1:3
-            @test isapprox(sum(p.value[i, :]), 0.0; atol = 1e-12)
+            @test isapprox(sum(p.value[i, :]), 0.0; atol = 1.0e-12)
         end
-        @test isapprox(p.value[1, 1], -(0.3 + 0.2); atol = 1e-14)
+        @test isapprox(p.value[1, 1], -(0.3 + 0.2); atol = 1.0e-14)
     end
 
     @testset "name and kwargs" begin
@@ -60,8 +64,8 @@ end
         Q = [-1.0 1.0; 2.0 -2.0]
         p = ContinuousTransitionMatrix(Q)
         @test size(p.value) == (2, 2)
-        @test isapprox(sum(p.value[1, :]), 0.0; atol = 1e-14)
-        @test isapprox(sum(p.value[2, :]), 0.0; atol = 1e-14)
+        @test isapprox(sum(p.value[1, :]), 0.0; atol = 1.0e-14)
+        @test isapprox(sum(p.value[2, :]), 0.0; atol = 1.0e-14)
     end
 
     @testset "error: non-square matrix" begin
@@ -86,7 +90,8 @@ end
 
     @testset "error: invalid scale" begin
         @test_throws ErrorException ContinuousTransitionMatrix(
-            _make_q3(); scale = :stickbreakrows)
+            _make_q3(); scale = :stickbreakrows
+        )
     end
 
     @testset "error: invalid prior" begin
@@ -103,7 +108,7 @@ end
         t = lograterows_forward(Q)
         @test length(t) == 6  # 3*(3-1)
         Q2 = lograterows_inverse(t, 3)
-        @test isapprox(Q2, Q; atol = 1e-12)
+        @test isapprox(Q2, Q; atol = 1.0e-12)
     end
 
     @testset "forward → inverse round-trip (2×2)" begin
@@ -111,20 +116,22 @@ end
         t = lograterows_forward(Q)
         @test length(t) == 2
         Q2 = lograterows_inverse(t, 2)
-        @test isapprox(Q2, Q; atol = 1e-12)
+        @test isapprox(Q2, Q; atol = 1.0e-12)
     end
 
     @testset "forward → inverse round-trip (4×4)" begin
-        Q = [-1.0 0.4 0.3 0.3;
-             0.2 -0.8 0.3 0.3;
-             0.1 0.1 -0.5 0.3;
-             0.0 0.2 0.3 -0.5]
+        Q = [
+            -1.0 0.4 0.3 0.3;
+            0.2 -0.8 0.3 0.3;
+            0.1 0.1 -0.5 0.3;
+            0.0 0.2 0.3 -0.5
+        ]
         p = ContinuousTransitionMatrix(Q)  # silently recomputes diagonal
         t = lograterows_forward(p.value)
         @test length(t) == 12  # 4*3
         Q2 = lograterows_inverse(t, 4)
         for i in 1:4
-            @test isapprox(sum(Q2[i, :]), 0.0; atol = 1e-12)
+            @test isapprox(sum(Q2[i, :]), 0.0; atol = 1.0e-12)
         end
         for i in 1:4, j in 1:4
             i == j && continue
@@ -136,9 +143,12 @@ end
         Q = _make_q3()
         fe = @fixedEffects begin
             Q = ContinuousTransitionMatrix(
-                [-0.5 0.3 0.2;
-                 0.1 -0.4 0.3;
-                 0.2 0.1 -0.3])
+                [
+                    -0.5 0.3 0.2;
+                    0.1 -0.4 0.3;
+                    0.2 0.1 -0.3
+                ]
+            )
         end
         θ0u = get_θ0_untransformed(fe)
         θ0t = get_θ0_transformed(fe)
@@ -149,7 +159,7 @@ end
         # Round-trip: inverse(forward(θ0u)) ≈ θ0u
         inv_transform = get_inverse_transform(fe)
         θ0u_back = inv_transform(θ0t)
-        @test isapprox(Matrix(θ0u_back[:Q]), Matrix(θ0u[:Q]); atol = 1e-10)
+        @test isapprox(Matrix(θ0u_back[:Q]), Matrix(θ0u[:Q]); atol = 1.0e-10)
     end
 end
 
@@ -159,10 +169,13 @@ end
 @testset "ContinuousTransitionMatrix flat names" begin
     fe = @fixedEffects begin
         Q = ContinuousTransitionMatrix(
-            [-0.5 0.3 0.2;
-             0.1 -0.4 0.3;
-             0.2 0.1 -0.3];
-            calculate_se = true)
+            [
+                -0.5 0.3 0.2;
+                0.1 -0.4 0.3;
+                0.2 0.1 -0.3
+            ];
+            calculate_se = true
+        )
     end
     flat = get_flat_names(fe)
     @test length(flat) == 6
@@ -178,9 +191,12 @@ end
 @testset "ContinuousTransitionMatrix bounds" begin
     fe = @fixedEffects begin
         Q = ContinuousTransitionMatrix(
-            [-0.5 0.3 0.2;
-             0.1 -0.4 0.3;
-             0.2 0.1 -0.3])
+            [
+                -0.5 0.3 0.2;
+                0.1 -0.4 0.3;
+                0.2 0.1 -0.3
+            ]
+        )
     end
     lb_t, ub_t = get_bounds_transformed(fe)
     @test all(lb_t[:Q] .== -Inf)
@@ -194,10 +210,13 @@ end
     Q0 = _make_q3()
     fe = @fixedEffects begin
         Q = ContinuousTransitionMatrix(
-            [-0.5 0.3 0.2;
-             0.1 -0.4 0.3;
-             0.2 0.1 -0.3];
-            calculate_se = true)
+            [
+                -0.5 0.3 0.2;
+                0.1 -0.4 0.3;
+                0.2 0.1 -0.3
+            ];
+            calculate_se = true
+        )
         σ = RealNumber(0.5; scale = :log, calculate_se = true)
     end
     inv_transform = get_inverse_transform(fe)
@@ -224,7 +243,7 @@ end
 
     # Compare with finite differences.
     g_fd = similar(x0)
-    h = 1e-5
+    h = 1.0e-5
     for i in eachindex(x0)
         xp = copy(x0)
         xp[i] += h
@@ -232,7 +251,7 @@ end
         xm[i] -= h
         g_fd[i] = (obj(xp) - obj(xm)) / (2h)
     end
-    @test isapprox(g_fwd, g_fd; atol = 1e-6)
+    @test isapprox(g_fwd, g_fd; atol = 1.0e-6)
 end
 
 # ---------------------------------------------------------------------------
@@ -242,7 +261,8 @@ end
     fe = @fixedEffects begin
         a = RealNumber(1.0)
         Q = ContinuousTransitionMatrix(
-            [-0.5 0.5; 0.2 -0.2])
+            [-0.5 0.5; 0.2 -0.2]
+        )
     end
     cn = get_collect_names(fe)
     @test :Q in cn
@@ -259,10 +279,13 @@ end
     p = ContinuousTransitionMatrix(Q)
     fe = @fixedEffects begin
         Q = ContinuousTransitionMatrix(
-            [-0.5 0.3 0.2;
-             0.1 -0.4 0.3;
-             0.2 0.1 -0.3];
-            calculate_se = true)
+            [
+                -0.5 0.3 0.2;
+                0.1 -0.4 0.3;
+                0.2 0.1 -0.3
+            ];
+            calculate_se = true
+        )
     end
     θ0u = get_θ0_untransformed(fe)
     specs = get_transforms(fe).forward.specs
@@ -273,13 +296,14 @@ end
     # Should be off-diagonal elements in row-major order.
     Q_val = p.value
     expected = [
-        Q_val[1, 2], Q_val[1, 3], Q_val[2, 1], Q_val[2, 3], Q_val[3, 1], Q_val[3, 2]]
-    @test isapprox(coords_nat, expected; atol = 1e-14)
+        Q_val[1, 2], Q_val[1, 3], Q_val[2, 1], Q_val[2, 3], Q_val[3, 1], Q_val[3, 2],
+    ]
+    @test isapprox(coords_nat, expected; atol = 1.0e-14)
 
     # Transformed coordinates are log of the same values.
     θ0t = get_θ0_transformed(fe)
     coords_trans = _coords_for_param(collect(θ0t[:Q]), spec; natural = false)
-    @test isapprox(coords_trans, log.(expected); atol = 1e-12)
+    @test isapprox(coords_trans, log.(expected); atol = 1.0e-12)
 end
 
 # ---------------------------------------------------------------------------
@@ -291,9 +315,12 @@ end
     model = @Model begin
         @fixedEffects begin
             Q = ContinuousTransitionMatrix(
-                [-0.5 0.3 0.2;
-                 0.1 -0.4 0.3;
-                 0.2 0.1 -0.3])
+                [
+                    -0.5 0.3 0.2;
+                    0.1 -0.4 0.3;
+                    0.2 0.1 -0.3
+                ]
+            )
             σ = RealNumber(0.5; scale = :log)
         end
         @covariates begin

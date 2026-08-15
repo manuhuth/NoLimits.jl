@@ -18,10 +18,12 @@ function _uq_param_indices(uq::UQResult, parameters; scale::Symbol = :transforme
     return idx
 end
 
-@inline function _uq_density_ylabel(backend::Symbol;
+@inline function _uq_density_ylabel(
+        backend::Symbol;
         analytic_wald::Bool = false,
         mixed_wald::Bool = false,
-        plot_type::Symbol = :density)
+        plot_type::Symbol = :density
+    )
     if plot_type == :histogram
         if backend == :chain || backend == :mcmc_refit
             return "Posterior Density Histogram"
@@ -34,7 +36,7 @@ end
         return "Posterior Density"
     elseif backend == :wald
         return analytic_wald ? "Wald Approximate Density" :
-               (mixed_wald ? "Wald Approx./KDE Density" : "Wald KDE Density")
+            (mixed_wald ? "Wald Approx./KDE Density" : "Wald KDE Density")
     end
     return "KDE Density"
 end
@@ -47,11 +49,13 @@ end
     return nothing
 end
 
-@inline function _wald_closed_form_kind(backend::Symbol,
+@inline function _wald_closed_form_kind(
+        backend::Symbol,
         scale::Symbol,
         j::Int,
         vcov_t::Union{Nothing, Matrix{Float64}},
-        coord_transforms)
+        coord_transforms
+    )
     backend == :wald || return :none
     vcov_t === nothing && return :none
     if scale == :transformed
@@ -119,10 +123,12 @@ end
     return y0 + t * (y1 - y0)
 end
 
-function _density_interval_slice(x_raw::AbstractVector{<:Real},
+function _density_interval_slice(
+        x_raw::AbstractVector{<:Real},
         y_raw::AbstractVector{<:Real},
         lo::Real,
-        hi::Real)
+        hi::Real
+    )
     length(x_raw) == length(y_raw) || error("x/y density vectors must have equal length.")
     length(x_raw) >= 2 || return nothing
     x = Float64.(x_raw)
@@ -161,7 +167,8 @@ function _density_interval_slice(x_raw::AbstractVector{<:Real},
 end
 
 function _uq_kde_xy(
-        vals::AbstractVector{<:Real}; bandwidth::Union{Nothing, Float64} = nothing)
+        vals::AbstractVector{<:Real}; bandwidth::Union{Nothing, Float64} = nothing
+    )
     x = Float64.(collect(vals))
     length(x) >= 2 || error("KDE requires at least two samples.")
     x_min = minimum(x)
@@ -170,7 +177,7 @@ function _uq_kde_xy(
         error("KDE requires finite samples.")
     end
     if x_max == x_min
-        δ = max(abs(x_min) * 0.05, 1e-3)
+        δ = max(abs(x_min) * 0.05, 1.0e-3)
         return [x_min - δ, x_min, x_min + δ], [0.0, 1.0 / δ, 0.0]
     end
     kd = bandwidth === nothing ? kde(x) : kde(x; bandwidth = bandwidth)
@@ -185,5 +192,5 @@ end
         lo_f, hi_f = hi_f, lo_f
     end
     return lims === nothing ? (lo_f, hi_f) :
-           (min(lims[1], lo_f), max(lims[2], hi_f))
+        (min(lims[1], lo_f), max(lims[2], hi_f))
 end

@@ -37,13 +37,15 @@ end
 function crossing_time(args...; kwargs...)
     error(
         "`crossing_time` may only be used as a deterministic node inside @formulas, " *
-        "e.g. `tstar = crossing_time(:state, :threshold; tmax = T)`.")
+            "e.g. `tstar = crossing_time(:state, :threshold; tmax = T)`."
+    )
 end
 
 function crossing_rootval(args...; kwargs...)
     error(
         "`crossing_rootval` may only be used as a deterministic node inside @formulas, " *
-        "e.g. `rootval = crossing_rootval(:state, :threshold; tmax = T)`.")
+            "e.g. `rootval = crossing_rootval(:state, :threshold; tmax = T)`."
+    )
 end
 
 get_formulas_crossings(f) = f.ir.crossings
@@ -56,8 +58,10 @@ get_formulas_crossings(f) = f.ir.crossings
     elseif pre !== nothing && hasproperty(pre, sym)
         return getproperty(pre, sym)
     else
-        error("crossing_time threshold `$(sym)` was not found among the fixed effects " *
-              "or preDifferentialEquation variables.")
+        error(
+            "crossing_time threshold `$(sym)` was not found among the fixed effects " *
+                "or preDifferentialEquation variables."
+        )
     end
 end
 

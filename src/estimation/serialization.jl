@@ -22,7 +22,7 @@ struct _SavedSamplerStub
     kind::Symbol
 end
 function Base.show(io::IO, s::_SavedSamplerStub)
-    print(io, "_SavedSamplerStub(:$(s.kind)) [not a live sampler; reconstructed from disk]")
+    return print(io, "_SavedSamplerStub(:$(s.kind)) [not a live sampler; reconstructed from disk]")
 end
 
 # ─── Saved DataModel config ──────────────────────────────────────────────────
@@ -100,10 +100,13 @@ struct SavedStandardResult{Kind, S, O, I, N, B, E, St}
     strategies::St
 end
 
-function SavedStandardResult{Kind}(solution::S, objective::O, iterations::I, notes::N,
-        eb_modes::B, eta_vec::E, strategies::St) where {Kind, S, O, I, N, B, E, St}
-    SavedStandardResult{Kind, S, O, I, N, B, E, St}(
-        solution, objective, iterations, notes, eb_modes, eta_vec, strategies)
+function SavedStandardResult{Kind}(
+        solution::S, objective::O, iterations::I, notes::N,
+        eb_modes::B, eta_vec::E, strategies::St
+    ) where {Kind, S, O, I, N, B, E, St}
+    return SavedStandardResult{Kind, S, O, I, N, B, E, St}(
+        solution, objective, iterations, notes, eb_modes, eta_vec, strategies
+    )
 end
 
 # MCMCChains.Chains is plain array data and serializes directly with JLD2.
@@ -164,7 +167,7 @@ end
 # Generic: the stub kind is the lowercased type name (:mle, :focei, :closedformem, ...),
 # so every FittingMethod - built-in or custom - is saveable.
 function _strip_fitting_method(m::FittingMethod)
-    _SavedFittingMethod(Symbol(lowercase(string(nameof(typeof(m))))))
+    return _SavedFittingMethod(Symbol(lowercase(string(nameof(typeof(m))))))
 end
 _strip_fitting_method(m::_SavedFittingMethod) = m  # idempotent
 
@@ -198,59 +201,71 @@ end
 
 function _strip_fit_kwargs(kw::NamedTuple)
     keep = (
-        :constants, :constants_re, :penalty, :ode_args, :ode_kwargs, :theta_0_untransformed)
+        :constants, :constants_re, :penalty, :ode_args, :ode_kwargs, :theta_0_untransformed,
+    )
     kept = NamedTuple(k => getfield(kw, k) for k in keep if haskey(kw, k))
     ser_kind = haskey(kw, :serialization) ? _ensemble_to_symbol(kw.serialization) : :serial
     return merge(kept, (; serialization_kind = ser_kind))
 end
 
 function _strip_method_result(r::FrequentistResult)
-    SavedFrequentistResult(_strip_solution(r.solution), r.objective, r.iterations, r.notes)
+    return SavedFrequentistResult(_strip_solution(r.solution), r.objective, r.iterations, r.notes)
 end
 
 function _strip_method_result(r::MAPResult)
-    SavedMAPResult(_strip_solution(r.solution), r.objective, r.iterations, r.notes)
+    return SavedMAPResult(_strip_solution(r.solution), r.objective, r.iterations, r.notes)
 end
 
 function _strip_method_result(r::FrequentistREResult)
-    SavedFrequentistREResult(
-        _strip_solution(r.solution), r.objective, r.iterations, r.notes, get_eb_modes(r))
+    return SavedFrequentistREResult(
+        _strip_solution(r.solution), r.objective, r.iterations, r.notes, get_eb_modes(r)
+    )
 end
 
 function _strip_method_result(r::MCEMResult)
-    SavedMCEMResult(
-        _strip_solution(r.solution), r.objective, r.iterations, r.notes, get_eb_modes(r))
+    return SavedMCEMResult(
+        _strip_solution(r.solution), r.objective, r.iterations, r.notes, get_eb_modes(r)
+    )
 end
 
 function _strip_method_result(r::SAEMResult)
-    SavedSAEMResult(
-        _strip_solution(r.solution), r.objective, r.iterations, r.notes, get_eb_modes(r))
+    return SavedSAEMResult(
+        _strip_solution(r.solution), r.objective, r.iterations, r.notes, get_eb_modes(r)
+    )
 end
 
 function _strip_method_result(r::GHQuadratureResult)
-    SavedGHQuadratureResult(
-        _strip_solution(r.solution), r.objective, r.iterations, r.notes, get_eb_modes(r))
+    return SavedGHQuadratureResult(
+        _strip_solution(r.solution), r.objective, r.iterations, r.notes, get_eb_modes(r)
+    )
 end
 
 function _strip_method_result(r::StandardOptimizationResult{Kind}) where {Kind}
-    SavedStandardResult{Kind}(_strip_solution(r.solution), r.objective, r.iterations,
-        r.notes, r.eb_modes, r.eta_vec, r.strategies)
+    return SavedStandardResult{Kind}(
+        _strip_solution(r.solution), r.objective, r.iterations,
+        r.notes, r.eb_modes, r.eta_vec, r.strategies
+    )
 end
 
 function _strip_method_result(r::MCMCResult)
-    SavedMCMCResult(
-        r.chain, _mcmc_sampler_kind(r.sampler), r.n_samples, r.notes, r.observed)
+    return SavedMCMCResult(
+        r.chain, _mcmc_sampler_kind(r.sampler), r.n_samples, r.notes, r.observed
+    )
 end
 
 function _strip_method_result(r::VIResult)
-    SavedVIResult(r.posterior, r.trace, r.n_iter, r.max_iter, r.final_elbo,
-        r.converged, r.notes, r.observed, r.coord_names)
+    return SavedVIResult(
+        r.posterior, r.trace, r.n_iter, r.max_iter, r.final_elbo,
+        r.converged, r.notes, r.observed, r.coord_names
+    )
 end
 
 function _strip_fit_result(res::FitResult; include_data::Bool = false)
     # Strip optimizer from diagnostics (it may hold Optim.jl internal state)
-    diag = FitDiagnostics(get_diagnostics(res).timing, nothing,
-        get_diagnostics(res).convergence, get_diagnostics(res).notes)
+    diag = FitDiagnostics(
+        get_diagnostics(res).timing, nothing,
+        get_diagnostics(res).convergence, get_diagnostics(res).notes
+    )
     fkw = _strip_fit_kwargs(get_fit_kwargs(res))
     dm = get_data_model(res)
     df = (include_data && dm !== nothing) ? get_df(dm) : nothing
@@ -271,13 +286,15 @@ _strip_partial_result(r::FitResult) = _strip_fit_result(r; include_data = false)
 _strip_partial_result(r) = nothing  # Nothing or unknown type; drop silently
 
 function _strip_fit_result(res::MultistartFitResult; include_data::Bool = false)
-    saved_ok = SavedFitResult[_strip_fit_result(r; include_data = false)
-                              for r in res.results_ok]
+    saved_ok = SavedFitResult[
+        _strip_fit_result(r; include_data = false)
+            for r in res.results_ok
+    ]
     saved_err = [_strip_partial_result(r) for r in res.results_err]
     err_strs = String[sprint(showerror, e) for e in res.errors_err]
     # Take df/config from the best result's data_model
     best_dm = isempty(res.results_ok) ? nothing :
-              get_data_model(res.results_ok[res.best_idx])
+        get_data_model(res.results_ok[res.best_idx])
     df = (include_data && best_dm !== nothing) ? get_df(best_dm) : nothing
     config = (include_data && best_dm !== nothing) ? _build_saved_config(best_dm) : nothing
     return SavedMultistartFitResult(
@@ -304,55 +321,61 @@ function _symbol_to_serialization(sym::Symbol)
 end
 
 function _reconstruct_method_result(s::SavedFrequentistResult)
-    FrequentistResult(s.solution, s.objective, s.iterations, nothing, s.notes)
+    return FrequentistResult(s.solution, s.objective, s.iterations, nothing, s.notes)
 end
 
 function _reconstruct_method_result(s::SavedMAPResult)
-    MAPResult(s.solution, s.objective, s.iterations, nothing, s.notes)
+    return MAPResult(s.solution, s.objective, s.iterations, nothing, s.notes)
 end
 
 function _reconstruct_method_result(s::SavedFrequentistREResult)
-    FrequentistREResult(s.solution, s.objective, s.iterations, nothing, s.notes, s.eb_modes)
+    return FrequentistREResult(s.solution, s.objective, s.iterations, nothing, s.notes, s.eb_modes)
 end
 
 function _reconstruct_method_result(s::SavedMCEMResult)
-    MCEMResult(s.solution, s.objective, s.iterations, nothing, s.notes, s.eb_modes)
+    return MCEMResult(s.solution, s.objective, s.iterations, nothing, s.notes, s.eb_modes)
 end
 
 function _reconstruct_method_result(s::SavedSAEMResult)
-    SAEMResult(s.solution, s.objective, s.iterations, nothing, s.notes, s.eb_modes)
+    return SAEMResult(s.solution, s.objective, s.iterations, nothing, s.notes, s.eb_modes)
 end
 
 function _reconstruct_method_result(s::SavedGHQuadratureResult)
-    GHQuadratureResult(s.solution, s.objective, s.iterations, nothing, s.notes, s.eb_modes)
+    return GHQuadratureResult(s.solution, s.objective, s.iterations, nothing, s.notes, s.eb_modes)
 end
 
 function _reconstruct_method_result(s::SavedStandardResult{Kind}) where {Kind}
-    StandardOptimizationResult{Kind}(s.solution, s.objective, s.iterations, nothing,
-        s.notes, s.eb_modes, s.eta_vec, s.strategies)
+    return StandardOptimizationResult{Kind}(
+        s.solution, s.objective, s.iterations, nothing,
+        s.notes, s.eb_modes, s.eta_vec, s.strategies
+    )
 end
 
 function _reconstruct_method_result(s::SavedMCMCResult)
-    MCMCResult(s.chain, _SavedSamplerStub(s.sampler_kind), s.n_samples, s.notes, s.observed)
+    return MCMCResult(s.chain, _SavedSamplerStub(s.sampler_kind), s.n_samples, s.notes, s.observed)
 end
 
 # VIResult: state=nothing, model=nothing — not reconstructable from disk.
 # (Without the model, `sample_posterior` cannot unlink draws and returns them as-is.)
 function _reconstruct_method_result(s::SavedVIResult)
-    VIResult(s.posterior, s.trace, nothing, s.n_iter, s.max_iter,
-        s.final_elbo, s.converged, s.notes, s.observed, s.coord_names, nothing)
+    return VIResult(
+        s.posterior, s.trace, nothing, s.n_iter, s.max_iter,
+        s.final_elbo, s.converged, s.notes, s.observed, s.coord_names, nothing
+    )
 end
 
 function _reconstruct_fit_kwargs(kw::NamedTuple)
     keep = (
-        :constants, :constants_re, :penalty, :ode_args, :ode_kwargs, :theta_0_untransformed)
+        :constants, :constants_re, :penalty, :ode_args, :ode_kwargs, :theta_0_untransformed,
+    )
     kept = NamedTuple(k => getfield(kw, k) for k in keep if haskey(kw, k))
     ser = _symbol_to_serialization(get(kw, :serialization_kind, :serial))
     return merge(kept, (; serialization = ser))
 end
 
 function _reconstruct_data_model(df, config::_SavedDataModelConfig, model)
-    return DataModel(model, df;
+    return DataModel(
+        model, df;
         primary_id = config.primary_id,
         time_col = config.time_col,
         evid_col = config.evid_col,
@@ -360,7 +383,8 @@ function _reconstruct_data_model(df, config::_SavedDataModelConfig, model)
         rate_col = config.rate_col,
         cmt_col = config.cmt_col,
         t0 = config.t0,
-        serialization = _symbol_to_serialization(config.serialization_kind))
+        serialization = _symbol_to_serialization(config.serialization_kind)
+    )
 end
 
 function _resolve_dm(saved_df, saved_config, model, dm)
@@ -379,25 +403,33 @@ function _reconstruct_fit_result(saved::SavedFitResult, model, dm)
     dm_r = _resolve_dm(saved.df, saved.data_model_config, model, dm)
     result = _reconstruct_method_result(saved.result)
     fkw = _reconstruct_fit_kwargs(saved.fit_kwargs_saved)
-    return FitResult(saved.method, result, saved.summary, saved.diagnostics,
-        dm_r, (dm_r, saved.method), fkw)
+    return FitResult(
+        saved.method, result, saved.summary, saved.diagnostics,
+        dm_r, (dm_r, saved.method), fkw
+    )
 end
 
 function _reconstruct_partial_result(r::SavedFitResult, model, dm)
-    _reconstruct_fit_result(r, model, dm)
+    return _reconstruct_fit_result(r, model, dm)
 end
 _reconstruct_partial_result(_, model, dm) = nothing  # Nothing or unknown type
 
 function _reconstruct_multistart(saved::SavedMultistartFitResult, model, dm)
     dm_r = _resolve_dm(saved.df, saved.data_model_config, model, dm)
-    results_ok = FitResult[_reconstruct_fit_result(r, model, dm_r)
-                           for r in saved.saved_results_ok]
-    results_err = [_reconstruct_partial_result(r, model, dm_r)
-                   for r in saved.saved_results_err]
-    return MultistartFitResult(saved.method, results_ok, results_err,
+    results_ok = FitResult[
+        _reconstruct_fit_result(r, model, dm_r)
+            for r in saved.saved_results_ok
+    ]
+    results_err = [
+        _reconstruct_partial_result(r, model, dm_r)
+            for r in saved.saved_results_err
+    ]
+    return MultistartFitResult(
+        saved.method, results_ok, results_err,
         saved.starts_ok, saved.starts_err,
         saved.errors_err_strings,
-        saved.best_idx, saved.scores_ok)
+        saved.best_idx, saved.scores_ok
+    )
 end
 
 # ─── Public API ──────────────────────────────────────────────────────────────
@@ -425,8 +457,10 @@ The path string.
 # See also
 [`load_fit`](@ref)
 """
-function save_fit(path::AbstractString, res::Union{FitResult, MultistartFitResult};
-        include_data::Bool = false)
+function save_fit(
+        path::AbstractString, res::Union{FitResult, MultistartFitResult};
+        include_data::Bool = false
+    )
     _require_ext(:NoLimitsJLD2Ext, :JLD2, "save_fit")
     stripped = _strip_fit_result(res; include_data = include_data)
     with_logger(NullLogger()) do
@@ -471,9 +505,11 @@ function load_fit(path::AbstractString; model = nothing, dm = nothing)
         _jld2_load(path)
     end
     saved.format_version == _SERIALIZATION_FORMAT_VERSION ||
-        error("Unsupported SavedFitResult format version $(saved.format_version). " *
-              "Expected version $(_SERIALIZATION_FORMAT_VERSION). " *
-              "This file may have been written by a different version of NoLimits.jl.")
+        error(
+        "Unsupported SavedFitResult format version $(saved.format_version). " *
+            "Expected version $(_SERIALIZATION_FORMAT_VERSION). " *
+            "This file may have been written by a different version of NoLimits.jl."
+    )
     if saved isa SavedMultistartFitResult
         return _reconstruct_multistart(saved, model, dm)
     end

@@ -19,8 +19,12 @@ _mv_n_outcomes(dist::Distribution{Multivariate}) = length(dist)
 # numeric type, AD-safe). The static ntuple avoids the runtime `dists[m]`
 # dynamic dispatch of a generator over heterogeneous per-outcome emissions.
 function _mv_emission_logpdf(dists::Tuple, y::AbstractVector)
-    sum(ntuple(m -> ismissing(y[m]) ? false : logpdf(dists[m], y[m]),
-        Val(length(dists))))
+    return sum(
+        ntuple(
+            m -> ismissing(y[m]) ? false : logpdf(dists[m], y[m]),
+            Val(length(dists))
+        )
+    )
 end
 
 # Joint MvNormal emission: handles missings via analytic marginalization.
@@ -38,7 +42,8 @@ end
 function _mv_emission_logpdf(dist::Distribution{Multivariate}, y::AbstractVector)
     any(ismissing, y) && error(
         "Missing observations in multivariate HMM are only supported for " *
-        "MvNormal emission distributions. Got $(typeof(dist)).")
+            "MvNormal emission distributions. Got $(typeof(dist))."
+    )
     return logpdf(dist, collect(y))
 end
 
@@ -46,7 +51,7 @@ end
 # only), so the HMM callers compute them once per row and pass them in, sparing
 # the per-state findall + copy in the joint MvNormal path. Values are unchanged.
 function _mv_emission_logpdf(dists::Tuple, y::AbstractVector, obs_idx, y_obs)
-    _mv_emission_logpdf(dists, y)
+    return _mv_emission_logpdf(dists, y)
 end
 
 function _mv_emission_logpdf(dist::MvNormal, y::AbstractVector, obs_idx, y_obs)
@@ -58,7 +63,8 @@ function _mv_emission_logpdf(dist::MvNormal, y::AbstractVector, obs_idx, y_obs)
 end
 
 function _mv_emission_logpdf(
-        dist::Distribution{Multivariate}, y::AbstractVector, obs_idx, y_obs)
+        dist::Distribution{Multivariate}, y::AbstractVector, obs_idx, y_obs
+    )
     return _mv_emission_logpdf(dist, y)
 end
 

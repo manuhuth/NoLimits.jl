@@ -28,10 +28,10 @@ is propagated forward without a likelihood contribution — identical to the HMM
 behavior.
 """
 struct DiscreteTimeObservedStatesMarkovModel{
-    M <: AbstractMatrix{<:Real},
-    D <: Distributions.Categorical,
-    T
-} <: Distribution{Univariate, Discrete}
+        M <: AbstractMatrix{<:Real},
+        D <: Distributions.Categorical,
+        T,
+    } <: Distribution{Univariate, Discrete}
     n_states::Int
     transition_matrix::M
     initial_dist::D
@@ -44,29 +44,35 @@ function DiscreteTimeObservedStatesMarkovModel(
         transition_matrix::AbstractMatrix{<:Real},
         initial_dist::Distributions.Categorical,
         state_labels::Vector{T}
-) where {T}
+    ) where {T}
     n_states = size(transition_matrix, 1)
     size(transition_matrix, 2) == n_states ||
         error("transition_matrix must be square, got $(size(transition_matrix)).")
     length(initial_dist.p) == n_states ||
-        error("length(initial_dist.p) must equal n_states ($n_states), " *
-              "got $(length(initial_dist.p)).")
+        error(
+        "length(initial_dist.p) must equal n_states ($n_states), " *
+            "got $(length(initial_dist.p))."
+    )
     length(state_labels) == n_states ||
-        error("length(state_labels) must equal n_states ($n_states), " *
-              "got $(length(state_labels)).")
+        error(
+        "length(state_labels) must equal n_states ($n_states), " *
+            "got $(length(state_labels))."
+    )
     _hmm_check_transition_matrix(transition_matrix)
     return DiscreteTimeObservedStatesMarkovModel(
-        n_states, transition_matrix, initial_dist, state_labels)
+        n_states, transition_matrix, initial_dist, state_labels
+    )
 end
 
 # Default constructor: integer labels 1..n_states
 function DiscreteTimeObservedStatesMarkovModel(
         transition_matrix::AbstractMatrix{<:Real},
         initial_dist::Distributions.Categorical
-)
+    )
     n_states = size(transition_matrix, 1)
     return DiscreteTimeObservedStatesMarkovModel(
-        transition_matrix, initial_dist, collect(1:n_states))
+        transition_matrix, initial_dist, collect(1:n_states)
+    )
 end
 
 @inline _omm_is_observed_markov_dist(::DiscreteTimeObservedStatesMarkovModel) = true
@@ -90,5 +96,5 @@ end
 # `_ObservedStatesMarkovModel` Union after both types exist).
 
 function Distributions.params(dist::DiscreteTimeObservedStatesMarkovModel)
-    (dist.transition_matrix, dist.initial_dist, dist.state_labels)
+    return (dist.transition_matrix, dist.initial_dist, dist.state_labels)
 end

@@ -21,7 +21,7 @@ function _assert_profile_interval(uq)
         @test all(isfinite, ints.upper)
         @test all(ints.lower .< est .< ints.upper)
     end
-    @test all(get_uq_diagnostics(uq).endpoint_found)
+    return @test all(get_uq_diagnostics(uq).endpoint_found)
 end
 
 # ── Shared models (UQ assertions need specific calculate_se flag patterns, so
@@ -57,12 +57,15 @@ const _UQ_NORE_P_MODEL = @Model begin
         y ~ Normal(a + b * t, σ)
     end
 end
-const _UQ_NORE_P_DM = DataModel(_UQ_NORE_P_MODEL,
+const _UQ_NORE_P_DM = DataModel(
+    _UQ_NORE_P_MODEL,
     DataFrame(
         ID = [1, 1, 2, 2],
         t = [0.0, 1.0, 0.0, 1.0],
-        y = [0.2, 0.3, 0.1, 0.2]);
-    primary_id = :ID, time_col = :t)
+        y = [0.2, 0.3, 0.1, 0.2]
+    );
+    primary_id = :ID, time_col = :t
+)
 
 # Scalar RE with se on (a, ω) but not σ (Wald / sandwich / MCEM testsets).
 const _UQ_RE_MODEL = @Model begin
@@ -81,15 +84,19 @@ const _UQ_RE_MODEL = @Model begin
         y ~ Normal(a + η, σ)
     end
 end
-const _UQ_RE_DM = DataModel(_UQ_RE_MODEL,
+const _UQ_RE_DM = DataModel(
+    _UQ_RE_MODEL,
     DataFrame(
         ID = [1, 1, 2, 2, 3, 3],
         t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
-        y = [0.2, 0.25, 0.1, 0.15, 0.3, 0.35]);
-    primary_id = :ID, time_col = :t)
+        y = [0.2, 0.25, 0.1, 0.15, 0.3, 0.35]
+    );
+    primary_id = :ID, time_col = :t
+)
 # One Laplace fit shared by the Wald and sandwich testsets.
 const _UQ_RE_RES_LAP = fit_model(
-    _UQ_RE_DM, NoLimits.Laplace(; optim_kwargs = (maxiters = 2,)))
+    _UQ_RE_DM, NoLimits.Laplace(; optim_kwargs = (maxiters = 2,))
+)
 
 # Single-se no-RE model (profile MLE + mcmc_refit error path).
 const _UQ_SE1_MODEL = @Model begin
@@ -128,7 +135,7 @@ end
     @test size(get_uq_draws(uq)) == (30, 2)
     Vt = get_uq_vcov(uq; scale = :transformed)
     λmin = minimum(eigvals(Symmetric(0.5 .* (Vt .+ Vt'))))
-    @test λmin >= -1e-10
+    @test λmin >= -1.0e-10
     d = get_uq_diagnostics(uq)
     @test haskey(d, :vcov_projected)
     @test haskey(d, :vcov_min_eig_raw)
@@ -138,10 +145,11 @@ end
     @test haskey(d, :inactive_fixed_effects_held_constant)
     @test d.hessian_reduced
     @test d.inactive_fixed_effects_held_constant
-    @test d.vcov_min_eig_used >= -1e-10
+    @test d.vcov_min_eig_used >= -1.0e-10
 
     uq_const = compute_uq(
-        res; method = :wald, constants = (a = 0.2,), n_draws = 30, rng = Random.Xoshiro(2))
+        res; method = :wald, constants = (a = 0.2,), n_draws = 30, rng = Random.Xoshiro(2)
+    )
     @test get_uq_parameter_names(uq_const) == [:σ]
 end
 
@@ -156,8 +164,10 @@ end
 end
 
 @testset "UQ chain for MCMC" begin
-    res = fit_model(_UQ_NORE_P_DM,
-        NoLimits.MCMC(; turing_kwargs = (n_samples = 18, n_adapt = 2, progress = false)))
+    res = fit_model(
+        _UQ_NORE_P_DM,
+        NoLimits.MCMC(; turing_kwargs = (n_samples = 18, n_adapt = 2, progress = false))
+    )
 
     uq = compute_uq(res; method = :chain, mcmc_draws = 15, rng = Random.Xoshiro(4))
     @test get_uq_backend(uq) == :chain
@@ -173,7 +183,8 @@ end
 @testset "UQ chain for VI" begin
     res = fit_model(
         _UQ_NORE_P_DM, NoLimits.VI(; turing_kwargs = (max_iter = 15, progress = false));
-        rng = Random.Xoshiro(401))
+        rng = Random.Xoshiro(401)
+    )
 
     uq = compute_uq(res; method = :chain, mcmc_draws = 35, rng = Random.Xoshiro(402))
     @test get_uq_backend(uq) == :chain
@@ -189,8 +200,10 @@ end
     @test get_uq_backend(uq_auto) == :chain
     @test size(get_uq_draws(uq_auto)) == (22, 2)
 
-    uq_const = compute_uq(res; method = :chain, constants = (a = 0.2,),
-        mcmc_draws = 20, rng = Random.Xoshiro(404))
+    uq_const = compute_uq(
+        res; method = :chain, constants = (a = 0.2,),
+        mcmc_draws = 20, rng = Random.Xoshiro(404)
+    )
     @test get_uq_parameter_names(uq_const) == [:σ]
     @test size(get_uq_draws(uq_const)) == (20, 1)
 end
@@ -280,9 +293,11 @@ end
 # landed (#159). Both effects must enter the observation for the covariance to be estimable.
 function _uq_psd_re_df()
     ids = [Symbol("S", i) for i in 1:12]
-    y = [0.10, 0.21, 0.32, 0.02, -0.08, -0.15, 0.15, 0.19, 0.27, -0.05, 0.04, 0.11,
-        0.22, 0.30, 0.41, -0.12, -0.06, 0.01, 0.08, 0.17, 0.25, 0.31, 0.36, 0.44,
-        -0.02, 0.06, 0.14, 0.18, 0.24, 0.29, 0.05, 0.12, 0.20, -0.09, -0.01, 0.07]
+    y = [
+        0.1, 0.21, 0.32, 0.02, -0.08, -0.15, 0.15, 0.19, 0.27, -0.05, 0.04, 0.11,
+        0.22, 0.3, 0.41, -0.12, -0.06, 0.01, 0.08, 0.17, 0.25, 0.31, 0.36, 0.44,
+        -0.02, 0.06, 0.14, 0.18, 0.24, 0.29, 0.05, 0.12, 0.2, -0.09, -0.01, 0.07,
+    ]
     return DataFrame(ID = repeat(ids; inner = 3), t = repeat([0.0, 1.0, 2.0], 12), y = y)
 end
 
@@ -295,13 +310,19 @@ end
         # The Wald Hessian is only finite at a properly converged estimate - at a degenerate
         # point it is NaN and `compute_uq` says so rather than returning NaN silently. The step
         # cap is what keeps the fit out of that region.
-        res = fit_model(dm,
+        res = fit_model(
+            dm,
             NoLimits.Laplace(;
                 optimizer = OptimizationOptimJL.LBFGS(
-                    linesearch = LineSearches.BackTracking(maxstep = 1.0))))
+                    linesearch = LineSearches.BackTracking(maxstep = 1.0)
+                )
+            )
+        )
 
-        uq = compute_uq(res; method = :wald, pseudo_inverse = true,
-            n_draws = 40, rng = Random.Xoshiro(seed))
+        uq = compute_uq(
+            res; method = :wald, pseudo_inverse = true,
+            n_draws = 40, rng = Random.Xoshiro(seed)
+        )
         @test get_uq_backend(uq) == :wald
         @test get_uq_source_method(uq) == :laplace
         names = get_uq_parameter_names(uq)
@@ -310,7 +331,7 @@ end
         V = get_uq_vcov(uq)
         @test size(V) == (n_coords, n_coords)
         @test all(isfinite, V)
-        @test isapprox(V, V'; rtol = 1e-10, atol = 1e-10)
+        @test isapprox(V, V'; rtol = 1.0e-10, atol = 1.0e-10)
         @test size(get_uq_draws(uq)) == (40, n_coords)
     end
 end
@@ -335,12 +356,14 @@ end
     dm = DataModel(_UQ_SE1_MODEL, df; primary_id = :ID, time_col = :t)
     res = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
 
-    uq = compute_uq(res;
+    uq = compute_uq(
+        res;
         method = :profile,
         profile_method = :LIN_EXTRAPOL,
         profile_scan_width = 1.0,
         profile_max_iter = 80,
-        rng = Random.Xoshiro(9))
+        rng = Random.Xoshiro(9)
+    )
     @test get_uq_backend(uq) == :profile
     @test get_uq_source_method(uq) == :mle
     @test get_uq_parameter_names(uq) == [:a]
@@ -356,9 +379,11 @@ end
 
     # The 0.x-only CICO tolerances are ignored, and say so instead of pretending to act.
     @test_logs (:warn, r"profile_scan_tol") NoLimits._warn_removed_profile_kw(
-        :profile_scan_tol, 1e-2)
+        :profile_scan_tol, 1.0e-2
+    )
     @test_logs (:warn, r"profile_loss_tol") NoLimits._warn_removed_profile_kw(
-        :profile_loss_tol, 1e-2)
+        :profile_loss_tol, 1.0e-2
+    )
     @test_logs NoLimits._warn_removed_profile_kw(:profile_scan_tol, nothing)
 end
 
@@ -388,12 +413,14 @@ end
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     res = fit_model(dm, NoLimits.Laplace(; optim_kwargs = (maxiters = 2,)))
 
-    uq = compute_uq(res;
+    uq = compute_uq(
+        res;
         method = :profile,
         profile_method = :LIN_EXTRAPOL,
         profile_scan_width = 0.8,
         profile_max_iter = 80,
-        rng = Random.Xoshiro(10))
+        rng = Random.Xoshiro(10)
+    )
     @test get_uq_backend(uq) == :profile
     @test get_uq_source_method(uq) == :laplace
     @test get_uq_parameter_names(uq) == [:a]
@@ -403,11 +430,13 @@ end
 @testset "UQ mcmc_refit for MLE" begin
     res = fit_model(_UQ_NORE_P_DM, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
 
-    uq = compute_uq(res;
+    uq = compute_uq(
+        res;
         method = :mcmc_refit,
         mcmc_turing_kwargs = (n_samples = 12, n_adapt = 2, progress = false),
         mcmc_draws = 9,
-        rng = Random.Xoshiro(11))
+        rng = Random.Xoshiro(11)
+    )
     @test get_uq_backend(uq) == :mcmc_refit
     @test get_uq_source_method(uq) == :mle
     @test get_uq_parameter_names(uq) == [:a, :σ]
@@ -428,9 +457,11 @@ end
     )
     dm = DataModel(_UQ_SE1_MODEL, df; primary_id = :ID, time_col = :t)
     res = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
-    @test_throws ErrorException compute_uq(res;
+    @test_throws ErrorException compute_uq(
+        res;
         method = :mcmc_refit,
-        mcmc_turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false))
+        mcmc_turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+    )
 end
 
 @testset "UQ Wald sandwich for MLE" begin
@@ -456,7 +487,8 @@ end
     res = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
 
     uq = compute_uq(
-        res; method = :wald, vcov = :sandwich, n_draws = 30, rng = Random.Xoshiro(12))
+        res; method = :wald, vcov = :sandwich, n_draws = 30, rng = Random.Xoshiro(12)
+    )
     @test get_uq_backend(uq) == :wald
     @test get_uq_source_method(uq) == :mle
     @test size(get_uq_vcov(uq)) == (2, 2)
@@ -465,8 +497,10 @@ end
 end
 
 @testset "UQ Wald sandwich for Laplace" begin
-    uq = compute_uq(_UQ_RE_RES_LAP;
-        method = :wald, vcov = :sandwich, n_draws = 30, rng = Random.Xoshiro(13))
+    uq = compute_uq(
+        _UQ_RE_RES_LAP;
+        method = :wald, vcov = :sandwich, n_draws = 30, rng = Random.Xoshiro(13)
+    )
     @test get_uq_backend(uq) == :wald
     @test get_uq_source_method(uq) == :laplace
     @test size(get_uq_vcov(uq)) == (2, 2)
@@ -475,12 +509,15 @@ end
 end
 
 @testset "UQ Wald for MCEM via Laplace approximation" begin
-    res = fit_model(_UQ_RE_DM,
+    res = fit_model(
+        _UQ_RE_DM,
         NoLimits.MCEM(;
             maxiters = 2,
             sample_schedule = 2,
             turing_kwargs = (n_adapt = 2, progress = false),
-            optim_kwargs = (maxiters = 2,)))
+            optim_kwargs = (maxiters = 2,)
+        )
+    )
 
     uq = compute_uq(res; method = :wald, n_draws = 40, rng = Random.Xoshiro(21))
     @test get_uq_backend(uq) == :wald
@@ -505,7 +542,8 @@ end
 @testset "_flat_transform_kinds_for_free — :logit vector" begin
     fe = @fixedEffects begin
         v = RealVector(
-            [0.2, 0.5, 0.8]; scale = [:logit, :logit, :logit], calculate_se = true)
+            [0.2, 0.5, 0.8]; scale = [:logit, :logit, :logit], calculate_se = true
+        )
     end
     kinds = NoLimits._flat_transform_kinds_for_free(fe, [:v])
     @test kinds == [:logit, :logit, :logit]
@@ -514,7 +552,8 @@ end
 @testset "_flat_transform_kinds_for_free — :elementwise mixed" begin
     fe = @fixedEffects begin
         v = RealVector(
-            [0.4, 2.0, -1.0]; scale = [:logit, :log, :identity], calculate_se = true)
+            [0.4, 2.0, -1.0]; scale = [:logit, :log, :identity], calculate_se = true
+        )
     end
     kinds = NoLimits._flat_transform_kinds_for_free(fe, [:v])
     @test kinds == [:logit, :log, :identity]
@@ -533,7 +572,8 @@ end
 @testset "_flat_transform_kinds_for_free — :elementwise two params" begin
     fe = @fixedEffects begin
         v = RealVector(
-            [0.3, 2.0, -1.0]; scale = [:logit, :log, :identity], calculate_se = true)
+            [0.3, 2.0, -1.0]; scale = [:logit, :log, :identity], calculate_se = true
+        )
         σ = RealNumber(0.5; scale = :log, calculate_se = true)
     end
     kinds = NoLimits._flat_transform_kinds_for_free(fe, [:v, :σ])
@@ -614,7 +654,7 @@ end
     dist = LogitNormal(μ, σ)  # σ = sqrt(v)
     # Check density at a few interior points
     for (xi, yi) in zip(x[50:10:(end - 50)], y[50:10:(end - 50)])
-        @test isapprox(yi, pdf(dist, xi); rtol = 1e-8)
+        @test isapprox(yi, pdf(dist, xi); rtol = 1.0e-8)
     end
 end
 
@@ -642,8 +682,8 @@ end
 # #173: pinv's default rank tolerance mapped a near-zero singular value to 0, so a weakly
 # identified direction was reported as near-zero variance - falsely precise. It must be large.
 @testset "Wald bread keeps weakly identified directions large" begin
-    H = [1.0 1.0; 1.0 1.0+1e-10]
+    H = [1.0 1.0; 1.0 1.0 + 1.0e-10]
     B = NoLimits._wald_pinv(H, [:a, :b])
-    @test diag(B)[2] > 1e8
-    @test isapprox(B, inv(H); rtol = 1e-3)
+    @test diag(B)[2] > 1.0e8
+    @test isapprox(B, inv(H); rtol = 1.0e-3)
 end

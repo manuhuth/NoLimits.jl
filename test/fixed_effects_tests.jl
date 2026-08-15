@@ -19,79 +19,121 @@ using Lux
     knots = [0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0]
 
     fe = @fixedEffects begin
-        β_x = RealVector(rand(2),
+        β_x = RealVector(
+            rand(2),
             scale = [:identity, :identity],
             lower = [-Inf, -Inf], upper = [Inf, Inf],
             prior = MvNormal(zeros(2), diagm(0 => ones(2))),
-            calculate_se = true)
+            calculate_se = true
+        )
 
-        λ12 = RealNumber(0.05, scale = :log, lower = 1e-12, upper = Inf,
-            prior = Normal(0.0, 1.0), calculate_se = true)
-        λ21 = RealNumber(0.05, scale = :log, lower = 1e-12, upper = Inf,
-            prior = Normal(0.0, 1.0), calculate_se = true)
+        λ12 = RealNumber(
+            0.05, scale = :log, lower = 1.0e-12, upper = Inf,
+            prior = Normal(0.0, 1.0), calculate_se = true
+        )
+        λ21 = RealNumber(
+            0.05, scale = :log, lower = 1.0e-12, upper = Inf,
+            prior = Normal(0.0, 1.0), calculate_se = true
+        )
 
-        α_lp1 = RealNumber(5.0, scale = :identity, lower = 1.0, upper = 10.0,
-            prior = Normal(5.0, 2.0), calculate_se = true)
-        α_lp2 = RealNumber(5.0, scale = :identity, lower = 1.0, upper = Inf,
-            prior = Normal(5.0, 2.0), calculate_se = true)
+        α_lp1 = RealNumber(
+            5.0, scale = :identity, lower = 1.0, upper = 10.0,
+            prior = Normal(5.0, 2.0), calculate_se = true
+        )
+        α_lp2 = RealNumber(
+            5.0, scale = :identity, lower = 1.0, upper = Inf,
+            prior = Normal(5.0, 2.0), calculate_se = true
+        )
 
-        α_dyn = RealVector(fill(1.0, 5),
+        α_dyn = RealVector(
+            fill(1.0, 5),
             scale = fill(:log, 5),
-            lower = fill(1e-12, 5), upper = fill(Inf, 5),
+            lower = fill(1.0e-12, 5), upper = fill(Inf, 5),
             prior = MvNormal(zeros(5), diagm(0 => ones(5))),
-            calculate_se = true)
+            calculate_se = true
+        )
 
-        β_dyn = RealVector(fill(0.5, 5),
+        β_dyn = RealVector(
+            fill(0.5, 5),
             scale = fill(:log, 5),
-            lower = fill(1e-12, 5), upper = fill(Inf, 5),
+            lower = fill(1.0e-12, 5), upper = fill(Inf, 5),
             prior = MvNormal(zeros(5), diagm(0 => ones(5))),
-            calculate_se = true)
+            calculate_se = true
+        )
 
-        κ = RealNumber(0.1, scale = :log, lower = 1e-12, upper = Inf,
-            prior = Normal(0.5), calculate_se = true)
-        γ = RealNumber(0.5, scale = :log, lower = 1e-12, upper = Inf,
-            prior = Normal(1.0), calculate_se = true)
-        δ = RealNumber(0.2, scale = :log, lower = 1e-12, upper = Inf,
-            prior = Normal(1.0), calculate_se = true)
-        ϵ3 = RealNumber(0.01, scale = :log, lower = 1e-12, upper = Inf,
-            prior = Normal(0.1), calculate_se = true)
+        κ = RealNumber(
+            0.1, scale = :log, lower = 1.0e-12, upper = Inf,
+            prior = Normal(0.5), calculate_se = true
+        )
+        γ = RealNumber(
+            0.5, scale = :log, lower = 1.0e-12, upper = Inf,
+            prior = Normal(1.0), calculate_se = true
+        )
+        δ = RealNumber(
+            0.2, scale = :log, lower = 1.0e-12, upper = Inf,
+            prior = Normal(1.0), calculate_se = true
+        )
+        ϵ3 = RealNumber(
+            0.01, scale = :log, lower = 1.0e-12, upper = Inf,
+            prior = Normal(0.1), calculate_se = true
+        )
 
-        ω = RealNumber(1.0, scale = :log, lower = 1e-12, upper = Inf,
-            prior = Normal(2.0), calculate_se = true)
+        ω = RealNumber(
+            1.0, scale = :log, lower = 1.0e-12, upper = Inf,
+            prior = Normal(2.0), calculate_se = true
+        )
 
-        sat_scale = RealNumber(1.0, scale = :log, lower = 1e-12, upper = Inf,
-            prior = Normal(2.0), calculate_se = true)
-        hill_K = RealNumber(1.0, scale = :log, lower = 1e-12, upper = Inf,
-            prior = Normal(2.0), calculate_se = true)
-        hill_n = RealNumber(2.0, scale = :log, lower = 1e-12, upper = Inf,
-            prior = Normal(2.0), calculate_se = true)
+        sat_scale = RealNumber(
+            1.0, scale = :log, lower = 1.0e-12, upper = Inf,
+            prior = Normal(2.0), calculate_se = true
+        )
+        hill_K = RealNumber(
+            1.0, scale = :log, lower = 1.0e-12, upper = Inf,
+            prior = Normal(2.0), calculate_se = true
+        )
+        hill_n = RealNumber(
+            2.0, scale = :log, lower = 1.0e-12, upper = Inf,
+            prior = Normal(2.0), calculate_se = true
+        )
 
-        μ = RealVector(zeros(3), scale = [:identity, :identity, :identity],
+        μ = RealVector(
+            zeros(3), scale = [:identity, :identity, :identity],
             lower = [-Inf, -Inf, -Inf], upper = [Inf, Inf, Inf],
-            prior = MvNormal(zeros(3), diagm(0 => ones(3))), calculate_se = true)
+            prior = MvNormal(zeros(3), diagm(0 => ones(3))), calculate_se = true
+        )
 
-        σ_α = RealNumber(2.5, scale = :log, lower = 1e-12, upper = Inf,
-            prior = Normal(2.5), calculate_se = true)
-        σ_β = RealNumber(2.5, scale = :log, lower = 1e-12, upper = Inf,
-            prior = Normal(2.5), calculate_se = true)
-        σ_η = RealNumber(1.0, scale = :log, lower = 1e-12, upper = Inf,
-            prior = Normal(1.0), calculate_se = true)
+        σ_α = RealNumber(
+            2.5, scale = :log, lower = 1.0e-12, upper = Inf,
+            prior = Normal(2.5), calculate_se = true
+        )
+        σ_β = RealNumber(
+            2.5, scale = :log, lower = 1.0e-12, upper = Inf,
+            prior = Normal(2.5), calculate_se = true
+        )
+        σ_η = RealNumber(
+            1.0, scale = :log, lower = 1.0e-12, upper = Inf,
+            prior = Normal(1.0), calculate_se = true
+        )
 
         Γ = SoftTreeParameters(2, 10; function_name = :ST, calculate_se = false)
         ζ1 = NNParameters(chain1; function_name = :NN1, calculate_se = false)
         ζ2 = NNParameters(chain2; function_name = :NN2, calculate_se = false)
         sp = SplineParameters(knots; function_name = :SP1, degree = 2, calculate_se = true)
 
-        σ_ϵ = RealNumber(2.0, scale = :log, lower = 1e-12, upper = Inf, calculate_se = true)
+        σ_ϵ = RealNumber(2.0, scale = :log, lower = 1.0e-12, upper = Inf, calculate_se = true)
         ψ = NPFParameter(1, 10, seed = 123, calculate_se = false)
 
-        Ω = RealPSDMatrix([1 0 0; 0 1 0; 0 0 1],
+        Ω = RealPSDMatrix(
+            [1 0 0; 0 1 0; 0 0 1],
             scale = :cholesky,
-            prior = Wishart(4, Matrix(I, 3, 3)))
+            prior = Wishart(4, Matrix(I, 3, 3))
+        )
 
-        Σ_y3 = RealPSDMatrix([1 0; 0 1],
+        Σ_y3 = RealPSDMatrix(
+            [1 0; 0 1],
             scale = :cholesky,
-            prior = Wishart(3, Matrix(I, 2, 2)))
+            prior = Wishart(3, Matrix(I, 2, 2))
+        )
     end
 
     @test :β_x in get_names(fe)
@@ -103,8 +145,8 @@ using Lux
     θ_un = get_inverse_transform(fe)(get_θ0_transformed(fe))
     θ_rt = get_inverse_transform(fe)(get_transform(fe)(θ_un))
     @test length(θ_rt) == length(θ_un)
-    @test isapprox(θ_rt.Ω, θ_un.Ω; rtol = 1e-6, atol = 1e-8)
-    @test isapprox(θ_rt.λ12, θ_un.λ12; rtol = 1e-6, atol = 1e-8)
+    @test isapprox(θ_rt.Ω, θ_un.Ω; rtol = 1.0e-6, atol = 1.0e-8)
+    @test isapprox(θ_rt.λ12, θ_un.λ12; rtol = 1.0e-6, atol = 1.0e-8)
 
     # Model function registry should include NN and SoftTree entries.
     @test haskey(get_model_funs(fe), :NN1)
@@ -126,7 +168,8 @@ end
     # Mixed-scale vector should only log-transform select elements.
     fe2 = @fixedEffects begin
         v = RealVector(
-            [1.0, 2.0], scale = [:log, :identity], lower = [1e-6, -Inf], upper = [Inf, Inf])
+            [1.0, 2.0], scale = [:log, :identity], lower = [1.0e-6, -Inf], upper = [Inf, Inf]
+        )
     end
     θt = get_transform(fe2)(get_θ0_untransformed(fe2))
     @test θt.v[1] ≈ log(1.0)
@@ -140,15 +183,16 @@ end
     @test θt3.Ω isa AbstractVector
 
     θrt3 = get_inverse_transform(fe3)(get_transform(fe3)(get_θ0_untransformed(fe3)))
-    @test isapprox(θrt3.Ω, get_θ0_untransformed(fe3).Ω; rtol = 1e-6, atol = 1e-8)
+    @test isapprox(θrt3.Ω, get_θ0_untransformed(fe3).Ω; rtol = 1.0e-6, atol = 1.0e-8)
 end
 
 @testset "FixedEffects examples" begin
     # Minimal example with mixed scales.
     fe = @fixedEffects begin
-        a = RealNumber(2.0, scale = :log, lower = 1e-6, upper = Inf)
+        a = RealNumber(2.0, scale = :log, lower = 1.0e-6, upper = Inf)
         b = RealVector(
-            [1.0, 2.0], scale = [:identity, :log], lower = [-Inf, 1e-6], upper = [Inf, Inf])
+            [1.0, 2.0], scale = [:identity, :log], lower = [-Inf, 1.0e-6], upper = [Inf, Inf]
+        )
     end
     θt = get_transform(fe)(get_θ0_untransformed(fe))
     @test θt.a ≈ log(2.0)
@@ -163,7 +207,7 @@ end
     @test θt_psd.Ω isa AbstractVector
     @test length(θt_psd.Ω) == 3
     θrt_psd = get_inverse_transform(fe_psd)(θt_psd)
-    @test isapprox(θrt_psd.Ω, get_θ0_untransformed(fe_psd).Ω; rtol = 1e-6, atol = 1e-8)
+    @test isapprox(θrt_psd.Ω, get_θ0_untransformed(fe_psd).Ω; rtol = 1.0e-6, atol = 1.0e-8)
 end
 
 @testset "FixedEffects mixtures" begin
@@ -196,7 +240,7 @@ end
     # Lower triangle only: n(n+1)/2 free coords, not the full n^2 factor.
     @test length(θt_chol.Ω) == 3
     θrt_chol = get_inverse_transform(fe_chol)(θt_chol)
-    @test isapprox(θrt_chol.Ω, get_θ0_untransformed(fe_chol).Ω; rtol = 1e-6, atol = 1e-8)
+    @test isapprox(θrt_chol.Ω, get_θ0_untransformed(fe_chol).Ω; rtol = 1.0e-6, atol = 1.0e-8)
     @test !get_params(fe_chol).Ω.calculate_se
 
     # Diagonal matrix parameters should log-transform elementwise.
@@ -206,7 +250,7 @@ end
     θt_diag = get_transform(fe_diag)(get_θ0_untransformed(fe_diag))
     @test θt_diag.D ≈ log.([1.0, 2.0, 3.0])
     θrt_diag = get_inverse_transform(fe_diag)(θt_diag)
-    @test isapprox(θrt_diag.D, [1.0, 2.0, 3.0]; rtol = 1e-6, atol = 1e-8)
+    @test isapprox(θrt_diag.D, [1.0, 2.0, 3.0]; rtol = 1.0e-6, atol = 1.0e-8)
     @test !get_params(fe_diag).D.calculate_se
 end
 
@@ -218,12 +262,13 @@ end
     θt_log = get_transform(fe_log)(get_θ0_untransformed(fe_log))
     @test θt_log.a ≈ log(2.0)
     θrt_log = get_inverse_transform(fe_log)(θt_log)
-    @test isapprox(θrt_log.a, 2.0; rtol = 1e-6, atol = 1e-8)
+    @test isapprox(θrt_log.a, 2.0; rtol = 1.0e-6, atol = 1.0e-8)
 
     # RealVector with mixed bounds and log scale should keep -Inf handled safely.
     fe_log_vec = @fixedEffects begin
         v = RealVector(
-            [1.0, 2.0], scale = [:log, :log], lower = [-Inf, 1e-6], upper = [Inf, Inf])
+            [1.0, 2.0], scale = [:log, :log], lower = [-Inf, 1.0e-6], upper = [Inf, Inf]
+        )
     end
     θt_lv = get_transform(fe_log_vec)(get_θ0_untransformed(fe_log_vec))
 
@@ -286,10 +331,10 @@ end
     θ = get_θ0_untransformed(fe)
     lp = logprior(get_priors(fe), θ)
     expected = logpdf(Normal(0.0, 1.0), θ.a) + logpdf(MvNormal(zeros(2), I), θ.v)
-    @test isapprox(lp, expected; rtol = 1e-8, atol = 1e-10)
+    @test isapprox(lp, expected; rtol = 1.0e-8, atol = 1.0e-10)
 
     priors = (a = Normal(0.0, 1.0), v = MvNormal(zeros(2), I), d = Priorless())
-    @test isapprox(logprior(priors, θ), expected; rtol = 1e-8, atol = 1e-10)
+    @test isapprox(logprior(priors, θ), expected; rtol = 1.0e-8, atol = 1.0e-10)
 end
 
 @testset "_param_spec for :logit RealNumber" begin
@@ -298,10 +343,10 @@ end
         p = RealNumber(0.3; scale = :logit)
     end
     θ0 = get_θ0_transformed(fe)
-    @test isapprox(θ0.p, logit_forward(0.3); rtol = 1e-10)
+    @test isapprox(θ0.p, logit_forward(0.3); rtol = 1.0e-10)
 
     θ_back = get_θ0_untransformed(fe)
-    @test isapprox(θ_back.p, 0.3; rtol = 1e-10)
+    @test isapprox(θ_back.p, 0.3; rtol = 1.0e-10)
 end
 
 @testset "_param_spec for uniform :logit RealVector" begin
@@ -309,10 +354,10 @@ end
         v = RealVector([0.2, 0.5, 0.8]; scale = [:logit, :logit, :logit])
     end
     θ0 = get_θ0_transformed(fe)
-    @test all(isapprox.(θ0.v, logit_forward.([0.2, 0.5, 0.8]); rtol = 1e-10))
+    @test all(isapprox.(θ0.v, logit_forward.([0.2, 0.5, 0.8]); rtol = 1.0e-10))
 
     θ_back = get_θ0_untransformed(fe)
-    @test isapprox(θ_back.v, [0.2, 0.5, 0.8]; rtol = 1e-8, atol = 1e-10)
+    @test isapprox(θ_back.v, [0.2, 0.5, 0.8]; rtol = 1.0e-8, atol = 1.0e-10)
 end
 
 @testset "_param_spec for mixed :elementwise RealVector" begin
@@ -320,14 +365,14 @@ end
         v = RealVector([0.4, 2.0, -1.5]; scale = [:logit, :log, :identity])
     end
     θ0 = get_θ0_transformed(fe)
-    @test isapprox(θ0.v[1], logit_forward(0.4); rtol = 1e-10)
-    @test isapprox(θ0.v[2], log(2.0); rtol = 1e-10)
-    @test isapprox(θ0.v[3], -1.5; rtol = 1e-10)
+    @test isapprox(θ0.v[1], logit_forward(0.4); rtol = 1.0e-10)
+    @test isapprox(θ0.v[2], log(2.0); rtol = 1.0e-10)
+    @test isapprox(θ0.v[3], -1.5; rtol = 1.0e-10)
 
     θ_back = get_θ0_untransformed(fe)
-    @test isapprox(θ_back.v[1], 0.4; rtol = 1e-8, atol = 1e-10)
-    @test isapprox(θ_back.v[2], 2.0; rtol = 1e-8, atol = 1e-10)
-    @test isapprox(θ_back.v[3], -1.5; rtol = 1e-10)
+    @test isapprox(θ_back.v[1], 0.4; rtol = 1.0e-8, atol = 1.0e-10)
+    @test isapprox(θ_back.v[2], 2.0; rtol = 1.0e-8, atol = 1.0e-10)
+    @test isapprox(θ_back.v[3], -1.5; rtol = 1.0e-10)
 end
 
 @testset "_transform_bounds :logit scalar — transformed bounds are (-Inf, Inf)" begin

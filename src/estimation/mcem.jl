@@ -27,11 +27,13 @@ end
     if ll_cache isa Vector
         return ll_cache
     elseif ll_cache isa _LLCache
-        caches = build_ll_cache(dm;
+        caches = build_ll_cache(
+            dm;
             ode_args = ll_cache.ode_args,
             ode_kwargs = ll_cache.ode_kwargs,
             force_saveat = ll_cache.saveat_cache !== nothing,
-            nthreads = nthreads)
+            nthreads = nthreads
+        )
         return caches isa Vector ? caches : [caches]
     else
         caches = build_ll_cache(dm; nthreads = nthreads)
@@ -78,10 +80,12 @@ struct MCEM_MCMC{S, K, SS} <: AbstractMCEMEStep
     warm_start::Bool
 end
 
-function MCEM_MCMC(; sampler = SaemixMH(),
+function MCEM_MCMC(;
+        sampler = SaemixMH(),
         turing_kwargs = NamedTuple(),
         sample_schedule = 100,
-        warm_start::Bool = true)
+        warm_start::Bool = true
+    )
     return MCEM_MCMC(sampler, turing_kwargs, sample_schedule, warm_start)
 end
 
@@ -116,11 +120,13 @@ struct MCEM_IS{PR, WM} <: AbstractMCEMEStep
     mcmc_warmup::WM   # MCEM_MCMC or nothing
 end
 
-function MCEM_IS(; n_samples::Int = 500,
+function MCEM_IS(;
+        n_samples::Int = 500,
         proposal = :gaussian,
         adapt::Bool = true,
         warm_start_mcmc_iters::Int = 0,
-        mcmc_warmup = nothing)
+        mcmc_warmup = nothing
+    )
     n_samples > 0 || throw(ArgumentError("n_samples must be > 0"))
     warm_start_mcmc_iters >= 0 || throw(ArgumentError("warm_start_mcmc_iters must be ≥ 0"))
     if warm_start_mcmc_iters > 0 && mcmc_warmup === nothing
@@ -218,7 +224,7 @@ end
 
 function MCEM(;
         optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
-        optim_kwargs = (; iterations = 50, g_abstol = 1e-4, f_reltol = 1e-6),
+        optim_kwargs = (; iterations = 50, g_abstol = 1.0e-4, f_reltol = 1.0e-6),
         adtype = Optimization.AutoForwardDiff(),
         e_step = nothing,
         sampler = SaemixMH(),
@@ -228,10 +234,10 @@ function MCEM(;
         verbose = false,
         progress = true,
         maxiters = 100,
-        rtol_theta = 1e-3,
-        atol_theta = 1e-4,
-        rtol_Q = 1e-3,
-        atol_Q = 1e-4,
+        rtol_theta = 1.0e-3,
+        atol_theta = 1.0e-4,
+        rtol_Q = 1.0e-3,
+        atol_Q = 1.0e-4,
         consecutive_params = 3,
         convergence_window::Int = 20,
         ebe_optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
@@ -253,7 +259,7 @@ function MCEM(;
         store_diagnostics::Bool = false,
         diagnostics_every::Int = 1,
         precondition::Bool = true
-)
+    )
     diagnostics_every >= 1 ||
         error("MCEM: diagnostics_every must be ≥ 1. Got: $diagnostics_every")
     convergence_window >= 4 ||
@@ -264,16 +270,24 @@ function MCEM(;
     else
         e_step
     end
-    em = EMOptions(maxiters, rtol_theta, atol_theta, rtol_Q, atol_Q, consecutive_params,
-        convergence_window)
-    ebe = EBEOptions(ebe_optimizer, ebe_optim_kwargs, ebe_adtype, ebe_grad_tol,
+    em = EMOptions(
+        maxiters, rtol_theta, atol_theta, rtol_Q, atol_Q, consecutive_params,
+        convergence_window
+    )
+    ebe = EBEOptions(
+        ebe_optimizer, ebe_optim_kwargs, ebe_adtype, ebe_grad_tol,
         ebe_multistart_n, ebe_multistart_k, ebe_multistart_max_rounds,
-        ebe_multistart_sampling)
-    ebe_rescue = EBERescueOptions(ebe_rescue_on_high_grad, ebe_rescue_multistart_n,
+        ebe_multistart_sampling
+    )
+    ebe_rescue = EBERescueOptions(
+        ebe_rescue_on_high_grad, ebe_rescue_multistart_n,
         ebe_rescue_multistart_k, ebe_rescue_max_rounds,
-        ebe_rescue_grad_tol, ebe_rescue_multistart_sampling)
-    MCEM(optimizer, optim_kwargs, adtype, e_step_actual, em, ebe, ebe_rescue,
-        lb, ub, verbose, progress, store_diagnostics, diagnostics_every, precondition)
+        ebe_rescue_grad_tol, ebe_rescue_multistart_sampling
+    )
+    return MCEM(
+        optimizer, optim_kwargs, adtype, e_step_actual, em, ebe, ebe_rescue,
+        lb, ub, verbose, progress, store_diagnostics, diagnostics_every, precondition
+    )
 end
 
 # MCEMResult is a StandardOptimizationResult{:mcem} alias (see common.jl).
@@ -365,10 +379,12 @@ function _extract_b_samples(chain, info::REBatchInfo, re_names::Vector{Symbol})
     return (samples, last_params, last_b)
 end
 
-function _re_dists_for_info(dm::DataModel,
+function _re_dists_for_info(
+        dm::DataModel,
         info::REBatchInfo,
         θ::ComponentArray,
-        cache::_LLCache)
+        cache::_LLCache
+    )
     model_funs = cache.model_funs
     helpers = cache.helpers
     θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
@@ -376,7 +392,8 @@ function _re_dists_for_info(dm::DataModel,
     cache_re = get_laplace_cache(get_re_group_info(dm))
     re_names = get_re_names(cache_re)
     pairs = Vector{Pair{Symbol, Vector{Distributions.Distribution}}}(
-        undef, length(re_names))
+        undef, length(re_names)
+    )
     for (ri, re) in enumerate(re_names)
         info_re = get_re_info(info)[ri]
         levels = get_levels(get_re_map(info_re))
@@ -392,12 +409,14 @@ function _re_dists_for_info(dm::DataModel,
     return NamedTuple(pairs)
 end
 
-function _filter_b_samples_by_prior(dm::DataModel,
+function _filter_b_samples_by_prior(
+        dm::DataModel,
         info::REBatchInfo,
         θ::ComponentArray,
         const_cache::REConstantsCache,
         cache::_LLCache,
-        samples::AbstractMatrix)
+        samples::AbstractMatrix
+    )
     size(samples, 2) == 0 && return samples
     dists_by_re = _re_dists_for_info(dm, info, θ, cache)
     keep = trues(size(samples, 2))
@@ -427,18 +446,24 @@ function _filter_b_samples_by_prior(dm::DataModel,
     return samples[:, idx]
 end
 
-function _mcem_sample_batch(dm, info, θ, const_cache, cache, sampler, turing_kwargs, rng,
+function _mcem_sample_batch(
+        dm, info, θ, const_cache, cache, sampler, turing_kwargs, rng,
         re_names, warm_start, last_params;
         anneal_sds::NamedTuple = NamedTuple(),
-        outer_iter::Int = 1)
+        outer_iter::Int = 1
+    )
     if sampler isa SaemixMH
         error("SAEM internal error: SaemixMH dispatched to generic _mcem_sample_batch with cache type $(typeof(cache)). This usually means a threaded SAEM path passed a cache vector instead of a per-thread cache.")
     end
-    _require_ext(:NoLimitsTuringExt, :Turing,
-        "Running the E-step with a Turing sampler ($(nameof(typeof(sampler))))")
-    return _mcem_sample_batch_turing(dm, info, θ, const_cache, cache, sampler,
+    _require_ext(
+        :NoLimitsTuringExt, :Turing,
+        "Running the E-step with a Turing sampler ($(nameof(typeof(sampler))))"
+    )
+    return _mcem_sample_batch_turing(
+        dm, info, θ, const_cache, cache, sampler,
         turing_kwargs, rng, re_names, warm_start, last_params;
-        anneal_sds = anneal_sds, outer_iter = outer_iter)
+        anneal_sds = anneal_sds, outer_iter = outer_iter
+    )
 end
 
 # Turing-backed E-step; filled in by NoLimitsTuringExt.
@@ -452,14 +477,16 @@ function _mcem_sample_batch_turing end
 # Reuses _amh_init_cov (adaptive_mh.jl) for prior-based initial covariance.
 # lp_offset and level_inds are set to dummy values — they are only used by
 # _amh_step_block! (MH path), not by _amh_haario_update! (reused here).
-function _is_init_proposal_blocks(dm::DataModel,
+function _is_init_proposal_blocks(
+        dm::DataModel,
         info::REBatchInfo,
         θ::ComponentArray,
         cache::_LLCache,
         re_names::Vector{Symbol},
         re_types::NamedTuple;
         init_scale::Float64 = 1.0,
-        eps_reg::Float64 = 1e-6)
+        eps_reg::Float64 = 1.0e-6
+    )
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = cache.model_funs
     helpers = cache.helpers
@@ -497,36 +524,46 @@ end
 # Prior-mean initial RE vector for one batch, retrying with up to 10 prior draws
 # when the prior mean has a non-finite log-joint. Shared MCEM/SAEM pre-loop seed;
 # `method_label` only flavors the error message.
-function _em_seed_batch_b(dm::DataModel, info::REBatchInfo, θ0_u,
+function _em_seed_batch_b(
+        dm::DataModel, info::REBatchInfo, θ0_u,
         const_cache::REConstantsCache, cache_init, rng::AbstractRNG,
-        re_names, bi::Int, method_label::String)
+        re_names, bi::Int, method_label::String
+    )
     b_init = _re_prior_mean_b(dm, info, θ0_u, const_cache, cache_init, re_names)
     logf = _laplace_logf_batch(dm, info, θ0_u, b_init, const_cache, cache_init)
     isfinite(logf) && return b_init
     for _ in 1:10
         samp, _ = _is_prior_sample_batch(
-            dm, info, θ0_u, const_cache, cache_init, rng, 1, re_names)
+            dm, info, θ0_u, const_cache, cache_init, rng, 1, re_names
+        )
         b_cand = samp[:, 1]
-        if isfinite(_laplace_logf_batch(
-            dm, info, θ0_u, b_cand, const_cache, cache_init))
+        if isfinite(
+                _laplace_logf_batch(
+                    dm, info, θ0_u, b_cand, const_cache, cache_init
+                )
+            )
             return b_cand
         end
     end
-    error("$(method_label): Cannot find valid initial random effects for batch $bi after 10 tries. " *
-          "Initial fixed-effect parameters likely produce -Inf log-likelihood. " *
-          "Try different starting values.")
+    error(
+        "$(method_label): Cannot find valid initial random effects for batch $bi after 10 tries. " *
+            "Initial fixed-effect parameters likely produce -Inf log-likelihood. " *
+            "Try different starting values."
+    )
 end
 
 # Draw n_samples from the prior proposal for a single batch.
 # Returns (samples::Matrix{Float64}(n_b, n_samples), log_qs::Vector{Float64}).
-function _is_prior_sample_batch(dm::DataModel,
+function _is_prior_sample_batch(
+        dm::DataModel,
         info::REBatchInfo,
         θ::ComponentArray,
         const_cache::REConstantsCache,
         cache::_LLCache,
         rng::AbstractRNG,
         n_samples::Int,
-        re_names::Vector{Symbol})
+        re_names::Vector{Symbol}
+    )
     nb = get_n_b(info)
     if nb == 0
         return (zeros(Float64, 0, n_samples), zeros(Float64, n_samples))
@@ -538,19 +575,28 @@ function _is_prior_sample_batch(dm::DataModel,
     # only on (θ, const_cov of the level representative), both invariant across the
     # n_samples draws. Rebuilding the full RE NamedTuple plus the runtime-Symbol
     # `getproperty` per draw measured 2.2× slower at the 500-sample default.
-    dist_table = [begin
-                      re_info = get_re_info(info)[ri]
-                      # `map(identity, ...)` narrows the Any-inferred comprehension to a
-                      # concrete eltype for single-family REs → typed rand/logpdf below.
-                      map(identity,
-                          [getproperty(
-                               dists_builder(θ,
-                                   get_const_cov(get_individuals(dm)[get_reps(re_info)[li]]),
-                                   model_funs, helpers),
-                               re)
-                           for li in eachindex(get_levels(get_re_map(re_info)))])
-                  end
-                  for (ri, re) in enumerate(re_names)]
+    dist_table = [
+        begin
+                re_info = get_re_info(info)[ri]
+                # `map(identity, ...)` narrows the Any-inferred comprehension to a
+                # concrete eltype for single-family REs → typed rand/logpdf below.
+                map(
+                    identity,
+                    [
+                        getproperty(
+                            dists_builder(
+                                θ,
+                                get_const_cov(get_individuals(dm)[get_reps(re_info)[li]]),
+                                model_funs, helpers
+                            ),
+                            re
+                        )
+                        for li in eachindex(get_levels(get_re_map(re_info)))
+                    ]
+                )
+            end
+            for (ri, re) in enumerate(re_names)
+    ]
     samples = Matrix{Float64}(undef, nb, n_samples)
     log_qs = zeros(Float64, n_samples)
     for m in 1:n_samples
@@ -581,12 +627,14 @@ end
 
 # Build a b vector at the prior mean (or median fallback) for each RE level in a batch.
 # Used to initialize b_current and Turing's starting state before the main SAEM/MCEM loop.
-function _re_prior_mean_b(dm::DataModel,
+function _re_prior_mean_b(
+        dm::DataModel,
         info::REBatchInfo,
         θ::ComponentArray,
         const_cache::REConstantsCache,
         cache::_LLCache,
-        re_names::Vector{Symbol})
+        re_names::Vector{Symbol}
+    )
     nb = get_n_b(info)
     b = zeros(Float64, nb)
     nb == 0 && return b
@@ -632,9 +680,11 @@ end
 # Convert a flat b vector to the NamedTuple format expected by Turing as `initial_params`.
 # Key names match those produced by `_extract_b_samples`: level 1 → `η_v1` (or `η_v1[k]`
 # for vectors), level li>1 → `η_vals[li]` (or `η_vals[li][k]` for vectors).
-function _b_to_last_params(b::AbstractVector,
+function _b_to_last_params(
+        b::AbstractVector,
         info::REBatchInfo,
-        re_names::Vector{Symbol})
+        re_names::Vector{Symbol}
+    )
     pairs = Pair{Symbol, Float64}[]
     for (ri, re) in enumerate(re_names)
         meta = get_re_info(info)[ri]
@@ -647,8 +697,8 @@ function _b_to_last_params(b::AbstractVector,
             else
                 for k in eachindex(r)
                     key = li == 1 ?
-                          Symbol(string(re, "_v1[", k, "]")) :
-                          Symbol(string(re, "_vals[", li, "][", k, "]"))
+                        Symbol(string(re, "_v1[", k, "]")) :
+                        Symbol(string(re, "_vals[", li, "][", k, "]"))
                     push!(pairs, key => Float64(b[r[k]]))
                 end
             end
@@ -664,13 +714,15 @@ end
 # If blocks have not yet accumulated enough samples, falls back to prior-like
 # sampling from the initial covariance (blocks.μ_run starts at zero = prior mean
 # in z-space for symmetric distributions like Normal).
-function _is_gaussian_sample_batch(dm::DataModel,
+function _is_gaussian_sample_batch(
+        dm::DataModel,
         info::REBatchInfo,
         rng::AbstractRNG,
         n_samples::Int,
         re_names::Vector{Symbol},
         re_types::NamedTuple,
-        blocks::Vector{_REAdaptBlock})
+        blocks::Vector{_REAdaptBlock}
+    )
     nb = get_n_b(info)
     if nb == 0
         return (zeros(Float64, 0, n_samples), zeros(Float64, n_samples))
@@ -709,11 +761,11 @@ function _is_gaussian_sample_batch(dm::DataModel,
                     z_val = z[1]
                     qs = q_scalar[ri]
                     if qs === nothing
-                        qs = Normal(μ[1], sqrt(max(block.C[1, 1], 1e-14)))
+                        qs = Normal(μ[1], sqrt(max(block.C[1, 1], 1.0e-14)))
                         q_scalar[ri] = qs
                     end
                     lq += logpdf(qs, z_val) +
-                          _bij_log_jac_forward(re_type, z_val)
+                        _bij_log_jac_forward(re_type, z_val)
                 else
                     b[r] .= η
                     # Multivariate Gaussian log-density: -0.5*(z-μ)'C⁻¹(z-μ) - 0.5*logdet(2πC)
@@ -722,13 +774,13 @@ function _is_gaussian_sample_batch(dm::DataModel,
                     if qm === nothing
                         Cfull = Matrix(block.C)
                         for d in 1:dim
-                            Cfull[d, d] += 1e-14
+                            Cfull[d, d] += 1.0e-14
                         end
                         qm = MvNormal(μ, Symmetric(Cfull))
                         q_mv[ri] = qm
                     end
                     lq += logpdf(qm, zv) +
-                          _bij_log_jac_forward(re_type, zv)
+                        _bij_log_jac_forward(re_type, zv)
                 end
             end
         end
@@ -740,13 +792,15 @@ end
 # Compute log-normalized IS weights for a batch.
 # log_ws[m] = log p(y, b_m | θ_k) - log_qs[m], then log-normalized (logsumexp = 0).
 # Returns (log_ws::Vector{Float64}, ess::Float64).
-function _is_compute_log_weights(dm::DataModel,
+function _is_compute_log_weights(
+        dm::DataModel,
         info::REBatchInfo,
         θ::ComponentArray,
         const_cache::REConstantsCache,
         cache::_LLCache,
         samples::AbstractMatrix,
-        log_qs::AbstractVector{Float64})
+        log_qs::AbstractVector{Float64}
+    )
     n = size(samples, 2)
     if n == 0
         return (Float64[], NaN)
@@ -777,14 +831,16 @@ end
 # When log_ws is provided (IS case) the weighted posterior mean and covariance are
 # estimated directly; otherwise uniform weights (MCMC posterior samples) are assumed.
 # Pooling across all levels within the batch is intentional — they share the proposal.
-function _is_update_blocks!(blocks::Vector{_REAdaptBlock},
+function _is_update_blocks!(
+        blocks::Vector{_REAdaptBlock},
         samples::AbstractMatrix,
         info::REBatchInfo,
         re_names::Vector{Symbol},
         re_types::NamedTuple,
         adapt_start::Int,
         eps_reg::Float64;
-        log_ws::Union{Nothing, AbstractVector{Float64}} = nothing)
+        log_ws::Union{Nothing, AbstractVector{Float64}} = nothing
+    )
     n_samp = size(samples, 2)
     n_samp == 0 && return
     # Build sample weights (normalized, sum to 1 per batch)
@@ -824,7 +880,7 @@ function _is_update_blocks!(blocks::Vector{_REAdaptBlock},
         end
         # Normalize pooled weights (levels share weight proportionally within sample)
         w_sum = sum(ws_pooled)
-        w_sum < 1e-300 && continue
+        w_sum < 1.0e-300 && continue
         ws_pooled ./= w_sum
         # Weighted mean in z-space
         μ = vec(zs * ws_pooled)
@@ -843,11 +899,13 @@ function _is_update_blocks!(blocks::Vector{_REAdaptBlock},
             # Cholesky failed (degenerate weights) — keep current block
         end
     end
+    return
 end
 
 # Unified IS E-step dispatcher for a single batch.
 # Returns (samples, log_ws, ess) — log_ws are log-normalized weights.
-function _is_sample_batch(dm::DataModel,
+function _is_sample_batch(
+        dm::DataModel,
         info::REBatchInfo,
         θ::ComponentArray,
         const_cache::REConstantsCache,
@@ -856,7 +914,8 @@ function _is_sample_batch(dm::DataModel,
         re_names::Vector{Symbol},
         re_types::NamedTuple,
         e_step::MCEM_IS,
-        blocks::Vector{_REAdaptBlock})
+        blocks::Vector{_REAdaptBlock}
+    )
     n_samples = e_step.n_samples
     proposal = e_step.proposal
     # Choose sampling strategy
@@ -865,8 +924,10 @@ function _is_sample_batch(dm::DataModel,
     elseif proposal === :gaussian
         # Fall back to prior-based initial covariance until blocks have data
         if isempty(blocks) || blocks[1].n_samples < 2
-            _is_prior_sample_batch(dm, info, θ, const_cache, cache, rng, n_samples,
-                re_names)
+            _is_prior_sample_batch(
+                dm, info, θ, const_cache, cache, rng, n_samples,
+                re_names
+            )
         else
             _is_gaussian_sample_batch(dm, info, rng, n_samples, re_names, re_types, blocks)
         end
@@ -892,7 +953,8 @@ _mcmc_e_step(es::MCEM_IS) = es.mcmc_warmup
 # `_laplace_logf_batch` (full log-joint) for the Q step, `_re_logpdf_batch`
 # (RE prior only, no ODE work) for the Q2 step. Julia specializes on the
 # function argument, so both wrappers compile to the historical bodies.
-function _mcem_Q_core(logf_fn::F, dm::DataModel,
+function _mcem_Q_core(
+        logf_fn::F, dm::DataModel,
         batch_infos::Vector{REBatchInfo},
         θ::ComponentArray,
         const_cache::REConstantsCache,
@@ -900,7 +962,8 @@ function _mcem_Q_core(logf_fn::F, dm::DataModel,
         samples_by_batch::AbstractVector{<:AbstractMatrix},
         weights_by_batch::Union{Nothing, AbstractVector{<:AbstractVector}} = nothing;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        q_cache::Union{Nothing, _MCEMQCache} = nothing) where {F}
+        q_cache::Union{Nothing, _MCEMQCache} = nothing
+    ) where {F}
     Tθ = eltype(θ)
     total = zero(Tθ)
     # Constant-RE batches (n_b == 0): logf is independent of samples — evaluate once.
@@ -939,7 +1002,8 @@ function _mcem_Q_core(logf_fn::F, dm::DataModel,
                 for s in 1:size(samples, 2)
                     b = view(samples, :, s)
                     logf = logf_fn(
-                        dm, info, θ, b, const_cache, cache_c; tctx = tctx)
+                        dm, info, θ, b, const_cache, cache_c; tctx = tctx
+                    )
                     !isfinite(logf) && (bad[] = true; break)
                     w = ws === nothing ? one(Tθ) : Tθ(ws[s])
                     acc += w * logf
@@ -967,7 +1031,8 @@ function _mcem_Q_core(logf_fn::F, dm::DataModel,
             for s in 1:size(samples, 2)
                 b = view(samples, :, s)
                 logf = logf_fn(
-                    dm, info, θ, b, const_cache, ll_cache_local; tctx = tctx)
+                    dm, info, θ, b, const_cache, ll_cache_local; tctx = tctx
+                )
                 !isfinite(logf) && return Tθ(Inf)
                 w = ws === nothing ? one(Tθ) : Tθ(ws[s])
                 acc += w * logf
@@ -981,7 +1046,8 @@ function _mcem_Q_core(logf_fn::F, dm::DataModel,
     return total
 end
 
-function _mcem_Q_array(dm::DataModel,
+function _mcem_Q_array(
+        dm::DataModel,
         batch_infos::Vector{REBatchInfo},
         θ::ComponentArray,
         const_cache::REConstantsCache,
@@ -989,13 +1055,17 @@ function _mcem_Q_array(dm::DataModel,
         samples_by_batch::AbstractVector{<:AbstractMatrix},
         weights_by_batch::Union{Nothing, AbstractVector{<:AbstractVector}} = nothing;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        q_cache::Union{Nothing, _MCEMQCache} = nothing)
-    return _mcem_Q_core(_laplace_logf_batch, dm, batch_infos, θ, const_cache,
+        q_cache::Union{Nothing, _MCEMQCache} = nothing
+    )
+    return _mcem_Q_core(
+        _laplace_logf_batch, dm, batch_infos, θ, const_cache,
         ll_cache, samples_by_batch, weights_by_batch;
-        serialization = serialization, q_cache = q_cache)
+        serialization = serialization, q_cache = q_cache
+    )
 end
 
-function _mcem_Q(dm::DataModel,
+function _mcem_Q(
+        dm::DataModel,
         batch_infos::Vector{REBatchInfo},
         θ::ComponentArray,
         const_cache::REConstantsCache,
@@ -1003,27 +1073,35 @@ function _mcem_Q(dm::DataModel,
         samples_by_batch::AbstractVector{<:AbstractMatrix},
         weights_by_batch::Union{Nothing, AbstractVector{<:AbstractVector}} = nothing;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        q_cache::Union{Nothing, _MCEMQCache} = nothing)
-    return _mcem_Q_array(dm, batch_infos, θ, const_cache, ll_cache, samples_by_batch,
-        weights_by_batch; serialization = serialization, q_cache = q_cache)
+        q_cache::Union{Nothing, _MCEMQCache} = nothing
+    )
+    return _mcem_Q_array(
+        dm, batch_infos, θ, const_cache, ll_cache, samples_by_batch,
+        weights_by_batch; serialization = serialization, q_cache = q_cache
+    )
 end
 
 # Q2 counterpart to _mcem_Q: evaluates only log p(η|θ_re) — no ODE calls.
 # Used for the Q2 M-step (parameters that appear only in RE distribution expressions).
-function _mcem_Q2(dm::DataModel,
+function _mcem_Q2(
+        dm::DataModel,
         batch_infos::Vector{REBatchInfo},
         θ::ComponentArray,
         const_cache::REConstantsCache,
         ll_cache,
         samples_by_batch::AbstractVector{<:AbstractMatrix},
         weights_by_batch::Union{Nothing, AbstractVector{<:AbstractVector}} = nothing;
-        serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads())
-    return _mcem_Q_core(_re_logpdf_batch, dm, batch_infos, θ, const_cache,
+        serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads()
+    )
+    return _mcem_Q_core(
+        _re_logpdf_batch, dm, batch_infos, θ, const_cache,
         ll_cache, samples_by_batch, weights_by_batch;
-        serialization = serialization)
+        serialization = serialization
+    )
 end
 
-function _fit_model(dm::DataModel, method::MCEM, args...;
+function _fit_model(
+        dm::DataModel, method::MCEM, args...;
         constants::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple(),
         penalty::NamedTuple = NamedTuple(),
@@ -1034,8 +1112,10 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
         rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         store_eb_modes::Bool = true,
-        store_data_model::Bool = true)
-    fit_kwargs = (constants = constants,
+        store_data_model::Bool = true
+    )
+    fit_kwargs = (
+        constants = constants,
         constants_re = constants_re,
         penalty = penalty,
         ode_args = ode_args,
@@ -1044,7 +1124,8 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
         rng = rng,
         theta_0_untransformed = theta_0_untransformed,
         store_eb_modes = store_eb_modes,
-        store_data_model = store_data_model)
+        store_data_model = store_data_model,
+    )
     re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) &&
         error("MCEM requires random effects. Use MLE/MAP for fixed-effects models.")
@@ -1082,11 +1163,19 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
     constants_re = _normalize_constants_re(dm, constants_re)
     const_cache = _build_constants_cache(dm, constants_re)
     pairing, batch_infos, _ = _build_re_batch_infos(dm, constants_re)
-    ll_cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-        serialization = serialization, force_saveat = true)
+    ll_cache = build_ll_cache(
+        dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = serialization, force_saveat = true
+    )
 
-    θt_free = ComponentArray(NamedTuple{Tuple(free_names)}(Tuple(getproperty(θ0_t, n)
-    for n in free_names)))
+    θt_free = ComponentArray(
+        NamedTuple{Tuple(free_names)}(
+            Tuple(
+                getproperty(θ0_t, n)
+                    for n in free_names
+            )
+        )
+    )
     axs_free = getaxes(θt_free)
     axs_full = getaxes(θ_const_t)
     T0 = eltype(θt_free)
@@ -1102,7 +1191,8 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
         Symbol[]
     end
 
-    diag = _MCEMDiagnostics{T0}(Vector{AbstractVector{T0}}(),
+    diag = _MCEMDiagnostics{T0}(
+        Vector{AbstractVector{T0}}(),
         Vector{T0}(),
         Vector{T0}(),
         Vector{T0}(),
@@ -1111,13 +1201,18 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
         Vector{T0}(),
         Vector{T0}(),
         Int[],
-        Float64[])
+        Float64[]
+    )
 
     q_cache = _init_mcem_q_cache(T0, serialization)
 
-    last_params = Vector{Union{
-        Nothing, NamedTuple, AbstractVector, _AdaptiveMHState, _SaemixMHState}}(
-        undef, length(batch_infos))
+    last_params = Vector{
+        Union{
+            Nothing, NamedTuple, AbstractVector, _AdaptiveMHState, _SaemixMHState,
+        },
+    }(
+        undef, length(batch_infos)
+    )
     fill!(last_params, nothing)
     batch_rngs = _mcem_thread_rngs(rng, length(batch_infos))
 
@@ -1129,7 +1224,8 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
             info = batch_infos[bi]
             get_n_b(info) == 0 && continue
             b_init = _em_seed_batch_b(
-                dm, info, θ0_u, const_cache, cache_init, rng, re_names, bi, "MCEM")
+                dm, info, θ0_u, const_cache, cache_init, rng, re_names, bi, "MCEM"
+            )
             last_params[bi] = _b_to_last_params(b_init, info, re_names)
         end
     end
@@ -1138,8 +1234,12 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
     re_types = get_re_types(get_random(get_model(dm)))
     ll_cache_single = ll_cache isa Vector ? ll_cache[1] : ll_cache
     proposal_blocks = if method.e_step isa MCEM_IS
-        [_is_init_proposal_blocks(dm, batch_infos[bi], θ0_u, ll_cache_single, re_names,
-             re_types) for bi in eachindex(batch_infos)]
+        [
+            _is_init_proposal_blocks(
+                    dm, batch_infos[bi], θ0_u, ll_cache_single, re_names,
+                    re_types
+                ) for bi in eachindex(batch_infos)
+        ]
     else
         nothing
     end
@@ -1154,8 +1254,10 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
     conv_window = method.em.convergence_window
     θ_window = Vector{T0}[]
     Q_window = T0[]
-    progress_bar = ProgressMeter.Progress(method.em.maxiters; desc = "MCEM",
-        enabled = method.progress)
+    progress_bar = ProgressMeter.Progress(
+        method.em.maxiters; desc = "MCEM",
+        enabled = method.progress
+    )
 
     for iter in 1:(method.em.maxiters)
         mstep_skipped = false
@@ -1170,7 +1272,7 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
         use_mcmc = _use_mcmc_this_iter(iter, method.e_step)
         samples_by_batch = Vector{Matrix{T0}}(undef, length(batch_infos))
         weights_by_batch = use_mcmc ? nothing :
-                           Vector{Vector{Float64}}(undef, length(batch_infos))
+            Vector{Vector{Float64}}(undef, length(batch_infos))
         ess_by_batch = use_mcmc ? nothing : Vector{Float64}(undef, length(batch_infos))
 
         if use_mcmc
@@ -1196,7 +1298,8 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
                             dm, info, θu_curr, const_cache, cache_c,
                             mcmc_es.sampler, tkwargs, batch_rngs[bi],
                             re_names, mcmc_es.warm_start, last_params[bi];
-                            outer_iter = iter)
+                            outer_iter = iter
+                        )
                         samples_by_batch[bi] = samples
                         last_params[bi] = lastp
                     end
@@ -1207,7 +1310,8 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
                         dm, info, θu_curr, const_cache, ll_cache,
                         mcmc_es.sampler, tkwargs, batch_rngs[bi],
                         re_names, mcmc_es.warm_start, last_params[bi];
-                        outer_iter = iter)
+                        outer_iter = iter
+                    )
                     samples_by_batch[bi] = samples
                     last_params[bi] = lastp
                 end
@@ -1215,11 +1319,13 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
 
             # If this is the last MCMC warm-up iteration, seed IS proposal blocks
             if method.e_step isa MCEM_IS &&
-               iter == method.e_step.warm_start_mcmc_iters &&
-               method.e_step.adapt
+                    iter == method.e_step.warm_start_mcmc_iters &&
+                    method.e_step.adapt
                 for bi in eachindex(batch_infos)
-                    _is_update_blocks!(proposal_blocks[bi], samples_by_batch[bi],
-                        batch_infos[bi], re_names, re_types, 2, 1e-6)
+                    _is_update_blocks!(
+                        proposal_blocks[bi], samples_by_batch[bi],
+                        batch_infos[bi], re_names, re_types, 2, 1.0e-6
+                    )
                 end
             end
             push!(diag.ess_hist, NaN)
@@ -1239,13 +1345,16 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
                         info = batch_infos[bi]
                         samps, log_ws, ess = _is_sample_batch(
                             dm, info, θu_curr, const_cache, cache_c,
-                            batch_rngs[bi], re_names, re_types, is_es, proposal_blocks[bi])
+                            batch_rngs[bi], re_names, re_types, is_es, proposal_blocks[bi]
+                        )
                         samples_by_batch[bi] = samps
                         weights_by_batch[bi] = exp.(log_ws)
                         ess_by_batch[bi] = ess
                         if is_es.adapt
-                            _is_update_blocks!(proposal_blocks[bi], samps, info,
-                                re_names, re_types, 2, 1e-6; log_ws = log_ws)
+                            _is_update_blocks!(
+                                proposal_blocks[bi], samps, info,
+                                re_names, re_types, 2, 1.0e-6; log_ws = log_ws
+                            )
                         end
                     end
                 end
@@ -1253,19 +1362,22 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
                 for (bi, info) in enumerate(batch_infos)
                     samps, log_ws, ess = _is_sample_batch(
                         dm, info, θu_curr, const_cache, ll_cache_single,
-                        batch_rngs[bi], re_names, re_types, is_es, proposal_blocks[bi])
+                        batch_rngs[bi], re_names, re_types, is_es, proposal_blocks[bi]
+                    )
                     samples_by_batch[bi] = samps
                     weights_by_batch[bi] = exp.(log_ws)
                     ess_by_batch[bi] = ess
                     if is_es.adapt
-                        _is_update_blocks!(proposal_blocks[bi], samps, info,
-                            re_names, re_types, 2, 1e-6; log_ws = log_ws)
+                        _is_update_blocks!(
+                            proposal_blocks[bi], samps, info,
+                            re_names, re_types, 2, 1.0e-6; log_ws = log_ws
+                        )
                     end
                 end
             end
             mean_ess = mean(filter(isfinite, ess_by_batch))
             if mean_ess < 0.1 * is_es.n_samples
-                @warn "MCEM IS: low effective sample size" iter=iter ess=mean_ess n_samples=is_es.n_samples
+                @warn "MCEM IS: low effective sample size" iter = iter ess = mean_ess n_samples = is_es.n_samples
             end
             push!(diag.ess_hist, mean_ess)
             S_diag = is_es.n_samples
@@ -1281,13 +1393,17 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
         mstep_constants = constants
         let q2_free_now = [n for n in q2_base_free_names if n ∉ keys(mstep_constants)]
             if !isempty(q2_free_now)
-                θt_q2 = ComponentArray(NamedTuple{Tuple(q2_free_now)}(
-                    Tuple(getproperty(θt_full_curr, n) for n in q2_free_now)))
+                θt_q2 = ComponentArray(
+                    NamedTuple{Tuple(q2_free_now)}(
+                        Tuple(getproperty(θt_full_curr, n) for n in q2_free_now)
+                    )
+                )
                 axs_q2 = getaxes(θt_q2)
                 # Anchored at the CURRENT iterate, not the initial theta: the anchor's job is to
                 # put the start at z = 0, and the free set is not invariant across EM iterations.
                 _, _, _q2_from_z, _z_from_q2 = _precondition_maps(
-                    get_model(dm), q2_free_now, θt_q2, axs_q2, _precondition_on(method))
+                    get_model(dm), q2_free_now, θt_q2, axs_q2, _precondition_on(method)
+                )
                 function obj_q2(z, p)
                     any(isnan, z) && return eltype(z)(Inf)
                     ψt_ca = _q2_from_z(z)
@@ -1297,23 +1413,29 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
                         setproperty!(θt_full_q2, name, getproperty(ψt_ca, name))
                     end
                     θu_q2 = inv_transform(θt_full_q2)
-                    Q2val = _mcem_Q2(dm, batch_infos, θu_q2, const_cache, ll_cache,
+                    Q2val = _mcem_Q2(
+                        dm, batch_infos, θu_q2, const_cache, ll_cache,
                         samples_by_batch, weights_by_batch;
-                        serialization = serialization)
+                        serialization = serialization
+                    )
                     isfinite(Q2val) || return T(Inf)
                     return -Q2val
                 end
                 lb_q2, ub_q2, use_bounds_q2, θ0_q2 = _resolve_optim_bounds(
                     fe, q2_free_now, collect(θt_q2), method.optimizer, nothing,
-                    nothing, NamedTuple(); allow_bbo = false)
+                    nothing, NamedTuple(); allow_bbo = false
+                )
                 optf_q2 = OptimizationFunction(obj_q2, method.adtype)
                 z0_q2 = _z_from_q2(θ0_q2)
                 prob_q2 = use_bounds_q2 ?
-                          OptimizationProblem(optf_q2, z0_q2;
-                    lb = _z_from_q2(lb_q2), ub = _z_from_q2(ub_q2)) :
-                          OptimizationProblem(optf_q2, z0_q2)
+                    OptimizationProblem(
+                        optf_q2, z0_q2;
+                        lb = _z_from_q2(lb_q2), ub = _z_from_q2(ub_q2)
+                    ) :
+                    OptimizationProblem(optf_q2, z0_q2)
                 sol_q2 = Optimization.solve(
-                    prob_q2, method.optimizer; method.optim_kwargs...)
+                    prob_q2, method.optimizer; method.optim_kwargs...
+                )
                 if all(isfinite, sol_q2.u)
                     # Mapped back before it is frozen into `mstep_constants` as a natural-scale
                     # value; a missed back-map here yields plausible wrong numbers, not an error.
@@ -1324,7 +1446,8 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
                     end
                     θu_q2_opt = inv_transform(θt_full_q2_opt)
                     q2_updates = NamedTuple{Tuple(q2_free_now)}(
-                        Tuple(getproperty(θu_q2_opt, n) for n in q2_free_now))
+                        Tuple(getproperty(θu_q2_opt, n) for n in q2_free_now)
+                    )
                     mstep_constants = merge(mstep_constants, q2_updates)
                 end
             end
@@ -1338,14 +1461,18 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
         θ_const_t_q1 = transform(θ_const_u_q1)
         axs_full_q1 = getaxes(θ_const_t_q1)
 
-        θt_free_iter = ComponentArray(NamedTuple{Tuple(free_names_q1)}(
-            Tuple(getproperty(θt_full_curr, n) for n in free_names_q1)))
+        θt_free_iter = ComponentArray(
+            NamedTuple{Tuple(free_names_q1)}(
+                Tuple(getproperty(θt_full_curr, n) for n in free_names_q1)
+            )
+        )
         axs_free_iter = getaxes(θt_free_iter)
 
         # Anchored at the current iterate, as for Q2 above.
         _, _, _θt_from_z, _z_from_θt = _precondition_maps(
             get_model(dm), free_names_q1, θt_free_iter, axs_free_iter,
-            _precondition_on(method))
+            _precondition_on(method)
+        )
         # Keyed on θt, not z, and the cache must stay INSIDE this loop: with a per-iteration
         # anchor, z = 0 means a different θt each iteration, so a hoisted cache would return
         # iteration 1's objective forever and report instant convergence with no error.
@@ -1356,7 +1483,7 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
             θt_vec = θt_free_loc
             use_cache = !(eltype(θt_free_loc) <: ForwardDiff.Dual)
             if use_cache && obj_cache.θ[] !== nothing &&
-               length(obj_cache.θ[]) == length(θt_vec)
+                    length(obj_cache.θ[]) == length(θt_vec)
                 _maxabsdiff(θt_vec, obj_cache.θ[]) == 0.0 && return obj_cache.obj[]
             end
             T = eltype(θt_free_loc)
@@ -1365,8 +1492,10 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
                 setproperty!(θt_full_loc, name, getproperty(θt_free_loc, name))
             end
             θu = inv_transform(θt_full_loc)
-            Q = _mcem_Q(dm, batch_infos, θu, const_cache, ll_cache, samples_by_batch,
-                weights_by_batch; serialization = serialization, q_cache = q_cache)
+            Q = _mcem_Q(
+                dm, batch_infos, θu, const_cache, ll_cache, samples_by_batch,
+                weights_by_batch; serialization = serialization, q_cache = q_cache
+            )
             !isfinite(Q) && return Inf
             obj = -Q + _penalty_value(θu, penalty)
             extra_objective === nothing || (obj += extra_objective(θu))
@@ -1381,11 +1510,12 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
         optf = OptimizationFunction(obj_only, method.adtype)
         lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
             fe, free_names_q1, collect(θt_free_iter), method.optimizer, method.lb,
-            method.ub, constants; method_label = "MCEM")
+            method.ub, constants; method_label = "MCEM"
+        )
         z0 = _z_from_θt(θ0_init)
         prob = use_bounds ?
-               OptimizationProblem(optf, z0; lb = _z_from_θt(lb), ub = _z_from_θt(ub)) :
-               OptimizationProblem(optf, z0)
+            OptimizationProblem(optf, z0; lb = _z_from_θt(lb), ub = _z_from_θt(ub)) :
+            OptimizationProblem(optf, z0)
 
         sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
 
@@ -1404,14 +1534,18 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
             θu_new = inv_transform(θt_full_new)
             Q_new = _mcem_Q(
                 dm, batch_infos, θu_new, const_cache, ll_cache, samples_by_batch,
-                weights_by_batch; serialization = serialization, q_cache = q_cache)
+                weights_by_batch; serialization = serialization, q_cache = q_cache
+            )
             Q_new = Q_new == Inf ? T0(Inf) : Q_new
         end
 
         # Update θt_free to reflect full current state (use full axes for tracking)
         θt_full_new_full = transform(θu_new)
-        θt_free = ComponentArray(NamedTuple{Tuple(free_names)}(
-            Tuple(getproperty(θt_full_new_full, n) for n in free_names)))
+        θt_free = ComponentArray(
+            NamedTuple{Tuple(free_names)}(
+                Tuple(getproperty(θt_full_new_full, n) for n in free_names)
+            )
+        )
         θ_prev_new = copy(θt_free)
 
         dθ_abs = _maxabsdiff(θ_prev_new, θ_prev)
@@ -1429,11 +1563,15 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
         end
         window_full = length(θ_window) == conv_window
         passθ, driftθ, _ = window_full ?
-                           _half_window_test(θ_window, method.em.atol_theta,
-            method.em.rtol_theta) : (false, T0(NaN), one(T0))
+            _half_window_test(
+                θ_window, method.em.atol_theta,
+                method.em.rtol_theta
+            ) : (false, T0(NaN), one(T0))
         passQ, driftQ, _ = window_full ?
-                           _half_window_test(Q_window, method.em.atol_Q,
-            method.em.rtol_Q) : (false, T0(NaN), one(T0))
+            _half_window_test(
+                Q_window, method.em.atol_Q,
+                method.em.rtol_Q
+            ) : (false, T0(NaN), one(T0))
         pass_θ = passθ && !mstep_skipped
         pass_Q = passQ && !mstep_skipped
 
@@ -1450,10 +1588,12 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
         push!(diag.samples, S_diag)
 
         if method.verbose
-            @info "MCEM iteration" iter=iter samples=S_diag Q=Q_new dθ_abs=dθ_abs dθ_rel=dθ_rel dQ_abs=dQ_abs dQ_rel=dQ_rel drift_θ=driftθ drift_Q=driftQ
+            @info "MCEM iteration" iter = iter samples = S_diag Q = Q_new dθ_abs = dθ_abs dθ_rel = dθ_rel dQ_abs = dQ_abs dQ_rel = dQ_rel drift_θ = driftθ drift_Q = driftQ
         end
-        ProgressMeter.next!(progress_bar;
-            showvalues = [(:iter, iter), (:samples, S_diag), (:Q, Q_new)])
+        ProgressMeter.next!(
+            progress_bar;
+            showvalues = [(:iter, iter), (:samples, S_diag), (:Q, Q_new)]
+        )
 
         θ_prev = θ_prev_new
         Q_prev = Q_new
@@ -1462,7 +1602,7 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
         param_streak = pass_θ ? param_streak + 1 : 0
         q_streak = pass_Q ? q_streak + 1 : 0
         if param_streak >= method.em.consecutive_params &&
-           q_streak >= method.em.consecutive_params
+                q_streak >= method.em.consecutive_params
             converged = true
             break
         end
@@ -1476,33 +1616,45 @@ function _fit_model(dm::DataModel, method::MCEM, args...;
     # See the SAEM driver: a non-finite Q is reported as-is so the objective always
     # belongs to the returned parameters; the count records how often it happened.
     n_nonfinite_Q = count(!isfinite, diag.Q_hist)
-    summary = FitSummary(Q_prev, converged,
+    summary = FitSummary(
+        Q_prev, converged,
         FitParameters(θ_hat_t, θ_hat_u),
-        NamedTuple())
-    diagnostics = FitDiagnostics((;), (optimizer = method.optimizer,),
-        (em_iters = length(diag.Q_hist),
+        NamedTuple()
+    )
+    diagnostics = FitDiagnostics(
+        (;), (optimizer = method.optimizer,),
+        (
+            em_iters = length(diag.Q_hist),
             n_nonfinite_Q = n_nonfinite_Q,
             dθ_abs = isempty(diag.dθ_abs) ? T0(NaN) : diag.dθ_abs[end],
             dQ_abs = isempty(diag.dQ_abs) ? T0(NaN) : diag.dQ_abs[end],
             drift_θ = isempty(diag.drift_θ) ? T0(NaN) : diag.drift_θ[end],
-            drift_Q = isempty(diag.drift_Q) ? T0(NaN) : diag.drift_Q[end]),
-        NamedTuple())
+            drift_Q = isempty(diag.drift_Q) ? T0(NaN) : diag.drift_Q[end],
+        ),
+        NamedTuple()
+    )
     last_b_candidates = @isdefined(samples_by_batch) ? samples_by_batch : nothing
     eb_modes = store_eb_modes ?
-               _compute_bstars(dm, θ_hat_u, constants_re, ll_cache, method.ebe, rng;
-        rescue = method.ebe_rescue,
-        progress = method.progress,
-        progress_desc = "MCEM Final EBE",
-        mcmc_candidates_by_batch = last_b_candidates)[1] : nothing
+        _compute_bstars(
+            dm, θ_hat_u, constants_re, ll_cache, method.ebe, rng;
+            rescue = method.ebe_rescue,
+            progress = method.progress,
+            progress_desc = "MCEM Final EBE",
+            mcmc_candidates_by_batch = last_b_candidates
+        )[1] : nothing
 
     notes = (diagnostics = diag,)
 
     result = MCEMResult(nothing, Q_prev, length(diag.Q_hist), nothing, notes, eb_modes)
-    return FitResult(method, result, summary, diagnostics,
-        store_data_model ? dm : nothing, args, fit_kwargs)
+    return FitResult(
+        method, result, summary, diagnostics,
+        store_data_model ? dm : nothing, args, fit_kwargs
+    )
 end
 
 function _with_eb_modes(result::MCEMResult, eb_modes)
-    return MCEMResult(result.solution, result.objective, result.iterations,
-        result.raw, result.notes, eb_modes)
+    return MCEMResult(
+        result.solution, result.objective, result.iterations,
+        result.raw, result.notes, eb_modes
+    )
 end

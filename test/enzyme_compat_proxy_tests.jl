@@ -40,8 +40,10 @@ import Optimisers
             y ~ Normal(a + x.Age + η, σ)
         end
     end
-    df = DataFrame(ID = repeat(1:3, inner = 2), t = repeat([0.0, 1.0], outer = 3),
-        Age = repeat([0.3, -0.2, 0.1], inner = 2), y = randn(Xoshiro(1), 6))
+    df = DataFrame(
+        ID = repeat(1:3, inner = 2), t = repeat([0.0, 1.0], outer = 3),
+        Age = repeat([0.3, -0.2, 0.1], inner = 2), y = randn(Xoshiro(1), 6)
+    )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     @test isconcretetype(eltype(dm.individuals))
 end
@@ -49,10 +51,12 @@ end
 @testset "transforms carry output axes; stable path ≡ legacy path" begin
     fe = @fixedEffects begin
         a = RealNumber(0.5)
-        b = RealNumber(0.2, scale = :log, lower = 1e-12, upper = Inf)
+        b = RealNumber(0.2, scale = :log, lower = 1.0e-12, upper = Inf)
         c = RealNumber(0.3, scale = :logit, lower = 0.0, upper = 1.0)
-        v = RealVector([0.4, 2.0], scale = [:identity, :log],
-            lower = [-Inf, 1e-12], upper = [Inf, Inf])
+        v = RealVector(
+            [0.4, 2.0], scale = [:identity, :log],
+            lower = [-Inf, 1.0e-12], upper = [Inf, Inf]
+        )
         Ω = RealPSDMatrix([1.0 0.2; 0.2 1.0], scale = :cholesky)
         E = RealPSDMatrix([1.5 0.1; 0.1 0.8], scale = :expm)
         G = RealLiePSDMatrix([1.5 0.1; 0.1 0.8])
@@ -73,10 +77,12 @@ end
     @test getaxes(θt) == getaxes(tf0(θu))
     @test collect(itf(θt)) == collect(itf0(θt))
     g_new = ForwardDiff.gradient(
-        v -> sum(abs2, collect(itf(ComponentArray(v, getaxes(θt))))), collect(θt))
+        v -> sum(abs2, collect(itf(ComponentArray(v, getaxes(θt))))), collect(θt)
+    )
     g_old = ForwardDiff.gradient(
-        v -> sum(abs2, collect(itf0(ComponentArray(v, getaxes(θt))))), collect(θt))
-    @test isapprox(g_new, g_old; rtol = 1e-12)
+        v -> sum(abs2, collect(itf0(ComponentArray(v, getaxes(θt))))), collect(θt)
+    )
+    @test isapprox(g_new, g_old; rtol = 1.0e-12)
 end
 
 @testset "SoftTree: positional flat rebuild ≡ Restructure; BLAS-free eval ≡ reference" begin
@@ -96,14 +102,18 @@ end
         probs = [1.0]
         for level in 0:1
             idx = (2^level):(2^(level + 1) - 1)
-            pv = [1 / (1 +
-                   exp(-(dot(view(params.node_weights, i, :), x) + params.node_biases[i])))
-                  for i in idx]
+            pv = [
+                1 / (
+                        1 +
+                        exp(-(dot(view(params.node_weights, i, :), x) + params.node_biases[i]))
+                    )
+                    for i in idx
+            ]
             probs = vcat(probs .* pv, probs .* (1 .- pv))
         end
         params.leaf_values * probs
     end
-    @test isapprox(tree(x, p0), y_ref; rtol = 1e-14)
+    @test isapprox(tree(x, p0), y_ref; rtol = 1.0e-14)
 end
 
 @testset "NN model_fun: CA-axes rebuild ≡ Restructure path" begin
@@ -118,7 +128,7 @@ end
     xin = [0.3, -0.2]
     st0 = Lux.initialstates(Xoshiro(0), chain)
     nn_direct = first(Lux.apply(chain, xin, ζp.reconstructor(collect(θ0.ζ)), st0))
-    @test isapprox(mf.NN1(xin, collect(θ0.ζ)), nn_direct; rtol = 1e-6)
+    @test isapprox(mf.NN1(xin, collect(θ0.ζ)), nn_direct; rtol = 1.0e-6)
     g = ForwardDiff.gradient(v -> mf.NN1(xin, v)[1], collect(θ0.ζ))
     @test all(isfinite, g)
 end
@@ -156,8 +166,10 @@ end
             y ~ Normal(x1(t), σ)
         end
     end
-    df = DataFrame(ID = repeat(1:2, inner = 3), t = repeat([0.0, 0.5, 1.0], outer = 2),
-        y = abs.(randn(Xoshiro(1), 6)) .+ 0.5)
+    df = DataFrame(
+        ID = repeat(1:2, inner = 3), t = repeat([0.0, 0.5, 1.0], outer = 2),
+        y = abs.(randn(Xoshiro(1), 6)) .+ 0.5
+    )
     # This test inspects the numerical DERHSFlat solve template; the model is linear
     # so force the numerical path (closed_form defaults to :auto and would bypass it).
     model = set_solver_config(model; closed_form = :off)
@@ -165,8 +177,10 @@ end
     θu = get_θ0_untransformed(dm.model.fixed.fixed)
     # fitting-path cache (force_saveat=true, as in _fit_no_re/laplace): saveat baked
     cache = NoLimits.build_ll_cache(dm; force_saveat = true)
-    ll = NoLimits.loglikelihood(dm, θu, ComponentArray(); cache = cache,
-        serialization = NoLimits.EnsembleSerial())
+    ll = NoLimits.loglikelihood(
+        dm, θu, ComponentArray(); cache = cache,
+        serialization = NoLimits.EnsembleSerial()
+    )
     @test isfinite(ll)
     prob = cache.prob_templates[1]
     @test prob.f.f isa NoLimits.DERHSFlat
@@ -177,38 +191,47 @@ end
     @test :dense in kw
     # dense fallback branch: plain cache for this model has no saveat → dense=true baked
     cache_d = NoLimits.build_ll_cache(dm)
-    NoLimits.loglikelihood(dm, θu, ComponentArray(); cache = cache_d,
-        serialization = NoLimits.EnsembleSerial())
+    NoLimits.loglikelihood(
+        dm, θu, ComponentArray(); cache = cache_d,
+        serialization = NoLimits.EnsembleSerial()
+    )
     prob_d = cache_d.prob_templates[1]
     @test keys(prob_d.kwargs) == (:dense,)
     @test prob_d.kwargs[:dense] === true
     # FD gradient through the flat-p path stays finite and matches finite reality
     axs = getaxes(θu)
     g = ForwardDiff.gradient(
-        v -> NoLimits.loglikelihood(dm, ComponentArray(v, axs), ComponentArray();
-            cache = cache, serialization = NoLimits.EnsembleSerial()),
-        collect(θu))
+        v -> NoLimits.loglikelihood(
+            dm, ComponentArray(v, axs), ComponentArray();
+            cache = cache, serialization = NoLimits.EnsembleSerial()
+        ),
+        collect(θu)
+    )
     @test all(isfinite, g)
 end
 
 @testset "_de_state_at: exact-time index access (no interpolation at saved points)" begin
     decay!(du, u, p, t) = (du[1] = -p[1] * u[1]; nothing)
     ts = [0.0, 0.5, 1.0]
-    sol = solve(ODEProblem(decay!, [1.0], (0.0, 1.0), [0.8]), Tsit5();
-        saveat = ts, abstol = 1e-10, reltol = 1e-10)
+    sol = solve(
+        ODEProblem(decay!, [1.0], (0.0, 1.0), [0.8]), Tsit5();
+        saveat = ts, abstol = 1.0e-10, reltol = 1.0e-10
+    )
     @test NoLimits._de_state_at(sol, 1, 0.5) == sol.u[2][1]
     @test NoLimits._de_state_at(sol, 1, 0.0) == sol.u[1][1]
     # off-grid falls back to interpolation
-    @test isapprox(NoLimits._de_state_at(sol, 1, 0.25), sol(0.25; idxs = 1); rtol = 1e-12)
+    @test isapprox(NoLimits._de_state_at(sol, 1, 0.25), sol(0.25; idxs = 1); rtol = 1.0e-12)
 end
 
 @testset "_logpdf_re_static ≡ dynamic logpdf dispatch" begin
     dists = (b = Normal(0.0, 0.7), m = MvNormal(zeros(2), I))
     @test NoLimits._logpdf_re_static(keys(dists), values(dists), :b, 0.3, Float64) ==
-          logpdf(dists.b, 0.3)
+        logpdf(dists.b, 0.3)
     @test NoLimits._logpdf_re_static(
-        keys(dists), values(dists), :m, [0.1, -0.2], Float64) ==
-          logpdf(dists.m, [0.1, -0.2])
+        keys(dists), values(dists), :m, [0.1, -0.2], Float64
+    ) ==
+        logpdf(dists.m, [0.1, -0.2])
     @test_throws ArgumentError NoLimits._logpdf_re_static(
-        keys(dists), values(dists), :nope, 0.0, Float64)
+        keys(dists), values(dists), :nope, 0.0, Float64
+    )
 end

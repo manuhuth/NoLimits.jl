@@ -12,7 +12,7 @@ using Random
 using Statistics
 
 function _require_re_supported(res::FitResult)
-    if get_result(res) isa FrequentistResult || get_result(res) isa MAPResult
+    return if get_result(res) isa FrequentistResult || get_result(res) isa MAPResult
         @warn "Random-effects diagnostics are not available for MLE/MAP."
         error("Random-effects diagnostics require Laplace/MCEM/SAEM/MCMC.")
     end
@@ -22,7 +22,7 @@ function _resolve_re_names(dm::DataModel, re_names)
     names = get_re_names(get_random(get_model(dm)))
     isempty(names) && error("Model has no random effects.")
     re_list = re_names === nothing ? names :
-              (re_names isa AbstractVector ? collect(re_names) : [re_names])
+        (re_names isa AbstractVector ? collect(re_names) : [re_names])
     for r in re_list
         r in names || error("Random effect $(r) not found. Available: $(names).")
     end
@@ -95,7 +95,8 @@ function _ebe_by_level(dm::DataModel, res::FitResult, re::Symbol)
     # Skip fixed levels from constants_re to avoid empty bstars for those levels.
     constants_re = _fit_constants_re(res)
     re_df = get_random_effects(
-        dm, res; constants_re = constants_re, flatten = true, include_constants = false)
+        dm, res; constants_re = constants_re, flatten = true, include_constants = false
+    )
     df = getproperty(re_df, re)
     re_groups = get_re_groups(get_random(get_model(dm)))
     col = Symbol(getfield(re_groups, re))
@@ -131,10 +132,12 @@ function _level_values_from_eta(dm::DataModel, re::Symbol, η_vec::Vector{Compon
 end
 
 function _ebe_by_level_mcmc(
-        dm::DataModel, res::FitResult, re::Symbol, mcmc_draws::Int, rng::AbstractRNG)
+        dm::DataModel, res::FitResult, re::Symbol, mcmc_draws::Int, rng::AbstractRNG
+    )
     constants_re = _fit_constants_re(res)
     θ_draws, η_draws, _ = _posterior_drawn_params(
-        res, dm, constants_re, NamedTuple(), mcmc_draws, rng)
+        res, dm, constants_re, NamedTuple(), mcmc_draws, rng
+    )
     sums = Dict{Any, Vector{Float64}}()
     counts = Dict{Any, Int}()
     for d in eachindex(η_draws)
@@ -179,7 +182,7 @@ function _standardize_re(dist, val::Vector{Float64}; flow_samples::Int = 500)
         end
     end
     if dist isa Distributions.MvLogNormal
-        z = log.(max.(val, 1e-300))
+        z = log.(max.(val, 1.0e-300))
         μ = try
             Float64.(Distributions.mean(dist.normal))
         catch
@@ -199,7 +202,7 @@ function _standardize_re(dist, val::Vector{Float64}; flow_samples::Int = 500)
     end
     if dist isa Distributions.MvLogitNormal
         # ALR: z_i = log(η_i / η_{d+1}), inner d-dim coords
-        ηf = max.(Float64.(val), 1e-300)
+        ηf = max.(Float64.(val), 1.0e-300)
         ref = ηf[end]
         z = log.(ηf[begin:(end - 1)]) .- log(ref)
         μ = try
@@ -220,7 +223,7 @@ function _standardize_re(dist, val::Vector{Float64}; flow_samples::Int = 500)
         return L \ (z .- μ)
     end
     if dist isa Distributions.MultivariateDistribution && !(dist isa MvNormal)
-        @warn "Skipping multivariate RE standardization for non-Normal distribution." dist=typeof(dist)
+        @warn "Skipping multivariate RE standardization for non-Normal distribution." dist = typeof(dist)
         return nothing
     end
     μ = try

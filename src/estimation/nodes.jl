@@ -84,8 +84,10 @@ end
 # ---------------------------------------------------------------------------
 
 # Enumerate all multi-indices α ∈ Z_{≥1}^dim with |α|₁ ≤ q_max (in-place).
-function _enumerate_multiindices!(result::Vector{Vector{Int}}, dim::Int, q_max::Int,
-        current::Vector{Int}, current_sum::Int)
+function _enumerate_multiindices!(
+        result::Vector{Vector{Int}}, dim::Int, q_max::Int,
+        current::Vector{Int}, current_sum::Int
+    )
     if length(current) == dim
         push!(result, copy(current))
         return
@@ -97,6 +99,7 @@ function _enumerate_multiindices!(result::Vector{Vector{Int}}, dim::Int, q_max::
         _enumerate_multiindices!(result, dim, q_max, current, current_sum + αi)
         pop!(current)
     end
+    return
 end
 
 function _smolyak_multiindices(dim::Int, level::Int)
@@ -124,8 +127,8 @@ merged by summing their signed weights. Near-zero combined weights (|w| < eps)
 are discarded.
 """
 function build_sparse_grid(dim::Int, level::Int)
-    @assert dim>=1 "dim must be ≥ 1"
-    @assert level>=1 "level must be ≥ 1"
+    @assert dim >= 1 "dim must be ≥ 1"
+    @assert level >= 1 "level must be ≥ 1"
 
     q_max = dim + level - 1
 
@@ -343,7 +346,8 @@ end
 
 # Key: (dims, levels) — dims[k] = RE-group dimension, levels[k] = GH level for that group
 const _ANISOTROPIC_CACHE = Dict{
-    Tuple{Vector{Int}, Vector{Int}}, GHQuadratureNodes{Float64}}()
+    Tuple{Vector{Int}, Vector{Int}}, GHQuadratureNodes{Float64},
+}()
 
 """
     get_anisotropic_grid(dims::Vector{Int}, levels::Vector{Int}) -> GHQuadratureNodes{Float64}

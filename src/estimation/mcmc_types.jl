@@ -24,7 +24,7 @@ function _warn_if_scaled_params(fe::FixedEffects; method_name::AbstractString = 
         end
     end
     isempty(ignored) ||
-        @debug "$(method_name) uses priors on the natural scale; parameter scale settings are ignored during sampling." ignored_parameters=ignored
+        @debug "$(method_name) uses priors on the natural scale; parameter scale settings are ignored during sampling." ignored_parameters = ignored
     return nothing
 end
 
@@ -50,11 +50,13 @@ struct MCMC{S, K, A, P} <: FittingMethod
     progress::P
 end
 
-function MCMC(; sampler = nothing,
+function MCMC(;
+        sampler = nothing,
         turing_kwargs = NamedTuple(),
         adtype = nothing,
-        progress = false)
-    MCMC(sampler, turing_kwargs, adtype, progress)
+        progress = false
+    )
+    return MCMC(sampler, turing_kwargs, adtype, progress)
 end
 
 """
@@ -92,19 +94,26 @@ chain UQ drop that many warm-up rows by default. `fit_kwargs` (e.g. `(constants 
 resolves the same settings the fit used. Dispatch is on the `chain` argument, so the
 frequentist `build_fit_result(dm, method, θ; kind=…)` is unaffected.
 """
-function build_fit_result(dm::DataModel, method::FittingMethod, chain::MCMCChains.Chains;
+function build_fit_result(
+        dm::DataModel, method::FittingMethod, chain::MCMCChains.Chains;
         sampler, n_samples::Integer, n_adapt::Integer = 0,
         observed = get_df(dm)[:, get_obs_cols(dm)],
         notes = NamedTuple(),
         store_data_model::Bool = true,
-        fit_args::Tuple = (), fit_kwargs = NamedTuple())
+        fit_args::Tuple = (), fit_kwargs = NamedTuple()
+    )
     result = MCMCResult(chain, sampler, n_samples, notes, observed)
-    summary = FitSummary(_mcmc_objective(chain, n_adapt), missing,
-        FitParameters(ComponentArray(), ComponentArray()), notes)
+    summary = FitSummary(
+        _mcmc_objective(chain, n_adapt), missing,
+        FitParameters(ComponentArray(), ComponentArray()), notes
+    )
     diagnostics = FitDiagnostics(
-        (;), (sampler = sampler,), (n_samples = n_samples, n_adapt = n_adapt), notes)
-    res = FitResult(method, result, summary, diagnostics,
-        store_data_model ? dm : nothing, fit_args, fit_kwargs)
+        (;), (sampler = sampler,), (n_samples = n_samples, n_adapt = n_adapt), notes
+    )
+    res = FitResult(
+        method, result, summary, diagnostics,
+        store_data_model ? dm : nothing, fit_args, fit_kwargs
+    )
     return _with_posterior_params(res, dm; rng = Random.default_rng())
 end
 
@@ -166,8 +175,8 @@ function Distributions._logpdf(p::_SafeMatrixPrior, x::AbstractMatrix{<:Real})
         _is_numeric_error(err) || rethrow(err)
         if !Threads.atomic_cas!(_WARNED_NUMERIC_ERROR, false, true)
             @warn "A numeric error ($(nameof(typeof(err)))) was raised while evaluating " *
-                  "the prior of $(p.name) (a $(nameof(typeof(p.d)))); rejecting this " *
-                  "proposal. Warned once per fit."
+                "the prior of $(p.name) (a $(nameof(typeof(p.d)))); rejecting this " *
+                "proposal. Warned once per fit."
         end
         return convert(float(eltype(x)), -Inf)
     end
@@ -243,8 +252,10 @@ Draw `n_draws` parameter vectors from a variational posterior, mapped back to th
 natural (constrained) scale. A deserialized result carries no model, so its draws are
 returned on the linked scale unchanged - that path needs no Turing.
 """
-function sample_posterior(res::VIResult; n_draws::Int = 1000,
-        rng::AbstractRNG = Random.default_rng(), return_names::Bool = false)
+function sample_posterior(
+        res::VIResult; n_draws::Int = 1000,
+        rng::AbstractRNG = Random.default_rng(), return_names::Bool = false
+    )
     n_draws >= 1 || error("n_draws must be >= 1.")
     raw = rand(rng, res.posterior, n_draws)
     mat = raw isa AbstractVector ? reshape(raw, :, 1) : Matrix(raw)

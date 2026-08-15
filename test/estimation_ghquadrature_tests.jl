@@ -40,7 +40,7 @@ end
 # Prior-bearing scalar model for MAP/UQ; prior tightness parameterizable so the
 # "MAP pulls toward prior" testset can reuse the same source block.
 function _ghq_prior_model(; a0 = 1.0, a_prior_sd = 2.0)
-    @Model begin
+    return @Model begin
         @fixedEffects begin
             a = RealNumber(a0; prior = Normal(0.0, a_prior_sd))
             σ = RealNumber(0.5, scale = :log; prior = LogNormal(0.0, 1.0))
@@ -210,34 +210,34 @@ end
     @testset "GH rule n=1" begin
         nodes, lw = _gh_rule(1)
         @test length(nodes) == 1
-        @test nodes[1]≈0.0 atol=1e-14
-        @test exp(lw[1])≈1.0 atol=1e-12
+        @test nodes[1] ≈ 0.0 atol = 1.0e-14
+        @test exp(lw[1]) ≈ 1.0 atol = 1.0e-12
     end
 
     @testset "GH rule n=2" begin
         nodes, lw = _gh_rule(2)
         @test length(nodes) == 2
-        @test sort(nodes)≈[-1.0, 1.0] atol=1e-12
-        @test exp.(lw)≈[0.5, 0.5] atol=1e-12   # element-wise via isapprox on arrays
-        @test sum(exp.(lw))≈1.0 atol=1e-12
+        @test sort(nodes) ≈ [-1.0, 1.0] atol = 1.0e-12
+        @test exp.(lw) ≈ [0.5, 0.5] atol = 1.0e-12   # element-wise via isapprox on arrays
+        @test sum(exp.(lw)) ≈ 1.0 atol = 1.0e-12
     end
 
     @testset "GH rule n=3" begin
         nodes, lw = _gh_rule(3)
         @test length(nodes) == 3
-        @test sort(nodes)≈[-sqrt(3.0), 0.0, sqrt(3.0)] atol=1e-10
+        @test sort(nodes) ≈ [-sqrt(3.0), 0.0, sqrt(3.0)] atol = 1.0e-10
         w = exp.(lw)
-        @test sum(w)≈1.0 atol=1e-12
+        @test sum(w) ≈ 1.0 atol = 1.0e-12
         idx0 = argmin(abs.(nodes))
-        @test w[idx0]≈2 / 3 atol=1e-10
+        @test w[idx0] ≈ 2 / 3 atol = 1.0e-10
         outer_w = w[setdiff(1:3, idx0)]
-        @test outer_w≈[1 / 6, 1 / 6] atol=1e-10
+        @test outer_w ≈ [1 / 6, 1 / 6] atol = 1.0e-10
     end
 
     @testset "GH weights sum to 1 for n=1..5" begin
         for n in 1:5
             _, lw = _gh_rule(n)
-            @test sum(exp.(lw))≈1.0 atol=1e-12
+            @test sum(exp.(lw)) ≈ 1.0 atol = 1.0e-12
         end
     end
 
@@ -247,8 +247,8 @@ end
     @testset "1D level=1 sparse grid == gh_rule(1)" begin
         sg = build_sparse_grid(1, 1)
         @test size(sg.nodes, 2) == 1
-        @test sg.nodes[1, 1]≈0.0 atol=1e-14
-        @test exp(sg.logweights[1])≈1.0 atol=1e-12
+        @test sg.nodes[1, 1] ≈ 0.0 atol = 1.0e-14
+        @test exp(sg.logweights[1]) ≈ 1.0 atol = 1.0e-12
     end
 
     @testset "1D level=2 sparse grid matches gh_rule(2)" begin
@@ -260,8 +260,8 @@ end
         @test size(sg.nodes, 2) == 2
         sorted_sg = sortperm(vec(sg.nodes))
         sorted_gh = sortperm(nodes_gh)
-        @test vec(sg.nodes)[sorted_sg]≈nodes_gh[sorted_gh] atol=1e-12
-        @test sg.logweights[sorted_sg]≈lw_gh[sorted_gh] atol=1e-12
+        @test vec(sg.nodes)[sorted_sg] ≈ nodes_gh[sorted_gh] atol = 1.0e-12
+        @test sg.logweights[sorted_sg] ≈ lw_gh[sorted_gh] atol = 1.0e-12
         @test all(sg.signs .== Int8(1))
     end
 
@@ -288,7 +288,7 @@ end
     @testset "Integration: E[1] = 1 (normalization, all levels)" begin
         for d in 1:4, L in 1:3
             sg = build_sparse_grid(d, L)
-            @test sg_integrate(_ -> 1.0, sg)≈1.0 atol=1e-10
+            @test sg_integrate(_ -> 1.0, sg) ≈ 1.0 atol = 1.0e-10
         end
     end
 
@@ -296,7 +296,7 @@ end
         for d in 1:3, L in 1:3
             sg = build_sparse_grid(d, L)
             for i in 1:d
-                @test sg_integrate(z -> z[i], sg)≈0.0 atol=1e-10
+                @test sg_integrate(z -> z[i], sg) ≈ 0.0 atol = 1.0e-10
             end
         end
     end
@@ -306,7 +306,7 @@ end
         for d in 1:4, L in 2:3
             sg = build_sparse_grid(d, L)
             for i in 1:d
-                @test sg_integrate(z -> z[i]^2, sg)≈1.0 atol=1e-10
+                @test sg_integrate(z -> z[i]^2, sg) ≈ 1.0 atol = 1.0e-10
             end
         end
     end
@@ -314,14 +314,14 @@ end
     @testset "Integration: E[zᵢ·zⱼ] = 0 for i≠j (independence, L≥2)" begin
         for d in 2:4, L in 2:3
             sg = build_sparse_grid(d, L)
-            @test sg_integrate(z -> z[1] * z[2], sg)≈0.0 atol=1e-10
+            @test sg_integrate(z -> z[1] * z[2], sg) ≈ 0.0 atol = 1.0e-10
         end
     end
 
     @testset "Integration: E[Σzᵢ²] = d (sum of variances, L≥2)" begin
         for d in 1:4, L in 2:3
             sg = build_sparse_grid(d, L)
-            @test sg_integrate(z -> sum(z .^ 2), sg)≈Float64(d) atol=1e-8
+            @test sg_integrate(z -> sum(z .^ 2), sg) ≈ Float64(d) atol = 1.0e-8
         end
     end
 
@@ -330,7 +330,7 @@ end
         for d in 1:3
             sg = build_sparse_grid(d, 3)
             for i in 1:d
-                @test sg_integrate(z -> z[i]^4, sg)≈3.0 atol=1e-8
+                @test sg_integrate(z -> z[i]^4, sg) ≈ 3.0 atol = 1.0e-8
             end
         end
     end
@@ -339,15 +339,15 @@ end
         # degree 4 ≤ 2*3-1=5 → exact for L=3
         for d in 2:3
             sg = build_sparse_grid(d, 3)
-            @test sg_integrate(z -> z[1]^2 * z[2]^2, sg)≈1.0 atol=1e-8
+            @test sg_integrate(z -> z[1]^2 * z[2]^2, sg) ≈ 1.0 atol = 1.0e-8
         end
     end
 
     @testset "Integration: odd moments E[zᵢ³] = 0, E[zᵢ·zⱼ²] = 0 (L≥2)" begin
         for d in 2:3, L in 2:3
             sg = build_sparse_grid(d, L)
-            @test sg_integrate(z -> z[1]^3, sg)≈0.0 atol=1e-10
-            @test sg_integrate(z -> z[1] * z[2]^2, sg)≈0.0 atol=1e-10
+            @test sg_integrate(z -> z[1]^3, sg) ≈ 0.0 atol = 1.0e-10
+            @test sg_integrate(z -> z[1] * z[2]^2, sg) ≈ 0.0 atol = 1.0e-10
         end
     end
 
@@ -407,14 +407,14 @@ end  # @testset "GHQuadrature nodes.jl"
     @testset "signed_logsumexp: positive result" begin
         # [3, 1] with signs [+, -] -> sum = 3 - 1 = 2
         log_val, s = NoLimits.signed_logsumexp([log(3.0), log(1.0)], Int8[1, -1])
-        @test log_val≈log(2.0) atol=1e-12
+        @test log_val ≈ log(2.0) atol = 1.0e-12
         @test s == Int8(1)
     end
 
     @testset "signed_logsumexp: negative result" begin
         # [1, 3] with signs [+, -] -> sum = 1 - 3 = -2
         log_val, s = NoLimits.signed_logsumexp([log(1.0), log(3.0)], Int8[1, -1])
-        @test log_val≈log(2.0) atol=1e-12
+        @test log_val ≈ log(2.0) atol = 1.0e-12
         @test s == Int8(-1)
     end
 
@@ -423,7 +423,7 @@ end  # @testset "GHQuadrature nodes.jl"
         # result = exp(1000) - exp(999.5) = exp(1000) * (1 - exp(-0.5)) ≈ exp(1000) * 0.3935
         log_val, s = NoLimits.signed_logsumexp([1000.0, 999.5], Int8[1, -1])
         expected = 1000.0 + log(1.0 - exp(-0.5))
-        @test log_val≈expected atol=1e-8
+        @test log_val ≈ expected atol = 1.0e-8
         @test s == Int8(1)
     end
 
@@ -432,16 +432,16 @@ end  # @testset "GHQuadrature nodes.jl"
         signs = Int8[1, 1, 1]
         log_val, s = NoLimits.signed_logsumexp(vals, signs)
         @test s == Int8(1)
-        @test exp(log_val)≈exp(1.0) + exp(2.0) + exp(3.0) rtol=1e-12
+        @test exp(log_val) ≈ exp(1.0) + exp(2.0) + exp(3.0) rtol = 1.0e-12
     end
 
     @testset "signed_logsumexp: single element" begin
         log_val, s = NoLimits.signed_logsumexp([2.5], Int8[1])
-        @test log_val≈2.5 atol=1e-12
+        @test log_val ≈ 2.5 atol = 1.0e-12
         @test s == Int8(1)
 
         log_val2, s2 = NoLimits.signed_logsumexp([2.5], Int8[-1])
-        @test log_val2≈2.5 atol=1e-12
+        @test log_val2 ≈ 2.5 atol = 1.0e-12
         @test s2 == Int8(-1)
     end
 
@@ -456,12 +456,12 @@ end  # @testset "GHQuadrature nodes.jl"
         re = NoLimits.GaussianRE(μ, LowerTriangular(L), 1)
 
         @test re.n_b == 1
-        @test re.μ≈[0.0] atol=1e-14
-        @test re.L≈[2.0;;] atol=1e-14
+        @test re.μ ≈ [0.0] atol = 1.0e-14
+        @test re.L ≈ [2.0;;] atol = 1.0e-14
 
         # transform: η = μ + L*z = 2z for z=[1.0]
         η = NoLimits.transform(re, [1.0])
-        @test η≈[2.0] atol=1e-14
+        @test η ≈ [2.0] atol = 1.0e-14
 
         # logcorrection is always 0 for GaussianRE
         @test NoLimits.logcorrection(re, [1.0]) == 0.0
@@ -475,7 +475,7 @@ end  # @testset "GHQuadrature nodes.jl"
 
         z = [0.3, -0.1]
         expected = μ + L * z
-        @test NoLimits.transform(re, z)≈expected atol=1e-14
+        @test NoLimits.transform(re, z) ≈ expected atol = 1.0e-14
     end
 
     # ----------------------------------------------------------
@@ -526,8 +526,8 @@ end  # @testset "GHQuadrature nodes.jl"
             @test length(re_m.μ) == info.n_b
             @test size(re_m.L) == (info.n_b, info.n_b)
             # For Normal(0.0, σ_η=1.0): μ should be 0, L should be [[1.0]]
-            @test re_m.μ≈zeros(info.n_b) atol=1e-10
-            @test Matrix(re_m.L)≈I(info.n_b) atol=1e-10
+            @test re_m.μ ≈ zeros(info.n_b) atol = 1.0e-10
+            @test Matrix(re_m.L) ≈ I(info.n_b) atol = 1.0e-10
         end
     end
 
@@ -542,7 +542,7 @@ end  # @testset "GHQuadrature nodes.jl"
             info.n_b == 0 && continue
             re_m = NoLimits.build_re_measure_from_batch(info, θ, const_cache, dm, ll_cache)
             # For Normal(0.0, σ_η=2.5): L should be [[2.5]]
-            @test Matrix(re_m.L)≈2.5 * I(info.n_b) atol=1e-10
+            @test Matrix(re_m.L) ≈ 2.5 * I(info.n_b) atol = 1.0e-10
         end
     end
 
@@ -711,9 +711,9 @@ end
         p_lap = NoLimits.get_params(res_lap; scale = :untransformed)
 
         # Within 50% — both methods approximate the same marginal likelihood
-        @test abs(p_sg.a - p_lap.a) / (abs(p_lap.a) + 1e-6) < 0.5
-        @test abs(p_sg.σ - p_lap.σ) / (abs(p_lap.σ) + 1e-6) < 0.5
-        @test abs(p_sg.ω - p_lap.ω) / (abs(p_lap.ω) + 1e-6) < 0.5
+        @test abs(p_sg.a - p_lap.a) / (abs(p_lap.a) + 1.0e-6) < 0.5
+        @test abs(p_sg.σ - p_lap.σ) / (abs(p_lap.σ) + 1.0e-6) < 0.5
+        @test abs(p_sg.ω - p_lap.ω) / (abs(p_lap.ω) + 1.0e-6) < 0.5
     end
 
     # ── ForwardDiff vs FiniteDifferences gradient check ──────────────────────
@@ -723,9 +723,11 @@ end
         # Build the same objective as _fit_model for gradient testing.
         # We use the internal infrastructure directly.
         model = _GHQ_SCALAR_MODEL
-        df_small = DataFrame(ID = repeat(1:4, inner = 3),
+        df_small = DataFrame(
+            ID = repeat(1:4, inner = 3),
             t = repeat([1.0, 2.0, 3.0], outer = 4),
-            y = [0.9, 1.1, 1.0, 1.3, 1.2, 1.1, 0.8, 0.9, 1.0, 1.2, 1.0, 0.9])
+            y = [0.9, 1.1, 1.0, 1.3, 1.2, 1.1, 0.8, 0.9, 1.0, 1.2, 1.0, 0.9]
+        )
         dm_small = DataModel(model, df_small; primary_id = :ID, time_col = :t)
         level = 2
 
@@ -736,7 +738,8 @@ end
         θ0_t = transform(θ0_u)
 
         _, batch_infos, const_cache = NoLimits._build_re_batch_infos(
-            dm_small, NamedTuple())
+            dm_small, NamedTuple()
+        )
         ll_cache = NoLimits.build_ll_cache(dm_small; force_saveat = true)
         for d in unique(info.n_b for info in batch_infos)
             d > 0 && NoLimits.get_sparse_grid(d, level)
@@ -750,7 +753,8 @@ end
             total = 0.0
             for info in batch_infos
                 bll = NoLimits._ghq_batch_ll(
-                    dm_small, info, θu_re, const_cache, ll_cache, level)
+                    dm_small, info, θu_re, const_cache, ll_cache, level
+                )
                 bll == -Inf && return Inf
                 total += bll
             end
@@ -764,42 +768,56 @@ end
         # Relative error < 1e-4 on all components
         for k in eachindex(grad_fd)
             abs_ref = abs(grad_fin[k])
-            if abs_ref > 1e-6
-                @test abs(grad_fd[k] - grad_fin[k]) / abs_ref < 1e-4
+            if abs_ref > 1.0e-6
+                @test abs(grad_fd[k] - grad_fin[k]) / abs_ref < 1.0e-4
             else
-                @test abs(grad_fd[k] - grad_fin[k]) < 1e-6
+                @test abs(grad_fd[k] - grad_fin[k]) < 1.0e-6
             end
         end
     end
 
     # ── Alternative outer optimizers ─────────────────────────────────────────
     @testset "BFGS outer optimizer" begin
-        res = fit_model(dm,
-            GHQuadrature(level = 1;
+        res = fit_model(
+            dm,
+            GHQuadrature(
+                level = 1;
                 optimizer = OptimizationOptimJL.BFGS(),
-                optim_kwargs = (maxiters = 2,)))
+                optim_kwargs = (maxiters = 2,)
+            )
+        )
     end
 
     @testset "NelderMead outer optimizer" begin
-        res = fit_model(dm,
-            GHQuadrature(level = 1;
+        res = fit_model(
+            dm,
+            GHQuadrature(
+                level = 1;
                 optimizer = OptimizationOptimJL.NelderMead(),
-                optim_kwargs = (maxiters = 2,)))
+                optim_kwargs = (maxiters = 2,)
+            )
+        )
     end
 
     @testset "BlackBoxOptim outer optimizer" begin
         lb_val, ub_val = NoLimits.default_bounds_from_start(dm; margin = 3.0)
-        res = fit_model(dm,
-            GHQuadrature(level = 1;
+        res = fit_model(
+            dm,
+            GHQuadrature(
+                level = 1;
                 optimizer = BBO_adaptive_de_rand_1_bin_radiuslimited(),
                 optim_kwargs = (maxiters = 2,),
-                lb = lb_val, ub = ub_val))
+                lb = lb_val, ub = ub_val
+            )
+        )
     end
 
     # ── constants kwarg ───────────────────────────────────────────────────────
     @testset "constants fix a parameter" begin
-        res = fit_model(dm, GHQuadrature(level = 1; optim_kwargs = (maxiters = 2,));
-            constants = (a = 1.0,))
+        res = fit_model(
+            dm, GHQuadrature(level = 1; optim_kwargs = (maxiters = 2,));
+            constants = (a = 1.0,)
+        )
         params = NoLimits.get_params(res; scale = :untransformed)
     end
 
@@ -823,8 +841,10 @@ end
         end
         # 40 IDs crossed with one SITE -> a single batch of joint dimension 41.
         ids = repeat(1:40; inner = 2)
-        df_big = DataFrame(ID = ids, SITE = fill(:A, length(ids)),
-            t = repeat([0.0, 1.0], 40), y = 0.1 .* ids)
+        df_big = DataFrame(
+            ID = ids, SITE = fill(:A, length(ids)),
+            t = repeat([0.0, 1.0], 40), y = 0.1 .* ids
+        )
         dm_big = DataModel(model, df_big; primary_id = :ID, time_col = :t)
         t0 = time()
         @test_throws ErrorException fit_model(dm_big, GHQuadrature(level = 5))
@@ -833,8 +853,10 @@ end
 
     # ── store_data_model=false ────────────────────────────────────────────────
     @testset "store_data_model=false" begin
-        res = fit_model(dm, GHQuadrature(level = 1; optim_kwargs = (maxiters = 2,));
-            store_data_model = false)
+        res = fit_model(
+            dm, GHQuadrature(level = 1; optim_kwargs = (maxiters = 2,));
+            store_data_model = false
+        )
         @test get_data_model(res) === nothing
     end
 end  # @testset "GHQuadrature ghquadrature.jl"
@@ -847,9 +869,11 @@ end  # @testset "GHQuadrature ghquadrature.jl"
 
     # ── Validation no longer rejects NPF ─────────────────────────────────────
     @testset "_ghq_validate_re_distributions allows NPF" begin
-        df_v = DataFrame(ID = repeat(1:5, inner = 3),
+        df_v = DataFrame(
+            ID = repeat(1:5, inner = 3),
             t = repeat([1.0, 2.0, 3.0], outer = 5),
-            y = randn(MersenneTwister(7), 15))
+            y = randn(MersenneTwister(7), 15)
+        )
         dm_npf = DataModel(_GHQ_NPF_MODEL, df_v; primary_id = :ID, time_col = :t)
         # Should NOT throw
         @test_nowarn NoLimits._ghq_validate_re_distributions(dm_npf)
@@ -857,9 +881,11 @@ end  # @testset "GHQuadrature ghquadrature.jl"
 
     # ── CompositeRE is returned for NPF batches ───────────────────────────────
     @testset "build_re_measure_from_batch returns CompositeRE for NPF" begin
-        df_v = DataFrame(ID = repeat(1:4, inner = 3),
+        df_v = DataFrame(
+            ID = repeat(1:4, inner = 3),
             t = repeat([1.0, 2.0, 3.0], outer = 4),
-            y = randn(MersenneTwister(8), 12))
+            y = randn(MersenneTwister(8), 12)
+        )
         dm_npf = DataModel(_GHQ_NPF_MODEL, df_v; primary_id = :ID, time_col = :t)
 
         fe = dm_npf.model.fixed.fixed
@@ -869,13 +895,15 @@ end  # @testset "GHQuadrature ghquadrature.jl"
         θ_re = NoLimits._symmetrize_psd_params(θ0_u_re, fe)
 
         _, batch_infos, const_cache = NoLimits._build_re_batch_infos(
-            dm_npf, NamedTuple())
+            dm_npf, NamedTuple()
+        )
         ll_cache = NoLimits.build_ll_cache(dm_npf; force_saveat = true)
 
         bi = batch_infos[1]
         if bi.n_b > 0
             re_measure = NoLimits.build_re_measure_from_batch(
-                bi, θ_re, const_cache, dm_npf, ll_cache)
+                bi, θ_re, const_cache, dm_npf, ll_cache
+            )
             @test re_measure isa NoLimits.CompositeRE
             @test re_measure.n_b == bi.n_b
 
@@ -897,12 +925,14 @@ end  # @testset "GHQuadrature ghquadrature.jl"
         θ0_u = NoLimits.get_θ0_untransformed(fe)
         θ_re = NoLimits._symmetrize_psd_params(θ0_u, fe)
         _, batch_infos, const_cache = NoLimits._build_re_batch_infos(
-            dm_gauss, NamedTuple())
+            dm_gauss, NamedTuple()
+        )
         ll_cache = NoLimits.build_ll_cache(dm_gauss; force_saveat = true)
         bi = batch_infos[1]
         if bi.n_b > 0
             re = NoLimits.build_re_measure_from_batch(
-                bi, θ_re, const_cache, dm_gauss, ll_cache)
+                bi, θ_re, const_cache, dm_gauss, ll_cache
+            )
             @test re isa NoLimits.GaussianRE
         end
     end
@@ -952,7 +982,8 @@ end
 # Shared by the Wald and Profile UQ testsets (same dm, same level-2 GHQ fit).
 const _GHQ_MAP_DM = _make_map_ghq_dm()
 const _GHQ_MAP_RES_GHQ2 = fit_model(
-    _GHQ_MAP_DM, GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,)))
+    _GHQ_MAP_DM, GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,))
+)
 
 @testset "GHQuadrature Wald UQ" begin
 
@@ -973,7 +1004,8 @@ const _GHQ_MAP_RES_GHQ2 = fit_model(
     # ── Sandwich vcov ────────────────────────────────────────────────────────
     @testset "compute_uq GHQuadrature sandwich vcov level=2" begin
         uq = compute_uq(
-            _GHQ_MAP_RES_GHQ2; method = :wald, vcov = :sandwich, pseudo_inverse = true)
+            _GHQ_MAP_RES_GHQ2; method = :wald, vcov = :sandwich, pseudo_inverse = true
+        )
 
         @test uq isa NoLimits.UQResult
         cia = get_uq_intervals(uq)
@@ -982,8 +1014,10 @@ const _GHQ_MAP_RES_GHQ2 = fit_model(
 
     # ── hessian_backend :fd_gradient also works ───────────────────────────────
     @testset "compute_uq GHQuadrature fd_gradient backend level=2" begin
-        uq = compute_uq(_GHQ_MAP_RES_GHQ2; method = :wald,
-            hessian_backend = :fd_gradient, pseudo_inverse = true)
+        uq = compute_uq(
+            _GHQ_MAP_RES_GHQ2; method = :wald,
+            hessian_backend = :fd_gradient, pseudo_inverse = true
+        )
 
         @test uq isa NoLimits.UQResult
         cia = get_uq_intervals(uq)
@@ -1007,10 +1041,12 @@ end  # @testset "GHQuadrature Profile UQ"
     @testset "compute_uq GHQuadrature :mcmc_refit (with priors)" begin
         # GHQuadrature with priors on all fixed effects can use mcmc_refit
         res = fit_model(dm_uq, GHQuadrature(level = 1; optim_kwargs = (maxiters = 2,)))
-        uq = compute_uq(res;
+        uq = compute_uq(
+            res;
             method = :mcmc_refit,
             mcmc_sampler = Turing.MH(),
-            mcmc_turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false))
+            mcmc_turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+        )
 
         @test uq isa NoLimits.UQResult
         cia = get_uq_intervals(uq)
@@ -1025,10 +1061,12 @@ end  # @testset "GHQuadrature mcmc_refit UQ"
     @testset "EnsembleThreads matches EnsembleSerial objective" begin
         res_serial = fit_model(
             dm_par, GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,));
-            serialization = NoLimits.EnsembleSerial())
+            serialization = NoLimits.EnsembleSerial()
+        )
         res_threaded = fit_model(
             dm_par, GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,));
-            serialization = NoLimits.EnsembleThreads())
+            serialization = NoLimits.EnsembleThreads()
+        )
 
         # Objectives should agree within numerical tolerance (same deterministic quadrature)
         @test abs(get_objective(res_serial) - get_objective(res_threaded)) < 1.0
@@ -1066,13 +1104,13 @@ end  # @testset "GHQuadrature parallelization (EnsembleThreads)"
         sg = build_sparse_grid(2, 3)
         # E[z₁²] = 1
         val = sg_integrate(z -> z[1]^2, sg)
-        @test val≈1.0 atol=1e-10
+        @test val ≈ 1.0 atol = 1.0e-10
         # E[z₁⁴] = 3
         val4 = sg_integrate(z -> z[1]^4, sg)
-        @test val4≈3.0 atol=1e-10
+        @test val4 ≈ 3.0 atol = 1.0e-10
         # E[z₁² * z₂²] = 1
         val_cross = sg_integrate(z -> z[1]^2 * z[2]^2, sg)
-        @test val_cross≈1.0 atol=1e-10
+        @test val_cross ≈ 1.0 atol = 1.0e-10
     end
 
     # Dedup is idempotent: building twice gives same result

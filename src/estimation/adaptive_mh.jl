@@ -59,9 +59,11 @@ struct AdaptiveNoLimitsMH
     eps_reg::Float64
 end
 
-function AdaptiveNoLimitsMH(; adapt_start::Int = 50,
+function AdaptiveNoLimitsMH(;
+        adapt_start::Int = 50,
         init_scale::Float64 = 1.0,
-        eps_reg::Float64 = 1e-6)
+        eps_reg::Float64 = 1.0e-6
+    )
     adapt_start >= 0 || throw(ArgumentError("adapt_start must be ≥ 0"))
     init_scale > 0 || throw(ArgumentError("init_scale must be > 0"))
     eps_reg > 0 || throw(ArgumentError("eps_reg must be > 0"))
@@ -123,11 +125,16 @@ end
 
 # MvLogNormal: component-wise log bijection (η ∈ (0,∞)^d)
 # J_f(η) diagonal 1/η_i → log|J| = -sum(z);  MH correction = sum(z_new) - sum(z_old)
-@inline _amh_bij_forward(::Val{:MvLogNormal}, η::AbstractVector) = Float64.(log.(max.(
-    η, 1e-300)))
+@inline _amh_bij_forward(::Val{:MvLogNormal}, η::AbstractVector) = Float64.(
+    log.(
+        max.(
+            η, 1.0e-300
+        )
+    )
+)
 @inline _amh_bij_inverse(::Val{:MvLogNormal}, z::AbstractVector) = Float64.(exp.(z))
 @inline _amh_bij_log_jac(::Val{:MvLogNormal}, z_new::AbstractVector, z_old::AbstractVector) = sum(z_new) -
-                                                                                              sum(z_old)
+    sum(z_old)
 
 # MvLogitNormal: ALR (additive log-ratio) bijection for the simplex distribution.
 # length(dist) = d+1 (outer dim); inner MvNormal has dim d.
@@ -137,7 +144,7 @@ end
 # log|J_{z→η}| = -sum(log η) = (d+1)log(1+sum(exp(z))) - sum(z)
 # MH correction = log|J(z_new→η_new)| - log|J(z_old→η_old)|
 @inline function _amh_bij_forward(::Val{:MvLogitNormal}, η::AbstractVector)
-    ηf = max.(Float64.(η), 1e-300)
+    ηf = max.(Float64.(η), 1.0e-300)
     ref = ηf[end]
     return log.(ηf[begin:(end - 1)]) .- log(ref)
 end
@@ -146,8 +153,10 @@ end
     S = 1.0 + sum(exp.(zf))
     return vcat(exp.(zf) ./ S, 1.0 / S)
 end
-@inline function _amh_bij_log_jac(::Val{:MvLogitNormal},
-        z_new::AbstractVector, z_old::AbstractVector)
+@inline function _amh_bij_log_jac(
+        ::Val{:MvLogitNormal},
+        z_new::AbstractVector, z_old::AbstractVector
+    )
     function _log_jac_mlogit(z)
         S = 1.0 + sum(exp.(z))
         return (length(z) + 1) * log(S) - sum(z)
@@ -158,23 +167,23 @@ end
 # LogNormal: log bijection (η > 0)
 # J_f(η) = 1/η  →  log|J_f| = -log(η) = -z
 # Correction: -z_old - (-z_new) = z_new - z_old
-@inline _amh_bij_forward(::Val{:LogNormal}, η::Real) = log(max(Float64(η), 1e-300))
+@inline _amh_bij_forward(::Val{:LogNormal}, η::Real) = log(max(Float64(η), 1.0e-300))
 @inline _amh_bij_inverse(::Val{:LogNormal}, z::Real) = exp(Float64(z))
 @inline _amh_bij_log_jac(::Val{:LogNormal}, z_new::Real, z_old::Real) = Float64(z_new) -
-                                                                        Float64(z_old)
+    Float64(z_old)
 
 # Exponential: same log bijection (η > 0)
-@inline _amh_bij_forward(::Val{:Exponential}, η::Real) = log(max(Float64(η), 1e-300))
+@inline _amh_bij_forward(::Val{:Exponential}, η::Real) = log(max(Float64(η), 1.0e-300))
 @inline _amh_bij_inverse(::Val{:Exponential}, z::Real) = exp(Float64(z))
 @inline _amh_bij_log_jac(::Val{:Exponential}, z_new::Real, z_old::Real) = Float64(z_new) -
-                                                                          Float64(z_old)
+    Float64(z_old)
 
 # Beta: logit bijection (η ∈ (0,1))
 # J_f(η) = 1/(η(1-η))  →  log|J_f| = -log(η(1-η))
 # Correction: -log(η_old(1-η_old)) - (-log(η_new(1-η_new)))
 #           = log(η_new(1-η_new)) - log(η_old(1-η_old))
 @inline function _amh_bij_forward(::Val{:Beta}, η::Real)
-    ηf = clamp(Float64(η), 1e-15, 1.0 - 1e-15)
+    ηf = clamp(Float64(η), 1.0e-15, 1.0 - 1.0e-15)
     return log(ηf) - log1p(-ηf)
 end
 @inline function _amh_bij_inverse(::Val{:Beta}, z::Real)
@@ -183,8 +192,8 @@ end
 @inline function _amh_bij_log_jac(::Val{:Beta}, z_new::Real, z_old::Real)
     η_new = _amh_bij_inverse(Val(:Beta), z_new)
     η_old = _amh_bij_inverse(Val(:Beta), z_old)
-    return log(max(η_new * (1.0 - η_new), 1e-300)) -
-           log(max(η_old * (1.0 - η_old), 1e-300))
+    return log(max(η_new * (1.0 - η_new), 1.0e-300)) -
+        log(max(η_old * (1.0 - η_old), 1.0e-300))
 end
 
 # NormalizingPlanarFlow: identity (output ∈ ℝ^d; user chose η-space)
@@ -193,7 +202,8 @@ end
 @inline _amh_bij_inverse(::Val{:NormalizingPlanarFlow}, z::Vector{Float64}) = z
 @inline _amh_bij_inverse(::Val{:NormalizingPlanarFlow}, z::AbstractVector) = Vector{Float64}(z)
 @inline _amh_bij_log_jac(
-::Val{:NormalizingPlanarFlow}, ::AbstractVector, ::AbstractVector) = 0.0
+    ::Val{:NormalizingPlanarFlow}, ::AbstractVector, ::AbstractVector
+) = 0.0
 
 # Fallback: identity for unknown / unbounded distributions
 @inline _amh_bij_forward(::Val, η) = η
@@ -274,7 +284,7 @@ end
 # Beta: z = logit(η), dz/dη = 1/(η(1-η)) → log|dz/dη| = -log(η(1-η))
 @inline function _bij_log_jac_forward(::Val{:Beta}, z::Real)
     b = 1.0 / (1.0 + exp(-Float64(z)))
-    return -log(max(b * (1.0 - b), 1e-300))
+    return -log(max(b * (1.0 - b), 1.0e-300))
 end
 
 # Multivariate case for scalar-dispatched types — sum over elements
@@ -311,38 +321,48 @@ end
 # Initial proposal covariance from prior distribution
 # ---------------------------------------------------------------------------
 
-function _amh_init_cov(dist::Normal, ::Int,
-        init_scale::Float64, eps_reg::Float64)
+function _amh_init_cov(
+        dist::Normal, ::Int,
+        init_scale::Float64, eps_reg::Float64
+    )
     v = 2.38^2 * init_scale * dist.σ^2 + eps_reg
     C = Matrix{Float64}(undef, 1, 1)
     C[1, 1] = v
     return C
 end
 
-function _amh_init_cov(dist::AbstractMvNormal, dim::Int,
-        init_scale::Float64, eps_reg::Float64)
+function _amh_init_cov(
+        dist::AbstractMvNormal, dim::Int,
+        init_scale::Float64, eps_reg::Float64
+    )
     λ = 2.38^2 / dim * init_scale
     Ω = Matrix{Float64}(cov(dist))
     return λ .* Ω .+ eps_reg .* Matrix{Float64}(I(dim))
 end
 
-function _amh_init_cov(dist::MvLogNormal, dim::Int,
-        init_scale::Float64, eps_reg::Float64)
+function _amh_init_cov(
+        dist::MvLogNormal, dim::Int,
+        init_scale::Float64, eps_reg::Float64
+    )
     λ = 2.38^2 / dim * init_scale
     Ω = Matrix{Float64}(cov(dist.normal))
     return λ .* Ω .+ eps_reg .* Matrix{Float64}(I(dim))
 end
 
-function _amh_init_cov(dist::MvLogitNormal, ::Int,
-        init_scale::Float64, eps_reg::Float64)
+function _amh_init_cov(
+        dist::MvLogitNormal, ::Int,
+        init_scale::Float64, eps_reg::Float64
+    )
     d = length(dist.normal)   # proposal dimension = inner normal dim (NOT length(dist) = d+1)
     λ = 2.38^2 / d * init_scale
     Ω = Matrix{Float64}(cov(dist.normal))
     return λ .* Ω .+ eps_reg .* Matrix{Float64}(I(d))
 end
 
-function _amh_init_cov(dist::LogNormal, ::Int,
-        init_scale::Float64, eps_reg::Float64)
+function _amh_init_cov(
+        dist::LogNormal, ::Int,
+        init_scale::Float64, eps_reg::Float64
+    )
     # In log-space the prior is Normal(μ, σ), so proposal variance = σ²
     v = 2.38^2 * init_scale * dist.σ^2 + eps_reg
     C = Matrix{Float64}(undef, 1, 1)
@@ -350,8 +370,10 @@ function _amh_init_cov(dist::LogNormal, ::Int,
     return C
 end
 
-function _amh_init_cov(::Exponential, ::Int,
-        init_scale::Float64, eps_reg::Float64)
+function _amh_init_cov(
+        ::Exponential, ::Int,
+        init_scale::Float64, eps_reg::Float64
+    )
     # Var[log(Exponential)] = π²/6 (log-exponential / Gumbel variance)
     v = 2.38^2 * init_scale * π^2 / 6.0 + eps_reg
     C = Matrix{Float64}(undef, 1, 1)
@@ -359,8 +381,10 @@ function _amh_init_cov(::Exponential, ::Int,
     return C
 end
 
-function _amh_init_cov(dist::Beta, ::Int,
-        init_scale::Float64, eps_reg::Float64)
+function _amh_init_cov(
+        dist::Beta, ::Int,
+        init_scale::Float64, eps_reg::Float64
+    )
     α, β = dist.α, dist.β
     σ²_logit = (α + β + 1.0) / (α * β)   # delta-method: Var[logit(η)]
     v = 2.38^2 * init_scale * σ²_logit + eps_reg
@@ -382,10 +406,10 @@ end
 @inline function _amh_chol_L(C::Matrix{Float64}, dim::Int)::Matrix{Float64}
     if dim == 1
         L = Matrix{Float64}(undef, 1, 1)
-        L[1, 1] = sqrt(max(C[1, 1], 1e-14))
+        L[1, 1] = sqrt(max(C[1, 1], 1.0e-14))
         return L
     else
-        return Matrix{Float64}(cholesky(Symmetric(C .+ 1e-14 .* I(dim))).L)
+        return Matrix{Float64}(cholesky(Symmetric(C .+ 1.0e-14 .* I(dim))).L)
     end
 end
 
@@ -397,8 +421,10 @@ end
     return z_curr + L[1, 1] * randn(rng)
 end
 
-function _amh_propose(rng::AbstractRNG, z_curr::AbstractVector{<:Real},
-        L::Matrix{Float64})
+function _amh_propose(
+        rng::AbstractRNG, z_curr::AbstractVector{<:Real},
+        L::Matrix{Float64}
+    )
     d = length(z_curr)
     return z_curr .+ L * randn(rng, d)
 end
@@ -407,8 +433,10 @@ end
 # Haario AM covariance update (pooled across levels of the same RE name)
 # ---------------------------------------------------------------------------
 
-function _amh_haario_update!(block::_REAdaptBlock, z::Real,
-        adapt_start::Int, eps_reg::Float64)
+function _amh_haario_update!(
+        block::_REAdaptBlock, z::Real,
+        adapt_start::Int, eps_reg::Float64
+    )
     block.n_samples += 1
     n = block.n_samples
     # Welford online mean and scatter (always updated)
@@ -417,15 +445,17 @@ function _amh_haario_update!(block::_REAdaptBlock, z::Real,
     δ2 = Float64(z) - block.μ_run[1]
     block.S_run[1, 1] += δ * δ2
     # Update proposal covariance once we have enough pooled samples
-    if n >= max(adapt_start + 1, 2)
+    return if n >= max(adapt_start + 1, 2)
         C_new = 2.38^2 * block.S_run[1, 1] / (n - 1) + eps_reg
         block.C[1, 1] = max(C_new, eps_reg)
         block.C_chol_L[1, 1] = sqrt(block.C[1, 1])
     end
 end
 
-function _amh_haario_update!(block::_REAdaptBlock, z::AbstractVector{<:Real},
-        adapt_start::Int, eps_reg::Float64)
+function _amh_haario_update!(
+        block::_REAdaptBlock, z::AbstractVector{<:Real},
+        adapt_start::Int, eps_reg::Float64
+    )
     block.n_samples += 1
     n = block.n_samples
     d = length(z)
@@ -437,7 +467,7 @@ function _amh_haario_update!(block::_REAdaptBlock, z::AbstractVector{<:Real},
     for j in 1:d, i in 1:d
         block.S_run[i, j] += δ[i] * δ2[j]
     end
-    if n >= max(adapt_start + 1, 2)
+    return if n >= max(adapt_start + 1, 2)
         λ = 2.38^2 / d
         # Scale into C, then add the regularizer to the diagonal only — the
         # previous `eps_reg * Id` materialised a dense d×d identity per MH step.
@@ -453,8 +483,10 @@ end
 # Build per-level individual index: level_inds[li] = batch-local ind indices
 # ---------------------------------------------------------------------------
 
-function _amh_build_level_inds(info::REBatchInfo, ri::Int,
-        laplace_cache)::Vector{Vector{Int}}
+function _amh_build_level_inds(
+        info::REBatchInfo, ri::Int,
+        laplace_cache
+    )::Vector{Vector{Int}}
     re_info = get_re_info(info)[ri]
     n_levels = length(get_levels(get_re_map(re_info)))
     level_inds = [Int[] for _ in 1:n_levels]
@@ -473,10 +505,12 @@ end
 # State initialization
 # ---------------------------------------------------------------------------
 
-function _amh_init_state(dm::DataModel, info::REBatchInfo,
+function _amh_init_state(
+        dm::DataModel, info::REBatchInfo,
         θ::ComponentArray, re_names::Vector{Symbol},
         const_cache::REConstantsCache, cache::_LLCache,
-        sampler::AdaptiveNoLimitsMH, rng::AbstractRNG)
+        sampler::AdaptiveNoLimitsMH, rng::AbstractRNG
+    )
     nb = get_n_b(info)
     b_current = zeros(Float64, nb)
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
@@ -521,7 +555,8 @@ function _amh_init_state(dm::DataModel, info::REBatchInfo,
         level_inds = _amh_build_level_inds(info, ri, laplace_cache)
 
         pdim = size(C, 1)  # proposal dimension (may differ from dim for MvLogitNormal)
-        push!(blocks,
+        push!(
+            blocks,
             _REAdaptBlock(
                 re_name, re_type, dim, n_levels, ri,
                 lp_offset, level_inds,
@@ -530,14 +565,17 @@ function _amh_init_state(dm::DataModel, info::REBatchInfo,
                 zeros(Float64, pdim),
                 zeros(Float64, pdim, pdim),
                 0
-            ))
+            )
+        )
         lp_offset += n_levels
     end
 
     # Initialize per-individual and per-level caches
-    ind_ll, re_lp, logp = _amh_compute_full_ll(dm, info, θ_re, b_current,
+    ind_ll, re_lp, logp = _amh_compute_full_ll(
+        dm, info, θ_re, b_current,
         const_cache, cache, blocks,
-        dists_builder, model_funs, helpers)
+        dists_builder, model_funs, helpers
+    )
     return _AdaptiveMHState(b_current, ind_ll, re_lp, logp, blocks, 0, 0)
 end
 
@@ -548,10 +586,12 @@ end
 # Shared fill of the per-individual likelihood and per-level RE log-prior vectors;
 # returns their total. Serves both the fresh-vector init path and the in-place
 # post-M-step recompute.
-function _amh_fill_ll!(ind_ll::Vector{Float64}, re_lp::Vector{Float64},
+function _amh_fill_ll!(
+        ind_ll::Vector{Float64}, re_lp::Vector{Float64},
         dm::DataModel, info::REBatchInfo, θ_re::ComponentArray,
         b::Vector{Float64}, const_cache::REConstantsCache, cache::_LLCache,
-        blocks::Vector{_REAdaptBlock}, dists_builder, model_funs, helpers)
+        blocks::Vector{_REAdaptBlock}, dists_builder, model_funs, helpers
+    )
     # Per-individual likelihoods
     for (j, ind_global) in enumerate(get_inds(info))
         η_ind = _build_eta_ind(dm, ind_global, info, b, const_cache, θ_re)
@@ -575,41 +615,51 @@ function _amh_fill_ll!(ind_ll::Vector{Float64}, re_lp::Vector{Float64},
     return sum(ind_ll) + sum(re_lp)
 end
 
-function _amh_compute_full_ll(dm::DataModel, info::REBatchInfo,
+function _amh_compute_full_ll(
+        dm::DataModel, info::REBatchInfo,
         θ_re::ComponentArray, b::Vector{Float64},
         const_cache::REConstantsCache, cache::_LLCache,
         blocks::Vector{_REAdaptBlock},
-        dists_builder, model_funs, helpers)
+        dists_builder, model_funs, helpers
+    )
     n_inds = length(get_inds(info))
     n_lp = isempty(blocks) ? 0 : blocks[end].lp_offset + blocks[end].n_levels
     ind_ll = Vector{Float64}(undef, n_inds)
     re_lp = Vector{Float64}(undef, n_lp)
-    logp = _amh_fill_ll!(ind_ll, re_lp, dm, info, θ_re, b, const_cache, cache,
-        blocks, dists_builder, model_funs, helpers)
+    logp = _amh_fill_ll!(
+        ind_ll, re_lp, dm, info, θ_re, b, const_cache, cache,
+        blocks, dists_builder, model_funs, helpers
+    )
     return ind_ll, re_lp, logp
 end
 
 # Recompute caches in-place after an M-step (θ changed, b_current unchanged).
-function _amh_recompute_ll_cache!(state::_AdaptiveMHState,
+function _amh_recompute_ll_cache!(
+        state::_AdaptiveMHState,
         dm::DataModel, info::REBatchInfo,
         θ_re::ComponentArray,   # pre-symmetrized by the caller
         const_cache::REConstantsCache,
-        cache::_LLCache)
+        cache::_LLCache
+    )
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
-    state.logp = _amh_fill_ll!(state.ind_ll, state.re_lp, dm, info, θ_re,
+    return state.logp = _amh_fill_ll!(
+        state.ind_ll, state.re_lp, dm, info, θ_re,
         state.b_current, const_cache, cache, state.blocks, dists_builder,
-        cache.model_funs, cache.helpers)
+        cache.model_funs, cache.helpers
+    )
 end
 
 # ---------------------------------------------------------------------------
 # Single MH step: per-level Gibbs-within-MH with incremental log-joint
 # ---------------------------------------------------------------------------
 
-function _amh_step!(state::_AdaptiveMHState, dm::DataModel,
+function _amh_step!(
+        state::_AdaptiveMHState, dm::DataModel,
         info::REBatchInfo, θ_re::ComponentArray,
         const_cache::REConstantsCache, cache::_LLCache,
         sampler::AdaptiveNoLimitsMH, rng::AbstractRNG;
-        anneal_sds::NamedTuple = NamedTuple())
+        anneal_sds::NamedTuple = NamedTuple()
+    )
     # θ_re is pre-symmetrized once per E-step by the caller (this used to re-copy the
     # PSD blocks of θ on every one of the ~n_samples steps per E-step).
     b = state.b_current
@@ -700,10 +750,14 @@ function _amh_step!(state::_AdaptiveMHState, dm::DataModel,
                     all_fin = true
                     for (k, j) in enumerate(affected)
                         ind_global = get_inds(info)[j]
-                        η_ind = _build_eta_ind(dm, ind_global, info, b,
-                            const_cache, θ_re)
-                        new_lls[k] = _loglikelihood_individual(dm, ind_global,
-                            θ_re, η_ind, cache)
+                        η_ind = _build_eta_ind(
+                            dm, ind_global, info, b,
+                            const_cache, θ_re
+                        )
+                        new_lls[k] = _loglikelihood_individual(
+                            dm, ind_global,
+                            θ_re, η_ind, cache
+                        )
                         if !isfinite(new_lls[k])
                             all_fin = false
                             break
@@ -751,20 +805,23 @@ function _amh_step!(state::_AdaptiveMHState, dm::DataModel,
             _amh_haario_update!(block, z_now, sampler.adapt_start, sampler.eps_reg)
         end
     end
+    return
 end
 
 # ---------------------------------------------------------------------------
 # _mcem_sample_batch dispatch for AdaptiveNoLimitsMH
 # ---------------------------------------------------------------------------
 
-function _mcem_sample_batch(dm::DataModel, info::REBatchInfo,
+function _mcem_sample_batch(
+        dm::DataModel, info::REBatchInfo,
         θ::ComponentArray,
         const_cache::REConstantsCache, cache::_LLCache,
         sampler::AdaptiveNoLimitsMH, turing_kwargs::NamedTuple,
         rng::AbstractRNG, re_names::Vector{Symbol},
         warm_start, last_params;
         anneal_sds::NamedTuple = NamedTuple(),
-        outer_iter::Int = 1)
+        outer_iter::Int = 1
+    )
     nb = get_n_b(info)
     if nb == 0
         return (zeros(eltype(θ), 0, 0), nothing, eltype(θ)[])
@@ -787,8 +844,10 @@ function _mcem_sample_batch(dm::DataModel, info::REBatchInfo,
     # Run the chain
     samples = Matrix{Float64}(undef, nb, n_samples)
     for i in 1:n_samples
-        _amh_step!(state, dm, info, θ_re, const_cache, cache, sampler, rng;
-            anneal_sds = anneal_sds)
+        _amh_step!(
+            state, dm, info, θ_re, const_cache, cache, sampler, rng;
+            anneal_sds = anneal_sds
+        )
         samples[:, i] .= state.b_current
     end
 

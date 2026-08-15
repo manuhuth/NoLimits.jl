@@ -15,34 +15,34 @@ import Bijectors: logabsdetjac
 # ── Public exports (method-developer API) ─────────────────────────────────────
 # Scaffolding / contracts / transforms
 export symmetrize_psd_parameters, apply_constants!, penalty_value, validate_constant_names,
-       resolve_optimizer_bounds, free_parameter_indices, merge_free_parameters, logabsdetjac
+    resolve_optimizer_bounds, free_parameter_indices, merge_free_parameters, logabsdetjac
 # RE-batching currency
 export build_re_batch_infos, REBatchInfo, REConstantsCache, RELevelInfo,
-       get_batch_individuals, get_batch_re_info, get_batch_re_dim, get_re_levels,
-       get_re_ranges,
-       get_re_reps, get_re_dim, get_re_is_scalar, build_eta_individual, random_effect_value,
-       eta_from_modes, LikelihoodCache, build_likelihood_cache, BatchThetaContext,
-       build_batch_theta_context
+    get_batch_individuals, get_batch_re_info, get_batch_re_dim, get_re_levels,
+    get_re_ranges,
+    get_re_reps, get_re_dim, get_re_is_scalar, build_eta_individual, random_effect_value,
+    eta_from_modes, LikelihoodCache, build_likelihood_cache, BatchThetaContext,
+    build_batch_theta_context
 # Evaluation primitives
 export solve_individual, obs_distributions, hmm_filter_step!, conditional_loglikelihood,
-       complete_data_loglikelihood, re_logprior, complete_data_loglikelihood_gradient,
-       complete_data_loglikelihood_hessian
+    complete_data_loglikelihood, re_logprior, complete_data_loglikelihood_gradient,
+    complete_data_loglikelihood_hessian
 # Posterior / empirical Bayes / marginal / sampling
 export empirical_bayes, empirical_bayes_covariance, laplace_marginal, ghq_marginal,
-       sample_random_effect_draws,
-       RandomEffectPosteriorSample, get_draws, get_log_weights, get_ess, EBEOptions
+    sample_random_effect_draws,
+    RandomEffectPosteriorSample, get_draws, get_log_weights, get_ess, EBEOptions
 # Fisher-information registry
 export expected_information, outcome_parameters, dispersion_indices,
-       has_expected_information
+    has_expected_information
 # Quadrature nodes
 export GHQuadratureNodes, build_sparse_grid, get_sparse_grid, build_tensor_product_grid,
-       get_anisotropic_grid, n_ghq_points, get_nodes, get_logweights, get_signs,
-       get_dimension,
-       get_level
+    get_anisotropic_grid, n_ghq_points, get_nodes, get_logweights, get_signs,
+    get_dimension,
+    get_level
 # Curvature seam
 export AbstractCurvature, ExactHessianCurvature, FisherInformationCurvature,
-       inner_curvature,
-       CurvatureWorkspace
+    inner_curvature,
+    CurvatureWorkspace
 # Fitting-method protocol drivers
 export fit_method, fit_fixed_effects, fit_laplace_family
 
@@ -59,8 +59,10 @@ solution accessors (state/signal getters callable at a time). Returns `NamedTupl
 algebraic (non-DE) models and `nothing` when the solve fails. `dense=true` returns a dense
 (interpolating) solution; the default reuses the fit `saveat` grid.
 """
-function solve_individual(dm::DataModel, idx::Integer, θ::ComponentArray, η;
-        cache = nothing, dense::Bool = false)
+function solve_individual(
+        dm::DataModel, idx::Integer, θ::ComponentArray, η;
+        cache = nothing, dense::Bool = false
+    )
     model = get_model(dm)
     get_de(model) === nothing && return NamedTuple()
     θ_re = symmetrize_psd_parameters(θ, get_fixed(model))
@@ -83,17 +85,22 @@ individuals with η built from the flat vector `b`. θ is natural-scale and symm
 Returns `-Inf` on solve failure or non-finite density.
 """
 conditional_loglikelihood(dm::DataModel, θ::ComponentArray, η; kwargs...) = loglikelihood(
-    dm, θ, η; kwargs...)
+    dm, θ, η; kwargs...
+)
 
-function conditional_loglikelihood(dm::DataModel, idx::Integer, θ::ComponentArray, η;
-        cache = nothing)
+function conditional_loglikelihood(
+        dm::DataModel, idx::Integer, θ::ComponentArray, η;
+        cache = nothing
+    )
     θ_re = symmetrize_psd_parameters(θ, get_fixed(get_model(dm)))
     η_ca = η isa NamedTuple ? ComponentArray(η) : η
     return _loglikelihood_individual(dm, Int(idx), θ_re, η_ca, _dev_ll_cache(dm, cache))
 end
 
-function conditional_loglikelihood(dm::DataModel, batch::REBatchInfo, θ::ComponentArray, b;
-        const_cache::REConstantsCache, cache = nothing)
+function conditional_loglikelihood(
+        dm::DataModel, batch::REBatchInfo, θ::ComponentArray, b;
+        const_cache::REConstantsCache, cache = nothing
+    )
     θ_re = symmetrize_psd_parameters(θ, get_fixed(get_model(dm)))
     c = _dev_ll_cache(dm, cache)
     T = promote_type(eltype(θ), eltype(b))
@@ -115,11 +122,14 @@ Random-effect prior log-density `log p(η | θ)` summed over the (free and const
 levels, deduplicated per level. No ODE. θ is natural-scale and symmetrized here.
 `complete_data_loglikelihood == conditional_loglikelihood + re_logprior` at batch scale.
 """
-function re_logprior(dm::DataModel, batch::REBatchInfo, θ::ComponentArray, b;
+function re_logprior(
+        dm::DataModel, batch::REBatchInfo, θ::ComponentArray, b;
         const_cache::REConstantsCache, cache = nothing,
-        anneal_sds::NamedTuple = NamedTuple())
+        anneal_sds::NamedTuple = NamedTuple()
+    )
     return _re_logpdf_batch(
-        dm, batch, θ, b, const_cache, _dev_ll_cache(dm, cache); anneal_sds = anneal_sds)
+        dm, batch, θ, b, const_cache, _dev_ll_cache(dm, cache); anneal_sds = anneal_sds
+    )
 end
 
 function re_logprior(dm::DataModel, idx::Integer, θ::ComponentArray, η; cache = nothing)
@@ -144,16 +154,20 @@ individuals, with η supplied or resolved from a fit) is documented above.
 function complete_data_loglikelihood(
         dm::DataModel, batch::REBatchInfo, θ::ComponentArray, b;
         const_cache::REConstantsCache, cache = nothing,
-        anneal_sds::NamedTuple = NamedTuple(), tctx = nothing)
-    return _laplace_logf_batch(dm, batch, θ, b, const_cache, _dev_ll_cache(dm, cache);
-        anneal_sds = anneal_sds, tctx = tctx)
+        anneal_sds::NamedTuple = NamedTuple(), tctx = nothing
+    )
+    return _laplace_logf_batch(
+        dm, batch, θ, b, const_cache, _dev_ll_cache(dm, cache);
+        anneal_sds = anneal_sds, tctx = tctx
+    )
 end
 
 function complete_data_loglikelihood(
-        dm::DataModel, idx::Integer, θ::ComponentArray, η; cache = nothing)
+        dm::DataModel, idx::Integer, θ::ComponentArray, η; cache = nothing
+    )
     c = _dev_ll_cache(dm, cache)
     return conditional_loglikelihood(dm, idx, θ, η; cache = c) +
-           re_logprior(dm, idx, θ, η; cache = c)
+        re_logprior(dm, idx, θ, η; cache = c)
 end
 
 """
@@ -164,7 +178,8 @@ independent subject, build a singleton batch with `build_re_batch_infos`.
 """
 function complete_data_loglikelihood_gradient(
         dm::DataModel, batch::REBatchInfo, θ::ComponentArray, b;
-        const_cache::REConstantsCache, cache = nothing)
+        const_cache::REConstantsCache, cache = nothing
+    )
     f = _LaplaceLogfBatch(dm, batch, θ, const_cache, _dev_ll_cache(dm, cache))
     return ForwardDiff.gradient(f, b)
 end
@@ -180,9 +195,12 @@ Hessian `H = ∇²_b log p(y, η | θ)` (negative-definite near a mode; the post
 function complete_data_loglikelihood_hessian(
         dm::DataModel, batch::REBatchInfo, θ::ComponentArray, b;
         const_cache::REConstantsCache, cache = nothing,
-        curvature::AbstractCurvature = ExactHessianCurvature())
-    return inner_curvature(curvature, dm, batch, θ, b, const_cache,
-        _dev_ll_cache(dm, cache), CurvatureWorkspace())
+        curvature::AbstractCurvature = ExactHessianCurvature()
+    )
+    return inner_curvature(
+        curvature, dm, batch, θ, b, const_cache,
+        _dev_ll_cache(dm, cache), CurvatureWorkspace()
+    )
 end
 
 """
@@ -194,7 +212,8 @@ distribution when `y === missing`). Non-HMM distributions pass through unchanged
 `hmm_priors` untouched.
 """
 hmm_filter_step!(hmm_priors::Dict{Symbol, Any}, outcome::Symbol, dist, y) = _apply_hmm_filter!(
-    hmm_priors, outcome, dist, y)
+    hmm_priors, outcome, dist, y
+)
 
 """
     obs_distributions(dm, idx, θ, η; cache=nothing, sol_accessors=nothing, hmm_filter=true) -> Vector{<:NamedTuple}
@@ -205,8 +224,10 @@ once (or reuses a passed `sol_accessors`). With `hmm_filter=true` (default) HMM 
 forward-filtered in sequence, matching `plot_fits`/`build_plot_cache`. Returns an empty vector
 on solve failure.
 """
-function obs_distributions(dm::DataModel, idx::Integer, θ::ComponentArray, η;
-        cache = nothing, sol_accessors = nothing, hmm_filter::Bool = true)
+function obs_distributions(
+        dm::DataModel, idx::Integer, θ::ComponentArray, η;
+        cache = nothing, sol_accessors = nothing, hmm_filter::Bool = true
+    )
     model = get_model(dm)
     θ_re = symmetrize_psd_parameters(θ, get_fixed(model))
     η_ca = η isa NamedTuple ? ComponentArray(η) : η
@@ -230,13 +251,17 @@ function obs_distributions(dm::DataModel, idx::Integer, θ::ComponentArray, η;
         vary = _varying_at(dm, ind, i, time_vec)
         η_row = _row_random_effects_at(dm, Int(idx), i, η_ca, rowwise_re; obs_only = true)
         obs = has_de ?
-              calculate_formulas_obs(model, θ_re, η_row, const_cov, vary, sol_accessors) :
-              calculate_formulas_obs(model, θ_re, η_row, const_cov, vary)
+            calculate_formulas_obs(model, θ_re, η_row, const_cov, vary, sol_accessors) :
+            calculate_formulas_obs(model, θ_re, η_row, const_cov, vary)
         prs = Pair{Symbol, Any}[]
         for col in obs_cols
             dist = getproperty(obs, col)
-            hmm_filter && (dist = _apply_hmm_filter!(hmm_priors, col, dist,
-                getfield(obs_series, col)[i]))
+            hmm_filter && (
+                dist = _apply_hmm_filter!(
+                    hmm_priors, col, dist,
+                    getfield(obs_series, col)[i]
+                )
+            )
             push!(prs, col => dist)
         end
         out[i] = NamedTuple(prs)
@@ -248,17 +273,23 @@ end
 
 # Modes + aligned batch structure at natural-scale θ. Batch order matches a fresh
 # build_re_batch_infos(dm, constants_re), so bstars[bi] pairs with infos[bi]/cc.
-function _empirical_bayes_batches(dm::DataModel, θ::ComponentArray;
+function _empirical_bayes_batches(
+        dm::DataModel, θ::ComponentArray;
         constants_re::NamedTuple = NamedTuple(), ebe_options::EBEOptions = EBEOptions(),
         rescue = nothing, ode_args::Tuple = (), ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        rng::AbstractRNG = Random.default_rng())
+        rng::AbstractRNG = Random.default_rng()
+    )
     θ_re = symmetrize_psd_parameters(θ, get_fixed(get_model(dm)))
-    cache = build_likelihood_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-        serialization = serialization)
+    cache = build_likelihood_cache(
+        dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = serialization
+    )
     _, infos, cc = build_re_batch_infos(dm, constants_re)
-    bstars, _ = _compute_bstars(dm, θ_re, constants_re, cache, ebe_options, rng;
-        rescue = rescue)
+    bstars, _ = _compute_bstars(
+        dm, θ_re, constants_re, cache, ebe_options, rng;
+        rescue = rescue
+    )
     return bstars, infos, cc, θ_re, cache
 end
 
@@ -273,7 +304,8 @@ differentiable in `θ` (the inner mode solver floatizes `θ`); for a θ-gradient
 use the Laplace fit's analytic gradient.
 """
 empirical_bayes(dm::DataModel, θ::ComponentArray; kwargs...) = _empirical_bayes_batches(
-    dm, θ; kwargs...)[1]
+    dm, θ; kwargs...
+)[1]
 
 function empirical_bayes(dm::DataModel, θ::ComponentArray, idx::Integer; kwargs...)
     bstars, infos, cc, θ_re, _ = _empirical_bayes_batches(dm, θ; kwargs...)
@@ -296,13 +328,16 @@ computed there. `Σ` is `nothing` when `−H` is not positive definite after jit
 function empirical_bayes_covariance(
         dm::DataModel, θ::ComponentArray, batch::REBatchInfo, b_star;
         const_cache::REConstantsCache, cache = nothing,
-        curvature::AbstractCurvature = ExactHessianCurvature(), jitter = 1e-6,
-        max_tries::Int = 6, adaptive::Bool = false, scale_factor = 0.0)
+        curvature::AbstractCurvature = ExactHessianCurvature(), jitter = 1.0e-6,
+        max_tries::Int = 6, adaptive::Bool = false, scale_factor = 0.0
+    )
     c = _dev_ll_cache(dm, cache)
     θ_re = symmetrize_psd_parameters(θ, get_fixed(get_model(dm)))
-    _, _, chol = _laplace_logdet_negH(dm, batch, θ_re, b_star, const_cache, c, nothing, 1;
+    _, _, chol = _laplace_logdet_negH(
+        dm, batch, θ_re, b_star, const_cache, c, nothing, 1;
         jitter = jitter, max_tries = max_tries, adaptive = adaptive,
-        scale_factor = scale_factor, hmode = curvature)
+        scale_factor = scale_factor, hmode = curvature
+    )
     (chol === nothing || chol.info != 0) && return nothing
     return Matrix(inv(chol))
 end
@@ -310,14 +345,21 @@ end
 function empirical_bayes_covariance(
         dm::DataModel, θ::ComponentArray, bstars::AbstractVector;
         constants_re::NamedTuple = NamedTuple(), ode_args::Tuple = (),
-        ode_kwargs::NamedTuple = NamedTuple(), kwargs...)
-    cache = build_likelihood_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-        force_saveat = true)
+        ode_kwargs::NamedTuple = NamedTuple(), kwargs...
+    )
+    cache = build_likelihood_cache(
+        dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        force_saveat = true
+    )
     _, infos, cc = build_re_batch_infos(dm, constants_re)
     length(bstars) == length(infos) ||
         error("empirical_bayes_covariance: got $(length(bstars)) modes for $(length(infos)) batches.")
-    return [empirical_bayes_covariance(dm, θ, infos[bi], bstars[bi]; const_cache = cc,
-                cache = cache, kwargs...) for bi in eachindex(infos)]
+    return [
+        empirical_bayes_covariance(
+                dm, θ, infos[bi], bstars[bi]; const_cache = cc,
+                cache = cache, kwargs...
+            ) for bi in eachindex(infos)
+    ]
 end
 
 """
@@ -330,38 +372,48 @@ Laplace-approximate marginal log-likelihood
 marginal use the Laplace fit's analytic (envelope + trace-estimator) gradient; naive AD through
 the recomputed mode is not supported.
 """
-function laplace_marginal(dm::DataModel, θ::ComponentArray, batch::REBatchInfo, b_star;
+function laplace_marginal(
+        dm::DataModel, θ::ComponentArray, batch::REBatchInfo, b_star;
         const_cache::REConstantsCache, cache = nothing,
-        curvature::AbstractCurvature = ExactHessianCurvature(), jitter = 1e-6,
-        max_tries::Int = 6, adaptive::Bool = false, scale_factor = 0.0)
+        curvature::AbstractCurvature = ExactHessianCurvature(), jitter = 1.0e-6,
+        max_tries::Int = 6, adaptive::Bool = false, scale_factor = 0.0
+    )
     c = _dev_ll_cache(dm, cache)
     logf = _laplace_logf_batch(dm, batch, θ, b_star, const_cache, c)
     logdet_negH, _, _ = _laplace_logdet_negH(
         dm, batch, θ, b_star, const_cache, c, nothing, 1;
         jitter = jitter, max_tries = max_tries, adaptive = adaptive,
-        scale_factor = scale_factor, hmode = curvature)
+        scale_factor = scale_factor, hmode = curvature
+    )
     # `_laplace_logdet_negH` already returns Inf for a degenerate or non-factorizable -H,
     # which makes the result -Inf; warn here (a reporting path) rather than in the hot loop.
     if isinf(logdet_negH)
         @warn "laplace_marginal: the Laplace expansion is invalid at b* (-H degenerate or " *
-              "not factorizable; b* may not be a true mode). Returning -Inf."
+            "not factorizable; b* may not be a true mode). Returning -Inf."
         return convert(typeof(logf), -Inf)
     end
     n_b = get_batch_re_dim(batch)
     return logf + (n_b / 2) * log(2 * pi) - logdet_negH / 2
 end
 
-function laplace_marginal(dm::DataModel, θ::ComponentArray;
+function laplace_marginal(
+        dm::DataModel, θ::ComponentArray;
         constants_re::NamedTuple = NamedTuple(),
-        curvature::AbstractCurvature = ExactHessianCurvature(), jitter = 1e-6,
-        max_tries::Int = 6, adaptive::Bool = false, scale_factor = 0.0, kwargs...)
+        curvature::AbstractCurvature = ExactHessianCurvature(), jitter = 1.0e-6,
+        max_tries::Int = 6, adaptive::Bool = false, scale_factor = 0.0, kwargs...
+    )
     bstars, infos, cc, θ_re, cache = _empirical_bayes_batches(
-        dm, θ; constants_re = constants_re, kwargs...)
+        dm, θ; constants_re = constants_re, kwargs...
+    )
     isempty(infos) && return zero(eltype(θ_re))
-    return sum(laplace_marginal(dm, θ_re, infos[bi], bstars[bi]; const_cache = cc,
-                   cache = cache, curvature = curvature, jitter = jitter,
-                   max_tries = max_tries, adaptive = adaptive, scale_factor = scale_factor)
-    for bi in eachindex(infos))
+    return sum(
+        laplace_marginal(
+                dm, θ_re, infos[bi], bstars[bi]; const_cache = cc,
+                cache = cache, curvature = curvature, jitter = jitter,
+                max_tries = max_tries, adaptive = adaptive, scale_factor = scale_factor
+            )
+            for bi in eachindex(infos)
+    )
 end
 
 """
@@ -374,18 +426,24 @@ integrator the `GHQuadrature` estimator uses (no mode-finding). `level` is an `I
 or a `NamedTuple` mapping RE name → level (anisotropic). This is distinct from the adaptive
 `get_marginal_likelihood` (AGHQ, centered at the posterior mode).
 """
-function ghq_marginal(dm::DataModel, θ::ComponentArray, batch::REBatchInfo;
-        level = 3, const_cache::REConstantsCache, cache = nothing)
+function ghq_marginal(
+        dm::DataModel, θ::ComponentArray, batch::REBatchInfo;
+        level = 3, const_cache::REConstantsCache, cache = nothing
+    )
     θ_re = symmetrize_psd_parameters(θ, get_fixed(get_model(dm)))
     return _ghq_batch_ll(dm, batch, θ_re, const_cache, _dev_ll_cache(dm, cache), level)
 end
 
-function ghq_marginal(dm::DataModel, θ::ComponentArray;
+function ghq_marginal(
+        dm::DataModel, θ::ComponentArray;
         level = 3, constants_re::NamedTuple = NamedTuple(),
-        ode_args::Tuple = (), ode_kwargs::NamedTuple = NamedTuple())
+        ode_args::Tuple = (), ode_kwargs::NamedTuple = NamedTuple()
+    )
     θ_re = symmetrize_psd_parameters(θ, get_fixed(get_model(dm)))
-    c = build_likelihood_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-        serialization = EnsembleSerial(), force_saveat = true)
+    c = build_likelihood_cache(
+        dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = EnsembleSerial(), force_saveat = true
+    )
     _, infos, cc = build_re_batch_infos(dm, constants_re)
     isempty(infos) && return zero(eltype(θ_re))
     return sum(_ghq_batch_ll(dm, infos[bi], θ_re, cc, c, level) for bi in eachindex(infos))
@@ -430,7 +488,8 @@ function sample_random_effect_draws(
         dm::DataModel, θ::ComponentArray, batch::REBatchInfo, b_star;
         method::Symbol = :importance, sampler = nothing, n_samples::Int = 100,
         n_adapt::Int = 50, const_cache::REConstantsCache, cache = nothing,
-        rng::AbstractRNG = Random.default_rng())
+        rng::AbstractRNG = Random.default_rng()
+    )
     θ_re = symmetrize_psd_parameters(θ, get_fixed(get_model(dm)))
     c = _dev_ll_cache(dm, cache)
     n_b = get_batch_re_dim(batch)
@@ -439,18 +498,23 @@ function sample_random_effect_draws(
             error("sample_random_effect_draws(method=:mcmc) requires a Turing `sampler`, e.g. MH() or NUTS().")
         n_b == 0 &&
             return RandomEffectPosteriorSample(
-                zeros(eltype(θ_re), 0, 0), nothing, nothing, :mcmc)
+            zeros(eltype(θ_re), 0, 0), nothing, nothing, :mcmc
+        )
         re_names = get_re_names(get_random(get_model(dm)))
         tkw = (n_samples = n_samples, n_adapt = n_adapt, progress = false)
         samples, _, _ = _mcem_sample_batch(
-            dm, batch, θ_re, const_cache, c, sampler, tkw, rng, re_names, false, nothing)
+            dm, batch, θ_re, const_cache, c, sampler, tkw, rng, re_names, false, nothing
+        )
         return RandomEffectPosteriorSample(samples, nothing, nothing, :mcmc)
     elseif method === :importance
         n_b == 0 &&
-            return RandomEffectPosteriorSample(zeros(0, n_samples), zeros(n_samples),
-                Float64(n_samples), :importance)
+            return RandomEffectPosteriorSample(
+            zeros(0, n_samples), zeros(n_samples),
+            Float64(n_samples), :importance
+        )
         Σ = empirical_bayes_covariance(
-            dm, θ_re, batch, b_star; const_cache = const_cache, cache = c)
+            dm, θ_re, batch, b_star; const_cache = const_cache, cache = c
+        )
         Σ === nothing &&
             return RandomEffectPosteriorSample(zeros(n_b, 0), Float64[], 0.0, :importance)
         q = MvNormal(collect(float.(b_star)), Symmetric(Matrix(Σ)))
@@ -460,7 +524,8 @@ function sample_random_effect_draws(
             b_r = rand(rng, q)
             @inbounds draws[:, r] = b_r
             logp = complete_data_loglikelihood(
-                dm, batch, θ_re, b_r; const_cache = const_cache, cache = c)
+                dm, batch, θ_re, b_r; const_cache = const_cache, cache = c
+            )
             @inbounds logw[r] = logp - logpdf(q, b_r)
         end
         w = exp.(logw .- maximum(logw))
@@ -471,31 +536,43 @@ function sample_random_effect_draws(
     error("Unknown sample_random_effect_draws method $(method); use :importance or :mcmc.")
 end
 
-function sample_random_effect_draws(dm::DataModel, θ::ComponentArray;
+function sample_random_effect_draws(
+        dm::DataModel, θ::ComponentArray;
         method::Symbol = :importance, sampler = nothing, n_samples::Int = 100,
         n_adapt::Int = 50, constants_re::NamedTuple = NamedTuple(),
         ode_args::Tuple = (), ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         ebe_options::EBEOptions = EBEOptions(), rescue = nothing,
-        rng::AbstractRNG = Random.default_rng())
+        rng::AbstractRNG = Random.default_rng()
+    )
     if method === :mcmc
         θ_re = symmetrize_psd_parameters(θ, get_fixed(get_model(dm)))
-        c = build_likelihood_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-            serialization = EnsembleSerial(), force_saveat = true)
+        c = build_likelihood_cache(
+            dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+            serialization = EnsembleSerial(), force_saveat = true
+        )
         _, infos, cc = build_re_batch_infos(dm, constants_re)
-        return [sample_random_effect_draws(
+        return [
+            sample_random_effect_draws(
                     dm, θ_re, infos[bi], eltype(θ_re)[]; method = :mcmc,
                     sampler = sampler, n_samples = n_samples, n_adapt = n_adapt,
-                    const_cache = cc, cache = c, rng = rng) for bi in eachindex(infos)]
+                    const_cache = cc, cache = c, rng = rng
+                ) for bi in eachindex(infos)
+        ]
     end
-    bstars, infos, cc, θ_re, cache = _empirical_bayes_batches(dm, θ;
+    bstars, infos, cc, θ_re, cache = _empirical_bayes_batches(
+        dm, θ;
         constants_re = constants_re, ebe_options = ebe_options, rescue = rescue,
         ode_args = ode_args, ode_kwargs = ode_kwargs, serialization = serialization,
-        rng = rng)
-    return [sample_random_effect_draws(
+        rng = rng
+    )
+    return [
+        sample_random_effect_draws(
                 dm, θ_re, infos[bi], bstars[bi]; method = :importance,
-                n_samples = n_samples, const_cache = cc, cache = cache, rng = rng)
-            for bi in eachindex(infos)]
+                n_samples = n_samples, const_cache = cc, cache = cache, rng = rng
+            )
+            for bi in eachindex(infos)
+    ]
 end
 
 # ── Fitting-method protocol: the drivers a new estimator plugs into ───────────
@@ -521,7 +598,8 @@ passes its prior term here). Requires the method to carry
 `optimizer`/`optim_kwargs`/`adtype`/`lb`/`ub`/`ignore_model_bounds`.
 """
 fit_fixed_effects(dm::DataModel, method; objective_term = _NoOpTerm(), kwargs...) = _fit_no_re(
-    dm, method; add_term = objective_term, kwargs...)
+    dm, method; add_term = objective_term, kwargs...
+)
 
 """
     fit_laplace_family(dm, method, curvature::AbstractCurvature, args, fit_kwargs, validate_post_transform; kwargs...) -> FitResult
@@ -562,8 +640,10 @@ Resolve the free fixed effects (those not in `constants`), the transform pair, t
 constants-applied transformed vector, the free parameters' initial transformed values, and the
 free→full index map. `theta0_untransformed` overrides the model's initial natural-scale values.
 """
-function free_parameter_layout(fe::FixedEffects; constants::NamedTuple = NamedTuple(),
-        theta0_untransformed = nothing)
+function free_parameter_layout(
+        fe::FixedEffects; constants::NamedTuple = NamedTuple(),
+        theta0_untransformed = nothing
+    )
     fixed_names = get_names(fe)
     free_names = [n for n in fixed_names if !(n in keys(constants))]
     θ0_u = get_θ0_untransformed(fe)
@@ -580,11 +660,16 @@ function free_parameter_layout(fe::FixedEffects; constants::NamedTuple = NamedTu
     θ_const_u = deepcopy(θ0_u)
     apply_constants!(θ_const_u, constants)
     θ_const_t = transform(θ_const_u)
-    θ0_free_t = ComponentArray(NamedTuple{Tuple(free_names)}(
-        Tuple(getproperty(θ0_t, n) for n in free_names)))
-    return NLFreeLayout(free_names, transform, inv_transform, θ_const_t,
+    θ0_free_t = ComponentArray(
+        NamedTuple{Tuple(free_names)}(
+            Tuple(getproperty(θ0_t, n) for n in free_names)
+        )
+    )
+    return NLFreeLayout(
+        free_names, transform, inv_transform, θ_const_t,
         collect(θ_const_t), getaxes(θ_const_t), θ0_free_t,
-        free_parameter_indices(θ_const_t, θ0_free_t), getaxes(θ0_free_t))
+        free_parameter_indices(θ_const_t, θ0_free_t), getaxes(θ0_free_t)
+    )
 end
 
 """
@@ -595,7 +680,7 @@ Overlay the optimizer's free-parameter solution onto the constants and return th
 """
 function resolve_fitted_parameters(layout::NLFreeLayout, θ_hat_free_t)
     θ_hat_t_free = θ_hat_free_t isa ComponentArray ? θ_hat_free_t :
-                   ComponentArray(θ_hat_free_t, layout.axs)
+        ComponentArray(θ_hat_free_t, layout.axs)
     T = eltype(θ_hat_t_free)
     θ_hat_t = ComponentArray(T.(layout.θ_const_t), layout.axs_full)
     for name in layout.free_names
@@ -638,7 +723,7 @@ end
 # API remains the full-control path.
 
 export FitContext, build_fit_context, initial_parameters, get_batch_infos,
-       optimize_parameters
+    optimize_parameters
 
 """
     FitContext
@@ -690,12 +775,16 @@ With a context, the primitives lose their cache arguments and address batches by
 The evaluation cache is single-threaded (`ponytail:` serial cache; pass the explicit primitives
 your own per-thread caches when parallelising a custom loop).
 """
-function build_fit_context(dm::DataModel;
+function build_fit_context(
+        dm::DataModel;
         constants_re::NamedTuple = NamedTuple(),
-        ode_args::Tuple = (), ode_kwargs::NamedTuple = NamedTuple())
+        ode_args::Tuple = (), ode_kwargs::NamedTuple = NamedTuple()
+    )
     _, infos, cc = build_re_batch_infos(dm, constants_re)
-    cache = build_likelihood_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-        force_saveat = true)
+    cache = build_likelihood_cache(
+        dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        force_saveat = true
+    )
     return FitContext(dm, infos, cc, cache, constants_re)
 end
 
@@ -718,78 +807,109 @@ point of a fitting loop (replace it with `theta_0_untransformed` when the caller
 initial_parameters(ctx::FitContext) = copy(get_θ0_untransformed(get_fixed(get_model(ctx.dm))))
 
 # Batch-index covers over the density primitives.
-for f in (:conditional_loglikelihood, :re_logprior, :complete_data_loglikelihood,
-    :complete_data_loglikelihood_gradient, :complete_data_loglikelihood_hessian)
+for f in (
+        :conditional_loglikelihood, :re_logprior, :complete_data_loglikelihood,
+        :complete_data_loglikelihood_gradient, :complete_data_loglikelihood_hessian,
+    )
     @eval @inline function $f(ctx::FitContext, bi::Integer, θ::ComponentArray, b; kwargs...)
-        return $f(ctx.dm, ctx.batch_infos[bi], θ, b;
-            const_cache = ctx.const_cache, cache = ctx.cache, kwargs...)
+        return $f(
+            ctx.dm, ctx.batch_infos[bi], θ, b;
+            const_cache = ctx.const_cache, cache = ctx.cache, kwargs...
+        )
     end
 end
 
 @inline function ghq_marginal(ctx::FitContext, bi::Integer, θ::ComponentArray; level = 3)
-    return ghq_marginal(ctx.dm, θ, ctx.batch_infos[bi]; level = level,
-        const_cache = ctx.const_cache, cache = ctx.cache)
+    return ghq_marginal(
+        ctx.dm, θ, ctx.batch_infos[bi]; level = level,
+        const_cache = ctx.const_cache, cache = ctx.cache
+    )
 end
 
 function ghq_marginal(ctx::FitContext, θ::ComponentArray; level = 3)
     isempty(ctx.batch_infos) && return zero(eltype(θ))
-    return sum(ghq_marginal(ctx, bi, θ; level = level)
-    for bi in eachindex(ctx.batch_infos))
+    return sum(
+        ghq_marginal(ctx, bi, θ; level = level)
+            for bi in eachindex(ctx.batch_infos)
+    )
 end
 
 # Population forms reusing the context caches (the bare-`dm` forms rebuild them per call).
-function empirical_bayes(ctx::FitContext, θ::ComponentArray;
+function empirical_bayes(
+        ctx::FitContext, θ::ComponentArray;
         ebe_options::EBEOptions = EBEOptions(), rescue = nothing,
-        rng::AbstractRNG = Random.default_rng())
+        rng::AbstractRNG = Random.default_rng()
+    )
     θ_re = symmetrize_psd_parameters(θ, get_fixed(get_model(ctx.dm)))
     bstars, _ = _compute_bstars(
         ctx.dm, θ_re, ctx.constants_re, ctx.cache, ebe_options, rng;
-        rescue = rescue)
+        rescue = rescue
+    )
     return bstars
 end
 
 @inline function empirical_bayes_covariance(
-        ctx::FitContext, bi::Integer, θ::ComponentArray, b_star; kwargs...)
-    return empirical_bayes_covariance(ctx.dm, θ, ctx.batch_infos[bi], b_star;
-        const_cache = ctx.const_cache, cache = ctx.cache, kwargs...)
+        ctx::FitContext, bi::Integer, θ::ComponentArray, b_star; kwargs...
+    )
+    return empirical_bayes_covariance(
+        ctx.dm, θ, ctx.batch_infos[bi], b_star;
+        const_cache = ctx.const_cache, cache = ctx.cache, kwargs...
+    )
 end
 
 function empirical_bayes_covariance(
-        ctx::FitContext, θ::ComponentArray, bstars::AbstractVector; kwargs...)
+        ctx::FitContext, θ::ComponentArray, bstars::AbstractVector; kwargs...
+    )
     length(bstars) == length(ctx.batch_infos) ||
         error("empirical_bayes_covariance: got $(length(bstars)) modes for $(length(ctx.batch_infos)) batches.")
-    return [empirical_bayes_covariance(ctx, bi, θ, bstars[bi]; kwargs...)
-            for bi in eachindex(ctx.batch_infos)]
+    return [
+        empirical_bayes_covariance(ctx, bi, θ, bstars[bi]; kwargs...)
+            for bi in eachindex(ctx.batch_infos)
+    ]
 end
 
-function laplace_marginal(ctx::FitContext, θ::ComponentArray;
+function laplace_marginal(
+        ctx::FitContext, θ::ComponentArray;
         curvature::AbstractCurvature = ExactHessianCurvature(),
         ebe_options::EBEOptions = EBEOptions(), rescue = nothing,
-        rng::AbstractRNG = Random.default_rng(), kwargs...)
+        rng::AbstractRNG = Random.default_rng(), kwargs...
+    )
     isempty(ctx.batch_infos) && return zero(eltype(θ))
     bstars = empirical_bayes(ctx, θ; ebe_options = ebe_options, rescue = rescue, rng = rng)
-    return sum(laplace_marginal(ctx.dm, θ, ctx.batch_infos[bi], bstars[bi];
-                   const_cache = ctx.const_cache, cache = ctx.cache,
-                   curvature = curvature, kwargs...)
-    for bi in eachindex(ctx.batch_infos))
+    return sum(
+        laplace_marginal(
+                ctx.dm, θ, ctx.batch_infos[bi], bstars[bi];
+                const_cache = ctx.const_cache, cache = ctx.cache,
+                curvature = curvature, kwargs...
+            )
+            for bi in eachindex(ctx.batch_infos)
+    )
 end
 
-function sample_random_effect_draws(ctx::FitContext, θ::ComponentArray;
+function sample_random_effect_draws(
+        ctx::FitContext, θ::ComponentArray;
         method::Symbol = :importance, sampler = nothing, n_samples::Int = 100,
         n_adapt::Int = 50, ebe_options::EBEOptions = EBEOptions(), rescue = nothing,
-        rng::AbstractRNG = Random.default_rng())
+        rng::AbstractRNG = Random.default_rng()
+    )
     if method === :mcmc
-        return [sample_random_effect_draws(
+        return [
+            sample_random_effect_draws(
                     ctx.dm, θ, ctx.batch_infos[bi], eltype(θ)[]; method = :mcmc,
                     sampler = sampler, n_samples = n_samples, n_adapt = n_adapt,
-                    const_cache = ctx.const_cache, cache = ctx.cache, rng = rng)
-                for bi in eachindex(ctx.batch_infos)]
+                    const_cache = ctx.const_cache, cache = ctx.cache, rng = rng
+                )
+                for bi in eachindex(ctx.batch_infos)
+        ]
     end
     bstars = empirical_bayes(ctx, θ; ebe_options = ebe_options, rescue = rescue, rng = rng)
-    return [sample_random_effect_draws(
+    return [
+        sample_random_effect_draws(
                 ctx.dm, θ, ctx.batch_infos[bi], bstars[bi]; method = method,
                 n_samples = n_samples, const_cache = ctx.const_cache, cache = ctx.cache,
-                rng = rng) for bi in eachindex(ctx.batch_infos)]
+                rng = rng
+            ) for bi in eachindex(ctx.batch_infos)
+    ]
 end
 
 """
@@ -813,18 +933,23 @@ in `f_natural`. Do-block friendly:
 `ponytail:` optimizes all fixed effects; apply `constants`/bounds via the explicit
 `free_parameter_layout`/`resolve_optimizer_bounds` path when needed.
 """
-function optimize_parameters(f_natural, ctx::FitContext;
+function optimize_parameters(
+        f_natural, ctx::FitContext;
         θ_start::ComponentArray = initial_parameters(ctx),
         optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
         adtype = Optimization.AutoForwardDiff(),
-        optim_kwargs::NamedTuple = NamedTuple())
+        optim_kwargs::NamedTuple = NamedTuple()
+    )
     dm = ctx.dm
     fe = get_fixed(get_model(dm))
     inv_transform = get_inverse_transform(fe)
     θt0 = get_transform(fe)(θ_start)
     axs = getaxes(θt0)
-    obj = (θt_vec, _) -> f_natural(symmetrize_psd_parameters(
-        dm, inv_transform(ComponentArray(θt_vec, axs))))
+    obj = (θt_vec, _) -> f_natural(
+        symmetrize_psd_parameters(
+            dm, inv_transform(ComponentArray(θt_vec, axs))
+        )
+    )
     prob = OptimizationProblem(OptimizationFunction(obj, adtype), collect(θt0))
     sol = Optimization.solve(prob, optimizer; optim_kwargs...)
     θ̂ = symmetrize_psd_parameters(dm, inv_transform(ComponentArray(sol.u, axs)))
@@ -839,10 +964,14 @@ Context form of [`build_fit_result`](@ref). `eb_modes = :auto` computes the per-
 empirical-Bayes modes via `empirical_bayes(ctx, θ)` for random-effect kinds (and stores
 `nothing` for fixed-effects kinds), so the common case needs no extra call.
 """
-function build_fit_result(ctx::FitContext, method::FittingMethod, θ::ComponentArray;
-        kind::Symbol = :frequentist, eb_modes = :auto, kwargs...)
+function build_fit_result(
+        ctx::FitContext, method::FittingMethod, θ::ComponentArray;
+        kind::Symbol = :frequentist, eb_modes = :auto, kwargs...
+    )
     modes = eb_modes === :auto ?
-            (kind in (:frequentist_re, :ghquadrature, :saem, :mcem) ?
-             empirical_bayes(ctx, θ) : nothing) : eb_modes
+        (
+            kind in (:frequentist_re, :ghquadrature, :saem, :mcem) ?
+            empirical_bayes(ctx, θ) : nothing
+        ) : eb_modes
     return build_fit_result(ctx.dm, method, θ; kind = kind, eb_modes = modes, kwargs...)
 end

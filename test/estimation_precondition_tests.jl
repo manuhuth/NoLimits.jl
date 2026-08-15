@@ -16,43 +16,49 @@ using LinearAlgebra
 # `RealNumber(0.2)` the scale is max(0.2, 1) = 1 and every assertion below passes
 # vacuously — a `precondition = false` check against s == 1 tests nothing at all.
 
-const _PC_DF = DataFrame(ID = [:A, :A, :B, :B, :C, :C, :D, :D],
-    t = repeat([0.0, 1.0], 4), y = [3.1, 3.4, 2.7, 2.9, 3.3, 3.0, 2.8, 3.2])
+const _PC_DF = DataFrame(
+    ID = [:A, :A, :B, :B, :C, :C, :D, :D],
+    t = repeat([0.0, 1.0], 4), y = [3.1, 3.4, 2.7, 2.9, 3.3, 3.0, 2.8, 3.2]
+)
 
 function _pc_model_re()
-    @Model(begin
-        @covariates begin
-            t = Covariate()
+    return @Model(
+        begin
+            @covariates begin
+                t = Covariate()
+            end
+            # Priors exist only so `PooledMap` -- Pooled plus a log-prior, and it requires random
+            # effects -- can share this fixture. Every ML method below ignores them.
+            @fixedEffects begin
+                a = RealNumber(3.0; prior = Normal(0.0, 10.0))   # identity, |theta0| = 3 -> s = 3
+                b = RealNumber(0.5, scale = :log, prior = LogNormal(0.0, 1.0))   # log -> s = 1
+                σ = RealNumber(0.4, scale = :log, prior = LogNormal(0.0, 1.0))
+            end
+            @randomEffects begin
+                η = RandomEffect(Normal(0.0, 1.0); column = :ID)
+            end
+            @formulas begin
+                y ~ Normal(a + b * t + η, σ)
+            end
         end
-        # Priors exist only so `PooledMap` -- Pooled plus a log-prior, and it requires random
-        # effects -- can share this fixture. Every ML method below ignores them.
-        @fixedEffects begin
-            a = RealNumber(3.0; prior = Normal(0.0, 10.0))   # identity, |theta0| = 3 -> s = 3
-            b = RealNumber(0.5, scale = :log, prior = LogNormal(0.0, 1.0))   # log -> s = 1
-            σ = RealNumber(0.4, scale = :log, prior = LogNormal(0.0, 1.0))
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column = :ID)
-        end
-        @formulas begin
-            y ~ Normal(a + b * t + η, σ)
-        end
-    end)
+    )
 end
 
 function _pc_model_nore()
-    @Model(begin
-        @covariates begin
-            t = Covariate()
+    return @Model(
+        begin
+            @covariates begin
+                t = Covariate()
+            end
+            @fixedEffects begin
+                a = RealNumber(3.0; prior = Normal(0.0, 10.0))
+                σ = RealNumber(0.4, scale = :log, prior = LogNormal(0.0, 1.0))
+            end
+            @formulas begin
+                y ~ Normal(a, σ)
+            end
         end
-        @fixedEffects begin
-            a = RealNumber(3.0; prior = Normal(0.0, 10.0))
-            σ = RealNumber(0.4, scale = :log, prior = LogNormal(0.0, 1.0))
-        end
-        @formulas begin
-            y ~ Normal(a, σ)
-        end
-    end)
+    )
 end
 
 const _PC_DM_RE = DataModel(_pc_model_re(), _PC_DF; primary_id = :ID, time_col = :t)
@@ -66,7 +72,8 @@ const _PC_DM_NORE = DataModel(_pc_model_nore(), _PC_DF; primary_id = :ID, time_c
     axs = ComponentArrays.getaxes(θ0_t)
 
     θ0_pc, s_pc, θt_from_z, z_from_θt = NoLimits._precondition_maps(
-        model, free_names, θ0_t, axs, true)
+        model, free_names, θ0_t, axs, true
+    )
 
     # Non-vacuity guard: at least one coordinate must be scaled, else the round-trip below
     # would hold for the identity map and prove nothing.
@@ -81,7 +88,8 @@ const _PC_DM_NORE = DataModel(_pc_model_nore(), _PC_DF; primary_id = :ID, time_c
 
     # off: theta0 = 0 and s = 1, so z IS the transformed vector.
     _, s_off, θt_off, z_off = NoLimits._precondition_maps(
-        model, free_names, θ0_t, axs, false)
+        model, free_names, θ0_t, axs, false
+    )
     @test all(==(1), s_off)
     @test collect(θt_off(collect(θ0_t))) ≈ collect(θ0_t)
     @test z_off(θ0_t) ≈ collect(θ0_t)
@@ -96,19 +104,31 @@ end
         ("MLE", _PC_DM_NORE, pc -> NoLimits.MLE(; precondition = pc), NamedTuple()),
         ("MAP", _PC_DM_NORE, pc -> NoLimits.MAP(; precondition = pc), NamedTuple()),
         ("Pooled", _PC_DM_RE, pc -> NoLimits.Pooled(; precondition = pc), NamedTuple()),
-        ("PooledMap", _PC_DM_RE, pc -> NoLimits.PooledMap(; precondition = pc),
-            NamedTuple()),
+        (
+            "PooledMap", _PC_DM_RE, pc -> NoLimits.PooledMap(; precondition = pc),
+            NamedTuple(),
+        ),
         ("FOCEI", _PC_DM_RE, pc -> NoLimits.FOCEI(; precondition = pc), NamedTuple()),
-        ("GHQuadrature", _PC_DM_RE,
-            pc -> NoLimits.GHQuadrature(; level = 3, precondition = pc), NamedTuple()),
-        ("SAEM", _PC_DM_RE,
-            pc -> NoLimits.SAEM(; precondition = pc, q_store_max = 2,
+        (
+            "GHQuadrature", _PC_DM_RE,
+            pc -> NoLimits.GHQuadrature(; level = 3, precondition = pc), NamedTuple(),
+        ),
+        (
+            "SAEM", _PC_DM_RE,
+            pc -> NoLimits.SAEM(;
+                precondition = pc, q_store_max = 2,
                 turing_kwargs = (; n_samples = 4, n_adapt = 2, progress = false),
-                fast_em...), NamedTuple()),
-        ("MCEM", _PC_DM_RE,
-            pc -> NoLimits.MCEM(; precondition = pc, maxiters = 2,
-                turing_kwargs = (; n_samples = 4, n_adapt = 2, progress = false)),
-            NamedTuple())
+                fast_em...
+            ), NamedTuple(),
+        ),
+        (
+            "MCEM", _PC_DM_RE,
+            pc -> NoLimits.MCEM(;
+                precondition = pc, maxiters = 2,
+                turing_kwargs = (; n_samples = 4, n_adapt = 2, progress = false)
+            ),
+            NamedTuple(),
+        ),
     ]
     for (name, dm, mk, kw) in cases
         on = fit_model(dm, mk(true); rng = Xoshiro(11), kw...)
@@ -118,8 +138,8 @@ end
         @test isfinite(o_off)
         # Stochastic-EM methods take a fixed, tiny number of steps from different
         # parameterizations, so they are compared loosely; the deterministic ones must agree.
-        tol = name in ("SAEM", "MCEM") ? 5.0 : 1e-3
-        @test isapprox(o_on, o_off; atol = tol, rtol = 1e-4) ||
-              error("$name: precondition on/off disagree ($o_on vs $o_off)")
+        tol = name in ("SAEM", "MCEM") ? 5.0 : 1.0e-3
+        @test isapprox(o_on, o_off; atol = tol, rtol = 1.0e-4) ||
+            error("$name: precondition on/off disagree ($o_on vs $o_off)")
     end
 end

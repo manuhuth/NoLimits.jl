@@ -86,8 +86,10 @@ specified standard deviations.
 - `init_bias_std::Real = 0.0`: standard deviation for node biases.
 - `init_leaf_std::Real = 0.1`: standard deviation for leaf values.
 """
-function init_params(tree::SoftTree; init_weight::Real = 0.0,
-        init_bias::Real = 0.0, init_leaf::Real = 0.0)
+function init_params(
+        tree::SoftTree; init_weight::Real = 0.0,
+        init_bias::Real = 0.0, init_leaf::Real = 0.0
+    )
     n_internal = 2^tree.depth - 1
     n_leaves = 2^tree.depth
 
@@ -97,8 +99,10 @@ function init_params(tree::SoftTree; init_weight::Real = 0.0,
     return SoftTreeParams(W, b, V)
 end
 
-function init_params(tree::SoftTree, rng::AbstractRNG;
-        init_weight_std::Real = 0.1, init_bias_std::Real = 0.0, init_leaf_std::Real = 0.1)
+function init_params(
+        tree::SoftTree, rng::AbstractRNG;
+        init_weight_std::Real = 0.1, init_bias_std::Real = 0.0, init_leaf_std::Real = 0.1
+    )
     n_internal = 2^tree.depth - 1
     n_leaves = 2^tree.depth
 
@@ -142,7 +146,8 @@ function softtree_params_from_flat(θ::AbstractVector, tree::SoftTree)
     node_biases = view(θ, nw_len .+ (1:n_internal))
     leaf_values = reshape(
         view(θ, (nw_len + n_internal) .+ (1:(tree.n_output * n_leaves))),
-        tree.n_output, n_leaves)
+        tree.n_output, n_leaves
+    )
     return SoftTreeParams(node_weights, node_biases, leaf_values)
 end
 
@@ -181,7 +186,8 @@ function (tree::SoftTree)(x::AbstractVector{<:Real}, params::SoftTreeParams)
         error("Invalid input length. Expected $(tree.input_dim); got $(length(x)).")
     n_leaves = 2^tree.depth
     T = promote_type(
-        eltype(params.node_weights), eltype(params.node_biases), eltype(x))
+        eltype(params.node_weights), eltype(params.node_biases), eltype(x)
+    )
     probs = Vector{T}(undef, n_leaves)
     probs[1] = one(T)
     @inbounds for level in 0:(tree.depth - 1)
@@ -189,12 +195,16 @@ function (tree::SoftTree)(x::AbstractVector{<:Real}, params::SoftTreeParams)
         start_idx = 2^level
         for k in 1:n_prev
             old = probs[k]
-            p = _sigmoid(_st_rowdot(params.node_weights, start_idx + k - 1, x) +
-                         params.node_biases[start_idx + k - 1])
+            p = _sigmoid(
+                _st_rowdot(params.node_weights, start_idx + k - 1, x) +
+                    params.node_biases[start_idx + k - 1]
+            )
             probs[n_prev + k] = old * (one(T) - p)
             probs[k] = old * p
         end
     end
-    return [_st_leafdot(params.leaf_values, o, probs)
-            for o in 1:size(params.leaf_values, 1)]
+    return [
+        _st_leafdot(params.leaf_values, o, probs)
+            for o in 1:size(params.leaf_values, 1)
+    ]
 end

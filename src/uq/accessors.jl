@@ -52,8 +52,11 @@ Return the names of the free fixed-effect parameters covered by this result.
   scale includes the derived last probability / last-column entries and may have more
   names than the transformed scale.
 """
-get_uq_parameter_names(uq::UQResult; scale::Symbol = :transformed) = copy(_uq_names_for_scale(
-    uq, scale))
+get_uq_parameter_names(uq::UQResult; scale::Symbol = :transformed) = copy(
+    _uq_names_for_scale(
+        uq, scale
+    )
+)
 
 """
     get_uq_estimates(uq::UQResult; scale=:natural, as_component=true)
@@ -101,9 +104,11 @@ function get_uq_intervals(uq::UQResult; scale::Symbol = :natural, as_component::
     ints === nothing && return nothing
     names = _uq_names_for_scale(uq, scale)
     if as_component
-        return (level = ints.level,
+        return (
+            level = ints.level,
             lower = _uq_component(names, ints.lower),
-            upper = _uq_component(names, ints.upper))
+            upper = _uq_component(names, ints.upper),
+        )
     end
     return (level = ints.level, lower = copy(ints.lower), upper = copy(ints.upper))
 end

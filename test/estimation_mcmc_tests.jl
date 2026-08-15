@@ -28,8 +28,10 @@ end
 
 @testset "MCMC basic (no RE)" begin
     dm = fx_nore_prior_dm()
-    meth = NoLimits.MCMC(; sampler = NUTS(5, 0.3),
-        turing_kwargs = (n_samples = 2, n_adapt = 2, progress = true))
+    meth = NoLimits.MCMC(;
+        sampler = NUTS(5, 0.3),
+        turing_kwargs = (n_samples = 2, n_adapt = 2, progress = true)
+    )
     res = fit_model(dm, meth)
 
     @test res isa FitResult
@@ -41,12 +43,16 @@ end
     Threads.nthreads() < 2 && return
 
     dm = fx_nore_prior_dm()
-    method = NoLimits.MCMC(; sampler = MH(),
-        turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false, verbose = false))
+    method = NoLimits.MCMC(;
+        sampler = MH(),
+        turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false, verbose = false)
+    )
     res_serial = fit_model(
-        dm, method; serialization = SciMLBase.EnsembleSerial(), rng = MersenneTwister(123))
+        dm, method; serialization = SciMLBase.EnsembleSerial(), rng = MersenneTwister(123)
+    )
     res_threads = fit_model(
-        dm, method; serialization = SciMLBase.EnsembleThreads(), rng = MersenneTwister(123))
+        dm, method; serialization = SciMLBase.EnsembleThreads(), rng = MersenneTwister(123)
+    )
     @test Array(NoLimits.get_chain(res_serial)) == Array(NoLimits.get_chain(res_threads))
 end
 
@@ -84,9 +90,11 @@ end
 end
 
 @testset "MCMC supports constants for fixed effects" begin
-    res = fit_model(fx_nore_prior_dm(),
+    res = fit_model(
+        fx_nore_prior_dm(),
         NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false));
-        constants = (a = 0.2,))
+        constants = (a = 0.2,)
+    )
 
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
@@ -94,9 +102,11 @@ end
 
 @testset "MCMC fixed-effects-only rejects all constants" begin
     err = try
-        fit_model(fx_nore_prior_dm(),
+        fit_model(
+            fx_nore_prior_dm(),
             NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false));
-            constants = (a = 0.2, b = 0.1, σ = 0.5))
+            constants = (a = 0.2, b = 0.1, σ = 0.5)
+        )
         nothing
     catch e
         e
@@ -107,7 +117,8 @@ end
 
 @testset "MCMC rejects penalty terms" begin
     @test_throws ErrorException fit_model(
-        fx_nore_prior_dm(), NoLimits.MCMC(); penalty = (a = 1.0,))
+        fx_nore_prior_dm(), NoLimits.MCMC(); penalty = (a = 1.0,)
+    )
 end
 
 @testset "MCMC fixed vector parameters" begin
@@ -137,7 +148,8 @@ end
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     res = fit_model(
-        dm, NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)))
+        dm, NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false))
+    )
 
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
@@ -156,11 +168,14 @@ end
         @fixedEffects begin
             a = RealNumber(0.2, prior = Normal(0.0, 1.0))
             σ = RealNumber(0.4, scale = :log, prior = LogNormal(0.0, 0.5))
-            ζ = NNParameters(chain; function_name = :NN1, calculate_se = false,
-                prior = filldist(Normal(0.0, 1.0), Lux.parameterlength(ps)))
+            ζ = NNParameters(
+                chain; function_name = :NN1, calculate_se = false,
+                prior = filldist(Normal(0.0, 1.0), Lux.parameterlength(ps))
+            )
             Γ = SoftTreeParameters(2, 2; function_name = :ST1, calculate_se = false)
             sp = SplineParameters(
-                knots; function_name = :SP1, degree = 2, calculate_se = false)
+                knots; function_name = :SP1, degree = 2, calculate_se = false
+            )
         end
 
         @covariates begin
@@ -170,8 +185,10 @@ end
         end
 
         @formulas begin
-            μ = softplus(exp(a) + NN1([x.Age, x.BMI], ζ)[1] +
-                         ST1([x.Age, x.BMI], Γ)[1] + SP1(x.BMI / 50, sp) + z)
+            μ = softplus(
+                exp(a) + NN1([x.Age, x.BMI], ζ)[1] +
+                    ST1([x.Age, x.BMI], Γ)[1] + SP1(x.BMI / 50, sp) + z
+            )
             y ~ Normal(μ, σ)
         end
     end
@@ -189,17 +206,22 @@ end
     θ0 = get_θ0_untransformed(dm.model.fixed.fixed)
     res = fit_model(
         dm, NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false));
-        constants = (Γ = θ0.Γ, sp = θ0.sp))
+        constants = (Γ = θ0.Γ, sp = θ0.sp)
+    )
 
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 
-    res_mle = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,));
-        constants = (Γ = θ0.Γ, sp = θ0.sp))
+    res_mle = fit_model(
+        dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,));
+        constants = (Γ = θ0.Γ, sp = θ0.sp)
+    )
     @test res_mle isa FitResult
 
-    res_map = fit_model(dm, NoLimits.MAP(; optim_kwargs = (maxiters = 2,));
-        constants = (Γ = θ0.Γ, sp = θ0.sp))
+    res_map = fit_model(
+        dm, NoLimits.MAP(; optim_kwargs = (maxiters = 2,));
+        constants = (Γ = θ0.Γ, sp = θ0.sp)
+    )
     @test res_map isa FitResult
 end
 
@@ -212,7 +234,8 @@ end
     model = @Model begin
         @fixedEffects begin
             Γ = SoftTreeParameters(
-                1, 2; function_name = :ST1, calculate_se = false, prior = st_prior)
+                1, 2; function_name = :ST1, calculate_se = false, prior = st_prior
+            )
             σ = RealNumber(0.5, scale = :log, prior = LogNormal(0.0, 0.5))
         end
 
@@ -225,12 +248,16 @@ end
         end
     end
 
-    df = DataFrame(ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.3, 0.05, 0.35])
+    df = DataFrame(
+        ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0],
+        y = [0.1, 0.3, 0.05, 0.35]
+    )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
 
-    res = fit_model(dm,
-        NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)))
+    res = fit_model(
+        dm,
+        NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false))
+    )
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 
     res_vi = fit_model(dm, NoLimits.VI(; turing_kwargs = (max_iter = 2,)))
@@ -246,11 +273,14 @@ end
         @fixedEffects begin
             a = RealNumber(0.1, prior = Normal(0.0, 1.0))
             σ = RealNumber(0.3, scale = :log, prior = LogNormal(0.0, 0.5))
-            ζ = NNParameters(chain; function_name = :NN1, calculate_se = false,
-                prior = filldist(Normal(0.0, 1.0), Lux.parameterlength(ps)))
+            ζ = NNParameters(
+                chain; function_name = :NN1, calculate_se = false,
+                prior = filldist(Normal(0.0, 1.0), Lux.parameterlength(ps))
+            )
             Γ = SoftTreeParameters(1, 2; function_name = :ST1, calculate_se = false)
             sp = SplineParameters(
-                knots; function_name = :SP1, degree = 2, calculate_se = false)
+                knots; function_name = :SP1, degree = 2, calculate_se = false
+            )
         end
 
         @covariates begin
@@ -289,17 +319,22 @@ end
     θ0 = get_θ0_untransformed(dm.model.fixed.fixed)
     res = fit_model(
         dm, NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false));
-        constants = (ζ = θ0.ζ, Γ = θ0.Γ, sp = θ0.sp))
+        constants = (ζ = θ0.ζ, Γ = θ0.Γ, sp = θ0.sp)
+    )
 
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 
-    res_mle = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,));
-        constants = (ζ = θ0.ζ, Γ = θ0.Γ, sp = θ0.sp))
+    res_mle = fit_model(
+        dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,));
+        constants = (ζ = θ0.ζ, Γ = θ0.Γ, sp = θ0.sp)
+    )
     @test res_mle isa FitResult
 
-    res_map = fit_model(dm, NoLimits.MAP(; optim_kwargs = (maxiters = 2,));
-        constants = (ζ = θ0.ζ, Γ = θ0.Γ, sp = θ0.sp))
+    res_map = fit_model(
+        dm, NoLimits.MAP(; optim_kwargs = (maxiters = 2,));
+        constants = (ζ = θ0.ζ, Γ = θ0.Γ, sp = θ0.sp)
+    )
     @test res_map isa FitResult
 end
 
@@ -329,9 +364,13 @@ end
     )
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm,
-        NoLimits.MCMC(; sampler = MH(),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)))
+    res = fit_model(
+        dm,
+        NoLimits.MCMC(;
+            sampler = MH(),
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+        )
+    )
 
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
@@ -342,8 +381,10 @@ end
     model = @Model begin
         @fixedEffects begin
             β = RealVector([0.5, 0.2]; prior = MvNormal(zeros(2), LinearAlgebra.I(2)))
-            Ω = RealPSDMatrix([1.0 0.0; 0.0 1.0]; calculate_se = true,
-                prior = InverseWishart(4.0, Matrix(1.0 * LinearAlgebra.I, 2, 2)))
+            Ω = RealPSDMatrix(
+                [1.0 0.0; 0.0 1.0]; calculate_se = true,
+                prior = InverseWishart(4.0, Matrix(1.0 * LinearAlgebra.I, 2, 2))
+            )
             σ = RealNumber(0.5; scale = :log, prior = LogNormal(0.0, 0.5))
         end
         @covariates begin
@@ -358,22 +399,28 @@ end
         end
     end
 
-    df = DataFrame(ID = repeat(1:4, inner = 3), t = repeat([0.0, 1.0, 2.0], 4),
-        y = [1.0, 1.4, 2.1, 0.8, 1.5, 2.4, 1.2, 1.7, 2.0, 0.9, 1.3, 1.9])
+    df = DataFrame(
+        ID = repeat(1:4, inner = 3), t = repeat([0.0, 1.0, 2.0], 4),
+        y = [1.0, 1.4, 2.1, 0.8, 1.5, 2.4, 1.2, 1.7, 2.0, 0.9, 1.3, 1.9]
+    )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
 
     logger = Test.TestLogger()
     res = Base.CoreLogging.with_logger(logger) do
-        fit_model(dm,
-            NoLimits.MCMC(; sampler = MH(),
-                turing_kwargs = (n_samples = 30, n_adapt = 5, progress = false)))
+        fit_model(
+            dm,
+            NoLimits.MCMC(;
+                sampler = MH(),
+                turing_kwargs = (n_samples = 30, n_adapt = 5, progress = false)
+            )
+        )
     end
     @test !any(r -> occursin("missing fixed effect", r.message), logger.logs)
 
     θ = NoLimits.get_params(res; scale = :untransformed)
     res_l = fit_model(dm, NoLimits.Laplace())
     @test ComponentArrays.labels(θ) ==
-          ComponentArrays.labels(NoLimits.get_params(res_l; scale = :untransformed))
+        ComponentArrays.labels(NoLimits.get_params(res_l; scale = :untransformed))
     @test all(isfinite, θ)
     @test isfinite(NoLimits.get_objective(res))
 

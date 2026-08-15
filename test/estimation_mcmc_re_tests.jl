@@ -32,26 +32,35 @@ const _MRE_MODEL = @Model begin
     end
 end
 
-const _MRE_DM2 = DataModel(_MRE_MODEL,
+const _MRE_DM2 = DataModel(
+    _MRE_MODEL,
     DataFrame(
         ID = [:A, :A, :B, :B],
         t = [0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, -0.1]);
-    primary_id = :ID, time_col = :t)
+        y = [0.1, 0.2, 0.0, -0.1]
+    );
+    primary_id = :ID, time_col = :t
+)
 
-const _MRE_DM3 = DataModel(_MRE_MODEL,
+const _MRE_DM3 = DataModel(
+    _MRE_MODEL,
     DataFrame(
         ID = [:A, :A, :B, :B, :C, :C],
         t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, -0.1, 0.05, 0.0]);
-    primary_id = :ID, time_col = :t)
+        y = [0.1, 0.2, 0.0, -0.1, 0.05, 0.0]
+    );
+    primary_id = :ID, time_col = :t
+)
 
-const _MRE_DM4 = DataModel(_MRE_MODEL,
+const _MRE_DM4 = DataModel(
+    _MRE_MODEL,
     DataFrame(
         ID = [:A, :A, :B, :B, :C, :C, :D, :D],
         t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, -0.1, 0.05, 0.0, -0.05, 0.1]);
-    primary_id = :ID, time_col = :t)
+        y = [0.1, 0.2, 0.0, -0.1, 0.05, 0.0, -0.05, 0.1]
+    );
+    primary_id = :ID, time_col = :t
+)
 
 @testset "MCMC RE multivariate (NUTS)" begin
     res = fx_mvnp_mcmc()
@@ -88,27 +97,39 @@ end
     )
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm,
-        NoLimits.MCMC(; sampler = NUTS(5, 0.3),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)))
+    res = fit_model(
+        dm,
+        NoLimits.MCMC(;
+            sampler = NUTS(5, 0.3),
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+        )
+    )
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 end
 
 @testset "MCMC RE constants_re (NUTS)" begin
-    res = fit_model(_MRE_DM3,
-        NoLimits.MCMC(; sampler = NUTS(5, 0.3),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false));
-        constants_re = (; η = (; A = 0.0,)))
+    res = fit_model(
+        _MRE_DM3,
+        NoLimits.MCMC(;
+            sampler = NUTS(5, 0.3),
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+        );
+        constants_re = (; η = (; A = 0.0))
+    )
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 end
 
 @testset "MCMC RE-only sampling with fixed constants" begin
-    res = fit_model(_MRE_DM2,
-        NoLimits.MCMC(; sampler = MH(),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false));
-        constants = (a = 0.2, σ = 0.5))
+    res = fit_model(
+        _MRE_DM2,
+        NoLimits.MCMC(;
+            sampler = MH(),
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+        );
+        constants = (a = 0.2, σ = 0.5)
+    )
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 end
@@ -116,9 +137,11 @@ end
 @testset "MCMC constants_re validates scalar shape early" begin
     dm = _MRE_DM2
     err = try
-        fit_model(dm,
+        fit_model(
+            dm,
             NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false));
-            constants_re = (; η = (; A = [0.0],)))
+            constants_re = (; η = (; A = [0.0]))
+        )
         nothing
     catch e
         e
@@ -130,9 +153,11 @@ end
 @testset "MCMC constants_re validates multivariate length early" begin
     dm = fx_mvnp_dm()
     err = try
-        fit_model(dm,
+        fit_model(
+            dm,
             NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false));
-            constants_re = (; η = (; A = [0.0],)))
+            constants_re = (; η = (; A = [0.0]))
+        )
         nothing
     catch e
         e
@@ -142,17 +167,23 @@ end
 end
 
 @testset "MCMC constants_re accepts valid multivariate constants" begin
-    res = fit_model(fx_mvnp_dm(),
+    res = fit_model(
+        fx_mvnp_dm(),
         NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false));
-        constants_re = (; η = (; A = [0.0, 0.0],)))
+        constants_re = (; η = (; A = [0.0, 0.0]))
+    )
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 end
 
 @testset "MCMC RE MH sampler" begin
-    res = fit_model(_MRE_DM2,
-        NoLimits.MCMC(; sampler = MH(),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)))
+    res = fit_model(
+        _MRE_DM2,
+        NoLimits.MCMC(;
+            sampler = MH(),
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+        )
+    )
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 end
@@ -184,18 +215,26 @@ end
     )
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm,
-        NoLimits.MCMC(; sampler = NUTS(5, 0.3),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)))
+    res = fit_model(
+        dm,
+        NoLimits.MCMC(;
+            sampler = NUTS(5, 0.3),
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+        )
+    )
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 end
 
 @testset "MCMC RE NormalizingPlanarFlow" begin
     res_nuts = fx_npf_mcmc()
-    res_mh = fit_model(fx_npf_dm(),
-        NoLimits.MCMC(; sampler = MH(),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)))
+    res_mh = fit_model(
+        fx_npf_dm(),
+        NoLimits.MCMC(;
+            sampler = MH(),
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+        )
+    )
     @test res_nuts isa FitResult
     @test NoLimits.get_chain(res_nuts) isa MCMCChains.Chains
     @test res_mh isa FitResult
@@ -217,13 +256,18 @@ end
         @fixedEffects begin
             a = RealNumber(0.2, prior = Normal(0.0, 1.0))
             σ = RealNumber(0.4, scale = :log, prior = LogNormal(0.0, 0.5))
-            ζ = NNParameters(chain; function_name = :NN1, calculate_se = false,
-                prior = filldist(Normal(0.0, 1.0), Lux.parameterlength(ps)))
-            Γ = SoftTreeParameters(2, 2; function_name = :ST1, calculate_se = false,
-                prior = filldist(Normal(0.0, 1.0), length(st0.value)))
+            ζ = NNParameters(
+                chain; function_name = :NN1, calculate_se = false,
+                prior = filldist(Normal(0.0, 1.0), Lux.parameterlength(ps))
+            )
+            Γ = SoftTreeParameters(
+                2, 2; function_name = :ST1, calculate_se = false,
+                prior = filldist(Normal(0.0, 1.0), length(st0.value))
+            )
             sp = SplineParameters(
                 knots; function_name = :SP1, degree = 2, calculate_se = false,
-                prior = filldist(Normal(0.0, 1.0), length(sp0.value)))
+                prior = filldist(Normal(0.0, 1.0), length(sp0.value))
+            )
         end
 
         @covariates begin
@@ -237,8 +281,10 @@ end
         end
 
         @formulas begin
-            μ = softplus(exp(a) + NN1([x.Age, x.BMI], ζ)[1] +
-                         ST1([x.Age, x.BMI], Γ)[1] + SP1(x.BMI / 50, sp) + z + η)
+            μ = softplus(
+                exp(a) + NN1([x.Age, x.BMI], ζ)[1] +
+                    ST1([x.Age, x.BMI], Γ)[1] + SP1(x.BMI / 50, sp) + z + η
+            )
             y ~ Normal(μ, σ)
         end
     end
@@ -253,9 +299,13 @@ end
     )
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm,
-        NoLimits.MCMC(; sampler = NUTS(5, 0.3),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)))
+    res = fit_model(
+        dm,
+        NoLimits.MCMC(;
+            sampler = NUTS(5, 0.3),
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+        )
+    )
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 end
@@ -296,18 +346,26 @@ end
     )
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm,
-        NoLimits.MCMC(; sampler = NUTS(5, 0.3),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)))
+    res = fit_model(
+        dm,
+        NoLimits.MCMC(;
+            sampler = NUTS(5, 0.3),
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+        )
+    )
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 end
 
 @testset "MCMC RE with threaded likelihood" begin
-    res = fit_model(_MRE_DM4,
-        NoLimits.MCMC(; sampler = NUTS(5, 0.3),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false));
-        serialization = EnsembleThreads())
+    res = fit_model(
+        _MRE_DM4,
+        NoLimits.MCMC(;
+            sampler = NUTS(5, 0.3),
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+        );
+        serialization = EnsembleThreads()
+    )
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 end
@@ -330,11 +388,15 @@ end
         @formulas begin
             p1 = 0.8 / (1 + exp(-(p1_r + η))) + 0.1
             p2 = 0.8 / (1 + exp(-p2_r)) + 0.1
-            P = [0.9 0.1;
-                 0.2 0.8]
-            y ~ DiscreteTimeDiscreteStatesHMM(P,
+            P = [
+                0.9 0.1;
+                0.2 0.8
+            ]
+            y ~ DiscreteTimeDiscreteStatesHMM(
+                P,
                 (Bernoulli(p1), Bernoulli(p2)),
-                Categorical([0.6, 0.4]))
+                Categorical([0.6, 0.4])
+            )
         end
     end
 
@@ -345,9 +407,13 @@ end
     )
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm,
-        NoLimits.MCMC(; sampler = MH(),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)))
+    res = fit_model(
+        dm,
+        NoLimits.MCMC(;
+            sampler = MH(),
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+        )
+    )
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 end
@@ -375,12 +441,16 @@ end
             λ21 = exp(λ21_r)
             p1 = 0.8 / (1 + exp(-(p1_r + η))) + 0.1
             p2 = 0.8 / (1 + exp(-p2_r)) + 0.1
-            Q = [-λ12 λ12;
-                 λ21 -λ21]
-            y ~ ContinuousTimeDiscreteStatesHMM(Q,
+            Q = [
+                -λ12 λ12;
+                λ21 -λ21
+            ]
+            y ~ ContinuousTimeDiscreteStatesHMM(
+                Q,
                 (Bernoulli(p1), Bernoulli(p2)),
                 Categorical([0.6, 0.4]),
-                dt)
+                dt
+            )
         end
     end
 
@@ -392,9 +462,13 @@ end
     )
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm,
-        NoLimits.MCMC(; sampler = MH(),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)))
+    res = fit_model(
+        dm,
+        NoLimits.MCMC(;
+            sampler = MH(),
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+        )
+    )
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 end
@@ -429,9 +503,13 @@ end
     )
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm,
-        NoLimits.MCMC(; sampler = MH(),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)))
+    res = fit_model(
+        dm,
+        NoLimits.MCMC(;
+            sampler = MH(),
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+        )
+    )
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 end
@@ -459,10 +537,14 @@ end
         end
     end
 
-    dm = DataModel(model,
-        DataFrame(ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0],
-            y = [0.1, 0.2, 0.0, -0.1]);
-        primary_id = :ID, time_col = :t)
+    dm = DataModel(
+        model,
+        DataFrame(
+            ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0],
+            y = [0.1, 0.2, 0.0, -0.1]
+        );
+        primary_id = :ID, time_col = :t
+    )
 
     m = NoLimits.get_model(dm)
     _TuringExt = Base.get_extension(NoLimits, :NoLimitsTuringExt)
@@ -477,10 +559,14 @@ end
     θ_bad.a = -1.0
     @test _TuringExt._mcmc_re_dist(builder, θ_bad, cc, mf, hp, :η) === nothing
 
-    res = fit_model(dm,
-        NoLimits.MCMC(; sampler = MH(),
-            turing_kwargs = (n_samples = 20, n_adapt = 5, progress = false));
-        rng = MersenneTwister(1), theta_0_untransformed = θ)
+    res = fit_model(
+        dm,
+        NoLimits.MCMC(;
+            sampler = MH(),
+            turing_kwargs = (n_samples = 20, n_adapt = 5, progress = false)
+        );
+        rng = MersenneTwister(1), theta_0_untransformed = θ
+    )
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 

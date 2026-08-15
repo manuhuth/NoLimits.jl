@@ -43,7 +43,7 @@ end
 @inline function _eq_collect_vector_component_pairs!(
         pairs::Vector{Tuple{String, String}},
         x
-)
+    )
     if x isa Expr
         if x.head == :ref && length(x.args) == 2
             base = x.args[1]
@@ -155,7 +155,8 @@ function _eq_latex_block(lines::Vector{Expr}; numbered::Bool = false)
     end
     body = join(tex_lines, " \\\\\n")
     return _eq_latexraw(
-        "\$\\begin{aligned}\n" * body * "\n\\end{aligned}\$"; parse = false)
+        "\$\\begin{aligned}\n" * body * "\n\\end{aligned}\$"; parse = false
+    )
 end
 
 function get_equation_lines(m::Model)

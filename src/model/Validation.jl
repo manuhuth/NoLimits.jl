@@ -13,7 +13,7 @@ const _NL_TIME_SYMBOLS = (:t, :ξ)
 # NoLimits names, plus anything defined in the module where @Model was written).
 function _nl_symbol_resolvable(s::Symbol, mod::Module)
     return isdefined(Base, s) || isdefined(Distributions, s) ||
-           isdefined(@__MODULE__, s) || isdefined(mod, s)
+        isdefined(@__MODULE__, s) || isdefined(mod, s)
 end
 
 # Names an expression binds locally: anonymous-function arguments, `do` arguments, and
@@ -48,7 +48,7 @@ function _nl_collect_free_syms!(out::Set{Symbol}, ex, bound::Set{Symbol} = Set{S
         inner = union(bound, _nl_collect_bound_syms!(Set{Symbol}(), ex.args[1]))
         return _nl_collect_free_syms!(out, ex.args[2], inner)
     elseif ex.head == :generator || ex.head == :comprehension ||
-           ex.head == :typed_comprehension
+            ex.head == :typed_comprehension
         inner = copy(bound)
         for a in ex.args[2:end]
             _nl_collect_bound_syms!(inner, a)
@@ -69,10 +69,14 @@ function _nl_unknown_syms(exprs, known::Set{Symbol}, mod::Module)
     for ex in exprs
         _nl_collect_free_syms!(syms, ex)
     end
-    return sort([s
-                 for s in syms
-                 if Base.isidentifier(s) && !(s in known) && !(s in _NL_TIME_SYMBOLS) &&
-                    !_nl_symbol_resolvable(s, mod)])
+    return sort(
+        [
+            s
+                for s in syms
+                if Base.isidentifier(s) && !(s in known) && !(s in _NL_TIME_SYMBOLS) &&
+                !_nl_symbol_resolvable(s, mod)
+        ]
+    )
 end
 
 function _nl_check_reserved_names(names, what::AbstractString)
@@ -91,7 +95,7 @@ block, constant covariates called as functions, and symbols in `@formulas` /
 function _nl_collect_field_accesses!(out::Vector{Pair{Symbol, Symbol}}, ex)
     ex isa Expr || return out
     if ex.head == :. && ex.args[1] isa Symbol && ex.args[2] isa QuoteNode &&
-       ex.args[2].value isa Symbol
+            ex.args[2].value isa Symbol
         push!(out, ex.args[1] => ex.args[2].value)
     end
     for a in ex.args
@@ -134,15 +138,17 @@ _nl_fun_out_dim(p) = nothing
 _nl_fun_out_dim(p::SoftTreeParameters) = p.n_output
 
 # Collect `f(arg, θ)` and `f(arg, θ)[k]` for model-function names `f`.
-function _nl_collect_fun_calls!(out::Vector{Tuple{Symbol, Any, Union{Nothing, Int}}},
-        ex, fun_syms::Set{Symbol}, idx::Union{Nothing, Int} = nothing)
+function _nl_collect_fun_calls!(
+        out::Vector{Tuple{Symbol, Any, Union{Nothing, Int}}},
+        ex, fun_syms::Set{Symbol}, idx::Union{Nothing, Int} = nothing
+    )
     ex isa Expr || return out
     if ex.head == :ref && length(ex.args) == 2 && ex.args[2] isa Integer
         _nl_collect_fun_calls!(out, ex.args[1], fun_syms, Int(ex.args[2]))
         return out
     end
     if ex.head == :call && ex.args[1] isa Symbol && ex.args[1] in fun_syms &&
-       length(ex.args) == 3
+            length(ex.args) == 3
         push!(out, (ex.args[1], ex.args[2], idx))
     end
     for a in ex.args
@@ -172,8 +178,10 @@ function _nl_check_model_fun_calls(exprs, fixed)
         want_in = _nl_fun_in_dim(p)
         if want_in !== nothing
             got = arg isa Expr && arg.head == :vect ? length(arg.args) :
-                  (arg isa Expr && arg.head == :call && arg.args[1] === :vcat ?
-                   length(arg.args) - 1 : nothing)
+                (
+                    arg isa Expr && arg.head == :call && arg.args[1] === :vcat ?
+                    length(arg.args) - 1 : nothing
+                )
             if got === nothing
                 # A bare scalar argument to a multi-input function is always wrong.
                 (arg isa Symbol || arg isa Number) && want_in > 1 &&
@@ -192,9 +200,11 @@ function _nl_check_model_fun_calls(exprs, fixed)
     return nothing
 end
 
-function _validate_model_symbols(formulas, random, covariates, fixed;
+function _validate_model_symbols(
+        formulas, random, covariates, fixed;
         fixed_names, re_names, prede_names, const_cov_names, varying_cov_names,
-        helper_names, model_fun_names, state_names, signal_names, context_module)
+        helper_names, model_fun_names, state_names, signal_names, context_module
+    )
     _nl_check_reserved_names(fixed_names, "Fixed effects")
     _nl_check_reserved_names(re_names, "Random effects")
     # Covariates are exempt: `t = Covariate()` is how the time column is declared.
@@ -217,26 +227,39 @@ function _validate_model_symbols(formulas, random, covariates, fixed;
     isempty(called_consts) ||
         error("Constant covariate(s) $(join(string.(called_consts), ", ")) are called like functions in @formulas. Use them as variables (e.g. `x` or `x.field`), or declare them as DynamicCovariate and call `w(t)`.")
 
-    known = Set{Symbol}(vcat(fixed_names, re_names, prede_names, const_cov_names,
-        varying_cov_names, helper_names, model_fun_names, state_names, signal_names,
-        ir.det_names, ir.obs_names))
+    known = Set{Symbol}(
+        vcat(
+            fixed_names, re_names, prede_names, const_cov_names,
+            varying_cov_names, helper_names, model_fun_names, state_names, signal_names,
+            ir.det_names, ir.obs_names
+        )
+    )
     _nl_check_covariate_fields(vcat(ir.det_exprs, ir.obs_exprs), covariates)
     _nl_check_model_fun_calls(vcat(ir.det_exprs, ir.obs_exprs), fixed)
 
     unknown = _nl_unknown_syms(
-        vcat(ir.det_exprs, ir.obs_exprs), known, context_module)
+        vcat(ir.det_exprs, ir.obs_exprs), known, context_module
+    )
     isempty(unknown) ||
         error("@formulas references undefined symbol(s) $(join(string.(unknown), ", ")). They are not a fixed effect, random effect, pre-DE variable, covariate, helper, model function or DE state/signal.")
 
     # Varying covariates in an RE distribution are rejected later, by DataModel, with a
     # message about `constant_on` -- do not pre-empt it here.
-    re_known = Set{Symbol}(vcat(fixed_names, const_cov_names, varying_cov_names,
-        helper_names, model_fun_names))
+    re_known = Set{Symbol}(
+        vcat(
+            fixed_names, const_cov_names, varying_cov_names,
+            helper_names, model_fun_names
+        )
+    )
     re_syms = get_re_syms(random)
     for name in re_names
-        bad = sort([s
+        bad = sort(
+            [
+                s
                     for s in getproperty(re_syms, name)
-                    if !(s in re_known) && !_nl_symbol_resolvable(s, context_module)])
+                    if !(s in re_known) && !_nl_symbol_resolvable(s, context_module)
+            ]
+        )
         isempty(bad) ||
             error("RandomEffect `$(name)` references undefined symbol(s) $(join(string.(bad), ", ")). They are not a fixed effect, constant covariate, helper or model function.")
     end

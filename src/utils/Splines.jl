@@ -104,8 +104,10 @@ length-1 vector it is treated as a scalar.
 - `knots::AbstractVector{<:Real}`: sorted knot sequence.
 - `degree::Integer`: polynomial degree.
 """
-function bspline_eval(x::Real, coeffs::AbstractVector{<:Real},
-        knots::AbstractVector{<:Real}, degree::Integer)
+function bspline_eval(
+        x::Real, coeffs::AbstractVector{<:Real},
+        knots::AbstractVector{<:Real}, degree::Integer
+    )
     n = _bspline_validate(x, knots, degree)
     length(coeffs) == n ||
         error("Coefficient length mismatch: expected $(n); got $(length(coeffs)).")
@@ -120,8 +122,10 @@ function bspline_eval(x::Real, coeffs::AbstractVector{<:Real},
     return s
 end
 
-function bspline_eval(x::AbstractVector{<:Real}, coeffs::AbstractVector{<:Real},
-        knots::AbstractVector{<:Real}, degree::Integer)
+function bspline_eval(
+        x::AbstractVector{<:Real}, coeffs::AbstractVector{<:Real},
+        knots::AbstractVector{<:Real}, degree::Integer
+    )
     length(x) == 1 || error("Spline input must be scalar; got length $(length(x)).")
     return bspline_eval(x[1], coeffs, knots, degree)
 end

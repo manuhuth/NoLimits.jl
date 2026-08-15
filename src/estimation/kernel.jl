@@ -27,7 +27,8 @@ coefficients are large in magnitude and nearly cancel. Levels 1–3 are
 numerically stable for typical NLME models.
 """
 function signed_logsumexp(
-        logvals::AbstractVector{T}, signs::AbstractVector{Int8}) where {T <: Number}
+        logvals::AbstractVector{T}, signs::AbstractVector{Int8}
+    ) where {T <: Number}
     isempty(logvals) && return (T(-Inf), Int8(1))
 
     amax = maximum(logvals)
@@ -96,7 +97,7 @@ function batch_loglik_ghq(
         sgrid::GHQuadratureNodes{Float64},
         const_cache::REConstantsCache,
         ll_cache::_LLCache
-)
+    )
     R = size(sgrid.nodes, 2)
     θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
 
@@ -127,9 +128,10 @@ function batch_loglik_ghq(
         valid = true
         for i in get_inds(batch_info)
             η_i = η_buf === nothing ?
-                  _build_eta_ind(dm, i, batch_info, b_r, const_cache, θ_re) :
-                  _build_eta_ind_fast!(
-                η_buf, template, i, batch_info, b_r, const_cache, re_cache)
+                _build_eta_ind(dm, i, batch_info, b_r, const_cache, θ_re) :
+                _build_eta_ind_fast!(
+                    η_buf, template, i, batch_info, b_r, const_cache, re_cache
+                )
             lli = _loglikelihood_individual(dm, i, θ_re, η_i, ll_cache)
             if !isfinite(lli)
                 valid = false
@@ -148,10 +150,10 @@ function batch_loglik_ghq(
     log_val, result_sign = signed_logsumexp(a_vals, sgrid.signs)
 
     if result_sign < 0
-        @warn "GHQuadrature: batch marginal likelihood estimate is negative "*
-              "(signed logsumexp returned negative result). "*
-              "This indicates numerical instability — consider reducing `level` "*
-              "or checking your model specification." maxlog=1
+        @warn "GHQuadrature: batch marginal likelihood estimate is negative " *
+            "(signed logsumexp returned negative result). " *
+            "This indicates numerical instability — consider reducing `level` " *
+            "or checking your model specification." maxlog = 1
         return T(-Inf)
     end
 
@@ -188,14 +190,15 @@ function batch_loglik_mc_prior(
         ll_cache::_LLCache,
         n_samples::Int,
         rng::AbstractRNG
-)
+    )
     get_n_b(batch_info) == 0 &&
         error("batch_loglik_mc_prior: called with n_b == 0; no RE to integrate.")
     re_names = get_re_names(get_random(get_model(dm)))
 
     # Draw b_r ~ p(b|θ) and get log_qs[r] = log p(b_r|θ)
     samples, log_qs = _is_prior_sample_batch(
-        dm, batch_info, θ, const_cache, ll_cache, rng, n_samples, re_names)
+        dm, batch_info, θ, const_cache, ll_cache, rng, n_samples, re_names
+    )
 
     # log p(y|b_r,θ) = _laplace_logf_batch(b_r) - log_qs[r]
     # since _laplace_logf_batch = log p(y|b,θ) + log p(b|θ)
@@ -209,7 +212,7 @@ function batch_loglik_mc_prior(
     all(isequal(-Inf), log_cond) && return -Inf
     amax = maximum(lc for lc in log_cond if isfinite(lc))
     return amax + log(sum(exp(lc - amax) for lc in log_cond if isfinite(lc))) -
-           log(Float64(n_samples))
+        log(Float64(n_samples))
 end
 
 """
@@ -246,7 +249,7 @@ function batch_loglik_mc_turing(
         sampler,
         n_warmup::Int,
         rng::AbstractRNG
-)
+    )
     get_n_b(batch_info) == 0 &&
         error("batch_loglik_mc_turing: called with n_b == 0; no RE to integrate.")
     n_b = get_n_b(batch_info)
@@ -257,9 +260,11 @@ function batch_loglik_mc_turing(
     effective_sampler = sampler === nothing ? AdaptiveNoLimitsMH() : sampler
     n_mcmc = max(n_warmup, 50)
     tkwargs = (n_samples = n_mcmc, n_adapt = n_warmup, progress = false, verbose = false)
-    mcmc_samples, _, _ = _mcem_sample_batch(dm, batch_info, θ, const_cache, ll_cache,
+    mcmc_samples, _, _ = _mcem_sample_batch(
+        dm, batch_info, θ, const_cache, ll_cache,
         effective_sampler, tkwargs, rng, re_names,
-        false, NamedTuple())
+        false, NamedTuple()
+    )
     n_mcmc_valid = size(mcmc_samples, 2)
     n_mcmc_valid == 0 && return -Inf
 
@@ -271,22 +276,23 @@ function batch_loglik_mc_turing(
     # Detect chain non-mixing: if variance is near-zero the chain is stuck.
     # Fall back to prior IS, which is always valid.
     max_var = n_b == 1 ? Statistics.var(view(mcmc_samples, 1, :)) :
-              maximum(Statistics.var(view(mcmc_samples, d, :)) for d in 1:n_b)
-    if max_var < 1e-10
+        maximum(Statistics.var(view(mcmc_samples, d, :)) for d in 1:n_b)
+    if max_var < 1.0e-10
         @warn "batch_loglik_mc_turing: MCMC chain did not mix (max marginal variance ≈ 0). " *
-              "Falling back to prior IS for this batch. Consider a better sampler or more warmup steps."
+            "Falling back to prior IS for this batch. Consider a better sampler or more warmup steps."
         return batch_loglik_mc_prior(
-            dm, batch_info, θ, const_cache, ll_cache, n_samples, rng)
+            dm, batch_info, θ, const_cache, ll_cache, n_samples, rng
+        )
     end
 
     # Step 3: Draw FRESH IID samples from q for IS (samples and proposal now match).
     if n_b == 1
-        σ_q = sqrt(Statistics.var(view(mcmc_samples, 1, :)) + 1e-8)
+        σ_q = sqrt(Statistics.var(view(mcmc_samples, 1, :)) + 1.0e-8)
         q1d = Distributions.Normal(μ_q[1], σ_q)
         B_is = reshape(rand(rng, q1d, n_samples), 1, n_samples)
         q_logpdf = b -> Distributions.logpdf(q1d, Float64(b[1]))
     else
-        Σ_raw = Statistics.cov(BT) + 1e-8 * LinearAlgebra.I(n_b)
+        Σ_raw = Statistics.cov(BT) + 1.0e-8 * LinearAlgebra.I(n_b)
         q_mv = Distributions.MvNormal(μ_q, Symmetric(Σ_raw))
         B_is = rand(rng, q_mv, n_samples)   # (n_b, n_samples)
         q_logpdf = b -> Distributions.logpdf(q_mv, Vector{Float64}(b))
@@ -304,7 +310,7 @@ function batch_loglik_mc_turing(
     all(isequal(-Inf), log_ws) && return -Inf
     amax = maximum(lw for lw in log_ws if isfinite(lw))
     return amax + log(sum(exp(lw - amax) for lw in log_ws if isfinite(lw))) -
-           log(Float64(n_samples))
+        log(Float64(n_samples))
 end
 
 """
@@ -321,14 +327,17 @@ function _batch_loglik_from_mc(
         ll_cache::_LLCache,
         mc::MCIntegrator,
         fallback_rng::AbstractRNG
-)
+    )
     rng = mc.rng === nothing ? fallback_rng : mc.rng
     if mc.mode === :prior
         return batch_loglik_mc_prior(
-            dm, batch_info, θ, const_cache, ll_cache, mc.n_samples, rng)
+            dm, batch_info, θ, const_cache, ll_cache, mc.n_samples, rng
+        )
     elseif mc.mode === :turing
-        return batch_loglik_mc_turing(dm, batch_info, θ, const_cache, ll_cache,
-            mc.n_samples, mc.sampler, mc.n_warmup, rng)
+        return batch_loglik_mc_turing(
+            dm, batch_info, θ, const_cache, ll_cache,
+            mc.n_samples, mc.sampler, mc.n_warmup, rng
+        )
     else
         error("_batch_loglik_from_mc: unknown MCIntegrator mode :$(mc.mode). Use :prior or :turing.")
     end

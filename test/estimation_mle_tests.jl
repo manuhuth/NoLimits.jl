@@ -158,7 +158,8 @@ let
     for (label, method) in MLE_MAP_METHODS
         @testset "$label requires a free fixed effect" begin
             @test_throws ErrorException fit_model(
-                dm, method; constants = (a = 0.2, σ = 0.3))
+                dm, method; constants = (a = 0.2, σ = 0.3)
+            )
         end
     end
 end
@@ -273,8 +274,10 @@ let
         @test_throws ErrorException fit_model(dm, NoLimits.MLE(); penalty = (bb = 1.0,))
         # #165: σ = 0 has zero LogNormal prior density; the objective's Inf short-circuit
         # would hand the optimizer a zero gradient and it would report convergence there.
-        @test_throws ErrorException fit_model(dm, NoLimits.MAP();
-            theta_0_untransformed = ComponentArray(a = 0.1, σ = 0.0))
+        @test_throws ErrorException fit_model(
+            dm, NoLimits.MAP();
+            theta_0_untransformed = ComponentArray(a = 0.1, σ = 0.0)
+        )
     end
 end
 
@@ -352,7 +355,7 @@ end
 
     a_map = NoLimits.get_params(res_map; scale = :untransformed).a
     a_pen = NoLimits.get_params(res_pen; scale = :untransformed).a
-    @test isapprox(a_map, a_pen; rtol = 1e-4, atol = 1e-4)
+    @test isapprox(a_map, a_pen; rtol = 1.0e-4, atol = 1.0e-4)
 end
 
 @testset "MLE uses optim_kwargs" begin
@@ -432,7 +435,8 @@ end
     lb = ComponentArray((; a = -2.0, σ = -3.0))
     method = NoLimits.MLE(
         optimizer = OptimizationBBO.BBO_adaptive_de_rand_1_bin_radiuslimited(),
-        lb = lb, optim_kwargs = (; iterations = 5))
+        lb = lb, optim_kwargs = (; iterations = 5)
+    )
     err = try
         fit_model(dm, method)
         nothing
@@ -460,7 +464,8 @@ end
 @testset "MLE optimizer Adam (OptimizationOptimisers)" begin
     dm = _mle_dm_basic()
     method = NoLimits.MLE(
-        optimizer = OptimizationOptimisers.Adam(0.05), optim_kwargs = (; maxiters = 2))
+        optimizer = OptimizationOptimisers.Adam(0.05), optim_kwargs = (; maxiters = 2)
+    )
     res = fit_model(dm, method)
     @test res isa FitResult
 end
@@ -490,7 +495,8 @@ end
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     method = NoLimits.MLE(
         optimizer = OptimizationBBO.BBO_adaptive_de_rand_1_bin_radiuslimited(),
-        optim_kwargs = (; iterations = 5))
+        optim_kwargs = (; iterations = 5)
+    )
     res = fit_model(dm, method)
     @test res isa FitResult
 end
@@ -562,7 +568,8 @@ let
     # optimum. It must be refused instead of "fitted".
     @testset "MAP rejects a start outside the prior support" begin
         @test_throws ErrorException fit_model(
-            dm, NoLimits.MAP(; optim_kwargs = (maxiters = 2,)))
+            dm, NoLimits.MAP(; optim_kwargs = (maxiters = 2,))
+        )
     end
 end
 
@@ -585,12 +592,18 @@ end
     # A plain NamedTuple start is accepted, like `constants`/`penalty`.
     res = fit_model(dm, NoLimits.MLE(); theta_0_untransformed = (a = 1.2, s = 0.4))
     @test res isa FitResult
-    @test_throws ErrorException fit_model(dm, NoLimits.MLE();
-        theta_0_untransformed = (a = 1.2, nope = 0.4))
-    @test_throws ErrorException fit_model(dm, NoLimits.MLE();
-        theta_0_untransformed = ComponentArray(a = NaN, s = 0.3))
-    @test_throws ErrorException fit_model(dm, NoLimits.MLE();
-        theta_0_untransformed = ComponentArray(a = Inf, s = 0.3))
+    @test_throws ErrorException fit_model(
+        dm, NoLimits.MLE();
+        theta_0_untransformed = (a = 1.2, nope = 0.4)
+    )
+    @test_throws ErrorException fit_model(
+        dm, NoLimits.MLE();
+        theta_0_untransformed = ComponentArray(a = NaN, s = 0.3)
+    )
+    @test_throws ErrorException fit_model(
+        dm, NoLimits.MLE();
+        theta_0_untransformed = ComponentArray(a = Inf, s = 0.3)
+    )
 
     # A non-finite objective is never reported as converged (#208/#209/#214/#215).
     summ = NoLimits.FitSummary(Inf, true, NoLimits.get_params(res), nothing)
@@ -610,8 +623,10 @@ end
             y ~ Normal(a, s)
         end
     end
-    dm = DataModel(model, DataFrame(ID = [1, 2], t = [0.0, 0.0], y = [0.1, 0.2]);
-        primary_id = :ID, time_col = :t)
+    dm = DataModel(
+        model, DataFrame(ID = [1, 2], t = [0.0, 0.0], y = [0.1, 0.2]);
+        primary_id = :ID, time_col = :t
+    )
     K = (maxiters = 1,)
     fit(m; kw...) = fit_model(dm, m; kw...)
 
@@ -619,23 +634,31 @@ end
     @test_throws ErrorException fit(NoLimits.MLE(optim_kwargs = K, ub = [0.4]))
     @test_throws ErrorException fit(NoLimits.MLE(optim_kwargs = K, ub = [NaN, NaN]))
     @test_throws ErrorException fit(NoLimits.MLE(optim_kwargs = K, lb = Float64[]))
-    @test_throws ErrorException fit(NoLimits.MLE(
-        optim_kwargs = K, lb = [0.3, 0.3], ub = [0.2, 0.2]))
+    @test_throws ErrorException fit(
+        NoLimits.MLE(
+            optim_kwargs = K, lb = [0.3, 0.3], ub = [0.2, 0.2]
+        )
+    )
     @test_throws ErrorException fit(NoLimits.MLE(optim_kwargs = K); constants = [1.0, 2.0])
     @test_throws ErrorException fit(NoLimits.MLE(optim_kwargs = K); penalty = (a = "x",))
     @test_throws ErrorException fit(NoLimits.MLE(optim_kwargs = K); penalty = (a = NaN,))
     @test_throws ErrorException fit(
-        NoLimits.MLE(optim_kwargs = K); extra_objective = (x, y) -> 0.0)
+        NoLimits.MLE(optim_kwargs = K); extra_objective = (x, y) -> 0.0
+    )
     @test_throws ErrorException fit(NoLimits.MLE(optim_kwargs = K); extra_objective = 1)
     # Unknown / out-of-domain parameter overrides are named, on both entry points.
-    @test_throws ErrorException fit(NoLimits.MLE(optim_kwargs = K);
-        theta_0_untransformed = ComponentArray(a = 0.2, s = 0.3, x = 9.0))
+    @test_throws ErrorException fit(
+        NoLimits.MLE(optim_kwargs = K);
+        theta_0_untransformed = ComponentArray(a = 0.2, s = 0.3, x = 9.0)
+    )
     @test_throws ErrorException simulate_data(
-        dm; theta_untransformed = ComponentArray(a = 0.2, s = -1.0))
+        dm; theta_untransformed = ComponentArray(a = 0.2, s = -1.0)
+    )
     @test_throws ErrorException simulate_data(
-        dm; theta_untransformed = ComponentArray(a = NaN, s = 0.3))
+        dm; theta_untransformed = ComponentArray(a = NaN, s = 0.3)
+    )
 
     @test fit(NoLimits.MLE(optim_kwargs = K, lb = [-5.0, -5.0], ub = [5.0, 5.0])) isa
-          FitResult
+        FitResult
     @test fit(NoLimits.MLE(optim_kwargs = K); penalty = (a = 10.0,)) isa FitResult
 end

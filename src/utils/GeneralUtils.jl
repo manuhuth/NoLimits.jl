@@ -31,9 +31,9 @@ end
 # requires a `Bool`. Resolve the right "silent"/"loud" values once for the installed
 # DiffEqBase version. On v6 the `DiffEqBase.SciMLLogging` branch is never evaluated.
 const _ODE_VERBOSE_SILENT = pkgversion(DiffEqBase) >= v"7" ?
-                            DiffEqBase.SciMLLogging.None() : false
+    DiffEqBase.SciMLLogging.None() : false
 const _ODE_VERBOSE_LOUD = pkgversion(DiffEqBase) >= v"7" ?
-                          DiffEqBase.SciMLLogging.Standard() : true
+    DiffEqBase.SciMLLogging.Standard() : true
 @inline _ode_verbose(v::Bool) = v ? _ODE_VERBOSE_LOUD : _ODE_VERBOSE_SILENT
 @inline _ode_verbose(v) = v   # already a verbosity object — pass through unchanged
 
@@ -69,12 +69,15 @@ end
 # two NamedTuple types, which survives into LLVM and breaks Enzyme forward mode
 # (invalid phi node); dispatch resolves to a single concrete return type per input.
 @inline _ode_normalize_verbose(kw::NamedTuple, v::Bool) = merge(
-    kw, (verbose = _ode_verbose(v),))
+    kw, (verbose = _ode_verbose(v),)
+)
 @inline _ode_normalize_verbose(kw::NamedTuple, v) = kw
 
-@inline function _ode_solve_kwargs(base::NamedTuple,
+@inline function _ode_solve_kwargs(
+        base::NamedTuple,
         extra::NamedTuple = NamedTuple(),
-        overrides::NamedTuple = NamedTuple())
+        overrides::NamedTuple = NamedTuple()
+    )
     merged = merge((verbose = _ODE_VERBOSE_SILENT, maxiters = 5000), base, extra, overrides)
     return _ode_normalize_verbose(merged, merged.verbose)
 end
@@ -93,7 +96,7 @@ end
 # during optimizer exploration instead of rethrowing.
 @inline function _is_numeric_error(err)
     return err isa LinearAlgebra.PosDefException ||
-           err isa LinearAlgebra.SingularException ||
-           err isa DomainError || err isa ArgumentError ||
-           err isa Roots.ConvergenceFailed
+        err isa LinearAlgebra.SingularException ||
+        err isa DomainError || err isa ArgumentError ||
+        err isa Roots.ConvergenceFailed
 end

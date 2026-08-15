@@ -88,9 +88,13 @@ macro initialDE(block)
     delete!(var_syms, :helpers)
     delete!(var_syms, :preDE)
 
-    call_syms = Set([s
-                     for s in call_syms
-                     if !(isdefined(Base, s) || isdefined(@__MODULE__, s))])
+    call_syms = Set(
+        [
+            s
+                for s in call_syms
+                if !(isdefined(Base, s) || isdefined(@__MODULE__, s))
+        ]
+    )
     var_syms = _macro_filter_var_syms(var_syms)
 
     meta = InitialDEMeta(collect(names))
@@ -124,9 +128,11 @@ It returns the initial state vector ordered to match `state_names`.
 - `static::Bool = false`: if `true`, returns a `StaticArrays.SVector` for allocation-free
   ODE solving with small state dimensions.
 """
-function get_initialde_builder(i::InitialDE,
+function get_initialde_builder(
+        i::InitialDE,
         state_names::Vector{Symbol};
-        static::Bool = false)
+        static::Bool = false
+    )
     init_names = i.ir.names
     name_set = Set(init_names)
     state_set = Set(state_names)
@@ -136,73 +142,87 @@ function get_initialde_builder(i::InitialDE,
         error("@initialDE is missing initial values for states: $(missing).")
     isempty(extra) || error("@initialDE includes unknown state(s): $(extra).")
 
-    expr_by_name = Dict{Symbol, Expr}((init_names[idx] => i.ir.exprs[idx])
-    for idx in eachindex(init_names))
+    expr_by_name = Dict{Symbol, Expr}(
+        (init_names[idx] => i.ir.exprs[idx])
+            for idx in eachindex(init_names)
+    )
     ordered_exprs = [expr_by_name[s] for s in state_names]
 
     call_syms = Set(i.ir.call_syms)
     var_syms = Set(i.ir.var_syms)
     prop_syms = Set(i.ir.prop_syms)
 
-    fun_syms = Set([s
-                    for s in call_syms
-                    if !(isdefined(Base, s) || isdefined(@__MODULE__, s))])
+    fun_syms = Set(
+        [
+            s
+                for s in call_syms
+                if !(isdefined(Base, s) || isdefined(@__MODULE__, s))
+        ]
+    )
 
     # `sym in prop_syms` is decidable at generation time — emit the chosen branch
     # directly. (The old code carried the membership test into the generated function
     # as `sym in Set([...])`, allocating a fresh Set per symbol on every builder call;
     # the initial-state builder runs per individual per objective evaluation. Mirrors
     # the identical fix in PreDE.jl and RandomEffects.jl.)
-    binds_vars = [if sym in prop_syms
-                      quote
-                          if hasproperty(constant_covariates, $(QuoteNode(sym)))
-                              $(sym) = getproperty(constant_covariates, $(QuoteNode(sym)))
-                          else
-                              error("Unknown symbol $(string($(QuoteNode(sym)))) in initialDE.")
-                          end
-                      end
-                  else
-                      quote
-                          if hasproperty(preDE, $(QuoteNode(sym)))
-                              $(sym) = getproperty(preDE, $(QuoteNode(sym)))
-                          elseif hasproperty(random_effects, $(QuoteNode(sym)))
-                              $(sym) = getproperty(random_effects, $(QuoteNode(sym)))
-                          elseif hasproperty(fixed_effects, $(QuoteNode(sym)))
-                              $(sym) = getproperty(fixed_effects, $(QuoteNode(sym)))
-                          elseif hasproperty(constant_covariates, $(QuoteNode(sym)))
-                              $(sym) = getproperty(constant_covariates, $(QuoteNode(sym)))
-                          else
-                              error("Unknown symbol $(string($(QuoteNode(sym)))) in initialDE.")
-                          end
-                      end
-                  end
-                  for sym in var_syms]
+    binds_vars = [
+        if sym in prop_syms
+                quote
+                    if hasproperty(constant_covariates, $(QuoteNode(sym)))
+                        $(sym) = getproperty(constant_covariates, $(QuoteNode(sym)))
+                else
+                        error("Unknown symbol $(string($(QuoteNode(sym)))) in initialDE.")
+                end
+                end
+        else
+                quote
+                    if hasproperty(preDE, $(QuoteNode(sym)))
+                        $(sym) = getproperty(preDE, $(QuoteNode(sym)))
+                elseif hasproperty(random_effects, $(QuoteNode(sym)))
+                        $(sym) = getproperty(random_effects, $(QuoteNode(sym)))
+                elseif hasproperty(fixed_effects, $(QuoteNode(sym)))
+                        $(sym) = getproperty(fixed_effects, $(QuoteNode(sym)))
+                elseif hasproperty(constant_covariates, $(QuoteNode(sym)))
+                        $(sym) = getproperty(constant_covariates, $(QuoteNode(sym)))
+                else
+                        error("Unknown symbol $(string($(QuoteNode(sym)))) in initialDE.")
+                end
+                end
+        end
+            for sym in var_syms
+    ]
 
-    binds_funs = [quote
-                      if hasproperty(model_funs, $(QuoteNode(sym)))
-                          $(sym) = getproperty(model_funs, $(QuoteNode(sym)))
-                      elseif hasproperty(helpers, $(QuoteNode(sym)))
-                          $(sym) = getproperty(helpers, $(QuoteNode(sym)))
-                      else
-                          error("Unknown function $(string($(QuoteNode(sym)))) in initialDE.")
-                      end
-                  end
-                  for sym in fun_syms]
+    binds_funs = [
+        quote
+                if hasproperty(model_funs, $(QuoteNode(sym)))
+                    $(sym) = getproperty(model_funs, $(QuoteNode(sym)))
+            elseif hasproperty(helpers, $(QuoteNode(sym)))
+                    $(sym) = getproperty(helpers, $(QuoteNode(sym)))
+            else
+                    error("Unknown function $(string($(QuoteNode(sym)))) in initialDE.")
+            end
+            end
+            for sym in fun_syms
+    ]
 
     vec_expr = static ?
-               Expr(:call, GlobalRef(StaticArrays, :SVector), ordered_exprs...) :
-               Expr(:vect, ordered_exprs...)
+        Expr(:call, GlobalRef(StaticArrays, :SVector), ordered_exprs...) :
+        Expr(:vect, ordered_exprs...)
 
-    func_expr = :(function (fixed_effects::ComponentArray,
-            random_effects::ComponentArray,
-            constant_covariates::NamedTuple,
-            model_funs::NamedTuple,
-            helpers::NamedTuple,
-            preDE::NamedTuple)
-        $(binds_vars...)
-        $(binds_funs...)
-        return $vec_expr
-    end)
+    func_expr = :(
+        function (
+                fixed_effects::ComponentArray,
+                random_effects::ComponentArray,
+                constant_covariates::NamedTuple,
+                model_funs::NamedTuple,
+                helpers::NamedTuple,
+                preDE::NamedTuple,
+            )
+            $(binds_vars...)
+            $(binds_funs...)
+            return $vec_expr
+        end
+    )
 
     init_rgf = RuntimeGeneratedFunction(@__MODULE__, @__MODULE__, func_expr)
     return init_rgf

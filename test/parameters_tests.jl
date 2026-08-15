@@ -24,17 +24,22 @@ using Turing: Flat
     @test v.value == [1.0, 2.0]
     @test v.lower == [-Inf, EPSILON]
     err = @test_throws ErrorException RealVector(
-        [1, 2]; name = :badv, scale = [:log, :log], lower = [-1.0, 0.1])
+        [1, 2]; name = :badv, scale = [:log, :log], lower = [-1.0, 0.1]
+    )
     @test_throws ErrorException RealVector(
-        [1, 2]; name = :bad_scale_vec, scale = [:identity])
+        [1, 2]; name = :bad_scale_vec, scale = [:identity]
+    )
     @test_throws ErrorException RealVector([1, 2]; name = :bad_lower_len, lower = [-Inf])
     @test_throws ErrorException RealVector([1, 2]; name = :bad_upper_len, upper = [Inf])
     @test_throws ErrorException RealVector(
-        [1, 2]; name = :bad_bounds_vec, lower = [0.0, 2.0], upper = [1.0, 1.0])
+        [1, 2]; name = :bad_bounds_vec, lower = [0.0, 2.0], upper = [1.0, 1.0]
+    )
     @test_throws ErrorException RealVector(
-        [1, 2]; name = :bad_scale_sym, scale = [:identity, :foo])
+        [1, 2]; name = :bad_scale_sym, scale = [:identity, :foo]
+    )
     @test_throws ErrorException RealVector(
-        [1, 2]; name = :bad_init_vec, lower = [0.0, 0.0], upper = [0.5, 1.5])
+        [1, 2]; name = :bad_init_vec, lower = [0.0, 0.0], upper = [0.5, 1.5]
+    )
 
     v2 = RealVector([1, 2]; name = :v2, scale = [:log, :identity], lower = [-Inf, -1.0])
     @test v2.lower == [EPSILON, -1.0]
@@ -42,26 +47,32 @@ using Turing: Flat
     psd = RealPSDMatrix([1.0 0.0; 0.0 1.0]; name = :Ω)
     @test psd.value == [1.0 0.0; 0.0 1.0]
     @test_throws ErrorException RealPSDMatrix(
-        [1.0 2.0; 2.0 1.0]; name = :bad_psd, scale = :log)
+        [1.0 2.0; 2.0 1.0]; name = :bad_psd, scale = :log
+    )
     @test_throws ErrorException RealPSDMatrix([1.0 2.0; 3.0 4.0]; name = :bad_psd2)
     @test_throws ErrorException RealPSDMatrix(
-        [1.0 0.0; 0.0 1.0]; name = :bad_psd_scale, scale = :foo)
+        [1.0 0.0; 0.0 1.0]; name = :bad_psd_scale, scale = :foo
+    )
 
-    lie = RealLiePSDMatrix([2.0 0.5; 0.5 1.0]; name = :Ωlie, eigenvalue_lower = 1e-3,
-        eigenvalue_upper = 1e3)
+    lie = RealLiePSDMatrix(
+        [2.0 0.5; 0.5 1.0]; name = :Ωlie, eigenvalue_lower = 1.0e-3,
+        eigenvalue_upper = 1.0e3
+    )
     @test lie.value == [2.0 0.5; 0.5 1.0]
     @test lie.scale == :lie
-    @test lie.eigenvalue_lower == [1e-3, 1e-3]
+    @test lie.eigenvalue_lower == [1.0e-3, 1.0e-3]
     @test_throws ErrorException RealLiePSDMatrix([1.0 2.0; 3.0 4.0]; name = :bad_lie)
     @test_throws ErrorException RealLiePSDMatrix(
-        [1.0 0.0; 0.0 1.0]; name = :bad_lie_scale, scale = :cholesky)
+        [1.0 0.0; 0.0 1.0]; name = :bad_lie_scale, scale = :cholesky
+    )
 
     d = RealDiagonalMatrix([1, 2, 3]; name = :d)
     @test d.value == [1.0, 2.0, 3.0]
     @test_throws ErrorException RealDiagonalMatrix([1.0, -2.0]; name = :badd)
     @test_logs (:warn,) RealDiagonalMatrix([1.0 0.1; 0.0 2.0]; name = :dmat)
     @test_throws ErrorException RealDiagonalMatrix(
-        [1.0, 2.0]; name = :bad_diag_scale, scale = :identity)
+        [1.0, 2.0]; name = :bad_diag_scale, scale = :identity
+    )
 
     @test_throws ErrorException RealNumber(1.0; name = :bad_prior, prior = :not_a_prior)
     @test RealNumber(1.0; name = :ok_prior, prior = Normal()).prior isa Distribution
@@ -81,15 +92,18 @@ end
     @test all(isinf, nn.upper)
     @test length(nn.value) > 0
     @test_throws ErrorException NNParameters(
-        chain; name = :bad_nn, function_name = :NN2, prior = :not_a_prior)
+        chain; name = :bad_nn, function_name = :NN2, prior = :not_a_prior
+    )
     @test_throws ErrorException NNParameters(
-        chain; name = :bad_nn_len, function_name = :NN3, prior = fill(Normal(), n - 1))
+        chain; name = :bad_nn_len, function_name = :NN3, prior = fill(Normal(), n - 1)
+    )
     mvn = MvNormal(zeros(n), I)
     nn_mvn = NNParameters(chain; name = :nn_mvn, function_name = :NN4, prior = mvn)
     @test nn_mvn.prior isa Distribution
     bad_mvn = MvNormal(zeros(n - 1), I)
     @test_throws ErrorException NNParameters(
-        chain; name = :bad_nn_mvn, function_name = :NN5, prior = bad_mvn)
+        chain; name = :bad_nn_mvn, function_name = :NN5, prior = bad_mvn
+    )
 end
 
 @testset "NormalizingPlanarFlow" begin
@@ -126,7 +140,8 @@ end
     npf0 = NPFParameter(2, 2; name = :npf0)
     n = length(npf0.value)
     @test_throws ErrorException NPFParameter(
-        2, 2; name = :bad_npf_prior_len, prior = fill(Normal(), n - 1))
+        2, 2; name = :bad_npf_prior_len, prior = fill(Normal(), n - 1)
+    )
 
     q0 = MvNormal(zeros(npf.n_input), I)
     flow = NormalizingPlanarFlow(npf.value, npf.reconstructor, q0)
@@ -146,7 +161,8 @@ end
     @test npf_custom.base_dist isa MvNormal
     @test mean(npf_custom.base_dist) == [0.5, -0.5]
     flow_custom = NormalizingPlanarFlow(
-        npf_custom.value, npf_custom.reconstructor, npf_custom.base_dist)
+        npf_custom.value, npf_custom.reconstructor, npf_custom.base_dist
+    )
     @test length(flow_custom) == 2
     @test length(rand(flow_custom)) == 2
 
@@ -159,7 +175,8 @@ end
     npf_tdist = NPFParameter(2, 2; name = :npf_tdist, base_dist = q0_t)
     @test npf_tdist.base_dist isa Distributions.AbstractMvTDist
     flow_tdist = NormalizingPlanarFlow(
-        npf_tdist.value, npf_tdist.reconstructor, npf_tdist.base_dist)
+        npf_tdist.value, npf_tdist.reconstructor, npf_tdist.base_dist
+    )
     @test length(flow_tdist) == 2
     @test length(rand(flow_tdist)) == 2
 end
@@ -174,13 +191,16 @@ end
     @test all(isinf, st.upper)
     @test length(st.value) > 0
     @test_throws ErrorException SoftTreeParameters(
-        0, 3; name = :bad_st, function_name = :ST)
+        0, 3; name = :bad_st, function_name = :ST
+    )
     @test_throws ErrorException SoftTreeParameters(
-        2, 0; name = :bad_st2, function_name = :ST)
+        2, 0; name = :bad_st2, function_name = :ST
+    )
     st0 = SoftTreeParameters(2, 2; name = :st0, function_name = :ST)
     n = length(st0.value)
     @test_throws ErrorException SoftTreeParameters(
-        2, 2; name = :bad_st_prior, function_name = :ST, prior = fill(Normal(), n - 1))
+        2, 2; name = :bad_st_prior, function_name = :ST, prior = fill(Normal(), n - 1)
+    )
 end
 
 @testset "Auto Uniform prior from bounds" begin
@@ -195,15 +215,17 @@ end
     @test RealNumber(0.5; name = :a_none).prior isa NoLimits.Priorless
 
     # User-supplied prior is never overwritten.
-    @test RealNumber(0.5; name = :a_p, lower = 0.0, upper = 1.0,
-        prior = Normal(0, 1)).prior isa Normal
+    @test RealNumber(
+        0.5; name = :a_p, lower = 0.0, upper = 1.0,
+        prior = Normal(0, 1)
+    ).prior isa Normal
 
     # :log EPSILON lower auto-default must NOT count as explicit; explicit log bounds do.
     @test RealNumber(0.5; name = :a_log_hi, scale = :log, upper = 2.0).prior isa
-          NoLimits.Priorless
-    e = RealNumber(0.5; name = :a_log, scale = :log, lower = 1e-3, upper = 2.0)
+        NoLimits.Priorless
+    e = RealNumber(0.5; name = :a_log, scale = :log, lower = 1.0e-3, upper = 2.0)
     @test e.prior isa Uniform
-    @test (e.prior.a, e.prior.b) == (1e-3, 2.0)
+    @test (e.prior.a, e.prior.b) == (1.0e-3, 2.0)
 
     # RealVector all bounded -> product of Uniforms; logpdf finite.
     v1 = RealVector([0.5, 0.5]; name = :v1, lower = [0.0, -1.0], upper = [1.0, 1.0])
@@ -223,8 +245,10 @@ end
 
     # No bounds anywhere -> Priorless; user prior preserved.
     @test RealVector([0.5, 0.5]; name = :v3).prior isa NoLimits.Priorless
-    @test RealVector([0.5, 0.5]; name = :v4, lower = [0.0, 0.0], upper = [1.0, 1.0],
-        prior = MvNormal(zeros(2), I)).prior isa MvNormal
+    @test RealVector(
+        [0.5, 0.5]; name = :v4, lower = [0.0, 0.0], upper = [1.0, 1.0],
+        prior = MvNormal(zeros(2), I)
+    ).prior isa MvNormal
 end
 
 # `NoLimits.Flat` replaced `Turing.Flat` so the model-definition path does not need Turing
@@ -235,8 +259,12 @@ end
         θ ~ product_distribution([Uniform(0.0, 1.0), flat])
         y ~ Normal(θ[1] + θ[2], 0.5)
     end
-    draws(flat) = Array(Turing.sample(MersenneTwister(11), _flat_demo(flat, 1.3),
-        NUTS(20, 0.65), 60; progress = false))
+    draws(flat) = Array(
+        Turing.sample(
+            MersenneTwister(11), _flat_demo(flat, 1.3),
+            NUTS(20, 0.65), 60; progress = false
+        )
+    )
     @test draws(NoLimits.Flat()) == draws(Flat())
 end
 
@@ -285,9 +313,11 @@ end
 
     # Invalid logit element in mixed vector
     @test_throws ErrorException RealVector(
-        [0.0, 2.0, -1.0]; scale = [:logit, :log, :identity])
+        [0.0, 2.0, -1.0]; scale = [:logit, :log, :identity]
+    )
     @test_throws ErrorException RealVector(
-        [1.0, 2.0, -1.0]; scale = [:logit, :log, :identity])
+        [1.0, 2.0, -1.0]; scale = [:logit, :log, :identity]
+    )
 end
 
 @testset "NPFParameter seeded initialization is reproducible" begin

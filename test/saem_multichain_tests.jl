@@ -43,7 +43,7 @@ end
     # of the chain count.
     b_chains = [
         [Float64[1.0], Float64[3.0], Float64[5.0]],   # batch 1: chains 1,2,3
-        [Float64[2.0], Float64[4.0], Float64[6.0]]   # batch 2: chains 1,2,3
+        [Float64[2.0], Float64[4.0], Float64[6.0]],   # batch 2: chains 1,2,3
     ]
     b_current = [zeros(1), zeros(1)]
 
@@ -70,7 +70,7 @@ end
     store = NoLimits._SAEMSampleStore(
         zeros(Float64, capacity),
         [[zeros(Float64, 1) for _ in 1:n_batches] for _ in 1:capacity],
-        1, 1, 0, capacity, 1e-10, 0
+        1, 1, 0, capacity, 1.0e-10, 0
     )
     b_chains = [[Float64[1.0], Float64[5.0]]]   # batch 1: chains 1,2
 
@@ -101,7 +101,8 @@ end
 
 @testset "Multi-chain: SAEMOptions explicit values" begin
     opts = NoLimits.SAEM(;
-        n_chains = 4, auto_small_n_chains = true, small_n_chain_target = 20).saem
+        n_chains = 4, auto_small_n_chains = true, small_n_chain_target = 20
+    ).saem
     @test opts.n_chains == 4
     @test opts.auto_small_n_chains == true
     @test opts.small_n_chain_target == 20
@@ -125,20 +126,24 @@ function _mc_dm()
             y ~ Normal(a + η, σ)
         end
     end
-    df = DataFrame(ID = [:A, :A, :B, :B, :C, :C], t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, -0.1, 0.15, 0.05])
+    df = DataFrame(
+        ID = [:A, :A, :B, :B, :C, :C], t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+        y = [0.1, 0.2, 0.0, -0.1, 0.15, 0.05]
+    )
     return DataModel(model, df; primary_id = :ID, time_col = :t)
 end
 
 @testset "Multi-chain: n_chains=1 regression (matches single-chain behavior)" begin
     dm = _mc_dm()
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         NoLimits.SAEM(;
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2, t0 = 2, progress = false, q_store_max = 2, builtin_stats = :none,
             n_chains = 1, auto_small_n_chains = false
-        ))
+        )
+    )
     conv = NoLimits.get_diagnostics(res).convergence
 
     @test all(n == 1 for n in conv.n_chains_used)
@@ -146,13 +151,15 @@ end
 
 @testset "Multi-chain: n_chains=2 runs and diagnostics reflect chain count" begin
     dm = _mc_dm()
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         NoLimits.SAEM(;
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2, t0 = 2, progress = false, q_store_max = 2, builtin_stats = :none,
             n_chains = 2, auto_small_n_chains = false
-        ))
+        )
+    )
     conv = NoLimits.get_diagnostics(res).convergence
 
     @test all(n == 2 for n in conv.n_chains_used)
@@ -161,13 +168,15 @@ end
 @testset "Multi-chain: auto_small_n_chains inflates chain count" begin
     # 3 individuals → 3 batches < target=50 → effective_n_chains = ceil(50/3) = 17
     dm = _mc_dm()
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         NoLimits.SAEM(;
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2, t0 = 1, progress = false, q_store_max = 2, builtin_stats = :none,
             auto_small_n_chains = true, small_n_chain_target = 50
-        ))
+        )
+    )
     conv = NoLimits.get_diagnostics(res).convergence
     # 3 batches, target=50 → ceil(50/3) = 17
     @test all(n == 17 for n in conv.n_chains_used)
@@ -198,13 +207,15 @@ end
         y = randn(2n)
     )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         NoLimits.SAEM(;
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2, t0 = 1, progress = false, q_store_max = 2, builtin_stats = :none,
             n_chains = 1, auto_small_n_chains = true, small_n_chain_target = 50
-        ))
+        )
+    )
     conv = NoLimits.get_diagnostics(res).convergence
     @test all(n == 1 for n in conv.n_chains_used)
 end
@@ -245,11 +256,13 @@ end
     # by the within-posterior variance each iteration, so ω decayed geometrically
     # to the 1e-5 floor whenever effective_n_chains > 1 — independent of the data.
     dm = _mc_variance_dm()
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         NoLimits.SAEM(;
             maxiters = 40, t0 = 20, progress = false,
             auto_small_n_chains = true, small_n_chain_target = 50
-        ))
+        )
+    )
     conv = NoLimits.get_diagnostics(res).convergence
     @test all(n == 5 for n in conv.n_chains_used)   # ceil(50/12)
 
@@ -262,8 +275,10 @@ end
     # Regression: builtin closed-form updates were merged over the user-supplied
     # `constants`, silently overwriting them.
     dm = _mc_variance_dm()
-    res = fit_model(dm,
+    res = fit_model(
+        dm,
         NoLimits.SAEM(; maxiters = 10, t0 = 5, progress = false);
-        constants = (; ω = 0.55))
+        constants = (; ω = 0.55)
+    )
     @test get_params(res; scale = :untransformed).ω ≈ 0.55
 end

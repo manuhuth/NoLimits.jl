@@ -83,7 +83,8 @@ struct MultistartFitResult{M, R, RE, S, E, B}
     scores_ok::B
 end
 
-function Multistart(; dists = NamedTuple(),
+function Multistart(;
+        dists = NamedTuple(),
         n_draws_requested::Int = 100,
         n_draws_used::Int = 50,
         sampling::Symbol = :random,
@@ -91,7 +92,8 @@ function Multistart(; dists = NamedTuple(),
         rng::AbstractRNG = Random.default_rng(),
         progress::Bool = true,
         screening::Symbol = :prior_mean,
-        ebe_maxiters::Int = 30)
+        ebe_maxiters::Int = 30
+    )
     # `0` used to be accepted and then silently expanded to `n_draws_used` (#220).
     n_draws_requested < 1 &&
         error("n_draws_requested must be >= 1 (it is the number of candidate starting points to sample); got $(n_draws_requested).")
@@ -100,8 +102,10 @@ function Multistart(; dists = NamedTuple(),
     (screening == :prior_mean || screening == :ebe) ||
         error("screening must be :prior_mean or :ebe.")
     ebe_maxiters < 1 && error("ebe_maxiters must be ≥ 1.")
-    return Multistart(dists, n_draws_requested, n_draws_used, sampling, serialization, rng,
-        progress, screening, ebe_maxiters)
+    return Multistart(
+        dists, n_draws_requested, n_draws_used, sampling, serialization, rng,
+        progress, screening, ebe_maxiters
+    )
 end
 
 function _lhs_unit(n::Int, rng::AbstractRNG)
@@ -146,12 +150,13 @@ function _check_bounds(name::Symbol, v, lower, upper)
         return
     end
     bad = findall((v .< lower) .| (v .> upper))
-    isempty(bad) ||
+    return isempty(bad) ||
         error("Multistart sampling for $(name) violates bounds at indices $(bad). Use a truncated distribution for sampling.")
 end
 
 function _sample_param(
-        name::Symbol, value, dist, n::Int, sampling::Symbol, rng::AbstractRNG)
+        name::Symbol, value, dist, n::Int, sampling::Symbol, rng::AbstractRNG
+    )
     function _fix_matrix(v)
         if v isa AbstractMatrix && size(v, 1) == size(v, 2)
             v = 0.5 .* (v .+ transpose(v))
@@ -160,7 +165,7 @@ function _sample_param(
                     cholesky(Symmetric(v))
                     return v
                 catch
-                    v = v + (1e-6 * (10.0^k)) .* I(size(v, 1))
+                    v = v + (1.0e-6 * (10.0^k)) .* I(size(v, 1))
                 end
             end
         end
@@ -245,22 +250,28 @@ end
 function _truncate_to_bounds(name::Symbol, d, lo, hi)
     (d isa UnivariateDistribution && (isfinite(lo) || isfinite(hi))) || return d
     outside = _mass_outside(d, lo, hi)
-    outside <= 1e-10 && return d
+    outside <= 1.0e-10 && return d
     outside >= 1.0 &&
-        error("Multistart sampling for $(name): the sampling distribution $(d) has no " *
-              "probability mass inside the declared bounds [$(lo), $(hi)]. Pass a `dists` " *
-              "entry that overlaps the bounds.")
-    return truncated(d; lower = isfinite(lo) ? lo : nothing,
-        upper = isfinite(hi) ? hi : nothing)
+        error(
+        "Multistart sampling for $(name): the sampling distribution $(d) has no " *
+            "probability mass inside the declared bounds [$(lo), $(hi)]. Pass a `dists` " *
+            "entry that overlaps the bounds."
+    )
+    return truncated(
+        d; lower = isfinite(lo) ? lo : nothing,
+        upper = isfinite(hi) ? hi : nothing
+    )
 end
 
-function _warn_bounded(warn::Bool, name::Symbol, source::AbstractString, lo, hi,
-        marginalised::Bool)
+function _warn_bounded(
+        warn::Bool, name::Symbol, source::AbstractString, lo, hi,
+        marginalised::Bool
+    )
     warn || return nothing
     extra = marginalised ?
-            " Draws are taken from per-coordinate truncated marginals, so the joint correlation is dropped." :
-            ""
-    @warn "Multistart: the $(source) sampling distribution for $(name) puts mass outside the declared bounds; draws are truncated to the bounds.$(extra)" parameter=name lower=lo upper=hi
+        " Draws are taken from per-coordinate truncated marginals, so the joint correlation is dropped." :
+        ""
+    return @warn "Multistart: the $(source) sampling distribution for $(name) puts mass outside the declared bounds; draws are truncated to the bounds.$(extra)" parameter = name lower = lo upper = hi
 end
 
 # Keep draws inside the parameter's declared range (a :log coordinate must stay
@@ -268,8 +279,10 @@ end
 # only when its bounds actually bind; otherwise the joint distribution is kept.
 function _bound_dist(name::Symbol, p, value, lo, hi, source::AbstractString, warn::Bool)
     if p isa AbstractArray
-        out = [_truncate_to_bounds(name, p[j], _bound_at(lo, j), _bound_at(hi, j))
-               for j in eachindex(p)]
+        out = [
+            _truncate_to_bounds(name, p[j], _bound_at(lo, j), _bound_at(hi, j))
+                for j in eachindex(p)
+        ]
         any(j -> out[j] !== p[j], eachindex(p)) &&
             _warn_bounded(warn, name, source, lo, hi, false)
         return out
@@ -282,8 +295,10 @@ function _bound_dist(name::Symbol, p, value, lo, hi, source::AbstractString, war
     (value isa AbstractVector && (any(isfinite, lo) || any(isfinite, hi))) || return p
     marg = [_laplace_marginal_mvnormal(p, j) for j in eachindex(value)]
     any(isnothing, marg) && return p
-    out = [_truncate_to_bounds(name, marg[j], _bound_at(lo, j), _bound_at(hi, j))
-           for j in eachindex(value)]
+    out = [
+        _truncate_to_bounds(name, marg[j], _bound_at(lo, j), _bound_at(hi, j))
+            for j in eachindex(value)
+    ]
     any(j -> out[j] !== marg[j], eachindex(out)) || return p
     _warn_bounded(warn, name, source, lo, hi, true)
     return out
@@ -302,9 +317,13 @@ function _collect_param_dists(dm::DataModel, ms::Multistart; warn::Bool = true)
             (hasproperty(priors, name) ? getfield(priors, name) : Priorless())
         p isa Priorless && continue
         source = user ? "supplied" : "prior-derived"
-        push!(pairs,
-            name => _bound_dist(name, p, getproperty(θ0_u, name), getproperty(lower, name),
-                getproperty(upper, name), source, warn))
+        push!(
+            pairs,
+            name => _bound_dist(
+                name, p, getproperty(θ0_u, name), getproperty(lower, name),
+                getproperty(upper, name), source, warn
+            )
+        )
     end
     return NamedTuple(pairs)
 end
@@ -320,7 +339,7 @@ function _multistart_initials(dm::DataModel, ms::Multistart)
     n_req = ms.n_draws_requested
     n_used = ms.n_draws_used
     if n_used > n_req
-        @warn "n_draws_used > n_draws_requested; increasing requested draws to match." n_draws_used=n_used n_draws_requested=n_req
+        @warn "n_draws_used > n_draws_requested; increasing requested draws to match." n_draws_used = n_used n_draws_requested = n_req
         n_req = n_used
     end
     n_req = max(n_req, 1)   # always at least θ0_u itself
@@ -433,15 +452,16 @@ function _build_ebe_eta(dm::DataModel, θu::ComponentArray, ll_cache; maxiters::
         end
         # Closure: negative joint log-density to minimize
         neg_logf = let dm = dm, i = i, θu = θu, ll_cache = ll_cache, axs = axs,
-            dists = dists, re_logpdf_fn = re_logpdf_fn, re_names = re_names,
-            re_names_tuple = re_names_tuple
+                dists = dists, re_logpdf_fn = re_logpdf_fn, re_names = re_names,
+                re_names_tuple = re_names_tuple
 
             (η_flat, _) -> begin
                 η_i = ComponentArray(η_flat, axs)
                 ll = _loglikelihood_individual(dm, i, θu, η_i, ll_cache)
                 !isfinite(ll) && return eltype(η_flat)(Inf)
                 re_v = NamedTuple{re_names_tuple}(
-                    Tuple([getproperty(η_i, re) for re in re_names]))
+                    Tuple([getproperty(η_i, re) for re in re_names])
+                )
                 lp = re_logpdf_fn(dists, re_v)
                 !isfinite(lp) && return eltype(η_flat)(Inf)
                 return -(ll + lp)
@@ -450,7 +470,8 @@ function _build_ebe_eta(dm::DataModel, θu::ComponentArray, ll_cache; maxiters::
         try
             prob = OptimizationProblem(
                 OptimizationFunction(neg_logf, Optimization.AutoForwardDiff()),
-                η0_flat)
+                η0_flat
+            )
             sol = solve(prob, optimizer; maxiters = maxiters)
             etas[i] = ComponentArray(sol.u, axs)
             f_sol = sol.objective  # = -(joint log-density at EBE)
@@ -465,7 +486,8 @@ function _build_ebe_eta(dm::DataModel, θu::ComponentArray, ll_cache; maxiters::
     return etas, joint_score
 end
 
-function _multistart_screen(dm::DataModel,
+function _multistart_screen(
+        dm::DataModel,
         candidates::Vector{ComponentArray},
         n_used::Int,
         ode_args::Tuple,
@@ -473,15 +495,19 @@ function _multistart_screen(dm::DataModel,
         serialization::SciMLBase.EnsembleAlgorithm,
         screening::Symbol,
         ebe_maxiters::Int;
-        progress::Bool = true)
+        progress::Bool = true
+    )
     # EBE inner optimization is serial per individual; use EnsembleSerial for that path.
     cache_serialization = screening == :ebe ? EnsembleSerial() : serialization
-    cache = build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-        serialization = cache_serialization, force_saveat = true)
+    cache = build_ll_cache(
+        dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = cache_serialization, force_saveat = true
+    )
     scores = Vector{Float64}(undef, length(candidates))
     screen_p = progress ?
-               Progress(
-        length(candidates); desc = "Multistart screening: ", showspeed = true) : nothing
+        Progress(
+            length(candidates); desc = "Multistart screening: ", showspeed = true
+        ) : nothing
     for (i, θu) in enumerate(candidates)
         if screening == :ebe
             etas, joint_score = _build_ebe_eta(dm, θu, cache; maxiters = ebe_maxiters)
@@ -587,32 +613,34 @@ function fit_model(ms::Multistart, dm::DataModel, method::FittingMethod, args...
     varied_str = isempty(varied) ? "none" : join(string.(varied), ", ")
 
     if n_req > n_used
-        starts, screen_scores = _multistart_screen(dm, all_starts, n_used, ode_args,
+        starts, screen_scores = _multistart_screen(
+            dm, all_starts, n_used, ode_args,
             ode_kwargs_inner, serialization,
             ms.screening, ms.ebe_maxiters;
-            progress = progress)
+            progress = progress
+        )
         finite_scores = filter(isfinite, screen_scores)
         if isempty(finite_scores)
             if ms.screening == :ebe
-                @info "Multistart" candidates=n_req selected=n_used varying=varied_str screening=ms.screening best_screening_joint_ll="all -Inf"
+                @info "Multistart" candidates = n_req selected = n_used varying = varied_str screening = ms.screening best_screening_joint_ll = "all -Inf"
             else
-                @info "Multistart" candidates=n_req selected=n_used varying=varied_str screening=ms.screening best_screening_ll="all -Inf"
+                @info "Multistart" candidates = n_req selected = n_used varying = varied_str screening = ms.screening best_screening_ll = "all -Inf"
             end
         elseif ms.screening == :ebe
-            @info "Multistart" candidates=n_req selected=n_used varying=varied_str screening=ms.screening best_screening_joint_ll=maximum(finite_scores) worst_screening_joint_ll=minimum(finite_scores)
+            @info "Multistart" candidates = n_req selected = n_used varying = varied_str screening = ms.screening best_screening_joint_ll = maximum(finite_scores) worst_screening_joint_ll = minimum(finite_scores)
         else
-            @info "Multistart" candidates=n_req selected=n_used varying=varied_str screening=ms.screening best_screening_ll=maximum(finite_scores) worst_screening_ll=minimum(finite_scores)
+            @info "Multistart" candidates = n_req selected = n_used varying = varied_str screening = ms.screening best_screening_ll = maximum(finite_scores) worst_screening_ll = minimum(finite_scores)
         end
     else
         starts = all_starts
-        @info "Multistart" candidates=n_req selected=n_used varying=varied_str
+        @info "Multistart" candidates = n_req selected = n_used varying = varied_str
     end
     n_starts = length(starts)
     results = Vector{Union{FitResult, Nothing}}(undef, n_starts)
     errors = Vector{Any}(undef, n_starts)
     rngs = [Random.Xoshiro(rand(ms.rng, UInt)) for _ in 1:n_starts]
     fit_p = progress ?
-            Progress(n_starts; desc = "Multistart fitting:  ", showspeed = true) : nothing
+        Progress(n_starts; desc = "Multistart fitting:  ", showspeed = true) : nothing
 
     function run_one(i)
         try
@@ -621,12 +649,13 @@ function fit_model(ms::Multistart, dm::DataModel, method::FittingMethod, args...
                 local_kwargs = merge(kw_nt, (rng = rngs[i],))
             end
             results[i] = fit_model(
-                dm, method, args...; theta_0_untransformed = starts[i], local_kwargs...)
+                dm, method, args...; theta_0_untransformed = starts[i], local_kwargs...
+            )
         catch err
             errors[i] = err
             results[i] = nothing
         end
-        progress && next!(fit_p)
+        return progress && next!(fit_p)
     end
 
     if ms.serialization isa EnsembleThreads
@@ -660,8 +689,10 @@ function fit_model(ms::Multistart, dm::DataModel, method::FittingMethod, args...
     isempty(results_ok) &&
         error("All multistart runs failed. First error: $(errors_err[1])")
     best_idx = findmin(scores_ok)[2]
-    return MultistartFitResult(method, results_ok, results_err, starts_ok,
-        starts_err, errors_err, best_idx, scores_ok)
+    return MultistartFitResult(
+        method, results_ok, results_err, starts_ok,
+        starts_err, errors_err, best_idx, scores_ok
+    )
 end
 
 get_summary(res::MultistartFitResult) = get_summary(get_multistart_best(res))

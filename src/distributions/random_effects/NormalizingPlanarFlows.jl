@@ -90,7 +90,7 @@ log p(x) = log q₀(z₀) - Σᵢ log|det(Jfᵢ)|
   ICML 2015.
 """
 struct NormalizingPlanarFlow{D <: Distribution, R <: Optimisers.Restructure} <:
-       AbstractNormalizingFlow
+    AbstractNormalizingFlow
     base::D       # transformed distribution with fixed base q0
     rebuild::R       # maps flat θ → bijector/transform
 end
@@ -124,7 +124,8 @@ samples = rand(flow, 1000)
 """
 function NormalizingPlanarFlow(
         n_input::Int, n_layers::Int; init = x -> sqrt((1 / n_input)) .* x,
-        base_dist = nothing)
+        base_dist = nothing
+    )
     q₀ = isnothing(base_dist) ? MvNormal(zeros(Float64, n_input), I) : base_dist
     d = length(q₀)
     Ls = [PlanarLayer(d, init) for _ in 1:n_layers]
@@ -133,7 +134,7 @@ function NormalizingPlanarFlow(
     θ, restructure = Optimisers.destructure(ts)
     transformed_obj = transformed(q₀, ts)
 
-    NormalizingPlanarFlow(transformed_obj, restructure)
+    return NormalizingPlanarFlow(transformed_obj, restructure)
 end
 
 """
@@ -179,16 +180,17 @@ object (its `fmap`-based reconstruction breaks Enzyme forward mode).
 A `NormalizingPlanarFlow` with the specified parameters.
 """
 function NormalizingPlanarFlow(
-        θ::AbstractVector, rebuild::Optimisers.Restructure, q0::ContinuousDistribution)
+        θ::AbstractVector, rebuild::Optimisers.Restructure, q0::ContinuousDistribution
+    )
     bij = _planar_chain_from_flat(θ, length(q0))
     trans = transformed(q0, bij)
-    NormalizingPlanarFlow(trans, rebuild)
+    return NormalizingPlanarFlow(trans, rebuild)
 end
 
 Distributions.logpdf(d::NormalizingPlanarFlow, x::Real) = logpdf(d.base, [x])
 Distributions.logpdf(d::NormalizingPlanarFlow, x::AbstractVector) = logpdf(d.base, x)
 function Distributions.logpdf(d::NormalizingPlanarFlow, x::StaticArrays.StaticVector)
-    logpdf(d.base, x)
+    return logpdf(d.base, x)
 end
 Distributions.pdf(d::NormalizingPlanarFlow, x::AbstractVector) = pdf(d.base, x)
 Distributions.length(d::NormalizingPlanarFlow) = length(d.base)
@@ -198,11 +200,11 @@ Distributions.rand(d::NormalizingPlanarFlow) = rand(d.base)
 Distributions.rand(rng::AbstractRNG, d::NormalizingPlanarFlow) = rand(rng, d.base)
 Distributions.rand(d::NormalizingPlanarFlow, n::Int) = rand(default_rng(), d, n)
 function Distributions.rand(rng::AbstractRNG, d::NormalizingPlanarFlow, n::Int)
-    rand(rng, d.base, n)
+    return rand(rng, d.base, n)
 end
 Distributions.rand(d::NormalizingPlanarFlow, dims::Dims...) = rand(d.base, dims...)
 function Distributions.rand(rng::AbstractRNG, d::NormalizingPlanarFlow, dims::Dims...)
-    rand(rng, d.base, dims...)
+    return rand(rng, d.base, dims...)
 end
 
 # Use the underlying transformed distribution's bijector for HMC/NUTS.
@@ -231,5 +233,5 @@ end
 # Estimate covariance via sampling — used only for MH step-size initialization,
 # so an empirical approximation is sufficient.
 function Statistics.cov(d::NormalizingPlanarFlow; n_samples::Int = 2000)
-    Statistics.cov(rand(default_rng(), d, n_samples)')
+    return Statistics.cov(rand(default_rng(), d, n_samples)')
 end
