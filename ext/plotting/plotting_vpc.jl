@@ -61,6 +61,7 @@ function plot_vpc(res::FitResult;
         kwargs_subplot = NamedTuple())
     dm = _get_dm(res, dm)
     save_path = _resolve_plot_path(save_path, plot_path)
+    bandwidth === nothing || _check_positive(bandwidth, "bandwidth")
     if n_sim !== nothing
         n_sim >= 1 || error("n_sim must be >= 1.")
         if n_simulations != 100 && n_simulations != n_sim

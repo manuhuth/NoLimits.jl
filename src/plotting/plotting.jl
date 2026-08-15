@@ -102,7 +102,29 @@ const MIN_FIGURE_HEIGHT = 300
 const MAX_FIGURE_HEIGHT = 2400
 const DEFAULT_DPI = 300
 
+# Shared option validators. Boundary values used to surface as InexactError / invalid
+# GenericMemory size / empty-reduction errors from deep inside layout, histogram and KDE
+# helpers (#210, #216).
+function _check_positive_int(v, name::AbstractString)
+    (v isa Integer && v >= 1) ||
+        error("$(name) must be an integer >= 1; got $(v).")
+    return nothing
+end
+
+function _check_positive(v, name::AbstractString)
+    (v isa Real && isfinite(v) && v > 0) ||
+        error("$(name) must be a finite positive number; got $(v).")
+    return nothing
+end
+
+function _check_unit_interval(v, name::AbstractString)
+    (v isa Real && isfinite(v) && 0 <= v <= 1) ||
+        error("$(name) must be a finite number in [0, 1]; got $(v).")
+    return nothing
+end
+
 function calculate_plot_size(nplots::Int, ncols::Int, style::PlotStyle = PlotStyle())
+    _check_positive_int(ncols, "ncols")
     ncols = min(ncols, nplots)
     nrows = ceil(Int, nplots / ncols)
     scale = nplots <= 4 ? 1.0 :
@@ -131,7 +153,11 @@ end
 # Uniform-bin histogram (centers/heights/width) so the drawing layer can size axes
 # without reading rendered series back; normalization ∈ (:probability, :pdf, :none).
 function _histogram_xy(vals::AbstractVector{<:Real}; bins::Int, normalization::Symbol)
+    _check_positive_int(bins, "bins")
+    vals = filter(isfinite, vals)
     n = length(vals)
+    n == 0 &&
+        error("Cannot build a histogram: no finite values remain after dropping missing/NaN/Inf entries.")
     lo, hi = extrema(vals)
     if lo == hi
         lo -= 0.5
