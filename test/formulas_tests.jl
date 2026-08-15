@@ -407,3 +407,76 @@ end
         end
     end)
 end
+
+@testset "Model-build declaration validation" begin
+    mk(body) = Core.eval(@__MODULE__, Expr(:macrocall, Symbol("@Model"), LineNumberNode(0),
+        body))
+    # An observation must be a distribution, not a bare symbol/literal/nothing.
+    for rhs in (:a, 1.0, :nothing)
+        @test_throws LoadError mk(quote
+            @fixedEffects begin
+                a = RealNumber(1.0)
+            end
+            @formulas begin
+                y ~ $rhs
+            end
+        end)
+    end
+    # A deterministic node may legitimately be a literal.
+    @test mk(quote
+        @fixedEffects begin
+            a = RealNumber(1.0)
+        end
+        @formulas begin
+            mu = 1.0
+            y ~ Normal(mu, 1.0)
+        end
+    end) isa Model
+    # RandomEffect needs a distribution too.
+    @test_throws LoadError mk(quote
+        @fixedEffects begin
+            a = RealNumber(1.0)
+        end
+        @randomEffects begin
+            eta = RandomEffect(a; column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(a + eta, 1.0)
+        end
+    end)
+    # Duplicate declarations are named.
+    @test_throws LoadError mk(quote
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            a = RealNumber(2.0)
+        end
+        @formulas begin
+            y ~ Normal(a, 1.0)
+        end
+    end)
+    @test_throws LoadError mk(quote
+        @fixedEffects begin
+            a = RealNumber(1.0)
+        end
+        @covariates begin
+            x = Covariate()
+            x = ConstantCovariate()
+        end
+        @formulas begin
+            y ~ Normal(a + x, 1.0)
+        end
+    end)
+end
+
+@testset "Parameter-block and covariate option validation" begin
+    @test_throws ErrorException RealNumber(Inf)
+    @test_throws ErrorException RealVector([Inf, 1.0])
+    @test_throws ErrorException RealDiagonalMatrix([Inf, 1.0])
+    @test_throws ErrorException ContinuousTransitionMatrix([0.0 Inf; 0.0 0.0])
+    # A scalar `scale` is broadcast, as the docstring promises.
+    @test RealVector([1.0, 2.0]; scale = :log).scale == [:log, :log]
+    @test_throws ErrorException ConstantCovariate(:x; constant_on = 1)
+    @test_throws ErrorException ConstantCovariate(:x; constant_on = "ID")
+    @test_throws ErrorException CovariateVector(Symbol[])
+    @test_throws ErrorException ConstantCovariateVector(Symbol[])
+end
