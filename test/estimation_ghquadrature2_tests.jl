@@ -514,9 +514,8 @@ end
         @test abs(p_iso.a - p_aniso.a) < 0.1
     end
 
-    @testset "anisotropic level default=1 for unlisted RE" begin
-        # Using level=(η=2,) on a model with only η should use level 2
-        # Using level=(η_other=2,) should default to level 1 for η
+    @testset "anisotropic level rejects unknown RE names" begin
+        # A misspelled RE name used to silently fall back to level 1 (#226).
         rng = MersenneTwister(7)
         n_id = 8
         ids = repeat(1:n_id, inner = 4)
@@ -526,11 +525,12 @@ end
         df = DataFrame(ID = ids, t = tobs, y = yobs)
         dm = DataModel(_GHQ_SCALAR_MODEL, df; primary_id = :ID, time_col = :t)
 
-        # (nonexistent=5,) → η defaults to level 1
-        res = fit_model(
+        @test_throws ErrorException fit_model(
             dm, GHQuadrature(level = (nonexistent = 5,); optim_kwargs = (maxiters = 2,))
         )
-        @test NoLimits.get_converged(res) isa Bool
+        # Scalar levels must be positive integers.
+        @test_throws ErrorException GHQuadrature(level = 0)
+        @test_throws ErrorException GHQuadrature(level = (η = 0,))
     end
 end  # @testset "Anisotropic sparse grids"
 

@@ -78,6 +78,26 @@ struct MCEM_MCMC{S, K, SS} <: AbstractMCEMEStep
     turing_kwargs::K
     sample_schedule::SS
     warm_start::Bool
+
+    function MCEM_MCMC(sampler::S, turing_kwargs::K, sample_schedule::SS, warm_start) where {S, K, SS}
+        _check_sample_schedule(sample_schedule)
+        return new{S, K, SS}(sampler, turing_kwargs, sample_schedule, warm_start)
+    end
+end
+
+# `sample_schedule` may be an Int, a vector of per-iteration counts, a function of the
+# iteration, or `nothing` (fall back to `turing_kwargs[:n_samples]`). Only the first two
+# can be checked up front; a callable is checked per iteration in `_mcem_schedule`.
+function _check_sample_schedule(s)
+    s === nothing && return nothing
+    if s isa Integer
+        s >= 1 || error("MCEM: sample_schedule must be ≥ 1. Got: $s")
+    elseif s isa AbstractVector
+        isempty(s) && error("MCEM: sample_schedule vector must not be empty.")
+        all(>=(1), s) ||
+            error("MCEM: every sample_schedule entry must be ≥ 1. Got: $s")
+    end
+    return nothing
 end
 
 function MCEM_MCMC(;
@@ -264,6 +284,10 @@ function MCEM(;
         error("MCEM: diagnostics_every must be ≥ 1. Got: $diagnostics_every")
     convergence_window >= 4 ||
         error("MCEM: convergence_window must be ≥ 4. Got: $convergence_window")
+    maxiters >= 1 ||
+        error("MCEM: maxiters must be ≥ 1. Got: $maxiters")
+    consecutive_params >= 1 ||
+        error("MCEM: consecutive_params must be ≥ 1. Got: $consecutive_params")
     # When e_step is not provided, build MCEM_MCMC from legacy kwargs (backward compat)
     e_step_actual = if e_step === nothing
         MCEM_MCMC(sampler, turing_kwargs, sample_schedule, warm_start)
@@ -815,9 +839,12 @@ function _is_compute_log_weights(
     # logsumexp normalization
     lmax = maximum(log_ws_unnorm)
     if !isfinite(lmax)
-        @warn "MCEM IS: all samples have -Inf log-weight in a batch — using uniform weights"
+        # Uniform weights keep the shapes valid, but every sample has zero density, so
+        # the Q step below rejects this batch. Report it as a failed E-step (ESS 0)
+        # rather than as a usable fallback (#226).
+        @warn "MCEM IS: all samples have -Inf log-weight in a batch — the E-step failed for this batch and its Q contribution is rejected"
         fill!(log_ws_unnorm, -log(Float64(n)))
-        return (log_ws_unnorm, 1.0)
+        return (log_ws_unnorm, 0.0)
     end
     log_sum = lmax + log(sum(exp(lw - lmax) for lw in log_ws_unnorm))
     log_ws = log_ws_unnorm .- log_sum
@@ -902,6 +929,21 @@ function _is_update_blocks!(
     return
 end
 
+# A user proposal must return `(samples::n_b × n_samples, log_qs::n_samples)` with finite
+# log densities; otherwise the failure surfaces as an opaque error inside weighting (#226).
+function _is_check_proposal_output(out, n_b::Int, n_samples::Int)
+    (out isa Tuple && length(out) == 2) ||
+        error("MCEM_IS: the proposal must return a (samples, log_qs) tuple. Got: $(typeof(out))")
+    samples, log_qs = out
+    (samples isa AbstractMatrix && size(samples) == (n_b, n_samples)) ||
+        error("MCEM_IS: the proposal must return an $(n_b)×$(n_samples) sample matrix. Got: $(summary(samples))")
+    (log_qs isa AbstractVector && length(log_qs) == n_samples) ||
+        error("MCEM_IS: the proposal must return $(n_samples) log proposal densities. Got: $(summary(log_qs))")
+    all(isfinite, log_qs) ||
+        error("MCEM_IS: the proposal returned non-finite log proposal densities.")
+    return nothing
+end
+
 # Unified IS E-step dispatcher for a single batch.
 # Returns (samples, log_ws, ess) — log_ws are log-normalized weights.
 function _is_sample_batch(
@@ -933,7 +975,9 @@ function _is_sample_batch(
         end
     elseif proposal isa Function
         re_dists = _re_dists_for_info(dm, info, θ, cache)
-        proposal(θ, info, re_dists, rng, n_samples)
+        out = proposal(θ, info, re_dists, rng, n_samples)
+        _is_check_proposal_output(out, get_n_b(info), n_samples)
+        out
     else
         error("MCEM_IS: unknown proposal type $(repr(proposal)). Use :prior, :gaussian, or a Function.")
     end
@@ -973,6 +1017,11 @@ function _mcem_Q_core(
         logf = logf_fn(dm, info, θ, Tθ[], const_cache, ll_cache_c)
         !isfinite(logf) && return Tθ(Inf)
         total += logf
+    end
+    # An E-step that retained no draws for a batch would divide 0 by 0 below; treat it
+    # as an invalid Q instead (#226).
+    for (bi, info) in enumerate(batch_infos)
+        get_n_b(info) > 0 && size(samples_by_batch[bi], 2) == 0 && return Tθ(Inf)
     end
     if serialization isa SciMLBase.EnsembleThreads
         nthreads = Threads.maxthreadid()
@@ -1279,9 +1328,13 @@ function _fit_model(
             # --- MCMC E-step (MCEM_MCMC or warm-up phase of MCEM_IS) ---
             mcmc_es = _mcmc_e_step(method.e_step)
             S = _mcem_schedule(mcmc_es.sample_schedule, iter)
-            if S <= 0
+            if mcmc_es.sample_schedule === nothing
                 S = get(mcmc_es.turing_kwargs, :n_samples, 100)
             end
+            # A schedule that asks for no draws is a misspecification, not a request to
+            # silently fall back to the default count (#226).
+            S >= 1 ||
+                error("MCEM: sample_schedule returned $S at iteration $iter; it must be ≥ 1.")
             tkwargs = merge(mcmc_es.turing_kwargs, (n_samples = S,))
 
             if serialization isa SciMLBase.EnsembleThreads

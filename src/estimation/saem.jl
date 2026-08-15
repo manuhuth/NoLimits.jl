@@ -538,6 +538,22 @@ function SAEM(;
         error("SAEM: diagnostics_every must be ≥ 1. Got: $diagnostics_every")
     convergence_window >= 4 ||
         error("SAEM: convergence_window must be ≥ 4. Got: $convergence_window")
+    maxiters >= 1 ||
+        error("SAEM: maxiters must be ≥ 1. Got: $maxiters")
+    consecutive_params >= 1 ||
+        error("SAEM: consecutive_params must be ≥ 1. Got: $consecutive_params")
+    n_chains >= 1 ||
+        error("SAEM: n_chains must be ≥ 1. Got: $n_chains")
+    kappa > 0 ||
+        error("SAEM: kappa must be > 0. Got: $kappa")
+    sa_burnin_iters >= 0 ||
+        error("SAEM: sa_burnin_iters must be ≥ 0. Got: $sa_burnin_iters")
+    sa_phase1_iters >= 0 ||
+        error("SAEM: sa_phase1_iters must be ≥ 0. Got: $sa_phase1_iters")
+    isnothing(t0) || t0 >= 0 ||
+        error("SAEM: t0 must be ≥ 0. Got: $t0")
+    isnothing(mcmc_steps) || mcmc_steps >= 1 ||
+        error("SAEM: mcmc_steps must be ≥ 1. Got: $mcmc_steps")
     resolved_t0 = isnothing(t0) ? (maxiters ÷ 2) : t0
     resolved_sa_anneal_iters = isnothing(sa_anneal_iters) ? resolved_t0 : sa_anneal_iters
     ebe_rescue = EBERescueOptions(

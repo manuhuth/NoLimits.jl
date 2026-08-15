@@ -203,6 +203,16 @@ end
 
 export StandardOptimizationResult
 
+# Multistart counts are validated in the inner constructors so every construction path
+# (public kwargs, SAEM, MCEM, ...) is covered rather than only the documented one.
+function _check_ebe_multistart(what::String, n, k, max_rounds)
+    n >= 1 || error("$what: multistart_n must be ≥ 1. Got: $n")
+    1 <= k <= n ||
+        error("$what: multistart_k must satisfy 1 ≤ multistart_k ≤ multistart_n. Got: multistart_k=$k, multistart_n=$n")
+    max_rounds >= 1 || error("$what: max_rounds must be ≥ 1. Got: $max_rounds")
+    return nothing
+end
+
 struct EBEOptions{O, K, A, T}
     optimizer::O
     optim_kwargs::K
@@ -212,6 +222,17 @@ struct EBEOptions{O, K, A, T}
     multistart_k::Int
     max_rounds::Int
     sampling::Symbol
+
+    function EBEOptions(
+            optimizer::O, optim_kwargs::K, adtype::A, grad_tol::T,
+            multistart_n, multistart_k, max_rounds, sampling
+        ) where {O, K, A, T}
+        _check_ebe_multistart("EBEOptions", multistart_n, multistart_k, max_rounds)
+        return new{O, K, A, T}(
+            optimizer, optim_kwargs, adtype, grad_tol,
+            multistart_n, multistart_k, max_rounds, sampling
+        )
+    end
 end
 
 struct EBERescueOptions{T}
@@ -221,6 +242,17 @@ struct EBERescueOptions{T}
     max_rounds::Int
     grad_tol::T
     sampling::Symbol
+
+    function EBERescueOptions(
+            enabled, multistart_n, multistart_k, max_rounds, grad_tol::T, sampling
+        ) where {T}
+        _check_ebe_multistart(
+            "EBERescueOptions", multistart_n, multistart_k, max_rounds
+        )
+        return new{T}(
+            enabled, multistart_n, multistart_k, max_rounds, grad_tol, sampling
+        )
+    end
 end
 
 """

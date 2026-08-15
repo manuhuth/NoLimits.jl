@@ -827,6 +827,8 @@ function _mcem_sample_batch(
         return (zeros(eltype(θ), 0, 0), nothing, eltype(θ)[])
     end
     n_samples = get(turing_kwargs, :n_samples, 100)
+    n_samples >= 1 ||
+        error("AdaptiveNoLimitsMH: n_samples must be ≥ 1. Got: $n_samples")
 
     # θ is constant across the whole E-step — symmetrize the PSD blocks ONCE here and
     # thread θ_re into the per-step kernel and the resync (each re-copied θ otherwise).

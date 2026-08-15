@@ -238,6 +238,50 @@ end
     @test get_spec(res) === res.spec
     @test get_fold_results(res) === res.fold_results
     @test get_obs_scores(res) === res.obs_scores
+    # Per-observation summary is the aggregate over scored rows, not a mean of fold
+    # totals (which weights a small fold like a large one, #226).
+    @test get_n_scored_obs(res) == nrow(res.obs_scores)
+    @test isapprox(
+        get_mean_obs_loglikelihood(res),
+        sum(res.obs_scores[!, :loglikelihood]) / nrow(res.obs_scores); atol = 1.0e-10
+    )
+end
+
+# The observation-fold test scores must carry the HMM filter through the training
+# observations that precede them; scoring them as sequence starts is wrong (#226).
+@testset "fit_cv observation-wise + HMM: held-out rows keep their filter history" begin
+    model = @Model begin
+        @fixedEffects begin
+            dummy = RealNumber(0.0)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @formulas begin
+            y ~ DiscreteTimeDiscreteStatesHMM(
+                [0.9 0.1; 0.1 0.9],
+                (Categorical([1.0, 0.0]), Categorical([0.0, 1.0])),
+                Categorical([0.5, 0.5])
+            )
+        end
+    end
+    # Observations reveal the hidden state exactly, so the predictive density of each
+    # row given its history is known in closed form: 0.5, then 0.9 (stay), then 0.1 (move).
+    df = DataFrame(
+        ID = repeat(1:3, inner = 3),
+        t = repeat([0.0, 1.0, 2.0], 3),
+        y = repeat([1, 1, 2], 3)
+    )
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+
+    cv = cross_validate(dm, 3; kind = :observation, rng = MersenneTwister(90))
+    res = fit_cv(cv, NoLimits.MLE(; optim_kwargs = (; iterations = 1)))
+
+    # Each row is held out exactly once, and the likelihood does not depend on `dummy`,
+    # so the scores must add up to the full-data loglikelihood.
+    expected = 3 * (log(0.5) + log(0.9) + log(0.1))
+    @test nrow(res.obs_scores) == nrow(df)
+    @test isapprox(sum(res.obs_scores[!, :loglikelihood]), expected; atol = 1.0e-8)
 end
 
 @testset "constants_re method gate covers all RE-aware optimizers" begin
