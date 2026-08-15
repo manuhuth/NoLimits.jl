@@ -1,6 +1,7 @@
 export cross_validate, fit_cv
 export CVSpec, CVResult, CVFoldResult
 export get_fold_results, get_obs_scores, get_spec
+export get_mean_obs_loglikelihood, get_n_scored_obs
 
 # ── Structs ───────────────────────────────────────────────────────────────────
 
@@ -38,8 +39,12 @@ end
     CVResult
 
 Aggregate cross-validation results. `obs_scores` combines all folds with a
-`:fold` column. `mean_test_loglikelihood` and `std_test_loglikelihood` summarize
-predictive performance across folds.
+`:fold` column. `mean_test_loglikelihood` and `std_test_loglikelihood` are the
+mean and standard deviation of the per-fold *total* test log-likelihoods; they
+weight every fold equally, which only compares folds fairly when the folds hold
+equally many scored observations. `mean_obs_loglikelihood` is the aggregate test
+log-likelihood divided by the total number of scored observations
+(`n_scored_obs`) and is the fold-size-independent summary.
 """
 struct CVResult
     spec::CVSpec
@@ -47,6 +52,8 @@ struct CVResult
     obs_scores::DataFrame
     mean_test_loglikelihood::Float64
     std_test_loglikelihood::Float64
+    mean_obs_loglikelihood::Float64
+    n_scored_obs::Int
 end
 
 # ── Accessors ─────────────────────────────────────────────────────────────────
@@ -73,6 +80,22 @@ get_obs_scores(r::CVResult) = r.obs_scores
 Return the [`CVSpec`](@ref) that describes the fold split used to produce `cv_res`.
 """
 get_spec(r::CVResult) = r.spec
+
+"""
+    get_mean_obs_loglikelihood(cv_res::CVResult) -> Float64
+
+Return the aggregate test log-likelihood divided by the number of scored held-out
+observations. Unlike `mean_test_loglikelihood` (a plain mean of per-fold totals) this
+does not depend on how the observations are distributed over folds.
+"""
+get_mean_obs_loglikelihood(r::CVResult) = r.mean_obs_loglikelihood
+
+"""
+    get_n_scored_obs(cv_res::CVResult) -> Int
+
+Return the number of held-out observations with a finite log-likelihood across all folds.
+"""
+get_n_scored_obs(r::CVResult) = r.n_scored_obs
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -200,7 +223,8 @@ end
 # Returns empty DataFrame on ODE failure; records NaN for non-finite logpdf.
 function _eval_individual_obs(
         dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache,
-        loss::Union{Nothing, Function}
+        loss::Union{Nothing, Function};
+        score_rows::Union{Nothing, BitVector} = nothing
     )
     model = get_model(dm)
     ind = get_individuals(dm)[idx]
@@ -233,6 +257,9 @@ function _eval_individual_obs(
     rows_out = NamedTuple[]
 
     for i in eachindex(obs_rows)
+        # Rows outside the scored set are still evaluated (the HMM filter has to run
+        # through them) but are not reported.
+        keep_row = score_rows === nothing || score_rows[obs_rows[i]]
         vary = vary_cache === nothing ? _varying_at(dm, ind, i, time_vec) : vary_cache[i]
         η_row = _row_random_effects_at(dm, idx, i, η_ind, rowwise_re; obs_only = true)
         obs = sol_accessors === nothing ?
@@ -306,7 +333,7 @@ function _eval_individual_obs(
                         obs = _cv_obs_float(y_raw), loglikelihood = lp, predicted_mean = NaN,
                     )
                 end
-                push!(rows_out, row)
+                keep_row && push!(rows_out, row)
             else
                 y_raw === missing && continue
                 v = _fast_logpdf(dist, y_raw)
@@ -333,7 +360,7 @@ function _eval_individual_obs(
                         obs = _cv_obs_float(y_raw), loglikelihood = lp, predicted_mean = pm,
                     )
                 end
-                push!(rows_out, row)
+                keep_row && push!(rows_out, row)
             end
         end
     end
@@ -343,12 +370,14 @@ end
 
 # ── Fold-level evaluation helpers ─────────────────────────────────────────────
 
-function _cv_collect_obs(dm_test, θu, η_vec, ll_cache_test, loss)
+function _cv_collect_obs(dm_test, θu, η_vec, ll_cache_test, loss, score_rows = nothing)
     dfs = DataFrame[]
     empty_eta = ComponentArray()
     for j in 1:length(get_individuals(dm_test))
         η_j = η_vec === nothing ? empty_eta : η_vec[j]
-        df = _eval_individual_obs(dm_test, j, θu, η_j, ll_cache_test, loss)
+        df = _eval_individual_obs(
+            dm_test, j, θu, η_j, ll_cache_test, loss; score_rows = score_rows
+        )
         isempty(df) || push!(dfs, df)
     end
     return isempty(dfs) ? DataFrame() : vcat(dfs...)
@@ -406,45 +435,58 @@ end
 # Pooled path: every test individual — seen or unseen — gets the deterministic
 # plug-in η evaluated from their own covariates with the strategies resolved by
 # the training fit (replays demotions and fixed Monte-Carlo draws exactly).
-function _cv_evaluate_pooled(dm_test, res_train, θu, ll_cache_test, loss)
+function _cv_evaluate_pooled(dm_test, res_train, θu, ll_cache_test, loss, score_rows)
     η_test = _compute_pooled_etas(dm_test, θu, get_result(res_train).strategies)
-    return _cv_collect_obs(dm_test, θu, η_test, ll_cache_test, loss)
+    return _cv_collect_obs(dm_test, θu, η_test, ll_cache_test, loss, score_rows)
 end
 
 # EBE path: pre-build η for each test individual (seen → training EBE,
 # unseen → RE prior mean).
 function _cv_evaluate_ebe(
         dm_train, dm_test, res_train, θu, ll_cache_test, loss,
-        constants_re
+        constants_re, score_rows
     )
     bstars, batch_infos, _, const_cache, _, _ = _resolve_bstars_for_re(
         dm_train, res_train, constants_re
     )
     η_train_vec = _eta_from_eb(dm_train, batch_infos, bstars, const_cache, θu)
-    re_to_eta = Dict{Any, ComponentArray}(
-        get_re_groups(get_individuals(dm_train)[i]) => η_train_vec[i]
-            for i in 1:length(get_individuals(dm_train))
-    )
     ref_eta = η_train_vec[1]
     dists_builder = create_random_effect_distribution(get_random(get_model(dm_test)))
     model_funs_test = get_model_funs(get_model(dm_test))
     helpers_test = get_helper_funs(get_model(dm_test))
     re_names = get_re_names(get_random(get_model(dm_test)))
+    # Levels are resolved one random effect at a time: in a crossed design a test
+    # individual can share a trained level for one effect (say SITE) while its level for
+    # another (say ID) is new, and only the genuinely new one needs the prior (#226).
+    level_eta = Dict{Tuple{Symbol, Any}, Any}()
+    for i in 1:length(get_individuals(dm_train))
+        g = get_re_groups(get_individuals(dm_train)[i])
+        for re in re_names
+            level_eta[(re, getproperty(g, re))] = getproperty(η_train_vec[i], re)
+        end
+    end
     mean_eta_cache = Dict{Int, ComponentArray}()
-    η_test = [
-        haskey(re_to_eta, get_re_groups(get_individuals(dm_test)[j])) ?
-            re_to_eta[get_re_groups(get_individuals(dm_test)[j])] :
-            get!(
-                () -> _cv_prior_mean_eta(
-                    dm_test, j, θu, dists_builder,
-                    model_funs_test, helpers_test,
-                    re_names, ref_eta
-                ),
-                mean_eta_cache, j
+    η_test = map(1:length(get_individuals(dm_test))) do j
+        g = get_re_groups(get_individuals(dm_test)[j])
+        prior_eta() = get!(
+            () -> _cv_prior_mean_eta(
+                dm_test, j, θu, dists_builder,
+                model_funs_test, helpers_test, re_names, ref_eta
+            ),
+            mean_eta_cache, j
+        )
+        ComponentArray(
+            NamedTuple(
+                (
+                    re => get(
+                            () -> getproperty(prior_eta(), re),
+                            level_eta, (re, getproperty(g, re))
+                        ) for re in re_names
+                )
             )
-            for j in 1:length(get_individuals(dm_test))
-    ]
-    return _cv_collect_obs(dm_test, θu, η_test, ll_cache_test, loss)
+        )
+    end
+    return _cv_collect_obs(dm_test, θu, η_test, ll_cache_test, loss, score_rows)
 end
 
 # MC path: marginalize over the conditional (seen) or prior (unseen) using S MC draws.
@@ -452,7 +494,7 @@ end
 function _cv_evaluate_mc(
         dm_train, dm_test, res_train, θu, ll_cache_test, loss,
         seen_re_mode, unseen_re_mode, n_mc_samples, rng, re_names,
-        constants_re
+        constants_re, score_rows
     )
     bstars, batch_infos, _, const_cache, ll_cache_train, _ = _resolve_bstars_for_re(
         dm_train, res_train, constants_re
@@ -535,7 +577,9 @@ function _cv_evaluate_mc(
                 )
             end
 
-            all_dfs[s][j] = _eval_individual_obs(dm_test, j, θu, η_j, ll_cache_test, loss)
+            all_dfs[s][j] = _eval_individual_obs(
+                dm_test, j, θu, η_j, ll_cache_test, loss; score_rows = score_rows
+            )
         end
     end
 
@@ -639,6 +683,12 @@ performance on the held-out test set. All `kwargs` are forwarded to
   to evaluate folds concurrently.
 - `constants_re`: fix specific RE levels on the natural scale.
 
+With `seen_re_mode=:ebe, unseen_re_mode=:mean` each random effect's level is resolved
+separately, so a crossed test individual keeps the trained value for every level it shares
+with the training fold and falls back to the prior only for genuinely new levels. The
+Monte-Carlo modes (`:conditional`/`:montecarlo`) still resolve on the full level tuple: an
+individual that shares only some of its levels is treated as unseen there.
+
 [`Pooled`](@ref)/[`PooledMap`](@ref) fits evaluate every test individual — seen or
 unseen — at the deterministic plug-in η computed from that individual's covariates
 with the strategies resolved by the training fit; `seen_re_mode`/`unseen_re_mode`
@@ -681,7 +731,18 @@ function fit_cv(
 
     function _run_fold(f)
         dm_train = _rebuild_dm(dm_ref, cv_spec.train_rows[f])
-        dm_test = _rebuild_dm(dm_ref, cv_spec.test_rows[f])
+        # Observation folds: evaluate on train ∪ test rows and score only the test rows.
+        # Held-out observations then see the same history the training observations
+        # provide (the HMM filter is carried through them) instead of restarting the
+        # sequence at the test rows (#226).
+        eval_rows, score_rows = if cv_spec.kind == :observation
+            rows = sort(unique(vcat(cv_spec.train_rows[f], cv_spec.test_rows[f])))
+            test_set = Set(cv_spec.test_rows[f])
+            (rows, BitVector(r ∈ test_set for r in rows))
+        else
+            (cv_spec.test_rows[f], nothing)
+        end
+        dm_test = _rebuild_dm(dm_ref, eval_rows)
 
         base_kw = (store_data_model = false, ode_args = ode_args, ode_kwargs = ode_kwargs)
         fit_kw = _cv_method_accepts_constants_re(method) ?
@@ -700,20 +761,22 @@ function fit_cv(
         cr = _res_constants_re(res_train, constants_re)
 
         obs_df = if !has_re
-            _cv_collect_obs(dm_test, θu, nothing, ll_cache_test, loss)
+            _cv_collect_obs(dm_test, θu, nothing, ll_cache_test, loss, score_rows)
         elseif get_result(res_train) isa PooledResult
             # Pooled/PooledMap: plug-in η from each test individual's covariates
-            _cv_evaluate_pooled(dm_test, res_train, θu, ll_cache_test, loss)
+            _cv_evaluate_pooled(dm_test, res_train, θu, ll_cache_test, loss, score_rows)
         elseif !_cv_has_re_support(res_train)
             # Method without EBE support (e.g. MCMC) → evaluate at zero RE
-            _cv_collect_obs(dm_test, θu, nothing, ll_cache_test, loss)
+            _cv_collect_obs(dm_test, θu, nothing, ll_cache_test, loss, score_rows)
         elseif seen_re_mode == :ebe && unseen_re_mode == :mean
-            _cv_evaluate_ebe(dm_train, dm_test, res_train, θu, ll_cache_test, loss, cr)
+            _cv_evaluate_ebe(
+                dm_train, dm_test, res_train, θu, ll_cache_test, loss, cr, score_rows
+            )
         else
             _cv_evaluate_mc(
                 dm_train, dm_test, res_train, θu, ll_cache_test, loss,
                 seen_re_mode, unseen_re_mode, n_mc_samples,
-                fold_rngs[f], re_names, cr
+                fold_rngs[f], re_names, cr, score_rows
             )
         end
 
@@ -739,10 +802,16 @@ function fit_cv(
     all_scores = vcat([fr.obs_scores for fr in fold_results]...)
     ll_vec = [fr.test_loglikelihood for fr in fold_results]
     ll_valid = filter(!isnan, ll_vec)
+    # Folds hold unequal numbers of observations, so the mean of fold totals depends on
+    # the split; report the per-observation score alongside it (#226).
+    scored = nrow(all_scores) == 0 ? Float64[] :
+        filter(!isnan, all_scores[!, :loglikelihood])
 
     return CVResult(
         cv_spec, fold_results, all_scores,
         isempty(ll_valid) ? NaN : mean(ll_valid),
-        length(ll_valid) >= 2 ? std(ll_valid) : NaN
+        length(ll_valid) >= 2 ? std(ll_valid) : NaN,
+        isempty(scored) ? NaN : sum(scored) / length(scored),
+        length(scored)
     )
 end

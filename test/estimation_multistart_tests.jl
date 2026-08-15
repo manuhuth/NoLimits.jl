@@ -21,6 +21,24 @@ const LD = NoLimits
     @test NoLimits.get_params(res; scale = :untransformed) isa ComponentArray
 end
 
+# An explicit start used to be dropped with a warning, so a deterministic candidate
+# could not be compared against the sampled ones (#226).
+@testset "Multistart keeps an explicit start as candidate 1" begin
+    dm = fx_nore_dm()
+    θ0 = copy(get_θ0_untransformed(dm.model.fixed.fixed))
+    θ0.a = 0.4321
+    ms = NoLimits.Multistart(
+        dists = (; a = Normal(1.0, 0.2)), n_draws_requested = 3, n_draws_used = 2
+    )
+    res = fit_model(
+        ms, dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,));
+        theta_0_untransformed = θ0
+    )
+    starts = NoLimits.get_multistart_starts(res)
+    @test length(starts) == 3
+    @test starts[1].a == 0.4321
+end
+
 @testset "Multistart LHS + fixed params" begin
     ms = NoLimits.Multistart(
         dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 4,

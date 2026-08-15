@@ -851,3 +851,27 @@ end
     # surrogate, so it rejects censored outcomes by design rather than silently.
     @test_throws ErrorException fit_model(dm, NoLimits.FOCEI())
 end
+
+# Invalid iteration/chain/sample counts used to construct fine and fail deep inside the
+# fit (BoundsError, 0/0, or a silently substituted default) — reject them up front (#226).
+@testset "estimator options reject non-positive counts" begin
+    @test_throws ErrorException NoLimits.SAEM(; maxiters = 0)
+    @test_throws ErrorException NoLimits.SAEM(; n_chains = 0)
+    @test_throws ErrorException NoLimits.SAEM(; kappa = 0.0)
+    @test_throws ErrorException NoLimits.SAEM(; consecutive_params = 0)
+    @test_throws ErrorException NoLimits.SAEM(; t0 = -1)
+    @test_throws ErrorException NoLimits.SAEM(; mcmc_steps = 0)
+    @test_throws ErrorException NoLimits.MCEM(; maxiters = 0)
+    @test_throws ErrorException NoLimits.MCEM(; consecutive_params = 0)
+    @test_throws ErrorException NoLimits.MCEM(; sample_schedule = 0)
+    @test_throws ErrorException NoLimits.MCEM(; sample_schedule = Int[])
+    @test_throws ErrorException NoLimits.MCEM(; sample_schedule = [10, 0])
+    @test_throws ErrorException NoLimits.EBEOptions(; multistart_n = 0)
+    @test_throws ErrorException NoLimits.EBEOptions(; multistart_n = 5, multistart_k = 6)
+    @test_throws ErrorException NoLimits.EBEOptions(; max_rounds = 0)
+    @test_throws ErrorException NoLimits.GHQuadrature(; level = 0)
+    @test_throws ErrorException NoLimits.GHQuadrature(; level = (η = 0,))
+    # Valid settings still construct.
+    @test NoLimits.SAEM(; maxiters = 3) isa NoLimits.SAEM
+    @test NoLimits.MCEM(; sample_schedule = [5, 7]) isa NoLimits.MCEM
+end

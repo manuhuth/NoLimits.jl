@@ -263,7 +263,15 @@ function _pooled_crossed_ind_eta(
     nt_pairs = Pair{Symbol, Any}[]
     for (ri, re) in enumerate(re_names)
         v = _pooled_eta_value(getproperty(dists, re), dims[ri], strategies[ri], T)
-        push!(nt_pairs, re => nlev[ri] == 1 ? v : fill(v, nlev[ri]))
+        # `fill` would alias one vector across all levels; each level needs its own slot.
+        rep = if nlev[ri] == 1
+            v
+        elseif v isa AbstractArray
+            [copy(v) for _ in 1:nlev[ri]]
+        else
+            fill(v, nlev[ri])
+        end
+        push!(nt_pairs, re => rep)
     end
     return ComponentArray(NamedTuple(nt_pairs))
 end

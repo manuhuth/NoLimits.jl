@@ -173,7 +173,9 @@ function _sample_param(
     end
 
     if dist isa AbstractArray
-        samples = [similar(value) for _ in 1:n]
+        # `copy`, not `similar`: coordinates whose distribution is `nothing` keep the
+        # model start value instead of holding uninitialized memory (#226).
+        samples = [copy(value) for _ in 1:n]
         for idx in eachindex(dist)
             d = dist[idx]
             d === nothing && continue
@@ -395,16 +397,30 @@ function _re_mean_or_zero(dist, dim::Int, is_scalar::Bool)
 end
 
 # Prior-mean plug-in η as a ComponentArray: each RE at `mean` (0/zeros fallback).
-function _prior_mean_eta(dists, re_cache)
+# `nlev[ri]` is the number of levels this individual spans for RE `ri` — crossed
+# individuals need one entry per level, the same layout the likelihood path uses (#226).
+function _prior_mean_eta(dists, re_cache, nlev = nothing)
     pairs = Pair{Symbol, Any}[]
     for (ri, re) in enumerate(get_re_names(re_cache))
         dim = get_dims(re_cache)[ri]
         is_scalar = get_is_scalar(re_cache)[ri]
         dist = getproperty(dists, re)
-        push!(pairs, re => _re_mean_or_zero(dist, dim, is_scalar))
+        v = _re_mean_or_zero(dist, dim, is_scalar)
+        n = nlev === nothing ? 1 : nlev[ri]
+        rep = if n == 1
+            v
+        elseif v isa AbstractArray
+            [copy(v) for _ in 1:n]
+        else
+            fill(v, n)
+        end
+        push!(pairs, re => rep)
     end
     return ComponentArray(NamedTuple(pairs))
 end
+
+# Level counts per RE for individual `i` (all ones unless the design is crossed).
+_ind_nlev(re_cache, i) = map(length, get_ind_level_ids(re_cache)[i])
 
 function _build_mean_eta(dm::DataModel, θu::ComponentArray)
     re_cache = get_laplace_cache(get_re_group_info(dm))
@@ -417,7 +433,7 @@ function _build_mean_eta(dm::DataModel, θu::ComponentArray)
     for i in 1:n
         const_cov = get_const_cov(get_individuals(dm)[i])
         dists = dists_builder(θu, const_cov, model_funs, helpers)
-        etas[i] = _prior_mean_eta(dists, re_cache)
+        etas[i] = _prior_mean_eta(dists, re_cache, _ind_nlev(re_cache, i))
     end
     return etas
 end
@@ -443,7 +459,7 @@ function _build_ebe_eta(dm::DataModel, θu::ComponentArray, ll_cache; maxiters::
         const_cov = get_const_cov(get_individuals(dm)[i])
         dists = dists_builder(θu, const_cov, model_funs, helpers)
         # Prior mean as the inner-optimization starting point.
-        η0_i = _prior_mean_eta(dists, re_cache)
+        η0_i = _prior_mean_eta(dists, re_cache, _ind_nlev(re_cache, i))
         axs = getaxes(η0_i)
         η0_flat = Vector(η0_i)
         if isempty(η0_flat)
@@ -477,13 +493,21 @@ function _build_ebe_eta(dm::DataModel, θu::ComponentArray, ll_cache; maxiters::
             f_sol = sol.objective  # = -(joint log-density at EBE)
             joint_score += isfinite(f_sol) ? -f_sol : -Inf
         catch
+            # A failed EBE must not score better than a valid (negative) joint density,
+            # and a partial sum must not be compared against complete ones (#226).
             etas[i] = η0_i
-            f0 = neg_logf(η0_flat, nothing)
-            joint_score += isfinite(f0) ? -f0 : 0.0
+            joint_score = -Inf
         end
         !isfinite(joint_score) && break
     end
     return etas, joint_score
+end
+
+# True when any individual spans more than one level of some grouping column.
+function _has_crossed_individuals(dm::DataModel)
+    re_cache = get_laplace_cache(get_re_group_info(dm))
+    re_cache === nothing && return false
+    return any(ids -> any(x -> length(x) > 1, ids), get_ind_level_ids(re_cache))
 end
 
 function _multistart_screen(
@@ -497,6 +521,13 @@ function _multistart_screen(
         ebe_maxiters::Int;
         progress::Bool = true
     )
+    # The EBE screen optimizes one η per individual, which cannot represent an
+    # individual that spans several levels of a grouping column; fall back to the
+    # prior-mean screen there instead of scoring a different model (#226).
+    if screening == :ebe && _has_crossed_individuals(dm)
+        @warn "Multistart: screening=:ebe does not support crossed random-effect designs (an individual spans several levels); using prior-mean screening instead."
+        screening = :loglik
+    end
     # EBE inner optimization is serial per individual; use EnsembleSerial for that path.
     cache_serialization = screening == :ebe ? EnsembleSerial() : serialization
     cache = build_ll_cache(
@@ -596,8 +627,10 @@ get_multistart_best(res::MultistartFitResult) = res.results_ok[res.best_idx]
 
 function fit_model(ms::Multistart, dm::DataModel, method::FittingMethod, args...; kwargs...)
     kw_nt = NamedTuple(kwargs)
-    if haskey(kw_nt, :theta_0_untransformed)
-        @warn "theta_0_untransformed ignored in multistart; use Multistart sampling to control starts."
+    # An explicit start is kept as candidate 1 (it bypasses screening) rather than
+    # discarded, so a deterministic start can be compared against sampled ones (#226).
+    theta_0_user = get(kw_nt, :theta_0_untransformed, nothing)
+    if theta_0_user !== nothing
         kw_nt = Base.structdiff(kw_nt, (theta_0_untransformed = nothing,))
     end
 
@@ -634,6 +667,10 @@ function fit_model(ms::Multistart, dm::DataModel, method::FittingMethod, args...
     else
         starts = all_starts
         @info "Multistart" candidates = n_req selected = n_used varying = varied_str
+    end
+    if theta_0_user !== nothing
+        starts = vcat([theta_0_user], starts)
+        @info "Multistart: explicit theta_0_untransformed kept as start 1."
     end
     n_starts = length(starts)
     results = Vector{Union{FitResult, Nothing}}(undef, n_starts)

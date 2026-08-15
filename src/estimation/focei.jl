@@ -792,7 +792,6 @@ function _focei_validate_distributions(
                     "Use Laplace for hidden-Markov / unsupported outcomes."
             )
         end
-        return nothing  # families are fixed by the formula; one observed batch suffices
     end
     return nothing
 end

@@ -81,6 +81,26 @@ struct GHQuadrature{LV, O, K, A, IO, MS, L, U} <: FittingMethod
     precondition::Bool
 end
 
+# `level` is an Int, a Vector{Int} (level continuation), or a NamedTuple of per-RE levels.
+function _check_ghq_level(level)
+    bad(l) = !(l isa Integer) || l < 1
+    if level isa NamedTuple
+        isempty(level) && error("GHQuadrature: anisotropic `level` must not be empty.")
+        for (k, l) in Base.pairs(level)
+            bad(l) &&
+                error("GHQuadrature: level for `$k` must be a positive integer. Got: $(repr(l))")
+        end
+    elseif level isa AbstractVector
+        isempty(level) && error("GHQuadrature: `level` vector must not be empty.")
+        all(!bad, level) ||
+            error("GHQuadrature: all entries in `level` must be positive integers. Got: $level")
+    else
+        bad(level) &&
+            error("GHQuadrature: `level` must be a positive integer. Got: $(repr(level))")
+    end
+    return nothing
+end
+
 function GHQuadrature(;
         level = 3,  # Int or NamedTuple for anisotropic levels
         optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
@@ -102,6 +122,7 @@ function GHQuadrature(;
         ignore_model_bounds = false,
         precondition = true
     )
+    _check_ghq_level(level)
     inner = inner_options === nothing ?
         LaplaceInnerOptions(
             inner_optimizer, inner_kwargs, inner_adtype, inner_grad_tol
@@ -177,9 +198,9 @@ function _ghq_batch_ll(
         _build_anisotropic_batch_grid(dm, info, level)
     end
 
-    # build_re_measure_from_batch may throw DomainError when distribution
-    # parameters hit numerical limits (e.g. Beta with α→0 due to underflow).
-    # Treat these as invalid parameter regions and return -Inf.
+    # build_re_measure_from_batch may throw when distribution parameters hit numerical
+    # limits (e.g. Beta with α→0 due to underflow, or a non-PD covariance). Treat these
+    # as invalid parameter regions and return -Inf, as the Laplace path does.
     adaptive = true
     re_measure = try
         m = build_re_measure_from_batch(info, θu_re, const_cache, dm, ll_cache)
@@ -187,7 +208,7 @@ function _ghq_batch_ll(
         adaptive = mc !== nothing
         adaptive ? mc : m
     catch e
-        e isa DomainError && return T(-Inf)
+        _is_numeric_error(e) && return T(-Inf)
         rethrow(e)
     end
     ghq_ll = batch_loglik_ghq(dm, info, θu_re, re_measure, sgrid, const_cache, ll_cache)
@@ -274,6 +295,9 @@ free levels (non-zero dimension) in this batch.
 """
 function _anisotropic_dims_levels(dm::DataModel, info::REBatchInfo, level::NamedTuple)
     re_names = get_re_names(get_laplace_cache(get_re_group_info(dm)))
+    unknown = setdiff(collect(keys(level)), re_names)
+    isempty(unknown) ||
+        error("GHQuadrature: unknown random effect(s) in `level`: $(join(unknown, ", ")). Declared random effects: $(join(re_names, ", ")).")
     dims = Int[]
     levels = Int[]
     for (ri, re_name) in enumerate(re_names)
