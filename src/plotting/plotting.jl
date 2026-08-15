@@ -333,8 +333,15 @@ end
                                                   get_result(res) isa VIResult)
 
 function _with_posterior_warmup(res::FitResult, mcmc_warmup::Union{Nothing, Int})
-    if !(get_result(res) isa MCMCResult) || mcmc_warmup === nothing
-        return res
+    mcmc_warmup === nothing && return res
+    # A negative warmup produced a BoundsError when the draws were sliced, and one larger
+    # than the chain was accepted silently (#223).
+    mcmc_warmup >= 0 ||
+        error("mcmc_warmup must be >= 0; got $(mcmc_warmup).")
+    get_result(res) isa MCMCResult || return res
+    let n_iter = size(get_chain(res), 1)
+        mcmc_warmup < n_iter ||
+            error("mcmc_warmup=$(mcmc_warmup) leaves no post-warmup draws: the chain has $(n_iter) iterations. Use a warmup below $(n_iter).")
     end
     conv = get_diagnostics(res).convergence
     conv = merge(conv, (n_adapt = mcmc_warmup,))
@@ -736,8 +743,8 @@ function _mcmc_drawn_params(res::FitResult,
     θ_rep = _apply_param_overrides(
         _coordwise_fixed_from_means(dm, "MCMC chain",
             key -> (sym = Symbol(key);
-            haskey(idx_map, sym) ?
-            _mcmc_param_value(vals, rep_iter, idx_map[sym], rep_chain) : nothing)),
+                haskey(idx_map, sym) ?
+                _mcmc_param_value(vals, rep_iter, idx_map[sym], rep_chain) : nothing)),
         overrides)
 
     re_meta = _re_free_meta(
@@ -793,9 +800,9 @@ function _mcmc_drawn_params(res::FitResult,
         θ = _apply_param_overrides(
             _coordwise_fixed_from_means(dm, "MCMC chain",
                 key -> (sym = Symbol(key);
-                haskey(idx_map, sym) ?
-                _mcmc_param_value(vals, iter_idx, idx_map[sym], chain_idx) :
-                nothing)),
+                    haskey(idx_map, sym) ?
+                    _mcmc_param_value(vals, iter_idx, idx_map[sym], chain_idx) :
+                    nothing)),
             overrides)
         θ_draws[k] = θ
 
@@ -842,7 +849,7 @@ function _vi_drawn_params(res::FitResult,
     θ_rep = _apply_param_overrides(
         _coordwise_fixed_from_means(dm, "VI posterior",
             key -> (idx = _lookup_chain_index(idx_map, key);
-            idx != 0 ? Float64(rep_row[idx]) : nothing)),
+                idx != 0 ? Float64(rep_row[idx]) : nothing)),
         overrides)
 
     re_meta = _re_free_meta(
@@ -893,7 +900,7 @@ function _vi_drawn_params(res::FitResult,
         θ = _apply_param_overrides(
             _coordwise_fixed_from_means(dm, "VI posterior",
                 key -> (idx = _lookup_chain_index(idx_map, key);
-                idx != 0 ? Float64(row[idx]) : nothing)),
+                    idx != 0 ? Float64(row[idx]) : nothing)),
             overrides)
         θ_draws[k] = θ
 
@@ -997,8 +1004,8 @@ function _default_random_effects_from_dm(dm::DataModel,
         v0 = try
             Distributions.mean(re_meta[re].dist)
         catch
-            @warn "Random effect $(re): its distribution has no analytic mean; "*
-            "using a Monte Carlo estimate of the population value." maxlog=1
+            @warn "Random effect $(re): its distribution has no analytic mean; " *
+                  "using a Monte Carlo estimate of the population value." maxlog=1
             _mc_mean(re_meta[re].dist, dim)
         end
         re_map = Dict{Any, Any}()

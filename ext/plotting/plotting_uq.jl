@@ -83,6 +83,8 @@ function plot_uq_distributions(uq::UQResult;
         save_path::Union{Nothing, String} = nothing,
         plot_path::Union{Nothing, String} = nothing)
     save_path = _resolve_plot_path(save_path, plot_path)
+    _check_unit_interval(interval_alpha, "interval_alpha")
+    _check_unit_interval(histogram_alpha, "histogram_alpha")
     plot_type in (:density, :histogram) ||
         error("plot_type must be :density or :histogram.")
     backend = get_uq_backend(uq)
