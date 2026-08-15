@@ -268,6 +268,9 @@ function _resolve_sim_theta(dm::DataModel, theta_untransformed)
     for name in get_names(fe)
         hasproperty(θ, name) || error("theta_untransformed is missing parameter $(name).")
     end
+    # Unknown names were discarded silently and non-finite values produced NaN/Inf
+    # observations with only a downstream "Invalid simulated value" warning (#221).
+    _validate_theta_override(dm, θ, "theta_untransformed")
     return θ
 end
 

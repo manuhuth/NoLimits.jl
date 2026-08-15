@@ -832,12 +832,23 @@ end
 function _validate_fit_overrides(dm::DataModel, kwargs::NamedTuple)
     constants = get(kwargs, :constants, NamedTuple())
     penalty = get(kwargs, :penalty, NamedTuple())
+    # A non-NamedTuple used to reach `_validate_constant_names` as an internal
+    # MethodError, and a non-numeric weight surfaced as `*(::String, ::Dual{...})` (#218).
+    constants isa NamedTuple ||
+        error("constants must be a NamedTuple such as (a = 1.0,); got $(typeof(constants)).")
+    penalty isa NamedTuple ||
+        error("penalty must be a NamedTuple such as (a = 100.0,); got $(typeof(penalty)).")
+    extra = get(kwargs, :extra_objective, nothing)
+    extra === nothing || _validate_extra_objective(dm, extra)
     (isempty(keys(constants)) && isempty(keys(penalty))) && return nothing
     fe = get_fixed(get_model(dm))
     fixed_set = Set(get_names(fe))
     _validate_constant_names(fixed_set, constants)
     for name in keys(penalty)
         name in fixed_set || error("Unknown penalty parameter $(name).")
+        w = getfield(penalty, name)
+        (w isa Real && isfinite(w) && w >= 0) ||
+            error("penalty.$(name) must be a finite, non-negative number (the penalty is quadratic regularization); got $(repr(w)).")
     end
     if !isempty(keys(constants))
         ft = get_transform(fe)
@@ -846,6 +857,15 @@ function _validate_fit_overrides(dm::DataModel, kwargs::NamedTuple)
                 _validate_constant_domain(name, ft.specs[i], getfield(constants, name))
         end
     end
+    return nothing
+end
+
+# `extra_objective` is called as `f(θu)`; a non-callable or wrong-arity value used to
+# surface as a bare MethodError from inside the objective, with no mention of the option
+# it came from (#218).
+function _validate_extra_objective(dm::DataModel, f)
+    applicable(f, get_θ0_untransformed(get_fixed(get_model(dm)))) ||
+        error("extra_objective must be a one-argument function of the natural-scale parameters, e.g. `θu -> 0.5 * θu.a^2`; got $(repr(f)).")
     return nothing
 end
 
@@ -880,17 +900,38 @@ function _coerce_theta_0(dm::DataModel, θ0)
     return base
 end
 
-# A non-finite starting value makes the objective return Inf with zero-valued Dual
-# partials, which the optimizer reports as an immediate converged optimum (#208, #209,
-# #214, #215).
-function _validate_theta_0(dm::DataModel, θ0)
-    θ0 === nothing && return nothing
-    flat = collect(θ0)
+# Shared validation for a user-supplied parameter vector (`theta_0_untransformed` on
+# `fit_model`, `theta_untransformed` on `simulate_data`). A non-finite entry makes the
+# objective return Inf with zero-valued Dual partials, which the optimizer reports as an
+# immediate converged optimum (#208, #209, #214, #215); an unknown name is a typo or a
+# stale parameter and was silently discarded (#218, #221).
+function _validate_theta_override(dm::DataModel, θ, option::AbstractString)
+    θ === nothing && return nothing
+    fe = get_fixed(get_model(dm))
+    known = Set(get_names(fe))
+    extra = [k for k in keys(θ) if !(k in known)]
+    isempty(extra) ||
+        error("Unknown parameter(s) $(join(string.(extra), ", ")) in $(option). Declared fixed effects: $(join(string.(get_names(fe)), ", ")).")
+    flat = collect(θ)
+    names = get_flat_names(fe)
+    _label(i) = length(names) == length(flat) ? string(names[i]) : "flat index $(i)"
     idx = findfirst(x -> !isfinite(x), flat)
-    idx === nothing && return nothing
-    names = get_flat_names(get_fixed(get_model(dm)))
-    where = length(names) == length(flat) ? string(names[idx]) : "flat index $(idx)"
-    error("Starting value $(where) in theta_0_untransformed is $(flat[idx]). All starting values must be finite.")
+    idx === nothing ||
+        error("Value $(_label(idx)) in $(option) is $(flat[idx]). All values must be finite.")
+    # Out-of-domain values (a negative :log scale, say) otherwise surface as a raw
+    # DomainError from a distribution constructor with no mention of the parameter (#221).
+    lo, hi = collect.(get_bounds_untransformed(fe))
+    (length(lo) == length(flat) && length(hi) == length(flat)) || return nothing
+    for i in eachindex(flat)
+        lo[i] <= flat[i] <= hi[i] ||
+            error("Value $(_label(i)) in $(option) is $(flat[i]), outside its declared bounds [$(lo[i]), $(hi[i])].")
+    end
+    return nothing
+end
+
+function _validate_theta_0(dm::DataModel, θ0)
+    _validate_theta_override(
+        dm, θ0, "theta_0_untransformed")
 end
 
 # The objective's `isinf(add) && return Inf` short-circuit returns a `Dual` whose partials
@@ -954,6 +995,32 @@ end
 # because SAEM/MCEM have no `ignore_model_bounds` field, FOCEI has no BBO support,
 # and Pooled suppresses the warning after refit round 1. Returns
 # (lb, ub, use_bounds, θ0_init).
+# A short/empty `lb`/`ub` used to leave parameters silently unbounded or leak a
+# DimensionMismatch, and NaN or reversed bounds reached the optimizer as a confusing
+# message in transformed coordinates (#218).
+function _validate_user_bounds(fe, free_names, lb, ub, n_free, user_lb, user_ub,
+        method_label::AbstractString)
+    coord_names = try
+        _flat_names_for_free(fe, collect(free_names))
+    catch
+        Symbol[]
+    end
+    label(i) = length(coord_names) == n_free ? "`$(coord_names[i])`" : "coordinate $(i)"
+    for (opt, v, given) in (("lb", lb, user_lb), ("ub", ub, user_ub))
+        given === nothing && continue
+        length(v) == n_free ||
+            error("$(method_label): $(opt) has $(length(v)) entries but the model has $(n_free) free parameter coordinate(s) ($(join(string.(coord_names), ", "))). Pass one bound per free coordinate, or `nothing` to use the declared bounds.")
+        bad = findfirst(isnan, v)
+        bad === nothing ||
+            error("$(method_label): $(opt) for $(label(bad)) is NaN. Bounds must be numbers (±Inf is allowed).")
+    end
+    for i in 1:n_free
+        lb[i] <= ub[i] ||
+            error("$(method_label): the lower bound for $(label(i)) ($(lb[i])) exceeds its upper bound ($(ub[i])). Bounds are given on the TRANSFORMED parameter scale.")
+    end
+    return nothing
+end
+
 function resolve_optimizer_bounds(fe, free_names, θ0_free_t, optimizer, user_lb, user_ub,
         effective_constants::NamedTuple; ignore_model_bounds::Bool = false,
         allow_bbo::Bool = true, emit_info::Bool = true,
@@ -982,6 +1049,8 @@ function resolve_optimizer_bounds(fe, free_names, θ0_free_t, optimizer, user_lb
     end
     lb = user_bounds ? normalize_bound(user_lb, lower_vec) : lower_vec
     ub = user_bounds ? normalize_bound(user_ub, upper_vec) : upper_vec
+    user_bounds && _validate_user_bounds(fe, free_names, lb, ub,
+        length(lower_vec), user_lb, user_ub, method_label)
     use_bounds = use_bounds || user_bounds
     # Match by module name so OptimizationBBO stays out of this package's dependencies;
     # only a user who actually passes a BBO optimizer needs it installed.
@@ -2447,6 +2516,7 @@ function _cdll_terms(dm::DataModel, θ::ComponentArray;
     # RE distribution (RE-distribution covariates are constant within a level).
     rep_ind = [Dict{Int, Int}() for _ in re_names]
     for i in 1:n, ri in eachindex(re_names)
+
         for li in get_ind_level_ids(re_cache)[i][ri]
             haskey(rep_ind[ri], li) || (rep_ind[ri][li] = i)
         end
@@ -2455,6 +2525,7 @@ function _cdll_terms(dm::DataModel, θ::ComponentArray;
     # Per-level RE distribution (built once; carries θ, so it is Dual under AD).
     level_dist = [Dict{Int, Any}() for _ in re_names]
     for ri in eachindex(re_names), (li, rep) in rep_ind[ri]
+
         dists = dists_builder(
             θs, get_const_cov(get_individuals(dm)[rep]), model_funs, helpers)
         level_dist[ri][li] = getproperty(dists, re_names[ri])
@@ -2525,6 +2596,7 @@ function _cdll_terms(dm::DataModel, θ::ComponentArray;
     for (k, i) in enumerate(sel)
         v = _loglikelihood_individual(dm, i, θs, build_eta_i(i), cache)
         for ri in eachindex(re_names), li in get_ind_level_ids(re_cache)[i][ri]
+
             (ri, li) in seen && continue
             push!(seen, (ri, li))
             v += logpdf(level_dist[ri][li], getval(ri, li))
