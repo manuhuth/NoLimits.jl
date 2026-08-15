@@ -124,6 +124,10 @@ function _compute_uq_chain(res::FitResult;
         n_iter, _, n_chains = size(arr)
 
         warmup = mcmc_warmup === nothing ? _uq_mcmc_warmup(res) : Int(mcmc_warmup)
+        # Silently clamping a too-large warmup left the user with a single retained
+        # sample and no indication their request was not honoured (#211).
+        warmup > n_iter - 1 &&
+            error("mcmc_warmup=$(warmup) leaves no post-warmup samples: the chain has $(n_iter) iterations. Use a warmup below $(n_iter).")
         warmup = clamp(warmup, 0, max(0, n_iter - 1))
         first_keep = warmup + 1
         first_keep <= n_iter || error("No post-warmup MCMC samples are available for UQ.")
@@ -143,6 +147,8 @@ function _compute_uq_chain(res::FitResult;
             if mcmc_draws < length(draw_pairs)
                 perm = randperm(rng, length(draw_pairs))
                 draw_pairs = draw_pairs[perm[1:mcmc_draws]]
+            elseif mcmc_draws > length(draw_pairs)
+                @warn "mcmc_draws=$(mcmc_draws) exceeds the $(length(draw_pairs)) post-warmup draws available; using all of them."
             end
         end
         used_draws = length(draw_pairs)
