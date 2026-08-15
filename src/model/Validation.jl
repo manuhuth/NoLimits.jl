@@ -72,7 +72,7 @@ function _nl_unknown_syms(exprs, known::Set{Symbol}, mod::Module)
     return sort([s
                  for s in syms
                  if Base.isidentifier(s) && !(s in known) && !(s in _NL_TIME_SYMBOLS) &&
-                        !_nl_symbol_resolvable(s, mod)])
+                    !_nl_symbol_resolvable(s, mod)])
 end
 
 function _nl_check_reserved_names(names, what::AbstractString)
