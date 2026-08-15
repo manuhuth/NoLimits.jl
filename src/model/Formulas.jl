@@ -384,6 +384,13 @@ function _formulas_crossing_spec(name::Symbol, rhs)
         (x isa Symbol ? x :
          error("$(rhs.args[1]) arguments must be symbol literals, e.g. :state."))
     end
+    # A statically numeric horizon is checkable now; a symbolic one is resolved at solve
+    # time and left alone (#222).
+    # `NaN`/`Inf` are globals, so they reach the macro as Symbols rather than Numbers.
+    let v = tmax === :NaN ? NaN : tmax === :Inf ? Inf : _parse_numeric_literal(tmax)
+        v === nothing || isfinite(v) && v > 0 ||
+            error("$(rhs.args[1]) for `$(name)`: tmax must be a finite positive time; got $(v).")
+    end
     return (name, _sym(pos[1]), _sym(pos[2]), tmax, kind)
 end
 

@@ -382,7 +382,25 @@ arguments and replaces the existing configuration.
 - `saveat_mode::Symbol = :dense`: save-time mode (`:dense`, `:saveat`, or `:auto`).
 - `closed_form::Symbol = :auto`: closed-form linear-ODE fast path (`:auto`, `:off`, `:diagonal`).
 """
+const _SAVEAT_MODES = (:dense, :saveat, :auto)
+const _CLOSED_FORM_MODES = (:auto, :off, :all, :diagonal)
+
+# These fields used to be stored verbatim, so a typo'd mode or a non-NamedTuple kwargs
+# container only failed much later inside the ODE solve (#222).
+function _validate_solver_config(cfg::ODESolverConfig)
+    cfg.saveat_mode in _SAVEAT_MODES ||
+        error("Invalid saveat_mode $(repr(cfg.saveat_mode)). Use one of $(_SAVEAT_MODES).")
+    cfg.closed_form in _CLOSED_FORM_MODES ||
+        error("Invalid closed_form $(repr(cfg.closed_form)). Use one of $(_CLOSED_FORM_MODES).")
+    cfg.kwargs isa NamedTuple ||
+        error("Solver kwargs must be a NamedTuple such as (; abstol = 1e-8); got $(typeof(cfg.kwargs)).")
+    cfg.args isa Tuple ||
+        error("Solver args must be a Tuple; got $(typeof(cfg.args)).")
+    return nothing
+end
+
 function set_solver_config(m::Model, cfg::ODESolverConfig)
+    _validate_solver_config(cfg)
     de_bundle = DEBundle(m.de.de, m.de.initial, m.de.prede, cfg, m.de.initial_builder)
     return Model(
         m.fixed, m.random, m.covariates, de_bundle, m.helpers, m.formulas, m.source)
@@ -587,9 +605,12 @@ macro Model(block)
         error("@Model has @initialDE but no @DifferentialEquation. Add a DE block or remove @initialDE.")
 
     helpers_block = helpers_expr === nothing ? :(NamedTuple()) : helpers_expr
-    fixed_block = fixed_expr === nothing ? :(@fixedEffects begin end) : fixed_expr
-    cov_block = cov_expr === nothing ? :(@covariates begin end) : cov_expr
-    random_block = random_expr === nothing ? :(@randomEffects begin end) : random_expr
+    fixed_block = fixed_expr === nothing ? :(@fixedEffects begin
+    end) : fixed_expr
+    cov_block = cov_expr === nothing ? :(@covariates begin
+    end) : cov_expr
+    random_block = random_expr === nothing ? :(@randomEffects begin
+    end) : random_expr
     prede_block = prede_expr === nothing ? :(nothing) : prede_expr
     de_block = de_expr === nothing ? :(nothing) : de_expr
     initial_block = initial_expr === nothing ? :(nothing) : initial_expr
@@ -683,7 +704,7 @@ macro Model(block)
             context_module = $(__module__))
 
         local ($(form_all_var), $(form_obs_var), $(req_states_var),
-        $(req_signals_var)) = get_formulas_builders(
+            $(req_signals_var)) = get_formulas_builders(
             $(formulas_var);
             fixed_names = $(fixed_names_var),
             collect_fixed_names = $(collect_fixed_names_var),

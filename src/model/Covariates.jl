@@ -9,6 +9,14 @@ export finalize_covariates
 
 abstract type AbstractCovariate end
 
+# A zero-length covariate vector builds a zero-dimensional covariate that silently
+# contributes nothing to every formula that reads it (#222).
+function _check_covariate_columns(columns, what::AbstractString)
+    isempty(columns) &&
+        error("$(what) needs at least one column; got an empty vector.")
+    return nothing
+end
+
 """
     ConstantCovariate(; constant_on) -> ConstantCovariate
 
@@ -94,6 +102,11 @@ field access only.
 """
 struct CovariateVector <: AbstractCovariate
     columns::Vector{Symbol}
+
+    function CovariateVector(columns::Vector{Symbol})
+        _check_covariate_columns(columns, "CovariateVector")
+        return new(columns)
+    end
 end
 
 """
@@ -164,11 +177,13 @@ function ConstantCovariate(column::Symbol; constant_on = Symbol[])
 end
 
 function ConstantCovariateVector(columns::Vector{Symbol}; constant_on = Symbol[])
+    _check_covariate_columns(columns, "ConstantCovariateVector")
     return ConstantCovariateVector(columns, _normalize_constant_on(constant_on))
 end
 
 function DynamicCovariateVector(columns::Vector{Symbol};
         interpolations = fill(LinearInterpolation, length(columns)))
+    _check_covariate_columns(columns, "DynamicCovariateVector")
     length(columns) == length(interpolations) ||
         error("Interpolation length mismatch: expected $(length(columns)); got $(length(interpolations)).")
     for itp in interpolations
@@ -177,8 +192,12 @@ function DynamicCovariateVector(columns::Vector{Symbol};
     return DynamicCovariateVector(columns, interpolations)
 end
 
+# `constant_on=1` / `constant_on="ID"` used to leak a Vector{Symbol} conversion or a
+# character-to-symbol MethodError (#222).
 function _normalize_constant_on(val)
     val isa Symbol && return [val]
+    (val isa AbstractVector && all(x -> x isa Symbol, val)) ||
+        error("constant_on must be a Symbol (e.g. :ID) or a vector of Symbols; got $(repr(val)).")
     return collect(val)
 end
 
