@@ -1,0 +1,5 @@
+# Revisions to skip in `git blame`. Enable locally with:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# style: reformat src/test/docs/ext with Runic (JuliaFormatter -> Runic switch)
+4402641fede5b4972e92cfc68232091bb8d4ce85
