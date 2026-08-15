@@ -220,6 +220,8 @@ function _parse_covariates(block::Expr)
         stmt.head == :(=) || error("Only assignments are allowed in @covariates block.")
         lhs, rhs = stmt.args
         lhs isa Symbol || error("Left-hand side must be a symbol in @covariates block.")
+        lhs in names &&
+            error("Duplicate covariate $(lhs) in @covariates block; covariate names must be unique.")
         rhs isa Expr && rhs.head == :call ||
             error("Right-hand side must be a constructor call in @covariates block.")
         _validate_covariate_ctor(rhs)

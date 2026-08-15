@@ -17,9 +17,9 @@ end
 
 struct FormulasIR
     det_names::Vector{Symbol}
-    det_exprs::Vector{Expr}
+    det_exprs::Vector{Any}
     obs_names::Vector{Symbol}
-    obs_exprs::Vector{Expr}
+    obs_exprs::Vector{Any}
     call_heads::Vector{Symbol}
     var_syms::Vector{Symbol}
     prop_syms::Vector{Symbol}
@@ -306,9 +306,9 @@ end
 function _parse_formulas(block::Expr)
     block.head == :block || error("@formulas expects a begin ... end block.")
     det_names = Symbol[]
-    det_exprs = Expr[]
+    det_exprs = Any[]
     obs_names = Symbol[]
-    obs_exprs = Expr[]
+    obs_exprs = Any[]
     lines = Expr[]
 
     det_set = Set{Symbol}()
@@ -336,6 +336,10 @@ function _parse_formulas(block::Expr)
             lhs == :t && error("Left-hand side cannot be t in @formulas block.")
             lhs == :ξ && error("Left-hand side cannot be ξ in @formulas block.")
             lhs in obs_set && error("Duplicate observation name $(lhs) in @formulas block.")
+            # `y ~ a` / `y ~ 1.0` / `y ~ nothing` used to leak an internal
+            # `Cannot convert Symbol to Expr` from the `Expr[]` push below (#219).
+            (rhs isa Expr && rhs.head == :call) ||
+                error("Observation $(lhs) in @formulas must be a distribution, e.g. $(lhs) ~ Normal(mu, sigma); got `$(rhs)`.")
             lhs in det_set &&
                 error("Name $(lhs) is already used for a deterministic in @formulas block.")
             push!(obs_names, lhs)
