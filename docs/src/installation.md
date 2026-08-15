@@ -1,6 +1,6 @@
 # Installation
 
-NoLimits.jl requires Julia 1.12 or later.
+NoLimits.jl supports Julia 1.10 (the current LTS), 1.11, and 1.12.
 
 ## Installing the Package
 
