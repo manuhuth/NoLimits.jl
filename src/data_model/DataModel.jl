@@ -297,6 +297,15 @@ function _group_row_indices(ids)
     return out
 end
 
+# True when at least one outcome value is observed on a non-event row.
+function _has_observations(df, config::DataModelConfig)
+    obs_rows = config.evid_col === nothing ? Colon() :
+               findall(==(0), _get_col(df, config.evid_col))
+    return any(c -> any(!ismissing, _get_col(df, c)[obs_rows]), config.obs_cols)
+end
+
+_has_observations(dm) = _has_observations(get_df(dm), dm.config)
+
 function _validate_schema(model, df, config::DataModelConfig)
     _require_col(df, config.primary_id, "primary id")
     _require_col(df, config.time_col, "time")
@@ -342,16 +351,14 @@ function _validate_schema(model, df, config::DataModelConfig)
         end
     end
 
-    # Observable columns may contain missings on observation rows, but a frame with no
-    # observed value anywhere yields an empty likelihood that still "converges" (#208, #212).
-    obs_rows = config.evid_col === nothing ? Colon() :
-               findall(==(0), _get_col(df, config.evid_col))
-    if !any(c -> any(!ismissing, _get_col(df, c)[obs_rows]), config.obs_cols)
-        error("No observed values found: every row of $(join(string.(config.obs_cols), ", ")) is missing" *
+    # An all-missing outcome frame is a legitimate *simulation* target (`simulate_data`
+    # fills it in) but yields an empty likelihood that still "converges" when fitted, so
+    # it warns here and is refused by `fit_model` (#208, #212).
+    _has_observations(df, config) ||
+        @warn "No observed values found: every row of $(join(string.(config.obs_cols), ", ")) is missing" *
               (config.evid_col === nothing ? "" :
                " or excluded by $(config.evid_col) != 0") *
-              ". At least one observation is required to fit or simulate.")
-    end
+              ". This DataModel can be simulated from, but cannot be fitted."
 
     # Check that obs_cols from @formulas exist in the data.
     formula_obs = get_formulas_meta(model.formulas.formulas).obs_names

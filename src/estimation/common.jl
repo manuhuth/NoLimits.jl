@@ -2447,6 +2447,7 @@ function _cdll_terms(dm::DataModel, θ::ComponentArray;
     # RE distribution (RE-distribution covariates are constant within a level).
     rep_ind = [Dict{Int, Int}() for _ in re_names]
     for i in 1:n, ri in eachindex(re_names)
+
         for li in get_ind_level_ids(re_cache)[i][ri]
             haskey(rep_ind[ri], li) || (rep_ind[ri][li] = i)
         end
@@ -2455,6 +2456,7 @@ function _cdll_terms(dm::DataModel, θ::ComponentArray;
     # Per-level RE distribution (built once; carries θ, so it is Dual under AD).
     level_dist = [Dict{Int, Any}() for _ in re_names]
     for ri in eachindex(re_names), (li, rep) in rep_ind[ri]
+
         dists = dists_builder(
             θs, get_const_cov(get_individuals(dm)[rep]), model_funs, helpers)
         level_dist[ri][li] = getproperty(dists, re_names[ri])
@@ -2525,6 +2527,7 @@ function _cdll_terms(dm::DataModel, θ::ComponentArray;
     for (k, i) in enumerate(sel)
         v = _loglikelihood_individual(dm, i, θs, build_eta_i(i), cache)
         for ri in eachindex(re_names), li in get_ind_level_ids(re_cache)[i][ri]
+
             (ri, li) in seen && continue
             push!(seen, (ri, li))
             v += logpdf(level_dist[ri][li], getval(ri, li))
@@ -2667,6 +2670,9 @@ function fit_model(dm::DataModel, method::FittingMethod, args...;
         fit_options_pooled_init::NamedTuple = NamedTuple(),
         kwargs...)
     _reset_numeric_warnings!()
+    # An all-missing outcome frame fits to objective 0.0 and reports success (#208, #212).
+    _has_observations(dm) ||
+        error("Cannot fit: every observation of $(join(string.(get_obs_cols(dm)), ", ")) is missing (or excluded by the EVID column). At least one observed value is required.")
     kwargs = NamedTuple(kwargs)
     if haskey(kwargs, :theta_0_untransformed)
         kwargs = merge(kwargs,

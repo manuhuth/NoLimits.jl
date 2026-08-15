@@ -2,7 +2,12 @@
 # names and structurally empty observation models at construction time instead of
 # letting them surface as UndefVarError deep inside a fitted objective.
 
-const _NL_RESERVED_NAMES = (:t, :ξ)
+# Time symbols that may not be shadowed by an effect name. `ξ` is only reserved *inside*
+# a random-effect distribution (checked by `_macro_forbidden_symbol`); it is a legal
+# effect name, so only `t` -- which collides with the `x1(t)` call syntax -- is listed.
+const _NL_RESERVED_EFFECT_NAMES = (:t,)
+# Symbols that are always bound at evaluation time and are never "undefined".
+const _NL_TIME_SYMBOLS = (:t, :ξ)
 
 # Symbols that resolve to an actual binding at formula-evaluation time (Base/Distributions/
 # NoLimits names, plus anything defined in the module where @Model was written).
@@ -11,18 +16,50 @@ function _nl_symbol_resolvable(s::Symbol, mod::Module)
            isdefined(@__MODULE__, s) || isdefined(mod, s)
 end
 
-# Free symbols of a user expression: call heads included, property names and keyword
-# argument names excluded (`x.Age` contributes `x`, `Normal(; σ = s)` contributes `s`).
-function _nl_collect_free_syms!(out::Set{Symbol}, ex)
+# Names an expression binds locally: anonymous-function arguments, `do` arguments, and
+# comprehension/generator iteration variables. `ntuple(s -> ntuple(j -> ..., 2), 2)` inside
+# @formulas binds `s` and `j`, which are not undefined symbols.
+function _nl_collect_bound_syms!(out::Set{Symbol}, ex)
     ex isa Symbol && (push!(out, ex); return out)
     ex isa Expr || return out
+    if ex.head == :tuple || ex.head == :parameters
+        for a in ex.args
+            _nl_collect_bound_syms!(out, a)
+        end
+    elseif ex.head == :(::) || ex.head == :kw
+        _nl_collect_bound_syms!(out, ex.args[1])
+    elseif ex.head == :(=) && length(ex.args) == 2   # `for i in ...` inside a generator
+        _nl_collect_bound_syms!(out, ex.args[1])
+    end
+    return out
+end
+
+# Free symbols of a user expression: call heads included; property names, keyword-argument
+# names and locally bound names excluded (`x.Age` contributes `x`, `Normal(; σ = s)`
+# contributes `s`, `j -> f(j)` contributes neither).
+function _nl_collect_free_syms!(out::Set{Symbol}, ex, bound::Set{Symbol} = Set{Symbol}())
+    ex isa Symbol && (ex in bound || push!(out, ex); return out)
+    ex isa Expr || return out
     if ex.head == :.
-        return _nl_collect_free_syms!(out, ex.args[1])
+        return _nl_collect_free_syms!(out, ex.args[1], bound)
     elseif ex.head == :kw && length(ex.args) == 2
-        return _nl_collect_free_syms!(out, ex.args[2])
+        return _nl_collect_free_syms!(out, ex.args[2], bound)
+    elseif ex.head == :-> || ex.head == :function || ex.head == :do
+        inner = union(bound, _nl_collect_bound_syms!(Set{Symbol}(), ex.args[1]))
+        return _nl_collect_free_syms!(out, ex.args[2], inner)
+    elseif ex.head == :generator || ex.head == :comprehension ||
+           ex.head == :typed_comprehension
+        inner = copy(bound)
+        for a in ex.args[2:end]
+            _nl_collect_bound_syms!(inner, a)
+        end
+        for a in ex.args
+            _nl_collect_free_syms!(out, a, inner)
+        end
+        return out
     end
     for a in ex.args
-        _nl_collect_free_syms!(out, a)
+        _nl_collect_free_syms!(out, a, bound)
     end
     return out
 end
@@ -34,14 +71,14 @@ function _nl_unknown_syms(exprs, known::Set{Symbol}, mod::Module)
     end
     return sort([s
                  for s in syms
-                 if Base.isidentifier(s) && !(s in known) && !(s in _NL_RESERVED_NAMES) &&
-                    !_nl_symbol_resolvable(s, mod)])
+                 if Base.isidentifier(s) && !(s in known) && !(s in _NL_TIME_SYMBOLS) &&
+                        !_nl_symbol_resolvable(s, mod)])
 end
 
 function _nl_check_reserved_names(names, what::AbstractString)
-    bad = [s for s in names if s in _NL_RESERVED_NAMES]
+    bad = [s for s in names if s in _NL_RESERVED_EFFECT_NAMES]
     isempty(bad) && return nothing
-    error("$(what) may not be named $(join(string.(bad), ", ")): `t` and `ξ` are reserved for the time variable used in @DifferentialEquation and @formulas.")
+    error("$(what) may not be named $(join(string.(bad), ", ")): `t` is reserved for the time variable used in @DifferentialEquation and @formulas.")
 end
 
 """

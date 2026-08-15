@@ -1816,8 +1816,11 @@ end
         ID = [1, 1], t = [0.0, Inf], y = [1.0, 1.1]))
     @test_throws ErrorException build(DataFrame(
         ID = [1, 1], t = ["0", "1"], y = [1.0, 1.1]))
-    @test_throws ErrorException build(DataFrame(ID = [1, 1], t = [0.0, 1.0],
-        y = Union{Missing, Float64}[missing, missing]))
+    # An all-missing outcome frame is a valid simulation target, so it warns at
+    # construction and is refused by fit_model instead.
+    dm_missing = @test_logs (:warn,) match_mode=:any build(DataFrame(
+        ID = [1, 1], t = [0.0, 1.0], y = Union{Missing, Float64}[missing, missing]))
+    @test_throws ErrorException fit_model(dm_missing, NoLimits.MLE())
     # Duplicate and unsorted timepoints are warnings, not errors.
     @test_logs (:warn,) match_mode=:any build(DataFrame(
         ID = [1, 1], t = [0.0, 0.0], y = [1.0, 1.1]))
