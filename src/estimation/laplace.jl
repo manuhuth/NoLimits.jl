@@ -1028,7 +1028,8 @@ end
 function NewtonInner(; max_dim::Int = 32, maxiters::Int = 100, g_abstol::Float64 = 1e-8,
         alpha_min::Float64 = 1e-4)
     # Invalid limits used to be accepted and only misbehave inside the inner solver (#220).
-    max_dim >= 1 || error("NewtonInner: max_dim must be >= 1; got $(max_dim).")
+    max_dim >= 0 ||
+        error("NewtonInner: max_dim must be >= 0 (0 always uses the fallback path); got $(max_dim).")
     maxiters >= 1 || error("NewtonInner: maxiters must be >= 1; got $(maxiters).")
     (isfinite(g_abstol) && g_abstol > 0) ||
         error("NewtonInner: g_abstol must be finite and > 0; got $(g_abstol).")
@@ -1620,10 +1621,10 @@ end
 # Internal shim: the fit machinery calls `_build_hess_b(mode, …, ad_cache, bi)`; route it
 # through the public `inner_curvature` seam so third-party curvatures are picked up too.
 @inline _build_hess_b(
-    mode::AbstractCurvature, dm::DataModel, batch_info::REBatchInfo, θ, b,
-    const_cache::REConstantsCache, cache::_LLCache,
-    ad_cache::Union{Nothing, LaplaceADCache}, bi::Int;
-    ctx::AbstractString = "", tctx = nothing) = inner_curvature(
+mode::AbstractCurvature, dm::DataModel, batch_info::REBatchInfo, θ, b,
+const_cache::REConstantsCache, cache::_LLCache,
+ad_cache::Union{Nothing, LaplaceADCache}, bi::Int;
+ctx::AbstractString = "", tctx = nothing) = inner_curvature(
     mode, dm, batch_info, θ, b, const_cache, cache,
     CurvatureWorkspace(ad_cache, bi); ctx = ctx, tctx = tctx)
 

@@ -409,8 +409,9 @@ end
 end
 
 @testset "Model-build declaration validation" begin
-    mk(body) = Core.eval(@__MODULE__, Expr(:macrocall, Symbol("@Model"), LineNumberNode(0),
-        body))
+    mk(body) = Core.eval(
+        @__MODULE__, Expr(:macrocall, Symbol("@Model"), LineNumberNode(0),
+            body))
     # An observation must be a distribution, not a bare symbol/literal/nothing.
     for rhs in (:a, 1.0, :nothing)
         @test_throws LoadError mk(quote

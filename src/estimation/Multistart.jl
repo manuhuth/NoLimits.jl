@@ -303,9 +303,8 @@ function _collect_param_dists(dm::DataModel, ms::Multistart; warn::Bool = true)
         p isa Priorless && continue
         source = user ? "supplied" : "prior-derived"
         push!(pairs,
-            name =>
-                _bound_dist(name, p, getproperty(θ0_u, name), getproperty(lower, name),
-                    getproperty(upper, name), source, warn))
+            name => _bound_dist(name, p, getproperty(θ0_u, name), getproperty(lower, name),
+                getproperty(upper, name), source, warn))
     end
     return NamedTuple(pairs)
 end

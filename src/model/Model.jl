@@ -367,21 +367,6 @@ per-individual constant-covariate values.
 """
 @inline get_covariates(m::Model) = m.covariates.covariates
 
-"""
-    set_solver_config(m::Model, cfg::ODESolverConfig) -> Model
-    set_solver_config(m::Model; alg, kwargs, args, saveat_mode) -> Model
-
-Return a new `Model` with the ODE solver configuration replaced by `cfg`.
-The keyword form constructs a new [`ODESolverConfig`](@ref) from the given keyword
-arguments and replaces the existing configuration.
-
-# Keyword Arguments
-- `alg`: ODE algorithm (e.g. `Tsit5()`). `nothing` falls back to `AutoTsit5(Rodas5P())`.
-- `kwargs = NamedTuple()`: keyword arguments forwarded to `solve`.
-- `args = ()`: positional arguments forwarded to `solve`.
-- `saveat_mode::Symbol = :dense`: save-time mode (`:dense`, `:saveat`, or `:auto`).
-- `closed_form::Symbol = :auto`: closed-form linear-ODE fast path (`:auto`, `:off`, `:diagonal`).
-"""
 const _SAVEAT_MODES = (:dense, :saveat, :auto)
 const _CLOSED_FORM_MODES = (:auto, :off, :all, :diagonal)
 
@@ -399,6 +384,21 @@ function _validate_solver_config(cfg::ODESolverConfig)
     return nothing
 end
 
+"""
+    set_solver_config(m::Model, cfg::ODESolverConfig) -> Model
+    set_solver_config(m::Model; alg, kwargs, args, saveat_mode) -> Model
+
+Return a new `Model` with the ODE solver configuration replaced by `cfg`.
+The keyword form constructs a new [`ODESolverConfig`](@ref) from the given keyword
+arguments and replaces the existing configuration.
+
+# Keyword Arguments
+- `alg`: ODE algorithm (e.g. `Tsit5()`). `nothing` falls back to `AutoTsit5(Rodas5P())`.
+- `kwargs = NamedTuple()`: keyword arguments forwarded to `solve`.
+- `args = ()`: positional arguments forwarded to `solve`.
+- `saveat_mode::Symbol = :dense`: save-time mode (`:dense`, `:saveat`, or `:auto`).
+- `closed_form::Symbol = :auto`: closed-form linear-ODE fast path (`:auto`, `:off`, `:diagonal`).
+"""
 function set_solver_config(m::Model, cfg::ODESolverConfig)
     _validate_solver_config(cfg)
     de_bundle = DEBundle(m.de.de, m.de.initial, m.de.prede, cfg, m.de.initial_builder)
@@ -605,12 +605,9 @@ macro Model(block)
         error("@Model has @initialDE but no @DifferentialEquation. Add a DE block or remove @initialDE.")
 
     helpers_block = helpers_expr === nothing ? :(NamedTuple()) : helpers_expr
-    fixed_block = fixed_expr === nothing ? :(@fixedEffects begin
-    end) : fixed_expr
-    cov_block = cov_expr === nothing ? :(@covariates begin
-    end) : cov_expr
-    random_block = random_expr === nothing ? :(@randomEffects begin
-    end) : random_expr
+    fixed_block = fixed_expr === nothing ? :(@fixedEffects begin end) : fixed_expr
+    cov_block = cov_expr === nothing ? :(@covariates begin end) : cov_expr
+    random_block = random_expr === nothing ? :(@randomEffects begin end) : random_expr
     prede_block = prede_expr === nothing ? :(nothing) : prede_expr
     de_block = de_expr === nothing ? :(nothing) : de_expr
     initial_block = initial_expr === nothing ? :(nothing) : initial_expr
@@ -704,7 +701,7 @@ macro Model(block)
             context_module = $(__module__))
 
         local ($(form_all_var), $(form_obs_var), $(req_states_var),
-            $(req_signals_var)) = get_formulas_builders(
+        $(req_signals_var)) = get_formulas_builders(
             $(formulas_var);
             fixed_names = $(fixed_names_var),
             collect_fixed_names = $(collect_fixed_names_var),

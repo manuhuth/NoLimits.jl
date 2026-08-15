@@ -527,6 +527,22 @@ end
 
 # ── fit_cv ────────────────────────────────────────────────────────────────────
 
+# Per-observation loss failures degrade to NaN by design (one bad row should not abort a
+# fold), which meant a wrong-arity or non-numeric callback silently produced an all-NaN
+# loss column. Check the contract once, up front, instead (#220).
+function _validate_cv_loss(cv_spec::CVSpec, loss)
+    applicable(loss, Normal(0.0, 1.0), 0.0) ||
+        error("The cv `loss` callback must take two arguments, `(distribution, observation)`, and return a real number; got $(repr(loss)).")
+    probe = try
+        loss(Normal(0.0, 1.0), 0.0)
+    catch e
+        error("The cv `loss` callback threw on a probe call `loss(Normal(0, 1), 0.0)`: $(sprint(showerror, e))")
+    end
+    probe isa Real ||
+        error("The cv `loss` callback must return a real number; a probe call returned $(repr(probe))::$(typeof(probe)).")
+    return nothing
+end
+
 """
     fit_cv(cv_spec, method, args...;
            seen_re_mode=:ebe, unseen_re_mode=:mean,
@@ -563,22 +579,6 @@ do not apply and must be left at their defaults.
 
 Returns a [`CVResult`](@ref).
 """
-# Per-observation loss failures degrade to NaN by design (one bad row should not abort a
-# fold), which meant a wrong-arity or non-numeric callback silently produced an all-NaN
-# loss column. Check the contract once, up front, instead (#220).
-function _validate_cv_loss(cv_spec::CVSpec, loss)
-    applicable(loss, Normal(0.0, 1.0), 0.0) ||
-        error("The cv `loss` callback must take two arguments, `(distribution, observation)`, and return a real number; got $(repr(loss)).")
-    probe = try
-        loss(Normal(0.0, 1.0), 0.0)
-    catch e
-        error("The cv `loss` callback threw on a probe call `loss(Normal(0, 1), 0.0)`: $(sprint(showerror, e))")
-    end
-    probe isa Real ||
-        error("The cv `loss` callback must return a real number; a probe call returned $(repr(probe))::$(typeof(probe)).")
-    return nothing
-end
-
 function fit_cv(cv_spec::CVSpec, method::FittingMethod, args...;
         seen_re_mode::Symbol = :ebe,
         unseen_re_mode::Symbol = :mean,

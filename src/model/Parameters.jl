@@ -374,7 +374,6 @@ function _validate_block_diagonal(v::AbstractMatrix, blk::Vector{Int}, name::Sym
     n = size(v, 1)
     scale = maximum(abs, v) + one(eltype(v))
     for i in 1:n, j in 1:n
-
         if blk[i] != blk[j] && abs(v[i, j]) > sqrt(eps(Float64)) * scale
             error("RealLiePSDMatrix($(name)): `value` must be block-diagonal for the given `blocks`; entry ($(i),$(j)) couples different blocks but is $(v[i, j]).")
         end

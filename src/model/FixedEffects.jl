@@ -596,26 +596,24 @@ function _collect_model_fun!(p::SoftTreeParameters, model_fun_pairs, ::Type{T}) 
     tree = SoftTree(p.input_dim, p.depth, p.n_output)
     _check_softtree_flat_layout(p, tree)
     push!(model_fun_pairs,
-        p.function_name =>
-            (x, θ) -> begin
-                TT = promote_type(eltype(θ), _value_type(x))
-                if TT === T
-                    return tree(_to_type(T, x), softtree_params_from_flat(_to_type(T, θ), tree))
-                end
-                return tree(_to_type(TT, x), softtree_params_from_flat(_to_type(TT, θ), tree))
-            end)
+        p.function_name => (x, θ) -> begin
+            TT = promote_type(eltype(θ), _value_type(x))
+            if TT === T
+                return tree(_to_type(T, x), softtree_params_from_flat(_to_type(T, θ), tree))
+            end
+            return tree(_to_type(TT, x), softtree_params_from_flat(_to_type(TT, θ), tree))
+        end)
 end
 
 function _collect_model_fun!(p::SplineParameters, model_fun_pairs, ::Type{T}) where {T}
     push!(model_fun_pairs,
-        p.function_name =>
-            (x, θ) -> begin
-                TT = promote_type(eltype(θ), _value_type(x))
-                if TT === T
-                    return bspline_eval(_to_type(T, x), _to_type(T, θ), p.knots, p.degree)
-                end
-                return bspline_eval(_to_type(TT, x), _to_type(TT, θ), p.knots, p.degree)
-            end)
+        p.function_name => (x, θ) -> begin
+            TT = promote_type(eltype(θ), _value_type(x))
+            if TT === T
+                return bspline_eval(_to_type(T, x), _to_type(T, θ), p.knots, p.degree)
+            end
+            return bspline_eval(_to_type(TT, x), _to_type(TT, θ), p.knots, p.degree)
+        end)
 end
 # The NormalizingPlanarFlow flat-θ constructor rebuilds the planar chain
 # positionally (`_planar_chain_from_flat`) instead of via the stored
@@ -634,15 +632,14 @@ function _collect_model_fun!(p::NPFParameter, model_fun_pairs, ::Type{T}) where 
     q0T = _adapt_base_dist(p.base_dist, T)
     _check_npf_flat_layout(p)
     push!(model_fun_pairs,
-        key =>
-            (θ) -> begin
-                TT = eltype(θ)
-                if TT === T
-                    return NormalizingPlanarFlow(_to_type(T, θ), p.reconstructor, q0T)
-                end
-                q0 = _adapt_base_dist(p.base_dist, TT)
-                return NormalizingPlanarFlow(_to_type(TT, θ), p.reconstructor, q0)
-            end)
+        key => (θ) -> begin
+            TT = eltype(θ)
+            if TT === T
+                return NormalizingPlanarFlow(_to_type(T, θ), p.reconstructor, q0T)
+            end
+            q0 = _adapt_base_dist(p.base_dist, TT)
+            return NormalizingPlanarFlow(_to_type(TT, θ), p.reconstructor, q0)
+        end)
 end
 
 # Adapt base distribution element type for ForwardDiff compatibility.
