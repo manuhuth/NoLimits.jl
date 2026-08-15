@@ -86,9 +86,14 @@ function _stat_from_dist(dist, f)
         return f(dist)
     catch
         if f === mode
-            return Distributions.mode(dist)
+            try
+                return Distributions.mode(dist)
+            catch
+            end
         end
-        rethrow()
+        # Distributions defining neither mean nor mode (e.g. CensoredDistributions'
+        # interval-censored ones) plot as a gap instead of erroring.
+        return NaN
     end
 end
 

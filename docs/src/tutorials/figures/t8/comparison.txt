@@ -1,0 +1,8 @@
+4×4 DataFrame
+ Row │ parameter  truth    interval_censored  naive_normal
+     │ String     Float64  Float64            Float64
+─────┼─────────────────────────────────────────────────────
+   1 │ beta0        12.0             11.8074       11.3639
+   2 │ beta1         0.35             0.348         0.38
+   3 │ omega         0.8              0.8146        0.8336
+   4 │ sigma         0.4              0.4212        0.5226

@@ -74,6 +74,13 @@ end
     @test p_fits !== nothing
 end
 
+@testset "plot_fits tolerates a statistic the distribution lacks" begin
+    # Outcome distributions without `mean` (CensoredDistributions' interval-censored
+    # ones) must plot as a gap instead of erroring, here and in the y-limits.
+    @test plot_fits(fx_pois_laplace(); plot_func = d -> error("undefined"),
+        plot_density = false) !== nothing
+end
+
 @testset "plot_data discrete" begin
     p_data = plot_data(fx_pois_dm())
     @test p_data !== nothing

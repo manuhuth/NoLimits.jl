@@ -368,6 +368,8 @@ This fits with `MLE`, `MAP`, `MCMC`, `Laplace`, `GHQuadrature`, `SAEM`, `MCEM`, 
 - Distributions whose log-density is `-Inf` over part of the parameter space, including censored and truncated ones, can make `VI` diverge, because the ADVI sampler visits those regions during adaptation. The optimization-based methods are unaffected.
 - `get_residuals` fills `res_raw` and `res_pearson`, and `plot_fits` draws its prediction line, from `mean` and `var`. A distribution that defines neither leaves those columns `missing`; `pit`, `res_quantile` and `logscore` need only `cdf` and `logpdf` and remain available.
 
+A worked example is the [interval-censored outcomes tutorial](../tutorials/mixed-effects-interval-censored-binned-laplace.md), which recovers known parameters from binned data and shows what the naive Normal likelihood costs.
+
 For the simpler case of censoring at a detection limit, `censored(...)` from `Distributions.jl` needs no extra package. See the [left-censored viral load tutorial](../tutorials/mixed-effects-left-censored-virload50-laplace.md).
 
 ## Related APIs

@@ -1,0 +1,28 @@
+FitResultSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  method                              : laplace
+  inference                           : frequentist
+  scale                               : natural
+  objective                           : 779.3857
+  iterations                          : 14
+  parameters shown (reported / total) : 3 / 3
+
+Parameter estimates
+  parameter      Estimate
+  -----------------------
+  mu1              0.8603
+  mu2             -0.5136
+  s                0.4223
+
+Outcome data coverage
+  outcome       n_obs   n_missing
+  -------------------------------
+  y               720           0
+  TOTAL           720           0
+
+Empirical Bayes random effects summary (across RE levels)
+  random effect  component       n          mean            sd           q25        median           q75
+  --------------------------------------------------------------------------------------------------
+  D              D_1           120        0.8929        0.8184        0.4373        1.0055        1.3519
+  D              D_2           120       -0.4660        0.5864       -0.8426       -0.4235       -0.0713

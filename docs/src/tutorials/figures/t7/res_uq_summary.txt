@@ -1,0 +1,29 @@
+UQResultSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  backend                             : wald
+  source_method                       : laplace
+  inference                           : frequentist
+  scale                               : natural
+  objective                           : 779.3857
+  interval level                      : 0.9500
+  parameters shown (reported / total) : 3 / 3
+
+Parameter uncertainty summary
+  parameter      Estimate    Std. Error      CI Lower      CI Upper
+  ---------------------------------------------------
+  mu1              0.8603        0.0841        0.6919        1.0266
+  mu2             -0.5136        0.0547       -0.6132       -0.4096
+  s                0.4223        0.0134        0.3964        0.4500
+
+Outcome data coverage
+  outcome       n_obs   n_missing
+  -------------------------------
+  y               720           0
+  TOTAL           720           0
+
+Empirical Bayes random effects summary (across RE levels)
+  random effect  component       n          mean            sd           q25        median           q75
+  --------------------------------------------------------------------------------------------------
+  D              D_1           120        0.8929        0.8184        0.4373        1.0055        1.3519
+  D              D_2           120       -0.4660        0.5864       -0.8426       -0.4235       -0.0713

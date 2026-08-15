@@ -1,6 +1,8 @@
 [deps]
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+CensoredDistributions = "b2eeebe4-5992-4301-9193-7ebc9f62c855"
 ColorSchemes = "35d6a980-a343-548e-a6ea-1d62b119f2f4"
+Copulas = "ae264745-0b69-425e-9d9d-cf662c5eec93"
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
@@ -17,7 +19,9 @@ NoLimits = {path = ".."}
 
 [compat]
 CairoMakie = "0.15"
+CensoredDistributions = "0.2.22"
 ColorSchemes = "3.31.0"
+Copulas = "0.1.40"
 DataFrames = "1.8.2"
 Distributions = "0.25.127"
 Documenter = "1.17"

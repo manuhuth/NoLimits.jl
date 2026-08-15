@@ -561,10 +561,7 @@ function plot_fits(res::FitResult;
                     color = is_mv ? marginal_colors[m] : style.color_secondary
                     create_styled_line!(
                         p, x_fit, curve; label = label, color = color, style = style)
-                    y_min = minimum(curve)
-                    y_max = maximum(curve)
-                    ylims = ylims === nothing ? (y_min, y_max) :
-                            (min(ylims[1], y_min), max(ylims[2], y_max))
+                    ylims = _merge_limits(ylims, curve)
                 end
             else
                 y_obs_series = getfield(get_obs(get_series(ind)), obs_name)
@@ -599,10 +596,7 @@ function plot_fits(res::FitResult;
                     color = is_mv ? marginal_colors[m] : style.color_secondary
                     create_styled_line!(
                         p, x_fit, curve; label = label, color = color, style = style)
-                    y_min = minimum(curve)
-                    y_max = maximum(curve)
-                    ylims = ylims === nothing ? (y_min, y_max) :
-                            (min(ylims[1], y_min), max(ylims[2], y_max))
+                    ylims = _merge_limits(ylims, curve)
                 end
             end
 
