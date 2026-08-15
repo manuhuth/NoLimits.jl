@@ -298,6 +298,15 @@ through `missing` rows as well. On Laplace/FOCEI/SAEM/MCEM/Pooled fits it theref
 matches `get_loglikelihood(res)` (which also conditions on the EB modes) to round-off;
 on `GHQuadrature` fits `get_loglikelihood` returns the *marginal* likelihood, which
 integrates over the random effects and is a different quantity.
+
+# HMM-family outcomes
+
+For HMM / observed-states outcomes every column is an **emission-level** quantity of the
+forward-filtered mixture distribution, not a hidden-state summary: `fitted` is the mixture
+mean (for a Bernoulli emission, a probability near the mixture average, not a state
+probability), and `pit`/`res_*` are the usual mixture-distribution residuals, which for a
+discrete outcome sit on the CDF steps. Use [`plot_hidden_states`](@ref) or
+`posterior_hidden_states` for state-level diagnostics.
 """
 function get_residuals(res::FitResult;
         dm::Union{Nothing, DataModel} = nothing,

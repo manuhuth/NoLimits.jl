@@ -565,3 +565,34 @@ let
             dm, NoLimits.MAP(; optim_kwargs = (maxiters = 2,)))
     end
 end
+
+@testset "fit_model starting-value validation" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            s = RealNumber(0.5, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @formulas begin
+            y ~ Normal(a, s)
+        end
+    end
+    df = DataFrame(ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0], y = [1.0, 1.1, 0.9, 1.0])
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+
+    # A plain NamedTuple start is accepted, like `constants`/`penalty`.
+    res = fit_model(dm, NoLimits.MLE(); theta_0_untransformed = (a = 1.2, s = 0.4))
+    @test res isa FitResult
+    @test_throws ErrorException fit_model(dm, NoLimits.MLE();
+        theta_0_untransformed = (a = 1.2, nope = 0.4))
+    @test_throws ErrorException fit_model(dm, NoLimits.MLE();
+        theta_0_untransformed = ComponentArray(a = NaN, s = 0.3))
+    @test_throws ErrorException fit_model(dm, NoLimits.MLE();
+        theta_0_untransformed = ComponentArray(a = Inf, s = 0.3))
+
+    # A non-finite objective is never reported as converged (#208/#209/#214/#215).
+    summ = NoLimits.FitSummary(Inf, true, NoLimits.get_params(res), nothing)
+    @test summ.converged == false
+end

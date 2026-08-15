@@ -212,3 +212,38 @@ end
     res_vi = fit_model(dm, NoLimits.VI(; turing_kwargs = (max_iter = 10, progress = false)))
     @test res_vi isa FitResult
 end
+
+@testset "HMM constructor and quantile validation" begin
+    E = (Normal(0.0, 1.0), Normal(3.0, 1.0))
+    C = Categorical([0.5, 0.5])
+    @test_throws ErrorException DiscreteTimeDiscreteStatesHMM([1.2 -0.2; 0.5 0.5], E, C)
+    @test_throws ErrorException DiscreteTimeDiscreteStatesHMM([1.0 1.0; 1.0 1.0], E, C)
+    @test_throws ErrorException DiscreteTimeDiscreteStatesHMM([NaN 0.0; 0.0 1.0], E, C)
+    @test_throws ErrorException DiscreteTimeDiscreteStatesHMM([0.0 0.0; 0.0 0.0], E, C)
+    @test_throws ErrorException ContinuousTimeDiscreteStatesHMM(
+        [-1.0 -1.0; 2.0 -2.0], E, C, 1.0)
+    @test_throws ErrorException ContinuousTimeDiscreteStatesHMM(
+        [-1.0 2.0; 2.0 -2.0], E, C, 1.0)
+    @test_throws ErrorException ContinuousTimeDiscreteStatesHMM(
+        [-1.0 1.0; 2.0 -2.0], E, C, -1.0)
+
+    # An observation impossible under every state must not poison the filter with NaNs.
+    far = DiscreteTimeDiscreteStatesHMM(
+        [1.0 0.0; 0.0 1.0], (Normal(0.0, 0.1), Normal(10.0, 0.1)), C)
+    @test all(isfinite, posterior_hidden_states(far, 1000.0))
+
+    # Quantiles of a discrete mixture must land on the support, not between its atoms.
+    disc = DiscreteTimeDiscreteStatesHMM(
+        [1.0 0.0; 0.0 1.0], (Categorical([1.0, 0.0]), Categorical([0.0, 1.0])), C)
+    @test quantile(disc, 0.5) in (1, 2)
+    @test_throws DomainError quantile(disc, -0.1)
+    @test_throws DomainError quantile(disc, 1.1)
+
+    # Continuous emissions still invert the mixture CDF.
+    cont = DiscreteTimeDiscreteStatesHMM([0.8 0.2; 0.1 0.9], E, C)
+    @test cdf(cont, quantile(cont, 0.5))≈0.5 atol=1e-6
+
+    mv = MVDiscreteTimeDiscreteStatesHMM([0.8 0.2; 0.1 0.9],
+        ((Normal(0.0, 1.0), Normal(0.0, 1.0)), (Normal(3.0, 1.0), Normal(3.0, 1.0))), C)
+    @test_throws ErrorException logpdf(mv, [1.0])
+end
