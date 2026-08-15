@@ -94,6 +94,8 @@ end
 function RealNumber(value::Real; name::Symbol = :unnamed, scale::Symbol = :identity,
         lower::Real = -Inf, upper::Real = Inf, prior = Priorless(), calculate_se::Bool = true)
     _check_prior(prior, name)
+    isfinite(value) ||
+        error("Invalid initial value for parameter $(name). Expected a finite number; got $(value).")
     explicit_bounds = isfinite(lower) && isfinite(upper)
     scale in REAL_SCALES ||
         error("Invalid scale for parameter $(name). Expected one of $(REAL_SCALES); got $(scale).")
@@ -162,6 +164,15 @@ function RealVector(value::AbstractVector{<:Real};
         prior = Priorless(),
         calculate_se::Bool = true)
     _check_prior(prior, name)
+    # The docstring allows a single Symbol for `scale`; broadcasting it here keeps that
+    # promise instead of failing with `no method matching iterate(::Symbol)` (#221).
+    scale isa Symbol && (scale = fill(scale, length(value)))
+    length(scale) == length(value) ||
+        error("Invalid scale for parameter $(name). Expected one scale per element ($(length(value))); got $(length(scale)).")
+    let bad = findfirst(!isfinite, value)
+        bad === nothing ||
+            error("Invalid initial value for parameter $(name) at index $(bad). Expected a finite number; got $(value[bad]).")
+    end
     # Capture explicit finiteness from the raw bounds, before the :log EPSILON default below
     # turns an unset lower into a finite EPSILON (which must NOT count as user-specified).
     explicit_lower = isfinite.(lower)
@@ -452,6 +463,8 @@ function RealDiagonalMatrix(value::AbstractVector{<:Real}; name::Symbol = :unnam
         error("Invalid scale for parameter $(name). Expected one of $(DIAGONAL_SCALES); got $(scale).")
     T = eltype(value) <: AbstractFloat ? eltype(value) : Float64
     v = T.(value)
+    all(isfinite, v) ||
+        error("Invalid diagonal values for parameter $(name). Expected all entries to be finite; got values=$(v).")
     all(v .> 0) ||
         error("Invalid diagonal values for parameter $(name). Expected all entries > 0 for scale :log; got values=$(v).")
     return RealDiagonalMatrix{T, typeof(v)}(name, v, scale, prior, calculate_se)
@@ -880,6 +893,8 @@ function ContinuousTransitionMatrix(value::AbstractMatrix{<:Real};
     for i in 1:n
         for j in 1:n
             i == j && continue
+            isfinite(v[i, j]) ||
+                error("ContinuousTransitionMatrix for parameter $(name): off-diagonal entry Q[$(i),$(j)] must be finite; got $(v[i,j]).")
             v[i, j] >= zero(T) ||
                 error("ContinuousTransitionMatrix for parameter $(name): off-diagonal entry Q[$(i),$(j)] must be non-negative; got $(v[i,j]).")
         end

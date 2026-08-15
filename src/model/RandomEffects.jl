@@ -91,7 +91,9 @@ Return the distribution-builder function with signature:
 
 The returned `NamedTuple` maps each random-effect name to its instantiated distribution.
 """
-create_random_effect_distribution(re::RandomEffects) = re.builders.create_random_effect_distribution
+function create_random_effect_distribution(re::RandomEffects)
+    re.builders.create_random_effect_distribution
+end
 
 """
     get_re_logpdf(re::RandomEffects) -> Function
@@ -255,6 +257,10 @@ function _parse_random_effects(block::Expr)
             error("Right-hand side must be a RandomEffect(...) call.")
 
         dist, column = _re_parse_call_args(rhs, lhs)
+        # A bare symbol/number/`nothing` here used to leak `Cannot convert Symbol to Expr`
+        # from the `Expr[]` push below (#219).
+        (dist isa Expr && dist.head == :call) ||
+            error("RandomEffect $(lhs) needs a distribution, e.g. RandomEffect(Normal(0.0, 1.0); column=:ID); got `$(dist)`.")
 
         forbidden = _macro_forbidden_symbol(dist)
         forbidden === nothing ||

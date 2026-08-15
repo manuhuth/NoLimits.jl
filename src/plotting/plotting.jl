@@ -333,8 +333,15 @@ end
                                                   get_result(res) isa VIResult)
 
 function _with_posterior_warmup(res::FitResult, mcmc_warmup::Union{Nothing, Int})
-    if !(get_result(res) isa MCMCResult) || mcmc_warmup === nothing
-        return res
+    mcmc_warmup === nothing && return res
+    # A negative warmup produced a BoundsError when the draws were sliced, and one larger
+    # than the chain was accepted silently (#223).
+    mcmc_warmup >= 0 ||
+        error("mcmc_warmup must be >= 0; got $(mcmc_warmup).")
+    get_result(res) isa MCMCResult || return res
+    let n_iter = size(get_chain(res), 1)
+        mcmc_warmup < n_iter ||
+            error("mcmc_warmup=$(mcmc_warmup) leaves no post-warmup draws: the chain has $(n_iter) iterations. Use a warmup below $(n_iter).")
     end
     conv = get_diagnostics(res).convergence
     conv = merge(conv, (n_adapt = mcmc_warmup,))

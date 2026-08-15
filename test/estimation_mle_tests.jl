@@ -596,3 +596,46 @@ end
     summ = NoLimits.FitSummary(Inf, true, NoLimits.get_params(res), nothing)
     @test summ.converged == false
 end
+
+@testset "fit_model option validation" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.2)
+            s = RealNumber(0.3, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @formulas begin
+            y ~ Normal(a, s)
+        end
+    end
+    dm = DataModel(model, DataFrame(ID = [1, 2], t = [0.0, 0.0], y = [0.1, 0.2]);
+        primary_id = :ID, time_col = :t)
+    K = (maxiters = 1,)
+    fit(m; kw...) = fit_model(dm, m; kw...)
+
+    # lb/ub are checked at the shared bounds resolver, so every estimator inherits it.
+    @test_throws ErrorException fit(NoLimits.MLE(optim_kwargs = K, ub = [0.4]))
+    @test_throws ErrorException fit(NoLimits.MLE(optim_kwargs = K, ub = [NaN, NaN]))
+    @test_throws ErrorException fit(NoLimits.MLE(optim_kwargs = K, lb = Float64[]))
+    @test_throws ErrorException fit(NoLimits.MLE(
+        optim_kwargs = K, lb = [0.3, 0.3], ub = [0.2, 0.2]))
+    @test_throws ErrorException fit(NoLimits.MLE(optim_kwargs = K); constants = [1.0, 2.0])
+    @test_throws ErrorException fit(NoLimits.MLE(optim_kwargs = K); penalty = (a = "x",))
+    @test_throws ErrorException fit(NoLimits.MLE(optim_kwargs = K); penalty = (a = NaN,))
+    @test_throws ErrorException fit(
+        NoLimits.MLE(optim_kwargs = K); extra_objective = (x, y) -> 0.0)
+    @test_throws ErrorException fit(NoLimits.MLE(optim_kwargs = K); extra_objective = 1)
+    # Unknown / out-of-domain parameter overrides are named, on both entry points.
+    @test_throws ErrorException fit(NoLimits.MLE(optim_kwargs = K);
+        theta_0_untransformed = ComponentArray(a = 0.2, s = 0.3, x = 9.0))
+    @test_throws ErrorException simulate_data(
+        dm; theta_untransformed = ComponentArray(a = 0.2, s = -1.0))
+    @test_throws ErrorException simulate_data(
+        dm; theta_untransformed = ComponentArray(a = NaN, s = 0.3))
+
+    @test fit(NoLimits.MLE(optim_kwargs = K, lb = [-5.0, -5.0], ub = [5.0, 5.0])) isa
+          FitResult
+    @test fit(NoLimits.MLE(optim_kwargs = K); penalty = (a = 10.0,)) isa FitResult
+end

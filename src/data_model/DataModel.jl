@@ -1453,6 +1453,9 @@ function DataModel(model,
         cmt_col::Symbol = :CMT,
         t0::Union{Nothing, Real} = 0.0,
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial())
+    # A non-finite integration start otherwise reaches the ODE solver internals (#220).
+    (t0 === nothing || isfinite(t0)) ||
+        error("t0 must be a finite time or `nothing`; got $(t0).")
     if primary_id === nothing
         re_groups = get_re_groups(model.random.random)
         re_cols = unique([getfield(re_groups, n) for n in get_re_names(model.random.random)])
@@ -1817,6 +1820,14 @@ function get_re_indices(dm::DataModel, id; obs_only::Bool = true)
 end
 
 function get_re_indices(dm::DataModel, idx::Int; obs_only::Bool = true)
+    n = length(get_individuals(dm))
+    if !(1 <= idx <= n)
+        # A numeric primary ID that is not also a valid position is far more likely to be
+        # an ID than an out-of-range index, so resolve it as one before failing (#220).
+        haskey(dm.id_index, idx) &&
+            return get_re_indices(dm, dm.id_index[idx]; obs_only = obs_only)
+        error("Individual index $(idx) is out of range: the DataModel has $(n) individual(s) (valid positions 1:$(n)), and $(idx) is not a $(get_primary_id(dm)) value either.")
+    end
     re_names = get_re_names(dm.model.random.random)
     info = dm.re_group_info.index_by_individual
     pairs = Pair{Symbol, Any}[]

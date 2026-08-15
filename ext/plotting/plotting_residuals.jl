@@ -481,6 +481,8 @@ function _plot_residual_pit_df(df::DataFrame;
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing)
+    (show_hist + show_kde + show_qq) == 0 &&
+        error("plot_residual_pit has every display mode disabled; enable one of show_hist, show_kde or show_qq.")
     if (show_hist + show_kde + show_qq) > 1
         @warn "plot_residual_pit expects one plot type at a time; defaulting to histogram." show_hist=show_hist show_kde=show_kde show_qq=show_qq
         show_hist = true

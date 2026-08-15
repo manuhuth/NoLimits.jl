@@ -367,6 +367,23 @@ per-individual constant-covariate values.
 """
 @inline get_covariates(m::Model) = m.covariates.covariates
 
+const _SAVEAT_MODES = (:dense, :saveat, :auto)
+const _CLOSED_FORM_MODES = (:auto, :off, :all, :diagonal)
+
+# These fields used to be stored verbatim, so a typo'd mode or a non-NamedTuple kwargs
+# container only failed much later inside the ODE solve (#222).
+function _validate_solver_config(cfg::ODESolverConfig)
+    cfg.saveat_mode in _SAVEAT_MODES ||
+        error("Invalid saveat_mode $(repr(cfg.saveat_mode)). Use one of $(_SAVEAT_MODES).")
+    cfg.closed_form in _CLOSED_FORM_MODES ||
+        error("Invalid closed_form $(repr(cfg.closed_form)). Use one of $(_CLOSED_FORM_MODES).")
+    cfg.kwargs isa NamedTuple ||
+        error("Solver kwargs must be a NamedTuple such as (; abstol = 1e-8); got $(typeof(cfg.kwargs)).")
+    cfg.args isa Tuple ||
+        error("Solver args must be a Tuple; got $(typeof(cfg.args)).")
+    return nothing
+end
+
 """
     set_solver_config(m::Model, cfg::ODESolverConfig) -> Model
     set_solver_config(m::Model; alg, kwargs, args, saveat_mode) -> Model
@@ -383,6 +400,7 @@ arguments and replaces the existing configuration.
 - `closed_form::Symbol = :auto`: closed-form linear-ODE fast path (`:auto`, `:off`, `:diagonal`).
 """
 function set_solver_config(m::Model, cfg::ODESolverConfig)
+    _validate_solver_config(cfg)
     de_bundle = DEBundle(m.de.de, m.de.initial, m.de.prede, cfg, m.de.initial_builder)
     return Model(
         m.fixed, m.random, m.covariates, de_bundle, m.helpers, m.formulas, m.source)

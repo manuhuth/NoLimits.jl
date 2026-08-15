@@ -1027,6 +1027,14 @@ end
 
 function NewtonInner(; max_dim::Int = 32, maxiters::Int = 100, g_abstol::Float64 = 1e-8,
         alpha_min::Float64 = 1e-4)
+    # Invalid limits used to be accepted and only misbehave inside the inner solver (#220).
+    max_dim >= 0 ||
+        error("NewtonInner: max_dim must be >= 0 (0 always uses the fallback path); got $(max_dim).")
+    maxiters >= 1 || error("NewtonInner: maxiters must be >= 1; got $(maxiters).")
+    (isfinite(g_abstol) && g_abstol > 0) ||
+        error("NewtonInner: g_abstol must be finite and > 0; got $(g_abstol).")
+    (isfinite(alpha_min) && alpha_min > 0) ||
+        error("NewtonInner: alpha_min must be finite and > 0; got $(alpha_min).")
     NewtonInner(max_dim, maxiters, g_abstol, alpha_min)
 end
 
@@ -1612,7 +1620,8 @@ end
 
 # Internal shim: the fit machinery calls `_build_hess_b(mode, …, ad_cache, bi)`; route it
 # through the public `inner_curvature` seam so third-party curvatures are picked up too.
-@inline _build_hess_b(mode::AbstractCurvature, dm::DataModel, batch_info::REBatchInfo, θ, b,
+@inline _build_hess_b(
+mode::AbstractCurvature, dm::DataModel, batch_info::REBatchInfo, θ, b,
 const_cache::REConstantsCache, cache::_LLCache,
 ad_cache::Union{Nothing, LaplaceADCache}, bi::Int;
 ctx::AbstractString = "", tctx = nothing) = inner_curvature(
@@ -2099,6 +2108,21 @@ struct Laplace{O, K, A, IO, HO, CO, MS, L, U} <: FittingMethod
     nan_recovery::Symbol   # :backtrack (default; NaN grad → non-finite objective), :fd (finite-difference gradient fallback), or :nan (propagate NaN to the optimizer)
 end
 
+# Invalid retry counts and jitter used to be accepted and deferred to the Hessian
+# fallback path, where they only show up as a failed factorization (#220).
+function _validate_laplace_hessian_options(h)
+    h.max_tries >= 1 || error("Laplace: max_tries must be >= 1; got $(h.max_tries).")
+    (isfinite(h.jitter) && h.jitter >= 0) ||
+        error("Laplace: jitter must be finite and non-negative; got $(h.jitter).")
+    (isfinite(h.growth) && h.growth > 1) ||
+        error("Laplace: jitter_growth must be finite and > 1; got $(h.growth).")
+    (isfinite(h.scale_factor) && h.scale_factor > 0) ||
+        error("Laplace: jitter_scale must be finite and > 0; got $(h.scale_factor).")
+    h.hutchinson_n >= 1 ||
+        error("Laplace: hutchinson_n must be >= 1; got $(h.hutchinson_n).")
+    return nothing
+end
+
 function Laplace(;
         optimizer = OptimizationOptimJL.LBFGS(
             linesearch = LineSearches.BackTracking(maxstep = 1.0)),
@@ -2138,6 +2162,7 @@ function Laplace(;
            LaplaceHessianOptions(
         jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale,
         use_trace_logdet_grad, use_hutchinson, hutchinson_n) : hessian_options
+    _validate_laplace_hessian_options(hess)
     cache = cache_options === nothing ? LaplaceCacheOptions(theta_tol) : cache_options
     ms = multistart_options === nothing ?
          LaplaceMultistartOptions(multistart_n, multistart_k, multistart_grad_tol,
