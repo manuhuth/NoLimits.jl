@@ -174,7 +174,8 @@ end
            ebe_grad_tol, ebe_multistart_n, ebe_multistart_k, ebe_multistart_max_rounds,
            ebe_multistart_sampling, ebe_rescue_on_high_grad, ebe_rescue_multistart_n,
            ebe_rescue_multistart_k, ebe_rescue_max_rounds, ebe_rescue_grad_tol,
-           ebe_rescue_multistart_sampling, lb, ub, precondition) <: FittingMethod
+           ebe_rescue_multistart_sampling, lb, ub, update_schedule,
+           precondition) <: FittingMethod
 
 Monte Carlo Expectation-Maximization for random-effects models. At each EM iteration the
 E-step draws random effects; the M-step maximizes the Monte Carlo Q-function over the
@@ -218,6 +219,16 @@ fixed effects.
   `ebe_rescue_multistart_sampling`: rescue multistart settings when an EBE mode has a
   high gradient norm. Disabled by default.
 - `lb`, `ub`: bounds on the transformed fixed-effect scale, or `nothing`.
+- `update_schedule = :all`: which RE batches the **E-step** refreshes each iteration
+  (same option shapes as [`SAEM`](@ref)):
+  - `:all` — every batch, every iteration.
+  - `Int` — random minibatch of that size, sampled without replacement each iteration.
+  - `(nbatches, iter, rng) -> Vector{Int}` — custom selection.
+
+  Only the E-step is subsampled: a batch that is skipped keeps its draws from the
+  iteration that last updated it, and the Q-function/M-step still aggregates over all
+  batches. Skipped batches therefore contribute samples drawn under an older `θ`, which
+  is the usual incremental-EM trade of a small bias for a cheaper E-step.
 - `precondition::Bool = true`: optimize the scaled offset `z` with
   `θ_transformed = θ0 + s .* z`, so every fit starts at `z = 0` and no coordinate can be
   frozen by an unlucky starting value. `s` is 1 for any coordinate already in log/logit
@@ -226,7 +237,7 @@ fixed effects.
   bit-for-bit. Note that with preconditioning on, the optimizer object behind
   [`get_raw`](@ref) works in `z`; [`get_params`](@ref) always returns the usual scales.
 """
-struct MCEM{O, K, A, ES, EO, EB, ER, L, U} <: FittingMethod
+struct MCEM{O, K, A, ES, EO, EB, ER, L, U, US} <: FittingMethod
     optimizer::O
     optim_kwargs::K
     adtype::A
@@ -236,6 +247,7 @@ struct MCEM{O, K, A, ES, EO, EB, ER, L, U} <: FittingMethod
     ebe_rescue::ER
     lb::L
     ub::U
+    update_schedule::US
     verbose::Bool
     progress::Bool
     store_diagnostics::Bool
@@ -277,6 +289,7 @@ function MCEM(;
         ebe_rescue_multistart_sampling = ebe_multistart_sampling,
         lb = nothing,
         ub = nothing,
+        update_schedule = :all,
         store_diagnostics::Bool = false,
         diagnostics_every::Int = 1,
         precondition::Bool = true
@@ -311,7 +324,8 @@ function MCEM(;
     )
     return MCEM(
         optimizer, optim_kwargs, adtype, e_step_actual, em, ebe, ebe_rescue,
-        lb, ub, verbose, progress, store_diagnostics, diagnostics_every, precondition
+        lb, ub, update_schedule, verbose, progress, store_diagnostics,
+        diagnostics_every, precondition
     )
 end
 
@@ -1328,6 +1342,14 @@ function _fit_model(
         enabled = method.progress
     )
 
+    # Persistent across iterations so `update_schedule` can refresh a subset of batches
+    # while the Q-function still sees every batch (skipped ones keep their last draws).
+    batches_buf = Int[]
+    prev_use_mcmc = nothing
+    samples_by_batch = Vector{Matrix{T0}}(undef, length(batch_infos))
+    weights_store = Vector{Vector{Float64}}(undef, length(batch_infos))
+    ess_by_batch = fill(NaN, length(batch_infos))
+
     for iter in 1:(method.em.maxiters)
         mstep_skipped = false
         θt_curr = θ_prev isa ComponentArray ? θ_prev : ComponentArray(θ_prev, axs_free)
@@ -1339,10 +1361,15 @@ function _fit_model(
         θu_curr = inv_transform(θt_full_curr)
 
         use_mcmc = _use_mcmc_this_iter(iter, method.e_step)
-        samples_by_batch = Vector{Matrix{T0}}(undef, length(batch_infos))
-        weights_by_batch = use_mcmc ? nothing :
-            Vector{Vector{Float64}}(undef, length(batch_infos))
-        ess_by_batch = use_mcmc ? nothing : Vector{Float64}(undef, length(batch_infos))
+        weights_by_batch = use_mcmc ? nothing : weights_store
+        # Stale draws are only reusable once every batch has some and they came from the
+        # same E-step mode, so force a full refresh on iteration 1 and on the one
+        # MCEM_IS warm-up -> IS switch.
+        sched = (prev_use_mcmc === use_mcmc) ? method.update_schedule : :all
+        prev_use_mcmc = use_mcmc
+        updated = _em_batches!(
+            batches_buf, sched, length(batch_infos), iter, rng
+        )
 
         if use_mcmc
             # --- MCMC E-step (MCEM_MCMC or warm-up phase of MCEM_IS) ---
@@ -1365,7 +1392,8 @@ function _fit_model(
                 n_chunks = length(caches)
                 Threads.@threads for chunk in 1:n_chunks
                     cache_c = caches[chunk]
-                    for bi in chunk:n_chunks:length(batch_infos)
+                    for k in chunk:n_chunks:length(updated)
+                        bi = updated[k]
                         info = batch_infos[bi]
                         samples, lastp, _ = _mcem_sample_batch(
                             dm, info, θu_curr, const_cache, cache_c,
@@ -1378,7 +1406,8 @@ function _fit_model(
                     end
                 end
             else
-                for (bi, info) in enumerate(batch_infos)
+                for bi in updated
+                    info = batch_infos[bi]
                     samples, lastp, _ = _mcem_sample_batch(
                         dm, info, θu_curr, const_cache, ll_cache,
                         mcmc_es.sampler, tkwargs, batch_rngs[bi],
@@ -1414,7 +1443,8 @@ function _fit_model(
                 n_chunks = length(caches)
                 Threads.@threads for chunk in 1:n_chunks
                     cache_c = caches[chunk]
-                    for bi in chunk:n_chunks:length(batch_infos)
+                    for k in chunk:n_chunks:length(updated)
+                        bi = updated[k]
                         info = batch_infos[bi]
                         samps, log_ws, ess = _is_sample_batch(
                             dm, info, θu_curr, const_cache, cache_c,
@@ -1432,7 +1462,8 @@ function _fit_model(
                     end
                 end
             else
-                for (bi, info) in enumerate(batch_infos)
+                for bi in updated
+                    info = batch_infos[bi]
                     samps, log_ws, ess = _is_sample_batch(
                         dm, info, θu_curr, const_cache, ll_cache_single,
                         batch_rngs[bi], re_names, re_types, is_es, proposal_blocks[bi]
@@ -1706,7 +1737,7 @@ function _fit_model(
         ),
         NamedTuple()
     )
-    last_b_candidates = @isdefined(samples_by_batch) ? samples_by_batch : nothing
+    last_b_candidates = samples_by_batch
     eb_modes = store_eb_modes ?
         _compute_bstars(
             dm, θ_hat_u, constants_re, ll_cache, method.ebe, rng;
