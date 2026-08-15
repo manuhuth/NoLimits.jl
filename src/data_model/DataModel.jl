@@ -251,13 +251,74 @@ function _check_missing(col, name::Symbol)
         error("Column $(name) contains missing values. Remove/replace missings before constructing DataModel.")
 end
 
+# Non-finite entries in a numeric column silently turn the whole likelihood into
+# `Inf`/`NaN` many layers later, so they are rejected where the row number is still known.
+function _check_finite(col, name::Symbol)
+    eltype(col) <: Union{Missing, Real} || return nothing
+    bad = findfirst(x -> !ismissing(x) && !isfinite(x), col)
+    bad === nothing && return nothing
+    error("Column $(name) contains the non-finite value $(col[bad]) in row $(bad). Remove or replace non-finite values before constructing DataModel.")
+end
+
+function _validate_re_group_columns(model, df)
+    re_groups = get_re_groups(model.random.random)
+    for re in get_re_names(model.random.random)
+        col = getfield(re_groups, re)
+        hasproperty(df, col) ||
+            error("RandomEffect $(re) is grouped by column $(col), which is not present in the DataFrame. Add the column or change `column=` in @randomEffects.")
+    end
+    return nothing
+end
+
+# Row order matters for sequential (HMM) outcomes and duplicate timepoints double-count
+# an observation, so both are surfaced -- as warnings, since neither is always a mistake.
+function _warn_time_layout(df, config::DataModelConfig)
+    ids = _get_col(df, config.primary_id)
+    tvals = _get_col(df, config.time_col)
+    unsorted = String[]
+    dups = String[]
+    for (id, rows) in pairs(_group_row_indices(ids))
+        ts = tvals[rows]
+        issorted(ts) || push!(unsorted, string(id))
+        length(unique(ts)) == length(ts) || push!(dups, string(id))
+    end
+    isempty(unsorted) ||
+        @warn "Rows are not sorted by $(config.time_col) within $(config.primary_id) $(join(string.(unsorted[1:min(end, 5)]), ", ")). Sequential outcomes (HMMs) and dynamic covariates are interpreted in row order."
+    isempty(dups) ||
+        @warn "Duplicate $(config.time_col) values within $(config.primary_id) $(join(string.(dups[1:min(end, 5)]), ", ")). Repeated timepoints are counted as independent observations in the likelihood."
+    return nothing
+end
+
+function _group_row_indices(ids)
+    out = Dict{Any, Vector{Int}}()
+    for (i, id) in enumerate(ids)
+        push!(get!(out, id, Int[]), i)
+    end
+    return out
+end
+
 function _validate_schema(model, df, config::DataModelConfig)
     _require_col(df, config.primary_id, "primary id")
     _require_col(df, config.time_col, "time")
     _require_cols(df, config.obs_cols)
+    _validate_re_group_columns(model, df)
+
+    nrow(df) == 0 &&
+        error("DataModel received a DataFrame with 0 rows. At least one observation is required.")
 
     _check_missing(_get_col(df, config.time_col), config.time_col)
     _check_missing(_get_col(df, config.primary_id), config.primary_id)
+    tcol = _get_col(df, config.time_col)
+    eltype(tcol) <: Real ||
+        error("Time column $(config.time_col) must contain numeric values, got eltype $(eltype(tcol)).")
+    _check_finite(tcol, config.time_col)
+    for c in config.obs_cols
+        _check_finite(_get_col(df, c), c)
+    end
+    for c in model.covariates.covariates.flat_names
+        hasproperty(df, c) && _check_finite(_get_col(df, c), c)
+    end
+    _warn_time_layout(df, config)
 
     if config.evid_col !== nothing
         _require_col(df, config.evid_col, "EVID")
@@ -281,8 +342,16 @@ function _validate_schema(model, df, config::DataModelConfig)
         end
     end
 
-    # Observable columns may contain missings on observation rows.
-    # Likelihood and diagnostics paths decide how to handle them.
+    # Observable columns may contain missings on observation rows, but a frame with no
+    # observed value anywhere yields an empty likelihood that still "converges" (#208, #212).
+    obs_rows = config.evid_col === nothing ? Colon() :
+               findall(==(0), _get_col(df, config.evid_col))
+    if !any(c -> any(!ismissing, _get_col(df, c)[obs_rows]), config.obs_cols)
+        error("No observed values found: every row of $(join(string.(config.obs_cols), ", ")) is missing" *
+              (config.evid_col === nothing ? "" :
+               " or excluded by $(config.evid_col) != 0") *
+              ". At least one observation is required to fit or simulate.")
+    end
 
     # Check that obs_cols from @formulas exist in the data.
     formula_obs = get_formulas_meta(model.formulas.formulas).obs_names

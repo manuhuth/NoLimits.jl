@@ -322,3 +322,88 @@ end
     @test obs.outcome_1_current isa ContinuousTimeDiscreteStatesHMM
     @test all.outcome_1_current isa ContinuousTimeDiscreteStatesHMM
 end
+
+@testset "Model-build symbol validation" begin
+    mk(body) = Core.eval(
+        @__MODULE__, Expr(:macrocall, Symbol("@Model"), LineNumberNode(0),
+            body))
+    # Undefined symbol in @formulas / @randomEffects.
+    @test_throws ErrorException mk(quote
+        @fixedEffects begin
+            alpha = RealNumber(1.0)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @formulas begin
+            y ~ Normal(alpah, 1.0)
+        end
+    end)
+    @test_throws ErrorException mk(quote
+        @fixedEffects begin
+            a = RealNumber(1.0)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            eta = RandomEffect(Normal(a, xi); column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(a + eta, 1.0)
+        end
+    end)
+    # `=` instead of `~` leaves the model without any observation.
+    @test_throws ErrorException mk(quote
+        @fixedEffects begin
+            a = RealNumber(1.0)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @formulas begin
+            y = Normal(a, 1.0)
+        end
+    end)
+    # `t` is reserved for the time variable.
+    @test_throws ErrorException mk(quote
+        @fixedEffects begin
+            t = RealNumber(1.0)
+        end
+        @covariates begin
+            tt = Covariate()
+        end
+        @formulas begin
+            y ~ Normal(t, 1.0)
+        end
+    end)
+    # Constant covariates may not be called like functions.
+    @test_throws ErrorException mk(quote
+        @fixedEffects begin
+            a = RealNumber(1.0)
+        end
+        @covariates begin
+            t = Covariate()
+            x = ConstantCovariateVector([:Age]; constant_on = :ID)
+        end
+        @formulas begin
+            y ~ Normal(x(t), 1.0)
+        end
+    end)
+    # Duplicate random-effect names.
+    @test_throws LoadError mk(quote
+        @fixedEffects begin
+            a = RealNumber(1.0)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            eta = RandomEffect(Normal(0.0, 1.0); column = :ID)
+            eta = RandomEffect(Normal(0.0, 1.0); column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(a + eta, 1.0)
+        end
+    end)
+end
