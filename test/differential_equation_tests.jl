@@ -166,39 +166,3 @@ end
     valsη, _, _ = SciMLStructures.canonicalize(SciMLStructures.Tunable(), pη)
     @test length(valsη) == length(η)
 end
-
-@testset "DifferentialEquation with macros" begin
-    # Fixed effects, helpers, and preDE defined via macros.
-    @helpers begin
-        sat(u) = u / (1 + abs(u))
-    end
-    fe = @fixedEffects begin
-        a = RealNumber(2.0)
-        b = RealNumber(3.0)
-    end
-    prede = @preDifferentialEquation begin
-        pre = a + b
-    end
-    de = @DifferentialEquation begin
-        D(x1) ~ sat(x1) + pre
-    end
-    fe0 = get_θ0_untransformed(fe)
-    helper_functions = @helpers begin
-        sat(u) = u / (1 + abs(u))
-    end
-    pre = get_prede_builder(prede)(
-        fe0, ComponentArray(), NamedTuple(), NamedTuple(), helper_functions
-    )
-    p = DEContext(
-        fe0,
-        ComponentArray(),
-        NamedTuple(),
-        NamedTuple(),
-        helper_functions,
-        NamedTuple(),
-        pre
-    )
-    pc = get_de_compiler(de)(p)
-    du = similar([0.5])
-    get_de_f!(de)(du, [0.5], pc, 0.0)
-end

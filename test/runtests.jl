@@ -20,16 +20,14 @@ using Test
 # under ~9 min wall. The four largest files (aqua ambiguities, laplace, saem,
 # closed_form_ode) are physically split into part-1/part-2 files whose halves
 # sit in different groups — no single file may exceed ~5 min or it becomes the
-# wall-clock floor. Keep each group's opening line as `["...` — parallel.sh and
-# the marvin sbatch derive the group count from that pattern.
+# wall-clock floor. Keep each group's opening line as a bare `[` or `["...` —
+# parallel.sh and the marvin sbatch count groups via `^\s+\[($|")`.
 const TEST_GROUPS = [
     # ── G1: Aqua ambiguity scan + tiny unit/AD ───────────────────────────────
     [
         "aqua_ambiguities_tests.jl",
         "helpers_tests.jl",
         "parameters_tests.jl",
-        "ad_softtree.jl",
-        "ad_flow.jl",
         "softtrees_tests.jl",
         "ad_random_effects.jl",
     ],
@@ -39,10 +37,7 @@ const TEST_GROUPS = [
     # ── G3: AD + model-layer units + closed-form part 1 ──────────────────────
     [
         "simplechains_nn_tests.jl",
-        "ad_fixed_prede.jl",
-        "ad_differential_equation.jl",
-        "ad_ode_solve.jl",
-        "ad_model_full.jl",
+        "ad_tests.jl",
         "transform_tests.jl",
         "fixed_effects_tests.jl",
         "splines_tests.jl",
@@ -65,11 +60,7 @@ const TEST_GROUPS = [
         "data_model_tests.jl",
         "identifiability_tests.jl",
         "data_model_ode_tests.jl",
-        "summaries_data_model_tests.jl",
-        "summaries_model_tests.jl",
-        "summaries_fit_uq_tests.jl",
-        "summaries_parameter_comparison_tests.jl",
-        "compact_show_tests.jl",
+        "summaries_tests.jl",
         "data_simulation_tests.jl",
         "ode_callbacks_tests.jl",
         "crossing_tests.jl",
@@ -125,7 +116,6 @@ const TEST_GROUPS = [
     [
         "saem_mh_kernel_tests.jl",
         "saem_var_lb_tests.jl",
-        "saem_multichain_tests.jl",
     ],
     # ── G18-G22: quadrature / multistart / MCEM / UQ ─────────────────────────
     ["estimation_ghquadrature_tests.jl"],
@@ -135,7 +125,6 @@ const TEST_GROUPS = [
     ],
     [
         "estimation_mcem_tests.jl",
-        "estimation_mcem_is_tests.jl",
         "extra_objective_tests.jl",
     ],
     ["uq_tests.jl"],
@@ -159,7 +148,6 @@ const TEST_GROUPS = [
         "lie_psd_matrix_tests.jl",
         "logabsdetjac_tests.jl",
         "enzyme_compat_proxy_tests.jl",
-        "enzyme_smoke_tests.jl",
     ],
     # ── G25: RE-plotting part 2 + plotting integration ───────────────────────
     [

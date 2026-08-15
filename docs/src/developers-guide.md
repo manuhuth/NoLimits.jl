@@ -98,15 +98,15 @@ not free within a process, so running all files in one process accumulates compi
 exhausts memory; exiting between batches caps per-process memory. The batch count can be
 overridden with the `NL_BATCHES` environment variable.
 
-To iterate on a single area, run an individual test file directly:
+To iterate on a single area, run an individual test file through the test sandbox:
 
 ```bash
-julia --project test/estimation_laplace_tests.jl
+NL_TEST_FILES="estimation_laplace_tests.jl" julia --project -e 'using Pkg; Pkg.test()'
 ```
 
 Automatic-differentiation correctness is covered by the `ad_*.jl` files, which check
 gradients and Hessians of the likelihood and random-effects terms. When adding a feature,
-add or extend the corresponding test file and keep it wired into the `TEST_FILES` list in
+add or extend the corresponding test file and keep it wired into the `TEST_GROUPS` list in
 `test/runtests.jl`.
 
 ## Documentation Workflow

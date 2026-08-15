@@ -15,56 +15,15 @@ const SAEM_FAST = (maxiters = 2, t0 = 1, kappa = 0.6, mcmc_steps = 1, q_store_ma
 # the halves run in different shards; the HMM/LTS fixtures moved with part 2).
 
 # ── shared DataModels (built once, reused across most testsets) ───────────────
-# Small: 2 individuals — used by most basic SAEM testsets
-const _SAEM_DF_S = DataFrame(
-    ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [0.1, 0.2, 0.0, -0.1]
-)
-const _SAEM_DM_S = DataModel(
-    @Model(
-        begin
-            @covariates begin
-                t = Covariate()
-            end
-            @fixedEffects begin
-                a = RealNumber(0.2)
-                σ = RealNumber(0.5, scale = :log)
-            end
-            @randomEffects begin
-                η = RandomEffect(Normal(0.0, 1.0); column = :ID)
-            end
-            @formulas begin
-                y ~ Normal(a + η, σ)
-            end
-        end
-    ),
-    _SAEM_DF_S; primary_id = :ID, time_col = :t
-)
+# Small: 2 individuals — used by most basic SAEM testsets (fixture model + df)
+const _SAEM_DM_S = fx_tiny_re_dm()
 
-# Medium: 4 individuals — used by threaded/minibatch/optimizer testsets
+# Medium: 4 individuals — used by threaded/minibatch smoke fits (init-insensitive)
 const _SAEM_DF_M = DataFrame(
     ID = [:A, :A, :B, :B, :C, :C, :D, :D], t = repeat([0.0, 1.0], 4),
     y = [0.1, 0.2, 0.0, -0.1, 0.05, 0.0, -0.05, 0.1]
 )
-const _SAEM_DM_M = DataModel(
-    @Model(
-        begin
-            @covariates begin
-                t = Covariate()
-            end
-            @fixedEffects begin
-                a = RealNumber(0.1)
-                σ = RealNumber(0.4, scale = :log)
-            end
-            @randomEffects begin
-                η = RandomEffect(Normal(0.0, 1.0); column = :ID)
-            end
-            @formulas begin
-                y ~ Normal(a + η, σ)
-            end
-        end
-    ),
-    _SAEM_DF_M; primary_id = :ID, time_col = :t
-)
+const _SAEM_DM_M = DataModel(fx_tiny_re_model(), _SAEM_DF_M; primary_id = :ID, time_col = :t)
 
 # Diagonal-MvNormal RE with parameterized means/variances — shared by the
 # builtin_stats diagonal testsets (closed-form fit, variance-target unit test,
@@ -959,44 +918,9 @@ end
     @test res isa FitResult
 end
 
-@testset "SAEM builtin_stats auto detects gaussian_re (scalar RE)" begin
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-
-        @fixedEffects begin
-            a = RealNumber(0.1)
-            σ = RealNumber(0.4, scale = :log)
-            τ = RealNumber(0.3, scale = :log)
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(a, τ); column = :ID)
-        end
-
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [:A, :A, :B, :B],
-        t = [0.0, 1.0, 0.0, 1.0],
-        y = [0.1, 0.2, 0.0, -0.1]
-    )
-
-    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    auto_cfg = NoLimits._saem_autodetect_gaussian_re(
-        dm, NoLimits.get_names(model.fixed.fixed)
-    )
-    @test auto_cfg !== nothing
-    @test auto_cfg.re_cov_params == (; η = :τ)
-    @test auto_cfg.re_mean_params == (; η = :a)
-    @test auto_cfg.resid_var_param == :σ
-
+@testset "SAEM builtin_stats = :auto fit smoke (MvNormal diagonal + means)" begin
     res = fit_model(
-        dm,
+        _SAEM_DIAG_DM,
         NoLimits.SAEM(;
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             q_store_max = 2,
@@ -1007,27 +931,6 @@ end
     @test res isa FitResult
 end
 
-@testset "SAEM builtin_stats auto detects gaussian_re (MvNormal diagonal + means)" begin
-    dm = _SAEM_DIAG_DM
-    auto_cfg = NoLimits._saem_autodetect_gaussian_re(
-        dm, NoLimits.get_names(_SAEM_DIAG_MODEL.fixed.fixed)
-    )
-    @test auto_cfg !== nothing
-    @test auto_cfg.re_cov_params == (; η = (:ω1, :ω2))
-    @test auto_cfg.re_mean_params == (; η = (:μ1, :μ2))
-    @test auto_cfg.resid_var_param == :σ
-
-    res = fit_model(
-        dm,
-        NoLimits.SAEM(;
-            sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-            q_store_max = 2,
-            maxiters = 2,
-            builtin_stats = :auto
-        )
-    )
-    @test res isa FitResult
-end
-
-# NOTE: "auto detects MvNormal symbol mean with fixed diagonal expression" lives in
-# estimation_saem_autodetect_tests.jl (identical model + assertions; was duplicated here).
+# NOTE: the _saem_autodetect_gaussian_re config assertions (scalar RE with parameterized
+# mean/sd, MvNormal diagonal + means, MvNormal symbol mean with fixed diagonal expression)
+# live in estimation_saem_autodetect_tests.jl.

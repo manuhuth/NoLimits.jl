@@ -11,6 +11,31 @@ using OptimizationOptimJL
 # Shared MLE/MAP testsets: models carry priors (MLE ignores them, MAP requires them).
 const MLE_MAP_METHODS = (("MLE", NoLimits.MLE()), ("MAP", NoLimits.MAP()))
 
+# Shared exp-mean model; one @Model serves several testsets (compile-bound suite).
+const MLE_EXP_MODEL = @Model begin
+    @covariates begin
+        t = Covariate()
+    end
+
+    @fixedEffects begin
+        a = RealNumber(0.1; prior = Normal(0.0, 1.0))
+        σ = RealNumber(0.5, scale = :log, prior = LogNormal(0.0, 0.5))
+    end
+
+    @formulas begin
+        y ~ Normal(exp(a), σ)
+    end
+end
+
+function _mle_dm_basic()
+    df = DataFrame(
+        ID = [1, 1, 1],
+        t = [0.0, 1.0, 2.0],
+        y = [0.1, 0.12, 0.11]
+    )
+    return DataModel(MLE_EXP_MODEL, df; primary_id = :ID, time_col = :t)
+end
+
 @testset "MLE non-ODE" begin
     res = fx_mle()                        # shared no-RE MLE fit
     @test res isa FitResult
@@ -132,28 +157,13 @@ end
 end
 
 let
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-
-        @fixedEffects begin
-            a = RealNumber(0.2, prior = Normal(0.0, 1.0))
-            σ = RealNumber(0.3, scale = :log, prior = LogNormal(0.0, 0.5))
-        end
-
-        @formulas begin
-            y ~ Normal(exp(a), σ)
-        end
-    end
-
     df = DataFrame(
         ID = [1, 1],
         t = [0.0, 1.0],
         y = [1.0, 1.05]
     )
 
-    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    dm = DataModel(MLE_EXP_MODEL, df; primary_id = :ID, time_col = :t)
 
     for (label, method) in MLE_MAP_METHODS
         @testset "$label requires a free fixed effect" begin
@@ -235,28 +245,7 @@ let
 end
 
 let
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-
-        @fixedEffects begin
-            a = RealNumber(0.1; prior = Normal(0.0, 1.0))
-            σ = RealNumber(0.5, scale = :log, prior = LogNormal(0.0, 0.5))
-        end
-
-        @formulas begin
-            y ~ Normal(exp(a), σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [1, 1, 1],
-        t = [0.0, 1.0, 2.0],
-        y = [0.1, 0.12, 0.11]
-    )
-
-    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    dm = _mle_dm_basic()
 
     for (label, method) in MLE_MAP_METHODS
         @testset "$label constants" begin
@@ -282,28 +271,7 @@ let
 end
 
 @testset "MLE penalties" begin
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-
-        @fixedEffects begin
-            a = RealNumber(0.1)
-            σ = RealNumber(0.5, scale = :log)
-        end
-
-        @formulas begin
-            y ~ Normal(exp(a), σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [1, 1, 1],
-        t = [0.0, 1.0, 2.0],
-        y = [0.1, 0.12, 0.11]
-    )
-
-    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    dm = _mle_dm_basic()
     res_no_penalty = fit_model(dm, NoLimits.MLE())
     res = fit_model(dm, NoLimits.MLE(); penalty = (a = 100.0,))
 
@@ -359,28 +327,7 @@ end
 end
 
 @testset "MLE uses optim_kwargs" begin
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-
-        @fixedEffects begin
-            a = RealNumber(0.1)
-            σ = RealNumber(0.5, scale = :log)
-        end
-
-        @formulas begin
-            y ~ Normal(exp(a), σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [1, 1, 1],
-        t = [0.0, 1.0, 2.0],
-        y = [0.1, 0.12, 0.11]
-    )
-
-    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    dm = _mle_dm_basic()
     method = NoLimits.MLE(optim_kwargs = (; iterations = 1))
     res = fit_model(dm, method)
 
@@ -388,32 +335,6 @@ end
     stats = res.result.solution.stats
     @test hasproperty(stats, :iterations)
     @test stats.iterations <= 1
-end
-
-function _mle_dm_basic()
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-
-        @fixedEffects begin
-            a = RealNumber(0.1)
-            σ = RealNumber(0.5, scale = :log)
-        end
-
-        @formulas begin
-            y ~ Normal(exp(a), σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [1, 1, 1],
-        t = [0.0, 1.0, 2.0],
-        y = [0.1, 0.12, 0.11]
-    )
-
-    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    return dm
 end
 
 @testset "MLE accepts lb-only user bounds" begin
@@ -573,19 +494,22 @@ let
     end
 end
 
-@testset "fit_model starting-value validation" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(1.0)
-            s = RealNumber(0.5, scale = :log)
-        end
-        @covariates begin
-            t = Covariate()
-        end
-        @formulas begin
-            y ~ Normal(a, s)
-        end
+# Shared by the two validation testsets below; per-fit kwargs never mutate the model.
+const MLE_VALIDATION_MODEL = @Model begin
+    @fixedEffects begin
+        a = RealNumber(1.0)
+        s = RealNumber(0.5, scale = :log)
     end
+    @covariates begin
+        t = Covariate()
+    end
+    @formulas begin
+        y ~ Normal(a, s)
+    end
+end
+
+@testset "fit_model starting-value validation" begin
+    model = MLE_VALIDATION_MODEL
     df = DataFrame(ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0], y = [1.0, 1.1, 0.9, 1.0])
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
 
@@ -611,18 +535,7 @@ end
 end
 
 @testset "fit_model option validation" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(0.2)
-            s = RealNumber(0.3, scale = :log)
-        end
-        @covariates begin
-            t = Covariate()
-        end
-        @formulas begin
-            y ~ Normal(a, s)
-        end
-    end
+    model = MLE_VALIDATION_MODEL
     dm = DataModel(
         model, DataFrame(ID = [1, 2], t = [0.0, 0.0], y = [0.1, 0.2]);
         primary_id = :ID, time_col = :t

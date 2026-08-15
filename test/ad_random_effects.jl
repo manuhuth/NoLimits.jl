@@ -6,6 +6,9 @@ using ComponentArrays
 using Distributions
 using Lux
 using LinearAlgebra
+using Bijectors
+using FunctionChains
+using Optimisers
 
 @testset "RandomEffects AD" begin
     # Distribution creation + logpdf are AD-compatible across backends.
@@ -88,44 +91,14 @@ using LinearAlgebra
     @test isapprox(hess, hess'; rtol = 1.0e-6, atol = 1.0e-8)
 end
 
-@testset "RandomEffects value AD" begin
-    # AD wrt random-effects values.
-    fe = @fixedEffects begin
-        μ = RealNumber(0.2)
-        σ = RealNumber(0.7, scale = :log, lower = 1.0e-12)
-        α = RealNumber(2.0)
-        β = RealNumber(1.3)
-    end
-    fixed_effects0 = get_θ0_transformed(fe)
-    inverse_transform = get_inverse_transform(fe)
-    model_funs = get_model_funs(fe)
-    re = @randomEffects begin
-        a = RandomEffect(Normal(μ, σ); column = :id)
-        b = RandomEffect(Gamma(α, β); column = :id)
-    end
-    create = create_random_effect_distribution(re)
-    logpdf_fn = get_re_logpdf(re)
-    dists = create(
-        inverse_transform(fixed_effects0), NamedTuple(), model_funs, NamedTuple()
-    )
-
-    f(rv) = logpdf_fn(dists, rv)
-    rv0 = ComponentArray(a = 0.1, b = 1.2)
-
-    val_fwd, grad_fwd = value_and_gradient(f, AutoForwardDiff(), rv0)
-
-    hess = ForwardDiff.hessian(f, rv0)
-    @test size(hess, 1) == length(rv0)
-    @test size(hess, 2) == length(rv0)
-    @test isapprox(hess, hess'; rtol = 1.0e-6, atol = 1.0e-8)
-end
-
 @testset "RandomEffects value AD (large)" begin
-    # Larger value-AD example with MVN and NPF.
+    # Value-AD across MVN, NPF, Normal, and Gamma random effects.
     fe = @fixedEffects begin
         μ = RealVector([0.1, -0.2])
         Ω = RealPSDMatrix(Matrix(I, 2, 2), scale = :cholesky)
         σ = RealNumber(0.6, scale = :log, lower = 1.0e-12)
+        α = RealNumber(2.0)
+        β = RealNumber(1.3)
         ψ = NPFParameter(2, 2, seed = 1, calculate_se = false)
     end
     fixed_effects0 = get_θ0_transformed(fe)
@@ -135,6 +108,7 @@ end
         mv = RandomEffect(MvNormal(μ, Ω); column = :id)
         flow = RandomEffect(NormalizingPlanarFlow(ψ); column = :id)
         uni = RandomEffect(Normal(μ[1], σ); column = :id)
+        gam = RandomEffect(Gamma(α, β); column = :id)
     end
     create = create_random_effect_distribution(re)
     logpdf_fn = get_re_logpdf(re)
@@ -142,7 +116,7 @@ end
         inverse_transform(fixed_effects0), NamedTuple(), model_funs, NamedTuple()
     )
 
-    rv0 = ComponentArray(mv = zeros(2), flow = rand(dists.flow), uni = 0.1)
+    rv0 = ComponentArray(mv = zeros(2), flow = rand(dists.flow), uni = 0.1, gam = 1.2)
     f(rv::ComponentArray) = logpdf_fn(dists, rv)
 
     val_fwd, grad_fwd = value_and_gradient(f, AutoForwardDiff(), rv0)
@@ -151,4 +125,55 @@ end
     @test size(hess, 1) == length(rv0)
     @test size(hess, 2) == length(rv0)
     @test isapprox(hess, hess'; rtol = 1.0e-6, atol = 1.0e-8)
+end
+
+@testset "NormalizingPlanarFlow AD" begin
+    # Compare gradients of logpdf across AD backends.
+    n = 2
+    flow = NormalizingPlanarFlow(n, 2)
+    x = [0.1, -0.2]
+
+    f(xv) = logpdf(flow, xv)
+
+    val_fwd, grad_fwd = value_and_gradient(f, AutoForwardDiff(), x)
+    @test length(grad_fwd) == length(x)
+
+    # ForwardDiff through flow parameters (theta).
+    q0 = MvNormal(zeros(n), I)
+    Ls = [PlanarLayer(n, x -> x) for _ in 1:2]
+    ts = FunctionChains.fchain(Ls)
+    θ, rebuild = Optimisers.destructure(ts)
+    gθ = ForwardDiff.gradient(θv -> logpdf(NormalizingPlanarFlow(θv, rebuild, q0), x), θ)
+    @test length(gθ) == length(θ)
+
+    # Custom base distribution: MvNormal with non-zero mean and non-identity covariance
+    q0_custom = MvNormal([0.5, -0.5], [2.0 0.3; 0.3 1.5])
+    gθ_custom = ForwardDiff.gradient(
+        θv -> logpdf(NormalizingPlanarFlow(θv, rebuild, q0_custom), x), θ
+    )
+    @test length(gθ_custom) == length(θ)
+    @test all(isfinite, gθ_custom)
+
+    # Gradient w.r.t. observation x with custom MvNormal base
+    flow_custom = NormalizingPlanarFlow(n, 2; base_dist = q0_custom)
+    gx_custom = ForwardDiff.gradient(xv -> logpdf(flow_custom, xv), x)
+    @test length(gx_custom) == length(x)
+    @test all(isfinite, gx_custom)
+
+    # Custom base changes the logpdf values compared to standard base
+    @test logpdf(flow_custom, x) != logpdf(NormalizingPlanarFlow(n, 2), x)
+
+    # MvTDist base: ForwardDiff through theta (passthrough _adapt_base_dist)
+    q0_t = MvTDist(3, zeros(n), Matrix{Float64}(I, n, n))
+    gθ_t = ForwardDiff.gradient(
+        θv -> logpdf(NormalizingPlanarFlow(θv, rebuild, q0_t), x), θ
+    )
+    @test length(gθ_t) == length(θ)
+    @test all(isfinite, gθ_t)
+
+    # MvTDist base: ForwardDiff through x
+    flow_t = NormalizingPlanarFlow(n, 2; base_dist = q0_t)
+    gx_t = ForwardDiff.gradient(xv -> logpdf(flow_t, xv), x)
+    @test length(gx_t) == length(x)
+    @test all(isfinite, gx_t)
 end

@@ -247,27 +247,30 @@ end
     @test ind1.series.vary.z == [1.0, 1.2]
 end
 
-@testset "DataModel with events (EVID/AMT/RATE/CMT)" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(1.0)
-            σ = RealNumber(0.5)
-        end
-
-        @covariates begin
-            t = Covariate()
-            x = ConstantCovariateVector([:Age])
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column = :ID)
-        end
-
-        @formulas begin
-            lin = a + x.Age + η
-            y ~ Normal(lin, σ)
-        end
+# Shared across the events and validation-errors testsets below.
+const dm_model_age_re = @Model begin
+    @fixedEffects begin
+        a = RealNumber(1.0)
+        σ = RealNumber(0.5)
     end
+
+    @covariates begin
+        t = Covariate()
+        x = ConstantCovariateVector([:Age])
+    end
+
+    @randomEffects begin
+        η = RandomEffect(Normal(0.0, 1.0); column = :ID)
+    end
+
+    @formulas begin
+        lin = a + x.Age + η
+        y ~ Normal(lin, σ)
+    end
+end
+
+@testset "DataModel with events (EVID/AMT/RATE/CMT)" begin
+    model = dm_model_age_re
 
     df = DataFrame(
         ID = [1, 1, 1, 2, 2],
@@ -304,35 +307,37 @@ end
     )
 end
 
-@testset "DataModel serialization config (EnsembleThreads)" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(1.0)
-            σ = RealNumber(0.5)
-        end
-
-        @covariates begin
-            t = Covariate()
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column = :ID)
-        end
-
-        @formulas begin
-            lin = a + η
-            y ~ Normal(lin, σ)
-        end
+# Shared valid model + df; only the DataModel(...) kwargs differ across the
+# serialization / primary_id / obs_cols testsets that use them.
+const dm_model_lin_eta = @Model begin
+    @fixedEffects begin
+        a = RealNumber(1.0)
+        σ = RealNumber(0.5)
     end
 
-    df = DataFrame(
-        ID = [1, 1],
-        t = [0.0, 1.0],
-        y = [1.0, 1.1]
-    )
+    @covariates begin
+        t = Covariate()
+    end
 
+    @randomEffects begin
+        η = RandomEffect(Normal(0.0, 1.0); column = :ID)
+    end
+
+    @formulas begin
+        lin = a + η
+        y ~ Normal(lin, σ)
+    end
+end
+
+const dm_df_two_rows = DataFrame(
+    ID = [1, 1],
+    t = [0.0, 1.0],
+    y = [1.0, 1.1]
+)
+
+@testset "DataModel serialization config (EnsembleThreads)" begin
     dm = DataModel(
-        model, df;
+        dm_model_lin_eta, dm_df_two_rows;
         primary_id = :ID,
         time_col = :t,
         serialization = EnsembleThreads()
@@ -342,26 +347,7 @@ end
 end
 
 @testset "DataModel validation errors" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(1.0)
-            σ = RealNumber(0.5)
-        end
-
-        @covariates begin
-            t = Covariate()
-            x = ConstantCovariateVector([:Age])
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column = :ID)
-        end
-
-        @formulas begin
-            lin = a + x.Age + η
-            y ~ Normal(lin, σ)
-        end
-    end
+    model = dm_model_age_re
 
     df_missing_time = DataFrame(
         ID = [1, 1],
@@ -387,6 +373,22 @@ end
     )
 end
 
+# Shared no-RE model; also reused by the mixed-type primary_id testset below.
+const dm_model_no_re = @Model begin
+    @covariates begin
+        t = Covariate()
+    end
+
+    @fixedEffects begin
+        a = RealNumber(1.0)
+        σ = RealNumber(0.5)
+    end
+
+    @formulas begin
+        y ~ Normal(a, σ)
+    end
+end
+
 @testset "DataModel time_col covariate validation" begin
     model_missing = @Model begin
         @fixedEffects begin
@@ -399,11 +401,7 @@ end
         end
     end
 
-    df = DataFrame(
-        ID = [1, 1],
-        t = [0.0, 1.0],
-        y = [1.0, 1.1]
-    )
+    df = dm_df_two_rows
 
     @test_throws ErrorException DataModel(
         model_missing, df; primary_id = :ID, time_col = :t
@@ -426,22 +424,7 @@ end
 
     @test_throws ErrorException DataModel(model_bad, df; primary_id = :ID, time_col = :t)
 
-    model_ok = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-
-        @fixedEffects begin
-            a = RealNumber(1.0)
-            σ = RealNumber(0.5)
-        end
-
-        @formulas begin
-            y ~ Normal(a, σ)
-        end
-    end
-
-    dm = DataModel(model_ok, df; primary_id = :ID, time_col = :t)
+    dm = DataModel(dm_model_no_re, df; primary_id = :ID, time_col = :t)
     @test dm isa DataModel
 end
 
@@ -497,29 +480,32 @@ end
     end
 end
 
-@testset "DataModel with three RE grouping columns (valid)" begin
-    model = @Model begin
-        @fixedEffects begin
-            σ = RealNumber(0.5)
-        end
-
-        @covariates begin
-            t = Covariate()
-            c1 = ConstantCovariate(; constant_on = :ID)
-            c2 = ConstantCovariate(; constant_on = :SITE)
-            c3 = ConstantCovariate(; constant_on = :YEAR)
-        end
-
-        @randomEffects begin
-            η_id = RandomEffect(Normal(c1, 1.0); column = :ID)
-            η_site = RandomEffect(Normal(c2, 1.0); column = :SITE)
-            η_year = RandomEffect(Normal(c3, 1.0); column = :YEAR)
-        end
-
-        @formulas begin
-            y ~ Normal(η_id + η_site + η_year, σ)
-        end
+# Shared by the valid and invalid three-RE-grouping testsets below.
+const dm_model_three_re = @Model begin
+    @fixedEffects begin
+        σ = RealNumber(0.5)
     end
+
+    @covariates begin
+        t = Covariate()
+        c1 = ConstantCovariate(; constant_on = :ID)
+        c2 = ConstantCovariate(; constant_on = :SITE)
+        c3 = ConstantCovariate(; constant_on = :YEAR)
+    end
+
+    @randomEffects begin
+        η_id = RandomEffect(Normal(c1, 1.0); column = :ID)
+        η_site = RandomEffect(Normal(c2, 1.0); column = :SITE)
+        η_year = RandomEffect(Normal(c3, 1.0); column = :YEAR)
+    end
+
+    @formulas begin
+        y ~ Normal(η_id + η_site + η_year, σ)
+    end
+end
+
+@testset "DataModel with three RE grouping columns (valid)" begin
+    model = dm_model_three_re
 
     df = DataFrame(
         ID = [1, 1, 2, 2],
@@ -540,28 +526,7 @@ end
 end
 
 @testset "DataModel with three RE grouping columns (invalid)" begin
-    model = @Model begin
-        @fixedEffects begin
-            σ = RealNumber(0.5)
-        end
-
-        @covariates begin
-            t = Covariate()
-            c1 = ConstantCovariate(; constant_on = :ID)
-            c2 = ConstantCovariate(; constant_on = :SITE)
-            c3 = ConstantCovariate(; constant_on = :YEAR)
-        end
-
-        @randomEffects begin
-            η_id = RandomEffect(Normal(c1, 1.0); column = :ID)
-            η_site = RandomEffect(Normal(c2, 1.0); column = :SITE)
-            η_year = RandomEffect(Normal(c3, 1.0); column = :YEAR)
-        end
-
-        @formulas begin
-            y ~ Normal(η_id + η_site + η_year, σ)
-        end
-    end
+    model = dm_model_three_re
 
     df_bad = DataFrame(
         ID = [1, 1, 2, 2],
@@ -785,26 +750,29 @@ end
     @test dm isa DataModel
 end
 
-@testset "DataModel errors when year covariate varies within YEAR group" begin
-    model = @Model begin
-        @fixedEffects begin
-            σ = RealNumber(0.5)
-        end
-
-        @covariates begin
-            t = Covariate()
-            c_year = ConstantCovariate(; constant_on = :YEAR)
-        end
-
-        @randomEffects begin
-            η_id = RandomEffect(Normal(0.0, 1.0); column = :ID)
-            η_year = RandomEffect(Normal(c_year, 1.0); column = :YEAR)
-        end
-
-        @formulas begin
-            y ~ Normal(η_id + η_year, σ)
-        end
+# Shared by the two c_year-inconsistency testsets below.
+const dm_model_cyear_re = @Model begin
+    @fixedEffects begin
+        σ = RealNumber(0.5)
     end
+
+    @covariates begin
+        t = Covariate()
+        c_year = ConstantCovariate(; constant_on = :YEAR)
+    end
+
+    @randomEffects begin
+        η_id = RandomEffect(Normal(0.0, 1.0); column = :ID)
+        η_year = RandomEffect(Normal(c_year, 1.0); column = :YEAR)
+    end
+
+    @formulas begin
+        y ~ Normal(η_id + η_year, σ)
+    end
+end
+
+@testset "DataModel errors when year covariate varies within YEAR group" begin
+    model = dm_model_cyear_re
 
     # YEAR=2020 appears with two different c_year values.
     df_bad = DataFrame(
@@ -851,25 +819,7 @@ end
 end
 
 @testset "DataModel errors when individual spans years and YEAR covariate is inconsistent" begin
-    model = @Model begin
-        @fixedEffects begin
-            σ = RealNumber(0.5)
-        end
-
-        @covariates begin
-            t = Covariate()
-            c_year = ConstantCovariate(; constant_on = :YEAR)
-        end
-
-        @randomEffects begin
-            η_id = RandomEffect(Normal(0.0, 1.0); column = :ID)
-            η_year = RandomEffect(Normal(c_year, 1.0); column = :YEAR)
-        end
-
-        @formulas begin
-            y ~ Normal(η_id + η_year, σ)
-        end
-    end
+    model = dm_model_cyear_re
 
     # ID=1 spans 2020 and 2021; YEAR=2020 has inconsistent c_year.
     df_bad = DataFrame(
@@ -1049,26 +999,29 @@ end
     @test_throws ErrorException DataModel(model, df; primary_id = :ID, time_col = :t)
 end
 
-@testset "DataModel RE validation only checks used covariates" begin
-    model = @Model begin
-        @fixedEffects begin
-            σ = RealNumber(0.5)
-        end
-
-        @covariates begin
-            t = Covariate()
-            c1 = ConstantCovariate()
-            c2 = ConstantCovariate()
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(c1, 1.0); column = :SITE)
-        end
-
-        @formulas begin
-            y ~ Normal(η, σ)
-        end
+# Shared by the invalid and valid used-covariates testsets below.
+const dm_model_used_cov = @Model begin
+    @fixedEffects begin
+        σ = RealNumber(0.5)
     end
+
+    @covariates begin
+        t = Covariate()
+        c1 = ConstantCovariate()
+        c2 = ConstantCovariate()
+    end
+
+    @randomEffects begin
+        η = RandomEffect(Normal(c1, 1.0); column = :SITE)
+    end
+
+    @formulas begin
+        y ~ Normal(η, σ)
+    end
+end
+
+@testset "DataModel RE validation only checks used covariates" begin
+    model = dm_model_used_cov
 
     df = DataFrame(
         ID = [1, 1, 2, 2],
@@ -1083,25 +1036,7 @@ end
 end
 
 @testset "DataModel RE validation only checks used covariates (valid)" begin
-    model = @Model begin
-        @fixedEffects begin
-            σ = RealNumber(0.5)
-        end
-
-        @covariates begin
-            t = Covariate()
-            c1 = ConstantCovariate()
-            c2 = ConstantCovariate()
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(c1, 1.0); column = :SITE)
-        end
-
-        @formulas begin
-            y ~ Normal(η, σ)
-        end
-    end
+    model = dm_model_used_cov
 
     df_ok = DataFrame(
         ID = [1, 1, 2, 2],
@@ -1117,31 +1052,7 @@ end
 end
 
 @testset "DataModel primary_id inference" begin
-    model_single = @Model begin
-        @fixedEffects begin
-            a = RealNumber(1.0)
-            σ = RealNumber(0.5)
-        end
-
-        @covariates begin
-            t = Covariate()
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column = :ID)
-        end
-        @formulas begin
-            lin = a + η
-            y ~ Normal(lin, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [1, 1],
-        t = [0.0, 1.0],
-        y = [1.0, 1.1]
-    )
-    dm = DataModel(model_single, df; time_col = :t)
+    dm = DataModel(dm_model_lin_eta, dm_df_two_rows; time_col = :t)
     @test get_primary_id(dm) == :ID
 
     model_multi = @Model begin
@@ -1466,33 +1377,9 @@ end
 end
 
 @testset "DataModel primary_id validation" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(1.0)
-            σ = RealNumber(0.5)
-        end
-
-        @covariates begin
-            t = Covariate()
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column = :ID)
-        end
-
-        @formulas begin
-            lin = a + η
-            y ~ Normal(lin, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [1, 1],
-        t = [0.0, 1.0],
-        y = [1.0, 1.1]
+    @test_throws ErrorException DataModel(
+        dm_model_lin_eta, dm_df_two_rows; primary_id = :SUBJ, time_col = :t
     )
-
-    @test_throws ErrorException DataModel(model, df; primary_id = :SUBJ, time_col = :t)
 end
 
 @testset "DataModel informs for numeric random-effect ids" begin
@@ -1597,51 +1484,13 @@ end
 end
 
 @testset "DataModel infers obs_cols from formulas" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(1.0)
-            σ = RealNumber(0.5)
-        end
-        @covariates begin
-            t = Covariate()
-        end
-
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column = :ID)
-        end
-
-        @formulas begin
-            lin = a + η
-            y ~ Normal(lin, σ)
-        end
-    end
-
-    df = DataFrame(
-        ID = [1, 1],
-        t = [0.0, 1.0],
-        y = [1.0, 1.1]
-    )
-
-    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    dm = DataModel(dm_model_lin_eta, dm_df_two_rows; primary_id = :ID, time_col = :t)
     ind1 = get_individual(dm, 1)
     @test ind1.series.obs.y == [1.0, 1.1]
 end
 
 @testset "DataModel supports mixed-type primary_id values" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(0.2)
-            σ = RealNumber(0.5)
-        end
-
-        @covariates begin
-            t = Covariate()
-        end
-
-        @formulas begin
-            y ~ Normal(a, σ)
-        end
-    end
+    model = dm_model_no_re
 
     df = DataFrame(
         ID = Any[1, 1, "2", "2"],

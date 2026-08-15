@@ -170,27 +170,8 @@ end
 
 # ── integration tests ─────────────────────────────────────────────────────────
 
-function _sched_dm()
-    model = @Model begin
-        @covariates begin
-            t = Covariate()
-        end
-        @fixedEffects begin
-            a = RealNumber(0.2)
-            σ = RealNumber(0.5, scale = :log)
-        end
-        @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column = :ID)
-        end
-        @formulas begin
-            y ~ Normal(a + η, σ)
-        end
-    end
-    df = DataFrame(
-        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [0.1, 0.2, 0.0, -0.1]
-    )
-    return DataModel(model, df; primary_id = :ID, time_col = :t)
-end
+# Model + df + DataModel are identical to the shared fixture.
+_sched_dm() = fx_tiny_re_dm()
 
 @testset "SA schedule: default robbins_monro regression" begin
     # maxiters=2, sa_burnin_iters=0, t0=1 → stabilization iter 1, decay iter 2
