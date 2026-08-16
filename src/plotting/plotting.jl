@@ -124,6 +124,7 @@ function _check_unit_interval(v, name::AbstractString)
 end
 
 function calculate_plot_size(nplots::Int, ncols::Int, style::PlotStyle = PlotStyle())
+    _check_positive_int(nplots, "nplots")
     _check_positive_int(ncols, "ncols")
     ncols = min(ncols, nplots)
     nrows = ceil(Int, nplots / ncols)

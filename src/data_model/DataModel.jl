@@ -254,9 +254,10 @@ end
 
 # Non-finite entries in a numeric column silently turn the whole likelihood into
 # `Inf`/`NaN` many layers later, so they are rejected where the row number is still known.
+# Value-based, not eltype-based: an `Any`-eltype outcome column can hold numeric NaN/Inf
+# next to legitimate non-numeric values, which an eltype guard waved through.
 function _check_finite(col, name::Symbol)
-    eltype(col) <: Union{Missing, Real} || return nothing
-    bad = findfirst(x -> !ismissing(x) && !isfinite(x), col)
+    bad = findfirst(x -> x isa Real && !isfinite(x), col)
     bad === nothing && return nothing
     error("Column $(name) contains the non-finite value $(col[bad]) in row $(bad). Remove or replace non-finite values before constructing DataModel.")
 end
@@ -337,6 +338,11 @@ function _validate_schema(model, df, config::DataModelConfig)
         _require_col(df, config.cmt_col, "CMT")
         _check_missing(_get_col(df, config.evid_col), config.evid_col)
         evid = _get_col(df, config.evid_col)
+        # EVID must be numeric and finite; the value 0 marks an observation and any other
+        # (finite) code marks an event, so nonzero event codes stay legal.
+        all(x -> x isa Real, evid) ||
+            error("Column $(config.evid_col) must contain numeric event codes (0 = observation, nonzero = event).")
+        _check_finite(evid, config.evid_col)
         evt_idx = findall(!=(0), evid)
         if !isempty(evt_idx)
             _check_missing(_get_col(df, config.amt_col)[evt_idx], config.amt_col)
@@ -1837,6 +1843,12 @@ Return the dynamic (interpolated) covariate series.
 
 @inline get_rows(rg::RowGroups) = rg.rows
 @inline get_obs_rows(rg::RowGroups) = rg.obs_rows
+
+# Primary-id value of individual `i`. Reads the individual's first *data* row, not its
+# first observation row: an event-only subject (every row EVID != 0) has none.
+@inline function _individual_id(dm, i::Integer)
+    return get_df(dm)[get_rows(get_row_groups(dm))[i][1], get_primary_id(dm)]
+end
 
 @inline get_re_values(rgi::REGroupInfo) = rgi.values
 @inline get_index_by_row(rgi::REGroupInfo) = rgi.index_by_row

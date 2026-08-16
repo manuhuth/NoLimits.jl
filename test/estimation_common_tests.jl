@@ -771,8 +771,8 @@ end
     @test_throws ErrorException NoLimits.EBEOptions(; multistart_n = 0)
     @test_throws ErrorException NoLimits.EBEOptions(; multistart_n = 5, multistart_k = 6)
     @test_throws ErrorException NoLimits.EBEOptions(; max_rounds = 0)
-    @test_throws ErrorException NoLimits.GHQuadrature(; level = 0)
-    @test_throws ErrorException NoLimits.GHQuadrature(; level = (η = 0,))
+    @test_throws ArgumentError NoLimits.GHQuadrature(; level = 0)
+    @test_throws ArgumentError NoLimits.GHQuadrature(; level = (η = 0,))
     # Valid settings still construct.
     @test NoLimits.SAEM(; maxiters = 3) isa NoLimits.SAEM
     @test NoLimits.MCEM(; sample_schedule = [5, 7]) isa NoLimits.MCEM
@@ -802,4 +802,112 @@ end
     @test_throws ErrorException NoLimits._saem_gamma_schedule(1, bad)
     good = NoLimits.SAEM(; sa_schedule = :custom, sa_schedule_fn = (i, o) -> 0.25).saem
     @test NoLimits._saem_gamma_schedule(1, good) == 0.25
+end
+
+@testset "boundary validation (#240 Group 2)" begin
+    # ── Normalizing planar flow constructor and scalar density pair (#235.12-15) ──
+    @test_throws ArgumentError NormalizingPlanarFlow(0, 2)
+    @test_throws ArgumentError NormalizingPlanarFlow(2, -1)
+    @test_throws ArgumentError NormalizingPlanarFlow(
+        2, 2; base_dist = MvNormal(zeros(3), I)
+    )
+    flow = NormalizingPlanarFlow(1, 2)
+    @test pdf(flow, 0.3) ≈ exp(logpdf(flow, 0.3))
+    @test_throws ErrorException NPFParameter(2, 2; base_dist = MvNormal(zeros(3), I))
+
+    # ── Shared GHQ (dimension, level) validation (#235.17-18, 23-24) ─────────────
+    for f in (
+            NoLimits.build_sparse_grid, NoLimits.get_sparse_grid,
+            NoLimits.n_ghq_points, NoLimits.ghq_points_bound,
+        )
+        @test_throws ArgumentError f(0, 2)
+        @test_throws ArgumentError f(2, 0)
+        @test_throws ArgumentError f(-1, -1)
+    end
+    @test_throws ArgumentError NoLimits.get_anisotropic_grid(Int[], Int[])
+    @test_throws ArgumentError NoLimits.get_anisotropic_grid([1, 2], [1])
+
+    # Any `Integer` level normalizes to `Int`, so it keeps the isotropic path (#235.21-22).
+    @test_throws ArgumentError GHQuadrature(level = 0)
+    @test_throws ArgumentError GHQuadrature(level = 2.5)
+    @test_throws ArgumentError GHQuadrature(level = Int[])
+    @test_throws ArgumentError GHQuadrature(level = (; η = 0))
+    @test GHQuadrature(level = Int8(3)).level === 3
+    @test GHQuadrature(level = UInt(3)).level === 3
+    @test GHQuadrature(level = Int8[2, 3]).level == Int[2, 3]
+    @test NoLimits.n_ghq_points(Int8(2), UInt(3)) == NoLimits.n_ghq_points(2, 3)
+    @test NoLimits.get_sparse_grid(Int8(2), UInt(3)).nodes ==
+        NoLimits.get_sparse_grid(2, 3).nodes
+
+    # ── Plot grid sizing (#235.19-20) ───────────────────────────────────────────
+    @test_throws ErrorException NoLimits.calculate_plot_size(0, 2)
+    @test_throws ErrorException NoLimits.calculate_plot_size(-3, 2)
+    @test NoLimits.calculate_plot_size(4, 2) isa Tuple{Int, Int}
+
+    # ── MCMC result boundary (#235.25-26) ───────────────────────────────────────
+    chain = NoLimits.MCMCChains.Chains(randn(4, 1, 1), [:a])
+    dm_re = fx_re_dm()
+    @test_throws ArgumentError NoLimits.build_fit_result(
+        dm_re, MLE(), chain; sampler = nothing, n_samples = 0
+    )
+    @test_throws ArgumentError NoLimits.build_fit_result(
+        dm_re, MLE(), chain; sampler = nothing, n_samples = 10, n_adapt = -1
+    )
+    @test_throws ArgumentError NoLimits.build_fit_result(
+        dm_re, MLE(), chain; sampler = nothing, n_samples = 10, n_adapt = 4
+    )
+
+    # ── Non-finite values behind a broad eltype, and EVID (#235.29-30) ──────────
+    _df(y) = DataFrame(ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0], y = y)
+    @test_throws ErrorException DataModel(
+        fx_re_model(), _df(Any[0.1, NaN, 0.2, 0.3]); primary_id = :ID, time_col = :t
+    )
+    @test_throws ErrorException DataModel(
+        fx_re_model(), _df(Any[0.1, Inf, 0.2, 0.3]); primary_id = :ID, time_col = :t
+    )
+    @test DataModel(
+        fx_re_model(), _df(Any[0.1, 0.2, 0.3, 0.4]); primary_id = :ID, time_col = :t
+    ) isa DataModel
+
+    ev_df(evid) = DataFrame(
+        ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0], y = [0.1, 0.2, 0.3, 0.4],
+        EVID = evid, AMT = zeros(4), RATE = zeros(4), CMT = ones(Int, 4)
+    )
+    ev_dm(evid) = DataModel(
+        fx_re_model(), ev_df(evid); primary_id = :ID, time_col = :t, evid_col = :EVID
+    )
+    @test ev_dm([0, 4, 0, 0]) isa DataModel     # nonzero event codes stay legal
+    @test_throws ErrorException ev_dm([0.0, NaN, 0.0, 0.0])
+    @test_throws ErrorException ev_dm([0.0, Inf, 0.0, 0.0])
+    @test_throws ErrorException ev_dm(["a", "b", "a", "a"])
+
+    # ── Event-only individuals no longer index an empty observation set (#237.29) ─
+    df_ev = copy(fx_re_df())
+    n = nrow(df_ev)
+    df_ev.EVID = [id == 6 ? 1 : 0 for id in df_ev.ID]
+    df_ev.AMT = zeros(n)
+    df_ev.RATE = zeros(n)
+    df_ev.CMT = ones(Int, n)
+    dm_ev = DataModel(
+        fx_re_model(), df_ev; primary_id = :ID, time_col = :t, evid_col = :EVID
+    )
+    @test isempty(NoLimits.get_obs_rows(NoLimits.get_row_groups(dm_ev))[6])
+    @test NoLimits._individual_id(dm_ev, 6) == 6
+    η_ev = get_random_effects(dm_ev, fx_laplace(), :η)
+    @test length(η_ev) == length(get_individuals(dm_ev))
+    @test all(isfinite, η_ev)
+
+    # ── GHQ log-likelihood honours `serialization` (#237.30) ────────────────────
+    # `serialization` is load-bearing at that call site: it decides whether the cache is
+    # a single object or one per chunk, and the branch must reduce either to the same
+    # number. Before the fix the keyword was dropped and the cache was always serial.
+    @test NoLimits.build_ll_cache(
+        dm_re; serialization = NoLimits.EnsembleThreads(), nthreads = 3,
+        force_saveat = true
+    ) isa AbstractVector
+    res_g2 = fx_ghq()
+    ll_ser = get_loglikelihood(dm_re, res_g2; serialization = NoLimits.EnsembleSerial())
+    ll_thr = get_loglikelihood(dm_re, res_g2; serialization = NoLimits.EnsembleThreads())
+    @test isfinite(ll_ser)
+    @test ll_thr ≈ ll_ser
 end

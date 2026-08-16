@@ -1737,10 +1737,7 @@ function get_random_effects(
     length(val_cols) == 1 ||
         error("Random effect :$(re) is multivariate ($(length(val_cols)) components); use get_random_effects(res) to access the full DataFrame.")
     val_col = val_cols[1]
-    id_order = [
-        get_df(dm)[get_obs_rows(get_row_groups(dm))[i][1], id_col]
-            for i in 1:length(get_individuals(dm))
-    ]
+    id_order = [_individual_id(dm, i) for i in 1:length(get_individuals(dm))]
     id_to_val = Dict(row[id_col] => row[val_col] for row in eachrow(df))
     return [id_to_val[id] for id in id_order]
 end
@@ -2406,17 +2403,24 @@ function get_loglikelihood(
         # Re-evaluate the sparse-grid marginal log-likelihood at the estimated θ.
         level = get_method(res).level
         ll_cache = build_ll_cache(
-            dm; ode_args = ode_args, ode_kwargs = ode_kwargs, force_saveat = true
+            dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+            serialization = serialization, force_saveat = true
         )
         _, batch_infos, const_cache = _build_re_batch_infos(dm, constants_re)
         θu_re = _symmetrize_psd_params(θu, get_fixed(get_model(dm)))
-        total = 0.0
-        for info in batch_infos
-            bll = _ghq_batch_ll(dm, info, θu_re, const_cache, ll_cache, level)
-            bll == -Inf && return -Inf
-            total += bll
+        # `serialization` decides whether `build_ll_cache` returns one cache or one per
+        # chunk; reduce in a fixed order so both give the same number.
+        caches = ll_cache isa AbstractVector ? ll_cache : [ll_cache]
+        parts = zeros(Float64, length(batch_infos))
+        Threads.@threads for c in 1:length(caches)
+            for bi in c:length(caches):length(batch_infos)
+                parts[bi] = _ghq_batch_ll(
+                    dm, batch_infos[bi], θu_re, const_cache, caches[c], level
+                )
+            end
         end
-        return total
+        any(==(-Inf), parts) && return -Inf
+        return sum(parts)
     elseif get_result(res) isa PooledResult
         return loglikelihood(
             dm, θu, get_eta_vec(get_result(res)); ode_args = ode_args,
@@ -2744,7 +2748,7 @@ function _cdll_terms(
     re_names = get_re_names(re)
     θs = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
     sel = _cdll_select(dm, individuals)
-    id_of(i) = get_df(dm)[get_obs_rows(get_row_groups(dm))[i][1], get_primary_id(dm)]
+    id_of(i) = _individual_id(dm, i)
 
     cache = build_ll_cache(
         dm; ode_args = ode_args, ode_kwargs = ode_kwargs,

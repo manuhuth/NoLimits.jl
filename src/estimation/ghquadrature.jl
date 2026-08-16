@@ -82,23 +82,26 @@ struct GHQuadrature{LV, O, K, A, IO, MS, L, U} <: FittingMethod
 end
 
 # `level` is an Int, a Vector{Int} (level continuation), or a NamedTuple of per-RE levels.
+# Returns the normalized level: any `Integer` (Int8, UInt, ...) becomes `Int`, so the
+# `level isa Int` dispatch below cannot mistake an isotropic level for an anisotropic one.
 function _check_ghq_level(level)
     bad(l) = !(l isa Integer) || l < 1
     if level isa NamedTuple
-        isempty(level) && error("GHQuadrature: anisotropic `level` must not be empty.")
+        isempty(level) && throw(ArgumentError("GHQuadrature: anisotropic `level` must not be empty."))
         for (k, l) in Base.pairs(level)
             bad(l) &&
-                error("GHQuadrature: level for `$k` must be a positive integer. Got: $(repr(l))")
+                throw(ArgumentError("GHQuadrature: level for `$k` must be a positive integer. Got: $(repr(l))"))
         end
+        return NamedTuple{keys(level)}(map(Int, Tuple(level)))
     elseif level isa AbstractVector
-        isempty(level) && error("GHQuadrature: `level` vector must not be empty.")
+        isempty(level) && throw(ArgumentError("GHQuadrature: `level` vector must not be empty."))
         all(!bad, level) ||
-            error("GHQuadrature: all entries in `level` must be positive integers. Got: $level")
-    else
-        bad(level) &&
-            error("GHQuadrature: `level` must be a positive integer. Got: $(repr(level))")
+            throw(ArgumentError("GHQuadrature: all entries in `level` must be positive integers. Got: $level"))
+        return Int[Int(l) for l in level]
     end
-    return nothing
+    bad(level) &&
+        throw(ArgumentError("GHQuadrature: `level` must be a positive integer. Got: $(repr(level))"))
+    return Int(level)
 end
 
 function GHQuadrature(;
@@ -122,7 +125,7 @@ function GHQuadrature(;
         ignore_model_bounds = false,
         precondition = true
     )
-    _check_ghq_level(level)
+    level = _check_ghq_level(level)
     inner = inner_options === nothing ?
         LaplaceInnerOptions(
             inner_optimizer, inner_kwargs, inner_adtype, inner_grad_tol
