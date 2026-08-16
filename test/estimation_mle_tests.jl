@@ -263,7 +263,9 @@ let
         @test_throws ErrorException fit_model(dm, NoLimits.MLE(); penalty = (bb = 1.0,))
         # #165: σ = 0 has zero LogNormal prior density; the objective's Inf short-circuit
         # would hand the optimizer a zero gradient and it would report convergence there.
-        @test_throws ErrorException fit_model(
+        # It also sits exactly on the boundary of the :log transform, which #249 now
+        # rejects first with an ArgumentError.
+        @test_throws ArgumentError fit_model(
             dm, NoLimits.MAP();
             theta_0_untransformed = ComponentArray(a = 0.1, σ = 0.0)
         )

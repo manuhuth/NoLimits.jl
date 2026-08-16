@@ -911,3 +911,18 @@ end
     @test isfinite(ll_ser)
     @test ll_thr ≈ ll_ser
 end
+
+@testset "Poisson fast path at the λ=0 boundary (#249)" begin
+    # 0 * log(0) used to be NaN, which the accumulator turned into -Inf for a case
+    # Distributions scores at 0.0.
+    @test NoLimits._fast_logpdf(Poisson(0.0), 0.0) == logpdf(Poisson(0.0), 0)
+    @test NoLimits._fast_logpdf(Poisson(0.0), 0.0) == 0.0
+    @test NoLimits._fast_logpdf(Poisson(0.0), 1.0) == -Inf
+    for λ in (0.0, 1.0e-12, 0.5, 3.0), y in (0.0, 1.0, 4.0)
+        @test NoLimits._fast_logpdf(Poisson(λ), y) ≈ logpdf(Poisson(λ), Int(y)) atol = 1.0e-10
+    end
+    # d/dλ logpdf(Poisson(λ), 0) = -1 at λ = 0; the NaN branch poisoned the Dual.
+    g = ForwardDiff.derivative(λ -> NoLimits._fast_logpdf(Poisson(λ), 0.0), 0.0)
+    @test g == -1.0
+    @test ForwardDiff.derivative(λ -> NoLimits._fast_logpdf(Poisson(λ), 2.0), 1.5) ≈ 2 / 1.5 - 1
+end

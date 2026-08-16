@@ -256,10 +256,45 @@ end
 # `Inf`/`NaN` many layers later, so they are rejected where the row number is still known.
 # Value-based, not eltype-based: an `Any`-eltype outcome column can hold numeric NaN/Inf
 # next to legitimate non-numeric values, which an eltype guard waved through.
+# Multivariate outcomes/covariates store a container per cell, so the scan recurses;
+# a nested NaN otherwise only surfaces as an `Inf` objective mid-fit (#249).
+_nonfinite(x) = x isa Real ? !isfinite(x) : x isa AbstractArray ? any(_nonfinite, x) : false
+
 function _check_finite(col, name::Symbol)
-    bad = findfirst(x -> x isa Real && !isfinite(x), col)
+    bad = findfirst(_nonfinite, col)
     bad === nothing && return nothing
     error("Column $(name) contains the non-finite value $(col[bad]) in row $(bad). Remove or replace non-finite values before constructing DataModel.")
+end
+
+# An observation is missing when it is `missing` or a container whose components all are.
+# Anything in between has no defined likelihood, so it is rejected at construction.
+@inline _obs_is_missing(y) = y === missing
+@inline function _obs_is_missing(y::AbstractArray)
+    Missing <: eltype(y) || return false
+    return all(ismissing, y)
+end
+
+# A column holding any missing cell gets a `Union{Missing,T}` element type, and no
+# multivariate `logpdf` accepts that. Construction guarantees the survivors are fully
+# observed, so narrowing here is safe; scalar and already-narrow cells are untouched.
+@inline _obs_value(y) = y
+@inline function _obs_value(y::AbstractArray)
+    Missing <: eltype(y) || return y
+    return convert(AbstractArray{nonmissingtype(eltype(y))}, y)
+end
+
+function _check_partial_missing(col, name::Symbol)
+    for (i, x) in enumerate(col)
+        (x isa AbstractArray && Missing <: eltype(x)) || continue
+        n_miss = count(ismissing, x)
+        (n_miss == 0 || n_miss == length(x)) && continue
+        throw(
+            ArgumentError(
+                "Column $(name) row $(i) is a partially observed multivariate value $(x). Component-wise marginalization is not supported: either supply every component or set the whole cell to `missing`."
+            )
+        )
+    end
+    return nothing
 end
 
 function _validate_re_group_columns(model, df)
@@ -303,7 +338,7 @@ end
 function _has_observations(df, config::DataModelConfig)
     obs_rows = config.evid_col === nothing ? Colon() :
         findall(==(0), _get_col(df, config.evid_col))
-    return any(c -> any(!ismissing, _get_col(df, c)[obs_rows]), config.obs_cols)
+    return any(c -> any(!_obs_is_missing, _get_col(df, c)[obs_rows]), config.obs_cols)
 end
 
 _has_observations(dm) = _has_observations(get_df(dm), dm.config)
@@ -325,6 +360,7 @@ function _validate_schema(model, df, config::DataModelConfig)
     _check_finite(tcol, config.time_col)
     for c in config.obs_cols
         _check_finite(_get_col(df, c), c)
+        _check_partial_missing(_get_col(df, c), c)
     end
     for c in model.covariates.covariates.flat_names
         hasproperty(df, c) && _check_finite(_get_col(df, c), c)

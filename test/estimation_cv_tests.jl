@@ -307,3 +307,35 @@ end
     @test NoLimits._cv_method_accepts_constants_re(NoLimits.SAEM())
     @test !NoLimits._cv_method_accepts_constants_re(NoLimits.MLE())
 end
+
+@testset "fit_cv scores impossible held-out observations as -Inf (#249)" begin
+    # A model that rules an observation out must lose, not win: the non-HMM scorer used
+    # to map -Inf to NaN, which aggregation dropped, making the fit look perfect.
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.0)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @formulas begin
+            p = 0.0 * a
+            y ~ Bernoulli(p)
+        end
+    end
+    df = DataFrame(
+        ID = repeat(1:4, inner = 2), t = repeat([0.0, 1.0], 4),
+        y = [0, 0, 0, 0, 0, 1, 0, 0]
+    )
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    cv = cross_validate(dm, 2; kind = :id, rng = MersenneTwister(1))
+    res = fit_cv(cv, NoLimits.MLE(; optim_kwargs = (; maxiters = 1)); rng = MersenneTwister(2))
+
+    lls = res.obs_scores[!, :loglikelihood]
+    @test !any(isnan, lls)
+    @test count(==(-Inf), lls) == 1
+    @test length(lls) == 8
+    @test res.n_scored_obs == 8
+    @test res.mean_obs_loglikelihood == -Inf
+    @test any(==(-Inf), [fr.test_loglikelihood for fr in res.fold_results])
+end
