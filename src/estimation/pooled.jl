@@ -194,12 +194,15 @@ function _pooled_plugin_strategies(
     strategies = Any[]
     for re in re_names
         dist = getproperty(dists, re)
-        strat = if _pooled_finite_or_nothing(() -> _re_mean(dist)) !== nothing
+        # Flows are checked before the generic mean probe: a flow's `mean` (added for
+        # direct API use) re-samples fresh draws every call, which would break the
+        # branch-stable, iteration-stable plug-in this loop is supposed to fix once.
+        strat = if dist isa NormalizingPlanarFlow
+            _PooledMCPlugin([rand(rng, dist.base.dist) for _ in 1:mc_draws])
+        elseif _pooled_finite_or_nothing(() -> _re_mean(dist)) !== nothing
             :mean
         elseif _pooled_finite_or_nothing(() -> median(dist)) !== nothing
             :median
-        elseif dist isa NormalizingPlanarFlow
-            _PooledMCPlugin([rand(rng, dist.base.dist) for _ in 1:mc_draws])
         else
             :zero
         end
