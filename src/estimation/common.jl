@@ -1011,6 +1011,11 @@ function _validate_theta_override(dm::DataModel, θ, option::AbstractString)
         lo[i] <= flat[i] <= hi[i] ||
             error("Value $(_label(i)) in $(option) is $(flat[i]), outside its declared bounds [$(lo[i]), $(hi[i])].")
     end
+    # Those bounds are inclusive, but the transform's domain is open: a value sitting
+    # exactly on the boundary still transforms to -Inf/NaN (#249).
+    θ isa ComponentArray && _check_transformed_finite(
+        _forward_or_argerror(get_transform(fe), θ), names, "Value in $(option)"
+    )
     return nothing
 end
 
@@ -3672,10 +3677,11 @@ end
 # @inline keeps static dispatch (no boxing) so callers match the hand-inlined path.
 @inline function _accum_obs_col(ll::T, obs, obs_series, col, i) where {T}
     y = getfield(obs_series, col)[i]
-    y === missing && return ll
+    _obs_is_missing(y) && return ll
+    yv = _obs_value(y)
     dist = getproperty(obs, col)
-    v = _fast_logpdf(dist, y)
-    v === nothing && (v = logpdf(dist, y))
+    v = _fast_logpdf(dist, yv)
+    v === nothing && (v = logpdf(dist, yv))
     isfinite(v) || return T(-Inf)
     return ll + v
 end
@@ -3984,13 +3990,17 @@ end
     return y == 1 ? log(p) : y == 0 ? log1p(-p) : -Inf
 end
 
+# `0 * log(0) == NaN` would score the valid boundary case Poisson(0) at y=0 as
+# impossible; xlogy fixes the limit and keeps a zero (Dual) derivative there (#249).
+@inline _xlogy(y, x) = iszero(y) ? zero(x) : y * log(x)
+
 @inline function _fast_logpdf(dist::Poisson, y)
     λ = dist.λ
     λ >= 0 || return -Inf
     y < 0 && return -Inf
     y_int = floor(Int, y)
     y_int == y || return -Inf
-    return y_int * log(λ) - λ - SpecialFunctions.logfactorial(y_int)
+    return _xlogy(y_int, λ) - λ - SpecialFunctions.logfactorial(y_int)
 end
 
 @inline _fast_logpdf(::Any, ::Any) = nothing

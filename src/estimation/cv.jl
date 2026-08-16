@@ -344,10 +344,17 @@ function _eval_individual_obs(
                 end
                 keep_row && push!(rows_out, row)
             else
-                y_raw === missing && continue
-                v = _fast_logpdf(dist, y_raw)
-                v === nothing && (v = logpdf(dist, y_raw))
-                lp = isfinite(v) ? Float64(v) : NaN
+                _obs_is_missing(y_raw) && continue
+                # `-Inf` is a valid score (the model rules the held-out value out); only
+                # a failed evaluation may become `NaN`, which aggregation drops (#249).
+                yv = _obs_value(y_raw)
+                lp = try
+                    v = _fast_logpdf(dist, yv)
+                    v === nothing && (v = logpdf(dist, yv))
+                    Float64(v)
+                catch e
+                    (e isa DomainError || e isa ArgumentError) ? NaN : rethrow(e)
+                end
                 pm = try
                     Float64(mean(dist))
                 catch
@@ -813,7 +820,7 @@ function fit_cv(
         ll_finite = filter(!isnan, ll_all)
         n_dropped = length(ll_all) - length(ll_finite)
         n_dropped == 0 ||
-            @warn "fit_cv: fold $f scored $(length(ll_finite)) of $(length(ll_all)) held-out observations; $(n_dropped) had a non-finite log-likelihood and were dropped from the fold total."
+            @warn "fit_cv: fold $f scored $(length(ll_finite)) of $(length(ll_all)) held-out observations; $(n_dropped) could not be evaluated (NaN) and were dropped from the fold total. A model that rules an observation out scores -Inf and is kept."
         test_ll = isempty(ll_finite) ? NaN : sum(ll_finite)
 
         fit_res = store_results ? res_train : nothing
