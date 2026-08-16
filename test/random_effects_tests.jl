@@ -241,3 +241,15 @@ end
     @test err isa LoadError
     @test occursin("Unsupported keyword", sprint(showerror, err))
 end
+
+# #246: sampled `mean` alongside the sampled `cov`, plus the `params` interface.
+@testset "NormalizingPlanarFlow moments and params" begin
+    f = NormalizingPlanarFlow(2, 1)
+    μ = mean(f; n_samples = 200)
+    @test length(μ) == 2
+    @test all(isfinite, μ)
+    @test size(cov(f; n_samples = 200)) == (2, 2)
+    p = params(f)
+    @test length(p) == 2
+    @test NormalizingPlanarFlow(p...) isa NormalizingPlanarFlow
+end

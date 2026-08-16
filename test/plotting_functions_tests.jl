@@ -239,8 +239,9 @@ end
 @testset "plot_data/fits multivariate HMM" begin
     model = @Model begin
         @fixedEffects begin
-            mu1 = RealNumber(0.0)
-            mu2 = RealNumber(3.0)
+            # Priors are ignored by MLE and let the same model serve the MCMC fit below.
+            mu1 = RealNumber(0.0, prior = Normal(0.0, 1.0))
+            mu2 = RealNumber(3.0, prior = Normal(3.0, 1.0))
         end
         @covariates begin
             t = Covariate()
@@ -353,6 +354,33 @@ end
             @test length(all_axes(plot_residual_distribution(res; residual = :raw))) ==
                 n_marginals
         end
+    end
+
+    # #245: one density band per component marginal instead of an early failure.
+    @testset "multivariate marginal density bands" begin
+        heatmaps(fig) = [
+            plt for ax in fig.content if ax isa CairoMakie.Axis
+                for plt in ax.scene.plots if plt isa CairoMakie.Makie.Heatmap
+        ]
+        f_all = plot_fits(res; plot_density = true, individuals_idx = 1)
+        @test length(heatmaps(f_all)) == n_marginals
+        f_one = plot_fits(
+            res; plot_density = true, individuals_idx = 1, marginal_idx = 2
+        )
+        @test length(heatmaps(f_one)) == 1
+
+        # Posterior draws over a vector-valued observable used to be rejected outright.
+        res_mcmc = fit_model(
+            dm,
+            NoLimits.MCMC(;
+                sampler = MH(),
+                turing_kwargs = (n_samples = 4, n_adapt = 2, progress = false)
+            )
+        )
+        f_mcmc = plot_fits(
+            res_mcmc; mcmc_draws = 2, individuals_idx = 1, plot_density = true
+        )
+        @test length(heatmaps(f_mcmc)) == n_marginals
     end
 end
 
