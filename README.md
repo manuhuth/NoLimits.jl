@@ -194,7 +194,7 @@ df = DataFrame(
 )
 
 dm  = DataModel(model, df; primary_id=:ID, time_col=:time)
-res = fit_model(dm, Laplace())
+res = fit_model(dm, NoLimits.Laplace())
 
 get_params(res; scale=:untransformed)   # population estimates
 get_random_effects(res)                 # per-subject effects

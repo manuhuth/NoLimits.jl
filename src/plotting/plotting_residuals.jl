@@ -89,14 +89,24 @@ end
 
 # Residual cells are scalar for univariate outcomes and per-component vectors for
 # multivariate ones; joint scores (`logscore`) stay scalar in either case.
-const _ResidualCell = Union{Missing, Float64, Vector{Float64}}
+const _ResidualCell = Union{
+    Missing, Float64, Vector{Float64}, Vector{Union{Missing, Float64}},
+}
+
+# Component vectors stay narrowly typed unless a component is actually missing.
+@inline _narrow_components(v) =
+    any(ismissing, v) ? convert(Vector{Union{Missing, Float64}}, v) :
+    Float64[Float64(x) for x in v]
 
 # Observation / fitted values keep their multivariate shape until after metric dispatch.
+# Partially observed vectors keep their observed components rather than collapsing.
 @inline function _obs_value(v)
     ismissing(v) && return missing
     if v isa AbstractVector
-        any(ismissing, v) && return missing
-        return Float64[Float64(x) for x in v]
+        all(ismissing, v) && return missing
+        return _narrow_components(
+            Union{Missing, Float64}[ismissing(x) ? missing : Float64(x) for x in v]
+        )
     end
     return _to_float_or_missing(v)
 end
@@ -123,10 +133,17 @@ function _metric_summary(vals::AbstractVector, qlo::Float64, qhi::Float64)
         all(v -> length(v) == n, vals_use) ||
             _residual_error("component count differs across posterior draws.")
         m = reduce(hcat, vals_use)
+        # Components can be missing independently across draws.
+        comp = [collect(skipmissing(view(m, k, :))) for k in 1:n]
+        summ(f) = _narrow_components(
+            Union{Missing, Float64}[
+                isempty(c) ? missing : Float64(f(c)) for c in comp
+            ]
+        )
         return (
-            Float64[mean(view(m, k, :)) for k in 1:n],
-            Float64[quantile(view(m, k, :), qlo) for k in 1:n],
-            Float64[quantile(view(m, k, :), qhi) for k in 1:n],
+            summ(mean),
+            summ(c -> quantile(c, qlo)),
+            summ(c -> quantile(c, qhi)),
         )
     end
     m = mean(vals_use)
@@ -205,7 +222,7 @@ end
 
 function _compute_mv_residual_metrics(
         dist,
-        y::Vector{Float64},
+        y::AbstractVector,
         residual_list::Vector{Symbol},
         fitted_stat,
         randomize_discrete::Bool,
@@ -229,21 +246,21 @@ function _compute_mv_residual_metrics(
             "the outcome has $(length(y)) components but its distribution reports " *
                 "$(length(marg)) marginals."
         )
-        pit_vec = Vector{Float64}(undef, length(y))
-        ok = true
-        for k in eachindex(y)
-            p = _pit_from_dist(
-                marg[k], y[k]; randomize_discrete = randomize_discrete,
-                cdf_fallback_mc = cdf_fallback_mc, rng = rng
-            )
-            ismissing(p) ? (ok = false) : (pit_vec[k] = p)
-        end
-        ok && (pit = pit_vec)
+        pit_vec = Union{Missing, Float64}[
+            _pit_from_dist(
+                    marg[k], y[k]; randomize_discrete = randomize_discrete,
+                    cdf_fallback_mc = cdf_fallback_mc, rng = rng
+                ) for k in eachindex(y)
+        ]
+        all(ismissing, pit_vec) || (pit = _narrow_components(pit_vec))
         if (:quantile in req) && !ismissing(pit)
-            res_quantile = Float64[
-                quantile(Normal(), clamp(p, eps(Float64), 1.0 - eps(Float64)))
-                    for p in pit
-            ]
+            res_quantile = _narrow_components(
+                Union{Missing, Float64}[
+                    ismissing(p) ? missing :
+                        quantile(Normal(), clamp(p, eps(Float64), 1.0 - eps(Float64)))
+                        for p in pit
+                ]
+            )
         end
         (:pit in req) || (pit = missing)
     end
@@ -265,9 +282,10 @@ function _compute_mv_residual_metrics(
     end
 
     logscore = missing
-    if :logscore in req
+    # The joint score needs every component; a partial vector has no joint density.
+    if (:logscore in req) && !any(ismissing, y)
         ls = try
-            -Float64(logpdf(dist, y))
+            -Float64(logpdf(dist, Float64[y...]))
         catch
             missing
         end
@@ -289,7 +307,7 @@ function _compute_residual_metrics(
         cdf_fallback_mc::Int,
         rng::AbstractRNG
     )
-    if y isa Vector{Float64}
+    if y isa AbstractVector
         return _compute_mv_residual_metrics(
             dist, y, residual_list, fitted_stat, randomize_discrete, cdf_fallback_mc, rng
         )
@@ -482,6 +500,11 @@ Vector-valued observations keep one row per observation; the `y`, `fitted`, `res
 `Vector{Float64}` with one entry per outcome component, in the order of the observation.
 `logscore` stays scalar: it is the joint score `-logpdf(dist, y)`. `time` and `x` remain
 scalar. Scalar outcomes are unaffected and keep scalar cells throughout.
+
+A partially observed vector keeps its observed components: the cell type widens to
+`Vector{Union{Missing, Float64}}` and only the missing components are `missing`. Such a
+row has no `logscore`, since the joint density needs every component. A row is only
+wholly `missing` when every component is.
 
 Component `pit` / `res_quantile` need the component marginals of the outcome
 distribution (known for `MvNormal` and for distributions with an `_re_marginals`
