@@ -34,7 +34,16 @@ function _uq_component(names::Vector{Symbol}, vals::Vector{Float64})
     return ComponentArray(NamedTuple{Tuple(names)}(Tuple(vals)))
 end
 
+# Every public UQ accessor takes the same `scale`; an unknown symbol used to fall through
+# to the transformed branch and silently mislabel natural-scale values (#237).
+@inline function _uq_check_scale(scale::Symbol)
+    scale in (:natural, :transformed) ||
+        throw(ArgumentError("scale must be :natural or :transformed. Got :$(scale)."))
+    return scale
+end
+
 @inline function _uq_names_for_scale(uq::UQResult, scale::Symbol)
+    _uq_check_scale(scale)
     if scale == :natural && uq.parameter_names_natural !== nothing
         return uq.parameter_names_natural
     end
@@ -70,13 +79,8 @@ Return point estimates from a [`UQResult`](@ref).
   name; otherwise return a plain `Vector{Float64}`.
 """
 function get_uq_estimates(uq::UQResult; scale::Symbol = :natural, as_component::Bool = true)
-    vals = if scale == :natural
-        uq.estimates_natural
-    elseif scale == :transformed
-        uq.estimates_transformed
-    else
-        error("scale must be :natural or :transformed.")
-    end
+    _uq_check_scale(scale)
+    vals = scale == :natural ? uq.estimates_natural : uq.estimates_transformed
     names = _uq_names_for_scale(uq, scale)
     return as_component ? _uq_component(names, vals) : copy(vals)
 end
@@ -94,13 +98,8 @@ available.
   otherwise plain `Vector{Float64}`.
 """
 function get_uq_intervals(uq::UQResult; scale::Symbol = :natural, as_component::Bool = true)
-    ints = if scale == :natural
-        uq.intervals_natural
-    elseif scale == :transformed
-        uq.intervals_transformed
-    else
-        error("scale must be :natural or :transformed.")
-    end
+    _uq_check_scale(scale)
+    ints = scale == :natural ? uq.intervals_natural : uq.intervals_transformed
     ints === nothing && return nothing
     names = _uq_names_for_scale(uq, scale)
     if as_component
@@ -123,28 +122,23 @@ available.
 - `scale::Symbol = :natural`: `:natural` or `:transformed`.
 """
 function get_uq_vcov(uq::UQResult; scale::Symbol = :natural)
-    if scale == :natural
-        return uq.vcov_natural === nothing ? nothing : copy(uq.vcov_natural)
-    elseif scale == :transformed
-        return uq.vcov_transformed === nothing ? nothing : copy(uq.vcov_transformed)
-    end
-    error("scale must be :natural or :transformed.")
+    _uq_check_scale(scale)
+    v = scale == :natural ? uq.vcov_natural : uq.vcov_transformed
+    return v === nothing ? nothing : copy(v)
 end
 
 """
     get_uq_draws(uq::UQResult; scale=:natural) -> Matrix{Float64} or nothing
 
-Return the posterior or bootstrap draws (n_params × n_draws) from a [`UQResult`](@ref),
-or `nothing` if not available.
+Return the posterior or bootstrap draws from a [`UQResult`](@ref), or `nothing` if not
+available. The matrix is `n_draws × n_params`: one row per draw, columns aligned with
+[`get_uq_parameter_names`](@ref) for the same `scale`.
 
 # Keyword Arguments
 - `scale::Symbol = :natural`: `:natural` or `:transformed`.
 """
 function get_uq_draws(uq::UQResult; scale::Symbol = :natural)
-    if scale == :natural
-        return uq.draws_natural === nothing ? nothing : copy(uq.draws_natural)
-    elseif scale == :transformed
-        return uq.draws_transformed === nothing ? nothing : copy(uq.draws_transformed)
-    end
-    error("scale must be :natural or :transformed.")
+    _uq_check_scale(scale)
+    d = scale == :natural ? uq.draws_natural : uq.draws_transformed
+    return d === nothing ? nothing : copy(d)
 end

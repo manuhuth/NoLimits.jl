@@ -49,9 +49,11 @@ Four backends are supported:
 # Keyword Arguments
 - `method::Symbol = :auto`: UQ backend. `:auto` selects `:chain` for MCMC/VI fits and
   `:wald` otherwise; can also be `:wald`, `:chain`, `:profile`, or `:mcmc_refit`.
-- `interval::Symbol = :auto`: interval type. `:auto` picks a sensible default per backend.
-  For Wald: `:wald` or `:normal`; for chain: `:equaltail` or `:chain`; for profile:
-  `:profile`.
+- `interval::Symbol = :auto`: interval type, validated against the resolved backend. Wald
+  accepts `:auto`, `:wald`, `:normal`; chain and `:mcmc_refit` accept `:auto`, `:equaltail`,
+  `:chain`; profile accepts `:auto`, `:profile`. Each backend implements one interval type,
+  so the aliases select the backend's interval rather than a variant of it, and a
+  cross-backend alias (e.g. `method=:wald, interval=:equaltail`) is an error.
 - `vcov::Symbol = :hessian`: covariance source for Wald UQ (`:hessian` or `:sandwich`).
 - `re_approx::Symbol = :auto`: random-effects approximation for Laplace-family Hessians.
 - `re_approx_method`: fitting method used for the RE approximation, or `nothing`.
@@ -118,7 +120,7 @@ function compute_uq(
     level_use = _validate_level(level)
     n_draws >= 1 || error("n_draws must be >= 1.")
     _validate_uq_options(
-        res; interval = interval, fd_abs_step = fd_abs_step,
+        res; fd_abs_step = fd_abs_step,
         fd_rel_step = fd_rel_step, fd_max_tries = fd_max_tries,
         mcmc_warmup = mcmc_warmup, mcmc_draws = mcmc_draws, constants = constants,
         profile_max_iter = profile_max_iter, profile_ftol_abs = profile_ftol_abs,
@@ -135,6 +137,7 @@ function compute_uq(
     else
         method
     end
+    _validate_uq_interval(backend, interval)
 
     if backend == :wald
         vcov in (:hessian, :sandwich) ||
