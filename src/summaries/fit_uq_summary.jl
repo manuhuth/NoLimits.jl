@@ -112,12 +112,21 @@ end
     ) ? :bayesian :
     :frequentist
 
+# Returns (value, notes): a caught accessor failure becomes a summary note instead of a
+# silent `nothing` (#237).
 function _fq_try_loglikelihood(res::FitResult)
     try
         ll = get_loglikelihood(res)
-        return isfinite(ll) ? Float64(ll) : nothing
-    catch
-        return nothing
+        isfinite(ll) && return (Float64(ll), String[])
+        return (nothing, ["Log-likelihood is not finite ($(ll))."])
+    catch err
+        return (
+            nothing,
+            [
+                "Log-likelihood unavailable: $(sprint(showerror, err)). Pass an explicit " *
+                    "DataModel to `get_loglikelihood` when the fit does not store one.",
+            ],
+        )
     end
 end
 
@@ -135,18 +144,28 @@ function _fq_try_outcome_coverage(res::FitResult)
         NamedTuple[], nothing, nothing,
         ["Data coverage unavailable: FitResult does not store DataModel."],
     )
+    # Coverage counts observation rows only; event rows (EVID != 0) carry no outcome and
+    # used to be counted as missing observations (#237).
+    obs_rows = _collect_obs_rows(dm)
     rows = NamedTuple[]
+    notes = String[]
     n_obs_total = 0
     n_missing_total = 0
     for col in get_obs_cols(dm)
-        v = getproperty(get_df(dm), col)
+        v = getproperty(get_df(dm), col)[obs_rows]
         miss = count(ismissing, v)
         obs = length(v) - miss
+        unit = any(x -> x isa AbstractVector, v) ? :vector_row : :row
         n_obs_total += obs
         n_missing_total += miss
-        push!(rows, (; outcome = col, n_obs = obs, n_missing = miss))
+        push!(rows, (; outcome = col, n_obs = obs, n_missing = miss, unit = unit))
     end
-    return (rows, n_obs_total, n_missing_total, String[])
+    any(r -> r.unit == :vector_row, rows) && push!(
+        notes,
+        "Coverage counts are joint observation rows, not vector components, for " *
+            "vector-valued outcomes (unit = vector_row)."
+    )
+    return (rows, n_obs_total, n_missing_total, notes)
 end
 
 function _fq_role_by_parent(model::Model)
@@ -565,11 +584,13 @@ function summarize(
     )
     cov_rows, n_obs_total, n_missing_total, notes2 = _fq_try_outcome_coverage(res)
     re_label, re_rows, notes3 = _fq_random_effect_block(res; constants_re = constants_re)
+    loglik, notes4 = _fq_try_loglikelihood(res)
 
     notes = String[]
     append!(notes, notes1)
     append!(notes, notes2)
     append!(notes, notes3)
+    append!(notes, notes4)
 
     return FitResultSummary(
         _method_symbol(get_method(res)),
@@ -578,7 +599,7 @@ function summarize(
         get_objective(res),
         get_converged(res),
         _fq_try_iterations(res),
-        _fq_try_loglikelihood(res),
+        loglik,
         include_non_se,
         n_total,
         length(param_rows),
@@ -593,18 +614,53 @@ function summarize(
     )
 end
 
+# Shared UQResult invariant check: everything a summary row reads must be aligned with the
+# parameter names for the requested scale, checked up front instead of failing (or silently
+# truncating) deep inside row construction (#237).
+function _fq_check_uq_invariants(uq::UQResult, scale::Symbol, names, est, ints, vcov, draws)
+    n = length(names)
+    length(est) == n || error(
+        "UQResult is inconsistent on scale :$(scale): $(n) parameter names but " *
+            "$(length(est)) estimates."
+    )
+    if ints !== nothing
+        (length(ints.lower) == n && length(ints.upper) == n) || error(
+            "UQResult is inconsistent on scale :$(scale): $(n) parameter names but " *
+                "intervals of length $(length(ints.lower))/$(length(ints.upper))."
+        )
+    end
+    if vcov !== nothing
+        size(vcov) == (n, n) || error(
+            "UQResult is inconsistent on scale :$(scale): $(n) parameter names but a " *
+                "$(size(vcov, 1))x$(size(vcov, 2)) covariance matrix."
+        )
+    end
+    if draws !== nothing
+        size(draws, 2) == n || error(
+            "UQResult is inconsistent on scale :$(scale): $(n) parameter names but draws " *
+                "with $(size(draws, 2)) columns (draws are n_draws x n_params)."
+        )
+    end
+    return nothing
+end
+
 function _fq_uq_base_vectors(uq::UQResult; scale::Symbol = :natural)
+    names = get_uq_parameter_names(uq; scale = scale)
     est = get_uq_estimates(uq; scale = scale, as_component = false)
     ints = get_uq_intervals(uq; scale = scale, as_component = false)
     vcov = get_uq_vcov(uq; scale = scale)
     draws = get_uq_draws(uq; scale = scale)
+    _fq_check_uq_invariants(uq, scale, names, est, ints, vcov, draws)
     se = nothing
     if vcov !== nothing
         se = [sqrt(max(vcov[i, i], 0.0)) for i in 1:size(vcov, 1)]
     elseif draws !== nothing
+        # Draws are n_draws x n_params, so reduce over draws to get one SE per parameter.
         se = vec(std(draws; dims = 1, corrected = true))
     end
-    return (est = est, ints = ints, se = se)
+    se === nothing || length(se) == length(names) ||
+        error("Internal summary error: $(length(se)) standard errors for $(length(names)) parameters.")
+    return (names = names, est = est, ints = ints, se = se)
 end
 
 function _fq_uq_interval_label(uq::UQResult)
@@ -620,7 +676,7 @@ function summarize(uq::UQResult; scale::Symbol = :natural)
     interval_label = _fq_uq_interval_label(uq)
 
     rows = NamedTuple[]
-    names = get_uq_parameter_names(uq)
+    names = base.names
     for i in eachindex(names)
         se_i = base.se === nothing ? nothing : base.se[i]
         lo = base.ints === nothing ? nothing : base.ints.lower[i]
@@ -679,8 +735,34 @@ function summarize(
     fit_est = lay.estimates
 
     base = _fq_uq_base_vectors(uq; scale = scale)
-    uq_names = get_uq_parameter_names(uq)
+    uq_names = base.names
     uq_idx = Dict{Symbol, Int}((uq_names[i] => i) for i in eachindex(uq_names))
+    align_notes = String[]
+    # A UQ result from a different parameter layout must not be silently truncated. The one
+    # legitimate extra is the Wald natural-scale stickbreak extension, which is reported.
+    extra_idx = [i for i in eachindex(uq_names) if !(uq_names[i] in flat_names)]
+    if !isempty(extra_idx)
+        derived_ok = scale == :natural && uq.parameter_names_natural !== nothing
+        derived_ok || error(
+            "UQ result does not match the fit parameter layout on scale :$(scale): " *
+                "$(uq_names[extra_idx]) are not fixed-effect coordinates of this fit."
+        )
+        push!(
+            align_notes,
+            "Derived natural-scale coordinates without a fit counterpart: " *
+                "$(join(string.(uq_names[extra_idx]), ", "))."
+        )
+    end
+    missing_uq = [
+        flat_names[i] for i in eachindex(flat_names)
+            if se_mask[i] && !haskey(uq_idx, flat_names[i])
+    ]
+    isempty(missing_uq) || push!(
+        align_notes,
+        "Reported without uncertainty (absent from the UQ result): " *
+            "$(join(string.(missing_uq), ", "))."
+    )
+    missing_set = Set(missing_uq)
     inference = _fq_inference_from_uq(uq)
     interval_label = _fq_uq_interval_label(uq)
     level = base.ints === nothing ? nothing : base.ints.level
@@ -709,7 +791,7 @@ function summarize(
                     calculate_se = se_mask[i],
                 )
             )
-        elseif include_non_se
+        elseif include_non_se || name in missing_set
             push!(
                 rows,
                 (;
@@ -725,9 +807,25 @@ function summarize(
         end
     end
 
+    for j in extra_idx
+        push!(
+            rows,
+            (;
+                parameter = uq_names[j],
+                role = "Derived (natural scale)",
+                estimate = base.est[j],
+                std_error = base.se === nothing ? nothing : base.se[j],
+                lower = base.ints === nothing ? nothing : base.ints.lower[j],
+                upper = base.ints === nothing ? nothing : base.ints.upper[j],
+                calculate_se = true,
+            )
+        )
+    end
+
     cov_rows, n_obs_total, n_missing_total, notes_cov = _fq_try_outcome_coverage(res)
     re_label, re_rows, notes_re = _fq_random_effect_block(res; constants_re = constants_re)
     notes = String[]
+    append!(notes, align_notes)
     append!(notes, notes_cov)
     append!(notes, notes_re)
 
@@ -740,7 +838,7 @@ function summarize(
         level,
         interval_label,
         include_non_se,
-        length(flat_names),
+        length(flat_names) + length(extra_idx),
         length(rows),
         count(identity, se_mask),
         rows,
@@ -813,18 +911,19 @@ function _fq_print_coverage_table(
     name_w = max(length("outcome"), maximum(length(string(r.outcome)) for r in rows))
     println(
         io, "  ", rpad("outcome", name_w), "  ",
-        lpad("n_obs", 10), "  ", lpad("n_missing", 10)
+        lpad("n_obs", 10), "  ", lpad("n_missing", 10), "  ", lpad("unit", 12)
     )
-    println(io, "  ", repeat("-", name_w + 24))
+    println(io, "  ", repeat("-", name_w + 38))
     for r in rows
         println(
             io, "  ", rpad(string(r.outcome), name_w), "  ",
-            lpad(string(r.n_obs), 10), "  ", lpad(string(r.n_missing), 10)
+            lpad(string(r.n_obs), 10), "  ", lpad(string(r.n_missing), 10),
+            "  ", lpad(string(get(r, :unit, :row)), 12)
         )
     end
     return println(
         io, "  ", rpad("TOTAL", name_w), "  ", lpad(string(n_obs_total), 10),
-        "  ", lpad(string(n_missing_total), 10)
+        "  ", lpad(string(n_missing_total), 10), "  ", lpad("", 12)
     )
 end
 
