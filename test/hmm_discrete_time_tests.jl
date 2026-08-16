@@ -265,3 +265,64 @@ end
     )
     @test_throws ErrorException logpdf(mv, [1.0])
 end
+
+@testset "HMM value support, state dims, and missing observations" begin
+    C = Categorical([0.5, 0.5])
+    P = [0.8 0.2; 0.1 0.9]
+    Q = [-1.0 1.0; 2.0 -2.0]
+    Econt = (Normal(0.0, 1.0), Normal(3.0, 1.0))
+    Edisc = (Poisson(1.0), Poisson(5.0))
+    Emix = (Poisson(1.0), Normal(3.0, 1.0))
+
+    # Value support follows the emissions: all-discrete is Discrete, mixed is Continuous.
+    @test DiscreteTimeDiscreteStatesHMM(P, Edisc, C) isa DiscreteUnivariateDistribution
+    @test DiscreteTimeDiscreteStatesHMM(P, Econt, C) isa ContinuousUnivariateDistribution
+    @test DiscreteTimeDiscreteStatesHMM(P, Emix, C) isa ContinuousUnivariateDistribution
+    @test ContinuousTimeDiscreteStatesHMM(Q, Edisc, C, 1.0) isa
+        DiscreteUnivariateDistribution
+    @test ContinuousTimeDiscreteStatesHMM(Q, Econt, C, 1.0) isa
+        ContinuousUnivariateDistribution
+    mv_disc = MVDiscreteTimeDiscreteStatesHMM(
+        P, ((Poisson(1.0), Poisson(2.0)), (Poisson(3.0), Poisson(4.0))), C
+    )
+    mv_cont = MVContinuousTimeDiscreteStatesHMM(
+        Q, ((Normal(), Normal()), (Normal(), Normal())), C, 1.0
+    )
+    @test mv_disc isa DiscreteMultivariateDistribution
+    @test mv_cont isa ContinuousMultivariateDistribution
+
+    # Likelihood values are untouched by the support parameterization.
+    @test logpdf(DiscreteTimeDiscreteStatesHMM(P, Econt, C), 0.4) ≈
+        log(0.45 * pdf(Normal(0.0, 1.0), 0.4) + 0.55 * pdf(Normal(3.0, 1.0), 0.4))
+
+    # State counts are validated at construction, on both DT and CT.
+    @test_throws ArgumentError DiscreteTimeDiscreteStatesHMM(P, (Normal(),), C)
+    @test_throws ArgumentError ContinuousTimeDiscreteStatesHMM(
+        Q, (Normal(), Normal(), Normal()), C, 1.0
+    )
+    @test_throws ArgumentError ContinuousTimeDiscreteStatesHMM(
+        Q, Econt, Categorical([0.3, 0.3, 0.4]), 1.0
+    )
+    @test_throws ArgumentError ContinuousTimeDiscreteStatesHMM(
+        [-1.0 1.0 0.0; 2.0 -2.0 0.0], Econt, C, 1.0
+    )
+
+    # A missing observation contributes nothing and leaves the propagated prior intact.
+    omm = DiscreteTimeObservedStatesMarkovModel(P, C)
+    ct_omm = ContinuousTimeObservedStatesMarkovModel(Q, C, 1.0)
+    for d in (
+            DiscreteTimeDiscreteStatesHMM(P, Econt, C),
+            ContinuousTimeDiscreteStatesHMM(Q, Edisc, C, 1.0),
+            mv_disc, mv_cont, omm, ct_omm, coarsed(omm), coarsed(ct_omm),
+        )
+        @test logpdf(d, missing) == 0.0
+        @test pdf(d, missing) == 1.0
+        @test posterior_hidden_states(d, missing) ≈ probabilities_hidden_states(d)
+    end
+    @test posterior_hidden_states(coarsed(omm), missing) ≈
+        posterior_hidden_states(omm, missing)
+
+    # coarsed delegates scalar summaries instead of iterating the wrapper.
+    @test quantile(coarsed(omm), 0.5) == quantile(omm, 0.5)
+    @test median(coarsed(omm)) == median(omm)
+end

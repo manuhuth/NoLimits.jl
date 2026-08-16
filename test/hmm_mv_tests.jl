@@ -59,13 +59,13 @@ for (label, M, mk) in mv_variants
         init = Categorical([0.6, 0.4])
 
         # Non-square transition/rate matrix
-        @test_throws ErrorException mk([1.0 0.0 0.0; 0.0 1.0 0.0], em, init)
+        @test_throws ArgumentError mk([1.0 0.0 0.0; 0.0 1.0 0.0], em, init)
 
         # Wrong number of emission elements (3 for n_states=2)
-        @test_throws ErrorException mk(M, (em..., (Normal(), Normal())), init)
+        @test_throws ArgumentError mk(M, (em..., (Normal(), Normal())), init)
 
         # Wrong initial_dist size (3 categories for n_states=2)
-        @test_throws ErrorException mk(M, em, Categorical([1 / 3, 1 / 3, 1 / 3]))
+        @test_throws ArgumentError mk(M, em, Categorical([1 / 3, 1 / 3, 1 / 3]))
 
         # Mismatched n_outcomes across states: state 1 has 2, state 2 has 1
         @test_throws ErrorException mk(
