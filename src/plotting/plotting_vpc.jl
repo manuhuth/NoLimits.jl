@@ -56,26 +56,23 @@ function _collect_observed_xy(
         dm::DataModel,
         obs_rows::Vector{Int},
         obs_name::Symbol,
-        x_axis_feature
+        x_axis_feature,
+        marginal::Union{Nothing, Int} = nothing
     )
     x_raw = _get_x_values(dm, ind, obs_rows, x_axis_feature)
     y_raw = getfield(get_obs(get_series(ind)), obs_name)
     x_all = Float64[]
     x_obs = Float64[]
     y_obs = Float64[]
-    for (xv, yv) in zip(x_raw, y_raw)
+    for (xv, yv_full) in zip(x_raw, y_raw)
         xv === missing && continue
         xv isa Real || continue
         xf = Float64(xv)
         isfinite(xf) || continue
         push!(x_all, xf)
+        yv = _obs_component(yv_full, marginal)
         yv === missing && continue
-        if !(yv isa Real)
-            yv isa AbstractVector &&
-                @warn "Vector-valued (multivariate) observations are not supported " *
-                "in VPC and are skipped." maxlog = 1
-            continue
-        end
+        yv isa Real || continue
         yf = Float64(yv)
         isfinite(yf) || continue
         push!(x_obs, xf)
@@ -205,7 +202,8 @@ function _simulate_obs(
         η_vec::Vector{ComponentArray},
         obs_name::Symbol,
         rng::AbstractRNG,
-        x_axis_feature
+        x_axis_feature,
+        marginal::Union{Nothing, Int} = nothing
     )
     sim_vals = Vector{Vector{Float64}}(undef, length(get_individuals(dm)))
     sim_x = Vector{Vector{Float64}}(undef, length(get_individuals(dm)))
@@ -235,15 +233,17 @@ function _simulate_obs(
                     get_model(dm), θ, η_row, get_const_cov(ind), vary, sol_accessors
                 )
             dist = getproperty(obs, obs_name)
-            if _is_hmm_dist(dist)
+            draw = if _is_hmm_dist(dist)
                 state = hmm_prev_state == 0 ?
                     _sample_hmm_hidden_state(rng, dist) :
                     _sample_hmm_hidden_state(rng, dist, hmm_prev_state)
                 hmm_prev_state = state
-                vals[j] = _float_if_real(_hmm_emission_rand(rng, dist, state))
+                _float_if_real(_hmm_emission_rand(rng, dist, state))
             else
-                vals[j] = rand(rng, dist)
+                rand(rng, dist)
             end
+            # A multivariate draw is a vector; keep only the component this panel plots.
+            vals[j] = marginal === nothing ? draw : draw[marginal]
         end
         sim_vals[i] = vals
     end

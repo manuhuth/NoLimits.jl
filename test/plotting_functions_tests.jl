@@ -300,6 +300,60 @@ end
     @test isa(
         plot_emission_distributions(dm; figure_layout = :vector), Vector{CairoMakie.Figure}
     )
+
+    # #240 group 4: the remaining diagnostics must show component panels with real data
+    # instead of erroring or returning empty figures. Component 1 has 5 observed values,
+    # component 2 has 4 (partially missing vectors keep their observed component).
+    @testset "multivariate diagnostics render component panels" begin
+        all_axes(fig) = [a for a in fig.content if a isa CairoMakie.Axis]
+        function scatter_counts(fig)
+            return [
+                sum(
+                        length(CairoMakie.Makie.to_value(plt[1]))
+                        for plt in ax.scene.plots if plt isa CairoMakie.Makie.Scatter;
+                        init = 0
+                    ) for ax in all_axes(fig)
+            ]
+        end
+
+        # Failure A: one marginal PDF panel per component and observation row.
+        f_od = plot_observation_distributions(res; individuals_idx = 1)
+        @test length(all_axes(f_od)) == 3 * n_marginals
+        pdf_lines = [
+            CairoMakie.Makie.to_value(plt[1])
+                for plt in first(all_axes(f_od)).scene.plots
+                if plt isa CairoMakie.Makie.Lines
+        ]
+        @test !isempty(pdf_lines)
+        @test length(first(pdf_lines)) == 200
+
+        # Failure B: VPC keeps observed values and never assigns a vector draw to
+        # scalar storage.
+        f_vpc = plot_vpc(res; n_simulations = 2, n_bins = 2)
+        @test length(all_axes(f_vpc)) == n_marginals
+        @test scatter_counts(f_vpc) == [5, 4]
+
+        # Failure C: nested observation vectors expand into component series.
+        @test scatter_counts(plot_observed_profiles(dm)) == [9]
+        @test scatter_counts(plot_observed_profiles(res; marginal_idx = 2)) == [4]
+        @test "y[1]" in _series_labels(plot_observed_profiles(dm))
+
+        # Failure D: DV/PRED/IPRED/WRES keep vector rows instead of emptying out.
+        for f_gof in (plot_dv_pred(res), plot_dv_ipred(res), plot_wres_pred(res))
+            @test length(all_axes(f_gof)) == n_marginals
+            @test scatter_counts(f_gof) == [5, 4]
+        end
+
+        # Residual panels follow the component-wise residual schema when it provides
+        # vector cells; the plots are a no-op on a scalar table.
+        rdf = NoLimits.get_residuals(res)
+        if any(v -> v isa AbstractVector, rdf.res_raw)
+            @test length(all_axes(plot_residuals(res; residual = :raw))) ==
+                n_inds * n_marginals
+            @test length(all_axes(plot_residual_distribution(res; residual = :raw))) ==
+                n_marginals
+        end
+    end
 end
 
 @testset "plot_fits supports varying non-ODE random-effect groups" begin
