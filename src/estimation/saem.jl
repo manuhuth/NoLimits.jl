@@ -297,7 +297,8 @@ end
     return _spawn_child_rngs(rng, nthreads)
 end
 
-function _saem_batches!(
+# Shared by SAEM and MCEM so the two estimators' minibatching options cannot drift.
+function _em_batches!(
         buf::Vector{Int}, update_schedule, nbatches::Int, iter::Int, rng::AbstractRNG
     )
     if update_schedule === :all
@@ -3310,7 +3311,7 @@ function _fit_model(
         γ = _saem_gamma_schedule(iter, method.saem)
         sched_phase = _saem_schedule_phase(iter, method.saem)
         mstep_skipped = false
-        updated = _saem_batches!(
+        updated = _em_batches!(
             q_cache.batches_buf, method.saem.update_schedule,
             length(batch_infos), iter, rng
         )

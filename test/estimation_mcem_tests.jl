@@ -154,6 +154,43 @@ end
     @test res isa FitResult
 end
 
+@testset "MCEM update_schedule minibatching" begin
+    @test NoLimits.MCEM().update_schedule === :all
+    # 4 batches. Every schedule must still yield a finite Q: batches skipped by the
+    # E-step keep their previous draws, so the M-step never sees an empty sample set.
+    for (sched, ser) in (
+            (2, EnsembleSerial()),
+            (2, EnsembleThreads()),
+            ((n, it, r) -> [1 + (it % n)], EnsembleSerial()),
+        )
+        res = fit_model(
+            _MCEM_DM4,
+            NoLimits.MCEM(;
+                sampler = MH(),
+                turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
+                maxiters = 3, update_schedule = sched
+            );
+            serialization = ser
+        )
+        @test res isa FitResult
+        @test isfinite(NoLimits.get_objective(res))
+    end
+    # MCEM_IS switching out of its MCMC warm-up must refresh every batch, or the IS
+    # Q-function would hit batches with no importance weights.
+    res_is = fit_model(
+        _MCEM_DM4,
+        NoLimits.MCEM(;
+            e_step = NoLimits.MCEM_IS(; n_samples = 8, warm_start_mcmc_iters = 1),
+            maxiters = 3, update_schedule = 2, progress = false
+        )
+    )
+    @test isfinite(NoLimits.get_objective(res_is))
+    @test_throws ErrorException fit_model(
+        _MCEM_DM4,
+        NoLimits.MCEM(; maxiters = 2, progress = false, update_schedule = :nope)
+    )
+end
+
 @testset "MCEM multivariate RE" begin
     res = fit_model(
         fx_mvnp_dm(),
