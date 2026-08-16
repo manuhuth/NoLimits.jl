@@ -126,8 +126,15 @@ function NormalizingPlanarFlow(
         n_input::Int, n_layers::Int; init = x -> sqrt((1 / n_input)) .* x,
         base_dist = nothing
     )
+    n_input >= 1 ||
+        throw(ArgumentError("NormalizingPlanarFlow: `n_input` must be ≥ 1. Got: $(n_input)"))
+    n_layers >= 1 ||
+        throw(ArgumentError("NormalizingPlanarFlow: `n_layers` must be ≥ 1. Got: $(n_layers)"))
     q₀ = isnothing(base_dist) ? MvNormal(zeros(Float64, n_input), I) : base_dist
     d = length(q₀)
+    # A base distribution of a different dimension used to silently override `n_input`.
+    d == n_input ||
+        throw(ArgumentError("NormalizingPlanarFlow: `base_dist` has dimension $(d), which must equal `n_input` = $(n_input)."))
     Ls = [PlanarLayer(d, init) for _ in 1:n_layers]
     ts = fchain(Ls)
 
@@ -192,6 +199,7 @@ Distributions.logpdf(d::NormalizingPlanarFlow, x::AbstractVector) = logpdf(d.bas
 function Distributions.logpdf(d::NormalizingPlanarFlow, x::StaticArrays.StaticVector)
     return logpdf(d.base, x)
 end
+Distributions.pdf(d::NormalizingPlanarFlow, x::Real) = pdf(d.base, [x])
 Distributions.pdf(d::NormalizingPlanarFlow, x::AbstractVector) = pdf(d.base, x)
 Distributions.length(d::NormalizingPlanarFlow) = length(d.base)
 Distributions.size(d::NormalizingPlanarFlow) = size(d.base)
