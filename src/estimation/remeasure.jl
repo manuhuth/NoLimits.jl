@@ -468,7 +468,8 @@ function build_re_measure_from_batch(
                 # Generic fallback for any continuous univariate distribution.
                 # Transport is chosen by support:
                 #   ℝ         → identity   (T(z) = z,        log|T'| = 0)
-                #   (0,∞)     → exp        (T(z) = exp(z),   log|T'| = z)
+                #   (a,∞)     → shift-exp  (T(z) = a+exp(z), log|T'| = z)
+                #   (-∞,b)    → shift-exp  (T(z) = b-exp(z), log|T'| = z)
                 #   (a,b) fin → scaled σ   (T(z) = a+(b-a)σ(z), log|T'| = log(b-a)+log σ+log(1-σ))
                 # logcorrection = logpdf(dist, T(z)) + log|T'(z)| + z²/2 + log(2π)/2
                 # Note: ForwardDiff compatibility depends on Distributions.jl's logpdf
@@ -490,16 +491,32 @@ function build_re_measure_from_batch(
                             end
                         )
                     end
-                elseif lo == 0 && hi == Inf
-                    # Exp transport
-                    let d = dist
-                        push!(segment_fns, z_k -> [exp(z_k[1])])
+                elseif isfinite(lo) && hi == Inf
+                    # Shifted exp transport; a == 0 is the plain exp case.
+                    let d = dist, a = Float64(lo)
+                        push!(segment_fns, z_k -> [a + exp(z_k[1])])
                         push!(
                             correction_fns,
                             z_k -> begin
                                 zz = z_k[1]
                                 T_z = eltype(z_k)
-                                η = exp(convert(T_z, zz))
+                                η = convert(T_z, a) + exp(convert(T_z, zz))
+                                Distributions.logpdf(d, η) +
+                                    convert(T_z, zz) + convert(T_z, zz)^2 / 2 +
+                                    log(convert(T_z, 2π)) / 2
+                            end
+                        )
+                    end
+                elseif lo == -Inf && isfinite(hi)
+                    # Mirrored shifted exp transport; same log-Jacobian z.
+                    let d = dist, b_hi = Float64(hi)
+                        push!(segment_fns, z_k -> [b_hi - exp(z_k[1])])
+                        push!(
+                            correction_fns,
+                            z_k -> begin
+                                zz = z_k[1]
+                                T_z = eltype(z_k)
+                                η = convert(T_z, b_hi) - exp(convert(T_z, zz))
                                 Distributions.logpdf(d, η) +
                                     convert(T_z, zz) + convert(T_z, zz)^2 / 2 +
                                     log(convert(T_z, 2π)) / 2
@@ -538,7 +555,8 @@ function build_re_measure_from_batch(
                     error(
                         "build_re_measure_from_batch: unsupported support for distribution " *
                             "$(typeof(dist)) (lo=$lo, hi=$hi). " *
-                            "GHQuadrature supports ℝ, (0,∞), and finite (a,b) supports."
+                            "GHQuadrature supports any interval support with " *
+                            "finite or infinite bounds."
                     )
                 end
                 push!(μ_segs, nothing)
@@ -727,6 +745,42 @@ end
 # ---------------------------------------------------------------------------
 
 """
+    _AD_INCOMPATIBLE_RE_TYPES
+
+Continuous univariate `Distributions.jl` types whose `logpdf` is a `ccall` into the
+Rmath C library (`StatsFuns.RFunctions`), so it converts its argument to `Float64`
+and cannot be differentiated by ForwardDiff. Random effects with these distributions
+are rejected up front by the AD-based marginal estimators.
+"""
+const _AD_INCOMPATIBLE_RE_TYPES = (
+    :NoncentralT, :NoncentralF, :NoncentralChisq, :NoncentralBeta, :StudentizedRange,
+)
+
+"""
+    _validate_re_ad_compatible(dm::DataModel, method_label::AbstractString)
+
+Throw an `ArgumentError` if any random effect uses a distribution whose `logpdf` is
+not ForwardDiff-compatible (see [`_AD_INCOMPATIBLE_RE_TYPES`](@ref)). Without this the
+failure surfaces deep in the AD path as an opaque `MethodError: no method matching
+Float64(::ForwardDiff.Dual{...})` (issue #247).
+"""
+function _validate_re_ad_compatible(dm::DataModel, method_label::AbstractString)
+    re_t = get_re_types(get_random(get_model(dm)))
+    bad = [n for (n, dtype) in Base.pairs(re_t) if dtype in _AD_INCOMPATIBLE_RE_TYPES]
+    isempty(bad) && return nothing
+    types_str = join([string(re_t[n]) for n in bad], ", ")
+    throw(
+        ArgumentError(
+            "$(method_label) cannot use random effect(s) $(join(string.(bad), ", ")) " *
+                "with distribution type(s) $(types_str): their `Distributions.logpdf` " *
+                "calls the Rmath C library, which is not ForwardDiff-compatible. " *
+                "Use a derivative-free sampler (SAEM/MCMC) or a different random-effect " *
+                "distribution."
+        )
+    )
+end
+
+"""
     _ghq_validate_re_distributions(dm::DataModel)
 
 Throw an informative error if the model contains random effects whose
@@ -744,6 +798,7 @@ function _ghq_validate_re_distributions(dm::DataModel)
     re = get_random(get_model(dm))
     re_t = get_re_types(re)
     isempty(re_t) && return
+    _validate_re_ad_compatible(dm, "GHQuadrature")
 
     # Distributions known to be unsupported (discrete or multivariate non-Gaussian).
     # Continuous univariate distributions not in this list are handled by the

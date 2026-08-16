@@ -284,7 +284,7 @@ function _focei_collect_obs!(
                 calculate_formulas_obs(model, θ, η_row, const_cov, vary, sol_accessors)
             for col in obs_cols
                 y = getfield(obs_series, col)[i]
-                y === missing && continue
+                _obs_is_missing(y) && continue
                 _focei_collect_push!(out, getproperty(obs, col))
             end
         end
@@ -322,7 +322,7 @@ function _focei_rows_push!(
         obs = obs_f(ctx, sol_acc, const_cov, vrows[i])
         for col in obs_cols
             y = getfield(obs_series, col)[i]
-            y === missing && continue
+            _obs_is_missing(y) && continue
             _focei_collect_push!(out, getproperty(obs, col))
         end
     end

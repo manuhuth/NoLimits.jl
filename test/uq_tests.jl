@@ -687,3 +687,11 @@ end
     @test diag(B)[2] > 1.0e8
     @test isapprox(B, inv(H); rtol = 1.0e-3)
 end
+
+# Issue #250 finding 7: non-finite Wald moments must not reach range/quantile/Makie.
+@testset "_wald_density_xy rejects non-finite mean/variance" begin
+    @test NoLimits._wald_density_xy(:normal, NaN, 1.0) === nothing
+    @test NoLimits._wald_density_xy(:normal, 0.0, Inf) === nothing
+    @test NoLimits._wald_density_xy(:lognormal, Inf, 1.0) === nothing
+    @test NoLimits._wald_density_xy(:logitnormal, 0.0, NaN) === nothing
+end

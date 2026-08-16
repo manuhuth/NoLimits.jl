@@ -87,7 +87,7 @@ end
         dm_bern,
         MCMC(;
             sampler = MH(),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+            turing_kwargs = (n_samples = 2, n_adapt = 1, progress = false)
         )
     )
     @test plot_vpc(res_bern; n_simulations = 5, n_bins = 3, mcmc_draws = 5) !== nothing
@@ -117,7 +117,7 @@ end
         dm_pois,
         MCMC(;
             sampler = MH(),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+            turing_kwargs = (n_samples = 2, n_adapt = 1, progress = false)
         )
     )
     @test plot_vpc(res_pois; n_simulations = 5, n_bins = 3, mcmc_draws = 5) !== nothing
@@ -156,4 +156,17 @@ end
     @test sim_x[2] == [0.0, 1.0]
     @test sim_vals[1] ≈ [0.1, 0.4, 0.4] atol = 1.0e-3
     @test sim_vals[2] ≈ [0.1, 0.3] atol = 1.0e-3
+end
+
+@testset "kernel VPC quantiles survive a degenerate bandwidth (#250.2)" begin
+    # Constant x makes the default bandwidth zero; pooling must replace the 0/0 weights.
+    y = [1.0, 2.0, 3.0, 4.0, 5.0]
+    for bw in (0.0, -1.0, NaN)
+        sm = NoLimits._kernel_quantiles(fill(2.0, 5), y, [2.0], bw, [10.0, 50.0, 90.0])
+        @test all(v -> all(isfinite, v), values(sm))
+        @test sm[50.0][1] ≈ 3.0
+    end
+    @test NoLimits._kernel_quantiles(
+        [0.0, 1.0], y[1:2], [0.0, 1.0], 0.5, [50.0]
+    )[50.0] == [1.0, 2.0]
 end

@@ -110,7 +110,7 @@ const _HMM_RE_SMOKE_METHODS = Dict(
         multistart_n = 2, multistart_k = 2
     ),
     :MCMC => () -> NoLimits.MCMC(;
-        sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+        sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 1, progress = false)
     ),
     :SAEM => () -> NoLimits.SAEM(;
         sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),

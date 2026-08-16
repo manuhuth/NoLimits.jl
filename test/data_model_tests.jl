@@ -1,9 +1,11 @@
 using Test
 using NoLimits
 using DataFrames
+using ComponentArrays
 using Distributions
 using SciMLBase
 using DataInterpolations
+using LinearAlgebra
 using SentinelArrays: ChainedVector
 
 @testset "row-varying RE capability detection" begin
@@ -1758,4 +1760,55 @@ end
         sprint(showerror, e)
     end
     @test occursin("eta", msg) && occursin("SITE", msg)
+end
+
+@testset "multivariate observation missingness is validated at construction (#249)" begin
+    # Vector-valued outcomes used to be inspected only one level deep, so nested
+    # missing/NaN components reached `logpdf` and raised a MethodError mid-fit.
+    model = @Model begin
+        @fixedEffects begin
+            μ = RealVector([0.0, 0.0])
+            σ = RealNumber(1.0, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @formulas begin
+            y ~ MvNormal(collect(μ), σ^2 * LinearAlgebra.I(2))
+        end
+    end
+    mk(vals) = DataModel(
+        model, DataFrame(ID = [1, 1], t = [0.0, 1.0], y = vals);
+        primary_id = :ID, time_col = :t
+    )
+    # One observed row next to an all-missing one: the column keeps a `Union{Missing,…}`
+    # element type, which no multivariate logpdf accepts unless it is narrowed first.
+    mixed = Vector{Union{Missing, Float64}}[[0.1, 0.2], [missing, missing]]
+
+    dm = mk(mixed)
+    @test NoLimits._has_observations(dm)
+    θ = NoLimits.get_θ0_untransformed(NoLimits.get_fixed(model))
+    @test isfinite(NoLimits.loglikelihood(dm, θ, [ComponentArray()]))
+
+    # A partially observed cell constructs fine (some outcomes, e.g. HMM emissions,
+    # define their own vector logpdf and decompose it component-wise); one that reaches
+    # a distribution with no such method (like this MvNormal) fails loudly at evaluation
+    # instead of silently returning a non-finite log-likelihood.
+    dm_partial = mk(Vector{Union{Missing, Float64}}[[0.1, missing], [0.3, 0.4]])
+    # Threaded (the default) wraps it in a Task/CompositeException; serial keeps it bare.
+    @test_throws ErrorException NoLimits.loglikelihood(
+        dm_partial, θ, [ComponentArray()]; serialization = NoLimits.EnsembleSerial()
+    )
+    # A nested NaN is a non-finite observation just like a scalar NaN.
+    @test_throws ErrorException mk(
+        Vector{Union{Missing, Float64}}[[NaN, 0.2], [0.3, 0.4]]
+    )
+    # All components missing == the whole cell missing: legal, and not an observation.
+    all_missing = Vector{Union{Missing, Float64}}[
+        [missing, missing], [missing, missing],
+    ]
+    dm_none = @test_logs (:warn,) match_mode = :any mk(all_missing)
+    @test !NoLimits._has_observations(dm_none)
+    @test NoLimits._obs_is_missing([missing, missing])
+    @test !NoLimits._obs_is_missing([0.1, 0.2])
 end

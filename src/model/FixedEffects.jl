@@ -350,6 +350,36 @@ function _to_type(::Type{T}, x) where {T}
     return x
 end
 
+# Parameter blocks validate the *closed* natural-scale constraint, but every transform
+# needs the open interior: 0 on :log, a singular PSD matrix, a zero simplex weight or
+# zero off-diagonal rate all map to -Inf/NaN. Those become an optimizer start the fit
+# reports as an immediate "converged" optimum, so they are rejected here (#249).
+function _check_transformed_finite(θt, flat_names, what::AbstractString)
+    for i in eachindex(θt)
+        isfinite(θt[i]) && continue
+        label = length(flat_names) == length(θt) ? string(flat_names[i]) : "flat index $(i)"
+        throw(
+            ArgumentError(
+                "$(what) for $(label) maps to $(θt[i]) on the transformed scale. The value sits on the boundary of its transform's domain (e.g. 0 on a :log scale, a singular matrix on :cholesky/:expm, a zero probability on :stickbreak, a zero rate on :lograterows). Move it strictly inside the domain."
+            )
+        )
+    end
+    return nothing
+end
+
+function _forward_or_argerror(transform, θu)
+    return try
+        transform(θu)
+    catch e
+        (e isa PosDefException || e isa DomainError) || rethrow(e)
+        throw(
+            ArgumentError(
+                "Declared starting values could not be transformed: $(e). A :cholesky/:expm scale needs a strictly positive definite matrix, not merely positive semi-definite."
+            )
+        )
+    end
+end
+
 function build_fixed_effects(params::NamedTuple)
     names = Symbol[collect(keys(params))...]
 
@@ -402,7 +432,11 @@ function build_fixed_effects(params::NamedTuple)
     # rebuild the transforms with precomputed axes so applications use the type-stable
     # assembly path (required for Enzyme; see ParameterTranformations.jl).
     transform0 = ForwardTransform(names, specs)
-    θ0_transformed = transform0(θ0_untransformed)
+    θ0_transformed = _forward_or_argerror(transform0, θ0_untransformed)
+    _check_transformed_finite(
+        θ0_transformed, _flatten_by_specs(θ0_transformed, names, specs),
+        "Declared starting value"
+    )
     transform = ForwardTransform(
         names, specs, getaxes(θ0_transformed), length(θ0_transformed)
     )

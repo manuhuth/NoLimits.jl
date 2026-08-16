@@ -625,3 +625,63 @@ end
     @test length(g_on) == length(s)
     @test all(isapprox(g_on[i] / g_off[i], s[i]; rtol = 1.0e-6) for i in eachindex(g_off))
 end
+
+@testset "AD-incompatible and bounded-support RE distributions (#247)" begin
+    # NoncentralT/F/Chisq/Beta and StudentizedRange reach Rmath through
+    # StatsFuns.RFunctions, which converts its argument to Float64. That is an upstream
+    # ForwardDiff incompatibility, so the marginal estimators reject them up front
+    # instead of failing with a MethodError deep in the AD path.
+    m_nct = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.4)
+            σ = RealNumber(0.35; scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(Distributions.NoncentralT(5.0, 0.5); column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(a + η, σ)
+        end
+    end
+    df = DataFrame(
+        ID = repeat(1:4, inner = 3), t = repeat(0.0:2.0, 4), y = collect(1.0:12.0)
+    )
+    dm_nct = DataModel(m_nct, df; primary_id = :ID, time_col = :t)
+    for method in (NoLimits.Laplace(), NoLimits.FOCEI(), NoLimits.GHQuadrature())
+        @test_throws ArgumentError fit_model(dm_nct, method)
+    end
+    # The parse-time distribution symbol must survive module qualification, otherwise
+    # every `Distributions.X(...)` random effect is seen as `:unknown`.
+    @test NoLimits.get_re_types(NoLimits.get_random(m_nct)).η === :NoncentralT
+
+    # A bounded-support RE prior can put every empirical Bayes mode outside its support,
+    # so the Laplace objective is the finite infeasibility wall at every θ. That is not a
+    # converged fit, whatever the optimizer's return code says.
+    m_unif = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.4)
+            σ = RealNumber(0.35; scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(Uniform(-1.0, 1.0); column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(a + η, σ)
+        end
+    end
+    df_u = DataFrame(
+        ID = repeat(1:4, inner = 3), t = repeat(0.0:2.0, 4),
+        y = repeat([10.0, -10.0, 10.0, -10.0], inner = 3)
+    )
+    dm_u = DataModel(m_unif, df_u; primary_id = :ID, time_col = :t)
+    res_u = fit_model(dm_u, NoLimits.Laplace(; optim_kwargs = (maxiters = 3,)))
+    @test NoLimits.get_objective(res_u) >= 1.0e10
+    @test NoLimits.get_converged(res_u) === false
+    @test res_u.summary.notes isa AbstractString
+end

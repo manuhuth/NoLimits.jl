@@ -28,7 +28,7 @@ function _plot_data_dm(
         x = _get_x_values(dm, ind, obs_rows, x_axis_feature)
         y = getfield(get_obs(get_series(ind)), obs_name)
         title_id = string(
-            get_primary_id(dm), ": ", get_df(dm)[obs_rows[1], get_primary_id(dm)]
+            get_primary_id(dm), ": ", _individual_id(dm, i)
         )
         _kw249 = merge(
             (
@@ -219,6 +219,76 @@ function plot_data(
     )
 end
 
+# Store `plot_func(dist)` into the (draw, point, component) prediction array.
+function _store_stat!(preds, d, j, dist, plot_func, is_mv::Bool, n_marginals::Int)
+    v = _stat_from_dist(dist, plot_func)
+    if is_mv
+        for m in 1:n_marginals
+            preds[d, j, m] = _float_if_real(v[m])
+        end
+    else
+        preds[d, j, 1] = _float_if_real(v)
+    end
+    return preds
+end
+
+# Component `m` of every stored distribution (`m === nothing` keeps them as they are).
+function _component_dists(dists_by_draw, obs_name::Symbol, m, n_marginals::Int)
+    m === nothing && return dists_by_draw
+    return [
+        [
+                _marginal_obs_dist(d, obs_name, m, n_marginals; fn = "plot_fits")
+                for d in draw
+            ] for draw in dists_by_draw
+    ]
+end
+
+# Transparent-to-component-color ramp so per-component density bands can overlay.
+function _density_colormap(m, marginal_colors)
+    m === nothing && return (:viridis, 0.5)
+    c = Makie.to_color(marginal_colors[m])
+    return Makie.cgrad([Makie.RGBAf(c.r, c.g, c.b, 0.0), Makie.RGBAf(c.r, c.g, c.b, 0.6)])
+end
+
+# Predictive-density overlay over the fit grid: a heatmap of the (draw-averaged)
+# density, or a PMF scatter for discrete outcomes.
+function _plot_density_band!(p, x_density, dists_by_draw, colormap, style::PlotStyle)
+    n_draws = length(dists_by_draw)
+    d0 = dists_by_draw[1][1]
+    # Bernoulli needs no overlay; the fit line already represents p(y=1).
+    _is_bernoulli(d0) && return p
+    if _is_discrete(d0)
+        for j in eachindex(x_density)
+            grid = _density_grid_discrete(dists_by_draw[1][j], 0.995)
+            grid === nothing && continue
+            probs = zeros(Float64, length(grid.vals))
+            for d in 1:n_draws
+                probs .+= pdf.(Ref(dists_by_draw[d][j]), grid.vals)
+            end
+            probs ./= n_draws
+            create_styled_scatter!(
+                p, fill(x_density[j], length(grid.vals)), grid.vals;
+                color = probs, colormap = :viridis, marker = :xcross,
+                markersize = style.marker_size_pmf,
+                strokewidth = style.marker_stroke_width_pmf, label = ""
+            )
+        end
+        return p
+    end
+    grid = _density_grid_continuous(dists_by_draw[1], 0.995, 100)
+    grid === nothing && return p
+    z = zeros(length(grid.y), length(x_density))
+    for d in 1:n_draws, j in eachindex(x_density)
+        z[:, j] .+= pdf.(Ref(dists_by_draw[d][j]), grid.y)
+    end
+    z ./= n_draws
+    # z is (ny, nx); Makie heatmap wants (nx, ny) -> permutedims.
+    _record!(
+        p, ax -> heatmap!(ax, x_density, grid.y, permutedims(z); colormap = colormap)
+    )
+    return p
+end
+
 """
     plot_fits(res::FitResult; dm, plot_density, plot_func, plot_data_points, observable,
               individuals_idx, x_axis_feature, shared_x_axis, shared_y_axis, ncols,
@@ -234,7 +304,9 @@ Plot model predictions against observed data for each individual as a multi-pane
 
 # Keyword Arguments
 - `dm::Union{Nothing, DataModel} = nothing`: data model (inferred from `res` by default).
-- `plot_density::Bool = false`: overlay the predictive distribution density.
+- `plot_density::Bool = false`: overlay the predictive distribution density. For
+  vector-valued observables one band per component marginal is drawn, in the component's
+  color (restricted to `marginal_idx` when given).
 - `plot_func = mean`: function applied to the predictive distribution to obtain the
   prediction line (e.g. `mean`, `median`).
 - `plot_data_points::Bool = true`: overlay the observed data points.
@@ -358,12 +430,6 @@ function plot_fits(
     marginal_colors = _marginal_colors(max(n_marginals, 1), style)
 
     is_mcmc = _is_posterior_draw_fit(res)
-    is_mv && is_mcmc && throw(
-        ArgumentError(
-            "plot_fits does not support posterior draws for vector-valued " *
-                "(multivariate) observables such as :$(obs_name)."
-        )
-    )
     θ_draws = nothing
     η_draws = nothing
     if is_mcmc
@@ -382,10 +448,10 @@ function plot_fits(
         (length(mcmc_quantiles) >= 2 && all(0 .<= mcmc_quantiles .<= 100)) ||
             error("mcmc_quantiles must be in [0,100] with length >= 2.")
     end
-    if is_mv && plot_density
-        @warn "plot_density is ignored for vector-valued (multivariate) observables."
-        plot_density = false
-    end
+    # Component indices to draw; `nothing` marks the scalar (single-curve) case.
+    margin_range = is_mv ?
+        (marginal_idx === nothing ? collect(1:n_marginals) : [marginal_idx]) :
+        [nothing]
 
     _default_xlabel = x_axis_feature === nothing ? "Time" : _axis_label(x_axis_feature)
     _default_ylabel = get(kwargs_subplot, :ylabel, _axis_label(obs_name))
@@ -402,7 +468,7 @@ function plot_fits(
         x_obs_plot, y_obs_plot = is_mv ? (nothing, nothing) :
             _collect_scalar_series(x_obs, y_obs)
         title_id = string(
-            get_primary_id(dm), ": ", get_df(dm)[obs_rows[1], get_primary_id(dm)]
+            get_primary_id(dm), ": ", _individual_id(dm, i)
         )
         is_leftmost = (k - 1) % ncols == 0
         _ylabel = is_leftmost ? _default_ylabel : ""
@@ -418,7 +484,6 @@ function plot_fits(
         end
         if plot_data_points
             if is_mv
-                margin_range = marginal_idx === nothing ? (1:n_marginals) : (marginal_idx,)
                 for m in margin_range
                     create_styled_scatter!(
                         p, xs_per_margin[m], ys_per_margin[m];
@@ -437,7 +502,8 @@ function plot_fits(
 
         if is_mcmc
             n_draws = length(θ_draws)
-            preds = zeros(Float64, n_draws, length(use_dense ? x_fit : obs_rows))
+            n_points = length(use_dense ? x_fit : obs_rows)
+            preds = zeros(Float64, n_draws, n_points, is_mv ? n_marginals : 1)
             dists_for_density = plot_density ?
                 Vector{Vector{Distribution}}(undef, n_draws) : nothing
             rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only = true)
@@ -461,7 +527,7 @@ function plot_fits(
                             get_model(dm), θ, η_ind, get_const_cov(ind), vary, sol_accessors
                         )
                         dist = getproperty(obs, obs_name)
-                        preds[d, j] = _stat_from_dist(dist, plot_func)
+                        _store_stat!(preds, d, j, dist, plot_func, is_mv, n_marginals)
                         if plot_density
                             dists[j] = dist
                         end
@@ -487,74 +553,48 @@ function plot_fits(
                             getproperty(obs, obs_name), y_obs_series_mcmc[j]
                         )
                         dists[j] = dist
-                        preds[d, j] = _stat_from_dist(dist, plot_func)
+                        _store_stat!(preds, d, j, dist, plot_func, is_mv, n_marginals)
                     end
                 end
                 if plot_density
                     dists_for_density[d] = dists
                 end
             end
-            mean_curve = vec(mean(preds, dims = 1))
-            create_styled_line!(
-                p, x_fit, mean_curve; label = "fit",
-                color = style.color_secondary, style = style
-            )
-            ylims = ylims === nothing ? (minimum(mean_curve), maximum(mean_curve)) :
-                (min(ylims[1], minimum(mean_curve)), max(ylims[2], maximum(mean_curve)))
+            for m in margin_range
+                slice = preds[:, :, m === nothing ? 1 : m]
+                mean_curve = vec(mean(slice, dims = 1))
+                create_styled_line!(
+                    p, x_fit, mean_curve;
+                    label = m === nothing ? "fit" : _marginal_label(obs_name, m),
+                    color = m === nothing ? style.color_secondary : marginal_colors[m],
+                    style = style
+                )
+                ylims = _merge_limits(ylims, mean_curve)
 
-            if plot_mcmc_quantiles
-                for q in mcmc_quantiles
-                    qvals = mapslices(x -> quantile(vec(x), q / 100), preds; dims = 1)
-                    qvals = vec(qvals)
-                    create_styled_line!(
-                        p, x_fit, qvals; color = style.color_secondary,
-                        alpha = mcmc_quantiles_alpha,
-                        linestyle = :dash, label = "$(q)%", style = style
-                    )
-                    ylims = (min(ylims[1], minimum(qvals)), max(ylims[2], maximum(qvals)))
+                if plot_mcmc_quantiles
+                    for q in mcmc_quantiles
+                        qvals = vec(
+                            mapslices(x -> quantile(vec(x), q / 100), slice; dims = 1)
+                        )
+                        create_styled_line!(
+                            p, x_fit, qvals;
+                            color = m === nothing ? style.color_secondary :
+                                marginal_colors[m],
+                            alpha = mcmc_quantiles_alpha,
+                            linestyle = :dash, label = "$(q)%", style = style
+                        )
+                        ylims = _merge_limits(ylims, qvals)
+                    end
                 end
             end
 
             if plot_density
-                if _is_bernoulli(dists_for_density[1][1])
-                    # Skip Bernoulli density overlay; the fit line already represents p(y=1).
-                elseif _is_discrete(dists_for_density[1][1])
-                    for j in eachindex(x_density)
-                        dist0 = dists_for_density[1][j]
-                        grid = _density_grid_discrete(dist0, 0.995)
-                        grid === nothing && continue
-                        probs = zeros(Float64, length(grid.vals))
-                        for d in 1:n_draws
-                            probs .+= pdf.(Ref(dists_for_density[d][j]), grid.vals)
-                        end
-                        probs ./= n_draws
-                        create_styled_scatter!(
-                            p, fill(x_density[j], length(grid.vals)), grid.vals;
-                            color = probs, colormap = :viridis, marker = :xcross,
-                            markersize = style.marker_size_pmf,
-                            strokewidth = style.marker_stroke_width_pmf, label = ""
-                        )
-                    end
-                else
-                    dists = dists_for_density[1]
-                    grid = _density_grid_continuous(dists, 0.995, 100)
-                    if grid !== nothing
-                        z = zeros(length(grid.y), length(x_density))
-                        for d in 1:n_draws
-                            for j in eachindex(x_density)
-                                z[:, j] .+= pdf.(Ref(dists_for_density[d][j]), grid.y)
-                            end
-                        end
-                        z ./= n_draws
-                        # z is (ny, nx); Makie heatmap wants (nx, ny) -> permutedims.
-                        _record!(
-                            p,
-                            ax -> heatmap!(
-                                ax, x_density, grid.y, permutedims(z);
-                                colormap = (:viridis, 0.5)
-                            )
-                        )
-                    end
+                for m in margin_range
+                    _plot_density_band!(
+                        p, x_density,
+                        _component_dists(dists_for_density, obs_name, m, n_marginals),
+                        _density_colormap(m, marginal_colors), style
+                    )
                 end
             end
         else
@@ -613,7 +653,6 @@ function plot_fits(
                         dists[j] = dist
                     end
                 end
-                margin_range = marginal_idx === nothing ? (1:n_marginals) : (marginal_idx,)
                 for m in margin_range
                     curve = is_mv ? vec(preds_dense[:, m]) : preds_dense
                     label = is_mv ? _marginal_label(obs_name, m) : "fit"
@@ -653,7 +692,6 @@ function plot_fits(
                         dists[j] = dist
                     end
                 end
-                margin_range = marginal_idx === nothing ? (1:n_marginals) : (marginal_idx,)
                 for m in margin_range
                     curve = is_mv ? vec(preds[:, m]) : preds
                     label = is_mv ? _marginal_label(obs_name, m) : "fit"
@@ -665,46 +703,30 @@ function plot_fits(
                 end
             end
 
-            if plot_density && !is_mv
-                if _is_bernoulli(dists[1])
-                    # Skip Bernoulli density overlay; the fit line already represents p(y=1).
-                elseif _is_discrete(dists[1])
-                    for j in eachindex(dists)
-                        grid = _density_grid_discrete(dists[j], 0.995)
-                        grid === nothing && continue
-                        create_styled_scatter!(
-                            p, fill(x_density[j], length(grid.vals)), grid.vals;
-                            color = grid.probs, colormap = :viridis, marker = :xcross,
-                            markersize = style.marker_size_pmf,
-                            strokewidth = style.marker_stroke_width_pmf, label = ""
-                        )
-                    end
-                else
-                    grid = _density_grid_continuous(dists, 0.995, 100)
-                    if grid !== nothing
-                        # grid.z is (ny, nx); Makie heatmap wants (nx, ny) -> permutedims.
-                        _record!(
-                            p,
-                            ax -> heatmap!(
-                                ax, x_density, grid.y, permutedims(grid.z);
-                                colormap = (:viridis, 0.5)
-                            )
-                        )
-                    end
+            if plot_density
+                for m in margin_range
+                    _plot_density_band!(
+                        p, x_density,
+                        _component_dists([dists], obs_name, m, n_marginals),
+                        _density_colormap(m, marginal_colors), style
+                    )
                 end
             end
         end
 
         plots[k] = p
-        xlims = xlims === nothing ? (minimum(x_fit), maximum(x_fit)) :
-            (min(xlims[1], minimum(x_fit)), max(xlims[2], maximum(x_fit)))
+        # `_merge_limits` skips empty/non-finite series, so event-only individuals
+        # contribute nothing instead of erroring in `minimum`.
+        xlims = _merge_limits(xlims, x_fit)
         observed_values = is_mv ? [val for vec in ys_per_margin for val in vec] : y_obs_plot
         ylims = _merge_limits(ylims, observed_values)
     end
 
     if shared_x_axis || shared_y_axis
-        xlim_use = shared_x_axis ? _pad_limits(xlims[1], xlims[2]) : nothing
-        ylim_use = shared_y_axis ? _pad_limits(ylims[1], ylims[2]) : nothing
+        xlim_use = shared_x_axis && xlims !== nothing ? _pad_limits(xlims[1], xlims[2]) :
+            nothing
+        ylim_use = shared_y_axis && ylims !== nothing ? _pad_limits(ylims[1], ylims[2]) :
+            nothing
         _apply_shared_axes!(plots, xlim_use, ylim_use)
     end
     p = combine_plots(plots; ncols = ncols, style = style, kwargs_layout...)
@@ -735,7 +757,7 @@ function _plot_hidden_states_impl(
         obs_rows = get_obs_rows(get_row_groups(dm))[i]
         x_vals = _get_x_values(dm, ind, obs_rows, x_axis_feature)
         title_id = string(
-            get_primary_id(dm), ": ", get_df(dm)[obs_rows[1], get_primary_id(dm)]
+            get_primary_id(dm), ": ", _individual_id(dm, i)
         )
         _kw870 = merge(
             (
@@ -1451,8 +1473,7 @@ function _plot_fits_comparison_impl(
         y_obs = getfield(get_obs(get_series(ind)), obs_name)
         x_obs_plot, y_obs_plot = _collect_scalar_series(x_obs, y_obs)
         title_id = string(
-            get_primary_id(dm_ref), ": ",
-            get_df(dm_ref)[obs_rows[1], get_primary_id(dm_ref)]
+            get_primary_id(dm_ref), ": ", _individual_id(dm_ref, i)
         )
         _kw1619 = merge(
             (
@@ -1482,14 +1503,8 @@ function _plot_fits_comparison_impl(
                 style = style,
                 linestyle = _comparison_line_style(labels[j], style)
             )
-            xlims = xlims === nothing ? (minimum(curve.x_fit), maximum(curve.x_fit)) :
-                (
-                    min(xlims[1], minimum(curve.x_fit)), max(xlims[2], maximum(curve.x_fit)),
-                )
-            ylims = ylims === nothing ? (minimum(curve.preds), maximum(curve.preds)) :
-                (
-                    min(ylims[1], minimum(curve.preds)), max(ylims[2], maximum(curve.preds)),
-                )
+            xlims = _merge_limits(xlims, curve.x_fit)
+            ylims = _merge_limits(ylims, curve.preds)
         end
 
         ylims = _merge_limits(ylims, y_obs_plot)
@@ -1497,8 +1512,10 @@ function _plot_fits_comparison_impl(
     end
 
     if shared_x_axis || shared_y_axis
-        xlim_use = shared_x_axis ? _pad_limits(xlims[1], xlims[2]) : nothing
-        ylim_use = shared_y_axis ? _pad_limits(ylims[1], ylims[2]) : nothing
+        xlim_use = shared_x_axis && xlims !== nothing ? _pad_limits(xlims[1], xlims[2]) :
+            nothing
+        ylim_use = shared_y_axis && ylims !== nothing ? _pad_limits(ylims[1], ylims[2]) :
+            nothing
         _apply_shared_axes!(plots, xlim_use, ylim_use)
     end
     p = combine_plots(plots; ncols = ncols, style = style, kwargs_layout...)

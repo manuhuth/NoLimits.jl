@@ -1011,6 +1011,11 @@ function _validate_theta_override(dm::DataModel, θ, option::AbstractString)
         lo[i] <= flat[i] <= hi[i] ||
             error("Value $(_label(i)) in $(option) is $(flat[i]), outside its declared bounds [$(lo[i]), $(hi[i])].")
     end
+    # Those bounds are inclusive, but the transform's domain is open: a value sitting
+    # exactly on the boundary still transforms to -Inf/NaN (#249).
+    θ isa ComponentArray && _check_transformed_finite(
+        _forward_or_argerror(get_transform(fe), θ), names, "Value in $(option)"
+    )
     return nothing
 end
 
@@ -2535,7 +2540,7 @@ Laplace, SAEM, MCEM, GHQuadrature.
 function get_loglikelihood_quadrature(
         dm::DataModel,
         res::FitResult;
-        level::Union{Int, NamedTuple} = 3,
+        level::Union{Integer, NamedTuple} = 3,
         constants_re::NamedTuple = NamedTuple(),
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
@@ -2547,6 +2552,8 @@ function get_loglikelihood_quadrature(
         mc_integrator::Union{Nothing, MCIntegrator} = nothing,
         fallback::Union{Nothing, MCIntegrator} = MCIntegrator()
     )
+    # Same normalization as the estimator path, so `Int8(3)`/`UInt(3)`/`3` all agree.
+    level = _check_ghq_level(level)
     if get_result(res) isa MCMCResult
         error("get_loglikelihood_quadrature: MCMC results are not supported.")
     end
@@ -2666,7 +2673,7 @@ end
 
 function get_loglikelihood_quadrature(
         res::FitResult;
-        level::Union{Int, NamedTuple} = 3,
+        level::Union{Integer, NamedTuple} = 3,
         constants_re::NamedTuple = NamedTuple(),
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
@@ -3672,10 +3679,28 @@ end
 # @inline keeps static dispatch (no boxing) so callers match the hand-inlined path.
 @inline function _accum_obs_col(ll::T, obs, obs_series, col, i) where {T}
     y = getfield(obs_series, col)[i]
-    y === missing && return ll
+    _obs_is_missing(y) && return ll
+    yv = _narrow_if_observed(y)
     dist = getproperty(obs, col)
-    v = _fast_logpdf(dist, y)
-    v === nothing && (v = logpdf(dist, y))
+    v = _fast_logpdf(dist, yv)
+    if v === nothing
+        v = try
+            logpdf(dist, yv)
+        catch e
+            # A partially observed vector reaching a distribution with no method for it
+            # (e.g. `MvNormal`, unlike HMM emissions) throws here instead of silently
+            # producing `Inf`/`NaN` (#249).
+            if e isa MethodError && yv isa AbstractArray && Missing <: eltype(yv)
+                error(
+                    "Column $(col) row $(i) is a partially observed multivariate value " *
+                        "$(yv) with no defined likelihood under $(nameof(typeof(dist))): " *
+                        "component-wise marginalization is not supported for this outcome " *
+                        "distribution. Supply every component or set the whole cell to `missing`."
+                )
+            end
+            rethrow()
+        end
+    end
     isfinite(v) || return T(-Inf)
     return ll + v
 end
@@ -3984,13 +4009,17 @@ end
     return y == 1 ? log(p) : y == 0 ? log1p(-p) : -Inf
 end
 
+# `0 * log(0) == NaN` would score the valid boundary case Poisson(0) at y=0 as
+# impossible; xlogy fixes the limit and keeps a zero (Dual) derivative there (#249).
+@inline _xlogy(y, x) = iszero(y) ? zero(x) : y * log(x)
+
 @inline function _fast_logpdf(dist::Poisson, y)
     λ = dist.λ
     λ >= 0 || return -Inf
     y < 0 && return -Inf
     y_int = floor(Int, y)
     y_int == y || return -Inf
-    return y_int * log(λ) - λ - SpecialFunctions.logfactorial(y_int)
+    return _xlogy(y_int, λ) - λ - SpecialFunctions.logfactorial(y_int)
 end
 
 @inline _fast_logpdf(::Any, ::Any) = nothing
@@ -4024,6 +4053,11 @@ function _build_vary_cache(dm::DataModel)
     end
 end
 
+# Cache copies an ensemble algorithm needs. Dispatch rather than `isa` so a custom
+# `SciMLBase.EnsembleAlgorithm` can opt into chunked caches (and observe the call).
+_ensemble_nthreads(::SciMLBase.EnsembleAlgorithm) = 1
+_ensemble_nthreads(::SciMLBase.EnsembleThreads) = Threads.maxthreadid()
+
 """
     build_likelihood_cache(dm; ode_args=(), ode_kwargs=NamedTuple(),
                            serialization=EnsembleSerial(), force_saveat=false, nthreads=1)
@@ -4041,8 +4075,8 @@ function build_likelihood_cache(
         force_saveat::Bool = false,
         nthreads::Int = 1
     )
-    if serialization isa SciMLBase.EnsembleThreads && nthreads == 1
-        nthreads = Threads.maxthreadid()
+    if nthreads == 1
+        nthreads = _ensemble_nthreads(serialization)
     end
     nthreads <= 1 && return _build_ll_cache_single(
         dm; ode_args = ode_args, ode_kwargs = ode_kwargs, force_saveat = force_saveat

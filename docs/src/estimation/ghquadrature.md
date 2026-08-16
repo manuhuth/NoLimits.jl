@@ -28,11 +28,15 @@ When random effects follow non-Gaussian distributions, `GHQuadrature` applies a 
 | `LogNormal` | Exponential ($b = e^{\mu + \sigma z}$) | Push-forward is LogNormal; log-correction = 0 |
 | `Beta` | Scaled logistic | Log-correction is non-zero |
 | `Gamma`, `Exponential`, `Weibull` | Exponential ($b = e^z$) | Log-correction is non-zero |
+| `Pareto`, any lower bound $a$ | Shifted exponential ($b = a + e^z$) | Log-correction is non-zero |
+| Support $(-\infty, b_{\max})$ | Mirrored exponential ($b = b_{\max} - e^z$) | Log-correction is non-zero |
 | `TDist` | Identity | Log-correction accounts for heavier tails |
 | `NormalizingPlanarFlow` | Bijector flow | Jacobian cancels; log-correction = 0 |
 | Any `ContinuousUnivariateDistribution` | By support shape | Generic fallback; log-correction is non-zero |
 
-Discrete distributions (`Poisson`, `Bernoulli`, etc.) are not supported and raise an error at validation time.
+Every interval support is covered, with either bound finite or infinite.
+
+Discrete distributions (`Poisson`, `Bernoulli`, etc.) are not supported and raise an error at validation time. Continuous univariate distributions whose `logpdf` calls the Rmath C library (`NoncentralT`, `NoncentralF`, `NoncentralChisq`, `NoncentralBeta`, `StudentizedRange`) are also rejected: that `logpdf` is not ForwardDiff-compatible, so no gradient-based marginal estimator (`GHQuadrature`, `Laplace`, `FOCEI`) can use them.
 
 ## What It Is Not
 
@@ -61,8 +65,8 @@ Consider [`Laplace`](laplace.md) or [`MCEM`](mcem.md) / [`SAEM`](saem.md) if the
 
 - Requires a model with random effects.
 - Requires at least one free fixed effect.
-- Supports all continuous univariate RE distributions, `MvNormal`, and `NormalizingPlanarFlow`.
-- Does not support discrete RE distributions.
+- Supports every continuous univariate RE distribution with an interval support, plus `MvNormal` and `NormalizingPlanarFlow`.
+- Does not support discrete RE distributions, nor the Rmath-backed noncentral families (`NoncentralT`, `NoncentralF`, `NoncentralChisq`, `NoncentralBeta`, `StudentizedRange`), whose `logpdf` is not ForwardDiff-compatible.
 - Supports nonlinear models, including ODE-based models.
 
 ## Basic Usage

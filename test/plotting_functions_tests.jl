@@ -3,6 +3,8 @@ using NoLimits
 using DataFrames
 using Distributions
 using CairoMakie
+using MCMCChains
+using Random
 using Turing: MH
 
 # Note: "plot_data and plot_fits basic", "plot_fits MCMC", "plot_fits VI"
@@ -239,8 +241,9 @@ end
 @testset "plot_data/fits multivariate HMM" begin
     model = @Model begin
         @fixedEffects begin
-            mu1 = RealNumber(0.0)
-            mu2 = RealNumber(3.0)
+            # Priors are ignored by MLE and let the same model serve the MCMC fit below.
+            mu1 = RealNumber(0.0, prior = Normal(0.0, 1.0))
+            mu2 = RealNumber(3.0, prior = Normal(3.0, 1.0))
         end
         @covariates begin
             t = Covariate()
@@ -354,6 +357,33 @@ end
                 n_marginals
         end
     end
+
+    # #245: one density band per component marginal instead of an early failure.
+    @testset "multivariate marginal density bands" begin
+        heatmaps(fig) = [
+            plt for ax in fig.content if ax isa CairoMakie.Axis
+                for plt in ax.scene.plots if plt isa CairoMakie.Makie.Heatmap
+        ]
+        f_all = plot_fits(res; plot_density = true, individuals_idx = 1)
+        @test length(heatmaps(f_all)) == n_marginals
+        f_one = plot_fits(
+            res; plot_density = true, individuals_idx = 1, marginal_idx = 2
+        )
+        @test length(heatmaps(f_one)) == 1
+
+        # Posterior draws over a vector-valued observable used to be rejected outright.
+        res_mcmc = fit_model(
+            dm,
+            NoLimits.MCMC(;
+                sampler = MH(),
+                turing_kwargs = (n_samples = 4, n_adapt = 2, progress = false)
+            )
+        )
+        f_mcmc = plot_fits(
+            res_mcmc; mcmc_draws = 2, individuals_idx = 1, plot_density = true
+        )
+        @test length(heatmaps(f_mcmc)) == n_marginals
+    end
 end
 
 @testset "plot_fits supports varying non-ODE random-effect groups" begin
@@ -387,4 +417,45 @@ end
     @test plot_fits(res) !== nothing
     # posterior-draw band -> _vi_drawn_params
     @test plot_fits(res; plot_mcmc_quantiles = true, mcmc_draws = 5) !== nothing
+end
+
+@testset "plots label individuals with no observation rows (#250.4)" begin
+    df_ev = copy(fx_re_df())
+    n = nrow(df_ev)
+    df_ev.EVID = [id == 6 ? 1 : 0 for id in df_ev.ID]
+    df_ev.AMT = zeros(n)
+    df_ev.RATE = zeros(n)
+    df_ev.CMT = ones(Int, n)
+    dm_ev = DataModel(
+        fx_re_model(), df_ev; primary_id = :ID, time_col = :t, evid_col = :EVID
+    )
+    @test isempty(NoLimits.get_obs_rows(NoLimits.get_row_groups(dm_ev))[6])
+    @test plot_data(dm_ev) !== nothing
+    @test plot_fits(fx_laplace(); dm = dm_ev) !== nothing
+end
+
+# Issue #250 finding 3: an all-warmup chain has no posterior draw to summarize.
+@testset "_mcmc_draw_indices rejects all-warmup chains" begin
+    chain = MCMCChains.Chains(randn(4, 2, 1), [:a, :b])
+    rng = Random.default_rng()
+    @test NoLimits._mcmc_draw_indices(chain, 2, 10, rng) == [3, 4]
+    @test_throws ArgumentError NoLimits._mcmc_draw_indices(chain, 4, 10, rng)
+    @test_throws ArgumentError NoLimits._mcmc_draw_indices(chain, 9, 10, rng)
+end
+
+# Issue #250 finding 6: a missing posterior coordinate must not silently become the
+# model's initial value; only explicitly pinned constants may bypass the lookup.
+@testset "_coordwise_fixed_from_means rejects missing coordinates" begin
+    dm = fx_nore_dm()
+    fe = NoLimits.get_fixed(NoLimits.get_model(dm))
+    names = NoLimits.get_names(fe)
+    θ0 = NoLimits.get_θ0_untransformed(fe)
+    @test_throws ArgumentError NoLimits._coordwise_fixed_from_means(
+        dm, "MCMC chain", _ -> nothing
+    )
+    ov = NamedTuple{Tuple(names)}(Tuple(getproperty(θ0, n) for n in names))
+    θ = NoLimits._coordwise_fixed_from_means(
+        dm, "MCMC chain", _ -> nothing; overrides = ov
+    )
+    @test all(getproperty(θ, n) == getproperty(θ0, n) for n in names)
 end

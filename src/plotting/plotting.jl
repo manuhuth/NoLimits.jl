@@ -448,11 +448,21 @@ end
     return nothing
 end
 
+function _missing_posterior_coord(source::AbstractString, key::AbstractString)
+    throw(
+        ArgumentError(
+            "$(source) has no coordinate `$(key)`. Substituting the model's initial " *
+                "value would mix posterior and initial parameters silently. Pass the " *
+                "parameter through `constants=` if it was pinned during the fit."
+        )
+    )
+end
+
 # Reconstruct a fixed-effect ComponentArray coordinate-by-coordinate. `lookup(key)`
 # maps a coordinate key string ("name" for scalars, "name[i,j]" for array elements) to
-# its value, or `nothing` when absent — in which case the initial value is used and a
-# `source`-tagged warning is emitted. Names in `overrides` bypass the lookup (constants
-# never appear in a chain). Shared by the MCMC/VI mean and draw paths.
+# its value, or `nothing` when absent. Names in `overrides` bypass the lookup (constants
+# are pinned, not sampled, so they never appear in a chain); anything else missing is a
+# name/layout mismatch and raises. Shared by the MCMC/VI mean and draw paths.
 function _coordwise_fixed_from_means(
         dm::DataModel, source::AbstractString, lookup;
         overrides::NamedTuple = NamedTuple()
@@ -475,17 +485,14 @@ function _coordwise_fixed_from_means(
                 for idx in CartesianIndices(val0)
                     idx_txt = join(Tuple(idx), ",")
                     ve = _lookup_coord(lookup, string(name, "[", idx_txt, "]"))
-                    if ve !== nothing
-                        vals[idx] = ve
-                    else
-                        @warn "$(source) is missing fixed effect element; falling back to initial value." name = name index = Tuple(idx)
-                        vals[idx] = Float64(val0[idx])
-                    end
+                    ve === nothing && _missing_posterior_coord(
+                        source, string(name, "[", idx_txt, "]")
+                    )
+                    vals[idx] = ve
                 end
                 push!(pairs, name => vals)
             else
-                @warn "$(source) is missing fixed effect; falling back to initial value." name = name
-                push!(pairs, name => val0)
+                _missing_posterior_coord(source, string(name))
             end
         end
     end
@@ -609,8 +616,14 @@ end
 
 function _mcmc_draw_indices(chain::Chains, n_adapt::Int, max_draws::Int, rng::AbstractRNG)
     n_iter = size(Array(chain), 1)
-    start_idx = min(n_adapt + 1, n_iter)
-    idxs = collect(start_idx:n_iter)
+    n_adapt < n_iter || throw(
+        ArgumentError(
+            "The stored MCMC chain has $(n_iter) iteration(s) of which $(n_adapt) are " *
+                "warmup, so no posterior draw is available. Reduce the warmup or store " *
+                "more iterations."
+        )
+    )
+    idxs = collect((n_adapt + 1):n_iter)
     n_keep = min(length(idxs), max_draws)
     n_keep == length(idxs) && return idxs
     return idxs[Random.randperm(rng, length(idxs))[1:n_keep]]
@@ -777,6 +790,8 @@ function _mcmc_drawn_params(
     chain = get_chain(res)
     n_adapt = _mcmc_warmup(res)
     draw_idxs = _mcmc_draw_indices(chain, n_adapt, max_draws, rng)
+    # Constants were pinned during the fit, so they are absent from the chain by design.
+    consts = _fit_kw(res, :constants, NamedTuple())
     nms = MCMCChains.names(chain)
     idx_map = _mcmc_param_index_map(chain)
     vals = Array(chain)
@@ -797,7 +812,8 @@ function _mcmc_drawn_params(
                 sym = Symbol(key);
                 haskey(idx_map, sym) ?
                     _mcmc_param_value(vals, rep_iter, idx_map[sym], rep_chain) : nothing
-            )
+            );
+            overrides = consts
         ),
         overrides
     )
@@ -862,7 +878,8 @@ function _mcmc_drawn_params(
                     haskey(idx_map, sym) ?
                         _mcmc_param_value(vals, iter_idx, idx_map[sym], chain_idx) :
                         nothing
-                )
+                );
+                overrides = consts
             ),
             overrides
         )
@@ -909,6 +926,7 @@ function _vi_drawn_params(
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = get_model_funs(get_model(dm))
     helpers = get_helper_funs(get_model(dm))
+    consts = _fit_kw(res, :constants, NamedTuple())
 
     rep_row = @view draws[1, :]
     θ_rep = _apply_param_overrides(
@@ -917,7 +935,8 @@ function _vi_drawn_params(
             key -> (
                 idx = _lookup_chain_index(idx_map, key);
                 idx != 0 ? Float64(rep_row[idx]) : nothing
-            )
+            );
+            overrides = consts
         ),
         overrides
     )
@@ -975,7 +994,8 @@ function _vi_drawn_params(
                 key -> (
                     idx = _lookup_chain_index(idx_map, key);
                     idx != 0 ? Float64(row[idx]) : nothing
-                )
+                );
+                overrides = consts
             ),
             overrides
         )

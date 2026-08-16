@@ -1,5 +1,6 @@
 using Test
 using NoLimits
+using DataFrames
 using Distributions
 using LinearAlgebra
 using Lux
@@ -422,4 +423,58 @@ end
     lb, ub = get_bounds_transformed(fe)
     @test lb.σ == log(NoLimits.EPSILON)
     @test ub.σ == Inf
+end
+
+@testset "transform-domain boundary starts are rejected (#249)" begin
+    # Every parameter block validates the CLOSED natural-scale constraint; the transform
+    # needs the open interior. Boundary values used to become -Inf/NaN optimizer starts
+    # that the fit then reported as an immediate "converged" optimum.
+    @test_throws ArgumentError @fixedEffects begin
+        a = RealNumber(0.0, scale = :log)
+    end
+    @test_throws ArgumentError @fixedEffects begin
+        a = RealVector([1.0, 0.0], scale = :log)
+    end
+    @test_throws ArgumentError @fixedEffects begin
+        a = RealPSDMatrix([1.0 0.0; 0.0 0.0], scale = :cholesky)
+    end
+    @test_throws ArgumentError @fixedEffects begin
+        a = RealLiePSDMatrix([1.0 0.0; 0.0 0.0])
+    end
+    @test_throws ArgumentError @fixedEffects begin
+        a = ProbabilityVector([1.0, 0.0, 0.0])
+    end
+    @test_throws ArgumentError @fixedEffects begin
+        a = ContinuousTransitionMatrix([-0.0 0.0; 0.0 -0.0])
+    end
+
+    # Interior values still build, and the stored transformed start stays finite.
+    fe = @fixedEffects begin
+        a = RealNumber(0.5, scale = :log)
+        b = ProbabilityVector([0.5, 0.3, 0.2])
+        c = RealPSDMatrix([1.0 0.1; 0.1 1.0], scale = :cholesky)
+    end
+    @test all(isfinite, NoLimits.get_θ0_transformed(fe))
+
+    # The same rule applies to a user-supplied start: the declared bounds are inclusive,
+    # so `σ = 0` passes them and only the transform-domain check catches it.
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            σ = RealNumber(0.5, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @formulas begin
+            y ~ Normal(a, σ)
+        end
+    end
+    dm = DataModel(
+        model, DataFrame(ID = [1, 1], t = [0.0, 1.0], y = [1.0, 1.1]);
+        primary_id = :ID, time_col = :t
+    )
+    bad = NoLimits._coerce_theta_0(dm, (; σ = 0.0))
+    @test_throws ArgumentError NoLimits._validate_theta_0(dm, bad)
+    @test NoLimits._validate_theta_0(dm, NoLimits._coerce_theta_0(dm, (; σ = 0.3))) === nothing
 end

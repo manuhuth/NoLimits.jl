@@ -276,8 +276,15 @@ function _parse_random_effects(block::Expr)
 end
 
 function _dist_type_symbol(dist_expr)
-    dist_expr isa Expr && dist_expr.head == :call && dist_expr.args[1] isa Symbol &&
-        return dist_expr.args[1]
+    if dist_expr isa Expr && dist_expr.head == :call
+        callee = dist_expr.args[1]
+        callee isa Symbol && return callee
+        # Module-qualified constructor, e.g. `Distributions.Normal(...)`.
+        if callee isa Expr && callee.head == :. && callee.args[2] isa QuoteNode &&
+                callee.args[2].value isa Symbol
+            return callee.args[2].value
+        end
+    end
     return :unknown
 end
 

@@ -98,7 +98,7 @@ import Turing   # MCMC/VI need the Turing extension loaded (#36)
     @testset "MCMC NUTS via product-marginals base" begin
         res = fit_model(
             dm_cop,
-            NoLimits.MCMC(; turing_kwargs = (n_samples = 5, n_adapt = 5, progress = false));
+            NoLimits.MCMC(; turing_kwargs = (n_samples = 5, n_adapt = 4, progress = false));
             rng = Xoshiro(3)
         )
         chain = NoLimits.get_chain(res)

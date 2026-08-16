@@ -256,10 +256,33 @@ end
 # `Inf`/`NaN` many layers later, so they are rejected where the row number is still known.
 # Value-based, not eltype-based: an `Any`-eltype outcome column can hold numeric NaN/Inf
 # next to legitimate non-numeric values, which an eltype guard waved through.
+# Multivariate outcomes/covariates store a container per cell, so the scan recurses;
+# a nested NaN otherwise only surfaces as an `Inf` objective mid-fit (#249).
+_nonfinite(x) = x isa Real ? !isfinite(x) : x isa AbstractArray ? any(_nonfinite, x) : false
+
 function _check_finite(col, name::Symbol)
-    bad = findfirst(x -> x isa Real && !isfinite(x), col)
+    bad = findfirst(_nonfinite, col)
     bad === nothing && return nothing
     error("Column $(name) contains the non-finite value $(col[bad]) in row $(bad). Remove or replace non-finite values before constructing DataModel.")
+end
+
+# An observation is missing when it is `missing` or a container whose components all are.
+# Anything in between has no defined likelihood, so it is rejected at construction.
+@inline _obs_is_missing(y) = y === missing
+@inline function _obs_is_missing(y::AbstractArray)
+    Missing <: eltype(y) || return false
+    return all(ismissing, y)
+end
+
+# Narrow a `Union{Missing,T}` cell to plain `T` only when it truly has no missing
+# component -- some outcomes (e.g. HMM emissions) define their own `logpdf` over a
+# partially observed vector and decompose it component-wise; a distribution without such
+# a method throws its own (loud) `MethodError` on the un-narrowed `Union` eltype rather
+# than silently producing `Inf`/`NaN`.
+@inline _narrow_if_observed(y) = y
+@inline function _narrow_if_observed(y::AbstractArray)
+    (Missing <: eltype(y) && !any(ismissing, y)) || return y
+    return convert(AbstractArray{nonmissingtype(eltype(y))}, y)
 end
 
 function _validate_re_group_columns(model, df)
@@ -303,7 +326,7 @@ end
 function _has_observations(df, config::DataModelConfig)
     obs_rows = config.evid_col === nothing ? Colon() :
         findall(==(0), _get_col(df, config.evid_col))
-    return any(c -> any(!ismissing, _get_col(df, c)[obs_rows]), config.obs_cols)
+    return any(c -> any(!_obs_is_missing, _get_col(df, c)[obs_rows]), config.obs_cols)
 end
 
 _has_observations(dm) = _has_observations(get_df(dm), dm.config)
