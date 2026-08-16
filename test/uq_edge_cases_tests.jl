@@ -206,7 +206,7 @@ const _UQE_FLOW_MAP_CONSTANTS = (ψ = _UQE_FLOW_MAP_θ0.ψ,)
     uq_refit = compute_uq(
         res_mle;
         method = :mcmc_refit,
-        mcmc_turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
+        mcmc_turing_kwargs = (n_samples = 2, n_adapt = 1, progress = false),
         mcmc_draws = 5,
         rng = Random.Xoshiro(203)
     )
@@ -225,7 +225,7 @@ end
 @testset "UQ edge: MCMC chain with multivariate + planar-flow REs and vector FE" begin
     res = fit_model(
         _UQE_RE_FLOW_MAP_DM,
-        NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false));
+        NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 1, progress = false));
         constants = _UQE_FLOW_MAP_CONSTANTS
     )
     uq = compute_uq(res; method = :chain, mcmc_draws = 5, rng = Random.Xoshiro(205))

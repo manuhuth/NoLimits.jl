@@ -38,7 +38,7 @@ const _PLT_DM_P = DataModel(
 
 const _PLT_RES_MCMC = fit_model(
     _PLT_DM_P,
-    NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false));
+    NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 1, progress = false));
     rng = MersenneTwister(42)
 )
 const _PLT_RES_VI = fit_model(

@@ -937,7 +937,7 @@ end  # @testset "GHQuadrature Profile UQ"
             res;
             method = :mcmc_refit,
             mcmc_sampler = Turing.MH(),
-            mcmc_turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+            mcmc_turing_kwargs = (n_samples = 2, n_adapt = 1, progress = false)
         )
 
         @test uq isa NoLimits.UQResult

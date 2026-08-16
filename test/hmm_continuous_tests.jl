@@ -295,7 +295,7 @@ end
     res_mle = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
     res_map = fit_model(dm, NoLimits.MAP(; optim_kwargs = (maxiters = 2,)))
     res_mcmc = fit_model(
-        dm, NoLimits.MCMC(sampler = MH(), turing_kwargs = (; n_samples = 2, n_adapt = 2))
+        dm, NoLimits.MCMC(sampler = MH(), turing_kwargs = (; n_samples = 2, n_adapt = 1))
     )
 
     @test res_mle isa FitResult

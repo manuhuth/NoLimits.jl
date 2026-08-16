@@ -87,7 +87,7 @@ end
         dm_bern,
         MCMC(;
             sampler = MH(),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+            turing_kwargs = (n_samples = 2, n_adapt = 1, progress = false)
         )
     )
     @test plot_vpc(res_bern; n_simulations = 5, n_bins = 3, mcmc_draws = 5) !== nothing
@@ -117,7 +117,7 @@ end
         dm_pois,
         MCMC(;
             sampler = MH(),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+            turing_kwargs = (n_samples = 2, n_adapt = 1, progress = false)
         )
     )
     @test plot_vpc(res_pois; n_simulations = 5, n_bins = 3, mcmc_draws = 5) !== nothing

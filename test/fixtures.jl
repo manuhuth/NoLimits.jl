@@ -685,7 +685,7 @@ function fx_npf_mcmc()
             fx_npf_dm(),
             NoLimits.MCMC(;
                 sampler = NUTS(5, 0.3),
-                turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+                turing_kwargs = (n_samples = 2, n_adapt = 1, progress = false)
             );
             rng = Random.Xoshiro(21)
         )
@@ -707,7 +707,7 @@ function fx_npf2_mcmc()
             fx_npf2_dm(),
             NoLimits.MCMC(;
                 sampler = NUTS(5, 0.3),
-                turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+                turing_kwargs = (n_samples = 2, n_adapt = 1, progress = false)
             );
             rng = Random.Xoshiro(22)
         )
@@ -720,7 +720,7 @@ function fx_mvnp_mcmc()
             fx_mvnp_dm(),
             NoLimits.MCMC(;
                 sampler = MH(),
-                turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+                turing_kwargs = (n_samples = 2, n_adapt = 1, progress = false)
             );
             rng = Random.Xoshiro(23)
         )
@@ -740,7 +740,7 @@ function fx_recov_mcmc()
         :recov_mcmc,
         () -> fit_model(
             fx_recov_dm(),
-            NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false));
+            NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 1, progress = false));
             rng = Random.Xoshiro(24)
         )
     )

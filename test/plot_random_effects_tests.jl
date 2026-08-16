@@ -360,7 +360,7 @@ end
     dm = _PRE_CONST_RE_DM
     constants_re = (; η = (; B = 0.0))
     res = fit_model(
-        dm, NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false));
+        dm, NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 1, progress = false));
         constants_re = constants_re
     )
 

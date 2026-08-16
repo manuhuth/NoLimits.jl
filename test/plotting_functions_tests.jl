@@ -3,6 +3,8 @@ using NoLimits
 using DataFrames
 using Distributions
 using CairoMakie
+using MCMCChains
+using Random
 using Turing: MH
 
 # Note: "plot_data and plot_fits basic", "plot_fits MCMC", "plot_fits VI"
@@ -415,4 +417,30 @@ end
     @test plot_fits(res) !== nothing
     # posterior-draw band -> _vi_drawn_params
     @test plot_fits(res; plot_mcmc_quantiles = true, mcmc_draws = 5) !== nothing
+end
+
+# Issue #250 finding 3: an all-warmup chain has no posterior draw to summarize.
+@testset "_mcmc_draw_indices rejects all-warmup chains" begin
+    chain = MCMCChains.Chains(randn(4, 2, 1), [:a, :b])
+    rng = Random.default_rng()
+    @test NoLimits._mcmc_draw_indices(chain, 2, 10, rng) == [3, 4]
+    @test_throws ArgumentError NoLimits._mcmc_draw_indices(chain, 4, 10, rng)
+    @test_throws ArgumentError NoLimits._mcmc_draw_indices(chain, 9, 10, rng)
+end
+
+# Issue #250 finding 6: a missing posterior coordinate must not silently become the
+# model's initial value; only explicitly pinned constants may bypass the lookup.
+@testset "_coordwise_fixed_from_means rejects missing coordinates" begin
+    dm = fx_nore_dm()
+    fe = NoLimits.get_fixed(NoLimits.get_model(dm))
+    names = NoLimits.get_names(fe)
+    θ0 = NoLimits.get_θ0_untransformed(fe)
+    @test_throws ArgumentError NoLimits._coordwise_fixed_from_means(
+        dm, "MCMC chain", _ -> nothing
+    )
+    ov = NamedTuple{Tuple(names)}(Tuple(getproperty(θ0, n) for n in names))
+    θ = NoLimits._coordwise_fixed_from_means(
+        dm, "MCMC chain", _ -> nothing; overrides = ov
+    )
+    @test all(getproperty(θ, n) == getproperty(θ0, n) for n in names)
 end
