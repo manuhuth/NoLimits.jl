@@ -108,6 +108,9 @@ _residual_error(msg) = error("get_residuals: " * msg)
 function _mv_marginals(dist)
     m = _re_marginals(dist)
     m === nothing || return collect(m)
+    # Shares the plotting component-marginal rule (MV HMMs, joint MvNormal emissions).
+    m = _dist_marginals(dist)
+    m === nothing || return collect(m)
     dist isa Distributions.AbstractMvNormal || return nothing
     return [Normal(μ, sqrt(v)) for (μ, v) in zip(mean(dist), diag(cov(dist)))]
 end
