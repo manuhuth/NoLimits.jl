@@ -911,3 +911,35 @@ end
     @test isfinite(ll_ser)
     @test ll_thr ≈ ll_ser
 end
+
+# A dispatch-visible ensemble type: `_ensemble_nthreads` is the one place the
+# `serialization` object is dispatched on, so a spy can record that the exact object
+# passed by the caller reached the cache builder (#244).
+struct _SpyEnsemble <: SciMLBase.EnsembleAlgorithm end
+const _SPY_CALLS = Ref(0)
+NoLimits._ensemble_nthreads(::_SpyEnsemble) = (_SPY_CALLS[] += 1; Threads.maxthreadid())
+
+@testset "GHQ get_loglikelihood dispatches the supplied ensemble (#244)" begin
+    dm = fx_re_dm()
+    res = fx_ghq()
+    _SPY_CALLS[] = 0
+    ll_spy = get_loglikelihood(dm, res; serialization = _SpyEnsemble())
+    @test _SPY_CALLS[] == 1
+    @test isfinite(ll_spy)
+    @test ll_spy ≈ get_loglikelihood(dm, res; serialization = _INV_SER)
+end
+
+@testset "get_loglikelihood_quadrature accepts any Integer level (#243)" begin
+    dm = fx_re_dm()
+    res = fx_ghq()
+    ll = get_loglikelihood_quadrature(dm, res; level = 2, serialization = _INV_SER)
+    @test get_loglikelihood_quadrature(
+        dm, res; level = Int8(2), serialization = _INV_SER
+    ) == ll
+    @test get_loglikelihood_quadrature(
+        dm, res; level = UInt(2), serialization = _INV_SER
+    ) == ll
+    @test_throws ArgumentError get_loglikelihood_quadrature(
+        dm, res; level = 0, serialization = _INV_SER
+    )
+end
