@@ -106,6 +106,14 @@ function _is_discrete(dist)
     return dist isa DiscreteDistribution
 end
 
+# Statistics.quantile treats a mixture as an iterable collection and errors on discrete
+# components, so bound a mixture's support by its widest component instead.
+function _marginal_quantile(d::Distributions.UnivariateMixture, p)
+    qs = [quantile(c, p) for c in Distributions.components(d)]
+    return p < 0.5 ? minimum(qs) : maximum(qs)
+end
+_marginal_quantile(d, p) = quantile(d, p)
+
 function _dist_quantile_bounds(dists, coverage)
     qlo = (1 - coverage) / 2
     qhi = 1 - qlo
@@ -113,8 +121,8 @@ function _dist_quantile_bounds(dists, coverage)
     highs = Float64[]
     for d in dists
         applicable(quantile, d, 0.5) || return nothing
-        push!(lows, quantile(d, qlo))
-        push!(highs, quantile(d, qhi))
+        push!(lows, _marginal_quantile(d, qlo))
+        push!(highs, _marginal_quantile(d, qhi))
     end
     return (minimum(lows), maximum(highs))
 end
@@ -139,8 +147,8 @@ function _density_grid_discrete(dist, coverage)
     qlo = (1 - coverage) / 2
     qhi = 1 - qlo
     applicable(quantile, dist, 0.5) || return nothing
-    lo = floor(Int, quantile(dist, qlo))
-    hi = ceil(Int, quantile(dist, qhi))
+    lo = floor(Int, _marginal_quantile(dist, qlo))
+    hi = ceil(Int, _marginal_quantile(dist, qhi))
     if lo > hi
         lo, hi = hi, lo
     end
@@ -274,6 +282,60 @@ function _state_emission_marginals(emission)
     else
         error("Unsupported emission element type: $(typeof(emission)).")
     end
+end
+
+_emission_marginals_or_nothing(e) =
+    (e isa Tuple || e isa MvNormal) ? _state_emission_marginals(e) : nothing
+
+# Scalar component marginals of a (possibly multivariate) observation distribution.
+# MV HMMs mix each state's component marginal by the prior hidden-state probabilities.
+# Returns `nothing` when no component decomposition is available.
+function _dist_marginals(dist)
+    if dist isa MVDiscreteTimeDiscreteStatesHMM ||
+            dist isa MVContinuousTimeDiscreteStatesHMM
+        w = Float64.(collect(probabilities_hidden_states(dist)))
+        per_state = map(_emission_marginals_or_nothing, collect(dist.emission_dists))
+        any(isnothing, per_state) && return nothing
+        return [
+            MixtureModel([ps[m] for ps in per_state], w) for m in 1:dist.n_outcomes
+        ]
+    end
+    dist isa Distribution{Multivariate} && return _emission_marginals_or_nothing(dist)
+    return [dist]
+end
+
+function _mv_plot_unsupported(fn::AbstractString, obs_name::Symbol, dist)
+    return ArgumentError(
+        "$(fn) does not support multivariate observations of type $(typeof(dist)) " *
+            "for observable :$(obs_name): no component marginals are available."
+    )
+end
+
+# Component marginals for one observation distribution, validated against the number of
+# components detected in the data. Throws the shared limitation error otherwise.
+function _obs_marginals_or_throw(
+        fn::AbstractString, obs_name::Symbol, dist, n_marginals::Int
+    )
+    ms = _dist_marginals(dist)
+    (ms === nothing || length(ms) != n_marginals) &&
+        throw(_mv_plot_unsupported(fn, obs_name, dist))
+    return ms
+end
+
+function _marginal_obs_dist(
+        dist, obs_name::Symbol, marginal::Union{Nothing, Int}, n_marginals::Int;
+        fn::AbstractString = "plot_observation_distributions"
+    )
+    marginal === nothing && return dist
+    return _obs_marginals_or_throw(fn, obs_name, dist, n_marginals)[marginal]
+end
+
+# Component `m` of an observation value, preserving per-component missingness.
+@inline function _obs_component(y, m::Union{Nothing, Int})
+    m === nothing && return y
+    y === missing && return missing
+    y isa AbstractVector || return missing
+    return m <= length(y) ? y[m] : missing
 end
 
 @inline _as_fit_result_for_plotting(res::FitResult) = res
@@ -438,7 +500,9 @@ end
 # mean is collected (individual-prediction/EBE path).
 function _collect_series(
         dm::DataModel, obs_name::Symbol,
-        θ::ComponentArray, η::Vector; want_sigma::Bool
+        θ::ComponentArray, η::Vector; want_sigma::Bool,
+        marginal::Union{Nothing, Int} = nothing, n_marginals::Int = 1,
+        fn::AbstractString = "This diagnostic"
     )
     dv_all = Float64[]
     pred_all = Float64[]
@@ -460,7 +524,7 @@ function _collect_series(
         end
 
         for (j, row) in enumerate(obs_rows)
-            yj = y_series[j]
+            yj = _obs_component(y_series[j], marginal)
             (yj === missing || !(yj isa Real)) && continue
             y = Float64(yj)
             isfinite(y) || continue
@@ -475,6 +539,9 @@ function _collect_series(
                     get_model(dm), θ, η_row, get_const_cov(ind), vary, sol_accessors
                 )
             dist = getproperty(obs_nt, obs_name)
+            if marginal !== nothing
+                dist = _obs_marginals_or_throw(fn, obs_name, dist, n_marginals)[marginal]
+            end
 
             pred_val = try
                 Float64(mean(dist))
@@ -502,16 +569,26 @@ end
 # (dv, pred, sigma_pred) using η_pop.
 function _collect_pred_series(
         dm::DataModel, obs_name::Symbol,
-        θ::ComponentArray, η_pop::Vector
+        θ::ComponentArray, η_pop::Vector; kwargs...
     )
-    return _collect_series(dm, obs_name, θ, η_pop; want_sigma = true)
+    return _collect_series(dm, obs_name, θ, η_pop; want_sigma = true, kwargs...)
 end
 
 # (dv, ipred) using EBEs.
 function _collect_ipred_series(
         dm::DataModel, obs_name::Symbol,
-        θ::ComponentArray, η_ebe::Vector
+        θ::ComponentArray, η_ebe::Vector; kwargs...
     )
-    dv_all, ipred_all, _ = _collect_series(dm, obs_name, θ, η_ebe; want_sigma = false)
+    dv_all, ipred_all, _ = _collect_series(
+        dm, obs_name, θ, η_ebe; want_sigma = false, kwargs...
+    )
     return dv_all, ipred_all
+end
+
+# Panel specs for a possibly multivariate observable: `(marginal_idx, label)` pairs.
+# Scalar observables yield a single `(nothing, "y")` panel.
+function _marginal_panels(dm::DataModel, obs_name::Symbol)
+    (is_mv, n) = _obs_multivariate_info(dm, obs_name)
+    is_mv || return [(nothing, string(obs_name))], 1
+    return [(m, _marginal_label(obs_name, m)) for m in 1:n], n
 end

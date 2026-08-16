@@ -1,3 +1,43 @@
+# Multivariate residual tables (Group 3 schema) store a `Vector{Float64}` cell per
+# observation for `y`, `fitted` and every residual metric, whole-cell `missing` when
+# undefined; `logscore` and `x` stay scalar. Expand every vector column in lockstep into
+# one row per component so the scalar panels below plot one panel per component.
+function _expand_residual_components(df::DataFrame, col::Symbol)
+    # `logscore` stays a scalar joint score, so a logscore panel is left unexpanded.
+    (hasproperty(df, col) && any(v -> v isa AbstractVector, df[!, col])) || return df
+    vec_cols = [
+        c for c in propertynames(df)
+            if any(v -> v isa AbstractVector, df[!, c])
+    ]
+    isempty(vec_cols) && return df
+    rows = NamedTuple[]
+    for r in eachrow(df)
+        n = 0
+        for c in vec_cols
+            r[c] isa AbstractVector && (n = max(n, length(r[c])))
+        end
+        base = NamedTuple(r)
+        if n == 0
+            push!(rows, base)
+            continue
+        end
+        for m in 1:n
+            vals = NamedTuple{Tuple(vec_cols)}(
+                Tuple(r[c] isa AbstractVector ? r[c][m] : r[c] for c in vec_cols)
+            )
+            push!(
+                rows,
+                merge(
+                    base,
+                    (; observable = Symbol(_marginal_label(Symbol(r.observable), m))),
+                    vals
+                )
+            )
+        end
+    end
+    return DataFrame(rows)
+end
+
 function _plot_residuals_df(
         df::DataFrame;
         metric::Symbol = :quantile,
@@ -12,6 +52,7 @@ function _plot_residuals_df(
     )
     metric = _validate_plot_metric(metric)
     col = _residual_metric_column(metric)
+    df = _expand_residual_components(df, col)
     plots = Vector{Any}()
     xlims = nothing
     ylims = nothing
@@ -200,6 +241,7 @@ function _plot_residual_distribution_df(
     )
     metric = _validate_plot_metric(metric)
     col = _residual_metric_column(metric)
+    df = _expand_residual_components(df, col)
     plots = Vector{Any}()
     xlims = nothing
     ylims = nothing
@@ -386,6 +428,7 @@ function _plot_residual_qq_df(
     )
     metric = _validate_plot_metric(metric)
     col = _residual_metric_column(metric)
+    df = _expand_residual_components(df, col)
     plots = Vector{Any}()
     for g in groupby(df, :observable)
         obs_name = g.observable[1]
@@ -551,6 +594,7 @@ function _plot_residual_pit_df(
         show_kde = false
         show_qq = false
     end
+    df = _expand_residual_components(df, :pit)
     plots = Vector{Any}()
     for g in groupby(df, :observable)
         obs_name = g.observable[1]
@@ -733,6 +777,7 @@ function _plot_residual_acf_df(
     max_lag >= 1 || error("max_lag must be >= 1.")
     metric = _validate_plot_metric(metric)
     col = _residual_metric_column(metric)
+    df = _expand_residual_components(df, col)
     plots = Vector{Any}()
     for gobs in groupby(df, :observable)
         obs_name = gobs.observable[1]

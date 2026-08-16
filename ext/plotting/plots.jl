@@ -358,8 +358,12 @@ function plot_fits(
     marginal_colors = _marginal_colors(max(n_marginals, 1), style)
 
     is_mcmc = _is_posterior_draw_fit(res)
-    is_mv && is_mcmc &&
-        error("plot_fits currently does not support posterior draws for multivariate HMM observables.")
+    is_mv && is_mcmc && throw(
+        ArgumentError(
+            "plot_fits does not support posterior draws for vector-valued " *
+                "(multivariate) observables such as :$(obs_name)."
+        )
+    )
     θ_draws = nothing
     η_draws = nothing
     if is_mcmc
@@ -379,7 +383,7 @@ function plot_fits(
             error("mcmc_quantiles must be in [0,100] with length >= 2.")
     end
     if is_mv && plot_density
-        @warn "plot_density is ignored for multivariate HMM observables."
+        @warn "plot_density is ignored for vector-valued (multivariate) observables."
         plot_density = false
     end
 
@@ -1153,6 +1157,14 @@ function _plot_emission_impl(
         save_path::Union{Nothing, String},
         figure_layout::Symbol
     )
+    # Reject non-HMM outcomes at entry instead of deep inside the per-individual path.
+    dist_rep = _representative_dist(dm, obs_name, nothing)
+    dist_rep isa MVDiscreteTimeDiscreteStatesHMM || throw(
+        ArgumentError(
+            "plot_emission_distributions requires an MVDiscreteTimeDiscreteStatesHMM " *
+                "observable; :$(obs_name) is a $(typeof(dist_rep))."
+        )
+    )
     inds = _resolve_individuals(dm, individuals_idx; default_all = true)
     groups = Vector{MakiePanelGroup}(undef, length(inds))
     xlims = nothing
@@ -1563,6 +1575,8 @@ scatter points at the observed time points.
 - `individuals_idx`: indices or IDs of individuals to include, or `nothing` for all.
 - `x_axis_feature::Union{Symbol, Nothing} = nothing`: covariate for the x-axis;
   defaults to the time column.
+- `marginal_idx::Union{Nothing, Int} = nothing`: for vector-valued observables, plot only
+  this component; `nothing` overlays every component in its own color.
 - `style::PlotStyle = PlotStyle()`: visual style configuration.
 - `kwargs_subplot`: additional Makie `Axis` attributes forwarded to the single panel.
 - `kwargs_layout`: additional Makie `Figure` attributes forwarded to the layout call.
@@ -1574,6 +1588,7 @@ function plot_observed_profiles(
         observable = nothing,
         individuals_idx = nothing,
         x_axis_feature::Union{Symbol, Nothing} = nothing,
+        marginal_idx::Union{Nothing, Int} = nothing,
         style::PlotStyle = PlotStyle(),
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
@@ -1583,6 +1598,14 @@ function plot_observed_profiles(
     save_path = _resolve_plot_path(save_path, plot_path)
     obs_name = _get_observable(dm, observable)
     inds = _resolve_individuals(dm, individuals_idx; default_all = true)
+    (is_mv, n_marginals) = _obs_multivariate_info(dm, obs_name)
+    marginal_idx !== nothing && !is_mv &&
+        error("marginal_idx only valid when the observable is multivariate.")
+    marginal_idx !== nothing && !(1 <= marginal_idx <= n_marginals) &&
+        error("marginal_idx must be between 1 and $(n_marginals).")
+    margins = is_mv ? (marginal_idx === nothing ? (1:n_marginals) : (marginal_idx:marginal_idx)) :
+        (0:0)
+    colors = _marginal_colors(max(n_marginals, 1), style)
 
     _kw_op = merge(
         (
@@ -1599,17 +1622,22 @@ function plot_observed_profiles(
         obs_rows = get_obs_rows(get_row_groups(dm))[i]
         x = _get_x_values(dm, ind, obs_rows, x_axis_feature)
         y = getfield(get_obs(get_series(ind)), obs_name)
-        xs, ys = _collect_scalar_series(x, y)
-        isempty(xs) && continue
-        order = sortperm(xs)
-        xs_sorted = xs[order]
-        ys_sorted = ys[order]
-        create_styled_line!(
-            p, xs_sorted, ys_sorted; label = "", color = style.color_primary, style = style
-        )
-        create_styled_scatter!(
-            p, xs_sorted, ys_sorted; label = "", color = style.color_primary, style = style
-        )
+        for m in margins
+            xs, ys = m == 0 ? _collect_scalar_series(x, y) :
+                _collect_multivariate_series(x, y, n_marginals; marginal_idx = m)
+            isempty(xs) && continue
+            order = sortperm(xs)
+            xs_sorted = xs[order]
+            ys_sorted = ys[order]
+            col = m == 0 ? style.color_primary : colors[m]
+            lbl = m == 0 ? "" : _marginal_label(obs_name, m)
+            create_styled_line!(
+                p, xs_sorted, ys_sorted; label = lbl, color = col, style = style
+            )
+            create_styled_scatter!(
+                p, xs_sorted, ys_sorted; label = lbl, color = col, style = style
+            )
+        end
     end
 
     fig = combine_plots([p]; ncols = 1, style = style, kwargs_layout...)
@@ -1622,6 +1650,7 @@ function plot_observed_profiles(
         observable = nothing,
         individuals_idx = nothing,
         x_axis_feature::Union{Symbol, Nothing} = nothing,
+        marginal_idx::Union{Nothing, Int} = nothing,
         style::PlotStyle = PlotStyle(),
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
@@ -1634,6 +1663,7 @@ function plot_observed_profiles(
         observable = observable,
         individuals_idx = individuals_idx,
         x_axis_feature = x_axis_feature,
+        marginal_idx = marginal_idx,
         style = style,
         kwargs_subplot = kwargs_subplot,
         kwargs_layout = kwargs_layout,
@@ -1680,28 +1710,45 @@ function plot_dv_pred(
     θ = get_params(res; scale = :untransformed)
     η_pred = _pred_re_per_individual(dm, θ)
 
-    dv, pred, _ = _collect_pred_series(dm, obs_name, θ, η_pred)
-    isempty(dv) && error("No non-missing observations found for observable :$(obs_name).")
+    panels_spec, n_marginals = _marginal_panels(dm, obs_name)
+    panels = Vector{Any}(undef, length(panels_spec))
+    for (k, (m, label)) in enumerate(panels_spec)
+        dv, pred, _ = _collect_pred_series(
+            dm, obs_name, θ, η_pred;
+            marginal = m, n_marginals = n_marginals, fn = "plot_dv_pred"
+        )
+        isempty(dv) &&
+            error("No non-missing observations found for observable :$(label).")
 
-    lo = min(minimum(dv), minimum(pred))
-    hi = max(maximum(dv), maximum(pred))
-    lims = _pad_limits(lo, hi)
+        lo = min(minimum(dv), minimum(pred))
+        hi = max(maximum(dv), maximum(pred))
+        lims = _pad_limits(lo, hi)
 
-    _kw_dvp = merge(
-        (xlabel = "Population prediction (PRED)", ylabel = "Observed (DV)"), kwargs_subplot
-    )
-    p = create_styled_plot(; style = style, _kw_dvp...)
-    create_styled_scatter!(
-        p, pred, dv; label = "", color = style.color_primary, style = style
-    )
-    create_styled_line!(
-        p, collect(lims), collect(lims);
-        color = style.color_reference, linestyle = :dash,
-        linewidth = style.line_width_secondary, label = "", style = style
-    )
-    _set_limits!(p; xlim = lims, ylim = lims)
+        _kw_dvp = merge(
+            (
+                xlabel = "Population prediction (PRED)",
+                ylabel = "Observed (DV)",
+                title = m === nothing ? "" : label,
+            ),
+            kwargs_subplot
+        )
+        p = create_styled_plot(; style = style, _kw_dvp...)
+        create_styled_scatter!(
+            p, pred, dv; label = "", color = style.color_primary, style = style
+        )
+        create_styled_line!(
+            p, collect(lims), collect(lims);
+            color = style.color_reference, linestyle = :dash,
+            linewidth = style.line_width_secondary, label = "", style = style
+        )
+        _set_limits!(p; xlim = lims, ylim = lims)
+        panels[k] = p
+    end
 
-    fig = combine_plots([p]; ncols = 1, style = style, kwargs_layout...)
+    fig = combine_plots(
+        panels; ncols = min(length(panels), DEFAULT_PLOT_COLS), style = style,
+        kwargs_layout...
+    )
     return _save_plot!(fig, save_path)
 end
 
@@ -1743,30 +1790,48 @@ function plot_dv_ipred(
     constants_re = _res_constants_re(res, NamedTuple())
     η_ebe = _default_random_effects(res, dm, constants_re, θ, Random.default_rng(), 1)
 
-    dv, ipred = _collect_ipred_series(dm, obs_name, θ, η_ebe)
-    isempty(dv) && error("No non-missing observations found for observable :$(obs_name).")
+    panels_spec, n_marginals = _marginal_panels(dm, obs_name)
+    return_panel && length(panels_spec) > 1 &&
+        error("return_panel requires a scalar observable; :$(obs_name) has $(n_marginals) components.")
+    panels = Vector{Any}(undef, length(panels_spec))
+    for (k, (m, label)) in enumerate(panels_spec)
+        dv, ipred = _collect_ipred_series(
+            dm, obs_name, θ, η_ebe;
+            marginal = m, n_marginals = n_marginals, fn = "plot_dv_ipred"
+        )
+        isempty(dv) &&
+            error("No non-missing observations found for observable :$(label).")
 
-    lo = min(minimum(dv), minimum(ipred))
-    hi = max(maximum(dv), maximum(ipred))
-    lims = _pad_limits(lo, hi)
+        lo = min(minimum(dv), minimum(ipred))
+        hi = max(maximum(dv), maximum(ipred))
+        lims = _pad_limits(lo, hi)
 
-    _kw_dvi = merge(
-        (xlabel = "Individual prediction (IPRED)", ylabel = "Observed (DV)"),
-        kwargs_subplot
-    )
-    p = create_styled_plot(; style = style, _kw_dvi...)
-    create_styled_scatter!(
-        p, ipred, dv; label = "", color = style.color_primary, style = style
-    )
-    create_styled_line!(
-        p, collect(lims), collect(lims);
-        color = style.color_reference, linestyle = :dash,
-        linewidth = style.line_width_secondary, label = "", style = style
-    )
-    _set_limits!(p; xlim = lims, ylim = lims)
+        _kw_dvi = merge(
+            (
+                xlabel = "Individual prediction (IPRED)",
+                ylabel = "Observed (DV)",
+                title = m === nothing ? "" : label,
+            ),
+            kwargs_subplot
+        )
+        p = create_styled_plot(; style = style, _kw_dvi...)
+        create_styled_scatter!(
+            p, ipred, dv; label = "", color = style.color_primary, style = style
+        )
+        create_styled_line!(
+            p, collect(lims), collect(lims);
+            color = style.color_reference, linestyle = :dash,
+            linewidth = style.line_width_secondary, label = "", style = style
+        )
+        _set_limits!(p; xlim = lims, ylim = lims)
+        panels[k] = p
+    end
 
-    return_panel && return p
-    fig = combine_plots([p]; ncols = 1, style = style, kwargs_layout...)
+    return_panel && return only(panels)
+    fig = combine_plots(
+        panels; ncols = min(length(panels), DEFAULT_PLOT_COLS), style = style,
+        kwargs_layout...
+    )
     return _save_plot!(fig, save_path)
 end
 
@@ -1808,30 +1873,49 @@ function plot_wres_pred(
     θ = get_params(res; scale = :untransformed)
     η_pred = _pred_re_per_individual(dm, θ)
 
-    dv, pred, sigma = _collect_pred_series(dm, obs_name, θ, η_pred)
-    isempty(dv) && error("No non-missing observations found for observable :$(obs_name).")
+    panels_spec, n_marginals = _marginal_panels(dm, obs_name)
+    return_panel && length(panels_spec) > 1 &&
+        error("return_panel requires a scalar observable; :$(obs_name) has $(n_marginals) components.")
+    panels = Vector{Any}(undef, length(panels_spec))
+    for (k, (m, label)) in enumerate(panels_spec)
+        dv, pred, sigma = _collect_pred_series(
+            dm, obs_name, θ, η_pred;
+            marginal = m, n_marginals = n_marginals, fn = "plot_wres_pred"
+        )
+        isempty(dv) &&
+            error("No non-missing observations found for observable :$(label).")
 
-    wres = (dv .- pred) ./ sigma
+        wres = (dv .- pred) ./ sigma
 
-    pred_lo, pred_hi = _pad_limits(minimum(pred), maximum(pred))
-    wres_lo, wres_hi = _pad_limits(minimum(wres), maximum(wres))
+        pred_lo, pred_hi = _pad_limits(minimum(pred), maximum(pred))
+        wres_lo, wres_hi = _pad_limits(minimum(wres), maximum(wres))
 
-    _kw_wres = merge(
-        (xlabel = "Population prediction (PRED)", ylabel = "Weighted residual (WRES)"),
-        kwargs_subplot
+        _kw_wres = merge(
+            (
+                xlabel = "Population prediction (PRED)",
+                ylabel = "Weighted residual (WRES)",
+                title = m === nothing ? "" : label,
+            ),
+            kwargs_subplot
+        )
+        p = create_styled_plot(; style = style, _kw_wres...)
+        create_styled_scatter!(
+            p, pred, wres; label = "", color = style.color_primary, style = style
+        )
+        add_reference_line!(
+            p, 0.0; orientation = :horizontal,
+            color = style.color_reference,
+            linewidth = style.line_width_secondary, label = ""
+        )
+        _set_limits!(p; xlim = (pred_lo, pred_hi), ylim = (wres_lo, wres_hi))
+        panels[k] = p
+    end
+
+    return_panel && return only(panels)
+    fig = combine_plots(
+        panels; ncols = min(length(panels), DEFAULT_PLOT_COLS), style = style,
+        kwargs_layout...
     )
-    p = create_styled_plot(; style = style, _kw_wres...)
-    create_styled_scatter!(
-        p, pred, wres; label = "", color = style.color_primary, style = style
-    )
-    add_reference_line!(
-        p, 0.0; orientation = :horizontal,
-        color = style.color_reference, linewidth = style.line_width_secondary, label = ""
-    )
-    _set_limits!(p; xlim = (pred_lo, pred_hi), ylim = (wres_lo, wres_hi))
-
-    return_panel && return p
-    fig = combine_plots([p]; ncols = 1, style = style, kwargs_layout...)
     return _save_plot!(fig, save_path)
 end
 
