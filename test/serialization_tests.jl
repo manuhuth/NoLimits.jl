@@ -193,7 +193,7 @@ end
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     res = fit_model(
         dm, NoLimits.MCMC(;
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+            turing_kwargs = (n_samples = 2, n_adapt = 1, progress = false)
         )
     )
 

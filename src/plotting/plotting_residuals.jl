@@ -289,7 +289,8 @@ function _compute_mv_residual_metrics(
         catch
             missing
         end
-        !ismissing(ls) && isfinite(ls) && (logscore = ls)
+        # `Inf` is a real score for an impossible observation; only `NaN` means failure.
+        !ismissing(ls) && !isnan(ls) && (logscore = ls)
     end
 
     return (
@@ -379,7 +380,8 @@ function _compute_residual_metrics(
     if :logscore in req
         if !ismissing(y) && applicable(logpdf, dist, y)
             ls = -Float64(logpdf(dist, y))
-            isfinite(ls) && (logscore = ls)
+            # `Inf` is a real score for an impossible observation; only `NaN` means failure.
+            isnan(ls) || (logscore = ls)
         end
     end
 
@@ -491,7 +493,8 @@ HMM-family outcomes `dist` is the forward-filtered distribution, so this identit
 through `missing` rows as well. On Laplace/FOCEI/SAEM/MCEM/Pooled fits it therefore
 matches `get_loglikelihood(res)` (which also conditions on the EB modes) to round-off;
 on `GHQuadrature` fits `get_loglikelihood` returns the *marginal* likelihood, which
-integrates over the random effects and is a different quantity.
+integrates over the random effects and is a different quantity. An observation the model
+assigns zero probability scores `Inf`; `missing` means the score could not be computed.
 
 # Multivariate (vector-valued) outcomes
 

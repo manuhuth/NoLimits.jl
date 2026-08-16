@@ -72,6 +72,7 @@ end
 end
 
 function _wald_density_xy(kind::Symbol, μ::Float64, v::Float64; npts::Int = 300)
+    (isfinite(μ) && isfinite(v)) || return nothing
     σ = sqrt(max(v, 0.0))
     σ <= sqrt(eps(Float64)) && return nothing
     if kind == :normal

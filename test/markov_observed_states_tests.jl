@@ -506,7 +506,7 @@ end
         dm,
         NoLimits.MCMC(;
             sampler = MH(),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+            turing_kwargs = (n_samples = 2, n_adapt = 1, progress = false)
         )
     )
     @test res_mcmc isa FitResult
@@ -926,7 +926,7 @@ end
         dm,
         NoLimits.MCMC(;
             sampler = MH(),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+            turing_kwargs = (n_samples = 2, n_adapt = 1, progress = false)
         )
     )
     @test res_mcmc isa FitResult

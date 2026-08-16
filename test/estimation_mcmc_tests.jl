@@ -30,7 +30,7 @@ end
     dm = fx_nore_prior_dm()
     meth = NoLimits.MCMC(;
         sampler = NUTS(5, 0.3),
-        turing_kwargs = (n_samples = 2, n_adapt = 2, progress = true)
+        turing_kwargs = (n_samples = 2, n_adapt = 1, progress = true)
     )
     res = fit_model(dm, meth)
 
@@ -45,7 +45,7 @@ end
     dm = fx_nore_prior_dm()
     method = NoLimits.MCMC(;
         sampler = MH(),
-        turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false, verbose = false)
+        turing_kwargs = (n_samples = 2, n_adapt = 1, progress = false, verbose = false)
     )
     res_serial = fit_model(
         dm, method; serialization = SciMLBase.EnsembleSerial(), rng = MersenneTwister(123)
@@ -92,7 +92,7 @@ end
 @testset "MCMC supports constants for fixed effects" begin
     res = fit_model(
         fx_nore_prior_dm(),
-        NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false));
+        NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 1, progress = false));
         constants = (a = 0.2,)
     )
 
@@ -104,7 +104,7 @@ end
     err = try
         fit_model(
             fx_nore_prior_dm(),
-            NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false));
+            NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 1, progress = false));
             constants = (a = 0.2, b = 0.1, σ = 0.5)
         )
         nothing
@@ -148,7 +148,7 @@ end
 
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     res = fit_model(
-        dm, NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false))
+        dm, NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 1, progress = false))
     )
 
     @test res isa FitResult
@@ -205,7 +205,7 @@ end
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     θ0 = get_θ0_untransformed(dm.model.fixed.fixed)
     res = fit_model(
-        dm, NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false));
+        dm, NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 1, progress = false));
         constants = (Γ = θ0.Γ, sp = θ0.sp)
     )
 
@@ -256,7 +256,7 @@ end
 
     res = fit_model(
         dm,
-        NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false))
+        NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 1, progress = false))
     )
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
 
@@ -318,7 +318,7 @@ end
     dm = DataModel(model_saveat, df; primary_id = :ID, time_col = :t)
     θ0 = get_θ0_untransformed(dm.model.fixed.fixed)
     res = fit_model(
-        dm, NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false));
+        dm, NoLimits.MCMC(; turing_kwargs = (n_samples = 2, n_adapt = 1, progress = false));
         constants = (ζ = θ0.ζ, Γ = θ0.Γ, sp = θ0.sp)
     )
 
@@ -368,7 +368,7 @@ end
         dm,
         NoLimits.MCMC(;
             sampler = MH(),
-            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false)
+            turing_kwargs = (n_samples = 2, n_adapt = 1, progress = false)
         )
     )
 

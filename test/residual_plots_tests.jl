@@ -635,3 +635,17 @@ end
     @test err isa ArgumentError
     @test occursin("fitted", err.msg) && occursin("must agree in length", err.msg)
 end
+
+# Issue #250 finding 1: a zero-probability observation is real information.
+@testset "logscore keeps impossible observations as Inf" begin
+    rng = Random.default_rng()
+    uni = NoLimits._compute_residual_metrics(
+        Uniform(0.0, 1.0), 5.0, [:logscore], mean, true, 0, rng
+    )
+    @test uni.logscore == Inf
+    mv = NoLimits._compute_residual_metrics(
+        product_distribution([Uniform(0.0, 1.0), Uniform(0.0, 1.0)]),
+        [5.0, 0.5], [:logscore], mean, true, 0, rng
+    )
+    @test mv.logscore == Inf
+end
