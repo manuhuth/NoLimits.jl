@@ -41,7 +41,8 @@ Fields:
 - `estimates_transformed`, `estimates_natural`: point estimates on each scale.
 - `intervals_transformed`, `intervals_natural`: [`UQIntervals`](@ref) or `nothing`.
 - `vcov_transformed`, `vcov_natural`: variance-covariance matrices or `nothing`.
-- `draws_transformed`, `draws_natural`: posterior/bootstrap draws (n_params × n_draws) or `nothing`.
+- `draws_transformed`, `draws_natural`: posterior/bootstrap draws (n_draws × n_params, one
+  row per draw and columns aligned with the parameter names) or `nothing`.
 - `diagnostics::NamedTuple`: backend-specific diagnostic information.
 """
 struct UQResult

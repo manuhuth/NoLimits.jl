@@ -216,10 +216,13 @@ end
 
 """
     ContinuousTimeDiscreteStatesHMM(transition_matrix, emission_dists, initial_dist, Δt)
-    <: Distribution{Univariate, Continuous}
+    <: Distribution{Univariate, S}
 
 A continuous-time Hidden Markov Model (HMM) with a finite number of hidden states and
 continuous or discrete emission distributions.
+
+The value support `S` is inferred from the emissions: `Discrete` when every emission is
+discrete, `Continuous` otherwise (including mixed emissions).
 
 State propagation is performed via the matrix exponential `exp(Q·Δt)` where `Q` is the
 rate matrix (`transition_matrix`). Implements the `Distributions.jl` interface.
@@ -238,13 +241,30 @@ struct ContinuousTimeDiscreteStatesHMM{
         E <: Tuple,
         D <: Distributions.Categorical,
         T <: Real,
-    } <: Distribution{Univariate, Continuous}
+        S <: ValueSupport,
+    } <: Distribution{Univariate, S}
     n_states::Int
     transition_matrix::M
     emission_dists::E
     initial_dist::D
     Δt::T
     propagation_mode::Symbol
+end
+
+# Field-for-field rebuild used by the per-row filter helpers; `S` is not inferable from
+# the fields, so it is resolved here from the emission types.
+function ContinuousTimeDiscreteStatesHMM(
+        n_states::Int,
+        transition_matrix::AbstractMatrix{<:Real},
+        emission_dists::Tuple,
+        initial_dist::Distributions.Categorical,
+        Δt::Real,
+        propagation_mode::Symbol
+    )
+    return ContinuousTimeDiscreteStatesHMM{
+        typeof(transition_matrix), typeof(emission_dists), typeof(initial_dist),
+        typeof(Δt), _hmm_support(emission_dists),
+    }(n_states, transition_matrix, emission_dists, initial_dist, Δt, propagation_mode)
 end
 
 function ContinuousTimeDiscreteStatesHMM(
@@ -255,7 +275,9 @@ function ContinuousTimeDiscreteStatesHMM(
         propagation_mode::Symbol = :auto
     )
     _ct_hmm_validate_mode(propagation_mode)
-    n_states = size(transition_matrix, 1)
+    n_states = _hmm_check_state_dims(
+        transition_matrix, length(emission_dists), length(initial_dist.p)
+    )
     Δt >= 0 ||
         error("Δt must be nonnegative for a continuous-time Markov model; got $(Δt). Check that observation times are sorted within each individual.")
     _hmm_check_generator_matrix(transition_matrix)

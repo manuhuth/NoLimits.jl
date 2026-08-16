@@ -6,7 +6,9 @@
              -> Makie.Figure
 
 Visual Predictive Check (VPC): compares observed percentile bands to simulated
-predictive percentile bands stratified by x-axis bins.
+predictive percentile bands stratified by x-axis bins. Vector-valued (multivariate)
+outcomes get one panel per component; observed and simulated values are binned and
+summarized component-wise.
 
 # Keyword Arguments
 - `dm::Union{Nothing, DataModel} = nothing`: data model (inferred from `res` by default).
@@ -93,8 +95,19 @@ function plot_vpc(
         res = _with_posterior_warmup(res, mcmc_warmup)
     end
 
-    plots = Vector{Any}(undef, length(observables))
-    for (oi, obs_name) in enumerate(observables)
+    # One panel per (observable, component): vector-valued outcomes are summarized
+    # component-wise instead of being dropped.
+    obs_list = observables isa Symbol ? [observables] : collect(observables)
+    panel_specs = Tuple{Symbol, Union{Nothing, Int}, String, Int}[]
+    for o in obs_list
+        specs, n_marg = _marginal_panels(dm, o)
+        for (m, lbl) in specs
+            push!(panel_specs, (o, m, lbl, n_marg))
+        end
+    end
+
+    plots = Vector{Any}(undef, length(panel_specs))
+    for (oi, (obs_name, marginal, obs_label, n_marginals)) in enumerate(panel_specs)
         x_label = x_axis_feature === nothing ? "Time" : _axis_label(x_axis_feature)
         all_x = Float64[]
         all_y = Float64[]
@@ -104,7 +117,7 @@ function plot_vpc(
         for (i, ind) in enumerate(get_individuals(dm))
             obs_rows = get_obs_rows(get_row_groups(dm))[i]
             x_all_i, x_i, y_i = _collect_observed_xy(
-                ind, dm, obs_rows, obs_name, x_axis_feature
+                ind, dm, obs_rows, obs_name, x_axis_feature, marginal
             )
             append!(all_x_bins, x_all_i)
             append!(all_x, x_i)
@@ -114,9 +127,9 @@ function plot_vpc(
         end
         x_for_bins = isempty(all_x) ? all_x_bins : all_x
         if isempty(x_for_bins)
-            @warn "No finite x values found for observable; returning empty VPC subplot." observable = obs_name
+            @warn "No finite x values found for observable; returning empty VPC subplot." observable = obs_label
             _kw_vpc = merge(
-                (xlabel = x_label, ylabel = _axis_label(obs_name)), kwargs_subplot
+                (xlabel = x_label, ylabel = _axis_label(obs_label)), kwargs_subplot
             )
             plots[oi] = create_styled_plot(; title = "", style = style, _kw_vpc...)
             continue
@@ -128,6 +141,11 @@ function plot_vpc(
         sim_y_all = Float64[]
 
         dist_rep = _representative_dist(dm, obs_name, x_axis_feature)
+        if marginal !== nothing
+            dist_rep = _obs_marginals_or_throw(
+                "plot_vpc", obs_name, dist_rep, n_marginals
+            )[marginal]
+        end
         is_discrete = dist_rep isa DiscreteDistribution
         is_bern = dist_rep isa Bernoulli
 
@@ -138,7 +156,7 @@ function plot_vpc(
             n_sim = length(θ_draws)
             for s in 1:n_sim
                 sim_x, sim_vals = _simulate_obs(
-                    dm, θ_draws[s], η_draws[s], obs_name, rng, x_axis_feature
+                    dm, θ_draws[s], η_draws[s], obs_name, rng, x_axis_feature, marginal
                 )
                 xs = reduce(vcat, sim_x)
                 ys = reduce(vcat, sim_vals)
@@ -150,7 +168,9 @@ function plot_vpc(
                 θ = get_params(res; scale = :untransformed)
                 level_vals = _sample_random_effects_levels(dm, θ, constants_re_use, rng)
                 η_vec = _eta_vec_from_levels(dm, level_vals)
-                sim_x, sim_vals = _simulate_obs(dm, θ, η_vec, obs_name, rng, x_axis_feature)
+                sim_x, sim_vals = _simulate_obs(
+                    dm, θ, η_vec, obs_name, rng, x_axis_feature, marginal
+                )
                 xs = reduce(vcat, sim_x)
                 ys = reduce(vcat, sim_vals)
                 append!(sim_x_all, xs)
@@ -158,7 +178,7 @@ function plot_vpc(
             end
         end
 
-        _kw_vpc = merge((xlabel = x_label, ylabel = _axis_label(obs_name)), kwargs_subplot)
+        _kw_vpc = merge((xlabel = x_label, ylabel = _axis_label(obs_label)), kwargs_subplot)
         p = create_styled_plot(; title = "", style = style, _kw_vpc...)
         if show_obs_points && !isempty(all_y)
             create_styled_scatter!(

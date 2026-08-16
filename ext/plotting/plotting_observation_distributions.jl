@@ -70,8 +70,8 @@ function plot_observation_distributions(
     end
 
     plots = Vector{Any}()
-    plot_groups = Vector{Tuple{Int, Symbol}}()
-    xlims_by_group = Dict{Tuple{Int, Symbol}, Tuple{Float64, Float64}}()
+    plot_groups = Vector{Tuple{Int, Symbol, Int}}()
+    xlims_by_group = Dict{Tuple{Int, Symbol, Int}, Tuple{Float64, Float64}}()
     ylims = nothing
 
     θ_draws = nothing
@@ -93,9 +93,15 @@ function plot_observation_distributions(
         rowwise_re = _needs_rowwise_random_effects(dm, i; obs_only = true)
 
         for obs_name in obs_list
-            for j in obs_idx
+            (is_mv, n_marginals) = _obs_multivariate_info(dm, obs_name)
+            # One marginal PDF/PMF panel per component; m == 0 is the scalar case.
+            marg_range = is_mv ? (1:n_marginals) : (0:0)
+            for j in obs_idx, m in marg_range
+                marginal = m == 0 ? nothing : m
                 row = obs_rows_all[j]
-                y_obs = getfield(get_obs(get_series(ind)), obs_name)[j]
+                y_obs = _obs_component(
+                    getfield(get_obs(get_series(ind)), obs_name)[j], marginal
+                )
                 has_obs_val = y_obs isa Number && isfinite(float(y_obs))
                 tval = get_df(dm)[row, get_time_col(dm)]
                 p = create_styled_plot(;
@@ -103,7 +109,10 @@ function plot_observation_distributions(
                         get_primary_id(dm), ": ", get_df(dm)[row, get_primary_id(dm)], ", ",
                         get_time_col(dm), ": ", tval
                     ),
-                    xlabel = _axis_label(obs_name),
+                    xlabel = _axis_label(
+                        marginal === nothing ? string(obs_name) :
+                            _marginal_label(obs_name, m)
+                    ),
                     ylabel = "Probability Density",
                     style = style,
                     kwargs_subplot...
@@ -134,7 +143,9 @@ function plot_observation_distributions(
                             calculate_formulas_obs(
                                 get_model(dm), θ, η_row, get_const_cov(ind), vary, sol_accessors
                             )
-                        dists[d] = getproperty(obs, obs_name)
+                        dists[d] = _marginal_obs_dist(
+                            getproperty(obs, obs_name), obs_name, marginal, n_marginals
+                        )
                     end
 
                     if dists[1] isa DiscreteDistribution
@@ -187,12 +198,12 @@ function plot_observation_distributions(
                         if has_obs_val
                             xlim = (min(xlim[1], float(y_obs)), max(xlim[2], float(y_obs)))
                         end
-                        xlims_by_group[(i, obs_name)] = haskey(
-                                xlims_by_group, (i, obs_name)
+                        xlims_by_group[(i, obs_name, m)] = haskey(
+                                xlims_by_group, (i, obs_name, m)
                             ) ?
                             (
-                                min(xlims_by_group[(i, obs_name)][1], xlim[1]),
-                                max(xlims_by_group[(i, obs_name)][2], xlim[2]),
+                                min(xlims_by_group[(i, obs_name, m)][1], xlim[1]),
+                                max(xlims_by_group[(i, obs_name, m)][2], xlim[2]),
                             ) :
                             xlim
                         ylims = ylims === nothing ? (minimum(qlo), maximum(qhi)) :
@@ -237,12 +248,12 @@ function plot_observation_distributions(
                         if has_obs_val
                             xlim = (min(xlim[1], float(y_obs)), max(xlim[2], float(y_obs)))
                         end
-                        xlims_by_group[(i, obs_name)] = haskey(
-                                xlims_by_group, (i, obs_name)
+                        xlims_by_group[(i, obs_name, m)] = haskey(
+                                xlims_by_group, (i, obs_name, m)
                             ) ?
                             (
-                                min(xlims_by_group[(i, obs_name)][1], xlim[1]),
-                                max(xlims_by_group[(i, obs_name)][2], xlim[2]),
+                                min(xlims_by_group[(i, obs_name, m)][1], xlim[1]),
+                                max(xlims_by_group[(i, obs_name, m)][2], xlim[2]),
                             ) :
                             xlim
                         ylims = ylims === nothing ? (minimum(qlo), maximum(qhi)) :
@@ -273,7 +284,7 @@ function plot_observation_distributions(
                             get_model(dm), sol, compiled, θ, η_ind, get_const_cov(ind)
                         )
                     end
-                    dist = if cache_obs_dists && cache.obs_dists !== nothing
+                    dist_raw = if cache_obs_dists && cache.obs_dists !== nothing
                         getproperty(cache.obs_dists[i][j], obs_name)
                     else
                         vary = _varying_at(dm, ind, j, row)
@@ -289,6 +300,7 @@ function plot_observation_distributions(
                             )
                         getproperty(obs, obs_name)
                     end
+                    dist = _marginal_obs_dist(dist_raw, obs_name, marginal, n_marginals)
 
                     if dist isa DiscreteDistribution
                         if dist isa Bernoulli
@@ -318,12 +330,12 @@ function plot_observation_distributions(
                         if has_obs_val
                             xlim = (min(xlim[1], float(y_obs)), max(xlim[2], float(y_obs)))
                         end
-                        xlims_by_group[(i, obs_name)] = haskey(
-                                xlims_by_group, (i, obs_name)
+                        xlims_by_group[(i, obs_name, m)] = haskey(
+                                xlims_by_group, (i, obs_name, m)
                             ) ?
                             (
-                                min(xlims_by_group[(i, obs_name)][1], xlim[1]),
-                                max(xlims_by_group[(i, obs_name)][2], xlim[2]),
+                                min(xlims_by_group[(i, obs_name, m)][1], xlim[1]),
+                                max(xlims_by_group[(i, obs_name, m)][2], xlim[2]),
                             ) :
                             xlim
                         ylims = ylims === nothing ? (minimum(probs), maximum(probs)) :
@@ -349,12 +361,12 @@ function plot_observation_distributions(
                         if has_obs_val
                             xlim = (min(xlim[1], float(y_obs)), max(xlim[2], float(y_obs)))
                         end
-                        xlims_by_group[(i, obs_name)] = haskey(
-                                xlims_by_group, (i, obs_name)
+                        xlims_by_group[(i, obs_name, m)] = haskey(
+                                xlims_by_group, (i, obs_name, m)
                             ) ?
                             (
-                                min(xlims_by_group[(i, obs_name)][1], xlim[1]),
-                                max(xlims_by_group[(i, obs_name)][2], xlim[2]),
+                                min(xlims_by_group[(i, obs_name, m)][1], xlim[1]),
+                                max(xlims_by_group[(i, obs_name, m)][2], xlim[2]),
                             ) :
                             xlim
                         ylims = ylims === nothing ? (minimum(pdf_vals), maximum(pdf_vals)) :
@@ -366,7 +378,7 @@ function plot_observation_distributions(
                 end
 
                 push!(plots, p)
-                push!(plot_groups, (i, obs_name))
+                push!(plot_groups, (i, obs_name, m))
             end
         end
     end

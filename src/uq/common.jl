@@ -21,17 +21,35 @@ function _validate_level(level::Real)
     return Float64(level)
 end
 
-const _UQ_INTERVALS = (:auto, :profile)
+# Interval aliases accepted per backend. Each backend implements exactly one interval type,
+# so the aliases are synonyms; validation happens after backend resolution because the same
+# symbol can be valid for one backend and meaningless for another (#239).
+const _UQ_BACKEND_INTERVALS = (
+    wald = (:auto, :wald, :normal),
+    chain = (:auto, :equaltail, :chain),
+    mcmc_refit = (:auto, :equaltail, :chain),
+    profile = (:auto, :profile),
+)
+
+function _validate_uq_interval(backend::Symbol, interval::Symbol)
+    allowed = get(_UQ_BACKEND_INTERVALS, backend, nothing)
+    allowed === nothing && return interval
+    interval in allowed && return interval
+    return error(
+        "interval=:$(interval) is not available for the :$(backend) UQ backend. " *
+            "Valid intervals for :$(backend) are $(allowed). Interval types are " *
+            "backend-specific: :wald/:normal need method=:wald, :equaltail/:chain need " *
+            "method=:chain or :mcmc_refit, and :profile needs method=:profile."
+    )
+end
 
 # Boundary/malformed UQ options used to be accepted silently and either changed the
 # numerical scheme or were clamped without notice (#211).
 function _validate_uq_options(
-        res::FitResult; interval, fd_abs_step, fd_rel_step,
+        res::FitResult; fd_abs_step, fd_rel_step,
         fd_max_tries, mcmc_warmup, mcmc_draws, constants, profile_max_iter,
         profile_ftol_abs, profile_scan_width
     )
-    interval in _UQ_INTERVALS ||
-        error("Unsupported interval $(interval). Use one of $(_UQ_INTERVALS).")
     for (name, v) in (
             ("fd_abs_step", fd_abs_step), ("fd_rel_step", fd_rel_step),
             ("profile_ftol_abs", profile_ftol_abs), ("profile_scan_width", profile_scan_width),

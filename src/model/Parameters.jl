@@ -645,6 +645,10 @@ function NPFParameter(
     u = fill(T(Inf), length(v))
     _check_nn_prior(prior, name, length(v))
     resolved_base = isnothing(base_dist) ? MvNormal(zeros(T, d), I) : base_dist
+    # The flow layers are sized by n_input; a base of a different dimension used to slip
+    # through and only fail when the chain was rebuilt from the flat parameters.
+    length(resolved_base) == d ||
+        error("Invalid base_dist for parameter $(name). Expected dimension $(d); got $(length(resolved_base)).")
     return NPFParameter{T, typeof(v), typeof(reconstructor), typeof(resolved_base)}(
         name, d, Int(n_layers), Int(seed), init, v,
         reconstructor, resolved_base, l, u, prior, calculate_se

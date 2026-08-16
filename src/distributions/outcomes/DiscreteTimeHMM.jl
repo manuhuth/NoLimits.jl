@@ -6,10 +6,13 @@ using Distributions
 
 """
     DiscreteTimeDiscreteStatesHMM(transition_matrix, emission_dists, initial_dist)
-    <: Distribution{Univariate, Continuous}
+    <: Distribution{Univariate, S}
 
 A discrete-time Hidden Markov Model (HMM) with a finite number of hidden states and
 continuous or discrete emission distributions.
+
+The value support `S` is inferred from the emissions: `Discrete` when every emission is
+discrete, `Continuous` otherwise (including mixed emissions).
 
 Implements the `Distributions.jl` interface (`pdf`, `logpdf`, `rand`, `mean`, `var`).
 Used as an observation distribution in `@formulas` blocks to model outcomes with latent
@@ -25,12 +28,27 @@ state dynamics.
 """
 struct DiscreteTimeDiscreteStatesHMM{
         M <: AbstractMatrix{<:Real}, E <: Tuple, D <: Distributions.Categorical,
+        S <: ValueSupport,
     } <:
-    Distribution{Univariate, Continuous}
+    Distribution{Univariate, S}
     n_states::Int
     transition_matrix::M
     emission_dists::E
     initial_dist::D
+end
+
+# Field-for-field rebuild used by the per-row filter helpers; `S` is not inferable from
+# the fields, so it is resolved here from the emission types.
+function DiscreteTimeDiscreteStatesHMM(
+        n_states::Int,
+        transition_matrix::AbstractMatrix{<:Real},
+        emission_dists::Tuple,
+        initial_dist::Distributions.Categorical
+    )
+    return DiscreteTimeDiscreteStatesHMM{
+        typeof(transition_matrix), typeof(emission_dists), typeof(initial_dist),
+        _hmm_support(emission_dists),
+    }(n_states, transition_matrix, emission_dists, initial_dist)
 end
 
 function DiscreteTimeDiscreteStatesHMM(
@@ -38,12 +56,9 @@ function DiscreteTimeDiscreteStatesHMM(
         emission_dists::Tuple,
         initial_dist::Distributions.Categorical
     )
-    n_states = size(transition_matrix, 1)
-    size(transition_matrix, 2) == n_states || error("transition_matrix must be square.")
-    length(emission_dists) == n_states ||
-        error("Number of emission distributions must match number of states.")
-    length(initial_dist.p) == n_states ||
-        error("Initial distribution size must match number of states.")
+    n_states = _hmm_check_state_dims(
+        transition_matrix, length(emission_dists), length(initial_dist.p)
+    )
     _hmm_check_transition_matrix(transition_matrix)
     return DiscreteTimeDiscreteStatesHMM(
         n_states, transition_matrix, emission_dists, initial_dist

@@ -485,8 +485,8 @@ end
             dm, GHQuadrature(level = (nonexistent = 5,); optim_kwargs = (maxiters = 2,))
         )
         # Scalar levels must be positive integers.
-        @test_throws ErrorException GHQuadrature(level = 0)
-        @test_throws ErrorException GHQuadrature(level = (η = 0,))
+        @test_throws ArgumentError GHQuadrature(level = 0)
+        @test_throws ArgumentError GHQuadrature(level = (η = 0,))
     end
 end  # @testset "Anisotropic sparse grids"
 
@@ -540,12 +540,12 @@ end  # @testset "Anisotropic sparse grids"
 
     @testset "empty level vector throws" begin
         dm = _make_progressive_dm()
-        @test_throws ErrorException fit_model(dm, GHQuadrature(level = Int[]))
+        @test_throws ArgumentError fit_model(dm, GHQuadrature(level = Int[]))
     end
 
     @testset "non-positive level entry throws" begin
         dm = _make_progressive_dm()
-        @test_throws ErrorException fit_model(dm, GHQuadrature(level = [1, 0]))
+        @test_throws ArgumentError fit_model(dm, GHQuadrature(level = [1, 0]))
     end
 end  # @testset "GHQuadrature progressive refinement"
 

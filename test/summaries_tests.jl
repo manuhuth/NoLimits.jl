@@ -661,3 +661,71 @@ end
     @test !occursin('\n', txt_uq)
     @test length(txt_uq) < 180
 end
+
+@testset "UQ summary scale, invariants, and interval aliases" begin
+    res = fx_mle()
+    names_t = [:a, :b, :σ]
+    ints(v) = NoLimits.UQIntervals(0.95, v .- 1.0, v .+ 1.0)
+    mk(names, nat, est_n; vcov = nothing, draws = nothing) = UQResult(
+        :wald, :mle, names, nat, Float64[1:length(names);], est_n,
+        ints(Float64[1:length(names);]), ints(est_n),
+        vcov, vcov, draws, draws, NamedTuple()
+    )
+
+    # Every public accessor rejects a scale that is neither :natural nor :transformed.
+    uq = mk(names_t, nothing, [10.0, 20.0, 30.0]; vcov = [1.0 0.0 0.0; 0.0 1.0 0.0; 0.0 0.0 1.0])
+    @test_throws ArgumentError get_uq_parameter_names(uq; scale = :bogus)
+    @test_throws ArgumentError get_uq_estimates(uq; scale = :bogus)
+    @test_throws ArgumentError get_uq_intervals(uq; scale = :bogus)
+    @test_throws ArgumentError get_uq_vcov(uq; scale = :bogus)
+    @test_throws ArgumentError get_uq_draws(uq; scale = :bogus)
+
+    # Names follow the requested scale instead of always using the transformed default.
+    uq_sc = mk(names_t, [:an, :bn, :σn], [10.0, 20.0, 30.0])
+    rows_n = summarize(uq_sc; scale = :natural).parameter_rows
+    @test [r.parameter for r in rows_n] == [:an, :bn, :σn]
+    @test [r.estimate for r in rows_n] == [10.0, 20.0, 30.0]
+    rows_t = summarize(uq_sc; scale = :transformed).parameter_rows
+    @test [r.parameter for r in rows_t] == names_t
+    @test [r.estimate for r in rows_t] == [1.0, 2.0, 3.0]
+
+    # Draw-based SEs give one value per parameter for n_draws below and above n_params.
+    for nd in (2, 5)
+        uq_d = mk(names_t, nothing, [1.0, 2.0, 3.0]; draws = randn(Xoshiro(3), nd, 3))
+        s = summarize(uq_d)
+        @test length(s.parameter_rows) == 3
+        @test all(r -> r.std_error isa Real, s.parameter_rows)
+    end
+
+    # Malformed UQResults are rejected up front, not deep inside row construction.
+    @test_throws ErrorException summarize(
+        UQResult(
+            :wald, :mle, names_t, nothing, [1.0, 2.0, 3.0], [1.0, 2.0],
+            nothing, nothing, nothing, nothing, nothing, nothing, NamedTuple()
+        )
+    )
+
+    # Foreign UQ layouts must fail; partial ones must be reported, never silently dropped.
+    @test_throws ErrorException summarize(res, mk([:a, :zzz], nothing, [1.0, 2.0]))
+    s_part = summarize(res, mk([:a, :b], nothing, [1.0, 2.0]))
+    @test any(r -> r.parameter == :σ && r.std_error === nothing, s_part.parameter_rows)
+    @test any(n -> occursin("without uncertainty", n), s_part.notes)
+
+    # Interval aliases are validated against the resolved backend.
+    for (backend, ok) in (
+            (:wald, (:auto, :wald, :normal)), (:chain, (:auto, :equaltail, :chain)),
+            (:mcmc_refit, (:auto, :equaltail, :chain)), (:profile, (:auto, :profile)),
+        )
+        for iv in ok
+            @test NoLimits._validate_uq_interval(backend, iv) == iv
+        end
+        for iv in setdiff([:wald, :normal, :equaltail, :chain, :profile], collect(ok))
+            @test_throws ErrorException NoLimits._validate_uq_interval(backend, iv)
+        end
+    end
+    @test compute_uq(res; method = :wald, interval = :normal, n_draws = 5) isa UQResult
+    @test_throws ErrorException compute_uq(res; method = :wald, interval = :equaltail)
+
+    # Coverage counts observation rows and states the counting unit.
+    @test all(r -> r.unit == :row, summarize(res).coverage_rows)
+end

@@ -4,10 +4,13 @@ using Distributions, LinearAlgebra, Random
 
 """
     MVDiscreteTimeDiscreteStatesHMM(transition_matrix, emission_dists, initial_dist)
-    <: Distribution{Multivariate, Continuous}
+    <: Distribution{Multivariate, S}
 
 A discrete-time Hidden Markov Model with shared latent states across M outcome
 variables.
+
+The value support `S` is inferred from the emissions: `Discrete` when every emission is
+discrete, `Continuous` otherwise (including mixed emissions).
 
 Two emission modes are supported:
 
@@ -39,7 +42,8 @@ struct MVDiscreteTimeDiscreteStatesHMM{
         M <: AbstractMatrix{<:Real},
         E <: Tuple,
         D <: Distributions.Categorical,
-    } <: Distribution{Multivariate, Continuous}
+        S <: ValueSupport,
+    } <: Distribution{Multivariate, S}
     n_states::Int
     n_outcomes::Int
     transition_matrix::M
@@ -47,23 +51,28 @@ struct MVDiscreteTimeDiscreteStatesHMM{
     initial_dist::D
 end
 
+# Field-for-field rebuild used by the per-row filter helpers; `S` is not inferable from
+# the fields, so it is resolved here from the emission types.
+function MVDiscreteTimeDiscreteStatesHMM(
+        n_states::Int,
+        n_outcomes::Int,
+        transition_matrix::AbstractMatrix{<:Real},
+        emission_dists::Tuple,
+        initial_dist::Distributions.Categorical
+    )
+    return MVDiscreteTimeDiscreteStatesHMM{
+        typeof(transition_matrix), typeof(emission_dists), typeof(initial_dist),
+        _hmm_support(emission_dists),
+    }(n_states, n_outcomes, transition_matrix, emission_dists, initial_dist)
+end
+
 function MVDiscreteTimeDiscreteStatesHMM(
         transition_matrix::AbstractMatrix{<:Real},
         emission_dists::Tuple,
         initial_dist::Distributions.Categorical
     )
-    n_states = size(transition_matrix, 1)
-    size(transition_matrix, 2) == n_states ||
-        error("transition_matrix must be square, got $(size(transition_matrix)).")
-    length(emission_dists) == n_states ||
-        error(
-        "length(emission_dists) must equal n_states ($n_states), " *
-            "got $(length(emission_dists))."
-    )
-    length(initial_dist.p) == n_states ||
-        error(
-        "length(initial_dist.p) must equal n_states ($n_states), " *
-            "got $(length(initial_dist.p))."
+    n_states = _hmm_check_state_dims(
+        transition_matrix, length(emission_dists), length(initial_dist.p)
     )
     n_outcomes = _mv_n_outcomes(emission_dists[1])
     for k in 2:n_states

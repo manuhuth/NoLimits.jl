@@ -118,6 +118,16 @@ function _ms_size_summary(p)
     return "n/a"
 end
 
+# Component names for a parameter block, so a consumer can identify the individual values
+# of a vector/matrix block instead of only its top-level name (#237).
+function _ms_component_names(name::Symbol, p)
+    val = hasproperty(p, :value) ? getfield(p, :value) : nothing
+    val isa AbstractArray || return Symbol[name]
+    return Symbol[
+        Symbol(name, "[", join(Tuple(ci), ","), "]") for ci in CartesianIndices(val)
+    ]
+end
+
 function _ms_details(p)
     if p isa NNParameters
         return "function=$(p.function_name), weights=$(length(p.value))"
@@ -198,6 +208,7 @@ function summarize(m::Model)
             fixed_effect_summaries,
             (;
                 name = name,
+                components = _ms_component_names(name, p),
                 block_type = Symbol(nameof(typeof(p))),
                 size = _ms_size_summary(p),
                 calculate_se = hasproperty(p, :calculate_se) ? getfield(p, :calculate_se) :

@@ -120,6 +120,12 @@ function build_fit_result(
         store_data_model::Bool = true,
         fit_args::Tuple = (), fit_kwargs = NamedTuple()
     )
+    n_samples >= 1 ||
+        throw(ArgumentError("build_fit_result: `n_samples` must be ≥ 1. Got: $(n_samples)"))
+    n_adapt >= 0 ||
+        throw(ArgumentError("build_fit_result: `n_adapt` must be ≥ 0. Got: $(n_adapt)"))
+    n_adapt < size(chain, 1) ||
+        throw(ArgumentError("build_fit_result: `n_adapt` = $(n_adapt) discards every one of the $(size(chain, 1)) draws in `chain`; it must be smaller."))
     result = MCMCResult(chain, sampler, n_samples, notes, observed)
     summary = FitSummary(
         _mcmc_objective(chain, n_adapt), missing,

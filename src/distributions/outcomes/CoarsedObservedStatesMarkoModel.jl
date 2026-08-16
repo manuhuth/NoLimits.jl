@@ -189,5 +189,11 @@ end
 Distributions.mean(dist::CoarsedObservedStatesMarkovModel) = mean(dist.base_dist)
 Distributions.var(dist::CoarsedObservedStatesMarkovModel) = var(dist.base_dist)
 Distributions.cdf(dist::CoarsedObservedStatesMarkovModel, y::Real) = cdf(dist.base_dist, y)
+# Scalar summaries delegate to the base model; without this the generic Distributions
+# fallback tries to iterate the wrapper and reports an unrelated MethodError (#235).
+function Distributions.quantile(dist::CoarsedObservedStatesMarkovModel, p::Real)
+    return quantile(dist.base_dist, p)
+end
+Distributions.median(dist::CoarsedObservedStatesMarkovModel) = median(dist.base_dist)
 Distributions.params(dist::CoarsedObservedStatesMarkovModel) = params(dist.base_dist)
 Base.length(dist::CoarsedObservedStatesMarkovModel) = length(dist.base_dist)

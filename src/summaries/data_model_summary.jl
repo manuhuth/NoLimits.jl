@@ -90,6 +90,33 @@ function _descriptive_stats(values)
     )
 end
 
+# One stats row per outcome, or per component for a vector-valued outcome (whose entries
+# `_descriptive_stats` would otherwise drop, reporting n = 0). `n_observed`/`n_missing`
+# always count observation ROWS, and `unit` says how to read the statistics (#237).
+function _outcome_stat_rows(name::Symbol, vals)
+    n_missing = count(ismissing, vals)
+    present = [v for v in vals if !(v === missing)]
+    n_observed = length(present)
+    if !isempty(present) && all(v -> v isa AbstractVector, present)
+        k = length(first(present))
+        if all(v -> length(v) == k, present)
+            return NamedTuple[
+                (;
+                        name = Symbol(name, "[", j, "]"),
+                        stats = _descriptive_stats([v[j] for v in present]),
+                        n_observed = n_observed, n_missing = n_missing, unit = :component,
+                    ) for j in 1:k
+            ]
+        end
+    end
+    return NamedTuple[
+        (;
+            name = name, stats = _descriptive_stats(present),
+            n_observed = n_observed, n_missing = n_missing, unit = :row,
+        ),
+    ]
+end
+
 function _collect_obs_rows(dm::DataModel)
     n = sum(length, get_obs_rows(get_row_groups(dm)))
     out = Vector{Int}(undef, n)
@@ -359,8 +386,7 @@ function summarize(dm::DataModel)
     outcome_stats = NamedTuple[]
     for obs in get_obs_cols(dm)
         col = getproperty(get_df(dm), obs)
-        vals = col[obs_rows]
-        push!(outcome_stats, (; name = obs, stats = _descriptive_stats(vals)))
+        append!(outcome_stats, _outcome_stat_rows(obs, col[obs_rows]))
     end
 
     # Declared covariates + per-column stats (observation rows only)
@@ -524,6 +550,15 @@ function Base.show(io::IO, ::MIME"text/plain", s::DataModelSummary)
 
     _print_descriptive_table(
         io, "Outcome descriptive statistics (observation rows)", s.outcome_stats
+    )
+    println(io)
+    _print_key_values(
+        io,
+        "Outcome coverage (observation rows)",
+        [
+            string(r.name) => "observed $(r.n_observed), missing $(r.n_missing), unit $(r.unit)"
+                for r in s.outcome_stats
+        ]
     )
     println(io)
     _print_covariate_declarations(io, s.covariate_declarations)

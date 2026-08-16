@@ -148,8 +148,33 @@ import Turing   # MCMC/VI need the Turing extension loaded (#36)
         @test sim[1, :y] isa AbstractVector
         @test length(sim[1, :y]) == 2
 
+        # Multivariate residual schema (#240 group 3): vector cells per component,
+        # scalar joint logscore, and prediction modes that keep the components.
         resid = NoLimits.get_residuals(res)
         @test nrow(resid) == nrow(df_out)
+        @test all(v -> v isa Vector{Float64} && length(v) == 2, resid.y)
+        @test all(v -> v isa Vector{Float64} && length(v) == 2, resid.fitted)
+        @test all(v -> v isa Vector{Float64} && length(v) == 2, resid.res_raw)
+        @test all(v -> v isa Vector{Float64} && length(v) == 2, resid.res_pearson)
+        @test all(v -> all(0 .<= v .<= 1), resid.pit)
+        @test all(isfinite, resid.logscore)
+        @test isapprox(
+            -sum(resid.logscore), NoLimits.get_loglikelihood(res); rtol = 1.0e-6
+        )
+        mvn = MvNormal([0.0, 1.0], [1.0 0.2; 0.2 2.0])
+        @test length(NoLimits._mv_marginals(mvn)) == 2
+        @test_throws ErrorException NoLimits._mv_fitted(mvn, cov)
+        # No known marginals => component PIT is refused rather than fabricated.
+        @test_throws ErrorException NoLimits._compute_mv_residual_metrics(
+            Dirichlet([1.0, 1.0]), [0.5, 0.5], [:pit], mean, true, 0, Xoshiro(8)
+        )
+
+        for mode in (:population, :ebe, :reestimate, :marginal)
+            pdf_out = NoLimits.predict(
+                res, df_out; re_mode = mode, marginal_draws = 2, rng = Xoshiro(6)
+            )
+            @test all(v -> v isa Vector{Float64} && length(v) == 2, pdf_out.prediction)
+        end
 
         cv_spec = NoLimits.cross_validate(dm_out, 2; rng = Xoshiro(4))
         cvres = NoLimits.fit_cv(

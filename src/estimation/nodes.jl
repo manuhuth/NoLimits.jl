@@ -36,6 +36,16 @@ end
 @inline get_dimension(g::GHQuadratureNodes) = g.dim
 @inline get_level(g::GHQuadratureNodes) = g.level
 
+# Single validator for every public sparse-grid entry point, so an invalid pair fails
+# here instead of as an AssertionError/InexactError deep in the construction.
+function _check_ghq_dim_level(dim, level)
+    (dim isa Integer && dim >= 1) ||
+        throw(ArgumentError("Gauss-Hermite quadrature dimension must be an integer ≥ 1. Got: $(repr(dim))"))
+    (level isa Integer && level >= 1) ||
+        throw(ArgumentError("Gauss-Hermite quadrature level must be an integer ≥ 1. Got: $(repr(level))"))
+    return nothing
+end
+
 # ---------------------------------------------------------------------------
 # 1D Gauss-Hermite rule (probabilist's convention)
 # ---------------------------------------------------------------------------
@@ -126,9 +136,10 @@ Duplicate nodes (which arise from the Smolyak tensor-product construction) are
 merged by summing their signed weights. Near-zero combined weights (|w| < eps)
 are discarded.
 """
-function build_sparse_grid(dim::Int, level::Int)
-    @assert dim >= 1 "dim must be ≥ 1"
-    @assert level >= 1 "level must be ≥ 1"
+function build_sparse_grid(dim_::Integer, level_::Integer)
+    _check_ghq_dim_level(dim_, level_)
+    dim = Int(dim_)
+    level = Int(level_)
 
     q_max = dim + level - 1
 
@@ -244,8 +255,9 @@ Return the Smolyak sparse-grid for the given `dim` and `level`, building and
 caching it on first call. Thread-safe only when all needed `(dim, level)` pairs
 are populated before concurrent use (call this for all needed pairs at setup time).
 """
-function get_sparse_grid(dim::Int, level::Int)
-    key = (dim, level)
+function get_sparse_grid(dim::Integer, level::Integer)
+    _check_ghq_dim_level(dim, level)
+    key = (Int(dim), Int(level))
     haskey(_SPARSEGRID_CACHE, key) && return _SPARSEGRID_CACHE[key]
     sg = build_sparse_grid(dim, level)
     _SPARSEGRID_CACHE[key] = sg
@@ -261,8 +273,8 @@ the grid (`n_ghq_points` builds it, which is exactly what explodes for large
 `dim`). The bound is the pre-deduplication point count, as a `Float64` because
 it overflows `Int` for large batches.
 """
-function ghq_points_bound(dim::Int, level::Int)
-    dim <= 0 && return 0.0
+function ghq_points_bound(dim::Integer, level::Integer)
+    _check_ghq_dim_level(dim, level)
     # f[j+1] = Σ over multi-indices α ∈ {1,…}^d with |α| = d + j of Π α_i,
     # since the order-k 1-D rule contributes k nodes. Recurse over dimensions.
     f = [Float64(1 + j) for j in 0:(level - 1)]
@@ -281,7 +293,8 @@ sparse grid for `dim` dimensions at accuracy `level`.
 Useful for checking grid size before fitting:
     n_ghq_points(5, 3)  # after deduplication
 """
-function n_ghq_points(dim::Int, level::Int)
+function n_ghq_points(dim::Integer, level::Integer)
+    _check_ghq_dim_level(dim, level)
     return size(get_sparse_grid(dim, level).nodes, 2)
 end
 
@@ -364,7 +377,11 @@ for k = 1,...,length(dims).  Call this for all needed `(dims, levels)` pairs
 at setup time before parallel use.
 """
 function get_anisotropic_grid(dims::Vector{Int}, levels::Vector{Int})
-    @assert length(dims) == length(levels) >= 1
+    (length(dims) == length(levels) && !isempty(dims)) ||
+        throw(ArgumentError("get_anisotropic_grid: `dims` and `levels` must be non-empty and of equal length. Got $(length(dims)) and $(length(levels))."))
+    for (d, l) in zip(dims, levels)
+        _check_ghq_dim_level(d, l)
+    end
     # Lookup with the caller's vectors (hashing does not retain the key); defensive
     # copies are only needed when INSERTING, so the cached-lookup fast path — taken
     # once per batch per objective evaluation — is allocation-free.

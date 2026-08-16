@@ -82,14 +82,53 @@ end
         return isfinite(x) ? x : missing
     end
     v isa AbstractVector &&
-        @warn "Vector-valued (multivariate) observations are not supported in scalar " *
-        "residual metrics and are reported as missing." maxlog = 1
+        @warn "Vector-valued entries have no scalar meaning in the `time`/`x` axis " *
+        "columns and are reported as missing." maxlog = 1
     return missing
 end
 
-function _metric_summary(vals::Vector{Union{Missing, Float64}}, qlo::Float64, qhi::Float64)
+# Residual cells are scalar for univariate outcomes and per-component vectors for
+# multivariate ones; joint scores (`logscore`) stay scalar in either case.
+const _ResidualCell = Union{Missing, Float64, Vector{Float64}}
+
+# Observation / fitted values keep their multivariate shape until after metric dispatch.
+@inline function _obs_value(v)
+    ismissing(v) && return missing
+    if v isa AbstractVector
+        any(ismissing, v) && return missing
+        return Float64[Float64(x) for x in v]
+    end
+    return _to_float_or_missing(v)
+end
+
+_residual_error(msg) = error("get_residuals: " * msg)
+
+# Component marginals of a multivariate outcome distribution, or `nothing` when they
+# are not available in closed form (component PIT/quantile is then refused).
+function _mv_marginals(dist)
+    m = _re_marginals(dist)
+    m === nothing || return collect(m)
+    # Shares the plotting component-marginal rule (MV HMMs, joint MvNormal emissions).
+    m = _dist_marginals(dist)
+    m === nothing || return collect(m)
+    dist isa Distributions.AbstractMvNormal || return nothing
+    return [Normal(μ, sqrt(v)) for (μ, v) in zip(mean(dist), diag(cov(dist)))]
+end
+
+function _metric_summary(vals::AbstractVector, qlo::Float64, qhi::Float64)
     vals_use = collect(skipmissing(vals))
     isempty(vals_use) && return (missing, missing, missing)
+    if first(vals_use) isa AbstractVector
+        n = length(first(vals_use))
+        all(v -> length(v) == n, vals_use) ||
+            _residual_error("component count differs across posterior draws.")
+        m = reduce(hcat, vals_use)
+        return (
+            Float64[mean(view(m, k, :)) for k in 1:n],
+            Float64[quantile(view(m, k, :), qlo) for k in 1:n],
+            Float64[quantile(view(m, k, :), qhi) for k in 1:n],
+        )
+    end
     m = mean(vals_use)
     lo = quantile(vals_use, qlo)
     hi = quantile(vals_use, qhi)
@@ -130,15 +169,136 @@ function _pit_from_dist(
     return missing
 end
 
-function _compute_residual_metrics(
+function _mv_fitted(dist, fitted_stat)
+    v = try
+        fitted_stat === mean ? _re_mean(dist) : fitted_stat(dist)
+    catch
+        return missing
+    end
+    v isa AbstractMatrix && _residual_error(
+        "fitted_stat returned a $(size(v, 1))x$(size(v, 2)) matrix for a multivariate " *
+            "outcome; matrix-valued statistics (e.g. `cov`) have no per-observation " *
+            "representation. Pass a vector-valued `fitted_stat` such as `mean`."
+    )
+    v isa AbstractVector && return Float64[Float64(x) for x in v]
+    v isa Number && return Float64(v)
+    return missing
+end
+
+# Per-component variances: `var`/`cov` diagonal, else the marginal variances.
+function _mv_variances(dist, marg)
+    v = try
+        var(dist)
+    catch
+        nothing
+    end
+    v isa AbstractVector && return Float64[Float64(x) for x in v]
+    c = try
+        cov(dist)
+    catch
+        nothing
+    end
+    c isa AbstractMatrix && return Float64[Float64(x) for x in diag(c)]
+    marg === nothing && return nothing
+    return Float64[Float64(var(m)) for m in marg]
+end
+
+function _compute_mv_residual_metrics(
         dist,
-        y::Union{Missing, Float64},
+        y::Vector{Float64},
         residual_list::Vector{Symbol},
         fitted_stat,
         randomize_discrete::Bool,
         cdf_fallback_mc::Int,
         rng::AbstractRNG
     )
+    req = Set(residual_list)
+    fitted = _mv_fitted(dist, fitted_stat)
+
+    pit = missing
+    res_quantile = missing
+    if (:pit in req) || (:quantile in req)
+        marg = _mv_marginals(dist)
+        marg === nothing && _residual_error(
+            "PIT / quantile residuals for a multivariate outcome of type " *
+                "$(nameof(typeof(dist))) require known component marginals, and a joint " *
+                "PIT has no canonical definition. Request only " *
+                "`[:raw, :pearson, :logscore]` for this outcome."
+        )
+        length(marg) == length(y) || _residual_error(
+            "the outcome has $(length(y)) components but its distribution reports " *
+                "$(length(marg)) marginals."
+        )
+        pit_vec = Vector{Float64}(undef, length(y))
+        ok = true
+        for k in eachindex(y)
+            p = _pit_from_dist(
+                marg[k], y[k]; randomize_discrete = randomize_discrete,
+                cdf_fallback_mc = cdf_fallback_mc, rng = rng
+            )
+            ismissing(p) ? (ok = false) : (pit_vec[k] = p)
+        end
+        ok && (pit = pit_vec)
+        if (:quantile in req) && !ismissing(pit)
+            res_quantile = Float64[
+                quantile(Normal(), clamp(p, eps(Float64), 1.0 - eps(Float64)))
+                    for p in pit
+            ]
+        end
+        (:pit in req) || (pit = missing)
+    end
+
+    μ = (:raw in req) || (:pearson in req) ? _mv_fitted(dist, mean) : missing
+    μ isa AbstractVector && length(μ) != length(y) && _residual_error(
+        "the outcome has $(length(y)) components but its distribution mean has " *
+            "$(length(μ))."
+    )
+
+    res_raw = (:raw in req) && μ isa AbstractVector ? y .- μ : missing
+
+    res_pearson = missing
+    if (:pearson in req) && μ isa AbstractVector
+        v = _mv_variances(dist, _mv_marginals(dist))
+        if v !== nothing && length(v) == length(y) && all(x -> x > 0 && isfinite(x), v)
+            res_pearson = (y .- μ) ./ sqrt.(v)
+        end
+    end
+
+    logscore = missing
+    if :logscore in req
+        ls = try
+            -Float64(logpdf(dist, y))
+        catch
+            missing
+        end
+        !ismissing(ls) && isfinite(ls) && (logscore = ls)
+    end
+
+    return (
+        fitted = fitted, pit = pit, res_quantile = res_quantile,
+        res_raw = res_raw, res_pearson = res_pearson, logscore = logscore,
+    )
+end
+
+function _compute_residual_metrics(
+        dist,
+        y::_ResidualCell,
+        residual_list::Vector{Symbol},
+        fitted_stat,
+        randomize_discrete::Bool,
+        cdf_fallback_mc::Int,
+        rng::AbstractRNG
+    )
+    if y isa Vector{Float64}
+        return _compute_mv_residual_metrics(
+            dist, y, residual_list, fitted_stat, randomize_discrete, cdf_fallback_mc, rng
+        )
+    elseif ismissing(y) && dist isa Distributions.MultivariateDistribution
+        return (
+            fitted = _mv_fitted(dist, fitted_stat), pit = missing, res_quantile = missing,
+            res_raw = missing, res_pearson = missing, logscore = missing,
+        )
+    end
     req = Set(residual_list)
     fitted = try
         v = _stat_from_dist(dist, fitted_stat)
@@ -219,20 +379,20 @@ function _residual_row(;
         observable::Symbol,
         time::Union{Missing, Float64},
         x::Union{Missing, Float64},
-        y::Union{Missing, Float64},
-        fitted::Union{Missing, Float64},
-        pit::Union{Missing, Float64},
-        pit_qlo::Union{Missing, Float64},
-        pit_qhi::Union{Missing, Float64},
-        res_quantile::Union{Missing, Float64},
-        res_quantile_qlo::Union{Missing, Float64},
-        res_quantile_qhi::Union{Missing, Float64},
-        res_raw::Union{Missing, Float64},
-        res_raw_qlo::Union{Missing, Float64},
-        res_raw_qhi::Union{Missing, Float64},
-        res_pearson::Union{Missing, Float64},
-        res_pearson_qlo::Union{Missing, Float64},
-        res_pearson_qhi::Union{Missing, Float64},
+        y::_ResidualCell,
+        fitted::_ResidualCell,
+        pit::_ResidualCell,
+        pit_qlo::_ResidualCell,
+        pit_qhi::_ResidualCell,
+        res_quantile::_ResidualCell,
+        res_quantile_qlo::_ResidualCell,
+        res_quantile_qhi::_ResidualCell,
+        res_raw::_ResidualCell,
+        res_raw_qlo::_ResidualCell,
+        res_raw_qhi::_ResidualCell,
+        res_pearson::_ResidualCell,
+        res_pearson_qlo::_ResidualCell,
+        res_pearson_qhi::_ResidualCell,
         logscore::Union{Missing, Float64},
         logscore_qlo::Union{Missing, Float64},
         logscore_qhi::Union{Missing, Float64},
@@ -314,6 +474,21 @@ through `missing` rows as well. On Laplace/FOCEI/SAEM/MCEM/Pooled fits it theref
 matches `get_loglikelihood(res)` (which also conditions on the EB modes) to round-off;
 on `GHQuadrature` fits `get_loglikelihood` returns the *marginal* likelihood, which
 integrates over the random effects and is a different quantity.
+
+# Multivariate (vector-valued) outcomes
+
+Vector-valued observations keep one row per observation; the `y`, `fitted`, `res_raw`,
+`res_pearson`, `pit` and `res_quantile` cells (and their `_qlo` / `_qhi` bands) then hold
+`Vector{Float64}` with one entry per outcome component, in the order of the observation.
+`logscore` stays scalar: it is the joint score `-logpdf(dist, y)`. `time` and `x` remain
+scalar. Scalar outcomes are unaffected and keep scalar cells throughout.
+
+Component `pit` / `res_quantile` need the component marginals of the outcome
+distribution (known for `MvNormal` and for distributions with an `_re_marginals`
+method, such as `Copulas.SklarDist`); requesting them for a distribution without known
+marginals throws, because a joint PIT has no canonical definition. A matrix-valued
+`fitted_stat` such as `cov` also throws. Statistics a distribution simply does not
+implement (e.g. no `mean`) stay `missing`, as for scalar outcomes.
 
 # HMM-family outcomes
 
@@ -443,14 +618,14 @@ function get_residuals(
                     id_val = get_df(dm)[row, get_primary_id(dm)]
                     tval = _to_float_or_missing(get_df(dm)[row, get_time_col(dm)])
                     xval = _to_float_or_missing(xvals[j])
-                    yval = _to_float_or_missing(yvals[j])
+                    yval = _obs_value(yvals[j])
 
-                    fitted_vals = Vector{Union{Missing, Float64}}(undef, n_draws)
-                    pit_vals = Vector{Union{Missing, Float64}}(undef, n_draws)
-                    q_vals = Vector{Union{Missing, Float64}}(undef, n_draws)
-                    raw_vals = Vector{Union{Missing, Float64}}(undef, n_draws)
-                    pearson_vals = Vector{Union{Missing, Float64}}(undef, n_draws)
-                    ls_vals = Vector{Union{Missing, Float64}}(undef, n_draws)
+                    fitted_vals = Vector{_ResidualCell}(undef, n_draws)
+                    pit_vals = Vector{_ResidualCell}(undef, n_draws)
+                    q_vals = Vector{_ResidualCell}(undef, n_draws)
+                    raw_vals = Vector{_ResidualCell}(undef, n_draws)
+                    pearson_vals = Vector{_ResidualCell}(undef, n_draws)
+                    ls_vals = Vector{_ResidualCell}(undef, n_draws)
 
                     for d in 1:n_draws
                         met = _compute_residual_metrics(
@@ -483,8 +658,7 @@ function get_residuals(
                             )
                         end
                     else
-                        fit_mean = collect(skipmissing(fitted_vals))
-                        fitted = isempty(fit_mean) ? missing : Float64(mean(fit_mean))
+                        fitted, _, _ = _metric_summary(fitted_vals, qlo, qhi)
 
                         pit_mean, pit_qlo, pit_qhi = _metric_summary(pit_vals, qlo, qhi)
                         q_mean, q_qlo, q_qhi = _metric_summary(q_vals, qlo, qhi)
@@ -574,7 +748,7 @@ function get_residuals(
                     id_val = get_df(dm)[row, get_primary_id(dm)]
                     tval = _to_float_or_missing(get_df(dm)[row, get_time_col(dm)])
                     xval = _to_float_or_missing(xvals[j])
-                    yval = _to_float_or_missing(yvals[j])
+                    yval = _obs_value(yvals[j])
 
                     dist = if cache_use.obs_dists !== nothing
                         getproperty(cache_use.obs_dists[i][j], obs_name)
@@ -749,7 +923,9 @@ integrates the posterior).
 Pass `newdata` as a `DataFrame`, rebuilt into a `DataModel` using the fitted model and
 the grouping, time and event columns of the original fit, or as a ready-made
 `DataModel`. Returns a `DataFrame` with the individual identifier, the time, the
-observable, and the predicted response in the `prediction` column. Extra keyword
+observable, and the predicted response in the `prediction` column. For a multivariate
+outcome each `prediction` cell is a `Vector{Float64}` with one entry per outcome
+component. Extra keyword
 arguments are forwarded to [`get_residuals`](@ref).
 
 # Keyword Arguments
@@ -943,7 +1119,8 @@ function _predict_marginal(
     sample_rngs = _spawn_child_rngs(rng, marginal_draws)
     n_new = length(get_individuals(dm_new))
 
-    sum_acc = Float64[]
+    # Accumulators are untyped so multivariate fitted values stay per-component vectors.
+    sum_acc = Any[]
     cnt_acc = Int[]
     id_col = nothing
     time_col = nothing
@@ -976,18 +1153,20 @@ function _predict_marginal(
             ode_args = ode_args, ode_kwargs = ode_kwargs, kwargs...
         )
         if isempty(sum_acc)
-            sum_acc = zeros(Float64, nrow(df))
+            sum_acc = Any[nothing for _ in 1:nrow(df)]
             cnt_acc = zeros(Int, nrow(df))
             id_col, time_col, obs_col = df.id, df.time, df.observable
         end
         for r in 1:length(sum_acc)
             fr = df.fitted[r]
-            ismissing(fr) || (sum_acc[r] += fr; cnt_acc[r] += 1)
+            ismissing(fr) && continue
+            sum_acc[r] = cnt_acc[r] == 0 ? fr : sum_acc[r] .+ fr
+            cnt_acc[r] += 1
         end
     end
     prediction = [
-        cnt_acc[r] > 0 ? sum_acc[r] / cnt_acc[r] : missing
+        cnt_acc[r] > 0 ? sum_acc[r] ./ cnt_acc[r] : missing
             for r in 1:length(sum_acc)
     ]
-    return _prediction_frame(id_col, time_col, obs_col, prediction)
+    return _prediction_frame(id_col, time_col, obs_col, identity.(prediction))
 end
