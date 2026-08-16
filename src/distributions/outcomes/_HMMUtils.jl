@@ -1,3 +1,5 @@
+using Distributions
+
 # Accepts tuples as well as vectors: the per-row HMM logpdf paths fuse their
 # per-state terms into tuples (no intermediate vectors); index-order max scan
 # and exp-sum are identical for both, so values are bit-identical.
@@ -40,6 +42,40 @@ end
 # live in the CT family files (ContinuousTimeHMM / MVContinuousTimeHMM /
 # ContinuousTimeObservedStatesMarkovModel / CoarsedObservedStatesMarkoModel).
 @inline _hmm_logpdf_and_posterior(d, y) = (logpdf(d, y), posterior_hidden_states(d, y))
+
+# ValueSupport of an HMM mixture, resolved from the emission types alone: `Discrete`
+# only when every emission is discrete, `Continuous` for any continuous or mixed case
+# (a mixed mixture has no counting-measure density, so the density convention wins).
+# Dispatch-only, so the outer constructors stay type-stable.
+@inline _hmm_support(::Distribution{<:Any, S}) where {S} = S
+@inline _hmm_support(dists::Tuple) = _hmm_merge_support(map(_hmm_support, dists)...)
+@inline _hmm_merge_support(S::Type{<:ValueSupport}) = S
+@inline _hmm_merge_support(::Type{Discrete}, ::Type{Discrete}) = Discrete
+@inline _hmm_merge_support(::Type{<:ValueSupport}, ::Type{<:ValueSupport}) = Continuous
+@inline function _hmm_merge_support(S1, S2, rest...)
+    return _hmm_merge_support(_hmm_merge_support(S1, S2), rest...)
+end
+
+# Shared state-count validation for the DT/CT HMM constructors: a malformed emission
+# tuple or initial distribution used to surface only later, during filtering (#235).
+function _hmm_check_state_dims(M::AbstractMatrix, n_emissions::Int, n_initial::Int)
+    n = size(M, 1)
+    size(M, 2) == n ||
+        throw(ArgumentError("transition_matrix must be square, got $(size(M))."))
+    n_emissions == n ||
+        throw(
+        ArgumentError(
+            "length(emission_dists) must equal n_states ($n), got $(n_emissions)."
+        )
+    )
+    n_initial == n ||
+        throw(
+        ArgumentError(
+            "length(initial_dist.p) must equal n_states ($n), got $(n_initial)."
+        )
+    )
+    return n
+end
 
 # Constructor-time validation of HMM transition/generator matrices. A malformed matrix
 # used to be accepted and then produce silent NaNs inside `probabilities_hidden_states`

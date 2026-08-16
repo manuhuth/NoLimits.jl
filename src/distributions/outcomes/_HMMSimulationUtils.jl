@@ -274,3 +274,37 @@ end
         rng, dist.base_dist, state
     ),
 ]
+
+# --- Missing-observation (skip) contract ------------------------------------
+# A skipped row contributes zero log-likelihood and leaves the propagated state prior
+# unchanged. The filters in common.jl/cv.jl/plotting.jl special-cased `missing` before
+# these methods existed; callers may now simply evaluate the distribution (#235).
+# Split into three groups rather than one Union: the observed-states and coarsed models
+# already have untyped-`y` methods, which a single all-family Union would tie with.
+const _HMMFamily = Union{
+    DiscreteTimeDiscreteStatesHMM,
+    ContinuousTimeDiscreteStatesHMM,
+    MVDiscreteTimeDiscreteStatesHMM,
+    MVContinuousTimeDiscreteStatesHMM,
+}
+
+Distributions.logpdf(::_HMMFamily, ::Missing) = 0.0
+Distributions.pdf(::_HMMFamily, ::Missing) = 1.0
+Distributions.logpdf(::_ObservedStatesMarkovModel, ::Missing) = 0.0
+Distributions.pdf(::_ObservedStatesMarkovModel, ::Missing) = 1.0
+Distributions.logpdf(::CoarsedObservedStatesMarkovModel, ::Missing) = 0.0
+Distributions.pdf(::CoarsedObservedStatesMarkovModel, ::Missing) = 1.0
+
+"""
+    posterior_hidden_states(dist, ::Missing)
+
+A missing observation carries no information: the posterior equals the propagated state
+prior, [`probabilities_hidden_states`](@ref).
+"""
+posterior_hidden_states(dist::_HMMFamily, ::Missing) = probabilities_hidden_states(dist)
+function posterior_hidden_states(dist::_ObservedStatesMarkovModel, ::Missing)
+    return probabilities_hidden_states(dist)
+end
+function posterior_hidden_states(dist::CoarsedObservedStatesMarkovModel, ::Missing)
+    return probabilities_hidden_states(dist)
+end

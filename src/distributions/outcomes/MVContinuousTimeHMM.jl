@@ -4,11 +4,14 @@ using Distributions, LinearAlgebra, Random
 
 """
     MVContinuousTimeDiscreteStatesHMM(transition_matrix, emission_dists, initial_dist, Δt)
-    <: Distribution{Multivariate, Continuous}
+    <: Distribution{Multivariate, S}
 
 A continuous-time Hidden Markov Model with shared latent states across M outcome
 variables. State propagation uses the matrix exponential `exp(Q · Δt)` where
 `Q` is the rate matrix (generator).
+
+The value support `S` is inferred from the emissions: `Discrete` when every emission is
+discrete, `Continuous` otherwise (including mixed emissions).
 
 Two emission modes are supported:
 
@@ -41,7 +44,8 @@ struct MVContinuousTimeDiscreteStatesHMM{
         E <: Tuple,
         D <: Distributions.Categorical,
         T <: Real,
-    } <: Distribution{Multivariate, Continuous}
+        S <: ValueSupport,
+    } <: Distribution{Multivariate, S}
     n_states::Int
     n_outcomes::Int
     transition_matrix::M
@@ -49,6 +53,26 @@ struct MVContinuousTimeDiscreteStatesHMM{
     initial_dist::D
     Δt::T
     propagation_mode::Symbol
+end
+
+# Field-for-field rebuild used by the per-row filter helpers; `S` is not inferable from
+# the fields, so it is resolved here from the emission types.
+function MVContinuousTimeDiscreteStatesHMM(
+        n_states::Int,
+        n_outcomes::Int,
+        transition_matrix::AbstractMatrix{<:Real},
+        emission_dists::Tuple,
+        initial_dist::Distributions.Categorical,
+        Δt::Real,
+        propagation_mode::Symbol
+    )
+    return MVContinuousTimeDiscreteStatesHMM{
+        typeof(transition_matrix), typeof(emission_dists), typeof(initial_dist),
+        typeof(Δt), _hmm_support(emission_dists),
+    }(
+        n_states, n_outcomes, transition_matrix, emission_dists, initial_dist, Δt,
+        propagation_mode
+    )
 end
 
 function MVContinuousTimeDiscreteStatesHMM(
@@ -60,18 +84,8 @@ function MVContinuousTimeDiscreteStatesHMM(
         propagation_mode::Symbol = :auto
     )
     _ct_hmm_validate_mode(propagation_mode)
-    n_states = size(transition_matrix, 1)
-    size(transition_matrix, 2) == n_states ||
-        error("transition_matrix must be square, got $(size(transition_matrix)).")
-    length(emission_dists) == n_states ||
-        error(
-        "length(emission_dists) must equal n_states ($n_states), " *
-            "got $(length(emission_dists))."
-    )
-    length(initial_dist.p) == n_states ||
-        error(
-        "length(initial_dist.p) must equal n_states ($n_states), " *
-            "got $(length(initial_dist.p))."
+    n_states = _hmm_check_state_dims(
+        transition_matrix, length(emission_dists), length(initial_dist.p)
     )
     n_outcomes = _mv_n_outcomes(emission_dists[1])
     for k in 2:n_states
