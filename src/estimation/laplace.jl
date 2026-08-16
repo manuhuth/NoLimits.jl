@@ -2717,6 +2717,7 @@ function _fit_laplace_family(
         theta_0_untransformed::Union{Nothing, ComponentArray},
         store_data_model::Bool, extra_objective = nothing
     ) where {V}
+    _validate_re_ad_compatible(dm, string(nameof(typeof(method))))
     fe = get_fixed(get_model(dm))
     layout = free_parameter_layout(
         fe; constants = constants,
@@ -2888,9 +2889,16 @@ function _fit_laplace_family(
         OptimizationProblem(optf, z0)
     sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
 
+    # No feasible point was ever reached, so `sol.objective` is the infeasibility wall
+    # and not a fit; the flat wall otherwise lets the optimizer report success (#247).
+    infeasible_fit = wall_ref[] === nothing
     summary = FitSummary(
-        sol.objective, sol.retcode == SciMLBase.ReturnCode.Success,
-        resolve_fitted_parameters(layout, _θt_from_z(sol.u)), NamedTuple()
+        sol.objective,
+        !infeasible_fit && sol.retcode == SciMLBase.ReturnCode.Success,
+        resolve_fitted_parameters(layout, _θt_from_z(sol.u)),
+        infeasible_fit ?
+            "The Laplace objective was infeasible at every parameter tried; the reported value is an infeasibility wall, not a marginal likelihood. Check starting values, and whether a bounded-support random-effect distribution puts empirical Bayes estimates outside its support." :
+            NamedTuple()
     )
     diagnostics = FitDiagnostics(
         (;), (optimizer = method.optimizer,), (retcode = sol.retcode,), NamedTuple()

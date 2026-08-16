@@ -68,11 +68,14 @@ jobs:
         run: julia --color=yes --project=. -e 'using Pkg; Pkg.test(; julia_args=["--check-bounds=auto"])'
 
   # The serial-vs-EnsembleThreads() invariance oracles only mean something with
-  # more than one thread, and the rest of CI runs single-threaded on purpose:
-  # the whole suite threaded would expose the known unlocalized threaded-Laplace
-  # race repo-wide. So exactly the two files carrying those oracles run threaded
-  # here. This is the guard that would have caught #151 (GHQ objective differing
-  # by 0.62-0.74 relative between serial and threaded).
+  # more than one thread, and the rest of CI runs single-threaded to keep the
+  # runtime budget, not to hide a defect: the residual threaded-Laplace
+  # non-determinism is issue #194, closed won't-fix at ~7e-10 relative on the
+  # objective (nonlinear-in-eta models, ~3% of threaded fits). Its magnitude is
+  # pinned by the Laplace rtol=1e-6 oracle in estimation_common_tests.jl. So
+  # exactly the two files carrying those oracles run threaded here. This is the
+  # guard that would have caught #151 (GHQ objective differing by 0.62-0.74
+  # relative between serial and threaded).
   # The GHQ #151 oracle lives in api_primitives_tests.jl (tight serial==threaded
   # fit comparison), so the full ghquadrature file no longer re-runs here — it
   # was ~7 min of threaded re-execution of tests that don't touch threading.

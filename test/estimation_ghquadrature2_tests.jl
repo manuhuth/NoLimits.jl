@@ -1005,3 +1005,52 @@ end
     )
     @test isfinite(get_objective(res))
 end
+
+@testset "Transports for one-sided shifted supports (#249 NL-05)" begin
+    # Pareto has support (θ, ∞) with θ ≠ 0, and GEV with ξ < 0 has support (-∞, μ - σ/ξ).
+    # Both used to pass prevalidation and then fail with "unsupported support".
+    m_par = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.5)
+            σ = RealNumber(0.3, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(Pareto(3.0, 3.0); column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(a + η, σ)
+        end
+    end
+    m_gev = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.5)
+            σ = RealNumber(0.3, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(GeneralizedExtremeValue(0.0, 1.0, -0.5); column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(a + η, σ)
+        end
+    end
+    rng = Xoshiro(4)
+    for (m, ηs) in (
+            (m_par, rand(rng, Pareto(3.0, 3.0), 6)),
+            (m_gev, rand(rng, GeneralizedExtremeValue(0.0, 1.0, -0.5), 6)),
+        )
+        df = DataFrame(
+            ID = repeat(1:6, inner = 3), t = repeat(0.0:2.0, 6),
+            y = 0.5 .+ repeat(ηs, inner = 3) .+ 0.3 .* randn(rng, 18)
+        )
+        dm = DataModel(m, df; primary_id = :ID, time_col = :t)
+        res = fit_model(dm, NoLimits.GHQuadrature(; level = 1, optim_kwargs = (maxiters = 2,)))
+        @test isfinite(NoLimits.get_objective(res))
+        @test NoLimits.get_objective(res) < 1.0e6
+    end
+end
