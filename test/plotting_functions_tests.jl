@@ -416,3 +416,18 @@ end
     # posterior-draw band -> _vi_drawn_params
     @test plot_fits(res; plot_mcmc_quantiles = true, mcmc_draws = 5) !== nothing
 end
+
+@testset "plots label individuals with no observation rows (#250.4)" begin
+    df_ev = copy(fx_re_df())
+    n = nrow(df_ev)
+    df_ev.EVID = [id == 6 ? 1 : 0 for id in df_ev.ID]
+    df_ev.AMT = zeros(n)
+    df_ev.RATE = zeros(n)
+    df_ev.CMT = ones(Int, n)
+    dm_ev = DataModel(
+        fx_re_model(), df_ev; primary_id = :ID, time_col = :t, evid_col = :EVID
+    )
+    @test isempty(NoLimits.get_obs_rows(NoLimits.get_row_groups(dm_ev))[6])
+    @test plot_data(dm_ev) !== nothing
+    @test plot_fits(fx_laplace(); dm = dm_ev) !== nothing
+end

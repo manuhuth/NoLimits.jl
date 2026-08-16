@@ -616,3 +616,22 @@ end
     pop = NoLimits.predict(res, holdout)
     @test isapprox(collect(pred.prediction), collect(pop.prediction); atol = 1.0)
 end
+
+@testset "residual expansion rejects mismatched component counts (#250.5)" begin
+    _ext = Base.get_extension(NoLimits, :NoLimitsMakieExt)
+    ok = DataFrame(
+        observable = [:y], individual_idx = [1], x = [0.0],
+        y = [[1.0, 2.0, 3.0]], fitted = [[1.0, 2.0, 3.0]], raw = [[0.0, 0.0, 0.0]]
+    )
+    @test nrow(_ext._expand_residual_components(ok, :raw)) == 3
+    bad = copy(ok)
+    bad.fitted = [[1.0, 2.0]]
+    err = try
+        _ext._expand_residual_components(bad, :raw)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin("fitted", err.msg) && occursin("must agree in length", err.msg)
+end

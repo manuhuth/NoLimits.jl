@@ -92,6 +92,9 @@ function create_styled_scatter!(
         p::MakiePanel, x, y; label = "", color = COLOR_PRIMARY,
         style::PlotStyle = PlotStyle(), kwargs...
     )
+    # Individuals with no observations (event-only rows) yield empty series; Makie's
+    # dimension conversion cannot infer a type from those, so drop them.
+    (x isa AbstractArray && isempty(x)) && return p
     lbl = _label(p, label)
     kw = NamedTuple(kwargs)
     col = haskey(kw, :color) ? kw.color : color
@@ -115,6 +118,7 @@ function create_styled_line!(
         p::MakiePanel, x, y; label = "", color = COLOR_SECONDARY,
         style::PlotStyle = PlotStyle(), kwargs...
     )
+    (x isa AbstractArray && isempty(x)) && return p
     lbl = _label(p, label)
     defaults = (; color = color, linewidth = style.line_width_primary)
     attrs = merge(defaults, NamedTuple(kwargs))

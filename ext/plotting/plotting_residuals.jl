@@ -12,9 +12,25 @@ function _expand_residual_components(df::DataFrame, col::Symbol)
     isempty(vec_cols) && return df
     rows = NamedTuple[]
     for r in eachrow(df)
+        # All vector cells of a row describe the same outcome components, so a length
+        # mismatch means a `fitted_stat` returned the wrong shape; say so explicitly.
         n = 0
+        ref = nothing
         for c in vec_cols
-            r[c] isa AbstractVector && (n = max(n, length(r[c])))
+            r[c] isa AbstractVector || continue
+            len = length(r[c])
+            if ref === nothing
+                n, ref = len, c
+            elseif len != n
+                throw(
+                    ArgumentError(
+                        "Residual column :$(c) has $(len) components for observable " *
+                            "$(r.observable) (individual $(r.individual_idx)), but " *
+                            ":$(ref) has $(n). All vector-valued residual columns of a " *
+                            "row must agree in length."
+                    )
+                )
+            end
         end
         base = NamedTuple(r)
         if n == 0

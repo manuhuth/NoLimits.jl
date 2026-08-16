@@ -28,7 +28,7 @@ function _plot_data_dm(
         x = _get_x_values(dm, ind, obs_rows, x_axis_feature)
         y = getfield(get_obs(get_series(ind)), obs_name)
         title_id = string(
-            get_primary_id(dm), ": ", get_df(dm)[obs_rows[1], get_primary_id(dm)]
+            get_primary_id(dm), ": ", _individual_id(dm, i)
         )
         _kw249 = merge(
             (
@@ -468,7 +468,7 @@ function plot_fits(
         x_obs_plot, y_obs_plot = is_mv ? (nothing, nothing) :
             _collect_scalar_series(x_obs, y_obs)
         title_id = string(
-            get_primary_id(dm), ": ", get_df(dm)[obs_rows[1], get_primary_id(dm)]
+            get_primary_id(dm), ": ", _individual_id(dm, i)
         )
         is_leftmost = (k - 1) % ncols == 0
         _ylabel = is_leftmost ? _default_ylabel : ""
@@ -715,15 +715,18 @@ function plot_fits(
         end
 
         plots[k] = p
-        xlims = xlims === nothing ? (minimum(x_fit), maximum(x_fit)) :
-            (min(xlims[1], minimum(x_fit)), max(xlims[2], maximum(x_fit)))
+        # `_merge_limits` skips empty/non-finite series, so event-only individuals
+        # contribute nothing instead of erroring in `minimum`.
+        xlims = _merge_limits(xlims, x_fit)
         observed_values = is_mv ? [val for vec in ys_per_margin for val in vec] : y_obs_plot
         ylims = _merge_limits(ylims, observed_values)
     end
 
     if shared_x_axis || shared_y_axis
-        xlim_use = shared_x_axis ? _pad_limits(xlims[1], xlims[2]) : nothing
-        ylim_use = shared_y_axis ? _pad_limits(ylims[1], ylims[2]) : nothing
+        xlim_use = shared_x_axis && xlims !== nothing ? _pad_limits(xlims[1], xlims[2]) :
+            nothing
+        ylim_use = shared_y_axis && ylims !== nothing ? _pad_limits(ylims[1], ylims[2]) :
+            nothing
         _apply_shared_axes!(plots, xlim_use, ylim_use)
     end
     p = combine_plots(plots; ncols = ncols, style = style, kwargs_layout...)
@@ -754,7 +757,7 @@ function _plot_hidden_states_impl(
         obs_rows = get_obs_rows(get_row_groups(dm))[i]
         x_vals = _get_x_values(dm, ind, obs_rows, x_axis_feature)
         title_id = string(
-            get_primary_id(dm), ": ", get_df(dm)[obs_rows[1], get_primary_id(dm)]
+            get_primary_id(dm), ": ", _individual_id(dm, i)
         )
         _kw870 = merge(
             (
@@ -1470,8 +1473,7 @@ function _plot_fits_comparison_impl(
         y_obs = getfield(get_obs(get_series(ind)), obs_name)
         x_obs_plot, y_obs_plot = _collect_scalar_series(x_obs, y_obs)
         title_id = string(
-            get_primary_id(dm_ref), ": ",
-            get_df(dm_ref)[obs_rows[1], get_primary_id(dm_ref)]
+            get_primary_id(dm_ref), ": ", _individual_id(dm_ref, i)
         )
         _kw1619 = merge(
             (
@@ -1501,14 +1503,8 @@ function _plot_fits_comparison_impl(
                 style = style,
                 linestyle = _comparison_line_style(labels[j], style)
             )
-            xlims = xlims === nothing ? (minimum(curve.x_fit), maximum(curve.x_fit)) :
-                (
-                    min(xlims[1], minimum(curve.x_fit)), max(xlims[2], maximum(curve.x_fit)),
-                )
-            ylims = ylims === nothing ? (minimum(curve.preds), maximum(curve.preds)) :
-                (
-                    min(ylims[1], minimum(curve.preds)), max(ylims[2], maximum(curve.preds)),
-                )
+            xlims = _merge_limits(xlims, curve.x_fit)
+            ylims = _merge_limits(ylims, curve.preds)
         end
 
         ylims = _merge_limits(ylims, y_obs_plot)
@@ -1516,8 +1512,10 @@ function _plot_fits_comparison_impl(
     end
 
     if shared_x_axis || shared_y_axis
-        xlim_use = shared_x_axis ? _pad_limits(xlims[1], xlims[2]) : nothing
-        ylim_use = shared_y_axis ? _pad_limits(ylims[1], ylims[2]) : nothing
+        xlim_use = shared_x_axis && xlims !== nothing ? _pad_limits(xlims[1], xlims[2]) :
+            nothing
+        ylim_use = shared_y_axis && ylims !== nothing ? _pad_limits(ylims[1], ylims[2]) :
+            nothing
         _apply_shared_axes!(plots, xlim_use, ylim_use)
     end
     p = combine_plots(plots; ncols = ncols, style = style, kwargs_layout...)
