@@ -168,6 +168,19 @@ import Turing   # MCMC/VI need the Turing extension loaded (#36)
         @test_throws ErrorException NoLimits._compute_mv_residual_metrics(
             Dirichlet([1.0, 1.0]), [0.5, 0.5], [:pit], mean, true, 0, Xoshiro(8)
         )
+        # Partially observed vectors keep their observed components (#240 group 4).
+        @test NoLimits._obs_value([1.0, 2.0]) isa Vector{Float64}
+        @test NoLimits._obs_value([1.0, missing]) isa Vector{Union{Missing, Float64}}
+        @test ismissing(NoLimits._obs_value([missing, missing]))
+        part = NoLimits._compute_mv_residual_metrics(
+            mvn, Union{Missing, Float64}[0.5, missing],
+            [:raw, :pearson, :pit, :logscore], mean, true, 0, Xoshiro(9)
+        )
+        @test !ismissing(part.res_raw[1]) && ismissing(part.res_raw[2])
+        @test !ismissing(part.res_pearson[1]) && ismissing(part.res_pearson[2])
+        @test !ismissing(part.pit[1]) && ismissing(part.pit[2])
+        # The joint score needs every component.
+        @test ismissing(part.logscore)
 
         for mode in (:population, :ebe, :reestimate, :marginal)
             pdf_out = NoLimits.predict(
