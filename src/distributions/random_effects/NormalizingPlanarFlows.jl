@@ -243,3 +243,11 @@ end
 function Statistics.cov(d::NormalizingPlanarFlow; n_samples::Int = 2000)
     return Statistics.cov(rand(default_rng(), d, n_samples)')
 end
+
+# Sampled counterpart of `cov`; the flow has no closed-form mean.
+function Statistics.mean(d::NormalizingPlanarFlow; n_samples::Int = 2000)
+    return vec(Statistics.mean(rand(default_rng(), d, n_samples); dims = 2))
+end
+
+# Constructor-level fields, as `Distributions.params` returns for its own types.
+Distributions.params(d::NormalizingPlanarFlow) = (d.base, d.rebuild)
