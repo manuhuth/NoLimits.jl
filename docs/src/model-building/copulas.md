@@ -139,7 +139,7 @@ dm = DataModel(model, df; primary_id=:ID, time_col=:t)
 res = fit_model(dm, NoLimits.Laplace())
 ```
 
-`get_loglikelihood`, `simulate_data` and `cross_validate` all work on the result, and `simulate_data` returns a `y` column of two-element vectors matching the input shape. `get_residuals` returns one row per observation as usual, but the scalar residual metrics (`pit`, `res_quantile`, `res_raw`, `res_pearson`, `logscore`) are `missing` for vector-valued observations and a warning says so; they have no scalar definition here. Judge fit through the log-likelihood, cross-validation, or dimension-wise plots built from `simulate_data` instead.
+`get_loglikelihood`, `simulate_data` and `cross_validate` all work on the result, and `simulate_data` returns a `y` column of two-element vectors matching the input shape. `get_residuals` returns one row per observation as usual, with vector-valued cells: `y`, `fitted`, `res_raw`, `res_pearson`, `pit` and `res_quantile` hold one entry per outcome component, while `logscore` is the scalar joint score `-logpdf(dist, y)`. The component `pit` and `res_quantile` use the copula's own margins, so they are the usual per-dimension PIT values.
 
 Note that `FOCEI` builds its Fisher-information surrogate from a fixed list of outcome families and rejects a `SklarDist` outcome. Use `Laplace`, which makes no distributional assumption beyond a twice-differentiable log-density. This restriction applies to the outcome distribution only; a copula random effect is fine under `FOCEI`.
 
