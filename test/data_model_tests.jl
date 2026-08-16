@@ -1790,9 +1790,14 @@ end
     θ = NoLimits.get_θ0_untransformed(NoLimits.get_fixed(model))
     @test isfinite(NoLimits.loglikelihood(dm, θ, [ComponentArray()]))
 
-    # Partially observed cells have no defined likelihood: rejected, not silently passed.
-    @test_throws ArgumentError mk(
-        Vector{Union{Missing, Float64}}[[0.1, missing], [0.3, 0.4]]
+    # A partially observed cell constructs fine (some outcomes, e.g. HMM emissions,
+    # define their own vector logpdf and decompose it component-wise); one that reaches
+    # a distribution with no such method (like this MvNormal) fails loudly at evaluation
+    # instead of silently returning a non-finite log-likelihood.
+    dm_partial = mk(Vector{Union{Missing, Float64}}[[0.1, missing], [0.3, 0.4]])
+    # Threaded (the default) wraps it in a Task/CompositeException; serial keeps it bare.
+    @test_throws ErrorException NoLimits.loglikelihood(
+        dm_partial, θ, [ComponentArray()]; serialization = NoLimits.EnsembleSerial()
     )
     # A nested NaN is a non-finite observation just like a scalar NaN.
     @test_throws ErrorException mk(

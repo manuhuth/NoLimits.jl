@@ -274,27 +274,15 @@ end
     return all(ismissing, y)
 end
 
-# A column holding any missing cell gets a `Union{Missing,T}` element type, and no
-# multivariate `logpdf` accepts that. Construction guarantees the survivors are fully
-# observed, so narrowing here is safe; scalar and already-narrow cells are untouched.
-@inline _obs_value(y) = y
-@inline function _obs_value(y::AbstractArray)
-    Missing <: eltype(y) || return y
+# Narrow a `Union{Missing,T}` cell to plain `T` only when it truly has no missing
+# component -- some outcomes (e.g. HMM emissions) define their own `logpdf` over a
+# partially observed vector and decompose it component-wise; a distribution without such
+# a method throws its own (loud) `MethodError` on the un-narrowed `Union` eltype rather
+# than silently producing `Inf`/`NaN`.
+@inline _narrow_if_observed(y) = y
+@inline function _narrow_if_observed(y::AbstractArray)
+    (Missing <: eltype(y) && !any(ismissing, y)) || return y
     return convert(AbstractArray{nonmissingtype(eltype(y))}, y)
-end
-
-function _check_partial_missing(col, name::Symbol)
-    for (i, x) in enumerate(col)
-        (x isa AbstractArray && Missing <: eltype(x)) || continue
-        n_miss = count(ismissing, x)
-        (n_miss == 0 || n_miss == length(x)) && continue
-        throw(
-            ArgumentError(
-                "Column $(name) row $(i) is a partially observed multivariate value $(x). Component-wise marginalization is not supported: either supply every component or set the whole cell to `missing`."
-            )
-        )
-    end
-    return nothing
 end
 
 function _validate_re_group_columns(model, df)
@@ -360,7 +348,6 @@ function _validate_schema(model, df, config::DataModelConfig)
     _check_finite(tcol, config.time_col)
     for c in config.obs_cols
         _check_finite(_get_col(df, c), c)
-        _check_partial_missing(_get_col(df, c), c)
     end
     for c in model.covariates.covariates.flat_names
         hasproperty(df, c) && _check_finite(_get_col(df, c), c)

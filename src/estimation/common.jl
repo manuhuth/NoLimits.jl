@@ -3680,10 +3680,27 @@ end
 @inline function _accum_obs_col(ll::T, obs, obs_series, col, i) where {T}
     y = getfield(obs_series, col)[i]
     _obs_is_missing(y) && return ll
-    yv = _obs_value(y)
+    yv = _narrow_if_observed(y)
     dist = getproperty(obs, col)
     v = _fast_logpdf(dist, yv)
-    v === nothing && (v = logpdf(dist, yv))
+    if v === nothing
+        v = try
+            logpdf(dist, yv)
+        catch e
+            # A partially observed vector reaching a distribution with no method for it
+            # (e.g. `MvNormal`, unlike HMM emissions) throws here instead of silently
+            # producing `Inf`/`NaN` (#249).
+            if e isa MethodError && yv isa AbstractArray && Missing <: eltype(yv)
+                error(
+                    "Column $(col) row $(i) is a partially observed multivariate value " *
+                        "$(yv) with no defined likelihood under $(nameof(typeof(dist))): " *
+                        "component-wise marginalization is not supported for this outcome " *
+                        "distribution. Supply every component or set the whole cell to `missing`."
+                )
+            end
+            rethrow()
+        end
+    end
     isfinite(v) || return T(-Inf)
     return ll + v
 end
