@@ -987,8 +987,9 @@ function predict(
         )
     end
     θ = get_params(res; scale = :untransformed)
+    # Inherit and normalize once, so every re_mode sees the same fixed levels (#251).
+    constants_re = _res_constants_re(res, constants_re, dm_new)
     if re_mode == :population
-        constants_re = _res_constants_re(res, constants_re, dm_new)
         df = get_residuals(
             dm_new; params = NamedTuple(θ), residuals = [:raw],
             fitted_stat = fitted_stat, constants_re = constants_re,
@@ -1105,19 +1106,49 @@ function _predict_eta_ebe(
             "refit with store_data_model = true."
     )
     η_vec = _default_random_effects_from_dm(dm_new, constants_re, θ)
+    # Pass no override here: the stored EB modes were computed under the fit's own
+    # constants_re, and a different batch layout would misalign with them.
     bstars, batch_infos, θu, const_cache, _, _ = _resolve_bstars_for_re(
-        dm_old, res, constants_re
+        dm_old, res, NamedTuple()
     )
     η_train = _eta_from_eb(dm_old, batch_infos, bstars, const_cache, θu)
     re_to_eta = Dict{Any, ComponentArray}(
         get_re_groups(get_individuals(dm_old)[i]) => η_train[i]
             for i in 1:length(get_individuals(dm_old))
     )
+    fixed_maps = _normalize_constants_re(dm_new, constants_re)
+    re_names = get_re_names(get_random(get_model(dm_new)))
     for j in 1:length(get_individuals(dm_new))
-        key = get_re_groups(get_individuals(dm_new)[j])
-        haskey(re_to_eta, key) && (η_vec[j] = re_to_eta[key])
+        ind = get_individuals(dm_new)[j]
+        key = get_re_groups(ind)
+        haskey(re_to_eta, key) || continue
+        η_vec[j] = isempty(fixed_maps) ? re_to_eta[key] :
+            _eta_with_fixed_levels(ind, re_to_eta[key], re_names, fixed_maps)
     end
     return η_vec
+end
+
+# Rebuild an individual's η so fixed random-effect levels win over the stored EBE,
+# which supplies every free level (#251).
+function _eta_with_fixed_levels(ind, η_ebe, re_names, fixed_maps::NamedTuple)
+    lookup = Dict{Tuple{Symbol, Any}, Any}()
+    dims = Dict{Symbol, Int}()
+    for re in re_names
+        g = getfield(get_re_groups(ind), re)
+        v = getproperty(η_ebe, re)
+        if g isa AbstractVector && length(g) > 1
+            for (gi, lvl) in pairs(g)
+                lookup[(re, lvl)] = v[gi]
+            end
+            dims[re] = v[1] isa AbstractVector ? length(v[1]) : 1
+        else
+            lookup[(re, g isa AbstractVector ? g[1] : g)] = v
+            dims[re] = v isa AbstractVector ? length(v) : 1
+        end
+    end
+    return _assemble_individual_eta(
+        ind, re_names, dims, fixed_maps, (re, lvl, dim) -> lookup[(re, lvl)]
+    )
 end
 
 # Monte-Carlo marginal prediction: integrate the random effects over their prior,

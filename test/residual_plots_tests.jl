@@ -101,6 +101,20 @@ end
         pop_df.prediction[pop_df.id .== "id_001"],
         ebe_df.prediction[ebe_df.id .== "id_001"]; atol = 1.0e-8
     )
+
+    # Regression for #251: an explicit constants_re must beat the stored EBE in :ebe,
+    # matching :population on the pinned level and leaving free levels on their EBE.
+    ov = (; η = (; id_002 = 1.5))
+    ebe_ov = NoLimits.predict(res, df; re_mode = :ebe, constants_re = ov)
+    pop_ov = NoLimits.predict(res, df; re_mode = :population, constants_re = ov)
+    @test isapprox(
+        ebe_ov.prediction[ebe_ov.id .== "id_002"],
+        pop_ov.prediction[pop_ov.id .== "id_002"]; atol = 1.0e-8
+    )
+    @test isapprox(
+        ebe_ov.prediction[ebe_ov.id .== "id_003"],
+        ebe_df.prediction[ebe_df.id .== "id_003"]; atol = 1.0e-8
+    )
 end
 
 @testset "residuals MCMC summary and draw-level outputs" begin
