@@ -4053,6 +4053,11 @@ function _build_vary_cache(dm::DataModel)
     end
 end
 
+# Cache copies an ensemble algorithm needs. Dispatch rather than `isa` so a custom
+# `SciMLBase.EnsembleAlgorithm` can opt into chunked caches (and observe the call).
+_ensemble_nthreads(::SciMLBase.EnsembleAlgorithm) = 1
+_ensemble_nthreads(::SciMLBase.EnsembleThreads) = Threads.maxthreadid()
+
 """
     build_likelihood_cache(dm; ode_args=(), ode_kwargs=NamedTuple(),
                            serialization=EnsembleSerial(), force_saveat=false, nthreads=1)
@@ -4062,11 +4067,6 @@ primitives. Pass it as the `cache` keyword to `solve_individual`, `conditional_l
 `complete_data_loglikelihood` and the other batch primitives to avoid rebuilding it on every call; use
 `force_saveat=true` when fitting iteratively.
 """
-# Cache copies an ensemble algorithm needs. Dispatch rather than `isa` so a custom
-# `SciMLBase.EnsembleAlgorithm` can opt into chunked caches (and observe the call).
-_ensemble_nthreads(::SciMLBase.EnsembleAlgorithm) = 1
-_ensemble_nthreads(::SciMLBase.EnsembleThreads) = Threads.maxthreadid()
-
 function build_likelihood_cache(
         dm::DataModel;
         ode_args::Tuple = (),
