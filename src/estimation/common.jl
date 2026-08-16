@@ -2540,7 +2540,7 @@ Laplace, SAEM, MCEM, GHQuadrature.
 function get_loglikelihood_quadrature(
         dm::DataModel,
         res::FitResult;
-        level::Union{Int, NamedTuple} = 3,
+        level::Union{Integer, NamedTuple} = 3,
         constants_re::NamedTuple = NamedTuple(),
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
@@ -2552,6 +2552,8 @@ function get_loglikelihood_quadrature(
         mc_integrator::Union{Nothing, MCIntegrator} = nothing,
         fallback::Union{Nothing, MCIntegrator} = MCIntegrator()
     )
+    # Same normalization as the estimator path, so `Int8(3)`/`UInt(3)`/`3` all agree.
+    level = _check_ghq_level(level)
     if get_result(res) isa MCMCResult
         error("get_loglikelihood_quadrature: MCMC results are not supported.")
     end
@@ -2671,7 +2673,7 @@ end
 
 function get_loglikelihood_quadrature(
         res::FitResult;
-        level::Union{Int, NamedTuple} = 3,
+        level::Union{Integer, NamedTuple} = 3,
         constants_re::NamedTuple = NamedTuple(),
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
@@ -4043,6 +4045,11 @@ primitives. Pass it as the `cache` keyword to `solve_individual`, `conditional_l
 `complete_data_loglikelihood` and the other batch primitives to avoid rebuilding it on every call; use
 `force_saveat=true` when fitting iteratively.
 """
+# Cache copies an ensemble algorithm needs. Dispatch rather than `isa` so a custom
+# `SciMLBase.EnsembleAlgorithm` can opt into chunked caches (and observe the call).
+_ensemble_nthreads(::SciMLBase.EnsembleAlgorithm) = 1
+_ensemble_nthreads(::SciMLBase.EnsembleThreads) = Threads.maxthreadid()
+
 function build_likelihood_cache(
         dm::DataModel;
         ode_args::Tuple = (),
@@ -4051,8 +4058,8 @@ function build_likelihood_cache(
         force_saveat::Bool = false,
         nthreads::Int = 1
     )
-    if serialization isa SciMLBase.EnsembleThreads && nthreads == 1
-        nthreads = Threads.maxthreadid()
+    if nthreads == 1
+        nthreads = _ensemble_nthreads(serialization)
     end
     nthreads <= 1 && return _build_ll_cache_single(
         dm; ode_args = ode_args, ode_kwargs = ode_kwargs, force_saveat = force_saveat
