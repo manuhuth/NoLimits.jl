@@ -3680,7 +3680,7 @@ end
 @inline function _accum_obs_col(ll::T, obs, obs_series, col, i) where {T}
     y = getfield(obs_series, col)[i]
     _obs_is_missing(y) && return ll
-    yv = _obs_value(y)
+    yv = _narrow_obs_eltype(y)
     dist = getproperty(obs, col)
     v = _fast_logpdf(dist, yv)
     v === nothing && (v = logpdf(dist, yv))

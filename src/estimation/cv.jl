@@ -347,7 +347,7 @@ function _eval_individual_obs(
                 _obs_is_missing(y_raw) && continue
                 # `-Inf` is a valid score (the model rules the held-out value out); only
                 # a failed evaluation may become `NaN`, which aggregation drops (#249).
-                yv = _obs_value(y_raw)
+                yv = _narrow_obs_eltype(y_raw)
                 lp = try
                     v = _fast_logpdf(dist, yv)
                     v === nothing && (v = logpdf(dist, yv))

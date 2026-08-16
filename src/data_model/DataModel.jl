@@ -277,8 +277,8 @@ end
 # A column holding any missing cell gets a `Union{Missing,T}` element type, and no
 # multivariate `logpdf` accepts that. Construction guarantees the survivors are fully
 # observed, so narrowing here is safe; scalar and already-narrow cells are untouched.
-@inline _obs_value(y) = y
-@inline function _obs_value(y::AbstractArray)
+@inline _narrow_obs_eltype(y) = y
+@inline function _narrow_obs_eltype(y::AbstractArray)
     Missing <: eltype(y) || return y
     return convert(AbstractArray{nonmissingtype(eltype(y))}, y)
 end

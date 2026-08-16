@@ -92,8 +92,11 @@ function _kernel_quantiles(
         (p => Vector{Float64}(undef, length(xgrid)))
             for p in percentiles
     )
+    # A degenerate bandwidth (all x equal, or a user-supplied non-positive value) makes
+    # smoothing across x meaningless; pool every point instead of dividing by zero.
+    smooth = isfinite(bandwidth) && bandwidth > 0
     for (i, xg) in enumerate(xgrid)
-        w = exp.(-0.5 .* ((x .- xg) ./ bandwidth) .^ 2)
+        w = smooth ? exp.(-0.5 .* ((x .- xg) ./ bandwidth) .^ 2) : ones(length(x))
         for p in percentiles
             out[p][i] = _weighted_quantile(y, w, p / 100)
         end
