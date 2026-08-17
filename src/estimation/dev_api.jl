@@ -125,8 +125,9 @@ levels, deduplicated per level. No ODE. θ is natural-scale and symmetrized here
 function re_logprior(
         dm::DataModel, batch::REBatchInfo, θ::ComponentArray, b;
         const_cache::REConstantsCache, cache = nothing,
-        anneal_sds::NamedTuple = NamedTuple()
+        anneal_sds::Union{NamedTuple, AbstractDict} = NamedTuple()
     )
+    anneal_sds = _as_namedtuple(anneal_sds)
     return _re_logpdf_batch(
         dm, batch, θ, b, const_cache, _dev_ll_cache(dm, cache); anneal_sds = anneal_sds
     )
@@ -154,8 +155,9 @@ individuals, with η supplied or resolved from a fit) is documented above.
 function complete_data_loglikelihood(
         dm::DataModel, batch::REBatchInfo, θ::ComponentArray, b;
         const_cache::REConstantsCache, cache = nothing,
-        anneal_sds::NamedTuple = NamedTuple(), tctx = nothing
+        anneal_sds::Union{NamedTuple, AbstractDict} = NamedTuple(), tctx = nothing
     )
+    anneal_sds = _as_namedtuple(anneal_sds)
     return _laplace_logf_batch(
         dm, batch, θ, b, const_cache, _dev_ll_cache(dm, cache);
         anneal_sds = anneal_sds, tctx = tctx
@@ -344,9 +346,11 @@ end
 
 function empirical_bayes_covariance(
         dm::DataModel, θ::ComponentArray, bstars::AbstractVector;
-        constants_re::NamedTuple = NamedTuple(), ode_args::Tuple = (),
-        ode_kwargs::NamedTuple = NamedTuple(), kwargs...
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(), ode_args::Tuple = (),
+        ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(), kwargs...
     )
+    constants_re = _as_namedtuple(constants_re)
+    ode_kwargs = _as_namedtuple(ode_kwargs)
     cache = build_likelihood_cache(
         dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
         force_saveat = true
@@ -398,10 +402,11 @@ end
 
 function laplace_marginal(
         dm::DataModel, θ::ComponentArray;
-        constants_re::NamedTuple = NamedTuple(),
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
         curvature::AbstractCurvature = ExactHessianCurvature(), jitter = 1.0e-6,
         max_tries::Int = 6, adaptive::Bool = false, scale_factor = 0.0, kwargs...
     )
+    constants_re = _as_namedtuple(constants_re)
     bstars, infos, cc, θ_re, cache = _empirical_bayes_batches(
         dm, θ; constants_re = constants_re, kwargs...
     )
@@ -436,9 +441,12 @@ end
 
 function ghq_marginal(
         dm::DataModel, θ::ComponentArray;
-        level = 3, constants_re::NamedTuple = NamedTuple(),
-        ode_args::Tuple = (), ode_kwargs::NamedTuple = NamedTuple()
+        level = 3, constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        ode_args::Tuple = (), ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple()
     )
+    level = _as_namedtuple(level)
+    constants_re = _as_namedtuple(constants_re)
+    ode_kwargs = _as_namedtuple(ode_kwargs)
     θ_re = symmetrize_psd_parameters(θ, get_fixed(get_model(dm)))
     c = build_likelihood_cache(
         dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
@@ -641,9 +649,10 @@ constants-applied transformed vector, the free parameters' initial transformed v
 free→full index map. `theta0_untransformed` overrides the model's initial natural-scale values.
 """
 function free_parameter_layout(
-        fe::FixedEffects; constants::NamedTuple = NamedTuple(),
+        fe::FixedEffects; constants::Union{NamedTuple, AbstractDict} = NamedTuple(),
         theta0_untransformed = nothing
     )
+    constants = _as_namedtuple(constants)
     fixed_names = get_names(fe)
     free_names = [n for n in fixed_names if !(n in keys(constants))]
     θ0_u = get_θ0_untransformed(fe)
@@ -777,9 +786,11 @@ your own per-thread caches when parallelising a custom loop).
 """
 function build_fit_context(
         dm::DataModel;
-        constants_re::NamedTuple = NamedTuple(),
-        ode_args::Tuple = (), ode_kwargs::NamedTuple = NamedTuple()
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        ode_args::Tuple = (), ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple()
     )
+    constants_re = _as_namedtuple(constants_re)
+    ode_kwargs = _as_namedtuple(ode_kwargs)
     _, infos, cc = build_re_batch_infos(dm, constants_re)
     cache = build_likelihood_cache(
         dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
@@ -938,8 +949,9 @@ function optimize_parameters(
         θ_start::ComponentArray = initial_parameters(ctx),
         optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
         adtype = Optimization.AutoForwardDiff(),
-        optim_kwargs::NamedTuple = NamedTuple()
+        optim_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple()
     )
+    optim_kwargs = _as_namedtuple(optim_kwargs)
     dm = ctx.dm
     fe = get_fixed(get_model(dm))
     inv_transform = get_inverse_transform(fe)

@@ -208,7 +208,8 @@ function _ensure_save_path(save_path::Union{Nothing, String})
         ext = ".png"
     end
     dir = dirname(save_path)
-    isdir(dir) || error("save_path directory does not exist: $(dir)")
+    # An empty dirname means a bare filename in the current directory.
+    isempty(dir) || isdir(dir) || error("save_path directory does not exist: $(dir)")
     return save_path
 end
 
@@ -1156,15 +1157,18 @@ plotting. Pass the returned [`PlotCache`](@ref) to `plot_fits` via the `cache` k
 function build_plot_cache(
         res::FitResult;
         dm::Union{Nothing, DataModel} = nothing,
-        params::NamedTuple = NamedTuple(),
-        constants_re::NamedTuple = NamedTuple(),
+        params::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
         cache_obs_dists::Bool = false,
         ode_args::Tuple = (),
-        ode_kwargs::NamedTuple = NamedTuple(),
+        ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
         mcmc_draws::Int = 1000,
         mcmc_warmup::Union{Nothing, Int} = nothing,
         rng::AbstractRNG = Random.default_rng()
     )
+    params = _as_namedtuple(params)
+    constants_re = _as_namedtuple(constants_re)
+    ode_kwargs = _as_namedtuple(ode_kwargs)
     dm === nothing && (dm = get_data_model(res))
     dm === nothing &&
         error("This fit result does not store a DataModel; pass dm=... to build_plot_cache.")
@@ -1260,13 +1264,16 @@ end
 
 function build_plot_cache(
         dm::DataModel;
-        params::NamedTuple = NamedTuple(),
-        constants_re::NamedTuple = NamedTuple(),
+        params::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
         cache_obs_dists::Bool = false,
         ode_args::Tuple = (),
-        ode_kwargs::NamedTuple = NamedTuple(),
+        ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
         rng::AbstractRNG = Random.default_rng()
     )
+    params = _as_namedtuple(params)
+    constants_re = _as_namedtuple(constants_re)
+    ode_kwargs = _as_namedtuple(ode_kwargs)
     θ = get_θ0_untransformed(get_fixed(get_model(dm)))
     θ = _apply_param_overrides(θ, params)
     η_vec = _default_random_effects_from_dm(dm, constants_re, θ)

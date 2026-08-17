@@ -109,14 +109,17 @@ function compute_uq(
         profile_local_alg::Union{Symbol, AbstractString} = :LN_NELDERMEAD,
         profile_max_iter::Int = 10_000,
         profile_ftol_abs::Real = 1.0e-3,
-        profile_kwargs::NamedTuple = NamedTuple(),
+        profile_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
         mcmc_method::Union{Nothing, MCMC} = nothing,
         mcmc_sampler = nothing,
-        mcmc_turing_kwargs::NamedTuple = NamedTuple(),
+        mcmc_turing_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
         mcmc_adtype = nothing,
-        mcmc_fit_kwargs::NamedTuple = NamedTuple(),
+        mcmc_fit_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
         rng::AbstractRNG = Random.default_rng()
     )
+    profile_kwargs = _as_namedtuple(profile_kwargs)
+    mcmc_turing_kwargs = _as_namedtuple(mcmc_turing_kwargs)
+    mcmc_fit_kwargs = _as_namedtuple(mcmc_fit_kwargs)
     method = _as_symbol(method)
     interval = _as_symbol(interval)
     vcov = _as_symbol(vcov)

@@ -304,7 +304,7 @@ function MCEM(;
         error("MCEM: consecutive_params must be ≥ 1. Got: $consecutive_params")
     # When e_step is not provided, build MCEM_MCMC from legacy kwargs (backward compat)
     e_step_actual = if e_step === nothing
-        MCEM_MCMC(sampler, turing_kwargs, sample_schedule, warm_start)
+        MCEM_MCMC(sampler, _as_namedtuple(turing_kwargs), sample_schedule, warm_start)
     else
         e_step
     end
@@ -313,7 +313,7 @@ function MCEM(;
         convergence_window
     )
     ebe = EBEOptions(
-        ebe_optimizer, ebe_optim_kwargs, ebe_adtype, ebe_grad_tol,
+        ebe_optimizer, _as_namedtuple(ebe_optim_kwargs), ebe_adtype, ebe_grad_tol,
         ebe_multistart_n, ebe_multistart_k, ebe_multistart_max_rounds,
         ebe_multistart_sampling
     )
@@ -323,7 +323,7 @@ function MCEM(;
         ebe_rescue_grad_tol, ebe_rescue_multistart_sampling
     )
     return MCEM(
-        optimizer, optim_kwargs, adtype, e_step_actual, em, ebe, ebe_rescue,
+        optimizer, _as_namedtuple(optim_kwargs), adtype, e_step_actual, em, ebe, ebe_rescue,
         lb, ub, _as_symbol(update_schedule), verbose, progress, store_diagnostics,
         diagnostics_every, precondition
     )

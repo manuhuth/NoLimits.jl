@@ -53,7 +53,10 @@ function MAP(;
         ignore_model_bounds = false,
         precondition = true
     )
-    return MAP(optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds, precondition)
+    return MAP(
+        optimizer, _as_namedtuple(optim_kwargs), adtype, lb, ub,
+        ignore_model_bounds, precondition
+    )
 end
 
 # MAPResult is a StandardOptimizationResult{:map} alias + constructor (see common.jl).

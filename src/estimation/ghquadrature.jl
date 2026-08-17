@@ -125,10 +125,10 @@ function GHQuadrature(;
         ignore_model_bounds = false,
         precondition = true
     )
-    level = _check_ghq_level(level)
+    level = _check_ghq_level(_as_namedtuple(level))
     inner = inner_options === nothing ?
         LaplaceInnerOptions(
-            inner_optimizer, inner_kwargs, inner_adtype, inner_grad_tol
+            inner_optimizer, _as_namedtuple(inner_kwargs), inner_adtype, inner_grad_tol
         ) :
         inner_options
     ms = multistart_options === nothing ?
@@ -138,7 +138,7 @@ function GHQuadrature(;
         ) :
         multistart_options
     return GHQuadrature(
-        level, optimizer, optim_kwargs, adtype, inner, ms, lb, ub,
+        level, optimizer, _as_namedtuple(optim_kwargs), adtype, inner, ms, lb, ub,
         ignore_model_bounds, precondition
     )
 end

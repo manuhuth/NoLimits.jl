@@ -505,7 +505,7 @@ function SAEM(;
         n_chains::Int = 1,
         auto_small_n_chains::Bool = true,
         small_n_chain_target::Int = 50,
-        sa_anneal_targets::NamedTuple = NamedTuple(),
+        sa_anneal_targets::Union{NamedTuple, AbstractDict} = NamedTuple(),
         sa_anneal_schedule::Union{Symbol, AbstractString} = :exponential,
         sa_anneal_iters = nothing,
         sa_anneal_alpha::Float64 = 0.95,
@@ -528,6 +528,13 @@ function SAEM(;
     sa_anneal_schedule = _as_symbol(sa_anneal_schedule)
     anneal_schedule = _as_symbol(anneal_schedule)
     resid_var_param = _as_symbol(resid_var_param)
+    optim_kwargs = _as_namedtuple(optim_kwargs)
+    turing_kwargs = _as_namedtuple(turing_kwargs)
+    ebe_optim_kwargs = _as_namedtuple(ebe_optim_kwargs)
+    # Values name a fixed effect, so a dict spelling brings them in as strings.
+    re_cov_params = map(_as_symbol, _as_namedtuple(re_cov_params))
+    re_mean_params = map(_as_symbol, _as_namedtuple(re_mean_params))
+    sa_anneal_targets = _as_namedtuple(sa_anneal_targets)
     q_store_max >= 1 ||
         error("SAEM: q_store_max must be ≥ 1. Got: $q_store_max")
     0 <= q_store_min <= q_store_max ||

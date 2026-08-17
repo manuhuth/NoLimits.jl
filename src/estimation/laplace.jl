@@ -2347,7 +2347,7 @@ function Laplace(;
     )
     inner = inner_options === nothing ?
         LaplaceInnerOptions(
-            inner_optimizer, inner_kwargs, inner_adtype, inner_grad_tol
+            inner_optimizer, _as_namedtuple(inner_kwargs), inner_adtype, inner_grad_tol
         ) : inner_options
     hess = hessian_options === nothing ?
         LaplaceHessianOptions(
@@ -2362,7 +2362,7 @@ function Laplace(;
             multistart_max_rounds, _as_symbol(multistart_sampling)
         ) : multistart_options
     return Laplace(
-        optimizer, optim_kwargs, adtype, inner, hess, cache,
+        optimizer, _as_namedtuple(optim_kwargs), adtype, inner, hess, cache,
         ms, lb, ub, ignore_model_bounds, precondition, _as_symbol(nan_recovery)
     )
 end
