@@ -268,8 +268,8 @@ end
 const _PARAM_BLOCK_CTORS = (
     :RealNumber, :RealVector, :RealPSDMatrix, :RealLiePSDMatrix,
     :RealDiagonalMatrix, :ProbabilityVector, :DiscreteTransitionMatrix,
-    :ContinuousTransitionMatrix, :NNParameters, :SoftTreeParameters, :SplineParameters,
-    :NPFParameter,
+    :ContinuousTransitionMatrix, :NNParameters, :FFNNParameters, :SoftTreeParameters,
+    :SplineParameters, :NPFParameter,
 )
 
 function _qualify_ctor_head(ex::Expr)

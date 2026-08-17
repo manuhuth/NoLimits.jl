@@ -41,6 +41,7 @@ NoLimits provides parameter types for scalars, vectors, structured matrices, and
 | `ProbabilityVector` | Probability simplex of length k≥2 | `Vector` summing to 1 |
 | `DiscreteTransitionMatrix` | n×n row-stochastic matrix (n≥2) | row-stochastic `Matrix` |
 | `ContinuousTransitionMatrix` | n×n rate matrix / Q-matrix (n≥2) | rate `Matrix` |
+| `FFNNParameters` | plain feed-forward network weights (no optional dependency) | flattened network params |
 | `NNParameters` | Lux `Chain` or SimpleChains `SimpleChain` weights | flattened network params |
 | `SoftTreeParameters` | Soft decision tree parameters | flattened tree params |
 | `SplineParameters` | B-spline coefficients | coefficient `Vector` |

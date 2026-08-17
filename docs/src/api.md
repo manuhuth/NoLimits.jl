@@ -41,6 +41,7 @@ ProbabilityVector
 DiscreteTransitionMatrix
 ContinuousTransitionMatrix
 NNParameters
+FFNNParameters
 NPFParameter
 SoftTreeParameters
 SplineParameters

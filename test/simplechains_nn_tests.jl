@@ -270,3 +270,165 @@ end
     @test occursin("zeta", err)
     @test occursin("Lux.Chain", err)
 end
+
+# FFNNParameters: the dependency-free plain-MLP path. It wraps a core `NoLimits.FFNN`
+# chain into the same `NNParameters` block, so only the forward pass and the flat layout
+# are new — everything below the block is the plumbing the backends above already use.
+
+@testset "FFNN forward pass against explicit references" begin
+    # 1 -> 2 -> 1 with fixed weights; layout is [vec(W1); b1; vec(W2); b2].
+    θ = [0.5, -1.5, 0.25, 0.75, 2.0, -0.5, 0.1]
+    x = 0.4
+    z1 = [0.5 * x + 0.25, -1.5 * x + 0.75]
+    refs = (
+        tanh = tanh,
+        relu = z -> max(0.0, z),
+        sigmoid = z -> 1 / (1 + exp(-z)),
+        logistic = z -> 1 / (1 + exp(-z)),
+        softplus = z -> log(1 + exp(z)),
+        identity = z -> z,
+        swish = z -> z / (1 + exp(-z)),
+        gelu = z -> 0.5 * z * (1 + tanh(sqrt(2 / pi) * (z + 0.044715 * z^3))),
+    )
+    for (name, f) in Base.pairs(refs)
+        net = NoLimits.FFNN((1, 2, 1), name, :identity)
+        h = f.(z1)
+        want = 2.0 * h[1] - 0.5 * h[2] + 0.1
+        @test isapprox(net([x], θ)[1], want; rtol = 1.0e-12)
+    end
+
+    # Output activations, including the vector-valued softmax.
+    net_out = NoLimits.FFNN((1, 2, 1), :identity, :logistic)
+    lin = 2.0 * z1[1] - 0.5 * z1[2] + 0.1
+    @test isapprox(net_out([x], θ)[1], 1 / (1 + exp(-lin)); rtol = 1.0e-12)
+
+    θ2 = [0.5, -1.5, 0.25, 0.75, 2.0, -0.5, 1.0, 3.0, 0.1, -0.2]
+    net_sm = NoLimits.FFNN((1, 2, 2), :identity, :softmax)
+    out = net_sm([x], θ2)
+    @test length(out) == 2
+    @test isapprox(sum(out), 1.0; rtol = 1.0e-12)
+    @test all(>(0), out)
+    a = [2.0 * z1[1] + 1.0 * z1[2] + 0.1, -0.5 * z1[1] + 3.0 * z1[2] - 0.2]
+    @test isapprox(out, exp.(a) ./ sum(exp.(a)); rtol = 1.0e-12)
+    # Stable for inputs that overflow a naive exp.
+    big = NoLimits.FFNN((1, 1, 2), :identity, :softmax)
+    out_big = big([1.0], [1.0, 0.0, 900.0, -900.0, 0.0, 0.0])
+    @test isapprox(sum(out_big), 1.0; rtol = 1.0e-12)
+    @test all(isfinite, out_big)
+end
+
+@testset "FFNN activation given as Symbol, String or callable" begin
+    θ = [0.5, -1.5, 0.25, 0.75, 2.0, -0.5, 0.1]
+    x = [-0.3]
+    from_sym = NoLimits.FFNN((1, 2, 1), :tanh, :identity)([x[1]], θ)
+    @test from_sym == NoLimits.FFNN((1, 2, 1), "tanh", "identity")(x, θ)
+    @test from_sym == NoLimits.FFNN((1, 2, 1), tanh, identity)(x, θ)
+
+    # Registry misses and misplaced output-only transforms fail with actionable messages.
+    err = try
+        NoLimits.FFNN((1, 2, 1), :not_an_activation, :identity)
+        nothing
+    catch e
+        sprint(showerror, e)
+    end
+    @test err !== nothing && occursin("tanh", err) && occursin("swish", err)
+    @test_throws ErrorException NoLimits.FFNN((1, 2, 1), :softmax, :identity)
+    @test_throws ErrorException NoLimits.FFNN((1, 2, 1), :logit, :identity)
+    @test_throws ErrorException NoLimits.FFNN((3,), :tanh, :identity)
+    @test_throws ErrorException NoLimits.FFNN((3, 0), :tanh, :identity)
+    @test_throws ErrorException NoLimits.FFNN((3, 1.5), :tanh, :identity)
+    # A mismatched input length is reported instead of reading past the parameters.
+    @test_throws ErrorException NoLimits.FFNN((1, 2, 1), :tanh, :identity)([0.1, 0.2], θ)
+end
+
+@testset "FFNNParameters block, plumbing and AD" begin
+    nn = FFNNParameters((2, 4, 1); name = :ζ, function_name = :NN1, seed = 0)
+    @test nn isa NNParameters
+    @test nn.chain isa NoLimits.FFNN
+    @test length(nn.value) == 4 * (2 + 1) + 1 * (4 + 1)
+    # Glorot-uniform weights, zero biases, deterministic in `seed`.
+    @test all(iszero, nn.value[9:12]) && nn.value[17] == 0.0
+    @test all(!iszero, nn.value[1:8]) && all(!iszero, nn.value[13:16])
+    @test maximum(abs, nn.value[1:8]) <= sqrt(6 / (2 + 4))
+    @test nn.value == FFNNParameters((2, 4, 1); function_name = :NNb, seed = 0).value
+    @test nn.value != FFNNParameters((2, 4, 1); function_name = :NNc, seed = 1).value
+    n = length(nn.value)
+    @test_throws ErrorException FFNNParameters(
+        (2, 4, 1); function_name = :NNd, prior = fill(Normal(), n - 1)
+    )
+
+    fe = @fixedEffects begin
+        ζ = FFNNParameters((2, 5, 1); activation = :tanh, function_name = :NN1, seed = 2)
+    end
+    mf = get_model_funs(fe)
+    p = collect(get_θ0_untransformed(fe).ζ)
+    x = [0.4, -0.1]
+    @test mf.NN1(x, p) isa AbstractVector
+    @test mf.NN1(x, p)[1] isa Real
+
+    g_fd = ForwardDiff.gradient(v -> mf.NN1(x, v)[1], p)
+    g_num = FiniteDifferences.grad(central_fdm(5, 1), v -> mf.NN1(x, v)[1], p)[1]
+    @test isapprox(g_fd, g_num; rtol = 1.0e-6, atol = 1.0e-8)
+    gx_fd = ForwardDiff.gradient(xx -> mf.NN1(xx, p)[1], x)
+    gx_num = FiniteDifferences.grad(central_fdm(5, 1), xx -> mf.NN1(xx, p)[1], x)[1]
+    @test isapprox(gx_fd, gx_num; rtol = 1.0e-6, atol = 1.0e-8)
+
+    # Dual input AND Dual parameters at once, plus the nesting depth a Laplace outer
+    # gradient with a Wald Hessian on top reaches (where SimpleChains returns garbage).
+    mixed = ForwardDiff.derivative(
+        s -> ForwardDiff.gradient(v -> mf.NN1(x .* s, v)[1], p)[1], 1.0
+    )
+    @test isfinite(mixed)
+    nest(f, k) = k == 0 ? f : (z -> ForwardDiff.derivative(nest(f, k - 1), z))
+    for k in 1:5
+        @test isfinite(nest(z -> mf.NN1(x .+ z, p)[1], k)(0.0))
+    end
+end
+
+@testset "FFNN and SimpleChains agree on identical copied weights" begin
+    chain = SimpleChain(static(2), TurboDense(tanh, 3), TurboDense(identity, 1))
+    fe = @fixedEffects begin
+        ζ_sc = NNParameters(chain; function_name = :SC, seed = 7, calculate_se = false)
+        ζ_ff = FFNNParameters((2, 3, 1); function_name = :FF, seed = 0)
+    end
+    mf = get_model_funs(fe)
+    p = collect(get_θ0_untransformed(fe).ζ_sc)
+    @test length(p) == length(get_θ0_untransformed(fe).ζ_ff)
+    for x in ([0.2, 0.5], [-1.3, 0.0])
+        @test isapprox(mf.FF(x, p)[1], mf.SC(x, p)[1]; rtol = 1.0e-12)
+    end
+    @test isapprox(
+        ForwardDiff.gradient(v -> mf.FF([0.2, 0.5], v)[1], p),
+        ForwardDiff.gradient(v -> mf.SC([0.2, 0.5], v)[1], p); rtol = 1.0e-10
+    )
+end
+
+@testset "FFNNParameters end-to-end Laplace fit" begin
+    df = DataFrame(
+        ID = [1, 1, 2, 2, 3, 3], t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+        Age = [0.3, 0.3, -0.2, -0.2, 0.1, 0.1],
+        y = [1.0, 1.1, 0.9, 1.0, 1.2, 1.05]
+    )
+    model = @Model begin
+        @fixedEffects begin
+            σ = RealNumber(0.5, scale = :log)
+            σ_η = RealNumber(0.5, scale = :log)
+            ζ = FFNNParameters((1, 4, 1); activation = :tanh, function_name = :NN1)
+        end
+        @covariates begin
+            t = Covariate()
+            x = ConstantCovariateVector([:Age])
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, σ_η); column = :ID)
+        end
+        @formulas begin
+            μ = NN1([x.Age], ζ)[1] + η
+            y ~ Normal(μ, σ)
+        end
+    end
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    res = fit_model(dm, NoLimits.Laplace(optim_kwargs = (; iterations = 10)))
+    @test isfinite(NoLimits.get_objective(res))
+    @test all(isfinite, collect(NoLimits.get_params(res).untransformed.ζ))
+end
