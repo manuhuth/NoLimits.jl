@@ -5,6 +5,7 @@ export rowsoftmax
 using ForwardDiff
 import DiffEqBase
 import Roots
+import DataFrames
 
 # Public symbol-valued options also accept the string spelling, so the Python/R
 # bindings (and serialized federated options) can pass them through unchanged.
@@ -12,6 +13,26 @@ import Roots
 @inline _as_symbol(x::AbstractString) = Symbol(x)
 @inline _as_symbol(x::Symbol) = x
 @inline _as_symbol(x) = x   # nothing, NamedTuples, functions, ... pass through
+
+# Public tabular inputs accept any Tables.jl table (CSV.File, column NamedTuple, an R
+# data.frame through JuliaConnectoR, ...). Non-tables pass through so the existing
+# schema validation still reports them.
+_as_dataframe(df::DataFrames.DataFrame) = df
+_as_dataframe(x) = DataFrames.Tables.istable(x) ? DataFrames.DataFrame(x) : x
+
+# Same idea for the NamedTuple-shaped options: a Python dict arrives as a `PyDict`
+# (an `AbstractDict`), which has no NamedTuple literal on the binding side. Values are
+# recursed so nested option groups convert too, and keys go through `String` so both
+# `"a" => 1` and `:a => 1` work. Field order from a dict is arbitrary, so only
+# name-matched options may be normalized this way.
+@inline _as_namedtuple(x::NamedTuple) = x
+function _as_namedtuple(d::AbstractDict)
+    # A dict keyed by anything else has no NamedTuple spelling; `constants_re` group
+    # levels are the live case (integer ids, matched by value) and must survive as-is.
+    all(k -> k isa Union{Symbol, AbstractString}, keys(d)) || return d
+    return (; (Symbol(String(k)) => _as_namedtuple(v) for (k, v) in Base.pairs(d))...)
+end
+@inline _as_namedtuple(x) = x   # nothing, ComponentArrays, ... pass through
 
 """
     rowsoftmax(L::AbstractMatrix) -> AbstractMatrix

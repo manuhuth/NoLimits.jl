@@ -247,6 +247,16 @@ end
     @test ind1.series.obs.y == [1.0, 1.1]
     @test ind1.const_cov.x.Age == 30.0
     @test ind1.series.vary.z == [1.0, 1.2]
+
+    # Any Tables.jl table is materialized at the boundary (#259).
+    dm_tbl = DataModel(
+        model, DataFrames.Tables.columntable(df_ok);
+        primary_id = :ID,
+        time_col = :t
+    )
+    @test get_df(dm_tbl) == get_df(dm)
+    @test length(get_individuals(dm_tbl)) == length(get_individuals(dm))
+    @test get_individual(dm_tbl, 1).series.obs.y == ind1.series.obs.y
 end
 
 # Shared across the events and validation-errors testsets below.
@@ -377,6 +387,12 @@ end
     # Column keywords also accept strings (#255), including on the error paths.
     @test_throws ErrorException DataModel(
         model, df_missing_time; primary_id = "ID", time_col = "t"
+    )
+
+    # A non-table input passes through the normalization (#259) and still fails in the
+    # schema validation, not with a conversion error.
+    @test_throws ErrorException DataModel(
+        model, 42; primary_id = :ID, time_col = :t
     )
 end
 

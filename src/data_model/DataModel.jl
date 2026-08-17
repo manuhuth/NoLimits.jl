@@ -1513,7 +1513,9 @@ observation counts, and saveat-mode resolution.
 
 # Arguments
 - `model::Model`: the compiled model (from `@Model`).
-- `df`: a `DataFrame` containing all required columns.
+- `df`: a `DataFrame`, or any Tables.jl-compatible table (a column `NamedTuple`, a
+  `CSV.File`, an R `data.frame` passed through JuliaConnectoR, ...), containing all
+  required columns. Non-`DataFrame` tables are materialized into a `DataFrame`.
 
 # Keyword Arguments
 - `primary_id::Union{Nothing, Symbol} = nothing`: primary individual-grouping column.
@@ -1545,6 +1547,7 @@ function DataModel(
         t0::Union{Nothing, Real} = 0.0,
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial()
     )
+    df = _as_dataframe(df)
     primary_id = _as_symbol(primary_id)
     time_col = _as_symbol(time_col)
     evid_col = _as_symbol(evid_col)

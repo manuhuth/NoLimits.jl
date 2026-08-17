@@ -97,6 +97,10 @@ end
     # of the pinned 0.6, diverging from :ebe by exactly that offset.
     pop_df = NoLimits.predict(res, df; re_mode = :population)
     ebe_df = NoLimits.predict(res, df; re_mode = :ebe)
+    # newdata also accepts any Tables.jl table (#259).
+    @test NoLimits.predict(
+        res, DataFrames.Tables.columntable(df); re_mode = :ebe
+    ) == ebe_df
     @test isapprox(
         pop_df.prediction[pop_df.id .== "id_001"],
         ebe_df.prediction[ebe_df.id .== "id_001"]; atol = 1.0e-8
@@ -107,6 +111,13 @@ end
     ov = (; η = (; id_002 = 1.5))
     ebe_ov = NoLimits.predict(res, df; re_mode = :ebe, constants_re = ov)
     pop_ov = NoLimits.predict(res, df; re_mode = :population, constants_re = ov)
+    # constants_re also accepts the dict spelling, nested levels included (#257).
+    ebe_ov_d = NoLimits.predict(
+        res, df; re_mode = :ebe, constants_re = Dict("η" => Dict("id_002" => 1.5))
+    )
+    @test collect(ebe_ov_d.prediction) == collect(ebe_ov.prediction)
+    @test nrow(get_residuals(res; constants_re = Dict("η" => Dict("id_001" => 0.6)))) ==
+        nrow(df)
     @test isapprox(
         ebe_ov.prediction[ebe_ov.id .== "id_002"],
         pop_ov.prediction[pop_ov.id .== "id_002"]; atol = 1.0e-8

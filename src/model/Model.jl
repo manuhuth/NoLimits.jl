@@ -417,7 +417,11 @@ function set_solver_config(
         closed_form::Union{Symbol, AbstractString} = :auto
     )
     return set_solver_config(
-        m, ODESolverConfig(alg, kwargs, args, _as_symbol(saveat_mode), _as_symbol(closed_form))
+        m,
+        ODESolverConfig(
+            alg, _as_namedtuple(kwargs), args,
+            _as_symbol(saveat_mode), _as_symbol(closed_form)
+        )
     )
 end
 

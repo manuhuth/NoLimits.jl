@@ -571,8 +571,9 @@ function summarize(
         res::FitResult;
         scale::Union{Symbol, AbstractString} = :natural,
         include_non_se::Bool = false,
-        constants_re::NamedTuple = NamedTuple()
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple()
     )
+    constants_re = _as_namedtuple(constants_re)
     scale = _fq_scale_symbol(scale)
     method = get_method(res)
     # Inference kind follows the result the estimator produced (a posterior chain is Bayesian
@@ -722,8 +723,9 @@ function summarize(
         res::FitResult, uq::UQResult;
         scale::Union{Symbol, AbstractString} = :natural,
         include_non_se::Bool = false,
-        constants_re::NamedTuple = NamedTuple()
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple()
     )
+    constants_re = _as_namedtuple(constants_re)
     scale = _fq_scale_symbol(scale)
     dm = get_data_model(res)
     dm === nothing && error("summarize(fit, uq) requires fit to store DataModel.")

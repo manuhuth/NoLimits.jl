@@ -73,6 +73,7 @@ function MCMC(;
         adtype = nothing,
         progress = false
     )
+    turing_kwargs = _as_namedtuple(turing_kwargs)
     _check_turing_kwargs("MCMC", turing_kwargs)
     return MCMC(sampler, turing_kwargs, adtype, progress)
 end
@@ -230,6 +231,7 @@ struct VI{K} <: FittingMethod
 end
 
 function VI(; turing_kwargs = NamedTuple())
+    turing_kwargs = _as_namedtuple(turing_kwargs)
     _check_turing_kwargs("VI", turing_kwargs)
     return VI(turing_kwargs)
 end
@@ -258,10 +260,6 @@ end
 get_variational_posterior(res::VIResult) = res.posterior
 get_vi_trace(res::VIResult) = res.trace
 get_vi_state(res::VIResult) = res.state
-
-@inline _as_namedtuple(x::NamedTuple) = x
-@inline _as_namedtuple(x::Base.Iterators.Pairs) = NamedTuple(x)
-@inline _as_namedtuple(x) = x isa NamedTuple ? x : NamedTuple(x)
 
 # Sampler kind is recorded when a fit is serialized; the Turing sampler types that
 # refine this live in the extension.
