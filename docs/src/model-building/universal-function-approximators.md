@@ -4,6 +4,7 @@ Nonlinear mixed-effects models often require flexible functional forms to captur
 
 The supported parameter constructors are:
 
+- `FFNNParameters(...)` - a plain feed-forward network (multilayer perceptron) given by its layer sizes and activations. Needs no optional dependency.
 - `NNParameters(...)` - wraps a [Lux.jl](https://github.com/LuxDL/Lux.jl) `Chain` **or** a [SimpleChains.jl](https://github.com/PumasAI/SimpleChains.jl) `SimpleChain` neural-network architecture.
 - `SoftTreeParameters(...)` - constructs a differentiable soft decision tree.
 
@@ -24,6 +25,18 @@ Both are declared in `@fixedEffects` and exposed as callable model functions thr
     documented in [`@fixedEffects`](@ref) and [`@randomEffects`](@ref); full constructor
     signatures are in the [Parameter Types](../api.md#Parameter-Types) section of the API
     reference.
+
+### A feed-forward network without any dependency
+
+For the common case - a plain multilayer perceptron - `FFNNParameters` takes the layer sizes and the activations directly, and its forward pass lives in NoLimits itself:
+
+```julia
+z_nn = FFNNParameters((2, 8, 8, 1); activation=:tanh, function_name=:NN1, calculate_se=false)
+```
+
+The block it returns is an `NNParameters` block, so call sites (`NN1([x.Age, x.BMI], z_nn)[1]`), priors, `calculate_se`, random effects on the weights and every estimator behave exactly as with a Lux or SimpleChains network. `activation` and `output_activation` accept a `Symbol`, a `String`, or any callable; the registry is `:tanh`, `:relu`, `:sigmoid` (alias `:logistic`), `:softplus`, `:identity`, `:gelu`, `:swish`, plus the output-only `:softmax` and `:logit`. Weights start from a Glorot-uniform draw (deterministic given `seed`) and biases from zero.
+
+Reach for `NNParameters` with a Lux `Chain` or a SimpleChains `SimpleChain` when the architecture goes beyond a plain MLP.
 
 !!! tip "Lux vs. SimpleChains backend for `NNParameters`"
     `NNParameters` accepts either a Lux `Chain` or a SimpleChains `SimpleChain`. The call
