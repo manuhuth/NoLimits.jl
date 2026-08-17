@@ -47,6 +47,38 @@ at the University of Bonn, with
 [Manuel Huth](https://www.mathematics-and-life-sciences.uni-bonn.de/en/group-members/people/hasenauer-group-members/manuel-huth)
 as lead developer.
 
+## R and Python interfaces
+
+NoLimits is fully usable from R and Python. Two thin wrapper packages,
+[NoLimitsR](https://github.com/manuhuth/NoLimitsR) and
+[NoLimitsPy](https://github.com/manuhuth/NoLimitsPy), expose every exported NoLimits.jl name
+dynamically, so there is no per-function glue code and new features are available as soon as
+the Julia package is updated. Models are written as strings, native data frames go straight
+into `DataModel`, and results come back as `data.frame`s or pandas `DataFrame`s.
+
+```r
+remotes::install_github("manuhuth/NoLimitsR"); NoLimitsR::install_nolimits()
+nl <- NoLimitsR::nolimits()
+dm <- nl$DataModel(nl_model(model_string), nl_data(df),
+                   primary_id = jl_sym("ID"), time_col = jl_sym("time"))
+res <- nl$fit_model(dm, nl$Laplace())
+head(nl_collect(nl$predict(res, nl_data(df))))
+```
+
+```python
+# pip install git+https://github.com/manuhuth/NoLimitsPy.git
+import NoLimitsPy as nl
+dm = nl.DataModel(nl.model(model_string), df,
+                  primary_id=nl.sym("ID"), time_col=nl.sym("time"))
+res = nl.fit_model(dm, nl.Laplace())
+print(nl.collect(nl.predict(res, df)).head())
+```
+
+See the
+[Using NoLimits from R and Python](https://manuhuth.github.io/NoLimits.jl/dev/tutorials/r-and-python)
+tutorial for installation, the full quickstart in both languages, and how Julia concepts such as
+Symbols and NamedTuples map onto native R and Python ones.
+
 ## Why NoLimits.jl?
 
 Nonlinear mixed-effects (NLME) models are the standard tool for longitudinal analysis in the

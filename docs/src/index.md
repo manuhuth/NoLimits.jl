@@ -65,6 +65,20 @@ NoLimits.jl is designed to avoid these trade-offs. It supports:
 NoLimits.jl is designed for mixed-effects models, but it can equally be used for
 fixed-effects-only analysis when random effects are not required.
 
+## R and Python Interfaces
+
+NoLimits is fully usable from R and Python through two thin wrapper packages,
+[NoLimitsR](https://github.com/manuhuth/NoLimitsR) and
+[NoLimitsPy](https://github.com/manuhuth/NoLimitsPy). Both expose every exported
+NoLimits.jl name dynamically, so no per-function glue code exists and new features become
+available as soon as the Julia package is updated. Models are written as strings, native
+data frames go straight into `DataModel`, and results come back as R `data.frame`s or
+pandas `DataFrame`s.
+
+See [Using NoLimits from R and Python](tutorials/r-and-python.md) for installation, the
+quickstart in both languages, and how Julia concepts such as Symbols and NamedTuples map
+onto native R and Python ones.
+
 ## Getting Started
 
 New users should begin with the [Installation](installation.md) page and the
