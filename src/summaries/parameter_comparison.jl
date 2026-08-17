@@ -64,7 +64,7 @@ compare_parameters("Gaussian" => fit_gauss, "flow" => fit_flow)
 function compare_parameters(
         f1::FitResult, frest::FitResult...;
         labels = nothing,
-        scale::Symbol = :natural,
+        scale::Union{Symbol, AbstractString} = :natural,
         include_non_se::Bool = false,
         common_only::Bool = false
     )
@@ -117,7 +117,7 @@ end
 
 function compare_parameters(
         p1::Pair, prest::Pair...;
-        scale::Symbol = :natural,
+        scale::Union{Symbol, AbstractString} = :natural,
         include_non_se::Bool = false,
         common_only::Bool = false
     )

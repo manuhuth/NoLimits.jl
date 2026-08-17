@@ -61,9 +61,9 @@ Return the names of the free fixed-effect parameters covered by this result.
   scale includes the derived last probability / last-column entries and may have more
   names than the transformed scale.
 """
-get_uq_parameter_names(uq::UQResult; scale::Symbol = :transformed) = copy(
+get_uq_parameter_names(uq::UQResult; scale::Union{Symbol, AbstractString} = :transformed) = copy(
     _uq_names_for_scale(
-        uq, scale
+        uq, _as_symbol(scale)
     )
 )
 
@@ -78,7 +78,8 @@ Return point estimates from a [`UQResult`](@ref).
 - `as_component::Bool = true`: if `true`, return a `ComponentArray` keyed by parameter
   name; otherwise return a plain `Vector{Float64}`.
 """
-function get_uq_estimates(uq::UQResult; scale::Symbol = :natural, as_component::Bool = true)
+function get_uq_estimates(uq::UQResult; scale::Union{Symbol, AbstractString} = :natural, as_component::Bool = true)
+    scale = _as_symbol(scale)
     _uq_check_scale(scale)
     vals = scale == :natural ? uq.estimates_natural : uq.estimates_transformed
     names = _uq_names_for_scale(uq, scale)
@@ -97,7 +98,8 @@ available.
 - `as_component::Bool = true`: if `true`, `lower` and `upper` are `ComponentArray`s;
   otherwise plain `Vector{Float64}`.
 """
-function get_uq_intervals(uq::UQResult; scale::Symbol = :natural, as_component::Bool = true)
+function get_uq_intervals(uq::UQResult; scale::Union{Symbol, AbstractString} = :natural, as_component::Bool = true)
+    scale = _as_symbol(scale)
     _uq_check_scale(scale)
     ints = scale == :natural ? uq.intervals_natural : uq.intervals_transformed
     ints === nothing && return nothing
@@ -121,7 +123,8 @@ available.
 # Keyword Arguments
 - `scale::Symbol = :natural`: `:natural` or `:transformed`.
 """
-function get_uq_vcov(uq::UQResult; scale::Symbol = :natural)
+function get_uq_vcov(uq::UQResult; scale::Union{Symbol, AbstractString} = :natural)
+    scale = _as_symbol(scale)
     _uq_check_scale(scale)
     v = scale == :natural ? uq.vcov_natural : uq.vcov_transformed
     return v === nothing ? nothing : copy(v)
@@ -137,7 +140,8 @@ available. The matrix is `n_draws × n_params`: one row per draw, columns aligne
 # Keyword Arguments
 - `scale::Symbol = :natural`: `:natural` or `:transformed`.
 """
-function get_uq_draws(uq::UQResult; scale::Symbol = :natural)
+function get_uq_draws(uq::UQResult; scale::Union{Symbol, AbstractString} = :natural)
+    scale = _as_symbol(scale)
     _uq_check_scale(scale)
     d = scale == :natural ? uq.draws_natural : uq.draws_transformed
     return d === nothing ? nothing : copy(d)

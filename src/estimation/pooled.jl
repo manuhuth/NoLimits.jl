@@ -82,12 +82,13 @@ function Pooled(;
         ub = nothing,
         ignore_model_bounds = false,
         force_free::Vector{Symbol} = Symbol[],
-        refreeze_check::Symbol = :warn,
+        refreeze_check::Union{Symbol, AbstractString} = :warn,
         identifiable_only::Bool = true,
         n_probes::Int = 3,
         mc_draws::Int = 256,
         precondition::Bool = true
     )
+    refreeze_check = _as_symbol(refreeze_check)
     refreeze_check in (:warn, :refit) || error("refreeze_check must be :warn or :refit.")
     n_probes >= 1 || error("n_probes must be >= 1.")
     mc_draws >= 1 || error("mc_draws must be >= 1.")
@@ -132,12 +133,13 @@ function PooledMap(;
         ub = nothing,
         ignore_model_bounds = false,
         force_free::Vector{Symbol} = Symbol[],
-        refreeze_check::Symbol = :warn,
+        refreeze_check::Union{Symbol, AbstractString} = :warn,
         identifiable_only::Bool = true,
         n_probes::Int = 3,
         mc_draws::Int = 256,
         precondition::Bool = true
     )
+    refreeze_check = _as_symbol(refreeze_check)
     refreeze_check in (:warn, :refit) || error("refreeze_check must be :warn or :refit.")
     n_probes >= 1 || error("n_probes must be >= 1.")
     mc_draws >= 1 || error("mc_draws must be >= 1.")

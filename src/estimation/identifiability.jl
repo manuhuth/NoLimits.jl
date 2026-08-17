@@ -113,6 +113,7 @@ function _ident_method_symbol(method)
 end
 
 function _resolve_ident_method(dm::DataModel, method_spec)
+    method_spec = _as_symbol(method_spec)
     if method_spec isa Symbol
         method_spec === :auto && return _has_random_effects(dm) ? Laplace() : MLE()
         method_spec === :mle && return MLE()
@@ -755,8 +756,8 @@ local identifiability verdict, and any null directions.
 """
 function identifiability_report(
         dm::DataModel;
-        method::Union{Symbol, FittingMethod} = :auto,
-        at::Union{Symbol, ComponentArray} = :start,
+        method::Union{Symbol, AbstractString, FittingMethod} = :auto,
+        at::Union{Symbol, AbstractString, ComponentArray} = :start,
         constants::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple(),
         penalty::NamedTuple = NamedTuple(),
@@ -767,11 +768,13 @@ function identifiability_report(
         rng_seed::Union{Nothing, UInt64} = nothing,
         atol::Real = 1.0e-8,
         rtol::Real = sqrt(eps(Float64)),
-        hessian_backend::Symbol = :auto,
+        hessian_backend::Union{Symbol, AbstractString} = :auto,
         fd_abs_step::Real = 1.0e-4,
         fd_rel_step::Real = 1.0e-3,
         fd_max_tries::Int = 8
     )
+    at = _as_symbol(at)
+    hessian_backend = _as_symbol(hessian_backend)
     method_use = _resolve_ident_method(dm, method)
     _validate_ident_method(dm, method_use)
     return _identifiability_report(
@@ -798,8 +801,8 @@ end
 
 function identifiability_report(
         res::FitResult;
-        method::Union{Symbol, FittingMethod} = :fit,
-        at::Union{Symbol, ComponentArray} = :fit,
+        method::Union{Symbol, AbstractString, FittingMethod} = :fit,
+        at::Union{Symbol, AbstractString, ComponentArray} = :fit,
         constants::Union{Nothing, NamedTuple} = nothing,
         constants_re::Union{Nothing, NamedTuple} = nothing,
         penalty::Union{Nothing, NamedTuple} = nothing,
@@ -810,7 +813,7 @@ function identifiability_report(
         rng_seed::Union{Nothing, UInt64} = nothing,
         atol::Real = 1.0e-8,
         rtol::Real = sqrt(eps(Float64)),
-        hessian_backend::Symbol = :auto,
+        hessian_backend::Union{Symbol, AbstractString} = :auto,
         fd_abs_step::Real = 1.0e-4,
         fd_rel_step::Real = 1.0e-3,
         fd_max_tries::Int = 8
@@ -819,6 +822,9 @@ function identifiability_report(
     dm === nothing &&
         error("This fit result does not store a DataModel; call identifiability_report(dm, ...) instead.")
 
+    method = _as_symbol(method)
+    at = _as_symbol(at)
+    hessian_backend = _as_symbol(hessian_backend)
     method_use = if method === :fit
         if get_method(res) isa MLE || get_method(res) isa MAP || get_method(res) isa Laplace
             get_method(res)

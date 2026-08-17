@@ -413,10 +413,11 @@ end
 
 function set_solver_config(
         m::Model; alg = nothing, kwargs = NamedTuple(),
-        args = (), saveat_mode::Symbol = :dense, closed_form::Symbol = :auto
+        args = (), saveat_mode::Union{Symbol, AbstractString} = :dense,
+        closed_form::Union{Symbol, AbstractString} = :auto
     )
     return set_solver_config(
-        m, ODESolverConfig(alg, kwargs, args, saveat_mode, closed_form)
+        m, ODESolverConfig(alg, kwargs, args, _as_symbol(saveat_mode), _as_symbol(closed_form))
     )
 end
 

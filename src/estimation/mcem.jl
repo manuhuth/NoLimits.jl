@@ -153,7 +153,7 @@ function MCEM_IS(;
     if warm_start_mcmc_iters > 0 && mcmc_warmup === nothing
         mcmc_warmup = MCEM_MCMC()
     end
-    return MCEM_IS(n_samples, proposal, adapt, warm_start_mcmc_iters, mcmc_warmup)
+    return MCEM_IS(n_samples, _as_symbol(proposal), adapt, warm_start_mcmc_iters, mcmc_warmup)
 end
 
 struct EMOptions{T}
@@ -324,7 +324,7 @@ function MCEM(;
     )
     return MCEM(
         optimizer, optim_kwargs, adtype, e_step_actual, em, ebe, ebe_rescue,
-        lb, ub, update_schedule, verbose, progress, store_diagnostics,
+        lb, ub, _as_symbol(update_schedule), verbose, progress, store_diagnostics,
         diagnostics_every, precondition
     )
 end

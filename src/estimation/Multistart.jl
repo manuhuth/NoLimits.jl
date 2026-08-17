@@ -87,13 +87,15 @@ function Multistart(;
         dists = NamedTuple(),
         n_draws_requested::Int = 100,
         n_draws_used::Int = 50,
-        sampling::Symbol = :random,
+        sampling::Union{Symbol, AbstractString} = :random,
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         rng::AbstractRNG = Random.default_rng(),
         progress::Bool = true,
-        screening::Symbol = :prior_mean,
+        screening::Union{Symbol, AbstractString} = :prior_mean,
         ebe_maxiters::Int = 30
     )
+    sampling = _as_symbol(sampling)
+    screening = _as_symbol(screening)
     # `0` used to be accepted and then silently expanded to `n_draws_used` (#220).
     n_draws_requested < 1 &&
         error("n_draws_requested must be >= 1 (it is the number of candidate starting points to sample); got $(n_draws_requested).")

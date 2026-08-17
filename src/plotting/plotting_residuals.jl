@@ -965,7 +965,7 @@ arguments are forwarded to [`get_residuals`](@ref).
 """
 function predict(
         res::FitResult, dm_new::DataModel;
-        re_mode::Symbol = :population,
+        re_mode::Union{Symbol, AbstractString} = :population,
         fitted_stat = mean,
         constants_re::NamedTuple = NamedTuple(),
         marginal_draws::Int = 100,
@@ -975,6 +975,7 @@ function predict(
         ode_kwargs::NamedTuple = NamedTuple(),
         kwargs...
     )
+    re_mode = _as_symbol(re_mode)
     # t0 is baked into every individual's tspan at DataModel construction, so a
     # dm_new built with a different t0 silently integrates from the wrong start (#148).
     dm_old = get_data_model(res)

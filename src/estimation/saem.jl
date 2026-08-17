@@ -497,7 +497,7 @@ function SAEM(;
         anneal_schedule = :exponential,
         anneal_min_sd = 1.0e-5,
         mstep_sa_on_params::Bool = true,
-        sa_schedule::Symbol = :robbins_monro,
+        sa_schedule::Union{Symbol, AbstractString} = :robbins_monro,
         sa_burnin_iters::Int = 6,
         sa_phase1_iters::Int = 200,
         sa_phase2_kappa::Float64 = -1.0,
@@ -506,7 +506,7 @@ function SAEM(;
         auto_small_n_chains::Bool = true,
         small_n_chain_target::Int = 50,
         sa_anneal_targets::NamedTuple = NamedTuple(),
-        sa_anneal_schedule::Symbol = :exponential,
+        sa_anneal_schedule::Union{Symbol, AbstractString} = :exponential,
         sa_anneal_iters = nothing,
         sa_anneal_alpha::Float64 = 0.95,
         sa_anneal_fn = nothing,
@@ -520,6 +520,14 @@ function SAEM(;
         diagnostics_every::Int = 1,
         precondition::Bool = true
     )
+    sa_schedule = _as_symbol(sa_schedule)
+    ebe_multistart_sampling = _as_symbol(ebe_multistart_sampling)
+    update_schedule = _as_symbol(update_schedule)
+    builtin_stats = _as_symbol(builtin_stats)
+    builtin_mean = _as_symbol(builtin_mean)
+    sa_anneal_schedule = _as_symbol(sa_anneal_schedule)
+    anneal_schedule = _as_symbol(anneal_schedule)
+    resid_var_param = _as_symbol(resid_var_param)
     q_store_max >= 1 ||
         error("SAEM: q_store_max must be ≥ 1. Got: $q_store_max")
     0 <= q_store_min <= q_store_max ||

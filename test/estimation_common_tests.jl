@@ -804,6 +804,82 @@ end
     @test NoLimits._saem_gamma_schedule(1, good) == 0.25
 end
 
+# Symbol-valued options also accept strings, so the Python/R bindings need no
+# per-function conversion (#255). Invalid strings must fail exactly like invalid symbols.
+@testset "symbol options accept strings (#255)" begin
+    @test NoLimits._as_symbol("abc") === :abc
+    @test NoLimits._as_symbol(:abc) === :abc
+    @test NoLimits._as_symbol(nothing) === nothing
+
+    s_str = NoLimits.SAEM(;
+        sa_schedule = "two_phase", sa_anneal_schedule = "linear",
+        update_schedule = "all", builtin_stats = "auto", resid_var_param = "σ",
+        ebe_multistart_sampling = "random", ebe_rescue_multistart_sampling = "random"
+    ).saem
+    s_sym = NoLimits.SAEM(;
+        sa_schedule = :two_phase, sa_anneal_schedule = :linear,
+        update_schedule = :all, builtin_stats = :auto, resid_var_param = :σ,
+        ebe_multistart_sampling = :random, ebe_rescue_multistart_sampling = :random
+    ).saem
+    @test s_str.sa_schedule === s_sym.sa_schedule
+    @test s_str.sa_anneal_schedule === s_sym.sa_anneal_schedule
+    @test s_str.update_schedule === s_sym.update_schedule
+    @test s_str.builtin_stats === s_sym.builtin_stats
+    @test s_str.resid_var_param === s_sym.resid_var_param
+    @test s_str.ebe_multistart_sampling === s_sym.ebe_multistart_sampling
+    @test s_str.ebe_rescue.sampling === s_sym.ebe_rescue.sampling
+    @test_throws ErrorException NoLimits.SAEM(; sa_schedule = "bad")
+    @test_throws ErrorException NoLimits.SAEM(; sa_anneal_schedule = "exponetial")
+
+    l_str = NoLimits.Laplace(; multistart_sampling = "random", nan_recovery = "error")
+    l_sym = NoLimits.Laplace(; multistart_sampling = :random, nan_recovery = :error)
+    @test l_str.multistart.sampling === l_sym.multistart.sampling
+    @test l_str.nan_recovery === l_sym.nan_recovery
+
+    for (T, kw) in (
+            (NoLimits.FOCEI, :multistart_sampling), (NoLimits.GHQuadrature, :multistart_sampling),
+        )
+        @test getfield(T(; kw => "random").multistart, :sampling) ===
+            getfield(T(; kw => :random).multistart, :sampling)
+    end
+
+    m_str = NoLimits.MCEM(; ebe_multistart_sampling = "random", update_schedule = "all")
+    m_sym = NoLimits.MCEM(; ebe_multistart_sampling = :random, update_schedule = :all)
+    @test m_str.ebe.sampling === m_sym.ebe.sampling
+    @test m_str.update_schedule === m_sym.update_schedule
+    @test NoLimits.MCEM_IS(; proposal = "prior").proposal ===
+        NoLimits.MCEM_IS(; proposal = :prior).proposal
+
+    @test NoLimits.EBEOptions(; sampling = "random").sampling ===
+        NoLimits.EBEOptions(; sampling = :random).sampling
+    @test NoLimits.MCIntegrator(; mode = "prior").mode ===
+        NoLimits.MCIntegrator(; mode = :prior).mode
+    @test_throws ErrorException NoLimits.MCIntegrator(; mode = "turnig")
+
+    ms_str = NoLimits.Multistart(; sampling = "lhs", screening = "ebe")
+    ms_sym = NoLimits.Multistart(; sampling = :lhs, screening = :ebe)
+    @test (ms_str.sampling, ms_str.screening) === (ms_sym.sampling, ms_sym.screening)
+    for T in (NoLimits.Pooled, NoLimits.PooledMap)
+        @test T(; refreeze_check = "refit").refreeze_check ===
+            T(; refreeze_check = :refit).refreeze_check
+        @test_throws ErrorException T(; refreeze_check = "warm")
+    end
+
+    dm = fx_nore_dm()
+    @test NoLimits.get_params(dm; scale = "untransformed") ==
+        NoLimits.get_params(dm; scale = :untransformed)
+    @test_throws ErrorException NoLimits.get_params(dm; scale = "untransfomed")
+    res = fx_mle()
+    @test NoLimits.get_params(res; scale = "transformed") ==
+        NoLimits.get_params(res; scale = :transformed)
+    @test_throws ErrorException NoLimits.get_params(res; scale = "transfomed")
+
+    m_str2 = set_solver_config(fx_nore_model(); saveat_mode = "auto", closed_form = "off")
+    m_sym2 = set_solver_config(fx_nore_model(); saveat_mode = :auto, closed_form = :off)
+    @test get_solver_config(m_str2).saveat_mode === get_solver_config(m_sym2).saveat_mode
+    @test get_solver_config(m_str2).closed_form === get_solver_config(m_sym2).closed_form
+end
+
 @testset "boundary validation (#240 Group 2)" begin
     # ── Normalizing planar flow constructor and scalar density pair (#235.12-15) ──
     @test_throws ArgumentError NormalizingPlanarFlow(0, 2)

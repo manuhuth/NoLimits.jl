@@ -6,6 +6,13 @@ using ForwardDiff
 import DiffEqBase
 import Roots
 
+# Public symbol-valued options also accept the string spelling, so the Python/R
+# bindings (and serialized federated options) can pass them through unchanged.
+# New public symbol options normalize through this at their entry point.
+@inline _as_symbol(x::AbstractString) = Symbol(x)
+@inline _as_symbol(x::Symbol) = x
+@inline _as_symbol(x) = x   # nothing, NamedTuples, functions, ... pass through
+
 """
     rowsoftmax(L::AbstractMatrix) -> AbstractMatrix
 

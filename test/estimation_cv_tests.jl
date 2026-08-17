@@ -77,6 +77,12 @@ end
     all_test = vcat(cv.test_rows...)
     @test length(all_test) == n_rows
     @test sort(all_test) == 1:n_rows
+
+    # kind also accepts the string spelling (#255).
+    cv_str = cross_validate(dm, 3; kind = "id", rng = MersenneTwister(1))
+    @test cv_str.kind === cv.kind
+    @test cv_str.test_rows == cv.test_rows
+    @test_throws ErrorException cross_validate(dm, 3; kind = "identifier")
 end
 
 @testset "cross_validate observation-wise: structure checks" begin
@@ -121,6 +127,15 @@ end
     @test nrow(os) == nrow(df)   # one row per observation
     @test all(isfinite, skipmissing(os[!, :loglikelihood]))
     @test all(isfinite, skipmissing(os[!, :predicted_mean]))
+
+    # seen_re_mode / unseen_re_mode also accept strings (#255).
+    res_str = fit_cv(
+        cv, NoLimits.MLE(); seen_re_mode = "ebe", unseen_re_mode = "mean",
+        rng = MersenneTwister(10)
+    )
+    @test res_str.mean_test_loglikelihood == res.mean_test_loglikelihood
+    @test_throws ErrorException fit_cv(cv, NoLimits.MLE(); seen_re_mode = "ebes")
+    @test_throws ErrorException fit_cv(cv, NoLimits.MLE(); unseen_re_mode = "means")
 end
 
 @testset "fit_cv id-wise + Laplace seen_re_mode=:ebe: runs without error" begin

@@ -63,6 +63,8 @@ end
         got = complete_data_loglikelihood(dm, θ; eta = :mean)
         exp = _cdll_manual(df, a, σ, ση, Dict(:s1 => 0.0, :s2 => 0.0))
         @test isapprox(got, exp; rtol = 1.0e-10)
+        # eta also accepts the string spelling (#255).
+        @test complete_data_loglikelihood(dm, θ; eta = "mean") == got
     end
 
     @testset "individual subset" begin
@@ -169,6 +171,8 @@ end
         )
         # bare symbol must be :mean or :ebe
         @test_throws ErrorException complete_data_loglikelihood(dm, θ; eta = :foo)
+        # an invalid string fails the same way (#255)
+        @test_throws ErrorException complete_data_loglikelihood(dm, θ; eta = "foo")
     end
 
     @testset "no random effects -> population loglik" begin

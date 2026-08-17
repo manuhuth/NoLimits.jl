@@ -96,7 +96,8 @@ function _fq_fmt_objective(x)
     return _fq_fmt_num(x)
 end
 
-function _fq_scale_symbol(scale::Symbol)
+function _fq_scale_symbol(scale::Union{Symbol, AbstractString})
+    scale = _as_symbol(scale)
     scale in (:natural, :transformed) || error("scale must be :natural or :transformed.")
     return scale
 end
@@ -568,7 +569,7 @@ end
 
 function summarize(
         res::FitResult;
-        scale::Symbol = :natural,
+        scale::Union{Symbol, AbstractString} = :natural,
         include_non_se::Bool = false,
         constants_re::NamedTuple = NamedTuple()
     )
@@ -668,7 +669,7 @@ function _fq_uq_interval_label(uq::UQResult)
     return inf == :bayesian ? "CrI" : "CI"
 end
 
-function summarize(uq::UQResult; scale::Symbol = :natural)
+function summarize(uq::UQResult; scale::Union{Symbol, AbstractString} = :natural)
     scale = _fq_scale_symbol(scale)
     inference = _fq_inference_from_uq(uq)
     base = _fq_uq_base_vectors(uq; scale = scale)
@@ -719,7 +720,7 @@ end
 
 function summarize(
         res::FitResult, uq::UQResult;
-        scale::Symbol = :natural,
+        scale::Union{Symbol, AbstractString} = :natural,
         include_non_se::Bool = false,
         constants_re::NamedTuple = NamedTuple()
     )

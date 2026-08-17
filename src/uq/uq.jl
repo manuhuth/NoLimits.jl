@@ -82,14 +82,14 @@ A [`UQResult`](@ref) with point estimates, intervals, covariance matrices, and d
 """
 function compute_uq(
         res::FitResult;
-        method::Symbol = :auto,
-        interval::Symbol = :auto,
-        vcov::Symbol = :hessian,
-        re_approx::Symbol = :auto,
+        method::Union{Symbol, AbstractString} = :auto,
+        interval::Union{Symbol, AbstractString} = :auto,
+        vcov::Union{Symbol, AbstractString} = :hessian,
+        re_approx::Union{Symbol, AbstractString} = :auto,
         re_approx_method::Union{Nothing, FittingMethod} = nothing,
         level::Real = 0.95,
         pseudo_inverse::Bool = false,
-        hessian_backend::Symbol = :auto,
+        hessian_backend::Union{Symbol, AbstractString} = :auto,
         fd_abs_step::Real = 1.0e-4,
         fd_rel_step::Real = 1.0e-3,
         fd_max_tries::Int = 8,
@@ -102,11 +102,11 @@ function compute_uq(
         ode_args::Union{Nothing, Tuple} = nothing,
         ode_kwargs::Union{Nothing, NamedTuple} = nothing,
         serialization::Union{Nothing, SciMLBase.EnsembleAlgorithm} = nothing,
-        profile_method::Symbol = :LIN_EXTRAPOL,
+        profile_method::Union{Symbol, AbstractString} = :LIN_EXTRAPOL,
         profile_scan_width::Real = 3.0,
         profile_scan_tol::Union{Nothing, Real} = nothing,
         profile_loss_tol::Union{Nothing, Real} = nothing,
-        profile_local_alg::Symbol = :LN_NELDERMEAD,
+        profile_local_alg::Union{Symbol, AbstractString} = :LN_NELDERMEAD,
         profile_max_iter::Int = 10_000,
         profile_ftol_abs::Real = 1.0e-3,
         profile_kwargs::NamedTuple = NamedTuple(),
@@ -117,6 +117,13 @@ function compute_uq(
         mcmc_fit_kwargs::NamedTuple = NamedTuple(),
         rng::AbstractRNG = Random.default_rng()
     )
+    method = _as_symbol(method)
+    interval = _as_symbol(interval)
+    vcov = _as_symbol(vcov)
+    re_approx = _as_symbol(re_approx)
+    hessian_backend = _as_symbol(hessian_backend)
+    profile_method = _as_symbol(profile_method)
+    profile_local_alg = _as_symbol(profile_local_alg)
     level_use = _validate_level(level)
     n_draws >= 1 || error("n_draws must be >= 1.")
     _validate_uq_options(
