@@ -5,6 +5,7 @@ export rowsoftmax
 using ForwardDiff
 import DiffEqBase
 import Roots
+import DataFrames
 
 # Public symbol-valued options also accept the string spelling, so the Python/R
 # bindings (and serialized federated options) can pass them through unchanged.
@@ -12,6 +13,12 @@ import Roots
 @inline _as_symbol(x::AbstractString) = Symbol(x)
 @inline _as_symbol(x::Symbol) = x
 @inline _as_symbol(x) = x   # nothing, NamedTuples, functions, ... pass through
+
+# Public tabular inputs accept any Tables.jl table (CSV.File, column NamedTuple, an R
+# data.frame through JuliaConnectoR, ...). Non-tables pass through so the existing
+# schema validation still reports them.
+_as_dataframe(df::DataFrames.DataFrame) = df
+_as_dataframe(x) = DataFrames.Tables.istable(x) ? DataFrames.DataFrame(x) : x
 
 # Same idea for the NamedTuple-shaped options: a Python dict arrives as a `PyDict`
 # (an `AbstractDict`), which has no NamedTuple literal on the binding side. Values are

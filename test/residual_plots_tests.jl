@@ -97,6 +97,10 @@ end
     # of the pinned 0.6, diverging from :ebe by exactly that offset.
     pop_df = NoLimits.predict(res, df; re_mode = :population)
     ebe_df = NoLimits.predict(res, df; re_mode = :ebe)
+    # newdata also accepts any Tables.jl table (#259).
+    @test NoLimits.predict(
+        res, DataFrames.Tables.columntable(df); re_mode = :ebe
+    ) == ebe_df
     @test isapprox(
         pop_df.prediction[pop_df.id .== "id_001"],
         ebe_df.prediction[ebe_df.id .== "id_001"]; atol = 1.0e-8
