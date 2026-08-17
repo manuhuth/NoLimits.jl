@@ -180,8 +180,8 @@ effects. `batch_infos` is a `Vector{REBatchInfo}`; `const_cache` is the `REConst
 levels fixed through `constants_re` (pass `NamedTuple()` for none). This is the entry point for
 walking the random-effect structure when assembling a custom estimator.
 """
-function build_re_batch_infos(dm::DataModel, constants_re::NamedTuple)
-    constants_re = _normalize_constants_re(dm, constants_re)
+function build_re_batch_infos(dm::DataModel, constants_re::Union{NamedTuple, AbstractDict})
+    constants_re = _normalize_constants_re(dm, _as_namedtuple(constants_re))
     const_cache = _build_constants_cache(dm, constants_re)
     pairing = _build_re_batches(dm, const_cache)
     cache = dm.re_group_info.laplace_cache

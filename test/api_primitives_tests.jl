@@ -404,6 +404,21 @@ end
             NoLimits._ghq_batch_ll(dm, infos[1], θ, cc, cache, 5)
         @test isfinite(NoLimits.ghq_marginal(dm, θ; level = 5))
 
+        # Dict spellings of the NamedTuple-shaped options (#257). An integer group
+        # level has no symbol spelling, so the inner dict must survive as a dict.
+        _, i_d, _ = NoLimits.build_re_batch_infos(dm, Dict("η" => Dict(1 => 0.0)))
+        _, i_nt, _ = NoLimits.build_re_batch_infos(dm, (; η = Dict(1 => 0.0)))
+        @test NoLimits.get_batch_re_dim.(i_d) == NoLimits.get_batch_re_dim.(i_nt)
+        @test NoLimits.ghq_marginal(
+            dm, θ; level = Dict("η" => 2), ode_kwargs = Dict("reltol" => 1.0e-6)
+        ) === NoLimits.ghq_marginal(dm, θ; level = (; η = 2), ode_kwargs = (; reltol = 1.0e-6))
+        fe_d = NoLimits.get_fixed(NoLimits.get_model(dm))
+        l_d = NoLimits.free_parameter_layout(fe_d; constants = Dict("σ" => 0.5))
+        l_nt = NoLimits.free_parameter_layout(fe_d; constants = (; σ = 0.5))
+        @test l_d.free_names == l_nt.free_names
+        @test l_d.θ_const_t == l_nt.θ_const_t
+        @test l_d.free_idx == l_nt.free_idx
+
         # expected_information registry aliases
         d = Normal(1.0, 0.5)
         @test NoLimits.has_expected_information(d)
@@ -636,6 +651,19 @@ end
             serialization = NoLimits.EnsembleSerial()
         )
         @test isfinite(NoLimits.get_objective(res_pi))
+
+        # fit_options_pooled_init takes a dict, nested option groups included (#257).
+        res_pi_d = fit_model(
+            dm, APITestClosedFormEM(; n_iter = 1); pooled_init = true,
+            fit_options_pooled_init = Dict("constants" => Dict("σ" => 0.3)),
+            serialization = NoLimits.EnsembleSerial()
+        )
+        res_pi_nt = fit_model(
+            dm, APITestClosedFormEM(; n_iter = 1); pooled_init = true,
+            fit_options_pooled_init = (; constants = (; σ = 0.3)),
+            serialization = NoLimits.EnsembleSerial()
+        )
+        @test NoLimits.get_objective(res_pi_d) == NoLimits.get_objective(res_pi_nt)
 
         # save/load roundtrip (generic _strip_fitting_method covers custom methods)
         path = tempname() * ".jld2"

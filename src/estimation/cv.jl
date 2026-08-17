@@ -735,11 +735,13 @@ function fit_cv(
         loss::Union{Nothing, Function} = nothing,
         fold_serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial(),
         rng::AbstractRNG = Random.default_rng(),
-        constants_re::NamedTuple = NamedTuple(),
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
         ode_args::Tuple = (),
-        ode_kwargs::NamedTuple = NamedTuple(),
+        ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
         kwargs...
     )
+    constants_re = _as_namedtuple(constants_re)
+    ode_kwargs = _as_namedtuple(ode_kwargs)
     seen_re_mode = _as_symbol(seen_re_mode)
     unseen_re_mode = _as_symbol(unseen_re_mode)
     seen_re_mode ∈ (:ebe, :conditional) ||

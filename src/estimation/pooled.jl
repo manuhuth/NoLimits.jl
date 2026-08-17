@@ -93,7 +93,7 @@ function Pooled(;
     n_probes >= 1 || error("n_probes must be >= 1.")
     mc_draws >= 1 || error("mc_draws must be >= 1.")
     return Pooled(
-        optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds,
+        optimizer, _as_namedtuple(optim_kwargs), adtype, lb, ub, ignore_model_bounds,
         force_free, refreeze_check, identifiable_only, n_probes, mc_draws, precondition
     )
 end
@@ -144,7 +144,7 @@ function PooledMap(;
     n_probes >= 1 || error("n_probes must be >= 1.")
     mc_draws >= 1 || error("mc_draws must be >= 1.")
     return PooledMap(
-        optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds,
+        optimizer, _as_namedtuple(optim_kwargs), adtype, lb, ub, ignore_model_bounds,
         force_free, refreeze_check, identifiable_only, n_probes, mc_draws, precondition
     )
 end

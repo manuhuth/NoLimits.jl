@@ -274,7 +274,7 @@ function _resolve_sim_theta(dm::DataModel, theta_untransformed)
         return get_θ0_untransformed(fe)
     end
     θ = theta_untransformed isa ComponentArray ? theta_untransformed :
-        ComponentArray(theta_untransformed)
+        ComponentArray(_as_namedtuple(theta_untransformed))
     for name in get_names(fe)
         hasproperty(θ, name) || error("theta_untransformed is missing parameter $(name).")
     end

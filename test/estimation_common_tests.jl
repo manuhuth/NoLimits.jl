@@ -880,6 +880,116 @@ end
     @test get_solver_config(m_str2).closed_form === get_solver_config(m_sym2).closed_form
 end
 
+# NamedTuple-shaped options also accept AbstractDicts, so a Python dict (which arrives
+# as a PyDict) needs no wrapper-side conversion (#257). A dict argument must produce the
+# same result as the NamedTuple spelling, and the same error when it is invalid.
+@testset "NamedTuple options accept dicts (#257)" begin
+    nt = NoLimits._as_namedtuple(Dict("a" => Dict(:b => 1), :c => 2.0))
+    @test nt.a == (; b = 1)          # nested dicts convert too
+    @test nt.c === 2.0
+    # A PyDict is `AbstractDict{Any, Any}`; its values must arrive converted.
+    @test NoLimits._as_namedtuple(Dict{Any, Any}("show_trace" => true)) == (; show_trace = true)
+    @test NoLimits._as_namedtuple(Dict()) == NamedTuple()
+    @test NoLimits._as_namedtuple(nothing) === nothing
+    @test NoLimits._as_namedtuple((; x = 1)) == (; x = 1)
+    # Non-symbol keys have no NamedTuple spelling: `constants_re` group levels are
+    # matched by value, so an integer-keyed dict must survive unchanged.
+    d_int = Dict(1 => 0.0)
+    @test NoLimits._as_namedtuple(d_int) === d_int
+
+    for T in (NoLimits.MLE, NoLimits.MAP, NoLimits.Pooled, NoLimits.PooledMap)
+        @test T(; optim_kwargs = Dict("maxiters" => 4)).optim_kwargs ==
+            T(; optim_kwargs = (; maxiters = 4)).optim_kwargs
+    end
+    for T in (NoLimits.Laplace, NoLimits.FOCEI, NoLimits.GHQuadrature)
+        m_d = T(; optim_kwargs = Dict("maxiters" => 4), inner_kwargs = Dict(:abstol => 1.0e-4))
+        m_nt = T(; optim_kwargs = (; maxiters = 4), inner_kwargs = (; abstol = 1.0e-4))
+        @test m_d.optim_kwargs == m_nt.optim_kwargs
+        @test m_d.inner.kwargs == m_nt.inner.kwargs
+    end
+    @test NoLimits.GHQuadrature(; level = Dict("η" => 5)).level ==
+        NoLimits.GHQuadrature(; level = (; η = 5)).level
+    @test_throws ArgumentError NoLimits.GHQuadrature(; level = Dict("η" => 0))
+
+    s_d = NoLimits.SAEM(;
+        optim_kwargs = Dict("iterations" => 4), turing_kwargs = Dict("n_samples" => 2),
+        ebe_optim_kwargs = Dict("maxiters" => 2), re_cov_params = Dict("η" => "ω"),
+        sa_anneal_targets = Dict("ω" => 0.5)
+    ).saem
+    s_nt = NoLimits.SAEM(;
+        optim_kwargs = (; iterations = 4), turing_kwargs = (; n_samples = 2),
+        ebe_optim_kwargs = (; maxiters = 2), re_cov_params = (; η = :ω),
+        sa_anneal_targets = (; ω = 0.5)
+    ).saem
+    @test s_d.turing_kwargs == s_nt.turing_kwargs
+    @test s_d.ebe_optim_kwargs == s_nt.ebe_optim_kwargs
+    @test s_d.re_cov_params == s_nt.re_cov_params   # values name a parameter: :ω, not "ω"
+    @test s_d.sa_anneal_targets == s_nt.sa_anneal_targets
+    @test_throws ErrorException NoLimits.SAEM(; turing_kwargs = Dict("n_samples" => 0))
+
+    m_d = NoLimits.MCEM(;
+        optim_kwargs = Dict("iterations" => 4), turing_kwargs = Dict("n_samples" => 2),
+        ebe_optim_kwargs = Dict("maxiters" => 2)
+    )
+    m_nt = NoLimits.MCEM(;
+        optim_kwargs = (; iterations = 4), turing_kwargs = (; n_samples = 2),
+        ebe_optim_kwargs = (; maxiters = 2)
+    )
+    @test m_d.optim_kwargs == m_nt.optim_kwargs
+    @test m_d.e_step.turing_kwargs == m_nt.e_step.turing_kwargs
+    @test m_d.ebe.optim_kwargs == m_nt.ebe.optim_kwargs
+    @test NoLimits.MCMC(; turing_kwargs = Dict("n_samples" => 2)).turing_kwargs ==
+        NoLimits.MCMC(; turing_kwargs = (; n_samples = 2)).turing_kwargs
+    @test_throws ErrorException NoLimits.MCMC(; turing_kwargs = Dict("n_samples" => 0))
+    @test NoLimits.VI(; turing_kwargs = Dict("n_samples" => 2)).turing_kwargs ==
+        NoLimits.VI(; turing_kwargs = (; n_samples = 2)).turing_kwargs
+    @test NoLimits.Multistart(; dists = Dict("a" => Normal(0.0, 1.0))).dists ==
+        NoLimits.Multistart(; dists = (; a = Normal(0.0, 1.0))).dists
+
+    cfg_d = get_solver_config(set_solver_config(fx_nore_model(); kwargs = Dict("abstol" => 1.0e-8)))
+    cfg_nt = get_solver_config(set_solver_config(fx_nore_model(); kwargs = (; abstol = 1.0e-8)))
+    @test cfg_d.kwargs == cfg_nt.kwargs
+
+    # ── fit_model options and its post-fit accessors ──
+    dm = fx_nore_dm()
+    mle = NoLimits.MLE(; optim_kwargs = (maxiters = 3,))
+    fit_d = fit_model(
+        dm, mle; constants = Dict("σ" => 0.5), penalty = Dict("a" => 10.0),
+        theta_0_untransformed = Dict("a" => 0.25), ode_kwargs = Dict{Any, Any}(),
+        serialization = _SER
+    )
+    fit_nt = fit_model(
+        dm, mle; constants = (; σ = 0.5), penalty = (; a = 10.0),
+        theta_0_untransformed = (; a = 0.25), serialization = _SER
+    )
+    @test NoLimits.get_params(fit_d; scale = :untransformed) ==
+        NoLimits.get_params(fit_nt; scale = :untransformed)
+    @test get_objective(fit_d) == get_objective(fit_nt)
+    err(f) = try
+        f()
+        ""
+    catch e
+        sprint(showerror, e)
+    end
+    e_d = err(() -> fit_model(dm, mle; constants = Dict("nope" => 1.0), serialization = _SER))
+    e_nt = err(() -> fit_model(dm, mle; constants = (; nope = 1.0), serialization = _SER))
+    @test !isempty(e_nt)
+    @test e_d == e_nt
+    @test_throws ErrorException fit_model(dm, mle; constants = [1.0], serialization = _SER)
+
+    # Nested dict, and an integer group level that must not be turned into a symbol.
+    res = fx_laplace()
+    re_d = NoLimits.get_random_effects(res; constants_re = Dict("η" => Dict(1 => 0.0)))
+    re_nt = NoLimits.get_random_effects(res; constants_re = (; η = Dict(1 => 0.0)))
+    @test isequal(re_d.η, re_nt.η)
+    @test NoLimits.get_loglikelihood(res; ode_kwargs = Dict("reltol" => 1.0e-6)) ==
+        NoLimits.get_loglikelihood(res; ode_kwargs = (; reltol = 1.0e-6))
+    e_lvl_d = err(() -> NoLimits.get_random_effects(res; constants_re = Dict("η" => Dict(99 => 0.0))))
+    e_lvl_nt = err(() -> NoLimits.get_random_effects(res; constants_re = (; η = Dict(99 => 0.0))))
+    @test !isempty(e_lvl_nt)
+    @test e_lvl_d == e_lvl_nt
+end
+
 @testset "boundary validation (#240 Group 2)" begin
     # ── Normalizing planar flow constructor and scalar density pair (#235.12-15) ──
     @test_throws ArgumentError NormalizingPlanarFlow(0, 2)
