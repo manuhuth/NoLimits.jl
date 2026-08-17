@@ -144,9 +144,10 @@ Returns a [`CVSpec`](@ref) storing row indices only (not full `DataModel`s).
 """
 function cross_validate(
         dm::DataModel, n_folds::Int;
-        kind::Symbol = :id,
+        kind::Union{Symbol, AbstractString} = :id,
         rng::AbstractRNG = Random.default_rng()
     )
+    kind = _as_symbol(kind)
     n_folds >= 2 || error("n_folds must be ≥ 2, got $n_folds")
     kind ∈ (:id, :observation) || error("kind must be :id or :observation, got $kind")
     n = length(get_individuals(dm))
@@ -727,8 +728,8 @@ Returns a [`CVResult`](@ref).
 """
 function fit_cv(
         cv_spec::CVSpec, method::FittingMethod, args...;
-        seen_re_mode::Symbol = :ebe,
-        unseen_re_mode::Symbol = :mean,
+        seen_re_mode::Union{Symbol, AbstractString} = :ebe,
+        unseen_re_mode::Union{Symbol, AbstractString} = :mean,
         n_mc_samples::Int = 100,
         store_results::Bool = false,
         loss::Union{Nothing, Function} = nothing,
@@ -739,6 +740,8 @@ function fit_cv(
         ode_kwargs::NamedTuple = NamedTuple(),
         kwargs...
     )
+    seen_re_mode = _as_symbol(seen_re_mode)
+    unseen_re_mode = _as_symbol(unseen_re_mode)
     seen_re_mode ∈ (:ebe, :conditional) ||
         error("seen_re_mode must be :ebe or :conditional, got $seen_re_mode")
     unseen_re_mode ∈ (:mean, :montecarlo) ||

@@ -34,10 +34,20 @@ using Distributions
     @test rep.rank <= length(rep.free_parameters)
     @test isempty(rep.random_effect_information)
 
+    # method / at / hessian_backend also accept strings (#255).
+    rep_str = identifiability_report(
+        dm; method = "mle", at = "start", hessian_backend = "auto"
+    )
+    @test rep_str.method === rep.method
+    @test rep_str.at === rep.at
+    @test rep_str.hessian == rep.hessian
+    @test_throws ErrorException identifiability_report(dm; method = "mlee")
+
     res = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
     rep_fit = identifiability_report(res)
     @test rep_fit.method == :mle
     @test rep_fit.at == :fit
+    @test identifiability_report(res; method = "mle").method === :mle
 end
 
 @testset "identifiability_report for Laplace includes RE information" begin

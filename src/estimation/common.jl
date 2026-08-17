@@ -230,7 +230,7 @@ struct EBEOptions{O, K, A, T}
         _check_ebe_multistart("EBEOptions", multistart_n, multistart_k, max_rounds)
         return new{O, K, A, T}(
             optimizer, optim_kwargs, adtype, grad_tol,
-            multistart_n, multistart_k, max_rounds, sampling
+            multistart_n, multistart_k, max_rounds, _as_symbol(sampling)
         )
     end
 end
@@ -250,7 +250,7 @@ struct EBERescueOptions{T}
             "EBERescueOptions", multistart_n, multistart_k, max_rounds
         )
         return new{T}(
-            enabled, multistart_n, multistart_k, max_rounds, grad_tol, sampling
+            enabled, multistart_n, multistart_k, max_rounds, grad_tol, _as_symbol(sampling)
         )
     end
 end
@@ -288,11 +288,12 @@ end
 
 function MCIntegrator(;
         n_samples::Int = 1000,
-        mode::Symbol = :turing,
+        mode::Union{Symbol, AbstractString} = :turing,
         sampler = nothing,
         n_warmup::Int = 500,
         rng::Union{Nothing, AbstractRNG} = nothing
     )
+    mode = _as_symbol(mode)
     mode in (:prior, :turing) ||
         error("MCIntegrator mode must be :prior or :turing, got :$(mode).")
     n_samples > 0 || error("MCIntegrator n_samples must be > 0.")
@@ -638,7 +639,8 @@ posterior mean of the fixed effects.
   - `:transformed` — the optimization-scale `ComponentArray`.
   - `:untransformed` — the natural-scale `ComponentArray`.
 """
-function get_params(res::FitResult; scale::Symbol = :both)
+function get_params(res::FitResult; scale::Union{Symbol, AbstractString} = :both)
+    scale = _as_symbol(scale)
     params = get_summary(res).params
     scale === :both && return params
     scale === :transformed && return params.transformed
@@ -662,7 +664,8 @@ get_θ0_transformed(dm::DataModel) = get_θ0_transformed(get_fixed(get_model(dm)
 The model's initial fixed-effect values, mirroring `get_params(res; scale)`: `:both`
 returns a [`FitParameters`](@ref), `:transformed`/`:untransformed` a `ComponentArray`.
 """
-function get_params(dm::DataModel; scale::Symbol = :both)
+function get_params(dm::DataModel; scale::Union{Symbol, AbstractString} = :both)
+    scale = _as_symbol(scale)
     fe = get_fixed(get_model(dm))
     scale === :both &&
         return FitParameters(get_θ0_transformed(fe), get_θ0_untransformed(fe))
@@ -2248,7 +2251,7 @@ function reestimate_ebes(
         ebe_multistart_n::Int = 50,
         ebe_multistart_k::Int = 1,
         ebe_multistart_max_rounds::Int = 5,
-        ebe_multistart_sampling::Symbol = :lhs,
+        ebe_multistart_sampling::Union{Symbol, AbstractString} = :lhs,
         ebe_mcmc_sampler = SaemixMH(),
         ebe_mcmc_n_adapt::Int = 50,
         ebe_rescue_on_high_grad::Bool = false,
@@ -2256,7 +2259,7 @@ function reestimate_ebes(
         ebe_rescue_multistart_k::Int = 32,
         ebe_rescue_max_rounds::Int = 8,
         ebe_rescue_grad_tol = ebe_grad_tol,
-        ebe_rescue_multistart_sampling::Symbol = :lhs,
+        ebe_rescue_multistart_sampling::Union{Symbol, AbstractString} = :lhs,
         constants_re::NamedTuple = NamedTuple(),
         individuals = nothing,
         ode_args::Tuple = (),
@@ -2483,7 +2486,7 @@ function EBEOptions(;
         multistart_n::Int = 50,
         multistart_k::Int = 10,
         max_rounds::Int = 1,
-        sampling::Symbol = :lhs
+        sampling::Union{Symbol, AbstractString} = :lhs
     )
     return EBEOptions(
         optimizer, optim_kwargs, adtype, grad_tol,
@@ -2751,6 +2754,7 @@ function _cdll_terms(
         ebe_options::Union{Nothing, EBEOptions} = nothing,
         rng::AbstractRNG = Random.default_rng()
     )
+    eta = _as_symbol(eta)   # every public complete_data_loglikelihood method lands here
     re = get_random(get_model(dm))
     re_names = get_re_names(re)
     θs = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))

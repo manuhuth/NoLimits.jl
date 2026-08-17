@@ -415,6 +415,10 @@ end
     @test ebe_by_id.m[1] > ebe_by_id.m[2] > ebe_by_id.m[3]
     @test !isapprox(ebe.prediction[1], pop.prediction[1]; atol = 1.0e-2)
 
+    # re_mode also accepts the string spelling (#255).
+    @test collect(NoLimits.predict(res, df; re_mode = "ebe").prediction) ==
+        collect(ebe.prediction)
+
     # :reestimate on the training data reproduces the stored EBEs.
     reest = NoLimits.predict(res, df; re_mode = :reestimate)
     @test isapprox(collect(reest.prediction), collect(ebe.prediction); atol = 5.0e-2)
@@ -473,6 +477,7 @@ end
     res_fo = fit_model(dm_fo, NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
     @test_throws ErrorException NoLimits.predict(res_fo, get_df(dm_fo); re_mode = :ebe)
     @test_throws ErrorException NoLimits.predict(res, df; re_mode = :nonsense)
+    @test_throws ErrorException NoLimits.predict(res, df; re_mode = "nonsense")
 end
 
 @testset "predict on new data inherits the DataModel t0" begin

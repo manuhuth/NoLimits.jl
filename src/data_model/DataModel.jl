@@ -1529,19 +1529,28 @@ observation counts, and saveat-mode resolution.
   individual's integration at its first data time.
 - `serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial()`: parallelisation
   strategy for ODE solving. Use `EnsembleThreads()` for multi-threaded evaluation.
+
+Every column keyword also accepts a `String` (`time_col = "TIME"`), which is convenient
+from the Python and R bindings.
 """
 function DataModel(
         model,
         df;
-        primary_id::Union{Nothing, Symbol} = nothing,
-        time_col::Symbol = :TIME,
-        evid_col::Union{Nothing, Symbol} = nothing,
-        amt_col::Symbol = :AMT,
-        rate_col::Symbol = :RATE,
-        cmt_col::Symbol = :CMT,
+        primary_id::Union{Nothing, Symbol, AbstractString} = nothing,
+        time_col::Union{Symbol, AbstractString} = :TIME,
+        evid_col::Union{Nothing, Symbol, AbstractString} = nothing,
+        amt_col::Union{Symbol, AbstractString} = :AMT,
+        rate_col::Union{Symbol, AbstractString} = :RATE,
+        cmt_col::Union{Symbol, AbstractString} = :CMT,
         t0::Union{Nothing, Real} = 0.0,
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial()
     )
+    primary_id = _as_symbol(primary_id)
+    time_col = _as_symbol(time_col)
+    evid_col = _as_symbol(evid_col)
+    amt_col = _as_symbol(amt_col)
+    rate_col = _as_symbol(rate_col)
+    cmt_col = _as_symbol(cmt_col)
     # A non-finite integration start otherwise reaches the ODE solver internals (#220).
     (t0 === nothing || isfinite(t0)) ||
         error("t0 must be a finite time or `nothing`; got $(t0).")

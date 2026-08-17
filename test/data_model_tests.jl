@@ -373,6 +373,11 @@ end
         time_col = :t,
         evid_col = :EVID
     )
+
+    # Column keywords also accept strings (#255), including on the error paths.
+    @test_throws ErrorException DataModel(
+        model, df_missing_time; primary_id = "ID", time_col = "t"
+    )
 end
 
 # Shared no-RE model; also reused by the mixed-type primary_id testset below.
@@ -1504,6 +1509,12 @@ end
     @test length(get_individuals(dm)) == 2
     @test get_individual(dm, 1).series.obs.y == [0.1, 0.2]
     @test get_individual(dm, "2").series.obs.y == [0.0, -0.1]
+
+    # Column keywords also accept the string spelling (#255).
+    dm_str = DataModel(model, df; primary_id = "ID", time_col = "t")
+    @test get_primary_id(dm_str) === get_primary_id(dm)
+    @test get_time_col(dm_str) === get_time_col(dm)
+    @test length(get_individuals(dm_str)) == length(get_individuals(dm))
 end
 
 @testset "DataModel validates missing covariates used by formulas" begin

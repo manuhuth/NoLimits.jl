@@ -151,6 +151,22 @@ end
         res; method = :wald, constants = (a = 0.2,), n_draws = 30, rng = Random.Xoshiro(2)
     )
     @test get_uq_parameter_names(uq_const) == [:σ]
+
+    # Symbol-valued options and accessor scales also accept strings (#255).
+    uq_str = compute_uq(
+        res; method = "wald", interval = "wald", vcov = "hessian",
+        hessian_backend = "auto", n_draws = 30, rng = Random.Xoshiro(1)
+    )
+    @test get_uq_backend(uq_str) == get_uq_backend(uq)
+    @test get_uq_estimates(uq_str; scale = "natural") == get_uq_estimates(uq; scale = :natural)
+    @test get_uq_parameter_names(uq_str; scale = "transformed") ==
+        get_uq_parameter_names(uq; scale = :transformed)
+    @test get_uq_vcov(uq_str; scale = "transformed") == get_uq_vcov(uq; scale = :transformed)
+    @test get_uq_draws(uq_str; scale = "natural") == get_uq_draws(uq; scale = :natural)
+    @test get_uq_intervals(uq_str; scale = "natural").lower ==
+        get_uq_intervals(uq; scale = :natural).lower
+    @test_throws ErrorException compute_uq(res; method = "wlad", n_draws = 5)
+    @test_throws ArgumentError get_uq_estimates(uq; scale = "nautral")
 end
 
 @testset "UQ Wald for MAP" begin

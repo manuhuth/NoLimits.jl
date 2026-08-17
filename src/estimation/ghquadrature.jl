@@ -134,7 +134,7 @@ function GHQuadrature(;
     ms = multistart_options === nothing ?
         LaplaceMultistartOptions(
             multistart_n, multistart_k, multistart_grad_tol,
-            multistart_max_rounds, multistart_sampling
+            multistart_max_rounds, _as_symbol(multistart_sampling)
         ) :
         multistart_options
     return GHQuadrature(

@@ -619,6 +619,11 @@ end
     # scale is validated and recorded.
     @test compare_parameters(fit1, fit2; scale = :transformed).scale == :transformed
     @test_throws ErrorException compare_parameters(fit1, fit2; scale = :bogus)
+    # scale also accepts the string spelling (#255).
+    @test compare_parameters(fit1, fit2; scale = "transformed").scale == :transformed
+    @test compare_parameters("A" => fit1, "B" => fit2; scale = "transformed").scale ==
+        :transformed
+    @test_throws ErrorException compare_parameters(fit1, fit2; scale = "bogus")
 
     # Mismatched label count is an error.
     @test_throws ErrorException compare_parameters(fit1, fit2; labels = ["only one"])
@@ -688,6 +693,14 @@ end
     rows_t = summarize(uq_sc; scale = :transformed).parameter_rows
     @test [r.parameter for r in rows_t] == names_t
     @test [r.estimate for r in rows_t] == [1.0, 2.0, 3.0]
+
+    # scale also accepts the string spelling (#255).
+    rows_str = summarize(uq_sc; scale = "transformed").parameter_rows
+    @test [r.parameter for r in rows_str] == [r.parameter for r in rows_t]
+    @test [r.estimate for r in rows_str] == [r.estimate for r in rows_t]
+    @test_throws ErrorException summarize(uq_sc; scale = "trasformed")
+    @test summarize(res; scale = "natural").parameter_rows ==
+        summarize(res; scale = :natural).parameter_rows
 
     # Draw-based SEs give one value per parameter for n_draws below and above n_params.
     for nd in (2, 5)
