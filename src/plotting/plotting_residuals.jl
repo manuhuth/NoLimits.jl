@@ -946,7 +946,8 @@ a known upper level. `:ebe`/`:reestimate`/`:marginal` need a random-effects meth
 are not available for MCMC/VI posterior-draw fits (whose `:population` path already
 integrates the posterior).
 
-Pass `newdata` as a `DataFrame`, rebuilt into a `DataModel` using the fitted model and
+Pass `newdata` as a `DataFrame` or any Tables.jl-compatible table, rebuilt into a
+`DataModel` using the fitted model and
 the grouping, time and event columns of the original fit, or as a ready-made
 `DataModel`. Returns a `DataFrame` with the individual identifier, the time, the
 observable, and the predicted response in the `prediction` column. For a multivariate
