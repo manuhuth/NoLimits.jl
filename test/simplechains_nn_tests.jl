@@ -333,12 +333,40 @@ end
     end
     @test err !== nothing && occursin("tanh", err) && occursin("swish", err)
     @test_throws ErrorException NoLimits.FFNN((1, 2, 1), :softmax, :identity)
-    @test_throws ErrorException NoLimits.FFNN((1, 2, 1), :logit, :identity)
     @test_throws ErrorException NoLimits.FFNN((3,), :tanh, :identity)
     @test_throws ErrorException NoLimits.FFNN((3, 0), :tanh, :identity)
     @test_throws ErrorException NoLimits.FFNN((3, 1.5), :tanh, :identity)
     # A mismatched input length is reported instead of reading past the parameters.
     @test_throws ErrorException NoLimits.FFNN((1, 2, 1), :tanh, :identity)([0.1, 0.2], θ)
+
+    # `:logit` is no longer registered anywhere: applied to the unbounded affine output it
+    # only ever threw a DomainError. Both positions report it with the same hint.
+    for (a, oa) in ((:logit, :identity), (:tanh, :logit))
+        err = try
+            NoLimits.FFNN((1, 2, 1), a, oa)
+            nothing
+        catch e
+            sprint(showerror, e)
+        end
+        @test err !== nothing
+        @test occursin("Unknown FFNN activation :logit", err)
+        @test occursin(":logistic", err) && occursin(":softmax", err)
+    end
+
+    # A wrong parameter-vector length is reported instead of being truncated (too long) or
+    # raising a raw BoundsError (too short).
+    net = NoLimits.FFNN((1, 2, 1), :tanh, :identity)
+    for bad in (vcat(θ, 0.0), θ[1:(end - 1)])
+        err = try
+            net([0.1], bad)
+            nothing
+        catch e
+            sprint(showerror, e)
+        end
+        @test err !== nothing
+        @test occursin("FFNN parameter vector has length $(length(bad))", err)
+        @test occursin("expects 7", err)
+    end
 end
 
 @testset "FFNNParameters block, plumbing and AD" begin
@@ -383,6 +411,30 @@ end
     for k in 1:5
         @test isfinite(nest(z -> mf.NN1(x .+ z, p)[1], k)(0.0))
     end
+
+    # A wrong call shape is caught at model-build time, as for the Lux/SimpleChains
+    # backends, instead of only at fit time from inside the AD-typed objective.
+    @test NoLimits._nl_fun_in_dim(nn) == 2
+    err = try
+        @Model begin
+            @fixedEffects begin
+                σ = RealNumber(0.5, scale = :log)
+                ζ = FFNNParameters((2, 5, 1); function_name = :NN1, seed = 2)
+            end
+            @covariates begin
+                t = Covariate()
+            end
+            @formulas begin
+                μ = NN1([t], ζ)[1]
+                y ~ Normal(μ, σ)
+            end
+        end
+        nothing
+    catch e
+        sprint(showerror, e)
+    end
+    @test err !== nothing
+    @test occursin("expects a length-2 input vector; got length 1", err)
 end
 
 @testset "FFNN and SimpleChains agree on identical copied weights" begin

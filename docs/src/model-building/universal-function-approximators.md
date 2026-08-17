@@ -34,7 +34,7 @@ For the common case - a plain multilayer perceptron - `FFNNParameters` takes the
 z_nn = FFNNParameters((2, 8, 8, 1); activation=:tanh, function_name=:NN1, calculate_se=false)
 ```
 
-The block it returns is an `NNParameters` block, so call sites (`NN1([x.Age, x.BMI], z_nn)[1]`), priors, `calculate_se`, random effects on the weights and every estimator behave exactly as with a Lux or SimpleChains network. `activation` and `output_activation` accept a `Symbol`, a `String`, or any callable; the registry is `:tanh`, `:relu`, `:sigmoid` (alias `:logistic`), `:softplus`, `:identity`, `:gelu`, `:swish`, plus the output-only `:softmax` and `:logit`. Weights start from a Glorot-uniform draw (deterministic given `seed`) and biases from zero.
+The block it returns is an `NNParameters` block, so call sites (`NN1([x.Age, x.BMI], z_nn)[1]`), priors, `calculate_se`, random effects on the weights and every estimator behave exactly as with a Lux or SimpleChains network. `activation` and `output_activation` accept a `Symbol`, a `String`, or any callable; the registry is `:tanh`, `:relu`, `:sigmoid` (alias `:logistic`), `:softplus`, `:identity`, `:gelu`, `:swish`, plus the output-only `:softmax`. Weights start from a Glorot-uniform draw (deterministic given `seed`) and biases from zero.
 
 Reach for `NNParameters` with a Lux `Chain` or a SimpleChains `SimpleChain` when the architecture goes beyond a plain MLP.
 
