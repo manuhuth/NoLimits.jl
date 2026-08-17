@@ -208,7 +208,8 @@ function _ensure_save_path(save_path::Union{Nothing, String})
         ext = ".png"
     end
     dir = dirname(save_path)
-    isdir(dir) || error("save_path directory does not exist: $(dir)")
+    # An empty dirname means a bare filename in the current directory.
+    isempty(dir) || isdir(dir) || error("save_path directory does not exist: $(dir)")
     return save_path
 end
 

@@ -167,6 +167,15 @@ const _OBS_RES_MLE = fit_model(_OBS_DM, NoLimits.MLE())
             _PLOT_RES_MLE;
             save_path = joinpath(tmp, "a.png"), plot_path = joinpath(tmp, "b.png")
         )
+        @test_throws ErrorException plot_data(
+            _PLOT_RES_MLE; save_path = joinpath(tmp, "missing_dir", "c.png")
+        )
+    end
+
+    # A bare filename is valid and resolves against the current directory.
+    cd(mktempdir()) do
+        plot_data(_PLOT_RES_MLE; save_path = "bare.png")
+        @test isfile("bare.png")
     end
 
     @test_throws ErrorException plot_fits(_PLOT_RES_MLE; x_axis_feature = :missing_feature)
