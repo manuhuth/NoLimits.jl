@@ -1,5 +1,5 @@
 using Random
-using StatsFuns: logistic, logit, log1pexp, softmax
+using StatsFuns: logistic, log1pexp, softmax
 
 export FFNNParameters
 
@@ -27,21 +27,24 @@ const _FFNN_ACTIVATIONS = (
     softplus = log1pexp, identity = identity, gelu = _ffnn_gelu, swish = _ffnn_swish,
 )
 
-# Output-only: `softmax` is a vector transform and `logit` maps (0,1) to ℝ, so neither
-# belongs between hidden layers.
-const _FFNN_OUTPUT_ACTIVATIONS = (softmax = _FFNNSoftmax(), logit = logit)
+# Output-only: `softmax` is a vector transform, so it does not belong between hidden
+# layers. `logit` is deliberately absent: it needs inputs in (0, 1), while the output
+# layer emits an unbounded affine value, so it would just throw a DomainError.
+const _FFNN_OUTPUT_ACTIVATIONS = (softmax = _FFNNSoftmax(),)
+
+const _FFNN_ACTIVATION_HINT = "For a (0, 1)-bounded output use :logistic, for probabilities use :softmax."
 
 function _ffnn_activation(a; output::Bool)
     a isa Union{Symbol, AbstractString} || return a   # any callable passes through
     s = _as_symbol(a)
     haskey(_FFNN_ACTIVATIONS, s) && return getfield(_FFNN_ACTIVATIONS, s)
     if haskey(_FFNN_OUTPUT_ACTIVATIONS, s)
-        output || error("Invalid FFNN activation :$(s). It is only available as an `output_activation` (:softmax is a vector transform and :logit expects inputs in (0, 1)).")
+        output || error("Invalid FFNN activation :$(s). It is only available as an `output_activation` (:softmax is a vector transform). $(_FFNN_ACTIVATION_HINT)")
         return getfield(_FFNN_OUTPUT_ACTIVATIONS, s)
     end
     valid = join(string.(keys(_FFNN_ACTIVATIONS)), ", ")
     out_only = join(string.(keys(_FFNN_OUTPUT_ACTIVATIONS)), ", ")
-    return error("Unknown FFNN activation :$(s). Valid names are $(valid) (hidden or output) and $(out_only) (output only); alternatively pass any callable.")
+    return error("Unknown FFNN activation :$(s). Valid names are $(valid) (hidden or output) and $(out_only) (output only); alternatively pass any callable. $(_FFNN_ACTIVATION_HINT)")
 end
 
 """
@@ -90,6 +93,8 @@ function (net::FFNN)(x::AbstractVector, θ::AbstractVector)
     s = net.sizes
     length(x) == s[1] ||
         error("FFNN input has length $(length(x)); the network expects $(s[1]).")
+    length(θ) == _ffnn_nparams(net) ||
+        error("FFNN parameter vector has length $(length(θ)); the network expects $(_ffnn_nparams(net)).")
     T = promote_type(eltype(θ), eltype(x))
     y = _ffnn_promote(T, x)
     offset = 0
@@ -169,7 +174,7 @@ Use [`NNParameters`](@ref) for architectures beyond a plain MLP.
   Registry: `:tanh`, `:relu`, `:sigmoid` (alias `:logistic`), `:softplus`, `:identity`,
   `:gelu` (tanh approximation), `:swish`.
 - `output_activation = :identity`: transform of the output layer. Same registry, plus the
-  output-only `:softmax` (numerically stable, sums to 1) and `:logit`.
+  output-only `:softmax` (numerically stable, sums to 1).
 - `name::Symbol = :unnamed`: parameter name (injected automatically by `@fixedEffects`).
 - `function_name::Symbol`: name the network is called under inside model blocks.
 - `seed::Integer = 0`: seed for the Glorot-uniform weight initialization (biases start at

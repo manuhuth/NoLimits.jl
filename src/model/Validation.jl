@@ -127,6 +127,7 @@ _nl_fun_in_dim(p) = nothing
 _nl_fun_in_dim(p::SoftTreeParameters) = p.input_dim
 _nl_fun_in_dim(p::SplineParameters) = 1
 function _nl_fun_in_dim(p::NNParameters)
+    p.chain isa FFNN && return p.chain.sizes[1]
     hasproperty(p.chain, :layers) || return nothing
     layers = p.chain.layers
     isempty(layers) && return nothing
