@@ -758,11 +758,11 @@ function identifiability_report(
         dm::DataModel;
         method::Union{Symbol, AbstractString, FittingMethod} = :auto,
         at::Union{Symbol, AbstractString, ComponentArray} = :start,
-        constants::NamedTuple = NamedTuple(),
-        constants_re::NamedTuple = NamedTuple(),
-        penalty::NamedTuple = NamedTuple(),
+        constants::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        penalty::Union{NamedTuple, AbstractDict} = NamedTuple(),
         ode_args::Tuple = (),
-        ode_kwargs::NamedTuple = NamedTuple(),
+        ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         rng::AbstractRNG = Random.default_rng(),
         rng_seed::Union{Nothing, UInt64} = nothing,
@@ -773,6 +773,10 @@ function identifiability_report(
         fd_rel_step::Real = 1.0e-3,
         fd_max_tries::Int = 8
     )
+    constants = _as_namedtuple(constants)
+    constants_re = _as_namedtuple(constants_re)
+    penalty = _as_namedtuple(penalty)
+    ode_kwargs = _as_namedtuple(ode_kwargs)
     at = _as_symbol(at)
     hessian_backend = _as_symbol(hessian_backend)
     method_use = _resolve_ident_method(dm, method)

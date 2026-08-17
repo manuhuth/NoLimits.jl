@@ -913,6 +913,20 @@ function _validate_constant_domain(name::Symbol, spec::TransformSpec, val)
     return nothing
 end
 
+# Accept a dict spelling of the NamedTuple-shaped `fit_model` options (#257). All of
+# them are matched by name downstream, so the arbitrary field order a dict yields does
+# not matter.
+function _normalize_fit_options(kwargs::NamedTuple)
+    for k in (:constants, :constants_re, :penalty, :ode_kwargs, :theta_0_untransformed)
+        haskey(kwargs, k) && (
+            kwargs = merge(
+                kwargs, NamedTuple{(k,)}((_as_namedtuple(getfield(kwargs, k)),))
+            )
+        )
+    end
+    return kwargs
+end
+
 # Validate the per-parameter `constants=` / `penalty=` overrides passed to `fit_model`
 # before any transform or objective math runs, so a bad name or an out-of-domain value
 # reports itself here instead of as a raw `DomainError`/`FieldError` from deep inside
@@ -923,9 +937,9 @@ function _validate_fit_overrides(dm::DataModel, kwargs::NamedTuple)
     # A non-NamedTuple used to reach `_validate_constant_names` as an internal
     # MethodError, and a non-numeric weight surfaced as `*(::String, ::Dual{...})` (#218).
     constants isa NamedTuple ||
-        error("constants must be a NamedTuple such as (a = 1.0,); got $(typeof(constants)).")
+        error("constants must be a NamedTuple or Dict such as (a = 1.0,); got $(typeof(constants)).")
     penalty isa NamedTuple ||
-        error("penalty must be a NamedTuple such as (a = 100.0,); got $(typeof(penalty)).")
+        error("penalty must be a NamedTuple or Dict such as (a = 100.0,); got $(typeof(penalty)).")
     extra = get(kwargs, :extra_objective, nothing)
     extra === nothing || _validate_extra_objective(dm, extra)
     (isempty(keys(constants)) && isempty(keys(penalty))) && return nothing
@@ -1425,10 +1439,11 @@ form uses the `DataModel` stored on `res`.
 function get_laplace_random_effects(
         dm::DataModel,
         res::FitResult;
-        constants_re::NamedTuple = NamedTuple(),
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
         flatten::Bool = true,
         include_constants::Bool = true
     )
+    constants_re = _as_namedtuple(constants_re)
     (get_result(res) isa FrequentistREResult || get_result(res) isa GHQuadratureResult) ||
         error("Laplace-style random-effects accessor requires a Laplace or GHQuadrature fit result.")
     constants_re = _res_constants_re(res, constants_re)
@@ -1444,10 +1459,11 @@ end
 
 function get_laplace_random_effects(
         res::FitResult;
-        constants_re::NamedTuple = NamedTuple(),
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
         flatten::Bool = true,
         include_constants::Bool = true
     )
+    constants_re = _as_namedtuple(constants_re)
     dm = get_data_model(res)
     dm === nothing &&
         error("This fit result does not store a DataModel; call get_laplace_random_effects(dm, res) instead.")
@@ -1625,10 +1641,11 @@ Supported methods: `Laplace`, `MCEM`, `SAEM`, `GHQuadrature`.
 function get_random_effects(
         dm::DataModel,
         res::FitResult;
-        constants_re::NamedTuple = NamedTuple(),
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
         flatten::Bool = true,
         include_constants::Bool = true
     )
+    constants_re = _as_namedtuple(constants_re)
     constants_re = _res_constants_re(res, constants_re)
     if get_result(res) isa FrequentistREResult || get_result(res) isa GHQuadratureResult
         return get_laplace_random_effects(
@@ -1708,10 +1725,11 @@ end
 
 function get_random_effects(
         res::FitResult;
-        constants_re::NamedTuple = NamedTuple(),
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
         flatten::Bool = true,
         include_constants::Bool = true
     )
+    constants_re = _as_namedtuple(constants_re)
     dm = get_data_model(res)
     dm === nothing &&
         error("This fit result does not store a DataModel; call get_random_effects(dm, res) instead.")
@@ -1731,9 +1749,10 @@ ordered by individual index in `dm`.
 """
 function get_random_effects(
         dm::DataModel, res::FitResult, re::Symbol;
-        constants_re::NamedTuple = NamedTuple(),
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
         include_constants::Bool = true
     )
+    constants_re = _as_namedtuple(constants_re)
     nt = get_random_effects(
         dm, res; constants_re = constants_re, flatten = true,
         include_constants = include_constants
@@ -1752,9 +1771,10 @@ end
 
 function get_random_effects(
         res::FitResult, re::Symbol;
-        constants_re::NamedTuple = NamedTuple(),
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
         include_constants::Bool = true
     )
+    constants_re = _as_namedtuple(constants_re)
     dm = get_data_model(res)
     dm === nothing &&
         error("This fit result does not store a DataModel; call get_random_effects(dm, res, re) instead.")
@@ -2115,15 +2135,17 @@ function sample_random_effects(
         res::FitResult;
         n_samples::Int = 100,
         rng::AbstractRNG = Random.default_rng(),
-        constants_re::NamedTuple = NamedTuple(),
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
         flatten::Bool = true,
         include_constants::Bool = true,
         jitter::Real = 1.0e-8,
         n_adapt::Int = 200,
         warm_start::Bool = true,
         sampler = nothing,
-        turing_kwargs::NamedTuple = NamedTuple()
+        turing_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple()
     )
+    constants_re = _as_namedtuple(constants_re)
+    turing_kwargs = _as_namedtuple(turing_kwargs)
     n_samples >= 1 || error("n_samples must be >= 1.")
     constants_re = _res_constants_re(res, constants_re)
 
@@ -2175,15 +2197,17 @@ function sample_random_effects(
         res::FitResult;
         n_samples::Int = 100,
         rng::AbstractRNG = Random.default_rng(),
-        constants_re::NamedTuple = NamedTuple(),
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
         flatten::Bool = true,
         include_constants::Bool = true,
         jitter::Real = 1.0e-8,
         n_adapt::Int = 200,
         warm_start::Bool = true,
         sampler = nothing,
-        turing_kwargs::NamedTuple = NamedTuple()
+        turing_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple()
     )
+    constants_re = _as_namedtuple(constants_re)
+    turing_kwargs = _as_namedtuple(turing_kwargs)
     dm = get_data_model(res)
     dm === nothing &&
         error("This fit result does not store a DataModel; call sample_random_effects(dm, res) instead.")
@@ -2245,7 +2269,7 @@ function reestimate_ebes(
         dm::DataModel,
         res::FitResult;
         ebe_optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
-        ebe_optim_kwargs::NamedTuple = NamedTuple(),
+        ebe_optim_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
         ebe_adtype = Optimization.AutoForwardDiff(),
         ebe_grad_tol = :auto,
         ebe_multistart_n::Int = 50,
@@ -2260,13 +2284,16 @@ function reestimate_ebes(
         ebe_rescue_max_rounds::Int = 8,
         ebe_rescue_grad_tol = ebe_grad_tol,
         ebe_rescue_multistart_sampling::Union{Symbol, AbstractString} = :lhs,
-        constants_re::NamedTuple = NamedTuple(),
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
         individuals = nothing,
         ode_args::Tuple = (),
-        ode_kwargs::NamedTuple = NamedTuple(),
+        ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
         rng::AbstractRNG = Random.default_rng(),
         progress::Bool = false
     )
+    ebe_optim_kwargs = _as_namedtuple(ebe_optim_kwargs)
+    constants_re = _as_namedtuple(constants_re)
+    ode_kwargs = _as_namedtuple(ode_kwargs)
     supported = get_result(res) isa FrequentistREResult ||
         get_result(res) isa MCEMResult || get_result(res) isa SAEMResult
     supported || error("reestimate_ebes is not supported for this fitting method.")
@@ -2383,11 +2410,13 @@ result, recomputing them when the fit was run with `store_eb_modes = false`.
 function get_loglikelihood(
         dm::DataModel,
         res::FitResult;
-        constants_re::NamedTuple = NamedTuple(),
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
         ode_args::Tuple = (),
-        ode_kwargs::NamedTuple = NamedTuple(),
+        ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads()
     )
+    constants_re = _as_namedtuple(constants_re)
+    ode_kwargs = _as_namedtuple(ode_kwargs)
     constants_re = _res_constants_re(res, constants_re)
     θu = get_params(res; scale = :untransformed)
     if get_result(res) isa FrequentistResult || get_result(res) isa MAPResult
@@ -2441,11 +2470,13 @@ end
 
 function get_loglikelihood(
         res::FitResult;
-        constants_re::NamedTuple = NamedTuple(),
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
         ode_args::Tuple = (),
-        ode_kwargs::NamedTuple = NamedTuple(),
+        ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads()
     )
+    constants_re = _as_namedtuple(constants_re)
+    ode_kwargs = _as_namedtuple(ode_kwargs)
     dm = get_data_model(res)
     dm === nothing &&
         error("This fit result does not store a DataModel; call get_loglikelihood(dm, res) instead.")
@@ -2543,10 +2574,10 @@ Laplace, SAEM, MCEM, GHQuadrature.
 function get_loglikelihood_quadrature(
         dm::DataModel,
         res::FitResult;
-        level::Union{Integer, NamedTuple} = 3,
-        constants_re::NamedTuple = NamedTuple(),
+        level::Union{Integer, NamedTuple, AbstractDict} = 3,
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
         ode_args::Tuple = (),
-        ode_kwargs::NamedTuple = NamedTuple(),
+        ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         ebe_options::Union{Nothing, EBEOptions} = nothing,
         seed::Int = 0,
@@ -2555,6 +2586,9 @@ function get_loglikelihood_quadrature(
         mc_integrator::Union{Nothing, MCIntegrator} = nothing,
         fallback::Union{Nothing, MCIntegrator} = MCIntegrator()
     )
+    constants_re = _as_namedtuple(constants_re)
+    ode_kwargs = _as_namedtuple(ode_kwargs)
+    level = _as_namedtuple(level)
     # Same normalization as the estimator path, so `Int8(3)`/`UInt(3)`/`3` all agree.
     level = _check_ghq_level(level)
     if get_result(res) isa MCMCResult
@@ -2676,10 +2710,10 @@ end
 
 function get_loglikelihood_quadrature(
         res::FitResult;
-        level::Union{Integer, NamedTuple} = 3,
-        constants_re::NamedTuple = NamedTuple(),
+        level::Union{Integer, NamedTuple, AbstractDict} = 3,
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
         ode_args::Tuple = (),
-        ode_kwargs::NamedTuple = NamedTuple(),
+        ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         ebe_options::Union{Nothing, EBEOptions} = nothing,
         seed::Int = 0,
@@ -2688,6 +2722,8 @@ function get_loglikelihood_quadrature(
         mc_integrator::Union{Nothing, MCIntegrator} = nothing,
         fallback::Union{Nothing, MCIntegrator} = MCIntegrator()
     )
+    constants_re = _as_namedtuple(constants_re)
+    ode_kwargs = _as_namedtuple(ode_kwargs)
     dm = get_data_model(res)
     dm === nothing &&
         error("This fit result does not store a DataModel; call get_loglikelihood_quadrature(dm, res) instead.")
@@ -2947,8 +2983,9 @@ end
 
 function complete_data_loglikelihood(
         dm::DataModel, res::FitResult;
-        eta = :ebe, constants_re::NamedTuple = NamedTuple(), kwargs...
+        eta = :ebe, constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(), kwargs...
     )
+    constants_re = _as_namedtuple(constants_re)
     constants_re = _res_constants_re(res, constants_re)
     θu = get_params(res; scale = :untransformed)
     return complete_data_loglikelihood(
@@ -2968,8 +3005,9 @@ end
 
 function complete_data_loglikelihood_per_individual(
         dm::DataModel, res::FitResult;
-        eta = :ebe, constants_re::NamedTuple = NamedTuple(), kwargs...
+        eta = :ebe, constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(), kwargs...
     )
+    constants_re = _as_namedtuple(constants_re)
     constants_re = _res_constants_re(res, constants_re)
     θu = get_params(res; scale = :untransformed)
     return complete_data_loglikelihood_per_individual(
@@ -3039,14 +3077,15 @@ function fit_model(
         dm::DataModel, method::FittingMethod, args...;
         store_data_model::Bool = true,
         pooled_init = false,
-        fit_options_pooled_init::NamedTuple = NamedTuple(),
+        fit_options_pooled_init::Union{NamedTuple, AbstractDict} = NamedTuple(),
         kwargs...
     )
     _reset_numeric_warnings!()
     # An all-missing outcome frame fits to objective 0.0 and reports success (#208, #212).
     _has_observations(dm) ||
         error("Cannot fit: every observation of $(join(string.(get_obs_cols(dm)), ", ")) is missing (or excluded by the EVID column). At least one observed value is required.")
-    kwargs = NamedTuple(kwargs)
+    kwargs = _normalize_fit_options(NamedTuple(kwargs))
+    fit_options_pooled_init = _as_namedtuple(fit_options_pooled_init)
     if haskey(kwargs, :theta_0_untransformed)
         kwargs = merge(
             kwargs,
@@ -4074,11 +4113,12 @@ primitives. Pass it as the `cache` keyword to `solve_individual`, `conditional_l
 function build_likelihood_cache(
         dm::DataModel;
         ode_args::Tuple = (),
-        ode_kwargs::NamedTuple = NamedTuple(),
+        ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial(),
         force_saveat::Bool = false,
         nthreads::Int = 1
     )
+    ode_kwargs = _as_namedtuple(ode_kwargs)
     if nthreads == 1
         nthreads = _ensemble_nthreads(serialization)
     end
@@ -4167,10 +4207,11 @@ end
 function loglikelihood(
         dm::DataModel, θ::ComponentArray, η;
         ode_args::Tuple = (),
-        ode_kwargs::NamedTuple = NamedTuple(),
+        ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         cache = nothing
     )
+    ode_kwargs = _as_namedtuple(ode_kwargs)
     # Fresh bindings throughout: `θ` and `η` are captured by the threaded closure
     # below, and reassigning a captured variable boxes it (`Core.Box`) — which made
     # every `η[i]` lookup and the whole serial loop dynamically typed (measured
@@ -4401,8 +4442,9 @@ A `NamedTuple` mapping each RE name to a `NamedTuple` with fields
 function compute_shrinkage(
         res::FitResult;
         dm::Union{Nothing, DataModel} = nothing,
-        constants_re::NamedTuple = NamedTuple()
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple()
     )
+    constants_re = _as_namedtuple(constants_re)
     dm_use = dm !== nothing ? dm : get_data_model(res)
     dm_use === nothing &&
         error("This fit result does not store a DataModel; pass dm=... explicitly.")

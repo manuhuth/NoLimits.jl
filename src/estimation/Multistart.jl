@@ -105,7 +105,7 @@ function Multistart(;
         error("screening must be :prior_mean or :ebe.")
     ebe_maxiters < 1 && error("ebe_maxiters must be ≥ 1.")
     return Multistart(
-        dists, n_draws_requested, n_draws_used, sampling, serialization, rng,
+        _as_namedtuple(dists), n_draws_requested, n_draws_used, sampling, serialization, rng,
         progress, screening, ebe_maxiters
     )
 end
@@ -631,7 +631,7 @@ multistart runs.
 get_multistart_best(res::MultistartFitResult) = res.results_ok[res.best_idx]
 
 function fit_model(ms::Multistart, dm::DataModel, method::FittingMethod, args...; kwargs...)
-    kw_nt = NamedTuple(kwargs)
+    kw_nt = _normalize_fit_options(NamedTuple(kwargs))
     # An explicit start is kept as candidate 1 (it bypasses screening) rather than
     # discarded, so a deterministic start can be compared against sampled ones (#226).
     theta_0_user = get(kw_nt, :theta_0_untransformed, nothing)

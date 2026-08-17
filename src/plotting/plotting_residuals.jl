@@ -533,21 +533,24 @@ function get_residuals(
         individuals_idx = nothing,
         obs_rows = nothing,
         x_axis_feature::Union{Nothing, Symbol} = nothing,
-        params::NamedTuple = NamedTuple(),
-        constants_re::NamedTuple = NamedTuple(),
+        params::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
         cache_obs_dists::Bool = true,
         residuals = [:quantile, :pit, :raw, :pearson, :logscore],
         fitted_stat = mean,
         randomize_discrete::Bool = true,
         cdf_fallback_mc::Int = 0,
         ode_args::Tuple = (),
-        ode_kwargs::NamedTuple = NamedTuple(),
+        ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
         mcmc_draws::Int = 1000,
         mcmc_warmup::Union{Nothing, Int} = nothing,
         mcmc_quantiles::Vector{<:Real} = [5, 95],
         rng::AbstractRNG = Random.default_rng(),
         return_draw_level::Bool = false
     )
+    params = _as_namedtuple(params)
+    constants_re = _as_namedtuple(constants_re)
+    ode_kwargs = _as_namedtuple(ode_kwargs)
     dm = _get_dm(res, dm)
     # Residuals of a fit whose objective is not finite are meaningless and used to fail
     # with an unrelated internal error from a NaN parameter vector (#212).
@@ -841,21 +844,24 @@ function get_residuals(
         individuals_idx = nothing,
         obs_rows = nothing,
         x_axis_feature::Union{Nothing, Symbol} = nothing,
-        params::NamedTuple = NamedTuple(),
-        constants_re::NamedTuple = NamedTuple(),
+        params::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
         cache_obs_dists::Bool = true,
         residuals = [:quantile, :pit, :raw, :pearson, :logscore],
         fitted_stat = mean,
         randomize_discrete::Bool = true,
         cdf_fallback_mc::Int = 0,
         ode_args::Tuple = (),
-        ode_kwargs::NamedTuple = NamedTuple(),
+        ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
         mcmc_draws::Int = 1000,
         mcmc_warmup::Union{Nothing, Int} = nothing,
         mcmc_quantiles::Vector{<:Real} = [5, 95],
         rng::AbstractRNG = Random.default_rng(),
         return_draw_level::Bool = false
     )
+    params = _as_namedtuple(params)
+    constants_re = _as_namedtuple(constants_re)
+    ode_kwargs = _as_namedtuple(ode_kwargs)
     cache_use = cache
     if cache_use === nothing
         cache_use = build_plot_cache(
@@ -968,14 +974,17 @@ function predict(
         res::FitResult, dm_new::DataModel;
         re_mode::Union{Symbol, AbstractString} = :population,
         fitted_stat = mean,
-        constants_re::NamedTuple = NamedTuple(),
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
         marginal_draws::Int = 100,
-        reestimate_kwargs::NamedTuple = NamedTuple(),
+        reestimate_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
         rng::AbstractRNG = Random.default_rng(),
         ode_args::Tuple = (),
-        ode_kwargs::NamedTuple = NamedTuple(),
+        ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
         kwargs...
     )
+    constants_re = _as_namedtuple(constants_re)
+    reestimate_kwargs = _as_namedtuple(reestimate_kwargs)
+    ode_kwargs = _as_namedtuple(ode_kwargs)
     re_mode = _as_symbol(re_mode)
     # t0 is baked into every individual's tspan at DataModel construction, so a
     # dm_new built with a different t0 silently integrates from the wrong start (#148).

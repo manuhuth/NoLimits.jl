@@ -53,7 +53,10 @@ function MLE(;
         ignore_model_bounds = false,
         precondition = true
     )
-    return MLE(optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds, precondition)
+    return MLE(
+        optimizer, _as_namedtuple(optim_kwargs), adtype, lb, ub,
+        ignore_model_bounds, precondition
+    )
 end
 
 # FrequentistResult is a StandardOptimizationResult{:frequentist} alias + constructor (see common.jl).
