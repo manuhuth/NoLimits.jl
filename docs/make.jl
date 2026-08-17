@@ -77,6 +77,7 @@ makedocs(;
         ],
         "Plotting" => "plotting/index.md",
         "Tutorials" => [
+            "Using NoLimits from R and Python" => "tutorials/r-and-python.md",
             "Multi-Method Comparison" => "tutorials/mixed-effects-multiple-methods.md",
             "ODE Model with Dosing (MCEM)" => "tutorials/mixed-effects-ode-mcem.md",
             "Neural Differential Equations (SAEM)" => "tutorials/mixed-effects-nn-saem.md",
