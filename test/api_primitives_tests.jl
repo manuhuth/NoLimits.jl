@@ -669,6 +669,28 @@ end
         @test_throws ErrorException og(NoLimits.SAEM(), dm, θ0)
         @test_throws ErrorException og(NoLimits.Laplace(), dm, θ0; scale = :nonsense)
         @test_throws ErrorException og(NoLimits.GHQuadrature(), dm, θ0; scale = :nonsense)
+
+        # MLE/MAP carry `fit_model`'s no-random-effects precondition, with its message
+        for m in (NoLimits.MLE(), NoLimits.MAP())
+            err = try
+                og(m, dm, θ0; serialization = ser)
+                nothing
+            catch e
+                e
+            end
+            @test err isa ErrorException
+            @test occursin("without random effects", err.msg)
+        end
+        @test_throws ErrorException og(NoLimits.MLE(), dm, θ0, 1)
+
+        # Issue #256: `scale` also accepts strings, and an invalid one is a domain error
+        vs, gs2 = og(NoLimits.Laplace(), dm, θ0; serialization = ser, scale = "transformed")
+        vr, gr = og(NoLimits.Laplace(), dm, θ0; serialization = ser, scale = :transformed)
+        @test vs == vr
+        @test collect(gs2) == collect(gr)
+        @test og(NoLimits.GHQuadrature(), dm, θ0; scale = "untransformed")[1] ==
+            og(NoLimits.GHQuadrature(), dm, θ0; scale = :untransformed)[1]
+        @test_throws ErrorException og(NoLimits.Laplace(), dm, θ0; scale = "nonsense")
     end
 
     # Issue #116: per-individual quantities must key off identity, not row position, so

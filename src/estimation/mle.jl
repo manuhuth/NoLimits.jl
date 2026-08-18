@@ -77,6 +77,13 @@ end
 _combine_add_terms(base, ::Nothing) = base
 _combine_add_terms(base, extra) = _SumTerms(base, extra)
 
+# Precondition shared by every fixed-effects-only route (MLE/MAP fits and their primitives).
+function _require_no_random_effects(dm::DataModel)
+    isempty(get_re_names(get_random(get_model(dm)))) ||
+        error("This method is only valid for models without random effects. Use Laplace, SAEM, or MCMC for random-effects models.")
+    return nothing
+end
+
 function _fit_no_re(
         dm::DataModel, method;
         constants::NamedTuple,
@@ -90,9 +97,7 @@ function _fit_no_re(
         fit_args::Tuple = (),
         fit_kwargs::NamedTuple = NamedTuple()
     )
-    re_names = get_re_names(get_random(get_model(dm)))
-    isempty(re_names) ||
-        error("This method is only valid for models without random effects. Use Laplace, SAEM, or MCMC for random-effects models.")
+    _require_no_random_effects(dm)
 
     fe = get_fixed(get_model(dm))
     fixed_names = get_names(fe)

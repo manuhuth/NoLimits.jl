@@ -710,10 +710,12 @@ const fit_laplace_family = _fit_laplace_family
 
 const _DiffResults = ForwardDiff.DiffResults
 
-@inline function _dev_check_scale(scale::Symbol)
-    scale in (:untransformed, :transformed) ||
-        error("gradient scale must be :untransformed or :transformed, got :$scale.")
-    return nothing
+# Normalizes `scale` (Symbol or string, per the #256 convention) and validates it.
+@inline function _dev_check_scale(scale::Union{Symbol, AbstractString})
+    s = _as_symbol(scale)
+    s in (:untransformed, :transformed) ||
+        error("gradient scale must be :untransformed or :transformed, got :$s.")
+    return s
 end
 
 # The penalty enters the log-objective negatively (the fits minimize `-ll + penalty`).
@@ -832,7 +834,8 @@ Shipped dispatches, and the finer-grained forms:
     `eta = …` freezes η instead. Population form only: the plug-in strategies are calibrated on
     the whole data set.
   - `MLE`, `MAP`: sweeps `loglikelihood` (plus `logprior` for `MAP`). `MLE` also has the
-    per-individual form `objective_and_gradient(MLE(), dm, θ, idx)`.
+    per-individual form `objective_and_gradient(MLE(), dm, θ, idx)`. Like `fit_model`, these
+    require a model WITHOUT random effects; use `Laplace`, `SAEM` or `MCMC` otherwise.
 
 A user-defined `FittingMethod` plugs into downstream tooling (federated aggregation,
 uncertainty workflows) by adding its own `objective_and_gradient` method.
@@ -869,12 +872,12 @@ end
 
 function objective_and_gradient(
         method::Union{Laplace, FOCEI}, dm::DataModel, θ::ComponentArray;
-        scale::Symbol = :untransformed, hessian::Bool = false,
+        scale::Union{Symbol, AbstractString} = :untransformed, hessian::Bool = false,
         include_penalty::Bool = false,
         penalty::Union{NamedTuple, AbstractDict} = NamedTuple(),
         fd_step::Real = 1.0e-5, kwargs...
     )
-    _dev_check_scale(scale)
+    scale = _dev_check_scale(scale)
     penalty = _as_namedtuple(penalty)
     call_kwargs = _dev_laplace_kwargs(method, kwargs)
     fe = get_fixed(get_model(dm))
@@ -907,8 +910,9 @@ end
 
 function objective_and_gradient(
         method::Union{Laplace, FOCEI}, dm::DataModel, θ::ComponentArray,
-        batch::REBatchInfo, b_star; scale::Symbol = :untransformed, kwargs...
+        batch::REBatchInfo, b_star; scale::Union{Symbol, AbstractString} = :untransformed, kwargs...
     )
+    scale = _dev_check_scale(scale)
     return laplace_marginal_gradient(
         dm, θ, batch, b_star; scale = scale, _dev_laplace_kwargs(method, kwargs)...
     )
@@ -939,13 +943,14 @@ end
 
 function objective_and_gradient(
         method::GHQuadrature, dm::DataModel, θ::ComponentArray;
-        scale::Symbol = :untransformed, hessian::Bool = false,
+        scale::Union{Symbol, AbstractString} = :untransformed, hessian::Bool = false,
         include_penalty::Bool = false,
         penalty::Union{NamedTuple, AbstractDict} = NamedTuple(),
         level = method.level, constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
         ode_args::Tuple = (), ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
         cache = nothing
     )
+    scale = _dev_check_scale(scale)
     _, infos, cc = build_re_batch_infos(dm, _as_namedtuple(constants_re))
     c = cache === nothing ?
         build_likelihood_cache(
@@ -960,9 +965,10 @@ end
 
 function objective_and_gradient(
         method::GHQuadrature, dm::DataModel, θ::ComponentArray, batch::REBatchInfo;
-        const_cache::REConstantsCache, cache = nothing, scale::Symbol = :untransformed,
+        const_cache::REConstantsCache, cache = nothing, scale::Union{Symbol, AbstractString} = :untransformed,
         hessian::Bool = false, level = method.level
     )
+    scale = _dev_check_scale(scale)
     f = _DevGHQObjective(
         dm, [batch], const_cache, _dev_ll_cache(dm, cache), level, NamedTuple(), false
     )
@@ -1001,7 +1007,7 @@ end
 
 function objective_and_gradient(
         method::Pooled, dm::DataModel, θ::ComponentArray;
-        scale::Symbol = :untransformed, hessian::Bool = false,
+        scale::Union{Symbol, AbstractString} = :untransformed, hessian::Bool = false,
         include_penalty::Bool = false,
         penalty::Union{NamedTuple, AbstractDict} = NamedTuple(),
         strategies = nothing, eta = nothing,
@@ -1009,6 +1015,7 @@ function objective_and_gradient(
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial(), cache = nothing,
         rng::AbstractRNG = Random.default_rng()
     )
+    scale = _dev_check_scale(scale)
     θ_re = symmetrize_psd_parameters(θ, get_fixed(get_model(dm)))
     strat = strategies === nothing ?
         _dev_pooled_strategies(dm, θ_re, method, rng) : strategies
@@ -1044,12 +1051,14 @@ end
 
 function objective_and_gradient(
         method::Union{MLE, MAP}, dm::DataModel, θ::ComponentArray;
-        scale::Symbol = :untransformed, hessian::Bool = false,
+        scale::Union{Symbol, AbstractString} = :untransformed, hessian::Bool = false,
         include_penalty::Bool = false,
         penalty::Union{NamedTuple, AbstractDict} = NamedTuple(),
         ode_args::Tuple = (), ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial(), cache = nothing
     )
+    scale = _dev_check_scale(scale)
+    _require_no_random_effects(dm)
     fe = get_fixed(get_model(dm))
     c = cache === nothing ?
         build_likelihood_cache(
@@ -1075,8 +1084,10 @@ end
 
 function objective_and_gradient(
         ::MLE, dm::DataModel, θ::ComponentArray, idx::Integer;
-        scale::Symbol = :untransformed, hessian::Bool = false, cache = nothing
+        scale::Union{Symbol, AbstractString} = :untransformed, hessian::Bool = false, cache = nothing
     )
+    scale = _dev_check_scale(scale)
+    _require_no_random_effects(dm)
     f = _DevIndividualObjective(dm, Int(idx), _dev_ll_cache(dm, cache))
     return _dev_sweep(f, dm, θ, scale, hessian)
 end
