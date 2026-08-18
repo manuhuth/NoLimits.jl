@@ -45,7 +45,7 @@ export AbstractCurvature, ExactHessianCurvature, FisherInformationCurvature,
     inner_curvature,
     CurvatureWorkspace
 # Fitting-method protocol drivers
-export fit_method, fit_fixed_effects, fit_laplace_family
+export fit_method, fit_fixed_effects, fit_laplace_family, objective_and_gradient
 
 # Resolve a single-thread evaluation cache for the per-item primitives.
 @inline _dev_ll_cache(::DataModel, cache::LikelihoodCache) = cache
@@ -427,7 +427,7 @@ end
 function _dev_gradient_scale(dm::DataModel, θ::ComponentArray, grad::ComponentArray, scale::Symbol)
     scale === :untransformed && return grad
     scale === :transformed ||
-        error("laplace_marginal_gradient: scale must be :untransformed or :transformed, got :$scale.")
+        error("gradient scale must be :untransformed or :transformed, got :$scale.")
     fe = get_fixed(get_model(dm))
     θ_re = symmetrize_psd_parameters(θ, fe)
     return apply_inv_jacobian_T(get_inverse_transform(fe), get_transform(fe)(θ_re), grad)
@@ -703,6 +703,394 @@ it with the analytic (envelope + trace-estimator) θ-gradient. Swap only the `cu
 ([`AbstractCurvature`](@ref)/[`inner_curvature`](@ref)) to define a new marginal method.
 """
 const fit_laplace_family = _fit_laplace_family
+
+# ── Joint objective value + θ-gradient (method-dispatched) ────────────────────
+# One entry point per estimator family, each reusing the exact route its own fit
+# differentiates, so the gradient a caller gets is the gradient the optimizer consumed.
+
+const _DiffResults = ForwardDiff.DiffResults
+
+# Normalizes `scale` (Symbol or string, per the #256 convention) and validates it.
+@inline function _dev_check_scale(scale::Union{Symbol, AbstractString})
+    s = _as_symbol(scale)
+    s in (:untransformed, :transformed) ||
+        error("gradient scale must be :untransformed or :transformed, got :$s.")
+    return s
+end
+
+# The penalty enters the log-objective negatively (the fits minimize `-ll + penalty`).
+@inline function _dev_penalty_term(θ::ComponentArray, include_penalty::Bool, penalty::NamedTuple)
+    (!include_penalty || isempty(keys(penalty))) && return zero(eltype(θ))
+    return -penalty_value(θ, penalty)
+end
+
+# ∂/∂θ of `-penalty_value(θ, penalty)`, added to an analytic gradient in place.
+function _dev_penalty_gradient!(g::ComponentArray, θ::ComponentArray, penalty::NamedTuple)
+    for name in keys(penalty)
+        w = getfield(penalty, name)
+        setproperty!(g, name, getproperty(g, name) .- 2 .* w .* getproperty(θ, name))
+    end
+    return g
+end
+
+# Objective wrappers for the AD sweep: the differentiated argument is the flat coordinate
+# vector of the requested scale; `:transformed` differentiates through the inverse
+# transform, which is what every fit's optimizer-scale objective does.
+struct _DevObjNatural{F, A}
+    f::F
+    axs::A
+end
+@inline (o::_DevObjNatural)(x) = o.f(ComponentArray(x, o.axs))
+
+struct _DevObjTransformed{F, I, E, A}
+    f::F
+    inv_transform::I
+    fe::E
+    axs::A
+end
+@inline function (o::_DevObjTransformed)(x)
+    return o.f(symmetrize_psd_parameters(o.inv_transform(ComponentArray(x, o.axs)), o.fe))
+end
+
+# Single ForwardDiff/DiffResults sweep of a natural-scale objective `f(θ::ComponentArray)`:
+# value and gradient (and the Hessian when asked) come out of the one sweep.
+function _dev_sweep(f, dm::DataModel, θ::ComponentArray, scale::Symbol, hessian::Bool)
+    _dev_check_scale(scale)
+    fe = get_fixed(get_model(dm))
+    θ_re = symmetrize_psd_parameters(θ, fe)
+    if scale === :untransformed
+        axs = getaxes(θ_re)
+        x0 = collect(ComponentArrays.getdata(θ_re))
+        g = _DevObjNatural(f, axs)
+    else
+        θt = get_transform(fe)(θ_re)
+        axs = getaxes(θt)
+        x0 = collect(ComponentArrays.getdata(θt))
+        g = _DevObjTransformed(f, get_inverse_transform(fe), fe, axs)
+    end
+    if hessian
+        res = ForwardDiff.hessian!(_DiffResults.HessianResult(x0), g, x0)
+        H = _DiffResults.hessian(res)
+        return (
+            _DiffResults.value(res),
+            ComponentArray(_DiffResults.gradient(res), axs),
+            (H .+ H') ./ 2,
+        )
+    end
+    res = ForwardDiff.gradient!(_DiffResults.GradientResult(x0), g, x0)
+    return (_DiffResults.value(res), ComponentArray(_DiffResults.gradient(res), axs))
+end
+
+# Central FD Jacobian of an analytic gradient, symmetrized: the Laplace/FOCEI Hessian.
+function _dev_fd_hessian(g_of_x, x0::Vector{Float64}, step::Real)
+    p = length(x0)
+    H = Matrix{Float64}(undef, p, p)
+    for j in 1:p
+        h = step * max(1.0, abs(x0[j]))
+        xp = copy(x0)
+        xm = copy(x0)
+        xp[j] += h
+        xm[j] -= h
+        H[:, j] .= (g_of_x(xp) .- g_of_x(xm)) ./ (2h)
+    end
+    return (H .+ H') ./ 2
+end
+
+"""
+    objective_and_gradient(method, dm, θ; scale=:untransformed, hessian=false, include_penalty=false, penalty=NamedTuple(), kwargs...)
+        -> (value, gradient) | (value, gradient, hessian)
+
+Value AND θ-gradient of `method`'s log-objective at natural-scale `θ`, computed together the
+way the corresponding `fit_model` computes them - the shared analytic kernel for
+`Laplace`/`FOCEI`, a single ForwardDiff/DiffResults sweep elsewhere. `value` is the method's
+core LOG-objective (higher is better, matching the scalar covers `laplace_marginal`,
+`ghq_marginal`, `loglikelihood`); the optimizer-side negation, preconditioning and
+free/constant merging are not part of the primitive. The gradient is a `ComponentArray` on
+`θ`'s axes (`scale = :untransformed`) or on the transformed axes (`:transformed`).
+
+`hessian = true` additionally returns the symmetric Hessian as a plain `Matrix` in the flat
+coordinate order of the returned gradient. Per family: `Laplace`/`FOCEI` use central finite
+differences over the ANALYTIC gradient (2p gradient evaluations - second-order AD through the
+implicit empirical-Bayes modes is not available), everything else a second-order ForwardDiff
+sweep. Expect ~5-6 digits from the FD-based Hessian and full precision from the AD one.
+
+`penalty` is excluded by default; pass `include_penalty = true` together with the fit's
+`penalty` named tuple to reproduce a penalized fit's objective. `MAP`'s log-priors are not a
+penalty and are always part of the `MAP` objective.
+
+Shipped dispatches, and the finer-grained forms:
+
+  - `Laplace`, `FOCEI`: forwards to [`laplace_marginal_gradient`](@ref) with the method's own
+    curvature (exact inner Hessian / Fisher information) and Hessian options. Per-batch form
+    `objective_and_gradient(method, dm, θ, batch, b_star; const_cache, …)`; batch pairs sum to
+    the population pair (the federation property).
+  - `GHQuadrature`: sweeps [`ghq_marginal`](@ref), whose adaptive centers are built from the
+    Dual-stripped `θ` and are therefore CONSTANT with respect to the gradient - the fit's own
+    convention, so the returned gradient is the one `fit_model(dm, GHQuadrature())` optimizes.
+    Per-batch form `objective_and_gradient(method, dm, θ, batch; const_cache, …)`.
+  - `Pooled`: sweeps the plug-in objective `loglikelihood(dm, θ, η(θ))` with AD flowing through
+    `η(θ)`, as the pooled fit does. The plug-in `strategies` are derived from the method and `θ`
+    unless supplied (`strategies = get_result(res).strategies` reproduces a fit exactly), and
+    `eta = …` freezes η instead. Population form only: the plug-in strategies are calibrated on
+    the whole data set.
+  - `MLE`, `MAP`: sweeps `loglikelihood` (plus `logprior` for `MAP`). `MLE` also has the
+    per-individual form `objective_and_gradient(MLE(), dm, θ, idx)`. Like `fit_model`, these
+    require a model WITHOUT random effects; use `Laplace`, `SAEM` or `MCMC` otherwise.
+
+A user-defined `FittingMethod` plugs into downstream tooling (federated aggregation,
+uncertainty workflows) by adding its own `objective_and_gradient` method.
+"""
+function objective_and_gradient(method::FittingMethod, dm::DataModel, θ::ComponentArray; kwargs...)
+    return error(
+        "objective_and_gradient is not defined for $(typeof(method)). It ships for Laplace, " *
+            "FOCEI, GHQuadrature, Pooled, MLE and MAP; sampling-based methods (SAEM/MCEM/MCMC/VI) " *
+            "have no deterministic θ-objective. Add a method for your own FittingMethod."
+    )
+end
+
+# ── Laplace / FOCEI: the shared analytic kernel ───────────────────────────────
+
+_dev_curvature(::Laplace) = ExactHessianCurvature()
+_dev_curvature(method::FOCEI) = FisherInformationCurvature(method.interaction)
+
+# The method's own Laplace-Hessian block (jitter, trace estimator, ...), so the primitive is
+# configured like the fit; explicit kwargs win.
+function _dev_laplace_kwargs(method, kwargs)
+    h = method.hessian
+    opts = NamedTuple(n => getfield(h, n) for n in fieldnames(typeof(h)))
+    return merge((; curvature = _dev_curvature(method)), opts, NamedTuple(kwargs))
+end
+
+function _dev_laplace_pair(dm::DataModel, θ::ComponentArray, call_kwargs, include_penalty, penalty)
+    v, g = laplace_marginal_gradient(dm, θ; scale = :untransformed, call_kwargs...)
+    if include_penalty && !isempty(keys(penalty))
+        v += _dev_penalty_term(θ, true, penalty)
+        g = _dev_penalty_gradient!(g, θ, penalty)
+    end
+    return (v, g)
+end
+
+function objective_and_gradient(
+        method::Union{Laplace, FOCEI}, dm::DataModel, θ::ComponentArray;
+        scale::Union{Symbol, AbstractString} = :untransformed, hessian::Bool = false,
+        include_penalty::Bool = false,
+        penalty::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        fd_step::Real = 1.0e-5, kwargs...
+    )
+    scale = _dev_check_scale(scale)
+    penalty = _as_namedtuple(penalty)
+    call_kwargs = _dev_laplace_kwargs(method, kwargs)
+    fe = get_fixed(get_model(dm))
+    θ_re = symmetrize_psd_parameters(θ, fe)
+    value, grad = _dev_laplace_pair(dm, θ_re, call_kwargs, include_penalty, penalty)
+    scaled = _dev_gradient_scale(dm, θ_re, grad, scale)
+    hessian || return (value, scaled)
+    # FD over the analytic gradient, in the coordinates of the requested scale.
+    if scale === :untransformed
+        axs = getaxes(θ_re)
+        x0 = collect(ComponentArrays.getdata(θ_re))
+        g_of_x = function (xv)
+            θx = ComponentArray(xv, axs)
+            _, gx = _dev_laplace_pair(dm, θx, call_kwargs, include_penalty, penalty)
+            return collect(gx)
+        end
+    else
+        θt = get_transform(fe)(θ_re)
+        axs = getaxes(θt)
+        x0 = collect(ComponentArrays.getdata(θt))
+        it = get_inverse_transform(fe)
+        g_of_x = function (xv)
+            θx = symmetrize_psd_parameters(it(ComponentArray(xv, axs)), fe)
+            _, gx = _dev_laplace_pair(dm, θx, call_kwargs, include_penalty, penalty)
+            return collect(_dev_gradient_scale(dm, θx, gx, :transformed))
+        end
+    end
+    return (value, scaled, _dev_fd_hessian(g_of_x, x0, fd_step))
+end
+
+function objective_and_gradient(
+        method::Union{Laplace, FOCEI}, dm::DataModel, θ::ComponentArray,
+        batch::REBatchInfo, b_star; scale::Union{Symbol, AbstractString} = :untransformed, kwargs...
+    )
+    scale = _dev_check_scale(scale)
+    return laplace_marginal_gradient(
+        dm, θ, batch, b_star; scale = scale, _dev_laplace_kwargs(method, kwargs)...
+    )
+end
+
+# ── GHQuadrature: the fit's fixed-center quadrature sum ───────────────────────
+
+struct _DevGHQObjective{D, B, C, K, L, P}
+    dm::D
+    infos::B
+    const_cache::C
+    cache::K
+    level::L
+    penalty::P
+    include_penalty::Bool
+end
+
+@inline function (o::_DevGHQObjective)(θ::ComponentArray)
+    total = _dev_penalty_term(θ, o.include_penalty, o.penalty)
+    for bi in eachindex(o.infos)
+        total += ghq_marginal(
+            o.dm, θ, o.infos[bi]; level = o.level,
+            const_cache = o.const_cache, cache = o.cache
+        )
+    end
+    return total
+end
+
+function objective_and_gradient(
+        method::GHQuadrature, dm::DataModel, θ::ComponentArray;
+        scale::Union{Symbol, AbstractString} = :untransformed, hessian::Bool = false,
+        include_penalty::Bool = false,
+        penalty::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        level = method.level, constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        ode_args::Tuple = (), ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        cache = nothing
+    )
+    scale = _dev_check_scale(scale)
+    _, infos, cc = build_re_batch_infos(dm, _as_namedtuple(constants_re))
+    c = cache === nothing ?
+        build_likelihood_cache(
+            dm; ode_args = ode_args, ode_kwargs = _as_namedtuple(ode_kwargs),
+            serialization = EnsembleSerial(), force_saveat = true
+        ) : cache
+    f = _DevGHQObjective(
+        dm, infos, cc, c, level, _as_namedtuple(penalty), include_penalty
+    )
+    return _dev_sweep(f, dm, θ, scale, hessian)
+end
+
+function objective_and_gradient(
+        method::GHQuadrature, dm::DataModel, θ::ComponentArray, batch::REBatchInfo;
+        const_cache::REConstantsCache, cache = nothing, scale::Union{Symbol, AbstractString} = :untransformed,
+        hessian::Bool = false, level = method.level
+    )
+    scale = _dev_check_scale(scale)
+    f = _DevGHQObjective(
+        dm, [batch], const_cache, _dev_ll_cache(dm, cache), level, NamedTuple(), false
+    )
+    return _dev_sweep(f, dm, θ, scale, hessian)
+end
+
+# ── Pooled: AD through the plug-in η(θ) ──────────────────────────────────────
+
+struct _DevPooledObjective{D, K, S, T, E, P}
+    dm::D
+    cache::K
+    serialization::S
+    strategies::T
+    eta::E
+    penalty::P
+    include_penalty::Bool
+end
+
+@inline function (o::_DevPooledObjective)(θ::ComponentArray)
+    η = o.eta === nothing ? _compute_pooled_etas(o.dm, θ, o.strategies) : o.eta
+    ll = loglikelihood(
+        o.dm, θ, η; cache = o.cache, serialization = o.serialization
+    )
+    return ll + _dev_penalty_term(θ, o.include_penalty, o.penalty)
+end
+
+# The plug-in strategies the pooled fit derives before optimizing (`_fit_pooled`).
+function _dev_pooled_strategies(dm::DataModel, θ::ComponentArray, method, rng::AbstractRNG)
+    fe = get_fixed(get_model(dm))
+    strategies = _pooled_plugin_strategies(dm, θ; mc_draws = method.mc_draws, rng = rng)
+    return _pooled_dual_safe_strategies(
+        dm, θ, get_transform(fe)(θ), get_inverse_transform(fe),
+        strategies, method.mc_draws, rng
+    )
+end
+
+function objective_and_gradient(
+        method::Pooled, dm::DataModel, θ::ComponentArray;
+        scale::Union{Symbol, AbstractString} = :untransformed, hessian::Bool = false,
+        include_penalty::Bool = false,
+        penalty::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        strategies = nothing, eta = nothing,
+        ode_args::Tuple = (), ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial(), cache = nothing,
+        rng::AbstractRNG = Random.default_rng()
+    )
+    scale = _dev_check_scale(scale)
+    θ_re = symmetrize_psd_parameters(θ, get_fixed(get_model(dm)))
+    strat = strategies === nothing ?
+        _dev_pooled_strategies(dm, θ_re, method, rng) : strategies
+    c = cache === nothing ?
+        build_likelihood_cache(
+            dm; ode_args = ode_args, ode_kwargs = _as_namedtuple(ode_kwargs),
+            serialization = serialization, force_saveat = true
+        ) : cache
+    f = _DevPooledObjective(
+        dm, c, serialization, strat, eta, _as_namedtuple(penalty), include_penalty
+    )
+    return _dev_sweep(f, dm, θ, scale, hessian)
+end
+
+# ── MLE / MAP: the fixed-effects log-likelihood (plus MAP's log-priors) ───────
+
+struct _DevNoREObjective{D, K, S, P, F}
+    dm::D
+    cache::K
+    serialization::S
+    penalty::P
+    include_penalty::Bool
+    fe::F     # `nothing` for MLE; the fixed-effects block (log-priors) for MAP
+end
+
+@inline function (o::_DevNoREObjective)(θ::ComponentArray)
+    ll = loglikelihood(
+        o.dm, θ, ComponentArray(); cache = o.cache, serialization = o.serialization
+    )
+    lp = o.fe === nothing ? zero(ll) : logprior(o.fe, θ)
+    return ll + lp + _dev_penalty_term(θ, o.include_penalty, o.penalty)
+end
+
+function objective_and_gradient(
+        method::Union{MLE, MAP}, dm::DataModel, θ::ComponentArray;
+        scale::Union{Symbol, AbstractString} = :untransformed, hessian::Bool = false,
+        include_penalty::Bool = false,
+        penalty::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        ode_args::Tuple = (), ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial(), cache = nothing
+    )
+    scale = _dev_check_scale(scale)
+    _require_no_random_effects(dm)
+    fe = get_fixed(get_model(dm))
+    c = cache === nothing ?
+        build_likelihood_cache(
+            dm; ode_args = ode_args, ode_kwargs = _as_namedtuple(ode_kwargs),
+            serialization = serialization, force_saveat = true
+        ) : cache
+    f = _DevNoREObjective(
+        dm, c, serialization, _as_namedtuple(penalty), include_penalty,
+        method isa MAP ? fe : nothing
+    )
+    return _dev_sweep(f, dm, θ, scale, hessian)
+end
+
+struct _DevIndividualObjective{D, K}
+    dm::D
+    idx::Int
+    cache::K
+end
+
+@inline function (o::_DevIndividualObjective)(θ::ComponentArray)
+    return conditional_loglikelihood(o.dm, o.idx, θ, ComponentArray(); cache = o.cache)
+end
+
+function objective_and_gradient(
+        ::MLE, dm::DataModel, θ::ComponentArray, idx::Integer;
+        scale::Union{Symbol, AbstractString} = :untransformed, hessian::Bool = false, cache = nothing
+    )
+    scale = _dev_check_scale(scale)
+    _require_no_random_effects(dm)
+    f = _DevIndividualObjective(dm, Int(idx), _dev_ll_cache(dm, cache))
+    return _dev_sweep(f, dm, θ, scale, hessian)
+end
 
 # ── Objective factory: shared fit setup/teardown ─────────────────────────────
 

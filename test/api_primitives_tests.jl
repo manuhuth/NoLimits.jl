@@ -419,6 +419,280 @@ end
         @test_throws ErrorException lmg(θ0; scale = :nonsense)
     end
 
+    # Issue #271: the method-dispatched joint value+gradient protocol. Each dispatch must
+    # reproduce its own fit's gradient (near-zero at that fit's optimum) and its own scalar
+    # cover's value.
+    @testset "objective_and_gradient" begin
+        og = NoLimits.objective_and_gradient
+        ser = NoLimits.EnsembleSerial()
+        dm = fx_re_dm()
+        fe = NoLimits.get_fixed(NoLimits.get_model(dm))
+        ft = NoLimits.get_transform(fe)
+        it = NoLimits.get_inverse_transform(fe)
+        θ0 = NoLimits.get_θ0_untransformed(fe)
+
+        # Central FD of a scalar θ-function, per named component, on the given scale.
+        function fd_check(f, θ, g; rtol = 1.0e-5)
+            for k in propertynames(θ)
+                h = 1.0e-5 * max(1.0, abs(getproperty(θ, k)))
+                θp = copy(θ)
+                θm = copy(θ)
+                setproperty!(θp, k, getproperty(θ, k) + h)
+                setproperty!(θm, k, getproperty(θ, k) - h)
+                @test getproperty(g, k) ≈ (f(θp) - f(θm)) / (2h) rtol = rtol
+            end
+        end
+
+        @testset "Laplace / FOCEI forward to the analytic kernel" begin
+            for m in (NoLimits.Laplace(), NoLimits.FOCEI())
+                cur = m isa NoLimits.FOCEI ?
+                    NoLimits.FisherInformationCurvature(m.interaction) :
+                    NoLimits.ExactHessianCurvature()
+                lm(θx) = NoLimits.laplace_marginal(
+                    dm, θx; curvature = cur, serialization = ser
+                )
+                for s in (1.0, 0.85)
+                    θ = ComponentArray(collect(θ0) .* s, getaxes(θ0))
+                    v, g = og(m, dm, θ; serialization = ser)
+                    vk, gk = NoLimits.laplace_marginal_gradient(
+                        dm, θ; curvature = cur, serialization = ser
+                    )
+                    @test v == vk                       # thin cover over the #270 kernel
+                    @test collect(g) == collect(gk)
+                    @test v ≈ lm(θ) rtol = 1.0e-12      # value == the scalar cover
+                    @test getaxes(g) == getaxes(θ)
+                    fd_check(lm, θ, g)
+
+                    θt = ft(θ)
+                    _, gt = og(m, dm, θ; serialization = ser, scale = :transformed)
+                    @test getaxes(gt) == getaxes(θt)
+                    fd_check(θtx -> lm(it(θtx)), θt, gt)
+                end
+            end
+
+            θ = θ0
+            m = NoLimits.Laplace()
+            v, g = og(m, dm, θ; serialization = ser)
+
+            # batch pairs sum to the population pair (the federation property)
+            bstars = NoLimits.empirical_bayes(dm, θ; serialization = ser)
+            _, infos, cc = NoLimits.build_re_batch_infos(dm, NamedTuple())
+            cache = NoLimits.build_likelihood_cache(dm; force_saveat = true)
+            vs = 0.0
+            gs = zero(g)
+            for bi in eachindex(infos)
+                vb, gb = og(
+                    m, dm, θ, infos[bi], bstars[bi]; const_cache = cc, cache = cache
+                )
+                vs += vb
+                gs .+= gb
+            end
+            @test vs ≈ v rtol = 1.0e-12
+            @test gs ≈ g rtol = 1.0e-12
+
+            # Hessian: FD over the analytic gradient. Symmetric by construction, and it must
+            # agree with a higher-order independent FD rule to ~4 digits (the documented
+            # tolerance for the FD-based Laplace/FOCEI Hessian).
+            v3, g3, H = og(m, dm, θ; serialization = ser, hessian = true)
+            @test v3 == v
+            @test H ≈ H'
+            grad_of_x = function (xv)
+                _, gx = og(
+                    m, dm, ComponentArray(xv, getaxes(θ)); serialization = ser
+                )
+                return collect(gx)
+            end
+            H_ref = FiniteDifferences.jacobian(
+                FiniteDifferences.central_fdm(5, 1), grad_of_x, collect(θ)
+            )[1]
+            @test H ≈ (H_ref .+ H_ref') ./ 2 rtol = 1.0e-4
+
+            # transformed-scale Hessian is the FD of the transformed-scale gradient
+            _, _, Ht = og(
+                m, dm, θ; serialization = ser, scale = :transformed, hessian = true
+            )
+            @test Ht ≈ Ht'
+            @test size(Ht) == (length(θ), length(θ))
+
+            # penalty is opt-in, and its analytic gradient matches the quadratic form
+            vpen, gpen = og(
+                m, dm, θ; serialization = ser, include_penalty = true,
+                penalty = (; a = 10.0)
+            )
+            @test vpen ≈ v - 10.0 * θ.a^2 rtol = 1.0e-10
+            @test gpen.a ≈ g.a - 20.0 * θ.a rtol = 1.0e-10
+            @test gpen.σ == g.σ
+
+            # gradient vanishes at the method's own optimum
+            for mm in (NoLimits.Laplace(), NoLimits.FOCEI())
+                res = fit_model(dm, mm; serialization = ser)
+                _, gc = og(
+                    mm, dm, NoLimits.get_params(res; scale = :untransformed);
+                    serialization = ser, scale = :transformed
+                )
+                @test maximum(abs, gc) < 1.0e-4
+            end
+        end
+
+        @testset "GHQuadrature keeps the fit's fixed centers" begin
+            m = NoLimits.GHQuadrature(; level = 3)
+            gm(θx) = NoLimits.ghq_marginal(dm, θx; level = 3)
+            for s in (1.0, 0.85)
+                θ = ComponentArray(collect(θ0) .* s, getaxes(θ0))
+                v, g = og(m, dm, θ)
+                @test v ≈ gm(θ) rtol = 1.0e-12
+                @test getaxes(g) == getaxes(θ)
+                # FD of `ghq_marginal` pins the fixed-center convention: the adaptive
+                # centers are built from the Dual-stripped θ, so the FD of the scalar cover
+                # and the AD gradient are the same object.
+                fd_check(gm, θ, g)
+                _, gt = og(m, dm, θ; scale = :transformed)
+                fd_check(θtx -> gm(it(θtx)), ft(θ), gt)
+            end
+
+            # per-batch pairs sum to the population pair
+            _, infos, cc = NoLimits.build_re_batch_infos(dm, NamedTuple())
+            cache = NoLimits.build_likelihood_cache(dm; force_saveat = true)
+            v, g = og(m, dm, θ0)
+            vs = 0.0
+            gs = zero(g)
+            for bi in eachindex(infos)
+                vb, gb = og(m, dm, θ0, infos[bi]; const_cache = cc, cache = cache)
+                vs += vb
+                gs .+= gb
+            end
+            @test vs ≈ v rtol = 1.0e-8
+            @test gs ≈ g rtol = 1.0e-6
+
+            # second-order ForwardDiff sweep
+            v3, g3, H = og(m, dm, θ0; hessian = true)
+            @test v3 ≈ v rtol = 1.0e-12
+            @test H ≈ H'
+            @test H ≈ ForwardDiff.hessian(
+                xv -> NoLimits.ghq_marginal(
+                    dm, ComponentArray(xv, getaxes(θ0)); level = 3
+                ), collect(θ0)
+            ) rtol = 1.0e-8
+
+            res = fit_model(dm, m; serialization = ser)
+            _, gc = og(
+                m, dm, NoLimits.get_params(res; scale = :untransformed);
+                scale = :transformed
+            )
+            @test maximum(abs, gc) < 1.0e-3
+        end
+
+        @testset "Pooled differentiates through η(θ)" begin
+            m = NoLimits.Pooled()
+            pv(θx) = og(m, dm, θx; serialization = ser)[1]
+            for s in (1.0, 0.85)
+                θ = ComponentArray(collect(θ0) .* s, getaxes(θ0))
+                v, g = og(m, dm, θ; serialization = ser)
+                @test isfinite(v)
+                fd_check(pv, θ, g)
+            end
+            v3, g3, H = og(m, dm, θ0; serialization = ser, hessian = true)
+            @test H ≈ H'
+
+            # value bookkeeping: the pooled fit minimizes `-value`
+            res = fit_model(dm, NoLimits.Pooled(); serialization = ser)
+            θ̂ = NoLimits.get_params(res; scale = :untransformed)
+            strat = NoLimits.get_result(res).strategies
+            vo, go = og(
+                m, dm, θ̂; serialization = ser, strategies = strat, scale = :transformed
+            )
+            @test vo ≈ -NoLimits.get_objective(res) rtol = 1.0e-8
+            @test maximum(abs, go) < 1.0e-4
+        end
+
+        @testset "MLE / MAP sweep the (prior-augmented) log-likelihood" begin
+            dmn = fx_nore_dm()
+            fen = NoLimits.get_fixed(NoLimits.get_model(dmn))
+            θn = NoLimits.get_θ0_untransformed(fen)
+            ll(θx) = NoLimits.loglikelihood(
+                dmn, θx, ComponentArray(); serialization = ser
+            )
+            v, g = og(NoLimits.MLE(), dmn, θn; serialization = ser)
+            @test v ≈ ll(θn) rtol = 1.0e-12
+            fd_check(ll, θn, g)
+            v3, g3, H = og(NoLimits.MLE(), dmn, θn; serialization = ser, hessian = true)
+            @test H ≈ H'
+            @test H ≈ ForwardDiff.hessian(
+                xv -> ll(ComponentArray(xv, getaxes(θn))), collect(θn)
+            ) rtol = 1.0e-8
+
+            # penalty is opt-in and enters the log-objective negatively
+            vp, gp = og(
+                NoLimits.MLE(), dmn, θn; serialization = ser,
+                include_penalty = true, penalty = (; a = 10.0)
+            )
+            @test vp ≈ v - 10.0 * θn.a^2 rtol = 1.0e-10
+            @test gp.a ≈ g.a - 20.0 * θn.a rtol = 1.0e-8
+
+            # per-individual contributions sum to the population pair
+            vs = 0.0
+            gs = zero(g)
+            for i in 1:length(NoLimits.get_individuals(dmn))
+                vi, gi = og(NoLimits.MLE(), dmn, θn, i)
+                vs += vi
+                gs .+= gi
+            end
+            @test vs ≈ v rtol = 1.0e-10
+            @test gs ≈ g rtol = 1.0e-8
+
+            res_m = fit_model(dmn, NoLimits.MLE(); serialization = ser)
+            _, gc = og(
+                NoLimits.MLE(), dmn, NoLimits.get_params(res_m; scale = :untransformed);
+                serialization = ser, scale = :transformed
+            )
+            @test maximum(abs, gc) < 1.0e-4
+
+            # MAP: the log-priors are part of the objective, not a penalty
+            dmp = fx_nore_prior_dm()
+            fep = NoLimits.get_fixed(NoLimits.get_model(dmp))
+            θp = NoLimits.get_θ0_untransformed(fep)
+            map_obj(θx) = NoLimits.loglikelihood(
+                dmp, θx, ComponentArray(); serialization = ser
+            ) + NoLimits.logprior(fep, θx)
+            vm, gm = og(NoLimits.MAP(), dmp, θp; serialization = ser)
+            @test vm ≈ map_obj(θp) rtol = 1.0e-12
+            fd_check(map_obj, θp, gm)
+            res_map = fit_model(dmp, NoLimits.MAP(); serialization = ser)
+            _, gmc = og(
+                NoLimits.MAP(), dmp, NoLimits.get_params(res_map; scale = :untransformed);
+                serialization = ser, scale = :transformed
+            )
+            @test maximum(abs, gmc) < 1.0e-4
+        end
+
+        # sampling-based methods have no deterministic θ-objective, and the scale is checked
+        @test_throws ErrorException og(NoLimits.SAEM(), dm, θ0)
+        @test_throws ErrorException og(NoLimits.Laplace(), dm, θ0; scale = :nonsense)
+        @test_throws ErrorException og(NoLimits.GHQuadrature(), dm, θ0; scale = :nonsense)
+
+        # MLE/MAP carry `fit_model`'s no-random-effects precondition, with its message
+        for m in (NoLimits.MLE(), NoLimits.MAP())
+            err = try
+                og(m, dm, θ0; serialization = ser)
+                nothing
+            catch e
+                e
+            end
+            @test err isa ErrorException
+            @test occursin("without random effects", err.msg)
+        end
+        @test_throws ErrorException og(NoLimits.MLE(), dm, θ0, 1)
+
+        # Issue #256: `scale` also accepts strings, and an invalid one is a domain error
+        vs, gs2 = og(NoLimits.Laplace(), dm, θ0; serialization = ser, scale = "transformed")
+        vr, gr = og(NoLimits.Laplace(), dm, θ0; serialization = ser, scale = :transformed)
+        @test vs == vr
+        @test collect(gs2) == collect(gr)
+        @test og(NoLimits.GHQuadrature(), dm, θ0; scale = "untransformed")[1] ==
+            og(NoLimits.GHQuadrature(), dm, θ0; scale = :untransformed)[1]
+        @test_throws ErrorException og(NoLimits.Laplace(), dm, θ0; scale = "nonsense")
+    end
+
     # Issue #116: per-individual quantities must key off identity, not row position, so
     # permuting/relabelling individuals may only change the order of the outer sum.
     @testset "per-individual terms are position-independent" begin
