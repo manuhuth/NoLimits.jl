@@ -1101,6 +1101,116 @@ end
         @test NoLimits.get_random_effects(dm, res) isa NamedTuple
     end
 
+    # Issue #273: the gradient-bearing primitives get FitContext forms that reuse the
+    # context's caches. Same results as the `dm` forms, no per-call rebuild.
+    @testset "FitContext gradient forms" begin
+        og = NoLimits.objective_and_gradient
+        ser = NoLimits.EnsembleSerial()
+        dm = fx_re_dm()
+        ctx = build_fit_context(dm)
+        θ0 = NoLimits.get_θ0_untransformed(NoLimits.get_fixed(NoLimits.get_model(dm)))
+
+        for s in (1.0, 0.85, 1.2), sc in (:untransformed, :transformed)
+            θ = ComponentArray(collect(θ0) .* s, getaxes(θ0))
+            v, g = NoLimits.laplace_marginal_gradient(ctx, θ; scale = sc)
+            vd, gd = NoLimits.laplace_marginal_gradient(
+                dm, θ; scale = sc, serialization = ser
+            )
+            @test v ≈ vd rtol = 1.0e-12
+            @test g ≈ gd rtol = 1.0e-12
+            @test getaxes(g) == getaxes(gd)
+
+            for m in (NoLimits.Laplace(), NoLimits.FOCEI())
+                vc, gc = og(m, ctx, θ; scale = sc)
+                vm, gm = og(m, dm, θ; scale = sc, serialization = ser)
+                @test vc ≈ vm rtol = 1.0e-12
+                @test gc ≈ gm rtol = 1.0e-12
+            end
+
+            ghq = NoLimits.GHQuadrature(; level = 2)
+            vc, gc = og(ghq, ctx, θ; scale = sc)
+            vm, gm = og(ghq, dm, θ; scale = sc)
+            @test vc == vm
+            @test gc == gm
+
+            pl = NoLimits.Pooled()
+            vc, gc = og(pl, ctx, θ; scale = sc, rng = Random.MersenneTwister(7))
+            vm, gm = og(pl, dm, θ; scale = sc, rng = Random.MersenneTwister(7))
+            @test vc ≈ vm rtol = 1.0e-12
+            @test gc ≈ gm rtol = 1.0e-12
+        end
+
+        # hessian = true is offered by every ctx form that offers it on `dm`
+        θ = ComponentArray(collect(θ0), getaxes(θ0))
+        vc, gc, Hc = og(NoLimits.Laplace(), ctx, θ; hessian = true)
+        vm, gm, Hm = og(NoLimits.Laplace(), dm, θ; hessian = true, serialization = ser)
+        @test vc ≈ vm rtol = 1.0e-12
+        @test gc ≈ gm rtol = 1.0e-12
+        @test Hc ≈ Hm rtol = 1.0e-10
+        ghq = NoLimits.GHQuadrature(; level = 2)
+        @test og(ghq, ctx, θ; hessian = true)[3] == og(ghq, dm, θ; hessian = true)[3]
+
+        # scalar-cover symmetry: batch-index laplace_marginal == the explicit call
+        modes = NoLimits.empirical_bayes(ctx, θ)
+        _, infos_c, cc_c = NoLimits.build_re_batch_infos(dm, NamedTuple())
+        cache_c = NoLimits.build_likelihood_cache(dm; force_saveat = true)
+        @test NoLimits.laplace_marginal(ctx, 1, θ, modes[1]) ===
+            NoLimits.laplace_marginal(
+            dm, θ, infos_c[1], modes[1]; const_cache = cc_c, cache = cache_c
+        )
+
+        # MLE / MAP (no random effects) reuse the likelihood cache
+        for (dmn, m) in (
+                (fx_nore_dm(), NoLimits.MLE()), (fx_nore_prior_dm(), NoLimits.MAP()),
+            )
+            cn = build_fit_context(dmn)
+            θn = NoLimits.get_θ0_untransformed(NoLimits.get_fixed(NoLimits.get_model(dmn)))
+            for sc in (:untransformed, :transformed)
+                vc, gc = og(m, cn, θn; scale = sc)
+                vm, gm = og(m, dmn, θn; scale = sc)
+                @test vc == vm
+                @test gc == gm
+            end
+            if m isa NoLimits.MLE
+                @test og(m, cn, θn, 1) == og(m, dmn, θn, 1)
+            end
+        end
+
+        # 20 sequential evaluations through one ctx == 20 dm-form calls (speedup is
+        # informational: the ctx form skips the per-call cache/batch-info rebuild)
+        og(NoLimits.Laplace(), ctx, θ)                       # warm up
+        og(NoLimits.Laplace(), dm, θ; serialization = ser)
+        vs_ctx = [og(NoLimits.Laplace(), ctx, θ) for _ in 1:20]
+        vs_dm = [og(NoLimits.Laplace(), dm, θ; serialization = ser) for _ in 1:20]
+        @test all(
+            vs_ctx[i][1] ≈ vs_dm[i][1] && vs_ctx[i][2] ≈ vs_dm[i][2] for i in 1:20
+        )
+        @test all(vs_ctx[i] == vs_ctx[1] for i in 1:20)      # reuse is stateless in θ
+
+        # Informational only (min of two rounds each): on these 2-subject fixtures the
+        # avoided rebuild is noise, so expect ~1x here - the gain scales with the data set
+        # (~1.75x on a 50-subject ODE model).
+        dmo = fx_ode_dm()
+        ctxo = build_fit_context(dmo)
+        θo = NoLimits.get_θ0_untransformed(NoLimits.get_fixed(NoLimits.get_model(dmo)))
+        f_ctx() = og(NoLimits.Laplace(), ctxo, θo)
+        f_dm() = og(NoLimits.Laplace(), dmo, θo; serialization = ser)
+        f_ctx()
+        f_dm()
+        t_ctx = minimum(@elapsed([f_ctx() for _ in 1:20]) for _ in 1:2)
+        t_dm = minimum(@elapsed([f_dm() for _ in 1:20]) for _ in 1:2)
+        @info "FitContext objective_and_gradient, 20 calls (ODE fixture)" t_ctx t_dm speedup = t_dm / t_ctx
+
+        # kwargs the context already fixed must error, not silently diverge
+        @test_throws ErrorException NoLimits.laplace_marginal_gradient(
+            ctx, θ; constants_re = (; η = (; var"1" = 0.0))
+        )
+        @test_throws ErrorException og(NoLimits.Laplace(), ctx, θ; ode_kwargs = (; abstol = 1.0e-8))
+        @test_throws ErrorException og(ghq, ctx, θ; constants_re = NamedTuple())
+        @test_throws ErrorException og(NoLimits.Pooled(), ctx, θ; ode_args = ())
+        @test_throws ErrorException og(NoLimits.MLE(), build_fit_context(fx_nore_dm()), θ0; cache = nothing)
+    end
+
     @testset "custom Bayesian estimator: build_fit_result(chain)" begin
         base = fx_mcmc()                       # built-in MCMC fit; reuse its chain + dm
         dm = NoLimits.get_data_model(base)

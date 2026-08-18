@@ -82,6 +82,25 @@ A user-defined `FittingMethod` joins this protocol by adding its own `objective_
 method; sampling-based methods (SAEM, MCEM, MCMC, VI) have no deterministic θ-objective and
 deliberately have none.
 
+Inside a loop that evaluates the objective many times at different θ - a custom optimizer, or a
+federated round trip - pass a `FitContext` instead of the `DataModel` and the θ-independent
+setup is reused instead of rebuilt per call:
+
+```julia
+ctx = build_fit_context(dm)                       # once per fit
+value, grad = laplace_marginal_gradient(ctx, θ)   # == the dm form, caches reused
+value, grad = objective_and_gradient(Laplace(), ctx, θ; scale = :transformed)
+value, grad, H = objective_and_gradient(GHQuadrature(; level = 3), ctx, θ; hessian = true)
+```
+
+The context forms exist for `Laplace`, `FOCEI`, `GHQuadrature`, `MLE`, `MAP` and `Pooled`, take
+the same keywords, and return identical results. `Pooled`, `MLE` and `MAP` reuse only the
+likelihood cache: they have no free random effects to batch, and `Pooled` recalibrates its
+plug-in `strategies` at every θ by construction. Keywords the context already fixed at build
+time (`constants_re`, `ode_args`, `ode_kwargs`, and the caches themselves) are rejected with an
+error rather than silently diverging from the cached state - set them in `build_fit_context`, or
+use the `dm` form when they must vary per call.
+
 ## Building a new fitting method
 
 A new estimator is a `struct MyMethod <: FittingMethod` plus one method,
@@ -129,7 +148,8 @@ with the context's stored objects - results are identical, and the explicit laye
 the full-control path (own caches per thread, `BatchThetaContext` amortisation, custom bounds).
 Note that the population primitives called with a bare `dm` (e.g. `empirical_bayes(dm, θ)`)
 rebuild the caches on every call - inside a loop, prefer the context forms or the explicit
-layer. See the [Building Custom Estimators](tutorials/building-custom-estimators.md) tutorial
+layer. The gradient-bearing primitives take a context too: `laplace_marginal_gradient(ctx, θ)`
+and `objective_and_gradient(method, ctx, θ)`, described above. See the [Building Custom Estimators](tutorials/building-custom-estimators.md) tutorial
 for the full walkthrough.
 
 ### A fixed-effects method
