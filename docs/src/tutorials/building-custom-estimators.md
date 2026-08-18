@@ -281,6 +281,17 @@ also closed-form - the mode value plus a trace correction - giving a fully deter
 
 ### Model and Data
 
+!!! tip "The same network without Lux"
+    `FFNNParameters` builds a plain multilayer perceptron with no optional dependency:
+
+    ```julia
+    ζ = FFNNParameters((1, 6, 1); activation=:tanh, output_activation=:identity,
+        function_name=:NN1, calculate_se=false)
+    ```
+
+    It returns an `NNParameters` block, so the estimator code below is unaffected. See
+    [function approximators](../model-building/universal-function-approximators.md).
+
 ```julia
 using Lux, LinearAlgebra
 

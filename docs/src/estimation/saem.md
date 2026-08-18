@@ -641,6 +641,17 @@ For HMM outcomes (`DiscreteTimeDiscreteStatesHMM`, `ContinuousTimeDiscreteStates
 
 The following example illustrates a mixed-effects ODE model in which neural network parameter vectors serve as random-effect distribution means. Despite the highly nonlinear dynamics, the random-effect mean parameters and observation scale parameter admit closed-form SAEM updates.
 
+!!! tip "The same networks without Lux"
+    Each `Chain(Dense(1, 4, tanh), Dense(4, 1))` below can be replaced by a dependency-free
+    `FFNNParameters` block with identical call sites:
+
+    ```julia
+    zA1 = FFNNParameters((1, 4, 1); activation=:tanh, output_activation=:identity,
+        function_name=:NNA1, calculate_se=false)
+    ```
+
+    See [function approximators](../model-building/universal-function-approximators.md).
+
 ```julia
 using NoLimits
 using LinearAlgebra

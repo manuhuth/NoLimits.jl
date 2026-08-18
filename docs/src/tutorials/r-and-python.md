@@ -341,6 +341,17 @@ model. Install the optional Julia package once (`install_nolimits(extras = "Simp
 in R, `nl.install_julia_packages("SimpleChains")` in Python), then write the prelude into
 the model string:
 
+!!! tip "No install needed for a plain network"
+    `FFNNParameters` builds the same architecture from its layer sizes without any optional
+    dependency, so the prelude reduces to the `@Model` block:
+
+    ```julia
+    z = FFNNParameters((1, 2, 1); activation=:tanh, output_activation=:identity,
+        function_name=:NN1, calculate_se=false)
+    ```
+
+    See [function approximators](../model-building/universal-function-approximators.md).
+
 ```r
 model <- nl_model('
 using SimpleChains
