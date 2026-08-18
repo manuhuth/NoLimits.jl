@@ -449,7 +449,7 @@ Scale contract: `θ` is natural-scale (as everywhere in this API) and `scale` se
 scale of the RETURNED gradient. `:untransformed` (default) is `∂/∂θ` on the natural scale;
 `:transformed` applies the fixed-effects transform Jacobian and returns `∂/∂θ_t` on the
 optimizer's transformed scale (`:log`, `:logit`, Cholesky, ... - see
-[`get_transform`](@ref)). The gradient is a `ComponentArray` on `θ`'s axes for
+`get_transform`). The gradient is a `ComponentArray` on `θ`'s axes for
 `:untransformed` and on the transformed-θ axes for `:transformed`.
 """
 function laplace_marginal_gradient(
