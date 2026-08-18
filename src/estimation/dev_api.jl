@@ -28,7 +28,8 @@ export solve_individual, obs_distributions, hmm_filter_step!, conditional_loglik
     complete_data_loglikelihood, re_logprior, complete_data_loglikelihood_gradient,
     complete_data_loglikelihood_hessian
 # Posterior / empirical Bayes / marginal / sampling
-export empirical_bayes, empirical_bayes_covariance, laplace_marginal, ghq_marginal,
+export empirical_bayes, empirical_bayes_covariance, laplace_marginal,
+    laplace_marginal_gradient, ghq_marginal,
     sample_random_effect_draws,
     RandomEffectPosteriorSample, get_draws, get_log_weights, get_ess, EBEOptions
 # Fisher-information registry
@@ -373,8 +374,8 @@ end
 Laplace-approximate marginal log-likelihood
 `log p(y | θ) ≈ log f(b*) + ½·n_b·log(2π) − ½·log det(−H)`. The batch form uses a supplied mode
 `b_star`; the population form finds the modes and sums over batches. For a θ-gradient of the
-marginal use the Laplace fit's analytic (envelope + trace-estimator) gradient; naive AD through
-the recomputed mode is not supported.
+marginal use [`laplace_marginal_gradient`](@ref) (the Laplace fit's analytic envelope +
+trace-estimator gradient); naive AD through the recomputed mode is not supported.
 """
 function laplace_marginal(
         dm::DataModel, θ::ComponentArray, batch::REBatchInfo, b_star;
@@ -419,6 +420,90 @@ function laplace_marginal(
             )
             for bi in eachindex(infos)
     )
+end
+
+# Move a natural-scale θ-gradient onto the transformed scale with the same Jacobian
+# the Laplace fit applies to its analytic gradient (laplace.jl `obj_grad`).
+function _dev_gradient_scale(dm::DataModel, θ::ComponentArray, grad::ComponentArray, scale::Symbol)
+    scale === :untransformed && return grad
+    scale === :transformed ||
+        error("laplace_marginal_gradient: scale must be :untransformed or :transformed, got :$scale.")
+    fe = get_fixed(get_model(dm))
+    θ_re = symmetrize_psd_parameters(θ, fe)
+    return apply_inv_jacobian_T(get_inverse_transform(fe), get_transform(fe)(θ_re), grad)
+end
+
+"""
+    laplace_marginal_gradient(dm, θ, batch, b_star; const_cache, cache=nothing, scale=:untransformed, curvature=ExactHessianCurvature(), jitter=1e-6, max_tries=6, growth=10.0, adaptive=false, scale_factor=0.0, use_trace_logdet_grad=true, use_hutchinson=false, hutchinson_n=8, rng=Random.default_rng()) -> (value, gradient)
+    laplace_marginal_gradient(dm, θ; constants_re=NamedTuple(), scale=:untransformed, kwargs...) -> (value, gradient)
+
+Value AND analytic θ-gradient of the Laplace-approximate marginal log-likelihood
+[`laplace_marginal`](@ref) - the exact gradient the `Laplace` fit optimizes, including the
+implicit `db*/dθ` envelope correction, so naive AD through the re-optimized mode is not
+needed. `value` is identical to `laplace_marginal` at the same arguments. The batch form
+takes one supplied mode `b_star`; the population form finds the modes and sums both value and
+gradient over batches (subjects are independent, so per-site sums are exact - this is the
+federation property).
+
+Scale contract: `θ` is natural-scale (as everywhere in this API) and `scale` selects the
+scale of the RETURNED gradient. `:untransformed` (default) is `∂/∂θ` on the natural scale;
+`:transformed` applies the fixed-effects transform Jacobian and returns `∂/∂θ_t` on the
+optimizer's transformed scale (`:log`, `:logit`, Cholesky, ... - see
+`get_transform`). The gradient is a `ComponentArray` on `θ`'s axes for
+`:untransformed` and on the transformed-θ axes for `:transformed`.
+"""
+function laplace_marginal_gradient(
+        dm::DataModel, θ::ComponentArray, batch::REBatchInfo, b_star;
+        const_cache::REConstantsCache, cache = nothing, scale::Symbol = :untransformed,
+        curvature::AbstractCurvature = ExactHessianCurvature(), jitter = 1.0e-6,
+        max_tries::Int = 6, growth = 10.0, adaptive::Bool = false, scale_factor = 0.0,
+        use_trace_logdet_grad::Bool = true, use_hutchinson::Bool = false,
+        hutchinson_n::Int = 8, rng::AbstractRNG = Random.default_rng()
+    )
+    c = _dev_ll_cache(dm, cache)
+    res = _laplace_grad_batch(
+        dm, batch, θ, b_star, const_cache, c, nothing, 1;
+        jitter = jitter, max_tries = max_tries, growth = growth, adaptive = adaptive,
+        scale_factor = scale_factor, use_trace_logdet_grad = use_trace_logdet_grad,
+        use_hutchinson = use_hutchinson, hutchinson_n = hutchinson_n, rng = rng,
+        hmode = curvature
+    )
+    if isinf(res.logdet)
+        @warn "laplace_marginal_gradient: the Laplace expansion is invalid at b* (-H " *
+            "degenerate or not factorizable; b* may not be a true mode). Returning -Inf."
+    end
+    n_b = get_batch_re_dim(batch)
+    value = res.logf + (n_b / 2) * log(2 * pi) - res.logdet / 2
+    return (value, _dev_gradient_scale(dm, θ, res.grad, scale))
+end
+
+function laplace_marginal_gradient(
+        dm::DataModel, θ::ComponentArray;
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        scale::Symbol = :untransformed,
+        curvature::AbstractCurvature = ExactHessianCurvature(), jitter = 1.0e-6,
+        max_tries::Int = 6, growth = 10.0, adaptive::Bool = false, scale_factor = 0.0,
+        use_trace_logdet_grad::Bool = true, use_hutchinson::Bool = false,
+        hutchinson_n::Int = 8, rng::AbstractRNG = Random.default_rng(), kwargs...
+    )
+    constants_re = _as_namedtuple(constants_re)
+    bstars, infos, cc, θ_re, cache = _empirical_bayes_batches(
+        dm, θ; constants_re = constants_re, rng = rng, kwargs...
+    )
+    value = zero(eltype(θ_re))
+    grad = ComponentArray(zeros(eltype(θ_re), length(θ_re)), getaxes(θ_re))
+    for bi in eachindex(infos)
+        v, g = laplace_marginal_gradient(
+            dm, θ_re, infos[bi], bstars[bi]; const_cache = cc, cache = cache,
+            scale = :untransformed, curvature = curvature, jitter = jitter,
+            max_tries = max_tries, growth = growth, adaptive = adaptive,
+            scale_factor = scale_factor, use_trace_logdet_grad = use_trace_logdet_grad,
+            use_hutchinson = use_hutchinson, hutchinson_n = hutchinson_n, rng = rng
+        )
+        value += v
+        grad .+= g
+    end
+    return (value, _dev_gradient_scale(dm, θ_re, grad, scale))
 end
 
 """

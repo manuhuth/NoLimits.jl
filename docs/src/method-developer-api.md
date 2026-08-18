@@ -37,7 +37,7 @@ Every function here obeys two conventions:
 | Forward map | `solve_individual`, `obs_distributions`, `hmm_filter_step!` |
 | Densities | `conditional_loglikelihood`, `complete_data_loglikelihood`, `re_logprior`, `complete_data_loglikelihood_gradient`, `complete_data_loglikelihood_hessian` |
 | Posterior / empirical Bayes | `empirical_bayes`, `empirical_bayes_covariance`, `sample_random_effect_draws` |
-| Marginals | `laplace_marginal`, `ghq_marginal` |
+| Marginals | `laplace_marginal`, `laplace_marginal_gradient`, `ghq_marginal` |
 | Curvature seam | `AbstractCurvature`, `ExactHessianCurvature`, `FisherInformationCurvature`, `inner_curvature` |
 | Fitting drivers | `fit_method`, `fit_fixed_effects`, `fit_laplace_family` |
 | Transforms | `ForwardTransform`, `InverseTransform`, `apply_inv_jacobian_T`, `logabsdetjac` |
