@@ -11,7 +11,10 @@ how Julia concepts map onto native R and Python ones. All code blocks on this pa
 shown for reference and are not executed when the documentation is built, because they
 require an R or Python session.
 
-The wrappers target NoLimits 0.2.5 and newer.
+The wrappers target NoLimits 0.2.5 and newer. From that version on, calls look like
+ordinary R and Python: where Julia expects a Symbol you pass a plain string, and where it
+expects a NamedTuple you pass a Python dict or a named R `list()`. No special constructors
+are needed in normal code.
 
 ## What the wrappers are
 
@@ -117,7 +120,7 @@ df <- data.frame(
 )
 
 jdf <- nl_data(df)
-dm <- nl$DataModel(model, jdf, primary_id = jl_sym("ID"), time_col = jl_sym("time"))
+dm <- nl$DataModel(model, jdf, primary_id = "ID", time_col = "time")
 res <- nl$fit_model(dm, nl$Laplace())
 
 nl$get_objective(res)
@@ -165,7 +168,7 @@ df = pd.DataFrame({
           8.1, 4.9, 3.0, 1.1, 11.0, 6.5, 4.1, 1.6],
 })
 
-dm = nl.DataModel(model, df, primary_id=nl.sym("ID"), time_col=nl.sym("time"))
+dm = nl.DataModel(model, df, primary_id="ID", time_col="time")
 res = nl.fit_model(dm, nl.Laplace())
 
 print(nl.get_objective(res))
@@ -176,28 +179,27 @@ nl.plot("plot_fits", res, file="fits.png")
 
 ## Symbols, NamedTuples, and other option types
 
-NoLimits uses a few Julia-specific argument types. Each has a direct native equivalent.
+NoLimits uses a few Julia-specific argument types. Each is written natively.
 
-Symbol arguments such as `primary_id`, `time_col`, and `scale` are written as strings
-passed through a helper:
+Symbol arguments such as `primary_id` and `time_col` are plain strings:
 
 ```r
-dm <- nl$DataModel(model, jdf, primary_id = jl_sym("ID"), time_col = jl_sym("time"))
+dm <- nl$DataModel(model, jdf, primary_id = "ID", time_col = "time")
 ```
 
 ```python
-dm = nl.DataModel(model, df, primary_id=nl.sym("ID"), time_col=nl.sym("time"))
+dm = nl.DataModel(model, df, primary_id="ID", time_col="time")
 ```
 
 Inside a model string, Julia syntax applies as usual, so `scale=:log` is written exactly
 as in Julia.
 
-NamedTuple options such as `optim_kwargs` or `theta_0_untransformed` are built with
-`nl_nt()` or a named `list()` in R, and with a plain dict in Python:
+NamedTuple options such as `optim_kwargs` or `theta_0_untransformed` are a named `list()`
+in R and a dict in Python:
 
 ```r
-res <- nl$fit_model(dm, nl$Laplace(optim_kwargs = nl_nt(show_trace = TRUE)),
-                    theta_0_untransformed = nl_nt(k = 0.7))
+res <- nl$fit_model(dm, nl$Laplace(optim_kwargs = list(show_trace = TRUE)),
+                    theta_0_untransformed = list(k = 0.7))
 ```
 
 ```python
@@ -208,6 +210,10 @@ res = nl.fit_model(dm, nl.Laplace(optim_kwargs={"show_trace": True}),
 Options that NoLimits keys by value rather than by name, such as `constants_re`, are
 Julia dictionaries. Build those with `nl_eval()` in R; in Python a dict with non-string
 keys is passed through as a Julia dictionary unchanged.
+
+The low-level constructors `jl_sym()` and `nl_nt()` (R) and `nl.sym()` (Python) remain
+available for edge cases, such as building a Symbol to store inside another object rather
+than to pass as an argument. Normal code does not need them.
 
 ## Data in, results out
 
@@ -255,8 +261,8 @@ session or run the loop in a subprocess if memory matters.
 |---|---|---|
 | Exported function `f` | `nl$f(...)`, or `f(...)` after `nl_attach()` | `nl.f(...)` |
 | `@Model begin ... end` | `nl_model("...")` | `nl.model("...")` |
-| Symbol `:ID` | `jl_sym("ID")` | `nl.sym("ID")` |
-| NamedTuple `(a = 1,)` | `nl_nt(a = 1)` or `list(a = 1)` | `{"a": 1}` |
+| Symbol `:ID` | `"ID"` | `"ID"` |
+| NamedTuple `(a = 1,)` | `list(a = 1)` | `{"a": 1}` |
 | Dictionary keyed by values | `nl_eval("Dict(...)")` | dict with non-string keys |
 | `DataFrame` argument | `nl_data(df)` | pandas frame passed directly |
 | Table result | `nl_collect(x)` | `nl.collect(x)` |

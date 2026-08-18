@@ -60,7 +60,7 @@ into `DataModel`, and results come back as `data.frame`s or pandas `DataFrame`s.
 remotes::install_github("manuhuth/NoLimitsR"); NoLimitsR::install_nolimits()
 nl <- NoLimitsR::nolimits()
 dm <- nl$DataModel(nl_model(model_string), nl_data(df),
-                   primary_id = jl_sym("ID"), time_col = jl_sym("time"))
+                   primary_id = "ID", time_col = "time")
 res <- nl$fit_model(dm, nl$Laplace())
 head(nl_collect(nl$predict(res, nl_data(df))))
 ```
@@ -69,7 +69,7 @@ head(nl_collect(nl$predict(res, nl_data(df))))
 # pip install git+https://github.com/manuhuth/NoLimitsPy.git
 import NoLimitsPy as nl
 dm = nl.DataModel(nl.model(model_string), df,
-                  primary_id=nl.sym("ID"), time_col=nl.sym("time"))
+                  primary_id="ID", time_col="time")
 res = nl.fit_model(dm, nl.Laplace())
 print(nl.collect(nl.predict(res, df)).head())
 ```
