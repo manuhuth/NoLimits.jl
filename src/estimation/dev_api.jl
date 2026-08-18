@@ -436,6 +436,7 @@ end
 """
     laplace_marginal_gradient(dm, θ, batch, b_star; const_cache, cache=nothing, scale=:untransformed, curvature=ExactHessianCurvature(), jitter=1e-6, max_tries=6, growth=10.0, adaptive=false, scale_factor=0.0, use_trace_logdet_grad=true, use_hutchinson=false, hutchinson_n=8, rng=Random.default_rng()) -> (value, gradient)
     laplace_marginal_gradient(dm, θ; constants_re=NamedTuple(), scale=:untransformed, kwargs...) -> (value, gradient)
+    laplace_marginal_gradient(ctx::FitContext, θ; scale=:untransformed, kwargs...) -> (value, gradient)
 
 Value AND analytic θ-gradient of the Laplace-approximate marginal log-likelihood
 [`laplace_marginal`](@ref) - the exact gradient the `Laplace` fit optimizes, including the
@@ -443,7 +444,9 @@ implicit `db*/dθ` envelope correction, so naive AD through the re-optimized mod
 needed. `value` is identical to `laplace_marginal` at the same arguments. The batch form
 takes one supplied mode `b_star`; the population form finds the modes and sums both value and
 gradient over batches (subjects are independent, so per-site sums are exact - this is the
-federation property).
+federation property). The `FitContext` form is the same population computation with the
+context's caches reused instead of rebuilt per call; kwargs frozen by the context
+(`constants_re`, `ode_args`, `ode_kwargs`, the caches) error rather than silently diverge.
 
 Scale contract: `θ` is natural-scale (as everywhere in this API) and `scale` selects the
 scale of the RETURNED gradient. `:untransformed` (default) is `∂/∂θ` on the natural scale;
@@ -799,6 +802,7 @@ end
 """
     objective_and_gradient(method, dm, θ; scale=:untransformed, hessian=false, include_penalty=false, penalty=NamedTuple(), kwargs...)
         -> (value, gradient) | (value, gradient, hessian)
+    objective_and_gradient(method, ctx::FitContext, θ; same kwargs) -> same
 
 Value AND θ-gradient of `method`'s log-objective at natural-scale `θ`, computed together the
 way the corresponding `fit_model` computes them - the shared analytic kernel for
@@ -837,6 +841,14 @@ Shipped dispatches, and the finer-grained forms:
     per-individual form `objective_and_gradient(MLE(), dm, θ, idx)`. Like `fit_model`, these
     require a model WITHOUT random effects; use `Laplace`, `SAEM` or `MCMC` otherwise.
 
+The `FitContext` form (`Laplace`, `FOCEI`, `GHQuadrature`, `MLE`, `MAP`, `Pooled`) returns
+identical results and reuses the context's batch infos, constant-RE cache and likelihood cache
+instead of rebuilding them per call - the form to use inside an iterating (e.g. federated)
+loop. `Pooled`/`MLE`/`MAP` reuse only the likelihood cache (they have no free random effects to
+batch, and `Pooled` recalibrates its plug-in `strategies` at every θ by construction). Options
+frozen at `build_fit_context` time (`constants_re`, `ode_args`, `ode_kwargs`, and the caches
+themselves) are not accepted per call and error if passed.
+
 A user-defined `FittingMethod` plugs into downstream tooling (federated aggregation,
 uncertainty workflows) by adding its own `objective_and_gradient` method.
 """
@@ -861,8 +873,11 @@ function _dev_laplace_kwargs(method, kwargs)
     return merge((; curvature = _dev_curvature(method)), opts, NamedTuple(kwargs))
 end
 
-function _dev_laplace_pair(dm::DataModel, θ::ComponentArray, call_kwargs, include_penalty, penalty)
-    v, g = laplace_marginal_gradient(dm, θ; scale = :untransformed, call_kwargs...)
+# `target` is a `DataModel` or a `FitContext` (defined below); dispatch picks the route.
+_dev_dm(dm::DataModel) = dm
+
+function _dev_laplace_pair(target, θ::ComponentArray, call_kwargs, include_penalty, penalty)
+    v, g = laplace_marginal_gradient(target, θ; scale = :untransformed, call_kwargs...)
     if include_penalty && !isempty(keys(penalty))
         v += _dev_penalty_term(θ, true, penalty)
         g = _dev_penalty_gradient!(g, θ, penalty)
@@ -871,7 +886,14 @@ function _dev_laplace_pair(dm::DataModel, θ::ComponentArray, call_kwargs, inclu
 end
 
 function objective_and_gradient(
-        method::Union{Laplace, FOCEI}, dm::DataModel, θ::ComponentArray;
+        method::Union{Laplace, FOCEI}, dm::DataModel, θ::ComponentArray; kwargs...
+    )
+    return _dev_laplace_og(method, dm, θ; kwargs...)
+end
+
+# Shared body for the `dm` and `FitContext` forms (`target` is either).
+function _dev_laplace_og(
+        method::Union{Laplace, FOCEI}, target, θ::ComponentArray;
         scale::Union{Symbol, AbstractString} = :untransformed, hessian::Bool = false,
         include_penalty::Bool = false,
         penalty::Union{NamedTuple, AbstractDict} = NamedTuple(),
@@ -880,9 +902,10 @@ function objective_and_gradient(
     scale = _dev_check_scale(scale)
     penalty = _as_namedtuple(penalty)
     call_kwargs = _dev_laplace_kwargs(method, kwargs)
+    dm = _dev_dm(target)
     fe = get_fixed(get_model(dm))
     θ_re = symmetrize_psd_parameters(θ, fe)
-    value, grad = _dev_laplace_pair(dm, θ_re, call_kwargs, include_penalty, penalty)
+    value, grad = _dev_laplace_pair(target, θ_re, call_kwargs, include_penalty, penalty)
     scaled = _dev_gradient_scale(dm, θ_re, grad, scale)
     hessian || return (value, scaled)
     # FD over the analytic gradient, in the coordinates of the requested scale.
@@ -891,7 +914,7 @@ function objective_and_gradient(
         x0 = collect(ComponentArrays.getdata(θ_re))
         g_of_x = function (xv)
             θx = ComponentArray(xv, axs)
-            _, gx = _dev_laplace_pair(dm, θx, call_kwargs, include_penalty, penalty)
+            _, gx = _dev_laplace_pair(target, θx, call_kwargs, include_penalty, penalty)
             return collect(gx)
         end
     else
@@ -901,7 +924,7 @@ function objective_and_gradient(
         it = get_inverse_transform(fe)
         g_of_x = function (xv)
             θx = symmetrize_psd_parameters(it(ComponentArray(xv, axs)), fe)
-            _, gx = _dev_laplace_pair(dm, θx, call_kwargs, include_penalty, penalty)
+            _, gx = _dev_laplace_pair(target, θx, call_kwargs, include_penalty, penalty)
             return collect(_dev_gradient_scale(dm, θx, gx, :transformed))
         end
     end
@@ -1250,6 +1273,8 @@ With a context, the primitives lose their cache arguments and address batches by
     empirical_bayes(ctx, θ)                     # per-batch modes b* (no Hessian computed)
     empirical_bayes_covariance(ctx, θ, modes)   # per-batch Σ = (−H)⁻¹ at the modes
     laplace_marginal(ctx, θ)                    # marginal log-likelihood at θ
+    laplace_marginal_gradient(ctx, θ)           # value + analytic θ-gradient of the marginal
+    objective_and_gradient(Laplace(), ctx, θ)   # method-dispatched value + gradient
     sample_random_effect_draws(ctx, θ)          # posterior draws per batch
     θ̂, sol = optimize_parameters(f, ctx)        # natural-scale objective, handled transforms
     build_fit_result(ctx, method, θ̂; kind=:frequentist_re, objective=...)  # eb_modes=:auto
@@ -1281,6 +1306,24 @@ primitives index into this vector.
 @inline get_batch_infos(ctx::FitContext) = ctx.batch_infos
 
 @inline get_data_model(ctx::FitContext) = ctx.dm
+@inline _dev_dm(ctx::FitContext) = ctx.dm
+
+# Everything the context froze at build time. Accepting these per call would silently diverge
+# from the cached state, so the context methods reject them.
+const _CTX_FIXED_KWARGS = (
+    :constants_re, :ode_args, :ode_kwargs, :const_cache, :cache, :serialization,
+)
+
+function _ctx_check_kwargs(fname::Symbol, kwargs)
+    for k in keys(kwargs)
+        k in _CTX_FIXED_KWARGS && error(
+            "$fname(ctx, ...): `$k` is fixed by the FitContext and cannot be passed per call. " *
+                "Set constants_re/ode_args/ode_kwargs in build_fit_context, or use the explicit " *
+                "`dm` form for per-call control."
+        )
+    end
+    return nothing
+end
 
 """
     initial_parameters(ctx::FitContext) -> ComponentArray
@@ -1368,6 +1411,112 @@ function laplace_marginal(
             )
             for bi in eachindex(ctx.batch_infos)
     )
+end
+
+# Batch-index cover, mirroring `ghq_marginal(ctx, bi, θ)`.
+@inline function laplace_marginal(
+        ctx::FitContext, bi::Integer, θ::ComponentArray, b_star; kwargs...
+    )
+    return laplace_marginal(
+        ctx.dm, θ, ctx.batch_infos[bi], b_star;
+        const_cache = ctx.const_cache, cache = ctx.cache, kwargs...
+    )
+end
+
+function laplace_marginal_gradient(
+        ctx::FitContext, θ::ComponentArray;
+        scale::Union{Symbol, AbstractString} = :untransformed,
+        curvature::AbstractCurvature = ExactHessianCurvature(),
+        ebe_options::EBEOptions = EBEOptions(), rescue = nothing,
+        rng::AbstractRNG = Random.default_rng(), kwargs...
+    )
+    _ctx_check_kwargs(:laplace_marginal_gradient, kwargs)
+    scale = _dev_check_scale(scale)
+    θ_re = symmetrize_psd_parameters(θ, get_fixed(get_model(ctx.dm)))
+    value = zero(eltype(θ_re))
+    grad = ComponentArray(zeros(eltype(θ_re), length(θ_re)), getaxes(θ_re))
+    isempty(ctx.batch_infos) && return (value, _dev_gradient_scale(ctx.dm, θ_re, grad, scale))
+    bstars = empirical_bayes(ctx, θ_re; ebe_options = ebe_options, rescue = rescue, rng = rng)
+    for bi in eachindex(ctx.batch_infos)
+        v, g = laplace_marginal_gradient(
+            ctx.dm, θ_re, ctx.batch_infos[bi], bstars[bi];
+            const_cache = ctx.const_cache, cache = ctx.cache, scale = :untransformed,
+            curvature = curvature, rng = rng, kwargs...
+        )
+        value += v
+        grad .+= g
+    end
+    return (value, _dev_gradient_scale(ctx.dm, θ_re, grad, scale))
+end
+
+# Context forms of the joint value+gradient primitive: same results, caches reused.
+function objective_and_gradient(
+        method::Union{Laplace, FOCEI}, ctx::FitContext, θ::ComponentArray; kwargs...
+    )
+    _ctx_check_kwargs(:objective_and_gradient, kwargs)
+    return _dev_laplace_og(method, ctx, θ; kwargs...)
+end
+
+function objective_and_gradient(
+        method::GHQuadrature, ctx::FitContext, θ::ComponentArray;
+        scale::Union{Symbol, AbstractString} = :untransformed, hessian::Bool = false,
+        include_penalty::Bool = false,
+        penalty::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        level = method.level, kwargs...
+    )
+    _ctx_check_kwargs(:objective_and_gradient, kwargs)
+    scale = _dev_check_scale(scale)
+    f = _DevGHQObjective(
+        ctx.dm, ctx.batch_infos, ctx.const_cache, ctx.cache, level,
+        _as_namedtuple(penalty), include_penalty
+    )
+    return _dev_sweep(f, ctx.dm, θ, scale, hessian)
+end
+
+function objective_and_gradient(
+        method::Union{MLE, MAP}, ctx::FitContext, θ::ComponentArray;
+        scale::Union{Symbol, AbstractString} = :untransformed, hessian::Bool = false,
+        include_penalty::Bool = false,
+        penalty::Union{NamedTuple, AbstractDict} = NamedTuple(), kwargs...
+    )
+    _ctx_check_kwargs(:objective_and_gradient, kwargs)
+    scale = _dev_check_scale(scale)
+    _require_no_random_effects(ctx.dm)
+    f = _DevNoREObjective(
+        ctx.dm, ctx.cache, EnsembleSerial(), _as_namedtuple(penalty), include_penalty,
+        method isa MAP ? get_fixed(get_model(ctx.dm)) : nothing
+    )
+    return _dev_sweep(f, ctx.dm, θ, scale, hessian)
+end
+
+function objective_and_gradient(
+        ::MLE, ctx::FitContext, θ::ComponentArray, idx::Integer;
+        scale::Union{Symbol, AbstractString} = :untransformed, hessian::Bool = false
+    )
+    scale = _dev_check_scale(scale)
+    _require_no_random_effects(ctx.dm)
+    f = _DevIndividualObjective(ctx.dm, Int(idx), ctx.cache)
+    return _dev_sweep(f, ctx.dm, θ, scale, hessian)
+end
+
+function objective_and_gradient(
+        method::Pooled, ctx::FitContext, θ::ComponentArray;
+        scale::Union{Symbol, AbstractString} = :untransformed, hessian::Bool = false,
+        include_penalty::Bool = false,
+        penalty::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        strategies = nothing, eta = nothing, rng::AbstractRNG = Random.default_rng(),
+        kwargs...
+    )
+    _ctx_check_kwargs(:objective_and_gradient, kwargs)
+    scale = _dev_check_scale(scale)
+    θ_re = symmetrize_psd_parameters(θ, get_fixed(get_model(ctx.dm)))
+    strat = strategies === nothing ?
+        _dev_pooled_strategies(ctx.dm, θ_re, method, rng) : strategies
+    f = _DevPooledObjective(
+        ctx.dm, ctx.cache, EnsembleSerial(), strat, eta, _as_namedtuple(penalty),
+        include_penalty
+    )
+    return _dev_sweep(f, ctx.dm, θ, scale, hessian)
 end
 
 function sample_random_effect_draws(
