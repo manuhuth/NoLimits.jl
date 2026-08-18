@@ -342,6 +342,83 @@ end
         ) isa ComponentArray
     end
 
+    @testset "laplace_marginal_gradient" begin
+        dm = fx_re_dm()
+        ser = NoLimits.EnsembleSerial()
+        fe = NoLimits.get_fixed(NoLimits.get_model(dm))
+        ft = NoLimits.get_transform(fe)
+        it = NoLimits.get_inverse_transform(fe)
+        θ0 = NoLimits.get_θ0_untransformed(fe)
+        lm(θ) = NoLimits.laplace_marginal(dm, θ; serialization = ser)
+        lmg(θ; kw...) = NoLimits.laplace_marginal_gradient(dm, θ; serialization = ser, kw...)
+
+        for s in (1.0, 0.75, 1.4)
+            θ = ComponentArray(collect(θ0) .* s, getaxes(θ0))
+            v, g = lmg(θ)
+            @test v ≈ lm(θ) rtol = 1.0e-12
+            # gradient entries correspond to θ's names/axes
+            @test g isa ComponentArray
+            @test getaxes(g) == getaxes(θ)
+            @test propertynames(g) == propertynames(θ)
+
+            # (1) natural-scale gradient vs central FD of laplace_marginal
+            θt = ft(θ)
+            _, gt = lmg(θ; scale = :transformed)
+            @test getaxes(gt) == getaxes(θt)
+            for k in propertynames(θ)
+                h = 1.0e-5 * max(1.0, abs(getproperty(θ, k)))
+                θp = copy(θ)
+                θm = copy(θ)
+                setproperty!(θp, k, getproperty(θ, k) + h)
+                setproperty!(θm, k, getproperty(θ, k) - h)
+                @test getproperty(g, k) ≈ (lm(θp) - lm(θm)) / (2h) rtol = 1.0e-5
+
+                # transformed-scale gradient vs central FD in transformed coordinates
+                ht = 1.0e-5 * max(1.0, abs(getproperty(θt, k)))
+                θtp = copy(θt)
+                θtm = copy(θt)
+                setproperty!(θtp, k, getproperty(θt, k) + ht)
+                setproperty!(θtm, k, getproperty(θt, k) - ht)
+                @test getproperty(gt, k) ≈ (lm(it(θtp)) - lm(it(θtm))) / (2ht) rtol = 1.0e-5
+            end
+
+            # batch form: per-batch (value, gradient) pairs sum to the population pair
+            bstars = NoLimits.empirical_bayes(dm, θ; serialization = ser)
+            _, infos_g, cc_g = NoLimits.build_re_batch_infos(dm, NamedTuple())
+            cache_g = NoLimits.build_likelihood_cache(dm; force_saveat = true)
+            vs = 0.0
+            gs = zero(g)
+            for bi in eachindex(infos_g)
+                vb, gb = NoLimits.laplace_marginal_gradient(
+                    dm, θ, infos_g[bi], bstars[bi]; const_cache = cc_g, cache = cache_g
+                )
+                vs += vb
+                gs .+= gb
+            end
+            @test vs ≈ v rtol = 1.0e-12
+            @test gs ≈ g rtol = 1.0e-12
+        end
+
+        # (2) additivity over disjoint-subject data models (the federation property)
+        df = fx_re_df()
+        model = fx_re_model()
+        dm_a = DataModel(model, df[df.ID .<= 3, :]; primary_id = :ID, time_col = :t)
+        dm_b = DataModel(model, df[df.ID .> 3, :]; primary_id = :ID, time_col = :t)
+        va, ga = NoLimits.laplace_marginal_gradient(dm_a, θ0; serialization = ser)
+        vb, gb = NoLimits.laplace_marginal_gradient(dm_b, θ0; serialization = ser)
+        vp, gp = lmg(θ0)
+        @test va + vb ≈ vp rtol = 1.0e-10
+        @test ga .+ gb ≈ gp rtol = 1.0e-10
+
+        # (3) at a converged Laplace optimum the gradient of the marginal vanishes
+        res_c = fit_model(dm, NoLimits.Laplace(); serialization = ser)
+        θc = NoLimits.get_params(res_c; scale = :untransformed)
+        _, gc = lmg(θc; scale = :transformed)
+        @test maximum(abs, gc) < 1.0e-4
+
+        @test_throws ErrorException lmg(θ0; scale = :nonsense)
+    end
+
     # Issue #116: per-individual quantities must key off identity, not row position, so
     # permuting/relabelling individuals may only change the order of the outer sum.
     @testset "per-individual terms are position-independent" begin

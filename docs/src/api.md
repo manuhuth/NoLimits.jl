@@ -271,6 +271,7 @@ complete_data_loglikelihood_hessian
 empirical_bayes
 empirical_bayes_covariance
 laplace_marginal
+laplace_marginal_gradient
 ghq_marginal
 sample_random_effect_draws
 RandomEffectPosteriorSample
