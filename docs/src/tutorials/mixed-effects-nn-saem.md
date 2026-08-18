@@ -73,6 +73,19 @@ first(df, 10)
 
 Instead of closed-form rate laws, neural networks learn the rate functions from data. Each `NNParameters` block declares a small feedforward network whose flattened weights join the fixed-effects vector and expose a callable (e.g. `NNA1`) usable inside `@DifferentialEquation` (see [function approximators](../model-building/universal-function-approximators.md)). Four networks drive the two-compartment system: `fA1`/`fA2` for the depot, `fC1`/`fC2` for the central compartment.
 
+!!! tip "The same architecture without SimpleChains"
+    A plain multilayer perceptron needs no neural-network backend at all: `FFNNParameters`
+    takes the layer sizes directly and its forward pass lives in NoLimits.
+
+    ```julia
+    zA1 = FFNNParameters((1, width_nn, 1); activation=:tanh, output_activation=:identity,
+        function_name=:NNA1, calculate_se=false)
+    ```
+
+    It returns an `NNParameters` block, so call sites, priors and random effects on the
+    weights are unchanged. See
+    [function approximators](../model-building/universal-function-approximators.md).
+
 Each network's weights are paired with a subject-level random-effect vector (`etaA1`, `etaA2`, `etaC1`, `etaC2`) drawn from an `MvNormal` centered on the population weights, so every individual gets a personalized network around shared population structure.
 
 ```julia
