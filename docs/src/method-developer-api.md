@@ -40,6 +40,7 @@ Every function here obeys two conventions:
 | Marginals | `laplace_marginal`, `laplace_marginal_gradient`, `ghq_marginal` |
 | Curvature seam | `AbstractCurvature`, `ExactHessianCurvature`, `FisherInformationCurvature`, `inner_curvature` |
 | Fitting drivers | `fit_method`, `fit_fixed_effects`, `fit_laplace_family` |
+| Value + gradient | `objective_and_gradient` |
 | Transforms | `ForwardTransform`, `InverseTransform`, `apply_inv_jacobian_T`, `logabsdetjac` |
 
 Full signatures are in the [API reference](api.md). The identity `complete_data_loglikelihood ==
@@ -47,6 +48,39 @@ conditional_loglikelihood + re_logprior` holds at batch scale. `empirical_bayes`
 posterior modes alone (no Hessian is computed), and `empirical_bayes_covariance` adds the
 curvature covariance `Σ = (−H)⁻¹` at those modes - together the Laplace approximation
 `N(b*, Σ)` to the random-effect posterior.
+
+## Objective value and gradient together
+
+`objective_and_gradient(method, dm, θ)` returns `(value, gradient)` for an estimator's
+log-objective in one pass, dispatching on the fitting method:
+
+```julia
+value, grad = objective_and_gradient(Laplace(), dm, θ)                       # natural scale
+value, grad = objective_and_gradient(Laplace(), dm, θ; scale = :transformed) # optimizer scale
+value, grad, H = objective_and_gradient(GHQuadrature(; level = 3), dm, θ; hessian = true)
+```
+
+`value` is the method's core log-objective, higher is better, matching the scalar covers
+(`laplace_marginal`, `ghq_marginal`, `loglikelihood`); the optimizer-side negation,
+preconditioning and free/constant merging stay in the fit. The gradient is a `ComponentArray`
+on θ's axes (or the transformed axes), and each dispatch reuses the route its own fit
+differentiates, so the gradient vanishes at that method's own optimum. `Laplace` and `FOCEI`
+forward to the analytic `laplace_marginal_gradient` kernel with their own curvature;
+`GHQuadrature` sweeps the quadrature sum with the adaptive centers held fixed at θ, exactly as
+its fit does; `Pooled` differentiates through the plug-in `η(θ)`; `MLE` and `MAP` sweep the
+log-likelihood, with MAP's log-priors included. Penalties are opt-in
+(`include_penalty = true`, `penalty = (; a = 100.0)`).
+
+`hessian = true` adds the symmetric Hessian as a `Matrix` in the gradient's flat coordinate
+order: central finite differences over the analytic gradient for `Laplace`/`FOCEI` (2p gradient
+evaluations, roughly five to six digits), a second-order ForwardDiff sweep elsewhere. Marginal
+methods also have per-batch forms (`objective_and_gradient(method, dm, θ, batch, b_star; …)`)
+and `MLE` a per-individual form, whose value and gradient pairs sum to the population pair -
+the property federated aggregation and per-subject clipping rely on.
+
+A user-defined `FittingMethod` joins this protocol by adding its own `objective_and_gradient`
+method; sampling-based methods (SAEM, MCEM, MCMC, VI) have no deterministic θ-objective and
+deliberately have none.
 
 ## Building a new fitting method
 

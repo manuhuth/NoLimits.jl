@@ -294,6 +294,7 @@ CurvatureWorkspace
 fit_method
 fit_fixed_effects
 fit_laplace_family
+objective_and_gradient
 free_parameter_layout
 NLFreeLayout
 resolve_fitted_parameters
