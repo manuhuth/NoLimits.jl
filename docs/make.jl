@@ -77,7 +77,6 @@ makedocs(;
         ],
         "Plotting" => "plotting/index.md",
         "Tutorials" => [
-            "Using NoLimits from R and Python" => "tutorials/r-and-python.md",
             "Multi-Method Comparison" => "tutorials/mixed-effects-multiple-methods.md",
             "ODE Model with Dosing (MCEM)" => "tutorials/mixed-effects-ode-mcem.md",
             "Neural Differential Equations (SAEM)" => "tutorials/mixed-effects-nn-saem.md",
@@ -89,6 +88,7 @@ makedocs(;
             "Fixed-Effects: MLE & MAP" => "tutorials/fixed-effects-nonlinear-mle-map.md",
             "Fixed-Effects: Variational Inference" => "tutorials/fixed-effects-vi.md",
             "Hidden & Observed Markov Models" => "tutorials/markov-models-observed-hidden-coarsed.md",
+            "Using NoLimits from R and Python" => "tutorials/r-and-python.md",
             "Building Custom Estimators" => "tutorials/building-custom-estimators.md",
         ],
         "Method-Developer API" => "method-developer-api.md",
