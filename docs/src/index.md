@@ -90,6 +90,10 @@ See [Using NoLimits from R and Python](tutorials/r-and-python.md) for installati
 quickstart in both languages, and how Julia concepts such as Symbols and NamedTuples map
 onto native R and Python ones.
 
+## Federated Learning (experimental)
+
+NoLimits exposes the per-site objective and gradient primitives for federated estimation, where several sites fit one shared model without pooling their data. [NoLimitsFlowerDemo](https://github.com/manuhuth/NoLimitsFlowerDemo) is a public showcase that runs this over [Flower](https://flower.ai), matches the equivalent pooled fit, and adds optional secure aggregation and differential privacy. It is under active development and not yet a released package, so its interfaces may change.
+
 ## How to Cite
 
 If you use NoLimits.jl in your research, please cite the software:
