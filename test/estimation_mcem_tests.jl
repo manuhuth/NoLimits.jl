@@ -630,7 +630,7 @@ end
             G .= .-collect(gg)
             return nothing
         end
-        sol = solve(OptimizationProblem(OptimizationFunction(f; grad = g!), x0), LBFGS(); maxiters = 50)
+        sol = Optimization.solve(Optimization.OptimizationProblem(Optimization.OptimizationFunction(f; grad = g!), x0), OptimizationOptimJL.LBFGS(); maxiters = 50)
         return rebuild(sol.u)
     end
 
