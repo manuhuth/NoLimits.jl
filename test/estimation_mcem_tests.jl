@@ -650,3 +650,56 @@ end
     @test isapprox(θ.σ, p_ref.σ; atol = 0.1)
     @test isapprox(θ.ω, p_ref.ω; atol = 0.1)
 end
+
+@testset "SAEM dev_api primitives (eligibility + suff-stats additivity + closed-form M-step)" begin
+    dm = fx_re_dm()   # a obs-side mean (numerical q1); σ resid + ω re-cov (closed-form)
+    fe = NoLimits.get_fixed(NoLimits.get_model(dm))
+    θ = NoLimits.get_θ0_untransformed(fe)
+
+    # Eligibility routing: σ, ω closed-form; a numerical. Constants drop from the free set.
+    elig = NoLimits.saem_closed_form_eligibility(dm)
+    @test elig.closed_form == [:σ, :ω]
+    @test elig.numerical == [:a]
+    eligc = NoLimits.saem_closed_form_eligibility(dm; constants = (; σ = 0.3))
+    @test eligc.closed_form == [:ω]
+    @test eligc.numerical == [:a]
+
+    # Fixed MCMC draws (deterministic under a seeded fresh state).
+    method = NoLimits.MCEM(;
+        sampler = MH(),
+        turing_kwargs = (n_samples = 30, n_adapt = 10, progress = false), maxiters = 200
+    )
+    draws, _ = NoLimits.mcem_e_step(dm, θ, method, nothing; rng = MersenneTwister(20240824))
+    nb = length(draws)
+    @test nb > 1
+
+    # Per-subject/batch additivity: de-normalized RE moments and additive outcome sums add
+    # up to the population form (the federated aggregation seam).
+    pop = NoLimits.saem_sufficient_statistics(dm, θ, draws)
+    per = [NoLimits.saem_sufficient_statistics(dm, θ, draws, i) for i in 1:nb]
+    @test haskey(pop.re, :η) && haskey(pop.outcome, :y)
+    sum_x = sum(p.re.η.mean .* p.re.η.n for p in per)
+    sum_xx = sum(p.re.η.second .* p.re.η.n for p in per)
+    n_tot = sum(p.re.η.n for p in per)
+    @test n_tot == pop.re.η.n
+    @test isapprox(sum_x ./ n_tot, pop.re.η.mean; atol = 1.0e-10, rtol = 0)
+    @test isapprox(sum_xx ./ n_tot, pop.re.η.second; atol = 1.0e-10, rtol = 0)
+    @test isapprox(sum(p.outcome.y.s1 for p in per), pop.outcome.y.s1; atol = 1.0e-8, rtol = 0)
+    @test isapprox(sum(p.outcome.y.ss for p in per), pop.outcome.y.ss; atol = 1.0e-8, rtol = 0)
+    @test sum(p.outcome.y.n for p in per) == pop.outcome.y.n
+
+    # Population form is bit-identical to the fit's own current-statistics kernel.
+    _, bis, cc = NoLimits.build_re_batch_infos(dm, NamedTuple())
+    llc = NoLimits.build_ll_cache(dm; serialization = NoLimits.EnsembleSerial(), force_saveat = true)
+    cfg = NoLimits._saem_resolve_closed_form_config(dm, NoLimits.SAEM().saem)
+    b_chains = [[NoLimits.get_draws(draws[bi])[:, c] for c in 1:size(NoLimits.get_draws(draws[bi]), 2)] for bi in 1:nb]
+    n_chains = size(NoLimits.get_draws(draws[1]), 2)
+    ref = NoLimits._saem_builtin_collect_current_stats(
+        dm, bis, b_chains, n_chains, NoLimits.symmetrize_psd_parameters(θ, fe), cc,
+        cfg.resid_var_param, cfg.hmm_emission_params, cfg.re_cov_params,
+        cfg.re_mean_params, cfg.re_family_map, llc, MersenneTwister(0)
+    )
+    @test pop.re.η.mean == ref.re.η.mean
+    @test pop.re.η.second == ref.re.η.second
+    @test pop.outcome.y.s1 == ref.outcome.y.s1
+end
