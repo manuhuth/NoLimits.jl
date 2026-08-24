@@ -372,7 +372,7 @@ end
 
 @testset "MLE optimizer BFGS (Optim)" begin
     dm = _mle_dm_basic()
-    method = NoLimits.MLE(optimizer = BFGS(), optim_kwargs = (;))
+    method = NoLimits.MLE(optimizer = Optim.BFGS(), optim_kwargs = (;))
     res = fit_model(dm, method)
     @test res isa FitResult
 end
