@@ -46,8 +46,8 @@ export AbstractCurvature, ExactHessianCurvature, FisherInformationCurvature,
     CurvatureWorkspace
 # Fitting-method protocol drivers
 export fit_method, fit_fixed_effects, fit_laplace_family, objective_and_gradient
-# MCEM M-step Q primitives
-export mcem_q_partition, mcem_q_objective_and_gradient
+# MCEM M-step Q primitives + state-threaded E-step
+export mcem_q_partition, mcem_q_objective_and_gradient, mcem_e_step
 
 # Resolve a single-thread evaluation cache for the per-item primitives.
 @inline _dev_ll_cache(::DataModel, cache::LikelihoodCache) = cache
@@ -1315,6 +1315,133 @@ function mcem_q_objective_and_gradient(
     wbb_i = wbb === nothing ? nothing : wbb[idx:idx]
     qf = _MCEMQObjective(dm, bi[idx:idx], cc, llc, sbb[idx:idx], wbb_i, serialization, part)
     return _mcem_dev_sweep(qf, dm, θ, fnames, _as_symbol(scale))
+end
+
+# ── MCEM E-step primitive (state-threaded) ────────────────────────────────────
+# One outer-iteration E-step, faithful to the MCEM fit loop's sampling: correct
+# sampler dispatch (SaemixMH/Turing MCMC or importance sampling), `sample_schedule`,
+# warm-start, and prior-mean first-iteration seeding. The per-batch draws are
+# deterministic in the per-batch RNGs (independent of thread scheduling), so this
+# serial replication is bit-identical to the fit's E-step at the same `θ`/`rng`.
+
+const _MCEMLastParams = Union{Nothing, NamedTuple, AbstractVector, _AdaptiveMHState, _SaemixMHState}
+
+# Fresh state (iter 1): build caches, spawn per-batch RNGs, seed warm-start from the
+# prior mean exactly as the fit's pre-loop does (`_em_seed_batch_b`/`_b_to_last_params`).
+function _mcem_estep_init(dm::DataModel, θ::ComponentArray, method::MCEM, rng::AbstractRNG, constants_re)
+    re_names = get_re_names(get_random(get_model(dm)))
+    isempty(re_names) && error("mcem_e_step requires random effects; MLE/MAP are for fixed-effects models.")
+    re_types = get_re_types(get_random(get_model(dm)))
+    constants_re = _normalize_constants_re(dm, _as_namedtuple(constants_re))
+    const_cache = _build_constants_cache(dm, constants_re)
+    _, batch_infos, _ = _build_re_batch_infos(dm, constants_re)
+    ll_cache = build_ll_cache(dm; serialization = EnsembleSerial(), force_saveat = true)
+    cache1 = ll_cache isa Vector ? ll_cache[1] : ll_cache
+    nb = length(batch_infos)
+    batch_rngs = _mcem_thread_rngs(rng, nb)
+    last_params = Vector{_MCEMLastParams}(undef, nb)
+    fill!(last_params, nothing)
+    for bi in 1:nb
+        info = batch_infos[bi]
+        get_n_b(info) == 0 && continue
+        b_init = _em_seed_batch_b(dm, info, θ, const_cache, cache1, rng, re_names, bi, "MCEM")
+        last_params[bi] = _b_to_last_params(b_init, info, re_names)
+    end
+    proposal_blocks = method.e_step isa MCEM_IS ?
+        [_is_init_proposal_blocks(dm, batch_infos[bi], θ, cache1, re_names, re_types) for bi in 1:nb] :
+        nothing
+    return (
+        iter = 1, prev_use_mcmc = nothing, last_params = last_params, batch_rngs = batch_rngs,
+        proposal_blocks = proposal_blocks, const_cache = const_cache, ll_cache = ll_cache,
+        cache1 = cache1, batch_infos = batch_infos, re_names = re_names, re_types = re_types,
+        samples_by_batch = Vector{Matrix{Float64}}(undef, nb),
+        weights_store = Vector{Union{Nothing, Vector{Float64}}}(nothing, nb),
+        ess_store = fill(NaN, nb), batches_buf = Int[],
+    )
+end
+
+"""
+    mcem_e_step(dm, θ, method::MCEM, state; rng=Random.default_rng(), constants_re=NamedTuple())
+        -> (draws::Vector{RandomEffectPosteriorSample}, new_state)
+
+Run ONE MCEM E-step at `θ`, exactly as one iteration of the MCEM fit loop does: it draws
+`p(η_b | y_b, θ)` per batch with the method's sampler (`method.e_step`), honoring
+`sample_schedule`, `update_schedule`, and warm-start. Pass `state === nothing` on the first
+call (reproduces the fit's prior-mean seeding); thread the returned `new_state` into the
+next call so warm-start / IS-proposal adaptation / per-batch RNGs persist across iterations.
+
+Returns the per-batch posterior draws (feed directly to [`mcem_q_objective_and_gradient`](@ref))
+and the updated state. Draws are deterministic in the per-batch RNGs, so a fixed `rng` on the
+first call reproduces the fit's E-step draws.
+"""
+function mcem_e_step(
+        dm::DataModel, θ::ComponentArray, method::MCEM, state;
+        rng::AbstractRNG = Random.default_rng(),
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple()
+    )
+    st = state === nothing ? _mcem_estep_init(dm, θ, method, rng, constants_re) : state
+    batch_infos = st.batch_infos
+    nb = length(batch_infos)
+    iter = st.iter
+    use_mcmc = _use_mcmc_this_iter(iter, method.e_step)
+    # Force a full refresh on iter 1 and on the MCMC-warmup -> IS switch (matches the fit).
+    sched = st.prev_use_mcmc === use_mcmc ? method.update_schedule : :all
+    updated = copy(_em_batches!(st.batches_buf, sched, nb, iter, rng))
+
+    if use_mcmc
+        mcmc_es = _mcmc_e_step(method.e_step)
+        S = _mcem_schedule(mcmc_es.sample_schedule, iter)
+        mcmc_es.sample_schedule === nothing && (S = get(mcmc_es.turing_kwargs, :n_samples, 100))
+        S >= 1 || error("mcem_e_step: sample_schedule returned $S at iteration $iter; it must be ≥ 1.")
+        tkwargs = merge(mcmc_es.turing_kwargs, (n_samples = S,))
+        for bi in updated
+            info = batch_infos[bi]
+            samples, lastp, _ = _mcem_sample_batch(
+                dm, info, θ, st.const_cache, st.cache1, mcmc_es.sampler, tkwargs,
+                st.batch_rngs[bi], st.re_names, mcmc_es.warm_start, st.last_params[bi];
+                outer_iter = iter
+            )
+            st.samples_by_batch[bi] = samples
+            st.last_params[bi] = lastp
+            st.weights_store[bi] = nothing
+        end
+        # Seed IS proposal blocks at the end of the MCMC warm-up (MCEM_IS.adapt).
+        if method.e_step isa MCEM_IS && iter == method.e_step.warm_start_mcmc_iters && method.e_step.adapt
+            for bi in 1:nb
+                _is_update_blocks!(
+                    st.proposal_blocks[bi], st.samples_by_batch[bi], batch_infos[bi],
+                    st.re_names, st.re_types, 2, 1.0e-6
+                )
+            end
+        end
+    else
+        is_es = method.e_step
+        for bi in updated
+            info = batch_infos[bi]
+            samps, log_ws, ess = _is_sample_batch(
+                dm, info, θ, st.const_cache, st.cache1, st.batch_rngs[bi],
+                st.re_names, st.re_types, is_es, st.proposal_blocks[bi]
+            )
+            st.samples_by_batch[bi] = samps
+            st.weights_store[bi] = log_ws
+            st.ess_store[bi] = ess
+            is_es.adapt && _is_update_blocks!(
+                st.proposal_blocks[bi], samps, info, st.re_names, st.re_types, 2, 1.0e-6; log_ws = log_ws
+            )
+        end
+    end
+
+    draws = Vector{RandomEffectPosteriorSample}(undef, nb)
+    for bi in 1:nb
+        S_bi = st.samples_by_batch[bi]
+        if use_mcmc
+            draws[bi] = RandomEffectPosteriorSample(S_bi, nothing, nothing, :mcmc)
+        else
+            draws[bi] = RandomEffectPosteriorSample(S_bi, st.weights_store[bi], st.ess_store[bi], :importance)
+        end
+    end
+    new_state = merge(st, (iter = iter + 1, prev_use_mcmc = use_mcmc))
+    return draws, new_state
 end
 
 # ── Objective factory: shared fit setup/teardown ─────────────────────────────

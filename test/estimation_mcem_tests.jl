@@ -5,7 +5,10 @@ using Distributions
 using Turing
 using Random
 using SciMLBase
+using ComponentArrays
+using Optimization
 using OptimizationOptimisers
+using OptimizationOptimJL
 using OptimizationBBO
 
 # One scalar-RE model shared by the option/sampler/constants testsets below
@@ -572,4 +575,78 @@ end
     @test length(gsub) == 1
     @test_throws ErrorException NoLimits.mcem_q_objective_and_gradient(dm, θ, draws, nb + 1; part = :q1)
     @test_throws ErrorException NoLimits.mcem_q_objective_and_gradient(dm, θ, draws; part = :bogus)
+end
+
+@testset "MCEM dev_api mcem_e_step (state-threaded E-step)" begin
+    dm = fx_re_dm()
+    fe = NoLimits.get_fixed(NoLimits.get_model(dm))
+    θ0 = NoLimits.get_θ0_untransformed(fe)
+    method = NoLimits.MCEM(; maxiters = 20, progress = false)
+
+    # Determinism: same fresh seed -> bit-identical draws.
+    d_a, s_a = NoLimits.mcem_e_step(dm, θ0, method, nothing; rng = MersenneTwister(11))
+    d_b, s_b = NoLimits.mcem_e_step(dm, θ0, method, nothing; rng = MersenneTwister(11))
+    nb = length(d_a)
+    @test nb > 1
+    @test all(NoLimits.get_draws(d_a[bi]) == NoLimits.get_draws(d_b[bi]) for bi in 1:nb)
+    @test all(NoLimits.get_draws(d_a[bi]) isa AbstractMatrix for bi in 1:nb)
+    @test s_a.iter == 2
+
+    # State threading: a second call advances iter and uses warm-start.
+    d2, s2 = NoLimits.mcem_e_step(dm, θ0, method, s_a; rng = MersenneTwister(11))
+    @test s2.iter == 3
+    @test length(d2) == nb
+
+    # Draws feed straight into the M-step primitive.
+    Q, g = NoLimits.mcem_q_objective_and_gradient(dm, θ0, d_a; part = :q1, serialization = NoLimits.EnsembleSerial())
+    @test isfinite(Q) && all(isfinite, collect(g))
+
+    # Round trip: the federated protocol { E-step local -> M-step Q2 (LBFGS over the
+    # summed grad) -> M-step Q1 -> repeat } reproduces fit_model(dm, MCEM()).
+    tr = NoLimits.get_transform(fe)
+    itr = NoLimits.get_inverse_transform(fe)
+    mstep = function (θ, draws, part, fnames)
+        θt = tr(θ)
+        θf0 = ComponentArray(NamedTuple{Tuple(fnames)}(Tuple(getproperty(θt, n) for n in fnames)))
+        axsf = getaxes(θf0)
+        x0 = collect(ComponentArrays.getdata(θf0))
+        rebuild = function (x)
+            θt_loc = ComponentArray(collect(θt), getaxes(θt))
+            θf = ComponentArray(x, axsf)
+            for n in fnames
+                setproperty!(θt_loc, n, getproperty(θf, n))
+            end
+            return itr(θt_loc)
+        end
+        f = (x, p) -> -NoLimits.mcem_q_objective_and_gradient(
+            dm, rebuild(x), draws; part = part, free_names = fnames,
+            scale = :transformed, serialization = NoLimits.EnsembleSerial()
+        )[1]
+        g! = function (G, x, p)
+            gg = NoLimits.mcem_q_objective_and_gradient(
+                dm, rebuild(x), draws; part = part, free_names = fnames,
+                scale = :transformed, serialization = NoLimits.EnsembleSerial()
+            )[2]
+            G .= .-collect(gg)
+            return nothing
+        end
+        sol = solve(OptimizationProblem(OptimizationFunction(f; grad = g!), x0), LBFGS(); maxiters = 50)
+        return rebuild(sol.u)
+    end
+
+    res = fit_model(dm, method; rng = MersenneTwister(7))
+    p_ref = NoLimits.get_params(res; scale = :untransformed)
+
+    θ = θ0
+    state = nothing
+    rng_loop = MersenneTwister(7)
+    for _ in 1:30
+        draws, state = NoLimits.mcem_e_step(dm, θ, method, state; rng = rng_loop)
+        θ = mstep(θ, draws, :q2, [:ω])
+        θ = mstep(θ, draws, :q1, [:a, :σ])
+    end
+    @test all(isfinite, collect(θ))
+    @test isapprox(θ.a, p_ref.a; atol = 0.1)
+    @test isapprox(θ.σ, p_ref.σ; atol = 0.1)
+    @test isapprox(θ.ω, p_ref.ω; atol = 0.1)
 end
