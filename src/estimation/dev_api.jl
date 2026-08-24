@@ -48,6 +48,8 @@ export AbstractCurvature, ExactHessianCurvature, FisherInformationCurvature,
 export fit_method, fit_fixed_effects, fit_laplace_family, objective_and_gradient
 # MCEM M-step Q primitives + state-threaded E-step
 export mcem_q_partition, mcem_q_objective_and_gradient, mcem_e_step
+# SAEM closed-form M-step primitives (federation)
+export saem_closed_form_eligibility, saem_sufficient_statistics, saem_closed_form_mstep
 
 # Resolve a single-thread evaluation cache for the per-item primitives.
 @inline _dev_ll_cache(::DataModel, cache::LikelihoodCache) = cache
@@ -1442,6 +1444,183 @@ function mcem_e_step(
     end
     new_state = merge(st, (iter = iter + 1, prev_use_mcmc = use_mcmc))
     return draws, new_state
+end
+
+# ── SAEM closed-form M-step primitives (federation) ──────────────────────────
+# The SAEM hybrid M-step splits free fixed effects into a closed-form-eligible block
+# (Gaussian RE covariances/means, residual σ, supported HMM emission) updated from
+# per-subject-additive sufficient statistics, and a numerical block optimized with the
+# same Q kernels as MCEM (`mcem_q_objective_and_gradient`). These primitives expose the
+# closed-form half, reusing the fit's `_saem_resolve_closed_form_config` /
+# `_saem_builtin_collect_current_stats` / `_saem_builtin_smooth_stats` /
+# `_saem_builtin_updates_from_smoothed_stats` verbatim so the routing and updates are
+# bit-identical to `fit_model(dm, SAEM())`.
+
+"""
+    saem_closed_form_eligibility(dm; constants=NamedTuple(), method=SAEM()) -> (closed_form, numerical)
+
+Partition the FREE (non-`constants`) fixed-effect names into the SAEM hybrid M-step's two
+routes: `closed_form` (RE covariance/mean parameters, the residual σ, and supported HMM
+emission parameters — resolved exactly as `fit_model(dm, SAEM())` does) and `numerical`
+(everything else, e.g. structural/mean parameters entering the observation model, optimized
+via [`mcem_q_objective_and_gradient`]). The federated driver routes each parameter accordingly.
+"""
+function saem_closed_form_eligibility(
+        dm::DataModel;
+        constants::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        method::SAEM = SAEM()
+    )
+    constants = _as_namedtuple(constants)
+    fe = get_fixed(get_model(dm))
+    free = [n for n in get_names(fe) if !(n in keys(constants))]
+    cfg = _saem_resolve_closed_form_config(dm, method.saem)
+    cf_syms = Symbol[]
+    for v in values(cfg.re_cov_params)
+        _saem_collect_target_symbols!(cf_syms, v)
+    end
+    for v in values(cfg.re_mean_params)
+        _saem_collect_target_symbols!(cf_syms, v)
+    end
+    _saem_collect_target_symbols!(cf_syms, cfg.resid_var_param)
+    for col in keys(cfg.hmm_emission_params)
+        info = getfield(cfg.hmm_emission_params, col)
+        hasproperty(info, :target) &&
+            _saem_collect_target_symbols!(cf_syms, getproperty(info, :target))
+    end
+    cf_set = cfg.builtin_stats_mode == :none ? Set{Symbol}() : Set(cf_syms)
+    closed_form = [n for n in free if n in cf_set]
+    numerical = [n for n in free if !(n in cf_set)]
+    return (closed_form = closed_form, numerical = numerical)
+end
+
+# draws (Matrix{Float64} per batch, n_b × S) -> the b_chains[bi][c] / n_chains shape the
+# fit's `_saem_builtin_collect_current_stats` expects. A shared sample schedule gives every
+# batch the same S; guard against a short batch just in case.
+function _saem_draws_to_chains(draws::AbstractVector{<:RandomEffectPosteriorSample})
+    nb = length(draws)
+    S = 0
+    for d in draws
+        c = size(get_draws(d), 2)
+        c > 0 && (S = S == 0 ? c : min(S, c))
+    end
+    S == 0 && error("saem_sufficient_statistics: draws contain no samples.")
+    b_chains = Vector{Vector{Vector{Float64}}}(undef, nb)
+    for bi in 1:nb
+        m = get_draws(draws[bi])
+        b_chains[bi] = [Float64.(@view m[:, c]) for c in 1:min(S, size(m, 2))]
+        for _ in (size(m, 2) + 1):S
+            push!(b_chains[bi], Float64[])
+        end
+    end
+    return b_chains, S
+end
+
+function _saem_stats_setup(dm::DataModel, draws, constants_re, cache)
+    constants_re = _as_namedtuple(constants_re)
+    _, batch_infos, const_cache = build_re_batch_infos(dm, constants_re)
+    length(draws) == length(batch_infos) ||
+        error("saem_sufficient_statistics: got $(length(draws)) draw batches but the model has $(length(batch_infos)); draws must come from the same dm/constants_re.")
+    ll_cache = cache === nothing ?
+        build_ll_cache(dm; serialization = EnsembleSerial(), force_saveat = true) : cache
+    llc = ll_cache isa Vector ? ll_cache[1] : ll_cache
+    return batch_infos, const_cache, llc
+end
+
+function _saem_stats_collect(dm::DataModel, batch_infos, b_chains, n_chains, θ, const_cache, llc, method::SAEM, rng)
+    cfg = _saem_resolve_closed_form_config(dm, method.saem)
+    θ_re = symmetrize_psd_parameters(θ, get_fixed(get_model(dm)))
+    return _saem_builtin_collect_current_stats(
+        dm, batch_infos, b_chains, n_chains, θ_re, const_cache,
+        cfg.resid_var_param, cfg.hmm_emission_params,
+        cfg.re_cov_params, cfg.re_mean_params, cfg.re_family_map, llc, rng
+    )
+end
+
+"""
+    saem_sufficient_statistics(dm, θ, draws; constants_re=NamedTuple(), method=SAEM(), cache=nothing, rng=Random.default_rng()) -> stats
+    saem_sufficient_statistics(dm, θ, draws, idx; ...) -> stats
+
+Per-subject-additive SAEM sufficient statistics at natural-scale `θ` and FIXED posterior
+`draws` (`Vector{RandomEffectPosteriorSample}`, one per batch, e.g. from [`mcem_e_step`]).
+Reuses the fit's `_saem_builtin_collect_current_stats`, so the population form (all batches)
+is bit-identical to the SAEM fit's per-iteration current statistics and plugs straight into
+[`saem_closed_form_mstep`].
+
+`stats` is a NamedTuple `(re, outcome, hmm)`:
+- `re[name] = (family, mean, second, n)`: RE moments, `mean = Σx/n`, `second = Σxx'/n` over
+  the `n` draw contributions (`x` is η; `log η` for lognormal families; the ALR transform
+  for `MvLogitNormal`).
+- `outcome[col] = (family, s1, s2, ss, n)`: additive residual sufficient statistics.
+- `hmm[col] = (family, target, sum_w, sum_wy)`: additive HMM emission statistics.
+
+Federated aggregation: `outcome`/`hmm` fields are plain sums (add directly across sites);
+`re` moments are additive after de-normalizing (`Σx = mean*n`, `Σxx' = second*n`), summing,
+then re-dividing by the pooled `n`. The `idx` form returns batch `idx`'s contribution; summed
+this way over batches it equals the population form (the per-subject seam for DP / federation).
+Draws are treated as equally-weighted MCMC draws, matching the SAEM MH sampler.
+"""
+function saem_sufficient_statistics(
+        dm::DataModel, θ::ComponentArray,
+        draws::AbstractVector{<:RandomEffectPosteriorSample};
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        method::SAEM = SAEM(), cache = nothing,
+        rng::AbstractRNG = Random.default_rng()
+    )
+    batch_infos, const_cache, llc = _saem_stats_setup(dm, draws, constants_re, cache)
+    b_chains, n_chains = _saem_draws_to_chains(draws)
+    return _saem_stats_collect(dm, batch_infos, b_chains, n_chains, θ, const_cache, llc, method, rng)
+end
+
+function saem_sufficient_statistics(
+        dm::DataModel, θ::ComponentArray,
+        draws::AbstractVector{<:RandomEffectPosteriorSample}, idx::Integer;
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        method::SAEM = SAEM(), cache = nothing,
+        rng::AbstractRNG = Random.default_rng()
+    )
+    batch_infos, const_cache, llc = _saem_stats_setup(dm, draws, constants_re, cache)
+    (1 <= idx <= length(batch_infos)) ||
+        error("saem_sufficient_statistics: batch idx $idx out of range 1:$(length(batch_infos)).")
+    b_chains, n_chains = _saem_draws_to_chains(draws)
+    return _saem_stats_collect(
+        dm, batch_infos[idx:idx], b_chains[idx:idx], n_chains, θ, const_cache, llc, method, rng
+    )
+end
+
+"""
+    saem_closed_form_mstep(dm, aggregated_stats, smoothed_state, θ, γ; constants=NamedTuple(), method=SAEM()) -> (θ_updates, new_smoothed_state)
+
+One coordinator-side SAEM closed-form M-step, bit-identical to the SAEM fit's closed-form
+update. Stochastic-approximation-smooths `aggregated_stats` (the summed per-site population
+sufficient statistics from [`saem_sufficient_statistics`]) against the carried
+`smoothed_state` with step size `γ`, then closed-form updates the eligible parameters.
+
+Pass `smoothed_state === nothing` on the first iteration (the SA state initializes to the
+current stats); thread the returned `new_smoothed_state` into the next call. `θ_updates` is a
+NamedTuple of natural-scale values for the closed-form-eligible parameters (keys in
+`constants` are dropped — user constants win, as in the fit). Reuses `_saem_builtin_smooth_stats`
+and `_saem_builtin_updates_from_smoothed_stats` verbatim; annealing/SA floors are the
+federated driver's responsibility (control them through `γ`).
+"""
+function saem_closed_form_mstep(
+        dm::DataModel, aggregated_stats, smoothed_state,
+        θ::ComponentArray, γ::Real;
+        constants::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        method::SAEM = SAEM()
+    )
+    constants = _as_namedtuple(constants)
+    cfg = _saem_resolve_closed_form_config(dm, method.saem)
+    new_state = _saem_builtin_smooth_stats(smoothed_state, aggregated_stats, γ)
+    θ_re = symmetrize_psd_parameters(θ, get_fixed(get_model(dm)))
+    updates = _saem_builtin_updates_from_smoothed_stats(
+        dm, θ_re, new_state, cfg.resid_var_param, cfg.hmm_emission_params,
+        cfg.re_cov_params, cfg.re_mean_params
+    )
+    for k in keys(constants)
+        haskey(updates, k) &&
+            (updates = Base.structdiff(updates, NamedTuple{(k,)}((nothing,))))
+    end
+    return (θ_updates = updates, new_smoothed_state = new_state)
 end
 
 # ── Objective factory: shared fit setup/teardown ─────────────────────────────

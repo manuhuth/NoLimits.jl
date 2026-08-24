@@ -2966,6 +2966,96 @@ function _saem_builtin_mean_updates(
     return NamedTuple{Tuple(mean_names)}(Tuple(getproperty(θu_hat, n) for n in mean_names))
 end
 
+# Resolve the builtin closed-form M-step routing exactly as the SAEM fit does: which
+# parameters get closed-form updates (RE covariances/means, residual σ, HMM emission),
+# the eligibility report, and the RE family map. Shared by `_fit_model(::SAEM)` and the
+# dev_api SAEM primitives so their routing is bit-identical. `extra_objective !== nothing`
+# disables the closed-form path (the M-step is no longer separable), matching the fit.
+function _saem_resolve_closed_form_config(dm::DataModel, saem::SAEMOptions, extra_objective = nothing)
+    fixed_names = get_names(get_fixed(get_model(dm)))
+    builtin_stats_mode = _saem_normalize_builtin_stats_mode(saem.builtin_stats)
+    resid_var_param = saem.resid_var_param
+    re_cov_params = saem.re_cov_params
+    re_mean_params = saem.re_mean_params
+    hmm_emission_params = NamedTuple()
+    if builtin_stats_mode == :auto
+        manual_has_re = !isempty(keys(re_cov_params)) || !isempty(keys(re_mean_params))
+        manual_has_resid = !(
+            resid_var_param == :σ || (
+                resid_var_param isa NamedTuple &&
+                    isempty(keys(resid_var_param))
+            )
+        )
+        auto_cfg = _saem_autodetect_gaussian_re(dm, fixed_names)
+        if auto_cfg === nothing
+            builtin_stats_mode = (manual_has_re || manual_has_resid) ? :closed_form : :none
+        else
+            builtin_stats_mode = :closed_form
+            re_cov_params = isempty(keys(re_cov_params)) ? auto_cfg.re_cov_params :
+                merge(auto_cfg.re_cov_params, re_cov_params)
+            re_mean_params = isempty(keys(re_mean_params)) ? auto_cfg.re_mean_params :
+                merge(auto_cfg.re_mean_params, re_mean_params)
+            hmm_emission_params = auto_cfg.hmm_emission_params
+            if resid_var_param isa NamedTuple
+                if isempty(keys(resid_var_param))
+                    resid_var_param = auto_cfg.resid_var_param
+                elseif auto_cfg.resid_var_param isa NamedTuple
+                    resid_var_param = merge(auto_cfg.resid_var_param, resid_var_param)
+                end
+            elseif resid_var_param == :σ
+                resid_var_param = auto_cfg.resid_var_param
+            end
+        end
+    end
+    if isempty(keys(hmm_emission_params))
+        hmm_emission_params = _saem_autodetect_hmm_emission_params(dm, Set(fixed_names))
+    end
+    builtin_cf_elig = _saem_builtin_closed_form_eligibility(
+        dm, re_cov_params, re_mean_params,
+        resid_var_param, hmm_emission_params
+    )
+    if builtin_stats_mode == :closed_form
+        resid_var_param = _saem_prune_hmm_outcome_targets(
+            dm, resid_var_param, builtin_cf_elig.hmm_outcomes
+        )
+        builtin_cf_elig = _saem_builtin_closed_form_eligibility(
+            dm, re_cov_params, re_mean_params,
+            resid_var_param, hmm_emission_params
+        )
+        if !isempty(builtin_cf_elig.outcome_targets_hmm)
+            @info "SAEM builtin_stats ignores HMM outcome targets; applying closed-form updates to eligible non-HMM/re blocks only." hmm_outcomes = builtin_cf_elig.outcome_targets_hmm
+        end
+        if !builtin_cf_elig.has_any_closed_form_block
+            @info "SAEM builtin_stats has no eligible closed-form blocks; falling back to numeric M-step."
+            builtin_stats_mode = :none
+        end
+    end
+    # `extra_objective` couples β and D through the ODE ensemble moments, so the M-step
+    # objective is no longer separable and the closed-form covariance/Q2 split is no longer
+    # exact. Disable the builtin closed-form updates so ω/σ are optimized numerically in the
+    # single joint Q1 M-step (which already adds `extra_objective`).
+    if extra_objective !== nothing
+        if builtin_stats_mode != :none
+            @info "SAEM: extra_objective present — disabling closed-form M-step; all free parameters (means, σ, ω) optimized numerically in the joint M-step."
+            builtin_stats_mode = :none
+        end
+        re_cov_params = NamedTuple()
+        re_mean_params = NamedTuple()
+        resid_var_param = NamedTuple()
+        hmm_emission_params = NamedTuple()
+    end
+    re_family_map = _saem_re_family_map(dm)
+    return (
+        builtin_stats_mode = builtin_stats_mode,
+        re_cov_params = re_cov_params,
+        re_mean_params = re_mean_params,
+        resid_var_param = resid_var_param,
+        hmm_emission_params = hmm_emission_params,
+        builtin_cf_elig = builtin_cf_elig,
+        re_family_map = re_family_map,
+    )
+end
+
 function _fit_model(
         dm::DataModel, method::SAEM, args...;
         constants::NamedTuple = NamedTuple(),
@@ -3034,78 +3124,13 @@ function _fit_model(
         serialization = serialization, force_saveat = true
     )
 
-    builtin_stats_mode_requested = _saem_normalize_builtin_stats_mode(method.saem.builtin_stats)
-    builtin_stats_mode = builtin_stats_mode_requested
-    resid_var_param = method.saem.resid_var_param
-    re_cov_params = method.saem.re_cov_params
-    re_mean_params = method.saem.re_mean_params
-    hmm_emission_params = NamedTuple()
-    if builtin_stats_mode == :auto
-        manual_has_re = !isempty(keys(re_cov_params)) || !isempty(keys(re_mean_params))
-        manual_has_resid = !(
-            resid_var_param == :σ || (
-                resid_var_param isa NamedTuple &&
-                    isempty(keys(resid_var_param))
-            )
-        )
-        auto_cfg = _saem_autodetect_gaussian_re(dm, fixed_names)
-        if auto_cfg === nothing
-            builtin_stats_mode = (manual_has_re || manual_has_resid) ? :closed_form : :none
-        else
-            builtin_stats_mode = :closed_form
-            re_cov_params = isempty(keys(re_cov_params)) ? auto_cfg.re_cov_params :
-                merge(auto_cfg.re_cov_params, re_cov_params)
-            re_mean_params = isempty(keys(re_mean_params)) ? auto_cfg.re_mean_params :
-                merge(auto_cfg.re_mean_params, re_mean_params)
-            hmm_emission_params = auto_cfg.hmm_emission_params
-            if resid_var_param isa NamedTuple
-                if isempty(keys(resid_var_param))
-                    resid_var_param = auto_cfg.resid_var_param
-                elseif auto_cfg.resid_var_param isa NamedTuple
-                    resid_var_param = merge(auto_cfg.resid_var_param, resid_var_param)
-                end
-            elseif resid_var_param == :σ
-                resid_var_param = auto_cfg.resid_var_param
-            end
-        end
-    end
-    if isempty(keys(hmm_emission_params))
-        hmm_emission_params = _saem_autodetect_hmm_emission_params(dm, Set(fixed_names))
-    end
-    builtin_cf_elig = _saem_builtin_closed_form_eligibility(
-        dm, re_cov_params, re_mean_params,
-        resid_var_param, hmm_emission_params
-    )
-    if builtin_stats_mode == :closed_form
-        resid_var_param = _saem_prune_hmm_outcome_targets(
-            dm, resid_var_param, builtin_cf_elig.hmm_outcomes
-        )
-        builtin_cf_elig = _saem_builtin_closed_form_eligibility(
-            dm, re_cov_params, re_mean_params,
-            resid_var_param, hmm_emission_params
-        )
-        if !isempty(builtin_cf_elig.outcome_targets_hmm)
-            @info "SAEM builtin_stats ignores HMM outcome targets; applying closed-form updates to eligible non-HMM/re blocks only." hmm_outcomes = builtin_cf_elig.outcome_targets_hmm
-        end
-        if !builtin_cf_elig.has_any_closed_form_block
-            @info "SAEM builtin_stats has no eligible closed-form blocks; falling back to numeric M-step."
-            builtin_stats_mode = :none
-        end
-    end
-    # `extra_objective` couples β and D through the ODE ensemble moments, so the M-step
-    # objective is no longer separable and the closed-form covariance/Q2 split is no longer
-    # exact. Disable the builtin closed-form updates so ω/σ are optimized numerically in the
-    # single joint Q1 M-step (which already adds `extra_objective`).
-    if extra_objective !== nothing
-        if builtin_stats_mode != :none
-            @info "SAEM: extra_objective present — disabling closed-form M-step; all free parameters (means, σ, ω) optimized numerically in the joint M-step."
-            builtin_stats_mode = :none
-        end
-        re_cov_params = NamedTuple()
-        re_mean_params = NamedTuple()
-        resid_var_param = NamedTuple()
-        hmm_emission_params = NamedTuple()
-    end
+    _cf_cfg = _saem_resolve_closed_form_config(dm, method.saem, extra_objective)
+    builtin_stats_mode = _cf_cfg.builtin_stats_mode
+    re_cov_params = _cf_cfg.re_cov_params
+    re_mean_params = _cf_cfg.re_mean_params
+    resid_var_param = _cf_cfg.resid_var_param
+    hmm_emission_params = _cf_cfg.hmm_emission_params
+    builtin_cf_elig = _cf_cfg.builtin_cf_elig
     has_custom_closed_form = method.saem.suffstats !== nothing &&
         method.saem.mstep_closed_form !== nothing
     # Detect Q2-only free parameters (appear only in RE distributions, never in obs-side blocks).
@@ -3137,7 +3162,7 @@ function _fit_model(
             @info "SAEM builtin_stats: censored column(s) $(censored_cols) — σ sufficient statistics via truncated sampling." targets = targets
         end
     end
-    re_family_map = _saem_re_family_map(dm)
+    re_family_map = _cf_cfg.re_family_map
 
     # anneal_to_fixed validation
     anneal_initial_sds = _saem_validate_anneal(
