@@ -46,6 +46,8 @@ export AbstractCurvature, ExactHessianCurvature, FisherInformationCurvature,
     CurvatureWorkspace
 # Fitting-method protocol drivers
 export fit_method, fit_fixed_effects, fit_laplace_family, objective_and_gradient
+# MCEM M-step Q primitives
+export mcem_q_partition, mcem_q_objective_and_gradient
 
 # Resolve a single-thread evaluation cache for the per-item primitives.
 @inline _dev_ll_cache(::DataModel, cache::LikelihoodCache) = cache
@@ -1113,6 +1115,206 @@ function objective_and_gradient(
     _require_no_random_effects(dm)
     f = _DevIndividualObjective(dm, Int(idx), _dev_ll_cache(dm, cache))
     return _dev_sweep(f, dm, θ, scale, hessian)
+end
+
+# ── MCEM M-step Q primitives ──────────────────────────────────────────────────
+# The Monte-Carlo Q(θ) = Σ_b (1/M) Σ_m log f(y_b, η_b^m | θ) at FIXED posterior draws,
+# split (as the MCEM fit is) into a Q1 part (full complete-data loglik, needs the ODE)
+# and a Q2 part (RE-prior only). Both reuse the exact fit kernels `_mcem_Q`/`_mcem_Q2`,
+# so the returned value is bit-identical to the fit's M-step Q at the same arguments.
+
+"""
+    mcem_q_partition(dm; constants=NamedTuple()) -> (q1, q2)
+
+Partition the free (non-`constants`) fixed-effect names into the MCEM M-step's two
+independent sub-problems: `q1` (names appearing in observation-side blocks, whose Q term
+needs the ODE/likelihood) and `q2` (names appearing only in `@randomEffects` distribution
+expressions, no ODE). Public wrapper over the partition the MCEM fit uses internally.
+"""
+function mcem_q_partition(
+        dm::DataModel; constants::Union{NamedTuple, AbstractDict} = NamedTuple()
+    )
+    constants = _as_namedtuple(constants)
+    fe = get_fixed(get_model(dm))
+    free = [n for n in get_names(fe) if !(n in keys(constants))]
+    return _partition_q1_q2_names(get_model(dm), free)
+end
+
+# Default free set for a part: partition ALL fixed-effect names (callers freeze a
+# complement by passing an explicit `free_names` subset).
+function _mcem_resolve_free_names(dm::DataModel, part::Symbol, free_names)
+    free_names !== nothing && return collect(Symbol, free_names)
+    p = _partition_q1_q2_names(get_model(dm), collect(Symbol, get_names(get_fixed(get_model(dm)))))
+    return part === :q1 ? p.q1 : p.q2
+end
+
+# Per-batch weights: `nothing` (uniform/MCMC) when every batch is unweighted, else
+# per-batch self-normalized weights (matching `_mcem_Q_core`'s sum-to-one convention).
+function _mcem_weights_from_draws(draws)
+    all(get_log_weights(d) === nothing for d in draws) && return nothing
+    return map(draws) do d
+        n = size(get_draws(d), 2)
+        lw = get_log_weights(d)
+        lw === nothing && return fill(1.0 / max(n, 1), n)
+        w = exp.(lw .- maximum(lw))
+        return w ./ sum(w)
+    end
+end
+
+# Build the fit's exact caches + per-batch sample/weight matrices from a draw vector.
+function _mcem_q_setup(
+        dm::DataModel, draws, constants_re, serialization::SciMLBase.EnsembleAlgorithm, cache
+    )
+    constants_re = _as_namedtuple(constants_re)
+    _, batch_infos, const_cache = build_re_batch_infos(dm, constants_re)
+    length(draws) == length(batch_infos) ||
+        error("mcem_q_objective_and_gradient: got $(length(draws)) draw batches but the model has $(length(batch_infos)); draws must come from the same `dm`/`constants_re`.")
+    ll_cache = cache === nothing ?
+        build_ll_cache(dm; serialization = serialization, force_saveat = true) : cache
+    samples_by_batch = [get_draws(d) for d in draws]
+    weights_by_batch = _mcem_weights_from_draws(draws)
+    return batch_infos, const_cache, ll_cache, samples_by_batch, weights_by_batch
+end
+
+# θ_u (natural) -> scalar Q, reusing the fit's Q1/Q2 kernels verbatim.
+struct _MCEMQObjective{D, B, C, L, S, W, E}
+    dm::D
+    batch_infos::B
+    const_cache::C
+    ll_cache::L
+    samples_by_batch::S
+    weights_by_batch::W
+    serialization::E
+    part::Symbol
+end
+@inline function (o::_MCEMQObjective)(θu::ComponentArray)
+    if o.part === :q1
+        return _mcem_Q(
+            o.dm, o.batch_infos, θu, o.const_cache, o.ll_cache,
+            o.samples_by_batch, o.weights_by_batch; serialization = o.serialization
+        )
+    end
+    return _mcem_Q2(
+        o.dm, o.batch_infos, θu, o.const_cache, o.ll_cache,
+        o.samples_by_batch, o.weights_by_batch; serialization = o.serialization
+    )
+end
+
+# Free-subset reconstruction: differentiate only `free_names`, freezing the
+# complement at the template — the M-step's per-part reparametrization.
+struct _MCEMFreeObjNatural{F, T, A, AF}
+    f::F
+    tmpl::T
+    axs_full::A
+    free_names::Vector{Symbol}
+    axs_free::AF
+end
+@inline function (o::_MCEMFreeObjNatural)(x)
+    θ_free = ComponentArray(x, o.axs_free)
+    θ_full = ComponentArray(eltype(x).(o.tmpl), o.axs_full)
+    for name in o.free_names
+        setproperty!(θ_full, name, getproperty(θ_free, name))
+    end
+    return o.f(θ_full)
+end
+
+struct _MCEMFreeObjTransformed{F, I, T, A, AF}
+    f::F
+    inv_transform::I
+    tmpl::T
+    axs_full::A
+    free_names::Vector{Symbol}
+    axs_free::AF
+end
+@inline function (o::_MCEMFreeObjTransformed)(x)
+    θt_free = ComponentArray(x, o.axs_free)
+    θt_full = ComponentArray(eltype(x).(o.tmpl), o.axs_full)
+    for name in o.free_names
+        setproperty!(θt_full, name, getproperty(θt_free, name))
+    end
+    return o.f(o.inv_transform(θt_full))
+end
+
+# Single DiffResults sweep of `qf(θ_u)` over the `free_names` subset (mirror of
+# `_dev_sweep`, but freezing the complement at `θ`). Returns (Q, gradient on free axes).
+function _mcem_dev_sweep(qf, dm::DataModel, θ::ComponentArray, free_names::Vector{Symbol}, scale::Symbol)
+    scale = _dev_check_scale(scale)
+    fe = get_fixed(get_model(dm))
+    θ_re = symmetrize_psd_parameters(θ, fe)
+    if scale === :untransformed
+        tmpl = collect(ComponentArrays.getdata(θ_re))
+        axs_full = getaxes(θ_re)
+        θ_free = ComponentArray(NamedTuple{Tuple(free_names)}(Tuple(getproperty(θ_re, n) for n in free_names)))
+        isempty(free_names) && return (qf(θ_re), θ_free)
+        axs_free = getaxes(θ_free)
+        x0 = collect(ComponentArrays.getdata(θ_free))
+        g = _MCEMFreeObjNatural(qf, tmpl, axs_full, free_names, axs_free)
+    else
+        θt_full = get_transform(fe)(θ_re)
+        tmpl = collect(ComponentArrays.getdata(θt_full))
+        axs_full = getaxes(θt_full)
+        θt_free = ComponentArray(NamedTuple{Tuple(free_names)}(Tuple(getproperty(θt_full, n) for n in free_names)))
+        isempty(free_names) && return (qf(θ_re), θt_free)
+        axs_free = getaxes(θt_free)
+        x0 = collect(ComponentArrays.getdata(θt_free))
+        g = _MCEMFreeObjTransformed(qf, get_inverse_transform(fe), tmpl, axs_full, free_names, axs_free)
+    end
+    res = ForwardDiff.gradient!(_DiffResults.GradientResult(x0), g, x0)
+    return (_DiffResults.value(res), ComponentArray(_DiffResults.gradient(res), axs_free))
+end
+
+"""
+    mcem_q_objective_and_gradient(dm, θ, draws; part=:q1, free_names=nothing, scale=:transformed, constants_re=NamedTuple(), serialization=EnsembleThreads(), cache=nothing) -> (Q, gradient)
+    mcem_q_objective_and_gradient(dm, θ, draws, idx; ...) -> (Q, gradient)
+
+Value and θ-gradient of one MCEM M-step Q-function at FIXED posterior `draws`
+(`Vector{RandomEffectPosteriorSample}`, one per batch, e.g. from
+[`sample_random_effect_draws`](@ref) or [`mcem_e_step`](@ref)).
+
+`part=:q1` evaluates the full complete-data Q (reuses `_mcem_Q`); `part=:q2` evaluates the
+RE-prior-only Q (reuses `_mcem_Q2`), so the returned value is bit-identical to the fit's
+M-step Q at the same arguments. `free_names` selects the differentiated subset (defaults to
+the `part`'s partition over all fixed effects; the complement is frozen at `θ`); `gradient`
+is a `ComponentArray` on those free axes at `scale` (`:transformed` or `:untransformed`).
+
+The per-batch form (`idx`) returns batch `idx`'s Q contribution; summing over `idx` equals
+the population form (the per-subject seam for DP clipping / federation).
+"""
+function mcem_q_objective_and_gradient(
+        dm::DataModel, θ::ComponentArray,
+        draws::AbstractVector{<:RandomEffectPosteriorSample};
+        part::Symbol = :q1,
+        free_names::Union{Nothing, AbstractVector} = nothing,
+        scale::Union{Symbol, AbstractString} = :transformed,
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
+        cache = nothing
+    )
+    part in (:q1, :q2) || error("mcem_q_objective_and_gradient: `part` must be :q1 or :q2, got :$part.")
+    fnames = _mcem_resolve_free_names(dm, part, free_names)
+    bi, cc, llc, sbb, wbb = _mcem_q_setup(dm, draws, constants_re, serialization, cache)
+    qf = _MCEMQObjective(dm, bi, cc, llc, sbb, wbb, serialization, part)
+    return _mcem_dev_sweep(qf, dm, θ, fnames, _as_symbol(scale))
+end
+
+function mcem_q_objective_and_gradient(
+        dm::DataModel, θ::ComponentArray,
+        draws::AbstractVector{<:RandomEffectPosteriorSample}, idx::Integer;
+        part::Symbol = :q1,
+        free_names::Union{Nothing, AbstractVector} = nothing,
+        scale::Union{Symbol, AbstractString} = :transformed,
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial(),
+        cache = nothing
+    )
+    part in (:q1, :q2) || error("mcem_q_objective_and_gradient: `part` must be :q1 or :q2, got :$part.")
+    fnames = _mcem_resolve_free_names(dm, part, free_names)
+    bi, cc, llc, sbb, wbb = _mcem_q_setup(dm, draws, constants_re, serialization, cache)
+    (1 <= idx <= length(bi)) ||
+        error("mcem_q_objective_and_gradient: batch idx $idx out of range 1:$(length(bi)).")
+    wbb_i = wbb === nothing ? nothing : wbb[idx:idx]
+    qf = _MCEMQObjective(dm, bi[idx:idx], cc, llc, sbb[idx:idx], wbb_i, serialization, part)
+    return _mcem_dev_sweep(qf, dm, θ, fnames, _as_symbol(scale))
 end
 
 # ── Objective factory: shared fit setup/teardown ─────────────────────────────

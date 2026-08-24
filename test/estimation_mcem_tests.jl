@@ -505,3 +505,71 @@ end
     @test res isa NoLimits.FitResult
     @test NoLimits.get_converged(res) isa Bool
 end
+
+@testset "MCEM dev_api Q primitives (partition + M-step Q value/gradient)" begin
+    dm = fx_re_dm()   # a, σ obs-side (q1); ω only in RE dist (q2)
+    fe = NoLimits.get_fixed(NoLimits.get_model(dm))
+    θ = NoLimits.get_θ0_untransformed(fe)
+
+    part = NoLimits.mcem_q_partition(dm)
+    @test part.q1 == [:a, :σ]
+    @test part.q2 == [:ω]
+    partc = NoLimits.mcem_q_partition(dm; constants = (; σ = 0.3))
+    @test partc.q1 == [:a]
+    @test partc.q2 == [:ω]
+
+    # FIXED weighted draws (importance; deterministic under a seeded rng)
+    draws = NoLimits.sample_random_effect_draws(
+        dm, θ; method = :importance, n_samples = 64,
+        serialization = NoLimits.EnsembleSerial(), rng = MersenneTwister(20240824)
+    )
+    nb = length(draws)
+    @test nb > 1
+
+    for prt in (:q1, :q2), scl in (:transformed, :untransformed)
+        Q, g = NoLimits.mcem_q_objective_and_gradient(
+            dm, θ, draws; part = prt, scale = scl,
+            serialization = NoLimits.EnsembleSerial()
+        )
+        Qsum = 0.0
+        gsum = zeros(length(g))
+        for bi in 1:nb
+            Qb, gb = NoLimits.mcem_q_objective_and_gradient(
+                dm, θ, draws, bi; part = prt, scale = scl,
+                serialization = NoLimits.EnsembleSerial()
+            )
+            Qsum += Qb
+            gsum .+= collect(gb)
+        end
+        @test isapprox(Q, Qsum; atol = 1.0e-10, rtol = 0)
+        @test isapprox(collect(g), gsum; atol = 1.0e-10, rtol = 0)
+    end
+
+    # Value is bit-identical to the fit kernel `_mcem_Q` at the same arguments.
+    _, bis, cc = NoLimits.build_re_batch_infos(dm, NamedTuple())
+    llc = NoLimits.build_ll_cache(dm; serialization = NoLimits.EnsembleSerial(), force_saveat = true)
+    sbb = [NoLimits.get_draws(d) for d in draws]
+    wbb = map(draws) do d
+        lw = NoLimits.get_log_weights(d)
+        w = exp.(lw .- maximum(lw))
+        return w ./ sum(w)
+    end
+    Qref = NoLimits._mcem_Q(dm, bis, θ, cc, llc, sbb, wbb; serialization = NoLimits.EnsembleSerial())
+    Qu, _ = NoLimits.mcem_q_objective_and_gradient(
+        dm, θ, draws; part = :q1, scale = :untransformed,
+        serialization = NoLimits.EnsembleSerial()
+    )
+    @test Qu == Qref
+    Q2ref = NoLimits._mcem_Q2(dm, bis, θ, cc, llc, sbb, wbb; serialization = NoLimits.EnsembleSerial())
+    Q2u, _ = NoLimits.mcem_q_objective_and_gradient(
+        dm, θ, draws; part = :q2, scale = :untransformed,
+        serialization = NoLimits.EnsembleSerial()
+    )
+    @test Q2u == Q2ref
+
+    # free_names subset freezes the complement; gradient is on the free axes.
+    _, gsub = NoLimits.mcem_q_objective_and_gradient(dm, θ, draws; part = :q1, free_names = [:a])
+    @test length(gsub) == 1
+    @test_throws ErrorException NoLimits.mcem_q_objective_and_gradient(dm, θ, draws, nb + 1; part = :q1)
+    @test_throws ErrorException NoLimits.mcem_q_objective_and_gradient(dm, θ, draws; part = :bogus)
+end
