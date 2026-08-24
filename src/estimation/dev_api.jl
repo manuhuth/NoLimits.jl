@@ -49,7 +49,7 @@ export fit_method, fit_fixed_effects, fit_laplace_family, objective_and_gradient
 # MCEM M-step Q primitives + state-threaded E-step
 export mcem_q_partition, mcem_q_objective_and_gradient, mcem_e_step
 # SAEM closed-form M-step primitives (federation)
-export saem_closed_form_eligibility, saem_sufficient_statistics
+export saem_closed_form_eligibility, saem_sufficient_statistics, saem_closed_form_mstep
 
 # Resolve a single-thread evaluation cache for the per-item primitives.
 @inline _dev_ll_cache(::DataModel, cache::LikelihoodCache) = cache
@@ -1585,6 +1585,42 @@ function saem_sufficient_statistics(
     return _saem_stats_collect(
         dm, batch_infos[idx:idx], b_chains[idx:idx], n_chains, θ, const_cache, llc, method, rng
     )
+end
+
+"""
+    saem_closed_form_mstep(dm, aggregated_stats, smoothed_state, θ, γ; constants=NamedTuple(), method=SAEM()) -> (θ_updates, new_smoothed_state)
+
+One coordinator-side SAEM closed-form M-step, bit-identical to the SAEM fit's closed-form
+update. Stochastic-approximation-smooths `aggregated_stats` (the summed per-site population
+sufficient statistics from [`saem_sufficient_statistics`]) against the carried
+`smoothed_state` with step size `γ`, then closed-form updates the eligible parameters.
+
+Pass `smoothed_state === nothing` on the first iteration (the SA state initializes to the
+current stats); thread the returned `new_smoothed_state` into the next call. `θ_updates` is a
+NamedTuple of natural-scale values for the closed-form-eligible parameters (keys in
+`constants` are dropped — user constants win, as in the fit). Reuses `_saem_builtin_smooth_stats`
+and `_saem_builtin_updates_from_smoothed_stats` verbatim; annealing/SA floors are the
+federated driver's responsibility (control them through `γ`).
+"""
+function saem_closed_form_mstep(
+        dm::DataModel, aggregated_stats, smoothed_state,
+        θ::ComponentArray, γ::Real;
+        constants::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        method::SAEM = SAEM()
+    )
+    constants = _as_namedtuple(constants)
+    cfg = _saem_resolve_closed_form_config(dm, method.saem)
+    new_state = _saem_builtin_smooth_stats(smoothed_state, aggregated_stats, γ)
+    θ_re = symmetrize_psd_parameters(θ, get_fixed(get_model(dm)))
+    updates = _saem_builtin_updates_from_smoothed_stats(
+        dm, θ_re, new_state, cfg.resid_var_param, cfg.hmm_emission_params,
+        cfg.re_cov_params, cfg.re_mean_params
+    )
+    for k in keys(constants)
+        haskey(updates, k) &&
+            (updates = Base.structdiff(updates, NamedTuple{(k,)}((nothing,))))
+    end
+    return (θ_updates = updates, new_smoothed_state = new_state)
 end
 
 # ── Objective factory: shared fit setup/teardown ─────────────────────────────

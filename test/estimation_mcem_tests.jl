@@ -702,4 +702,81 @@ end
     @test pop.re.η.mean == ref.re.η.mean
     @test pop.re.η.second == ref.re.η.second
     @test pop.outcome.y.s1 == ref.outcome.y.s1
+
+    # Closed-form M-step is bit-identical to the fit's inline smooth+update internals.
+    θ_re = NoLimits.symmetrize_psd_parameters(θ, fe)
+    state_ref = nothing
+    cf_state = nothing
+    for (γ, dd) in ((1.0, draws), (0.6, draws))
+        stats = NoLimits.saem_sufficient_statistics(dm, θ, dd)
+        upd, cf_state = NoLimits.saem_closed_form_mstep(dm, stats, cf_state, θ, γ)
+        state_ref = NoLimits._saem_builtin_smooth_stats(state_ref, stats, γ)
+        upd_ref = NoLimits._saem_builtin_updates_from_smoothed_stats(
+            dm, θ_re, state_ref, cfg.resid_var_param, cfg.hmm_emission_params,
+            cfg.re_cov_params, cfg.re_mean_params
+        )
+        @test upd == upd_ref
+        @test haskey(upd, :σ) && haskey(upd, :ω) && !haskey(upd, :a)
+    end
+    # User constants win over closed-form updates.
+    stats1 = NoLimits.saem_sufficient_statistics(dm, θ, draws)
+    updc, _ = NoLimits.saem_closed_form_mstep(dm, stats1, nothing, θ, 1.0; constants = (; σ = 0.3))
+    @test !haskey(updc, :σ) && haskey(updc, :ω)
+
+    # Round trip: federated { E-step -> suff-stats -> closed-form (σ,ω) + LBFGS q1 (a) }
+    # reproduces fit_model(dm, SAEM()) under a fixed rng.
+    tr = NoLimits.get_transform(fe)
+    itr = NoLimits.get_inverse_transform(fe)
+    mstep_a = function (θ, draws)
+        fnames = [:a]
+        θt = tr(θ)
+        θf0 = ComponentArray(NamedTuple{Tuple(fnames)}(Tuple(getproperty(θt, n) for n in fnames)))
+        axsf = getaxes(θf0)
+        x0 = collect(ComponentArrays.getdata(θf0))
+        rebuild = function (x)
+            θt_loc = ComponentArray(collect(θt), getaxes(θt))
+            θf = ComponentArray(x, axsf)
+            for n in fnames
+                setproperty!(θt_loc, n, getproperty(θf, n))
+            end
+            return itr(θt_loc)
+        end
+        f = (x, p) -> -NoLimits.mcem_q_objective_and_gradient(
+            dm, rebuild(x), draws; part = :q1, free_names = fnames,
+            scale = :transformed, serialization = NoLimits.EnsembleSerial()
+        )[1]
+        g! = function (G, x, p)
+            gg = NoLimits.mcem_q_objective_and_gradient(
+                dm, rebuild(x), draws; part = :q1, free_names = fnames,
+                scale = :transformed, serialization = NoLimits.EnsembleSerial()
+            )[2]
+            G .= .-collect(gg)
+            return nothing
+        end
+        sol = Optimization.solve(
+            Optimization.OptimizationProblem(Optimization.OptimizationFunction(f; grad = g!), x0),
+            OptimizationOptimJL.LBFGS(); maxiters = 50
+        )
+        return rebuild(sol.u)
+    end
+
+    res = fit_model(dm, NoLimits.SAEM(); rng = MersenneTwister(7))
+    p_ref = NoLimits.get_params(res; scale = :untransformed)
+    saem_opts = NoLimits.SAEM().saem
+    θ_rt = θ
+    state = nothing
+    cfs = nothing
+    rng_loop = MersenneTwister(7)
+    for iter in 1:150
+        draws_i, state = NoLimits.mcem_e_step(dm, θ_rt, method, state; rng = rng_loop)
+        stats_i = NoLimits.saem_sufficient_statistics(dm, θ_rt, draws_i)
+        γ = NoLimits._saem_gamma_schedule(iter, saem_opts)
+        upd_i, cfs = NoLimits.saem_closed_form_mstep(dm, stats_i, cfs, θ_rt, γ)
+        θ_rt = ComponentArray(merge(NamedTuple(θ_rt), upd_i))
+        θ_rt = mstep_a(θ_rt, draws_i)
+    end
+    @test all(isfinite, collect(θ_rt))
+    @test isapprox(θ_rt.a, p_ref.a; atol = 0.05)
+    @test isapprox(θ_rt.σ, p_ref.σ; atol = 0.03)
+    @test isapprox(θ_rt.ω, p_ref.ω; atol = 0.03)
 end
