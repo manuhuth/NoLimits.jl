@@ -1127,7 +1127,10 @@ function _build_obs(df, rows, obs_rows, obs_cols)
     return NamedTuple(pairs)
 end
 
-function _build_callbacks(model, df, rows, config::DataModelConfig)
+# `t0` is the individual's actual integration start (see the `tspan` construction in
+# `_data_model`): only events recorded exactly there are folded into u0 / the initial
+# infusion rates, every later event becomes a PresetTimeCallback at its own time.
+function _build_callbacks(model, df, rows, config::DataModelConfig, t0)
     config.evid_col === nothing && return nothing
     model.de.de === nothing && return nothing
     evid = _get_col(df, config.evid_col)[rows]
@@ -1147,7 +1150,6 @@ function _build_callbacks(model, df, rows, config::DataModelConfig)
     bolus_by_time = Dict{Tt, Vector{Float64}}()
     reset_by_time = Dict{Tt, Vector{Tuple{Int, Float64}}}()
     rate_delta_by_time = Dict{Tt, Vector{Float64}}()
-    t0 = minimum(_get_col(df, config.time_col)[rows])
     init_bolus = zeros(Float64, n_states)
     init_resets = Tuple{Int, Float64}[]
     init_rate_starts = zeros(Float64, n_states)
@@ -1609,7 +1611,7 @@ function DataModel(
     obs_groups = Vector{Vector{Int}}(undef, length(groups))
 
     bad_ids = Any[]
-    bad_tmin = Dict{Any, Float64}()
+    bad_tmin = Dict{Any, Tuple{Float64, Float64}}()
     for (i, rows) in enumerate(groups)
         tvals = _get_col(df, time_col)[rows]
         _validate_dynamic_covariates(cov, rows, tvals, keys_sorted[i])
@@ -1625,26 +1627,29 @@ function DataModel(
         dyn = _build_dyn_cov(cov, df, rows, time_col)
         series = IndividualSeries(obs, vary, dyn)
         const_cov = _build_const_cov(cov, df, rows)
-        callbacks = _build_callbacks(model, df, rows, config)
         # Integration start defaults to `t0` (0.0) so the initial conditions are applied
         # at t = 0 even when the first observation is later; `t0 = nothing` recovers the
         # legacy behaviour of starting at the first data time. The lower bound is never
         # raised above the data (extended down to `t0`, not truncated).
+        lo = minimum(tvals)
+        start = t0 === nothing ? lo : min(oftype(lo, t0), lo)
         if isempty(time_offsets)
-            lo = minimum(tvals)
-            tspan = (t0 === nothing ? lo : min(oftype(lo, t0), lo), maximum(tvals))
+            tspan = (start, maximum(tvals))
         else
             extra_min = minimum(time_offsets)
             extra_max = maximum(time_offsets)
             tmin = minimum(tvals) + extra_min
             tmax = maximum(tvals) + extra_max
-            if tmin < 0
+            # Only a formula time before the actual integration start is invalid; a
+            # negative time is fine when the solve starts at or below it.
+            if tmin < start
                 id_val = keys_sorted[i]
                 push!(bad_ids, id_val)
-                bad_tmin[id_val] = tmin
+                bad_tmin[id_val] = (tmin, float(start))
             end
-            tspan = (t0 === nothing ? tmin : min(oftype(tmin, t0), tmin), tmax)
+            tspan = (oftype(tmin, start), tmax)
         end
+        callbacks = _build_callbacks(model, df, rows, config, tspan[1])
         if !isempty(de_dyn) && tspan[1] < minimum(tvals)
             error("Formulas request times earlier than the dynamic covariate support for individual $(keys_sorted[i]): the integration span starts at t=$(tspan[1]) (smallest formula time offset $(off_min)), but the dynamic covariate(s) $(join(de_dyn, ", ")) used in @DifferentialEquation are only supported on [$(minimum(tvals)), $(maximum(tvals))] and cannot be extrapolated. Add covariate rows covering t=$(tspan[1]), or change the formula offset (or t0) so that the integration starts at or after $(minimum(tvals)).")
         end
@@ -1655,8 +1660,8 @@ function DataModel(
     end
 
     if !isempty(bad_ids)
-        details = join(["$(id) => $(bad_tmin[id])" for id in bad_ids], ", ")
-        error("Formulas request times earlier than the first observation for individual ids: $(details). This would require to calculate the value of the ODE solution prior to the initial conditions (at t=0). Change the offset in your model or remove the corresponding data points that are observed at t_k for which t_k - offset < 0.")
+        details = join(["$(id) => $(bad_tmin[id][1]) (start t=$(bad_tmin[id][2]))" for id in bad_ids], ", ")
+        error("Formulas request times earlier than the start of the integration for individual ids: $(details). This would require to calculate the value of the ODE solution prior to the initial conditions. Change the offset in your model, pass an earlier t0, or remove the corresponding data points that are observed at t_k for which t_k - offset is before the integration start.")
     end
 
     # Narrow the element type (individuals of a homogeneous dataset share one concrete
