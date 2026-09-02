@@ -225,18 +225,46 @@ function _compute_uq_chain(
     intervals_n = _intervals_from_draws(draws_n, level)
     Vn = _cov_from_draws(draws_n)
 
+    # The chain is stored on the natural scale, so the transformed-scale summaries have to
+    # be built by pushing every draw forward (#306). Only the monotone scalar kinds have a
+    # per-coordinate forward map; a structured block (cholesky/expm/lie/stickbreak/
+    # lograterows) is reconstructed from its whole natural value, which the chain draws do
+    # not carry per coordinate, so those coordinates stay on the natural scale and are
+    # listed in the diagnostics.
+    active_kinds = _flat_transform_kinds_for_free(fe, free_names)[active_idx]
+    draws_t = copy(draws_n)
+    natural_only = Symbol[]
+    for j in eachindex(active_kinds)
+        if _is_monotone_scalar_kind(active_kinds[j])
+            @views draws_t[:, j] .= _scalar_forward.(active_kinds[j], draws_n[:, j])
+        else
+            push!(natural_only, active_names[j])
+        end
+    end
+    isempty(natural_only) ||
+        @warn "Chain UQ: these coordinates have no per-coordinate forward transform and are reported on the natural scale for scale = :transformed." parameters = unique(
+        natural_only
+    ) maxlog = 1
+    diag = merge(
+        diag, (; transformed_scale_natural_only = natural_only, coordinate_transforms = active_kinds)
+    )
+
+    est_t = vec(mean(draws_t; dims = 1))
+    intervals_t = _intervals_from_draws(draws_t, level)
+    Vt = _cov_from_draws(draws_t)
+
     return UQResult(
         :chain,
         _method_symbol(method),
         active_names,
         nothing,
-        copy(est_n),
-        copy(est_n),
+        est_t,
+        est_n,
+        intervals_t,
         intervals_n,
-        intervals_n,
-        copy(Vn),
-        copy(Vn),
-        copy(draws_n),
+        Vt,
+        Vn,
+        draws_t,
         copy(draws_n),
         diag
     )

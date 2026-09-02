@@ -147,6 +147,22 @@ end
     @test d.inactive_fixed_effects_held_constant
     @test d.vcov_min_eig_used >= -1.0e-10
 
+    # #306 finding 6: intervals and monotone natural SEs are closed form, not draw quantiles.
+    est_t = get_uq_estimates(uq; scale = :transformed, as_component = false)
+    ints_t = get_uq_intervals(uq; scale = :transformed, as_component = false)
+    se_t = sqrt.(diag(get_uq_vcov(uq; scale = :transformed)))
+    z = quantile(Normal(), 0.975)
+    @test ints_t.lower ≈ est_t .- z .* se_t atol = 1.0e-12
+    @test ints_t.upper ≈ est_t .+ z .* se_t atol = 1.0e-12
+    ints_n = get_uq_intervals(uq; scale = :natural, as_component = false)
+    # σ is the :log coordinate (index 2), a is :identity (index 1).
+    @test ints_n.lower[2] == exp(ints_t.lower[2])
+    @test ints_n.upper[2] == exp(ints_t.upper[2])
+    @test ints_n.lower[1] == ints_t.lower[1]
+    se_n = sqrt.(diag(get_uq_vcov(uq; scale = :natural)))
+    @test se_n[1] ≈ se_t[1] rtol = 1.0e-12
+    @test se_n[2] ≈ sqrt(expm1(se_t[2]^2) * exp(2 * est_t[2] + se_t[2]^2)) rtol = 1.0e-12
+
     uq_const = compute_uq(
         res; method = :wald, constants = (a = 0.2,), n_draws = 30, rng = Random.Xoshiro(2)
     )
@@ -194,6 +210,22 @@ end
     @test d.requested_draws == 15
     @test d.used_draws == 15
     @test d.available_draws >= d.used_draws
+
+    # #306 finding 3: the transformed scale must be the forward transform of the chain,
+    # not a copy of the natural-scale numbers.
+    est_n = get_uq_estimates(uq; scale = :natural, as_component = false)
+    est_t = get_uq_estimates(uq; scale = :transformed, as_component = false)
+    draws_n = get_uq_draws(uq; scale = :natural)
+    draws_t = get_uq_draws(uq; scale = :transformed)
+    @test draws_t[:, 2] ≈ log.(draws_n[:, 2])
+    @test draws_t != draws_n
+    @test est_t[2] ≈ mean(log.(draws_n[:, 2]))
+    @test est_t[1] == est_n[1]
+    ints_t = get_uq_intervals(uq; scale = :transformed, as_component = false)
+    ints_n = get_uq_intervals(uq; scale = :natural, as_component = false)
+    # Interpolated draw quantiles are only approximately equivariant, so compare loosely.
+    @test ints_t.lower[2] ≈ log(ints_n.lower[2]) rtol = 0.05
+    @test ints_t.upper[2] < ints_n.upper[2]
 end
 
 @testset "UQ chain for VI" begin

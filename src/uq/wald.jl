@@ -94,6 +94,43 @@ function _wald_meat_diag(B::Matrix{Float64}, H::AbstractMatrix, n_cluster::Int)
         "are unusable (too small). Use vcov = :hessian." n_cluster meat_rank
     return (; n_cluster = n_cluster, meat_rank = meat_rank, meat_degenerate = degenerate)
 end
+
+# Coordinate transforms that are monotone increasing scalar maps, so `_scalar_forward` /
+# `_scalar_inverse` apply per coordinate. `:elementwise` masks are already expanded into
+# these by `_flat_transform_kinds_for_free`.
+@inline function _is_monotone_scalar_kind(kind::Symbol)
+    return kind === :identity || kind === :log || kind === :logit
+end
+
+# Exact natural-scale variances where they exist: identity copies the transformed one,
+# `:log` uses the lognormal closed form. Rows/columns are rescaled by the same factor so
+# the drawn correlations - and with them PSD-ness - are preserved.
+function _wald_closed_form_natural_vcov(
+        Vn::Matrix{Float64}, est_t::Vector{Float64}, Vt::Matrix{Float64},
+        active_kinds::Vector{Symbol}
+    )
+    p = size(Vn, 1)
+    r = ones(Float64, p)
+    for j in eachindex(active_kinds)
+        j <= p || break
+        kind = active_kinds[j]
+        s2 = Vt[j, j]
+        v_new = if kind === :identity
+            s2
+        elseif kind === :log
+            expm1(s2) * exp(2 * est_t[j] + s2)
+        else
+            continue
+        end
+        v_old = Vn[j, j]
+        (isfinite(v_new) && v_new >= 0 && v_old > 0) || continue
+        r[j] = sqrt(v_new / v_old)
+    end
+    all(isone, r) && return Vn
+    Vn2 = Diagonal(r) * Vn * Diagonal(r)
+    return Matrix{Float64}(0.5 .* (Vn2 .+ Vn2'))
+end
+
 # Shared Wald finalize tail: project the raw covariance to PSD, draw from the Gaussian
 # approximation, map draws back to the natural scale, extend any stickbreak coordinates,
 # and assemble the UQResult. `extra_diag` carries method-specific diagnostics (e.g.
@@ -145,8 +182,21 @@ function _finalize_wald_uqresult(
     # inspecting the draws should see the overflow rather than find rows silently missing.
     draws_n_fin = n_nonfinite > 0 ? draws_n[finite_rows, :] : draws_n
 
-    intervals_t = _intervals_from_draws(draws_t, level)
+    # Closed forms replace the draw quantiles wherever they exist (#306): the transformed
+    # interval is exactly `est ± z*SE`, and a monotone scalar transform carries those
+    # endpoints to the natural scale exactly (quantiles are equivariant). `:identity`,
+    # `:log` and `:logit` are all increasing, so the endpoints keep their order. Structured
+    # blocks (cholesky/expm/lie/stickbreak/lograterows) have no per-coordinate map and stay
+    # draw-based.
+    z = quantile(Normal(), 1.0 - (1.0 - level) / 2)
+    se_t = [sqrt(max(Vt[i, i], 0.0)) for i in axes(Vt, 1)]
+    intervals_t = UQIntervals(level, est_t .- z .* se_t, est_t .+ z .* se_t)
     intervals_n = _intervals_from_draws(draws_n_fin, level)
+    for j in eachindex(active_kinds)
+        _is_monotone_scalar_kind(active_kinds[j]) || continue
+        intervals_n.lower[j] = _scalar_inverse(active_kinds[j], intervals_t.lower[j])
+        intervals_n.upper[j] = _scalar_inverse(active_kinds[j], intervals_t.upper[j])
+    end
 
     ext = _extend_natural_stickbreak(
         fe, free_names, active_names, active_kinds,
@@ -163,6 +213,7 @@ function _finalize_wald_uqresult(
             for i in 1:size(Vn_src, 1)
     ]
     Vn_use = _cov_from_draws(all(Vn_rows) ? Vn_src : Vn_src[Vn_rows, :])
+    Vn_use = _wald_closed_form_natural_vcov(Vn_use, est_t, Vt, active_kinds)
 
     diag = merge(
         (;
