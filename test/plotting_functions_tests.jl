@@ -315,10 +315,10 @@ end
         function scatter_counts(fig)
             return [
                 sum(
-                    length(CairoMakie.Makie.to_value(plt[1]))
+                        length(CairoMakie.Makie.to_value(plt[1]))
                         for plt in ax.scene.plots if plt isa CairoMakie.Makie.Scatter;
-                    init = 0
-                ) for ax in all_axes(fig)
+                        init = 0
+                    ) for ax in all_axes(fig)
             ]
         end
 
