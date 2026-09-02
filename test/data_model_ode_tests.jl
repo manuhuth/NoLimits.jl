@@ -207,6 +207,8 @@ end
     dm = DataModel(model_saveat, df; primary_id = :ID, time_col = :t)
 
     ind = get_individual(dm, 1)
+    # The covariate knots are kinks in the RHS and are handed to the solver (#309).
+    @test NoLimits.get_tstops(ind) == [0.0, 0.5, 1.0]
     θ = get_θ0_untransformed(model_saveat.fixed.fixed)
     η = ComponentArray()
     const_covariates_i = NamedTuple()
@@ -389,6 +391,33 @@ end
 
     model_saveat = set_solver_config(model; saveat_mode = :saveat)
     dm = DataModel(model_saveat, df; primary_id = :ID, time_col = :t)
+
+    # NaN in a *vector* covariate column used to slip past the finiteness guard, which
+    # iterated the synthetic `x_1`/`x_2` flat names instead of Age/BMI (#309).
+    df_nan = copy(df)
+    df_nan.Age = [NaN, NaN, NaN, 45.0, 45.0, 45.0]
+    err_nan = try
+        DataModel(model_saveat, df_nan; primary_id = :ID, time_col = :t)
+        nothing
+    catch e
+        e
+    end
+    @test err_nan isa ErrorException
+    @test occursin("Column Age contains the non-finite value", err_nan.msg)
+
+    # A repeated row time NaN-poisons the CubicSpline interpolant over its whole
+    # support, so it is rejected at construction naming the covariate (#309).
+    df_dup = copy(df)
+    df_dup.t = [0.0, 0.5, 0.5, 0.0, 0.5, 1.0]
+    err_dup = try
+        DataModel(model_saveat, df_dup; primary_id = :ID, time_col = :t)
+        nothing
+    catch e
+        e
+    end
+    @test err_dup isa ErrorException
+    @test occursin("repeated time", err_dup.msg)
+    @test occursin("Dynamic covariate w", err_dup.msg)
 
     ind = get_individual(dm, 1)
     θ = get_θ0_untransformed(model_saveat.fixed.fixed)

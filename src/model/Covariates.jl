@@ -14,6 +14,10 @@ abstract type AbstractCovariate end
 function _check_covariate_columns(columns, what::AbstractString)
     isempty(columns) &&
         error("$(what) needs at least one column; got an empty vector.")
+    # Duplicates otherwise surface as a raw `duplicate field name in NamedTuple` when the
+    # per-row/per-individual value is built (#309).
+    allunique(columns) ||
+        error("$(what) needs distinct columns; got repeated column(s) $(join(unique([c for c in columns if count(==(c), columns) > 1]), ", ")).")
     return nothing
 end
 
@@ -161,6 +165,18 @@ const ALLOWED_INTERPOLATIONS = Set(
         ConstantInterpolation,
         SmoothedConstantInterpolation,
         LinearInterpolation,
+        QuadraticInterpolation,
+        LagrangeInterpolation,
+        QuadraticSpline,
+        CubicSpline,
+        AkimaInterpolation,
+    ]
+)
+
+# Repeated node times make these interpolants return NaN everywhere (or throw a
+# SingularException); the constant and linear ones tolerate them (#309).
+const _DUP_TIME_UNSAFE_INTERPOLATIONS = Set(
+    [
         QuadraticInterpolation,
         LagrangeInterpolation,
         QuadraticSpline,

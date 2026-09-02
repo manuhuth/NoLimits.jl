@@ -3330,14 +3330,17 @@ end
 # `ind.callbacks` come out of the abstractly-typed `Individual` storage, so the
 # kwargs NamedTuples must be built behind a dispatch boundary to stay concrete
 # (keeps the Bool method of `_ode_normalize_verbose` statically dead).
-@inline function _ll_prob_kwargs(cb, saveat_use)
-    base = saveat_use === nothing ? (dense = true,) :
-        (saveat = saveat_use, save_everystep = false, dense = false)
+# `tstops` always merged (empty vector when the DE reads no dynamic covariate): a
+# conditional merge would make the return a Union of two NamedTuple types, which is the
+# shape the comment above says breaks Enzyme.
+@inline function _ll_prob_kwargs(cb, saveat_use, tstops)
+    base = saveat_use === nothing ? (dense = true, tstops = tstops) :
+        (saveat = saveat_use, save_everystep = false, dense = false, tstops = tstops)
     return cb === nothing ? base : merge(base, (callback = cb,))
 end
 
-function _ll_build_prob_template(f!_use, u0, tspan, p_flat, cb, saveat_use)
-    kw = _ll_prob_kwargs(cb, saveat_use)
+function _ll_build_prob_template(f!_use, u0, tspan, p_flat, cb, saveat_use, tstops)
+    kw = _ll_prob_kwargs(cb, saveat_use, tstops)
     return ODEProblem{true, SciMLBase.FullSpecialize}(f!_use, u0, tspan, p_flat; kw...)
 end
 
@@ -3600,7 +3603,7 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
         if prob === nothing
             saveat_use = _ll_saveat(cache, idx, ind)
             prob = _ll_build_prob_template(
-                f!_use, u0, get_tspan(ind), p_flat, cb, saveat_use
+                f!_use, u0, get_tspan(ind), p_flat, cb, saveat_use, get_tstops(ind)
             )
             if cache.prob_templates !== nothing
                 cache.prob_templates[idx] = prob
@@ -3635,7 +3638,7 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
         )
         cbset = cb === nothing ? cbk : SciMLBase.CallbackSet(cb, cbk)
         prob = ODEProblem{true, SciMLBase.FullSpecialize}(
-            f!_use, u0_T, get_tspan(ind), p_flat; _ll_prob_kwargs(cbset, saveat_use)...
+            f!_use, u0_T, get_tspan(ind), p_flat; _ll_prob_kwargs(cbset, saveat_use, get_tstops(ind))...
         )
         sol = _ll_ode_solve_baked(cache, prob)
         SciMLBase.successful_retcode(sol) || return _ll_drop_solve(sol.retcode)
@@ -3680,7 +3683,7 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
         SciMLBase.CallbackSet(cb, cross_cbs...)
     end
     prob = ODEProblem{true, SciMLBase.FullSpecialize}(
-        f!_use, u0_T, get_tspan(ind), p_flat; _ll_prob_kwargs(cbset, saveat_use)...
+        f!_use, u0_T, get_tspan(ind), p_flat; _ll_prob_kwargs(cbset, saveat_use, get_tstops(ind))...
     )
     sol = _ll_ode_solve_baked(cache, prob)
     SciMLBase.successful_retcode(sol) || return _ll_drop_solve(sol.retcode)

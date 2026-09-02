@@ -1316,7 +1316,7 @@ end
         end
 
         @formulas begin
-            y ~ Normal(x1(t - 0.5), σ)
+            y ~ Normal(x1(t - 0.5) + x1(t + 0.5), σ)
         end
     end
 
@@ -1340,6 +1340,24 @@ end
     @test occursin("dynamic covariate support", err.msg)
     @test occursin("-0.5", err.msg)
     @test occursin("[0.5, 2.0]", err.msg)
+
+    # The mirrored upper-bound guard: the +0.5 offset pushes the integration past the
+    # covariate support, which used to escape as a raw extrapolation error (#309).
+    df_up = DataFrame(
+        ID = [1, 1, 1],
+        t = [0.0, 1.0, 2.0],
+        w1 = [1.0, 1.2, 1.4],
+        y = [1.0, 1.1, 1.2]
+    )
+    err_up = try
+        DataModel(model_saveat, df_up; primary_id = :ID, time_col = :t)
+        nothing
+    catch e
+        e
+    end
+    @test err_up isa ErrorException
+    @test occursin("later than the dynamic covariate support", err_up.msg)
+    @test occursin("2.5", err_up.msg)
 end
 
 @testset "DataModel pairing creates multiple batches" begin

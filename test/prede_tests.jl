@@ -40,6 +40,15 @@ end
     @test_throws LoadError @eval @preDifferentialEquation begin
         bad = t + 1
     end
+
+    # An unresolvable symbol used to fall through as a bare UndefVarError (#309).
+    prede_unknown = @preDifferentialEquation begin
+        v = w + 1
+    end
+    build_unknown = get_prede_builder(prede_unknown)
+    @test_throws ErrorException build_unknown(
+        ComponentArray(), ComponentArray(), NamedTuple(), NamedTuple(), NamedTuple()
+    )
 end
 
 @testset "PreDifferentialEquation mutation warnings" begin
