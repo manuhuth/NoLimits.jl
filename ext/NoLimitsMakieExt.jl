@@ -114,4 +114,22 @@ include("plotting/plotting_residuals.jl")
 include("plotting/plotting_random_effects.jl")
 include("plotting/plotting_uq.jl")
 
+# Plotting a multistart result plots its best run (#295); the plot_multistart_* functions
+# are multistart-specific and stay out of this list.
+for f in (
+        :plot_data, :plot_dv_ipred, :plot_dv_pred, :plot_em_trajectories,
+        :plot_emission_distributions, :plot_fits, :plot_hidden_states,
+        :plot_observation_distributions, :plot_observed_profiles,
+        :plot_random_effect_distributions, :plot_random_effect_pairplot,
+        :plot_random_effect_pit, :plot_random_effect_standardized,
+        :plot_random_effect_standardized_scatter, :plot_random_effects_pdf,
+        :plot_random_effects_scatter, :plot_residual_acf, :plot_residual_distribution,
+        :plot_residual_pit, :plot_residual_qq, :plot_residuals, :plot_shrinkage,
+        :plot_vpc, :plot_wres_pred,
+    )
+    @eval function $f(res::MultistartFitResult, args...; kwargs...)
+        return $f(_as_fit_result_for_plotting(res), args...; kwargs...)
+    end
+end
+
 end # module NoLimitsMakieExt
