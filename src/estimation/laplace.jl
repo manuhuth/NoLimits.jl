@@ -385,13 +385,15 @@ function _re_start_value(dist, dim::Int, T)
         ok = false
         try
             v = _re_mean(dist)
-            ok = true
+            # Cauchy and TDist(ν<=1) have a NaN mean; a NaN start poisons the whole
+            # mode search, so treat it as unusable and fall through to the median.
+            ok = all(isfinite, v)
         catch
         end
         if !ok
             try
                 v = median(dist)
-                ok = true
+                ok = all(isfinite, v)
             catch
             end
         end
@@ -405,13 +407,13 @@ function _re_start_value(dist, dim::Int, T)
         ok = false
         try
             v = _re_mean(dist)
-            ok = true
+            ok = all(isfinite, v)
         catch
         end
         if !ok
             try
                 v = median(dist)
-                ok = true
+                ok = all(isfinite, v)
             catch
             end
         end
