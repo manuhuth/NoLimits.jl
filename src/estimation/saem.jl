@@ -1306,12 +1306,83 @@ function _saem_hmm_outcome_names(dm::DataModel)
     return hmm
 end
 
+@inline function _saem_target_is_shared(target, shared::Set{Symbol})
+    isempty(shared) && return false
+    syms = _saem_collect_target_symbols!(Symbol[], target)
+    return any(in(shared), syms)
+end
+
+# Drop residual-variance targets whose parameter is also used elsewhere (issue #289).
+function _saem_drop_shared_resid_targets(resid_var_param, shared::Set{Symbol})
+    isempty(shared) && return resid_var_param
+    if resid_var_param isa NamedTuple
+        isempty(keys(resid_var_param)) && return resid_var_param
+        kept = Pair{Symbol, Any}[
+            k => v
+                for (k, v) in Base.pairs(resid_var_param)
+                if !_saem_target_is_shared(v, shared)
+        ]
+        return NamedTuple(kept)
+    end
+    return _saem_target_is_shared(resid_var_param, shared) ? NamedTuple() : resid_var_param
+end
+
+"""
+    _saem_shared_closed_form_targets(dm, fixed_names) -> Set{Symbol}
+
+Fixed effects that autodetection would claim as closed-form targets but that are also
+referenced outside the block whose sufficient statistics would update them: an RE
+mean/covariance parameter that also enters an outcome-side block (`@formulas`,
+`@preDifferentialEquation`, `@DifferentialEquation`, `@initialDE`) or another random
+effect's distribution, or a residual-variance parameter that also enters a random-effect
+distribution. The closed-form update would discard the likelihood information carried
+through the other block, so these fall back to the numeric M-step.
+"""
+function _saem_shared_closed_form_targets(dm::DataModel, fixed_names::Vector{Symbol})
+    model = get_model(dm)
+    re_model = get_random(model)
+    re_names = get_re_names(re_model)
+    shared = Set{Symbol}()
+    isempty(re_names) && return shared
+    fixed_set = Set(fixed_names)
+    re_dists = get_re_dist_exprs(re_model)
+    obs_fe = _compute_obs_fe_syms(model)
+    re_syms_map = get_re_syms(re_model)
+    re_fe_syms = Set{Symbol}()
+    for (_, syms) in Base.pairs(re_syms_map)
+        union!(re_fe_syms, filter(∈(fixed_set), syms))
+    end
+
+    for re in re_names
+        hasproperty(re_dists, re) || continue
+        mapping = _saem_parse_re_gaussian_mapping(getproperty(re_dists, re), fixed_set)
+        mapping === nothing && continue
+        other_re_syms = Set{Symbol}()
+        for (name, syms) in Base.pairs(re_syms_map)
+            name === re || union!(other_re_syms, filter(∈(fixed_set), syms))
+        end
+        for target in (mapping.cov, mapping.mean)
+            target === nothing && continue
+            for s in _saem_collect_target_symbols!(Symbol[], target)
+                (s in obs_fe || s in other_re_syms) && push!(shared, s)
+            end
+        end
+    end
+
+    resid = _saem_autodetect_resid_var_param(dm, fixed_set)
+    for s in _saem_collect_target_symbols!(Symbol[], resid)
+        s in re_fe_syms && push!(shared, s)
+    end
+    return shared
+end
+
 function _saem_autodetect_gaussian_re(dm::DataModel, fixed_names::Vector{Symbol})
     re_model = get_random(get_model(dm))
     re_names = get_re_names(re_model)
     isempty(re_names) && return nothing
     fixed_set = Set(fixed_names)
     re_dists = get_re_dist_exprs(re_model)
+    shared = _saem_shared_closed_form_targets(dm, fixed_names)
 
     cov_pairs = Pair{Symbol, Any}[]
     mean_pairs = Pair{Symbol, Any}[]
@@ -1321,11 +1392,17 @@ function _saem_autodetect_gaussian_re(dm::DataModel, fixed_names::Vector{Symbol}
         mapping = _saem_parse_re_gaussian_mapping(getproperty(re_dists, re), fixed_set)
         mapping === nothing && continue
         push!(family_pairs, re => mapping.family)
-        mapping.cov === nothing || push!(cov_pairs, re => mapping.cov)
-        mapping.mean === nothing || push!(mean_pairs, re => mapping.mean)
+        if mapping.cov !== nothing && !_saem_target_is_shared(mapping.cov, shared)
+            push!(cov_pairs, re => mapping.cov)
+        end
+        if mapping.mean !== nothing && !_saem_target_is_shared(mapping.mean, shared)
+            push!(mean_pairs, re => mapping.mean)
+        end
     end
 
-    resid_var_param = _saem_autodetect_resid_var_param(dm, fixed_set)
+    resid_var_param = _saem_drop_shared_resid_targets(
+        _saem_autodetect_resid_var_param(dm, fixed_set), shared
+    )
     has_outcome_updates = resid_var_param isa NamedTuple ? !isempty(keys(resid_var_param)) :
         true
     hmm_emission_params = _saem_autodetect_hmm_emission_params(dm, fixed_set)
@@ -2824,7 +2901,8 @@ function _saem_log_closed_form_plan(
         hmm_emission_params::NamedTuple,
         has_custom_closed_form::Bool,
         base_free_names::Vector{Symbol},
-        q2_base_free_names::Vector{Symbol}
+        q2_base_free_names::Vector{Symbol},
+        shared_excluded::Vector{Symbol} = Symbol[]
     )
     cf_syms = Symbol[]
     for v in values(re_cov_params)
@@ -2853,7 +2931,11 @@ function _saem_log_closed_form_plan(
         groups = String[]
         !isempty(q1_numeric) && push!(groups, string(q1_numeric))
         !isempty(q2_numeric) && push!(groups, string(q2_numeric) * " (Q2-only)")
-        @info "SAEM: numerically optimized parameters: $(join(groups, "  "))"
+        msg = "SAEM: numerically optimized parameters: $(join(groups, "  "))"
+        excluded = [n for n in shared_excluded if n in numeric_params]
+        isempty(excluded) ||
+            (msg *= "; $(excluded) excluded from the closed-form M-step because they are shared with other model blocks")
+        @info msg
     end
     return nothing
 end
@@ -2978,7 +3060,9 @@ function _saem_resolve_closed_form_config(dm::DataModel, saem::SAEMOptions, extr
     re_cov_params = saem.re_cov_params
     re_mean_params = saem.re_mean_params
     hmm_emission_params = NamedTuple()
+    shared_excluded = Symbol[]
     if builtin_stats_mode == :auto
+        shared_excluded = sort!(collect(_saem_shared_closed_form_targets(dm, fixed_names)))
         manual_has_re = !isempty(keys(re_cov_params)) || !isempty(keys(re_mean_params))
         manual_has_resid = !(
             resid_var_param == :σ || (
@@ -3053,6 +3137,7 @@ function _saem_resolve_closed_form_config(dm::DataModel, saem::SAEMOptions, extr
         hmm_emission_params = hmm_emission_params,
         builtin_cf_elig = builtin_cf_elig,
         re_family_map = re_family_map,
+        shared_excluded = shared_excluded,
     )
 end
 
@@ -3147,7 +3232,8 @@ function _fit_model(
     _saem_log_closed_form_plan(
         method.saem.builtin_stats, builtin_stats_mode, builtin_cf_elig,
         re_cov_params, re_mean_params, resid_var_param, hmm_emission_params,
-        has_custom_closed_form, base_free_names, q2_base_free_names
+        has_custom_closed_form, base_free_names, q2_base_free_names,
+        _cf_cfg.shared_excluded
     )
     let obs_targets = _saem_outcome_targets(get_obs_cols(dm), resid_var_param),
             ir = get_formulas_ir(get_formulas(get_model(dm)))
