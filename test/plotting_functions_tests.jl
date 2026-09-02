@@ -386,6 +386,71 @@ end
     end
 end
 
+# #294: plot_hidden_states used to reject any non-multivariate observable, so a plain
+# (univariate) HMM outcome could never be plotted even though its filter supports it.
+@testset "plot_hidden_states univariate HMM (#294)" begin
+    model = @Model begin
+        @fixedEffects begin
+            mu1 = RealNumber(0.0)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @formulas begin
+            P = [0.9 0.1; 0.2 0.8]
+            y ~ DiscreteTimeDiscreteStatesHMM(
+                P, (Normal(mu1, 1.0), Normal(3.0, 1.0)), Categorical([0.5, 0.5])
+            )
+        end
+    end
+
+    df = DataFrame(
+        ID = repeat(1:2, inner = 3),
+        t = repeat([0.0, 1.0, 2.0], 2),
+        y = Union{Missing, Float64}[0.1, missing, 3.1, 3.0, 2.8, 0.2],
+    )
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+
+    fig = plot_hidden_states(dm)
+    @test fig !== nothing
+
+    # Hand-rolled forward filter for individual 1: propagate, then weight by the
+    # emission pdf; a missing observation only propagates.
+    P = [0.9 0.1; 0.2 0.8]
+    em = (Normal(0.0, 1.0), Normal(3.0, 1.0))
+    prior = [0.5, 0.5]
+    expected = Vector{Vector{Float64}}()
+    for y in df.y[1:3]
+        p = transpose(P) * prior
+        p ./= sum(p)
+        if ismissing(y)
+            prior = p
+        else
+            u = p .* [pdf(em[1], y), pdf(em[2], y)]
+            prior = u ./ sum(u)
+            push!(expected, copy(prior))
+        end
+    end
+
+    ax = _first_axis(fig)
+    polys = [p for p in ax.scene.plots if p isa CairoMakie.Makie.Poly]
+    @test length(polys) == 2
+    heights = [
+        [r.widths[2] for r in CairoMakie.Makie.to_value(p[1])] for p in polys
+    ]
+    for state in 1:2
+        @test isapprox(
+            heights[state], [e[state] for e in expected]; atol = 1.0e-6
+        )
+    end
+
+    res = fit_model(dm, NoLimits.MLE(optim_kwargs = (; iterations = 2)))
+    @test plot_hidden_states(res) !== nothing
+    @test isa(
+        plot_hidden_states(res; figure_layout = :vector), Vector{CairoMakie.Figure}
+    )
+end
+
 @testset "plot_fits supports varying non-ODE random-effect groups" begin
     @test plot_fits(
         fx_varyre_dm(); constants_re = fx_varyre_constants_re(),
