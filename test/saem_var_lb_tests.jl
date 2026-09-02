@@ -723,3 +723,30 @@ end
     )
     @test get_params(res; scale = :untransformed).ω ≈ 0.55
 end
+
+@testset "var lb integration: numeric M-step — clamp survives to the result" begin
+    # Regression for #283: the post-M-step var-lb clamp used to be dropped because
+    # θt_free / θ_prev_new were never resynced from the clamped θu_new.
+    # builtin_stats = :none forces the numeric M-step, sa_anneal_alpha = 0 keeps the
+    # (already correct) anneal clamp from masking it, and the effective floor is
+    # min(anneal_min_sd, var_lb_value), so both are raised above the fixture's
+    # σ = 0.3. Without the resync σ comes back at its unclamped 0.3.
+    Random.seed!(1234)
+    dm = _make_normal_re_dm()
+    res = fit_model(
+        dm,
+        NoLimits.SAEM(;
+            sampler = MH(),
+            turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
+            maxiters = 2,
+            builtin_stats = :none,
+            sa_anneal_alpha = 0.0,
+            auto_var_lb = true,
+            anneal_min_sd = 0.5,
+            var_lb_value = 0.5
+        )
+    )
+    θ = NoLimits.get_params(res; scale = :untransformed)
+    @test Float64(θ.σ) >= 0.5
+    @test Float64(θ.ω) >= 0.5
+end

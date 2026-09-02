@@ -566,7 +566,7 @@ end
 function _em_seed_batch_b(
         dm::DataModel, info::REBatchInfo, θ0_u,
         const_cache::REConstantsCache, cache_init, rng::AbstractRNG,
-        re_names, bi::Int, method_label::String
+        re_names, bi, method_label::String
     )
     b_init = _re_prior_mean_b(dm, info, θ0_u, const_cache, cache_init, re_names)
     logf = _laplace_logf_batch(dm, info, θ0_u, b_init, const_cache, cache_init)
@@ -588,6 +588,25 @@ function _em_seed_batch_b(
         "$(method_label): Cannot find valid initial random effects for batch $bi after 10 tries. " *
             "Initial fixed-effect parameters likely produce -Inf log-likelihood. " *
             "Try different starting values."
+    )
+end
+
+# Guard for the native samplers' own initial draw. An unchecked prior draw with a
+# non-finite log-joint deadlocks the chain: the acceptance ratio becomes NaN, so no
+# proposal is ever accepted and the M-step is skipped every iteration. Returns `b`
+# unchanged (no extra RNG draws) whenever it is already finite.
+function _em_vet_init_b(
+        dm::DataModel, info::REBatchInfo, θ_re,
+        b::Vector{Float64}, const_cache::REConstantsCache, cache,
+        rng::AbstractRNG, re_names, method_label::String
+    )
+    isempty(b) && return b
+    isfinite(_laplace_logf_batch(dm, info, θ_re, b, const_cache, cache)) && return b
+    return Vector{Float64}(
+        _em_seed_batch_b(
+            dm, info, θ_re, const_cache, cache, rng, re_names,
+            "(sampler init)", method_label
+        )
     )
 end
 
