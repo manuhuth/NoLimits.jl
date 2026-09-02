@@ -1744,29 +1744,58 @@ end
 
     get_random_effects(dm::DataModel, res::FitResult, re::Symbol; kwargs...) -> Vector
 
-Return the empirical Bayes estimates for a single random effect `re` as a plain vector,
-ordered by individual index in `dm`.
+Return the empirical Bayes estimates for a single random effect `re` as a plain vector.
+For an effect grouped at the primary id the vector is ordered by individual index in
+`dm`; for an effect grouped at any other level (e.g. `:SITE`) it holds one value per
+level of that grouping column, in level order.
 """
 function get_random_effects(
         dm::DataModel, res::FitResult, re::Symbol;
         constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
         include_constants::Bool = true
     )
-    constants_re = _as_namedtuple(constants_re)
+    group_col, levels, vals = _re_level_values(
+        dm, res, re; constants_re = _as_namedtuple(constants_re),
+        include_constants = include_constants
+    )
+    group_col == get_primary_id(dm) || return vals
+    id_order = [_individual_id(dm, i) for i in 1:length(get_individuals(dm))]
+    id_to_val = Dict(levels[i] => vals[i] for i in eachindex(levels))
+    return [id_to_val[id] for id in id_order]
+end
+
+# Per-level EBEs of a scalar random effect at its OWN grouping level.
+# Returns (grouping column, level values, EBE values).
+function _re_level_values(
+        dm::DataModel, res::FitResult, re::Symbol;
+        constants_re::NamedTuple = NamedTuple(),
+        include_constants::Bool = true
+    )
     nt = get_random_effects(
         dm, res; constants_re = constants_re, flatten = true,
         include_constants = include_constants
     )
     haskey(nt, re) || error("Random effect :$(re) not found. Available: $(keys(nt)).")
     df = getfield(nt, re)
-    id_col = get_primary_id(dm)
-    val_cols = [c for c in propertynames(df) if c != id_col]
+    group_col = getfield(get_re_groups(get_random(get_model(dm))), re)
+    val_cols = [c for c in propertynames(df) if c != group_col]
     length(val_cols) == 1 ||
         error("Random effect :$(re) is multivariate ($(length(val_cols)) components); use get_random_effects(res) to access the full DataFrame.")
-    val_col = val_cols[1]
-    id_order = [_individual_id(dm, i) for i in 1:length(get_individuals(dm))]
-    id_to_val = Dict(row[id_col] => row[val_col] for row in eachrow(df))
-    return [id_to_val[id] for id in id_order]
+    return group_col, df[!, group_col], df[!, val_cols[1]]
+end
+
+# First individual carrying each level of random effect `re` (fallback: individual 1).
+# Used to instantiate covariate-dependent RE distributions at non-primary levels.
+function _re_level_representatives(dm::DataModel, re::Symbol, levels)
+    inds = get_individuals(dm)
+    pos = Dict{Any, Int}()
+    for i in eachindex(inds)
+        g = getfield(get_re_groups(inds[i]), re)
+        for lvl in (g isa AbstractVector ? g : (g,))
+            get!(pos, lvl, i)
+        end
+    end
+    return [get(pos, lvl, 1) for lvl in levels]
 end
 
 function get_random_effects(
@@ -4458,20 +4487,23 @@ function compute_shrinkage(
 
     pairs = Pair{Symbol, NamedTuple}[]
     for re in re_names
-        # get_random_effects(res, re) returns a vector ordered by individual index
-        ebes = try
-            get_random_effects(dm_use, res, re; constants_re = constants_re)
-        catch
+        # EBEs at the random effect's own grouping level (one value per level).
+        levels, ebes = try
+            _, lv, vals = _re_level_values(dm_use, res, re; constants_re = constants_re)
+            (lv, vals)
+        catch e
+            @warn "compute_shrinkage: skipping random effect $re; $(sprint(showerror, e))"
             continue
         end
-        length(ebes) == length(get_individuals(dm_use)) || continue
+        isempty(levels) && continue
+        reps = _re_level_representatives(dm_use, re, levels)
 
         etas = Float64[]
         sigma = NaN
         valid = true
 
-        for i in eachindex(get_individuals(dm_use))
-            ind = get_individuals(dm_use)[i]
+        for i in eachindex(levels)
+            ind = get_individuals(dm_use)[reps[i]]
             ebe = Float64(ebes[i])
             isfinite(ebe) || continue
 

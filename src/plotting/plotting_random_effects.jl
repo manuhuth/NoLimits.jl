@@ -181,6 +181,17 @@ function _standardize_re(dist, val::Vector{Float64}; flow_samples::Int = 500)
             return L \ (val .- μv)
         end
     end
+    # Univariate log/logit-scale families: standardize on the transformed scale, matching
+    # the MvLogNormal/MvLogitNormal branches below and compute_shrinkage's convention.
+    if dist isa Distributions.LogNormal
+        dist.σ > 0 || return nothing
+        return [(log(max(val[1], 1.0e-300)) - dist.μ) / dist.σ]
+    end
+    if dist isa Distributions.LogitNormal
+        dist.σ > 0 || return nothing
+        p = clamp(val[1], 1.0e-300, 1 - eps(Float64))
+        return [(log(p / (1 - p)) - dist.μ) / dist.σ]
+    end
     if dist isa Distributions.MvLogNormal
         z = log.(max.(val, 1.0e-300))
         μ = try
