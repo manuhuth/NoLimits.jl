@@ -810,8 +810,8 @@ function _plot_hidden_states_impl(
                     get_model(dm), θ_ind, η_row, get_const_cov(ind), vary, sol_accessors
                 )
             dist = getproperty(obs, obs_name)
-            dist isa MVDiscreteTimeDiscreteStatesHMM ||
-                error("Observable $(obs_name) must be MVDiscreteTimeDiscreteStatesHMM.")
+            _is_hmm_dist(dist) ||
+                error("Observable $(obs_name) must be a hidden-Markov-model outcome, got $(typeof(dist)).")
             y_val = getfield(get_obs(get_series(ind)), obs_name)[j]
             prior = get(hmm_priors_hs, obs_name, nothing)
             dist_filtered = _hmm_with_prior(dist, prior)
@@ -822,7 +822,7 @@ function _plot_hidden_states_impl(
             post = posterior_hidden_states(dist_filtered, y_val)
             hmm_priors_hs[obs_name] = post
             if n_states === nothing
-                n_states = dist.n_states
+                n_states = length(post)
             end
             push!(times, x_vals[j])
             push!(posteriors, post)
@@ -931,8 +931,6 @@ function plot_hidden_states(
     save_path = _resolve_plot_path(save_path, plot_path)
     constants_re_use = _res_constants_re(res, constants_re)
     obs_name = _get_observable(dm, observable)
-    (is_mv, _) = _obs_multivariate_info(dm, obs_name)
-    is_mv || error("plot_hidden_states requires a multivariate observable.")
     _is_posterior_draw_fit(res) &&
         error("plot_hidden_states does not support posterior draws yet.")
 
@@ -1006,8 +1004,6 @@ function plot_hidden_states(
     end
     save_path = _resolve_plot_path(save_path, plot_path)
     obs_name = _get_observable(dm, observable)
-    (is_mv, _) = _obs_multivariate_info(dm, obs_name)
-    is_mv || error("plot_hidden_states requires a multivariate observable.")
 
     θ = get_θ0_untransformed(get_fixed(get_model(dm)))
     θ = _apply_param_overrides(θ, params)
