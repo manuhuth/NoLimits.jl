@@ -599,23 +599,25 @@ end
     )
     @test θi3.b == 0.1
 
+    # ω held at its true value: see the note on the assertion below.
+    _POOLED_WARM_CST = (; ω = 0.5)
+
     # full warm-started fit reaches the same optimum as a cold fit
-    res_cold = fit_model(dm, NoLimits.Laplace(); serialization = NoLimits.EnsembleSerial())
-    res_warm = fit_model(
-        dm, NoLimits.Laplace(); pooled_init = true,
+    res_cold = fit_model(
+        dm, NoLimits.Laplace(); constants = _POOLED_WARM_CST,
         serialization = NoLimits.EnsembleSerial()
     )
-    # Convergence-gated: a converged warm-started fit must reach the same optimum
-    # as the cold fit. We don't assert unconditional equality because the warm
-    # start begins at the fully-converged pooled estimate, from which this tiny
-    # 12-individual problem can slide into a σ→0 likelihood degeneracy under
-    # reduced-optimization (-O1/-O0) arithmetic and not converge. The robust
-    # "reaches the same optimum" coverage comes from the custom-Pooled check below
-    # (which converges) plus the _pooled_init_theta mechanics tests above.
-    # 1.12-only: on Julia 1.10 (x86) the warm fit CONVERGES into that degeneracy,
-    # so the equality is a knife-edge there; the mechanics stay tested everywhere.
-    @test VERSION < v"1.12" || !NoLimits.get_converged(res_warm) ||
-        isapprox(
+    res_warm = fit_model(
+        dm, NoLimits.Laplace(); pooled_init = true, constants = _POOLED_WARM_CST,
+        serialization = NoLimits.EnsembleSerial()
+    )
+    # ω is unidentifiable on this 12-individual fixture and collapses toward 0, leaving
+    # the likelihood flat along that direction. Comparing two optimizer paths with ω free
+    # compares where each happened to stop on a flat ridge, so it flaked on FP noise
+    # alone; the old `!get_converged` escape hatch hid that (and get_converged is not a
+    # quality signal). Holding ω at its true value removes the degeneracy and makes
+    # "reaches the same optimum" well-posed on every Julia version.
+    @test isapprox(
         NoLimits.get_objective(res_warm), NoLimits.get_objective(res_cold); atol = 1.0e-2
     )
 
@@ -623,10 +625,9 @@ end
     res_custom = fit_model(
         dm, NoLimits.Laplace();
         pooled_init = NoLimits.Pooled(optim_kwargs = (; maxiters = 5)),
-        serialization = NoLimits.EnsembleSerial()
+        constants = _POOLED_WARM_CST, serialization = NoLimits.EnsembleSerial()
     )
-    @test VERSION < v"1.12" || !NoLimits.get_converged(res_custom) ||
-        isapprox(
+    @test isapprox(
         NoLimits.get_objective(res_custom), NoLimits.get_objective(res_cold); atol = 1.0e-2
     )
 
