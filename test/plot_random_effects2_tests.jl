@@ -122,6 +122,21 @@ end
 
     # Mahalanobis standardization / scatter / pairplot need multivariate REs
     @test plot_random_effect_standardized_scatter(res) !== nothing
-    @test plot_random_effect_pairplot(res) !== nothing
     @test plot_random_effects_scatter(res) !== nothing
+
+    # Component labels must not be double-prefixed (#293): η_1, not η_η_1.
+    fig = plot_random_effect_pairplot(res)
+    @test fig !== nothing
+    titles = unique(
+        [ax.title[] for ax in fig.content if ax isa Axis && !isempty(ax.title[])]
+    )
+    @test sort(titles) == ["η_1", "η_2"]
+end
+
+@testset "Univariate log/logit RE standardization (#292)" begin
+    d = LogNormal(0.2, 0.3)
+    @test NoLimits._standardize_re(d, [1.5])[1] ≈ (log(1.5) - d.μ) / d.σ
+
+    dl = LogitNormal(0.1, 0.4)
+    @test NoLimits._standardize_re(dl, [0.6])[1] ≈ (log(0.6 / 0.4) - dl.μ) / dl.σ
 end
