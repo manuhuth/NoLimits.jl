@@ -10,8 +10,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Formatting gate: Runic (pinned major). Runic has no configuration, so there
-  # is no style file and no v1-vs-v2 drift to guard against.
+  # Formatting gate: Runic, pinned to an exact version. Runic has no
+  # configuration file, but its output changes between minor releases, so a
+  # major-only pin makes the gate non-deterministic. Bump this pin only
+  # together with a repo-wide reformat commit made with the same version.
   format-check:
     name: format check (Runic)
     runs-on: ubuntu-latest
@@ -21,7 +23,7 @@ jobs:
         with:
           version: "1"
       - name: Install Runic
-        run: julia -e 'using Pkg; Pkg.add(PackageSpec(name="Runic", version="1"))'
+        run: julia -e 'using Pkg; Pkg.add(PackageSpec(name="Runic", version=v"1.9.0"))'
       - name: Check formatting
         run: |
           julia -e 'using Runic; exit(Runic.main(ARGS))' -- \
