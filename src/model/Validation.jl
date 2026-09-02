@@ -241,8 +241,13 @@ function _validate_model_symbols(
     unknown = _nl_unknown_syms(
         vcat(ir.det_exprs, ir.obs_exprs), known, context_module
     )
-    isempty(unknown) ||
-        error("@formulas references undefined symbol(s) $(join(string.(unknown), ", ")). They are not a fixed effect, random effect, pre-DE variable, covariate, helper, model function or DE state/signal.")
+    if !isempty(unknown)
+        # `NPF_x` can only come from the `NormalizingPlanarFlow(x)` rewrite -- point back
+        # at the spelling the user actually wrote.
+        npf_hint = any(startswith(string(s), "NPF_") for s in unknown) ?
+            " `NormalizingPlanarFlow(x)` requires `x` to be an `NPFParameter` in @fixedEffects." : ""
+        error("@formulas references undefined symbol(s) $(join(string.(unknown), ", ")). They are not a fixed effect, random effect, pre-DE variable, covariate, helper, model function or DE state/signal.$(npf_hint)")
+    end
 
     # Varying covariates in an RE distribution are rejected later, by DataModel, with a
     # message about `constant_on` -- do not pre-empt it here.

@@ -173,6 +173,20 @@ model_t = @Model begin
 end
 ```
 
+### Flows as Outcome Distributions
+
+The same `NormalizingPlanarFlow(ψ)` spelling is also allowed as an outcome distribution in `@formulas`. A flow is always multivariate, so the observation column must hold vectors, `[y]` cells even for a one-dimensional flow, and outcomes are matched by name without any `η[1]`-style indexing.
+
+```julia
+@fixedEffects begin
+    ψ = NPFParameter(2, 3; seed=1, calculate_se=false)
+end
+
+@formulas begin
+    z ~ NormalizingPlanarFlow(ψ)
+end
+```
+
 ## Metadata and Builder Accessors
 
 The parsed random-effects object exposes accessor functions for its components. The most commonly used are:

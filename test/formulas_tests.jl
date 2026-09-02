@@ -2,6 +2,7 @@ using Test
 using NoLimits
 using ComponentArrays
 using Distributions
+import DataFrames
 
 struct FakeSol end
 
@@ -510,4 +511,50 @@ end
     @test_throws ErrorException ConstantCovariate(:x; constant_on = "ID")
     @test_throws ErrorException CovariateVector(Symbol[])
     @test_throws ErrorException ConstantCovariateVector(Symbol[])
+end
+
+@testset "Formulas NormalizingPlanarFlow outcome" begin
+    # `NormalizingPlanarFlow(ψ)` must be rewritten to the generated `NPF_ψ(ψ)` model
+    # function in @formulas too, not only in @randomEffects (#288).
+    model = @Model begin
+        @fixedEffects begin
+            phi = NPFParameter(2, 3; seed = 7, calculate_se = false)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @formulas begin
+            z ~ NormalizingPlanarFlow(phi)
+        end
+    end
+    ir = get_formulas_ir(get_formulas(model))
+    @test ir.obs_exprs[1] == :(NPF_phi(phi))
+
+    df = DataFrames.DataFrame(
+        ID = [1, 1], t = [0.0, 1.0], z = [[0.1, -0.2], [0.3, 0.05]]
+    )
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    θ = NoLimits.get_params(dm; scale = :untransformed)
+    ll = complete_data_loglikelihood(dm, θ; eta = :mean)
+
+    flow = get_model_funs(model).NPF_phi(θ.phi)
+    @test isapprox(ll, sum(logpdf(flow, y) for y in df.z))
+
+    # A flow call on a non-NPF fixed effect fails at model build with a clear message.
+    @test_throws ErrorException Core.eval(
+        @__MODULE__, Expr(
+            :macrocall, Symbol("@Model"), LineNumberNode(0),
+            quote
+                @fixedEffects begin
+                    mu = RealNumber(1.0)
+                end
+                @covariates begin
+                    t = Covariate()
+                end
+                @formulas begin
+                    z ~ NormalizingPlanarFlow(mu)
+                end
+            end
+        )
+    )
 end
