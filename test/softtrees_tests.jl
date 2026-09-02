@@ -92,6 +92,34 @@ end
     @test !warned(() -> fit_model(dm, method; theta_0_untransformed = θ_ok))
 end
 
+# Multi-output trees sit at the same saddle when the leaves are constant within a row,
+# even if the rows differ from each other (#304).
+@testset "SoftTree degenerate multi-output start warns" begin
+    df = DataFrame(ID = [1, 1, 2, 2], t = [0.0, 1.0, 0.0, 1.0], y = [1.0, 1.1, 0.9, 1.0])
+    model = @Model begin
+        @fixedEffects begin
+            σ = RealNumber(0.5, scale = :log)
+            Γ = SoftTreeParameters(
+                1, 2; n_output = 2, function_name = :ST2, calculate_se = false
+            )
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @formulas begin
+            y ~ Normal(ST2([t], Γ)[1], σ)
+        end
+    end
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    θ = deepcopy(get_θ0_untransformed(model.fixed.fixed))
+    # Leaves are vec of a (2, 4) matrix: row 1 all 0.3, row 2 all 0.7.
+    θ.Γ[(end - 7):end] .= repeat([0.3, 0.7], 4)
+    logs = first(
+        Test.collect_test_logs(() -> NoLimits._warn_degenerate_soft_trees(dm, θ))
+    )
+    @test any(l -> occursin("Soft tree", string(l.message)), logs)
+end
+
 function _softtree_scalar(x, tree, params)
     return sum(tree(x, params))
 end

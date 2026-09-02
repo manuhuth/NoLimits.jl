@@ -3367,9 +3367,14 @@ function _warn_degenerate_soft_trees(dm::DataModel, θ_start)
         p isa SoftTreeParameters || continue
         v = θ_start === nothing ? p.value : getproperty(θ_start, name)
         n_leaf = p.n_output * 2^p.depth
-        leaves = @view v[(length(v) - n_leaf + 1):end]
-        all(isequal(first(leaves)), leaves) || continue
-        @warn "Soft tree $(name) starts with all $(n_leaf) leaf values equal to $(first(leaves)). The split parameters have exactly zero gradient there, so a gradient-based optimizer cannot train them and the tree stays a constant (absorbed into the surrounding model). Give the leaves a small zero-mean spread instead — e.g. `θ0.$(name)[(end - $(n_leaf) + 1):end] .= 0.05 .* [(-1.0)^i for i in 1:$(n_leaf)]` — which keeps the output at $(first(leaves)) while making the splits trainable." maxlog = 1
+        # Leaves are stored as `vec(leaf_values)` with shape (n_output, 2^depth), and the
+        # saddle is per output row: a row that is constant zeroes the split gradient even
+        # when other rows hold a different constant (#304).
+        leaves = reshape(
+            @view(v[(length(v) - n_leaf + 1):end]), p.n_output, 2^p.depth
+        )
+        any(o -> all(isequal(leaves[o, 1]), @view(leaves[o, :])), 1:p.n_output) || continue
+        @warn "Soft tree $(name) starts with constant leaf values within an output row (first leaf $(leaves[1, 1])). The split parameters have exactly zero gradient there, so a gradient-based optimizer cannot train them and the tree stays a constant (absorbed into the surrounding model). Give the leaves a small zero-mean spread instead — e.g. `θ0.$(name)[(end - $(n_leaf) + 1):end] .= 0.05 .* [(-1.0)^i for i in 1:$(n_leaf)]` — which keeps the output unchanged while making the splits trainable." maxlog = 1
     end
     return nothing
 end
