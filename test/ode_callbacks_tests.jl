@@ -559,3 +559,54 @@ end
         @test isapprox(_fitted(_dm(df; t0 = nothing)), expected; rtol = 1.0e-5)
     end
 end
+
+@testset "ODE callbacks: infusion rate state is per-solve (#308)" begin
+    # A linear RHS would take the closed-form path (which copies the rates) and hide
+    # the shared-buffer race, so the RHS here is deliberately nonlinear.
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+
+        @fixedEffects begin
+            k = RealNumber(0.3, scale = :log)
+            σ = RealNumber(1.0, scale = :log)
+        end
+
+        @DifferentialEquation begin
+            D(x1) ~ -k * x1 * x1 / (1 + x1)
+        end
+
+        @initialDE begin
+            x1 = 0.0
+        end
+
+        @formulas begin
+            y ~ Normal(x1(t), σ)
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 1, 2, 2, 2],
+        t = [1.0, 2.0, 4.0, 1.0, 2.0, 4.0],
+        EVID = [1, 0, 0, 1, 0, 0],
+        AMT = [10.0, 0.0, 0.0, 10.0, 0.0, 0.0],
+        RATE = [5.0, 0.0, 0.0, 5.0, 0.0, 0.0],
+        CMT = [1, 1, 1, 1, 1, 1],
+        y = [missing, 3.0, 2.0, missing, 2.5, 1.8]
+    )
+    dm = DataModel(
+        model, df; primary_id = :ID, time_col = :t, evid_col = :EVID,
+        amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT
+    )
+    θ = get_θ0_untransformed(model.fixed.fixed)
+    ref = NoLimits.loglikelihood(dm, θ, ComponentArray())
+    @test isfinite(ref)
+
+    n = 200
+    out = fill(NaN, n)
+    Threads.@threads for i in 1:n
+        out[i] = NoLimits.loglikelihood(dm, θ, ComponentArray())
+    end
+    @test all(==(ref), out)
+end

@@ -1357,6 +1357,13 @@ end
     return u0
 end
 
+# The `affect!` closure mutates `infusion_rates` in place during integration, so two
+# concurrent solves of one individual corrupt each other (#308). Callers that may run
+# in parallel take a private copy; deepcopy keeps the struct field and the closure's
+# captured buffer pointing at the same new vector.
+@inline _private_event_callbacks(::Nothing) = nothing
+_private_event_callbacks(e::EventCallbacks) = deepcopy(e)
+
 function _build_re_groups(model, df, rows)
     groups = get_re_groups(model.random.random)
     re_names = get_re_names(model.random.random)

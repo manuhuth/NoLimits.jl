@@ -3275,7 +3275,7 @@ function _row_random_effects_fill(
     return ComponentArray(vals, tmpl.axs)
 end
 
-mutable struct _LLCache{H, M, S, A, O, K, P, V, SA}
+mutable struct _LLCache{H, M, S, A, O, K, P, V, SA, EC}
     helpers::H
     model_funs::M
     solver_cfg::S
@@ -3285,6 +3285,7 @@ mutable struct _LLCache{H, M, S, A, O, K, P, V, SA}
     prob_templates::P
     vary_cache::V
     saveat_cache::SA
+    event_cbs::EC
     closed_form_plan::ClosedFormPlan
 end
 const LikelihoodCache = _LLCache
@@ -3298,6 +3299,7 @@ const LikelihoodCache = _LLCache
 @inline get_prob_templates(c::_LLCache) = c.prob_templates
 @inline get_vary_cache(c::_LLCache) = c.vary_cache
 @inline get_saveat_cache(c::_LLCache) = c.saveat_cache
+@inline get_event_cbs(c::_LLCache) = c.event_cbs
 @inline get_closed_form_plan(c::_LLCache) = c.closed_form_plan
 
 # `_is_hmm_dist` (the 7 HMM-family outcome types) is defined in
@@ -3534,7 +3536,7 @@ end
 # DE, forms u0 from `pre`, and extracts the event callback + infusion rates. The divergent
 # solve tails (flat-p templates + saveat + crossings vs dense) stay at each call site.
 @inline function _solve_preamble(
-        dm::DataModel, ind::Individual, θ, η_ind, pre, helpers, model_funs
+        dm::DataModel, ind::Individual, θ, η_ind, pre, helpers, model_funs, events
     )
     model = get_model(dm)
     const_cov = get_const_cov(ind)
@@ -3553,10 +3555,10 @@ end
     u0 = _initial_state_with_pre(model, θ, η_ind, const_cov, pre)
     cb = nothing
     infusion_rates = nothing
-    if get_callbacks(ind) !== nothing
-        _apply_initial_events!(u0, get_callbacks(ind))
-        cb = get_callback(get_callbacks(ind))
-        infusion_rates = get_infusion_rates(get_callbacks(ind))
+    if events !== nothing
+        _apply_initial_events!(u0, events)
+        cb = get_callback(events)
+        infusion_rates = get_infusion_rates(events)
     end
     return compiled, u0, cb, infusion_rates
 end
@@ -3564,8 +3566,9 @@ end
 function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
     model = get_model(dm)
     ind = get_individuals(dm)[idx]
+    events = cache.event_cbs === nothing ? nothing : cache.event_cbs[idx]
     compiled, u0, cb, infusion_rates = _solve_preamble(
-        dm, ind, θ, η_ind, pre, cache.helpers, cache.model_funs
+        dm, ind, θ, η_ind, pre, cache.helpers, cache.model_funs, events
     )
     # T must cover the vars eltype too (η/θ can enter the RHS without entering
     # u0) — pack once with the promoted type, reuse for template and remake.
@@ -3579,7 +3582,7 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
         saveat_use = _ll_saveat(cache, idx, ind)
         sol = _cf_dispatch_solve(
             model, compiled, u0_T, get_tspan(ind), saveat_use, plan,
-            get_callbacks(ind), cache.alg, cache.ode_args,
+            events, cache.alg, cache.ode_args,
             _ode_solve_kwargs(cache.solver_cfg.kwargs, cache.ode_kwargs, NamedTuple())
         )
         sol === nothing && return _ll_drop_solve(:closed_form_failed)
@@ -4144,6 +4147,15 @@ function _build_vary_cache_individual(
     return [_vary_row(vary, dyn_local, t_obs, j) for j in 1:n_rows]
 end
 
+# Each cache owns its event callbacks for the same reason it owns its interpolants:
+# `infusion_rates` is mutated in place during integration (#308). `nothing` when no
+# individual has events, so event-free models pay nothing.
+function _build_event_cache(dm::DataModel)
+    inds = get_individuals(dm)
+    any(ind -> get_callbacks(ind) !== nothing, inds) || return nothing
+    return [_private_event_callbacks(get_callbacks(ind)) for ind in inds]
+end
+
 function _build_vary_cache(dm::DataModel)
     return map(eachindex(get_individuals(dm))) do i
         ind = get_individuals(dm)[i]
@@ -4209,6 +4221,7 @@ function _build_ll_cache_single(
     end
     vary_cache = _build_vary_cache(dm)
     saveat_cache = _build_fit_saveat_cache(dm, force_saveat)
+    event_cbs = _build_event_cache(dm)
     return _LLCache(
         get_helper_funs(get_model(dm)),
         get_model_funs(get_model(dm)),
@@ -4219,6 +4232,7 @@ function _build_ll_cache_single(
         prob_templates,
         vary_cache,
         saveat_cache,
+        event_cbs,
         get_closed_form_plan(dm)
     )
 end

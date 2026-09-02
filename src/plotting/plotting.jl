@@ -371,8 +371,9 @@ function _solve_dense_individual(
     )
     model = get_model(dm)
     pre = calculate_prede(model, θ, η_ind, get_const_cov(ind))
+    events = _private_event_callbacks(get_callbacks(ind))
     compiled, u0, cb, infusion_rates = _solve_preamble(
-        dm, ind, θ, η_ind, pre, get_helper_funs(model), get_model_funs(model)
+        dm, ind, θ, η_ind, pre, get_helper_funs(model), get_model_funs(model), events
     )
     f! = get_de_f!(get_de(model))
     infusion_rates === nothing || (f! = _plot_with_infusion(f!, infusion_rates))
@@ -382,7 +383,7 @@ function _solve_dense_individual(
         cf_alg = _resolve_ode_alg(solver_cfg.alg)
         sol = _cf_dispatch_solve(
             model, compiled, u0, get_tspan(ind), nothing, plan,
-            get_callbacks(ind), cf_alg, solver_cfg.args,
+            events, cf_alg, solver_cfg.args,
             _ode_solve_kwargs(solver_cfg.kwargs, ode_kwargs, NamedTuple())
         )
         sol !== nothing && return sol, compiled
