@@ -3379,6 +3379,29 @@ function _warn_degenerate_soft_trees(dm::DataModel, θ_start)
     return nothing
 end
 
+# A fit whose objective never became finite (`Inf`, or the RE path's infeasibility wall)
+# leaves the optimizer on a flat surface, so the returned "estimates" are the starting
+# values. Name the individuals whose contribution is -Inf so the culprit is visible.
+function _warn_nonfinite_fit(dm::DataModel, θu, label::AbstractString)
+    ids = try
+        cache = build_ll_cache(dm; serialization = SciMLBase.EnsembleSerial())
+        cache1 = cache isa Vector ? first(cache) : cache
+        lp = get_laplace_cache(get_re_group_info(dm))
+        template = lp === nothing ? nothing : get_eta_template(lp)
+        η = template === nothing ? ComponentArray() : template
+        [
+            string(_individual_id(dm, i)) for i in eachindex(get_individuals(dm))
+                if !isfinite(_loglikelihood_individual(dm, i, θu, η, cache1))
+        ]
+    catch
+        String[]
+    end
+    culprit = isempty(ids) ? "" :
+        " Individual(s) with a -Inf log-likelihood contribution at the returned parameters ($(get_primary_id(dm))): $(join(ids, ", "))."
+    @warn "$(label): the objective never became finite, so the optimizer saw a constant value everywhere and stopped without moving. The returned parameters are the starting values, NOT estimates.$(culprit) Check for observations large enough to overflow the residual, and for out-of-domain `log`/`sqrt`/`^` in @formulas or @DifferentialEquation."
+    return nothing
+end
+
 @inline function _reset_numeric_warnings!()
     _WARNED_SOLVE_DROP[] = false
     _WARNED_NUMERIC_ERROR[] = false

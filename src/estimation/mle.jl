@@ -153,9 +153,12 @@ function _fit_no_re(
         OptimizationProblem(optf, z0)
     sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
 
+    fitted = resolve_fitted_parameters(layout, _θt_from_z(sol.u))
+    isfinite(sol.objective) ||
+        _warn_nonfinite_fit(dm, fitted.untransformed, string(nameof(typeof(method))))
     summary = FitSummary(
         sol.objective, sol.retcode == SciMLBase.ReturnCode.Success,
-        resolve_fitted_parameters(layout, _θt_from_z(sol.u)), NamedTuple()
+        fitted, NamedTuple()
     )
     diagnostics = FitDiagnostics(
         (;), (optimizer = method.optimizer,), (retcode = sol.retcode,), NamedTuple()

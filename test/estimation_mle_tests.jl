@@ -40,6 +40,15 @@ end
     res = fx_mle()                        # shared no-RE MLE fit
     @test res isa FitResult
     @test NoLimits.get_params(res; scale = :untransformed) isa ComponentArray
+
+    # #310: a finite but overflowing observation makes the objective constant, so the fit
+    # returns the starting values; it must say so and name the individual.
+    df_bad = copy(fx_nore_df())
+    df_bad.y[8] = 1.0e200
+    dm_bad = DataModel(fx_nore_model(), df_bad; primary_id = :ID, time_col = :t)
+    @test_logs (:warn, r"never became finite.*ID\): 4") match_mode = :any fit_model(
+        dm_bad, NoLimits.MLE(); serialization = NoLimits.EnsembleSerial()
+    )
 end
 
 let

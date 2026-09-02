@@ -567,6 +567,8 @@ function _fit_model_scalar(
     )
 
     # ── Build result ─────────────────────────────────────────────────────────
+    isfinite(sol.objective) ||
+        _warn_nonfinite_fit(dm, θ_hat_u, string(nameof(typeof(method))))
     summary = FitSummary(
         sol.objective,
         sol.retcode == SciMLBase.ReturnCode.Success,
