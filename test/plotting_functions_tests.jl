@@ -114,6 +114,9 @@ end
 
     res_ms = fit_model(ms, fx_nore_dm(), NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
     @test plot_multistart_waterfall(res_ms) !== nothing
+    # Ordinary plots used to throw a MethodError on a MultistartFitResult (#295).
+    @test plot_fits(res_ms) !== nothing
+    @test plot_data(res_ms) !== nothing
 
     mktempdir() do tmp
         p_path = joinpath(tmp, "plot_multistart_waterfall.png")
@@ -312,10 +315,10 @@ end
         function scatter_counts(fig)
             return [
                 sum(
-                        length(CairoMakie.Makie.to_value(plt[1]))
+                    length(CairoMakie.Makie.to_value(plt[1]))
                         for plt in ax.scene.plots if plt isa CairoMakie.Makie.Scatter;
-                        init = 0
-                    ) for ax in all_axes(fig)
+                    init = 0
+                ) for ax in all_axes(fig)
             ]
         end
 

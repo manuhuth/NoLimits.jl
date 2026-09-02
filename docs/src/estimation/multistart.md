@@ -187,12 +187,20 @@ best_run = get_multistart_best(res_ms)
 best_idx = get_multistart_best_index(res_ms)
 ```
 
-Standard fit accessors also work directly on a `MultistartFitResult`, dispatching to the best run:
+The whole post-processing surface also works directly on a `MultistartFitResult`, dispatching to the best run:
 
 ```julia
 theta_best = get_params(res_ms; scale=:untransformed)
 obj_best   = get_objective(res_ms)
+
+fit_summary = summarize(res_ms)
+uq          = compute_uq(res_ms; method=:wald)
+resid       = get_residuals(res_ms)
+pred        = predict(res_ms, dm; re_mode=:population)
+fig         = plot_fits(res_ms)
 ```
+
+This covers the accessors, `summarize`, `compute_uq`, `get_residuals`, `predict`, `complete_data_loglikelihood`, `get_marginal_likelihood`, `compute_shrinkage`, and every `plot_*` function. `get_multistart_best(res_ms)` is still available whenever the underlying `FitResult` itself is needed, for example to pass one run to a function that takes several fits.
 
 ## Example: Fixed-Effects MLE with Screening
 
