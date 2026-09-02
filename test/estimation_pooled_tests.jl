@@ -524,6 +524,15 @@ end
 
 # ─── 14. PooledMap: priors active on free params, frozen priors constant ──────────
 
+# True when the PooledMap fit reports that every prior-bearing parameter was frozen.
+function _pooledmap_warned(dm)
+    logger = Test.TestLogger()
+    Base.CoreLogging.with_logger(logger) do
+        fit_model(dm, NoLimits.PooledMap(); serialization = NoLimits.EnsembleSerial())
+    end
+    return any(r -> occursin("every prior-bearing", string(r.message)), logger.logs)
+end
+
 @testset "PooledMap with RE-only mean" begin
     model = @Model begin
         @fixedEffects begin
@@ -550,6 +559,30 @@ end
     θ̂ = NoLimits.get_params(res; scale = :untransformed)
     # prior Normal(0,1) shrinks μ̂ slightly below the data mean
     @test 0.5 < θ̂.μ < mean(df.y)
+
+    # A live prior survives the auto-freeze here, so no degeneracy warning.
+    @test !_pooledmap_warned(dm)
+
+    # Same model with the only prior on the auto-frozen ω: the MAP term degenerates
+    # into a constant offset, which must be reported (#284).
+    model_deg = @Model begin
+        @fixedEffects begin
+            μ = RealNumber(0.0)
+            ω = RealNumber(0.5, scale = :log, prior = LogNormal(0.0, 0.5))
+            σ = RealNumber(0.4, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(μ, ω); column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(η, σ)
+        end
+    end
+    dm_deg = DataModel(model_deg, df; primary_id = :ID, time_col = :t)
+    @test _pooledmap_warned(dm_deg)
 end
 
 # ─── 15. method option validation ─────────────────────────────────────────────────

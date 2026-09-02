@@ -1169,6 +1169,14 @@ function _fit_pooled(
             "refreeze_check=:refit or force_free."
     end
 
+    # The up-front gate only sees user `constants`; auto-freezing can demote the last
+    # prior-bearing parameter, leaving the MAP term a constant offset (a plain Pooled fit).
+    if method isa PooledMap && !_has_fixed_priors(fe, merged_constants)
+        @warn "PooledMap: every prior-bearing fixed effect was frozen, so the MAP " *
+            "penalty is constant and this fit is equivalent to Pooled(). Use " *
+            "force_free to keep a prior-bearing parameter free."
+    end
+
     η_hat = _compute_pooled_etas(dm, θ_hat_u, strategies)
 
     re_names = get_re_names(get_laplace_cache(get_re_group_info(dm)))
@@ -1401,6 +1409,7 @@ function _fit_model(
         "PooledMap() requires priors on free fixed effects. Define priors in " *
             "@fixedEffects (e.g. RealNumber(...; prior=Normal(...))) or use Pooled() instead."
     )
+    _warn_unbounded_prior_at_bounds(fe)
 
     return _fit_pooled(
         dm, method;
