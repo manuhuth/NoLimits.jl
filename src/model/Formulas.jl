@@ -742,10 +742,19 @@ state/signal accessors. State and signal names must be called with a time argume
 Dynamic covariates used without an explicit `(t)` call are evaluated implicitly at the
 current time `t`.
 
+As in `@randomEffects`, `NormalizingPlanarFlow(ψ)` is rewritten to the generated
+`NPF_ψ(ψ)` model function, so a flow can be used directly as an outcome distribution.
+The flow is multivariate, so the observation column must hold vectors.
+
 The `@formulas` block is required in every `@Model`.
 """
 macro formulas(block)
     det_names, det_exprs, obs_names, obs_exprs, line_exprs = _parse_formulas(block)
+    # `NormalizingPlanarFlow(ψ)` is sugar for the generated `NPF_ψ(ψ)` model function,
+    # in @formulas as well as in @randomEffects (#288). `line_exprs` keeps the original
+    # spelling for display.
+    det_exprs = _rewrite_npf_calls.(det_exprs)
+    obs_exprs = _rewrite_npf_calls.(obs_exprs)
     all_exprs = vcat(det_exprs, obs_exprs)
     det_set = Set(det_names)
 

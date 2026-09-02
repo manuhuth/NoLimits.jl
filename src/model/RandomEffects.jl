@@ -288,17 +288,6 @@ function _dist_type_symbol(dist_expr)
     return :unknown
 end
 
-function _rewrite_npf_calls(ex)
-    ex isa Expr || return ex
-    if ex.head == :call && ex.args[1] == :NormalizingPlanarFlow && length(ex.args) == 2
-        arg = ex.args[2]
-        if arg isa Symbol
-            return Expr(:call, Symbol("NPF_", arg), arg)
-        end
-    end
-    return Expr(ex.head, map(_rewrite_npf_calls, ex.args)...)
-end
-
 """
     @randomEffects begin
         name = RandomEffect(dist; column=:GroupCol)
