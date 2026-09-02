@@ -130,6 +130,8 @@ function _cf_depends_on(e, svars, tvar)
     return false
 end
 
+const _CLOSED_FORM_LOCK = ReentrantLock()
+
 """
     _detect_closed_form(model) -> ClosedFormPlan
 
@@ -142,8 +144,13 @@ rest are integrated numerically. `mode` is `:diagonal` (the subset's coefficient
 matrix is diagonal — scalar closed form) or `:linear` (general/triangular — matrix-
 exponential action). `cf_states == 1:n` means the whole system is closed-form.
 Anything untraceable is conservatively excluded (numerical is always correct).
+
+Serialized: the Symbolics term caches this drives are process-wide and not thread-safe,
+and racing them silently returns a wrong plan. Runs once per `DataModel`, sub-millisecond.
 """
-function _detect_closed_form(model)
+_detect_closed_form(model) = @lock _CLOSED_FORM_LOCK _detect_closed_form_impl(model)
+
+function _detect_closed_form_impl(model)
     de = get_de(model)
     de === nothing && return _NO_CLOSED_FORM
     # Crossing (time-to-event) models need solver-native event detection and
