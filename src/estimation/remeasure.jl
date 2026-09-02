@@ -134,8 +134,8 @@ struct CompositeRE{T <: Number} <: AbstractREMeasure
     n_b::Int
     has_correction::Bool              # fast-path flag: false if all corrections are nothing
     unbounded::Bool                   # true iff every RE segment has support ℝ^dk, making
-    # b-space mode-centered AGHQ valid; conservatively false for all pre-existing
-    # transports so only marginals-based (copula) measures opt in
+    # b-space mode-centered AGHQ valid; false for bounded-support segments, which must
+    # keep the prior-centered rule
 end
 
 function transform(re::CompositeRE, z::AbstractVector)
@@ -246,21 +246,22 @@ function build_re_measure_from_batch(
             range = get_ranges(info)[li]
             push!(all_ranges, range)
 
-            # ℝ-supported segments allow b-space mode-centered AGHQ. Kept false for
-            # the pre-existing non-Gaussian transports (incl. identity/TDist) so
-            # their quadrature behavior is unchanged; only linear-Gaussian and
-            # all-ℝ marginals (copula) segments qualify.
+            # ℝ-supported segments allow b-space mode-centered AGHQ: CenteredREMeasure
+            # places nodes anywhere in ℝ^n_b and scores them with the prior logpdf at
+            # b, so support ℝ is the only requirement (issue #286). Bounded-support
+            # segments (LogNormal, Gamma, Beta, ...) keep the prior-centered rule.
             seg_marg = _re_marginals(dist)
-            all_unbounded &= dist isa Distributions.Normal ||
-                dist isa Distributions.MvNormal ||
-                (
-                seg_marg !== nothing &&
-                    all(
+            all_unbounded &= if seg_marg !== nothing
+                all(
                     mi -> Distributions.minimum(mi) == -Inf &&
                         Distributions.maximum(mi) == Inf,
                     seg_marg
                 )
-            )
+            elseif dist isa Distributions.ContinuousUnivariateDistribution
+                Distributions.minimum(dist) == -Inf && Distributions.maximum(dist) == Inf
+            else
+                dist isa Distributions.MvNormal
+            end
 
             if dist isa Distributions.Normal
                 μ_k = [Distributions.mean(dist)]

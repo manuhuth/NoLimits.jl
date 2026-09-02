@@ -260,10 +260,10 @@ the estimate oscillate and drift *away* from the true integral as the level rise
 regularly turning the batch marginal negative (issue #98). Centered on the mode it
 converges at level 1-3.
 
-Returns `nothing` (keep the prior-centered measure) when the batch is not purely
-Gaussian — `CenteredREMeasure` places nodes anywhere in ℝ^n_b, which only stays
-inside the random-effect support when every RE in the batch is `Normal`/`MvNormal`
-— or when the mode/curvature is unavailable.
+Returns `nothing` (keep the prior-centered measure) when some RE in the batch has
+bounded support — `CenteredREMeasure` places nodes anywhere in ℝ^n_b, which only
+stays inside the random-effect support when every RE in the batch is supported on
+all of ℝ — or when the mode/curvature is unavailable.
 """
 function _ghq_adaptive_measure(
         dm::DataModel, info::REBatchInfo,

@@ -1054,3 +1054,66 @@ end
         @test NoLimits.get_objective(res) < 1.0e6
     end
 end
+
+# ============================================================
+# Issue #286: ℝ-supported non-Gaussian REs must get the adaptive (mode-centered)
+# rule; on the prior-centered rule the estimate drifts *away* with the level.
+# ============================================================
+
+# Simpson's rule reference for the 1-D marginal of one subject.
+function _ghq_brute_subject_ll(y_i, a, σ, prior; lo = -40.0, hi = 40.0, npts = 100_001)
+    grid = range(lo, hi; length = npts)
+    logvals = [
+        sum(logpdf(Normal(a + η, σ), yi) for yi in y_i) + logpdf(prior, η)
+            for η in grid
+    ]
+    m = maximum(logvals)
+    w = ones(npts)
+    w[2:2:(end - 1)] .= 4
+    w[3:2:(end - 1)] .= 2
+    return m + log(sum(w .* exp.(logvals .- m)) * step(grid) / 3)
+end
+
+@testset "ghq_marginal converges for ℝ-supported non-Gaussian REs (#286)" begin
+    rng = MersenneTwister(2861)
+    n_id, n_obs = 6, 4
+    ids = repeat(1:n_id, inner = n_obs)
+    tobs = repeat(1:n_obs, n_id) .* 1.0
+    yobs = 0.5 .+ randn(rng, n_id)[ids] .+ 0.2 .* randn(rng, n_id * n_obs)
+    df = DataFrame(ID = ids, t = tobs, y = yobs)
+    dm_t = DataModel(_GHQ_TDIST_MODEL, df; primary_id = :ID, time_col = :t)
+    dm_n = DataModel(_GHQ_SCALAR_MODEL, df; primary_id = :ID, time_col = :t)
+
+    # ν → ∞ makes TDist(ν) indistinguishable from Normal(0, 1); the two models must
+    # give the same marginal. Before the fix the TDist batch stayed on the
+    # prior-centered rule and was tens of nats off.
+    θ_t_big = ComponentArray(a = 0.5, σ = 0.2, ν = 1.0e6)
+    θ_n = ComponentArray(a = 0.5, σ = 0.2, ω = 1.0)
+    @test NoLimits.ghq_marginal(dm_t, θ_t_big; level = 5) ≈
+        NoLimits.ghq_marginal(dm_n, θ_n; level = 5) atol = 1.0e-5
+
+    # Convergence in the quadrature level against a brute-force 1-D integral.
+    θ_t = ComponentArray(a = 0.5, σ = 0.2, ν = 4.0)
+    brute = sum(
+        _ghq_brute_subject_ll(yobs[ids .== i], θ_t.a, θ_t.σ, TDist(θ_t.ν))
+            for i in 1:n_id
+    )
+    @test NoLimits.ghq_marginal(dm_t, θ_t; level = 3) ≈ brute atol = 1.0e-2
+    @test NoLimits.ghq_marginal(dm_t, θ_t; level = 9) ≈ brute atol = 1.0e-5
+
+    # Bounded-support REs must keep the prior-centered rule.
+    dm_w = _ghq_family_dm(
+        _GHQ_WEIB_MODEL,
+        (
+            seed = 2862, n_id = 5, n_obs = 3,
+            eta = (rng, n) -> rand(rng, Weibull(2.0, 1.5), n),
+            y = (η, ε) -> η .+ 0.3 .* ε,
+        )
+    )
+    _, infos_w, cc_w = NoLimits._build_re_batch_infos(dm_w, NamedTuple())
+    ll_w = NoLimits.build_likelihood_cache(dm_w)
+    θ_w = ComponentArray(a = 1.0, σ = 0.3, α = 2.0, θ = 1.5)
+    m_w = NoLimits.build_re_measure_from_batch(infos_w[1], θ_w, cc_w, dm_w, ll_w)
+    @test m_w isa NoLimits.CompositeRE
+    @test !m_w.unbounded
+end
