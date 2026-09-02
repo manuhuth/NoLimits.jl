@@ -89,6 +89,20 @@ end
         loglik += logpdf(obs.y, y)
     end
     @test isfinite(loglik)
+
+    # Negative observation times are legitimate (#287): the integration starts at `t0`
+    # when it is given and at the individual's first time when it is `nothing`.
+    df_neg = DataFrame(ID = [1, 1, 1], t = [-6.0, -4.0, -2.0], y = [1.0, 0.9, 0.8])
+    for (t0_val, start) in ((nothing, -6.0), (-10.0, -10.0))
+        dm_neg = DataModel(
+            model_saveat, df_neg; primary_id = :ID, time_col = :t, t0 = t0_val
+        )
+        @test get_individual(dm_neg, 1).tspan == (start, -2.0)
+        mu = [exp(-0.2 * (tt - start)) for tt in df_neg.t]
+        ll_ref = sum(logpdf.(Normal.(mu, 0.5), df_neg.y))
+        ll_neg = NoLimits.loglikelihood(dm_neg, θ, ComponentArray())
+        @test isapprox(ll_neg, ll_ref; rtol = 1.0e-5)
+    end
 end
 
 @testset "DataModel ODE logpdf with time offsets" begin

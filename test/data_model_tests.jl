@@ -1277,6 +1277,18 @@ end
 
     model_saveat = set_solver_config(model; saveat_mode = :saveat)
     @test_throws ErrorException DataModel(model_saveat, df; primary_id = :ID, time_col = :t)
+
+    # The guard compares against the actual integration start, not the literal t=0
+    # (#287): a lag below the individual's first time still errors at negative times.
+    df_neg = DataFrame(ID = [1, 1], t = [-6.0, -4.0], y = [1.0, 1.1])
+    @test_throws ErrorException DataModel(
+        model_saveat, df_neg; primary_id = :ID, time_col = :t, t0 = nothing
+    )
+    # ... while an explicit t0 below the lagged time makes the same model valid.
+    dm_ok = DataModel(
+        model_saveat, df_neg; primary_id = :ID, time_col = :t, t0 = -10.0
+    )
+    @test get_individual(dm_ok, 1).tspan[1] == -10.0
 end
 
 @testset "DataModel errors on offsets below dynamic covariate support" begin
