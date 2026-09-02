@@ -317,6 +317,27 @@ end
         primary_id = :ID, time_col = :t, evid_col = :EVID,
         amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT
     )
+
+    # A dose row sharing t with a baseline observation is not a duplicate observation (#308).
+    df_dose_at_t0 = DataFrame(
+        ID = [1, 1, 1], t = [0.0, 0.0, 1.0], EVID = [1, 0, 0],
+        AMT = [0.0, 0.0, 0.0], RATE = zeros(3), CMT = [1, 1, 1],
+        Age = [30.0, 30.0, 30.0], y = [missing, 1.1, 1.2]
+    )
+    @test_logs DataModel(
+        model, df_dose_at_t0;
+        primary_id = :ID, time_col = :t, evid_col = :EVID,
+        amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT
+    )
+    # Two genuine observations at one time still warn.
+    df_dup_obs = copy(df_dose_at_t0)
+    df_dup_obs.EVID[1] = 0
+    df_dup_obs.y[1] = 1.0
+    @test_logs (:warn, r"Duplicate") match_mode = :any DataModel(
+        model, df_dup_obs;
+        primary_id = :ID, time_col = :t, evid_col = :EVID,
+        amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT
+    )
 end
 
 # Shared valid model + df; only the DataModel(...) kwargs differ across the
@@ -1699,6 +1720,24 @@ end
         evid_col = :EVID, amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT
     )
     @test isconcretetype(eltype(get_individuals(dm1)))
+
+    # AMT=0 with RATE!=0 is a zero-duration infusion the two solve paths disagree on (#308).
+    df_zero_amt = copy(df)
+    df_zero_amt.AMT[1] = 0.0
+    df_zero_amt.RATE[1] = 5.0
+    @test_throws ErrorException DataModel(
+        model, df_zero_amt; primary_id = :ID, time_col = :t, evid_col = :EVID,
+        amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT
+    )
+
+    # With a DE, an individual with only event rows has no observation time to solve
+    # from -- rejected instead of a BoundsError during the solve (#308).
+    df_dosing_only = copy(df)
+    df_dosing_only.EVID[7:8] .= 1
+    @test_throws ErrorException DataModel(
+        model, df_dosing_only; primary_id = :ID, time_col = :t, evid_col = :EVID,
+        amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT
+    )
 end
 
 @testset "chunked (ChainedVector) columns from CSV" begin

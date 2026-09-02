@@ -302,12 +302,16 @@ end
 function _warn_time_layout(df, config::DataModelConfig)
     ids = _get_col(df, config.primary_id)
     tvals = _get_col(df, config.time_col)
+    # Only observation rows can be double-counted; event rows carry no likelihood term.
+    evid = (config.evid_col !== nothing && hasproperty(df, config.evid_col)) ?
+        _get_col(df, config.evid_col) : nothing
     unsorted = String[]
     dups = String[]
     for (id, rows) in pairs(_group_row_indices(ids))
         ts = tvals[rows]
         issorted(ts) || push!(unsorted, string(id))
-        length(unique(ts)) == length(ts) || push!(dups, string(id))
+        tobs = evid === nothing ? ts : tvals[filter(r -> isequal(evid[r], 0), rows)]
+        length(unique(tobs)) == length(tobs) || push!(dups, string(id))
     end
     isempty(unsorted) ||
         @warn "Rows are not sorted by $(config.time_col) within $(config.primary_id) $(join(string.(unsorted[1:min(end, 5)]), ", ")). Sequential outcomes (HMMs) and dynamic covariates are interpreted in row order."
@@ -375,6 +379,29 @@ function _validate_schema(model, df, config::DataModelConfig)
             _check_missing(_get_col(df, config.amt_col)[evt_idx], config.amt_col)
             _check_missing(_get_col(df, config.rate_col)[evt_idx], config.rate_col)
             _check_missing(_get_col(df, config.cmt_col)[evt_idx], config.cmt_col)
+            _check_finite(_get_col(df, config.amt_col), config.amt_col)
+            _check_finite(_get_col(df, config.rate_col), config.rate_col)
+            # A zero-amount infusion has zero duration: the numerical path stops the rate
+            # at once while the closed-form path leaves it running forever (#308).
+            # Event-only individuals stay legal without a DE (#237.29); with one, every
+            # solve path indexes the individual's first observation time.
+            if model.de.de !== nothing
+                amt_all = _get_col(df, config.amt_col)
+                rate_all = _get_col(df, config.rate_col)
+                tvals_all = _get_col(df, config.time_col)
+                ids_all = _get_col(df, config.primary_id)
+                for i in evt_idx
+                    if evid[i] == 1 && rate_all[i] != 0 && amt_all[i] == 0
+                        error("Infusion event for $(config.primary_id) $(ids_all[i]) at time $(tvals_all[i]) has $(config.amt_col)=0 and $(config.rate_col)=$(rate_all[i]). A zero-amount infusion has no defined duration; use $(config.rate_col)=0 for a bolus or a nonzero $(config.amt_col).")
+                    end
+                end
+                dosing_only = [
+                    string(id) for (id, rws) in _group_row_indices(ids_all)
+                        if !any(r -> isequal(evid[r], 0), rws)
+                ]
+                isempty(dosing_only) ||
+                    error("$(config.primary_id) $(join(sort(dosing_only), ", ")) has only event rows ($(config.evid_col) != 0). With a @DifferentialEquation each individual needs at least one $(config.evid_col) == 0 row.")
+            end
             # Without a DE block, EVID only excludes rows from the observations -- the
             # dose amounts have nowhere to go (#174).
             if model.de.de === nothing &&

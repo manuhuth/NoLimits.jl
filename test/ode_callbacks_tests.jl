@@ -262,13 +262,13 @@ end
 
     @testset "CMT name mapping works" begin
         df = DataFrame(
-            ID = [1, 1],
-            t = [0.0, 0.0],
-            EVID = [1, 1],
-            AMT = [2.0, 3.0],
-            RATE = [0.0, 0.0],
-            CMT = ["x1", "central"],
-            y = [missing, missing]
+            ID = [1, 1, 1],
+            t = [0.0, 0.0, 1.0],
+            EVID = [1, 1, 0],
+            AMT = [2.0, 3.0, 0.0],
+            RATE = [0.0, 0.0, 0.0],
+            CMT = ["x1", "central", "x1"],
+            y = [missing, missing, 1.0]
         )
         dm = DataModel(
             model, df;
@@ -285,13 +285,13 @@ end
 
     @testset "CMT mixed styles error" begin
         df = DataFrame(
-            ID = [1, 1],
-            t = [0.0, 0.0],
-            EVID = [1, 1],
-            AMT = [2.0, 3.0],
-            RATE = [0.0, 0.0],
-            CMT = Any["x1", 2],
-            y = [missing, missing]
+            ID = [1, 1, 1],
+            t = [0.0, 0.0, 1.0],
+            EVID = [1, 1, 0],
+            AMT = [2.0, 3.0, 0.0],
+            RATE = [0.0, 0.0, 0.0],
+            CMT = Any["x1", 2, "x1"],
+            y = [missing, missing, 1.0]
         )
         @test_throws ErrorException DataModel(
             model, df;
@@ -306,13 +306,13 @@ end
 
     @testset "CMT closest-match suggestion" begin
         df = DataFrame(
-            ID = [1],
-            t = [0.0],
-            EVID = [1],
-            AMT = [2.0],
-            RATE = [0.0],
-            CMT = ["x2"],
-            y = [missing]
+            ID = [1, 1],
+            t = [0.0, 1.0],
+            EVID = [1, 0],
+            AMT = [2.0, 0.0],
+            RATE = [0.0, 0.0],
+            CMT = ["x2", "x1"],
+            y = [missing, 1.0]
         )
         err = try
             DataModel(
