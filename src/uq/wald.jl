@@ -1,34 +1,69 @@
 using LinearAlgebra
 using Random
 
+# Above this condition number `inv(H)` keeps fewer than ~4 significant digits and can
+# return a roundoff-SIGNED enormous eigenvalue that the PSD projection clips (#306).
+const _WALD_INV_MAX_COND = 1.0e-4 / eps(Float64)
+
+# Parameters loading most on the given (near-)null directions - the ones that are not
+# identified by the data.
+function _wald_weak_names(F::SVD, weak::AbstractVector{Int}, active_names)
+    length(active_names) == length(F.S) || return collect(active_names)
+    return unique([active_names[argmax(abs.(view(F.V, :, j)))] for j in weak])
+end
+
 # Pseudo-inverse of the objective Hessian for the Wald "bread" matrix.
 #
 # `pinv`'s default rank tolerance maps a near-zero singular value to 0 rather than to a
 # large reciprocal, so a weakly identified direction came out with near-zero variance -
 # falsely precise, the exact opposite of what a standard error must convey (issue #173).
-# Keep every nonzero singular value so such a direction yields a LARGE variance, and only
-# drop the exactly singular ones (which is what makes this usable where `inv` throws).
+# Keep every nonzero singular value so such a direction yields a LARGE variance, and floor
+# the reciprocal of the (near-)singular ones at the conditioning tolerance.
 function _wald_pinv(H::AbstractMatrix, active_names)
     F = svd(H)
     n = length(F.S)
     smax = n == 0 ? 0.0 : maximum(F.S)
-    tol = eps(Float64) * smax * maximum(size(H))
-    weak = findall(<(tol), F.S)
+    tol_raw = eps(Float64) * smax * maximum(size(H))
+    tol = tol_raw > 0 ? tol_raw : eps(Float64)
+    weak = findall(<=(tol), F.S)
     if !isempty(weak)
-        # Name the parameters loading most on the (near-)null directions - those are the
-        # ones whose reported SE is now large because they are not identified by the data.
-        loads = length(active_names) == n ?
-            [active_names[argmax(abs.(view(F.V, :, j)))] for j in weak] : active_names
         @warn "Wald covariance: the objective Hessian is (near-)singular in " *
             "$(length(weak)) direction(s); the standard errors for these parameters are " *
             "large because they are only weakly identified. Consider reparameterizing or " *
-            "fixing them via `constants=`." parameters = unique(loads) smallest_singular_value = minimum(F.S)
+            "fixing them via `constants=`." parameters = _wald_weak_names(F, weak, active_names) smallest_singular_value = minimum(F.S)
     end
-    Sinv = [s > 0 ? inv(s) : zero(s) for s in F.S]
+    # An exactly zero singular value is the limit of the near-zero case: flooring at `tol`
+    # keeps its variance large instead of zero, as the warning above promises (#306).
+    Sinv = [s > tol ? inv(s) : inv(tol) for s in F.S]
     return F.V * Diagonal(Sinv) * F.U'
 end
 
 function _wald_bread(H::AbstractMatrix, pseudo_inverse::Bool, active_names)
+    F = svd(H)
+    smax = isempty(F.S) ? 0.0 : maximum(F.S)
+    # Zero curvature is no information, not infinite precision. ForwardDiff returns an
+    # exactly zero Hessian whenever the objective short-circuits to `Inf`, and that passes
+    # every finiteness guard while inverting to zero standard errors (issue #306).
+    smax > 0 ||
+        error(
+        "Wald covariance unavailable: the objective Hessian at the estimate is zero, so " *
+            "the objective carries no curvature (typically a non-finite likelihood that " *
+            "short-circuits to a constant). Check the fit converged to a finite objective."
+    )
+    if !pseudo_inverse
+        # `inv` does not throw for a Hessian that is singular only to machine precision; it
+        # returns a covariance whose enormous eigenvalue has a roundoff-decided sign. Refuse
+        # instead, on the same conditioning test the pseudo-inverse branch uses (#306).
+        smin = minimum(F.S)
+        smin <= smax / _WALD_INV_MAX_COND &&
+            error(
+            "Failed to invert Hessian for Wald covariance: it is numerically singular " *
+                "(condition number $(smax / smin)), so the covariance would be dominated by " *
+                "roundoff. Parameter(s) $(join(_wald_weak_names(F, findall(<=(smax / _WALD_INV_MAX_COND), F.S), active_names), ", ")) are only weakly " *
+                "identified. Consider pseudo_inverse=true, reparameterizing, or fixing them " *
+                "via constants."
+        )
+    end
     bread = try
         pseudo_inverse ? _wald_pinv(H, active_names) : inv(H)
     catch err
@@ -42,6 +77,23 @@ function _wald_bread(H::AbstractMatrix, pseudo_inverse::Bool, active_names)
     return Matrix{Float64}(0.5 .* (bread .+ bread'))
 end
 
+# Cluster-robust sandwich meat diagnostics. At a converged optimum the per-cluster scores
+# sum to zero, so with one cluster - or near-duplicate clusters - the meat collapses to
+# (numerically) zero and the sandwich reports standard errors far TIGHTER than the Hessian
+# ones, with nothing in the output to show it (issue #306).
+function _wald_meat_diag(B::Matrix{Float64}, H::AbstractMatrix, n_cluster::Int)
+    n_active = size(B, 1)
+    meat_rank = rank(B)
+    meat_scale = opnorm(B)
+    degenerate = meat_rank < n_active || meat_scale <= 1.0e-8 * opnorm(H)
+    degenerate &&
+        @warn "Sandwich covariance is degenerate for this fit: the cluster-robust meat " *
+        "has rank $(meat_rank) for $(n_active) parameter(s) over $(n_cluster) " *
+        "cluster(s). Per-cluster scores sum to zero at the optimum, so few or " *
+        "near-duplicate clusters collapse the meat and the resulting standard errors " *
+        "are unusable (too small). Use vcov = :hessian." n_cluster meat_rank
+    return (; n_cluster = n_cluster, meat_rank = meat_rank, meat_degenerate = degenerate)
+end
 # Shared Wald finalize tail: project the raw covariance to PSD, draw from the Gaussian
 # approximation, map draws back to the natural scale, extend any stickbreak coordinates,
 # and assemble the UQResult. `extra_diag` carries method-specific diagnostics (e.g.
@@ -322,6 +374,7 @@ function _compute_uq_wald_no_re(
 
     bread = _wald_bread(H_active, pseudo_inverse, active_names)
 
+    meat_diag = NamedTuple()
     Vt_raw = if vcov == :hessian
         copy(bread)
     elseif vcov == :sandwich
@@ -353,6 +406,7 @@ function _compute_uq_wald_no_re(
             B .+= g * g'
         end
         B = 0.5 .* (B .+ B')
+        meat_diag = _wald_meat_diag(B, H_active, length(get_individuals(dm)))
         M = bread * B * bread'
         Matrix{Float64}(0.5 .* (M .+ M'))
     else
@@ -362,7 +416,7 @@ function _compute_uq_wald_no_re(
     return _finalize_wald_uqresult(
         fe, θ_hat_t, θ_hat_u, free_names, active_idx,
         active_names, active_kinds, _θu_from_active, Vt_raw, backend_used, vcov,
-        pseudo_inverse, n_draws, level, rng, _method_symbol(method), NamedTuple()
+        pseudo_inverse, n_draws, level, rng, _method_symbol(method), meat_diag
     )
 end
 
@@ -512,6 +566,7 @@ function _compute_uq_wald_re(
 
     bread = _wald_bread(H_active, pseudo_inverse, active_names)
 
+    meat_diag = NamedTuple()
     Vt_raw = if vcov == :hessian
         copy(bread)
     elseif vcov == :sandwich
@@ -553,6 +608,7 @@ function _compute_uq_wald_re(
             B .+= g * g'
         end
         B = 0.5 .* (B .+ B')
+        meat_diag = _wald_meat_diag(B, H_active, length(batch_infos))
         M = bread * B * bread'
         Matrix{Float64}(0.5 .* (M .+ M'))
     else
@@ -563,6 +619,6 @@ function _compute_uq_wald_re(
         fe, θ_hat_t, θ_hat_u, free_names, active_idx,
         active_names, active_kinds, _θu_from_active, Vt_raw, backend_used, vcov,
         pseudo_inverse, n_draws, level, rng, _method_symbol(source_method),
-        (; approximation_method = _method_symbol(approx_method))
+        merge((; approximation_method = _method_symbol(approx_method)), meat_diag)
     )
 end
