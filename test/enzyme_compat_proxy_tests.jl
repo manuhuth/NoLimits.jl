@@ -196,7 +196,8 @@ end
         serialization = NoLimits.EnsembleSerial()
     )
     prob_d = cache_d.prob_templates[1]
-    @test keys(prob_d.kwargs) == (:dense,)
+    @test keys(prob_d.kwargs) == (:dense, :tstops)
+    @test isempty(prob_d.kwargs[:tstops])
     @test prob_d.kwargs[:dense] === true
     # FD gradient through the flat-p path stays finite and matches finite reality
     axs = getaxes(θu)
