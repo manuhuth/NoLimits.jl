@@ -17,7 +17,7 @@ Requires prior distributions on at least one free fixed effect.
 
 # Keyword Arguments
 - `optimizer`: Optimization.jl-compatible optimizer. Defaults to `LBFGS` with backtracking
-  line search, or to `Optimisers.Adam()` when `update_schedule != :all`.
+  line search, or to `Optimisers.Adam(0.01)` when `update_schedule != :all`.
 - `optim_kwargs::NamedTuple = NamedTuple()`: keyword arguments forwarded to `Optimization.solve`
   (e.g. `maxiters`, `reltol`).
 - `adtype`: automatic-differentiation backend. Defaults to `AutoForwardDiff()`.

@@ -103,7 +103,7 @@ Notes:
   - integer `m`: a random minibatch of `min(m, nbatches)` batches, sampled without replacement each iteration.
   - callable `(nbatches::Int, iter::Int, rng) -> Vector{Int}`: returns the batch indices to use in optimizer iteration `iter`; a plain function or a callable struct (for stateful schedules).
 
-  The selected batches' contribution is scaled by `nbatches / length(selected)`, so the objective remains an unbiased estimate of the full-data objective; priors, `penalty`, and `extra_objective` are never scaled. One minibatch is drawn per optimizer iteration from the fit `rng`, and the objective and gradient of that iteration share it. When mini-batching is active and no `optimizer` is given, the default optimizer becomes `Optimisers.Adam()` (with `maxiters=1000` and `save_best=false` unless set in `optim_kwargs`) instead of LBFGS; passing a non-Optimisers optimizer emits a warning because line-search optimizers do not behave well on a stochastic objective. After the fit, the reported objective is re-evaluated once on all batches at the fitted parameters. With Optimisers.jl rules, finite bounds (model bounds or `lb`/`ub`) are enforced by projecting each update onto the box.
+  The selected batches' contribution is scaled by `nbatches / length(selected)`, so the objective remains an unbiased estimate of the full-data objective; priors, `penalty`, and `extra_objective` are never scaled. One minibatch is drawn per optimizer iteration from the fit `rng`, and the objective and gradient of that iteration share it. When mini-batching is active and no `optimizer` is given, the default optimizer becomes `Optimisers.Adam(0.01)` (with `maxiters=1000` and `save_best=false` unless set in `optim_kwargs`) instead of LBFGS; passing a non-Optimisers optimizer emits a warning because line-search optimizers do not behave well on a stochastic objective. After the fit, the reported objective is re-evaluated once on all batches at the fitted parameters. With Optimisers.jl rules, finite bounds (model bounds or `lb`/`ub`) are enforced by projecting each update onto the box.
 
 ```julia
 using Optimisers
@@ -142,7 +142,7 @@ Practical implications:
 
 - Outer optimizer (`optimizer`, `optim_kwargs`, `adtype`)
   - Runs once at the top level.
-  - Defaults to the local-gradient `OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep=1.0))`. Derivative-free methods (e.g. `NLopt.LN_BOBYQA()`) and global methods are also supported. When `update_schedule != :all` and no optimizer is passed, the default is `Optimisers.Adam()` instead.
+  - Defaults to the local-gradient `OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep=1.0))`. Derivative-free methods (e.g. `NLopt.LN_BOBYQA()`) and global methods are also supported. When `update_schedule != :all` and no optimizer is passed, the default is `Optimisers.Adam(0.01)` instead.
   - The line-search step cap matters: an uncapped unit first step can overshoot into the region where the marginal is not finite. Keep `maxstep` if you substitute another line search.
   - Note: if you switch to an NLopt optimizer, it interprets `optim_kwargs.maxiters` as a cap on the number of function *evaluations* (`maxeval`), not outer iterations; reaching it yields `retcode = MaxIters` (reported as not converged).
   - If using BlackBoxOptim (`OptimizationBBO.*`), finite bounds are required.

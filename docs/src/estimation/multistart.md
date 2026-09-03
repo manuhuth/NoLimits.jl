@@ -160,8 +160,10 @@ Note that screening (Phase 1) always runs serially regardless of `serialization`
 
 Random number generator behavior depends on how `rng` is supplied (the constructor default is `Xoshiro(0)`):
 
-- If `rng` is not passed to `fit_model(ms, ...)`, each start receives an internally spawned child RNG to ensure independence.
-- If `rng` is explicitly provided in the fit keywords, that generator is forwarded to every underlying fit call.
+Each start always receives its own internally spawned child RNG, so threaded starts never share generator state.
+
+- If `rng` is not passed to `fit_model(ms, ...)`, the child RNGs are seeded from the `Multistart` `rng`.
+- If `rng` is explicitly provided in the fit keywords, the child RNGs are seeded from that generator instead.
 
 ## Fit Keyword Forwarding
 

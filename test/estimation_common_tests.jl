@@ -1240,6 +1240,11 @@ struct _MBCustomMethod <: NoLimits.FittingMethod end
         @test all(==(4), rec.nb)
         @test all(r -> r === rng_fit, rec.rngs)
 
+        # A callable may return any iterable of Int, including an immutable range (#323).
+        st_rng = NL._minibatch_state((n, it, r) -> 1:2, 3, MersenneTwister(1))
+        NL._minibatch_current!(st_rng)
+        @test st_rng.selected == [1, 2]
+
         st3 = NL._minibatch_state((n, it, r) -> Int[], 4, MersenneTwister(1))
         @test_throws ErrorException NL._minibatch_current!(st3)
         st4 = NL._minibatch_state((n, it, r) -> [7], 4, MersenneTwister(1))
@@ -1248,7 +1253,10 @@ struct _MBCustomMethod <: NoLimits.FittingMethod end
 
     @testset "_resolve_outer_optimizer" begin
         @test NL._resolve_outer_optimizer(nothing, :all, "X") isa OptimizationOptimJL.LBFGS
-        @test NL._resolve_outer_optimizer(nothing, 3, "X") isa Optimisers.Adam
+        default_adam = NL._resolve_outer_optimizer(nothing, 3, "X")
+        @test default_adam isa Optimisers.Adam
+        # Adam(1e-3) did not converge in the default iteration budget (#323).
+        @test default_adam.eta == 0.01
         @test_logs (:warn, r"stochastic") NL._resolve_outer_optimizer(
             OptimizationOptimJL.LBFGS(), 3, "X"
         )

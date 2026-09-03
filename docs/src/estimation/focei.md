@@ -119,7 +119,7 @@ entry for the complete keyword list.
 As with `Laplace`, both the **outer** fixed-effects optimizer and the inner EB optimization
 default to `OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep=1.0))`, and
 the outer problem is preconditioned by default (`precondition=true`). When
-`update_schedule != :all` and no optimizer is passed, the default is `Optimisers.Adam()`
+`update_schedule != :all` and no optimizer is passed, the default is `Optimisers.Adam(0.01)`
 instead. If you switch the outer optimizer to NLopt, note that NLopt interprets
 `optim_kwargs.maxiters` as a cap on the number of function *evaluations* (`maxeval`);
 reaching it yields `retcode = MaxIters` (reported as not converged).

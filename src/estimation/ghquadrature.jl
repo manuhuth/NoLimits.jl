@@ -46,7 +46,7 @@ whose gradient is not; use `Laplace()` for that, and `level ≥ 3` here.
   Levels 1–3 are numerically stable; higher levels may exhibit cancellation
   in signed logsumexp.
 - `optimizer`: outer Optimization.jl-compatible optimizer.  Defaults to LBFGS
-  with backtracking line search, or to `Optimisers.Adam()` when
+  with backtracking line search, or to `Optimisers.Adam(0.01)` when
   `update_schedule != :all`.
 - `optim_kwargs::NamedTuple = NamedTuple()`: forwarded to `Optimization.solve`
   (e.g. `maxiters`, `reltol`).

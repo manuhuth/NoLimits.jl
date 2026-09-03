@@ -30,7 +30,7 @@ function _schedule_batches!(
     elseif hasmethod(update_schedule, Tuple{Int, Int, AbstractRNG})
         return update_schedule(nbatches, iter, rng)
     else
-        error("Invalid update_schedule. Use :all, Int minibatch size, or a callable (nbatches, iter, rng) -> Vector{Int}.")
+        error("Invalid update_schedule. Use :all, Int minibatch size, or a callable (nbatches, iter, rng) -> indices (any iterable of Int).")
     end
 end
 
@@ -51,7 +51,7 @@ function _check_update_schedule(update_schedule, label::AbstractString)
     end
     return error(
         "$label: invalid update_schedule. Use :all, an Int minibatch size, or a " *
-            "callable (nbatches::Int, iter::Int, rng) -> Vector{Int}."
+            "callable (nbatches::Int, iter::Int, rng) -> indices (any iterable of Int)."
     )
 end
 
@@ -93,8 +93,8 @@ function _minibatch_draw!(st::_MinibatchState)
                 "outside the valid range 1:$(st.nbatches)."
         )
     end
-    # Copy first: the callable may return an alias of `buf`.
-    st.selected = sort!(unique!(copy(sel)))
+    # `collect` copies: the callable may return an alias of `buf`, or an immutable range.
+    st.selected = sort!(unique!(collect(Int, sel)))
     empty!(st.active)
     for i in st.selected
         push!(st.active, i)
@@ -178,7 +178,7 @@ _default_lbfgs() = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTrack
 
 function _resolve_outer_optimizer(optimizer, update_schedule, label::AbstractString)
     if optimizer === nothing
-        return update_schedule === :all ? _default_lbfgs() : Optimisers.Adam()
+        return update_schedule === :all ? _default_lbfgs() : Optimisers.Adam(0.01)
     end
     if update_schedule !== :all
         SciMLBase.allowscallback(optimizer) || error(
@@ -203,8 +203,8 @@ const _UPDATE_SCHEDULE_DOC = """
   - `:all` (default) — use all batches every iteration (deterministic objective).
   - `Int` — random minibatch of that size, sampled without replacement each iteration
     (`min(m, nbatches)` batches are used).
-  - Any callable with signature `(nbatches::Int, iter::Int, rng) -> Vector{Int}` — returns
-    the indices of the batches to use in optimizer iteration `iter`. Can be a plain function
+  - Any callable with signature `(nbatches::Int, iter::Int, rng) -> indices` returning any
+    iterable of `Int` (a `Vector{Int}`, a range, ...) — the indices of the batches to use in optimizer iteration `iter`. Can be a plain function
     or a callable struct (useful for stateful schedules such as cycling windows).
     Duplicate indices returned by a callable are ignored. A stateful callable is shared by
     every fit that uses the same method object (including all `Multistart` starts), so pass
@@ -213,7 +213,7 @@ const _UPDATE_SCHEDULE_DOC = """
   objective stays an unbiased estimate of the full-data objective; priors, `penalty`, and
   `extra_objective` are never scaled. One minibatch is drawn per optimizer iteration from
   the fit `rng`; the objective and gradient of that iteration share it. When mini-batching
-  is active and no `optimizer` is given, the default becomes `Optimisers.Adam()` (with
+  is active and no `optimizer` is given, the default becomes `Optimisers.Adam(0.01)` (with
   `maxiters = 1000` and `save_best = false` unless given in `optim_kwargs`) instead of
   LBFGS; passing a non-Optimisers optimizer warns. After the fit, the reported objective
   is re-evaluated once on all batches at the fitted parameters. With Optimisers.jl rules,
