@@ -147,6 +147,22 @@ end
     @test d.inactive_fixed_effects_held_constant
     @test d.vcov_min_eig_used >= -1.0e-10
 
+    # #306 finding 6: intervals and monotone natural SEs are closed form, not draw quantiles.
+    est_t = get_uq_estimates(uq; scale = :transformed, as_component = false)
+    ints_t = get_uq_intervals(uq; scale = :transformed, as_component = false)
+    se_t = sqrt.(diag(get_uq_vcov(uq; scale = :transformed)))
+    z = quantile(Normal(), 0.975)
+    @test ints_t.lower ≈ est_t .- z .* se_t atol = 1.0e-12
+    @test ints_t.upper ≈ est_t .+ z .* se_t atol = 1.0e-12
+    ints_n = get_uq_intervals(uq; scale = :natural, as_component = false)
+    # σ is the :log coordinate (index 2), a is :identity (index 1).
+    @test ints_n.lower[2] == exp(ints_t.lower[2])
+    @test ints_n.upper[2] == exp(ints_t.upper[2])
+    @test ints_n.lower[1] == ints_t.lower[1]
+    se_n = sqrt.(diag(get_uq_vcov(uq; scale = :natural)))
+    @test se_n[1] ≈ se_t[1] rtol = 1.0e-12
+    @test se_n[2] ≈ sqrt(expm1(se_t[2]^2) * exp(2 * est_t[2] + se_t[2]^2)) rtol = 1.0e-12
+
     uq_const = compute_uq(
         res; method = :wald, constants = (a = 0.2,), n_draws = 30, rng = Random.Xoshiro(2)
     )
@@ -194,6 +210,22 @@ end
     @test d.requested_draws == 15
     @test d.used_draws == 15
     @test d.available_draws >= d.used_draws
+
+    # #306 finding 3: the transformed scale must be the forward transform of the chain,
+    # not a copy of the natural-scale numbers.
+    est_n = get_uq_estimates(uq; scale = :natural, as_component = false)
+    est_t = get_uq_estimates(uq; scale = :transformed, as_component = false)
+    draws_n = get_uq_draws(uq; scale = :natural)
+    draws_t = get_uq_draws(uq; scale = :transformed)
+    @test draws_t[:, 2] ≈ log.(draws_n[:, 2])
+    @test draws_t != draws_n
+    @test est_t[2] ≈ mean(log.(draws_n[:, 2]))
+    @test est_t[1] == est_n[1]
+    ints_t = get_uq_intervals(uq; scale = :transformed, as_component = false)
+    ints_n = get_uq_intervals(uq; scale = :natural, as_component = false)
+    # Interpolated draw quantiles are only approximately equivariant, so compare loosely.
+    @test ints_t.lower[2] ≈ log(ints_n.lower[2]) rtol = 0.05
+    @test ints_t.upper[2] < ints_n.upper[2]
 end
 
 @testset "UQ chain for VI" begin
@@ -702,6 +734,45 @@ end
     B = NoLimits._wald_pinv(H, [:a, :b])
     @test diag(B)[2] > 1.0e8
     @test isapprox(B, inv(H); rtol = 1.0e-3)
+
+    # #306 finding 1: an EXACTLY zero singular value is the limit of the near-zero case,
+    # not a perfectly determined direction - it must not come back with zero variance.
+    B0 = @test_logs match_mode = :any (:warn, r"weakly identified") NoLimits._wald_pinv(
+        diagm([10.0, 0.0, 5.0]), [:a, :b, :c]
+    )
+    @test diag(B0)[2] > 1.0e8
+    @test isapprox(diag(B0)[1], 0.1)
+
+    # #306 finding 2: the default (`inv`) branch must refuse a machine-singular Hessian
+    # instead of returning a roundoff-signed covariance.
+    @test_throws ErrorException NoLimits._wald_bread(
+        [1.0 1.0; 1.0 1.0 + 1.0e-12], false, [:a, :b]
+    )
+    @test NoLimits._wald_bread(H, false, [:a, :b]) isa Matrix{Float64}
+
+    # #306 finding 5: a zero Hessian is no information, not infinite precision.
+    @test_throws ErrorException NoLimits._wald_bread(zeros(2, 2), true, [:a, :b])
+    @test_throws ErrorException NoLimits._wald_bread(zeros(2, 2), false, [:a, :b])
+
+    # #306 finding 2: a clipped eigenvalue of the matrix's own scale is not a rounding
+    # repair, and the warning must say so instead of "shrunk toward zero".
+    @test_logs (:warn, r"far beyond roundoff") NoLimits._project_psd_covariance(
+        [-1.0 0.0; 0.0 1.0]
+    )
+    Vp, dp = @test_logs (:warn, r"shrunk toward zero") NoLimits._project_psd_covariance(
+        [1.0 0.0; 0.0 -1.0e-20]
+    )
+    @test dp.vcov_n_eigs_clipped == 1
+    @test dp.vcov_min_eig_rel > -1.0e-8
+    @test isapprox(Vp, [1.0 0.0; 0.0 0.0]; atol = 1.0e-18)
+
+    # #306 finding 7: a collapsed sandwich meat must say so and be visible in the diags.
+    md = @test_logs (:warn, r"degenerate") NoLimits._wald_meat_diag(
+        zeros(3, 3), Matrix(1.0I, 3, 3), 1
+    )
+    @test md.n_cluster == 1
+    @test md.meat_rank == 0
+    @test md.meat_degenerate
 end
 
 # Issue #250 finding 7: non-finite Wald moments must not reach range/quantile/Makie.

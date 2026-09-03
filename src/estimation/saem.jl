@@ -3939,7 +3939,15 @@ function _fit_model(
 
         # Var lb clamp (post M-step)
         if !isempty(var_lb_targets)
-            θu_new = _saem_apply_var_lb(θu_new, var_lb_targets, var_lb_eff)
+            θu_new_clamped = _saem_apply_var_lb(θu_new, var_lb_targets, var_lb_eff)
+            if θu_new_clamped !== θu_new
+                θu_new = θu_new_clamped
+                θt_full = transform(θu_new)
+                for name in base_free_names
+                    setproperty!(θt_free, name, getproperty(θt_full, name))
+                end
+                θ_prev_new = copy(θt_free)
+            end
         end
 
         θ_full_vec = θt_full

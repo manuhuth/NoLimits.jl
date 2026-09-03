@@ -69,6 +69,39 @@ end
     @test isapprox(accs[2].rv, -0.5; atol = 1.0e-6)
 end
 
+# A bolus at t = 0.5 jumps x from 0.5 to 1.5 across the level: the crossing IS the jump,
+# so both paths must report the dose time itself and not extrapolate off the smooth
+# pre-jump interpolant (#308).
+@testset "crossing at a coincident dose" begin
+    df = DataFrame(
+        ID = [1, 1, 1, 1],
+        t = [0.0, 0.5, 1.0, 2.0],
+        y = [0.0, missing, 1.5, 2.5],
+        zt = [missing, missing, missing, 0.5],
+        rz = [missing, missing, missing, 0.0],
+        EVID = [0, 1, 0, 0],
+        AMT = [0.0, 1.0, 0.0, 0.0],
+        RATE = zeros(4),
+        CMT = [1, 1, 1, 1]
+    )
+    dm = DataModel(
+        _crossing_model(), df; primary_id = :ID, time_col = :t, evid_col = :EVID,
+        amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT
+    )
+    θ = get_θ0_untransformed(dm.model.fixed.fixed)
+    ηz = NoLimits._default_random_effects_from_dm(dm, NamedTuple(), θ)
+    ind = dm.individuals[1]
+    pre = NoLimits.calculate_prede(dm.model, θ, ηz[1], ind.const_cov)
+    cache = NoLimits._build_ll_cache_single(dm)
+    acc_ll = NoLimits._ll_solve_de(dm, 1, θ, ηz[1], cache, pre)
+    sol, comp = NoLimits._solve_dense_individual(dm, ind, θ, ηz[1])
+    acc_pl = NoLimits._sol_accessors_with_crossings(
+        dm.model, sol, comp, θ, ηz[1], ind.const_cov
+    )
+    @test isapprox(acc_ll.tc, 0.5; atol = 1.0e-6)
+    @test isapprox(acc_pl.tc, 0.5; atol = 1.0e-6)
+end
+
 @testset "crossing_rootval likelihood is finite and AD-differentiable" begin
     dm = _crossing_dm()
     θ = get_θ0_untransformed(dm.model.fixed.fixed)

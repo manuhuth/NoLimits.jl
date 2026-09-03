@@ -152,6 +152,16 @@ function compute_uq(
     if backend == :wald
         vcov in (:hessian, :sandwich) ||
             error("For Wald UQ, vcov must be :hessian or :sandwich.")
+        # A non-finite objective means the likelihood short-circuits to a constant, which
+        # gives ForwardDiff an exactly zero Hessian and hence zero standard errors (#306).
+        obj_src = get_objective(res)
+        isfinite(obj_src) ||
+            error(
+            "Wald UQ unavailable: the source fit's objective is $(obj_src), so the " *
+                "estimate is not at a finite local optimum and its Hessian carries no " *
+                "information. Fix the fit (check for non-finite likelihood contributions, " *
+                "e.g. out-of-range data) before quantifying its uncertainty."
+        )
     end
 
     if backend == :chain

@@ -117,6 +117,11 @@ end
         z = CovariateVector([:a, :b, :c])
     end
     @test !haskey(cov3.interpolations, :z)
+
+    # Duplicate columns used to surface as a raw NamedTuple error at build time (#309).
+    @test_throws ErrorException CovariateVector([:z1, :z1])
+    @test_throws ErrorException ConstantCovariateVector([:z1, :z1])
+    @test_throws ErrorException DynamicCovariateVector([:z1, :z1])
 end
 
 @testset "Covariates macro rewriting" begin

@@ -46,6 +46,8 @@ const NL = NoLimits
     @test NL._focei_dispersion_indices(LogNormal(0.0, 1.0)) == [2]
     @test NL._focei_dispersion_indices(Poisson(1.0)) == Int[]
     @test NL._focei_dispersion_indices(Gamma(2.0, 1.0)) == Int[]
+    # MvNormal: the vech(Σ) coordinates, after the k mean entries (#284).
+    @test NL._focei_dispersion_indices(MvNormal(zeros(2), [1.0 0.0; 0.0 1.0])) == [3, 4, 5]
 
     # Support flags.
     @test NL._focei_is_supported(Normal(0.0, 1.0))
@@ -162,6 +164,39 @@ end
     @test !isapprox(Hfoce[1, 1], Hfoci[1, 1]; atol = 1.0e-3)
     # Crucially, FOCE froze the dispersion at η = μη, NOT at η = 0.
     @test !isapprox(Hfoce[1, 1], 2 * exp(-2 * c0) + Λ; atol = 1.0e-3)
+
+    # MvNormal outcome: `interaction=false` must freeze the covariance block too, so
+    # the two Hessians differ (they were byte-identical before #284).
+    model_mv = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            c = RealNumber(-0.3)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(0.3, 0.6); column = :ID)
+        end
+        @formulas begin
+            y ~ MvNormal([a + η, a - η], exp(c + 0.8 * η) * LinearAlgebra.I(2))
+        end
+    end
+    df_mv = DataFrame(
+        ID = [1, 1], t = [0.0, 1.0], y = [[1.3, 0.9], [1.1, 1.0]]
+    )
+    dm_mv = DataModel(model_mv, df_mv; primary_id = :ID, time_col = :t)
+    _, infos_mv, cc_mv = NL._build_re_batch_infos(dm_mv, NamedTuple())
+    cache_mv = NL.build_ll_cache(dm_mv; force_saveat = true)
+    θu_mv = NL.get_θ0_untransformed(dm_mv.model.fixed.fixed)
+    Hmv_foce = NL._focei_negH_batch(
+        dm_mv, infos_mv[1], θu_mv, b, cc_mv, cache_mv; interaction = false
+    )
+    Hmv_foci = NL._focei_negH_batch(
+        dm_mv, infos_mv[1], θu_mv, b, cc_mv, cache_mv; interaction = true
+    )
+    @test all(isfinite, Hmv_foce) && all(isfinite, Hmv_foci)
+    @test !isapprox(Hmv_foce[1, 1], Hmv_foci[1, 1]; rtol = 1.0e-6)
 
     # FOCE end-to-end fit runs.
     rf = fit_model(

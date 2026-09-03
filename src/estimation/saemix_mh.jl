@@ -345,6 +345,8 @@ function _saemixmh_init_state(
     levels = _saemixmh_build_levels(dm, batch_info, re_names)
     b = zeros(Float64, nb)
     _saemixmh_init_b!(b, levels, dm, θ, const_cache, cache, rng, re_names)
+    b_ok = _em_vet_init_b(dm, batch_info, θ_re, b, const_cache, cache, rng, re_names, "SaemixMH")
+    b_ok === b || copyto!(b, b_ok)
     indiv_ll = Vector{Float64}(undef, n_inds)
     _saemixmh_init_indiv_ll!(indiv_ll, dm, batch_info, θ_re, const_cache, cache, b)
     level_plp = Vector{Float64}(undef, length(levels))

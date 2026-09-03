@@ -600,3 +600,20 @@ end
         @test s.saem.retry_mcmc_steps == 2
     end
 end
+
+# ---------------------------------------------------------------------------
+# Bijection log-Jacobians (#283)
+# ---------------------------------------------------------------------------
+
+@testset "AdaptiveNoLimitsMH bijection log-Jacobians: ALR reduces to logit at d=1" begin
+    # At d = 1 the ALR map is exactly the logit map, so MvLogitNormal must agree
+    # numerically with the scalar Beta implementation.
+    for z_new in (-1.3, 0.0, 0.7), z_old in (-0.4, 0.0, 2.1)
+        @test NoLimits._amh_bij_log_jac(Val(:MvLogitNormal), [z_new], [z_old]) ≈
+            NoLimits._amh_bij_log_jac(Val(:Beta), z_new, z_old)
+    end
+    for z in (-2.0, -0.5, 0.0, 1.1, 3.0)
+        @test NoLimits._bij_log_jac_forward(Val(:MvLogitNormal), [z]) ≈
+            NoLimits._bij_log_jac_forward(Val(:Beta), z)
+    end
+end

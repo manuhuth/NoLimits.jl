@@ -166,11 +166,18 @@ macro preDifferentialEquation(block)
     # function as `sym in Set([...])`, allocating a fresh Set on every builder
     # invocation; `calculate_prede` runs per individual per objective evaluation.
     # Mirrors the identical fix in RandomEffects.jl.)
+    # An unresolvable symbol used to fall through to a bare `UndefVarError` at the first
+    # objective evaluation (#309). Pre-DE variables assigned in this same block resolve
+    # from the generated assignments below, so they keep the fall-through.
+    _unknown_sym = sym -> sym in names ? :() :
+        :(error($("Unknown symbol $(sym) in preDifferentialEquation.")))
     binds_vars = [
         if sym in prop_syms
                 quote
                     if hasproperty(constant_features_i, $(QuoteNode(sym)))
                         $(sym) = getproperty(constant_features_i, $(QuoteNode(sym)))
+                else
+                        $(_unknown_sym(sym))
                 end
                 end
         else
@@ -181,6 +188,8 @@ macro preDifferentialEquation(block)
                         $(sym) = getproperty(random_effects, $(QuoteNode(sym)))
                 elseif hasproperty(fixed_effects, $(QuoteNode(sym)))
                         $(sym) = getproperty(fixed_effects, $(QuoteNode(sym)))
+                else
+                        $(_unknown_sym(sym))
                 end
                 end
         end

@@ -24,14 +24,14 @@ The table below summarizes the available UQ backends, their associated estimatio
 
 | Backend | `method` | Typical source fit | Output style |
 | --- | --- | --- | --- |
-| Wald | `:wald` | `MLE`, `MAP`, `Laplace`, `MCEM`, `SAEM`, `GHQuadrature` | covariance + Gaussian-draw intervals |
+| Wald | `:wald` | `MLE`, `MAP`, `Laplace`, `MCEM`, `SAEM`, `GHQuadrature` | covariance + normal-quantile intervals |
 | Chain | `:chain` | `MCMC`, `VI` | posterior-draw intervals |
 | Profile likelihood | `:profile` | `MLE`, `MAP`, `Laplace` | profile intervals |
 | MCMC refit | `:mcmc_refit` | non-`MCMC` fits | posterior-draw intervals from refit |
 
 ### Wald (`method=:wald`)
 
-The Wald backend computes an approximate variance-covariance matrix for selected fixed-effect coordinates, then draws from a Gaussian approximation to construct confidence intervals. This is the most computationally efficient approach and works well for well-identified models whose log-likelihood surface is approximately quadratic near the optimum.
+The Wald backend computes an approximate variance-covariance matrix for selected fixed-effect coordinates, then reports confidence intervals as `estimate ± z * SE` on the transformed scale, back-transformed exactly for coordinates whose transform is monotone. Draws from the Gaussian approximation are still returned and are used for the coordinates that have no closed form. This is the most computationally efficient approach and works well for well-identified models whose log-likelihood surface is approximately quadratic near the optimum.
 
 ```julia
 uq_wald = compute_uq(

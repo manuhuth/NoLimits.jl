@@ -354,3 +354,13 @@ end
     @test res.mean_obs_loglikelihood == -Inf
     @test any(==(-Inf), [fr.test_loglikelihood for fr in res.fold_results])
 end
+
+# t0 = nothing lets every fold re-derive the integration start from its own rows, so an
+# observation split would fit and score with different initial-condition times (#304).
+@testset "cross_validate observation-wise: ODE with t0 = nothing is refused" begin
+    dm = DataModel(
+        fx_ode_model(), fx_ode_df(); primary_id = :ID, time_col = :t, t0 = nothing
+    )
+    @test_throws ErrorException cross_validate(dm, 2; kind = :observation)
+    @test cross_validate(dm, 2; kind = :id) isa CVSpec
+end

@@ -194,6 +194,12 @@ function _focei_paramcount(d::MvNormal)
     k = length(d)
     return k + k * (k + 1) ÷ 2
 end
+# The vech(Σ) block is the dispersion FOCE freezes; `_focei_params` orders the k mean
+# entries first, so the covariance coordinates start at k+1.
+function _focei_dispersion_indices(d::MvNormal)
+    k = length(d)
+    return collect((k + 1):(k + k * (k + 1) ÷ 2))
+end
 function _focei_expected_information(d::MvNormal)
     # Covariance block in closed form. With B_a = E_ij + E_ji (i<j) or E_ii (i==j),
     # tr(P E_rs P E_uv) = P[v,r]·P[s,u], so
@@ -612,6 +618,9 @@ function _focei_negH_batch_impl(
         if !interaction && any(d -> !isempty(_focei_dispersion_indices(d)), dists_b)
             m_b = _focei_prior_mean_b(dm, batch_info, θ_re, const_cache, cache)
             dists_m = _focei_obs_dists_batch(dm, batch_info, θ_re, m_b, const_cache, cache)
+            # An empty batch means the model failed to evaluate at the prior mean; the
+            # dispersion lookups below would index it out of bounds.
+            isempty(dists_m) && return fill(convert(T, NaN), nb, nb)
         end
         Hdata = _focei_data_term(J, dists_b, dists_m, interaction, T)
     end

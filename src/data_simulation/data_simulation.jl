@@ -92,10 +92,11 @@ function _simulate_sol_accessors(dm::DataModel, idx::Int, θ, η)
     u0 = calculate_initial_state(model, θ, η, const_cov)
     cb = nothing
     infusion_rates = nothing
-    if get_callbacks(ind) !== nothing
-        _apply_initial_events!(u0, get_callbacks(ind))
-        cb = get_callback(get_callbacks(ind))
-        infusion_rates = get_infusion_rates(get_callbacks(ind))
+    events = _private_event_callbacks(get_callbacks(ind))
+    if events !== nothing
+        _apply_initial_events!(u0, events)
+        cb = get_callback(events)
+        infusion_rates = get_infusion_rates(events)
     end
     plan = get_closed_form_plan(dm)
     if is_cf_eligible(plan) && (_cf_is_whole(plan) || cb === nothing)
@@ -103,7 +104,7 @@ function _simulate_sol_accessors(dm::DataModel, idx::Int, θ, η)
         cf_alg = _resolve_ode_alg(solver_cfg.alg)
         sol = _cf_dispatch_solve(
             model, compiled, u0, get_tspan(ind), get_saveat(ind), plan,
-            get_callbacks(ind), cf_alg, solver_cfg.args,
+            events, cf_alg, solver_cfg.args,
             _ode_solve_kwargs(solver_cfg.kwargs, NamedTuple(), NamedTuple())
         )
         sol !== nothing && return get_de_accessors_builder(get_de(model))(sol, compiled)

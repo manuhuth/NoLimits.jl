@@ -6,6 +6,7 @@ using ForwardDiff
 import DiffEqBase
 import Roots
 import DataFrames
+import DataInterpolations
 
 # Public symbol-valued options also accept the string spelling, so the Python/R
 # bindings (and serialized federated options) can pass them through unchanged.
@@ -126,5 +127,7 @@ end
     return err isa LinearAlgebra.PosDefException ||
         err isa LinearAlgebra.SingularException ||
         err isa DomainError || err isa ArgumentError ||
-        err isa Roots.ConvergenceFailed
+        err isa Roots.ConvergenceFailed ||
+        err isa DataInterpolations.LeftExtrapolationError ||
+        err isa DataInterpolations.RightExtrapolationError
 end

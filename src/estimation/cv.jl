@@ -150,6 +150,13 @@ function cross_validate(
     kind = _as_symbol(kind)
     n_folds >= 2 || error("n_folds must be ≥ 2, got $n_folds")
     kind ∈ (:id, :observation) || error("kind must be :id or :observation, got $kind")
+    # With `t0 = nothing` each DataModel resolves an individual's integration start from
+    # the rows it holds. An observation split can drop that individual's earliest row from
+    # the training fold but not from the scoring fold, so the initial condition would fire
+    # at different times in the fitted and the scored model (#304).
+    if kind == :observation && get_t0(dm) === nothing && get_de(get_model(dm)) !== nothing
+        error("cross_validate(kind = :observation) needs an explicit t0 on a model with a differential equation: with t0 = nothing each fold re-derives every individual's integration start from the rows it keeps, so the training and the scoring model would apply the initial conditions at different times. Rebuild the DataModel with t0 = <first observation time> (e.g. t0 = 0.0), or use kind = :id.")
+    end
     n = length(get_individuals(dm))
     if kind == :id
         n >= n_folds || error("n_folds ($n_folds) exceeds number of individuals ($n)")

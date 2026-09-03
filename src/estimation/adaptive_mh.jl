@@ -141,8 +141,8 @@ end
 # η ∈ Δ^{d+1} (simplex), z ∈ ℝ^d (inner normal coords).
 # Forward: z_i = log(η_i / η_{d+1})  (ALR, last component as reference)
 # Inverse: η = softmax(vcat(z, 0))
-# log|J_{z→η}| = -sum(log η) = (d+1)log(1+sum(exp(z))) - sum(z)
-# MH correction = log|J(z_new→η_new)| - log|J(z_old→η_old)|
+# log|J_f(η)| = log|dz/dη| = -sum(log η) = (d+1)log(1+sum(exp(z))) - sum(z)
+# MH correction = log|J_f(η_old)| - log|J_f(η_new)|
 @inline function _amh_bij_forward(::Val{:MvLogitNormal}, η::AbstractVector)
     ηf = max.(Float64.(η), 1.0e-300)
     ref = ηf[end]
@@ -161,7 +161,7 @@ end
         S = 1.0 + sum(exp.(z))
         return (length(z) + 1) * log(S) - sum(z)
     end
-    return _log_jac_mlogit(z_new) - _log_jac_mlogit(z_old)
+    return _log_jac_mlogit(z_old) - _log_jac_mlogit(z_new)
 end
 
 # LogNormal: log bijection (η > 0)
@@ -269,10 +269,10 @@ end
 @inline _bij_log_jac_forward(::Val{:NormalizingPlanarFlow}, ::AbstractVector) = 0.0
 # MvLogNormal: z = log(η), log|dz/dη| = -sum(z_i)
 @inline _bij_log_jac_forward(::Val{:MvLogNormal}, z::AbstractVector) = -sum(z)
-# MvLogitNormal: z = alr(η) (ALR, d-dim), log|dz/dη| = sum(z) - (d+1)*log(1+sum(exp(z)))
+# MvLogitNormal: z = alr(η) (ALR, d-dim), log|dz/dη| = (d+1)*log(1+sum(exp(z))) - sum(z)
 @inline function _bij_log_jac_forward(::Val{:MvLogitNormal}, z::AbstractVector)
     S = 1.0 + sum(exp.(Float64.(z)))
-    return sum(z) - (length(z) + 1) * log(S)
+    return (length(z) + 1) * log(S) - sum(z)
 end
 
 # LogNormal: z = log(η), dz/dη = 1/η = exp(-z) → log|dz/dη| = -z
@@ -569,6 +569,9 @@ function _amh_init_state(
         )
         lp_offset += n_levels
     end
+
+    b_ok = _em_vet_init_b(dm, info, θ_re, b_current, const_cache, cache, rng, re_names, "AdaptiveMH")
+    b_ok === b_current || copyto!(b_current, b_ok)
 
     # Initialize per-individual and per-level caches
     ind_ll, re_lp, logp = _amh_compute_full_ll(

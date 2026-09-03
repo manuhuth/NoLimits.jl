@@ -2894,10 +2894,13 @@ function _fit_laplace_family(
     # No feasible point was ever reached, so `sol.objective` is the infeasibility wall
     # and not a fit; the flat wall otherwise lets the optimizer report success (#247).
     infeasible_fit = wall_ref[] === nothing
+    fitted = resolve_fitted_parameters(layout, _θt_from_z(sol.u))
+    (infeasible_fit || !isfinite(sol.objective)) &&
+        _warn_nonfinite_fit(dm, fitted.untransformed, string(nameof(typeof(method))))
     summary = FitSummary(
         sol.objective,
         !infeasible_fit && sol.retcode == SciMLBase.ReturnCode.Success,
-        resolve_fitted_parameters(layout, _θt_from_z(sol.u)),
+        fitted,
         infeasible_fit ?
             "The Laplace objective was infeasible at every parameter tried; the reported value is an infeasibility wall, not a marginal likelihood. Check starting values, and whether a bounded-support random-effect distribution puts empirical Bayes estimates outside its support." :
             NamedTuple()
