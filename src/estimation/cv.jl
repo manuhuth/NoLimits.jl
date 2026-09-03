@@ -71,6 +71,8 @@ get_fold_results(r::CVResult) = r.fold_results
 Return the combined per-observation score table from all folds. Contains columns
 `:fold`, `:individual`, `:time`, `:outcome`, `:obs`, `:loglikelihood`,
 `:predicted_mean`, and optionally `:loss` when a loss function was supplied.
+Under the Monte-Carlo random-effect modes `:loglikelihood` holds the individual's joint
+predictive marginal on its first row and `0.0` on the others (see [`fit_cv`](@ref)).
 """
 get_obs_scores(r::CVResult) = r.obs_scores
 
@@ -514,7 +516,11 @@ function _cv_evaluate_ebe(
 end
 
 # MC path: marginalize over the conditional (seen) or prior (unseen) using S MC draws.
-# Aggregates per-obs log-likelihoods via logsumexp and predicted means via arithmetic mean.
+# The score is the per-individual JOINT marginal log(1/S Σ_s Π_r p(y_r|η_s)) (#290): the
+# row log-likelihoods are summed within an individual per draw, then logsumexp'd across
+# draws. It is carried on the individual's first row with 0.0 on the others, so every
+# consumer that sums `:loglikelihood` stays correct; per-row values are therefore not
+# per-observation densities in these modes. Predicted means/losses stay per-row means.
 function _cv_evaluate_mc(
         dm_train, dm_test, res_train, θu, ll_cache_test, loss,
         seen_re_mode, unseen_re_mode, n_mc_samples, rng, re_names,
@@ -625,7 +631,8 @@ function _cv_evaluate_mc(
         base_df = all_dfs[s0][j]
         n_rows = nrow(base_df)
 
-        ll_acc = fill(-Inf, n_rows)
+        ll_acc = -Inf                      # logsumexp over draws of the subject sum
+        n_valid_draws = 0
         mean_acc = fill(0.0, n_rows)
         mean_cnt = fill(0, n_rows)
         loss_acc = :loss ∈ names(base_df) ? fill(0.0, n_rows) : nothing
@@ -634,9 +641,15 @@ function _cv_evaluate_mc(
         for s in 1:n_mc_samples
             df_s = all_dfs[s][j]
             nrow(df_s) == n_rows || continue   # ODE failure → contributes 0 probability
+            draw_ll = 0.0
             for r in 1:n_rows
-                lp = df_s[r, :loglikelihood]
-                isnan(lp) || (ll_acc[r] = logaddexp(ll_acc[r], lp))
+                draw_ll += df_s[r, :loglikelihood]
+            end
+            if !isnan(draw_ll)
+                ll_acc = logaddexp(ll_acc, draw_ll)
+                n_valid_draws += 1
+            end
+            for r in 1:n_rows
                 pm = df_s[r, :predicted_mean]
                 if !isnan(pm)
                     mean_acc[r] += pm
@@ -653,7 +666,12 @@ function _cv_evaluate_mc(
         end
 
         df_out = copy(base_df)
-        df_out[!, :loglikelihood] = ll_acc .- log(n_mc_samples)
+        df_out[!, :loglikelihood] = if n_valid_draws == 0
+            fill(NaN, n_rows)              # no usable draw → drop the whole individual
+        else
+            joint_ll = ll_acc - log(n_valid_draws)
+            [r == 1 ? joint_ll : 0.0 for r in 1:n_rows]
+        end
         df_out[!, :predicted_mean] = [
             mean_cnt[r] > 0 ? mean_acc[r] / mean_cnt[r] : NaN
                 for r in 1:n_rows
@@ -716,6 +734,13 @@ performance on the held-out test set. All `kwargs` are forwarded to
 - `fold_serialization`: controls fold-level parallelism. Use `EnsembleThreads()`
   to evaluate folds concurrently.
 - `constants_re`: fix specific RE levels on the natural scale.
+
+The Monte-Carlo modes (`:conditional`/`:montecarlo`) score each test individual by its
+joint predictive marginal `log( (1/S) Σ_s Π_r p(y_r|b_s) )`, not by a sum of
+per-observation predictive densities. That value is stored on the individual's first row
+of `obs_scores` with `0.0` on its remaining rows, so fold totals and
+`mean_obs_loglikelihood` keep summing correctly while a single `:loglikelihood` entry is
+no longer a per-observation quantity in these modes.
 
 With `seen_re_mode=:ebe, unseen_re_mode=:mean` each random effect's level is resolved
 separately, so a crossed test individual keeps the trained value for every level it shares
