@@ -114,3 +114,84 @@ end
     @test res isa FitResult
     θu = NoLimits.get_params(res; scale = :untransformed)
 end
+
+# ── Mini-batching over individuals (#281) ────────────────────────────────────
+# Constructor/API coverage for MAP lives in the shared loop in estimation_mle_tests.jl.
+using ComponentArrays
+import Optimisers
+using Random: MersenneTwister
+
+struct _MAPFixedSched
+    sel::Vector{Int}
+end
+(s::_MAPFixedSched)(nbatches::Int, iter::Int, rng) = s.sel
+
+@testset "MAP mini-batching (#281)" begin
+    NL = NoLimits
+    dm = fx_nore_prior_dm()
+    fe = NL.get_fixed(NL.get_model(dm))
+    n_ind = length(NL.get_individuals(dm))
+    _ser = NoLimits.EnsembleSerial()
+
+    @testset ":all is unchanged" begin
+        r1 = fit_model(dm, NL.MAP(; optim_kwargs = (maxiters = 3,)); serialization = _ser)
+        r2 = fit_model(
+            dm, NL.MAP(; update_schedule = :all, optim_kwargs = (maxiters = 3,));
+            serialization = _ser
+        )
+        @test get_objective(r1) == get_objective(r2)
+        @test NL.get_params(r1; scale = :transformed) ==
+            NL.get_params(r2; scale = :transformed)
+    end
+
+    # The prior and the penalty are global terms: neither is scaled by the minibatch
+    # factor, and the reported objective is the full-data one.
+    @testset "final objective keeps prior and penalty unscaled" begin
+        penalty = (; a = 100.0)
+        res = fit_model(
+            dm,
+            NL.MAP(;
+                update_schedule = _MAPFixedSched([1, 3]),
+                optimizer = Optimisers.Adam(0.05), optim_kwargs = (maxiters = 5,)
+            );
+            penalty = penalty, serialization = _ser, rng = MersenneTwister(2)
+        )
+        θ̂ = NL.get_params(res; scale = :untransformed)
+        expected = -NL.loglikelihood(dm, θ̂, ComponentArray(); serialization = _ser) +
+            NL._penalty_value(θ̂, penalty) - NL.logprior(fe, θ̂)
+        @test get_objective(res) ≈ expected
+    end
+
+    # Same check on the optimizer's own objective: prior and penalty enter once, unscaled.
+    @testset "optimizer objective keeps global terms unscaled" begin
+        penalty = (; a = 100.0)
+        res0 = fit_model(
+            dm,
+            NL.MAP(;
+                update_schedule = _MAPFixedSched([1, 3]),
+                optimizer = Optimisers.Adam(0.0), optim_kwargs = (maxiters = 1,)
+            );
+            penalty = penalty, serialization = _ser, rng = MersenneTwister(2)
+        )
+        θ00 = NL.get_θ0_untransformed(dm)
+        expected_sub = (n_ind / 2) * (
+            -NL._loglikelihood_indices(
+                dm, θ00, ComponentArray(), [1, 3]; serialization = _ser
+            )
+        ) + NL._penalty_value(θ00, penalty) - NL.logprior(fe, θ00)
+        @test NL.get_result(res0).solution.objective ≈ expected_sub rtol = 1.0e-12
+    end
+
+    @testset "reproducible given the same rng" begin
+        mk() = fit_model(
+            dm,
+            NL.MAP(;
+                update_schedule = 2, optimizer = Optimisers.Adam(0.05),
+                optim_kwargs = (maxiters = 3,)
+            );
+            serialization = _ser, rng = MersenneTwister(7)
+        )
+        @test NL.get_params(mk(); scale = :transformed) ==
+            NL.get_params(mk(); scale = :transformed)
+    end
+end

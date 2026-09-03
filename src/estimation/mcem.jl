@@ -1386,7 +1386,7 @@ function _fit_model(
         # MCEM_IS warm-up -> IS switch.
         sched = (prev_use_mcmc === use_mcmc) ? method.update_schedule : :all
         prev_use_mcmc = use_mcmc
-        updated = _em_batches!(
+        updated = _schedule_batches!(
             batches_buf, sched, length(batch_infos), iter, rng
         )
 

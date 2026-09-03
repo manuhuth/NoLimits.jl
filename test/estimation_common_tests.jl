@@ -1151,3 +1151,166 @@ end
         dm, res; level = 0, serialization = _INV_SER
     )
 end
+
+# Shared mini-batch infrastructure behind SAEM/MCEM and the MLE/MAP outer loop (#281).
+import Optimisers
+import OptimizationOptimJL
+using Random: MersenneTwister
+
+mutable struct _MBRecorder
+    nb::Vector{Int}
+    it::Vector{Int}
+    rngs::Vector{Any}
+end
+_MBRecorder() = _MBRecorder(Int[], Int[], Any[])
+function (r::_MBRecorder)(nbatches::Int, iter::Int, rng)
+    push!(r.nb, nbatches)
+    push!(r.it, iter)
+    push!(r.rngs, rng)
+    return [1, 2]
+end
+
+# No installed optimizer opts out of callbacks, so declare one here.
+struct _MBNoCallbackOpt <: NoLimits.SciMLBase.AbstractOptimizationAlgorithm end
+NoLimits.SciMLBase.allowscallback(::_MBNoCallbackOpt) = false
+
+struct _MBCustomMethod <: NoLimits.FittingMethod end
+
+@testset "mini-batch schedule helpers (#281)" begin
+    NL = NoLimits
+    rng = MersenneTwister(42)
+
+    @testset "_schedule_batches!" begin
+        buf = Int[]
+        @test NL._schedule_batches!(buf, :all, 5, 1, rng) == 1:5
+        sel = NL._schedule_batches!(Int[], 3, 5, 1, rng)
+        @test length(sel) == 3
+        @test allunique(sel)
+        @test all(i -> 1 <= i <= 5, sel)
+        @test length(NL._schedule_batches!(Int[], 9, 5, 1, rng)) == 5
+        @test_throws ErrorException NL._schedule_batches!(Int[], 0, 5, 1, rng)
+        @test_throws ErrorException NL._schedule_batches!(Int[], -2, 5, 1, rng)
+        @test NL._schedule_batches!(Int[], (n, it, r) -> [2, 4], 5, 1, rng) == [2, 4]
+        @test NL._schedule_batches!(Int[], _MBRecorder(), 5, 1, rng) == [1, 2]
+        @test_throws ErrorException NL._schedule_batches!(Int[], "x", 5, 1, rng)
+        @test_throws ErrorException NL._schedule_batches!(Int[], 1.5, 5, 1, rng)
+    end
+
+    @testset "_check_update_schedule" begin
+        @test NL._check_update_schedule(:all, "X") === :all
+        @test NL._check_update_schedule(3, "X") == 3
+        f = (n, it, r) -> [1]
+        @test NL._check_update_schedule(f, "X") === f
+        r = _MBRecorder()
+        @test NL._check_update_schedule(r, "X") === r
+        @test_throws ErrorException NL._check_update_schedule(0, "X")
+        @test_throws ErrorException NL._check_update_schedule(-1, "X")
+        @test_throws ErrorException NL._check_update_schedule("x", "X")
+        @test_throws ErrorException NL._check_update_schedule(1.5, "X")
+    end
+
+    @testset "_minibatch_state lifecycle" begin
+        @test NL._minibatch_state(:all, 5, MersenneTwister(1)) === nothing
+
+        st = NL._minibatch_state(2, 5, MersenneTwister(1))
+        @test NL._minibatch_current!(nothing) === nothing
+        NL._minibatch_current!(st)
+        sel1 = copy(st.selected)
+        @test length(sel1) == 2
+        @test issorted(sel1)
+        @test NL._minibatch_scale(st) == 5 / 2
+        @test NL._minibatch_scale(nothing) == 1.0
+        NL._minibatch_current!(st)
+        @test st.selected == sel1              # same iteration keeps the selection
+        @test st.iter == 1
+        NL._minibatch_advance!(st)
+        NL._minibatch_current!(st)
+        @test st.iter == 2
+        @test length(st.selected) == 2
+
+        # A schedule callable sees the fit rng and one iteration index per advance.
+        rec = _MBRecorder()
+        rng_fit = MersenneTwister(3)
+        st2 = NL._minibatch_state(rec, 4, rng_fit)
+        for _ in 1:3
+            NL._minibatch_current!(st2)
+            NL._minibatch_advance!(st2)
+        end
+        @test rec.it == [1, 2, 3]
+        @test all(==(4), rec.nb)
+        @test all(r -> r === rng_fit, rec.rngs)
+
+        st3 = NL._minibatch_state((n, it, r) -> Int[], 4, MersenneTwister(1))
+        @test_throws ErrorException NL._minibatch_current!(st3)
+        st4 = NL._minibatch_state((n, it, r) -> [7], 4, MersenneTwister(1))
+        @test_throws ErrorException NL._minibatch_current!(st4)
+    end
+
+    @testset "_resolve_outer_optimizer" begin
+        @test NL._resolve_outer_optimizer(nothing, :all, "X") isa OptimizationOptimJL.LBFGS
+        @test NL._resolve_outer_optimizer(nothing, 3, "X") isa Optimisers.Adam
+        @test_logs (:warn, r"stochastic") NL._resolve_outer_optimizer(
+            OptimizationOptimJL.LBFGS(), 3, "X"
+        )
+        adam = Optimisers.Adam(0.1)
+        @test (@test_logs NL._resolve_outer_optimizer(adam, 3, "X")) === adam
+        lb = OptimizationOptimJL.LBFGS()
+        @test (@test_logs NL._resolve_outer_optimizer(lb, :all, "X")) === lb
+        chain = Optimisers.OptimiserChain(Optimisers.ClipGrad(1.0), Optimisers.Adam(0.1))
+        @test chain isa Optimisers.AbstractRule
+        @test (@test_logs NL._resolve_outer_optimizer(chain, 3, "X")) === chain
+
+        # Optimizers that reject callbacks cannot carry the schedule.
+        @test_throws ErrorException NL._resolve_outer_optimizer(_MBNoCallbackOpt(), 3, "X")
+        @test NL._resolve_outer_optimizer(_MBNoCallbackOpt(), :all, "X") isa _MBNoCallbackOpt
+    end
+
+    @testset "_update_schedule accessor" begin
+        @test NL._update_schedule(NL.MLE()) === :all
+        @test NL._update_schedule(NL.MLE(update_schedule = 3)) == 3
+        # Custom dev-API methods have no such field and fall back to :all.
+        @test NL._update_schedule(_MBCustomMethod()) === :all
+    end
+
+    @testset "_minibatch_solve_kwargs" begin
+        st = NL._minibatch_state(2, 5, MersenneTwister(1))
+        @test NL._minibatch_solve_kwargs((; maxiters = 2), Optimisers.Adam(), nothing, Returns(nothing)) ==
+            (; maxiters = 2)
+
+        kw = NL._minibatch_solve_kwargs((;), Optimisers.Adam(), st, Returns(nothing))
+        @test kw.maxiters == 1000
+        @test kw.save_best == false
+        @test haskey(kw, :callback)
+        @test NL._minibatch_solve_kwargs((; maxiters = 7), Optimisers.Adam(), st, Returns(nothing)).maxiters == 7
+
+        kw_lb = NL._minibatch_solve_kwargs((;), OptimizationOptimJL.LBFGS(), st, Returns(nothing))
+        @test keys(kw_lb) == (:callback,)
+
+        # A user callback is chained, and repeated iteration numbers advance once.
+        seen = Int[]
+        invalidated = Ref(0)
+        st2 = NL._minibatch_state(2, 5, MersenneTwister(1))
+        cb = NL._minibatch_solve_kwargs(
+            (; callback = (state, args...) -> (push!(seen, state.iter); false)),
+            Optimisers.Adam(), st2, () -> (invalidated[] += 1)
+        ).callback
+        @test cb((; iter = 1)) == false
+        @test cb((; iter = 1)) == false
+        @test seen == [1, 1]
+        @test st2.iter == 2
+        @test invalidated[] == 1
+        @test cb((; iter = 2)) == false
+        @test st2.iter == 3
+        @test invalidated[] == 2
+
+        # Solvers that never set `iter` leave it at 0; the schedule must still advance.
+        st3 = NL._minibatch_state(2, 5, MersenneTwister(1))
+        cb0 = NL._minibatch_solve_kwargs(
+            (;), Optimisers.Adam(), st3, Returns(nothing)
+        ).callback
+        for _ in 1:3
+            @test cb0((; iter = 0)) == false
+        end
+        @test st3.iter == 4
+    end
+end

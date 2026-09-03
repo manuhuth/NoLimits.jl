@@ -297,32 +297,6 @@ end
     return _spawn_child_rngs(rng, nthreads)
 end
 
-# Shared by SAEM and MCEM so the two estimators' minibatching options cannot drift.
-function _em_batches!(
-        buf::Vector{Int}, update_schedule, nbatches::Int, iter::Int, rng::AbstractRNG
-    )
-    if update_schedule === :all
-        resize!(buf, nbatches)
-        @inbounds for i in 1:nbatches
-            buf[i] = i
-        end
-        return buf
-    elseif update_schedule isa Int
-        m = min(update_schedule, nbatches)
-        resize!(buf, nbatches)
-        @inbounds for i in 1:nbatches
-            buf[i] = i
-        end
-        Random.randperm!(rng, buf)
-        resize!(buf, m)
-        return buf
-    elseif hasmethod(update_schedule, Tuple{Int, Int, AbstractRNG})
-        return update_schedule(nbatches, iter, rng)
-    else
-        error("Invalid update_schedule. Use :all, Int minibatch size, or a callable (nbatches, iter, rng) -> Vector{Int}.")
-    end
-end
-
 """
     SAEM(; optimizer, optim_kwargs, adtype, sampler, turing_kwargs, update_schedule,
            warm_start, verbose, progress, mcmc_steps, q_store_max, q_store_epsilon,
@@ -3444,7 +3418,7 @@ function _fit_model(
         γ = _saem_gamma_schedule(iter, method.saem)
         sched_phase = _saem_schedule_phase(iter, method.saem)
         mstep_skipped = false
-        updated = _em_batches!(
+        updated = _schedule_batches!(
             q_cache.batches_buf, method.saem.update_schedule,
             length(batch_infos), iter, rng
         )

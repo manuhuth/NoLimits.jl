@@ -11,6 +11,8 @@ using OptimizationBBO
 using NoLimits.LineSearches
 using FiniteDifferences
 using Random
+using SciMLBase
+import Optimisers
 import Turing
 
 # Access internal functions via module
@@ -1116,4 +1118,94 @@ end
     m_w = NoLimits.build_re_measure_from_batch(infos_w[1], θ_w, cc_w, dm_w, ll_w)
     @test m_w isa NoLimits.CompositeRE
     @test !m_w.unbounded
+end
+
+# ── Mini-batching over RE batches (#281) ─────────────────────────────────────
+
+struct _GHQMBRec
+    nb::Vector{Int}
+    it::Vector{Int}
+    rngs::Vector{Any}
+end
+function (r::_GHQMBRec)(nbatches::Int, iter::Int, rng)
+    push!(r.nb, nbatches)
+    push!(r.it, iter)
+    push!(r.rngs, rng)
+    return [1, 2]
+end
+
+@testset "GHQuadrature mini-batching (#281)" begin
+    dm = fx_re_dm()
+    ser = SciMLBase.EnsembleSerial()
+    lvl = 2
+
+    # `:all` reproduces the pre-#281 default path exactly.
+    r_def = fit_model(
+        dm, NoLimits.GHQuadrature(level = lvl, optim_kwargs = (; maxiters = 5));
+        serialization = ser
+    )
+    r_all = fit_model(
+        dm,
+        NoLimits.GHQuadrature(
+            level = lvl, update_schedule = :all, optim_kwargs = (; maxiters = 5)
+        );
+        serialization = ser
+    )
+    @test NoLimits.get_objective(r_def) == NoLimits.get_objective(r_all)
+    @test NoLimits.get_params(r_def; scale = :transformed) ==
+        NoLimits.get_params(r_all; scale = :transformed)
+
+    # One schedule call per optimizer iteration, always with the fit rng.
+    rec = _GHQMBRec(Int[], Int[], Any[])
+    rng = MersenneTwister(1)
+    res_rec = fit_model(
+        dm,
+        NoLimits.GHQuadrature(
+            level = lvl, update_schedule = rec, optimizer = Optimisers.Adam(0.05),
+            optim_kwargs = (; maxiters = 4)
+        );
+        rng = rng, serialization = ser
+    )
+    @test rec.it == collect(1:4)
+    @test all(==(6), rec.nb)
+    @test all(x -> x === rng, rec.rngs)
+    @test isfinite(NoLimits.get_objective(res_rec))
+
+    # Integer schedule: runs, finite objective, reproducible for a fixed rng.
+    mk() = fit_model(
+        dm,
+        NoLimits.GHQuadrature(
+            level = lvl, update_schedule = 2, optimizer = Optimisers.Adam(0.05),
+            optim_kwargs = (; maxiters = 3)
+        );
+        rng = MersenneTwister(7), serialization = ser
+    )
+    res_a = mk()
+    @test isfinite(NoLimits.get_objective(res_a))
+    @test NoLimits.get_params(res_a; scale = :transformed) ==
+        NoLimits.get_params(mk(); scale = :transformed)
+
+    # The reported objective is the FULL-data one at the fitted parameters, with the
+    # penalty added exactly once (unscaled).
+    pen = (; a = 100.0)
+    res_pen = fit_model(
+        dm,
+        NoLimits.GHQuadrature(
+            level = lvl, update_schedule = 2, optimizer = Optimisers.Adam(0.05),
+            optim_kwargs = (; maxiters = 3)
+        );
+        penalty = pen, rng = MersenneTwister(5), serialization = ser
+    )
+    θhat = NoLimits.get_params(res_pen; scale = :untransformed)
+    res_full = fit_model(
+        dm,
+        NoLimits.GHQuadrature(
+            level = lvl, optimizer = Optimisers.Adam(0.0),
+            optim_kwargs = (; maxiters = 1)
+        );
+        penalty = pen, theta_0_untransformed = θhat, serialization = ser
+    )
+    @test isapprox(
+        NoLimits.get_objective(res_pen), NoLimits.get_objective(res_full); rtol = 1.0e-8
+    )
 end

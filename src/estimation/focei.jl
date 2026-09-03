@@ -680,7 +680,7 @@ end
 """
     FOCEI(; interaction=true, optimizer, optim_kwargs, adtype, inner_*, multistart_*,
             jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale, theta_tol,
-            lb, ub, ignore_model_bounds, precondition) <: FittingMethod
+            lb, ub, ignore_model_bounds, precondition, update_schedule) <: FittingMethod
 
 First-Order Conditional Estimation with Interaction for random-effects models.
 
@@ -704,9 +704,11 @@ A gradient-based outer optimizer must cap its line-search step; see the `optimiz
 [`Laplace`](@ref) for why and for the measured numbers.
 
 Keyword arguments mirror [`Laplace`](@ref) (including `precondition`); the only
-addition is `interaction::Bool=true`.
+addition is `interaction::Bool=true`. The `optimizer` default is LBFGS with backtracking,
+or `Optimisers.Adam()` when `update_schedule != :all`.
+$(_UPDATE_SCHEDULE_DOC)
 """
-struct FOCEI{O, K, A, IO, HO, CO, MS, L, U} <: FittingMethod
+struct FOCEI{O, K, A, IO, HO, CO, MS, L, U, US} <: FittingMethod
     optimizer::O
     optim_kwargs::K
     adtype::A
@@ -719,13 +721,14 @@ struct FOCEI{O, K, A, IO, HO, CO, MS, L, U} <: FittingMethod
     ignore_model_bounds::Bool
     precondition::Bool
     interaction::Bool
+    update_schedule::US
 end
+
+_update_schedule(m::FOCEI) = m.update_schedule
 
 function FOCEI(;
         interaction::Bool = true,
-        optimizer = OptimizationOptimJL.LBFGS(
-            linesearch = LineSearches.BackTracking(maxstep = 1.0)
-        ),
+        optimizer = nothing,
         optim_kwargs = (; maxiters = 1000),
         adtype = Optimization.AutoForwardDiff(),
         inner_options = nothing,
@@ -750,8 +753,11 @@ function FOCEI(;
         lb = nothing,
         ub = nothing,
         ignore_model_bounds = false,
-        precondition = true
+        precondition = true,
+        update_schedule = :all
     )
+    update_schedule = _check_update_schedule(_as_symbol(update_schedule), "FOCEI")
+    optimizer = _resolve_outer_optimizer(optimizer, update_schedule, "FOCEI")
     inner = inner_options === nothing ?
         LaplaceInnerOptions(
             inner_optimizer, _as_namedtuple(inner_kwargs), inner_adtype, inner_grad_tol
@@ -769,7 +775,7 @@ function FOCEI(;
         ) : multistart_options
     return FOCEI(
         optimizer, _as_namedtuple(optim_kwargs), adtype, inner, hess, cache,
-        ms, lb, ub, ignore_model_bounds, precondition, interaction
+        ms, lb, ub, ignore_model_bounds, precondition, interaction, update_schedule
     )
 end
 
