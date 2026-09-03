@@ -50,6 +50,16 @@ using Turing: Flat
         [1.0 2.0; 2.0 1.0]; name = :bad_psd, scale = :log
     )
     @test_throws ErrorException RealPSDMatrix([1.0 2.0; 3.0 4.0]; name = :bad_psd2)
+    # The rejection message must not recompute `eigen` on input `eigen` throws on (#313).
+    @test_throws r"parameter Om.*non-square 2x3" RealPSDMatrix(
+        [1.0 2.0 3.0; 4.0 5.0 6.0]; name = :Om
+    )
+    @test_throws r"parameter Om.*non-finite entries" RealPSDMatrix(
+        [1.0 NaN; NaN 1.0]; name = :Om
+    )
+    @test_throws r"parameter Om.*non-finite entries" RealLiePSDMatrix(
+        [1.0 NaN; NaN 1.0]; name = :Om
+    )
     @test_throws ErrorException RealPSDMatrix(
         [1.0 0.0; 0.0 1.0]; name = :bad_psd_scale, scale = :foo
     )

@@ -652,20 +652,24 @@ function _parse_de(block::Expr)
     line_exprs = Expr[]
     seen = Set{Symbol}()
 
+    ln = nothing
     for stmt in block.args
-        stmt isa LineNumberNode && continue
-        stmt isa Expr || error("Invalid statement in @DifferentialEquation block.")
+        if stmt isa LineNumberNode
+            ln = stmt
+            continue
+        end
+        stmt isa Expr || error("Invalid statement in @DifferentialEquation block." * _stmt_loc(ln, stmt))
 
         if stmt.head == :(=)
             lhs, rhs = stmt.args
             lhs isa Expr && lhs.head == :call ||
-                error("Derived signals must be function-like: s(t)=... .")
+                error("Derived signals must be function-like: s(t)=... ." * _stmt_loc(ln, stmt))
             name = lhs.args[1]
-            name isa Symbol || error("Derived signal name must be a Symbol.")
-            length(lhs.args) == 2 || error("Derived signal must be of form s(t) = expr.")
+            name isa Symbol || error("Derived signal name must be a Symbol." * _stmt_loc(ln, stmt))
+            length(lhs.args) == 2 || error("Derived signal must be of form s(t) = expr." * _stmt_loc(ln, stmt))
             arg = lhs.args[2]
-            (arg == :t || arg == :ξ) || error("Derived signal argument must be t or ξ.")
-            name in seen && error("Duplicate DE name: $(name).")
+            (arg == :t || arg == :ξ) || error("Derived signal argument must be t or ξ." * _stmt_loc(ln, stmt))
+            name in seen && error("Duplicate DE name: $(name)." * _stmt_loc(ln, stmt))
             push!(seen, name)
             push!(signal_names, name)
             push!(signal_exprs, rhs)
@@ -674,15 +678,15 @@ function _parse_de(block::Expr)
         end
 
         stmt.head == :call && stmt.args[1] == :~ ||
-            error("Only D(x) ~ expr or s(t)=expr are allowed in @DifferentialEquation.")
+            error("Only D(x) ~ expr or s(t)=expr are allowed in @DifferentialEquation." * _stmt_loc(ln, stmt))
         lhs, rhs = stmt.args[2], stmt.args[3]
         lhs isa Expr && lhs.head == :call && lhs.args[1] == :D ||
-            error("Left-hand side must be D(state).")
+            error("Left-hand side must be D(state)." * _stmt_loc(ln, stmt))
         length(lhs.args) == 2 ||
-            error("Left-hand side must be D(state) with a single symbol.")
+            error("Left-hand side must be D(state) with a single symbol." * _stmt_loc(ln, stmt))
         state = lhs.args[2]
-        state isa Symbol || error("State name must be a Symbol.")
-        state in seen && error("Duplicate DE name: $(state).")
+        state isa Symbol || error("State name must be a Symbol." * _stmt_loc(ln, stmt))
+        state in seen && error("Duplicate DE name: $(state)." * _stmt_loc(ln, stmt))
         push!(seen, state)
         push!(state_names, state)
         push!(rhs_exprs, rhs)

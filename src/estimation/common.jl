@@ -3712,8 +3712,9 @@ function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_
         _is_numeric_error(err) || rethrow(err)
         if !Threads.atomic_cas!(_WARNED_NUMERIC_ERROR, false, true)
             @warn "A numeric error ($(nameof(typeof(err)))) was raised while evaluating " *
-                "the likelihood; treating this point as -Inf. Check the domains of " *
-                "`log`, `sqrt` and `^` in @formulas / @DifferentialEquation. " *
+                "the likelihood; treating this point as -Inf. The error was: " *
+                "$(_brief_error_message(err)). If this is a `log`/`sqrt`/`^` domain issue, " *
+                "check those domains in @formulas / @DifferentialEquation. " *
                 "Warned once per fit."
         end
         return -Inf

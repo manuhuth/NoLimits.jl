@@ -339,40 +339,44 @@ function _parse_formulas(block::Expr)
     det_set = Set{Symbol}()
     obs_set = Set{Symbol}()
 
+    ln = nothing
     for stmt in block.args
-        stmt isa LineNumberNode && continue
-        stmt isa Expr || error("Invalid statement in @formulas block.")
+        if stmt isa LineNumberNode
+            ln = stmt
+            continue
+        end
+        stmt isa Expr || error("Invalid statement in @formulas block." * _stmt_loc(ln, stmt))
         if stmt.head == :(=)
             lhs, rhs = stmt.args
-            lhs isa Symbol || error("Left-hand side must be a symbol in @formulas block.")
-            lhs == :t && error("Left-hand side cannot be t in @formulas block.")
-            lhs == :ξ && error("Left-hand side cannot be ξ in @formulas block.")
+            lhs isa Symbol || error("Left-hand side must be a symbol in @formulas block." * _stmt_loc(ln, stmt))
+            lhs == :t && error("Left-hand side cannot be t in @formulas block." * _stmt_loc(ln, stmt))
+            lhs == :ξ && error("Left-hand side cannot be ξ in @formulas block." * _stmt_loc(ln, stmt))
             lhs in det_set &&
-                error("Duplicate deterministic name $(lhs) in @formulas block.")
+                error("Duplicate deterministic name $(lhs) in @formulas block." * _stmt_loc(ln, stmt))
             lhs in obs_set &&
-                error("Name $(lhs) is already used for an observation in @formulas block.")
+                error("Name $(lhs) is already used for an observation in @formulas block." * _stmt_loc(ln, stmt))
             push!(det_names, lhs)
             push!(det_exprs, rhs)
             push!(det_set, lhs)
             push!(lines, Expr(:(=), lhs, rhs))
         elseif stmt.head == :call && stmt.args[1] == :~
             lhs, rhs = stmt.args[2], stmt.args[3]
-            lhs isa Symbol || error("Left-hand side must be a symbol in @formulas block.")
-            lhs == :t && error("Left-hand side cannot be t in @formulas block.")
-            lhs == :ξ && error("Left-hand side cannot be ξ in @formulas block.")
-            lhs in obs_set && error("Duplicate observation name $(lhs) in @formulas block.")
+            lhs isa Symbol || error("Left-hand side must be a symbol in @formulas block." * _stmt_loc(ln, stmt))
+            lhs == :t && error("Left-hand side cannot be t in @formulas block." * _stmt_loc(ln, stmt))
+            lhs == :ξ && error("Left-hand side cannot be ξ in @formulas block." * _stmt_loc(ln, stmt))
+            lhs in obs_set && error("Duplicate observation name $(lhs) in @formulas block." * _stmt_loc(ln, stmt))
             # `y ~ a` / `y ~ 1.0` / `y ~ nothing` used to leak an internal
             # `Cannot convert Symbol to Expr` from the `Expr[]` push below (#219).
             (rhs isa Expr && rhs.head == :call) ||
-                error("Observation $(lhs) in @formulas must be a distribution, e.g. $(lhs) ~ Normal(mu, sigma); got `$(rhs)`.")
+                error("Observation $(lhs) in @formulas must be a distribution, e.g. $(lhs) ~ Normal(mu, sigma); got `$(rhs)`." * _stmt_loc(ln, stmt))
             lhs in det_set &&
-                error("Name $(lhs) is already used for a deterministic in @formulas block.")
+                error("Name $(lhs) is already used for a deterministic in @formulas block." * _stmt_loc(ln, stmt))
             push!(obs_names, lhs)
             push!(obs_exprs, rhs)
             push!(obs_set, lhs)
             push!(lines, Expr(:call, :~, lhs, rhs))
         else
-            error("Only assignments and ~ observations are allowed in @formulas block.")
+            error("Only assignments and ~ observations are allowed in @formulas block." * _stmt_loc(ln, stmt))
         end
     end
 

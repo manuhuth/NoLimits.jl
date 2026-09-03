@@ -201,7 +201,7 @@ function Distributions._logpdf(p::_SafeMatrixPrior, x::AbstractMatrix{<:Real})
         if !Threads.atomic_cas!(_WARNED_NUMERIC_ERROR, false, true)
             @warn "A numeric error ($(nameof(typeof(err)))) was raised while evaluating " *
                 "the prior of $(p.name) (a $(nameof(typeof(p.d)))); rejecting this " *
-                "proposal. Warned once per fit."
+                "proposal. The error was: $(_brief_error_message(err)). Warned once per fit."
         end
         return convert(float(eltype(x)), -Inf)
     end

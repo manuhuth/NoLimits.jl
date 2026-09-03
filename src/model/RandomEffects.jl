@@ -245,28 +245,32 @@ function _parse_random_effects(block::Expr)
     re_names = Symbol[]
     dist_exprs = Expr[]
     columns = Symbol[]
+    ln = nothing
     for stmt in block.args
-        stmt isa LineNumberNode && continue
-        stmt isa Expr || error("Invalid statement in @randomEffects block.")
-        stmt.head == :(=) || error("Only assignments are allowed in @randomEffects block.")
+        if stmt isa LineNumberNode
+            ln = stmt
+            continue
+        end
+        stmt isa Expr || error("Invalid statement in @randomEffects block." * _stmt_loc(ln, stmt))
+        stmt.head == :(=) || error("Only assignments are allowed in @randomEffects block." * _stmt_loc(ln, stmt))
         lhs, rhs = stmt.args
-        lhs isa Symbol || error("Left-hand side must be a symbol in @randomEffects block.")
+        lhs isa Symbol || error("Left-hand side must be a symbol in @randomEffects block." * _stmt_loc(ln, stmt))
         lhs in re_names &&
-            error("Duplicate random effect $(lhs) in @randomEffects block; random-effect names must be unique.")
+            error("Duplicate random effect $(lhs) in @randomEffects block; random-effect names must be unique." * _stmt_loc(ln, stmt))
         rhs isa Expr && rhs.head == :call ||
-            error("Right-hand side must be a RandomEffect(...) call.")
+            error("Right-hand side must be a RandomEffect(...) call." * _stmt_loc(ln, stmt))
         _re_ctor_name(rhs.args[1]) === :RandomEffect ||
-            error("Right-hand side must be a RandomEffect(...) call.")
+            error("Right-hand side must be a RandomEffect(...) call." * _stmt_loc(ln, stmt))
 
         dist, column = _re_parse_call_args(rhs, lhs)
         # A bare symbol/number/`nothing` here used to leak `Cannot convert Symbol to Expr`
         # from the `Expr[]` push below (#219).
         (dist isa Expr && dist.head == :call) ||
-            error("RandomEffect $(lhs) needs a distribution, e.g. RandomEffect(Normal(0.0, 1.0); column=:ID); got `$(dist)`.")
+            error("RandomEffect $(lhs) needs a distribution, e.g. RandomEffect(Normal(0.0, 1.0); column=:ID); got `$(dist)`." * _stmt_loc(ln, stmt))
 
         forbidden = _macro_forbidden_symbol(dist)
         forbidden === nothing ||
-            error("RandomEffect $(lhs) uses forbidden symbol $(forbidden).")
+            error("RandomEffect $(lhs) uses forbidden symbol $(forbidden)." * _stmt_loc(ln, stmt))
 
         push!(re_names, lhs)
         push!(dist_exprs, dist)

@@ -485,3 +485,39 @@ end
     @test_throws ArgumentError NoLimits._validate_theta_0(dm, bad)
     @test NoLimits._validate_theta_0(dm, NoLimits._coerce_theta_0(dm, (; σ = 0.3))) === nothing
 end
+
+# Block-parser errors must name the offending statement and its source line, and a
+# non-constructor right-hand side must not get a `name =` kwarg spliced in (#313).
+@testset "@fixedEffects parse errors name the statement (#313)" begin
+    bad_stmt = try
+        @eval @fixedEffects begin
+            sigma
+        end
+        nothing
+    catch err
+        err
+    end
+    @test occursin(
+        r"Invalid statement in @fixedEffects block\. \(at .*: sigma\)",
+        sprint(showerror, bad_stmt)
+    )
+
+    bad_rhs = try
+        @eval @fixedEffects begin
+            a = 1 + 2
+        end
+        nothing
+    catch err
+        err
+    end
+    @test occursin(
+        r"must be a parameter-block constructor call such as RealNumber\(\.\.\.\); got `1 \+ 2`",
+        sprint(showerror, bad_rhs)
+    )
+
+    # Module-qualified constructors still build.
+    fe = @fixedEffects begin
+        a = NoLimits.RealNumber(1.0)
+    end
+    @test get_names(fe) == [:a]
+end

@@ -139,3 +139,12 @@ function _rewrite_npf_calls(ex)
     end
     return Expr(ex.head, map(_rewrite_npf_calls, ex.args)...)
 end
+
+# Source location suffix for block-parser errors: the offending statement and the line
+# of the last `LineNumberNode` seen before it (#313).
+function _stmt_loc(ln, stmt)
+    loc = ln isa LineNumberNode ? "$(ln.file):$(ln.line)" : "unknown location"
+    txt = replace(string(stmt), "\n" => " ")
+    length(txt) > 120 && (txt = first(txt, 117) * "...")
+    return " (at $(loc): $(txt))"
+end

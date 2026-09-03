@@ -272,19 +272,23 @@ function _model_validate_blocks(block::Expr)
         )
     )
     counts = Dict{Symbol, Int}()
+    ln = nothing
     for stmt in block.args
-        stmt isa LineNumberNode && continue
+        if stmt isa LineNumberNode
+            ln = stmt
+            continue
+        end
         stmt isa Expr ||
-            error("Invalid statement in @Model; only macro blocks are allowed.")
+            error("Invalid statement in @Model; only macro blocks are allowed." * _stmt_loc(ln, stmt))
         stmt.head == :macrocall ||
-            error("Invalid statement in @Model; only macro blocks are allowed.")
+            error("Invalid statement in @Model; only macro blocks are allowed." * _stmt_loc(ln, stmt))
         name = _model_macro_name(stmt)
-        name === nothing && error("Invalid macro call in @Model.")
+        name === nothing && error("Invalid macro call in @Model." * _stmt_loc(ln, stmt))
         name in allowed ||
-            error("Unknown block $(name) in @Model. Allowed blocks: $(collect(allowed)).")
+            error("Unknown block $(name) in @Model. Allowed blocks: $(collect(allowed))." * _stmt_loc(ln, stmt))
         counts[name] = get(counts, name, 0) + 1
         counts[name] > 1 &&
-            error("Duplicate $(name) block in @Model. Each block can appear at most once.")
+            error("Duplicate $(name) block in @Model. Each block can appear at most once." * _stmt_loc(ln, stmt))
     end
     return nothing
 end

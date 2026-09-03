@@ -49,12 +49,16 @@ function parse_helpers(block::Expr)::Vector{HelperDef}
     block.head == :block || error("@helpers expects a begin ... end block.")
     defs = HelperDef[]
     seen = Set{Symbol}()
+    ln = nothing
     for stmt in block.args
-        stmt isa LineNumberNode && continue
-        stmt isa Expr || error("Invalid statement in @helpers block.")
+        if stmt isa LineNumberNode
+            ln = stmt
+            continue
+        end
+        stmt isa Expr || error("Invalid statement in @helpers block." * _stmt_loc(ln, stmt))
         def = _parse_helper(stmt)
         if def.name in seen
-            error("Duplicate helper name: $(def.name). Helper names must be unique within @helpers.")
+            error("Duplicate helper name: $(def.name). Helper names must be unique within @helpers." * _stmt_loc(ln, stmt))
         end
         _warn_if_mutating_helper(def)
         push!(seen, def.name)

@@ -89,19 +89,23 @@ function _parse_prede(block::Expr)
     names = Symbol[]
     exprs = Expr[]
     lines = Expr[]
+    ln = nothing
     for stmt in block.args
-        stmt isa LineNumberNode && continue
-        stmt isa Expr || error("Invalid statement in @preDifferentialEquation block.")
+        if stmt isa LineNumberNode
+            ln = stmt
+            continue
+        end
+        stmt isa Expr || error("Invalid statement in @preDifferentialEquation block." * _stmt_loc(ln, stmt))
         stmt.head == :(=) ||
-            error("Only assignments are allowed in @preDifferentialEquation block.")
+            error("Only assignments are allowed in @preDifferentialEquation block." * _stmt_loc(ln, stmt))
         lhs, rhs = stmt.args
         lhs isa Symbol ||
-            error("Left-hand side must be a symbol in @preDifferentialEquation block.")
+            error("Left-hand side must be a symbol in @preDifferentialEquation block." * _stmt_loc(ln, stmt))
         rhs isa LineNumberNode &&
-            error("Invalid right-hand side in @preDifferentialEquation block.")
+            error("Invalid right-hand side in @preDifferentialEquation block." * _stmt_loc(ln, stmt))
         forbidden = _macro_forbidden_symbol(rhs)
         forbidden === nothing ||
-            error("preDifferentialEquation uses forbidden symbol $(forbidden).")
+            error("preDifferentialEquation uses forbidden symbol $(forbidden)." * _stmt_loc(ln, stmt))
         rhs isa Expr && _warn_if_mutating_prede(lhs, rhs)
         push!(names, lhs)
         push!(exprs, rhs isa Expr ? rhs : Expr(:call, :identity, rhs))

@@ -38,16 +38,20 @@ function _parse_initialde(block::Expr)
     exprs = Expr[]
     seen = Set{Symbol}()
 
+    ln = nothing
     for stmt in block.args
-        stmt isa LineNumberNode && continue
-        stmt isa Expr || error("Invalid statement in @initialDE block.")
-        stmt.head == :(=) || error("Only assignments are allowed in @initialDE block.")
+        if stmt isa LineNumberNode
+            ln = stmt
+            continue
+        end
+        stmt isa Expr || error("Invalid statement in @initialDE block." * _stmt_loc(ln, stmt))
+        stmt.head == :(=) || error("Only assignments are allowed in @initialDE block." * _stmt_loc(ln, stmt))
         lhs, rhs = stmt.args
-        lhs isa Symbol || error("Left-hand side must be a symbol in @initialDE block.")
-        lhs in seen && error("Duplicate initial DE name: $(lhs).")
-        rhs isa LineNumberNode && error("Invalid right-hand side in @initialDE block.")
+        lhs isa Symbol || error("Left-hand side must be a symbol in @initialDE block." * _stmt_loc(ln, stmt))
+        lhs in seen && error("Duplicate initial DE name: $(lhs)." * _stmt_loc(ln, stmt))
+        rhs isa LineNumberNode && error("Invalid right-hand side in @initialDE block." * _stmt_loc(ln, stmt))
         forbidden = _macro_forbidden_symbol(rhs)
-        forbidden === nothing || error("@initialDE uses forbidden symbol $(forbidden).")
+        forbidden === nothing || error("@initialDE uses forbidden symbol $(forbidden)." * _stmt_loc(ln, stmt))
         push!(seen, lhs)
         push!(names, lhs)
         push!(exprs, rhs isa Expr ? rhs : Expr(:call, :identity, rhs))

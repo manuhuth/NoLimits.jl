@@ -1035,7 +1035,8 @@ function _re_logpdf_batch(
         _is_numeric_error(err) || rethrow(err)
         if !Threads.atomic_cas!(_WARNED_NUMERIC_ERROR, false, true)
             @warn "A numeric error ($(nameof(typeof(err)))) was raised while evaluating " *
-                "the random-effect prior; treating this point as -Inf. Warned once per fit."
+                "the random-effect prior; treating this point as -Inf. The error was: " *
+                "$(_brief_error_message(err)). Warned once per fit."
         end
         return convert(promote_type(eltype(θ), eltype(b)), -Inf)
     end
