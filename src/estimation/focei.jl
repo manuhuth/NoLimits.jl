@@ -705,7 +705,7 @@ A gradient-based outer optimizer must cap its line-search step; see the `optimiz
 
 Keyword arguments mirror [`Laplace`](@ref) (including `precondition`); the only
 addition is `interaction::Bool=true`. The `optimizer` default is LBFGS with backtracking,
-or `Optimisers.Adam()` when `update_schedule != :all`.
+or `Optimisers.Adam(0.01)` when `update_schedule != :all`.
 $(_UPDATE_SCHEDULE_DOC)
 """
 struct FOCEI{O, K, A, IO, HO, CO, MS, L, U, US} <: FittingMethod

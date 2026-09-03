@@ -696,16 +696,16 @@ function fit_model(ms::Multistart, dm::DataModel, method::FittingMethod, args...
     n_starts = length(starts)
     results = Vector{Union{FitResult, Nothing}}(undef, n_starts)
     errors = Vector{Any}(undef, n_starts)
-    rngs = [Random.Xoshiro(rand(ms.rng, UInt)) for _ in 1:n_starts]
+    # Every start gets its own forked rng: a shared rng object would be raced by the
+    # threaded starts (mini-batch draws call `randperm!` on it).
+    seed_rng = get(kw_nt, :rng, ms.rng)
+    rngs = [Random.Xoshiro(rand(seed_rng, UInt)) for _ in 1:n_starts]
     fit_p = progress ?
         Progress(n_starts; desc = "Multistart fitting:  ", showspeed = true) : nothing
 
     function run_one(i)
         try
-            local_kwargs = kw_nt
-            if !haskey(kw_nt, :rng)
-                local_kwargs = merge(kw_nt, (rng = rngs[i],))
-            end
+            local_kwargs = merge(kw_nt, (rng = rngs[i],))
             results[i] = fit_model(
                 dm, method, args...; theta_0_untransformed = starts[i], local_kwargs...
             )

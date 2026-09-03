@@ -138,7 +138,7 @@ NoLimits.GHQuadrature(;
 - integer `m`: a random minibatch of `min(m, nbatches)` batches, sampled without replacement each iteration.
 - callable `(nbatches::Int, iter::Int, rng) -> Vector{Int}`: returns the batch indices to use in optimizer iteration `iter`; a plain function or a callable struct (for stateful schedules).
 
-The selected batches' contribution is scaled by `nbatches / length(selected)`, so the objective remains an unbiased estimate of the full-data objective; priors, `penalty`, and `extra_objective` are never scaled. One minibatch is drawn per optimizer iteration from the fit `rng`, and the objective and gradient of that iteration share it. When mini-batching is active and no `optimizer` is given, the default optimizer becomes `Optimisers.Adam()` (from Optimisers.jl, with `maxiters=1000` and `save_best=false` unless set in `optim_kwargs`) instead of LBFGS; passing a non-Optimisers optimizer emits a warning because line-search optimizers do not behave well on a stochastic objective. After the fit, the reported objective is re-evaluated once on all batches at the fitted parameters. With Optimisers.jl rules, finite bounds (model bounds or `lb`/`ub`) are enforced by projecting each update onto the box.
+The selected batches' contribution is scaled by `nbatches / length(selected)`, so the objective remains an unbiased estimate of the full-data objective; priors, `penalty`, and `extra_objective` are never scaled. One minibatch is drawn per optimizer iteration from the fit `rng`, and the objective and gradient of that iteration share it. When mini-batching is active and no `optimizer` is given, the default optimizer becomes `Optimisers.Adam(0.01)` (from Optimisers.jl, with `maxiters=1000` and `save_best=false` unless set in `optim_kwargs`) instead of LBFGS; passing a non-Optimisers optimizer emits a warning because line-search optimizers do not behave well on a stochastic objective. After the fit, the reported objective is re-evaluated once on all batches at the fitted parameters. With Optimisers.jl rules, finite bounds (model bounds or `lb`/`ub`) are enforced by projecting each update onto the box.
 
 ### `level`
 
@@ -168,7 +168,7 @@ res = fit_model(dm, NoLimits.GHQuadrature(level=[1, 2]))
 | Bounds | `lb`, `ub`, `ignore_model_bounds` | Box bounds on transformed fixed-effect parameters. |
 | Mini-batching | `update_schedule` | Which batches enter the outer objective/gradient per optimizer iteration. |
 
-The default outer optimizer is `OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep = 1.0))`; when `update_schedule != :all` and no optimizer is passed, the default is `Optimisers.Adam()` instead.
+The default outer optimizer is `OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep = 1.0))`; when `update_schedule != :all` and no optimizer is passed, the default is `Optimisers.Adam(0.01)` instead.
 
 !!! note "No inner optimization during fitting"
     Unlike `Laplace`, `GHQuadrature` does **not** run an inner optimization during the forward pass. The objective is a direct sum over quadrature nodes and is fully differentiable by ForwardDiff. The inner optimizer is used only after convergence to compute empirical Bayes mode estimates for `get_random_effects`.

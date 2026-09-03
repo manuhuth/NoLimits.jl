@@ -2220,7 +2220,7 @@ random effects.
 # Keyword Arguments
 - `optimizer`: outer Optimization.jl optimizer. Defaults to
   `OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0))`, which uses
-  the analytic marginal gradient, or to `Optimisers.Adam()` when `update_schedule != :all`.
+  the analytic marginal gradient, or to `Optimisers.Adam(0.01)` when `update_schedule != :all`.
 
   **The `maxstep` cap is load-bearing, not decoration.** The gradient is exact, but its
   coordinates can span four orders of magnitude at a poorly scaled start - on `pheno_sd`, where

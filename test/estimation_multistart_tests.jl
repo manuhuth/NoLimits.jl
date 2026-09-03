@@ -7,6 +7,7 @@ using Random
 using Turing
 using MCMCChains
 using SciMLBase
+import Optimisers
 
 const LD = NoLimits
 
@@ -241,6 +242,23 @@ end
     )
     res = fit_model(ms, fx_nore_dm(), NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
     @test res isa NoLimits.MultistartFitResult
+
+    # A user-supplied rng must not be shared across threaded starts: mini-batch draws
+    # mutate it, which made the fit non-reproducible (#323).
+    mb = NoLimits.MLE(
+        update_schedule = 2, optimizer = Optimisers.Adam(0.05),
+        optim_kwargs = (; maxiters = 10)
+    )
+    # A fresh Multistart per run: its rng is consumed when the starts are sampled.
+    ms_mb() = NoLimits.Multistart(
+        dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 3, n_draws_used = 3,
+        serialization = EnsembleThreads(), progress = false, rng = MersenneTwister(101)
+    )
+    objs = [
+        NoLimits.get_objective(fit_model(ms_mb(), fx_nore_dm(), mb; rng = MersenneTwister(5)))
+            for _ in 1:2
+    ]
+    @test objs[1] == objs[2]
 end
 
 @testset "Multistart LHS extensive (univariate + priors override)" begin
