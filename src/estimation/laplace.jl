@@ -2963,17 +2963,19 @@ function _fit_laplace_family(
     )
     sol = Optimization.solve(prob, opt_use; solve_kwargs...)
 
-    # Mini-batched objectives are per-minibatch; re-evaluate on all batches at the fitted
-    # θ (this also refreshes every batch's EB mode, which the diagnostics below use).
-    # The same evaluation runs when `wall_ref` is still empty: optimizers that only call
-    # the fused AD objective (Optimisers.jl rules) never evaluate it in Float64, which
+    # Final full-data evaluation at θ̂ (#322). The optimizer's last evaluation need not be
+    # at `sol.u` (Optim keeps the state of a rejected line-search trial), and a
+    # warm-started inner solve returns as soon as it meets its own stopping tolerance
+    # (often at iteration 0), so the cached EB modes carry the residual of whichever θ was
+    # tried last. Dropping the warm state re-solves the modes cold at θ̂, so `eb_modes`,
+    # the reported objective and the diagnostic below all describe the fitted model. It
+    # also covers mini-batched objectives (per-selection) and optimizers that only call
+    # the fused AD objective (Optimisers.jl rules), which never evaluate it in Float64 and
     # would otherwise look like an infeasible fit.
-    final_obj = sol.objective
-    if mb !== nothing || wall_ref[] === nothing
-        mb_ref[] = nothing
-        invalidate!()
-        final_obj = obj_only(sol.u, nothing)
-    end
+    mb_ref[] = nothing
+    invalidate!()
+    fill!(ebe_cache.bstar_cache.has_bstar, false)
+    final_obj = obj_only(sol.u, nothing)
 
     # No feasible point was ever reached, so `sol.objective` is the infeasibility wall
     # and not a fit; the flat wall otherwise lets the optimizer report success (#247).
