@@ -583,6 +583,10 @@ function _fit_model_scalar(
     θ_hat_u = inv_transform(θ_hat_t)
 
     # ── Post-hoc EB mode finding (for get_random_effects) ────────────────────
+    # Cold-solve the modes at θ̂: a warm start returns the stale residual of whichever θ
+    # the optimizer tried last (same warm-start issue as the Laplace family).
+    invalidate!()
+    fill!(ebe_cache.bstar_cache.has_bstar, false)
     _laplace_get_bstar!(
         ebe_cache, dm, batch_infos, θ_hat_u, const_cache, ll_cache;
         optimizer = inner_opts.optimizer,
