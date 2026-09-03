@@ -57,6 +57,11 @@ end
     model_saveat = set_solver_config(model; saveat_mode = :saveat)
     dm = DataModel(model_saveat, df; primary_id = :ID, time_col = :t)
 
+    # A non-algorithm `alg` is rejected eagerly (#314); real algorithms pass.
+    @test_throws ErrorException set_solver_config(model; alg = :Tsit5)
+    @test set_solver_config(model; alg = Tsit5()) isa NoLimits.Model
+    @test set_solver_config(model; alg = AutoTsit5(Rodas5P())) isa NoLimits.Model
+
     ind = get_individual(dm, 1)
     θ = get_θ0_untransformed(model_saveat.fixed.fixed)
     η = ComponentArray()

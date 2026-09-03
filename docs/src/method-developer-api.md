@@ -129,19 +129,25 @@ parameters (the transformed-scale round trip and PSD symmetrisation are handled)
 function NoLimits.fit_method(dm, m::MyEM, args...; theta_0_untransformed = nothing, kwargs...)
     ctx = build_fit_context(dm)
     θ = something(theta_0_untransformed, initial_parameters(ctx))
+    sol = nothing
     for _ in 1:m.n_iter
         modes = empirical_bayes(ctx, θ)                     # E-step: posterior modes ...
         covs = empirical_bayes_covariance(ctx, θ, modes)    # ... and their covariance
-        θ, _ = optimize_parameters(ctx; θ_start = θ) do θn  # M-step, natural scale
+        θ, sol = optimize_parameters(ctx; θ_start = θ) do θn  # M-step, natural scale
             -sum(complete_data_loglikelihood(ctx, bi, θn, modes[bi]) +
                  0.5 * tr(covs[bi] * complete_data_loglikelihood_hessian(ctx, bi, θn, modes[bi]))
                  for bi in eachindex(get_batch_infos(ctx)))
         end
     end
     return build_fit_result(ctx, m, θ; kind = :frequentist_re,
-        objective = -laplace_marginal(ctx, θ))
+        objective = -laplace_marginal(ctx, θ),
+        converged = SciMLBase.successful_retcode(sol))
 end
 ```
+
+`build_fit_result` defaults `converged` to `missing`, so an estimator that omits it reports
+"unknown" rather than claiming success; pass the retcode of the solution `optimize_parameters`
+returns, as above.
 
 Every context call is a thin cover forwarding to the corresponding cache-explicit primitive
 with the context's stored objects - results are identical, and the explicit layer below remains

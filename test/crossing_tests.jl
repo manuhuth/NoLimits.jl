@@ -140,3 +140,54 @@ end
         @test isapprox(acc_ll.rv, acc_pl.rv; atol = 1.0e-6)
     end
 end
+
+@testset "crossing symbols are validated at build time" begin
+    mk(body) = Core.eval(
+        @__MODULE__, Expr(
+            :macrocall, Symbol("@Model"), LineNumberNode(0), body
+        )
+    )
+    # Both used to be raised per individual from inside the solve (#314).
+    @test_throws ErrorException mk(
+        quote
+            @fixedEffects begin
+                k = RealNumber(1.0)
+                level = RealNumber(1.0)
+            end
+            @covariates begin
+                t = Covariate()
+            end
+            @DifferentialEquation begin
+                D(x) ~ k
+            end
+            @initialDE begin
+                x = 0.0
+            end
+            @formulas begin
+                tc = crossing_time(:x2, :level)
+                y ~ Normal(tc, 1.0)
+            end
+        end
+    )
+    @test_throws ErrorException mk(
+        quote
+            @fixedEffects begin
+                k = RealNumber(1.0)
+                level = RealNumber(1.0)
+            end
+            @covariates begin
+                t = Covariate()
+            end
+            @DifferentialEquation begin
+                D(x) ~ k
+            end
+            @initialDE begin
+                x = 0.0
+            end
+            @formulas begin
+                tc = crossing_time(:x, :levelz)
+                y ~ Normal(tc, 1.0)
+            end
+        end
+    )
+end

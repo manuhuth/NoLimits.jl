@@ -1545,8 +1545,8 @@ function _fit_model(
                     return -Q2val
                 end
                 lb_q2, ub_q2, use_bounds_q2, θ0_q2 = _resolve_optim_bounds(
-                    fe, q2_free_now, collect(θt_q2), method.optimizer, nothing,
-                    nothing, NamedTuple(); allow_bbo = false
+                    fe, q2_free_now, collect(θt_q2), method.optimizer, method.lb,
+                    method.ub, NamedTuple(); allow_bbo = false, method_label = "MCEM"
                 )
                 optf_q2 = OptimizationFunction(obj_q2, method.adtype)
                 z0_q2 = _z_from_q2(θ0_q2)

@@ -2071,6 +2071,10 @@ in `f_natural`. Do-block friendly:
         -sum(complete_data_loglikelihood(ctx, bi, θn, modes[bi]) for bi in eachindex(get_batch_infos(ctx)))
     end
 
+The returned `sol` carries the optimizer's verdict: pass
+`converged = SciMLBase.successful_retcode(sol)` to [`build_fit_result`](@ref) instead of
+letting it default to `missing`.
+
 `ponytail:` optimizes all fixed effects; apply `constants`/bounds via the explicit
 `free_parameter_layout`/`resolve_optimizer_bounds` path when needed.
 """

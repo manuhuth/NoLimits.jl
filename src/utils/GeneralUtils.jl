@@ -131,3 +131,10 @@ end
         err isa DataInterpolations.LeftExtrapolationError ||
         err isa DataInterpolations.RightExtrapolationError
 end
+
+# An exception's own message, flattened to one line. The type name alone hides what the
+# model actually complained about (#313); the cap keeps a long message out of the log.
+function _brief_error_message(err; maxlen::Int = 200)
+    msg = replace(sprint(showerror, err), '\n' => ' ')
+    return length(msg) > maxlen ? first(msg, maxlen - 3) * "..." : msg
+end

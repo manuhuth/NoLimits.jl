@@ -243,6 +243,20 @@ end
     @test res isa FitResult
 end
 
+# #311: `ω` appears only in the RE distribution, so it is solved in the Q2-only M-step,
+# which passed `nothing, nothing` where the user bounds belong and let ω run to its
+# unconstrained MLE (natural ~0.29, far below exp(2)).
+@testset "MCEM user bounds reach the Q2-only M-step" begin
+    method = NoLimits.MCEM(
+        sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
+        maxiters = 2, optim_kwargs = (; maxiters = 5),
+        lb = ComponentArray(a = -10.0, σ = -10.0, ω = 2.0),
+        ub = ComponentArray(a = 10.0, σ = 10.0, ω = 3.0)
+    )
+    res = fit_model(fx_re_dm(), method)
+    @test NoLimits.get_params(res; scale = :untransformed).ω >= exp(2.0) - 1.0e-6
+end
+
 @testset "MCEM with ODE model" begin
     res = fit_model(
         fx_ode_dm(),

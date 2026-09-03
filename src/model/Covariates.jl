@@ -253,16 +253,20 @@ function _parse_covariates(block::Expr)
     block.head == :block || error("@covariates expects a begin ... end block.")
     names = Symbol[]
     exprs = Expr[]
+    ln = nothing
     for stmt in block.args
-        stmt isa LineNumberNode && continue
-        stmt isa Expr || error("Invalid statement in @covariates block.")
-        stmt.head == :(=) || error("Only assignments are allowed in @covariates block.")
+        if stmt isa LineNumberNode
+            ln = stmt
+            continue
+        end
+        stmt isa Expr || error("Invalid statement in @covariates block." * _stmt_loc(ln, stmt))
+        stmt.head == :(=) || error("Only assignments are allowed in @covariates block." * _stmt_loc(ln, stmt))
         lhs, rhs = stmt.args
-        lhs isa Symbol || error("Left-hand side must be a symbol in @covariates block.")
+        lhs isa Symbol || error("Left-hand side must be a symbol in @covariates block." * _stmt_loc(ln, stmt))
         lhs in names &&
-            error("Duplicate covariate $(lhs) in @covariates block; covariate names must be unique.")
+            error("Duplicate covariate $(lhs) in @covariates block; covariate names must be unique." * _stmt_loc(ln, stmt))
         rhs isa Expr && rhs.head == :call ||
-            error("Right-hand side must be a constructor call in @covariates block.")
+            error("Right-hand side must be a constructor call in @covariates block." * _stmt_loc(ln, stmt))
         _validate_covariate_ctor(rhs)
         rhs = _rewrite_univariate_covariate(lhs, rhs)
         push!(names, lhs)

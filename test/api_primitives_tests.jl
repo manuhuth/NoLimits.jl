@@ -1099,6 +1099,14 @@ end
         )
         @test NoLimits.get_eb_modes(NoLimits.get_result(res)) !== nothing
         @test NoLimits.get_random_effects(dm, res) isa NamedTuple
+        # #311: a caller who never inspects the retcode does not get a silent `true`
+        @test NoLimits.get_converged(res) === missing
+        res_conv = build_fit_result(
+            ctx, APITestClosedFormEM(), θ̂; kind = :frequentist_re,
+            objective = sol.objective, eb_modes = nothing,
+            converged = NoLimits.SciMLBase.successful_retcode(sol)
+        )
+        @test NoLimits.get_converged(res_conv) isa Bool
     end
 
     # Issue #273: the gradient-bearing primitives get FitContext forms that reuse the

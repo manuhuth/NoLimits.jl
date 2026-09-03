@@ -415,6 +415,21 @@ end
     @test_throws ErrorException DataModel(
         model, 42; primary_id = :ID, time_col = :t
     )
+
+    # A declared covariate whose column is absent is named at construction (#315).
+    df_no_age = DataFrame(
+        ID = [1, 1],
+        t = [0.0, 1.0],
+        y = [1.0, 1.1]
+    )
+    @test_throws "Covariate x is declared as ConstantCovariateVector with column Age" DataModel(
+        model, df_no_age; primary_id = :ID, time_col = :t
+    )
+
+    # Swapped positional arguments report the argument order, not a phantom column (#315).
+    @test_throws "Check the argument order" DataModel(
+        df_no_age, model; primary_id = :ID, time_col = :t
+    )
 end
 
 # Shared no-RE model; also reused by the mixed-type primary_id testset below.
@@ -1077,6 +1092,20 @@ end
     )
 
     @test_throws ErrorException DataModel(model, df; primary_id = :ID, time_col = :t)
+
+    # Missings are validated by declaration, so a covariate used only in the RE
+    # distribution is caught at construction (#309.5).
+    df_missing_c1 = DataFrame(
+        ID = [1, 1, 2, 2],
+        SITE = [:A, :A, :B, :B],
+        t = [0.0, 1.0, 0.0, 1.0],
+        c1 = [10.0, 10.0, missing, missing],
+        c2 = [1.0, 1.0, 3.0, 3.0],
+        y = [1.0, 1.1, 0.9, 1.0]
+    )
+    @test_throws "contains missing values" DataModel(
+        model, df_missing_c1; primary_id = :ID, time_col = :t
+    )
 end
 
 @testset "DataModel RE validation only checks used covariates (valid)" begin
@@ -1584,7 +1613,7 @@ end
     @test length(get_individuals(dm_str)) == length(get_individuals(dm))
 end
 
-@testset "DataModel validates missing covariates used by formulas" begin
+@testset "DataModel validates missing covariates by declaration" begin
     model_used = @Model begin
         @fixedEffects begin
             a = RealNumber(0.2)
@@ -1634,8 +1663,11 @@ end
         y = [0.1, 0.2]
     )
 
-    dm = DataModel(model_unused, df_unused_missing; primary_id = :ID, time_col = :t)
-    @test dm isa DataModel
+    # Declared but unused covariates are validated too: their missings otherwise only
+    # surfaced later, inside a distribution or the DE (#309.5, #315).
+    @test_throws "contains missing values" DataModel(
+        model_unused, df_unused_missing; primary_id = :ID, time_col = :t
+    )
 end
 
 @testset "DataModel allows partially missing observables on observation rows (regression)" begin

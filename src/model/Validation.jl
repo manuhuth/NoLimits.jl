@@ -11,9 +11,18 @@ const _NL_TIME_SYMBOLS = (:t, :ξ)
 
 # Symbols that resolve to an actual binding at formula-evaluation time (Base/Distributions/
 # NoLimits names, plus anything defined in the module where @Model was written).
+# Distributions re-exports SpecialFunctions, so `eta`, `beta`, `gamma`, `zeta` and
+# `digamma` -- common parameter names -- used to pass as defined (#312). A name the
+# user's own module resolves (e.g. via `using SpecialFunctions`) still counts.
+function _nl_resolvable_reexport(m::Module, s::Symbol)
+    isdefined(m, s) || return false
+    b = getfield(m, s)
+    return !(b isa Function && nameof(parentmodule(b)) === :SpecialFunctions)
+end
+
 function _nl_symbol_resolvable(s::Symbol, mod::Module)
-    return isdefined(Base, s) || isdefined(Distributions, s) ||
-        isdefined(@__MODULE__, s) || isdefined(mod, s)
+    return isdefined(Base, s) || _nl_resolvable_reexport(Distributions, s) ||
+        _nl_resolvable_reexport(@__MODULE__, s) || isdefined(mod, s)
 end
 
 # Names an expression binds locally: anonymous-function arguments, `do` arguments, and
@@ -137,6 +146,7 @@ end
 
 _nl_fun_out_dim(p) = nothing
 _nl_fun_out_dim(p::SoftTreeParameters) = p.n_output
+_nl_fun_out_dim(p::NNParameters) = p.chain isa FFNN ? p.chain.sizes[end] : nothing
 
 # Collect `f(arg, θ)` and `f(arg, θ)[k]` for model-function names `f`.
 function _nl_collect_fun_calls!(
@@ -184,9 +194,9 @@ function _nl_check_model_fun_calls(exprs, fixed)
                     length(arg.args) - 1 : nothing
                 )
             if got === nothing
-                # A bare scalar argument to a multi-input function is always wrong.
-                (arg isa Symbol || arg isa Number) && want_in > 1 &&
-                    error("$(fun) (parameter $(p.name)) expects a length-$(want_in) input vector; got the scalar `$(arg)`. Write $(fun)([a, b, ...], $(p.name)).")
+                # Only splines take a scalar; every other model function wants a vector.
+                (arg isa Symbol || arg isa Number) && !(p isa SplineParameters) &&
+                    error("$(fun) (parameter $(p.name)) expects a length-$(want_in) input vector; got the scalar `$(arg)`. Write $(fun)([$(want_in == 1 ? string(arg) : "a, b, ...")], $(p.name)).")
             elseif got != want_in
                 error("$(fun) (parameter $(p.name)) expects a length-$(want_in) input vector; got length $(got).")
             end
@@ -209,6 +219,17 @@ function _validate_model_symbols(
     _nl_check_reserved_names(fixed_names, "Fixed effects")
     _nl_check_reserved_names(re_names, "Random effects")
     # Covariates are exempt: `t = Covariate()` is how the time column is declared.
+
+    # A pre-DE output silently shadowed a same-named effect or covariate inside
+    # @DifferentialEquation and @initialDE (#312).
+    for (other, what) in (
+            (fixed_names, "fixed effect"), (re_names, "random effect"),
+            (const_cov_names, "constant covariate"),
+        )
+        clash = sort([s for s in prede_names if s in other])
+        isempty(clash) ||
+            error("@preDifferentialEquation output(s) $(join(string.(clash), ", ")) collide with the $(what)(s) of the same name and would shadow them inside @DifferentialEquation and @initialDE. Rename the pre-DE variable.")
+    end
 
     ir = get_formulas_ir(formulas)
     isempty(ir.obs_names) &&
@@ -258,6 +279,7 @@ function _validate_model_symbols(
         )
     )
     re_syms = get_re_syms(random)
+    re_dist_exprs = get_re_dist_exprs(random)
     for name in re_names
         bad = sort(
             [
@@ -268,6 +290,18 @@ function _validate_model_symbols(
         )
         isempty(bad) ||
             error("RandomEffect `$(name)` references undefined symbol(s) $(join(string.(bad), ", ")). They are not a fixed effect, constant covariate, helper or model function.")
+        heads = _macro_collect_call_symbols(
+            getproperty(re_dist_exprs, name), Set{Symbol}()
+        )
+        bad_calls = sort(
+            [
+                s
+                    for s in heads
+                    if !(s in re_known) && !_nl_symbol_resolvable(s, context_module)
+            ]
+        )
+        isempty(bad_calls) ||
+            error("RandomEffect `$(name)` calls undefined function(s) $(join(string.(bad_calls), ", ")): check for a typo or a missing package extension (e.g. `using Copulas`).")
     end
     return nothing
 end

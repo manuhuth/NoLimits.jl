@@ -346,6 +346,16 @@ function _validate_schema(model, df, config::DataModelConfig)
     nrow(df) == 0 &&
         error("DataModel received a DataFrame with 0 rows. At least one observation is required.")
 
+    # Every declared covariate needs its backing column: an absent one otherwise
+    # surfaces as a raw DataFrames error from whichever later `_get_col` hits it (#315).
+    for name in model.covariates.covariates.names
+        p = getfield(model.covariates.covariates.params, name)
+        for c in _covariate_data_columns(p)
+            hasproperty(df, c) ||
+                error("Covariate $(name) is declared as $(nameof(typeof(p))) with column $(c), but $(c) is not present in the DataFrame.")
+        end
+    end
+
     _check_missing(_get_col(df, config.time_col), config.time_col)
     _check_missing(_get_col(df, config.primary_id), config.primary_id)
     tcol = _get_col(df, config.time_col)
@@ -432,16 +442,8 @@ function _validate_schema(model, df, config::DataModelConfig)
         !isempty(missing_cols) &&
             error("Missing observation columns $(missing_cols) required by @formulas. Add them to the data.")
     end
-    _validate_formula_covariates_missing(model, df, config)
+    _validate_covariates_missing(model, df, config)
     return nothing
-end
-
-function _formula_used_covariates(model)
-    covariates = model.covariates.covariates
-    isempty(covariates.names) && return Symbol[]
-    ir = get_formulas_ir(model.formulas.formulas)
-    used = Set{Symbol}(vcat(ir.var_syms, ir.prop_syms))
-    return [name for name in covariates.names if name in used]
 end
 
 function _check_covariate_missing(
@@ -449,15 +451,16 @@ function _check_covariate_missing(
     )
     data = idx === nothing ? _get_col(df, col) : _get_col(df, col)[idx]
     if any(ismissing, data)
-        error("Covariate $(cov_name) uses column $(col) in @formulas, but $(col) contains missing values on $(scope). Remove/replace missings before constructing DataModel.")
+        error("Covariate $(cov_name) uses column $(col), but $(col) contains missing values on $(scope). Remove/replace missings before constructing DataModel.")
     end
     return nothing
 end
 
-function _validate_formula_covariates_missing(model, df, config::DataModelConfig)
-    used_covariates = _formula_used_covariates(model)
-    isempty(used_covariates) && return nothing
+# Missings are validated by declaration, not by formula usage: a covariate used only in
+# a RE distribution or the DE otherwise failed much later inside a distribution (#309.5).
+function _validate_covariates_missing(model, df, config::DataModelConfig)
     covariates = model.covariates.covariates
+    isempty(covariates.names) && return nothing
     params = covariates.params
     obs_idx = if config.evid_col === nothing
         nothing
@@ -466,7 +469,7 @@ function _validate_formula_covariates_missing(model, df, config::DataModelConfig
         findall(==(0), evid)
     end
     obs_scope = config.evid_col === nothing ? "all rows" : "observation rows"
-    for name in used_covariates
+    for name in covariates.names
         p = getfield(params, name)
         if p isa Covariate
             _check_covariate_missing(df, p.column, obs_idx, name, obs_scope)
@@ -1184,7 +1187,7 @@ end
 # `t0` is the individual's actual integration start (see the `tspan` construction in
 # `_data_model`): only events recorded exactly there are folded into u0 / the initial
 # infusion rates, every later event becomes a PresetTimeCallback at its own time.
-function _build_callbacks(model, df, rows, config::DataModelConfig, t0)
+function _build_callbacks(model, df, rows, config::DataModelConfig, t0, tend, id_val, truncated)
     config.evid_col === nothing && return nothing
     model.de.de === nothing && return nothing
     evid = _get_col(df, config.evid_col)[rows]
@@ -1262,6 +1265,7 @@ function _build_callbacks(model, df, rows, config::DataModelConfig, t0)
                     init_rate_starts[cmt_i] += rate_i
                     duration = abs(amt_i / rate_i)
                     stop_t = t + duration
+                    stop_t > tend && push!(truncated, (id_val, t, stop_t))
                     stop_delta = _get_or_init!(rate_delta_by_time, stop_t, n_states)
                     stop_delta[cmt_i] -= rate_i
                 end
@@ -1274,6 +1278,7 @@ function _build_callbacks(model, df, rows, config::DataModelConfig, t0)
                     start_delta = _get_or_init!(rate_delta_by_time, t, n_states)
                     start_delta[cmt_i] += rate_i
                     stop_t = t + duration
+                    stop_t > tend && push!(truncated, (id_val, t, stop_t))
                     stop_delta = _get_or_init!(rate_delta_by_time, stop_t, n_states)
                     stop_delta[cmt_i] -= rate_i
                 end
@@ -1610,6 +1615,8 @@ function DataModel(
         t0::Union{Nothing, Real} = 0.0,
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial()
     )
+    model isa Model ||
+        error("DataModel expects a Model built with @Model as its first argument; got $(typeof(model)). Check the argument order: DataModel(model, df; ...).")
     df = _as_dataframe(df)
     primary_id = _as_symbol(primary_id)
     time_col = _as_symbol(time_col)
@@ -1674,6 +1681,7 @@ function DataModel(
 
     bad_ids = Any[]
     bad_tmin = Dict{Any, Tuple{Float64, Float64}}()
+    truncated_infusions = Tuple{Any, Any, Any}[]
     for (i, rows) in enumerate(groups)
         tvals = _get_col(df, time_col)[rows]
         _validate_dynamic_covariates(cov, rows, tvals, keys_sorted[i])
@@ -1711,7 +1719,7 @@ function DataModel(
             end
             tspan = (oftype(tmin, start), tmax)
         end
-        callbacks = _build_callbacks(model, df, rows, config, tspan[1])
+        callbacks = _build_callbacks(model, df, rows, config, tspan[1], tspan[2], keys_sorted[i], truncated_infusions)
         if !isempty(de_dyn) && tspan[1] < minimum(tvals)
             error("Formulas request times earlier than the dynamic covariate support for individual $(keys_sorted[i]): the integration span starts at t=$(tspan[1]) (smallest formula time offset $(off_min)), but the dynamic covariate(s) $(join(de_dyn, ", ")) used in @DifferentialEquation are only supported on [$(minimum(tvals)), $(maximum(tvals))] and cannot be extrapolated. Add covariate rows covering t=$(tspan[1]), or change the formula offset (or t0) so that the integration starts at or after $(minimum(tvals)).")
         end
@@ -1726,6 +1734,11 @@ function DataModel(
         cb_times = callbacks !== nothing ? callbacks.all_times : Float64[]
         saveat = _build_saveat(df, rows, obs_rows, time_col, config, time_offsets, cb_times)
         individuals[i] = Individual(series, const_cov, callbacks, tspan, re_groups, saveat, tstops)
+    end
+
+    if !isempty(truncated_infusions)
+        details = join(["$(id): dose at t=$(t0i) stops at t=$(st)" for (id, t0i, st) in truncated_infusions], ", ")
+        @warn "Infusion stop time is after the end of the integration span, so the infusion is truncated and less than AMT is delivered ($(details)). Extend the observation times (or t0/formula offsets) past the infusion end if the full dose should be delivered."
     end
 
     if !isempty(bad_ids)

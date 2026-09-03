@@ -429,7 +429,7 @@ struct FitResult{M <: FittingMethod, R <: MethodResult, S, D, DM, A, K}
 end
 
 """
-    build_fit_result(dm, method, θ; kind=:frequentist, objective, converged=true, iterations=missing,
+    build_fit_result(dm, method, θ; kind=:frequentist, objective, converged=missing, iterations=missing,
                      eb_modes=nothing, eta_vec=nothing, strategies=nothing, solution=nothing,
                      raw=nothing, notes=NamedTuple(), optimizer=nothing,
                      convergence=NamedTuple(), timing=NamedTuple(),
@@ -450,6 +450,11 @@ either scale. `kind` selects the result routing:
     order) so `get_random_effects`, `get_loglikelihood`, and plotting resolve the random effects.
   - `:pooled` - plugged-in random effects supplied through `eta_vec`.
 
+`converged` defaults to `missing` rather than `true`: an estimator that never inspects its
+optimizer's return code must not claim convergence. Pass
+`converged = SciMLBase.successful_retcode(sol)` with the `sol` that
+[`optimize_parameters`](@ref) (or `Optimization.solve`) returned.
+
 Reusing `:frequentist_re` gives the widest random-effect accessor coverage. Note that `compute_uq`
 routes on the `method` *type*; to inherit Wald/profile intervals either pass a built-in `method`
 instance (e.g. `Laplace()`) or define the `uq_family` trait for your method type.
@@ -461,7 +466,7 @@ function build_fit_result(
         dm::DataModel, method::FittingMethod, θ::ComponentArray;
         kind::Symbol = :frequentist,
         objective::Real,
-        converged::Bool = true,
+        converged::Union{Bool, Nothing, Missing} = missing,
         iterations = missing,
         eb_modes = nothing,
         eta_vec = nothing,
@@ -537,10 +542,11 @@ Return the final objective value (e.g. negative log-likelihood for MLE).
 get_objective(res::FitResult) = res.summary.objective
 
 """
-    get_converged(res::FitResult) -> Bool or Nothing
+    get_converged(res::FitResult) -> Bool, Nothing or Missing
 
 Return the convergence flag. `true` indicates successful convergence, `false` indicates
-failure, and `nothing` is returned for methods that do not track convergence (e.g. MCMC).
+failure, `nothing` is returned for methods that do not track convergence (e.g. MCMC), and
+`missing` for a custom estimator that did not report one to [`build_fit_result`](@ref).
 """
 get_converged(res::FitResult) = res.summary.converged
 
@@ -1101,8 +1107,8 @@ end
 # Resolve the transformed free-parameter optimizer bounds shared by the fixed-effect
 # fit drivers (MLE/MAP/Pooled/GHQuadrature/Laplace/FOCEI and the SAEM/MCEM M-step).
 # Coerces user lb/ub (scalar / NamedTuple / ComponentArray / vector) onto the
-# free-name subset, falls back to the model hard bounds, and applies the
-# BlackBoxOptim finite-bounds + model-intersection + start-clamp rules.
+# free-name subset, falls back to the model hard bounds, applies the finite-bounds +
+# model-intersection rules of the optimizers that need a box, and clamps the start into it.
 # `ignore_model_bounds`/`allow_bbo`/`emit_info` are args (not read off the method)
 # because SAEM/MCEM have no `ignore_model_bounds` field, FOCEI has no BBO support,
 # and Pooled suppresses the warning after refit round 1. Returns
@@ -1173,23 +1179,45 @@ function resolve_optimizer_bounds(
     # Match by module name so OptimizationBBO stays out of this package's dependencies;
     # only a user who actually passes a BBO optimizer needs it installed.
     is_bbo = allow_bbo && nameof(parentmodule(typeof(optimizer))) === :OptimizationBBO
-    if is_bbo && !use_bounds
+    # IPNewton is barrier-only and throws inside Optim's private types without a box;
+    # ParticleSwarm (like BBO) samples particles uniformly inside the box, so an infinite
+    # edge yields all-NaN estimates with a finite objective and no warning (#311).
+    opt_label = is_bbo ? "BlackBoxOptim methods require" : "$(nameof(typeof(optimizer))) requires"
+    requires_bounds = is_bbo || optimizer isa OptimizationOptimJL.IPNewton
+    requires_finite = requires_bounds || optimizer isa OptimizationOptimJL.ParticleSwarm
+    if requires_bounds && !use_bounds
         error(
-            "BlackBoxOptim methods require finite bounds. Add lower/upper bounds in " *
+            "$(opt_label) finite bounds. Add lower/upper bounds in " *
                 "@fixedEffects (on transformed scale) or pass them via " *
                 "$(method_label)(lb=..., ub=...). A quick helper is " *
                 "default_bounds_from_start(dm; margin=...)."
         )
     end
-    if is_bbo && !(all(isfinite, lb) && all(isfinite, ub))
-        error("BlackBoxOptim methods require finite lower and upper bounds for all free parameters.")
+    if requires_finite && use_bounds && !(all(isfinite, lb) && all(isfinite, ub))
+        error("$(opt_label) finite lower and upper bounds for all free parameters.")
     end
-    if is_bbo
+    if requires_finite && use_bounds
         lb = map((u, m) -> isfinite(m) ? max(u, m) : u, collect(lb), lower_vec)
         ub = map((u, m) -> isfinite(m) ? min(u, m) : u, collect(ub), upper_vec)
-        θ0_init = clamp.(collect(θ0_free_t), lb, ub)
-    else
-        θ0_init = θ0_free_t
+    end
+    θ0_init = θ0_free_t
+    # Without this the optimizer reports the violation in preconditioned z-coordinates
+    # (`Initial x[(1,)]=0.0 is outside of [-1.2, -0.8]`), naming no number the user typed;
+    # the EM M-steps anchor z at the current iterate and hit the same message (#311).
+    if use_bounds
+        v = collect(θ0_init)
+        outside = findall(i -> !(lb[i] <= v[i] <= ub[i]), eachindex(v))
+        if !isempty(outside)
+            coord_names = try
+                _flat_names_for_free(fe, collect(free_names))
+            catch
+                Symbol[]
+            end
+            labels = length(coord_names) == length(v) ?
+                string.(coord_names[outside]) : string.("coordinate ", outside)
+            @warn "$(method_label): the start value of $(join(labels, ", ")) lies outside the bounds and was clamped into the box. Values are on the TRANSFORMED parameter scale." start = v[outside] lower = lb[outside] upper = ub[outside]
+            θ0_init = clamp.(v, lb, ub)
+        end
     end
     return lb, ub, use_bounds, θ0_init
 end
@@ -1530,6 +1558,50 @@ function _compute_mcmc_candidates(
     end
 end
 
+# Post-hoc EBE convergence diagnostic: max|∂ℓ/∂b| per batch at the stored modes. Shared by
+# the final EBE passes (SAEM/MCEM/`reestimate_ebes`) and the Laplace-family/GHQ finishes.
+function _ebe_grad_norms(
+        ebe_cache, dm::DataModel, batch_infos, θu::ComponentArray,
+        const_cache, ll_cache, active_set = nothing
+    )
+    ll_local = ll_cache isa AbstractVector ? ll_cache[1] : ll_cache
+    norms = Vector{Float64}(undef, length(batch_infos))
+    for (bi, info) in enumerate(batch_infos)
+        if get_n_b(info) == 0 || (active_set !== nothing && !(bi ∈ active_set))
+            norms[bi] = 0.0
+            continue
+        end
+        b = ebe_cache.bstar_cache.b_star[bi]
+        if isempty(b)
+            norms[bi] = Inf
+            continue
+        end
+        g, _ = _laplace_gradb_cached!(
+            ebe_cache, bi, dm, info, θu, const_cache, ll_local, b
+        )
+        gn = maximum(abs, g)
+        norms[bi] = isfinite(gn) ? Float64(gn) : Inf
+    end
+    return norms
+end
+
+# Warn (never error) when the modes a fit returns miss the EBE gradient tolerance. Skipped
+# for models without random effects and outside plain floating-point θ (never inside AD).
+function _warn_ebe_grad_tol(
+        ebe_cache, dm::DataModel, batch_infos, θu::ComponentArray,
+        const_cache, ll_cache, grad_tol; label::AbstractString = "Fit"
+    )
+    (eltype(θu) <: AbstractFloat && !isempty(batch_infos)) || return nothing
+    tol = Float64(grad_tol)
+    isfinite(tol) && tol > 0 || return nothing
+    norms = _ebe_grad_norms(ebe_cache, dm, batch_infos, θu, const_cache, ll_cache)
+    all(iszero, norms) && return nothing
+    if any(>(tol), norms)
+        @warn "$(label): the returned empirical Bayes estimates do not satisfy the EBE gradient tolerance for all batches; treat the marginal-likelihood approximation with care." max_grad = maximum(norms) grad_tol = tol
+    end
+    return nothing
+end
+
 function _compute_bstars(
         dm::DataModel,
         θu::ComponentArray,
@@ -1554,26 +1626,9 @@ function _compute_bstars(
         SciMLBase.EnsembleSerial()
     active_set = active_batch_indices === nothing ? nothing : Set(active_batch_indices)
 
-    function _batch_grad_norms()
-        norms = Vector{Float64}(undef, n_batches)
-        for (bi, info) in enumerate(batch_infos)
-            if get_n_b(info) == 0 || (active_set !== nothing && !(bi ∈ active_set))
-                norms[bi] = 0.0
-                continue
-            end
-            b = ebe_cache.bstar_cache.b_star[bi]
-            if isempty(b)
-                norms[bi] = Inf
-                continue
-            end
-            g, _ = _laplace_gradb_cached!(
-                ebe_cache, bi, dm, info, θu, const_cache, ll_cache_local, b
-            )
-            gn = maximum(abs, g)
-            norms[bi] = isfinite(gn) ? Float64(gn) : Inf
-        end
-        return norms
-    end
+    _batch_grad_norms() = _ebe_grad_norms(
+        ebe_cache, dm, batch_infos, θu, const_cache, ll_cache_local, active_set
+    )
 
     bstars = _laplace_get_bstar!(
         ebe_cache, dm, batch_infos, θu, const_cache, ll_cache;
@@ -3712,8 +3767,9 @@ function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_
         _is_numeric_error(err) || rethrow(err)
         if !Threads.atomic_cas!(_WARNED_NUMERIC_ERROR, false, true)
             @warn "A numeric error ($(nameof(typeof(err)))) was raised while evaluating " *
-                "the likelihood; treating this point as -Inf. Check the domains of " *
-                "`log`, `sqrt` and `^` in @formulas / @DifferentialEquation. " *
+                "the likelihood; treating this point as -Inf. The error was: " *
+                "$(_brief_error_message(err)). If this is a `log`/`sqrt`/`^` domain issue, " *
+                "check those domains in @formulas / @DifferentialEquation. " *
                 "Warned once per fit."
         end
         return -Inf

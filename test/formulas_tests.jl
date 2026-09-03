@@ -363,6 +363,23 @@ end
             end
         end
     )
+    # A deterministic node referencing a name defined later in the block (#314).
+    @test_throws ErrorException mk(
+        quote
+            @fixedEffects begin
+                a = RealNumber(1.0)
+                b = RealNumber(1.0)
+            end
+            @covariates begin
+                t = Covariate()
+            end
+            @formulas begin
+                mu = base + b
+                base = a
+                y ~ Normal(mu, 1.0)
+            end
+        end
+    )
     # `=` instead of `~` leaves the model without any observation.
     @test_throws ErrorException mk(
         quote

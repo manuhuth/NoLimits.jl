@@ -519,6 +519,13 @@ end
     # a + η = 1 - 2 < 0 -> log throws inside the formula
     bad = NoLimits.conditional_loglikelihood(dm, 1, θ, ComponentArray(η = -2.0))
     @test bad == -Inf
+
+    # The exception's own message must survive into the warning (#313); the type name
+    # alone plus generic log/sqrt advice hid what the model actually complained about.
+    NoLimits._WARNED_NUMERIC_ERROR[] = false
+    @test_logs (:warn, r"DomainError with -1\.0.*log was called with a negative real argument") match_mode = :any begin
+        NoLimits.conditional_loglikelihood(dm, 1, θ, ComponentArray(η = -2.0))
+    end
 end
 
 # The sibling of the above for the RE prior: `_loglikelihood_individual`'s guard does not cover

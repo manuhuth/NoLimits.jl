@@ -1035,7 +1035,8 @@ function _re_logpdf_batch(
         _is_numeric_error(err) || rethrow(err)
         if !Threads.atomic_cas!(_WARNED_NUMERIC_ERROR, false, true)
             @warn "A numeric error ($(nameof(typeof(err)))) was raised while evaluating " *
-                "the random-effect prior; treating this point as -Inf. Warned once per fit."
+                "the random-effect prior; treating this point as -Inf. The error was: " *
+                "$(_brief_error_message(err)). Warned once per fit."
         end
         return convert(promote_type(eltype(θ), eltype(b)), -Inf)
     end
@@ -2895,6 +2896,11 @@ function _fit_laplace_family(
     # and not a fit; the flat wall otherwise lets the optimizer report success (#247).
     infeasible_fit = wall_ref[] === nothing
     fitted = resolve_fitted_parameters(layout, _θt_from_z(sol.u))
+    # Post-hoc EBE diagnostic (#311): the whole approximation rests on these modes.
+    infeasible_fit || _warn_ebe_grad_tol(
+        ebe_cache, dm, batch_infos, fitted.untransformed, const_cache, ll_cache,
+        inner_opts.grad_tol; label = string(nameof(typeof(method)))
+    )
     (infeasible_fit || !isfinite(sol.objective)) &&
         _warn_nonfinite_fit(dm, fitted.untransformed, string(nameof(typeof(method))))
     summary = FitSummary(

@@ -272,6 +272,28 @@ const _PARAM_BLOCK_CTORS = (
     :SplineParameters, :NPFParameter,
 )
 
+# Last symbol of a call head (`f`, `Mod.f`, or a GlobalRef), or `nothing`.
+function _fe_call_head_symbol(fn)
+    fn isa Symbol && return fn
+    fn isa GlobalRef && return fn.name
+    if fn isa Expr && fn.head == :.
+        last = fn.args[end]
+        last isa QuoteNode && (last = last.value)
+        last isa Symbol && return last
+    end
+    return nothing
+end
+
+# A parameter block is a type, so its constructor is capitalized. Operators and ordinary
+# functions (`a = 1 + 2`) must not get a `name =` kwarg spliced in (#313); user-defined
+# blocks are allowed, hence the capitalization rule rather than the allowlist.
+function _fe_is_param_block_call(rhs::Expr)
+    sym = _fe_call_head_symbol(rhs.args[1])
+    sym === nothing && return false
+    sym in _PARAM_BLOCK_CTORS && return true
+    return isuppercase(first(string(sym)))
+end
+
 function _qualify_ctor_head(ex::Expr)
     head = ex.args[1]
     if head isa Symbol && head in _PARAM_BLOCK_CTORS
@@ -284,16 +306,22 @@ function _parse_fixed_effects(block::Expr)
     block.head == :block || error("@fixedEffects expects a begin ... end block.")
     names = Symbol[]
     exprs = Expr[]
+    ln = nothing
     for stmt in block.args
-        stmt isa LineNumberNode && continue
-        stmt isa Expr || error("Invalid statement in @fixedEffects block.")
-        stmt.head == :(=) || error("Only assignments are allowed in @fixedEffects block.")
+        if stmt isa LineNumberNode
+            ln = stmt
+            continue
+        end
+        stmt isa Expr || error("Invalid statement in @fixedEffects block." * _stmt_loc(ln, stmt))
+        stmt.head == :(=) || error("Only assignments are allowed in @fixedEffects block." * _stmt_loc(ln, stmt))
         lhs, rhs = stmt.args
-        lhs isa Symbol || error("Left-hand side must be a symbol in @fixedEffects block.")
+        lhs isa Symbol || error("Left-hand side must be a symbol in @fixedEffects block." * _stmt_loc(ln, stmt))
         lhs in names &&
-            error("Duplicate fixed effect $(lhs) in @fixedEffects block; parameter names must be unique.")
+            error("Duplicate fixed effect $(lhs) in @fixedEffects block; parameter names must be unique." * _stmt_loc(ln, stmt))
         rhs isa Expr && rhs.head == :call ||
-            error("Right-hand side must be a constructor call in @fixedEffects block.")
+            error("Right-hand side must be a constructor call in @fixedEffects block." * _stmt_loc(ln, stmt))
+        _fe_is_param_block_call(rhs) ||
+            error("Right-hand side of `$(lhs) = ...` in @fixedEffects must be a parameter-block constructor call such as RealNumber(...); got `$(rhs)`." * _stmt_loc(ln, stmt))
         push!(names, lhs)
         push!(exprs, _qualify_ctor_head(_with_name_kw(rhs, lhs)))
     end
@@ -750,6 +778,16 @@ function _flatten_by_specs(
             # Lower triangle only, column-major -- must match `_vech_lower`.
             for c in 1:spec.size[2]
                 for r in c:spec.size[1]
+                    push!(flat_names, Symbol(name, "_", r, "_", c))
+                end
+            end
+        elseif spec.kind == :expm
+            # Upper triangle, column by column -- must match `_upper_tri_vec` and the
+            # natural-scale `:expm` branch of `_coords_for_param`. `:lie` keeps linear
+            # indices: its coordinates are [log-eigenvalues; rotation coefficients],
+            # not matrix entries.
+            for c in 1:spec.size[2]
+                for r in 1:c
                     push!(flat_names, Symbol(name, "_", r, "_", c))
                 end
             end
