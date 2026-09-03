@@ -86,6 +86,43 @@ end
         end
     end
 
+    # Unknown DE symbols used to surface only on the first ODE solve (#314).
+    @test_throws ErrorException @eval @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @DifferentialEquation begin
+            D(x1) ~ -aa * x1
+        end
+        @initialDE begin
+            x1 = 1.0
+        end
+        @formulas begin
+            obs ~ Normal(x1(t), 1.0)
+        end
+    end
+
+    @test_throws ErrorException @eval @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @DifferentialEquation begin
+            D(x1) ~ -sqr(a) * x1
+        end
+        @initialDE begin
+            x1 = 1.0
+        end
+        @formulas begin
+            obs ~ Normal(x1(t), 1.0)
+        end
+    end
+
     @test_throws LoadError @eval @Model begin
         @fixedEffects begin
             a = RealNumber(1.0)

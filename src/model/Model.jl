@@ -148,6 +148,44 @@ function _validate_de_covariate_usage(de, covariates)
     return nothing
 end
 
+# The generated DE parameter compiler raises the same two errors, but only on the first
+# ODE solve (#314). The namespaces are known once @Model has assembled its blocks, so
+# mirror the checks (and the messages) here.
+function _validate_de_symbols(
+        de; fixed_names, re_names, prede_names, const_cov_names, dynamic_cov_names,
+        helper_names, model_fun_names
+    )
+    de === nothing && return nothing
+    meta = get_de_meta(de)
+    known_vars = Set{Symbol}(vcat(prede_names, re_names, fixed_names, const_cov_names))
+    for sym in sort(collect(meta.var_syms))
+        sym in known_vars ||
+            error("Unknown symbol $(sym) in DifferentialEquation.")
+    end
+    known_funs = Set{Symbol}(vcat(dynamic_cov_names, model_fun_names, helper_names))
+    for sym in sort(collect(meta.fun_syms))
+        sym in known_funs ||
+            error("Unknown function $(sym) in DifferentialEquation.")
+    end
+    return nothing
+end
+
+# Same messages as the per-individual runtime checks in `_ll_solve_de` /
+# `_crossing_threshold`, raised once at build time (#314).
+function _validate_crossings(formulas; state_names, fixed_names, prede_names)
+    crossings = get_formulas_crossings(formulas)
+    isempty(crossings) && return nothing
+    states = Set{Symbol}(state_names)
+    levels = Set{Symbol}(vcat(fixed_names, prede_names))
+    for spec in crossings
+        spec.state in states ||
+            error("crossing state `$(spec.state)` is not a DE state.")
+        spec.threshold in levels ||
+            error("crossing_time threshold `$(spec.threshold)` was not found among the fixed effects or preDifferentialEquation variables.")
+    end
+    return nothing
+end
+
 """
     FormulasBundle{F, A, O}
 
@@ -389,6 +427,13 @@ function _validate_solver_config(cfg::ODESolverConfig)
         error("Solver kwargs must be a NamedTuple such as (; abstol = 1e-8); got $(typeof(cfg.kwargs)).")
     cfg.args isa Tuple ||
         error("Solver args must be a Tuple; got $(typeof(cfg.args)).")
+    # A non-algorithm `alg` used to reach `solve` unchecked, and on the closed-form path
+    # was never exercised at all (#314).
+    if !(cfg.alg === nothing || cfg.alg isa SciMLBase.AbstractODEAlgorithm)
+        hint = cfg.alg isa Union{Symbol, AbstractString} ?
+            " Did you mean $(cfg.alg)()?" : ""
+        error("alg must be an OrdinaryDiffEq algorithm such as Tsit5(); got $(typeof(cfg.alg)).$(hint)")
+    end
     return nothing
 end
 
@@ -735,6 +780,22 @@ macro Model(block)
             state_names = $(state_names_var),
             signal_names = $(signal_names_var),
             context_module = $(__module__)
+        )
+        _validate_de_symbols(
+            $(de_var);
+            fixed_names = $(fixed_names_var),
+            re_names = $(random_names_var),
+            prede_names = $(prede_names_var),
+            const_cov_names = $(const_cov_names_var),
+            dynamic_cov_names = $(covariates_var).dynamic,
+            helper_names = $(helper_names_var),
+            model_fun_names = $(model_fun_names_var)
+        )
+        _validate_crossings(
+            $(formulas_var);
+            state_names = $(state_names_var),
+            fixed_names = $(fixed_names_var),
+            prede_names = $(prede_names_var)
         )
 
         local (

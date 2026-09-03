@@ -427,6 +427,26 @@ function _formulas_crossing_spec(name::Symbol, rhs)
     return (name, _sym(pos[1]), _sym(pos[2]), tmax, kind)
 end
 
+# Deterministic nodes are emitted in declaration order, so a node referencing a name
+# defined further down the block used to fail with a bare UndefVarError at the first
+# evaluation (#314). The shared symbol check cannot see this: its `known` set is
+# unordered.
+function _formulas_check_det_order(ir::FormulasIR, known_names)
+    known = Set{Symbol}(known_names)
+    det_set = Set{Symbol}(ir.det_names)
+    defined = Set{Symbol}()
+    for i in eachindex(ir.det_names)
+        syms = _nl_collect_free_syms!(Set{Symbol}(), ir.det_exprs[i])
+        forward = sort(
+            [s for s in syms if s in det_set && !(s in defined) && !(s in known)]
+        )
+        isempty(forward) ||
+            error("@formulas node `$(ir.det_names[i])` references $(join(string.(forward), ", ")), which is defined later in the same block. Move the definition above `$(ir.det_names[i])`.")
+        push!(defined, ir.det_names[i])
+    end
+    return nothing
+end
+
 function _formulas_build_formulas_expr(
         ir::FormulasIR,
         fixed_names::Vector{Symbol},
@@ -440,6 +460,13 @@ function _formulas_build_formulas_expr(
         signal_names::Vector{Symbol},
         index_sym::Symbol,
         collect_fixed_names::Vector{Symbol} = Symbol[]
+    )
+    _formulas_check_det_order(
+        ir,
+        vcat(
+            fixed_names, re_names, prede_names, const_cov_names, varying_cov_names,
+            helper_names, model_fun_names, state_names, signal_names
+        )
     )
     det_exprs = copy(ir.det_exprs)
     # crossing-time nodes are computed by the solver event callback and merged into

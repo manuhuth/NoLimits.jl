@@ -49,6 +49,15 @@ end
     @test_throws ErrorException build_unknown(
         ComponentArray(), ComponentArray(), NamedTuple(), NamedTuple(), NamedTuple()
     )
+
+    # Same for an unknown helper / model function (#314).
+    prede_unknown_fun = @preDifferentialEquation begin
+        v = sqr(1.0)
+    end
+    build_unknown_fun = get_prede_builder(prede_unknown_fun)
+    @test_throws ErrorException build_unknown_fun(
+        ComponentArray(), ComponentArray(), NamedTuple(), NamedTuple(), NamedTuple()
+    )
 end
 
 @testset "PreDifferentialEquation mutation warnings" begin

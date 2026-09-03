@@ -200,12 +200,18 @@ macro preDifferentialEquation(block)
             for sym in var_syms
     ]
 
+    # Same fall-through as the variable chain above (#314); a pre-DE variable holding a
+    # function can legitimately be the call head, so those names keep it.
+    _unknown_fun = sym -> sym in names ? :() :
+        :(error($("Unknown function $(sym) in preDifferentialEquation.")))
     binds_funs = [
         quote
                 if hasproperty(model_funs, $(QuoteNode(sym)))
                     $(sym) = getproperty(model_funs, $(QuoteNode(sym)))
             elseif hasproperty(helper_functions, $(QuoteNode(sym)))
                     $(sym) = getproperty(helper_functions, $(QuoteNode(sym)))
+            else
+                    $(_unknown_fun(sym))
             end
             end
             for sym in call_syms
