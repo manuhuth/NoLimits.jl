@@ -1184,7 +1184,7 @@ end
 # `t0` is the individual's actual integration start (see the `tspan` construction in
 # `_data_model`): only events recorded exactly there are folded into u0 / the initial
 # infusion rates, every later event becomes a PresetTimeCallback at its own time.
-function _build_callbacks(model, df, rows, config::DataModelConfig, t0)
+function _build_callbacks(model, df, rows, config::DataModelConfig, t0, tend, id_val, truncated)
     config.evid_col === nothing && return nothing
     model.de.de === nothing && return nothing
     evid = _get_col(df, config.evid_col)[rows]
@@ -1262,6 +1262,7 @@ function _build_callbacks(model, df, rows, config::DataModelConfig, t0)
                     init_rate_starts[cmt_i] += rate_i
                     duration = abs(amt_i / rate_i)
                     stop_t = t + duration
+                    stop_t > tend && push!(truncated, (id_val, t, stop_t))
                     stop_delta = _get_or_init!(rate_delta_by_time, stop_t, n_states)
                     stop_delta[cmt_i] -= rate_i
                 end
@@ -1274,6 +1275,7 @@ function _build_callbacks(model, df, rows, config::DataModelConfig, t0)
                     start_delta = _get_or_init!(rate_delta_by_time, t, n_states)
                     start_delta[cmt_i] += rate_i
                     stop_t = t + duration
+                    stop_t > tend && push!(truncated, (id_val, t, stop_t))
                     stop_delta = _get_or_init!(rate_delta_by_time, stop_t, n_states)
                     stop_delta[cmt_i] -= rate_i
                 end
@@ -1674,6 +1676,7 @@ function DataModel(
 
     bad_ids = Any[]
     bad_tmin = Dict{Any, Tuple{Float64, Float64}}()
+    truncated_infusions = Tuple{Any, Any, Any}[]
     for (i, rows) in enumerate(groups)
         tvals = _get_col(df, time_col)[rows]
         _validate_dynamic_covariates(cov, rows, tvals, keys_sorted[i])
@@ -1711,7 +1714,7 @@ function DataModel(
             end
             tspan = (oftype(tmin, start), tmax)
         end
-        callbacks = _build_callbacks(model, df, rows, config, tspan[1])
+        callbacks = _build_callbacks(model, df, rows, config, tspan[1], tspan[2], keys_sorted[i], truncated_infusions)
         if !isempty(de_dyn) && tspan[1] < minimum(tvals)
             error("Formulas request times earlier than the dynamic covariate support for individual $(keys_sorted[i]): the integration span starts at t=$(tspan[1]) (smallest formula time offset $(off_min)), but the dynamic covariate(s) $(join(de_dyn, ", ")) used in @DifferentialEquation are only supported on [$(minimum(tvals)), $(maximum(tvals))] and cannot be extrapolated. Add covariate rows covering t=$(tspan[1]), or change the formula offset (or t0) so that the integration starts at or after $(minimum(tvals)).")
         end
@@ -1726,6 +1729,11 @@ function DataModel(
         cb_times = callbacks !== nothing ? callbacks.all_times : Float64[]
         saveat = _build_saveat(df, rows, obs_rows, time_col, config, time_offsets, cb_times)
         individuals[i] = Individual(series, const_cov, callbacks, tspan, re_groups, saveat, tstops)
+    end
+
+    if !isempty(truncated_infusions)
+        details = join(["$(id): dose at t=$(t0i) stops at t=$(st)" for (id, t0i, st) in truncated_infusions], ", ")
+        @warn "Infusion stop time is after the end of the integration span, so the infusion is truncated and less than AMT is delivered ($(details)). Extend the observation times (or t0/formula offsets) past the infusion end if the full dose should be delivered."
     end
 
     if !isempty(bad_ids)

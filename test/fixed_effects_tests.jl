@@ -209,6 +209,13 @@ end
     @test length(θt_psd.Ω) == 3
     θrt_psd = get_inverse_transform(fe_psd)(θt_psd)
     @test isapprox(θrt_psd.Ω, get_θ0_untransformed(fe_psd).Ω; rtol = 1.0e-6, atol = 1.0e-8)
+    # `:expm` coordinates are the upper triangle column by column, and the flat names
+    # must say which entry each one is (#306).
+    fe_psd3 = @fixedEffects begin
+        Ω = RealPSDMatrix([1.2 0.1 0.0; 0.1 1.1 0.0; 0.0 0.0 1.3], scale = :expm)
+    end
+    @test get_flat_names(fe_psd3) ==
+        [:Ω_1_1, :Ω_1_2, :Ω_2_2, :Ω_1_3, :Ω_2_3, :Ω_3_3]
 end
 
 @testset "FixedEffects mixtures" begin

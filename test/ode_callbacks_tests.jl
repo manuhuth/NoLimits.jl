@@ -153,6 +153,15 @@ using OrdinaryDiffEq
         @test isfinite(ll_first)
         @test ll_first == ll_second
 
+        # An infusion whose stop time is past the end of the integration span is
+        # truncated there, so less than AMT is delivered (#308).
+        df_over = copy(df_evt)
+        df_over.AMT = [0.0, 2.0, 0.0]
+        @test_logs (:warn, r"truncat") match_mode = :any DataModel(
+            model, df_over; primary_id = :ID, time_col = :t,
+            evid_col = :EVID, amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT
+        )
+
         # A RATE opposing AMT would silently reverse the dose direction (#170).
         df_bad = copy(df_evt)
         df_bad.RATE = [0.0, -0.5, 0.0]

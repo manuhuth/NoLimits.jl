@@ -753,6 +753,16 @@ function _flatten_by_specs(
                     push!(flat_names, Symbol(name, "_", r, "_", c))
                 end
             end
+        elseif spec.kind == :expm
+            # Upper triangle, column by column -- must match `_upper_tri_vec` and the
+            # natural-scale `:expm` branch of `_coords_for_param`. `:lie` keeps linear
+            # indices: its coordinates are [log-eigenvalues; rotation coefficients],
+            # not matrix entries.
+            for c in 1:spec.size[2]
+                for r in 1:c
+                    push!(flat_names, Symbol(name, "_", r, "_", c))
+                end
+            end
         elseif val isa AbstractMatrix
             for r in 1:size(val, 1)
                 for c in 1:size(val, 2)
