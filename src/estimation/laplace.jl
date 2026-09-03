@@ -2210,7 +2210,7 @@ end
               multistart_grad_tol, multistart_max_rounds, multistart_sampling,
               jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale,
               use_trace_logdet_grad, use_hutchinson, hutchinson_n, theta_tol,
-              lb, ub, precondition) <: FittingMethod
+              lb, ub, precondition, update_schedule) <: FittingMethod
 
 Laplace approximation with Empirical Bayes Estimates (EBE) for random-effects models.
 The outer optimizer maximizes the Laplace-approximated marginal likelihood over the
@@ -2220,7 +2220,7 @@ random effects.
 # Keyword Arguments
 - `optimizer`: outer Optimization.jl optimizer. Defaults to
   `OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0))`, which uses
-  the analytic marginal gradient.
+  the analytic marginal gradient, or to `Optimisers.Adam()` when `update_schedule != :all`.
 
   **The `maxstep` cap is load-bearing, not decoration.** The gradient is exact, but its
   coordinates can span four orders of magnitude at a poorly scaled start - on `pheno_sd`, where
@@ -2283,8 +2283,9 @@ random effects.
   diagonal at 1 with a small off-diagonal). Set `false` to restore the raw behaviour.
   Note that with preconditioning on, the optimizer object behind [`get_raw`](@ref) works
   in `z`; the fitted parameters from [`get_params`](@ref) are on the usual scales.
+$(_UPDATE_SCHEDULE_DOC)
 """
-struct Laplace{O, K, A, IO, HO, CO, MS, L, U} <: FittingMethod
+struct Laplace{O, K, A, IO, HO, CO, MS, L, U, US} <: FittingMethod
     optimizer::O
     optim_kwargs::K
     adtype::A
@@ -2297,6 +2298,7 @@ struct Laplace{O, K, A, IO, HO, CO, MS, L, U} <: FittingMethod
     ignore_model_bounds::Bool
     precondition::Bool
     nan_recovery::Symbol   # :backtrack (default; NaN grad → non-finite objective), :fd (finite-difference gradient fallback), or :nan (propagate NaN to the optimizer)
+    update_schedule::US
 end
 
 # Invalid retry counts and jitter used to be accepted and deferred to the Hessian
@@ -2314,10 +2316,10 @@ function _validate_laplace_hessian_options(h)
     return nothing
 end
 
+_update_schedule(m::Laplace) = m.update_schedule
+
 function Laplace(;
-        optimizer = OptimizationOptimJL.LBFGS(
-            linesearch = LineSearches.BackTracking(maxstep = 1.0)
-        ),
+        optimizer = nothing,
         optim_kwargs = (; maxiters = 1000),
         adtype = Optimization.AutoForwardDiff(),
         inner_options = nothing,
@@ -2346,8 +2348,11 @@ function Laplace(;
         ub = nothing,
         ignore_model_bounds = false,
         precondition = true,
-        nan_recovery = :backtrack
+        nan_recovery = :backtrack,
+        update_schedule = :all
     )
+    update_schedule = _check_update_schedule(_as_symbol(update_schedule), "Laplace")
+    optimizer = _resolve_outer_optimizer(optimizer, update_schedule, "Laplace")
     inner = inner_options === nothing ?
         LaplaceInnerOptions(
             inner_optimizer, _as_namedtuple(inner_kwargs), inner_adtype, inner_grad_tol
@@ -2366,7 +2371,8 @@ function Laplace(;
         ) : multistart_options
     return Laplace(
         optimizer, _as_namedtuple(optim_kwargs), adtype, inner, hess, cache,
-        ms, lb, ub, ignore_model_bounds, precondition, _as_symbol(nan_recovery)
+        ms, lb, ub, ignore_model_bounds, precondition, _as_symbol(nan_recovery),
+        update_schedule
     )
 end
 
@@ -2458,10 +2464,12 @@ function _laplace_objective_and_grad(
         multistart::LaplaceMultistartOptions,
         rng::AbstractRNG,
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        hmode::_HessMode = _ExactHess()
+        hmode::_HessMode = _ExactHess(),
+        minibatch = nothing
     )
     inner_opts = _resolve_inner_options(inner, dm)
     multistart_opts = _resolve_multistart_options(multistart, inner_opts)
+    active = _minibatch_active(minibatch)
 
     bstars = _laplace_get_bstar!(
         ebe_cache, dm, batch_infos, θ, const_cache, ll_cache;
@@ -2472,7 +2480,8 @@ function _laplace_objective_and_grad(
         theta_tol = cache_opts.theta_tol,
         multistart = multistart_opts,
         rng = rng,
-        serialization = serialization
+        serialization = serialization,
+        active_batches = active
     )
 
     infT = convert(eltype(θ), Inf)
@@ -2492,6 +2501,7 @@ function _laplace_objective_and_grad(
             cache_c = caches[c]
             for bi in c:n_chunks:length(batch_infos)
                 bad[] && break
+                active !== nothing && !(bi in active) && continue
                 info = batch_infos[bi]
                 b = bstars[bi]
                 res = _laplace_grad_batch(
@@ -2518,14 +2528,19 @@ function _laplace_objective_and_grad(
         end
         bad[] && return (infT, ComponentArray(grad, axs), bstars)
         total = 0.0
-        @inbounds for bi in eachindex(batch_infos)
+        @inbounds for bi in (minibatch === nothing ? eachindex(batch_infos) : minibatch.selected)
             total += obj_by_batch[bi]
             @views grad .+= grad_by_batch[:, bi]
+        end
+        if minibatch !== nothing
+            total *= minibatch.scale
+            grad .*= minibatch.scale
         end
         return (-total, ComponentArray(-grad, axs), bstars)
     else
         total = 0.0
         for (bi, info) in enumerate(batch_infos)
+            active !== nothing && !(bi in active) && continue
             b = bstars[bi]
             res = _laplace_grad_batch(
                 dm, info, θ, b, const_cache, ll_cache, ebe_cache.ad_cache, bi;
@@ -2544,6 +2559,10 @@ function _laplace_objective_and_grad(
             total += res.logf + 0.5 * get_n_b(info) * log(2π) - 0.5 * res.logdet
             grad .+= res.grad
         end
+        if minibatch !== nothing
+            total *= minibatch.scale
+            grad .*= minibatch.scale
+        end
         return (-total, ComponentArray(-grad, axs), bstars)
     end
 end
@@ -2561,10 +2580,12 @@ function _laplace_objective_only(
         multistart::LaplaceMultistartOptions,
         rng::AbstractRNG,
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        hmode::_HessMode = _ExactHess()
+        hmode::_HessMode = _ExactHess(),
+        minibatch = nothing
     )
     inner_opts = _resolve_inner_options(inner, dm)
     multistart_opts = _resolve_multistart_options(multistart, inner_opts)
+    active = _minibatch_active(minibatch)
 
     bstars = _laplace_get_bstar!(
         ebe_cache, dm, batch_infos, θ, const_cache, ll_cache;
@@ -2575,7 +2596,8 @@ function _laplace_objective_only(
         theta_tol = cache_opts.theta_tol,
         multistart = multistart_opts,
         rng = rng,
-        serialization = serialization
+        serialization = serialization,
+        active_batches = active
     )
     infT = convert(eltype(θ), Inf)
     use_cache = false
@@ -2595,6 +2617,7 @@ function _laplace_objective_only(
             cache_c = caches[c]
             for bi in c:n_chunks:length(batch_infos)
                 bad[] && break
+                active !== nothing && !(bi in active) && continue
                 info = batch_infos[bi]
                 b = bstars[bi]
                 tctx = _objective_theta_ctx(dm, info, θ, const_cache, cache_c, b, hmode)
@@ -2620,7 +2643,7 @@ function _laplace_objective_only(
         end
         bad[] && return infT
         total = 0.0
-        @inbounds for bi in eachindex(batch_infos)
+        @inbounds for bi in (minibatch === nothing ? eachindex(batch_infos) : minibatch.selected)
             total += obj_by_batch[bi]
         end
     else
@@ -2630,6 +2653,7 @@ function _laplace_objective_only(
         ll_cache_use = ll_cache isa AbstractVector ? ll_cache[1] : ll_cache
         total = 0.0
         for (bi, info) in enumerate(batch_infos)
+            active !== nothing && !(bi in active) && continue
             b = bstars[bi]
             tctx = _objective_theta_ctx(dm, info, θ, const_cache, ll_cache_use, b, hmode)
             logf = _laplace_logf_batch(
@@ -2652,6 +2676,7 @@ function _laplace_objective_only(
             total += logf + 0.5 * get_n_b(info) * log(2π) - 0.5 * logdet
         end
     end
+    minibatch !== nothing && (total *= minibatch.scale)
     return -total
 end
 
@@ -2703,6 +2728,32 @@ function _fit_model(
     )
 end
 
+# Advancing the minibatch schedule must drop every θ-keyed memo: a batch skipped for a
+# few iterations still holds `last_b`/`last_logdet` from an older θ, and a bit-exact `b`
+# match would otherwise return that stale logdet.
+struct _LaplaceMinibatchInvalidate{C, E}
+    obj_cache::C
+    ebe_cache::E
+end
+
+# GHQuadrature has no outer objective cache and passes `nothing` here.
+_reset_obj_cache!(::Nothing) = nothing
+function _reset_obj_cache!(c)
+    c.θ = nothing
+    c.has_grad = false
+    return nothing
+end
+
+function (f::_LaplaceMinibatchInvalidate)()
+    _reset_obj_cache!(f.obj_cache)
+    f.ebe_cache.θ_cache = nothing
+    hc = f.ebe_cache.hess_cache
+    hc !== nothing && fill!(hc.last_valid, false)
+    gc = f.ebe_cache.grad_cache
+    gc.last_valid !== nothing && fill!(gc.last_valid, false)
+    return nothing
+end
+
 # Shared optimizer driver for the Laplace family: exact-Hessian Laplace and
 # FOCEI/FOCE run the same marginal-likelihood machinery and differ only in the
 # inner Hessian mode (`hmode`), the gradient NaN-recovery policy, BlackBoxOptim
@@ -2742,6 +2793,9 @@ function _fit_laplace_family(
     n_batches = length(batch_infos)
     Tθ = eltype(layout.θ0_free_t)
     ebe_cache = _init_laplace_eval_cache(n_batches, Tθ)
+    mb = _minibatch_state(_update_schedule(method), n_batches, rng)
+    # The ref lets the post-solve full-data evaluation switch mini-batching off.
+    mb_ref = Ref{Union{Nothing, typeof(mb)}}(mb)
 
     θ0_free_t = layout.θ0_free_t
     axs_free = layout.axs
@@ -2797,7 +2851,8 @@ function _fit_laplace_family(
             multistart = multistart_opts,
             rng = rng,
             serialization = serialization,
-            hmode = hmode
+            hmode = hmode,
+            minibatch = _minibatch_current!(mb_ref[])
         )
         !isfinite(obj) && return _infeasible(T)
         has_penalty && (obj += _penalty_value(θu, penalty))
@@ -2826,7 +2881,8 @@ function _fit_laplace_family(
             multistart = multistart_opts,
             rng = rng,
             serialization = serialization,
-            hmode = hmode
+            hmode = hmode,
+            minibatch = _minibatch_current!(mb_ref[])
         )
         !isfinite(obj) && return (infT, ComponentArray(zeros(T, length(θt_free)), axs_free))
         grad_u = grad_full
@@ -2888,9 +2944,26 @@ function _fit_laplace_family(
     z0 = _z_from_θt(θ0_init)
     lb_z = _z_from_θt(lb)
     ub_z = _z_from_θt(ub)
+    opt_use, use_bounds = _bounded_optimizer(method.optimizer, use_bounds, lb_z, ub_z)
     prob = use_bounds ? OptimizationProblem(optf, z0; lb = lb_z, ub = ub_z) :
         OptimizationProblem(optf, z0)
-    sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
+    invalidate! = _LaplaceMinibatchInvalidate(obj_cache, ebe_cache)
+    solve_kwargs = _minibatch_solve_kwargs(
+        method.optim_kwargs, opt_use, mb, invalidate!
+    )
+    sol = Optimization.solve(prob, opt_use; solve_kwargs...)
+
+    # Mini-batched objectives are per-minibatch; re-evaluate on all batches at the fitted
+    # θ (this also refreshes every batch's EB mode, which the diagnostics below use).
+    # The same evaluation runs when `wall_ref` is still empty: optimizers that only call
+    # the fused AD objective (Optimisers.jl rules) never evaluate it in Float64, which
+    # would otherwise look like an infeasible fit.
+    final_obj = sol.objective
+    if mb !== nothing || wall_ref[] === nothing
+        mb_ref[] = nothing
+        invalidate!()
+        final_obj = obj_only(sol.u, nothing)
+    end
 
     # No feasible point was ever reached, so `sol.objective` is the infeasibility wall
     # and not a fit; the flat wall otherwise lets the optimizer report success (#247).
@@ -2901,10 +2974,10 @@ function _fit_laplace_family(
         ebe_cache, dm, batch_infos, fitted.untransformed, const_cache, ll_cache,
         inner_opts.grad_tol; label = string(nameof(typeof(method)))
     )
-    (infeasible_fit || !isfinite(sol.objective)) &&
+    (infeasible_fit || !isfinite(final_obj)) &&
         _warn_nonfinite_fit(dm, fitted.untransformed, string(nameof(typeof(method))))
     summary = FitSummary(
-        sol.objective,
+        final_obj,
         !infeasible_fit && sol.retcode == SciMLBase.ReturnCode.Success,
         fitted,
         infeasible_fit ?
@@ -2920,7 +2993,7 @@ function _fit_laplace_family(
     # `sol.u` is the preconditioned offset z, not θ (provenance only — the fitted
     # parameters live in `summary`, and serialization keeps just this vector).
     result = FrequentistREResult(
-        sol, sol.objective, niter, raw, NamedTuple(), ebe_cache.bstar_cache.b_star
+        sol, final_obj, niter, raw, NamedTuple(), ebe_cache.bstar_cache.b_star
     )
     return FitResult(
         method, result, summary, diagnostics,

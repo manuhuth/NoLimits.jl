@@ -1388,7 +1388,7 @@ function mcem_e_step(
     use_mcmc = _use_mcmc_this_iter(iter, method.e_step)
     # Force a full refresh on iter 1 and on the MCMC-warmup -> IS switch (matches the fit).
     sched = st.prev_use_mcmc === use_mcmc ? method.update_schedule : :all
-    updated = copy(_em_batches!(st.batches_buf, sched, nb, iter, rng))
+    updated = copy(_schedule_batches!(st.batches_buf, sched, nb, iter, rng))
 
     if use_mcmc
         mcmc_es = _mcmc_e_step(method.e_step)

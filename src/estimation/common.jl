@@ -4341,6 +4341,22 @@ function loglikelihood(
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         cache = nothing
     )
+    return _loglikelihood_indices(
+        dm, θ, η, Base.OneTo(length(get_individuals(dm)));
+        ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = serialization, cache = cache
+    )
+end
+
+# Sum of the individual log-likelihoods over the GLOBAL individual indices in `sel`
+# (no scaling). `sel = 1:n` reproduces the full likelihood bit-for-bit.
+function _loglikelihood_indices(
+        dm::DataModel, θ::ComponentArray, η, sel::AbstractVector{<:Integer};
+        ode_args::Tuple = (),
+        ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
+        cache = nothing
+    )
     ode_kwargs = _as_namedtuple(ode_kwargs)
     # Fresh bindings throughout: `θ` and `η` are captured by the threaded closure
     # below, and reassigning a captured variable boxes it (`Core.Box`) — which made
@@ -4357,7 +4373,6 @@ function loglikelihood(
             dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
             serialization = serialization
         ) : cache
-    n = length(get_individuals(dm))
     η_eltype = ηs isa Vector ? (isempty(ηs) ? Float64 : eltype(first(ηs))) : eltype(ηs)
     T = promote_type(eltype(θs), η_eltype)
     if serialization isa SciMLBase.EnsembleThreads
@@ -4377,7 +4392,8 @@ function loglikelihood(
             )
             built isa Vector ? built : [built]
         end
-        by_individual = Vector{T}(undef, n)
+        m = length(sel)
+        by_individual = Vector{T}(undef, m)
         bad = Threads.Atomic{Bool}(false)
         # Chunk-indexed cache assignment: each task owns cache slot `c` for its whole
         # stride. Indexing by `Threads.threadid()` is unsafe under task migration
@@ -4386,21 +4402,22 @@ function loglikelihood(
         n_chunks = length(caches)
         Threads.@threads for c in 1:n_chunks
             cache_c = caches[c]
-            for i in c:n_chunks:n
+            for k in c:n_chunks:m
                 bad[] && break
+                i = sel[k]
                 η_ind = ηs isa Vector ? ηs[i] : ηs
                 lli = _loglikelihood_individual(dm, i, θs, η_ind, cache_c)
                 if !isfinite(lli)
                     bad[] = true
                 else
-                    by_individual[i] = lli
+                    by_individual[k] = lli
                 end
             end
         end
         bad[] && return -Inf
         ll = zero(T)
-        @inbounds for i in 1:n
-            ll += by_individual[i]
+        @inbounds for k in 1:m
+            ll += by_individual[k]
         end
         return ll
     else
@@ -4408,7 +4425,7 @@ function loglikelihood(
         # otherwise carry a loop-wide Union accumulator (the threaded branch
         # promotes the same way).
         ll = zero(T)
-        for i in 1:n
+        for i in sel
             η_ind = ηs isa Vector ? ηs[i] : ηs
             lli = _loglikelihood_individual(dm, i, θs, η_ind, cache_use)
             !isfinite(lli) && return -Inf

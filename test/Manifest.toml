@@ -114,9 +114,9 @@ version = "1.2.0"
 
 [[deps.AdvancedHMC]]
 deps = ["AbstractMCMC", "ArgCheck", "DocStringExtensions", "IrrationalConstants", "LinearAlgebra", "LogDensityProblems", "LogDensityProblemsAD", "LogExpFunctions", "ProgressMeter", "Random", "Setfield", "Statistics", "StatsBase"]
-git-tree-sha1 = "877f5aa8559585d13429008116827ce4c37483fc"
+git-tree-sha1 = "230bc5a3a9cd4e2ddb9c7cb1e00f330c88f04e03"
 uuid = "0bf59076-c3b1-5ca4-86bd-e02cd72cde3d"
-version = "0.8.6"
+version = "0.8.7"
 
     [deps.AdvancedHMC.extensions]
     AdvancedHMCADTypesExt = "ADTypes"
@@ -2519,7 +2519,7 @@ uuid = "ca575930-c2e3-43a9-ace4-1e988b2c1908"
 version = "1.3.0"
 
 [[deps.NoLimits]]
-deps = ["Bijectors", "ComponentArrays", "DataFrames", "DataInterpolations", "DiffEqBase", "DiffEqCallbacks", "Distributions", "Downloads", "ExponentialAction", "ForwardDiff", "FunctionChains", "Functors", "KernelDensity", "LineSearches", "LinearAlgebra", "Logging", "MCMCChains", "Optimisers", "Optimization", "OptimizationOptimJL", "OrdinaryDiffEq", "ProgressMeter", "Random", "Roots", "RuntimeGeneratedFunctions", "SciMLBase", "SciMLStructures", "SpecialFunctions", "StaticArrays", "Statistics", "StatsFuns", "Symbolics"]
+deps = ["Bijectors", "ComponentArrays", "DataFrames", "DataInterpolations", "DiffEqBase", "DiffEqCallbacks", "Distributions", "Downloads", "ExponentialAction", "ForwardDiff", "FunctionChains", "Functors", "KernelDensity", "LineSearches", "LinearAlgebra", "Logging", "MCMCChains", "Optimisers", "Optimization", "OptimizationOptimJL", "OptimizationOptimisers", "OrdinaryDiffEq", "ProgressMeter", "Random", "Roots", "RuntimeGeneratedFunctions", "SciMLBase", "SciMLStructures", "SpecialFunctions", "StaticArrays", "Statistics", "StatsFuns", "Symbolics"]
 path = ".."
 uuid = "1d491b74-35a5-408f-ae19-cf8524c3769d"
 version = "0.2.7"
