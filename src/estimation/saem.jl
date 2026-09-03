@@ -2986,11 +2986,14 @@ function _saem_builtin_mean_updates(
         transform,
         inv_transform;
         optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
+        adtype = Optimization.AutoForwardDiff(),
         optim_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         penalty::NamedTuple = NamedTuple(),
         extra_objective = nothing,
-        anneal_sds::NamedTuple = NamedTuple()
+        anneal_sds::NamedTuple = NamedTuple(),
+        user_lb = nothing,
+        user_ub = nothing
     )
     isempty(mean_params) && return NamedTuple()
     if get_de(get_model(dm)) === nothing
@@ -3034,9 +3037,13 @@ function _saem_builtin_mean_updates(
         return obj
     end
 
-    optf = OptimizationFunction(obj_only, Optimization.AutoForwardDiff())
-    θ0_init = collect(θt_mean)
-    prob = OptimizationProblem(optf, θ0_init)
+    optf = OptimizationFunction(obj_only, adtype)
+    lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
+        get_fixed(get_model(dm)), mean_names, collect(θt_mean), optimizer,
+        user_lb, user_ub, NamedTuple(); allow_bbo = false, method_label = "SAEM"
+    )
+    prob = use_bounds ? OptimizationProblem(optf, collect(θ0_init); lb = lb, ub = ub) :
+        OptimizationProblem(optf, collect(θ0_init))
     sol = Optimization.solve(prob, optimizer; optim_kwargs...)
     θt_mean_hat = sol.u isa ComponentArray ? sol.u : ComponentArray(sol.u, axs_mean)
 
@@ -3604,10 +3611,12 @@ function _fit_model(
                     dm, batch_infos, b_current,
                     ComponentArray(θu_curr, getaxes(θu_curr)), const_cache,
                     mean_params, cache, sample_store, transform, inv_transform;
-                    optimizer = method.optimizer, optim_kwargs = method.optim_kwargs,
+                    optimizer = method.optimizer, adtype = method.adtype,
+                    optim_kwargs = method.optim_kwargs,
                     serialization = serialization, penalty = penalty,
                     extra_objective = extra_objective,
-                    anneal_sds = anneal_sds
+                    anneal_sds = anneal_sds,
+                    user_lb = method.lb, user_ub = method.ub
                 )
                 if !isempty(mean_updates)
                     iter_constants = merge(iter_constants, mean_updates)
@@ -3700,8 +3709,8 @@ function _fit_model(
                     return -Q2val
                 end
                 lb_q2, ub_q2, use_bounds_q2, θ0_q2 = _resolve_optim_bounds(
-                    fe, q2_free_now, collect(θt_q2), method.optimizer, nothing,
-                    nothing, NamedTuple(); allow_bbo = false
+                    fe, q2_free_now, collect(θt_q2), method.optimizer, method.lb,
+                    method.ub, NamedTuple(); allow_bbo = false, method_label = "SAEM"
                 )
                 optf_q2 = OptimizationFunction(obj_q2, method.adtype)
                 z0_q2 = _z_from_q2(θ0_q2)

@@ -1101,8 +1101,8 @@ end
 # Resolve the transformed free-parameter optimizer bounds shared by the fixed-effect
 # fit drivers (MLE/MAP/Pooled/GHQuadrature/Laplace/FOCEI and the SAEM/MCEM M-step).
 # Coerces user lb/ub (scalar / NamedTuple / ComponentArray / vector) onto the
-# free-name subset, falls back to the model hard bounds, and applies the
-# BlackBoxOptim finite-bounds + model-intersection + start-clamp rules.
+# free-name subset, falls back to the model hard bounds, applies the finite-bounds +
+# model-intersection rules of the optimizers that need a box, and clamps the start into it.
 # `ignore_model_bounds`/`allow_bbo`/`emit_info` are args (not read off the method)
 # because SAEM/MCEM have no `ignore_model_bounds` field, FOCEI has no BBO support,
 # and Pooled suppresses the warning after refit round 1. Returns
@@ -1173,23 +1173,45 @@ function resolve_optimizer_bounds(
     # Match by module name so OptimizationBBO stays out of this package's dependencies;
     # only a user who actually passes a BBO optimizer needs it installed.
     is_bbo = allow_bbo && nameof(parentmodule(typeof(optimizer))) === :OptimizationBBO
-    if is_bbo && !use_bounds
+    # IPNewton is barrier-only and throws inside Optim's private types without a box;
+    # ParticleSwarm (like BBO) samples particles uniformly inside the box, so an infinite
+    # edge yields all-NaN estimates with a finite objective and no warning (#311).
+    opt_label = is_bbo ? "BlackBoxOptim methods require" : "$(nameof(typeof(optimizer))) requires"
+    requires_bounds = is_bbo || optimizer isa OptimizationOptimJL.IPNewton
+    requires_finite = requires_bounds || optimizer isa OptimizationOptimJL.ParticleSwarm
+    if requires_bounds && !use_bounds
         error(
-            "BlackBoxOptim methods require finite bounds. Add lower/upper bounds in " *
+            "$(opt_label) finite bounds. Add lower/upper bounds in " *
                 "@fixedEffects (on transformed scale) or pass them via " *
                 "$(method_label)(lb=..., ub=...). A quick helper is " *
                 "default_bounds_from_start(dm; margin=...)."
         )
     end
-    if is_bbo && !(all(isfinite, lb) && all(isfinite, ub))
-        error("BlackBoxOptim methods require finite lower and upper bounds for all free parameters.")
+    if requires_finite && use_bounds && !(all(isfinite, lb) && all(isfinite, ub))
+        error("$(opt_label) finite lower and upper bounds for all free parameters.")
     end
-    if is_bbo
+    if requires_finite && use_bounds
         lb = map((u, m) -> isfinite(m) ? max(u, m) : u, collect(lb), lower_vec)
         ub = map((u, m) -> isfinite(m) ? min(u, m) : u, collect(ub), upper_vec)
-        θ0_init = clamp.(collect(θ0_free_t), lb, ub)
-    else
-        θ0_init = θ0_free_t
+    end
+    θ0_init = θ0_free_t
+    # Without this the optimizer reports the violation in preconditioned z-coordinates
+    # (`Initial x[(1,)]=0.0 is outside of [-1.2, -0.8]`), naming no number the user typed;
+    # the EM M-steps anchor z at the current iterate and hit the same message (#311).
+    if use_bounds
+        v = collect(θ0_init)
+        outside = findall(i -> !(lb[i] <= v[i] <= ub[i]), eachindex(v))
+        if !isempty(outside)
+            coord_names = try
+                _flat_names_for_free(fe, collect(free_names))
+            catch
+                Symbol[]
+            end
+            labels = length(coord_names) == length(v) ?
+                string.(coord_names[outside]) : string.("coordinate ", outside)
+            @warn "$(method_label): the start value of $(join(labels, ", ")) lies outside the bounds and was clamped into the box. Values are on the TRANSFORMED parameter scale." start = v[outside] lower = lb[outside] upper = ub[outside]
+            θ0_init = clamp.(v, lb, ub)
+        end
     end
     return lb, ub, use_bounds, θ0_init
 end

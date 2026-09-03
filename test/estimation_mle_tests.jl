@@ -582,6 +582,25 @@ end
         dm; theta_untransformed = ComponentArray(a = NaN, s = 0.3)
     )
 
+    # #311: ParticleSwarm samples particles uniformly inside the box (an infinite edge
+    # gives all-NaN estimates with a finite objective) and IPNewton is barrier-only, so
+    # both are rejected instead of silently returning junk or throwing from inside Optim.
+    @test_throws ErrorException fit(
+        NoLimits.MLE(
+            optimizer = Optim.ParticleSwarm(), optim_kwargs = (; maxiters = 5),
+            lb = [-2.0, -2.0], ub = [Inf, Inf]
+        )
+    )
+    @test_throws ErrorException fit(
+        NoLimits.MLE(optimizer = Optim.IPNewton(), optim_kwargs = K)
+    )
+    # #311: a start outside the box used to surface as `Initial x[(1,)]=0.0 is outside of
+    # [...]` in preconditioned z-coordinates, naming no number the user typed.
+    @test_logs (:warn, r"clamped into the box") match_mode = :any fit(
+        NoLimits.MLE(optim_kwargs = K, lb = [-1.0, -1.0], ub = [1.0, 1.0]);
+        theta_0_untransformed = (a = 5.0, s = 0.5)
+    )
+
     @test fit(NoLimits.MLE(optim_kwargs = K, lb = [-5.0, -5.0], ub = [5.0, 5.0])) isa
         FitResult
     @test fit(NoLimits.MLE(optim_kwargs = K); penalty = (a = 10.0,)) isa FitResult
