@@ -503,16 +503,18 @@ function _formulas_build_formulas_expr(
     const_cov_set = Set(const_cov_names)
     varying_cov_set = Set(varying_cov_names)
 
-    for sym in var_syms
-        in_fixed = sym in fixed_set
-        in_re = sym in re_set
-        in_pre = sym in prede_set
-        in_const = sym in const_cov_set
-        in_var = sym in varying_cov_set
-        count = (in_fixed ? 1 : 0) + (in_re ? 1 : 0) + (in_pre ? 1 : 0) +
-            (in_const ? 1 : 0) + (in_var ? 1 : 0)
-        count > 1 &&
-            error("Symbol $(sym) is ambiguous in @formulas (appears in multiple namespaces).")
+    # Every namespace a bare name resolves from. Outcome, deterministic-node, helper,
+    # model-function, state and signal names used to be omitted, so an outcome sharing
+    # a name with a fixed effect silently used the fixed effect (#312).
+    let namespaces = (
+            fixed_set, re_set, prede_set, const_cov_set, varying_cov_set,
+            Set(helper_names), Set(model_fun_names), Set(state_names),
+            Set(signal_names), Set(ir.det_names), Set(ir.obs_names),
+        )
+        for sym in union(namespaces...)
+            Base.count(ns -> sym in ns, namespaces) > 1 &&
+                error("Symbol $(sym) is ambiguous in @formulas (appears in multiple namespaces).")
+        end
     end
 
     fixed_used = [s for s in fixed_names if s in var_syms]
