@@ -219,6 +219,11 @@ end
     @test z_stats.n == 4
     @test z_stats.mean ≈ 2.5 atol = 1.0e-12
 
+    # A subject-constant covariate is summarized once per individual, not per row (#309.7).
+    x_stats = only(filter(row -> row.name == Symbol("x.x"), s.covariate_stats)).stats
+    @test x_stats.n == 2
+    @test x_stats.mean ≈ 15.0 atol = 1.0e-12
+
     re_id = only(filter(r -> r.name == :η_id, s.random_effect_summaries))
     @test re_id.group == :ID
     @test re_id.n_levels == 2

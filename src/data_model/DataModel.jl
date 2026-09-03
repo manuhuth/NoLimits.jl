@@ -346,6 +346,16 @@ function _validate_schema(model, df, config::DataModelConfig)
     nrow(df) == 0 &&
         error("DataModel received a DataFrame with 0 rows. At least one observation is required.")
 
+    # Every declared covariate needs its backing column: an absent one otherwise
+    # surfaces as a raw DataFrames error from whichever later `_get_col` hits it (#315).
+    for name in model.covariates.covariates.names
+        p = getfield(model.covariates.covariates.params, name)
+        for c in _covariate_data_columns(p)
+            hasproperty(df, c) ||
+                error("Covariate $(name) is declared as $(nameof(typeof(p))) with column $(c), but $(c) is not present in the DataFrame.")
+        end
+    end
+
     _check_missing(_get_col(df, config.time_col), config.time_col)
     _check_missing(_get_col(df, config.primary_id), config.primary_id)
     tcol = _get_col(df, config.time_col)
@@ -432,16 +442,8 @@ function _validate_schema(model, df, config::DataModelConfig)
         !isempty(missing_cols) &&
             error("Missing observation columns $(missing_cols) required by @formulas. Add them to the data.")
     end
-    _validate_formula_covariates_missing(model, df, config)
+    _validate_covariates_missing(model, df, config)
     return nothing
-end
-
-function _formula_used_covariates(model)
-    covariates = model.covariates.covariates
-    isempty(covariates.names) && return Symbol[]
-    ir = get_formulas_ir(model.formulas.formulas)
-    used = Set{Symbol}(vcat(ir.var_syms, ir.prop_syms))
-    return [name for name in covariates.names if name in used]
 end
 
 function _check_covariate_missing(
@@ -449,15 +451,16 @@ function _check_covariate_missing(
     )
     data = idx === nothing ? _get_col(df, col) : _get_col(df, col)[idx]
     if any(ismissing, data)
-        error("Covariate $(cov_name) uses column $(col) in @formulas, but $(col) contains missing values on $(scope). Remove/replace missings before constructing DataModel.")
+        error("Covariate $(cov_name) uses column $(col), but $(col) contains missing values on $(scope). Remove/replace missings before constructing DataModel.")
     end
     return nothing
 end
 
-function _validate_formula_covariates_missing(model, df, config::DataModelConfig)
-    used_covariates = _formula_used_covariates(model)
-    isempty(used_covariates) && return nothing
+# Missings are validated by declaration, not by formula usage: a covariate used only in
+# a RE distribution or the DE otherwise failed much later inside a distribution (#309.5).
+function _validate_covariates_missing(model, df, config::DataModelConfig)
     covariates = model.covariates.covariates
+    isempty(covariates.names) && return nothing
     params = covariates.params
     obs_idx = if config.evid_col === nothing
         nothing
@@ -466,7 +469,7 @@ function _validate_formula_covariates_missing(model, df, config::DataModelConfig
         findall(==(0), evid)
     end
     obs_scope = config.evid_col === nothing ? "all rows" : "observation rows"
-    for name in used_covariates
+    for name in covariates.names
         p = getfield(params, name)
         if p isa Covariate
             _check_covariate_missing(df, p.column, obs_idx, name, obs_scope)
@@ -1612,6 +1615,8 @@ function DataModel(
         t0::Union{Nothing, Real} = 0.0,
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial()
     )
+    model isa Model ||
+        error("DataModel expects a Model built with @Model as its first argument; got $(typeof(model)). Check the argument order: DataModel(model, df; ...).")
     df = _as_dataframe(df)
     primary_id = _as_symbol(primary_id)
     time_col = _as_symbol(time_col)
