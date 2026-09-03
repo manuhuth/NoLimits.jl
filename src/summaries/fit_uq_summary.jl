@@ -992,6 +992,7 @@ function Base.show(io::IO, ::MIME"text/plain", s::FitResultSummary)
             "inference" => s.inference,
             "scale" => s.scale,
             "objective" => _fq_fmt_objective(s.objective),
+            "converged" => s.converged === nothing ? "not tracked" : s.converged,
             "iterations" => s.iterations,
             "parameters shown (reported / total)" => "$(s.n_parameters_reported) / $(s.n_parameters_total)",
         ]

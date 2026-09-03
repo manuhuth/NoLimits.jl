@@ -566,6 +566,12 @@ function _fit_model_scalar(
         serialization = serialization
     )
 
+    # Post-hoc EBE diagnostic (#311), same check as the Laplace family.
+    _warn_ebe_grad_tol(
+        ebe_cache, dm, batch_infos, θ_hat_u, const_cache, ll_cache,
+        inner_opts.grad_tol; label = string(nameof(typeof(method)))
+    )
+
     # ── Build result ─────────────────────────────────────────────────────────
     isfinite(sol.objective) ||
         _warn_nonfinite_fit(dm, θ_hat_u, string(nameof(typeof(method))))

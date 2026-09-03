@@ -429,7 +429,7 @@ struct FitResult{M <: FittingMethod, R <: MethodResult, S, D, DM, A, K}
 end
 
 """
-    build_fit_result(dm, method, θ; kind=:frequentist, objective, converged=true, iterations=missing,
+    build_fit_result(dm, method, θ; kind=:frequentist, objective, converged=missing, iterations=missing,
                      eb_modes=nothing, eta_vec=nothing, strategies=nothing, solution=nothing,
                      raw=nothing, notes=NamedTuple(), optimizer=nothing,
                      convergence=NamedTuple(), timing=NamedTuple(),
@@ -450,6 +450,11 @@ either scale. `kind` selects the result routing:
     order) so `get_random_effects`, `get_loglikelihood`, and plotting resolve the random effects.
   - `:pooled` - plugged-in random effects supplied through `eta_vec`.
 
+`converged` defaults to `missing` rather than `true`: an estimator that never inspects its
+optimizer's return code must not claim convergence. Pass
+`converged = SciMLBase.successful_retcode(sol)` with the `sol` that
+[`optimize_parameters`](@ref) (or `Optimization.solve`) returned.
+
 Reusing `:frequentist_re` gives the widest random-effect accessor coverage. Note that `compute_uq`
 routes on the `method` *type*; to inherit Wald/profile intervals either pass a built-in `method`
 instance (e.g. `Laplace()`) or define the `uq_family` trait for your method type.
@@ -461,7 +466,7 @@ function build_fit_result(
         dm::DataModel, method::FittingMethod, θ::ComponentArray;
         kind::Symbol = :frequentist,
         objective::Real,
-        converged::Bool = true,
+        converged::Union{Bool, Nothing, Missing} = missing,
         iterations = missing,
         eb_modes = nothing,
         eta_vec = nothing,
@@ -537,10 +542,11 @@ Return the final objective value (e.g. negative log-likelihood for MLE).
 get_objective(res::FitResult) = res.summary.objective
 
 """
-    get_converged(res::FitResult) -> Bool or Nothing
+    get_converged(res::FitResult) -> Bool, Nothing or Missing
 
 Return the convergence flag. `true` indicates successful convergence, `false` indicates
-failure, and `nothing` is returned for methods that do not track convergence (e.g. MCMC).
+failure, `nothing` is returned for methods that do not track convergence (e.g. MCMC), and
+`missing` for a custom estimator that did not report one to [`build_fit_result`](@ref).
 """
 get_converged(res::FitResult) = res.summary.converged
 
@@ -1552,6 +1558,50 @@ function _compute_mcmc_candidates(
     end
 end
 
+# Post-hoc EBE convergence diagnostic: max|∂ℓ/∂b| per batch at the stored modes. Shared by
+# the final EBE passes (SAEM/MCEM/`reestimate_ebes`) and the Laplace-family/GHQ finishes.
+function _ebe_grad_norms(
+        ebe_cache, dm::DataModel, batch_infos, θu::ComponentArray,
+        const_cache, ll_cache, active_set = nothing
+    )
+    ll_local = ll_cache isa AbstractVector ? ll_cache[1] : ll_cache
+    norms = Vector{Float64}(undef, length(batch_infos))
+    for (bi, info) in enumerate(batch_infos)
+        if get_n_b(info) == 0 || (active_set !== nothing && !(bi ∈ active_set))
+            norms[bi] = 0.0
+            continue
+        end
+        b = ebe_cache.bstar_cache.b_star[bi]
+        if isempty(b)
+            norms[bi] = Inf
+            continue
+        end
+        g, _ = _laplace_gradb_cached!(
+            ebe_cache, bi, dm, info, θu, const_cache, ll_local, b
+        )
+        gn = maximum(abs, g)
+        norms[bi] = isfinite(gn) ? Float64(gn) : Inf
+    end
+    return norms
+end
+
+# Warn (never error) when the modes a fit returns miss the EBE gradient tolerance. Skipped
+# for models without random effects and outside plain floating-point θ (never inside AD).
+function _warn_ebe_grad_tol(
+        ebe_cache, dm::DataModel, batch_infos, θu::ComponentArray,
+        const_cache, ll_cache, grad_tol; label::AbstractString = "Fit"
+    )
+    (eltype(θu) <: AbstractFloat && !isempty(batch_infos)) || return nothing
+    tol = Float64(grad_tol)
+    isfinite(tol) && tol > 0 || return nothing
+    norms = _ebe_grad_norms(ebe_cache, dm, batch_infos, θu, const_cache, ll_cache)
+    all(iszero, norms) && return nothing
+    if any(>(tol), norms)
+        @warn "$(label): the returned empirical Bayes estimates do not satisfy the EBE gradient tolerance for all batches; treat the marginal-likelihood approximation with care." max_grad = maximum(norms) grad_tol = tol
+    end
+    return nothing
+end
+
 function _compute_bstars(
         dm::DataModel,
         θu::ComponentArray,
@@ -1576,26 +1626,9 @@ function _compute_bstars(
         SciMLBase.EnsembleSerial()
     active_set = active_batch_indices === nothing ? nothing : Set(active_batch_indices)
 
-    function _batch_grad_norms()
-        norms = Vector{Float64}(undef, n_batches)
-        for (bi, info) in enumerate(batch_infos)
-            if get_n_b(info) == 0 || (active_set !== nothing && !(bi ∈ active_set))
-                norms[bi] = 0.0
-                continue
-            end
-            b = ebe_cache.bstar_cache.b_star[bi]
-            if isempty(b)
-                norms[bi] = Inf
-                continue
-            end
-            g, _ = _laplace_gradb_cached!(
-                ebe_cache, bi, dm, info, θu, const_cache, ll_cache_local, b
-            )
-            gn = maximum(abs, g)
-            norms[bi] = isfinite(gn) ? Float64(gn) : Inf
-        end
-        return norms
-    end
+    _batch_grad_norms() = _ebe_grad_norms(
+        ebe_cache, dm, batch_infos, θu, const_cache, ll_cache_local, active_set
+    )
 
     bstars = _laplace_get_bstar!(
         ebe_cache, dm, batch_infos, θu, const_cache, ll_cache;

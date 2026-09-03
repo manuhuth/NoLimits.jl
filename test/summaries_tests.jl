@@ -296,6 +296,8 @@ end
     txt_fit = sprint(show, MIME"text/plain"(), s_fit)
     @test occursin("FitResultSummary", txt_fit)
     @test occursin("Outcome data coverage", txt_fit)
+    # #311: the rich report shows the stored convergence flag, not just the terse show
+    @test occursin("converged", txt_fit)
 
     s_fit_all = summarize(res; include_non_se = true)
     @test s_fit_all.n_parameters_reported == 3
