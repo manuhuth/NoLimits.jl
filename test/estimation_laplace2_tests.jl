@@ -966,3 +966,51 @@ end
     @test obj < 1.0e9
     @test NoLimits.get_summary(res).notes == NamedTuple()
 end
+
+# Optimization.jl builds a fused AD `fg!` from the objective whenever the
+# `OptimizationFunction` carries no `fg`, silently ignoring the analytic `grad`; the fit
+# then partly follows AD through the inner EBE solves and depends on `adtype`. With `fg`
+# supplied, `NoAD()` - which cannot produce a gradient at all - must give the identical
+# fit, because only the analytic gradient is ever used.
+@testset "Laplace uses the analytic gradient (fg)" begin
+    ads = (Optimization.AutoForwardDiff(), SciMLBase.NoAD())
+    for ctor in (NoLimits.Laplace, NoLimits.FOCEI)
+        f1, f2 = map(ads) do ad
+            fit_model(
+                fx_re_dm(), ctor(adtype = ad, optim_kwargs = (; maxiters = 6));
+                serialization = SciMLBase.EnsembleSerial()
+            )
+        end
+        @test NoLimits.get_params(f1; scale = :transformed) ==
+            NoLimits.get_params(f2; scale = :transformed)
+        @test NoLimits.get_objective(f1) == NoLimits.get_objective(f2)
+    end
+end
+
+# Issue #322: the optimizer's last objective evaluation need not be at `sol.u`, so the
+# returned EB modes must be refreshed at the fitted θ, not left at a line-search trial.
+@testset "returned EB modes are the modes at the fitted θ (#322)" begin
+    dm = fx_re_dm()
+    _, batch_infos, const_cache = NoLimits._build_re_batch_infos(dm, NamedTuple())
+    ll_cache = NoLimits.build_ll_cache(
+        dm; serialization = SciMLBase.EnsembleSerial(), force_saveat = true
+    )
+    for maxiters in (1, 2, 3, 4)
+        method = NoLimits.Laplace(; optim_kwargs = (; maxiters))
+        res = fit_model(dm, method; serialization = SciMLBase.EnsembleSerial())
+        @test isfinite(NoLimits.get_objective(res))
+        θu = NoLimits.get_params(res; scale = :untransformed)
+        cache = NoLimits._init_laplace_eval_cache(length(batch_infos), Float64)
+        for (bi, b) in enumerate(res.result.eb_modes)
+            cache.bstar_cache.b_star[bi] = b
+            cache.bstar_cache.has_bstar[bi] = true
+        end
+        norms = NoLimits._ebe_grad_norms(
+            cache, dm, batch_infos, θu, const_cache, ll_cache
+        )
+        @test maximum(norms) < 1.0e-10
+        res2 = fit_model(dm, method; serialization = SciMLBase.EnsembleSerial())
+        @test NoLimits.get_params(res2; scale = :transformed) ==
+            NoLimits.get_params(res; scale = :transformed)
+    end
+end
