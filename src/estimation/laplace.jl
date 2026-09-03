@@ -2934,6 +2934,16 @@ function _fit_laplace_family(
         grad = (G, z, p) -> begin
             # chain rule for θt = θt0 + s .* z
             G .= s_pc .* obj_grad(z, p)[2]
+        end,
+        # Without `fg`, Optimization.jl builds a fused AD `fg!` by differentiating
+        # `obj_only` and ignores `grad` (Optim's line search and every Optimisers rule
+        # call it), so the analytic marginal gradient would go unused.
+        fg = (G, z, p) -> begin
+            obj, g = obj_grad(z, p)
+            G .= s_pc .* g
+            # `obj_grad` reports infeasibility as `Inf`; return the same finite wall as
+            # `obj_only` so the line search backtracks instead of giving up.
+            return isfinite(obj) ? obj : _infeasible(typeof(obj))
         end
     )
     lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(

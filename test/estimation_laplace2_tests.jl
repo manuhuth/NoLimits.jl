@@ -966,3 +966,23 @@ end
     @test obj < 1.0e9
     @test NoLimits.get_summary(res).notes == NamedTuple()
 end
+
+# Optimization.jl builds a fused AD `fg!` from the objective whenever the
+# `OptimizationFunction` carries no `fg`, silently ignoring the analytic `grad`; the fit
+# then partly follows AD through the inner EBE solves and depends on `adtype`. With `fg`
+# supplied, `NoAD()` - which cannot produce a gradient at all - must give the identical
+# fit, because only the analytic gradient is ever used.
+@testset "Laplace uses the analytic gradient (fg)" begin
+    ads = (Optimization.AutoForwardDiff(), SciMLBase.NoAD())
+    for ctor in (NoLimits.Laplace, NoLimits.FOCEI)
+        f1, f2 = map(ads) do ad
+            fit_model(
+                fx_re_dm(), ctor(adtype = ad, optim_kwargs = (; maxiters = 6));
+                serialization = SciMLBase.EnsembleSerial()
+            )
+        end
+        @test NoLimits.get_params(f1; scale = :transformed) ==
+            NoLimits.get_params(f2; scale = :transformed)
+        @test NoLimits.get_objective(f1) == NoLimits.get_objective(f2)
+    end
+end
