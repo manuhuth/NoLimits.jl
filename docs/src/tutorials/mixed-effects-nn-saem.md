@@ -1,6 +1,6 @@
-# Mixed-Effects Tutorial 3: Neural Differential-Equation Components (SAEM)
+# Neural Differential Equations (SAEM)
 
-Often we know a dynamical system's structure — compartments and transfer pathways — but not the exact rate laws. Neural ODEs close that gap by embedding small neural networks inside the ODE right-hand side, letting the data shape the unknown functional forms while the compartmental structure stays interpretable. This tutorial builds a two-compartment Neural ODE for the Theophylline data and fits it with Stochastic Approximation Expectation-Maximization (SAEM), with subject-level random effects on the network weights so each individual gets a personalized version of the dynamics.
+Often we know a dynamical system's structure - compartments and transfer pathways - but not the exact rate laws. Neural ODEs close that gap by embedding small neural networks inside the ODE right-hand side, letting the data shape the unknown functional forms while the compartmental structure stays interpretable. This tutorial builds a two-compartment Neural ODE for the Theophylline data and fits it with Stochastic Approximation Expectation-Maximization (SAEM), with subject-level random effects on the network weights so each individual gets a personalized version of the dynamics.
 
 ## Learning Goals
 
@@ -14,7 +14,7 @@ Often we know a dynamical system's structure — compartments and transfer pathw
 
 ## Step 1: Data Setup
 
-We use the Theophylline dataset (12 subjects, concentration over time) in a flat format where the dose `d` enters as a constant covariate — a two-compartment transfer system (depot → central → cleared).
+We use the Theophylline dataset (12 subjects, concentration over time) in a flat format where the dose `d` enters as a constant covariate - a two-compartment transfer system (depot → central → cleared).
 
 ```julia
 using NoLimits
@@ -234,7 +234,7 @@ Helper functions
 
 ## Step 3: Build the `DataModel` and Configure SAEM
 
-After building the `DataModel`, we fit with default SAEM (`NoLimits.SAEM()`): an adaptive-Metropolis E-step samples the random effects, a stochastic-approximation (Robbins-Monro) M-step updates the population parameters (see [SAEM](../estimation/saem.md)). No tuning is needed despite the high random-effect dimension — four network-weight vectors per subject.
+After building the `DataModel`, we fit with default SAEM (`NoLimits.SAEM()`): an adaptive-Metropolis E-step samples the random effects, a stochastic-approximation (Robbins-Monro) M-step updates the population parameters (see [SAEM](../estimation/saem.md)). No tuning is needed despite the high random-effect dimension - four network-weight vectors per subject.
 
 ```julia
 dm = DataModel(model, df; primary_id=:ID, time_col=:t)
@@ -458,3 +458,9 @@ p_obs_saem
 - **Hybrid mechanistic-neural ODE.** The compartments encode known structure (mass conservation, transfer); the networks fill in the unknown rate functions. This applies wherever the topology is known but the governing laws are not.
 - **Default SAEM suffices** even at high random-effect dimension. For finer control, SAEM also exposes closed-form Gaussian block updates via `builtin_stats=:closed_form` with the `re_mean_params` mapping.
 - **Settings are modest for speed.** For production, widen the networks, raise `maxiters` and sample counts, and tighten the ODE solver tolerances.
+
+## Where to go next
+
+- [Soft-Tree Differential Equations (SAEM)](mixed-effects-softtree-saem.md) - the next tutorial.
+- [All tutorials](index.md) - the full list, tagged by outcome, model, and estimator.
+- [Troubleshooting](../troubleshooting.md) - when a fit fails or does not converge.

@@ -26,7 +26,7 @@ The plotting functions fall into a handful of diagnostic groups:
 - **Random-effects diagnostics:** `plot_random_effects_pdf`, `plot_random_effect_distributions`, `plot_random_effect_pit`, `plot_random_effect_standardized`, `plot_random_effect_standardized_scatter`, `plot_random_effect_pairplot`, and `plot_random_effects_scatter`.
 - **Uncertainty quantification:** `plot_uq_distributions` (parameter uncertainty from a `UQResult`).
 
-See the [Plotting and Diagnostics](../api.md#Plotting-and-Diagnostics) section of the API reference for the full list of functions and their arguments.
+See the [Plotting and Diagnostics](../api/plotting.md) section of the API reference for the full list of functions and their arguments.
 
 ## Executable setup
 
@@ -175,7 +175,7 @@ p_compare
 
 Beyond comparing objective values, it is informative to examine how fixed-effect estimates vary across top-ranked multistart runs. `plot_multistart_fixed_effect_variability` displays this variation as z-scores in a single panel, providing a concise summary of parameter stability across optimization restarts.
 
-By default it plots blocks with `calculate_se=true` on the natural scale (`scale=:untransformed`) using `mode=:points` (all values from the top-`k_best` runs); `mode=:quantiles` shows quantile summaries instead, and `include_parameters`/`exclude_parameters` select specific blocks by name. See the [Plotting and Diagnostics](../api.md#Plotting-and-Diagnostics) API reference for the full argument list.
+By default it plots blocks with `calculate_se=true` on the natural scale (`scale=:untransformed`) using `mode=:points` (all values from the top-`k_best` runs); `mode=:quantiles` shows quantile summaries instead, and `include_parameters`/`exclude_parameters` select specific blocks by name. See the [Plotting and Diagnostics](../api/plotting.md) API reference for the full argument list.
 
 ```@example plotting_overview
 p_ms_var_points = plot_multistart_fixed_effect_variability(
@@ -254,3 +254,9 @@ uq = compute_uq(res; method=:wald, n_draws=80, rng=Random.Xoshiro(7))
 p_uq = plot_uq_distributions(uq; scale=:natural, plot_type=:density)
 p_uq
 ```
+
+## Where to go next
+
+- [Plotting and Diagnostics API](../api/plotting.md) - every argument of every plot function.
+- [Uncertainty Quantification](../uncertainty-quantification/index.md) - the plots that visualize UQ results.
+- [Multi-Method Comparison](../tutorials/mixed-effects-multiple-methods.md) - these plots in a full analysis.

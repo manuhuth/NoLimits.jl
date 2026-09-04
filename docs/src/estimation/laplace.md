@@ -53,7 +53,37 @@ res = fit_model(dm, NoLimits.Laplace(; optim_kwargs=(maxiters=100,)))
 
 ## Constructor Options
 
-The `Laplace` constructor exposes options that control the outer fixed-effects optimization, the inner EB optimization, Hessian stabilization, and the computational strategy for log-determinant gradients. Most users will only need to adjust a few of these; the defaults are chosen to work well across a range of model types. The values in the example below are illustrative overrides, not the shipped defaults - see *Repository-verified behavior* further down for those.
+The `Laplace` constructor exposes options that control the outer fixed-effects optimization, the inner EB optimization, Hessian stabilization, and the computational strategy for log-determinant gradients. Most users only ever touch `optim_kwargs` and, on hard problems, the Hessian-stabilization group. The shipped defaults are:
+
+| Keyword | Default | What it controls |
+| --- | --- | --- |
+| `optimizer` | `LBFGS(linesearch = BackTracking(maxstep = 1.0))` | outer optimizer over fixed effects |
+| `optim_kwargs` | `(; maxiters = 1000)` | outer optimizer settings |
+| `adtype` | `AutoForwardDiff()` | AD backend for the outer gradient |
+| `inner_optimizer` | `LBFGS(linesearch = BackTracking(maxstep = 1.0))` | optimizer for the per-batch EB modes |
+| `inner_kwargs` | `NamedTuple()` | inner optimizer settings |
+| `inner_adtype` | `AutoForwardDiff()` | AD backend for the inner problem |
+| `inner_grad_tol` | `:auto` | inner gradient tolerance (`1e-8` non-ODE, `1e-2` ODE) |
+| `multistart_n` | `50` | EB starting points drawn per batch |
+| `multistart_k` | `10` | EB starting points actually optimized |
+| `multistart_grad_tol` | `inner_grad_tol` | tolerance for accepting an EB restart |
+| `multistart_max_rounds` | `1` | EB restart rounds |
+| `multistart_sampling` | `:lhs` | how EB starting points are drawn |
+| `jitter` | `1e-6` | initial diagonal jitter on `-H` |
+| `max_tries` | `6` | jitter retries before giving up |
+| `jitter_growth` | `10.0` | factor by which jitter grows per retry |
+| `adaptive_jitter` | `true` | scale the jitter to the matrix |
+| `jitter_scale` | `1e-6` | reference scale for adaptive jitter |
+| `use_trace_logdet_grad` | `true` | trace-based log-determinant gradient path |
+| `use_hutchinson` | `false` | stochastic Hutchinson estimator instead |
+| `hutchinson_n` | `8` | Hutchinson probe vectors |
+| `theta_tol` | `0.0` | cache reuse tolerance across nearby θ |
+| `lb` / `ub` | `nothing` | bounds on transformed fixed effects |
+| `ignore_model_bounds` | `false` | disable model-declared bounds |
+| `precondition` | `true` | precondition the outer problem |
+| `nan_recovery` | `:backtrack` | what to do when the outer gradient is `NaN` |
+
+The example below overrides many of them at once purely to show the syntax; it is not a recommended configuration.
 
 ```julia
 using Optimization
@@ -98,7 +128,7 @@ Notes:
 - `lb`/`ub` are bounds on transformed fixed-effect parameters.
 - `ignore_model_bounds=false` by default; set `true` to disable the model-declared parameter bounds during optimization.
 
-See the [`Laplace`](@ref) entry in the API reference for the full list of keyword arguments and their defaults.
+See the [`Laplace`](@ref) entry in the API reference for the full signature.
 
 ### Option Groups
 
@@ -288,3 +318,10 @@ lb, ub = default_bounds_from_start(dm; margin=1.0)
 ```
 
 These bounds are then passed directly to the `Laplace` constructor via `lb` and `ub`.
+
+## Where to go next
+
+- [Choosing a method](index.md#Choosing-a-Method) - how this compares with the alternatives.
+- [FOCEI](focei.md) - the next method.
+- [Uncertainty Quantification](../uncertainty-quantification/index.md) - standard errors and intervals for a fit.
+- [Troubleshooting](../troubleshooting.md) - when a fit fails or does not converge.

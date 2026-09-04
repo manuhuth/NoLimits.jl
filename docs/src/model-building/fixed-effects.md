@@ -29,7 +29,7 @@ For standard-error eligibility, `RealNumber` and `RealVector` default to `calcul
 
 ## Supported Parameter Types
 
-NoLimits provides parameter types for scalars, vectors, structured matrices, and learned function approximators. Each type controls how values are stored, transformed during optimization, and optionally regularized via priors. The overview below lists the purpose and value kind of each type; see the [Parameter Types](../api.md#Parameter-Types) section of the API reference for full constructor signatures, keyword arguments, and defaults.
+NoLimits provides parameter types for scalars, vectors, structured matrices, and learned function approximators. Each type controls how values are stored, transformed during optimization, and optionally regularized via priors. The overview below lists the purpose and value kind of each type; see the [Parameter Types](../api/model-building.md#Parameter-Types) section of the API reference for full constructor signatures, keyword arguments, and defaults.
 
 | Type | Purpose | Value kind |
 |---|---|---|
@@ -260,3 +260,10 @@ model_t = @Model begin
     end
 end
 ```
+
+## Where to go next
+
+- [@covariates](covariates.md) - the next block in a model definition.
+- [Model Building overview](index.md) - how the blocks fit together.
+- [Model Building API](../api/model-building.md) - full constructor signatures.
+- [Quickstart](../quickstart.md) - the whole workflow end to end.

@@ -149,3 +149,10 @@ Note that `FOCEI` builds its Fisher-information surrogate from a fixed list of o
 - [`@randomEffects`](random-effects.md) for the general random-effect declaration syntax.
 - [`@formulas`](formulas.md) for outcome distributions, including third-party distributions in general.
 - [Installation](../installation.md) for the full list of optional dependencies.
+
+## Where to go next
+
+- [@preDifferentialEquation](pre-differential-equation.md) - the next block in a model definition.
+- [Model Building overview](index.md) - how the blocks fit together.
+- [Model Building API](../api/model-building.md) - full constructor signatures.
+- [Quickstart](../quickstart.md) - the whole workflow end to end.

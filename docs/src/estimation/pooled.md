@@ -194,3 +194,10 @@ failing pre-fit warns and falls back to the unmodified start.
 
 Wald confidence intervals for the free (non-frozen) parameters are available through
 [`compute_uq`](@ref); see [Uncertainty Quantification](../uncertainty-quantification/index.md).
+
+## Where to go next
+
+- [Choosing a method](index.md#Choosing-a-Method) - how this compares with the alternatives.
+- [Multistart](multistart.md) - the next method.
+- [Uncertainty Quantification](../uncertainty-quantification/index.md) - standard errors and intervals for a fit.
+- [Troubleshooting](../troubleshooting.md) - when a fit fails or does not converge.

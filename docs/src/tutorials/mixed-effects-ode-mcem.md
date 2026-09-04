@@ -1,6 +1,6 @@
-# Mixed-Effects Tutorial 2: ODE Model with Input Events (MCEM)
+# ODE Model with Dosing (MCEM)
 
-Many longitudinal systems follow ODE dynamics driven by discrete input events — a bolus injection, a nutrient pulse, a stimulus onset. This tutorial builds a two-compartment ODE model (`depot` → `center` → elimination) for the Theophylline concentration-time data, with subject-level random effects on the transfer rate `ka`, elimination rate `cl`, and volume `v`, and fits it with Monte Carlo Expectation-Maximization (MCEM) — well suited to models where random effects enter nonlinearly. The same workflow applies to any compartmental system with discrete inputs, from tracer kinetics to bioprocess engineering.
+Many longitudinal systems follow ODE dynamics driven by discrete input events - a bolus injection, a nutrient pulse, a stimulus onset. This tutorial builds a two-compartment ODE model (`depot` → `center` → elimination) for the Theophylline concentration-time data, with subject-level random effects on the transfer rate `ka`, elimination rate `cl`, and volume `v`, and fits it with Monte Carlo Expectation-Maximization (MCEM) - well suited to models where random effects enter nonlinearly. The same workflow applies to any compartmental system with discrete inputs, from tracer kinetics to bioprocess engineering.
 
 ## What You Will Learn
 
@@ -93,13 +93,13 @@ first(df, 12)
 
 ## Step 2: Define the ODE Mixed-Effects Model
 
-Each subject has three positive parameters — transfer rate `ka`, elimination rate `cl`, volume `v` — written as exponentials of a population fixed effect plus a subject deviation:
+Each subject has three positive parameters - transfer rate `ka`, elimination rate `cl`, volume `v` - written as exponentials of a population fixed effect plus a subject deviation:
 
 - `ka = exp(tka + eta[1])`
 - `cl = exp(tcl + eta[2])`
 - `v = exp(tv + eta[3])`
 
-The deviations `eta` follow a multivariate normal with diagonal covariance (`omega1`, `omega2`, `omega3`), and observations are Normal around the central-compartment concentration with residual SD `sigma_eps`. Because `eta` enters through the exponential, the model is nonlinear in the random effects — the setting MCEM handles well. `set_solver_config` then selects `Tsit5()` (a non-stiff explicit Runge-Kutta) with the tolerances below.
+The deviations `eta` follow a multivariate normal with diagonal covariance (`omega1`, `omega2`, `omega3`), and observations are Normal around the central-compartment concentration with residual SD `sigma_eps`. Because `eta` enters through the exponential, the model is nonlinear in the random effects - the setting MCEM handles well. `set_solver_config` then selects `Tsit5()` (a non-stiff explicit Runge-Kutta) with the tolerances below.
 
 ```julia
 using NoLimits
@@ -162,7 +162,7 @@ model = set_solver_config(
 
 ### Model Summary
 
-`summarize` confirms the parsed blocks — fixed effects, random effects, covariates, ODE states, and formulas:
+`summarize` confirms the parsed blocks - fixed effects, random effects, covariates, ODE states, and formulas:
 
 ```julia
 model_summary = NoLimits.summarize(model)
@@ -252,7 +252,7 @@ dm = DataModel(
 
 ### DataModel Summary
 
-The summary reports individuals, observation counts, and event structure — a useful checkpoint before an expensive fit:
+The summary reports individuals, observation counts, and event structure - a useful checkpoint before an expensive fit:
 
 ```julia
 dm_summary = NoLimits.summarize(dm)
@@ -329,7 +329,7 @@ Per-random-effect summary
 
 ## Step 4: Configure MCEM
 
-MCEM alternates an E-step (sample random effects from their conditional posterior) with an M-step (maximize the expected complete-data log-likelihood); growing the E-step sample count across iterations sharpens the approximation as it converges (see [MCEM](../estimation/mcem.md)). The settings below keep runtime short — production runs would raise `maxiters`, the `sample_schedule` ceiling, and the per-E-step sample count. Here `sample_schedule` grows from 60 by 20 per iteration up to 260, and `EnsembleThreads()` solves the ODE across individuals in parallel.
+MCEM alternates an E-step (sample random effects from their conditional posterior) with an M-step (maximize the expected complete-data log-likelihood); growing the E-step sample count across iterations sharpens the approximation as it converges (see [MCEM](../estimation/mcem.md)). The settings below keep runtime short - production runs would raise `maxiters`, the `sample_schedule` ceiling, and the per-E-step sample count. Here `sample_schedule` grows from 60 by 20 per iteration up to 260, and `EnsembleThreads()` solves the ODE across individuals in parallel.
 
 ```julia
 mcem_method = NoLimits.MCEM(;
@@ -345,7 +345,7 @@ serialization = SciMLBase.EnsembleThreads()
 
 ## Step 5: Fit the Model and Inspect Core Outputs
 
-Running the fit performs the full MCEM loop. The final objective is the marginal log-likelihood approximation at convergence — useful for monitoring, but model adequacy is best judged by the predictive diagnostics below.
+Running the fit performs the full MCEM loop. The final objective is the marginal log-likelihood approximation at convergence - useful for monitoring, but model adequacy is best judged by the predictive diagnostics below.
 
 ```julia
 res_mcem = fit_model(
@@ -548,5 +548,11 @@ Empirical Bayes random effects summary (across RE levels)
 
 ## Practical Guidance
 
-- **Objective is an optimization diagnostic, not a quality score.** Judge model adequacy through predictive checks: `plot_fits` for overall shape, `plot_observation_distributions` for local calibration — discrepancies in each point to different misspecifications.
+- **Objective is an optimization diagnostic, not a quality score.** Judge model adequacy through predictive checks: `plot_fits` for overall shape, `plot_observation_distributions` for local calibration - discrepancies in each point to different misspecifications.
 - **Scale up before changing structure.** If the fit looks unstable or the objective hasn't plateaued, first raise `maxiters` and the sample-schedule ceiling; MCEM converges slowly when Monte Carlo noise dominates the gradient.
+
+## Where to go next
+
+- [Count Outcomes: Poisson & NegativeBinomial (MCEM)](mixed-effects-seizure-counts-poisson-nb-mcem.md) - the next tutorial.
+- [All tutorials](index.md) - the full list, tagged by outcome, model, and estimator.
+- [Troubleshooting](../troubleshooting.md) - when a fit fails or does not converge.

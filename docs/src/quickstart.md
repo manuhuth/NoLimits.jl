@@ -79,9 +79,55 @@ Results are read through accessor functions rather than field access.
 ```julia
 get_params(res; scale=:untransformed)   # population parameter estimates
 get_objective(res)                      # objective value at the optimum
-get_converged(res)                      # convergence flag
+get_converged(res)                      # optimizer stopping flag
 get_random_effects(res)                 # empirical Bayes estimates per subject
 ```
+
+```
+ComponentVector{Float64}(A0 = 10.287307571175845, k = 0.4906846606420441, omega = 0.16169743770538822, sigma = 0.11738571003728736)
+```
+
+`NoLimits.summarize(res)` collects all of it into one table:
+
+```julia
+NoLimits.summarize(res)
+```
+
+```
+FitResultSummary
+════════════════════════════════════════════════════════════════════════════════════════════════
+Overview
+  method                              : laplace
+  inference                           : frequentist
+  scale                               : natural
+  objective                           : -0.1041
+  iterations                          : 24
+  parameters shown (reported / total) : 4 / 4
+
+Parameter estimates
+  parameter      Estimate
+  -----------------------
+  A0              10.2873
+  k                0.4907
+  omega            0.1617
+  sigma            0.1174
+
+Outcome data coverage
+  outcome       n_obs   n_missing          unit
+  ---------------------------------------------
+  y                16           0           row
+  TOTAL            16           0
+
+Empirical Bayes random effects summary (across RE levels)
+  random effect       n          mean            sd           q25        median           q75
+  ---------------------------------------------------------------------------
+  eta                 4        0.0001        0.1614       -0.0754        0.0192        0.0947
+```
+
+`A0` and `k` recover the shape of the data: a population baseline just above 10 decaying at
+roughly 0.49 per time unit, with a between-subject SD of 0.16 on the log scale. Note that
+`get_converged` reports the optimizer's stopping criterion, not the quality of the fit - see
+[Troubleshooting](troubleshooting.md) if it is `false`.
 
 ## 5. Visualize the fit
 
@@ -91,8 +137,10 @@ alongside NoLimits: `using Pkg; Pkg.add("CairoMakie")` once, then
 ```julia
 using CairoMakie
 
-plot_fits(res)
+plot_fits(res; ncols=2)
 ```
+
+![Fitted exponential-decay trajectories against the observations, one panel per subject.](figures/qs/p_fit.png)
 
 `plot_fits` overlays the model predictions on the observed data for each individual. See
 [Plotting](plotting/index.md) for visual predictive checks, residual diagnostics, and
@@ -102,6 +150,7 @@ random-effects plots.
 
 - [Model Building](model-building/index.md) - the full `@Model` specification language.
 - [Estimation](estimation/index.md) - every estimation method and the unified interface.
-- [Tutorials](tutorials/mixed-effects-multiple-methods.md) - end-to-end worked analyses,
+- [Tutorials](tutorials/index.md) - thirteen end-to-end worked analyses,
   including ODE-based models, neural-network components, count outcomes, and censoring.
 - [NLME Methodology](nlme-methodology.md) - the mathematical framework behind the methods.
+- [Troubleshooting](troubleshooting.md) - what to do when a fit fails or looks wrong.

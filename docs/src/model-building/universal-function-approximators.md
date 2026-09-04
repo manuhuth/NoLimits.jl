@@ -23,7 +23,7 @@ Both are declared in `@fixedEffects` and exposed as callable model functions thr
     (`NPFParameter`) are declared the same way - in `@fixedEffects`, with a
     `function_name` (for splines) and used through `@randomEffects` (for flows). They are
     documented in [`@fixedEffects`](@ref) and [`@randomEffects`](@ref); full constructor
-    signatures are in the [Parameter Types](../api.md#Parameter-Types) section of the API
+    signatures are in the [Parameter Types](../api/model-building.md#Parameter-Types) section of the API
     reference.
 
 ### A feed-forward network without any dependency
@@ -209,3 +209,9 @@ end
 - The `function_name` keyword controls the callable name used to invoke the approximator in model expressions. Each approximator must have a unique function name.
 - Learned parameter blocks are typically declared with `calculate_se=false`, since standard error computation for high-dimensional parameter vectors is often neither feasible nor informative.
 - The same `@Model` DSL is used for fixed-effects-only and mixed-effects workflows; only the presence and structure of `@randomEffects` determines whether individualization occurs.
+
+## Where to go next
+
+- [Model Building overview](index.md) - how the blocks fit together.
+- [Model Building API](../api/model-building.md) - full constructor signatures.
+- [Quickstart](../quickstart.md) - the whole workflow end to end.

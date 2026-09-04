@@ -190,3 +190,10 @@ using SciMLBase
 
 res_threads = fit_model(dm, NoLimits.GHQuadrature(level=2); serialization=EnsembleThreads())
 ```
+
+## Where to go next
+
+- [Choosing a method](index.md#Choosing-a-Method) - how this compares with the alternatives.
+- [MCEM](mcem.md) - the next method.
+- [Uncertainty Quantification](../uncertainty-quantification/index.md) - standard errors and intervals for a fit.
+- [Troubleshooting](../troubleshooting.md) - when a fit fails or does not converge.

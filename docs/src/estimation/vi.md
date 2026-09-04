@@ -172,3 +172,10 @@ The screening phase evaluates the marginal log-likelihood at η = 0 for each can
 - Start with `family=:meanfield` for speed, then compare with `:fullrank` when posterior correlations are expected.
 - Check `get_vi_trace(res)` and downstream predictive diagnostics (`plot_fits`, residual plots, VPC) to assess approximation quality.
 - For highly multimodal or strongly non-Gaussian posteriors, `MCMC` remains the more faithful Bayesian baseline.
+
+## Where to go next
+
+- [Choosing a method](index.md#Choosing-a-Method) - how this compares with the alternatives.
+- [MLE / MAP](mle.md) - the next method.
+- [Uncertainty Quantification](../uncertainty-quantification/index.md) - standard errors and intervals for a fit.
+- [Troubleshooting](../troubleshooting.md) - when a fit fails or does not converge.

@@ -1,4 +1,4 @@
-# Mixed-Effects Tutorial 4: SoftTree Differential-Equation Components (SAEM)
+# Soft-Tree Differential Equations (SAEM)
 
 This tutorial mirrors the [Neural ODE tutorial](mixed-effects-nn-saem.md) but swaps the neural networks for soft decision trees as the rate-function approximators. Soft trees approximate arbitrary nonlinear mappings, and for the low-dimensional inputs typical of scientific rate functions (a single state, or time) they can match neural-network flexibility with fewer parameters and a more inspectable, piecewise-smooth structure. We build the same two-compartment ODE for the Theophylline data and fit it with Stochastic Approximation Expectation-Maximization (SAEM), with subject-level random effects on each tree's parameters.
 
@@ -11,7 +11,7 @@ This tutorial mirrors the [Neural ODE tutorial](mixed-effects-nn-saem.md) but sw
 
 ## Step 1: Data Setup
 
-We use the Theophylline dataset (12 subjects) in a flat format where the dose `d` enters as a constant covariate — a two-compartment transfer system (depot → central → cleared).
+We use the Theophylline dataset (12 subjects) in a flat format where the dose `d` enters as a constant covariate - a two-compartment transfer system (depot → central → cleared).
 
 ```julia
 using NoLimits
@@ -67,7 +67,7 @@ first(df, 10)
 
 ## Step 2: Define SoftTree-Driven ODE Mixed-Effects Model
 
-As in the Neural ODE tutorial, data-driven approximators learn the rate functions — here soft decision trees. Each `SoftTreeParameters` block declares a tree of given input dimension and depth (`depth_st`: a depth-`d` tree has `2^d` leaves); its flattened parameters join the fixed-effects vector and expose a callable (e.g. `STA1`) (see [function approximators](../model-building/universal-function-approximators.md)). Four trees drive the two-compartment system: `fA1`/`fA2` for the depot, `fC1`/`fC2` for the central compartment.
+As in the Neural ODE tutorial, data-driven approximators learn the rate functions - here soft decision trees. Each `SoftTreeParameters` block declares a tree of given input dimension and depth (`depth_st`: a depth-`d` tree has `2^d` leaves); its flattened parameters join the fixed-effects vector and expose a callable (e.g. `STA1`) (see [function approximators](../model-building/universal-function-approximators.md)). Four trees drive the two-compartment system: `fA1`/`fA2` for the depot, `fC1`/`fC2` for the central compartment.
 
 Each tree's parameters are paired with a subject-level random-effect vector drawn from an `MvNormal` centered on the population parameters, giving every individual a personalized version of the dynamics.
 
@@ -212,7 +212,7 @@ Helper functions
 
 ## Step 3: Build `DataModel` and Configure SAEM
 
-After building the `DataModel`, we fit with default SAEM (`NoLimits.SAEM()`): an adaptive-Metropolis E-step samples the random effects, a stochastic-approximation (Robbins-Monro) M-step updates the population parameters (see [SAEM](../estimation/saem.md)). No tuning is needed despite the high random-effect dimension — a full tree-parameter vector per subject.
+After building the `DataModel`, we fit with default SAEM (`NoLimits.SAEM()`): an adaptive-Metropolis E-step samples the random effects, a stochastic-approximation (Robbins-Monro) M-step updates the population parameters (see [SAEM](../estimation/saem.md)). No tuning is needed despite the high random-effect dimension - a full tree-parameter vector per subject.
 
 ```julia
 dm = DataModel(model, df; primary_id=:ID, time_col=:t)
@@ -450,3 +450,9 @@ p_obs_saem
 - **Trees vs networks.** Soft trees can be more parameter-efficient for the low-dimensional inputs common in rate functions, and their piecewise-smooth form is easier to inspect; both embed in the same framework with minimal code change (compare the [Neural ODE tutorial](mixed-effects-nn-saem.md)).
 - **Default SAEM suffices** even at high random-effect dimension. For finer control, use closed-form Gaussian block updates via `builtin_stats=:closed_form` with `re_mean_params`.
 - **Settings are modest for speed.** For production, use deeper trees, raise `maxiters` and sample counts, and tighten the ODE solver tolerances.
+
+## Where to go next
+
+- [Fixed-Effects: MLE & MAP](fixed-effects-nonlinear-mle-map.md) - the next tutorial.
+- [All tutorials](index.md) - the full list, tagged by outcome, model, and estimator.
+- [Troubleshooting](../troubleshooting.md) - when a fit fails or does not converge.

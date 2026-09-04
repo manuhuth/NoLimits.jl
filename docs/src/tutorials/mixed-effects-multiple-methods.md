@@ -1,11 +1,11 @@
-# Mixed-Effects Tutorial 1: Nonlinear Random-Effects Model Across Multiple Estimation Methods
+# Multi-Method Comparison
 
-Nonlinear mixed-effects (NLME) models describe how individual trajectories vary around a shared population trend. A practical question follows: how sensitive are the conclusions to the estimation algorithm? This tutorial fits one nonlinear growth model to the Orange tree dataset with four estimators — Laplace, MCEM, SAEM, and full Bayesian MCMC — and compares them on fitted trajectories, observation-level predictions, and parameter uncertainty, leaving you with a reusable template for multi-method comparison.
+Nonlinear mixed-effects (NLME) models describe how individual trajectories vary around a shared population trend. A practical question follows: how sensitive are the conclusions to the estimation algorithm? This tutorial fits one nonlinear growth model to the Orange tree dataset with four estimators - Laplace, MCEM, SAEM, and full Bayesian MCMC - and compares them on fitted trajectories, observation-level predictions, and parameter uncertainty, leaving you with a reusable template for multi-method comparison.
 
 ## What You Will Learn
 
 - Build a nonlinear mixed-effects model with a lognormal random effect on a growth asymptote.
-- Configure four estimators — Laplace, MCEM, SAEM, MCMC — with sensible defaults.
+- Configure four estimators - Laplace, MCEM, SAEM, MCMC - with sensible defaults.
 - Compare methods in predictive space, not just by objective values.
 - See where the estimators agree, where they diverge, and what each adds.
 
@@ -53,7 +53,7 @@ first(df, 8)
 
 Each tree follows a saturating growth curve toward a tree-specific maximum. That maximum (the asymptote) is the random effect: every tree gets its own upper bound while sharing the population growth shape.
 
-The curve uses an initial size `phi1`, a log-scale population asymptote `log_vmax`, and a midpoint `phi3`. Each tree's asymptote `vmax_i` is drawn from a `LogNormal`, keeping it positive and placing variability on a multiplicative scale; the observation model is also lognormal, so residual spread grows with the prediction, and `softplus` keeps the mean positive without hard discontinuities. All fixed effects get weakly-informative priors — optional for Laplace/MCEM/SAEM, required for MCMC.
+The curve uses an initial size `phi1`, a log-scale population asymptote `log_vmax`, and a midpoint `phi3`. Each tree's asymptote `vmax_i` is drawn from a `LogNormal`, keeping it positive and placing variability on a multiplicative scale; the observation model is also lognormal, so residual spread grows with the prediction, and `softplus` keeps the mean positive without hard discontinuities. All fixed effects get weakly-informative priors - optional for Laplace/MCEM/SAEM, required for MCMC.
 
 ```julia
 model = @Model begin
@@ -159,12 +159,12 @@ Helper functions
 
 The `DataModel` validates the schema, groups individuals into random-effect batches, and prepares the internal representations. The four methods take fundamentally different approaches to the random-effects integral in the marginal likelihood:
 
-- **[Laplace](../estimation/laplace.md)** — analytic second-order approximation around each individual's empirical-Bayes mode; fast and deterministic.
-- **[MCEM](../estimation/mcem.md)** — Monte Carlo EM: sample the random effects in the E-step, maximize in the M-step; robust to non-Gaussian random effects.
-- **[SAEM](../estimation/saem.md)** — stochastic-approximation EM: updates running sufficient statistics, so it needs fewer samples per iteration.
-- **[MCMC](../estimation/mcmc.md)** — samples the full joint posterior, the richest uncertainty picture at the highest cost.
+- **[Laplace](../estimation/laplace.md)** - analytic second-order approximation around each individual's empirical-Bayes mode; fast and deterministic.
+- **[MCEM](../estimation/mcem.md)** - Monte Carlo EM: sample the random effects in the E-step, maximize in the M-step; robust to non-Gaussian random effects.
+- **[SAEM](../estimation/saem.md)** - stochastic-approximation EM: updates running sufficient statistics, so it needs fewer samples per iteration.
+- **[MCMC](../estimation/mcmc.md)** - samples the full joint posterior, the richest uncertainty picture at the highest cost.
 
-The settings below favor short runtimes; production runs would raise iteration counts and sample sizes. SAEM uses pure defaults (`NoLimits.SAEM()`) on purpose — with sensible starts it reaches the same solution as the tuned estimators.
+The settings below favor short runtimes; production runs would raise iteration counts and sample sizes. SAEM uses pure defaults (`NoLimits.SAEM()`) on purpose - with sensible starts it reaches the same solution as the tuned estimators.
 
 One detail matters for every estimator, especially the stochastic ones: `log_vmax` starts at `5.0` (`exp(5.0) ≈ 148`, a plausible asymptote). SAEM and the EM methods draw random effects from the *current* parameters, so a start far from the data (say `log_vmax = 10.0`, an asymptote near `22000`) can trap the sampler in a degenerate region. Starting values on the right order of magnitude are one of the most effective ways to make mixed-effects estimation robust.
 
@@ -282,7 +282,7 @@ res_mcmc = fit_model(dm, mcmc_method; serialization=serialization, rng=Random.Xo
 
 ### FitResult Summaries
 
-Summarizing each result shows parameter values, convergence, and method-specific diagnostics — a quick first check that the methods broadly agree.
+Summarizing each result shows parameter values, convergence, and method-specific diagnostics - a quick first check that the methods broadly agree.
 
 ```julia
 fit_summary_laplace = NoLimits.summarize(res_laplace)
@@ -350,7 +350,7 @@ The values differ by construction:
 - **Laplace** reports the minimized Laplace-approximated marginal likelihood (lower is better).
 - **MCEM** and **SAEM** report the EM auxiliary quantity `Q`, a log-likelihood lower bound (higher is better).
 
-So raw values are not comparable across method families, though within one family they are — e.g. across starting points or model variants.
+So raw values are not comparable across method families, though within one family they are - e.g. across starting points or model variants.
 
 ## Step 6: Compare Parameter Estimates Side by Side
 
@@ -557,7 +557,7 @@ p_obs_mcmc
 
 ## Step 9: Uncertainty Quantification Across Methods
 
-The optimization-based methods return point estimates, so uncertainty comes from Wald intervals built on the objective's curvature at the optimum — a sharp peak gives tight intervals, a flat one wide (see [Wald UQ](../uncertainty-quantification/wald.md)). MCMC instead gives exact posterior draws. Below we compute UQ for all four and plot the parameter distributions on the natural scale.
+The optimization-based methods return point estimates, so uncertainty comes from Wald intervals built on the objective's curvature at the optimum - a sharp peak gives tight intervals, a flat one wide (see [Wald UQ](../uncertainty-quantification/wald.md)). MCMC instead gives exact posterior draws. Below we compute UQ for all four and plot the parameter distributions on the natural scale.
 
 ```julia
 uq_laplace = compute_uq(
@@ -694,7 +694,13 @@ p_uq_mcmc
 
 ## Interpretation and Practical Guidance
 
-- **Compare in predictive space, not objective space.** Each method optimizes a different quantity, so compare trajectories, observation distributions, and intervals — not raw objective values.
+- **Compare in predictive space, not objective space.** Each method optimizes a different quantity, so compare trajectories, observation distributions, and intervals - not raw objective values.
 - **Agreement is the norm for well-specified models.** When Laplace, MCEM, and SAEM diverge, suspect misspecification, too few iterations, or a hard likelihood surface.
 - **MCMC gives the richest uncertainty.** Posterior bands and marginals capture asymmetry, multimodality, and correlation most faithfully.
 - **Pick by inferential goal.** Fast point estimates with approximate SEs → Laplace; flexible random-effect distributions → SAEM/MCEM; full posterior inference → MCMC.
+
+## Where to go next
+
+- [ODE Model with Dosing (MCEM)](mixed-effects-ode-mcem.md) - the next tutorial.
+- [All tutorials](index.md) - the full list, tagged by outcome, model, and estimator.
+- [Troubleshooting](../troubleshooting.md) - when a fit fails or does not converge.

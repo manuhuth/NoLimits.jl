@@ -1,6 +1,6 @@
-# Markov Models in NoLimits.jl: Observed, Hidden, Coarsed, and Pathsum
+# Hidden & Observed Markov Models
 
-Multi-state models describe a process moving between a finite set of discrete states over time, focusing on the transitions — staying, progressing, recovering, relapsing, or being absorbed. Under the Markov property (the future depends only on the current state) the transition structure stays interpretable and tractable, and covariates, time, and random effects can shape it. This tutorial specifies and estimates four related Markov models in NoLimits:
+Multi-state models describe a process moving between a finite set of discrete states over time, focusing on the transitions - staying, progressing, recovering, relapsing, or being absorbed. Under the Markov property (the future depends only on the current state) the transition structure stays interpretable and tractable, and covariates, time, and random effects can shape it. This tutorial specifies and estimates four related Markov models in NoLimits:
 
 1. an **observed** Markov model, where the state sequence is measured directly;
 2. a **hidden** Markov model (HMM), where observations are noisy proxies for a latent state;
@@ -386,7 +386,7 @@ This notebook focuses on fixed-effects HMMs for clarity, but the same NoLimits b
 - multivariate emissions
 - etc.
 
-Below is an example with covariate-dependent transition rates on the log scale and logistic-parametrized emissions. Random effects also require a marginal-likelihood estimator — [Laplace](../estimation/laplace.md), [SAEM](../estimation/saem.md), or [MCEM](../estimation/mcem.md).
+Below is an example with covariate-dependent transition rates on the log scale and logistic-parametrized emissions. Random effects also require a marginal-likelihood estimator - [Laplace](../estimation/laplace.md), [SAEM](../estimation/saem.md), or [MCEM](../estimation/mcem.md).
 ```julia
 model_custom = @Model begin
     @covariates begin
@@ -473,3 +473,8 @@ res_custom = fit_model(dm_custom, SAEM(); rng=Random.Xoshiro(1203))
 NoLimits.summarize(res_custom)
 ```
 
+## Where to go next
+
+- [Neural Differential Equations (SAEM)](mixed-effects-nn-saem.md) - the next tutorial.
+- [All tutorials](index.md) - the full list, tagged by outcome, model, and estimator.
+- [Troubleshooting](../troubleshooting.md) - when a fit fails or does not converge.

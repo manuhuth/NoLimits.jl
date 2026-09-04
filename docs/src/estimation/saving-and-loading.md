@@ -84,3 +84,9 @@ Note: `get_multistart_errors` returns `Vector{String}` after loading rather than
 save_fit(path, res; include_data=false) -> path::String
 load_fit(path; model=nothing, dm=nothing) -> FitResult or MultistartFitResult
 ```
+
+## Where to go next
+
+- [Choosing a method](index.md#Choosing-a-Method) - how this compares with the alternatives.
+- [Uncertainty Quantification](../uncertainty-quantification/index.md) - standard errors and intervals for a fit.
+- [Troubleshooting](../troubleshooting.md) - when a fit fails or does not converge.

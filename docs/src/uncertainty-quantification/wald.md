@@ -172,3 +172,9 @@ draws_tr = get_uq_draws(uq; scale=:transformed)
 
 diag = get_uq_diagnostics(uq)
 ```
+
+## Where to go next
+
+- [Uncertainty Quantification overview](index.md) - the three approaches side by side.
+- [Profile likelihood](profile-likelihood.md) - the next approach.
+- [Multi-Method Comparison](../tutorials/mixed-effects-multiple-methods.md) - UQ on four fits of one model.

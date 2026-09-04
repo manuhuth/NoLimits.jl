@@ -287,3 +287,10 @@ obj = get_objective(res)
 ok = get_converged(res)
 diag = get_diagnostics(res)
 ```
+
+## Where to go next
+
+- [Choosing a method](index.md#Choosing-a-Method) - how this compares with the alternatives.
+- [Pooled / PooledMap](pooled.md) - the next method.
+- [Uncertainty Quantification](../uncertainty-quantification/index.md) - standard errors and intervals for a fit.
+- [Troubleshooting](../troubleshooting.md) - when a fit fails or does not converge.

@@ -1,4 +1,4 @@
-# Mixed-Effects Tutorial 8: Interval-Censored (Binned) Outcomes (Laplace)
+# Interval-Censored Outcomes (Laplace)
 
 Some measurements are never observed exactly. A lab that reports a count to the nearest whole unit, a questionnaire scored in bands, a delay recorded as "day 3" rather than "3.4 days" - in each case the record says only that the true value fell inside an interval. Treating the reported number as if it were exact adds the bin's own variance to the residual and inflates the estimated measurement noise. The fix is an *interval-censored likelihood*, where an observation contributes the probability mass of its interval, $F(u) - F(l)$, instead of a density at a point.
 
@@ -432,3 +432,9 @@ All four 95% intervals cover the simulation truth.
 - **No integration code is needed.** `interval_censored` is an ordinary `Distribution`; NoLimits calls `logpdf` on it like any other outcome. The same holds for any third-party distribution - see [`@formulas`](../model-building/formulas.md).
 - **Method availability.** `MLE`, `MAP`, `MCMC`, `Laplace`, `GHQuadrature`, `SAEM`, `MCEM`, `Pooled` and `PooledMap` all work. `FOCEI` rejects the outcome by design, and `VI` can diverge on any likelihood that is `-Inf` over part of the parameter space.
 - **Reusable template.** Swap the bin width for the grid your data are reported on, or move to a per-observation interval, and the rest of the workflow is unchanged.
+
+## Where to go next
+
+- [Copula Random Effects (Laplace)](mixed-effects-copula-random-effects-laplace.md) - the next tutorial.
+- [All tutorials](index.md) - the full list, tagged by outcome, model, and estimator.
+- [Troubleshooting](../troubleshooting.md) - when a fit fails or does not converge.

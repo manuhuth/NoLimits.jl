@@ -15,24 +15,75 @@ hero:
       link: /quickstart
     - theme: alt
       text: Tutorials
-      link: /tutorials/mixed-effects-multiple-methods
+      link: /tutorials/
     - theme: alt
       text: View on GitHub
       link: https://github.com/manuhuth/NoLimits.jl
 
 features:
-  - title: Diverse structural models
+  - icon: 🧬
+    title: Diverse structural models
     details: Classical nonlinear functions, mechanistic ODE systems, and Markov outcome models combine within a single specification.
-  - title: Flexible estimation
+    link: /model-building/
+    linkText: Model building
+  - icon: 🎯
+    title: Flexible estimation
     details: Fit one model with Laplace, FOCEI, MCEM, SAEM, or full Bayesian MCMC (plus variational inference for fixed-effects-only models), and compare paradigms without rewriting it.
-  - title: Machine-learning integration
+    link: /estimation/
+    linkText: Which method should I use?
+  - icon: 🤖
+    title: Machine-learning integration
     details: Embed neural networks (including neural-ODE constructions) and soft decision trees alongside known mechanistic terms.
-  - title: Rich hierarchical variability
+    link: /model-building/universal-function-approximators
+    linkText: Neural nets and soft trees
+  - icon: 📈
+    title: Rich hierarchical variability
     details: Heavy-tailed, skewed, and normalizing-flow random-effect distributions, optionally parameterized by covariates and learned functions.
+    link: /model-building/random-effects
+    linkText: Random effects
 ---
 ```
 
 **NoLimits** stands for **NO**n **LI**near **MI**xed effec**TS**.
+
+## A complete model, fitted, in one screen
+
+```julia
+using NoLimits, CairoMakie
+
+model = @Model begin
+    @fixedEffects begin
+        A0    = RealNumber(10.0, scale=:log)   # population baseline
+        k     = RealNumber(0.5,  scale=:log)   # population decay rate
+        omega = RealNumber(0.3,  scale=:log)   # between-subject SD
+        sigma = RealNumber(0.5,  scale=:log)   # residual SD
+    end
+
+    @covariates begin
+        time = Covariate()
+    end
+
+    @randomEffects begin
+        eta = RandomEffect(Normal(0.0, omega); column=:ID)
+    end
+
+    @formulas begin
+        pred = A0 * exp(eta) * exp(-k * time)
+        y ~ Normal(pred, sigma)
+    end
+end
+
+# df holds one row per (subject, time): columns ID, time, y
+dm  = DataModel(model, df; primary_id=:ID, time_col=:time)
+res = fit_model(dm, NoLimits.Laplace())
+plot_fits(res; ncols=2)
+```
+
+![Fitted exponential-decay trajectories against the observations, one panel per subject.](figures/qs/p_fit.png)
+
+Swapping `NoLimits.Laplace()` for `NoLimits.SAEM()`, `NoLimits.MCEM()`, or `NoLimits.MCMC()`
+refits the same model with a different estimator, and nothing else changes. The full walkthrough
+is in the [Quickstart](quickstart.md).
 
 ## Why NoLimits.jl?
 
@@ -43,35 +94,22 @@ individuals. Nonlinear mixed-effects models provide a principled statistical fra
 this, but existing software often forces users to choose between model expressiveness,
 estimation flexibility, and modern machine-learning integration.
 
-NoLimits.jl is designed to avoid these trade-offs. It supports:
-
-- **Diverse structural models.** Classical nonlinear functions, mechanistic ODE systems, and
-  Markov outcome models (observed-state and hidden) can be combined within a single specification.
-- **Flexible estimation.** The same model can be fitted using frequentist methods (Laplace
-  approximation, FOCEI, MCEM, SAEM, Gauss-Hermite quadrature) or full Bayesian MCMC sampling,
-  enabling comparison across inferential paradigms; variational inference is additionally
-  available for fixed-effects-only models.
-- **Machine-learning integration.** Neural-network components - including neural-ODE
-  constructions - and soft decision trees can be embedded alongside known mechanistic terms,
-  so models retain established scientific structure while learning unknown nonlinear behavior
-  from data.
-- **Rich hierarchical variability.** Random-effect distributions are not restricted to
-  Gaussian forms; heavy-tailed, skewed, and normalizing-flow-based distributions are
-  supported, and can themselves be parameterized by covariates and learned functions.
-- **Composability.** Multiple outcomes, multiple grouping structures (e.g., subject-level and
-  site-level), covariates at different temporal resolutions, and learned components can all
-  coexist in one coherent model definition.
-
-NoLimits.jl is designed for mixed-effects models, but it can equally be used for
-fixed-effects-only analysis when random effects are not required.
+NoLimits.jl is designed to avoid these trade-offs: structural models, estimators, random-effect
+distributions, and learned components are independent choices that compose freely, and multiple
+outcomes, multiple grouping levels, and covariates at different temporal resolutions can coexist
+in one model definition. [Capabilities](capabilities.md) lists what is supported, feature by
+feature. The package is built for mixed-effects models but works equally well for
+fixed-effects-only analysis.
 
 ## Getting Started
 
 New users should begin with the [Installation](installation.md) page and the
 [Quickstart](quickstart.md), then work through the
-[Tutorials](tutorials/mixed-effects-multiple-methods.md) for hands-on examples covering
-fixed-effects models, mixed-effects estimation with multiple methods, ODE-based models, and
-machine-learning-augmented dynamics.
+[Tutorials](tutorials/index.md) for hands-on examples covering fixed-effects models,
+mixed-effects estimation with multiple methods, ODE-based models, and machine-learning-augmented
+dynamics. If you already write population models in NONMEM, Monolix, or nlmixr2, start from
+[Coming from NONMEM / Monolix / nlmixr2](coming-from-nonmem.md) instead. When a fit misbehaves,
+[Troubleshooting](troubleshooting.md) lists the usual causes.
 
 For a concise overview of what the package can do, see [Capabilities](capabilities.md). For
 the mathematical foundations, see [NLME Methodology](nlme-methodology.md).

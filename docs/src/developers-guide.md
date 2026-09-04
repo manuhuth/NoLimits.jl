@@ -1,7 +1,7 @@
 # Developers Guide
 
 This page is for contributors and maintainers working on NoLimits.jl itself. For using the
-package, see [Quickstart](quickstart.md) and the [Tutorials](tutorials/mixed-effects-multiple-methods.md).
+package, see [Quickstart](quickstart.md) and the [Tutorials](tutorials/index.md).
 
 ## Scope
 

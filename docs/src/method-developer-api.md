@@ -268,3 +268,99 @@ default, or `method = :mcmc` for a Turing sampler).
 The names on this page are the semver-stable method-developer API: a breaking change to any of
 them requires a major version bump. Underscore-prefixed symbols are internal and may change at
 any release.
+
+## Reference
+
+Docstrings for the primitives described above.
+
+### Contracts and transforms
+
+```@docs
+symmetrize_psd_parameters
+logabsdetjac
+```
+
+### Random-effect batching
+
+```@docs
+build_re_batch_infos
+REBatchInfo
+get_batch_individuals
+get_batch_re_info
+get_batch_re_dim
+build_eta_individual
+eta_from_modes
+build_likelihood_cache
+```
+
+### Density primitives
+
+```@docs
+solve_individual
+obs_distributions
+hmm_filter_step!
+conditional_loglikelihood
+complete_data_loglikelihood
+complete_data_loglikelihood_per_individual
+re_logprior
+complete_data_loglikelihood_gradient
+complete_data_loglikelihood_hessian
+```
+
+### Posterior, empirical Bayes, and sampling
+
+```@docs
+empirical_bayes
+empirical_bayes_covariance
+laplace_marginal
+laplace_marginal_gradient
+ghq_marginal
+sample_random_effect_draws
+RandomEffectPosteriorSample
+EBEOptions
+```
+
+### Curvature seam
+
+```@docs
+AbstractCurvature
+ExactHessianCurvature
+FisherInformationCurvature
+inner_curvature
+CurvatureWorkspace
+```
+
+### Fitting drivers and objective factory
+
+```@docs
+fit_method
+fit_fixed_effects
+fit_laplace_family
+objective_and_gradient
+free_parameter_layout
+NLFreeLayout
+resolve_fitted_parameters
+build_fit_result
+uq_family
+```
+
+### Fit context (convenience layer)
+
+```@docs
+FitContext
+build_fit_context
+get_batch_infos
+initial_parameters
+optimize_parameters
+```
+
+### Sparse-grid quadrature
+
+```@docs
+GHQuadratureNodes
+build_sparse_grid
+get_sparse_grid
+build_tensor_product_grid
+get_anisotropic_grid
+n_ghq_points
+```

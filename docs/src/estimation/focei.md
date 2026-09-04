@@ -164,3 +164,10 @@ available through [`get_residuals`](@ref) and the residual-plot functions; see
 Wald confidence intervals from the inverse observed-information matrix are available for
 FOCEI fits through [`compute_uq`](@ref); see
 [Uncertainty Quantification](../uncertainty-quantification/index.md).
+
+## Where to go next
+
+- [Choosing a method](index.md#Choosing-a-Method) - how this compares with the alternatives.
+- [GH Quadrature](ghquadrature.md) - the next method.
+- [Uncertainty Quantification](../uncertainty-quantification/index.md) - standard errors and intervals for a fit.
+- [Troubleshooting](../troubleshooting.md) - when a fit fails or does not converge.

@@ -155,3 +155,8 @@ For `method=:mcmc_refit`, the diagnostics additionally include:
 - `refit_turing_kwargs`: the Turing keyword arguments used.
 - `sampled_fixed_names`: names of fixed effects that were sampled.
 - `constants_used`: the constants applied during the refit.
+
+## Where to go next
+
+- [Uncertainty Quantification overview](index.md) - the three approaches side by side.
+- [Multi-Method Comparison](../tutorials/mixed-effects-multiple-methods.md) - UQ on four fits of one model.
