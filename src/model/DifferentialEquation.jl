@@ -172,6 +172,25 @@ end
 
 @inline (a::DESignalAccessor)(t) = a.f(a.sol, a.pc, t)
 
+# Callable struct instead of a gensym'd closure over `signal_fns`: two byte-identical
+# `@DifferentialEquation` blocks must produce the same type regardless of the module
+# they expand in (issue #327). `names` lists states then signals.
+struct _DEAccessors{names, nstates, S}
+    signal_fns::S
+end
+
+function _DEAccessors{names, nstates}(fns::S) where {names, nstates, S}
+    return _DEAccessors{names, nstates, S}(fns)
+end
+
+@generated function (a::_DEAccessors{names, nstates})(sol, pc) where {names, nstates}
+    vals = Any[:(DEStateAccessor(sol, $i)) for i in 1:nstates]
+    for j in 1:(length(names) - nstates)
+        push!(vals, :(DESignalAccessor(sol, pc, a.signal_fns[$j])))
+    end
+    return :(NamedTuple{$names}(($(vals...),)))
+end
+
 """
     DEStaticContext{B, I}
 
@@ -721,6 +740,7 @@ Must be paired with `@initialDE` when used inside `@Model`.
 """
 macro DifferentialEquation(block)
     RuntimeGeneratedFunctions.init(__module__)
+    mod = @__MODULE__
     state_names, rhs_exprs, signal_names, signal_exprs, line_exprs = _parse_de(block)
     signal_set = Set(signal_names)
 
@@ -888,32 +908,23 @@ macro DifferentialEquation(block)
             end
             ) for i in eachindex(signal_names)
     ]
-    accessor_names = vcat(state_names, signal_names)
-    accessor_vals = vcat(
-        [:(DEStateAccessor(sol, $i)) for i in eachindex(state_names)],
-        [:(DESignalAccessor(sol, pc, signal_fns[$i])) for i in eachindex(signal_names)]
-    )
-    accessors_nt = Expr(
-        :call,
-        Expr(:curly, :NamedTuple, Expr(:tuple, QuoteNode.(accessor_names)...)),
-        Expr(:tuple, accessor_vals...)
-    )
-    accessors_fn_sym = gensym(:de_accessors_)
-    accessors_expr = :(
-        function $(accessors_fn_sym)(sol, pc)
-            return $accessors_nt
-        end
-    )
+    accessor_names_expr = Expr(:tuple, QuoteNode.(vcat(state_names, signal_names))...)
+
+    # RGF tags are NoLimits itself, so the function types do not carry the caller
+    # module. Construction stays inside the quote: the bodies must be re-registered in
+    # the RGF cache in every fresh session.
+    compile_expr = _qualify_context_globals(compile_expr, __module__)
+    f!_expr = _qualify_context_globals(f!_expr, __module__)
+    f_expr = _qualify_context_globals(f_expr, __module__)
+    signal_fn_exprs = [_qualify_context_globals(ex, __module__) for ex in signal_fn_exprs]
 
     state_names_expr = Expr(:vect, QuoteNode.(state_names)...)
     signal_names_expr = Expr(:vect, QuoteNode.(signal_names)...)
     lines_expr = Expr(:vect, QuoteNode.(line_exprs)...)
     return quote
-        compile_rgf = RuntimeGeneratedFunction(
-            @__MODULE__, @__MODULE__, $(QuoteNode(compile_expr))
-        )
-        f!_rgf = RuntimeGeneratedFunction(@__MODULE__, @__MODULE__, $(QuoteNode(f!_expr)))
-        f_rgf = RuntimeGeneratedFunction(@__MODULE__, @__MODULE__, $(QuoteNode(f_expr)))
+        compile_rgf = RuntimeGeneratedFunction($mod, $mod, $(QuoteNode(compile_expr)))
+        f!_rgf = RuntimeGeneratedFunction($mod, $mod, $(QuoteNode(f!_expr)))
+        f_rgf = RuntimeGeneratedFunction($mod, $mod, $(QuoteNode(f_expr)))
         meta = DifferentialEquationMeta(
             $state_names_expr, $signal_names_expr,
             $(Expr(:vect, map(QuoteNode, collect(var_syms_no_states))...)),
@@ -926,14 +937,16 @@ macro DifferentialEquation(block)
                 [
                     :(
                             RuntimeGeneratedFunction(
-                                @__MODULE__, @__MODULE__, $(QuoteNode(signal_fn_exprs[i]))
+                                $mod, $mod, $(QuoteNode(signal_fn_exprs[i]))
                             )
                         )
                         for i in eachindex(signal_fn_exprs)
                 ]...
             ),
         )
-        $(accessors_expr)
-        DifferentialEquation(meta, builders, $(accessors_fn_sym))
+        DifferentialEquation(
+            meta, builders,
+            _DEAccessors{$accessor_names_expr, $(length(state_names))}(signal_fns)
+        )
     end
 end

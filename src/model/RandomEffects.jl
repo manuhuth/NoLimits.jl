@@ -29,6 +29,65 @@ struct RandomEffectsBuilders{C, L}
     logpdf::L
 end
 
+# Callable structs instead of per-expansion closures/named methods: two byte-identical
+# `@randomEffects` blocks must produce the same `RandomEffects` type regardless of the
+# module they expand in (issue #327).
+struct _REDistBuilder{F}
+    f::F
+end
+
+function (b::_REDistBuilder)(
+        fixed_effects::ComponentArray,
+        constant_features_i::NamedTuple,
+        model_funs::NamedTuple
+    )
+    return b.f(fixed_effects, constant_features_i, model_funs, NamedTuple())
+end
+
+function (b::_REDistBuilder)(
+        fixed_effects::AbstractArray,
+        constant_features_i::NamedTuple,
+        model_funs::NamedTuple
+    )
+    return b.f(
+        _re_componentize(fixed_effects), constant_features_i, model_funs, NamedTuple()
+    )
+end
+
+function (b::_REDistBuilder)(
+        fixed_effects::ComponentArray,
+        constant_features_i::NamedTuple,
+        model_funs::NamedTuple,
+        helper_functions::NamedTuple
+    )
+    return b.f(fixed_effects, constant_features_i, model_funs, helper_functions)
+end
+
+function (b::_REDistBuilder)(
+        fixed_effects::AbstractArray,
+        constant_features_i::NamedTuple,
+        model_funs::NamedTuple,
+        helper_functions::NamedTuple
+    )
+    return b.f(
+        _re_componentize(fixed_effects), constant_features_i, model_funs, helper_functions
+    )
+end
+
+struct _RELogpdf{names} end
+
+@generated function (::_RELogpdf{names})(dists, re_values) where {names}
+    ex = :(0.0)
+    for n in names
+        ex = :(
+            $ex + logpdf(
+                getproperty(dists, $(QuoteNode(n))), getproperty(re_values, $(QuoteNode(n)))
+            )
+        )
+    end
+    return ex
+end
+
 """
     RandomEffects
 
@@ -399,15 +458,27 @@ macro randomEffects(block)
     # generated function as `sym in Set([...])`, allocating a fresh Set on every
     # builder invocation — and the builder runs per RE level per log-density
     # evaluation in the estimation hot paths.)
+    #
+    # A speculative `hasproperty` bind makes the symbol local, so it escapes the
+    # GlobalRef rewrite below. Seed it from the caller module when only that module
+    # defines it (user types, `Copulas`, ...); the branches overwrite it when they hit.
+    _caller_ref = function (s::Symbol)
+        (__module__ === @__MODULE__) && return nothing
+        return (!isdefined(@__MODULE__, s) && isdefined(__module__, s)) ?
+            :($(s) = $(GlobalRef(__module__, s))) : nothing
+    end
+
     binds_vars = [
         if sym in prop_syms
                 quote
+                    $(_caller_ref(sym))
                     if hasproperty(constant_features_i, $(QuoteNode(sym)))
                         $(sym) = getproperty(constant_features_i, $(QuoteNode(sym)))
                 end
                 end
         else
                 quote
+                    $(_caller_ref(sym))
                     if hasproperty(constant_features_i, $(QuoteNode(sym)))
                         $(sym) = getproperty(constant_features_i, $(QuoteNode(sym)))
                 elseif hasproperty(fixed_effects, $(QuoteNode(sym)))
@@ -420,6 +491,7 @@ macro randomEffects(block)
 
     binds_funs = [
         quote
+                $(_caller_ref(sym))
                 if hasproperty(model_funs, $(QuoteNode(sym)))
                     $(sym) = getproperty(model_funs, $(QuoteNode(sym)))
             elseif hasproperty(helper_functions, $(QuoteNode(sym)))
@@ -437,6 +509,7 @@ macro randomEffects(block)
         :tuple, (Expr(:(=), re_names[i], re_names[i]) for i in eachindex(re_names))...
     )
 
+    mod = @__MODULE__
     func_expr = :(
         function (
                 fixed_effects::ComponentArray,
@@ -460,48 +533,12 @@ macro randomEffects(block)
     )
     dist_expr_values = Expr(:tuple, (QuoteNode.(dist_exprs))...)
 
+    # RGF tag is NoLimits itself, so the function type does not carry the caller module.
+    # Construction stays inside the quote: the body must be re-registered in the RGF
+    # cache in every fresh session.
+    func_expr = _qualify_context_globals(func_expr, __module__)
     return quote
-        create_dist = RuntimeGeneratedFunction(
-            @__MODULE__, @__MODULE__, $(QuoteNode(func_expr))
-        )
-        function create_wrapper(
-                fixed_effects::ComponentArray,
-                constant_features_i::NamedTuple,
-                model_funs::NamedTuple
-            )
-            return create_dist(fixed_effects, constant_features_i, model_funs, NamedTuple())
-        end
-        function create_wrapper(
-                fixed_effects::AbstractArray,
-                constant_features_i::NamedTuple,
-                model_funs::NamedTuple
-            )
-            return create_dist(
-                _re_componentize(fixed_effects),
-                constant_features_i, model_funs, NamedTuple()
-            )
-        end
-        function create_wrapper(
-                fixed_effects::ComponentArray,
-                constant_features_i::NamedTuple,
-                model_funs::NamedTuple,
-                helper_functions::NamedTuple
-            )
-            return create_dist(
-                fixed_effects, constant_features_i, model_funs, helper_functions
-            )
-        end
-        function create_wrapper(
-                fixed_effects::AbstractArray,
-                constant_features_i::NamedTuple,
-                model_funs::NamedTuple,
-                helper_functions::NamedTuple
-            )
-            return create_dist(
-                _re_componentize(fixed_effects),
-                constant_features_i, model_funs, helper_functions
-            )
-        end
+        create_dist = RuntimeGeneratedFunction($mod, $mod, $(QuoteNode(func_expr)))
         meta = RandomEffectsMeta(
             $re_names_expr,
             NamedTuple{($(QuoteNode.(re_names)...),)}($groups_values),
@@ -509,24 +546,10 @@ macro randomEffects(block)
             $re_syms_expr,
             NamedTuple{($(QuoteNode.(re_names)...),)}($dist_expr_values)
         )
-        logpdf_fn = function (dists, re_values)
-            total = 0.0
-            $(
-                Expr(
-                    :block,
-                    [
-                        :(
-                                total += logpdf(
-                                    getproperty(dists, $(QuoteNode(n))),
-                                    getproperty(re_values, $(QuoteNode(n)))
-                                )
-                            ) for n in re_names
-                    ]...
-                )
-            )
-            return total
-        end
-        builders = RandomEffectsBuilders(create_wrapper, logpdf_fn)
+        builders = RandomEffectsBuilders(
+            _REDistBuilder(create_dist),
+            _RELogpdf{$(Expr(:tuple, QuoteNode.(re_names)...))}()
+        )
         RandomEffects(meta, builders)
     end
 end

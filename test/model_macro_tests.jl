@@ -510,3 +510,37 @@ end
 
     @test ok === true
 end
+
+@testset "Model type is identical across expansion modules" begin
+    body = quote
+        @Model begin
+            @fixedEffects begin
+                a = RealNumber(0.3)
+                σ = RealNumber(0.4, scale = :log)
+            end
+            @covariates begin
+                t = Covariate()
+            end
+            @randomEffects begin
+                η = RandomEffect(Normal(0.0, 1.0); column = :ID)
+            end
+            @DifferentialEquation begin
+                D(x1) ~ -a * exp(η) * x1
+                sig(t) = 2.0 * x1
+            end
+            @initialDE begin
+                x1 = 1.0
+            end
+            @formulas begin
+                y ~ Normal(x1(t) + 0.0 * sig(t), σ)
+            end
+        end
+    end
+    types = map(1:2) do _
+        mod = Core.eval(Main, :(module $(gensym(:LDTypeStable)) end))
+        Core.eval(mod, :(using NoLimits))
+        Core.eval(mod, :(using Distributions))
+        typeof(Core.eval(mod, body))
+    end
+    @test types[1] === types[2]
+end

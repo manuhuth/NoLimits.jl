@@ -659,12 +659,21 @@ function _qualify_context_globals(ex, mod::Module)
     (mod === @__MODULE__) && return ex
     locals = Set{Symbol}()
     _collect_assigned_syms!(locals, ex)
-    if ex isa Expr && ex.head == :function && ex.args[1] isa Expr
-        for a in ex.args[1].args
-            a isa Symbol && push!(locals, a)
-        end
+    if ex isa Expr && ex.head == :function
+        _collect_arg_syms!(locals, ex.args[1])
     end
     return _qcg(ex, mod, locals)
+end
+# Argument names, including a lone `f(p)` arg and typed `x::T` args.
+_collect_arg_syms!(::Set{Symbol}, ::Any) = nothing
+_collect_arg_syms!(s::Set{Symbol}, a::Symbol) = (push!(s, a); nothing)
+function _collect_arg_syms!(s::Set{Symbol}, ex::Expr)
+    if ex.head === :(::) || ex.head === :kw
+        _collect_arg_syms!(s, ex.args[1])
+    else
+        foreach(a -> _collect_arg_syms!(s, a), ex.args)
+    end
+    return nothing
 end
 _collect_assigned_syms!(::Set{Symbol}, ex) = nothing
 function _collect_assigned_syms!(s::Set{Symbol}, ex::Expr)
