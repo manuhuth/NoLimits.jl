@@ -233,6 +233,28 @@ end
     )
 end
 
+# Symbolics' term caches are process-wide and not thread-safe: racing detection used to
+# return a corrupted plan (wrong `mode`/`cf_states`), which under `:auto` can silently
+# solve a coupled system as decoupled scalars. Reproduced on every unpatched run at 4
+# threads; the plan is a pure function of the model, so every draw must match.
+@testset "closed-form detection is thread-safe" begin
+    if Threads.nthreads() < 2
+        @info "skipped: needs Threads.nthreads() > 1"
+    else
+        m = _cf_diag2_model(:auto)
+        ref = NoLimits._detect_closed_form(m)
+        plans = Vector{Any}(undef, 400)
+        Threads.@threads for i in eachindex(plans)
+            plans[i] = NoLimits._detect_closed_form(m)
+        end
+        @test all(
+            p -> p.mode === ref.mode && p.eligible == ref.eligible &&
+                p.n == ref.n && p.cf_states == ref.cf_states,
+            plans
+        )
+    end
+end
+
 @testset "closed_form = :diagonal errors on ineligible model" begin
     mnl = set_solver_config(
         (

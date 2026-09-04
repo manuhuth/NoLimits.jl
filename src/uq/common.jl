@@ -384,18 +384,29 @@ function _project_psd_covariance(cov_mat::Matrix{Float64})
     V = Matrix{Float64}(0.5 .* (V .+ V'))
     min_raw = isempty(vals_raw) ? 0.0 : minimum(vals_raw)
     min_used = isempty(vals) ? 0.0 : minimum(vals)
-    # Clipping a negative eigenvalue to zero shrinks the variance along that direction, so a
-    # weakly identified parameter can come out looking precise. Never do that silently
-    # (issue #173).
+    # Clipping shrinks the variance along that direction, so never do it silently (#173),
+    # and say so louder when the negative is far beyond roundoff relative to the matrix
+    # scale: that is numerical error, not a rounding repair (#306).
+    scale = isempty(vals_raw) ? 0.0 : maximum(abs, vals_raw)
+    min_rel = scale > 0.0 ? min_raw / scale : 0.0
     n_clipped > 0 &&
         @warn "Wald covariance was projected to the nearest PSD matrix: $(n_clipped) " *
-        "negative eigenvalue(s) clipped to zero (most negative $(min_raw)). Standard " *
-        "errors along those directions are shrunk toward zero and understate the true " *
-        "uncertainty; prefer method = :profile / :mcmc for those parameters." maxlog = 3
+        "negative eigenvalue(s) clipped to zero (most negative $(min_raw), " *
+        "$(abs(min_rel)) of the matrix scale). " *
+        (
+        min_rel < -1.0e-8 ?
+            "That is far beyond roundoff: the estimate is not at a local minimum, or the " *
+            "Hessian is (near-)singular, so this covariance is dominated by numerical " *
+            "error and its standard errors are not usable. " :
+            "Standard errors along those directions are shrunk toward zero and understate " *
+            "the true uncertainty. "
+    ) *
+        "Prefer method = :profile / :mcmc for those parameters." maxlog = 3
     diag = (;
         vcov_projected = n_clipped > 0,
         vcov_min_eig_raw = min_raw,
         vcov_min_eig_used = min_used,
+        vcov_min_eig_rel = min_rel,
         vcov_n_eigs_clipped = n_clipped,
     )
     return V, diag

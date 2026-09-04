@@ -523,7 +523,8 @@ function plot_random_effect_pairplot(
                 if length(cols) == 1
                     push!(labels, Symbol(string(r)))
                 else
-                    push!(labels, Symbol(string(r), "_", c))
+                    # `c` already carries the RE-name prefix (flatten_re_names).
+                    push!(labels, Symbol(c))
                 end
             end
         end

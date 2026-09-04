@@ -25,12 +25,12 @@ For models with random effects, two separate modes control prediction for seen a
 **`seen_re_mode`** - individuals who appear in the training set:
 
 - `:ebe` (default) - plug in the empirical Bayes estimate (EBE, MAP of the conditional posterior) obtained from the training fit. Fast and the standard approach in pharmacometrics.
-- `:conditional` - draw `n_mc_samples` samples from the training conditional posterior `p(b | y_train, θ̂)` using the Laplace approximation (for `Laplace`) or MCMC sweeps (for `MCEM`/`SAEM`), then average per-observation log-likelihoods via `logsumexp` and predicted means arithmetically.
+- `:conditional` - draw `n_mc_samples` samples from the training conditional posterior `p(b | y_train, θ̂)` using the Laplace approximation (for `Laplace`) or MCMC sweeps (for `MCEM`/`SAEM`), then score each individual by its joint predictive marginal `log( (1/S) Σ_s Π_r p(y_r | b_s) )`, that is the sum of the individual's observation log-likelihoods within a draw followed by a `logsumexp` across draws. Predicted means are averaged arithmetically. Because the score is a per-individual quantity, `obs_scores` carries it on the individual's first row with `0.0` on the remaining rows, so sums and per-fold totals stay correct while single rows are no longer per-observation densities.
 
 **`unseen_re_mode`** - individuals absent from training (only possible with `kind=:id`):
 
 - `:mean` (default) - set the random effect to the prior mean (zero for zero-mean priors). This is the marginal population prediction.
-- `:montecarlo` - draw `n_mc_samples` samples from the RE prior `p(b | θ̂)` and average in the same way as `:conditional`.
+- `:montecarlo` - draw `n_mc_samples` samples from the RE prior `p(b | θ̂)` and aggregate them the same way as `:conditional`, giving the per-individual joint predictive marginal log-likelihood.
 
 ## Usage
 

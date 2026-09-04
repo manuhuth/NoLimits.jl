@@ -153,6 +153,15 @@ using OrdinaryDiffEq
         @test isfinite(ll_first)
         @test ll_first == ll_second
 
+        # An infusion whose stop time is past the end of the integration span is
+        # truncated there, so less than AMT is delivered (#308).
+        df_over = copy(df_evt)
+        df_over.AMT = [0.0, 2.0, 0.0]
+        @test_logs (:warn, r"truncat") match_mode = :any DataModel(
+            model, df_over; primary_id = :ID, time_col = :t,
+            evid_col = :EVID, amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT
+        )
+
         # A RATE opposing AMT would silently reverse the dose direction (#170).
         df_bad = copy(df_evt)
         df_bad.RATE = [0.0, -0.5, 0.0]
@@ -262,13 +271,13 @@ end
 
     @testset "CMT name mapping works" begin
         df = DataFrame(
-            ID = [1, 1],
-            t = [0.0, 0.0],
-            EVID = [1, 1],
-            AMT = [2.0, 3.0],
-            RATE = [0.0, 0.0],
-            CMT = ["x1", "central"],
-            y = [missing, missing]
+            ID = [1, 1, 1],
+            t = [0.0, 0.0, 1.0],
+            EVID = [1, 1, 0],
+            AMT = [2.0, 3.0, 0.0],
+            RATE = [0.0, 0.0, 0.0],
+            CMT = ["x1", "central", "x1"],
+            y = [missing, missing, 1.0]
         )
         dm = DataModel(
             model, df;
@@ -285,13 +294,13 @@ end
 
     @testset "CMT mixed styles error" begin
         df = DataFrame(
-            ID = [1, 1],
-            t = [0.0, 0.0],
-            EVID = [1, 1],
-            AMT = [2.0, 3.0],
-            RATE = [0.0, 0.0],
-            CMT = Any["x1", 2],
-            y = [missing, missing]
+            ID = [1, 1, 1],
+            t = [0.0, 0.0, 1.0],
+            EVID = [1, 1, 0],
+            AMT = [2.0, 3.0, 0.0],
+            RATE = [0.0, 0.0, 0.0],
+            CMT = Any["x1", 2, "x1"],
+            y = [missing, missing, 1.0]
         )
         @test_throws ErrorException DataModel(
             model, df;
@@ -306,13 +315,13 @@ end
 
     @testset "CMT closest-match suggestion" begin
         df = DataFrame(
-            ID = [1],
-            t = [0.0],
-            EVID = [1],
-            AMT = [2.0],
-            RATE = [0.0],
-            CMT = ["x2"],
-            y = [missing]
+            ID = [1, 1],
+            t = [0.0, 1.0],
+            EVID = [1, 0],
+            AMT = [2.0, 0.0],
+            RATE = [0.0, 0.0],
+            CMT = ["x2", "x1"],
+            y = [missing, 1.0]
         )
         err = try
             DataModel(
@@ -458,4 +467,155 @@ end
     # Verify: the grid contains t=1 explicitly and no interior grid point is earlier
     # than t=1 and later than t=0 (i.e. t=1 IS the first interior grid point).
     @test minimum(filter(t -> t > 0.0, grid)) ≤ 1.0
+end
+
+@testset "ODE callbacks: dose at a first row later than t0 (#285)" begin
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+
+        @fixedEffects begin
+            k = RealNumber(0.2)
+            σ = RealNumber(0.01)
+        end
+
+        @DifferentialEquation begin
+            D(x1) ~ -k * x1
+        end
+
+        @initialDE begin
+            x1 = 0.0
+        end
+
+        @formulas begin
+            y ~ Normal(x1(t), σ)
+        end
+    end
+
+    kk = 0.2
+
+    function _dm(df; kwargs...)
+        return DataModel(
+            model, df; primary_id = :ID, time_col = :t, evid_col = :EVID,
+            amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT, kwargs...
+        )
+    end
+    _fitted(dm) = get_residuals(
+        dm; params = NamedTuple(NoLimits.get_params(dm; scale = :untransformed))
+    ).fitted
+
+    @testset "Bolus" begin
+        df = DataFrame(
+            ID = [1, 1, 1, 1],
+            t = [10.0, 11.0, 13.0, 16.0],
+            EVID = [1, 0, 0, 0],
+            AMT = [100.0, 0.0, 0.0, 0.0],
+            RATE = [0.0, 0.0, 0.0, 0.0],
+            CMT = [1, 1, 1, 1],
+            y = [missing, 1.0, 1.0, 1.0]
+        )
+        dm = _dm(df)
+        ind = get_individual(dm, 1)
+        # Integration starts at t0 = 0, so the dose is a mid-solve event, not part of u0.
+        @test ind.tspan == (0.0, 16.0)
+        @test 10.0 in ind.callbacks.all_times
+        @test ind.callbacks.init_bolus === nothing
+        expected = [100.0 * exp(-kk * (tt - 10.0)) for tt in (11.0, 13.0, 16.0)]
+        @test isapprox(_fitted(dm), expected; rtol = 1.0e-5)
+        # `t0 = nothing` starts at the dose row, which then folds into u0.
+        dm_n = _dm(df; t0 = nothing)
+        @test get_individual(dm_n, 1).callbacks.init_bolus == [(1, 100.0)]
+        @test isapprox(_fitted(dm_n), expected; rtol = 1.0e-5)
+    end
+
+    @testset "Infusion" begin
+        # RATE = 50, AMT = 100 => infusion runs on [2, 4].
+        df = DataFrame(
+            ID = [1, 1, 1],
+            t = [2.0, 3.0, 4.0],
+            EVID = [1, 0, 0],
+            AMT = [100.0, 0.0, 0.0],
+            RATE = [50.0, 0.0, 0.0],
+            CMT = [1, 1, 1],
+            y = [missing, 1.0, 1.0]
+        )
+        dm = _dm(df)
+        ind = get_individual(dm, 1)
+        @test ind.tspan == (0.0, 4.0)
+        @test 2.0 in ind.callbacks.all_times
+        @test 4.0 in ind.callbacks.all_times
+        @test all(iszero, ind.callbacks.init_infusion_rates)
+        expected = [50.0 / kk * (1 - exp(-kk * (tt - 2.0))) for tt in (3.0, 4.0)]
+        @test isapprox(_fitted(dm), expected; rtol = 1.0e-5)
+    end
+
+    @testset "Individuals starting at different times" begin
+        df = DataFrame(
+            ID = [1, 1, 1, 2, 2, 2],
+            t = [0.0, 1.0, 3.0, 5.0, 6.0, 8.0],
+            EVID = [1, 0, 0, 1, 0, 0],
+            AMT = [100.0, 0.0, 0.0, 100.0, 0.0, 0.0],
+            RATE = zeros(6),
+            CMT = fill(1, 6),
+            y = [missing, 1.0, 1.0, missing, 1.0, 1.0]
+        )
+        expected = [
+            100.0 * exp(-kk * 1.0), 100.0 * exp(-kk * 3.0),
+            100.0 * exp(-kk * 1.0), 100.0 * exp(-kk * 3.0),
+        ]
+        @test isapprox(_fitted(_dm(df)), expected; rtol = 1.0e-5)
+        @test isapprox(_fitted(_dm(df; t0 = nothing)), expected; rtol = 1.0e-5)
+    end
+end
+
+@testset "ODE callbacks: infusion rate state is per-solve (#308)" begin
+    # A linear RHS would take the closed-form path (which copies the rates) and hide
+    # the shared-buffer race, so the RHS here is deliberately nonlinear.
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+
+        @fixedEffects begin
+            k = RealNumber(0.3, scale = :log)
+            σ = RealNumber(1.0, scale = :log)
+        end
+
+        @DifferentialEquation begin
+            D(x1) ~ -k * x1 * x1 / (1 + x1)
+        end
+
+        @initialDE begin
+            x1 = 0.0
+        end
+
+        @formulas begin
+            y ~ Normal(x1(t), σ)
+        end
+    end
+
+    df = DataFrame(
+        ID = [1, 1, 1, 2, 2, 2],
+        t = [1.0, 2.0, 4.0, 1.0, 2.0, 4.0],
+        EVID = [1, 0, 0, 1, 0, 0],
+        AMT = [10.0, 0.0, 0.0, 10.0, 0.0, 0.0],
+        RATE = [5.0, 0.0, 0.0, 5.0, 0.0, 0.0],
+        CMT = [1, 1, 1, 1, 1, 1],
+        y = [missing, 3.0, 2.0, missing, 2.5, 1.8]
+    )
+    dm = DataModel(
+        model, df; primary_id = :ID, time_col = :t, evid_col = :EVID,
+        amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT
+    )
+    θ = get_θ0_untransformed(model.fixed.fixed)
+    ref = NoLimits.loglikelihood(dm, θ, ComponentArray())
+    @test isfinite(ref)
+
+    n = 200
+    out = fill(NaN, n)
+    Threads.@threads for i in 1:n
+        out[i] = NoLimits.loglikelihood(dm, θ, ComponentArray())
+    end
+    @test all(==(ref), out)
 end

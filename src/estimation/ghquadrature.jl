@@ -20,7 +20,8 @@ using LineSearches
                  inner_options, inner_optimizer, inner_kwargs, inner_adtype,
                  inner_grad_tol, multistart_options, multistart_n, multistart_k,
                  multistart_grad_tol, multistart_max_rounds, multistart_sampling,
-                 lb, ub, ignore_model_bounds, precondition) <: FittingMethod
+                 lb, ub, ignore_model_bounds, precondition,
+                 update_schedule) <: FittingMethod
 
 Sparse-grid (Smolyak) quadrature for NLME marginal likelihood estimation.
 
@@ -45,7 +46,8 @@ whose gradient is not; use `Laplace()` for that, and `level ≥ 3` here.
   Levels 1–3 are numerically stable; higher levels may exhibit cancellation
   in signed logsumexp.
 - `optimizer`: outer Optimization.jl-compatible optimizer.  Defaults to LBFGS
-  with backtracking line search.
+  with backtracking line search, or to `Optimisers.Adam(0.01)` when
+  `update_schedule != :all`.
 - `optim_kwargs::NamedTuple = NamedTuple()`: forwarded to `Optimization.solve`
   (e.g. `maxiters`, `reltol`).
 - `adtype`: AD backend for the outer gradient.  Defaults to
@@ -67,8 +69,9 @@ whose gradient is not; use `Laplace()` for that, and `level ≥ 3` here.
   `false` to optimize the transformed vector directly, which reproduces pre-0.2 results
   bit-for-bit. Note that with preconditioning on, the optimizer object behind
   [`get_raw`](@ref) works in `z`; [`get_params`](@ref) always returns the usual scales.
+$(_UPDATE_SCHEDULE_DOC)
 """
-struct GHQuadrature{LV, O, K, A, IO, MS, L, U} <: FittingMethod
+struct GHQuadrature{LV, O, K, A, IO, MS, L, U, US} <: FittingMethod
     level::LV   # Int (isotropic) or NamedTuple (anisotropic per-RE-group)
     optimizer::O
     optim_kwargs::K
@@ -79,6 +82,7 @@ struct GHQuadrature{LV, O, K, A, IO, MS, L, U} <: FittingMethod
     ub::U
     ignore_model_bounds::Bool
     precondition::Bool
+    update_schedule::US
 end
 
 # `level` is an Int, a Vector{Int} (level continuation), or a NamedTuple of per-RE levels.
@@ -104,9 +108,11 @@ function _check_ghq_level(level)
     return Int(level)
 end
 
+_update_schedule(m::GHQuadrature) = m.update_schedule
+
 function GHQuadrature(;
         level = 3,  # Int or NamedTuple for anisotropic levels
-        optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
+        optimizer = nothing,
         optim_kwargs = NamedTuple(),
         adtype = Optimization.AutoForwardDiff(),
         inner_options = nothing,
@@ -123,8 +129,11 @@ function GHQuadrature(;
         lb = nothing,
         ub = nothing,
         ignore_model_bounds = false,
-        precondition = true
+        precondition = true,
+        update_schedule = :all
     )
+    update_schedule = _check_update_schedule(_as_symbol(update_schedule), "GHQuadrature")
+    optimizer = _resolve_outer_optimizer(optimizer, update_schedule, "GHQuadrature")
     level = _check_ghq_level(_as_namedtuple(level))
     inner = inner_options === nothing ?
         LaplaceInnerOptions(
@@ -139,7 +148,7 @@ function GHQuadrature(;
         multistart_options
     return GHQuadrature(
         level, optimizer, _as_namedtuple(optim_kwargs), adtype, inner, ms, lb, ub,
-        ignore_model_bounds, precondition
+        ignore_model_bounds, precondition, update_schedule
     )
 end
 
@@ -260,10 +269,10 @@ the estimate oscillate and drift *away* from the true integral as the level rise
 regularly turning the batch marginal negative (issue #98). Centered on the mode it
 converges at level 1-3.
 
-Returns `nothing` (keep the prior-centered measure) when the batch is not purely
-Gaussian — `CenteredREMeasure` places nodes anywhere in ℝ^n_b, which only stays
-inside the random-effect support when every RE in the batch is `Normal`/`MvNormal`
-— or when the mode/curvature is unavailable.
+Returns `nothing` (keep the prior-centered measure) when some RE in the batch has
+bounded support — `CenteredREMeasure` places nodes anywhere in ℝ^n_b, which only
+stays inside the random-effect support when every RE in the batch is supported on
+all of ℝ — or when the mode/curvature is unavailable.
 """
 function _ghq_adaptive_measure(
         dm::DataModel, info::REBatchInfo,
@@ -446,6 +455,9 @@ function _fit_model_scalar(
     n_batches = length(batch_infos)
     Tθ = eltype(layout.θ0_free_t)
     ebe_cache = _init_laplace_eval_cache(n_batches, Tθ)
+    mb = _minibatch_state(_update_schedule(method), n_batches, rng)
+    # The ref lets the post-solve full-data evaluation switch mini-batching off.
+    mb_ref = Ref{Union{Nothing, typeof(mb)}}(mb)
 
     # ── Objective ────────────────────────────────────────────────────────────
     θ0_free_t = layout.θ0_free_t
@@ -460,6 +472,8 @@ function _fit_model_scalar(
     )
 
     function obj(z, p)
+        st = _minibatch_current!(mb_ref[])
+        active = _minibatch_active(st)
         θt_free = _θt_from_z(z)
         T = eltype(θt_free)
         infT = convert(T, Inf)
@@ -481,7 +495,8 @@ function _fit_model_scalar(
             grad_tol = inner_opts.grad_tol,
             multistart = multistart_opts,
             rng = rng,
-            serialization = serialization
+            serialization = serialization,
+            active_batches = active
         )
 
         # Both branches fill the same per-batch vector and reduce it with the same
@@ -496,6 +511,7 @@ function _fit_model_scalar(
             Threads.@threads for c in 1:n_chunks
                 cache_c = ll_cache[c]
                 for bi in c:n_chunks:length(batch_infos)
+                    active !== nothing && !(bi in active) && continue
                     if bad[]
                         results[bi] = zero(T)
                         continue
@@ -517,6 +533,7 @@ function _fit_model_scalar(
             bad[] && return infT
         else
             for (bi, info) in enumerate(batch_infos)
+                active !== nothing && !(bi in active) && continue
                 bll = _ghq_batch_ll(
                     dm, info, θu_re, const_cache, ll_cache,
                     method.level, bstars[bi]
@@ -525,7 +542,7 @@ function _fit_model_scalar(
                 results[bi] = convert(T, bll)
             end
         end
-        total = sum(results)
+        total = st === nothing ? sum(results) : st.scale * sum(results[bi] for bi in st.selected)
         return -total + convert(T, _penalty_value(θu, penalty)) +
             (extra_objective === nothing ? zero(T) : convert(T, extra_objective(θu)))
     end
@@ -540,9 +557,20 @@ function _fit_model_scalar(
     z0 = _z_from_θt(θ0_init)
     lb_z = _z_from_θt(lb)
     ub_z = _z_from_θt(ub)
+    opt_use, use_bounds = _bounded_optimizer(method.optimizer, use_bounds, lb_z, ub_z)
     prob = use_bounds ? OptimizationProblem(optf, z0; lb = lb_z, ub = ub_z) :
         OptimizationProblem(optf, z0)
-    sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
+    invalidate! = _LaplaceMinibatchInvalidate(nothing, ebe_cache)
+    solve_kwargs = _minibatch_solve_kwargs(method.optim_kwargs, opt_use, mb, invalidate!)
+    sol = Optimization.solve(prob, opt_use; solve_kwargs...)
+
+    # Mini-batched objectives are per-minibatch; re-evaluate on all batches at the fitted θ.
+    final_obj = sol.objective
+    if mb !== nothing
+        mb_ref[] = nothing
+        invalidate!()
+        final_obj = obj(sol.u, nothing)
+    end
 
     # ── Extract solution ─────────────────────────────────────────────────────
     # Mapped back here so both consumers below (the post-hoc EB modes and `FitParameters`) see θt.
@@ -555,6 +583,10 @@ function _fit_model_scalar(
     θ_hat_u = inv_transform(θ_hat_t)
 
     # ── Post-hoc EB mode finding (for get_random_effects) ────────────────────
+    # Cold-solve the modes at θ̂: a warm start returns the stale residual of whichever θ
+    # the optimizer tried last (same warm-start issue as the Laplace family).
+    invalidate!()
+    fill!(ebe_cache.bstar_cache.has_bstar, false)
     _laplace_get_bstar!(
         ebe_cache, dm, batch_infos, θ_hat_u, const_cache, ll_cache;
         optimizer = inner_opts.optimizer,
@@ -566,9 +598,17 @@ function _fit_model_scalar(
         serialization = serialization
     )
 
+    # Post-hoc EBE diagnostic (#311), same check as the Laplace family.
+    _warn_ebe_grad_tol(
+        ebe_cache, dm, batch_infos, θ_hat_u, const_cache, ll_cache,
+        inner_opts.grad_tol; label = string(nameof(typeof(method)))
+    )
+
     # ── Build result ─────────────────────────────────────────────────────────
+    isfinite(final_obj) ||
+        _warn_nonfinite_fit(dm, θ_hat_u, string(nameof(typeof(method))))
     summary = FitSummary(
-        sol.objective,
+        final_obj,
         sol.retcode == SciMLBase.ReturnCode.Success,
         FitParameters(θ_hat_t, θ_hat_u),
         NamedTuple()
@@ -581,7 +621,7 @@ function _fit_model_scalar(
         sol.stats.iterations : missing
     raw = hasproperty(sol, :original) ? sol.original : sol
     result = GHQuadratureResult(
-        sol, sol.objective, niter, raw, NamedTuple(),
+        sol, final_obj, niter, raw, NamedTuple(),
         ebe_cache.bstar_cache.b_star
     )
     return FitResult(
@@ -617,7 +657,7 @@ function _fit_model(
             lv,
             method.optimizer, method.optim_kwargs, method.adtype,
             method.inner, method.multistart, method.lb, method.ub,
-            method.ignore_model_bounds, method.precondition
+            method.ignore_model_bounds, method.precondition, method.update_schedule
         )
         res = _fit_model_scalar(dm, inner, args...; theta_0_untransformed = θ0, kwargs...)
         θ0 = get_params(res; scale = :untransformed)

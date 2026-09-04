@@ -389,10 +389,13 @@ function summarize(dm::DataModel)
         append!(outcome_stats, _outcome_stat_rows(obs, col[obs_rows]))
     end
 
-    # Declared covariates + per-column stats (observation rows only)
+    # Declared covariates + per-column stats (observation rows, except subject-constant
+    # covariates: those take one row per individual so follow-up length cannot weight
+    # them (#309.7)).
     covariate_declarations = NamedTuple[]
     covariate_stats = NamedTuple[]
     nonnumeric_covariate_columns = String[]
+    first_rows = [rws[1] for rws in get_rows(get_row_groups(dm))]
     for cname in cov.names
         p = getfield(cov.params, cname)
         kind, cols, constant_on = _covariate_kind_and_columns(p)
@@ -400,9 +403,10 @@ function summarize(dm::DataModel)
             covariate_declarations,
             (; name = cname, kind = kind, columns = cols, constant_on = constant_on)
         )
+        is_const = p isa ConstantCovariate || p isa ConstantCovariateVector
         for colname in cols
             col = getproperty(get_df(dm), colname)
-            vals = col[obs_rows]
+            vals = col[is_const ? first_rows : obs_rows]
             st = _descriptive_stats(vals)
             if st.n == 0
                 push!(nonnumeric_covariate_columns, string(cname, ".", colname))
@@ -564,7 +568,8 @@ function Base.show(io::IO, ::MIME"text/plain", s::DataModelSummary)
     _print_covariate_declarations(io, s.covariate_declarations)
     println(io)
     _print_descriptive_table(
-        io, "Covariate descriptive statistics (observation rows)", s.covariate_stats
+        io, "Covariate descriptive statistics (observation rows; constant covariates per individual)",
+        s.covariate_stats
     )
     if !isempty(s.nonnumeric_covariate_columns)
         println(io)

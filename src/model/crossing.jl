@@ -105,6 +105,14 @@ end
     a = integrator.tprev
     b = integrator.t
     va = ForwardDiff.value(integrator(a; idxs = idx)) - cv
+    vb = ForwardDiff.value(integrator(b; idxs = idx)) - cv
+    # The step interpolant is smooth, so if it does not bracket the level the crossing is
+    # a jump (a coincident dose/reset) at `integrator.t` -- report it, no IFT correction.
+    if (vb < 0) == (va < 0)
+        ca.ref[] = oftype(ca.ref[], b)
+        ca.fired[] = true
+        return nothing
+    end
     @inbounds for _ in 1:40                                 # bisection on the step interpolant
         m = 0.5 * (a + b)
         vm = ForwardDiff.value(integrator(m; idxs = idx)) - cv
@@ -150,6 +158,12 @@ function _crossing_time_from_sol(sol, idx::Int, c, tmax)
     end
     found || return oftype(0.5 * (ts[1] + ts[1]) - cv, tmax)
     va = ForwardDiff.value(sol(a; idxs = idx)) - cv
+    vb = ForwardDiff.value(sol(b; idxs = idx)) - cv
+    # Same rule as `_CrossingAffect`: a sign change the smooth interpolant does not
+    # bracket (a duplicated `sol.t` entry) is a jump at `b`.
+    if b <= a || (vb < 0) == (va < 0)
+        return oftype(sol.u[1][idx] - c, b)
+    end
     @inbounds for _ in 1:40                                 # bisection on the step interpolant
         m = 0.5 * (a + b)
         vm = ForwardDiff.value(sol(m; idxs = idx)) - cv

@@ -71,6 +71,12 @@ Use the accessor functions to retrieve individual components:
 [`get_multistart_starts`](@ref), [`get_multistart_failed_results`](@ref),
 [`get_multistart_failed_starts`](@ref), [`get_multistart_best_index`](@ref),
 [`get_multistart_best`](@ref).
+
+All post-processing (`summarize`, `compute_uq`, `get_residuals`, `predict`,
+`complete_data_loglikelihood`, `get_marginal_likelihood`, `compute_shrinkage`, every
+`plot_*` function, ...) accepts a `MultistartFitResult` directly and acts on the best
+run. [`get_multistart_best`](@ref) is still available when the underlying
+[`FitResult`](@ref) itself is needed.
 """
 struct MultistartFitResult{M, R, RE, S, E, B}
     method::M
@@ -690,16 +696,16 @@ function fit_model(ms::Multistart, dm::DataModel, method::FittingMethod, args...
     n_starts = length(starts)
     results = Vector{Union{FitResult, Nothing}}(undef, n_starts)
     errors = Vector{Any}(undef, n_starts)
-    rngs = [Random.Xoshiro(rand(ms.rng, UInt)) for _ in 1:n_starts]
+    # Every start gets its own forked rng: a shared rng object would be raced by the
+    # threaded starts (mini-batch draws call `randperm!` on it).
+    seed_rng = get(kw_nt, :rng, ms.rng)
+    rngs = [Random.Xoshiro(rand(seed_rng, UInt)) for _ in 1:n_starts]
     fit_p = progress ?
         Progress(n_starts; desc = "Multistart fitting:  ", showspeed = true) : nothing
 
     function run_one(i)
         try
-            local_kwargs = kw_nt
-            if !haskey(kw_nt, :rng)
-                local_kwargs = merge(kw_nt, (rng = rngs[i],))
-            end
+            local_kwargs = merge(kw_nt, (rng = rngs[i],))
             results[i] = fit_model(
                 dm, method, args...; theta_0_untransformed = starts[i], local_kwargs...
             )
@@ -747,34 +753,34 @@ function fit_model(ms::Multistart, dm::DataModel, method::FittingMethod, args...
     )
 end
 
-get_summary(res::MultistartFitResult) = get_summary(get_multistart_best(res))
-get_diagnostics(res::MultistartFitResult) = get_diagnostics(get_multistart_best(res))
-get_result(res::MultistartFitResult) = get_result(get_multistart_best(res))
+# Post-processing on a multistart result acts on the best run (#295). One list instead of
+# per-function forwarders, so the accessor surface cannot drift out of sync again.
+# `get_method` and the `get_multistart_*` accessors are deliberately not in it.
+const MULTISTART_FORWARDED_FUNCTIONS = (
+    :get_summary, :get_diagnostics, :get_result, :get_objective, :get_converged,
+    :get_data_model, :get_params, :get_chain, :get_iterations, :get_raw, :get_notes,
+    :get_observed, :get_sampler, :get_n_samples, :get_random_effects,
+    :get_laplace_random_effects, :get_loglikelihood, :get_loglikelihood_quadrature,
+    :get_fit_args, :get_fit_kwargs, :get_closed_form_mstep_used,
+    :get_variational_posterior, :get_vi_state, :get_vi_trace, :get_residuals,
+    :summarize, :compute_uq, :compute_shrinkage, :complete_data_loglikelihood,
+    :predict, :reestimate_ebes, :sample_random_effects, :sample_posterior,
+    :identifiability_report,
+)
+
+for f in MULTISTART_FORWARDED_FUNCTIONS
+    @eval function $f(res::MultistartFitResult, args...; kwargs...)
+        return $f(get_multistart_best(res), args...; kwargs...)
+    end
+end
+
 get_method(res::MultistartFitResult) = res.method
-get_objective(res::MultistartFitResult) = get_objective(get_multistart_best(res))
-get_converged(res::MultistartFitResult) = get_converged(get_multistart_best(res))
-get_data_model(res::MultistartFitResult) = get_data_model(get_multistart_best(res))
 
-function get_params(res::MultistartFitResult; kwargs...)
-    return get_params(get_multistart_best(res); kwargs...)
+# Forms that take the DataModel first and the fit second.
+function complete_data_loglikelihood(dm::DataModel, res::MultistartFitResult; kwargs...)
+    return complete_data_loglikelihood(dm, get_multistart_best(res); kwargs...)
 end
 
-get_chain(res::MultistartFitResult) = get_chain(get_multistart_best(res))
-get_iterations(res::MultistartFitResult) = get_iterations(get_multistart_best(res))
-get_raw(res::MultistartFitResult) = get_raw(get_multistart_best(res))
-get_notes(res::MultistartFitResult) = get_notes(get_multistart_best(res))
-get_observed(res::MultistartFitResult) = get_observed(get_multistart_best(res))
-get_sampler(res::MultistartFitResult) = get_sampler(get_multistart_best(res))
-get_n_samples(res::MultistartFitResult) = get_n_samples(get_multistart_best(res))
-
-function get_random_effects(res::MultistartFitResult; kwargs...)
-    return get_random_effects(get_multistart_best(res); kwargs...)
-end
-
-function get_laplace_random_effects(res::MultistartFitResult; kwargs...)
-    return get_laplace_random_effects(get_multistart_best(res); kwargs...)
-end
-
-function get_loglikelihood(res::MultistartFitResult; kwargs...)
-    return get_loglikelihood(get_multistart_best(res); kwargs...)
+function get_loglikelihood_quadrature(dm::DataModel, res::MultistartFitResult; kwargs...)
+    return get_loglikelihood_quadrature(dm, get_multistart_best(res); kwargs...)
 end

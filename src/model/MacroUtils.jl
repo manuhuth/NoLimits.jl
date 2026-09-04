@@ -124,3 +124,27 @@ function _macro_forbidden_symbol(ex)
     end
     return nothing
 end
+
+# Convenience rewrite shared by @randomEffects and @formulas: `NormalizingPlanarFlow(ψ)`
+# becomes a call to the generated `NPF_ψ(ψ)` model function registered from the
+# corresponding `NPFParameter`. Only the exact one-argument call on a bare symbol is
+# rewritten; every other spelling is left untouched.
+function _rewrite_npf_calls(ex)
+    ex isa Expr || return ex
+    if ex.head == :call && ex.args[1] == :NormalizingPlanarFlow && length(ex.args) == 2
+        arg = ex.args[2]
+        if arg isa Symbol
+            return Expr(:call, Symbol("NPF_", arg), arg)
+        end
+    end
+    return Expr(ex.head, map(_rewrite_npf_calls, ex.args)...)
+end
+
+# Source location suffix for block-parser errors: the offending statement and the line
+# of the last `LineNumberNode` seen before it (#313).
+function _stmt_loc(ln, stmt)
+    loc = ln isa LineNumberNode ? "$(ln.file):$(ln.line)" : "unknown location"
+    txt = replace(string(stmt), "\n" => " ")
+    length(txt) > 120 && (txt = first(txt, 117) * "...")
+    return " (at $(loc): $(txt))"
+end

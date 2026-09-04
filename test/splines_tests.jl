@@ -24,6 +24,10 @@ using ForwardDiff
     @test_throws ErrorException bspline_eval(-0.1, coeffs, knots, degree)
     @test_throws ErrorException bspline_eval(1.1, coeffs, knots, degree)
 
+    # Right boundary knot: the basis used to collapse to all-zero there (#304).
+    @test isapprox(sum(bspline_basis(knots[end], knots, degree)), 1.0; atol = 1.0e-10)
+    @test isapprox(bspline_eval(knots[end], coeffs, knots, degree), coeffs[end]; atol = 1.0e-10)
+
     knots_bad = [0.0, 0.5, 0.4, 1.0]
     @test_throws ErrorException bspline_basis(0.5, knots_bad, 1)
 end

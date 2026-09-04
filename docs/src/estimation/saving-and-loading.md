@@ -1,6 +1,6 @@
 # Saving and Loading Fit Results
 
-Fit results can be persisted to disk using `save_fit` and reloaded with `load_fit`. Results are stored as [JLD2](https://github.com/JuliaIO/JLD2.jl) files. Because the `DataModel` contains runtime-generated closures (from the `@Model` macro) that cannot be serialized, these are stripped on save and must be reconstructed on load. All numerical content - parameters, objectives, chains, empirical Bayes modes - is preserved exactly.
+Fit results can be persisted to disk using `save_fit` and reloaded with `load_fit`. Results are stored as [JLD2](https://github.com/JuliaIO/JLD2.jl) files. Because the `DataModel` contains runtime-generated closures (from the `@Model` macro) that cannot be serialized, these are stripped on save and must be reconstructed on load. All numerical content - parameters, objectives, chains, empirical Bayes modes - is preserved exactly. Reconstructing the model in a new session recompiles the generated code; see [Precompiling Models](precompiling-models.md) for how to cache that compilation across sessions.
 
 !!! note "JLD2 is an optional dependency"
     `save_fit` and `load_fit` live in a package extension, so JLD2 is not installed with

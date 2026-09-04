@@ -10,14 +10,14 @@ using LineSearches
 
 """
     MAP(; optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds,
-    precondition) <: FittingMethod
+    precondition, update_schedule) <: FittingMethod
 
 Maximum A Posteriori estimation for models without random effects.
 Requires prior distributions on at least one free fixed effect.
 
 # Keyword Arguments
 - `optimizer`: Optimization.jl-compatible optimizer. Defaults to `LBFGS` with backtracking
-  line search.
+  line search, or to `Optimisers.Adam(0.01)` when `update_schedule != :all`.
 - `optim_kwargs::NamedTuple = NamedTuple()`: keyword arguments forwarded to `Optimization.solve`
   (e.g. `maxiters`, `reltol`).
 - `adtype`: automatic-differentiation backend. Defaults to `AutoForwardDiff()`.
@@ -33,8 +33,11 @@ Requires prior distributions on at least one free fixed effect.
   `false` to optimize the transformed vector directly, which reproduces pre-0.2 results
   bit-for-bit. Note that with preconditioning on, the optimizer object behind
   [`get_raw`](@ref) works in `z`; [`get_params`](@ref) always returns the usual scales.
+$(_UPDATE_SCHEDULE_DOC)  A batch here is a single individual, so `update_schedule = 5`
+  uses 5 randomly chosen individuals per optimizer iteration. The log-prior is a global
+  term applied once per objective evaluation and is never scaled.
 """
-struct MAP{O, K, A, L, U} <: FittingMethod
+struct MAP{O, K, A, L, U, US} <: FittingMethod
     optimizer::O
     optim_kwargs::K
     adtype::A
@@ -42,20 +45,26 @@ struct MAP{O, K, A, L, U} <: FittingMethod
     ub::U
     ignore_model_bounds::Bool
     precondition::Bool
+    update_schedule::US
 end
 
+_update_schedule(m::MAP) = m.update_schedule
+
 function MAP(;
-        optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
+        optimizer = nothing,
         optim_kwargs = NamedTuple(),
         adtype = Optimization.AutoForwardDiff(),
         lb = nothing,
         ub = nothing,
         ignore_model_bounds = false,
-        precondition = true
+        precondition = true,
+        update_schedule = :all
     )
+    update_schedule = _check_update_schedule(_as_symbol(update_schedule), "MAP")
+    optimizer = _resolve_outer_optimizer(optimizer, update_schedule, "MAP")
     return MAP(
         optimizer, _as_namedtuple(optim_kwargs), adtype, lb, ub,
-        ignore_model_bounds, precondition
+        ignore_model_bounds, precondition, update_schedule
     )
 end
 
@@ -107,6 +116,7 @@ function _fit_model(
         ode_kwargs = ode_kwargs,
         serialization = serialization,
         add_term = add_term,
+        rng = rng,
         theta_0_untransformed = theta_0_untransformed,
         store_data_model = store_data_model,
         fit_args = args,

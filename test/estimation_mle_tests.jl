@@ -40,6 +40,15 @@ end
     res = fx_mle()                        # shared no-RE MLE fit
     @test res isa FitResult
     @test NoLimits.get_params(res; scale = :untransformed) isa ComponentArray
+
+    # #310: a finite but overflowing observation makes the objective constant, so the fit
+    # returns the starting values; it must say so and name the individual.
+    df_bad = copy(fx_nore_df())
+    df_bad.y[8] = 1.0e200
+    dm_bad = DataModel(fx_nore_model(), df_bad; primary_id = :ID, time_col = :t)
+    @test_logs (:warn, r"never became finite.*ID\): 4") match_mode = :any fit_model(
+        dm_bad, NoLimits.MLE(); serialization = NoLimits.EnsembleSerial()
+    )
 end
 
 let
@@ -573,7 +582,223 @@ end
         dm; theta_untransformed = ComponentArray(a = NaN, s = 0.3)
     )
 
+    # #311: ParticleSwarm samples particles uniformly inside the box (an infinite edge
+    # gives all-NaN estimates with a finite objective) and IPNewton is barrier-only, so
+    # both are rejected instead of silently returning junk or throwing from inside Optim.
+    @test_throws ErrorException fit(
+        NoLimits.MLE(
+            optimizer = Optim.ParticleSwarm(), optim_kwargs = (; maxiters = 5),
+            lb = [-2.0, -2.0], ub = [Inf, Inf]
+        )
+    )
+    @test_throws ErrorException fit(
+        NoLimits.MLE(optimizer = Optim.IPNewton(), optim_kwargs = K)
+    )
+    # #311: a start outside the box used to surface as `Initial x[(1,)]=0.0 is outside of
+    # [...]` in preconditioned z-coordinates, naming no number the user typed.
+    @test_logs (:warn, r"clamped into the box") match_mode = :any fit(
+        NoLimits.MLE(optim_kwargs = K, lb = [-1.0, -1.0], ub = [1.0, 1.0]);
+        theta_0_untransformed = (a = 5.0, s = 0.5)
+    )
+
     @test fit(NoLimits.MLE(optim_kwargs = K, lb = [-5.0, -5.0], ub = [5.0, 5.0])) isa
         FitResult
     @test fit(NoLimits.MLE(optim_kwargs = K); penalty = (a = 10.0,)) isa FitResult
+end
+
+# ── Mini-batching over individuals (#281) ────────────────────────────────────
+import Optimisers
+using Random: MersenneTwister
+
+# Fixed selection, and a recorder for the (nbatches, iter, rng) contract.
+struct _MLEFixedSched
+    sel::Vector{Int}
+end
+(s::_MLEFixedSched)(nbatches::Int, iter::Int, rng) = s.sel
+
+mutable struct _MLESchedRecorder
+    nb::Vector{Int}
+    it::Vector{Int}
+    rngs::Vector{Any}
+end
+_MLESchedRecorder() = _MLESchedRecorder(Int[], Int[], Any[])
+function (r::_MLESchedRecorder)(nbatches::Int, iter::Int, rng)
+    push!(r.nb, nbatches)
+    push!(r.it, iter)
+    push!(r.rngs, rng)
+    return [1, 2]
+end
+
+@testset "MLE mini-batching (#281)" begin
+    NL = NoLimits
+    dm = fx_nore_dm()
+    n_ind = length(NL.get_individuals(dm))
+    @test n_ind == 4
+
+    @testset "constructor" begin
+        for T in (NL.MLE, NL.MAP)
+            @test T().update_schedule === :all
+            @test T(update_schedule = :all).update_schedule === :all
+            @test T(update_schedule = "all").update_schedule === :all
+            @test T(update_schedule = 2).update_schedule == 2
+            f = (n, it, r) -> [1]
+            @test T(update_schedule = f).update_schedule === f
+            @test_throws ErrorException T(update_schedule = 0)
+            @test_throws ErrorException T(update_schedule = "bogus")
+            @test_throws ErrorException T(update_schedule = 1.5)
+
+            @test T().optimizer isa OptimizationOptimJL.LBFGS
+            @test T(update_schedule = 2).optimizer isa Optimisers.AbstractRule
+            @test_logs (:warn, r"stochastic") T(
+                update_schedule = 2, optimizer = OptimizationOptimJL.LBFGS()
+            )
+            adam = Optimisers.Adam(0.05)
+            @test (@test_logs T(update_schedule = 2, optimizer = adam)).optimizer === adam
+            lb = OptimizationOptimJL.LBFGS()
+            @test (@test_logs T(update_schedule = :all, optimizer = lb)).optimizer === lb
+        end
+    end
+
+    @testset ":all is unchanged" begin
+        r1 = fit_model(
+            dm, NL.MLE(; optim_kwargs = (maxiters = 3,));
+            serialization = NoLimits.EnsembleSerial()
+        )
+        r2 = fit_model(
+            dm, NL.MLE(; update_schedule = :all, optim_kwargs = (maxiters = 3,));
+            serialization = NoLimits.EnsembleSerial()
+        )
+        @test get_objective(r1) == get_objective(r2)
+        @test NL.get_params(r1; scale = :transformed) ==
+            NL.get_params(r2; scale = :transformed)
+    end
+
+    @testset "_loglikelihood_indices" begin
+        θ = NL.get_θ0_untransformed(dm)
+        for ser in (NoLimits.EnsembleSerial(), NoLimits.EnsembleThreads())
+            full = NL.loglikelihood(dm, θ, ComponentArray(); serialization = ser)
+            @test NL._loglikelihood_indices(
+                dm, θ, ComponentArray(), 1:n_ind; serialization = ser
+            ) == full
+            part = NL._loglikelihood_indices(
+                dm, θ, ComponentArray(), [2, 4]; serialization = ser
+            )
+            singles = sum(
+                NL._loglikelihood_indices(
+                        dm, θ, ComponentArray(), [i]; serialization = ser
+                    ) for i in (2, 4)
+            )
+            @test part ≈ singles
+        end
+    end
+
+    @testset "one draw per optimizer iteration" begin
+        rec = _MLESchedRecorder()
+        rng = MersenneTwister(1)
+        fit_model(
+            dm,
+            NL.MLE(;
+                update_schedule = rec, optimizer = Optimisers.Adam(0.05),
+                optim_kwargs = (maxiters = 4,)
+            );
+            serialization = NoLimits.EnsembleSerial(), rng = rng
+        )
+        @test rec.it == collect(1:4)
+        @test all(==(n_ind), rec.nb)
+        @test all(r -> r === rng, rec.rngs)
+    end
+
+    @testset "final objective is the full-data objective" begin
+        penalty = (; a = 100.0)
+        extra = θ -> 0.5 * θ.a^2
+        res = fit_model(
+            dm,
+            NL.MLE(;
+                update_schedule = _MLEFixedSched([1, 3]),
+                optimizer = Optimisers.Adam(0.05), optim_kwargs = (maxiters = 5,)
+            );
+            penalty = penalty, extra_objective = extra,
+            serialization = NoLimits.EnsembleSerial(), rng = MersenneTwister(2)
+        )
+        θ̂ = NL.get_params(res; scale = :untransformed)
+        expected = -NL.loglikelihood(
+            dm, θ̂, ComponentArray(); serialization = NoLimits.EnsembleSerial()
+        ) + NL._penalty_value(θ̂, penalty) + extra(θ̂)
+        @test get_objective(res) ≈ expected
+
+        # The optimizer itself saw the scaled subset objective, with the global terms
+        # (penalty, extra_objective) added once and unscaled. Adam(0.0) freezes θ at θ0.
+        res0 = fit_model(
+            dm,
+            NL.MLE(;
+                update_schedule = _MLEFixedSched([1, 3]),
+                optimizer = Optimisers.Adam(0.0), optim_kwargs = (maxiters = 1,)
+            );
+            penalty = penalty, extra_objective = extra,
+            serialization = NoLimits.EnsembleSerial(), rng = MersenneTwister(2)
+        )
+        θ00 = NL.get_θ0_untransformed(dm)
+        expected_sub = (n_ind / 2) * (
+            -NL._loglikelihood_indices(
+                dm, θ00, ComponentArray(), [1, 3];
+                serialization = NoLimits.EnsembleSerial()
+            )
+        ) + NL._penalty_value(θ00, penalty) + extra(θ00)
+        @test NL.get_result(res0).solution.objective ≈ expected_sub rtol = 1.0e-12
+
+        # The scaled subset objective is a different (unbiased) quantity.
+        θ0 = NL.get_θ0_untransformed(dm)
+        sub = (n_ind / 2) * NL._loglikelihood_indices(
+            dm, θ0, ComponentArray(), [1, 3];
+            serialization = NoLimits.EnsembleSerial()
+        )
+        @test sub != NL.loglikelihood(
+            dm, θ0, ComponentArray(); serialization = NoLimits.EnsembleSerial()
+        )
+    end
+
+    @testset "reproducible given the same rng" begin
+        mk() = fit_model(
+            dm,
+            NL.MLE(;
+                update_schedule = 2, optimizer = Optimisers.Adam(0.05),
+                optim_kwargs = (maxiters = 3,)
+            );
+            serialization = NoLimits.EnsembleSerial(), rng = MersenneTwister(7)
+        )
+        @test NL.get_params(mk(); scale = :transformed) ==
+            NL.get_params(mk(); scale = :transformed)
+    end
+
+    @testset "bounds are projected for Optimisers rules" begin
+        θ0_t = NL.get_θ0_transformed(dm)
+        lo = (; a = θ0_t.a - 0.01, b = θ0_t.b - 0.01, σ = θ0_t.σ - 0.01)
+        hi = (; a = θ0_t.a + 0.01, b = θ0_t.b + 0.01, σ = θ0_t.σ + 0.01)
+        res = fit_model(
+            dm,
+            NL.MLE(;
+                update_schedule = 2, lb = lo, ub = hi,
+                optimizer = Optimisers.Adam(1.0), optim_kwargs = (maxiters = 5,)
+            );
+            serialization = NoLimits.EnsembleSerial(), rng = MersenneTwister(3)
+        )
+        θ̂t = NL.get_params(res; scale = :transformed)
+        names = (:a, :b, :σ)
+        @test all(
+            getproperty(lo, k) - 1.0e-12 <= θ̂t[k] <= getproperty(hi, k) + 1.0e-12
+                for k in names
+        )
+        @test any(
+            min(
+                    abs(θ̂t[k] - getproperty(lo, k)), abs(θ̂t[k] - getproperty(hi, k))
+                ) <= 1.0e-8 for k in names
+        )
+
+        # The bounded LBFGS path is untouched.
+        res_all = fit_model(
+            dm, NL.MLE(; lb = lo, ub = hi, optim_kwargs = (maxiters = 3,));
+            serialization = NoLimits.EnsembleSerial()
+        )
+        @test res_all isa FitResult
+    end
 end

@@ -160,8 +160,10 @@ Note that screening (Phase 1) always runs serially regardless of `serialization`
 
 Random number generator behavior depends on how `rng` is supplied (the constructor default is `Xoshiro(0)`):
 
-- If `rng` is not passed to `fit_model(ms, ...)`, each start receives an internally spawned child RNG to ensure independence.
-- If `rng` is explicitly provided in the fit keywords, that generator is forwarded to every underlying fit call.
+Each start always receives its own internally spawned child RNG, so threaded starts never share generator state.
+
+- If `rng` is not passed to `fit_model(ms, ...)`, the child RNGs are seeded from the `Multistart` `rng`.
+- If `rng` is explicitly provided in the fit keywords, the child RNGs are seeded from that generator instead.
 
 ## Fit Keyword Forwarding
 
@@ -187,12 +189,20 @@ best_run = get_multistart_best(res_ms)
 best_idx = get_multistart_best_index(res_ms)
 ```
 
-Standard fit accessors also work directly on a `MultistartFitResult`, dispatching to the best run:
+The whole post-processing surface also works directly on a `MultistartFitResult`, dispatching to the best run:
 
 ```julia
 theta_best = get_params(res_ms; scale=:untransformed)
 obj_best   = get_objective(res_ms)
+
+fit_summary = summarize(res_ms)
+uq          = compute_uq(res_ms; method=:wald)
+resid       = get_residuals(res_ms)
+pred        = predict(res_ms, dm; re_mode=:population)
+fig         = plot_fits(res_ms)
 ```
+
+This covers the accessors, `summarize`, `compute_uq`, `get_residuals`, `predict`, `complete_data_loglikelihood`, `get_marginal_likelihood`, `compute_shrinkage`, and every `plot_*` function. `get_multistart_best(res_ms)` is still available whenever the underlying `FitResult` itself is needed, for example to pass one run to a function that takes several fits.
 
 ## Example: Fixed-Effects MLE with Screening
 

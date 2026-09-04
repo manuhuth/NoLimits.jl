@@ -52,7 +52,9 @@ end
     auto_cfg = _auto_cfg(model, df)
     @test auto_cfg !== nothing
     @test auto_cfg.re_cov_params == (; η = :τ)
-    @test auto_cfg.re_mean_params == (; η = :a)
+    # `a` is the RE mean but also feeds the outcome, so its closed-form update would
+    # discard the outcome likelihood; it falls back to the numeric M-step (issue #289).
+    @test auto_cfg.re_mean_params == NamedTuple()
     @test auto_cfg.resid_var_param == :σ
 end
 
@@ -524,4 +526,75 @@ end
     @test auto_cfg !== nothing
     @test auto_cfg.re_cov_params == (; η = :τ)
     @test auto_cfg.resid_var_param == (; yb = :p)
+end
+
+@testset "SAEM auto-detect: RE scale shared with the outcome is not closed-form" begin
+    # ω drives both the RE spread and the residual sd through a deterministic formula,
+    # so the RE-moment closed-form update would ignore the outcome (issue #289).
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+
+        @fixedEffects begin
+            a = RealNumber(0.1)
+            ω = RealNumber(0.3, scale = :log)
+        end
+
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, ω); column = :ID)
+        end
+
+        @formulas begin
+            s = 0.4 + 1.5 * ω
+            y ~ Normal(a + η, s)
+        end
+    end
+
+    df = DataFrame(
+        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [0.1, 0.2, 0.0, -0.1]
+    )
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    fixed_names = NoLimits.get_names(model.fixed.fixed)
+    @test NoLimits._saem_shared_closed_form_targets(dm, fixed_names) == Set([:ω])
+    @test _auto_cfg(model, df) === nothing
+
+    cfg = NoLimits._saem_resolve_closed_form_config(dm, NoLimits.SAEM().saem)
+    @test cfg.builtin_stats_mode == :none
+    @test cfg.shared_excluded == [:ω]
+    cf, num = NoLimits.saem_closed_form_eligibility(dm)
+    @test :ω ∉ cf
+    @test :ω ∈ num
+
+    # Same model with an independent residual sd keeps the closed-form ω update.
+    model_ok = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+
+        @fixedEffects begin
+            a = RealNumber(0.1)
+            ω = RealNumber(0.3, scale = :log)
+            s = RealNumber(0.5, scale = :log)
+        end
+
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, ω); column = :ID)
+        end
+
+        @formulas begin
+            y ~ Normal(a + η, s)
+        end
+    end
+    dm_ok = DataModel(model_ok, df; primary_id = :ID, time_col = :t)
+    @test isempty(
+        NoLimits._saem_shared_closed_form_targets(
+            dm_ok, NoLimits.get_names(model_ok.fixed.fixed)
+        )
+    )
+    auto_ok = _auto_cfg(model_ok, df)
+    @test auto_ok.re_cov_params == (; η = :ω)
+    @test auto_ok.resid_var_param == :s
+    cf_ok, _ = NoLimits.saem_closed_form_eligibility(dm_ok)
+    @test :ω ∈ cf_ok
 end

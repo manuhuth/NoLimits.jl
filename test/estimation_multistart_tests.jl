@@ -7,6 +7,7 @@ using Random
 using Turing
 using MCMCChains
 using SciMLBase
+import Optimisers
 
 const LD = NoLimits
 
@@ -241,6 +242,23 @@ end
     )
     res = fit_model(ms, fx_nore_dm(), NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
     @test res isa NoLimits.MultistartFitResult
+
+    # A user-supplied rng must not be shared across threaded starts: mini-batch draws
+    # mutate it, which made the fit non-reproducible (#323).
+    mb = NoLimits.MLE(
+        update_schedule = 2, optimizer = Optimisers.Adam(0.05),
+        optim_kwargs = (; maxiters = 10)
+    )
+    # A fresh Multistart per run: its rng is consumed when the starts are sampled.
+    ms_mb() = NoLimits.Multistart(
+        dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 3, n_draws_used = 3,
+        serialization = EnsembleThreads(), progress = false, rng = MersenneTwister(101)
+    )
+    objs = [
+        NoLimits.get_objective(fit_model(ms_mb(), fx_nore_dm(), mb; rng = MersenneTwister(5)))
+            for _ in 1:2
+    ]
+    @test objs[1] == objs[2]
 end
 
 @testset "Multistart LHS extensive (univariate + priors override)" begin
@@ -471,4 +489,41 @@ end
     res = fit_model(ms, fx_fixre_dm(), NoLimits.Laplace(; optim_kwargs = (maxiters = 2,)))
     @test length(NoLimits.get_multistart_results(res)) >= 1
     @test NoLimits.get_multistart_best(res) !== nothing
+end
+
+# Post-processing used to throw a raw MethodError on a MultistartFitResult because only a
+# hand-maintained subset of accessors forwarded to the best run (#295).
+@testset "Multistart post-processing forwards to the best run" begin
+    ms = NoLimits.Multistart(
+        dists = (; a = Normal(0.2, 0.2)), n_draws_requested = 3, n_draws_used = 2,
+        progress = false, rng = Random.Xoshiro(3)
+    )
+    dm = fx_nore_dm()
+    res = NoLimits.fit_model(ms, dm, NoLimits.MLE(; optim_kwargs = (maxiters = 20,)))
+    best = NoLimits.get_multistart_best(res)
+
+    @test NoLimits.summarize(res).parameter_rows == NoLimits.summarize(best).parameter_rows
+    @test NoLimits.get_uq_estimates(NoLimits.compute_uq(res; method = :wald)) ==
+        NoLimits.get_uq_estimates(NoLimits.compute_uq(best; method = :wald))
+    @test NoLimits.complete_data_loglikelihood(res) == NoLimits.complete_data_loglikelihood(best)
+    @test NoLimits.complete_data_loglikelihood(dm, res) == NoLimits.complete_data_loglikelihood(dm, best)
+    @test isequal(NoLimits.get_residuals(res), NoLimits.get_residuals(best))
+    @test isequal(
+        NoLimits.predict(res, dm; re_mode = :population),
+        NoLimits.predict(best, dm; re_mode = :population)
+    )
+    @test NoLimits.get_fit_args(res) == NoLimits.get_fit_args(best)
+    @test NoLimits.get_fit_kwargs(res) == NoLimits.get_fit_kwargs(best)
+    @test NoLimits.get_closed_form_mstep_used(res) == NoLimits.get_closed_form_mstep_used(best)
+
+    ms_re = NoLimits.Multistart(
+        dists = (; a = Normal(0.2, 0.2)), n_draws_requested = 3, n_draws_used = 2,
+        progress = false, rng = Random.Xoshiro(3)
+    )
+    res_re = NoLimits.fit_model(
+        ms_re, fx_fixre_dm(), NoLimits.Laplace(; optim_kwargs = (maxiters = 3,))
+    )
+    best_re = NoLimits.get_multistart_best(res_re)
+    @test NoLimits.compute_shrinkage(res_re) == NoLimits.compute_shrinkage(best_re)
+    @test NoLimits.get_marginal_likelihood(res_re) == NoLimits.get_marginal_likelihood(best_re)
 end

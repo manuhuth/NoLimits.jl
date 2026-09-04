@@ -172,6 +172,25 @@ end
 
 @inline (a::DESignalAccessor)(t) = a.f(a.sol, a.pc, t)
 
+# Callable struct instead of a gensym'd closure over `signal_fns`: two byte-identical
+# `@DifferentialEquation` blocks must produce the same type regardless of the module
+# they expand in (issue #327). `names` lists states then signals.
+struct _DEAccessors{names, nstates, S}
+    signal_fns::S
+end
+
+function _DEAccessors{names, nstates}(fns::S) where {names, nstates, S}
+    return _DEAccessors{names, nstates, S}(fns)
+end
+
+@generated function (a::_DEAccessors{names, nstates})(sol, pc) where {names, nstates}
+    vals = Any[:(DEStateAccessor(sol, $i)) for i in 1:nstates]
+    for j in 1:(length(names) - nstates)
+        push!(vals, :(DESignalAccessor(sol, pc, a.signal_fns[$j])))
+    end
+    return :(NamedTuple{$names}(($(vals...),)))
+end
+
 """
     DEStaticContext{B, I}
 
@@ -652,20 +671,24 @@ function _parse_de(block::Expr)
     line_exprs = Expr[]
     seen = Set{Symbol}()
 
+    ln = nothing
     for stmt in block.args
-        stmt isa LineNumberNode && continue
-        stmt isa Expr || error("Invalid statement in @DifferentialEquation block.")
+        if stmt isa LineNumberNode
+            ln = stmt
+            continue
+        end
+        stmt isa Expr || error("Invalid statement in @DifferentialEquation block." * _stmt_loc(ln, stmt))
 
         if stmt.head == :(=)
             lhs, rhs = stmt.args
             lhs isa Expr && lhs.head == :call ||
-                error("Derived signals must be function-like: s(t)=... .")
+                error("Derived signals must be function-like: s(t)=... ." * _stmt_loc(ln, stmt))
             name = lhs.args[1]
-            name isa Symbol || error("Derived signal name must be a Symbol.")
-            length(lhs.args) == 2 || error("Derived signal must be of form s(t) = expr.")
+            name isa Symbol || error("Derived signal name must be a Symbol." * _stmt_loc(ln, stmt))
+            length(lhs.args) == 2 || error("Derived signal must be of form s(t) = expr." * _stmt_loc(ln, stmt))
             arg = lhs.args[2]
-            (arg == :t || arg == :ξ) || error("Derived signal argument must be t or ξ.")
-            name in seen && error("Duplicate DE name: $(name).")
+            (arg == :t || arg == :ξ) || error("Derived signal argument must be t or ξ." * _stmt_loc(ln, stmt))
+            name in seen && error("Duplicate DE name: $(name)." * _stmt_loc(ln, stmt))
             push!(seen, name)
             push!(signal_names, name)
             push!(signal_exprs, rhs)
@@ -674,15 +697,15 @@ function _parse_de(block::Expr)
         end
 
         stmt.head == :call && stmt.args[1] == :~ ||
-            error("Only D(x) ~ expr or s(t)=expr are allowed in @DifferentialEquation.")
+            error("Only D(x) ~ expr or s(t)=expr are allowed in @DifferentialEquation." * _stmt_loc(ln, stmt))
         lhs, rhs = stmt.args[2], stmt.args[3]
         lhs isa Expr && lhs.head == :call && lhs.args[1] == :D ||
-            error("Left-hand side must be D(state).")
+            error("Left-hand side must be D(state)." * _stmt_loc(ln, stmt))
         length(lhs.args) == 2 ||
-            error("Left-hand side must be D(state) with a single symbol.")
+            error("Left-hand side must be D(state) with a single symbol." * _stmt_loc(ln, stmt))
         state = lhs.args[2]
-        state isa Symbol || error("State name must be a Symbol.")
-        state in seen && error("Duplicate DE name: $(state).")
+        state isa Symbol || error("State name must be a Symbol." * _stmt_loc(ln, stmt))
+        state in seen && error("Duplicate DE name: $(state)." * _stmt_loc(ln, stmt))
         push!(seen, state)
         push!(state_names, state)
         push!(rhs_exprs, rhs)
@@ -717,6 +740,7 @@ Must be paired with `@initialDE` when used inside `@Model`.
 """
 macro DifferentialEquation(block)
     RuntimeGeneratedFunctions.init(__module__)
+    mod = @__MODULE__
     state_names, rhs_exprs, signal_names, signal_exprs, line_exprs = _parse_de(block)
     signal_set = Set(signal_names)
 
@@ -884,32 +908,23 @@ macro DifferentialEquation(block)
             end
             ) for i in eachindex(signal_names)
     ]
-    accessor_names = vcat(state_names, signal_names)
-    accessor_vals = vcat(
-        [:(DEStateAccessor(sol, $i)) for i in eachindex(state_names)],
-        [:(DESignalAccessor(sol, pc, signal_fns[$i])) for i in eachindex(signal_names)]
-    )
-    accessors_nt = Expr(
-        :call,
-        Expr(:curly, :NamedTuple, Expr(:tuple, QuoteNode.(accessor_names)...)),
-        Expr(:tuple, accessor_vals...)
-    )
-    accessors_fn_sym = gensym(:de_accessors_)
-    accessors_expr = :(
-        function $(accessors_fn_sym)(sol, pc)
-            return $accessors_nt
-        end
-    )
+    accessor_names_expr = Expr(:tuple, QuoteNode.(vcat(state_names, signal_names))...)
+
+    # RGF tags are NoLimits itself, so the function types do not carry the caller
+    # module. Construction stays inside the quote: the bodies must be re-registered in
+    # the RGF cache in every fresh session.
+    compile_expr = _qualify_context_globals(compile_expr, __module__)
+    f!_expr = _qualify_context_globals(f!_expr, __module__)
+    f_expr = _qualify_context_globals(f_expr, __module__)
+    signal_fn_exprs = [_qualify_context_globals(ex, __module__) for ex in signal_fn_exprs]
 
     state_names_expr = Expr(:vect, QuoteNode.(state_names)...)
     signal_names_expr = Expr(:vect, QuoteNode.(signal_names)...)
     lines_expr = Expr(:vect, QuoteNode.(line_exprs)...)
     return quote
-        compile_rgf = RuntimeGeneratedFunction(
-            @__MODULE__, @__MODULE__, $(QuoteNode(compile_expr))
-        )
-        f!_rgf = RuntimeGeneratedFunction(@__MODULE__, @__MODULE__, $(QuoteNode(f!_expr)))
-        f_rgf = RuntimeGeneratedFunction(@__MODULE__, @__MODULE__, $(QuoteNode(f_expr)))
+        compile_rgf = RuntimeGeneratedFunction($mod, $mod, $(QuoteNode(compile_expr)))
+        f!_rgf = RuntimeGeneratedFunction($mod, $mod, $(QuoteNode(f!_expr)))
+        f_rgf = RuntimeGeneratedFunction($mod, $mod, $(QuoteNode(f_expr)))
         meta = DifferentialEquationMeta(
             $state_names_expr, $signal_names_expr,
             $(Expr(:vect, map(QuoteNode, collect(var_syms_no_states))...)),
@@ -922,14 +937,16 @@ macro DifferentialEquation(block)
                 [
                     :(
                             RuntimeGeneratedFunction(
-                                @__MODULE__, @__MODULE__, $(QuoteNode(signal_fn_exprs[i]))
+                                $mod, $mod, $(QuoteNode(signal_fn_exprs[i]))
                             )
                         )
                         for i in eachindex(signal_fn_exprs)
                 ]...
             ),
         )
-        $(accessors_expr)
-        DifferentialEquation(meta, builders, $(accessors_fn_sym))
+        DifferentialEquation(
+            meta, builders,
+            _DEAccessors{$accessor_names_expr, $(length(state_names))}(signal_fns)
+        )
     end
 end

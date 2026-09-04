@@ -566,7 +566,7 @@ end
 function _em_seed_batch_b(
         dm::DataModel, info::REBatchInfo, θ0_u,
         const_cache::REConstantsCache, cache_init, rng::AbstractRNG,
-        re_names, bi::Int, method_label::String
+        re_names, bi, method_label::String
     )
     b_init = _re_prior_mean_b(dm, info, θ0_u, const_cache, cache_init, re_names)
     logf = _laplace_logf_batch(dm, info, θ0_u, b_init, const_cache, cache_init)
@@ -588,6 +588,25 @@ function _em_seed_batch_b(
         "$(method_label): Cannot find valid initial random effects for batch $bi after 10 tries. " *
             "Initial fixed-effect parameters likely produce -Inf log-likelihood. " *
             "Try different starting values."
+    )
+end
+
+# Guard for the native samplers' own initial draw. An unchecked prior draw with a
+# non-finite log-joint deadlocks the chain: the acceptance ratio becomes NaN, so no
+# proposal is ever accepted and the M-step is skipped every iteration. Returns `b`
+# unchanged (no extra RNG draws) whenever it is already finite.
+function _em_vet_init_b(
+        dm::DataModel, info::REBatchInfo, θ_re,
+        b::Vector{Float64}, const_cache::REConstantsCache, cache,
+        rng::AbstractRNG, re_names, method_label::String
+    )
+    isempty(b) && return b
+    isfinite(_laplace_logf_batch(dm, info, θ_re, b, const_cache, cache)) && return b
+    return Vector{Float64}(
+        _em_seed_batch_b(
+            dm, info, θ_re, const_cache, cache, rng, re_names,
+            "(sampler init)", method_label
+        )
     )
 end
 
@@ -1367,7 +1386,7 @@ function _fit_model(
         # MCEM_IS warm-up -> IS switch.
         sched = (prev_use_mcmc === use_mcmc) ? method.update_schedule : :all
         prev_use_mcmc = use_mcmc
-        updated = _em_batches!(
+        updated = _schedule_batches!(
             batches_buf, sched, length(batch_infos), iter, rng
         )
 
@@ -1526,8 +1545,8 @@ function _fit_model(
                     return -Q2val
                 end
                 lb_q2, ub_q2, use_bounds_q2, θ0_q2 = _resolve_optim_bounds(
-                    fe, q2_free_now, collect(θt_q2), method.optimizer, nothing,
-                    nothing, NamedTuple(); allow_bbo = false
+                    fe, q2_free_now, collect(θt_q2), method.optimizer, method.lb,
+                    method.ub, NamedTuple(); allow_bbo = false, method_label = "MCEM"
                 )
                 optf_q2 = OptimizationFunction(obj_q2, method.adtype)
                 z0_q2 = _z_from_q2(θ0_q2)

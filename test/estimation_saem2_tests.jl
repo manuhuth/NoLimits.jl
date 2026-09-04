@@ -5,6 +5,7 @@ using Distributions
 using Turing
 using Random
 using SciMLBase
+using Optimization
 using OptimizationOptimisers
 using OptimizationBBO
 using LinearAlgebra
@@ -583,6 +584,25 @@ end
     @test NoLimits.get_closed_form_mstep_used(res)
     @test notes.closed_form_mstep_mode == :closed_form_only
     @test :builtin_stats in notes.closed_form_mstep_sources
+end
+
+# #311: the `builtin_mean = :glm` M-step hardcoded ForwardDiff and built its problem with
+# no box, so it ignored both `adtype` and every bound. `sa_burnin_iters = 0` is what makes
+# the path reachable in a 2-iteration fit.
+@testset "SAEM builtin_mean glm honours adtype and bounds" begin
+    res = fit_model(
+        fx_tiny_re_dm(),
+        NoLimits.SAEM(;
+            sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
+            SAEM_FAST...,
+            builtin_mean = :glm,
+            sa_burnin_iters = 0,
+            adtype = Optimization.AutoFiniteDiff(),
+            lb = (; a = 0.7, σ = -10.0),
+            ub = (; a = 0.9, σ = 10.0)
+        )
+    )
+    @test 0.7 - 1.0e-6 <= NoLimits.get_params(res; scale = :untransformed).a <= 0.9 + 1.0e-6
 end
 
 @testset "SAEM builtin_mean glm (Bernoulli + Poisson)" begin

@@ -2,7 +2,7 @@
 
 The Wald method is the most widely used approach to uncertainty quantification for maximum likelihood and related estimators. It approximates the log-likelihood surface as locally quadratic at the optimum, yielding a Gaussian approximation to the sampling distribution of the parameter estimates. This approximation is computationally inexpensive and accurate when the model is well-identified and the sample size is adequate.
 
-In NoLimits.jl, Wald UQ is accessed via `compute_uq(...; method=:wald)`. It constructs an approximate variance-covariance matrix for eligible fixed-effect coordinates, then draws from the implied Gaussian distribution to form confidence intervals.
+In NoLimits.jl, Wald UQ is accessed via `compute_uq(...; method=:wald)`. It constructs an approximate variance-covariance matrix for eligible fixed-effect coordinates and reports `estimate ± z * SE` intervals on the transformed scale, back-transformed exactly for coordinates whose transform is monotone. Draws from the implied Gaussian distribution are also returned and cover the remaining coordinates.
 
 For visualization of Wald-based densities, closed-form curves are used when available:
 
@@ -97,7 +97,7 @@ end
 
 ### Choosing `n_draws`
 
-The `n_draws` parameter controls the number of Monte Carlo samples drawn from the Wald Gaussian approximation. These draws are used to compute draw-based summaries (accessible via `get_uq_draws`), interval estimates, and the natural-scale covariance matrix.
+The `n_draws` parameter controls the number of Monte Carlo samples drawn from the Wald Gaussian approximation. These draws are used for draw-based summaries (accessible via `get_uq_draws`) and for the parts of the natural-scale covariance matrix that have no closed form. Intervals and the natural-scale variances of identity- and log-scale coordinates are computed in closed form and do not depend on `n_draws` or on the seed.
 
 Importantly, `n_draws` does not affect the transformed-scale covariance matrix itself (`get_uq_vcov(...; scale=:transformed)`), which is derived directly from the Hessian or sandwich calculation.
 

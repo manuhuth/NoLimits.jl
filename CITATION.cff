@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-message: "If you use NoLimits.jl in your research, please cite it as below."
+message: "If you use NoLimits.jl in your research, please cite the paper below."
 title: "NoLimits.jl"
 abstract: >-
   A Julia framework for nonlinear mixed-effects modeling of longitudinal data,
@@ -14,19 +14,22 @@ authors:
   - family-names: "Arruda"
     given-names: "Jonas"
     affiliation: "Bonn Center for Mathematical Life Sciences, University of Bonn"
-  - family-names: "Peiter"
-    given-names: "Clemens"
+  - family-names: "Schmid"
+    given-names: "Nina"
     affiliation: "Bonn Center for Mathematical Life Sciences, University of Bonn"
   - family-names: "Gusinow"
     given-names: "Roy"
     affiliation: "Bonn Center for Mathematical Life Sciences, University of Bonn"
-  - family-names: "Schmid"
-    given-names: "Nina"
+  - family-names: "Wieland"
+    given-names: "Vincent"
+    affiliation: "Bonn Center for Mathematical Life Sciences, University of Bonn"
+  - family-names: "Peiter"
+    given-names: "Clemens"
     affiliation: "Bonn Center for Mathematical Life Sciences, University of Bonn"
   - family-names: "Hasenauer"
     given-names: "Jan"
     affiliation: "Bonn Center for Mathematical Life Sciences, University of Bonn"
-version: "0.2.0"
+version: "0.2.7"
 license: MIT
 repository-code: "https://github.com/manuhuth/NoLimits.jl"
 url: "https://manuhuth.github.io/NoLimits.jl/"
@@ -37,3 +40,36 @@ keywords:
   - "scientific machine learning"
   - "Bayesian inference"
   - "Julia"
+preferred-citation:
+  type: article
+  title: "NoLimits.jl: Flexible and Composable Nonlinear Mixed-Effects Modeling in Julia"
+  journal: "arXiv"
+  year: 2026
+  month: 6
+  url: "https://arxiv.org/abs/2606.24427"
+  doi: "10.48550/arXiv.2606.24427"
+  identifiers:
+    - type: other
+      value: "arXiv:2606.24427"
+  authors:
+    - family-names: "Huth"
+      given-names: "Manuel"
+      affiliation: "Bonn Center for Mathematical Life Sciences, University of Bonn"
+    - family-names: "Arruda"
+      given-names: "Jonas"
+      affiliation: "Bonn Center for Mathematical Life Sciences, University of Bonn"
+    - family-names: "Schmid"
+      given-names: "Nina"
+      affiliation: "Bonn Center for Mathematical Life Sciences, University of Bonn"
+    - family-names: "Gusinow"
+      given-names: "Roy"
+      affiliation: "Bonn Center for Mathematical Life Sciences, University of Bonn"
+    - family-names: "Wieland"
+      given-names: "Vincent"
+      affiliation: "Bonn Center for Mathematical Life Sciences, University of Bonn"
+    - family-names: "Peiter"
+      given-names: "Clemens"
+      affiliation: "Bonn Center for Mathematical Life Sciences, University of Bonn"
+    - family-names: "Hasenauer"
+      given-names: "Jan"
+      affiliation: "Bonn Center for Mathematical Life Sciences, University of Bonn"

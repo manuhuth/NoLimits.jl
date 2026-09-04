@@ -1388,7 +1388,7 @@ function mcem_e_step(
     use_mcmc = _use_mcmc_this_iter(iter, method.e_step)
     # Force a full refresh on iter 1 and on the MCMC-warmup -> IS switch (matches the fit).
     sched = st.prev_use_mcmc === use_mcmc ? method.update_schedule : :all
-    updated = copy(_em_batches!(st.batches_buf, sched, nb, iter, rng))
+    updated = copy(_schedule_batches!(st.batches_buf, sched, nb, iter, rng))
 
     if use_mcmc
         mcmc_es = _mcmc_e_step(method.e_step)
@@ -2070,6 +2070,10 @@ in `f_natural`. Do-block friendly:
     θ̂, sol = optimize_parameters(ctx; θ_start=θ) do θn
         -sum(complete_data_loglikelihood(ctx, bi, θn, modes[bi]) for bi in eachindex(get_batch_infos(ctx)))
     end
+
+The returned `sol` carries the optimizer's verdict: pass
+`converged = SciMLBase.successful_retcode(sol)` to [`build_fit_result`](@ref) instead of
+letting it default to `missing`.
 
 `ponytail:` optimizes all fixed effects; apply `constants`/bounds via the explicit
 `free_parameter_layout`/`resolve_optimizer_bounds` path when needed.

@@ -57,6 +57,11 @@ end
     model_saveat = set_solver_config(model; saveat_mode = :saveat)
     dm = DataModel(model_saveat, df; primary_id = :ID, time_col = :t)
 
+    # A non-algorithm `alg` is rejected eagerly (#314); real algorithms pass.
+    @test_throws ErrorException set_solver_config(model; alg = :Tsit5)
+    @test set_solver_config(model; alg = Tsit5()) isa NoLimits.Model
+    @test set_solver_config(model; alg = AutoTsit5(Rodas5P())) isa NoLimits.Model
+
     ind = get_individual(dm, 1)
     θ = get_θ0_untransformed(model_saveat.fixed.fixed)
     η = ComponentArray()
@@ -89,6 +94,20 @@ end
         loglik += logpdf(obs.y, y)
     end
     @test isfinite(loglik)
+
+    # Negative observation times are legitimate (#287): the integration starts at `t0`
+    # when it is given and at the individual's first time when it is `nothing`.
+    df_neg = DataFrame(ID = [1, 1, 1], t = [-6.0, -4.0, -2.0], y = [1.0, 0.9, 0.8])
+    for (t0_val, start) in ((nothing, -6.0), (-10.0, -10.0))
+        dm_neg = DataModel(
+            model_saveat, df_neg; primary_id = :ID, time_col = :t, t0 = t0_val
+        )
+        @test get_individual(dm_neg, 1).tspan == (start, -2.0)
+        mu = [exp(-0.2 * (tt - start)) for tt in df_neg.t]
+        ll_ref = sum(logpdf.(Normal.(mu, 0.5), df_neg.y))
+        ll_neg = NoLimits.loglikelihood(dm_neg, θ, ComponentArray())
+        @test isapprox(ll_neg, ll_ref; rtol = 1.0e-5)
+    end
 end
 
 @testset "DataModel ODE logpdf with time offsets" begin
@@ -193,6 +212,8 @@ end
     dm = DataModel(model_saveat, df; primary_id = :ID, time_col = :t)
 
     ind = get_individual(dm, 1)
+    # The covariate knots are kinks in the RHS and are handed to the solver (#309).
+    @test NoLimits.get_tstops(ind) == [0.0, 0.5, 1.0]
     θ = get_θ0_untransformed(model_saveat.fixed.fixed)
     η = ComponentArray()
     const_covariates_i = NamedTuple()
@@ -375,6 +396,33 @@ end
 
     model_saveat = set_solver_config(model; saveat_mode = :saveat)
     dm = DataModel(model_saveat, df; primary_id = :ID, time_col = :t)
+
+    # NaN in a *vector* covariate column used to slip past the finiteness guard, which
+    # iterated the synthetic `x_1`/`x_2` flat names instead of Age/BMI (#309).
+    df_nan = copy(df)
+    df_nan.Age = [NaN, NaN, NaN, 45.0, 45.0, 45.0]
+    err_nan = try
+        DataModel(model_saveat, df_nan; primary_id = :ID, time_col = :t)
+        nothing
+    catch e
+        e
+    end
+    @test err_nan isa ErrorException
+    @test occursin("Column Age contains the non-finite value", err_nan.msg)
+
+    # A repeated row time NaN-poisons the CubicSpline interpolant over its whole
+    # support, so it is rejected at construction naming the covariate (#309).
+    df_dup = copy(df)
+    df_dup.t = [0.0, 0.5, 0.5, 0.0, 0.5, 1.0]
+    err_dup = try
+        DataModel(model_saveat, df_dup; primary_id = :ID, time_col = :t)
+        nothing
+    catch e
+        e
+    end
+    @test err_dup isa ErrorException
+    @test occursin("repeated time", err_dup.msg)
+    @test occursin("Dynamic covariate w", err_dup.msg)
 
     ind = get_individual(dm, 1)
     θ = get_θ0_untransformed(model_saveat.fixed.fixed)

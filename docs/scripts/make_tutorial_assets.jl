@@ -1206,10 +1206,11 @@ function NoLimits.fit_method(
     )
     ctx = build_fit_context(dm)
     θ = something(theta_0_untransformed, initial_parameters(ctx))
+    sol = nothing
     for _ in 1:(m.n_iter)
         modes = empirical_bayes(ctx, θ)                    # E-step: posterior modes b* ...
         covs = empirical_bayes_covariance(ctx, θ, modes)   # ... and covariance Σ = (−H)⁻¹
-        θ, _ = optimize_parameters(ctx; θ_start = θ) do θn  # M-step, natural scale
+        θ, sol = optimize_parameters(ctx; θ_start = θ) do θn  # M-step, natural scale
             -sum(
                 complete_data_loglikelihood(ctx, bi, θn, modes[bi]) +
                     0.5 * tr(
@@ -1222,7 +1223,8 @@ function NoLimits.fit_method(
     end
     return build_fit_result(
         ctx, m, θ; kind = :frequentist_re,
-        objective = -laplace_marginal(ctx, θ), iterations = m.n_iter
+        objective = -laplace_marginal(ctx, θ), iterations = m.n_iter,
+        converged = SciMLBase.successful_retcode(sol)
     )
 end
 

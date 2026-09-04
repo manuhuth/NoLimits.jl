@@ -317,6 +317,27 @@ end
         primary_id = :ID, time_col = :t, evid_col = :EVID,
         amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT
     )
+
+    # A dose row sharing t with a baseline observation is not a duplicate observation (#308).
+    df_dose_at_t0 = DataFrame(
+        ID = [1, 1, 1], t = [0.0, 0.0, 1.0], EVID = [1, 0, 0],
+        AMT = [0.0, 0.0, 0.0], RATE = zeros(3), CMT = [1, 1, 1],
+        Age = [30.0, 30.0, 30.0], y = [missing, 1.1, 1.2]
+    )
+    @test_logs DataModel(
+        model, df_dose_at_t0;
+        primary_id = :ID, time_col = :t, evid_col = :EVID,
+        amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT
+    )
+    # Two genuine observations at one time still warn.
+    df_dup_obs = copy(df_dose_at_t0)
+    df_dup_obs.EVID[1] = 0
+    df_dup_obs.y[1] = 1.0
+    @test_logs (:warn, r"Duplicate") match_mode = :any DataModel(
+        model, df_dup_obs;
+        primary_id = :ID, time_col = :t, evid_col = :EVID,
+        amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT
+    )
 end
 
 # Shared valid model + df; only the DataModel(...) kwargs differ across the
@@ -393,6 +414,21 @@ end
     # schema validation, not with a conversion error.
     @test_throws ErrorException DataModel(
         model, 42; primary_id = :ID, time_col = :t
+    )
+
+    # A declared covariate whose column is absent is named at construction (#315).
+    df_no_age = DataFrame(
+        ID = [1, 1],
+        t = [0.0, 1.0],
+        y = [1.0, 1.1]
+    )
+    @test_throws "Covariate x is declared as ConstantCovariateVector with column Age" DataModel(
+        model, df_no_age; primary_id = :ID, time_col = :t
+    )
+
+    # Swapped positional arguments report the argument order, not a phantom column (#315).
+    @test_throws "Check the argument order" DataModel(
+        df_no_age, model; primary_id = :ID, time_col = :t
     )
 end
 
@@ -1056,6 +1092,20 @@ end
     )
 
     @test_throws ErrorException DataModel(model, df; primary_id = :ID, time_col = :t)
+
+    # Missings are validated by declaration, so a covariate used only in the RE
+    # distribution is caught at construction (#309.5).
+    df_missing_c1 = DataFrame(
+        ID = [1, 1, 2, 2],
+        SITE = [:A, :A, :B, :B],
+        t = [0.0, 1.0, 0.0, 1.0],
+        c1 = [10.0, 10.0, missing, missing],
+        c2 = [1.0, 1.0, 3.0, 3.0],
+        y = [1.0, 1.1, 0.9, 1.0]
+    )
+    @test_throws "contains missing values" DataModel(
+        model, df_missing_c1; primary_id = :ID, time_col = :t
+    )
 end
 
 @testset "DataModel RE validation only checks used covariates (valid)" begin
@@ -1277,6 +1327,18 @@ end
 
     model_saveat = set_solver_config(model; saveat_mode = :saveat)
     @test_throws ErrorException DataModel(model_saveat, df; primary_id = :ID, time_col = :t)
+
+    # The guard compares against the actual integration start, not the literal t=0
+    # (#287): a lag below the individual's first time still errors at negative times.
+    df_neg = DataFrame(ID = [1, 1], t = [-6.0, -4.0], y = [1.0, 1.1])
+    @test_throws ErrorException DataModel(
+        model_saveat, df_neg; primary_id = :ID, time_col = :t, t0 = nothing
+    )
+    # ... while an explicit t0 below the lagged time makes the same model valid.
+    dm_ok = DataModel(
+        model_saveat, df_neg; primary_id = :ID, time_col = :t, t0 = -10.0
+    )
+    @test get_individual(dm_ok, 1).tspan[1] == -10.0
 end
 
 @testset "DataModel errors on offsets below dynamic covariate support" begin
@@ -1304,7 +1366,7 @@ end
         end
 
         @formulas begin
-            y ~ Normal(x1(t - 0.5), σ)
+            y ~ Normal(x1(t - 0.5) + x1(t + 0.5), σ)
         end
     end
 
@@ -1328,6 +1390,24 @@ end
     @test occursin("dynamic covariate support", err.msg)
     @test occursin("-0.5", err.msg)
     @test occursin("[0.5, 2.0]", err.msg)
+
+    # The mirrored upper-bound guard: the +0.5 offset pushes the integration past the
+    # covariate support, which used to escape as a raw extrapolation error (#309).
+    df_up = DataFrame(
+        ID = [1, 1, 1],
+        t = [0.0, 1.0, 2.0],
+        w1 = [1.0, 1.2, 1.4],
+        y = [1.0, 1.1, 1.2]
+    )
+    err_up = try
+        DataModel(model_saveat, df_up; primary_id = :ID, time_col = :t)
+        nothing
+    catch e
+        e
+    end
+    @test err_up isa ErrorException
+    @test occursin("later than the dynamic covariate support", err_up.msg)
+    @test occursin("2.5", err_up.msg)
 end
 
 @testset "DataModel pairing creates multiple batches" begin
@@ -1533,7 +1613,7 @@ end
     @test length(get_individuals(dm_str)) == length(get_individuals(dm))
 end
 
-@testset "DataModel validates missing covariates used by formulas" begin
+@testset "DataModel validates missing covariates by declaration" begin
     model_used = @Model begin
         @fixedEffects begin
             a = RealNumber(0.2)
@@ -1583,8 +1663,11 @@ end
         y = [0.1, 0.2]
     )
 
-    dm = DataModel(model_unused, df_unused_missing; primary_id = :ID, time_col = :t)
-    @test dm isa DataModel
+    # Declared but unused covariates are validated too: their missings otherwise only
+    # surfaced later, inside a distribution or the DE (#309.5, #315).
+    @test_throws "contains missing values" DataModel(
+        model_unused, df_unused_missing; primary_id = :ID, time_col = :t
+    )
 end
 
 @testset "DataModel allows partially missing observables on observation rows (regression)" begin
@@ -1669,6 +1752,24 @@ end
         evid_col = :EVID, amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT
     )
     @test isconcretetype(eltype(get_individuals(dm1)))
+
+    # AMT=0 with RATE!=0 is a zero-duration infusion the two solve paths disagree on (#308).
+    df_zero_amt = copy(df)
+    df_zero_amt.AMT[1] = 0.0
+    df_zero_amt.RATE[1] = 5.0
+    @test_throws ErrorException DataModel(
+        model, df_zero_amt; primary_id = :ID, time_col = :t, evid_col = :EVID,
+        amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT
+    )
+
+    # With a DE, an individual with only event rows has no observation time to solve
+    # from -- rejected instead of a BoundsError during the solve (#308).
+    df_dosing_only = copy(df)
+    df_dosing_only.EVID[7:8] .= 1
+    @test_throws ErrorException DataModel(
+        model, df_dosing_only; primary_id = :ID, time_col = :t, evid_col = :EVID,
+        amt_col = :AMT, rate_col = :RATE, cmt_col = :CMT
+    )
 end
 
 @testset "chunked (ChainedVector) columns from CSV" begin

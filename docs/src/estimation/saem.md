@@ -384,6 +384,7 @@ For common distribution structures, SAEM can automatically derive closed-form up
 - `builtin_stats`
   - `:auto`, `:closed_form`, or `:none`.
   - `:auto` attempts to infer compatible closed-form mappings from the model structure.
+  - `:auto` skips any parameter that is also referenced outside the block whose sufficient statistics would update it, for example a random-effect scale that a deterministic formula also feeds into the outcome distribution, because the closed-form update would discard that information; such parameters fall back to the numeric M-step and are named in the startup info message.
   - `:gaussian_re` is accepted as a backward-compatible alias for `:closed_form`.
 - `builtin_mean`
   - `:glm` or `:none`.

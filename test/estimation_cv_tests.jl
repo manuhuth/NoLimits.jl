@@ -3,6 +3,7 @@ using DataFrames
 using NoLimits
 using Distributions
 using Random
+using LinearAlgebra: I, Symmetric
 
 # ── Shared fixtures ────────────────────────────────────────────────────────────
 
@@ -258,6 +259,46 @@ end
     end
 end
 
+# The Monte-Carlo modes must score the per-subject JOINT marginal, not the sum of
+# per-observation predictive densities (#290). Normal-Normal random intercept has a
+# closed-form joint: MvNormal(a, ρ² 11ᵀ + σ² I) with ρ = 1 fixed by the RE prior.
+@testset "fit_cv unseen_re_mode=:montecarlo scores the joint marginal (#290)" begin
+    model = _make_re_model()
+    k = 6
+    tvals = collect(0.0:(k - 1))
+    rng = MersenneTwister(290)
+    ntrain = 12
+    us = randn(rng, ntrain)
+    df_train = DataFrame(
+        ID = repeat(2:(ntrain + 1), inner = k),
+        t = repeat(tvals, ntrain),
+        y = [1.0 + us[(i - 1) ÷ k + 1] + 0.3 * randn(rng) for i in 1:(ntrain * k)]
+    )
+    ytest = [0.6, 0.75, 0.6, 0.7, 0.65, 0.8]
+    df = vcat(DataFrame(ID = fill(1, k), t = tvals, y = ytest), df_train)
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+
+    cv = NoLimits.CVSpec(
+        dm, [findall(!=(1), df.ID)], [findall(==(1), df.ID)], :id, 1
+    )
+    res = fit_cv(
+        cv, NoLimits.Laplace();
+        unseen_re_mode = :montecarlo, n_mc_samples = 20_000,
+        rng = MersenneTwister(291), store_results = true
+    )
+
+    θ = NoLimits.get_params(res.fold_results[1].fit_result; scale = :untransformed)
+    Σ = ones(k, k) .+ θ.σ^2 .* I(k)
+    joint = logpdf(MvNormal(fill(θ.a, k), Symmetric(Σ)), ytest)
+    per_obs = sum(logpdf(Normal(θ.a, sqrt(1.0 + θ.σ^2)), ytest[i]) for i in 1:k)
+
+    @test abs(joint - per_obs) > 5.0                       # the two really differ here
+    @test isapprox(res.mean_test_loglikelihood, joint; atol = 0.5)
+    # Row column keeps the joint on the first row, zeros elsewhere, so sums still work.
+    @test isapprox(sum(res.obs_scores[!, :loglikelihood]), joint; atol = 0.5)
+    @test count(!=(0.0), res.obs_scores[!, :loglikelihood]) == 1
+end
+
 @testset "fit_cv accessors" begin
     model = _make_mle_model()
     df = _make_df()
@@ -353,4 +394,14 @@ end
     @test res.n_scored_obs == 8
     @test res.mean_obs_loglikelihood == -Inf
     @test any(==(-Inf), [fr.test_loglikelihood for fr in res.fold_results])
+end
+
+# t0 = nothing lets every fold re-derive the integration start from its own rows, so an
+# observation split would fit and score with different initial-condition times (#304).
+@testset "cross_validate observation-wise: ODE with t0 = nothing is refused" begin
+    dm = DataModel(
+        fx_ode_model(), fx_ode_df(); primary_id = :ID, time_col = :t, t0 = nothing
+    )
+    @test_throws ErrorException cross_validate(dm, 2; kind = :observation)
+    @test cross_validate(dm, 2; kind = :id) isa CVSpec
 end

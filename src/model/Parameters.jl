@@ -262,6 +262,16 @@ function _is_psd(mat::AbstractMatrix{<:Real}; atol::Real = EPSILON)
     return minimum(vals) >= -atol
 end
 
+# Why a matrix failed `_is_psd`. `eigen` runs only on input it cannot throw on, so the
+# diagnostic cannot pre-empt itself (#313).
+function _psd_reject_reason(v::AbstractMatrix{<:Real})
+    size(v, 1) == size(v, 2) ||
+        return "got a non-square $(size(v, 1))x$(size(v, 2)) matrix"
+    all(isfinite, v) || return "got a matrix with non-finite entries"
+    issymmetric(v) || return "got a non-symmetric matrix"
+    return "got matrix with min eigenvalue $(minimum(eigen(Symmetric(v)).values))"
+end
+
 function RealPSDMatrix(
         value::AbstractMatrix{<:Real}; name::Symbol = :unnamed,
         scale::Symbol = :cholesky, prior = Priorless(), calculate_se::Bool = false
@@ -272,7 +282,7 @@ function RealPSDMatrix(
     T = eltype(value) <: AbstractFloat ? eltype(value) : Float64
     v = T.(value)
     _is_psd(v) ||
-        error("Invalid initial value for parameter $(name). Expected symmetric positive semi-definite matrix; got matrix with min eigenvalue $(minimum(eigen(Symmetric(v)).values)).")
+        error("Invalid initial value for parameter $(name). Expected symmetric positive semi-definite matrix; $(_psd_reject_reason(v)).")
     return RealPSDMatrix{T, typeof(v)}(name, v, scale, prior, calculate_se)
 end
 
@@ -401,7 +411,7 @@ function RealLiePSDMatrix(
     T = eltype(value) <: AbstractFloat ? eltype(value) : Float64
     v = T.(value)
     _is_psd(v) ||
-        error("Invalid initial value for parameter $(name). Expected symmetric positive semi-definite matrix; got matrix with min eigenvalue $(minimum(eigen(Symmetric(v)).values)).")
+        error("Invalid initial value for parameter $(name). Expected symmetric positive semi-definite matrix; $(_psd_reject_reason(v)).")
     lo, up = _normalize_eig_bounds(eigenvalue_lower, eigenvalue_upper, size(v, 1), name)
     blk, fixed = _normalize_lie_structure(blocks, fix_eigenvalues, size(v, 1), name)
     blocks !== nothing && _validate_block_diagonal(v, blk, name)

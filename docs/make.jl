@@ -83,6 +83,7 @@ makedocs(;
                 "Multistart" => "estimation/multistart.md",
                 "Cross-Validation" => "estimation/cv.md",
                 "Saving & Loading" => "estimation/saving-and-loading.md",
+                "Precompiling Models" => "estimation/precompiling-models.md",
                 "Reproducibility" => "estimation/reproducibility.md",
             ],
         ],

@@ -183,6 +183,14 @@ dm = DataModel(
 
 The `CMT` column can contain either integer indices or state names (`String`/`Symbol`), but the format must be consistent within the DataFrame.
 
+### Event Timing Conventions
+
+An observation recorded at the same time as a dose is always scored against the **pre-dose** state, regardless of the order of the rows in the DataFrame. This differs from NONMEM, where the record order decides. The convention is the right one for the common pre-dose trough sample; if a sample is drawn just after the dose, give it a slightly later time (for example `t = 1.0 + 1e-6`) so that it is scored against the post-dose state.
+
+A reset event (`EVID = 2`) recorded at the integration start time replaces the `@initialDE` value for that compartment rather than being added to it, following NONMEM reset semantics.
+
+An infusion whose stop time (`t + AMT / RATE`) falls after the end of an individual's integration span is truncated at the end of the span, so less than `AMT` is delivered. `DataModel` warns when this happens.
+
 ## Dynamic Covariates and Interpolation
 
 When using `DynamicCovariate` or `DynamicCovariateVector`, the `DataInterpolations` package must be loaded in the user environment:

@@ -40,6 +40,14 @@ Expressions inside `@formulas` can reference symbols drawn from several model na
 
 If a symbol name is shared across more than one namespace among fixed effects, random effects, preDE outputs, and covariates, the macro raises an ambiguity error to prevent silent resolution conflicts.
 
+`NormalizingPlanarFlow(ψ)` is also accepted as an outcome distribution, with `ψ` an `NPFParameter` fixed effect. The flow is multivariate, so the observation column holds vectors, `[y]` cells even for a one-dimensional flow, and no `η[1]`-style indexing is needed. See [Flows as Outcome Distributions](random-effects.md#flows-as-outcome-distributions).
+
+```julia
+@formulas begin
+    z ~ NormalizingPlanarFlow(ψ)
+end
+```
+
 ## State and Signal Access from ODE Models
 
 When the model includes a differential equation system, ODE states and derived signals can be referenced in formulas subject to the following rules:

@@ -117,6 +117,7 @@ laplace_method = NoLimits.Laplace(;
     ub=nothing,
     ignore_model_bounds=false,
     nan_recovery=:backtrack,
+    update_schedule=:all,
 )
 ```
 
@@ -127,6 +128,20 @@ Notes:
 - `use_hutchinson=true` activates the stochastic Hutchinson approximation for logdet-related terms.
 - `lb`/`ub` are bounds on transformed fixed-effect parameters.
 - `ignore_model_bounds=false` by default; set `true` to disable the model-declared parameter bounds during optimization.
+- `update_schedule=:all`: which random-effect batches enter the outer objective and gradient per optimizer iteration (mini-batching).
+  - `:all` (default): use all batches every iteration; the objective is deterministic and identical to previous versions.
+  - integer `m`: a random minibatch of `min(m, nbatches)` batches, sampled without replacement each iteration.
+  - callable `(nbatches::Int, iter::Int, rng) -> Vector{Int}`: returns the batch indices to use in optimizer iteration `iter`; a plain function or a callable struct (for stateful schedules).
+
+  The selected batches' contribution is scaled by `nbatches / length(selected)`, so the objective remains an unbiased estimate of the full-data objective; priors, `penalty`, and `extra_objective` are never scaled. One minibatch is drawn per optimizer iteration from the fit `rng`, and the objective and gradient of that iteration share it. When mini-batching is active and no `optimizer` is given, the default optimizer becomes `Optimisers.Adam(0.01)` (with `maxiters=1000` and `save_best=false` unless set in `optim_kwargs`) instead of LBFGS; passing a non-Optimisers optimizer emits a warning because line-search optimizers do not behave well on a stochastic objective. After the fit, the reported objective is re-evaluated once on all batches at the fitted parameters. With Optimisers.jl rules, finite bounds (model bounds or `lb`/`ub`) are enforced by projecting each update onto the box.
+
+```julia
+using Optimisers
+method = Laplace(update_schedule = 8)                       # 8 random batches per iteration, Adam default
+method = Laplace(update_schedule = 8, optimizer = Optimisers.Adam(0.01), optim_kwargs = (; maxiters = 500))
+cycle(nbatches, iter, rng) = [mod1(iter, nbatches)]        # deterministic pass over batches
+method = Laplace(update_schedule = cycle)
+```
 
 See the [`Laplace`](@ref) entry in the API reference for the full signature.
 
@@ -144,6 +159,7 @@ The constructor keywords fall into several logical groups, summarized in the tab
 | Caching | `theta_tol` | Reuse tolerance for objective/gradient cache across nearby fixed-effect values. |
 | Bounds | `lb`, `ub`, `ignore_model_bounds` | Optional transformed-scale bounds for free fixed effects; `ignore_model_bounds` disables model-declared bounds. |
 | NaN recovery | `nan_recovery` | Strategy when the outer gradient contains `NaN` values. |
+| Mini-batching | `update_schedule` | Which batches enter the outer objective/gradient per optimizer iteration. |
 
 ### Inner vs Outer Optimizer Choices (Optimization.jl Interface)
 
@@ -156,7 +172,7 @@ Practical implications:
 
 - Outer optimizer (`optimizer`, `optim_kwargs`, `adtype`)
   - Runs once at the top level.
-  - Defaults to the local-gradient `OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep=1.0))`. Derivative-free methods (e.g. `NLopt.LN_BOBYQA()`) and global methods are also supported.
+  - Defaults to the local-gradient `OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep=1.0))`. Derivative-free methods (e.g. `NLopt.LN_BOBYQA()`) and global methods are also supported. When `update_schedule != :all` and no optimizer is passed, the default is `Optimisers.Adam(0.01)` instead.
   - The line-search step cap matters: an uncapped unit first step can overshoot into the region where the marginal is not finite. Keep `maxstep` if you substitute another line search.
   - Note: if you switch to an NLopt optimizer, it interprets `optim_kwargs.maxiters` as a cap on the number of function *evaluations* (`maxeval`), not outer iterations; reaching it yields `retcode = MaxIters` (reported as not converged).
   - If using BlackBoxOptim (`OptimizationBBO.*`), finite bounds are required.

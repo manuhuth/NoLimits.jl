@@ -59,7 +59,10 @@ end
 # ForwardDiff/Enzyme compatible.
 function _bspline_nonzero(x::Real, knots::AbstractVector{<:Real}, degree::Int)
     m = length(knots)
-    mu = x == knots[end] ? m - 1 : searchsortedlast(knots, x)
+    # Clamp to the last existing span: at `x == knots[end]` (and inside a repeated
+    # right boundary) `searchsortedlast` runs past the last basis function, which made
+    # every basis value zero there (#304).
+    mu = min(searchsortedlast(knots, x), m - degree - 1)
     T = float(promote_type(typeof(x), eltype(knots)))
     prev = zeros(T, degree + 1)   # level k-1: prev[r] = N_{mu-(k-1)+r-1, k-1}
     cur = zeros(T, degree + 1)    # level k:   cur[r]  = N_{mu-k+r-1, k}

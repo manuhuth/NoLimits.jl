@@ -429,7 +429,7 @@ struct FitResult{M <: FittingMethod, R <: MethodResult, S, D, DM, A, K}
 end
 
 """
-    build_fit_result(dm, method, θ; kind=:frequentist, objective, converged=true, iterations=missing,
+    build_fit_result(dm, method, θ; kind=:frequentist, objective, converged=missing, iterations=missing,
                      eb_modes=nothing, eta_vec=nothing, strategies=nothing, solution=nothing,
                      raw=nothing, notes=NamedTuple(), optimizer=nothing,
                      convergence=NamedTuple(), timing=NamedTuple(),
@@ -450,6 +450,11 @@ either scale. `kind` selects the result routing:
     order) so `get_random_effects`, `get_loglikelihood`, and plotting resolve the random effects.
   - `:pooled` - plugged-in random effects supplied through `eta_vec`.
 
+`converged` defaults to `missing` rather than `true`: an estimator that never inspects its
+optimizer's return code must not claim convergence. Pass
+`converged = SciMLBase.successful_retcode(sol)` with the `sol` that
+[`optimize_parameters`](@ref) (or `Optimization.solve`) returned.
+
 Reusing `:frequentist_re` gives the widest random-effect accessor coverage. Note that `compute_uq`
 routes on the `method` *type*; to inherit Wald/profile intervals either pass a built-in `method`
 instance (e.g. `Laplace()`) or define the `uq_family` trait for your method type.
@@ -461,7 +466,7 @@ function build_fit_result(
         dm::DataModel, method::FittingMethod, θ::ComponentArray;
         kind::Symbol = :frequentist,
         objective::Real,
-        converged::Bool = true,
+        converged::Union{Bool, Nothing, Missing} = missing,
         iterations = missing,
         eb_modes = nothing,
         eta_vec = nothing,
@@ -537,10 +542,11 @@ Return the final objective value (e.g. negative log-likelihood for MLE).
 get_objective(res::FitResult) = res.summary.objective
 
 """
-    get_converged(res::FitResult) -> Bool or Nothing
+    get_converged(res::FitResult) -> Bool, Nothing or Missing
 
 Return the convergence flag. `true` indicates successful convergence, `false` indicates
-failure, and `nothing` is returned for methods that do not track convergence (e.g. MCMC).
+failure, `nothing` is returned for methods that do not track convergence (e.g. MCMC), and
+`missing` for a custom estimator that did not report one to [`build_fit_result`](@ref).
 """
 get_converged(res::FitResult) = res.summary.converged
 
@@ -1101,8 +1107,8 @@ end
 # Resolve the transformed free-parameter optimizer bounds shared by the fixed-effect
 # fit drivers (MLE/MAP/Pooled/GHQuadrature/Laplace/FOCEI and the SAEM/MCEM M-step).
 # Coerces user lb/ub (scalar / NamedTuple / ComponentArray / vector) onto the
-# free-name subset, falls back to the model hard bounds, and applies the
-# BlackBoxOptim finite-bounds + model-intersection + start-clamp rules.
+# free-name subset, falls back to the model hard bounds, applies the finite-bounds +
+# model-intersection rules of the optimizers that need a box, and clamps the start into it.
 # `ignore_model_bounds`/`allow_bbo`/`emit_info` are args (not read off the method)
 # because SAEM/MCEM have no `ignore_model_bounds` field, FOCEI has no BBO support,
 # and Pooled suppresses the warning after refit round 1. Returns
@@ -1173,23 +1179,45 @@ function resolve_optimizer_bounds(
     # Match by module name so OptimizationBBO stays out of this package's dependencies;
     # only a user who actually passes a BBO optimizer needs it installed.
     is_bbo = allow_bbo && nameof(parentmodule(typeof(optimizer))) === :OptimizationBBO
-    if is_bbo && !use_bounds
+    # IPNewton is barrier-only and throws inside Optim's private types without a box;
+    # ParticleSwarm (like BBO) samples particles uniformly inside the box, so an infinite
+    # edge yields all-NaN estimates with a finite objective and no warning (#311).
+    opt_label = is_bbo ? "BlackBoxOptim methods require" : "$(nameof(typeof(optimizer))) requires"
+    requires_bounds = is_bbo || optimizer isa OptimizationOptimJL.IPNewton
+    requires_finite = requires_bounds || optimizer isa OptimizationOptimJL.ParticleSwarm
+    if requires_bounds && !use_bounds
         error(
-            "BlackBoxOptim methods require finite bounds. Add lower/upper bounds in " *
+            "$(opt_label) finite bounds. Add lower/upper bounds in " *
                 "@fixedEffects (on transformed scale) or pass them via " *
                 "$(method_label)(lb=..., ub=...). A quick helper is " *
                 "default_bounds_from_start(dm; margin=...)."
         )
     end
-    if is_bbo && !(all(isfinite, lb) && all(isfinite, ub))
-        error("BlackBoxOptim methods require finite lower and upper bounds for all free parameters.")
+    if requires_finite && use_bounds && !(all(isfinite, lb) && all(isfinite, ub))
+        error("$(opt_label) finite lower and upper bounds for all free parameters.")
     end
-    if is_bbo
+    if requires_finite && use_bounds
         lb = map((u, m) -> isfinite(m) ? max(u, m) : u, collect(lb), lower_vec)
         ub = map((u, m) -> isfinite(m) ? min(u, m) : u, collect(ub), upper_vec)
-        θ0_init = clamp.(collect(θ0_free_t), lb, ub)
-    else
-        θ0_init = θ0_free_t
+    end
+    θ0_init = θ0_free_t
+    # Without this the optimizer reports the violation in preconditioned z-coordinates
+    # (`Initial x[(1,)]=0.0 is outside of [-1.2, -0.8]`), naming no number the user typed;
+    # the EM M-steps anchor z at the current iterate and hit the same message (#311).
+    if use_bounds
+        v = collect(θ0_init)
+        outside = findall(i -> !(lb[i] <= v[i] <= ub[i]), eachindex(v))
+        if !isempty(outside)
+            coord_names = try
+                _flat_names_for_free(fe, collect(free_names))
+            catch
+                Symbol[]
+            end
+            labels = length(coord_names) == length(v) ?
+                string.(coord_names[outside]) : string.("coordinate ", outside)
+            @warn "$(method_label): the start value of $(join(labels, ", ")) lies outside the bounds and was clamped into the box. Values are on the TRANSFORMED parameter scale." start = v[outside] lower = lb[outside] upper = ub[outside]
+            θ0_init = clamp.(v, lb, ub)
+        end
     end
     return lb, ub, use_bounds, θ0_init
 end
@@ -1530,6 +1558,50 @@ function _compute_mcmc_candidates(
     end
 end
 
+# Post-hoc EBE convergence diagnostic: max|∂ℓ/∂b| per batch at the stored modes. Shared by
+# the final EBE passes (SAEM/MCEM/`reestimate_ebes`) and the Laplace-family/GHQ finishes.
+function _ebe_grad_norms(
+        ebe_cache, dm::DataModel, batch_infos, θu::ComponentArray,
+        const_cache, ll_cache, active_set = nothing
+    )
+    ll_local = ll_cache isa AbstractVector ? ll_cache[1] : ll_cache
+    norms = Vector{Float64}(undef, length(batch_infos))
+    for (bi, info) in enumerate(batch_infos)
+        if get_n_b(info) == 0 || (active_set !== nothing && !(bi ∈ active_set))
+            norms[bi] = 0.0
+            continue
+        end
+        b = ebe_cache.bstar_cache.b_star[bi]
+        if isempty(b)
+            norms[bi] = Inf
+            continue
+        end
+        g, _ = _laplace_gradb_cached!(
+            ebe_cache, bi, dm, info, θu, const_cache, ll_local, b
+        )
+        gn = maximum(abs, g)
+        norms[bi] = isfinite(gn) ? Float64(gn) : Inf
+    end
+    return norms
+end
+
+# Warn (never error) when the modes a fit returns miss the EBE gradient tolerance. Skipped
+# for models without random effects and outside plain floating-point θ (never inside AD).
+function _warn_ebe_grad_tol(
+        ebe_cache, dm::DataModel, batch_infos, θu::ComponentArray,
+        const_cache, ll_cache, grad_tol; label::AbstractString = "Fit"
+    )
+    (eltype(θu) <: AbstractFloat && !isempty(batch_infos)) || return nothing
+    tol = Float64(grad_tol)
+    isfinite(tol) && tol > 0 || return nothing
+    norms = _ebe_grad_norms(ebe_cache, dm, batch_infos, θu, const_cache, ll_cache)
+    all(iszero, norms) && return nothing
+    if any(>(tol), norms)
+        @warn "$(label): the returned empirical Bayes estimates do not satisfy the EBE gradient tolerance for all batches; treat the marginal-likelihood approximation with care." max_grad = maximum(norms) grad_tol = tol
+    end
+    return nothing
+end
+
 function _compute_bstars(
         dm::DataModel,
         θu::ComponentArray,
@@ -1554,26 +1626,9 @@ function _compute_bstars(
         SciMLBase.EnsembleSerial()
     active_set = active_batch_indices === nothing ? nothing : Set(active_batch_indices)
 
-    function _batch_grad_norms()
-        norms = Vector{Float64}(undef, n_batches)
-        for (bi, info) in enumerate(batch_infos)
-            if get_n_b(info) == 0 || (active_set !== nothing && !(bi ∈ active_set))
-                norms[bi] = 0.0
-                continue
-            end
-            b = ebe_cache.bstar_cache.b_star[bi]
-            if isempty(b)
-                norms[bi] = Inf
-                continue
-            end
-            g, _ = _laplace_gradb_cached!(
-                ebe_cache, bi, dm, info, θu, const_cache, ll_cache_local, b
-            )
-            gn = maximum(abs, g)
-            norms[bi] = isfinite(gn) ? Float64(gn) : Inf
-        end
-        return norms
-    end
+    _batch_grad_norms() = _ebe_grad_norms(
+        ebe_cache, dm, batch_infos, θu, const_cache, ll_cache_local, active_set
+    )
 
     bstars = _laplace_get_bstar!(
         ebe_cache, dm, batch_infos, θu, const_cache, ll_cache;
@@ -1744,29 +1799,58 @@ end
 
     get_random_effects(dm::DataModel, res::FitResult, re::Symbol; kwargs...) -> Vector
 
-Return the empirical Bayes estimates for a single random effect `re` as a plain vector,
-ordered by individual index in `dm`.
+Return the empirical Bayes estimates for a single random effect `re` as a plain vector.
+For an effect grouped at the primary id the vector is ordered by individual index in
+`dm`; for an effect grouped at any other level (e.g. `:SITE`) it holds one value per
+level of that grouping column, in level order.
 """
 function get_random_effects(
         dm::DataModel, res::FitResult, re::Symbol;
         constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
         include_constants::Bool = true
     )
-    constants_re = _as_namedtuple(constants_re)
+    group_col, levels, vals = _re_level_values(
+        dm, res, re; constants_re = _as_namedtuple(constants_re),
+        include_constants = include_constants
+    )
+    group_col == get_primary_id(dm) || return vals
+    id_order = [_individual_id(dm, i) for i in 1:length(get_individuals(dm))]
+    id_to_val = Dict(levels[i] => vals[i] for i in eachindex(levels))
+    return [id_to_val[id] for id in id_order]
+end
+
+# Per-level EBEs of a scalar random effect at its OWN grouping level.
+# Returns (grouping column, level values, EBE values).
+function _re_level_values(
+        dm::DataModel, res::FitResult, re::Symbol;
+        constants_re::NamedTuple = NamedTuple(),
+        include_constants::Bool = true
+    )
     nt = get_random_effects(
         dm, res; constants_re = constants_re, flatten = true,
         include_constants = include_constants
     )
     haskey(nt, re) || error("Random effect :$(re) not found. Available: $(keys(nt)).")
     df = getfield(nt, re)
-    id_col = get_primary_id(dm)
-    val_cols = [c for c in propertynames(df) if c != id_col]
+    group_col = getfield(get_re_groups(get_random(get_model(dm))), re)
+    val_cols = [c for c in propertynames(df) if c != group_col]
     length(val_cols) == 1 ||
         error("Random effect :$(re) is multivariate ($(length(val_cols)) components); use get_random_effects(res) to access the full DataFrame.")
-    val_col = val_cols[1]
-    id_order = [_individual_id(dm, i) for i in 1:length(get_individuals(dm))]
-    id_to_val = Dict(row[id_col] => row[val_col] for row in eachrow(df))
-    return [id_to_val[id] for id in id_order]
+    return group_col, df[!, group_col], df[!, val_cols[1]]
+end
+
+# First individual carrying each level of random effect `re` (fallback: individual 1).
+# Used to instantiate covariate-dependent RE distributions at non-primary levels.
+function _re_level_representatives(dm::DataModel, re::Symbol, levels)
+    inds = get_individuals(dm)
+    pos = Dict{Any, Int}()
+    for i in eachindex(inds)
+        g = getfield(get_re_groups(inds[i]), re)
+        for lvl in (g isa AbstractVector ? g : (g,))
+            get!(pos, lvl, i)
+        end
+    end
+    return [get(pos, lvl, 1) for lvl in levels]
 end
 
 function get_random_effects(
@@ -3246,7 +3330,7 @@ function _row_random_effects_fill(
     return ComponentArray(vals, tmpl.axs)
 end
 
-mutable struct _LLCache{H, M, S, A, O, K, P, V, SA}
+mutable struct _LLCache{H, M, S, A, O, K, P, V, SA, EC}
     helpers::H
     model_funs::M
     solver_cfg::S
@@ -3256,6 +3340,7 @@ mutable struct _LLCache{H, M, S, A, O, K, P, V, SA}
     prob_templates::P
     vary_cache::V
     saveat_cache::SA
+    event_cbs::EC
     closed_form_plan::ClosedFormPlan
 end
 const LikelihoodCache = _LLCache
@@ -3269,6 +3354,7 @@ const LikelihoodCache = _LLCache
 @inline get_prob_templates(c::_LLCache) = c.prob_templates
 @inline get_vary_cache(c::_LLCache) = c.vary_cache
 @inline get_saveat_cache(c::_LLCache) = c.saveat_cache
+@inline get_event_cbs(c::_LLCache) = c.event_cbs
 @inline get_closed_form_plan(c::_LLCache) = c.closed_form_plan
 
 # `_is_hmm_dist` (the 7 HMM-family outcome types) is defined in
@@ -3301,14 +3387,17 @@ end
 # `ind.callbacks` come out of the abstractly-typed `Individual` storage, so the
 # kwargs NamedTuples must be built behind a dispatch boundary to stay concrete
 # (keeps the Bool method of `_ode_normalize_verbose` statically dead).
-@inline function _ll_prob_kwargs(cb, saveat_use)
-    base = saveat_use === nothing ? (dense = true,) :
-        (saveat = saveat_use, save_everystep = false, dense = false)
+# `tstops` always merged (empty vector when the DE reads no dynamic covariate): a
+# conditional merge would make the return a Union of two NamedTuple types, which is the
+# shape the comment above says breaks Enzyme.
+@inline function _ll_prob_kwargs(cb, saveat_use, tstops)
+    base = saveat_use === nothing ? (dense = true, tstops = tstops) :
+        (saveat = saveat_use, save_everystep = false, dense = false, tstops = tstops)
     return cb === nothing ? base : merge(base, (callback = cb,))
 end
 
-function _ll_build_prob_template(f!_use, u0, tspan, p_flat, cb, saveat_use)
-    kw = _ll_prob_kwargs(cb, saveat_use)
+function _ll_build_prob_template(f!_use, u0, tspan, p_flat, cb, saveat_use, tstops)
+    kw = _ll_prob_kwargs(cb, saveat_use, tstops)
     return ODEProblem{true, SciMLBase.FullSpecialize}(f!_use, u0, tspan, p_flat; kw...)
 end
 
@@ -3338,10 +3427,38 @@ function _warn_degenerate_soft_trees(dm::DataModel, θ_start)
         p isa SoftTreeParameters || continue
         v = θ_start === nothing ? p.value : getproperty(θ_start, name)
         n_leaf = p.n_output * 2^p.depth
-        leaves = @view v[(length(v) - n_leaf + 1):end]
-        all(isequal(first(leaves)), leaves) || continue
-        @warn "Soft tree $(name) starts with all $(n_leaf) leaf values equal to $(first(leaves)). The split parameters have exactly zero gradient there, so a gradient-based optimizer cannot train them and the tree stays a constant (absorbed into the surrounding model). Give the leaves a small zero-mean spread instead — e.g. `θ0.$(name)[(end - $(n_leaf) + 1):end] .= 0.05 .* [(-1.0)^i for i in 1:$(n_leaf)]` — which keeps the output at $(first(leaves)) while making the splits trainable." maxlog = 1
+        # Leaves are stored as `vec(leaf_values)` with shape (n_output, 2^depth), and the
+        # saddle is per output row: a row that is constant zeroes the split gradient even
+        # when other rows hold a different constant (#304).
+        leaves = reshape(
+            @view(v[(length(v) - n_leaf + 1):end]), p.n_output, 2^p.depth
+        )
+        any(o -> all(isequal(leaves[o, 1]), @view(leaves[o, :])), 1:p.n_output) || continue
+        @warn "Soft tree $(name) starts with constant leaf values within an output row (first leaf $(leaves[1, 1])). The split parameters have exactly zero gradient there, so a gradient-based optimizer cannot train them and the tree stays a constant (absorbed into the surrounding model). Give the leaves a small zero-mean spread instead — e.g. `θ0.$(name)[(end - $(n_leaf) + 1):end] .= 0.05 .* [(-1.0)^i for i in 1:$(n_leaf)]` — which keeps the output unchanged while making the splits trainable." maxlog = 1
     end
+    return nothing
+end
+
+# A fit whose objective never became finite (`Inf`, or the RE path's infeasibility wall)
+# leaves the optimizer on a flat surface, so the returned "estimates" are the starting
+# values. Name the individuals whose contribution is -Inf so the culprit is visible.
+function _warn_nonfinite_fit(dm::DataModel, θu, label::AbstractString)
+    ids = try
+        cache = build_ll_cache(dm; serialization = SciMLBase.EnsembleSerial())
+        cache1 = cache isa Vector ? first(cache) : cache
+        lp = get_laplace_cache(get_re_group_info(dm))
+        template = lp === nothing ? nothing : get_eta_template(lp)
+        η = template === nothing ? ComponentArray() : template
+        [
+            string(_individual_id(dm, i)) for i in eachindex(get_individuals(dm))
+                if !isfinite(_loglikelihood_individual(dm, i, θu, η, cache1))
+        ]
+    catch
+        String[]
+    end
+    culprit = isempty(ids) ? "" :
+        " Individual(s) with a -Inf log-likelihood contribution at the returned parameters ($(get_primary_id(dm))): $(join(ids, ", "))."
+    @warn "$(label): the objective never became finite, so the optimizer saw a constant value everywhere and stopped without moving. The returned parameters are the starting values, NOT estimates.$(culprit) Check for observations large enough to overflow the residual, and for out-of-domain `log`/`sqrt`/`^` in @formulas or @DifferentialEquation."
     return nothing
 end
 
@@ -3474,7 +3591,7 @@ end
 # DE, forms u0 from `pre`, and extracts the event callback + infusion rates. The divergent
 # solve tails (flat-p templates + saveat + crossings vs dense) stay at each call site.
 @inline function _solve_preamble(
-        dm::DataModel, ind::Individual, θ, η_ind, pre, helpers, model_funs
+        dm::DataModel, ind::Individual, θ, η_ind, pre, helpers, model_funs, events
     )
     model = get_model(dm)
     const_cov = get_const_cov(ind)
@@ -3493,10 +3610,10 @@ end
     u0 = _initial_state_with_pre(model, θ, η_ind, const_cov, pre)
     cb = nothing
     infusion_rates = nothing
-    if get_callbacks(ind) !== nothing
-        _apply_initial_events!(u0, get_callbacks(ind))
-        cb = get_callback(get_callbacks(ind))
-        infusion_rates = get_infusion_rates(get_callbacks(ind))
+    if events !== nothing
+        _apply_initial_events!(u0, events)
+        cb = get_callback(events)
+        infusion_rates = get_infusion_rates(events)
     end
     return compiled, u0, cb, infusion_rates
 end
@@ -3504,8 +3621,9 @@ end
 function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
     model = get_model(dm)
     ind = get_individuals(dm)[idx]
+    events = cache.event_cbs === nothing ? nothing : cache.event_cbs[idx]
     compiled, u0, cb, infusion_rates = _solve_preamble(
-        dm, ind, θ, η_ind, pre, cache.helpers, cache.model_funs
+        dm, ind, θ, η_ind, pre, cache.helpers, cache.model_funs, events
     )
     # T must cover the vars eltype too (η/θ can enter the RHS without entering
     # u0) — pack once with the promoted type, reuse for template and remake.
@@ -3519,7 +3637,7 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
         saveat_use = _ll_saveat(cache, idx, ind)
         sol = _cf_dispatch_solve(
             model, compiled, u0_T, get_tspan(ind), saveat_use, plan,
-            get_callbacks(ind), cache.alg, cache.ode_args,
+            events, cache.alg, cache.ode_args,
             _ode_solve_kwargs(cache.solver_cfg.kwargs, cache.ode_kwargs, NamedTuple())
         )
         sol === nothing && return _ll_drop_solve(:closed_form_failed)
@@ -3543,7 +3661,7 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
         if prob === nothing
             saveat_use = _ll_saveat(cache, idx, ind)
             prob = _ll_build_prob_template(
-                f!_use, u0, get_tspan(ind), p_flat, cb, saveat_use
+                f!_use, u0, get_tspan(ind), p_flat, cb, saveat_use, get_tstops(ind)
             )
             if cache.prob_templates !== nothing
                 cache.prob_templates[idx] = prob
@@ -3578,7 +3696,7 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
         )
         cbset = cb === nothing ? cbk : SciMLBase.CallbackSet(cb, cbk)
         prob = ODEProblem{true, SciMLBase.FullSpecialize}(
-            f!_use, u0_T, get_tspan(ind), p_flat; _ll_prob_kwargs(cbset, saveat_use)...
+            f!_use, u0_T, get_tspan(ind), p_flat; _ll_prob_kwargs(cbset, saveat_use, get_tstops(ind))...
         )
         sol = _ll_ode_solve_baked(cache, prob)
         SciMLBase.successful_retcode(sol) || return _ll_drop_solve(sol.retcode)
@@ -3623,7 +3741,7 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
         SciMLBase.CallbackSet(cb, cross_cbs...)
     end
     prob = ODEProblem{true, SciMLBase.FullSpecialize}(
-        f!_use, u0_T, get_tspan(ind), p_flat; _ll_prob_kwargs(cbset, saveat_use)...
+        f!_use, u0_T, get_tspan(ind), p_flat; _ll_prob_kwargs(cbset, saveat_use, get_tstops(ind))...
     )
     sol = _ll_ode_solve_baked(cache, prob)
     SciMLBase.successful_retcode(sol) || return _ll_drop_solve(sol.retcode)
@@ -3649,8 +3767,9 @@ function _loglikelihood_individual(dm::DataModel, idx::Int, θ, η_ind, cache::_
         _is_numeric_error(err) || rethrow(err)
         if !Threads.atomic_cas!(_WARNED_NUMERIC_ERROR, false, true)
             @warn "A numeric error ($(nameof(typeof(err)))) was raised while evaluating " *
-                "the likelihood; treating this point as -Inf. Check the domains of " *
-                "`log`, `sqrt` and `^` in @formulas / @DifferentialEquation. " *
+                "the likelihood; treating this point as -Inf. The error was: " *
+                "$(_brief_error_message(err)). If this is a `log`/`sqrt`/`^` domain issue, " *
+                "check those domains in @formulas / @DifferentialEquation. " *
                 "Warned once per fit."
         end
         return -Inf
@@ -4084,6 +4203,15 @@ function _build_vary_cache_individual(
     return [_vary_row(vary, dyn_local, t_obs, j) for j in 1:n_rows]
 end
 
+# Each cache owns its event callbacks for the same reason it owns its interpolants:
+# `infusion_rates` is mutated in place during integration (#308). `nothing` when no
+# individual has events, so event-free models pay nothing.
+function _build_event_cache(dm::DataModel)
+    inds = get_individuals(dm)
+    any(ind -> get_callbacks(ind) !== nothing, inds) || return nothing
+    return [_private_event_callbacks(get_callbacks(ind)) for ind in inds]
+end
+
 function _build_vary_cache(dm::DataModel)
     return map(eachindex(get_individuals(dm))) do i
         ind = get_individuals(dm)[i]
@@ -4149,6 +4277,7 @@ function _build_ll_cache_single(
     end
     vary_cache = _build_vary_cache(dm)
     saveat_cache = _build_fit_saveat_cache(dm, force_saveat)
+    event_cbs = _build_event_cache(dm)
     return _LLCache(
         get_helper_funs(get_model(dm)),
         get_model_funs(get_model(dm)),
@@ -4159,6 +4288,7 @@ function _build_ll_cache_single(
         prob_templates,
         vary_cache,
         saveat_cache,
+        event_cbs,
         get_closed_form_plan(dm)
     )
 end
@@ -4211,6 +4341,22 @@ function loglikelihood(
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         cache = nothing
     )
+    return _loglikelihood_indices(
+        dm, θ, η, Base.OneTo(length(get_individuals(dm)));
+        ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = serialization, cache = cache
+    )
+end
+
+# Sum of the individual log-likelihoods over the GLOBAL individual indices in `sel`
+# (no scaling). `sel = 1:n` reproduces the full likelihood bit-for-bit.
+function _loglikelihood_indices(
+        dm::DataModel, θ::ComponentArray, η, sel::AbstractVector{<:Integer};
+        ode_args::Tuple = (),
+        ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
+        cache = nothing
+    )
     ode_kwargs = _as_namedtuple(ode_kwargs)
     # Fresh bindings throughout: `θ` and `η` are captured by the threaded closure
     # below, and reassigning a captured variable boxes it (`Core.Box`) — which made
@@ -4227,7 +4373,6 @@ function loglikelihood(
             dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
             serialization = serialization
         ) : cache
-    n = length(get_individuals(dm))
     η_eltype = ηs isa Vector ? (isempty(ηs) ? Float64 : eltype(first(ηs))) : eltype(ηs)
     T = promote_type(eltype(θs), η_eltype)
     if serialization isa SciMLBase.EnsembleThreads
@@ -4247,7 +4392,8 @@ function loglikelihood(
             )
             built isa Vector ? built : [built]
         end
-        by_individual = Vector{T}(undef, n)
+        m = length(sel)
+        by_individual = Vector{T}(undef, m)
         bad = Threads.Atomic{Bool}(false)
         # Chunk-indexed cache assignment: each task owns cache slot `c` for its whole
         # stride. Indexing by `Threads.threadid()` is unsafe under task migration
@@ -4256,21 +4402,22 @@ function loglikelihood(
         n_chunks = length(caches)
         Threads.@threads for c in 1:n_chunks
             cache_c = caches[c]
-            for i in c:n_chunks:n
+            for k in c:n_chunks:m
                 bad[] && break
+                i = sel[k]
                 η_ind = ηs isa Vector ? ηs[i] : ηs
                 lli = _loglikelihood_individual(dm, i, θs, η_ind, cache_c)
                 if !isfinite(lli)
                     bad[] = true
                 else
-                    by_individual[i] = lli
+                    by_individual[k] = lli
                 end
             end
         end
         bad[] && return -Inf
         ll = zero(T)
-        @inbounds for i in 1:n
-            ll += by_individual[i]
+        @inbounds for k in 1:m
+            ll += by_individual[k]
         end
         return ll
     else
@@ -4278,7 +4425,7 @@ function loglikelihood(
         # otherwise carry a loop-wide Union accumulator (the threaded branch
         # promotes the same way).
         ll = zero(T)
-        for i in 1:n
+        for i in sel
             η_ind = ηs isa Vector ? ηs[i] : ηs
             lli = _loglikelihood_individual(dm, i, θs, η_ind, cache_use)
             !isfinite(lli) && return -Inf
@@ -4458,20 +4605,23 @@ function compute_shrinkage(
 
     pairs = Pair{Symbol, NamedTuple}[]
     for re in re_names
-        # get_random_effects(res, re) returns a vector ordered by individual index
-        ebes = try
-            get_random_effects(dm_use, res, re; constants_re = constants_re)
-        catch
+        # EBEs at the random effect's own grouping level (one value per level).
+        levels, ebes = try
+            _, lv, vals = _re_level_values(dm_use, res, re; constants_re = constants_re)
+            (lv, vals)
+        catch e
+            @warn "compute_shrinkage: skipping random effect $re; $(sprint(showerror, e))"
             continue
         end
-        length(ebes) == length(get_individuals(dm_use)) || continue
+        isempty(levels) && continue
+        reps = _re_level_representatives(dm_use, re, levels)
 
         etas = Float64[]
         sigma = NaN
         valid = true
 
-        for i in eachindex(get_individuals(dm_use))
-            ind = get_individuals(dm_use)[i]
+        for i in eachindex(levels)
+            ind = get_individuals(dm_use)[reps[i]]
             ebe = Float64(ebes[i])
             isfinite(ebe) || continue
 

@@ -82,6 +82,14 @@ end
     @test length(res.result.eb_modes) == length(get_batches(fx_re_dm()))
 end
 
+# Issue #311: the post-hoc EBE gradient check must stay silent on a healthy fit.
+@testset "Laplace EBE gradient diagnostic is quiet on a healthy fit" begin
+    @test_logs min_level = Base.CoreLogging.Warn fit_model(
+        fx_re_dm(), NoLimits.Laplace(; optim_kwargs = (maxiters = 3,));
+        serialization = _SER
+    )
+end
+
 @testset "Laplace fit (ODE) runs" begin
     @test fx_ode_laplace().summary.converged isa Bool
 end

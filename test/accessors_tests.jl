@@ -113,3 +113,26 @@ end
     @test usage_fx.η == [:Age]
     @test get_re_covariate_usage(fx_recov_laplace()) == usage_fx
 end
+
+@testset "Shrinkage covers non-primary RE levels (#291)" begin
+    res = fx_mg_laplace()
+    dm = fx_mg_dm()
+
+    # η_site is grouped at :SITE, not the primary id; the single-RE accessor must
+    # return one value per SITE level instead of erroring.
+    site_ebes = NL.get_random_effects(dm, res, :η_site)
+    @test length(site_ebes) == 2
+    @test site_ebes == NL.get_random_effects(res).η_site[!, :η_site_1]
+
+    sh = NL.compute_shrinkage(res)
+    @test haskey(sh, :η_id)
+    @test haskey(sh, :η_site)
+
+    # ω = 1 for both REs in fx_mg_model, so shrinkage = 1 - sd(EBEs).
+    z = Float64.(site_ebes)
+    m = sum(z) / length(z)
+    sd = sqrt(sum(abs2, z .- m) / (length(z) - 1))
+    @test sh.η_site.sigma ≈ 1.0
+    @test sh.η_site.eta_std ≈ sd
+    @test sh.η_site.shrinkage ≈ 1.0 - sd
+end

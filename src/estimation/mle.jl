@@ -11,13 +11,13 @@ using LineSearches
 
 """
     MLE(; optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds,
-    precondition) <: FittingMethod
+    precondition, update_schedule) <: FittingMethod
 
 Maximum Likelihood Estimation for models without random effects.
 
 # Keyword Arguments
 - `optimizer`: Optimization.jl-compatible optimizer. Defaults to `LBFGS` with backtracking
-  line search.
+  line search, or to `Optimisers.Adam(0.01)` when `update_schedule != :all`.
 - `optim_kwargs::NamedTuple = NamedTuple()`: keyword arguments forwarded to `Optimization.solve`
   (e.g. `maxiters`, `reltol`).
 - `adtype`: automatic-differentiation backend. Defaults to `AutoForwardDiff()`.
@@ -33,8 +33,10 @@ Maximum Likelihood Estimation for models without random effects.
   `false` to optimize the transformed vector directly, which reproduces pre-0.2 results
   bit-for-bit. Note that with preconditioning on, the optimizer object behind
   [`get_raw`](@ref) works in `z`; [`get_params`](@ref) always returns the usual scales.
+$(_UPDATE_SCHEDULE_DOC)  A batch here is a single individual, so `update_schedule = 5`
+  uses 5 randomly chosen individuals per optimizer iteration.
 """
-struct MLE{O, K, A, L, U} <: FittingMethod
+struct MLE{O, K, A, L, U, US} <: FittingMethod
     optimizer::O
     optim_kwargs::K
     adtype::A
@@ -42,20 +44,26 @@ struct MLE{O, K, A, L, U} <: FittingMethod
     ub::U
     ignore_model_bounds::Bool
     precondition::Bool
+    update_schedule::US
 end
 
+_update_schedule(m::MLE) = m.update_schedule
+
 function MLE(;
-        optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
+        optimizer = nothing,
         optim_kwargs = NamedTuple(),
         adtype = Optimization.AutoForwardDiff(),
         lb = nothing,
         ub = nothing,
         ignore_model_bounds = false,
-        precondition = true
+        precondition = true,
+        update_schedule = :all
     )
+    update_schedule = _check_update_schedule(_as_symbol(update_schedule), "MLE")
+    optimizer = _resolve_outer_optimizer(optimizer, update_schedule, "MLE")
     return MLE(
         optimizer, _as_namedtuple(optim_kwargs), adtype, lb, ub,
-        ignore_model_bounds, precondition
+        ignore_model_bounds, precondition, update_schedule
     )
 end
 
@@ -92,6 +100,7 @@ function _fit_no_re(
         ode_kwargs::NamedTuple,
         serialization::SciMLBase.EnsembleAlgorithm,
         add_term,
+        rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         store_data_model::Bool = true,
         fit_args::Tuple = (),
@@ -126,6 +135,9 @@ function _fit_no_re(
     θ0_pc, s_pc, _θt_from_z, _z_from_θt = _precondition_maps(
         get_model(dm), free_names, θ0_free_t, layout.axs, _precondition_on(method)
     )
+    mb = _minibatch_state(_update_schedule(method), length(get_individuals(dm)), rng)
+    # Cleared before the final full-data re-evaluation of the objective.
+    mb_ref = Ref{Union{Nothing, typeof(mb)}}(mb)
     function obj(z, p)
         v_free = ComponentArrays.getdata(_θt_from_z(z))
         T = eltype(v_free)
@@ -134,9 +146,17 @@ function _fit_no_re(
         θu = inv_transform(θt_full)
         add = add_term(θu)
         isinf(add) && return infT
-        ll = loglikelihood(
-            dm, θu, ComponentArray(); cache = cache, serialization = serialization
-        )
+        st = _minibatch_current!(mb_ref[])
+        ll = if st === nothing
+            loglikelihood(
+                dm, θu, ComponentArray(); cache = cache, serialization = serialization
+            )
+        else
+            st.scale * _loglikelihood_indices(
+                dm, θu, ComponentArray(), st.selected;
+                cache = cache, serialization = serialization
+            )
+        end
         ll == -Inf && return infT
         return -ll + _penalty_value(θu, penalty) + add
     end
@@ -149,13 +169,25 @@ function _fit_no_re(
     z0 = _z_from_θt(θ0_init)
     lb_z = _z_from_θt(lb)
     ub_z = _z_from_θt(ub)
+    # Optimisers.jl rules take no box, so bounds become a projection inside the rule.
+    opt_use, use_bounds = _bounded_optimizer(method.optimizer, use_bounds, lb_z, ub_z)
     prob = use_bounds ? OptimizationProblem(optf, z0; lb = lb_z, ub = ub_z) :
         OptimizationProblem(optf, z0)
-    sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
+    kw = _minibatch_solve_kwargs(method.optim_kwargs, opt_use, mb, Returns(nothing))
+    sol = Optimization.solve(prob, opt_use; kw...)
 
+    fitted = resolve_fitted_parameters(layout, _θt_from_z(sol.u))
+    # The optimizer's objective is a minibatch estimate; report the full-data value.
+    final_obj = sol.objective
+    if mb !== nothing
+        mb_ref[] = nothing
+        final_obj = obj(sol.u, nothing)
+    end
+    isfinite(final_obj) ||
+        _warn_nonfinite_fit(dm, fitted.untransformed, string(nameof(typeof(method))))
     summary = FitSummary(
-        sol.objective, sol.retcode == SciMLBase.ReturnCode.Success,
-        resolve_fitted_parameters(layout, _θt_from_z(sol.u)), NamedTuple()
+        final_obj, sol.retcode == SciMLBase.ReturnCode.Success,
+        fitted, NamedTuple()
     )
     diagnostics = FitDiagnostics(
         (;), (optimizer = method.optimizer,), (retcode = sol.retcode,), NamedTuple()
@@ -163,7 +195,7 @@ function _fit_no_re(
     niter = hasproperty(sol, :stats) && hasproperty(sol.stats, :iterations) ?
         sol.stats.iterations : missing
     raw = hasproperty(sol, :original) ? sol.original : sol
-    result = FrequentistResult(sol, sol.objective, niter, raw, NamedTuple())
+    result = FrequentistResult(sol, final_obj, niter, raw, NamedTuple())
     return FitResult(
         method, result, summary, diagnostics,
         store_data_model ? dm : nothing, fit_args, fit_kwargs
@@ -248,6 +280,7 @@ function _fit_model(
         ode_kwargs = ode_kwargs,
         serialization = serialization,
         add_term = _combine_add_terms(_NoOpTerm(), extra_objective),
+        rng = rng,
         theta_0_untransformed = theta_0_untransformed,
         store_data_model = store_data_model,
         fit_args = args,

@@ -111,16 +111,23 @@ res_foce = fit_model(dm, NoLimits.FOCEI(; interaction=false))
 
 All keyword arguments of `FOCEI` **mirror those of [`Laplace`](laplace.md)** - the outer
 fixed-effects optimizer, the inner EB optimization, the EB multistart policy, the Hessian
-jitter controls, caching, and bounds all behave identically. The only addition is
-`interaction::Bool=true`. See the [Laplace](laplace.md) page for the full description of
-the shared option groups, and the [`FOCEI`](@ref) API entry for the complete keyword list.
+jitter controls, caching, bounds, and the `update_schedule` mini-batching option all behave
+identically. The only addition is `interaction::Bool=true`. See the [Laplace](laplace.md)
+page for the full description of the shared option groups, and the [`FOCEI`](@ref) API
+entry for the complete keyword list.
 
 As with `Laplace`, both the **outer** fixed-effects optimizer and the inner EB optimization
 default to `OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep=1.0))`, and
-the outer problem is preconditioned by default (`precondition=true`). If you switch the outer
-optimizer to NLopt, note that NLopt interprets `optim_kwargs.maxiters` as a cap on the number of
-function *evaluations* (`maxeval`); reaching it yields `retcode = MaxIters` (reported as not
-converged).
+the outer problem is preconditioned by default (`precondition=true`). When
+`update_schedule != :all` and no optimizer is passed, the default is `Optimisers.Adam(0.01)`
+instead. If you switch the outer optimizer to NLopt, note that NLopt interprets
+`optim_kwargs.maxiters` as a cap on the number of function *evaluations* (`maxeval`);
+reaching it yields `retcode = MaxIters` (reported as not converged).
+
+`update_schedule` selects a random minibatch of random-effect batches (individuals sharing
+random-effect levels) to enter the outer objective/gradient each optimizer iteration; see
+[Laplace's `update_schedule` documentation](laplace.md#Constructor-Options) for the full
+description, unbiasedness scaling, and bounds caveat.
 
 ```julia
 using NoLimits

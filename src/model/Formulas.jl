@@ -339,40 +339,44 @@ function _parse_formulas(block::Expr)
     det_set = Set{Symbol}()
     obs_set = Set{Symbol}()
 
+    ln = nothing
     for stmt in block.args
-        stmt isa LineNumberNode && continue
-        stmt isa Expr || error("Invalid statement in @formulas block.")
+        if stmt isa LineNumberNode
+            ln = stmt
+            continue
+        end
+        stmt isa Expr || error("Invalid statement in @formulas block." * _stmt_loc(ln, stmt))
         if stmt.head == :(=)
             lhs, rhs = stmt.args
-            lhs isa Symbol || error("Left-hand side must be a symbol in @formulas block.")
-            lhs == :t && error("Left-hand side cannot be t in @formulas block.")
-            lhs == :ξ && error("Left-hand side cannot be ξ in @formulas block.")
+            lhs isa Symbol || error("Left-hand side must be a symbol in @formulas block." * _stmt_loc(ln, stmt))
+            lhs == :t && error("Left-hand side cannot be t in @formulas block." * _stmt_loc(ln, stmt))
+            lhs == :ξ && error("Left-hand side cannot be ξ in @formulas block." * _stmt_loc(ln, stmt))
             lhs in det_set &&
-                error("Duplicate deterministic name $(lhs) in @formulas block.")
+                error("Duplicate deterministic name $(lhs) in @formulas block." * _stmt_loc(ln, stmt))
             lhs in obs_set &&
-                error("Name $(lhs) is already used for an observation in @formulas block.")
+                error("Name $(lhs) is already used for an observation in @formulas block." * _stmt_loc(ln, stmt))
             push!(det_names, lhs)
             push!(det_exprs, rhs)
             push!(det_set, lhs)
             push!(lines, Expr(:(=), lhs, rhs))
         elseif stmt.head == :call && stmt.args[1] == :~
             lhs, rhs = stmt.args[2], stmt.args[3]
-            lhs isa Symbol || error("Left-hand side must be a symbol in @formulas block.")
-            lhs == :t && error("Left-hand side cannot be t in @formulas block.")
-            lhs == :ξ && error("Left-hand side cannot be ξ in @formulas block.")
-            lhs in obs_set && error("Duplicate observation name $(lhs) in @formulas block.")
+            lhs isa Symbol || error("Left-hand side must be a symbol in @formulas block." * _stmt_loc(ln, stmt))
+            lhs == :t && error("Left-hand side cannot be t in @formulas block." * _stmt_loc(ln, stmt))
+            lhs == :ξ && error("Left-hand side cannot be ξ in @formulas block." * _stmt_loc(ln, stmt))
+            lhs in obs_set && error("Duplicate observation name $(lhs) in @formulas block." * _stmt_loc(ln, stmt))
             # `y ~ a` / `y ~ 1.0` / `y ~ nothing` used to leak an internal
             # `Cannot convert Symbol to Expr` from the `Expr[]` push below (#219).
             (rhs isa Expr && rhs.head == :call) ||
-                error("Observation $(lhs) in @formulas must be a distribution, e.g. $(lhs) ~ Normal(mu, sigma); got `$(rhs)`.")
+                error("Observation $(lhs) in @formulas must be a distribution, e.g. $(lhs) ~ Normal(mu, sigma); got `$(rhs)`." * _stmt_loc(ln, stmt))
             lhs in det_set &&
-                error("Name $(lhs) is already used for a deterministic in @formulas block.")
+                error("Name $(lhs) is already used for a deterministic in @formulas block." * _stmt_loc(ln, stmt))
             push!(obs_names, lhs)
             push!(obs_exprs, rhs)
             push!(obs_set, lhs)
             push!(lines, Expr(:call, :~, lhs, rhs))
         else
-            error("Only assignments and ~ observations are allowed in @formulas block.")
+            error("Only assignments and ~ observations are allowed in @formulas block." * _stmt_loc(ln, stmt))
         end
     end
 
@@ -423,6 +427,26 @@ function _formulas_crossing_spec(name::Symbol, rhs)
     return (name, _sym(pos[1]), _sym(pos[2]), tmax, kind)
 end
 
+# Deterministic nodes are emitted in declaration order, so a node referencing a name
+# defined further down the block used to fail with a bare UndefVarError at the first
+# evaluation (#314). The shared symbol check cannot see this: its `known` set is
+# unordered.
+function _formulas_check_det_order(ir::FormulasIR, known_names)
+    known = Set{Symbol}(known_names)
+    det_set = Set{Symbol}(ir.det_names)
+    defined = Set{Symbol}()
+    for i in eachindex(ir.det_names)
+        syms = _nl_collect_free_syms!(Set{Symbol}(), ir.det_exprs[i])
+        forward = sort(
+            [s for s in syms if s in det_set && !(s in defined) && !(s in known)]
+        )
+        isempty(forward) ||
+            error("@formulas node `$(ir.det_names[i])` references $(join(string.(forward), ", ")), which is defined later in the same block. Move the definition above `$(ir.det_names[i])`.")
+        push!(defined, ir.det_names[i])
+    end
+    return nothing
+end
+
 function _formulas_build_formulas_expr(
         ir::FormulasIR,
         fixed_names::Vector{Symbol},
@@ -436,6 +460,13 @@ function _formulas_build_formulas_expr(
         signal_names::Vector{Symbol},
         index_sym::Symbol,
         collect_fixed_names::Vector{Symbol} = Symbol[]
+    )
+    _formulas_check_det_order(
+        ir,
+        vcat(
+            fixed_names, re_names, prede_names, const_cov_names, varying_cov_names,
+            helper_names, model_fun_names, state_names, signal_names
+        )
     )
     det_exprs = copy(ir.det_exprs)
     # crossing-time nodes are computed by the solver event callback and merged into
@@ -503,16 +534,18 @@ function _formulas_build_formulas_expr(
     const_cov_set = Set(const_cov_names)
     varying_cov_set = Set(varying_cov_names)
 
-    for sym in var_syms
-        in_fixed = sym in fixed_set
-        in_re = sym in re_set
-        in_pre = sym in prede_set
-        in_const = sym in const_cov_set
-        in_var = sym in varying_cov_set
-        count = (in_fixed ? 1 : 0) + (in_re ? 1 : 0) + (in_pre ? 1 : 0) +
-            (in_const ? 1 : 0) + (in_var ? 1 : 0)
-        count > 1 &&
-            error("Symbol $(sym) is ambiguous in @formulas (appears in multiple namespaces).")
+    # Every namespace a bare name resolves from. Outcome, deterministic-node, helper,
+    # model-function, state and signal names used to be omitted, so an outcome sharing
+    # a name with a fixed effect silently used the fixed effect (#312).
+    let namespaces = (
+            fixed_set, re_set, prede_set, const_cov_set, varying_cov_set,
+            Set(helper_names), Set(model_fun_names), Set(state_names),
+            Set(signal_names), Set(ir.det_names), Set(ir.obs_names),
+        )
+        for sym in union(namespaces...)
+            Base.count(ns -> sym in ns, namespaces) > 1 &&
+                error("Symbol $(sym) is ambiguous in @formulas (appears in multiple namespaces).")
+        end
     end
 
     fixed_used = [s for s in fixed_names if s in var_syms]
@@ -626,12 +659,21 @@ function _qualify_context_globals(ex, mod::Module)
     (mod === @__MODULE__) && return ex
     locals = Set{Symbol}()
     _collect_assigned_syms!(locals, ex)
-    if ex isa Expr && ex.head == :function && ex.args[1] isa Expr
-        for a in ex.args[1].args
-            a isa Symbol && push!(locals, a)
-        end
+    if ex isa Expr && ex.head == :function
+        _collect_arg_syms!(locals, ex.args[1])
     end
     return _qcg(ex, mod, locals)
+end
+# Argument names, including a lone `f(p)` arg and typed `x::T` args.
+_collect_arg_syms!(::Set{Symbol}, ::Any) = nothing
+_collect_arg_syms!(s::Set{Symbol}, a::Symbol) = (push!(s, a); nothing)
+function _collect_arg_syms!(s::Set{Symbol}, ex::Expr)
+    if ex.head === :(::) || ex.head === :kw
+        _collect_arg_syms!(s, ex.args[1])
+    else
+        foreach(a -> _collect_arg_syms!(s, a), ex.args)
+    end
+    return nothing
 end
 _collect_assigned_syms!(::Set{Symbol}, ex) = nothing
 function _collect_assigned_syms!(s::Set{Symbol}, ex::Expr)
@@ -742,10 +784,19 @@ state/signal accessors. State and signal names must be called with a time argume
 Dynamic covariates used without an explicit `(t)` call are evaluated implicitly at the
 current time `t`.
 
+As in `@randomEffects`, `NormalizingPlanarFlow(ψ)` is rewritten to the generated
+`NPF_ψ(ψ)` model function, so a flow can be used directly as an outcome distribution.
+The flow is multivariate, so the observation column must hold vectors.
+
 The `@formulas` block is required in every `@Model`.
 """
 macro formulas(block)
     det_names, det_exprs, obs_names, obs_exprs, line_exprs = _parse_formulas(block)
+    # `NormalizingPlanarFlow(ψ)` is sugar for the generated `NPF_ψ(ψ)` model function,
+    # in @formulas as well as in @randomEffects (#288). `line_exprs` keeps the original
+    # spelling for display.
+    det_exprs = _rewrite_npf_calls.(det_exprs)
+    obs_exprs = _rewrite_npf_calls.(obs_exprs)
     all_exprs = vcat(det_exprs, obs_exprs)
     det_set = Set(det_names)
 

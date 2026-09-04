@@ -134,13 +134,16 @@ NoLimits exposes the per-site objective and gradient primitives for federated es
 
 ## How to Cite
 
-If you use NoLimits.jl in your research, please cite the software:
+If you use NoLimits.jl in your research, please cite the paper:
 
 ```bibtex
-@software{NoLimits_jl_2026,
-  title  = {{NoLimits.jl}},
-  author = {Huth, Manuel and Arruda, Jonas and Peiter, Clemens and Gusinow, Roy and Schmid, Nina and Hasenauer, Jan},
-  year   = {2026},
-  url    = {https://github.com/manuhuth/NoLimits.jl}
+@misc{huth2026nolimits,
+  title         = {{NoLimits.jl}: Flexible and Composable Nonlinear Mixed-Effects Modeling in Julia},
+  author        = {Huth, Manuel and Arruda, Jonas and Schmid, Nina and Gusinow, Roy and Wieland, Vincent and Peiter, Clemens and Hasenauer, Jan},
+  year          = {2026},
+  eprint        = {2606.24427},
+  archivePrefix = {arXiv},
+  primaryClass  = {stat.CO},
+  url           = {https://arxiv.org/abs/2606.24427}
 }
 ```
