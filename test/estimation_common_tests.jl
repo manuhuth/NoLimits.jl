@@ -543,6 +543,9 @@ end
         ArgumentError("Normal: the condition σ > 0 is not satisfied.")
     )
     @test NoLimits._is_numeric_error(ArgumentError("matrix contains Infs or NaNs"))
+    # A bare "Inf"/"NaN" substring must not re-open the hole.
+    @test !NoLimits._is_numeric_error(ArgumentError("Information missing"))
+    @test !NoLimits._is_numeric_error(ArgumentError("Infinite loop guard"))
     @test !NoLimits._is_numeric_error(MethodError(sqrt, (nothing,)))
 
     model = @Model begin

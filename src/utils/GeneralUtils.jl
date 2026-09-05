@@ -127,14 +127,11 @@ end
 # as numeric degeneracy masked genuine programming errors as `-Inf` (#326). Only messages
 # that actually signal a numeric failure count: Distributions' `check_args` (a scale
 # driven negative by an optimizer step) and LAPACK/BLAS finite checks.
-const _NUMERIC_ARGUMENT_ERROR_PATTERNS = ("is not satisfied", "Infs or NaNs", "NaN", "Inf")
+# Word boundaries matter: a bare "Inf" substring also matches "Information missing".
+const _NUMERIC_ARGUMENT_ERROR_RE = r"is not satisfied|Infs or NaNs|\bNaN\b|\bInf\b"
 
 @inline function _is_numeric_argument_error(err::ArgumentError)
-    msg = string(err.msg)
-    for pat in _NUMERIC_ARGUMENT_ERROR_PATTERNS
-        occursin(pat, msg) && return true
-    end
-    return false
+    return occursin(_NUMERIC_ARGUMENT_ERROR_RE, string(err.msg))
 end
 
 @inline function _is_numeric_error(err)
