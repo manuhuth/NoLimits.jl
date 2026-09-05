@@ -27,21 +27,41 @@ fit_summary = NoLimits.summarize(res)
 fit_summary
 ```
 
-## Available Methods
+## Choosing a Method
 
-The choice of method depends on whether the model includes random effects and on the inferential framework you require:
+Start here. The four questions below narrow twelve methods down to one or two, and the table
+underneath gives the trade-offs behind each answer.
 
-| Model type | Methods | Notes |
-| --- | --- | --- |
-| Mixed-effects | `Laplace`, `FOCEI`, `GHQuadrature`, `MCEM`, `SAEM`, `MCMC` | Require random effects in the model |
-| Mixed-effects (pooled) | `Pooled`, `PooledMap` | Naive pooled estimation: random effects plugged in at their distributional mean, recomputed from the fixed effects at every objective evaluation |
-| Fixed-effects only | `MLE`, `MAP`, `MCMC`, `VI` | `MLE` is likelihood-only; `MAP` adds priors; `MCMC`/`VI` are Bayesian |
-| Cross-method | `Multistart` | Wrapper that runs repeated fits from different starting values |
-| Model comparison | `cross_validate` + `fit_cv` | Observation-wise or subject-wise k-fold CV; supports EBE and Monte Carlo RE prediction |
+1. **Does the model have random effects?** No: `MLE`, `MAP`, `VI`, or `MCMC`. Yes: continue - `MCMC` handles both cases, the others below do not.
+2. **Do you want a posterior or a point estimate?** A posterior: `MCMC`. A point estimate: continue.
+3. **Is the model strongly nonlinear in the random effects?** No, or only mildly: `Laplace`
+   (or `FOCEI`). Yes: `SAEM`, `MCEM`, or `GHQuadrature`, which do not linearize around the mode.
+4. **Is the model expensive to evaluate (ODE solves, neural components)?** Then warm-start
+   whatever you picked with [`pooled_init`](pooled.md) and keep the number of random effects
+   small; `GHQuadrature` cost grows quickly with the number of random effects.
 
-The `MAP`-suffixed variant `PooledMap` is identical to `Pooled` but adds the log-prior of the fixed effects to the objective.
+| Method | Random effects | Fixed-effect priors | Integration over the random effects | Relative cost | What you get |
+| --- | --- | --- | --- | --- | --- |
+| [`Laplace`](laplace.md) | required | not used | second-order approximation at the empirical Bayes mode | low | point estimates, EB modes, Wald UQ |
+| [`FOCEI`](focei.md) | required | not used | same approximation with Fisher-information curvature | low | as `Laplace`, cheaper per iteration |
+| [`GHQuadrature`](ghquadrature.md) | required | not used | numerical quadrature; accuracy set by the number of nodes | medium, grows fast with the number of random effects | point estimates with controllable integration error |
+| [`SAEM`](saem.md) | required | not used | Monte Carlo with stochastic approximation | medium | point estimates, sampled random effects |
+| [`MCEM`](mcem.md) | required | not used | Monte Carlo, no curvature assumption | high | point estimates, sampled random effects |
+| [`MCMC`](mcmc.md) | optional | required | sampled jointly with the parameters | high | full posterior chains |
+| [`Pooled` / `PooledMap`](pooled.md) | plugged in at their mean | `PooledMap` only | none | lowest | fast warm start via `pooled_init` |
+| [`MLE` / `MAP`](mle.md) | not allowed | `MAP` needs at least one | not applicable | lowest | point estimates |
+| [`VI`](vi.md) | not allowed | required | not applicable | low | approximate posterior |
 
-Each method has a dedicated page with its objective, options, and examples: [Laplace](laplace.md), [FOCEI](focei.md), [GH Quadrature](ghquadrature.md), [MCEM](mcem.md), [SAEM](saem.md), [Pooled / PooledMap](pooled.md), [MCMC](mcmc.md), [VI](vi.md), and [MLE / MAP](mle.md). The [Pooled](pooled.md) method also serves as a fast warm start for the other estimators via `pooled_init`.
+`Multistart` wraps any optimization-based method and runs it from several starting values;
+`cross_validate` + `fit_cv` compare fitted models rather than fit them.
+
+!!! note "Two different `Laplace`s"
+    `NoLimits.Laplace()` is the estimation method. `Laplace(mu, sigma)` inside `@formulas` is
+    the Distributions.jl density. They are unrelated, and both appear in the example below.
+
+## Method Pages
+
+Each method has a dedicated page with its objective, options, and examples: [Laplace](laplace.md), [FOCEI](focei.md), [GH Quadrature](ghquadrature.md), [MCEM](mcem.md), [SAEM](saem.md), [Pooled / PooledMap](pooled.md), [MCMC](mcmc.md), [VI](vi.md), and [MLE / MAP](mle.md). Model comparison is covered by [Cross-Validation](cv.md) (`cross_validate` + `fit_cv`, observation-wise or subject-wise k-fold, with EBE or Monte Carlo random-effect prediction).
 
 ## Common Fit Keywords
 
@@ -64,23 +84,6 @@ Several keyword arguments are shared across methods (though not all apply to eve
 - `MAP` requires at least one fixed-effect prior.
 - `PooledMap` requires a prior on at least one fixed effect.
 - `MCEM` and `SAEM` do not incorporate fixed-effect priors in their objective.
-
-## Reproducibility and Individual Order
-
-Every per-individual quantity - the conditional log-likelihood, the empirical Bayes mode, the per-individual Laplace/FOCEI marginal and its analytic gradient - is computed from that individual's own data alone and is keyed by identity, not by row position. Permuting the individuals in the data frame or relabeling their IDs therefore leaves each per-individual term bitwise unchanged, and refitting the same `DataModel` with the same `rng` and the same `serialization` reproduces a previous fit exactly.
-
-What a permutation does change is the order in which those terms are added into the population objective and gradient. Floating-point addition is not associative, so the sums can differ in their last bits: relative differences at the 1e-16 level. A gradient-based optimizer amplifies that seed, taking slightly different steps and stopping at a slightly different point.
-
-How large the amplification gets depends on the conditioning of the data. On well-scaled data it stays negligible. On badly conditioned data - observation times spanning many orders of magnitude, responses spanning several orders, very ragged numbers of observations per individual - the objective is nearly flat around the optimum and the difference becomes visible in the reported estimates. Measured with `Laplace` on 120 individuals (permuted and relabeled, `EnsembleSerial()`):
-
-| Quantity, original vs. permuted | Well-scaled data | Badly conditioned data |
-| --- | --- | --- |
-| per-individual terms and EB modes | bitwise equal | bitwise equal |
-| objective and gradient at a fixed θ | ≤ 1e-15 relative | ≤ 1e-15 relative |
-| fitted objective | 5.1e-11 relative | 7.0e-11 relative |
-| fitted parameters | 3.6e-7 relative | 1.9e-5 relative |
-
-The guarantee is therefore: exact permutation invariance of every per-individual quantity, invariance of the population objective and gradient up to floating-point summation order, and invariance of the fitted parameters only up to the conditioning of the problem. To check permutation invariance sharply, compare the objective and gradient at a fixed θ rather than the fitted values. When comparing whole fits, choose a tolerance that reflects the data: 1e-6 relative on the parameters is realistic for well-scaled data, while badly conditioned data can need 1e-4 or looser.
 
 ## Multistart Wrapper
 
@@ -219,3 +222,10 @@ res_vi_fixed = fit_model(
     NoLimits.VI(; turing_kwargs=(max_iter=300, progress=false)),
 )
 ```
+
+## Where to go next
+
+- [Troubleshooting](../troubleshooting.md) - what to do when a fit fails or does not converge.
+- [Reproducibility and Individual Order](reproducibility.md) - what is bitwise reproducible and what is not.
+- [Uncertainty Quantification](../uncertainty-quantification/index.md) - standard errors, profiles, and posteriors.
+- [Multi-Method Comparison](../tutorials/mixed-effects-multiple-methods.md) - the same model fitted four ways.

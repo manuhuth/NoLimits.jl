@@ -193,3 +193,9 @@ For mixed-effects fits, `constants_re` can be passed to hold selected random-eff
 - `compute_uq` requires access to the original `DataModel`. This is available when the fit was run with `store_data_model=true` (the default).
 - The `level` argument must satisfy `0 < level < 1`.
 - For methods that rely on random draws (`:wald`, `:chain`, `:mcmc_refit`), pass an `rng` argument to ensure reproducibility.
+
+## Where to go next
+
+- [Wald](wald.md) - the cheapest option, available from any optimization-based fit.
+- [Profile likelihood](profile-likelihood.md) - when the Wald approximation is not trustworthy.
+- [MCMC-based uncertainty](mcmc-based-uncertainty.md) - posterior intervals.

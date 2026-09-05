@@ -236,3 +236,10 @@ res_cv = fit_cv(cv, NoLimits.SAEM();
     fold_serialization = EnsembleThreads(),
 )
 ```
+
+## Where to go next
+
+- [Choosing a method](index.md#Choosing-a-Method) - how this compares with the alternatives.
+- [Saving & Loading](saving-and-loading.md) - the next method.
+- [Uncertainty Quantification](../uncertainty-quantification/index.md) - standard errors and intervals for a fit.
+- [Troubleshooting](../troubleshooting.md) - when a fit fails or does not converge.

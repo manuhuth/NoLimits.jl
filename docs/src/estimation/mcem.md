@@ -252,7 +252,7 @@ method = NoLimits.MCEM(;
 
 The constructor signature block above lists every keyword with its default. See the [`MCEM`](@ref) entry in the API reference for the full list. The notes below explain the behavior that is not obvious from the names.
 
-- **EM convergence.** MCEM monitors both fixed-effect stability (`rtol_theta`, `atol_theta`) and Q-function stability (`rtol_Q`, `atol_Q`) with the same windowed drift test used by SAEM: the last `convergence_window` iterates are split into two halves, and each coordinate's drift between the half means must satisfy `drift ≤ max(atol, rtol * scale, 2 * mc_se)`, where `mc_se` is the Monte-Carlo standard error of the half-mean difference estimated from the window itself (drift indistinguishable from sampling noise counts as stationary). `consecutive_params` is the number of consecutive iterations on which both tests must pass before convergence is declared; setting `rtol` and `atol` of a test to `0` disables early stopping. See the SAEM page's [Convergence and Early Stopping](saem.md#convergence-and-early-stopping) section for details. Note that with a fixed, small Monte-Carlo sample size the EM iterates keep jittering at sampling scale and the fit typically uses all `maxiters`; a growing `sample_schedule` (classic MCEM practice) shrinks that jitter so the drift can fall below tolerance and trigger the stop. `verbose` enables iteration-level logging of `Q`, `dtheta`, `dQ`, and the drift values.
+- **EM convergence.** MCEM monitors both fixed-effect stability (`rtol_theta`, `atol_theta`) and Q-function stability (`rtol_Q`, `atol_Q`) with the same windowed drift test used by SAEM: the last `convergence_window` iterates are split into two halves, and each coordinate's drift between the half means must satisfy `drift ≤ max(atol, rtol * scale, 2 * mc_se)`, where `mc_se` is the Monte-Carlo standard error of the half-mean difference estimated from the window itself (drift indistinguishable from sampling noise counts as stationary). `consecutive_params` is the number of consecutive iterations on which both tests must pass before convergence is declared; setting `rtol` and `atol` of a test to `0` disables early stopping. See the SAEM page's [Convergence and Early Stopping](saem.md#Convergence-and-Early-Stopping) section for details. Note that with a fixed, small Monte-Carlo sample size the EM iterates keep jittering at sampling scale and the fit typically uses all `maxiters`; a growing `sample_schedule` (classic MCEM practice) shrinks that jitter so the drift can fall below tolerance and trigger the stop. `verbose` enables iteration-level logging of `Q`, `dtheta`, `dQ`, and the drift values.
 - **Final EB modes.** After the EM iterations complete, MCEM computes empirical Bayes (EB) modal estimates of the random effects used by downstream accessors, configured through the `ebe_*` keywords (`ebe_grad_tol=:auto` selects a data-adaptive tolerance). When `ebe_rescue_on_high_grad=true` (default `false`), a rescue multistart governed by the `ebe_rescue_*` keywords is triggered if the final EB gradient norm remains above threshold.
 - **Bounds.** `lb`, `ub` are optional transformed-scale bounds for free fixed effects in the M-step optimization. Parameters held constant via the `constants` fit keyword are excluded automatically.
 
@@ -352,3 +352,10 @@ ok      = get_converged(res)
 
 re_df   = get_random_effects(res)
 ```
+
+## Where to go next
+
+- [Choosing a method](index.md#Choosing-a-Method) - how this compares with the alternatives.
+- [SAEM](saem.md) - the next method.
+- [Uncertainty Quantification](../uncertainty-quantification/index.md) - standard errors and intervals for a fit.
+- [Troubleshooting](../troubleshooting.md) - when a fit fails or does not converge.

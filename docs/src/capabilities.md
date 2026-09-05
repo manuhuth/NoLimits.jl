@@ -34,14 +34,10 @@ NoLimits.jl provides a broad set of modeling, estimation, and diagnostic capabil
 
 ## Estimation Methods
 
-| Model type | Available methods |
-| --- | --- |
-| Mixed-effects | Laplace approximation, FOCEI, MCEM, SAEM, Gauss-Hermite quadrature (GHQuadrature), MCMC |
-| Mixed-effects (pooled) | Pooled, PooledMap |
-| Fixed-effects only | MLE, MAP, MCMC, VI |
-| Cross-method | Multistart optimization wrapper |
-
-All methods share a unified `fit_model` interface, allowing direct comparison of estimation approaches on the same model and data. See [Estimation](estimation/index.md) for the full method reference.
+Twelve methods share one `fit_model` interface, covering mixed-effects, naive-pooled, and
+fixed-effects-only models in both frequentist and Bayesian form. The
+[decision table](estimation/index.md#Choosing-a-Method) is the canonical list: it gives each
+method's assumptions, cost, and output side by side.
 
 ## Uncertainty Quantification
 
@@ -63,3 +59,9 @@ All methods share a unified `fit_model` interface, allowing direct comparison of
 ## Composability
 
 A defining feature of NoLimits.jl is that the capabilities above are freely composable. A single model can simultaneously use ODE dynamics, multiple learned function approximators, several random-effect grouping levels with non-Gaussian distributions, covariates at different temporal resolutions, and multiple outcome types. These combinations are exercised throughout the test suite.
+
+## Where to go next
+
+- [Quickstart](quickstart.md) - the shortest path from install to a fitted model.
+- [Model Building](model-building/index.md) - the specification language behind these capabilities.
+- [Tutorials](tutorials/index.md) - each capability in a complete analysis.

@@ -1,4 +1,4 @@
-# Mixed-Effects Tutorial 7: Copula Random Effects (Laplace)
+# Copula Random Effects (Laplace)
 
 A multivariate random effect is almost always given an `MvNormal`, which fixes two things at once: the marginals are Gaussian *and* the dependence between them is Gaussian. A copula separates the two. [Copulas.jl](https://github.com/lrnv/Copulas.jl)'s `SklarDist(copula, marginals)` is an ordinary `Distributions.jl` multivariate distribution, so NoLimits accepts it wherever a random-effect distribution is accepted, and the dependence structure becomes a modelling choice of its own.
 
@@ -366,3 +366,9 @@ plot_uq_distributions(uq; scale=:natural, plot_type=:density, show_legend=false)
 - **What NoLimits reads out of a copula.** `GHQuadrature` transports its quadrature nodes through the marginal quantile functions and `MCMC` samples in a product-of-marginals base space, both through the `NoLimits._re_marginals` hook the `Copulas` extension provides. `Pooled` plugs the random effect in at its marginal means, which a copula never shifts, so `get_notes(res).plugin.D` reports `:mean`.
 - **Recovery is a test, not a formality.** Simulating at known values and fitting back is the cheapest way to catch a mis-specified declaration; a `column` typo or an unqualified `SklarDist` shows up here rather than in a real analysis.
 - **Reusable template.** Swap `ClaytonCopula` for any other copula, or the Normal marginals for skewed or bounded ones, and nothing else in the workflow changes. See [Copula Distributions](../model-building/copulas.md) for copulas as outcome distributions.
+
+## Where to go next
+
+- [Hidden & Observed Markov Models](markov-models-observed-hidden-coarsed.md) - the next tutorial.
+- [All tutorials](index.md) - the full list, tagged by outcome, model, and estimator.
+- [Troubleshooting](../troubleshooting.md) - when a fit fails or does not converge.

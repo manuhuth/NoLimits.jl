@@ -1,10 +1,10 @@
-# Mixed-Effects Tutorial 6: Left-Censored Nonlinear Model (Laplace)
+# Left-Censored Nonlinear Model (Laplace)
 
-In many biomedical assays, measurements below the lower limit of quantification (LLOQ) are *left-censored*: the value is known only to lie below a threshold. HIV viral load is the canonical case — assays report "undetectable" below ~50 copies/mL (≈1.7 on the log10 scale), and 30–40% of measurements can be censored in well-treated patients. Dropping these rows or substituting the limit biases estimates; the principled fix is a *censored likelihood*, where uncensored points contribute their density and censored points the cumulative probability of falling below the limit. This tutorial fits a bi-exponential decay model (fast then slow viral decline) to the `virload50` dataset (50 patients), with `LogNormal` random effects making it nonlinear in the random effects, using NoLimits' `censored(...)` syntax and the Laplace approximation.
+In many biomedical assays, measurements below the lower limit of quantification (LLOQ) are *left-censored*: the value is known only to lie below a threshold. HIV viral load is the canonical case - assays report "undetectable" below ~50 copies/mL (≈1.7 on the log10 scale), and 30–40% of measurements can be censored in well-treated patients. Dropping these rows or substituting the limit biases estimates; the principled fix is a *censored likelihood*, where uncensored points contribute their density and censored points the cumulative probability of falling below the limit. This tutorial fits a bi-exponential decay model (fast then slow viral decline) to the `virload50` dataset (50 patients), with `LogNormal` random effects making it nonlinear in the random effects, using NoLimits' `censored(...)` syntax and the Laplace approximation.
 
 If your outcome is a discrete observed-state Markov model with ambiguous/set-valued state
 labels, use `coarsed(...)` instead of `censored(...)`. See the formulas documentation:
-[`Example: Coarsed Observed-State Markov Model`](../model-building/formulas.md#example-coarsed-observed-state-markov-model).
+[`Example: Coarsed Observed-State Markov Model`](../model-building/formulas.md#Example:-Coarsed-Observed-State-Markov-Model).
 
 ## Learning Goals
 
@@ -53,7 +53,7 @@ sort!(df, [:ID, :Time])
 
 ## Step 2: Define the Nonlinear Left-Censored Mixed-Effects Model
 
-The bi-exponential decay captures two phases of viral dynamics — rapid initial clearance, then slower decline. For subject $i$ at time $t$:
+The bi-exponential decay captures two phases of viral dynamics - rapid initial clearance, then slower decline. For subject $i$ at time $t$:
 
 ```math
 V_i(t) = A_i e^{-k_{1,i} t} + B_i e^{-k_{2,i} t},
@@ -340,7 +340,7 @@ p_fit
 
 ## Step 6: Observation Distribution Diagnostic (First Individual)
 
-The predicted distribution at selected time points: a Normal density for uncensored observations, and for censored ones the mass below 1.7 collapsed into a point mass at the limit — a check that the censored likelihood behaves as intended.
+The predicted distribution at selected time points: a Normal density for uncensored observations, and for censored ones the mass below 1.7 collapsed into a point mass at the limit - a check that the censored likelihood behaves as intended.
 
 ```julia
 p_obs = plot_observation_distributions(
@@ -358,7 +358,7 @@ p_obs
 
 ## Step 7: Wald Uncertainty Quantification
 
-Wald 95% intervals come from the observed Fisher information (the log-likelihood curvature at the optimum) — cheap, and a first read on identifiability: wide intervals flag parameters the data barely constrain (see [Wald UQ](../uncertainty-quantification/wald.md)).
+Wald 95% intervals come from the observed Fisher information (the log-likelihood curvature at the optimum) - cheap, and a first read on identifiability: wide intervals flag parameters the data barely constrain (see [Wald UQ](../uncertainty-quantification/wald.md)).
 
 ```julia
 uq = compute_uq(
@@ -457,7 +457,13 @@ plot_uq_distributions(uq; scale=:natural, plot_type=:density, show_legend=false)
 
 ## Interpretation Notes
 
-- **Why Laplace.** The `LogNormal` parameters sit inside a bi-exponential trajectory, so the model is nonlinear in the random effects — the case the Laplace approximation is built for.
-- **Why the censored likelihood matters.** Censored rows contribute the cumulative probability of falling below 1.7, not a density at the pinned value — essential for unbiased estimation under detection limits.
+- **Why Laplace.** The `LogNormal` parameters sit inside a bi-exponential trajectory, so the model is nonlinear in the random effects - the case the Laplace approximation is built for.
+- **Why the censored likelihood matters.** Censored rows contribute the cumulative probability of falling below 1.7, not a density at the pinned value - essential for unbiased estimation under detection limits.
 - **The slow phase is only weakly identified here.** With so many censored observations, the data say little about the slow exponential, so its amplitude collapses toward zero and the fast phase dominates. This is the data speaking: the observable dynamics are a single decline to the limit. Longer follow-up or a higher limit would identify both phases.
 - **Reusable template.** The same `censored(...)` syntax generalizes to higher censoring fractions and other patterns. For observations binned into intervals rather than pinned at a limit, see the [interval-censored outcomes tutorial](mixed-effects-interval-censored-binned-laplace.md).
+
+## Where to go next
+
+- [Interval-Censored Outcomes (Laplace)](mixed-effects-interval-censored-binned-laplace.md) - the next tutorial.
+- [All tutorials](index.md) - the full list, tagged by outcome, model, and estimator.
+- [Troubleshooting](../troubleshooting.md) - when a fit fails or does not converge.

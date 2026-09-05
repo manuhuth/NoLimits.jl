@@ -383,3 +383,10 @@ For the simpler case of censoring at a detection limit, `censored(...)` from `Di
 ## Related APIs
 
 Programmatic access to the internal representation and evaluation of formulas is provided by `get_formulas_meta`, `get_formulas_ir`, `get_formulas_builders`, and `get_formulas_time_offsets`. Full signatures are in the [API reference](../api.md).
+
+## Where to go next
+
+- [@fixedEffects](fixed-effects.md) - the next block in a model definition.
+- [Model Building overview](index.md) - how the blocks fit together.
+- [Model Building API](../api/model-building.md) - full constructor signatures.
+- [Quickstart](../quickstart.md) - the whole workflow end to end.

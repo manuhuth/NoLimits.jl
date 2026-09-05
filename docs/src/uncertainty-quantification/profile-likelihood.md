@@ -126,3 +126,9 @@ Because profile likelihood characterizes uncertainty by tracing the objective fu
 - **Per-parameter errors:** `errors` captures any profiler-level issues encountered during computation.
 
 These diagnostics are essential for identifying incomplete or numerically unstable intervals. If an interval endpoint was not found, common remedies include widening `profile_scan_width`, increasing `profile_max_iter`, or relaxing `profile_ftol_abs`.
+
+## Where to go next
+
+- [Uncertainty Quantification overview](index.md) - the three approaches side by side.
+- [MCMC-based uncertainty](mcmc-based-uncertainty.md) - the next approach.
+- [Multi-Method Comparison](../tutorials/mixed-effects-multiple-methods.md) - UQ on four fits of one model.

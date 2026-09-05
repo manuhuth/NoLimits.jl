@@ -271,3 +271,9 @@ re_idx_all = get_re_indices(dm, 1; obs_only=false)
 ```
 
 When a grouping column varies within an individual in a supported non-ODE model, `get_re_indices` returns the row-level random-effect level ids in observation-row order (or all-row order when `obs_only=false`).
+
+## Where to go next
+
+- [Choosing a method](estimation/index.md#Choosing-a-Method) - fitting the DataModel you just built.
+- [Coming from NONMEM / Monolix / nlmixr2](coming-from-nonmem.md) - event-table conventions in familiar terms.
+- [Plotting](plotting/index.md) - inspecting the data before you fit it.

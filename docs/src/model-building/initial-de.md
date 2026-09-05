@@ -145,3 +145,10 @@ For performance-sensitive workflows using static arrays, the builder can return 
 ```julia
 builder_static = get_initialde_builder(init, [:x1, :x2]; static=true)
 ```
+
+## Where to go next
+
+- [Function Approximators](universal-function-approximators.md) - the next block in a model definition.
+- [Model Building overview](index.md) - how the blocks fit together.
+- [Model Building API](../api/model-building.md) - full constructor signatures.
+- [Quickstart](../quickstart.md) - the whole workflow end to end.

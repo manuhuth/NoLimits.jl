@@ -111,3 +111,10 @@ end
 ## Note on Automatic Differentiation
 
 Helpers that mutate arrays in place are detected and produce a warning. When reverse-mode AD compatibility is needed, prefer non-mutating implementations.
+
+## Where to go next
+
+- [@formulas](formulas.md) - the next block in a model definition.
+- [Model Building overview](index.md) - how the blocks fit together.
+- [Model Building API](../api/model-building.md) - full constructor signatures.
+- [Quickstart](../quickstart.md) - the whole workflow end to end.

@@ -219,3 +219,10 @@ Two related constraints still apply:
 
 - Random effects referenced in `@preDifferentialEquation` must be grouped by `primary_id`.
 - Constant covariates keep their current validation rules: they must remain constant within `primary_id` and within every declared `constant_on` grouping.
+
+## Where to go next
+
+- [Copula Distributions](copulas.md) - the next block in a model definition.
+- [Model Building overview](index.md) - how the blocks fit together.
+- [Model Building API](../api/model-building.md) - full constructor signatures.
+- [Quickstart](../quickstart.md) - the whole workflow end to end.

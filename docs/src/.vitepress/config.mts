@@ -22,8 +22,9 @@ const baseTemp = {
 const navTemp = {
   nav: [
     { text: 'Get Started', link: '/quickstart' },
-    { text: 'Estimation', link: '/estimation/index' },
-    { text: 'Tutorials', link: '/tutorials/mixed-effects-multiple-methods' },
+    { text: 'Estimation', link: '/estimation/' },
+    { text: 'Tutorials', link: '/tutorials/' },
+    { text: 'From NONMEM', link: '/coming-from-nonmem' },
     { text: 'API', link: '/api' },
   ],
 }
@@ -51,14 +52,24 @@ export default defineConfig({
   base: 'REPLACE_ME_DOCUMENTER_VITEPRESS',// TODO: replace this in makedocs!
   title: 'REPLACE_ME_DOCUMENTER_VITEPRESS',
   description: 'REPLACE_ME_DOCUMENTER_VITEPRESS',
-  lastUpdated: true,
   cleanUrls: true,
   outDir: 'REPLACE_ME_DOCUMENTER_VITEPRESS', // This is required for MarkdownVitepress to work correctly...
   head: [
     ['link', { rel: 'icon', href: 'REPLACE_ME_DOCUMENTER_VITEPRESS_FAVICON' }],
     ['script', {src: `${getBaseRepository(baseTemp.base)}versions.js`}],
     // ['script', {src: '/versions.js'], for custom domains, I guess if deploy_url is available.
-    ['script', {src: `${baseTemp.base}siteinfo.js`}]
+    ['script', {src: `${baseTemp.base}siteinfo.js`}],
+    ['link', { rel: 'icon', type: 'image/png', href: `${baseTemp.base}favicon.png` }],
+    ['link', { rel: 'preconnect', href: 'https://cdn.jsdelivr.net', crossorigin: '' }],
+    ['meta', { property: 'og:type', content: 'website' }],
+    ['meta', { property: 'og:site_name', content: 'NoLimits.jl' }],
+    ['meta', { property: 'og:title', content: 'NoLimits.jl' }],
+    ['meta', { property: 'og:description', content: 'Nonlinear mixed-effects modeling for longitudinal data in Julia: mechanistic ODEs, Markov models, machine-learning components, and frequentist and Bayesian estimation through one interface.' }],
+    ['meta', { property: 'og:image', content: 'https://manuhuth.github.io/NoLimits.jl/dev/logo.png' }],
+    ['meta', { name: 'twitter:card', content: 'summary_large_image' }],
+    ['meta', { name: 'twitter:title', content: 'NoLimits.jl' }],
+    ['meta', { name: 'twitter:description', content: 'Nonlinear mixed-effects modeling for longitudinal data in Julia.' }],
+    ['meta', { name: 'twitter:image', content: 'https://manuhuth.github.io/NoLimits.jl/dev/logo.png' }]
   ],
 
   markdown: {
@@ -82,6 +93,7 @@ export default defineConfig({
     },
     resolve: {
       alias: {
+        // DocumenterVitepress injects its own components (VersionPicker.vue) here.
         '@': path.resolve(__dirname, '../components')
       }
     },

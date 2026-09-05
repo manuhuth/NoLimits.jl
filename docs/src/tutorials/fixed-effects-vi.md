@@ -1,4 +1,4 @@
-# Fixed-Effects Tutorial 2: Variational Inference (VI)
+# Fixed-Effects: Variational Inference
 
 This tutorial shows a complete fixed-effects Bayesian workflow with `VI` in NoLimits.jl: model specification, fitting, variational diagnostics, posterior sampling, chain-style UQ, and plotting.
 
@@ -206,3 +206,9 @@ You now have a complete fixed-effects VI workflow:
 - Access to optimization trace/state and posterior sampler.
 - Posterior intervals through `compute_uq(...; method=:chain)`.
 - Posterior-aware predictive and observation-level plots.
+
+## Where to go next
+
+- [Using NoLimits from R and Python](r-and-python.md) - the next tutorial.
+- [All tutorials](index.md) - the full list, tagged by outcome, model, and estimator.
+- [Troubleshooting](../troubleshooting.md) - when a fit fails or does not converge.

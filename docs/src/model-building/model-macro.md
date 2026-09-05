@@ -249,3 +249,10 @@ model_summary
 `@Model` wires internal evaluation functions used during fitting and simulation - `calculate_prede` (pre-DE expressions), `calculate_initial_state` (ODE initial conditions), `calculate_formulas_all` (all formula nodes), and `calculate_formulas_obs` (observation-node formulas only). Full signatures are in the [API reference](../api.md).
 
 When formulas reference ODE states or signals, formula evaluation requires DE solution accessors from `get_de_accessors_builder(...)`.
+
+## Where to go next
+
+- [@helpers](helpers.md) - the next block in a model definition.
+- [Model Building overview](index.md) - how the blocks fit together.
+- [Model Building API](../api/model-building.md) - full constructor signatures.
+- [Quickstart](../quickstart.md) - the whole workflow end to end.

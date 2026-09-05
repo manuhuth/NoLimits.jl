@@ -642,3 +642,8 @@ p_embed
   a custom method inherits every accessor, plot, and transform; `kind=:frequentist_re` selects the
   frequentist-with-random-effects result, and the `uq_family` trait adds Wald uncertainty while
   the method keeps its own type.
+
+## Where to go next
+
+- [All tutorials](index.md) - the full list, tagged by outcome, model, and estimator.
+- [Troubleshooting](../troubleshooting.md) - when a fit fails or does not converge.

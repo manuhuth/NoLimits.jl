@@ -1,6 +1,6 @@
-# Mixed-Effects Tutorial 5: Modeling Seizure Counts with Poisson and Negative Binomial Outcomes
+# Count Outcomes: Poisson & NegativeBinomial (MCEM)
 
-Count outcomes — seizures, infections, adverse events — are non-negative integers whose variance grows with the mean, so a Normal likelihood can predict negative counts and biased errors. The Poisson and Negative Binomial distributions respect this structure. This tutorial fits and compares both as nonlinear mixed-effects models on the Thall and Vail (1990) epilepsy trial (59 patients, progabide vs placebo, four two-week periods). The two share the same predictor and random intercept and differ only in the outcome: Poisson fixes the variance to the mean, while Negative Binomial adds a dispersion parameter for overdispersion. The random effect enters through an exponential rate, so both are nonlinear in the random effects — a natural fit for Monte Carlo Expectation-Maximization (MCEM).
+Count outcomes - seizures, infections, adverse events - are non-negative integers whose variance grows with the mean, so a Normal likelihood can predict negative counts and biased errors. The Poisson and Negative Binomial distributions respect this structure. This tutorial fits and compares both as nonlinear mixed-effects models on the Thall and Vail (1990) epilepsy trial (59 patients, progabide vs placebo, four two-week periods). The two share the same predictor and random intercept and differ only in the outcome: Poisson fixes the variance to the mean, while Negative Binomial adds a dispersion parameter for overdispersion. The random effect enters through an exponential rate, so both are nonlinear in the random effects - a natural fit for Monte Carlo Expectation-Maximization (MCEM).
 
 ## Learning Goals
 
@@ -173,7 +173,7 @@ Helper functions
 
 ### Build `DataModel` and Configure `MCEM`
 
-The `DataModel` validates the data and groups observations by subject. MCEM's `sample_schedule` grows the E-step sample count across iterations (see [MCEM](../estimation/mcem.md)); the compact settings here keep runtime short — production runs would use more iterations and larger samples.
+The `DataModel` validates the data and groups observations by subject. MCEM's `sample_schedule` grows the E-step sample count across iterations (see [MCEM](../estimation/mcem.md)); the compact settings here keep runtime short - production runs would use more iterations and larger samples.
 
 ```julia
 dm_poisson = DataModel(model_poisson, df; primary_id=:Subject, time_col=:period_f)
@@ -315,7 +315,7 @@ Empirical Bayes random effects summary (across RE levels)
   eta                59        0.3579        0.6502        0.0455        0.2804        0.6631
 ```
 
-Fitted values vs observed data for the first two subjects, plus the predicted distribution at selected points — especially informative for counts, where distribution shape matters, not just the mean.
+Fitted values vs observed data for the first two subjects, plus the predicted distribution at selected points - especially informative for counts, where distribution shape matters, not just the mean.
 
 ```julia
 p_fit_poisson = plot_fits(
@@ -441,7 +441,7 @@ plot_uq_distributions(uq_poisson)
 
 ## Step 3: Negative Binomial Mixed-Effects Model
 
-The Poisson fixes the variance to the mean, but trial counts are often *overdispersed* — more variable than Poisson allows. The Negative Binomial adds a dispersion parameter `r`: large `r` recovers the Poisson, small `r` means strong overdispersion, so comparing the two reveals whether overdispersion matters.
+The Poisson fixes the variance to the mean, but trial counts are often *overdispersed* - more variable than Poisson allows. The Negative Binomial adds a dispersion parameter `r`: large `r` recovers the Poisson, small `r` means strong overdispersion, so comparing the two reveals whether overdispersion matters.
 
 The model keeps the Poisson predictor and random intercept, adding `log_r` (log scale for positivity) and the lines that convert `lambda` and `r` into the `(r, p)` form `Distributions.NegativeBinomial` expects.
 
@@ -546,7 +546,7 @@ Helper functions
 
 ### Build `DataModel`, Fit, Summarize, Plot, and UQ (Negative Binomial)
 
-Same workflow as the Poisson, with identical MCEM settings — so differences reflect model adequacy, not tuning:
+Same workflow as the Poisson, with identical MCEM settings - so differences reflect model adequacy, not tuning:
 
 ```julia
 dm_nb = DataModel(model_nb, df; primary_id=:Subject, time_col=:period_f)
@@ -623,7 +623,7 @@ p_fit_nb
 <!- injected:t5-pfitnb ->
 ![Fitted Negative Binomial seizure-rate trajectories for the first two subjects.](figures/t5/p_fit_nb.png)
 
-Compare the predicted probability mass with the Poisson version — the Negative Binomial should give more weight to extreme counts.
+Compare the predicted probability mass with the Poisson version - the Negative Binomial should give more weight to extreme counts.
 
 ```julia
 p_obs_nb
@@ -709,4 +709,10 @@ Comparing the two objectives (negative log-likelihoods) needs care: the Poisson 
 (poisson_objective = -676.3985855275587, nb_objective = -645.9052503662361)
 ```
 
-The two objectives come from different likelihood families — a useful heuristic, but definitive selection needs the formal tools above.
+The two objectives come from different likelihood families - a useful heuristic, but definitive selection needs the formal tools above.
+
+## Where to go next
+
+- [Left-Censored Nonlinear Model (Laplace)](mixed-effects-left-censored-virload50-laplace.md) - the next tutorial.
+- [All tutorials](index.md) - the full list, tagged by outcome, model, and estimator.
+- [Troubleshooting](../troubleshooting.md) - when a fit fails or does not converge.

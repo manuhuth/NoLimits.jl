@@ -253,3 +253,10 @@ diagnostics = get_diagnostics(res)
 ```
 
 Since there is no single optimized objective value, `get_objective(res)` returns `NaN` and `get_converged(res)` returns `missing`.
+
+## Where to go next
+
+- [Choosing a method](index.md#Choosing-a-Method) - how this compares with the alternatives.
+- [VI](vi.md) - the next method.
+- [Uncertainty Quantification](../uncertainty-quantification/index.md) - standard errors and intervals for a fit.
+- [Troubleshooting](../troubleshooting.md) - when a fit fails or does not converge.

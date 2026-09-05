@@ -354,3 +354,10 @@ chain_best = get_chain(res_ms)
 ```
 
 Use this pattern only when a restart-style MCMC workflow is explicitly needed.
+
+## Where to go next
+
+- [Choosing a method](index.md#Choosing-a-Method) - how this compares with the alternatives.
+- [Cross-Validation](cv.md) - the next method.
+- [Uncertainty Quantification](../uncertainty-quantification/index.md) - standard errors and intervals for a fit.
+- [Troubleshooting](../troubleshooting.md) - when a fit fails or does not converge.

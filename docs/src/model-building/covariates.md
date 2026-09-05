@@ -27,7 +27,7 @@ end
 Six constructor forms are available within `@covariates`: the scalar/vector pairs
 `Covariate`/`CovariateVector` (varying), `ConstantCovariate`/`ConstantCovariateVector`
 (constant within a group), and `DynamicCovariate`/`DynamicCovariateVector` (interpolated).
-See the [Covariate Types](../api.md#Covariate-Types) section of the API reference for full
+See the [Covariate Types](../api/model-building.md#Covariate-Types) section of the API reference for full
 constructor signatures and keyword arguments.
 
 Note the following macro-level conventions:
@@ -38,7 +38,7 @@ Note the following macro-level conventions:
 
 ## Supported Interpolation Types
 
-Dynamic covariates construct interpolating functions from observed time-value pairs using [DataInterpolations.jl](https://docs.sciml.ai/DataInterpolations/stable/). The supported interpolation methods are `ConstantInterpolation`, `SmoothedConstantInterpolation`, `LinearInterpolation`, `QuadraticInterpolation`, `LagrangeInterpolation`, `QuadraticSpline`, `CubicSpline`, and `AkimaInterpolation` (see the [Covariate Types](../api.md#Covariate-Types) section of the API reference for the per-method minimum-observation requirements).
+Dynamic covariates construct interpolating functions from observed time-value pairs using [DataInterpolations.jl](https://docs.sciml.ai/DataInterpolations/stable/). The supported interpolation methods are `ConstantInterpolation`, `SmoothedConstantInterpolation`, `LinearInterpolation`, `QuadraticInterpolation`, `LagrangeInterpolation`, `QuadraticSpline`, `CubicSpline`, and `AkimaInterpolation` (see the [Covariate Types](../api/model-building.md#Covariate-Types) section of the API reference for the per-method minimum-observation requirements).
 
 When no interpolation is specified, `DynamicCovariate` defaults to `LinearInterpolation`. To use a non-default method, ensure that `DataInterpolations` is loaded in the model-definition environment (e.g., `using DataInterpolations`).
 
@@ -121,3 +121,10 @@ When a `DataModel` is constructed, the covariate declarations are validated agai
 - The configured `time_col` must be declared as `Covariate()` or `DynamicCovariate()` in the `@covariates` block.
 - All declared covariate columns must be present in the DataFrame and free of missing values.
 - Constant covariates are checked for consistency: values must be identical within each level of the `primary_id` column and within each declared `constant_on` group.
+
+## Where to go next
+
+- [@randomEffects](random-effects.md) - the next block in a model definition.
+- [Model Building overview](index.md) - how the blocks fit together.
+- [Model Building API](../api/model-building.md) - full constructor signatures.
+- [Quickstart](../quickstart.md) - the whole workflow end to end.

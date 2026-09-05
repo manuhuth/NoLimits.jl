@@ -1,6 +1,6 @@
-# Fixed-Effects Tutorial 1: Nonlinear Longitudinal Model (MLE + MAP)
+# Fixed-Effects: MLE & MAP
 
-Many biological processes — organ growth, tumour progression, enzyme saturation — follow sigmoidal trajectories that linear regression cannot capture. This tutorial builds a logistic growth model for tree-trunk circumference data and estimates its parameters by maximum likelihood (MLE) and maximum a posteriori (MAP), showing how prior information shapes the fit. Random effects are omitted here; a [later tutorial](mixed-effects-multiple-methods.md) adds between-subject variability.
+Many biological processes - organ growth, tumour progression, enzyme saturation - follow sigmoidal trajectories that linear regression cannot capture. This tutorial builds a logistic growth model for tree-trunk circumference data and estimates its parameters by maximum likelihood (MLE) and maximum a posteriori (MAP), showing how prior information shapes the fit. Random effects are omitted here; a [later tutorial](mixed-effects-multiple-methods.md) adds between-subject variability.
 
 ## What You Will Learn
 
@@ -11,7 +11,7 @@ Many biological processes — organ growth, tumour progression, enzyme saturatio
 
 ## Step 1: Load the Data
 
-The classic Orange tree growth study (Draper and Smith; R's `datasets::Orange`) records trunk circumference for five trees at seven time points each — a compact, representative example of nonlinear longitudinal data.
+The classic Orange tree growth study (Draper and Smith; R's `datasets::Orange`) records trunk circumference for five trees at seven time points each - a compact, representative example of nonlinear longitudinal data.
 
 ```julia
 using NoLimits
@@ -56,7 +56,7 @@ The structural model is a three-parameter logistic growth curve:
 
 $$\mu(t) = \frac{a}{1 + \exp\!\bigl(-k\,(t - t_0)\bigr)}$$
 
-`a` is the upper asymptote, `k` the growth-phase steepness, and `t0` the inflection point (the age of fastest growth); observations are Normal around this curve with standard deviation `σ`. Each parameter also carries a weakly-informative prior — ignored by MLE, but used by MAP in Step 4.
+`a` is the upper asymptote, `k` the growth-phase steepness, and `t0` the inflection point (the age of fastest growth); observations are Normal around this curve with standard deviation `σ`. Each parameter also carries a weakly-informative prior - ignored by MLE, but used by MAP in Step 4.
 
 ```julia
 using NoLimits
@@ -163,7 +163,7 @@ map_method = NoLimits.MAP(; optim_kwargs=(maxiters=500,))
 serialization = SciMLBase.EnsembleThreads()
 ```
 
-`primary_id=:Tree` identifies individuals and `time_col=:age` sets the time axis; `EnsembleThreads()` evaluates the per-individual likelihood in parallel — minor here, but valuable on larger datasets.
+`primary_id=:Tree` identifies individuals and `time_col=:age` sets the time axis; `EnsembleThreads()` evaluates the per-individual likelihood in parallel - minor here, but valuable on larger datasets.
 
 ### DataModel Summary
 
@@ -350,7 +350,7 @@ p_fit_mle
 <!- injected:fe1-pfitmle ->
 ![Fitted population logistic trajectories under MLE for the first two trees.](figures/fe1/p_fit_mle.png)
 
-With no random effects, every tree shares the same population curve, so deviations mix measurement noise with uncaptured between-tree variability. Systematic patterns — one tree consistently above the curve, another below — signal that random effects are needed (see the [mixed-effects tutorials](mixed-effects-multiple-methods.md)).
+With no random effects, every tree shares the same population curve, so deviations mix measurement noise with uncaptured between-tree variability. Systematic patterns - one tree consistently above the curve, another below - signal that random effects are needed (see the [mixed-effects tutorials](mixed-effects-multiple-methods.md)).
 
 MAP fit plot:
 
@@ -365,7 +365,7 @@ How far the MAP trajectories shift from the MLE ones is a quick visual read on p
 
 ## Step 7: Observation Distribution Diagnostics
 
-It also helps to inspect the predicted observation distribution at a single time point — here the first observation of the first tree, with the observed value marked. A well-calibrated model places observations near the center of the distribution, not in the tails.
+It also helps to inspect the predicted observation distribution at a single time point - here the first observation of the first tree, with the observed value marked. A well-calibrated model places observations near the center of the distribution, not in the tails.
 
 ```julia
 p_obs_mle = plot_observation_distributions(
@@ -401,10 +401,16 @@ p_obs_map
 <!- injected:fe1-pobsmap ->
 ![Predicted observation distribution at the first observation of the first tree (MAP).](figures/fe1/p_obs_map.png)
 
-A value far in the tail points to misspecification — a residual distribution that is too narrow, or a structural model that systematically over- or under-predicts.
+A value far in the tail points to misspecification - a residual distribution that is too narrow, or a structural model that systematically over- or under-predicts.
 
 ## Summary and Next Steps
 
-- **MLE vs MAP.** MLE is purely data-driven; MAP adds log-prior terms that stabilize weakly identified parameters — common in nonlinear models with asymptotic behavior. Comparing them shows which parameters the data actually constrain.
-- **No random effects.** Every individual shares one curve; systematic per-tree deviations call for random effects — see the [mixed-effects tutorials](mixed-effects-multiple-methods.md).
+- **MLE vs MAP.** MLE is purely data-driven; MAP adds log-prior terms that stabilize weakly identified parameters - common in nonlinear models with asymptotic behavior. Comparing them shows which parameters the data actually constrain.
+- **No random effects.** Every individual shares one curve; systematic per-tree deviations call for random effects - see the [mixed-effects tutorials](mixed-effects-multiple-methods.md).
 - **Diagnostics are method-agnostic.** `plot_fits` and `plot_observation_distributions` work identically across every estimator.
+
+## Where to go next
+
+- [Fixed-Effects: Variational Inference](fixed-effects-vi.md) - the next tutorial.
+- [All tutorials](index.md) - the full list, tagged by outcome, model, and estimator.
+- [Troubleshooting](../troubleshooting.md) - when a fit fails or does not converge.

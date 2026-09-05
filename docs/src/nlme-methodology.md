@@ -291,3 +291,14 @@ The primary targets of estimation are:
 Details on each estimation method and the available uncertainty quantification backends are
 provided in the [Estimation](estimation/index.md) and
 [Uncertainty Quantification](uncertainty-quantification/index.md) sections.
+
+## Further reading
+
+A longer write-up of the estimators, with full derivations, is kept in the repository as
+[`docs/methods/estimation_methods.pdf`](https://github.com/manuhuth/NoLimits.jl/blob/main/docs/methods/estimation_methods.pdf).
+
+## Where to go next
+
+- [Choosing a method](estimation/index.md#Choosing-a-Method) - the estimators these derivations describe.
+- [Uncertainty Quantification](uncertainty-quantification/index.md) - inference after estimation.
+- [References](references.md) - the full bibliography.

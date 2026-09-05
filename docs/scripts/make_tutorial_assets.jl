@@ -1472,17 +1472,77 @@ function tutorial_md1()
 end
 
 # ----------------------------------------------------------------------------- #
+# ----------------------------------------------------------------------------- #
+# Quickstart page (assets live in docs/src/figures/qs, beside the quickstart page)
+# ----------------------------------------------------------------------------- #
+function quickstart()
+    dir = mkpath(joinpath(DOCS_ROOT, "src", "figures", "qs"))
+    Random.seed!(42)
+
+    model = @Model begin
+        @fixedEffects begin
+            A0 = RealNumber(10.0, scale = :log)
+            k = RealNumber(0.5, scale = :log)
+            omega = RealNumber(0.3, scale = :log)
+            sigma = RealNumber(0.5, scale = :log)
+        end
+
+        @covariates begin
+            time = Covariate()
+        end
+
+        @randomEffects begin
+            eta = RandomEffect(Normal(0.0, omega); column = :ID)
+        end
+
+        @formulas begin
+            pred = A0 * exp(eta) * exp(-k * time)
+            y ~ Normal(pred, sigma)
+        end
+    end
+
+    df = DataFrame(
+        ID = repeat([:s1, :s2, :s3, :s4], inner = 4),
+        time = repeat([0.0, 1.0, 2.0, 4.0], outer = 4),
+        y = [
+            10.2, 6.1, 3.6, 1.4,
+            12.5, 7.8, 4.9, 1.9,
+            8.1, 4.9, 3.0, 1.1,
+            11.0, 6.5, 4.1, 1.6,
+        ]
+    )
+
+    dm = DataModel(model, df; primary_id = :ID, time_col = :time)
+    res = fit_model(dm, NoLimits.Laplace(); rng = Random.Xoshiro(1))
+
+    for (name, obj) in (
+            "fit_summary" => NoLimits.summarize(res),
+            "params" => get_params(res; scale = :untransformed),
+            "random_effects" => get_random_effects(res),
+        )
+        path = joinpath(dir, string(name, ".txt"))
+        open(path, "w") do io
+            print(io, rstrip(repr(MIME("text/plain"), obj)))
+        end
+        @info "  text  -> $(relpath(path, DOCS_ROOT))"
+    end
+
+    plot_fits(res; ncols = 2, save_path = joinpath(dir, "p_fit.png"))
+    @info "  fig   -> $(relpath(joinpath(dir, "p_fit.png"), DOCS_ROOT))"
+    return res
+end
+
 const TUTORIALS = Dict(
     "t1" => tutorial1, "t2" => tutorial2, "t3" => tutorial3, "t4" => tutorial4,
     "t5" => tutorial5, "t6" => tutorial6, "t7" => tutorial7,
     "t8" => tutorial_intcens, "fe1" => tutorial8, "fe2" => tutorial9,
-    "md1" => tutorial_md1
+    "md1" => tutorial_md1, "qs" => quickstart
 )
 
 function main()
     mkpath(FIG_ROOT)
     requested = isempty(ARGS) ?
-        ["t1", "t2", "t5", "t6", "t7", "t8", "fe1", "fe2", "t3", "t4", "md1"] :
+        ["t1", "t2", "t5", "t6", "t7", "t8", "fe1", "fe2", "t3", "t4", "md1", "qs"] :
         ARGS
     for key in requested
         haskey(TUTORIALS, key) || (@warn "Unknown tutorial key: $key"; continue)

@@ -30,7 +30,9 @@ Then verify the installation by loading the package:
 using NoLimits
 ```
 
-If this runs without errors, the installation is complete and you are ready to proceed to the [Tutorials](tutorials/mixed-effects-multiple-methods.md).
+If this runs without errors, the installation is complete. Go straight to the
+[Quickstart](quickstart.md) - it builds and fits a model in five steps - and come back to the
+section below only when something tells you a package is missing.
 
 ## Optional Dependencies
 
@@ -88,3 +90,9 @@ always available.
     method: pass them as `optimizer = ...`. NoLimits no longer depends on either package, so
     add the one you want to your own environment and `using` it before referring to its
     algorithms (e.g. `using OptimizationNLopt` for `NLopt.LN_BOBYQA()`).
+
+## Where to go next
+
+- [Quickstart](quickstart.md) - build and fit a model in five steps.
+- [Coming from NONMEM / Monolix / nlmixr2](coming-from-nonmem.md) - if you already write population models elsewhere.
+- [Troubleshooting](troubleshooting.md) - if something did not install cleanly.

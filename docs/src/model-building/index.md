@@ -128,3 +128,9 @@ The following sub-pages document each model block in detail:
 - [`@initialDE`](@ref) - Initial conditions for ODE states
 - [`@formulas`](@ref) - Observation models and deterministic nodes
 - [Function Approximators (NNs + SoftTrees)](universal-function-approximators.md) - Neural networks and soft decision trees
+
+## Where to go next
+
+- [@Model](model-macro.md) - the macro every model starts from.
+- [Data Model Construction](../data-model-construction.md) - binding a finished model to data.
+- [Choosing a method](../estimation/index.md#Choosing-a-Method) - picking an estimator once the model is written.
