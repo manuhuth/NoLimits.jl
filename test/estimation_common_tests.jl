@@ -536,7 +536,13 @@ end
     # root-find gives up, and it is not a subtype of any other whitelisted error.
     @test NoLimits._is_numeric_error(Roots.ConvergenceFailed("failed"))
     @test NoLimits._is_numeric_error(DomainError(-1.0, "x"))
-    @test NoLimits._is_numeric_error(ArgumentError("x"))
+    # Only ArgumentErrors whose message signals a numeric failure count; a plain one is
+    # a programming error and must escape (#326).
+    @test !NoLimits._is_numeric_error(ArgumentError("x"))
+    @test NoLimits._is_numeric_error(
+        ArgumentError("Normal: the condition σ > 0 is not satisfied.")
+    )
+    @test NoLimits._is_numeric_error(ArgumentError("matrix contains Infs or NaNs"))
     @test !NoLimits._is_numeric_error(MethodError(sqrt, (nothing,)))
 
     model = @Model begin
@@ -571,6 +577,37 @@ end
     θ_bad = deepcopy(θ)
     θ_bad.a = -1.0                      # sqrt(-1) throws inside the RE distribution
     @test NoLimits.re_logprior(dm, batch, θ_bad, b; const_cache = cc, cache = cache) == -Inf
+
+    # #326: a helper bug raising ArgumentError used to be swallowed as -Inf.
+    model_bug = @Model begin
+        @helpers begin
+            bad(u) = throw(ArgumentError("bug sentinel"))
+        end
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            s = RealNumber(0.5, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @formulas begin
+            y ~ Normal(bad(a), s)
+        end
+    end
+    dm_bug = DataModel(
+        model_bug, fx_nore_df(); primary_id = :ID, time_col = :t
+    )
+    θ_bug = get_θ0_untransformed(NoLimits.get_fixed(NoLimits.get_model(dm_bug)))
+    err = try
+        NoLimits.loglikelihood(
+            dm_bug, θ_bug, [ComponentArray()]; serialization = NoLimits.EnsembleSerial()
+        )
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin("bug sentinel", err.msg)
 end
 
 # ── Invariance oracles ───────────────────────────────────────────────────────
@@ -629,6 +666,21 @@ const _INV_SER = NoLimits.EnsembleSerial()
                     get_objective(res_serial), get_objective(res_threaded);
                     rtol = 1.0e-6
                 )
+            end
+        end
+
+        # #194/#326: the drift only ever showed up on nonlinear-in-eta models, and only
+        # in a few percent of fits, so a single comparison can pass through a live race.
+        # Repeat a seeded threaded fit against the serial reference.
+        @testset "repeated threaded Laplace on a nonlinear-in-eta model" begin
+            dm_nl = fx_pois_dm()
+            method_nl = NoLimits.Laplace(; optim_kwargs = (maxiters = 2,))
+            o_serial = get_objective(fx_pois_laplace())
+            for _ in 1:5
+                o_threaded = get_objective(
+                    fit_model(dm_nl, method_nl; serialization = EnsembleThreads())
+                )
+                @test isapprox(o_serial, o_threaded; rtol = 1.0e-8)
             end
         end
     end

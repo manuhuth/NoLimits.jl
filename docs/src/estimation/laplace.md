@@ -295,6 +295,13 @@ res_serial = fit_model(dm, NoLimits.Laplace(); serialization=EnsembleSerial())
 res_threads = fit_model(dm, NoLimits.Laplace(); serialization=EnsembleThreads())
 ```
 
+!!! note "Bit-reproducibility"
+    On models whose random effects enter nonlinearly, the threaded objective can differ
+    from the serial one by roughly `1e-9` relative, because the thread schedule perturbs
+    the empirical-Bayes modes and the outer optimizer then walks a marginally different
+    path. Estimates and standard errors are unaffected at any practically relevant
+    precision, but a bit-identical rerun requires `serialization = EnsembleSerial()`.
+
 ## Bounds and BlackBoxOptim
 
 When using a derivative-free global optimizer from BlackBoxOptim, finite bounds on all free fixed effects are required. A convenience function generates default bounds from the initial parameter values:

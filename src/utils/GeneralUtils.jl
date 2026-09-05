@@ -123,10 +123,25 @@ end
 # Exception classes that signal a numerically-degenerate point (rather than a
 # programming error): callers treat these as objective = Inf / likelihood = -Inf
 # during optimizer exploration instead of rethrowing.
+# `ArgumentError` is the workhorse exception of half of Julia, so classifying all of them
+# as numeric degeneracy masked genuine programming errors as `-Inf` (#326). Only messages
+# that actually signal a numeric failure count: Distributions' `check_args` (a scale
+# driven negative by an optimizer step) and LAPACK/BLAS finite checks.
+const _NUMERIC_ARGUMENT_ERROR_PATTERNS = ("is not satisfied", "Infs or NaNs", "NaN", "Inf")
+
+@inline function _is_numeric_argument_error(err::ArgumentError)
+    msg = string(err.msg)
+    for pat in _NUMERIC_ARGUMENT_ERROR_PATTERNS
+        occursin(pat, msg) && return true
+    end
+    return false
+end
+
 @inline function _is_numeric_error(err)
     return err isa LinearAlgebra.PosDefException ||
         err isa LinearAlgebra.SingularException ||
-        err isa DomainError || err isa ArgumentError ||
+        err isa DomainError ||
+        (err isa ArgumentError && _is_numeric_argument_error(err)) ||
         err isa Roots.ConvergenceFailed ||
         err isa DataInterpolations.LeftExtrapolationError ||
         err isa DataInterpolations.RightExtrapolationError

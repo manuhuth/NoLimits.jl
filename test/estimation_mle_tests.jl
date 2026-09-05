@@ -4,6 +4,7 @@ using DataFrames
 using Distributions
 using ComponentArrays
 using LinearAlgebra
+using Optimization
 using OptimizationBBO
 using OptimizationOptimisers
 using OptimizationOptimJL
@@ -801,4 +802,47 @@ end
         )
         @test res_all isa FitResult
     end
+end
+
+@testset "Rmath-backed outcome is rejected under ForwardDiff (#326)" begin
+    # NoncentralT's logpdf goes through the Rmath C library, which cannot take duals.
+    # Before the probe this failed with a bare `MethodError: Float64(::Dual)` from
+    # inside the optimizer.
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.5)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @formulas begin
+            y ~ NoncentralT(5.0, a)
+        end
+    end
+    dm = DataModel(
+        model, DataFrame(ID = [1, 1], t = [0.0, 1.0], y = [0.2, 0.4]);
+        primary_id = :ID, time_col = :t
+    )
+    err = try
+        fit_model(
+            dm, NoLimits.MLE(; optim_kwargs = (maxiters = 1,));
+            serialization = NoLimits.EnsembleSerial()
+        )
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin("not ForwardDiff-differentiable", err.msg)
+    @test occursin("AutoFiniteDiff", err.msg)
+
+    res = fit_model(
+        dm,
+        NoLimits.MLE(;
+            adtype = Optimization.AutoFiniteDiff(), optim_kwargs = (maxiters = 1,)
+        );
+        serialization = NoLimits.EnsembleSerial()
+    )
+    @test res isa FitResult
+    @test isfinite(get_objective(res))
 end
