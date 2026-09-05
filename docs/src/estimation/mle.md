@@ -166,7 +166,17 @@ res_ode = fit_model(dm_ode, NoLimits.MLE())
 
 ## Non-Gaussian Outcome Example
 
-NoLimits.jl supports any outcome distribution available in `Distributions.jl`. The following example uses a Poisson likelihood for count data.
+NoLimits.jl supports any outcome distribution from `Distributions.jl` whose `logpdf` is differentiable with the chosen AD backend. The default backend is `Optimization.AutoForwardDiff()`.
+
+The known exception is the Rmath-backed family, `NoncentralT`, `NoncentralF`, `NoncentralChisq`, `NoncentralBeta` and `StudentizedRange`. Their `logpdf` calls the Rmath C library, which cannot accept dual numbers, so they only work when none of their parameters is estimated. `fit_model` detects this before optimizing and raises an `ArgumentError` naming the workaround: pick a non-ForwardDiff backend,
+
+```julia
+fit_model(dm, MLE(; adtype = Optimization.AutoFiniteDiff()))
+```
+
+or use a differentiable distribution.
+
+The following example uses a Poisson likelihood for count data.
 
 ```julia
 using NoLimits

@@ -3412,6 +3412,37 @@ end
 # own `maxlog`: these sites fire from inside `Threads.@threads` regions, and `maxlog`
 # bookkeeping mutates an unsynchronized Dict in the logger.
 # ponytail: one warning per fit, not a rate. Per-fit counters if users need the rate.
+# A ForwardDiff failure inside an Rmath-backed `logpdf` surfaces as an opaque
+# `MethodError: Float64(::ForwardDiff.Dual)` from deep inside the optimizer (#326). One
+# gradient at the start point turns that into an actionable message, and it builds the
+# same specialization the optimizer needs anyway.
+@inline function _is_forwarddiff_dual_methoderror(err)
+    err isa MethodError || return false
+    return any(a -> occursin("ForwardDiff.Dual", string(typeof(a))), err.args)
+end
+
+function _probe_forwarddiff_objective(obj, adtype, z0)
+    adtype isa Optimization.AutoForwardDiff || return nothing
+    try
+        ForwardDiff.gradient(z -> obj(z, nothing), z0)
+    catch err
+        _is_forwarddiff_dual_methoderror(err) || rethrow(err)
+        throw(
+            ArgumentError(
+                "The model's likelihood is not ForwardDiff-differentiable. This is " *
+                    "commonly an Rmath-backed distribution (NoncentralT, NoncentralF, " *
+                    "NoncentralChisq, NoncentralBeta, StudentizedRange) receiving an " *
+                    "estimated parameter: their `Distributions.logpdf` calls the Rmath C " *
+                    "library, which cannot accept dual numbers. Pass " *
+                    "`adtype = Optimization.AutoFiniteDiff()` (or another non-ForwardDiff " *
+                    "backend) to the fitting method, or use a differentiable distribution. " *
+                    "The original error was: $(_brief_error_message(err))"
+            )
+        )
+    end
+    return nothing
+end
+
 const _WARNED_SOLVE_DROP = Threads.Atomic{Bool}(false)
 const _WARNED_NUMERIC_ERROR = Threads.Atomic{Bool}(false)
 

@@ -360,19 +360,22 @@ function _init_laplace_hess_cache(T::Type, n::Int)
     last_H = [Matrix{T}(undef, 0, 0) for _ in 1:n]
     last_chol = Vector{Any}(undef, n)
     fill!(last_chol, nothing)
-    last_valid = falses(n)
+    last_valid = fill(false, n)
     return _LaplaceHessCache(last_b, last_logdet, last_H, last_chol, last_valid)
 end
 
 # Fresh full EBE cache (b*/gradient/AD/Hessian sub-caches) — shared by every
 # fit entry point that runs the Laplace-family inner problem.
+# The validity flags are `Vector{Bool}`, not `BitVector`: this cache is written
+# concurrently by the per-batch tasks, and a BitVector packs 64 flags per word, so
+# two tasks setting different batch indices lose one of the two updates.
 function _init_laplace_eval_cache(n_batches::Int, T::Type{<:Real})
-    bstar_cache = _LaplaceBStarCache([Vector{T}() for _ in 1:n_batches], falses(n_batches))
+    bstar_cache = _LaplaceBStarCache([Vector{T}() for _ in 1:n_batches], fill(false, n_batches))
     grad_cache = _LaplaceGradCache(
         [Vector{T}() for _ in 1:n_batches],
         fill(T(NaN), n_batches),
         [Vector{T}() for _ in 1:n_batches],
-        falses(n_batches)
+        fill(false, n_batches)
     )
     ad_cache = _init_laplace_ad_cache(n_batches)
     hess_cache = _init_laplace_hess_cache(T, n_batches)

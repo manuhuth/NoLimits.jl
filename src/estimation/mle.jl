@@ -171,6 +171,7 @@ function _fit_no_re(
     ub_z = _z_from_θt(ub)
     # Optimisers.jl rules take no box, so bounds become a projection inside the rule.
     opt_use, use_bounds = _bounded_optimizer(method.optimizer, use_bounds, lb_z, ub_z)
+    _probe_forwarddiff_objective(obj, method.adtype, z0)
     prob = use_bounds ? OptimizationProblem(optf, z0; lb = lb_z, ub = ub_z) :
         OptimizationProblem(optf, z0)
     kw = _minibatch_solve_kwargs(method.optim_kwargs, opt_use, mb, Returns(nothing))
