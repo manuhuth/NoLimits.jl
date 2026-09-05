@@ -32,8 +32,12 @@ end
 # Callable structs instead of per-expansion closures/named methods: two byte-identical
 # `@randomEffects` blocks must produce the same `RandomEffects` type regardless of the
 # module they expand in (issue #327).
-struct _REDistBuilder{F}
+# `lits` carries the Float literals hoisted out of the distribution body, so changing
+# only a literal (an RE sd, say) leaves the generated expression - and therefore the
+# `Model` type - untouched.
+struct _REDistBuilder{F, L <: Tuple}
     f::F
+    lits::L
 end
 
 function (b::_REDistBuilder)(
@@ -41,7 +45,7 @@ function (b::_REDistBuilder)(
         constant_features_i::NamedTuple,
         model_funs::NamedTuple
     )
-    return b.f(fixed_effects, constant_features_i, model_funs, NamedTuple())
+    return b.f(fixed_effects, constant_features_i, model_funs, NamedTuple(), b.lits)
 end
 
 function (b::_REDistBuilder)(
@@ -50,7 +54,8 @@ function (b::_REDistBuilder)(
         model_funs::NamedTuple
     )
     return b.f(
-        _re_componentize(fixed_effects), constant_features_i, model_funs, NamedTuple()
+        _re_componentize(fixed_effects), constant_features_i, model_funs, NamedTuple(),
+        b.lits
     )
 end
 
@@ -60,7 +65,9 @@ function (b::_REDistBuilder)(
         model_funs::NamedTuple,
         helper_functions::NamedTuple
     )
-    return b.f(fixed_effects, constant_features_i, model_funs, helper_functions)
+    return b.f(
+        fixed_effects, constant_features_i, model_funs, helper_functions, b.lits
+    )
 end
 
 function (b::_REDistBuilder)(
@@ -70,8 +77,21 @@ function (b::_REDistBuilder)(
         helper_functions::NamedTuple
     )
     return b.f(
-        _re_componentize(fixed_effects), constant_features_i, model_funs, helper_functions
+        _re_componentize(fixed_effects), constant_features_i, model_funs, helper_functions,
+        b.lits
     )
+end
+
+# Replace Float literals by indexed reads from the `__re_lits` argument. Integer literals
+# are left alone: they are usually dimensions or type parameters.
+function _hoist_re_float_literals(ex, lits::Vector{Any})
+    if ex isa Float64 || ex isa Float32
+        push!(lits, ex)
+        return :(__re_lits[$(length(lits))])
+    elseif ex isa Expr
+        return Expr(ex.head, (_hoist_re_float_literals(a, lits) for a in ex.args)...)
+    end
+    return ex
 end
 
 struct _RELogpdf{names} end
@@ -394,6 +414,7 @@ macro randomEffects(block)
         delete!(local_var, :constant_features_i)
         delete!(local_var, :model_funs)
         delete!(local_var, :helper_functions)
+        delete!(local_var, :__re_lits)
 
         local_var = Set([s for s in local_var if Base.isidentifier(s)])
         skip_vars = Set([:Inf, :NaN, :nothing, :missing, :true, :false])
@@ -423,6 +444,7 @@ macro randomEffects(block)
     delete!(var_syms, :constant_features_i)
     delete!(var_syms, :model_funs)
     delete!(var_syms, :helper_functions)
+    delete!(var_syms, :__re_lits)
 
     call_syms = Set(
         [
@@ -501,8 +523,10 @@ macro randomEffects(block)
             for sym in call_syms
     ]
 
+    lits = Any[]
+    dist_bodies = [_hoist_re_float_literals(ex, lits) for ex in dist_exprs_rewritten]
     dist_assigns = [
-        :($(re_names[i]) = $(dist_exprs_rewritten[i]))
+        :($(re_names[i]) = $(dist_bodies[i]))
             for i in eachindex(re_names)
     ]
     ret_expr = Expr(
@@ -516,6 +540,7 @@ macro randomEffects(block)
                 constant_features_i::NamedTuple,
                 model_funs::NamedTuple,
                 helper_functions::NamedTuple,
+                __re_lits::Tuple,
             )
             $(binds_vars...)
             $(binds_funs...)
@@ -547,7 +572,7 @@ macro randomEffects(block)
             NamedTuple{($(QuoteNode.(re_names)...),)}($dist_expr_values)
         )
         builders = RandomEffectsBuilders(
-            _REDistBuilder(create_dist),
+            _REDistBuilder(create_dist, $(Expr(:tuple, lits...))),
             _RELogpdf{$(Expr(:tuple, QuoteNode.(re_names)...))}()
         )
         RandomEffects(meta, builders)
