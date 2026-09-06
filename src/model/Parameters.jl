@@ -39,6 +39,21 @@ function _warn_logit_unrepresentable(name, what, x)
     return nothing
 end
 
+# The stick-breaking transform is defined on the OPEN simplex: a zero weight (or a
+# probability of exactly 1) empties the stick and leaves the later logits undefined. The
+# blocks used to accept those and hand the optimizer NaN coordinates (#336).
+function _check_simplex_interior(name, what, p::AbstractVector{<:Real})
+    for i in eachindex(p)
+        (p[i] > 0 && p[i] < 1) && continue
+        throw(
+            ArgumentError(
+                "Parameter $(name): $(what) has entry $(i) equal to $(p[i]). The :stickbreak transform is defined on the open simplex, so every probability must be strictly between 0 and 1 (a structural zero or an absorbing transition cannot be estimated with this parameterization). Use a small positive weight instead."
+            )
+        )
+    end
+    return nothing
+end
+
 """
     Priorless()
 
@@ -838,6 +853,7 @@ function ProbabilityVector(
     abs(s - one(T)) <= atol ||
         error("ProbabilityVector for parameter $(name) must sum to 1 (within 1e-6); got sum=$(s).")
     v = v ./ s   # silent normalization
+    _check_simplex_interior(name, "initial value", v)
     return ProbabilityVector{T, typeof(v)}(name, v, scale, prior, calculate_se)
 end
 
@@ -891,6 +907,9 @@ function DiscreteTransitionMatrix(
     all(abs.(row_sums .- one(T)) .<= atol) ||
         error("Each row of DiscreteTransitionMatrix for parameter $(name) must sum to 1 (within 1e-6); got row sums=$(vec(row_sums)).")
     v = v ./ row_sums   # silent row-wise normalization
+    for i in 1:n
+        _check_simplex_interior(name, "initial value in row $(i)", v[i, :])
+    end
     return DiscreteTransitionMatrix{T, typeof(v)}(name, v, scale, prior, calculate_se)
 end
 

@@ -1036,6 +1036,58 @@ function _posterior_drawn_params(
     error("Posterior draws are supported only for MCMC and VI fit results.")
 end
 
+# Posterior draws of the FIXED effects only. `_posterior_drawn_params` also assembles a
+# per-individual η from the training levels, which cannot be resolved for unseen subjects;
+# `predict(:population)` integrates the fixed effects while the random effects stay at
+# their prior location, so it needs the θ draws alone (#339).
+function _posterior_theta_draws(
+        res::FitResult, dm::DataModel, max_draws::Int, rng::AbstractRNG
+    )
+    max_draws >= 1 || error("marginal_draws must be >= 1.")
+    consts = _fit_kw(res, :constants, NamedTuple())
+    if get_result(res) isa MCMCResult
+        chain = get_chain(res)
+        draw_idxs = _mcmc_draw_indices(chain, _mcmc_warmup(res), max_draws, rng)
+        isempty(draw_idxs) && error("No MCMC draws available after warmup.")
+        idx_map = _mcmc_param_index_map(chain)
+        vals = Array(chain)
+        n_chains = size(vals, 3)
+        return [
+            begin
+                    chain_idx = rand(rng, 1:n_chains)
+                    _coordwise_fixed_from_means(
+                        dm, "MCMC chain",
+                        key -> (
+                            sym = Symbol(key);
+                            haskey(idx_map, sym) ?
+                            _mcmc_param_value(vals, iter_idx, idx_map[sym], chain_idx) :
+                            nothing
+                        );
+                        overrides = consts
+                    )
+                end for iter_idx in draw_idxs
+        ]
+    elseif get_result(res) isa VIResult
+        raw = sample_posterior(res; n_draws = max_draws, rng = rng, return_names = true)
+        draws = raw.draws
+        size(draws, 1) >= 1 || error("No VI posterior draws available.")
+        idx_map = Dict{String, Int}(
+            string(n) => i for (i, n) in enumerate(raw.names)
+        )
+        return [
+            _coordwise_fixed_from_means(
+                    dm, "VI posterior",
+                    key -> (
+                        idx = _lookup_chain_index(idx_map, key);
+                        idx != 0 ? Float64(draws[k, idx]) : nothing
+                    );
+                    overrides = consts
+                ) for k in 1:size(draws, 1)
+        ]
+    end
+    error("Posterior draws are supported only for MCMC and VI fit results.")
+end
+
 function _default_random_effects(
         res::FitResult,
         dm::DataModel,

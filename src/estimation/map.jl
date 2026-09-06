@@ -107,6 +107,7 @@ function _fit_model(
         rng = rng,
         theta_0_untransformed = theta_0_untransformed,
         store_data_model = store_data_model,
+        extra_objective = extra_objective,
     )
     return _fit_no_re(
         dm, method;

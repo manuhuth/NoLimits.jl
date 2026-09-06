@@ -305,10 +305,19 @@ function build_re_measure_from_batch(
                 L_k = _lower_chol_from_cov(d_inner.Σ)
                 push!(μ_segs, μ_k)
                 push!(L_diags, L_k)
-                let μ = μ_k, L = L_k
+                let μ = μ_k, L = L_k, d = length(μ_k)
+                    # The z segment is laid out on the NATURAL simplex dimension d+1 while
+                    # the transport needs only d normal coordinates, so `L * z_k` used to
+                    # throw a DimensionMismatch (#342). Consume the first d and leave the
+                    # trailing coordinate unused.
+                    # ponytail: the unused coordinate costs grid nodes, not accuracy — a
+                    # Smolyak rule of level L in n dims restricted to a factor that is
+                    # constant in one coordinate is exactly the level-L rule in n-1 dims.
+                    # Upgrade path: carry reference-space ranges separately from the
+                    # natural RE layout (LaplaceRECache.dims / _REInfo.ranges).
                     push!(
                         segment_fns, z_k -> begin
-                            u = μ .+ L * z_k
+                            u = μ .+ L * view(z_k, 1:d)
                             unnorm = vcat(exp.(u), one(eltype(u)))
                             unnorm ./ sum(unnorm)
                         end

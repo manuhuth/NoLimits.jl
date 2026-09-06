@@ -297,6 +297,18 @@ end
     # Row column keeps the joint on the first row, zeros elsewhere, so sums still work.
     @test isapprox(sum(res.obs_scores[!, :loglikelihood]), joint; atol = 0.5)
     @test count(!=(0.0), res.obs_scores[!, :loglikelihood]) == 1
+
+    # #333: the reported Monte Carlo loss is the AVERAGE over draws. `_spawn_child_rngs`
+    # takes the first seed from the same position regardless of how many are requested,
+    # so draw 1 is shared between the two runs below; the loss column used to copy draw 1
+    # and was therefore identical.
+    sq_loss(d, y) = (y - mean(d))^2
+    kw = (; unseen_re_mode = :montecarlo, loss = sq_loss)
+    r1 = fit_cv(cv, NoLimits.Laplace(); kw..., n_mc_samples = 1, rng = MersenneTwister(291))
+    r8 = fit_cv(cv, NoLimits.Laplace(); kw..., n_mc_samples = 8, rng = MersenneTwister(291))
+    @test "loss" ∈ names(r8.obs_scores)
+    @test all(isfinite, r8.obs_scores[!, :loss])
+    @test r1.obs_scores[1, :loss] != r8.obs_scores[1, :loss]
 end
 
 @testset "fit_cv accessors" begin

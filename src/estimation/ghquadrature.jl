@@ -412,6 +412,7 @@ function _fit_model_scalar(
         rng = rng,
         theta_0_untransformed = theta_0_untransformed,
         store_data_model = store_data_model,
+        extra_objective = extra_objective,
     )
 
     # ── Validate ────────────────────────────────────────────────────────────

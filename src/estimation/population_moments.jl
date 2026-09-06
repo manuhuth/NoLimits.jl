@@ -65,6 +65,10 @@ function ensemble_moments(simulate, θu, re_half, R::AbstractMatrix)
     M2 = zeros(eltype(μ), nt)
     @inbounds for l in 2:n_s
         y = simulate(θu, _ens_draw(Dh, R, l))
+        # Unchecked indexing below: a shorter draw would read out of bounds, a longer one
+        # would be silently truncated (#343).
+        length(y) == nt ||
+            error("ensemble_moments: `simulate` returned $(length(y)) time point(s) for draw $(l) but $(nt) for draw 1; the output length must not depend on the random-effect realization.")
         for j in 1:nt
             d = y[j] - μ[j]
             μ[j] += d / l
@@ -81,6 +85,10 @@ end
 # with per-entry or scalar noise standard deviation σ. `offset` is added to each
 # prediction entry (the measurement-variance add-on), avoiding a per-eval temporary.
 function _pm_gauss_nll(obs, pred, σ; offset = 0.0)
+    length(pred) == length(obs) ||
+        error("population_moment_term: the model predicts $(length(pred)) time point(s) but $(length(obs)) were observed; a prefix is not scored implicitly (#343).")
+    σ isa Number || length(σ) == length(obs) ||
+        error("population_moment_term: the noise SD has $(length(σ)) entries but $(length(obs)) observations were supplied; pass a scalar or a matching vector.")
     acc = zero(eltype(pred))
     @inbounds for j in eachindex(obs)
         s = _pm_scalar_or(σ, j)
@@ -138,6 +146,11 @@ function population_moment_term(;
         error("population_moment_term: `sd_mean` is required when `mean` is supplied.")
     has_var && sd_var === nothing &&
         error("population_moment_term: `sd_var` is required when `var` is supplied (SCSH).")
+    # An empty series scores exactly zero and looks like a successful term (#343).
+    has_mean && isempty(mean) &&
+        error("population_moment_term: `mean` is empty; supply at least one observed time point or omit it.")
+    has_var && isempty(var) &&
+        error("population_moment_term: `var` is empty; supply at least one observed time point or omit it.")
     return function pop_moment_nll(θu)
         μ, Σ = ensemble_moments(simulate, θu, re_half, samples)
         nll = zero(eltype(μ))

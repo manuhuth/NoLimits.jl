@@ -197,3 +197,37 @@ end
     @test r0 isa FitResult
     @test r1 isa FitResult
 end
+
+@testset "population moment helpers validate shapes before their unchecked loops (#343)" begin
+    R = reshape([-1.0, 1.0], 1, 2)
+    sim = (θ, b) -> [b[1], 2b[1]]
+
+    # A simulation whose output length depends on the draw silently truncated (or read
+    # out of bounds) inside the @inbounds Welford loop.
+    @test_throws ErrorException ensemble_moments(
+        (θ, b) -> b[1] < 0 ? [b[1]] : [b[1], 999.0], nothing, θ -> [1.0], R
+    )
+    @test ensemble_moments((θ, b) -> [b[1]], nothing, θ -> [1.0], R) isa Tuple
+
+    # Prediction/observation and noise lengths must line up; a prefix is not scored.
+    @test_throws ErrorException population_moment_term(
+        simulate = sim, re_half = θ -> [1.0], samples = R, mean = [0.0], sd_mean = 1.0
+    )(nothing)
+    @test_throws ErrorException population_moment_term(
+        simulate = sim, re_half = θ -> [1.0], samples = R,
+        mean = [0.0, 0.0], sd_mean = [1.0]
+    )(nothing)
+    # An empty series scored exactly zero and looked like a successful term.
+    @test_throws ErrorException population_moment_term(
+        simulate = sim, re_half = θ -> [1.0], samples = R, mean = Float64[], sd_mean = 1.0
+    )
+    # The matching case still works, with a scalar or a per-time noise vector.
+    @test population_moment_term(
+        simulate = sim, re_half = θ -> [1.0], samples = R,
+        mean = [0.0, 0.0], sd_mean = 1.0
+    )(nothing) isa Real
+    @test population_moment_term(
+        simulate = sim, re_half = θ -> [1.0], samples = R,
+        mean = [0.0, 0.0], sd_mean = [1.0, 1.0]
+    )(nothing) isa Real
+end

@@ -3147,6 +3147,7 @@ function _fit_model(
         theta_0_untransformed = theta_0_untransformed,
         store_eb_modes = store_eb_modes,
         store_data_model = store_data_model,
+        extra_objective = extra_objective,
     )
     re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) &&

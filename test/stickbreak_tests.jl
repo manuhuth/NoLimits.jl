@@ -45,6 +45,35 @@ using Random
         @test_throws ErrorException ProbabilityVector([1.0])
     end
 
+    @testset "simplex boundary values are rejected (#336)" begin
+        # The :stickbreak transform is defined on the open simplex: an exhausted stick
+        # used to divide 0 by 0 and put NaN into the transformed start.
+        @test_throws ArgumentError ProbabilityVector([1.0, 0.0, 0.0])
+        @test_throws ArgumentError ProbabilityVector([0.5, 0.5, 0.0, 0.0])
+        @test_throws ArgumentError DiscreteTransitionMatrix(Matrix{Float64}(I, 3, 3))
+        @test_throws ArgumentError DiscreteTransitionMatrix([0.5 0.5; 0.0 1.0])
+        @test_throws DomainError NoLimits.stickbreak_forward([1.0, 0.0, 0.0])
+        # Interior values are untouched.
+        @test ProbabilityVector([0.2, 0.5, 0.3]) isa ProbabilityVector
+        @test DiscreteTransitionMatrix([0.8 0.2; 0.3 0.7]) isa DiscreteTransitionMatrix
+    end
+
+    @testset "clamped logit: analytic pullback and log-Jacobian agree (#337)" begin
+        # Beyond ±LOGIT_CLAMP the inverse is constant, so its derivative is zero and the
+        # change-of-variables determinant is singular, not merely small.
+        t = [25.0]
+        g = [0.0, 1.0 / NoLimits.stickbreak_inverse(t)[2]]
+        @test NoLimits._stickbreak_inv_jacobian_T(t, g) ≈
+            ForwardDiff.gradient(z -> log(NoLimits.stickbreak_inverse(z)[2]), t) atol = 1.0e-12
+        t0 = [0.0]
+        g0 = [0.0, 1.0 / NoLimits.stickbreak_inverse(t0)[2]]
+        @test NoLimits._stickbreak_inv_jacobian_T(t0, g0) ≈
+            ForwardDiff.gradient(z -> log(NoLimits.stickbreak_inverse(z)[2]), t0) atol = 1.0e-10
+        @test NoLimits._logabsdetjac_logit([25.0]) == -Inf
+        @test NoLimits._logabsdetjac_stickbreak([25.0]) == -Inf
+        @test NoLimits._logabsdetjac_logit([0.0]) ≈ log(0.25)
+    end
+
     @testset "ProbabilityVector error: negative entry" begin
         @test_throws ErrorException ProbabilityVector([-0.1, 0.6, 0.5])
     end

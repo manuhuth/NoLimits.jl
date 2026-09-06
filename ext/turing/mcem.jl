@@ -176,16 +176,20 @@ function NoLimits._mcem_sample_batch_turing(
     # Turing ≥ 0.45 defaults to FlexiChains; `_extract_b_samples` consumes the chain via
     # the MCMCChains API (`names`/`Array`), so force an MCMCChains.Chains result here.
     tkwargs = merge(tkwargs, (chain_type = MCMCChains.Chains,))
+    # `adapt` is not a Turing keyword; the adaptive Hamiltonian samplers read `nadapts`
+    # and everything else silently ignored it (#335).
+    adapt_kw = (_mcmc_is_adaptive(sampler) && !haskey(tkwargs, :nadapts)) ?
+        (; nadapts = n_adapt) : (;)
     chain = if warm_start && last_params isa NamedTuple && !isempty(last_params)
         init = DynamicPPL.InitFromParams(last_params)
         Base.invokelatest(
             Turing.sample, rng, model, sampler, n_samples;
-            adapt = n_adapt, initial_params = init, tkwargs...
+            adapt_kw..., initial_params = init, tkwargs...
         )
     else
         Base.invokelatest(
             Turing.sample, rng, model, sampler, n_samples;
-            adapt = n_adapt, tkwargs...
+            adapt_kw..., tkwargs...
         )
     end
     samples, lastp, lastb = _extract_b_samples(chain, info, re_names)

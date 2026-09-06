@@ -932,7 +932,9 @@ Predict the response on new data from a fitted model. The fixed effects are take
 from `res`; how the random effects are chosen is controlled by `re_mode`:
 
 - `:population` (default): random effects at their prior mean (the typical-subject
-  "PRED"), so the predictions apply to previously unseen subjects.
+  "PRED"), so the predictions apply to previously unseen subjects. For an MCMC/VI fit
+  the fixed effects are integrated over `marginal_draws` posterior draws rather than
+  plugged in at their posterior mean.
 - `:ebe`: reuse the empirical-Bayes estimate from the fit for any subject whose
   random-effect grouping signature is present in the training data (the individual
   "IPRED"); subjects not seen in training fall back to the population value.
@@ -1001,6 +1003,16 @@ function predict(
     # Inherit and normalize once, so every re_mode sees the same fixed levels (#251).
     constants_re = _res_constants_re(res, constants_re, dm_new)
     if re_mode == :population
+        # A posterior fit's :population prediction is the posterior MEAN of the
+        # conditional mean, not the conditional mean at the posterior-mean parameter;
+        # for a nonlinear model these differ (#339).
+        if _is_posterior_draw_fit(res)
+            return _predict_posterior_population(
+                res, dm_new; fitted_stat = fitted_stat, constants_re = constants_re,
+                marginal_draws = marginal_draws, rng = rng,
+                ode_args = ode_args, ode_kwargs = ode_kwargs, kwargs...
+            )
+        end
         df = get_residuals(
             dm_new; params = NamedTuple(θ), residuals = [:raw],
             fitted_stat = fitted_stat, constants_re = constants_re,
@@ -1162,6 +1174,55 @@ function _eta_with_fixed_levels(ind, η_ebe, re_names, fixed_maps::NamedTuple)
     )
 end
 
+# Draw-wise predictive mean for MCMC/VI fits: evaluate the population prediction at each
+# posterior draw of the fixed effects and average (#339). Random effects stay at their
+# prior location, so this is the posterior version of `re_mode = :population`.
+function _predict_posterior_population(
+        res::FitResult, dm_new::DataModel;
+        fitted_stat, constants_re::NamedTuple, marginal_draws::Int,
+        rng::AbstractRNG, ode_args::Tuple, ode_kwargs::NamedTuple, kwargs...
+    )
+    θ_draws = _posterior_theta_draws(res, dm_new, marginal_draws, rng)
+    return _average_prediction_frames(
+        get_residuals(
+                dm_new; params = NamedTuple(θ_d), residuals = [:raw],
+                fitted_stat = fitted_stat, constants_re = constants_re,
+                ode_args = ode_args, ode_kwargs = ode_kwargs, kwargs...
+            ) for θ_d in θ_draws
+    )
+end
+
+# Element-wise mean of the `fitted` column over an iterator of per-draw residual frames.
+# Accumulators stay untyped so multivariate fitted values remain per-component vectors,
+# and a missing entry simply drops out of its own average. Consumed lazily: the caller
+# passes a generator so only one frame is alive at a time.
+function _average_prediction_frames(frames)
+    base = nothing
+    sum_acc = Any[]
+    cnt_acc = Int[]
+    for df in frames
+        if base === nothing
+            base = df
+            sum_acc = Any[nothing for _ in 1:nrow(df)]
+            cnt_acc = zeros(Int, nrow(df))
+        end
+        for r in eachindex(sum_acc)
+            fr = df.fitted[r]
+            ismissing(fr) && continue
+            sum_acc[r] = cnt_acc[r] == 0 ? fr : sum_acc[r] .+ fr
+            cnt_acc[r] += 1
+        end
+    end
+    base === nothing && error("No prediction draws were produced.")
+    prediction = [
+        cnt_acc[r] > 0 ? sum_acc[r] ./ cnt_acc[r] : missing
+            for r in eachindex(sum_acc)
+    ]
+    return _prediction_frame(
+        base.id, base.time, base.observable, identity.(prediction)
+    )
+end
+
 # Monte-Carlo marginal prediction: integrate the random effects over their prior,
 # averaging the per-draw predicted means.
 function _predict_marginal(
@@ -1187,54 +1248,35 @@ function _predict_marginal(
     sample_rngs = _spawn_child_rngs(rng, marginal_draws)
     n_new = length(get_individuals(dm_new))
 
-    # Accumulators are untyped so multivariate fitted values stay per-component vectors.
-    sum_acc = Any[]
-    cnt_acc = Int[]
-    id_col = nothing
-    time_col = nothing
-    obs_col = nothing
-    for s in 1:marginal_draws
-        srng = sample_rngs[s]
-        level_vals = Dict{Symbol, Dict{Any, Any}}()
-        for re in re_names
-            m = Dict{Any, Any}()
-            for lvl in re_meta[re].levels_free
-                m[lvl] = rand(srng, re_meta[re].dist)
+    return _average_prediction_frames(
+        begin
+                srng = sample_rngs[s]
+                level_vals = Dict{Symbol, Dict{Any, Any}}()
+                for re in re_names
+                    m = Dict{Any, Any}()
+                    for lvl in re_meta[re].levels_free
+                        m[lvl] = rand(srng, re_meta[re].dist)
+                end
+                    level_vals[re] = m
             end
-            level_vals[re] = m
-        end
-        get_free_value = (re, lvl, dim) -> level_vals[re][lvl]
-        η_vec = Vector{ComponentArray}(undef, n_new)
-        for j in 1:n_new
-            η_vec[j] = _assemble_individual_eta(
-                get_individuals(dm_new)[j], re_names, level_dims, fixed_maps,
-                get_free_value
-            )
-        end
-        cache = _fill_plot_cache(
-            dm_new, θ, η_vec, constants_re, true,
-            ode_args, ode_kwargs
-        )
-        df = get_residuals(
-            dm_new; cache = cache, params = NamedTuple(θ),
-            residuals = [:raw], fitted_stat = fitted_stat, constants_re = constants_re,
-            ode_args = ode_args, ode_kwargs = ode_kwargs, kwargs...
-        )
-        if isempty(sum_acc)
-            sum_acc = Any[nothing for _ in 1:nrow(df)]
-            cnt_acc = zeros(Int, nrow(df))
-            id_col, time_col, obs_col = df.id, df.time, df.observable
-        end
-        for r in 1:length(sum_acc)
-            fr = df.fitted[r]
-            ismissing(fr) && continue
-            sum_acc[r] = cnt_acc[r] == 0 ? fr : sum_acc[r] .+ fr
-            cnt_acc[r] += 1
-        end
-    end
-    prediction = [
-        cnt_acc[r] > 0 ? sum_acc[r] ./ cnt_acc[r] : missing
-            for r in 1:length(sum_acc)
-    ]
-    return _prediction_frame(id_col, time_col, obs_col, identity.(prediction))
+                get_free_value = (re, lvl, dim) -> level_vals[re][lvl]
+                η_vec = Vector{ComponentArray}(undef, n_new)
+                for j in 1:n_new
+                    η_vec[j] = _assemble_individual_eta(
+                        get_individuals(dm_new)[j], re_names, level_dims, fixed_maps,
+                        get_free_value
+                    )
+            end
+                cache = _fill_plot_cache(
+                    dm_new, θ, η_vec, constants_re, true,
+                    ode_args, ode_kwargs
+                )
+                get_residuals(
+                    dm_new; cache = cache, params = NamedTuple(θ),
+                    residuals = [:raw], fitted_stat = fitted_stat,
+                    constants_re = constants_re,
+                    ode_args = ode_args, ode_kwargs = ode_kwargs, kwargs...
+                )
+            end for s in 1:marginal_draws
+    )
 end

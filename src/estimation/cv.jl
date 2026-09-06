@@ -625,9 +625,15 @@ function _cv_evaluate_mc(
 
     # Aggregate across samples: logsumexp for loglikelihood, mean for predicted_mean/loss
     result_dfs = DataFrame[]
+    n_failed_draws = 0
+    n_failed_inds = 0
     for j in 1:n_test
         s0 = findfirst(s -> !isempty(all_dfs[s][j]), 1:n_mc_samples)
-        s0 === nothing && continue
+        if s0 === nothing
+            n_failed_draws += n_mc_samples
+            n_failed_inds += 1
+            continue
+        end
         base_df = all_dfs[s0][j]
         n_rows = nrow(base_df)
 
@@ -635,7 +641,7 @@ function _cv_evaluate_mc(
         n_valid_draws = 0
         mean_acc = fill(0.0, n_rows)
         mean_cnt = fill(0, n_rows)
-        loss_acc = :loss ∈ names(base_df) ? fill(0.0, n_rows) : nothing
+        loss_acc = hasproperty(base_df, :loss) ? fill(0.0, n_rows) : nothing
         loss_cnt = loss_acc !== nothing ? fill(0, n_rows) : nothing
 
         for s in 1:n_mc_samples
@@ -655,7 +661,7 @@ function _cv_evaluate_mc(
                     mean_acc[r] += pm
                     mean_cnt[r] += 1
                 end
-                if loss_acc !== nothing && :loss ∈ names(df_s)
+                if loss_acc !== nothing && hasproperty(df_s, :loss)
                     lv = Float64(df_s[r, :loss])
                     if !isnan(lv)
                         loss_acc[r] += lv
@@ -669,7 +675,7 @@ function _cv_evaluate_mc(
         df_out[!, :loglikelihood] = if n_valid_draws == 0
             fill(NaN, n_rows)              # no usable draw → drop the whole individual
         else
-            joint_ll = ll_acc - log(n_valid_draws)
+            joint_ll = ll_acc - log(n_mc_samples)
             [r == 1 ? joint_ll : 0.0 for r in 1:n_rows]
         end
         df_out[!, :predicted_mean] = [
@@ -682,8 +688,13 @@ function _cv_evaluate_mc(
                     for r in 1:n_rows
             ]
         end
+        n_failed_draws += n_mc_samples - n_valid_draws
         push!(result_dfs, df_out)
     end
+
+    # A failed draw contributes zero probability and stays in the denominator (#332);
+    # say how much of the requested Monte Carlo budget was actually usable.
+    n_failed_draws == 0 || @warn "fit_cv: $(n_failed_draws) of $(n_mc_samples * n_test) Monte Carlo draws could not be evaluated and contributed zero probability to the predictive likelihood; $(n_failed_inds) test individual(s) lost every draw and are omitted from the fold."
 
     return isempty(result_dfs) ? DataFrame() : vcat(result_dfs...)
 end
@@ -793,7 +804,12 @@ function fit_cv(
 
     n_folds = cv_spec.n_folds
     dm_ref = cv_spec.dm
-    fold_rngs = _spawn_child_rngs(rng, n_folds)
+    # Two independent streams per fold: the training fit must be reproducible from the
+    # supplied `rng`, and the predictive draws must not shift with how many numbers the
+    # training algorithm consumed (#334).
+    child_rngs = _spawn_child_rngs(rng, 2 * n_folds)
+    train_rngs = child_rngs[1:n_folds]
+    fold_rngs = child_rngs[(n_folds + 1):(2 * n_folds)]
 
     function _run_fold(f)
         dm_train = _rebuild_dm(dm_ref, cv_spec.train_rows[f])
@@ -810,7 +826,10 @@ function fit_cv(
         end
         dm_test = _rebuild_dm(dm_ref, eval_rows)
 
-        base_kw = (store_data_model = false, ode_args = ode_args, ode_kwargs = ode_kwargs)
+        base_kw = (
+            store_data_model = false, ode_args = ode_args, ode_kwargs = ode_kwargs,
+            rng = train_rngs[f],
+        )
         fit_kw = _cv_method_accepts_constants_re(method) ?
             merge(base_kw, (constants_re = constants_re,)) : base_kw
         res_train = fit_model(dm_train, method, args...; fit_kw..., kwargs...)
