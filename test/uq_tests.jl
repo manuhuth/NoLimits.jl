@@ -395,6 +395,82 @@ end
     @test !NoLimits._wald_usable_draw_row([NaN, 0.0, 0.0], 40)
 end
 
+@testset "Wald and profile reuse the fit's extra_objective (#331)" begin
+    # Normal location model with a known-variance quadratic extra term centred at the
+    # sample mean: the estimate is unchanged, so the covariance isolates the term. The
+    # objective Hessian is n/σ̂² + k, and Wald must invert exactly that.
+    ys = [0.2, 0.3, 0.1, 0.2, 0.25, 0.35]
+    df = DataFrame(ID = [1, 1, 2, 2, 3, 3], t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0], y = ys)
+    dm = DataModel(_UQ_SE1_MODEL, df; primary_id = :ID, time_col = :t)
+    c = sum(ys) / length(ys)
+    k = 7.0
+    res = fit_model(dm, NoLimits.MLE(); extra_objective = θ -> 0.5 * k * (θ.a - c)^2)
+    θ̂ = get_params(res; scale = :untransformed)
+    @test isapprox(θ̂.a, c; atol = 1.0e-5)
+
+    uq = compute_uq(res; method = :wald, n_draws = 20, rng = Random.Xoshiro(3))
+    expected = 1.0 / (length(ys) / θ̂.σ^2 + k)
+    @test isapprox(get_uq_vcov(uq; scale = :transformed)[1, 1], expected; rtol = 1.0e-4)
+
+    # Without the term the same fit gives the plain 1/(n/σ̂²).
+    res0 = fit_model(dm, NoLimits.MLE())
+    uq0 = compute_uq(res0; method = :wald, n_draws = 20, rng = Random.Xoshiro(3))
+    θ̂0 = get_params(res0; scale = :untransformed)
+    @test isapprox(
+        get_uq_vcov(uq0; scale = :transformed)[1, 1],
+        θ̂0.σ^2 / length(ys); rtol = 1.0e-4
+    )
+
+    # The profile objective must be the fit's objective too, so it is still stationary
+    # at the estimate (a plain -loglik profile would not be).
+    uqp = compute_uq(res; method = :profile)
+    @test get_uq_diagnostics(uqp).loss_at_estimate <= get_uq_diagnostics(uqp).loss_critical
+end
+
+@testset "Profile UQ scans the fit's bounds, not the declared ones (#340)" begin
+    df = DataFrame(ID = [1, 1, 2, 2, 3, 3], t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0], y = [0.2, 0.3, 0.1, 0.2, 0.25, 0.35])
+    dm = DataModel(_UQ_SE1_MODEL, df; primary_id = :ID, time_col = :t)
+    # `a` is declared unbounded; the fit restricts it to a box narrower than its
+    # likelihood interval, so the profile must run out of domain instead of scanning past
+    # the estimator's own bounds.
+    res_box = fit_model(dm, NoLimits.MLE(; lb = [0.2, -Inf], ub = [0.3, Inf]))
+    uq_box = compute_uq(res_box; method = :profile)
+    ib = get_uq_intervals(uq_box; scale = :transformed, as_component = false)
+    @test isnan(ib.lower[1]) || ib.lower[1] >= 0.2 - 1.0e-8
+    @test isnan(ib.upper[1]) || ib.upper[1] <= 0.3 + 1.0e-8
+    @test !all(get_uq_diagnostics(uq_box).endpoint_found)
+
+    # Control: the same model fitted without the box does find both endpoints, and they
+    # lie outside it — which is exactly what the bounded profile must not report.
+    res_free = fit_model(dm, NoLimits.MLE())
+    uq_free = compute_uq(res_free; method = :profile)
+    ifree = get_uq_intervals(uq_free; scale = :transformed, as_component = false)
+    @test all(get_uq_diagnostics(uq_free).endpoint_found)
+    @test ifree.lower[1] < 0.2 || ifree.upper[1] > 0.3
+end
+
+@testset "Wald n_draws=1 keeps the exact scalar variance (#338)" begin
+    df = DataFrame(ID = [1, 1, 2, 2, 3, 3], t = [0.0, 1.0, 0.0, 1.0, 0.0, 1.0], y = [0.2, 0.3, 0.1, 0.2, 0.25, 0.35])
+    dm = DataModel(_UQ_SE1_MODEL, df; primary_id = :ID, time_col = :t)
+    res = fit_model(dm, NoLimits.MLE())
+    uq = compute_uq(res; method = :wald, n_draws = 1, rng = Random.Xoshiro(4))
+    # `a` is an :identity coordinate, so the natural variance is the transformed one; a
+    # single draw used to report it as exactly zero.
+    @test get_uq_vcov(uq; scale = :natural)[1, 1] ≈ get_uq_vcov(uq; scale = :transformed)[1, 1]
+    @test get_uq_vcov(uq; scale = :natural)[1, 1] > 0
+end
+
+@testset "_profile_scan_bounds: interior estimates near a bound survive (#341)" begin
+    # A strictly interior estimate closer to the bound than the default epsilon used to
+    # throw, and the throw sat outside the per-coordinate handler.
+    lo, hi = NoLimits._profile_scan_bounds(1.0e-10, 0.0, 1.0, 3.0)
+    @test lo < 1.0e-10 < hi
+    lo2, hi2 = NoLimits._profile_scan_bounds(0.5, 0.0, 1.0, 3.0)
+    @test 0.0 < lo2 < 0.5 < hi2 < 1.0
+    # A genuinely bound-pinned estimate still cannot be enclosed, but says so accurately.
+    @test_throws ErrorException NoLimits._profile_scan_bounds(0.0, 0.0, 1.0, 3.0)
+end
+
 @testset "UQ profile for MLE" begin
     df = DataFrame(
         ID = [1, 1, 2, 2, 3, 3],

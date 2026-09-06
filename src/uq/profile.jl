@@ -20,8 +20,12 @@ end
     left = max(left, x0 - width)
     right = min(right, x0 + width)
 
-    # Keep bounds strictly enclosing x0 for LikelihoodProfiler checks.
+    # Keep bounds strictly enclosing x0 for LikelihoodProfiler checks. The inward push
+    # never crosses x0 itself: an estimate closer to a bound than the default ϵ is still
+    # strictly interior and remains profilable (#341).
     ϵ = max(1.0e-8, abs(x0) * 1.0e-8)
+    isfinite(lb) && x0 > lb && (ϵ = min(ϵ, (x0 - lb) / 2))
+    isfinite(ub) && x0 < ub && (ϵ = min(ϵ, (ub - x0) / 2))
     if !(left < x0)
         left = x0 - 10 * ϵ
     end
@@ -36,8 +40,27 @@ end
         right = min(right, ub - ϵ)
     end
     left < x0 < right ||
-        error("Unable to construct valid profile scan bounds around parameter estimate $(x0). Try larger profile_scan_width or relaxed bounds.")
+        error("Unable to construct profile scan bounds around parameter estimate $(x0): it sits on the boundary of its box [$(lb), $(ub)], so no interval strictly enclosing it exists inside the domain. A larger profile_scan_width cannot help; relax the bound or exclude this coordinate from profile UQ.")
     return (left, right)
+end
+
+# Fit-time `lb`/`ub` overrides and `ignore_model_bounds` are part of the estimator's
+# contract, so the profile must scan the domain the estimate came from, not the declared
+# model box (#340). Methods without those options keep the model bounds.
+function _profile_effective_bounds(method, free_names, lb_full, ub_full)
+    (hasproperty(method, :lb) && hasproperty(method, :ub)) || return (lb_full, ub_full)
+    n = length(lb_full)
+    ignore = hasproperty(method, :ignore_model_bounds) && method.ignore_model_bounds
+    fb_lo = ignore ? fill(-Inf, n) : lb_full
+    fb_hi = ignore ? fill(Inf, n) : ub_full
+    resolve = function (bound, fallback)
+        bound === nothing && return fallback
+        bound isa Number && return fill(Float64(bound), n)
+        b = bound isa NamedTuple ? ComponentArray(bound) : bound
+        v = b isa ComponentArray ? collect(_ca_subset(b, free_names)) : collect(bound)
+        return length(v) == n ? Float64.(v) : fallback
+    end
+    return (resolve(method.lb, fb_lo), resolve(method.ub, fb_hi))
 end
 
 function _build_uq_obj_no_re(
@@ -67,6 +90,9 @@ function _build_uq_obj_no_re(
 
     ll_cache = _build_ll_cache_uq(dm, ode_args_use, ode_kwargs_use, serialization_use)
     use_penalty = !isempty(keys(penalty_use))
+    # The fit minimized loglik + prior + penalty + extra_objective; profiling anything
+    # else profiles a different objective (#331).
+    extra_use = _fit_kw(res, :extra_objective, nothing)
     use_prior = method isa MAP
 
     function obj_full(x::AbstractVector)
@@ -85,6 +111,7 @@ function _build_uq_obj_no_re(
             obj += -lp
         end
         use_penalty && (obj += _penalty_value(θu, penalty_use))
+        extra_use === nothing || (obj += extra_use(θu))
         return Float64(obj)
     end
 
@@ -135,6 +162,7 @@ function _build_uq_obj_re(
     ebe_cache = _init_laplace_eval_cache(length(batch_infos), Float64)
     cache_opts = LaplaceCacheOptions(0.0)
     use_penalty = !isempty(keys(penalty_use))
+    extra_use = _fit_kw(res, :extra_objective, nothing)   # see the no-RE builder (#331)
     seed = rand(rng, UInt64)
 
     function obj_full(x::AbstractVector)
@@ -169,6 +197,7 @@ function _build_uq_obj_re(
         obj == Inf && return Inf
 
         use_penalty && (obj += _penalty_value(θu, penalty_use))
+        extra_use === nothing || (obj += extra_use(θu))
         return Float64(obj)
     end
 
@@ -278,8 +307,13 @@ function _compute_uq_profile(
     loss_crit = obj0 + threshold
 
     lower_t, upper_t = get_bounds_transformed(fe)
-    lb_coords = _coords_on_transformed_layout(fe, lower_t, free_names; natural = false)[active_idx]
-    ub_coords = _coords_on_transformed_layout(fe, upper_t, free_names; natural = false)[active_idx]
+    lb_full, ub_full = _profile_effective_bounds(
+        get_method(res), free_names,
+        _coords_on_transformed_layout(fe, lower_t, free_names; natural = false),
+        _coords_on_transformed_layout(fe, upper_t, free_names; natural = false)
+    )
+    lb_coords = lb_full[active_idx]
+    ub_coords = ub_full[active_idx]
 
     p = length(xhat_active)
     lower_prof_t = fill(NaN, p)
@@ -301,10 +335,13 @@ function _compute_uq_profile(
 
     for j in 1:p
         errors[j] = nothing
-        scan_lo, scan_hi = _profile_scan_bounds(
-            xhat_active[j], lb_coords[j], ub_coords[j], Float64(profile_scan_width)
-        )
+        # Scan-bound construction is inside the per-coordinate handler: a bound-pinned
+        # estimate is a normal outcome of a constrained fit and must not abort the
+        # intervals of every other coordinate (#341).
         r = try
+            scan_lo, scan_hi = _profile_scan_bounds(
+                xhat_active[j], lb_coords[j], ub_coords[j], Float64(profile_scan_width)
+            )
             _profile_run(
                 profiler, optprob, xhat_active, j, scan_lo, scan_hi,
                 threshold, profile_kwargs

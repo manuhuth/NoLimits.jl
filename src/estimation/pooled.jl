@@ -1047,7 +1047,8 @@ function _fit_pooled(
         rng::AbstractRNG,
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         store_data_model::Bool = true,
-        fit_args::Tuple = ()
+        fit_args::Tuple = (),
+        extra_objective = nothing
     )
     model = get_model(dm)
     fe = get_fixed(model)
@@ -1214,6 +1215,7 @@ function _fit_pooled(
         rng = rng,
         theta_0_untransformed = theta_0_untransformed,
         store_data_model = store_data_model,
+        extra_objective = extra_objective,
     )
     return FitResult(
         method, result, summary, diag,
@@ -1380,7 +1382,8 @@ function _fit_model(
         rng = rng,
         theta_0_untransformed = theta_0_untransformed,
         store_data_model = store_data_model,
-        fit_args = args
+        fit_args = args,
+        extra_objective = extra_objective
     )
 end
 
@@ -1422,6 +1425,7 @@ function _fit_model(
         rng = rng,
         theta_0_untransformed = theta_0_untransformed,
         store_data_model = store_data_model,
-        fit_args = args
+        fit_args = args,
+        extra_objective = extra_objective
     )
 end

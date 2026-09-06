@@ -318,6 +318,15 @@ function stickbreak_forward(p::AbstractVector{<:Real})
     remaining = one(T)
     for i in 1:(k - 1)
         pi = T(p[i])
+        # An exhausted stick (remaining == 0 at a simplex vertex / absorbing row) makes
+        # pi / remaining a 0/0 NaN. Say what is wrong instead: `_forward_or_argerror`
+        # turns a DomainError into the declaration-level message (#336, same policy as #249).
+        remaining > 0 || throw(
+            DomainError(
+                p,
+                "stickbreak_forward: the probability vector is on the boundary of the simplex (all remaining mass is consumed at index $(i)). The :stickbreak transform is defined on the open interior only; move every entry strictly between 0 and 1."
+            )
+        )
         νi = pi / remaining
         t[i] = logit_forward(νi)
         remaining -= pi
@@ -456,8 +465,9 @@ function _stickbreak_inv_jacobian_T(t::AbstractVector{<:Real}, g::AbstractVector
     g_t = Vector{T}(undef, k1)
     S = T(g[k]) * p[k]  # = g[k] * r[k]
     for j in k1:-1:1
-        σj = logit_inverse(T(t[j]))
-        σj_prime = σj * (one(T) - σj)
+        # The clamped inverse is locally constant beyond ±LOGIT_CLAMP, so the pullback
+        # must use the clamped derivative too (#337).
+        σj_prime = _logit_inv_jacobian(T(t[j]))
         rj1 = r[j + 1]
         g_t[j] = σj_prime * r[j] * (T(g[j]) - S / rj1)
         S += T(g[j]) * p[j]
@@ -963,12 +973,19 @@ function _block_logabsdetjac(spec::TransformSpec, block)
     end
 end
 
+# log|d logit_inverse / dz|. The inverse clamps at ±LOGIT_CLAMP, so outside that interval
+# the map is constant and the determinant is singular, not merely small (#337).
+@inline function _logabsdetjac_logit_scalar(z::Real)
+    abs(z) >= LOGIT_CLAMP && return typeof(float(z))(-Inf)
+    sig = logit_inverse(z)
+    return log(sig) + log(one(sig) - sig)
+end
+
 # Scalar / diagonal closed forms. :log -> sum z (dexp/dz = exp z); :logit -> sum log sigma(1-sigma).
 function _logabsdetjac_logit(block)
     s = zero(_block_eltype(block))
     for z in _block_scalars(block)
-        sig = logit_inverse(z)
-        s += log(sig) + log(one(sig) - sig)
+        s += _logabsdetjac_logit_scalar(z)
     end
     return s
 end
@@ -981,8 +998,7 @@ function _logabsdetjac_elementwise(spec::TransformSpec, block)
         if m === :log
             s += block[j]
         elseif m === :logit
-            sig = logit_inverse(block[j])
-            s += log(sig) + log(one(sig) - sig)
+            s += _logabsdetjac_logit_scalar(block[j])
         end
     end
     return s
@@ -1027,7 +1043,7 @@ function _logabsdetjac_stickbreak(block)
     logrem = zero(T)
     @inbounds for i in eachindex(block)
         sig = logit_inverse(T(block[i]))
-        total += log(sig) + log(one(T) - sig) + logrem
+        total += _logabsdetjac_logit_scalar(T(block[i])) + logrem
         logrem += log(one(T) - sig)
     end
     return total

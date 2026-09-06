@@ -31,14 +31,20 @@ end
 @inline NoLimits._mcmc_sampler_kind(::HMC) = :hmc
 @inline NoLimits._mcmc_sampler_kind(::MH) = :mh
 
+# Only the Hamiltonian samplers adapt; anything else would carry a phantom warmup count
+# that later trims real posterior draws (#335).
+@inline _mcmc_is_adaptive(sampler) = NoLimits._mcmc_sampler_kind(sampler) in (:hmc, :nuts)
+
 @inline function _mcmc_sampler_defaults(sampler)
     kind = NoLimits._mcmc_sampler_kind(sampler)
     if kind == :mh
         return (n_samples = 2500, n_adapt = 0)
     elseif kind == :hmc
         return (n_samples = 1500, n_adapt = 750)
-    else
+    elseif kind == :nuts
         return (n_samples = 1000, n_adapt = 500)
+    else
+        return (n_samples = 1000, n_adapt = 0)
     end
 end
 
@@ -387,6 +393,7 @@ function NoLimits._mcmc_fit_impl(
         rng = rng,
         theta_0_untransformed = theta_0_untransformed,
         store_data_model = store_data_model,
+        extra_objective = extra_objective,
     )
     re_names = get_re_names(get_random(get_model(dm)))
     isempty(keys(penalty)) ||
@@ -538,16 +545,36 @@ function NoLimits._mcmc_fit_impl(
     # opt into a different chain type via turing_kwargs.
     haskey(turing_kwargs, :chain_type) ||
         (turing_kwargs = merge(turing_kwargs, (chain_type = MCMCChains.Chains,)))
-    chain = Turing.sample(rng, model, sampler, n_samples; adapt = n_adapt, turing_kwargs...)
+    # Turing's adaptive Hamiltonian samplers take `nadapts`; the `adapt` keyword this
+    # adapter used to pass was absorbed by `kwargs...` and never controlled adaptation,
+    # so the requested count was silently replaced by the sampler default (#335).
+    is_adaptive = _mcmc_is_adaptive(sampler)
+    adapt_kw = (is_adaptive && !haskey(turing_kwargs, :nadapts)) ? (; nadapts = n_adapt) : (;)
+    chain = Turing.sample(rng, model, sampler, n_samples; adapt_kw..., turing_kwargs...)
+
+    # Turing discards the adaptation iterations before returning, so the retained chain
+    # normally holds NO warmup rows. Everything downstream (posterior means, chain UQ,
+    # the objective summary) drops `n_adapt` rows from the STORED chain, so record the
+    # rows that are actually there instead of the number requested (#335).
+    n_adapt_eff = is_adaptive ? Int(get(turing_kwargs, :nadapts, n_adapt)) : 0
+    discard_initial = Int(
+        get(
+            turing_kwargs, :discard_initial,
+            get(turing_kwargs, :discard_adapt, true) ? n_adapt_eff : 0
+        )
+    )
+    n_warmup = clamp(n_adapt_eff - discard_initial, 0, max(0, size(chain, 1) - 1))
 
     obs = get_df(dm)[:, get_obs_cols(dm)]
     summary = FitSummary(
-        _mcmc_objective(chain, n_adapt), missing,
+        _mcmc_objective(chain, n_warmup), missing,
         FitParameters(ComponentArray(), ComponentArray()),
         NamedTuple()
     )
     diagnostics = FitDiagnostics(
-        (;), (sampler = sampler,), (n_samples = n_samples, n_adapt = n_adapt), NamedTuple()
+        (;), (sampler = sampler,),
+        (n_samples = n_samples, n_adapt = n_warmup, n_adapt_requested = n_adapt_eff),
+        NamedTuple()
     )
     result = MCMCResult(chain, sampler, n_samples, NamedTuple(), obs)
     res = FitResult(

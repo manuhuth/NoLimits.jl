@@ -111,6 +111,7 @@ function _wald_closed_form_natural_vcov(
     )
     p = size(Vn, 1)
     r = ones(Float64, p)
+    direct = Pair{Int, Float64}[]
     for j in eachindex(active_kinds)
         j <= p || break
         kind = active_kinds[j]
@@ -123,11 +124,22 @@ function _wald_closed_form_natural_vcov(
             continue
         end
         v_old = Vn[j, j]
-        (isfinite(v_new) && v_new >= 0 && v_old > 0) || continue
-        r[j] = sqrt(v_new / v_old)
+        (isfinite(v_new) && v_new >= 0) || continue
+        if v_old > 0
+            r[j] = sqrt(v_new / v_old)
+        else
+            # No empirical spread to rescale (a single usable draw, or a coordinate the
+            # draws never moved). The exact variance is known, so write it in rather than
+            # reporting zero uncertainty; a PSD matrix with a zero diagonal entry has a
+            # zero row/column, so no off-diagonal is lost (#338).
+            push!(direct, j => v_new)
+        end
     end
-    all(isone, r) && return Vn
+    (all(isone, r) && isempty(direct)) && return Vn
     Vn2 = Diagonal(r) * Vn * Diagonal(r)
+    for (j, v) in direct
+        Vn2[j, j] = v
+    end
     return Matrix{Float64}(0.5 .* (Vn2 .+ Vn2'))
 end
 
@@ -214,6 +226,13 @@ function _finalize_wald_uqresult(
     ]
     Vn_use = _cov_from_draws(all(Vn_rows) ? Vn_src : Vn_src[Vn_rows, :])
     Vn_use = _wald_closed_form_natural_vcov(Vn_use, est_t, Vt, active_kinds)
+    # Fewer than two usable draws leaves the sampled moments undefined. The closed forms
+    # above still fill the :identity and :log coordinates exactly; the rest would read as
+    # zero uncertainty, which is a lack of samples, not certainty (#338).
+    n_usable = count(Vn_rows)
+    if n_usable < 2 && any(k -> !(k === :identity || k === :log), active_kinds)
+        @warn "Wald natural-scale covariance built from $(n_usable) usable draw(s): sampled moments are undefined, so only :identity and :log coordinates carry an exact variance and the remaining entries are zero. Use n_draws >= 2."
+    end
 
     diag = merge(
         (;
@@ -330,6 +349,9 @@ function _compute_uq_wald_no_re(
     penalty_use = _resolve_fit_kw(res, penalty, :penalty, NamedTuple())
     ode_args_use = _resolve_fit_kw(res, ode_args, :ode_args, ())
     ode_kwargs_use = _resolve_fit_kw(res, ode_kwargs, :ode_kwargs, NamedTuple())
+    # The fitting objective included `extra_objective`; a covariance built without it
+    # inverts a different Hessian (#331).
+    extra_use = _fit_kw(res, :extra_objective, nothing)
     serialization_use = _resolve_fit_kw(
         res, serialization, :serialization, EnsembleSerial()
     )
@@ -401,6 +423,7 @@ function _compute_uq_wald_no_re(
             obj += -lp
         end
         use_penalty && (obj += _penalty_value(θu, penalty_use))
+        extra_use === nothing || (obj += extra_use(θu))
         return obj
     end
 
@@ -506,6 +529,7 @@ function _compute_uq_wald_re(
     penalty_use = _resolve_fit_kw(res, penalty, :penalty, NamedTuple())
     ode_args_use = _resolve_fit_kw(res, ode_args, :ode_args, ())
     ode_kwargs_use = _resolve_fit_kw(res, ode_kwargs, :ode_kwargs, NamedTuple())
+    extra_use = _fit_kw(res, :extra_objective, nothing)   # see the no-RE path (#331)
     # Force SERIAL evaluation of the random-effects Laplace objective (EB solve + inner
     # logdet/Hessian) used to build the covariance. The threaded per-batch inner Hessian
     # is non-deterministic run-to-run (it produces a varying Wald covariance) — the
@@ -596,6 +620,7 @@ function _compute_uq_wald_re(
         obj == Inf && return Inf
 
         use_penalty && (obj += _penalty_value(θu, penalty_use))
+        extra_use === nothing || (obj += extra_use(θu))
         return obj
     end
 

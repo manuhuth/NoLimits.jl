@@ -337,6 +337,16 @@ end
     res_lit = fit_model(dm_lit, NoLimits.SAEM(maxiters = 3, progress = false))
     @test res_lit isa FitResult
     @test isfinite(NoLimits.get_params(res_lit; scale = :untransformed).σ)
+
+    # #342: GHQuadrature laid the quadrature nodes out on the natural simplex dimension
+    # d+1 while the transport needs d normal coordinates, so every MvLogitNormal batch
+    # threw a DimensionMismatch. Same fixture, no extra model.
+    res_ghq = fit_model(
+        dm_lit, NoLimits.GHQuadrature(; level = 1, optim_kwargs = (maxiters = 2,));
+        serialization = SciMLBase.EnsembleSerial()
+    )
+    @test res_ghq isa FitResult
+    @test isfinite(get_objective(res_ghq))
 end
 
 @testset "SAEM builtin stats MvLogNormal and MvLogitNormal RE" begin

@@ -24,6 +24,32 @@ using SciMLBase
     hmc_defaults = _TuringExt._mcmc_sampler_defaults(HMC(0.01, 5))
     @test hmc_defaults.n_samples == 1500
     @test hmc_defaults.n_adapt == 750
+
+    # A non-adaptive sampler must not carry a phantom warmup count: the stored number is
+    # what later gets trimmed off the returned chain (#335).
+    @test _TuringExt._mcmc_sampler_defaults(PG(5)).n_adapt == 0
+    @test _TuringExt._mcmc_is_adaptive(NUTS())
+    @test !_TuringExt._mcmc_is_adaptive(MH())
+end
+
+@testset "MCMC warmup diagnostics describe rows in the chain (#335)" begin
+    # Turing discards its adaptation iterations before returning, so the stored `n_adapt`
+    # must be the retained warmup (zero), not the requested count — that count used to be
+    # subtracted again from real posterior draws.
+    dm = fx_nore_prior_dm()
+    for n_adapt in (0, 3)
+        res = fit_model(
+            dm,
+            NoLimits.MCMC(;
+                turing_kwargs = (n_samples = 10, n_adapt = n_adapt, progress = false)
+            );
+            rng = MersenneTwister(4)
+        )
+        conv = NoLimits.get_diagnostics(res).convergence
+        @test size(NoLimits.get_chain(res), 1) == 10
+        @test conv.n_adapt == 0
+        @test conv.n_adapt_requested == n_adapt
+    end
 end
 
 @testset "MCMC basic (no RE)" begin
@@ -37,6 +63,31 @@ end
     @test res isa FitResult
     @test NoLimits.get_chain(res) isa MCMCChains.Chains
     @test NoLimits.get_observed(res).y == fx_nore_df().y
+end
+
+@testset "predict(:population) integrates the posterior for MCMC fits (#339)" begin
+    # The plug-in path evaluated one parameter vector and ignored the posterior entirely,
+    # so `marginal_draws` and `rng` had no effect on the result.
+    dm = fx_nore_prior_dm()
+    res = fit_model(
+        dm,
+        NoLimits.MCMC(;
+            sampler = MH(),
+            turing_kwargs = (n_samples = 200, n_adapt = 0, progress = false, verbose = false)
+        );
+        rng = MersenneTwister(9)
+    )
+    df = fx_nore_df()
+    kw = (; re_mode = :population)
+    p_a = NoLimits.predict(res, df; kw..., marginal_draws = 8, rng = MersenneTwister(1))
+    p_b = NoLimits.predict(res, df; kw..., marginal_draws = 8, rng = MersenneTwister(1))
+    p_c = NoLimits.predict(res, df; kw..., marginal_draws = 150, rng = MersenneTwister(1))
+    @test p_a.prediction == p_b.prediction        # same rng, same draws
+    @test p_a.prediction != p_c.prediction        # the draws actually enter the answer
+    # This model's conditional mean is linear in the parameters, so integrating the
+    # posterior and plugging in its mean agree up to Monte Carlo error.
+    θ = NoLimits.get_params(res; scale = :untransformed)
+    @test isapprox(p_c.prediction, θ.a .+ θ.b .* df.t; rtol = 0.2, atol = 0.05)
 end
 
 @testset "MCMC serial vs threaded is reproducible (MH)" begin

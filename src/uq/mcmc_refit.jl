@@ -88,19 +88,22 @@ function _compute_uq_mcmc_refit(
     method_refit = _mcmc_refit_method(
         mcmc_method, mcmc_sampler, mcmc_turing_kwargs, mcmc_adtype
     )
-    fitkw = merge(
-        (
-            constants = constants_all,
-            constants_re = constants_re_use,
-            ode_args = ode_args_use,
-            ode_kwargs = ode_kwargs_use,
-            serialization = serialization_use,
-            rng = rng,
-            theta_0_untransformed = θ_hat_u,
-            store_data_model = true,
-        ),
-        mcmc_fit_kwargs
+    # Carry the fitted objective's `extra_objective` into the refit; without it the
+    # posterior targets a different model than the point estimate did (#331).
+    extra_use = _fit_kw(res, :extra_objective, nothing)
+    base_fitkw = (
+        constants = constants_all,
+        constants_re = constants_re_use,
+        ode_args = ode_args_use,
+        ode_kwargs = ode_kwargs_use,
+        serialization = serialization_use,
+        rng = rng,
+        theta_0_untransformed = θ_hat_u,
+        store_data_model = true,
     )
+    extra_use === nothing ||
+        (base_fitkw = merge(base_fitkw, (extra_objective = extra_use,)))
+    fitkw = merge(base_fitkw, mcmc_fit_kwargs)
     refit_res = fit_model(dm, method_refit; fitkw...)
 
     uq_chain = _compute_uq_chain(
