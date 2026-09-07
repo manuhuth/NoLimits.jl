@@ -175,7 +175,8 @@ end
            ebe_multistart_sampling, ebe_rescue_on_high_grad, ebe_rescue_multistart_n,
            ebe_rescue_multistart_k, ebe_rescue_max_rounds, ebe_rescue_grad_tol,
            ebe_rescue_multistart_sampling, lb, ub, update_schedule,
-           precondition) <: FittingMethod
+           precondition, builtin_stats, resid_var_param, re_cov_params,
+           re_mean_params) <: FittingMethod
 
 Monte Carlo Expectation-Maximization for random-effects models. At each EM iteration the
 E-step draws random effects; the M-step maximizes the Monte Carlo Q-function over the
@@ -218,6 +219,27 @@ fixed effects.
   `ebe_rescue_multistart_k`, `ebe_rescue_max_rounds`, `ebe_rescue_grad_tol`,
   `ebe_rescue_multistart_sampling`: rescue multistart settings when an EBE mode has a
   high gradient norm. Disabled by default.
+- `builtin_stats = :auto`: closed-form M-step for the parameters whose Monte Carlo
+  Q-maximizer is available in closed form from sufficient statistics (Gaussian/log-normal
+  random-effect means and covariances, the residual scale, supported HMM emissions), with
+  the same routing rules as [`SAEM`](@ref).
+  - `:auto` — detect the eligible blocks from the model (default).
+  - `:closed_form` (alias `:gaussian_re`) — use the maps given below, no detection.
+  - `:none` — optimize every free parameter numerically (the pre-0.2.10 M-step).
+
+  Routing is hybrid: eligible parameters are updated in closed form and frozen for the
+  iteration, everything else is optimized numerically as before, and the numeric problem is
+  skipped entirely when nothing is left. The path is disabled automatically for an
+  [`MCEM_IS`](@ref) E-step (its draws are weighted, the statistics are not) and when
+  `extra_objective` is passed (the M-step is then not separable). The statistics are a plain
+  Monte Carlo average over the current E-step draws — MCEM carries no
+  stochastic-approximation state.
+- `resid_var_param::Symbol = :σ`: fixed-effect name for the residual standard deviation,
+  or a NamedTuple of outcome column to parameter name. Autodetected under `:auto`.
+- `re_cov_params::NamedTuple = NamedTuple()`: mapping of RE name to covariance parameter.
+  Autodetected under `:auto`.
+- `re_mean_params::NamedTuple = NamedTuple()`: mapping of RE name to mean parameter.
+  Autodetected under `:auto`.
 - `lb`, `ub`: bounds on the transformed fixed-effect scale, or `nothing`.
 - `update_schedule = :all`: which RE batches the **E-step** refreshes each iteration
   (same option shapes as [`SAEM`](@ref)):
@@ -237,7 +259,7 @@ fixed effects.
   bit-for-bit. Note that with preconditioning on, the optimizer object behind
   [`get_raw`](@ref) works in `z`; [`get_params`](@ref) always returns the usual scales.
 """
-struct MCEM{O, K, A, ES, EO, EB, ER, L, U, US} <: FittingMethod
+struct MCEM{O, K, A, ES, EO, EB, ER, L, U, US, RV, RC, RM} <: FittingMethod
     optimizer::O
     optim_kwargs::K
     adtype::A
@@ -253,6 +275,10 @@ struct MCEM{O, K, A, ES, EO, EB, ER, L, U, US} <: FittingMethod
     store_diagnostics::Bool
     diagnostics_every::Int
     precondition::Bool
+    builtin_stats::Symbol
+    resid_var_param::RV
+    re_cov_params::RC
+    re_mean_params::RM
 end
 
 function MCEM(;
@@ -292,7 +318,11 @@ function MCEM(;
         update_schedule = :all,
         store_diagnostics::Bool = false,
         diagnostics_every::Int = 1,
-        precondition::Bool = true
+        precondition::Bool = true,
+        builtin_stats = :auto,
+        resid_var_param = :σ,
+        re_cov_params = NamedTuple(),
+        re_mean_params = NamedTuple()
     )
     diagnostics_every >= 1 ||
         error("MCEM: diagnostics_every must be ≥ 1. Got: $diagnostics_every")
@@ -325,11 +355,36 @@ function MCEM(;
     return MCEM(
         optimizer, _as_namedtuple(optim_kwargs), adtype, e_step_actual, em, ebe, ebe_rescue,
         lb, ub, _as_symbol(update_schedule), verbose, progress, store_diagnostics,
-        diagnostics_every, precondition
+        diagnostics_every, precondition, _as_symbol(builtin_stats), resid_var_param,
+        re_cov_params, re_mean_params
     )
 end
 
 # MCEMResult is a StandardOptimizationResult{:mcem} alias (see common.jl).
+
+function get_closed_form_mstep_used(res::MCEMResult)
+    notes = res.notes
+    if notes isa NamedTuple && hasproperty(notes, :closed_form_mstep_used)
+        return Bool(getproperty(notes, :closed_form_mstep_used))
+    end
+    return false
+end
+
+# MCEM's closed-form M-step reuses SAEM's resolver verbatim, so the eligibility rules,
+# autodetection and shared-target exclusions are identical for both estimators.
+function _mcem_saem_opts(method::MCEM)
+    return SAEM(;
+        builtin_stats = method.builtin_stats,
+        resid_var_param = method.resid_var_param,
+        re_cov_params = method.re_cov_params,
+        re_mean_params = method.re_mean_params
+    ).saem
+end
+
+# Floor for closed-form variance/scale updates, mirroring SAEM's `auto_var_lb` /
+# `var_lb_value = 1e-5`: a Monte Carlo variance can come out at zero with few subjects or
+# few draws, and the `:log` transform would then produce `log(0) = -Inf`.
+const _MCEM_VAR_LB = 1.0e-5
 
 mutable struct _MCEMDiagnostics{T}
     θ_hist::Vector{AbstractVector{T}}
@@ -1294,6 +1349,50 @@ function _fit_model(
         Symbol[]
     end
 
+    _cf_cfg = _saem_resolve_closed_form_config(
+        dm, _mcem_saem_opts(method), extra_objective; label = "MCEM"
+    )
+    cf_mode = _cf_cfg.builtin_stats_mode
+    if cf_mode == :closed_form && method.e_step isa MCEM_IS
+        @info "MCEM: importance-sampling E-step — disabling the closed-form M-step. Its sufficient statistics weight every draw equally, so all free parameters are optimized numerically."
+        cf_mode = :none
+    end
+    if !(cf_mode in (:closed_form, :none))
+        @info "MCEM: unknown builtin_stats option; using the numeric M-step." option = method.builtin_stats allowed = (
+            :auto, :closed_form, :gaussian_re, :none,
+        )
+        cf_mode = :none
+    end
+    cf_on = cf_mode == :closed_form
+    cf_cov = cf_on ? _cf_cfg.re_cov_params : NamedTuple()
+    cf_mean = cf_on ? _cf_cfg.re_mean_params : NamedTuple()
+    cf_resid = cf_on ? _cf_cfg.resid_var_param : NamedTuple()
+    cf_hmm = cf_on ? _cf_cfg.hmm_emission_params : NamedTuple()
+    _saem_log_closed_form_plan(
+        method.builtin_stats, cf_mode, _cf_cfg.builtin_cf_elig,
+        cf_cov, cf_mean, cf_resid, cf_hmm, false, free_names,
+        q2_base_free_names, _cf_cfg.shared_excluded; label = "MCEM"
+    )
+    cf_target_syms = Symbol[]
+    for v in values(cf_cov)
+        _saem_collect_target_symbols!(cf_target_syms, v)
+    end
+    for v in values(cf_mean)
+        _saem_collect_target_symbols!(cf_target_syms, v)
+    end
+    _saem_collect_target_symbols!(cf_target_syms, cf_resid)
+    for col in keys(cf_hmm)
+        info_hmm = getfield(cf_hmm, col)
+        hasproperty(info_hmm, :target) &&
+            _saem_collect_target_symbols!(cf_target_syms, getproperty(info_hmm, :target))
+    end
+    closed_form_targets = Tuple(n for n in free_names if n in Set(cf_target_syms))
+    numeric_targets = Tuple(n for n in free_names if !(n in Set(cf_target_syms)))
+    var_lb_targets = cf_on ?
+        _saem_build_var_lb_target_set(cf_cov, _cf_cfg.re_family_map, cf_resid, θ0_u) : ()
+    closed_form_used = false
+    numeric_mstep_used = false
+
     diag = _MCEMDiagnostics{T0}(
         Vector{AbstractVector{T0}}(),
         Vector{T0}(),
@@ -1515,8 +1614,46 @@ function _fit_model(
         # expressions (no ODE needed).  Results are folded into mstep_constants so the
         # Q1 optimizer below sees them as fixed.
         mstep_constants = constants
+        if cf_on
+            cache_cf = ll_cache isa Vector ? ll_cache[1] : ll_cache
+            # Plain Monte Carlo average over THIS iteration's draws. MCEM keeps no
+            # stochastic-approximation state, and routing through `_saem_blend` with
+            # γ = 1 would not be bitwise the draws' own mean.
+            b_chains = [
+                [
+                    view(samples_by_batch[bi], :, c)
+                        for c in 1:size(samples_by_batch[bi], 2)
+                ] for bi in eachindex(batch_infos)
+            ]
+            n_draws = [length(ch) for ch in b_chains]
+            θ_cf = ComponentArray(θu_curr, getaxes(θu_curr))
+            stats_cf = _saem_builtin_collect_current_stats(
+                dm, batch_infos, b_chains, n_draws, θ_cf, const_cache,
+                cf_resid, cf_hmm, cf_cov, cf_mean, _cf_cfg.re_family_map,
+                cache_cf, rng; re_mean_offsets = _cf_cfg.re_mean_offsets
+            )
+            updates = _saem_builtin_updates_from_smoothed_stats(
+                dm, θ_cf, stats_cf, cf_resid, cf_hmm, cf_cov, cf_mean
+            )
+            # User-supplied constants always win over the closed-form updates.
+            for k in keys(constants)
+                haskey(updates, k) &&
+                    (updates = Base.structdiff(updates, NamedTuple{(k,)}((nothing,))))
+            end
+            if !isempty(updates)
+                closed_form_used = true
+                updates = _saem_clamp_constants_to_bounds(updates, fe)
+                if !isempty(var_lb_targets)
+                    updates = _saem_apply_var_lb_to_constants(
+                        updates, var_lb_targets, _MCEM_VAR_LB
+                    )
+                end
+                mstep_constants = merge(mstep_constants, updates)
+            end
+        end
         let q2_free_now = [n for n in q2_base_free_names if n ∉ keys(mstep_constants)]
             if !isempty(q2_free_now)
+                numeric_mstep_used = true
                 θt_q2 = ComponentArray(
                     NamedTuple{Tuple(q2_free_now)}(
                         Tuple(getproperty(θt_full_curr, n) for n in q2_free_now)
@@ -1585,82 +1722,95 @@ function _fit_model(
         θ_const_t_q1 = transform(θ_const_u_q1)
         axs_full_q1 = getaxes(θ_const_t_q1)
 
-        θt_free_iter = ComponentArray(
-            NamedTuple{Tuple(free_names_q1)}(
-                Tuple(getproperty(θt_full_curr, n) for n in free_names_q1)
-            )
-        )
-        axs_free_iter = getaxes(θt_free_iter)
-
-        # Anchored at the current iterate, as for Q2 above.
-        _, _, _θt_from_z, _z_from_θt = _precondition_maps(
-            get_model(dm), free_names_q1, θt_free_iter, axs_free_iter,
-            _precondition_on(method)
-        )
-        # Keyed on θt, not z, and the cache must stay INSIDE this loop: with a per-iteration
-        # anchor, z = 0 means a different θt each iteration, so a hoisted cache would return
-        # iteration 1's objective forever and report instant convergence with no error.
-        obj_cache = (θ = Ref{Any}(nothing), obj = Ref{Any}(nothing))
-        function obj_only(z, p)
-            any(isnan, z) && return Inf
-            θt_free_loc = _θt_from_z(z)
-            θt_vec = θt_free_loc
-            use_cache = !(eltype(θt_free_loc) <: ForwardDiff.Dual)
-            if use_cache && obj_cache.θ[] !== nothing &&
-                    length(obj_cache.θ[]) == length(θt_vec)
-                _maxabsdiff(θt_vec, obj_cache.θ[]) == 0.0 && return obj_cache.obj[]
-            end
-            T = eltype(θt_free_loc)
-            θt_full_loc = ComponentArray(T.(θ_const_t_q1), axs_full_q1)
-            for name in free_names_q1
-                setproperty!(θt_full_loc, name, getproperty(θt_free_loc, name))
-            end
-            θu = inv_transform(θt_full_loc)
-            Q = _mcem_Q(
-                dm, batch_infos, θu, const_cache, ll_cache, samples_by_batch,
-                weights_by_batch; serialization = serialization, q_cache = q_cache
-            )
-            !isfinite(Q) && return Inf
-            obj = -Q + _penalty_value(θu, penalty)
-            extra_objective === nothing || (obj += extra_objective(θu))
-            !isfinite(obj) && return Inf
-            if use_cache
-                obj_cache.θ[] = copy(θt_vec)
-                obj_cache.obj[] = obj
-            end
-            return obj
-        end
-
-        optf = OptimizationFunction(obj_only, method.adtype)
-        lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
-            fe, free_names_q1, collect(θt_free_iter), method.optimizer, method.lb,
-            method.ub, constants; method_label = "MCEM"
-        )
-        z0 = _z_from_θt(θ0_init)
-        prob = use_bounds ?
-            OptimizationProblem(optf, z0; lb = _z_from_θt(lb), ub = _z_from_θt(ub)) :
-            OptimizationProblem(optf, z0)
-
-        sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
-
-        if any(!isfinite, sol.u)
-            @warn "MCEM M-step iter $iter: optimizer returned non-finite parameters; skipping update."
-            mstep_skipped = true
-            θu_new = θu_curr
-            Q_new = Q_prev
-        else
-            θ_hat_t_free = _θt_from_z(sol.u)
-
-            θt_full_new = ComponentArray(eltype(θ_hat_t_free).(θ_const_t_q1), axs_full_q1)
-            for name in free_names_q1
-                setproperty!(θt_full_new, name, getproperty(θ_hat_t_free, name))
-            end
+        if isempty(free_names_q1)
+            # Every free parameter was fixed by the closed-form M-step, so there is no
+            # numeric problem left: evaluate Q at the closed-form iterate directly.
+            θt_full_new = ComponentArray(T0.(θ_const_t_q1), axs_full_q1)
             θu_new = inv_transform(θt_full_new)
             Q_new = _mcem_Q(
                 dm, batch_infos, θu_new, const_cache, ll_cache, samples_by_batch,
                 weights_by_batch; serialization = serialization, q_cache = q_cache
             )
             Q_new = Q_new == Inf ? T0(Inf) : Q_new
+        else
+            numeric_mstep_used = true
+            θt_free_iter = ComponentArray(
+                NamedTuple{Tuple(free_names_q1)}(
+                    Tuple(getproperty(θt_full_curr, n) for n in free_names_q1)
+                )
+            )
+            axs_free_iter = getaxes(θt_free_iter)
+
+            # Anchored at the current iterate, as for Q2 above.
+            _, _, _θt_from_z, _z_from_θt = _precondition_maps(
+                get_model(dm), free_names_q1, θt_free_iter, axs_free_iter,
+                _precondition_on(method)
+            )
+            # Keyed on θt, not z, and the cache must stay INSIDE this loop: with a per-iteration
+            # anchor, z = 0 means a different θt each iteration, so a hoisted cache would return
+            # iteration 1's objective forever and report instant convergence with no error.
+            obj_cache = (θ = Ref{Any}(nothing), obj = Ref{Any}(nothing))
+            function obj_only(z, p)
+                any(isnan, z) && return Inf
+                θt_free_loc = _θt_from_z(z)
+                θt_vec = θt_free_loc
+                use_cache = !(eltype(θt_free_loc) <: ForwardDiff.Dual)
+                if use_cache && obj_cache.θ[] !== nothing &&
+                        length(obj_cache.θ[]) == length(θt_vec)
+                    _maxabsdiff(θt_vec, obj_cache.θ[]) == 0.0 && return obj_cache.obj[]
+                end
+                T = eltype(θt_free_loc)
+                θt_full_loc = ComponentArray(T.(θ_const_t_q1), axs_full_q1)
+                for name in free_names_q1
+                    setproperty!(θt_full_loc, name, getproperty(θt_free_loc, name))
+                end
+                θu = inv_transform(θt_full_loc)
+                Q = _mcem_Q(
+                    dm, batch_infos, θu, const_cache, ll_cache, samples_by_batch,
+                    weights_by_batch; serialization = serialization, q_cache = q_cache
+                )
+                !isfinite(Q) && return Inf
+                obj = -Q + _penalty_value(θu, penalty)
+                extra_objective === nothing || (obj += extra_objective(θu))
+                !isfinite(obj) && return Inf
+                if use_cache
+                    obj_cache.θ[] = copy(θt_vec)
+                    obj_cache.obj[] = obj
+                end
+                return obj
+            end
+
+            optf = OptimizationFunction(obj_only, method.adtype)
+            lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
+                fe, free_names_q1, collect(θt_free_iter), method.optimizer, method.lb,
+                method.ub, constants; method_label = "MCEM"
+            )
+            z0 = _z_from_θt(θ0_init)
+            prob = use_bounds ?
+                OptimizationProblem(optf, z0; lb = _z_from_θt(lb), ub = _z_from_θt(ub)) :
+                OptimizationProblem(optf, z0)
+
+            sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
+
+            if any(!isfinite, sol.u)
+                @warn "MCEM M-step iter $iter: optimizer returned non-finite parameters; skipping update."
+                mstep_skipped = true
+                θu_new = θu_curr
+                Q_new = Q_prev
+            else
+                θ_hat_t_free = _θt_from_z(sol.u)
+
+                θt_full_new = ComponentArray(eltype(θ_hat_t_free).(θ_const_t_q1), axs_full_q1)
+                for name in free_names_q1
+                    setproperty!(θt_full_new, name, getproperty(θ_hat_t_free, name))
+                end
+                θu_new = inv_transform(θt_full_new)
+                Q_new = _mcem_Q(
+                    dm, batch_infos, θu_new, const_cache, ll_cache, samples_by_batch,
+                    weights_by_batch; serialization = serialization, q_cache = q_cache
+                )
+                Q_new = Q_new == Inf ? T0(Inf) : Q_new
+            end
         end
 
         # Update θt_free to reflect full current state (use full axes for tracking)
@@ -1767,7 +1917,18 @@ function _fit_model(
             mcmc_candidates_by_batch = last_b_candidates
         )[1] : nothing
 
-    notes = (diagnostics = diag,)
+    mstep_mode = closed_form_used ? (numeric_mstep_used ? :hybrid : :closed_form_only) :
+        :numeric_only
+    notes = (
+        diagnostics = diag,
+        closed_form_mstep_used = closed_form_used,
+        closed_form_mstep_mode = mstep_mode,
+        builtin_stats_mode_requested = method.builtin_stats,
+        builtin_stats_mode_effective = cf_mode,
+        builtin_stats_closed_form_eligibility = _cf_cfg.builtin_cf_elig,
+        closed_form_targets = closed_form_targets,
+        numeric_targets = numeric_targets,
+    )
 
     result = MCEMResult(nothing, Q_prev, length(diag.Q_hist), nothing, notes, eb_modes)
     return FitResult(

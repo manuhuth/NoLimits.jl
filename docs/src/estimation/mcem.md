@@ -247,6 +247,7 @@ method = NoLimits.MCEM(;
 | Logging | `verbose`, `progress` | Diagnostic output and progress bar. |
 | Final EB estimation | `ebe_*` and `ebe_rescue_*` options | Post-fit empirical Bayes mode computation used by random-effects accessors and diagnostics. |
 | Bounds | `lb`, `ub` | Optional transformed-scale bounds for free fixed effects in M-step optimization. |
+| Closed-form M-step | `builtin_stats`, `resid_var_param`, `re_cov_params`, `re_mean_params` | Which parameter blocks are updated from sufficient statistics instead of by the optimizer. |
 
 ## Behavioral Notes
 
@@ -254,7 +255,36 @@ The constructor signature block above lists every keyword with its default. See 
 
 - **EM convergence.** MCEM monitors both fixed-effect stability (`rtol_theta`, `atol_theta`) and Q-function stability (`rtol_Q`, `atol_Q`) with the same windowed drift test used by SAEM: the last `convergence_window` iterates are split into two halves, and each coordinate's drift between the half means must satisfy `drift ≤ max(atol, rtol * scale, 2 * mc_se)`, where `mc_se` is the Monte-Carlo standard error of the half-mean difference estimated from the window itself (drift indistinguishable from sampling noise counts as stationary). `consecutive_params` is the number of consecutive iterations on which both tests must pass before convergence is declared; setting `rtol` and `atol` of a test to `0` disables early stopping. See the SAEM page's [Convergence and Early Stopping](saem.md#Convergence-and-Early-Stopping) section for details. Note that with a fixed, small Monte-Carlo sample size the EM iterates keep jittering at sampling scale and the fit typically uses all `maxiters`; a growing `sample_schedule` (classic MCEM practice) shrinks that jitter so the drift can fall below tolerance and trigger the stop. `verbose` enables iteration-level logging of `Q`, `dtheta`, `dQ`, and the drift values.
 - **Final EB modes.** After the EM iterations complete, MCEM computes empirical Bayes (EB) modal estimates of the random effects used by downstream accessors, configured through the `ebe_*` keywords (`ebe_grad_tol=:auto` selects a data-adaptive tolerance). When `ebe_rescue_on_high_grad=true` (default `false`), a rescue multistart governed by the `ebe_rescue_*` keywords is triggered if the final EB gradient norm remains above threshold.
-- **Bounds.** `lb`, `ub` are optional transformed-scale bounds for free fixed effects in the M-step optimization. Parameters held constant via the `constants` fit keyword are excluded automatically.
+- **Bounds.** `lb`, `ub` are optional transformed-scale bounds for free fixed effects in the M-step optimization. Parameters held constant via the `constants` fit keyword are excluded automatically. They do not apply to closed-form updates, which are clamped to each fixed effect's own declared natural-scale bounds instead.
+
+## Closed-Form M-step
+
+For an exponential-family block the Monte Carlo Q-function is maximized analytically, so the M-step for that block does not need an optimizer at all. `builtin_stats = :auto` (the default) detects those blocks and updates them from the sufficient statistics of the current E-step draws, using the same routing rules as [`SAEM`](@ref):
+
+| Keyword | Default | Meaning |
+| --- | --- | --- |
+| `builtin_stats` | `:auto` | `:auto` infers the eligible blocks from the model, `:closed_form` (alias `:gaussian_re`) uses the maps below without inference, `:none` optimizes everything numerically. |
+| `resid_var_param` | `:σ` | Fixed effect holding the residual standard deviation, or a NamedTuple of outcome column to parameter name. |
+| `re_cov_params` | `NamedTuple()` | Random-effect name to covariance parameter. |
+| `re_mean_params` | `NamedTuple()` | Random-effect name to mean parameter. |
+
+Eligible blocks are Gaussian/log-normal random-effect means and covariances, `Exponential` random-effect scales, the residual scale of `Normal`/`LogNormal`/`Exponential`/`Bernoulli`/`Poisson` outcomes, and supported HMM emissions. A scalar `Normal`/`LogNormal` mean written as `β + offset`, where `β` is a fixed effect and the offset carries none (for example `CL_mean + 0.75 * log(wt / 70)`), is also eligible: the per-level offset is subtracted before the moments are formed, so the covariance update centers on the structured mean. See [Which Models Have Closed-Form M-step Updates?](saem-advanced.md#Which-Models-Have-Closed-Form-M-step-Updates?) for the full list.
+
+Routing is hybrid. Eligible parameters are updated in closed form and held fixed for the iteration, everything else is optimized numerically exactly as before, and the numerical problem is skipped entirely when nothing is left. Two situations disable the path automatically, each with an info message: an [`MCEM_IS`](@ref) E-step (its draws are weighted while the statistics are not) and an `extra_objective` (the M-step is then not separable).
+
+Unlike SAEM, MCEM applies no stochastic-approximation smoothing: the statistics are a plain Monte Carlo average over the current iteration's draws, which is the exact conditional Q-maximizer for that block. Because the closed-form update carries none of the optimizer's own tolerance or jitter, a fit with `builtin_stats = :auto` follows a different iterate path than the same fit with `:none` and generally stops at a different iteration. Pass `builtin_stats = :none` to reproduce the pre-0.2.10 numerical M-step exactly.
+
+The routing is logged once at startup and recorded in the result:
+
+```julia
+res = fit_model(dm, MCEM())
+NoLimits.get_closed_form_mstep_used(get_result(res))   # true when a block was updated in closed form
+notes = get_notes(get_result(res))
+notes.closed_form_targets    # parameters updated from sufficient statistics
+notes.numeric_targets        # parameters left to the optimizer; () means it never ran
+notes.closed_form_mstep_mode # :closed_form_only, :hybrid or :numeric_only
+notes.builtin_stats_closed_form_eligibility.reasons   # why a block was rejected
+```
 
 ## Diagnostics
 

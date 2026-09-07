@@ -377,8 +377,13 @@ or closed-form updates (when `builtin_stats` is enabled).
 - `suffstats`: custom sufficient statistics function, or `nothing` to use the built-in.
 - `q_from_stats`: custom Q-function from sufficient statistics, or `nothing`.
 - `mstep_closed_form`: custom closed-form M-step function, or `nothing`.
-- `builtin_stats`: `:auto`, `:on`, or `:off`; controls use of built-in Gaussian statistics.
-- `builtin_mean`: `:none`, `:additive`, or `:all`; controls built-in mean parameterization.
+- `builtin_stats = :auto`: closed-form M-step from built-in sufficient statistics.
+  `:auto` infers the eligible blocks from the model, `:closed_form` (alias `:gaussian_re`)
+  uses the maps below without inference, and `:none` optimizes every free parameter
+  numerically. Routing is hybrid: parameters that are not eligible stay on the numeric
+  M-step.
+- `builtin_mean = :none`: `:glm` adds a numerical generalized-linear sub-step for the RE
+  mean parameters. `:none` leaves them to the closed-form or numeric M-step.
 - `resid_var_param::Symbol = :σ`: fixed-effect name for the residual standard deviation.
 - `re_cov_params::NamedTuple = NamedTuple()`: mapping of RE name to covariance parameter.
 - `re_mean_params::NamedTuple = NamedTuple()`: mapping of RE name to mean parameter.
@@ -2152,6 +2157,10 @@ function _saem_builtin_collect_current_stats(
                     sum_xx = zeros(Tθ, dim, dim)
                 end
                 sum_x .+= x
+                # `vector * adjoint` dispatches to `broadcast(*, u, v)`, so this whole
+                # accumulation is BLAS-free and bit-reproducible across CPU kernels. Do NOT
+                # "optimize" it into `mul!`/`BLAS.syrk!`: that is exactly the dispatch the
+                # closed-form M-step exists to avoid.
                 sum_xx .+= x * x'
                 nvals += 1
             end

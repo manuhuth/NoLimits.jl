@@ -598,3 +598,96 @@ end
     cf_ok, _ = NoLimits.saem_closed_form_eligibility(dm_ok)
     @test :ω ∈ cf_ok
 end
+
+@testset "SAEM parse: additive random-effect mean offset" begin
+    fs = Set([:a, :b, :τ])
+    parse = NoLimits._saem_parse_re_gaussian_mapping
+
+    # `β + offset` with a fixed-effect-free offset keeps β as the closed-form mean target
+    # and flags the offset, in either operand order.
+    m = parse(:(LogNormal(a + 0.75 * log(wt / 70.0), τ)), fs)
+    @test m.mean == :a
+    @test m.cov == :τ
+    @test m.mean_offset
+    @test parse(:(Normal(0.75 * log(wt / 70.0) + a, τ)), fs).mean_offset
+    @test parse(:(Normal(a + 1.0, τ)), fs) == (
+        family = :normal, mean = :a, cov = :τ, mean_offset = true,
+    )
+
+    # A bare symbol is the plain target; an offset carrying a fixed effect, a product, or a
+    # numeric-only mean map no mean target at all.
+    @test parse(:(Normal(a, τ)), fs) == (
+        family = :normal, mean = :a, cov = :τ, mean_offset = false,
+    )
+    @test parse(:(Normal(a + b, τ)), fs).mean === nothing
+    @test parse(:(Normal(a * b, τ)), fs).mean === nothing
+    @test parse(:(Normal(a + b * x, τ)), fs).mean === nothing
+    @test parse(:(Normal(0.0, τ)), fs).mean === nothing
+    @test !parse(:(Normal(0.0, τ)), fs).mean_offset
+end
+
+@testset "SAEM auto-detect: warfarin-style model is fully closed-form" begin
+    # Three log-normal REs, allometric weight scaling on clearance, one Normal outcome:
+    # all seven fixed effects are closed-form targets once the additive offset is parsed.
+    model = @Model begin
+        @helpers begin
+            bateman(t, dose, ka, ke) = dose * ka / (ka - ke) *
+                (exp(-ke * t) - exp(-ka * t))
+        end
+
+        @fixedEffects begin
+            ka_mean = RealNumber(0.0)
+            CL_mean = RealNumber(-0.5)
+            V_mean = RealNumber(4.0)
+            sigma_ka = RealNumber(2.0, scale = :log)
+            sigma_CL = RealNumber(2.0, scale = :log)
+            sigma_V = RealNumber(2.0, scale = :log)
+            sigma_C_error = RealNumber(2.0, scale = :log)
+        end
+
+        @covariates begin
+            t = Covariate()
+            d = ConstantCovariate(constant_on = :id)
+            wt = ConstantCovariate(constant_on = :id)
+        end
+
+        @randomEffects begin
+            ka = RandomEffect(LogNormal(ka_mean, sigma_ka); column = :id)
+            CL = RandomEffect(
+                LogNormal(CL_mean + 0.75 * log(wt / 70.0), sigma_CL); column = :id
+            )
+            V = RandomEffect(LogNormal(V_mean, sigma_V); column = :id)
+        end
+
+        @formulas begin
+            C ~ Normal(bateman(t, d, ka, CL / V) / V, sigma_C_error)
+        end
+    end
+
+    df = DataFrame(
+        id = [:A, :A, :B, :B],
+        t = [1.0, 2.0, 1.0, 2.0],
+        d = [100.0, 100.0, 100.0, 100.0],
+        wt = [66.7, 66.7, 80.0, 80.0],
+        C = [8.0, 6.0, 7.0, 5.0]
+    )
+    dm = DataModel(model, df; primary_id = :id, time_col = :t)
+
+    auto_cfg = _auto_cfg(model, df; primary_id = :id)
+    @test auto_cfg.re_mean_params == (; ka = :ka_mean, CL = :CL_mean, V = :V_mean)
+    @test auto_cfg.re_cov_params == (; ka = :sigma_ka, CL = :sigma_CL, V = :sigma_V)
+    @test auto_cfg.re_mean_offsets == (; CL = true)
+    @test auto_cfg.resid_var_param == :sigma_C_error
+
+    for opts in (NoLimits.SAEM().saem, NoLimits._mcem_saem_opts(NoLimits.MCEM()))
+        cfg = NoLimits._saem_resolve_closed_form_config(dm, opts)
+        @test cfg.builtin_stats_mode == :closed_form
+        @test cfg.re_mean_offsets == (; CL = true)
+        @test isempty(cfg.builtin_cf_elig.reasons)
+        @test isempty(cfg.shared_excluded)
+    end
+
+    cf, num = NoLimits.saem_closed_form_eligibility(dm)
+    @test Set(cf) == Set(NoLimits.get_names(model.fixed.fixed))
+    @test isempty(num)
+end

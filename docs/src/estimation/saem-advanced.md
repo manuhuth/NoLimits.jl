@@ -219,6 +219,7 @@ SAEM provides two closed-form pathways that can substantially accelerate converg
 Built-in blockwise closed-form updates are available for:
 
 - Random-effect distribution parameters in `Normal`, `MvNormal`, `LogNormal`, and `Exponential` blocks (through `re_mean_params` and `re_cov_params`).
+- Structured scalar `Normal`/`LogNormal` means of the form `β + offset`, where `β` is a fixed effect and the offset carries none (for example the allometric `CL_mean + 0.75 * log(wt / 70)`). The per-level offset is subtracted before the moments are formed, so `β` is updated in closed form and the covariance update centers on the structured mean. A mean with two free fixed effects in it (`μ0 + β * x`) is not eligible and stays numeric.
 - Observation distribution parameters in `Normal`, `LogNormal`, `Exponential`, `Bernoulli`, and `Poisson` blocks (through `resid_var_param`, including named outcome-specific mappings).
 
 These updates are compatible with arbitrarily nonlinear model structure, including ODE-based dynamics and function-approximator components, provided that the updated parameters appear in the supported distribution blocks.
