@@ -16,6 +16,14 @@ using Statistics
     return Symbol(lowercase(string(nameof(typeof(method)))))
 end
 
+# Which UQ backends can actually replace Wald for a fit produced by `method_sym`. Profile
+# UQ is restricted to MLE/MAP/Laplace/GHQuadrature, so recommending it to an MCEM or SAEM
+# user sends them into an error instead of an alternative.
+@inline function _wald_fallback_methods(method_sym::Symbol)
+    return method_sym in (:mle, :map, :laplace, :ghquadrature) ?
+        "method = :profile / :mcmc_refit" : "method = :mcmc_refit"
+end
+
 function _validate_level(level::Real)
     (0.0 < level < 1.0) || error("UQ level must be strictly between 0 and 1. Got $(level).")
     return Float64(level)
@@ -367,7 +375,10 @@ function _build_ll_cache_uq(
     return build_ll_cache(dm; ode_args = ode_args, ode_kwargs = ode_kwargs)
 end
 
-function _project_psd_covariance(cov_mat::Matrix{Float64})
+function _project_psd_covariance(
+        cov_mat::Matrix{Float64};
+        fallbacks::String = "method = :mcmc_refit"
+    )
     size(cov_mat, 1) == size(cov_mat, 2) || error("Covariance matrix must be square.")
     S = Symmetric(0.5 .* (cov_mat .+ cov_mat'))
     eig = eigen(S)
@@ -401,7 +412,7 @@ function _project_psd_covariance(cov_mat::Matrix{Float64})
             "Standard errors along those directions are shrunk toward zero and understate " *
             "the true uncertainty. "
     ) *
-        "Prefer method = :profile / :mcmc for those parameters." maxlog = 3
+        "Prefer $(fallbacks) for those parameters." maxlog = 3
     diag = (;
         vcov_projected = n_clipped > 0,
         vcov_min_eig_raw = min_raw,

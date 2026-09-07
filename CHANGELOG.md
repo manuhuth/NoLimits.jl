@@ -6,6 +6,13 @@
 
 ### Bug fixes
 
+- The warning raised when a Wald covariance is projected to the nearest PSD matrix
+  recommended `method = :profile / :mcmc`. Neither name was right for every fit: the
+  keyword is `:mcmc_refit`, and profile UQ is restricted to MLE/MAP/Laplace/GHQuadrature
+  results, so an MCEM or SAEM user following the advice hit
+  "Profile UQ is currently supported for ...". The message now names only the backends that
+  exist for the fit at hand.
+
 - A normalizing-flow random effect could kill a whole `SAEM` fit instead of scoring the bad
   proposal `-Inf`. When the Q2 M-step drives a planar layer's weight to exactly `w = 0`,
   `Bijectors.get_u_hat` returns `u_hat = NaN` while `w'u_hat` stays finite, the `NaN`
