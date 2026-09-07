@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.2.10
+
 ### Bug fixes
 
 - A normalizing-flow random effect could kill a whole `SAEM` fit instead of scoring the bad
