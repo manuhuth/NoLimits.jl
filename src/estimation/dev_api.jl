@@ -1532,7 +1532,8 @@ function _saem_stats_collect(dm::DataModel, batch_infos, b_chains, n_chains, θ,
     return _saem_builtin_collect_current_stats(
         dm, batch_infos, b_chains, n_chains, θ_re, const_cache,
         cfg.resid_var_param, cfg.hmm_emission_params,
-        cfg.re_cov_params, cfg.re_mean_params, cfg.re_family_map, llc, rng
+        cfg.re_cov_params, cfg.re_mean_params, cfg.re_family_map, llc, rng;
+        re_mean_offsets = cfg.re_mean_offsets
     )
 end
 
