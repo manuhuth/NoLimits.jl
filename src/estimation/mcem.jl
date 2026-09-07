@@ -1389,8 +1389,9 @@ function _fit_model(
         hasproperty(info_hmm, :target) &&
             _saem_collect_target_symbols!(cf_target_syms, getproperty(info_hmm, :target))
     end
-    closed_form_targets = Tuple(n for n in free_names if n in Set(cf_target_syms))
-    numeric_targets = Tuple(n for n in free_names if !(n in Set(cf_target_syms)))
+    cf_target_set = Set(cf_target_syms)
+    closed_form_targets = Tuple(n for n in free_names if n in cf_target_set)
+    numeric_targets = Tuple(n for n in free_names if !(n in cf_target_set))
     var_lb_targets = cf_on ?
         _saem_build_var_lb_target_set(cf_cov, _cf_cfg.re_family_map, cf_resid, θ0_u) : ()
     closed_form_used = false
