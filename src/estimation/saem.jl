@@ -1097,13 +1097,18 @@ function _saem_expr_has_fixed_symbol(ex, fixed_set::Set{Symbol})
     return any(a -> _saem_expr_has_fixed_symbol(a, fixed_set), args)
 end
 
-# Mean slot of a scalar Normal/LogNormal random effect -> (target, has_offset).
-# A bare fixed-effect symbol is the plain target. `β + offset` (or `offset + β`), with `β`
-# a fixed effect and `offset` free of fixed effects, is a *structured* mean: `β` stays a
-# closed-form target and the per-level offset is subtracted from the moments, so the
-# variance update centers on the structured mean rather than on the pooled empirical one.
-# The fixed-effect-free requirement is what keeps `β` recoverable from the moments alone;
-# `μ0 + β * x` has two fixed effects in the mean and stays numeric.
+# Mean slot of a scalar Normal/LogNormal random effect -> (target, mean_offset).
+# `mean_offset = true` means the level's own mean is subtracted from the moments before
+# they are formed, so the covariance update centers on the model's mean rather than on the
+# pooled empirical one. Three cases:
+#   * bare fixed-effect symbol -> that symbol is the target, no offset needed.
+#   * `β + offset` / `offset + β` with `β` a fixed effect and `offset` free of fixed
+#     effects -> `β` is the target and `offset` is the per-level shift. The
+#     fixed-effect-free requirement is what keeps `β` recoverable from the moments alone;
+#     `μ0 + β * x` has two fixed effects in the mean and stays numeric.
+#   * anything with no fixed effect at all (`0.0`, `log(wt)`) -> the mean is KNOWN. There
+#     is no target, and the exact conditional maximizer of the variance is the second
+#     moment about that known mean, with no empirical-mean correction.
 function _saem_parse_re_mean_target(μarg, fixed_set::Set{Symbol})
     μarg isa Symbol && return ((μarg in fixed_set) ? μarg : nothing, false)
     if μarg isa Expr && μarg.head === :call && length(μarg.args) == 3 &&
@@ -1116,7 +1121,7 @@ function _saem_parse_re_mean_target(μarg, fixed_set::Set{Symbol})
             end
         end
     end
-    return (nothing, false)
+    return (nothing, !_saem_expr_has_fixed_symbol(μarg, fixed_set))
 end
 
 function _saem_parse_re_gaussian_mapping(dist_expr, fixed_set::Set{Symbol})
@@ -1424,6 +1429,9 @@ function _saem_autodetect_gaussian_re(dm::DataModel, fixed_names::Vector{Symbol}
         if mapping.mean !== nothing && !_saem_target_is_shared(mapping.mean, shared)
             push!(mean_pairs, re => mapping.mean)
             mapping.mean_offset && push!(mean_offset_pairs, re => true)
+        elseif mapping.mean === nothing && mapping.mean_offset
+            # Known mean: no target, but still centered on it (see the parser).
+            push!(mean_offset_pairs, re => true)
         end
     end
 
@@ -2074,14 +2082,16 @@ end
 @inline _saem_n_chains_at(n_chains::Int, ::Int) = n_chains
 @inline _saem_n_chains_at(n_chains::AbstractVector{<:Integer}, bi::Int) = Int(n_chains[bi])
 
-# Per-level offsets `c_i` of a structured random-effect mean `β + c_i`, read off the level's
-# own prior distribution as `c_i = μ_i - β`. Random-effect distributions see only constant
-# covariates, so `c_i` is genuinely level-constant.
+# Per-level offsets `c_i` of a random-effect mean `β + c_i`, read off the level's own prior
+# distribution as `c_i = μ_i - β`. Random-effect distributions see only constant covariates,
+# so `c_i` is genuinely level-constant. `mean_sym === nothing` is the known-mean case, where
+# the whole mean is the offset.
 function _saem_re_mean_offsets(
-        dm::DataModel, batch_infos::Vector{REBatchInfo}, re::Symbol, mean_sym::Symbol,
-        θ::ComponentArray, ll_cache::_LLCache, ::Type{Tθ}
+        dm::DataModel, batch_infos::Vector{REBatchInfo}, re::Symbol,
+        mean_sym::Union{Symbol, Nothing}, θ::ComponentArray, ll_cache::_LLCache,
+        ::Type{Tθ}
     ) where {Tθ}
-    β = Tθ(getproperty(θ, mean_sym))
+    β = mean_sym === nothing ? zero(Tθ) : Tθ(getproperty(θ, mean_sym))
     return [
         Tθ[
             Tθ(Distributions.params(d)[1]) - β
@@ -2119,13 +2129,16 @@ function _saem_builtin_collect_current_stats(
         ri === nothing && continue
 
         family = haskey(re_family_map, re) ? getfield(re_family_map, re) : :normal
-        offsets = if haskey(re_mean_offsets, re) && haskey(re_mean_params, re)
-            _saem_re_mean_offsets(
-                dm, batch_infos, re, getfield(re_mean_params, re), θ, ll_cache, Tθ
-            )
+        mean_sym = haskey(re_mean_params, re) ? getfield(re_mean_params, re) : nothing
+        offsets = if haskey(re_mean_offsets, re) && mean_sym isa Union{Symbol, Nothing}
+            _saem_re_mean_offsets(dm, batch_infos, re, mean_sym, θ, ll_cache, Tθ)
         else
             nothing
         end
+        # The mean is known (a literal or covariate-only expression) when it was centered
+        # out and no fixed effect estimates it: the variance maximizer is then the second
+        # moment about that mean, with no empirical-mean correction.
+        known_mean = offsets !== nothing && mean_sym === nothing
         sum_x = nothing
         sum_xx = nothing
         nvals = 0
@@ -2169,7 +2182,11 @@ function _saem_builtin_collect_current_stats(
         mean_x = sum_x ./ nvals
         second_x = sum_xx ./ nvals
         push!(
-            re_pairs, re => (family = family, mean = mean_x, second = second_x, n = nvals)
+            re_pairs,
+            re => (
+                family = family, mean = mean_x, second = second_x, n = nvals,
+                known_mean = known_mean,
+            )
         )
     end
     re_stats = NamedTuple(re_pairs)
@@ -2267,6 +2284,8 @@ function _saem_builtin_smooth_re_stats(prev_re::NamedTuple, curr_re::NamedTuple,
                     mean = _saem_blend(p.mean, c.mean, γ),
                     second = _saem_blend(p.second, c.second, γ),
                     n = c.n,
+                    known_mean = hasproperty(c, :known_mean) ? c.known_mean :
+                        (hasproperty(p, :known_mean) && p.known_mean),
                 )
             )
         elseif haskey(curr_re, re)
@@ -2599,7 +2618,10 @@ function _saem_builtin_updates_from_smoothed_stats(
 
         μ_hat = st.mean
         S2_hat = st.second
-        Σ_hat = S2_hat .- μ_hat * μ_hat'
+        # `vector * adjoint` is a broadcast, not BLAS (see the accumulator). With a known
+        # mean the moments are already central, so there is nothing to subtract.
+        Σ_hat = (hasproperty(st, :known_mean) && st.known_mean) ? S2_hat :
+            S2_hat .- μ_hat * μ_hat'
         if any(!isfinite, Σ_hat)
             @warn "SAEM closed-form: non-finite covariance estimate for RE :$re; skipping update."
             continue
@@ -3157,10 +3179,13 @@ function _saem_resolve_closed_form_config(
             # where the effective target is still the autodetected one.
             offset_pairs = Pair{Symbol, Bool}[]
             for re in keys(auto_cfg.re_mean_offsets)
-                haskey(re_mean_params, re) &&
-                    getfield(re_mean_params, re) ===
-                    getfield(auto_cfg.re_mean_params, re) &&
+                if !haskey(auto_cfg.re_mean_params, re)
+                    push!(offset_pairs, re => true)   # known mean, no target to override
+                elseif haskey(re_mean_params, re) &&
+                        getfield(re_mean_params, re) ===
+                        getfield(auto_cfg.re_mean_params, re)
                     push!(offset_pairs, re => true)
+                end
             end
             re_mean_offsets = NamedTuple(offset_pairs)
             hmm_emission_params = auto_cfg.hmm_emission_params

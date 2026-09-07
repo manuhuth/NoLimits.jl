@@ -786,6 +786,20 @@ end
         @test upd == upd_ref
         @test haskey(upd, :σ) && haskey(upd, :ω) && !haskey(upd, :a)
     end
+    # `fx_re_dm`'s random effect is `Normal(0.0, ω)`: the mean is known, so the exact
+    # conditional maximizer of ω is the second moment about that mean. The moments come
+    # back already central, with no empirical-mean correction.
+    @test pop.re.η.known_mean
+    η_all = reduce(vcat, [vec(NoLimits.get_draws(draws[bi])) for bi in 1:nb])
+    @test length(η_all) == pop.re.η.n
+    m2 = sum(abs2, η_all) / length(η_all)
+    @test isapprox(pop.re.η.second[1, 1], m2; rtol = 1.0e-12)
+    upd_km, _ = NoLimits.saem_closed_form_mstep(dm, pop, nothing, θ, 1.0)
+    @test isapprox(upd_km.ω, sqrt(m2); rtol = 1.0e-10)
+    # Strictly above the pre-0.2.10 centring, which subtracted the pooled empirical mean
+    # and so discarded the part of the spread that a nonzero E[η] carries.
+    @test upd_km.ω > sqrt(m2 - (sum(η_all) / length(η_all))^2)
+
     # User constants win over closed-form updates.
     stats1 = NoLimits.saem_sufficient_statistics(dm, θ, draws)
     updc, _ = NoLimits.saem_closed_form_mstep(dm, stats1, nothing, θ, 1.0; constants = (; σ = 0.3))

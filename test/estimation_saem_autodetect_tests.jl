@@ -599,7 +599,7 @@ end
     @test :ω ∈ cf_ok
 end
 
-@testset "SAEM parse: additive random-effect mean offset" begin
+@testset "SAEM parse: random-effect mean centring" begin
     fs = Set([:a, :b, :τ])
     parse = NoLimits._saem_parse_re_gaussian_mapping
 
@@ -614,16 +614,25 @@ end
         family = :normal, mean = :a, cov = :τ, mean_offset = true,
     )
 
-    # A bare symbol is the plain target; an offset carrying a fixed effect, a product, or a
-    # numeric-only mean map no mean target at all.
+    # A bare symbol is the plain target and needs no centring.
     @test parse(:(Normal(a, τ)), fs) == (
         family = :normal, mean = :a, cov = :τ, mean_offset = false,
     )
-    @test parse(:(Normal(a + b, τ)), fs).mean === nothing
-    @test parse(:(Normal(a * b, τ)), fs).mean === nothing
-    @test parse(:(Normal(a + b * x, τ)), fs).mean === nothing
-    @test parse(:(Normal(0.0, τ)), fs).mean === nothing
-    @test !parse(:(Normal(0.0, τ)), fs).mean_offset
+
+    # A mean with no fixed effect at all is KNOWN: no target, but still centered out, so
+    # the variance update is the second moment about it.
+    @test parse(:(Normal(0.0, τ)), fs) == (
+        family = :normal, mean = nothing, cov = :τ, mean_offset = true,
+    )
+    @test parse(:(LogNormal(0.0, τ)), fs).mean_offset
+    @test parse(:(Normal(log(x), τ)), fs).mean_offset
+
+    # A mean carrying a fixed effect we cannot extract is neither a target nor centrable:
+    # it stays numeric and the moments stay about the pooled empirical mean.
+    for ex in (:(Normal(a + b, τ)), :(Normal(a * b, τ)), :(Normal(a + b * x, τ)))
+        @test parse(ex, fs).mean === nothing
+        @test !parse(ex, fs).mean_offset
+    end
 end
 
 @testset "SAEM auto-detect: warfarin-style model is fully closed-form" begin

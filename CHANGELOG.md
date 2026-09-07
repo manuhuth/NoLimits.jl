@@ -55,6 +55,15 @@
   `β + offset` form described above, because the covariance is now centered on that mean.
   The previous update centered on the pooled empirical mean, which absorbed the
   covariate-driven between-subject spread into the random-effect variance.
+- **`SAEM` and `MCEM` closed-form variance estimates change for literal-mean random
+  effects**, i.e. the common `Normal(0.0, ω)` / `LogNormal(0.0, ω)` form. The mean is known
+  there, so the exact conditional maximizer is the second moment *about that mean*,
+  `sqrt(Σ(η - μ)² / n)`. The previous update computed `second - mean * mean'`, subtracting
+  the pooled empirical mean of the draws, which is the maximizer only when the mean is a
+  free parameter estimated from those same moments. The old value was biased low by
+  `E[η - μ]²`, and that bias is not always small: on the `fx_re_dm` test fixture the
+  closed-form ω moves from 0.162 to 0.228 at identical draws. Only the closed-form path
+  changes, so `builtin_stats = :none` reproduces the previous numbers.
 - Method-level `lb`/`ub` never constrained closed-form updates (they are transformed-scale
   bounds for the optimizer); closed-form values are clamped to each fixed effect's own
   declared natural-scale bounds. The SAEM documentation claimed otherwise and has been
