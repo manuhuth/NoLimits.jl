@@ -39,6 +39,56 @@ const _MCEM_DM4 = DataModel(
     primary_id = :ID, time_col = :t
 )
 
+# `fx_re_df`'s `y` is nearly noiseless, which leaves σ and ω at the edge of
+# identifiability. A noisier panel on the same model gives the closed-form and numeric
+# M-steps something to agree on.
+const _MCEM_CF_DM = DataModel(
+    fx_re_model(),
+    let rng = Xoshiro(11), nid = 10, nobs = 4
+        b = randn(rng, nid) .* 0.4
+        ids = repeat(1:nid, inner = nobs)
+        DataFrame(
+            ID = ids,
+            t = repeat(collect(0.0:(nobs - 1)), nid),
+            y = 0.2 .+ b[ids] .+ randn(rng, nid * nobs) .* 0.3
+        )
+    end;
+    primary_id = :ID, time_col = :t
+)
+
+# Structured random-effect mean `cl_mean + 0.75 * log(wt / 70)`: with the additive-offset
+# parser every free parameter is closed-form eligible, so the numeric M-step is empty.
+const _MCEM_OFFSET_MODEL = @Model begin
+    @covariates begin
+        t = Covariate()
+        wt = ConstantCovariate(constant_on = :ID)
+    end
+    @fixedEffects begin
+        cl_mean = RealNumber(0.0)
+        omega_cl = RealNumber(0.3, scale = :log)
+        sigma_y = RealNumber(0.3, scale = :log)
+    end
+    @randomEffects begin
+        CL = RandomEffect(
+            LogNormal(cl_mean + 0.75 * log(wt / 70.0), omega_cl); column = :ID
+        )
+    end
+    @formulas begin
+        y ~ Normal(CL * t, sigma_y)
+    end
+end
+
+const _MCEM_OFFSET_DM = DataModel(
+    _MCEM_OFFSET_MODEL,
+    DataFrame(
+        ID = repeat([:A, :B, :C, :D], inner = 2),
+        t = repeat([1.0, 2.0], outer = 4),
+        wt = repeat([60.0, 70.0, 80.0, 90.0], inner = 2),
+        y = [0.9, 1.9, 1.1, 2.2, 1.0, 2.1, 1.2, 2.3]
+    );
+    primary_id = :ID, time_col = :t
+)
+
 @testset "MCEM default sampler" begin
     method = NoLimits.MCEM()
     @test method.e_step isa NoLimits.MCEM_MCMC
@@ -247,11 +297,15 @@ end
 # which passed `nothing, nothing` where the user bounds belong and let ω run to its
 # unconstrained MLE (natural ~0.29, far below exp(2)).
 @testset "MCEM user bounds reach the Q2-only M-step" begin
+    # `builtin_stats = :none` keeps ω on the numeric Q2 leg. The method-level lb/ub are
+    # transformed-scale bounds for the optimizer, so they do not constrain a closed-form
+    # update (which is clamped to the fixed effect's own declared natural-scale bounds).
     method = NoLimits.MCEM(
         sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
         maxiters = 2, optim_kwargs = (; maxiters = 5),
         lb = ComponentArray(a = -10.0, σ = -10.0, ω = 2.0),
-        ub = ComponentArray(a = 10.0, σ = 10.0, ω = 3.0)
+        ub = ComponentArray(a = 10.0, σ = 10.0, ω = 3.0),
+        builtin_stats = :none
     )
     res = fit_model(fx_re_dm(), method)
     @test NoLimits.get_params(res; scale = :untransformed).ω >= exp(2.0) - 1.0e-6
@@ -732,6 +786,20 @@ end
         @test upd == upd_ref
         @test haskey(upd, :σ) && haskey(upd, :ω) && !haskey(upd, :a)
     end
+    # `fx_re_dm`'s random effect is `Normal(0.0, ω)`: the mean is known, so the exact
+    # conditional maximizer of ω is the second moment about that mean. The moments come
+    # back already central, with no empirical-mean correction.
+    @test pop.re.η.known_mean
+    η_all = reduce(vcat, [vec(NoLimits.get_draws(draws[bi])) for bi in 1:nb])
+    @test length(η_all) == pop.re.η.n
+    m2 = sum(abs2, η_all) / length(η_all)
+    @test isapprox(pop.re.η.second[1, 1], m2; rtol = 1.0e-12)
+    upd_km, _ = NoLimits.saem_closed_form_mstep(dm, pop, nothing, θ, 1.0)
+    @test isapprox(upd_km.ω, sqrt(m2); rtol = 1.0e-10)
+    # Strictly above the pre-0.2.10 centring, which subtracted the pooled empirical mean
+    # and so discarded the part of the spread that a nonzero E[η] carries.
+    @test upd_km.ω > sqrt(m2 - (sum(η_all) / length(η_all))^2)
+
     # User constants win over closed-form updates.
     stats1 = NoLimits.saem_sufficient_statistics(dm, θ, draws)
     updc, _ = NoLimits.saem_closed_form_mstep(dm, stats1, nothing, θ, 1.0; constants = (; σ = 0.3))
@@ -793,4 +861,145 @@ end
     @test isapprox(θ_rt.a, p_ref.a; atol = 0.05)
     @test isapprox(θ_rt.σ, p_ref.σ; atol = 0.03)
     @test isapprox(θ_rt.ω, p_ref.ω; atol = 0.03)
+end
+
+@testset "MCEM closed-form M-step routing and agreement" begin
+    tk = (n_samples = 20, n_adapt = 5, progress = false)
+    mcem_cf(bs; kw...) = NoLimits.MCEM(;
+        sampler = MH(), turing_kwargs = tk, maxiters = 15, progress = false,
+        builtin_stats = bs, kw...
+    )
+    fit_cf(dm, bs; kw...) = fit_model(
+        dm, mcem_cf(bs); rng = Xoshiro(3),
+        serialization = NoLimits.EnsembleSerial(), kw...
+    )
+    notes_of(res) = NoLimits.get_notes(NoLimits.get_result(res))
+
+    # `:auto` is the default and routes σ/ω through the closed form, `a` (obs-side) numeric.
+    @test NoLimits.MCEM().builtin_stats == :auto
+    res_auto = fit_cf(fx_re_dm(), :auto)
+    n_auto = notes_of(res_auto)
+    @test n_auto.builtin_stats_mode_effective == :closed_form
+    @test n_auto.closed_form_mstep_used
+    @test n_auto.closed_form_mstep_mode == :hybrid
+    @test n_auto.closed_form_targets == (:σ, :ω)
+    @test n_auto.numeric_targets == (:a,)
+    @test isempty(n_auto.builtin_stats_closed_form_eligibility.reasons)
+    @test NoLimits.get_closed_form_mstep_used(NoLimits.get_result(res_auto))
+
+    # `:none` reproduces the pre-change path: every free parameter stays numeric.
+    res_none = fit_cf(fx_re_dm(), :none)
+    n_none = notes_of(res_none)
+    @test n_none.builtin_stats_mode_effective == :none
+    @test !n_none.closed_form_mstep_used
+    @test n_none.closed_form_mstep_mode == :numeric_only
+    @test n_none.closed_form_targets == ()
+    @test n_none.numeric_targets == (:a, :σ, :ω)
+
+    @test all(isfinite, collect(NoLimits.get_params(res_auto; scale = :untransformed)))
+
+    # Same Q, two different M-steps: agreement in the limit, not bitwise.
+    m_agree(bs) = NoLimits.MCEM(;
+        sampler = MH(), turing_kwargs = (n_samples = 60, n_adapt = 10, progress = false),
+        maxiters = 40, progress = false, builtin_stats = bs
+    )
+    p_auto = NoLimits.get_params(
+        fit_model(
+            _MCEM_CF_DM, m_agree(:auto); rng = Xoshiro(3),
+            serialization = NoLimits.EnsembleSerial()
+        ); scale = :untransformed
+    )
+    p_none = NoLimits.get_params(
+        fit_model(
+            _MCEM_CF_DM, m_agree(:none); rng = Xoshiro(3),
+            serialization = NoLimits.EnsembleSerial()
+        ); scale = :untransformed
+    )
+    for k in (:a, :σ, :ω)
+        @test isapprox(getproperty(p_auto, k), getproperty(p_none, k); rtol = 0.15)
+    end
+
+    # A constant drops its parameter from both routes.
+    res_c = fit_cf(fx_re_dm(), :auto; constants = (; σ = 0.3))
+    n_c = notes_of(res_c)
+    @test n_c.closed_form_targets == (:ω,)
+    @test n_c.numeric_targets == (:a,)
+    @test NoLimits.get_params(res_c; scale = :untransformed).σ == 0.3
+
+    # Same rng, same closed-form M-step -> bitwise identical parameters and Q history.
+    m_det = NoLimits.MCEM(;
+        sampler = MH(), turing_kwargs = tk, maxiters = 8, progress = false,
+        store_diagnostics = true
+    )
+    d1 = fit_model(
+        fx_re_dm(), m_det; rng = Xoshiro(3), serialization = NoLimits.EnsembleSerial()
+    )
+    d2 = fit_model(
+        fx_re_dm(), m_det; rng = Xoshiro(3), serialization = NoLimits.EnsembleSerial()
+    )
+    @test collect(NoLimits.get_params(d1; scale = :untransformed)) ==
+        collect(NoLimits.get_params(d2; scale = :untransformed))
+    @test notes_of(d1).diagnostics.Q_hist == notes_of(d2).diagnostics.Q_hist
+    @test NoLimits.get_iterations(NoLimits.get_result(d1)) ==
+        NoLimits.get_iterations(NoLimits.get_result(d2))
+
+    # An importance-sampling E-step weights its draws; the statistics do not, so the
+    # closed-form path switches itself off.
+    res_is = fit_model(
+        fx_re_dm(),
+        NoLimits.MCEM(;
+            e_step = NoLimits.MCEM_IS(; n_samples = 20), maxiters = 3, progress = false
+        );
+        rng = Xoshiro(3), serialization = NoLimits.EnsembleSerial()
+    )
+    @test notes_of(res_is).builtin_stats_mode_effective == :none
+    @test !notes_of(res_is).closed_form_mstep_used
+
+    # `extra_objective` makes the M-step non-separable; same fallback.
+    res_eo = fit_model(
+        fx_re_dm(), mcem_cf(:auto); rng = Xoshiro(3),
+        serialization = NoLimits.EnsembleSerial(), extra_objective = θ -> 0.5 * θ.a^2
+    )
+    @test notes_of(res_eo).builtin_stats_mode_effective == :none
+    @test !notes_of(res_eo).closed_form_mstep_used
+end
+
+@testset "MCEM closed-form M-step with a structured random-effect mean" begin
+    tk = (n_samples = 20, n_adapt = 5, progress = false)
+    notes_of(res) = NoLimits.get_notes(NoLimits.get_result(res))
+    m(bs) = NoLimits.MCEM(;
+        sampler = MH(), turing_kwargs = tk, maxiters = 15, progress = false,
+        builtin_stats = bs
+    )
+
+    # The additive `0.75 * log(wt / 70)` offset keeps `cl_mean` a closed-form target, so
+    # nothing is left for the optimizer and the empty-free-set branch carries the M-step.
+    cfg = NoLimits._saem_resolve_closed_form_config(
+        _MCEM_OFFSET_DM, NoLimits._mcem_saem_opts(NoLimits.MCEM())
+    )
+    @test cfg.re_mean_params == (; CL = :cl_mean)
+    @test cfg.re_mean_offsets == (; CL = true)
+    @test cfg.re_cov_params == (; CL = :omega_cl)
+    @test cfg.resid_var_param == :sigma_y
+
+    res_auto = fit_model(
+        _MCEM_OFFSET_DM, m(:auto); rng = Xoshiro(3),
+        serialization = NoLimits.EnsembleSerial()
+    )
+    n_auto = notes_of(res_auto)
+    @test n_auto.closed_form_targets == (:cl_mean, :omega_cl, :sigma_y)
+    @test n_auto.numeric_targets == ()
+    @test n_auto.closed_form_mstep_mode == :closed_form_only
+    p_auto = NoLimits.get_params(res_auto; scale = :untransformed)
+    @test all(isfinite, collect(p_auto))
+    @test isfinite(NoLimits.get_objective(res_auto))
+
+    res_none = fit_model(
+        _MCEM_OFFSET_DM, m(:none); rng = Xoshiro(3),
+        serialization = NoLimits.EnsembleSerial()
+    )
+    p_none = NoLimits.get_params(res_none; scale = :untransformed)
+    for k in (:cl_mean, :omega_cl, :sigma_y)
+        @test isapprox(getproperty(p_auto, k), getproperty(p_none, k); rtol = 0.15)
+    end
 end

@@ -377,8 +377,13 @@ or closed-form updates (when `builtin_stats` is enabled).
 - `suffstats`: custom sufficient statistics function, or `nothing` to use the built-in.
 - `q_from_stats`: custom Q-function from sufficient statistics, or `nothing`.
 - `mstep_closed_form`: custom closed-form M-step function, or `nothing`.
-- `builtin_stats`: `:auto`, `:on`, or `:off`; controls use of built-in Gaussian statistics.
-- `builtin_mean`: `:none`, `:additive`, or `:all`; controls built-in mean parameterization.
+- `builtin_stats = :auto`: closed-form M-step from built-in sufficient statistics.
+  `:auto` infers the eligible blocks from the model, `:closed_form` (alias `:gaussian_re`)
+  uses the maps below without inference, and `:none` optimizes every free parameter
+  numerically. Routing is hybrid: parameters that are not eligible stay on the numeric
+  M-step.
+- `builtin_mean = :none`: `:glm` adds a numerical generalized-linear sub-step for the RE
+  mean parameters. `:none` leaves them to the closed-form or numeric M-step.
 - `resid_var_param::Symbol = :σ`: fixed-effect name for the residual standard deviation.
 - `re_cov_params::NamedTuple = NamedTuple()`: mapping of RE name to covariance parameter.
 - `re_mean_params::NamedTuple = NamedTuple()`: mapping of RE name to mean parameter.
@@ -1083,6 +1088,42 @@ end
     return info.family == :bernoulli && info.hmm_type == :discrete_time
 end
 
+# `true` when `ex` mentions any fixed effect. Used to certify that a random-effect mean
+# offset is data-only, so it can be subtracted from the sufficient statistics.
+function _saem_expr_has_fixed_symbol(ex, fixed_set::Set{Symbol})
+    ex isa Symbol && return ex in fixed_set
+    ex isa Expr || return false
+    args = ex.head === :call ? (@view ex.args[2:end]) : (@view ex.args[1:end])
+    return any(a -> _saem_expr_has_fixed_symbol(a, fixed_set), args)
+end
+
+# Mean slot of a scalar Normal/LogNormal random effect -> (target, mean_offset).
+# `mean_offset = true` means the level's own mean is subtracted from the moments before
+# they are formed, so the covariance update centers on the model's mean rather than on the
+# pooled empirical one. Three cases:
+#   * bare fixed-effect symbol -> that symbol is the target, no offset needed.
+#   * `β + offset` / `offset + β` with `β` a fixed effect and `offset` free of fixed
+#     effects -> `β` is the target and `offset` is the per-level shift. The
+#     fixed-effect-free requirement is what keeps `β` recoverable from the moments alone;
+#     `μ0 + β * x` has two fixed effects in the mean and stays numeric.
+#   * anything with no fixed effect at all (`0.0`, `log(wt)`) -> the mean is KNOWN. There
+#     is no target, and the exact conditional maximizer of the variance is the second
+#     moment about that known mean, with no empirical-mean correction.
+function _saem_parse_re_mean_target(μarg, fixed_set::Set{Symbol})
+    μarg isa Symbol && return ((μarg in fixed_set) ? μarg : nothing, false)
+    if μarg isa Expr && μarg.head === :call && length(μarg.args) == 3 &&
+            μarg.args[1] === :+
+        lhs, rhs = μarg.args[2], μarg.args[3]
+        for (β, offset) in ((lhs, rhs), (rhs, lhs))
+            if β isa Symbol && β in fixed_set &&
+                    !_saem_expr_has_fixed_symbol(offset, fixed_set)
+                return (β, true)
+            end
+        end
+    end
+    return (nothing, !_saem_expr_has_fixed_symbol(μarg, fixed_set))
+end
+
 function _saem_parse_re_gaussian_mapping(dist_expr, fixed_set::Set{Symbol})
     cname = _saem_call_name(dist_expr)
     cname === nothing && return nothing
@@ -1092,24 +1133,33 @@ function _saem_parse_re_gaussian_mapping(dist_expr, fixed_set::Set{Symbol})
         μarg = dist_expr.args[2]
         σarg = dist_expr.args[3]
         σ_target = (σarg isa Symbol && σarg in fixed_set) ? σarg : nothing
-        mean_target = (μarg isa Symbol && μarg in fixed_set) ? μarg : nothing
-        return (family = :normal, mean = mean_target, cov = σ_target)
+        mean_target, mean_offset = _saem_parse_re_mean_target(μarg, fixed_set)
+        return (
+            family = :normal, mean = mean_target, cov = σ_target,
+            mean_offset = mean_offset,
+        )
     end
 
     if cname == :LogNormal
         (dist_expr isa Expr && length(dist_expr.args) == 3) || return nothing
         μarg = dist_expr.args[2]
         σarg = dist_expr.args[3]
-        mean_target = (μarg isa Symbol && μarg in fixed_set) ? μarg : nothing
+        mean_target, mean_offset = _saem_parse_re_mean_target(μarg, fixed_set)
         cov_target = (σarg isa Symbol && σarg in fixed_set) ? σarg : nothing
-        return (family = :lognormal, mean = mean_target, cov = cov_target)
+        return (
+            family = :lognormal, mean = mean_target, cov = cov_target,
+            mean_offset = mean_offset,
+        )
     end
 
     if cname == :Exponential
         (dist_expr isa Expr && length(dist_expr.args) == 2) || return nothing
         θarg = dist_expr.args[2]
         cov_target = (θarg isa Symbol && θarg in fixed_set) ? θarg : nothing
-        return (family = :exponential, mean = nothing, cov = cov_target)
+        return (
+            family = :exponential, mean = nothing, cov = cov_target,
+            mean_offset = false,
+        )
     end
 
     if cname == :MvNormal
@@ -1146,7 +1196,10 @@ function _saem_parse_re_gaussian_mapping(dist_expr, fixed_set::Set{Symbol})
                 end
             end
         end
-        return (family = :mvnormal, mean = mean_target, cov = cov_target)
+        return (
+            family = :mvnormal, mean = mean_target, cov = cov_target,
+            mean_offset = false,
+        )
     end
 
     if cname == :MvLogNormal || cname == :MvLogitNormal
@@ -1184,7 +1237,10 @@ function _saem_parse_re_gaussian_mapping(dist_expr, fixed_set::Set{Symbol})
             end
         end
         fam = cname == :MvLogNormal ? :mvlognormal : :mvlogitnormal
-        return (family = fam, mean = mean_target, cov = cov_target)
+        return (
+            family = fam, mean = mean_target, cov = cov_target,
+            mean_offset = false,
+        )
     end
 
     return nothing
@@ -1360,6 +1416,7 @@ function _saem_autodetect_gaussian_re(dm::DataModel, fixed_names::Vector{Symbol}
 
     cov_pairs = Pair{Symbol, Any}[]
     mean_pairs = Pair{Symbol, Any}[]
+    mean_offset_pairs = Pair{Symbol, Bool}[]
     family_pairs = Pair{Symbol, Symbol}[]
     for re in re_names
         hasproperty(re_dists, re) || continue
@@ -1371,6 +1428,10 @@ function _saem_autodetect_gaussian_re(dm::DataModel, fixed_names::Vector{Symbol}
         end
         if mapping.mean !== nothing && !_saem_target_is_shared(mapping.mean, shared)
             push!(mean_pairs, re => mapping.mean)
+            mapping.mean_offset && push!(mean_offset_pairs, re => true)
+        elseif mapping.mean === nothing && mapping.mean_offset
+            # Known mean: no target, but still centered on it (see the parser).
+            push!(mean_offset_pairs, re => true)
         end
     end
 
@@ -1396,6 +1457,7 @@ function _saem_autodetect_gaussian_re(dm::DataModel, fixed_names::Vector{Symbol}
     return (
         re_cov_params = NamedTuple(cov_pairs),
         re_mean_params = NamedTuple(mean_pairs),
+        re_mean_offsets = NamedTuple(mean_offset_pairs),
         re_families = NamedTuple(family_pairs),
         resid_var_param = resid_var_param,
         hmm_emission_params = hmm_emission_params,
@@ -2015,6 +2077,27 @@ function _saem_collect_outcome_stats_individual(
     return (NamedTuple(pairs), true)
 end
 
+# Number of draws contributed by batch `bi`. MCEM's `update_schedule` can leave batches
+# with different draw counts, so the count may be per-batch rather than shared.
+@inline _saem_n_chains_at(n_chains::Int, ::Int) = n_chains
+@inline _saem_n_chains_at(n_chains::AbstractVector{<:Integer}, bi::Int) = Int(n_chains[bi])
+
+# Per-level offsets `c_i` of a random-effect mean `β + c_i`, read off the level's own prior
+# distribution as `c_i = μ_i - β`. Random-effect distributions see only constant covariates,
+# so `c_i` is genuinely level-constant. `mean_sym === nothing` is the known-mean case, where
+# the whole mean is the offset.
+function _saem_re_mean_offsets(
+        dm::DataModel, batch_infos::Vector{REBatchInfo}, re::Symbol,
+        mean_sym::Union{Symbol, Nothing}, θ::ComponentArray, ll_cache::_LLCache,
+        ::Type{Tθ}
+    ) where {Tθ}
+    β = mean_sym === nothing ? zero(Tθ) : Tθ(getproperty(θ, mean_sym))
+    return map(batch_infos) do info
+        dists = getproperty(_re_dists_for_info(dm, info, θ, ll_cache), re)
+        return Tθ[Tθ(Distributions.params(d)[1]) - β for d in dists]
+    end
+end
+
 # Collect this iteration's sufficient statistics from EVERY chain's sample. Each chain
 # is a separate E-step draw: second moments must include the across-chain dispersion,
 # so the chains' η are never averaged before the moments are formed (doing so deflates
@@ -2023,7 +2106,7 @@ function _saem_builtin_collect_current_stats(
         dm::DataModel,
         batch_infos::Vector{REBatchInfo},
         b_chains::AbstractVector,
-        n_chains::Int,
+        n_chains::Union{Int, AbstractVector{<:Integer}},
         θ::ComponentArray,
         const_cache::REConstantsCache,
         resid_var_param,
@@ -2032,7 +2115,8 @@ function _saem_builtin_collect_current_stats(
         re_mean_params::NamedTuple,
         re_family_map::NamedTuple,
         ll_cache::_LLCache,
-        rng::AbstractRNG
+        rng::AbstractRNG;
+        re_mean_offsets::NamedTuple = NamedTuple()
     )
     Tθ = promote_type(eltype(θ), Float64)
     cache = get_laplace_cache(get_re_group_info(dm))
@@ -2043,13 +2127,23 @@ function _saem_builtin_collect_current_stats(
         ri === nothing && continue
 
         family = haskey(re_family_map, re) ? getfield(re_family_map, re) : :normal
+        mean_sym = haskey(re_mean_params, re) ? getfield(re_mean_params, re) : nothing
+        offsets = if haskey(re_mean_offsets, re) && mean_sym isa Union{Symbol, Nothing}
+            _saem_re_mean_offsets(dm, batch_infos, re, mean_sym, θ, ll_cache, Tθ)
+        else
+            nothing
+        end
+        # The mean is known (a literal or covariate-only expression) when it was centered
+        # out and no fixed effect estimates it: the variance maximizer is then the second
+        # moment about that mean, with no empirical-mean correction.
+        known_mean = offsets !== nothing && mean_sym === nothing
         sum_x = nothing
         sum_xx = nothing
         nvals = 0
-        for (bi, info) in enumerate(batch_infos), c in 1:n_chains
+        for (bi, info) in enumerate(batch_infos), c in 1:_saem_n_chains_at(n_chains, bi)
             b = b_chains[bi][c]
             rei = get_re_info(info)[ri]
-            for lvl_id in get_levels(get_re_map(rei))
+            for (li, lvl_id) in enumerate(get_levels(get_re_map(rei)))
                 v = _re_value_from_b(rei, lvl_id, b)
                 v === nothing && continue
                 raw = v isa Number ? Tθ[v] : Tθ.(collect(v))
@@ -2067,12 +2161,17 @@ function _saem_builtin_collect_current_stats(
                 else
                     continue
                 end
+                offsets === nothing || (x = x .- offsets[bi][li])
                 if sum_x === nothing
                     dim = length(x)
                     sum_x = zeros(Tθ, dim)
                     sum_xx = zeros(Tθ, dim, dim)
                 end
                 sum_x .+= x
+                # `vector * adjoint` dispatches to `broadcast(*, u, v)`, so this whole
+                # accumulation is BLAS-free and bit-reproducible across CPU kernels. Do NOT
+                # "optimize" it into `mul!`/`BLAS.syrk!`: that is exactly the dispatch the
+                # closed-form M-step exists to avoid.
                 sum_xx .+= x * x'
                 nvals += 1
             end
@@ -2081,7 +2180,11 @@ function _saem_builtin_collect_current_stats(
         mean_x = sum_x ./ nvals
         second_x = sum_xx ./ nvals
         push!(
-            re_pairs, re => (family = family, mean = mean_x, second = second_x, n = nvals)
+            re_pairs,
+            re => (
+                family = family, mean = mean_x, second = second_x, n = nvals,
+                known_mean = known_mean,
+            )
         )
     end
     re_stats = NamedTuple(re_pairs)
@@ -2091,7 +2194,7 @@ function _saem_builtin_collect_current_stats(
     if !isempty(keys(obs_targets))
         obs_acc = Dict{Symbol, Any}()
         all_supported = true
-        for (bi, info) in enumerate(batch_infos), c in 1:n_chains
+        for (bi, info) in enumerate(batch_infos), c in 1:_saem_n_chains_at(n_chains, bi)
             b = b_chains[bi][c]
             for i in get_inds(info)
                 η_ind = _build_eta_ind(dm, i, info, b, const_cache, θ)
@@ -2126,7 +2229,7 @@ function _saem_builtin_collect_current_stats(
     if !isempty(keys(hmm_emission_params))
         hmm_acc = Dict{Symbol, Any}()
         all_supported = true
-        for (bi, info) in enumerate(batch_infos), c in 1:n_chains
+        for (bi, info) in enumerate(batch_infos), c in 1:_saem_n_chains_at(n_chains, bi)
             b = b_chains[bi][c]
             for i in get_inds(info)
                 η_ind = _build_eta_ind(dm, i, info, b, const_cache, θ)
@@ -2179,6 +2282,8 @@ function _saem_builtin_smooth_re_stats(prev_re::NamedTuple, curr_re::NamedTuple,
                     mean = _saem_blend(p.mean, c.mean, γ),
                     second = _saem_blend(p.second, c.second, γ),
                     n = c.n,
+                    known_mean = hasproperty(c, :known_mean) ? c.known_mean :
+                        (hasproperty(p, :known_mean) && p.known_mean),
                 )
             )
         elseif haskey(curr_re, re)
@@ -2511,7 +2616,10 @@ function _saem_builtin_updates_from_smoothed_stats(
 
         μ_hat = st.mean
         S2_hat = st.second
-        Σ_hat = S2_hat .- μ_hat * μ_hat'
+        # `vector * adjoint` is a broadcast, not BLAS (see the accumulator). With a known
+        # mean the moments are already central, so there is nothing to subtract.
+        Σ_hat = (hasproperty(st, :known_mean) && st.known_mean) ? S2_hat :
+            S2_hat .- μ_hat * μ_hat'
         if any(!isfinite, Σ_hat)
             @warn "SAEM closed-form: non-finite covariance estimate for RE :$re; skipping update."
             continue
@@ -2876,7 +2984,8 @@ function _saem_log_closed_form_plan(
         has_custom_closed_form::Bool,
         base_free_names::Vector{Symbol},
         q2_base_free_names::Vector{Symbol},
-        shared_excluded::Vector{Symbol} = Symbol[]
+        shared_excluded::Vector{Symbol} = Symbol[];
+        label::String = "SAEM"
     )
     cf_syms = Symbol[]
     for v in values(re_cov_params)
@@ -2900,12 +3009,12 @@ function _saem_log_closed_form_plan(
     q1_numeric = [n for n in numeric_params if n ∉ q2_set]
     q2_numeric = [n for n in numeric_params if n ∈ q2_set]
     if isempty(numeric_params)
-        @info "SAEM: all parameters handled by closed-form M-step; numeric optimizer inactive."
+        @info "$(label): all parameters handled by closed-form M-step; numeric optimizer inactive."
     else
         groups = String[]
         !isempty(q1_numeric) && push!(groups, string(q1_numeric))
         !isempty(q2_numeric) && push!(groups, string(q2_numeric) * " (Q2-only)")
-        msg = "SAEM: numerically optimized parameters: $(join(groups, "  "))"
+        msg = "$(label): numerically optimized parameters: $(join(groups, "  "))"
         excluded = [n for n in shared_excluded if n in numeric_params]
         isempty(excluded) ||
             (msg *= "; $(excluded) excluded from the closed-form M-step because they are shared with other model blocks")
@@ -3034,12 +3143,16 @@ end
 # the eligibility report, and the RE family map. Shared by `_fit_model(::SAEM)` and the
 # dev_api SAEM primitives so their routing is bit-identical. `extra_objective !== nothing`
 # disables the closed-form path (the M-step is no longer separable), matching the fit.
-function _saem_resolve_closed_form_config(dm::DataModel, saem::SAEMOptions, extra_objective = nothing)
+function _saem_resolve_closed_form_config(
+        dm::DataModel, saem::SAEMOptions, extra_objective = nothing;
+        label::String = "SAEM"
+    )
     fixed_names = get_names(get_fixed(get_model(dm)))
     builtin_stats_mode = _saem_normalize_builtin_stats_mode(saem.builtin_stats)
     resid_var_param = saem.resid_var_param
     re_cov_params = saem.re_cov_params
     re_mean_params = saem.re_mean_params
+    re_mean_offsets = NamedTuple()
     hmm_emission_params = NamedTuple()
     shared_excluded = Symbol[]
     if builtin_stats_mode == :auto
@@ -3060,6 +3173,19 @@ function _saem_resolve_closed_form_config(dm::DataModel, saem::SAEMOptions, extr
                 merge(auto_cfg.re_cov_params, re_cov_params)
             re_mean_params = isempty(keys(re_mean_params)) ? auto_cfg.re_mean_params :
                 merge(auto_cfg.re_mean_params, re_mean_params)
+            # An offset belongs to the mean target it was parsed with, so keep the flag only
+            # where the effective target is still the autodetected one.
+            offset_pairs = Pair{Symbol, Bool}[]
+            for re in keys(auto_cfg.re_mean_offsets)
+                if !haskey(auto_cfg.re_mean_params, re)
+                    push!(offset_pairs, re => true)   # known mean, no target to override
+                elseif haskey(re_mean_params, re) &&
+                        getfield(re_mean_params, re) ===
+                        getfield(auto_cfg.re_mean_params, re)
+                    push!(offset_pairs, re => true)
+                end
+            end
+            re_mean_offsets = NamedTuple(offset_pairs)
             hmm_emission_params = auto_cfg.hmm_emission_params
             if resid_var_param isa NamedTuple
                 if isempty(keys(resid_var_param))
@@ -3088,10 +3214,10 @@ function _saem_resolve_closed_form_config(dm::DataModel, saem::SAEMOptions, extr
             resid_var_param, hmm_emission_params
         )
         if !isempty(builtin_cf_elig.outcome_targets_hmm)
-            @info "SAEM builtin_stats ignores HMM outcome targets; applying closed-form updates to eligible non-HMM/re blocks only." hmm_outcomes = builtin_cf_elig.outcome_targets_hmm
+            @info "$(label) builtin_stats ignores HMM outcome targets; applying closed-form updates to eligible non-HMM/re blocks only." hmm_outcomes = builtin_cf_elig.outcome_targets_hmm
         end
         if !builtin_cf_elig.has_any_closed_form_block
-            @info "SAEM builtin_stats has no eligible closed-form blocks; falling back to numeric M-step."
+            @info "$(label) builtin_stats has no eligible closed-form blocks; falling back to numeric M-step."
             builtin_stats_mode = :none
         end
     end
@@ -3101,11 +3227,12 @@ function _saem_resolve_closed_form_config(dm::DataModel, saem::SAEMOptions, extr
     # single joint Q1 M-step (which already adds `extra_objective`).
     if extra_objective !== nothing
         if builtin_stats_mode != :none
-            @info "SAEM: extra_objective present — disabling closed-form M-step; all free parameters (means, σ, ω) optimized numerically in the joint M-step."
+            @info "$(label): extra_objective present — disabling closed-form M-step; all free parameters (means, σ, ω) optimized numerically in the joint M-step."
             builtin_stats_mode = :none
         end
         re_cov_params = NamedTuple()
         re_mean_params = NamedTuple()
+        re_mean_offsets = NamedTuple()
         resid_var_param = NamedTuple()
         hmm_emission_params = NamedTuple()
     end
@@ -3114,6 +3241,7 @@ function _saem_resolve_closed_form_config(dm::DataModel, saem::SAEMOptions, extr
         builtin_stats_mode = builtin_stats_mode,
         re_cov_params = re_cov_params,
         re_mean_params = re_mean_params,
+        re_mean_offsets = re_mean_offsets,
         resid_var_param = resid_var_param,
         hmm_emission_params = hmm_emission_params,
         builtin_cf_elig = builtin_cf_elig,
@@ -3195,6 +3323,7 @@ function _fit_model(
     builtin_stats_mode = _cf_cfg.builtin_stats_mode
     re_cov_params = _cf_cfg.re_cov_params
     re_mean_params = _cf_cfg.re_mean_params
+    re_mean_offsets = _cf_cfg.re_mean_offsets
     resid_var_param = _cf_cfg.resid_var_param
     hmm_emission_params = _cf_cfg.hmm_emission_params
     builtin_cf_elig = _cf_cfg.builtin_cf_elig
@@ -3512,7 +3641,8 @@ function _fit_model(
                 ComponentArray(θu_curr, getaxes(θu_curr)), const_cache,
                 resid_var_param, hmm_emission_params,
                 re_cov_params, re_mean_params,
-                re_family_map, cache, rng
+                re_family_map, cache, rng;
+                re_mean_offsets = re_mean_offsets
             )
             builtin_stats_state = _saem_builtin_smooth_stats(
                 builtin_stats_state, curr_stats, γ

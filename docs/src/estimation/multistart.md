@@ -318,7 +318,7 @@ While multistart is primarily designed for optimization-based methods, it can be
 using NoLimits
 using DataFrames
 using Distributions
-using Turing
+import Turing
 
 model = @Model begin
     @covariates begin
@@ -347,7 +347,7 @@ ms = NoLimits.Multistart(; n_draws_requested=6, n_draws_used=3)
 
 res_ms = fit_model(
     ms, dm,
-    NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=200, n_adapt=0, progress=false)),
+    NoLimits.MCMC(; sampler=Turing.MH(), turing_kwargs=(n_samples=200, n_adapt=0, progress=false)),
 )
 
 chain_best = get_chain(res_ms)

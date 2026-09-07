@@ -39,7 +39,7 @@ CairoMakie.activate!(type = "png")
 using DataFrames
 using Distributions
 using Random
-using Turing
+import Turing
 
 Random.seed!(12)
 
@@ -151,7 +151,7 @@ For vectors, legend labels are assigned as `Model 1`, `Model 2`, and so on in in
 
 ```@example plotting_overview
 saem_quick = NoLimits.SAEM(;
-    sampler=MH(),
+    sampler=Turing.MH(),
     maxiters=20,
     mcmc_steps=8,
     t0=8,

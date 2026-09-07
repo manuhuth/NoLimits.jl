@@ -15,8 +15,8 @@ MCEM supports two E-step implementations, controlled by the `e_step` argument.
 
 The default strategy. Draws samples from the exact conditional distribution `p(b | y, θ)`
 with an MCMC kernel. The default kernel is the native `SaemixMH`, so this path needs no
-Turing; passing a [Turing.jl](https://turinglang.org/) sampler such as `NUTS()` or `MH()`
-requires `using Turing`.
+Turing; passing a [Turing.jl](https://turinglang.org/) sampler such as `Turing.NUTS()` or
+`Turing.MH()` requires `import Turing`.
 
 ```julia
 NoLimits.MCEM_MCMC(;
@@ -28,8 +28,10 @@ NoLimits.MCEM_MCMC(;
 ```
 
 - `sampler` - E-step kernel. Native (no Turing): `SaemixMH()`, `AdaptiveNoLimitsMH()`.
-  Turing samplers such as `MH()` or `NUTS(...)` need `using Turing`. Before v0.2.3 this
-  defaulted to `NUTS(0.75)` with `sample_schedule = 250`.
+  Turing samplers such as `Turing.MH()` or `Turing.NUTS(...)` need `import Turing` (not
+  `using Turing`, which collides with the NoLimits exports `Laplace`, `MAP`, `MLE`,
+  `loglikelihood`, `logprior` and `predict`). Before v0.2.3 this defaulted to `NUTS(0.75)`
+  with `sample_schedule = 250`.
 - `turing_kwargs` - forwarded to Turing; the keys `n_samples` and `n_adapt` are interpreted explicitly. Ignored by the native samplers.
 - `sample_schedule` - number of MCMC samples per iteration; accepts an integer, a vector (iteration-indexed), or a function `iter -> n_samples`.
 - `warm_start` - when `true`, reuses previous latent-state values as chain initialization.
@@ -77,7 +79,7 @@ es = NoLimits.MCEM_IS(
     adapt                 = true,
     warm_start_mcmc_iters = 5,
     mcmc_warmup           = NoLimits.MCEM_MCMC(
-        sampler       = MH(),
+        sampler       = Turing.MH(),
         turing_kwargs = (n_samples=50, n_adapt=0, progress=false),
     ),
 )
@@ -117,7 +119,7 @@ If fixed-effect priors are defined in the model, MCEM ignores them in its object
 using NoLimits
 using DataFrames
 using Distributions
-using Turing
+import Turing
 
 model = @Model begin
     @fixedEffects begin
@@ -154,7 +156,7 @@ dm = DataModel(model, df; primary_id=:ID, time_col=:t)
 ```julia
 res = fit_model(dm, NoLimits.MCEM(
     e_step  = NoLimits.MCEM_MCMC(
-        sampler       = MH(),
+        sampler       = Turing.MH(),
         turing_kwargs = (n_samples=50, n_adapt=0, progress=false),
     ),
     maxiters = 30,
@@ -187,7 +189,7 @@ The full set of constructor arguments is shown below. All arguments have default
 using Optimization
 using OptimizationOptimJL
 using LineSearches
-using Turing
+import Turing
 
 method = NoLimits.MCEM(;
     # E-step (new unified interface)
@@ -247,6 +249,7 @@ method = NoLimits.MCEM(;
 | Logging | `verbose`, `progress` | Diagnostic output and progress bar. |
 | Final EB estimation | `ebe_*` and `ebe_rescue_*` options | Post-fit empirical Bayes mode computation used by random-effects accessors and diagnostics. |
 | Bounds | `lb`, `ub` | Optional transformed-scale bounds for free fixed effects in M-step optimization. |
+| Closed-form M-step | `builtin_stats`, `resid_var_param`, `re_cov_params`, `re_mean_params` | Which parameter blocks are updated from sufficient statistics instead of by the optimizer. |
 
 ## Behavioral Notes
 
@@ -254,7 +257,36 @@ The constructor signature block above lists every keyword with its default. See 
 
 - **EM convergence.** MCEM monitors both fixed-effect stability (`rtol_theta`, `atol_theta`) and Q-function stability (`rtol_Q`, `atol_Q`) with the same windowed drift test used by SAEM: the last `convergence_window` iterates are split into two halves, and each coordinate's drift between the half means must satisfy `drift ≤ max(atol, rtol * scale, 2 * mc_se)`, where `mc_se` is the Monte-Carlo standard error of the half-mean difference estimated from the window itself (drift indistinguishable from sampling noise counts as stationary). `consecutive_params` is the number of consecutive iterations on which both tests must pass before convergence is declared; setting `rtol` and `atol` of a test to `0` disables early stopping. See the SAEM page's [Convergence and Early Stopping](saem.md#Convergence-and-Early-Stopping) section for details. Note that with a fixed, small Monte-Carlo sample size the EM iterates keep jittering at sampling scale and the fit typically uses all `maxiters`; a growing `sample_schedule` (classic MCEM practice) shrinks that jitter so the drift can fall below tolerance and trigger the stop. `verbose` enables iteration-level logging of `Q`, `dtheta`, `dQ`, and the drift values.
 - **Final EB modes.** After the EM iterations complete, MCEM computes empirical Bayes (EB) modal estimates of the random effects used by downstream accessors, configured through the `ebe_*` keywords (`ebe_grad_tol=:auto` selects a data-adaptive tolerance). When `ebe_rescue_on_high_grad=true` (default `false`), a rescue multistart governed by the `ebe_rescue_*` keywords is triggered if the final EB gradient norm remains above threshold.
-- **Bounds.** `lb`, `ub` are optional transformed-scale bounds for free fixed effects in the M-step optimization. Parameters held constant via the `constants` fit keyword are excluded automatically.
+- **Bounds.** `lb`, `ub` are optional transformed-scale bounds for free fixed effects in the M-step optimization. Parameters held constant via the `constants` fit keyword are excluded automatically. They do not apply to closed-form updates, which are clamped to each fixed effect's own declared natural-scale bounds instead.
+
+## Closed-Form M-step
+
+For an exponential-family block the Monte Carlo Q-function is maximized analytically, so the M-step for that block does not need an optimizer at all. `builtin_stats = :auto` (the default) detects those blocks and updates them from the sufficient statistics of the current E-step draws, using the same routing rules as [`SAEM`](@ref):
+
+| Keyword | Default | Meaning |
+| --- | --- | --- |
+| `builtin_stats` | `:auto` | `:auto` infers the eligible blocks from the model, `:closed_form` (alias `:gaussian_re`) uses the maps below without inference, `:none` optimizes everything numerically. |
+| `resid_var_param` | `:σ` | Fixed effect holding the residual standard deviation, or a NamedTuple of outcome column to parameter name. |
+| `re_cov_params` | `NamedTuple()` | Random-effect name to covariance parameter. |
+| `re_mean_params` | `NamedTuple()` | Random-effect name to mean parameter. |
+
+Eligible blocks are Gaussian/log-normal random-effect means and covariances, `Exponential` random-effect scales, the residual scale of `Normal`/`LogNormal`/`Exponential`/`Bernoulli`/`Poisson` outcomes, and supported HMM emissions. A scalar `Normal`/`LogNormal` mean written as `β + offset`, where `β` is a fixed effect and the offset carries none (for example `CL_mean + 0.75 * log(wt / 70)`), is also eligible: the per-level offset is subtracted before the moments are formed, so the covariance update centers on the structured mean. See [Which Models Have Closed-Form M-step Updates?](saem-advanced.md#Which-Models-Have-Closed-Form-M-step-Updates?) for the full list.
+
+Routing is hybrid. Eligible parameters are updated in closed form and held fixed for the iteration, everything else is optimized numerically exactly as before, and the numerical problem is skipped entirely when nothing is left. Two situations disable the path automatically, each with an info message: an [`MCEM_IS`](@ref) E-step (its draws are weighted while the statistics are not) and an `extra_objective` (the M-step is then not separable).
+
+Unlike SAEM, MCEM applies no stochastic-approximation smoothing: the statistics are a plain Monte Carlo average over the current iteration's draws, which is the exact conditional Q-maximizer for that block. Because the closed-form update carries none of the optimizer's own tolerance or jitter, a fit with `builtin_stats = :auto` follows a different iterate path than the same fit with `:none` and generally stops at a different iteration. Pass `builtin_stats = :none` to reproduce the pre-0.2.10 numerical M-step exactly.
+
+The routing is logged once at startup and recorded in the result:
+
+```julia
+res = fit_model(dm, MCEM())
+NoLimits.get_closed_form_mstep_used(get_result(res))   # true when a block was updated in closed form
+notes = get_notes(get_result(res))
+notes.closed_form_targets    # parameters updated from sufficient statistics
+notes.numeric_targets        # parameters left to the optimizer; () means it never ran
+notes.closed_form_mstep_mode # :closed_form_only, :hybrid or :numeric_only
+notes.builtin_stats_closed_form_eligibility.reasons   # why a block was rejected
+```
 
 ## Diagnostics
 
@@ -283,7 +315,7 @@ The legacy MCMC-only keyword interface is fully preserved. Existing code that do
 ```julia
 # Old API - still works
 method = NoLimits.MCEM(
-    sampler       = MH(),
+    sampler       = Turing.MH(),
     turing_kwargs = (n_samples=50, n_adapt=0, progress=false),
     maxiters      = 20,
 )

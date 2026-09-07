@@ -152,7 +152,9 @@ function _finalize_wald_uqresult(
         active_names, active_kinds, θu_from_active, Vt_raw, backend_used, vcov,
         pseudo_inverse, n_draws, level, rng, method_sym, extra_diag
     )
-    Vt, vcov_diag = _project_psd_covariance(Vt_raw)
+    Vt, vcov_diag = _project_psd_covariance(
+        Vt_raw; fallbacks = _wald_fallback_methods(method_sym)
+    )
 
     θ_coords_t = _coords_on_transformed_layout(fe, θ_hat_t, free_names; natural = false)
     θ_coords_u = _coords_on_transformed_layout(fe, θ_hat_u, free_names; natural = true)

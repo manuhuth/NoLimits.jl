@@ -203,7 +203,7 @@ plot_fits(res)                          # fit vs. data
 ```
 
 Swapping the inference paradigm is a one-line change: `fit_model(dm, SAEM())`, `fit_model(dm, MCEM())`,
-or `fit_model(dm, MCMC())` all fit the *same* model (`MCMC` needs `using Turing`). More examples — neural-ODE models, Markov-model
+or `fit_model(dm, MCMC())` all fit the *same* model (`MCMC` needs `import Turing`). More examples — neural-ODE models, Markov-model
 outcomes, normalizing-flow random effects, count outcomes, censored data, and multi-method
 comparison — are in the [Tutorials](https://manuhuth.github.io/NoLimits.jl/dev/tutorials/mixed-effects-multiple-methods).
 

@@ -399,7 +399,7 @@ After convergence, SAEM computes empirical Bayes modal estimates of the random e
 
 ### Bound Inputs
 
-`lb`, `ub` are optional transformed-scale bounds for free fixed effects. When a closed-form M-step is used, SAEM projects the closed-form updates into these bounds on the transformed scale.
+`lb`, `ub` are optional transformed-scale bounds for the numerical M-step over the free fixed effects. They do not apply to closed-form updates: those are clamped to each fixed effect's own declared natural-scale bounds (`lower`/`upper` in `@fixedEffects`), and scalar variance/scale targets additionally respect the `auto_var_lb`/`var_lb_value` floor.
 
 ### RE Annealing Inputs
 

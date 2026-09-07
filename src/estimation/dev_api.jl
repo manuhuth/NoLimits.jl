@@ -1532,7 +1532,8 @@ function _saem_stats_collect(dm::DataModel, batch_infos, b_chains, n_chains, θ,
     return _saem_builtin_collect_current_stats(
         dm, batch_infos, b_chains, n_chains, θ_re, const_cache,
         cfg.resid_var_param, cfg.hmm_emission_params,
-        cfg.re_cov_params, cfg.re_mean_params, cfg.re_family_map, llc, rng
+        cfg.re_cov_params, cfg.re_mean_params, cfg.re_family_map, llc, rng;
+        re_mean_offsets = cfg.re_mean_offsets
     )
 end
 
@@ -1547,9 +1548,12 @@ is bit-identical to the SAEM fit's per-iteration current statistics and plugs st
 [`saem_closed_form_mstep`].
 
 `stats` is a NamedTuple `(re, outcome, hmm)`:
-- `re[name] = (family, mean, second, n)`: RE moments, `mean = Σx/n`, `second = Σxx'/n` over
-  the `n` draw contributions (`x` is η; `log η` for lognormal families; the ALR transform
-  for `MvLogitNormal`).
+- `re[name] = (family, mean, second, n, known_mean)`: RE moments, `mean = Σx/n`,
+  `second = Σxx'/n` over the `n` draw contributions (`x` is η; `log η` for lognormal
+  families; the ALR transform for `MvLogitNormal`). When the random effect's declared mean
+  is structured, the level's own mean is subtracted from `x` first; `known_mean` is `true`
+  when that mean carries no fixed effect at all, in which case `second` is already the
+  central second moment and the closed-form variance update uses it directly.
 - `outcome[col] = (family, s1, s2, ss, n)`: additive residual sufficient statistics.
 - `hmm[col] = (family, target, sum_w, sum_wy)`: additive HMM emission statistics.
 

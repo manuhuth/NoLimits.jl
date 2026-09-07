@@ -116,7 +116,7 @@ Or configure the sampler through individual keyword arguments:
 - `mcmc_fit_kwargs` - additional keyword arguments for the underlying `fit_model` call.
 
 When no explicit configuration is provided, defaults from `NoLimits.MCMC` are used with a
-NUTS sampler. The MCMC refit runs a `MCMC` fit, so it requires `using Turing`.
+NUTS sampler. The MCMC refit runs a `MCMC` fit, so it requires `import Turing`.
 
 ## Returned Quantities
 

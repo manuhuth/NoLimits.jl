@@ -9,13 +9,13 @@ constructor reference.
 
 SAEM accepts three types of E-step sampler.
 
-### `MH()`
+### `Turing.MH()`
 
 Turing's built-in random-walk Metropolis-Hastings. Uses a fixed standard-Normal proposal in the linked (unconstrained) space. Fast per-step but requires careful tuning of `mcmc_steps` to achieve adequate mixing.
 
 ```julia
-using Turing
-res = fit_model(dm, SAEM(sampler=MH()))
+import Turing
+res = fit_model(dm, SAEM(sampler=Turing.MH()))
 ```
 
 ### `SaemixMH` (default)
@@ -48,7 +48,7 @@ Backward-compatible aliases:
 - `target_accept` maps to `proba_mcmc`.
 - `adapt_rate` maps to `stepsize_rw`.
 
-`SaemixMH` pairs naturally with the default `mstep_sa_on_params=true` because kernel-1's prior-proposal draws always produce a finite log-joint, so E-step retries are rarely triggered. For Turing-based samplers (`MH()`, `NUTS`) the E-step retry mechanism (`max_estep_retries=3`) handles the occasional non-finite objective that can arise early in training.
+`SaemixMH` pairs naturally with the default `mstep_sa_on_params=true` because kernel-1's prior-proposal draws always produce a finite log-joint, so E-step retries are rarely triggered. For Turing-based samplers (`Turing.MH()`, `Turing.NUTS`) the E-step retry mechanism (`max_estep_retries=3`) handles the occasional non-finite objective that can arise early in training.
 
 ### `AdaptiveNoLimitsMH`
 
@@ -83,9 +83,9 @@ Constructor keywords:
 Any Turing-compatible sampler can be used:
 
 ```julia
-using Turing
+import Turing
 res = fit_model(dm, SAEM(
-    sampler      = NUTS(0.75),
+    sampler      = Turing.NUTS(0.75),
     turing_kwargs = (n_samples=10, n_adapt=5, progress=false),
     mcmc_steps   = 10,
 ))
@@ -174,7 +174,7 @@ end
 
 # Collapse eta_site toward a fixed effect over the run
 method = NoLimits.SAEM(;
-    sampler=MH(),
+    sampler=Turing.MH(),
     turing_kwargs=(n_samples=20, n_adapt=0, progress=false),
     maxiters=100,
     anneal_to_fixed=(:eta_site,),
@@ -189,7 +189,7 @@ To compare schedules, pass the same `anneal_to_fixed` with a different `anneal_s
 
 ```julia
 method_linear = NoLimits.SAEM(;
-    sampler=MH(),
+    sampler=Turing.MH(),
     turing_kwargs=(n_samples=20, n_adapt=0, progress=false),
     maxiters=100,
     anneal_to_fixed=(:eta_site,),
@@ -197,7 +197,7 @@ method_linear = NoLimits.SAEM(;
 )
 
 method_gamma = NoLimits.SAEM(;
-    sampler=MH(),
+    sampler=Turing.MH(),
     turing_kwargs=(n_samples=20, n_adapt=0, progress=false),
     maxiters=100,
     anneal_to_fixed=(:eta_site,),
@@ -219,6 +219,7 @@ SAEM provides two closed-form pathways that can substantially accelerate converg
 Built-in blockwise closed-form updates are available for:
 
 - Random-effect distribution parameters in `Normal`, `MvNormal`, `LogNormal`, and `Exponential` blocks (through `re_mean_params` and `re_cov_params`).
+- Structured scalar `Normal`/`LogNormal` means of the form `β + offset`, where `β` is a fixed effect and the offset carries none (for example the allometric `CL_mean + 0.75 * log(wt / 70)`). The per-level offset is subtracted before the moments are formed, so `β` is updated in closed form and the covariance update centers on the structured mean. A mean with two free fixed effects in it (`μ0 + β * x`) is not eligible and stays numeric.
 - Observation distribution parameters in `Normal`, `LogNormal`, `Exponential`, `Bernoulli`, and `Poisson` blocks (through `resid_var_param`, including named outcome-specific mappings).
 
 These updates are compatible with arbitrarily nonlinear model structure, including ODE-based dynamics and function-approximator components, provided that the updated parameters appear in the supported distribution blocks.
@@ -520,7 +521,7 @@ function mstep_closed_form(s, dm)
 end
 
 method = NoLimits.SAEM(;
-    sampler=MH(),
+    sampler=Turing.MH(),
     turing_kwargs=(n_samples=12, n_adapt=0, progress=false),
     maxiters=20,
     suffstats=suffstats,

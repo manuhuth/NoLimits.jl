@@ -2,6 +2,93 @@
 
 ## Unreleased
 
+## v0.2.10
+
+### Bug fixes
+
+- The warning raised when a Wald covariance is projected to the nearest PSD matrix
+  recommended `method = :profile / :mcmc`. Neither name was right for every fit: the
+  keyword is `:mcmc_refit`, and profile UQ is restricted to MLE/MAP/Laplace/GHQuadrature
+  results, so an MCEM or SAEM user following the advice hit
+  "Profile UQ is currently supported for ...". The message now names only the backends that
+  exist for the fit at hand.
+
+- A normalizing-flow random effect could kill a whole `SAEM` fit instead of scoring the bad
+  proposal `-Inf`. When the Q2 M-step drives a planar layer's weight to exactly `w = 0`,
+  `Bijectors.get_u_hat` returns `u_hat = NaN` while `w'u_hat` stays finite, the `NaN`
+  propagates into the next layer's `find_alpha`, and Roots rejects the resulting `[NaN, NaN]`
+  bracket with `ArgumentError("The interval [a,b] is not a bracketing interval...")`. The
+  random-effect prior already wraps that call intending to score it `-Inf`, but
+  `_is_numeric_error` classified `ArgumentError` by message only and this message matched
+  none of the alternatives, so the guard rethrew. Roots' bracketing message is now
+  classified as a numeric error, which closes the same hole in `_re_logpdf_batch` and
+  `_laplace_logf_batch` at once, so every estimator gets it. Only paths that previously
+  threw are affected: no successful fit changes. This is not a Bijectors 0.16 regression;
+  Bijectors 0.15.24 with `Roots.ITP` fails identically, and the compat bounds are unchanged.
+
+### New features
+
+- `MCEM` gained the closed-form M-step that `SAEM` already had, through four new keywords
+  with SAEM's names, meanings and defaults: `builtin_stats` (default `:auto`),
+  `resid_var_param`, `re_cov_params` and `re_mean_params`. Parameters whose Monte Carlo
+  Q-maximizer is available in closed form (Gaussian/log-normal random-effect means and
+  covariances, `Exponential` random-effect scales, the residual scale, supported HMM
+  emissions) are updated from the sufficient statistics of the current E-step draws, and
+  the remaining free parameters are optimized numerically as before. When nothing is left
+  the numerical M-step is skipped entirely. Unlike SAEM there is no stochastic-approximation
+  smoothing: the statistics are a plain Monte Carlo average over this iteration's draws.
+  The path removes the optimizer's BLAS calls from the M-step, which is what made the same
+  fit differ in its last bits between AVX-512 and AVX2/Zen machines. It disables itself for
+  an `MCEM_IS` E-step (weighted draws, unweighted statistics) and when `extra_objective` is
+  passed (the M-step is then not separable), each with an info message. The routing is
+  logged at startup and recorded in `notes` as `closed_form_targets`, `numeric_targets`,
+  `closed_form_mstep_mode` and `builtin_stats_closed_form_eligibility`, with
+  `get_closed_form_mstep_used(get_result(res))` as the one-line check.
+- A random-effect mean written as `β + offset`, where `β` is a fixed effect and the offset
+  carries no fixed effect (for example the allometric `LogNormal(CL_mean + 0.75 * log(wt /
+  70), sigma_CL)`), is now a closed-form target for both `SAEM` and `MCEM`. The per-level
+  offset is subtracted before the moments are formed, so `β` is updated in closed form and
+  the covariance update centers on the structured mean instead of the pooled empirical one.
+  A mean with two free fixed effects in it (`μ0 + β * x`) remains ineligible.
+
+### Behavior changes
+
+- **`MCEM` results change for models with an exponential-family block**, because
+  `builtin_stats` defaults to `:auto`. The closed-form update is the exact maximizer of the
+  same Monte Carlo Q-function over those parameters, so the estimator's target is unchanged,
+  but it carries none of the optimizer's tolerance or jitter: the sequence of iterates
+  differs, the windowed drift test typically fires earlier, and the reported iteration count
+  and objective move. Pass `MCEM(builtin_stats = :none)` to restore the previous, fully
+  numerical M-step exactly.
+- **`SAEM` covariance estimates change for random effects with a structured mean** of the
+  `β + offset` form described above, because the covariance is now centered on that mean.
+  The previous update centered on the pooled empirical mean, which absorbed the
+  covariate-driven between-subject spread into the random-effect variance.
+- **`SAEM` and `MCEM` closed-form variance estimates change for literal-mean random
+  effects**, i.e. the common `Normal(0.0, ω)` / `LogNormal(0.0, ω)` form. The mean is known
+  there, so the exact conditional maximizer is the second moment *about that mean*,
+  `sqrt(Σ(η - μ)² / n)`. The previous update computed `second - mean * mean'`, subtracting
+  the pooled empirical mean of the draws, which is the maximizer only when the mean is a
+  free parameter estimated from those same moments. The old value was biased low by
+  `E[η - μ]²`, and that bias is not always small: on the `fx_re_dm` test fixture the
+  closed-form ω moves from 0.162 to 0.228 at identical draws. Only the closed-form path
+  changes, so `builtin_stats = :none` reproduces the previous numbers.
+- Method-level `lb`/`ub` never constrained closed-form updates (they are transformed-scale
+  bounds for the optimizer); closed-form values are clamped to each fixed effect's own
+  declared natural-scale bounds. The SAEM documentation claimed otherwise and has been
+  corrected.
+
+### Documentation
+
+- The `SAEM` docstring listed `builtin_stats = :on`/`:off` and
+  `builtin_mean = :additive`/`:all`, none of which exist. The accepted values are
+  `:auto`/`:closed_form`/`:gaussian_re`/`:none` and `:none`/`:glm`.
+- Enabling the Turing extension is now documented as `import Turing` rather than
+  `using Turing`, because `using Turing` collides with the NoLimits exports `Laplace`,
+  `MAP`, `MLE`, `loglikelihood`, `logprior` and `predict`.
+- Backfilled the missing `## v0.2.0` heading below (its release notes were folded into the
+  `v0.2.1` section when the changelog was first written).
+
 ## v0.2.9
 
 ### Bug fixes
@@ -164,7 +251,7 @@
 
 - Turing.jl is now a weak dependency (#36). `using NoLimits` no longer loads it, cutting
   load time and dependency count; `MCMC`, `VI`, the chain-based UQ refit and the Turing
-  E-step samplers require an explicit `using Turing`. `MCEM`'s default E-step is now the
+  E-step samplers require an explicit `import Turing`. `MCEM`'s default E-step is now the
   Turing-free `MCEM_MCMC(sampler = SaemixMH(), sample_schedule = 100)` - pass
   `NUTS(0.75)` / `250` to restore the previous default.
 - Random effects can be given a copula distribution from Copulas.jl (#177), loaded via
@@ -355,6 +442,8 @@
   every fresh dependency resolve, including CI, the docs build and Aqua's
   persistent-tasks probe. The cap can be lifted once LikelihoodProfiler imports
   `SciMLBase` itself.
+
+## v0.2.0
 
 ### Breaking changes
 

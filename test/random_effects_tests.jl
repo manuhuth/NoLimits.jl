@@ -242,6 +242,32 @@ end
     @test occursin("Unsupported keyword", sprint(showerror, err))
 end
 
+# A planar layer with w = 0 makes Bijectors' `get_u_hat` return u_hat = NaN, and a
+# multi-layer chain reports that as a Roots bracketing ArgumentError rather than as NaN.
+# The RE prior must score such a point -Inf instead of throwing: regression for the 0.2.9
+# normalizing-flow SAEM crash, whose Q2 M-step drove a layer's weight to exactly zero.
+@testset "flow prior with a zero planar weight scores -Inf" begin
+    # `[w(d); u(d); b(1)]` per layer, layers in chain order; the last layer has w = 0, so
+    # the inverse chain hits the degeneracy first and passes NaN to the layer before it.
+    psi_bad = [
+        -1.3104712579054207, 0.9974286247290959, 1.4732993220574093,
+        0.0, 3.2382304226542815, -1.8312014258434777,
+    ]
+    flow = NormalizingPlanarFlow(
+        psi_bad, NormalizingPlanarFlow(1, 2).rebuild, MvNormal(zeros(1), I)
+    )
+    x_bad = [-0.643686975316279]
+    # Documents the upstream contract; drop it if Bijectors ever returns NaN here instead.
+    @test_throws ArgumentError logpdf(flow, x_bad)
+    @test NoLimits._is_numeric_error(
+        try
+            logpdf(flow, x_bad)
+        catch err
+            err
+        end
+    )
+end
+
 # #246: sampled `mean` alongside the sampled `cov`, plus the `params` interface.
 @testset "NormalizingPlanarFlow moments and params" begin
     f = NormalizingPlanarFlow(2, 1)

@@ -835,6 +835,21 @@ end
     @test_logs (:warn, r"far beyond roundoff") NoLimits._project_psd_covariance(
         [-1.0 0.0; 0.0 1.0]
     )
+
+    # The alternative the warning names must exist for the fit at hand: profile UQ is
+    # restricted to MLE/MAP/Laplace/GHQuadrature, so an MCEM or SAEM fit is sent to
+    # :mcmc_refit only.
+    @test NoLimits._wald_fallback_methods(:laplace) == "method = :profile / :mcmc_refit"
+    @test NoLimits._wald_fallback_methods(:ghquadrature) == "method = :profile / :mcmc_refit"
+    @test NoLimits._wald_fallback_methods(:mcem) == "method = :mcmc_refit"
+    @test NoLimits._wald_fallback_methods(:saem) == "method = :mcmc_refit"
+    @test NoLimits._wald_fallback_methods(:focei) == "method = :mcmc_refit"
+    @test_logs (:warn, r"Prefer method = :mcmc_refit for those parameters\.") NoLimits._project_psd_covariance(
+        [-1.0 0.0; 0.0 1.0]; fallbacks = NoLimits._wald_fallback_methods(:mcem)
+    )
+    @test_logs (:warn, r"Prefer method = :profile / :mcmc_refit") NoLimits._project_psd_covariance(
+        [-1.0 0.0; 0.0 1.0]; fallbacks = NoLimits._wald_fallback_methods(:laplace)
+    )
     Vp, dp = @test_logs (:warn, r"shrunk toward zero") NoLimits._project_psd_covariance(
         [1.0 0.0; 0.0 -1.0e-20]
     )
