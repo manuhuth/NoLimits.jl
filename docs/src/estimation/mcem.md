@@ -15,8 +15,8 @@ MCEM supports two E-step implementations, controlled by the `e_step` argument.
 
 The default strategy. Draws samples from the exact conditional distribution `p(b | y, θ)`
 with an MCMC kernel. The default kernel is the native `SaemixMH`, so this path needs no
-Turing; passing a [Turing.jl](https://turinglang.org/) sampler such as `NUTS()` or `MH()`
-requires `using Turing`.
+Turing; passing a [Turing.jl](https://turinglang.org/) sampler such as `Turing.NUTS()` or
+`Turing.MH()` requires `import Turing`.
 
 ```julia
 NoLimits.MCEM_MCMC(;
@@ -28,8 +28,10 @@ NoLimits.MCEM_MCMC(;
 ```
 
 - `sampler` - E-step kernel. Native (no Turing): `SaemixMH()`, `AdaptiveNoLimitsMH()`.
-  Turing samplers such as `MH()` or `NUTS(...)` need `using Turing`. Before v0.2.3 this
-  defaulted to `NUTS(0.75)` with `sample_schedule = 250`.
+  Turing samplers such as `Turing.MH()` or `Turing.NUTS(...)` need `import Turing` (not
+  `using Turing`, which collides with the NoLimits exports `Laplace`, `MAP`, `MLE`,
+  `loglikelihood`, `logprior` and `predict`). Before v0.2.3 this defaulted to `NUTS(0.75)`
+  with `sample_schedule = 250`.
 - `turing_kwargs` - forwarded to Turing; the keys `n_samples` and `n_adapt` are interpreted explicitly. Ignored by the native samplers.
 - `sample_schedule` - number of MCMC samples per iteration; accepts an integer, a vector (iteration-indexed), or a function `iter -> n_samples`.
 - `warm_start` - when `true`, reuses previous latent-state values as chain initialization.
@@ -77,7 +79,7 @@ es = NoLimits.MCEM_IS(
     adapt                 = true,
     warm_start_mcmc_iters = 5,
     mcmc_warmup           = NoLimits.MCEM_MCMC(
-        sampler       = MH(),
+        sampler       = Turing.MH(),
         turing_kwargs = (n_samples=50, n_adapt=0, progress=false),
     ),
 )
@@ -117,7 +119,7 @@ If fixed-effect priors are defined in the model, MCEM ignores them in its object
 using NoLimits
 using DataFrames
 using Distributions
-using Turing
+import Turing
 
 model = @Model begin
     @fixedEffects begin
@@ -154,7 +156,7 @@ dm = DataModel(model, df; primary_id=:ID, time_col=:t)
 ```julia
 res = fit_model(dm, NoLimits.MCEM(
     e_step  = NoLimits.MCEM_MCMC(
-        sampler       = MH(),
+        sampler       = Turing.MH(),
         turing_kwargs = (n_samples=50, n_adapt=0, progress=false),
     ),
     maxiters = 30,
@@ -187,7 +189,7 @@ The full set of constructor arguments is shown below. All arguments have default
 using Optimization
 using OptimizationOptimJL
 using LineSearches
-using Turing
+import Turing
 
 method = NoLimits.MCEM(;
     # E-step (new unified interface)
@@ -313,7 +315,7 @@ The legacy MCMC-only keyword interface is fully preserved. Existing code that do
 ```julia
 # Old API - still works
 method = NoLimits.MCEM(
-    sampler       = MH(),
+    sampler       = Turing.MH(),
     turing_kwargs = (n_samples=50, n_adapt=0, progress=false),
     maxiters      = 20,
 )

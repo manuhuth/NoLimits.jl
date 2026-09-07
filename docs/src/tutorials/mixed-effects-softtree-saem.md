@@ -24,7 +24,7 @@ using Random
 using LinearAlgebra
 using OrdinaryDiffEq
 using SciMLBase
-using Turing
+import Turing
 
 include(joinpath(@__DIR__, "_data_loaders.jl"))
 

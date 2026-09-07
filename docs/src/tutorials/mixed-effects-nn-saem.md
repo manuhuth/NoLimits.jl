@@ -28,7 +28,7 @@ using LinearAlgebra
 using OrdinaryDiffEq
 using SciMLBase
 using SimpleChains
-using Turing
+import Turing
 
 include(joinpath(@__DIR__, "_data_loaders.jl"))
 

@@ -9,8 +9,10 @@ Markov chain Monte Carlo (MCMC) methods provide a principled approach to Bayesia
 
 !!! note "Turing is an optional dependency"
     NoLimits does not install or load Turing for you. Run `Pkg.add("Turing")` and
-    `using Turing` alongside NoLimits; without it, `fit_model(dm, MCMC())` raises an
-    error naming what to install. See [Optional Dependencies](../installation.md#Optional-Dependencies).
+    `import Turing` alongside NoLimits; without it, `fit_model(dm, MCMC())` raises an
+    error naming what to install. Use `import`, not `using`: `using Turing` collides with
+    the NoLimits exports `Laplace`, `MAP`, `MLE`, `loglikelihood`, `logprior` and
+    `predict`. See [Optional Dependencies](../installation.md#Optional-Dependencies).
 
 ## Applicability
 
@@ -29,7 +31,7 @@ Note that `MCMC` samples on the natural (untransformed) parameter scale. The par
 using NoLimits
 using DataFrames
 using Distributions
-using Turing
+import Turing
 
 model = @Model begin
     @fixedEffects begin
@@ -62,7 +64,7 @@ df = DataFrame(
 dm = DataModel(model, df; primary_id=:ID, time_col=:t)
 
 method = NoLimits.MCMC(;
-    sampler=NUTS(0.75),
+    sampler=Turing.NUTS(0.75),
     turing_kwargs=(n_samples=500, n_adapt=250, progress=false),
 )
 
@@ -75,7 +77,7 @@ The `MCMC` constructor accepts the following keyword arguments, which control th
 
 ```julia
 using NoLimits
-using Turing
+import Turing
 
 method = NoLimits.MCMC(;
     sampler=Turing.NUTS(0.75),
@@ -131,7 +133,7 @@ constants_re = (; eta=(; A=0.0))
 
 res_fixed_levels = fit_model(
     dm,
-    NoLimits.MCMC(; sampler=NUTS(0.75), turing_kwargs=(n_samples=300, n_adapt=150, progress=false));
+    NoLimits.MCMC(; sampler=Turing.NUTS(0.75), turing_kwargs=(n_samples=300, n_adapt=150, progress=false));
     constants_re=constants_re,
 )
 ```
@@ -143,7 +145,7 @@ For mixed-effects models, it can be useful to fix all population-level parameter
 ```julia
 res_re_only = fit_model(
     dm,
-    NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=400, n_adapt=0, progress=false));
+    NoLimits.MCMC(; sampler=Turing.MH(), turing_kwargs=(n_samples=400, n_adapt=0, progress=false));
     constants=(a=0.2, b=0.1, tau=0.4, sigma=0.3),
 )
 ```
@@ -156,7 +158,7 @@ When the model contains no random effects, `MCMC` samples only the fixed effects
 using NoLimits
 using DataFrames
 using Distributions
-using Turing
+import Turing
 
 model_fixed = @Model begin
     @covariates begin
@@ -186,7 +188,7 @@ dm_fixed = DataModel(model_fixed, df_fixed; primary_id=:ID, time_col=:t)
 
 res_fixed = fit_model(
     dm_fixed,
-    NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=300, n_adapt=0, progress=false)),
+    NoLimits.MCMC(; sampler=Turing.MH(), turing_kwargs=(n_samples=300, n_adapt=0, progress=false)),
 )
 ```
 
@@ -198,7 +200,7 @@ Hidden Markov models (HMMs) with subject-level random effects can also be estima
 using NoLimits
 using DataFrames
 using Distributions
-using Turing
+import Turing
 
 model_hmm = @Model begin
     @covariates begin
@@ -236,7 +238,7 @@ dm_hmm = DataModel(model_hmm, df_hmm; primary_id=:ID, time_col=:t)
 
 res_hmm = fit_model(
     dm_hmm,
-    NoLimits.MCMC(; sampler=MH(), turing_kwargs=(n_samples=200, n_adapt=0, progress=false)),
+    NoLimits.MCMC(; sampler=Turing.MH(), turing_kwargs=(n_samples=200, n_adapt=0, progress=false)),
 )
 ```
 

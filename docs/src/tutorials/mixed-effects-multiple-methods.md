@@ -22,7 +22,7 @@ using Distributions
 using Downloads
 using Random
 using SciMLBase
-using Turing
+import Turing
 
 include(joinpath(@__DIR__, "_data_loaders.jl"))
 
@@ -184,7 +184,7 @@ mcem_method = NoLimits.MCEM(;
 saem_method = NoLimits.SAEM()
 
 mcmc_method = NoLimits.MCMC(;
-    sampler=NUTS(0.75),
+    sampler=Turing.NUTS(0.75),
     progress=false,
     turing_kwargs=(n_samples=1000, n_adapt=500, progress=false),
 )

@@ -66,8 +66,11 @@ MCMC-based E-step for [`MCEM`](@ref). Accepts the native samplers
 
 # Keyword Arguments
 - `sampler`: Defaults to `SaemixMH()`, which needs no Turing. Turing samplers
-  (`NUTS`, `MH`) require `using Turing`. To restore the pre-0.2.3 default, pass
-  `MCEM_MCMC(sampler = NUTS(0.75), sample_schedule = 250)`.
+  (`NUTS`, `MH`) require `import Turing`. Prefer `import` over `using Turing`: the latter
+  brings Turing's `Laplace`, `MAP`, `MLE`, `loglikelihood`, `logprior` and `predict` into
+  scope alongside the NoLimits exports of the same names, and every unqualified use then
+  fails with an ambiguity error. To restore the pre-0.2.3 default, pass
+  `MCEM_MCMC(sampler = Turing.NUTS(0.75), sample_schedule = 250)`.
 - `turing_kwargs::NamedTuple`: forwarded to `Turing.sample`; ignored by the native samplers.
 - `sample_schedule`: samples per E-step — `Int`, `Vector{Int}`, or `Function(iter)->Int`.
   Defaults to `100`.

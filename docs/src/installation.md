@@ -82,8 +82,15 @@ always available.
 
 !!! note "Turing samplers"
     `SAEM` and `MCEM` default to the native `SaemixMH` sampler and need no Turing. Pass
-    `MH()`, `NUTS()` or another Turing sampler and the Turing extension is required.
-    `MCMC` and `VI` always require it.
+    `Turing.MH()`, `Turing.NUTS()` or another Turing sampler and the Turing extension is
+    required. `MCMC` and `VI` always require it.
+
+!!! warning "`import Turing`, not `using Turing`"
+    Loading Turing with `import Turing` is enough to trigger the extension. Prefer it over
+    `using Turing`, which brings Turing's own `Laplace`, `MAP`, `MLE`, `loglikelihood`,
+    `logprior` and `predict` into scope alongside the NoLimits exports of the same names:
+    every unqualified use then fails with an ambiguity error. With `import Turing`, refer
+    to Turing's names as `Turing.NUTS()`, `Turing.MH()` and so on.
 
 !!! note "Optimizers"
     Optimizers from `OptimizationBBO` and `OptimizationNLopt` still work with every fitting
