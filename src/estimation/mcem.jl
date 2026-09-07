@@ -1623,12 +1623,7 @@ function _fit_model(
             # Plain Monte Carlo average over THIS iteration's draws. MCEM keeps no
             # stochastic-approximation state, and routing through `_saem_blend` with
             # γ = 1 would not be bitwise the draws' own mean.
-            b_chains = [
-                [
-                    view(samples_by_batch[bi], :, c)
-                        for c in 1:size(samples_by_batch[bi], 2)
-                ] for bi in eachindex(batch_infos)
-            ]
+            b_chains = [[view(s, :, c) for c in axes(s, 2)] for s in samples_by_batch]
             n_draws = [length(ch) for ch in b_chains]
             θ_cf = ComponentArray(θu_curr, getaxes(θu_curr))
             stats_cf = _saem_builtin_collect_current_stats(

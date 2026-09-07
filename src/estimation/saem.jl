@@ -2092,12 +2092,10 @@ function _saem_re_mean_offsets(
         ::Type{Tθ}
     ) where {Tθ}
     β = mean_sym === nothing ? zero(Tθ) : Tθ(getproperty(θ, mean_sym))
-    return [
-        Tθ[
-            Tθ(Distributions.params(d)[1]) - β
-                for d in getproperty(_re_dists_for_info(dm, info, θ, ll_cache), re)
-        ] for info in batch_infos
-    ]
+    return map(batch_infos) do info
+        dists = getproperty(_re_dists_for_info(dm, info, θ, ll_cache), re)
+        return Tθ[Tθ(Distributions.params(d)[1]) - β for d in dists]
+    end
 end
 
 # Collect this iteration's sufficient statistics from EVERY chain's sample. Each chain
