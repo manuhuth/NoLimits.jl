@@ -7,6 +7,7 @@ using Lux
 using ForwardDiff
 using SciMLBase
 using Roots
+import Bijectors
 using DataInterpolations
 using LinearAlgebra
 
@@ -543,6 +544,24 @@ end
         ArgumentError("Normal: the condition σ > 0 is not satisfied.")
     )
     @test NoLimits._is_numeric_error(ArgumentError("matrix contains Infs or NaNs"))
+    # Roots' bracketing methods (A42 since Bijectors 0.16.2, ITP before it) reject a
+    # non-bracketing interval with a plain ArgumentError. `Bijectors.find_alpha` hits this
+    # when a degenerate flow parameter (a planar layer with w = 0) makes wᵗy non-finite:
+    # the same event as the ConvergenceFailed above, and it killed a 0.2.9 flow SAEM fit.
+    @test NoLimits._is_numeric_error(
+        ArgumentError(
+            "The interval [a,b] is not a bracketing interval.\n" *
+                "You need f(a) and f(b) to have different signs (f(a) * f(b) < 0)."
+        )
+    )
+    # The real thing, not just the message: a NaN argument must be classified, not rethrown.
+    @test NoLimits._is_numeric_error(
+        try
+            Bijectors.find_alpha(NaN, -0.76, 1.47)
+        catch err
+            err
+        end
+    )
     # A bare "Inf"/"NaN" substring must not re-open the hole.
     @test !NoLimits._is_numeric_error(ArgumentError("Information missing"))
     @test !NoLimits._is_numeric_error(ArgumentError("Infinite loop guard"))

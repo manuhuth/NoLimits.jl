@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Bug fixes
+
+- A normalizing-flow random effect could kill a whole `SAEM` fit instead of scoring the bad
+  proposal `-Inf`. When the Q2 M-step drives a planar layer's weight to exactly `w = 0`,
+  `Bijectors.get_u_hat` returns `u_hat = NaN` while `w'u_hat` stays finite, the `NaN`
+  propagates into the next layer's `find_alpha`, and Roots rejects the resulting `[NaN, NaN]`
+  bracket with `ArgumentError("The interval [a,b] is not a bracketing interval...")`. The
+  random-effect prior already wraps that call intending to score it `-Inf`, but
+  `_is_numeric_error` classified `ArgumentError` by message only and this message matched
+  none of the alternatives, so the guard rethrew. Roots' bracketing message is now
+  classified as a numeric error, which closes the same hole in `_re_logpdf_batch` and
+  `_laplace_logf_batch` at once, so every estimator gets it. Only paths that previously
+  threw are affected: no successful fit changes. This is not a Bijectors 0.16 regression;
+  Bijectors 0.15.24 with `Roots.ITP` fails identically, and the compat bounds are unchanged.
+
 ### New features
 
 - `MCEM` gained the closed-form M-step that `SAEM` already had, through four new keywords

@@ -126,9 +126,16 @@ end
 # `ArgumentError` is the workhorse exception of half of Julia, so classifying all of them
 # as numeric degeneracy masked genuine programming errors as `-Inf` (#326). Only messages
 # that actually signal a numeric failure count: Distributions' `check_args` (a scale
-# driven negative by an optimizer step) and LAPACK/BLAS finite checks.
+# driven negative by an optimizer step), LAPACK/BLAS finite checks, and Roots' bracketing
+# methods, which reject a non-bracketing interval with a plain `ArgumentError`.
+# `Bijectors.find_alpha` hands Roots `[wᵗy - 2|wᵗû|, wᵗy + 2|wᵗû|]`, which brackets the
+# root for every finite input, so a rejection means a non-finite `wᵗy`: a degenerate flow
+# proposal, e.g. a planar layer whose `w` hit exactly zero, at which `get_u_hat` returns
+# `û = NaN` while `wᵗû` stays finite. That is a -Inf point for the optimizer to back off
+# from, not a programming error.
 # Word boundaries matter: a bare "Inf" substring also matches "Information missing".
-const _NUMERIC_ARGUMENT_ERROR_RE = r"is not satisfied|Infs or NaNs|\bNaN\b|\bInf\b"
+const _NUMERIC_ARGUMENT_ERROR_RE =
+    r"is not satisfied|Infs or NaNs|not a bracketing interval|\bNaN\b|\bInf\b"
 
 @inline function _is_numeric_argument_error(err::ArgumentError)
     return occursin(_NUMERIC_ARGUMENT_ERROR_RE, string(err.msg))
