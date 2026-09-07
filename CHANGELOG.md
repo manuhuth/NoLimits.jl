@@ -2,6 +2,162 @@
 
 ## Unreleased
 
+## v0.2.9
+
+### Bug fixes
+
+- `extra_objective` was dropped from the fit metadata, so Wald covariances, profile
+  likelihoods and the `mcmc_refit` UQ path inverted a different Hessian than the one that
+  was minimized. Every estimator now records it and all three UQ paths re-add it (#331).
+- Wald with a single usable natural-scale draw reported zero variance. The exact scalar
+  closed form is now used directly, and only the coordinates that genuinely need sampled
+  moments warn on fewer than two usable draws (#338).
+- Profile UQ reconstructed the declared model box instead of resolving the estimator's
+  effective `lb`/`ub`/`ignore_model_bounds`, so scan and nuisance optimization ran on the
+  wrong domain (#340).
+- A bound-pinned coordinate aborted every other profile interval, and the inward epsilon
+  could cross the estimate, making a strictly interior estimate near a bound unprofilable
+  (#341).
+- `fit_cv` Monte Carlo modes dropped failed draws from the denominator instead of scoring
+  them as zero probability, and the failed-draw count is now reported (#332).
+- The cross-validation loss column was copied from the first draw rather than averaged,
+  because `:loss in names(df)` is always false for a `String`-keyed `names` (#333).
+- `fit_cv` now derives independent training and scoring RNG streams per fold and passes the
+  training stream to `fit_model` (#334).
+- Boundary simplex declarations are rejected with a parameter-specific message, and
+  `stickbreak_forward` throws a `DomainError` on an exhausted stick instead of producing
+  `0/0` NaN coordinates (#336).
+- The stick-breaking pullback and the logit, elementwise and stick-breaking log-Jacobians
+  now use the clamped derivative, so they agree with the clamped inverse they
+  differentiate (#337).
+- Turing's adaptive samplers take `nadapts`, not `adapt`, so the old keyword was absorbed
+  by kwargs and never controlled adaptation. Turing also discards adaptation before
+  returning, so the stored warmup is now the retained row count, the request is kept as
+  `n_adapt_requested`, and posterior draws are no longer trimmed twice (#335).
+- `predict(re_mode = :population)` on an MCMC or VI fit plugged in the posterior mean of
+  the fixed effects instead of integrating over the posterior draws (#339).
+- `GHQuadrature` laid its nodes out on the natural simplex dimension `d+1` while the
+  `MvLogitNormal` transport needs `d` normal coordinates, throwing a `DimensionMismatch`
+  for every such batch (#342).
+- The population-moment helpers validate series shapes before their unchecked loops instead
+  of silently truncating or reading out of bounds, and reject an empty observation series
+  (#343).
+- Two byte-identical `@Model` blocks produced different `typeof(model)` depending on the
+  module they expanded in, so pkgimage-cached specializations were never reused. The
+  `@randomEffects` and `@DifferentialEquation` RGFs are now tagged with `NoLimits` itself
+  and their emitted closures replaced by top-level callable structs (#327).
+- The Laplace empirical-Bayes cache validity flags raced under `EnsembleThreads`, and the
+  numeric-error classifier masked genuine `ArgumentError`s and mis-probed MLE AD support
+  (#326).
+
+### Documentation
+
+- Restructured navigation with new NONMEM migration, troubleshooting, reproducibility and
+  advanced SAEM pages, and a split API reference.
+- Added a guide to precompiling models with a `PrecompileTools` workload.
+
+## v0.2.8
+
+### Features
+
+- Mini-batching (`update_schedule = :all | Int | (nbatches, iter, rng) -> Vector{Int}`) for
+  `Laplace`, `FOCEI`, `MLE`, `MAP` and `GHQuadrature`, sharing the SAEM/MCEM selector
+  (#281). One mini-batch per outer iteration, drawn lazily so objective and gradient of an
+  iteration always share the selection; unselected batches do no EBE, quadrature or
+  likelihood work. The optimizer default becomes `Optimisers.Adam(0.01)` under
+  mini-batching, with bounds applied through a projected rule.
+- `Laplace` and `FOCEI` now supply `fg` so the outer optimizer uses the analytic gradient.
+- `summarize` shows the convergence flag, which is now honest for custom estimators, and
+  the Laplace family reports an EBE gradient diagnostic (#311).
+
+### Bug fixes
+
+- Wald intervals and natural-scale standard errors are now closed-form where the math gives
+  one, transformed-scale chain UQ is genuine rather than a relabelled natural scale, and
+  unidentified directions, non-finite fits and degenerate sandwiches no longer report false
+  precision (#306).
+- Infusion rate state is per solve instead of a mutable buffer shared across threads, and
+  closed-form ODE detection is thread-safe (#308).
+- Crossing times at a coincident dose, `AMT=0` with a nonzero rate, dosing-only individuals
+  and duplicate timestamps are handled or rejected explicitly (#308).
+- Covariate validation gaps, the dynamic-covariate `tspan` guard and knot `tstops` (#309).
+- `fit_cv` Monte Carlo modes score the per-subject joint marginal (#290).
+- Model building now runs the DE symbol, crossing, solver-config and formula-order checks at
+  build time, validates covariates by declaration, rejects swapped `DataModel` arguments,
+  keeps the real error message in numeric warnings and reports line numbers from the block
+  parsers (#312, #313, #314, #315, #316).
+- Every EM M-step honours `adtype` and user bounds, bound-hungry optimizers are guarded, and
+  starts are clamped into the box (#311).
+- FOCEI prior-mean failure, the MvNormal FOCE freeze and the PooledMap prior gate (#284);
+  three EM sampler and SAEM bugs (#283).
+- Spline right-boundary knot, cross-validation `t0` anchoring and the multi-output soft-tree
+  guard (#304); a warning when a fit never reaches a finite objective (#310).
+- Mode-centered AGHQ for all real-supported random effects, random-effect post-processing at
+  non-primary levels, `plot_hidden_states` for univariate HMM outcomes, and the
+  `NormalizingPlanarFlow` rewrite in `@formulas`.
+- Shared parameters are excluded from the SAEM closed-form M-step, and
+  `MultistartFitResult` forwards the whole post-processing surface.
+
+## v0.2.7
+
+### Features
+
+- Method-developer API for MCEM: `mcem_e_step` (state-threaded) plus the M-step Q
+  primitives `mcem_q_objective_and_gradient` and `mcem_q_partition`.
+- Method-developer API for SAEM: sufficient-statistics and eligibility primitives, and the
+  stateful `saem_closed_form_mstep`.
+
+## v0.2.6
+
+### Features
+
+- Method-dispatched `objective_and_gradient` protocol (#271) and `FitContext` forms of the
+  gradient-bearing dev-API primitives (#273).
+- The analytic Laplace marginal theta-gradient is now public (#269).
+
+## v0.2.5
+
+### Features
+
+- `FFNNParameters`, a dependency-free feed-forward network parameter block (#261).
+- Public APIs accept any Tables.jl table where a `DataFrame` is expected (#259), any
+  `AbstractDict` where a `NamedTuple` is expected (#257), and strings wherever a `Symbol` is
+  expected (#255).
+
+### Bug fixes
+
+- `predict(re_mode = :ebe)` ignored `constants_re` (#251).
+- Plotting rejected a bare filename as `save_path`.
+
+## v0.2.4
+
+### Features
+
+- `MCEM` gains `update_schedule` for E-step mini-batching (#233).
+- Julia 1.10 (LTS) is supported again, with a 1.10 CI canary (#37).
+
+### Bug fixes
+
+- A large validation round across model construction, fit options, parameter constructors,
+  solver config, covariate columns, crossing horizons, cross-validation, accessors,
+  plotting, simulation overrides and `compute_uq`: invalid input is now rejected at the
+  point of declaration with a specific message rather than surfacing as a numeric failure
+  much later (#205 through #223).
+- Estimation and cross-validation audit findings (#226, #229) and two further parallel
+  bug-fix rounds (#235 through #239, #243 through #250), including vector-valued residual
+  and prediction schemas for multivariate outcomes, the HMM value-support and state-dim
+  contract, multivariate predictive density bands in `plot_fits`, and
+  `NormalizingPlanarFlow` moments.
+- Per-component missingness is preserved in multivariate residuals (#248).
+
+### Documentation
+
+- Tutorials for copula random effects and censored outcomes (#203).
+
+### Internal
+
+- Runic replaces JuliaFormatter as the formatting gate.
+
 ## v0.2.3
 
 ### Features
