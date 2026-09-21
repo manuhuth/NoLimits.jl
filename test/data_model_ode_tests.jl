@@ -589,8 +589,13 @@ end
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     θ = get_params(dm; scale = :untransformed)
     @test isfinite(complete_data_loglikelihood(dm, θ; eta = :mean))
-    # site varying within an individual: rejected
+    # site varying within an individual: rejected. For a DE model the general
+    # within-primary check fires first, so the preDE validator is exercised directly.
     df_bad = copy(df)
     df_bad.SITE[2] = "s2"
     @test_throws ErrorException DataModel(model, df_bad; primary_id = :ID, time_col = :t)
+    @test_throws "preDifferentialEquation uses random effect u" NoLimits._validate_prede_random_effects(
+        model, df_bad, :ID
+    )
+    @test NoLimits._validate_prede_random_effects(model, df, :ID) === nothing
 end
