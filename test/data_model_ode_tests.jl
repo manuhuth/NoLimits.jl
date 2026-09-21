@@ -550,3 +550,47 @@ end
     end
     @test isfinite(loglik)
 end
+
+@testset "DataModel ODE: coarser-level random effect in preDE" begin
+    model = @Model begin
+        @fixedEffects begin
+            lk = RealNumber(log(0.5))
+            ω = RealNumber(0.3, scale = :log)
+            ψ = RealNumber(0.3, scale = :log)
+            σ = RealNumber(0.2, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, ω); column = :ID)
+            u = RandomEffect(Normal(0.0, ψ); column = :SITE)
+        end
+        @preDifferentialEquation begin
+            k = exp(lk + η + u)
+        end
+        @DifferentialEquation begin
+            D(x1) ~ -k * x1
+        end
+        @initialDE begin
+            x1 = 1.0
+        end
+        @formulas begin
+            y ~ Normal(x1(t), σ)
+        end
+    end
+    df = DataFrame(
+        ID = ["a", "a", "b", "b", "c", "c"],
+        SITE = ["s1", "s1", "s1", "s1", "s2", "s2"],
+        t = [0.5, 1.0, 0.5, 1.0, 0.5, 1.0],
+        y = [0.8, 0.6, 0.75, 0.55, 0.9, 0.7]
+    )
+    # site constant within each individual: allowed, and the joint log density is finite
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    θ = get_params(dm; scale = :untransformed)
+    @test isfinite(complete_data_loglikelihood(dm, θ; eta = :mean))
+    # site varying within an individual: rejected
+    df_bad = copy(df)
+    df_bad.SITE[2] = "s2"
+    @test_throws ErrorException DataModel(model, df_bad; primary_id = :ID, time_col = :t)
+end

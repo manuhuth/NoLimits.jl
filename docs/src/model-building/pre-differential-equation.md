@@ -138,7 +138,7 @@ The following functions provide programmatic access to preDE internals:
 
 ## Data-Model Constraint for Random Effects in preDE
 
-Because preDE values are computed once per individual per model evaluation, any random effects referenced in this block must be grouped by `primary_id` in the `DataModel`. Random effects grouped by a different column (e.g., a site-level grouping) are not permitted in preDE expressions, since their values would not be uniquely determined at the individual level.
+Because preDE values are computed once per individual per model evaluation, any random effect referenced in this block must have a single value per individual. Random effects grouped by `primary_id` always qualify. Random effects at a coarser level (e.g., a site-level grouping) also qualify as long as the grouping column is constant within each individual, which `DataModel` checks against the data. A grouping column that changes within an individual is rejected, since the random effect would not be uniquely determined at the individual level.
 
 ## Where to go next
 

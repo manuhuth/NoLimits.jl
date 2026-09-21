@@ -716,7 +716,7 @@ function _validate_constant_covariates_primary(model, df, primary_id::Symbol, co
     return nothing
 end
 
-function _validate_prede_random_effects(model, primary_id::Symbol)
+function _validate_prede_random_effects(model, df, primary_id::Symbol)
     prede = model.de.prede
     prede === nothing && return nothing
     re_names = get_re_names(model.random.random)
@@ -724,11 +724,15 @@ function _validate_prede_random_effects(model, primary_id::Symbol)
     used = Set(get_prede_syms(prede))
     re_groups = get_re_groups(model.random.random)
     for re in re_names
-        if re in used
-            group_col = getfield(re_groups, re)
-            if group_col != primary_id
-                error("@preDifferentialEquation uses random effect $(re) grouped by $(group_col), which can vary within individuals. Only random effects grouped by the primary id $(primary_id) are allowed in preDE.")
-            end
+        re in used || continue
+        group_col = getfield(re_groups, re)
+        group_col == primary_id && continue
+        # preDE is evaluated once per individual, so a random effect at a coarser level
+        # (e.g. site) is fine as long as its level does not change within an individual.
+        bad = _check_constant_within_group(df, primary_id, [group_col])
+        if !isempty(bad)
+            details = join(["$(k) => $(unique(bad[k]))" for k in keys(bad)], ", ")
+            error("@preDifferentialEquation uses random effect $(re) grouped by $(group_col), which varies within primary_id $(primary_id). Offending ids: $(details). Random effects used in preDE must be constant within each individual.")
         end
     end
     return nothing
@@ -1659,7 +1663,7 @@ function DataModel(
     _validate_re_dist_covariates(model, cov)
     _validate_re_group_within_primary(model, df, config)
     _validate_re_group_identifiability(model, df, config)
-    _validate_prede_random_effects(model, primary_id)
+    _validate_prede_random_effects(model, df, primary_id)
     include_t = model.de.de !== nothing
     state_names = model.de.de === nothing ? Symbol[] : get_de_states(model.de.de)
     signal_names = model.de.de === nothing ? Symbol[] : get_de_signals(model.de.de)

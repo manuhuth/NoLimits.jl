@@ -244,7 +244,7 @@ ensures coarsed-state likelihoods are used only when explicitly requested.
 - **Constant covariate consistency**: constant covariates must be constant within `primary_id` and within all declared `constant_on` groups.
 - **Random-effect covariate dependencies**: random-effect distributions that use covariates require those covariates to be `ConstantCovariate` or `ConstantCovariateVector`.
 - **Formula time offsets**: constant time offsets in formulas (e.g., `x1(t - 0.5)`) extend the integration window automatically. Offsets that push evaluation before `t = 0` are rejected. Non-constant offsets require `saveat_mode = :dense`.
-- **PreDE random-effect constraint**: random effects used in `@preDifferentialEquation` must be grouped by `primary_id`.
+- **PreDE random-effect constraint**: random effects used in `@preDifferentialEquation` must be constant within each `primary_id` group. Grouping by `primary_id` or by a coarser level (e.g. a site column that never changes within an individual) is allowed. A grouping column that varies within an individual is rejected.
 
 ## DataModel Summary
 
