@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Changes
+
+- `@preDifferentialEquation` may now reference random effects grouped by a column coarser
+  than `primary_id` (for example a site or study column), as long as that column is
+  constant within every individual. preDE is evaluated once per individual, so such a random
+  effect has a single value there. `DataModel` checks the constancy against the data and
+  rejects a grouping column that varies within an individual with an error naming the
+  offending ids. Previously any non-`primary_id` random effect in preDE was rejected, which
+  ruled out nested site/individual random effects on ODE parameters.
+
 ## v0.2.10
 
 ### Bug fixes
