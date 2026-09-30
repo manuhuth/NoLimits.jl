@@ -1940,7 +1940,9 @@ Horizontal bar chart of eta shrinkage for all scalar random effects, with a
 vertical reference line at `threshold` (default 30 %).
 
 Bars are colored by severity: below `threshold` (green), between `threshold`
-and 50 % (orange), above 50 % (red). Shrinkage is computed via
+and 50 % (orange), above 50 % (red). Negative shrinkage (SD of the EBEs above
+the fitted RE scale, common in small samples) is drawn as a bar extending left
+of 0 and colored green. Shrinkage is computed via
 [`compute_shrinkage`](@ref).
 
 # Keyword Arguments
@@ -1966,6 +1968,11 @@ function plot_shrinkage(
     save_path = _resolve_plot_path(save_path, plot_path)
     _check_unit_interval(threshold, "threshold")
     shrink_nt = compute_shrinkage(res; dm = dm, constants_re = constants_re)
+    fig = _shrinkage_figure(shrink_nt; threshold = threshold, bar_color = bar_color, style = style, kwargs_subplot = kwargs_subplot)
+    return _save_plot!(fig, save_path)
+end
+
+function _shrinkage_figure(shrink_nt::NamedTuple; threshold, bar_color, style, kwargs_subplot)
     isempty(shrink_nt) &&
         error("No shrinkage values computed; check that the model has scalar random effects.")
 
@@ -1991,17 +1998,16 @@ function plot_shrinkage(
     )
 
     yticks_pos = collect(1:n)
-    bar_vals = max.(values_pct, 0.0)
     _record!(
         p,
         ax -> barplot!(
-            ax, yticks_pos, bar_vals;
+            ax, yticks_pos, values_pct;
             direction = :x, color = bar_colors, width = 0.6
         )
     )
     for i in 1:n
         add_annotation!(
-            p, bar_vals[i] + 1.5, yticks_pos[i],
+            p, max(values_pct[i], 0.0) + 1.5, yticks_pos[i],
             string(round(values_pct[i]; digits = 1), "%"); fontsize = 9, halign = :left
         )
     end
@@ -2015,11 +2021,10 @@ function plot_shrinkage(
     _axis_attrs!(p; yticks = (yticks_pos, re_labels))
     _set_limits!(
         p;
-        xlim = (-2.0, max(maximum(values_pct) * 1.25 + 5.0, threshold * 100 * 1.5)),
+        xlim = (min(-2.0, minimum(values_pct) * 1.25 - 2.0), max(maximum(values_pct) * 1.25 + 5.0, threshold * 100 * 1.5)),
         ylim = (0.5, n + 0.5)
     )
     p.legend_position = :rb
 
-    fig = combine_plots([p]; ncols = 1, style = style)
-    return _save_plot!(fig, save_path)
+    return combine_plots([p]; ncols = 1, style = style)
 end

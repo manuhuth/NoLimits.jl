@@ -976,13 +976,16 @@ end
 Plot the probability integral transform (PIT) of empirical-Bayes estimates under their
 fitted prior distributions, providing a calibration check for the random-effects model.
 
+Only one of `show_hist`, `show_kde` and `show_qq` is drawn; enabling several warns and
+falls back to the histogram.
+
 # Keyword Arguments
 - `dm::Union{Nothing, DataModel} = nothing`: data model (inferred from `res` by default).
 - `re_names`: random-effect names to include, or `nothing` for all.
 - `levels`, `individuals_idx`: grouping level or individual filters.
 - `show_hist::Bool = true`: show a PIT histogram.
-- `show_kde::Bool = false`: overlay a KDE curve.
-- `show_qq::Bool = true`: add a Uniform QQ reference line.
+- `show_kde::Bool = false`: draw a KDE curve instead of a histogram.
+- `show_qq::Bool = false`: draw a Uniform QQ plot instead of a histogram.
 - `shared_x_axis::Bool = true`, `shared_y_axis::Bool = true`: share axes.
 - `ncols::Int = 3`: number of subplot columns.
 - `style::PlotStyle = PlotStyle()`: visual style configuration.
@@ -1002,7 +1005,7 @@ function plot_random_effect_pit(
         x_covariate::Union{Nothing, Symbol} = nothing,
         show_hist::Bool = true,
         show_kde::Bool = false,
-        show_qq::Bool = true,
+        show_qq::Bool = false,
         shared_x_axis::Bool = true,
         shared_y_axis::Bool = true,
         ncols::Int = DEFAULT_PLOT_COLS,
