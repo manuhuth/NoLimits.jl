@@ -955,7 +955,7 @@ function _info_numeric_re_group_levels(model, df)
     numeric_cols in _warned_numeric_re_group_cols && return nothing
     push!(_warned_numeric_re_group_cols, numeric_cols)
     cols_str = join(string.(numeric_cols), ", ")
-    @info "DataModel detected numeric random-effect grouping levels in column(s) $(cols_str). You will not be able to use constant random-effects. If you want to use constant random effects, consider relabeling your random effects to strings or symbols."
+    @info "DataModel detected numeric random-effect grouping levels in column(s) $(cols_str). Numbers cannot be NamedTuple keys, so pass `constants_re` for these levels as a Dict, e.g. `constants_re = (; η = Dict(1 => 0.0))`."
     return nothing
 end
 

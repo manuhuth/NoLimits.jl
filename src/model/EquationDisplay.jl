@@ -187,15 +187,22 @@ function get_equation_lines(m::Model)
     return [_eq_clean_expr(ex) for ex in lines]
 end
 
+_resolve_latex(latex::Bool) = latex
+_resolve_latex(::Nothing) = Base.get_extension(@__MODULE__, :NoLimitsLatexifyExt) !== nothing
+
 """
-    show_equations([io::IO], m::Model; latex::Bool = true, numbered::Bool = false)
+    show_equations([io::IO], m::Model; latex::Union{Nothing, Bool} = nothing, numbered::Bool = false)
 
 Display a model's equations - preDE assignments, differential equations, and formula
-nodes. With `latex = true` (default) they are rendered as LaTeX via Latexify, which has
-to be loaded alongside NoLimits; otherwise they are printed as plain text and no optional
-dependency is needed. Set `numbered = true` to number the equations.
+nodes. With `latex = true` they are rendered as LaTeX via Latexify, which has to be loaded
+alongside NoLimits; with `latex = false` they are printed as plain text and no optional
+dependency is needed. The default `latex = nothing` renders LaTeX when Latexify is loaded
+and plain text otherwise. Set `numbered = true` to number the equations.
 """
-function show_equations(io::IO, m::Model; latex::Bool = true, numbered::Bool = false)
+function show_equations(
+        io::IO, m::Model; latex::Union{Nothing, Bool} = nothing, numbered::Bool = false
+    )
+    latex = _resolve_latex(latex)
     latex &&
         _require_ext(:NoLimitsLatexifyExt, :Latexify, "show_equations(...; latex = true)")
     lines = get_equation_lines(m)
@@ -213,7 +220,10 @@ function show_equations(io::IO, m::Model; latex::Bool = true, numbered::Bool = f
     return nothing
 end
 
-function show_equations(m::Model; latex::Bool = true, numbered::Bool = false)
+function show_equations(
+        m::Model; latex::Union{Nothing, Bool} = nothing, numbered::Bool = false
+    )
+    latex = _resolve_latex(latex)
     latex &&
         _require_ext(:NoLimitsLatexifyExt, :Latexify, "show_equations(...; latex = true)")
     lines = get_equation_lines(m)

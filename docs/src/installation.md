@@ -67,7 +67,7 @@ Using a feature without its package raises an error that names what to install; 
 degrades silently:
 
 ```julia
-julia> show_equations(model)
+julia> show_equations(model; latex = true)
 ERROR: show_equations(...; latex = true) requires Latexify.jl, which NoLimits declares
 as an optional dependency and therefore does not install or load for you.
 
@@ -77,8 +77,9 @@ as an optional dependency and therefore does not install or load for you.
 Load it alongside NoLimits and retry.
 ```
 
-`show_equations(model; latex = false)` needs no optional package, and `plain` text output is
-always available.
+`show_equations(model; latex = false)` needs no optional package, and plain text output is
+always available. The default `show_equations(model)` renders LaTeX when Latexify is loaded
+and falls back to plain text otherwise.
 
 !!! note "Turing samplers"
     `SAEM` and `MCEM` default to the native `SaemixMH` sampler and need no Turing. Pass
