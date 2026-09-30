@@ -2632,7 +2632,7 @@ the Hessian H of log p(b | y, θ) at b*. The log-correction
 accounts for the prior, Jacobian, and Gaussian quadrature measure.
 
 # Supported methods
-Laplace, SAEM, MCEM, GHQuadrature.
+Laplace, FOCEI, SAEM, MCEM, GHQuadrature.
 
 # Not supported
 - **MCMC**: raises an error.
@@ -2643,10 +2643,13 @@ Laplace, SAEM, MCEM, GHQuadrature.
 - `level`: Smolyak accuracy level (default 3). Same as in `GHQuadrature`.
 - `constants_re`: fixes specific RE levels on the natural scale.
 - `ode_args`, `ode_kwargs`: forwarded to the ODE solver.
-- `serialization`: `EnsembleThreads()` (default) or `EnsembleSerial()`.
+- `serialization`: `EnsembleThreads()` (default) parallelizes over batches;
+  `EnsembleSerial()` runs them serially. Both return the same value.
 - `ebe_options::Union{Nothing, EBEOptions}`: EBE optimizer options used when stored
   modes are unavailable. `nothing` uses the same defaults as `Laplace()`.
-- `rng`: random number generator for EBE multistart (if needed).
+- `rng`: random number generator for EBE multistart (if needed). Monte Carlo
+  sampling (`mc_integrator`, `fallback`) uses one independent stream per batch, seeded
+  from `rng`, so results do not depend on `serialization`.
 - `jitter`: initial jitter for Cholesky of negative Hessian (default 1e-6).
 - `mc_integrator::Union{Nothing, MCIntegrator}`: if not `nothing`, use Monte Carlo
   sampling for **all** batches instead of AGHQ. See [`MCIntegrator`](@ref).
@@ -2709,7 +2712,8 @@ function get_loglikelihood_quadrature(
 
     _, batch_infos, const_cache = _build_re_batch_infos(dm, constants_re)
     ll_cache = build_ll_cache(
-        dm; ode_args = ode_args, ode_kwargs = ode_kwargs, force_saveat = true
+        dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = serialization, force_saveat = true
     )
 
     # Resolve EBE modes: use stored ones if available and matching, else compute.
@@ -2734,62 +2738,87 @@ function get_loglikelihood_quadrature(
         )
     end
 
-    total = 0.0
-    for (bi, info) in enumerate(batch_infos)
-        if get_n_b(info) == 0
-            s = 0.0
-            empty_b = Float64[]
-            for i in get_inds(info)
-                η_i = _build_eta_ind(dm, i, info, empty_b, const_cache, θu_re)
-                lli = _loglikelihood_individual(dm, i, θu_re, η_i, ll_cache)
-                !isfinite(lli) && return -Inf
-                s += lli
+    # One RNG stream per batch, drawn serially, so MC results do not depend on
+    # `serialization` or thread scheduling.
+    batch_rngs = _spawn_child_rngs(rng, length(batch_infos))
+    parts = Vector{Float64}(undef, length(batch_infos))
+    if ll_cache isa AbstractVector
+        # Chunk-indexed caches: `threadid()` indexing is unsafe under task migration.
+        n_chunks = length(ll_cache)
+        Threads.@threads for c in 1:n_chunks
+            for bi in c:n_chunks:length(batch_infos)
+                parts[bi] = _quadrature_batch_ll(
+                    dm, bi, batch_infos[bi], θu_re, const_cache, ll_cache[c], bstars,
+                    level, jitter, mc_integrator, fallback, batch_rngs[bi]
+                )
             end
-            total += s
+        end
+    else
+        for bi in eachindex(batch_infos)
+            parts[bi] = _quadrature_batch_ll(
+                dm, bi, batch_infos[bi], θu_re, const_cache, ll_cache, bstars,
+                level, jitter, mc_integrator, fallback, batch_rngs[bi]
+            )
+        end
+    end
+    any(==(-Inf), parts) && return -Inf
+    return sum(parts)
+end
+
+function _quadrature_batch_ll(
+        dm, bi, info, θu_re, const_cache, ll_cache, bstars,
+        level, jitter, mc_integrator, fallback, rng
+    )
+    if get_n_b(info) == 0
+        s = 0.0
+        empty_b = Float64[]
+        for i in get_inds(info)
+            η_i = _build_eta_ind(dm, i, info, empty_b, const_cache, θu_re)
+            lli = _loglikelihood_individual(dm, i, θu_re, η_i, ll_cache)
+            !isfinite(lli) && return -Inf
+            s += lli
+        end
+    else
+        s = if mc_integrator !== nothing
+            # MC for all batches: skip AGHQ entirely
+            _batch_loglik_from_mc(
+                dm, info, θu_re, const_cache, ll_cache, mc_integrator, rng
+            )
         else
-            bll = if mc_integrator !== nothing
-                # MC for all batches: skip AGHQ entirely
+            b_star = bstars[bi]
+            re_measure = build_centered_re_measure(
+                b_star, info, bi, θu_re, const_cache, dm, ll_cache;
+                jitter = jitter
+            )
+            if re_measure !== nothing
+                sgrid = level isa Int ? get_sparse_grid(get_n_b(info), level) :
+                    _build_anisotropic_batch_grid(dm, info, level)
+                batch_loglik_ghq(
+                    dm, info, θu_re, re_measure, sgrid, const_cache, ll_cache
+                )
+            elseif fallback !== nothing
+                @warn "get_loglikelihood_quadrature: Cholesky of -H failed for batch $bi " *
+                    "(b* may not be a true mode or posterior is near-flat). " *
+                    "Falling back to $(fallback.mode) MC sampling with $(fallback.n_samples) samples."
                 _batch_loglik_from_mc(
-                    dm, info, θu_re, const_cache, ll_cache, mc_integrator, rng
+                    dm, info, θu_re, const_cache, ll_cache, fallback, rng
                 )
             else
-                b_star = bstars[bi]
-                re_measure = build_centered_re_measure(
-                    b_star, info, bi, θu_re, const_cache, dm, ll_cache;
-                    jitter = jitter
+                error(
+                    "get_loglikelihood_quadrature: Cholesky of -H failed for batch $bi. " *
+                        "Pass fallback=MCIntegrator(...) to use sampling as fallback, " *
+                        "or increase `jitter`."
                 )
-                if re_measure !== nothing
-                    sgrid = level isa Int ? get_sparse_grid(get_n_b(info), level) :
-                        _build_anisotropic_batch_grid(dm, info, level)
-                    batch_loglik_ghq(
-                        dm, info, θu_re, re_measure, sgrid, const_cache, ll_cache
-                    )
-                elseif fallback !== nothing
-                    @warn "get_loglikelihood_quadrature: Cholesky of -H failed for batch $bi " *
-                        "(b* may not be a true mode or posterior is near-flat). " *
-                        "Falling back to $(fallback.mode) MC sampling with $(fallback.n_samples) samples."
-                    _batch_loglik_from_mc(
-                        dm, info, θu_re, const_cache, ll_cache, fallback, rng
-                    )
-                else
-                    error(
-                        "get_loglikelihood_quadrature: Cholesky of -H failed for batch $bi. " *
-                            "Pass fallback=MCIntegrator(...) to use sampling as fallback, " *
-                            "or increase `jitter`."
-                    )
-                end
             end
-            bll == -Inf && return -Inf
-            total += bll
         end
-        # RE levels fixed via `constants_re` are not integrated over, so their prior
-        # density has to be added explicitly (mirrors `_ghq_batch_ll`). Without it the
-        # returned value is not a log-density in the fixed levels.
-        const_ll = _const_re_prior_logf(dm, info, θu_re, const_cache, ll_cache)
-        !isfinite(const_ll) && return -Inf
-        total += const_ll
+        s == -Inf && return -Inf
     end
-    return total
+    # RE levels fixed via `constants_re` are not integrated over, so their prior
+    # density has to be added explicitly (mirrors `_ghq_batch_ll`). Without it the
+    # returned value is not a log-density in the fixed levels.
+    const_ll = _const_re_prior_logf(dm, info, θu_re, const_cache, ll_cache)
+    !isfinite(const_ll) && return -Inf
+    return s + const_ll
 end
 
 function get_loglikelihood_quadrature(
