@@ -626,6 +626,9 @@ function _de_rewrite_all(
         ]
         if f isa Symbol && f in fun_syms
             return Expr(:call, Expr(:., :funs, QuoteNode(f)), new_args...)
+        elseif _de_dotted_call_base(f) in fun_syms
+            # DynamicCovariateVector component, e.g. `w.a(t)`.
+            return Expr(:call, Expr(:., Expr(:., :funs, QuoteNode(f.args[1])), f.args[2]), new_args...)
         end
         return Expr(:call, f, new_args...)
     elseif ex.head == :.
@@ -637,6 +640,20 @@ function _de_rewrite_all(
             map(arg -> _de_rewrite_all(arg, state_map, var_syms, fun_syms), ex.args)...
         )
     end
+end
+
+_de_dotted_call_base(f) = f isa Expr && f.head == :. && f.args[1] isa Symbol ? f.args[1] : nothing
+
+function _de_collect_dotted_call_bases(ex, out::Set{Symbol})
+    ex isa Expr || return out
+    if ex.head == :call
+        base = _de_dotted_call_base(ex.args[1])
+        base === nothing || push!(out, base)
+    end
+    for arg in ex.args
+        _de_collect_dotted_call_bases(arg, out)
+    end
+    return out
 end
 
 function _de_replace_signal_calls(ex, names::Set{Symbol})
@@ -729,7 +746,8 @@ Two statement forms are supported:
 - `signal(t) = expr`: defines a derived signal computed from states and parameters.
 
 Symbols in right-hand sides are resolved from (in order): pre-DE variables, random
-effects, fixed effects, constant covariates, dynamic covariates (called as `w(t)`),
+effects, fixed effects, constant covariates, dynamic covariates (called as `w(t)`, or
+`w.a(t)` for a `DynamicCovariateVector` component),
 model functions, and helper functions. Varying (non-dynamic) covariates are not allowed
 inside the DE.
 
@@ -764,12 +782,15 @@ macro DifferentialEquation(block)
     var_syms = Set{Symbol}()
     prop_syms = Set{Symbol}()
     time_call_syms = Set{Symbol}()
+    dotted_bases = Set{Symbol}()
     for ex in vcat(rhs_rewritten, signal_rewritten)
         _macro_collect_call_symbols(ex, call_syms)
         _macro_collect_var_symbols(ex, var_syms)
         _macro_collect_property_bases(ex, prop_syms)
         _de_collect_time_calls(ex, time_call_syms)
+        _de_collect_dotted_call_bases(ex, dotted_bases)
     end
+    union!(call_syms, dotted_bases)
 
     delete!(var_syms, :t)
     delete!(var_syms, :ξ)
@@ -780,7 +801,7 @@ macro DifferentialEquation(block)
         [
             s
                 for s in call_syms
-                if !(isdefined(Base, s) || isdefined(@__MODULE__, s))
+                if !(isdefined(Base, s) || isdefined(@__MODULE__, s) || s in dotted_bases && isdefined(__module__, s))
         ]
     )
     var_syms = _macro_filter_var_syms(var_syms)

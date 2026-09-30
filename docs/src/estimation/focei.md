@@ -158,7 +158,7 @@ obj     = get_objective(res)
 ok      = get_converged(res)
 
 re_df   = get_random_effects(res)
-ll      = get_loglikelihood(res)
+ll      = get_loglikelihood(res)   # conditional log p(y | η̂, θ̂); see get_marginal_likelihood
 ```
 
 Conditional weighted residuals (CWRES), the diagnostic most closely associated with the

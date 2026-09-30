@@ -379,6 +379,17 @@ end
     shrink = NoLimits.compute_shrinkage(res)
     @test haskey(shrink, :η)
     @test isfinite(shrink.η.shrinkage)
+
+    # Negative shrinkage (SD(EBE) > ω̂) must still draw a bar left of 0.
+    _ext = Base.get_extension(NoLimits, :NoLimitsMakieExt)
+    fig = _ext._shrinkage_figure(
+        (; η = (; shrinkage = -0.05), κ = (; shrinkage = 0.4));
+        threshold = 0.3, bar_color = nothing, style = PlotStyle(), kwargs_subplot = NamedTuple()
+    )
+    ax = only(filter(c -> c isa CairoMakie.Makie.Axis, fig.content))
+    bp = only(filter(p -> p isa CairoMakie.Makie.BarPlot, ax.scene.plots))
+    @test [pt[2] for pt in bp[1][]] ≈ [-5.0, 40.0]
+    @test ax.limits[][1][1] < -5.0
 end
 
 @testset "compute_shrinkage skips planar-flow REs instead of crashing (#109)" begin

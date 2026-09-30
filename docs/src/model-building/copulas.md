@@ -41,7 +41,7 @@ end
 `D` is a two-element random effect and is indexed as `D[1]`, `D[2]` exactly like an `MvNormal` one. The copula parameter can be estimated too: declare it as a fixed effect on the log scale and pass it in, as `thc` does in the outcome example below.
 
 !!! note "Qualify Copulas names inside `@randomEffects`"
-    The random-effect distribution builder is compiled into a generated-function module that does not see the `using Copulas` in your script, so `Copulas.SklarDist` and `Copulas.ClaytonCopula` must be written out in full. A bare `SklarDist(...)` builds the model without complaint and then fails with `UndefVarError: SklarDist not defined` when you construct the `DataModel`. `@formulas` resolves against your own scope, so the outcome example below can use the short names.
+    Writing `Copulas.SklarDist` and `Copulas.ClaytonCopula` in full is the robust choice. In a top-level script with `using Copulas` the bare names work too, but the random-effect distribution builder may not see names that are only in scope inside a module or package. `@formulas` resolves against your own scope, so the outcome example below uses the short names.
 
 Estimation works with `Laplace`, `GHQuadrature`, `Pooled`, `MCMC` and the other random-effects methods. Three internals are worth knowing about, because they are what makes the marginals matter more than the copula itself:
 

@@ -58,8 +58,8 @@ non-positive prediction, or an ODE solve that failed. Fixes:
 - Constrain the parameter with `scale = :log` (or model bounds) instead of letting the optimizer
   step into the invalid region.
 - Guard the formula itself, for example with a softplus on a quantity that must stay positive.
-- The optimization-based methods take `nan_recovery = :backtrack` (the default), which retries a
-  shorter step instead of aborting:
+- `Laplace` takes `nan_recovery = :backtrack` (the default), which retries a shorter step
+  instead of aborting (`FOCEI` always backtracks and does not take the option):
 
   ```julia
   res = fit_model(dm, NoLimits.Laplace(; nan_recovery = :backtrack))
@@ -82,19 +82,27 @@ number of random effects, or fixing one of them with `constants_re`, is often th
 
 ## The ODE solver fails or the fit is very slow
 
-- **Stiffness.** The default solver is a good general choice, but a stiff system needs a stiff
-  solver, as in the [Neural Differential Equations](tutorials/mixed-effects-nn-saem.md) tutorial:
+- **Stiffness.** The default solver, `AutoTsit5(Rodas5P())`, already switches to a stiff method
+  when the problem needs it. To pick a different solver, as in the
+  [Neural Differential Equations](tutorials/mixed-effects-nn-saem.md) tutorial, pass it with the
+  solver tolerances in `kwargs`:
 
   ```julia
-  model = set_solver_config(model; alg = AutoTsit5(Rosenbrock23()), abstol = 1.0e-6, reltol = 1.0e-6)
+  model = set_solver_config(model; alg = AutoTsit5(Rosenbrock23()), kwargs = (; abstol = 1.0e-6, reltol = 1.0e-6))
   ```
+
+  Each keyword call rebuilds the whole solver configuration from the defaults, so pass every
+  setting you want (`alg`, `kwargs`, `saveat_mode`, ...) in one call.
 - **Tolerances.** Tight `abstol`/`reltol` on an ODE model dominates the runtime. Loosen them
-  through `set_solver_config` while exploring, then tighten for the final fit.
+  through `set_solver_config(model; kwargs = (; abstol, reltol))` while exploring, then tighten
+  for the final fit.
 - **Parallelism.** Evaluate individuals in parallel, and start Julia with `-t auto`:
 
   ```julia
   res = fit_model(dm, NoLimits.Laplace(); serialization = SciMLBase.EnsembleThreads())
   ```
+
+  `NoLimits.EnsembleThreads()` is the same object and works without loading SciMLBase.
 - **Method cost.** `MCEM` is the most expensive of the mixed-effects methods; `SAEM` reaches a
   comparable answer for far less work on most models. See
   [Choosing a method](estimation/index.md#Choosing-a-Method).

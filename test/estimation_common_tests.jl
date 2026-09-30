@@ -755,6 +755,20 @@ end
         get_marginal_likelihood(dm_c, res_c; constants_re = cre, serialization = _INV_SER),
         joint; rtol = 1.0e-8
     )
+
+    # `serialization` was accepted but ignored. Batches now run threaded with one MC
+    # stream per batch, so serial and threaded must agree (only exercised under -t > 1).
+    for kw in (
+            (; level = 2),
+            (; mc_integrator = NoLimits.MCIntegrator(; mode = :prior, n_samples = 200)),
+        )
+        ser = get_marginal_likelihood(res_l; seed = 7, serialization = _INV_SER, kw...)
+        thr = get_marginal_likelihood(
+            res_l; seed = 7, serialization = NoLimits.EnsembleThreads(), kw...
+        )
+        @test isfinite(ser)
+        @test isapprox(ser, thr; rtol = 1.0e-10)
+    end
 end
 
 @testset "objectives are finite at the fitted estimate" begin

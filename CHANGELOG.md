@@ -12,6 +12,37 @@
   offending ids. Previously any non-`primary_id` random effect in preDE was rejected, which
   ruled out nested site/individual random effects on ODE parameters.
 
+- `show_equations(model)` now defaults to `latex = nothing`: LaTeX when Latexify is loaded,
+  plain text otherwise. Previously the default call errored without Latexify.
+
+### Bug fixes
+
+- A `DynamicCovariateVector` component called inside `@DifferentialEquation`
+  (`inp.i1(t)`, also in derived signals) threw `UndefVarError: inp not defined`. It now
+  resolves like a scalar dynamic covariate `w(t)`.
+- `get_marginal_likelihood` / `get_loglikelihood_quadrature` accepted `serialization` but
+  always ran serially. `EnsembleThreads()` now parallelizes over batches, with the same
+  result as `EnsembleSerial()`. Monte Carlo integration (`mc_integrator`, `fallback`) now
+  draws one RNG stream per batch, so its values for a given seed differ from earlier
+  releases.
+- `plot_shrinkage` drew no bar for a negative shrinkage value (valid in small samples); the
+  bar now extends left of 0.
+- `plot_random_effect_pit(res)` warned about conflicting plot types on its own defaults;
+  `show_qq` now defaults to `false`.
+- The numeric random-effect grouping `@info` claimed constant random effects are
+  unavailable. They work with a `Dict`, e.g. `constants_re = (; η = Dict(1 => 0.0))`, and
+  the message now says so.
+
+### Documentation
+
+- Corrected: the `set_solver_config` tolerance example (tolerances go in `kwargs`) and the
+  default solver; `nan_recovery` is Laplace-only; `calculate_se` defaults of
+  `ProbabilityVector` and the transition matrices; coarser-level random effects in ODE
+  models; clamped spline knots; GHQuadrature solves EB modes at every evaluation;
+  the MCMC objective and `get_converged` value; `get_loglikelihood` is the conditional
+  log-likelihood for random-effects fits (use `get_marginal_likelihood` to compare models);
+  missing outcomes on observation rows are allowed; unqualified Copulas names.
+
 ## v0.2.10
 
 ### Bug fixes

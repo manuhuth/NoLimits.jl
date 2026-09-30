@@ -6,6 +6,7 @@ using OrdinaryDiffEq
 using ComponentArrays
 using DataInterpolations
 using Lux
+using ForwardDiff
 
 function _varying_at(ind, idx)
     pairs = Pair{Symbol, Any}[]
@@ -174,6 +175,68 @@ end
         loglik += logpdf(obs.y, y)
     end
     @test isfinite(loglik)
+
+    # DynamicCovariateVector components `w.a(t)` in DE states and signals must match
+    # the equivalent scalar DynamicCovariates.
+    vec_model = @Model begin
+        @fixedEffects begin
+            k = RealNumber(0.5; scale = :log)
+            σ = RealNumber(0.3; scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+            inp = DynamicCovariateVector([:i1, :i2]; interpolations = [LinearInterpolation, LinearInterpolation])
+        end
+        @DifferentialEquation begin
+            s(t) = 0.5 * inp.i2(t)
+            D(x) ~ -k * x + inp.i1(t) + s(t)
+        end
+        @initialDE begin
+            x = 1.0
+        end
+        @formulas begin
+            y ~ Normal(x(t), σ)
+        end
+    end
+    scalar_model = @Model begin
+        @fixedEffects begin
+            k = RealNumber(0.5; scale = :log)
+            σ = RealNumber(0.3; scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+            i1 = DynamicCovariate(; interpolation = LinearInterpolation)
+            i2 = DynamicCovariate(; interpolation = LinearInterpolation)
+        end
+        @DifferentialEquation begin
+            s(t) = 0.5 * i2(t)
+            D(x) ~ -k * x + i1(t) + s(t)
+        end
+        @initialDE begin
+            x = 1.0
+        end
+        @formulas begin
+            y ~ Normal(x(t), σ)
+        end
+    end
+    df_vec = DataFrame(
+        ID = repeat(["a", "b"]; inner = 4),
+        t = repeat([0.0, 1.0, 2.0, 3.0], 2),
+        i1 = [0.1, 0.4, 0.2, 0.9, 0.3, 0.3, 0.8, 0.5],
+        i2 = [1.0, 0.2, 0.6, 0.4, 0.7, 0.1, 0.9, 0.2],
+        y = [1.0, 0.9, 1.1, 1.3, 0.8, 1.0, 1.2, 1.4]
+    )
+    dm_vec = DataModel(vec_model, df_vec; primary_id = :ID, time_col = :t)
+    dm_scalar = DataModel(scalar_model, df_vec; primary_id = :ID, time_col = :t)
+    θv = NoLimits.get_params(dm_vec; scale = :untransformed)
+    ll_vec = complete_data_loglikelihood(dm_vec, θv)
+    @test isfinite(ll_vec)
+    @test ll_vec ≈ complete_data_loglikelihood(dm_scalar, θv) rtol = 1.0e-10
+    g = ForwardDiff.gradient(
+        p -> complete_data_loglikelihood(dm_vec, ComponentArray(p, getaxes(θv))),
+        collect(θv)
+    )
+    @test all(isfinite, g)
 end
 
 @testset "DataModel ODE logpdf with covariate interpolation" begin

@@ -103,6 +103,7 @@ const _PRE_NORM_RES_MCMC = fit_model(
     @test p_pit_qq !== nothing
 
     @test_throws ArgumentError plot_random_effect_pit(res; x_covariate = :Age)
+    @test_logs min_level = Base.CoreLogging.Warn plot_random_effect_pit(res)
 
     p_pdf = plot_random_effects_pdf(res)
     @test p_pdf !== nothing

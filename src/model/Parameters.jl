@@ -690,7 +690,11 @@ are initialized to zero. Inside model blocks the spline is evaluated as
 `function_name(x, θ_slice)`.
 
 # Arguments
-- `knots::AbstractVector{<:Real}`: B-spline knot vector (including boundary knots).
+- `knots::AbstractVector{<:Real}`: B-spline knot vector (including boundary knots). Use
+  clamped knots, repeating each boundary knot `degree + 1` times, e.g.
+  `vcat(zeros(d), collect(range(0.0, 1.0; length = 4)), ones(d))` for degree `d`. With
+  unclamped (evenly spaced) knots the basis sums to less than one near `knots[1]` and the
+  spline misbehaves over much of the knot range.
 
 # Keyword Arguments
 - `name::Symbol = :unnamed`: parameter name (injected automatically by `@fixedEffects`).

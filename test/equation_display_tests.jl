@@ -77,6 +77,10 @@ using LinearAlgebra
 
     txt_latex = sprint(io -> NoLimits.show_equations(io, model; latex = true))
     @test !isempty(strip(txt_latex))
+    # Default `latex = nothing` resolves to LaTeX because Latexify is loaded here.
+    @test NoLimits._resolve_latex(nothing) === true
+    @test NoLimits._resolve_latex(false) === false
+    @test sprint(io -> NoLimits.show_equations(io, model)) == txt_latex
     @test !occursin("~\\left", txt_latex)
     @test occursin("\\dot{", txt_latex)
     @test occursin("&=", txt_latex)
