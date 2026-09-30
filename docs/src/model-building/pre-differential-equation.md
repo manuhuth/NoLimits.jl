@@ -90,13 +90,15 @@ end
 
 PreDE expressions can also incorporate neural networks, soft decision trees, and spline functions. This is useful when individual-level baseline quantities are modeled as flexible, learned functions of covariates.
 
+The spline uses clamped knots: each boundary knot is repeated `degree` extra times (`degree + 1` in total), so the B-spline basis sums to one over the whole knot range instead of fading to zero at the left end.
+
 ```julia
 using NoLimits
 using Lux
 using Distributions
 
 chain = Chain(Dense(2, 3, tanh), Dense(3, 1))
-knots = collect(range(0.0, 1.0; length=6))
+knots = vcat(zeros(3), collect(range(0.0, 1.0; length=4)), ones(3))  # clamped, cubic
 
 model = @Model begin
     @helpers begin

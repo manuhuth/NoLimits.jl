@@ -309,7 +309,7 @@ ok = get_converged(res)
 re_df = get_random_effects(res)
 re_df_laplace = get_laplace_random_effects(res; flatten=true, include_constants=true)
 
-ll = get_loglikelihood(res)
+ll = get_loglikelihood(res)   # conditional log p(y | η̂, θ̂); see get_marginal_likelihood
 ```
 
 `get_random_effects` and `get_laplace_random_effects` each return one `DataFrame` per random effect, with rows corresponding to the levels of the grouping column (e.g., one row per individual).

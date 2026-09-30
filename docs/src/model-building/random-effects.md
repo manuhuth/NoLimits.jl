@@ -212,12 +212,12 @@ Whether a non-`primary_id` grouping column may change within an individual depen
 |---------|-------------------------------------------------------------------|-----------|
 | Non-ODE formulas | Yes | The random effect used for each observation row is selected from that row's grouping value. |
 | Discrete-time HMM outcomes | Yes | Row-wise selection is applied at each observation row. |
-| ODE models | No | Random effects must remain uniquely defined at the individual level during ODE evaluation. |
+| ODE models | No | Each random effect must have a single value per individual during ODE evaluation. A coarser-level random effect (e.g. site) is allowed as long as its grouping column is constant within each `primary_id`. |
 | Continuous-time HMM outcomes | Yes | Row-wise selection is applied at each observation row. |
 
 Two related constraints still apply:
 
-- Random effects referenced in `@preDifferentialEquation` must be grouped by `primary_id`.
+- Random effects referenced in `@preDifferentialEquation` or `@DifferentialEquation` may be grouped by `primary_id` or by a coarser column (e.g. site), provided that column is constant within each `primary_id`. Only grouping columns that vary within an individual are rejected.
 - Constant covariates keep their current validation rules: they must remain constant within `primary_id` and within every declared `constant_on` grouping.
 
 ## Where to go next

@@ -254,7 +254,7 @@ observed = get_observed(res)
 diagnostics = get_diagnostics(res)
 ```
 
-Since there is no single optimized objective value, `get_objective(res)` returns `NaN` and `get_converged(res)` returns `missing`.
+There is no single optimized objective value: `get_objective(res)` returns the mean negative log posterior density over the post-warm-up draws (lower is better, as for the optimization methods; `NaN` if the sampler records no log-density), and `get_converged(res)` returns `missing`.
 
 ## Where to go next
 

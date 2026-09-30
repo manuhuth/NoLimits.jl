@@ -53,11 +53,12 @@ whose gradient is not; use `Laplace()` for that, and `level ≥ 3` here.
 - `adtype`: AD backend for the outer gradient.  Defaults to
   `AutoForwardDiff()`.
 - `inner_options / inner_optimizer / inner_kwargs / inner_adtype / inner_grad_tol`:
-  configure the Laplace-style inner optimizer used **only post-hoc** to compute
-  empirical-Bayes mode estimates for `get_random_effects`.
+  configure the Laplace-style inner optimizer for the empirical-Bayes modes. It runs
+  on every objective evaluation (the modes center the adaptive rule for Gaussian
+  random effects) and again at the optimum for `get_random_effects`.
 - `multistart_options / multistart_n / multistart_k / multistart_grad_tol /
   multistart_max_rounds / multistart_sampling`: multistart settings for the
-  post-hoc EB mode finder.
+  EB mode finder.
 - `lb`, `ub`: box bounds on the transformed fixed-effect scale.  `nothing`
   falls back to model-declared bounds.
 - `ignore_model_bounds::Bool = false`: if `true`, model-declared parameter

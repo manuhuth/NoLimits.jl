@@ -38,24 +38,23 @@ Every interval support is covered, with either bound finite or infinite.
 
 Discrete distributions (`Poisson`, `Bernoulli`, etc.) are not supported and raise an error at validation time. Continuous univariate distributions whose `logpdf` calls the Rmath C library (`NoncentralT`, `NoncentralF`, `NoncentralChisq`, `NoncentralBeta`, `StudentizedRange`) are also rejected: that `logpdf` is not ForwardDiff-compatible, so no gradient-based marginal estimator (`GHQuadrature`, `Laplace`, `FOCEI`) can use them.
 
-## What It Is Not
+## Adaptive and Prior-Centered Rules
 
-**`GHQuadrature` is currently prior-centered, not posterior-centered.** The quadrature nodes are placed around the prior mean of each random-effects distribution, not around the posterior mode. This is the standard (non-adaptive) Gauss-Hermite approach.
+**For Gaussian random effects the rule is adaptive (mode-centered AGHQ).** On every objective evaluation, `GHQuadrature` first solves the empirical-Bayes (EB) mode of each batch with the inner optimizer (warm-started from the previous evaluation), then centers and whitens the quadrature nodes at that mode, as `Laplace` does. This applies to batches whose random effects are all `Normal`/`MvNormal`, or a composite of marginals supported on the whole real line. The mode and its curvature are held fixed with respect to the outer gradient; at a converged rule the dropped terms are of the order of the quadrature error.
 
-As a consequence:
+**Other random-effect distributions keep the prior-centered rule.** Nodes are placed around the prior through the transport map above, not around the posterior mode. As a consequence:
 
-- When the data are highly informative and the posterior mode lies far from the prior mean, the nodes may miss the region of highest likelihood. In that case, the signed logsumexp can become numerically negative (especially at level ≥ 2), signaling poor quadrature accuracy.
-- The method works best when the posterior is roughly centered on the prior - for example, with moderate-information data, well-calibrated priors, or Gaussian random effects where the prior is a reasonable envelope for the posterior.
-- Level 1 in the current (prior-centered) form is **not** equivalent to the Laplace approximation. That equivalence holds only for the adaptive (posterior-centered) variant, which is not yet implemented.
+- When the data are highly informative and the posterior mode lies far from the prior, the nodes may miss the region of highest likelihood. The signed logsumexp can then become numerically negative (especially at level ≥ 2); the batch falls back to the level-1 rule with a warning.
+- The prior-centered rule works best when the posterior is roughly centered on the prior, and needs a higher `level` than the adaptive rule for the same accuracy.
 
-An adaptive version (AGHQ), which re-centers nodes at the posterior mode per outer iteration, is planned and will address these limitations. For now, if you observe numerical instability at higher levels, consider using [`Laplace`](laplace.md) instead or staying at level 1.
+At level 1 the adaptive rule's value equals the Laplace approximation, but its gradient does not; use [`Laplace`](laplace.md) for that, and `level ≥ 3` here.
 
 ## When to Use It
 
 `GHQuadrature` is a good choice when:
 
-- You have **no reliable starting values** and want a robust objective surface to explore. Because the objective is fully differentiable with respect to the fixed effects (no inner optimization during the forward pass), gradient-based optimizers can traverse the parameter space more freely than under Laplace.
-- You **know the posterior is close to the prior** - for instance, with weak data or well-specified priors - and want a more faithful marginal likelihood than Laplace at a controlled cost.
+- You want a **more accurate marginal likelihood than Laplace** for Gaussian random effects. The adaptive rule refines the Laplace approximation with extra nodes around the EB mode.
+- For non-Gaussian random effects, you **know the posterior is close to the prior** - for instance, with weak data or well-specified priors - and want a more faithful marginal likelihood than Laplace at a controlled cost.
 - You want to **cross-check Laplace results**. At the same optimum, a consistent GHQuadrature estimate (especially at level ≥ 2) provides evidence that the Laplace approximation is adequate.
 - You are fitting models with **non-Gaussian random effects** and want a quadrature-based alternative to Laplace without the approximation error of a Gaussian envelope.
 
@@ -116,7 +115,7 @@ NoLimits.GHQuadrature(;
     optimizer = OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
     optim_kwargs = NamedTuple(),
     adtype = Optimization.AutoForwardDiff(),
-    inner_optimizer = ...,   # used post-hoc for get_random_effects only
+    inner_optimizer = ...,   # EB modes: adaptive centering and get_random_effects
     inner_kwargs = NamedTuple(),
     inner_adtype = Optimization.AutoForwardDiff(),
     inner_grad_tol = :auto,
@@ -164,14 +163,14 @@ res = fit_model(dm, NoLimits.GHQuadrature(level=[1, 2]))
 | Group | Keywords | What they control |
 | --- | --- | --- |
 | Outer optimization | `optimizer`, `optim_kwargs`, `adtype` | Optimization over fixed effects. |
-| Inner EB (post-hoc) | `inner_optimizer`, `inner_kwargs`, `inner_adtype`, `inner_grad_tol`, `multistart_*` | Inner optimizer used **only** after fitting to compute EB modes for `get_random_effects`. Not used during the forward pass. |
+| Inner EB | `inner_optimizer`, `inner_kwargs`, `inner_adtype`, `inner_grad_tol`, `multistart_*` | Inner optimizer for the EB modes. It runs on every objective evaluation (the modes center the adaptive rule for Gaussian random effects) and once more, cold-started, at the optimum for `get_random_effects`. |
 | Bounds | `lb`, `ub`, `ignore_model_bounds` | Box bounds on transformed fixed-effect parameters. |
 | Mini-batching | `update_schedule` | Which batches enter the outer objective/gradient per optimizer iteration. |
 
 The default outer optimizer is `OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep = 1.0))`; when `update_schedule != :all` and no optimizer is passed, the default is `Optimisers.Adam(0.01)` instead.
 
-!!! note "No inner optimization during fitting"
-    Unlike `Laplace`, `GHQuadrature` does **not** run an inner optimization during the forward pass. The objective is a direct sum over quadrature nodes and is fully differentiable by ForwardDiff. The inner optimizer is used only after convergence to compute empirical Bayes mode estimates for `get_random_effects`.
+!!! note "Inner optimization during fitting"
+    Like `Laplace`, `GHQuadrature` solves the EB modes on every objective evaluation; for Gaussian random effects they center the adaptive rule. Batches with other random-effect distributions use the prior-centered rule, which does not depend on the modes. The modes are solved once more, cold-started, at the optimum for `get_random_effects`.
 
 ## Accessing Results
 
@@ -181,12 +180,12 @@ theta_t    = get_params(res; scale=:transformed)
 obj        = get_objective(res)
 converged  = get_converged(res)
 re         = get_random_effects(res)   # empirical Bayes mode estimates
-ll         = get_loglikelihood(res)
+ll         = get_loglikelihood(res)   # sparse-grid marginal log-likelihood
 ```
 
 ## Numerical Stability
 
-The Smolyak weights alternate in sign at higher levels (inclusion-exclusion construction). When the integrand is not well approximated by the prior-centered Gaussian, the positive and negative contributions can nearly cancel, producing a numerically small or negative result from the signed logsumexp. When this happens, the batch marginal likelihood is returned as `-Inf` and a warning is emitted.
+The Smolyak weights alternate in sign at higher levels (inclusion-exclusion construction). When the integrand is not well approximated by the prior-centered Gaussian, the positive and negative contributions can nearly cancel, producing a numerically small or negative result from the signed logsumexp. When this happens for a prior-centered batch, that batch falls back to the level-1 rule (which has only positive weights) and a warning is emitted; for an adaptive batch the batch log-likelihood is `-Inf` at that parameter value.
 
 Practical guidance:
 

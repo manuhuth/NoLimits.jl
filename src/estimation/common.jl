@@ -366,7 +366,7 @@ High-level summary of a fitting result.
 
 # Fields
 - `objective::O`: the final objective value (negative log-likelihood, negative log-posterior, etc.).
-- `converged::C`: convergence flag (`true` / `false` / `nothing` for MCMC).
+- `converged::C`: convergence flag (`true` / `false` / `missing` for MCMC).
 - `params::P`: a [`FitParameters`](@ref) struct with parameter estimates.
 - `notes::N`: method-specific string notes or `nothing`.
 """
@@ -542,11 +542,11 @@ Return the final objective value (e.g. negative log-likelihood for MLE).
 get_objective(res::FitResult) = res.summary.objective
 
 """
-    get_converged(res::FitResult) -> Bool, Nothing or Missing
+    get_converged(res::FitResult) -> Bool or Missing
 
 Return the convergence flag. `true` indicates successful convergence, `false` indicates
-failure, `nothing` is returned for methods that do not track convergence (e.g. MCMC), and
-`missing` for a custom estimator that did not report one to [`build_fit_result`](@ref).
+failure, and `missing` is returned for methods that do not track convergence (e.g. MCMC)
+and for a custom estimator that did not report one to [`build_fit_result`](@ref).
 """
 get_converged(res::FitResult) = res.summary.converged
 
@@ -2479,11 +2479,17 @@ end
     get_loglikelihood(res::FitResult; constants_re, ode_args, ode_kwargs,
                       serialization) -> Real
 
-Compute the marginal log-likelihood at the estimated parameter values.
+Compute the log-likelihood at the estimated parameter values. What it measures
+depends on the method:
 
-For MLE/MAP results, evaluates the population log-likelihood. For random-effect
-results (Laplace/FOCEI/SAEM/MCEM), evaluates using the EB modes stored in the
-result, recomputing them when the fit was run with `store_eb_modes = false`.
+- MLE/MAP (no random effects): the log-likelihood `log p(y | θ̂)`.
+- Laplace/FOCEI/SAEM/MCEM/Pooled: the *conditional* log-likelihood `log p(y | η̂, θ̂)`
+  at the EB modes (or pooled random effects), without the random-effect prior term.
+  The EB modes are recomputed when the fit was run with `store_eb_modes = false`.
+- GHQuadrature: the sparse-grid marginal log-likelihood at `θ̂`.
+
+For model comparison across random-effect methods use
+[`get_marginal_likelihood`](@ref), which integrates the random effects out.
 
 # Keyword Arguments
 - `constants_re::NamedTuple = NamedTuple()`: random effects fixed at given values.
