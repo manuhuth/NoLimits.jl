@@ -16,15 +16,32 @@ _mv_n_outcomes(dist::Distribution{Multivariate}) = length(dist)
 
 # Conditionally independent emissions: inner element is a Tuple of M scalar
 # distributions. Missing entries contribute false (≡ 0, promotes to any
-# numeric type, AD-safe). The static ntuple avoids the runtime `dists[m]`
-# dynamic dispatch of a generator over heterogeneous per-outcome emissions.
-function _mv_emission_logpdf(dists::Tuple, y::AbstractVector)
-    return sum(
-        ntuple(
-            m -> ismissing(y[m]) ? false : logpdf(dists[m], y[m]),
-            Val(length(dists))
-        )
-    )
+# numeric type, AD-safe).
+#
+# The sum is unrolled at compile time into a straight-line left fold,
+#     acc = reduce_first(add_sum, term(dists[1], y[1]))
+#     acc = add_sum(acc, term(dists[m], y[m]))      for m = 2, ..., M
+# with a literal index m, so the element type of `dists[m]` and of its logpdf
+# is static at every step. (The former `sum(ntuple(m -> ... dists[m] ..., Val(M)))`
+# compiled the closure for a runtime `m`; on a heterogeneous tuple such as
+# 9 Bernoulli + 2 Normal that is not inferable, so every element and every
+# ForwardDiff.Dual result was boxed.) The `false` contributions, the left-to-right
+# summation order and the `reduce_first` seed are exactly those of `sum` over the
+# former tuple, so values and result types are unchanged (an all-missing row
+# still gives `0::Int`). A recursive fold is deliberately avoided: its accumulator
+# is a small Union (missing vs. observed), which gets union-split at every
+# recursive call and makes the inlined code grow exponentially in M.
+@inline _mv_emission_term(d, ym) = ismissing(ym) ? false : logpdf(d, ym)
+
+@generated function _mv_emission_logpdf(dists::Tuple, y::AbstractVector)
+    M = fieldcount(dists)
+    M == 0 && return :(throw(ArgumentError("empty tuple of emission distributions")))
+    body = Any[:(acc = Base.reduce_first(Base.add_sum, _mv_emission_term(dists[1], y[1])))]
+    for m in 2:M
+        push!(body, :(acc = Base.add_sum(acc, _mv_emission_term(dists[$m], y[$m]))))
+    end
+    push!(body, :(return acc))
+    return Expr(:block, body...)
 end
 
 # Joint MvNormal emission: handles missings via analytic marginalization.
