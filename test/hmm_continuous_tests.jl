@@ -215,6 +215,40 @@ end
     @test length(g) == length(θ0)
 end
 
+@testset "CT HMM equilibrium shortcut under nested ForwardDiff and integer Δt" begin
+    # max exit rate × Δt = 300 > _CT_HMM_EQUIL_THRESHOLD on a cyclic Q, so the spectral-gap
+    # shortcut is taken. A Hessian reaches it with Dual{Dual} entries (as the random-effect
+    # Hessian in GHQuadrature / Laplace / get_marginal_likelihood does); stripping only one
+    # Dual layer used to hand `eigvals` a Dual matrix (MethodError: eigvals!).
+    f(x) = begin
+        λ = exp(x[1]); μ = exp(x[2])
+        Q = [-λ λ; μ -μ]
+        logpdf(
+            ContinuousTimeDiscreteStatesHMM(
+                Q, (Bernoulli(0.2), Bernoulli(0.7)), Categorical([0.6, 0.4]), 1.0
+            ), 1
+        )
+    end
+    # at equilibrium the state law is the stationary π = (μ, λ) / (λ + μ)
+    fstat(x) = (λ = exp(x[1]); μ = exp(x[2]); log((0.2μ + 0.7λ) / (λ + μ)))
+    x0 = [log(300.0), log(250.0)]
+    @test f(x0) ≈ fstat(x0)
+    @test ForwardDiff.gradient(f, x0) ≈ ForwardDiff.gradient(fstat, x0)
+    H = ForwardDiff.hessian(f, x0)
+    @test all(isfinite, H)
+    @test H ≈ ForwardDiff.hessian(fstat, x0)
+
+    # an integer Δt must not hit a missing `_ct_hmm_primal` method
+    Q = [-300.0 300.0; 250.0 -250.0]
+    hmm_int = ContinuousTimeDiscreteStatesHMM(
+        Q, (Bernoulli(0.2), Bernoulli(0.7)), Categorical([0.6, 0.4]), 1
+    )
+    hmm_flt = ContinuousTimeDiscreteStatesHMM(
+        Q, (Bernoulli(0.2), Bernoulli(0.7)), Categorical([0.6, 0.4]), 1.0
+    )
+    @test logpdf(hmm_int, 1) == logpdf(hmm_flt, 1)
+end
+
 @testset "HMM ForwardDiff remains finite for tiny hidden-state masses" begin
     emissions = (
         Categorical([0.99999998, 1.0e-8, 1.0e-8]),

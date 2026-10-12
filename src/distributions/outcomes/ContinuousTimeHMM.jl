@@ -112,13 +112,17 @@ end
 # to within ~1e-12 for all ergodic Q.  The spectral gap (smallest |non-zero eigenvalue| of Q)
 # governs convergence; using max_exit_rate was incorrect for Q matrices with disparate rates
 # (e.g. funnel topologies) where the gap can be orders of magnitude smaller than max_exit.
-# For ForwardDiff Dual-number inputs eigvals is unavailable; the shortcut is skipped and
-# expv is used instead.
+# eigvals has no ForwardDiff Dual method, so the gate and the gap are computed on the
+# primal values (`_ct_hmm_primal`); the stationary solve stays generic and carries the
+# derivatives.
 const _CT_HMM_EQUIL_THRESHOLD = 200.0
 
-# Strip ForwardDiff Dual to its primal Float64 value (identity for plain floats).
-@inline _ct_hmm_primal(x::AbstractFloat) = x
-@inline _ct_hmm_primal(x::ForwardDiff.Dual) = ForwardDiff.value(x)
+# Strip ForwardDiff Duals down to the primal real value (identity for plain reals).
+# Recursive: nested AD — e.g. a ForwardDiff Hessian over the random effects inside
+# GHQuadrature / Laplace / get_marginal_likelihood — produces Dual{T1, Dual{T2, Float64}},
+# and stripping only one layer handed a Dual matrix to `eigvals` (MethodError eigvals!).
+@inline _ct_hmm_primal(x::Real) = x
+@inline _ct_hmm_primal(x::ForwardDiff.Dual) = _ct_hmm_primal(ForwardDiff.value(x))
 
 # Returns the spectral gap of Q: smallest |non-zero eigenvalue|.
 # Operates on the primal Float64 values so it works for both plain floats and Dual arrays.
