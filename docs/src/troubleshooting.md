@@ -102,6 +102,12 @@ number of random effects, or fixing one of them with `constants_re`, is often th
   ```
 
   The first attempt fails silently; only a failed fallback solve gives the -Inf warning.
+  Solves that are stiff from the start skip the first attempt (`stiffness_check = 2.0e4`, the
+  default): when the spectral radius ρ of the state Jacobian ∂f/∂u at the initial state, times
+  the integration interval, exceeds the threshold, the fallback solves directly. For gradient
+  (ForwardDiff) solves that pass this test, a Float64 solve with `alg` decides first, so a
+  failing attempt is never run with dual numbers. `stiffness_check = nothing` restores the
+  plain retry.
 - **Tolerances.** Tight `abstol`/`reltol` on an ODE model dominates the runtime. Loosen them
   through `set_solver_config(model; kwargs = (; abstol, reltol))` while exploring, then tighten
   for the final fit.
