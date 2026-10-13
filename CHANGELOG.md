@@ -6,8 +6,10 @@
 
 - SAEM skips the M-step in iterations with step size γ = 0 (the `sa_burnin_iters` burn-in
   iterations and, under `:robbins_monro`, the final iteration). The update
-  `θ_old + γ * (θ̂ - θ_old)` discards θ̂ there, so the closed-form updates, the Q2 and numeric
-  M-step solves and the post-M-step clamps no longer run and θ stays unchanged. The E-step,
+  `θ_old + γ * (θ̂ - θ_old)` discards θ̂ there, so the closed-form updates and the Q2 and
+  numeric M-step solves no longer run and θ stays unchanged, up to the variance-floor and
+  `sa_anneal` clamps. A fit with `maxiters <= sa_burnin_iters` warns, since it returns θ at
+  its start value. The E-step,
   the sample store and sufficient-statistics updates, Q and the diagnostics are computed as
   before. Iterations with γ > 0 are unchanged. Before, each burn-in iteration ran the
   numeric M-step solve and discarded its result, while the closed-form updates (from the

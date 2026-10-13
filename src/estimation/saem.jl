@@ -3631,6 +3631,10 @@ function _fit_model(
     # Last computed observed-data log-likelihood, re-shown by the progress bar /
     # verbose log between `obsLL_every`-gated evaluations.
     obsLL_display = T0(NaN)
+    if method.saem.sa_schedule !== :custom &&
+            method.saem.maxiters <= method.saem.sa_burnin_iters
+        @warn "SAEM: maxiters = $(method.saem.maxiters) <= sa_burnin_iters = $(method.saem.sa_burnin_iters), so every iteration is burn-in (γ = 0) and skips the M-step. θ is returned at its start value, up to the variance-floor and sa_anneal clamps. Lower sa_burnin_iters or raise maxiters."
+    end
     for iter in 1:(method.saem.maxiters)
         γ = _saem_gamma_schedule(iter, method.saem)
         sched_phase = _saem_schedule_phase(iter, method.saem)
@@ -3721,10 +3725,12 @@ function _fit_model(
 
         if γ == 0.0
             # γ = 0 discards the M-step result (θ_old + 0 * (θ̂ − θ_old) = θ_old), so the
-            # closed-form updates, the Q2 and numeric M-step solves and the post-M-step clamps
-            # are skipped and θ is kept. The E-step and the γ-gated sample store / sufficient
-            # statistics updates above still run. This happens in the burn-in iterations and,
-            # under :robbins_monro, in the final iteration.
+            # closed-form updates and the Q2 and numeric M-step solves are skipped and θ is
+            # kept; only the sa_anneal / var-lb clamps below can still move it onto their
+            # floors. The E-step and the γ-gated sample store / sufficient statistics
+            # updates above still run. This happens in the burn-in iterations and, under
+            # :robbins_monro, in the final iteration.
+            θt_free = copy(θt_curr)
             θ_prev_new = copy(θt_curr)
             θt_full = θt_full_curr
             θu_new = θu_curr
@@ -3737,7 +3743,6 @@ function _fit_model(
                 )
             end
             Q_new = Q_new == Inf ? T0(Inf) : Q_new
-            anneal_was_active = do_sa_anneal && iter <= sa_anneal_iters_eff
         else
             # builtin variance updates (optional)
             iter_constants = constants
@@ -4140,36 +4145,36 @@ function _fit_model(
                 end
             end
             Q_new = Q_new == Inf ? T0(Inf) : Q_new
+        end
 
-            # SA annealing clamp (post M-step)
-            if do_sa_anneal
-                θu_new_clamped = _saem_apply_sa_anneal_clamp(
-                    θu_new, sa_anneal_targets_eff, sa_anneal_initial_vals,
-                    iter, sa_anneal_iters_eff, method.saem.sa_anneal_alpha,
-                    method.saem.sa_anneal_schedule
-                )
-                if θu_new_clamped !== θu_new
-                    θu_new = θu_new_clamped
-                    θt_full = transform(θu_new)
-                    for name in base_free_names
-                        setproperty!(θt_free, name, getproperty(θt_full, name))
-                    end
-                    θ_prev_new = copy(θt_free)
+        # SA annealing clamp (post M-step)
+        if do_sa_anneal
+            θu_new_clamped = _saem_apply_sa_anneal_clamp(
+                θu_new, sa_anneal_targets_eff, sa_anneal_initial_vals,
+                iter, sa_anneal_iters_eff, method.saem.sa_anneal_alpha,
+                method.saem.sa_anneal_schedule
+            )
+            if θu_new_clamped !== θu_new
+                θu_new = θu_new_clamped
+                θt_full = transform(θu_new)
+                for name in base_free_names
+                    setproperty!(θt_free, name, getproperty(θt_full, name))
                 end
+                θ_prev_new = copy(θt_free)
             end
-            anneal_was_active = do_sa_anneal && iter <= sa_anneal_iters_eff
+        end
+        anneal_was_active = do_sa_anneal && iter <= sa_anneal_iters_eff
 
-            # Var lb clamp (post M-step)
-            if !isempty(var_lb_targets)
-                θu_new_clamped = _saem_apply_var_lb(θu_new, var_lb_targets, var_lb_eff)
-                if θu_new_clamped !== θu_new
-                    θu_new = θu_new_clamped
-                    θt_full = transform(θu_new)
-                    for name in base_free_names
-                        setproperty!(θt_free, name, getproperty(θt_full, name))
-                    end
-                    θ_prev_new = copy(θt_free)
+        # Var lb clamp (post M-step)
+        if !isempty(var_lb_targets)
+            θu_new_clamped = _saem_apply_var_lb(θu_new, var_lb_targets, var_lb_eff)
+            if θu_new_clamped !== θu_new
+                θu_new = θu_new_clamped
+                θt_full = transform(θu_new)
+                for name in base_free_names
+                    setproperty!(θt_free, name, getproperty(θt_full, name))
                 end
+                θ_prev_new = copy(θt_free)
             end
         end
 
