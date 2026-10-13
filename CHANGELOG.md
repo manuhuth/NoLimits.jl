@@ -4,6 +4,14 @@
 
 ### Changes
 
+- `DataModel` accepts `weights = :col`, a column of per-individual likelihood weights. All
+  estimators maximize `sum_b w_b * log p(y_b | θ)` over the batches of individuals that
+  share random effects; weights must be equal within such a batch. SAEM/MCEM sample
+  unweighted and weight only the M-step, including the closed-form updates. Wald UQ on a
+  weighted fit defaults to the sandwich covariance (`compute_uq` now takes
+  `vcov = :auto`), `get_loglikelihood` returns the weighted value, and `fit_cv` weights
+  held-out scores unless `weighted = false`. New accessor `get_weights`.
+
 - `@preDifferentialEquation` may now reference random effects grouped by a column coarser
   than `primary_id` (for example a site or study column), as long as that column is
   constant within every individual. preDE is evaluated once per individual, so such a random

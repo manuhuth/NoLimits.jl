@@ -417,7 +417,7 @@ function laplace_marginal(
     )
     isempty(infos) && return zero(eltype(θ_re))
     return sum(
-        laplace_marginal(
+        _batch_weight(dm, get_inds(infos[bi])) * laplace_marginal(
                 dm, θ_re, infos[bi], bstars[bi]; const_cache = cc,
                 cache = cache, curvature = curvature, jitter = jitter,
                 max_tries = max_tries, adaptive = adaptive, scale_factor = scale_factor
@@ -507,8 +507,9 @@ function laplace_marginal_gradient(
             scale_factor = scale_factor, use_trace_logdet_grad = use_trace_logdet_grad,
             use_hutchinson = use_hutchinson, hutchinson_n = hutchinson_n, rng = rng
         )
-        value += v
-        grad .+= g
+        w = _batch_weight(dm, get_inds(infos[bi]))
+        value += w * v
+        grad .+= w .* g
     end
     return (value, _dev_gradient_scale(dm, θ_re, grad, scale))
 end
@@ -546,7 +547,10 @@ function ghq_marginal(
     )
     _, infos, cc = build_re_batch_infos(dm, constants_re)
     isempty(infos) && return zero(eltype(θ_re))
-    return sum(_ghq_batch_ll(dm, infos[bi], θ_re, cc, c, level) for bi in eachindex(infos))
+    return sum(
+        _batch_weight(dm, get_inds(infos[bi])) * _ghq_batch_ll(dm, infos[bi], θ_re, cc, c, level)
+            for bi in eachindex(infos)
+    )
 end
 
 """
@@ -955,12 +959,14 @@ struct _DevGHQObjective{D, B, C, K, L, P}
     level::L
     penalty::P
     include_penalty::Bool
+    weighted::Bool
 end
 
 @inline function (o::_DevGHQObjective)(θ::ComponentArray)
     total = _dev_penalty_term(θ, o.include_penalty, o.penalty)
     for bi in eachindex(o.infos)
-        total += ghq_marginal(
+        w = o.weighted ? _batch_weight(o.dm, get_inds(o.infos[bi])) : 1.0
+        total += w * ghq_marginal(
             o.dm, θ, o.infos[bi]; level = o.level,
             const_cache = o.const_cache, cache = o.cache
         )
@@ -985,7 +991,7 @@ function objective_and_gradient(
             serialization = EnsembleSerial(), force_saveat = true
         ) : cache
     f = _DevGHQObjective(
-        dm, infos, cc, c, level, _as_namedtuple(penalty), include_penalty
+        dm, infos, cc, c, level, _as_namedtuple(penalty), include_penalty, true
     )
     return _dev_sweep(f, dm, θ, scale, hessian)
 end
@@ -997,7 +1003,7 @@ function objective_and_gradient(
     )
     scale = _dev_check_scale(scale)
     f = _DevGHQObjective(
-        dm, [batch], const_cache, _dev_ll_cache(dm, cache), level, NamedTuple(), false
+        dm, [batch], const_cache, _dev_ll_cache(dm, cache), level, NamedTuple(), false, false
     )
     return _dev_sweep(f, dm, θ, scale, hessian)
 end
@@ -1567,6 +1573,8 @@ Federated aggregation: `outcome`/`hmm` fields are plain sums (add directly acros
 then re-dividing by the pooled `n`. The `idx` form returns batch `idx`'s contribution; summed
 this way over batches it equals the population form (the per-subject seam for DP / federation).
 Draws are treated as equally-weighted MCMC draws, matching the SAEM MH sampler.
+With likelihood weights ([`get_weights`](@ref)) every contribution is multiplied by its
+batch weight and `n` is the summed weight, so the aggregation rule above is unchanged.
 """
 function saem_sufficient_statistics(
         dm::DataModel, θ::ComponentArray,
@@ -1873,7 +1881,7 @@ end
 function ghq_marginal(ctx::FitContext, θ::ComponentArray; level = 3)
     isempty(ctx.batch_infos) && return zero(eltype(θ))
     return sum(
-        ghq_marginal(ctx, bi, θ; level = level)
+        _batch_weight(ctx.dm, get_inds(ctx.batch_infos[bi])) * ghq_marginal(ctx, bi, θ; level = level)
             for bi in eachindex(ctx.batch_infos)
     )
 end
@@ -1921,7 +1929,7 @@ function laplace_marginal(
     isempty(ctx.batch_infos) && return zero(eltype(θ))
     bstars = empirical_bayes(ctx, θ; ebe_options = ebe_options, rescue = rescue, rng = rng)
     return sum(
-        laplace_marginal(
+        _batch_weight(ctx.dm, get_inds(ctx.batch_infos[bi])) * laplace_marginal(
                 ctx.dm, θ, ctx.batch_infos[bi], bstars[bi];
                 const_cache = ctx.const_cache, cache = ctx.cache,
                 curvature = curvature, kwargs...
@@ -1960,8 +1968,9 @@ function laplace_marginal_gradient(
             const_cache = ctx.const_cache, cache = ctx.cache, scale = :untransformed,
             curvature = curvature, rng = rng, kwargs...
         )
-        value += v
-        grad .+= g
+        w = _batch_weight(ctx.dm, get_inds(ctx.batch_infos[bi]))
+        value += w * v
+        grad .+= w .* g
     end
     return (value, _dev_gradient_scale(ctx.dm, θ_re, grad, scale))
 end
@@ -1985,7 +1994,7 @@ function objective_and_gradient(
     scale = _dev_check_scale(scale)
     f = _DevGHQObjective(
         ctx.dm, ctx.batch_infos, ctx.const_cache, ctx.cache, level,
-        _as_namedtuple(penalty), include_penalty
+        _as_namedtuple(penalty), include_penalty, true
     )
     return _dev_sweep(f, ctx.dm, θ, scale, hessian)
 end

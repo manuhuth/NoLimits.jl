@@ -1346,3 +1346,89 @@ end
         )
     end
 end
+
+@testset "likelihood weights: marginal objectives, fits, UQ, CV" begin
+    ser = NoLimits.EnsembleSerial()
+    og = NoLimits.objective_and_gradient
+    model = fx_re_model()
+    df = copy(fx_re_df())
+    df.w1 = ones(nrow(df))
+    df.w = [id == 1 ? 2.0 : 1.0 for id in df.ID]
+    # Weight 2 on individual 1 must equal adding an exact copy of it.
+    dup = df[df.ID .== 1, :]
+    dup.ID .= maximum(df.ID) + 1
+    mk(d; kw...) = DataModel(model, d; primary_id = :ID, time_col = :t, kw...)
+    dm0, dm1, dmw, dmd = mk(df), mk(df; weights = :w1), mk(df; weights = "w"), mk(vcat(df, dup))
+    @test NoLimits.get_weights(dm0) === nothing
+    @test NoLimits.get_weights(dmw) == [2.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    θ = NoLimits.get_θ0_untransformed(NoLimits.get_fixed(model))
+
+    for (m, mfit) in (
+            (NoLimits.Laplace(), NoLimits.Laplace(; optim_kwargs = (maxiters = 2,))),
+            (NoLimits.FOCEI(), NoLimits.FOCEI(; optim_kwargs = (maxiters = 2,))),
+            (NoLimits.GHQuadrature(level = 2), NoLimits.GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,))),
+        )
+        v0, g0 = og(m, dm0, θ)
+        v1, g1 = og(m, dm1, θ)
+        @test v1 == v0
+        @test collect(g1) == collect(g0)
+        vw, gw = og(m, dmw, θ)
+        vd, gd = og(m, dmd, θ)
+        @test vw ≈ vd rtol = 1.0e-10
+        @test collect(gw) ≈ collect(gd) rtol = 1.0e-8
+
+        fit(d) = fit_model(d, mfit; serialization = ser, rng = Random.Xoshiro(1))
+        r0, r1, rw, rd = fit(dm0), fit(dm1), fit(dmw), fit(dmd)
+        @test NoLimits.get_objective(r1) == NoLimits.get_objective(r0)
+        @test NoLimits.get_objective(rw) ≈ NoLimits.get_objective(rd) rtol = 1.0e-8
+        @test collect(NoLimits.get_params(rw; scale = :transformed)) ≈
+            collect(NoLimits.get_params(rd; scale = :transformed)) rtol = 1.0e-6
+        @test NoLimits.get_loglikelihood(rw) ≈ NoLimits.get_loglikelihood(rd) rtol = 1.0e-6
+    end
+
+    # No random effects: MLE objective/gradient.
+    mn = fx_nore_model()
+    dfn = copy(fx_nore_df())
+    dfn.w = [id == 1 ? 2.0 : 1.0 for id in dfn.ID]
+    dupn = dfn[dfn.ID .== 1, :]
+    dupn.ID .= maximum(dfn.ID) + 1
+    dmn_w = DataModel(mn, dfn; primary_id = :ID, time_col = :t, weights = :w)
+    dmn_d = DataModel(mn, vcat(dfn, dupn); primary_id = :ID, time_col = :t)
+    θn = NoLimits.get_θ0_untransformed(NoLimits.get_fixed(mn))
+    vw, gw = og(NoLimits.MLE(), dmn_w, θn)
+    vd, gd = og(NoLimits.MLE(), dmn_d, θn)
+    @test vw ≈ vd rtol = 1.0e-12
+    @test collect(gw) ≈ collect(gd) rtol = 1.0e-10
+
+    # Wald: a weighted DataModel defaults to the sandwich. A constant weight c scales H by c
+    # and the meat by c^2, so the sandwich equals the unweighted one.
+    dfn.w2 = fill(2.0, nrow(dfn))
+    dmn_2 = DataModel(mn, dfn; primary_id = :ID, time_col = :t, weights = :w2)
+    rn0 = fit_model(fx_nore_dm(), NoLimits.MLE(); serialization = ser)
+    rn2 = fit_model(dmn_2, NoLimits.MLE(); serialization = ser)
+    @test NoLimits.get_objective(rn2) ≈ 2 * NoLimits.get_objective(rn0) rtol = 1.0e-8
+    uq0 = compute_uq(rn0; method = :wald, rng = Random.Xoshiro(1))
+    @test NoLimits.get_uq_diagnostics(uq0).vcov == :hessian
+    uq2 = compute_uq(rn2; method = :wald, rng = Random.Xoshiro(1))
+    @test NoLimits.get_uq_diagnostics(uq2).vcov == :sandwich
+    uq0s = compute_uq(rn0; method = :wald, vcov = :sandwich, rng = Random.Xoshiro(1))
+    @test NoLimits.get_uq_vcov(uq2; scale = :transformed) ≈
+        NoLimits.get_uq_vcov(uq0s; scale = :transformed) rtol = 1.0e-3
+
+    # CV: held-out scores are weighted by default; `weighted = false` turns that off.
+    dfn.wr = [0.5 + 0.25 * id for id in dfn.ID]
+    dmn_r = DataModel(mn, dfn; primary_id = :ID, time_col = :t, weights = :wr)
+    cv = cross_validate(dmn_r, 2; rng = Random.MersenneTwister(3))
+    cw = fit_cv(cv, NoLimits.MLE(); rng = Random.MersenneTwister(1))
+    cu = fit_cv(cv, NoLimits.MLE(); rng = Random.MersenneTwister(1), weighted = false)
+    sw = get_obs_scores(cw)
+    @test "weight" in names(sw)
+    @test !("weight" in names(get_obs_scores(cu)))
+    @test sw.weight == [0.5 + 0.25 * id for id in sw.individual]
+    @test sw.loglikelihood == get_obs_scores(cu).loglikelihood
+    @test get_mean_obs_loglikelihood(cw) ≈ sum(sw.weight .* sw.loglikelihood) / sum(sw.weight)
+    for fr in get_fold_results(cw)
+        s = sw[sw.fold .== fr.fold, :]
+        @test fr.test_loglikelihood ≈ sum(s.weight .* s.loglikelihood)
+    end
+end

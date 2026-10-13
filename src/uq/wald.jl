@@ -479,7 +479,7 @@ function _compute_uq_wald_no_re(
                 fd_rel_step = fd_rel_step,
                 fd_max_tries = fd_max_tries
             )
-            B .+= g * g'
+            B .+= _ind_weight(dm, i)^2 .* (g * g')
         end
         B = 0.5 .* (B .+ B')
         meat_diag = _wald_meat_diag(B, H_active, length(get_individuals(dm)))
@@ -604,7 +604,7 @@ function _compute_uq_wald_re(
                     const_cache, ll_cache_local, approx_method.level
                 )
                 bll == -Inf && return Inf
-                total += bll
+                total += _batch_weight(dm, get_inds(info)) * bll
             end
             -total
         else
@@ -694,7 +694,8 @@ function _compute_uq_wald_re(
                         _symmetrize_psd_params(θu, fe),
                         const_cache, ll_cache_local, approx_method.level
                     )
-                    bll == -Inf ? Inf : -bll
+                    # The Laplace branch below is already weighted per batch.
+                    bll == -Inf ? Inf : -_batch_weight(dm, get_inds(info)) * bll
                 else
                     _laplace_objective_only(
                         dm, info_single, θu, const_cache, ll_cache, ebe_cache_i;

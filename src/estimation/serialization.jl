@@ -36,6 +36,7 @@ struct _SavedDataModelConfig
     cmt_col::Symbol
     serialization_kind::Symbol   # :serial / :threads / :distributed
     t0::Union{Nothing, Float64}
+    weights_col::Union{Nothing, Symbol}
 end
 
 # ─── Per-method saved result structs ─────────────────────────────────────────
@@ -195,7 +196,8 @@ function _build_saved_config(dm::DataModel)
         cfg.rate_col,
         cfg.cmt_col,
         _ensemble_to_symbol(cfg.serialization),
-        cfg.t0 === nothing ? nothing : float(cfg.t0)
+        cfg.t0 === nothing ? nothing : float(cfg.t0),
+        cfg.weights_col
     )
 end
 
@@ -383,7 +385,8 @@ function _reconstruct_data_model(df, config::_SavedDataModelConfig, model)
         rate_col = config.rate_col,
         cmt_col = config.cmt_col,
         t0 = config.t0,
-        serialization = _symbol_to_serialization(config.serialization_kind)
+        serialization = _symbol_to_serialization(config.serialization_kind),
+        weights = config.weights_col
     )
 end
 

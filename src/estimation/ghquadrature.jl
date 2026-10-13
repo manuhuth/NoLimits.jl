@@ -525,7 +525,7 @@ function _fit_model_scalar(
                 else
                     # `convert`, not `T(bll)`: when `T` is a Dual and `bll` is the same
                     # Dual type, the constructor tries `Float64(::Dual)` and throws.
-                    results[bi] = convert(T, bll)
+                    results[bi] = _batch_weight(dm, get_inds(batch_infos[bi])) * convert(T, bll)
                 end
             end
             bad[] && return infT
@@ -537,7 +537,7 @@ function _fit_model_scalar(
                     method.level, bstars[bi]
                 )
                 bll == -Inf && return infT
-                results[bi] = convert(T, bll)
+                results[bi] = _batch_weight(dm, get_inds(info)) * convert(T, bll)
             end
         end
         total = st === nothing ? sum(results) : st.scale * sum(results[bi] for bi in st.selected)

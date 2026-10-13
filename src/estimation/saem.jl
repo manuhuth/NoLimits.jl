@@ -2034,6 +2034,19 @@ function _saem_push_outcome_stat(prev, dist, y, T::Type)
     )
 end
 
+# Likelihood weights scale an individual's sufficient statistics and its count.
+function _saem_weight_outcome_stat(st, dm::DataModel, i::Int)
+    get_weights(dm) === nothing && return st
+    w = _ind_weight(dm, i)
+    return (family = st.family, s1 = w * st.s1, s2 = w * st.s2, ss = w * st.ss, n = w * st.n)
+end
+
+function _saem_weight_hmm_stat(st, dm::DataModel, i::Int)
+    get_weights(dm) === nothing && return st
+    w = _ind_weight(dm, i)
+    return (family = st.family, target = st.target, sum_w = w .* st.sum_w, sum_wy = w .* st.sum_wy)
+end
+
 @inline function _saem_merge_outcome_stats(a, b)
     a.family == b.family || return nothing
     return (
@@ -2169,8 +2182,10 @@ function _saem_builtin_collect_current_stats(
         sum_x = nothing
         sum_xx = nothing
         nvals = 0
+        wsum = 0.0
         for (bi, info) in enumerate(batch_infos), c in 1:_saem_n_chains_at(n_chains, bi)
             b = b_chains[bi][c]
+            wb = _batch_weight(dm, get_inds(info))
             rei = get_re_info(info)[ri]
             for (li, lvl_id) in enumerate(get_levels(get_re_map(rei)))
                 v = _re_value_from_b(rei, lvl_id, b)
@@ -2196,22 +2211,25 @@ function _saem_builtin_collect_current_stats(
                     sum_x = zeros(Tθ, dim)
                     sum_xx = zeros(Tθ, dim, dim)
                 end
-                sum_x .+= x
+                sum_x .+= wb .* x
                 # `vector * adjoint` dispatches to `broadcast(*, u, v)`, so this whole
                 # accumulation is BLAS-free and bit-reproducible across CPU kernels. Do NOT
                 # "optimize" it into `mul!`/`BLAS.syrk!`: that is exactly the dispatch the
                 # closed-form M-step exists to avoid.
-                sum_xx .+= x * x'
+                sum_xx .+= wb .* (x * x')
                 nvals += 1
+                wsum += wb
             end
         end
-        nvals == 0 && continue
-        mean_x = sum_x ./ nvals
-        second_x = sum_xx ./ nvals
+        (nvals == 0 || iszero(wsum)) && continue
+        mean_x = sum_x ./ wsum
+        second_x = sum_xx ./ wsum
         push!(
             re_pairs,
             re => (
-                family = family, mean = mean_x, second = second_x, n = nvals,
+                family = family, mean = mean_x, second = second_x,
+                # Summed weight under likelihood weights, so `mean * n` stays additive.
+                n = get_weights(dm) === nothing ? nvals : wsum,
                 known_mean = known_mean,
             )
         )
@@ -2234,7 +2252,8 @@ function _saem_builtin_collect_current_stats(
                     all_supported = false
                     break
                 end
-                for (col, st) in pairs(stats_i)
+                for (col, st0) in pairs(stats_i)
+                    st = _saem_weight_outcome_stat(st0, dm, i)
                     prev = get(obs_acc, col, nothing)
                     if prev === nothing
                         obs_acc[col] = st
@@ -2269,7 +2288,8 @@ function _saem_builtin_collect_current_stats(
                     all_supported = false
                     break
                 end
-                for (col, st) in pairs(stats_i)
+                for (col, st0) in pairs(stats_i)
+                    st = _saem_weight_hmm_stat(st0, dm, i)
                     prev = get(hmm_acc, col, nothing)
                     if prev === nothing
                         hmm_acc[col] = st
@@ -2745,7 +2765,7 @@ function _saem_Q_core(
             dm, info, θ, Tθ[], const_cache, ll_cache_c; anneal_sds = anneal_sds
         )
         !isfinite(logf) && return Tθ(Inf)
-        const_total += logf
+        const_total += _batch_weight(dm, get_inds(info)) * logf
     end
     if serialization isa SciMLBase.EnsembleThreads
         nthreads = Threads.maxthreadid()
@@ -2780,7 +2800,7 @@ function _saem_Q_core(
                 !isfinite(logf) && (bad[] = true; return)
                 acc += w * logf
             end
-            partial_obj[bi] = acc
+            partial_obj[bi] = _batch_weight(dm, get_inds(info)) * acc
         end
         bad[] && return Tθ(Inf)
         weighted_total = zero(Tθ)
@@ -2807,7 +2827,7 @@ function _saem_Q_core(
                 !isfinite(logf) && return Tθ(Inf)
                 acc += w * logf
             end
-            weighted_total += acc
+            weighted_total += _batch_weight(dm, get_inds(info)) * acc
         end
         return const_total + weighted_total / weight_sum
     end
@@ -2850,7 +2870,7 @@ function _saem_obsLL(
             η_ind = _build_eta_ind(dm, i, info, b, const_cache, θ_re)
             lli = _loglikelihood_individual(dm, i, θ_re, η_ind, cache_local)
             isfinite(lli) || continue
-            total += lli
+            total += _ind_weight(dm, i) * lli
         end
     end
     return total
@@ -2881,16 +2901,17 @@ function _saem_Q_current_core(
                 anneal_sds = anneal_sds
             )
             !isfinite(logf) && return typeof(total)(Inf)
-            total += logf
+            total += _batch_weight(dm, get_inds(info)) * logf
             continue
         end
+        wb = _batch_weight(dm, get_inds(info))
         for c in 1:n_chains
             logf = logf_fn(
                 dm, info, θ, b_chains[bi][c], const_cache, ll_cache_local;
                 anneal_sds = anneal_sds
             )
             !isfinite(logf) && return typeof(total)(Inf)
-            total += inv_nc * logf
+            total += wb * (inv_nc * logf)
         end
     end
     return total

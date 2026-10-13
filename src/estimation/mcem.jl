@@ -1127,7 +1127,7 @@ function _mcem_Q_core(
         get_n_b(info) > 0 && continue
         logf = logf_fn(dm, info, θ, Tθ[], const_cache, ll_cache_c)
         !isfinite(logf) && return Tθ(Inf)
-        total += logf
+        total += _batch_weight(dm, get_inds(info)) * logf
     end
     # An E-step that retained no draws for a batch would divide 0 by 0 below; treat it
     # as an invalid Q instead (#226).
@@ -1170,7 +1170,7 @@ function _mcem_Q_core(
             if ws === nothing
                 acc /= size(samples, 2)
             end
-            partial_obj[bi] = acc
+            partial_obj[bi] = _batch_weight(dm, get_inds(info)) * acc
         end
         bad[] && return Tθ(Inf)
         @inbounds for bi in eachindex(batch_infos)
@@ -1196,7 +1196,7 @@ function _mcem_Q_core(
             if ws === nothing
                 acc /= size(samples, 2)
             end
-            total += acc
+            total += _batch_weight(dm, get_inds(info)) * acc
         end
     end
     return total

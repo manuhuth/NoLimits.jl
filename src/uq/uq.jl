@@ -54,7 +54,9 @@ Four backends are supported:
   `:chain`; profile accepts `:auto`, `:profile`. Each backend implements one interval type,
   so the aliases select the backend's interval rather than a variant of it, and a
   cross-backend alias (e.g. `method=:wald, interval=:equaltail`) is an error.
-- `vcov::Symbol = :hessian`: covariance source for Wald UQ (`:hessian` or `:sandwich`).
+- `vcov::Symbol = :auto`: covariance source for Wald UQ (`:hessian` or `:sandwich`).
+  `:auto` uses `:sandwich` when the `DataModel` has likelihood weights (the inverse
+  Hessian of a weighted objective is not a valid covariance) and `:hessian` otherwise.
 - `re_approx::Symbol = :auto`: random-effects approximation for Laplace-family Hessians.
 - `re_approx_method`: fitting method used for the RE approximation, or `nothing`.
 - `level::Real = 0.95`: nominal coverage level for the intervals.
@@ -84,7 +86,7 @@ function compute_uq(
         res::FitResult;
         method::Union{Symbol, AbstractString} = :auto,
         interval::Union{Symbol, AbstractString} = :auto,
-        vcov::Union{Symbol, AbstractString} = :hessian,
+        vcov::Union{Symbol, AbstractString} = :auto,
         re_approx::Union{Symbol, AbstractString} = :auto,
         re_approx_method::Union{Nothing, FittingMethod} = nothing,
         level::Real = 0.95,
@@ -150,6 +152,10 @@ function compute_uq(
     _validate_uq_interval(backend, interval)
 
     if backend == :wald
+        if vcov == :auto
+            dm_w = get_data_model(res)
+            vcov = (dm_w !== nothing && get_weights(dm_w) !== nothing) ? :sandwich : :hessian
+        end
         vcov in (:hessian, :sandwich) ||
             error("For Wald UQ, vcov must be :hessian or :sandwich.")
         # A non-finite objective means the likelihood short-circuits to a constant, which

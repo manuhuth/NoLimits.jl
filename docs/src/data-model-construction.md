@@ -24,6 +24,7 @@ The key constructor arguments are:
 - `evid_col` (default `nothing`): enables event-table parsing for ODE models (see below).
 - `amt_col` (default `:AMT`), `rate_col` (default `:RATE`), `cmt_col` (default `:CMT`): event-related columns, used when `evid_col` is set.
 - `serialization` (default `EnsembleSerial()`): controls parallel execution mode; use `EnsembleThreads()` for multi-threaded evaluation.
+- `weights` (default `nothing`): a column of per-individual likelihood weights, see [Likelihood Weights](#Likelihood-Weights).
 
 The examples below always pass these explicitly, but if you omit them the defaults above apply (so a dataset whose time column is named `TIME` and whose event columns are named `AMT`/`RATE`/`CMT` needs no overrides).
 
@@ -242,7 +243,27 @@ ensures coarsed-state likelihoods are used only when explicitly requested.
 - **Constant covariate consistency**: constant covariates must be constant within `primary_id` and within all declared `constant_on` groups.
 - **Random-effect covariate dependencies**: random-effect distributions that use covariates require those covariates to be `ConstantCovariate` or `ConstantCovariateVector`.
 - **Formula time offsets**: constant time offsets in formulas (e.g., `x1(t - 0.5)`) extend the integration window automatically. Offsets that push evaluation before `t = 0` are rejected. Non-constant offsets require `saveat_mode = :dense`.
+- **Likelihood weights**: a `weights` column must be numeric, finite, nonnegative, constant within each individual, contain a positive value, and be equal within each batch of individuals that share random-effect levels.
 - **PreDE random-effect constraint**: random effects used in `@preDifferentialEquation` must be constant within each `primary_id` group. Grouping by `primary_id` or by a coarser level (e.g. a site column that never changes within an individual) is allowed. A grouping column that varies within an individual is rejected.
+
+## Likelihood Weights
+
+`DataModel(model, df; weights = :w)` attaches a weight `w_i` to each individual. Every estimator then maximizes the weighted objective
+
+```math
+\sum_b w_b \, \ln p(y_b \mid \theta),
+```
+
+where `b` runs over the batches of individuals that share random-effect levels (for independent individuals a batch is one individual). The column must be constant within each individual, finite and nonnegative, with at least one positive value, and equal for all individuals in a batch. Weights are not normalized. An integer weight `k` gives the same objective as `k` copies of the individual. `get_weights(dm)` returns the per-individual weights, or `nothing` without a weight column.
+
+How the methods use the weights:
+
+- `Laplace`, `FOCEI`, `GHQuadrature`, `MLE`, `MAP`, `Pooled`: each batch contribution to the marginal (or conditional) log-likelihood is multiplied by its weight, including the log-determinant terms. The empirical Bayes modes are unaffected, since the weight of a batch does not change its optimum.
+- `MCMC`, `VI`: the log-likelihood is weighted; the priors on fixed and random effects are not.
+- `SAEM`, `MCEM`: the E-step samples from the unweighted conditional distributions. The M-step objective weights each batch, and the closed-form updates use weighted sufficient statistics divided by the summed weights. User-supplied `suffstats` functions receive the `DataModel` and must apply `get_weights(dm)` themselves.
+- `get_loglikelihood` and the marginal likelihood accessors return the weighted value.
+- `compute_uq(res; method = :wald)` defaults to the sandwich covariance `H^{-1} B H^{-1}` with `B = \sum_b w_b^2 g_b g_b^T` when the data model is weighted; the inverse Hessian of a weighted objective is not a covariance estimate. Pass `vcov = :hessian` to override. Profile likelihoods use the weighted objective.
+- `fit_cv` multiplies each held-out individual's scores by its weight (and adds a `:weight` column to `get_obs_scores`); pass `weighted = false` for unweighted scores.
 
 ## DataModel Summary
 

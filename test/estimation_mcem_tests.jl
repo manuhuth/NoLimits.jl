@@ -1003,3 +1003,91 @@ end
         @test isapprox(getproperty(p_auto, k), getproperty(p_none, k); rtol = 0.15)
     end
 end
+
+@testset "likelihood weights: MCEM/SAEM Q and closed-form M-step" begin
+    ser = NoLimits.EnsembleSerial()
+    model = fx_re_model()
+    df = copy(fx_re_df())
+    df.w1 = ones(nrow(df))
+    df.w = [id == 1 ? 2.0 : 1.0 for id in df.ID]
+    wr = 0.5 .+ rand(MersenneTwister(5), 6)
+    df.wr = wr[df.ID]
+    dup = df[df.ID .== 1, :]
+    dup.ID .= 7
+    mk(d; kw...) = DataModel(model, d; primary_id = :ID, time_col = :t, kw...)
+    dm0, dm1, dmw, dmr = mk(df), mk(df; weights = :w1), mk(df; weights = :w), mk(df; weights = :wr)
+    dmd = mk(vcat(df, dup))
+    fe = NoLimits.get_fixed(model)
+    θ = NoLimits.get_θ0_untransformed(fe)
+    method = NoLimits.MCEM(;
+        sampler = MH(), turing_kwargs = (n_samples = 30, n_adapt = 10, progress = false)
+    )
+    draws, _ = NoLimits.mcem_e_step(dm0, θ, method, nothing; rng = MersenneTwister(1))
+    # Same draws for the duplicated individual 7 as for individual 1.
+    _, bis0, _ = NoLimits.build_re_batch_infos(dm0, NamedTuple())
+    _, bisd, _ = NoLimits.build_re_batch_infos(dmd, NamedTuple())
+    pos = Dict(only(NoLimits.get_batch_individuals(b)) => k for (k, b) in enumerate(bis0))
+    src_of(i) = i == 7 ? 1 : i
+    draws_d = [draws[pos[src_of(only(NoLimits.get_batch_individuals(b)))]] for b in bisd]
+
+    q(d, dr, part; kw...) = NoLimits.mcem_q_objective_and_gradient(
+        d, θ, dr; part = part, serialization = ser, kw...
+    )
+    for part in (:q1, :q2)
+        Q0, g0 = q(dm0, draws, part)
+        Q1, g1 = q(dm1, draws, part)
+        @test Q1 == Q0
+        @test collect(g1) == collect(g0)
+        Qw, gw = q(dmw, draws, part)
+        Qd, gd = q(dmd, draws_d, part)
+        @test Qw ≈ Qd rtol = 1.0e-12
+        @test collect(gw) ≈ collect(gd) rtol = 1.0e-10
+    end
+
+    # SAEM Q at the same fixed chains.
+    chains(dr) = [[NoLimits.get_draws(x)[:, c] for c in 1:size(NoLimits.get_draws(x), 2)] for x in dr]
+    nc = size(NoLimits.get_draws(draws[1]), 2)
+    function saemQ(d, dr)
+        _, bis, cc = NoLimits.build_re_batch_infos(d, NamedTuple())
+        llc = NoLimits.build_ll_cache(d; serialization = ser, force_saveat = true)
+        return NoLimits._saem_Q_current(d, bis, θ, cc, llc, chains(dr), nc)
+    end
+    @test saemQ(dm1, draws) == saemQ(dm0, draws)
+    @test saemQ(dmw, draws) ≈ saemQ(dmd, draws_d) rtol = 1.0e-12
+
+    # Sufficient statistics: weights act as replication.
+    sw = NoLimits.saem_sufficient_statistics(dmw, θ, draws)
+    sd = NoLimits.saem_sufficient_statistics(dmd, θ, draws_d)
+    @test sw.re.η.mean ≈ sd.re.η.mean rtol = 1.0e-12
+    @test sw.re.η.second ≈ sd.re.η.second rtol = 1.0e-12
+    @test sw.re.η.n ≈ sd.re.η.n
+    @test sw.outcome.y.s1 ≈ sd.outcome.y.s1 rtol = 1.0e-12
+    @test sw.outcome.y.n ≈ sd.outcome.y.n
+
+    # Closed-form σ, ω under random weights solve the weighted Q's first-order conditions,
+    # and not the unweighted ones.
+    sr = NoLimits.saem_sufficient_statistics(dmr, θ, draws)
+    upd, _ = NoLimits.saem_closed_form_mstep(dmr, sr, nothing, θ, 1.0)
+    θcf = ComponentArray(merge(NamedTuple(θ), (; σ = upd.σ, ω = upd.ω)))
+    qcf(d, part, name) = NoLimits.mcem_q_objective_and_gradient(
+        d, θcf, draws; part = part, free_names = [name], scale = :untransformed,
+        serialization = ser
+    )[2][name]
+    @test abs(qcf(dmr, :q1, :σ)) < 1.0e-6
+    @test abs(qcf(dmr, :q2, :ω)) < 1.0e-6
+    @test abs(qcf(dm0, :q1, :σ)) > 1.0e-3
+    @test abs(qcf(dm0, :q2, :ω)) > 1.0e-4
+
+    # Unit weights reproduce the unweighted fits exactly.
+    for mfit in (
+            NoLimits.SAEM(; maxiters = 3, q_store_max = 2),
+            NoLimits.MCEM(; sampler = MH(), turing_kwargs = (n_samples = 10, n_adapt = 5, progress = false), maxiters = 2, progress = false),
+        )
+        r0 = fit_model(dm0, mfit; serialization = ser, rng = MersenneTwister(2))
+        r1 = fit_model(dm1, mfit; serialization = ser, rng = MersenneTwister(2))
+        @test collect(NoLimits.get_params(r1; scale = :transformed)) ==
+            collect(NoLimits.get_params(r0; scale = :transformed))
+        rw = fit_model(dmr, mfit; serialization = ser, rng = MersenneTwister(2))
+        @test all(isfinite, collect(NoLimits.get_params(rw; scale = :transformed)))
+    end
+end
