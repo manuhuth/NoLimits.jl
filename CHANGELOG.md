@@ -25,6 +25,14 @@
   unequal per-item costs. Results are unchanged: values are still stored per item and
   reduced in a fixed order.
 
+- SAEM's default M-step objective (`mstep_sa_on_params = true`, current-iteration samples)
+  and its Q2 counterpart now run over batches on threads under `EnsembleThreads`, as the
+  ring-buffer Q and the MCEM Q already did. Before, they ignored `serialization` and ran on
+  one thread. The observed log-likelihood of the progress display and the E-step retry
+  check are threaded the same way. Per-batch parts are summed in batch order, so threaded
+  and serial results are bitwise equal. With `n_chains > 1` the per-batch grouping changes
+  the serial sum at rounding level.
+
 - `show_equations(model)` now defaults to `latex = nothing`: LaTeX when Latexify is loaded,
   plain text otherwise. Previously the default call errored without Latexify.
 

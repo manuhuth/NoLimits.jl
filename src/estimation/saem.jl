@@ -233,6 +233,23 @@ end
 # implementation (mcem.jl), aliased under the SAEM-side name.
 const _saem_thread_caches = _mcem_thread_caches
 
+# Calls `f(k, cache)` for k in 1:n. Under `EnsembleThreads` the items are pulled greedily
+# and each task owns one cache slot (`caches[Threads.threadid()]` is unsafe under task
+# migration); otherwise they run in order on one cache. `f` must write its result by `k`
+# and the caller reduces in index order, so both paths give the same number.
+function _saem_foreach_batch(f, dm::DataModel, ll_cache, n::Int, serialization)
+    if serialization isa SciMLBase.EnsembleThreads
+        caches = _saem_thread_caches(dm, ll_cache, Threads.maxthreadid())
+        _greedy_foreach((k, c) -> f(k, caches[c]), n, length(caches))
+    else
+        cache = ll_cache isa Vector ? ll_cache[1] : ll_cache
+        for k in 1:n
+            f(k, cache)
+        end
+    end
+    return nothing
+end
+
 function _saem_sample_batches!(
         dm::DataModel,
         batch_infos::Vector{REBatchInfo},
@@ -2859,19 +2876,26 @@ function _saem_obsLL(
         θ::ComponentArray,
         const_cache::REConstantsCache,
         ll_cache,
-        b_current::AbstractVector
+        b_current::AbstractVector;
+        serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads()
     )
-    total = 0.0
-    cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
     θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
-    for (bi, info) in enumerate(batch_infos)
+    parts = zeros(Float64, length(batch_infos))
+    _saem_foreach_batch(dm, ll_cache, length(batch_infos), serialization) do bi, cache
+        info = batch_infos[bi]
         b = b_current[bi]
+        acc = 0.0
         for i in get_inds(info)
             η_ind = _build_eta_ind(dm, i, info, b, const_cache, θ_re)
-            lli = _loglikelihood_individual(dm, i, θ_re, η_ind, cache_local)
+            lli = _loglikelihood_individual(dm, i, θ_re, η_ind, cache)
             isfinite(lli) || continue
-            total += _ind_weight(dm, i) * lli
+            acc += _ind_weight(dm, i) * lli
         end
+        parts[bi] = acc
+    end
+    total = 0.0
+    for bi in eachindex(parts)
+        total += parts[bi]
     end
     return total
 end
@@ -2888,31 +2912,41 @@ function _saem_Q_current_core(
         ll_cache,
         b_chains::AbstractVector,
         n_chains::Int;
+        serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         anneal_sds::NamedTuple = NamedTuple()
     ) where {F}
-    total = zero(eltype(θ))
-    ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
-    inv_nc = one(total) / n_chains
-    for (bi, info) in enumerate(batch_infos)
+    Tθ = eltype(θ)
+    inv_nc = one(Tθ) / n_chains
+    # Per-batch parts, summed in batch order below: the result does not depend on the
+    # schedule and is bitwise the same under EnsembleSerial and EnsembleThreads.
+    parts = Vector{Tθ}(undef, length(batch_infos))
+    bad = Threads.Atomic{Bool}(false)
+    _saem_foreach_batch(dm, ll_cache, length(batch_infos), serialization) do bi, cache
+        bad[] && return
+        info = batch_infos[bi]
+        wb = _batch_weight(dm, get_inds(info))
         if get_n_b(info) == 0
             # Chain-independent contribution — evaluate once at full weight.
-            logf = logf_fn(
-                dm, info, θ, eltype(θ)[], const_cache, ll_cache_local;
-                anneal_sds = anneal_sds
-            )
-            !isfinite(logf) && return typeof(total)(Inf)
-            total += _batch_weight(dm, get_inds(info)) * logf
-            continue
+            logf = logf_fn(dm, info, θ, Tθ[], const_cache, cache; anneal_sds = anneal_sds)
+            isfinite(logf) || (bad[] = true; return)
+            parts[bi] = wb * logf
+            return
         end
-        wb = _batch_weight(dm, get_inds(info))
+        acc = zero(Tθ)
         for c in 1:n_chains
             logf = logf_fn(
-                dm, info, θ, b_chains[bi][c], const_cache, ll_cache_local;
+                dm, info, θ, b_chains[bi][c], const_cache, cache;
                 anneal_sds = anneal_sds
             )
-            !isfinite(logf) && return typeof(total)(Inf)
-            total += wb * (inv_nc * logf)
+            isfinite(logf) || (bad[] = true; return)
+            acc += wb * (inv_nc * logf)
         end
+        parts[bi] = acc
+    end
+    bad[] && return Tθ(Inf)
+    total = zero(Tθ)
+    @inbounds for bi in eachindex(parts)
+        total += parts[bi]
     end
     return total
 end
@@ -2930,7 +2964,8 @@ function _saem_Q_current(
     )
     return _saem_Q_current_core(
         _laplace_logf_batch, dm, batch_infos, θ,
-        const_cache, ll_cache, b_chains, n_chains; anneal_sds = anneal_sds
+        const_cache, ll_cache, b_chains, n_chains;
+        serialization = serialization, anneal_sds = anneal_sds
     )
 end
 
@@ -2967,7 +3002,8 @@ function _saem_Q2_current(
     )
     return _saem_Q_current_core(
         _re_logpdf_batch, dm, batch_infos, θ,
-        const_cache, ll_cache, b_chains, n_chains; anneal_sds = anneal_sds
+        const_cache, ll_cache, b_chains, n_chains;
+        serialization = serialization, anneal_sds = anneal_sds
     )
 end
 
@@ -2983,25 +3019,26 @@ function _saem_bad_batches(
         n_chains::Int,
         const_cache::REConstantsCache,
         ll_cache;
+        serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         anneal_sds::NamedTuple = NamedTuple()
     )
-    bad = Int[]
-    ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
-    @inbounds for bi in updated
+    is_bad = zeros(Bool, length(updated))  # not a BitVector: tasks write neighbouring bits
+    _saem_foreach_batch(dm, ll_cache, length(updated), serialization) do k, cache
+        bi = updated[k]
         chains = b_chains[bi]
-        (isempty(chains) || isempty(chains[1])) && continue
+        (isempty(chains) || isempty(chains[1])) && return
         for c in 1:n_chains
             logf = _laplace_logf_batch(
-                dm, batch_infos[bi], θ, chains[c], const_cache, ll_cache_local;
+                dm, batch_infos[bi], θ, chains[c], const_cache, cache;
                 anneal_sds = anneal_sds
             )
             if !isfinite(logf)
-                push!(bad, bi)
-                break
+                is_bad[k] = true
+                return
             end
         end
     end
-    return bad
+    return Int[updated[k] for k in eachindex(updated) if is_bad[k]]
 end
 
 function _saem_collect_target_symbols!(out::Vector{Symbol}, target)
@@ -3663,7 +3700,8 @@ function _fit_model(
             for _retry in 1:(method.saem.max_estep_retries)
                 bad = _saem_bad_batches(
                     dm, batch_infos, updated, θu_curr, b_chains,
-                    effective_n_chains, const_cache, ll_cache; anneal_sds = anneal_sds
+                    effective_n_chains, const_cache, ll_cache;
+                    serialization = serialization, anneal_sds = anneal_sds
                 )
                 isempty(bad) && break
                 if method.saem.verbose
@@ -4173,7 +4211,8 @@ function _fit_model(
         if need_obsLL
             obsLL_display = T0(
                 _saem_obsLL(
-                    dm, batch_infos, θu_new, const_cache, ll_cache, b_current
+                    dm, batch_infos, θu_new, const_cache, ll_cache, b_current;
+                    serialization = serialization
                 )
             )
         end
