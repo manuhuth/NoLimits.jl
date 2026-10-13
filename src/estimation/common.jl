@@ -845,6 +845,21 @@ end
     return [Random.Xoshiro(seeds[i]) for i in 1:n]
 end
 
+# Greedy work-pulling over items 1:n (`@threads :greedy` needs Julia 1.11). Calls
+# `f(k, c)` where `c` is the task's own cache/scratch slot. Which slot handles which item
+# is nondeterministic, so `f` must write results by `k` and callers reduce afterwards.
+function _greedy_foreach(f, n::Int, ntasks::Int)
+    next = Threads.Atomic{Int}(0)
+    @sync for c in 1:min(ntasks, n)
+        Threads.@spawn while true
+            k = Threads.atomic_add!(next, 1) + 1
+            k > n && break
+            f(k, c)
+        end
+    end
+    return nothing
+end
+
 # ---------------------------------------------------------------------------
 # Positional free/constants merge (shared by the optimization drivers): the flat
 # positions of the free parameters inside the full transformed vector are
@@ -2539,12 +2554,10 @@ function get_loglikelihood(
         # chunk; reduce in a fixed order so both give the same number.
         caches = ll_cache isa AbstractVector ? ll_cache : [ll_cache]
         parts = zeros(Float64, length(batch_infos))
-        Threads.@threads for c in 1:length(caches)
-            for bi in c:length(caches):length(batch_infos)
-                parts[bi] = _ghq_batch_ll(
-                    dm, batch_infos[bi], θu_re, const_cache, caches[c], level
-                )
-            end
+        _greedy_foreach(length(batch_infos), length(caches)) do bi, c
+            parts[bi] = _ghq_batch_ll(
+                dm, batch_infos[bi], θu_re, const_cache, caches[c], level
+            )
         end
         any(==(-Inf), parts) && return -Inf
         return sum(parts)
@@ -2749,15 +2762,12 @@ function get_loglikelihood_quadrature(
     batch_rngs = _spawn_child_rngs(rng, length(batch_infos))
     parts = Vector{Float64}(undef, length(batch_infos))
     if ll_cache isa AbstractVector
-        # Chunk-indexed caches: `threadid()` indexing is unsafe under task migration.
-        n_chunks = length(ll_cache)
-        Threads.@threads for c in 1:n_chunks
-            for bi in c:n_chunks:length(batch_infos)
-                parts[bi] = _quadrature_batch_ll(
-                    dm, bi, batch_infos[bi], θu_re, const_cache, ll_cache[c], bstars,
-                    level, jitter, mc_integrator, fallback, batch_rngs[bi]
-                )
-            end
+        # Slot-indexed caches: `threadid()` indexing is unsafe under task migration.
+        _greedy_foreach(length(batch_infos), length(ll_cache)) do bi, c
+            parts[bi] = _quadrature_batch_ll(
+                dm, bi, batch_infos[bi], θu_re, const_cache, ll_cache[c], bstars,
+                level, jitter, mc_integrator, fallback, batch_rngs[bi]
+            )
         end
     else
         for bi in eachindex(batch_infos)
@@ -3444,7 +3454,7 @@ function _ll_ode_solve_baked(cache::_LLCache, prob)
 end
 
 # One-shot warning flags, reset per `fit_model` call. Atomics rather than the logger's
-# own `maxlog`: these sites fire from inside `Threads.@threads` regions, and `maxlog`
+# own `maxlog`: these sites fire from inside threaded regions, and `maxlog`
 # bookkeeping mutates an unsynchronized Dict in the logger.
 # ponytail: one warning per fit, not a rate. Per-fit counters if users need the rate.
 # A ForwardDiff failure inside an Rmath-backed `logpdf` surfaces as an opaque
@@ -4461,23 +4471,17 @@ function _loglikelihood_indices(
         m = length(sel)
         by_individual = Vector{T}(undef, m)
         bad = Threads.Atomic{Bool}(false)
-        # Chunk-indexed cache assignment: each task owns cache slot `c` for its whole
-        # stride. Indexing by `Threads.threadid()` is unsafe under task migration
-        # (`@threads :dynamic` may move a task between threads at yield points,
-        # letting two tasks share one cache slot).
-        n_chunks = length(caches)
-        Threads.@threads for c in 1:n_chunks
-            cache_c = caches[c]
-            for k in c:n_chunks:m
-                bad[] && break
-                i = sel[k]
-                η_ind = ηs isa Vector ? ηs[i] : ηs
-                lli = _loglikelihood_individual(dm, i, θs, η_ind, cache_c)
-                if !isfinite(lli)
-                    bad[] = true
-                else
-                    by_individual[k] = lli
-                end
+        # Each task owns cache slot `c` for its whole life; `Threads.threadid()` indexing
+        # is unsafe under task migration (two tasks could share one slot).
+        _greedy_foreach(m, length(caches)) do k, c
+            bad[] && return
+            i = sel[k]
+            η_ind = ηs isa Vector ? ηs[i] : ηs
+            lli = _loglikelihood_individual(dm, i, θs, η_ind, caches[c])
+            if !isfinite(lli)
+                bad[] = true
+            else
+                by_individual[k] = lli
             end
         end
         bad[] && return -Inf

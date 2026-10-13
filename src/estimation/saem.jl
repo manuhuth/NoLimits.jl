@@ -255,24 +255,20 @@ function _saem_sample_batches!(
     isempty(batches) && return nothing
     if serialization isa SciMLBase.EnsembleThreads
         caches = _saem_thread_caches(dm, ll_cache, Threads.maxthreadid())
-        # Chunk-indexed cache assignment: `caches[Threads.threadid()]` is unsafe under
+        # Each task owns cache slot `slot`: `caches[Threads.threadid()]` is unsafe under
         # task migration (two tasks may share a slot and race on its buffers).
-        n_chunks = length(caches)
-        Threads.@threads for chunk in 1:n_chunks
-            cache = caches[chunk]
-            for k in chunk:n_chunks:length(batches)
-                bi = batches[k]
-                info = batch_infos[bi]
-                for c in 1:effective_n_chains
-                    _, lastp, lastb = _mcem_sample_batch(
-                        dm, info, θ, const_cache, cache,
-                        sampler, turing_kwargs, batch_rngs[bi],
-                        re_names, warm_start, last_chain_params[bi][c];
-                        anneal_sds = anneal_sds, outer_iter = outer_iter
-                    )
-                    b_chains[bi][c] = lastb
-                    last_chain_params[bi][c] = lastp
-                end
+        _greedy_foreach(length(batches), length(caches)) do k, slot
+            bi = batches[k]
+            info = batch_infos[bi]
+            for c in 1:effective_n_chains
+                _, lastp, lastb = _mcem_sample_batch(
+                    dm, info, θ, const_cache, caches[slot],
+                    sampler, turing_kwargs, batch_rngs[bi],
+                    re_names, warm_start, last_chain_params[bi][c];
+                    anneal_sds = anneal_sds, outer_iter = outer_iter
+                )
+                b_chains[bi][c] = lastb
+                last_chain_params[bi][c] = lastp
             end
         end
     else
@@ -2728,34 +2724,30 @@ function _saem_Q_core(
         end
         fill!(partial_obj, zero(Tθ))
         bad = Threads.Atomic{Bool}(false)
-        # Chunk-indexed cache assignment: `caches[Threads.threadid()]` is unsafe under
+        # Each task owns cache slot `c`: `caches[Threads.threadid()]` is unsafe under
         # task migration (two tasks may share a slot and race on its buffers).
-        n_chunks = length(caches)
-        Threads.@threads for chunk in 1:n_chunks
-            cache_c = caches[chunk]
-            for bi in chunk:n_chunks:length(batch_infos)
-                bad[] && break
-                get_n_b(batch_infos[bi]) == 0 && continue
-                info = batch_infos[bi]
-                acc = zero(Tθ)
-                h = h_start
-                # θ is fixed for this whole Q evaluation — hoist the θ-only work
-                # (symmetrize + RE-distribution table) out of the sample loop.
-                tctx = _safe_theta_ctx(dm, info, θ, cache_c)
-                @inbounds for _ in 1:active_len
-                    w = store.weights[h]
-                    snap = store.snaps[h][bi]
-                    h = h == cap ? 1 : h + 1
-                    logf = logf_fn(
-                        dm, info, θ, snap, const_cache, cache_c;
-                        anneal_sds = anneal_sds, tctx = tctx
-                    )
-                    !isfinite(logf) && (bad[] = true; break)
-                    acc += w * logf
-                end
-                bad[] && break
-                partial_obj[bi] = acc
+        _greedy_foreach(length(batch_infos), length(caches)) do bi, c
+            bad[] && return
+            get_n_b(batch_infos[bi]) == 0 && return
+            cache_c = caches[c]
+            info = batch_infos[bi]
+            acc = zero(Tθ)
+            h = h_start
+            # θ is fixed for this whole Q evaluation — hoist the θ-only work
+            # (symmetrize + RE-distribution table) out of the sample loop.
+            tctx = _safe_theta_ctx(dm, info, θ, cache_c)
+            @inbounds for _ in 1:active_len
+                w = store.weights[h]
+                snap = store.snaps[h][bi]
+                h = h == cap ? 1 : h + 1
+                logf = logf_fn(
+                    dm, info, θ, snap, const_cache, cache_c;
+                    anneal_sds = anneal_sds, tctx = tctx
+                )
+                !isfinite(logf) && (bad[] = true; return)
+                acc += w * logf
             end
+            partial_obj[bi] = acc
         end
         bad[] && return Tθ(Inf)
         weighted_total = zero(Tθ)
