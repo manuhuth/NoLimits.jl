@@ -3452,21 +3452,26 @@ function _ll_ode_solve_baked(cache::_LLCache, prob, reset! = nothing)
     )
     return _solve_with_fallback(
         prob, cache.alg, cache.solver_cfg.fallback_alg, cache.ode_args, reset!;
-        solve_kwargs...
+        stiffness_check = cache.solver_cfg.stiffness_check, solve_kwargs...
     )
 end
 
-# Restores the crossing records of a failed first attempt before the fallback solve.
-struct _CrossingReset{R, T}
+# Restores the crossing records and the infusion rates (both mutated by callbacks) of a
+# failed first attempt or a stiffness probe before the next solve.
+struct _CrossingReset{R, T, E}
     refs::R          # Ref{T} receiving the crossing time (or `nothing` for :rootval)
     fireds::Vector{Base.RefValue{Bool}}
     tinits::T
+    events::E        # EventCallbacks or nothing
 end
+_CrossingReset(refs, fireds, tinits) = _CrossingReset(refs, fireds, tinits, nothing)
 function (cr::_CrossingReset)()
     for k in eachindex(cr.fireds)
         cr.fireds[k][] = false
         cr.refs[k][] = cr.tinits[k]
     end
+    cr.events === nothing ||
+        copyto!(get_infusion_rates(cr.events), get_init_infusion_rates(cr.events))
     return nothing
 end
 
@@ -3761,7 +3766,10 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
             end
         end
         prob = remake(prob; u0 = u0_T, p = p_flat)
-        sol = _ll_ode_solve_baked(cache, prob)
+        sol = _ll_ode_solve_baked(
+            cache, prob,
+            events === nothing ? nothing : _CrossingReset((), Base.RefValue{Bool}[], (), events)
+        )
         SciMLBase.successful_retcode(sol) || return _ll_drop_solve(sol.retcode)
         return get_de_accessors_builder(get_de(model))(sol, compiled)
     end
@@ -3791,7 +3799,7 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
         prob = ODEProblem{true, SciMLBase.FullSpecialize}(
             f!_use, u0_T, get_tspan(ind), p_flat; _ll_prob_kwargs(cbset, saveat_use, get_tstops(ind))...
         )
-        sol = _ll_ode_solve_baked(cache, prob, _CrossingReset((r,), [fired], (tinit,)))
+        sol = _ll_ode_solve_baked(cache, prob, _CrossingReset((r,), [fired], (tinit,), events))
         SciMLBase.successful_retcode(sol) || return _ll_drop_solve(sol.retcode)
         acc = get_de_accessors_builder(get_de(model))(sol, compiled)
         return merge(acc, NamedTuple{(spec.name,)}((r[],)))
@@ -3843,7 +3851,7 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
         f!_use, u0_T, get_tspan(ind), p_flat; _ll_prob_kwargs(cbset, saveat_use, get_tstops(ind))...
     )
     sol = _ll_ode_solve_baked(
-        cache, prob, _CrossingReset(reset_refs, reset_fireds, reset_tinits)
+        cache, prob, _CrossingReset(reset_refs, reset_fireds, reset_tinits, events)
     )
     SciMLBase.successful_retcode(sol) || return _ll_drop_solve(sol.retcode)
     acc = get_de_accessors_builder(get_de(model))(sol, compiled)

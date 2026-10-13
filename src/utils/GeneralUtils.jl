@@ -126,11 +126,59 @@ end
 # attempt stays silent; only a failed fallback reaches the caller's drop/warning path.
 # With `fallback === nothing` the second branch is dead code and the return type is the
 # primary solution type.
-function _solve_with_fallback(prob, alg, fallback, args::Tuple, reset! = nothing; kw...)
+#
+# Stiffness routing (`stiffness_check`, a threshold; `nothing` disables it). With a
+# fallback configured, a problem is solved with the fallback directly when
+#   1. ρ(∂f/∂u at (u0, p, t0)) · |t_end − t0| > stiffness_check (primal values; a
+#      non-finite Jacobian counts as stiff), or
+#   2. the problem carries dual numbers and a Float64 solve of the primal problem with
+#      `alg` (same kwargs, hence the same step budget) fails.
+# Both cost a small fraction of a failed primary attempt, which on a stiff problem runs
+# the whole step budget (for duals at the full dual cost) before the fallback starts.
+function _solve_with_fallback(
+        prob, alg, fallback, args::Tuple, reset! = nothing;
+        stiffness_check = nothing, kw...
+    )
+    if fallback !== nothing && stiffness_check !== nothing &&
+            _route_to_fallback(prob, alg, args, reset!, stiffness_check; kw...)
+        return solve(prob, fallback, args...; kw...)
+    end
     sol = solve(prob, alg, args...; kw...)
     (fallback === nothing || SciMLBase.successful_retcode(sol)) && return sol
     reset! === nothing || reset!()
     return solve(prob, fallback, args...; kw...)
+end
+
+# Primal (Float64) value of a possibly nested ForwardDiff dual, elementwise for arrays.
+@inline _primal(x::ForwardDiff.Dual) = _primal(ForwardDiff.value(x))
+@inline _primal(x::AbstractArray{<:ForwardDiff.Dual}) = _primal.(x)
+@inline _primal(x) = x
+
+function _route_to_fallback(prob, alg, args, reset!, threshold; kw...)
+    dual = eltype(prob.u0) <: ForwardDiff.Dual
+    # ponytail: duals are stripped from array parameters only (the estimation path packs
+    # a flat Vector); a dual-carrying struct `p` skips the routing.
+    dual && !(prob.p isa AbstractArray) && return false
+    u0 = _primal(prob.u0)
+    p = _primal(prob.p)
+    t0, t1 = _primal(prob.tspan[1]), _primal(prob.tspan[2])
+    _stiff_at_start(prob.f, SciMLBase.isinplace(prob), u0, p, t0) * abs(t1 - t0) >
+        threshold && return true
+    dual || return false
+    probe = remake(prob; u0 = u0, p = p)
+    ok = SciMLBase.successful_retcode(
+        solve(probe, alg, args...; kw..., save_everystep = false, dense = false)
+    )
+    reset! === nothing || reset!()   # callbacks of the probe recorded state
+    return !ok
+end
+
+# Spectral radius of the state Jacobian at (u0, p, t0), `Inf` when it is not finite.
+function _stiff_at_start(f, iip::Bool, u0, p, t0)
+    J = iip ? ForwardDiff.jacobian((du, u) -> f(du, u, p, t0), similar(u0), u0) :
+        ForwardDiff.jacobian(u -> f(u, p, t0), u0)
+    all(isfinite, J) || return Inf
+    return maximum(abs, eigvals(J))
 end
 
 # Exception classes that signal a numerically-degenerate point (rather than a
