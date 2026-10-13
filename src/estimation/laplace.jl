@@ -1,6 +1,7 @@
 export Laplace
 export FrequentistREResult
 export NewtonInner
+export AcceptedWarmStarts
 
 using ForwardDiff
 using LinearAlgebra
@@ -228,9 +229,12 @@ mutable struct _LaplaceCache{T, B, G, A, H}
     grad_cache::G
     ad_cache::A
     hess_cache::H
+    # Committed warm starts of `AcceptedWarmStarts` (one vector per batch, empty until the
+    # first commit); `nothing` = default rule (warm start from the last evaluated θ).
+    warm::Union{Nothing, Vector{Vector{Float64}}}
     # explicit inner ctor: the auto outer ctor leaves T unbound for θ_cache=nothing (Aqua, 1.10)
     function _LaplaceCache{T, B, G, A, H}(θ_cache, bstar_cache, grad_cache, ad_cache, hess_cache) where {T, B, G, A, H}
-        return new{T, B, G, A, H}(θ_cache, bstar_cache, grad_cache, ad_cache, hess_cache)
+        return new{T, B, G, A, H}(θ_cache, bstar_cache, grad_cache, ad_cache, hess_cache, nothing)
     end
 end
 
@@ -1385,7 +1389,17 @@ function _laplace_compute_bstar_batch!(
     b0_default = _laplace_default_b0(dm, info, θ_val, const_cache, ll_cache; tctx = tctx)
     b_start = b0_default
     warm_start_usable = false
-    if cache.bstar_cache.has_bstar[bi]
+    if cache.warm !== nothing
+        # AcceptedWarmStarts: start from the warm start committed at the last accepted
+        # outer iterate, so b* at θ does not depend on earlier trial points.
+        w = cache.warm[bi]
+        if length(w) == nb && isfinite(
+                _laplace_logf_batch(dm, info, θ_val, w, const_cache, ll_cache; tctx = tctx)
+            )
+            b_start = copy(w)
+            warm_start_usable = true
+        end
+    elseif cache.bstar_cache.has_bstar[bi]
         b_prev = cache.bstar_cache.b_star[bi]
         if length(b_prev) == nb
             f_prev = _laplace_logf_batch(
@@ -2220,6 +2234,63 @@ struct LaplaceCacheOptions{T}
     end
 end
 
+"""
+    AcceptedWarmStarts(; multistart_every = nothing, n_draw = 25, n_local = 3,
+                       d_min = 2.0, u_min = 1e-3, seed = 0)
+
+Inner-mode strategy for [`Laplace`](@ref) and [`FOCEI`](@ref), passed as
+`warm_starts = AcceptedWarmStarts(...)`.
+
+The inner optimizations start from warm starts that change only at accepted outer
+iterates. The first warm starts are the modes at the start point (solved from the default
+start). Each time the outer optimizer accepts an iterate (each call of the Optimization.jl
+callback), the modes at that iterate become the new warm starts. Trial points never change
+them, so the objective at θ depends only on θ and the committed warm starts, not on which
+trial points were evaluated before. The default (`warm_starts = nothing`) warm-starts from
+the last evaluated θ.
+
+`multistart_every = k` additionally runs an inner multistart at every k-th accepted
+iterate (iteration count `state.iter`, `nothing` = never), per batch of random effects:
+1. `n_draw` Latin-hypercube draws from the random-effect prior at θ, the uniform
+   coordinates mapped to `[u_min, 1 - u_min]` and through the quantile of each
+   coordinate's prior marginal (RNG `Xoshiro(seed + batch index)`),
+2. the inner objective at every draw,
+3. greedy selection by objective of up to `n_local` draws whose distance to the warm start
+   and to every draw taken so far, scaled by the prior standard deviations, exceeds `d_min`,
+4. local inner optimizations from the taken draws; the best mode (the current one included)
+   becomes the mode and the warm start.
+
+A multistart changes the objective at the accepted iterate, so the optimizer's value and
+gradient there are stale. For an optimizer that supports it (`InteriorPointBFGS.IPBFGS`
+≥ 0.2), the callback then returns `:refresh` and the optimizer re-evaluates both. For
+other optimizers the run continues with the stale values (warned once) and the next trial
+point is evaluated with the new warm starts.
+
+Requires an outer optimizer whose callback is called once per accepted iterate (Optim.jl
+methods, `IPBFGS`), and `update_schedule = :all`.
+"""
+struct AcceptedWarmStarts
+    multistart_every::Union{Nothing, Int}
+    n_draw::Int
+    n_local::Int
+    d_min::Float64
+    u_min::Float64
+    seed::Int
+end
+
+function AcceptedWarmStarts(;
+        multistart_every = nothing, n_draw::Integer = 25, n_local::Integer = 3,
+        d_min::Real = 2.0, u_min::Real = 1.0e-3, seed::Integer = 0
+    )
+    multistart_every === nothing || multistart_every >= 1 ||
+        error("AcceptedWarmStarts: multistart_every must be ≥ 1 or nothing; got $(multistart_every).")
+    n_draw >= 1 && n_local >= 1 ||
+        error("AcceptedWarmStarts: n_draw and n_local must be ≥ 1.")
+    0 < u_min < 0.5 || error("AcceptedWarmStarts: u_min must lie in (0, 0.5); got $(u_min).")
+    d_min >= 0 || error("AcceptedWarmStarts: d_min must be ≥ 0; got $(d_min).")
+    return AcceptedWarmStarts(multistart_every, n_draw, n_local, d_min, u_min, seed)
+end
+
 @inline _default_inner_grad_tol(dm::DataModel) = get_de(get_model(dm)) === nothing ? 1.0e-8 :
     1.0e-2
 
@@ -2318,6 +2389,9 @@ random effects.
 - `use_hutchinson::Bool = false`: use Hutchinson estimator instead of Cholesky for log-det.
 - `hutchinson_n::Int = 8`: number of Rademacher vectors for the Hutchinson estimator.
 - `theta_tol::Float64 = 0.0`: fixed-effect change tolerance for EBE caching.
+- `warm_starts = nothing`: inner-mode warm-start strategy. `nothing` warm-starts from the
+  modes of the last evaluated θ. [`AcceptedWarmStarts`](@ref) warm-starts from the modes of
+  the last accepted outer iterate, optionally with a periodic prior-LHS inner multistart.
 - `lb`, `ub`: bounds on the transformed fixed-effect scale, or `nothing`.
 - `precondition::Bool = true`: optimize the scaled offset `z` with
   `θ_transformed = θ0 + s .* z`, where `s` is 1 for every coordinate that already lives in
@@ -2332,7 +2406,7 @@ random effects.
   in `z`; the fitted parameters from [`get_params`](@ref) are on the usual scales.
 $(_UPDATE_SCHEDULE_DOC)
 """
-struct Laplace{O, K, A, IO, HO, CO, MS, L, U, US} <: FittingMethod
+struct Laplace{O, K, A, IO, HO, CO, MS, L, U, US, WS} <: FittingMethod
     optimizer::O
     optim_kwargs::K
     adtype::A
@@ -2346,6 +2420,7 @@ struct Laplace{O, K, A, IO, HO, CO, MS, L, U, US} <: FittingMethod
     precondition::Bool
     nan_recovery::Symbol   # :backtrack (default; NaN grad → non-finite objective), :fd (finite-difference gradient fallback), or :nan (propagate NaN to the optimizer)
     update_schedule::US
+    warm_starts::WS
 end
 
 # Invalid retry counts and jitter used to be accepted and deferred to the Hessian
@@ -2396,9 +2471,11 @@ function Laplace(;
         ignore_model_bounds = false,
         precondition = true,
         nan_recovery = :backtrack,
-        update_schedule = :all
+        update_schedule = :all,
+        warm_starts::Union{Nothing, AcceptedWarmStarts} = nothing
     )
     update_schedule = _check_update_schedule(_as_symbol(update_schedule), "Laplace")
+    _check_warm_starts(warm_starts, update_schedule, "Laplace")
     optimizer = _resolve_outer_optimizer(optimizer, update_schedule, "Laplace")
     inner = inner_options === nothing ?
         LaplaceInnerOptions(
@@ -2419,7 +2496,7 @@ function Laplace(;
     return Laplace(
         optimizer, _as_namedtuple(optim_kwargs), adtype, inner, hess, cache,
         ms, lb, ub, ignore_model_bounds, precondition, _as_symbol(nan_recovery),
-        update_schedule
+        update_schedule, warm_starts
     )
 end
 
@@ -2794,6 +2871,179 @@ function (f::_LaplaceMinibatchInvalidate)()
     return nothing
 end
 
+# ── AcceptedWarmStarts ───────────────────────────────────────────────────────────
+
+function _check_warm_starts(ws, update_schedule, label)
+    ws === nothing && return nothing
+    update_schedule === :all ||
+        error("$(label): warm_starts = AcceptedWarmStarts(...) requires update_schedule = :all.")
+    return nothing
+end
+
+_warm_starts(method) = hasproperty(method, :warm_starts) ? method.warm_starts : nothing
+
+# Optimizers whose callback may return `:refresh` (re-evaluate f and g at the current
+# point). ponytail: name/version check instead of a package extension, InteriorPointBFGS
+# is not registered; make it an extension once it is.
+function _supports_refresh(opt)
+    T = typeof(opt)
+    mod = parentmodule(T)
+    nameof(T) === :IPBFGS && nameof(mod) === :InteriorPointBFGS || return false
+    v = pkgversion(mod)
+    return v !== nothing && v >= v"0.2.0"
+end
+
+function _commit_warm!(ebe_cache::_LaplaceCache)
+    for bi in eachindex(ebe_cache.warm)
+        ebe_cache.warm[bi] = collect(Float64, ebe_cache.bstar_cache.b_star[bi])
+    end
+    return nothing
+end
+
+# Prior marginal of every coordinate of a batch's b, or `nothing` when one has none.
+function _laplace_prior_marginals(dm::DataModel, batch_info::REBatchInfo, θ, cache::_LLCache, tctx)
+    nb = get_n_b(batch_info)
+    out = Vector{Any}(undef, nb)
+    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
+    θ_re = tctx === nothing ? _symmetrize_psd_params(θ, get_fixed(get_model(dm))) : tctx.θ_re
+    re_names = get_re_names(get_laplace_cache(get_re_group_info(dm)))
+    for (ri, re) in enumerate(re_names)
+        info = get_re_info(batch_info)[ri]
+        for (li, _) in enumerate(get_levels(get_re_map(info)))
+            rep_idx = get_reps(info)[li]
+            dists = tctx === nothing ?
+                dists_builder(
+                    θ_re, get_const_cov(get_individuals(dm)[rep_idx]), cache.model_funs, cache.helpers
+                ) : tctx.dists[ri][li]
+            dist = getproperty(dists, re)
+            r = get_ranges(info)[li]
+            if get_is_scalar(info)
+                dist isa Distributions.UnivariateDistribution || return nothing
+                out[first(r)] = dist
+            else
+                for (j, k) in enumerate(r)
+                    m = _laplace_marginal_mvnormal(dist, j)
+                    m === nothing && return nothing
+                    out[k] = m
+                end
+            end
+        end
+    end
+    return out
+end
+
+# Prior-LHS multistart of one batch at the accepted θ (see `AcceptedWarmStarts`). The
+# current mode `b_star[bi]` is the warm-start run. Returns true when a better mode was found
+# (stored in `b_star[bi]`).
+# ponytail: the pre-screen uses the fit's solver settings, no separate reduced step budget.
+function _laplace_accepted_multistart_batch!(
+        cache::_LaplaceCache, bi::Int, dm::DataModel, info::REBatchInfo, θ_val,
+        const_cache::REConstantsCache, ll_cache::_LLCache, inner::LaplaceInnerOptions,
+        ws::AcceptedWarmStarts
+    )
+    nb = get_n_b(info)
+    nb == 0 && return false
+    tctx = _safe_theta_ctx(dm, info, θ_val, ll_cache)
+    margs = try
+        _laplace_prior_marginals(dm, info, θ_val, ll_cache, tctx)
+    catch err
+        _is_numeric_error(err) || rethrow(err)
+        nothing
+    end
+    margs === nothing && return false
+    sd = [Distributions.std(m) for m in margs]
+    logf(b) = _laplace_logf_batch(dm, info, θ_val, b, const_cache, ll_cache; tctx = tctx)
+    b_warm = collect(Float64, cache.bstar_cache.b_star[bi])
+    f_warm = logf(b_warm)
+    isfinite(f_warm) || (f_warm = -Inf)
+    # 1. stratified prior draws: per coordinate one point per stratum, random order
+    rng = Random.Xoshiro(ws.seed + bi)
+    n = ws.n_draw
+    U = Matrix{Float64}(undef, nb, n)
+    for k in 1:nb
+        U[k, :] .= (Random.randperm(rng, n) .- rand(rng, n)) ./ n
+    end
+    draws = [
+        [
+                Float64(Distributions.quantile(margs[k], ws.u_min + (1 - 2ws.u_min) * U[k, m]))
+                for k in 1:nb
+            ] for m in 1:n
+    ]
+    # 2. pre-screen; 3. greedy selection of distant draws by objective
+    J = [(f = logf(b); isfinite(f) ? -f : Inf) for b in draws]
+    starts = [b_warm]
+    for m in sortperm(J)
+        (isfinite(J[m]) && length(starts) <= ws.n_local) || break
+        all(b -> sqrt(sum(abs2, (draws[m] .- b) ./ sd)) > ws.d_min, starts) &&
+            push!(starts, draws[m])
+    end
+    # 4. local runs from the taken draws, keep the best
+    best_b, best_f = b_warm, f_warm
+    for b0 in @view starts[2:end]
+        sol = try
+            _laplace_solve_batch!(
+                dm, info, θ_val, const_cache, ll_cache, cache.ad_cache, bi, b0;
+                optimizer = inner.optimizer, optim_kwargs = inner.kwargs,
+                adtype = inner.adtype, tctx = tctx
+            )
+        catch err
+            err isa DomainError || err isa ArgumentError || err isa ErrorException ||
+                rethrow(err)
+            nothing
+        end
+        sol === nothing && continue
+        f = logf(sol.u)
+        if isfinite(f) && f > best_f
+            best_b, best_f = collect(Float64, sol.u), f
+        end
+    end
+    best_b === b_warm && return false
+    _laplace_store_bstar!(cache, bi, best_b)
+    return true
+end
+
+function _laplace_accepted_multistart!(
+        cache::_LaplaceCache, dm::DataModel, batch_infos::Vector{REBatchInfo}, θ,
+        const_cache::REConstantsCache, ll_cache, inner::LaplaceInnerOptions,
+        ws::AcceptedWarmStarts
+    )
+    θ_val = _laplace_floatize(θ)
+    caches = _laplace_thread_caches(dm, ll_cache, Threads.maxthreadid())
+    changed = fill(false, length(batch_infos))
+    n_chunks = length(caches)
+    # Chunk-indexed cache assignment, as in `_laplace_get_bstar!`.
+    Threads.@threads for c in 1:n_chunks
+        for bi in c:n_chunks:length(batch_infos)
+            changed[bi] = _laplace_accepted_multistart_batch!(
+                cache, bi, dm, batch_infos[bi], θ_val, const_cache, caches[c], inner, ws
+            )
+        end
+    end
+    return any(changed)
+end
+
+const _WARNED_STALE_REFRESH = Threads.Atomic{Bool}(false)
+
+# Optimization.jl callback of `AcceptedWarmStarts`: called once per accepted iterate.
+struct _AcceptedWarmCallback{F, M, U}
+    at_accepted!::F     # (state) -> Bool: re-solve at the accepted θ if needed, multistart, commit
+    refresh_ok::Bool
+    user_cb::U
+    method_label::M
+end
+
+function (cb::_AcceptedWarmCallback)(state, args...)
+    changed = cb.at_accepted!(state)
+    halt = cb.user_cb === nothing ? false : cb.user_cb(state, args...)
+    halt === true && return true
+    if changed
+        cb.refresh_ok && return :refresh
+        Threads.atomic_cas!(_WARNED_STALE_REFRESH, false, true) ||
+            @warn "$(cb.method_label): the inner multistart of AcceptedWarmStarts changed the modes at the accepted iterate, but the outer optimizer cannot be told to re-evaluate there (only InteriorPointBFGS.IPBFGS ≥ 0.2 supports a :refresh callback). It continues with the stale objective value and gradient at this iterate. Warned once per session."
+    end
+    return halt
+end
+
 # Shared optimizer driver for the Laplace family: exact-Hessian Laplace and
 # FOCEI/FOCE run the same marginal-likelihood machinery and differ only in the
 # inner Hessian mode (`hmode`), the gradient NaN-recovery policy, BlackBoxOptim
@@ -2833,6 +3083,8 @@ function _fit_laplace_family(
     n_batches = length(batch_infos)
     Tθ = eltype(layout.θ0_free_t)
     ebe_cache = _init_laplace_eval_cache(n_batches, Tθ)
+    ws = _warm_starts(method)
+    ws === nothing || (ebe_cache.warm = [Float64[] for _ in 1:n_batches])
     mb = _minibatch_state(_update_schedule(method), n_batches, rng)
     # The ref lets the post-solve full-data evaluation switch mini-batching off.
     mb_ref = Ref{Union{Nothing, typeof(mb)}}(mb)
@@ -3001,6 +3253,51 @@ function _fit_laplace_family(
     solve_kwargs = _minibatch_solve_kwargs(
         method.optim_kwargs, opt_use, mb, invalidate!
     )
+    if ws !== nothing
+        θu_of(z) = inv_transform(
+            _merge_free_into_full(θ_const_t_vec, free_idx, _θt_from_z(z), axs_full)
+        )
+        # First warm starts: the modes at the start point, from the default start.
+        obj_only(z0, nothing)
+        _commit_warm!(ebe_cache)
+        last_ms = Ref(0)
+        function at_accepted!(state)
+            z = state.u
+            θu = θu_of(z)
+            θc = ebe_cache.θ_cache
+            # The optimizer may accept a point other than the last evaluated one.
+            if θc === nothing || length(θc) != length(θu) || _maxabsdiff(θu, θc) != 0
+                _reset_obj_cache!(obj_cache)
+                obj_only(z, nothing)
+            end
+            k = ws.multistart_every
+            changed = false
+            if k !== nothing && state.iter > 0 && state.iter % k == 0 && state.iter != last_ms[]
+                last_ms[] = state.iter
+                changed = _laplace_accepted_multistart!(
+                    ebe_cache, dm, batch_infos, θu, const_cache, ll_cache, inner_opts, ws
+                )
+                if changed       # b* moved at this θ: drop everything derived from the old b*
+                    _reset_obj_cache!(obj_cache)
+                    hc = ebe_cache.hess_cache
+                    hc !== nothing && fill!(hc.last_valid, false)
+                    gc = ebe_cache.grad_cache
+                    gc.last_valid !== nothing && fill!(gc.last_valid, false)
+                end
+            end
+            _commit_warm!(ebe_cache)
+            return changed
+        end
+        solve_kwargs = merge(
+            solve_kwargs,
+            (;
+                callback = _AcceptedWarmCallback(
+                    at_accepted!, _supports_refresh(opt_use),
+                    get(solve_kwargs, :callback, nothing), string(nameof(typeof(method)))
+                ),
+            )
+        )
+    end
     sol = Optimization.solve(prob, opt_use; solve_kwargs...)
 
     # Final full-data evaluation at θ̂ (#322). The optimizer's last evaluation need not be

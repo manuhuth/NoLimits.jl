@@ -102,6 +102,7 @@ const TEST_GROUPS = [
     [
         "estimation_laplace2_tests.jl",
         "estimation_focei_tests.jl",
+        "accepted_warm_starts_tests.jl",
     ],
     ["estimation_pooled_tests.jl"],
     # ── G15-G17: SAEM ────────────────────────────────────────────────────────

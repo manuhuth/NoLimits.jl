@@ -32,6 +32,7 @@ MAP
 Laplace
 FOCEI
 NewtonInner
+AcceptedWarmStarts
 GHQuadrature
 MCEM
 MCEM_MCMC

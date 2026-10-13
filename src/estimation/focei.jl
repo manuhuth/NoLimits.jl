@@ -857,7 +857,8 @@ not supported — use [`Laplace`](@ref) for those.
 A gradient-based outer optimizer must cap its line-search step; see the `optimizer` entry in
 [`Laplace`](@ref) for why and for the measured numbers.
 
-Keyword arguments mirror [`Laplace`](@ref) (including `precondition`); the only
+Keyword arguments mirror [`Laplace`](@ref) (including `precondition` and `warm_starts`,
+see [`AcceptedWarmStarts`](@ref)); the only
 addition is `interaction::Bool=true`. The `optimizer` default is LBFGS with backtracking,
 or `Optimisers.Adam(0.01)` when `update_schedule != :all`. The `inner_optimizer` default
 differs from Laplace: a Gauss-Newton [`NewtonInner`](@ref) with the same Fisher-information
@@ -866,7 +867,7 @@ which needs first-order AD only and falls back to LBFGS where it stalls. Pass
 `inner_optimizer = LBFGS(...)` for the previous default.
 $(_UPDATE_SCHEDULE_DOC)
 """
-struct FOCEI{O, K, A, IO, HO, CO, MS, L, U, US} <: FittingMethod
+struct FOCEI{O, K, A, IO, HO, CO, MS, L, U, US, WS} <: FittingMethod
     optimizer::O
     optim_kwargs::K
     adtype::A
@@ -880,6 +881,7 @@ struct FOCEI{O, K, A, IO, HO, CO, MS, L, U, US} <: FittingMethod
     precondition::Bool
     interaction::Bool
     update_schedule::US
+    warm_starts::WS
 end
 
 _update_schedule(m::FOCEI) = m.update_schedule
@@ -912,9 +914,11 @@ function FOCEI(;
         ub = nothing,
         ignore_model_bounds = false,
         precondition = true,
-        update_schedule = :all
+        update_schedule = :all,
+        warm_starts::Union{Nothing, AcceptedWarmStarts} = nothing
     )
     update_schedule = _check_update_schedule(_as_symbol(update_schedule), "FOCEI")
+    _check_warm_starts(warm_starts, update_schedule, "FOCEI")
     optimizer = _resolve_outer_optimizer(optimizer, update_schedule, "FOCEI")
     inner = inner_options === nothing ?
         LaplaceInnerOptions(
@@ -933,7 +937,8 @@ function FOCEI(;
         ) : multistart_options
     return FOCEI(
         optimizer, _as_namedtuple(optim_kwargs), adtype, inner, hess, cache,
-        ms, lb, ub, ignore_model_bounds, precondition, interaction, update_schedule
+        ms, lb, ub, ignore_model_bounds, precondition, interaction, update_schedule,
+        warm_starts
     )
 end
 
