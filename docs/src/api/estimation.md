@@ -31,6 +31,7 @@ MLE
 MAP
 Laplace
 FOCEI
+NewtonInner
 GHQuadrature
 MCEM
 MCEM_MCMC

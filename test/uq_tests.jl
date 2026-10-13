@@ -915,7 +915,7 @@ end
             dm, bi, itr(ComponentArray(x, getaxes(θt))), cc, llc, NoLimits._init_laplace_eval_cache(length(bi), Float64);
             inner = io, hessian = m.hessian, cache_opts = NoLimits.LaplaceCacheOptions(0.0),
             multistart = NoLimits._resolve_multistart_options(m.multistart, io),
-            rng = Xoshiro(0), serialization = EnsembleSerial(), hmode = hmode
+            rng = Xoshiro(0), serialization = NoLimits.EnsembleSerial(), hmode = hmode
         )
         h = 1.0e-4
         x0 = collect(θt)
