@@ -375,6 +375,7 @@ end
             mcmc_steps = 1,
             q_store_max = 2,
             maxiters = 2,
+            sa_burnin_iters = 0,  # burn-in iterations (γ = 0) skip the M-step
             progress = false,
             builtin_stats = :auto
         );
@@ -508,6 +509,7 @@ end
             mcmc_steps = 1,
             q_store_max = 2,
             maxiters = 2,
+            sa_burnin_iters = 0,  # burn-in iterations (γ = 0) skip the M-step
             progress = false,
             builtin_stats = :auto
         );
@@ -573,6 +575,7 @@ end
             mcmc_steps = 1,
             q_store_max = 2,
             maxiters = 2,
+            sa_burnin_iters = 0,  # burn-in iterations (γ = 0) skip the M-step
             progress = false,
             builtin_stats = :auto
         );
