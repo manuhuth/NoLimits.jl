@@ -1457,23 +1457,28 @@ end
 # bit-identical to `fit_model(dm, SAEM())`.
 
 """
-    saem_closed_form_eligibility(dm; constants=NamedTuple(), method=SAEM()) -> (closed_form, numerical)
+    saem_closed_form_eligibility(dm; constants=NamedTuple(), method=SAEM(), extra_objective=nothing) -> (closed_form, numerical)
 
 Partition the FREE (non-`constants`) fixed-effect names into the SAEM hybrid M-step's two
 routes: `closed_form` (RE covariance/mean parameters, the residual σ, and supported HMM
 emission parameters — resolved exactly as `fit_model(dm, SAEM())` does) and `numerical`
 (everything else, e.g. structural/mean parameters entering the observation model, optimized
 via [`mcem_q_objective_and_gradient`]). The federated driver routes each parameter accordingly.
+
+Pass the same `extra_objective` as to `fit_model`. With an extra term the M-step is no longer
+separable, the fit disables all closed-form updates, and every free parameter is reported as
+`numerical`.
 """
 function saem_closed_form_eligibility(
         dm::DataModel;
         constants::Union{NamedTuple, AbstractDict} = NamedTuple(),
-        method::SAEM = SAEM()
+        method::SAEM = SAEM(),
+        extra_objective = nothing
     )
     constants = _as_namedtuple(constants)
     fe = get_fixed(get_model(dm))
     free = [n for n in get_names(fe) if !(n in keys(constants))]
-    cfg = _saem_resolve_closed_form_config(dm, method.saem)
+    cfg = _saem_resolve_closed_form_config(dm, method.saem, extra_objective)
     cf_syms = Symbol[]
     for v in values(cfg.re_cov_params)
         _saem_collect_target_symbols!(cf_syms, v)

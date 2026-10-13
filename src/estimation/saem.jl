@@ -1093,6 +1093,31 @@ function _saem_expr_has_fixed_symbol(ex, fixed_set::Set{Symbol})
     return any(a -> _saem_expr_has_fixed_symbol(a, fixed_set), args)
 end
 
+# True when `ex` is built only from fixed effects, literals and Base/LinearAlgebra
+# functions, so it takes the same value in every group. A closed-form RE mean is the plain
+# average of the draws only under such a scale; a scale that varies between groups
+# (covariates, other REs, helpers) makes the M-step a precision-weighted mean, so the
+# mean target is left to the numeric M-step.
+# ponytail: syntactic check, a helper of fixed effects only is also rejected (stays numeric).
+function _saem_expr_group_invariant(ex, fixed_set::Set{Symbol})
+    ex isa Number && return true
+    ex isa Symbol && return ex in fixed_set
+    ex isa Expr || return false
+    if ex.head === :call
+        f = ex.args[1]
+        # `LinearAlgebra.Diagonal(...)` / `Base.exp(...)`
+        if f isa Expr && f.head === :. && f.args[1] in (:Base, :LinearAlgebra) &&
+                f.args[2] isa QuoteNode
+            f = f.args[2].value
+        end
+        (f isa Symbol && !(f in fixed_set) &&
+            (isdefined(Base, f) || isdefined(LinearAlgebra, f))) || return false
+        return all(a -> _saem_expr_group_invariant(a, fixed_set), @view ex.args[2:end])
+    end
+    ex.head in (:vect, :tuple, :vcat, :hcat, :row) || return false
+    return all(a -> _saem_expr_group_invariant(a, fixed_set), ex.args)
+end
+
 # Mean slot of a scalar Normal/LogNormal random effect -> (target, mean_offset).
 # `mean_offset = true` means the level's own mean is subtracted from the moments before
 # they are formed, so the covariance update centers on the model's mean rather than on the
@@ -1130,6 +1155,8 @@ function _saem_parse_re_gaussian_mapping(dist_expr, fixed_set::Set{Symbol})
         σarg = dist_expr.args[3]
         σ_target = (σarg isa Symbol && σarg in fixed_set) ? σarg : nothing
         mean_target, mean_offset = _saem_parse_re_mean_target(μarg, fixed_set)
+        _saem_expr_group_invariant(σarg, fixed_set) ||
+            ((mean_target, mean_offset) = (nothing, false))
         return (
             family = :normal, mean = mean_target, cov = σ_target,
             mean_offset = mean_offset,
@@ -1141,6 +1168,8 @@ function _saem_parse_re_gaussian_mapping(dist_expr, fixed_set::Set{Symbol})
         μarg = dist_expr.args[2]
         σarg = dist_expr.args[3]
         mean_target, mean_offset = _saem_parse_re_mean_target(μarg, fixed_set)
+        _saem_expr_group_invariant(σarg, fixed_set) ||
+            ((mean_target, mean_offset) = (nothing, false))
         cov_target = (σarg isa Symbol && σarg in fixed_set) ? σarg : nothing
         return (
             family = :lognormal, mean = mean_target, cov = cov_target,
@@ -1192,6 +1221,7 @@ function _saem_parse_re_gaussian_mapping(dist_expr, fixed_set::Set{Symbol})
                 end
             end
         end
+        _saem_expr_group_invariant(Σarg, fixed_set) || (mean_target = nothing)
         return (
             family = :mvnormal, mean = mean_target, cov = cov_target,
             mean_offset = false,
@@ -1233,6 +1263,7 @@ function _saem_parse_re_gaussian_mapping(dist_expr, fixed_set::Set{Symbol})
             end
         end
         fam = cname == :MvLogNormal ? :mvlognormal : :mvlogitnormal
+        _saem_expr_group_invariant(Σarg, fixed_set) || (mean_target = nothing)
         return (
             family = fam, mean = mean_target, cov = cov_target,
             mean_offset = false,
@@ -3227,6 +3258,10 @@ function _saem_resolve_closed_form_config(
         re_mean_offsets = NamedTuple()
         resid_var_param = NamedTuple()
         hmm_emission_params = NamedTuple()
+        # Report what is applied: no closed-form targets.
+        builtin_cf_elig = _saem_builtin_closed_form_eligibility(
+            dm, re_cov_params, re_mean_params, resid_var_param, hmm_emission_params
+        )
     end
     re_family_map = _saem_re_family_map(dm)
     return (
