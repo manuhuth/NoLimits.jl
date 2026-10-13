@@ -2022,13 +2022,13 @@ function _laplace_grad_batch(
     )
     ForwardDiff.gradient!(buf.grad_logf, logf_θ, θ_vec, cfg)
     grad_logf = buf.grad_logf
-    # FOCEI with closed-form scores: g = ∂ logf / ∂b and the curvature come from one Jacobian
-    # pass (focei.jl), so Gθ with ∂H/∂θ, and the exact Hessian with ∂H/∂b, each take one
-    # nested AD pass instead of two. `nothing` otherwise: the separate passes below.
-    fast = hmode isa _FOCEIHess && use_trace_logdet_grad && !use_hutchinson ?
-        _focei_onepass_derivatives(
-            dm, batch_info, θ_vec, b, const_cache, cache, hmode.interaction, tctx
-        ) : nothing
+    # g = ∂ logf / ∂b and the curvature H from one pass (`_onepass_logdet_derivatives`), so
+    # Gθ with ∂H/∂θ, and the exact Hessian with ∂H/∂b, each take one nested AD pass, and
+    # RE-only fixed effects no model solve. `nothing` (e.g. a third-party curvature): the
+    # separate passes below.
+    fast = use_trace_logdet_grad && !use_hutchinson ?
+        _onepass_logdet_derivatives(hmode, dm, batch_info, θ_vec, b, const_cache, cache, tctx) :
+        nothing
     Gθ = if fast === nothing
         # g(b, θ) = ∂ logf / ∂b
         function gθ!(out, θv)
@@ -3082,4 +3082,76 @@ function _with_eb_modes(result::FrequentistREResult, eb_modes)
         result.solution, result.objective, result.iterations,
         result.raw, result.notes, eb_modes
     )
+end
+
+# -------------------------------------------------------------------------------------
+# One-pass derivatives of the log-determinant gradient (`_laplace_grad_batch`).
+# -------------------------------------------------------------------------------------
+
+# θ- and b-derivatives of F(θ, b) = [∇_b log f; vech(H)] for the curvature H of the
+# Laplace expansion (H as `inner_curvature` returns it), from ONE nested AD pass each.
+# Returns (Gθ = ∂∇_b log f/∂θ, Jθ = ∂vech(H)/∂θ, Hex = exact Hessian ∂∇_b log f/∂b
+# (symmetrized), Jb = ∂vech(H)/∂b), or `nothing`, and then `_laplace_grad_batch`
+# differentiates gradient and curvature separately. Methods: exact Hessian here,
+# FisherInformationCurvature in focei.jl; other curvatures take the separate passes.
+_onepass_logdet_derivatives(::AbstractCurvature, args...) = nothing
+
+function _onepass_logdet_derivatives(
+        ::ExactHessianCurvature, dm::DataModel, batch_info::REBatchInfo, θ, b,
+        const_cache::REConstantsCache, cache::_LLCache, tctx
+    )
+    # gradient and Hessian of log f in b from one second-order pass
+    function F(θv, bv, tc)
+        T = promote_type(eltype(θv), eltype(bv))
+        f = bw -> _laplace_logf_batch(dm, batch_info, θv, bw, const_cache, cache; tctx = tc)
+        res = ForwardDiff.hessian!(ForwardDiff.DiffResults.HessianResult(similar(bv, T)), f, bv)
+        return vcat(ForwardDiff.DiffResults.gradient(res), _vech(ForwardDiff.DiffResults.hessian(res)))
+    end
+    return _onepass_from_F(F, dm, batch_info, θ, b, const_cache, cache, tctx)
+end
+
+# The θ pass gets no θ-context: a cached prior Hessian is constant in θ only at the
+# Float64 point. Fixed effects that appear only in random-effects distributions (not in
+# `@formulas`, `@preDifferentialEquation`, `@DifferentialEquation`, `@initialDE`) move F
+# only through the prior, so their columns come from the prior terms alone, without a
+# model solve.
+function _onepass_from_F(F, dm::DataModel, batch_info::REBatchInfo, θ, b, const_cache, cache, tctx)
+    nb = length(b)
+    nv = _ntri(nb)
+    o, p = _theta_split_obs_re(dm, θ)
+    Jθ = Matrix{Float64}(undef, nb + nv, length(θ))
+    Jθ[:, o] = ForwardDiff.jacobian(x -> F(_theta_with(θ, o, x), b, nothing), θ[o])
+    if !isempty(p)
+        prior(θv) = begin
+            θr = _symmetrize_psd_params(θv, get_fixed(get_model(dm)))
+            lp = _FOCEIPriorLogf(dm, batch_info, θr, const_cache, cache)
+            vcat(ForwardDiff.gradient(lp, b), _vech(ForwardDiff.hessian(lp, b)))
+        end
+        Jθ[:, p] = ForwardDiff.jacobian(x -> prior(_theta_with(θ, p, x)), θ[p])
+    end
+    Jb = ForwardDiff.jacobian(bv -> F(θ, bv, tctx), b)
+    Hex = Jb[1:nb, :]
+    return (
+        Gθ = Jθ[1:nb, :], Jθ = Jθ[(nb + 1):end, :],
+        Hex = (Hex + Hex') / 2, Jb = Jb[(nb + 1):end, :],
+    )
+end
+
+# Positions in θ of the outcome-side fixed effects (`o`) and of those that enter only
+# random-effects distributions (`p`).
+function _theta_split_obs_re(dm::DataModel, θ::ComponentArray)
+    m = ComponentArray(zeros(length(θ)), getaxes(θ))
+    for n in _compute_obs_fe_syms(get_model(dm))
+        v = getproperty(m, n)
+        v isa AbstractArray ? (v .= 1) : setproperty!(m, n, 1.0)
+    end
+    flags = collect(m) .!= 0
+    return findall(flags), findall(.!flags)
+end
+
+# θ with the entries at `idx` replaced by `x` (element type promoted to that of `x`).
+function _theta_with(θ::ComponentArray, idx, x)
+    θc = ComponentArray(convert.(promote_type(eltype(θ), eltype(x)), collect(θ)), getaxes(θ))
+    θc[idx] = x
+    return θc
 end

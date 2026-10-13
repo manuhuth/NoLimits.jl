@@ -250,8 +250,8 @@ end
     @test all(isfinite, collect(g))
 end
 
-@testset "FOCEI gradient with a crossing level and an RE-only parameter" begin
-    # One-pass FOCEI gradient (θ split into outcome-side and RE-only entries) vs finite
+@testset "FOCEI and Laplace gradients with a crossing level and an RE-only parameter" begin
+    # One-pass FOCEI and Laplace gradients (θ split into outcome-side and RE-only entries) vs finite
     # differences of the marginal with the modes re-solved. The crossing level `lev` is a
     # fixed effect named only as a quoted symbol; ω enters only the RE distribution.
     cm = @Model begin
@@ -297,14 +297,15 @@ end
     dm = DataModel(cm, df; primary_id = :ID, time_col = :t)
     @test :lev in NL._compute_obs_fe_syms(cm)
     θ = NL.get_params(dm; scale = :untransformed)
-    o, p = NL._focei_theta_split(dm, θ)
+    o, p = NL._theta_split_obs_re(dm, θ)
     @test !isempty(p)
     ebe = NL.EBEOptions(grad_tol = 1.0e-10, multistart_n = 1, multistart_k = 1)
-    curv = NL.FisherInformationCurvature(true)
-    _, g = NL.laplace_marginal_gradient(dm, θ; curvature = curv, ebe_options = ebe)
-    marg(x) = NL.laplace_marginal(dm, ComponentArray(x, getaxes(θ)); curvature = curv, ebe_options = ebe)
-    g_fd = FiniteDifferences.grad(central_fdm(5, 1), marg, collect(θ))[1]
-    @test collect(g) ≈ g_fd rtol = 1.0e-5
+    for curv in (NL.FisherInformationCurvature(true), NL.ExactHessianCurvature())
+        _, g = NL.laplace_marginal_gradient(dm, θ; curvature = curv, ebe_options = ebe)
+        marg(x) = NL.laplace_marginal(dm, ComponentArray(x, getaxes(θ)); curvature = curv, ebe_options = ebe)
+        g_fd = FiniteDifferences.grad(central_fdm(5, 1), marg, collect(θ))[1]
+        @test collect(g) ≈ g_fd rtol = 1.0e-5
+    end
 end
 
 @testset "FOCEI rejects unsupported (HMM) outcome distributions" begin

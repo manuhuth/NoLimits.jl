@@ -788,70 +788,27 @@ const _FOCEIHess = FisherInformationCurvature
     )
 end
 
-# θ- and b-derivatives of F(θ, b) = [∇_b log f; vech(H)], H the FOCEI curvature as
-# `inner_curvature` returns it, from ONE nested AD pass each (laplace.jl
-# `_laplace_grad_batch`). Gives Gθ = ∂∇_b log f/∂θ, ∂vech(H)/∂θ, the exact Hessian
-# ∂∇_b log f/∂b (symmetrized) and ∂vech(H)/∂b. `nothing` when a family has no closed-form
-# score or the evaluation fails at (θ, b); the caller then differentiates gradient and
-# curvature separately. The θ pass gets no θ-context: its cached prior Hessian is constant
-# in θ only at the Float64 point.
-# Fixed effects that appear only in random-effects distributions (not in `@formulas`,
-# `@preDifferentialEquation`, `@DifferentialEquation`, `@initialDE`) move F only through the
-# prior, so their columns come from the prior terms alone, without a model solve.
-function _focei_onepass_derivatives(
-        dm::DataModel, batch_info::REBatchInfo, θ, b,
-        const_cache::REConstantsCache, cache::_LLCache, interaction::Bool, tctx
+# FOCEI method of `_onepass_logdet_derivatives` (laplace.jl): F(θ, b) = [∇_b log f; vech(H)]
+# from one Jacobian pass with the closed-form scores. `nothing` when a family has no
+# closed-form score or the evaluation fails at (θ, b).
+function _onepass_logdet_derivatives(
+        c::FisherInformationCurvature, dm::DataModel, batch_info::REBatchInfo, θ, b,
+        const_cache::REConstantsCache, cache::_LLCache, tctx
     )
     r = _focei_grad_negH_batch(
-        dm, batch_info, θ, b, const_cache, cache; interaction = interaction, tctx = tctx
+        dm, batch_info, θ, b, const_cache, cache; interaction = c.interaction, tctx = tctx
     )
     (r === nothing || r[1] === nothing) && return nothing
-    nb = length(b)
-    nv = _ntri(nb)
+    nv = _ntri(length(b))
     function F(θv, bv, tc)
         s = _focei_grad_negH_batch(
-            dm, batch_info, θv, bv, const_cache, cache; interaction = interaction, tctx = tc
+            dm, batch_info, θv, bv, const_cache, cache; interaction = c.interaction, tctx = tc
         )
         T = promote_type(eltype(θv), eltype(bv))
-        (s === nothing || s[1] === nothing) && return fill(T(NaN), nb + nv)
+        (s === nothing || s[1] === nothing) && return fill(T(NaN), length(bv) + nv)
         return vcat(s[1], _vech(-s[2]))
     end
-    o, p = _focei_theta_split(dm, θ)
-    Jθ = Matrix{eltype(r[1])}(undef, nb + nv, length(θ))
-    Jθ[:, o] = ForwardDiff.jacobian(x -> F(_theta_with(θ, o, x), b, nothing), θ[o])
-    if !isempty(p)
-        prior(θv) = begin
-            θr = _symmetrize_psd_params(θv, get_fixed(get_model(dm)))
-            lp = _FOCEIPriorLogf(dm, batch_info, θr, const_cache, cache)
-            vcat(ForwardDiff.gradient(lp, b), _vech(ForwardDiff.hessian(lp, b)))
-        end
-        Jθ[:, p] = ForwardDiff.jacobian(x -> prior(_theta_with(θ, p, x)), θ[p])
-    end
-    Jb = ForwardDiff.jacobian(bv -> F(θ, bv, tctx), b)
-    Hex = Jb[1:nb, :]
-    return (
-        Gθ = Jθ[1:nb, :], Jθ = Jθ[(nb + 1):end, :],
-        Hex = (Hex + Hex') / 2, Jb = Jb[(nb + 1):end, :],
-    )
-end
-
-# Positions in θ of the outcome-side fixed effects (`o`) and of those that enter only
-# random-effects distributions (`p`).
-function _focei_theta_split(dm::DataModel, θ::ComponentArray)
-    m = ComponentArray(zeros(length(θ)), getaxes(θ))
-    for n in _compute_obs_fe_syms(get_model(dm))
-        v = getproperty(m, n)
-        v isa AbstractArray ? (v .= 1) : setproperty!(m, n, 1.0)
-    end
-    flags = collect(m) .!= 0
-    return findall(flags), findall(.!flags)
-end
-
-# θ with the entries at `idx` replaced by `x` (element type promoted to that of `x`).
-function _theta_with(θ::ComponentArray, idx, x)
-    θc = ComponentArray(convert.(promote_type(eltype(θ), eltype(x)), collect(θ)), getaxes(θ))
-    θc[idx] = x
-    return θc
+    return _onepass_from_F(F, dm, batch_info, θ, b, const_cache, cache, tctx)
 end
 
 # Newton-step hook (laplace.jl `_newton_grad_hess!`): gradient and curvature in one pass.
