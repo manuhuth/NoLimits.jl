@@ -4583,6 +4583,10 @@ function _compute_obs_fe_syms(model)
     syms = Set{Symbol}()
     # @formulas — FormulasIR.var_syms contains all variable symbols
     union!(syms, filter(∈(fe_names), get_formulas(model).ir.var_syms))
+    # crossing levels are quoted symbols (`crossing_time(:x, :level)`), not variable references
+    for c in get_formulas_crossings(get_formulas(model))
+        c.threshold in fe_names && push!(syms, c.threshold)
+    end
     de = model.de
     if de !== nothing
         # @preDifferentialEquation

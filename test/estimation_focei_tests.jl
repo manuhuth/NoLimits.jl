@@ -250,6 +250,63 @@ end
     @test all(isfinite, collect(g))
 end
 
+@testset "FOCEI gradient with a crossing level and an RE-only parameter" begin
+    # One-pass FOCEI gradient (θ split into outcome-side and RE-only entries) vs finite
+    # differences of the marginal with the modes re-solved. The crossing level `lev` is a
+    # fixed effect named only as a quoted symbol; ω enters only the RE distribution.
+    cm = @Model begin
+        @fixedEffects begin
+            k = RealNumber(0.5; scale = :log)
+            lev = RealNumber(0.6)
+            ω = RealNumber(0.3; scale = :log)
+            σ = RealNumber(0.05; scale = :log)
+            σt = RealNumber(0.3; scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, ω); column = :ID)
+        end
+        @preDifferentialEquation begin
+            r = k * exp(η)
+        end
+        @DifferentialEquation begin
+            D(x) ~ r * (1 - x)
+        end
+        @initialDE begin
+            x = 0.0
+        end
+        @formulas begin
+            tc = crossing_time(:x, :lev)
+            y ~ Normal(x(t), σ)
+            z ~ Normal(tc, σt)
+        end
+    end
+    cm = set_solver_config(cm; alg = Tsit5(), saveat_mode = :saveat, kwargs = (; abstol = 1.0e-12, reltol = 1.0e-12))
+    rng = Xoshiro(4)
+    rows = NamedTuple[]
+    for i in 1:6
+        ri = 0.5 * exp(0.3 * randn(rng))
+        for tt in (0.5, 1.0, 2.0, 4.0)
+            push!(rows, (ID = "s$i", t = tt, y = 1 - exp(-ri * tt) + 0.05 * randn(rng), z = missing))
+        end
+        push!(rows, (ID = "s$i", t = 6.0, y = missing, z = -log(0.4) / ri + 0.3 * randn(rng)))
+    end
+    df = DataFrame(rows)
+    dm = DataModel(cm, df; primary_id = :ID, time_col = :t)
+    @test :lev in NL._compute_obs_fe_syms(cm)
+    θ = NL.get_params(dm; scale = :untransformed)
+    o, p = NL._focei_theta_split(dm, θ)
+    @test !isempty(p)
+    ebe = NL.EBEOptions(grad_tol = 1.0e-10, multistart_n = 1, multistart_k = 1)
+    curv = NL.FisherInformationCurvature(true)
+    _, g = NL.laplace_marginal_gradient(dm, θ; curvature = curv, ebe_options = ebe)
+    marg(x) = NL.laplace_marginal(dm, ComponentArray(x, getaxes(θ)); curvature = curv, ebe_options = ebe)
+    g_fd = FiniteDifferences.grad(central_fdm(5, 1), marg, collect(θ))[1]
+    @test collect(g) ≈ g_fd rtol = 1.0e-5
+end
+
 @testset "FOCEI rejects unsupported (HMM) outcome distributions" begin
     model = @Model begin
         @covariates begin

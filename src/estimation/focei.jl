@@ -795,6 +795,9 @@ end
 # score or the evaluation fails at (θ, b); the caller then differentiates gradient and
 # curvature separately. The θ pass gets no θ-context: its cached prior Hessian is constant
 # in θ only at the Float64 point.
+# Fixed effects that appear only in random-effects distributions (not in `@formulas`,
+# `@preDifferentialEquation`, `@DifferentialEquation`, `@initialDE`) move F only through the
+# prior, so their columns come from the prior terms alone, without a model solve.
 function _focei_onepass_derivatives(
         dm::DataModel, batch_info::REBatchInfo, θ, b,
         const_cache::REConstantsCache, cache::_LLCache, interaction::Bool, tctx
@@ -813,13 +816,42 @@ function _focei_onepass_derivatives(
         (s === nothing || s[1] === nothing) && return fill(T(NaN), nb + nv)
         return vcat(s[1], _vech(-s[2]))
     end
-    Jθ = ForwardDiff.jacobian(θv -> F(θv, b, nothing), θ)
+    o, p = _focei_theta_split(dm, θ)
+    Jθ = Matrix{eltype(r[1])}(undef, nb + nv, length(θ))
+    Jθ[:, o] = ForwardDiff.jacobian(x -> F(_theta_with(θ, o, x), b, nothing), θ[o])
+    if !isempty(p)
+        prior(θv) = begin
+            θr = _symmetrize_psd_params(θv, get_fixed(get_model(dm)))
+            lp = _FOCEIPriorLogf(dm, batch_info, θr, const_cache, cache)
+            vcat(ForwardDiff.gradient(lp, b), _vech(ForwardDiff.hessian(lp, b)))
+        end
+        Jθ[:, p] = ForwardDiff.jacobian(x -> prior(_theta_with(θ, p, x)), θ[p])
+    end
     Jb = ForwardDiff.jacobian(bv -> F(θ, bv, tctx), b)
     Hex = Jb[1:nb, :]
     return (
         Gθ = Jθ[1:nb, :], Jθ = Jθ[(nb + 1):end, :],
         Hex = (Hex + Hex') / 2, Jb = Jb[(nb + 1):end, :],
     )
+end
+
+# Positions in θ of the outcome-side fixed effects (`o`) and of those that enter only
+# random-effects distributions (`p`).
+function _focei_theta_split(dm::DataModel, θ::ComponentArray)
+    m = ComponentArray(zeros(length(θ)), getaxes(θ))
+    for n in _compute_obs_fe_syms(get_model(dm))
+        v = getproperty(m, n)
+        v isa AbstractArray ? (v .= 1) : setproperty!(m, n, 1.0)
+    end
+    flags = collect(m) .!= 0
+    return findall(flags), findall(.!flags)
+end
+
+# θ with the entries at `idx` replaced by `x` (element type promoted to that of `x`).
+function _theta_with(θ::ComponentArray, idx, x)
+    θc = ComponentArray(convert.(promote_type(eltype(θ), eltype(x)), collect(θ)), getaxes(θ))
+    θc[idx] = x
+    return θc
 end
 
 # Newton-step hook (laplace.jl `_newton_grad_hess!`): gradient and curvature in one pass.
