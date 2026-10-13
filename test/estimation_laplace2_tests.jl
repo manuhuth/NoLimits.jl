@@ -440,6 +440,29 @@ end
         end
     end
 
+    @testset "Gauss-Newton curvature: one-pass gradient and mode" begin
+        llc = NoLimits.build_ll_cache(dm; force_saveat = true)
+        _, binfos, ccache = NoLimits._build_re_batch_infos(dm, NamedTuple())
+        θ = NoLimits.get_θ0_untransformed(get_model(dm).fixed.fixed)
+        adc = NoLimits._init_laplace_ad_cache(length(binfos))
+        gn = NewtonInner(curvature = FisherInformationCurvature(true), x_abstol = 1.0e-12)
+        for bi in (1, 5, 17)
+            info = binfos[bi]
+            b = fill(0.3, info.n_b)
+            f = NoLimits._LaplaceLogfBatch(dm, info, θ, ccache, llc)
+            g1, negH = NoLimits._focei_grad_negH_batch(dm, info, θ, b, ccache, llc; interaction = true)
+            @test g1 ≈ NoLimits.ForwardDiff.gradient(f, b) rtol = 1.0e-10
+            @test -negH ≈ NoLimits._build_hess_b(FisherInformationCurvature(true), dm, info, θ, b, ccache, llc, nothing, 1)
+            sol_def = NoLimits._laplace_solve_batch!(dm, info, θ, ccache, llc, adc, bi, zeros(info.n_b))
+            sol_gn = NoLimits._laplace_solve_batch!(dm, info, θ, ccache, llc, adc, bi, zeros(info.n_b); optimizer = gn)
+            @test sol_gn isa NoLimits._NewtonSol
+            @test sol_gn.converged
+            @test collect(sol_gn.u) ≈ collect(sol_def.u) atol = 1.0e-6
+        end
+        @test_throws ErrorException NewtonInner(x_abstol = -1.0)
+        @test_throws ErrorException NewtonInner(curvature = :fisher)
+    end
+
     @testset "Laplace fit matches default within tolerance" begin
         res_def = fit_model(
             dm, NoLimits.Laplace(optim_kwargs = (maxiters = 40,));

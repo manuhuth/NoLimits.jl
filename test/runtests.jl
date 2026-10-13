@@ -64,6 +64,7 @@ const TEST_GROUPS = [
         "data_simulation_tests.jl",
         "ode_callbacks_tests.jl",
         "crossing_tests.jl",
+        "ode_fallback_tests.jl",
         "datasets_tests.jl",
     ],
     # ── G6-G8: plotting (shares fx_nore/re/ode/pois/bern/npf/npf2/recov) ─────
@@ -101,6 +102,7 @@ const TEST_GROUPS = [
     [
         "estimation_laplace2_tests.jl",
         "estimation_focei_tests.jl",
+        "accepted_warm_starts_tests.jl",
     ],
     ["estimation_pooled_tests.jl"],
     # ── G15-G17: SAEM ────────────────────────────────────────────────────────

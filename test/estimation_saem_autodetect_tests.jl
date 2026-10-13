@@ -700,3 +700,104 @@ end
     @test Set(cf) == Set(NoLimits.get_names(model.fixed.fixed))
     @test isempty(num)
 end
+
+@testset "SAEM closed form: extra_objective clears targets in diagnostics and dev API" begin
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+
+        @fixedEffects begin
+            μ = RealNumber(0.1)
+            ω = RealNumber(0.3, scale = :log)
+            s = RealNumber(0.5, scale = :log)
+        end
+
+        @randomEffects begin
+            η = RandomEffect(Normal(μ, ω); column = :ID)
+        end
+
+        @formulas begin
+            y ~ Normal(η, s)
+        end
+    end
+    df = DataFrame(
+        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [0.1, 0.2, 0.0, -0.1]
+    )
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    extra = θ -> 0.0
+
+    # Without an extra term: μ, ω, s are closed-form targets.
+    cfg = NoLimits._saem_resolve_closed_form_config(dm, NoLimits.SAEM().saem)
+    @test cfg.builtin_stats_mode == :closed_form
+    @test cfg.builtin_cf_elig.has_any_closed_form_block
+    @test !isempty(cfg.builtin_cf_elig.re_targets)
+    cf, num = NoLimits.saem_closed_form_eligibility(dm)
+    @test Set(cf) == Set([:μ, :ω, :s])
+    @test isempty(num)
+
+    # With an extra term nothing is applied, and the diagnostics say so.
+    for opts in (NoLimits.SAEM().saem, NoLimits._mcem_saem_opts(NoLimits.MCEM()))
+        cfg_x = NoLimits._saem_resolve_closed_form_config(dm, opts, extra)
+        @test cfg_x.builtin_stats_mode == :none
+        @test !cfg_x.builtin_cf_elig.has_any_closed_form_block
+        @test isempty(cfg_x.builtin_cf_elig.re_targets)
+        @test isempty(cfg_x.builtin_cf_elig.outcome_targets_non_hmm)
+    end
+    cf_x, num_x = NoLimits.saem_closed_form_eligibility(dm; extra_objective = extra)
+    @test isempty(cf_x)
+    @test Set(num_x) == Set([:μ, :ω, :s])
+end
+
+@testset "SAEM auto-detect: no closed-form RE mean with a group-varying sd" begin
+    fs = Set([:μ, :ω, :d1, :d2])
+    parse = NoLimits._saem_parse_re_gaussian_mapping
+    # sd depends on a covariate -> precision-weighted mean, not the plain average.
+    @test parse(:(Normal(μ, exp(0.5 * (c * d1 + (1 - c) * d2)))), fs).mean === nothing
+    @test parse(:(LogNormal(μ, exp(c * d1))), fs).mean === nothing
+    @test parse(:(Normal(μ + log(c), sqrt(c) * ω)), fs).mean === nothing
+    @test parse(:(Normal(μ, myhelper(d1))), fs).mean === nothing
+    @test parse(:(MvNormal([μ, d1], Diagonal([c, 1.0]))), fs).mean === nothing
+    # sd built only from fixed effects and literals is group-invariant -> target kept.
+    @test parse(:(Normal(μ, ω)), fs).mean == :μ
+    @test parse(:(Normal(μ, exp(0.5 * (d1 + d2)))), fs).mean == :μ
+    @test parse(:(Normal(μ, 2.0)), fs).mean == :μ
+    @test parse(:(MvNormal([μ, d1], Diagonal([ω, 1.0]))), fs).mean == (:μ, :d1)
+    @test parse(:(MvNormal([μ, d1], LinearAlgebra.Diagonal([ω, 1.0]))), fs).mean ==
+        (:μ, :d1)
+
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+            c = ConstantCovariate(constant_on = :ID)
+        end
+
+        @fixedEffects begin
+            μ = RealNumber(0.1)
+            d1 = RealNumber(-1.0)
+            d2 = RealNumber(1.0)
+            s = RealNumber(0.5, scale = :log)
+        end
+
+        @randomEffects begin
+            η = RandomEffect(
+                Normal(μ, exp(0.5 * (c * d1 + (1 - c) * d2))); column = :ID
+            )
+        end
+
+        @formulas begin
+            y ~ Normal(η, s)
+        end
+    end
+    df = DataFrame(
+        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], c = [0.0, 0.0, 1.0, 1.0],
+        y = [0.1, 0.2, 0.0, -0.1]
+    )
+    auto = _auto_cfg(model, df)
+    @test !haskey(auto.re_mean_params, :η)
+    cf, num = NoLimits.saem_closed_form_eligibility(
+        DataModel(model, df; primary_id = :ID, time_col = :t)
+    )
+    @test :μ ∈ num
+    @test :μ ∉ cf
+end

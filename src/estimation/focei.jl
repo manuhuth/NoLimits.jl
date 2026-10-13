@@ -9,7 +9,7 @@ using LineSearches
 using ForwardDiff
 using LinearAlgebra
 using Distributions
-using SpecialFunctions: trigamma
+using SpecialFunctions: trigamma, digamma
 
 # =====================================================================================
 # FOCEI / FOCE estimation.
@@ -603,40 +603,155 @@ function _focei_negH_batch_impl(
     T = promote_type(eltype(θ_re), eltype(b))
     nb == 0 && return zeros(T, 0, 0)
 
-    dists_b = _focei_obs_dists_batch(dm, batch_info, θ_re, b, const_cache, cache)
-    if isempty(dists_b)
-        Hdata = zeros(T, nb, nb)
-    else
-        Φ = _FOCEIPhi(dm, batch_info, θ_re, const_cache, cache)
-        J = ForwardDiff.jacobian(Φ, b)
-        # Guard against an ODE solve that succeeds at the base point but reports failure
-        # under the AD seed (length mismatch): signal a non-finite Hessian so the marginal
-        # becomes -Inf and the outer optimizer backtracks out of the unstable region.
-        D_expected = sum(_focei_paramcount, dists_b; init = 0)
-        size(J, 1) == D_expected || return fill(convert(T, NaN), nb, nb)
-        dists_m = nothing
-        if !interaction && any(d -> !isempty(_focei_dispersion_indices(d)), dists_b)
-            m_b = _focei_prior_mean_b(dm, batch_info, θ_re, const_cache, cache)
-            dists_m = _focei_obs_dists_batch(dm, batch_info, θ_re, m_b, const_cache, cache)
-            # An empty batch means the model failed to evaluate at the prior mean; the
-            # dispersion lookups below would index it out of bounds.
-            isempty(dists_m) && return fill(convert(T, NaN), nb, nb)
-        end
-        Hdata = _focei_data_term(J, dists_b, dists_m, interaction, T)
-    end
-
-    # Prior curvature: for all-Gaussian REs it is constant in b and arrives
-    # precomputed in the θ-context (its ∂/∂b is exactly zero either way, so the
-    # cached Float64 matrix reproduces the per-call dual result bit-for-bit on
-    # the b-differentiated paths). θ-dual callers pass tctx without a cached Λ
-    # (or none at all), keeping ∂Λ/∂θ exact.
-    Λ = if tctx !== nothing && tctx.prior_hess !== nothing
-        tctx.prior_hess
-    else
-        -ForwardDiff.hessian(_FOCEIPriorLogf(dm, batch_info, θ_re, const_cache, cache), b)
-    end
-    return Hdata .+ Λ
+    parts = _focei_dists_jacobian(dm, batch_info, θ_re, b, const_cache, cache, interaction)
+    parts === nothing && return fill(convert(T, NaN), nb, nb)
+    dists_b, J, dists_m = parts
+    Hdata = J === nothing ? zeros(T, nb, nb) : _focei_data_term(J, dists_b, dists_m, interaction, T)
+    return Hdata .+ _focei_prior_negH(dm, batch_info, θ_re, b, const_cache, cache, tctx)
 end
+
+# Outcome distributions at b, the Jacobian J = ∂Φ/∂b of their stacked parameters (`nothing`
+# without observations) and, for FOCE with dispersion parameters, the distributions at the
+# prior mean. Returns `nothing` when the model fails to evaluate under the AD seed or at the
+# prior mean; the callers turn that into a non-finite result.
+function _focei_dists_jacobian(
+        dm::DataModel, batch_info::REBatchInfo, θ_re, b,
+        const_cache::REConstantsCache, cache::_LLCache, interaction::Bool
+    )
+    dists_b = _focei_obs_dists_batch(dm, batch_info, θ_re, b, const_cache, cache)
+    isempty(dists_b) && return (dists_b, nothing, nothing)
+    Φ = _FOCEIPhi(dm, batch_info, θ_re, const_cache, cache)
+    J = ForwardDiff.jacobian(Φ, b)
+    # Guard against an ODE solve that succeeds at the base point but reports failure
+    # under the AD seed (length mismatch): signal a non-finite Hessian so the marginal
+    # becomes -Inf and the outer optimizer backtracks out of the unstable region.
+    size(J, 1) == sum(_focei_paramcount, dists_b; init = 0) || return nothing
+    dists_m = nothing
+    if !interaction && any(d -> !isempty(_focei_dispersion_indices(d)), dists_b)
+        m_b = _focei_prior_mean_b(dm, batch_info, θ_re, const_cache, cache)
+        dists_m = _focei_obs_dists_batch(dm, batch_info, θ_re, m_b, const_cache, cache)
+        # An empty batch means the model failed to evaluate at the prior mean; the
+        # dispersion lookups would index it out of bounds.
+        isempty(dists_m) && return nothing
+    end
+    return (dists_b, J, dists_m)
+end
+
+# Prior curvature: for all-Gaussian REs it is constant in b and arrives
+# precomputed in the θ-context (its ∂/∂b is exactly zero either way, so the
+# cached Float64 matrix reproduces the per-call dual result bit-for-bit on
+# the b-differentiated paths). θ-dual callers pass tctx without a cached Λ
+# (or none at all), keeping ∂Λ/∂θ exact.
+function _focei_prior_negH(
+        dm::DataModel, batch_info::REBatchInfo, θ_re, b,
+        const_cache::REConstantsCache, cache::_LLCache, tctx
+    )
+    tctx !== nothing && tctx.prior_hess !== nothing && return tctx.prior_hess
+    return -ForwardDiff.hessian(_FOCEIPriorLogf(dm, batch_info, θ_re, const_cache, cache), b)
+end
+
+# Score ∂ log p(y | φ)/∂φ in the `_focei_params` order, for every family with a registered
+# Fisher information; `nothing` otherwise (the Newton step then takes the gradient by AD).
+_focei_score(::Any, y) = nothing
+function _focei_score(d::Union{Normal, LogNormal}, y)
+    z = ((d isa LogNormal ? log(y) : y) - d.μ) / d.σ
+    return (z / d.σ, (z * z - 1) / d.σ)
+end
+function _focei_score(d::Distributions.Laplace, y)
+    r = y - d.μ
+    return (sign(r) / d.θ, (abs(r) / d.θ - 1) / d.θ)
+end
+function _focei_score(d::Cauchy, y)
+    z = (y - d.μ) / d.σ
+    q = d.σ * (1 + z * z)
+    return (2z / q, (z * z - 1) / q)
+end
+_focei_score(d::Exponential, y) = ((y / d.θ - 1) / d.θ,)
+_focei_score(d::Poisson, y) = (y / d.λ - 1,)
+_focei_score(d::Bernoulli, y) = (y / d.p - (1 - y) / (1 - d.p),)
+_focei_score(d::Binomial, y) = (y / d.p - (d.n - y) / (1 - d.p),)
+_focei_score(d::Geometric, y) = (1 / d.p - y / (1 - d.p),)       # y failures before the first success
+_focei_score(d::Gamma, y) = (log(y) - log(d.θ) - digamma(d.α), (y / d.θ - d.α) / d.θ)
+function _focei_score(d::Beta, y)
+    ψ = digamma(d.α + d.β)
+    return (log(y) - digamma(d.α) + ψ, log1p(-y) - digamma(d.β) + ψ)
+end
+# MvNormal: ∂/∂μ = P r and ∂/∂Σ = G = ½ (P r rᵀ P − P) with P = Σ⁻¹, r = y − μ. A vech
+# coordinate (i, j) moves Σ[i, j] and Σ[j, i] together, so it collects G[i, j] + G[j, i].
+function _focei_score(d::MvNormal, y)
+    P = inv(Matrix(cov(d)))
+    Pr = P * (y .- mean(d))
+    k = length(d)
+    s = Vector{eltype(Pr)}(undef, k + k * (k + 1) ÷ 2)
+    s[1:k] .= Pr
+    a = k
+    @inbounds for j in 1:k, i in 1:j
+        a += 1
+        G = (Pr[i] * Pr[j] - P[i, j]) / 2
+        s[a] = i == j ? G : 2G
+    end
+    return s
+end
+
+# Observed values in the order of `_focei_obs_dists_batch`: individual, observation row,
+# outcome column, missing values skipped.
+function _focei_obs_values_batch(dm::DataModel, batch_info::REBatchInfo)
+    out = Any[]
+    cols = get_obs_cols(dm)
+    for i in get_inds(batch_info)
+        obs_series = get_obs(get_series(get_individuals(dm)[i]))
+        for r in eachindex(get_obs_rows(get_row_groups(dm))[i]), col in cols
+            y = getfield(obs_series, col)[r]
+            _obs_is_missing(y) || push!(out, y)
+        end
+    end
+    return out
+end
+
+# Gradient of the batch log-joint and the negative FOCEI curvature from ONE Jacobian pass:
+# ∇_b log f = Σⱼ Jⱼᵀ sⱼ + ∇_b log π with the closed-form scores sⱼ, so a Gauss-Newton inner
+# step costs one AD solve instead of two (gradient and Jacobian separately). Returns
+# `(grad, negH)`; `grad` is `nothing` when a family has no closed-form score (the caller
+# then takes the gradient by AD and keeps negH). `nothing` when the evaluation fails.
+function _focei_grad_negH_batch(
+        dm::DataModel, batch_info::REBatchInfo, θ, b,
+        const_cache::REConstantsCache, cache::_LLCache;
+        interaction::Bool, tctx = nothing
+    )
+    try
+        θ_re = tctx === nothing ? _symmetrize_psd_params(θ, get_fixed(get_model(dm))) :
+            tctx.θ_re
+        T = promote_type(eltype(θ_re), eltype(b))
+        nb = get_n_b(batch_info)
+        parts = _focei_dists_jacobian(dm, batch_info, θ_re, b, const_cache, cache, interaction)
+        parts === nothing && return nothing
+        dists_b, J, dists_m = parts
+        grad = ForwardDiff.gradient(_FOCEIPriorLogf(dm, batch_info, θ_re, const_cache, cache), b)
+        Hdata = zeros(T, nb, nb)
+        if J !== nothing
+            ys = _focei_obs_values_batch(dm, batch_info)
+            length(ys) == length(dists_b) || return nothing
+            offset = 0
+            for (j, d) in enumerate(dists_b)
+                s = _focei_score(d, ys[j])
+                if s === nothing
+                    grad = nothing
+                    break
+                end
+                for k in eachindex(s)
+                    grad .+= s[k] .* view(J, offset + k, :)
+                end
+                offset += length(s)
+            end
+            Hdata = _focei_data_term(J, dists_b, dists_m, interaction, T)
+        end
+        return (grad, Hdata .+ _focei_prior_negH(dm, batch_info, θ_re, b, const_cache, cache, tctx))
+    catch err
+        _is_numeric_error(err) && return nothing
+        rethrow(err)
+    end
+end
+
 
 # -------------------------------------------------------------------------------------
 # 5. Hessian-builder plug-in for the shared Laplace objective/gradient machinery.
@@ -673,6 +788,45 @@ const _FOCEIHess = FisherInformationCurvature
     )
 end
 
+# FOCEI method of `_onepass_logdet_derivatives` (laplace.jl): F(θ, b) = [∇_b log f; vech(H)]
+# from one Jacobian pass with the closed-form scores. `nothing` when a family has no
+# closed-form score or the evaluation fails at (θ, b).
+function _onepass_logdet_derivatives(
+        c::FisherInformationCurvature, dm::DataModel, batch_info::REBatchInfo, θ, b,
+        const_cache::REConstantsCache, cache::_LLCache, tctx
+    )
+    r = _focei_grad_negH_batch(
+        dm, batch_info, θ, b, const_cache, cache; interaction = c.interaction, tctx = tctx
+    )
+    (r === nothing || r[1] === nothing) && return nothing
+    nv = _ntri(length(b))
+    function F(θv, bv, tc)
+        s = _focei_grad_negH_batch(
+            dm, batch_info, θv, bv, const_cache, cache; interaction = c.interaction, tctx = tc
+        )
+        T = promote_type(eltype(θv), eltype(bv))
+        (s === nothing || s[1] === nothing) && return fill(T(NaN), length(bv) + nv)
+        return vcat(s[1], _vech(-s[2]))
+    end
+    return _onepass_from_F(F, dm, batch_info, θ, b, const_cache, cache, tctx)
+end
+
+# Newton-step hook (laplace.jl `_newton_grad_hess!`): gradient and curvature in one pass.
+function _newton_grad_hess!(
+        g, c::FisherInformationCurvature, f, cfg, dm, batch_info, θ, b,
+        const_cache, cache, tctx
+    )
+    r = _focei_grad_negH_batch(
+        dm, batch_info, θ, b, const_cache, cache; interaction = c.interaction, tctx = tctx
+    )
+    if r === nothing || r[1] === nothing
+        ForwardDiff.gradient!(g, f, b, cfg)
+        return r === nothing ? nothing : -r[2]
+    end
+    copyto!(g, r[1])
+    return -r[2]
+end
+
 # -------------------------------------------------------------------------------------
 # 6. Method types.
 # -------------------------------------------------------------------------------------
@@ -703,12 +857,17 @@ not supported — use [`Laplace`](@ref) for those.
 A gradient-based outer optimizer must cap its line-search step; see the `optimizer` entry in
 [`Laplace`](@ref) for why and for the measured numbers.
 
-Keyword arguments mirror [`Laplace`](@ref) (including `precondition`); the only
+Keyword arguments mirror [`Laplace`](@ref) (including `precondition` and `warm_starts`,
+see [`AcceptedWarmStarts`](@ref)); the only
 addition is `interaction::Bool=true`. The `optimizer` default is LBFGS with backtracking,
-or `Optimisers.Adam(0.01)` when `update_schedule != :all`.
+or `Optimisers.Adam(0.01)` when `update_schedule != :all`. The `inner_optimizer` default
+differs from Laplace: a Gauss-Newton [`NewtonInner`](@ref) with the same Fisher-information
+curvature (`NewtonInner(curvature = FisherInformationCurvature(true), x_abstol = 1e-10)`),
+which needs first-order AD only and falls back to LBFGS where it stalls. Pass
+`inner_optimizer = LBFGS(...)` for the previous default.
 $(_UPDATE_SCHEDULE_DOC)
 """
-struct FOCEI{O, K, A, IO, HO, CO, MS, L, U, US} <: FittingMethod
+struct FOCEI{O, K, A, IO, HO, CO, MS, L, U, US, WS} <: FittingMethod
     optimizer::O
     optim_kwargs::K
     adtype::A
@@ -722,6 +881,7 @@ struct FOCEI{O, K, A, IO, HO, CO, MS, L, U, US} <: FittingMethod
     precondition::Bool
     interaction::Bool
     update_schedule::US
+    warm_starts::WS
 end
 
 _update_schedule(m::FOCEI) = m.update_schedule
@@ -735,7 +895,7 @@ function FOCEI(;
         hessian_options = nothing,
         cache_options = nothing,
         multistart_options = nothing,
-        inner_optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
+        inner_optimizer = NewtonInner(curvature = FisherInformationCurvature(true), x_abstol = 1.0e-10),
         inner_kwargs = NamedTuple(),
         inner_adtype = Optimization.AutoForwardDiff(),
         inner_grad_tol = :auto,
@@ -754,9 +914,11 @@ function FOCEI(;
         ub = nothing,
         ignore_model_bounds = false,
         precondition = true,
-        update_schedule = :all
+        update_schedule = :all,
+        warm_starts::Union{Nothing, AcceptedWarmStarts} = nothing
     )
     update_schedule = _check_update_schedule(_as_symbol(update_schedule), "FOCEI")
+    _check_warm_starts(warm_starts, update_schedule, "FOCEI")
     optimizer = _resolve_outer_optimizer(optimizer, update_schedule, "FOCEI")
     inner = inner_options === nothing ?
         LaplaceInnerOptions(
@@ -775,7 +937,8 @@ function FOCEI(;
         ) : multistart_options
     return FOCEI(
         optimizer, _as_namedtuple(optim_kwargs), adtype, inner, hess, cache,
-        ms, lb, ub, ignore_model_bounds, precondition, interaction, update_schedule
+        ms, lb, ub, ignore_model_bounds, precondition, interaction, update_schedule,
+        warm_starts
     )
 end
 

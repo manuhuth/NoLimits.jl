@@ -76,9 +76,11 @@ end
 # first crosses the level it locates the crossing time WITHIN that step from the
 # step's own interpolant (always live during integration — no dense solution, sparse
 # `saveat` preserved) and records it. Result is grid-independent and, under
-# ForwardDiff, exact: after bisecting on the primal to the root `troot`, one
-# implicit-function-theorem Newton step `t* = troot - g/ġ` (g = state−level,
-# ġ = d(state)/dt) carries the exact dual sensitivity dt*/dθ = −(∂g/∂θ)/(∂g/∂t).
+# ForwardDiff, exact: after bisecting on the primal to the root `troot`, the
+# implicit-function-theorem Newton step `t1 = troot - g/ġ` (g = state−level,
+# ġ = d(state)/dt) carries the exact first-order sensitivity dt*/dθ = −(∂g/∂θ)/(∂g/∂t),
+# and a second step at the dual time t1 makes the second-order sensitivities (nested
+# duals of the Laplace/FOCEI gradients) exact as well (`_crossing_newton2`).
 struct _CrossingCondition{C}
     idx::Int                       # ODE state index
     c::C                           # crossing level (Real or ForwardDiff.Dual)
@@ -124,9 +126,7 @@ end
         end
     end
     troot = 0.5 * (a + b)
-    g = integrator(troot; idxs = idx) - c                   # dual residual at the primal root
-    gdot = integrator(troot, Val{1})[idx]                   # time-derivative of the state
-    ca.ref[] = abs(ForwardDiff.value(gdot)) > 0 ? troot - g / gdot : oftype(g, troot)
+    ca.ref[] = _crossing_newton2(t -> integrator(t; idxs = idx), t -> integrator(t, Val{1})[idx], troot, c)
     ca.fired[] = true
     return nothing
 end
@@ -175,9 +175,19 @@ function _crossing_time_from_sol(sol, idx::Int, c, tmax)
         end
     end
     troot = 0.5 * (a + b)
-    g = sol(troot; idxs = idx) - c
-    gdot = sol(troot, Val{1})[idx]
-    return abs(ForwardDiff.value(gdot)) > 0 ? troot - g / gdot : oftype(g, troot)
+    return _crossing_newton2(t -> sol(t; idxs = idx), t -> sol(t, Val{1})[idx], troot, c)
+end
+
+# Crossing time with exact dual sensitivities from the primal root `troot` of x(t) = c:
+# two Newton steps on the step interpolant, the second at the dual time t1. One step gives
+# exact first derivatives only; its second derivatives miss −g_tt g_θ² / g_t³, which the
+# Laplace/FOCEI gradients need (nested duals). Two steps make them exact.
+function _crossing_newton2(x, xdot, troot, c)
+    g = x(troot) - c                                        # dual residual at the primal root
+    gdot = xdot(troot)
+    abs(ForwardDiff.value(gdot)) > 0 || return oftype(g, troot)
+    t1 = troot - g / gdot
+    return t1 - (x(t1) - c) / xdot(t1)
 end
 
 # AMICI-style rootvalue read off a solved trajectory: 0 if state `idx` crosses level `c`

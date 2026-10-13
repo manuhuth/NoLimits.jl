@@ -873,3 +873,61 @@ end
     @test NoLimits._wald_density_xy(:lognormal, Inf, 1.0) === nothing
     @test NoLimits._wald_density_xy(:logitnormal, 0.0, NaN) === nothing
 end
+
+@testset "Wald Hessian of Laplace/FOCEI includes the implicit db*/dθ term" begin
+    # The Laplace objective re-solves the modes b* in Float64, so AD through it at fixed b*
+    # is not its gradient. The Wald Hessian must match a finite-difference Hessian of the
+    # objective itself. Nonlinear in η with few observations per subject, so the log-det
+    # term depends on b* noticeably.
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.5)
+            k = RealNumber(0.8; scale = :log)
+            ω = RealNumber(0.5; scale = :log)
+            σ = RealNumber(0.2; scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(a, ω); column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(exp(η) * exp(-k * t) + exp(2η) * t, σ)
+        end
+    end
+    rng = Xoshiro(7)
+    df = DataFrame(ID = repeat(string.(1:25), inner = 3), t = repeat([0.3, 1.0, 2.0], 25))
+    ηs = 0.5 .+ 0.5 .* randn(rng, 25)
+    df.y = [exp(ηs[parse(Int, id)]) * exp(-0.8 * t) + exp(2ηs[parse(Int, id)]) * t + 0.2 * randn(rng) for (id, t) in zip(df.ID, df.t)]
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    for (m, hmode) in (
+            (NoLimits.Laplace(inner_grad_tol = 1.0e-10), NoLimits._ExactHess()),
+            (NoLimits.FOCEI(inner_grad_tol = 1.0e-10), NoLimits._FOCEIHess(true)),
+        )
+        res = fit_model(dm, m; rng = Xoshiro(1))
+        H_uq = inv(get_uq_vcov(compute_uq(res; method = :wald); scale = :transformed))
+        fe = NoLimits.get_fixed(get_model(dm))
+        itr = NoLimits.get_inverse_transform(fe)
+        θt = NoLimits.get_transform(fe)(NoLimits.get_params(res; scale = :untransformed))
+        io = NoLimits._resolve_inner_options(m.inner, dm)
+        _, bi, cc = NoLimits._build_re_batch_infos(dm, NamedTuple())
+        llc = NoLimits.build_ll_cache(dm; force_saveat = true)
+        obj(x) = NoLimits._laplace_objective_only(
+            dm, bi, itr(ComponentArray(x, getaxes(θt))), cc, llc, NoLimits._init_laplace_eval_cache(length(bi), Float64);
+            inner = io, hessian = m.hessian, cache_opts = NoLimits.LaplaceCacheOptions(0.0),
+            multistart = NoLimits._resolve_multistart_options(m.multistart, io),
+            rng = Xoshiro(0), serialization = NoLimits.EnsembleSerial(), hmode = hmode
+        )
+        h = 1.0e-4
+        x0 = collect(θt)
+        n = length(x0)
+        H_ref = [
+            begin
+                    e_i = h * (1:n .== i); e_j = h * (1:n .== j)
+                    (obj(x0 + e_i + e_j) - obj(x0 + e_i - e_j) - obj(x0 - e_i + e_j) + obj(x0 - e_i - e_j)) / (4h^2)
+                end for i in 1:n, j in 1:n
+        ]
+        @test H_uq ≈ H_ref rtol = 2.0e-3
+    end
+end
