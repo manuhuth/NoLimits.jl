@@ -2022,21 +2022,38 @@ function _laplace_grad_batch(
     )
     ForwardDiff.gradient!(buf.grad_logf, logf_θ, θ_vec, cfg)
     grad_logf = buf.grad_logf
-    # g(b, θ) = ∂ logf / ∂b
-    function gθ!(out, θv)
-        fb = bv -> _laplace_logf_batch(dm, batch_info, θv, bv, const_cache, cache)
-        cfg = _get_fd_cfg!(buf.gθ_grad_cfg, fb, b, () -> ForwardDiff.GradientConfig(fb, b))
-        ForwardDiff.gradient!(out, fb, b, cfg)
-        return out
+    # FOCEI with closed-form scores: g = ∂ logf / ∂b and the curvature come from one Jacobian
+    # pass (focei.jl), so Gθ with ∂H/∂θ, and the exact Hessian with ∂H/∂b, each take one
+    # nested AD pass instead of two. `nothing` otherwise: the separate passes below.
+    fast = hmode isa _FOCEIHess && use_trace_logdet_grad && !use_hutchinson ?
+        _focei_onepass_derivatives(
+            dm, batch_info, θ_vec, b, const_cache, cache, hmode.interaction, tctx
+        ) : nothing
+    Gθ = if fast === nothing
+        # g(b, θ) = ∂ logf / ∂b
+        function gθ!(out, θv)
+            fb = bv -> _laplace_logf_batch(dm, batch_info, θv, bv, const_cache, cache)
+            cfg = _get_fd_cfg!(buf.gθ_grad_cfg, fb, b, () -> ForwardDiff.GradientConfig(fb, b))
+            ForwardDiff.gradient!(out, fb, b, cfg)
+            return out
+        end
+        cfg = _get_fd_cfg!(
+            buf.Gθ_cfg, gθ!, θ_vec, () -> ForwardDiff.JacobianConfig(gθ!, buf.gradb_tmp, θ_vec)
+        )
+        ForwardDiff.jacobian!(buf.Gθ, gθ!, buf.gradb_tmp, θ_vec, cfg)
+        buf.Gθ
+    else
+        fast.Gθ
     end
-    cfg = _get_fd_cfg!(
-        buf.Gθ_cfg, gθ!, θ_vec, () -> ForwardDiff.JacobianConfig(gθ!, buf.gradb_tmp, θ_vec)
-    )
-    ForwardDiff.jacobian!(buf.Gθ, gθ!, buf.gradb_tmp, θ_vec, cfg)
-    Gθ = buf.Gθ
 
     # logdet(-H) gradients w.r.t θ and b (b fixed)
-    if use_hutchinson
+    if fast !== nothing
+        Ainv = chol \ Matrix{eltype(H)}(I, nb, nb)
+        weights = Vector{eltype(H)}(undef, _ntri(nb))
+        _vech_weights!(weights, Ainv)
+        grad_logdet_θ = -(fast.Jθ' * weights)
+        grad_logdet_b = -(fast.Jb' * weights)
+    elseif use_hutchinson
         n = nb
         Ainv = chol \ Matrix{eltype(H)}(I, n, n)
         ns = max(1, hutchinson_n)
@@ -2148,7 +2165,7 @@ function _laplace_grad_batch(
     # optimizer diverge while the derivative-free default was unaffected.
     chol_b = chol
     if !(hmode isa _ExactHess)
-        H_ex = try
+        H_ex = fast !== nothing ? fast.Hex : try
             _laplace_hessian_b(
                 dm, batch_info, θ, b, const_cache, cache, ad_cache, bi;
                 ctx = "dbdtheta", tctx = tctx0

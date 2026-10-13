@@ -788,6 +788,40 @@ const _FOCEIHess = FisherInformationCurvature
     )
 end
 
+# θ- and b-derivatives of F(θ, b) = [∇_b log f; vech(H)], H the FOCEI curvature as
+# `inner_curvature` returns it, from ONE nested AD pass each (laplace.jl
+# `_laplace_grad_batch`). Gives Gθ = ∂∇_b log f/∂θ, ∂vech(H)/∂θ, the exact Hessian
+# ∂∇_b log f/∂b (symmetrized) and ∂vech(H)/∂b. `nothing` when a family has no closed-form
+# score or the evaluation fails at (θ, b); the caller then differentiates gradient and
+# curvature separately. The θ pass gets no θ-context: its cached prior Hessian is constant
+# in θ only at the Float64 point.
+function _focei_onepass_derivatives(
+        dm::DataModel, batch_info::REBatchInfo, θ, b,
+        const_cache::REConstantsCache, cache::_LLCache, interaction::Bool, tctx
+    )
+    r = _focei_grad_negH_batch(
+        dm, batch_info, θ, b, const_cache, cache; interaction = interaction, tctx = tctx
+    )
+    (r === nothing || r[1] === nothing) && return nothing
+    nb = length(b)
+    nv = _ntri(nb)
+    function F(θv, bv, tc)
+        s = _focei_grad_negH_batch(
+            dm, batch_info, θv, bv, const_cache, cache; interaction = interaction, tctx = tc
+        )
+        T = promote_type(eltype(θv), eltype(bv))
+        (s === nothing || s[1] === nothing) && return fill(T(NaN), nb + nv)
+        return vcat(s[1], _vech(-s[2]))
+    end
+    Jθ = ForwardDiff.jacobian(θv -> F(θv, b, nothing), θ)
+    Jb = ForwardDiff.jacobian(bv -> F(θ, bv, tctx), b)
+    Hex = Jb[1:nb, :]
+    return (
+        Gθ = Jθ[1:nb, :], Jθ = Jθ[(nb + 1):end, :],
+        Hex = (Hex + Hex') / 2, Jb = Jb[(nb + 1):end, :],
+    )
+end
+
 # Newton-step hook (laplace.jl `_newton_grad_hess!`): gradient and curvature in one pass.
 function _newton_grad_hess!(
         g, c::FisherInformationCurvature, f, cfg, dm, batch_info, θ, b,
