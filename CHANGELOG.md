@@ -4,6 +4,17 @@
 
 ### Changes
 
+- SAEM skips the M-step in iterations with step size γ = 0 (the `sa_burnin_iters` burn-in
+  iterations and, under `:robbins_monro`, the final iteration). The update
+  `θ_old + γ * (θ̂ - θ_old)` discards θ̂ there, so the closed-form updates, the Q2 and numeric
+  M-step solves and the post-M-step clamps no longer run and θ stays unchanged. The E-step,
+  the sample store and sufficient-statistics updates, Q and the diagnostics are computed as
+  before. Iterations with γ > 0 are unchanged. Before, each burn-in iteration ran the
+  numeric M-step solve and discarded its result, while the closed-form updates (from the
+  statistics of the first burn-in sample) and `builtin_mean = :glm` still changed θ. Fits
+  with `sa_burnin_iters > 0` (default 6) therefore differ from before: all of θ stays at
+  its start value until the first γ > 0 iteration.
+
 - `DataModel` accepts `weights = :col`, a column of per-individual likelihood weights. All
   estimators maximize `sum_b w_b * log p(y_b | θ)` over the batches of individuals that
   share random effects; weights must be equal within such a batch. SAEM/MCEM sample

@@ -2,6 +2,7 @@ using Test
 using NoLimits
 using DataFrames
 using Distributions
+using Random
 using Turing
 
 # ── unit tests for schedule helpers ──────────────────────────────────────────
@@ -237,4 +238,47 @@ end
 
     @test all(p === :custom for p in conv.schedule_phase)
     @test all(γ ≈ 0.5 for γ in conv.gamma)
+end
+
+@testset "SA schedule: γ = 0 skips the M-step and keeps θ" begin
+    dm = _sched_dm()
+    k, n = 3, 10
+    # The default :robbins_monro schedule with burn-in: γ = 0 in iterations 1:k and n.
+    rm_opts = NoLimits.SAEM(; maxiters = n, sa_burnin_iters = k, t0 = 3).saem
+    γs = [NoLimits._saem_gamma_schedule(i, rm_opts) for i in 1:n]
+    @test all(iszero, γs[1:k]) && iszero(γs[n]) && all(>(0), γs[(k + 1):(n - 1)])
+
+    # The schedule records the iteration, and extra_objective (evaluated only inside the
+    # numeric M-step objective) counts its calls per iteration.
+    cur = Ref(0)
+    calls = zeros(Int, n)
+    eo = θu -> (calls[cur[]] += 1; zero(eltype(θu)))
+    saem(m) = NoLimits.SAEM(;
+        sampler = MH(),
+        turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
+        maxiters = m, sa_schedule = :custom,
+        sa_schedule_fn = (i, _) -> (cur[] = i; γs[i]),
+        progress = false
+    )
+    θ0_t = NoLimits.get_θ0_transformed(dm.model.fixed.fixed)
+
+    # Burn-in only: θ stays at θ0 and the M-step objective is never evaluated.
+    res_k = fit_model(dm, saem(k); rng = MersenneTwister(7), extra_objective = eo)
+    @test collect(get_params(res_k; scale = :transformed)) == collect(θ0_t)
+    @test all(iszero, calls[1:k])
+
+    # Full run: the M-step runs exactly in the γ > 0 iterations, and the final γ = 0
+    # iteration returns θ of iteration n - 1 (same seed, one iteration shorter).
+    fill!(calls, 0)
+    res_n = fit_model(dm, saem(n); rng = MersenneTwister(7), extra_objective = eo)
+    @test all(iszero, calls[1:k]) && iszero(calls[n])
+    @test all(>(0), calls[(k + 1):(n - 1)])
+    res_n1 = fit_model(dm, saem(n - 1); rng = MersenneTwister(7), extra_objective = eo)
+    @test collect(get_params(res_n; scale = :transformed)) ==
+        collect(get_params(res_n1; scale = :transformed))
+    @test collect(get_params(res_n; scale = :transformed)) != collect(θ0_t)
+
+    # Closed-form path (builtin σ update, no extra_objective): burn-in keeps θ0 as well.
+    res_cf = fit_model(dm, saem(k); rng = MersenneTwister(7))
+    @test collect(get_params(res_cf; scale = :transformed)) == collect(θ0_t)
 end

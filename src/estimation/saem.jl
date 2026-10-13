@@ -3719,262 +3719,15 @@ function _fit_model(
             end
         end
 
-        # builtin variance updates (optional)
-        iter_constants = constants
-        if builtin_stats_mode == :closed_form
-            cache = ll_cache isa Vector ? ll_cache[1] : ll_cache
-            curr_stats = _saem_builtin_collect_current_stats(
-                dm, batch_infos, b_chains,
-                effective_n_chains,
-                ComponentArray(θu_curr, getaxes(θu_curr)), const_cache,
-                resid_var_param, hmm_emission_params,
-                re_cov_params, re_mean_params,
-                re_family_map, cache, rng;
-                re_mean_offsets = re_mean_offsets
-            )
-            builtin_stats_state = _saem_builtin_smooth_stats(
-                builtin_stats_state, curr_stats, γ
-            )
-            updates = _saem_builtin_updates_from_smoothed_stats(
-                dm, ComponentArray(θu_curr, getaxes(θu_curr)),
-                builtin_stats_state, resid_var_param, hmm_emission_params,
-                re_cov_params, re_mean_params
-            )
-            # User-supplied constants always win over builtin closed-form updates.
-            for k in keys(constants)
-                haskey(updates, k) &&
-                    (updates = Base.structdiff(updates, NamedTuple{(k,)}((nothing,))))
-            end
-            if !isempty(updates)
-                closed_form_builtin_used = true
-                # annealing always wins: strip cov targets for annealed REs
-                if do_anneal
-                    for an in anneal_names
-                        if haskey(re_cov_params, an)
-                            target_sym = re_cov_params[an]
-                            target_sym isa Symbol && haskey(updates, target_sym) &&
-                                (
-                                updates = Base.structdiff(
-                                    updates, NamedTuple{(target_sym,)}((nothing,))
-                                )
-                            )
-                        end
-                    end
-                end
-                iter_constants = merge(iter_constants, updates)
-            end
-        elseif builtin_stats_mode != :none
-            @info "Unknown builtin_stats option; using numeric SAEM." option = builtin_stats_mode allowed = (
-                :auto, :closed_form, :gaussian_re, :none,
-            )
-        end
-
-        # builtin mean updates (optional, GLM)
-        if method.saem.builtin_mean == :glm
-            resid_params = Symbol[]
-            if resid_var_param isa NamedTuple
-                for v in values(resid_var_param)
-                    _saem_collect_target_symbols!(resid_params, v)
-                end
-            elseif resid_var_param isa Symbol
-                push!(resid_params, resid_var_param)
-            end
-            re_cov_param_values = Symbol[]
-            for v in values(re_cov_params)
-                _saem_collect_target_symbols!(re_cov_param_values, v)
-            end
-            re_mean_param_values = Symbol[]
-            for v in values(re_mean_params)
-                _saem_collect_target_symbols!(re_mean_param_values, v)
-            end
-            mean_params = [
-                n
-                    for n in fixed_names
-                    if !(n in keys(iter_constants)) &&
-                    !(n in resid_params) &&
-                    !(n in re_cov_param_values) &&
-                    !(n in re_mean_param_values)
-            ]
-
-            if method.saem.suffstats !== nothing
-                @info "builtin_mean=:glm skipped because suffstats path is active."
-            else
-                cache = ll_cache isa Vector ? ll_cache[1] : ll_cache
-                mean_updates = _saem_builtin_mean_updates(
-                    dm, batch_infos, b_current,
-                    ComponentArray(θu_curr, getaxes(θu_curr)), const_cache,
-                    mean_params, cache, sample_store, transform, inv_transform;
-                    optimizer = method.optimizer, adtype = method.adtype,
-                    optim_kwargs = method.optim_kwargs,
-                    serialization = serialization, penalty = penalty,
-                    extra_objective = extra_objective,
-                    anneal_sds = anneal_sds,
-                    user_lb = method.lb, user_ub = method.ub
-                )
-                if !isempty(mean_updates)
-                    iter_constants = merge(iter_constants, mean_updates)
-                end
-            end
-        elseif method.saem.builtin_mean != :none
-            @info "Unknown builtin_mean option; using numeric SAEM." option = method.saem.builtin_mean
-        end
-        iter_constants = _saem_clamp_constants_to_bounds(iter_constants, fe)
-        if !isempty(var_lb_targets)
-            iter_constants = _saem_apply_var_lb_to_constants(
-                iter_constants, var_lb_targets, var_lb_eff
-            )
-        end
-        # build per-iteration free set / transforms
-        free_names_iter = [n for n in fixed_names if !(n in keys(iter_constants))]
-        θt_free = ComponentArray(
-            NamedTuple{Tuple(free_names_iter)}(
-                Tuple(
-                    getproperty(
-                            θt_full_curr,
-                            n
-                        )
-                        for n in free_names_iter
-                )
-            )
-        )
-        axs_free = getaxes(θt_free)
-        # O3: reuse pre-allocated buffer instead of deepcopy each iteration
-        copyto!(θ_const_u_work, θ0_u)
-        _apply_constants!(θ_const_u_work, iter_constants)
-        # sa_anneal floor for closed-form constants (the free-param clamp below misses them)
-        if do_sa_anneal
-            θ_const_u_work = _saem_apply_sa_anneal_clamp(
-                θ_const_u_work,
-                sa_anneal_targets_eff, sa_anneal_initial_vals, iter, sa_anneal_iters_eff,
-                method.saem.sa_anneal_alpha, method.saem.sa_anneal_schedule
-            )
-        end
-        θ_const_t_iter = transform(θ_const_u_work)
-        axs_full_iter = getaxes(θ_const_t_iter)
-        base_free_names = free_names_iter
-        θ_const_t = θ_const_t_iter
-        axs_full = axs_full_iter
-
-        # ── Q2 numerical M-step ──────────────────────────────────────────────
-        # Optimize parameters that appear only in RE distribution expressions.
-        # No ODE calls needed — objective is purely log p(η | θ_Q2).
-        let q2_free_now = [n for n in q2_base_free_names if n ∉ keys(iter_constants)]
-            if !isempty(q2_free_now)
-                θt_q2 = ComponentArray(
-                    NamedTuple{Tuple(q2_free_now)}(
-                        Tuple(getproperty(θt_full_curr, n) for n in q2_free_now)
-                    )
-                )
-                axs_q2 = getaxes(θt_q2)
-                # Single-assignment aliases: `θt_full_curr`/`axs_full_iter` are
-                # reassigned elsewhere in the iteration, so capturing them directly
-                # would box them (`Core.Box`) inside every objective evaluation.
-                θt_full_q2_base = θt_full_curr
-                axs_full_q2 = axs_full_iter
-                # Anchored at the current iterate: the anchor's job is to put the start at
-                # z = 0, and the free set is not invariant across SAEM iterations.
-                _, _, _q2_from_z, _z_from_q2 = _precondition_maps(
-                    get_model(dm), q2_free_now, θt_q2, axs_q2, _precondition_on(method)
-                )
-                function obj_q2(z, p)
-                    any(isnan, z) && return eltype(z)(Inf)
-                    ψt_ca = _q2_from_z(z)
-                    T = eltype(ψt_ca)
-                    θt_full_q2 = ComponentArray(T.(collect(θt_full_q2_base)), axs_full_q2)
-                    for name in q2_free_now
-                        setproperty!(θt_full_q2, name, getproperty(ψt_ca, name))
-                    end
-                    θu_q2 = inv_transform(θt_full_q2)
-                    Q2val = if method.saem.mstep_sa_on_params
-                        _saem_Q2_current(
-                            dm, batch_infos, θu_q2, const_cache, ll_cache,
-                            b_chains, effective_n_chains; serialization = serialization,
-                            anneal_sds = anneal_sds
-                        )
-                    else
-                        _saem_Q2(
-                            dm, batch_infos, θu_q2, const_cache, ll_cache,
-                            sample_store; serialization = serialization,
-                            anneal_sds = anneal_sds
-                        )
-                    end
-                    isfinite(Q2val) || return T(Inf)
-                    return -Q2val
-                end
-                lb_q2, ub_q2, use_bounds_q2, θ0_q2 = _resolve_optim_bounds(
-                    fe, q2_free_now, collect(θt_q2), method.optimizer, method.lb,
-                    method.ub, NamedTuple(); allow_bbo = false, method_label = "SAEM"
-                )
-                optf_q2 = OptimizationFunction(obj_q2, method.adtype)
-                z0_q2 = _z_from_q2(θ0_q2)
-                prob_q2 = use_bounds_q2 ?
-                    OptimizationProblem(
-                        optf_q2, z0_q2;
-                        lb = _z_from_q2(lb_q2), ub = _z_from_q2(ub_q2)
-                    ) :
-                    OptimizationProblem(optf_q2, z0_q2)
-                sol_q2 = Optimization.solve(
-                    prob_q2, method.optimizer; method.optim_kwargs...
-                )
-                if all(isfinite, sol_q2.u)
-                    # Mapped back before the SA damping below, which must act on θt.
-                    θt_q2_opt = _q2_from_z(sol_q2.u)
-                    if method.saem.mstep_sa_on_params
-                        θt_q2_before = collect(θt_q2)
-                        θt_q2_opt = ComponentArray(
-                            θt_q2_before .+ γ .* (collect(θt_q2_opt) .- θt_q2_before),
-                            axs_q2
-                        )
-                    end
-                    θt_full_q2_opt = ComponentArray(collect(θt_full_curr), axs_full_iter)
-                    for name in q2_free_now
-                        setproperty!(θt_full_q2_opt, name, getproperty(θt_q2_opt, name))
-                    end
-                    θu_q2_opt = inv_transform(θt_full_q2_opt)
-                    q2_updates = NamedTuple{Tuple(q2_free_now)}(
-                        Tuple(getproperty(θu_q2_opt, n) for n in q2_free_now)
-                    )
-                    iter_constants = merge(iter_constants, q2_updates)
-                    iter_constants = _saem_clamp_constants_to_bounds(iter_constants, fe)
-                    if !isempty(var_lb_targets)
-                        iter_constants = _saem_apply_var_lb_to_constants(
-                            iter_constants, var_lb_targets, var_lb_eff
-                        )
-                    end
-                    # Recompute free names / axes with Q2 params now treated as constants
-                    free_names_iter = [n for n in fixed_names if n ∉ keys(iter_constants)]
-                    θt_free = ComponentArray(
-                        NamedTuple{Tuple(free_names_iter)}(
-                            Tuple(getproperty(θt_full_curr, n) for n in free_names_iter)
-                        )
-                    )
-                    axs_free = getaxes(θt_free)
-                    copyto!(θ_const_u_work, θ0_u)
-                    _apply_constants!(θ_const_u_work, iter_constants)
-                    # sa_anneal floor for closed-form constants (Q2 path; mirrors site above)
-                    if do_sa_anneal
-                        θ_const_u_work = _saem_apply_sa_anneal_clamp(
-                            θ_const_u_work,
-                            sa_anneal_targets_eff, sa_anneal_initial_vals, iter,
-                            sa_anneal_iters_eff, method.saem.sa_anneal_alpha,
-                            method.saem.sa_anneal_schedule
-                        )
-                    end
-                    θ_const_t_iter = transform(θ_const_u_work)
-                    axs_full_iter = getaxes(θ_const_t_iter)
-                    base_free_names = free_names_iter
-                    θ_const_t = θ_const_t_iter
-                    axs_full = axs_full_iter
-                end
-            end
-        end
-
-        anneal_was_active = false
-        all_fixed_by_builtin = isempty(free_names_iter)
-        if all_fixed_by_builtin
-            θ_prev_new = copy(θt_free)
-            θt_full = ComponentArray(T0.(θ_const_t), axs_full)
-            θu_new = inv_transform(θt_full)
+        if γ == 0.0
+            # γ = 0 discards the M-step result (θ_old + 0 * (θ̂ − θ_old) = θ_old), so the
+            # closed-form updates, the Q2 and numeric M-step solves and the post-M-step clamps
+            # are skipped and θ is kept. The E-step and the γ-gated sample store / sufficient
+            # statistics updates above still run. This happens in the burn-in iterations and,
+            # under :robbins_monro, in the final iteration.
+            θ_prev_new = copy(θt_curr)
+            θt_full = θt_full_curr
+            θu_new = θu_curr
             if method.saem.suffstats !== nothing && method.saem.q_from_stats !== nothing
                 Q_new = method.saem.q_from_stats(s, θu_new, dm)
             else
@@ -3983,172 +3736,440 @@ function _fit_model(
                     serialization = serialization, q_cache = q_cache, anneal_sds = anneal_sds
                 )
             end
+            Q_new = Q_new == Inf ? T0(Inf) : Q_new
+            anneal_was_active = do_sa_anneal && iter <= sa_anneal_iters_eff
         else
-            obj_cache = (θ = Ref{Any}(nothing), obj = Ref{Any}(nothing))
-            # Single-assignment aliases for the captured per-iteration state: the
-            # `*_iter` locals (and `axs_free`) are assigned twice per iteration, so
-            # capturing them directly boxes them (`Core.Box`) and dynamically types
-            # the θt_full rebuild in every M-step objective evaluation. The free
-            # vector is a closure-LOCAL (`θt_free_loc`): the objective must not
-            # write through to the outer `θt_free`, which the non-finite-solution
-            # path reads after the solve expecting the pre-solve iterate.
-            θ_const_t_obj = θ_const_t_iter
-            axs_full_obj = axs_full_iter
-            free_names_obj = free_names_iter
-            axs_free_obj = axs_free
-            # Anchored at the current iterate, as for Q2. The objective cache below is keyed on
-            # θt and lives inside this loop; with a per-iteration anchor, z = 0 means a different
-            # θt each iteration, so hoisting the cache would make it permanently stale.
-            _, _, _θt_from_z, _z_from_θt = _precondition_maps(
-                get_model(dm), free_names_iter, θt_free, axs_free, _precondition_on(method)
-            )
-            function obj_only(z, p)
-                any(isnan, z) && return eltype(z)(Inf)
-                θt_free_loc = _θt_from_z(z)
-                θt_vec = θt_free_loc
-                use_cache = !(eltype(θt_free_loc) <: ForwardDiff.Dual)
-                if use_cache && obj_cache.θ[] !== nothing &&
-                        length(obj_cache.θ[]) == length(θt_vec)
-                    maxdiff = _maxabsdiff(θt_vec, obj_cache.θ[])
-                    if maxdiff == 0.0
-                        return obj_cache.obj[]
+            # builtin variance updates (optional)
+            iter_constants = constants
+            if builtin_stats_mode == :closed_form
+                cache = ll_cache isa Vector ? ll_cache[1] : ll_cache
+                curr_stats = _saem_builtin_collect_current_stats(
+                    dm, batch_infos, b_chains,
+                    effective_n_chains,
+                    ComponentArray(θu_curr, getaxes(θu_curr)), const_cache,
+                    resid_var_param, hmm_emission_params,
+                    re_cov_params, re_mean_params,
+                    re_family_map, cache, rng;
+                    re_mean_offsets = re_mean_offsets
+                )
+                builtin_stats_state = _saem_builtin_smooth_stats(
+                    builtin_stats_state, curr_stats, γ
+                )
+                updates = _saem_builtin_updates_from_smoothed_stats(
+                    dm, ComponentArray(θu_curr, getaxes(θu_curr)),
+                    builtin_stats_state, resid_var_param, hmm_emission_params,
+                    re_cov_params, re_mean_params
+                )
+                # User-supplied constants always win over builtin closed-form updates.
+                for k in keys(constants)
+                    haskey(updates, k) &&
+                        (updates = Base.structdiff(updates, NamedTuple{(k,)}((nothing,))))
+                end
+                if !isempty(updates)
+                    closed_form_builtin_used = true
+                    # annealing always wins: strip cov targets for annealed REs
+                    if do_anneal
+                        for an in anneal_names
+                            if haskey(re_cov_params, an)
+                                target_sym = re_cov_params[an]
+                                target_sym isa Symbol && haskey(updates, target_sym) &&
+                                    (
+                                    updates = Base.structdiff(
+                                        updates, NamedTuple{(target_sym,)}((nothing,))
+                                    )
+                                )
+                            end
+                        end
+                    end
+                    iter_constants = merge(iter_constants, updates)
+                end
+            elseif builtin_stats_mode != :none
+                @info "Unknown builtin_stats option; using numeric SAEM." option = builtin_stats_mode allowed = (
+                    :auto, :closed_form, :gaussian_re, :none,
+                )
+            end
+
+            # builtin mean updates (optional, GLM)
+            if method.saem.builtin_mean == :glm
+                resid_params = Symbol[]
+                if resid_var_param isa NamedTuple
+                    for v in values(resid_var_param)
+                        _saem_collect_target_symbols!(resid_params, v)
+                    end
+                elseif resid_var_param isa Symbol
+                    push!(resid_params, resid_var_param)
+                end
+                re_cov_param_values = Symbol[]
+                for v in values(re_cov_params)
+                    _saem_collect_target_symbols!(re_cov_param_values, v)
+                end
+                re_mean_param_values = Symbol[]
+                for v in values(re_mean_params)
+                    _saem_collect_target_symbols!(re_mean_param_values, v)
+                end
+                mean_params = [
+                    n
+                        for n in fixed_names
+                        if !(n in keys(iter_constants)) &&
+                        !(n in resid_params) &&
+                        !(n in re_cov_param_values) &&
+                        !(n in re_mean_param_values)
+                ]
+
+                if method.saem.suffstats !== nothing
+                    @info "builtin_mean=:glm skipped because suffstats path is active."
+                else
+                    cache = ll_cache isa Vector ? ll_cache[1] : ll_cache
+                    mean_updates = _saem_builtin_mean_updates(
+                        dm, batch_infos, b_current,
+                        ComponentArray(θu_curr, getaxes(θu_curr)), const_cache,
+                        mean_params, cache, sample_store, transform, inv_transform;
+                        optimizer = method.optimizer, adtype = method.adtype,
+                        optim_kwargs = method.optim_kwargs,
+                        serialization = serialization, penalty = penalty,
+                        extra_objective = extra_objective,
+                        anneal_sds = anneal_sds,
+                        user_lb = method.lb, user_ub = method.ub
+                    )
+                    if !isempty(mean_updates)
+                        iter_constants = merge(iter_constants, mean_updates)
                     end
                 end
-                T = eltype(θt_free_loc)
-                θt_full = ComponentArray(T.(θ_const_t_obj), axs_full_obj)
-                for name in free_names_obj
-                    setproperty!(θt_full, name, getproperty(θt_free_loc, name))
-                end
-                θu = inv_transform(θt_full)
-                Q = if method.saem.suffstats !== nothing &&
-                        method.saem.q_from_stats !== nothing
-                    method.saem.q_from_stats(s, θu, dm)
-                elseif method.saem.mstep_sa_on_params
-                    _saem_Q_current(
-                        dm, batch_infos, θu, const_cache, ll_cache,
-                        b_chains, effective_n_chains;
-                        serialization = serialization, anneal_sds = anneal_sds
+            elseif method.saem.builtin_mean != :none
+                @info "Unknown builtin_mean option; using numeric SAEM." option = method.saem.builtin_mean
+            end
+            iter_constants = _saem_clamp_constants_to_bounds(iter_constants, fe)
+            if !isempty(var_lb_targets)
+                iter_constants = _saem_apply_var_lb_to_constants(
+                    iter_constants, var_lb_targets, var_lb_eff
+                )
+            end
+            # build per-iteration free set / transforms
+            free_names_iter = [n for n in fixed_names if !(n in keys(iter_constants))]
+            θt_free = ComponentArray(
+                NamedTuple{Tuple(free_names_iter)}(
+                    Tuple(
+                        getproperty(
+                                θt_full_curr,
+                                n
+                            )
+                            for n in free_names_iter
                     )
+                )
+            )
+            axs_free = getaxes(θt_free)
+            # O3: reuse pre-allocated buffer instead of deepcopy each iteration
+            copyto!(θ_const_u_work, θ0_u)
+            _apply_constants!(θ_const_u_work, iter_constants)
+            # sa_anneal floor for closed-form constants (the free-param clamp below misses them)
+            if do_sa_anneal
+                θ_const_u_work = _saem_apply_sa_anneal_clamp(
+                    θ_const_u_work,
+                    sa_anneal_targets_eff, sa_anneal_initial_vals, iter, sa_anneal_iters_eff,
+                    method.saem.sa_anneal_alpha, method.saem.sa_anneal_schedule
+                )
+            end
+            θ_const_t_iter = transform(θ_const_u_work)
+            axs_full_iter = getaxes(θ_const_t_iter)
+            base_free_names = free_names_iter
+            θ_const_t = θ_const_t_iter
+            axs_full = axs_full_iter
+
+            # ── Q2 numerical M-step ──────────────────────────────────────────────
+            # Optimize parameters that appear only in RE distribution expressions.
+            # No ODE calls needed — objective is purely log p(η | θ_Q2).
+            let q2_free_now = [n for n in q2_base_free_names if n ∉ keys(iter_constants)]
+                if !isempty(q2_free_now)
+                    θt_q2 = ComponentArray(
+                        NamedTuple{Tuple(q2_free_now)}(
+                            Tuple(getproperty(θt_full_curr, n) for n in q2_free_now)
+                        )
+                    )
+                    axs_q2 = getaxes(θt_q2)
+                    # Single-assignment aliases: `θt_full_curr`/`axs_full_iter` are
+                    # reassigned elsewhere in the iteration, so capturing them directly
+                    # would box them (`Core.Box`) inside every objective evaluation.
+                    θt_full_q2_base = θt_full_curr
+                    axs_full_q2 = axs_full_iter
+                    # Anchored at the current iterate: the anchor's job is to put the start at
+                    # z = 0, and the free set is not invariant across SAEM iterations.
+                    _, _, _q2_from_z, _z_from_q2 = _precondition_maps(
+                        get_model(dm), q2_free_now, θt_q2, axs_q2, _precondition_on(method)
+                    )
+                    function obj_q2(z, p)
+                        any(isnan, z) && return eltype(z)(Inf)
+                        ψt_ca = _q2_from_z(z)
+                        T = eltype(ψt_ca)
+                        θt_full_q2 = ComponentArray(T.(collect(θt_full_q2_base)), axs_full_q2)
+                        for name in q2_free_now
+                            setproperty!(θt_full_q2, name, getproperty(ψt_ca, name))
+                        end
+                        θu_q2 = inv_transform(θt_full_q2)
+                        Q2val = if method.saem.mstep_sa_on_params
+                            _saem_Q2_current(
+                                dm, batch_infos, θu_q2, const_cache, ll_cache,
+                                b_chains, effective_n_chains; serialization = serialization,
+                                anneal_sds = anneal_sds
+                            )
+                        else
+                            _saem_Q2(
+                                dm, batch_infos, θu_q2, const_cache, ll_cache,
+                                sample_store; serialization = serialization,
+                                anneal_sds = anneal_sds
+                            )
+                        end
+                        isfinite(Q2val) || return T(Inf)
+                        return -Q2val
+                    end
+                    lb_q2, ub_q2, use_bounds_q2, θ0_q2 = _resolve_optim_bounds(
+                        fe, q2_free_now, collect(θt_q2), method.optimizer, method.lb,
+                        method.ub, NamedTuple(); allow_bbo = false, method_label = "SAEM"
+                    )
+                    optf_q2 = OptimizationFunction(obj_q2, method.adtype)
+                    z0_q2 = _z_from_q2(θ0_q2)
+                    prob_q2 = use_bounds_q2 ?
+                        OptimizationProblem(
+                            optf_q2, z0_q2;
+                            lb = _z_from_q2(lb_q2), ub = _z_from_q2(ub_q2)
+                        ) :
+                        OptimizationProblem(optf_q2, z0_q2)
+                    sol_q2 = Optimization.solve(
+                        prob_q2, method.optimizer; method.optim_kwargs...
+                    )
+                    if all(isfinite, sol_q2.u)
+                        # Mapped back before the SA damping below, which must act on θt.
+                        θt_q2_opt = _q2_from_z(sol_q2.u)
+                        if method.saem.mstep_sa_on_params
+                            θt_q2_before = collect(θt_q2)
+                            θt_q2_opt = ComponentArray(
+                                θt_q2_before .+ γ .* (collect(θt_q2_opt) .- θt_q2_before),
+                                axs_q2
+                            )
+                        end
+                        θt_full_q2_opt = ComponentArray(collect(θt_full_curr), axs_full_iter)
+                        for name in q2_free_now
+                            setproperty!(θt_full_q2_opt, name, getproperty(θt_q2_opt, name))
+                        end
+                        θu_q2_opt = inv_transform(θt_full_q2_opt)
+                        q2_updates = NamedTuple{Tuple(q2_free_now)}(
+                            Tuple(getproperty(θu_q2_opt, n) for n in q2_free_now)
+                        )
+                        iter_constants = merge(iter_constants, q2_updates)
+                        iter_constants = _saem_clamp_constants_to_bounds(iter_constants, fe)
+                        if !isempty(var_lb_targets)
+                            iter_constants = _saem_apply_var_lb_to_constants(
+                                iter_constants, var_lb_targets, var_lb_eff
+                            )
+                        end
+                        # Recompute free names / axes with Q2 params now treated as constants
+                        free_names_iter = [n for n in fixed_names if n ∉ keys(iter_constants)]
+                        θt_free = ComponentArray(
+                            NamedTuple{Tuple(free_names_iter)}(
+                                Tuple(getproperty(θt_full_curr, n) for n in free_names_iter)
+                            )
+                        )
+                        axs_free = getaxes(θt_free)
+                        copyto!(θ_const_u_work, θ0_u)
+                        _apply_constants!(θ_const_u_work, iter_constants)
+                        # sa_anneal floor for closed-form constants (Q2 path; mirrors site above)
+                        if do_sa_anneal
+                            θ_const_u_work = _saem_apply_sa_anneal_clamp(
+                                θ_const_u_work,
+                                sa_anneal_targets_eff, sa_anneal_initial_vals, iter,
+                                sa_anneal_iters_eff, method.saem.sa_anneal_alpha,
+                                method.saem.sa_anneal_schedule
+                            )
+                        end
+                        θ_const_t_iter = transform(θ_const_u_work)
+                        axs_full_iter = getaxes(θ_const_t_iter)
+                        base_free_names = free_names_iter
+                        θ_const_t = θ_const_t_iter
+                        axs_full = axs_full_iter
+                    end
+                end
+            end
+
+            anneal_was_active = false
+            all_fixed_by_builtin = isempty(free_names_iter)
+            if all_fixed_by_builtin
+                θ_prev_new = copy(θt_free)
+                θt_full = ComponentArray(T0.(θ_const_t), axs_full)
+                θu_new = inv_transform(θt_full)
+                if method.saem.suffstats !== nothing && method.saem.q_from_stats !== nothing
+                    Q_new = method.saem.q_from_stats(s, θu_new, dm)
                 else
-                    _saem_Q(
-                        dm, batch_infos, θu, const_cache, ll_cache, sample_store;
+                    Q_new = _saem_Q(
+                        dm, batch_infos, θu_new, const_cache, ll_cache, sample_store;
                         serialization = serialization, q_cache = q_cache, anneal_sds = anneal_sds
                     )
                 end
-                !isfinite(Q) && return T(Inf)
-                obj = -Q + _penalty_value(θu, penalty)
-                extra_objective === nothing || (obj += extra_objective(θu))
-                !isfinite(obj) && return T(Inf)
-                if use_cache
-                    obj_cache.θ[] = copy(θt_vec)
-                    obj_cache.obj[] = obj
-                end
-                return obj
-            end
-
-            optf = OptimizationFunction(obj_only, method.adtype)
-            lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
-                fe, free_names_iter, collect(θt_free), method.optimizer,
-                method.lb, method.ub, constants; method_label = "SAEM"
-            )
-            # z-space problem only; `lb`/`ub` stay on the θt scale below, where the closed-form
-            # M-step clamps with them directly.
-            z0 = _z_from_θt(θ0_init)
-            prob = use_bounds ?
-                OptimizationProblem(optf, z0; lb = _z_from_θt(lb), ub = _z_from_θt(ub)) :
-                OptimizationProblem(optf, z0)
-            if method.saem.suffstats !== nothing &&
-                    method.saem.mstep_closed_form !== nothing
-                closed_form_custom_used = true
-                θu_new = method.saem.mstep_closed_form(s, dm)
-                θt_full = transform(θu_new)
-                θt_free = ComponentArray(
-                    NamedTuple{Tuple(free_names_iter)}(
-                        Tuple(
-                            getproperty(
-                                    θt_full,
-                                    n
-                                )
-                                for n in free_names_iter
-                        )
-                    )
-                )
-                if use_bounds
-                    # Closed-form M-step: project onto transformed box bounds.
-                    θt_free_vec = collect(θt_free)
-                    @inbounds for i in eachindex(θt_free_vec, lb, ub)
-                        θt_free_vec[i] = clamp(θt_free_vec[i], lb[i], ub[i])
-                    end
-                    θt_free = ComponentArray(θt_free_vec, axs_free)
-                end
             else
-                numeric_mstep_used = true
-                θt_free_before = method.saem.mstep_sa_on_params ? collect(θt_free) : nothing
-                sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
-                if any(!isfinite, sol.u)
-                    @warn "SAEM M-step iter $iter: optimizer returned non-finite parameters; skipping update."
-                    mstep_skipped = true
-                else
-                    # Mapped back before the SA damping below, which must act on θt.
-                    θ_hat_t_free = _θt_from_z(sol.u)
-                    if method.saem.mstep_sa_on_params
-                        # SA update: θ_new = θ_old + γ*(θ̂ − θ_old)
-                        θt_free = ComponentArray(
-                            θt_free_before .+
-                                γ .* (collect(θ_hat_t_free) .- θt_free_before),
-                            axs_free
+                obj_cache = (θ = Ref{Any}(nothing), obj = Ref{Any}(nothing))
+                # Single-assignment aliases for the captured per-iteration state: the
+                # `*_iter` locals (and `axs_free`) are assigned twice per iteration, so
+                # capturing them directly boxes them (`Core.Box`) and dynamically types
+                # the θt_full rebuild in every M-step objective evaluation. The free
+                # vector is a closure-LOCAL (`θt_free_loc`): the objective must not
+                # write through to the outer `θt_free`, which the non-finite-solution
+                # path reads after the solve expecting the pre-solve iterate.
+                θ_const_t_obj = θ_const_t_iter
+                axs_full_obj = axs_full_iter
+                free_names_obj = free_names_iter
+                axs_free_obj = axs_free
+                # Anchored at the current iterate, as for Q2. The objective cache below is keyed on
+                # θt and lives inside this loop; with a per-iteration anchor, z = 0 means a different
+                # θt each iteration, so hoisting the cache would make it permanently stale.
+                _, _, _θt_from_z, _z_from_θt = _precondition_maps(
+                    get_model(dm), free_names_iter, θt_free, axs_free, _precondition_on(method)
+                )
+                function obj_only(z, p)
+                    any(isnan, z) && return eltype(z)(Inf)
+                    θt_free_loc = _θt_from_z(z)
+                    θt_vec = θt_free_loc
+                    use_cache = !(eltype(θt_free_loc) <: ForwardDiff.Dual)
+                    if use_cache && obj_cache.θ[] !== nothing &&
+                            length(obj_cache.θ[]) == length(θt_vec)
+                        maxdiff = _maxabsdiff(θt_vec, obj_cache.θ[])
+                        if maxdiff == 0.0
+                            return obj_cache.obj[]
+                        end
+                    end
+                    T = eltype(θt_free_loc)
+                    θt_full = ComponentArray(T.(θ_const_t_obj), axs_full_obj)
+                    for name in free_names_obj
+                        setproperty!(θt_full, name, getproperty(θt_free_loc, name))
+                    end
+                    θu = inv_transform(θt_full)
+                    Q = if method.saem.suffstats !== nothing &&
+                            method.saem.q_from_stats !== nothing
+                        method.saem.q_from_stats(s, θu, dm)
+                    elseif method.saem.mstep_sa_on_params
+                        _saem_Q_current(
+                            dm, batch_infos, θu, const_cache, ll_cache,
+                            b_chains, effective_n_chains;
+                            serialization = serialization, anneal_sds = anneal_sds
                         )
                     else
-                        θt_free = θ_hat_t_free
+                        _saem_Q(
+                            dm, batch_infos, θu, const_cache, ll_cache, sample_store;
+                            serialization = serialization, q_cache = q_cache, anneal_sds = anneal_sds
+                        )
+                    end
+                    !isfinite(Q) && return T(Inf)
+                    obj = -Q + _penalty_value(θu, penalty)
+                    extra_objective === nothing || (obj += extra_objective(θu))
+                    !isfinite(obj) && return T(Inf)
+                    if use_cache
+                        obj_cache.θ[] = copy(θt_vec)
+                        obj_cache.obj[] = obj
+                    end
+                    return obj
+                end
+
+                optf = OptimizationFunction(obj_only, method.adtype)
+                lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
+                    fe, free_names_iter, collect(θt_free), method.optimizer,
+                    method.lb, method.ub, constants; method_label = "SAEM"
+                )
+                # z-space problem only; `lb`/`ub` stay on the θt scale below, where the closed-form
+                # M-step clamps with them directly.
+                z0 = _z_from_θt(θ0_init)
+                prob = use_bounds ?
+                    OptimizationProblem(optf, z0; lb = _z_from_θt(lb), ub = _z_from_θt(ub)) :
+                    OptimizationProblem(optf, z0)
+                if method.saem.suffstats !== nothing &&
+                        method.saem.mstep_closed_form !== nothing
+                    closed_form_custom_used = true
+                    θu_new = method.saem.mstep_closed_form(s, dm)
+                    θt_full = transform(θu_new)
+                    θt_free = ComponentArray(
+                        NamedTuple{Tuple(free_names_iter)}(
+                            Tuple(
+                                getproperty(
+                                        θt_full,
+                                        n
+                                    )
+                                    for n in free_names_iter
+                            )
+                        )
+                    )
+                    if use_bounds
+                        # Closed-form M-step: project onto transformed box bounds.
+                        θt_free_vec = collect(θt_free)
+                        @inbounds for i in eachindex(θt_free_vec, lb, ub)
+                            θt_free_vec[i] = clamp(θt_free_vec[i], lb[i], ub[i])
+                        end
+                        θt_free = ComponentArray(θt_free_vec, axs_free)
+                    end
+                else
+                    numeric_mstep_used = true
+                    θt_free_before = method.saem.mstep_sa_on_params ? collect(θt_free) : nothing
+                    sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
+                    if any(!isfinite, sol.u)
+                        @warn "SAEM M-step iter $iter: optimizer returned non-finite parameters; skipping update."
+                        mstep_skipped = true
+                    else
+                        # Mapped back before the SA damping below, which must act on θt.
+                        θ_hat_t_free = _θt_from_z(sol.u)
+                        if method.saem.mstep_sa_on_params
+                            # SA update: θ_new = θ_old + γ*(θ̂ − θ_old)
+                            θt_free = ComponentArray(
+                                θt_free_before .+
+                                    γ .* (collect(θ_hat_t_free) .- θt_free_before),
+                                axs_free
+                            )
+                        else
+                            θt_free = θ_hat_t_free
+                        end
                     end
                 end
-            end
-            θ_prev_new = copy(θt_free)
+                θ_prev_new = copy(θt_free)
 
-            θt_full = ComponentArray(eltype(θt_free).(θ_const_t), axs_full)
-            for name in base_free_names
-                setproperty!(θt_full, name, getproperty(θt_free, name))
+                θt_full = ComponentArray(eltype(θt_free).(θ_const_t), axs_full)
+                for name in base_free_names
+                    setproperty!(θt_full, name, getproperty(θt_free, name))
+                end
+                θu_new = inv_transform(θt_full)
+                if method.saem.suffstats !== nothing && method.saem.q_from_stats !== nothing
+                    Q_new = method.saem.q_from_stats(s, θu_new, dm)
+                else
+                    Q_new = _saem_Q(
+                        dm, batch_infos, θu_new, const_cache, ll_cache, sample_store;
+                        serialization = serialization, q_cache = q_cache, anneal_sds = anneal_sds
+                    )
+                end
             end
-            θu_new = inv_transform(θt_full)
-            if method.saem.suffstats !== nothing && method.saem.q_from_stats !== nothing
-                Q_new = method.saem.q_from_stats(s, θu_new, dm)
-            else
-                Q_new = _saem_Q(
-                    dm, batch_infos, θu_new, const_cache, ll_cache, sample_store;
-                    serialization = serialization, q_cache = q_cache, anneal_sds = anneal_sds
+            Q_new = Q_new == Inf ? T0(Inf) : Q_new
+
+            # SA annealing clamp (post M-step)
+            if do_sa_anneal
+                θu_new_clamped = _saem_apply_sa_anneal_clamp(
+                    θu_new, sa_anneal_targets_eff, sa_anneal_initial_vals,
+                    iter, sa_anneal_iters_eff, method.saem.sa_anneal_alpha,
+                    method.saem.sa_anneal_schedule
                 )
-            end
-        end
-        Q_new = Q_new == Inf ? T0(Inf) : Q_new
-
-        # SA annealing clamp (post M-step)
-        if do_sa_anneal
-            θu_new_clamped = _saem_apply_sa_anneal_clamp(
-                θu_new, sa_anneal_targets_eff, sa_anneal_initial_vals,
-                iter, sa_anneal_iters_eff, method.saem.sa_anneal_alpha,
-                method.saem.sa_anneal_schedule
-            )
-            if θu_new_clamped !== θu_new
-                θu_new = θu_new_clamped
-                θt_full = transform(θu_new)
-                for name in base_free_names
-                    setproperty!(θt_free, name, getproperty(θt_full, name))
+                if θu_new_clamped !== θu_new
+                    θu_new = θu_new_clamped
+                    θt_full = transform(θu_new)
+                    for name in base_free_names
+                        setproperty!(θt_free, name, getproperty(θt_full, name))
+                    end
+                    θ_prev_new = copy(θt_free)
                 end
-                θ_prev_new = copy(θt_free)
             end
-        end
-        anneal_was_active = do_sa_anneal && iter <= sa_anneal_iters_eff
+            anneal_was_active = do_sa_anneal && iter <= sa_anneal_iters_eff
 
-        # Var lb clamp (post M-step)
-        if !isempty(var_lb_targets)
-            θu_new_clamped = _saem_apply_var_lb(θu_new, var_lb_targets, var_lb_eff)
-            if θu_new_clamped !== θu_new
-                θu_new = θu_new_clamped
-                θt_full = transform(θu_new)
-                for name in base_free_names
-                    setproperty!(θt_free, name, getproperty(θt_full, name))
+            # Var lb clamp (post M-step)
+            if !isempty(var_lb_targets)
+                θu_new_clamped = _saem_apply_var_lb(θu_new, var_lb_targets, var_lb_eff)
+                if θu_new_clamped !== θu_new
+                    θu_new = θu_new_clamped
+                    θt_full = transform(θu_new)
+                    for name in base_free_names
+                        setproperty!(θt_free, name, getproperty(θt_full, name))
+                    end
+                    θ_prev_new = copy(θt_free)
                 end
-                θ_prev_new = copy(θt_free)
             end
         end
 
