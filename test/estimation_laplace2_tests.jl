@@ -463,6 +463,31 @@ end
         @test_throws ErrorException NewtonInner(curvature = :fisher)
     end
 
+    @testset "trust-region globalization" begin
+        llc = NoLimits.build_ll_cache(dm; force_saveat = true)
+        _, binfos, ccache = NoLimits._build_re_batch_infos(dm, NamedTuple())
+        θ = NoLimits.get_θ0_untransformed(get_model(dm).fixed.fixed)
+        adc = NoLimits._init_laplace_ad_cache(length(binfos))
+        @test NewtonInner().globalization === :linesearch
+        @test_throws ErrorException NewtonInner(globalization = :dogleg)
+        for curv in (ExactHessianCurvature(), FisherInformationCurvature(true))
+            tr = NewtonInner(
+                curvature = curv, x_abstol = 1.0e-10, maxiters = 1000, globalization = :trust_region
+            )
+            for bi in (1, 5, 17)
+                info = binfos[bi]
+                sol_def = NoLimits._laplace_solve_batch!(dm, info, θ, ccache, llc, adc, bi, zeros(info.n_b))
+                sol_tr = NoLimits._laplace_solve_batch!(
+                    dm, info, θ, ccache, llc, adc, bi, fill(3.0, info.n_b); optimizer = tr
+                )
+                @test sol_tr isa NoLimits._NewtonSol
+                @test sol_tr.converged
+                @test collect(sol_tr.u) ≈ collect(sol_def.u) atol = 1.0e-6
+                @test NoLimits._laplace_sol_logf(sol_tr) ≈ NoLimits._laplace_sol_logf(sol_def) atol = 1.0e-8
+            end
+        end
+    end
+
     @testset "Laplace fit matches default within tolerance" begin
         res_def = fit_model(
             dm, NoLimits.Laplace(optim_kwargs = (maxiters = 40,));

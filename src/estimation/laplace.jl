@@ -1092,7 +1092,8 @@ end
 
 """
     NewtonInner(; max_dim=32, maxiters=100, g_abstol=1e-8, alpha_min=1e-4,
-                curvature=ExactHessianCurvature(), x_abstol=0.0)
+                curvature=ExactHessianCurvature(), x_abstol=0.0,
+                globalization=:linesearch)
 
 Opt-in inner-EBE optimizer for [`Laplace`](@ref)/[`FOCEI`](@ref) (and the
 `ebe_optimizer` options): a damped Newton ascent on the batch log-joint, built
@@ -1124,6 +1125,13 @@ warm starts the outer optimization provides and avoids the per-solve
   coordinate. With ODE solutions the gradient of the log-joint has a noise floor, where the
   backtracking cannot see a gain any more and the solve would otherwise stall at the mode.
   `0.0` (default) disables the test.
+- `globalization`: `:linesearch` (default) is the damped Newton ascent with Armijo
+  backtracking described above. `:trust_region` runs Optim.jl's `NewtonTrustRegion()` on
+  `-log f` with the `curvature` Hessian, `Optim.Options(; x_abstol, g_abstol, iterations =
+  maxiters)` (`alpha_min` unused); gradient and Hessian at a point come from one pass, the
+  value of a trial point from a plain evaluation. With
+  `curvature = FisherInformationCurvature(true)` this is the Gauss-Newton trust-region
+  inner solve of MEMOIR-style FOCEI codes.
 """
 struct NewtonInner{C}
     max_dim::Int
@@ -1132,12 +1140,13 @@ struct NewtonInner{C}
     alpha_min::Float64
     curvature::C
     x_abstol::Float64
+    globalization::Symbol
 end
 
 function NewtonInner(;
         max_dim::Int = 32, maxiters::Int = 100, g_abstol::Float64 = 1.0e-8,
         alpha_min::Float64 = 1.0e-4, curvature = ExactHessianCurvature(),
-        x_abstol::Float64 = 0.0
+        x_abstol::Float64 = 0.0, globalization::Symbol = :linesearch
     )
     # Invalid limits used to be accepted and only misbehave inside the inner solver (#220).
     max_dim >= 0 ||
@@ -1151,7 +1160,9 @@ function NewtonInner(;
         error("NewtonInner: curvature must be an AbstractCurvature; got $(repr(curvature)).")
     (isfinite(x_abstol) && x_abstol >= 0) ||
         error("NewtonInner: x_abstol must be finite and >= 0; got $(x_abstol).")
-    return NewtonInner(max_dim, maxiters, g_abstol, alpha_min, curvature, x_abstol)
+    globalization in (:linesearch, :trust_region) ||
+        error("NewtonInner: globalization must be :linesearch or :trust_region; got $(repr(globalization)).")
+    return NewtonInner(max_dim, maxiters, g_abstol, alpha_min, curvature, x_abstol, globalization)
 end
 
 # Minimal solution wrapper for the Newton path, duck-typed for the accessors
@@ -1242,6 +1253,76 @@ function _newton_inner_solve(
     return _NewtonSol(b, Float64(fval), isfinite(gn) ? gn : Inf, false)
 end
 
+# Trust-region variant (`globalization = :trust_region`): Optim.jl's NewtonTrustRegion on
+# -log f. Optim asks for the value of a trial point alone and for gradient and Hessian of an
+# accepted point; the last two share one pass (`_newton_grad_hess!`), cached per point.
+# The result is taken as it is when finite (as an Optim-based inner solve would), a
+# non-finite one signals the LBFGS fallback.
+function _newton_tr_inner_solve(
+        dm::DataModel, batch_info::REBatchInfo, θ_val::ComponentArray,
+        const_cache::REConstantsCache, cache::_LLCache, ad_cache::LaplaceADCache,
+        bi::Int, b0::Vector{Float64}, newton::NewtonInner; tctx = nothing
+    )
+    nb = length(b0)
+    tctx === nothing && (tctx = _safe_theta_ctx(dm, batch_info, θ_val, cache))
+    f = _LaplaceLogfBatch(dm, batch_info, θ_val, const_cache, cache, tctx)
+    isfinite(f(b0)) || return _NewtonSol(copy(b0), -Inf, Inf, false)
+    entry = ad_cache.grad_cfg[bi]
+    if entry === nothing
+        entry = _FDCfgStore()
+        ad_cache.grad_cfg[bi] = entry
+    end
+    cfg = _get_fd_cfg!(entry::_FDCfgStore, f, b0, () -> ForwardDiff.GradientConfig(f, b0))
+    b_v, f_v = fill(NaN, nb), Ref(NaN)                   # value cache
+    b_d, g_d, H_d = fill(NaN, nb), zeros(nb), zeros(nb, nb)   # gradient/Hessian cache (log f)
+    function value_at(b)
+        b == b_v || (f_v[] = f(b); copyto!(b_v, b))
+        return f_v[]
+    end
+    function derivs_at!(b)
+        b == b_d && return nothing
+        H = _newton_grad_hess!(
+            g_d, newton.curvature, f, cfg, dm, batch_info, θ_val, b, const_cache, cache, tctx
+        )
+        H === nothing && (
+            H = _build_hess_b(
+                newton.curvature, dm, batch_info, θ_val, b, const_cache, cache, ad_cache, bi;
+                ctx = "newton_inner", tctx = tctx
+            )
+        )
+        copyto!(H_d, H)
+        copyto!(b_d, b)
+        return nothing
+    end
+    function fgh!(F, G, H, b)
+        if G !== nothing || H !== nothing
+            derivs_at!(b)
+            G === nothing || (G .= .-g_d)
+            H === nothing || (H .= .-H_d)
+        end
+        return F === nothing ? nothing : -value_at(b)
+    end
+    res = try
+        Optim.optimize(
+            Optim.NLSolversBase.only_fgh!(fgh!), copy(b0), Optim.NewtonTrustRegion(),
+            Optim.Options(;
+                x_abstol = newton.x_abstol, g_abstol = newton.g_abstol,
+                iterations = newton.maxiters
+            )
+        )
+    catch err
+        _is_numeric_error(err) || err isa DomainError || err isa ArgumentError ||
+            err isa LinearAlgebra.PosDefException || rethrow(err)
+        return _NewtonSol(copy(b0), -Inf, Inf, false)
+    end
+    b = collect(Float64, Optim.minimizer(res))
+    fval = -Optim.minimum(res)
+    isfinite(fval) || return _NewtonSol(b, -Inf, Inf, false)
+    derivs_at!(b)
+    gn = maximum(abs, g_d)
+    return _NewtonSol(b, Float64(fval), isfinite(gn) ? gn : Inf, true)
+end
+
 # Gradient of the Newton step into `g`. Returns the Hessian when the curvature yields it in
 # the same pass (FisherInformationCurvature, focei.jl), else `nothing`: the caller builds it
 # only if the gradient test does not stop the solve.
@@ -1289,7 +1370,9 @@ function _laplace_solve_batch!(
     optimizer_use = optimizer
     if optimizer isa NewtonInner
         if nb <= optimizer.max_dim
-            nsol = _newton_inner_solve(
+            solve_fn = optimizer.globalization === :trust_region ? _newton_tr_inner_solve :
+                _newton_inner_solve
+            nsol = solve_fn(
                 dm, batch_info, θ_val, const_cache, cache,
                 ad_cache, bi, collect(Float64, b0_use), optimizer;
                 tctx = tctx
@@ -2236,7 +2319,8 @@ end
 
 """
     AcceptedWarmStarts(; multistart_every = nothing, n_draw = 25, n_local = 3,
-                       d_min = 2.0, u_min = 1e-3, seed = 0)
+                       d_min = 2.0, u_min = 1e-3, seed = 0,
+                       initial_multistart = false, refresh = true)
 
 Inner-mode strategy for [`Laplace`](@ref) and [`FOCEI`](@ref), passed as
 `warm_starts = AcceptedWarmStarts(...)`.
@@ -2253,18 +2337,25 @@ the last evaluated θ.
 iterate (iteration count `state.iter`, `nothing` = never), per batch of random effects:
 1. `n_draw` Latin-hypercube draws from the random-effect prior at θ, the uniform
    coordinates mapped to `[u_min, 1 - u_min]` and through the quantile of each
-   coordinate's prior marginal (RNG `Xoshiro(seed + batch index)`),
+   coordinate's prior marginal (RNG `Xoshiro(seed + i)`, with `i` the index of the
+   individual in data order for a batch of one individual, else the batch index),
 2. the inner objective at every draw,
 3. greedy selection by objective of up to `n_local` draws whose distance to the warm start
    and to every draw taken so far, scaled by the prior standard deviations, exceeds `d_min`,
 4. local inner optimizations from the taken draws; the best mode (the current one included)
    becomes the mode and the warm start.
 
+`initial_multistart = true` also runs this multistart at the start point θ0, before the
+first warm starts are committed. There the distances of step 3 are measured to the default
+start of the inner optimization instead of to the mode.
+
 A multistart changes the objective at the accepted iterate, so the optimizer's value and
 gradient there are stale. For an optimizer that supports it (`InteriorPointBFGS.IPBFGS`
 ≥ 0.2), the callback then returns `:refresh` and the optimizer re-evaluates both. For
 other optimizers the run continues with the stale values (warned once) and the next trial
-point is evaluated with the new warm starts.
+point is evaluated with the new warm starts. `refresh = false` never returns `:refresh`
+(and does not warn): the optimizer always continues with the stale values, as MEMOIR's
+legacy fits did.
 
 Requires an outer optimizer whose callback is called once per accepted iterate (Optim.jl
 methods, `IPBFGS`), and `update_schedule = :all`.
@@ -2276,11 +2367,14 @@ struct AcceptedWarmStarts
     d_min::Float64
     u_min::Float64
     seed::Int
+    initial_multistart::Bool
+    refresh::Bool
 end
 
 function AcceptedWarmStarts(;
         multistart_every = nothing, n_draw::Integer = 25, n_local::Integer = 3,
-        d_min::Real = 2.0, u_min::Real = 1.0e-3, seed::Integer = 0
+        d_min::Real = 2.0, u_min::Real = 1.0e-3, seed::Integer = 0,
+        initial_multistart::Bool = false, refresh::Bool = true
     )
     multistart_every === nothing || multistart_every >= 1 ||
         error("AcceptedWarmStarts: multistart_every must be ≥ 1 or nothing; got $(multistart_every).")
@@ -2288,7 +2382,9 @@ function AcceptedWarmStarts(;
         error("AcceptedWarmStarts: n_draw and n_local must be ≥ 1.")
     0 < u_min < 0.5 || error("AcceptedWarmStarts: u_min must lie in (0, 0.5); got $(u_min).")
     d_min >= 0 || error("AcceptedWarmStarts: d_min must be ≥ 0; got $(d_min).")
-    return AcceptedWarmStarts(multistart_every, n_draw, n_local, d_min, u_min, seed)
+    return AcceptedWarmStarts(
+        multistart_every, n_draw, n_local, d_min, u_min, seed, initial_multistart, refresh
+    )
 end
 
 @inline _default_inner_grad_tol(dm::DataModel) = get_de(get_model(dm)) === nothing ? 1.0e-8 :
@@ -2938,14 +3034,38 @@ function _laplace_prior_marginals(dm::DataModel, batch_info::REBatchInfo, θ, ca
     return out
 end
 
+# RNG of the multistart draws of batch `bi`: seeded by the individual's index in data order
+# for a batch of one individual, else by the batch index.
+function _aws_rng(ws::AcceptedWarmStarts, info::REBatchInfo, bi::Int)
+    inds = get_inds(info)
+    return Random.Xoshiro(ws.seed + (length(inds) == 1 ? first(inds) : bi))
+end
+
+# Latin-hypercube draws from the prior marginals `margs`: per coordinate one point per
+# stratum ((i - 1) / n, i / n], strata in random order, mapped to [u_min, 1 - u_min] and
+# through the marginal's quantile.
+function _aws_draws(rng, margs, n::Int, u_min::Float64)
+    nb = length(margs)
+    U = Matrix{Float64}(undef, nb, n)
+    for k in 1:nb
+        U[k, :] .= (Random.randperm(rng, n) .- rand(rng, n)) ./ n
+    end
+    return [
+        [Float64(Distributions.quantile(margs[k], u_min + (1 - 2u_min) * U[k, m])) for k in 1:nb]
+            for m in 1:n
+    ]
+end
+
 # Prior-LHS multistart of one batch at the accepted θ (see `AcceptedWarmStarts`). The
-# current mode `b_star[bi]` is the warm-start run. Returns true when a better mode was found
-# (stored in `b_star[bi]`).
+# current mode `b_star[bi]` is the warm-start run. `from_default`: the distances of the
+# greedy selection are measured to the default inner start instead of to the mode (the
+# initial multistart, where the mode was solved from the default start). Returns true when
+# a better mode was found (stored in `b_star[bi]`).
 # ponytail: the pre-screen uses the fit's solver settings, no separate reduced step budget.
 function _laplace_accepted_multistart_batch!(
         cache::_LaplaceCache, bi::Int, dm::DataModel, info::REBatchInfo, θ_val,
         const_cache::REConstantsCache, ll_cache::_LLCache, inner::LaplaceInnerOptions,
-        ws::AcceptedWarmStarts
+        ws::AcceptedWarmStarts; from_default::Bool = false
     )
     nb = get_n_b(info)
     nb == 0 && return false
@@ -2962,22 +3082,15 @@ function _laplace_accepted_multistart_batch!(
     b_warm = collect(Float64, cache.bstar_cache.b_star[bi])
     f_warm = logf(b_warm)
     isfinite(f_warm) || (f_warm = -Inf)
-    # 1. stratified prior draws: per coordinate one point per stratum, random order
-    rng = Random.Xoshiro(ws.seed + bi)
-    n = ws.n_draw
-    U = Matrix{Float64}(undef, nb, n)
-    for k in 1:nb
-        U[k, :] .= (Random.randperm(rng, n) .- rand(rng, n)) ./ n
-    end
-    draws = [
-        [
-                Float64(Distributions.quantile(margs[k], ws.u_min + (1 - 2ws.u_min) * U[k, m]))
-                for k in 1:nb
-            ] for m in 1:n
-    ]
+    # 1. stratified prior draws
+    draws = _aws_draws(_aws_rng(ws, info, bi), margs, ws.n_draw, ws.u_min)
     # 2. pre-screen; 3. greedy selection of distant draws by objective
     J = [(f = logf(b); isfinite(f) ? -f : Inf) for b in draws]
-    starts = [b_warm]
+    starts = [
+        from_default ?
+            collect(Float64, _laplace_default_b0(dm, info, θ_val, const_cache, ll_cache; tctx = tctx)) :
+            b_warm,
+    ]
     for m in sortperm(J)
         (isfinite(J[m]) && length(starts) <= ws.n_local) || break
         all(b -> sqrt(sum(abs2, (draws[m] .- b) ./ sd)) > ws.d_min, starts) &&
@@ -3011,7 +3124,7 @@ end
 function _laplace_accepted_multistart!(
         cache::_LaplaceCache, dm::DataModel, batch_infos::Vector{REBatchInfo}, θ,
         const_cache::REConstantsCache, ll_cache, inner::LaplaceInnerOptions,
-        ws::AcceptedWarmStarts
+        ws::AcceptedWarmStarts; from_default::Bool = false
     )
     θ_val = _laplace_floatize(θ)
     caches = _laplace_thread_caches(dm, ll_cache, Threads.maxthreadid())
@@ -3021,7 +3134,8 @@ function _laplace_accepted_multistart!(
     Threads.@threads for c in 1:n_chunks
         for bi in c:n_chunks:length(batch_infos)
             changed[bi] = _laplace_accepted_multistart_batch!(
-                cache, bi, dm, batch_infos[bi], θ_val, const_cache, caches[c], inner, ws
+                cache, bi, dm, batch_infos[bi], θ_val, const_cache, caches[c], inner, ws;
+                from_default = from_default
             )
         end
     end
@@ -3036,7 +3150,10 @@ struct _AcceptedWarmCallback{F, M, U}
     refresh_ok::Bool
     user_cb::U
     method_label::M
+    warn_stale::Bool    # false: stale values after a multistart are intended (`refresh = false`)
 end
+_AcceptedWarmCallback(f, refresh_ok, user_cb, label) =
+    _AcceptedWarmCallback(f, refresh_ok, user_cb, label, true)
 
 function (cb::_AcceptedWarmCallback)(state, args...)
     changed = cb.at_accepted!(state)
@@ -3044,7 +3161,7 @@ function (cb::_AcceptedWarmCallback)(state, args...)
     halt === true && return true
     if changed
         cb.refresh_ok && return :refresh
-        Threads.atomic_cas!(_WARNED_STALE_REFRESH, false, true) ||
+        cb.warn_stale && !Threads.atomic_cas!(_WARNED_STALE_REFRESH, false, true) &&
             @warn "$(cb.method_label): the inner multistart of AcceptedWarmStarts changed the modes at the accepted iterate, but the outer optimizer cannot be told to re-evaluate there (only InteriorPointBFGS.IPBFGS ≥ 0.2 supports a :refresh callback). It continues with the stale objective value and gradient at this iterate. Warned once per session."
     end
     return halt
@@ -3263,8 +3380,22 @@ function _fit_laplace_family(
         θu_of(z) = inv_transform(
             _merge_free_into_full(θ_const_t_vec, free_idx, _θt_from_z(z), axs_full)
         )
+        function drop_bstar_derived!()   # b* moved at the cached θ
+            _reset_obj_cache!(obj_cache)
+            hc = ebe_cache.hess_cache
+            hc !== nothing && fill!(hc.last_valid, false)
+            gc = ebe_cache.grad_cache
+            gc.last_valid !== nothing && fill!(gc.last_valid, false)
+            return nothing
+        end
         # First warm starts: the modes at the start point, from the default start.
         obj_only(z0, nothing)
+        if ws.initial_multistart && _laplace_accepted_multistart!(
+                ebe_cache, dm, batch_infos, θu_of(z0), const_cache, ll_cache, inner_opts, ws;
+                from_default = true
+            )
+            drop_bstar_derived!()
+        end
         _commit_warm!(ebe_cache)
         last_ms = Ref(0)
         function at_accepted!(state)
@@ -3283,13 +3414,7 @@ function _fit_laplace_family(
                 changed = _laplace_accepted_multistart!(
                     ebe_cache, dm, batch_infos, θu, const_cache, ll_cache, inner_opts, ws
                 )
-                if changed       # b* moved at this θ: drop everything derived from the old b*
-                    _reset_obj_cache!(obj_cache)
-                    hc = ebe_cache.hess_cache
-                    hc !== nothing && fill!(hc.last_valid, false)
-                    gc = ebe_cache.grad_cache
-                    gc.last_valid !== nothing && fill!(gc.last_valid, false)
-                end
+                changed && drop_bstar_derived!()
             end
             _commit_warm!(ebe_cache)
             return changed
@@ -3298,8 +3423,9 @@ function _fit_laplace_family(
             solve_kwargs,
             (;
                 callback = _AcceptedWarmCallback(
-                    at_accepted!, _supports_refresh(opt_use),
-                    get(solve_kwargs, :callback, nothing), string(nameof(typeof(method)))
+                    at_accepted!, ws.refresh && _supports_refresh(opt_use),
+                    get(solve_kwargs, :callback, nothing), string(nameof(typeof(method))),
+                    ws.refresh
                 ),
             )
         )
