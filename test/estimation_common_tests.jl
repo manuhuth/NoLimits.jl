@@ -691,6 +691,24 @@ const _INV_SER = NoLimits.EnsembleSerial()
             end
         end
 
+        # Greedy work-pulling assigns individuals to cache slots nondeterministically;
+        # per-individual results reduced in index order must stay bit-identical.
+        @testset "threaded loglikelihood is bit-identical to serial" begin
+            dm_ll = fx_re_dm()
+            θ_ll = get_θ0_untransformed(NoLimits.get_fixed(NoLimits.get_model(dm_ll)))
+            η_ll = [ComponentArray(η = 0.05 * i) for i in eachindex(get_individuals(dm_ll))]
+            ll_of(ser) = x -> NoLimits.loglikelihood(
+                dm_ll, ComponentArray(x, getaxes(θ_ll)), η_ll; serialization = ser
+            )
+            x_ll = collect(θ_ll)
+            v_ser = ll_of(_INV_SER)(x_ll)
+            g_ser = ForwardDiff.gradient(ll_of(_INV_SER), x_ll)
+            for _ in 1:5
+                @test ll_of(EnsembleThreads())(x_ll) === v_ser
+                @test ForwardDiff.gradient(ll_of(EnsembleThreads()), x_ll) == g_ser
+            end
+        end
+
         # #194/#326: the drift only ever showed up on nonlinear-in-eta models, and only
         # in a few percent of fits, so a single comparison can pass through a live race.
         # Repeat a seeded threaded fit against the serial reference.

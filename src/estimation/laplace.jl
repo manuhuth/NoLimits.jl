@@ -1589,33 +1589,26 @@ function _laplace_get_bstar!(
         nthreads = Threads.maxthreadid()
         caches = _laplace_thread_caches(dm, ll_cache, nthreads)
         ind_counter = Threads.Atomic{Int}(0)
-        # Chunk-indexed cache assignment: each task owns cache slot `c` for its whole
-        # stride. Indexing by `Threads.threadid()` is unsafe under task migration
-        # (`@threads :dynamic` can move a task between threads at yield points — and the
-        # inner `solve(...)` yields — so two tasks may share one cache slot and race on
-        # its mutable buffers, making the EB modes and the whole fit nondeterministic
-        # across processes).
-        n_chunks = length(caches)
-        Threads.@threads for c in 1:n_chunks
-            cache_c = caches[c]
-            for bi in c:n_chunks:length(batch_infos)
-                active_batches !== nothing && !(bi ∈ active_batches) && continue
-                info = batch_infos[bi]
-                _laplace_compute_bstar_batch!(
-                    cache, bi, dm, info, θ_val, const_cache, cache_c;
-                    optimizer = optimizer,
-                    optim_kwargs = optim_kwargs,
-                    adtype = adtype,
-                    grad_tol = grad_tol,
-                    multistart = multistart,
-                    rng = batch_rngs[bi],
-                    mcmc_candidates = mcmc_candidates_by_batch === nothing ? nothing :
-                        mcmc_candidates_by_batch[bi]
-                )
-                new_count = Threads.atomic_add!(ind_counter, max(0, get_n_b(info))) +
-                    max(0, get_n_b(info))
-                ProgressMeter.update!(p, new_count)
-            end
+        # Each task owns cache slot `c` for its whole life. Indexing by
+        # `Threads.threadid()` is unsafe under task migration (the inner `solve(...)`
+        # yields, so two tasks could share one slot and race on its mutable buffers).
+        _greedy_foreach(length(batch_infos), length(caches)) do bi, c
+            active_batches !== nothing && !(bi ∈ active_batches) && return
+            info = batch_infos[bi]
+            _laplace_compute_bstar_batch!(
+                cache, bi, dm, info, θ_val, const_cache, caches[c];
+                optimizer = optimizer,
+                optim_kwargs = optim_kwargs,
+                adtype = adtype,
+                grad_tol = grad_tol,
+                multistart = multistart,
+                rng = batch_rngs[bi],
+                mcmc_candidates = mcmc_candidates_by_batch === nothing ? nothing :
+                    mcmc_candidates_by_batch[bi]
+            )
+            new_count = Threads.atomic_add!(ind_counter, max(0, get_n_b(info))) +
+                max(0, get_n_b(info))
+            ProgressMeter.update!(p, new_count)
         end
     else
         ll_cache_local = ll_cache isa AbstractVector ? ll_cache[1] : ll_cache
@@ -2497,37 +2490,33 @@ function _laplace_objective_and_grad(
         obj_by_batch = Vector{eltype(θ)}(undef, length(batch_infos))
         grad_by_batch = Matrix{eltype(θ)}(undef, length(θ), length(batch_infos))
         bad = Threads.Atomic{Bool}(false)
-        # Chunk-indexed cache assignment (see _laplace_get_bstar!): each task owns cache
-        # slot `c`; `caches[Threads.threadid()]` is unsafe under task migration.
-        n_chunks = length(caches)
-        Threads.@threads for c in 1:n_chunks
-            cache_c = caches[c]
-            for bi in c:n_chunks:length(batch_infos)
-                bad[] && break
-                active !== nothing && !(bi in active) && continue
-                info = batch_infos[bi]
-                b = bstars[bi]
-                res = _laplace_grad_batch(
-                    dm, info, θ, b, const_cache, cache_c, ebe_cache.ad_cache, bi;
-                    jitter = hessian.jitter,
-                    max_tries = hessian.max_tries,
-                    growth = hessian.growth,
-                    adaptive = hessian.adaptive,
-                    scale_factor = hessian.scale_factor,
-                    use_trace_logdet_grad = hessian.use_trace_logdet_grad,
-                    use_hutchinson = hessian.use_hutchinson,
-                    hutchinson_n = hessian.hutchinson_n,
-                    rng = batch_rngs[bi],
-                    hmode = hmode
-                )
-                if res.logf == -Inf
-                    bad[] = true
-                    break
-                end
-                obj_by_batch[bi] = res.logf + 0.5 * get_n_b(info) * log(2π) -
-                    0.5 * res.logdet
-                @views grad_by_batch[:, bi] .= res.grad
+        # Each task owns cache slot `c` (see _laplace_get_bstar!); per-batch results are
+        # reduced below in batch order.
+        _greedy_foreach(length(batch_infos), length(caches)) do bi, c
+            bad[] && return
+            active !== nothing && !(bi in active) && return
+            info = batch_infos[bi]
+            b = bstars[bi]
+            res = _laplace_grad_batch(
+                dm, info, θ, b, const_cache, caches[c], ebe_cache.ad_cache, bi;
+                jitter = hessian.jitter,
+                max_tries = hessian.max_tries,
+                growth = hessian.growth,
+                adaptive = hessian.adaptive,
+                scale_factor = hessian.scale_factor,
+                use_trace_logdet_grad = hessian.use_trace_logdet_grad,
+                use_hutchinson = hessian.use_hutchinson,
+                hutchinson_n = hessian.hutchinson_n,
+                rng = batch_rngs[bi],
+                hmode = hmode
+            )
+            if res.logf == -Inf
+                bad[] = true
+                return
             end
+            obj_by_batch[bi] = res.logf + 0.5 * get_n_b(info) * log(2π) -
+                0.5 * res.logdet
+            @views grad_by_batch[:, bi] .= res.grad
         end
         bad[] && return (infT, ComponentArray(grad, axs), bstars)
         total = 0.0
@@ -2613,36 +2602,32 @@ function _laplace_objective_only(
         caches = _laplace_thread_caches(dm, ll_cache, nthreads)
         obj_by_batch = Vector{eltype(θ)}(undef, length(batch_infos))
         bad = Threads.Atomic{Bool}(false)
-        # Chunk-indexed cache assignment (see _laplace_get_bstar!): each task owns cache
-        # slot `c`; `caches[Threads.threadid()]` is unsafe under task migration.
-        n_chunks = length(caches)
-        Threads.@threads for c in 1:n_chunks
+        # Each task owns cache slot `c` (see _laplace_get_bstar!).
+        _greedy_foreach(length(batch_infos), length(caches)) do bi, c
+            bad[] && return
+            active !== nothing && !(bi in active) && return
             cache_c = caches[c]
-            for bi in c:n_chunks:length(batch_infos)
-                bad[] && break
-                active !== nothing && !(bi in active) && continue
-                info = batch_infos[bi]
-                b = bstars[bi]
-                tctx = _objective_theta_ctx(dm, info, θ, const_cache, cache_c, b, hmode)
-                logf = _laplace_logf_batch(
-                    dm, info, θ, b, const_cache, cache_c; tctx = tctx
-                )
-                logf == -Inf && (bad[] = true; break)
-                logdet, _, _ = _laplace_logdet_negH(
-                    dm, info, θ, b, const_cache, cache_c, nothing, bi;
-                    jitter = hessian.jitter,
-                    max_tries = hessian.max_tries,
-                    growth = hessian.growth,
-                    adaptive = hessian.adaptive,
-                    scale_factor = hessian.scale_factor,
-                    hess_cache = ebe_cache.hess_cache,
-                    use_cache = use_cache,
-                    hmode = hmode,
-                    tctx = tctx
-                )
-                logdet == Inf && (bad[] = true; break)
-                obj_by_batch[bi] = logf + 0.5 * get_n_b(info) * log(2π) - 0.5 * logdet
-            end
+            info = batch_infos[bi]
+            b = bstars[bi]
+            tctx = _objective_theta_ctx(dm, info, θ, const_cache, cache_c, b, hmode)
+            logf = _laplace_logf_batch(
+                dm, info, θ, b, const_cache, cache_c; tctx = tctx
+            )
+            logf == -Inf && (bad[] = true; return)
+            logdet, _, _ = _laplace_logdet_negH(
+                dm, info, θ, b, const_cache, cache_c, nothing, bi;
+                jitter = hessian.jitter,
+                max_tries = hessian.max_tries,
+                growth = hessian.growth,
+                adaptive = hessian.adaptive,
+                scale_factor = hessian.scale_factor,
+                hess_cache = ebe_cache.hess_cache,
+                use_cache = use_cache,
+                hmode = hmode,
+                tctx = tctx
+            )
+            logdet == Inf && (bad[] = true; return)
+            obj_by_batch[bi] = logf + 0.5 * get_n_b(info) * log(2π) - 0.5 * logdet
         end
         bad[] && return infT
         total = 0.0

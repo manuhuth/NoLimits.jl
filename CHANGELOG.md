@@ -12,6 +12,11 @@
   offending ids. Previously any non-`primary_id` random effect in preDE was rejected, which
   ruled out nested site/individual random effects on ODE parameters.
 
+- Threaded loops over individuals, batches, multistart runs and CV folds now hand out work
+  greedily (each task pulls the next item) instead of fixed strides, which balances
+  unequal per-item costs. Results are unchanged: values are still stored per item and
+  reduced in a fixed order.
+
 - `show_equations(model)` now defaults to `latex = nothing`: LaTeX when Latexify is loaded,
   plain text otherwise. Previously the default call errored without Latexify.
 

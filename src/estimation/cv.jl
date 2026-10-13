@@ -887,7 +887,7 @@ function fit_cv(
         [_run_fold(f) for f in 1:n_folds]
     else
         buf = Vector{CVFoldResult}(undef, n_folds)
-        Threads.@threads for f in 1:n_folds
+        _greedy_foreach(n_folds, Threads.nthreads()) do f, _
             buf[f] = _run_fold(f)
         end
         buf

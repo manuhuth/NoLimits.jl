@@ -717,9 +717,7 @@ function fit_model(ms::Multistart, dm::DataModel, method::FittingMethod, args...
     end
 
     if ms.serialization isa EnsembleThreads
-        Threads.@threads for i in 1:n_starts
-            run_one(i)
-        end
+        _greedy_foreach((i, _) -> run_one(i), n_starts, Threads.nthreads())
     else
         for i in 1:n_starts
             run_one(i)

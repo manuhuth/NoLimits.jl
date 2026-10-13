@@ -507,29 +507,25 @@ function _fit_model_scalar(
         results = Vector{T}(undef, length(batch_infos))
         if ll_cache isa AbstractVector
             bad = Threads.Atomic{Bool}(false)
-            # Chunk-indexed cache assignment — `Threads.threadid()` indexing is
+            # Each task owns cache slot `c` — `Threads.threadid()` indexing is
             # unsafe under task migration (two tasks could share one cache slot).
-            n_chunks = length(ll_cache)
-            Threads.@threads for c in 1:n_chunks
-                cache_c = ll_cache[c]
-                for bi in c:n_chunks:length(batch_infos)
-                    active !== nothing && !(bi in active) && continue
-                    if bad[]
-                        results[bi] = zero(T)
-                        continue
-                    end
-                    bll = _ghq_batch_ll(
-                        dm, batch_infos[bi], θu_re, const_cache,
-                        cache_c, method.level, bstars[bi]
-                    )
-                    if bll == -Inf
-                        Threads.atomic_or!(bad, true)
-                        results[bi] = zero(T)
-                    else
-                        # `convert`, not `T(bll)`: when `T` is a Dual and `bll` is the same
-                        # Dual type, the constructor tries `Float64(::Dual)` and throws.
-                        results[bi] = convert(T, bll)
-                    end
+            _greedy_foreach(length(batch_infos), length(ll_cache)) do bi, c
+                active !== nothing && !(bi in active) && return
+                if bad[]
+                    results[bi] = zero(T)
+                    return
+                end
+                bll = _ghq_batch_ll(
+                    dm, batch_infos[bi], θu_re, const_cache,
+                    ll_cache[c], method.level, bstars[bi]
+                )
+                if bll == -Inf
+                    Threads.atomic_or!(bad, true)
+                    results[bi] = zero(T)
+                else
+                    # `convert`, not `T(bll)`: when `T` is a Dual and `bll` is the same
+                    # Dual type, the constructor tries `Float64(::Dual)` and throws.
+                    results[bi] = convert(T, bll)
                 end
             end
             bad[] && return infT
