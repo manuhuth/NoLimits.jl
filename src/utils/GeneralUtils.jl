@@ -120,6 +120,19 @@ end
 # partner — same speed, three orders of magnitude more accurate here.
 @inline _resolve_ode_alg(alg) = alg === nothing ? AutoTsit5(Rodas5P()) : alg
 
+# Solve with `alg`; when that attempt fails and a `fallback` algorithm is configured
+# (`ODESolverConfig.fallback_alg`), re-solve the same problem with it. `reset!` restores
+# state that callbacks recorded during the failed attempt (crossing times). The first
+# attempt stays silent; only a failed fallback reaches the caller's drop/warning path.
+# With `fallback === nothing` the second branch is dead code and the return type is the
+# primary solution type.
+function _solve_with_fallback(prob, alg, fallback, args::Tuple, reset! = nothing; kw...)
+    sol = solve(prob, alg, args...; kw...)
+    (fallback === nothing || SciMLBase.successful_retcode(sol)) && return sol
+    reset! === nothing || reset!()
+    return solve(prob, fallback, args...; kw...)
+end
+
 # Exception classes that signal a numerically-degenerate point (rather than a
 # programming error): callers treat these as objective = Inf / likelihood = -Inf
 # during optimizer exploration instead of rethrowing.

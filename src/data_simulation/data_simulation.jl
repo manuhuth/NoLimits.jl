@@ -118,16 +118,16 @@ function _simulate_sol_accessors(dm::DataModel, idx::Int, θ, η)
             solver_cfg.kwargs, NamedTuple(), (dense = true,)
         )
         sol = cb === nothing ?
-            solve(prob, alg, solver_cfg.args...; solve_kwargs...) :
-            solve(prob, alg, solver_cfg.args...; solve_kwargs..., callback = cb)
+            _solve_with_fallback(prob, alg, solver_cfg.fallback_alg, solver_cfg.args; solve_kwargs...) :
+            _solve_with_fallback(prob, alg, solver_cfg.fallback_alg, solver_cfg.args; solve_kwargs..., callback = cb)
     else
         solve_kwargs = _ode_solve_kwargs(
             solver_cfg.kwargs, NamedTuple(),
             (saveat = get_saveat(ind), save_everystep = false, dense = false)
         )
         sol = cb === nothing ?
-            solve(prob, alg, solver_cfg.args...; solve_kwargs...) :
-            solve(prob, alg, solver_cfg.args...; solve_kwargs..., callback = cb)
+            _solve_with_fallback(prob, alg, solver_cfg.fallback_alg, solver_cfg.args; solve_kwargs...) :
+            _solve_with_fallback(prob, alg, solver_cfg.fallback_alg, solver_cfg.args; solve_kwargs..., callback = cb)
     end
     return get_de_accessors_builder(get_de(model))(sol, compiled)
 end

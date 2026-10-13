@@ -62,7 +62,7 @@ struct RandomBundle{R}
 end
 
 """
-    ODESolverConfig{A, K, T}
+    ODESolverConfig{A, K, T, F}
 
 Configuration for the ODE solver used when integrating the `@DifferentialEquation` block.
 
@@ -87,17 +87,24 @@ Configuration for the ODE solver used when integrating the `@DifferentialEquatio
     linear/nonlinear splits. Exact, but for small dense systems not necessarily faster than
     the numerical solver on the gradient — opt in when exactness matters.
   - `:diagonal` — require a whole-system diagonal linear ODE; error otherwise.
+- `fallback_alg`: ODE algorithm used to re-solve the same problem (same `kwargs`/`args`)
+  when the solve with `alg` does not return a successful retcode, e.g. `Tsit5()` as `alg`
+  with a step budget in `kwargs` and `AutoVern7(Rodas5P())` as fallback. The failed first
+  attempt is silent. `nothing` (default) means no second attempt.
 
 Constructed by the `@Model` macro with defaults and updated via [`set_solver_config`](@ref).
 """
-struct ODESolverConfig{A, K, T}
+struct ODESolverConfig{A, K, T, F}
     alg::A
     kwargs::K
     args::T
     saveat_mode::Symbol
     closed_form::Symbol
+    fallback_alg::F
 end
 
+ODESolverConfig(alg, kwargs, args, saveat_mode, closed_form) =
+    ODESolverConfig(alg, kwargs, args, saveat_mode, closed_form, nothing)
 ODESolverConfig() = ODESolverConfig(nothing, NamedTuple(), (), :dense, :auto)
 
 """
@@ -434,12 +441,14 @@ function _validate_solver_config(cfg::ODESolverConfig)
             " Did you mean $(cfg.alg)()?" : ""
         error("alg must be an OrdinaryDiffEq algorithm such as Tsit5(); got $(typeof(cfg.alg)).$(hint)")
     end
+    cfg.fallback_alg === nothing || cfg.fallback_alg isa SciMLBase.AbstractODEAlgorithm ||
+        error("fallback_alg must be an OrdinaryDiffEq algorithm such as Rodas5P() or nothing; got $(typeof(cfg.fallback_alg)).")
     return nothing
 end
 
 """
     set_solver_config(m::Model, cfg::ODESolverConfig) -> Model
-    set_solver_config(m::Model; alg, kwargs, args, saveat_mode) -> Model
+    set_solver_config(m::Model; alg, fallback_alg, kwargs, args, saveat_mode, closed_form) -> Model
 
 Return a new `Model` with the ODE solver configuration replaced by `cfg`.
 The keyword form constructs a new [`ODESolverConfig`](@ref) from the given keyword
@@ -451,6 +460,14 @@ arguments and replaces the existing configuration.
 - `args = ()`: positional arguments forwarded to `solve`.
 - `saveat_mode::Symbol = :dense`: save-time mode (`:dense`, `:saveat`, or `:auto`).
 - `closed_form::Symbol = :auto`: closed-form linear-ODE fast path (`:auto`, `:off`, `:diagonal`).
+- `fallback_alg = nothing`: algorithm for a second solve of the same problem when the solve
+  with `alg` fails (non-successful retcode, e.g. `MaxIters` of a non-stiff method on a stiff
+  stretch). Same `kwargs`/`args`; a step budget in `kwargs` applies to both attempts.
+  Applies to every numerical solve (estimation incl. dual-number solves and crossing
+  models, simulation, plotting), not to the closed-form path.
+
+Every keyword call rebuilds the whole configuration from these defaults, so pass every
+setting you want in one call.
 """
 function set_solver_config(m::Model, cfg::ODESolverConfig)
     _validate_solver_config(cfg)
@@ -461,7 +478,7 @@ function set_solver_config(m::Model, cfg::ODESolverConfig)
 end
 
 function set_solver_config(
-        m::Model; alg = nothing, kwargs = NamedTuple(),
+        m::Model; alg = nothing, fallback_alg = nothing, kwargs = NamedTuple(),
         args = (), saveat_mode::Union{Symbol, AbstractString} = :dense,
         closed_form::Union{Symbol, AbstractString} = :auto
     )
@@ -469,7 +486,7 @@ function set_solver_config(
         m,
         ODESolverConfig(
             alg, _as_namedtuple(kwargs), args,
-            _as_symbol(saveat_mode), _as_symbol(closed_form)
+            _as_symbol(saveat_mode), _as_symbol(closed_form), fallback_alg
         )
     )
 end
