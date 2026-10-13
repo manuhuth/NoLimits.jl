@@ -113,6 +113,47 @@ end
         )
     end
 
+    @testset "legacy options: initial multistart, no refresh, per-individual seed" begin
+        ws = AcceptedWarmStarts()
+        @test !ws.initial_multistart && ws.refresh
+        st = (; iter = 2, u = [0.0])
+        # refresh = false: stale values are intended, no :refresh and no warning
+        cb = NoLimits._AcceptedWarmCallback(_ -> true, false, nothing, "FOCEI", false)
+        @test (@test_logs cb(st, 0.0)) === false
+        # seed = seed + individual index (data order) for one-individual batches
+        s = _aws_setup(dm, true)
+        ws7 = AcceptedWarmStarts(; seed = 7)
+        for (bi, info) in enumerate(s.binfos)
+            @test rand(NoLimits._aws_rng(ws7, info, bi)) == rand(Random.Xoshiro(7 + only(info.inds)))
+        end
+        # initial multistart: with μ = 0 the default start η = 0 is a stationary point of
+        # the log-joint, the inner solve stays there; the multistart finds a mode at |η| ≈ 2
+        s0 = _aws_setup(dm, true)
+        s0.obj(0.0)
+        @test all(b -> abs(b[1]) < 1.0e-6, s0.cache.bstar_cache.b_star)
+        wsi = AcceptedWarmStarts(; initial_multistart = true)
+        @test NoLimits._laplace_accepted_multistart!(
+            s0.cache, dm, s0.binfos, ComponentArray(μ = 0.0), s0.cc, s0.llc, s0.inner, wsi;
+            from_default = true
+        )
+        @test all(b -> abs(abs(b[1]) - 2) < 0.1, s0.cache.bstar_cache.b_star)
+        # in a fit from μ = 0 the modes stay at the saddle η = 0 (no finite Laplace value)
+        # unless the initial multistart moves them
+        for ims in (false, true)
+            logs, _ = Test.collect_test_logs() do
+                fit_model(
+                    dm, NoLimits.Laplace(;
+                        warm_starts = AcceptedWarmStarts(; initial_multistart = ims, refresh = false),
+                        optim_kwargs = (; maxiters = 2)
+                    );
+                    theta_0_untransformed = ComponentArray(μ = 0.0),
+                    serialization = SciMLBase.EnsembleSerial()
+                )
+            end
+            @test any(l -> occursin("never became finite", string(l.message)), logs) == !ims
+        end
+    end
+
     @testset "fit with AcceptedWarmStarts" begin
         calls = Ref(0)
         user_cb = (state, f) -> (calls[] += 1; false)
