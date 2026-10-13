@@ -1110,8 +1110,10 @@ function _saem_expr_group_invariant(ex, fixed_set::Set{Symbol})
                 f.args[2] isa QuoteNode
             f = f.args[2].value
         end
-        (f isa Symbol && !(f in fixed_set) &&
-            (isdefined(Base, f) || isdefined(LinearAlgebra, f))) || return false
+        (
+            f isa Symbol && !(f in fixed_set) &&
+                (isdefined(Base, f) || isdefined(LinearAlgebra, f))
+        ) || return false
         return all(a -> _saem_expr_group_invariant(a, fixed_set), @view ex.args[2:end])
     end
     ex.head in (:vect, :tuple, :vcat, :hcat, :row) || return false
