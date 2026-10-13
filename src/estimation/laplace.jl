@@ -1087,7 +1087,8 @@ function _re_prior_logf_batch(
 end
 
 """
-    NewtonInner(; max_dim=32, maxiters=100, g_abstol=1e-8, alpha_min=1e-4)
+    NewtonInner(; max_dim=32, maxiters=100, g_abstol=1e-8, alpha_min=1e-4,
+                curvature=ExactHessianCurvature(), x_abstol=0.0)
 
 Opt-in inner-EBE optimizer for [`Laplace`](@ref)/[`FOCEI`](@ref) (and the
 `ebe_optimizer` options): a damped Newton ascent on the batch log-joint, built
@@ -1110,17 +1111,29 @@ warm starts the outer optimization provides and avoids the per-solve
   (a stalled or failed Newton solve automatically falls back to the default
   LBFGS path from the best point found, so robustness is never worse than the
   default).
+- `curvature`: the Hessian of the Newton step. `ExactHessianCurvature()` (default) is full
+  second-order AD. `FisherInformationCurvature(true)` is the Gauss-Newton /
+  expected-information Hessian from first-order AD only: much cheaper per step for ODE
+  models, and still an ascent direction, since the matrix is negative definite.
+- `x_abstol`: step convergence tolerance (as Optim.jl's `x_abstol`). The solve has
+  converged when a step, accepted or backtracked, moves `b` by at most `x_abstol` in every
+  coordinate. With ODE solutions the gradient of the log-joint has a noise floor, where the
+  backtracking cannot see a gain any more and the solve would otherwise stall at the mode.
+  `0.0` (default) disables the test.
 """
-struct NewtonInner
+struct NewtonInner{C}
     max_dim::Int
     maxiters::Int
     g_abstol::Float64
     alpha_min::Float64
+    curvature::C
+    x_abstol::Float64
 end
 
 function NewtonInner(;
         max_dim::Int = 32, maxiters::Int = 100, g_abstol::Float64 = 1.0e-8,
-        alpha_min::Float64 = 1.0e-4
+        alpha_min::Float64 = 1.0e-4, curvature = ExactHessianCurvature(),
+        x_abstol::Float64 = 0.0
     )
     # Invalid limits used to be accepted and only misbehave inside the inner solver (#220).
     max_dim >= 0 ||
@@ -1130,7 +1143,11 @@ function NewtonInner(;
         error("NewtonInner: g_abstol must be finite and > 0; got $(g_abstol).")
     (isfinite(alpha_min) && alpha_min > 0) ||
         error("NewtonInner: alpha_min must be finite and > 0; got $(alpha_min).")
-    return NewtonInner(max_dim, maxiters, g_abstol, alpha_min)
+    curvature isa AbstractCurvature ||
+        error("NewtonInner: curvature must be an AbstractCurvature; got $(repr(curvature)).")
+    (isfinite(x_abstol) && x_abstol >= 0) ||
+        error("NewtonInner: x_abstol must be finite and >= 0; got $(x_abstol).")
+    return NewtonInner(max_dim, maxiters, g_abstol, alpha_min, curvature, x_abstol)
 end
 
 # Minimal solution wrapper for the Newton path, duck-typed for the accessors
@@ -1175,16 +1192,18 @@ function _newton_inner_solve(
     end
     cfg = _get_fd_cfg!(entry::_FDCfgStore, f, b, () -> ForwardDiff.GradientConfig(f, b))
     g = Vector{Float64}(undef, nb)
-    ForwardDiff.gradient!(g, f, b, cfg)
     b_try = similar(b)
     for _ in 1:(newton.maxiters)
+        H = _newton_grad_hess!(
+            g, newton.curvature, f, cfg, dm, batch_info, θ_val, b, const_cache, cache, tctx
+        )
         gn = maximum(abs, g)
         isfinite(gn) || return _NewtonSol(b, Float64(fval), Inf, false)
         gn <= newton.g_abstol && return _NewtonSol(b, Float64(fval), gn, true)
-        H = _laplace_hessian_b(
-            dm, batch_info, θ_val, b, const_cache, cache, ad_cache, bi;
+        H === nothing && (H = _build_hess_b(
+            newton.curvature, dm, batch_info, θ_val, b, const_cache, cache, ad_cache, bi;
             ctx = "newton_inner", tctx = tctx
-        )
+        ))
         chol, _ = _laplace_cholesky_negH(
             H; jitter = 1.0e-6, max_tries = 8, growth = 10.0,
             adaptive = true, scale_factor = 1.0e-6
@@ -1196,7 +1215,10 @@ function _newton_inner_solve(
         (isfinite(slope) && slope > 0) || return _NewtonSol(b, Float64(fval), gn, false)
         α = 1.0
         accepted = false
+        Δmax = maximum(abs, Δ)
         while α >= newton.alpha_min
+            # step below the tolerance: b is at the mode up to x_abstol
+            α * Δmax <= newton.x_abstol && return _NewtonSol(b, Float64(fval), gn, true)
             @. b_try = b + α * Δ
             f_try = f(b_try)
             if isfinite(f_try) && f_try >= fval + 1.0e-4 * α * slope
@@ -1208,10 +1230,20 @@ function _newton_inner_solve(
             α /= 2
         end
         accepted || return _NewtonSol(b, Float64(fval), gn, false)
-        ForwardDiff.gradient!(g, f, b, cfg)
     end
+    _newton_grad_hess!(g, ExactHessianCurvature(), f, cfg, dm, batch_info, θ_val, b, const_cache, cache, tctx)
     gn = maximum(abs, g)
     return _NewtonSol(b, Float64(fval), isfinite(gn) ? gn : Inf, false)
+end
+
+# Gradient of the Newton step into `g`. Returns the Hessian when the curvature yields it in
+# the same pass (FisherInformationCurvature, focei.jl), else `nothing`: the caller builds it
+# only if the gradient test does not stop the solve.
+function _newton_grad_hess!(
+        g, curvature, f, cfg, dm, batch_info, θ, b, const_cache, cache, tctx
+    )
+    ForwardDiff.gradient!(g, f, b, cfg)
+    return nothing
 end
 
 @inline _laplace_sol_logf(sol::_NewtonSol) = sol.logf

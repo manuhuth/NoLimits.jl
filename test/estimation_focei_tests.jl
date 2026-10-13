@@ -400,3 +400,36 @@ end
     @test isconcretetype(eltype(dists))
     @test eltype(dists) <: Normal
 end
+
+@testset "FOCEI closed-form scores match AD of logpdf" begin
+    # φ -> logpdf of the family rebuilt from its `_focei_params`
+    function ad_score(d, y)
+        φ = NoLimits._focei_params(d)
+        rebuild = d isa Binomial ? (v -> Binomial(d.n, v[1])) :
+            d isa MvNormal ? (v -> begin
+                k = length(d)
+                Σ = zeros(eltype(v), k, k)
+                a = k
+                for j in 1:k, i in 1:j
+                    a += 1
+                    Σ[i, j] = v[a]
+                    Σ[j, i] = v[a]
+                end
+                MvNormal(v[1:k], Σ)
+            end) : (v -> typeof(d).name.wrapper(v...))
+        return ForwardDiff.gradient(v -> logpdf(rebuild(v), y), φ)
+    end
+    cases = [
+        (Normal(0.3, 1.7), 1.1), (LogNormal(0.2, 0.6), 1.9),
+        (Distributions.Laplace(0.4, 1.3), -0.8), (Cauchy(0.1, 0.7), 1.4),
+        (Exponential(2.5), 1.2), (Poisson(3.2), 5), (Bernoulli(0.3), 1), (Bernoulli(0.3), 0),
+        (Binomial(7, 0.4), 2), (Geometric(0.35), 3), (Gamma(2.3, 1.4), 2.7), (Beta(1.8, 3.1), 0.27),
+        (MvNormal([0.2, -0.4, 1.0], [2.0 0.3 0.1; 0.3 1.5 -0.2; 0.1 -0.2 0.8]), [0.9, -1.1, 0.4]),
+    ]
+    for (d, y) in cases
+        s = NoLimits._focei_score(d, y)
+        @test s !== nothing
+        @test collect(s) ≈ ad_score(d, y) rtol = 1.0e-10
+    end
+    @test NoLimits._focei_score(NegativeBinomial(3, 0.4), 2) === nothing
+end
