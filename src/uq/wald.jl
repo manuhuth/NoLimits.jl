@@ -630,28 +630,32 @@ function _compute_uq_wald_re(
     # only the partial derivative at fixed b*; the Hessian differences the analytic
     # gradient (with the implicit db*/dθ term) instead.
     grad_active = approx_method isa GHQuadrature ? nothing : function (x_active)
-        θu = _θu_from_active(x_active)
-        obj, g, _ = _laplace_objective_and_grad(
-            dm, batch_infos, θu, const_cache, ll_cache, ebe_cache;
-            inner = approx_method.inner,
-            hessian = approx_method.hessian,
-            cache_opts = cache_opts,
-            multistart = approx_method.multistart,
-            rng = Random.Xoshiro(seed),
-            serialization = serialization_use,
-            hmode = hmode_use
-        )
-        isfinite(obj) || return fill(NaN, length(x_active))
-        g_u = collect(g)
-        axs = getaxes(θu)
-        use_penalty && (g_u .+= ForwardDiff.gradient(
-            v -> _penalty_value(ComponentArray(v, axs), penalty_use), collect(θu)
-        ))
-        extra_use === nothing || (g_u .+= ForwardDiff.gradient(
-            v -> extra_use(ComponentArray(v, axs)), collect(θu)
-        ))
-        J = ForwardDiff.jacobian(x -> collect(_θu_from_active(x)), x_active)
-        return J' * g_u
+            θu = _θu_from_active(x_active)
+            obj, g, _ = _laplace_objective_and_grad(
+                dm, batch_infos, θu, const_cache, ll_cache, ebe_cache;
+                inner = approx_method.inner,
+                hessian = approx_method.hessian,
+                cache_opts = cache_opts,
+                multistart = approx_method.multistart,
+                rng = Random.Xoshiro(seed),
+                serialization = serialization_use,
+                hmode = hmode_use
+            )
+            isfinite(obj) || return fill(NaN, length(x_active))
+            g_u = collect(g)
+            axs = getaxes(θu)
+            use_penalty && (
+                g_u .+= ForwardDiff.gradient(
+                    v -> _penalty_value(ComponentArray(v, axs), penalty_use), collect(θu)
+                )
+            )
+            extra_use === nothing || (
+                g_u .+= ForwardDiff.gradient(
+                    v -> extra_use(ComponentArray(v, axs)), collect(θu)
+                )
+            )
+            J = ForwardDiff.jacobian(x -> collect(_θu_from_active(x)), x_active)
+            return J' * g_u
     end
     hess_backend_use = if hessian_backend != :auto
         hessian_backend

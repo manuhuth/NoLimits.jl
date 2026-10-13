@@ -901,8 +901,10 @@ end
     ηs = 0.5 .+ 0.5 .* randn(rng, 25)
     df.y = [exp(ηs[parse(Int, id)]) * exp(-0.8 * t) + exp(2ηs[parse(Int, id)]) * t + 0.2 * randn(rng) for (id, t) in zip(df.ID, df.t)]
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
-    for (m, hmode) in ((NoLimits.Laplace(inner_grad_tol = 1.0e-10), NoLimits._ExactHess()),
-                       (NoLimits.FOCEI(inner_grad_tol = 1.0e-10), NoLimits._FOCEIHess(true)))
+    for (m, hmode) in (
+            (NoLimits.Laplace(inner_grad_tol = 1.0e-10), NoLimits._ExactHess()),
+            (NoLimits.FOCEI(inner_grad_tol = 1.0e-10), NoLimits._FOCEIHess(true)),
+        )
         res = fit_model(dm, m; rng = Xoshiro(1))
         H_uq = inv(get_uq_vcov(compute_uq(res; method = :wald); scale = :transformed))
         fe = NoLimits.get_fixed(get_model(dm))
@@ -920,10 +922,12 @@ end
         h = 1.0e-4
         x0 = collect(θt)
         n = length(x0)
-        H_ref = [begin
-                     e_i = h * (1:n .== i); e_j = h * (1:n .== j)
-                     (obj(x0 + e_i + e_j) - obj(x0 + e_i - e_j) - obj(x0 - e_i + e_j) + obj(x0 - e_i - e_j)) / (4h^2)
-                 end for i in 1:n, j in 1:n]
+        H_ref = [
+            begin
+                    e_i = h * (1:n .== i); e_j = h * (1:n .== j)
+                    (obj(x0 + e_i + e_j) - obj(x0 + e_i - e_j) - obj(x0 - e_i + e_j) + obj(x0 - e_i - e_j)) / (4h^2)
+                end for i in 1:n, j in 1:n
+        ]
         @test H_uq ≈ H_ref rtol = 2.0e-3
     end
 end

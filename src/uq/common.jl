@@ -502,18 +502,18 @@ function _hessian_from_objective(
         error("Unsupported Hessian backend $(backend). Use :auto, :forwarddiff, or :fd_gradient.")
 
     grad_fun = grad !== nothing ? (x -> Float64.(grad(Float64.(x)))) : x -> begin
-        xv = Float64.(x)
-        try
-            return Float64.(ForwardDiff.gradient(obj, xv))
+            xv = Float64.(x)
+            try
+                return Float64.(ForwardDiff.gradient(obj, xv))
         catch
-            return _gradient_fd_from_obj(
-                obj, xv;
-                abs_step = fd_abs_step,
-                rel_step = fd_rel_step,
-                max_tries = fd_max_tries
-            )
+                return _gradient_fd_from_obj(
+                    obj, xv;
+                    abs_step = fd_abs_step,
+                    rel_step = fd_rel_step,
+                    max_tries = fd_max_tries
+                )
         end
-    end
+        end
 
     if backend_use == :forwarddiff
         try

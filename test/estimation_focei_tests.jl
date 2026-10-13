@@ -464,17 +464,19 @@ end
     function ad_score(d, y)
         φ = NoLimits._focei_params(d)
         rebuild = d isa Binomial ? (v -> Binomial(d.n, v[1])) :
-            d isa MvNormal ? (v -> begin
-                k = length(d)
-                Σ = zeros(eltype(v), k, k)
-                a = k
-                for j in 1:k, i in 1:j
-                    a += 1
-                    Σ[i, j] = v[a]
-                    Σ[j, i] = v[a]
+            d isa MvNormal ? (
+                v -> begin
+                    k = length(d)
+                    Σ = zeros(eltype(v), k, k)
+                    a = k
+                    for j in 1:k, i in 1:j
+                        a += 1
+                        Σ[i, j] = v[a]
+                        Σ[j, i] = v[a]
                 end
-                MvNormal(v[1:k], Σ)
-            end) : (v -> typeof(d).name.wrapper(v...))
+                    MvNormal(v[1:k], Σ)
+                end
+            ) : (v -> typeof(d).name.wrapper(v...))
         return ForwardDiff.gradient(v -> logpdf(rebuild(v), y), φ)
     end
     cases = [

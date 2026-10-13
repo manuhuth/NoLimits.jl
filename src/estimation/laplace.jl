@@ -1200,10 +1200,12 @@ function _newton_inner_solve(
         gn = maximum(abs, g)
         isfinite(gn) || return _NewtonSol(b, Float64(fval), Inf, false)
         gn <= newton.g_abstol && return _NewtonSol(b, Float64(fval), gn, true)
-        H === nothing && (H = _build_hess_b(
-            newton.curvature, dm, batch_info, θ_val, b, const_cache, cache, ad_cache, bi;
-            ctx = "newton_inner", tctx = tctx
-        ))
+        H === nothing && (
+            H = _build_hess_b(
+                newton.curvature, dm, batch_info, θ_val, b, const_cache, cache, ad_cache, bi;
+                ctx = "newton_inner", tctx = tctx
+            )
+        )
         chol, _ = _laplace_cholesky_negH(
             H; jitter = 1.0e-6, max_tries = 8, growth = 10.0,
             adaptive = true, scale_factor = 1.0e-6
@@ -2159,12 +2161,12 @@ function _laplace_grad_batch(
     chol_b = chol
     if !(hmode isa _ExactHess)
         H_ex = fast !== nothing ? fast.Hex : try
-            _laplace_hessian_b(
-                dm, batch_info, θ, b, const_cache, cache, ad_cache, bi;
-                ctx = "dbdtheta", tctx = tctx0
-            )
+                _laplace_hessian_b(
+                    dm, batch_info, θ, b, const_cache, cache, ad_cache, bi;
+                    ctx = "dbdtheta", tctx = tctx0
+                )
         catch err
-            _is_numeric_error(err) ? nothing : rethrow(err)
+                _is_numeric_error(err) ? nothing : rethrow(err)
         end
         if H_ex !== nothing && negH_definite_without_jitter(H_ex)
             c, _ = _laplace_cholesky_negH(
