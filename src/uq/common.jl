@@ -485,19 +485,23 @@ function _intervals_from_draws(draws::Matrix{Float64}, level::Float64)
     return UQIntervals(level, lower, upper)
 end
 
+# `grad`: optional analytic gradient of `obj` for the :fd_gradient backend. Needed when AD
+# through `obj` is not the total derivative, e.g. a Laplace objective whose inner modes b*
+# are re-solved in Float64 (AD at fixed b* misses the implicit db*/dθ term).
 function _hessian_from_objective(
         obj::Function,
         x0::Vector{Float64};
         backend::Symbol = :auto,
         fd_abs_step::Real = 1.0e-4,
         fd_rel_step::Real = 1.0e-3,
-        fd_max_tries::Int = 8
+        fd_max_tries::Int = 8,
+        grad = nothing
     )
     backend_use = backend == :auto ? :forwarddiff : backend
     backend_use == :forwarddiff || backend_use == :fd_gradient ||
         error("Unsupported Hessian backend $(backend). Use :auto, :forwarddiff, or :fd_gradient.")
 
-    grad_fun = x -> begin
+    grad_fun = grad !== nothing ? (x -> Float64.(grad(Float64.(x)))) : x -> begin
         xv = Float64.(x)
         try
             return Float64.(ForwardDiff.gradient(obj, xv))
