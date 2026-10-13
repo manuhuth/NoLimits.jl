@@ -669,6 +669,79 @@ end
     @test_throws ErrorException fit_model(dm, NoLimits.Laplace(); pooled_init = :yes)
 end
 
+# ─── 16b. pooled_init inherits extra_objective, bounds and weights ────────────────
+
+@testset "pooled_init inherits extra_objective, bounds and weights" begin
+    model = _pooled_init_model()
+    df = _pooled_df(; gen = (id, t, rng) -> 1.2 + 0.5 * t + 0.2 * randn(rng))
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    ser = (; serialization = NoLimits.EnsembleSerial())
+    pre(method, kw; fo = NamedTuple(), pi = true) =
+        NoLimits._pooled_init_theta(dm, method, pi, fo, merge(ser, kw))
+
+    # extra_objective pulls b to 2 (the data alone give b ≈ 0.5)
+    pull = θu -> 1.0e4 * (θu.b - 2.0)^2
+    @test pre(NoLimits.Laplace(), (; extra_objective = pull)).b ≈ 2.0 atol = 1.0e-2
+    @test pre(NoLimits.Laplace(), (; extra_objective = pull); fo = (; extra_objective = nothing)).b ≈
+        0.5 atol = 0.2
+
+    # bounds of the main method: a plain vector over (μ, ω, b, σ), while the pre-fit
+    # frees only (μ, b, σ) and must re-key it by name
+    lap_b = NoLimits.Laplace(; lb = fill(-Inf, 4), ub = [Inf, Inf, 0.2, Inf])
+    @test pre(lap_b, NamedTuple()).b <= 0.2
+    # a boxed pre-fit runs in Fminbox: 5 barrier rounds of 10 LBFGS iterations
+    @test NoLimits._default_pooled_init_method(dm, lap_b, NamedTuple()).optim_kwargs ==
+        (; maxiters = 5, local_maxiters = 10)
+    @test NoLimits._default_pooled_init_method(dm, NoLimits.Laplace(), NamedTuple()).optim_kwargs ==
+        (; maxiters = 50)
+    lap_nt = NoLimits.Laplace(;
+        lb = (; μ = -Inf, ω = -Inf, b = -Inf, σ = -Inf), ub = (; μ = Inf, ω = Inf, b = 0.2, σ = Inf)
+    )
+    @test pre(lap_nt, NamedTuple()).b <= 0.2
+    # main-call constants shorten the vector consistently
+    lap_c = NoLimits.Laplace(; lb = fill(-Inf, 3), ub = [Inf, 0.2, Inf])
+    θc = pre(lap_c, (; constants = (; ω = 0.5)))
+    @test θc.b <= 0.2 && θc.ω == 0.5
+    # a user Pooled instance keeps its own (absent) bounds …
+    @test pre(lap_b, NamedTuple(); pi = NoLimits.Pooled(optim_kwargs = (; maxiters = 50))).b ≈
+        0.5 atol = 0.2
+    # … and the main fit clamps that start strictly into its box
+    @test_logs (:warn, r"clamped into the box") match_mode = :any fit_model(
+        dm, NoLimits.Laplace(; optim_kwargs = (; maxiters = 2), lb = fill(-Inf, 4), ub = [Inf, Inf, 0.2, Inf]);
+        pooled_init = NoLimits.Pooled(optim_kwargs = (; maxiters = 50)), ser...
+    )
+
+    # per-individual weights act in the pre-fit: individuals 7-12 have slope -0.5
+    dfw = _pooled_df(; gen = (id, t, rng) -> 1.2 + (id <= 6 ? 0.5 : -0.5) * t + 0.1 * randn(rng))
+    dfw.w = [id <= 6 ? 1.0 : 0.0 for id in dfw.ID]
+    dmw = DataModel(model, dfw; primary_id = :ID, time_col = :t, weights = :w)
+    dmu = DataModel(model, dfw; primary_id = :ID, time_col = :t)
+    θw = NoLimits._pooled_init_theta(dmw, NoLimits.Laplace(), true, NamedTuple(), ser)
+    θu = NoLimits._pooled_init_theta(dmu, NoLimits.Laplace(), true, NamedTuple(), ser)
+    @test θw.b ≈ 0.5 atol = 0.1
+    @test θu.b ≈ 0.0 atol = 0.1
+end
+
+@testset "start clamped strictly inside the bounds" begin
+    @test -1.0 < NoLimits._clamp_inside(-5.0, -1.0, 1.0) < -0.99
+    @test 0.99 < NoLimits._clamp_inside(5.0, -1.0, 1.0) < 1.0
+    @test NoLimits._clamp_inside(0.3, -1.0, 1.0) == 0.3
+    @test 1.0e3 < NoLimits._clamp_inside(-Inf, 1.0e3, Inf) < 1.0e3 + 1.0e-4
+    @test NoLimits._clamp_inside(2.0, 1.0, 1.0) == 1.0          # degenerate box
+    @test NoLimits._needs_interior_start(NoLimits.OptimizationOptimJL.IPNewton())
+    @test !NoLimits._needs_interior_start(NoLimits.OptimizationOptimJL.LBFGS())
+
+    fe = NoLimits.get_fixed(_pooled_init_model())
+    θ0 = ComponentArray(μ = 1.0, ω = 0.0, b = 0.2, σ = 0.0)   # transformed scale, b on its bound
+    lb, ub = fill(-10.0, 4), [10.0, 10.0, 0.2, 10.0]   # IPNewton needs a finite box
+    res(opt) = NoLimits.resolve_optimizer_bounds(
+        fe, [:μ, :ω, :b, :σ], θ0, opt, lb, ub, NamedTuple()
+    )[4]
+    # an on-bound start is moved inside only for an interior-point optimizer
+    @test collect(res(NoLimits.OptimizationOptimJL.LBFGS()))[3] == 0.2
+    @test collect(res(NoLimits.OptimizationOptimJL.IPNewton()))[3] < 0.2
+end
+
 # ─── 17. Wald UQ on a Pooled fit ──────────────────────────────────────────────────
 #
 # The pooled plug-in likelihood of (μ RE-only mean, b, σ) is IDENTICAL to the plain
