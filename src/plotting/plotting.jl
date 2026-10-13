@@ -392,11 +392,12 @@ function _solve_dense_individual(
     solver_cfg = get_solver_config(model)
     alg = _resolve_ode_alg(solver_cfg.alg)
     solve_kwargs = _ode_solve_kwargs(solver_cfg.kwargs, ode_kwargs, (dense = true,))
+    fb = solver_cfg.fallback_alg
     if cb === nothing
-        sol = solve(prob, alg, solver_cfg.args..., ode_args...; solve_kwargs...)
+        sol = _solve_with_fallback(prob, alg, fb, (solver_cfg.args..., ode_args...); solve_kwargs...)
     else
-        sol = solve(
-            prob, alg, solver_cfg.args..., ode_args...; solve_kwargs..., callback = cb
+        sol = _solve_with_fallback(
+            prob, alg, fb, (solver_cfg.args..., ode_args...); solve_kwargs..., callback = cb
         )
     end
     return sol, compiled

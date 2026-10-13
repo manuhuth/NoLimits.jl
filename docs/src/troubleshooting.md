@@ -93,6 +93,15 @@ number of random effects, or fixing one of them with `constants_re`, is often th
 
   Each keyword call rebuilds the whole solver configuration from the defaults, so pass every
   setting you want (`alg`, `kwargs`, `saveat_mode`, ...) in one call.
+- **Solves that fail only far from the optimum.** A fast non-stiff method with a step budget
+  can be combined with a stiff fallback that re-solves only the failed solves:
+
+  ```julia
+  model = set_solver_config(model; alg = Tsit5(), fallback_alg = AutoVern7(Rodas5P()),
+                            kwargs = (; maxiters = 10^4, abstol = 1.0e-8, reltol = 1.0e-8))
+  ```
+
+  The first attempt fails silently; only a failed fallback solve gives the -Inf warning.
 - **Tolerances.** Tight `abstol`/`reltol` on an ODE model dominates the runtime. Loosen them
   through `set_solver_config(model; kwargs = (; abstol, reltol))` while exploring, then tighten
   for the final fit.

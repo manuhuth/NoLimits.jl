@@ -3446,11 +3446,28 @@ function _ll_build_prob_template(f!_use, u0, tspan, p_flat, cb, saveat_use, tsto
     return ODEProblem{true, SciMLBase.FullSpecialize}(f!_use, u0, tspan, p_flat; kw...)
 end
 
-function _ll_ode_solve_baked(cache::_LLCache, prob)
+function _ll_ode_solve_baked(cache::_LLCache, prob, reset! = nothing)
     solve_kwargs = _ode_solve_kwargs(
         cache.solver_cfg.kwargs, cache.ode_kwargs, NamedTuple()
     )
-    return solve(prob, cache.alg, cache.ode_args...; solve_kwargs...)
+    return _solve_with_fallback(
+        prob, cache.alg, cache.solver_cfg.fallback_alg, cache.ode_args, reset!;
+        solve_kwargs...
+    )
+end
+
+# Restores the crossing records of a failed first attempt before the fallback solve.
+struct _CrossingReset{R, T}
+    refs::R          # Ref{T} receiving the crossing time (or `nothing` for :rootval)
+    fireds::Vector{Base.RefValue{Bool}}
+    tinits::T
+end
+function (cr::_CrossingReset)()
+    for k in eachindex(cr.fireds)
+        cr.fireds[k][] = false
+        cr.refs[k][] = cr.tinits[k]
+    end
+    return nothing
 end
 
 # One-shot warning flags, reset per `fit_model` call. Atomics rather than the logger's
@@ -3774,7 +3791,7 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
         prob = ODEProblem{true, SciMLBase.FullSpecialize}(
             f!_use, u0_T, get_tspan(ind), p_flat; _ll_prob_kwargs(cbset, saveat_use, get_tstops(ind))...
         )
-        sol = _ll_ode_solve_baked(cache, prob)
+        sol = _ll_ode_solve_baked(cache, prob, _CrossingReset((r,), [fired], (tinit,)))
         SciMLBase.successful_retcode(sol) || return _ll_drop_solve(sol.retcode)
         acc = get_de_accessors_builder(get_de(model))(sol, compiled)
         return merge(acc, NamedTuple{(spec.name,)}((r[],)))
@@ -3785,6 +3802,9 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
     thr = Vector{Any}(undef, n_cross)
     time_refs = Vector{Any}(undef, n_cross)   # Ref{T} for :time, `nothing` for :rootval
     cross_cbs = Any[]
+    reset_refs = Any[]
+    reset_fireds = Base.RefValue{Bool}[]
+    reset_tinits = Any[]
     for k in 1:n_cross
         spec = crossings[k]
         sidx = findfirst(==(spec.state), state_names)
@@ -3798,6 +3818,9 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
             r = Ref{T}(tinit)
             time_refs[k] = r
             fired = Ref(false)
+            push!(reset_refs, r)
+            push!(reset_fireds, fired)
+            push!(reset_tinits, tinit)
             push!(
                 cross_cbs,
                 SciMLBase.DiscreteCallback(
@@ -3819,7 +3842,9 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
     prob = ODEProblem{true, SciMLBase.FullSpecialize}(
         f!_use, u0_T, get_tspan(ind), p_flat; _ll_prob_kwargs(cbset, saveat_use, get_tstops(ind))...
     )
-    sol = _ll_ode_solve_baked(cache, prob)
+    sol = _ll_ode_solve_baked(
+        cache, prob, _CrossingReset(reset_refs, reset_fireds, reset_tinits)
+    )
     SciMLBase.successful_retcode(sol) || return _ll_drop_solve(sol.retcode)
     acc = get_de_accessors_builder(get_de(model))(sol, compiled)
     cross_nt = NamedTuple{Tuple(crossings[k].name for k in 1:n_cross)}(
