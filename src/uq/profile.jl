@@ -180,7 +180,7 @@ function _build_uq_obj_re(
                     const_cache, ll_cache_local, method.level
                 )
                 bll == -Inf && return Inf
-                total += bll
+                total += _batch_weight(dm, get_inds(info)) * bll
             end
             -total
         else

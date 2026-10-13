@@ -21,6 +21,7 @@ get_individual
 get_batches
 get_batch_ids
 get_primary_id
+get_weights
 get_df
 get_model
 get_row_groups

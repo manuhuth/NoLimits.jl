@@ -109,7 +109,7 @@ function _rebuild_dm(dm_ref::DataModel, rows::Vector{Int})
         primary_id = cfg.primary_id, time_col = cfg.time_col,
         evid_col = cfg.evid_col, amt_col = cfg.amt_col,
         rate_col = cfg.rate_col, cmt_col = cfg.cmt_col, t0 = cfg.t0,
-        serialization = cfg.serialization
+        serialization = cfg.serialization, weights = cfg.weights_col
     )
 end
 
@@ -745,6 +745,11 @@ performance on the held-out test set. All `kwargs` are forwarded to
 - `fold_serialization`: controls fold-level parallelism. Use `EnsembleThreads()`
   to evaluate folds concurrently.
 - `constants_re`: fix specific RE levels on the natural scale.
+- `weighted`: when the `DataModel` has likelihood weights (see [`get_weights`](@ref)) and
+  this is `true` (default), each held-out individual's scores are multiplied by its
+  weight in the fold totals, and `mean_obs_loglikelihood` divides the weighted sum by the
+  summed weights of the scored observations. A `:weight` column is added to
+  `obs_scores`. `false` gives unweighted scores. The training fits are weighted either way.
 
 The Monte-Carlo modes (`:conditional`/`:montecarlo`) score each test individual by its
 joint predictive marginal `log( (1/S) Σ_s Π_r p(y_r|b_s) )`, not by a sum of
@@ -781,10 +786,12 @@ function fit_cv(
         constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
         ode_args::Tuple = (),
         ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        weighted::Bool = true,
         kwargs...
     )
     constants_re = _as_namedtuple(constants_re)
     ode_kwargs = _as_namedtuple(ode_kwargs)
+    use_weights = weighted && get_weights(cv_spec.dm) !== nothing
     seen_re_mode = _as_symbol(seen_re_mode)
     unseen_re_mode = _as_symbol(unseen_re_mode)
     seen_re_mode ∈ (:ebe, :conditional) ||
@@ -869,15 +876,26 @@ function fit_cv(
         end
 
         insertcols!(obs_df, 1, :fold => fill(f, nrow(obs_df)))
+        if use_weights && nrow(obs_df) > 0
+            w_test = get_weights(dm_test)
+            obs_df[!, :weight] = Float64[w_test[dm_test.id_index[id]] for id in obs_df[!, :individual]]
+        end
 
         # A fold can score nothing at all (every outcome missing, every ODE solve
         # failed): keep the empty frame instead of indexing a column that is not there.
         ll_all = "loglikelihood" ∈ names(obs_df) ? obs_df[!, :loglikelihood] : Float64[]
-        ll_finite = filter(!isnan, ll_all)
+        ok = .!isnan.(ll_all)
+        ll_finite = ll_all[ok]
         n_dropped = length(ll_all) - length(ll_finite)
         n_dropped == 0 ||
             @warn "fit_cv: fold $f scored $(length(ll_finite)) of $(length(ll_all)) held-out observations; $(n_dropped) could not be evaluated (NaN) and were dropped from the fold total. A model that rules an observation out scores -Inf and is kept."
-        test_ll = isempty(ll_finite) ? NaN : sum(ll_finite)
+        test_ll = if isempty(ll_finite)
+            NaN
+        elseif use_weights
+            sum(obs_df[ok, :weight] .* ll_finite)
+        else
+            sum(ll_finite)
+        end
 
         fit_res = store_results ? res_train : nothing
         return CVFoldResult{typeof(fit_res)}(f, test_ll, obs_df, fit_res)
@@ -898,14 +916,22 @@ function fit_cv(
     ll_valid = filter(!isnan, ll_vec)
     # Folds hold unequal numbers of observations, so the mean of fold totals depends on
     # the split; report the per-observation score alongside it (#226).
-    scored = nrow(all_scores) == 0 ? Float64[] :
-        filter(!isnan, all_scores[!, :loglikelihood])
+    ok = nrow(all_scores) == 0 ? BitVector() : .!isnan.(all_scores[!, :loglikelihood])
+    scored = nrow(all_scores) == 0 ? Float64[] : all_scores[ok, :loglikelihood]
+    mean_obs = if isempty(scored)
+        NaN
+    elseif use_weights
+        w_scored = all_scores[ok, :weight]
+        sum(w_scored .* scored) / sum(w_scored)
+    else
+        sum(scored) / length(scored)
+    end
 
     return CVResult(
         cv_spec, fold_results, all_scores,
         isempty(ll_valid) ? NaN : mean(ll_valid),
         length(ll_valid) >= 2 ? std(ll_valid) : NaN,
-        isempty(scored) ? NaN : sum(scored) / length(scored),
+        mean_obs,
         length(scored)
     )
 end

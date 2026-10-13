@@ -389,6 +389,7 @@ function simulate_data_model(
         rate_col = cfg.rate_col,
         cmt_col = cfg.cmt_col,
         t0 = cfg.t0,
-        serialization = serialization
+        serialization = serialization,
+        weights = cfg.weights_col
     )
 end

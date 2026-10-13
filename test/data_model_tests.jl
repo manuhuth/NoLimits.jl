@@ -1940,3 +1940,35 @@ end
     @test NoLimits._obs_is_missing([missing, missing])
     @test !NoLimits._obs_is_missing([0.1, 0.2])
 end
+
+@testset "likelihood weights column validation" begin
+    mk(d; kw...) = DataModel(fx_re_model(), d; primary_id = :ID, time_col = :t, kw...)
+    base = copy(fx_re_df())
+    ok = copy(base)
+    ok.w = Float64.(ok.ID)
+    @test NoLimits.get_weights(mk(ok; weights = :w)) == Float64.(1:6)
+    @test NoLimits.get_weights(mk(base)) === nothing
+    # Strings are accepted like the other column keywords; zero weights are allowed.
+    ok.w[ok.ID .== 2] .= 0.0
+    @test NoLimits.get_weights(mk(ok; weights = "w"))[2] == 0.0
+
+    bad(f) = (d = copy(base); d.w = f.(d.ID, eachindex(d.ID)); d)
+    @test_throws r"varies within ID 1" mk(bad((id, r) -> id == 1 ? Float64(r) : 1.0); weights = :w)
+    @test_throws r"negative weight" mk(bad((id, r) -> id == 3 ? -1.0 : 1.0); weights = :w)
+    @test_throws r"non-finite" mk(bad((id, r) -> id == 3 ? NaN : 1.0); weights = :w)
+    @test_throws r"no positive weight" mk(bad((id, r) -> 0.0); weights = :w)
+    @test_throws r"missing values" mk(bad((id, r) -> id == 2 ? missing : 1.0); weights = :w)
+    @test_throws ErrorException mk(base; weights = :nope)
+
+    # Individuals sharing a random-effect level (crossed ID x SITE) form one batch and
+    # must carry one weight.
+    mg = copy(fx_mg_df())
+    mg.w = [id <= 2 ? 1.0 : 2.0 for id in mg.ID]
+    @test NoLimits.get_weights(
+        DataModel(fx_mg_model(), mg; primary_id = :ID, time_col = :t, weights = :w)
+    ) == [1.0, 1.0, 2.0, 2.0]
+    mg.w = [id == 1 ? 3.0 : 1.0 for id in mg.ID]
+    @test_throws r"differs within a batch" DataModel(
+        fx_mg_model(), mg; primary_id = :ID, time_col = :t, weights = :w
+    )
+end

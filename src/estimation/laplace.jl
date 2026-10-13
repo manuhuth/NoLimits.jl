@@ -2642,9 +2642,12 @@ function _laplace_objective_and_grad(
                 bad[] = true
                 return
             end
-            obj_by_batch[bi] = res.logf + 0.5 * get_n_b(info) * log(2π) -
-                0.5 * res.logdet
-            @views grad_by_batch[:, bi] .= res.grad
+            w = _batch_weight(dm, get_inds(info))
+            obj_by_batch[bi] = w * (
+                res.logf + 0.5 * get_n_b(info) * log(2π) -
+                    0.5 * res.logdet
+            )
+            @views grad_by_batch[:, bi] .= w .* res.grad
         end
         bad[] && return (infT, ComponentArray(grad, axs), bstars)
         total = 0.0
@@ -2676,8 +2679,9 @@ function _laplace_objective_and_grad(
                 hmode = hmode
             )
             res.logf == -Inf && return (infT, ComponentArray(grad, axs), bstars)
-            total += res.logf + 0.5 * get_n_b(info) * log(2π) - 0.5 * res.logdet
-            grad .+= res.grad
+            w = _batch_weight(dm, get_inds(info))
+            total += w * (res.logf + 0.5 * get_n_b(info) * log(2π) - 0.5 * res.logdet)
+            grad .+= w .* res.grad
         end
         if minibatch !== nothing
             total *= minibatch.scale
@@ -2755,7 +2759,8 @@ function _laplace_objective_only(
                 tctx = tctx
             )
             logdet == Inf && (bad[] = true; return)
-            obj_by_batch[bi] = logf + 0.5 * get_n_b(info) * log(2π) - 0.5 * logdet
+            obj_by_batch[bi] = _batch_weight(dm, get_inds(info)) *
+                (logf + 0.5 * get_n_b(info) * log(2π) - 0.5 * logdet)
         end
         bad[] && return infT
         total = 0.0
@@ -2789,7 +2794,8 @@ function _laplace_objective_only(
                 tctx = tctx
             )
             logdet == Inf && return infT
-            total += logf + 0.5 * get_n_b(info) * log(2π) - 0.5 * logdet
+            total += _batch_weight(dm, get_inds(info)) *
+                (logf + 0.5 * get_n_b(info) * log(2π) - 0.5 * logdet)
         end
     end
     minibatch !== nothing && (total *= minibatch.scale)

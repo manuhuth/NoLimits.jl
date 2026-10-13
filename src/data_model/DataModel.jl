@@ -14,6 +14,7 @@ export get_closed_form_plan
 export get_time_col
 export get_obs_cols
 export get_evid_col
+export get_weights
 export get_t0
 export get_series
 export get_const_cov
@@ -47,6 +48,7 @@ algorithm, save-time mode, and the integration start time.
 - `serialization::S`: SciML ensemble algorithm (e.g. `EnsembleSerial()`, `EnsembleThreads()`).
 - `saveat_mode::Symbol`: `:dense` or `:saveat` (resolved from `:auto` at construction time).
 - `t0::T`: integration start time, or `nothing` to start at each individual's first data time.
+- `weights_col::Union{Nothing, Symbol}`: per-individual likelihood weight column, or `nothing`.
 """
 struct DataModelConfig{S, T}
     primary_id::Symbol
@@ -59,6 +61,7 @@ struct DataModelConfig{S, T}
     serialization::S
     saveat_mode::Symbol
     t0::T
+    weights_col::Union{Nothing, Symbol}
 end
 
 struct RowGroups{R, O}
@@ -184,6 +187,8 @@ struct DataModel{M, D, I, P, C, K, G, R}
     id_index::K
     row_groups::G
     re_group_info::R
+    # Per-individual likelihood weights, or `nothing` (unweighted).
+    weights::Union{Nothing, Vector{Float64}}
     # Lazily-computed closed-form eligibility (see `get_closed_form_plan`). Mutable
     # cache slot only; the DataModel is otherwise immutable.
     closed_form_plan::Base.RefValue{Union{Nothing, ClosedFormPlan}}
@@ -1603,6 +1608,11 @@ observation counts, and saveat-mode resolution.
   individual's integration at its first data time.
 - `serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial()`: parallelisation
   strategy for ODE solving. Use `EnsembleThreads()` for multi-threaded evaluation.
+- `weights::Union{Nothing, Symbol} = nothing`: column of per-individual likelihood
+  weights. Each individual contributes `w * log p(y_i | θ)` to the objective. The column
+  must be constant within each individual, finite and nonnegative with at least one
+  positive value, and equal within each batch of individuals that share a random-effect
+  level. Weights are not normalized. See [`get_weights`](@ref).
 
 Every column keyword also accepts a `String` (`time_col = "TIME"`), which is convenient
 from the Python and R bindings.
@@ -1617,7 +1627,8 @@ function DataModel(
         rate_col::Union{Symbol, AbstractString} = :RATE,
         cmt_col::Union{Symbol, AbstractString} = :CMT,
         t0::Union{Nothing, Real} = 0.0,
-        serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial()
+        serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial(),
+        weights::Union{Nothing, Symbol, AbstractString} = nothing
     )
     model isa Model ||
         error("DataModel expects a Model built with @Model as its first argument; got $(typeof(model)). Check the argument order: DataModel(model, df; ...).")
@@ -1628,6 +1639,7 @@ function DataModel(
     amt_col = _as_symbol(amt_col)
     rate_col = _as_symbol(rate_col)
     cmt_col = _as_symbol(cmt_col)
+    weights_col = _as_symbol(weights)
     # A non-finite integration start otherwise reaches the ODE solver internals (#220).
     (t0 === nothing || isfinite(t0)) ||
         error("t0 must be a finite time or `nothing`; got $(t0).")
@@ -1649,7 +1661,7 @@ function DataModel(
     saveat_mode = saveat_mode == :auto ? :saveat : saveat_mode
     config = DataModelConfig(
         primary_id, time_col, evid_col, amt_col, rate_col,
-        cmt_col, obs_cols, serialization, saveat_mode, t0
+        cmt_col, obs_cols, serialization, saveat_mode, t0, weights_col
     )
     _validate_schema(model, df, config)
     _validate_observed_markov_coarsed_usage(model, df, config)
@@ -1764,10 +1776,40 @@ function DataModel(
     id_index = Dict{Any, Int}((keys_sorted[i] => i) for i in eachindex(keys_sorted))
     row_groups = RowGroups(groups, obs_groups)
     re_group_info = _build_re_group_info(model, df, individuals, row_groups)
+    ind_weights = _build_individual_weights(df, weights_col, groups, keys_sorted, pairing, primary_id)
     return DataModel(
         model, df, individuals, pairing, config, id_index, row_groups,
-        re_group_info, Base.RefValue{Union{Nothing, ClosedFormPlan}}(nothing)
+        re_group_info, ind_weights, Base.RefValue{Union{Nothing, ClosedFormPlan}}(nothing)
     )
+end
+
+function _build_individual_weights(df, col, groups, keys_sorted, pairing, primary_id)
+    col === nothing && return nothing
+    _require_col(df, col, "weights")
+    vals = _get_col(df, col)
+    _check_missing(vals, col)
+    eltype(vals) <: Real ||
+        all(v -> v isa Real, vals) ||
+        error("Weights column $(col) must be numeric.")
+    _check_finite(vals, col)
+    w = Vector{Float64}(undef, length(groups))
+    for (i, rows) in enumerate(groups)
+        wi = Float64(vals[rows[1]])
+        all(r -> vals[r] == wi, rows) ||
+            error("Weights column $(col) varies within $(primary_id) $(keys_sorted[i]); weights must be constant within each individual.")
+        wi >= 0 ||
+            error("Weights column $(col) has the negative weight $(wi) for $(primary_id) $(keys_sorted[i]); weights must be nonnegative.")
+        w[i] = wi
+    end
+    any(>(0), w) || error("Weights column $(col) has no positive weight; at least one individual needs weight > 0.")
+    # Individuals sharing a random-effect level form one marginal-likelihood term,
+    # which can only carry one weight.
+    for b in pairing.batches
+        all(==(w[b[1]]), w[b]) && continue
+        details = join(["$(keys_sorted[i]) => $(w[i])" for i in b], ", ")
+        error("Weights column $(col) differs within a batch of individuals that share random-effect levels ($(primary_id): $(details)). Weights must be equal within each such batch.")
+    end
+    return w
 end
 
 """
@@ -1871,6 +1913,18 @@ Return the `REGroupInfo` struct containing random-effect level values and per-ro
 level indices, plus per-individual row-level assignments.
 """
 get_re_group_info(dm::DataModel) = dm.re_group_info
+
+"""
+    get_weights(dm::DataModel) -> Union{Nothing, Vector{Float64}}
+
+Return the per-individual likelihood weights (in individual order), or `nothing` when
+the `DataModel` was built without a `weights` column.
+"""
+get_weights(dm::DataModel) = dm.weights
+
+# Weight of individual `i` / of a batch of individuals (batches carry one weight).
+@inline _ind_weight(dm::DataModel, i::Integer) = dm.weights === nothing ? 1.0 : dm.weights[i]
+@inline _batch_weight(dm::DataModel, inds) = dm.weights === nothing ? 1.0 : dm.weights[first(inds)]
 
 """
     get_time_col(dm::DataModel) -> Symbol

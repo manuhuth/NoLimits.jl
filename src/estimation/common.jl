@@ -2555,7 +2555,7 @@ function get_loglikelihood(
         caches = ll_cache isa AbstractVector ? ll_cache : [ll_cache]
         parts = zeros(Float64, length(batch_infos))
         _greedy_foreach(length(batch_infos), length(caches)) do bi, c
-            parts[bi] = _ghq_batch_ll(
+            parts[bi] = _batch_weight(dm, get_inds(batch_infos[bi])) * _ghq_batch_ll(
                 dm, batch_infos[bi], θu_re, const_cache, caches[c], level
             )
         end
@@ -2834,7 +2834,7 @@ function _quadrature_batch_ll(
     # returned value is not a log-density in the fixed levels.
     const_ll = _const_re_prior_logf(dm, info, θu_re, const_cache, ll_cache)
     !isfinite(const_ll) && return -Inf
-    return s + const_ll
+    return _batch_weight(dm, get_inds(info)) * (s + const_ll)
 end
 
 function get_loglikelihood_quadrature(
@@ -4506,7 +4506,7 @@ function _loglikelihood_indices(
             if !isfinite(lli)
                 bad[] = true
             else
-                by_individual[k] = lli
+                by_individual[k] = _ind_weight(dm, i) * lli
             end
         end
         bad[] && return -Inf
@@ -4524,7 +4524,7 @@ function _loglikelihood_indices(
             η_ind = ηs isa Vector ? ηs[i] : ηs
             lli = _loglikelihood_individual(dm, i, θs, η_ind, cache_use)
             !isfinite(lli) && return -Inf
-            ll += lli
+            ll += _ind_weight(dm, i) * lli
         end
         return ll
     end
