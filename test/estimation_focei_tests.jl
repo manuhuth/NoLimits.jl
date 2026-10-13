@@ -250,6 +250,64 @@ end
     @test all(isfinite, collect(g))
 end
 
+@testset "FOCEI and Laplace gradients with a crossing level and an RE-only parameter" begin
+    # One-pass FOCEI and Laplace gradients (θ split into outcome-side and RE-only entries) vs finite
+    # differences of the marginal with the modes re-solved. The crossing level `lev` is a
+    # fixed effect named only as a quoted symbol; ω enters only the RE distribution.
+    cm = @Model begin
+        @fixedEffects begin
+            k = RealNumber(0.5; scale = :log)
+            lev = RealNumber(0.6)
+            ω = RealNumber(0.3; scale = :log)
+            σ = RealNumber(0.05; scale = :log)
+            σt = RealNumber(0.3; scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, ω); column = :ID)
+        end
+        @preDifferentialEquation begin
+            r = k * exp(η)
+        end
+        @DifferentialEquation begin
+            D(x) ~ r * (1 - x)
+        end
+        @initialDE begin
+            x = 0.0
+        end
+        @formulas begin
+            tc = crossing_time(:x, :lev)
+            y ~ Normal(x(t), σ)
+            z ~ Normal(tc, σt)
+        end
+    end
+    cm = set_solver_config(cm; alg = Tsit5(), saveat_mode = :saveat, kwargs = (; abstol = 1.0e-12, reltol = 1.0e-12))
+    rng = Xoshiro(4)
+    rows = NamedTuple[]
+    for i in 1:6
+        ri = 0.5 * exp(0.3 * randn(rng))
+        for tt in (0.5, 1.0, 2.0, 4.0)
+            push!(rows, (ID = "s$i", t = tt, y = 1 - exp(-ri * tt) + 0.05 * randn(rng), z = missing))
+        end
+        push!(rows, (ID = "s$i", t = 6.0, y = missing, z = -log(0.4) / ri + 0.3 * randn(rng)))
+    end
+    df = DataFrame(rows)
+    dm = DataModel(cm, df; primary_id = :ID, time_col = :t)
+    @test :lev in NL._compute_obs_fe_syms(cm)
+    θ = NL.get_params(dm; scale = :untransformed)
+    o, p = NL._theta_split_obs_re(dm, θ)
+    @test !isempty(p)
+    ebe = NL.EBEOptions(grad_tol = 1.0e-10, multistart_n = 1, multistart_k = 1)
+    for curv in (NL.FisherInformationCurvature(true), NL.ExactHessianCurvature())
+        _, g = NL.laplace_marginal_gradient(dm, θ; curvature = curv, ebe_options = ebe)
+        marg(x) = NL.laplace_marginal(dm, ComponentArray(x, getaxes(θ)); curvature = curv, ebe_options = ebe)
+        g_fd = FiniteDifferences.grad(central_fdm(5, 1), marg, collect(θ))[1]
+        @test collect(g) ≈ g_fd rtol = 1.0e-5
+    end
+end
+
 @testset "FOCEI rejects unsupported (HMM) outcome distributions" begin
     model = @Model begin
         @covariates begin
@@ -399,4 +457,37 @@ end
     dists = NL._focei_obs_dists_batch(dm, info, θu, zeros(info.n_b), const_cache, ll_cache)
     @test isconcretetype(eltype(dists))
     @test eltype(dists) <: Normal
+end
+
+@testset "FOCEI closed-form scores match AD of logpdf" begin
+    # φ -> logpdf of the family rebuilt from its `_focei_params`
+    function ad_score(d, y)
+        φ = NoLimits._focei_params(d)
+        rebuild = d isa Binomial ? (v -> Binomial(d.n, v[1])) :
+            d isa MvNormal ? (v -> begin
+                k = length(d)
+                Σ = zeros(eltype(v), k, k)
+                a = k
+                for j in 1:k, i in 1:j
+                    a += 1
+                    Σ[i, j] = v[a]
+                    Σ[j, i] = v[a]
+                end
+                MvNormal(v[1:k], Σ)
+            end) : (v -> typeof(d).name.wrapper(v...))
+        return ForwardDiff.gradient(v -> logpdf(rebuild(v), y), φ)
+    end
+    cases = [
+        (Normal(0.3, 1.7), 1.1), (LogNormal(0.2, 0.6), 1.9),
+        (Distributions.Laplace(0.4, 1.3), -0.8), (Cauchy(0.1, 0.7), 1.4),
+        (Exponential(2.5), 1.2), (Poisson(3.2), 5), (Bernoulli(0.3), 1), (Bernoulli(0.3), 0),
+        (Binomial(7, 0.4), 2), (Geometric(0.35), 3), (Gamma(2.3, 1.4), 2.7), (Beta(1.8, 3.1), 0.27),
+        (MvNormal([0.2, -0.4, 1.0], [2.0 0.3 0.1; 0.3 1.5 -0.2; 0.1 -0.2 0.8]), [0.9, -1.1, 0.4]),
+    ]
+    for (d, y) in cases
+        s = NoLimits._focei_score(d, y)
+        @test s !== nothing
+        @test collect(s) ≈ ad_score(d, y) rtol = 1.0e-10
+    end
+    @test NoLimits._focei_score(NegativeBinomial(3, 0.4), 2) === nothing
 end

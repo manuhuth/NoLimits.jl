@@ -1087,7 +1087,8 @@ function _re_prior_logf_batch(
 end
 
 """
-    NewtonInner(; max_dim=32, maxiters=100, g_abstol=1e-8, alpha_min=1e-4)
+    NewtonInner(; max_dim=32, maxiters=100, g_abstol=1e-8, alpha_min=1e-4,
+                curvature=ExactHessianCurvature(), x_abstol=0.0)
 
 Opt-in inner-EBE optimizer for [`Laplace`](@ref)/[`FOCEI`](@ref) (and the
 `ebe_optimizer` options): a damped Newton ascent on the batch log-joint, built
@@ -1110,17 +1111,29 @@ warm starts the outer optimization provides and avoids the per-solve
   (a stalled or failed Newton solve automatically falls back to the default
   LBFGS path from the best point found, so robustness is never worse than the
   default).
+- `curvature`: the Hessian of the Newton step. `ExactHessianCurvature()` (default) is full
+  second-order AD. `FisherInformationCurvature(true)` is the Gauss-Newton /
+  expected-information Hessian from first-order AD only: much cheaper per step for ODE
+  models, and still an ascent direction, since the matrix is negative definite.
+- `x_abstol`: step convergence tolerance (as Optim.jl's `x_abstol`). The solve has
+  converged when a step, accepted or backtracked, moves `b` by at most `x_abstol` in every
+  coordinate. With ODE solutions the gradient of the log-joint has a noise floor, where the
+  backtracking cannot see a gain any more and the solve would otherwise stall at the mode.
+  `0.0` (default) disables the test.
 """
-struct NewtonInner
+struct NewtonInner{C}
     max_dim::Int
     maxiters::Int
     g_abstol::Float64
     alpha_min::Float64
+    curvature::C
+    x_abstol::Float64
 end
 
 function NewtonInner(;
         max_dim::Int = 32, maxiters::Int = 100, g_abstol::Float64 = 1.0e-8,
-        alpha_min::Float64 = 1.0e-4
+        alpha_min::Float64 = 1.0e-4, curvature = ExactHessianCurvature(),
+        x_abstol::Float64 = 0.0
     )
     # Invalid limits used to be accepted and only misbehave inside the inner solver (#220).
     max_dim >= 0 ||
@@ -1130,7 +1143,11 @@ function NewtonInner(;
         error("NewtonInner: g_abstol must be finite and > 0; got $(g_abstol).")
     (isfinite(alpha_min) && alpha_min > 0) ||
         error("NewtonInner: alpha_min must be finite and > 0; got $(alpha_min).")
-    return NewtonInner(max_dim, maxiters, g_abstol, alpha_min)
+    curvature isa AbstractCurvature ||
+        error("NewtonInner: curvature must be an AbstractCurvature; got $(repr(curvature)).")
+    (isfinite(x_abstol) && x_abstol >= 0) ||
+        error("NewtonInner: x_abstol must be finite and >= 0; got $(x_abstol).")
+    return NewtonInner(max_dim, maxiters, g_abstol, alpha_min, curvature, x_abstol)
 end
 
 # Minimal solution wrapper for the Newton path, duck-typed for the accessors
@@ -1175,16 +1192,18 @@ function _newton_inner_solve(
     end
     cfg = _get_fd_cfg!(entry::_FDCfgStore, f, b, () -> ForwardDiff.GradientConfig(f, b))
     g = Vector{Float64}(undef, nb)
-    ForwardDiff.gradient!(g, f, b, cfg)
     b_try = similar(b)
     for _ in 1:(newton.maxiters)
+        H = _newton_grad_hess!(
+            g, newton.curvature, f, cfg, dm, batch_info, θ_val, b, const_cache, cache, tctx
+        )
         gn = maximum(abs, g)
         isfinite(gn) || return _NewtonSol(b, Float64(fval), Inf, false)
         gn <= newton.g_abstol && return _NewtonSol(b, Float64(fval), gn, true)
-        H = _laplace_hessian_b(
-            dm, batch_info, θ_val, b, const_cache, cache, ad_cache, bi;
+        H === nothing && (H = _build_hess_b(
+            newton.curvature, dm, batch_info, θ_val, b, const_cache, cache, ad_cache, bi;
             ctx = "newton_inner", tctx = tctx
-        )
+        ))
         chol, _ = _laplace_cholesky_negH(
             H; jitter = 1.0e-6, max_tries = 8, growth = 10.0,
             adaptive = true, scale_factor = 1.0e-6
@@ -1196,7 +1215,10 @@ function _newton_inner_solve(
         (isfinite(slope) && slope > 0) || return _NewtonSol(b, Float64(fval), gn, false)
         α = 1.0
         accepted = false
+        Δmax = maximum(abs, Δ)
         while α >= newton.alpha_min
+            # step below the tolerance: b is at the mode up to x_abstol
+            α * Δmax <= newton.x_abstol && return _NewtonSol(b, Float64(fval), gn, true)
             @. b_try = b + α * Δ
             f_try = f(b_try)
             if isfinite(f_try) && f_try >= fval + 1.0e-4 * α * slope
@@ -1208,10 +1230,20 @@ function _newton_inner_solve(
             α /= 2
         end
         accepted || return _NewtonSol(b, Float64(fval), gn, false)
-        ForwardDiff.gradient!(g, f, b, cfg)
     end
+    _newton_grad_hess!(g, ExactHessianCurvature(), f, cfg, dm, batch_info, θ_val, b, const_cache, cache, tctx)
     gn = maximum(abs, g)
     return _NewtonSol(b, Float64(fval), isfinite(gn) ? gn : Inf, false)
+end
+
+# Gradient of the Newton step into `g`. Returns the Hessian when the curvature yields it in
+# the same pass (FisherInformationCurvature, focei.jl), else `nothing`: the caller builds it
+# only if the gradient test does not stop the solve.
+function _newton_grad_hess!(
+        g, curvature, f, cfg, dm, batch_info, θ, b, const_cache, cache, tctx
+    )
+    ForwardDiff.gradient!(g, f, b, cfg)
+    return nothing
 end
 
 @inline _laplace_sol_logf(sol::_NewtonSol) = sol.logf
@@ -1983,21 +2015,38 @@ function _laplace_grad_batch(
     )
     ForwardDiff.gradient!(buf.grad_logf, logf_θ, θ_vec, cfg)
     grad_logf = buf.grad_logf
-    # g(b, θ) = ∂ logf / ∂b
-    function gθ!(out, θv)
-        fb = bv -> _laplace_logf_batch(dm, batch_info, θv, bv, const_cache, cache)
-        cfg = _get_fd_cfg!(buf.gθ_grad_cfg, fb, b, () -> ForwardDiff.GradientConfig(fb, b))
-        ForwardDiff.gradient!(out, fb, b, cfg)
-        return out
+    # g = ∂ logf / ∂b and the curvature H from one pass (`_onepass_logdet_derivatives`), so
+    # Gθ with ∂H/∂θ, and the exact Hessian with ∂H/∂b, each take one nested AD pass, and
+    # RE-only fixed effects no model solve. `nothing` (e.g. a third-party curvature): the
+    # separate passes below.
+    fast = use_trace_logdet_grad && !use_hutchinson ?
+        _onepass_logdet_derivatives(hmode, dm, batch_info, θ_vec, b, const_cache, cache, tctx) :
+        nothing
+    Gθ = if fast === nothing
+        # g(b, θ) = ∂ logf / ∂b
+        function gθ!(out, θv)
+            fb = bv -> _laplace_logf_batch(dm, batch_info, θv, bv, const_cache, cache)
+            cfg = _get_fd_cfg!(buf.gθ_grad_cfg, fb, b, () -> ForwardDiff.GradientConfig(fb, b))
+            ForwardDiff.gradient!(out, fb, b, cfg)
+            return out
+        end
+        cfg = _get_fd_cfg!(
+            buf.Gθ_cfg, gθ!, θ_vec, () -> ForwardDiff.JacobianConfig(gθ!, buf.gradb_tmp, θ_vec)
+        )
+        ForwardDiff.jacobian!(buf.Gθ, gθ!, buf.gradb_tmp, θ_vec, cfg)
+        buf.Gθ
+    else
+        fast.Gθ
     end
-    cfg = _get_fd_cfg!(
-        buf.Gθ_cfg, gθ!, θ_vec, () -> ForwardDiff.JacobianConfig(gθ!, buf.gradb_tmp, θ_vec)
-    )
-    ForwardDiff.jacobian!(buf.Gθ, gθ!, buf.gradb_tmp, θ_vec, cfg)
-    Gθ = buf.Gθ
 
     # logdet(-H) gradients w.r.t θ and b (b fixed)
-    if use_hutchinson
+    if fast !== nothing
+        Ainv = chol \ Matrix{eltype(H)}(I, nb, nb)
+        weights = Vector{eltype(H)}(undef, _ntri(nb))
+        _vech_weights!(weights, Ainv)
+        grad_logdet_θ = -(fast.Jθ' * weights)
+        grad_logdet_b = -(fast.Jb' * weights)
+    elseif use_hutchinson
         n = nb
         Ainv = chol \ Matrix{eltype(H)}(I, n, n)
         ns = max(1, hutchinson_n)
@@ -2109,7 +2158,7 @@ function _laplace_grad_batch(
     # optimizer diverge while the derivative-free default was unaffected.
     chol_b = chol
     if !(hmode isa _ExactHess)
-        H_ex = try
+        H_ex = fast !== nothing ? fast.Hex : try
             _laplace_hessian_b(
                 dm, batch_info, θ, b, const_cache, cache, ad_cache, bi;
                 ctx = "dbdtheta", tctx = tctx0
@@ -3018,4 +3067,76 @@ function _with_eb_modes(result::FrequentistREResult, eb_modes)
         result.solution, result.objective, result.iterations,
         result.raw, result.notes, eb_modes
     )
+end
+
+# -------------------------------------------------------------------------------------
+# One-pass derivatives of the log-determinant gradient (`_laplace_grad_batch`).
+# -------------------------------------------------------------------------------------
+
+# θ- and b-derivatives of F(θ, b) = [∇_b log f; vech(H)] for the curvature H of the
+# Laplace expansion (H as `inner_curvature` returns it), from ONE nested AD pass each.
+# Returns (Gθ = ∂∇_b log f/∂θ, Jθ = ∂vech(H)/∂θ, Hex = exact Hessian ∂∇_b log f/∂b
+# (symmetrized), Jb = ∂vech(H)/∂b), or `nothing`, and then `_laplace_grad_batch`
+# differentiates gradient and curvature separately. Methods: exact Hessian here,
+# FisherInformationCurvature in focei.jl; other curvatures take the separate passes.
+_onepass_logdet_derivatives(::AbstractCurvature, args...) = nothing
+
+function _onepass_logdet_derivatives(
+        ::ExactHessianCurvature, dm::DataModel, batch_info::REBatchInfo, θ, b,
+        const_cache::REConstantsCache, cache::_LLCache, tctx
+    )
+    # gradient and Hessian of log f in b from one second-order pass
+    function F(θv, bv, tc)
+        T = promote_type(eltype(θv), eltype(bv))
+        f = bw -> _laplace_logf_batch(dm, batch_info, θv, bw, const_cache, cache; tctx = tc)
+        res = ForwardDiff.hessian!(ForwardDiff.DiffResults.HessianResult(similar(bv, T)), f, bv)
+        return vcat(ForwardDiff.DiffResults.gradient(res), _vech(ForwardDiff.DiffResults.hessian(res)))
+    end
+    return _onepass_from_F(F, dm, batch_info, θ, b, const_cache, cache, tctx)
+end
+
+# The θ pass gets no θ-context: a cached prior Hessian is constant in θ only at the
+# Float64 point. Fixed effects that appear only in random-effects distributions (not in
+# `@formulas`, `@preDifferentialEquation`, `@DifferentialEquation`, `@initialDE`) move F
+# only through the prior, so their columns come from the prior terms alone, without a
+# model solve.
+function _onepass_from_F(F, dm::DataModel, batch_info::REBatchInfo, θ, b, const_cache, cache, tctx)
+    nb = length(b)
+    nv = _ntri(nb)
+    o, p = _theta_split_obs_re(dm, θ)
+    Jθ = Matrix{Float64}(undef, nb + nv, length(θ))
+    Jθ[:, o] = ForwardDiff.jacobian(x -> F(_theta_with(θ, o, x), b, nothing), θ[o])
+    if !isempty(p)
+        prior(θv) = begin
+            θr = _symmetrize_psd_params(θv, get_fixed(get_model(dm)))
+            lp = _FOCEIPriorLogf(dm, batch_info, θr, const_cache, cache)
+            vcat(ForwardDiff.gradient(lp, b), _vech(ForwardDiff.hessian(lp, b)))
+        end
+        Jθ[:, p] = ForwardDiff.jacobian(x -> prior(_theta_with(θ, p, x)), θ[p])
+    end
+    Jb = ForwardDiff.jacobian(bv -> F(θ, bv, tctx), b)
+    Hex = Jb[1:nb, :]
+    return (
+        Gθ = Jθ[1:nb, :], Jθ = Jθ[(nb + 1):end, :],
+        Hex = (Hex + Hex') / 2, Jb = Jb[(nb + 1):end, :],
+    )
+end
+
+# Positions in θ of the outcome-side fixed effects (`o`) and of those that enter only
+# random-effects distributions (`p`).
+function _theta_split_obs_re(dm::DataModel, θ::ComponentArray)
+    m = ComponentArray(zeros(length(θ)), getaxes(θ))
+    for n in _compute_obs_fe_syms(get_model(dm))
+        v = getproperty(m, n)
+        v isa AbstractArray ? (v .= 1) : setproperty!(m, n, 1.0)
+    end
+    flags = collect(m) .!= 0
+    return findall(flags), findall(.!flags)
+end
+
+# θ with the entries at `idx` replaced by `x` (element type promoted to that of `x`).
+function _theta_with(θ::ComponentArray, idx, x)
+    θc = ComponentArray(convert.(promote_type(eltype(θ), eltype(x)), collect(θ)), getaxes(θ))
+    θc[idx] = x
+    return θc
 end
