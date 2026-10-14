@@ -91,20 +91,32 @@ Configuration for the ODE solver used when integrating the `@DifferentialEquatio
   when the solve with `alg` does not return a successful retcode, e.g. `Tsit5()` as `alg`
   with a step budget in `kwargs` and `AutoVern7(Rodas5P())` as fallback. The failed first
   attempt is silent. `nothing` (default) means no second attempt.
+- `stiffness_check`: threshold for solving with `fallback_alg` directly, skipping the
+  attempt with `alg` (default `2.0e4`, `nothing` disables it; no effect without a
+  `fallback_alg`). A problem goes to the fallback directly when the spectral radius ρ of
+  the state Jacobian ∂f/∂u at `(u0, p, t0)` (primal values) satisfies
+  `ρ · (t_end − t0) > stiffness_check`, or, for a solve with ForwardDiff dual numbers,
+  when a Float64 solve of the primal problem with `alg` fails.
 
 Constructed by the `@Model` macro with defaults and updated via [`set_solver_config`](@ref).
 """
-struct ODESolverConfig{A, K, T, F}
+struct ODESolverConfig{A, K, T, F, S}
     alg::A
     kwargs::K
     args::T
     saveat_mode::Symbol
     closed_form::Symbol
     fallback_alg::F
+    stiffness_check::S
 end
 
-ODESolverConfig(alg, kwargs, args, saveat_mode, closed_form) =
-    ODESolverConfig(alg, kwargs, args, saveat_mode, closed_form, nothing)
+const _DEFAULT_STIFFNESS_CHECK = 2.0e4
+
+function ODESolverConfig(alg, kwargs, args, saveat_mode, closed_form, fallback_alg = nothing)
+    return ODESolverConfig(
+        alg, kwargs, args, saveat_mode, closed_form, fallback_alg, _DEFAULT_STIFFNESS_CHECK
+    )
+end
 ODESolverConfig() = ODESolverConfig(nothing, NamedTuple(), (), :dense, :auto)
 
 """
@@ -443,12 +455,15 @@ function _validate_solver_config(cfg::ODESolverConfig)
     end
     cfg.fallback_alg === nothing || cfg.fallback_alg isa SciMLBase.AbstractODEAlgorithm ||
         error("fallback_alg must be an OrdinaryDiffEq algorithm such as Rodas5P() or nothing; got $(typeof(cfg.fallback_alg)).")
+    cfg.stiffness_check === nothing ||
+        (cfg.stiffness_check isa Real && cfg.stiffness_check > 0) ||
+        error("stiffness_check must be a positive number or nothing; got $(repr(cfg.stiffness_check)).")
     return nothing
 end
 
 """
     set_solver_config(m::Model, cfg::ODESolverConfig) -> Model
-    set_solver_config(m::Model; alg, fallback_alg, kwargs, args, saveat_mode, closed_form) -> Model
+    set_solver_config(m::Model; alg, fallback_alg, stiffness_check, kwargs, args, saveat_mode, closed_form) -> Model
 
 Return a new `Model` with the ODE solver configuration replaced by `cfg`.
 The keyword form constructs a new [`ODESolverConfig`](@ref) from the given keyword
@@ -465,6 +480,16 @@ arguments and replaces the existing configuration.
   stretch). Same `kwargs`/`args`; a step budget in `kwargs` applies to both attempts.
   Applies to every numerical solve (estimation incl. dual-number solves and crossing
   models, simulation, plotting), not to the closed-form path.
+- `stiffness_check = 2.0e4`: with a `fallback_alg`, solve with the fallback directly,
+  without the attempt with `alg`, when the problem is stiff at its start:
+  `ρ · (t_end − t0) > stiffness_check`, where ρ is the spectral radius of the state
+  Jacobian ∂f/∂u at `(u0, p, t0)`, evaluated on primal (Float64) values. A solve with
+  ForwardDiff dual numbers that passes this test first solves the primal problem with
+  `alg` in Float64 (same `kwargs`, so the same step budget) and goes to the fallback
+  directly when that fails. Both checks cost a small fraction of a failed attempt with
+  `alg`, which runs the whole step budget (at dual cost for gradients) before the
+  fallback starts. `nothing` disables the routing; without a `fallback_alg` it has no
+  effect.
 
 Every keyword call rebuilds the whole configuration from these defaults, so pass every
 setting you want in one call.
@@ -478,7 +503,8 @@ function set_solver_config(m::Model, cfg::ODESolverConfig)
 end
 
 function set_solver_config(
-        m::Model; alg = nothing, fallback_alg = nothing, kwargs = NamedTuple(),
+        m::Model; alg = nothing, fallback_alg = nothing,
+        stiffness_check = _DEFAULT_STIFFNESS_CHECK, kwargs = NamedTuple(),
         args = (), saveat_mode::Union{Symbol, AbstractString} = :dense,
         closed_form::Union{Symbol, AbstractString} = :auto
     )
@@ -486,7 +512,8 @@ function set_solver_config(
         m,
         ODESolverConfig(
             alg, _as_namedtuple(kwargs), args,
-            _as_symbol(saveat_mode), _as_symbol(closed_form), fallback_alg
+            _as_symbol(saveat_mode), _as_symbol(closed_form), fallback_alg,
+            stiffness_check
         )
     )
 end

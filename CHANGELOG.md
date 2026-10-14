@@ -4,6 +4,19 @@
 
 ### Changes
 
+- SAEM skips the M-step in iterations with step size γ = 0 (the `sa_burnin_iters` burn-in
+  iterations and, under `:robbins_monro`, the final iteration). The update
+  `θ_old + γ * (θ̂ - θ_old)` discards θ̂ there, so the closed-form updates and the Q2 and
+  numeric M-step solves no longer run and θ stays unchanged, up to the variance-floor and
+  `sa_anneal` clamps. A fit with `maxiters <= sa_burnin_iters` warns, since it returns θ at
+  its start value. The E-step,
+  the sample store and sufficient-statistics updates, Q and the diagnostics are computed as
+  before. Iterations with γ > 0 are unchanged. Before, each burn-in iteration ran the
+  numeric M-step solve and discarded its result, while the closed-form updates (from the
+  statistics of the first burn-in sample) and `builtin_mean = :glm` still changed θ. Fits
+  with `sa_burnin_iters > 0` (default 6) therefore differ from before: all of θ stays at
+  its start value until the first γ > 0 iteration.
+
 - `DataModel` accepts `weights = :col`, a column of per-individual likelihood weights. All
   estimators maximize `sum_b w_b * log p(y_b | θ)` over the batches of individuals that
   share random effects; weights must be equal within such a batch. SAEM/MCEM sample
@@ -24,6 +37,14 @@
   greedily (each task pulls the next item) instead of fixed strides, which balances
   unequal per-item costs. Results are unchanged: values are still stored per item and
   reduced in a fixed order.
+
+- SAEM's default M-step objective (`mstep_sa_on_params = true`, current-iteration samples)
+  and its Q2 counterpart now run over batches on threads under `EnsembleThreads`, as the
+  ring-buffer Q and the MCEM Q already did. Before, they ignored `serialization` and ran on
+  one thread. The observed log-likelihood of the progress display and the E-step retry
+  check are threaded the same way. Per-batch parts are summed in batch order, so threaded
+  and serial results are bitwise equal. With `n_chains > 1` the per-batch grouping changes
+  the serial sum at rounding level.
 
 - `show_equations(model)` now defaults to `latex = nothing`: LaTeX when Latexify is loaded,
   plain text otherwise. Previously the default call errored without Latexify.

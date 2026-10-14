@@ -1219,9 +1219,16 @@ function resolve_optimizer_bounds(
     # Without this the optimizer reports the violation in preconditioned z-coordinates
     # (`Initial x[(1,)]=0.0 is outside of [-1.2, -0.8]`), naming no number the user typed;
     # the EM M-steps anchor z at the current iterate and hit the same message (#311).
+    # The start is moved strictly inside, as interior-point optimizers (IPNewton,
+    # InteriorPointBFGS.IPBFGS) reject a start on the bound; for those a start that
+    # already sits on a bound is moved inside too, without a warning.
     if use_bounds
         v = collect(θ0_init)
         outside = findall(i -> !(lb[i] <= v[i] <= ub[i]), eachindex(v))
+        if _needs_interior_start(optimizer)
+            on_bound = findall(i -> v[i] == lb[i] || v[i] == ub[i], eachindex(v))
+            isempty(on_bound) || (θ0_init = _clamp_inside.(v, lb, ub))
+        end
         if !isempty(outside)
             coord_names = try
                 _flat_names_for_free(fe, collect(free_names))
@@ -1231,11 +1238,23 @@ function resolve_optimizer_bounds(
             labels = length(coord_names) == length(v) ?
                 string.(coord_names[outside]) : string.("coordinate ", outside)
             @warn "$(method_label): the start value of $(join(labels, ", ")) lies outside the bounds and was clamped into the box. Values are on the TRANSFORMED parameter scale." start = v[outside] lower = lb[outside] upper = ub[outside]
-            θ0_init = clamp.(v, lb, ub)
+            θ0_init = _clamp_inside.(v, lb, ub)
         end
     end
     return lb, ub, use_bounds, θ0_init
 end
+
+# ponytail: fixed margin of 1e-8 relative to the bound (absolute below 1); make it a
+# keyword if an optimizer needs more room. A box narrower than the margins gives its midpoint.
+function _clamp_inside(v, l, u)
+    lo = isfinite(l) ? l + 1.0e-8 * max(1, abs(l)) : l
+    hi = isfinite(u) ? u - 1.0e-8 * max(1, abs(u)) : u
+    return lo <= hi ? clamp(v, lo, hi) : (l + u) / 2
+end
+
+# ponytail: name check, InteriorPointBFGS is not a dependency (cf. `_supports_refresh`).
+_needs_interior_start(opt) = opt isa OptimizationOptimJL.IPNewton ||
+    nameof(typeof(opt)) === :IPBFGS
 const _resolve_optim_bounds = resolve_optimizer_bounds
 
 # Per-coordinate first-step size for the outer optimizer, chosen from how the coordinate
@@ -3191,16 +3210,25 @@ Fit a model to data using the specified estimation method.
   point on the natural scale; defaults to the model's declared initial values.
 - `store_data_model::Bool = true`: whether to store a reference to `dm` in the result.
 - `pooled_init = false`: warm-start the fit from a quick [`Pooled`](@ref) pre-fit.
-  `true` runs `Pooled(optim_kwargs=(; maxiters=50))`; alternatively pass your own
-  `Pooled`/`PooledMap` instance for full control. The pooled pre-fit starts from
-  `theta_0_untransformed` (or the model's initial values) and its estimate becomes the
-  starting point of the actual fit. Inside [`Multistart`](@ref) the pre-fit runs once
-  per start. Requires a model with random effects; not available when `method` itself
-  is `Pooled`/`PooledMap`.
+  `true` runs `Pooled(optim_kwargs=(; maxiters=50))` with the `lb`, `ub` and
+  `ignore_model_bounds` of `method` (when `method` has them), so the pre-fit searches
+  the same box as the main fit. With a box, OptimizationOptimJL wraps the LBFGS of the
+  pre-fit in Fminbox, and the budget of 50 LBFGS iterations is spent as
+  `maxiters = 5` Fminbox rounds of `local_maxiters = 10`. Alternatively pass your own
+  `Pooled`/`PooledMap` instance for full control (its own optimizer and bounds apply),
+  e.g. `Pooled(optimizer = <interior-point optimizer>, lb = lb, ub = ub)` for an
+  interior-point pre-fit. The pooled pre-fit starts from `theta_0_untransformed` (or
+  the model's initial values) and its estimate becomes the starting point of the actual
+  fit; a coordinate outside the main fit's bounds is clamped strictly inside them
+  (relative margin 1e-8) with a warning. Inside [`Multistart`](@ref) the pre-fit runs
+  once per start. Requires a model with random effects; not available when `method`
+  itself is `Pooled`/`PooledMap`.
 - `fit_options_pooled_init::NamedTuple = NamedTuple()`: extra keyword arguments for the
   pooled pre-fit (same keywords as `fit_model`, e.g. `constants`, `penalty`,
-  `serialization`). By default the pre-fit inherits `constants`, `penalty`, `ode_args`,
-  `ode_kwargs`, `serialization`, and `rng` from the main call; entries here override.
+  `serialization`). By default the pre-fit inherits `constants`, `penalty`,
+  `extra_objective`, `ode_args`, `ode_kwargs`, `serialization`, `rng` and
+  `theta_0_untransformed` from the main call; entries here override. Per-individual
+  weights of the `DataModel` act in the pre-fit as well.
 """
 function fit_model(
         dm::DataModel, method::FittingMethod, args...;
@@ -3452,21 +3480,26 @@ function _ll_ode_solve_baked(cache::_LLCache, prob, reset! = nothing)
     )
     return _solve_with_fallback(
         prob, cache.alg, cache.solver_cfg.fallback_alg, cache.ode_args, reset!;
-        solve_kwargs...
+        stiffness_check = cache.solver_cfg.stiffness_check, solve_kwargs...
     )
 end
 
-# Restores the crossing records of a failed first attempt before the fallback solve.
-struct _CrossingReset{R, T}
+# Restores the crossing records and the infusion rates (both mutated by callbacks) of a
+# failed first attempt or a stiffness probe before the next solve.
+struct _CrossingReset{R, T, E}
     refs::R          # Ref{T} receiving the crossing time (or `nothing` for :rootval)
     fireds::Vector{Base.RefValue{Bool}}
     tinits::T
+    events::E        # EventCallbacks or nothing
 end
+_CrossingReset(refs, fireds, tinits) = _CrossingReset(refs, fireds, tinits, nothing)
 function (cr::_CrossingReset)()
     for k in eachindex(cr.fireds)
         cr.fireds[k][] = false
         cr.refs[k][] = cr.tinits[k]
     end
+    cr.events === nothing ||
+        copyto!(get_infusion_rates(cr.events), get_init_infusion_rates(cr.events))
     return nothing
 end
 
@@ -3761,7 +3794,10 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
             end
         end
         prob = remake(prob; u0 = u0_T, p = p_flat)
-        sol = _ll_ode_solve_baked(cache, prob)
+        sol = _ll_ode_solve_baked(
+            cache, prob,
+            events === nothing ? nothing : _CrossingReset((), Base.RefValue{Bool}[], (), events)
+        )
         SciMLBase.successful_retcode(sol) || return _ll_drop_solve(sol.retcode)
         return get_de_accessors_builder(get_de(model))(sol, compiled)
     end
@@ -3791,7 +3827,7 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
         prob = ODEProblem{true, SciMLBase.FullSpecialize}(
             f!_use, u0_T, get_tspan(ind), p_flat; _ll_prob_kwargs(cbset, saveat_use, get_tstops(ind))...
         )
-        sol = _ll_ode_solve_baked(cache, prob, _CrossingReset((r,), [fired], (tinit,)))
+        sol = _ll_ode_solve_baked(cache, prob, _CrossingReset((r,), [fired], (tinit,), events))
         SciMLBase.successful_retcode(sol) || return _ll_drop_solve(sol.retcode)
         acc = get_de_accessors_builder(get_de(model))(sol, compiled)
         return merge(acc, NamedTuple{(spec.name,)}((r[],)))
@@ -3843,7 +3879,7 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
         f!_use, u0_T, get_tspan(ind), p_flat; _ll_prob_kwargs(cbset, saveat_use, get_tstops(ind))...
     )
     sol = _ll_ode_solve_baked(
-        cache, prob, _CrossingReset(reset_refs, reset_fireds, reset_tinits)
+        cache, prob, _CrossingReset(reset_refs, reset_fireds, reset_tinits, events)
     )
     SciMLBase.successful_retcode(sol) || return _ll_drop_solve(sol.retcode)
     acc = get_de_accessors_builder(get_de(model))(sol, compiled)

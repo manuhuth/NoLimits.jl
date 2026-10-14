@@ -1312,6 +1312,38 @@ end
 
 _default_pooled_init_method() = Pooled(; optim_kwargs = (; maxiters = 50))
 
+# The default pre-fit searches the same box as the main fit: the main method's `lb`/`ub`
+# and `ignore_model_bounds`, when it has them. A plain-vector bound is ordered over the
+# main fit's free parameters, and the pre-fit frees fewer (it freezes dispersion
+# parameters), so it is re-keyed by name first. With a box, Optimization.jl wraps LBFGS
+# in Fminbox, where `maxiters` counts barrier rounds of up to 1000 LBFGS iterations each,
+# so the budget of 50 LBFGS iterations is split as 5 rounds of 10.
+function _default_pooled_init_method(dm::DataModel, method, constants::NamedTuple)
+    lb = hasproperty(method, :lb) ? method.lb : nothing
+    ub = hasproperty(method, :ub) ? method.ub : nothing
+    ignore = hasproperty(method, :ignore_model_bounds) && method.ignore_model_bounds
+    lo, hi = get_bounds_transformed(get_fixed(get_model(dm)))
+    boxed = lb !== nothing || ub !== nothing ||
+        (!ignore && !(all(isinf, lo) && all(isinf, hi)))
+    return Pooled(;
+        optim_kwargs = boxed ? (; maxiters = 5, local_maxiters = 10) : (; maxiters = 50),
+        ignore_model_bounds = ignore,
+        lb = _bound_by_name(dm, lb, constants), ub = _bound_by_name(dm, ub, constants)
+    )
+end
+
+function _bound_by_name(dm::DataModel, b, constants::NamedTuple)
+    (b === nothing || b isa ComponentArray || b isa NamedTuple) && return b
+    fe = get_fixed(get_model(dm))
+    free = [n for n in get_names(fe) if !haskey(constants, n)]
+    θt = _ca_subset(get_transform(fe)(get_θ0_untransformed(fe)), free)
+    v = b isa Number ? [b] : collect(b)
+    # other orderings are not known here: the pre-fit then uses the declared bounds, and
+    # the main fit clamps its start into its own box
+    length(v) == length(θt) || return nothing
+    return ComponentArray(v, getaxes(θt))
+end
+
 # Resolve fit_model's `pooled_init` option: run a quick Pooled pre-fit and return its
 # untransformed estimate as the starting point for the actual fit. The pre-fit
 # inherits the shared fit keywords from the main call; `fit_options` overrides them.
@@ -1325,7 +1357,7 @@ function _pooled_init_theta(
     isempty(get_re_names(get_random(get_model(dm)))) &&
         error("pooled_init requires a model with random effects.")
     pooled_method = if pooled_init === true
-        _default_pooled_init_method()
+        _default_pooled_init_method(dm, method, get(kwargs_nt, :constants, NamedTuple()))
     elseif pooled_init isa Pooled || pooled_init isa PooledMap
         pooled_init
     else
@@ -1334,6 +1366,7 @@ function _pooled_init_theta(
     base = (;
         constants = get(kwargs_nt, :constants, NamedTuple()),
         penalty = get(kwargs_nt, :penalty, NamedTuple()),
+        extra_objective = get(kwargs_nt, :extra_objective, nothing),
         ode_args = get(kwargs_nt, :ode_args, ()),
         ode_kwargs = get(kwargs_nt, :ode_kwargs, NamedTuple()),
         serialization = get(kwargs_nt, :serialization, EnsembleThreads()),

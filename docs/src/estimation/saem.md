@@ -271,7 +271,7 @@ The SA gain sequence `γ_t ∈ [0, 1]` controls how aggressively new samples upd
 
 where `phase3_total = maxiters - sa_burnin_iters - t0` and `k3 = iter - sa_burnin_iters - t0`.
 
-- `sa_burnin_iters::Int = 6`: iterations before SA updates begin. During burn-in no SA smoothing is performed and no samples are stored.
+- `sa_burnin_iters::Int = 6`: iterations before SA updates begin. During burn-in no SA smoothing is performed, no samples are stored and the M-step is skipped, so θ stays at its start value. Any iteration with γ = 0 skips the M-step, which includes the final `:robbins_monro` iteration.
 - `t0::Int = maxiters ÷ 2`: length of the stabilization phase (γ = 1). Defaults to `nothing`, which resolves to `maxiters ÷ 2` (i.e. `150` at the default `maxiters=300`).
 - `kappa::Float64 = 0.65`: decay exponent controlling how quickly γ falls off after stabilization.
 

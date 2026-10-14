@@ -393,11 +393,18 @@ function _solve_dense_individual(
     alg = _resolve_ode_alg(solver_cfg.alg)
     solve_kwargs = _ode_solve_kwargs(solver_cfg.kwargs, ode_kwargs, (dense = true,))
     fb = solver_cfg.fallback_alg
+    sc = solver_cfg.stiffness_check
+    reset! = events === nothing ? nothing :
+        _CrossingReset((), Base.RefValue{Bool}[], (), events)
     if cb === nothing
-        sol = _solve_with_fallback(prob, alg, fb, (solver_cfg.args..., ode_args...); solve_kwargs...)
+        sol = _solve_with_fallback(
+            prob, alg, fb, (solver_cfg.args..., ode_args...), reset!;
+            stiffness_check = sc, solve_kwargs...
+        )
     else
         sol = _solve_with_fallback(
-            prob, alg, fb, (solver_cfg.args..., ode_args...); solve_kwargs..., callback = cb
+            prob, alg, fb, (solver_cfg.args..., ode_args...), reset!;
+            stiffness_check = sc, solve_kwargs..., callback = cb
         )
     end
     return sol, compiled

@@ -1091,3 +1091,102 @@ end
         @test all(isfinite, collect(NoLimits.get_params(rw; scale = :transformed)))
     end
 end
+
+@testset "SAEM/MCEM M-step objectives: EnsembleThreads == EnsembleSerial" begin
+    # ODE model, 8 batches with likelihood weights. The threaded objectives sum per-batch
+    # parts in batch order, so they must be bitwise equal to the serial path, also under
+    # ForwardDiff (value and gradient), and must return Inf on a non-finite batch.
+    FD = NoLimits.ForwardDiff
+    ids = repeat(1:8, inner = 3)
+    tt = repeat([0.0, 0.5, 1.0], 8)
+    df = DataFrame(ID = ids, t = tt, y = exp.(-0.3 .* tt) .+ 0.02 .* ids)
+    df.wr = (0.5 .+ rand(MersenneTwister(7), 8))[df.ID]
+    dm = DataModel(fx_ode_model(), df; primary_id = :ID, time_col = :t, weights = :wr)
+    θ = NoLimits.get_θ0_untransformed(NoLimits.get_fixed(NoLimits.get_model(dm)))
+    x0 = collect(θ)
+    θof(x) = ComponentArray(x, getaxes(θ))
+    _, bis, cc = NoLimits.build_re_batch_infos(dm, NamedTuple())
+    nb = length(bis)
+    @test nb == 8
+    nc = 3
+    rng = MersenneTwister(3)
+    chains = [[0.3 .* randn(rng, NoLimits.get_n_b(b)) for _ in 1:nc] for b in bis]
+    bad_chains = deepcopy(chains)
+    bad_chains[5][2] .= NaN
+    samples = [reduce(hcat, ch) for ch in chains]
+    bad_samples = [reduce(hcat, ch) for ch in bad_chains]
+    is_w = [(w -> w ./ sum(w))(rand(rng, nc)) for _ in 1:nb]
+    ser, thr = SciMLBase.EnsembleSerial(), SciMLBase.EnsembleThreads()
+    llc = Dict(
+        s => NoLimits.build_ll_cache(dm; serialization = s, force_saveat = true)
+            for s in (ser, thr)
+    )
+    store = NoLimits._init_saem_sample_store(4, 0.0, 1, bis)
+    NoLimits._saem_store_push!(store, chains, 0.5, nc)
+    NoLimits._saem_store_push!(store, [reverse(c) for c in chains], 0.5, nc)
+    bad_store = NoLimits._init_saem_sample_store(4, 0.0, 1, bis)
+    NoLimits._saem_store_push!(bad_store, bad_chains, 0.5, nc)
+
+    objs = (
+        Q_current = (s, ch) -> x -> NoLimits._saem_Q_current(
+            dm, bis, θof(x), cc, llc[s], ch, nc; serialization = s
+        ),
+        Q2_current = (s, ch) -> x -> NoLimits._saem_Q2_current(
+            dm, bis, θof(x), cc, llc[s], ch, nc; serialization = s
+        ),
+        Q = (s, st) -> x -> NoLimits._saem_Q(
+            dm, bis, θof(x), cc, llc[s], st; serialization = s
+        ),
+        Q2 = (s, st) -> x -> NoLimits._saem_Q2(
+            dm, bis, θof(x), cc, llc[s], st; serialization = s
+        ),
+        mcem_Q = (s, sm) -> x -> NoLimits._mcem_Q(
+            dm, bis, θof(x), cc, llc[s], sm; serialization = s
+        ),
+        mcem_Q_is = (s, sm) -> x -> NoLimits._mcem_Q(
+            dm, bis, θof(x), cc, llc[s], sm, is_w; serialization = s
+        ),
+        mcem_Q2 = (s, sm) -> x -> NoLimits._mcem_Q2(
+            dm, bis, θof(x), cc, llc[s], sm; serialization = s
+        ),
+    )
+    good = (
+        Q_current = chains, Q2_current = chains, Q = store, Q2 = store,
+        mcem_Q = samples, mcem_Q_is = samples, mcem_Q2 = samples,
+    )
+    bad = (
+        Q_current = bad_chains, Q2_current = bad_chains, Q = bad_store, Q2 = bad_store,
+        mcem_Q = bad_samples, mcem_Q_is = bad_samples, mcem_Q2 = bad_samples,
+    )
+    for k in keys(objs)
+        fs, ft = objs[k](ser, good[k]), objs[k](thr, good[k])
+        vs = fs(x0)
+        @test isfinite(vs)
+        @test ft(x0) === vs
+        @test FD.gradient(ft, x0) == FD.gradient(fs, x0)
+        @test objs[k](ser, bad[k])(x0) == Inf
+        @test objs[k](thr, bad[k])(x0) == Inf
+        @test FD.value(objs[k](thr, bad[k])(FD.Dual.(x0, 1.0))) == Inf
+    end
+
+    # Q_current is the weighted chain average of the batch log-joints.
+    ref = sum(
+        NoLimits._batch_weight(dm, NoLimits.get_inds(bis[bi])) * sum(
+                NoLimits._laplace_logf_batch(dm, bis[bi], θ, chains[bi][c], cc, llc[ser])
+                for c in 1:nc
+            ) / nc for bi in 1:nb
+    )
+    @test objs.Q_current(ser, chains)(x0) ≈ ref rtol = 1.0e-13
+
+    # Observed log-likelihood (progress display) and the E-step retry check.
+    b_cur = [ch[1] for ch in chains]
+    o(s) = NoLimits._saem_obsLL(dm, bis, θ, cc, llc[s], b_cur; serialization = s)
+    @test o(thr) === o(ser)
+    @test o(ser) ≈ NoLimits.loglikelihood(dm, θ, NoLimits._eta_from_eb(dm, bis, b_cur, cc, θ)) rtol = 1.0e-12
+    bb(s, upd) = NoLimits._saem_bad_batches(
+        dm, bis, upd, θ, bad_chains, nc, cc, llc[s]; serialization = s
+    )
+    for upd in (collect(1:nb), [7, 5, 2], [1, 2])
+        @test bb(thr, upd) == bb(ser, upd) == (5 in upd ? [5] : Int[])
+    end
+end

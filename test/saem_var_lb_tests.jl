@@ -739,6 +739,7 @@ end
             sampler = MH(),
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             maxiters = 2,
+            sa_burnin_iters = 0,  # burn-in iterations (γ = 0) skip the M-step and its clamp
             builtin_stats = :none,
             sa_anneal_alpha = 0.0,
             auto_var_lb = true,

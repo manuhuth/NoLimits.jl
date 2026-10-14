@@ -136,6 +136,7 @@ end
             turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             builtin_stats = :closed_form,
             maxiters = 2,
+            sa_burnin_iters = 0,  # burn-in iterations (γ = 0) skip the M-step
             progress = false,
             q_store_max = 2
         )
@@ -163,6 +164,7 @@ end
             suffstats = suffstats,
             mstep_closed_form = mstep_closed_form,
             maxiters = 2,
+            sa_burnin_iters = 0,
             progress = false,
             q_store_max = 2
         )
@@ -902,6 +904,7 @@ end
             sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
             q_store_max = 2,
             maxiters = 2,
+            sa_burnin_iters = 0,  # burn-in iterations (γ = 0) skip the M-step
             builtin_stats = :closed_form,
             resid_var_param = (; y1 = :σ1, y2 = :σ2),
             re_cov_params = (; η = :τ)
