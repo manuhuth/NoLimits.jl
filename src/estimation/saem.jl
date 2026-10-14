@@ -3621,8 +3621,8 @@ function _fit_model(
             info = batch_infos[bi]
             get_n_b(info) == 0 && continue
             b_init = b0s !== nothing ? b0s[bi] : _em_seed_batch_b(
-                dm, info, θ0_u, const_cache, cache_init, rng, re_names, bi, "SAEM"
-            )
+                    dm, info, θ0_u, const_cache, cache_init, rng, re_names, bi, "SAEM"
+                )
             b_current[bi] .= b_init
             lp = b0s !== nothing ? b_init : _b_to_last_params(b_init, info, re_names)
             for c in 1:effective_n_chains
