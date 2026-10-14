@@ -618,6 +618,44 @@ function _is_init_proposal_blocks(
     return blocks
 end
 
+# `re_0` of `fit_model` (SAEM/MCEM) as one flat natural-scale b per batch. `re_0` is a
+# `FitResult` (its EBEs) or a NamedTuple of DataFrames shaped like `get_random_effects`
+# output: per random effect, the grouping column plus the value column(s).
+function _em_re_0_bstars(dm::DataModel, batch_infos, re_0)
+    re_0 isa FitResult && (re_0 = get_random_effects(dm, re_0))
+    re_0 = _as_namedtuple(re_0)
+    cache = get_laplace_cache(get_re_group_info(dm))
+    re_groups = get_re_groups(get_random(get_model(dm)))
+    re_names = get_re_names(cache)
+    lookups = map(re_names) do re
+        haskey(re_0, re) || error("re_0 has no table for random effect $(re).")
+        df = getfield(re_0, re)
+        col = getfield(re_groups, re)
+        vcols = [c for c in propertynames(df) if c != col]
+        Dict(
+            string(df[k, col]) => reduce(vcat, (df[k, c] for c in vcols); init = Float64[])
+                for k in 1:nrow(df)
+        )
+    end
+    return map(batch_infos) do info
+        b = zeros(Float64, get_n_b(info))
+        for (ri, re) in enumerate(re_names)
+            rei = get_re_info(info)[ri]
+            for (li, id) in enumerate(get_levels(get_re_map(rei)))
+                lvl = get_re_index(cache)[ri].levels[id]
+                v = get(lookups[ri], string(lvl), nothing)
+                v === nothing &&
+                    error("re_0.$(re) has no row for level $(lvl) of column $(getfield(re_groups, re)).")
+                r = get_ranges(rei)[li]
+                length(v) == length(r) ||
+                    error("re_0.$(re) level $(lvl) has $(length(v)) values; expected $(length(r)).")
+                b[r] .= v
+            end
+        end
+        b
+    end
+end
+
 # Prior-mean initial RE vector for one batch, retrying with up to 10 prior draws
 # when the prior mean has a non-finite log-joint. Shared MCEM/SAEM pre-loop seed;
 # `method_label` only flavors the error message.
@@ -1267,6 +1305,7 @@ function _fit_model(
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
+        re_0 = nothing,
         store_eb_modes::Bool = true,
         store_data_model::Bool = true
     )
@@ -1421,10 +1460,16 @@ function _fit_model(
     # Pre-loop initialization: seed last_params from prior mean so that the first MCMC chain
     # (when warm_start=true) starts at a valid, finite-likelihood point — analogous to saemix's
     # initialization filter, but checking the full joint density via _laplace_logf_batch.
+    # A user `re_0` is stored as the flat b itself: every MCMC sampler starts its chain there.
+    b0s = re_0 === nothing ? nothing : _em_re_0_bstars(dm, batch_infos, re_0)
     let cache_init = ll_cache isa Vector ? ll_cache[1] : ll_cache
         for bi in 1:length(batch_infos)
             info = batch_infos[bi]
             get_n_b(info) == 0 && continue
+            if b0s !== nothing
+                last_params[bi] = b0s[bi]
+                continue
+            end
             b_init = _em_seed_batch_b(
                 dm, info, θ0_u, const_cache, cache_init, rng, re_names, bi, "MCEM"
             )
