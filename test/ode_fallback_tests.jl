@@ -215,3 +215,29 @@ end
         @test g == g_ref
     end
 end
+
+# Nested duals on the stiff route (Laplace Hessian). ForwardDiff orders tags by a generated
+# counter; a tag count cached in a downstream package image can sort the outer tag after the
+# solver's tag. Generating the solver tag's count first reproduces that order here.
+struct _FbHess{K, D, A}
+    dm::D
+    ax::A
+end
+function (f::_FbHess)(v)
+    θ = ComponentArray(v, f.ax)
+    return NoLimits.loglikelihood(f.dm, θ, NoLimits._default_random_effects_from_dm(f.dm, NamedTuple(), θ))
+end
+@testset "ODE stiff fallback under nested duals" begin
+    dm = _fb_dm(Tsit5(), Rodas5P(); crossing = false)
+    θ0 = get_θ0_untransformed(dm.model.fixed.fixed)
+    v0 = collect(θ0)
+    H_ref = ForwardDiff.hessian(_FbHess{:ref, typeof(dm), typeof(getaxes(θ0))}(dm, getaxes(θ0)), v0)
+    F = _FbHess{:inverted, typeof(dm), typeof(getaxes(θ0))}
+    T = ForwardDiff.Tag{F, Float64}
+    N = ForwardDiff.pickchunksize(length(v0))
+    V = ForwardDiff.Dual{T, ForwardDiff.Dual{T, Float64, N}, N}
+    ForwardDiff.tagcount(ForwardDiff.Tag{NoLimits.DiffEqBase.OrdinaryDiffEqTag, V})
+    H = ForwardDiff.hessian(F(dm, getaxes(θ0)), v0)
+    @test all(isfinite, H_ref)
+    @test H ≈ H_ref
+end

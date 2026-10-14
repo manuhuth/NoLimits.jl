@@ -465,6 +465,25 @@ end
     return nothing
 end
 
+# Solver AD on a dual problem (stiff-solver Jacobian or time derivative under an outer
+# ForwardDiff pass, e.g. the Laplace Hessian): the solver differentiates with its own tag
+# over eltype(p), so `du` is wider than `p`. Lift u, p and t to eltype(du) so the RHS
+# never combines the solver's dual with the outer dual. ForwardDiff orders two tags by a
+# generated counter, and a tag count cached in a downstream package image (precompile
+# workload) can sort the solver tag inside the outer one: the RHS result then nests the
+# tags the wrong way and storing it in `du` fails with `Float64(::Dual)`.
+# ponytail: allocating converts, only on this path; a lazy lifted view if it shows up.
+@inline function (f::DERHSFlat)(
+        du::AbstractVector{D}, u, p::AbstractVector{V}, t
+    ) where {V <: ForwardDiff.Dual, D <: ForwardDiff.Dual{<:Any, V}}
+    f.inner!(
+        du, convert(Vector{D}, u),
+        (vars = _vars_from_flat(convert(Vector{D}, p), f.layout), funs = f.funs),
+        convert(D, t)
+    )
+    return nothing
+end
+
 function _de_build_compiled(θ::ComponentArray, η::ComponentArray, static::DEStaticContext)
     fe_un = static.inverse_transform(θ)
     prede = static.prede_builder(
