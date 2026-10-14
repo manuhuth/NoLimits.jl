@@ -3348,6 +3348,7 @@ function _fit_model(
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
+        re_0 = nothing,
         store_eb_modes::Bool = true,
         store_data_model::Bool = true
     )
@@ -3613,15 +3614,17 @@ function _fit_model(
 
     # Pre-loop initialization: seed b_current and last_chain_params from prior mean so that
     # the first MCMC chain (warm_start=true) starts at a valid, finite-likelihood point.
+    # A user `re_0` is stored as the flat b itself: every MCMC sampler starts its chain there.
+    b0s = re_0 === nothing ? nothing : _em_re_0_bstars(dm, batch_infos, re_0)
     let cache_init = ll_cache isa Vector ? ll_cache[1] : ll_cache
         for bi in 1:length(batch_infos)
             info = batch_infos[bi]
             get_n_b(info) == 0 && continue
-            b_init = _em_seed_batch_b(
-                dm, info, θ0_u, const_cache, cache_init, rng, re_names, bi, "SAEM"
-            )
+            b_init = b0s !== nothing ? b0s[bi] : _em_seed_batch_b(
+                    dm, info, θ0_u, const_cache, cache_init, rng, re_names, bi, "SAEM"
+                )
             b_current[bi] .= b_init
-            lp = _b_to_last_params(b_init, info, re_names)
+            lp = b0s !== nothing ? b_init : _b_to_last_params(b_init, info, re_names)
             for c in 1:effective_n_chains
                 last_chain_params[bi][c] = lp
             end

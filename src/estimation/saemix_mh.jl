@@ -337,14 +337,16 @@ function _saemixmh_init_state(
         cache::_LLCache,
         rng::AbstractRNG,
         re_names::Vector{Symbol},
-        rw_init::Float64
+        rw_init::Float64;
+        b0 = nothing
     )
     nb = get_n_b(batch_info)
     n_inds = length(get_inds(batch_info))
     θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
     levels = _saemixmh_build_levels(dm, batch_info, re_names)
     b = zeros(Float64, nb)
-    _saemixmh_init_b!(b, levels, dm, θ, const_cache, cache, rng, re_names)
+    b0 === nothing ? _saemixmh_init_b!(b, levels, dm, θ, const_cache, cache, rng, re_names) :
+        copyto!(b, b0)
     b_ok = _em_vet_init_b(dm, batch_info, θ_re, b, const_cache, cache, rng, re_names, "SaemixMH")
     b_ok === b || copyto!(b, b_ok)
     indiv_ll = Vector{Float64}(undef, n_inds)
@@ -719,8 +721,10 @@ function _mcem_sample_batch(
     state = if warm_start && last_params isa _SaemixMHState
         last_params
     else
+        # A flat b (the `re_0` seed of `fit_model`) is the chain's start; else a prior draw.
         _saemixmh_init_state(
-            dm, info, θ, const_cache, cache, rng, re_names, sampler.rw_init
+            dm, info, θ, const_cache, cache, rng, re_names, sampler.rw_init;
+            b0 = last_params isa AbstractVector{<:Real} ? last_params : nothing
         )
     end
 
