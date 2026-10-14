@@ -828,6 +828,45 @@ end
     end
 end
 
+# Eight random effects per individual: the level-2 Smolyak rule puts weight -7 on the
+# mode. On a linear-Gaussian model the whitened integrand is constant, so adaptive GHQ
+# must still return the exact marginal at every level.
+@testset "AGHQ is exact for a linear-Gaussian model with 8 random effects" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            σ = RealNumber(0.3, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(MvNormal(zeros(8), Diagonal(fill(0.25, 8))); column = :ID)
+        end
+        @formulas begin
+            mu = a + η[1] + η[2] * t + η[3] * t^2 + η[4] * t^3 + η[5] * t^4 +
+                η[6] * t^5 + η[7] * t^6 + η[8] * t^7
+            y ~ Normal(mu, σ)
+        end
+    end
+    ts = collect(range(-1.0, 1.0; length = 12))
+    rng = Xoshiro(3)
+    df = DataFrame(ID = fill("s1", 12), t = ts, y = 1.0 .+ 0.6 .* randn(rng, 12))
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    fe = NoLimits.get_fixed(NoLimits.get_model(dm))
+    θ = NoLimits._symmetrize_psd_params(NoLimits.get_θ0_untransformed(fe), fe)
+    _, infos, cc = NoLimits._build_re_batch_infos(dm, NamedTuple())
+    cache = NoLimits.build_ll_cache(dm; force_saveat = true)
+    cache = cache isa AbstractVector ? cache[1] : cache
+    Z = hcat([ts .^ k for k in 0:7]...)
+    exact = logpdf(MvNormal(ones(12), Symmetric(0.3^2 * I + 0.25 * Z * Z')), df.y)
+    for level in 1:3
+        @test isapprox(
+            NoLimits._ghq_batch_ll(dm, infos[1], θ, cc, cache, level), exact; atol = 1.0e-8
+        )
+    end
+end
+
 # Issue #151: on ill-conditioned batches the adaptive rule was rejected by the
 # *Laplace* admissibility test (λmin > 1e-8·λmax), which sent those batches back to
 # the prior-centered rule of #98; its signed sum turns negative, the batch marginal

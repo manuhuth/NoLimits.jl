@@ -43,8 +43,10 @@ whose gradient is not; use `Laplace()` for that, and `level ≥ 3` here.
   - `NamedTuple` (anisotropic): per-RE-group level, e.g.
     `level = (η_id = 3, η_site = 2)`.  RE groups not mentioned default to
     level 1.  The batch grid is the tensor product of per-group Smolyak grids.
-  Levels 1–3 are numerically stable; higher levels may exhibit cancellation
-  in signed logsumexp.
+  The Smolyak weights are signed and the weight at the mode grows with the
+  number of random effects `d` (−(d−1) at level 2, e.g. −7 for d = 8). A batch
+  whose integrand is far from Gaussian can therefore get a negative signed sum;
+  that batch then falls back to the level-1 (Laplace) value with a warning.
 - `optimizer`: outer Optimization.jl-compatible optimizer.  Defaults to LBFGS
   with backtracking line search, or to `Optimisers.Adam(0.01)` when
   `update_schedule != :all`.
@@ -214,34 +216,16 @@ function _ghq_batch_ll(
     # build_re_measure_from_batch may throw when distribution parameters hit numerical
     # limits (e.g. Beta with α→0 due to underflow, or a non-PD covariance). Treat these
     # as invalid parameter regions and return -Inf, as the Laplace path does.
-    adaptive = true
     re_measure = try
         m = build_re_measure_from_batch(info, θu_re, const_cache, dm, ll_cache)
         mc = _ghq_adaptive_measure(dm, info, θu_re, const_cache, ll_cache, m, b_star)
-        adaptive = mc !== nothing
-        adaptive ? mc : m
+        mc === nothing ? m : mc
     catch e
         _is_numeric_error(e) && return T(-Inf)
         rethrow(e)
     end
+    # A negative signed Smolyak sum falls back to the level-1 rule inside batch_loglik_ghq.
     ghq_ll = batch_loglik_ghq(dm, info, θu_re, re_measure, sgrid, const_cache, ll_cache)
-    # Adaptive centering is skipped for batches that are not purely Gaussian, and the
-    # prior-centered rule's signed Smolyak weights can turn the batch marginal negative at
-    # level >= 2 (issue #98), which used to surface as an `Inf` objective for the whole fit
-    # (issue #176). The level-1 rule has only positive weights, so fall back to it rather
-    # than declaring the batch impossible.
-    if !isfinite(ghq_ll) && !adaptive && get_n_b(info) > 0
-        grid1 = get_sparse_grid(get_n_b(info), 1)
-        if grid1 !== sgrid
-            @warn "GHQuadrature: the prior-centered rule was numerically unstable for a " *
-                "non-Gaussian random-effect batch; falling back to the level-1 rule for " *
-                "this batch. Pass a lower `level`, or use SAEM/MCEM for a more accurate " *
-                "marginal." maxlog = 1
-            ghq_ll = batch_loglik_ghq(
-                dm, info, θu_re, re_measure, grid1, const_cache, ll_cache
-            )
-        end
-    end
     const_ll = _const_re_prior_logf(dm, info, θu_re, const_cache, ll_cache)
     (!isfinite(ghq_ll) || !isfinite(const_ll)) && return T(-Inf)
     return ghq_ll + T(const_ll)
