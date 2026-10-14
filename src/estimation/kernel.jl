@@ -84,10 +84,9 @@ change of variables b = μ + Lz. The prior logpdf term is NOT added separately.
 through `μ(θ)` and `L(θ)` in `re_measure`, and through `_loglikelihood_individual`.
 The nodes `z_r` are precomputed Float64 constants.
 
-Returns `-Inf` (promoting to the accumulator type) if:
-- Any individual likelihood evaluates to `-Inf`
-- The signed logsumexp result is negative (numerical instability warning)
-- The result is non-finite
+A node whose individual likelihood is not finite is dropped. If the signed sum is not
+positive and finite, the batch falls back to the single-node level-1 rule (with a
+warning); `-Inf` (in the accumulator type) is returned only if that is not finite either.
 """
 function batch_loglik_ghq(
         dm::DataModel,
@@ -148,17 +147,22 @@ function batch_loglik_ghq(
     end
 
     log_val, result_sign = signed_logsumexp(a_vals, sgrid.signs)
+    result_sign > 0 && isfinite(log_val) && return log_val
 
-    if result_sign < 0
-        @warn "GHQuadrature: batch marginal likelihood estimate is negative " *
-            "(signed logsumexp returned negative result). " *
-            "This indicates numerical instability — consider reducing `level` " *
-            "or checking your model specification." maxlog = 1
-        return T(-Inf)
-    end
-
-    isfinite(log_val) || return T(-Inf)
-    return log_val
+    # The signed Smolyak sum is a valid rule but not a positive one: the weight at the
+    # center is -(d-1) at level 2 (-7 for d = 8), so a batch whose integrand drops by more
+    # than that margin one standard deviation away from the center sums to a negative
+    # "likelihood". Returning -Inf there made the whole marginal -Inf. The level-1 rule
+    # (one node at z = 0, weight 1; the Laplace value under the adaptive measure) cannot
+    # be negative, so use it for this batch.
+    R == 1 && return T(-Inf)
+    @warn "GHQuadrature: the signed sparse-grid sum of a $(sgrid.dim)-dimensional batch is " *
+        "not positive (the rule is not accurate for this non-Gaussian integrand); using " *
+        "the level-1 rule for this batch. A higher `level` or SAEM/MCEM gives a more " *
+        "accurate marginal." maxlog = 1
+    return batch_loglik_ghq(
+        dm, batch_info, θ, re_measure, get_sparse_grid(sgrid.dim, 1), const_cache, ll_cache
+    )
 end
 
 # ---------------------------------------------------------------------------
