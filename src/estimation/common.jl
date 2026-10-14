@@ -3208,6 +3208,15 @@ Fit a model to data using the specified estimation method.
 - `rng = Random.default_rng()`: random number generator (used by MCMC/SAEM/MCEM).
 - `theta_0_untransformed::Union{Nothing, ComponentArray} = nothing`: custom starting
   point on the natural scale; defaults to the model's declared initial values.
+- `re_0 = nothing`: initial random effects for `SAEM` and `MCEM` only. Either a
+  `FitResult` of a fit on the same `dm` (its EBEs, e.g. of a `Laplace`/`FOCEI` fit) or a
+  `NamedTuple` of `DataFrame`s in the format of [`get_random_effects`](@ref) (per random
+  effect, the grouping column and the value column(s), natural scale). Every free level
+  needs a row. Every MCMC E-step chain (`SaemixMH`, `AdaptiveNoLimitsMH`, Turing
+  samplers) starts at these values instead of a prior draw (native samplers) or the prior
+  mean (Turing), also with `warm_start = false`. For the native samplers a start with a
+  non-finite log-density falls back to the prior mean. The `MCEM_IS` importance-sampling
+  E-step does not use it. `nothing` keeps the default behaviour.
 - `store_data_model::Bool = true`: whether to store a reference to `dm` in the result.
 - `pooled_init = false`: warm-start the fit from a quick [`Pooled`](@ref) pre-fit.
   `true` runs `Pooled(optim_kwargs=(; maxiters=50))` with the `lb`, `ub` and
@@ -3251,6 +3260,8 @@ function fit_model(
         _validate_theta_0(dm, kwargs.theta_0_untransformed)
     end
     _validate_fit_overrides(dm, kwargs)
+    get(kwargs, :re_0, nothing) === nothing || method isa Union{SAEM, MCEM} ||
+        error("re_0 is supported only by SAEM and MCEM; got $(nameof(typeof(method))).")
     _warn_degenerate_soft_trees(dm, get(kwargs, :theta_0_untransformed, nothing))
     try
         if pooled_init === false

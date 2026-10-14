@@ -180,6 +180,10 @@ function NoLimits._mcem_sample_batch_turing(
     # and everything else silently ignored it (#335).
     adapt_kw = (_mcmc_is_adaptive(sampler) && !haskey(tkwargs, :nadapts)) ?
         (; nadapts = n_adapt) : (;)
+    if last_params isa AbstractVector{<:Real}   # `re_0` seed of `fit_model` (flat b)
+        last_params = NoLimits._b_to_last_params(last_params, info, re_names)
+        warm_start = true
+    end
     chain = if warm_start && last_params isa NamedTuple && !isempty(last_params)
         init = DynamicPPL.InitFromParams(last_params)
         Base.invokelatest(

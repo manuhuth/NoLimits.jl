@@ -509,7 +509,8 @@ function _amh_init_state(
         dm::DataModel, info::REBatchInfo,
         θ::ComponentArray, re_names::Vector{Symbol},
         const_cache::REConstantsCache, cache::_LLCache,
-        sampler::AdaptiveNoLimitsMH, rng::AbstractRNG
+        sampler::AdaptiveNoLimitsMH, rng::AbstractRNG;
+        b0 = nothing
     )
     nb = get_n_b(info)
     b_current = zeros(Float64, nb)
@@ -570,6 +571,7 @@ function _amh_init_state(
         lp_offset += n_levels
     end
 
+    b0 === nothing || copyto!(b_current, b0)   # `re_0` seed replaces the prior draw
     b_ok = _em_vet_init_b(dm, info, θ_re, b_current, const_cache, cache, rng, re_names, "AdaptiveMH")
     b_ok === b_current || copyto!(b_current, b_ok)
 
@@ -843,7 +845,10 @@ function _mcem_sample_batch(
         _amh_recompute_ll_cache!(last_params, dm, info, θ_re, const_cache, cache)
         last_params
     else
-        _amh_init_state(dm, info, θ, re_names, const_cache, cache, sampler, rng)
+        _amh_init_state(
+            dm, info, θ, re_names, const_cache, cache, sampler, rng;
+            b0 = last_params isa AbstractVector{<:Real} ? last_params : nothing
+        )
     end
 
     # Run the chain

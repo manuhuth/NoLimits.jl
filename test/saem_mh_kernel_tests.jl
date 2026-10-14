@@ -617,3 +617,49 @@ end
             NoLimits._bij_log_jac_forward(Val(:Beta), z)
     end
 end
+
+# ---------------------------------------------------------------------------
+# re_0: E-step chains start at given random effects
+# ---------------------------------------------------------------------------
+
+@testset "re_0 seeds the E-step chains" begin
+    dm = _mh_scalar_dm(MersenneTwister(3); n_id = 6, inner = 3)
+    re0 = (η = DataFrame(ID = 1:6, η_1 = collect(0.5:0.5:3.0)),)
+    _, infos, cc = NoLimits.build_re_batch_infos(dm, NamedTuple())
+    b0s = NoLimits._em_re_0_bstars(dm, infos, re0)
+    cache = NoLimits.build_ll_cache(dm)
+    θ = NoLimits.get_θ0_untransformed(NoLimits.get_fixed(NoLimits.get_model(dm)))
+    still = SaemixMH(n_kern1 = 0, n_kern2 = 0, n_kern3 = 0)   # chain does not move
+    for (bi, info) in enumerate(infos)
+        samples, state, _ = NoLimits._mcem_sample_batch(
+            dm, info, θ, cc, cache, still, (n_samples = 1,), MersenneTwister(1),
+            [:η], false, b0s[bi]
+        )
+        @test samples[:, 1] == b0s[bi]
+        # The returned state is carried over: the next call starts where this one ended.
+        s2, _, _ = NoLimits._mcem_sample_batch(
+            dm, info, θ, cc, cache, SaemixMH(), (n_samples = 1,), MersenneTwister(2),
+            [:η], true, state
+        )
+        @test s2[:, 1] != b0s[bi]  # moved, from the seed
+    end
+    @test sort(reduce(vcat, b0s)) == collect(0.5:0.5:3.0)
+
+    # Through fit_model: with a still chain, the first M-step (γ = 1) sets ω² = mean(b0²).
+    for method in (
+            SAEM(sampler = still, maxiters = 2, sa_burnin_iters = 0, progress = false),
+            MCEM(sampler = still, maxiters = 1, progress = false),
+        )
+        res = fit_model(dm, method; re_0 = re0, rng = MersenneTwister(1))
+        ω = NoLimits.get_params(res; scale = :untransformed).ω
+        method isa SAEM && @test ω ≈ sqrt(sum(abs2, 0.5:0.5:3.0) / 6) rtol = 1.0e-3
+        method isa MCEM && @test ω > 1.0   # prior start ω = 0.4 would stay well below
+    end
+
+    # Default unchanged: re_0 = nothing gives the same fit bit for bit.
+    m = SAEM(maxiters = 3, progress = false)
+    p1 = NoLimits.get_params(fit_model(dm, m; rng = MersenneTwister(5)); scale = :untransformed)
+    p2 = NoLimits.get_params(fit_model(dm, m; re_0 = nothing, rng = MersenneTwister(5)); scale = :untransformed)
+    @test p1 == p2
+    @test_throws ErrorException fit_model(dm, NoLimits.Laplace(); re_0 = re0)
+end
