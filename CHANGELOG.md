@@ -51,6 +51,11 @@
 
 ### Bug fixes
 
+- `GHQuadrature` and `get_marginal_likelihood` returned `-Inf` for the whole marginal at
+  level ≥ 2 when one batch's signed Smolyak sum was negative. With `d` random effects the
+  level-2 weight at the mode is `-(d-1)` (`-7` for `d = 8`), so a non-Gaussian batch can
+  sum to a negative value. Such a batch now falls back to the level-1 (Laplace) value with
+  a warning, for adaptive and prior-centered rules alike.
 - A `DynamicCovariateVector` component called inside `@DifferentialEquation`
   (`inp.i1(t)`, also in derived signals) threw `UndefVarError: inp not defined`. It now
   resolves like a scalar dynamic covariate `w(t)`.
