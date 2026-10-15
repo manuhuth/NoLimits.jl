@@ -97,10 +97,13 @@ Configuration for the ODE solver used when integrating the `@DifferentialEquatio
   the state Jacobian ∂f/∂u at `(u0, p, t0)` (primal values) satisfies
   `ρ · (t_end − t0) > stiffness_check`, or, for a solve with ForwardDiff dual numbers,
   when a Float64 solve of the primal problem with `alg` fails.
+- `fallback_kwargs`: keyword arguments merged over `kwargs` for the solves with
+  `fallback_alg` only, e.g. `(; maxiters = 10^5)` for a larger step budget of the stiff
+  fallback. `NamedTuple()` (default) means the fallback uses `kwargs` unchanged.
 
 Constructed by the `@Model` macro with defaults and updated via [`set_solver_config`](@ref).
 """
-struct ODESolverConfig{A, K, T, F, S}
+struct ODESolverConfig{A, K, T, F, S, FK}
     alg::A
     kwargs::K
     args::T
@@ -108,6 +111,7 @@ struct ODESolverConfig{A, K, T, F, S}
     closed_form::Symbol
     fallback_alg::F
     stiffness_check::S
+    fallback_kwargs::FK
 end
 
 const _DEFAULT_STIFFNESS_CHECK = 2.0e4
@@ -115,6 +119,11 @@ const _DEFAULT_STIFFNESS_CHECK = 2.0e4
 function ODESolverConfig(alg, kwargs, args, saveat_mode, closed_form, fallback_alg = nothing)
     return ODESolverConfig(
         alg, kwargs, args, saveat_mode, closed_form, fallback_alg, _DEFAULT_STIFFNESS_CHECK
+    )
+end
+function ODESolverConfig(alg, kwargs, args, saveat_mode, closed_form, fallback_alg, stiffness_check)
+    return ODESolverConfig(
+        alg, kwargs, args, saveat_mode, closed_form, fallback_alg, stiffness_check, NamedTuple()
     )
 end
 ODESolverConfig() = ODESolverConfig(nothing, NamedTuple(), (), :dense, :auto)
@@ -444,6 +453,8 @@ function _validate_solver_config(cfg::ODESolverConfig)
         error("Invalid closed_form $(repr(cfg.closed_form)). Use one of $(_CLOSED_FORM_MODES).")
     cfg.kwargs isa NamedTuple ||
         error("Solver kwargs must be a NamedTuple such as (; abstol = 1e-8); got $(typeof(cfg.kwargs)).")
+    cfg.fallback_kwargs isa NamedTuple ||
+        error("fallback_kwargs must be a NamedTuple such as (; maxiters = 10^5); got $(typeof(cfg.fallback_kwargs)).")
     cfg.args isa Tuple ||
         error("Solver args must be a Tuple; got $(typeof(cfg.args)).")
     # A non-algorithm `alg` used to reach `solve` unchecked, and on the closed-form path
@@ -463,7 +474,7 @@ end
 
 """
     set_solver_config(m::Model, cfg::ODESolverConfig) -> Model
-    set_solver_config(m::Model; alg, fallback_alg, stiffness_check, kwargs, args, saveat_mode, closed_form) -> Model
+    set_solver_config(m::Model; alg, fallback_alg, stiffness_check, fallback_kwargs, kwargs, args, saveat_mode, closed_form) -> Model
 
 Return a new `Model` with the ODE solver configuration replaced by `cfg`.
 The keyword form constructs a new [`ODESolverConfig`](@ref) from the given keyword
@@ -490,6 +501,9 @@ arguments and replaces the existing configuration.
   `alg`, which runs the whole step budget (at dual cost for gradients) before the
   fallback starts. `nothing` disables the routing; without a `fallback_alg` it has no
   effect.
+- `fallback_kwargs = NamedTuple()`: keyword arguments merged over `kwargs` for the solves
+  with `fallback_alg` only, e.g. `(; maxiters = 10^5)` to give the stiff fallback a larger
+  step budget than `alg`. The default keeps the shared `kwargs`.
 
 Every keyword call rebuilds the whole configuration from these defaults, so pass every
 setting you want in one call.
@@ -504,7 +518,8 @@ end
 
 function set_solver_config(
         m::Model; alg = nothing, fallback_alg = nothing,
-        stiffness_check = _DEFAULT_STIFFNESS_CHECK, kwargs = NamedTuple(),
+        stiffness_check = _DEFAULT_STIFFNESS_CHECK, fallback_kwargs = NamedTuple(),
+        kwargs = NamedTuple(),
         args = (), saveat_mode::Union{Symbol, AbstractString} = :dense,
         closed_form::Union{Symbol, AbstractString} = :auto
     )
@@ -513,7 +528,7 @@ function set_solver_config(
         ODESolverConfig(
             alg, _as_namedtuple(kwargs), args,
             _as_symbol(saveat_mode), _as_symbol(closed_form), fallback_alg,
-            stiffness_check
+            stiffness_check, _as_namedtuple(fallback_kwargs)
         )
     )
 end

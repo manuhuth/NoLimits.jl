@@ -399,12 +399,12 @@ function _solve_dense_individual(
     if cb === nothing
         sol = _solve_with_fallback(
             prob, alg, fb, (solver_cfg.args..., ode_args...), reset!;
-            stiffness_check = sc, solve_kwargs...
+            stiffness_check = sc, fallback_kwargs = solver_cfg.fallback_kwargs, solve_kwargs...
         )
     else
         sol = _solve_with_fallback(
             prob, alg, fb, (solver_cfg.args..., ode_args...), reset!;
-            stiffness_check = sc, solve_kwargs..., callback = cb
+            stiffness_check = sc, fallback_kwargs = solver_cfg.fallback_kwargs, solve_kwargs..., callback = cb
         )
     end
     return sol, compiled
