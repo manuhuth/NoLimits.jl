@@ -114,6 +114,40 @@ end
     @test all(isfinite, simulate_data(dm).y)
 end
 
+@testset "ODE fallback kwargs" begin
+    @test get_solver_config(_fb_model(; crossing = false)).fallback_kwargs == NamedTuple()
+    @test_throws ErrorException set_solver_config(
+        _fb_model(; crossing = false); fallback_kwargs = [:maxiters => 5]
+    )
+    # fallback_kwargs reach the fallback: a 5-step budget makes Rodas5P fail. The
+    # default leaves the fallback solve bitwise unchanged.
+    for sc in (2.0e4, 1.0e3, nothing)
+        dm = _fb_dm(Tsit5(), Rodas5P(); crossing = false, stiffness_check = sc)
+        ll_ref, g_ref = _fb_ll_grad(dm)
+        m = set_solver_config(
+            dm.model; alg = Tsit5(), fallback_alg = Rodas5P(), stiffness_check = sc,
+            kwargs = (; maxiters = 300, abstol = 1.0e-8, reltol = 1.0e-8), closed_form = :off,
+            fallback_kwargs = (; maxiters = 5)
+        )
+        dm5 = DataModel(m, _fb_df(; crossing = false); primary_id = :ID, time_col = :t)
+        @test _fb_ll_grad(dm5)[1] == -Inf
+        m = set_solver_config(
+            dm.model; alg = Tsit5(), fallback_alg = Rodas5P(), stiffness_check = sc,
+            kwargs = (; maxiters = 300, abstol = 1.0e-8, reltol = 1.0e-8), closed_form = :off,
+            fallback_kwargs = NamedTuple()
+        )
+        dm0 = DataModel(m, _fb_df(; crossing = false); primary_id = :ID, time_col = :t)
+        @test _fb_ll_grad(dm0) == (ll_ref, g_ref)
+    end
+    # raw solve: the fallback gets maxiters = 5, the primary keeps 300
+    prob = ODEProblem((du, u, p, t) -> (du[1] = -p[1] * (u[1] - t); nothing), [0.0], (0.0, 2.0), [1.0e4])
+    kw = NoLimits._ode_solve_kwargs((; maxiters = 300, abstol = 1.0e-8, reltol = 1.0e-8))
+    sol = NoLimits._solve_with_fallback(prob, Tsit5(), Rodas5P(), (); kw..., fallback_kwargs = (; maxiters = 5))
+    @test sol.retcode == ReturnCode.MaxIters
+    sol = NoLimits._solve_with_fallback(prob, Tsit5(), Rodas5P(), (); kw..., fallback_kwargs = (; maxiters = 10^4))
+    @test sol.retcode == ReturnCode.Success
+end
+
 # Counts RHS calls by element type: Float64 calls and dual calls separately.
 mutable struct _FbCount
     f64::Int

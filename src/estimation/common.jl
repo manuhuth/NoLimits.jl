@@ -3491,7 +3491,8 @@ function _ll_ode_solve_baked(cache::_LLCache, prob, reset! = nothing)
     )
     return _solve_with_fallback(
         prob, cache.alg, cache.solver_cfg.fallback_alg, cache.ode_args, reset!;
-        stiffness_check = cache.solver_cfg.stiffness_check, solve_kwargs...
+        stiffness_check = cache.solver_cfg.stiffness_check,
+        fallback_kwargs = cache.solver_cfg.fallback_kwargs, solve_kwargs...
     )
 end
 
