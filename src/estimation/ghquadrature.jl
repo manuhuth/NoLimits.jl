@@ -254,16 +254,22 @@ the estimate oscillate and drift *away* from the true integral as the level rise
 regularly turning the batch marginal negative (issue #98). Centered on the mode it
 converges at level 1-3.
 
-Returns `nothing` (keep the prior-centered measure) when some RE in the batch has
-bounded support — `CenteredREMeasure` places nodes anywhere in ℝ^n_b, which only
-stays inside the random-effect support when every RE in the batch is supported on
-all of ℝ — or when the mode/curvature is unavailable.
+When some RE in the batch has bounded support, b-space centering is invalid
+(`CenteredREMeasure` places nodes anywhere in ℝ^n_b), so the rule is made adaptive in
+the transport reference space instead ([`AdaptiveTransportRE`](@ref)): same integral,
+nodes at the u-space mode. Returns `nothing` (keep the prior-centered measure) when the
+mode/curvature is unavailable.
 """
 function _ghq_adaptive_measure(
         dm::DataModel, info::REBatchInfo,
         θu_re::ComponentArray, const_cache::REConstantsCache, ll_cache::_LLCache,
         prior_measure::AbstractREMeasure, b_star
     )
+    if prior_measure isa CompositeRE && !prior_measure.unbounded
+        return build_adaptive_transport_measure(
+            prior_measure, dm, info, _laplace_floatize(θu_re), const_cache, ll_cache
+        )
+    end
     prior_measure isa GaussianRE ||
         (prior_measure isa CompositeRE && prior_measure.unbounded) || return nothing
     # b*, H and S are frozen w.r.t. the outer AD: at a converged rule the value no

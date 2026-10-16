@@ -751,6 +751,134 @@ function build_centered_re_measure(
 end
 
 # ---------------------------------------------------------------------------
+# Adaptive rule in the transport reference space (bounded-support REs)
+# ---------------------------------------------------------------------------
+
+"""
+    AdaptiveTransportRE <: AbstractREMeasure
+
+Mode-centered (adaptive) quadrature for batches whose random effects have bounded
+support (LogNormal, Gamma, Beta, ...), where b-space centering is invalid because nodes
+would leave the support. The prior transport measure `base` maps the reference variable
+u ∈ ℝ^n_b to η = T(u) with correction c(u), so the batch integral is
+
+    ∫ p(y | T(u)) e^{c(u)} φ(u) du.
+
+The nodes are placed at u = û + S x, where û is the mode of the integrand in u-space and
+S S' the inverse negative Hessian there. For x ~ N(0, I) the change of variables gives the
+correction
+
+    log c̃(x) = c(u) - |u|²/2 + |x|²/2 + log|det S|,
+
+which is exact for any invertible S, so this is the same integral; only the node placement
+changes. Centered at the prior (û = 0, S = I) a narrow likelihood bump is missed by the
+nodes and the estimate is badly off at any practical level.
+
+`û` and `S` are Float64 and frozen w.r.t. the outer AD (as for `CenteredREMeasure`);
+`base` carries the θ-dependence of T and c.
+"""
+struct AdaptiveTransportRE{M <: AbstractREMeasure} <: AbstractREMeasure
+    base::M
+    û::Vector{Float64}
+    S::LowerTriangular{Float64, Matrix{Float64}}
+    log_det_S::Float64
+    n_b::Int
+end
+
+transform(re::AdaptiveTransportRE, x::AbstractVector) = transform(re.base, re.û .+ re.S * x)
+function logcorrection(re::AdaptiveTransportRE, x::AbstractVector)
+    u = re.û .+ re.S * x
+    return logcorrection(re.base, u) - sum(abs2, u) / 2 + sum(abs2, x) / 2 + re.log_det_S
+end
+Base.eltype(re::AdaptiveTransportRE) = eltype(re.base)
+
+# log of the u-space integrand of one batch (up to the constant -n_b/2 log 2π):
+# Σᵢ ℓᵢ(T(u)) + c(u) - |u|²/2. Generic in eltype(u) for ForwardDiff.
+function _transport_logintegrand(
+        u::AbstractVector, base::AbstractREMeasure, dm::DataModel, info::REBatchInfo,
+        θ_re::ComponentArray, const_cache, ll_cache::_LLCache
+    )
+    b = transform(base, u)
+    total = logcorrection(base, u) - sum(abs2, u) / 2
+    for i in get_inds(info)
+        η_i = _build_eta_ind(dm, i, info, b, const_cache, θ_re)
+        lli = _loglikelihood_individual(dm, i, θ_re, η_i, ll_cache)
+        isfinite(lli) || return oftype(total, -Inf)
+        total += lli
+    end
+    return total
+end
+
+"""
+    build_adaptive_transport_measure(base, dm, info, θ_val, const_cache, ll_cache; maxiter, gtol)
+
+Find the u-space mode û by Levenberg-Marquardt-damped Newton ascent from u = 0 (value,
+gradient and Hessian from one ForwardDiff pass; damping λI added until -H + λI is positive
+definite; Armijo backtracking) and return an [`AdaptiveTransportRE`](@ref) around `base`.
+`θ_val` is the Float64 parameter vector.
+
+The change of variables is exact for ANY center and invertible scale, so an unconverged
+search still yields a valid rule as long as -H is positive definite at the final point -
+only the node placement (accuracy) suffers, and a near-mode center is far better than the
+prior center. Returns `nothing` only when the integrand is not finite at u = 0 or -H at
+the final point is not positive definite; the caller then keeps the prior-centered rule.
+"""
+function build_adaptive_transport_measure(
+        base::AbstractREMeasure, dm::DataModel, info::REBatchInfo,
+        θ_val::ComponentArray, const_cache, ll_cache::_LLCache;
+        maxiter::Int = 100, gtol::Float64 = 1.0e-8
+    )
+    n = get_n_b(info)
+    θ_re = _symmetrize_psd_params(θ_val, get_fixed(get_model(dm)))
+    base_val = build_re_measure_from_batch(info, θ_val, const_cache, dm, ll_cache)
+    F = u -> _transport_logintegrand(u, base_val, dm, info, θ_re, const_cache, ll_cache)
+    u = zeros(Float64, n)
+    dr = ForwardDiff.DiffResults.HessianResult(u)
+    eval! = v -> ForwardDiff.hessian!(dr, F, v)
+    eval!(u)
+    Fu = ForwardDiff.DiffResults.value(dr)
+    isfinite(Fu) || return nothing
+    for _ in 1:maxiter
+        g = copy(ForwardDiff.DiffResults.gradient(dr))
+        A = -Matrix(ForwardDiff.DiffResults.hessian(dr))
+        (all(isfinite, g) && all(isfinite, A)) || break
+        maximum(abs, g) <= gtol * max(1.0, abs(Fu)) && break
+        λ = 0.0
+        C = cholesky(Symmetric(A); check = false)
+        while !issuccess(C)
+            λ = λ == 0 ? 1.0e-6 * max(1.0, maximum(abs, A)) : 10λ
+            λ > 1.0e12 && break
+            C = cholesky(Symmetric(A + λ * I); check = false)
+        end
+        issuccess(C) || break
+        d = C \ g
+        t, slope, moved = 1.0, dot(g, d), false
+        while t > 1.0e-10
+            Fn = F(u .+ t .* d)
+            if isfinite(Fn) && Fn >= Fu + 1.0e-4 * t * slope
+                u .+= t .* d
+                moved = true
+                break
+            end
+            t /= 2
+        end
+        moved || break
+        eval!(u)
+        Fu = ForwardDiff.DiffResults.value(dr)
+    end
+    eval!(u)
+    A = -Matrix(ForwardDiff.DiffResults.hessian(dr))
+    all(isfinite, A) || return nothing
+    C = cholesky(Symmetric(A); check = false)
+    issuccess(C) || return nothing
+    cS = cholesky(Symmetric(inv(C)); check = false)
+    issuccess(cS) || return nothing
+    return AdaptiveTransportRE(
+        base, u, LowerTriangular(Matrix(cS.L)), -sum(log, diag(C.L)), n
+    )
+end
+
+# ---------------------------------------------------------------------------
 # Pre-validation: check all RE distributions are supported
 # ---------------------------------------------------------------------------
 
