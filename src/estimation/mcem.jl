@@ -687,6 +687,58 @@ function _em_seed_batch_b(
     )
 end
 
+# Would `_em_seed_batch_b` succeed for every batch at θ_u? Probed on a COPY of `rng`, so
+# a feasible start leaves the caller's RNG stream (and hence the fit) unchanged.
+function _em_start_seedable(
+        dm::DataModel, batch_infos, θ_u, const_cache::REConstantsCache, cache_init,
+        rng::AbstractRNG, re_names
+    )
+    probe = copy(rng)
+    for info in batch_infos
+        get_n_b(info) == 0 && continue
+        ok = try
+            b = _re_prior_mean_b(dm, info, θ_u, const_cache, cache_init, re_names)
+            isfinite(_laplace_logf_batch(dm, info, θ_u, b, const_cache, cache_init)) ||
+                any(1:10) do _
+                    samp, _ = _is_prior_sample_batch(
+                        dm, info, θ_u, const_cache, cache_init, probe, 1, re_names
+                    )
+                    isfinite(_laplace_logf_batch(dm, info, θ_u, samp[:, 1], const_cache, cache_init))
+                end
+        catch
+            false
+        end
+        ok || return false
+    end
+    return true
+end
+
+# Start repair for the EM methods. A start at which some batch has no finite log-joint for
+# any RE draw (e.g. an RE scale that is invalid at θ0, or an observation mean outside the
+# outcome's support) makes the pre-loop seed fail. Instead of erroring, move the start
+# along the transformed-scale segment toward the model's declared initial values,
+# θ(λ) = λ θ0 + (1 - λ) θ_decl for λ = 1/2, 1/4, ..., 2^-8, 0, and use the first θ(λ)
+# at which every batch can be seeded. Returns θ0_u unchanged when it is already feasible
+# or when no point on the segment is (the seed then raises its usual error).
+function _em_repair_start(
+        dm::DataModel, batch_infos, θ0_u, const_cache::REConstantsCache, cache_init,
+        rng::AbstractRNG, re_names, method_label::String
+    )
+    _em_start_seedable(dm, batch_infos, θ0_u, const_cache, cache_init, rng, re_names) &&
+        return θ0_u
+    fe = get_fixed(get_model(dm))
+    transform, inv_transform = get_transform(fe), get_inverse_transform(fe)
+    θ0_t, θd_t = transform(θ0_u), transform(get_θ0_untransformed(fe))
+    for λ in (0.5 .^ (1:8)..., 0.0)
+        θλ_u = inv_transform(λ .* θ0_t .+ (1 - λ) .* θd_t)
+        if _em_start_seedable(dm, batch_infos, θλ_u, const_cache, cache_init, rng, re_names)
+            @warn "$(method_label): no finite log-likelihood for any initial random effect at the given start; moved the start toward the model's declared initial values (λ = $(λ))."
+            return θλ_u
+        end
+    end
+    return θ0_u
+end
+
 # Guard for the native samplers' own initial draw. An unchecked prior draw with a
 # non-finite log-joint deadlocks the chain: the acceptance ratio becomes NaN, so no
 # proposal is ever accepted and the M-step is skipped every iteration. Returns `b`

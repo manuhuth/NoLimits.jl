@@ -3406,6 +3406,20 @@ function _fit_model(
         dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
         serialization = serialization, force_saveat = true
     )
+    if re_0 === nothing
+        # probe θ0_u: that is the point the pre-loop seed below evaluates
+        θ0_r = _em_repair_start(
+            dm, batch_infos, θ0_u, const_cache,
+            ll_cache isa Vector ? ll_cache[1] : ll_cache, rng, re_names, "SAEM"
+        )
+        if θ0_r !== θ0_u
+            θ0_u = θ0_r
+            θ0_t = transform(θ0_u)
+            θ_const_u = deepcopy(θ0_u)
+            _apply_constants!(θ_const_u, constants)
+            θ_const_t = transform(θ_const_u)
+        end
+    end
 
     _cf_cfg = _saem_resolve_closed_form_config(dm, method.saem, extra_objective)
     builtin_stats_mode = _cf_cfg.builtin_stats_mode
