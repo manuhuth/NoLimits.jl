@@ -1618,6 +1618,196 @@ function _saem_prune_hmm_outcome_targets(dm::DataModel, resid_var_param, hmm_out
     return NamedTuple(kept)
 end
 
+# ---------------------------------------------------------------------------
+# Automatic centering ("mu-referencing") of additive fixed effects
+# ---------------------------------------------------------------------------
+#
+# When a fixed effect `a` enters the model ONLY as `a + η` (or `a + η[k]`) and that RE
+# term enters only through the same sums, the likelihood depends on (a, η) only through
+# a + η: shifting a → a + δ, η → η - δ for every level leaves it unchanged. Plain SAEM
+# then crawls along this ridge (the M-step moves a given η, the E-step moves η given a);
+# on a linear random intercept-slope model it needs thousands of iterations. After each
+# M-step we move to the best point on the ridge in one step: δ = mean over levels and
+# chains of (η - prior mean), which maximizes the Gaussian RE prior along the shift
+# (for a vector RE only when every component is centered, then it is the exact joint
+# optimum for any Ω). Same estimand; only the path changes.
+
+_cs_is_term(ex, re::Symbol, k::Int) =
+    k == 0 ? ex === re : (ex isa Expr && ex.head === :ref && length(ex.args) == 2 &&
+                          ex.args[1] === re && ex.args[2] == k)
+
+# occurrences of symbol `s` (as a value, not as a call head)
+function _cs_count_sym(ex, s::Symbol)
+    ex === s && return 1
+    ex isa Expr || return 0
+    args = ex.head === :call ? ex.args[2:end] : ex.args
+    return sum((_cs_count_sym(a, s) for a in args); init = 0)
+end
+
+function _cs_count_term(ex, re::Symbol, k::Int)
+    _cs_is_term(ex, re, k) && return 1
+    ex isa Expr || return 0
+    args = ex.head === :call ? ex.args[2:end] : ex.args
+    return sum((_cs_count_term(a, re, k) for a in args); init = 0)
+end
+
+# number of `+` calls having both `fe` and the RE term as direct arguments
+function _cs_count_pairs(ex, fe::Symbol, re::Symbol, k::Int)
+    ex isa Expr || return 0
+    n = 0
+    if ex.head === :call && ex.args[1] === :+
+        args = ex.args[2:end]
+        n += (count(==(fe), args) == 1 && count(a -> _cs_is_term(a, re, k), args) == 1)
+    end
+    args = ex.head === :call ? ex.args[2:end] : ex.args
+    return n + sum((_cs_count_pairs(a, fe, re, k) for a in args); init = 0)
+end
+
+"""
+    _saem_detect_centering_pairs(dm, free_names) -> Vector{NamedTuple}
+
+Pairs `(fe, re, k)` (k = 0 for a scalar RE, else the component) such that the free
+fixed effect `fe` (scalar, identity scale, unbounded, absent from every RE distribution)
+and the RE term occur in `@formulas`/`@preDifferentialEquation` only as two direct
+arguments of the same `+` call, never in `@DifferentialEquation`/`@initialDE`, for a
+`Normal`/`MvNormal` RE. Vector REs qualify only when every component is paired.
+"""
+function _saem_detect_centering_pairs(dm::DataModel, free_names::Vector{Symbol})
+    model = get_model(dm)
+    fe = get_fixed(model)
+    lines = Any[]
+    append!(lines, get_formulas_ir(get_formulas(model)).lines)
+    excluded = Set{Symbol}()
+    de = model.de
+    if de !== nothing
+        de.prede !== nothing && append!(lines, de.prede.meta.lines)
+        de.de !== nothing && union!(excluded, de.de.meta.var_syms, de.de.meta.fun_syms)
+        de.initial !== nothing && union!(excluded, de.initial.ir.var_syms, de.initial.ir.prop_syms)
+    end
+    re_syms_map = get_re_syms(get_random(model))
+    in_re_dists = Set{Symbol}()
+    for (_, syms) in Base.pairs(re_syms_map)
+        union!(in_re_dists, syms)
+    end
+    family = _saem_re_family_map(dm)
+    θ0 = get_θ0_untransformed(fe)
+    lo, hi = get_bounds_untransformed(fe)
+    tr = get_transform(fe)
+    count_all(f) = sum((f(l) for l in lines); init = 0)
+    candidates = Symbol[]
+    for a in free_names
+        a in in_re_dists && continue
+        a in excluded && continue
+        getproperty(θ0, a) isa Real || continue
+        (isfinite(getproperty(lo, a)) || isfinite(getproperty(hi, a))) && continue
+        # identity scale: the transform leaves the coordinate unchanged
+        θp = copy(θ0)
+        setproperty!(θp, a, 0.37)
+        getproperty(tr(θp), a) == 0.37 || continue
+        push!(candidates, a)
+    end
+    pairs = NamedTuple{(:fe, :re, :k), Tuple{Symbol, Symbol, Int}}[]
+    for re in get_re_names(get_random(model))
+        fam = hasproperty(family, re) ? getproperty(family, re) : :unsupported
+        fam in (:normal, :mvnormal) || continue
+        re in excluded && continue
+        rc = get_laplace_cache(get_re_group_info(dm))
+        ri = findfirst(==(re), get_re_names(rc))
+        ri === nothing && continue
+        dim = rc.is_scalar[ri] ? 0 : rc.dims[ri]
+        ks = dim == 0 ? (0,) : Tuple(1:dim)
+        # vector RE used unindexed anywhere -> not shiftable component-wise
+        if dim > 0
+            n_bare = count_all(l -> _cs_count_sym(l, re))
+            n_ref = sum(k -> count_all(l -> _cs_count_term(l, re, k)), ks)
+            n_bare == n_ref || continue      # every use of `re` is an indexed component
+        end
+        found = NamedTuple{(:fe, :re, :k), Tuple{Symbol, Symbol, Int}}[]
+        for k in ks, a in candidates
+            any(p -> p.fe === a, pairs) && continue
+            np = count_all(l -> _cs_count_pairs(l, a, re, k))
+            np >= 1 || continue
+            np == count_all(l -> _cs_count_sym(l, a)) || continue
+            np == count_all(l -> _cs_count_term(l, re, k)) || continue
+            push!(found, (fe = a, re = re, k = k))
+            break
+        end
+        length(found) == length(ks) && append!(pairs, found)
+    end
+    return pairs
+end
+
+# Flat-b indices of every level of (re, k) in one batch.
+function _cs_batch_indices(info::REBatchInfo, re_names, re::Symbol, k::Int)
+    ri = findfirst(==(re), re_names)
+    meta = get_re_info(info)[ri]
+    return [k == 0 ? first(r) : r[k] for r in get_ranges(meta)]
+end
+
+"""
+    _saem_center!(pairs, θu, b_current, b_chains, last_chain_params, sample_store, ...)
+
+One centering step (see the section comment): returns the shifted natural-scale θ; shifts
+every stored/chain RE value of the paired terms by -δ in place.
+"""
+function _saem_center!(
+        pairs, θu, dm::DataModel, batch_infos, b_current, b_chains, last_chain_params,
+        sample_store, const_cache, cache, re_names, n_chains::Int
+    )
+    θn = copy(θu)
+    prior_means = [get_n_b(info) == 0 ? Float64[] :
+                   _re_prior_mean_b(dm, info, θu, const_cache, cache, re_names)
+                   for info in batch_infos]
+    for p in pairs
+        s, n = 0.0, 0
+        idx = [_cs_batch_indices(info, re_names, p.re, p.k) for info in batch_infos]
+        for bi in eachindex(batch_infos), c in 1:n_chains, i in idx[bi]
+            s += b_chains[bi][c][i] - prior_means[bi][i]
+            n += 1
+        end
+        n == 0 && continue
+        δ = s / n
+        (isfinite(δ) && δ != 0) || continue
+        setproperty!(θn, p.fe, getproperty(θn, p.fe) + δ)
+        for bi in eachindex(batch_infos)
+            isempty(idx[bi]) && continue
+            for i in idx[bi]
+                b_current[bi][i] -= δ
+                for c in 1:n_chains
+                    b_chains[bi][c][i] -= δ
+                end
+                for slot in 1:sample_store.capacity
+                    snap = sample_store.snaps[slot]
+                    length(snap) >= bi && length(snap[bi]) >= i && (snap[bi][i] -= δ)
+                end
+            end
+            for c in 1:n_chains
+                st = last_chain_params[bi][c]
+                if st isa _AdaptiveMHState
+                    for i in idx[bi]
+                        st.b_current[i] -= δ
+                    end
+                elseif st isa _SaemixMHState
+                    for i in idx[bi]
+                        st.b[i] -= δ
+                    end
+                elseif st isa NamedTuple
+                    last_chain_params[bi][c] = _b_to_last_params(
+                        b_chains[bi][c], batch_infos[bi], re_names
+                    )
+                elseif st isa AbstractVector
+                    v = copy(st)
+                    for i in idx[bi]
+                        v[i] -= δ
+                    end
+                    last_chain_params[bi][c] = v
+                end
+            end
+        end
+    end
+    return θn
+end
+
 function _saem_re_family_map(dm::DataModel)
     re_names = get_re_names(get_random(get_model(dm)))
     re_dists = get_re_dist_exprs(get_random(get_model(dm)))
@@ -3462,6 +3652,12 @@ function _fit_model(
         end
     end
     re_family_map = _cf_cfg.re_family_map
+    # automatic centering of additive fixed effects (see _saem_detect_centering_pairs)
+    center_pairs = _saem_detect_centering_pairs(dm, base_free_names)
+    if !isempty(center_pairs)
+        @info "SAEM: centering fixed effects on their additive random effects: " *
+            join(["$(p.fe) ↔ $(p.k == 0 ? p.re : "$(p.re)[$(p.k)]")" for p in center_pairs], ", ")
+    end
 
     # anneal_to_fixed validation
     anneal_initial_sds = _saem_validate_anneal(
@@ -4193,6 +4389,20 @@ function _fit_model(
                 end
                 θ_prev_new = copy(θt_free)
             end
+        end
+
+        # Centering step (post M-step): jump to the best point of the a + η ridge.
+        if !isempty(center_pairs) && γ > 0 && !mstep_skipped && !do_anneal
+            θu_new = _saem_center!(
+                center_pairs, θu_new, dm, batch_infos, b_current, b_chains,
+                last_chain_params, sample_store, const_cache,
+                ll_cache isa Vector ? ll_cache[1] : ll_cache, re_names, effective_n_chains
+            )
+            θt_full = transform(θu_new)
+            for name in base_free_names
+                setproperty!(θt_free, name, getproperty(θt_full, name))
+            end
+            θ_prev_new = copy(θt_free)
         end
 
         θ_full_vec = θt_full
