@@ -42,9 +42,9 @@ whose gradient is not; use `Laplace()` for that, and `level ≥ 3` here.
   random effect has bounded support and every batch has at most 3 RE dimensions (the
   transport-space rule for bounded REs needs the higher level), else 3; afterwards the
   marginal log-likelihood at the estimate is recomputed with the next finer rule
-  (`2L + 1` nodes for scalar random effects, `L + 2` otherwise) and, while the two differ by
-  more than 0.5 (whole data set), the fit is refined from the estimate at the finer level
-  (at most 4 refinements, up to ~2000 nodes per batch). May also be:
+  (`2L + 1` nodes) and, while the two differ by more than 0.5 (whole data set), the fit is
+  refined from the estimate at the finer level (at most 4 refinements). Refinement applies
+  to models whose random-effect batches are scalar (one random effect per batch). May also be:
   - `Int` (isotropic): same level for all RE groups.
   - `NamedTuple` (anisotropic): per-RE-group level, e.g.
     `level = (η_id = 3, η_site = 2)`.  RE groups not mentioned default to
@@ -705,8 +705,13 @@ function _ghq_fit_auto(
     _, infos, _ = _build_re_batch_infos(dm, constants_re)
     m = _ghq_resolve_auto_level(method, dm, infos)
     res = _fit_model_scalar(dm, m, args...; theta_0_untransformed = theta_0_untransformed, kwargs...)
+    # Refinement only for scalar random effects (1-D batches): there the finer rules are
+    # nearly free and the base level is most often too coarse (binary data with a large RE
+    # variance). Multi-dimensional/bounded batches keep the base rule: on M05 (two bounded
+    # REs) the level-5 error hovers around the tolerance, so starts refined differently
+    # (objectives at different levels) and the fit cost rose 4x without better estimates.
     maxdim = maximum((get_n_b(info) for info in infos); init = 0)
-    maxdim == 0 && return res
+    maxdim == 1 || return res
     ode = (ode_args = get(kwargs, :ode_args, ()), ode_kwargs = get(kwargs, :ode_kwargs, NamedTuple()))
     for _ in 1:_GHQ_AUTO_MAX_REFINE
         L, L2 = m.level, _ghq_next_level(m.level, maxdim)
