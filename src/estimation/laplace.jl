@@ -253,6 +253,14 @@ _LaplaceHessCache(last_b, last_logdet, last_H, last_chol, last_valid) = _Laplace
     last_b, last_logdet, last_H, last_chol, last_valid, fill(eltype(last_logdet)(NaN), length(last_logdet))
 )
 
+# Exact Hessian ∇²_b log f at b left by the inner Newton solve at the current θ (seeded
+# entry, `last_chol === nothing`; see `_laplace_store_mode_hess!`), else `nothing`.
+function _laplace_mode_hess(hc, bi::Int, b)
+    (hc !== nothing && hc.last_valid[bi] && hc.last_chol[bi] === nothing) || return nothing
+    hc.last_b[bi] == b || return nothing
+    return hc.last_H[bi]
+end
+
 # log f(b) left by the inner solve at this θ (see `_laplace_store_mode_hess!`), else NaN.
 function _laplace_cached_logf(hc, bi::Int, b, use_cache::Bool)
     (use_cache && hc !== nothing && hc.last_valid[bi]) || return NaN

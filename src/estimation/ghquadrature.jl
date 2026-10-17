@@ -217,7 +217,8 @@ function _ghq_batch_ll(
         const_cache::REConstantsCache,
         ll_cache::_LLCache,
         level,   # Int, NamedTuple or :auto
-        b_star = nothing
+        b_star = nothing,
+        H_star = nothing   # exact ∇²_b log f at b_star (Float64 θ), when known
     )
     level === :auto && (level = _ghq_auto_level(dm, info))
     T = eltype(θu_re)
@@ -248,7 +249,7 @@ function _ghq_batch_ll(
     # as invalid parameter regions and return -Inf, as the Laplace path does.
     re_measure = try
         m = build_re_measure_from_batch(info, θu_re, const_cache, dm, ll_cache)
-        mc = _ghq_adaptive_measure(dm, info, θu_re, const_cache, ll_cache, m, b_star)
+        mc = _ghq_adaptive_measure(dm, info, θu_re, const_cache, ll_cache, m, b_star, H_star)
         mc === nothing ? m : mc
     catch e
         _is_numeric_error(e) && return T(-Inf)
@@ -293,7 +294,7 @@ mode/curvature is unavailable.
 function _ghq_adaptive_measure(
         dm::DataModel, info::REBatchInfo,
         θu_re::ComponentArray, const_cache::REConstantsCache, ll_cache::_LLCache,
-        prior_measure::AbstractREMeasure, b_star
+        prior_measure::AbstractREMeasure, b_star, H_star = nothing
     )
     if prior_measure isa CompositeRE && !prior_measure.unbounded
         return build_adaptive_transport_measure(
@@ -313,7 +314,7 @@ function _ghq_adaptive_measure(
     (b === nothing || length(b) != get_n_b(info)) && return nothing
     return build_centered_re_measure(
         b, info, 1, θ_val, const_cache, dm, ll_cache;
-        θ_prior = θu_re
+        θ_prior = θu_re, H_star = b_star === nothing ? nothing : H_star
     )
 end
 
@@ -546,7 +547,8 @@ function _fit_model_scalar(
                 end
                 bll = _ghq_batch_ll(
                     dm, batch_infos[bi], θu_re, const_cache,
-                    ll_cache[c], method.level, bstars[bi]
+                    ll_cache[c], method.level, bstars[bi],
+                    _laplace_mode_hess(ebe_cache.hess_cache, bi, bstars[bi])
                 )
                 if bll == -Inf
                     Threads.atomic_or!(bad, true)
@@ -563,7 +565,8 @@ function _fit_model_scalar(
                 active !== nothing && !(bi in active) && continue
                 bll = _ghq_batch_ll(
                     dm, info, θu_re, const_cache, ll_cache,
-                    method.level, bstars[bi]
+                    method.level, bstars[bi],
+                    _laplace_mode_hess(ebe_cache.hess_cache, bi, bstars[bi])
                 )
                 bll == -Inf && return infT
                 results[bi] = _batch_weight(dm, get_inds(info)) * convert(T, bll)

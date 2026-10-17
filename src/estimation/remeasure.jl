@@ -715,13 +715,17 @@ function build_centered_re_measure(
         ll_cache::_LLCache;
         jitter::Float64 = 1.0e-6,
         max_tries::Int = 6,
-        θ_prior::ComponentArray = θu
+        θ_prior::ComponentArray = θu,
+        H_star::Union{Nothing, AbstractMatrix} = nothing
     )
     # Always work in Float64: SAEM stores eb_modes as Float32, and the Hessian
     # computation promotes to Float64 regardless, so T must be Float64.
     b_star = Vector{Float64}(b_star)
     T = Float64
-    H = _laplace_hessian_b(dm, batch_info, θu, b_star, const_cache, ll_cache, nothing, bi)
+    # `H_star`: the exact Hessian at b_star (same θu) when the caller already has it
+    H = H_star !== nothing && size(H_star) == (length(b_star), length(b_star)) ?
+        Matrix{Float64}(H_star) :
+        _laplace_hessian_b(dm, batch_info, θu, b_star, const_cache, ll_cache, nothing, bi)
     # S only places the nodes — the change-of-variables correction compensates any
     # invertible scaling exactly — so the admissibility test is plain definiteness of -H,
     # which is also what `negH_definite_without_jitter` now applies to the Laplace *value*
