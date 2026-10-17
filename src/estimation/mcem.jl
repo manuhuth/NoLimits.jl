@@ -75,18 +75,41 @@ MCMC-based E-step for [`MCEM`](@ref). Accepts the native samplers
 - `sample_schedule`: samples per E-step — `Int`, `Vector{Int}`, or `Function(iter)->Int`.
   Defaults to `100`.
 - `warm_start::Bool = true`: initialize sampler from previous iteration's modes.
+- `thin::Int = 4`: keep every `thin`-th draw of the chain for the M-step (and the
+  closed-form statistics), but never fewer than 25 draws: the effective interval is
+  `max(1, min(thin, S ÷ 25))` for `S` draws per E-step, so small schedules are not thinned.
+  Each kept draw costs one log-likelihood evaluation per M-step objective evaluation
+  (typically dozens, with dual numbers), while a further MCMC sweep costs only a few, so
+  using autocorrelated neighbours buys little Monte Carlo precision at a high price;
+  subsampling the chain is then the efficient choice (Geyer 1992, Stat. Sci. 7:473;
+  MacEachern & Berliner 1994, Am. Stat. 48:188). `thin = 1` keeps every draw.
 """
 struct MCEM_MCMC{S, K, SS} <: AbstractMCEMEStep
     sampler::S
     turing_kwargs::K
     sample_schedule::SS
     warm_start::Bool
+    thin::Int
 
-    function MCEM_MCMC(sampler::S, turing_kwargs::K, sample_schedule::SS, warm_start) where {S, K, SS}
+    function MCEM_MCMC(
+            sampler::S, turing_kwargs::K, sample_schedule::SS, warm_start, thin::Integer = 4
+        ) where {S, K, SS}
         _check_sample_schedule(sample_schedule)
         _check_turing_kwargs("MCEM", turing_kwargs)
-        return new{S, K, SS}(sampler, turing_kwargs, sample_schedule, warm_start)
+        thin >= 1 || error("MCEM: thin must be ≥ 1. Got: $thin")
+        return new{S, K, SS}(sampler, turing_kwargs, sample_schedule, warm_start, Int(thin))
     end
+end
+
+# Draws kept for the M-step from `S` E-step draws under `MCEM_MCMC(thin = t)`: every
+# `max(1, min(t, S ÷ 25))`-th, ending at the last draw (never fewer than 25 kept).
+@inline _mcem_thin_step(thin::Int, S::Int) = max(1, min(thin, S ÷ 25))
+
+function _mcem_thin(samples::AbstractMatrix, thin::Int)
+    S = size(samples, 2)
+    k = _mcem_thin_step(thin, S)
+    k == 1 && return samples
+    return samples[:, (S - k * (S ÷ k - 1)):k:S]
 end
 
 # `sample_schedule` may be an Int, a vector of per-iteration counts, a function of the
@@ -108,9 +131,10 @@ function MCEM_MCMC(;
         sampler = SaemixMH(),
         turing_kwargs = NamedTuple(),
         sample_schedule = 100,
-        warm_start::Bool = true
+        warm_start::Bool = true,
+        thin::Integer = 4
     )
-    return MCEM_MCMC(sampler, turing_kwargs, sample_schedule, warm_start)
+    return MCEM_MCMC(sampler, turing_kwargs, sample_schedule, warm_start, thin)
 end
 
 """
@@ -1325,6 +1349,9 @@ end
 _use_mcmc_this_iter(::Int, ::MCEM_MCMC) = true
 _use_mcmc_this_iter(iter::Int, es::MCEM_IS) = iter <= es.warm_start_mcmc_iters
 
+_mcem_thin_of(es::MCEM_MCMC) = es.thin
+_mcem_thin_of(es) = 1
+
 # Helper: get the MCMC e_step options for warm-up (or the method itself for MCEM_MCMC)
 _mcmc_e_step(es::MCEM_MCMC) = es
 _mcmc_e_step(es::MCEM_IS) = es.mcmc_warmup
@@ -1770,7 +1797,7 @@ function _fit_model(
                         re_names, mcmc_es.warm_start, last_params[bi];
                         outer_iter = iter
                     )
-                    samples_by_batch[bi] = samples
+                    samples_by_batch[bi] = _mcem_thin(samples, _mcem_thin_of(mcmc_es))
                     last_params[bi] = lastp
                 end
             else
@@ -1782,7 +1809,7 @@ function _fit_model(
                         re_names, mcmc_es.warm_start, last_params[bi];
                         outer_iter = iter
                     )
-                    samples_by_batch[bi] = samples
+                    samples_by_batch[bi] = _mcem_thin(samples, _mcem_thin_of(mcmc_es))
                     last_params[bi] = lastp
                 end
             end
