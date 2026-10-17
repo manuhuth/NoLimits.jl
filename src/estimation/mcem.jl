@@ -1536,6 +1536,20 @@ function _fit_model(
         dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
         serialization = serialization, force_saveat = true
     )
+    # Start repair (shared with SAEM): no finite log-joint for any initial RE draw at θ0.
+    if re_0 === nothing
+        θ0_r = _em_repair_start(
+            dm, batch_infos, θ0_u, const_cache,
+            ll_cache isa Vector ? ll_cache[1] : ll_cache, rng, re_names, "MCEM"
+        )
+        if θ0_r !== θ0_u
+            θ0_u = θ0_r
+            θ0_t = transform(θ0_u)
+            θ_const_u = deepcopy(θ0_u)
+            _apply_constants!(θ_const_u, constants)
+            θ_const_t = transform(θ_const_u)
+        end
+    end
 
     θt_free = ComponentArray(
         NamedTuple{Tuple(free_names)}(

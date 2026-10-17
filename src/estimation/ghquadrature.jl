@@ -544,6 +544,22 @@ function _fit_model_scalar(
     )
 
     z0 = _z_from_θt(θ0_init)
+    # Start repair (as in Laplace/SAEM): a start with a non-finite objective (e.g. an RE
+    # scale that is invalid at θ0) ends the fit at once; move it along the transformed
+    # segment toward the declared initial values to the first feasible point.
+    let f0 = obj(z0, nothing)
+        if !isfinite(f0)
+            θd = free_parameter_layout(fe; constants = constants).θ0_free_t
+            for λ in (0.5 .^ (1:8)..., 0.0)
+                zλ = _z_from_θt(λ .* θ0_init .+ (1 - λ) .* θd)
+                if isfinite(obj(zλ, nothing))
+                    @warn "GHQuadrature: the objective is not finite at the given start; moved the start toward the model's declared initial values (λ = $(λ))."
+                    z0 = zλ
+                    break
+                end
+            end
+        end
+    end
     lb_z = _z_from_θt(lb)
     ub_z = _z_from_θt(ub)
     opt_use, use_bounds = _bounded_optimizer(method.optimizer, use_bounds, lb_z, ub_z)
