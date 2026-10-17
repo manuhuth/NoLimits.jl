@@ -3374,8 +3374,9 @@ function _fit_laplace_family(
     # at θ0) every evaluation returns the wall and the fit ends at once. Move the start
     # along the transformed-scale segment toward the model's declared initial values,
     # θ(λ) = λ θ0 + (1 - λ) θ_decl for λ = 1/2, ..., 2^-8, 0, and use the first feasible
-    # point. Feasible starts are untouched.
-    let f0 = obj_only(z0, nothing)
+    # point. Feasible starts are untouched. Not with `warm_starts = AcceptedWarmStarts(...)`,
+    # whose initial multistart is the user's chosen mechanism for a start that is not usable.
+    ws === nothing && let f0 = obj_only(z0, nothing)
         if !isfinite(f0) || f0 >= _infeasible(typeof(f0))
             θd = free_parameter_layout(fe; constants = constants).θ0_free_t
             for λ in (0.5 .^ (1:8)..., 0.0)
