@@ -38,9 +38,13 @@ transport-map rule, which needs a higher `level` for the same accuracy.
 whose gradient is not; use `Laplace()` for that, and `level ≥ 3` here.
 
 # Keyword Arguments
-- `level = :auto`: Smolyak accuracy level. `:auto` uses 5 when some random effect has
-  bounded support and every batch has at most 3 RE dimensions (the transport-space rule
-  for bounded REs needs the higher level), else 3. May also be:
+- `level = :auto`: Smolyak accuracy level, error-controlled. The fit starts at 5 when some
+  random effect has bounded support and every batch has at most 3 RE dimensions (the
+  transport-space rule for bounded REs needs the higher level), else 3; afterwards the
+  marginal log-likelihood at the estimate is recomputed with the next finer rule
+  (`2L + 1` nodes for scalar random effects, `L + 2` otherwise) and, while the two differ by
+  more than 0.05 (whole data set), the fit is refined from the estimate at the finer level
+  (at most 4 refinements, up to ~2000 nodes per batch). May also be:
   - `Int` (isotropic): same level for all RE groups.
   - `NamedTuple` (anisotropic): per-RE-group level, e.g.
     `level = (η_id = 3, η_site = 2)`.  RE groups not mentioned default to
@@ -677,6 +681,50 @@ function _fit_model_scalar(
 end
 
 # ---------------------------------------------------------------------------
+# `level = :auto`: error-controlled level
+# ---------------------------------------------------------------------------
+# Fit at the dimension-based base level (`_ghq_resolve_auto_level`), then compare the
+# marginal log-likelihood at θ̂ under that rule and the next finer one; while they differ
+# by more than _GHQ_AUTO_TOL nats (whole data set), refit from θ̂ at the finer level.
+# A fixed level cannot serve every model: binary outcomes with a large RE variance
+# (toenail data, RE sd ~4) need ~15 nodes per dimension — level 3 there moves the
+# estimates by many standard errors — while most models are exact at level 3.
+const _GHQ_AUTO_TOL = 0.05
+const _GHQ_AUTO_MAX_REFINE = 4
+const _GHQ_AUTO_MAX_NODES = 2_000
+_ghq_next_level(level::Int, maxdim::Int) = maxdim <= 1 ? 2level + 1 : level + 2
+
+function _ghq_fit_auto(
+        dm::DataModel, method::GHQuadrature, args...;
+        theta_0_untransformed = nothing, kwargs...
+    )
+    constants_re = _normalize_constants_re(dm, get(kwargs, :constants_re, NamedTuple()))
+    _, infos, _ = _build_re_batch_infos(dm, constants_re)
+    m = _ghq_resolve_auto_level(method, dm, infos)
+    res = _fit_model_scalar(dm, m, args...; theta_0_untransformed = theta_0_untransformed, kwargs...)
+    maxdim = maximum((get_n_b(info) for info in infos); init = 0)
+    maxdim == 0 && return res
+    ode = (ode_args = get(kwargs, :ode_args, ()), ode_kwargs = get(kwargs, :ode_kwargs, NamedTuple()))
+    for _ in 1:_GHQ_AUTO_MAX_REFINE
+        L, L2 = m.level, _ghq_next_level(m.level, maxdim)
+        maximum(info -> get_n_b(info) == 0 ? 0 : _batch_grid_bound(dm, info, L2), infos) >
+            _GHQ_AUTO_MAX_NODES && break
+        θ̂ = get_params(res; scale = :untransformed)
+        ll1 = ghq_marginal(dm, θ̂; level = L, constants_re = constants_re, ode...)
+        ll2 = ghq_marginal(dm, θ̂; level = L2, constants_re = constants_re, ode...)
+        (isfinite(ll1) && isfinite(ll2)) || break
+        abs(ll2 - ll1) <= _GHQ_AUTO_TOL && break
+        m = GHQuadrature(
+            L2, method.optimizer, method.optim_kwargs, method.adtype, method.inner,
+            method.multistart, method.lb, method.ub, method.ignore_model_bounds,
+            method.precondition, method.update_schedule
+        )
+        res = _fit_model_scalar(dm, m, args...; theta_0_untransformed = θ̂, kwargs...)
+    end
+    return res
+end
+
+# ---------------------------------------------------------------------------
 # Progressive refinement interceptor (level::Vector{Int})
 # ---------------------------------------------------------------------------
 # The struct is now defined, so this method can reference it safely.
@@ -687,6 +735,9 @@ function _fit_model(
         kwargs...
     )
     level = method.level
+    level === :auto && return _ghq_fit_auto(
+        dm, method, args...; theta_0_untransformed = theta_0_untransformed, kwargs...
+    )
     level isa Vector{Int} || return _fit_model_scalar(
         dm, method, args...;
         theta_0_untransformed = theta_0_untransformed,
