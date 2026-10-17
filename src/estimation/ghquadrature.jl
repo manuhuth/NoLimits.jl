@@ -119,7 +119,7 @@ function GHQuadrature(;
         optim_kwargs = NamedTuple(),
         adtype = Optimization.AutoForwardDiff(),
         inner_options = nothing,
-        inner_optimizer = NewtonInner(),
+        inner_optimizer = NewtonInner(x_abstol = 1.0e-10),
         inner_kwargs = NamedTuple(),
         inner_adtype = Optimization.AutoForwardDiff(),
         inner_grad_tol = :auto,

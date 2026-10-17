@@ -2547,7 +2547,7 @@ function Laplace(;
         hessian_options = nothing,
         cache_options = nothing,
         multistart_options = nothing,
-        inner_optimizer = NewtonInner(),
+        inner_optimizer = NewtonInner(x_abstol = 1.0e-10),
         inner_kwargs = NamedTuple(),
         inner_adtype = Optimization.AutoForwardDiff(),
         inner_grad_tol = :auto,
