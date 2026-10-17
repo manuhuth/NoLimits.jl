@@ -1849,7 +1849,22 @@ and the RE term occur in `@formulas`/`@preDifferentialEquation` only as two dire
 arguments of the same `+` call, never in `@DifferentialEquation`/`@initialDE`, for a
 `Normal`/`MvNormal` RE. Vector REs qualify only when every component is paired.
 """
-function _saem_detect_centering_pairs(dm::DataModel, free_names::Vector{Symbol})
+# number of `*` calls having `fe` and the (scalar) RE symbol as direct arguments
+# (fe * η with η log-normal: fe * η = fe e^δ * η e^{-δ}, a ridge in log η)
+function _cs_count_prod_pairs(ex, fe::Symbol, re::Symbol)
+    ex isa Expr || return 0
+    n = 0
+    if ex.head === :call && ex.args[1] === :*
+        args = ex.args[2:end]
+        n += (count(==(fe), args) == 1 && count(==(re), args) == 1)
+    end
+    args = ex.head === :call ? ex.args[2:end] : ex.args
+    return n + sum((_cs_count_prod_pairs(a, fe, re) for a in args); init = 0)
+end
+
+function _saem_detect_centering_pairs(
+        dm::DataModel, free_names::Vector{Symbol}; lognormal::Bool = false
+    )
     model = get_model(dm)
     fe = get_fixed(model)
     lines = Any[]
@@ -1917,6 +1932,26 @@ function _saem_detect_centering_pairs(dm::DataModel, free_names::Vector{Symbol})
             end
         end
         length(found) == length(ks) && append!(pairs, found)
+    end
+    lognormal || return pairs
+    # Scale centering for a scalar log-normal RE entering only as a factor `fe * η`
+    # (opt-in, MCEM): the shift is applied to log η, so `fe` may be on any scale.
+    for re in get_re_names(get_random(model))
+        fam = hasproperty(family, re) ? getproperty(family, re) : :unsupported
+        fam === :lognormal || continue
+        re in excluded && continue
+        rc = get_laplace_cache(get_re_group_info(dm))
+        ri = findfirst(==(re), get_re_names(rc))
+        (ri === nothing || !rc.is_scalar[ri]) && continue
+        for (a, _) in candidates
+            any(p -> p.fe === a, pairs) && continue
+            np = count_all(l -> _cs_count_prod_pairs(l, a, re))
+            np >= 1 || continue
+            np == count_all(l -> _cs_count_sym(l, a)) || continue
+            np == count_all(l -> _cs_count_term(l, re, 0)) || continue
+            push!(pairs, (fe = a, re = re, k = 0, mode = :lnmul))
+            break
+        end
     end
     return pairs
 end

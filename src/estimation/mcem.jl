@@ -786,8 +786,13 @@ function _mcem_center!(
     prior_means = [get_n_b(info) == 0 ? Float64[] :
                    _re_prior_mean_b(dm, info, θu, const_cache, cache, re_names)
                    for info in batch_infos]
+    # log-location of log-normal levels (`:lnmul` pairs: the shift acts on log η)
+    prior_locs = any(p -> p.mode === :lnmul, pairs) ?
+        [get_n_b(info) == 0 ? Float64[] : _re_lognormal_loc_b(dm, info, θu, cache, re_names)
+         for info in batch_infos] : nothing
     for p in pairs
         ri = findfirst(==(p.re), re_names)
+        lnm = p.mode === :lnmul
         s, wsum = 0.0, 0.0
         idx = [_cs_batch_indices(info, re_names, p.re, p.k) for info in batch_infos]
         for bi in eachindex(batch_infos)
@@ -797,40 +802,52 @@ function _mcem_center!(
             w = weights_by_batch === nothing || !isassigned(weights_by_batch, bi) ?
                 fill(1.0 / nS, nS) : weights_by_batch[bi] ./ sum(weights_by_batch[bi])
             for m in 1:nS, i in idx[bi]
-                s += w[m] * (S[i, m] - prior_means[bi][i])
+                if lnm
+                    (S[i, m] > 0 && isfinite(prior_locs[bi][i])) || continue
+                    s += w[m] * (log(S[i, m]) - prior_locs[bi][i])
+                else
+                    s += w[m] * (S[i, m] - prior_means[bi][i])
+                end
                 wsum += w[m]
             end
         end
         wsum > 0 || continue
         δ = s / wsum
         (isfinite(δ) && δ != 0) || continue
-        setproperty!(θn, p.fe, p.mode === :mul ? getproperty(θn, p.fe) * exp(δ) :
+        setproperty!(θn, p.fe, (p.mode === :mul || lnm) ? getproperty(θn, p.fe) * exp(δ) :
             getproperty(θn, p.fe) + δ)
+        # the RE moves the opposite way: η - δ, or η e^{-δ} for a log-normal RE
+        fac = exp(-δ)
         kk = p.k == 0 ? 1 : p.k
         for bi in eachindex(batch_infos)
             isempty(idx[bi]) && continue
             if isassigned(samples_by_batch, bi)
                 for i in idx[bi]
-                    samples_by_batch[bi][i, :] .-= δ
+                    if lnm
+                        samples_by_batch[bi][i, :] .*= fac
+                    else
+                        samples_by_batch[bi][i, :] .-= δ
+                    end
                 end
             end
             if proposal_blocks !== nothing && ri !== nothing
+                # proposal blocks live in the bijected space (log η for log-normal REs)
                 blk = proposal_blocks[bi][ri]
                 length(blk.μ_run) >= kk && (blk.μ_run[kk] -= δ)
             end
             st = last_params[bi]
             if st isa _AdaptiveMHState
                 for i in idx[bi]
-                    st.b_current[i] -= δ
+                    st.b_current[i] = lnm ? st.b_current[i] * fac : st.b_current[i] - δ
                 end
             elseif st isa _SaemixMHState
                 for i in idx[bi]
-                    st.b[i] -= δ
+                    st.b[i] = lnm ? st.b[i] * fac : st.b[i] - δ
                 end
             elseif st isa AbstractVector
                 v = copy(st)
                 for i in idx[bi]
-                    v[i] -= δ
+                    v[i] = lnm ? v[i] * fac : v[i] - δ
                 end
                 last_params[bi] = v
             elseif st isa NamedTuple && isassigned(samples_by_batch, bi)
@@ -841,6 +858,24 @@ function _mcem_center!(
         end
     end
     return θn
+end
+
+# Flat-b vector of each log-normal level's log-location μ (NaN elsewhere).
+function _re_lognormal_loc_b(dm::DataModel, info::REBatchInfo, θ, cache, re_names)
+    loc = fill(NaN, get_n_b(info))
+    dists_by_re = _re_dists_for_info(dm, info, θ, cache)
+    for (ri, re) in enumerate(re_names)
+        meta = get_re_info(info)[ri]
+        levels = get_levels(get_re_map(meta))
+        (isempty(levels) || !get_is_scalar(meta)) && continue
+        dists = getproperty(dists_by_re, re)
+        for (li, _) in enumerate(levels)
+            d = dists[li]
+            d isa Distributions.LogNormal || continue
+            loc[first(get_ranges(meta)[li])] = Float64(Distributions.params(d)[1])
+        end
+    end
+    return loc
 end
 
 # Guard for the native samplers' own initial draw. An unchecked prior draw with a
@@ -1709,10 +1744,10 @@ function _fit_model(
     re_types = get_re_types(get_random(get_model(dm)))
     ll_cache_single = ll_cache isa Vector ? ll_cache[1] : ll_cache
     # automatic centering of additive fixed effects (shared detector, see saem.jl)
-    center_pairs = _saem_detect_centering_pairs(dm, free_names)
+    center_pairs = _saem_detect_centering_pairs(dm, free_names; lognormal = true)
     if !isempty(center_pairs)
         @info "MCEM: centering fixed effects on their additive random effects: " *
-            join(["$(p.mode === :mul ? "log " : "")$(p.fe) ↔ $(p.k == 0 ? p.re : "$(p.re)[$(p.k)]")" for p in center_pairs], ", ")
+            join(["$(p.mode === :mul ? "log " : "")$(p.fe) ↔ $(p.mode === :lnmul ? "log " : "")$(p.k == 0 ? p.re : "$(p.re)[$(p.k)]")" for p in center_pairs], ", ")
     end
     proposal_blocks = if method.e_step isa MCEM_IS
         [
