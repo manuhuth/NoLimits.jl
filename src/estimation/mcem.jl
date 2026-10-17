@@ -125,8 +125,12 @@ Monte Carlo approximation of the Q-function.
 # Keyword Arguments
 - `n_samples::Int = 500`: number of IS draws per E-step.
 - `proposal`: proposal mode, one of:
+  - `:laplace` (default) — per batch, a multivariate t (ν = 4) centered at the
+    posterior mode of the random effects with scale from the Laplace curvature there
+    (Booth & Hobert 1999). Used when every RE of the batch is `Normal`/`MvNormal`;
+    other batches (and failed mode searches) use `:gaussian`.
   - `:prior` — draw each RE level from its current prior `p(b | θ_k)`.
-  - `:gaussian` (default) — block-diagonal Gaussian in bijected space, adapted
+  - `:gaussian` — block-diagonal Gaussian in bijected space, adapted
     from previous iteration's samples via Haario-Welford statistics.
   - `Function` — user-supplied function with signature
     `(θ, batch_info, re_dists, rng, n_samples) -> (samples::Matrix, log_qs::Vector)`.
@@ -146,7 +150,7 @@ end
 
 function MCEM_IS(;
         n_samples::Int = 500,
-        proposal = :gaussian,
+        proposal = :laplace,
         adapt::Bool = true,
         warm_start_mcmc_iters::Int = 0,
         mcmc_warmup = nothing
@@ -1235,6 +1239,47 @@ function _is_check_proposal_output(out, n_b::Int, n_samples::Int, what::Abstract
     return (samples, convert(Vector{Float64}, log_qs))
 end
 
+# Laplace importance-sampling proposal for one batch (Booth & Hobert 1999, JRSS-B):
+# multivariate t (ν = 4) centered at the batch's posterior mode b* with scale (-H)^{-1},
+# H the Hessian of log p(y, b | θ) at b*. Subject-specific, so the effective sample size
+# does not collapse when each posterior is much narrower than the RE population (the pooled
+# adaptive Gaussian proposal's failure mode). Only for batches whose REs all have support ℝ
+# (Normal/MvNormal); returns `nothing` otherwise or when the mode/curvature is unavailable,
+# and the caller falls back to the adaptive Gaussian proposal.
+function _is_laplace_sample_batch(
+        dm::DataModel, info::REBatchInfo, θ::ComponentArray, const_cache, cache::_LLCache,
+        rng::AbstractRNG, n_samples::Int, re_names, re_types::NamedTuple; ν::Float64 = 4.0
+    )
+    for (ri, re) in enumerate(re_names)
+        isempty(get_levels(get_re_map(get_re_info(info)[ri]))) && continue
+        getproperty(re_types, re) in (:Normal, :MvNormal) || return nothing
+    end
+    b_star = try
+        _ghq_bstar_batch(dm, info, θ, const_cache, cache)
+    catch
+        nothing
+    end
+    (b_star === nothing || length(b_star) != get_n_b(info) || !all(isfinite, b_star)) &&
+        return nothing
+    H = try
+        _laplace_hessian_b(dm, info, θ, b_star, const_cache, cache, nothing, 1)
+    catch
+        return nothing
+    end
+    all(isfinite, H) || return nothing
+    C = cholesky(Symmetric(-Matrix{Float64}(H)); check = false)
+    issuccess(C) || return nothing
+    Σ = Symmetric(inv(C))
+    q = try
+        Distributions.MvTDist(ν, Vector{Float64}(b_star), Distributions.PDMats.PDMat(Matrix(Σ)))
+    catch
+        return nothing
+    end
+    samples = rand(rng, q, n_samples)
+    log_qs = [Distributions.logpdf(q, view(samples, :, m)) for m in 1:n_samples]
+    return (samples, log_qs)
+end
+
 # Unified IS E-step dispatcher for a single batch.
 # Returns (samples, log_ws, ess) — log_ws are log-normalized weights.
 function _is_sample_batch(
@@ -1252,13 +1297,19 @@ function _is_sample_batch(
     n_samples = e_step.n_samples
     proposal = e_step.proposal
     # Choose sampling strategy
-    out, what = if proposal === :prior
+    lap = proposal === :laplace ?
+        _is_laplace_sample_batch(
+            dm, info, θ, const_cache, cache, rng, n_samples, re_names, re_types
+        ) : nothing
+    out, what = if lap !== nothing
+        (lap, "the Laplace-t proposal")
+    elseif proposal === :prior
         (
             _is_prior_sample_batch(
                 dm, info, θ, const_cache, cache, rng, n_samples, re_names
             ), "the prior proposal",
         )
-    elseif proposal === :gaussian
+    elseif proposal === :gaussian || proposal === :laplace   # :laplace fallback
         # Fall back to prior-based initial covariance until the blocks that actually
         # carry levels have adapted — gating on blocks[1] alone keeps every effect on
         # prior sampling whenever the first declared effect has no active level (#229).
@@ -1280,7 +1331,7 @@ function _is_sample_batch(
         re_dists = _re_dists_for_info(dm, info, θ, cache)
         (proposal(θ, info, re_dists, rng, n_samples), "the proposal")
     else
-        error("MCEM_IS: unknown proposal type $(repr(proposal)). Use :prior, :gaussian, or a Function.")
+        error("MCEM_IS: unknown proposal type $(repr(proposal)). Use :laplace, :gaussian, :prior, or a Function.")
     end
     samples, log_qs = _is_check_proposal_output(out, get_n_b(info), n_samples, what)
     log_ws, ess = _is_compute_log_weights(dm, info, θ, const_cache, cache, samples, log_qs)
