@@ -154,6 +154,102 @@ function _saem_store_push!(store::_SAEMSampleStore, b_chains, γ::Float64, n_cha
     return store
 end
 
+# ── persistent curvature for the numeric M-step ─────────────────────────────
+# The numeric M-step runs a few quasi-Newton iterations on an objective that changes only
+# by Monte-Carlo noise between SAEM iterations, yet every solve used to start from an
+# identity inverse Hessian: the first step was a raw gradient step (capped by the line
+# search's `maxstep`) that the backtracking line search then shrank through several extra
+# objective evaluations (each a full pass of model solves). The gradients the optimizer
+# evaluates are recorded here (from the ForwardDiff duals the objective already sees), a
+# BFGS approximation of the objective's Hessian is carried across SAEM iterations in the
+# transformed (θt) coordinates, and the next M-step's LBFGS uses it as its preconditioner
+# (initial inverse Hessian), so its first step is a quasi-Newton step. This changes only
+# how the M-step optimizer moves, not the M-step objective.
+mutable struct _SAEMMStepCurvature
+    names::Vector{Symbol}          # free names the approximation belongs to
+    B::Matrix{Float64}             # BFGS Hessian approximation of the objective in θt
+    n_updates::Int
+    zs::Vector{Vector{Float64}}    # z-points of the current solve's gradient evaluations
+    gs::Vector{Vector{Float64}}    # the gradients there (z coordinates)
+end
+function _SAEMMStepCurvature()
+    return _SAEMMStepCurvature(
+        Symbol[], zeros(0, 0), 0, Vector{Float64}[], Vector{Float64}[]
+    )
+end
+
+_saem_mstep_record!(::_SAEMMStepCurvature, z, obj) = nothing
+function _saem_mstep_record!(
+        c::_SAEMMStepCurvature, z::AbstractVector{ForwardDiff.Dual{Tg, Float64, N}},
+        obj::ForwardDiff.Dual{Tg, Float64, N}
+    ) where {Tg, N}
+    # Only a full gradient (one chunk, identity seeds) is a usable record.
+    N == length(z) || return nothing
+    @inbounds for j in 1:N
+        ForwardDiff.partials(z[j])[j] == 1.0 || return nothing
+    end
+    isfinite(ForwardDiff.value(obj)) || return nothing
+    g = Float64[ForwardDiff.partials(obj)[j] for j in 1:N]
+    all(isfinite, g) || return nothing
+    push!(c.zs, Float64[ForwardDiff.value(zj) for zj in z])
+    push!(c.gs, g)
+    return nothing
+end
+
+function _saem_mstep_curv_reset!(c::_SAEMMStepCurvature, names::Vector{Symbol})
+    if c.names != names
+        c.names = copy(names)
+        c.B = zeros(0, 0)
+        c.n_updates = 0
+    end
+    empty!(c.zs)
+    empty!(c.gs)
+    return c
+end
+
+# BFGS updates of `c.B` from consecutive recorded gradient evaluations of the last solve.
+# z and θt are related by θt = θ0 + s_pc .* z, so the pair maps to θt as (s_pc .* Δz,
+# Δg ./ s_pc). Pairs violating the curvature condition are skipped (B stays PD).
+function _saem_mstep_curv_update!(c::_SAEMMStepCurvature, s_pc::AbstractVector)
+    n = length(s_pc)
+    for k in 1:(length(c.zs) - 1)
+        sz = c.zs[k + 1] .- c.zs[k]
+        yz = c.gs[k + 1] .- c.gs[k]
+        sy = dot(sz, yz)
+        (isfinite(sy) && sy > 1.0e-10 * norm(sz) * norm(yz) && sy > 0) || continue
+        sθ = s_pc .* sz
+        yθ = yz ./ s_pc
+        if size(c.B, 1) != n
+            # Standard initial scaling (Nocedal & Wright eq. 6.20), taken in z coordinates.
+            γ0 = dot(yz, yz) / sy
+            c.B = Matrix(Diagonal(γ0 ./ (s_pc .^ 2)))
+        end
+        Bs = c.B * sθ
+        sBs = dot(sθ, Bs)
+        (isfinite(sBs) && sBs > 0) || continue
+        c.B .+= (yθ * yθ') ./ sy .- (Bs * Bs') ./ sBs
+        c.n_updates += 1
+    end
+    empty!(c.zs)
+    empty!(c.gs)
+    return c
+end
+
+# The M-step optimizer for this solve: the default-style unconstrained LBFGS (no user
+# preconditioner) gets the carried Hessian approximation, mapped to z, as preconditioner.
+function _saem_mstep_optimizer(opt, c::_SAEMMStepCurvature, s_pc::AbstractVector)
+    opt isa OptimizationOptimJL.LBFGS || return opt
+    opt.P === nothing || return opt
+    (c.n_updates > 0 && size(c.B, 1) == length(s_pc)) || return opt
+    Bz = c.B .* (s_pc * s_pc')
+    all(isfinite, Bz) || return opt
+    C = cholesky(Symmetric(Bz); check = false)
+    issuccess(C) || return opt
+    return OptimizationOptimJL.LBFGS(
+        opt.m, opt.alphaguess!, opt.linesearch!, C, opt.precondprep!, opt.manifold, false
+    )
+end
+
 # ── anneal_to_fixed helpers ──────────────────────────────────────────────────
 
 function _saem_validate_anneal(anneal_to_fixed, anneal_schedule, dm, θ_const_u)
@@ -3877,6 +3973,7 @@ function _fit_model(
             method.saem.maxiters <= method.saem.sa_burnin_iters
         @warn "SAEM: maxiters = $(method.saem.maxiters) <= sa_burnin_iters = $(method.saem.sa_burnin_iters), so every iteration is burn-in (γ = 0) and skips the M-step. θ is returned at its start value, up to the variance-floor and sa_anneal clamps. Lower sa_burnin_iters or raise maxiters."
     end
+    mstep_curv = _SAEMMStepCurvature()
     for iter in 1:(method.saem.maxiters)
         γ = _saem_gamma_schedule(iter, method.saem)
         sched_phase = _saem_schedule_phase(iter, method.saem)
@@ -4268,7 +4365,7 @@ function _fit_model(
                 # Anchored at the current iterate, as for Q2. The objective cache below is keyed on
                 # θt and lives inside this loop; with a per-iteration anchor, z = 0 means a different
                 # θt each iteration, so hoisting the cache would make it permanently stale.
-                _, _, _θt_from_z, _z_from_θt = _precondition_maps(
+                _, s_pc_m, _θt_from_z, _z_from_θt = _precondition_maps(
                     get_model(dm), free_names_iter, θt_free, axs_free, _precondition_on(method)
                 )
                 function obj_only(z, p)
@@ -4308,6 +4405,7 @@ function _fit_model(
                     obj = -Q + _penalty_value(θu, penalty)
                     extra_objective === nothing || (obj += extra_objective(θu))
                     !isfinite(obj) && return T(Inf)
+                    _saem_mstep_record!(mstep_curv, z, obj)
                     if use_cache
                         obj_cache.θ[] = copy(θt_vec)
                         obj_cache.obj[] = obj
@@ -4353,7 +4451,11 @@ function _fit_model(
                 else
                     numeric_mstep_used = true
                     θt_free_before = method.saem.mstep_sa_on_params ? collect(θt_free) : nothing
-                    sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
+                    _saem_mstep_curv_reset!(mstep_curv, free_names_iter)
+                    mstep_opt = use_bounds ? method.optimizer :
+                        _saem_mstep_optimizer(method.optimizer, mstep_curv, s_pc_m)
+                    sol = Optimization.solve(prob, mstep_opt; method.optim_kwargs...)
+                    use_bounds || _saem_mstep_curv_update!(mstep_curv, s_pc_m)
                     if any(!isfinite, sol.u)
                         @warn "SAEM M-step iter $iter: optimizer returned non-finite parameters; skipping update."
                         mstep_skipped = true
