@@ -250,6 +250,72 @@ function _saem_mstep_optimizer(opt, c::_SAEMMStepCurvature, s_pc::AbstractVector
     )
 end
 
+# ── value-and-gradient objective for the numeric M-step ─────────────────────
+# A ForwardDiff pass of the M-step objective costs little more than a Float64 pass (both
+# are dominated by per-solve overhead of the model's ODE/likelihood evaluation), but the
+# line search used to evaluate trial points with a Float64 pass and then, once a trial was
+# accepted, re-evaluate the same point with a dual pass for its gradient. Here every Float64
+# evaluation runs the single-chunk dual pass and keeps the gradient, which the optimizer's
+# gradient request at the accepted point then reuses: one pass per trial point instead of
+# two per accepted point. Same objective and gradient (ForwardDiff, one chunk).
+mutable struct _SAEMFGCache
+    z::Vector{Float64}
+    val::Float64
+    g::Vector{Float64}
+    valid::Bool
+end
+_SAEMFGCache(n::Int) = _SAEMFGCache(zeros(n), NaN, zeros(n), false)
+
+function _saem_fg_pass!(c::_SAEMFGCache, f::F, z::AbstractVector{Float64}, p, ::Val{N}) where {F, N}
+    Tg = typeof(ForwardDiff.Tag(f, Float64))
+    zd = Vector{ForwardDiff.Dual{Tg, Float64, N}}(undef, N)
+    @inbounds for i in 1:N
+        zd[i] = ForwardDiff.Dual{Tg}(z[i], ntuple(j -> Float64(i == j), Val(N)))
+    end
+    r = f(zd, p)
+    copyto!(c.z, z)
+    if r isa ForwardDiff.Dual
+        c.val = Float64(ForwardDiff.value(r))
+        @inbounds for j in 1:N
+            c.g[j] = ForwardDiff.partials(r)[j]
+        end
+    else
+        c.val = Float64(r)
+        fill!(c.g, NaN)
+    end
+    c.valid = true
+    return c
+end
+
+@inline function _saem_fg_ensure!(c::_SAEMFGCache, f::F, z::AbstractVector{Float64}, p) where {F}
+    (c.valid && c.z == z) || _saem_fg_pass!(c, f, z, p, Val(length(z)))
+    return c
+end
+
+_saem_fg_value(c::_SAEMFGCache, f::F, z, p) where {F} = f(z, p)
+function _saem_fg_value(c::_SAEMFGCache, f::F, z::AbstractVector{Float64}, p) where {F}
+    return _saem_fg_ensure!(c, f, z, p).val
+end
+function _saem_fg_grad!(c::_SAEMFGCache, f::F, G, z::AbstractVector{Float64}, p) where {F}
+    copyto!(G, _saem_fg_ensure!(c, f, z, p).g)
+    return c.val
+end
+
+# The numeric M-step's OptimizationFunction: the value-and-gradient form above for
+# ForwardDiff with a single-chunk gradient (n <= 12, ForwardDiff's default chunk limit),
+# else the plain objective differentiated by `adtype`.
+function _saem_mstep_optf(obj::F, adtype, n::Int) where {F}
+    if adtype isa Optimization.AutoForwardDiff && 1 <= n <= 12
+        fgc = _SAEMFGCache(n)
+        return OptimizationFunction(
+            (z, p) -> _saem_fg_value(fgc, obj, z, p), adtype;
+            grad = (G, z, p) -> (_saem_fg_grad!(fgc, obj, G, z, p); nothing),
+            fg = (G, z, p) -> _saem_fg_grad!(fgc, obj, G, z, p)
+        )
+    end
+    return OptimizationFunction(obj, adtype)
+end
+
 # ── anneal_to_fixed helpers ──────────────────────────────────────────────────
 
 function _saem_validate_anneal(anneal_to_fixed, anneal_schedule, dm, θ_const_u)
@@ -4413,7 +4479,7 @@ function _fit_model(
                     return obj
                 end
 
-                optf = OptimizationFunction(obj_only, method.adtype)
+                optf = _saem_mstep_optf(obj_only, method.adtype, length(θt_free))
                 lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
                     fe, free_names_iter, collect(θt_free), method.optimizer,
                     method.lb, method.ub, constants; method_label = "SAEM"
