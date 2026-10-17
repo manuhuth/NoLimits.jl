@@ -135,6 +135,10 @@ Monte Carlo approximation of the Q-function.
   - `Function` — user-supplied function with signature
     `(θ, batch_info, re_dists, rng, n_samples) -> (samples::Matrix, log_qs::Vector)`.
 - `adapt::Bool = true`: update Gaussian proposal blocks after each IS iteration.
+- `ramp::Bool = true`: grow the number of draws linearly from `max(20, n_samples ÷ 10)` at
+  the first iteration to `n_samples` at half of `maxiters` (full size afterwards), as in
+  MCEM practice (Wei & Tanner 1990; Booth & Hobert 1999): early iterations far from the
+  optimum need no precise E-step. The convergence test only stops at the full size.
 - `warm_start_mcmc_iters::Int = 0`: run this many MCMC iterations before switching
   to IS. If > 0, `mcmc_warmup` must be provided (or defaults are used).
 - `mcmc_warmup`: an [`MCEM_MCMC`](@ref) for the warm-up phase, or `nothing` to use
@@ -146,6 +150,7 @@ struct MCEM_IS{PR, WM} <: AbstractMCEMEStep
     adapt::Bool
     warm_start_mcmc_iters::Int
     mcmc_warmup::WM   # MCEM_MCMC or nothing
+    ramp::Bool
 end
 
 function MCEM_IS(;
@@ -153,14 +158,15 @@ function MCEM_IS(;
         proposal = :laplace,
         adapt::Bool = true,
         warm_start_mcmc_iters::Int = 0,
-        mcmc_warmup = nothing
+        mcmc_warmup = nothing,
+        ramp::Bool = true
     )
     n_samples > 0 || throw(ArgumentError("n_samples must be > 0"))
     warm_start_mcmc_iters >= 0 || throw(ArgumentError("warm_start_mcmc_iters must be ≥ 0"))
     if warm_start_mcmc_iters > 0 && mcmc_warmup === nothing
         mcmc_warmup = MCEM_MCMC()
     end
-    return MCEM_IS(n_samples, _as_symbol(proposal), adapt, warm_start_mcmc_iters, mcmc_warmup)
+    return MCEM_IS(n_samples, _as_symbol(proposal), adapt, warm_start_mcmc_iters, mcmc_warmup, ramp)
 end
 
 struct EMOptions{T}
@@ -1249,6 +1255,14 @@ function _is_laplace_sample_batch(
     return (samples, log_qs)
 end
 
+# MC sample size of IS iteration `iter` under `MCEM_IS(ramp = true)`.
+function _mcem_is_ramp(iter::Int, n_full::Int, maxiters::Int)
+    n_min = min(n_full, max(20, n_full ÷ 10))
+    k_full = max(1, maxiters ÷ 2)
+    (iter >= k_full || k_full == 1) && return n_full
+    return n_min + round(Int, (n_full - n_min) * (iter - 1) / (k_full - 1))
+end
+
 # Unified IS E-step dispatcher for a single batch.
 # Returns (samples, log_ws, ess) — log_ws are log-normalized weights.
 function _is_sample_batch(
@@ -1261,9 +1275,9 @@ function _is_sample_batch(
         re_names::Vector{Symbol},
         re_types::NamedTuple,
         e_step::MCEM_IS,
-        blocks::Vector{_REAdaptBlock}
+        blocks::Vector{_REAdaptBlock};
+        n_samples::Int = e_step.n_samples
     )
-    n_samples = e_step.n_samples
     proposal = e_step.proposal
     # Choose sampling strategy
     lap = proposal === :laplace ?
@@ -1718,6 +1732,7 @@ function _fit_model(
         θu_curr = inv_transform(θt_full_curr)
 
         use_mcmc = _use_mcmc_this_iter(iter, method.e_step)
+        ramp_full = true          # set by the IS branch when the sample size is ramped
         weights_by_batch = use_mcmc ? nothing : weights_store
         # Stale draws are only reusable once every batch has some and they came from the
         # same E-step mode, so force a full refresh on iteration 1 and on the one
@@ -1788,6 +1803,9 @@ function _fit_model(
         else
             # --- IS E-step ---
             is_es = method.e_step
+            n_iter = is_es.ramp ? _mcem_is_ramp(iter, is_es.n_samples, method.em.maxiters) :
+                is_es.n_samples
+            ramp_full = n_iter == is_es.n_samples
             if serialization isa SciMLBase.EnsembleThreads
                 nthreads = Threads.maxthreadid()
                 caches = _mcem_thread_caches(dm, ll_cache, nthreads)
@@ -1798,7 +1816,8 @@ function _fit_model(
                     info = batch_infos[bi]
                     samps, log_ws, ess = _is_sample_batch(
                         dm, info, θu_curr, const_cache, caches[c],
-                        batch_rngs[bi], re_names, re_types, is_es, proposal_blocks[bi]
+                        batch_rngs[bi], re_names, re_types, is_es, proposal_blocks[bi];
+                        n_samples = n_iter
                     )
                     samples_by_batch[bi] = samps
                     weights_by_batch[bi] = exp.(log_ws)
@@ -1815,7 +1834,8 @@ function _fit_model(
                     info = batch_infos[bi]
                     samps, log_ws, ess = _is_sample_batch(
                         dm, info, θu_curr, const_cache, ll_cache_single,
-                        batch_rngs[bi], re_names, re_types, is_es, proposal_blocks[bi]
+                        batch_rngs[bi], re_names, re_types, is_es, proposal_blocks[bi];
+                        n_samples = n_iter
                     )
                     samples_by_batch[bi] = samps
                     weights_by_batch[bi] = exp.(log_ws)
@@ -1829,11 +1849,11 @@ function _fit_model(
                 end
             end
             mean_ess = mean(filter(isfinite, ess_by_batch))
-            if mean_ess < 0.1 * is_es.n_samples
-                @warn "MCEM IS: low effective sample size" iter = iter ess = mean_ess n_samples = is_es.n_samples
+            if mean_ess < 0.1 * n_iter
+                @warn "MCEM IS: low effective sample size" iter = iter ess = mean_ess n_samples = n_iter
             end
             push!(diag.ess_hist, mean_ess)
-            S_diag = is_es.n_samples
+            S_diag = n_iter
         end
 
         # ── M-step ───────────────────────────────────────────────────────────
@@ -2080,8 +2100,8 @@ function _fit_model(
                 Q_window, method.em.atol_Q,
                 method.em.rtol_Q
             ) : (false, T0(NaN), one(T0))
-        pass_θ = passθ && !mstep_skipped
-        pass_Q = passQ && !mstep_skipped
+        pass_θ = passθ && !mstep_skipped && ramp_full
+        pass_Q = passQ && !mstep_skipped && ramp_full
 
         if method.store_diagnostics && iter % method.diagnostics_every == 0
             push!(diag.θ_hist, θ_prev_new)
