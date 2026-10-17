@@ -798,8 +798,18 @@ function _transport_logintegrand(
         u::AbstractVector, base::AbstractREMeasure, dm::DataModel, info::REBatchInfo,
         θ_re::ComponentArray, const_cache, ll_cache::_LLCache
     )
+    # `CompositeRE` keeps its segment maps in `Vector{Any}`, so `b` and the correction are
+    # not inferable here; the subject loop runs behind a function barrier, specialized on
+    # their concrete runtime types (one dynamic dispatch per evaluation, not per subject).
     b = transform(base, u)
-    total = logcorrection(base, u) - sum(abs2, u) / 2
+    c0 = logcorrection(base, u) - sum(abs2, u) / 2
+    return _transport_ll_sum(b, c0, dm, info, θ_re, const_cache, ll_cache)
+end
+
+function _transport_ll_sum(
+        b::AbstractVector, total, dm::DataModel, info::REBatchInfo,
+        θ_re::ComponentArray, const_cache, ll_cache::_LLCache
+    )
     for i in get_inds(info)
         η_i = _build_eta_ind(dm, i, info, b, const_cache, θ_re)
         lli = _loglikelihood_individual(dm, i, θ_re, η_i, ll_cache)
