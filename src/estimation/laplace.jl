@@ -3692,7 +3692,12 @@ function _onepass_from_F(
     k = with_logf ? 1 : 0
     o, p = _theta_split_obs_re(dm, θ)
     Jθ = Matrix{Float64}(undef, k + nb + nv, length(θ))
-    Jθ[:, o] = ForwardDiff.jacobian(x -> F(_theta_with(θ, o, x), b, nothing), θ[o])
+    # outcome-side θ and b differentiated together: one model solve instead of two
+    no = length(o)
+    J = ForwardDiff.jacobian(
+        x -> F(_theta_with(θ, o, view(x, 1:no)), x[(no + 1):end], nothing), vcat(θ[o], b)
+    )
+    Jθ[:, o] = view(J, :, 1:no)
     if !isempty(p)
         prior(θv) = begin
             θr = _symmetrize_psd_params(θv, get_fixed(get_model(dm)))
@@ -3702,7 +3707,7 @@ function _onepass_from_F(
         end
         Jθ[:, p] = ForwardDiff.jacobian(x -> prior(_theta_with(θ, p, x)), θ[p])
     end
-    Jb = ForwardDiff.jacobian(bv -> F(θ, bv, tctx), b)
+    Jb = J[:, (no + 1):end]
     Hex = Jb[(k + 1):(k + nb), :]
     return (
         Gθ = Jθ[(k + 1):(k + nb), :], Jθ = Jθ[(k + nb + 1):end, :],
