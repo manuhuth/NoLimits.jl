@@ -1231,14 +1231,16 @@ function _newton_inner_solve(
         bi::Int,
         b0::Vector{Float64},
         newton::NewtonInner;
-        tctx = nothing
+        tctx = nothing,
+        f0_min::Union{Nothing, Float64} = nothing
     )
     nb = length(b0)
     # Exception-safe: a degenerate θ falls back to the per-call path inside the
     # logf wrapper (-Inf) instead of throwing out of the inner solve.
     tctx === nothing && (tctx = _safe_theta_ctx(dm, batch_info, θ_val, cache))
     f = _LaplaceLogfBatch(dm, batch_info, θ_val, const_cache, cache, tctx)
-    newton.curvature isa ExactHessianCurvature && return _newton_exact_solve(f, b0, newton)
+    newton.curvature isa ExactHessianCurvature &&
+        return _newton_exact_solve(f, b0, newton; f0_min = f0_min)
     b = copy(b0)
     fval = f(b)
     isfinite(fval) || return _NewtonSol(b, -Inf, Inf, false)
@@ -1301,7 +1303,9 @@ end
 # rule near the mode - already carries the derivatives for the next iteration, and a
 # converged solve returns the Hessian at the mode (reused for the log-determinant).
 # Same iterates, tests and fallback signal as the generic loop.
-function _newton_exact_solve(f, b0::Vector{Float64}, newton::NewtonInner)
+# `f0_min`: return `nothing` (no solve) unless log f(b0) is finite and > f0_min - lets the caller screen a
+# start against an alternative with the first pass of the solve itself.
+function _newton_exact_solve(f, b0::Vector{Float64}, newton::NewtonInner; f0_min::Union{Nothing, Float64} = nothing)
     b = copy(b0)
     b_try = similar(b)
     rc = ForwardDiff.DiffResults.HessianResult(b)
@@ -1309,6 +1313,7 @@ function _newton_exact_solve(f, b0::Vector{Float64}, newton::NewtonInner)
     cfg = ForwardDiff.HessianConfig(f, rc, b)
     rc = ForwardDiff.hessian!(rc, f, b, cfg)
     fval = Float64(ForwardDiff.DiffResults.value(rc))
+    f0_min === nothing || (isfinite(fval) && fval > f0_min) || return nothing
     isfinite(fval) || return _NewtonSol(b, -Inf, Inf, false)
     gn = Inf
     for _ in 1:(newton.maxiters)
@@ -1463,7 +1468,8 @@ function _laplace_solve_batch!(
         optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
         optim_kwargs::NamedTuple = NamedTuple(),
         adtype = Optimization.AutoForwardDiff(),
-        tctx = nothing
+        tctx = nothing,
+        f0_min::Union{Nothing, Float64} = nothing
     )
     nb = get_n_b(batch_info)
     nb == 0 && return Float64[]
@@ -1490,8 +1496,9 @@ function _laplace_solve_batch!(
             nsol = solve_fn(
                 dm, batch_info, θ_val, const_cache, cache,
                 ad_cache, bi, collect(Float64, b0_use), optimizer;
-                tctx = tctx
+                tctx = tctx, (f0_min === nothing ? (;) : (; f0_min = f0_min))...
             )
+            nsol === nothing && return nothing   # start screened out (`f0_min`)
             nsol.converged && return nsol
             # Stalled/failed Newton: continue into the default quasi-Newton path
             # from the best point found, so the option is never less robust
@@ -1586,6 +1593,7 @@ function _laplace_compute_bstar_batch!(
     end
     b0_default = _laplace_default_b0(dm, info, θ_val, const_cache, ll_cache; tctx = tctx)
     b_start = b0_default
+    presolved = nothing   # inner solve already run from b_start (screened predictor start)
     f_start = NaN   # log f(b_start), NaN = not evaluated yet
     warm_start_usable = false
     if cache.warm !== nothing
@@ -1610,13 +1618,25 @@ function _laplace_compute_bstar_batch!(
             # evaluation; the previous mode when there is none or it does not beat the
             # default start.
             pred = _laplace_predict_bstar(cache.bstar_cache, bi, θ_val, nb)
-            f_pred = pred === nothing ? -Inf :
-                _laplace_logf_batch(dm, info, θ_val, pred, const_cache, ll_cache; tctx = tctx)
+            if pred !== nothing && _newton_screens_start(optimizer, nb)
+                # the exact Newton solve screens the start with its own first pass
+                presolved = _laplace_try_solve(
+                    dm, info, θ_val, const_cache, ll_cache, cache.ad_cache, bi, pred;
+                    optimizer = optimizer, optim_kwargs = optim_kwargs, adtype = adtype,
+                    tctx = tctx, f0_min = f_def
+                )
+                f_pred = presolved === nothing ? -Inf : _laplace_sol_logf(presolved)
+                isfinite(f_pred) || (presolved = nothing)
+            else
+                f_pred = pred === nothing ? -Inf :
+                    _laplace_logf_batch(dm, info, θ_val, pred, const_cache, ll_cache; tctx = tctx)
+            end
             if isfinite(f_pred) && f_pred > f_def
                 b_start = pred
                 f_start = f_pred
                 warm_start_usable = true
             else
+                presolved = nothing
                 f_prev = _laplace_logf_batch(
                     dm, info, θ_val, b_prev, const_cache, ll_cache; tctx = tctx
                 )
@@ -1659,21 +1679,10 @@ function _laplace_compute_bstar_batch!(
     b_best = b_start
     best_f = isfinite(f_start) ? f_start : -Inf
     g_best_norm = Inf   # the gradient at b_start is needed only when the solve fails (below)
-    sol_best = try
-        _laplace_solve_batch!(
-            dm, info, θ_val, const_cache, ll_cache, cache.ad_cache, bi, b_start;
-            optimizer = optimizer,
-            optim_kwargs = optim_kwargs,
-            adtype = adtype,
-            tctx = tctx
-        )
-    catch err
-        if err isa DomainError || err isa ArgumentError || err isa ErrorException
-            nothing
-        else
-            rethrow(err)
-        end
-    end
+    sol_best = presolved !== nothing ? presolved : _laplace_try_solve(
+        dm, info, θ_val, const_cache, ll_cache, cache.ad_cache, bi, b_start;
+        optimizer = optimizer, optim_kwargs = optim_kwargs, adtype = adtype, tctx = tctx
+    )
     H_best = nothing   # exact Hessian at b_best when the inner solve returned it
     if sol_best !== nothing
         b_best = sol_best.u
@@ -1812,6 +1821,26 @@ function _laplace_compute_bstar_batch!(
     _laplace_store_mode_hess!(cache.hess_cache, bi, b_best, H_best, best_f)
     return nothing
 end
+
+# `_laplace_solve_batch!` with the inner-solve failures of `_laplace_compute_bstar_batch!`
+# mapped to `nothing`.
+function _laplace_try_solve(args...; kwargs...)
+    return try
+        _laplace_solve_batch!(args...; kwargs...)
+    catch err
+        if err isa DomainError || err isa ArgumentError || err isa ErrorException
+            nothing
+        else
+            rethrow(err)
+        end
+    end
+end
+
+# Whether the inner optimizer is the exact-Hessian line-search Newton solve (which can
+# screen its start, `f0_min`) for this batch size.
+@inline _newton_screens_start(opt, nb::Int) = opt isa NewtonInner &&
+    opt.curvature isa ExactHessianCurvature && opt.globalization === :linesearch &&
+    nb <= opt.max_dim
 
 @inline _laplace_sol_hess(sol::_NewtonSol) = sol.H
 @inline _laplace_sol_hess(sol) = nothing
