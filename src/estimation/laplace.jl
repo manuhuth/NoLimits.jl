@@ -1538,16 +1538,19 @@ function _laplace_compute_bstar_batch!(
     end
     b0_default = _laplace_default_b0(dm, info, θ_val, const_cache, ll_cache; tctx = tctx)
     b_start = b0_default
+    f_start = NaN   # log f(b_start), NaN = not evaluated yet
     warm_start_usable = false
     if cache.warm !== nothing
         # AcceptedWarmStarts: start from the warm start committed at the last accepted
         # outer iterate, so b* at θ does not depend on earlier trial points.
         w = cache.warm[bi]
-        if length(w) == nb && isfinite(
-                _laplace_logf_batch(dm, info, θ_val, w, const_cache, ll_cache; tctx = tctx)
-            )
-            b_start = copy(w)
-            warm_start_usable = true
+        if length(w) == nb
+            f_w = _laplace_logf_batch(dm, info, θ_val, w, const_cache, ll_cache; tctx = tctx)
+            if isfinite(f_w)
+                b_start = copy(w)
+                f_start = f_w
+                warm_start_usable = true
+            end
         end
     elseif cache.bstar_cache.has_bstar[bi]
         b_prev = cache.bstar_cache.b_star[bi]
@@ -1561,11 +1564,16 @@ function _laplace_compute_bstar_batch!(
             warm_start_usable = isfinite(f_prev)
             if f_prev > f_def
                 b_start = b_prev
+                f_start = f_prev
+            else
+                f_start = f_def
             end
         end
     end
-    g0, f_start = _laplace_gradb_cached!(
-        cache, bi, dm, info, θ_val, const_cache, ll_cache, b_start; tctx = tctx
+    isnan(f_start) && (
+        f_start = _laplace_logf_batch(
+            dm, info, θ_val, b_start, const_cache, ll_cache; tctx = tctx
+        )
     )
     if !isfinite(f_start)
         best_f = -Inf
@@ -1587,17 +1595,10 @@ function _laplace_compute_bstar_batch!(
         if isfinite(best_f)
             b_start = best_b
         end
-        g0, _ = _laplace_gradb_cached!(
-            cache, bi, dm, info, θ_val, const_cache, ll_cache, b_start; tctx = tctx
-        )
-    end
-    g0_norm = maximum(abs, g0)
-    if !isfinite(g0_norm)
-        g0_norm = Inf
     end
     b_best = b_start
     best_f = isfinite(f_start) ? f_start : -Inf
-    g_best_norm = g0_norm
+    g_best_norm = Inf   # the gradient at b_start is needed only when the solve fails (below)
     sol_best = try
         _laplace_solve_batch!(
             dm, info, θ_val, const_cache, ll_cache, cache.ad_cache, bi, b_start;
@@ -1634,6 +1635,12 @@ function _laplace_compute_bstar_batch!(
         if !isfinite(g_best_norm)
             g_best_norm = Inf
         end
+    else
+        g0, _ = _laplace_gradb_cached!(
+            cache, bi, dm, info, θ_val, const_cache, ll_cache, b_start; tctx = tctx
+        )
+        g0_norm = maximum(abs, g0)
+        g_best_norm = isfinite(g0_norm) ? g0_norm : Inf
     end
     use_mcmc = mcmc_candidates !== nothing && size(mcmc_candidates, 2) > 0
     # The inner multistart fires on cold starts (no usable previous mode for this
