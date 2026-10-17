@@ -227,7 +227,11 @@ fixed effects.
   omitted, defaults to `MCEM_MCMC` constructed from the legacy keyword arguments below.
 - `sampler`: (legacy) E-step sampler; used when `e_step` is not provided. Defaults to `SaemixMH()`.
 - `turing_kwargs::NamedTuple`: (legacy) forwarded to `Turing.sample`.
-- `sample_schedule::Int = 100`: (legacy) MCMC samples per E-step iteration.
+- `sample_schedule::Int = 25`: (legacy) MCMC samples per E-step iteration. Each draw is
+  evaluated in every M-step objective evaluation, which dominates the cost of an iteration;
+  25 warm-started SaemixMH sweeps (6 MH kernel steps each) per iteration were as accurate
+  as 100 at a third to half of the cost per iteration in benchmark fits (an explicit
+  `MCEM_MCMC()` keeps its own default of 100 sweeps, thinned to 25 draws).
 - `warm_start::Bool = true`: (legacy) initialize sampler from previous iteration's modes.
 - `verbose::Bool = false`: print per-iteration diagnostics.
 - `progress::Bool = true`: show a progress bar.
@@ -325,7 +329,7 @@ function MCEM(;
         e_step = nothing,
         sampler = SaemixMH(),
         turing_kwargs = NamedTuple(),
-        sample_schedule = 100,
+        sample_schedule = 25,
         warm_start = true,
         verbose = false,
         progress = true,
