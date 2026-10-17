@@ -1489,6 +1489,33 @@ function _mcem_Q_core(
     return total
 end
 
+# Observation-only log-density of one batch: `_laplace_logf_batch` without the RE-prior
+# terms. When no parameter of the numeric Q1 M-step enters an RE distribution (the RE-prior
+# parameters are frozen for the iteration by the closed-form or Q2 sub-step), those terms are
+# constant in the optimized parameters, so the maximizer is unchanged while each objective
+# evaluation skips one RE logpdf per draw and level (an MvNormal solve per draw).
+function _mcem_obs_logf_batch(
+        dm::DataModel, batch_info::REBatchInfo, θ::ComponentArray,
+        b, const_cache::REConstantsCache, cache::_LLCache; tctx = nothing
+    )
+    T = promote_type(eltype(θ), eltype(b))
+    try
+        θ_re = tctx === nothing ? _symmetrize_psd_params(θ, get_fixed(get_model(dm))) :
+            tctx.θ_re
+        ll = zero(T)
+        for i in get_inds(batch_info)
+            η_ind = _build_eta_ind(dm, i, batch_info, b, const_cache, θ_re)
+            lli = _loglikelihood_individual(dm, i, θ_re, η_ind, cache)
+            isfinite(lli) || return convert(T, -Inf)::T
+            ll += lli
+        end
+        return convert(T, ll)::T
+    catch err
+        _is_numeric_error(err) && return convert(T, -Inf)::T
+        rethrow(err)
+    end
+end
+
 function _mcem_Q_array(
         dm::DataModel,
         batch_infos::Vector{REBatchInfo},
@@ -1760,6 +1787,11 @@ function _fit_model(
         nothing
     end
 
+    # fixed effects entering any RE distribution (see `q1_obs_only` in the M-step)
+    re_dist_syms = Set{Symbol}()
+    for (_, syms) in Base.pairs(get_re_syms(get_random(get_model(dm))))
+        union!(re_dist_syms, syms)
+    end
     θ_prev = copy(θt_free)
     Q_prev = T0(Inf)
     θu_last = θ0_u   # tracks the full untransformed params at the end of each iteration
@@ -2024,6 +2056,7 @@ function _fit_model(
         # Determine Q1 free names and per-iteration full-θ state
         # (Q2-optimal params are now baked into mstep_constants).
         free_names_q1 = [n for n in free_names if n ∉ keys(mstep_constants)]
+        q1_obs_only = !any(in(re_dist_syms), free_names_q1)
         θ_const_u_q1 = copy(θ_const_u)
         _apply_constants!(θ_const_u_q1, mstep_constants)
         θ_const_t_q1 = transform(θ_const_u_q1)
@@ -2072,10 +2105,16 @@ function _fit_model(
                     setproperty!(θt_full_loc, name, getproperty(θt_free_loc, name))
                 end
                 θu = inv_transform(θt_full_loc)
-                Q = _mcem_Q(
-                    dm, batch_infos, θu, const_cache, ll_cache, samples_by_batch,
-                    weights_by_batch; serialization = serialization, q_cache = q_cache
-                )
+                Q = q1_obs_only ?
+                    _mcem_Q_core(
+                        _mcem_obs_logf_batch, dm, batch_infos, θu, const_cache, ll_cache,
+                        samples_by_batch, weights_by_batch;
+                        serialization = serialization, q_cache = q_cache
+                    ) :
+                    _mcem_Q(
+                        dm, batch_infos, θu, const_cache, ll_cache, samples_by_batch,
+                        weights_by_batch; serialization = serialization, q_cache = q_cache
+                    )
                 !isfinite(Q) && return Inf
                 obj = -Q + _penalty_value(θu, penalty)
                 extra_objective === nothing || (obj += extra_objective(θu))
