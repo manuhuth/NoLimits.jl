@@ -3370,6 +3370,25 @@ function _fit_laplace_family(
         method_label = "Laplace"
     )
     z0 = _z_from_θt(θ0_init)
+    # Start repair (as in SAEM): at an infeasible start (e.g. an RE scale that is invalid
+    # at θ0) every evaluation returns the wall and the fit ends at once. Move the start
+    # along the transformed-scale segment toward the model's declared initial values,
+    # θ(λ) = λ θ0 + (1 - λ) θ_decl for λ = 1/2, ..., 2^-8, 0, and use the first feasible
+    # point. Feasible starts are untouched.
+    let f0 = obj_only(z0, nothing)
+        if !isfinite(f0) || f0 >= _infeasible(typeof(f0))
+            θd = free_parameter_layout(fe; constants = constants).θ0_free_t
+            for λ in (0.5 .^ (1:8)..., 0.0)
+                zλ = _z_from_θt(λ .* θ0_init .+ (1 - λ) .* θd)
+                fλ = obj_only(zλ, nothing)
+                if isfinite(fλ) && fλ < _infeasible(typeof(fλ))
+                    @warn "Laplace: the objective is not finite at the given start; moved the start toward the model's declared initial values (λ = $(λ))."
+                    z0 = zλ
+                    break
+                end
+            end
+        end
+    end
     lb_z = _z_from_θt(lb)
     ub_z = _z_from_θt(ub)
     opt_use, use_bounds = _bounded_optimizer(method.optimizer, use_bounds, lb_z, ub_z)
