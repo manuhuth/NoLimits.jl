@@ -739,6 +739,37 @@ function _em_repair_start(
     return θ0_u
 end
 
+# Monte Carlo log-likelihood ratio log L(θ) - log L(θ0) from posterior draws at θ0:
+# L(θ)/L(θ0) = E_{η | y, θ0}[p(y, η | θ) / p(y, η | θ0)], estimated per batch with the
+# normalized E-step weights (uniform for MCMC draws). `l0` caches log p(y, η_s | θ0).
+function _mcem_loglik_ratio(
+        dm::DataModel, batch_infos, θ, θ0, samples_by_batch, weights_by_batch,
+        const_cache, cache, l0
+    )
+    total = 0.0
+    for (bi, info) in enumerate(batch_infos)
+        if get_n_b(info) == 0
+            total += _laplace_logf_batch(dm, info, θ, Float64[], const_cache, cache) -
+                _laplace_logf_batch(dm, info, θ0, Float64[], const_cache, cache)
+            continue
+        end
+        S = samples_by_batch[bi]
+        nS = size(S, 2)
+        w = weights_by_batch === nothing ? fill(1.0 / nS, nS) :
+            weights_by_batch[bi] ./ sum(weights_by_batch[bi])
+        lr = Vector{Float64}(undef, nS)
+        for m in 1:nS
+            lr[m] = log(w[m]) + _laplace_logf_batch(
+                dm, info, θ, view(S, :, m), const_cache, cache
+            ) - l0[bi][m]
+        end
+        mx = maximum(lr)
+        isfinite(mx) || return -Inf
+        total += mx + log(sum(exp, lr .- mx))
+    end
+    return total
+end
+
 # MCEM counterpart of `_saem_center!` (see the centering section in saem.jl): after the
 # M-step shift a += δ and every stored sample / proposal mean / warm start of the paired RE
 # term by -δ, δ = (IS-)weighted mean over samples and levels of (η - prior mean). The
@@ -1602,6 +1633,7 @@ function _fit_model(
     # IS proposal blocks — one Vector{_REAdaptBlock} per batch (only for MCEM_IS)
     re_types = get_re_types(get_random(get_model(dm)))
     ll_cache_single = ll_cache isa Vector ? ll_cache[1] : ll_cache
+    relax_ω = 1.0   # adaptive over-relaxation factor (see the M-step)
     # automatic centering of additive fixed effects (shared detector, see saem.jl)
     center_pairs = _saem_detect_centering_pairs(dm, free_names)
     if !isempty(center_pairs)
@@ -1970,6 +2002,35 @@ function _fit_model(
                     weights_by_batch; serialization = serialization, q_cache = q_cache
                 )
                 Q_new = Q_new == Inf ? T0(Inf) : Q_new
+            end
+        end
+
+        # Adaptive over-relaxed step (Salakhutdinov & Roweis 2003): try going ω' = 1.5ω times
+        # the EM step on the transformed scale; keep it if the Monte Carlo likelihood-ratio
+        # estimate (same draws) beats the EM point, else take the EM step and reset ω = 1.
+        # Speeds up EM's slow convergence for variance components from poor starts.
+        if !mstep_skipped && θu_new !== nothing && getaxes(θu_new) == getaxes(θu_curr) &&
+                all(i -> isassigned(samples_by_batch, i), eachindex(batch_infos))
+            wb = use_mcmc ? nothing : weights_by_batch
+            l0 = [get_n_b(info) == 0 ? Float64[] :
+                  [_laplace_logf_batch(dm, info, θu_curr, view(samples_by_batch[bi], :, m),
+                    const_cache, ll_cache_single) for m in axes(samples_by_batch[bi], 2)]
+                  for (bi, info) in enumerate(batch_infos)]
+            if all(v -> all(isfinite, v), l0)
+                θt_c, θt_e = transform(θu_curr), transform(θu_new)
+                ω_try = min(1.5 * relax_ω, 8.0)
+                θu_ext = inv_transform(θt_c .+ ω_try .* (θt_e .- θt_c))
+                r_em = _mcem_loglik_ratio(dm, batch_infos, θu_new, θu_curr, samples_by_batch,
+                    wb, const_cache, ll_cache_single, l0)
+                r_ext = all(isfinite, θu_ext) ?
+                    _mcem_loglik_ratio(dm, batch_infos, θu_ext, θu_curr, samples_by_batch,
+                        wb, const_cache, ll_cache_single, l0) : -Inf
+                if isfinite(r_ext) && r_ext > r_em
+                    θu_new = θu_ext
+                    relax_ω = ω_try
+                else
+                    relax_ω = 1.0
+                end
             end
         end
 
