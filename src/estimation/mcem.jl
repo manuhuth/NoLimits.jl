@@ -739,6 +739,75 @@ function _em_repair_start(
     return θ0_u
 end
 
+# MCEM counterpart of `_saem_center!` (see the centering section in saem.jl): after the
+# M-step shift a += δ and every stored sample / proposal mean / warm start of the paired RE
+# term by -δ, δ = (IS-)weighted mean over samples and levels of (η - prior mean). The
+# likelihood is unchanged; the RE prior term improves. The IS proposal is N(μ_run, C) per
+# level in the bijected space, which is the identity for the Normal/MvNormal REs paired here.
+function _mcem_center!(
+        pairs, θu, dm::DataModel, batch_infos, samples_by_batch, weights_by_batch,
+        proposal_blocks, last_params, const_cache, cache, re_names
+    )
+    θn = copy(θu)
+    prior_means = [get_n_b(info) == 0 ? Float64[] :
+                   _re_prior_mean_b(dm, info, θu, const_cache, cache, re_names)
+                   for info in batch_infos]
+    for p in pairs
+        ri = findfirst(==(p.re), re_names)
+        s, wsum = 0.0, 0.0
+        idx = [_cs_batch_indices(info, re_names, p.re, p.k) for info in batch_infos]
+        for bi in eachindex(batch_infos)
+            isassigned(samples_by_batch, bi) || continue
+            S = samples_by_batch[bi]
+            nS = size(S, 2)
+            w = weights_by_batch === nothing || !isassigned(weights_by_batch, bi) ?
+                fill(1.0 / nS, nS) : weights_by_batch[bi] ./ sum(weights_by_batch[bi])
+            for m in 1:nS, i in idx[bi]
+                s += w[m] * (S[i, m] - prior_means[bi][i])
+                wsum += w[m]
+            end
+        end
+        wsum > 0 || continue
+        δ = s / wsum
+        (isfinite(δ) && δ != 0) || continue
+        setproperty!(θn, p.fe, getproperty(θn, p.fe) + δ)
+        kk = p.k == 0 ? 1 : p.k
+        for bi in eachindex(batch_infos)
+            isempty(idx[bi]) && continue
+            if isassigned(samples_by_batch, bi)
+                for i in idx[bi]
+                    samples_by_batch[bi][i, :] .-= δ
+                end
+            end
+            if proposal_blocks !== nothing && ri !== nothing
+                blk = proposal_blocks[bi][ri]
+                length(blk.μ_run) >= kk && (blk.μ_run[kk] -= δ)
+            end
+            st = last_params[bi]
+            if st isa _AdaptiveMHState
+                for i in idx[bi]
+                    st.b_current[i] -= δ
+                end
+            elseif st isa _SaemixMHState
+                for i in idx[bi]
+                    st.b[i] -= δ
+                end
+            elseif st isa AbstractVector
+                v = copy(st)
+                for i in idx[bi]
+                    v[i] -= δ
+                end
+                last_params[bi] = v
+            elseif st isa NamedTuple && isassigned(samples_by_batch, bi)
+                last_params[bi] = _b_to_last_params(
+                    samples_by_batch[bi][:, end], batch_infos[bi], re_names
+                )
+            end
+        end
+    end
+    return θn
+end
+
 # Guard for the native samplers' own initial draw. An unchecked prior draw with a
 # non-finite log-joint deadlocks the chain: the acceptance ratio becomes NaN, so no
 # proposal is ever accepted and the M-step is skipped every iteration. Returns `b`
@@ -1532,6 +1601,12 @@ function _fit_model(
     # IS proposal blocks — one Vector{_REAdaptBlock} per batch (only for MCEM_IS)
     re_types = get_re_types(get_random(get_model(dm)))
     ll_cache_single = ll_cache isa Vector ? ll_cache[1] : ll_cache
+    # automatic centering of additive fixed effects (shared detector, see saem.jl)
+    center_pairs = _saem_detect_centering_pairs(dm, free_names)
+    if !isempty(center_pairs)
+        @info "MCEM: centering fixed effects on their additive random effects: " *
+            join(["$(p.fe) ↔ $(p.k == 0 ? p.re : "$(p.re)[$(p.k)]")" for p in center_pairs], ", ")
+    end
     proposal_blocks = if method.e_step isa MCEM_IS
         [
             _is_init_proposal_blocks(
@@ -1895,6 +1970,15 @@ function _fit_model(
                 )
                 Q_new = Q_new == Inf ? T0(Inf) : Q_new
             end
+        end
+
+        # Centering step (post M-step): jump to the best point of the a + η ridge.
+        if !isempty(center_pairs) && !mstep_skipped
+            θu_new = _mcem_center!(
+                center_pairs, θu_new, dm, batch_infos, samples_by_batch,
+                use_mcmc ? nothing : weights_by_batch, proposal_blocks, last_params,
+                const_cache, ll_cache_single, re_names
+            )
         end
 
         # Update θt_free to reflect full current state (use full axes for tracking)
