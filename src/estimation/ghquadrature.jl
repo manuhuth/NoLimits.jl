@@ -38,7 +38,9 @@ transport-map rule, which needs a higher `level` for the same accuracy.
 whose gradient is not; use `Laplace()` for that, and `level ≥ 3` here.
 
 # Keyword Arguments
-- `level = 3`: Smolyak accuracy level.  May be:
+- `level = :auto`: Smolyak accuracy level. `:auto` uses 5 when some random effect has
+  bounded support and every batch has at most 3 RE dimensions (the transport-space rule
+  for bounded REs needs the higher level), else 3. May also be:
   - `Int` (isotropic): same level for all RE groups.
   - `NamedTuple` (anisotropic): per-RE-group level, e.g.
     `level = (η_id = 3, η_site = 2)`.  RE groups not mentioned default to
@@ -92,6 +94,7 @@ end
 # Returns the normalized level: any `Integer` (Int8, UInt, ...) becomes `Int`, so the
 # `level isa Int` dispatch below cannot mistake an isotropic level for an anisotropic one.
 function _check_ghq_level(level)
+    level === :auto && return :auto
     bad(l) = !(l isa Integer) || l < 1
     if level isa NamedTuple
         isempty(level) && throw(ArgumentError("GHQuadrature: anisotropic `level` must not be empty."))
@@ -113,8 +116,28 @@ end
 
 _update_schedule(m::GHQuadrature) = m.update_schedule
 
+# `level = :auto` (default): 5 when some random effect has bounded support (LogNormal, Beta,
+# Gamma, ...) and every batch has at most 3 RE dimensions, else 3. The transport-space
+# adaptive rule for bounded REs needs a higher level for the same accuracy (M05, two bounded
+# REs: per-batch error ~3e-2 at level 3 vs 1e-3..1e-2 at level 5, against a 60x60 tensor
+# rule; summed over 150 subjects that biased the estimates); Gaussian REs use the
+# mode-centered rule, which is accurate at level 3. Resolved once per fit.
+const _GHQ_UNBOUNDED_RE_TYPES = (:Normal, :MvNormal, :TDist, :NormalizingPlanarFlow)
+function _ghq_resolve_auto_level(method::GHQuadrature, dm::DataModel, batch_infos)
+    method.level === :auto || return method
+    re_types = get_re_types(get_random(get_model(dm)))
+    bounded = any(t -> !(t in _GHQ_UNBOUNDED_RE_TYPES), values(re_types))
+    maxdim = maximum((get_n_b(info) for info in batch_infos); init = 0)
+    lvl = bounded && maxdim <= 3 ? 5 : 3
+    return GHQuadrature(
+        lvl, method.optimizer, method.optim_kwargs, method.adtype, method.inner,
+        method.multistart, method.lb, method.ub, method.ignore_model_bounds,
+        method.precondition, method.update_schedule
+    )
+end
+
 function GHQuadrature(;
-        level = 3,  # Int or NamedTuple for anisotropic levels
+        level = :auto,  # :auto, Int, Vector{Int} or NamedTuple for anisotropic levels
         optimizer = nothing,
         optim_kwargs = NamedTuple(),
         adtype = Optimization.AutoForwardDiff(),
@@ -434,6 +457,7 @@ function _fit_model_scalar(
 
     # ── Infrastructure ───────────────────────────────────────────────────────
     pairing, batch_infos, const_cache = _build_re_batch_infos(dm, constants_re)
+    method = _ghq_resolve_auto_level(method, dm, batch_infos)
 
     ll_cache = build_ll_cache(
         dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
