@@ -1663,6 +1663,21 @@ function _cs_count_pairs(ex, fe::Symbol, re::Symbol, k::Int)
     return n + sum((_cs_count_pairs(a, fe, re, k) for a in args); init = 0)
 end
 
+# number of `*` calls having `fe` and `exp(<RE term>)` as direct arguments (log-scale fe:
+# fe * exp(η) = exp(log fe + η), the additive ridge on the transformed scale)
+function _cs_count_mul_pairs(ex, fe::Symbol, re::Symbol, k::Int)
+    ex isa Expr || return 0
+    n = 0
+    if ex.head === :call && ex.args[1] === :*
+        args = ex.args[2:end]
+        isexpterm(a) = a isa Expr && a.head === :call && length(a.args) == 2 &&
+            a.args[1] === :exp && _cs_is_term(a.args[2], re, k)
+        n += (count(==(fe), args) == 1 && count(isexpterm, args) == 1)
+    end
+    args = ex.head === :call ? ex.args[2:end] : ex.args
+    return n + sum((_cs_count_mul_pairs(a, fe, re, k) for a in args); init = 0)
+end
+
 """
     _saem_detect_centering_pairs(dm, free_names) -> Vector{NamedTuple}
 
@@ -1694,19 +1709,23 @@ function _saem_detect_centering_pairs(dm::DataModel, free_names::Vector{Symbol})
     lo, hi = get_bounds_untransformed(fe)
     tr = get_transform(fe)
     count_all(f) = sum((f(l) for l in lines); init = 0)
-    candidates = Symbol[]
+    candidates = Pair{Symbol, Symbol}[]      # fe => :add (identity, unbounded) | :mul (log)
     for a in free_names
         a in in_re_dists && continue
         a in excluded && continue
         getproperty(θ0, a) isa Real || continue
-        (isfinite(getproperty(lo, a)) || isfinite(getproperty(hi, a))) && continue
-        # identity scale: the transform leaves the coordinate unchanged
+        l, h = getproperty(lo, a), getproperty(hi, a)
         θp = copy(θ0)
         setproperty!(θp, a, 0.37)
-        getproperty(tr(θp), a) == 0.37 || continue
-        push!(candidates, a)
+        t1 = getproperty(tr(θp), a)
+        if !isfinite(l) && !isfinite(h) && t1 == 0.37
+            push!(candidates, a => :add)
+        elseif 0 <= l <= EPSILON && !isfinite(h) && isapprox(t1, log(0.37); rtol = 1.0e-12)
+            setproperty!(θp, a, 2.5)
+            isapprox(getproperty(tr(θp), a), log(2.5); rtol = 1.0e-12) && push!(candidates, a => :mul)
+        end
     end
-    pairs = NamedTuple{(:fe, :re, :k), Tuple{Symbol, Symbol, Int}}[]
+    pairs = NamedTuple{(:fe, :re, :k, :mode), Tuple{Symbol, Symbol, Int, Symbol}}[]
     for re in get_re_names(get_random(model))
         fam = hasproperty(family, re) ? getproperty(family, re) : :unsupported
         fam in (:normal, :mvnormal) || continue
@@ -1722,15 +1741,16 @@ function _saem_detect_centering_pairs(dm::DataModel, free_names::Vector{Symbol})
             n_ref = sum(k -> count_all(l -> _cs_count_term(l, re, k)), ks)
             n_bare == n_ref || continue      # every use of `re` is an indexed component
         end
-        found = NamedTuple{(:fe, :re, :k), Tuple{Symbol, Symbol, Int}}[]
+        found = NamedTuple{(:fe, :re, :k, :mode), Tuple{Symbol, Symbol, Int, Symbol}}[]
         for k in ks
-            for a in candidates
+            for (a, mode) in candidates
                 (any(p -> p.fe === a, pairs) || any(p -> p.fe === a, found)) && continue
-                np = count_all(l -> _cs_count_pairs(l, a, re, k))
+                np = mode === :add ? count_all(l -> _cs_count_pairs(l, a, re, k)) :
+                    count_all(l -> _cs_count_mul_pairs(l, a, re, k))
                 np >= 1 || continue
                 np == count_all(l -> _cs_count_sym(l, a)) || continue
                 np == count_all(l -> _cs_count_term(l, re, k)) || continue
-                push!(found, (fe = a, re = re, k = k))
+                push!(found, (fe = a, re = re, k = k, mode = mode))
                 break                    # next component
             end
         end
@@ -1770,7 +1790,9 @@ function _saem_center!(
         n == 0 && continue
         δ = s / n
         (isfinite(δ) && δ != 0) || continue
-        setproperty!(θn, p.fe, getproperty(θn, p.fe) + δ)
+        # :add -> a + δ ; :mul (log-scale a) -> log a + δ
+        setproperty!(θn, p.fe, p.mode === :mul ? getproperty(θn, p.fe) * exp(δ) :
+            getproperty(θn, p.fe) + δ)
         for bi in eachindex(batch_infos)
             isempty(idx[bi]) && continue
             for i in idx[bi]
@@ -3658,7 +3680,7 @@ function _fit_model(
     center_pairs = _saem_detect_centering_pairs(dm, base_free_names)
     if !isempty(center_pairs)
         @info "SAEM: centering fixed effects on their additive random effects: " *
-            join(["$(p.fe) ↔ $(p.k == 0 ? p.re : "$(p.re)[$(p.k)]")" for p in center_pairs], ", ")
+            join(["$(p.mode === :mul ? "log " : "")$(p.fe) ↔ $(p.k == 0 ? p.re : "$(p.re)[$(p.k)]")" for p in center_pairs], ", ")
     end
 
     # anneal_to_fixed validation

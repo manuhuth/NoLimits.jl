@@ -770,7 +770,8 @@ function _mcem_center!(
         wsum > 0 || continue
         δ = s / wsum
         (isfinite(δ) && δ != 0) || continue
-        setproperty!(θn, p.fe, getproperty(θn, p.fe) + δ)
+        setproperty!(θn, p.fe, p.mode === :mul ? getproperty(θn, p.fe) * exp(δ) :
+            getproperty(θn, p.fe) + δ)
         kk = p.k == 0 ? 1 : p.k
         for bi in eachindex(batch_infos)
             isempty(idx[bi]) && continue
@@ -1605,7 +1606,7 @@ function _fit_model(
     center_pairs = _saem_detect_centering_pairs(dm, free_names)
     if !isempty(center_pairs)
         @info "MCEM: centering fixed effects on their additive random effects: " *
-            join(["$(p.fe) ↔ $(p.k == 0 ? p.re : "$(p.re)[$(p.k)]")" for p in center_pairs], ", ")
+            join(["$(p.mode === :mul ? "log " : "")$(p.fe) ↔ $(p.k == 0 ? p.re : "$(p.re)[$(p.k)]")" for p in center_pairs], ", ")
     end
     proposal_blocks = if method.e_step isa MCEM_IS
         [
