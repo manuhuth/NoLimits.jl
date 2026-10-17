@@ -123,12 +123,16 @@ _update_schedule(m::GHQuadrature) = m.update_schedule
 # rule; summed over 150 subjects that biased the estimates); Gaussian REs use the
 # mode-centered rule, which is accurate at level 3. Resolved once per fit.
 const _GHQ_UNBOUNDED_RE_TYPES = (:Normal, :MvNormal, :TDist, :NormalizingPlanarFlow)
+_ghq_has_bounded_re(dm::DataModel) =
+    any(t -> !(t in _GHQ_UNBOUNDED_RE_TYPES), values(get_re_types(get_random(get_model(dm)))))
+# Per-batch resolution, for code paths that evaluate the objective outside `fit_model`
+# (developer API, grid checks): same rule with the batch's own dimension.
+_ghq_auto_level(dm::DataModel, info::REBatchInfo) =
+    _ghq_has_bounded_re(dm) && get_n_b(info) <= 3 ? 5 : 3
 function _ghq_resolve_auto_level(method::GHQuadrature, dm::DataModel, batch_infos)
     method.level === :auto || return method
-    re_types = get_re_types(get_random(get_model(dm)))
-    bounded = any(t -> !(t in _GHQ_UNBOUNDED_RE_TYPES), values(re_types))
     maxdim = maximum((get_n_b(info) for info in batch_infos); init = 0)
-    lvl = bounded && maxdim <= 3 ? 5 : 3
+    lvl = _ghq_has_bounded_re(dm) && maxdim <= 3 ? 5 : 3
     return GHQuadrature(
         lvl, method.optimizer, method.optim_kwargs, method.adtype, method.inner,
         method.multistart, method.lb, method.ub, method.ignore_model_bounds,
@@ -210,9 +214,10 @@ function _ghq_batch_ll(
         θu_re::ComponentArray,
         const_cache::REConstantsCache,
         ll_cache::_LLCache,
-        level,   # Int or NamedTuple
+        level,   # Int, NamedTuple or :auto
         b_star = nothing
     )
+    level === :auto && (level = _ghq_auto_level(dm, info))
     T = eltype(θu_re)
     if get_n_b(info) == 0
         # All RE are constant — no integration needed.
@@ -353,6 +358,12 @@ end
 
 # Pre-build all grids needed for this fit so concurrent use is thread-safe.
 function _prepopulate_ghq_cache(dm::DataModel, batch_infos, level)
+    if level === :auto
+        for info in batch_infos
+            get_n_b(info) > 0 && get_sparse_grid(get_n_b(info), _ghq_auto_level(dm, info))
+        end
+        return nothing
+    end
     return if level isa Int
         for d in unique(get_n_b(info) for info in batch_infos)
             d > 0 && get_sparse_grid(d, level)
@@ -367,6 +378,7 @@ end
 
 # Node-count upper bound for a batch grid, without building it.
 function _batch_grid_bound(dm::DataModel, info::REBatchInfo, level)
+    level === :auto && (level = _ghq_auto_level(dm, info))
     level isa Int && return ghq_points_bound(get_n_b(info), level)
     dims, levels = _anisotropic_dims_levels(dm, info, level)
     return prod(ghq_points_bound(d, l) for (d, l) in zip(dims, levels); init = 1.0)
