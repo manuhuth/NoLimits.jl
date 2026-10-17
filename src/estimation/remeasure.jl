@@ -809,6 +809,51 @@ function _transport_logintegrand(
     return total
 end
 
+# Reference point u with transform(base, u) ≈ b, segment by segment: a warm start for the
+# u-space mode from the b-space EB mode. Univariate segments (all bounded transports are
+# monotone) use safeguarded Newton/bisection on [-40, 40]; multivariate segments Newton on
+# the segment map (one step for the affine Gaussian case). Returns `nothing` on failure.
+function _transport_inverse(base::CompositeRE, b::AbstractVector{<:Real})
+    u = zeros(Float64, base.n_b)
+    for k in eachindex(base.segment_fns)
+        r = base.ranges[k]
+        f = base.segment_fns[k]
+        target = Float64.(b[r])
+        if length(r) == 1
+            g = x -> f([x])[1] - target[1]
+            lo, hi = -40.0, 40.0
+            (g(lo) <= 0 <= g(hi)) || return nothing
+            x = 0.0
+            for _ in 1:100
+                gx = g(x)
+                abs(gx) <= 1.0e-12 * max(1.0, abs(target[1])) && break
+                gx > 0 ? (hi = x) : (lo = x)
+                d = ForwardDiff.derivative(g, x)
+                xn = d > 0 ? x - gx / d : (lo + hi) / 2
+                x = (lo < xn < hi) ? xn : (lo + hi) / 2
+            end
+            u[first(r)] = x
+        else
+            x = zeros(Float64, length(r))
+            for _ in 1:50
+                res = f(x) .- target
+                maximum(abs, res) <= 1.0e-12 * max(1.0, maximum(abs, target)) && break
+                J = ForwardDiff.jacobian(f, x)
+                size(J, 1) == size(J, 2) || return nothing
+                step = try
+                    J \ res
+                catch
+                    return nothing
+                end
+                x .-= step
+                all(isfinite, x) || return nothing
+            end
+            u[r] .= x
+        end
+    end
+    return u
+end
+
 """
     build_adaptive_transport_measure(base, dm, info, θ_val, const_cache, ll_cache; maxiter, gtol)
 
@@ -826,13 +871,17 @@ the final point is not positive definite; the caller then keeps the prior-center
 function build_adaptive_transport_measure(
         base::AbstractREMeasure, dm::DataModel, info::REBatchInfo,
         θ_val::ComponentArray, const_cache, ll_cache::_LLCache;
-        maxiter::Int = 100, gtol::Float64 = 1.0e-8
+        maxiter::Int = 100, gtol::Float64 = 1.0e-8, b_star = nothing
     )
     n = get_n_b(info)
     θ_re = _symmetrize_psd_params(θ_val, get_fixed(get_model(dm)))
     base_val = build_re_measure_from_batch(info, θ_val, const_cache, dm, ll_cache)
     F = u -> _transport_logintegrand(u, base_val, dm, info, θ_re, const_cache, ll_cache)
-    u = zeros(Float64, n)
+    # warm start from the b-space EB mode when available (the u-space mode differs from
+    # its preimage only by the transport Jacobian term), else from the prior center u = 0
+    u0 = (b_star === nothing || !(base_val isa CompositeRE) || length(b_star) != n) ? nothing :
+        _transport_inverse(base_val, b_star)
+    u = (u0 !== nothing && all(isfinite, u0) && isfinite(F(u0))) ? u0 : zeros(Float64, n)
     dr = ForwardDiff.DiffResults.HessianResult(u)
     eval! = v -> ForwardDiff.hessian!(dr, F, v)
     eval!(u)

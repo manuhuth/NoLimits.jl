@@ -267,7 +267,8 @@ function _ghq_adaptive_measure(
     )
     if prior_measure isa CompositeRE && !prior_measure.unbounded
         return build_adaptive_transport_measure(
-            prior_measure, dm, info, _laplace_floatize(θu_re), const_cache, ll_cache
+            prior_measure, dm, info, _laplace_floatize(θu_re), const_cache, ll_cache;
+            b_star = b_star
         )
     end
     prior_measure isa GaussianRE ||
