@@ -127,10 +127,12 @@ concatenates the per-segment outputs:
 The type parameter `T` tracks the element type of the accumulator (may be a
 `ForwardDiff.Dual` when `θ` carries gradient tags).
 """
-struct CompositeRE{T <: Number} <: AbstractREMeasure
-    segment_fns::Vector{Any}          # f_k : ℝ^dk → ℝ^dk
-    correction_fns::Vector{Any}       # c_k : ℝ^dk → scalar, or nothing for zero correction
-    ranges::Vector{UnitRange{Int}}    # z-index range for each segment
+struct CompositeRE{T <: Number, SF <: Tuple, CF <: Tuple, RG <: Tuple} <: AbstractREMeasure
+    # Tuples (not Vector{Any}), so every segment map/correction has a concrete type and
+    # `transform`/`logcorrection` compile to straight-line code.
+    segment_fns::SF                   # f_k : ℝ^dk → ℝ^dk
+    correction_fns::CF                # c_k : ℝ^dk → scalar, or nothing for zero correction
+    ranges::RG                        # z-index range (UnitRange{Int}) for each segment
     n_b::Int
     has_correction::Bool              # fast-path flag: false if all corrections are nothing
     unbounded::Bool                   # true iff every RE segment has support ℝ^dk, making
@@ -138,19 +140,31 @@ struct CompositeRE{T <: Number} <: AbstractREMeasure
     # keep the prior-centered rule
 end
 
+function CompositeRE{T}(
+        segment_fns::Tuple, correction_fns::Tuple, ranges::Tuple,
+        n_b::Int, has_correction::Bool, unbounded::Bool
+    ) where {T}
+    return CompositeRE{T, typeof(segment_fns), typeof(correction_fns), typeof(ranges)}(
+        segment_fns, correction_fns, ranges, n_b, has_correction, unbounded
+    )
+end
+
 function transform(re::CompositeRE, z::AbstractVector)
-    parts = [re.segment_fns[k](z[re.ranges[k]]) for k in eachindex(re.segment_fns)]
-    return reduce(vcat, parts)
+    parts = map((f, r) -> f(z[r]), re.segment_fns, re.ranges)
+    return vcat(parts...)
+end
+
+# Σ_k c_k(z[r_k]) over the non-`nothing` corrections, unrolled over the tuples.
+_composite_corr(::Tuple{}, ::Tuple{}, z, acc) = acc
+function _composite_corr(cf::Tuple, rs::Tuple, z, acc)
+    c = first(cf)
+    acc2 = c === nothing ? acc : acc + c(z[first(rs)])
+    return _composite_corr(Base.tail(cf), Base.tail(rs), z, acc2)
 end
 
 function logcorrection(re::CompositeRE, z::AbstractVector)
     re.has_correction || return zero(eltype(z))
-    total = zero(eltype(z))
-    for k in eachindex(re.correction_fns)
-        re.correction_fns[k] === nothing && continue
-        total += re.correction_fns[k](z[re.ranges[k]])
-    end
-    return total
+    return _composite_corr(re.correction_fns, re.ranges, z, zero(eltype(z)))
 end
 
 Base.eltype(::CompositeRE{T}) where {T} = T
@@ -647,7 +661,8 @@ function build_re_measure_from_batch(
     T = isempty(non_nothing_L) ? T :
         mapreduce(eltype, promote_type, non_nothing_L; init = T)
     return CompositeRE{T}(
-        segment_fns, correction_fns, all_ranges, n_b, has_correction, all_unbounded
+        Tuple(segment_fns), Tuple(correction_fns), Tuple(all_ranges), n_b,
+        has_correction, all_unbounded
     )
 end
 
