@@ -1101,11 +1101,13 @@ on the same AD gradient/Hessian and adaptive-jitter Cholesky machinery the
 Laplace approximation already uses. Pass it as
 `Laplace(inner_optimizer=NewtonInner())`.
 
-The default inner optimizer is unchanged (LBFGS via Optimization.jl); this is
-an option because a different optimizer can reach a (numerically) different
-conditional mode on hard problems. Newton converges quadratically from the
-warm starts the outer optimization provides and avoids the per-solve
-`OptimizationProblem` setup overhead.
+It is the default inner optimizer of `Laplace` and `GHQuadrature` (FOCEI uses its
+Gauss-Newton variant). Pass `inner_optimizer = OptimizationOptimJL.LBFGS(linesearch =
+LineSearches.BackTracking(maxstep = 1.0))` for the previous default; a different optimizer
+can reach a (numerically) different conditional mode on hard problems. Newton converges
+quadratically from the warm starts the outer optimization provides and avoids the
+per-solve `OptimizationProblem` setup overhead (in profiles of a GHQ fit on a 1-D RE model
+the LBFGS inner solves with their backtracking line search were ~2/3 of the time).
 
 - `max_dim`: batches with more than `max_dim` random-effect dimensions fall
   back to the default LBFGS path.
@@ -2462,7 +2464,8 @@ random effects.
   candidates with [`get_marginal_likelihood`](@ref), which is method-independent.
 - `optim_kwargs::NamedTuple = (; maxiters = 1000)`: keyword arguments for the outer `solve` call.
 - `adtype`: AD backend for the outer optimizer. Defaults to `AutoForwardDiff()`.
-- `inner_optimizer`: inner optimizer for computing EBE modes. Defaults to `LBFGS`.
+- `inner_optimizer`: inner optimizer for computing EBE modes. Defaults to [`NewtonInner`](@ref)
+  (damped Newton, falls back to LBFGS when a solve stalls).
 - `inner_kwargs::NamedTuple = NamedTuple()`: keyword arguments for the inner `solve` call.
 - `inner_adtype`: AD backend for the inner optimizer. Defaults to `AutoForwardDiff()`.
 - `inner_grad_tol`: gradient tolerance for inner convergence (`:auto` chooses automatically).
@@ -2544,7 +2547,7 @@ function Laplace(;
         hessian_options = nothing,
         cache_options = nothing,
         multistart_options = nothing,
-        inner_optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
+        inner_optimizer = NewtonInner(),
         inner_kwargs = NamedTuple(),
         inner_adtype = Optimization.AutoForwardDiff(),
         inner_grad_tol = :auto,
