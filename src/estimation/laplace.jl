@@ -2670,7 +2670,7 @@ random effects.
   a 16-compartment PBPK model and diverged on a joint PK/PD fit, and SBPLX ran a
   proportional-error parameter away to a degenerate optimum on a myelosuppression model. Compare
   candidates with [`get_marginal_likelihood`](@ref), which is method-independent.
-- `optim_kwargs::NamedTuple = (; maxiters = 1000)`: keyword arguments for the outer `solve` call.
+- `optim_kwargs = nothing`: keyword arguments for the outer `solve` call; `nothing` = `(; maxiters = 1000)`, plus `reltol = 1e-12` (stop after two successive iterations that change the objective by <= 1e-12 relative) for an Optim.jl optimizer.
 - `adtype`: AD backend for the outer optimizer. Defaults to `AutoForwardDiff()`.
 - `inner_optimizer`: inner optimizer for computing EBE modes. Defaults to [`NewtonInner`](@ref)
   (damped Newton, falls back to LBFGS when a solve stalls).
@@ -2732,6 +2732,15 @@ end
 
 # Invalid retry counts and jitter used to be accepted and deferred to the Hessian
 # fallback path, where they only show up as a failed factorization (#220).
+# Default outer `solve` keywords. For an Optim.jl optimizer the fit also stops after two
+# successive iterations that change the objective by <= 1e-12 relative (Optim's
+# `f_reltol`, `successive_f_tol = 1`): the marginal is evaluated through inner mode solves
+# and ODE solves whose own tolerances put a noise floor of about that size on it, so
+# iterations below it only chase that noise (measured: the last ~30% of an ODE fit moved
+# the objective by < 1e-9).
+_laplace_default_optim_kwargs(optimizer) = optimizer isa Optim.AbstractOptimizer ?
+    (; maxiters = 1000, reltol = 1.0e-12) : (; maxiters = 1000)
+
 function _validate_laplace_hessian_options(h)
     h.max_tries >= 1 || error("Laplace: max_tries must be >= 1; got $(h.max_tries).")
     (isfinite(h.jitter) && h.jitter >= 0) ||
@@ -2749,7 +2758,7 @@ _update_schedule(m::Laplace) = m.update_schedule
 
 function Laplace(;
         optimizer = nothing,
-        optim_kwargs = (; maxiters = 1000),
+        optim_kwargs = nothing,
         adtype = Optimization.AutoForwardDiff(),
         inner_options = nothing,
         hessian_options = nothing,
@@ -2800,6 +2809,7 @@ function Laplace(;
             multistart_n, multistart_k, multistart_grad_tol,
             multistart_max_rounds, _as_symbol(multistart_sampling)
         ) : multistart_options
+    optim_kwargs === nothing && (optim_kwargs = _laplace_default_optim_kwargs(optimizer))
     return Laplace(
         optimizer, _as_namedtuple(optim_kwargs), adtype, inner, hess, cache,
         ms, lb, ub, ignore_model_bounds, precondition, _as_symbol(nan_recovery),
