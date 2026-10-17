@@ -1338,6 +1338,17 @@ function _newton_exact_solve(f, b0::Vector{Float64}, newton::NewtonInner)
             else
                 f_try = f(b_try)
             end
+            # A full step that lands where the gradient test passes is the mode even when
+            # the sufficient-decrease test fails by solver noise in log f (else the step
+            # would be halved down to x_abstol, one model solve per halving).
+            if α == 1.0 && isfinite(f_try) &&
+                    f_try >= fval - 1.0e-8 * (1 + abs(fval)) &&
+                    maximum(abs, ForwardDiff.DiffResults.gradient(rt)) <= newton.g_abstol
+                return _NewtonSol(
+                    b_try, f_try, maximum(abs, ForwardDiff.DiffResults.gradient(rt)), true,
+                    copy(ForwardDiff.DiffResults.hessian(rt))
+                )
+            end
             if isfinite(f_try) && f_try >= fval + 1.0e-4 * α * slope
                 b, b_try = b_try, b
                 if α == 1.0
