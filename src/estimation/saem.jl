@@ -1723,14 +1723,16 @@ function _saem_detect_centering_pairs(dm::DataModel, free_names::Vector{Symbol})
             n_bare == n_ref || continue      # every use of `re` is an indexed component
         end
         found = NamedTuple{(:fe, :re, :k), Tuple{Symbol, Symbol, Int}}[]
-        for k in ks, a in candidates
-            any(p -> p.fe === a, pairs) && continue
-            np = count_all(l -> _cs_count_pairs(l, a, re, k))
-            np >= 1 || continue
-            np == count_all(l -> _cs_count_sym(l, a)) || continue
-            np == count_all(l -> _cs_count_term(l, re, k)) || continue
-            push!(found, (fe = a, re = re, k = k))
-            break
+        for k in ks
+            for a in candidates
+                (any(p -> p.fe === a, pairs) || any(p -> p.fe === a, found)) && continue
+                np = count_all(l -> _cs_count_pairs(l, a, re, k))
+                np >= 1 || continue
+                np == count_all(l -> _cs_count_sym(l, a)) || continue
+                np == count_all(l -> _cs_count_term(l, re, k)) || continue
+                push!(found, (fe = a, re = re, k = k))
+                break                    # next component
+            end
         end
         length(found) == length(ks) && append!(pairs, found)
     end
