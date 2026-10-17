@@ -3234,13 +3234,18 @@ function _saem_bad_batches(
         const_cache::REConstantsCache,
         ll_cache;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        anneal_sds::NamedTuple = NamedTuple()
+        anneal_sds::NamedTuple = NamedTuple(),
+        chain_states = nothing
     )
     is_bad = zeros(Bool, length(updated))  # not a BitVector: tasks write neighbouring bits
     _saem_foreach_batch(dm, ll_cache, length(updated), serialization) do k, cache
         bi = updated[k]
         chains = b_chains[bi]
         (isempty(chains) || isempty(chains[1])) && return
+        # A sampler state that already holds the finite log-density terms of its current
+        # sample at this θ (SaemixMH) certifies the batch without re-solving the model.
+        chain_states !== nothing &&
+            all(c -> _saem_chain_state_finite(chain_states[bi][c]), 1:n_chains) && return
         for c in 1:n_chains
             logf = _laplace_logf_batch(
                 dm, batch_infos[bi], θ, chains[c], const_cache, cache;
@@ -3942,7 +3947,8 @@ function _fit_model(
                 bad = _saem_bad_batches(
                     dm, batch_infos, updated, θu_curr, b_chains,
                     effective_n_chains, const_cache, ll_cache;
-                    serialization = serialization, anneal_sds = anneal_sds
+                    serialization = serialization, anneal_sds = anneal_sds,
+                    chain_states = last_chain_params
                 )
                 isempty(bad) && break
                 if method.saem.verbose
@@ -4247,6 +4253,7 @@ function _fit_model(
                 end
             else
                 obj_cache = (θ = Ref{Any}(nothing), obj = Ref{Any}(nothing))
+                obj_at_new = nothing
                 # Single-assignment aliases for the captured per-iteration state: the
                 # `*_iter` locals (and `axs_free`) are assigned twice per iteration, so
                 # capturing them directly boxes them (`Core.Box`) and dynamically types
@@ -4351,6 +4358,17 @@ function _fit_model(
                         @warn "SAEM M-step iter $iter: optimizer returned non-finite parameters; skipping update."
                         mstep_skipped = true
                     else
+                        # The new iterate is the optimizer's minimizer (no SA damping at
+                        # γ = 1, none at all on the ring-buffer path), so the M-step
+                        # objective the optimizer already evaluated there is -Q(θ_new) up to
+                        # the penalty terms: reuse it instead of re-solving the model below.
+                        # Unbounded problems only (a box-constrained solver may report a
+                        # barrier-augmented value).
+                        if !use_bounds && method.saem.suffstats === nothing &&
+                                (γ == 1 || !method.saem.mstep_sa_on_params) &&
+                                sol.objective isa Real && isfinite(sol.objective)
+                            obj_at_new = Float64(sol.objective)
+                        end
                         # Mapped back before the SA damping below, which must act on θt.
                         θ_hat_t_free = _θt_from_z(sol.u)
                         if method.saem.mstep_sa_on_params
@@ -4374,6 +4392,16 @@ function _fit_model(
                 θu_new = inv_transform(θt_full)
                 if method.saem.suffstats !== nothing && method.saem.q_from_stats !== nothing
                     Q_new = method.saem.q_from_stats(s, θu_new, dm)
+                elseif obj_at_new !== nothing
+                    extra_new = extra_objective === nothing ? 0.0 : extra_objective(θu_new)
+                    Q_new = -(obj_at_new - _penalty_value(θu_new, penalty) - extra_new)
+                    isfinite(Q_new) || (
+                        Q_new = _saem_Q(
+                            dm, batch_infos, θu_new, const_cache, ll_cache, sample_store;
+                            serialization = serialization, q_cache = q_cache,
+                            anneal_sds = anneal_sds
+                        )
+                    )
                 else
                     Q_new = _saem_Q(
                         dm, batch_infos, θu_new, const_cache, ll_cache, sample_store;
