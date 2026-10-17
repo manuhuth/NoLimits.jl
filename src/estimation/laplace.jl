@@ -247,6 +247,17 @@ struct _LaplaceHessCache{T, L, H, C, V}
     last_H::H
     last_chol::C
     last_valid::V
+    last_logf::Vector{T}   # log f at last_b when the inner solve left it, else NaN
+end
+_LaplaceHessCache(last_b, last_logdet, last_H, last_chol, last_valid) = _LaplaceHessCache(
+    last_b, last_logdet, last_H, last_chol, last_valid, fill(eltype(last_logdet)(NaN), length(last_logdet))
+)
+
+# log f(b) left by the inner solve at this θ (see `_laplace_store_mode_hess!`), else NaN.
+function _laplace_cached_logf(hc, bi::Int, b, use_cache::Bool)
+    (use_cache && hc !== nothing && hc.last_valid[bi]) || return NaN
+    hc.last_b[bi] == b || return NaN
+    return hc.last_logf[bi]
 end
 
 mutable struct _LaplaceCache{T, B, G, A, H}
@@ -1787,7 +1798,7 @@ function _laplace_compute_bstar_batch!(
         end
     end
     _laplace_store_bstar!(cache, bi, b_best)
-    _laplace_store_mode_hess!(cache.hess_cache, bi, b_best, H_best)
+    _laplace_store_mode_hess!(cache.hess_cache, bi, b_best, H_best, best_f)
     return nothing
 end
 
@@ -1798,7 +1809,7 @@ end
 # and, when the exact Newton solve returned the Hessian at b*, seeds it with that Hessian
 # (`last_chol = nothing` marks such an entry: the factorization is still to be done, and
 # only the exact-Hessian log-determinant may use it; see `_laplace_logdet_negH`).
-function _laplace_store_mode_hess!(hc::_LaplaceHessCache, bi::Int, b, H)
+function _laplace_store_mode_hess!(hc::_LaplaceHessCache, bi::Int, b, H, logf)
     if H === nothing || length(b) != size(H, 1) || !(H isa eltype(hc.last_H))
         hc.last_valid[bi] = false
         return nothing
@@ -1809,10 +1820,11 @@ function _laplace_store_mode_hess!(hc::_LaplaceHessCache, bi::Int, b, H)
     hc.last_H[bi] = H
     hc.last_chol[bi] = nothing
     hc.last_logdet[bi] = NaN
+    hc.last_logf[bi] = isfinite(logf) ? logf : NaN
     hc.last_valid[bi] = true
     return nothing
 end
-_laplace_store_mode_hess!(::Nothing, bi::Int, b, H) = nothing
+_laplace_store_mode_hess!(::Nothing, bi::Int, b, H, logf) = nothing
 
 function _laplace_get_bstar!(
         cache::_LaplaceCache,
@@ -2159,6 +2171,7 @@ function _laplace_logdet_negH(
         hess_cache.last_logdet[bi] = logdet
         hess_cache.last_H[bi] = H
         hess_cache.last_chol[bi] = chol
+        H_seed === nothing && (hess_cache.last_logf[bi] = NaN)
         hess_cache.last_valid[bi] = true
     end
     return (logdet, H, chol)
@@ -2225,7 +2238,9 @@ function _laplace_grad_batch(
     else
         tctx0
     end
-    logf = _laplace_logf_batch(dm, batch_info, θ, b, const_cache, cache; tctx = tctx)
+    logf = _laplace_cached_logf(hess_cache, bi, b, use_cache)
+    isnan(logf) &&
+        (logf = _laplace_logf_batch(dm, batch_info, θ, b, const_cache, cache; tctx = tctx))
     logdet, H, chol = _laplace_logdet_negH(
         dm, batch_info, θ, b, const_cache, cache, ad_cache, bi;
         jitter = jitter, max_tries = max_tries, growth = growth,
@@ -3003,8 +3018,9 @@ function _laplace_objective_only(
             info = batch_infos[bi]
             b = bstars[bi]
             tctx = _objective_theta_ctx(dm, info, θ, const_cache, cache_c, b, hmode)
-            logf = _laplace_logf_batch(
-                dm, info, θ, b, const_cache, cache_c; tctx = tctx
+            logf = _laplace_cached_logf(ebe_cache.hess_cache, bi, b, use_cache)
+            isnan(logf) && (
+                logf = _laplace_logf_batch(dm, info, θ, b, const_cache, cache_c; tctx = tctx)
             )
             logf == -Inf && (bad[] = true; return)
             logdet, _, _ = _laplace_logdet_negH(
@@ -3038,8 +3054,9 @@ function _laplace_objective_only(
             active !== nothing && !(bi in active) && continue
             b = bstars[bi]
             tctx = _objective_theta_ctx(dm, info, θ, const_cache, ll_cache_use, b, hmode)
-            logf = _laplace_logf_batch(
-                dm, info, θ, b, const_cache, ll_cache_use; tctx = tctx
+            logf = _laplace_cached_logf(ebe_cache.hess_cache, bi, b, use_cache)
+            isnan(logf) && (
+                logf = _laplace_logf_batch(dm, info, θ, b, const_cache, ll_cache_use; tctx = tctx)
             )
             logf == -Inf && return infT
             logdet, _, _ = _laplace_logdet_negH(
