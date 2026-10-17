@@ -1170,12 +1170,14 @@ end
 # Minimal solution wrapper for the Newton path, duck-typed for the accessors
 # `_laplace_sol_logf` / `_laplace_sol_grad_norm` and the `sol.u` reads in
 # `_laplace_compute_bstar_batch!`.
-struct _NewtonSol{U}
+struct _NewtonSol{U, H}
     u::U
     logf::Float64
     g_norm::Float64
     converged::Bool
+    H::H   # exact ∇²_b log f at `u` when the solve computed it there, else `nothing`
 end
+_NewtonSol(u, logf, g_norm, converged) = _NewtonSol(u, logf, g_norm, converged, nothing)
 
 # Damped Newton ascent on b ↦ logf(b) at fixed (Float64) θ. Direction
 # Δ = (-H + λI)⁻¹ g via the adaptive-jitter Cholesky (λ escalation doubles as
@@ -1199,6 +1201,7 @@ function _newton_inner_solve(
     # logf wrapper (-Inf) instead of throwing out of the inner solve.
     tctx === nothing && (tctx = _safe_theta_ctx(dm, batch_info, θ_val, cache))
     f = _LaplaceLogfBatch(dm, batch_info, θ_val, const_cache, cache, tctx)
+    newton.curvature isa ExactHessianCurvature && return _newton_exact_solve(f, b0, newton)
     b = copy(b0)
     fval = f(b)
     isfinite(fval) || return _NewtonSol(b, -Inf, Inf, false)
@@ -1253,6 +1256,68 @@ function _newton_inner_solve(
     _newton_grad_hess!(g, ExactHessianCurvature(), f, cfg, dm, batch_info, θ_val, b, const_cache, cache, tctx)
     gn = maximum(abs, g)
     return _NewtonSol(b, Float64(fval), isfinite(gn) ? gn : Inf, false)
+end
+
+# `_newton_inner_solve` with the exact Hessian: value, gradient and Hessian of log f come
+# from ONE nested-dual pass (DiffResults) instead of a gradient pass plus a Hessian pass.
+# The full step (α = 1) is evaluated with that pass too, so an accepted full step - the
+# rule near the mode - already carries the derivatives for the next iteration, and a
+# converged solve returns the Hessian at the mode (reused for the log-determinant).
+# Same iterates, tests and fallback signal as the generic loop.
+function _newton_exact_solve(f, b0::Vector{Float64}, newton::NewtonInner)
+    b = copy(b0)
+    b_try = similar(b)
+    rc = ForwardDiff.DiffResults.HessianResult(b)
+    rt = ForwardDiff.DiffResults.HessianResult(b)
+    cfg = ForwardDiff.HessianConfig(f, rc, b)
+    rc = ForwardDiff.hessian!(rc, f, b, cfg)
+    fval = Float64(ForwardDiff.DiffResults.value(rc))
+    isfinite(fval) || return _NewtonSol(b, -Inf, Inf, false)
+    gn = Inf
+    for _ in 1:(newton.maxiters)
+        g = ForwardDiff.DiffResults.gradient(rc)
+        H = ForwardDiff.DiffResults.hessian(rc)
+        gn = maximum(abs, g)
+        isfinite(gn) || return _NewtonSol(b, fval, Inf, false)
+        gn <= newton.g_abstol && return _NewtonSol(b, fval, gn, true, copy(H))
+        chol, _ = _laplace_cholesky_negH(
+            H; jitter = 1.0e-6, max_tries = 8, growth = 10.0,
+            adaptive = true, scale_factor = 1.0e-6
+        )
+        (chol === nothing || chol.info != 0) && return _NewtonSol(b, fval, gn, false)
+        Δ = chol \ g
+        slope = dot(g, Δ)
+        (isfinite(slope) && slope > 0) || return _NewtonSol(b, fval, gn, false)
+        α = 1.0
+        accepted = false
+        Δmax = maximum(abs, Δ)
+        while α >= newton.alpha_min
+            # step below the tolerance: b is at the mode up to x_abstol
+            α * Δmax <= newton.x_abstol && return _NewtonSol(b, fval, gn, true, copy(H))
+            @. b_try = b + α * Δ
+            if α == 1.0
+                rt = ForwardDiff.hessian!(rt, f, b_try, cfg)
+                f_try = Float64(ForwardDiff.DiffResults.value(rt))
+            else
+                f_try = f(b_try)
+            end
+            if isfinite(f_try) && f_try >= fval + 1.0e-4 * α * slope
+                b, b_try = b_try, b
+                if α == 1.0
+                    rc, rt = rt, rc
+                else
+                    rc = ForwardDiff.hessian!(rc, f, b, cfg)
+                end
+                fval = f_try
+                accepted = true
+                break
+            end
+            α /= 2
+        end
+        accepted || return _NewtonSol(b, fval, gn, false)
+    end
+    gn = maximum(abs, ForwardDiff.DiffResults.gradient(rc))
+    return _NewtonSol(b, fval, isfinite(gn) ? gn : Inf, false)
 end
 
 # Trust-region variant (`globalization = :trust_region`): Optim.jl's NewtonTrustRegion on
@@ -1548,8 +1613,10 @@ function _laplace_compute_bstar_batch!(
             rethrow(err)
         end
     end
+    H_best = nothing   # exact Hessian at b_best when the inner solve returned it
     if sol_best !== nothing
         b_best = sol_best.u
+        H_best = _laplace_sol_hess(sol_best)
         best_f = _laplace_sol_logf(sol_best)
         if !isfinite(best_f)
             best_f = _laplace_logf_batch(
@@ -1619,6 +1686,7 @@ function _laplace_compute_bstar_batch!(
             best_after = b_best
             best_after_f = best_f
             best_after_g_norm = g_best_norm
+            best_after_H = H_best
             for s in idxs
                 b0 = vals[s][2]
                 sol_try = try
@@ -1649,6 +1717,7 @@ function _laplace_compute_bstar_batch!(
                 if f_try > best_after_f
                     best_after = b_try
                     best_after_f = f_try
+                    best_after_H = _laplace_sol_hess(sol_try)
                     g_try_norm = _laplace_sol_grad_norm(sol_try)
                     if !isfinite(g_try_norm)
                         g_try, _ = _laplace_gradb_cached!(
@@ -1663,6 +1732,7 @@ function _laplace_compute_bstar_batch!(
             b_best = best_after
             best_f = best_after_f
             g_best_norm = best_after_g_norm
+            H_best = best_after_H
             if g_best_norm <= multistart.grad_tol
                 break
             end
@@ -1672,8 +1742,32 @@ function _laplace_compute_bstar_batch!(
         end
     end
     _laplace_store_bstar!(cache, bi, b_best)
+    _laplace_store_mode_hess!(cache.hess_cache, bi, b_best, H_best)
     return nothing
 end
+
+@inline _laplace_sol_hess(sol::_NewtonSol) = sol.H
+@inline _laplace_sol_hess(sol) = nothing
+
+# The b*-solve at a new θ invalidates the batch's log-determinant cache (keyed by b only)
+# and, when the exact Newton solve returned the Hessian at b*, seeds it with that Hessian
+# (`last_chol = nothing` marks such an entry: the factorization is still to be done, and
+# only the exact-Hessian log-determinant may use it; see `_laplace_logdet_negH`).
+function _laplace_store_mode_hess!(hc::_LaplaceHessCache, bi::Int, b, H)
+    if H === nothing || length(b) != size(H, 1) || !(H isa eltype(hc.last_H))
+        hc.last_valid[bi] = false
+        return nothing
+    end
+    b_last = hc.last_b[bi]
+    length(b_last) == length(b) || resize!(b_last, length(b))
+    copyto!(b_last, b)
+    hc.last_H[bi] = H
+    hc.last_chol[bi] = nothing
+    hc.last_logdet[bi] = NaN
+    hc.last_valid[bi] = true
+    return nothing
+end
+_laplace_store_mode_hess!(::Nothing, bi::Int, b, H) = nothing
 
 function _laplace_get_bstar!(
         cache::_LaplaceCache,
@@ -1971,6 +2065,7 @@ function _laplace_logdet_negH(
         H = zeros(T, 0, 0)
         return (zero(T), H, nothing)
     end
+    H_seed = nothing
     if use_cache && hess_cache !== nothing
         if hess_cache.last_valid[bi]
             b_last = hess_cache.last_b[bi]
@@ -1983,15 +2078,19 @@ function _laplace_logdet_negH(
                     end
                 end
                 if same
-                    return (
+                    hess_cache.last_chol[bi] === nothing ||
+                        return (
                         hess_cache.last_logdet[bi],
                         hess_cache.last_H[bi], hess_cache.last_chol[bi],
                     )
+                    # exact Hessian left by the inner Newton solve at this b*
+                    hmode isa _ExactHess && eltype(hess_cache.last_H[bi]) === eltype(θ) &&
+                        (H_seed = hess_cache.last_H[bi])
                 end
             end
         end
     end
-    H = _build_hess_b(
+    H = H_seed !== nothing ? H_seed : _build_hess_b(
         hmode, dm, batch_info, θ, b, const_cache,
         cache, ad_cache, bi; ctx = ctx, tctx = tctx
     )
@@ -2038,7 +2137,9 @@ function _laplace_grad_batch(
         use_hutchinson::Bool = false,
         hutchinson_n::Int = 8,
         rng::AbstractRNG = Random.default_rng(),
-        hmode::_HessMode = _ExactHess()
+        hmode::_HessMode = _ExactHess(),
+        hess_cache::Union{Nothing, _LaplaceHessCache} = nothing,
+        use_cache::Bool = false
     )
     nb = get_n_b(batch_info)
     if nb == 0
@@ -2082,7 +2183,8 @@ function _laplace_grad_batch(
     logdet, H, chol = _laplace_logdet_negH(
         dm, batch_info, θ, b, const_cache, cache, ad_cache, bi;
         jitter = jitter, max_tries = max_tries, growth = growth,
-        adaptive = adaptive, scale_factor = scale_factor, ctx = "logdet", hmode = hmode, tctx = tctx
+        adaptive = adaptive, scale_factor = scale_factor, ctx = "logdet", hmode = hmode, tctx = tctx,
+        hess_cache = hess_cache, use_cache = use_cache
     )
     infT = convert(eltype(θ), Inf)
     logdet == Inf && return (
@@ -2706,6 +2808,9 @@ function _laplace_objective_and_grad(
         serialization = serialization,
         active_batches = active
     )
+    # b* (and the log-determinant cache keyed by it) belong to this θ
+    use_cache = ebe_cache.θ_cache !== nothing && length(ebe_cache.θ_cache) == length(θ) &&
+        _maxabsdiff(θ, ebe_cache.θ_cache) <= cache_opts.theta_tol
 
     infT = convert(eltype(θ), Inf)
     grad = zeros(eltype(θ), length(θ))
@@ -2735,7 +2840,9 @@ function _laplace_objective_and_grad(
                 use_hutchinson = hessian.use_hutchinson,
                 hutchinson_n = hessian.hutchinson_n,
                 rng = batch_rngs[bi],
-                hmode = hmode
+                hmode = hmode,
+                hess_cache = ebe_cache.hess_cache,
+                use_cache = use_cache
             )
             if res.logf == -Inf
                 bad[] = true
@@ -2775,7 +2882,9 @@ function _laplace_objective_and_grad(
                 use_hutchinson = hessian.use_hutchinson,
                 hutchinson_n = hessian.hutchinson_n,
                 rng = batch_rngs[bi],
-                hmode = hmode
+                hmode = hmode,
+                hess_cache = ebe_cache.hess_cache,
+                use_cache = use_cache
             )
             res.logf == -Inf && return (infT, ComponentArray(grad, axs), bstars)
             w = _batch_weight(dm, get_inds(info))
