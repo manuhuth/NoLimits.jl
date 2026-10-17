@@ -43,7 +43,7 @@ whose gradient is not; use `Laplace()` for that, and `level ≥ 3` here.
   transport-space rule for bounded REs needs the higher level), else 3; afterwards the
   marginal log-likelihood at the estimate is recomputed with the next finer rule
   (`2L + 1` nodes for scalar random effects, `L + 2` otherwise) and, while the two differ by
-  more than 0.05 (whole data set), the fit is refined from the estimate at the finer level
+  more than 0.5 (whole data set), the fit is refined from the estimate at the finer level
   (at most 4 refinements, up to ~2000 nodes per batch). May also be:
   - `Int` (isotropic): same level for all RE groups.
   - `NamedTuple` (anisotropic): per-RE-group level, e.g.
@@ -686,10 +686,13 @@ end
 # Fit at the dimension-based base level (`_ghq_resolve_auto_level`), then compare the
 # marginal log-likelihood at θ̂ under that rule and the next finer one; while they differ
 # by more than _GHQ_AUTO_TOL nats (whole data set), refit from θ̂ at the finer level.
+# 0.5 nats: on toenail/H01 the estimate-moving rule errors are several nats (level 3 vs 7:
+# 10 / 5 nats), converged levels differ by <= 0.2; 0.05 refined models whose estimates
+# were already exact (default-GHQ challenger 350 -> 942 s).
 # A fixed level cannot serve every model: binary outcomes with a large RE variance
 # (toenail data, RE sd ~4) need ~15 nodes per dimension — level 3 there moves the
 # estimates by many standard errors — while most models are exact at level 3.
-const _GHQ_AUTO_TOL = 0.05
+const _GHQ_AUTO_TOL = 0.5
 const _GHQ_AUTO_MAX_REFINE = 4
 const _GHQ_AUTO_MAX_NODES = 2_000
 _ghq_next_level(level::Int, maxdim::Int) = maxdim <= 1 ? 2level + 1 : level + 2
