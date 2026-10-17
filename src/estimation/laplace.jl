@@ -177,6 +177,32 @@ end
 struct _LaplaceBStarCache{T, B}
     b_star::Vector{Vector{T}}
     has_bstar::B
+    # First-order predictor of the mode, b*(θ) ≈ pred_b + pred_db (θ - pred_θ), from the
+    # implicit-function derivative db*/dθ of the last gradient evaluation (per batch; empty
+    # = none). Only a warm start for the inner solve, never a result.
+    pred_θ::Vector{Vector{Float64}}
+    pred_b::Vector{Vector{Float64}}
+    pred_db::Vector{Matrix{Float64}}
+end
+_LaplaceBStarCache(b_star, has_bstar) = _LaplaceBStarCache(
+    b_star, has_bstar, [Float64[] for _ in b_star], [Float64[] for _ in b_star],
+    [zeros(0, 0) for _ in b_star]
+)
+
+function _laplace_store_predictor!(bc::_LaplaceBStarCache, bi::Int, θ, b, dbdθ)
+    (all(isfinite, dbdθ) && all(isfinite, b)) || (empty!(bc.pred_θ[bi]); return nothing)
+    bc.pred_θ[bi] = collect(Float64, θ)
+    bc.pred_b[bi] = collect(Float64, b)
+    bc.pred_db[bi] = Matrix{Float64}(dbdθ)
+    return nothing
+end
+_laplace_store_predictor!(::Nothing, bi::Int, θ, b, dbdθ) = nothing
+
+function _laplace_predict_bstar(bc::_LaplaceBStarCache, bi::Int, θ, nb::Int)
+    θ0 = bc.pred_θ[bi]
+    (length(θ0) == length(θ) && length(bc.pred_b[bi]) == nb) || return nothing
+    pred = bc.pred_b[bi] .+ bc.pred_db[bi] * (collect(Float64, θ) .- θ0)
+    return all(isfinite, pred) ? pred : nothing
 end
 
 struct _LaplaceGradCache{T, L, G, V}
@@ -1555,18 +1581,30 @@ function _laplace_compute_bstar_batch!(
     elseif cache.bstar_cache.has_bstar[bi]
         b_prev = cache.bstar_cache.b_star[bi]
         if length(b_prev) == nb
-            f_prev = _laplace_logf_batch(
-                dm, info, θ_val, b_prev, const_cache, ll_cache; tctx = tctx
-            )
             f_def = _laplace_logf_batch(
                 dm, info, θ_val, b0_default, const_cache, ll_cache; tctx = tctx
             )
-            warm_start_usable = isfinite(f_prev)
-            if f_prev > f_def
-                b_start = b_prev
-                f_start = f_prev
+            # First choice: the mode extrapolated along db*/dθ from the last gradient
+            # evaluation; the previous mode when there is none or it does not beat the
+            # default start.
+            pred = _laplace_predict_bstar(cache.bstar_cache, bi, θ_val, nb)
+            f_pred = pred === nothing ? -Inf :
+                _laplace_logf_batch(dm, info, θ_val, pred, const_cache, ll_cache; tctx = tctx)
+            if isfinite(f_pred) && f_pred > f_def
+                b_start = pred
+                f_start = f_pred
+                warm_start_usable = true
             else
-                f_start = f_def
+                f_prev = _laplace_logf_batch(
+                    dm, info, θ_val, b_prev, const_cache, ll_cache; tctx = tctx
+                )
+                warm_start_usable = isfinite(f_prev)
+                if f_prev > f_def
+                    b_start = b_prev
+                    f_start = f_prev
+                else
+                    f_start = f_def
+                end
             end
         end
     end
@@ -2146,7 +2184,8 @@ function _laplace_grad_batch(
         rng::AbstractRNG = Random.default_rng(),
         hmode::_HessMode = _ExactHess(),
         hess_cache::Union{Nothing, _LaplaceHessCache} = nothing,
-        use_cache::Bool = false
+        use_cache::Bool = false,
+        bstar_cache::Union{Nothing, _LaplaceBStarCache} = nothing
     )
     nb = get_n_b(batch_info)
     if nb == 0
@@ -2389,6 +2428,7 @@ function _laplace_grad_batch(
         end
     end
     dbdθ = chol_b \ Gθ
+    _laplace_store_predictor!(bstar_cache, bi, θ_vec, b, dbdθ)
     corr = vec(grad_logdet_b' * dbdθ)
     grad = grad_logf .- 0.5 .* (grad_logdet_θ .+ corr)
     return (logf = logf, logdet = logdet, grad = ComponentArray(grad, axs))
@@ -2853,7 +2893,8 @@ function _laplace_objective_and_grad(
                 rng = batch_rngs[bi],
                 hmode = hmode,
                 hess_cache = ebe_cache.hess_cache,
-                use_cache = use_cache
+                use_cache = use_cache,
+                bstar_cache = ebe_cache.bstar_cache
             )
             if res.logf == -Inf
                 bad[] = true
@@ -2895,7 +2936,8 @@ function _laplace_objective_and_grad(
                 rng = batch_rngs[bi],
                 hmode = hmode,
                 hess_cache = ebe_cache.hess_cache,
-                use_cache = use_cache
+                use_cache = use_cache,
+                bstar_cache = ebe_cache.bstar_cache
             )
             res.logf == -Inf && return (infT, ComponentArray(grad, axs), bstars)
             w = _batch_weight(dm, get_inds(info))
