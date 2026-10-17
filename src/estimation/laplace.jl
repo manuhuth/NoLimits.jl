@@ -2732,14 +2732,15 @@ end
 
 # Invalid retry counts and jitter used to be accepted and deferred to the Hessian
 # fallback path, where they only show up as a failed factorization (#220).
-# Default outer `solve` keywords. For an Optim.jl optimizer the fit also stops after two
+# Default outer `solve` keywords (Laplace, FOCEI, GHQuadrature: `base` plus the rule below).
+# For an Optim.jl optimizer the fit also stops after two
 # successive iterations that change the objective by <= 1e-12 relative (Optim's
 # `f_reltol`, `successive_f_tol = 1`): the marginal is evaluated through inner mode solves
 # and ODE solves whose own tolerances put a noise floor of about that size on it, so
 # iterations below it only chase that noise (measured: the last ~30% of an ODE fit moved
 # the objective by < 1e-9).
-_laplace_default_optim_kwargs(optimizer) = optimizer isa Optim.AbstractOptimizer ?
-    (; maxiters = 1000, reltol = 1.0e-12) : (; maxiters = 1000)
+_outer_default_optim_kwargs(optimizer, base::NamedTuple) =
+    optimizer isa Optim.AbstractOptimizer ? merge(base, (; reltol = 1.0e-12)) : base
 
 function _validate_laplace_hessian_options(h)
     h.max_tries >= 1 || error("Laplace: max_tries must be >= 1; got $(h.max_tries).")
@@ -2809,7 +2810,8 @@ function Laplace(;
             multistart_n, multistart_k, multistart_grad_tol,
             multistart_max_rounds, _as_symbol(multistart_sampling)
         ) : multistart_options
-    optim_kwargs === nothing && (optim_kwargs = _laplace_default_optim_kwargs(optimizer))
+    optim_kwargs === nothing &&
+        (optim_kwargs = _outer_default_optim_kwargs(optimizer, (; maxiters = 1000)))
     return Laplace(
         optimizer, _as_namedtuple(optim_kwargs), adtype, inner, hess, cache,
         ms, lb, ub, ignore_model_bounds, precondition, _as_symbol(nan_recovery),

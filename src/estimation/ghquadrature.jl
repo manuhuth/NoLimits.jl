@@ -52,7 +52,7 @@ whose gradient is not; use `Laplace()` for that, and `level ≥ 3` here.
 - `optimizer`: outer Optimization.jl-compatible optimizer.  Defaults to LBFGS
   with backtracking line search, or to `Optimisers.Adam(0.01)` when
   `update_schedule != :all`.
-- `optim_kwargs::NamedTuple = NamedTuple()`: forwarded to `Optimization.solve`
+- `optim_kwargs = nothing`: forwarded to `Optimization.solve`; `nothing` = `NamedTuple()`, plus `reltol = 1e-12` for an Optim.jl optimizer (as [`Laplace`](@ref))
   (e.g. `maxiters`, `reltol`).
 - `adtype`: AD backend for the outer gradient.  Defaults to
   `AutoForwardDiff()`.
@@ -143,7 +143,7 @@ end
 function GHQuadrature(;
         level = :auto,  # :auto, Int, Vector{Int} or NamedTuple for anisotropic levels
         optimizer = nothing,
-        optim_kwargs = NamedTuple(),
+        optim_kwargs = nothing,
         adtype = Optimization.AutoForwardDiff(),
         inner_options = nothing,
         inner_optimizer = NewtonInner(x_abstol = 1.0e-10),
@@ -176,6 +176,8 @@ function GHQuadrature(;
             multistart_max_rounds, _as_symbol(multistart_sampling)
         ) :
         multistart_options
+    optim_kwargs === nothing &&
+        (optim_kwargs = _outer_default_optim_kwargs(optimizer, NamedTuple()))
     return GHQuadrature(
         level, optimizer, _as_namedtuple(optim_kwargs), adtype, inner, ms, lb, ub,
         ignore_model_bounds, precondition, update_schedule
