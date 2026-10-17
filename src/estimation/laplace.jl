@@ -2218,13 +2218,6 @@ function _laplace_grad_batch(
             _FDCfgStore(), _FDCfgStore(), _FDCfgStore()
         ) :
         _get_grad_buffers!(ad_cache, bi, eltype(θ_vec), nθ, nb, use_trace_logdet_grad)
-    # envelope term
-    logf_θ = _LaplaceLogfTheta(dm, batch_info, b, const_cache, cache)
-    cfg = _get_fd_cfg!(
-        buf.grad_logf_cfg, logf_θ, θ_vec, () -> ForwardDiff.GradientConfig(logf_θ, θ_vec)
-    )
-    ForwardDiff.gradient!(buf.grad_logf, logf_θ, θ_vec, cfg)
-    grad_logf = buf.grad_logf
     # g = ∂ logf / ∂b and the curvature H from one pass (`_onepass_logdet_derivatives`), so
     # Gθ with ∂H/∂θ, and the exact Hessian with ∂H/∂b, each take one nested AD pass, and
     # RE-only fixed effects no model solve. `nothing` (e.g. a third-party curvature): the
@@ -2232,6 +2225,17 @@ function _laplace_grad_batch(
     fast = use_trace_logdet_grad && !use_hutchinson ?
         _onepass_logdet_derivatives(hmode, dm, batch_info, θ_vec, b, const_cache, cache, tctx) :
         nothing
+    # envelope term (from the one-pass θ derivatives when they carry it)
+    grad_logf = if fast !== nothing && fast.grad_logf !== nothing
+        fast.grad_logf
+    else
+        logf_θ = _LaplaceLogfTheta(dm, batch_info, b, const_cache, cache)
+        cfg = _get_fd_cfg!(
+            buf.grad_logf_cfg, logf_θ, θ_vec, () -> ForwardDiff.GradientConfig(logf_θ, θ_vec)
+        )
+        ForwardDiff.gradient!(buf.grad_logf, logf_θ, θ_vec, cfg)
+        buf.grad_logf
+    end
     Gθ = if fast === nothing
         # g(b, θ) = ∂ logf / ∂b
         function gθ!(out, θv)
@@ -3655,14 +3659,20 @@ function _onepass_logdet_derivatives(
         ::ExactHessianCurvature, dm::DataModel, batch_info::REBatchInfo, θ, b,
         const_cache::REConstantsCache, cache::_LLCache, tctx
     )
-    # gradient and Hessian of log f in b from one second-order pass
+    # value, gradient and Hessian of log f in b from one second-order pass; the value row
+    # gives the envelope term ∂ log f/∂θ from the same θ pass (`with_logf`)
     function F(θv, bv, tc)
         T = promote_type(eltype(θv), eltype(bv))
         f = bw -> _laplace_logf_batch(dm, batch_info, θv, bw, const_cache, cache; tctx = tc)
         res = ForwardDiff.hessian!(ForwardDiff.DiffResults.HessianResult(similar(bv, T)), f, bv)
-        return vcat(ForwardDiff.DiffResults.gradient(res), _vech(ForwardDiff.DiffResults.hessian(res)))
+        return vcat(
+            ForwardDiff.DiffResults.value(res), ForwardDiff.DiffResults.gradient(res),
+            _vech(ForwardDiff.DiffResults.hessian(res))
+        )
     end
-    return _onepass_from_F(F, dm, batch_info, θ, b, const_cache, cache, tctx)
+    return _onepass_from_F(
+        F, dm, batch_info, θ, b, const_cache, cache, tctx; with_logf = true
+    )
 end
 
 # The θ pass gets no θ-context: a cached prior Hessian is constant in θ only at the
@@ -3670,25 +3680,34 @@ end
 # `@formulas`, `@preDifferentialEquation`, `@DifferentialEquation`, `@initialDE`) move F
 # only through the prior, so their columns come from the prior terms alone, without a
 # model solve.
-function _onepass_from_F(F, dm::DataModel, batch_info::REBatchInfo, θ, b, const_cache, cache, tctx)
+# `with_logf = true`: F's first row is log f itself, and `grad_logf` = ∂ log f/∂θ comes
+# from the same θ pass (for the RE-only fixed effects from the RE prior, constant levels
+# included); otherwise `grad_logf = nothing`.
+function _onepass_from_F(
+        F, dm::DataModel, batch_info::REBatchInfo, θ, b, const_cache, cache, tctx;
+        with_logf::Bool = false
+    )
     nb = length(b)
     nv = _ntri(nb)
+    k = with_logf ? 1 : 0
     o, p = _theta_split_obs_re(dm, θ)
-    Jθ = Matrix{Float64}(undef, nb + nv, length(θ))
+    Jθ = Matrix{Float64}(undef, k + nb + nv, length(θ))
     Jθ[:, o] = ForwardDiff.jacobian(x -> F(_theta_with(θ, o, x), b, nothing), θ[o])
     if !isempty(p)
         prior(θv) = begin
             θr = _symmetrize_psd_params(θv, get_fixed(get_model(dm)))
             lp = _FOCEIPriorLogf(dm, batch_info, θr, const_cache, cache)
-            vcat(ForwardDiff.gradient(lp, b), _vech(ForwardDiff.hessian(lp, b)))
+            gh = vcat(ForwardDiff.gradient(lp, b), _vech(ForwardDiff.hessian(lp, b)))
+            with_logf ? vcat(_re_logpdf_batch(dm, batch_info, θv, b, const_cache, cache), gh) : gh
         end
         Jθ[:, p] = ForwardDiff.jacobian(x -> prior(_theta_with(θ, p, x)), θ[p])
     end
     Jb = ForwardDiff.jacobian(bv -> F(θ, bv, tctx), b)
-    Hex = Jb[1:nb, :]
+    Hex = Jb[(k + 1):(k + nb), :]
     return (
-        Gθ = Jθ[1:nb, :], Jθ = Jθ[(nb + 1):end, :],
-        Hex = (Hex + Hex') / 2, Jb = Jb[(nb + 1):end, :],
+        Gθ = Jθ[(k + 1):(k + nb), :], Jθ = Jθ[(k + nb + 1):end, :],
+        Hex = (Hex + Hex') / 2, Jb = Jb[(k + nb + 1):end, :],
+        grad_logf = with_logf ? Jθ[1, :] : nothing,
     )
 end
 
