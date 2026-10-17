@@ -2139,7 +2139,7 @@ function _fit_model(
             # Value-and-gradient objective and carried BFGS preconditioner, shared with SAEM
             # (see `_SAEMMStepCurvature` / `_saem_mstep_optf` in saem.jl): one dual pass per
             # trial point, and each M-step's LBFGS starts from the curvature of the last ones.
-            optf = _saem_mstep_optf(obj_only, method.adtype, length(free_names_q1))
+            optf = _saem_mstep_optf(obj_only, method.adtype, length(θt_free_iter))   # coordinates, not names
             lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
                 fe, free_names_q1, collect(θt_free_iter), method.optimizer, method.lb,
                 method.ub, constants; method_label = "MCEM"
