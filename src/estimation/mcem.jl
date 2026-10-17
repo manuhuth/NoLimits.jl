@@ -221,7 +221,11 @@ fixed effects.
 
 # Keyword Arguments
 - `optimizer`: M-step Optimization.jl optimizer. Defaults to `LBFGS` with backtracking.
-- `optim_kwargs::NamedTuple = (; iterations=50, g_abstol=1e-4, f_reltol=1e-6)`: keyword arguments for the M-step `solve`.
+- `optim_kwargs::NamedTuple = (; iterations=10, g_abstol=1e-4, f_reltol=1e-6)`: keyword arguments
+  for the M-step `solve`. The M-step is warm-started at the current iterate and only has to
+  increase the Monte Carlo Q-function (generalized EM, Dempster, Laird & Rubin 1977), whose
+  maximizer is itself only known up to Monte Carlo error, so a few quasi-Newton iterations
+  per EM iteration suffice; the EM fixed point is unchanged.
 - `adtype`: AD backend for the M-step. Defaults to `AutoForwardDiff()`.
 - `e_step`: E-step strategy. Either [`MCEM_MCMC`](@ref) or [`MCEM_IS`](@ref). When
   omitted, defaults to `MCEM_MCMC` constructed from the legacy keyword arguments below.
@@ -324,7 +328,7 @@ end
 
 function MCEM(;
         optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
-        optim_kwargs = (; iterations = 50, g_abstol = 1.0e-4, f_reltol = 1.0e-6),
+        optim_kwargs = (; iterations = 10, g_abstol = 1.0e-4, f_reltol = 1.0e-6),
         adtype = Optimization.AutoForwardDiff(),
         e_step = nothing,
         sampler = SaemixMH(),
