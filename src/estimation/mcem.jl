@@ -1823,6 +1823,7 @@ function _fit_model(
     weights_store = Vector{Vector{Float64}}(undef, length(batch_infos))
     ess_by_batch = fill(NaN, length(batch_infos))
 
+    mstep_curv = _SAEMMStepCurvature()   # carried M-step curvature (see the Q1 M-step)
     for iter in 1:(method.em.maxiters)
         mstep_skipped = false
         θt_curr = θ_prev isa ComponentArray ? θ_prev : ComponentArray(θ_prev, axs_free)
@@ -2090,7 +2091,7 @@ function _fit_model(
             axs_free_iter = getaxes(θt_free_iter)
 
             # Anchored at the current iterate, as for Q2 above.
-            _, _, _θt_from_z, _z_from_θt = _precondition_maps(
+            _, s_pc_q1, _θt_from_z, _z_from_θt = _precondition_maps(
                 get_model(dm), free_names_q1, θt_free_iter, axs_free_iter,
                 _precondition_on(method)
             )
@@ -2127,6 +2128,7 @@ function _fit_model(
                 obj = -Q + _penalty_value(θu, penalty)
                 extra_objective === nothing || (obj += extra_objective(θu))
                 !isfinite(obj) && return Inf
+                _saem_mstep_record!(mstep_curv, z, obj)   # gradients for the carried curvature
                 if use_cache
                     obj_cache.θ[] = copy(θt_vec)
                     obj_cache.obj[] = obj
@@ -2134,7 +2136,10 @@ function _fit_model(
                 return obj
             end
 
-            optf = OptimizationFunction(obj_only, method.adtype)
+            # Value-and-gradient objective and carried BFGS preconditioner, shared with SAEM
+            # (see `_SAEMMStepCurvature` / `_saem_mstep_optf` in saem.jl): one dual pass per
+            # trial point, and each M-step's LBFGS starts from the curvature of the last ones.
+            optf = _saem_mstep_optf(obj_only, method.adtype, length(free_names_q1))
             lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
                 fe, free_names_q1, collect(θt_free_iter), method.optimizer, method.lb,
                 method.ub, constants; method_label = "MCEM"
@@ -2144,7 +2149,11 @@ function _fit_model(
                 OptimizationProblem(optf, z0; lb = _z_from_θt(lb), ub = _z_from_θt(ub)) :
                 OptimizationProblem(optf, z0)
 
-            sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
+            _saem_mstep_curv_reset!(mstep_curv, free_names_q1)
+            mstep_opt = use_bounds ? method.optimizer :
+                _saem_mstep_optimizer(method.optimizer, mstep_curv, s_pc_q1)
+            sol = Optimization.solve(prob, mstep_opt; method.optim_kwargs...)
+            use_bounds || _saem_mstep_curv_update!(mstep_curv, s_pc_q1)
 
             if any(!isfinite, sol.u)
                 @warn "MCEM M-step iter $iter: optimizer returned non-finite parameters; skipping update."
