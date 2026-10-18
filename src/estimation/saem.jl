@@ -513,8 +513,9 @@ or closed-form updates (when `builtin_stats` is enabled).
 - `warm_start::Bool = true`: initialize the sampler from the previous iteration's modes.
 - `verbose::Bool = false`: print per-iteration diagnostics.
 - `progress::Bool = true`: show a progress bar.
-- `mcmc_steps`: number of MCMC sweeps per E-step. Defaults to `1` for `SaemixMH` (one
-  sweep runs kernels 1–3, i.e. `n_kern1 + n_kern2 + n_kern3` proposals per RE level) and
+- `mcmc_steps`: number of MCMC sweeps per E-step. Defaults for `SaemixMH` to one sweep per
+  3 random-effect dimensions of the largest batch, `max(1, cld(n_b, 3))` (one sweep runs
+  kernels 1–3, i.e. `n_kern1 + n_kern2 + n_kern3` proposals per RE level), and
   `80` for Turing-based samplers (`MH`, `AdaptiveNoLimitsMH`, `NUTS`). Override explicitly
   when needed.
 - `q_store_max::Int = 50`: ring buffer capacity — maximum number of snapshots retained.
@@ -754,7 +755,8 @@ function SAEM(;
         ebe_rescue_on_high_grad, ebe_rescue_multistart_n, ebe_rescue_multistart_k,
         ebe_rescue_max_rounds, ebe_rescue_grad_tol, ebe_rescue_multistart_sampling
     )
-    resolved_mcmc_steps = isnothing(mcmc_steps) ? (sampler isa SaemixMH ? 1 : 80) :
+    # SaemixMH default 0 = automatic: resolved at fit time from the RE batch dimension
+    resolved_mcmc_steps = isnothing(mcmc_steps) ? (sampler isa SaemixMH ? 0 : 80) :
         mcmc_steps
     saem = SAEMOptions(
         sampler, turing_kwargs, update_schedule, warm_start, verbose, progress,
@@ -4038,7 +4040,12 @@ function _fit_model(
 
     # O1: hoist tkwargs construction — values never change during the run
     tkwargs = method.saem.turing_kwargs
+    # automatic SaemixMH sweeps (mcmc_steps = 0): one sweep per 3 RE dimensions of the
+    # largest batch - a single sweep mixed too slowly for network-weight REs (13-dim:
+    # held-out accuracy 1/10 starts vs 5/10 with 5 sweeps); batches with <= 3 REs keep 1
     n_samples_saem = method.saem.mcmc_steps > 0 ? method.saem.mcmc_steps :
+        method.saem.sampler isa SaemixMH ?
+        max(1, cld(maximum((get_n_b(info) for info in batch_infos); init = 1), 3)) :
         get(tkwargs, :n_samples, 1)
     tkwargs = merge(tkwargs, (n_samples = n_samples_saem,))
     haskey(tkwargs, :n_adapt) || (tkwargs = merge(tkwargs, (n_adapt = 50,)))
