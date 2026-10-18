@@ -30,12 +30,18 @@ Approximates the batch marginal likelihood via
     log L_batch ≈ signed_logsumexp_r [ log|W_r| + Σᵢ ℓᵢ(μ + Lzᵣ, θ) ]
 
 where `{(zᵣ, Wᵣ)}` are Smolyak–Gauss-Hermite quadrature nodes/weights at the
-requested `level`.  The rule is *adaptive* for Gaussian random effects: like
-`Laplace` it solves for the empirical-Bayes mode of each batch, then centers and
-whitens the nodes there.  Non-Gaussian random effects keep the prior-centered
-transport-map rule, which needs a higher `level` for the same accuracy.
-`level = 1` is a single-node rule whose value is the Laplace approximation but
-whose gradient is not; use `Laplace()` for that, and `level ≥ 3` here.
+requested `level`.  The rule is *adaptive*.  When every random effect of a batch has
+support ℝ (`Normal`, `MvNormal`, `TDist`, normalizing flows, copulas with ℝ marginals),
+it solves for the empirical-Bayes mode of the batch, like `Laplace`, then centers and
+whitens the nodes there.  A batch with a bounded-support random effect (`LogNormal`,
+`Gamma`, `Beta`, `Weibull`, ...) gets the rule adaptive in the standard-normal reference
+space of the transport map: nodes centered at the mode of the integrand in that space
+(warm-started from the empirical-Bayes mode) and scaled by its curvature there; it needs
+a higher `level` for the same accuracy.  The prior-centered transport-map rule is used
+only when that mode or curvature is not available.
+For ℝ-supported random effects `level = 1` is a single-node rule whose value is the
+Laplace approximation but whose gradient is not; use `Laplace()` for that, and
+`level ≥ 3` here.
 
 # Keyword Arguments
 - `level = :auto`: Smolyak accuracy level, error-controlled. The fit starts at 5 when some
@@ -62,8 +68,9 @@ whose gradient is not; use `Laplace()` for that, and `level ≥ 3` here.
   `AutoForwardDiff()`.
 - `inner_options / inner_optimizer / inner_kwargs / inner_adtype / inner_grad_tol`:
   configure the Laplace-style inner optimizer for the empirical-Bayes modes. It runs
-  on every objective evaluation (the modes center the adaptive rule for Gaussian
-  random effects) and again at the optimum for `get_random_effects`.
+  on every objective evaluation (the modes center the adaptive rule, or warm-start the
+  reference-space mode search for bounded-support random effects) and again at the
+  optimum for `get_random_effects`.
 - `multistart_options / multistart_n / multistart_k / multistart_grad_tol /
   multistart_max_rounds / multistart_sampling`: multistart settings for the
   EB mode finder.
