@@ -983,6 +983,14 @@ end
 # logcorrection (`_re_prior_logf_batch`). Uses `_logpdf_re_static` so the logpdf stays
 # statically dispatched (Enzyme forward-mode BLAS safe); the anneal branch keeps dynamic
 # getproperty, matching the previous per-function behaviour.
+@inline function _re_prior_lp(dists, re::Symbol, v, has_anneal::Bool, anneal_sds, ::Type{T}) where {T}
+    if has_anneal && haskey(anneal_sds, re)
+        dist = _saem_apply_anneal_dist(getproperty(dists, re), getfield(anneal_sds, re))
+        return convert(T, logpdf(dist, v))
+    end
+    return _logpdf_re_static(keys(dists), values(dists), re, v, T)
+end
+
 function _re_free_prior_logf(
         dm::DataModel, batch_info::REBatchInfo, θ_re::ComponentArray,
         b, cache::_LLCache; anneal_sds::NamedTuple = NamedTuple(), tctx = nothing
@@ -1005,17 +1013,15 @@ function _re_free_prior_logf(
                     θ_re, get_const_cov(get_individuals(dm)[rep_idx]),
                     model_funs, helpers
                 ) : tctx.dists[ri][li]
-            v = _re_value_from_b(info, level_id, b)
-            v === nothing && continue
-            lp = if has_anneal && haskey(anneal_sds, re)
-                dist = _saem_apply_anneal_dist(
-                    getproperty(dists, re),
-                    getfield(anneal_sds, re)
-                )
-                convert(T_ll, logpdf(dist, v))
-            else
-                _logpdf_re_static(keys(dists), values(dists), re, v, T_ll)
-            end
+            # Branch on scalar-ness here instead of taking `_re_value_from_b`'s
+            # Union{Nothing, scalar, view}: each branch hands a concretely typed value to
+            # logpdf, which Enzyme's type analysis needs (EnzymeNoTypeError on MvNormal REs).
+            idx = get_re_map(info).level_to_index[level_id]
+            idx == 0 && continue
+            r = get_ranges(info)[idx]
+            lp = get_is_scalar(info) ?
+                _re_prior_lp(dists, re, b[first(r)], has_anneal, anneal_sds, T_ll) :
+                _re_prior_lp(dists, re, view(b, r), has_anneal, anneal_sds, T_ll)
             isfinite(lp) || return T_ll(-Inf)
             ll += lp
         end
