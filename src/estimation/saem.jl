@@ -1797,8 +1797,10 @@ end
 # optimum for any Ω). Same estimand; only the path changes.
 
 _cs_is_term(ex, re::Symbol, k::Int) =
-    k == 0 ? ex === re : (ex isa Expr && ex.head === :ref && length(ex.args) == 2 &&
-                          ex.args[1] === re && ex.args[2] == k)
+    k == 0 ? ex === re : (
+        ex isa Expr && ex.head === :ref && length(ex.args) == 2 &&
+        ex.args[1] === re && ex.args[2] == k
+    )
 
 # occurrences of symbol `s` (as a value, not as a call head)
 function _cs_count_sym(ex, s::Symbol)
@@ -1976,9 +1978,11 @@ function _saem_center!(
         sample_store, const_cache, cache, re_names, n_chains::Int
     )
     θn = copy(θu)
-    prior_means = [get_n_b(info) == 0 ? Float64[] :
-                   _re_prior_mean_b(dm, info, θu, const_cache, cache, re_names)
-                   for info in batch_infos]
+    prior_means = [
+        get_n_b(info) == 0 ? Float64[] :
+            _re_prior_mean_b(dm, info, θu, const_cache, cache, re_names)
+            for info in batch_infos
+    ]
     for p in pairs
         s, n = 0.0, 0
         idx = [_cs_batch_indices(info, re_names, p.re, p.k) for info in batch_infos]
@@ -1990,8 +1994,10 @@ function _saem_center!(
         δ = s / n
         (isfinite(δ) && δ != 0) || continue
         # :add -> a + δ ; :mul (log-scale a) -> log a + δ
-        setproperty!(θn, p.fe, p.mode === :mul ? getproperty(θn, p.fe) * exp(δ) :
-            getproperty(θn, p.fe) + δ)
+        setproperty!(
+            θn, p.fe, p.mode === :mul ? getproperty(θn, p.fe) * exp(δ) :
+                getproperty(θn, p.fe) + δ
+        )
         for bi in eachindex(batch_infos)
             isempty(idx[bi]) && continue
             for i in idx[bi]

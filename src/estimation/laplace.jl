@@ -1694,9 +1694,9 @@ function _laplace_compute_bstar_batch!(
     best_f = isfinite(f_start) ? f_start : -Inf
     g_best_norm = Inf   # the gradient at b_start is needed only when the solve fails (below)
     sol_best = presolved !== nothing ? presolved : _laplace_try_solve(
-        dm, info, θ_val, const_cache, ll_cache, cache.ad_cache, bi, b_start;
-        optimizer = optimizer, optim_kwargs = optim_kwargs, adtype = adtype, tctx = tctx
-    )
+            dm, info, θ_val, const_cache, ll_cache, cache.ad_cache, bi, b_start;
+            optimizer = optimizer, optim_kwargs = optim_kwargs, adtype = adtype, tctx = tctx
+        )
     H_best = nothing   # exact Hessian at b_best when the inner solve returned it
     if sol_best !== nothing
         b_best = sol_best.u
@@ -2202,9 +2202,9 @@ function _laplace_logdet_negH(
         end
     end
     H = H_seed !== nothing ? H_seed : _build_hess_b(
-        hmode, dm, batch_info, θ, b, const_cache,
-        cache, ad_cache, bi; ctx = ctx, tctx = tctx
-    )
+            hmode, dm, batch_info, θ, b, const_cache,
+            cache, ad_cache, bi; ctx = ctx, tctx = tctx
+        )
     infT = convert(eltype(H), Inf)
     # Inf here makes the marginal -Inf, so the optimizer backtracks out of a degenerate
     # region instead of climbing the jitter artifact.

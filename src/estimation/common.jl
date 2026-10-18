@@ -4620,12 +4620,14 @@ end
     for (i, n) in enumerate(names)
         P = T.parameters[i]
         (P <: RealPSDMatrix || P <: RealLiePSDMatrix) || continue
-        push!(ex.args, quote
-            A = getproperty(θ, $(QuoteNode(n)))
-            if A isa AbstractMatrix
-                setproperty!(θsym, $(QuoteNode(n)), 0.5 .* (A .+ A'))
+        push!(
+            ex.args, quote
+                A = getproperty(θ, $(QuoteNode(n)))
+                if A isa AbstractMatrix
+                    setproperty!(θsym, $(QuoteNode(n)), 0.5 .* (A .+ A'))
+                end
             end
-        end)
+        )
     end
     push!(ex.args, :(return θsym))
     return ex

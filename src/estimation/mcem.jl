@@ -742,11 +742,11 @@ function _em_start_seedable(
             b = _re_prior_mean_b(dm, info, θ_u, const_cache, cache_init, re_names)
             isfinite(_laplace_logf_batch(dm, info, θ_u, b, const_cache, cache_init)) ||
                 any(1:10) do _
-                    samp, _ = _is_prior_sample_batch(
-                        dm, info, θ_u, const_cache, cache_init, probe, 1, re_names
-                    )
-                    isfinite(_laplace_logf_batch(dm, info, θ_u, samp[:, 1], const_cache, cache_init))
-                end
+                samp, _ = _is_prior_sample_batch(
+                    dm, info, θ_u, const_cache, cache_init, probe, 1, re_names
+                )
+                isfinite(_laplace_logf_batch(dm, info, θ_u, samp[:, 1], const_cache, cache_init))
+            end
         catch
             false
         end
@@ -791,13 +791,17 @@ function _mcem_center!(
         proposal_blocks, last_params, const_cache, cache, re_names
     )
     θn = copy(θu)
-    prior_means = [get_n_b(info) == 0 ? Float64[] :
-                   _re_prior_mean_b(dm, info, θu, const_cache, cache, re_names)
-                   for info in batch_infos]
+    prior_means = [
+        get_n_b(info) == 0 ? Float64[] :
+            _re_prior_mean_b(dm, info, θu, const_cache, cache, re_names)
+            for info in batch_infos
+    ]
     # log-location of log-normal levels (`:lnmul` pairs: the shift acts on log η)
     prior_locs = any(p -> p.mode === :lnmul, pairs) ?
-        [get_n_b(info) == 0 ? Float64[] : _re_lognormal_loc_b(dm, info, θu, cache, re_names)
-         for info in batch_infos] : nothing
+        [
+            get_n_b(info) == 0 ? Float64[] : _re_lognormal_loc_b(dm, info, θu, cache, re_names)
+            for info in batch_infos
+        ] : nothing
     for p in pairs
         ri = findfirst(==(p.re), re_names)
         lnm = p.mode === :lnmul
@@ -822,8 +826,10 @@ function _mcem_center!(
         wsum > 0 || continue
         δ = s / wsum
         (isfinite(δ) && δ != 0) || continue
-        setproperty!(θn, p.fe, (p.mode === :mul || lnm) ? getproperty(θn, p.fe) * exp(δ) :
-            getproperty(θn, p.fe) + δ)
+        setproperty!(
+            θn, p.fe, (p.mode === :mul || lnm) ? getproperty(θn, p.fe) * exp(δ) :
+                getproperty(θn, p.fe) + δ
+        )
         # the RE moves the opposite way: η - δ, or η e^{-δ} for a log-normal RE
         fac = exp(-δ)
         kk = p.k == 0 ? 1 : p.k
