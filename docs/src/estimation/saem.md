@@ -83,7 +83,6 @@ method = NoLimits.SAEM(;
     # E-step sampler
     sampler=SaemixMH(),
     turing_kwargs=NamedTuple(),
-    update_schedule=:all,
     warm_start=true,
     mcmc_steps=nothing,   # resolves to 1 for SaemixMH (the default sampler), 80 otherwise
 
@@ -183,7 +182,7 @@ The constructor arguments are organized into the following functional groups.
 | Group | Keywords | What they control |
 | --- | --- | --- |
 | M-step optimizer | `optimizer`, `optim_kwargs`, `adtype` | Fixed-effect update in each SAEM iteration via [Optimization.jl](https://docs.sciml.ai/Optimization/stable/). |
-| E-step sampler | `sampler`, `turing_kwargs`, `mcmc_steps`, `update_schedule`, `warm_start` | Random-effect sampling and batch update selection. |
+| E-step sampler | `sampler`, `turing_kwargs`, `mcmc_steps`, `warm_start` | Random-effect sampling. |
 | SA schedule | `sa_schedule`, `sa_burnin_iters`, `t0`, `kappa`, `sa_phase1_iters`, `sa_phase2_kappa`, `sa_schedule_fn` | Gain sequence shape and phases. |
 | Multi-chain | `n_chains`, `auto_small_n_chains`, `small_n_chain_target` | Number of parallel MCMC chains per batch. |
 | SA variance annealing | `sa_anneal_targets`, `sa_anneal_schedule`, `sa_anneal_iters`, `sa_anneal_alpha`, `sa_anneal_fn` | Post-M-step variance floor that decays over iterations to prevent early collapse. |
@@ -215,14 +214,10 @@ These arguments configure the MCMC sampling of random effects at each SAEM itera
   - Number of MCMC samples drawn per iteration.
   - Default: `nothing`, which resolves to `1` when the sampler is `SaemixMH` (the default) and `80` for any other sampler.
   - If `mcmc_steps <= 0`, SAEM falls back to `turing_kwargs[:n_samples]` (or `1`).
-- `update_schedule`
-  - Controls which batches of individuals are updated at each iteration, enabling minibatch variants of SAEM.
-  - Supported values:
-    - `:all` updates all batches.
-    - integer `m` updates a random minibatch of size `min(m, nbatches)`.
-    - function `(nbatches, iter, rng) -> Vector{Int}` returns the batch indices to update.
 - `warm_start`
   - When `true`, reuses latent-state sampler state between iterations where available.
+
+Mini-batch SAEM (the E-step on a random subset of batches per iteration) is a wrapper around the method: `fit_model(dm, MiniBatch(SAEM(); schedule = 20))`. See [Mini-batching](minibatch.md).
 
 ### M-step Optimization Inputs
 

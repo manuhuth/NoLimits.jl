@@ -239,6 +239,8 @@ method = NoLimits.MCEM(;
 )
 ```
 
+Mini-batch MCEM (the E-step on a random subset of batches per iteration) is a wrapper around the method: `fit_model(dm, MiniBatch(MCEM(); schedule = 20))`. See [Mini-batching](minibatch.md).
+
 ## Option Groups
 
 | Group | Keywords | What they control |

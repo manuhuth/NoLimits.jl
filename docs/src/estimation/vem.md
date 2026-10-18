@@ -131,6 +131,8 @@ repair and EBE multistart) comes from the `rng` keyword of `fit_model`, as for
 [SAEM](saem.md) and [MCEM](mcem.md). Pass a seeded generator such as `Random.Xoshiro(1)`
 to make a fit reproducible.
 
+Stochastic VEM (a random subset of batches per optimizer iteration) is a wrapper around the method: `fit_model(dm, MiniBatch(VEM(); schedule = 50))`. See [Mini-batching](minibatch.md).
+
 ## API
 
 ```@docs
