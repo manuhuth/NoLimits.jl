@@ -121,6 +121,7 @@ const TEST_GROUPS = [
     ],
     # ── G18-G22: quadrature / multistart / MCEM / UQ ─────────────────────────
     ["estimation_ghquadrature_tests.jl"],
+    ["estimation_vem_tests.jl"],
     [
         "estimation_multistart_tests.jl",
         "estimation_precondition_tests.jl",
