@@ -2105,6 +2105,39 @@ function _sample_re_laplace_path(
     )
 end
 
+# VEM path: draws from the fitted variational q of each batch, b = mean + scale ξ in the
+# centered space of Gaussian REs and through the prior transport otherwise.
+function _sample_vem_bstars_raw(
+        dm::DataModel, batch_infos, bstars, θu, const_cache, ll_cache_local,
+        res::FitResult; n_samples::Int, rng::AbstractRNG
+    )
+    notes = get_result(res).notes
+    keep = notes.variational_batches
+    keep == findall(info -> get_n_b(info) > 0, batch_infos) &&
+        all(length(notes.variational_params[k].mean) == get_n_b(batch_infos[bi]) for (k, bi) in enumerate(keep)) ||
+        error("The batch layout differs from the VEM fit; sample with the fit's constants_re.")
+    qs = Vector{Any}(nothing, length(batch_infos))
+    for (k, bi) in enumerate(keep)
+        base = build_re_measure_from_batch(batch_infos[bi], θu, const_cache, dm, ll_cache_local)
+        qs[bi] = (notes.variational_params[k], base)
+    end
+    bstars_per_sample = Vector{Vector{Any}}(undef, n_samples)
+    for s in 1:n_samples
+        sampled = Vector{Any}(undef, length(batch_infos))
+        for bi in eachindex(batch_infos)
+            if qs[bi] === nothing
+                sampled[bi] = bstars[bi]
+                continue
+            end
+            q, base = qs[bi]
+            v = q.mean .+ q.scale * randn(rng, length(q.mean))
+            sampled[bi] = base isa GaussianRE ? v : transform(base, v)
+        end
+        bstars_per_sample[s] = sampled
+    end
+    return bstars_per_sample
+end
+
 # MCMC path: draw n_samples from the exact conditional p(b | y, θ̂) using
 # the same MCMC kernel that drives the E-step (Turing sampler for MCEM,
 # SaemixMH or Turing for SAEM). Each call to _mcem_sample_batch advances
@@ -2153,14 +2186,19 @@ end
 
 # Draw n_samples from the conditional posterior of the random effects for every
 # batch, dispatching on the fit type: Laplace/GHQuadrature use the Gaussian Laplace
-# approximation, MCEM/SAEM reuse the E-step MCMC kernel. Shared by fit_cv's
+# approximation, VEM its fitted variational q, MCEM/SAEM reuse the E-step MCMC kernel. Shared by fit_cv's
 # :conditional CV path and predict's :marginal mode.
 function _sample_conditional_bstars(
         dm::DataModel, batch_infos, bstars, θu, const_cache,
         ll_cache, res::FitResult, n_samples::Int, rng::AbstractRNG
     )
     lcl = ll_cache isa Vector ? ll_cache[1] : ll_cache
-    if get_result(res) isa FrequentistREResult || get_result(res) isa GHQuadratureResult
+    if get_method(res) isa VEM
+        return _sample_vem_bstars_raw(
+            dm, batch_infos, bstars, θu, const_cache, lcl, res;
+            n_samples = n_samples, rng = rng
+        )
+    elseif get_result(res) isa FrequentistREResult || get_result(res) isa GHQuadratureResult
         return _sample_laplace_bstars_raw(
             dm, batch_infos, bstars, θu, const_cache, lcl;
             n_samples = n_samples, rng = rng
@@ -2221,6 +2259,8 @@ conditional distribution, so the draws are consistent with the E-step:
 - `Laplace`, `GHQuadrature`: Gaussian Laplace
   approximation centered at the EBE mode ``b^\\star`` with covariance
   ``(-H)^{-1}``, where ``H`` is the Hessian of the joint log-density at ``b^\\star``.
+- `VEM`: draws from the fitted variational distribution ``q_i`` of each batch
+  (`get_result(res).notes.variational_params`).
 - `MCEM`, `SAEM`: MCMC samples drawn from the exact conditional with the same
   sampler used in the E-step (Turing sampler for MCEM, `SaemixMH` or Turing
   sampler for SAEM), seeded at the EBE mode.
@@ -2272,6 +2312,14 @@ function sample_random_effects(
     )
     isempty(batch_infos) && return NamedTuple()
 
+    if get_method(res) isa VEM
+        raw = _sample_vem_bstars_raw(
+            dm, batch_infos, bstars, θu, const_cache,
+            ll_cache isa Vector ? ll_cache[1] : ll_cache, res;
+            n_samples = n_samples, rng = rng
+        )
+        return _bstars_to_re_df(dm, batch_infos, raw, constants_re, flatten, include_constants)
+    end
     if get_result(res) isa FrequentistREResult || get_result(res) isa GHQuadratureResult
         return _sample_re_laplace_path(
             dm, res, constants_re,

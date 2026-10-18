@@ -126,6 +126,7 @@ _cv_method_accepts_constants_re(::FOCEI) = true
 _cv_method_accepts_constants_re(::GHQuadrature) = true
 _cv_method_accepts_constants_re(::MCEM) = true
 _cv_method_accepts_constants_re(::SAEM) = true
+_cv_method_accepts_constants_re(::VEM) = true
 _cv_method_accepts_constants_re(::MCMC) = true
 _cv_method_accepts_constants_re(::VI) = true
 

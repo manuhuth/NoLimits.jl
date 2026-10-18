@@ -5,6 +5,7 @@ using Distributions
 using LinearAlgebra
 using Random
 using OptimizationOptimJL
+using Statistics
 
 # VEM (variational EM, Tarek & Afonso 2026). Linear-Gaussian anchor: the dense Gaussian
 # family is exact, so VEM must reproduce the (exact) Laplace MLE up to the sample-average
@@ -156,4 +157,109 @@ end
     @test isapprox(θv.k, θl.k; rtol = 0.05)
     @test isapprox(θv.ω, θl.ω; rtol = 0.15)
     @test isapprox(θv.σ, θl.σ; rtol = 0.05)
+end
+
+@testset "VEM: threaded fit equals serial bitwise" begin
+    dm = _vem_lin_dm(Xoshiro(11))
+    for m in (NoLimits.VEM(), NoLimits.VEM(; expectation = :mc, n_samples = 8, n_is = 50, optim_kwargs = (; maxiters = 10)))
+        rt = fit_model(dm, m; rng = Xoshiro(3))
+        rs = fit_model(dm, m; rng = Xoshiro(3), serialization = NoLimits.EnsembleSerial())
+        @test collect(get_params(rt; scale = :transformed)) == collect(get_params(rs; scale = :transformed))
+        @test get_objective(rt) === get_objective(rs)
+        @test get_result(rt).notes.elbo === get_result(rs).notes.elbo
+        @test get_result(rt).eb_modes == get_result(rs).eb_modes
+    end
+end
+
+@testset "VEM: Wald UQ, conditional draws from q, CV with constants_re" begin
+    dm = _vem_lin_dm(Xoshiro(11))
+    rv = fit_model(dm, NoLimits.VEM(); rng = Xoshiro(3))
+    @test uq_family(get_method(rv)) === :wald_re
+    uq = compute_uq(rv; method = :wald)
+    iv = get_uq_intervals(uq)
+    θv = get_params(rv; scale = :untransformed)
+    @test iv.lower.a < θv.a < iv.upper.a
+    @test 0 < iv.upper.a - iv.lower.a < 1
+
+    # draws come from the fitted variational q (b = mean + scale ξ), not a Laplace Gaussian
+    bstars, bis, θu, cc, llc, _ = NoLimits._resolve_bstars_for_re(dm, rv, NamedTuple())
+    draws = NoLimits._sample_conditional_bstars(dm, bis, bstars, θu, cc, llc, rv, 4000, Xoshiro(1))
+    q = get_result(rv).notes.variational_params[1]
+    B = reduce(hcat, [d[1] for d in draws])
+    @test vec(mean(B; dims = 2)) ≈ q.mean atol = 0.01
+    @test cov(B; dims = 2) ≈ q.scale * q.scale' rtol = 0.1
+    sre = sample_random_effects(rv; n_samples = 3, rng = Xoshiro(1))
+    @test nrow(sre.η) == 3 * 60
+
+    @test NoLimits._cv_method_accepts_constants_re(NoLimits.VEM())
+    cv = cross_validate(dm, 2; kind = :observation, rng = Xoshiro(4))
+    cres = fit_cv(
+        cv, NoLimits.VEM(; n_is = 0, refine = false, optim_kwargs = (; maxiters = 20));
+        constants_re = (; η = Dict(1 => [0.0, 0.0])), seen_re_mode = :conditional,
+        n_mc_samples = 10, store_results = true, rng = Xoshiro(4)
+    )
+    @test isfinite(cres.mean_test_loglikelihood)
+    for fr in cres.fold_results
+        @test haskey(NoLimits.get_fit_kwargs(fr.fit_result).constants_re, :η)
+    end
+end
+
+@testset "VEM: model errors propagate, discrete random effects are rejected" begin
+    model = @Model begin
+        @helpers begin
+            vem_guard(x) = x > 1.5 ? error("vem_guard: user error") : x
+        end
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            σ = RealNumber(0.5; scale = :log)
+            ω = RealNumber(0.5; scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, ω); column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(vem_guard(a) + η, σ)
+        end
+    end
+    df = DataFrame(ID = repeat(1:8, inner = 3), t = repeat(0.0:2.0, 8), y = 3.0 .+ 0.1 .* randn(Xoshiro(1), 24))
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    # used to be scored -Inf, so the fit silently stalled at a = 1.5
+    @test_throws "vem_guard: user error" fit_model(dm, NoLimits.VEM(; n_is = 0); rng = Xoshiro(1))
+
+    dmodel = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            σ = RealNumber(0.5; scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(Poisson(2.0); column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(a + η, σ)
+        end
+    end
+    ddm = DataModel(dmodel, df; primary_id = :ID, time_col = :t)
+    @test_throws "VEM does not support discrete" fit_model(ddm, NoLimits.VEM())
+end
+
+# Smoke coverage on shared fixtures (few iterations; not accuracy checks).
+@testset "VEM: ODE, Poisson outcome, two RE groupings, Multistart" begin
+    m = NoLimits.VEM(; n_is = 50, optim_kwargs = (; maxiters = 5))
+    for dm in (fx_ode_dm(), fx_pois_dm(), fx_mg_dm())
+        r = fit_model(dm, m; rng = Xoshiro(1))
+        @test isfinite(get_objective(r))
+        @test all(isfinite, collect(get_params(r; scale = :untransformed)))
+        @test length(get_result(r).eb_modes) == length(get_result(r).notes.variational_params)
+    end
+    ms = NoLimits.Multistart(; dists = (; a = Normal(0.2, 0.3)), n_draws_requested = 3, n_draws_used = 2)
+    rm = fit_model(ms, fx_pois_dm(), m; rng = Xoshiro(2))
+    @test rm isa NoLimits.MultistartFitResult
+    @test length(NoLimits.get_multistart_results(rm)) == 2
+    @test isfinite(get_objective(rm))
 end

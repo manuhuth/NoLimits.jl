@@ -24,6 +24,7 @@ uq_family(::FOCEI) = :wald_re
 uq_family(::MCEM) = :wald_re
 uq_family(::SAEM) = :wald_re
 uq_family(::GHQuadrature) = :wald_re
+uq_family(::VEM) = :wald_re
 uq_family(::MCMC) = :chain
 uq_family(::VI) = :chain
 

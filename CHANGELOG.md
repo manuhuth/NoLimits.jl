@@ -11,6 +11,17 @@
   `refine` step uses the same optimizer, keywords and bounds. New docs page
   "Estimation > VEM".
 
+- VEM honors the `serialization` keyword of `fit_model` (default `EnsembleThreads()`,
+  before always serial): batch-wise ELBO/gradient, initialization, refinement,
+  importance sampling and EBEs run on threads, bitwise equal to a serial fit. VEM fits
+  support Wald UQ (`uq_family(::VEM) = :wald_re`), `constants_re` in `fit_cv`, and
+  `sample_random_effects` / conditional CV draws from the fitted variational
+  distributions. Discrete random-effect distributions are rejected up front, and only
+  numeric errors at trial points count as `-Inf`: other errors in a model (e.g. a user
+  `error()`) propagate instead of stalling the fit. The importance-sampling objective
+  now draws from per-batch child generators of `rng`, so its value differs from before
+  for the same seed.
+
 - SAEM skips the M-step in iterations with step size γ = 0 (the `sa_burnin_iters` burn-in
   iterations and, under `:robbins_monro`, the final iteration). The update
   `θ_old + γ * (θ̂ - θ_old)` discards θ̂ there, so the closed-form updates and the Q2 and

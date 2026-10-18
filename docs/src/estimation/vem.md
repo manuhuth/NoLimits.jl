@@ -22,8 +22,10 @@ effects (e.g. neural networks) and many random effects.
 
 - Requires a model with random effects and at least one free fixed effect.
 - `penalty` and `extra_objective` are not supported; fixed-effect priors are ignored.
-- Any random-effect distribution is supported with the default `adtype`. A non-ForwardDiff
-  `adtype` (reverse mode) requires Gaussian (`Normal`/`MvNormal`) random effects.
+- Any continuous random-effect distribution is supported with the default `adtype`
+  (the same set as [GHQuadrature](ghquadrature.md)); discrete random effects are rejected.
+  A non-ForwardDiff `adtype` (reverse mode) requires Gaussian (`Normal`/`MvNormal`)
+  random effects.
 
 ## Basic Usage
 
@@ -130,6 +132,22 @@ All randomness (Monte Carlo draws, refinement nodes, importance-sampling draws, 
 repair and EBE multistart) comes from the `rng` keyword of `fit_model`, as for
 [SAEM](saem.md) and [MCEM](mcem.md). Pass a seeded generator such as `Random.Xoshiro(1)`
 to make a fit reproducible.
+
+The `serialization` keyword of `fit_model` (default `EnsembleThreads()`) parallelizes the
+per-batch work (ELBO and gradient, initialization, refinement, importance sampling and
+EBEs) over Julia threads; `EnsembleSerial()` runs it on one thread. Random draws are made
+before the threaded loops and batch results are summed in batch order, so a threaded fit is
+bitwise equal to a serial one with the same `rng`. The reverse-mode (`adtype`) objective
+runs serially.
+
+## Downstream Analysis
+
+- Wald uncertainty quantification (`compute_uq(res; method = :wald)`) uses the Laplace
+  approximation of the marginal likelihood at the VEM estimate, as for SAEM and MCEM.
+- [`sample_random_effects`](@ref) and the `:conditional` mode of [`fit_cv`](@ref) draw
+  from the fitted variational distribution of each batch, ``b = m_i + L_i \xi`` with
+  ``\xi \sim N(0, I)`` (through the prior transport for non-Gaussian random effects).
+- [`fit_cv`](@ref) passes `constants_re` to the VEM training fits.
 
 ## API
 

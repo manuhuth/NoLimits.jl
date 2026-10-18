@@ -90,6 +90,13 @@ effects: no inner mode finding or Hessian per objective evaluation, unlike Lapla
 Randomness (the fixed Monte Carlo draws, multivariate-t refinement nodes, importance-sampling
 draws, start repair and EBE multistart) comes only from the `rng` keyword of
 [`fit_model`](@ref), as for `SAEM` and `MCEM`: the same seeded `rng` gives identical fits.
+The `serialization` keyword of `fit_model` (default `EnsembleThreads()`) runs the per-batch
+work on threads; threaded and serial (`EnsembleSerial()`) fits are bitwise equal. The
+reverse-mode objective runs serially.
+
+Fits support Wald UQ ([`compute_uq`](@ref)), and [`sample_random_effects`](@ref) and
+conditional cross-validation draw from the fitted variational distributions
+(`get_result(res).notes.variational_params`). Discrete random effects are not supported.
 """
 struct VEM{O, K, A, L, U, EB} <: FittingMethod
     optimizer::O
@@ -255,8 +262,8 @@ end
 # on b itself, value = logint(L⁻¹(b - μ)) - log|det L| (the standardized u-space of the
 # prior transport, used for other supports, traps VEM at a collapsed RE variance: with a
 # small L the likelihood barely depends on u and the gradient that would grow L vanishes -
-# M03 from a perturbed start converged to Ω₁₁ = 0, objective 992 vs 702). Numerical/model
-# errors at trial points (e.g. an invalid generator matrix) count as -Inf for the line search.
+# M03 from a perturbed start converged to Ω₁₁ = 0, objective 992 vs 702). Numerical errors
+# at trial points count as -Inf for the line search; anything else is rethrown.
 function _vem_logjoint(v, base, dm::DataModel, info::REBatchInfo, θ_re, const_cache, ll_cache::_LLCache)
     T = promote_type(eltype(v), eltype(base), eltype(θ_re))
     try
@@ -268,12 +275,18 @@ function _vem_logjoint(v, base, dm::DataModel, info::REBatchInfo, θ_re, const_c
         end
         return convert(T, _transport_logintegrand(v, base, dm, info, θ_re, const_cache, ll_cache))
     catch err
-        (
-            _is_numeric_error(err) || err isa DomainError || err isa ArgumentError ||
-                err isa ErrorException || err isa LinearAlgebra.PosDefException ||
-                err isa LinearAlgebra.SingularException
-        ) || rethrow(err)
+        _is_numeric_error(err) || rethrow()
         return convert(T, -Inf)
+    end
+end
+
+# RE measure of a batch, `nothing` at a numerically degenerate θ
+function _vem_measure(info::REBatchInfo, θu, const_cache, dm::DataModel, ll_cache::_LLCache)
+    try
+        return build_re_measure_from_batch(info, θu, const_cache, dm, ll_cache)
+    catch err
+        _is_numeric_error(err) || rethrow()
+        return nothing
     end
 end
 
@@ -286,15 +299,8 @@ function _vem_batch_elbo(
     ξ, w = dr.ξ, dr.w
     n = size(ξ, 1)
     T = promote_type(eltype(θu), eltype(κ))
-    base = try
-        build_re_measure_from_batch(info, θu, const_cache, dm, ll_cache)
-    catch err
-        (
-            _is_numeric_error(err) || err isa DomainError || err isa ArgumentError ||
-                err isa LinearAlgebra.PosDefException
-        ) || rethrow(err)
-        return T(-Inf)
-    end
+    base = _vem_measure(info, θu, const_cache, dm, ll_cache)
+    base === nothing && return T(-Inf)
     θ_re = _symmetrize_psd_params(θu, get_fixed(get_model(dm)))
     μ, L = _vem_effective(κ, dr, n, family, θu)
     acc = zero(T)
@@ -432,15 +438,8 @@ function _vem_refine_batch_ll(
         lw::Vector{Float64}, dm::DataModel, info::REBatchInfo, const_cache, ll_cache::_LLCache
     )
     T = eltype(θu)
-    base = try
-        build_re_measure_from_batch(info, θu, const_cache, dm, ll_cache)
-    catch err
-        (
-            _is_numeric_error(err) || err isa DomainError || err isa ArgumentError ||
-                err isa LinearAlgebra.PosDefException
-        ) || rethrow(err)
-        return T(-Inf)
-    end
+    base = _vem_measure(info, θu, const_cache, dm, ll_cache)
+    base === nothing && return T(-Inf)
     θ_re = _symmetrize_psd_params(θu, get_fixed(get_model(dm)))
     K = size(x, 2)
     v = Vector{T}(undef, K)
@@ -459,17 +458,15 @@ function _vem_init_batch(
         θu::ComponentArray, n::Int, family::Symbol, dm::DataModel, info::REBatchInfo,
         const_cache, ll_cache::_LLCache
     )
-    base = try
-        build_re_measure_from_batch(info, θu, const_cache, dm, ll_cache)
-    catch
-        return zeros(Float64, _vem_nkappa(n, family))
-    end
+    base = _vem_measure(info, θu, const_cache, dm, ll_cache)
+    base === nothing && return zeros(Float64, _vem_nkappa(n, family))
     θ_re = _symmetrize_psd_params(θu, get_fixed(get_model(dm)))
     # mode and curvature in the standardized u-space (well conditioned), then mapped to the
     # variational space (centered b for Gaussian REs)
     f = u -> try
         _transport_logintegrand(u, base, dm, info, θ_re, const_cache, ll_cache)
-    catch
+    catch err
+        _is_numeric_error(err) || rethrow()
         -Inf
     end
     û, Σu = _vem_u_laplace(f, n)
@@ -488,11 +485,7 @@ function _vem_init_prior(
         θu::ComponentArray, n::Int, family::Symbol, dm::DataModel, info::REBatchInfo,
         const_cache, ll_cache::_LLCache
     )
-    base = try
-        build_re_measure_from_batch(info, θu, const_cache, dm, ll_cache)
-    catch
-        return _vem_kappa_from(zeros(n), Matrix(1.0I, n, n), n, family)
-    end
+    base = _vem_measure(info, θu, const_cache, dm, ll_cache)
     base isa GaussianRE || return _vem_kappa_from(zeros(n), Matrix(1.0I, n, n), n, family)
     L = Matrix{Float64}(base.L)
     return _vem_kappa_from(Vector{Float64}(base.μ), L * L', n, family)
@@ -529,7 +522,8 @@ function _vem_u_laplace(f, n::Int)
     end
     H = try
         ForwardDiff.hessian(f, u)
-    catch
+    catch err
+        _is_numeric_error(err) || rethrow()
         return u, Matrix(1.0I, n, n)
     end
     all(isfinite, H) || return u, Matrix(1.0I, n, n)
@@ -573,7 +567,8 @@ function _vem_is_loglik(
         ν::Float64, rng::AbstractRNG, dm::DataModel, info::REBatchInfo, const_cache,
         ll_cache::_LLCache
     )
-    base = build_re_measure_from_batch(info, θu, const_cache, dm, ll_cache)
+    base = _vem_measure(info, θu, const_cache, dm, ll_cache)
+    base === nothing && return -Inf
     θ_re = _symmetrize_psd_params(θu, get_fixed(get_model(dm)))
     μ, L = _vem_effective(Vector{Float64}(κ), dr, n, family, θu)
     family === :dense || (L = Matrix(Diagonal(diag(L))))
@@ -589,6 +584,19 @@ function _vem_is_loglik(
     lmax = maximum(lw)
     isfinite(lmax) || return -Inf
     return lmax + log(sum(exp(w - lmax) for w in lw)) - log(K)
+end
+
+# f(k, ll_cache) over batches 1:n; threaded with one cache per task when `caches` has more
+# than one entry. Callers write results by k and reduce in index order.
+function _vem_foreach(f, n::Int, caches::Vector)
+    if length(caches) == 1
+        for k in 1:n
+            f(k, caches[1])
+        end
+    else
+        _greedy_foreach((k, c) -> f(k, caches[c]), n, length(caches))
+    end
+    return nothing
 end
 
 _sol_iterations(sol) = hasproperty(sol, :stats) && hasproperty(sol.stats, :iterations) ?
@@ -615,7 +623,7 @@ function _fit_model(
         extra_objective = nothing,
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
-        serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial(),
+        serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         rng::AbstractRNG = Random.default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         store_eb_modes::Bool = true,
@@ -633,7 +641,7 @@ function _fit_model(
     re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) &&
         error("VEM requires random effects. Use MLE/MAP for fixed-effects models.")
-    _validate_re_ad_compatible(dm, "VEM")
+    _ghq_validate_re_distributions(dm, "VEM")
     fe = get_fixed(get_model(dm))
     priors = get_priors(fe)
     if any(!(getfield(priors, k) isa Priorless) for k in keys(priors))
@@ -654,11 +662,12 @@ function _fit_model(
     constants_re = _normalize_constants_re(dm, constants_re)
     const_cache = _build_constants_cache(dm, constants_re)
     _, batch_infos, _ = _build_re_batch_infos(dm, constants_re)
-    ll_cache = build_ll_cache(
+    ll_caches = build_ll_cache(
         dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-        serialization = EnsembleSerial(), force_saveat = true
+        serialization = serialization, force_saveat = true
     )
-    ll_cache = ll_cache isa Vector ? ll_cache[1] : ll_cache
+    caches = ll_caches isa Vector ? ll_caches : [ll_caches]
+    ll_cache = caches[1]
     # start repair shared with SAEM/MCEM: no finite log-joint for any initial RE draw
     θ0_r = _em_repair_start(dm, batch_infos, θ0_u, const_cache, ll_cache, rng, re_names, "VEM")
     θ0_u = θ0_r
@@ -699,6 +708,15 @@ function _fit_model(
     ξs = _VEMDraws[]
     cpairs = _saem_detect_centering_pairs(dm, free_names)
     idx_u = ComponentArray(collect(1:length(θu0)), getaxes(θu0))
+    nk = length(keep)
+    κinits = Vector{Vector{Float64}}(undef, nk)
+    _vem_foreach(nk, caches) do k, lc
+        bi = keep[k]
+        κinits[k] = method.init === :laplace ?
+            _vem_init_batch(θu0, nb[bi], family, dm, batch_infos[bi], const_cache, lc) :
+            _vem_init_prior(θu0, nb[bi], family, dm, batch_infos[bi], const_cache, lc)
+    end
+    # draws serially, in batch order: the rng stream does not depend on the threading
     for (k, bi) in enumerate(keep)
         center = Tuple{Int, Vector{Int}, Float64}[
             (
@@ -706,43 +724,52 @@ function _fit_model(
                     Float64(getproperty(θu0, cp.fe)),
                 ) for cp in cpairs
         ]
-        κinit = method.init === :laplace ?
-            _vem_init_batch(θu0, nb[bi], family, dm, batch_infos[bi], const_cache, ll_cache) :
-            _vem_init_prior(θu0, nb[bi], family, dm, batch_infos[bi], const_cache, ll_cache)
-        push!(ξs, _vem_draws(nb[bi], method, rng, κinit, family, center))
+        push!(ξs, _vem_draws(nb[bi], method, rng, κinits[k], family, center))
         # preconditioned start: μ̃ = 0, L̃ = I  (κ zeros)
     end
 
     # ---- objective: -Σ ELBO_i, gradient per batch by ForwardDiff over (θ, κ_i) ----
+    # per-batch results by index, reduced in batch order: threaded == serial bitwise
+    vals = Vector{Float64}(undef, nk)
+    gθs = Vector{Vector{Float64}}(undef, nk)
+    gκs = Vector{Vector{Float64}}(undef, nk)
     function fg_fd!(F, G, x)
-        xθ = view(x, 1:p)
-        G === nothing || fill!(G, 0.0)
-        total = 0.0
-        θu = G === nothing ? θu_of(xθ) : nothing
-        for (k, bi) in enumerate(keep)
-            info, ξ, r = batch_infos[bi], ξs[k], ranges[k]
-            if G === nothing
-                v = _vem_batch_elbo(θu, view(x, r), ξ, family, dm, info, const_cache, ll_cache)
-                isfinite(v) || return Inf
-                total -= v
-            else
-                v, gθ, gκ = _vem_split_cheaper(p, length(r), size(ξ.ξ, 1)) ?
-                    _vem_batch_grad(
-                        θu_of, collect(xθ), Vector{Float64}(x[r]), ξ, family, dm, info,
-                        const_cache, ll_cache
-                    ) :
-                    _vem_batch_grad_joint(
-                        θu_of, collect(xθ), Vector{Float64}(x[r]), ξ, family, dm, info,
-                        const_cache, ll_cache
-                    )
-                if !(isfinite(v) && all(isfinite, gθ) && all(isfinite, gκ))
-                    fill!(G, NaN)
-                    return Inf
-                end
-                total -= v
-                @views G[1:p] .-= gθ
-                @views G[r] .-= gκ
+        xθ = collect(view(x, 1:p))
+        if G === nothing
+            θu = θu_of(xθ)
+            _vem_foreach(nk, caches) do k, lc
+                vals[k] = _vem_batch_elbo(
+                    θu, view(x, ranges[k]), ξs[k], family, dm, batch_infos[keep[k]],
+                    const_cache, lc
+                )
             end
+            all(isfinite, vals) || return Inf
+            total = 0.0
+            for k in 1:nk
+                total -= vals[k]
+            end
+            return total
+        end
+        _vem_foreach(nk, caches) do k, lc
+            r, ξ = ranges[k], ξs[k]
+            grad = _vem_split_cheaper(p, length(r), size(ξ.ξ, 1)) ?
+                _vem_batch_grad : _vem_batch_grad_joint
+            vals[k], gθs[k], gκs[k] = grad(
+                θu_of, xθ, Vector{Float64}(x[r]), ξ, family, dm, batch_infos[keep[k]],
+                const_cache, lc
+            )
+        end
+        fill!(G, 0.0)
+        total = 0.0
+        for k in 1:nk
+            v, gθ, gκ = vals[k], gθs[k], gκs[k]
+            if !(isfinite(v) && all(isfinite, gθ) && all(isfinite, gκ))
+                fill!(G, NaN)
+                return Inf
+            end
+            total -= v
+            @views G[1:p] .-= gθ
+            @views G[ranges[k]] .-= gκ
         end
         return F === nothing ? nothing : total
     end
@@ -842,12 +869,15 @@ function _fit_model(
         DRr = ForwardDiff.DiffResults
         fr = xθ -> begin
             θu = θu_of(xθ)
-            tot = zero(eltype(xθ))
-            for (k, bi) in enumerate(keep)
+            lls = Vector{eltype(θu)}(undef, nk)
+            _vem_foreach(nk, caches) do k, lc
                 μ, L, (xn, lw) = qs[k]
-                ll = _vem_refine_batch_ll(θu, μ, L, xn, lw, dm, batch_infos[bi], const_cache, ll_cache)
-                isfinite(ll) || return convert(eltype(xθ), Inf)
-                tot -= ll
+                lls[k] = _vem_refine_batch_ll(θu, μ, L, xn, lw, dm, batch_infos[keep[k]], const_cache, lc)
+            end
+            all(isfinite, lls) || return convert(eltype(xθ), Inf)
+            tot = zero(eltype(xθ))
+            for k in 1:nk
+                tot -= lls[k]
             end
             tot
         end
@@ -883,12 +913,18 @@ function _fit_model(
 
     # ---- objective: importance-sampling marginal likelihood around the fitted q ----
     objective = if method.n_is > 0
-        ll = 0.0
-        for (k, bi) in enumerate(keep)
-            ll += _vem_is_loglik(
+        is_rngs = _spawn_child_rngs(rng, nk)
+        lls = Vector{Float64}(undef, nk)
+        _vem_foreach(nk, caches) do k, lc
+            bi = keep[k]
+            lls[k] = _vem_is_loglik(
                 θ_hat_u, view(x̂, ranges[k]), ξs[k], family, nb[bi], method.n_is, method.is_df,
-                rng, dm, batch_infos[bi], const_cache, ll_cache
+                is_rngs[k], dm, batch_infos[bi], const_cache, lc
             )
+        end
+        ll = 0.0
+        for k in 1:nk
+            ll += lls[k]
         end
         -ll
     else
@@ -910,7 +946,7 @@ function _fit_model(
         NamedTuple()
     )
     eb_modes = store_eb_modes ?
-        _compute_bstars(dm, θ_hat_u, constants_re, ll_cache, method.ebe, rng)[1] : nothing
+        _compute_bstars(dm, θ_hat_u, constants_re, ll_caches, method.ebe, rng)[1] : nothing
     notes = (
         elbo = elbo, objective_kind = method.n_is > 0 ? :importance_sampling : :neg_elbo,
         refine_iterations = refine_iters, family = family, n_nodes = [length(ξ.w) for ξ in ξs], variational_params = q_params,
