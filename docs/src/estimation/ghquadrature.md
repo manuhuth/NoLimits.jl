@@ -111,11 +111,11 @@ res = fit_model(dm, NoLimits.GHQuadrature())
 
 ```julia
 NoLimits.GHQuadrature(;
-    level = 3,
-    optimizer = OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
-    optim_kwargs = NamedTuple(),
+    level = :auto,
+    optimizer = OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep=1.0)),
+    optim_kwargs = nothing,   # reltol = 1e-12 for an Optim.jl optimizer
     adtype = Optimization.AutoForwardDiff(),
-    inner_optimizer = ...,   # EB modes: adaptive centering and get_random_effects
+    inner_optimizer = NoLimits.NewtonInner(x_abstol=1e-10),   # EB modes
     inner_kwargs = NamedTuple(),
     inner_adtype = Optimization.AutoForwardDiff(),
     inner_grad_tol = :auto,
@@ -127,6 +127,7 @@ NoLimits.GHQuadrature(;
     lb = nothing,
     ub = nothing,
     ignore_model_bounds = false,
+    precondition = true,
     update_schedule = :all,
 )
 ```
@@ -143,11 +144,15 @@ The selected batches' contribution is scaled by `nbatches / length(selected)`, s
 
 Controls the accuracy of the Smolyak-GH quadrature. Can be:
 
+- **`:auto`** (default): the fit starts at level 5 when some random effect has bounded support (for example `LogNormal`, `Beta`, `Gamma`) and every batch has at most 3 random-effect dimensions, and at level 3 otherwise. When every random-effect batch is scalar, the marginal log-likelihood at the estimate is then recomputed with the next finer rule (`2L + 1`); while the two values differ by more than 0.5 (whole data set), the fit is refined from the estimate at the finer level. At most 4 refinements are made, and refinement stops before a rule would need more than 2000 nodes per batch. Batches of higher dimension keep the starting level.
 - **`Int`** (isotropic): the same level is applied to all RE groups. Levels 1-3 are numerically stable; higher levels can exhibit cancellation in the signed logsumexp for non-Gaussian posteriors.
 - **`NamedTuple`** (anisotropic): a different level per RE group, e.g. `level = (eta_id = 3, eta_site = 2)`. RE groups not mentioned default to level 1. Useful when different random effects are expected to need different quadrature accuracy.
 - **`Vector{Int}`** (progressive refinement): runs optimization sequentially through the listed levels, warm-starting each from the previous result. For example, `level = [1, 2]` first optimizes at level 1 and then refines at level 2 starting from the level-1 estimates. This can improve stability when starting values are uncertain.
 
 ```julia
+# Automatic level (default)
+res = fit_model(dm, NoLimits.GHQuadrature())
+
 # Isotropic level 3
 res = fit_model(dm, NoLimits.GHQuadrature(level=3))
 
@@ -167,7 +172,7 @@ res = fit_model(dm, NoLimits.GHQuadrature(level=[1, 2]))
 | Bounds | `lb`, `ub`, `ignore_model_bounds` | Box bounds on transformed fixed-effect parameters. |
 | Mini-batching | `update_schedule` | Which batches enter the outer objective/gradient per optimizer iteration. |
 
-The default outer optimizer is `OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep = 1.0))`; when `update_schedule != :all` and no optimizer is passed, the default is `Optimisers.Adam(0.01)` instead.
+The default outer optimizer is `OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep = 1.0))`; when `update_schedule != :all` and no optimizer is passed, the default is `Optimisers.Adam(0.01)` instead. The default inner optimizer is [`NewtonInner(x_abstol = 1e-10)`](@ref NewtonInner), as for `Laplace`; see the [Laplace](laplace.md) page for the inner options.
 
 !!! note "Inner optimization during fitting"
     Like `Laplace`, `GHQuadrature` solves the EB modes on every objective evaluation; for Gaussian random effects they center the adaptive rule. Batches with other random-effect distributions use the prior-centered rule, which does not depend on the modes. The modes are solved once more, cold-started, at the optimum for `get_random_effects`.
@@ -185,7 +190,7 @@ ll         = get_loglikelihood(res)   # sparse-grid marginal log-likelihood
 
 ## Numerical Stability
 
-The Smolyak weights alternate in sign at higher levels (inclusion-exclusion construction). When the integrand is not well approximated by the prior-centered Gaussian, the positive and negative contributions can nearly cancel, producing a numerically small or negative result from the signed logsumexp. When this happens for a prior-centered batch, that batch falls back to the level-1 rule (which has only positive weights) and a warning is emitted; for an adaptive batch the batch log-likelihood is `-Inf` at that parameter value.
+The Smolyak weights alternate in sign at higher levels (inclusion-exclusion construction). When the integrand is not well approximated by the prior-centered Gaussian, the positive and negative contributions can nearly cancel, producing a numerically small or negative result from the signed logsumexp. When the signed sum of a batch is not positive and finite, that batch falls back to the single-node level-1 rule (weight 1, so it cannot be negative; under the adaptive rule its value is the Laplace approximation), and a warning is emitted once. This applies to adaptive and prior-centered batches alike. The batch log-likelihood is `-Inf` only if the level-1 value is not finite either.
 
 Practical guidance:
 

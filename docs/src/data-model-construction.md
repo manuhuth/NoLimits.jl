@@ -263,7 +263,7 @@ How the methods use the weights:
 - `SAEM`, `MCEM`: the E-step samples from the unweighted conditional distributions. The M-step objective weights each batch, and the closed-form updates use weighted sufficient statistics divided by the summed weights. User-supplied `suffstats` functions receive the `DataModel` and must apply `get_weights(dm)` themselves.
 - `get_loglikelihood` and the marginal likelihood accessors return the weighted value.
 - `compute_uq(res; method = :wald)` defaults to the sandwich covariance `H^{-1} B H^{-1}` with `B = \sum_b w_b^2 g_b g_b^T` when the data model is weighted; the inverse Hessian of a weighted objective is not a covariance estimate. Pass `vcov = :hessian` to override. Profile likelihoods use the weighted objective.
-- `fit_cv` multiplies each held-out individual's scores by its weight (and adds a `:weight` column to `get_obs_scores`); pass `weighted = false` for unweighted scores.
+- `fit_cv` adds a `:weight` column to `get_obs_scores` and weights each held-out individual's scores by its weight in the fold totals; `mean_obs_loglikelihood` divides the weighted sum by the summed weights of the scored observations. The per-row `:loglikelihood` values stay unweighted. Pass `weighted = false` for unweighted totals. The training fits are weighted either way.
 
 ## DataModel Summary
 

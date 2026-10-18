@@ -24,6 +24,7 @@ NoLimits.MCEM_MCMC(;
     turing_kwargs  = NamedTuple(),
     sample_schedule = 100,
     warm_start     = true,
+    thin           = 4,
 )
 ```
 
@@ -35,6 +36,9 @@ NoLimits.MCEM_MCMC(;
 - `turing_kwargs` - forwarded to Turing; the keys `n_samples` and `n_adapt` are interpreted explicitly. Ignored by the native samplers.
 - `sample_schedule` - number of MCMC samples per iteration; accepts an integer, a vector (iteration-indexed), or a function `iter -> n_samples`.
 - `warm_start` - when `true`, reuses previous latent-state values as chain initialization.
+- `thin` - keep every `thin`-th draw for the M-step, but never fewer than 25 draws: the effective interval is `max(1, min(thin, S ÷ 25))` for `S` draws per iteration. With the default 100 samples, 25 draws are kept.
+
+`MCEM()` without an `e_step` builds its E-step from the shorthand keywords `sampler`, `turing_kwargs`, `sample_schedule` and `warm_start`, where `sample_schedule` defaults to `25` (25 warm-started `SaemixMH` sweeps per iteration, not thinned). An explicit `MCEM_MCMC()` keeps its own default of 100 samples, thinned to 25.
 
 ### Importance Sampling E-step (`MCEM_IS`)
 
@@ -45,16 +49,18 @@ IS is often substantially faster per iteration than MCMC because it requires onl
 ```julia
 NoLimits.MCEM_IS(;
     n_samples             = 500,
-    proposal              = :gaussian,
+    proposal              = :laplace,
     adapt                 = true,
     warm_start_mcmc_iters = 0,
     mcmc_warmup           = nothing,
+    ramp                  = true,
 )
 ```
 
 - `n_samples` - number of IS draws per E-step iteration.
 - `proposal` - proposal distribution (see [Proposal Modes](@ref) below).
 - `adapt` - when `true`, updates the Gaussian proposal blocks after each IS iteration using IS-weighted statistics of the current samples.
+- `ramp` - when `true`, the number of draws grows linearly from `min(n_samples, max(20, n_samples ÷ 10))` at the first iteration to `n_samples` at iteration `maxiters ÷ 2`, and stays at `n_samples` afterwards. The convergence test can only stop the fit once the full sample size is reached. With `ramp = false` every iteration uses `n_samples` draws.
 - `warm_start_mcmc_iters` - number of initial iterations to run with the MCMC E-step before switching to IS. Use this to pre-warm the Gaussian proposal.
 - `mcmc_warmup` - an `MCEM_MCMC` configuration used during the warm-up phase (required when `warm_start_mcmc_iters > 0`).
 
@@ -62,6 +68,7 @@ NoLimits.MCEM_IS(;
 
 | `proposal` | Behavior |
 |---|---|
+| `:laplace` (default) | Per batch, a multivariate t distribution (ν = 4) centered at the posterior mode of the random effects, with scale matrix from the Laplace curvature at the mode (Booth & Hobert 1999). Used when every random effect of the batch is `Normal`/`MvNormal`; other batches, and batches whose mode search fails, use `:gaussian`. |
 | `:prior` | Each RE level is sampled independently from its prior `p(η \| θ)`. No adaptation. |
 | `:gaussian` | Adaptive block-diagonal Gaussian in the bijected (unconstrained) space. Falls back to the prior in the first iteration. The blocks are updated after each iteration using IS-weighted posterior statistics. |
 | `Function` | User-supplied function with signature `(θ, batch_info, re_dists, rng, n_samples) → (samples, log_qs)`. |
@@ -193,17 +200,17 @@ import Turing
 
 method = NoLimits.MCEM(;
     # E-step (new unified interface)
-    e_step=NoLimits.MCEM_MCMC(),          # or MCEM_IS(...)
+    e_step=nothing,          # or MCEM_MCMC(...), MCEM_IS(...)
 
-    # Backward-compatible MCMC shorthand (passed to MCEM_MCMC internally)
-    # sampler=SaemixMH(),
-    # turing_kwargs=NamedTuple(),
-    # sample_schedule=100,
-    # warm_start=true,
+    # MCMC shorthand, used to build MCEM_MCMC when e_step = nothing
+    sampler=SaemixMH(),
+    turing_kwargs=NamedTuple(),
+    sample_schedule=25,
+    warm_start=true,
 
     # M-step
-    optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
-    optim_kwargs=(; iterations=50, g_abstol=1e-4, f_reltol=1e-6),
+    optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep=1.0)),
+    optim_kwargs=(; iterations=10, g_abstol=1e-4, f_reltol=1e-6),
     adtype=Optimization.AutoForwardDiff(),
 
     # EM convergence
@@ -218,7 +225,7 @@ method = NoLimits.MCEM(;
     convergence_window=20,
 
     # Final EB estimation
-    ebe_optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
+    ebe_optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep=1.0)),
     ebe_optim_kwargs=NamedTuple(),
     ebe_adtype=Optimization.AutoForwardDiff(),
     ebe_grad_tol=:auto,
@@ -256,6 +263,7 @@ method = NoLimits.MCEM(;
 The constructor signature block above lists every keyword with its default. See the [`MCEM`](@ref) entry in the API reference for the full list. The notes below explain the behavior that is not obvious from the names.
 
 - **EM convergence.** MCEM monitors both fixed-effect stability (`rtol_theta`, `atol_theta`) and Q-function stability (`rtol_Q`, `atol_Q`) with the same windowed drift test used by SAEM: the last `convergence_window` iterates are split into two halves, and each coordinate's drift between the half means must satisfy `drift ≤ max(atol, rtol * scale, 2 * mc_se)`, where `mc_se` is the Monte-Carlo standard error of the half-mean difference estimated from the window itself (drift indistinguishable from sampling noise counts as stationary). `consecutive_params` is the number of consecutive iterations on which both tests must pass before convergence is declared; setting `rtol` and `atol` of a test to `0` disables early stopping. See the SAEM page's [Convergence and Early Stopping](saem.md#Convergence-and-Early-Stopping) section for details. Note that with a fixed, small Monte-Carlo sample size the EM iterates keep jittering at sampling scale and the fit typically uses all `maxiters`; a growing `sample_schedule` (classic MCEM practice) shrinks that jitter so the drift can fall below tolerance and trigger the stop. `verbose` enables iteration-level logging of `Q`, `dtheta`, `dQ`, and the drift values.
+- **M-step.** The default `optim_kwargs = (; iterations=10, g_abstol=1e-4, f_reltol=1e-6)` caps the numerical M-step at 10 optimizer iterations per EM iteration. The M-step is warm-started at the current iterate and only has to increase the Monte Carlo Q-function (generalized EM), so the EM fixed point is unchanged.
 - **Final EB modes.** After the EM iterations complete, MCEM computes empirical Bayes (EB) modal estimates of the random effects used by downstream accessors, configured through the `ebe_*` keywords (`ebe_grad_tol=:auto` selects a data-adaptive tolerance). When `ebe_rescue_on_high_grad=true` (default `false`), a rescue multistart governed by the `ebe_rescue_*` keywords is triggered if the final EB gradient norm remains above threshold.
 - **Bounds.** `lb`, `ub` are optional transformed-scale bounds for free fixed effects in the M-step optimization. Parameters held constant via the `constants` fit keyword are excluded automatically. They do not apply to closed-form updates, which are clamped to each fixed effect's own declared natural-scale bounds instead.
 
