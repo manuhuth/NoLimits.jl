@@ -118,6 +118,16 @@ mutable struct _SaemixMHState
     n_total::Int
 end
 
+# True when a sampler chain state certifies that its current sample has a finite
+# log-density at the E-step θ. A `_SaemixMHState` carries the per-individual observation
+# log-likelihoods and per-level prior log-densities of its current sample (re-synced to θ at
+# the start of every E-step and updated on every acceptance), so SAEM's bad-batch check can
+# skip re-solving the model for it. Other states are never certified.
+_saem_chain_state_finite(state) = false
+function _saem_chain_state_finite(state::_SaemixMHState)
+    return all(isfinite, state.indiv_ll) && all(isfinite, state.level_plp)
+end
+
 # ---------------------------------------------------------------------------
 # Init helpers
 # ---------------------------------------------------------------------------

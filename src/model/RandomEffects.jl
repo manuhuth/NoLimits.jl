@@ -35,6 +35,13 @@ end
 # `lits` carries the Float literals hoisted out of the distribution body, so changing
 # only a literal (an RE sd, say) leaves the generated expression - and therefore the
 # `Model` type - untouched.
+# Array-valued fixed effects (covariance matrices, mean vectors) enter the RE distributions
+# as plain Arrays, not as ComponentArray views: Enzyme cannot deduce the type of the view
+# structs built from the axis constants (EnzymeNoTypeError in the MvNormal prior, M03).
+# A copy of a few entries per distribution build.
+_re_materialize(x) = x
+_re_materialize(x::AbstractArray) = Array(x)
+
 struct _REDistBuilder{F, L <: Tuple}
     f::F
     lits::L
@@ -504,7 +511,7 @@ macro randomEffects(block)
                     if hasproperty(constant_features_i, $(QuoteNode(sym)))
                         $(sym) = getproperty(constant_features_i, $(QuoteNode(sym)))
                 elseif hasproperty(fixed_effects, $(QuoteNode(sym)))
-                        $(sym) = getproperty(fixed_effects, $(QuoteNode(sym)))
+                        $(sym) = _re_materialize(getproperty(fixed_effects, $(QuoteNode(sym))))
                 end
                 end
         end

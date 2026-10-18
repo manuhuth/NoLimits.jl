@@ -174,7 +174,13 @@ function _bounded_optimizer(optimizer, use_bounds::Bool, lb_z, ub_z)
     return _ProjectedRule(optimizer, lb_z, ub_z), false
 end
 
-_default_lbfgs() = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0))
+# Memory m = 20 (Optim's default is 10): the outer problems have few parameters but each
+# objective evaluation solves every inner EB problem, so better curvature (fewer outer
+# iterations) pays; in the autoresearch challenger benchmark m = 20 was 10-17% faster on
+# 5 of 9 Laplace models and within noise on the rest.
+_default_lbfgs() = OptimizationOptimJL.LBFGS(
+    m = 20, linesearch = LineSearches.BackTracking(maxstep = 1.0)
+)
 
 function _resolve_outer_optimizer(optimizer, update_schedule, label::AbstractString)
     if optimizer === nothing

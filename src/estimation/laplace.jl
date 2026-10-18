@@ -177,6 +177,32 @@ end
 struct _LaplaceBStarCache{T, B}
     b_star::Vector{Vector{T}}
     has_bstar::B
+    # First-order predictor of the mode, b*(θ) ≈ pred_b + pred_db (θ - pred_θ), from the
+    # implicit-function derivative db*/dθ of the last gradient evaluation (per batch; empty
+    # = none). Only a warm start for the inner solve, never a result.
+    pred_θ::Vector{Vector{Float64}}
+    pred_b::Vector{Vector{Float64}}
+    pred_db::Vector{Matrix{Float64}}
+end
+_LaplaceBStarCache(b_star, has_bstar) = _LaplaceBStarCache(
+    b_star, has_bstar, [Float64[] for _ in b_star], [Float64[] for _ in b_star],
+    [zeros(0, 0) for _ in b_star]
+)
+
+function _laplace_store_predictor!(bc::_LaplaceBStarCache, bi::Int, θ, b, dbdθ)
+    (all(isfinite, dbdθ) && all(isfinite, b)) || (empty!(bc.pred_θ[bi]); return nothing)
+    bc.pred_θ[bi] = collect(Float64, θ)
+    bc.pred_b[bi] = collect(Float64, b)
+    bc.pred_db[bi] = Matrix{Float64}(dbdθ)
+    return nothing
+end
+_laplace_store_predictor!(::Nothing, bi::Int, θ, b, dbdθ) = nothing
+
+function _laplace_predict_bstar(bc::_LaplaceBStarCache, bi::Int, θ, nb::Int)
+    θ0 = bc.pred_θ[bi]
+    (length(θ0) == length(θ) && length(bc.pred_b[bi]) == nb) || return nothing
+    pred = bc.pred_b[bi] .+ bc.pred_db[bi] * (collect(Float64, θ) .- θ0)
+    return all(isfinite, pred) ? pred : nothing
 end
 
 struct _LaplaceGradCache{T, L, G, V}
@@ -221,6 +247,25 @@ struct _LaplaceHessCache{T, L, H, C, V}
     last_H::H
     last_chol::C
     last_valid::V
+    last_logf::Vector{T}   # log f at last_b when the inner solve left it, else NaN
+end
+_LaplaceHessCache(last_b, last_logdet, last_H, last_chol, last_valid) = _LaplaceHessCache(
+    last_b, last_logdet, last_H, last_chol, last_valid, fill(eltype(last_logdet)(NaN), length(last_logdet))
+)
+
+# Exact Hessian ∇²_b log f at b left by the inner Newton solve at the current θ (seeded
+# entry, `last_chol === nothing`; see `_laplace_store_mode_hess!`), else `nothing`.
+function _laplace_mode_hess(hc, bi::Int, b)
+    (hc !== nothing && hc.last_valid[bi] && hc.last_chol[bi] === nothing) || return nothing
+    hc.last_b[bi] == b || return nothing
+    return hc.last_H[bi]
+end
+
+# log f(b) left by the inner solve at this θ (see `_laplace_store_mode_hess!`), else NaN.
+function _laplace_cached_logf(hc, bi::Int, b, use_cache::Bool)
+    (use_cache && hc !== nothing && hc.last_valid[bi]) || return NaN
+    hc.last_b[bi] == b || return NaN
+    return hc.last_logf[bi]
 end
 
 mutable struct _LaplaceCache{T, B, G, A, H}
@@ -938,6 +983,14 @@ end
 # logcorrection (`_re_prior_logf_batch`). Uses `_logpdf_re_static` so the logpdf stays
 # statically dispatched (Enzyme forward-mode BLAS safe); the anneal branch keeps dynamic
 # getproperty, matching the previous per-function behaviour.
+@inline function _re_prior_lp(dists, re::Symbol, v, has_anneal::Bool, anneal_sds, ::Type{T}) where {T}
+    if has_anneal && haskey(anneal_sds, re)
+        dist = _saem_apply_anneal_dist(getproperty(dists, re), getfield(anneal_sds, re))
+        return convert(T, logpdf(dist, v))
+    end
+    return _logpdf_re_static(keys(dists), values(dists), re, v, T)
+end
+
 function _re_free_prior_logf(
         dm::DataModel, batch_info::REBatchInfo, θ_re::ComponentArray,
         b, cache::_LLCache; anneal_sds::NamedTuple = NamedTuple(), tctx = nothing
@@ -960,17 +1013,15 @@ function _re_free_prior_logf(
                     θ_re, get_const_cov(get_individuals(dm)[rep_idx]),
                     model_funs, helpers
                 ) : tctx.dists[ri][li]
-            v = _re_value_from_b(info, level_id, b)
-            v === nothing && continue
-            lp = if has_anneal && haskey(anneal_sds, re)
-                dist = _saem_apply_anneal_dist(
-                    getproperty(dists, re),
-                    getfield(anneal_sds, re)
-                )
-                convert(T_ll, logpdf(dist, v))
-            else
-                _logpdf_re_static(keys(dists), values(dists), re, v, T_ll)
-            end
+            # Branch on scalar-ness here instead of taking `_re_value_from_b`'s
+            # Union{Nothing, scalar, view}: each branch hands a concretely typed value to
+            # logpdf, which Enzyme's type analysis needs (EnzymeNoTypeError on MvNormal REs).
+            idx = get_re_map(info).level_to_index[level_id]
+            idx == 0 && continue
+            r = get_ranges(info)[idx]
+            lp = get_is_scalar(info) ?
+                _re_prior_lp(dists, re, b[first(r)], has_anneal, anneal_sds, T_ll) :
+                _re_prior_lp(dists, re, view(b, r), has_anneal, anneal_sds, T_ll)
             isfinite(lp) || return T_ll(-Inf)
             ll += lp
         end
@@ -1101,11 +1152,13 @@ on the same AD gradient/Hessian and adaptive-jitter Cholesky machinery the
 Laplace approximation already uses. Pass it as
 `Laplace(inner_optimizer=NewtonInner())`.
 
-The default inner optimizer is unchanged (LBFGS via Optimization.jl); this is
-an option because a different optimizer can reach a (numerically) different
-conditional mode on hard problems. Newton converges quadratically from the
-warm starts the outer optimization provides and avoids the per-solve
-`OptimizationProblem` setup overhead.
+It is the default inner optimizer of `Laplace` and `GHQuadrature` (FOCEI uses its
+Gauss-Newton variant). Pass `inner_optimizer = OptimizationOptimJL.LBFGS(linesearch =
+LineSearches.BackTracking(maxstep = 1.0))` for the previous default; a different optimizer
+can reach a (numerically) different conditional mode on hard problems. Newton converges
+quadratically from the warm starts the outer optimization provides and avoids the
+per-solve `OptimizationProblem` setup overhead (in profiles of a GHQ fit on a 1-D RE model
+the LBFGS inner solves with their backtracking line search were ~2/3 of the time).
 
 - `max_dim`: batches with more than `max_dim` random-effect dimensions fall
   back to the default LBFGS path.
@@ -1168,12 +1221,14 @@ end
 # Minimal solution wrapper for the Newton path, duck-typed for the accessors
 # `_laplace_sol_logf` / `_laplace_sol_grad_norm` and the `sol.u` reads in
 # `_laplace_compute_bstar_batch!`.
-struct _NewtonSol{U}
+struct _NewtonSol{U, H}
     u::U
     logf::Float64
     g_norm::Float64
     converged::Bool
+    H::H   # exact ∇²_b log f at `u` when the solve computed it there, else `nothing`
 end
+_NewtonSol(u, logf, g_norm, converged) = _NewtonSol(u, logf, g_norm, converged, nothing)
 
 # Damped Newton ascent on b ↦ logf(b) at fixed (Float64) θ. Direction
 # Δ = (-H + λI)⁻¹ g via the adaptive-jitter Cholesky (λ escalation doubles as
@@ -1190,13 +1245,16 @@ function _newton_inner_solve(
         bi::Int,
         b0::Vector{Float64},
         newton::NewtonInner;
-        tctx = nothing
+        tctx = nothing,
+        f0_min::Union{Nothing, Float64} = nothing
     )
     nb = length(b0)
     # Exception-safe: a degenerate θ falls back to the per-call path inside the
     # logf wrapper (-Inf) instead of throwing out of the inner solve.
     tctx === nothing && (tctx = _safe_theta_ctx(dm, batch_info, θ_val, cache))
     f = _LaplaceLogfBatch(dm, batch_info, θ_val, const_cache, cache, tctx)
+    newton.curvature isa ExactHessianCurvature &&
+        return _newton_exact_solve(f, b0, newton; f0_min = f0_min)
     b = copy(b0)
     fval = f(b)
     isfinite(fval) || return _NewtonSol(b, -Inf, Inf, false)
@@ -1251,6 +1309,82 @@ function _newton_inner_solve(
     _newton_grad_hess!(g, ExactHessianCurvature(), f, cfg, dm, batch_info, θ_val, b, const_cache, cache, tctx)
     gn = maximum(abs, g)
     return _NewtonSol(b, Float64(fval), isfinite(gn) ? gn : Inf, false)
+end
+
+# `_newton_inner_solve` with the exact Hessian: value, gradient and Hessian of log f come
+# from ONE nested-dual pass (DiffResults) instead of a gradient pass plus a Hessian pass.
+# The full step (α = 1) is evaluated with that pass too, so an accepted full step - the
+# rule near the mode - already carries the derivatives for the next iteration, and a
+# converged solve returns the Hessian at the mode (reused for the log-determinant).
+# Same iterates, tests and fallback signal as the generic loop.
+# `f0_min`: return `nothing` (no solve) unless log f(b0) is finite and > f0_min - lets the caller screen a
+# start against an alternative with the first pass of the solve itself.
+function _newton_exact_solve(f, b0::Vector{Float64}, newton::NewtonInner; f0_min::Union{Nothing, Float64} = nothing)
+    b = copy(b0)
+    b_try = similar(b)
+    rc = ForwardDiff.DiffResults.HessianResult(b)
+    rt = ForwardDiff.DiffResults.HessianResult(b)
+    cfg = ForwardDiff.HessianConfig(f, rc, b)
+    rc = ForwardDiff.hessian!(rc, f, b, cfg)
+    fval = Float64(ForwardDiff.DiffResults.value(rc))
+    f0_min === nothing || (isfinite(fval) && fval > f0_min) || return nothing
+    isfinite(fval) || return _NewtonSol(b, -Inf, Inf, false)
+    gn = Inf
+    for _ in 1:(newton.maxiters)
+        g = ForwardDiff.DiffResults.gradient(rc)
+        H = ForwardDiff.DiffResults.hessian(rc)
+        gn = maximum(abs, g)
+        isfinite(gn) || return _NewtonSol(b, fval, Inf, false)
+        gn <= newton.g_abstol && return _NewtonSol(b, fval, gn, true, copy(H))
+        chol, _ = _laplace_cholesky_negH(
+            H; jitter = 1.0e-6, max_tries = 8, growth = 10.0,
+            adaptive = true, scale_factor = 1.0e-6
+        )
+        (chol === nothing || chol.info != 0) && return _NewtonSol(b, fval, gn, false)
+        Δ = chol \ g
+        slope = dot(g, Δ)
+        (isfinite(slope) && slope > 0) || return _NewtonSol(b, fval, gn, false)
+        α = 1.0
+        accepted = false
+        Δmax = maximum(abs, Δ)
+        while α >= newton.alpha_min
+            # step below the tolerance: b is at the mode up to x_abstol
+            α * Δmax <= newton.x_abstol && return _NewtonSol(b, fval, gn, true, copy(H))
+            @. b_try = b + α * Δ
+            if α == 1.0
+                rt = ForwardDiff.hessian!(rt, f, b_try, cfg)
+                f_try = Float64(ForwardDiff.DiffResults.value(rt))
+            else
+                f_try = f(b_try)
+            end
+            # A full step that lands where the gradient test passes is the mode even when
+            # the sufficient-decrease test fails by solver noise in log f (else the step
+            # would be halved down to x_abstol, one model solve per halving).
+            if α == 1.0 && isfinite(f_try) &&
+                    f_try >= fval - 1.0e-8 * (1 + abs(fval)) &&
+                    maximum(abs, ForwardDiff.DiffResults.gradient(rt)) <= newton.g_abstol
+                return _NewtonSol(
+                    b_try, f_try, maximum(abs, ForwardDiff.DiffResults.gradient(rt)), true,
+                    copy(ForwardDiff.DiffResults.hessian(rt))
+                )
+            end
+            if isfinite(f_try) && f_try >= fval + 1.0e-4 * α * slope
+                b, b_try = b_try, b
+                if α == 1.0
+                    rc, rt = rt, rc
+                else
+                    rc = ForwardDiff.hessian!(rc, f, b, cfg)
+                end
+                fval = f_try
+                accepted = true
+                break
+            end
+            α /= 2
+        end
+        accepted || return _NewtonSol(b, fval, gn, false)
+    end
+    gn = maximum(abs, ForwardDiff.DiffResults.gradient(rc))
+    return _NewtonSol(b, fval, isfinite(gn) ? gn : Inf, false)
 end
 
 # Trust-region variant (`globalization = :trust_region`): Optim.jl's NewtonTrustRegion on
@@ -1348,7 +1482,8 @@ function _laplace_solve_batch!(
         optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
         optim_kwargs::NamedTuple = NamedTuple(),
         adtype = Optimization.AutoForwardDiff(),
-        tctx = nothing
+        tctx = nothing,
+        f0_min::Union{Nothing, Float64} = nothing
     )
     nb = get_n_b(batch_info)
     nb == 0 && return Float64[]
@@ -1375,8 +1510,9 @@ function _laplace_solve_batch!(
             nsol = solve_fn(
                 dm, batch_info, θ_val, const_cache, cache,
                 ad_cache, bi, collect(Float64, b0_use), optimizer;
-                tctx = tctx
+                tctx = tctx, (f0_min === nothing ? (;) : (; f0_min = f0_min))...
             )
+            nsol === nothing && return nothing   # start screened out (`f0_min`)
             nsol.converged && return nsol
             # Stalled/failed Newton: continue into the default quasi-Newton path
             # from the best point found, so the option is never less robust
@@ -1471,34 +1607,67 @@ function _laplace_compute_bstar_batch!(
     end
     b0_default = _laplace_default_b0(dm, info, θ_val, const_cache, ll_cache; tctx = tctx)
     b_start = b0_default
+    presolved = nothing   # inner solve already run from b_start (screened predictor start)
+    f_start = NaN   # log f(b_start), NaN = not evaluated yet
     warm_start_usable = false
     if cache.warm !== nothing
         # AcceptedWarmStarts: start from the warm start committed at the last accepted
         # outer iterate, so b* at θ does not depend on earlier trial points.
         w = cache.warm[bi]
-        if length(w) == nb && isfinite(
-                _laplace_logf_batch(dm, info, θ_val, w, const_cache, ll_cache; tctx = tctx)
-            )
-            b_start = copy(w)
-            warm_start_usable = true
+        if length(w) == nb
+            f_w = _laplace_logf_batch(dm, info, θ_val, w, const_cache, ll_cache; tctx = tctx)
+            if isfinite(f_w)
+                b_start = copy(w)
+                f_start = f_w
+                warm_start_usable = true
+            end
         end
     elseif cache.bstar_cache.has_bstar[bi]
         b_prev = cache.bstar_cache.b_star[bi]
         if length(b_prev) == nb
-            f_prev = _laplace_logf_batch(
-                dm, info, θ_val, b_prev, const_cache, ll_cache; tctx = tctx
-            )
             f_def = _laplace_logf_batch(
                 dm, info, θ_val, b0_default, const_cache, ll_cache; tctx = tctx
             )
-            warm_start_usable = isfinite(f_prev)
-            if f_prev > f_def
-                b_start = b_prev
+            # First choice: the mode extrapolated along db*/dθ from the last gradient
+            # evaluation; the previous mode when there is none or it does not beat the
+            # default start.
+            pred = _laplace_predict_bstar(cache.bstar_cache, bi, θ_val, nb)
+            if pred !== nothing && _newton_screens_start(optimizer, nb)
+                # the exact Newton solve screens the start with its own first pass
+                presolved = _laplace_try_solve(
+                    dm, info, θ_val, const_cache, ll_cache, cache.ad_cache, bi, pred;
+                    optimizer = optimizer, optim_kwargs = optim_kwargs, adtype = adtype,
+                    tctx = tctx, f0_min = f_def
+                )
+                f_pred = presolved === nothing ? -Inf : _laplace_sol_logf(presolved)
+                isfinite(f_pred) || (presolved = nothing)
+            else
+                f_pred = pred === nothing ? -Inf :
+                    _laplace_logf_batch(dm, info, θ_val, pred, const_cache, ll_cache; tctx = tctx)
+            end
+            if isfinite(f_pred) && f_pred > f_def
+                b_start = pred
+                f_start = f_pred
+                warm_start_usable = true
+            else
+                presolved = nothing
+                f_prev = _laplace_logf_batch(
+                    dm, info, θ_val, b_prev, const_cache, ll_cache; tctx = tctx
+                )
+                warm_start_usable = isfinite(f_prev)
+                if f_prev > f_def
+                    b_start = b_prev
+                    f_start = f_prev
+                else
+                    f_start = f_def
+                end
             end
         end
     end
-    g0, f_start = _laplace_gradb_cached!(
-        cache, bi, dm, info, θ_val, const_cache, ll_cache, b_start; tctx = tctx
+    isnan(f_start) && (
+        f_start = _laplace_logf_batch(
+            dm, info, θ_val, b_start, const_cache, ll_cache; tctx = tctx
+        )
     )
     if !isfinite(f_start)
         best_f = -Inf
@@ -1520,34 +1689,18 @@ function _laplace_compute_bstar_batch!(
         if isfinite(best_f)
             b_start = best_b
         end
-        g0, _ = _laplace_gradb_cached!(
-            cache, bi, dm, info, θ_val, const_cache, ll_cache, b_start; tctx = tctx
-        )
-    end
-    g0_norm = maximum(abs, g0)
-    if !isfinite(g0_norm)
-        g0_norm = Inf
     end
     b_best = b_start
     best_f = isfinite(f_start) ? f_start : -Inf
-    g_best_norm = g0_norm
-    sol_best = try
-        _laplace_solve_batch!(
+    g_best_norm = Inf   # the gradient at b_start is needed only when the solve fails (below)
+    sol_best = presolved !== nothing ? presolved : _laplace_try_solve(
             dm, info, θ_val, const_cache, ll_cache, cache.ad_cache, bi, b_start;
-            optimizer = optimizer,
-            optim_kwargs = optim_kwargs,
-            adtype = adtype,
-            tctx = tctx
+            optimizer = optimizer, optim_kwargs = optim_kwargs, adtype = adtype, tctx = tctx
         )
-    catch err
-        if err isa DomainError || err isa ArgumentError || err isa ErrorException
-            nothing
-        else
-            rethrow(err)
-        end
-    end
+    H_best = nothing   # exact Hessian at b_best when the inner solve returned it
     if sol_best !== nothing
         b_best = sol_best.u
+        H_best = _laplace_sol_hess(sol_best)
         best_f = _laplace_sol_logf(sol_best)
         if !isfinite(best_f)
             best_f = _laplace_logf_batch(
@@ -1565,6 +1718,12 @@ function _laplace_compute_bstar_batch!(
         if !isfinite(g_best_norm)
             g_best_norm = Inf
         end
+    else
+        g0, _ = _laplace_gradb_cached!(
+            cache, bi, dm, info, θ_val, const_cache, ll_cache, b_start; tctx = tctx
+        )
+        g0_norm = maximum(abs, g0)
+        g_best_norm = isfinite(g0_norm) ? g0_norm : Inf
     end
     use_mcmc = mcmc_candidates !== nothing && size(mcmc_candidates, 2) > 0
     # The inner multistart fires on cold starts (no usable previous mode for this
@@ -1617,6 +1776,7 @@ function _laplace_compute_bstar_batch!(
             best_after = b_best
             best_after_f = best_f
             best_after_g_norm = g_best_norm
+            best_after_H = H_best
             for s in idxs
                 b0 = vals[s][2]
                 sol_try = try
@@ -1647,6 +1807,7 @@ function _laplace_compute_bstar_batch!(
                 if f_try > best_after_f
                     best_after = b_try
                     best_after_f = f_try
+                    best_after_H = _laplace_sol_hess(sol_try)
                     g_try_norm = _laplace_sol_grad_norm(sol_try)
                     if !isfinite(g_try_norm)
                         g_try, _ = _laplace_gradb_cached!(
@@ -1661,6 +1822,7 @@ function _laplace_compute_bstar_batch!(
             b_best = best_after
             best_f = best_after_f
             g_best_norm = best_after_g_norm
+            H_best = best_after_H
             if g_best_norm <= multistart.grad_tol
                 break
             end
@@ -1670,8 +1832,53 @@ function _laplace_compute_bstar_batch!(
         end
     end
     _laplace_store_bstar!(cache, bi, b_best)
+    _laplace_store_mode_hess!(cache.hess_cache, bi, b_best, H_best, best_f)
     return nothing
 end
+
+# `_laplace_solve_batch!` with the inner-solve failures of `_laplace_compute_bstar_batch!`
+# mapped to `nothing`.
+function _laplace_try_solve(args...; kwargs...)
+    return try
+        _laplace_solve_batch!(args...; kwargs...)
+    catch err
+        if err isa DomainError || err isa ArgumentError || err isa ErrorException
+            nothing
+        else
+            rethrow(err)
+        end
+    end
+end
+
+# Whether the inner optimizer is the exact-Hessian line-search Newton solve (which can
+# screen its start, `f0_min`) for this batch size.
+@inline _newton_screens_start(opt, nb::Int) = opt isa NewtonInner &&
+    opt.curvature isa ExactHessianCurvature && opt.globalization === :linesearch &&
+    nb <= opt.max_dim
+
+@inline _laplace_sol_hess(sol::_NewtonSol) = sol.H
+@inline _laplace_sol_hess(sol) = nothing
+
+# The b*-solve at a new θ invalidates the batch's log-determinant cache (keyed by b only)
+# and, when the exact Newton solve returned the Hessian at b*, seeds it with that Hessian
+# (`last_chol = nothing` marks such an entry: the factorization is still to be done, and
+# only the exact-Hessian log-determinant may use it; see `_laplace_logdet_negH`).
+function _laplace_store_mode_hess!(hc::_LaplaceHessCache, bi::Int, b, H, logf)
+    if H === nothing || length(b) != size(H, 1) || !(H isa eltype(hc.last_H))
+        hc.last_valid[bi] = false
+        return nothing
+    end
+    b_last = hc.last_b[bi]
+    length(b_last) == length(b) || resize!(b_last, length(b))
+    copyto!(b_last, b)
+    hc.last_H[bi] = H
+    hc.last_chol[bi] = nothing
+    hc.last_logdet[bi] = NaN
+    hc.last_logf[bi] = isfinite(logf) ? logf : NaN
+    hc.last_valid[bi] = true
+    return nothing
+end
+_laplace_store_mode_hess!(::Nothing, bi::Int, b, H, logf) = nothing
 
 function _laplace_get_bstar!(
         cache::_LaplaceCache,
@@ -1969,6 +2176,7 @@ function _laplace_logdet_negH(
         H = zeros(T, 0, 0)
         return (zero(T), H, nothing)
     end
+    H_seed = nothing
     if use_cache && hess_cache !== nothing
         if hess_cache.last_valid[bi]
             b_last = hess_cache.last_b[bi]
@@ -1981,18 +2189,22 @@ function _laplace_logdet_negH(
                     end
                 end
                 if same
-                    return (
+                    hess_cache.last_chol[bi] === nothing ||
+                        return (
                         hess_cache.last_logdet[bi],
                         hess_cache.last_H[bi], hess_cache.last_chol[bi],
                     )
+                    # exact Hessian left by the inner Newton solve at this b*
+                    hmode isa _ExactHess && eltype(hess_cache.last_H[bi]) === eltype(θ) &&
+                        (H_seed = hess_cache.last_H[bi])
                 end
             end
         end
     end
-    H = _build_hess_b(
-        hmode, dm, batch_info, θ, b, const_cache,
-        cache, ad_cache, bi; ctx = ctx, tctx = tctx
-    )
+    H = H_seed !== nothing ? H_seed : _build_hess_b(
+            hmode, dm, batch_info, θ, b, const_cache,
+            cache, ad_cache, bi; ctx = ctx, tctx = tctx
+        )
     infT = convert(eltype(H), Inf)
     # Inf here makes the marginal -Inf, so the optimizer backtracks out of a degenerate
     # region instead of climbing the jitter artifact.
@@ -2013,6 +2225,7 @@ function _laplace_logdet_negH(
         hess_cache.last_logdet[bi] = logdet
         hess_cache.last_H[bi] = H
         hess_cache.last_chol[bi] = chol
+        H_seed === nothing && (hess_cache.last_logf[bi] = NaN)
         hess_cache.last_valid[bi] = true
     end
     return (logdet, H, chol)
@@ -2036,7 +2249,10 @@ function _laplace_grad_batch(
         use_hutchinson::Bool = false,
         hutchinson_n::Int = 8,
         rng::AbstractRNG = Random.default_rng(),
-        hmode::_HessMode = _ExactHess()
+        hmode::_HessMode = _ExactHess(),
+        hess_cache::Union{Nothing, _LaplaceHessCache} = nothing,
+        use_cache::Bool = false,
+        bstar_cache::Union{Nothing, _LaplaceBStarCache} = nothing
     )
     nb = get_n_b(batch_info)
     if nb == 0
@@ -2076,11 +2292,14 @@ function _laplace_grad_batch(
     else
         tctx0
     end
-    logf = _laplace_logf_batch(dm, batch_info, θ, b, const_cache, cache; tctx = tctx)
+    logf = _laplace_cached_logf(hess_cache, bi, b, use_cache)
+    isnan(logf) &&
+        (logf = _laplace_logf_batch(dm, batch_info, θ, b, const_cache, cache; tctx = tctx))
     logdet, H, chol = _laplace_logdet_negH(
         dm, batch_info, θ, b, const_cache, cache, ad_cache, bi;
         jitter = jitter, max_tries = max_tries, growth = growth,
-        adaptive = adaptive, scale_factor = scale_factor, ctx = "logdet", hmode = hmode, tctx = tctx
+        adaptive = adaptive, scale_factor = scale_factor, ctx = "logdet", hmode = hmode, tctx = tctx,
+        hess_cache = hess_cache, use_cache = use_cache
     )
     infT = convert(eltype(θ), Inf)
     logdet == Inf && return (
@@ -2107,13 +2326,6 @@ function _laplace_grad_batch(
             _FDCfgStore(), _FDCfgStore(), _FDCfgStore()
         ) :
         _get_grad_buffers!(ad_cache, bi, eltype(θ_vec), nθ, nb, use_trace_logdet_grad)
-    # envelope term
-    logf_θ = _LaplaceLogfTheta(dm, batch_info, b, const_cache, cache)
-    cfg = _get_fd_cfg!(
-        buf.grad_logf_cfg, logf_θ, θ_vec, () -> ForwardDiff.GradientConfig(logf_θ, θ_vec)
-    )
-    ForwardDiff.gradient!(buf.grad_logf, logf_θ, θ_vec, cfg)
-    grad_logf = buf.grad_logf
     # g = ∂ logf / ∂b and the curvature H from one pass (`_onepass_logdet_derivatives`), so
     # Gθ with ∂H/∂θ, and the exact Hessian with ∂H/∂b, each take one nested AD pass, and
     # RE-only fixed effects no model solve. `nothing` (e.g. a third-party curvature): the
@@ -2121,6 +2333,17 @@ function _laplace_grad_batch(
     fast = use_trace_logdet_grad && !use_hutchinson ?
         _onepass_logdet_derivatives(hmode, dm, batch_info, θ_vec, b, const_cache, cache, tctx) :
         nothing
+    # envelope term (from the one-pass θ derivatives when they carry it)
+    grad_logf = if fast !== nothing && fast.grad_logf !== nothing
+        fast.grad_logf
+    else
+        logf_θ = _LaplaceLogfTheta(dm, batch_info, b, const_cache, cache)
+        cfg = _get_fd_cfg!(
+            buf.grad_logf_cfg, logf_θ, θ_vec, () -> ForwardDiff.GradientConfig(logf_θ, θ_vec)
+        )
+        ForwardDiff.gradient!(buf.grad_logf, logf_θ, θ_vec, cfg)
+        buf.grad_logf
+    end
     Gθ = if fast === nothing
         # g(b, θ) = ∂ logf / ∂b
         function gθ!(out, θv)
@@ -2274,6 +2497,7 @@ function _laplace_grad_batch(
         end
     end
     dbdθ = chol_b \ Gθ
+    _laplace_store_predictor!(bstar_cache, bi, θ_vec, b, dbdθ)
     corr = vec(grad_logdet_b' * dbdθ)
     grad = grad_logf .- 0.5 .* (grad_logdet_θ .+ corr)
     return (logf = logf, logdet = logdet, grad = ComponentArray(grad, axs))
@@ -2460,9 +2684,10 @@ random effects.
   a 16-compartment PBPK model and diverged on a joint PK/PD fit, and SBPLX ran a
   proportional-error parameter away to a degenerate optimum on a myelosuppression model. Compare
   candidates with [`get_marginal_likelihood`](@ref), which is method-independent.
-- `optim_kwargs::NamedTuple = (; maxiters = 1000)`: keyword arguments for the outer `solve` call.
+- `optim_kwargs = nothing`: keyword arguments for the outer `solve` call; `nothing` = `(; maxiters = 1000)`, plus `reltol = 1e-12` (stop after two successive iterations that change the objective by <= 1e-12 relative) for an Optim.jl optimizer.
 - `adtype`: AD backend for the outer optimizer. Defaults to `AutoForwardDiff()`.
-- `inner_optimizer`: inner optimizer for computing EBE modes. Defaults to `LBFGS`.
+- `inner_optimizer`: inner optimizer for computing EBE modes. Defaults to [`NewtonInner`](@ref)
+  (damped Newton, falls back to LBFGS when a solve stalls).
 - `inner_kwargs::NamedTuple = NamedTuple()`: keyword arguments for the inner `solve` call.
 - `inner_adtype`: AD backend for the inner optimizer. Defaults to `AutoForwardDiff()`.
 - `inner_grad_tol`: gradient tolerance for inner convergence (`:auto` chooses automatically).
@@ -2521,6 +2746,16 @@ end
 
 # Invalid retry counts and jitter used to be accepted and deferred to the Hessian
 # fallback path, where they only show up as a failed factorization (#220).
+# Default outer `solve` keywords (Laplace, FOCEI, GHQuadrature: `base` plus the rule below).
+# For an Optim.jl optimizer the fit also stops after two
+# successive iterations that change the objective by <= 1e-12 relative (Optim's
+# `f_reltol`, `successive_f_tol = 1`): the marginal is evaluated through inner mode solves
+# and ODE solves whose own tolerances put a noise floor of about that size on it, so
+# iterations below it only chase that noise (measured: the last ~30% of an ODE fit moved
+# the objective by < 1e-9).
+_outer_default_optim_kwargs(optimizer, base::NamedTuple) =
+    optimizer isa Optim.AbstractOptimizer ? merge(base, (; reltol = 1.0e-12)) : base
+
 function _validate_laplace_hessian_options(h)
     h.max_tries >= 1 || error("Laplace: max_tries must be >= 1; got $(h.max_tries).")
     (isfinite(h.jitter) && h.jitter >= 0) ||
@@ -2538,13 +2773,13 @@ _update_schedule(m::Laplace) = m.update_schedule
 
 function Laplace(;
         optimizer = nothing,
-        optim_kwargs = (; maxiters = 1000),
+        optim_kwargs = nothing,
         adtype = Optimization.AutoForwardDiff(),
         inner_options = nothing,
         hessian_options = nothing,
         cache_options = nothing,
         multistart_options = nothing,
-        inner_optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
+        inner_optimizer = NewtonInner(x_abstol = 1.0e-10),
         inner_kwargs = NamedTuple(),
         inner_adtype = Optimization.AutoForwardDiff(),
         inner_grad_tol = :auto,
@@ -2589,6 +2824,8 @@ function Laplace(;
             multistart_n, multistart_k, multistart_grad_tol,
             multistart_max_rounds, _as_symbol(multistart_sampling)
         ) : multistart_options
+    optim_kwargs === nothing &&
+        (optim_kwargs = _outer_default_optim_kwargs(optimizer, (; maxiters = 1000)))
     return Laplace(
         optimizer, _as_namedtuple(optim_kwargs), adtype, inner, hess, cache,
         ms, lb, ub, ignore_model_bounds, precondition, _as_symbol(nan_recovery),
@@ -2703,6 +2940,9 @@ function _laplace_objective_and_grad(
         serialization = serialization,
         active_batches = active
     )
+    # b* (and the log-determinant cache keyed by it) belong to this θ
+    use_cache = ebe_cache.θ_cache !== nothing && length(ebe_cache.θ_cache) == length(θ) &&
+        _maxabsdiff(θ, ebe_cache.θ_cache) <= cache_opts.theta_tol
 
     infT = convert(eltype(θ), Inf)
     grad = zeros(eltype(θ), length(θ))
@@ -2732,7 +2972,10 @@ function _laplace_objective_and_grad(
                 use_hutchinson = hessian.use_hutchinson,
                 hutchinson_n = hessian.hutchinson_n,
                 rng = batch_rngs[bi],
-                hmode = hmode
+                hmode = hmode,
+                hess_cache = ebe_cache.hess_cache,
+                use_cache = use_cache,
+                bstar_cache = ebe_cache.bstar_cache
             )
             if res.logf == -Inf
                 bad[] = true
@@ -2772,7 +3015,10 @@ function _laplace_objective_and_grad(
                 use_hutchinson = hessian.use_hutchinson,
                 hutchinson_n = hessian.hutchinson_n,
                 rng = batch_rngs[bi],
-                hmode = hmode
+                hmode = hmode,
+                hess_cache = ebe_cache.hess_cache,
+                use_cache = use_cache,
+                bstar_cache = ebe_cache.bstar_cache
             )
             res.logf == -Inf && return (infT, ComponentArray(grad, axs), bstars)
             w = _batch_weight(dm, get_inds(info))
@@ -2838,8 +3084,9 @@ function _laplace_objective_only(
             info = batch_infos[bi]
             b = bstars[bi]
             tctx = _objective_theta_ctx(dm, info, θ, const_cache, cache_c, b, hmode)
-            logf = _laplace_logf_batch(
-                dm, info, θ, b, const_cache, cache_c; tctx = tctx
+            logf = _laplace_cached_logf(ebe_cache.hess_cache, bi, b, use_cache)
+            isnan(logf) && (
+                logf = _laplace_logf_batch(dm, info, θ, b, const_cache, cache_c; tctx = tctx)
             )
             logf == -Inf && (bad[] = true; return)
             logdet, _, _ = _laplace_logdet_negH(
@@ -2873,8 +3120,9 @@ function _laplace_objective_only(
             active !== nothing && !(bi in active) && continue
             b = bstars[bi]
             tctx = _objective_theta_ctx(dm, info, θ, const_cache, ll_cache_use, b, hmode)
-            logf = _laplace_logf_batch(
-                dm, info, θ, b, const_cache, ll_cache_use; tctx = tctx
+            logf = _laplace_cached_logf(ebe_cache.hess_cache, bi, b, use_cache)
+            isnan(logf) && (
+                logf = _laplace_logf_batch(dm, info, θ, b, const_cache, ll_cache_use; tctx = tctx)
             )
             logf == -Inf && return infT
             logdet, _, _ = _laplace_logdet_negH(
@@ -3367,6 +3615,26 @@ function _fit_laplace_family(
         method_label = "Laplace"
     )
     z0 = _z_from_θt(θ0_init)
+    # Start repair (as in SAEM): at an infeasible start (e.g. an RE scale that is invalid
+    # at θ0) every evaluation returns the wall and the fit ends at once. Move the start
+    # along the transformed-scale segment toward the model's declared initial values,
+    # θ(λ) = λ θ0 + (1 - λ) θ_decl for λ = 1/2, ..., 2^-8, 0, and use the first feasible
+    # point. Feasible starts are untouched. Not with `warm_starts = AcceptedWarmStarts(...)`,
+    # whose initial multistart is the user's chosen mechanism for a start that is not usable.
+    ws === nothing && let f0 = obj_only(z0, nothing)
+        if !isfinite(f0) || f0 >= _infeasible(typeof(f0))
+            θd = free_parameter_layout(fe; constants = constants).θ0_free_t
+            for λ in (0.5 .^ (1:8)..., 0.0)
+                zλ = _z_from_θt(λ .* θ0_init .+ (1 - λ) .* θd)
+                fλ = obj_only(zλ, nothing)
+                if isfinite(fλ) && fλ < _infeasible(typeof(fλ))
+                    @warn "Laplace: the objective is not finite at the given start; moved the start toward the model's declared initial values (λ = $(λ))."
+                    z0 = zλ
+                    break
+                end
+            end
+        end
+    end
     lb_z = _z_from_θt(lb)
     ub_z = _z_from_θt(ub)
     opt_use, use_bounds = _bounded_optimizer(method.optimizer, use_bounds, lb_z, ub_z)
@@ -3516,14 +3784,20 @@ function _onepass_logdet_derivatives(
         ::ExactHessianCurvature, dm::DataModel, batch_info::REBatchInfo, θ, b,
         const_cache::REConstantsCache, cache::_LLCache, tctx
     )
-    # gradient and Hessian of log f in b from one second-order pass
+    # value, gradient and Hessian of log f in b from one second-order pass; the value row
+    # gives the envelope term ∂ log f/∂θ from the same θ pass (`with_logf`)
     function F(θv, bv, tc)
         T = promote_type(eltype(θv), eltype(bv))
         f = bw -> _laplace_logf_batch(dm, batch_info, θv, bw, const_cache, cache; tctx = tc)
         res = ForwardDiff.hessian!(ForwardDiff.DiffResults.HessianResult(similar(bv, T)), f, bv)
-        return vcat(ForwardDiff.DiffResults.gradient(res), _vech(ForwardDiff.DiffResults.hessian(res)))
+        return vcat(
+            ForwardDiff.DiffResults.value(res), ForwardDiff.DiffResults.gradient(res),
+            _vech(ForwardDiff.DiffResults.hessian(res))
+        )
     end
-    return _onepass_from_F(F, dm, batch_info, θ, b, const_cache, cache, tctx)
+    return _onepass_from_F(
+        F, dm, batch_info, θ, b, const_cache, cache, tctx; with_logf = true
+    )
 end
 
 # The θ pass gets no θ-context: a cached prior Hessian is constant in θ only at the
@@ -3531,25 +3805,39 @@ end
 # `@formulas`, `@preDifferentialEquation`, `@DifferentialEquation`, `@initialDE`) move F
 # only through the prior, so their columns come from the prior terms alone, without a
 # model solve.
-function _onepass_from_F(F, dm::DataModel, batch_info::REBatchInfo, θ, b, const_cache, cache, tctx)
+# `with_logf = true`: F's first row is log f itself, and `grad_logf` = ∂ log f/∂θ comes
+# from the same θ pass (for the RE-only fixed effects from the RE prior, constant levels
+# included); otherwise `grad_logf = nothing`.
+function _onepass_from_F(
+        F, dm::DataModel, batch_info::REBatchInfo, θ, b, const_cache, cache, tctx;
+        with_logf::Bool = false
+    )
     nb = length(b)
     nv = _ntri(nb)
+    k = with_logf ? 1 : 0
     o, p = _theta_split_obs_re(dm, θ)
-    Jθ = Matrix{Float64}(undef, nb + nv, length(θ))
-    Jθ[:, o] = ForwardDiff.jacobian(x -> F(_theta_with(θ, o, x), b, nothing), θ[o])
+    Jθ = Matrix{Float64}(undef, k + nb + nv, length(θ))
+    # outcome-side θ and b differentiated together: one model solve instead of two
+    no = length(o)
+    J = ForwardDiff.jacobian(
+        x -> F(_theta_with(θ, o, view(x, 1:no)), x[(no + 1):end], nothing), vcat(θ[o], b)
+    )
+    Jθ[:, o] = view(J, :, 1:no)
     if !isempty(p)
         prior(θv) = begin
             θr = _symmetrize_psd_params(θv, get_fixed(get_model(dm)))
             lp = _FOCEIPriorLogf(dm, batch_info, θr, const_cache, cache)
-            vcat(ForwardDiff.gradient(lp, b), _vech(ForwardDiff.hessian(lp, b)))
+            gh = vcat(ForwardDiff.gradient(lp, b), _vech(ForwardDiff.hessian(lp, b)))
+            with_logf ? vcat(_re_logpdf_batch(dm, batch_info, θv, b, const_cache, cache), gh) : gh
         end
         Jθ[:, p] = ForwardDiff.jacobian(x -> prior(_theta_with(θ, p, x)), θ[p])
     end
-    Jb = ForwardDiff.jacobian(bv -> F(θ, bv, tctx), b)
-    Hex = Jb[1:nb, :]
+    Jb = J[:, (no + 1):end]
+    Hex = Jb[(k + 1):(k + nb), :]
     return (
-        Gθ = Jθ[1:nb, :], Jθ = Jθ[(nb + 1):end, :],
-        Hex = (Hex + Hex') / 2, Jb = Jb[(nb + 1):end, :],
+        Gθ = Jθ[(k + 1):(k + nb), :], Jθ = Jθ[(k + nb + 1):end, :],
+        Hex = (Hex + Hex') / 2, Jb = Jb[(k + nb + 1):end, :],
+        grad_logf = with_logf ? Jθ[1, :] : nothing,
     )
 end
 

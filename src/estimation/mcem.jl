@@ -75,18 +75,41 @@ MCMC-based E-step for [`MCEM`](@ref). Accepts the native samplers
 - `sample_schedule`: samples per E-step — `Int`, `Vector{Int}`, or `Function(iter)->Int`.
   Defaults to `100`.
 - `warm_start::Bool = true`: initialize sampler from previous iteration's modes.
+- `thin::Int = 4`: keep every `thin`-th draw of the chain for the M-step (and the
+  closed-form statistics), but never fewer than 25 draws: the effective interval is
+  `max(1, min(thin, S ÷ 25))` for `S` draws per E-step, so small schedules are not thinned.
+  Each kept draw costs one log-likelihood evaluation per M-step objective evaluation
+  (typically dozens, with dual numbers), while a further MCMC sweep costs only a few, so
+  using autocorrelated neighbours buys little Monte Carlo precision at a high price;
+  subsampling the chain is then the efficient choice (Geyer 1992, Stat. Sci. 7:473;
+  MacEachern & Berliner 1994, Am. Stat. 48:188). `thin = 1` keeps every draw.
 """
 struct MCEM_MCMC{S, K, SS} <: AbstractMCEMEStep
     sampler::S
     turing_kwargs::K
     sample_schedule::SS
     warm_start::Bool
+    thin::Int
 
-    function MCEM_MCMC(sampler::S, turing_kwargs::K, sample_schedule::SS, warm_start) where {S, K, SS}
+    function MCEM_MCMC(
+            sampler::S, turing_kwargs::K, sample_schedule::SS, warm_start, thin::Integer = 4
+        ) where {S, K, SS}
         _check_sample_schedule(sample_schedule)
         _check_turing_kwargs("MCEM", turing_kwargs)
-        return new{S, K, SS}(sampler, turing_kwargs, sample_schedule, warm_start)
+        thin >= 1 || error("MCEM: thin must be ≥ 1. Got: $thin")
+        return new{S, K, SS}(sampler, turing_kwargs, sample_schedule, warm_start, Int(thin))
     end
+end
+
+# Draws kept for the M-step from `S` E-step draws under `MCEM_MCMC(thin = t)`: every
+# `max(1, min(t, S ÷ 25))`-th, ending at the last draw (never fewer than 25 kept).
+@inline _mcem_thin_step(thin::Int, S::Int) = max(1, min(thin, S ÷ 25))
+
+function _mcem_thin(samples::AbstractMatrix, thin::Int)
+    S = size(samples, 2)
+    k = _mcem_thin_step(thin, S)
+    k == 1 && return samples
+    return samples[:, (S - k * (S ÷ k - 1)):k:S]
 end
 
 # `sample_schedule` may be an Int, a vector of per-iteration counts, a function of the
@@ -108,9 +131,10 @@ function MCEM_MCMC(;
         sampler = SaemixMH(),
         turing_kwargs = NamedTuple(),
         sample_schedule = 100,
-        warm_start::Bool = true
+        warm_start::Bool = true,
+        thin::Integer = 4
     )
-    return MCEM_MCMC(sampler, turing_kwargs, sample_schedule, warm_start)
+    return MCEM_MCMC(sampler, turing_kwargs, sample_schedule, warm_start, thin)
 end
 
 """
@@ -125,12 +149,20 @@ Monte Carlo approximation of the Q-function.
 # Keyword Arguments
 - `n_samples::Int = 500`: number of IS draws per E-step.
 - `proposal`: proposal mode, one of:
+  - `:laplace` (default) — per batch, a multivariate t (ν = 4) centered at the
+    posterior mode of the random effects with scale from the Laplace curvature there
+    (Booth & Hobert 1999). Used when every RE of the batch is `Normal`/`MvNormal`;
+    other batches (and failed mode searches) use `:gaussian`.
   - `:prior` — draw each RE level from its current prior `p(b | θ_k)`.
-  - `:gaussian` (default) — block-diagonal Gaussian in bijected space, adapted
+  - `:gaussian` — block-diagonal Gaussian in bijected space, adapted
     from previous iteration's samples via Haario-Welford statistics.
   - `Function` — user-supplied function with signature
     `(θ, batch_info, re_dists, rng, n_samples) -> (samples::Matrix, log_qs::Vector)`.
 - `adapt::Bool = true`: update Gaussian proposal blocks after each IS iteration.
+- `ramp::Bool = true`: grow the number of draws linearly from `max(20, n_samples ÷ 10)` at
+  the first iteration to `n_samples` at half of `maxiters` (full size afterwards), as in
+  MCEM practice (Wei & Tanner 1990; Booth & Hobert 1999): early iterations far from the
+  optimum need no precise E-step. The convergence test only stops at the full size.
 - `warm_start_mcmc_iters::Int = 0`: run this many MCMC iterations before switching
   to IS. If > 0, `mcmc_warmup` must be provided (or defaults are used).
 - `mcmc_warmup`: an [`MCEM_MCMC`](@ref) for the warm-up phase, or `nothing` to use
@@ -142,21 +174,23 @@ struct MCEM_IS{PR, WM} <: AbstractMCEMEStep
     adapt::Bool
     warm_start_mcmc_iters::Int
     mcmc_warmup::WM   # MCEM_MCMC or nothing
+    ramp::Bool
 end
 
 function MCEM_IS(;
         n_samples::Int = 500,
-        proposal = :gaussian,
+        proposal = :laplace,
         adapt::Bool = true,
         warm_start_mcmc_iters::Int = 0,
-        mcmc_warmup = nothing
+        mcmc_warmup = nothing,
+        ramp::Bool = true
     )
     n_samples > 0 || throw(ArgumentError("n_samples must be > 0"))
     warm_start_mcmc_iters >= 0 || throw(ArgumentError("warm_start_mcmc_iters must be ≥ 0"))
     if warm_start_mcmc_iters > 0 && mcmc_warmup === nothing
         mcmc_warmup = MCEM_MCMC()
     end
-    return MCEM_IS(n_samples, _as_symbol(proposal), adapt, warm_start_mcmc_iters, mcmc_warmup)
+    return MCEM_IS(n_samples, _as_symbol(proposal), adapt, warm_start_mcmc_iters, mcmc_warmup, ramp)
 end
 
 struct EMOptions{T}
@@ -187,13 +221,21 @@ fixed effects.
 
 # Keyword Arguments
 - `optimizer`: M-step Optimization.jl optimizer. Defaults to `LBFGS` with backtracking.
-- `optim_kwargs::NamedTuple = (; iterations=50, g_abstol=1e-4, f_reltol=1e-6)`: keyword arguments for the M-step `solve`.
+- `optim_kwargs::NamedTuple = (; iterations=10, g_abstol=1e-4, f_reltol=1e-6)`: keyword arguments
+  for the M-step `solve`. The M-step is warm-started at the current iterate and only has to
+  increase the Monte Carlo Q-function (generalized EM, Dempster, Laird & Rubin 1977), whose
+  maximizer is itself only known up to Monte Carlo error, so a few quasi-Newton iterations
+  per EM iteration suffice; the EM fixed point is unchanged.
 - `adtype`: AD backend for the M-step. Defaults to `AutoForwardDiff()`.
 - `e_step`: E-step strategy. Either [`MCEM_MCMC`](@ref) or [`MCEM_IS`](@ref). When
   omitted, defaults to `MCEM_MCMC` constructed from the legacy keyword arguments below.
 - `sampler`: (legacy) E-step sampler; used when `e_step` is not provided. Defaults to `SaemixMH()`.
 - `turing_kwargs::NamedTuple`: (legacy) forwarded to `Turing.sample`.
-- `sample_schedule::Int = 100`: (legacy) MCMC samples per E-step iteration.
+- `sample_schedule::Int = 25`: (legacy) MCMC samples per E-step iteration. Each draw is
+  evaluated in every M-step objective evaluation, which dominates the cost of an iteration;
+  25 warm-started SaemixMH sweeps (6 MH kernel steps each) per iteration were as accurate
+  as 100 at a third to half of the cost per iteration in benchmark fits (an explicit
+  `MCEM_MCMC()` keeps its own default of 100 sweeps, thinned to 25 draws).
 - `warm_start::Bool = true`: (legacy) initialize sampler from previous iteration's modes.
 - `verbose::Bool = false`: print per-iteration diagnostics.
 - `progress::Bool = true`: show a progress bar.
@@ -286,12 +328,12 @@ end
 
 function MCEM(;
         optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
-        optim_kwargs = (; iterations = 50, g_abstol = 1.0e-4, f_reltol = 1.0e-6),
+        optim_kwargs = (; iterations = 10, g_abstol = 1.0e-4, f_reltol = 1.0e-6),
         adtype = Optimization.AutoForwardDiff(),
         e_step = nothing,
         sampler = SaemixMH(),
         turing_kwargs = NamedTuple(),
-        sample_schedule = 100,
+        sample_schedule = 25,
         warm_start = true,
         verbose = false,
         progress = true,
@@ -685,6 +727,169 @@ function _em_seed_batch_b(
             "Initial fixed-effect parameters likely produce -Inf log-likelihood. " *
             "Try different starting values."
     )
+end
+
+# Would `_em_seed_batch_b` succeed for every batch at θ_u? Probed on a COPY of `rng`, so
+# a feasible start leaves the caller's RNG stream (and hence the fit) unchanged.
+function _em_start_seedable(
+        dm::DataModel, batch_infos, θ_u, const_cache::REConstantsCache, cache_init,
+        rng::AbstractRNG, re_names
+    )
+    probe = copy(rng)
+    for info in batch_infos
+        get_n_b(info) == 0 && continue
+        ok = try
+            b = _re_prior_mean_b(dm, info, θ_u, const_cache, cache_init, re_names)
+            isfinite(_laplace_logf_batch(dm, info, θ_u, b, const_cache, cache_init)) ||
+                any(1:10) do _
+                samp, _ = _is_prior_sample_batch(
+                    dm, info, θ_u, const_cache, cache_init, probe, 1, re_names
+                )
+                isfinite(_laplace_logf_batch(dm, info, θ_u, samp[:, 1], const_cache, cache_init))
+            end
+        catch
+            false
+        end
+        ok || return false
+    end
+    return true
+end
+
+# Start repair for the EM methods. A start at which some batch has no finite log-joint for
+# any RE draw (e.g. an RE scale that is invalid at θ0, or an observation mean outside the
+# outcome's support) makes the pre-loop seed fail. Instead of erroring, move the start
+# along the transformed-scale segment toward the model's declared initial values,
+# θ(λ) = λ θ0 + (1 - λ) θ_decl for λ = 1/2, 1/4, ..., 2^-8, 0, and use the first θ(λ)
+# at which every batch can be seeded. Returns θ0_u unchanged when it is already feasible
+# or when no point on the segment is (the seed then raises its usual error).
+function _em_repair_start(
+        dm::DataModel, batch_infos, θ0_u, const_cache::REConstantsCache, cache_init,
+        rng::AbstractRNG, re_names, method_label::String
+    )
+    _em_start_seedable(dm, batch_infos, θ0_u, const_cache, cache_init, rng, re_names) &&
+        return θ0_u
+    fe = get_fixed(get_model(dm))
+    transform, inv_transform = get_transform(fe), get_inverse_transform(fe)
+    θ0_t, θd_t = transform(θ0_u), transform(get_θ0_untransformed(fe))
+    for λ in (0.5 .^ (1:8)..., 0.0)
+        θλ_u = inv_transform(λ .* θ0_t .+ (1 - λ) .* θd_t)
+        if _em_start_seedable(dm, batch_infos, θλ_u, const_cache, cache_init, rng, re_names)
+            @warn "$(method_label): no finite log-likelihood for any initial random effect at the given start; moved the start toward the model's declared initial values (λ = $(λ))."
+            return θλ_u
+        end
+    end
+    return θ0_u
+end
+
+# MCEM counterpart of `_saem_center!` (see the centering section in saem.jl): after the
+# M-step shift a += δ and every stored sample / proposal mean / warm start of the paired RE
+# term by -δ, δ = (IS-)weighted mean over samples and levels of (η - prior mean). The
+# likelihood is unchanged; the RE prior term improves. The IS proposal is N(μ_run, C) per
+# level in the bijected space, which is the identity for the Normal/MvNormal REs paired here.
+function _mcem_center!(
+        pairs, θu, dm::DataModel, batch_infos, samples_by_batch, weights_by_batch,
+        proposal_blocks, last_params, const_cache, cache, re_names
+    )
+    θn = copy(θu)
+    prior_means = [
+        get_n_b(info) == 0 ? Float64[] :
+            _re_prior_mean_b(dm, info, θu, const_cache, cache, re_names)
+            for info in batch_infos
+    ]
+    # log-location of log-normal levels (`:lnmul` pairs: the shift acts on log η)
+    prior_locs = any(p -> p.mode === :lnmul, pairs) ?
+        [
+            get_n_b(info) == 0 ? Float64[] : _re_lognormal_loc_b(dm, info, θu, cache, re_names)
+            for info in batch_infos
+        ] : nothing
+    for p in pairs
+        ri = findfirst(==(p.re), re_names)
+        lnm = p.mode === :lnmul
+        s, wsum = 0.0, 0.0
+        idx = [_cs_batch_indices(info, re_names, p.re, p.k) for info in batch_infos]
+        for bi in eachindex(batch_infos)
+            isassigned(samples_by_batch, bi) || continue
+            S = samples_by_batch[bi]
+            nS = size(S, 2)
+            w = weights_by_batch === nothing || !isassigned(weights_by_batch, bi) ?
+                fill(1.0 / nS, nS) : weights_by_batch[bi] ./ sum(weights_by_batch[bi])
+            for m in 1:nS, i in idx[bi]
+                if lnm
+                    (S[i, m] > 0 && isfinite(prior_locs[bi][i])) || continue
+                    s += w[m] * (log(S[i, m]) - prior_locs[bi][i])
+                else
+                    s += w[m] * (S[i, m] - prior_means[bi][i])
+                end
+                wsum += w[m]
+            end
+        end
+        wsum > 0 || continue
+        δ = s / wsum
+        (isfinite(δ) && δ != 0) || continue
+        setproperty!(
+            θn, p.fe, (p.mode === :mul || lnm) ? getproperty(θn, p.fe) * exp(δ) :
+                getproperty(θn, p.fe) + δ
+        )
+        # the RE moves the opposite way: η - δ, or η e^{-δ} for a log-normal RE
+        fac = exp(-δ)
+        kk = p.k == 0 ? 1 : p.k
+        for bi in eachindex(batch_infos)
+            isempty(idx[bi]) && continue
+            if isassigned(samples_by_batch, bi)
+                for i in idx[bi]
+                    if lnm
+                        samples_by_batch[bi][i, :] .*= fac
+                    else
+                        samples_by_batch[bi][i, :] .-= δ
+                    end
+                end
+            end
+            if proposal_blocks !== nothing && ri !== nothing
+                # proposal blocks live in the bijected space (log η for log-normal REs)
+                blk = proposal_blocks[bi][ri]
+                length(blk.μ_run) >= kk && (blk.μ_run[kk] -= δ)
+            end
+            st = last_params[bi]
+            if st isa _AdaptiveMHState
+                for i in idx[bi]
+                    st.b_current[i] = lnm ? st.b_current[i] * fac : st.b_current[i] - δ
+                end
+            elseif st isa _SaemixMHState
+                for i in idx[bi]
+                    st.b[i] = lnm ? st.b[i] * fac : st.b[i] - δ
+                end
+            elseif st isa AbstractVector
+                v = copy(st)
+                for i in idx[bi]
+                    v[i] = lnm ? v[i] * fac : v[i] - δ
+                end
+                last_params[bi] = v
+            elseif st isa NamedTuple && isassigned(samples_by_batch, bi)
+                last_params[bi] = _b_to_last_params(
+                    samples_by_batch[bi][:, end], batch_infos[bi], re_names
+                )
+            end
+        end
+    end
+    return θn
+end
+
+# Flat-b vector of each log-normal level's log-location μ (NaN elsewhere).
+function _re_lognormal_loc_b(dm::DataModel, info::REBatchInfo, θ, cache, re_names)
+    loc = fill(NaN, get_n_b(info))
+    dists_by_re = _re_dists_for_info(dm, info, θ, cache)
+    for (ri, re) in enumerate(re_names)
+        meta = get_re_info(info)[ri]
+        levels = get_levels(get_re_map(meta))
+        (isempty(levels) || !get_is_scalar(meta)) && continue
+        dists = getproperty(dists_by_re, re)
+        for (li, _) in enumerate(levels)
+            d = dists[li]
+            d isa Distributions.LogNormal || continue
+            loc[first(get_ranges(meta)[li])] = Float64(Distributions.params(d)[1])
+        end
+    end
+    return loc
 end
 
 # Guard for the native samplers' own initial draw. An unchecked prior draw with a
@@ -1082,6 +1287,55 @@ function _is_check_proposal_output(out, n_b::Int, n_samples::Int, what::Abstract
     return (samples, convert(Vector{Float64}, log_qs))
 end
 
+# Laplace importance-sampling proposal for one batch (Booth & Hobert 1999, JRSS-B):
+# multivariate t (ν = 4) centered at the batch's posterior mode b* with scale (-H)^{-1},
+# H the Hessian of log p(y, b | θ) at b*. Subject-specific, so the effective sample size
+# does not collapse when each posterior is much narrower than the RE population (the pooled
+# adaptive Gaussian proposal's failure mode). Only for batches whose REs all have support ℝ
+# (Normal/MvNormal); returns `nothing` otherwise or when the mode/curvature is unavailable,
+# and the caller falls back to the adaptive Gaussian proposal.
+function _is_laplace_sample_batch(
+        dm::DataModel, info::REBatchInfo, θ::ComponentArray, const_cache, cache::_LLCache,
+        rng::AbstractRNG, n_samples::Int, re_names, re_types::NamedTuple; ν::Float64 = 4.0
+    )
+    for (ri, re) in enumerate(re_names)
+        isempty(get_levels(get_re_map(get_re_info(info)[ri]))) && continue
+        getproperty(re_types, re) in (:Normal, :MvNormal) || return nothing
+    end
+    b_star = try
+        _ghq_bstar_batch(dm, info, θ, const_cache, cache)
+    catch
+        nothing
+    end
+    (b_star === nothing || length(b_star) != get_n_b(info) || !all(isfinite, b_star)) &&
+        return nothing
+    H = try
+        _laplace_hessian_b(dm, info, θ, b_star, const_cache, cache, nothing, 1)
+    catch
+        return nothing
+    end
+    all(isfinite, H) || return nothing
+    C = cholesky(Symmetric(-Matrix{Float64}(H)); check = false)
+    issuccess(C) || return nothing
+    Σ = Symmetric(inv(C))
+    q = try
+        Distributions.MvTDist(ν, Vector{Float64}(b_star), Distributions.PDMats.PDMat(Matrix(Σ)))
+    catch
+        return nothing
+    end
+    samples = rand(rng, q, n_samples)
+    log_qs = [Distributions.logpdf(q, view(samples, :, m)) for m in 1:n_samples]
+    return (samples, log_qs)
+end
+
+# MC sample size of IS iteration `iter` under `MCEM_IS(ramp = true)`.
+function _mcem_is_ramp(iter::Int, n_full::Int, maxiters::Int)
+    n_min = min(n_full, max(20, n_full ÷ 10))
+    k_full = max(1, maxiters ÷ 2)
+    (iter >= k_full || k_full == 1) && return n_full
+    return n_min + round(Int, (n_full - n_min) * (iter - 1) / (k_full - 1))
+end
+
 # Unified IS E-step dispatcher for a single batch.
 # Returns (samples, log_ws, ess) — log_ws are log-normalized weights.
 function _is_sample_batch(
@@ -1094,18 +1348,24 @@ function _is_sample_batch(
         re_names::Vector{Symbol},
         re_types::NamedTuple,
         e_step::MCEM_IS,
-        blocks::Vector{_REAdaptBlock}
+        blocks::Vector{_REAdaptBlock};
+        n_samples::Int = e_step.n_samples
     )
-    n_samples = e_step.n_samples
     proposal = e_step.proposal
     # Choose sampling strategy
-    out, what = if proposal === :prior
+    lap = proposal === :laplace ?
+        _is_laplace_sample_batch(
+            dm, info, θ, const_cache, cache, rng, n_samples, re_names, re_types
+        ) : nothing
+    out, what = if lap !== nothing
+        (lap, "the Laplace-t proposal")
+    elseif proposal === :prior
         (
             _is_prior_sample_batch(
                 dm, info, θ, const_cache, cache, rng, n_samples, re_names
             ), "the prior proposal",
         )
-    elseif proposal === :gaussian
+    elseif proposal === :gaussian || proposal === :laplace   # :laplace fallback
         # Fall back to prior-based initial covariance until the blocks that actually
         # carry levels have adapted — gating on blocks[1] alone keeps every effect on
         # prior sampling whenever the first declared effect has no active level (#229).
@@ -1127,7 +1387,7 @@ function _is_sample_batch(
         re_dists = _re_dists_for_info(dm, info, θ, cache)
         (proposal(θ, info, re_dists, rng, n_samples), "the proposal")
     else
-        error("MCEM_IS: unknown proposal type $(repr(proposal)). Use :prior, :gaussian, or a Function.")
+        error("MCEM_IS: unknown proposal type $(repr(proposal)). Use :laplace, :gaussian, :prior, or a Function.")
     end
     samples, log_qs = _is_check_proposal_output(out, get_n_b(info), n_samples, what)
     log_ws, ess = _is_compute_log_weights(dm, info, θ, const_cache, cache, samples, log_qs)
@@ -1137,6 +1397,9 @@ end
 # Helper: is the current iteration still in the MCMC warm-up phase?
 _use_mcmc_this_iter(::Int, ::MCEM_MCMC) = true
 _use_mcmc_this_iter(iter::Int, es::MCEM_IS) = iter <= es.warm_start_mcmc_iters
+
+_mcem_thin_of(es::MCEM_MCMC) = es.thin
+_mcem_thin_of(es) = 1
 
 # Helper: get the MCMC e_step options for warm-up (or the method itself for MCEM_MCMC)
 _mcmc_e_step(es::MCEM_MCMC) = es
@@ -1238,6 +1501,33 @@ function _mcem_Q_core(
         end
     end
     return total
+end
+
+# Observation-only log-density of one batch: `_laplace_logf_batch` without the RE-prior
+# terms. When no parameter of the numeric Q1 M-step enters an RE distribution (the RE-prior
+# parameters are frozen for the iteration by the closed-form or Q2 sub-step), those terms are
+# constant in the optimized parameters, so the maximizer is unchanged while each objective
+# evaluation skips one RE logpdf per draw and level (an MvNormal solve per draw).
+function _mcem_obs_logf_batch(
+        dm::DataModel, batch_info::REBatchInfo, θ::ComponentArray,
+        b, const_cache::REConstantsCache, cache::_LLCache; tctx = nothing
+    )
+    T = promote_type(eltype(θ), eltype(b))
+    try
+        θ_re = tctx === nothing ? _symmetrize_psd_params(θ, get_fixed(get_model(dm))) :
+            tctx.θ_re
+        ll = zero(T)
+        for i in get_inds(batch_info)
+            η_ind = _build_eta_ind(dm, i, batch_info, b, const_cache, θ_re)
+            lli = _loglikelihood_individual(dm, i, θ_re, η_ind, cache)
+            isfinite(lli) || return convert(T, -Inf)::T
+            ll += lli
+        end
+        return convert(T, ll)::T
+    catch err
+        _is_numeric_error(err) && return convert(T, -Inf)::T
+        rethrow(err)
+    end
 end
 
 function _mcem_Q_array(
@@ -1363,6 +1653,20 @@ function _fit_model(
         dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
         serialization = serialization, force_saveat = true
     )
+    # Start repair (shared with SAEM): no finite log-joint for any initial RE draw at θ0.
+    if re_0 === nothing
+        θ0_r = _em_repair_start(
+            dm, batch_infos, θ0_u, const_cache,
+            ll_cache isa Vector ? ll_cache[1] : ll_cache, rng, re_names, "MCEM"
+        )
+        if θ0_r !== θ0_u
+            θ0_u = θ0_r
+            θ0_t = transform(θ0_u)
+            θ_const_u = deepcopy(θ0_u)
+            _apply_constants!(θ_const_u, constants)
+            θ_const_t = transform(θ_const_u)
+        end
+    end
 
     θt_free = ComponentArray(
         NamedTuple{Tuple(free_names)}(
@@ -1480,6 +1784,12 @@ function _fit_model(
     # IS proposal blocks — one Vector{_REAdaptBlock} per batch (only for MCEM_IS)
     re_types = get_re_types(get_random(get_model(dm)))
     ll_cache_single = ll_cache isa Vector ? ll_cache[1] : ll_cache
+    # automatic centering of additive fixed effects (shared detector, see saem.jl)
+    center_pairs = _saem_detect_centering_pairs(dm, free_names; lognormal = true)
+    if !isempty(center_pairs)
+        @info "MCEM: centering fixed effects on their additive random effects: " *
+            join(["$(p.mode === :mul ? "log " : "")$(p.fe) ↔ $(p.mode === :lnmul ? "log " : "")$(p.k == 0 ? p.re : "$(p.re)[$(p.k)]")" for p in center_pairs], ", ")
+    end
     proposal_blocks = if method.e_step isa MCEM_IS
         [
             _is_init_proposal_blocks(
@@ -1491,6 +1801,11 @@ function _fit_model(
         nothing
     end
 
+    # fixed effects entering any RE distribution (see `q1_obs_only` in the M-step)
+    re_dist_syms = Set{Symbol}()
+    for (_, syms) in Base.pairs(get_re_syms(get_random(get_model(dm))))
+        union!(re_dist_syms, syms)
+    end
     θ_prev = copy(θt_free)
     Q_prev = T0(Inf)
     θu_last = θ0_u   # tracks the full untransformed params at the end of each iteration
@@ -1514,6 +1829,7 @@ function _fit_model(
     weights_store = Vector{Vector{Float64}}(undef, length(batch_infos))
     ess_by_batch = fill(NaN, length(batch_infos))
 
+    mstep_curv = _SAEMMStepCurvature()   # carried M-step curvature (see the Q1 M-step)
     for iter in 1:(method.em.maxiters)
         mstep_skipped = false
         θt_curr = θ_prev isa ComponentArray ? θ_prev : ComponentArray(θ_prev, axs_free)
@@ -1525,6 +1841,7 @@ function _fit_model(
         θu_curr = inv_transform(θt_full_curr)
 
         use_mcmc = _use_mcmc_this_iter(iter, method.e_step)
+        ramp_full = true          # set by the IS branch when the sample size is ramped
         weights_by_batch = use_mcmc ? nothing : weights_store
         # Stale draws are only reusable once every batch has some and they came from the
         # same E-step mode, so force a full refresh on iteration 1 and on the one
@@ -1562,7 +1879,7 @@ function _fit_model(
                         re_names, mcmc_es.warm_start, last_params[bi];
                         outer_iter = iter
                     )
-                    samples_by_batch[bi] = samples
+                    samples_by_batch[bi] = _mcem_thin(samples, _mcem_thin_of(mcmc_es))
                     last_params[bi] = lastp
                 end
             else
@@ -1574,7 +1891,7 @@ function _fit_model(
                         re_names, mcmc_es.warm_start, last_params[bi];
                         outer_iter = iter
                     )
-                    samples_by_batch[bi] = samples
+                    samples_by_batch[bi] = _mcem_thin(samples, _mcem_thin_of(mcmc_es))
                     last_params[bi] = lastp
                 end
             end
@@ -1595,6 +1912,9 @@ function _fit_model(
         else
             # --- IS E-step ---
             is_es = method.e_step
+            n_iter = is_es.ramp ? _mcem_is_ramp(iter, is_es.n_samples, method.em.maxiters) :
+                is_es.n_samples
+            ramp_full = n_iter == is_es.n_samples
             if serialization isa SciMLBase.EnsembleThreads
                 nthreads = Threads.maxthreadid()
                 caches = _mcem_thread_caches(dm, ll_cache, nthreads)
@@ -1605,7 +1925,8 @@ function _fit_model(
                     info = batch_infos[bi]
                     samps, log_ws, ess = _is_sample_batch(
                         dm, info, θu_curr, const_cache, caches[c],
-                        batch_rngs[bi], re_names, re_types, is_es, proposal_blocks[bi]
+                        batch_rngs[bi], re_names, re_types, is_es, proposal_blocks[bi];
+                        n_samples = n_iter
                     )
                     samples_by_batch[bi] = samps
                     weights_by_batch[bi] = exp.(log_ws)
@@ -1622,7 +1943,8 @@ function _fit_model(
                     info = batch_infos[bi]
                     samps, log_ws, ess = _is_sample_batch(
                         dm, info, θu_curr, const_cache, ll_cache_single,
-                        batch_rngs[bi], re_names, re_types, is_es, proposal_blocks[bi]
+                        batch_rngs[bi], re_names, re_types, is_es, proposal_blocks[bi];
+                        n_samples = n_iter
                     )
                     samples_by_batch[bi] = samps
                     weights_by_batch[bi] = exp.(log_ws)
@@ -1636,11 +1958,11 @@ function _fit_model(
                 end
             end
             mean_ess = mean(filter(isfinite, ess_by_batch))
-            if mean_ess < 0.1 * is_es.n_samples
-                @warn "MCEM IS: low effective sample size" iter = iter ess = mean_ess n_samples = is_es.n_samples
+            if mean_ess < 0.1 * n_iter
+                @warn "MCEM IS: low effective sample size" iter = iter ess = mean_ess n_samples = n_iter
             end
             push!(diag.ess_hist, mean_ess)
-            S_diag = is_es.n_samples
+            S_diag = n_iter
         end
 
         # ── M-step ───────────────────────────────────────────────────────────
@@ -1749,6 +2071,7 @@ function _fit_model(
         # Determine Q1 free names and per-iteration full-θ state
         # (Q2-optimal params are now baked into mstep_constants).
         free_names_q1 = [n for n in free_names if n ∉ keys(mstep_constants)]
+        q1_obs_only = !any(in(re_dist_syms), free_names_q1)
         θ_const_u_q1 = copy(θ_const_u)
         _apply_constants!(θ_const_u_q1, mstep_constants)
         θ_const_t_q1 = transform(θ_const_u_q1)
@@ -1774,7 +2097,7 @@ function _fit_model(
             axs_free_iter = getaxes(θt_free_iter)
 
             # Anchored at the current iterate, as for Q2 above.
-            _, _, _θt_from_z, _z_from_θt = _precondition_maps(
+            _, s_pc_q1, _θt_from_z, _z_from_θt = _precondition_maps(
                 get_model(dm), free_names_q1, θt_free_iter, axs_free_iter,
                 _precondition_on(method)
             )
@@ -1797,14 +2120,21 @@ function _fit_model(
                     setproperty!(θt_full_loc, name, getproperty(θt_free_loc, name))
                 end
                 θu = inv_transform(θt_full_loc)
-                Q = _mcem_Q(
-                    dm, batch_infos, θu, const_cache, ll_cache, samples_by_batch,
-                    weights_by_batch; serialization = serialization, q_cache = q_cache
-                )
+                Q = q1_obs_only ?
+                    _mcem_Q_core(
+                        _mcem_obs_logf_batch, dm, batch_infos, θu, const_cache, ll_cache,
+                        samples_by_batch, weights_by_batch;
+                        serialization = serialization, q_cache = q_cache
+                    ) :
+                    _mcem_Q(
+                        dm, batch_infos, θu, const_cache, ll_cache, samples_by_batch,
+                        weights_by_batch; serialization = serialization, q_cache = q_cache
+                    )
                 !isfinite(Q) && return Inf
                 obj = -Q + _penalty_value(θu, penalty)
                 extra_objective === nothing || (obj += extra_objective(θu))
                 !isfinite(obj) && return Inf
+                _saem_mstep_record!(mstep_curv, z, obj)   # gradients for the carried curvature
                 if use_cache
                     obj_cache.θ[] = copy(θt_vec)
                     obj_cache.obj[] = obj
@@ -1812,7 +2142,10 @@ function _fit_model(
                 return obj
             end
 
-            optf = OptimizationFunction(obj_only, method.adtype)
+            # Value-and-gradient objective and carried BFGS preconditioner, shared with SAEM
+            # (see `_SAEMMStepCurvature` / `_saem_mstep_optf` in saem.jl): one dual pass per
+            # trial point, and each M-step's LBFGS starts from the curvature of the last ones.
+            optf = _saem_mstep_optf(obj_only, method.adtype, length(θt_free_iter))   # coordinates, not names
             lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
                 fe, free_names_q1, collect(θt_free_iter), method.optimizer, method.lb,
                 method.ub, constants; method_label = "MCEM"
@@ -1822,7 +2155,11 @@ function _fit_model(
                 OptimizationProblem(optf, z0; lb = _z_from_θt(lb), ub = _z_from_θt(ub)) :
                 OptimizationProblem(optf, z0)
 
-            sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
+            _saem_mstep_curv_reset!(mstep_curv, free_names_q1)
+            mstep_opt = use_bounds ? method.optimizer :
+                _saem_mstep_optimizer(method.optimizer, mstep_curv, s_pc_q1)
+            sol = Optimization.solve(prob, mstep_opt; method.optim_kwargs...)
+            use_bounds || _saem_mstep_curv_update!(mstep_curv, s_pc_q1)
 
             if any(!isfinite, sol.u)
                 @warn "MCEM M-step iter $iter: optimizer returned non-finite parameters; skipping update."
@@ -1843,6 +2180,15 @@ function _fit_model(
                 )
                 Q_new = Q_new == Inf ? T0(Inf) : Q_new
             end
+        end
+
+        # Centering step (post M-step): jump to the best point of the a + η ridge.
+        if !isempty(center_pairs) && !mstep_skipped
+            θu_new = _mcem_center!(
+                center_pairs, θu_new, dm, batch_infos, samples_by_batch,
+                use_mcmc ? nothing : weights_by_batch, proposal_blocks, last_params,
+                const_cache, ll_cache_single, re_names
+            )
         end
 
         # Update θt_free to reflect full current state (use full axes for tracking)
@@ -1878,8 +2224,8 @@ function _fit_model(
                 Q_window, method.em.atol_Q,
                 method.em.rtol_Q
             ) : (false, T0(NaN), one(T0))
-        pass_θ = passθ && !mstep_skipped
-        pass_Q = passQ && !mstep_skipped
+        pass_θ = passθ && !mstep_skipped && ramp_full
+        pass_Q = passQ && !mstep_skipped && ramp_full
 
         if method.store_diagnostics && iter % method.diagnostics_every == 0
             push!(diag.θ_hist, θ_prev_new)

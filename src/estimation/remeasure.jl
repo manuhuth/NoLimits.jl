@@ -127,10 +127,12 @@ concatenates the per-segment outputs:
 The type parameter `T` tracks the element type of the accumulator (may be a
 `ForwardDiff.Dual` when `θ` carries gradient tags).
 """
-struct CompositeRE{T <: Number} <: AbstractREMeasure
-    segment_fns::Vector{Any}          # f_k : ℝ^dk → ℝ^dk
-    correction_fns::Vector{Any}       # c_k : ℝ^dk → scalar, or nothing for zero correction
-    ranges::Vector{UnitRange{Int}}    # z-index range for each segment
+struct CompositeRE{T <: Number, SF <: Tuple, CF <: Tuple, RG <: Tuple} <: AbstractREMeasure
+    # Tuples (not Vector{Any}), so every segment map/correction has a concrete type and
+    # `transform`/`logcorrection` compile to straight-line code.
+    segment_fns::SF                   # f_k : ℝ^dk → ℝ^dk
+    correction_fns::CF                # c_k : ℝ^dk → scalar, or nothing for zero correction
+    ranges::RG                        # z-index range (UnitRange{Int}) for each segment
     n_b::Int
     has_correction::Bool              # fast-path flag: false if all corrections are nothing
     unbounded::Bool                   # true iff every RE segment has support ℝ^dk, making
@@ -138,19 +140,31 @@ struct CompositeRE{T <: Number} <: AbstractREMeasure
     # keep the prior-centered rule
 end
 
+function CompositeRE{T}(
+        segment_fns::Tuple, correction_fns::Tuple, ranges::Tuple,
+        n_b::Int, has_correction::Bool, unbounded::Bool
+    ) where {T}
+    return CompositeRE{T, typeof(segment_fns), typeof(correction_fns), typeof(ranges)}(
+        segment_fns, correction_fns, ranges, n_b, has_correction, unbounded
+    )
+end
+
 function transform(re::CompositeRE, z::AbstractVector)
-    parts = [re.segment_fns[k](z[re.ranges[k]]) for k in eachindex(re.segment_fns)]
-    return reduce(vcat, parts)
+    parts = map((f, r) -> f(z[r]), re.segment_fns, re.ranges)
+    return vcat(parts...)
+end
+
+# Σ_k c_k(z[r_k]) over the non-`nothing` corrections, unrolled over the tuples.
+_composite_corr(::Tuple{}, ::Tuple{}, z, acc) = acc
+function _composite_corr(cf::Tuple, rs::Tuple, z, acc)
+    c = first(cf)
+    acc2 = c === nothing ? acc : acc + c(z[first(rs)])
+    return _composite_corr(Base.tail(cf), Base.tail(rs), z, acc2)
 end
 
 function logcorrection(re::CompositeRE, z::AbstractVector)
     re.has_correction || return zero(eltype(z))
-    total = zero(eltype(z))
-    for k in eachindex(re.correction_fns)
-        re.correction_fns[k] === nothing && continue
-        total += re.correction_fns[k](z[re.ranges[k]])
-    end
-    return total
+    return _composite_corr(re.correction_fns, re.ranges, z, zero(eltype(z)))
 end
 
 Base.eltype(::CompositeRE{T}) where {T} = T
@@ -647,7 +661,8 @@ function build_re_measure_from_batch(
     T = isempty(non_nothing_L) ? T :
         mapreduce(eltype, promote_type, non_nothing_L; init = T)
     return CompositeRE{T}(
-        segment_fns, correction_fns, all_ranges, n_b, has_correction, all_unbounded
+        Tuple(segment_fns), Tuple(correction_fns), Tuple(all_ranges), n_b,
+        has_correction, all_unbounded
     )
 end
 
@@ -715,13 +730,17 @@ function build_centered_re_measure(
         ll_cache::_LLCache;
         jitter::Float64 = 1.0e-6,
         max_tries::Int = 6,
-        θ_prior::ComponentArray = θu
+        θ_prior::ComponentArray = θu,
+        H_star::Union{Nothing, AbstractMatrix} = nothing
     )
     # Always work in Float64: SAEM stores eb_modes as Float32, and the Hessian
     # computation promotes to Float64 regardless, so T must be Float64.
     b_star = Vector{Float64}(b_star)
     T = Float64
-    H = _laplace_hessian_b(dm, batch_info, θu, b_star, const_cache, ll_cache, nothing, bi)
+    # `H_star`: the exact Hessian at b_star (same θu) when the caller already has it
+    H = H_star !== nothing && size(H_star) == (length(b_star), length(b_star)) ?
+        Matrix{Float64}(H_star) :
+        _laplace_hessian_b(dm, batch_info, θu, b_star, const_cache, ll_cache, nothing, bi)
     # S only places the nodes — the change-of-variables correction compensates any
     # invertible scaling exactly — so the admissibility test is plain definiteness of -H,
     # which is also what `negH_definite_without_jitter` now applies to the Laplace *value*
@@ -748,6 +767,183 @@ function build_centered_re_measure(
         dm, batch_info, θ_prior, b, const_cache, ll_cache
     )
     return CenteredREMeasure(b_star, S, T(log_det_S), re_prior_logf, get_n_b(batch_info))
+end
+
+# ---------------------------------------------------------------------------
+# Adaptive rule in the transport reference space (bounded-support REs)
+# ---------------------------------------------------------------------------
+
+"""
+    AdaptiveTransportRE <: AbstractREMeasure
+
+Mode-centered (adaptive) quadrature for batches whose random effects have bounded
+support (LogNormal, Gamma, Beta, ...), where b-space centering is invalid because nodes
+would leave the support. The prior transport measure `base` maps the reference variable
+u ∈ ℝ^n_b to η = T(u) with correction c(u), so the batch integral is
+
+    ∫ p(y | T(u)) e^{c(u)} φ(u) du.
+
+The nodes are placed at u = û + S x, where û is the mode of the integrand in u-space and
+S S' the inverse negative Hessian there. For x ~ N(0, I) the change of variables gives the
+correction
+
+    log c̃(x) = c(u) - |u|²/2 + |x|²/2 + log|det S|,
+
+which is exact for any invertible S, so this is the same integral; only the node placement
+changes. Centered at the prior (û = 0, S = I) a narrow likelihood bump is missed by the
+nodes and the estimate is badly off at any practical level.
+
+`û` and `S` are Float64 and frozen w.r.t. the outer AD (as for `CenteredREMeasure`);
+`base` carries the θ-dependence of T and c.
+"""
+struct AdaptiveTransportRE{M <: AbstractREMeasure} <: AbstractREMeasure
+    base::M
+    û::Vector{Float64}
+    S::LowerTriangular{Float64, Matrix{Float64}}
+    log_det_S::Float64
+    n_b::Int
+end
+
+transform(re::AdaptiveTransportRE, x::AbstractVector) = transform(re.base, re.û .+ re.S * x)
+function logcorrection(re::AdaptiveTransportRE, x::AbstractVector)
+    u = re.û .+ re.S * x
+    return logcorrection(re.base, u) - sum(abs2, u) / 2 + sum(abs2, x) / 2 + re.log_det_S
+end
+Base.eltype(re::AdaptiveTransportRE) = eltype(re.base)
+
+# log of the u-space integrand of one batch (up to the constant -n_b/2 log 2π):
+# Σᵢ ℓᵢ(T(u)) + c(u) - |u|²/2. Generic in eltype(u) for ForwardDiff.
+function _transport_logintegrand(
+        u::AbstractVector, base::AbstractREMeasure, dm::DataModel, info::REBatchInfo,
+        θ_re::ComponentArray, const_cache, ll_cache::_LLCache
+    )
+    b = transform(base, u)
+    total = logcorrection(base, u) - sum(abs2, u) / 2
+    for i in get_inds(info)
+        η_i = _build_eta_ind(dm, i, info, b, const_cache, θ_re)
+        lli = _loglikelihood_individual(dm, i, θ_re, η_i, ll_cache)
+        isfinite(lli) || return oftype(total, -Inf)
+        total += lli
+    end
+    return total
+end
+
+# Reference point u with transform(base, u) ≈ b, segment by segment: a warm start for the
+# u-space mode from the b-space EB mode. Univariate segments (all bounded transports are
+# monotone) use safeguarded Newton/bisection on [-40, 40]; multivariate segments Newton on
+# the segment map (one step for the affine Gaussian case). Returns `nothing` on failure.
+function _transport_inverse(base::CompositeRE, b::AbstractVector{<:Real})
+    u = zeros(Float64, base.n_b)
+    for k in eachindex(base.segment_fns)
+        r = base.ranges[k]
+        f = base.segment_fns[k]
+        target = Float64.(b[r])
+        if length(r) == 1
+            g = x -> f([x])[1] - target[1]
+            lo, hi = -40.0, 40.0
+            (g(lo) <= 0 <= g(hi)) || return nothing
+            x = 0.0
+            for _ in 1:100
+                gx = g(x)
+                abs(gx) <= 1.0e-12 * max(1.0, abs(target[1])) && break
+                gx > 0 ? (hi = x) : (lo = x)
+                d = ForwardDiff.derivative(g, x)
+                xn = d > 0 ? x - gx / d : (lo + hi) / 2
+                x = (lo < xn < hi) ? xn : (lo + hi) / 2
+            end
+            u[first(r)] = x
+        else
+            x = zeros(Float64, length(r))
+            for _ in 1:50
+                res = f(x) .- target
+                maximum(abs, res) <= 1.0e-12 * max(1.0, maximum(abs, target)) && break
+                J = ForwardDiff.jacobian(f, x)
+                size(J, 1) == size(J, 2) || return nothing
+                step = try
+                    J \ res
+                catch
+                    return nothing
+                end
+                x .-= step
+                all(isfinite, x) || return nothing
+            end
+            u[r] .= x
+        end
+    end
+    return u
+end
+
+"""
+    build_adaptive_transport_measure(base, dm, info, θ_val, const_cache, ll_cache; maxiter, gtol)
+
+Find the u-space mode û by Levenberg-Marquardt-damped Newton ascent from u = 0 (value,
+gradient and Hessian from one ForwardDiff pass; damping λI added until -H + λI is positive
+definite; Armijo backtracking) and return an [`AdaptiveTransportRE`](@ref) around `base`.
+`θ_val` is the Float64 parameter vector.
+
+The change of variables is exact for ANY center and invertible scale, so an unconverged
+search still yields a valid rule as long as -H is positive definite at the final point -
+only the node placement (accuracy) suffers, and a near-mode center is far better than the
+prior center. Returns `nothing` only when the integrand is not finite at u = 0 or -H at
+the final point is not positive definite; the caller then keeps the prior-centered rule.
+"""
+function build_adaptive_transport_measure(
+        base::AbstractREMeasure, dm::DataModel, info::REBatchInfo,
+        θ_val::ComponentArray, const_cache, ll_cache::_LLCache;
+        maxiter::Int = 100, gtol::Float64 = 1.0e-8, b_star = nothing
+    )
+    n = get_n_b(info)
+    θ_re = _symmetrize_psd_params(θ_val, get_fixed(get_model(dm)))
+    base_val = build_re_measure_from_batch(info, θ_val, const_cache, dm, ll_cache)
+    F = u -> _transport_logintegrand(u, base_val, dm, info, θ_re, const_cache, ll_cache)
+    # warm start from the b-space EB mode when available (the u-space mode differs from
+    # its preimage only by the transport Jacobian term), else from the prior center u = 0
+    u0 = (b_star === nothing || !(base_val isa CompositeRE) || length(b_star) != n) ? nothing :
+        _transport_inverse(base_val, b_star)
+    u = (u0 !== nothing && all(isfinite, u0) && isfinite(F(u0))) ? u0 : zeros(Float64, n)
+    dr = ForwardDiff.DiffResults.HessianResult(u)
+    eval! = v -> ForwardDiff.hessian!(dr, F, v)
+    eval!(u)
+    Fu = ForwardDiff.DiffResults.value(dr)
+    isfinite(Fu) || return nothing
+    for _ in 1:maxiter
+        g = copy(ForwardDiff.DiffResults.gradient(dr))
+        A = -Matrix(ForwardDiff.DiffResults.hessian(dr))
+        (all(isfinite, g) && all(isfinite, A)) || break
+        maximum(abs, g) <= gtol * max(1.0, abs(Fu)) && break
+        λ = 0.0
+        C = cholesky(Symmetric(A); check = false)
+        while !issuccess(C)
+            λ = λ == 0 ? 1.0e-6 * max(1.0, maximum(abs, A)) : 10λ
+            λ > 1.0e12 && break
+            C = cholesky(Symmetric(A + λ * I); check = false)
+        end
+        issuccess(C) || break
+        d = C \ g
+        t, slope, moved = 1.0, dot(g, d), false
+        while t > 1.0e-10
+            Fn = F(u .+ t .* d)
+            if isfinite(Fn) && Fn >= Fu + 1.0e-4 * t * slope
+                u .+= t .* d
+                moved = true
+                break
+            end
+            t /= 2
+        end
+        moved || break
+        eval!(u)
+        Fu = ForwardDiff.DiffResults.value(dr)
+    end
+    eval!(u)
+    A = -Matrix(ForwardDiff.DiffResults.hessian(dr))
+    all(isfinite, A) || return nothing
+    C = cholesky(Symmetric(A); check = false)
+    issuccess(C) || return nothing
+    cS = cholesky(Symmetric(inv(C)); check = false)
+    issuccess(cS) || return nothing
+    return AdaptiveTransportRE(
+        base, u, LowerTriangular(Matrix(cS.L)), -sum(log, diag(C.L)), n
+    )
 end
 
 # ---------------------------------------------------------------------------

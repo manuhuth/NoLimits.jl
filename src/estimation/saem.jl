@@ -154,6 +154,168 @@ function _saem_store_push!(store::_SAEMSampleStore, b_chains, γ::Float64, n_cha
     return store
 end
 
+# ── persistent curvature for the numeric M-step ─────────────────────────────
+# The numeric M-step runs a few quasi-Newton iterations on an objective that changes only
+# by Monte-Carlo noise between SAEM iterations, yet every solve used to start from an
+# identity inverse Hessian: the first step was a raw gradient step (capped by the line
+# search's `maxstep`) that the backtracking line search then shrank through several extra
+# objective evaluations (each a full pass of model solves). The gradients the optimizer
+# evaluates are recorded here (from the ForwardDiff duals the objective already sees), a
+# BFGS approximation of the objective's Hessian is carried across SAEM iterations in the
+# transformed (θt) coordinates, and the next M-step's LBFGS uses it as its preconditioner
+# (initial inverse Hessian), so its first step is a quasi-Newton step. This changes only
+# how the M-step optimizer moves, not the M-step objective.
+mutable struct _SAEMMStepCurvature
+    names::Vector{Symbol}          # free names the approximation belongs to
+    B::Matrix{Float64}             # BFGS Hessian approximation of the objective in θt
+    n_updates::Int
+    zs::Vector{Vector{Float64}}    # z-points of the current solve's gradient evaluations
+    gs::Vector{Vector{Float64}}    # the gradients there (z coordinates)
+end
+function _SAEMMStepCurvature()
+    return _SAEMMStepCurvature(
+        Symbol[], zeros(0, 0), 0, Vector{Float64}[], Vector{Float64}[]
+    )
+end
+
+_saem_mstep_record!(::_SAEMMStepCurvature, z, obj) = nothing
+function _saem_mstep_record!(
+        c::_SAEMMStepCurvature, z::AbstractVector{ForwardDiff.Dual{Tg, Float64, N}},
+        obj::ForwardDiff.Dual{Tg, Float64, N}
+    ) where {Tg, N}
+    # Only a full gradient (one chunk, identity seeds) is a usable record.
+    N == length(z) || return nothing
+    @inbounds for j in 1:N
+        ForwardDiff.partials(z[j])[j] == 1.0 || return nothing
+    end
+    isfinite(ForwardDiff.value(obj)) || return nothing
+    g = Float64[ForwardDiff.partials(obj)[j] for j in 1:N]
+    all(isfinite, g) || return nothing
+    push!(c.zs, Float64[ForwardDiff.value(zj) for zj in z])
+    push!(c.gs, g)
+    return nothing
+end
+
+function _saem_mstep_curv_reset!(c::_SAEMMStepCurvature, names::Vector{Symbol})
+    if c.names != names
+        c.names = copy(names)
+        c.B = zeros(0, 0)
+        c.n_updates = 0
+    end
+    empty!(c.zs)
+    empty!(c.gs)
+    return c
+end
+
+# BFGS updates of `c.B` from consecutive recorded gradient evaluations of the last solve.
+# z and θt are related by θt = θ0 + s_pc .* z, so the pair maps to θt as (s_pc .* Δz,
+# Δg ./ s_pc). Pairs violating the curvature condition are skipped (B stays PD).
+function _saem_mstep_curv_update!(c::_SAEMMStepCurvature, s_pc::AbstractVector)
+    n = length(s_pc)
+    for k in 1:(length(c.zs) - 1)
+        sz = c.zs[k + 1] .- c.zs[k]
+        yz = c.gs[k + 1] .- c.gs[k]
+        sy = dot(sz, yz)
+        (isfinite(sy) && sy > 1.0e-10 * norm(sz) * norm(yz) && sy > 0) || continue
+        sθ = s_pc .* sz
+        yθ = yz ./ s_pc
+        if size(c.B, 1) != n
+            # Standard initial scaling (Nocedal & Wright eq. 6.20), taken in z coordinates.
+            γ0 = dot(yz, yz) / sy
+            c.B = Matrix(Diagonal(γ0 ./ (s_pc .^ 2)))
+        end
+        Bs = c.B * sθ
+        sBs = dot(sθ, Bs)
+        (isfinite(sBs) && sBs > 0) || continue
+        c.B .+= (yθ * yθ') ./ sy .- (Bs * Bs') ./ sBs
+        c.n_updates += 1
+    end
+    empty!(c.zs)
+    empty!(c.gs)
+    return c
+end
+
+# The M-step optimizer for this solve: the default-style unconstrained LBFGS (no user
+# preconditioner) gets the carried Hessian approximation, mapped to z, as preconditioner.
+function _saem_mstep_optimizer(opt, c::_SAEMMStepCurvature, s_pc::AbstractVector)
+    opt isa OptimizationOptimJL.LBFGS || return opt
+    opt.P === nothing || return opt
+    (c.n_updates > 0 && size(c.B, 1) == length(s_pc)) || return opt
+    Bz = c.B .* (s_pc * s_pc')
+    all(isfinite, Bz) || return opt
+    C = cholesky(Symmetric(Bz); check = false)
+    issuccess(C) || return opt
+    return OptimizationOptimJL.LBFGS(
+        opt.m, opt.alphaguess!, opt.linesearch!, C, opt.precondprep!, opt.manifold, false
+    )
+end
+
+# ── value-and-gradient objective for the numeric M-step ─────────────────────
+# A ForwardDiff pass of the M-step objective costs little more than a Float64 pass (both
+# are dominated by per-solve overhead of the model's ODE/likelihood evaluation), but the
+# line search used to evaluate trial points with a Float64 pass and then, once a trial was
+# accepted, re-evaluate the same point with a dual pass for its gradient. Here every Float64
+# evaluation runs the single-chunk dual pass and keeps the gradient, which the optimizer's
+# gradient request at the accepted point then reuses: one pass per trial point instead of
+# two per accepted point. Same objective and gradient (ForwardDiff, one chunk).
+mutable struct _SAEMFGCache
+    z::Vector{Float64}
+    val::Float64
+    g::Vector{Float64}
+    valid::Bool
+end
+_SAEMFGCache(n::Int) = _SAEMFGCache(zeros(n), NaN, zeros(n), false)
+
+function _saem_fg_pass!(c::_SAEMFGCache, f::F, z::AbstractVector{Float64}, p, ::Val{N}) where {F, N}
+    Tg = typeof(ForwardDiff.Tag(f, Float64))
+    zd = Vector{ForwardDiff.Dual{Tg, Float64, N}}(undef, N)
+    @inbounds for i in 1:N
+        zd[i] = ForwardDiff.Dual{Tg}(z[i], ntuple(j -> Float64(i == j), Val(N)))
+    end
+    r = f(zd, p)
+    copyto!(c.z, z)
+    if r isa ForwardDiff.Dual
+        c.val = Float64(ForwardDiff.value(r))
+        @inbounds for j in 1:N
+            c.g[j] = ForwardDiff.partials(r)[j]
+        end
+    else
+        c.val = Float64(r)
+        fill!(c.g, NaN)
+    end
+    c.valid = true
+    return c
+end
+
+@inline function _saem_fg_ensure!(c::_SAEMFGCache, f::F, z::AbstractVector{Float64}, p) where {F}
+    (c.valid && c.z == z) || _saem_fg_pass!(c, f, z, p, Val(length(z)))
+    return c
+end
+
+_saem_fg_value(c::_SAEMFGCache, f::F, z, p) where {F} = f(z, p)
+function _saem_fg_value(c::_SAEMFGCache, f::F, z::AbstractVector{Float64}, p) where {F}
+    return _saem_fg_ensure!(c, f, z, p).val
+end
+function _saem_fg_grad!(c::_SAEMFGCache, f::F, G, z::AbstractVector{Float64}, p) where {F}
+    copyto!(G, _saem_fg_ensure!(c, f, z, p).g)
+    return c.val
+end
+
+# The numeric M-step's OptimizationFunction: the value-and-gradient form above for
+# ForwardDiff with a single-chunk gradient (n <= 12, ForwardDiff's default chunk limit),
+# else the plain objective differentiated by `adtype`.
+function _saem_mstep_optf(obj::F, adtype, n::Int) where {F}
+    if adtype isa Optimization.AutoForwardDiff && 1 <= n <= 12
+        fgc = _SAEMFGCache(n)
+        return OptimizationFunction(
+            (z, p) -> _saem_fg_value(fgc, obj, z, p), adtype;
+            grad = (G, z, p) -> (_saem_fg_grad!(fgc, obj, G, z, p); nothing),
+            fg = (G, z, p) -> _saem_fg_grad!(fgc, obj, G, z, p)
+        )
+    end
+    return OptimizationFunction(obj, adtype)
+end
+
 # ── anneal_to_fixed helpers ──────────────────────────────────────────────────
 
 function _saem_validate_anneal(anneal_to_fixed, anneal_schedule, dm, θ_const_u)
@@ -331,7 +493,7 @@ or closed-form updates (when `builtin_stats` is enabled).
 
 # Keyword Arguments
 - `optimizer`: M-step Optimization.jl optimizer. Defaults to `LBFGS` with backtracking.
-- `optim_kwargs::NamedTuple = (; iterations=10, g_abstol=1e-4, f_reltol=1e-6)`: keyword
+- `optim_kwargs::NamedTuple = (; iterations=4, g_abstol=1e-4, f_reltol=1e-6)`: keyword
   arguments for the M-step `solve`. The defaults cap the inner LBFGS at 10 iterations
   and convergence tolerances (max-norm gradient < 1e-4, relative function improvement
   < 1e-6) appropriate for the approximate M-step in SAEM — tight convergence is
@@ -351,8 +513,9 @@ or closed-form updates (when `builtin_stats` is enabled).
 - `warm_start::Bool = true`: initialize the sampler from the previous iteration's modes.
 - `verbose::Bool = false`: print per-iteration diagnostics.
 - `progress::Bool = true`: show a progress bar.
-- `mcmc_steps`: number of MCMC sweeps per E-step. Defaults to `1` for `SaemixMH` (one
-  sweep runs kernels 1–3, i.e. `n_kern1 + n_kern2 + n_kern3` proposals per RE level) and
+- `mcmc_steps`: number of MCMC sweeps per E-step. Defaults for `SaemixMH` to one sweep per
+  3 random-effect dimensions of the largest batch, `max(1, cld(n_b, 3))` (one sweep runs
+  kernels 1–3, i.e. `n_kern1 + n_kern2 + n_kern3` proposals per RE level), and
   `80` for Turing-based samplers (`MH`, `AdaptiveNoLimitsMH`, `NUTS`). Override explicitly
   when needed.
 - `q_store_max::Int = 50`: ring buffer capacity — maximum number of snapshots retained.
@@ -440,7 +603,7 @@ end
 
 function SAEM(;
         optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
-        optim_kwargs = (; iterations = 10, g_abstol = 1.0e-4, f_reltol = 1.0e-6),
+        optim_kwargs = (; iterations = 4, g_abstol = 1.0e-4, f_reltol = 1.0e-6),
         adtype = Optimization.AutoForwardDiff(),
         sampler = SaemixMH(),
         turing_kwargs = NamedTuple(),
@@ -592,7 +755,8 @@ function SAEM(;
         ebe_rescue_on_high_grad, ebe_rescue_multistart_n, ebe_rescue_multistart_k,
         ebe_rescue_max_rounds, ebe_rescue_grad_tol, ebe_rescue_multistart_sampling
     )
-    resolved_mcmc_steps = isnothing(mcmc_steps) ? (sampler isa SaemixMH ? 1 : 80) :
+    # SaemixMH default 0 = automatic: resolved at fit time from the RE batch dimension
+    resolved_mcmc_steps = isnothing(mcmc_steps) ? (sampler isa SaemixMH ? 0 : 80) :
         mcmc_steps
     saem = SAEMOptions(
         sampler, turing_kwargs, update_schedule, warm_start, verbose, progress,
@@ -1616,6 +1780,261 @@ function _saem_prune_hmm_outcome_targets(dm::DataModel, resid_var_param, hmm_out
         return resid_var_param
     end
     return NamedTuple(kept)
+end
+
+# ---------------------------------------------------------------------------
+# Automatic centering ("mu-referencing") of additive fixed effects
+# ---------------------------------------------------------------------------
+#
+# When a fixed effect `a` enters the model ONLY as `a + η` (or `a + η[k]`) and that RE
+# term enters only through the same sums, the likelihood depends on (a, η) only through
+# a + η: shifting a → a + δ, η → η - δ for every level leaves it unchanged. Plain SAEM
+# then crawls along this ridge (the M-step moves a given η, the E-step moves η given a);
+# on a linear random intercept-slope model it needs thousands of iterations. After each
+# M-step we move to the best point on the ridge in one step: δ = mean over levels and
+# chains of (η - prior mean), which maximizes the Gaussian RE prior along the shift
+# (for a vector RE only when every component is centered, then it is the exact joint
+# optimum for any Ω). Same estimand; only the path changes.
+
+_cs_is_term(ex, re::Symbol, k::Int) =
+    k == 0 ? ex === re : (
+        ex isa Expr && ex.head === :ref && length(ex.args) == 2 &&
+        ex.args[1] === re && ex.args[2] == k
+    )
+
+# occurrences of symbol `s` (as a value, not as a call head)
+function _cs_count_sym(ex, s::Symbol)
+    ex === s && return 1
+    ex isa Expr || return 0
+    args = ex.head === :call ? ex.args[2:end] : ex.args
+    return sum((_cs_count_sym(a, s) for a in args); init = 0)
+end
+
+function _cs_count_term(ex, re::Symbol, k::Int)
+    _cs_is_term(ex, re, k) && return 1
+    ex isa Expr || return 0
+    args = ex.head === :call ? ex.args[2:end] : ex.args
+    return sum((_cs_count_term(a, re, k) for a in args); init = 0)
+end
+
+# number of `+` calls having both `fe` and the RE term as direct arguments
+function _cs_count_pairs(ex, fe::Symbol, re::Symbol, k::Int)
+    ex isa Expr || return 0
+    n = 0
+    if ex.head === :call && ex.args[1] === :+
+        args = ex.args[2:end]
+        n += (count(==(fe), args) == 1 && count(a -> _cs_is_term(a, re, k), args) == 1)
+    end
+    args = ex.head === :call ? ex.args[2:end] : ex.args
+    return n + sum((_cs_count_pairs(a, fe, re, k) for a in args); init = 0)
+end
+
+# number of `*` calls having `fe` and `exp(<RE term>)` as direct arguments (log-scale fe:
+# fe * exp(η) = exp(log fe + η), the additive ridge on the transformed scale)
+function _cs_count_mul_pairs(ex, fe::Symbol, re::Symbol, k::Int)
+    ex isa Expr || return 0
+    n = 0
+    if ex.head === :call && ex.args[1] === :*
+        args = ex.args[2:end]
+        isexpterm(a) = a isa Expr && a.head === :call && length(a.args) == 2 &&
+            a.args[1] === :exp && _cs_is_term(a.args[2], re, k)
+        n += (count(==(fe), args) == 1 && count(isexpterm, args) == 1)
+    end
+    args = ex.head === :call ? ex.args[2:end] : ex.args
+    return n + sum((_cs_count_mul_pairs(a, fe, re, k) for a in args); init = 0)
+end
+
+"""
+    _saem_detect_centering_pairs(dm, free_names) -> Vector{NamedTuple}
+
+Pairs `(fe, re, k)` (k = 0 for a scalar RE, else the component) such that the free
+fixed effect `fe` (scalar, identity scale, unbounded, absent from every RE distribution)
+and the RE term occur in `@formulas`/`@preDifferentialEquation` only as two direct
+arguments of the same `+` call, never in `@DifferentialEquation`/`@initialDE`, for a
+`Normal`/`MvNormal` RE. Vector REs qualify only when every component is paired.
+"""
+# number of `*` calls having `fe` and the (scalar) RE symbol as direct arguments
+# (fe * η with η log-normal: fe * η = fe e^δ * η e^{-δ}, a ridge in log η)
+function _cs_count_prod_pairs(ex, fe::Symbol, re::Symbol)
+    ex isa Expr || return 0
+    n = 0
+    if ex.head === :call && ex.args[1] === :*
+        args = ex.args[2:end]
+        n += (count(==(fe), args) == 1 && count(==(re), args) == 1)
+    end
+    args = ex.head === :call ? ex.args[2:end] : ex.args
+    return n + sum((_cs_count_prod_pairs(a, fe, re) for a in args); init = 0)
+end
+
+function _saem_detect_centering_pairs(
+        dm::DataModel, free_names::Vector{Symbol}; lognormal::Bool = false
+    )
+    model = get_model(dm)
+    fe = get_fixed(model)
+    lines = Any[]
+    append!(lines, get_formulas_ir(get_formulas(model)).lines)
+    excluded = Set{Symbol}()
+    de = model.de
+    if de !== nothing
+        de.prede !== nothing && append!(lines, de.prede.meta.lines)
+        de.de !== nothing && union!(excluded, de.de.meta.var_syms, de.de.meta.fun_syms)
+        de.initial !== nothing && union!(excluded, de.initial.ir.var_syms, de.initial.ir.prop_syms)
+    end
+    re_syms_map = get_re_syms(get_random(model))
+    in_re_dists = Set{Symbol}()
+    for (_, syms) in Base.pairs(re_syms_map)
+        union!(in_re_dists, syms)
+    end
+    family = _saem_re_family_map(dm)
+    θ0 = get_θ0_untransformed(fe)
+    lo, hi = get_bounds_untransformed(fe)
+    tr = get_transform(fe)
+    count_all(f) = sum((f(l) for l in lines); init = 0)
+    candidates = Pair{Symbol, Symbol}[]      # fe => :add (identity, unbounded) | :mul (log)
+    for a in free_names
+        a in in_re_dists && continue
+        a in excluded && continue
+        getproperty(θ0, a) isa Real || continue
+        l, h = getproperty(lo, a), getproperty(hi, a)
+        θp = copy(θ0)
+        setproperty!(θp, a, 0.37)
+        t1 = getproperty(tr(θp), a)
+        if !isfinite(l) && !isfinite(h) && t1 == 0.37
+            push!(candidates, a => :add)
+        elseif 0 <= l <= EPSILON && !isfinite(h) && isapprox(t1, log(0.37); rtol = 1.0e-12)
+            setproperty!(θp, a, 2.5)
+            isapprox(getproperty(tr(θp), a), log(2.5); rtol = 1.0e-12) && push!(candidates, a => :mul)
+        end
+    end
+    pairs = NamedTuple{(:fe, :re, :k, :mode), Tuple{Symbol, Symbol, Int, Symbol}}[]
+    for re in get_re_names(get_random(model))
+        fam = hasproperty(family, re) ? getproperty(family, re) : :unsupported
+        fam in (:normal, :mvnormal) || continue
+        re in excluded && continue
+        rc = get_laplace_cache(get_re_group_info(dm))
+        ri = findfirst(==(re), get_re_names(rc))
+        ri === nothing && continue
+        dim = rc.is_scalar[ri] ? 0 : rc.dims[ri]
+        ks = dim == 0 ? (0,) : Tuple(1:dim)
+        # vector RE used unindexed anywhere -> not shiftable component-wise
+        if dim > 0
+            n_bare = count_all(l -> _cs_count_sym(l, re))
+            n_ref = sum(k -> count_all(l -> _cs_count_term(l, re, k)), ks)
+            n_bare == n_ref || continue      # every use of `re` is an indexed component
+        end
+        found = NamedTuple{(:fe, :re, :k, :mode), Tuple{Symbol, Symbol, Int, Symbol}}[]
+        for k in ks
+            for (a, mode) in candidates
+                (any(p -> p.fe === a, pairs) || any(p -> p.fe === a, found)) && continue
+                np = mode === :add ? count_all(l -> _cs_count_pairs(l, a, re, k)) :
+                    count_all(l -> _cs_count_mul_pairs(l, a, re, k))
+                np >= 1 || continue
+                np == count_all(l -> _cs_count_sym(l, a)) || continue
+                np == count_all(l -> _cs_count_term(l, re, k)) || continue
+                push!(found, (fe = a, re = re, k = k, mode = mode))
+                break                    # next component
+            end
+        end
+        length(found) == length(ks) && append!(pairs, found)
+    end
+    lognormal || return pairs
+    # Scale centering for a scalar log-normal RE entering only as a factor `fe * η`
+    # (opt-in, MCEM): the shift is applied to log η, so `fe` may be on any scale.
+    for re in get_re_names(get_random(model))
+        fam = hasproperty(family, re) ? getproperty(family, re) : :unsupported
+        fam === :lognormal || continue
+        re in excluded && continue
+        rc = get_laplace_cache(get_re_group_info(dm))
+        ri = findfirst(==(re), get_re_names(rc))
+        (ri === nothing || !rc.is_scalar[ri]) && continue
+        for (a, _) in candidates
+            any(p -> p.fe === a, pairs) && continue
+            np = count_all(l -> _cs_count_prod_pairs(l, a, re))
+            np >= 1 || continue
+            np == count_all(l -> _cs_count_sym(l, a)) || continue
+            np == count_all(l -> _cs_count_term(l, re, 0)) || continue
+            push!(pairs, (fe = a, re = re, k = 0, mode = :lnmul))
+            break
+        end
+    end
+    return pairs
+end
+
+# Flat-b indices of every level of (re, k) in one batch.
+function _cs_batch_indices(info::REBatchInfo, re_names, re::Symbol, k::Int)
+    ri = findfirst(==(re), re_names)
+    meta = get_re_info(info)[ri]
+    return [k == 0 ? first(r) : r[k] for r in get_ranges(meta)]
+end
+
+"""
+    _saem_center!(pairs, θu, b_current, b_chains, last_chain_params, sample_store, ...)
+
+One centering step (see the section comment): returns the shifted natural-scale θ; shifts
+every stored/chain RE value of the paired terms by -δ in place.
+"""
+function _saem_center!(
+        pairs, θu, dm::DataModel, batch_infos, b_current, b_chains, last_chain_params,
+        sample_store, const_cache, cache, re_names, n_chains::Int
+    )
+    θn = copy(θu)
+    prior_means = [
+        get_n_b(info) == 0 ? Float64[] :
+            _re_prior_mean_b(dm, info, θu, const_cache, cache, re_names)
+            for info in batch_infos
+    ]
+    for p in pairs
+        s, n = 0.0, 0
+        idx = [_cs_batch_indices(info, re_names, p.re, p.k) for info in batch_infos]
+        for bi in eachindex(batch_infos), c in 1:n_chains, i in idx[bi]
+            s += b_chains[bi][c][i] - prior_means[bi][i]
+            n += 1
+        end
+        n == 0 && continue
+        δ = s / n
+        (isfinite(δ) && δ != 0) || continue
+        # :add -> a + δ ; :mul (log-scale a) -> log a + δ
+        setproperty!(
+            θn, p.fe, p.mode === :mul ? getproperty(θn, p.fe) * exp(δ) :
+                getproperty(θn, p.fe) + δ
+        )
+        for bi in eachindex(batch_infos)
+            isempty(idx[bi]) && continue
+            for i in idx[bi]
+                b_current[bi][i] -= δ
+                for c in 1:n_chains
+                    b_chains[bi][c][i] -= δ
+                end
+                for slot in 1:sample_store.capacity
+                    snap = sample_store.snaps[slot]
+                    length(snap) >= bi && length(snap[bi]) >= i && (snap[bi][i] -= δ)
+                end
+            end
+            for c in 1:n_chains
+                st = last_chain_params[bi][c]
+                if st isa _AdaptiveMHState
+                    for i in idx[bi]
+                        st.b_current[i] -= δ
+                    end
+                elseif st isa _SaemixMHState
+                    for i in idx[bi]
+                        st.b[i] -= δ
+                    end
+                elseif st isa NamedTuple
+                    last_chain_params[bi][c] = _b_to_last_params(
+                        b_chains[bi][c], batch_infos[bi], re_names
+                    )
+                elseif st isa AbstractVector
+                    v = copy(st)
+                    for i in idx[bi]
+                        v[i] -= δ
+                    end
+                    last_chain_params[bi][c] = v
+                end
+            end
+        end
+    end
+    return θn
 end
 
 function _saem_re_family_map(dm::DataModel)
@@ -3020,13 +3439,18 @@ function _saem_bad_batches(
         const_cache::REConstantsCache,
         ll_cache;
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        anneal_sds::NamedTuple = NamedTuple()
+        anneal_sds::NamedTuple = NamedTuple(),
+        chain_states = nothing
     )
     is_bad = zeros(Bool, length(updated))  # not a BitVector: tasks write neighbouring bits
     _saem_foreach_batch(dm, ll_cache, length(updated), serialization) do k, cache
         bi = updated[k]
         chains = b_chains[bi]
         (isempty(chains) || isempty(chains[1])) && return
+        # A sampler state that already holds the finite log-density terms of its current
+        # sample at this θ (SaemixMH) certifies the batch without re-solving the model.
+        chain_states !== nothing &&
+            all(c -> _saem_chain_state_finite(chain_states[bi][c]), 1:n_chains) && return
         for c in 1:n_chains
             logf = _laplace_logf_batch(
                 dm, batch_infos[bi], θ, chains[c], const_cache, cache;
@@ -3406,6 +3830,20 @@ function _fit_model(
         dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
         serialization = serialization, force_saveat = true
     )
+    if re_0 === nothing
+        # probe θ0_u: that is the point the pre-loop seed below evaluates
+        θ0_r = _em_repair_start(
+            dm, batch_infos, θ0_u, const_cache,
+            ll_cache isa Vector ? ll_cache[1] : ll_cache, rng, re_names, "SAEM"
+        )
+        if θ0_r !== θ0_u
+            θ0_u = θ0_r
+            θ0_t = transform(θ0_u)
+            θ_const_u = deepcopy(θ0_u)
+            _apply_constants!(θ_const_u, constants)
+            θ_const_t = transform(θ_const_u)
+        end
+    end
 
     _cf_cfg = _saem_resolve_closed_form_config(dm, method.saem, extra_objective)
     builtin_stats_mode = _cf_cfg.builtin_stats_mode
@@ -3448,6 +3886,12 @@ function _fit_model(
         end
     end
     re_family_map = _cf_cfg.re_family_map
+    # automatic centering of additive fixed effects (see _saem_detect_centering_pairs)
+    center_pairs = _saem_detect_centering_pairs(dm, base_free_names)
+    if !isempty(center_pairs)
+        @info "SAEM: centering fixed effects on their additive random effects: " *
+            join(["$(p.mode === :mul ? "log " : "")$(p.fe) ↔ $(p.k == 0 ? p.re : "$(p.re)[$(p.k)]")" for p in center_pairs], ", ")
+    end
 
     # anneal_to_fixed validation
     anneal_initial_sds = _saem_validate_anneal(
@@ -3602,7 +4046,12 @@ function _fit_model(
 
     # O1: hoist tkwargs construction — values never change during the run
     tkwargs = method.saem.turing_kwargs
+    # automatic SaemixMH sweeps (mcmc_steps = 0): one sweep per 3 RE dimensions of the
+    # largest batch - a single sweep mixed too slowly for network-weight REs (13-dim:
+    # held-out accuracy 1/10 starts vs 5/10 with 5 sweeps); batches with <= 3 REs keep 1
     n_samples_saem = method.saem.mcmc_steps > 0 ? method.saem.mcmc_steps :
+        method.saem.sampler isa SaemixMH ?
+        max(1, cld(maximum((get_n_b(info) for info in batch_infos); init = 1), 3)) :
         get(tkwargs, :n_samples, 1)
     tkwargs = merge(tkwargs, (n_samples = n_samples_saem,))
     haskey(tkwargs, :n_adapt) || (tkwargs = merge(tkwargs, (n_adapt = 50,)))
@@ -3638,6 +4087,7 @@ function _fit_model(
             method.saem.maxiters <= method.saem.sa_burnin_iters
         @warn "SAEM: maxiters = $(method.saem.maxiters) <= sa_burnin_iters = $(method.saem.sa_burnin_iters), so every iteration is burn-in (γ = 0) and skips the M-step. θ is returned at its start value, up to the variance-floor and sa_anneal clamps. Lower sa_burnin_iters or raise maxiters."
     end
+    mstep_curv = _SAEMMStepCurvature()
     for iter in 1:(method.saem.maxiters)
         γ = _saem_gamma_schedule(iter, method.saem)
         sched_phase = _saem_schedule_phase(iter, method.saem)
@@ -3708,7 +4158,8 @@ function _fit_model(
                 bad = _saem_bad_batches(
                     dm, batch_infos, updated, θu_curr, b_chains,
                     effective_n_chains, const_cache, ll_cache;
-                    serialization = serialization, anneal_sds = anneal_sds
+                    serialization = serialization, anneal_sds = anneal_sds,
+                    chain_states = last_chain_params
                 )
                 isempty(bad) && break
                 if method.saem.verbose
@@ -4013,6 +4464,7 @@ function _fit_model(
                 end
             else
                 obj_cache = (θ = Ref{Any}(nothing), obj = Ref{Any}(nothing))
+                obj_at_new = nothing
                 # Single-assignment aliases for the captured per-iteration state: the
                 # `*_iter` locals (and `axs_free`) are assigned twice per iteration, so
                 # capturing them directly boxes them (`Core.Box`) and dynamically types
@@ -4027,7 +4479,7 @@ function _fit_model(
                 # Anchored at the current iterate, as for Q2. The objective cache below is keyed on
                 # θt and lives inside this loop; with a per-iteration anchor, z = 0 means a different
                 # θt each iteration, so hoisting the cache would make it permanently stale.
-                _, _, _θt_from_z, _z_from_θt = _precondition_maps(
+                _, s_pc_m, _θt_from_z, _z_from_θt = _precondition_maps(
                     get_model(dm), free_names_iter, θt_free, axs_free, _precondition_on(method)
                 )
                 function obj_only(z, p)
@@ -4067,6 +4519,7 @@ function _fit_model(
                     obj = -Q + _penalty_value(θu, penalty)
                     extra_objective === nothing || (obj += extra_objective(θu))
                     !isfinite(obj) && return T(Inf)
+                    _saem_mstep_record!(mstep_curv, z, obj)
                     if use_cache
                         obj_cache.θ[] = copy(θt_vec)
                         obj_cache.obj[] = obj
@@ -4074,7 +4527,7 @@ function _fit_model(
                     return obj
                 end
 
-                optf = OptimizationFunction(obj_only, method.adtype)
+                optf = _saem_mstep_optf(obj_only, method.adtype, length(θt_free))
                 lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
                     fe, free_names_iter, collect(θt_free), method.optimizer,
                     method.lb, method.ub, constants; method_label = "SAEM"
@@ -4112,11 +4565,26 @@ function _fit_model(
                 else
                     numeric_mstep_used = true
                     θt_free_before = method.saem.mstep_sa_on_params ? collect(θt_free) : nothing
-                    sol = Optimization.solve(prob, method.optimizer; method.optim_kwargs...)
+                    _saem_mstep_curv_reset!(mstep_curv, free_names_iter)
+                    mstep_opt = use_bounds ? method.optimizer :
+                        _saem_mstep_optimizer(method.optimizer, mstep_curv, s_pc_m)
+                    sol = Optimization.solve(prob, mstep_opt; method.optim_kwargs...)
+                    use_bounds || _saem_mstep_curv_update!(mstep_curv, s_pc_m)
                     if any(!isfinite, sol.u)
                         @warn "SAEM M-step iter $iter: optimizer returned non-finite parameters; skipping update."
                         mstep_skipped = true
                     else
+                        # The new iterate is the optimizer's minimizer (no SA damping at
+                        # γ = 1, none at all on the ring-buffer path), so the M-step
+                        # objective the optimizer already evaluated there is -Q(θ_new) up to
+                        # the penalty terms: reuse it instead of re-solving the model below.
+                        # Unbounded problems only (a box-constrained solver may report a
+                        # barrier-augmented value).
+                        if !use_bounds && method.saem.suffstats === nothing &&
+                                (γ == 1 || !method.saem.mstep_sa_on_params) &&
+                                sol.objective isa Real && isfinite(sol.objective)
+                            obj_at_new = Float64(sol.objective)
+                        end
                         # Mapped back before the SA damping below, which must act on θt.
                         θ_hat_t_free = _θt_from_z(sol.u)
                         if method.saem.mstep_sa_on_params
@@ -4140,6 +4608,16 @@ function _fit_model(
                 θu_new = inv_transform(θt_full)
                 if method.saem.suffstats !== nothing && method.saem.q_from_stats !== nothing
                     Q_new = method.saem.q_from_stats(s, θu_new, dm)
+                elseif obj_at_new !== nothing
+                    extra_new = extra_objective === nothing ? 0.0 : extra_objective(θu_new)
+                    Q_new = -(obj_at_new - _penalty_value(θu_new, penalty) - extra_new)
+                    isfinite(Q_new) || (
+                        Q_new = _saem_Q(
+                            dm, batch_infos, θu_new, const_cache, ll_cache, sample_store;
+                            serialization = serialization, q_cache = q_cache,
+                            anneal_sds = anneal_sds
+                        )
+                    )
                 else
                     Q_new = _saem_Q(
                         dm, batch_infos, θu_new, const_cache, ll_cache, sample_store;
@@ -4179,6 +4657,20 @@ function _fit_model(
                 end
                 θ_prev_new = copy(θt_free)
             end
+        end
+
+        # Centering step (post M-step): jump to the best point of the a + η ridge.
+        if !isempty(center_pairs) && γ > 0 && !mstep_skipped && !do_anneal
+            θu_new = _saem_center!(
+                center_pairs, θu_new, dm, batch_infos, b_current, b_chains,
+                last_chain_params, sample_store, const_cache,
+                ll_cache isa Vector ? ll_cache[1] : ll_cache, re_names, effective_n_chains
+            )
+            θt_full = transform(θu_new)
+            for name in base_free_names
+                setproperty!(θt_free, name, getproperty(θt_full, name))
+            end
+            θ_prev_new = copy(θt_free)
         end
 
         θ_full_vec = θt_full

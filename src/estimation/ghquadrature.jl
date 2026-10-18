@@ -38,7 +38,13 @@ transport-map rule, which needs a higher `level` for the same accuracy.
 whose gradient is not; use `Laplace()` for that, and `level ≥ 3` here.
 
 # Keyword Arguments
-- `level = 3`: Smolyak accuracy level.  May be:
+- `level = :auto`: Smolyak accuracy level, error-controlled. The fit starts at 5 when some
+  random effect has bounded support and every batch has at most 3 RE dimensions (the
+  transport-space rule for bounded REs needs the higher level), else 3; afterwards the
+  marginal log-likelihood at the estimate is recomputed with the next finer rule
+  (`2L + 1` nodes) and, while the two differ by more than 0.5 (whole data set), the fit is
+  refined from the estimate at the finer level (at most 4 refinements). Refinement applies
+  to models whose random-effect batches are scalar (one random effect per batch). May also be:
   - `Int` (isotropic): same level for all RE groups.
   - `NamedTuple` (anisotropic): per-RE-group level, e.g.
     `level = (η_id = 3, η_site = 2)`.  RE groups not mentioned default to
@@ -50,7 +56,7 @@ whose gradient is not; use `Laplace()` for that, and `level ≥ 3` here.
 - `optimizer`: outer Optimization.jl-compatible optimizer.  Defaults to LBFGS
   with backtracking line search, or to `Optimisers.Adam(0.01)` when
   `update_schedule != :all`.
-- `optim_kwargs::NamedTuple = NamedTuple()`: forwarded to `Optimization.solve`
+- `optim_kwargs = nothing`: forwarded to `Optimization.solve`; `nothing` = `NamedTuple()`, plus `reltol = 1e-12` for an Optim.jl optimizer (as [`Laplace`](@ref))
   (e.g. `maxiters`, `reltol`).
 - `adtype`: AD backend for the outer gradient.  Defaults to
   `AutoForwardDiff()`.
@@ -92,6 +98,7 @@ end
 # Returns the normalized level: any `Integer` (Int8, UInt, ...) becomes `Int`, so the
 # `level isa Int` dispatch below cannot mistake an isotropic level for an anisotropic one.
 function _check_ghq_level(level)
+    level === :auto && return :auto
     bad(l) = !(l isa Integer) || l < 1
     if level isa NamedTuple
         isempty(level) && throw(ArgumentError("GHQuadrature: anisotropic `level` must not be empty."))
@@ -113,13 +120,37 @@ end
 
 _update_schedule(m::GHQuadrature) = m.update_schedule
 
+# `level = :auto` (default): 5 when some random effect has bounded support (LogNormal, Beta,
+# Gamma, ...) and every batch has at most 3 RE dimensions, else 3. The transport-space
+# adaptive rule for bounded REs needs a higher level for the same accuracy (M05, two bounded
+# REs: per-batch error ~3e-2 at level 3 vs 1e-3..1e-2 at level 5, against a 60x60 tensor
+# rule; summed over 150 subjects that biased the estimates); Gaussian REs use the
+# mode-centered rule, which is accurate at level 3. Resolved once per fit.
+const _GHQ_UNBOUNDED_RE_TYPES = (:Normal, :MvNormal, :TDist, :NormalizingPlanarFlow)
+_ghq_has_bounded_re(dm::DataModel) =
+    any(t -> !(t in _GHQ_UNBOUNDED_RE_TYPES), values(get_re_types(get_random(get_model(dm)))))
+# Per-batch resolution, for code paths that evaluate the objective outside `fit_model`
+# (developer API, grid checks): same rule with the batch's own dimension.
+_ghq_auto_level(dm::DataModel, info::REBatchInfo) =
+    _ghq_has_bounded_re(dm) && get_n_b(info) <= 3 ? 5 : 3
+function _ghq_resolve_auto_level(method::GHQuadrature, dm::DataModel, batch_infos)
+    method.level === :auto || return method
+    maxdim = maximum((get_n_b(info) for info in batch_infos); init = 0)
+    lvl = _ghq_has_bounded_re(dm) && maxdim <= 3 ? 5 : 3
+    return GHQuadrature(
+        lvl, method.optimizer, method.optim_kwargs, method.adtype, method.inner,
+        method.multistart, method.lb, method.ub, method.ignore_model_bounds,
+        method.precondition, method.update_schedule
+    )
+end
+
 function GHQuadrature(;
-        level = 3,  # Int or NamedTuple for anisotropic levels
+        level = :auto,  # :auto, Int, Vector{Int} or NamedTuple for anisotropic levels
         optimizer = nothing,
-        optim_kwargs = NamedTuple(),
+        optim_kwargs = nothing,
         adtype = Optimization.AutoForwardDiff(),
         inner_options = nothing,
-        inner_optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
+        inner_optimizer = NewtonInner(x_abstol = 1.0e-10),
         inner_kwargs = NamedTuple(),
         inner_adtype = Optimization.AutoForwardDiff(),
         inner_grad_tol = :auto,
@@ -149,6 +180,8 @@ function GHQuadrature(;
             multistart_max_rounds, _as_symbol(multistart_sampling)
         ) :
         multistart_options
+    optim_kwargs === nothing &&
+        (optim_kwargs = _outer_default_optim_kwargs(optimizer, NamedTuple()))
     return GHQuadrature(
         level, optimizer, _as_namedtuple(optim_kwargs), adtype, inner, ms, lb, ub,
         ignore_model_bounds, precondition, update_schedule
@@ -187,9 +220,11 @@ function _ghq_batch_ll(
         θu_re::ComponentArray,
         const_cache::REConstantsCache,
         ll_cache::_LLCache,
-        level,   # Int or NamedTuple
-        b_star = nothing
+        level,   # Int, NamedTuple or :auto
+        b_star = nothing,
+        H_star = nothing   # exact ∇²_b log f at b_star (Float64 θ), when known
     )
+    level === :auto && (level = _ghq_auto_level(dm, info))
     T = eltype(θu_re)
     if get_n_b(info) == 0
         # All RE are constant — no integration needed.
@@ -218,7 +253,7 @@ function _ghq_batch_ll(
     # as invalid parameter regions and return -Inf, as the Laplace path does.
     re_measure = try
         m = build_re_measure_from_batch(info, θu_re, const_cache, dm, ll_cache)
-        mc = _ghq_adaptive_measure(dm, info, θu_re, const_cache, ll_cache, m, b_star)
+        mc = _ghq_adaptive_measure(dm, info, θu_re, const_cache, ll_cache, m, b_star, H_star)
         mc === nothing ? m : mc
     catch e
         _is_numeric_error(e) && return T(-Inf)
@@ -254,16 +289,23 @@ the estimate oscillate and drift *away* from the true integral as the level rise
 regularly turning the batch marginal negative (issue #98). Centered on the mode it
 converges at level 1-3.
 
-Returns `nothing` (keep the prior-centered measure) when some RE in the batch has
-bounded support — `CenteredREMeasure` places nodes anywhere in ℝ^n_b, which only
-stays inside the random-effect support when every RE in the batch is supported on
-all of ℝ — or when the mode/curvature is unavailable.
+When some RE in the batch has bounded support, b-space centering is invalid
+(`CenteredREMeasure` places nodes anywhere in ℝ^n_b), so the rule is made adaptive in
+the transport reference space instead ([`AdaptiveTransportRE`](@ref)): same integral,
+nodes at the u-space mode. Returns `nothing` (keep the prior-centered measure) when the
+mode/curvature is unavailable.
 """
 function _ghq_adaptive_measure(
         dm::DataModel, info::REBatchInfo,
         θu_re::ComponentArray, const_cache::REConstantsCache, ll_cache::_LLCache,
-        prior_measure::AbstractREMeasure, b_star
+        prior_measure::AbstractREMeasure, b_star, H_star = nothing
     )
+    if prior_measure isa CompositeRE && !prior_measure.unbounded
+        return build_adaptive_transport_measure(
+            prior_measure, dm, info, _laplace_floatize(θu_re), const_cache, ll_cache;
+            b_star = b_star
+        )
+    end
     prior_measure isa GaussianRE ||
         (prior_measure isa CompositeRE && prior_measure.unbounded) || return nothing
     # b*, H and S are frozen w.r.t. the outer AD: at a converged rule the value no
@@ -276,7 +318,7 @@ function _ghq_adaptive_measure(
     (b === nothing || length(b) != get_n_b(info)) && return nothing
     return build_centered_re_measure(
         b, info, 1, θ_val, const_cache, dm, ll_cache;
-        θ_prior = θu_re
+        θ_prior = θu_re, H_star = b_star === nothing ? nothing : H_star
     )
 end
 
@@ -323,6 +365,12 @@ end
 
 # Pre-build all grids needed for this fit so concurrent use is thread-safe.
 function _prepopulate_ghq_cache(dm::DataModel, batch_infos, level)
+    if level === :auto
+        for info in batch_infos
+            get_n_b(info) > 0 && get_sparse_grid(get_n_b(info), _ghq_auto_level(dm, info))
+        end
+        return nothing
+    end
     return if level isa Int
         for d in unique(get_n_b(info) for info in batch_infos)
             d > 0 && get_sparse_grid(d, level)
@@ -337,6 +385,7 @@ end
 
 # Node-count upper bound for a batch grid, without building it.
 function _batch_grid_bound(dm::DataModel, info::REBatchInfo, level)
+    level === :auto && (level = _ghq_auto_level(dm, info))
     level isa Int && return ghq_points_bound(get_n_b(info), level)
     dims, levels = _anisotropic_dims_levels(dm, info, level)
     return prod(ghq_points_bound(d, l) for (d, l) in zip(dims, levels); init = 1.0)
@@ -427,6 +476,7 @@ function _fit_model_scalar(
 
     # ── Infrastructure ───────────────────────────────────────────────────────
     pairing, batch_infos, const_cache = _build_re_batch_infos(dm, constants_re)
+    method = _ghq_resolve_auto_level(method, dm, batch_infos)
 
     ll_cache = build_ll_cache(
         dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
@@ -501,7 +551,8 @@ function _fit_model_scalar(
                 end
                 bll = _ghq_batch_ll(
                     dm, batch_infos[bi], θu_re, const_cache,
-                    ll_cache[c], method.level, bstars[bi]
+                    ll_cache[c], method.level, bstars[bi],
+                    _laplace_mode_hess(ebe_cache.hess_cache, bi, bstars[bi])
                 )
                 if bll == -Inf
                     Threads.atomic_or!(bad, true)
@@ -518,7 +569,8 @@ function _fit_model_scalar(
                 active !== nothing && !(bi in active) && continue
                 bll = _ghq_batch_ll(
                     dm, info, θu_re, const_cache, ll_cache,
-                    method.level, bstars[bi]
+                    method.level, bstars[bi],
+                    _laplace_mode_hess(ebe_cache.hess_cache, bi, bstars[bi])
                 )
                 bll == -Inf && return infT
                 results[bi] = _batch_weight(dm, get_inds(info)) * convert(T, bll)
@@ -537,6 +589,22 @@ function _fit_model_scalar(
     )
 
     z0 = _z_from_θt(θ0_init)
+    # Start repair (as in Laplace/SAEM): a start with a non-finite objective (e.g. an RE
+    # scale that is invalid at θ0) ends the fit at once; move it along the transformed
+    # segment toward the declared initial values to the first feasible point.
+    let f0 = obj(z0, nothing)
+        if !isfinite(f0)
+            θd = free_parameter_layout(fe; constants = constants).θ0_free_t
+            for λ in (0.5 .^ (1:8)..., 0.0)
+                zλ = _z_from_θt(λ .* θ0_init .+ (1 - λ) .* θd)
+                if isfinite(obj(zλ, nothing))
+                    @warn "GHQuadrature: the objective is not finite at the given start; moved the start toward the model's declared initial values (λ = $(λ))."
+                    z0 = zλ
+                    break
+                end
+            end
+        end
+    end
     lb_z = _z_from_θt(lb)
     ub_z = _z_from_θt(ub)
     opt_use, use_bounds = _bounded_optimizer(method.optimizer, use_bounds, lb_z, ub_z)
@@ -613,6 +681,58 @@ function _fit_model_scalar(
 end
 
 # ---------------------------------------------------------------------------
+# `level = :auto`: error-controlled level
+# ---------------------------------------------------------------------------
+# Fit at the dimension-based base level (`_ghq_resolve_auto_level`), then compare the
+# marginal log-likelihood at θ̂ under that rule and the next finer one; while they differ
+# by more than _GHQ_AUTO_TOL nats (whole data set), refit from θ̂ at the finer level.
+# 0.5 nats: on toenail/H01 the estimate-moving rule errors are several nats (level 3 vs 7:
+# 10 / 5 nats), converged levels differ by <= 0.2; 0.05 refined models whose estimates
+# were already exact (default-GHQ challenger 350 -> 942 s).
+# A fixed level cannot serve every model: binary outcomes with a large RE variance
+# (toenail data, RE sd ~4) need ~15 nodes per dimension — level 3 there moves the
+# estimates by many standard errors — while most models are exact at level 3.
+const _GHQ_AUTO_TOL = 0.5
+const _GHQ_AUTO_MAX_REFINE = 4
+const _GHQ_AUTO_MAX_NODES = 2_000
+_ghq_next_level(level::Int, maxdim::Int) = maxdim <= 1 ? 2level + 1 : level + 2
+
+function _ghq_fit_auto(
+        dm::DataModel, method::GHQuadrature, args...;
+        theta_0_untransformed = nothing, kwargs...
+    )
+    constants_re = _normalize_constants_re(dm, get(kwargs, :constants_re, NamedTuple()))
+    _, infos, _ = _build_re_batch_infos(dm, constants_re)
+    m = _ghq_resolve_auto_level(method, dm, infos)
+    res = _fit_model_scalar(dm, m, args...; theta_0_untransformed = theta_0_untransformed, kwargs...)
+    # Refinement only for scalar random effects (1-D batches): there the finer rules are
+    # nearly free and the base level is most often too coarse (binary data with a large RE
+    # variance). Multi-dimensional/bounded batches keep the base rule: on M05 (two bounded
+    # REs) the level-5 error hovers around the tolerance, so starts refined differently
+    # (objectives at different levels) and the fit cost rose 4x without better estimates.
+    maxdim = maximum((get_n_b(info) for info in infos); init = 0)
+    maxdim == 1 || return res
+    ode = (ode_args = get(kwargs, :ode_args, ()), ode_kwargs = get(kwargs, :ode_kwargs, NamedTuple()))
+    for _ in 1:_GHQ_AUTO_MAX_REFINE
+        L, L2 = m.level, _ghq_next_level(m.level, maxdim)
+        maximum(info -> get_n_b(info) == 0 ? 0 : _batch_grid_bound(dm, info, L2), infos) >
+            _GHQ_AUTO_MAX_NODES && break
+        θ̂ = get_params(res; scale = :untransformed)
+        ll1 = ghq_marginal(dm, θ̂; level = L, constants_re = constants_re, ode...)
+        ll2 = ghq_marginal(dm, θ̂; level = L2, constants_re = constants_re, ode...)
+        (isfinite(ll1) && isfinite(ll2)) || break
+        abs(ll2 - ll1) <= _GHQ_AUTO_TOL && break
+        m = GHQuadrature(
+            L2, method.optimizer, method.optim_kwargs, method.adtype, method.inner,
+            method.multistart, method.lb, method.ub, method.ignore_model_bounds,
+            method.precondition, method.update_schedule
+        )
+        res = _fit_model_scalar(dm, m, args...; theta_0_untransformed = θ̂, kwargs...)
+    end
+    return res
+end
+
+# ---------------------------------------------------------------------------
 # Progressive refinement interceptor (level::Vector{Int})
 # ---------------------------------------------------------------------------
 # The struct is now defined, so this method can reference it safely.
@@ -623,6 +743,9 @@ function _fit_model(
         kwargs...
     )
     level = method.level
+    level === :auto && return _ghq_fit_auto(
+        dm, method, args...; theta_0_untransformed = theta_0_untransformed, kwargs...
+    )
     level isa Vector{Int} || return _fit_model_scalar(
         dm, method, args...;
         theta_0_untransformed = theta_0_untransformed,

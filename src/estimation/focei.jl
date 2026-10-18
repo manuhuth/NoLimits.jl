@@ -889,7 +889,7 @@ _update_schedule(m::FOCEI) = m.update_schedule
 function FOCEI(;
         interaction::Bool = true,
         optimizer = nothing,
-        optim_kwargs = (; maxiters = 1000),
+        optim_kwargs = nothing,
         adtype = Optimization.AutoForwardDiff(),
         inner_options = nothing,
         hessian_options = nothing,
@@ -935,6 +935,8 @@ function FOCEI(;
             multistart_n, multistart_k, multistart_grad_tol,
             multistart_max_rounds, _as_symbol(multistart_sampling)
         ) : multistart_options
+    optim_kwargs === nothing &&
+        (optim_kwargs = _outer_default_optim_kwargs(optimizer, (; maxiters = 1000)))
     return FOCEI(
         optimizer, _as_namedtuple(optim_kwargs), adtype, inner, hess, cache,
         ms, lb, ub, ignore_model_bounds, precondition, interaction, update_schedule,

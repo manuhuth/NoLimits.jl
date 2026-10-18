@@ -1409,7 +1409,8 @@ function mcem_e_step(
                 st.batch_rngs[bi], st.re_names, mcmc_es.warm_start, st.last_params[bi];
                 outer_iter = iter
             )
-            st.samples_by_batch[bi] = samples
+            # same draw thinning as the fit_model driver (MCEM_MCMC(thin))
+            st.samples_by_batch[bi] = _mcem_thin(samples, _mcem_thin_of(mcmc_es))
             st.last_params[bi] = lastp
             st.weights_store[bi] = nothing
         end
