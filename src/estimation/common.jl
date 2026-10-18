@@ -4604,24 +4604,31 @@ holds; private per-batch/per-individual kernels assume a pre-symmetrized `θ_re`
 function symmetrize_psd_parameters(θ::ComponentArray, fe::FixedEffects)
     params = get_params(fe)
     _has_psd_params(params) || return θ
-    θsym = θ
-    for name in get_names(fe)
-        p = getfield(params, name)
-        if p isa RealPSDMatrix || p isa RealLiePSDMatrix
-            A = getproperty(θsym, name)
+    # Flat data copy + axes rewrap instead of deepcopy: `setproperty!` writes values, not
+    # containers, so copying the underlying vector is sufficient (and much cheaper).
+    θsym = ComponentArray(copy(ComponentArrays.getdata(θ)), getaxes(θ))
+    return _symmetrize_psd_blocks!(θsym, θ, params)
+end
+
+# Unrolled over the PSD blocks with literal property names: type-stable (a runtime-Symbol
+# loop with a conditionally rebound result made Enzyme reverse mode fail with an
+# UndefRefError in VEM on an MvNormal-RE model).
+@generated function _symmetrize_psd_blocks!(
+        θsym, θ, ::NamedTuple{names, T}
+    ) where {names, T}
+    ex = Expr(:block)
+    for (i, n) in enumerate(names)
+        P = T.parameters[i]
+        (P <: RealPSDMatrix || P <: RealLiePSDMatrix) || continue
+        push!(ex.args, quote
+            A = getproperty(θ, $(QuoteNode(n)))
             if A isa AbstractMatrix
-                Asym = 0.5 .* (A .+ A')
-                if θsym === θ
-                    # Flat data copy + axes rewrap instead of deepcopy:
-                    # `setproperty!` writes values, not containers, so copying
-                    # the underlying vector is sufficient (and much cheaper).
-                    θsym = ComponentArray(copy(ComponentArrays.getdata(θ)), getaxes(θ))
-                end
-                setproperty!(θsym, name, Asym)
+                setproperty!(θsym, $(QuoteNode(n)), 0.5 .* (A .+ A'))
             end
-        end
+        end)
     end
-    return θsym
+    push!(ex.args, :(return θsym))
+    return ex
 end
 function symmetrize_psd_parameters(dm::DataModel, θ::ComponentArray)
     return symmetrize_psd_parameters(θ, get_fixed(get_model(dm)))
