@@ -116,13 +116,15 @@ res = fit_model(dm, NoLimits.VEM(; adtype = ad); rng = Random.Xoshiro(1))
   the bias of the Gaussian family. `:auto` refines for at most 50 free fixed-effect
   coordinates and at most two random effects per batch.
 - `n_is = 1000`, `is_df = 5.0`: importance-sampling draws and t degrees of freedom of the
-  reported objective, an estimate of ``-\log p(y \mid \hat\theta)``. `n_is = 0` reports
-  the negative ELBO instead.
+  reported objective, an estimate of ``-\log p(y \mid \hat\theta)``, for batches with more
+  than two random effects. Batches with one or two random effects use adaptive
+  Gauss-Hermite quadrature around q (21 or 9 x 9 nodes, the `refine` rule) instead.
+  `n_is = 0` reports the negative ELBO instead.
 - `ebe_*`: options of the empirical Bayes modes computed after the fit.
 
 ## Results and Reproducibility
 
-`get_objective` returns the importance-sampling estimate of the negative marginal
+`get_objective` returns the quadrature or importance-sampling estimate of the negative marginal
 log-likelihood, `get_iterations` the iterations of the joint fit and `get_converged` whether
 the joint fit (and an accepted refinement) ended with a successful return code. The notes
 of `get_result(res)` hold the final ELBO, the number of refinement iterations and the

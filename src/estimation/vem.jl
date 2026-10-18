@@ -73,8 +73,9 @@ effects: no inner mode finding or Hessian per objective evaluation, unlike Lapla
 - `init::Symbol = :laplace`: initialize each q at the Laplace approximation of the batch
   posterior at the starting θ (`:prior` starts from the prior, μ = 0, L = I).
 - `n_is::Int = 1000`, `is_df = 5.0`: importance-sampling draws and t degrees of freedom for
-  the final marginal-likelihood estimate (the reported objective). `n_is = 0` reports
-  -ELBO instead.
+  the final marginal-likelihood estimate (the reported objective) of batches with more than
+  2 random effects; batches with 1-2 random effects use adaptive Gauss-Hermite quadrature
+  around q (21 / 9 x 9 nodes, as `refine`). `n_is = 0` reports -ELBO instead.
 - `refine = :auto`, `refine_nodes = 64`: after the joint VEM optimization, keep each fitted q
   fixed and maximize the importance-sampled marginal likelihood over the fixed effects with
   fixed nodes: a tensor Gauss-Hermite rule around q for batches with 1-2 random effects
@@ -912,15 +913,26 @@ function _fit_model(
     θ_hat_t = transform(θ_hat_u)
 
     # ---- objective: importance-sampling marginal likelihood around the fitted q ----
+    # batches with 1-2 REs: adaptive tensor Gauss-Hermite around q (the refinement rule;
+    # deterministic and more accurate than n_is draws), otherwise t importance sampling
     objective = if method.n_is > 0
         is_rngs = _spawn_child_rngs(rng, nk)
         lls = Vector{Float64}(undef, nk)
         _vem_foreach(nk, caches) do k, lc
             bi = keep[k]
-            lls[k] = _vem_is_loglik(
-                θ_hat_u, view(x̂, ranges[k]), ξs[k], family, nb[bi], method.n_is, method.is_df,
-                is_rngs[k], dm, batch_infos[bi], const_cache, lc
-            )
+            lls[k] = if nb[bi] <= 2
+                μq, Lq = _vem_effective(Vector{Float64}(x̂[ranges[k]]), ξs[k], nb[bi], family, θ_hat_u)
+                family === :dense || (Lq = Matrix(Diagonal(diag(Lq))))
+                _vem_refine_batch_ll(
+                    θ_hat_u, μq, Lq, _vem_refine_nodes(nb[bi], 0, method.is_df, is_rngs[k])...,
+                    dm, batch_infos[bi], const_cache, lc
+                )
+            else
+                _vem_is_loglik(
+                    θ_hat_u, view(x̂, ranges[k]), ξs[k], family, nb[bi], method.n_is, method.is_df,
+                    is_rngs[k], dm, batch_infos[bi], const_cache, lc
+                )
+            end
         end
         ll = 0.0
         for k in 1:nk
