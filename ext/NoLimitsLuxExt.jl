@@ -40,10 +40,15 @@ function _nn_model_fun(chain::Lux.Chain, p::NNParameters, ::Type{T}) where {T}
             psT = ComponentArray(_to_type(T, θ), ps_axes)
             return first(Lux.apply(chain, xT, psT, stT))
         end
+        # Mixed element types (Float64 weights with dual inputs, e.g. the inner random-effect
+        # solves of Laplace, or the reverse): Lux layers promote internally, so the weights
+        # are NOT copied into the promoted type - converting all of them on every call (one
+        # call per observation row) was ~64% of the network time of a Lux latent-variable model
+        # (hard suite N03). Only the (small) input is converted.
         xTT = _to_type(TT, x)
-        psTT = ComponentArray(_to_type(TT, θ), ps_axes)
+        ps = ComponentArray(θ, ps_axes)
         stTT = Functors.fmap(y -> _to_type(TT, y), stT)
-        return first(Lux.apply(chain, xTT, psTT, stTT))
+        return first(Lux.apply(chain, xTT, ps, stTT))
     end
 end
 
