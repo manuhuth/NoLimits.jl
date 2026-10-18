@@ -43,7 +43,7 @@ ms = NoLimits.Multistart(;
     n_draws_used=50,
     sampling=:random,                # :random or :lhs
     serialization=EnsembleThreads(), # controls parallelism across starts
-    rng=Xoshiro(0),
+    rng=nothing,                     # nothing: fresh Xoshiro(42) per fit_model call
     progress=true,
     screening=:prior_mean,           # :prior_mean or :ebe
     ebe_maxiters=30,
@@ -158,7 +158,7 @@ The `ms.serialization` field controls execution of the individual fits and defau
 
 Note that screening (Phase 1) always runs serially regardless of `serialization`; only Phase 2 (the full optimizations) is parallelized.
 
-Random number generator behavior depends on how `rng` is supplied (the constructor default is `Xoshiro(0)`):
+Random number generator behavior depends on how `rng` is supplied. The constructor default `rng = nothing` creates a fresh `Xoshiro(42)` at every `fit_model(ms, ...)` call, so a multistart fit is reproducible by default, also when the same `Multistart` object is reused. The starts are sampled from this generator.
 
 Each start always receives its own internally spawned child RNG, so threaded starts never share generator state.
 

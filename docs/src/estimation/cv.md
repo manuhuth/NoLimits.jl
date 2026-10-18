@@ -59,7 +59,7 @@ res_cv = fit_cv(cv, NoLimits.Laplace();
     store_results  = false,      # set true to keep per-fold FitResult objects
     loss           = nothing,    # optional (dist, y) -> scalar loss
     fold_serialization = EnsembleSerial(),  # or EnsembleThreads()
-    rng            = Random.default_rng(),
+    rng            = Xoshiro(42),  # default: fixed seed, reproducible folds and refits
 )
 ```
 

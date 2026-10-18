@@ -72,7 +72,7 @@ Several keyword arguments are shared across methods (though not all apply to eve
 - `penalty`: L2-style parameter penalties (not supported by `MCMC` or `VI`; use `MAP` for penalized estimation instead).
 - `ode_args`, `ode_kwargs`: forwarded to the ODE solver during likelihood evaluation.
 - `serialization`: `EnsembleSerial()` or `EnsembleThreads()` for parallel evaluation across individuals.
-- `rng`: random-number generator for reproducibility.
+- `rng`: random-number generator. The default is a fresh `Xoshiro(42)` per call, so stochastic estimators (`SAEM`, `MCEM`, `MCMC`, `VI`, `Multistart`, mini-batch schedules) give the same result on every run, independent of `Random.seed!`. Pass another `rng` for different draws.
 - `theta_0_untransformed`: custom starting values on the natural (untransformed) scale.
 - `store_data_model`: stores the `DataModel` inside the `FitResult` for use by downstream accessors (default `true`).
 - `store_eb_modes`: for `MCEM`/`SAEM`, controls whether empirical Bayes modes are stored during fitting.

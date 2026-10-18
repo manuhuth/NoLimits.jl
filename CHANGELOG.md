@@ -4,6 +4,20 @@
 
 ### Changes
 
+- The `rng` keyword of every estimator, cross-validation and UQ entry point now defaults
+  to a fresh `Xoshiro(42)` per call instead of `Random.default_rng()`. Fits with `SAEM`,
+  `MCEM` (all E-steps), `MCMC`, `VI`, mini-batch `update_schedule` draws, EBE multistarts,
+  `Multistart`, `cross_validate`/`fit_cv`, `compute_uq`, `reestimate_ebes`,
+  `complete_data_loglikelihood` and `identifiability_report` are therefore reproducible by
+  default and no longer depend on `Random.seed!` or on earlier calls. `Multistart(; rng)`
+  now defaults to `nothing`, which creates the fixed-seed generator at each
+  `fit_model(ms, ...)` call, so a reused `Multistart` object gives the same starts.
+  Results of fits that relied on the global RNG change. Pass an explicit `rng` for
+  different draws. Simulation and sampling functions (`simulate_data`,
+  `sample_random_effects`, `sample_posterior`, `sample_random_effect_draws`,
+  `mcem_e_step`, `saem_sufficient_statistics`, `fixed_re_normals`) and plotting keep
+  `Random.default_rng()`.
+
 - SAEM skips the M-step in iterations with step size γ = 0 (the `sa_burnin_iters` burn-in
   iterations and, under `:robbins_monro`, the final iteration). The update
   `θ_old + γ * (θ̂ - θ_old)` discards θ̂ there, so the closed-form updates and the Q2 and

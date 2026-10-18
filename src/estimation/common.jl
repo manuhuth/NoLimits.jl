@@ -839,6 +839,11 @@ function _half_window_test(win::Vector{<:Real}, atol::Real, rtol::Real)
     return drift <= max(T(atol), T(rtol) * scale, 2 * se), drift, scale
 end
 
+# Default `rng` of every estimator, CV and UQ entry point. A fresh instance per call keeps
+# results independent of call order and of the global RNG (docs state `Xoshiro(42)`).
+const _DEFAULT_RNG_SEED = 42
+_default_rng() = Random.Xoshiro(_DEFAULT_RNG_SEED)
+
 @inline function _spawn_child_rngs(rng::AbstractRNG, n::Int)
     n <= 0 && return Random.Xoshiro[]
     seeds = rand(rng, UInt64, n)
@@ -1751,7 +1756,7 @@ function get_random_effects(
             ode_args = _fit_kw(res, :ode_args, ())
             ode_kwargs = _fit_kw(res, :ode_kwargs, NamedTuple())
             serialization = _fit_kw(res, :serialization, EnsembleThreads())
-            rng = _fit_kw(res, :rng, Random.default_rng())
+            rng = _fit_kw(res, :rng, _default_rng())
             ll_cache = build_ll_cache(
                 dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
                 serialization = serialization, force_saveat = true
@@ -1780,7 +1785,7 @@ function get_random_effects(
             ode_args = _fit_kw(res, :ode_args, ())
             ode_kwargs = _fit_kw(res, :ode_kwargs, NamedTuple())
             serialization = _fit_kw(res, :serialization, EnsembleThreads())
-            rng = _fit_kw(res, :rng, Random.default_rng())
+            rng = _fit_kw(res, :rng, _default_rng())
             ll_cache = build_ll_cache(
                 dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
                 serialization = serialization, force_saveat = true
@@ -1931,7 +1936,7 @@ end
 
 function _resolve_bstars_for_re(
         dm::DataModel, res::FitResult, constants_re::NamedTuple;
-        θ = nothing, rng::AbstractRNG = Random.default_rng()
+        θ = nothing, rng::AbstractRNG = _default_rng()
     )
     # The stored EB modes were computed with the fit's constants_re; the batch layout
     # must match them, so inherit it when the caller passed none.
@@ -2406,7 +2411,7 @@ function reestimate_ebes(
         individuals = nothing,
         ode_args::Tuple = (),
         ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         progress::Bool = false
     )
     ebe_optim_kwargs = _as_namedtuple(ebe_optim_kwargs)
@@ -2936,7 +2941,7 @@ function _cdll_terms(
         ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial(),
         ebe_options::Union{Nothing, EBEOptions} = nothing,
-        rng::AbstractRNG = Random.default_rng()
+        rng::AbstractRNG = _default_rng()
     )
     eta = _as_symbol(eta)   # every public complete_data_loglikelihood method lands here
     re = get_random(get_model(dm))
@@ -3205,7 +3210,10 @@ Fit a model to data using the specified estimation method.
 - `ode_args::Tuple = ()`: extra positional arguments forwarded to the ODE solver.
 - `ode_kwargs::NamedTuple = NamedTuple()`: extra keyword arguments forwarded to the ODE solver.
 - `serialization = EnsembleThreads()`: parallelisation strategy.
-- `rng = Random.default_rng()`: random number generator (used by MCMC/SAEM/MCEM).
+- `rng = Xoshiro(42)`: random number generator (used by MCMC, VI, SAEM, MCEM,
+  mini-batch schedules and EBE multistarts). Each call creates a fresh generator with
+  this fixed seed, so a fit is reproducible by default and independent of the global
+  RNG. Pass your own `rng` for different draws.
 - `theta_0_untransformed::Union{Nothing, ComponentArray} = nothing`: custom starting
   point on the natural scale; defaults to the model's declared initial values.
 - `re_0 = nothing`: initial random effects for `SAEM` and `MCEM` only. Either a

@@ -335,7 +335,7 @@ res = fit_model(
     ode_args=(),
     ode_kwargs=NamedTuple(),
     serialization=EnsembleSerial(),
-    rng=Random.default_rng(),
+    rng=Xoshiro(42),
     theta_0_untransformed=nothing,
     store_eb_modes=true,
 )

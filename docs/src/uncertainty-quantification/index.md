@@ -192,7 +192,7 @@ For mixed-effects fits, `constants_re` can be passed to hold selected random-eff
 
 - `compute_uq` requires access to the original `DataModel`. This is available when the fit was run with `store_data_model=true` (the default).
 - The `level` argument must satisfy `0 < level < 1`.
-- For methods that rely on random draws (`:wald`, `:chain`, `:mcmc_refit`), pass an `rng` argument to ensure reproducibility.
+- Methods that rely on random draws (`:wald`, `:chain`, `:mcmc_refit`) default to `rng = Xoshiro(42)` and are reproducible across calls; pass another `rng` for different draws.
 
 ## Where to go next
 

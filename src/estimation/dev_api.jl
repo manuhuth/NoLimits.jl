@@ -285,7 +285,7 @@ function _empirical_bayes_batches(
         constants_re::NamedTuple = NamedTuple(), ebe_options::EBEOptions = EBEOptions(),
         rescue = nothing, ode_args::Tuple = (), ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        rng::AbstractRNG = Random.default_rng()
+        rng::AbstractRNG = _default_rng()
     )
     θ_re = symmetrize_psd_parameters(θ, get_fixed(get_model(dm)))
     cache = build_likelihood_cache(
@@ -301,7 +301,7 @@ function _empirical_bayes_batches(
 end
 
 """
-    empirical_bayes(dm, θ; constants_re=NamedTuple(), ebe_options=EBEOptions(), rescue=nothing, ode_args=(), ode_kwargs=NamedTuple(), serialization=EnsembleThreads(), rng=Random.default_rng()) -> Vector{Vector{Float64}}
+    empirical_bayes(dm, θ; constants_re=NamedTuple(), ebe_options=EBEOptions(), rescue=nothing, ode_args=(), ode_kwargs=NamedTuple(), serialization=EnsembleThreads(), rng=Xoshiro(42)) -> Vector{Vector{Float64}}
     empirical_bayes(dm, θ, idx::Integer; kwargs...) -> ComponentArray
 
 Empirical-Bayes (posterior-mode) random effects at an arbitrary natural-scale `θ`. The
@@ -438,7 +438,7 @@ function _dev_gradient_scale(dm::DataModel, θ::ComponentArray, grad::ComponentA
 end
 
 """
-    laplace_marginal_gradient(dm, θ, batch, b_star; const_cache, cache=nothing, scale=:untransformed, curvature=ExactHessianCurvature(), jitter=1e-6, max_tries=6, growth=10.0, adaptive=false, scale_factor=0.0, use_trace_logdet_grad=true, use_hutchinson=false, hutchinson_n=8, rng=Random.default_rng()) -> (value, gradient)
+    laplace_marginal_gradient(dm, θ, batch, b_star; const_cache, cache=nothing, scale=:untransformed, curvature=ExactHessianCurvature(), jitter=1e-6, max_tries=6, growth=10.0, adaptive=false, scale_factor=0.0, use_trace_logdet_grad=true, use_hutchinson=false, hutchinson_n=8, rng=Xoshiro(42)) -> (value, gradient)
     laplace_marginal_gradient(dm, θ; constants_re=NamedTuple(), scale=:untransformed, kwargs...) -> (value, gradient)
     laplace_marginal_gradient(ctx::FitContext, θ; scale=:untransformed, kwargs...) -> (value, gradient)
 
@@ -465,7 +465,7 @@ function laplace_marginal_gradient(
         curvature::AbstractCurvature = ExactHessianCurvature(), jitter = 1.0e-6,
         max_tries::Int = 6, growth = 10.0, adaptive::Bool = false, scale_factor = 0.0,
         use_trace_logdet_grad::Bool = true, use_hutchinson::Bool = false,
-        hutchinson_n::Int = 8, rng::AbstractRNG = Random.default_rng()
+        hutchinson_n::Int = 8, rng::AbstractRNG = _default_rng()
     )
     c = _dev_ll_cache(dm, cache)
     res = _laplace_grad_batch(
@@ -491,7 +491,7 @@ function laplace_marginal_gradient(
         curvature::AbstractCurvature = ExactHessianCurvature(), jitter = 1.0e-6,
         max_tries::Int = 6, growth = 10.0, adaptive::Bool = false, scale_factor = 0.0,
         use_trace_logdet_grad::Bool = true, use_hutchinson::Bool = false,
-        hutchinson_n::Int = 8, rng::AbstractRNG = Random.default_rng(), kwargs...
+        hutchinson_n::Int = 8, rng::AbstractRNG = _default_rng(), kwargs...
     )
     constants_re = _as_namedtuple(constants_re)
     bstars, infos, cc, θ_re, cache = _empirical_bayes_batches(
@@ -1046,7 +1046,7 @@ function objective_and_gradient(
         strategies = nothing, eta = nothing,
         ode_args::Tuple = (), ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial(), cache = nothing,
-        rng::AbstractRNG = Random.default_rng()
+        rng::AbstractRNG = _default_rng()
     )
     scale = _dev_check_scale(scale)
     θ_re = symmetrize_psd_parameters(θ, get_fixed(get_model(dm)))
@@ -1891,7 +1891,7 @@ end
 function empirical_bayes(
         ctx::FitContext, θ::ComponentArray;
         ebe_options::EBEOptions = EBEOptions(), rescue = nothing,
-        rng::AbstractRNG = Random.default_rng()
+        rng::AbstractRNG = _default_rng()
     )
     θ_re = symmetrize_psd_parameters(θ, get_fixed(get_model(ctx.dm)))
     bstars, _ = _compute_bstars(
@@ -1925,7 +1925,7 @@ function laplace_marginal(
         ctx::FitContext, θ::ComponentArray;
         curvature::AbstractCurvature = ExactHessianCurvature(),
         ebe_options::EBEOptions = EBEOptions(), rescue = nothing,
-        rng::AbstractRNG = Random.default_rng(), kwargs...
+        rng::AbstractRNG = _default_rng(), kwargs...
     )
     isempty(ctx.batch_infos) && return zero(eltype(θ))
     bstars = empirical_bayes(ctx, θ; ebe_options = ebe_options, rescue = rescue, rng = rng)
@@ -1954,7 +1954,7 @@ function laplace_marginal_gradient(
         scale::Union{Symbol, AbstractString} = :untransformed,
         curvature::AbstractCurvature = ExactHessianCurvature(),
         ebe_options::EBEOptions = EBEOptions(), rescue = nothing,
-        rng::AbstractRNG = Random.default_rng(), kwargs...
+        rng::AbstractRNG = _default_rng(), kwargs...
     )
     _ctx_check_kwargs(:laplace_marginal_gradient, kwargs)
     scale = _dev_check_scale(scale)
@@ -2031,7 +2031,7 @@ function objective_and_gradient(
         scale::Union{Symbol, AbstractString} = :untransformed, hessian::Bool = false,
         include_penalty::Bool = false,
         penalty::Union{NamedTuple, AbstractDict} = NamedTuple(),
-        strategies = nothing, eta = nothing, rng::AbstractRNG = Random.default_rng(),
+        strategies = nothing, eta = nothing, rng::AbstractRNG = _default_rng(),
         kwargs...
     )
     _ctx_check_kwargs(:objective_and_gradient, kwargs)

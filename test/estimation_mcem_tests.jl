@@ -133,15 +133,20 @@ end
 end
 
 @testset "MCEM basic (random effects)" begin
-    res = fit_model(
-        _MCEM_DM2,
-        NoLimits.MCEM(;
-            sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-            maxiters = 2
-        )
+    method = NoLimits.MCEM(;
+        sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
+        maxiters = 2
     )
+    res = fit_model(_MCEM_DM2, method)
     @test res isa FitResult
     @test NoLimits.get_converged(res) isa Bool
+
+    # The default rng has a fixed seed, independent of the global RNG.
+    θ(r) = collect(NoLimits.get_params(r; scale = :untransformed))
+    r0 = fit_model(fx_re_dm(), method)  # ω makes the M-step depend on the draws
+    Random.seed!(987)
+    @test θ(fit_model(fx_re_dm(), method)) == θ(r0)
+    @test θ(fit_model(fx_re_dm(), method; rng = Xoshiro(7))) != θ(r0)
 end
 
 # NOTE: testsets shared line-for-line with SAEM (serial-vs-threaded reproducibility,
