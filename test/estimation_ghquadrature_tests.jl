@@ -810,6 +810,35 @@ end  # @testset "GHQuadrature ghquadrature.jl"
         end
     end
 
+    # ── NPF transport is the forward flow F (bijector(dist) is F⁻¹) ─────────────
+    @testset "NPF transport pushes N(0, 1) forward through the flow" begin
+        df_v = DataFrame(
+            ID = repeat(1:4, inner = 3),
+            t = repeat([1.0, 2.0, 3.0], outer = 4),
+            y = randn(MersenneTwister(8), 12)
+        )
+        dm_npf = DataModel(_GHQ_NPF_MODEL, df_v; primary_id = :ID, time_col = :t)
+        fe = dm_npf.model.fixed.fixed
+        θ = deepcopy(NoLimits.get_θ0_untransformed(fe))
+        θ.ψ .= [1.0, 1.5, 0.5, -0.8, 1.2, 0.3]  # [w; u; b] per layer: skewed, shifted flow
+        θ_re = NoLimits._symmetrize_psd_params(θ, fe)
+        _, batch_infos, const_cache = NoLimits._build_re_batch_infos(dm_npf, NamedTuple())
+        ll_cache = NoLimits.build_ll_cache(dm_npf; force_saveat = true)
+        rm = NoLimits.build_re_measure_from_batch(
+            batch_infos[1], θ_re, const_cache, dm_npf, ll_cache
+        )
+        dists = NoLimits.create_random_effect_distribution(NoLimits.get_random(dm_npf.model))
+        dist = dists(
+            θ_re, NoLimits.get_const_cov(dm_npf.individuals[1]), ll_cache.model_funs,
+            ll_cache.helpers
+        ).η
+        x = vec(rand(Xoshiro(1), dist, 200_000))
+        # P(η ≤ T(z)) = Φ(z) for the transport T of N(0, 1) onto the RE distribution
+        for z in (-1.0, 0.0, 1.0)
+            @test count(<=(NoLimits.transform(rm, [z])[1]), x) / length(x) ≈ cdf(Normal(), z) atol = 0.01
+        end
+    end
+
     # ── GaussianRE fast path still returned for pure-Gaussian model ───────────
     @testset "build_re_measure_from_batch returns GaussianRE for Normal model" begin
         dm_gauss = _make_simple_ghq_dm(; n_id = 4, n_obs = 3)

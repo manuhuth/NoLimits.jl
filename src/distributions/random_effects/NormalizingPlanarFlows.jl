@@ -215,6 +215,9 @@ function Distributions.rand(rng::AbstractRNG, d::NormalizingPlanarFlow, dims::Di
     return rand(rng, d.base, dims...)
 end
 
+# Forward flow F (base draw z -> sample x = F(z)); `bijector(d)` is its inverse F⁻¹.
+_flow_forward(d::NormalizingPlanarFlow) = d.base.transform
+
 # Use the underlying transformed distribution's bijector for HMC/NUTS.
 Bijectors.bijector(d::NormalizingPlanarFlow) = Bijectors.bijector(d.base)
 

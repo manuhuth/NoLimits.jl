@@ -588,7 +588,8 @@ function build_re_measure_from_batch(
 
             elseif dist isa AbstractNormalizingFlow
                 has_npf = true
-                bij = Bijectors.bijector(dist)   # flow transform F: ℝ^d → ℝ^d
+                # push N(0, I) forward through F; `Bijectors.bijector(dist)` is F⁻¹
+                bij = _flow_forward(dist)
                 let b = bij
                     push!(segment_fns, z_k -> b(z_k))
                 end
