@@ -2582,7 +2582,7 @@ point is evaluated with the new warm starts. `refresh = false` never returns `:r
 legacy fits did.
 
 Requires an outer optimizer whose callback is called once per accepted iterate (Optim.jl
-methods, `IPBFGS`), and `update_schedule = :all`.
+methods, `IPBFGS`), and no mini-batching ([`MiniBatch`](@ref) with `schedule = :all` only).
 """
 struct AcceptedWarmStarts
     multistart_every::Union{Nothing, Int}
@@ -2648,7 +2648,7 @@ end
               multistart_grad_tol, multistart_max_rounds, multistart_sampling,
               jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale,
               use_trace_logdet_grad, use_hutchinson, hutchinson_n, theta_tol,
-              lb, ub, precondition, update_schedule) <: FittingMethod
+              lb, ub, precondition) <: FittingMethod
 
 Laplace approximation with Empirical Bayes Estimates (EBE) for random-effects models.
 The outer optimizer maximizes the Laplace-approximated marginal likelihood over the
@@ -2658,7 +2658,7 @@ random effects.
 # Keyword Arguments
 - `optimizer`: outer Optimization.jl optimizer. Defaults to
   `OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0))`, which uses
-  the analytic marginal gradient, or to `Optimisers.Adam(0.01)` when `update_schedule != :all`.
+  the analytic marginal gradient. For mini-batching wrap the method in [`MiniBatch`](@ref).
 
   **The `maxstep` cap is load-bearing, not decoration.** The gradient is exact, but its
   coordinates can span four orders of magnitude at a poorly scaled start - on `pheno_sd`, where
@@ -2725,7 +2725,6 @@ random effects.
   diagonal at 1 with a small off-diagonal). Set `false` to restore the raw behaviour.
   Note that with preconditioning on, the optimizer object behind [`get_raw`](@ref) works
   in `z`; the fitted parameters from [`get_params`](@ref) are on the usual scales.
-$(_UPDATE_SCHEDULE_DOC)
 """
 struct Laplace{O, K, A, IO, HO, CO, MS, L, U, US, WS} <: FittingMethod
     optimizer::O
@@ -2802,12 +2801,9 @@ function Laplace(;
         ignore_model_bounds = false,
         precondition = true,
         nan_recovery = :backtrack,
-        update_schedule = :all,
         warm_starts::Union{Nothing, AcceptedWarmStarts} = nothing
     )
-    update_schedule = _check_update_schedule(_as_symbol(update_schedule), "Laplace")
-    _check_warm_starts(warm_starts, update_schedule, "Laplace")
-    optimizer = _resolve_outer_optimizer(optimizer, update_schedule, "Laplace")
+    optimizer = _resolve_outer_optimizer(optimizer)
     inner = inner_options === nothing ?
         LaplaceInnerOptions(
             inner_optimizer, _as_namedtuple(inner_kwargs), inner_adtype, inner_grad_tol
@@ -2829,7 +2825,7 @@ function Laplace(;
     return Laplace(
         optimizer, _as_namedtuple(optim_kwargs), adtype, inner, hess, cache,
         ms, lb, ub, ignore_model_bounds, precondition, _as_symbol(nan_recovery),
-        update_schedule, warm_starts
+        :all, warm_starts
     )
 end
 
@@ -3223,10 +3219,10 @@ end
 
 # ── AcceptedWarmStarts ───────────────────────────────────────────────────────────
 
-function _check_warm_starts(ws, update_schedule, label)
+function _check_warm_starts(ws, schedule, label)
     ws === nothing && return nothing
-    update_schedule === :all ||
-        error("$(label): warm_starts = AcceptedWarmStarts(...) requires update_schedule = :all.")
+    schedule === :all ||
+        error("$(label): warm_starts = AcceptedWarmStarts(...) requires schedule = :all.")
     return nothing
 end
 

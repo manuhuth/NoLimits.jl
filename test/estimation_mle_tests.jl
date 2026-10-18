@@ -637,27 +637,39 @@ end
     @test n_ind == 4
 
     @testset "constructor" begin
+        MB = NL.MiniBatch
         for T in (NL.MLE, NL.MAP)
-            @test T().update_schedule === :all
-            @test T(update_schedule = :all).update_schedule === :all
-            @test T(update_schedule = "all").update_schedule === :all
-            @test T(update_schedule = 2).update_schedule == 2
+            @test !hasmethod(T, Tuple{}, (:update_schedule,))
+            @test MB(T(); schedule = :all).schedule === :all
+            @test MB(T(); schedule = "all").schedule === :all
+            @test MB(T(); schedule = 2).schedule == 2
             f = (n, it, r) -> [1]
-            @test T(update_schedule = f).update_schedule === f
-            @test_throws ErrorException T(update_schedule = 0)
-            @test_throws ErrorException T(update_schedule = "bogus")
-            @test_throws ErrorException T(update_schedule = 1.5)
+            @test MB(T(); schedule = f).schedule === f
+            @test_throws ErrorException MB(T(); schedule = 0)
+            @test_throws ErrorException MB(T(); schedule = "bogus")
+            @test_throws ErrorException MB(T(); schedule = 1.5)
+            @test_throws ErrorException MB(MB(T(); schedule = 2); schedule = 2)
+            @test_throws ErrorException MB(T(); schedule = 2, em_variant = :bogus)
 
             @test T().optimizer isa OptimizationOptimJL.LBFGS
-            @test T(update_schedule = 2).optimizer isa Optimisers.AbstractRule
-            @test_logs (:warn, r"stochastic") T(
-                update_schedule = 2, optimizer = OptimizationOptimJL.LBFGS()
+            @test MB(T(); schedule = 2).optimizer isa Optimisers.AbstractRule
+            @test MB(T(); schedule = 2).optim_kwargs == (; maxiters = 1000)
+            @test MB(T(); schedule = :all).optimizer === T().optimizer
+            @test_logs (:warn, r"stochastic") MB(
+                T(); schedule = 2, optimizer = OptimizationOptimJL.LBFGS()
+            )
+            @test_logs (:warn, r"stochastic") MB(
+                T(; optimizer = OptimizationOptimJL.LBFGS()); schedule = 2
             )
             adam = Optimisers.Adam(0.05)
-            @test (@test_logs T(update_schedule = 2, optimizer = adam)).optimizer === adam
+            @test (@test_logs MB(T(); schedule = 2, optimizer = adam)).optimizer === adam
+            m_adam = T(; optimizer = adam, optim_kwargs = (; maxiters = 7))
+            @test MB(m_adam; schedule = 2).optimizer === adam
+            @test MB(m_adam; schedule = 2).optim_kwargs == (; maxiters = 7)
             lb = OptimizationOptimJL.LBFGS()
-            @test (@test_logs T(update_schedule = :all, optimizer = lb)).optimizer === lb
+            @test (@test_logs MB(T(); schedule = :all, optimizer = lb)).optimizer === lb
         end
+        @test_throws ErrorException MB(NL.Pooled(); schedule = 2)
     end
 
     @testset ":all is unchanged" begin
@@ -666,12 +678,24 @@ end
             serialization = NoLimits.EnsembleSerial()
         )
         r2 = fit_model(
-            dm, NL.MLE(; update_schedule = :all, optim_kwargs = (maxiters = 3,));
+            dm, NL.MiniBatch(NL.MLE(; optim_kwargs = (maxiters = 3,)); schedule = :all);
             serialization = NoLimits.EnsembleSerial()
         )
         @test get_objective(r1) == get_objective(r2)
         @test NL.get_params(r1; scale = :transformed) ==
             NL.get_params(r2; scale = :transformed)
+        # the minibatch code path over all individuals reproduces the deterministic fit
+        r3 = @test_logs (:warn, r"stochastic") fit_model(
+            dm,
+            NL.MiniBatch(
+                NL.MLE(; optim_kwargs = (maxiters = 3,)); schedule = n_ind,
+                optimizer = NL.MLE().optimizer
+            );
+            serialization = NoLimits.EnsembleSerial()
+        )
+        @test get_objective(r3) ≈ get_objective(r1) rtol = 1.0e-10
+        @test NL.get_params(r3; scale = :transformed) ≈
+            NL.get_params(r1; scale = :transformed) rtol = 1.0e-8
     end
 
     @testset "_loglikelihood_indices" begin
@@ -698,8 +722,8 @@ end
         rng = MersenneTwister(1)
         fit_model(
             dm,
-            NL.MLE(;
-                update_schedule = rec, optimizer = Optimisers.Adam(0.05),
+            NL.MiniBatch(
+                NL.MLE(); schedule = rec, optimizer = Optimisers.Adam(0.05),
                 optim_kwargs = (maxiters = 4,)
             );
             serialization = NoLimits.EnsembleSerial(), rng = rng
@@ -714,8 +738,8 @@ end
         extra = θ -> 0.5 * θ.a^2
         res = fit_model(
             dm,
-            NL.MLE(;
-                update_schedule = _MLEFixedSched([1, 3]),
+            NL.MiniBatch(
+                NL.MLE(); schedule = _MLEFixedSched([1, 3]),
                 optimizer = Optimisers.Adam(0.05), optim_kwargs = (maxiters = 5,)
             );
             penalty = penalty, extra_objective = extra,
@@ -731,8 +755,8 @@ end
         # (penalty, extra_objective) added once and unscaled. Adam(0.0) freezes θ at θ0.
         res0 = fit_model(
             dm,
-            NL.MLE(;
-                update_schedule = _MLEFixedSched([1, 3]),
+            NL.MiniBatch(
+                NL.MLE(); schedule = _MLEFixedSched([1, 3]),
                 optimizer = Optimisers.Adam(0.0), optim_kwargs = (maxiters = 1,)
             );
             penalty = penalty, extra_objective = extra,
@@ -761,8 +785,8 @@ end
     @testset "reproducible given the same rng" begin
         mk() = fit_model(
             dm,
-            NL.MLE(;
-                update_schedule = 2, optimizer = Optimisers.Adam(0.05),
+            NL.MiniBatch(
+                NL.MLE(); schedule = 2, optimizer = Optimisers.Adam(0.05),
                 optim_kwargs = (maxiters = 3,)
             );
             serialization = NoLimits.EnsembleSerial(), rng = MersenneTwister(7)
@@ -777,8 +801,8 @@ end
         hi = (; a = θ0_t.a + 0.01, b = θ0_t.b + 0.01, σ = θ0_t.σ + 0.01)
         res = fit_model(
             dm,
-            NL.MLE(;
-                update_schedule = 2, lb = lo, ub = hi,
+            NL.MiniBatch(
+                NL.MLE(; lb = lo, ub = hi); schedule = 2,
                 optimizer = Optimisers.Adam(1.0), optim_kwargs = (maxiters = 5,)
             );
             serialization = NoLimits.EnsembleSerial(), rng = MersenneTwister(3)

@@ -136,7 +136,7 @@ end
     @testset ":all is unchanged" begin
         r1 = fit_model(dm, NL.MAP(; optim_kwargs = (maxiters = 3,)); serialization = _ser)
         r2 = fit_model(
-            dm, NL.MAP(; update_schedule = :all, optim_kwargs = (maxiters = 3,));
+            dm, NL.MiniBatch(NL.MAP(; optim_kwargs = (maxiters = 3,)); schedule = :all);
             serialization = _ser
         )
         @test get_objective(r1) == get_objective(r2)
@@ -150,8 +150,8 @@ end
         penalty = (; a = 100.0)
         res = fit_model(
             dm,
-            NL.MAP(;
-                update_schedule = _MAPFixedSched([1, 3]),
+            NL.MiniBatch(
+                NL.MAP(); schedule = _MAPFixedSched([1, 3]),
                 optimizer = Optimisers.Adam(0.05), optim_kwargs = (maxiters = 5,)
             );
             penalty = penalty, serialization = _ser, rng = MersenneTwister(2)
@@ -167,8 +167,8 @@ end
         penalty = (; a = 100.0)
         res0 = fit_model(
             dm,
-            NL.MAP(;
-                update_schedule = _MAPFixedSched([1, 3]),
+            NL.MiniBatch(
+                NL.MAP(); schedule = _MAPFixedSched([1, 3]),
                 optimizer = Optimisers.Adam(0.0), optim_kwargs = (maxiters = 1,)
             );
             penalty = penalty, serialization = _ser, rng = MersenneTwister(2)
@@ -185,8 +185,8 @@ end
     @testset "reproducible given the same rng" begin
         mk() = fit_model(
             dm,
-            NL.MAP(;
-                update_schedule = 2, optimizer = Optimisers.Adam(0.05),
+            NL.MiniBatch(
+                NL.MAP(); schedule = 2, optimizer = Optimisers.Adam(0.05),
                 optim_kwargs = (maxiters = 3,)
             );
             serialization = _ser, rng = MersenneTwister(7)

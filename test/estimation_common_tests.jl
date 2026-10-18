@@ -926,17 +926,16 @@ end
 
     s_str = NoLimits.SAEM(;
         sa_schedule = "two_phase", sa_anneal_schedule = "linear",
-        update_schedule = "all", builtin_stats = "auto", resid_var_param = "σ",
+        builtin_stats = "auto", resid_var_param = "σ",
         ebe_multistart_sampling = "random", ebe_rescue_multistart_sampling = "random"
     ).saem
     s_sym = NoLimits.SAEM(;
         sa_schedule = :two_phase, sa_anneal_schedule = :linear,
-        update_schedule = :all, builtin_stats = :auto, resid_var_param = :σ,
+        builtin_stats = :auto, resid_var_param = :σ,
         ebe_multistart_sampling = :random, ebe_rescue_multistart_sampling = :random
     ).saem
     @test s_str.sa_schedule === s_sym.sa_schedule
     @test s_str.sa_anneal_schedule === s_sym.sa_anneal_schedule
-    @test s_str.update_schedule === s_sym.update_schedule
     @test s_str.builtin_stats === s_sym.builtin_stats
     @test s_str.resid_var_param === s_sym.resid_var_param
     @test s_str.ebe_multistart_sampling === s_sym.ebe_multistart_sampling
@@ -956,10 +955,10 @@ end
             getfield(T(; kw => :random).multistart, :sampling)
     end
 
-    m_str = NoLimits.MCEM(; ebe_multistart_sampling = "random", update_schedule = "all")
-    m_sym = NoLimits.MCEM(; ebe_multistart_sampling = :random, update_schedule = :all)
+    m_str = NoLimits.MCEM(; ebe_multistart_sampling = "random")
+    m_sym = NoLimits.MCEM(; ebe_multistart_sampling = :random)
     @test m_str.ebe.sampling === m_sym.ebe.sampling
-    @test m_str.update_schedule === m_sym.update_schedule
+    @test NoLimits.MiniBatch(m_str; schedule = "all").schedule === :all
     @test NoLimits.MCEM_IS(; proposal = "prior").proposal ===
         NoLimits.MCEM_IS(; proposal = :prior).proposal
 
@@ -1357,33 +1356,34 @@ struct _MBCustomMethod <: NoLimits.FittingMethod end
         @test_throws ErrorException NL._minibatch_current!(st4)
     end
 
-    @testset "_resolve_outer_optimizer" begin
-        @test NL._resolve_outer_optimizer(nothing, :all, "X") isa OptimizationOptimJL.LBFGS
-        default_adam = NL._resolve_outer_optimizer(nothing, 3, "X")
+    @testset "MiniBatch optimizer resolution" begin
+        @test NL._resolve_outer_optimizer(nothing) isa OptimizationOptimJL.LBFGS
+        opt(o; s = 3, m = NL.MLE()) = first(NL._minibatch_optimizer(m, s, o, nothing))
+        @test opt(nothing; s = :all) isa OptimizationOptimJL.LBFGS
+        default_adam = opt(nothing)
         @test default_adam isa Optimisers.Adam
         # Adam(1e-3) did not converge in the default iteration budget (#323).
         @test default_adam.eta == 0.01
-        @test_logs (:warn, r"stochastic") NL._resolve_outer_optimizer(
-            OptimizationOptimJL.LBFGS(), 3, "X"
-        )
+        @test_logs (:warn, r"stochastic") opt(OptimizationOptimJL.LBFGS())
         adam = Optimisers.Adam(0.1)
-        @test (@test_logs NL._resolve_outer_optimizer(adam, 3, "X")) === adam
+        @test (@test_logs opt(adam)) === adam
         lb = OptimizationOptimJL.LBFGS()
-        @test (@test_logs NL._resolve_outer_optimizer(lb, :all, "X")) === lb
+        @test (@test_logs opt(lb; s = :all)) === lb
         chain = Optimisers.OptimiserChain(Optimisers.ClipGrad(1.0), Optimisers.Adam(0.1))
         @test chain isa Optimisers.AbstractRule
-        @test (@test_logs NL._resolve_outer_optimizer(chain, 3, "X")) === chain
+        @test (@test_logs opt(chain)) === chain
 
         # Optimizers that reject callbacks cannot carry the schedule.
-        @test_throws ErrorException NL._resolve_outer_optimizer(_MBNoCallbackOpt(), 3, "X")
-        @test NL._resolve_outer_optimizer(_MBNoCallbackOpt(), :all, "X") isa _MBNoCallbackOpt
+        @test_throws ErrorException opt(_MBNoCallbackOpt())
+        @test opt(_MBNoCallbackOpt(); s = :all) isa _MBNoCallbackOpt
     end
 
     @testset "_update_schedule accessor" begin
         @test NL._update_schedule(NL.MLE()) === :all
-        @test NL._update_schedule(NL.MLE(update_schedule = 3)) == 3
+        @test NL._update_schedule(NL._minibatch_method(NL.MiniBatch(NL.MLE(); schedule = 3))) == 3
         # Custom dev-API methods have no such field and fall back to :all.
         @test NL._update_schedule(_MBCustomMethod()) === :all
+        @test_throws ErrorException NL.MiniBatch(_MBCustomMethod(); schedule = 2)
     end
 
     @testset "_minibatch_solve_kwargs" begin

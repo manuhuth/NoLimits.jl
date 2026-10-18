@@ -20,8 +20,7 @@ using LineSearches
                  inner_options, inner_optimizer, inner_kwargs, inner_adtype,
                  inner_grad_tol, multistart_options, multistart_n, multistart_k,
                  multistart_grad_tol, multistart_max_rounds, multistart_sampling,
-                 lb, ub, ignore_model_bounds, precondition,
-                 update_schedule) <: FittingMethod
+                 lb, ub, ignore_model_bounds, precondition) <: FittingMethod
 
 Sparse-grid (Smolyak) quadrature for NLME marginal likelihood estimation.
 
@@ -54,8 +53,8 @@ whose gradient is not; use `Laplace()` for that, and `level ≥ 3` here.
   whose integrand is far from Gaussian can therefore get a negative signed sum;
   that batch then falls back to the level-1 (Laplace) value with a warning.
 - `optimizer`: outer Optimization.jl-compatible optimizer.  Defaults to LBFGS
-  with backtracking line search, or to `Optimisers.Adam(0.01)` when
-  `update_schedule != :all`.
+  with backtracking line search. For mini-batching wrap the method in
+  [`MiniBatch`](@ref).
 - `optim_kwargs = nothing`: forwarded to `Optimization.solve`; `nothing` = `NamedTuple()`, plus `reltol = 1e-12` for an Optim.jl optimizer (as [`Laplace`](@ref))
   (e.g. `maxiters`, `reltol`).
 - `adtype`: AD backend for the outer gradient.  Defaults to
@@ -78,7 +77,6 @@ whose gradient is not; use `Laplace()` for that, and `level ≥ 3` here.
   `false` to optimize the transformed vector directly, which reproduces pre-0.2 results
   bit-for-bit. Note that with preconditioning on, the optimizer object behind
   [`get_raw`](@ref) works in `z`; [`get_params`](@ref) always returns the usual scales.
-$(_UPDATE_SCHEDULE_DOC)
 """
 struct GHQuadrature{LV, O, K, A, IO, MS, L, U, US} <: FittingMethod
     level::LV   # Int (isotropic) or NamedTuple (anisotropic per-RE-group)
@@ -163,11 +161,9 @@ function GHQuadrature(;
         lb = nothing,
         ub = nothing,
         ignore_model_bounds = false,
-        precondition = true,
-        update_schedule = :all
+        precondition = true
     )
-    update_schedule = _check_update_schedule(_as_symbol(update_schedule), "GHQuadrature")
-    optimizer = _resolve_outer_optimizer(optimizer, update_schedule, "GHQuadrature")
+    optimizer = _resolve_outer_optimizer(optimizer)
     level = _check_ghq_level(_as_namedtuple(level))
     inner = inner_options === nothing ?
         LaplaceInnerOptions(
@@ -184,7 +180,7 @@ function GHQuadrature(;
         (optim_kwargs = _outer_default_optim_kwargs(optimizer, NamedTuple()))
     return GHQuadrature(
         level, optimizer, _as_namedtuple(optim_kwargs), adtype, inner, ms, lb, ub,
-        ignore_model_bounds, precondition, update_schedule
+        ignore_model_bounds, precondition, :all
     )
 end
 

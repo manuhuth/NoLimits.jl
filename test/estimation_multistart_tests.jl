@@ -245,8 +245,8 @@ end
 
     # A user-supplied rng must not be shared across threaded starts: mini-batch draws
     # mutate it, which made the fit non-reproducible (#323).
-    mb = NoLimits.MLE(
-        update_schedule = 2, optimizer = Optimisers.Adam(0.05),
+    mb = NoLimits.MiniBatch(
+        NoLimits.MLE(); schedule = 2, optimizer = Optimisers.Adam(0.05),
         optim_kwargs = (; maxiters = 10)
     )
     # A fresh Multistart per run: its rng is consumed when the starts are sampled.

@@ -282,7 +282,6 @@ end
         NoLimits.SAEM(;
             maxiters = 2,
             mcmc_steps = 1,
-            update_schedule = :all,
             turing_kwargs = (n_adapt = 2, progress = false),
             optim_kwargs = (maxiters = 2,)
         );

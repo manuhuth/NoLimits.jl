@@ -105,6 +105,45 @@ end
     @test collect(get_params(r3; scale = :transformed)) != collect(get_params(r1; scale = :transformed))
 end
 
+@testset "VEM: MiniBatch (stochastic VEM)" begin
+    import Optimisers
+    dm = _vem_lin_dm(Xoshiro(11))
+    K = length(NoLimits.get_individuals(dm))
+    base = NoLimits.VEM(; refine = false, n_is = 0)
+    r0 = fit_model(dm, base; rng = Xoshiro(3))
+    # every batch selected + the same LBFGS reproduces the unwrapped fit
+    rf = @test_logs (:warn, r"stochastic") fit_model(
+        dm, NoLimits.MiniBatch(base; schedule = K, optimizer = base.optimizer); rng = Xoshiro(3)
+    )
+    @test collect(get_params(rf; scale = :transformed)) ≈
+        collect(get_params(r0; scale = :transformed)) rtol = 1.0e-8
+    @test get_objective(rf) ≈ get_objective(r0) rtol = 1.0e-10
+    # the optimizer sees (K/|B|) Σ_B (-ELBO_i): two halves average to the full objective
+    obj(sched) = get_result(
+        fit_model(
+            dm,
+            NoLimits.MiniBatch(
+                base; schedule = sched, optimizer = Optimisers.Adam(0.0),
+                optim_kwargs = (; maxiters = 1)
+            );
+            rng = Xoshiro(3)
+        )
+    ).solution.objective
+    half = K ÷ 2
+    @test (obj((n, it, r) -> 1:half) + obj((n, it, r) -> (half + 1):n)) / 2 ≈ obj(:all) rtol = 1.0e-10
+    # default Adam(0.01), 1000 iterations on minibatches of 10 lands near the full fit
+    # (measured: a 1.953 vs 1.964, b -0.498 vs -0.504, σ 0.264 vs 0.259)
+    mb = NoLimits.MiniBatch(NoLimits.VEM(; n_is = 0); schedule = 10)
+    ra = fit_model(dm, mb; rng = Xoshiro(5))
+    θa, θ0 = get_params(ra; scale = :untransformed), get_params(r0; scale = :untransformed)
+    @test isapprox(θa.a, θ0.a; atol = 0.05)
+    @test isapprox(θa.b, θ0.b; atol = 0.03)
+    @test isapprox(θa.σ, θ0.σ; rtol = 0.05)
+    @test get_result(ra).notes.refine_iterations == 0
+    @test collect(get_params(fit_model(dm, mb; rng = Xoshiro(5)); scale = :transformed)) ==
+        collect(get_params(ra; scale = :transformed))
+end
+
 # Opt-in like enzyme_compat_proxy_tests.jl: Enzyme is not a test dependency.
 if get(ENV, "NOLIMITS_TEST_ENZYME", "false") == "true" && VERSION >= v"1.12.5" &&
         Base.find_package("Enzyme") !== nothing
@@ -120,6 +159,16 @@ if get(ENV, "NOLIMITS_TEST_ENZYME", "false") == "true" && VERSION >= v"1.12.5" &
         @test get_method(re).adtype === ad
         @test collect(get_params(re; scale = :transformed)) ≈
             collect(get_params(rf; scale = :transformed)) rtol = 1.0e-6
+        # MiniBatch: the minibatch enters the reverse pass as constant contexts
+        import Optimisers
+        mbv(adt) = NoLimits.MiniBatch(
+            NoLimits.VEM(; n_is = 0, refine = false, adtype = adt); schedule = 10,
+            optimizer = Optimisers.Adam(0.05), optim_kwargs = (; maxiters = 20)
+        )
+        rmf = fit_model(dm, mbv(NoLimits.Optimization.AutoForwardDiff()); rng = Xoshiro(3))
+        rme = fit_model(dm, mbv(ad); rng = Xoshiro(3))
+        @test collect(get_params(rme; scale = :transformed)) ≈
+            collect(get_params(rmf; scale = :transformed)) rtol = 1.0e-6
     end
 end
 
