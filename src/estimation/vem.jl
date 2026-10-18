@@ -7,7 +7,7 @@
 #     Σ_i ELBO_i(θ, κ_i),   ELBO_i = E_{q(u; κ_i)}[log p(y_i, u | θ)] + H(q(·; κ_i)),
 #
 # with one Gaussian variational distribution q(u; κ_i) = N(μ_i, L_i L_i') per RE batch,
-# and (θ, κ) are optimized JOINTLY by L-BFGS. The expectation is a sample average over
+# and (θ, κ) are optimized JOINTLY (L-BFGS by default). The expectation is a sample average over
 # draws ξ_ij ~ N(0, I) fixed once per fit (u_ij = μ_i + L_i ξ_ij; "deterministic VEM",
 # the paper's default: a deterministic objective that admits quasi-Newton steps and line
 # searches). The variational family lives in the standardized RE space u of the prior
@@ -20,33 +20,56 @@
 export VEM
 
 """
-    VEM(; n_samples = :auto, expectation = :auto, family = :dense, maxiters = 1000, g_abstol = 1e-5,
-        f_reltol = 1e-8, init = :laplace, n_is = 1000, is_df = 5.0, ebe_kwargs...)
+    VEM(; optimizer = nothing, optim_kwargs = nothing, adtype = AutoForwardDiff(), lb = nothing,
+        ub = nothing, ignore_model_bounds = false, n_samples = :auto, expectation = :auto,
+        family = :dense, init = :laplace, n_is = 1000, is_df = 5.0, refine = :auto,
+        refine_nodes = 64, ebe_optimizer, ebe_optim_kwargs, ebe_adtype, ebe_grad_tol,
+        ebe_multistart_n, ebe_multistart_k, ebe_multistart_max_rounds, ebe_multistart_sampling)
 
 Variational Expectation Maximization (Tarek & Afonso 2026). Maximizes the evidence lower
 bound jointly over the fixed effects and one Gaussian variational distribution per
-random-effect batch with L-BFGS, using `n_samples` fixed standard-normal draws per batch
-(sample-average approximation of the ELBO). Scales to models with many population
-parameters (e.g. neural networks) and random effects: no inner mode finding or Hessian
-per objective evaluation, unlike Laplace/FOCEI.
+random-effect batch with an Optimization.jl optimizer (L-BFGS by default), using
+`n_samples` fixed standard-normal draws per batch (sample-average approximation of the
+ELBO). Scales to models with many population parameters (e.g. neural networks) and random
+effects: no inner mode finding or Hessian per objective evaluation, unlike Laplace/FOCEI.
 
 # Keyword Arguments
+- `optimizer`: Optimization.jl-compatible optimizer for the joint ELBO fit and the `refine`
+  step. `nothing` selects `LBFGS(m = 20, linesearch = BackTracking())`. The optimizer works
+  on a diagonally preconditioned offset of the fixed effects and receives the analytic
+  value and gradient in one call (`fg`).
+- `optim_kwargs = nothing`: keyword arguments forwarded to `Optimization.solve` (both
+  stages). `nothing` uses `(; maxiters = 1000)`, plus `g_abstol = 1e-5`, `reltol = 1e-8` and
+  `allow_f_increases = false` for an Optim.jl optimizer (the sample-average objective's
+  gradient norm stalls around 1e-2 near the optimum, so in practice the relative objective
+  change stops the fit). A user-supplied NamedTuple replaces these defaults.
+- `adtype = AutoForwardDiff()`: automatic differentiation of the joint objective. The default
+  differentiates per batch in forward mode (cheap for few fixed effects). Any other ADTypes
+  backend - typically `AutoEnzyme(mode = Enzyme.set_runtime_activity(Enzyme.Reverse),
+  function_annotation = Enzyme.Duplicated)` with Enzyme loaded (without the `Duplicated`
+  annotation Enzyme rejects the objective, which captures mutable caches) - differentiates
+  the whole objective (all fixed effects and all variational parameters) in ONE pass through DifferentiationInterface: reverse mode for large networks
+  (paper: reverse mode is what makes VEM scale). Rule of thumb: reverse mode pays off from
+  roughly 100 fixed-effect coordinates (FFNN with 116 weights: 69 s vs 258 s with forward
+  mode; 27 coordinates with 13-dimensional random effects: 418 s vs 295 s). Requires
+  Gaussian random effects (centered variational space, evaluated through the
+  Enzyme-compatible batch log-joint). The `refine` step always uses ForwardDiff.
+- `lb`, `ub`: bounds on the transformed fixed-effect scale, or `nothing` to use the
+  model-declared bounds (as for [`Laplace`](@ref)). Variational parameters are unbounded.
+- `ignore_model_bounds::Bool = false`: ignore the bounds declared in `@fixedEffects`
+  (explicit `lb`/`ub` still apply).
 - `n_samples = :auto`: draws per batch in the sample-average ELBO (fixed per fit). `:auto`
   uses max(16, 4 n_b) for an n_b-dimensional batch: 16 draws biased the 13-dimensional
   network-weight random effects of a test model (objective -59.5 vs -93.4 with 64 draws).
 - `expectation = :auto`: how E_q is computed. `:quadrature` uses a Smolyak Gauss-Hermite
   rule in the base space (7 nodes for scalar random effects, level 5 / 4 for 2 / 3
-  dimensions) — deterministic and far more accurate than a few draws for small batches;
+  dimensions), deterministic and far more accurate than a few draws for small batches;
   `:mc` uses `n_samples` fixed draws (the paper's sample-average approximation). `:auto`
   picks quadrature for batches with ≤ 3 random effects.
 - `family::Symbol = :dense`: `:dense` (full lower-triangular scale) or `:diagonal` (mean-field)
   Gaussian family in the standardized random-effect space. Mean-field q cannot represent
   posterior correlations between random effects and biases correlated RE covariances
   (M03 anchor: Ω₁₂ = -0.08 vs 0.15); use it only for very high-dimensional REs.
-- `maxiters::Int = 1000`, `g_abstol = 1e-5`, `f_reltol = 1e-8`: L-BFGS stopping rules (the
-  sample-average objective's gradient norm stalls around 1e-2 near the optimum, so in
-  practice the relative objective change stops the fit).
-- `memory::Int = 20`: L-BFGS memory.
 - `init::Symbol = :laplace`: initialize each q at the Laplace approximation of the batch
   posterior at the starting θ (`:prior` starts from the prior, μ = 0, L = I).
 - `n_is::Int = 1000`, `is_df = 5.0`: importance-sampling draws and t degrees of freedom for
@@ -61,49 +84,46 @@ per objective evaluation, unlike Laplace/FOCEI.
   and is consistent as the number of nodes grows. `:auto` refines when the model has at most
   50 free fixed-effect coordinates and at most 2 random effects per batch (each refinement
   iteration costs one forward-mode pass over the fixed effects; network models skip it).
-- `adtype = AutoForwardDiff()`: automatic differentiation of the joint objective. The default
-  differentiates per batch in forward mode (cheap for few fixed effects). Any other ADTypes
-  backend - typically `AutoEnzyme(mode = Enzyme.set_runtime_activity(Enzyme.Reverse))` with
-  Enzyme loaded - differentiates the whole objective (all fixed effects and all variational
-  parameters) in ONE pass through DifferentiationInterface: reverse mode for large networks
-  (paper: reverse mode is what makes VEM scale). Rule of thumb: reverse mode pays off from
-  roughly 100 fixed-effect coordinates (FFNN with 116 weights: 69 s vs 258 s with forward
-  mode; 27 coordinates with 13-dimensional random effects: 418 s vs 295 s). Requires
-  Gaussian random effects (centered variational space, evaluated through the
-  Enzyme-compatible batch log-joint).
+  The refinement uses the same `optimizer`, `optim_kwargs` and bounds as the joint fit.
 - `ebe_*`: options of the final empirical-Bayes modes (as for `MCEM`).
+
+Randomness (the fixed Monte Carlo draws, multivariate-t refinement nodes, importance-sampling
+draws, start repair and EBE multistart) comes only from the `rng` keyword of
+[`fit_model`](@ref), as for `SAEM` and `MCEM`: the same seeded `rng` gives identical fits.
 """
-struct VEM{EB} <: FittingMethod
+struct VEM{O, K, A, L, U, EB} <: FittingMethod
+    optimizer::O
+    optim_kwargs::K
+    adtype::A
+    lb::L
+    ub::U
+    ignore_model_bounds::Bool
     n_samples::Union{Int, Symbol}
     expectation::Symbol
     family::Symbol
-    maxiters::Int
-    g_abstol::Float64
-    f_reltol::Float64
-    memory::Int
     init::Symbol
     n_is::Int
     is_df::Float64
     refine::Symbol
     refine_nodes::Int
-    adtype::Any
     ebe::EB
 end
 
 function VEM(;
+        optimizer = nothing,
+        optim_kwargs = nothing,
+        adtype = Optimization.AutoForwardDiff(),
+        lb = nothing,
+        ub = nothing,
+        ignore_model_bounds::Bool = false,
         n_samples::Union{Int, Symbol} = :auto,
         expectation = :auto,
         family = :dense,
-        maxiters::Int = 1000,
-        g_abstol::Real = 1.0e-5,
-        f_reltol::Real = 1.0e-8,
-        memory::Int = 20,
         init = :laplace,
         n_is::Int = 1000,
         is_df::Real = 5.0,
         refine = :auto,
         refine_nodes::Int = 64,
-        adtype = Optimization.AutoForwardDiff(),
         ebe_optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
         ebe_optim_kwargs = NamedTuple(),
         ebe_adtype = Optimization.AutoForwardDiff(),
@@ -124,20 +144,28 @@ function VEM(;
     expectation = _as_symbol(expectation)
     expectation in (:auto, :mc, :quadrature) ||
         error("VEM: expectation must be :auto, :mc or :quadrature. Got: $expectation")
-    maxiters >= 1 || error("VEM: maxiters must be ≥ 1. Got: $maxiters")
     n_is >= 0 || error("VEM: n_is must be ≥ 0. Got: $n_is")
     is_df > 0 || error("VEM: is_df must be > 0. Got: $is_df")
+    # memory 20 and an uncapped BackTracking step: the preconditioned joint problem has
+    # hundreds of coordinates, so the outer default's maxstep = 1 would shorten early steps
+    optimizer === nothing &&
+        (optimizer = OptimizationOptimJL.LBFGS(m = 20, linesearch = LineSearches.BackTracking()))
+    optim_kwargs === nothing && (
+        optim_kwargs = optimizer isa Optim.AbstractOptimizer ?
+            (; maxiters = 1000, g_abstol = 1.0e-5, reltol = 1.0e-8, allow_f_increases = false) :
+            (; maxiters = 1000)
+    )
     ebe = EBEOptions(
         ebe_optimizer, _as_namedtuple(ebe_optim_kwargs), ebe_adtype, ebe_grad_tol,
         ebe_multistart_n, ebe_multistart_k, ebe_multistart_max_rounds,
         ebe_multistart_sampling
     )
     return VEM(
-        n_samples, expectation, family, maxiters, Float64(g_abstol), Float64(f_reltol), memory, init,
-        n_is, Float64(is_df),
+        optimizer, _as_namedtuple(optim_kwargs), adtype, lb, ub, ignore_model_bounds,
+        n_samples, expectation, family, init, n_is, Float64(is_df),
         refine === :auto ? :auto : refine === true ? :on : refine === false ? :off :
             error("VEM: refine must be :auto, true or false. Got: $refine"),
-        refine_nodes, adtype, ebe
+        refine_nodes, ebe
     )
 end
 
@@ -563,6 +591,9 @@ function _vem_is_loglik(
     return lmax + log(sum(exp(w - lmax) for w in lw)) - log(K)
 end
 
+_sol_iterations(sol) = hasproperty(sol, :stats) && hasproperty(sol.stats, :iterations) ?
+    sol.stats.iterations : missing
+
 function _vem_theta_u(
         xθ::AbstractVector, θ_const_t::ComponentArray, axs_full, axs_free, free_names,
         inv_transform
@@ -659,7 +690,11 @@ function _fit_model(
         off += k
     end
     x0 = zeros(Float64, off)
-    x0[1:p] .= collect(Float64, θt_free)
+    lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
+        fe, free_names, θt_free, method.optimizer, method.lb, method.ub, constants;
+        ignore_model_bounds = method.ignore_model_bounds, method_label = "VEM"
+    )
+    x0[1:p] .= collect(Float64, θ0_init)
     θu0 = θu_of(view(x0, 1:p))
     ξs = _VEMDraws[]
     cpairs = _saem_detect_centering_pairs(dm, free_names)
@@ -771,19 +806,26 @@ function _fit_model(
     end
     y0 = copy(x0)
     y0[1:p] .= 0.0
-    opt = Optim.LBFGS(; m = method.memory, linesearch = LineSearches.BackTracking())
-    t0 = time()
-    ores = Optim.optimize(
-        Optim.NLSolversBase.only_fg!(fgy!), y0, opt,
-        Optim.Options(;
-            iterations = method.maxiters, g_abstol = method.g_abstol,
-            f_reltol = method.f_reltol, allow_f_increases = false
-        )
+    fy(y, _) = fgy!(0.0, nothing, y)
+    # `fg` makes Optim's line search and Optimisers rules use the fused value + gradient
+    optf = OptimizationFunction(
+        fy, method.adtype;
+        grad = (G, y, _) -> (fgy!(nothing, G, y); nothing),
+        fg = (G, y, _) -> fgy!(0.0, G, y)
     )
-    x̂ = xmap(Optim.minimizer(ores))
-    elbo = -Optim.minimum(ores)
+    # bounds act on the fixed effects only, mapped into y; κ stays unbounded
+    lb_y = vcat((lb .- x0[1:p]) ./ s, fill(-Inf, off - p))
+    ub_y = vcat((ub .- x0[1:p]) ./ s, fill(Inf, off - p))
+    opt_use, use_bounds_y = _bounded_optimizer(method.optimizer, use_bounds, lb_y, ub_y)
+    prob = use_bounds_y ? OptimizationProblem(optf, y0; lb = lb_y, ub = ub_y) :
+        OptimizationProblem(optf, y0)
+    t0 = time()
+    sol = Optimization.solve(prob, opt_use; method.optim_kwargs...)
+    x̂ = xmap(sol.u)
+    elbo = -fy(sol.u, nothing)
     θ_hat_u = θu_of(view(x̂, 1:p))
     refine_iters = 0
+    refine_ok = true
     do_refine = method.refine === :on ||
         (method.refine === :auto && p <= 50 && maximum(nb[keep]; init = 0) <= 2)
     if do_refine
@@ -821,17 +863,20 @@ function _fit_model(
             return F === nothing ? nothing : v
         end
         xθ0 = Vector{Float64}(x̂[1:p])
-        rres = Optim.optimize(
-            Optim.NLSolversBase.only_fg!(fgr!), xθ0,
-            Optim.LBFGS(; m = method.memory, linesearch = LineSearches.BackTracking()),
-            Optim.Options(;
-                iterations = method.maxiters, g_abstol = method.g_abstol,
-                f_reltol = method.f_reltol
-            )
+        rf = OptimizationFunction(
+            (xθ, _) -> fr(xθ), method.adtype;
+            grad = (G, xθ, _) -> (fgr!(nothing, G, xθ); nothing),
+            fg = (G, xθ, _) -> fgr!(0.0, G, xθ)
         )
-        if isfinite(Optim.minimum(rres)) && Optim.minimum(rres) <= fr(xθ0)
-            θ_hat_u = θu_of(Optim.minimizer(rres))
-            refine_iters = Optim.iterations(rres)
+        ropt, rbounds = _bounded_optimizer(method.optimizer, use_bounds, lb, ub)
+        rprob = rbounds ? OptimizationProblem(rf, xθ0; lb = lb, ub = ub) :
+            OptimizationProblem(rf, xθ0)
+        rsol = Optimization.solve(rprob, ropt; method.optim_kwargs...)
+        fθ = fr(rsol.u)
+        if isfinite(fθ) && fθ <= fr(xθ0)
+            θ_hat_u = θu_of(rsol.u)
+            refine_iters = _sol_iterations(rsol)
+            refine_ok = rsol.retcode == SciMLBase.ReturnCode.Success
         end
     end
     θ_hat_t = transform(θ_hat_u)
@@ -849,8 +894,8 @@ function _fit_model(
     else
         -elbo
     end
-    converged = (Optim.f_converged(ores) || Optim.g_converged(ores) || Optim.x_converged(ores)) &&
-        Optim.iterations(ores) < method.maxiters && isfinite(objective)
+    niter = _sol_iterations(sol)
+    converged = sol.retcode == SciMLBase.ReturnCode.Success && refine_ok && isfinite(objective)
     q_params = [
         begin
                 μq, Lq = _vem_effective(Vector{Float64}(x̂[ranges[k]]), ξs[k], nb[keep[k]], family, θ_hat_u)
@@ -860,11 +905,8 @@ function _fit_model(
 
     summary = FitSummary(objective, converged, FitParameters(θ_hat_t, θ_hat_u), NamedTuple())
     diagnostics = FitDiagnostics(
-        (; fit_seconds = time() - t0), (optimizer = opt,),
-        (
-            iterations = Optim.iterations(ores), elbo = elbo, f_calls = Optim.f_calls(ores),
-            g_calls = Optim.g_calls(ores),
-        ),
+        (; fit_seconds = time() - t0), (optimizer = method.optimizer,),
+        (retcode = sol.retcode, iterations = niter, elbo = elbo),
         NamedTuple()
     )
     eb_modes = store_eb_modes ?
@@ -874,7 +916,8 @@ function _fit_model(
         refine_iterations = refine_iters, family = family, n_nodes = [length(ξ.w) for ξ in ξs], variational_params = q_params,
         variational_batches = keep,
     )
-    result = FrequentistREResult(nothing, objective, Optim.iterations(ores), ores, notes, eb_modes)
+    raw = hasproperty(sol, :original) ? sol.original : sol
+    result = FrequentistREResult(sol, objective, niter, raw, notes, eb_modes)
     return FitResult(
         method, result, summary, diagnostics, store_data_model ? dm : nothing, args, fit_kwargs
     )

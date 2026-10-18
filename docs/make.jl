@@ -70,6 +70,7 @@ makedocs(;
                 "MCEM" => "estimation/mcem.md",
                 "SAEM" => "estimation/saem.md",
                 "SAEM: advanced" => "estimation/saem-advanced.md",
+                "VEM" => "estimation/vem.md",
             ],
             "Bayesian" => [
                 "MCMC" => "estimation/mcmc.md",

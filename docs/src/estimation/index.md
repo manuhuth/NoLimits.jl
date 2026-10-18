@@ -29,7 +29,7 @@ fit_summary
 
 ## Choosing a Method
 
-Start here. The four questions below narrow twelve methods down to one or two, and the table
+Start here. The four questions below narrow thirteen methods down to one or two, and the table
 underneath gives the trade-offs behind each answer.
 
 1. **Does the model have random effects?** No: `MLE`, `MAP`, `VI`, or `MCMC`. Yes: continue - `MCMC` handles both cases, the others below do not.
@@ -47,6 +47,7 @@ underneath gives the trade-offs behind each answer.
 | [`GHQuadrature`](ghquadrature.md) | required | not used | numerical quadrature; accuracy set by the number of nodes | medium, grows fast with the number of random effects | point estimates with controllable integration error |
 | [`SAEM`](saem.md) | required | not used | Monte Carlo with stochastic approximation | medium | point estimates, sampled random effects |
 | [`MCEM`](mcem.md) | required | not used | Monte Carlo, no curvature assumption | high | point estimates, sampled random effects |
+| [`VEM`](vem.md) | required | not used | Gaussian variational lower bound, optionally refined by importance sampling | low to medium, scales to many parameters | point estimates, variational posteriors of the random effects |
 | [`MCMC`](mcmc.md) | optional | required | sampled jointly with the parameters | high | full posterior chains |
 | [`Pooled` / `PooledMap`](pooled.md) | plugged in at their mean | `PooledMap` only | none | lowest | fast warm start via `pooled_init` |
 | [`MLE` / `MAP`](mle.md) | not allowed | `MAP` needs at least one | not applicable | lowest | point estimates |
@@ -61,7 +62,7 @@ underneath gives the trade-offs behind each answer.
 
 ## Method Pages
 
-Each method has a dedicated page with its objective, options, and examples: [Laplace](laplace.md), [FOCEI](focei.md), [GH Quadrature](ghquadrature.md), [MCEM](mcem.md), [SAEM](saem.md), [Pooled / PooledMap](pooled.md), [MCMC](mcmc.md), [VI](vi.md), and [MLE / MAP](mle.md). Model comparison is covered by [Cross-Validation](cv.md) (`cross_validate` + `fit_cv`, observation-wise or subject-wise k-fold, with EBE or Monte Carlo random-effect prediction).
+Each method has a dedicated page with its objective, options, and examples: [Laplace](laplace.md), [FOCEI](focei.md), [GH Quadrature](ghquadrature.md), [MCEM](mcem.md), [SAEM](saem.md), [VEM](vem.md), [Pooled / PooledMap](pooled.md), [MCMC](mcmc.md), [VI](vi.md), and [MLE / MAP](mle.md). Model comparison is covered by [Cross-Validation](cv.md) (`cross_validate` + `fit_cv`, observation-wise or subject-wise k-fold, with EBE or Monte Carlo random-effect prediction).
 
 ## Common Fit Keywords
 

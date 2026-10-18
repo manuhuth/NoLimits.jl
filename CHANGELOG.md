@@ -4,6 +4,13 @@
 
 ### Changes
 
+- New estimator `VEM` (variational expectation maximization, Tarek and Afonso 2026), with
+  the optimizer interface of `Laplace`/`MLE`: `optimizer` (any Optimization.jl optimizer,
+  default `LBFGS(m = 20, linesearch = BackTracking())`), `optim_kwargs` (forwarded to
+  `Optimization.solve`), `adtype`, `lb`, `ub` and `ignore_model_bounds`. The optional
+  `refine` step uses the same optimizer, keywords and bounds. New docs page
+  "Estimation > VEM".
+
 - SAEM skips the M-step in iterations with step size γ = 0 (the `sa_burnin_iters` burn-in
   iterations and, under `:robbins_monro`, the final iteration). The update
   `θ_old + γ * (θ̂ - θ_old)` discards θ̂ there, so the closed-form updates and the Q2 and
