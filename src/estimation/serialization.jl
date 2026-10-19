@@ -447,7 +447,7 @@ Non-serializable fields are stripped automatically:
 - Optimization solver cache in `raw` (`get_raw` returns `nothing` after loading)
 - MCMC `sampler` (replaced with a `_SavedSamplerStub` on load)
 - VI `state` (`get_vi_state` returns `nothing` after loading)
-- `rng` from `fit_kwargs` (defaults to `Random.default_rng()` on load)
+- `rng` from `fit_kwargs` (consumers fall back to the fixed default `Xoshiro(42)` on load)
 - Diagnostic `optimizer` field
 
 # Keyword Arguments

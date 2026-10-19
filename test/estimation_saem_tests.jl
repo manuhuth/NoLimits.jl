@@ -383,15 +383,23 @@ end
 
 @testset "SAEM basic (random effects)" begin
     dm = _SAEM_DM_S
-    res = fit_model(
-        dm,
-        NoLimits.SAEM(;
-            sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-            SAEM_FAST...
-        )
+    method = NoLimits.SAEM(;
+        sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
+        SAEM_FAST...
     )
+    res = fit_model(dm, method)
     @test res isa FitResult
     @test NoLimits.get_converged(res) isa Bool
+
+    # The default rng has a fixed seed, independent of the global RNG. Default sampler,
+    # no burn-in and a free ω, so θ depends on the draws after two iterations.
+    θ(r) = collect(NoLimits.get_params(r; scale = :untransformed))
+    m0 = NoLimits.SAEM(; SAEM_FAST..., sa_burnin_iters = 0, progress = false)
+    dm_ω = fx_re_dm()
+    r0 = fit_model(dm_ω, m0)
+    Random.seed!(987)
+    @test θ(fit_model(dm_ω, m0)) == θ(r0)
+    @test θ(fit_model(dm_ω, m0; rng = Xoshiro(7))) != θ(r0)
 end
 
 @testset "SAEM/MCEM serial vs threaded is reproducible" begin

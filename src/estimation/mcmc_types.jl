@@ -139,7 +139,7 @@ function build_fit_result(
         method, result, summary, diagnostics,
         store_data_model ? dm : nothing, fit_args, fit_kwargs
     )
-    return _with_posterior_params(res, dm; rng = Random.default_rng())
+    return _with_posterior_params(res, dm; rng = _default_rng())
 end
 
 # Objective for a posterior chain: the mean negative log posterior density over the

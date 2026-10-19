@@ -1582,7 +1582,7 @@ function _laplace_compute_bstar_batch!(
         adtype = Optimization.AutoForwardDiff(),
         grad_tol = 1.0e-6,
         multistart = LaplaceMultistartOptions(0, 0, grad_tol, 5, :lhs),
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         mcmc_candidates::Union{Nothing, AbstractMatrix} = nothing
     )
     nb = get_n_b(info)
@@ -1893,7 +1893,7 @@ function _laplace_get_bstar!(
         grad_tol = 1.0e-6,
         theta_tol = 0.0,
         multistart = LaplaceMultistartOptions(0, 0, grad_tol, 5, :lhs),
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         progress::Bool = false,
         progress_desc::AbstractString = "EBE",
@@ -2248,7 +2248,7 @@ function _laplace_grad_batch(
         use_trace_logdet_grad::Bool = true,
         use_hutchinson::Bool = false,
         hutchinson_n::Int = 8,
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         hmode::_HessMode = _ExactHess(),
         hess_cache::Union{Nothing, _LaplaceHessCache} = nothing,
         use_cache::Bool = false,
@@ -3151,7 +3151,7 @@ function _fit_model(
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         store_data_model::Bool = true
     )

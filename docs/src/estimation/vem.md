@@ -132,8 +132,8 @@ fitted variational parameters.
 
 All randomness (Monte Carlo draws, refinement nodes, importance-sampling draws, start
 repair and EBE multistart) comes from the `rng` keyword of `fit_model`, as for
-[SAEM](saem.md) and [MCEM](mcem.md). Pass a seeded generator such as `Random.Xoshiro(1)`
-to make a fit reproducible.
+[SAEM](saem.md) and [MCEM](mcem.md). The default is a fresh `Xoshiro(42)` per call, so
+fits are reproducible by default; pass another seeded generator for different draws.
 
 The `serialization` keyword of `fit_model` (default `EnsembleThreads()`) parallelizes the
 per-batch work (ELBO and gradient, initialization, refinement, importance sampling and

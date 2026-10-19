@@ -503,7 +503,7 @@ function _build_laplace_objective(
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         rng_seed::Union{Nothing, UInt64} = nothing,
         atol::Real = 1.0e-8,
         rtol::Real = sqrt(eps(Float64))
@@ -596,7 +596,7 @@ function _identifiability_report(
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         rng_seed::Union{Nothing, UInt64} = nothing,
         atol::Real = 1.0e-8,
         rtol::Real = sqrt(eps(Float64)),
@@ -764,7 +764,7 @@ function identifiability_report(
         ode_args::Tuple = (),
         ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         rng_seed::Union{Nothing, UInt64} = nothing,
         atol::Real = 1.0e-8,
         rtol::Real = sqrt(eps(Float64)),
@@ -869,7 +869,7 @@ function identifiability_report(
             EnsembleThreads()
         ) : serialization
     rng_use = rng === nothing ?
-        (haskey(fitkw, :rng) ? getfield(fitkw, :rng) : Random.default_rng()) : rng
+        (haskey(fitkw, :rng) ? getfield(fitkw, :rng) : _default_rng()) : rng
 
     fit_point = get_params(res; scale = :untransformed)
 
