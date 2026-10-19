@@ -29,6 +29,15 @@ function NNParameters(
     )
 end
 
+# Layers get fresh arrays, not reshaped views of the flat vector or the input: Enzyme reverse
+# mode through LuxLib's fused_dense! rule with aliased arrays corrupts the GC heap once the
+# gradient runs on more than one thread. Same copy count as converting the flat vector.
+_nn_plain(::Type{T}, x::AbstractArray) where {T} = _to_type(T, x)
+_nn_plain(::Type{T}, x::Number) where {T} = _to_type(T, x)
+function _nn_plain(::Type{T}, ca::ComponentArray) where {T}
+    return NamedTuple{keys(ca)}(map(k -> _nn_plain(T, getproperty(ca, k)), ComponentArrays.valkeys(ca)))
+end
+
 function _nn_model_fun(chain::Lux.Chain, p::NNParameters, ::Type{T}) where {T}
     st = Lux.initialstates(Xoshiro(0), chain)
     stT = Functors.fmap(y -> _to_type(T, y), st)
@@ -36,9 +45,13 @@ function _nn_model_fun(chain::Lux.Chain, p::NNParameters, ::Type{T}) where {T}
     return (x, θ) -> begin
         TT = promote_type(eltype(θ), _value_type(x))
         if TT === T
-            xT = _to_type(T, x)
-            psT = ComponentArray(_to_type(T, θ), ps_axes)
-            return first(Lux.apply(chain, xT, psT, stT))
+            psT = _nn_plain(T, ComponentArray(θ, ps_axes))
+            if x isa AbstractVector  # Lux's reshape(x, :, 1) would alias x
+                xm = Matrix{T}(undef, length(x), 1)
+                copyto!(xm, x)
+                return first(Lux.apply(chain, xm, psT, stT))[:, 1]
+            end
+            return first(Lux.apply(chain, _to_type(T, x), psT, stT))
         end
         # Mixed element types (Float64 weights with dual inputs, e.g. the inner random-effect
         # solves of Laplace, or the reverse): Lux layers promote internally, so the weights

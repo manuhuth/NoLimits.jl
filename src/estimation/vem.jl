@@ -76,8 +76,9 @@ effects: no inner mode finding or Hessian per objective evaluation, unlike Lapla
   backend - typically `AutoEnzyme(mode = Enzyme.set_runtime_activity(Enzyme.Reverse),
   function_annotation = Enzyme.Duplicated)` with Enzyme loaded (without the `Duplicated`
   annotation Enzyme rejects the objective, which captures mutable caches) - differentiates
-  the whole objective (all fixed effects and all variational parameters) in ONE pass through DifferentiationInterface: reverse mode for large networks
-  (paper: reverse mode is what makes VEM scale). Rule of thumb: reverse mode pays off from
+  each batch's ELBO over the fixed effects and that batch's variational parameters in one
+  DifferentiationInterface pass, batches threaded like the default: reverse mode for large
+  networks (paper: reverse mode is what makes VEM scale). Rule of thumb: reverse mode pays off from
   roughly 100 fixed-effect coordinates (FFNN with 116 weights: 69 s vs 258 s with forward
   mode; 27 coordinates with 13-dimensional random effects: 418 s vs 295 s). Requires
   Gaussian random effects (centered variational space, evaluated through the
@@ -123,8 +124,8 @@ Randomness (the fixed Monte Carlo draws, multivariate-t refinement nodes, import
 draws, start repair and EBE multistart) comes only from the `rng` keyword of
 [`fit_model`](@ref), as for `SAEM` and `MCEM`: the same seeded `rng` gives identical fits.
 The `serialization` keyword of `fit_model` (default `EnsembleThreads()`) runs the per-batch
-work on threads; threaded and serial (`EnsembleSerial()`) fits are bitwise equal. The
-reverse-mode objective runs serially.
+work on threads, for every `adtype`; threaded and serial (`EnsembleSerial()`) fits are
+bitwise equal.
 
 Fits support Wald UQ ([`compute_uq`](@ref)), and [`sample_random_effects`](@ref) and
 conditional cross-validation draw from the fitted variational distributions
@@ -433,6 +434,16 @@ function _vem_batch_elbo_rev(
         logdet += κ[n + k]
     end
     return acc + logdet + n / 2 * (1 + log(2π))
+end
+
+# value-only reverse-path ELBO: numerical failures at line-search trial points count as -Inf
+function _vem_batch_elbo_rev_value(args...)
+    try
+        return _vem_batch_elbo_rev(args...)
+    catch err
+        _is_numeric_error(err) || rethrow()
+        return -Inf
+    end
 end
 
 # Value and gradient of one batch's ELBO. θ-part: one ForwardDiff pass over the fixed
@@ -856,7 +867,7 @@ function _fit_model(
         end
     end
 
-    # ---- objective: -Σ ELBO_i, gradient per batch by ForwardDiff over (θ, κ_i) ----
+    # ---- objective: -Σ ELBO_i, value and gradient per batch ----
     # per-batch results by index, reduced in batch order: threaded == serial bitwise.
     # Under MiniBatch: -(K/|B|) Σ_{i∈B} ELBO_i, the unbiased estimate of the full objective
     # and its (θ, κ) gradient (zero for the κ blocks outside B). Kept `nothing` outside solve.
@@ -866,17 +877,41 @@ function _fit_model(
     vals = Vector{Float64}(undef, nk)
     gθs = Vector{Vector{Float64}}(undef, nk)
     gκs = Vector{Vector{Float64}}(undef, nk)
-    function fg_fd!(F, G, x)
-        xθ = collect(view(x, 1:p))
+
+    # ForwardDiff (default): per batch over (θ, κ_i). Other backends (reverse mode): one
+    # DifferentiationInterface pass per batch over z = [xθ; κ_k] with the batch index a
+    # constant context; one function and preparation per task cache, since the Duplicated
+    # function shadow is mutable state of the preparation.
+    use_fd = nameof(typeof(method.adtype)) === :AutoForwardDiff
+    if !use_fd
+        for bi in keep
+            build_re_measure_from_batch(batch_infos[bi], θu0, const_cache, dm, ll_cache) isa
+                GaussianRE || error("VEM: adtype = $(nameof(typeof(method.adtype))) requires Gaussian (Normal/MvNormal) random effects; use the default AutoForwardDiff().")
+        end
+    end
+    elbo_b = use_fd ? _vem_batch_elbo : _vem_batch_elbo_rev_value
+    fbs = [
+        (z, k) -> _vem_batch_elbo_rev(
+                θu_of(view(z, 1:p)), view(z, (p + 1):length(z)), ξs[k], family, dm,
+                batch_infos[keep[k]], const_cache, lc
+            ) for lc in caches
+    ]
+    DI = Optimization.OptimizationBase.DifferentiationInterface
+    preps = use_fd ? nothing : [
+            DI.prepare_gradient(fb, method.adtype, x0[1:(p + length(first(ranges)))], DI.Constant(1))
+            for fb in fbs
+        ]
+    tids = collect(eachindex(caches))
+    function fg!(F, G, x)
         st = _minibatch_current!(mb_ref[])
         c = _minibatch_scale(st)
         ks = st === nothing ? all_k : st.selected
         nsel = length(ks)
         if G === nothing
-            θu = θu_of(xθ)
+            θu = θu_of(collect(view(x, 1:p)))
             _vem_foreach(nsel, caches) do j, lc
                 k = ks[j]
-                vals[j] = _vem_batch_elbo(
+                vals[j] = elbo_b(
                     θu, view(x, ranges[k]), ξs[k], family, dm, batch_infos[keep[k]],
                     const_cache, lc
                 )
@@ -888,15 +923,32 @@ function _fit_model(
             end
             return total
         end
-        _vem_foreach(nsel, caches) do j, lc
-            k = ks[j]
-            r, ξ = ranges[k], ξs[k]
-            grad = ξ.K == 0 && _vem_split_cheaper(p, length(r), size(ξ.ξ, 1)) ?
-                _vem_batch_grad : _vem_batch_grad_joint
-            vals[j], gθs[j], gκs[j] = grad(
-                θu_of, xθ, Vector{Float64}(x[r]), ξ, family, dm, batch_infos[keep[k]],
-                const_cache, lc
-            )
+        if use_fd
+            xθ = collect(view(x, 1:p))
+            _vem_foreach(nsel, caches) do j, lc
+                k = ks[j]
+                r, ξ = ranges[k], ξs[k]
+                grad = ξ.K == 0 && _vem_split_cheaper(p, length(r), size(ξ.ξ, 1)) ?
+                    _vem_batch_grad : _vem_batch_grad_joint
+                vals[j], gθs[j], gκs[j] = grad(
+                    θu_of, xθ, Vector{Float64}(x[r]), ξ, family, dm, batch_infos[keep[k]],
+                    const_cache, lc
+                )
+            end
+        else
+            _vem_foreach(nsel, tids) do j, t
+                k = ks[j]
+                z = vcat(x[1:p], x[ranges[k]])
+                g = similar(z)
+                vals[j] = try
+                    first(DI.value_and_gradient!(fbs[t], g, preps[t], method.adtype, z, DI.Constant(k)))
+                catch err
+                    _is_numeric_error(err) || rethrow()
+                    -Inf
+                end
+                gθs[j] = g[1:p]
+                gκs[j] = g[(p + 1):end]
+            end
         end
         fill!(G, 0.0)
         total = 0.0
@@ -912,42 +964,6 @@ function _fit_model(
         end
         return F === nothing ? nothing : total
     end
-
-    # ---- reverse-mode path: the whole objective in one pass (DifferentiationInterface) ----
-    use_fd = nameof(typeof(method.adtype)) === :AutoForwardDiff
-    if !use_fd
-        for bi in keep
-            build_re_measure_from_batch(batch_infos[bi], θu0, const_cache, dm, ll_cache) isa
-                GaussianRE || error("VEM: adtype = $(nameof(typeof(method.adtype))) requires Gaussian (Normal/MvNormal) random effects; use the default AutoForwardDiff().")
-        end
-    end
-    # the minibatch (selection, scale) enters as constant contexts, drawn outside the AD pass
-    Ftot = (x, ks, c) -> begin
-        θu = θu_of(view(x, 1:p))
-        tot = zero(eltype(x))
-        for k in ks
-            tot -= c * _vem_batch_elbo_rev(
-                θu, view(x, ranges[k]), ξs[k], family, dm, batch_infos[keep[k]], const_cache,
-                ll_cache
-            )
-        end
-        tot
-    end
-    DI = Optimization.OptimizationBase.DifferentiationInterface
-    prep = use_fd ? nothing :
-        DI.prepare_gradient(Ftot, method.adtype, x0, DI.Constant(all_k), DI.Constant(1.0))
-    function fg_rev!(F, G, x)
-        st = _minibatch_current!(mb_ref[])
-        ks = st === nothing ? all_k : st.selected
-        c = _minibatch_scale(st)
-        G === nothing && return Ftot(x, ks, c)
-        v, _ = DI.value_and_gradient!(
-            Ftot, G, prep, method.adtype, x, DI.Constant(ks), DI.Constant(c)
-        )
-        isfinite(v) || fill!(G, NaN)
-        return F === nothing ? nothing : v
-    end
-    fg! = use_fd ? fg_fd! : fg_rev!
 
     # Diagonal preconditioning of the fixed effects (p <= 50): optimize y with
     # x[1:p] = x0[1:p] + s .* y[1:p], s_j = 1/sqrt(curvature_jj) from a finite difference of
