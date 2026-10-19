@@ -18,7 +18,7 @@ function _schedule_batches!(
         return buf
     elseif update_schedule isa Int
         update_schedule >= 1 ||
-            error("update_schedule: minibatch size must be ≥ 1. Got: $update_schedule")
+            error("MiniBatch schedule: minibatch size must be ≥ 1. Got: $update_schedule")
         m = min(update_schedule, nbatches)
         resize!(buf, nbatches)
         @inbounds for i in 1:nbatches
@@ -30,27 +30,27 @@ function _schedule_batches!(
     elseif hasmethod(update_schedule, Tuple{Int, Int, AbstractRNG})
         return update_schedule(nbatches, iter, rng)
     else
-        error("Invalid update_schedule. Use :all, Int minibatch size, or a callable (nbatches, iter, rng) -> indices (any iterable of Int).")
+        error("Invalid MiniBatch schedule. Use :all, Int minibatch size, or a callable (nbatches, iter, rng) -> indices (any iterable of Int).")
     end
 end
 
 """
     _check_update_schedule(update_schedule, label)
 
-Constructor-time validation of an `update_schedule` option.
+Constructor-time validation of a `MiniBatch` schedule.
 """
 function _check_update_schedule(update_schedule, label::AbstractString)
     if update_schedule === :all
         return update_schedule
     elseif update_schedule isa Int
         update_schedule >= 1 ||
-            error("$label: update_schedule minibatch size must be ≥ 1. Got: $update_schedule")
+            error("$label: schedule minibatch size must be ≥ 1. Got: $update_schedule")
         return update_schedule
     elseif hasmethod(update_schedule, Tuple{Int, Int, AbstractRNG})
         return update_schedule
     end
     return error(
-        "$label: invalid update_schedule. Use :all, an Int minibatch size, or a " *
+        "$label: invalid schedule. Use :all, an Int minibatch size, or a " *
             "callable (nbatches::Int, iter::Int, rng) -> indices (any iterable of Int)."
     )
 end
