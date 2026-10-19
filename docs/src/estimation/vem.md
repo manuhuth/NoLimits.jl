@@ -157,6 +157,7 @@ Stochastic VEM (a random subset of batches per optimizer iteration) is a wrapper
 
 ```@docs
 VEM
+PlanarFlowFamily
 ```
 
 ## Where to go next
