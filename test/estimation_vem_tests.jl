@@ -200,6 +200,14 @@ if get(ENV, "NOLIMITS_TEST_ENZYME", "false") == "true" && VERSION >= v"1.12.5" &
         @test get_method(re).adtype === ad
         @test collect(get_params(re; scale = :transformed)) ≈
             collect(get_params(rf; scale = :transformed)) rtol = 1.0e-6
+        # per-batch reverse passes are threaded and reduced in batch order
+        rs = fit_model(
+            dm, NoLimits.VEM(; n_is = 0, adtype = ad); rng = Xoshiro(3),
+            serialization = NoLimits.EnsembleSerial()
+        )
+        @test collect(get_params(rs; scale = :transformed)) ==
+            collect(get_params(re; scale = :transformed))
+        @test get_objective(rs) == get_objective(re)
         # MiniBatch: the minibatch enters the reverse pass as constant contexts
         import Optimisers
         mbv(adt) = NoLimits.MiniBatch(
