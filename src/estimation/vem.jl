@@ -999,16 +999,19 @@ function _fit_model(
     y0 = copy(x0)
     y0[1:p] .= 0.0
     fy(y, _) = fgy!(0.0, nothing, y)
-    # `fg` makes Optim's line search and Optimisers rules use the fused value + gradient
-    optf = OptimizationFunction(
-        fy, method.adtype;
-        grad = (G, y, _) -> (fgy!(nothing, G, y); nothing),
-        fg = (G, y, _) -> fgy!(0.0, G, y)
-    )
     # bounds act on the fixed effects only, mapped into y; κ stays unbounded
     lb_y = vcat((lb .- x0[1:p]) ./ s, fill(-Inf, off - p))
     ub_y = vcat((ub .- x0[1:p]) ./ s, fill(Inf, off - p))
     opt_use, use_bounds_y = _bounded_optimizer(method.optimizer, use_bounds, lb_y, ub_y)
+    # `fg` makes Optim's line search and Optimisers rules use the fused value + gradient.
+    # OptimizationOptimJL otherwise allocates a dense n×n Hessian even for L-BFGS, which
+    # runs out of memory at large N; a 0×0 prototype is never touched by Hessian-free rules.
+    optf = OptimizationFunction(
+        fy, method.adtype;
+        grad = (G, y, _) -> (fgy!(nothing, G, y); nothing),
+        fg = (G, y, _) -> fgy!(0.0, G, y),
+        hess_prototype = SciMLBase.requireshessian(opt_use) ? nothing : Matrix{Float64}(undef, 0, 0)
+    )
     prob = use_bounds_y ? OptimizationProblem(optf, y0; lb = lb_y, ub = ub_y) :
         OptimizationProblem(optf, y0)
     t0 = time()

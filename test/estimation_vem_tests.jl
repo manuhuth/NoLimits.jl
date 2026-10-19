@@ -11,7 +11,7 @@ using ForwardDiff
 # VEM (variational EM, Tarek & Afonso 2026). Linear-Gaussian anchor: the dense Gaussian
 # family is exact, so VEM must reproduce the (exact) Laplace MLE up to the sample-average
 # error; a bounded-support (LogNormal) RE exercises the transport-space family.
-function _vem_lin_dm(rng)
+function _vem_lin_dm(rng; n = 60)
     model = @Model begin
         @fixedEffects begin
             a = RealNumber(0.0)
@@ -31,7 +31,7 @@ function _vem_lin_dm(rng)
     end
     L = cholesky([0.4 0.15; 0.15 0.25]).L
     rows = NamedTuple[]
-    for i in 1:60
+    for i in 1:n
         η = L * randn(rng, 2)
         for t in 0.0:1.0:5.0
             push!(rows, (; ID = i, t, y = 2.0 + η[1] + (-0.5 + η[2]) * t + 0.3 * randn(rng)))
@@ -75,6 +75,14 @@ end
     @test get_result(rd).notes.objective_kind === :neg_elbo
     rp = fit_model(dm, NoLimits.VEM(; init = :prior, n_samples = 8); rng = Xoshiro(1))
     @test isfinite(get_objective(rp))
+    # no dense n×n Hessian buffer for L-BFGS: memory grows linearly in N (4x N -> 4x bytes;
+    # the dense buffer made this ratio about 5.2)
+    m1 = NoLimits.VEM(; family = :diagonal, init = :prior, n_is = 0, refine = false, optim_kwargs = (; maxiters = 1))
+    d1, d4 = _vem_lin_dm(Xoshiro(1); n = 1000), _vem_lin_dm(Xoshiro(1); n = 4000)
+    fit_model(d1, m1; rng = Xoshiro(1))
+    a1 = @allocated fit_model(d1, m1; rng = Xoshiro(1))
+    a4 = @allocated fit_model(d4, m1; rng = Xoshiro(1))
+    @test a4 / a1 < 4.5
 end
 
 @testset "VEM: Optimization.jl optimizer, optim_kwargs and bounds" begin
