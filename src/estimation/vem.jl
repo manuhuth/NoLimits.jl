@@ -17,7 +17,35 @@
 # The final objective is an importance-sampling estimate of -log p(y | θ̂) with a
 # multivariate-t proposal around each fitted q (the ELBO itself is reported in the notes).
 
-export VEM
+export VEM, PlanarFlowFamily
+
+"""
+    PlanarFlowFamily(K::Integer; base = :dense, seed = 0)
+
+Variational family for [`VEM`](@ref) (`family = PlanarFlowFamily(K)`): `K` planar layers
+F(z) = z + û tanh(wᵀz + b) on the base draw of a Gaussian family, so each batch's q is
+the law of m₀ + S₀(μ + L F(ξ)), ξ ~ N(0, I) (`base = :dense` or `:diagonal` for L).
+Planar layers can represent skewed random-effect posteriors (few binary or count
+observations per subject). û is the invertible reparameterization of u (wᵀû > -1).
+Layers start at the identity (û = 0) with random nonzero w (|w| ≈ 1), drawn from the fit `rng`
+(`seed = 0`) or from `Xoshiro(seed)`. Flow fits use the Monte Carlo expectation with
+max(64, 8 n_b) draws per batch (`n_samples = :auto`) and a joint ForwardDiff gradient;
+the refinement and the importance-sampling objective use a t proposal around the
+moment-matched q.
+"""
+struct PlanarFlowFamily
+    K::Int
+    base::Symbol
+    seed::Int
+end
+
+function PlanarFlowFamily(K::Integer; base = :dense, seed::Integer = 0)
+    K >= 1 || error("PlanarFlowFamily: K must be ≥ 1. Got: $K")
+    base = _as_symbol(base)
+    base in (:diagonal, :dense) ||
+        error("PlanarFlowFamily: base must be :diagonal or :dense. Got: $base")
+    return PlanarFlowFamily(Int(K), base, Int(seed))
+end
 
 """
     VEM(; optimizer = nothing, optim_kwargs = nothing, adtype = AutoForwardDiff(), lb = nothing,
@@ -66,8 +94,9 @@ effects: no inner mode finding or Hessian per objective evaluation, unlike Lapla
   dimensions), deterministic and far more accurate than a few draws for small batches;
   `:mc` uses `n_samples` fixed draws (the paper's sample-average approximation). `:auto`
   picks quadrature for batches with ≤ 3 random effects.
-- `family::Symbol = :dense`: `:dense` (full lower-triangular scale) or `:diagonal` (mean-field)
-  Gaussian family in the standardized random-effect space. Mean-field q cannot represent
+- `family = :dense`: `:dense` (full lower-triangular scale) or `:diagonal` (mean-field)
+  Gaussian family in the standardized random-effect space, or a
+  [`PlanarFlowFamily`](@ref) (normalizing planar flow on the Gaussian base draw). Mean-field q cannot represent
   posterior correlations between random effects and biases correlated RE covariances
   (M03 anchor: Ω₁₂ = -0.08 vs 0.15); use it only for very high-dimensional REs.
 - `init::Symbol = :laplace`: initialize each q at the Laplace approximation of the batch
@@ -109,6 +138,8 @@ struct VEM{O, K, A, L, U, EB} <: FittingMethod
     n_samples::Union{Int, Symbol}
     expectation::Symbol
     family::Symbol
+    flow::Int
+    flow_seed::Int
     init::Symbol
     n_is::Int
     is_df::Float64
@@ -141,6 +172,10 @@ function VEM(;
         ebe_multistart_max_rounds = 5,
         ebe_multistart_sampling = :lhs
     )
+    flow, flow_seed = 0, 0
+    if family isa PlanarFlowFamily
+        flow, flow_seed, family = family.K, family.seed, family.base
+    end
     family = _as_symbol(family)
     init = _as_symbol(init)
     family in (:diagonal, :dense) ||
@@ -172,7 +207,7 @@ function VEM(;
     )
     return VEM(
         optimizer, _as_namedtuple(optim_kwargs), adtype, lb, ub, ignore_model_bounds,
-        n_samples, expectation, family, init, n_is, Float64(is_df),
+        n_samples, expectation, family, flow, flow_seed, init, n_is, Float64(is_df),
         refine === :auto ? :auto : refine === true ? :on : refine === false ? :off :
             error("VEM: refine must be :auto, true or false. Got: $refine"),
         refine_nodes, ebe
@@ -184,6 +219,41 @@ end
 #   κ = [μ (n); log diag(L) (n); strictly-lower entries of L, column-major (dense only)]
 # ---------------------------------------------------------------------------------------
 _vem_nkappa(n::Int, family::Symbol) = family === :dense ? 2n + n * (n - 1) ÷ 2 : 2n
+# planar-flow parameters of one batch, after the Gaussian part: [u (n); w (n); b] per layer
+_vem_nflow(n::Int, K::Int) = K * (2n + 1)
+
+@inline _vem_softplus(x) = x > 30 ? x : log1p(exp(x))
+
+# K planar layers on the base draw ξ (θ = κ, flow block after offset `off`):
+# z ← z + û tanh(wᵀz + b), û = u + (m(wᵀu) - wᵀu) w / |w|², m(x) = softplus(x) - 1, so
+# wᵀû = m(wᵀu) > -1 and log|det ∂z'/∂z| = log1p((1 - tanh²) m(wᵀu)). Plain loops (Enzyme).
+function _vem_flow(θ::AbstractVector, off::Int, ξ::AbstractVector, n::Int, K::Int)
+    T = promote_type(eltype(θ), eltype(ξ))
+    z = Vector{T}(undef, n)
+    for i in 1:n
+        z[i] = ξ[i]
+    end
+    ld = zero(T)
+    for k in 1:K
+        o = off + (k - 1) * (2n + 1)
+        wu = zero(T)
+        ww = zero(T)
+        a = zero(T)
+        for i in 1:n
+            wu += θ[o + n + i] * θ[o + i]
+            ww += θ[o + n + i]^2
+            a += θ[o + n + i] * z[i]
+        end
+        m = _vem_softplus(wu) - 1
+        c = (m - wu) / ww
+        h = tanh(a + θ[o + 2n + 1])
+        for i in 1:n
+            z[i] += (θ[o + i] + c * θ[o + n + i]) * h
+        end
+        ld += log1p((1 - h^2) * m)
+    end
+    return z, ld
+end
 
 function _vem_scale(κ::AbstractVector, n::Int, family::Symbol)
     T = eltype(κ)
@@ -223,6 +293,7 @@ struct _VEMDraws
     # the paired RE coordinates moves by -(fe - fe0), so changing fe does not require all
     # batches' q means to follow along the a-η ridge (M18 crawled along it for 1000 iterations)
     center::Vector{Tuple{Int, Vector{Int}, Float64}}
+    K::Int   # planar-flow layers (0: Gaussian family)
 end
 
 # effective mean and scale of q: m0 + S0 μ̃, S0 L̃
@@ -249,16 +320,18 @@ function _vem_draws(
     m0 = κinit[1:n]
     S0 = _vem_scale(κinit, n, family)
     logdetS0 = sum(log(abs(S0[k, k])) for k in 1:n)
-    mode = method.expectation === :auto ? (n <= 3 ? :quadrature : :mc) : method.expectation
+    K = method.flow
+    mode = method.expectation === :auto ? (n <= 3 && K == 0 ? :quadrature : :mc) :
+        method.expectation
     if mode === :quadrature
         g = get_sparse_grid(n, n == 1 ? 7 : n == 2 ? 5 : 4)
         return _VEMDraws(
             Matrix{Float64}(g.nodes), Float64.(g.signs) .* exp.(g.logweights),
-            m0, S0, logdetS0, center
+            m0, S0, logdetS0, center, K
         )
     end
-    M = method.n_samples === :auto ? max(16, 4n) : method.n_samples
-    return _VEMDraws(randn(rng, n, M), fill(1.0 / M, M), m0, S0, logdetS0, center)
+    M = method.n_samples === :auto ? (K > 0 ? max(64, 8n) : max(16, 4n)) : method.n_samples
+    return _VEMDraws(randn(rng, n, M), fill(1.0 / M, M), m0, S0, logdetS0, center, K)
 end
 
 # Log integrand in the variational space. Gaussian random effects are CENTERED: q lives
@@ -308,9 +381,15 @@ function _vem_batch_elbo(
     μ, L = _vem_effective(κ, dr, n, family, θu)
     acc = zero(T)
     M = size(ξ, 2)
+    nG = _vem_nkappa(n, family)
     for j in 1:M
-        u = _vem_draw(μ, L, view(ξ, :, j), family)
-        v = _vem_logjoint(u, base, dm, info, θ_re, const_cache, ll_cache)
+        if dr.K == 0
+            u = _vem_draw(μ, L, view(ξ, :, j), family)
+            v = _vem_logjoint(u, base, dm, info, θ_re, const_cache, ll_cache)
+        else
+            z, ld = _vem_flow(κ, nG, view(ξ, :, j), n, dr.K)
+            v = _vem_logjoint(_vem_draw(μ, L, z, family), base, dm, info, θ_re, const_cache, ll_cache) + ld
+        end
         isfinite(v) || return T(-Inf)
         acc += w[j] * v
     end
@@ -333,9 +412,16 @@ function _vem_batch_elbo_rev(
     n = size(ξ, 1)
     μ, L = _vem_effective(κ, dr, n, family, θu)
     acc = zero(promote_type(eltype(θu), eltype(κ)))
+    nG = _vem_nkappa(n, family)
     for j in 1:size(ξ, 2)
-        v = _vem_draw(μ, L, view(ξ, :, j), family)
-        acc += w[j] * _laplace_logf_batch_impl(dm, info, θu, v, const_cache, ll_cache)
+        if dr.K == 0
+            v = _vem_draw(μ, L, view(ξ, :, j), family)
+            acc += w[j] * _laplace_logf_batch_impl(dm, info, θu, v, const_cache, ll_cache)
+        else
+            z, ld = _vem_flow(κ, nG, view(ξ, :, j), n, dr.K)
+            v = _vem_draw(μ, L, z, family)
+            acc += w[j] * (_laplace_logf_batch_impl(dm, info, θu, v, const_cache, ll_cache) + ld)
+        end
     end
     logdet = dr.logdetS0
     for k in 1:n
@@ -566,16 +652,33 @@ function _vem_kappa_from(m::AbstractVector, Σ::AbstractMatrix, n::Int, family::
 end
 
 # log p̂(y_batch | θ) by importance sampling from a multivariate t around the fitted q.
+# Mean and scale factor of q: (μ, L) of the Gaussian family; for a planar flow the
+# moment-matched Gaussian over the fit's draws.
+function _vem_q_moments(κ::Vector{Float64}, dr::_VEMDraws, n::Int, family::Symbol, θu)
+    μ, L = _vem_effective(κ, dr, n, family, θu)
+    family === :dense || (L = Matrix(Diagonal(diag(L))))
+    dr.K == 0 && return μ, L
+    M = size(dr.ξ, 2)
+    B = zeros(Float64, n, M)
+    for j in 1:M
+        z, _ = _vem_flow(κ, _vem_nkappa(n, family), view(dr.ξ, :, j), n, dr.K)
+        B[:, j] .= _vem_draw(μ, L, z, family)
+    end
+    m = vec(sum(B; dims = 2)) ./ M
+    D = B .- m
+    C = cholesky(Symmetric(D * D' ./ max(M - 1, 1)) + 1.0e-10 * I; check = false)
+    issuccess(C) || return μ, L
+    return m, Matrix(C.L)
+end
+
 function _vem_is_loglik(
-        θu::ComponentArray, κ::AbstractVector, dr::_VEMDraws, family::Symbol, n::Int, K::Int,
+        θu::ComponentArray, μ::Vector{Float64}, L::Matrix{Float64}, n::Int, K::Int,
         ν::Float64, rng::AbstractRNG, dm::DataModel, info::REBatchInfo, const_cache,
         ll_cache::_LLCache
     )
     base = _vem_measure(info, θu, const_cache, dm, ll_cache)
     base === nothing && return -Inf
     θ_re = _symmetrize_psd_params(θu, get_fixed(get_model(dm)))
-    μ, L = _vem_effective(Vector{Float64}(κ), dr, n, family, θu)
-    family === :dense || (L = Matrix(Diagonal(diag(L))))
     # PDMat from the factor: L L' formed explicitly is not numerically PD for badly scaled REs
     q = Distributions.MvTDist(ν, μ, Distributions.PDMats.PDMat(LinearAlgebra.Cholesky(LowerTriangular(Matrix(L)))))
     lw = Vector{Float64}(undef, K)
@@ -698,7 +801,7 @@ function _fit_model(
     ranges = UnitRange{Int}[]
     off = p
     for bi in keep
-        k = _vem_nkappa(nb[bi], family)
+        k = _vem_nkappa(nb[bi], family) + _vem_nflow(nb[bi], method.flow)
         push!(ranges, (off + 1):(off + k))
         off += k
     end
@@ -731,6 +834,22 @@ function _fit_model(
         push!(ξs, _vem_draws(nb[bi], method, rng, κinits[k], family, center))
         # preconditioned start: μ̃ = 0, L̃ = I  (κ zeros)
     end
+    # planar layers start at the identity: û = 0 for u = w log(e - 1) / |w|², b = 0
+    if method.flow > 0
+        rngf = method.flow_seed == 0 ? rng : Random.Xoshiro(method.flow_seed)
+        for (k, bi) in enumerate(keep)
+            n = nb[bi]
+            o = first(ranges[k]) - 1 + _vem_nkappa(n, family)
+            for l in 1:method.flow
+                # |w| ≈ 1: with |w| = 0.1 the û reparameterization was ill-conditioned
+                # (1000 L-BFGS iterations, Ω off by 0.3 on a 3-RE binary model)
+                w = randn(rngf, n) ./ sqrt(n)
+                ol = o + (l - 1) * (2n + 1)
+                x0[(ol + 1):(ol + n)] .= w .* (log(ℯ - 1) / sum(abs2, w))
+                x0[(ol + n + 1):(ol + 2n)] .= w
+            end
+        end
+    end
 
     # ---- objective: -Σ ELBO_i, gradient per batch by ForwardDiff over (θ, κ_i) ----
     # per-batch results by index, reduced in batch order: threaded == serial bitwise
@@ -756,7 +875,7 @@ function _fit_model(
         end
         _vem_foreach(nk, caches) do k, lc
             r, ξ = ranges[k], ξs[k]
-            grad = _vem_split_cheaper(p, length(r), size(ξ.ξ, 1)) ?
+            grad = ξ.K == 0 && _vem_split_cheaper(p, length(r), size(ξ.ξ, 1)) ?
                 _vem_batch_grad : _vem_batch_grad_joint
             vals[k], gθs[k], gκs[k] = grad(
                 θu_of, xθ, Vector{Float64}(x[r]), ξ, family, dm, batch_infos[keep[k]],
@@ -863,11 +982,8 @@ function _fit_model(
         # ---- IS refinement with each q frozen (removes the variational bias) ----
         qs = [
             begin
-                    μq, Lq = _vem_effective(Vector{Float64}(x̂[ranges[k]]), ξs[k], nb[bi], family, θ_hat_u)
-                    (
-                        μq, family === :dense ? Lq : Matrix(Diagonal(diag(Lq))),
-                        _vem_refine_nodes(nb[bi], method.refine_nodes, method.is_df, rng),
-                    )
+                    μq, Lq = _vem_q_moments(Vector{Float64}(x̂[ranges[k]]), ξs[k], nb[bi], family, θ_hat_u)
+                    (μq, Lq, _vem_refine_nodes(nb[bi], method.refine_nodes, method.is_df, rng))
                 end for (k, bi) in enumerate(keep)
         ]
         DRr = ForwardDiff.DiffResults
@@ -923,19 +1039,16 @@ function _fit_model(
         lls = Vector{Float64}(undef, nk)
         _vem_foreach(nk, caches) do k, lc
             bi = keep[k]
-            lls[k] = if nb[bi] <= 3
-                μq, Lq = _vem_effective(Vector{Float64}(x̂[ranges[k]]), ξs[k], nb[bi], family, θ_hat_u)
-                family === :dense || (Lq = Matrix(Diagonal(diag(Lq))))
+            μq, Lq = _vem_q_moments(Vector{Float64}(x̂[ranges[k]]), ξs[k], nb[bi], family, θ_hat_u)
+            lls[k] = nb[bi] <= 3 ?
                 _vem_refine_batch_ll(
                     θ_hat_u, μq, Lq, _vem_refine_nodes(nb[bi], 0, method.is_df, is_rngs[k])...,
                     dm, batch_infos[bi], const_cache, lc
-                )
-            else
+                ) :
                 _vem_is_loglik(
-                    θ_hat_u, view(x̂, ranges[k]), ξs[k], family, nb[bi], method.n_is, method.is_df,
+                    θ_hat_u, μq, Lq, nb[bi], method.n_is, method.is_df,
                     is_rngs[k], dm, batch_infos[bi], const_cache, lc
                 )
-            end
         end
         ll = 0.0
         for k in 1:nk
@@ -949,7 +1062,10 @@ function _fit_model(
     converged = sol.retcode == SciMLBase.ReturnCode.Success && refine_ok && isfinite(objective)
     q_params = [
         begin
-                μq, Lq = _vem_effective(Vector{Float64}(x̂[ranges[k]]), ξs[k], nb[keep[k]], family, θ_hat_u)
+                κk = Vector{Float64}(x̂[ranges[k]])
+                μq, Lq = ξs[k].K == 0 ?
+                _vem_effective(κk, ξs[k], nb[keep[k]], family, θ_hat_u) :
+                _vem_q_moments(κk, ξs[k], nb[keep[k]], family, θ_hat_u)
                 (mean = μq, scale = Lq)
             end for k in eachindex(ranges)
     ]

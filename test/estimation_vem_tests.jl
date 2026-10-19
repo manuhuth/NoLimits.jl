@@ -6,6 +6,7 @@ using LinearAlgebra
 using Random
 using OptimizationOptimJL
 using Statistics
+using ForwardDiff
 
 # VEM (variational EM, Tarek & Afonso 2026). Linear-Gaussian anchor: the dense Gaussian
 # family is exact, so VEM must reproduce the (exact) Laplace MLE up to the sample-average
@@ -106,6 +107,45 @@ end
     @test collect(get_params(r3; scale = :transformed)) != collect(get_params(r1; scale = :transformed))
 end
 
+@testset "VEM: planar-flow variational family" begin
+    @test_throws ErrorException PlanarFlowFamily(0)
+    @test_throws ErrorException PlanarFlowFamily(2; base = :full)
+    @test NoLimits.VEM(; family = PlanarFlowFamily(2)).flow == 2
+    # identity at the init (û = 0) and exact log-Jacobian of the layer stack
+    n, K = 3, 2
+    rng = Xoshiro(4)
+    θ = zeros(K * (2n + 1))
+    for l in 1:K
+        w = 0.1 .* randn(rng, n)
+        o = (l - 1) * (2n + 1)
+        θ[(o + 1):(o + n)] .= w .* (log(ℯ - 1) / sum(abs2, w))
+        θ[(o + n + 1):(o + 2n)] .= w
+    end
+    ξ = randn(rng, n)
+    z, ld = NoLimits._vem_flow(θ, 0, ξ, n, K)
+    @test z ≈ ξ atol = 1.0e-12
+    @test abs(ld) < 1.0e-12
+    θr = randn(Xoshiro(5), K * (2n + 1))
+    _, ldr = NoLimits._vem_flow(θr, 0, ξ, n, K)
+    J = ForwardDiff.jacobian(x -> NoLimits._vem_flow(θr, 0, x, n, K)[1], ξ)
+    @test ldr ≈ logabsdet(J)[1] rtol = 1.0e-10
+    # Gaussian posterior: the flow family contains the exact q, so the fit matches Laplace
+    dm = _vem_lin_dm(Xoshiro(11))
+    rl = fit_model(dm, NoLimits.Laplace())
+    fam = NoLimits.VEM(; family = PlanarFlowFamily(1))
+    rf = fit_model(dm, fam; rng = Xoshiro(3))
+    θl = get_params(rl; scale = :untransformed)
+    θf = get_params(rf; scale = :untransformed)
+    @test isapprox(θf.a, θl.a; atol = 0.03)
+    @test isapprox(θf.b, θl.b; atol = 0.03)
+    @test isapprox(θf.σ, θl.σ; rtol = 0.03)
+    @test isapprox(θf.Ω, θl.Ω; atol = 0.04)
+    @test abs(get_objective(rf) - get_objective(rl)) < 1.0
+    @test all(q -> all(isfinite, q.mean) && all(isfinite, q.scale), get_notes(rf).variational_params)
+    rf2 = fit_model(dm, fam; rng = Xoshiro(3))
+    @test collect(get_params(rf2; scale = :transformed)) == collect(get_params(rf; scale = :transformed))
+end
+
 # Opt-in like enzyme_compat_proxy_tests.jl: Enzyme is not a test dependency.
 if get(ENV, "NOLIMITS_TEST_ENZYME", "false") == "true" && VERSION >= v"1.12.5" &&
         Base.find_package("Enzyme") !== nothing
@@ -121,6 +161,18 @@ if get(ENV, "NOLIMITS_TEST_ENZYME", "false") == "true" && VERSION >= v"1.12.5" &
         @test get_method(re).adtype === ad
         @test collect(get_params(re; scale = :transformed)) ≈
             collect(get_params(rf; scale = :transformed)) rtol = 1.0e-6
+    end
+    @testset "VEM: Enzyme reverse mode with a planar-flow family" begin
+        dm = _vem_lin_dm(Xoshiro(11))
+        ad = NoLimits.Optimization.AutoEnzyme(;
+            mode = Enzyme.set_runtime_activity(Enzyme.Reverse),
+            function_annotation = Enzyme.Duplicated
+        )
+        fam = PlanarFlowFamily(1)
+        rf = fit_model(dm, NoLimits.VEM(; family = fam, n_is = 0); rng = Xoshiro(3))
+        re = fit_model(dm, NoLimits.VEM(; family = fam, n_is = 0, adtype = ad); rng = Xoshiro(3))
+        @test collect(get_params(re; scale = :transformed)) ≈
+            collect(get_params(rf; scale = :transformed)) rtol = 1.0e-4
     end
 end
 
