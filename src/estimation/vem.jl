@@ -74,16 +74,16 @@ effects: no inner mode finding or Hessian per objective evaluation, unlike Lapla
   posterior at the starting θ (`:prior` starts from the prior, μ = 0, L = I).
 - `n_is::Int = 1000`, `is_df = 5.0`: importance-sampling draws and t degrees of freedom for
   the final marginal-likelihood estimate (the reported objective) of batches with more than
-  2 random effects; batches with 1-2 random effects use adaptive Gauss-Hermite quadrature
-  around q (21 / 9 x 9 nodes, as `refine`). `n_is = 0` reports -ELBO instead.
+  3 random effects; batches with 1-3 random effects use adaptive Gauss-Hermite quadrature
+  around q (21 / 9² / 7³ nodes, as `refine`). `n_is = 0` reports -ELBO instead.
 - `refine = :auto`, `refine_nodes = 64`: after the joint VEM optimization, keep each fitted q
   fixed and maximize the importance-sampled marginal likelihood over the fixed effects with
-  fixed nodes: a tensor Gauss-Hermite rule around q for batches with 1-2 random effects
-  (adaptive quadrature; 21 / 9 x 9 nodes), `refine_nodes` multivariate-t draws (ν = `is_df`)
+  fixed nodes: a tensor Gauss-Hermite rule around q for batches with 1-3 random effects
+  (adaptive quadrature; 21 / 9² / 7³ nodes), `refine_nodes` multivariate-t draws (ν = `is_df`)
   otherwise. This removes the
   variational bias of the Gaussian family (binary toenail data: VEM ω = 3.52, MLE 4.00)
   and is consistent as the number of nodes grows. `:auto` refines when the model has at most
-  50 free fixed-effect coordinates and at most 2 random effects per batch (each refinement
+  50 free fixed-effect coordinates and at most 3 random effects per batch (each refinement
   iteration costs one forward-mode pass over the fixed effects; network models skip it).
   The refinement uses the same `optimizer`, `optim_kwargs` and bounds as the joint fit.
 - `ebe_*`: options of the final empirical-Bayes modes (as for `MCEM`).
@@ -417,13 +417,14 @@ _vem_split_cheaper(p::Int, v::Int, n_b::Int) = cld(p + v, 12) > cld(p, 12) + cld
 
 # IS-refinement nodes of one batch: base-space nodes x (n, K) and log weights such that
 # log p(y_b | θ) ≈ logsumexp_k [lw_k + logint(μ + L x_k)] (+ the u-space Jacobian log|L|).
-# 1-2 REs: tensor Gauss-Hermite (lw = log w + |x|²/2; adaptive quadrature around q);
+# 1-3 REs: tensor Gauss-Hermite (lw = log w + |x|²/2; adaptive quadrature around q);
 # otherwise multivariate-t draws (lw = -log K - log t_ν(x) - n/2 log 2π; `refine = true` only:
 # optimizing θ over a fixed draw set fits its noise - 64 draws moved a 2-D Gaussian fit).
 function _vem_refine_nodes(n::Int, K::Int, ν::Float64, rng::AbstractRNG)
-    if n <= 2
-        # tensor Gauss-Hermite (positive weights): 21 nodes (n = 1), 9 x 9 (n = 2)
-        g = get_sparse_grid(1, n == 1 ? 21 : 9)
+    if n <= 3
+        # tensor Gauss-Hermite (positive weights): 21 (n = 1), 9² (n = 2), 7³ (n = 3) nodes;
+        # 3 REs: the Gaussian-q bias of a skewed binary posterior (Ω₃₃ 12% low) is refined away
+        g = get_sparse_grid(1, n == 1 ? 21 : n == 2 ? 9 : 7)
         x1, w1 = vec(g.nodes), g.logweights
         idx = collect(Iterators.product(ntuple(_ -> eachindex(x1), n)...))
         x = reduce(hcat, [[x1[i] for i in I] for I in vec(idx)])
@@ -857,7 +858,7 @@ function _fit_model(
     refine_iters = 0
     refine_ok = true
     do_refine = method.refine === :on ||
-        (method.refine === :auto && p <= 50 && maximum(nb[keep]; init = 0) <= 2)
+        (method.refine === :auto && p <= 50 && maximum(nb[keep]; init = 0) <= 3)
     if do_refine
         # ---- IS refinement with each q frozen (removes the variational bias) ----
         qs = [
@@ -915,14 +916,14 @@ function _fit_model(
     θ_hat_t = transform(θ_hat_u)
 
     # ---- objective: importance-sampling marginal likelihood around the fitted q ----
-    # batches with 1-2 REs: adaptive tensor Gauss-Hermite around q (the refinement rule;
+    # batches with 1-3 REs: adaptive tensor Gauss-Hermite around q (the refinement rule;
     # deterministic and more accurate than n_is draws), otherwise t importance sampling
     objective = if method.n_is > 0
         is_rngs = _spawn_child_rngs(rng, nk)
         lls = Vector{Float64}(undef, nk)
         _vem_foreach(nk, caches) do k, lc
             bi = keep[k]
-            lls[k] = if nb[bi] <= 2
+            lls[k] = if nb[bi] <= 3
                 μq, Lq = _vem_effective(Vector{Float64}(x̂[ranges[k]]), ξs[k], nb[bi], family, θ_hat_u)
                 family === :dense || (Lq = Matrix(Diagonal(diag(Lq))))
                 _vem_refine_batch_ll(

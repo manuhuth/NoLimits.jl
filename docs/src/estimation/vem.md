@@ -114,11 +114,11 @@ res = fit_model(dm, NoLimits.VEM(; adtype = ad); rng = Random.Xoshiro(1))
 - `refine = :auto`, `refine_nodes = 64`: after the joint fit, keep each q fixed and
   maximize an importance-sampled marginal likelihood over the fixed effects. This removes
   the bias of the Gaussian family. `:auto` refines for at most 50 free fixed-effect
-  coordinates and at most two random effects per batch.
+  coordinates and at most three random effects per batch.
 - `n_is = 1000`, `is_df = 5.0`: importance-sampling draws and t degrees of freedom of the
   reported objective, an estimate of ``-\log p(y \mid \hat\theta)``, for batches with more
-  than two random effects. Batches with one or two random effects use adaptive
-  Gauss-Hermite quadrature around q (21 or 9 x 9 nodes, the `refine` rule) instead.
+  than three random effects. Batches with one to three random effects use adaptive
+  Gauss-Hermite quadrature around q (21, 9² or 7³ nodes, the `refine` rule) instead.
   `n_is = 0` reports the negative ELBO instead.
 - `ebe_*`: options of the empirical Bayes modes computed after the fit.
 
