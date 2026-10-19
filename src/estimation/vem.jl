@@ -35,7 +35,7 @@ effects: no inner mode finding or Hessian per objective evaluation, unlike Lapla
 
 # Keyword Arguments
 - `optimizer`: Optimization.jl-compatible optimizer for the joint ELBO fit and the `refine`
-  step. `nothing` selects `LBFGS(m = 20, linesearch = BackTracking())`. The optimizer works
+  step. `nothing` selects `LBFGS(m = 20, linesearch = BackTracking(maxstep = 30.0))`. The optimizer works
   on a diagonally preconditioned offset of the fixed effects and receives the analytic
   value and gradient in one call (`fg`).
 - `optim_kwargs = nothing`: keyword arguments forwarded to `Optimization.solve` (both
@@ -154,10 +154,12 @@ function VEM(;
         error("VEM: expectation must be :auto, :mc or :quadrature. Got: $expectation")
     n_is >= 0 || error("VEM: n_is must be ≥ 0. Got: $n_is")
     is_df > 0 || error("VEM: is_df must be > 0. Got: $is_df")
-    # memory 20 and an uncapped BackTracking step: the preconditioned joint problem has
-    # hundreds of coordinates, so the outer default's maxstep = 1 would shorten early steps
+    # memory 20; BackTracking step capped at 30 in the preconditioned coordinates (|.|∞): the
+    # outer default's maxstep = 1 shortens early steps of the joint problem, while an
+    # uncapped first step sent a CT-Markov fit (M14) to rates whose likelihood evaluation
+    # did not return for 20 minutes
     optimizer === nothing &&
-        (optimizer = OptimizationOptimJL.LBFGS(m = 20, linesearch = LineSearches.BackTracking()))
+        (optimizer = OptimizationOptimJL.LBFGS(m = 20, linesearch = LineSearches.BackTracking(maxstep = 30.0)))
     optim_kwargs === nothing && (
         optim_kwargs = optimizer isa Optim.AbstractOptimizer ?
             (; maxiters = 1000, g_abstol = 1.0e-5, reltol = 1.0e-8, allow_f_increases = false) :

@@ -64,7 +64,7 @@ get_params(res; scale = :untransformed)
 VEM takes the same optimizer keywords as [`Laplace`](@ref) and [`MLE`](@ref):
 
 - `optimizer`: any Optimization.jl optimizer. The default is
-  `LBFGS(m = 20, linesearch = BackTracking())` from OptimizationOptimJL.
+  `LBFGS(m = 20, linesearch = BackTracking(maxstep = 30.0))` from OptimizationOptimJL.
 - `optim_kwargs`: keyword arguments forwarded to `Optimization.solve`. With the default
   (`nothing`) VEM uses `(; maxiters = 1000)`, plus `g_abstol = 1e-5`, `reltol = 1e-8` and
   `allow_f_increases = false` for an Optim.jl optimizer. A NamedTuple you pass replaces
