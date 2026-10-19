@@ -1374,7 +1374,7 @@ end
 
 Run ONE MCEM E-step at `θ`, exactly as one iteration of the MCEM fit loop does: it draws
 `p(η_b | y_b, θ)` per batch with the method's sampler (`method.e_step`), honoring
-`sample_schedule`, `update_schedule`, and warm-start. Pass `state === nothing` on the first
+`sample_schedule` and warm-start (every batch is refreshed). Pass `state === nothing` on the first
 call (reproduces the fit's prior-mean seeding); thread the returned `new_state` into the
 next call so warm-start / IS-proposal adaptation / per-batch RNGs persist across iterations.
 

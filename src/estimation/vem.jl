@@ -117,6 +117,8 @@ effects: no inner mode finding or Hessian per objective evaluation, unlike Lapla
   The refinement uses the same `optimizer`, `optim_kwargs` and bounds as the joint fit.
 - `ebe_*`: options of the final empirical-Bayes modes (as for `MCEM`).
 
+For mini-batching (stochastic VEM) wrap the method in [`MiniBatch`](@ref).
+
 Randomness (the fixed Monte Carlo draws, multivariate-t refinement nodes, importance-sampling
 draws, start repair and EBE multistart) comes only from the `rng` keyword of
 [`fit_model`](@ref), as for `SAEM` and `MCEM`: the same seeded `rng` gives identical fits.
@@ -128,7 +130,7 @@ Fits support Wald UQ ([`compute_uq`](@ref)), and [`sample_random_effects`](@ref)
 conditional cross-validation draw from the fitted variational distributions
 (`get_result(res).notes.variational_params`). Discrete random effects are not supported.
 """
-struct VEM{O, K, A, L, U, EB} <: FittingMethod
+struct VEM{O, K, A, L, U, EB, US} <: FittingMethod
     optimizer::O
     optim_kwargs::K
     adtype::A
@@ -146,7 +148,10 @@ struct VEM{O, K, A, L, U, EB} <: FittingMethod
     refine::Symbol
     refine_nodes::Int
     ebe::EB
+    update_schedule::US
 end
+
+_update_schedule(m::VEM) = m.update_schedule
 
 function VEM(;
         optimizer = nothing,
@@ -210,7 +215,7 @@ function VEM(;
         n_samples, expectation, family, flow, flow_seed, init, n_is, Float64(is_df),
         refine === :auto ? :auto : refine === true ? :on : refine === false ? :off :
             error("VEM: refine must be :auto, true or false. Got: $refine"),
-        refine_nodes, ebe
+        refine_nodes, ebe, :all
     )
 end
 
@@ -852,47 +857,58 @@ function _fit_model(
     end
 
     # ---- objective: -Σ ELBO_i, gradient per batch by ForwardDiff over (θ, κ_i) ----
-    # per-batch results by index, reduced in batch order: threaded == serial bitwise
+    # per-batch results by index, reduced in batch order: threaded == serial bitwise.
+    # Under MiniBatch: -(K/|B|) Σ_{i∈B} ELBO_i, the unbiased estimate of the full objective
+    # and its (θ, κ) gradient (zero for the κ blocks outside B). Kept `nothing` outside solve.
+    all_k = collect(eachindex(keep))
+    mb = _minibatch_state(_update_schedule(method), length(keep), rng)
+    mb_ref = Ref{Union{Nothing, typeof(mb)}}(nothing)
     vals = Vector{Float64}(undef, nk)
     gθs = Vector{Vector{Float64}}(undef, nk)
     gκs = Vector{Vector{Float64}}(undef, nk)
     function fg_fd!(F, G, x)
         xθ = collect(view(x, 1:p))
+        st = _minibatch_current!(mb_ref[])
+        c = _minibatch_scale(st)
+        ks = st === nothing ? all_k : st.selected
+        nsel = length(ks)
         if G === nothing
             θu = θu_of(xθ)
-            _vem_foreach(nk, caches) do k, lc
-                vals[k] = _vem_batch_elbo(
+            _vem_foreach(nsel, caches) do j, lc
+                k = ks[j]
+                vals[j] = _vem_batch_elbo(
                     θu, view(x, ranges[k]), ξs[k], family, dm, batch_infos[keep[k]],
                     const_cache, lc
                 )
             end
-            all(isfinite, vals) || return Inf
             total = 0.0
-            for k in 1:nk
-                total -= vals[k]
+            for j in 1:nsel
+                isfinite(vals[j]) || return Inf
+                total -= c * vals[j]
             end
             return total
         end
-        _vem_foreach(nk, caches) do k, lc
+        _vem_foreach(nsel, caches) do j, lc
+            k = ks[j]
             r, ξ = ranges[k], ξs[k]
             grad = ξ.K == 0 && _vem_split_cheaper(p, length(r), size(ξ.ξ, 1)) ?
                 _vem_batch_grad : _vem_batch_grad_joint
-            vals[k], gθs[k], gκs[k] = grad(
+            vals[j], gθs[j], gκs[j] = grad(
                 θu_of, xθ, Vector{Float64}(x[r]), ξ, family, dm, batch_infos[keep[k]],
                 const_cache, lc
             )
         end
         fill!(G, 0.0)
         total = 0.0
-        for k in 1:nk
-            v, gθ, gκ = vals[k], gθs[k], gκs[k]
+        for j in 1:nsel
+            v, gθ, gκ = vals[j], gθs[j], gκs[j]
             if !(isfinite(v) && all(isfinite, gθ) && all(isfinite, gκ))
                 fill!(G, NaN)
                 return Inf
             end
-            total -= v
-            @views G[1:p] .-= gθ
-            @views G[ranges[k]] .-= gκ
+            total -= c * v
+            @views G[1:p] .-= c .* gθ
+            @views G[ranges[ks[j]]] .-= c .* gκ
         end
         return F === nothing ? nothing : total
     end
@@ -905,21 +921,29 @@ function _fit_model(
                 GaussianRE || error("VEM: adtype = $(nameof(typeof(method.adtype))) requires Gaussian (Normal/MvNormal) random effects; use the default AutoForwardDiff().")
         end
     end
-    Ftot = x -> begin
+    # the minibatch (selection, scale) enters as constant contexts, drawn outside the AD pass
+    Ftot = (x, ks, c) -> begin
         θu = θu_of(view(x, 1:p))
         tot = zero(eltype(x))
-        for (k, bi) in enumerate(keep)
-            tot -= _vem_batch_elbo_rev(
-                θu, view(x, ranges[k]), ξs[k], family, dm, batch_infos[bi], const_cache, ll_cache
+        for k in ks
+            tot -= c * _vem_batch_elbo_rev(
+                θu, view(x, ranges[k]), ξs[k], family, dm, batch_infos[keep[k]], const_cache,
+                ll_cache
             )
         end
         tot
     end
     DI = Optimization.OptimizationBase.DifferentiationInterface
-    prep = use_fd ? nothing : DI.prepare_gradient(Ftot, method.adtype, x0)
+    prep = use_fd ? nothing :
+        DI.prepare_gradient(Ftot, method.adtype, x0, DI.Constant(all_k), DI.Constant(1.0))
     function fg_rev!(F, G, x)
-        G === nothing && return Ftot(x)
-        v, _ = DI.value_and_gradient!(Ftot, G, prep, method.adtype, x)
+        st = _minibatch_current!(mb_ref[])
+        ks = st === nothing ? all_k : st.selected
+        c = _minibatch_scale(st)
+        G === nothing && return Ftot(x, ks, c)
+        v, _ = DI.value_and_gradient!(
+            Ftot, G, prep, method.adtype, x, DI.Constant(ks), DI.Constant(c)
+        )
         isfinite(v) || fill!(G, NaN)
         return F === nothing ? nothing : v
     end
@@ -931,7 +955,9 @@ function _fit_model(
     # preconditioner of each q). Badly scaled fixed effects (M18: slope 1e-3 x times up to
     # 5e3) otherwise stalled L-BFGS (5000 iterations, |g| = 3e3, a = 1.5 vs 5).
     s = ones(Float64, p)
-    if p <= 50
+    # Under MiniBatch an Optimisers rule takes fixed-size steps in these units; posterior-sd
+    # units would make them tiny for well-determined effects, so s stays 1 there.
+    if p <= 50 && !(mb !== nothing && method.optimizer isa Optimisers.AbstractRule)
         G0 = zeros(Float64, off)
         f0 = fg!(0.0, G0, x0)
         if isfinite(f0) && all(isfinite, G0)
@@ -970,14 +996,22 @@ function _fit_model(
     prob = use_bounds_y ? OptimizationProblem(optf, y0; lb = lb_y, ub = ub_y) :
         OptimizationProblem(optf, y0)
     t0 = time()
-    sol = Optimization.solve(prob, opt_use; method.optim_kwargs...)
+    mb_ref[] = mb
+    sol = Optimization.solve(
+        prob, opt_use;
+        _minibatch_solve_kwargs(method.optim_kwargs, opt_use, mb, Returns(nothing))...
+    )
+    mb_ref[] = nothing
     x̂ = xmap(sol.u)
     elbo = -fy(sol.u, nothing)
     θ_hat_u = θu_of(view(x̂, 1:p))
     refine_iters = 0
     refine_ok = true
-    do_refine = method.refine === :on ||
-        (method.refine === :auto && p <= 50 && maximum(nb[keep]; init = 0) <= 3)
+    # a full-data pass per iteration: off by default under MiniBatch
+    do_refine = method.refine === :on || (
+        method.refine === :auto && mb === nothing && p <= 50 &&
+            maximum(nb[keep]; init = 0) <= 3
+    )
     if do_refine
         # ---- IS refinement with each q frozen (removes the variational bias) ----
         qs = [

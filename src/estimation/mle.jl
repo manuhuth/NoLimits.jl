@@ -11,13 +11,13 @@ using LineSearches
 
 """
     MLE(; optimizer, optim_kwargs, adtype, lb, ub, ignore_model_bounds,
-    precondition, update_schedule) <: FittingMethod
+    precondition) <: FittingMethod
 
 Maximum Likelihood Estimation for models without random effects.
 
 # Keyword Arguments
 - `optimizer`: Optimization.jl-compatible optimizer. Defaults to `LBFGS` with backtracking
-  line search, or to `Optimisers.Adam(0.01)` when `update_schedule != :all`.
+  line search. For mini-batching wrap the method in [`MiniBatch`](@ref).
 - `optim_kwargs::NamedTuple = NamedTuple()`: keyword arguments forwarded to `Optimization.solve`
   (e.g. `maxiters`, `reltol`).
 - `adtype`: automatic-differentiation backend. Defaults to `AutoForwardDiff()`.
@@ -33,8 +33,6 @@ Maximum Likelihood Estimation for models without random effects.
   `false` to optimize the transformed vector directly, which reproduces pre-0.2 results
   bit-for-bit. Note that with preconditioning on, the optimizer object behind
   [`get_raw`](@ref) works in `z`; [`get_params`](@ref) always returns the usual scales.
-$(_UPDATE_SCHEDULE_DOC)  A batch here is a single individual, so `update_schedule = 5`
-  uses 5 randomly chosen individuals per optimizer iteration.
 """
 struct MLE{O, K, A, L, U, US} <: FittingMethod
     optimizer::O
@@ -56,14 +54,12 @@ function MLE(;
         lb = nothing,
         ub = nothing,
         ignore_model_bounds = false,
-        precondition = true,
-        update_schedule = :all
+        precondition = true
     )
-    update_schedule = _check_update_schedule(_as_symbol(update_schedule), "MLE")
-    optimizer = _resolve_outer_optimizer(optimizer, update_schedule, "MLE")
+    optimizer = _resolve_outer_optimizer(optimizer)
     return MLE(
         optimizer, _as_namedtuple(optim_kwargs), adtype, lb, ub,
-        ignore_model_bounds, precondition, update_schedule
+        ignore_model_bounds, precondition, :all
     )
 end
 

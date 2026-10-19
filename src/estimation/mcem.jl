@@ -211,7 +211,7 @@ end
            ebe_grad_tol, ebe_multistart_n, ebe_multistart_k, ebe_multistart_max_rounds,
            ebe_multistart_sampling, ebe_rescue_on_high_grad, ebe_rescue_multistart_n,
            ebe_rescue_multistart_k, ebe_rescue_max_rounds, ebe_rescue_grad_tol,
-           ebe_rescue_multistart_sampling, lb, ub, update_schedule,
+           ebe_rescue_multistart_sampling, lb, ub,
            precondition, builtin_stats, resid_var_param, re_cov_params,
            re_mean_params) <: FittingMethod
 
@@ -286,16 +286,8 @@ fixed effects.
 - `re_mean_params::NamedTuple = NamedTuple()`: mapping of RE name to mean parameter.
   Autodetected under `:auto`.
 - `lb`, `ub`: bounds on the transformed fixed-effect scale, or `nothing`.
-- `update_schedule = :all`: which RE batches the **E-step** refreshes each iteration
-  (same option shapes as [`SAEM`](@ref)):
-  - `:all` — every batch, every iteration.
-  - `Int` — random minibatch of that size, sampled without replacement each iteration.
-  - `(nbatches, iter, rng) -> Vector{Int}` — custom selection.
-
-  Only the E-step is subsampled: a batch that is skipped keeps its draws from the
-  iteration that last updated it, and the Q-function/M-step still aggregates over all
-  batches. Skipped batches therefore contribute samples drawn under an older `θ`, which
-  is the usual incremental-EM trade of a small bias for a cheaper E-step.
+- Mini-batching (E-step on a subset of batches per iteration): wrap the method in
+  [`MiniBatch`](@ref).
 - `precondition::Bool = true`: optimize the scaled offset `z` with
   `θ_transformed = θ0 + s .* z`, so every fit starts at `z = 0` and no coordinate can be
   frozen by an unlucky starting value. `s` is 1 for any coordinate already in log/logit
@@ -360,7 +352,6 @@ function MCEM(;
         ebe_rescue_multistart_sampling = ebe_multistart_sampling,
         lb = nothing,
         ub = nothing,
-        update_schedule = :all,
         store_diagnostics::Bool = false,
         diagnostics_every::Int = 1,
         precondition::Bool = true,
@@ -399,7 +390,7 @@ function MCEM(;
     )
     return MCEM(
         optimizer, _as_namedtuple(optim_kwargs), adtype, e_step_actual, em, ebe, ebe_rescue,
-        lb, ub, _as_symbol(update_schedule), verbose, progress, store_diagnostics,
+        lb, ub, :all, verbose, progress, store_diagnostics,
         diagnostics_every, precondition, _as_symbol(builtin_stats), resid_var_param,
         re_cov_params, re_mean_params
     )
@@ -1425,7 +1416,7 @@ function _mcem_Q_core(
     # Constant-RE batches (n_b == 0): logf is independent of samples — evaluate once.
     ll_cache_c = ll_cache isa Vector ? ll_cache[1] : ll_cache
     for (bi, info) in enumerate(batch_infos)
-        get_n_b(info) > 0 && continue
+        (get_n_b(info) > 0 || iszero(_batch_weight(dm, get_inds(info)))) && continue
         logf = logf_fn(dm, info, θ, Tθ[], const_cache, ll_cache_c)
         !isfinite(logf) && return Tθ(Inf)
         total += _batch_weight(dm, get_inds(info)) * logf
@@ -1450,6 +1441,8 @@ function _mcem_Q_core(
         _greedy_foreach(length(batch_infos), length(caches)) do bi, c
             bad[] && return
             get_n_b(batch_infos[bi]) == 0 && return
+            # zero weight (e.g. outside a scaled MiniBatch subset): skip its stale draws
+            iszero(_batch_weight(dm, get_inds(batch_infos[bi]))) && return
             cache_c = caches[c]
             info = batch_infos[bi]
             samples = samples_by_batch[bi]
@@ -1480,7 +1473,7 @@ function _mcem_Q_core(
     else
         ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
         for (bi, info) in enumerate(batch_infos)
-            get_n_b(info) == 0 && continue
+            (get_n_b(info) == 0 || iszero(_batch_weight(dm, get_inds(info)))) && continue
             samples = samples_by_batch[bi]
             ws = weights_by_batch === nothing ? nothing : weights_by_batch[bi]
             acc = zero(Tθ)
@@ -1821,7 +1814,7 @@ function _fit_model(
         enabled = method.progress
     )
 
-    # Persistent across iterations so `update_schedule` can refresh a subset of batches
+    # Persistent across iterations so a `MiniBatch` schedule can refresh a subset of batches
     # while the Q-function still sees every batch (skipped ones keep their last draws).
     batches_buf = Int[]
     prev_use_mcmc = nothing
@@ -1846,7 +1839,8 @@ function _fit_model(
         # Stale draws are only reusable once every batch has some and they came from the
         # same E-step mode, so force a full refresh on iteration 1 and on the one
         # MCEM_IS warm-up -> IS switch.
-        sched = (prev_use_mcmc === use_mcmc) ? method.update_schedule : :all
+        sched = (prev_use_mcmc === use_mcmc) ? method.update_schedule :
+            _full_schedule(method.update_schedule)
         prev_use_mcmc = use_mcmc
         updated = _schedule_batches!(
             batches_buf, sched, length(batch_infos), iter, rng

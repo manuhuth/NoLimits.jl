@@ -127,17 +127,10 @@ NoLimits.GHQuadrature(;
     lb = nothing,
     ub = nothing,
     ignore_model_bounds = false,
-    update_schedule = :all,
 )
 ```
 
-`update_schedule=:all`: which random-effect batches enter the outer objective and gradient per optimizer iteration (mini-batching).
-
-- `:all` (default): use all batches every iteration; the objective is deterministic and identical to previous versions.
-- integer `m`: a random minibatch of `min(m, nbatches)` batches, sampled without replacement each iteration.
-- callable `(nbatches::Int, iter::Int, rng) -> Vector{Int}`: returns the batch indices to use in optimizer iteration `iter`; a plain function or a callable struct (for stateful schedules).
-
-The selected batches' contribution is scaled by `nbatches / length(selected)`, so the objective remains an unbiased estimate of the full-data objective; priors, `penalty`, and `extra_objective` are never scaled. One minibatch is drawn per optimizer iteration from the fit `rng`, and the objective and gradient of that iteration share it. When mini-batching is active and no `optimizer` is given, the default optimizer becomes `Optimisers.Adam(0.01)` (from Optimisers.jl, with `maxiters=1000` and `save_best=false` unless set in `optim_kwargs`) instead of LBFGS; passing a non-Optimisers optimizer emits a warning because line-search optimizers do not behave well on a stochastic objective. After the fit, the reported objective is re-evaluated once on all batches at the fitted parameters. With Optimisers.jl rules, finite bounds (model bounds or `lb`/`ub`) are enforced by projecting each update onto the box.
+Mini-batching is a wrapper around the method: `fit_model(dm, MiniBatch(GHQuadrature(); schedule = 8))`. See [Mini-batching](minibatch.md).
 
 ### `level`
 
@@ -165,9 +158,8 @@ res = fit_model(dm, NoLimits.GHQuadrature(level=[1, 2]))
 | Outer optimization | `optimizer`, `optim_kwargs`, `adtype` | Optimization over fixed effects. |
 | Inner EB | `inner_optimizer`, `inner_kwargs`, `inner_adtype`, `inner_grad_tol`, `multistart_*` | Inner optimizer for the EB modes. It runs on every objective evaluation (the modes center the adaptive rule for Gaussian random effects) and once more, cold-started, at the optimum for `get_random_effects`. |
 | Bounds | `lb`, `ub`, `ignore_model_bounds` | Box bounds on transformed fixed-effect parameters. |
-| Mini-batching | `update_schedule` | Which batches enter the outer objective/gradient per optimizer iteration. |
 
-The default outer optimizer is `OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep = 1.0))`; when `update_schedule != :all` and no optimizer is passed, the default is `Optimisers.Adam(0.01)` instead.
+The default outer optimizer is `OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep = 1.0))`.
 
 !!! note "Inner optimization during fitting"
     Like `Laplace`, `GHQuadrature` solves the EB modes on every objective evaluation; for Gaussian random effects they center the adaptive rule. Batches with other random-effect distributions use the prior-centered rule, which does not depend on the modes. The modes are solved once more, cold-started, at the optimum for `get_random_effects`.

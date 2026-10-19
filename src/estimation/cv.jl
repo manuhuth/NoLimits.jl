@@ -129,6 +129,7 @@ _cv_method_accepts_constants_re(::SAEM) = true
 _cv_method_accepts_constants_re(::VEM) = true
 _cv_method_accepts_constants_re(::MCMC) = true
 _cv_method_accepts_constants_re(::VI) = true
+_cv_method_accepts_constants_re(m::MiniBatch) = _cv_method_accepts_constants_re(m.method)
 
 # ── cross_validate ────────────────────────────────────────────────────────────
 

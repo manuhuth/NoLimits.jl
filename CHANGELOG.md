@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Breaking
+
+- Mini-batching is now a wrapper, `MiniBatch(method; schedule, optimizer, optim_kwargs,
+  em_variant)`, used as `fit_model(dm, MiniBatch(Laplace(); schedule = 8))`. The
+  `update_schedule` keyword is removed from `MLE`, `MAP`, `Laplace`, `FOCEI`,
+  `GHQuadrature`, `SAEM` and `MCEM`; `schedule` takes the same values (`Int`, a callable
+  `(nbatches, iter, rng) -> indices`, or `:all`). Migration:
+  `Laplace(update_schedule = 8, optimizer = o, lb = l)` becomes
+  `MiniBatch(Laplace(lb = l); schedule = 8, optimizer = o)`. The default Adam(0.01) still
+  replaces the default LBFGS while mini-batching; an optimizer set on the wrapped method
+  is kept. `VEM` gains mini-batching (stochastic VEM: unbiased gradient of the full ELBO,
+  zero gradient for the variational parameters of unselected batches). `SAEM`/`MCEM` gain
+  `em_variant = :scaled` (M-step on the selected batches with likelihood weights scaled by
+  `nbatches / |B|`) next to the previous behaviour, `em_variant = :incremental` (the
+  default: smaller error and seed spread in a screening comparison on four models, see the
+  docs page; `:scaled` has lower wall time).
+  New docs page "Estimation > Workflow > Mini-batching".
+
 ### Changes
 
 - New estimator `VEM` (variational expectation maximization, Tarek and Afonso 2026), with

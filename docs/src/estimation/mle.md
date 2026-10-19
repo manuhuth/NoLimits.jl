@@ -65,7 +65,6 @@ method = NoLimits.MLE(;
     lb=nothing,
     ub=nothing,
     ignore_model_bounds=false,
-    update_schedule=:all,
 )
 ```
 
@@ -75,17 +74,10 @@ method = NoLimits.MLE(;
 | --- | --- | --- |
 | Optimization | `optimizer`, `optim_kwargs`, `adtype` | Controls fixed-effect objective optimization via [Optimization.jl](https://docs.sciml.ai/Optimization/stable/). |
 | Bounds | `lb`, `ub`, `ignore_model_bounds` | Optional transformed-scale bounds for free fixed effects; `ignore_model_bounds` disables model-declared bounds. |
-| Mini-batching | `update_schedule` | Which individuals enter the outer objective/gradient per optimizer iteration. |
 
 `ignore_model_bounds` defaults to `false`. Setting it to `true` disables the parameter bounds declared in the model during optimization. This keyword also applies to [`MAP`](#MAP-Estimation), which shares the `MLE` constructor options.
 
-`update_schedule=:all`: which individuals enter the outer objective and gradient per optimizer iteration (mini-batching); for `MLE` each individual is one batch.
-
-- `:all` (default): use all individuals every iteration; the objective is deterministic and identical to previous versions.
-- integer `m`: a random minibatch of `min(m, n_individuals)` individuals, sampled without replacement each iteration.
-- callable `(n_individuals::Int, iter::Int, rng) -> Vector{Int}`: returns the individual indices to use in optimizer iteration `iter`; a plain function or a callable struct (for stateful schedules).
-
-The selected individuals' contribution is scaled by `n_individuals / length(selected)`, so the objective remains an unbiased estimate of the full-data objective; `penalty` and `extra_objective` are never scaled. One minibatch is drawn per optimizer iteration from the fit `rng`, and the objective and gradient of that iteration share it. When `update_schedule != :all` and no `optimizer` is passed, the default optimizer becomes `Optimisers.Adam(0.01)` (from Optimisers.jl, with `maxiters=1000` and `save_best=false` unless set in `optim_kwargs`) instead of LBFGS; passing a non-Optimisers optimizer emits a warning because line-search optimizers do not behave well on a stochastic objective. After the fit, the reported objective is re-evaluated once on all individuals at the fitted parameters. With Optimisers.jl rules, finite bounds (model bounds or `lb`/`ub`) are enforced by projecting each update onto the box. This keyword also applies to [`MAP`](#MAP-Estimation).
+Mini-batching over individuals (each individual is one batch) is a wrapper around the method: `fit_model(dm, MiniBatch(MLE(); schedule = 5))` uses 5 random individuals per optimizer iteration. It also applies to `MAP`, whose log-prior is never scaled. See [Mini-batching](minibatch.md).
 
 ## Optimization.jl Interface
 
@@ -255,7 +247,7 @@ res_hmm = fit_model(dm_hmm, NoLimits.MLE(optim_kwargs=(iterations=5,)))
 
 Maximum a posteriori (`MAP`) estimation extends `MLE` by incorporating prior information about the fixed effects into the objective. Where `MLE` minimizes the negative log-likelihood alone, `MAP` minimizes the negative log-likelihood plus the negative log-prior of the fixed effects. It is the natural choice for fixed-effects-only models when substantive domain knowledge is available as priors.
 
-`MAP` shares every `MLE` constructor option and `fit_model` keyword; switching between the two requires changing only the method argument. It requires at least one fixed effect to carry a prior (a non-`Priorless` distribution); otherwise `fit_model` raises an error. Priors are assigned per parameter with the `prior` keyword in [`@fixedEffects`](../model-building/fixed-effects.md). This includes `update_schedule`, the mini-batching option described above; the prior is a global term and is applied once, unscaled, regardless of which individuals are selected.
+`MAP` shares every `MLE` constructor option and `fit_model` keyword; switching between the two requires changing only the method argument. It requires at least one fixed effect to carry a prior (a non-`Priorless` distribution); otherwise `fit_model` raises an error. Priors are assigned per parameter with the `prior` keyword in [`@fixedEffects`](../model-building/fixed-effects.md). Under [`MiniBatch`](@ref) the prior is a global term and is applied once, unscaled, regardless of which individuals are selected.
 
 ```julia
 using NoLimits

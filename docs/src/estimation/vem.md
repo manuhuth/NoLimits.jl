@@ -142,6 +142,8 @@ before the threaded loops and batch results are summed in batch order, so a thre
 bitwise equal to a serial one with the same `rng`. The reverse-mode (`adtype`) objective
 runs serially.
 
+Stochastic VEM (a random subset of batches per optimizer iteration) is a wrapper around the method: `fit_model(dm, MiniBatch(VEM(); schedule = 50))`. See [Mini-batching](minibatch.md).
+
 ## Downstream Analysis
 
 - Wald uncertainty quantification (`compute_uq(res; method = :wald)`) uses the Laplace

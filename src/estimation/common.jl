@@ -3308,7 +3308,7 @@ function fit_model(
         _validate_theta_0(dm, kwargs.theta_0_untransformed)
     end
     _validate_fit_overrides(dm, kwargs)
-    get(kwargs, :re_0, nothing) === nothing || method isa Union{SAEM, MCEM} ||
+    get(kwargs, :re_0, nothing) === nothing || _base_method(method) isa Union{SAEM, MCEM} ||
         error("re_0 is supported only by SAEM and MCEM; got $(nameof(typeof(method))).")
     _warn_degenerate_soft_trees(dm, get(kwargs, :theta_0_untransformed, nothing))
     try
@@ -3320,7 +3320,7 @@ function fit_model(
             )
         end
         θ_init = _pooled_init_theta(
-            dm, method, pooled_init, fit_options_pooled_init, kwargs
+            dm, _base_method(method), pooled_init, fit_options_pooled_init, kwargs
         )
         kw = merge(kwargs, (theta_0_untransformed = θ_init,))
         return _fit_model(dm, method, args...; store_data_model = store_data_model, kw...)
