@@ -15,7 +15,9 @@
   is kept. `VEM` gains mini-batching (stochastic VEM: unbiased gradient of the full ELBO,
   zero gradient for the variational parameters of unselected batches). `SAEM`/`MCEM` gain
   `em_variant = :scaled` (M-step on the selected batches with likelihood weights scaled by
-  `nbatches / |B|`) next to the previous behaviour, `em_variant = :incremental` (default).
+  `nbatches / |B|`) next to the previous behaviour, `em_variant = :incremental` (the
+  default: smaller error and seed spread in a screening comparison on four models, see the
+  docs page; `:scaled` has lower wall time).
   New docs page "Estimation > Workflow > Mini-batching".
 
 ### Changes
