@@ -148,17 +148,11 @@ function _ct_hmm_stationary(Q::AbstractMatrix{T}) where {T}
     b = zeros(T, n)
     b[n] = one(T)
     # For non-ergodic Q (multiple communicating classes or absorbing states) the
-    # system is rank-deficient.  `\` throws SingularException in the exactly
-    # singular case; near-singular cases produce a solution with negative
-    # components.  Both signal that the long-time limit depends on v, so we
-    # return nothing and let the caller fall back to expv.
-    local π
-    try
-        π = A \ b
-    catch e
-        e isa LinearAlgebra.SingularException && return nothing
-        rethrow(e)
-    end
+    # system is rank-deficient: an exactly singular solve returns nothing, and near-singular
+    # cases give negative components. Both mean the long-time limit depends on v, so the
+    # caller falls back to the matrix exponential. Plain-loop solve: no LAPACK (Enzyme).
+    π = _gepp_solve_or_nothing(A, b)
+    π === nothing && return nothing
     tol = sqrt(eps(float(real(one(T)))))
     any(x -> x < -tol, π) && return nothing
     s = sum(π)
@@ -174,7 +168,13 @@ function _ct_hmm_expv(Q::AbstractMatrix, p0::AbstractVector, Δt::Real, max_exit
         DomainError(max_exit_dt, "CT-HMM propagation needs finite rates × Δt.")
     )
     max_exit_dt > _CT_HMM_EQUIL_THRESHOLD || return expv(Δt, transpose(Q), p0)
-    p = max.(_matexp_pade(Matrix(transpose(Q)) .* Δt) * p0, 0)
+    n = size(Q, 1)
+    E = _matexp_pade([Q[j, i] * Δt for i in 1:n, j in 1:n])   # exp(QᵀΔt), no BLAS
+    p = zeros(promote_type(eltype(E), eltype(p0)), n)
+    @inbounds for j in 1:n, i in 1:n
+        p[i] += E[i, j] * p0[j]
+    end
+    p = max.(p, 0)
     return p ./ sum(p)
 end
 

@@ -326,6 +326,14 @@ end
     @test NoLimits._is_numeric_error(err)
     @test_throws DomainError probabilities_hidden_states(hmm([-1.0 NaN 1.0; 1.0 -1.0 0.0; 0.0 1.0 -1.0]))
 
+    # the plain-loop solve used by the Padé step and the stationary shortcut
+    A = [4.0 1.0 -2.0; 0.5 -3.0 1.0; 2.0 1.0 0.1]
+    B = [1.0 2.0; -1.0 0.5; 0.3 3.0]
+    @test NoLimits._gepp_solve(A, B) ≈ A \ B rtol = 1.0e-13
+    @test NoLimits._gepp_solve(A, B[:, 1]) ≈ A \ B[:, 1] rtol = 1.0e-13
+    @test NoLimits._gepp_solve_or_nothing([1.0 2.0; 2.0 4.0], [1.0, 1.0]) === nothing
+    @test_throws LinearAlgebra.SingularException NoLimits._gepp_solve([1.0 2.0; 2.0 4.0], [1.0, 1.0])
+
     # a DataModel likelihood at extreme rates evaluates quickly and stays finite
     model = @Model begin
         @fixedEffects begin
