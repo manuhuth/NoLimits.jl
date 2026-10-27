@@ -437,54 +437,6 @@ end
     @test_throws "requires a VEM fit" get_variational_distributions(fit_model(dm0, NoLimits.Laplace()))
 end
 
-# Opt-in like enzyme_compat_proxy_tests.jl: Enzyme is not a test dependency.
-if get(ENV, "NOLIMITS_TEST_ENZYME", "false") == "true" && VERSION >= v"1.12.5" &&
-        Base.find_package("Enzyme") !== nothing
-    using Enzyme
-    @testset "VEM: Enzyme reverse mode matches ForwardDiff" begin
-        dm = _vem_lin_dm(Xoshiro(11))
-        ad = NoLimits.Optimization.AutoEnzyme(;
-            mode = Enzyme.set_runtime_activity(Enzyme.Reverse),
-            function_annotation = Enzyme.Duplicated
-        )
-        rf = fit_model(dm, NoLimits.VEM(; n_is = 0); rng = Xoshiro(3))
-        re = fit_model(dm, NoLimits.VEM(; n_is = 0, adtype = ad); rng = Xoshiro(3))
-        @test get_method(re).adtype === ad
-        @test collect(get_params(re; scale = :transformed)) ≈
-            collect(get_params(rf; scale = :transformed)) rtol = 1.0e-6
-        # per-batch reverse passes are threaded and reduced in batch order
-        rs = fit_model(
-            dm, NoLimits.VEM(; n_is = 0, adtype = ad); rng = Xoshiro(3),
-            serialization = NoLimits.EnsembleSerial()
-        )
-        @test collect(get_params(rs; scale = :transformed)) ==
-            collect(get_params(re; scale = :transformed))
-        @test get_objective(rs) == get_objective(re)
-        # MiniBatch: the minibatch enters the reverse pass as constant contexts
-        import Optimisers
-        mbv(adt) = NoLimits.MiniBatch(
-            NoLimits.VEM(; n_is = 0, refine = false, adtype = adt); schedule = 10,
-            optimizer = Optimisers.Adam(0.05), optim_kwargs = (; maxiters = 20)
-        )
-        rmf = fit_model(dm, mbv(NoLimits.Optimization.AutoForwardDiff()); rng = Xoshiro(3))
-        rme = fit_model(dm, mbv(ad); rng = Xoshiro(3))
-        @test collect(get_params(rme; scale = :transformed)) ≈
-            collect(get_params(rmf; scale = :transformed)) rtol = 1.0e-6
-    end
-    @testset "VEM: Enzyme reverse mode with a planar-flow family" begin
-        dm = _vem_lin_dm(Xoshiro(11))
-        ad = NoLimits.Optimization.AutoEnzyme(;
-            mode = Enzyme.set_runtime_activity(Enzyme.Reverse),
-            function_annotation = Enzyme.Duplicated
-        )
-        fam = PlanarFlowFamily(1)
-        rf = fit_model(dm, NoLimits.VEM(; family = fam, n_is = 0); rng = Xoshiro(3))
-        re = fit_model(dm, NoLimits.VEM(; family = fam, n_is = 0, adtype = ad); rng = Xoshiro(3))
-        @test collect(get_params(re; scale = :transformed)) ≈
-            collect(get_params(rf; scale = :transformed)) rtol = 1.0e-4
-    end
-end
-
 @testset "VEM: LogNormal random effect (transport-space family)" begin
     model = @Model begin
         @fixedEffects begin
@@ -732,4 +684,102 @@ end
     @test rm isa NoLimits.MultistartFitResult
     @test length(NoLimits.get_multistart_results(rm)) == 2
     @test isfinite(get_objective(rm))
+end
+
+# Julia 1.12.7's `LowerTriangular \ x` branches on `istriu`, which made Enzyme drop the
+# off-diagonal gradient at an exactly diagonal covariance (#371). `_logpdf_ad` must keep
+# Distributions' value bit for bit.
+@testset "VEM: AD-safe MvNormal log-density" begin
+    x = [0.3, -0.2]
+    for Σ in ([0.3 0.0; 0.0 0.3], [0.4 0.15; 0.15 0.25])
+        d = MvNormal([0.1, -0.1], Σ)
+        @test NoLimits._logpdf_ad(d, x) === logpdf(d, x)
+        @test NoLimits._fast_logpdf(d, x) === logpdf(d, x)
+        Ω(t) = (L = [exp(t[1]) 0.0; t[2] exp(t[3])]; L * L')
+        t0 = [log(sqrt(Σ[1, 1])), 0.0, log(sqrt(Σ[2, 2]))]
+        g = ForwardDiff.gradient(t -> NoLimits._logpdf_ad(MvNormal(zeros(2), Ω(t)), x), t0)
+        @test g ≈ ForwardDiff.gradient(t -> logpdf(MvNormal(zeros(2), Ω(t)), x), t0) rtol = 1.0e-14
+        @test g[2] != 0
+    end
+    @test NoLimits._logpdf_ad(Normal(0.0, 2.0), 0.5) === logpdf(Normal(0.0, 2.0), 0.5)
+    @test_throws DimensionMismatch NoLimits._logpdf_ad(MvNormal(zeros(2), [1.0 0.0; 0.0 1.0]), [1.0])
+end
+
+# Opt-in like enzyme_compat_proxy_tests.jl: Enzyme is not a test dependency. One outer
+# testset, last in the file: a failure is reported without skipping other testsets.
+if get(ENV, "NOLIMITS_TEST_ENZYME", "false") == "true" && VERSION >= v"1.12.5" &&
+        Base.find_package("Enzyme") !== nothing
+    using Enzyme
+    @testset "VEM: Enzyme reverse mode (opt-in)" begin
+        ad = NoLimits.Optimization.AutoEnzyme(;
+            mode = Enzyme.set_runtime_activity(Enzyme.Reverse),
+            function_annotation = Enzyme.Duplicated
+        )
+        @testset "batch ELBO gradient at the exact start (zero Ω off-diagonal)" begin
+            # #371: on Julia 1.12.7 the Ω₂₁ entry came back 0 (ForwardDiff: -1.39)
+            DI = NoLimits.Optimization.OptimizationBase.DifferentiationInterface
+            dm = _vem_lin_dm(Xoshiro(11))
+            fe = NoLimits.get_fixed(NoLimits.get_model(dm))
+            θ0t = NoLimits.get_transform(fe)(NoLimits.get_θ0_untransformed(fe))
+            axs = NoLimits.ComponentArrays.getaxes(θ0t)
+            x0 = Vector{Float64}(NoLimits.ComponentArrays.getdata(θ0t))
+            @test x0[5] == 0.0
+            itr = NoLimits.get_inverse_transform(fe)
+            # the fit's type-stable assembly (a ComponentArray over a view slowed Enzyme down)
+            θu_of(x) = itr(NoLimits._merge_free_into_full(x0, collect(eachindex(x0)), x, axs))
+            cre = NoLimits._normalize_constants_re(dm, NamedTuple())
+            cc = NoLimits._build_constants_cache(dm, cre)
+            _, infos, _ = NoLimits._build_re_batch_infos(dm, cre)
+            lc = NoLimits.build_ll_cache(dm; serialization = NoLimits.EnsembleSerial(), force_saveat = true)
+            p = length(x0)
+            z0 = vcat(x0, zeros(NoLimits._vem_nkappa(2, :dense)))
+            method = NoLimits.VEM(; n_is = 0)
+            for info in infos[1:10]
+                κi = NoLimits._vem_init_batch(θu_of(x0), 2, :dense, dm, info, cc, lc)
+                dr = NoLimits._vem_draws(2, method, Xoshiro(3), κi, :dense)
+                f = z -> NoLimits._vem_batch_elbo_rev(
+                    θu_of(view(z, 1:p)), view(z, (p + 1):length(z)), dr, :dense, dm, info, cc, lc
+                )
+                gf = ForwardDiff.gradient(f, z0)
+                ge = DI.gradient(f, ad, z0)
+                @test gf[5] != 0
+                @test isapprox(ge, gf; rtol = 1.0e-10, atol = 1.0e-10)
+            end
+        end
+        @testset "fit matches ForwardDiff" begin
+            dm = _vem_lin_dm(Xoshiro(11))
+            rf = fit_model(dm, NoLimits.VEM(; n_is = 0); rng = Xoshiro(3))
+            re = fit_model(dm, NoLimits.VEM(; n_is = 0, adtype = ad); rng = Xoshiro(3))
+            @test get_method(re).adtype === ad
+            @test collect(get_params(re; scale = :transformed)) ≈
+                collect(get_params(rf; scale = :transformed)) rtol = 1.0e-6
+            @test get_iterations(re) == get_iterations(rf)
+            # per-batch reverse passes are threaded and reduced in batch order
+            rs = fit_model(
+                dm, NoLimits.VEM(; n_is = 0, adtype = ad); rng = Xoshiro(3),
+                serialization = NoLimits.EnsembleSerial()
+            )
+            @test collect(get_params(rs; scale = :transformed)) ==
+                collect(get_params(re; scale = :transformed))
+            @test get_objective(rs) == get_objective(re)
+            # MiniBatch: the minibatch enters the reverse pass as constant contexts
+            import Optimisers
+            mbv(adt) = NoLimits.MiniBatch(
+                NoLimits.VEM(; n_is = 0, refine = false, adtype = adt); schedule = 10,
+                optimizer = Optimisers.Adam(0.05), optim_kwargs = (; maxiters = 20)
+            )
+            rmf = fit_model(dm, mbv(NoLimits.Optimization.AutoForwardDiff()); rng = Xoshiro(3))
+            rme = fit_model(dm, mbv(ad); rng = Xoshiro(3))
+            @test collect(get_params(rme; scale = :transformed)) ≈
+                collect(get_params(rmf; scale = :transformed)) rtol = 1.0e-6
+        end
+        @testset "planar-flow family" begin
+            dm = _vem_lin_dm(Xoshiro(11))
+            fam = PlanarFlowFamily(1)
+            rf = fit_model(dm, NoLimits.VEM(; family = fam, n_is = 0); rng = Xoshiro(3))
+            re = fit_model(dm, NoLimits.VEM(; family = fam, n_is = 0, adtype = ad); rng = Xoshiro(3))
+            @test collect(get_params(re; scale = :transformed)) ≈
+                collect(get_params(rf; scale = :transformed)) rtol = 1.0e-4
+        end
+    end
 end

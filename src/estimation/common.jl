@@ -4396,7 +4396,24 @@ end
     return _xlogy(y_int, λ) - λ - SpecialFunctions.logfactorial(y_int)
 end
 
+@inline _fast_logpdf(dist::MvNormal{<:Real, <:Distributions.PDMats.PDMat}, y::AbstractVector{<:Real}) =
+    _logpdf_ad(dist, y)
+
 @inline _fast_logpdf(::Any, ::Any) = nothing
+
+# `logpdf` with the same value, but for a dense MvNormal the whitening solve uses the
+# 3-argument `ldiv!`. Julia 1.12.7's `LowerTriangular \ x` (BLAS eltypes) runs the 2-argument
+# `ldiv!`, which picks the triangle by value (`istriu`): at an exactly diagonal Cholesky factor
+# Enzyme reverse then drops the off-diagonal covariance gradient (#371).
+@inline _logpdf_ad(dist, x) = logpdf(dist, x)
+function _logpdf_ad(d::MvNormal{<:Real, <:Distributions.PDMats.PDMat}, x::AbstractVector{<:Real})
+    length(x) == length(d) ||
+        throw(DimensionMismatch("MvNormal of length $(length(d)) evaluated at a vector of length $(length(x))"))
+    r = x .- d.μ
+    L = Distributions.PDMats.chol_lower(cholesky(d.Σ))
+    z = ldiv!(similar(r, promote_type(eltype(L), eltype(r))), L, r)
+    return Distributions.mvnormal_c0(d) - sum(abs2, z) / 2
+end
 
 # Function barrier: `dm.individuals` has abstract eltype, so `vary`/`dyn` are only
 # concretely typed once they cross this call. Inside, the comprehension infers a

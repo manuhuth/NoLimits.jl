@@ -805,7 +805,7 @@ function _const_re_prior_logf(
                         getproperty(dists, re),
                         getfield(anneal_sds, re)
                     )
-                    convert(T, logpdf(dist, v))
+                    convert(T, _logpdf_ad(dist, v))
                 else
                     _logpdf_re_static(keys(dists), values(dists), re, v, T)
                 end
@@ -858,7 +858,7 @@ end
 # statically dispatched; recursion depth = number of REs (small).
 function _logpdf_re_static(ks::Tuple, ds::Tuple, re::Symbol, v, ::Type{T}) where {T}
     if first(ks) === re
-        return convert(T, logpdf(first(ds), v))
+        return convert(T, _logpdf_ad(first(ds), v))
     end
     return _logpdf_re_static(Base.tail(ks), Base.tail(ds), re, v, T)
 end
@@ -986,7 +986,7 @@ end
 @inline function _re_prior_lp(dists, re::Symbol, v, has_anneal::Bool, anneal_sds, ::Type{T}) where {T}
     if has_anneal && haskey(anneal_sds, re)
         dist = _saem_apply_anneal_dist(getproperty(dists, re), getfield(anneal_sds, re))
-        return convert(T, logpdf(dist, v))
+        return convert(T, _logpdf_ad(dist, v))
     end
     return _logpdf_re_static(keys(dists), values(dists), re, v, T)
 end
