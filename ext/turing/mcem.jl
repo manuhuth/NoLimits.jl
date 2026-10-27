@@ -1,15 +1,17 @@
 const _MCEM_MODEL_CACHE = Dict{Tuple{Tuple{Vararg{Symbol}}}, Symbol}()
 const _MCEM_MODEL_CACHE_LOCK = ReentrantLock()
 
+# The lock is held across the `Core.eval`, so concurrent callers define each key once.
 function _build_mcem_batch_model(re_names::Vector{Symbol})
     key = (Tuple(re_names),)
-    lock(_MCEM_MODEL_CACHE_LOCK)
-    if haskey(_MCEM_MODEL_CACHE, key)
-        val = _MCEM_MODEL_CACHE[key]
-        unlock(_MCEM_MODEL_CACHE_LOCK)
-        return val
+    return @lock _MCEM_MODEL_CACHE_LOCK begin
+        get!(_MCEM_MODEL_CACHE, key) do
+            _define_mcem_batch_model(re_names)
+        end
     end
-    unlock(_MCEM_MODEL_CACHE_LOCK)
+end
+
+function _define_mcem_batch_model(re_names::Vector{Symbol})
     fname = gensym(:_mcem_batch_model)
     sample_blocks = Expr(:block)
     re_val_syms = Symbol[]
@@ -148,9 +150,6 @@ function _build_mcem_batch_model(re_names::Vector{Symbol})
         end
     end
     Core.eval(@__MODULE__, ex)
-    lock(_MCEM_MODEL_CACHE_LOCK)
-    _MCEM_MODEL_CACHE[key] = fname
-    unlock(_MCEM_MODEL_CACHE_LOCK)
     return fname
 end
 
