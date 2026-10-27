@@ -157,7 +157,20 @@ log-likelihood at the fixed values.
 log-likelihood (plus `penalty` and `extra_objective`), `get_iterations` the iterations of the
 joint fit and `get_converged` whether the joint fit (and an accepted refinement) ended with a
 successful return code. The notes of `get_result(res)` hold the final ELBO, the number of
-refinement iterations and the fitted variational parameters.
+refinement iterations and the fitted variational parameters in random-effect batch order.
+
+[`get_variational_distributions`](@ref) returns the fitted variational distributions per
+individual, in the order of the individuals of the `DataModel`: the batch, mean and
+Cholesky scale factor of ``q``, whether ``q`` is a distribution of the random effects
+themselves (`:natural`, Gaussian random effects) or of the standardized variables of the
+prior transport (`:standardized`), and the random effect, level and component of each
+coordinate. Individuals linked by a shared random-effect level share one joint ``q``.
+
+```julia
+vd = get_variational_distributions(res)
+vd.mean[1]          # q mean of the first individual
+vd.coordinates[1]   # [(re = :η, level = 1, component = 1), (re = :η, level = 1, component = 2)]
+```
 
 All randomness (Monte Carlo draws, refinement nodes, importance-sampling draws, start
 repair and EBE multistart) comes from the `rng` keyword of `fit_model`, as for
@@ -187,6 +200,7 @@ Stochastic VEM (a random subset of batches per optimizer iteration) is a wrapper
 ```@docs
 VEM
 PlanarFlowFamily
+get_variational_distributions
 ```
 
 ## Where to go next

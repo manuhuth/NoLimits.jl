@@ -17,7 +17,7 @@
 # The final objective is an importance-sampling estimate of -log p(y | θ̂) with a
 # multivariate-t proposal around each fitted q (the ELBO itself is reported in the notes).
 
-export VEM, PlanarFlowFamily
+export VEM, PlanarFlowFamily, get_variational_distributions
 
 """
     PlanarFlowFamily(K::Integer; base = :dense, seed = 0)
@@ -140,8 +140,10 @@ work on threads, for every `adtype`; threaded and serial (`EnsembleSerial()`) fi
 bitwise equal.
 
 Fits support Wald UQ ([`compute_uq`](@ref)), and [`sample_random_effects`](@ref) and
-conditional cross-validation draw from the fitted variational distributions
-(`get_result(res).notes.variational_params`). Discrete random effects are not supported.
+conditional cross-validation draw from the fitted variational distributions.
+[`get_variational_distributions`](@ref) returns these distributions per individual
+(`get_result(res).notes.variational_params` holds them in random-effect batch order).
+Discrete random effects are not supported.
 """
 struct VEM{O, K, A, L, U, EB, US} <: FittingMethod
     optimizer::O
@@ -1255,7 +1257,12 @@ function _fit_model(
                 μq, Lq = ξs[k].K == 0 ?
                 _vem_effective(κk, ξs[k], nb[keep[k]], family, θ_hat_u) :
                 _vem_q_moments(κk, ξs[k], nb[keep[k]], family, θ_hat_u)
-                (mean = μq, scale = Lq)
+                # q lives on b for Gaussian random effects, else on the standardized u of
+                # the prior transport b = T_θ(u) (a type property, so θ0 serves as fallback)
+                base = _vem_measure(batch_infos[keep[k]], θ_hat_u, const_cache, dm, ll_cache)
+                base === nothing &&
+                (base = _vem_measure(batch_infos[keep[k]], θu0, const_cache, dm, ll_cache))
+                (mean = μq, scale = Lq, space = base isa GaussianRE ? :natural : :standardized)
             end for k in eachindex(ranges)
     ]
 
@@ -1279,3 +1286,77 @@ function _fit_model(
     )
 end
 
+"""
+    get_variational_distributions(res::FitResult) -> DataFrame
+    get_variational_distributions(dm::DataModel, res::FitResult) -> DataFrame
+
+Fitted variational distributions ``q`` of a [`VEM`](@ref) fit, one row per individual in
+the order of the individuals of the `DataModel` (the order that
+[`get_random_effects`](@ref) uses for random effects grouped by the primary id).
+Individuals linked by a shared random-effect level (e.g. a site effect next to a subject
+effect) form one random-effect batch and share one joint ``q``.
+
+Columns:
+- the primary-id column: the id of the individual;
+- `batch`: index of the batch of the individual in `get_notes(res).variational_params`, or
+  `0` when all its random-effect levels are fixed through `constants_re` (no ``q``);
+- `mean`, `scale`: ``q = N(\\mathrm{mean}, \\mathrm{scale}\\,\\mathrm{scale}^\\top)`` of the
+  batch, with `scale` lower triangular (diagonal for `family = :diagonal`). For a
+  [`PlanarFlowFamily`](@ref) they are the mean and Cholesky factor of the moment-matched
+  Gaussian;
+- `space`: `:natural` when all random effects of the batch are Gaussian (`Normal`,
+  `MvNormal`), so that ``q`` is a distribution of the random effects ``b``;
+  `:standardized` otherwise, so that ``q`` is a distribution of the standardized
+  ``u`` and ``b = T_{\\hat\\theta}(u)`` with the prior transport ``T_{\\hat\\theta}`` (as
+  in [`sample_random_effects`](@ref));
+- `coordinates`: one `(re, level, component)` named tuple per entry of `mean`: the random
+  effect, its grouping level and the component index (`1` for a scalar random effect).
+"""
+function get_variational_distributions(dm::DataModel, res::FitResult)
+    notes = get_notes(res)
+    (notes isa NamedTuple && haskey(notes, :variational_params)) ||
+        error("get_variational_distributions requires a VEM fit result.")
+    _, batch_infos, _ = _build_re_batch_infos(dm, _res_constants_re(res, NamedTuple(), dm))
+    keep = notes.variational_batches
+    qs = notes.variational_params
+    (
+        keep == findall(info -> get_n_b(info) > 0, batch_infos) &&
+            all(length(qs[k].mean) == get_n_b(batch_infos[bi]) for (k, bi) in enumerate(keep))
+    ) || error("The batch layout of this DataModel differs from the VEM fit; pass the DataModel of the fit.")
+    cache = get_laplace_cache(get_re_group_info(dm))
+    re_names = get_re_names(cache)
+    n = length(get_individuals(dm))
+    batch_of = zeros(Int, n)
+    coords = Vector{Vector{NamedTuple}}(undef, length(keep))
+    for (k, bi) in enumerate(keep)
+        info = batch_infos[bi]
+        batch_of[collect(get_inds(info))] .= k
+        c = Vector{NamedTuple}(undef, get_n_b(info))
+        for (ri, re) in enumerate(re_names)
+            rei = get_re_info(info)[ri]
+            levels_all = get_re_index(cache)[ri].levels
+            for (li, lvl_id) in enumerate(get_levels(get_re_map(rei)))
+                for (j, pos) in enumerate(get_ranges(rei)[li])
+                    c[pos] = (re = re, level = levels_all[lvl_id], component = j)
+                end
+            end
+        end
+        coords[k] = c
+    end
+    q_of(i, f, none) = batch_of[i] == 0 ? none : copy(getfield(qs[batch_of[i]], f))
+    return DataFrame(
+        get_primary_id(dm) => [_individual_id(dm, i) for i in 1:n],
+        :batch => batch_of,
+        :mean => [q_of(i, :mean, Float64[]) for i in 1:n],
+        :scale => [q_of(i, :scale, zeros(0, 0)) for i in 1:n],
+        :space => [batch_of[i] == 0 ? :none : qs[batch_of[i]].space for i in 1:n],
+        :coordinates => [batch_of[i] == 0 ? NamedTuple[] : copy(coords[batch_of[i]]) for i in 1:n],
+    )
+end
+
+function get_variational_distributions(res::FitResult)
+    dm = get_data_model(res)
+    dm === nothing &&
+        error("This fit result does not store a DataModel; call get_variational_distributions(dm, res) instead.")
+    return get_variational_distributions(dm, res)
+end

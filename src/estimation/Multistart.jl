@@ -768,6 +768,7 @@ const MULTISTART_FORWARDED_FUNCTIONS = (
     :get_laplace_random_effects, :get_loglikelihood, :get_loglikelihood_quadrature,
     :get_fit_args, :get_fit_kwargs, :get_closed_form_mstep_used,
     :get_variational_posterior, :get_vi_state, :get_vi_trace, :get_residuals,
+    :get_variational_distributions,
     :summarize, :compute_uq, :compute_shrinkage, :complete_data_loglikelihood,
     :predict, :reestimate_ebes, :sample_random_effects, :sample_posterior,
     :identifiability_report,

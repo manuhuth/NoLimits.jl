@@ -385,6 +385,58 @@ end
     )
 end
 
+@testset "VEM: get_variational_distributions maps q to individuals" begin
+    dm0 = _vem_lin_dm(Xoshiro(11))
+    df = copy(get_df(dm0))
+    # a distinctive individual: its q mean of η[1] is far above the others
+    df.y[df.ID .== 17] .+= 5.0
+    dm = DataModel(NoLimits.get_model(dm0), df; primary_id = :ID, time_col = :t)
+    rv = fit_model(dm, NoLimits.VEM(); rng = Xoshiro(3))
+    notes = get_notes(rv)
+    _, infos, _ = NoLimits.build_re_batch_infos(dm, NamedTuple())
+    # the batch order differs from the individual order here
+    batch_first = [first(NoLimits.get_batch_individuals(infos[bi])) for bi in notes.variational_batches]
+    @test batch_first != 1:60
+    @test argmax([q.mean[1] for q in notes.variational_params]) != 17
+
+    vd = get_variational_distributions(rv)
+    @test vd.ID == unique(df.ID)
+    @test names(vd) == ["ID", "batch", "mean", "scale", "space", "coordinates"]
+    @test argmax([m[1] for m in vd.mean]) == 17
+    for i in 1:60
+        k = vd.batch[i]
+        @test batch_first[k] == i
+        @test vd.mean[i] == notes.variational_params[k].mean
+        @test vd.scale[i] == notes.variational_params[k].scale
+        @test vd.space[i] === :natural
+        @test vd.coordinates[i] == [(re = :η, level = i, component = 1), (re = :η, level = i, component = 2)]
+    end
+    @test istril(vd.scale[17])
+    @test get_variational_distributions(dm, rv) == vd
+
+    # shared levels: individuals of one site share one joint q over all its levels
+    r = fit_model(fx_mg_dm(), NoLimits.VEM(; n_is = 50, optim_kwargs = (; maxiters = 5)); rng = Xoshiro(1))
+    v = get_variational_distributions(r)
+    @test v.batch[1] == v.batch[2] != v.batch[3] == v.batch[4]
+    @test v.mean[1] == v.mean[2]
+    for i in 1:4
+        @test length(v.coordinates[i]) == length(v.mean[i]) == 3
+        @test (re = :η_id, level = v.ID[i], component = 1) in v.coordinates[i]
+    end
+    @test (re = :η_site, level = :A, component = 1) in v.coordinates[1]
+    @test (re = :η_site, level = :B, component = 1) in v.coordinates[3]
+
+    # levels fixed by constants_re: no q for that individual
+    rc = fit_model(
+        dm0, NoLimits.VEM(; n_is = 0, optim_kwargs = (; maxiters = 5));
+        constants_re = (; η = Dict(1 => [0.0, 0.0])), rng = Xoshiro(3)
+    )
+    vc = get_variational_distributions(rc)
+    @test vc.batch[1] == 0 && isempty(vc.mean[1]) && vc.space[1] === :none
+    @test all(>(0), vc.batch[2:end])
+    @test_throws "requires a VEM fit" get_variational_distributions(fit_model(dm0, NoLimits.Laplace()))
+end
+
 # Opt-in like enzyme_compat_proxy_tests.jl: Enzyme is not a test dependency.
 if get(ENV, "NOLIMITS_TEST_ENZYME", "false") == "true" && VERSION >= v"1.12.5" &&
         Base.find_package("Enzyme") !== nothing

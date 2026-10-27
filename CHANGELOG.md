@@ -58,6 +58,11 @@
   methods, `ParticleSwarm`) with an error, since the variational parameters are unbounded
   (#379, #380).
 
+- New accessor `get_variational_distributions(res)`: the fitted variational distributions
+  of a VEM fit per individual, in `DataModel` order (batch, mean, Cholesky scale, space and
+  the random effect, level and component of each coordinate). `notes.variational_params`
+  is in random-effect batch order, which in general differs from the individual order.
+
 - The `rng` keyword of every estimator, cross-validation and UQ entry point now defaults
   to a fresh `Xoshiro(42)` per call instead of `Random.default_rng()`. Fits with `SAEM`,
   `MCEM` (all E-steps), `MCMC`, `VI`, `VEM`, `MiniBatch` schedule draws, EBE multistarts,
