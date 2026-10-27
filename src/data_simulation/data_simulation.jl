@@ -94,12 +94,14 @@ function _simulate_sol_accessors(dm::DataModel, idx::Int, θ, η)
     infusion_rates = nothing
     events = _private_event_callbacks(get_callbacks(ind))
     if events !== nothing
+        _de_check_events_supported(u0)
         _apply_initial_events!(u0, events)
         cb = get_callback(events)
         infusion_rates = get_infusion_rates(events)
     end
     plan = get_closed_form_plan(dm)
-    if is_cf_eligible(plan) && (_cf_is_whole(plan) || cb === nothing)
+    if is_cf_eligible(plan) && !_de_has_vector_states(u0) &&
+            (_cf_is_whole(plan) || cb === nothing)
         solver_cfg = get_solver_config(model)
         cf_alg = _resolve_ode_alg(solver_cfg.alg)
         sol = _cf_dispatch_solve(

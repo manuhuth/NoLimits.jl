@@ -18,7 +18,12 @@ struct InitialDEIR
     call_syms::Vector{Symbol}
     var_syms::Vector{Symbol}
     prop_syms::Vector{Symbol}
+    # globals of the defining module referenced by the block (e.g. `zeros(NSTATE)`);
+    # used only when the symbol is no model name.
+    globals::Vector{GlobalRef}
 end
+InitialDEIR(names, exprs, call_syms, var_syms, prop_syms) =
+    InitialDEIR(names, exprs, call_syms, var_syms, prop_syms, GlobalRef[])
 
 """
     InitialDE
@@ -67,9 +72,12 @@ end
 
 Compile initial-condition declarations for an ODE system into an [`InitialDE`](@ref) struct.
 
-Each statement must assign a scalar expression to a state name matching one declared with
-`D(state) ~ ...` in the paired `@DifferentialEquation` block. Every state must have exactly
-one initial condition. The symbols `t` and `ξ` are forbidden.
+Each statement must assign a scalar or vector expression to a state name matching one
+declared with `D(state) ~ ...` in the paired `@DifferentialEquation` block. A vector value
+(e.g. `x = zeros(4)`) makes `x` a vector-valued state: inside `@DifferentialEquation`, `x`
+is then a vector and `D(x) ~ ...` must return a vector of the same length; inside
+`@formulas`, `x(t)` returns the vector. Every state must have exactly one initial
+condition. The symbols `t` and `ξ` are forbidden.
 
 Right-hand sides may reference fixed effects, random effects, constant covariates,
 pre-DE variables, model functions, and helper functions.
@@ -107,7 +115,8 @@ macro initialDE(block)
         exprs,
         collect(call_syms),
         collect(var_syms),
-        collect(prop_syms)
+        collect(prop_syms),
+        GlobalRef[GlobalRef(__module__, s) for s in var_syms if isdefined(__module__, s)]
     )
     return :(InitialDE($meta, $ir))
 end
@@ -155,6 +164,7 @@ function get_initialde_builder(
     call_syms = Set(i.ir.call_syms)
     var_syms = Set(i.ir.var_syms)
     prop_syms = Set(i.ir.prop_syms)
+    globals = Dict{Symbol, GlobalRef}(g.name => g for g in i.ir.globals)
 
     fun_syms = Set(
         [
@@ -189,7 +199,10 @@ function get_initialde_builder(
                 elseif hasproperty(constant_covariates, $(QuoteNode(sym)))
                         $(sym) = getproperty(constant_covariates, $(QuoteNode(sym)))
                 else
-                        error("Unknown symbol $(string($(QuoteNode(sym)))) in initialDE.")
+                        $(
+                        haskey(globals, sym) ? :($(sym) = $(globals[sym])) :
+                            :(error($("Unknown symbol $(sym) in initialDE.")))
+                    )
                 end
                 end
         end
@@ -209,9 +222,12 @@ function get_initialde_builder(
             for sym in fun_syms
     ]
 
-    vec_expr = static ?
-        Expr(:call, GlobalRef(StaticArrays, :SVector), ordered_exprs...) :
-        Expr(:vect, ordered_exprs...)
+    # Scalar-only states give the same Vector/SVector as before; any vector-valued
+    # initial value turns the state into a ComponentVector (see `_de_initial_state`).
+    vec_expr = Expr(
+        :call, GlobalRef(@__MODULE__, :_de_initial_state),
+        Val(Tuple(state_names)), Val(static), ordered_exprs...
+    )
 
     func_expr = :(
         function (

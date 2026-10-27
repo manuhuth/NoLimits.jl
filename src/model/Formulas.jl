@@ -686,6 +686,15 @@ _qcg(ex, ::Module, ::Set{Symbol}) = ex
     s in locals && return s
     return !isdefined(@__MODULE__, s) && isdefined(mod, s) ? GlobalRef(mod, s) : s
 end
+_qcg_index(ex, mod::Module, locals::Set{Symbol}) = _qcg(ex, mod, locals)
+function _qcg_index(s::Symbol, mod::Module, locals::Set{Symbol})
+    (s === :end || s === :begin) && return s
+    return _qcg_sym(s, mod, locals)
+end
+function _qcg_index(ex::Expr, mod::Module, locals::Set{Symbol})
+    ex.head == :ref && return _qcg(ex, mod, locals)
+    return Expr(ex.head, map(a -> _qcg_index(a, mod, locals), ex.args)...)
+end
 function _qcg(ex::Expr, mod::Module, locals::Set{Symbol})
     if ex.head == :call && ex.args[1] isa Symbol
         return Expr(
@@ -696,6 +705,12 @@ function _qcg(ex::Expr, mod::Module, locals::Set{Symbol})
         return Expr(
             :., _qcg_sym(ex.args[1], mod, locals),
             map(a -> _qcg(a, mod, locals), ex.args[2:end])...
+        )
+    elseif ex.head == :ref
+        # bare globals used as indices, e.g. `x(t)[NSTATE]`
+        return Expr(
+            :ref, _qcg(ex.args[1], mod, locals),
+            map(a -> _qcg_index(a, mod, locals), ex.args[2:end])...
         )
     end
     return Expr(ex.head, map(a -> _qcg(a, mod, locals), ex.args)...)

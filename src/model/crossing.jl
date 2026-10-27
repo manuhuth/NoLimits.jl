@@ -219,7 +219,9 @@ function _sol_accessors_with_crossings(model, sol, compiled, θ, η, const_cov)
     names = ntuple(k -> crossings[k].name, length(crossings))
     vals = ntuple(length(crossings)) do k
         spec = crossings[k]
-        sidx = findfirst(==(spec.state), state_names)
+        sidx = sol isa SciMLBase.AbstractODESolution ?
+            _de_flat_state_index(sol.prob.u0, state_names, spec.state) :
+            findfirst(==(spec.state), state_names)
         sidx === nothing && error("crossing state `$(spec.state)` is not a DE state.")
         c = _crossing_threshold(spec.threshold, θ, pre)
         if spec.kind === :rootval

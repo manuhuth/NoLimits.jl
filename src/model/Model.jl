@@ -181,13 +181,15 @@ end
 # mirror the checks (and the messages) here.
 function _validate_de_symbols(
         de; fixed_names, re_names, prede_names, const_cov_names, dynamic_cov_names,
-        helper_names, model_fun_names
+        helper_names, model_fun_names, context_module::Union{Nothing, Module} = nothing
     )
     de === nothing && return nothing
     meta = get_de_meta(de)
     known_vars = Set{Symbol}(vcat(prede_names, re_names, fixed_names, const_cov_names))
     for sym in sort(collect(meta.var_syms))
+        # globals of the defining module (e.g. a state dimension) resolve last
         sym in known_vars ||
+            (context_module !== nothing && isdefined(context_module, sym)) ||
             error("Unknown symbol $(sym) in DifferentialEquation.")
     end
     known_funs = Set{Symbol}(vcat(dynamic_cov_names, model_fun_names, helper_names))
@@ -848,7 +850,8 @@ macro Model(block)
             const_cov_names = $(const_cov_names_var),
             dynamic_cov_names = $(covariates_var).dynamic,
             helper_names = $(helper_names_var),
-            model_fun_names = $(model_fun_names_var)
+            model_fun_names = $(model_fun_names_var),
+            context_module = $(__module__)
         )
         _validate_crossings(
             $(formulas_var);

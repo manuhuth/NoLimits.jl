@@ -3872,6 +3872,7 @@ end
     cb = nothing
     infusion_rates = nothing
     if events !== nothing
+        _de_check_events_supported(u0)
         _apply_initial_events!(u0, events)
         cb = get_callback(events)
         infusion_rates = get_infusion_rates(events)
@@ -3894,7 +3895,8 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
     # Closed-form fast path: diagonal-linear system with no mid-trajectory events
     # (t0 doses already folded into u0). Analytic states over the saveat grid.
     plan = cache.closed_form_plan
-    if isempty(crossings) && is_cf_eligible(plan) && (_cf_is_whole(plan) || cb === nothing)
+    if isempty(crossings) && is_cf_eligible(plan) && !_de_has_vector_states(u0) &&
+            (_cf_is_whole(plan) || cb === nothing)
         saveat_use = _ll_saveat(cache, idx, ind)
         sol = _cf_dispatch_solve(
             model, compiled, u0_T, get_tspan(ind), saveat_use, plan,
@@ -3947,8 +3949,7 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
         # type-stable fast path (the common case, incl. a single apoptosis event):
         # no Vector{Any} / splat, concrete callback.
         spec = crossings[1]
-        sidx = findfirst(==(spec.state), state_names)
-        sidx === nothing && error("crossing state `$(spec.state)` is not a DE state.")
+        sidx = _de_flat_state_index(u0, state_names, spec.state)
         c = _crossing_threshold(spec.threshold, θ, pre)
         tinit = spec.tmax === nothing ? convert(T, get_tspan(ind)[2]) :
             convert(T, spec.tmax)
@@ -3978,8 +3979,7 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
     reset_tinits = Any[]
     for k in 1:n_cross
         spec = crossings[k]
-        sidx = findfirst(==(spec.state), state_names)
-        sidx === nothing && error("crossing state `$(spec.state)` is not a DE state.")
+        sidx = _de_flat_state_index(u0, state_names, spec.state)
         c = _crossing_threshold(spec.threshold, θ, pre)
         sidxs[k] = sidx
         thr[k] = c

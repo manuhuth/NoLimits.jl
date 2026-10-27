@@ -155,6 +155,127 @@ end
 
 @inline (a::DEStateAccessor)(t) = _de_state_at(a.sol, a.idx, t)
 
+# ---------------------------------------------------------------------------
+# Vector-valued states (issue #376)
+# ---------------------------------------------------------------------------
+# A state whose `@initialDE` value is an `AbstractVector` is a vector state. When any
+# state is vector-valued the initial state is a `ComponentVector` (one component per
+# state, in `@DifferentialEquation` order), so the state layout travels with the type
+# of `u` and every macro-generated kernel resolves it by dispatch: plain `Vector` /
+# `SVector` states keep the old scalar `u[i]` / `du[i] = ...` code unchanged.
+
+"""
+    _de_initial_state(::Val{names}, ::Val{static}, vals...)
+
+Assemble the ODE initial state from the per-state `@initialDE` values. All-scalar
+values give the same `Vector` (or `SVector` when `static`) as before; if any value is
+an `AbstractVector` the result is a `ComponentVector` with one component per state.
+"""
+@inline _de_initial_state(::Val, ::Val{false}, vals::Number...) = [vals...]
+@inline function _de_initial_state(::Val, ::Val{true}, vals::Number...)
+    return StaticArrays.SVector(vals...)
+end
+function _de_initial_state(::Val{names}, ::Val, vals...) where {names}
+    for v in vals
+        (v isa Number || v isa AbstractVector{<:Number}) || error(
+            "@initialDE values must be numbers or vectors of numbers; got $(typeof(v))."
+        )
+    end
+    return ComponentArray(NamedTuple{names}(map(_de_init_component, vals)))
+end
+_de_init_component(v::Number) = v
+_de_init_component(v::AbstractVector) = collect(v)
+
+"""
+    _de_has_vector_states(u0) -> Bool
+
+Whether an initial state (from [`_de_initial_state`](@ref)) carries vector states.
+"""
+@inline _de_has_vector_states(u0) = false
+@inline _de_has_vector_states(::ComponentArray) = true
+
+# Index range (vector state) or Int (scalar state) of state `s` inside a ComponentVector.
+@inline _de_ca_index(u::ComponentArray, s::Symbol) = getaxes(u)[1][s].idx
+
+# Bind state `s` (position `i`) inside the RHS: `u[i]` for plain vectors, the named
+# component (scalar or view) for ComponentVectors.
+@inline _de_state_get(u::AbstractVector, ::Val, i::Int) = @inbounds u[i]
+@inline _de_state_get(u::ComponentArray, ::Val{s}, ::Int) where {s} = getproperty(u, s)
+
+# Write the derivative of state `s` (position `i`).
+@inline function _de_state_set!(du::AbstractVector, ::Val, i::Int, v)
+    @inbounds du[i] = v
+    return nothing
+end
+@inline function _de_state_set!(du::ComponentArray, ::Val{s}, ::Int, v) where {s}
+    return _de_write_component!(du, _de_ca_index(du, s), v, s)
+end
+@inline function _de_write_component!(du, idx::Integer, v, s)
+    @inbounds du[idx] = v
+    return nothing
+end
+@inline function _de_write_component!(du, idx::AbstractUnitRange, v, s)
+    length(v) == length(idx) || throw(
+        DimensionMismatch(
+            "D($(s)) has length $(length(v)) but state $(s) has length $(length(idx))."
+        )
+    )
+    j = first(idx) - 1
+    @inbounds for k in eachindex(v)
+        du[j += 1] = v[k]
+    end
+    return nothing
+end
+
+# Out-of-place RHS assembly.
+@inline _de_oop_du(::AbstractVector, vals...) = [vals...]
+function _de_oop_du(u::ComponentArray, vals...)
+    flat = reduce(vcat, map(v -> v isa Number ? [v] : vec(collect(v)), vals))
+    return ComponentArray(flat, getaxes(u))
+end
+
+# Lift a state to a wider eltype keeping its ComponentVector layout (solver-AD path).
+@inline _de_lift_u(::Type{D}, u::AbstractVector) where {D} = convert(Vector{D}, u)
+@inline function _de_lift_u(::Type{D}, u::ComponentArray) where {D}
+    return ComponentArray(convert(Vector{D}, getdata(u)), getaxes(u))
+end
+
+# Flat index of state `s` (position `i`) in a solution: the component range/index when
+# the solved state is a ComponentVector, `i` otherwise (closed-form solution objects
+# are only used for all-scalar systems).
+@inline _de_sol_state_index(sol, ::Val, i::Int) = i
+@inline function _de_sol_state_index(sol::SciMLBase.AbstractODESolution, v::Val, i::Int)
+    return _de_u_state_index(sol.prob.u0, v, i)
+end
+@inline _de_u_state_index(u, ::Val, i::Int) = i
+@inline _de_u_state_index(u::ComponentArray, ::Val{s}, ::Int) where {s} = _de_ca_index(u, s)
+
+# Dosing (EVID/CMT) targets state positions of the all-scalar layout (bolus vectors and
+# infusion rates have one entry per state name); vector states are not mapped yet.
+@inline _de_check_events_supported(u0) = nothing
+function _de_check_events_supported(::ComponentArray)
+    return error(
+        "Dosing events (EVID/CMT) are not supported for models with vector-valued " *
+        "states yet."
+    )
+end
+
+"""
+    _de_flat_state_index(u0, state_names, name) -> Int
+
+Flat index of the SCALAR state `name` inside the initial state `u0` (used by event
+detection on a state). Errors for an unknown or vector-valued state.
+"""
+function _de_flat_state_index(u0, state_names::AbstractVector{Symbol}, name::Symbol)
+    i = findfirst(==(name), state_names)
+    i === nothing && error("`$(name)` is not a DE state.")
+    u0 isa ComponentArray || return i
+    idx = _de_ca_index(u0, name)
+    idx isa Integer ||
+        error("State `$(name)` is vector-valued; this feature needs a scalar state.")
+    return idx
+end
+
 """
     DESignalAccessor{S, P, F}
 
@@ -184,7 +305,10 @@ function _DEAccessors{names, nstates}(fns::S) where {names, nstates, S}
 end
 
 @generated function (a::_DEAccessors{names, nstates})(sol, pc) where {names, nstates}
-    vals = Any[:(DEStateAccessor(sol, $i)) for i in 1:nstates]
+    vals = Any[
+        :(DEStateAccessor(sol, _de_sol_state_index(sol, $(Val(names[i])), $i)))
+            for i in 1:nstates
+    ]
     for j in 1:(length(names) - nstates)
         push!(vals, :(DESignalAccessor(sol, pc, a.signal_fns[$j])))
     end
@@ -331,11 +455,16 @@ end
 # Bool is a Number, but packing it as a float would change `if`/`&&` semantics in
 # the RHS — carry it (and any other non-real value) as an inert layout constant.
 _flat_len(::Bool) = 0
+# Integers (e.g. a global state dimension `NSTATE` used as an index) stay exact
+# constants: packing them as floats would break indexing in the RHS. Integer values
+# cannot be θ/η-dependent.
+_flat_len(::Integer) = 0
 _flat_len(::Real) = 1
 _flat_len(v::AbstractArray{<:Real}) = eltype(v) === Bool ? 0 : length(v)
 _flat_len(v) = 0
 
 _flat_slot(v::Bool, o::Int) = DEVarConst(v)
+_flat_slot(v::Integer, o::Int) = DEVarConst(v)
 _flat_slot(::Real, o::Int) = DEVarSlot{0}(o, ())
 function _flat_slot(v::AbstractArray{<:Real, N}, o::Int) where {N}
     return eltype(v) === Bool ? DEVarConst(v) : DEVarSlot{N}(o, size(v))
@@ -477,7 +606,7 @@ end
         du::AbstractVector{D}, u, p::AbstractVector{V}, t
     ) where {V <: ForwardDiff.Dual, D <: ForwardDiff.Dual{<:Any, V}}
     f.inner!(
-        du, convert(Vector{D}, u),
+        du, _de_lift_u(D, u),
         (vars = _vars_from_flat(convert(Vector{D}, p), f.layout), funs = f.funs),
         convert(D, t)
     )
@@ -590,6 +719,14 @@ canonicalize(::SciMLStructures.Discrete, p::DEParams) = _canonicalize_empty(p)
 canonicalize(::SciMLStructures.Input, p::DEParams) = _canonicalize_empty(p)
 canonicalize(::SciMLStructures.Initials, p::DEParams) = _canonicalize_empty(p)
 
+# Last resort for a symbol that is no model name: a global of the module the block is
+# written in (e.g. `const NSTATE = 4`), resolved when the macro expands. Model names
+# take precedence because the generated lookup tries them first.
+function _de_global_fallback(mod::Module, sym::Symbol, block::String)
+    isdefined(mod, sym) && return GlobalRef(mod, sym)
+    return :(error($("Unknown symbol $(sym) in $(block).")))
+end
+
 function _de_signal_used_bare(ex, name::Symbol)
     ex isa Symbol && return ex == name
     ex isa Expr || return false
@@ -671,6 +808,24 @@ function _de_collect_dotted_call_bases(ex, out::Set{Symbol})
     end
     for arg in ex.args
         _de_collect_dotted_call_bases(arg, out)
+    end
+    return out
+end
+
+# Symbols used inside index expressions (`x[N]`, `x[1:(N - 1)]`); `_macro_collect_var_symbols`
+# only descends into the indexed object. `end`/`begin` are index keywords.
+function _de_collect_index_symbols(ex, out::Set{Symbol})
+    ex isa Expr || return out
+    if ex.head == :ref
+        for arg in ex.args[2:end]
+            _macro_collect_var_symbols(arg, out)
+            _de_collect_index_symbols(arg, out)
+        end
+        _de_collect_index_symbols(ex.args[1], out)
+        return out
+    end
+    for arg in ex.args
+        _de_collect_index_symbols(arg, out)
     end
     return out
 end
@@ -808,8 +963,11 @@ macro DifferentialEquation(block)
         _macro_collect_property_bases(ex, prop_syms)
         _de_collect_time_calls(ex, time_call_syms)
         _de_collect_dotted_call_bases(ex, dotted_bases)
+        _de_collect_index_symbols(ex, var_syms)
     end
     union!(call_syms, dotted_bases)
+    delete!(var_syms, :end)
+    delete!(var_syms, :begin)
 
     delete!(var_syms, :t)
     delete!(var_syms, :ξ)
@@ -854,7 +1012,7 @@ macro DifferentialEquation(block)
             elseif hasproperty(constant_covariates, $(QuoteNode(sym)))
                     getproperty(constant_covariates, $(QuoteNode(sym)))
             else
-                    error("Unknown symbol $(string($(QuoteNode(sym)))) in DifferentialEquation.")
+                    $(_de_global_fallback(__module__, sym, "DifferentialEquation"))
             end
             end
             for sym in var_syms_no_states
@@ -899,13 +1057,19 @@ macro DifferentialEquation(block)
         end
     )
 
-    state_binds = [:($(state_names[i]) = u[$i]) for i in eachindex(state_names)]
+    state_binds = [
+        :($(state_names[i]) = _de_state_get(u, $(Val(state_names[i])), $i))
+            for i in eachindex(state_names)
+    ]
     signal_assigns = [
         :($(signal_names[i]) = $(signal_fast[i]))
             for i in eachindex(signal_names)
     ]
-    du_assigns = [:(du[$i] = $(rhs_fast[i])) for i in eachindex(state_names)]
-    f_expr = Expr(:vect, rhs_fast...)
+    du_assigns = [
+        :(_de_state_set!(du, $(Val(state_names[i])), $i, $(rhs_fast[i])))
+            for i in eachindex(state_names)
+    ]
+    f_expr = Expr(:call, :_de_oop_du, :u, rhs_fast...)
 
     f!_expr = :(
         function (
@@ -934,7 +1098,11 @@ macro DifferentialEquation(block)
     )
 
     state_sol_binds = [
-        :($(state_names[i]) = $(_de_state_at)(sol, $i, t))
+        :(
+            $(state_names[i]) = $(_de_state_at)(
+                sol, $(_de_sol_state_index)(sol, $(Val(state_names[i])), $i), t
+            )
+        )
             for i in eachindex(state_names)
     ]
     signal_fn_exprs = [
