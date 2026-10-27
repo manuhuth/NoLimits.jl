@@ -123,13 +123,13 @@ effects: no inner mode finding or Hessian per objective evaluation, unlike Lapla
 - `ebe_*`: options of the final empirical-Bayes modes (as for `MCEM`).
 
 The `penalty` and `extra_objective` keywords of [`fit_model`](@ref) act as for `Laplace`:
-both are functions of the natural-scale fixed effects, added (with their ForwardDiff
-gradients) to the negative ELBO, to the `refine` objective and to the reported objective
-(`get_result(res).notes.elbo` stays the plain ELBO). Likelihood weights of the `DataModel`
-multiply the ELBO term of each random-effect batch, and its marginal-likelihood term in
-`refine` and in the reported objective. Random-effect levels fixed through `constants_re`
-enter as for `Laplace`: with the prior density of the fixed values, and a batch without
-free levels (no q) with its log-likelihood at the fixed values.
+both are functions of the natural-scale fixed effects, added (with ForwardDiff gradients
+for every `adtype`, as Laplace does) to the negative ELBO, to the `refine` objective and to
+the reported objective (`get_result(res).notes.elbo` stays the plain ELBO). Likelihood
+weights of the `DataModel` multiply the ELBO term of each random-effect batch, and its
+marginal-likelihood term in `refine` and in the reported objective. Random-effect levels
+fixed through `constants_re` enter as for `Laplace`: with the prior density of the fixed
+values, and a batch without free levels (no q) with its log-likelihood at the fixed values.
 
 For mini-batching (stochastic VEM) wrap the method in [`MiniBatch`](@ref); the penalty and
 `extra_objective` are then added once per iteration, not scaled by the number of batches.
@@ -425,7 +425,8 @@ end
 # Batch ELBO for the reverse-mode path (`adtype` other than ForwardDiff): Gaussian REs in the
 # centered space, joint density from the Enzyme-compatible `_laplace_logf_batch_impl` (no
 # try/catch, no transport measure). Same value as `_vem_batch_elbo` for Gaussian REs:
-# E_q[log p(y, b | θ)] + n/2 (1 + log 2π) + log|det L|.
+# E_q[log p(y, b | θ)] + n/2 (1 + log 2π) + log|det L|, without the prior of levels fixed by
+# `constants_re` (added once per batch by the θ-only terms, as on the ForwardDiff path).
 function _vem_batch_elbo_rev(
         θu::ComponentArray, κ::AbstractVector, dr::_VEMDraws, family::Symbol,
         dm::DataModel, info::REBatchInfo, const_cache, ll_cache::_LLCache
@@ -438,11 +439,16 @@ function _vem_batch_elbo_rev(
     for j in 1:size(ξ, 2)
         if dr.K == 0
             v = _vem_draw(μ, L, view(ξ, :, j), family)
-            acc += w[j] * _laplace_logf_batch_impl(dm, info, θu, v, const_cache, ll_cache)
+            acc += w[j] * _laplace_logf_batch_impl(
+                dm, info, θu, v, const_cache, ll_cache; const_prior = false
+            )
         else
             z, ld = _vem_flow(κ, nG, view(ξ, :, j), n, dr.K)
             v = _vem_draw(μ, L, z, family)
-            acc += w[j] * (_laplace_logf_batch_impl(dm, info, θu, v, const_cache, ll_cache) + ld)
+            lf = _laplace_logf_batch_impl(
+                dm, info, θu, v, const_cache, ll_cache; const_prior = false
+            )
+            acc += w[j] * (lf + ld)
         end
     end
     logdet = dr.logdetS0
@@ -953,7 +959,8 @@ function _fit_model(
 
     # ---- θ-only terms: penalty + extra_objective - Σ_b w_b (fixed-level terms of b) ----
     # penalty and extra_objective act on the natural-scale θu, as for Laplace; these terms
-    # are added once per evaluation and not scaled under MiniBatch
+    # are added once per evaluation and not scaled under MiniBatch. Their gradients use
+    # ForwardDiff for every adtype, as in Laplace (`obj_grad` there).
     has_pen = !isempty(keys(penalty)) || extra_objective !== nothing
     nf = length(fixed_b)
     has_glob = has_pen || nf > 0
@@ -1123,7 +1130,7 @@ function _fit_model(
     # preconditioner of each q). Badly scaled fixed effects (M18: slope 1e-3 x times up to
     # 5e3) otherwise stalled L-BFGS (5000 iterations, |g| = 3e3, a = 1.5 vs 5).
     # Where that curvature is not positive, the scale comes from the BHHH information
-    # Σ_i (∂ELBO_i/∂θ_j)² (the per-batch score outer product) instead of s_j = 1: unit scale
+    # Σ_b w_b (∂ELBO_b/∂θ_j)² (the per-batch score outer product) instead of s_j = 1: unit scale
     # was ~100x the posterior-sd scale of the other coordinates, and on a Beta RE (M05)
     # L-BFGS then drove log α₁ onto the flat asymptote α₁ → ∞ (Beta mass at 1).
     s = ones(Float64, p)
@@ -1133,10 +1140,26 @@ function _fit_model(
         G0 = zeros(Float64, off)
         f0 = fg!(0.0, G0, x0)
         if isfinite(f0) && all(isfinite, G0)
-            bhhh = zeros(Float64, p)
-            for k in 1:nk
-                bhhh .+= abs2.(gθs[k])
+            # BHHH = Σ_b w_b s_b², s_b the unweighted score of batch b (its ELBO plus the
+            # prior of its fixed levels, or the log-likelihood of a batch without q): a
+            # weight-w batch counts as w copies, as in the objective. The penalty and
+            # extra_objective have no per-batch score; their own curvature is added.
+            sc = Vector{Union{Nothing, Vector{Float64}}}(nothing, length(batch_infos))
+            for (j, k) in enumerate(all_k)
+                sc[keep[k]] = copy(gθs[j])
             end
+            for j in 1:nf
+                g = fgs[j] ./ _batch_weight(dm, get_inds(batch_infos[fixed_b[j]]))
+                bi = fixed_b[j]
+                sc[bi] === nothing ? (sc[bi] = g) : (sc[bi] .+= g)
+            end
+            bhhh = zeros(Float64, p)
+            for bi in eachindex(sc)
+                sc[bi] === nothing && continue
+                bhhh .+= _batch_weight(dm, get_inds(batch_infos[bi])) .* abs2.(sc[bi])
+            end
+            gpen = z -> has_pen ? ForwardDiff.gradient(y -> pen_of(θu_of(y)), z) : zeros(p)
+            gp0 = nothing
             Gj = similar(G0)
             for j in 1:p
                 h = 1.0e-4 * max(1.0, abs(x0[j]))
@@ -1144,7 +1167,11 @@ function _fit_model(
                 xj[j] += h
                 fj = fg!(0.0, Gj, xj)
                 Hjj = (Gj[j] - G0[j]) / h
-                Hjj = isfinite(fj) && isfinite(Hjj) && Hjj > 0 ? Hjj : bhhh[j]
+                if !(isfinite(fj) && isfinite(Hjj) && Hjj > 0)
+                    gp0 === nothing && (gp0 = gpen(x0[1:p]))
+                    hp = (gpen(xj[1:p])[j] - gp0[j]) / h
+                    Hjj = bhhh[j] + (isfinite(hp) ? max(hp, 0.0) : 0.0)
+                end
                 (isfinite(Hjj) && Hjj > 0) && (s[j] = clamp(1 / sqrt(Hjj), 1.0e-6, 1.0e2))
             end
         end

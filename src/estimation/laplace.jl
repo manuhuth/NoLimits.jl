@@ -1037,7 +1037,8 @@ function _laplace_logf_batch_impl(
         const_cache::REConstantsCache,
         cache::_LLCache;
         anneal_sds::NamedTuple = NamedTuple(),
-        tctx = nothing
+        tctx = nothing,
+        const_prior::Bool = true
     )
     T_ll = promote_type(eltype(θ), eltype(b))
     θ_re = tctx === nothing ? _symmetrize_psd_params(θ, get_fixed(get_model(dm))) :
@@ -1048,12 +1049,14 @@ function _laplace_logf_batch_impl(
         anneal_sds = anneal_sds, tctx = tctx
     )
     !isfinite(ll) && return T_ll(-Inf)
-    # constant-RE prior term
-    const_ll = _const_re_prior_logf(
-        dm, batch_info, θ_re, const_cache, cache; anneal_sds = anneal_sds
-    )
-    !isfinite(const_ll) && return T_ll(-Inf)
-    ll += const_ll
+    # constant-RE prior term (`const_prior = false`: VEM adds it once per batch instead)
+    if const_prior
+        const_ll = _const_re_prior_logf(
+            dm, batch_info, θ_re, const_cache, cache; anneal_sds = anneal_sds
+        )
+        !isfinite(const_ll) && return T_ll(-Inf)
+        ll += const_ll
+    end
     # likelihood term
     for i in get_inds(batch_info)
         η_ind = _build_eta_ind(dm, i, batch_info, b, const_cache, θ_re)

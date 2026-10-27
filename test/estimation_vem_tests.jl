@@ -512,6 +512,23 @@ end
     @test θ.α1 < 50 && θ.α2 < 50
     @test get_objective(res) < 160
     @test isapprox(θ.c, 2.0; rtol = 0.1)
+
+    # the BHHH fallback weights batch scores like the objective: weight 2 equals a
+    # duplicated individual, weight 0 a removed one
+    df = DataFrame(rows)
+    df.w = [id == 3 ? 2.0 : id == 5 ? 0.0 : 1.0 for id in df.ID]
+    dup = df[df.ID .== 3, :]
+    dup.ID .= 1000
+    dfd = vcat(df[df.ID .!= 5, :], dup)
+    dmw = DataModel(model, df; primary_id = :ID, time_col = :t, weights = :w)
+    dmd = DataModel(model, dfd; primary_id = :ID, time_col = :t)
+    rw = fit_model(dmw, NoLimits.VEM(); theta_0_untransformed = θ0, rng = Xoshiro(1))
+    rd = fit_model(dmd, NoLimits.VEM(); theta_0_untransformed = θ0, rng = Xoshiro(1))
+    # (same preconditioner, so the same optimizer path)
+    @test get_iterations(rw) == get_iterations(rd)
+    @test collect(get_params(rw; scale = :untransformed)) ≈
+        collect(get_params(rd; scale = :untransformed)) rtol = 1.0e-3
+    @test get_objective(rw) ≈ get_objective(rd) atol = 1.0e-3
 end
 
 @testset "VEM: objective after refinement is the marginal likelihood at the estimate (#371)" begin
@@ -780,6 +797,22 @@ if get(ENV, "NOLIMITS_TEST_ENZYME", "false") == "true" && VERSION >= v"1.12.5" &
             re = fit_model(dm, NoLimits.VEM(; family = fam, n_is = 0, adtype = ad); rng = Xoshiro(3))
             @test collect(get_params(re; scale = :transformed)) ≈
                 collect(get_params(rf; scale = :transformed)) rtol = 1.0e-4
+        end
+        @testset "constants_re: fixed-level prior counted once" begin
+            # a batch with free and fixed levels (site A fixed): the reverse-path ELBO
+            # leaves the fixed prior to the θ-only terms, as the ForwardDiff path does
+            for c in (NamedTuple(), (; η_site = Dict(:A => 0.3)))
+                ef, ee = (
+                    get_result(
+                            fit_model(fx_mg_dm(), _vem_frozen(; adtype = a); constants_re = c, rng = Xoshiro(3))
+                        ).notes.elbo for a in (NoLimits.Optimization.AutoForwardDiff(), ad)
+                )
+                @test ee ≈ ef rtol = 1.0e-10
+                rf = fit_model(fx_mg_dm(), NoLimits.VEM(; n_is = 0); constants_re = c, rng = Xoshiro(3))
+                re = fit_model(fx_mg_dm(), NoLimits.VEM(; n_is = 0, adtype = ad); constants_re = c, rng = Xoshiro(3))
+                @test collect(get_params(re; scale = :transformed)) ≈
+                    collect(get_params(rf; scale = :transformed)) rtol = 1.0e-6
+            end
         end
     end
 end

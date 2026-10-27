@@ -173,6 +173,25 @@
   parameters of MCMC/VI fits, and `plot_fits_comparison`. Randomized PIT residuals and
   plots of posterior-draw fits are therefore reproducible by default and no longer depend
   on `Random.seed!`.
+- VEM with an Enzyme reverse-mode `adtype` on Julia 1.12.7 returned a zero gradient for the
+  off-diagonal entries of an `MvNormal` random-effect covariance at an exactly diagonal
+  Cholesky factor (e.g. the default start), because `LowerTriangular \ x` there chooses the
+  triangle by value (#371). Dense `MvNormal` log-densities in the random-effect prior terms
+  and in the outcome likelihood (shared with `Laplace` and the other estimators) now whiten
+  with the three-argument `ldiv!`; their values are unchanged bit for bit.
+- VEM diagonally preconditions the fixed effects with the finite-difference curvature of
+  the objective at the start. Where that curvature was not positive the scale was 1, and on
+  a Beta random effect L-BFGS then drove a shape parameter to 2.7e8 (all Beta mass at 1;
+  objective 263.8 vs 156.2) (#371). Those coordinates now use the BHHH information of the
+  batch scores, `Σ_b w_b s_b²` with the `DataModel` weights `w_b` (a weight-2 batch counts
+  like a duplicated one), plus the curvature of `penalty` and `extra_objective`.
+- The VEM `refine` step kept the quadrature rule of each batch at the q fitted at the VEM
+  estimate. As θ moved away from it the rule lost accuracy, and the optimizer exploited the
+  error (three correlated binary random effects: objective 20 below the MLE, a variance 3.7
+  vs 1.52); the reported objective after a refinement was off by 0.22 (one random effect)
+  to 1.5 (three) (#371). The rule of each batch is now centered at the mode of its integrand
+  and scaled by the curvature there at every θ (Newton from q's mean), and the reported
+  objective uses the rule at θ̂. VEM fits with `refine` change accordingly.
 
 ### Documentation
 
