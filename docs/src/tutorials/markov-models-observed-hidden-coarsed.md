@@ -299,7 +299,7 @@ NoLimits.summarize(res_coarsed)
 
 For continuous-time models, NoLimits offers different state-propagation modes for the transition step between observations:
 
-- `:expv`: general-purpose propagation based on matrix exponential logic. Works for any generator matrix (cyclic or acyclic).
+- `:expv`: general-purpose propagation based on matrix exponential logic. Works for any generator matrix (cyclic or acyclic). When the largest exit rate times `Δt` exceeds 200, the stationary distribution is used for ergodic generators, and otherwise the dense `exp(Q·Δt)` is computed by scaling and squaring, so the cost of one step grows only logarithmically with the rates. On this path non-finite rates throw a `DomainError`, which the estimators treat as an infeasible point.
 - `:pathsum`: path-sum propagation specialized for **acyclic** transition graphs (DAG structure).
 
 

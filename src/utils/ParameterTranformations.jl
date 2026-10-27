@@ -532,8 +532,10 @@ _scalar_value(x::ForwardDiff.Dual) = _scalar_value(ForwardDiff.value(x))
 # squaring Padé (Higham degree 13; only +, *, \, I) for Dual eltypes, which arise only at
 # 2nd+ ForwardDiff order (nested Hessian) where `exp(::Matrix{Dual})` has no BLAS method.
 _matexp(M::AbstractMatrix{<:LinearAlgebra.BlasFloat}) = exp(M)
+_matexp(M::AbstractMatrix{<:Real}) = _matexp_pade(M)
 
-function _matexp(M::AbstractMatrix{<:Real})
+# The generic Padé path for any real eltype, Float64 included (no LAPACK `exp`).
+function _matexp_pade(M::AbstractMatrix{<:Real})
     b = (
         64764752532480000.0, 32382376266240000.0, 7771770303897600.0,
         1187353796428800.0, 129060195264000.0, 10559470521600.0, 670442572800.0,

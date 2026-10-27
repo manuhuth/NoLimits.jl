@@ -104,15 +104,20 @@ function _hmm_check_generator_matrix(Q::AbstractMatrix, label = "transition_matr
     n = size(Q, 1)
     @inbounds for i in 1:n
         s = zero(eltype(Q))
+        scale = zero(eltype(Q))
         for j in 1:n
             q = Q[i, j]
-            isfinite(q) ||
-                error("$(label)[$(i), $(j)] is $(q); generator entries must be finite.")
+            # non-finite rates come from overflowing parameters: a numeric (infeasible) point
+            isfinite(q) || throw(
+                DomainError(q, "$(label)[$(i), $(j)] is $(q); generator entries must be finite.")
+            )
             i == j || q >= 0 ||
                 error("$(label)[$(i), $(j)] is $(q); off-diagonal generator rates must be nonnegative.")
             s += q
+            scale = max(scale, abs(q))
         end
-        isapprox(s, zero(s); atol = _HMM_ROW_ATOL) ||
+        # the relative term admits the rounding of `-(sum of rates)` at large rates
+        isapprox(s, zero(s); atol = _HMM_ROW_ATOL + 1.0e-12 * scale) ||
             error("$(label) row $(i) sums to $(s); each row of a continuous-time generator must sum to 0.")
     end
     return nothing
