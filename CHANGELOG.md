@@ -127,9 +127,15 @@
   at extreme rates (e.g. after a long optimizer step) ran for more than 20 minutes (#371).
   When the largest exit rate times `Δt` exceeds 200 and the stationary shortcut does not
   apply, `exp(QΔt)` is now computed by Padé scaling and squaring, whose cost grows with
-  `log2` of the rates; the path is ForwardDiff-compatible. Below that threshold results
-  are unchanged. Non-finite rates throw a `DomainError` (an infeasible point for the
-  estimators) instead of looping.
+  `log2` of the rates. Below that threshold results are unchanged. Non-finite rates throw
+  a `DomainError` (an infeasible point for the estimators) instead of looping. The extreme-
+  rate path works under ForwardDiff and under Enzyme forward and reverse mode: the Padé
+  step and the stationary solve use plain loops instead of BLAS/LAPACK, and the
+  spectral-gap test of the stationary shortcut (a branch decision on primal values) is
+  marked inactive for Enzyme through a new `EnzymeCore` package extension. Enzyme forward
+  mode on a DataModel log-likelihood with an HMM outcome failed at any rate
+  (`EnzymeNoTypeError` in the per-row filter); the filter step now runs outside its
+  `try` region, which fixes this.
 - `get_sparse_grid` and `get_anisotropic_grid` filled a module-level `Dict` without a lock,
   so a threaded multistart could fail with "Multiple concurrent writes to Dict detected"
   (#371). Both caches are now safe under concurrent use (lock-free reads of an immutable

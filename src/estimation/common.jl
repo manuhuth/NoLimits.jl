@@ -4198,39 +4198,36 @@ function _hmm_row_column(
         hmm_seen[j] = true
     end
     init_p = hmm_init[j]
-    # check_args=false inside `_hmm_pin_initial_probs`: degenerate posteriors must not
-    # throw — the isfinite guard below catches NaN logpdf.
-    dist_up = _hmm_pin_initial_probs(dist, init_p)
     prior = hmm_has_prior[j] ? hmm_priors[j] : nothing
-    dist_use = try
-        _hmm_with_prior(dist_up, prior)
+    # Only the call sits in the try, so no distribution struct is live across it: Enzyme
+    # forward mode cannot type the struct copies a try region otherwise creates.
+    res = try
+        _hmm_row_eval(dist, init_p, prior, y)
     catch err
         (err isa DomainError || err isa ArgumentError) && return (T_hmm(-Inf), :bad)
         rethrow(err)
     end
     if y === missing
-        hmm_priors[j] = try
-            probabilities_hidden_states(dist_use)
-        catch err
-            (err isa DomainError || err isa ArgumentError) && return (T_hmm(-Inf), :bad)
-            rethrow(err)
-        end
+        hmm_priors[j] = res
         hmm_has_prior[j] = true
         return (zero(T_hmm), :prior)
     end
-    # Combined accessor: continuous-time families propagate the hidden state once and
-    # reuse it for both the likelihood and the posterior (bit-identical to separate calls).
-    lp_post = try
-        _hmm_logpdf_and_posterior(dist_use, y)
-    catch err
-        (err isa DomainError || err isa ArgumentError) && return (T_hmm(-Inf), :bad)
-        rethrow(err)
-    end
-    v = lp_post[1]
+    v = res[1]
     isfinite(v) || return (T_hmm(-Inf), :bad)
-    hmm_priors[j] = lp_post[2]
+    hmm_priors[j] = res[2]
     hmm_has_prior[j] = true
     return (convert(T_hmm, v), :ok)
+end
+
+# One filter step of `_hmm_row_column`, without exception handling (the caller catches
+# numeric errors). check_args=false inside `_hmm_pin_initial_probs`: degenerate
+# posteriors must not throw; the caller's isfinite guard catches a NaN logpdf. The
+# continuous-time families propagate the hidden state once for both the likelihood and
+# the posterior (bit-identical to separate calls).
+@noinline function _hmm_row_eval(dist, init_p, prior, y)
+    dist_use = _hmm_with_prior(_hmm_pin_initial_probs(dist, init_p), prior)
+    y === missing && return probabilities_hidden_states(dist_use)
+    return _hmm_logpdf_and_posterior(dist_use, y)
 end
 
 function _loglikelihood_rows_hmm(
