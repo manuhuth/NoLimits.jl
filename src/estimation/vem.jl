@@ -970,6 +970,10 @@ function _fit_model(
     # the gradient at the start (the variational block is already O(1) through the fixed
     # preconditioner of each q). Badly scaled fixed effects (M18: slope 1e-3 x times up to
     # 5e3) otherwise stalled L-BFGS (5000 iterations, |g| = 3e3, a = 1.5 vs 5).
+    # Where that curvature is not positive, the scale comes from the BHHH information
+    # Σ_i (∂ELBO_i/∂θ_j)² (the per-batch score outer product) instead of s_j = 1: unit scale
+    # was ~100x the posterior-sd scale of the other coordinates, and on a Beta RE (M05)
+    # L-BFGS then drove log α₁ onto the flat asymptote α₁ → ∞ (Beta mass at 1).
     s = ones(Float64, p)
     # Under MiniBatch an Optimisers rule takes fixed-size steps in these units; posterior-sd
     # units would make them tiny for well-determined effects, so s stays 1 there.
@@ -977,6 +981,10 @@ function _fit_model(
         G0 = zeros(Float64, off)
         f0 = fg!(0.0, G0, x0)
         if isfinite(f0) && all(isfinite, G0)
+            bhhh = zeros(Float64, p)
+            for k in 1:nk
+                bhhh .+= abs2.(gθs[k])
+            end
             Gj = similar(G0)
             for j in 1:p
                 h = 1.0e-4 * max(1.0, abs(x0[j]))
@@ -984,8 +992,8 @@ function _fit_model(
                 xj[j] += h
                 fj = fg!(0.0, Gj, xj)
                 Hjj = (Gj[j] - G0[j]) / h
-                (isfinite(fj) && isfinite(Hjj) && Hjj > 0) &&
-                    (s[j] = clamp(1 / sqrt(Hjj), 1.0e-6, 1.0e2))
+                Hjj = isfinite(fj) && isfinite(Hjj) && Hjj > 0 ? Hjj : bhhh[j]
+                (isfinite(Hjj) && Hjj > 0) && (s[j] = clamp(1 / sqrt(Hjj), 1.0e-6, 1.0e2))
             end
         end
     end
