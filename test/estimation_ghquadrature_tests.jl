@@ -270,6 +270,44 @@ end
         @test sg1 === sg2
     end
 
+    # Concurrent first use of new keys must not corrupt the shared Dicts ("Multiple
+    # concurrent writes to Dict detected" under a threaded multistart, #371).
+    @testset "grid caches are safe under concurrent first use" begin
+        sg_keys = [(d, l) for d in 1:40 for l in 1:2]
+        an_keys = [([d1, d2], [l1, l2]) for d1 in 1:3 for d2 in 1:3 for l1 in 1:2 for l2 in 1:2]
+        # Without the lock this failed in 3 of 5 runs of 20 rounds on 8 threads.
+        for round in 1:20
+            empty!(NoLimits._SPARSEGRID_CACHE)
+            empty!(NoLimits._ANISOTROPIC_CACHE)
+            go = Threads.Atomic{Bool}(false)   # start all tasks together on new keys
+            tasks = map(1:(4 * Threads.nthreads())) do i
+                Threads.@spawn begin
+                    while !go[]
+                        GC.safepoint()
+                    end
+                    for j in 0:(length(sg_keys) - 1)
+                        NoLimits.get_sparse_grid(sg_keys[mod1(i + 3j, length(sg_keys))]...)
+                        NoLimits.get_anisotropic_grid(an_keys[mod1(i + j, length(an_keys))]...)
+                    end
+                end
+            end
+            go[] = true
+            foreach(fetch, tasks)
+            @test length(NoLimits._SPARSEGRID_CACHE) == length(sg_keys)
+            @test length(NoLimits._ANISOTROPIC_CACHE) == length(an_keys)
+        end
+        for (d, l) in sg_keys
+            ref = build_sparse_grid(d, l)
+            g = NoLimits.get_sparse_grid(d, l)
+            @test g === NoLimits.get_sparse_grid(d, l)
+            @test g.nodes == ref.nodes && g.logweights == ref.logweights && g.signs == ref.signs
+        end
+        for (dims, levels) in an_keys
+            @test NoLimits.get_anisotropic_grid(dims, levels) ===
+                NoLimits.get_anisotropic_grid(copy(dims), copy(levels))
+        end
+    end
+
     # ----------------------------------------------------------
     # Signs: Smolyak at L=1 has all positive weights
     # ----------------------------------------------------------

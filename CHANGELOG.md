@@ -74,8 +74,8 @@
   Results of fits that relied on the global RNG change. Pass an explicit `rng` for
   different draws. Simulation and sampling functions (`simulate_data`,
   `sample_random_effects`, `sample_posterior`, `sample_random_effect_draws`,
-  `mcem_e_step`, `saem_sufficient_statistics`, `fixed_re_normals`) and plotting keep
-  `Random.default_rng()`.
+  `mcem_e_step`, `saem_sufficient_statistics`, `fixed_re_normals`) keep
+  `Random.default_rng()`; plotting follows the fixed-seed default (see Bug fixes).
 
 - SAEM skips the M-step in iterations with step size γ = 0 (the `sa_burnin_iters` burn-in
   iterations and, under `:robbins_monro`, the final iteration). The update
@@ -144,6 +144,35 @@
 - The numeric random-effect grouping `@info` claimed constant random effects are
   unavailable. They work with a `Dict`, e.g. `constants_re = (; η = Dict(1 => 0.0))`, and
   the message now says so.
+- The continuous-time Markov propagation (`ContinuousTimeDiscreteStatesHMM`,
+  `MVContinuousTimeDiscreteStatesHMM`, `ContinuousTimeObservedStatesMarkovModel`) took a
+  number of `expv` Taylor substeps proportional to the rates, so one objective evaluation
+  at extreme rates (e.g. after a long optimizer step) ran for more than 20 minutes (#371).
+  When the largest exit rate times `Δt` exceeds 200 and the stationary shortcut does not
+  apply, `exp(QΔt)` is now computed by Padé scaling and squaring, whose cost grows with
+  `log2` of the rates. Below that threshold results are unchanged. Non-finite rates throw
+  a `DomainError` (an infeasible point for the estimators) instead of looping. The extreme-
+  rate path works under ForwardDiff and under Enzyme forward and reverse mode: the Padé
+  step and the stationary solve use plain loops instead of BLAS/LAPACK, and the
+  spectral-gap test of the stationary shortcut (a branch decision on primal values) is
+  marked inactive for Enzyme through a new `EnzymeCore` package extension. Enzyme forward
+  mode on a DataModel log-likelihood with an HMM outcome failed at any rate
+  (`EnzymeNoTypeError` in the per-row filter); the filter step now runs outside its
+  `try` region, which fixes this.
+- `get_sparse_grid` and `get_anisotropic_grid` filled a module-level `Dict` without a lock,
+  so a threaded multistart could fail with "Multiple concurrent writes to Dict detected"
+  (#371). Both caches are now safe under concurrent use (lock-free reads of an immutable
+  snapshot, inserts under a lock). The Turing model caches of `MCMC`/`MCEM` and the
+  `DataModel` numeric-grouping notice set are now locked too.
+- Plotting drew from `Random.default_rng()` (#371). The `rng` keyword of the plotting
+  functions, `build_plot_cache`, `get_residuals` and `predict` now defaults to a fresh
+  `Xoshiro(42)` per call, as for the estimators, and is passed to every draw on the plotting
+  path: posterior-draw subsampling in `plot_random_effects_scatter`,
+  `plot_random_effect_standardized(_scatter)` and `plot_dv_ipred` (which gain an `rng`
+  keyword), normalizing-flow sampling in the random-effect plots, the posterior-mean
+  parameters of MCMC/VI fits, and `plot_fits_comparison`. Randomized PIT residuals and
+  plots of posterior-draw fits are therefore reproducible by default and no longer depend
+  on `Random.seed!`.
 
 ### Documentation
 

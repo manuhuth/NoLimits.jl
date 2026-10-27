@@ -532,28 +532,114 @@ _scalar_value(x::ForwardDiff.Dual) = _scalar_value(ForwardDiff.value(x))
 # squaring Padé (Higham degree 13; only +, *, \, I) for Dual eltypes, which arise only at
 # 2nd+ ForwardDiff order (nested Hessian) where `exp(::Matrix{Dual})` has no BLAS method.
 _matexp(M::AbstractMatrix{<:LinearAlgebra.BlasFloat}) = exp(M)
+_matexp(M::AbstractMatrix{<:Real}) = _matexp_pade(M)
 
-function _matexp(M::AbstractMatrix{<:Real})
+# Plain-loop matrix product and 1-norm (no BLAS/LAPACK), so that Enzyme forward mode can
+# differentiate the Padé path; meant for small dense matrices.
+function _matmul_loops(A::AbstractMatrix, B::AbstractMatrix)
+    n, k = size(A)
+    m = size(B, 2)
+    C = zeros(promote_type(eltype(A), eltype(B)), n, m)
+    @inbounds for j in 1:m, l in 1:k
+        b = B[l, j]
+        for i in 1:n
+            C[i, j] += A[i, l] * b
+        end
+    end
+    return C
+end
+
+# 1-norm of the primal values (only selects the number of squarings).
+function _opnorm1_value(M::AbstractMatrix)
+    nrm = 0.0
+    @inbounds for j in axes(M, 2)
+        c = 0.0
+        for i in axes(M, 1)
+            c += abs(_scalar_value(M[i, j]))
+        end
+        nrm = max(nrm, c)
+    end
+    return nrm
+end
+
+# Solve A X = B by Gaussian elimination with partial pivoting in plain loops: no LAPACK
+# call, so Enzyme forward mode can differentiate it (meant for small dense matrices).
+function _gepp_solve(A::AbstractMatrix, B::AbstractVecOrMat)
+    X = _gepp_solve_or_nothing(A, B)
+    X === nothing && throw(LinearAlgebra.SingularException(0))
+    return X
+end
+
+# As `_gepp_solve`, but returns `nothing` for an exactly singular `A` (no try/catch needed).
+function _gepp_solve_or_nothing(A::AbstractMatrix, B::AbstractVecOrMat)
+    n = LinearAlgebra.checksquare(A)
+    T = promote_type(eltype(A), eltype(B))
+    M = Matrix{T}(A)
+    X = B isa AbstractVector ? Vector{T}(B) : Matrix{T}(B)
+    m = size(X, 2)
+    @inbounds for k in 1:n
+        p = k
+        amax = abs(M[k, k])
+        for i in (k + 1):n
+            a = abs(M[i, k])
+            if a > amax
+                amax = a
+                p = i
+            end
+        end
+        iszero(amax) && return nothing
+        if p != k
+            for j in 1:n
+                M[k, j], M[p, j] = M[p, j], M[k, j]
+            end
+            for j in 1:m
+                X[k, j], X[p, j] = X[p, j], X[k, j]
+            end
+        end
+        r = inv(M[k, k])   # operation order of LAPACK getf2/getrs
+        for i in (k + 1):n
+            l = M[i, k] * r
+            for j in (k + 1):n
+                M[i, j] -= l * M[k, j]
+            end
+            for j in 1:m
+                X[i, j] -= l * X[k, j]
+            end
+        end
+    end
+    @inbounds for j in 1:m, k in n:-1:1
+        X[k, j] /= M[k, k]
+        for i in 1:(k - 1)
+            X[i, j] -= X[k, j] * M[i, k]
+        end
+    end
+    return X
+end
+
+# The generic Padé path for any real eltype, Float64 included (no LAPACK `exp`).
+function _matexp_pade(M::AbstractMatrix{<:Real})
     b = (
         64764752532480000.0, 32382376266240000.0, 7771770303897600.0,
         1187353796428800.0, 129060195264000.0, 10559470521600.0, 670442572800.0,
         33522128640.0, 1323241920.0, 40840800.0, 960960.0, 16380.0, 182.0, 1.0,
     )
-    nrm = opnorm(_scalar_value.(M), 1)
+    nrm = _opnorm1_value(M)
     s = nrm > 5.371920351148152 ? ceil(Int, log2(nrm / 5.371920351148152)) : 0
     A = M ./ 2.0^s
-    A2 = A * A
-    A4 = A2 * A2
-    A6 = A2 * A4
-    Uodd = A * (
-        A6 * (b[14] * A6 + b[12] * A4 + b[10] * A2) +
-            b[8] * A6 + b[6] * A4 + b[4] * A2 + b[2] * I
+    mm = _matmul_loops
+    A2 = mm(A, A)
+    A4 = mm(A2, A2)
+    A6 = mm(A2, A4)
+    Uodd = mm(
+        A,
+        mm(A6, b[14] * A6 + b[12] * A4 + b[10] * A2) + b[8] * A6 + b[6] * A4 + b[4] * A2 +
+            b[2] * I
     )
-    Veven = A6 * (b[13] * A6 + b[11] * A4 + b[9] * A2) +
+    Veven = mm(A6, b[13] * A6 + b[11] * A4 + b[9] * A2) +
         b[7] * A6 + b[5] * A4 + b[3] * A2 + b[1] * I
-    P = (Veven - Uodd) \ (Veven + Uodd)
+    P = _gepp_solve(Veven - Uodd, Veven + Uodd)
     for _ in 1:s
-        P = P * P
+        P = mm(P, P)
     end
     return P
 end

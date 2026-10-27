@@ -906,7 +906,7 @@ end
             (NoLimits.FOCEI(inner_grad_tol = 1.0e-10), NoLimits._FOCEIHess(true)),
         )
         res = fit_model(dm, m; rng = Xoshiro(1))
-        H_uq = inv(get_uq_vcov(compute_uq(res; method = :wald); scale = :transformed))
+        H_uq = inv(get_uq_vcov(compute_uq(res; method = :wald, rng = Xoshiro(2)); scale = :transformed))
         fe = NoLimits.get_fixed(get_model(dm))
         itr = NoLimits.get_inverse_transform(fe)
         θt = NoLimits.get_transform(fe)(NoLimits.get_params(res; scale = :untransformed))
@@ -919,7 +919,10 @@ end
             multistart = NoLimits._resolve_multistart_options(m.multistart, io),
             rng = Xoshiro(0), serialization = NoLimits.EnsembleSerial(), hmode = hmode
         )
-        h = 1.0e-4
+        # `obj` re-solves b* only to the inner tolerance (a first-order error here), which the
+        # second difference divides by 4h²: at h = 1e-4 the reference moved by up to 2.1e-3
+        # across inner multistart seeds (#371), at h = 1e-3 by at most 2.2e-5.
+        h = 1.0e-3
         x0 = collect(θt)
         n = length(x0)
         H_ref = [
@@ -928,6 +931,6 @@ end
                     (obj(x0 + e_i + e_j) - obj(x0 + e_i - e_j) - obj(x0 - e_i + e_j) + obj(x0 - e_i - e_j)) / (4h^2)
                 end for i in 1:n, j in 1:n
         ]
-        @test H_uq ≈ H_ref rtol = 2.0e-3
+        @test H_uq ≈ H_ref rtol = 2.0e-4
     end
 end

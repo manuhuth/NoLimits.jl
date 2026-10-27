@@ -157,7 +157,7 @@ function _pit_from_dist(
         y::Union{Missing, Float64};
         randomize_discrete::Bool = true,
         cdf_fallback_mc::Int = 0,
-        rng::AbstractRNG = Random.default_rng()
+        rng::AbstractRNG = _default_rng()
     )
     ismissing(y) && return missing
     if applicable(cdf, dist, y)
@@ -481,7 +481,8 @@ Compute residuals for each observation and return a `DataFrame`.
 - `ode_args::Tuple = ()`, `ode_kwargs::NamedTuple = NamedTuple()`: forwarded to ODE solver.
 - `mcmc_draws::Int = 1000`, `mcmc_warmup`: MCMC draw settings.
 - `mcmc_quantiles::Vector = [5, 95]`: percentiles for MCMC residual uncertainty bands.
-- `rng::AbstractRNG = Random.default_rng()`: random-number generator.
+- `rng::AbstractRNG = Xoshiro(42)`: random-number generator. A fresh generator with
+  this fixed seed is created per call, so repeated calls draw the same values.
 - `return_draw_level::Bool = false`: if `true`, return draw-level residuals for MCMC.
 
 # `:logscore` sign and relation to `get_loglikelihood`
@@ -545,7 +546,7 @@ function get_residuals(
         mcmc_draws::Int = 1000,
         mcmc_warmup::Union{Nothing, Int} = nothing,
         mcmc_quantiles::Vector{<:Real} = [5, 95],
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         return_draw_level::Bool = false
     )
     params = _as_namedtuple(params)
@@ -856,7 +857,7 @@ function get_residuals(
         mcmc_draws::Int = 1000,
         mcmc_warmup::Union{Nothing, Int} = nothing,
         mcmc_quantiles::Vector{<:Real} = [5, 95],
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         return_draw_level::Bool = false
     )
     params = _as_namedtuple(params)
@@ -970,7 +971,8 @@ arguments are forwarded to [`get_residuals`](@ref).
 - `constants_re::NamedTuple = NamedTuple()`: fix random-effect levels on the natural scale.
 - `marginal_draws::Int = 100`: Monte Carlo draws for `re_mode = :marginal`.
 - `reestimate_kwargs::NamedTuple = NamedTuple()`: forwarded to [`reestimate_ebes`](@ref).
-- `rng::AbstractRNG = Random.default_rng()`: random source for `:marginal`.
+- `rng::AbstractRNG = Xoshiro(42)`: random source for `:marginal`. A fresh generator
+  with this fixed seed is created per call, so repeated calls draw the same values.
 """
 function predict(
         res::FitResult, dm_new::DataModel;
@@ -979,7 +981,7 @@ function predict(
         constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
         marginal_draws::Int = 100,
         reestimate_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         ode_args::Tuple = (),
         ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
         kwargs...

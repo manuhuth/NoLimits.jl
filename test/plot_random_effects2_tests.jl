@@ -4,6 +4,7 @@ using CairoMakie
 using DataFrames
 using Distributions
 using Turing
+using Random
 
 # Second half of the random-effects plotting tests (split from
 # plot_random_effects_tests.jl for CI shard balance; the halves run in
@@ -93,6 +94,44 @@ end
     @test plot_random_effect_distributions(res_mcmc) !== nothing
     @test plot_random_effect_pit(res_mcmc) !== nothing
     @test plot_random_effect_standardized(res_mcmc) !== nothing
+end
+
+# Scatter positions of every axis, to compare figures without rendering them.
+_scatter_points(fig) = [
+    copy(pl[1][]) for ax in fig.content if ax isa Axis
+        for pl in ax.scene.plots if pl isa Scatter
+]
+
+@testset "RE plots draw from rng, not from the global RNG (#371)" begin
+    res_mcmc = fx_mcmc_re()          # 20 posterior samples, so mcmc_draws = 5 subsamples
+    for f in (plot_random_effects_scatter, plot_random_effect_standardized_scatter)
+        Random.seed!(1)
+        p1 = _scatter_points(f(res_mcmc; mcmc_draws = 5))
+        Random.seed!(2)
+        p2 = _scatter_points(f(res_mcmc; mcmc_draws = 5))
+        @test !isempty(p1)
+        @test p1 == p2
+        q1 = _scatter_points(f(res_mcmc; mcmc_draws = 5, rng = Random.Xoshiro(3)))
+        q2 = _scatter_points(f(res_mcmc; mcmc_draws = 5, rng = Random.Xoshiro(3)))
+        @test q1 == q2
+    end
+    @test plot_random_effect_standardized(res_mcmc; rng = Random.Xoshiro(3)) !== nothing
+    @test plot_dv_ipred(res_mcmc; rng = Random.Xoshiro(3)) !== nothing
+
+    # EBE posterior means follow the passed rng
+    dm = get_data_model(res_mcmc)
+    e1, _ = NoLimits._ebe_by_level_mcmc(dm, res_mcmc, :η, 5, Random.Xoshiro(4))
+    e2, _ = NoLimits._ebe_by_level_mcmc(dm, res_mcmc, :η, 5, Random.Xoshiro(4))
+    @test e1 == e2
+
+    # normalizing-flow standardization samples from rng (default: fixed seed)
+    flow = NormalizingPlanarFlow(2, 2)
+    z(; kw...) = NoLimits._standardize_re(flow, [0.1, -0.2]; flow_samples = 50, kw...)
+    @test z(rng = Random.Xoshiro(5)) == z(rng = Random.Xoshiro(5))
+    Random.seed!(1)
+    z1 = z()
+    Random.seed!(2)
+    @test z() == z1
 end
 
 @testset "Multivariate RE diagnostics (Laplace)" begin

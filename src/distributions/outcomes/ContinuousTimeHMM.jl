@@ -148,21 +148,34 @@ function _ct_hmm_stationary(Q::AbstractMatrix{T}) where {T}
     b = zeros(T, n)
     b[n] = one(T)
     # For non-ergodic Q (multiple communicating classes or absorbing states) the
-    # system is rank-deficient.  `\` throws SingularException in the exactly
-    # singular case; near-singular cases produce a solution with negative
-    # components.  Both signal that the long-time limit depends on v, so we
-    # return nothing and let the caller fall back to expv.
-    local π
-    try
-        π = A \ b
-    catch e
-        e isa LinearAlgebra.SingularException && return nothing
-        rethrow(e)
-    end
+    # system is rank-deficient: an exactly singular solve returns nothing, and near-singular
+    # cases give negative components. Both mean the long-time limit depends on v, so the
+    # caller falls back to the matrix exponential. Plain-loop solve: no LAPACK (Enzyme).
+    π = _gepp_solve_or_nothing(A, b)
+    π === nothing && return nothing
     tol = sqrt(eps(float(real(one(T)))))
     any(x -> x < -tol, π) && return nothing
     s = sum(π)
     return π ./ s  # renormalize for floating-point safety
+end
+
+# `expv` takes a number of Taylor substeps proportional to ‖QΔt‖, so extreme rates made a
+# single propagation run for minutes (#371). Past the equilibrium threshold (and when the
+# stationary shortcut does not apply) use Padé scaling and squaring of exp(QᵀΔt), whose
+# cost grows with log2‖QΔt‖. Below the threshold `expv` is used unchanged.
+function _ct_hmm_expv(Q::AbstractMatrix, p0::AbstractVector, Δt::Real, max_exit_dt::Real)
+    (isfinite(max_exit_dt) && all(x -> isfinite(_ct_hmm_primal(x)), Q)) || throw(
+        DomainError(max_exit_dt, "CT-HMM propagation needs finite rates × Δt.")
+    )
+    max_exit_dt > _CT_HMM_EQUIL_THRESHOLD || return expv(Δt, transpose(Q), p0)
+    n = size(Q, 1)
+    E = _matexp_pade([Q[j, i] * Δt for i in 1:n, j in 1:n])   # exp(QᵀΔt), no BLAS
+    p = zeros(promote_type(eltype(E), eltype(p0)), n)
+    @inbounds for j in 1:n, i in 1:n
+        p[i] += E[i, j] * p0[j]
+    end
+    p = max.(p, 0)
+    return p ./ sum(p)
 end
 
 function _ct_hmm_probabilities_hidden_states(
@@ -180,15 +193,16 @@ function _ct_hmm_probabilities_hidden_states(
         # For ForwardDiff Dual inputs, _ct_hmm_spectral_gap strips to primal Float64 values;
         # _ct_hmm_stationary uses A\b which is generic and works for Dual.
         max_exit = maximum(-_ct_hmm_primal.(diag(transition_matrix)))
-        if max_exit * _ct_hmm_primal(Δt) > _CT_HMM_EQUIL_THRESHOLD
+        max_exit_dt = max_exit * _ct_hmm_primal(Δt)
+        if max_exit_dt > _CT_HMM_EQUIL_THRESHOLD
             gap = _ct_hmm_spectral_gap(transition_matrix)
             if gap * _ct_hmm_primal(Δt) > _CT_HMM_EQUIL_THRESHOLD
                 π = _ct_hmm_stationary(transition_matrix)
                 π !== nothing && return π
-                # Non-ergodic Q: fall through to expv
+                # Non-ergodic Q: fall through to the matrix exponential
             end
         end
-        return expv(Δt, transpose(transition_matrix), initial_p)
+        return _ct_hmm_expv(transition_matrix, initial_p, Δt, max_exit_dt)
     end
 
     if mode == :pathsum || mode == :auto
@@ -206,16 +220,17 @@ function _ct_hmm_probabilities_hidden_states(
 
     # :auto fell through (cyclic graph) — apply equilibrium shortcut before expv
     max_exit = maximum(-_ct_hmm_primal.(diag(transition_matrix)))
-    if max_exit * _ct_hmm_primal(Δt) > _CT_HMM_EQUIL_THRESHOLD
+    max_exit_dt = max_exit * _ct_hmm_primal(Δt)
+    if max_exit_dt > _CT_HMM_EQUIL_THRESHOLD
         gap = _ct_hmm_spectral_gap(transition_matrix)
         if gap * _ct_hmm_primal(Δt) > _CT_HMM_EQUIL_THRESHOLD
             π = _ct_hmm_stationary(transition_matrix)
             π !== nothing && return π
-            # Non-ergodic Q: fall through to expv
+            # Non-ergodic Q: fall through to the matrix exponential
         end
     end
 
-    return expv(Δt, transpose(transition_matrix), initial_p)
+    return _ct_hmm_expv(transition_matrix, initial_p, Δt, max_exit_dt)
 end
 
 """
@@ -229,7 +244,11 @@ The value support `S` is inferred from the emissions: `Discrete` when every emis
 discrete, `Continuous` otherwise (including mixed emissions).
 
 State propagation is performed via the matrix exponential `exp(Q·Δt)` where `Q` is the
-rate matrix (`transition_matrix`). Implements the `Distributions.jl` interface.
+rate matrix (`transition_matrix`). When the largest exit rate times `Δt` exceeds 200, the
+stationary distribution is used for ergodic `Q`, and otherwise `exp(Q·Δt)` is formed by
+scaling and squaring, so extreme rates stay cheap. On the matrix-exponential path,
+non-finite rates throw a `DomainError`.
+Implements the `Distributions.jl` interface.
 
 # Arguments
 - `transition_matrix::AbstractMatrix{<:Real}`: rate matrix (generator) of shape

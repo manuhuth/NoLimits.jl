@@ -328,7 +328,8 @@ Plot model predictions against observed data for each individual as a multi-pane
 - `mcmc_quantiles_alpha::Float64 = 0.8`: opacity of the quantile band.
 - `mcmc_draws::Int = 1000`: number of MCMC draws for posterior predictive plotting.
 - `mcmc_warmup::Union{Nothing, Int} = nothing`: warm-up count override for MCMC.
-- `rng::AbstractRNG = Random.default_rng()`: random-number generator.
+- `rng::AbstractRNG = Xoshiro(42)`: random-number generator. A fresh generator with
+  this fixed seed is created per call, so repeated calls draw the same values.
 """
 function plot_fits(
         res::FitResult;
@@ -358,7 +359,7 @@ function plot_fits(
         mcmc_draws::Int = 1000,
         mcmc_warmup::Union{Nothing, Int} = nothing,
         marginal_idx::Union{Nothing, Int} = nothing,
-        rng::AbstractRNG = Random.default_rng()
+        rng::AbstractRNG = _default_rng()
     )
     dm = _get_dm(res, dm)
     save_path = _resolve_plot_path(save_path, plot_path)
@@ -919,7 +920,7 @@ function plot_hidden_states(
         params::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple(),
         mcmc_draws::Int = 1,
-        rng::AbstractRNG = Random.default_rng()
+        rng::AbstractRNG = _default_rng()
     )
     dm = _get_dm(res, dm)
     figure_layout in (:single, :vector) ||
@@ -994,7 +995,7 @@ function plot_hidden_states(
         plot_path::Union{Nothing, String} = nothing,
         params::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple(),
-        rng::AbstractRNG = Random.default_rng()
+        rng::AbstractRNG = _default_rng()
     )
     figure_layout in (:single, :vector) ||
         error("figure_layout must be :single or :vector.")
@@ -1261,7 +1262,7 @@ function plot_emission_distributions(
         params::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple(),
         mcmc_draws::Int = 1,
-        rng::AbstractRNG = Random.default_rng()
+        rng::AbstractRNG = _default_rng()
     )
     figure_layout in (:single, :vector) ||
         error("figure_layout must be :single or :vector.")
@@ -1322,7 +1323,7 @@ function plot_emission_distributions(
         plot_path::Union{Nothing, String} = nothing,
         params::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple(),
-        rng::AbstractRNG = Random.default_rng()
+        rng::AbstractRNG = _default_rng()
     )
     figure_layout in (:single, :vector) ||
         error("figure_layout must be :single or :vector.")
@@ -1384,7 +1385,7 @@ function plot_fits(
         cache_obs_dists::Bool = false,
         mcmc_draws::Int = 1000,
         mcmc_warmup::Union{Nothing, Int} = nothing,
-        rng::AbstractRNG = Random.default_rng()
+        rng::AbstractRNG = _default_rng()
     )
     save_path = _resolve_plot_path(save_path, plot_path)
     cache = build_plot_cache(
@@ -1441,7 +1442,8 @@ function _plot_fits_comparison_impl(
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing
+        plot_path::Union{Nothing, String} = nothing,
+        rng::AbstractRNG = _default_rng()
     )
     length(fits) == length(labels) ||
         error("Internal error: fits and labels length mismatch.")
@@ -1454,7 +1456,7 @@ function _plot_fits_comparison_impl(
     obs_name = _get_observable(dm_ref, observable)
     inds = _resolve_individuals(dm_ref, individuals_idx; default_all = true)
     caches = [
-        build_plot_cache(fits[j]; dm = dms[j], cache_obs_dists = false)
+        build_plot_cache(fits[j]; dm = dms[j], cache_obs_dists = false, rng = rng)
             for j in eachindex(fits)
     ]
     line_colors = _comparison_line_colors(length(fits), style)
@@ -1534,7 +1536,9 @@ When called with a single `FitResult` or `MultistartFitResult`, behaves like
 [`plot_fits`](@ref). When called with a collection, overlays predictions from each
 model on the same panel, labeled by vector index, `NamedTuple` key, or `Dict` key.
 
-All keyword arguments are forwarded to the underlying `plot_fits` implementation.
+All keyword arguments are forwarded to the underlying `plot_fits` implementation,
+including `rng` (default: a fresh `Xoshiro(42)` per call) for the posterior-mean
+parameters of MCMC/VI fits.
 """
 function plot_fits_comparison(res::Union{FitResult, MultistartFitResult}; kwargs...)
     return plot_fits(_as_fit_result_for_plotting(res); kwargs...)
@@ -1766,7 +1770,7 @@ function plot_dv_pred(
 end
 
 """
-    plot_dv_ipred(res::FitResult; dm, observable, style, kwargs_subplot,
+    plot_dv_ipred(res::FitResult; dm, observable, style, rng, kwargs_subplot,
                   kwargs_layout, save_path, plot_path) -> Makie.Figure
 
 Goodness-of-fit scatter plot of observed values (DV) against individual
@@ -1778,6 +1782,8 @@ line is overlaid for reference.
 - `dm::Union{Nothing, DataModel} = nothing`: data model (inferred from `res` by default).
 - `observable`: name of the outcome variable, or `nothing` for the first.
 - `style::PlotStyle = PlotStyle()`: visual style configuration.
+- `rng::AbstractRNG = Xoshiro(42)`: random-number generator for the random effects of
+  posterior-draw fits. A fresh generator with this fixed seed is created per call.
 - `kwargs_subplot`: additional Makie `Axis` attributes forwarded to the subplot.
 - `kwargs_layout`: additional Makie `Figure` attributes forwarded to the layout.
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
@@ -1790,6 +1796,7 @@ function plot_dv_ipred(
         dm::Union{Nothing, DataModel} = nothing,
         observable = nothing,
         style::PlotStyle = PlotStyle(),
+        rng::AbstractRNG = _default_rng(),
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
@@ -1801,7 +1808,7 @@ function plot_dv_ipred(
     obs_name = _get_observable(dm, observable)
     θ = get_params(res; scale = :untransformed)
     constants_re = _res_constants_re(res, NamedTuple())
-    η_ebe = _default_random_effects(res, dm, constants_re, θ, Random.default_rng(), 1)
+    η_ebe = _default_random_effects(res, dm, constants_re, θ, rng, 1)
 
     panels_spec, n_marginals = _marginal_panels(dm, obs_name)
     return_panel && length(panels_spec) > 1 &&

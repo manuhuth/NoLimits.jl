@@ -22,7 +22,8 @@ curves overlaid on the observed data, providing a detailed look at model calibra
 - `cache_obs_dists::Bool = false`: pre-compute observation distributions when building cache.
 - `constants_re::NamedTuple = NamedTuple()`: random-effect constants.
 - `mcmc_quantiles`, `mcmc_quantiles_alpha`, `mcmc_draws`, `mcmc_warmup`: MCMC settings.
-- `rng::AbstractRNG = Random.default_rng()`: random-number generator.
+- `rng::AbstractRNG = Xoshiro(42)`: random-number generator. A fresh generator with
+  this fixed seed is created per call, so repeated calls draw the same values.
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
 - `kwargs_subplot`: additional Makie `Axis` attributes forwarded to each subplot.
 - `kwargs_layout`: additional Makie `Figure` attributes forwarded to the combined layout.
@@ -45,7 +46,7 @@ function plot_observation_distributions(
         mcmc_quantiles_alpha::Float64 = 0.8,
         mcmc_draws::Int = 1000,
         mcmc_warmup::Union{Nothing, Int} = nothing,
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
         plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
