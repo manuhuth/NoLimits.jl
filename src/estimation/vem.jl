@@ -17,7 +17,7 @@
 # The final objective is an importance-sampling estimate of -log p(y | θ̂) with a
 # multivariate-t proposal around each fitted q (the ELBO itself is reported in the notes).
 
-export VEM, PlanarFlowFamily
+export VEM, PlanarFlowFamily, get_variational_distributions
 
 """
     PlanarFlowFamily(K::Integer; base = :dense, seed = 0)
@@ -84,7 +84,9 @@ effects: no inner mode finding or Hessian per objective evaluation, unlike Lapla
   Gaussian random effects (centered variational space, evaluated through the
   Enzyme-compatible batch log-joint). The `refine` step always uses ForwardDiff.
 - `lb`, `ub`: bounds on the transformed fixed-effect scale, or `nothing` to use the
-  model-declared bounds (as for [`Laplace`](@ref)). Variational parameters are unbounded.
+  model-declared bounds (as for [`Laplace`](@ref)). Variational parameters are unbounded,
+  so optimizers that need finite bounds on every coordinate (BlackBoxOptim methods,
+  `ParticleSwarm`) are rejected.
 - `ignore_model_bounds::Bool = false`: ignore the bounds declared in `@fixedEffects`
   (explicit `lb`/`ub` still apply).
 - `n_samples = :auto`: draws per batch in the sample-average ELBO (fixed per fit). `:auto`
@@ -118,7 +120,17 @@ effects: no inner mode finding or Hessian per objective evaluation, unlike Lapla
   The refinement uses the same `optimizer`, `optim_kwargs` and bounds as the joint fit.
 - `ebe_*`: options of the final empirical-Bayes modes (as for `MCEM`).
 
-For mini-batching (stochastic VEM) wrap the method in [`MiniBatch`](@ref).
+The `penalty` and `extra_objective` keywords of [`fit_model`](@ref) act as for `Laplace`:
+both are functions of the natural-scale fixed effects, added (with their ForwardDiff
+gradients) to the negative ELBO, to the `refine` objective and to the reported objective
+(`get_result(res).notes.elbo` stays the plain ELBO). Likelihood weights of the `DataModel`
+multiply the ELBO term of each random-effect batch, and its marginal-likelihood term in
+`refine` and in the reported objective. Random-effect levels fixed through `constants_re`
+enter as for `Laplace`: with the prior density of the fixed values, and a batch without
+free levels (no q) with its log-likelihood at the fixed values.
+
+For mini-batching (stochastic VEM) wrap the method in [`MiniBatch`](@ref); the penalty and
+`extra_objective` are then added once per iteration, not scaled by the number of batches.
 
 Randomness (the fixed Monte Carlo draws, multivariate-t refinement nodes, importance-sampling
 draws, start repair and EBE multistart) comes only from the `rng` keyword of
@@ -128,8 +140,10 @@ work on threads, for every `adtype`; threaded and serial (`EnsembleSerial()`) fi
 bitwise equal.
 
 Fits support Wald UQ ([`compute_uq`](@ref)), and [`sample_random_effects`](@ref) and
-conditional cross-validation draw from the fitted variational distributions
-(`get_result(res).notes.variational_params`). Discrete random effects are not supported.
+conditional cross-validation draw from the fitted variational distributions.
+[`get_variational_distributions`](@ref) returns these distributions per individual
+(`get_result(res).notes.variational_params` holds them in random-effect batch order).
+Discrete random effects are not supported.
 """
 struct VEM{O, K, A, L, U, EB, US} <: FittingMethod
     optimizer::O
@@ -722,6 +736,38 @@ function _vem_foreach(f, n::Int, caches::Vector)
     return nothing
 end
 
+# whether a batch has random-effect levels fixed by `constants_re`
+function _vem_has_const_levels(dm::DataModel, info::REBatchInfo, const_cache)
+    isempty(const_cache.is_const) && return false
+    ids = get_ind_level_ids(get_laplace_cache(get_re_group_info(dm)))
+    return any(
+        const_cache.is_const[ri][id] for i in get_inds(info)
+            for ri in eachindex(const_cache.is_const) for id in ids[i][ri]
+    )
+end
+
+# penalty and extra_objective on the natural scale (both optional), as for Laplace
+function _vem_penalty(θu, penalty::NamedTuple, extra_objective)
+    T = eltype(θu)
+    v = convert(T, _penalty_value(θu, penalty))
+    extra_objective === nothing && return v
+    return v + convert(T, extra_objective(θu))
+end
+
+# The variational parameters are unbounded, so optimizers that need a finite box on every
+# coordinate cannot run the joint problem.
+function _vem_check_optimizer(opt)
+    (
+        nameof(parentmodule(typeof(opt))) === :OptimizationBBO ||
+            opt isa OptimizationOptimJL.ParticleSwarm
+    ) || return nothing
+    return error(
+        "VEM: $(nameof(typeof(opt))) needs finite bounds on every coordinate, but VEM " *
+            "optimizes the unbounded variational parameters jointly with the fixed effects. " *
+            "Use a gradient-based optimizer (e.g. the default LBFGS)."
+    )
+end
+
 _sol_iterations(sol) = hasproperty(sol, :stats) && hasproperty(sol.stats, :iterations) ?
     sol.stats.iterations : missing
 
@@ -759,8 +805,7 @@ function _fit_model(
         store_eb_modes = store_eb_modes, store_data_model = store_data_model,
         extra_objective = extra_objective,
     )
-    isempty(penalty) || error("VEM does not support `penalty`.")
-    extra_objective === nothing || error("VEM does not support `extra_objective`.")
+    _vem_check_optimizer(method.optimizer)
     re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) &&
         error("VEM requires random effects. Use MLE/MAP for fixed-effects models.")
@@ -814,6 +859,17 @@ function _fit_model(
     p = length(θt_free)
     nb = [get_n_b(info) for info in batch_infos]
     keep = findall(>(0), nb)
+    # DataModel weights multiply each batch's ELBO term (as Laplace weights its
+    # log-likelihood term); zero-weight batches are skipped
+    wk = [_batch_weight(dm, get_inds(batch_infos[bi])) for bi in keep]
+    # levels fixed by `constants_re` enter as for Laplace/GHQuadrature: a batch without
+    # free levels contributes log p(y_b, b_fixed | θ) (it has no q), other batches the
+    # prior density of their fixed levels, log p(b_fixed | θ)
+    fixed_b = [
+        bi for bi in eachindex(batch_infos)
+            if !iszero(_batch_weight(dm, get_inds(batch_infos[bi]))) &&
+            (nb[bi] == 0 || _vem_has_const_levels(dm, batch_infos[bi], const_cache))
+    ]
     ranges = UnitRange{Int}[]
     off = p
     for bi in keep
@@ -867,11 +923,65 @@ function _fit_model(
         end
     end
 
-    # ---- objective: -Σ ELBO_i, value and gradient per batch ----
+    # ---- θ-only terms: penalty + extra_objective - Σ_b w_b (fixed-level terms of b) ----
+    # penalty and extra_objective act on the natural-scale θu, as for Laplace; these terms
+    # are added once per evaluation and not scaled under MiniBatch
+    has_pen = !isempty(keys(penalty)) || extra_objective !== nothing
+    nf = length(fixed_b)
+    has_glob = has_pen || nf > 0
+    pen_of(θu) = _vem_penalty(θu, penalty, extra_objective)
+    function fixed_ll(θu, j, lc)
+        info = batch_infos[fixed_b[j]]
+        w = _batch_weight(dm, get_inds(info))
+        get_n_b(info) == 0 &&
+            return w * _laplace_logf_batch(dm, info, θu, Float64[], const_cache, lc)
+        lp = try
+            _const_re_prior_logf(dm, info, _symmetrize_psd_params(θu, fe), const_cache, lc)
+        catch err
+            _is_numeric_error(err) || rethrow()
+            convert(eltype(θu), -Inf)
+        end
+        return w * lp
+    end
+    fvals = Vector{Float64}(undef, nf)
+    fgs = Vector{Vector{Float64}}(undef, nf)
+    DRg = ForwardDiff.DiffResults
+    # value of the θ-only terms at xθ; with a vector `gθ`, also adds their gradient to it
+    function glob(xθ::Vector{Float64}, gθ)
+        total = 0.0
+        if gθ === nothing
+            θu = θu_of(xθ)
+            has_pen && (total += pen_of(θu))
+            _vem_foreach(nf, caches) do j, lc
+                fvals[j] = fixed_ll(θu, j, lc)
+            end
+        else
+            if has_pen
+                r = DRg.GradientResult(xθ)
+                ForwardDiff.gradient!(r, z -> pen_of(θu_of(z)), xθ)
+                total += DRg.value(r)
+                gθ .+= DRg.gradient(r)
+            end
+            _vem_foreach(nf, caches) do j, lc
+                r = DRg.GradientResult(xθ)
+                ForwardDiff.gradient!(r, z -> fixed_ll(θu_of(z), j, lc), xθ)
+                fvals[j] = DRg.value(r)
+                fgs[j] = copy(DRg.gradient(r))
+            end
+        end
+        for j in 1:nf
+            total -= fvals[j]
+            gθ === nothing || (gθ .-= fgs[j])
+        end
+        return total
+    end
+
+    # ---- objective: -Σ w_i ELBO_i (+ θ-only terms), value and gradient per batch ----
     # per-batch results by index, reduced in batch order: threaded == serial bitwise.
-    # Under MiniBatch: -(K/|B|) Σ_{i∈B} ELBO_i, the unbiased estimate of the full objective
-    # and its (θ, κ) gradient (zero for the κ blocks outside B). Kept `nothing` outside solve.
-    all_k = collect(eachindex(keep))
+    # Under MiniBatch: -(K/|B|) Σ_{i∈B} w_i ELBO_i, the unbiased estimate of the full
+    # objective and its (θ, κ) gradient (zero for the κ blocks outside B). Kept `nothing`
+    # outside solve.
+    all_k = [k for k in eachindex(keep) if !iszero(wk[k])]
     mb = _minibatch_state(_update_schedule(method), length(keep), rng)
     mb_ref = Ref{Union{Nothing, typeof(mb)}}(nothing)
     vals = Vector{Float64}(undef, nk)
@@ -918,10 +1028,13 @@ function _fit_model(
             end
             total = 0.0
             for j in 1:nsel
+                w = c * wk[ks[j]]
+                iszero(w) && continue
                 isfinite(vals[j]) || return Inf
-                total -= c * vals[j]
+                total -= w * vals[j]
             end
-            return total
+            has_glob && (total += glob(collect(view(x, 1:p)), nothing))
+            return isfinite(total) ? total : Inf
         end
         if use_fd
             xθ = collect(view(x, 1:p))
@@ -953,14 +1066,25 @@ function _fit_model(
         fill!(G, 0.0)
         total = 0.0
         for j in 1:nsel
+            w = c * wk[ks[j]]
+            iszero(w) && continue
             v, gθ, gκ = vals[j], gθs[j], gκs[j]
             if !(isfinite(v) && all(isfinite, gθ) && all(isfinite, gκ))
                 fill!(G, NaN)
                 return Inf
             end
-            total -= c * v
-            @views G[1:p] .-= c .* gθ
-            @views G[ranges[ks[j]]] .-= c .* gκ
+            total -= w * v
+            @views G[1:p] .-= w .* gθ
+            @views G[ranges[ks[j]]] .-= w .* gκ
+        end
+        if has_glob
+            gg = zeros(Float64, p)
+            total += glob(collect(view(x, 1:p)), gg)
+            if !(isfinite(total) && all(isfinite, gg))
+                fill!(G, NaN)
+                return Inf
+            end
+            @views G[1:p] .+= gg
         end
         return F === nothing ? nothing : total
     end
@@ -1019,8 +1143,12 @@ function _fit_model(
     )
     mb_ref[] = nothing
     x̂ = xmap(sol.u)
-    elbo = -fy(sol.u, nothing)
-    θ_hat_u = θu_of(view(x̂, 1:p))
+    # notes.elbo is the bound itself; the penalty and extra_objective are reported only in
+    # the objective (as for Laplace)
+    obj_joint = fy(sol.u, nothing)
+    elbo = has_pen ? -(obj_joint - pen_of(θu_of(Vector{Float64}(x̂[1:p])))) : -obj_joint
+    xθ_hat = Vector{Float64}(x̂[1:p])
+    θ_hat_u = θu_of(xθ_hat)
     refine_iters = 0
     refine_ok = true
     # a full-data pass per iteration: off by default under MiniBatch
@@ -1039,17 +1167,27 @@ function _fit_model(
         DRr = ForwardDiff.DiffResults
         fr = xθ -> begin
             θu = θu_of(xθ)
-            lls = Vector{eltype(θu)}(undef, nk)
+            T = eltype(θu)
+            lls = Vector{T}(undef, nk)
             _vem_foreach(nk, caches) do k, lc
+                iszero(wk[k]) && (lls[k] = zero(T); return)
                 μ, L, (xn, lw) = qs[k]
                 lls[k] = _vem_refine_batch_ll(θu, μ, L, xn, lw, dm, batch_infos[keep[k]], const_cache, lc)
             end
-            all(isfinite, lls) || return convert(eltype(xθ), Inf)
+            flls = Vector{T}(undef, nf)
+            _vem_foreach(nf, caches) do j, lc
+                flls[j] = fixed_ll(θu, j, lc)
+            end
+            (all(isfinite, lls) && all(isfinite, flls)) || return convert(eltype(xθ), Inf)
             tot = zero(eltype(xθ))
             for k in 1:nk
-                tot -= lls[k]
+                tot -= wk[k] * lls[k]
             end
-            tot
+            for j in 1:nf
+                tot -= flls[j]
+            end
+            has_pen && (tot += pen_of(θu))
+            isfinite(tot) ? tot : convert(eltype(xθ), Inf)
         end
         function fgr!(F, G, xθ)
             if G === nothing
@@ -1074,7 +1212,8 @@ function _fit_model(
         rsol = Optimization.solve(rprob, ropt; method.optim_kwargs...)
         fθ = fr(rsol.u)
         if isfinite(fθ) && fθ <= fr(xθ0)
-            θ_hat_u = θu_of(rsol.u)
+            xθ_hat = Vector{Float64}(rsol.u)
+            θ_hat_u = θu_of(xθ_hat)
             refine_iters = _sol_iterations(rsol)
             refine_ok = rsol.retcode == SciMLBase.ReturnCode.Success
         end
@@ -1088,6 +1227,7 @@ function _fit_model(
         is_rngs = _spawn_child_rngs(rng, nk)
         lls = Vector{Float64}(undef, nk)
         _vem_foreach(nk, caches) do k, lc
+            iszero(wk[k]) && (lls[k] = 0.0; return)
             bi = keep[k]
             μq, Lq = _vem_q_moments(Vector{Float64}(x̂[ranges[k]]), ξs[k], nb[bi], family, θ_hat_u)
             lls[k] = nb[bi] <= 3 ?
@@ -1102,11 +1242,12 @@ function _fit_model(
         end
         ll = 0.0
         for k in 1:nk
-            ll += lls[k]
+            ll += wk[k] * lls[k]
         end
-        -ll
+        # fixed batches, penalty and extra_objective at θ̂ (glob is their negative sum)
+        -ll + (has_glob ? glob(xθ_hat, nothing) : 0.0)
     else
-        -elbo
+        obj_joint
     end
     niter = _sol_iterations(sol)
     converged = sol.retcode == SciMLBase.ReturnCode.Success && refine_ok && isfinite(objective)
@@ -1116,7 +1257,12 @@ function _fit_model(
                 μq, Lq = ξs[k].K == 0 ?
                 _vem_effective(κk, ξs[k], nb[keep[k]], family, θ_hat_u) :
                 _vem_q_moments(κk, ξs[k], nb[keep[k]], family, θ_hat_u)
-                (mean = μq, scale = Lq)
+                # q lives on b for Gaussian random effects, else on the standardized u of
+                # the prior transport b = T_θ(u) (a type property, so θ0 serves as fallback)
+                base = _vem_measure(batch_infos[keep[k]], θ_hat_u, const_cache, dm, ll_cache)
+                base === nothing &&
+                (base = _vem_measure(batch_infos[keep[k]], θu0, const_cache, dm, ll_cache))
+                (mean = μq, scale = Lq, space = base isa GaussianRE ? :natural : :standardized)
             end for k in eachindex(ranges)
     ]
 
@@ -1138,4 +1284,79 @@ function _fit_model(
     return FitResult(
         method, result, summary, diagnostics, store_data_model ? dm : nothing, args, fit_kwargs
     )
+end
+
+"""
+    get_variational_distributions(res::FitResult) -> DataFrame
+    get_variational_distributions(dm::DataModel, res::FitResult) -> DataFrame
+
+Fitted variational distributions ``q`` of a [`VEM`](@ref) fit, one row per individual in
+the order of the individuals of the `DataModel` (the order that
+[`get_random_effects`](@ref) uses for random effects grouped by the primary id).
+Individuals linked by a shared random-effect level (e.g. a site effect next to a subject
+effect) form one random-effect batch and share one joint ``q``.
+
+Columns:
+- the primary-id column: the id of the individual;
+- `batch`: index of the batch of the individual in `get_notes(res).variational_params`, or
+  `0` when all its random-effect levels are fixed through `constants_re` (no ``q``);
+- `mean`, `scale`: ``q = N(\\mathrm{mean}, \\mathrm{scale}\\,\\mathrm{scale}^\\top)`` of the
+  batch, with `scale` lower triangular (diagonal for `family = :diagonal`). For a
+  [`PlanarFlowFamily`](@ref) they are the mean and Cholesky factor of the moment-matched
+  Gaussian;
+- `space`: `:natural` when all random effects of the batch are Gaussian (`Normal`,
+  `MvNormal`), so that ``q`` is a distribution of the random effects ``b``;
+  `:standardized` otherwise, so that ``q`` is a distribution of the standardized
+  ``u`` and ``b = T_{\\hat\\theta}(u)`` with the prior transport ``T_{\\hat\\theta}`` (as
+  in [`sample_random_effects`](@ref));
+- `coordinates`: one `(re, level, component)` named tuple per entry of `mean`: the random
+  effect, its grouping level and the component index (`1` for a scalar random effect).
+"""
+function get_variational_distributions(dm::DataModel, res::FitResult)
+    notes = get_notes(res)
+    (notes isa NamedTuple && haskey(notes, :variational_params)) ||
+        error("get_variational_distributions requires a VEM fit result.")
+    _, batch_infos, _ = _build_re_batch_infos(dm, _res_constants_re(res, NamedTuple(), dm))
+    keep = notes.variational_batches
+    qs = notes.variational_params
+    (
+        keep == findall(info -> get_n_b(info) > 0, batch_infos) &&
+            all(length(qs[k].mean) == get_n_b(batch_infos[bi]) for (k, bi) in enumerate(keep))
+    ) || error("The batch layout of this DataModel differs from the VEM fit; pass the DataModel of the fit.")
+    cache = get_laplace_cache(get_re_group_info(dm))
+    re_names = get_re_names(cache)
+    n = length(get_individuals(dm))
+    batch_of = zeros(Int, n)
+    coords = Vector{Vector{NamedTuple}}(undef, length(keep))
+    for (k, bi) in enumerate(keep)
+        info = batch_infos[bi]
+        batch_of[collect(get_inds(info))] .= k
+        c = Vector{NamedTuple}(undef, get_n_b(info))
+        for (ri, re) in enumerate(re_names)
+            rei = get_re_info(info)[ri]
+            levels_all = get_re_index(cache)[ri].levels
+            for (li, lvl_id) in enumerate(get_levels(get_re_map(rei)))
+                for (j, pos) in enumerate(get_ranges(rei)[li])
+                    c[pos] = (re = re, level = levels_all[lvl_id], component = j)
+                end
+            end
+        end
+        coords[k] = c
+    end
+    q_of(i, f, none) = batch_of[i] == 0 ? none : copy(getfield(qs[batch_of[i]], f))
+    return DataFrame(
+        get_primary_id(dm) => [_individual_id(dm, i) for i in 1:n],
+        :batch => batch_of,
+        :mean => [q_of(i, :mean, Float64[]) for i in 1:n],
+        :scale => [q_of(i, :scale, zeros(0, 0)) for i in 1:n],
+        :space => [batch_of[i] == 0 ? :none : qs[batch_of[i]].space for i in 1:n],
+        :coordinates => [batch_of[i] == 0 ? NamedTuple[] : copy(coords[batch_of[i]]) for i in 1:n],
+    )
+end
+
+function get_variational_distributions(res::FitResult)
+    dm = get_data_model(res)
+    dm === nothing &&
+        error("This fit result does not store a DataModel; call get_variational_distributions(dm, res) instead.")
+    return get_variational_distributions(dm, res)
 end

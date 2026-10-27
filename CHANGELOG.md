@@ -40,6 +40,29 @@
   now draws from per-batch child generators of `rng`, so its value differs from before
   for the same seed.
 
+- VEM accepts the `penalty` and `extra_objective` keywords of `fit_model` (#377; before an
+  error). As for `Laplace`, both are functions of the natural-scale fixed effects and are
+  added, with their ForwardDiff gradients, to the negative ELBO, to the `refine` objective
+  and to the reported objective; under `MiniBatch` they are not scaled by
+  `nbatches / |B|`. `notes.elbo` stays the plain ELBO.
+
+- VEM honors `DataModel` likelihood weights (#378; before silently ignored): the ELBO term
+  of each random-effect batch, and its marginal-likelihood term in `refine` and in the
+  reported objective, is multiplied by the batch weight. Random-effect levels fixed through
+  `constants_re` now enter the VEM objective as for `Laplace`/`GHQuadrature`: a batch
+  without free levels contributes its log-likelihood at the fixed values (before, its data
+  were left out), and the prior density of fixed levels is included (before, missing).
+  This changes VEM fits with `constants_re`, e.g. in `fit_cv`.
+
+- VEM rejects optimizers that need finite bounds on every coordinate (BlackBoxOptim
+  methods, `ParticleSwarm`) with an error, since the variational parameters are unbounded
+  (#379, #380).
+
+- New accessor `get_variational_distributions(res)`: the fitted variational distributions
+  of a VEM fit per individual, in `DataModel` order (batch, mean, Cholesky scale, space and
+  the random effect, level and component of each coordinate). `notes.variational_params`
+  is in random-effect batch order, which in general differs from the individual order.
+
 - The `rng` keyword of every estimator, cross-validation and UQ entry point now defaults
   to a fresh `Xoshiro(42)` per call instead of `Random.default_rng()`. Fits with `SAEM`,
   `MCEM` (all E-steps), `MCMC`, `VI`, `VEM`, `MiniBatch` schedule draws, EBE multistarts,

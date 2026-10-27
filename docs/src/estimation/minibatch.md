@@ -68,8 +68,9 @@ callback advances the schedule). With Optimisers.jl rules, finite bounds (model 
 `lb`/`ub` of the wrapped method) are enforced by projecting each update onto the box.
 `AcceptedWarmStarts` requires `schedule = :all`.
 
-For `VEM` (stochastic variational EM) the objective is `-(K/|B|) Σ_{i∈B} ELBO_i(θ, κ_i)`
-over the `K` batches with random effects. Its gradient is the unbiased estimate of the
+For `VEM` (stochastic variational EM) the objective is `-(K/|B|) Σ_{i∈B} w_i ELBO_i(θ, κ_i)`
+over the `K` batches with random effects (`w_i` the likelihood weights, 1 without a weight
+column), plus the unscaled `penalty` and `extra_objective`. Its gradient is the unbiased estimate of the
 gradient of the full negative ELBO with respect to the fixed effects and all variational
 parameters: the variational parameters `κ_i` of an unselected batch do not enter it and get
 a zero gradient. The full objective is separable in the `κ_i`, so this stochastic gradient
