@@ -113,7 +113,7 @@ function _simulate_sol_accessors(dm::DataModel, idx::Int, θ, η)
     prob = ODEProblem(f!_use, u0, get_tspan(ind), compiled)
     solver_cfg = get_solver_config(model)
     alg = _resolve_ode_alg(solver_cfg.alg)
-    sc = (stiffness_check = solver_cfg.stiffness_check,)
+    sc = (stiffness_check = solver_cfg.stiffness_check, fallback_kwargs = solver_cfg.fallback_kwargs)
     reset! = events === nothing ? nothing :
         _CrossingReset((), Base.RefValue{Bool}[], (), events)
     if get_saveat(ind) === nothing

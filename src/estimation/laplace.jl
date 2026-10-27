@@ -1146,14 +1146,15 @@ end
                 curvature=ExactHessianCurvature(), x_abstol=0.0,
                 globalization=:linesearch)
 
-Opt-in inner-EBE optimizer for [`Laplace`](@ref)/[`FOCEI`](@ref) (and the
-`ebe_optimizer` options): a damped Newton ascent on the batch log-joint, built
+Inner-EBE optimizer for [`Laplace`](@ref), [`FOCEI`](@ref) and [`GHQuadrature`](@ref)
+(and the `ebe_optimizer` options): a damped Newton ascent on the batch log-joint, built
 on the same AD gradient/Hessian and adaptive-jitter Cholesky machinery the
-Laplace approximation already uses. Pass it as
-`Laplace(inner_optimizer=NewtonInner())`.
+Laplace approximation already uses.
 
-It is the default inner optimizer of `Laplace` and `GHQuadrature` (FOCEI uses its
-Gauss-Newton variant). Pass `inner_optimizer = OptimizationOptimJL.LBFGS(linesearch =
+It is the default inner optimizer of `Laplace` and `GHQuadrature`
+(`NewtonInner(x_abstol = 1e-10)`); FOCEI defaults to its Gauss-Newton variant
+(`curvature = FisherInformationCurvature(true)`). A stalled solve falls back to LBFGS
+(see `alpha_min` below). Pass `inner_optimizer = OptimizationOptimJL.LBFGS(linesearch =
 LineSearches.BackTracking(maxstep = 1.0))` for the previous default; a different optimizer
 can reach a (numerically) different conditional mode on hard problems. Newton converges
 quadratically from the warm starts the outer optimization provides and avoids the

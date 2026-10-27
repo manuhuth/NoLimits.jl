@@ -84,7 +84,7 @@ method = NoLimits.SAEM(;
     sampler=SaemixMH(),
     turing_kwargs=NamedTuple(),
     warm_start=true,
-    mcmc_steps=nothing,   # resolves to 1 for SaemixMH (the default sampler), 80 otherwise
+    mcmc_steps=nothing,   # SaemixMH: max(1, cld(n_b, 3)) sweeps; 80 otherwise
 
     # SA schedule
     sa_schedule=:robbins_monro,
@@ -212,7 +212,7 @@ These arguments configure the MCMC sampling of random effects at each SAEM itera
   - Additional keyword arguments passed to Turing sampling calls (ignored for `SaemixMH` and `AdaptiveNoLimitsMH`).
 - `mcmc_steps`
   - Number of MCMC samples drawn per iteration.
-  - Default: `nothing`, which resolves to `1` when the sampler is `SaemixMH` (the default) and `80` for any other sampler.
+  - Default: `nothing`. For `SaemixMH` (the default sampler) this resolves at fit time to `max(1, cld(n_b, 3))` sweeps, where `n_b` is the number of random-effect dimensions of the largest batch (one sweep per three dimensions, so batches with at most three dimensions use one sweep). For any other sampler it resolves to `80`.
   - If `mcmc_steps <= 0`, SAEM falls back to `turing_kwargs[:n_samples]` (or `1`).
 - `warm_start`
   - When `true`, reuses latent-state sampler state between iterations where available.
@@ -231,6 +231,12 @@ When the M-step is performed numerically (i.e., no closed-form update is provide
   - When `false`, the M-step minimizes the full ring-buffer Q-function and sets `θ_new = θ̂` directly. Useful as a diagnostic or when you want the classical ring-buffer SAEM behavior.
 
 SAEM uses the SciML [Optimization.jl](https://docs.sciml.ai/Optimization/stable/) interface for numerical M-step updates.
+
+### Automatic Centering
+
+When a fixed effect and a random effect enter the model only through their sum, the likelihood is invariant under `a → a + δ`, `η → η - δ`, and plain SAEM moves slowly along this ridge. SAEM detects such pairs automatically and, after every M-step that is not skipped (γ > 0, and no RE annealing via `anneal_to_fixed` active), shifts the fixed effect by `δ`, the mean over levels and chains of `η` minus its prior mean, and the stored random-effect samples by `-δ`. The estimand is unchanged; only the iteration path changes. The detected pairs are reported in an `@info` message at the start of the fit. There is no option to disable it.
+
+A pair `(a, η)` qualifies when `η` has a `Normal` or `MvNormal` distribution, `a` is a free scalar fixed effect that does not appear in any random-effect distribution, and in `@formulas`/`@preDifferentialEquation` both occur only as the two arguments of the same sum `a + η` (or `a + η[k]`), never in `@DifferentialEquation` or `@initialDE`. For a vector random effect, every component must be paired. `a` must either be on the identity scale and unbounded (additive shift), or on the log scale with lower bound 0 and appear as `a * exp(η)` (the shift is applied to `log a`).
 
 ### E-step Retry Inputs
 
@@ -266,7 +272,7 @@ The SA gain sequence `γ_t ∈ [0, 1]` controls how aggressively new samples upd
 
 where `phase3_total = maxiters - sa_burnin_iters - t0` and `k3 = iter - sa_burnin_iters - t0`.
 
-- `sa_burnin_iters::Int = 6`: iterations before SA updates begin. During burn-in no SA smoothing is performed, no samples are stored and the M-step is skipped, so θ stays at its start value. Any iteration with γ = 0 skips the M-step, which includes the final `:robbins_monro` iteration.
+- `sa_burnin_iters::Int = 6`: iterations before SA updates begin. During burn-in no SA smoothing is performed, no samples are stored and the M-step is skipped, so θ stays at its start value. Any iteration with γ = 0 skips the M-step, which includes the final `:robbins_monro` iteration. If `maxiters <= sa_burnin_iters` (with any schedule other than `:custom`), every iteration is burn-in: θ is returned at its start value, up to the variance-floor and `sa_anneal` clamps, and a warning is emitted.
 - `t0::Int = maxiters ÷ 2`: length of the stabilization phase (γ = 1). Defaults to `nothing`, which resolves to `maxiters ÷ 2` (i.e. `150` at the default `maxiters=300`).
 - `kappa::Float64 = 0.65`: decay exponent controlling how quickly γ falls off after stabilization.
 

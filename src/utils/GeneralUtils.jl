@@ -135,18 +135,20 @@ end
 #      `alg` (same kwargs, hence the same step budget) fails.
 # Both cost a small fraction of a failed primary attempt, which on a stiff problem runs
 # the whole step budget (for duals at the full dual cost) before the fallback starts.
+# `fallback_kwargs` (`ODESolverConfig.fallback_kwargs`) are merged over `kw` for the
+# fallback solves only; the primary solve and the dual probe use `kw`.
 function _solve_with_fallback(
         prob, alg, fallback, args::Tuple, reset! = nothing;
-        stiffness_check = nothing, kw...
+        stiffness_check = nothing, fallback_kwargs = NamedTuple(), kw...
     )
     if fallback !== nothing && stiffness_check !== nothing &&
             _route_to_fallback(prob, alg, args, reset!, stiffness_check; kw...)
-        return solve(prob, fallback, args...; kw...)
+        return solve(prob, fallback, args...; kw..., fallback_kwargs...)
     end
     sol = solve(prob, alg, args...; kw...)
     (fallback === nothing || SciMLBase.successful_retcode(sol)) && return sol
     reset! === nothing || reset!()
-    return solve(prob, fallback, args...; kw...)
+    return solve(prob, fallback, args...; kw..., fallback_kwargs...)
 end
 
 # Primal (Float64) value of a possibly nested ForwardDiff dual, elementwise for arrays.

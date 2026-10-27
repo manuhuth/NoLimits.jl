@@ -115,9 +115,14 @@ jitter controls, caching and bounds all behave identically. The only addition is
 page for the full description of the shared option groups, and the [`FOCEI`](@ref) API
 entry for the complete keyword list.
 
-As with `Laplace`, both the **outer** fixed-effects optimizer and the inner EB optimization
-default to `OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep=1.0))`, and
-the outer problem is preconditioned by default (`precondition=true`). If you switch the outer optimizer to NLopt, note that NLopt interprets
+As with `Laplace`, the **outer** fixed-effects optimizer defaults to
+`OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep=1.0))`, and the outer
+problem is preconditioned by default (`precondition=true`). The inner EB optimization defaults
+to the Gauss-Newton variant of [`NewtonInner`](@ref),
+`NewtonInner(curvature = FisherInformationCurvature(true), x_abstol = 1e-10)`, which uses the
+same Fisher-information curvature as the FOCEI approximation and needs first-order AD only. A
+stalled Newton solve continues on the LBFGS path; LBFGS as the inner optimizer is opt-in via
+`inner_optimizer`. If you switch the outer optimizer to NLopt, note that NLopt interprets
 `optim_kwargs.maxiters` as a cap on the number of function *evaluations* (`maxeval`);
 reaching it yields `retcode = MaxIters` (reported as not converged).
 

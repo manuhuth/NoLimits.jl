@@ -58,10 +58,10 @@ The `Laplace` constructor exposes options that control the outer fixed-effects o
 | Keyword | Default | What it controls |
 | --- | --- | --- |
 | `optimizer` | `LBFGS(linesearch = BackTracking(maxstep = 1.0))` | outer optimizer over fixed effects |
-| `optim_kwargs` | `(; maxiters = 1000)` | outer optimizer settings |
+| `optim_kwargs` | `(; maxiters = 1000)`, plus `reltol = 1e-12` for an Optim.jl optimizer | outer optimizer settings |
 | `adtype` | `AutoForwardDiff()` | AD backend for the outer gradient |
-| `inner_optimizer` | `LBFGS(linesearch = BackTracking(maxstep = 1.0))` | optimizer for the per-batch EB modes |
-| `inner_kwargs` | `NamedTuple()` | inner optimizer settings |
+| `inner_optimizer` | `NewtonInner(x_abstol = 1e-10)` | optimizer for the per-batch EB modes |
+| `inner_kwargs` | `NamedTuple()` | settings for the LBFGS inner path (opt-in or Newton fallback) |
 | `inner_adtype` | `AutoForwardDiff()` | AD backend for the inner problem |
 | `inner_grad_tol` | `:auto` | inner gradient tolerance (`1e-8` non-ODE, `1e-2` ODE) |
 | `multistart_n` | `50` | EB starting points drawn per batch |
@@ -95,7 +95,7 @@ laplace_method = NoLimits.Laplace(;
     optimizer=NLopt.LN_BOBYQA(),
     optim_kwargs=(; maxiters=1000),
     adtype=Optimization.AutoForwardDiff(),
-    inner_optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep=1.0)),
+    inner_optimizer=NoLimits.NewtonInner(x_abstol=1e-10),
     inner_kwargs=NamedTuple(),
     inner_adtype=Optimization.AutoForwardDiff(),
     inner_grad_tol=:auto,
@@ -164,12 +164,13 @@ Practical implications:
   - If using BlackBoxOptim (`OptimizationBBO.*`), finite bounds are required.
 - Inner optimizer (`inner_optimizer`, `inner_kwargs`, `inner_adtype`, `inner_grad_tol`)
   - Runs repeatedly across batches and across outer iterations.
-  - Should typically be a fast local optimizer; defaults are chosen for that path.
+  - Defaults to [`NewtonInner(x_abstol = 1e-10)`](@ref NewtonInner), a damped Newton ascent on the batch log-joint with the exact AD Hessian. Its convergence is set by its own `g_abstol` and `x_abstol`. A stalled Newton solve, or a batch with more than `max_dim = 32` random-effect dimensions, continues on the LBFGS path from the best point found.
+  - `OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep=1.0))` (the previous default) is opt-in via `inner_optimizer`; `inner_kwargs` are passed to the `solve` call of this LBFGS path. `inner_grad_tol` does not change the stopping rule of either path; it is the default of `multistart_grad_tol` (an EB mode with a larger gradient norm triggers the EB multistart) and the threshold of the post-fit EB gradient warning.
   - Tighter inner tolerances can improve objective/gradient quality but increase runtime.
 
 Repository-verified behavior:
 
-- Default outer optimizer is `OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep=1.0))`; the default inner optimizer is the same. The outer problem is preconditioned by default (`precondition=true`), so the optimizer works in a scaled offset that starts at zero; see the [`Laplace`](@ref) API entry.
+- Default outer optimizer is `OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking(maxstep=1.0))`; the default inner optimizer is `NewtonInner(x_abstol = 1e-10)`. The outer problem is preconditioned by default (`precondition=true`), so the optimizer works in a scaled offset that starts at zero; see the [`Laplace`](@ref) API entry.
 - Outer BlackBoxOptim is supported with finite bounds (`lb`, `ub`); without bounds, an error is raised.
 
 Examples:
@@ -181,7 +182,8 @@ using OptimizationBBO
 using LineSearches
 
 # 1) Local-gradient LBFGS for both outer and inner
-#    (close to the defaults; the shipped default also caps the line search with maxstep=1.0)
+#    (the shipped outer default also caps the line search with maxstep=1.0;
+#     the shipped inner default is NewtonInner)
 laplace_local = NoLimits.Laplace(;
     optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
     inner_optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
