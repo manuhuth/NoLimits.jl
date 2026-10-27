@@ -520,6 +520,115 @@ end
     @test isapprox(θv.σ, θl.σ; rtol = 0.05)
 end
 
+@testset "VEM: Beta random effect does not collapse to a point mass (#371)" begin
+    # From this start the FD curvature of log α1 is not positive; with the unit fallback
+    # scale L-BFGS drove α1 to 2.7e8 (Beta mass at 1, objective 263.8 vs 156.2).
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            c = RealNumber(1.0)
+            σ = RealNumber(0.5; scale = :log)
+            ω = RealNumber(0.3; scale = :log)
+            α1 = RealNumber(2.0; scale = :log)
+            α2 = RealNumber(3.0; scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η_ln = RandomEffect(LogNormal(0.0, ω); column = :ID)
+            η_b = RandomEffect(Beta(α1, α2); column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(a * η_ln + c * η_b * t, σ)
+        end
+    end
+    rng = Xoshiro(1)
+    rows = NamedTuple[]
+    for id in 1:30
+        ηl = exp(0.5 * randn(rng))
+        ηb = rand(rng, Beta(4.0, 2.0))
+        for t in 0.0:1.0:5.0
+            push!(rows, (; ID = id, t, y = 1.5 * ηl + 2.0 * ηb * t + 0.3 * randn(rng)))
+        end
+    end
+    dm = DataModel(model, DataFrame(rows); primary_id = :ID, time_col = :t)
+    θ0 = deepcopy(NoLimits.get_θ0_untransformed(NoLimits.get_fixed(model)))
+    θ0 .= [1.0, 0.3, 0.3, 0.3, 2.0, 5.0]
+    res = fit_model(dm, NoLimits.VEM(); theta_0_untransformed = θ0, rng = Xoshiro(1))
+    θ = get_params(res; scale = :untransformed)
+    @test θ.α1 < 50 && θ.α2 < 50
+    @test get_objective(res) < 160
+    @test isapprox(θ.c, 2.0; rtol = 0.1)
+end
+
+@testset "VEM: objective after refinement is the marginal likelihood at the estimate (#371)" begin
+    # The VEM stage is stopped early, so the refinement moves θ away from the fitted q. With
+    # nodes frozen at q the reported objective was off by 0.22 (1 RE) and 1.5 (3 REs).
+    m1 = @Model begin
+        @fixedEffects begin
+            b0 = RealNumber(0.0)
+            b1 = RealNumber(0.0)
+            ω = RealNumber(0.3; scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, ω); column = :ID)
+        end
+        @formulas begin
+            y ~ Bernoulli(1 / (1 + exp(-(b0 + η + b1 * t))))
+        end
+    end
+    m3 = @Model begin
+        @fixedEffects begin
+            b0 = RealNumber(0.0)
+            b1 = RealNumber(0.0)
+            b2 = RealNumber(0.0)
+            Ω = RealPSDMatrix(Matrix(0.2I, 3, 3); scale = :cholesky)
+        end
+        @covariates begin
+            t = Covariate()
+            x = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(MvNormal(zeros(3), Ω); column = :ID)
+        end
+        @formulas begin
+            y ~ Bernoulli(1 / (1 + exp(-((b0 + η[1]) + (b1 + η[2]) * t + (b2 + η[3]) * x))))
+        end
+    end
+    rng = Xoshiro(100)
+    rows = NamedTuple[]
+    for i in 1:100
+        η = 2.0 * randn(rng)
+        for t in 0.0:1.0:5.0
+            push!(rows, (; ID = i, t, y = rand(rng) < 1 / (1 + exp(-(-1 + η + 0.3 * t))) ? 1 : 0))
+        end
+    end
+    dm1 = DataModel(m1, DataFrame(rows); primary_id = :ID, time_col = :t)
+    S = Diagonal([2.1, 1.4, 1.7])
+    L = cholesky(Symmetric(S * [1.0 -0.3 0.4; -0.3 1.0 0.2; 0.4 0.2 1.0] * S)).L
+    rng = Xoshiro(60)
+    rows = NamedTuple[]
+    for i in 1:60
+        η = L * randn(rng, 3)
+        x0 = rand(rng, 0:1)
+        for (j, t) in enumerate(range(0, 1; length = 6))
+            x = Float64(isodd(j + x0))
+            lp = (-0.5 + η[1]) + (1 + η[2]) * t + (0.8 + η[3]) * x
+            push!(rows, (; ID = i, t, x, y = rand(rng) < 1 / (1 + exp(-lp)) ? 1 : 0))
+        end
+    end
+    dm3 = DataModel(m3, DataFrame(rows); primary_id = :ID, time_col = :t)
+    for (dm, level, tol) in ((dm1, 30, 0.02), (dm3, 11, 0.1))
+        res = fit_model(dm, NoLimits.VEM(; optim_kwargs = (; maxiters = 3)); rng = Xoshiro(1))
+        @test get_result(res).notes.refine_iterations > 0
+        @test isapprox(get_objective(res), -get_loglikelihood_quadrature(dm, res; level); atol = tol)
+    end
+end
+
 @testset "VEM: threaded fit equals serial bitwise" begin
     dm = _vem_lin_dm(Xoshiro(11))
     for m in (NoLimits.VEM(), NoLimits.VEM(; expectation = :mc, n_samples = 8, n_is = 50, optim_kwargs = (; maxiters = 10)))

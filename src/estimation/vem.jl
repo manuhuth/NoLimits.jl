@@ -108,11 +108,13 @@ effects: no inner mode finding or Hessian per objective evaluation, unlike Lapla
   the final marginal-likelihood estimate (the reported objective) of batches with more than
   3 random effects; batches with 1-3 random effects use adaptive Gauss-Hermite quadrature
   around q (21 / 9² / 7³ nodes, as `refine`). `n_is = 0` reports -ELBO instead.
-- `refine = :auto`, `refine_nodes = 64`: after the joint VEM optimization, keep each fitted q
-  fixed and maximize the importance-sampled marginal likelihood over the fixed effects with
-  fixed nodes: a tensor Gauss-Hermite rule around q for batches with 1-3 random effects
-  (adaptive quadrature; 21 / 9² / 7³ nodes), `refine_nodes` multivariate-t draws (ν = `is_df`)
-  otherwise. This removes the
+- `refine = :auto`, `refine_nodes = 64`: after the joint VEM optimization, maximize the
+  marginal likelihood over the fixed effects with fixed base nodes: a tensor Gauss-Hermite
+  rule for batches with 1-3 random effects (adaptive quadrature; 21 / 9² / 7³ nodes),
+  `refine_nodes` multivariate-t draws (ν = `is_df`) otherwise. At every θ the rule of each
+  batch is centered at the mode of its integrand and scaled by the curvature there (Newton
+  from the fitted q's mean; q where the curvature is not negative definite), and the
+  reported objective uses the rule at θ̂. This removes the
   variational bias of the Gaussian family (binary toenail data: VEM ω = 3.52, MLE 4.00)
   and is consistent as the number of nodes grows. `:auto` refines when the model has at most
   50 free fixed-effect coordinates and at most 3 random effects per batch (each refinement
@@ -613,9 +615,22 @@ end
 
 # damped Newton for the mode of f, curvature covariance (-H)⁻¹ capped at the prior's I
 function _vem_u_laplace(f, n::Int)
-    u = zeros(Float64, n)
+    u, Σ = _vem_newton_mode(f, zeros(Float64, n))
+    Σ === nothing && return u, Matrix(1.0I, n, n)
+    # posterior no wider than the prior in u-space
+    for k in 1:n
+        Σ[k, k] > 1.0 && (r = 1 / sqrt(Σ[k, k]); Σ[k, :] .*= r; Σ[:, k] .*= r)
+    end
+    return u, Σ
+end
+
+# damped Newton for the mode of f from u0: (mode, (-H)⁻¹), or (point, nothing) when f is
+# not finite at u0 or -H is not positive definite at the end point
+function _vem_newton_mode(f, u0::Vector{Float64})
+    n = length(u0)
+    u = copy(u0)
     fu = f(u)
-    isfinite(fu) || return u, Matrix(1.0I, n, n)
+    isfinite(fu) || return u, nothing
     λ = 1.0e-3
     for _ in 1:100
         g = ForwardDiff.gradient(f, u)
@@ -644,17 +659,30 @@ function _vem_u_laplace(f, n::Int)
         ForwardDiff.hessian(f, u)
     catch err
         _is_numeric_error(err) || rethrow()
-        return u, Matrix(1.0I, n, n)
+        return u, nothing
     end
-    all(isfinite, H) || return u, Matrix(1.0I, n, n)
+    all(isfinite, H) || return u, nothing
     C = cholesky(Symmetric(-H); check = false)
-    issuccess(C) || return u, Matrix(1.0I, n, n)
-    Σ = Matrix(inv(C))
-    # posterior no wider than the prior in u-space
-    for k in 1:n
-        Σ[k, k] > 1.0 && (r = 1 / sqrt(Σ[k, k]); Σ[k, :] .*= r; Σ[:, k] .*= r)
-    end
-    return u, Σ
+    issuccess(C) || return u, nothing
+    return u, Matrix(inv(C))
+end
+
+# Center and scale of the adaptive rule of one batch at θu (Float64): the mode of the log
+# integrand in the variational space and the Cholesky factor of (-H)⁻¹ there (Newton from
+# the fitted q's mean), or q itself where that curvature is not negative definite.
+function _vem_adapt_rule(
+        θu::ComponentArray, μq::Vector{Float64}, Lq::Matrix{Float64}, dm::DataModel,
+        info::REBatchInfo, const_cache, ll_cache::_LLCache
+    )
+    base = _vem_measure(info, θu, const_cache, dm, ll_cache)
+    base === nothing && return μq, Lq
+    θ_re = _symmetrize_psd_params(θu, get_fixed(get_model(dm)))
+    f = v -> _vem_logjoint(v, base, dm, info, θ_re, const_cache, ll_cache)
+    v, Σ = _vem_newton_mode(f, μq)
+    Σ === nothing && return μq, Lq
+    C = cholesky(Symmetric(Σ); check = false)
+    issuccess(C) || return μq, Lq
+    return v, Matrix(C.L)
 end
 
 function _vem_kappa_from(m::AbstractVector, Σ::AbstractMatrix, n::Int, family::Symbol)
@@ -1094,6 +1122,10 @@ function _fit_model(
     # the gradient at the start (the variational block is already O(1) through the fixed
     # preconditioner of each q). Badly scaled fixed effects (M18: slope 1e-3 x times up to
     # 5e3) otherwise stalled L-BFGS (5000 iterations, |g| = 3e3, a = 1.5 vs 5).
+    # Where that curvature is not positive, the scale comes from the BHHH information
+    # Σ_i (∂ELBO_i/∂θ_j)² (the per-batch score outer product) instead of s_j = 1: unit scale
+    # was ~100x the posterior-sd scale of the other coordinates, and on a Beta RE (M05)
+    # L-BFGS then drove log α₁ onto the flat asymptote α₁ → ∞ (Beta mass at 1).
     s = ones(Float64, p)
     # Under MiniBatch an Optimisers rule takes fixed-size steps in these units; posterior-sd
     # units would make them tiny for well-determined effects, so s stays 1 there.
@@ -1101,6 +1133,10 @@ function _fit_model(
         G0 = zeros(Float64, off)
         f0 = fg!(0.0, G0, x0)
         if isfinite(f0) && all(isfinite, G0)
+            bhhh = zeros(Float64, p)
+            for k in 1:nk
+                bhhh .+= abs2.(gθs[k])
+            end
             Gj = similar(G0)
             for j in 1:p
                 h = 1.0e-4 * max(1.0, abs(x0[j]))
@@ -1108,8 +1144,8 @@ function _fit_model(
                 xj[j] += h
                 fj = fg!(0.0, Gj, xj)
                 Hjj = (Gj[j] - G0[j]) / h
-                (isfinite(fj) && isfinite(Hjj) && Hjj > 0) &&
-                    (s[j] = clamp(1 / sqrt(Hjj), 1.0e-6, 1.0e2))
+                Hjj = isfinite(fj) && isfinite(Hjj) && Hjj > 0 ? Hjj : bhhh[j]
+                (isfinite(Hjj) && Hjj > 0) && (s[j] = clamp(1 / sqrt(Hjj), 1.0e-6, 1.0e2))
             end
         end
     end
@@ -1157,7 +1193,11 @@ function _fit_model(
             maximum(nb[keep]; init = 0) <= 3
     )
     if do_refine
-        # ---- IS refinement with each q frozen (removes the variational bias) ----
+        # ---- refinement: maximize the adaptive quadrature / IS marginal likelihood ----
+        # (removes the variational bias). The rule of each batch is re-centered at every θ
+        # (mode and Laplace scale, Newton from q's mean): nodes frozen at the VEM fit lose
+        # accuracy as θ moves, and the optimizer exploited that error (3 correlated binary
+        # REs: objective 20 below the MLE, a variance 3.7 vs 1.52).
         qs = [
             begin
                     μq, Lq = _vem_q_moments(Vector{Float64}(x̂[ranges[k]]), ξs[k], nb[bi], family, θ_hat_u)
@@ -1167,12 +1207,15 @@ function _fit_model(
         DRr = ForwardDiff.DiffResults
         fr = xθ -> begin
             θu = θu_of(xθ)
+            θv = eltype(xθ) === Float64 ? θu : θu_of(ForwardDiff.value.(xθ))
             T = eltype(θu)
             lls = Vector{T}(undef, nk)
             _vem_foreach(nk, caches) do k, lc
                 iszero(wk[k]) && (lls[k] = zero(T); return)
-                μ, L, (xn, lw) = qs[k]
-                lls[k] = _vem_refine_batch_ll(θu, μ, L, xn, lw, dm, batch_infos[keep[k]], const_cache, lc)
+                μq, Lq, (xn, lw) = qs[k]
+                info = batch_infos[keep[k]]
+                μ, L = _vem_adapt_rule(θv, μq, Lq, dm, info, const_cache, lc)
+                lls[k] = _vem_refine_batch_ll(θu, μ, L, xn, lw, dm, info, const_cache, lc)
             end
             flls = Vector{T}(undef, nf)
             _vem_foreach(nf, caches) do j, lc
@@ -1222,7 +1265,8 @@ function _fit_model(
 
     # ---- objective: importance-sampling marginal likelihood around the fitted q ----
     # batches with 1-3 REs: adaptive tensor Gauss-Hermite around q (the refinement rule;
-    # deterministic and more accurate than n_is draws), otherwise t importance sampling
+    # deterministic and more accurate than n_is draws), otherwise t importance sampling.
+    # After a refinement the rule is re-centered at θ̂ (q was fitted at the VEM estimate).
     objective = if method.n_is > 0
         is_rngs = _spawn_child_rngs(rng, nk)
         lls = Vector{Float64}(undef, nk)
@@ -1230,6 +1274,8 @@ function _fit_model(
             iszero(wk[k]) && (lls[k] = 0.0; return)
             bi = keep[k]
             μq, Lq = _vem_q_moments(Vector{Float64}(x̂[ranges[k]]), ξs[k], nb[bi], family, θ_hat_u)
+            do_refine &&
+                ((μq, Lq) = _vem_adapt_rule(θ_hat_u, μq, Lq, dm, batch_infos[bi], const_cache, lc))
             lls[k] = nb[bi] <= 3 ?
                 _vem_refine_batch_ll(
                     θ_hat_u, μq, Lq, _vem_refine_nodes(nb[bi], 0, method.is_df, is_rngs[k])...,
