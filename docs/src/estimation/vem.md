@@ -21,7 +21,9 @@ effects (e.g. neural networks) and many random effects.
 ## Applicability
 
 - Requires a model with random effects and at least one free fixed effect.
-- `penalty` and `extra_objective` are not supported; fixed-effect priors are ignored.
+- `penalty`, `extra_objective` and likelihood weights of the `DataModel` are supported (see
+  [Penalties and Weights](#Penalties-and-Weights));
+  fixed-effect priors are ignored.
 - Any continuous random-effect distribution is supported with the default `adtype`
   (the same set as [GHQuadrature](ghquadrature.md)); discrete random effects are rejected.
   A non-ForwardDiff `adtype` (reverse mode) requires Gaussian (`Normal`/`MvNormal`)
@@ -103,6 +105,32 @@ ad = NoLimits.Optimization.AutoEnzyme(;
 res = fit_model(dm, NoLimits.VEM(; adtype = ad); rng = Random.Xoshiro(1))
 ```
 
+## Penalties and Weights
+
+The `penalty` and `extra_objective` keywords of [`fit_model`](@ref) work as for
+[Laplace](laplace.md). Both are functions of the fixed effects on the natural scale; they
+are added to the negative ELBO of the joint fit, to the objective of the `refine` step and to
+the reported objective, and their gradients (ForwardDiff) enter the optimizer's gradient.
+Under [`MiniBatch`](@ref) they are added once per iteration and are not multiplied by
+`nbatches / |B|`. The ELBO in the notes of `get_result(res)` excludes them.
+
+```julia
+res = fit_model(
+    dm, NoLimits.VEM();
+    penalty = (; a = 10.0),                       # adds 10 a²
+    extra_objective = θ -> 5.0 * (θ.b + 0.5)^2,   # any differentiable function of θ
+    rng = Random.Xoshiro(1),
+)
+```
+
+Likelihood weights of the `DataModel` (`DataModel(...; weights = :w)`) multiply the ELBO
+term of each random-effect batch, and its marginal-likelihood term in the `refine` step and
+in the reported objective, so a weight of 2 is equivalent to a duplicated individual. The
+optimal variational distribution of a batch does not depend on its weight. Random-effect
+levels fixed through `constants_re` enter as for Laplace: with the prior density of the fixed
+values, and a batch without free levels (and hence without variational distribution) with its
+log-likelihood at the fixed values.
+
 ## Variational Options
 
 - `family = :dense`: full lower-triangular scale; `:diagonal` gives a mean-field family,
@@ -125,10 +153,10 @@ res = fit_model(dm, NoLimits.VEM(; adtype = ad); rng = Random.Xoshiro(1))
 ## Results and Reproducibility
 
 `get_objective` returns the quadrature or importance-sampling estimate of the negative marginal
-log-likelihood, `get_iterations` the iterations of the joint fit and `get_converged` whether
-the joint fit (and an accepted refinement) ended with a successful return code. The notes
-of `get_result(res)` hold the final ELBO, the number of refinement iterations and the
-fitted variational parameters.
+log-likelihood (plus `penalty` and `extra_objective`), `get_iterations` the iterations of the
+joint fit and `get_converged` whether the joint fit (and an accepted refinement) ended with a
+successful return code. The notes of `get_result(res)` hold the final ELBO, the number of
+refinement iterations and the fitted variational parameters.
 
 All randomness (Monte Carlo draws, refinement nodes, importance-sampling draws, start
 repair and EBE multistart) comes from the `rng` keyword of `fit_model`, as for

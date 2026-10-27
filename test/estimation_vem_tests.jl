@@ -7,6 +7,8 @@ using Random
 using OptimizationOptimJL
 using Statistics
 using ForwardDiff
+using ComponentArrays
+import Optimisers
 
 # VEM (variational EM, Tarek & Afonso 2026). Linear-Gaussian anchor: the dense Gaussian
 # family is exact, so VEM must reproduce the (exact) Laplace MLE up to the sample-average
@@ -183,6 +185,172 @@ end
     @test get_result(ra).notes.refine_iterations == 0
     @test collect(get_params(fit_model(dm, mb; rng = Xoshiro(5)); scale = :transformed)) ==
         collect(get_params(ra; scale = :transformed))
+end
+
+# Holds θ (and q) at the start: Adam with learning rate 0 for one iteration (both stages).
+_vem_frozen(; kw...) = NoLimits.VEM(;
+    optimizer = Optimisers.Adam(0.0), optim_kwargs = (; maxiters = 1), kw...
+)
+
+@testset "VEM: penalty and extra_objective" begin
+    dm = _vem_lin_dm(Xoshiro(11))
+    fe = NoLimits.get_fixed(NoLimits.get_model(dm))
+    θ0 = NoLimits.get_θ0_untransformed(fe)
+    pen = (; σ = 2.0)
+    extra = θ -> (θ.a - 1.0)^2 + sum(abs2, θ.Ω)
+    term(θ) = 2.0 * θ.σ^2 + extra(θ)
+
+    # objective = unpenalized objective + penalty + extra_objective at the same θ; the
+    # notes keep the plain ELBO
+    r0 = fit_model(dm, _vem_frozen(); rng = Xoshiro(3))
+    rp = fit_model(dm, _vem_frozen(); penalty = pen, extra_objective = extra, rng = Xoshiro(3))
+    θh = get_params(r0; scale = :untransformed)
+    @test collect(θh) ≈ collect(θ0) rtol = 1.0e-12
+    @test collect(get_params(rp; scale = :untransformed)) == collect(θh)
+    @test get_objective(rp) ≈ get_objective(r0) + term(θh) rtol = 1.0e-12
+    @test get_result(rp).notes.elbo ≈ get_result(r0).notes.elbo rtol = 1.0e-12
+    @test get_result(rp).solution.objective ≈ get_result(r0).solution.objective + term(θh) rtol = 1.0e-12
+    rn = fit_model(dm, _vem_frozen(; n_is = 0); penalty = pen, extra_objective = extra, rng = Xoshiro(3))
+    @test get_objective(rn) ≈ -get_result(rn).notes.elbo + term(θh) rtol = 1.0e-12
+
+    # gradient: one plain gradient step (MiniBatch keeps the fixed-effect scaling at 1), so
+    # θ1 = θ0 - η ∇f and the difference of the penalized and plain steps is η ∇term;
+    # the term is not scaled by K/|B| when only half of the batches are used
+    K = length(NoLimits.get_individuals(dm))
+    η = 1.0e-2
+    tr, itr = NoLimits.get_transform(fe), NoLimits.get_inverse_transform(fe)
+    θt0 = tr(θ0)
+    tt(v) = term(itr(ComponentArray(v, getaxes(θt0))))
+    gref = ForwardDiff.gradient(tt, collect(θt0))
+    h = 1.0e-6
+    gfd = map(eachindex(θt0)) do i
+        e = zeros(length(θt0))
+        e[i] = h
+        (tt(collect(θt0) .+ e) - tt(collect(θt0) .- e)) / (2h)
+    end
+    @test gref ≈ gfd rtol = 1.0e-6
+    for sched in (K, K ÷ 2)
+        mb = NoLimits.MiniBatch(
+            NoLimits.VEM(; refine = false, n_is = 0); schedule = sched,
+            optimizer = Optimisers.Descent(η), optim_kwargs = (; maxiters = 1)
+        )
+        s0 = fit_model(dm, mb; rng = Xoshiro(3))
+        sp = fit_model(dm, mb; penalty = pen, extra_objective = extra, rng = Xoshiro(3))
+        Δ = (collect(get_params(s0; scale = :transformed)) .- collect(get_params(sp; scale = :transformed))) ./ η
+        @test Δ ≈ gref rtol = 1.0e-7
+        mb0 = NoLimits.MiniBatch(
+            NoLimits.VEM(; refine = false, n_is = 0); schedule = sched,
+            optimizer = Optimisers.Adam(0.0), optim_kwargs = (; maxiters = 1)
+        )
+        o0 = get_result(fit_model(dm, mb0; rng = Xoshiro(3))).solution.objective
+        op = get_result(
+            fit_model(dm, mb0; penalty = pen, extra_objective = extra, rng = Xoshiro(3))
+        ).solution.objective
+        @test op ≈ o0 + term(θh) rtol = 1.0e-12
+    end
+
+    # a penalty moves the estimates as for Laplace (exact for this linear Gaussian model)
+    pa = (; a = 50.0)
+    eb = θ -> 30.0 * (θ.b + 1.0)^2
+    rv0 = fit_model(dm, NoLimits.VEM(); rng = Xoshiro(3))
+    rv = fit_model(dm, NoLimits.VEM(); penalty = pa, extra_objective = eb, rng = Xoshiro(3))
+    rl = fit_model(dm, NoLimits.Laplace(); penalty = pa, extra_objective = eb)
+    θv0, θv, θl = (get_params(r; scale = :untransformed) for r in (rv0, rv, rl))
+    @test get_converged(rv)
+    @test θv.a < θv0.a - 0.5
+    @test θv.b < θv0.b - 0.05
+    @test isapprox(θv.a, θl.a; atol = 0.02)
+    @test isapprox(θv.b, θl.b; atol = 0.02)
+    @test isapprox(θv.σ, θl.σ; rtol = 0.02)
+    @test isapprox(θv.Ω, θl.Ω; atol = 0.03)
+    @test abs(get_objective(rv) - get_objective(rl)) < 1.0
+    # Wald UQ includes the terms (as for Laplace)
+    iv = get_uq_intervals(compute_uq(rv; method = :wald))
+    @test iv.lower.a < θv.a < iv.upper.a
+end
+
+@testset "VEM: DataModel weights" begin
+    dm = _vem_lin_dm(Xoshiro(11))
+    model = NoLimits.get_model(dm)
+    df = get_df(dm)
+    mk(d; kw...) = DataModel(model, d; primary_id = :ID, time_col = :t, kw...)
+    j = 7
+    df1 = copy(df)
+    df1.w = ones(nrow(df1))
+    df1.w2 = [id == j ? 2.0 : 1.0 for id in df1.ID]
+    dup = df[df.ID .== j, :]
+    dup.ID .= 1000
+    dm1, dmw, dmd = mk(df1; weights = :w), mk(df1; weights = :w2), mk(vcat(df, dup))
+
+    # unit weights reproduce the unweighted fit exactly
+    r0 = fit_model(dm, NoLimits.VEM(); rng = Xoshiro(3))
+    r1 = fit_model(dm1, NoLimits.VEM(); rng = Xoshiro(3))
+    @test collect(get_params(r1; scale = :transformed)) == collect(get_params(r0; scale = :transformed))
+    @test get_objective(r1) == get_objective(r0)
+    @test get_result(r1).notes.elbo == get_result(r0).notes.elbo
+
+    # weight 2 equals a duplicated individual: ELBO and objective at the start, one gradient
+    # step, and the fit
+    fw = fit_model(dmw, _vem_frozen(); rng = Xoshiro(3))
+    fd = fit_model(dmd, _vem_frozen(); rng = Xoshiro(3))
+    @test get_result(fw).notes.elbo ≈ get_result(fd).notes.elbo rtol = 1.0e-10
+    @test get_objective(fw) ≈ get_objective(fd) rtol = 1.0e-10
+    f0 = fit_model(dm, _vem_frozen(); rng = Xoshiro(3))
+    @test !isapprox(get_objective(fw), get_objective(f0); rtol = 1.0e-3)
+    step(d, K) = fit_model(
+        d,
+        NoLimits.MiniBatch(
+            NoLimits.VEM(; refine = false, n_is = 0); schedule = K,
+            optimizer = Optimisers.Descent(1.0e-2), optim_kwargs = (; maxiters = 1)
+        );
+        rng = Xoshiro(3)
+    )
+    @test collect(get_params(step(dmw, 60); scale = :transformed)) ≈
+        collect(get_params(step(dmd, 61); scale = :transformed)) rtol = 1.0e-10
+    rw = fit_model(dmw, NoLimits.VEM(); rng = Xoshiro(3))
+    rd = fit_model(dmd, NoLimits.VEM(); rng = Xoshiro(3))
+    @test get_converged(rw) && get_converged(rd)
+    @test collect(get_params(rw; scale = :untransformed)) ≈
+        collect(get_params(rd; scale = :untransformed)) atol = 2.0e-3
+    @test get_objective(rw) ≈ get_objective(rd) atol = 1.0e-3
+
+    # MiniBatch: weighted batch terms scale by K/|B| like unweighted ones
+    obj(sched) = get_result(
+        fit_model(
+            dmw,
+            NoLimits.MiniBatch(
+                NoLimits.VEM(; refine = false, n_is = 0); schedule = sched,
+                optimizer = Optimisers.Adam(0.0), optim_kwargs = (; maxiters = 1)
+            );
+            rng = Xoshiro(3)
+        )
+    ).solution.objective
+    @test (obj((n, it, r) -> 1:30) + obj((n, it, r) -> 31:n)) / 2 ≈ obj(:all) rtol = 1.0e-10
+
+    # levels fixed by constants_re enter as for Laplace: a batch without free levels
+    # contributes log p(y_b, b_fixed | θ) (at the start: a = b = 0, η = 0)
+    cre = (; η = Dict(1 => [0.0, 0.0]))
+    rc = fit_model(dm, _vem_frozen(); constants_re = cre, rng = Xoshiro(3))
+    rr = fit_model(mk(df[df.ID .!= 1, :]), _vem_frozen(); rng = Xoshiro(3))
+    θc = get_params(rc; scale = :untransformed)
+    ll1 = sum(logpdf.(Normal(0.0, θc.σ), df.y[df.ID .== 1])) +
+        logpdf(MvNormal(zeros(2), Matrix(θc.Ω)), zeros(2))
+    @test get_objective(rc) ≈ get_objective(rr) - ll1 rtol = 1.0e-10
+    @test get_result(rc).notes.elbo ≈ get_result(rr).notes.elbo + ll1 rtol = 1.0e-10
+    # at the start q is the exact posterior of this linear Gaussian model, so the reported
+    # objective is the exact marginal likelihood, as Laplace's; also with a fixed level in
+    # a batch with free levels (prior density of the fixed site level)
+    lfrozen = NoLimits.Laplace(; optimizer = Optimisers.Adam(0.0), optim_kwargs = (; maxiters = 1))
+    @test get_objective(rc) ≈ get_objective(fit_model(dm, lfrozen; constants_re = cre)) rtol = 1.0e-6
+    for c in (NamedTuple(), (; η_site = Dict(:A => 0.3)))
+        ov = get_objective(fit_model(fx_mg_dm(), _vem_frozen(); constants_re = c, rng = Xoshiro(3)))
+        ol = get_objective(fit_model(fx_mg_dm(), lfrozen; constants_re = c))
+        @test ov ≈ ol rtol = 1.0e-6
+    end
+    rcf = fit_model(dm, NoLimits.VEM(); constants_re = cre, rng = Xoshiro(3))
+    rcl = fit_model(dm, NoLimits.Laplace(); constants_re = cre)
+    @test collect(get_params(rcf; scale = :untransformed)) ≈
+        collect(get_params(rcl; scale = :untransformed)) atol = 0.03
 end
 
 # Opt-in like enzyme_compat_proxy_tests.jl: Enzyme is not a test dependency.
