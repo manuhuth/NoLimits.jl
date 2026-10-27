@@ -353,6 +353,38 @@ end
         collect(get_params(rcl; scale = :untransformed)) atol = 0.03
 end
 
+@testset "VEM: model bounds, ignore_model_bounds, optimizers without bounds support" begin
+    dm = _vem_lin_dm(Xoshiro(11))
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.0; upper = 1.5)
+            b = RealNumber(0.0)
+            σ = RealNumber(0.5; scale = :log)
+            Ω = RealPSDMatrix([0.3 0.0; 0.0 0.3]; scale = :cholesky)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(MvNormal([0.0, 0.0], Ω); column = :ID)
+        end
+        @formulas begin
+            y ~ Normal((a + η[1]) + (b + η[2]) * t, σ)
+        end
+    end
+    dmb = DataModel(model, get_df(dm); primary_id = :ID, time_col = :t)
+    # the declared bound binds in the joint fit and in the refinement (MLE a ≈ 1.96)
+    # (refinement without bounds would move a back above 1.5)
+    rb = fit_model(dmb, NoLimits.VEM(); rng = Xoshiro(3))
+    @test 1.4 < get_params(rb; scale = :untransformed).a <= 1.5 + 1.0e-8
+    ri = fit_model(dmb, NoLimits.VEM(; ignore_model_bounds = true); rng = Xoshiro(3))
+    @test get_params(ri; scale = :untransformed).a > 1.8
+    # the variational parameters are unbounded: optimizers that need a finite box are rejected
+    @test_throws "needs finite bounds" fit_model(
+        dmb, NoLimits.VEM(; optimizer = OptimizationOptimJL.ParticleSwarm())
+    )
+end
+
 # Opt-in like enzyme_compat_proxy_tests.jl: Enzyme is not a test dependency.
 if get(ENV, "NOLIMITS_TEST_ENZYME", "false") == "true" && VERSION >= v"1.12.5" &&
         Base.find_package("Enzyme") !== nothing

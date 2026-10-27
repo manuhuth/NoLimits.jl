@@ -54,6 +54,10 @@
   were left out), and the prior density of fixed levels is included (before, missing).
   This changes VEM fits with `constants_re`, e.g. in `fit_cv`.
 
+- VEM rejects optimizers that need finite bounds on every coordinate (BlackBoxOptim
+  methods, `ParticleSwarm`) with an error, since the variational parameters are unbounded
+  (#379, #380).
+
 - The `rng` keyword of every estimator, cross-validation and UQ entry point now defaults
   to a fresh `Xoshiro(42)` per call instead of `Random.default_rng()`. Fits with `SAEM`,
   `MCEM` (all E-steps), `MCMC`, `VI`, `VEM`, `MiniBatch` schedule draws, EBE multistarts,

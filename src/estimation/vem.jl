@@ -84,7 +84,9 @@ effects: no inner mode finding or Hessian per objective evaluation, unlike Lapla
   Gaussian random effects (centered variational space, evaluated through the
   Enzyme-compatible batch log-joint). The `refine` step always uses ForwardDiff.
 - `lb`, `ub`: bounds on the transformed fixed-effect scale, or `nothing` to use the
-  model-declared bounds (as for [`Laplace`](@ref)). Variational parameters are unbounded.
+  model-declared bounds (as for [`Laplace`](@ref)). Variational parameters are unbounded,
+  so optimizers that need finite bounds on every coordinate (BlackBoxOptim methods,
+  `ParticleSwarm`) are rejected.
 - `ignore_model_bounds::Bool = false`: ignore the bounds declared in `@fixedEffects`
   (explicit `lb`/`ub` still apply).
 - `n_samples = :auto`: draws per batch in the sample-average ELBO (fixed per fit). `:auto`
@@ -750,6 +752,20 @@ function _vem_penalty(θu, penalty::NamedTuple, extra_objective)
     return v + convert(T, extra_objective(θu))
 end
 
+# The variational parameters are unbounded, so optimizers that need a finite box on every
+# coordinate cannot run the joint problem.
+function _vem_check_optimizer(opt)
+    (
+        nameof(parentmodule(typeof(opt))) === :OptimizationBBO ||
+            opt isa OptimizationOptimJL.ParticleSwarm
+    ) || return nothing
+    return error(
+        "VEM: $(nameof(typeof(opt))) needs finite bounds on every coordinate, but VEM " *
+            "optimizes the unbounded variational parameters jointly with the fixed effects. " *
+            "Use a gradient-based optimizer (e.g. the default LBFGS)."
+    )
+end
+
 _sol_iterations(sol) = hasproperty(sol, :stats) && hasproperty(sol.stats, :iterations) ?
     sol.stats.iterations : missing
 
@@ -787,6 +803,7 @@ function _fit_model(
         store_eb_modes = store_eb_modes, store_data_model = store_data_model,
         extra_objective = extra_objective,
     )
+    _vem_check_optimizer(method.optimizer)
     re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) &&
         error("VEM requires random effects. Use MLE/MAP for fixed-effects models.")

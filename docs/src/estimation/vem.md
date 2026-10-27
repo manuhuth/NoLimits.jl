@@ -76,7 +76,8 @@ VEM takes the same optimizer keywords as [`Laplace`](@ref) and [`MLE`](@ref):
   for roughly 100 or more fixed-effect coordinates.
 - `lb`, `ub`, `ignore_model_bounds`: bounds on the transformed fixed-effect scale, resolved
   as for the other methods (model-declared bounds by default). The variational parameters
-  are unbounded.
+  are unbounded, so optimizers that need finite bounds on every coordinate
+  (BlackBoxOptim methods, `ParticleSwarm`) are rejected with an error.
 
 The optimizer receives the objective value and its analytic gradient in one call, on a
 diagonally rescaled offset of the fixed effects. The optional refinement step (`refine`)
