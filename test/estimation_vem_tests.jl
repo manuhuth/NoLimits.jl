@@ -310,6 +310,73 @@ end
     @test isapprox(θ.c, 2.0; rtol = 0.1)
 end
 
+@testset "VEM: objective after refinement is the marginal likelihood at the estimate (#371)" begin
+    # The VEM stage is stopped early, so the refinement moves θ away from the fitted q. With
+    # nodes frozen at q the reported objective was off by 0.22 (1 RE) and 1.5 (3 REs).
+    m1 = @Model begin
+        @fixedEffects begin
+            b0 = RealNumber(0.0)
+            b1 = RealNumber(0.0)
+            ω = RealNumber(0.3; scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, ω); column = :ID)
+        end
+        @formulas begin
+            y ~ Bernoulli(1 / (1 + exp(-(b0 + η + b1 * t))))
+        end
+    end
+    m3 = @Model begin
+        @fixedEffects begin
+            b0 = RealNumber(0.0)
+            b1 = RealNumber(0.0)
+            b2 = RealNumber(0.0)
+            Ω = RealPSDMatrix(Matrix(0.2I, 3, 3); scale = :cholesky)
+        end
+        @covariates begin
+            t = Covariate()
+            x = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(MvNormal(zeros(3), Ω); column = :ID)
+        end
+        @formulas begin
+            y ~ Bernoulli(1 / (1 + exp(-((b0 + η[1]) + (b1 + η[2]) * t + (b2 + η[3]) * x))))
+        end
+    end
+    rng = Xoshiro(100)
+    rows = NamedTuple[]
+    for i in 1:100
+        η = 2.0 * randn(rng)
+        for t in 0.0:1.0:5.0
+            push!(rows, (; ID = i, t, y = rand(rng) < 1 / (1 + exp(-(-1 + η + 0.3 * t))) ? 1 : 0))
+        end
+    end
+    dm1 = DataModel(m1, DataFrame(rows); primary_id = :ID, time_col = :t)
+    S = Diagonal([2.1, 1.4, 1.7])
+    L = cholesky(Symmetric(S * [1.0 -0.3 0.4; -0.3 1.0 0.2; 0.4 0.2 1.0] * S)).L
+    rng = Xoshiro(60)
+    rows = NamedTuple[]
+    for i in 1:60
+        η = L * randn(rng, 3)
+        x0 = rand(rng, 0:1)
+        for (j, t) in enumerate(range(0, 1; length = 6))
+            x = Float64(isodd(j + x0))
+            lp = (-0.5 + η[1]) + (1 + η[2]) * t + (0.8 + η[3]) * x
+            push!(rows, (; ID = i, t, x, y = rand(rng) < 1 / (1 + exp(-lp)) ? 1 : 0))
+        end
+    end
+    dm3 = DataModel(m3, DataFrame(rows); primary_id = :ID, time_col = :t)
+    for (dm, level, tol) in ((dm1, 30, 0.02), (dm3, 11, 0.1))
+        res = fit_model(dm, NoLimits.VEM(; optim_kwargs = (; maxiters = 3)); rng = Xoshiro(1))
+        @test get_result(res).notes.refine_iterations > 0
+        @test isapprox(get_objective(res), -get_loglikelihood_quadrature(dm, res; level); atol = tol)
+    end
+end
+
 @testset "VEM: threaded fit equals serial bitwise" begin
     dm = _vem_lin_dm(Xoshiro(11))
     for m in (NoLimits.VEM(), NoLimits.VEM(; expectation = :mc, n_samples = 8, n_is = 50, optim_kwargs = (; maxiters = 10)))
