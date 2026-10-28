@@ -311,10 +311,11 @@ struct _VEMDraws
     m0::Vector{Float64}
     S0::Matrix{Float64}
     logdetS0::Float64
-    # automatic centering (as for SAEM/MCEM): for each additive pair `fe + η` the q mean of
-    # the paired RE coordinates moves by -(fe - fe0), so changing fe does not require all
-    # batches' q means to follow along the a-η ridge (M18 crawled along it for 1000 iterations)
-    center::Vector{Tuple{Int, Vector{Int}, Float64}}
+    # automatic centering (as for SAEM/MCEM): for each pair `fe + η` (`fe * exp(η)`: log fe)
+    # the q mean of the paired RE coordinates moves by -(fe - fe0), so changing fe does not
+    # require all batches' q means to follow along the a-η ridge (M18 crawled along it for
+    # 1000 iterations). Entries (fe index, RE indices, fe0 or log fe0, log scale).
+    center::Vector{Tuple{Int, Vector{Int}, Float64, Bool}}
     K::Int   # planar-flow layers (0: Gaussian family)
 end
 
@@ -324,8 +325,8 @@ function _vem_effective(κ::AbstractVector, dr::_VEMDraws, n::Int, family::Symbo
     if !isempty(dr.center)
         T = promote_type(eltype(μ), eltype(θu))
         μ = Vector{T}(μ)
-        for (j, idx, fe0) in dr.center
-            δ = θu[j] - fe0
+        for (j, idx, c0, lg) in dr.center
+            δ = (lg ? log(θu[j]) : θu[j]) - c0
             for i in idx
                 μ[i] -= δ
             end
@@ -337,7 +338,7 @@ end
 
 function _vem_draws(
         n::Int, method, rng::AbstractRNG, κinit::Vector{Float64}, family::Symbol,
-        center::Vector{Tuple{Int, Vector{Int}, Float64}} = Tuple{Int, Vector{Int}, Float64}[]
+        center::Vector{Tuple{Int, Vector{Int}, Float64, Bool}} = Tuple{Int, Vector{Int}, Float64, Bool}[]
     )
     m0 = κinit[1:n]
     S0 = _vem_scale(κinit, n, family)
@@ -931,11 +932,15 @@ function _fit_model(
     end
     # draws serially, in batch order: the rng stream does not depend on the threading
     for (k, bi) in enumerate(keep)
-        center = Tuple{Int, Vector{Int}, Float64}[
+        # only where q lives on b (Gaussian batches): in the standardized u-space the ridge
+        # shift of a paired coordinate would be δ / sd(θ)
+        gauss = _vem_measure(batch_infos[bi], θu0, const_cache, dm, ll_cache) isa GaussianRE
+        center = Tuple{Int, Vector{Int}, Float64, Bool}[
             (
                     Int(getproperty(idx_u, cp.fe)), _cs_batch_indices(batch_infos[bi], re_names, cp.re, cp.k),
-                    Float64(getproperty(θu0, cp.fe)),
-                ) for cp in cpairs
+                    cp.mode === :mul ? log(Float64(getproperty(θu0, cp.fe))) :
+                    Float64(getproperty(θu0, cp.fe)), cp.mode === :mul,
+                ) for cp in cpairs if gauss
         ]
         push!(ξs, _vem_draws(nb[bi], method, rng, κinits[k], family, center))
         # preconditioned start: μ̃ = 0, L̃ = I  (κ zeros)
