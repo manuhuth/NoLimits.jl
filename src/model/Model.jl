@@ -642,14 +642,21 @@ end
 
 function _de_state_layout(m::Model, const_cov::NamedTuple = NamedTuple())
     (m.de.de === nothing || m.de.initial_builder === nothing) && return nothing
+    # `invokelatest`: the model's generated functions may be newer than the caller's
+    # world (a model defined via `eval` in a running function); one probe call per
+    # DataModel, so the dynamic call costs nothing measurable.
     u0 = try
-        θ = get_θ0_untransformed(m.fixed.fixed)
-        η = _probe_random_effects(m, θ, const_cov)
-        _initial_state_with_pre(m, θ, η, const_cov, calculate_prede(m, θ, η, const_cov))
+        Base.invokelatest(_probe_initial_state, m, const_cov)
     catch
         return nothing
     end
     return _de_layout_from_init(u0, get_de_states(m.de.de))
+end
+
+function _probe_initial_state(m::Model, const_cov::NamedTuple)
+    θ = get_θ0_untransformed(m.fixed.fixed)
+    η = _probe_random_effects(m, θ, const_cov)
+    return _initial_state_with_pre(m, θ, η, const_cov, calculate_prede(m, θ, η, const_cov))
 end
 
 # State layout (or `nothing` for all-scalar states) at given (θ, η, covariates).

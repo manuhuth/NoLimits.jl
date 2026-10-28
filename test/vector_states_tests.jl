@@ -938,3 +938,38 @@ end
     )
     @test e2 !== nothing && occursin("integer literal", msg(e2))
 end
+
+@testset "state layout probe for a model defined while a function runs" begin
+    # The model's generated functions are newer than the running function's world; the
+    # DataModel's layout probe must still see the vector state (dosing maps by it).
+    function build_in_running_function()
+        m = Core.eval(
+            @__MODULE__, :(
+                @Model begin
+                    @fixedEffects begin
+                        ka = RealNumber(1.0, scale = :log)
+                        ke = RealNumber(0.2, scale = :log)
+                        σ = RealNumber(0.2, scale = :log)
+                    end
+                    @covariates begin
+                        t = Covariate()
+                    end
+                    @DifferentialEquation begin
+                        D(g) ~ [-ka * g[1], ka * g[1] - ka * g[2]]
+                        D(c) ~ ka * g[2] - ke * c
+                    end
+                    @initialDE begin
+                        g = [0.0, 0.0]
+                        c = 0.0
+                    end
+                    @formulas begin
+                        y ~ Normal(c(t), σ)
+                    end
+                end
+            )
+        )
+        dm = _vs_dose_dm(m, _vs_dose_df("g[1]", "g[2]", "c"))
+        return NoLimits._dm_state_layout(dm)
+    end
+    @test build_in_running_function() == (g = 1:2, c = 3)
+end
