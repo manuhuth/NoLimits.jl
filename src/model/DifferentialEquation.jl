@@ -158,75 +158,105 @@ end
 # ---------------------------------------------------------------------------
 # Vector-valued states (issue #376)
 # ---------------------------------------------------------------------------
-# A state whose `@initialDE` value is an `AbstractVector` is a vector state. When any
-# state is vector-valued the initial state is a `ComponentVector` (one component per
-# state, in `@DifferentialEquation` order), so the state layout travels with the type
-# of `u` and every macro-generated kernel resolves it by dispatch: plain `Vector` /
-# `SVector` states keep the old scalar `u[i]` / `du[i] = ...` code unchanged.
+# A state whose `@initialDE` value is an `AbstractVector` is a vector state. The solver
+# always integrates ONE flat plain `Vector` (states concatenated in declaration order);
+# where each state sits in it is the *state layout*, a NamedTuple with an `Int` (scalar
+# state) or a `UnitRange` (vector state) per state. The layout is created once per
+# solve from the initial values and travels in the compiled DE context as `states`
+# (`nothing` for all-scalar models, whose generated code is exactly the old
+# `u[i]` / `du[i] = ...`). Its field types are fixed by the model, so every lookup
+# below resolves by dispatch.
+
+"""
+    _DEInitialState{V, L}
+
+Initial state of a model with vector-valued states: the flat state vector `u` and its
+state layout (see above). Produced by [`_de_initial_state`](@ref) and split with
+[`_de_split_init`](@ref) before the solve.
+"""
+struct _DEInitialState{V <: AbstractVector, L <: NamedTuple}
+    u::V
+    layout::L
+end
 
 """
     _de_initial_state(::Val{names}, ::Val{static}, vals...)
 
 Assemble the ODE initial state from the per-state `@initialDE` values. All-scalar
 values give the same `Vector` (or `SVector` when `static`) as before; if any value is
-an `AbstractVector` the result is a `ComponentVector` with one component per state.
+an `AbstractVector`, the values are concatenated into one flat `Vector` and returned
+with their layout as an [`_DEInitialState`](@ref).
 """
 @inline _de_initial_state(::Val, ::Val{false}, vals::Number...) = [vals...]
 @inline function _de_initial_state(::Val, ::Val{true}, vals::Number...)
     return StaticArrays.SVector(vals...)
 end
 function _de_initial_state(::Val{names}, ::Val, vals...) where {names}
-    for v in vals
+    for (n, v) in zip(names, vals)
         (v isa Number || v isa AbstractVector{<:Number}) || error(
-            "@initialDE values must be numbers or vectors of numbers; got $(typeof(v))."
+            "@initialDE value of $(n) must be a number or a vector of numbers; got $(typeof(v))."
         )
+        v isa AbstractVector && isempty(v) &&
+            error("@initialDE value of $(n) is an empty vector.")
     end
-    return ComponentArray(NamedTuple{names}(map(_de_init_component, vals)))
+    T = promote_type(map(eltype, vals)...)
+    layout = NamedTuple{names}(_de_init_layout(1, vals...))
+    u = Vector{T}(undef, sum(length, vals))
+    k = 0
+    for v in vals
+        for x in v                       # a Number iterates once
+            u[k += 1] = x
+        end
+    end
+    return _DEInitialState(u, layout)
 end
-_de_init_component(v::Number) = v
-_de_init_component(v::AbstractVector) = collect(v)
+_de_init_layout(::Int) = ()
+_de_init_layout(o::Int, v::Number, rest...) = (o, _de_init_layout(o + 1, rest...)...)
+function _de_init_layout(o::Int, v::AbstractVector, rest...)
+    return (o:(o + length(v) - 1), _de_init_layout(o + length(v), rest...)...)
+end
 
-"""
-    _de_has_vector_states(u0) -> Bool
+# Flat initial state and its layout (`nothing` for all-scalar models).
+@inline _de_split_init(u0::AbstractVector) = (u0, nothing)
+@inline _de_split_init(u0::_DEInitialState) = (u0.u, u0.layout)
 
-Whether an initial state (from [`_de_initial_state`](@ref)) carries vector states.
-"""
-@inline _de_has_vector_states(u0) = false
-@inline _de_has_vector_states(::ComponentArray) = true
+# Layout of the compiled DE context: `states` when present, `nothing` otherwise.
+@inline _de_states(::Any) = nothing
+@inline function _de_states(p::NamedTuple{names}) where {names}
+    return :states in names ? getfield(p, :states) : nothing
+end
+@inline _de_with_states(compiled::NamedTuple, ::Nothing) = compiled
+@inline _de_with_states(compiled::NamedTuple, layout::NamedTuple) =
+    merge(compiled, (; states = layout))
 
-# Index range (vector state) or Int (scalar state) of state `s` inside a ComponentVector.
-@inline _de_ca_index(u::ComponentArray, s::Symbol) = getaxes(u)[1][s].idx
-
-# Bind state `s` (position `i`) inside the RHS: `u[i]` for plain vectors, the named
-# component (scalar or view) for ComponentVectors.
-@inline _de_state_get(u::AbstractVector, ::Val, i::Int) = @inbounds u[i]
-@inline _de_state_get(u::ComponentArray, ::Val{s}, ::Int) where {s} = getproperty(u, s)
+# Bind state `s` (position `i`) inside the RHS: `u[i]` without a layout, otherwise the
+# element (scalar state) or a view of the range (vector state).
+@inline _de_state_get(u, ::Nothing, ::Val, i::Int) = @inbounds u[i]
+@inline function _de_state_get(u, layout::NamedTuple, ::Val{s}, ::Int) where {s}
+    return _de_get_at(u, getfield(layout, s))
+end
+@inline _de_get_at(u, idx::Integer) = @inbounds u[idx]
+@inline _de_get_at(u, idx::AbstractUnitRange) = view(u, idx)
 
 # Write the derivative of state `s` (position `i`).
-@inline function _de_state_set!(du::AbstractVector, ::Val, i::Int, v)
-    @inbounds du[i] = v
+@inline function _de_state_set!(du, ::Nothing, ::Val{s}, i::Int, v) where {s}
+    return _de_write_component!(du, i, v, s)
+end
+@inline function _de_state_set!(du, layout::NamedTuple, ::Val{s}, ::Int, v) where {s}
+    return _de_write_component!(du, getfield(layout, s), v, s)
+end
+@inline function _de_write_component!(du, idx::Integer, v, s)
+    @inbounds du[idx] = v
     return nothing
 end
-@inline function _de_state_set!(du::ComponentArray, ::Val{s}, ::Int, v) where {s}
-    return _de_write_component!(du, _de_ca_index(du, s), v, s)
-end
-@inline function _de_state_set!(
-        du::ComponentArray, ::Val{s}, ::Int, v::AbstractVector
-    ) where {s}
-    return _de_write_component!(du, _de_ca_index(du, s), v, s)
-end
 # A vector derivative for a state whose `@initialDE` value is a scalar.
-function _de_state_set!(du::AbstractVector, ::Val{s}, ::Int, v::AbstractVector) where {s}
+function _de_write_component!(du, ::Integer, v::AbstractVector, s)
     return throw(
         DimensionMismatch(
             "D($(s)) is a vector of length $(length(v)), but @initialDE gives a scalar " *
                 "for $(s). Give $(s) a vector initial value, e.g. $(s) = zeros($(length(v)))."
         )
     )
-end
-@inline function _de_write_component!(du, idx::Integer, v, s)
-    @inbounds du[idx] = v
-    return nothing
 end
 @inline function _de_write_component!(du, idx::AbstractUnitRange, v, s)
     length(v) == length(idx) || throw(
@@ -242,45 +272,33 @@ end
 end
 
 # Out-of-place RHS assembly.
-@inline _de_oop_du(::AbstractVector, vals...) = [vals...]
-function _de_oop_du(u::ComponentArray, vals...)
-    flat = reduce(vcat, map(v -> v isa Number ? [v] : vec(collect(v)), vals))
-    return ComponentArray(flat, getaxes(u))
+@inline _de_oop_du(u, ::Nothing, vals...) = [vals...]
+function _de_oop_du(u, layout::NamedTuple, vals...)
+    du = similar(u, promote_type(map(eltype, vals)...))
+    for (s, v) in zip(keys(layout), vals)
+        _de_write_component!(du, getfield(layout, s), v, s)
+    end
+    return du
 end
 
-# Lift a state to a wider eltype keeping its ComponentVector layout (solver-AD path).
-@inline _de_lift_u(::Type{D}, u::AbstractVector) where {D} = convert(Vector{D}, u)
-@inline function _de_lift_u(::Type{D}, u::ComponentArray) where {D}
-    return ComponentArray(convert(Vector{D}, getdata(u)), getaxes(u))
-end
-
-# Flat index of state `s` (position `i`) in a solution: the component range/index when
-# the solved state is a ComponentVector, `i` otherwise (closed-form solution objects
-# are only used for all-scalar systems).
-@inline _de_sol_state_index(sol, ::Val, i::Int) = i
-@inline function _de_sol_state_index(sol::SciMLBase.AbstractODESolution, v::Val, i::Int)
-    return _de_u_state_index(sol.prob.u0, v, i)
-end
-@inline _de_u_state_index(u, ::Val, i::Int) = i
-@inline _de_u_state_index(u::ComponentArray, ::Val{s}, ::Int) where {s} = _de_ca_index(u, s)
+# Flat index (Int) or range (vector state) of state `s` (position `i`) for accessors.
+@inline _de_acc_index(::Nothing, ::Val, i::Int) = i
+@inline _de_acc_index(layout::NamedTuple, ::Val{s}, ::Int) where {s} = getfield(layout, s)
 
 # ---------------------------------------------------------------------------
-# State layout: flat position of every state (Int for a scalar state, a UnitRange for
-# a vector state). Flat elements are named `x` (scalar) and `x[k]` (vector element).
+# State layout helpers. Flat elements are named `x` (scalar) and `x[k]` (vector).
 # ---------------------------------------------------------------------------
 
 """
-    _de_layout_from_u0(u0, state_names) -> NamedTuple
+    _de_layout_from_init(u0, state_names) -> NamedTuple
 
-Flat layout of the states in the initial state `u0`: `Int` for a scalar state, a
-`UnitRange` for a vector state.
+State layout of an initial state from `@initialDE`: `Int` per scalar state, `UnitRange`
+per vector state (all-scalar initial states map state `i` to flat index `i`).
 """
-function _de_layout_from_u0(u0, state_names::AbstractVector{Symbol})
+function _de_layout_from_init(u0::AbstractVector, state_names::AbstractVector{Symbol})
     return NamedTuple{Tuple(state_names)}(Tuple(1:length(state_names)))
 end
-function _de_layout_from_u0(u0::ComponentArray, state_names::AbstractVector{Symbol})
-    return NamedTuple{Tuple(state_names)}(Tuple(_de_ca_index(u0, n) for n in state_names))
-end
+_de_layout_from_init(u0::_DEInitialState, ::AbstractVector{Symbol}) = u0.layout
 
 _de_layout_has_vector(layout::NamedTuple) = any(v -> !(v isa Integer), values(layout))
 _de_layout_length(layout::NamedTuple) = sum(length, values(layout); init = 0)
@@ -324,19 +342,19 @@ function _de_check_events_layout(u0, events)
 end
 
 """
-    _de_flat_state_index(u0, state_names, name) -> Int
+    _de_flat_state_index(layout, state_names, name) -> Int
 
-Flat index of the SCALAR state `name` inside the initial state `u0` (used by event
-detection on a state). Errors for an unknown or vector-valued state.
+Flat index of the SCALAR state `name` (used by event detection on a state); `layout` is
+the state layout or `nothing` (all-scalar). Errors for an unknown or vector state.
 """
-function _de_flat_state_index(u0, state_names::AbstractVector{Symbol}, name::Symbol)
+function _de_flat_state_index(layout, state_names::AbstractVector{Symbol}, name::Symbol)
     i = findfirst(==(name), state_names)
     i === nothing && error("`$(name)` is not a DE state.")
-    u0 isa ComponentArray || return i
-    idx = _de_ca_index(u0, name)
+    layout === nothing && return i
+    idx = getfield(layout, name)
     idx isa Integer ||
         error("State `$(name)` is vector-valued; this feature needs a scalar state.")
-    return idx
+    return Int(idx)
 end
 
 """
@@ -369,7 +387,7 @@ end
 
 @generated function (a::_DEAccessors{names, nstates})(sol, pc) where {names, nstates}
     vals = Any[
-        :(DEStateAccessor(sol, _de_sol_state_index(sol, $(Val(names[i])), $i)))
+        :(DEStateAccessor(sol, _de_acc_index(_de_states(pc), $(Val(names[i])), $i)))
             for i in 1:nstates
     ]
     for j in 1:(length(names) - nstates)
@@ -449,6 +467,7 @@ function Base.getproperty(p::DEParams, s::Symbol)
     end
     return getfield(p, s)
 end
+@inline _de_states(p::DEParams) = _de_states(getfield(p, :compiled))
 
 Base.propertynames(::DEParams) = (:θ, :η, :static, :compiled, :vars, :funs)
 
@@ -646,14 +665,19 @@ passing the compiled NamedTuple directly (the changed inlining context may alter
 fp contraction at the ulp level, which can shift adaptive step sequences within
 solver tolerance).
 """
-struct DERHSFlat{F, L, C}
+struct DERHSFlat{F, L, C, S}
     inner!::F
     layout::L
     funs::C
+    states::S      # state layout (`nothing` when all states are scalar)
 end
+DERHSFlat(inner!, layout, funs) = DERHSFlat(inner!, layout, funs, nothing)
+
+@inline _de_flat_p(f::DERHSFlat{<:Any, <:Any, <:Any, Nothing}, vars) = (vars = vars, funs = f.funs)
+@inline _de_flat_p(f::DERHSFlat, vars) = (vars = vars, funs = f.funs, states = f.states)
 
 @inline function (f::DERHSFlat)(du, u, p, t)
-    f.inner!(du, u, (vars = _vars_from_flat(p, f.layout), funs = f.funs), t)
+    f.inner!(du, u, _de_flat_p(f, _vars_from_flat(p, f.layout)), t)
     return nothing
 end
 
@@ -669,8 +693,8 @@ end
         du::AbstractVector{D}, u, p::AbstractVector{V}, t
     ) where {V <: ForwardDiff.Dual, D <: ForwardDiff.Dual{<:Any, V}}
     f.inner!(
-        du, _de_lift_u(D, u),
-        (vars = _vars_from_flat(convert(Vector{D}, p), f.layout), funs = f.funs),
+        du, convert(Vector{D}, u),
+        _de_flat_p(f, _vars_from_flat(convert(Vector{D}, p), f.layout)),
         convert(D, t)
     )
     return nothing
@@ -1194,8 +1218,11 @@ macro DifferentialEquation(block)
         end
     )
 
+    # `__de_layout__` is the state layout of the compiled context (`nothing` when all
+    # states are scalar, which reduces every bind/write below to `u[i]` / `du[i] = ...`).
+    layout_bind = :(__de_layout__ = _de_states(p))
     state_binds = [
-        :($(state_names[i]) = _de_state_get(u, $(Val(state_names[i])), $i))
+        :($(state_names[i]) = _de_state_get(u, __de_layout__, $(Val(state_names[i])), $i))
             for i in eachindex(state_names)
     ]
     signal_assigns = [
@@ -1203,10 +1230,10 @@ macro DifferentialEquation(block)
             for i in eachindex(signal_names)
     ]
     du_assigns = [
-        :(_de_state_set!(du, $(Val(state_names[i])), $i, $(rhs_fast[i])))
+        :(_de_state_set!(du, __de_layout__, $(Val(state_names[i])), $i, $(rhs_fast[i])))
             for i in eachindex(state_names)
     ]
-    f_expr = Expr(:call, :_de_oop_du, :u, rhs_fast...)
+    f_expr = Expr(:call, :_de_oop_du, :u, :__de_layout__, rhs_fast...)
 
     f!_expr = :(
         function (
@@ -1217,6 +1244,7 @@ macro DifferentialEquation(block)
             )
             vars = p.vars
             funs = p.funs
+            $(layout_bind)
             $(state_binds...)
             $(signal_assigns...)
             $(du_assigns...)
@@ -1228,6 +1256,7 @@ macro DifferentialEquation(block)
         function (u::AbstractVector, p, t)
             vars = p.vars
             funs = p.funs
+            $(layout_bind)
             $(state_binds...)
             $(signal_assigns...)
             return $f_expr
@@ -1237,7 +1266,7 @@ macro DifferentialEquation(block)
     state_sol_binds = [
         :(
             $(state_names[i]) = $(_de_state_at)(
-                sol, $(_de_sol_state_index)(sol, $(Val(state_names[i])), $i), t
+                sol, $(_de_acc_index)($(_de_states)(pc), $(Val(state_names[i])), $i), t
             )
         )
             for i in eachindex(state_names)

@@ -211,6 +211,10 @@ end
 # Accessors for plotting, with any crossing node values (time or rootvalue) merged in
 # (no-op when the model declares no crossings).
 function _sol_accessors_with_crossings(model, sol, compiled, θ, η, const_cov)
+    # contexts rebuilt for a cached solution carry no state layout yet
+    if !haskey(compiled, :states)
+        compiled = _de_with_states(compiled, _de_states_at(model, θ, η, const_cov))
+    end
     acc = get_de_accessors_builder(model.de.de)(sol, compiled)
     crossings = get_formulas_crossings(model.formulas.formulas)
     isempty(crossings) && return acc
@@ -219,10 +223,7 @@ function _sol_accessors_with_crossings(model, sol, compiled, θ, η, const_cov)
     names = ntuple(k -> crossings[k].name, length(crossings))
     vals = ntuple(length(crossings)) do k
         spec = crossings[k]
-        sidx = sol isa SciMLBase.AbstractODESolution ?
-            _de_flat_state_index(sol.prob.u0, state_names, spec.state) :
-            findfirst(==(spec.state), state_names)
-        sidx === nothing && error("crossing state `$(spec.state)` is not a DE state.")
+        sidx = _de_flat_state_index(_de_states(compiled), state_names, spec.state)
         c = _crossing_threshold(spec.threshold, θ, pre)
         if spec.kind === :rootval
             _crossing_rootval_from_sol(sol, sidx, c)

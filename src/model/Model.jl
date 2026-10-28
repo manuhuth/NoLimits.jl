@@ -579,7 +579,9 @@ end
     calculate_initial_state(m::Model, θ::ComponentArray, η::ComponentArray,
                             const_covariates_i::NamedTuple; static=false) -> Vector
 
-Evaluate the `@initialDE` block and return the initial ODE state vector.
+Evaluate the `@initialDE` block and return the initial ODE state vector. Vector-valued
+states are concatenated in state order into this one flat vector (scalar `a`, then
+`x[1]`, ..., `x[n]`, ...).
 
 Requires both `@DifferentialEquation` and `@initialDE` blocks to be present.
 
@@ -590,7 +592,8 @@ Requires both `@DifferentialEquation` and `@initialDE` blocks to be present.
 - `const_covariates_i::NamedTuple`: constant-covariate values for one individual.
 
 # Keyword Arguments
-- `static::Bool = false`: if `true`, returns a `StaticArrays.SVector`.
+- `static::Bool = false`: if `true`, returns a `StaticArrays.SVector` (all-scalar
+  states only; with vector states the flat `Vector` is returned).
 """
 function calculate_initial_state(
         m::Model,
@@ -609,7 +612,7 @@ function calculate_initial_state(
     builder = static ?
         get_initialde_builder(m.de.initial, get_de_states(m.de.de); static = true) :
         m.de.initial_builder
-    return builder(θ, η, const_covariates_i, model_funs, helpers, pre)
+    return first(_de_split_init(builder(θ, η, const_covariates_i, model_funs, helpers, pre)))
 end
 
 # ---------------------------------------------------------------------------
@@ -641,17 +644,26 @@ function _de_state_layout(m::Model, const_cov::NamedTuple = NamedTuple())
     (m.de.de === nothing || m.de.initial_builder === nothing) && return nothing
     u0 = try
         θ = get_θ0_untransformed(m.fixed.fixed)
-        calculate_initial_state(m, θ, _probe_random_effects(m, θ, const_cov), const_cov)
+        η = _probe_random_effects(m, θ, const_cov)
+        _initial_state_with_pre(m, θ, η, const_cov, calculate_prede(m, θ, η, const_cov))
     catch
         return nothing
     end
-    return _de_layout_from_u0(u0, get_de_states(m.de.de))
+    return _de_layout_from_init(u0, get_de_states(m.de.de))
+end
+
+# State layout (or `nothing` for all-scalar states) at given (θ, η, covariates).
+function _de_states_at(m::Model, θ, η, const_cov::NamedTuple)
+    raw = _initial_state_with_pre(m, θ, η, const_cov, calculate_prede(m, θ, η, const_cov))
+    return last(_de_split_init(raw))
 end
 
 # Internal pre-aware twin of `calculate_initial_state`: the estimation hot paths
 # compute the preDE NamedTuple once per individual evaluation and reuse it for the
 # initial state, the DE compile context, and every formula row, instead of
-# re-deriving it inside each call.
+# re-deriving it inside each call. Returns the raw builder output: the flat initial
+# vector, or an `_DEInitialState` (flat vector + state layout) with vector states —
+# split it with `_de_split_init`.
 function _initial_state_with_pre(
         m::Model,
         θ::ComponentArray,

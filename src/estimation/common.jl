@@ -3867,8 +3867,9 @@ end
         model_funs = model_funs,
         preDE = pre,
     )
-    compiled = get_de_compiler(get_de(model))(pc)
-    u0 = _initial_state_with_pre(model, θ, η_ind, const_cov, pre)
+    # vector-valued states: flat u0 plus the state layout, carried in `compiled`
+    u0, states = _de_split_init(_initial_state_with_pre(model, θ, η_ind, const_cov, pre))
+    compiled = _de_with_states(get_de_compiler(get_de(model))(pc), states)
     cb = nothing
     infusion_rates = nothing
     if events !== nothing
@@ -3895,7 +3896,7 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
     # Closed-form fast path: diagonal-linear system with no mid-trajectory events
     # (t0 doses already folded into u0). Analytic states over the saveat grid.
     plan = cache.closed_form_plan
-    if isempty(crossings) && is_cf_eligible(plan) && !_de_has_vector_states(u0) &&
+    if isempty(crossings) && is_cf_eligible(plan) && _de_states(compiled) === nothing &&
             (_cf_is_whole(plan) || cb === nothing)
         saveat_use = _ll_saveat(cache, idx, ind)
         sol = _cf_dispatch_solve(
@@ -3916,7 +3917,8 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
     # Built only here: the closed-form early-return above needs none of them.
     layout, plen = _flat_layout(compiled.vars)
     f!_use = _with_infusion(
-        DERHSFlat(get_de_f!(get_de(model)), layout, compiled.funs), infusion_rates
+        DERHSFlat(get_de_f!(get_de(model)), layout, compiled.funs, _de_states(compiled)),
+        infusion_rates
     )
     p_flat = _flat_pack(compiled.vars, layout, plen, T)
     if isempty(crossings)
@@ -3949,7 +3951,7 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
         # type-stable fast path (the common case, incl. a single apoptosis event):
         # no Vector{Any} / splat, concrete callback.
         spec = crossings[1]
-        sidx = _de_flat_state_index(u0, state_names, spec.state)
+        sidx = _de_flat_state_index(_de_states(compiled), state_names, spec.state)
         c = _crossing_threshold(spec.threshold, θ, pre)
         tinit = spec.tmax === nothing ? convert(T, get_tspan(ind)[2]) :
             convert(T, spec.tmax)
@@ -3979,7 +3981,7 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
     reset_tinits = Any[]
     for k in 1:n_cross
         spec = crossings[k]
-        sidx = _de_flat_state_index(u0, state_names, spec.state)
+        sidx = _de_flat_state_index(_de_states(compiled), state_names, spec.state)
         c = _crossing_threshold(spec.threshold, θ, pre)
         sidxs[k] = sidx
         thr[k] = c

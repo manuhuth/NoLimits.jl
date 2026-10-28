@@ -378,7 +378,7 @@ function _solve_dense_individual(
     f! = get_de_f!(get_de(model))
     infusion_rates === nothing || (f! = _plot_with_infusion(f!, infusion_rates))
     plan = get_closed_form_plan(dm)
-    if is_cf_eligible(plan) && !_de_has_vector_states(u0) &&
+    if is_cf_eligible(plan) && _de_states(compiled) === nothing &&
             (_cf_is_whole(plan) || cb === nothing)
         solver_cfg = get_solver_config(model)
         cf_alg = _resolve_ode_alg(solver_cfg.alg)
