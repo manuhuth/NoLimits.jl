@@ -120,7 +120,10 @@ effects: no inner mode finding or Hessian per objective evaluation, unlike Lapla
   and is consistent as the number of nodes grows. `:auto` refines when the model has at most
   50 free fixed-effect coordinates and at most 3 random effects per batch (each refinement
   iteration costs one forward-mode pass over the fixed effects; network models skip it).
-  The refinement uses the same `optimizer`, `optim_kwargs` and bounds as the joint fit.
+  The refinement uses the same `optimizer`, `optim_kwargs` and bounds as the joint fit,
+  followed by a damped Newton finish (at most 50 fixed-effect coordinates; Hessian by
+  central differences of the gradient) within the remaining `maxiters`, whose
+  `g_abstol` / `reltol` test decides the refinement's convergence.
 - `ebe_*`: options of the final empirical-Bayes modes (as for `MCEM`).
 
 The `penalty` and `extra_objective` keywords of [`fit_model`](@ref) act as for `Laplace`:
@@ -734,6 +737,59 @@ function _vem_refine_rule(
     return μd, L .+ (Ld .- ForwardDiff.value.(Ld))
 end
 
+# Damped Newton finish of the refinement from x (in place) within [lb, ub]: curvature by
+# central differences of the gradient `grad!(G, x)`, eigenvalues clipped at 1e-8 of the
+# largest, Armijo backtracking, coordinates at a bound with the gradient pointing outward
+# held fixed. Converged when |g|∞ ≤ gtol on the free coordinates, or when the predicted
+# or the achieved decrease of a Newton step is at most rtol max(|f|, 1).
+# Returns (f(x), converged, iterations).
+function _vem_newton_finish!(
+        f, grad!, x::Vector{Float64}, lb, ub, nmax::Int, gtol::Float64, rtol::Float64
+    )
+    p = length(x)
+    fx = f(x)
+    isfinite(fx) || return fx, false, 0
+    g, gp, gm = zeros(p), zeros(p), zeros(p)
+    for it in 1:nmax
+        grad!(g, x)
+        all(isfinite, g) || return fx, false, it - 1
+        free = findall(j -> !((x[j] <= lb[j] && g[j] > 0) || (x[j] >= ub[j] && g[j] < 0)), 1:p)
+        maximum(j -> abs(g[j]), free; init = 0.0) <= gtol && return fx, true, it - 1
+        H = zeros(length(free), length(free))
+        for (c, j) in enumerate(free)
+            h = 1.0e-6 * max(1.0, abs(x[j]))
+            xj = copy(x)
+            xj[j] = x[j] + h
+            grad!(gp, xj)
+            xj[j] = x[j] - h
+            grad!(gm, xj)
+            @views H[:, c] .= (gp[free] .- gm[free]) ./ (2h)
+        end
+        all(isfinite, H) || return fx, false, it - 1
+        E = eigen(Symmetric((H .+ H') ./ 2))
+        λmax = maximum(abs, E.values)
+        λmax > 0 || return fx, false, it - 1
+        λ = max.(E.values, 1.0e-8 * λmax)
+        Δ = -(E.vectors * ((E.vectors' * g[free]) ./ λ))
+        pred = -dot(g[free], Δ)
+        tol = rtol * max(abs(fx), 1.0)
+        α, xn, fn = 1.0, x, Inf
+        for _ in 1:40
+            xn = copy(x)
+            xn[free] .= clamp.(x[free] .+ α .* Δ, lb[free], ub[free])
+            fn = f(xn)
+            isfinite(fn) && fn <= fx - 1.0e-4 * α * pred && break
+            α /= 2
+        end
+        isfinite(fn) && fn <= fx - 1.0e-4 * α * pred || return fx, pred / 2 <= tol, it - 1
+        df = fx - fn
+        x .= xn
+        fx = fn
+        (pred / 2 <= tol || df <= tol) && return fx, true, it
+    end
+    return fx, false, nmax
+end
+
 function _vem_kappa_from(m::AbstractVector, Σ::AbstractMatrix, n::Int, family::Symbol)
     κ = zeros(Float64, _vem_nkappa(n, family))
     κ[1:n] .= m
@@ -1332,11 +1388,27 @@ function _fit_model(
         rsol = Optimization.solve(rprob, ropt; method.optim_kwargs...)
         refine_retcode = rsol.retcode
         refine_iters = _sol_iterations(rsol)
-        fθ = fr(rsol.u)
+        # damped Newton finish (p ≤ 50), which also decides convergence: L-BFGS in these
+        # coordinates stalls when the problem is ill-conditioned (M18: cond(H) ≈ 6e5, stopped
+        # by reltol 0.004 above the optimum, which Newton reaches in 2 steps) or fails its
+        # first line search (M19: fr = Inf at α = 1 along -g). Within the remaining maxiters.
+        xr = Vector{Float64}(rsol.u)
+        okw = method.optim_kwargs
+        nmax = p <= 50 ? min(50, get(okw, :maxiters, 1000) - refine_iters) : 0
+        newton_ok = rsol.retcode == SciMLBase.ReturnCode.Success
+        if nmax > 0
+            fθ, newton_ok, nit = _vem_newton_finish!(
+                fr, (G, x) -> fgr!(nothing, G, x), xr, lb, ub, nmax,
+                Float64(get(okw, :g_abstol, 1.0e-5)), Float64(get(okw, :reltol, 1.0e-8))
+            )
+            refine_iters += nit
+        else
+            fθ = fr(xr)
+        end
         if isfinite(fθ) && fθ <= fr(xθ0)
-            xθ_hat = Vector{Float64}(rsol.u)
+            xθ_hat = xr
             θ_hat_u = θu_of(xθ_hat)
-            refine_ok = rsol.retcode == SciMLBase.ReturnCode.Success
+            refine_ok = newton_ok
             refined = true
         end
     end
