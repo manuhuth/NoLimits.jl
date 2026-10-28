@@ -235,9 +235,13 @@ Rules:
   holds the states in declaration order; its elements are named `a` for a scalar state
   and `x[1]`, ..., `x[n]` for a vector state. Dosing (`CMT`), summaries and error
   messages use these names (see [Data Model Construction](../data-model-construction.md)).
-- Elements can also be written one per line, `D(x[1]) ~ ...`, `D(x[2]) ~ ...`, with
-  integer literal indices covering `1:n`. A state is written either as a whole or
-  element-wise, not both.
+- A state can also be written element-wise: a single element `D(x[k]) ~ <scalar>` or a
+  range `D(x[a:b]) ~ <vector>`. Indices are integer literals, `begin`, `end` and
+  `end - k`, so `D(x[2:end])` works whatever the length of `x` (also when the length
+  comes from a global constant). Over all lines of a state every element must be given
+  exactly once: gaps, overlaps, indices outside the state and right-hand sides of the
+  wrong length are errors (with literal indices at model definition, with `end` when
+  the model is solved). A state is written either as a whole or element-wise, not both.
 - Global constants of the module the model is written in (such as `NSTATE` above) can be
   used in `@initialDE`, in right-hand sides (including indices such as `x[NSTATE]` and
   ranges such as `x[1:(NSTATE - 1)]`) and in `@formulas` indices. Model names
@@ -253,7 +257,8 @@ const NTR = 5
 
 @DifferentialEquation begin
     D(depot) ~ -ktr * depot
-    D(transit) ~ ktr .* (vcat(depot, transit[1:(end - 1)]) .- transit)
+    D(transit[1]) ~ ktr * (depot - transit[1])
+    D(transit[2:end]) ~ ktr .* (transit[1:(end - 1)] .- transit[2:end])
     D(central) ~ ktr * transit[end] - ke * central
 end
 @initialDE begin
@@ -262,6 +267,16 @@ end
     central = 0.0
 end
 ```
+
+The same chain as one line, `D(transit) ~ ktr .* (vcat(depot, transit[1:(end - 1)]) .- transit)`,
+gives identical results but allocates a temporary vector (`vcat`) in every right-hand-side
+evaluation.
+
+Performance: a right-hand side that is a broadcast expression (`.*`, `.-`, `f.(...)`) is
+written into the derivative in place, fused, without temporary vectors; slices of a state
+such as `x[2:end]` are views, not copies. Calls that build new vectors (`vcat`, `[...]`
+with more than 8 elements, functions returning vectors such as a neural network) still
+allocate. In `@formulas`, `x(t)` at an observation time is a view into the solution.
 
 ## DE Accessors for States and Signals
 
