@@ -192,24 +192,27 @@ with their layout as an [`_DEInitialState`](@ref).
     return StaticArrays.SVector(vals...)
 end
 function _de_initial_state(::Val{names}, ::Val, vals...) where {names}
-    for (n, v) in zip(names, vals)
-        (v isa Number || v isa AbstractVector{<:Number}) || error(
-            "@initialDE value of $(n) must be a number or a vector of numbers; got $(typeof(v))."
-        )
-        v isa AbstractVector && isempty(v) &&
-            error("@initialDE value of $(n) is an empty vector.")
-    end
-    T = promote_type(map(eltype, vals)...)
+    # Type-stable over the heterogeneous `vals` tuple (recursion, no loop over a
+    # Union-typed element): reverse-mode Enzyme needs this to stay statically typed.
+    _de_check_init(names, vals)
     layout = NamedTuple{names}(_de_init_layout(1, vals...))
-    u = Vector{T}(undef, sum(length, vals))
-    k = 0
-    for v in vals
-        for x in v                       # a Number iterates once
-            u[k += 1] = x
-        end
-    end
-    return _DEInitialState(u, layout)
+    return _DEInitialState(_de_plain_vector(vcat(vals...)), layout)
 end
+_de_plain_vector(u::Vector) = u
+_de_plain_vector(u::AbstractVector) = collect(u)    # e.g. a static vector
+_de_check_init(::Tuple{}, ::Tuple{}) = nothing
+function _de_check_init(names::Tuple, vals::Tuple)
+    _de_check_init_value(first(names), first(vals))
+    return _de_check_init(Base.tail(names), Base.tail(vals))
+end
+_de_check_init_value(::Symbol, ::Number) = nothing
+function _de_check_init_value(n::Symbol, v::AbstractVector{<:Number})
+    isempty(v) && error("@initialDE value of $(n) is an empty vector.")
+    return nothing
+end
+_de_check_init_value(n::Symbol, v) = error(
+    "@initialDE value of $(n) must be a number or a vector of numbers; got $(typeof(v))."
+)
 _de_init_layout(::Int) = ()
 _de_init_layout(o::Int, v::Number, rest...) = (o, _de_init_layout(o + 1, rest...)...)
 function _de_init_layout(o::Int, v::AbstractVector, rest...)
@@ -226,8 +229,11 @@ end
     return :states in names ? getfield(p, :states) : nothing
 end
 @inline _de_with_states(compiled::NamedTuple, ::Nothing) = compiled
-@inline _de_with_states(compiled::NamedTuple, layout::NamedTuple) =
+@inline _de_with_states(compiled::NamedTuple, layout::Union{NamedTuple, Val}) =
     merge(compiled, (; states = layout))
+# Choose the layout to carry: the runtime one, or a cached type-level one (checked).
+@inline _de_pick_layout(::Nothing, rt) = rt
+@inline _de_pick_layout(v::Val, rt) = _de_hot_layout(v, rt)
 
 # Bind state `s` (position `i`) inside the RHS: `u[i]` without a layout, otherwise the
 # element (scalar state) or a view of the range (vector state).
@@ -237,6 +243,30 @@ end
 end
 @inline _de_get_at(u, idx::Integer) = @inbounds u[idx]
 @inline _de_get_at(u, idx::AbstractUnitRange) = view(u, idx)
+
+# Type-level layout (`Val(layout)`): the same lookups with every index a compile-time
+# constant (used in the likelihood hot path; see `_ll_solve_de`).
+@inline _de_state_get(u, ::Val{L}, v::Val, i::Int) where {L} = _de_state_get(u, L, v, i)
+@inline _de_state_set!(du, ::Val{L}, v::Val, i::Int, x) where {L} = _de_state_set!(du, L, v, i, x)
+@inline _de_static_layout(::Nothing) = nothing
+@inline _de_static_layout(layout::NamedTuple) = Val(layout)
+
+# Layout for the likelihood RHS: the cached type-level layout (checked against this
+# solve's runtime layout), or the runtime one when no cached layout exists.
+@inline _de_hot_layout(::Nothing, ::Nothing) = nothing
+@inline function _de_hot_layout(v::Val{L}, rt::NamedTuple) where {L}
+    L == rt || _de_layout_mismatch(L, rt)
+    return v
+end
+_de_hot_layout(::Nothing, rt::NamedTuple) = Val(rt)
+_de_hot_layout(v::Val{L}, ::Nothing) where {L} = _de_layout_mismatch(L, nothing)
+@noinline function _de_layout_mismatch(expected, got)
+    return error(
+        "The vector-valued state layout $(got) differs from $(expected) found when the " *
+            "DataModel was built; state lengths must not depend on the individual or the " *
+            "parameter values."
+    )
+end
 
 # Write the derivative of state `s` (position `i`).
 @inline function _de_state_set!(du, ::Nothing, ::Val{s}, i::Int, v) where {s}
@@ -273,6 +303,7 @@ end
 
 # Out-of-place RHS assembly.
 @inline _de_oop_du(u, ::Nothing, vals...) = [vals...]
+_de_oop_du(u, ::Val{L}, vals...) where {L} = _de_oop_du(u, L, vals...)
 function _de_oop_du(u, layout::NamedTuple, vals...)
     du = similar(u, promote_type(map(eltype, vals)...))
     for (s, v) in zip(keys(layout), vals)
@@ -284,6 +315,7 @@ end
 # Flat index (Int) or range (vector state) of state `s` (position `i`) for accessors.
 @inline _de_acc_index(::Nothing, ::Val, i::Int) = i
 @inline _de_acc_index(layout::NamedTuple, ::Val{s}, ::Int) where {s} = getfield(layout, s)
+@inline _de_acc_index(::Val{L}, v::Val, i::Int) where {L} = _de_acc_index(L, v, i)
 
 # ---------------------------------------------------------------------------
 # State layout helpers. Flat elements are named `x` (scalar) and `x[k]` (vector).
@@ -347,6 +379,9 @@ end
 Flat index of the SCALAR state `name` (used by event detection on a state); `layout` is
 the state layout or `nothing` (all-scalar). Errors for an unknown or vector state.
 """
+function _de_flat_state_index(::Val{L}, state_names::AbstractVector{Symbol}, name::Symbol) where {L}
+    return _de_flat_state_index(L, state_names, name)
+end
 function _de_flat_state_index(layout, state_names::AbstractVector{Symbol}, name::Symbol)
     i = findfirst(==(name), state_names)
     i === nothing && error("`$(name)` is not a DE state.")

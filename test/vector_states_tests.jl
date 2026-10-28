@@ -656,3 +656,14 @@ end
     @test _vs_ll(dmI, θ, ComponentArray()) == _vs_ll(dmF, θ, ComponentArray())
     @test _vs_grad(dmI, θ, ComponentArray()) == _vs_grad(dmF, θ, ComponentArray())
 end
+
+@testset "flat initial state: layout, type stability" begin
+    init = @inferred NoLimits._de_initial_state(Val((:a, :x, :c)), Val(false), 1.0, [2.0, 3.0], 4)
+    u, layout = NoLimits._de_split_init(init)
+    @test u == [1.0, 2.0, 3.0, 4.0] && u isa Vector{Float64}
+    @test layout == (a = 1, x = 2:3, c = 4)
+    @test NoLimits._de_flat_state_names(layout) == ["a", "x[1]", "x[2]", "c"]
+    # all-scalar initial values keep the plain (or static) vector
+    @test NoLimits._de_initial_state(Val((:a, :b)), Val(false), 1.0, 2.0) == [1.0, 2.0]
+    @test NoLimits._de_split_init([1.0, 2.0]) == ([1.0, 2.0], nothing)
+end

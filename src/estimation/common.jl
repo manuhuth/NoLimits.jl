@@ -3537,7 +3537,7 @@ function _row_random_effects_fill(
     return ComponentArray(vals, tmpl.axs)
 end
 
-mutable struct _LLCache{H, M, S, A, O, K, P, V, SA, EC}
+mutable struct _LLCache{H, M, S, A, O, K, P, V, SA, EC, SL}
     helpers::H
     model_funs::M
     solver_cfg::S
@@ -3549,6 +3549,9 @@ mutable struct _LLCache{H, M, S, A, O, K, P, V, SA, EC}
     saveat_cache::SA
     event_cbs::EC
     closed_form_plan::ClosedFormPlan
+    # state layout as a type (`Val(layout)`) for vector-valued states, `nothing` otherwise:
+    # the RHS then indexes with compile-time constants (type-stable, Enzyme-friendly)
+    state_layout::SL
 end
 const LikelihoodCache = _LLCache
 
@@ -3852,7 +3855,8 @@ end
 # DE, forms u0 from `pre`, and extracts the event callback + infusion rates. The divergent
 # solve tails (flat-p templates + saveat + crossings vs dense) stay at each call site.
 @inline function _solve_preamble(
-        dm::DataModel, ind::Individual, θ, η_ind, pre, helpers, model_funs, events
+        dm::DataModel, ind::Individual, θ, η_ind, pre, helpers, model_funs, events,
+        layout_hint = nothing
     )
     model = get_model(dm)
     const_cov = get_const_cov(ind)
@@ -3868,8 +3872,11 @@ end
         preDE = pre,
     )
     # vector-valued states: flat u0 plus the state layout, carried in `compiled`
+    # (`layout_hint`: the cache's type-level layout, used instead of the runtime one)
     u0, states = _de_split_init(_initial_state_with_pre(model, θ, η_ind, const_cov, pre))
-    compiled = _de_with_states(get_de_compiler(get_de(model))(pc), states)
+    compiled = _de_with_states(
+        get_de_compiler(get_de(model))(pc), _de_pick_layout(layout_hint, states)
+    )
     cb = nothing
     infusion_rates = nothing
     if events !== nothing
@@ -3886,7 +3893,8 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
     ind = get_individuals(dm)[idx]
     events = cache.event_cbs === nothing ? nothing : cache.event_cbs[idx]
     compiled, u0, cb, infusion_rates = _solve_preamble(
-        dm, ind, θ, η_ind, pre, cache.helpers, cache.model_funs, events
+        dm, ind, θ, η_ind, pre, cache.helpers, cache.model_funs, events,
+        cache.state_layout
     )
     # T must cover the vars eltype too (η/θ can enter the RHS without entering
     # u0) — pack once with the promoted type, reuse for template and remake.
@@ -4584,7 +4592,8 @@ function _build_ll_cache_single(
         vary_cache,
         saveat_cache,
         event_cbs,
-        get_closed_form_plan(dm)
+        get_closed_form_plan(dm),
+        _de_static_layout(_dm_state_layout_vec(dm))
     )
 end
 

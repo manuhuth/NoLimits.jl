@@ -1876,6 +1876,12 @@ function _dm_state_layout(dm::DataModel)
     return _de_state_layout(model, const_cov)
 end
 
+# The layout when it has a vector state, `nothing` otherwise (all-scalar or unprobeable).
+function _dm_state_layout_vec(dm::DataModel)
+    layout = _dm_state_layout(dm)
+    return (layout !== nothing && _de_layout_has_vector(layout)) ? layout : nothing
+end
+
 function _dm_has_vector_states(dm::DataModel)
     layout = _dm_state_layout(dm)
     return layout !== nothing && _de_layout_has_vector(layout)
