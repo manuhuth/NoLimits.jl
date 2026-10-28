@@ -92,7 +92,9 @@
   so a model with a vector state is solved numerically. Broadcast right-hand sides are
   fused in place into the derivative and state slices are views, so element-wise forms
   such as a transit chain run without allocations. `summarize(model)` shows state
-  lengths (`x[1:4]`) and `summarize(dm)` lists the flat elements.
+  lengths (`x[1:4]`) and `summarize(dm)` lists the flat elements. New tutorial
+  "Vector-Valued ODE States (Laplace)": a transit-compartment chain with dosing by name
+  and a latent neural ODE.
 
 - `@DifferentialEquation` accepts broadcast calls with model parameters, e.g.
   `exp.(-k .* x)` (before, the arguments of `f.(...)` were not resolved).

@@ -1,6 +1,6 @@
 # Tutorials
 
-Thirteen end-to-end analyses, each one runnable from a clean Julia session. Every tutorial
+Fourteen end-to-end analyses, each one runnable from a clean Julia session. Every tutorial
 states the data, the model, and the estimator up front, then walks through fitting,
 diagnostics, and plots.
 
@@ -18,6 +18,7 @@ it fits one model with four estimators and shows what each one gives you.
 | [Interval-Censored Outcomes](mixed-effects-interval-censored-binned-laplace.md) | binned into intervals | closed-form nonlinear | `Laplace` |
 | [Copula Random Effects](mixed-effects-copula-random-effects-laplace.md) | continuous | non-Gaussian dependence between random effects | `Laplace` |
 | [Hidden & Observed Markov Models](markov-models-observed-hidden-coarsed.md) | discrete states | observed-state and hidden Markov | `Laplace` |
+| [Vector-Valued ODE States](vector-valued-states.md) | continuous | transit-compartment chain with dosing; latent neural ODE | `Laplace` |
 
 ## Machine-learning components
 

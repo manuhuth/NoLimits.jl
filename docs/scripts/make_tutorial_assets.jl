@@ -1532,17 +1532,190 @@ function quickstart()
     return res
 end
 
+# ----------------------------------------------------------------------------- #
+# Tutorial: vector-valued ODE states -- transit chain (Laplace) and latent NN-ODE
+# ----------------------------------------------------------------------------- #
+# The transit model block, exactly as on the tutorial page. It is evaluated in a fresh
+# module per chain length, which is what re-running the page with another value of
+# `const NTR` does.
+const VS_TRANSIT_MODEL = quote
+    @Model begin
+        @fixedEffects begin
+            ktr = RealNumber(1.5, scale = :log)
+            ke = RealNumber(0.2, scale = :log)
+            V = RealNumber(10.0, scale = :log)
+            ω = RealNumber(0.3, scale = :log)
+            σ = RealNumber(0.3, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, ω); column = :ID)
+        end
+        @preDifferentialEquation begin
+            ktr_i = ktr * exp(η)
+        end
+        @DifferentialEquation begin
+            D(depot) ~ -ktr_i * depot
+            D(transit[1]) ~ ktr_i * (depot - transit[1])
+            D(transit[2:end]) ~ ktr_i .* (transit[1:(end - 1)] .- transit[2:end])
+            D(central) ~ ktr_i * transit[end] - ke * central
+        end
+        @initialDE begin
+            depot = 0.0
+            transit = zeros(NTR)
+            central = 0.0
+        end
+        @formulas begin
+            y ~ Normal(central(t) / V, σ)
+        end
+    end
+end
+
+function vs_transit_model(n::Int)
+    mod = Core.eval(Main, Expr(:module, true, gensym(:VSTransitSession), Expr(:block)))  # a fresh session
+    Core.eval(mod, :(using NoLimits, Distributions))
+    Core.eval(mod, :(const NTR = $n))
+    return Core.eval(mod, VS_TRANSIT_MODEL)
+end
+
+function vs_dosing_df(n_id::Int, obs_t)
+    rows = DataFrame(
+        ID = Int[], t = Float64[], EVID = Int[], AMT = Float64[], RATE = Float64[],
+        CMT = String[], y = Union{Missing, Float64}[]
+    )
+    for id in 1:n_id
+        push!(rows, (id, 0.0, 1, 100.0, 0.0, "depot", missing))
+        for tt in obs_t
+            push!(rows, (id, tt, 0, 0.0, 0.0, "depot", 0.0))
+        end
+    end
+    return rows
+end
+
+function tutorial_vs()
+    slug = "vs1"
+    Random.seed!(376)
+
+    # (a) transit chain
+    obs_t = [0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 24.0]
+    df = vs_dosing_df(8, obs_t)
+    dm_kw = (
+        primary_id = :ID, time_col = :t, evid_col = :EVID, amt_col = :AMT,
+        rate_col = :RATE, cmt_col = :CMT,
+    )
+    model4 = vs_transit_model(4)
+    sim = Base.invokelatest(simulate_data, DataModel(model4, df; dm_kw...); rng = Random.Xoshiro(1))
+    df.y = sim.y
+    txt(slug, "transit_df_head", first(df, 6))
+
+    dm4 = Base.invokelatest(DataModel, model4, df; dm_kw...)
+    dm_text = sprint(show, MIME"text/plain"(), NoLimits.summarize(dm4))
+    open(joinpath(slug_dir(slug), "transit_dm_states.txt"), "w") do io
+        print(io, join(filter(l -> occursin(r"ODE states|states  |flat elements", l), split(dm_text, '\n')), '\n'))
+    end
+    laplace = NoLimits.Laplace(; optim_kwargs = (maxiters = 50,))
+    res4 = Base.invokelatest(fit_model, dm4, laplace; rng = Random.Xoshiro(2))
+    txt(slug, "transit_params", NoLimits.get_params(res4; scale = :untransformed))
+    Base.invokelatest(
+        plot_fits, res4; ncols = 4, shared_x_axis = true, shared_y_axis = true,
+        save_path = fig(slug, "p_fit_transit")
+    )
+
+    objs = Pair{Int, Float64}[]
+    for n in (2, 4, 8)
+        m = vs_transit_model(n)
+        dm = Base.invokelatest(DataModel, m, df; dm_kw...)
+        r = Base.invokelatest(fit_model, dm, laplace; rng = Random.Xoshiro(2))
+        push!(objs, n => NoLimits.get_objective(r))
+    end
+    txt(slug, "transit_objectives", DataFrame(NTR = first.(objs), objective = last.(objs)))
+
+    # (b) latent neural ODE
+    dose, ka, ke, V = 100.0, 1.0, 0.2, 10.0
+    t_obs = [0.5, 1.0, 2.0, 4.0, 6.0, 8.0, 12.0, 24.0]
+    rng = Random.Xoshiro(3)
+    df_nn = DataFrame(ID = Int[], t = Float64[], y = Float64[])
+    for id in 1:8
+        Vi = V * exp(0.2 * randn(rng))
+        for tt in t_obs
+            c = dose * ka / (Vi * (ka - ke)) * (exp(-ke * tt) - exp(-ka * tt))
+            push!(df_nn, (id, tt, c * exp(0.1 * randn(rng))))
+        end
+    end
+    txt(slug, "nn_df_head", first(df_nn, 6))
+
+    model_nn = Base.invokelatest(vs_nn_model)
+    dm_nn = Base.invokelatest(DataModel, model_nn, df_nn; primary_id = :ID, time_col = :t)
+    res_nn = Base.invokelatest(
+        fit_model, dm_nn, NoLimits.Laplace(; optim_kwargs = (maxiters = 300,));
+        rng = Random.Xoshiro(4)
+    )
+    txt(slug, "nn_objective", (objective = NoLimits.get_objective(res_nn),))
+    Base.invokelatest(
+        plot_fits, res_nn; ncols = 4, shared_x_axis = true, shared_y_axis = true,
+        save_path = fig(slug, "p_fit_nn")
+    )
+    return nothing
+end
+
+# The latent-ODE model block, exactly as on the tutorial page (`const NSTATE = 2`).
+const VS_NN_MODEL = quote
+    @Model begin
+        @fixedEffects begin
+            tvv = RealNumber(10.0, scale = :log)
+            omega_v = RealNumber(0.2, scale = :log)
+            omega_s = RealNumber(0.2, scale = :log)
+            sigma = RealNumber(0.1, scale = :log)
+            z_nn = FFNNParameters(
+                (NSTATE, 8, NSTATE); activation = :tanh,
+                output_activation = :identity, function_name = :NN, calculate_se = false
+            )
+            kel = RealNumber(0.1, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            eta_v = RandomEffect(Normal(0.0, omega_v); column = :ID)
+            eta_s = RandomEffect(Normal(0.0, omega_s); column = :ID)
+        end
+        @preDifferentialEquation begin
+            vc = tvv * exp(eta_v)
+            s = exp(eta_s)
+        end
+        @DifferentialEquation begin
+            D(x) ~ s .* NN(x, z_nn) .- kel .* x
+        end
+        @initialDE begin
+            x = vcat(1.0, zeros(NSTATE - 1))
+        end
+        @formulas begin
+            cp = 100.0 * x(t)[NSTATE] / vc
+            y ~ Normal(cp, abs(cp) * sigma + 0.05)
+        end
+    end
+end
+
+function vs_nn_model(nstate::Int = 2)
+    mod = Core.eval(Main, Expr(:module, true, gensym(:VSLatentSession), Expr(:block)))  # a fresh session
+    Core.eval(mod, :(using NoLimits, Distributions))
+    Core.eval(mod, :(const NSTATE = $nstate))
+    return Core.eval(mod, VS_NN_MODEL)
+end
+
 const TUTORIALS = Dict(
     "t1" => tutorial1, "t2" => tutorial2, "t3" => tutorial3, "t4" => tutorial4,
     "t5" => tutorial5, "t6" => tutorial6, "t7" => tutorial7,
     "t8" => tutorial_intcens, "fe1" => tutorial8, "fe2" => tutorial9,
-    "md1" => tutorial_md1, "qs" => quickstart
+    "md1" => tutorial_md1, "qs" => quickstart, "vs1" => tutorial_vs
 )
 
 function main()
     mkpath(FIG_ROOT)
     requested = isempty(ARGS) ?
-        ["t1", "t2", "t5", "t6", "t7", "t8", "fe1", "fe2", "t3", "t4", "md1", "qs"] :
+        ["t1", "t2", "t5", "t6", "t7", "t8", "fe1", "fe2", "t3", "t4", "md1", "qs", "vs1"] :
         ARGS
     for key in requested
         haskey(TUTORIALS, key) || (@warn "Unknown tutorial key: $key"; continue)
