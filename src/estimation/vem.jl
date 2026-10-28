@@ -1224,6 +1224,8 @@ function _fit_model(
     θ_hat_u = θu_of(xθ_hat)
     refine_iters = 0
     refine_ok = true
+    refine_retcode = nothing
+    refined = false
     # a full-data pass per iteration: off by default under MiniBatch
     do_refine = method.refine === :on || (
         method.refine === :auto && mb === nothing && p <= 50 &&
@@ -1290,12 +1292,14 @@ function _fit_model(
         rprob = rbounds ? OptimizationProblem(rf, xθ0; lb = lb, ub = ub) :
             OptimizationProblem(rf, xθ0)
         rsol = Optimization.solve(rprob, ropt; method.optim_kwargs...)
+        refine_retcode = rsol.retcode
+        refine_iters = _sol_iterations(rsol)
         fθ = fr(rsol.u)
         if isfinite(fθ) && fθ <= fr(xθ0)
             xθ_hat = Vector{Float64}(rsol.u)
             θ_hat_u = θu_of(xθ_hat)
-            refine_iters = _sol_iterations(rsol)
             refine_ok = rsol.retcode == SciMLBase.ReturnCode.Success
+            refined = true
         end
     end
     θ_hat_t = transform(θ_hat_u)
@@ -1341,7 +1345,11 @@ function _fit_model(
         obj_joint
     end
     niter = _sol_iterations(sol)
-    converged = sol.retcode == SciMLBase.ReturnCode.Success && refine_ok && isfinite(objective)
+    # after an accepted refinement θ̂ is the refinement's optimum and the objective is
+    # re-centered there, so the joint fit's retcode does not bear on it (M18: the joint fit
+    # stops at MaxIters on an ELBO plateau in 10/10 starts although the refinement converged)
+    converged = (refined ? refine_ok : sol.retcode == SciMLBase.ReturnCode.Success) &&
+        isfinite(objective)
     q_params = [
         begin
                 bi = keep[k]
@@ -1370,7 +1378,11 @@ function _fit_model(
     summary = FitSummary(objective, converged, FitParameters(θ_hat_t, θ_hat_u), NamedTuple())
     diagnostics = FitDiagnostics(
         (; fit_seconds = time() - t0), (optimizer = method.optimizer,),
-        (retcode = sol.retcode, iterations = niter, elbo = elbo),
+        (
+            retcode = sol.retcode, iterations = niter, elbo = elbo,
+            refine_retcode = refine_retcode, refine_iterations = refine_iters,
+            refine_accepted = refined,
+        ),
         NamedTuple()
     )
     eb_modes = store_eb_modes ?
