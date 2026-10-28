@@ -15,6 +15,21 @@ init = @initialDE begin
 end
 ```
 
+A vector value makes the state vector-valued (see
+[Vector-Valued States](differential-equation.md#Vector-Valued-States)):
+
+```julia
+const NSTATE = 4
+
+init = @initialDE begin
+    x = zeros(NSTATE)       # vector state of length 4
+    c = 0.0                 # scalar state
+end
+```
+
+The values are concatenated in `@DifferentialEquation` state order into the one flat
+initial state vector the solver integrates.
+
 ## Parsing and Validation Rules
 
 The following constraints are enforced at parse time:
@@ -40,6 +55,9 @@ Initial-value expressions can reference the following model components:
 - PreDE outputs (`@preDifferentialEquation`)
 - Helper functions (`@helpers`)
 - Model functions from learned parameter blocks (e.g., neural network, soft tree, or spline functions)
+
+A symbol that is none of these is looked up as a global constant of the module the model
+is written in (e.g. `NSTATE` above).
 
 This resolution order mirrors that of `@preDifferentialEquation`, ensuring a consistent namespace across the pre-integration model components.
 

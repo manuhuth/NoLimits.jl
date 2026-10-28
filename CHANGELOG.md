@@ -77,6 +77,29 @@
   `mcem_e_step`, `saem_sufficient_statistics`, `fixed_re_normals`) keep
   `Random.default_rng()`; plotting follows the fixed-seed default (see Bug fixes).
 
+- Vector-valued ODE states (#376). A state whose `@initialDE` value is a vector
+  (`x = zeros(4)`) is a vector state: `D(x) ~ ...` returns a vector of the same length,
+  `x` is a vector inside `@DifferentialEquation`, and `x(t)` returns the vector in
+  `@formulas` and in solution accessors. Elements can also be written one per line,
+  `D(x[1]) ~ ...`, with integer literal indices covering `1:n`. Scalar and vector states
+  mix freely; the solver integrates one flat state vector whose elements are named `a`
+  and `x[1]`, ..., `x[n]`. All estimators, simulation, plotting and UQ work unchanged on
+  such models. Dosing addresses a flat element: `CMT = "x[2]"`, or an integer flat
+  position (for all-scalar models this is the state position, as before); naming a whole
+  vector state is an error. Closed-form solutions stay limited to scalar states, so a
+  model with a vector state is solved numerically. `summarize(model)` shows state lengths
+  (`x[1:4]`) and `summarize(dm)` lists the flat elements.
+
+- `@DifferentialEquation`, `@initialDE` and `@formulas` indices may use global constants
+  of the module the model is written in (e.g. `zeros(NSTATE)`, `x[NSTATE]`,
+  `x[1:(N - 1)]`). Model names take precedence over globals of the same name; before,
+  such globals raised "Unknown symbol".
+
+- Integer-valued quantities used in a `@DifferentialEquation` right-hand side (an `Int`
+  constant covariate, or one of the globals above) stay exact integers instead of being
+  converted to the floating-point type of the solve. Results of existing models are
+  unchanged (log-likelihood and gradient bit-identical on Int-covariate test models).
+
 - SAEM skips the M-step in iterations with step size γ = 0 (the `sa_burnin_iters` burn-in
   iterations and, under `:robbins_monro`, the final iteration). The update
   `θ_old + γ * (θ̂ - θ_old)` discards θ̂ there, so the closed-form updates and the Q2 and

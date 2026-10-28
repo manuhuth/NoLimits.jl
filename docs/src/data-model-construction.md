@@ -184,6 +184,8 @@ dm = DataModel(
 
 The `CMT` column can contain either integer indices or state names (`String`/`Symbol`), but the format must be consistent within the DataFrame.
 
+With vector-valued states (see [Vector-Valued States](model-building/differential-equation.md#Vector-Valued-States)) a compartment is one element of the flat state vector: a scalar state is addressed by its name (`"depot"`), an element of a vector state by `"x[k]"` (`"transit[1]"`), and an integer `CMT` is the position in the flat state vector (`depot`, `transit[1]`, ..., `transit[n]`, `central`, ...). For models with only scalar states the flat position is the state position, so existing data are unaffected. Naming a whole vector state (`"transit"`) is an error, since it does not identify one compartment. Boluses (`RATE = 0`), infusions (`RATE > 0`) and resets (`EVID = 2`) all use this addressing; `summarize(dm)` lists the flat element names.
+
 ### Event Timing Conventions
 
 An observation recorded at the same time as a dose is always scored against the **pre-dose** state, regardless of the order of the rows in the DataFrame. This differs from NONMEM, where the record order decides. The convention is the right one for the common pre-dose trough sample; if a sample is drawn just after the dose, give it a slightly later time (for example `t = 1.0 + 1e-6`) so that it is scored against the post-dose state.

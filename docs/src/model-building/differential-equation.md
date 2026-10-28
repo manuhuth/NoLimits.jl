@@ -28,7 +28,8 @@ The following constraints are enforced at parse time:
 - The block must be wrapped in `begin ... end`.
 - Only `D(state) ~ expr` and `signal(t) = expr` / `signal(\xi) = expr` forms are permitted.
 - State names and signal names must be unique across the block.
-- `D(...)` must contain exactly one symbolic state name.
+- `D(...)` must contain exactly one symbolic state name, or one element `x[k]` of a
+  vector-valued state (see [Vector-Valued States](#Vector-Valued-States)).
 - Derived signals must always be referenced as function calls (`s(t)` or `s(\xi)`), never as bare symbols (`s`).
 - Unresolved symbols or functions in DE expressions raise an error during compilation.
 
@@ -186,6 +187,79 @@ model = @Model begin
     @formulas begin
         y ~ LogNormal(center(t), sigma)
     end
+end
+```
+
+## Vector-Valued States
+
+A state becomes a vector when its `@initialDE` value is a vector. One `D(x) ~ ...` line
+then describes all of its elements, which keeps models with many similar states short:
+latent or neural ODEs whose dimension is a hyperparameter, or a chain of transit
+compartments whose length is a modelling choice.
+
+```julia
+const NSTATE = 4
+
+model = @Model begin
+    @fixedEffects begin
+        sigma = RealNumber(0.2, scale = :log)
+        omega = RealNumber(0.2, scale = :log)
+        z = FFNNParameters((NSTATE, 8, NSTATE); activation = :tanh, function_name = :NN)
+    end
+    @covariates begin
+        t = Covariate()
+    end
+    @randomEffects begin
+        eta = RandomEffect(Normal(0.0, omega); column = :ID)
+    end
+    @DifferentialEquation begin
+        D(x) ~ exp(eta) * NN(x, z) .- 0.1 .* x      # x is a vector of length NSTATE
+    end
+    @initialDE begin
+        x = vcat(1.0, zeros(NSTATE - 1))
+    end
+    @formulas begin
+        y ~ Normal(x(t)[NSTATE], sigma)               # x(t) returns the vector
+    end
+end
+```
+
+Rules:
+
+- The length of a vector state is the length of its `@initialDE` value. It must be the
+  same for every individual and parameter value, and `D(x)` must return a vector of that
+  length (otherwise a `DimensionMismatch` is raised).
+- Inside `@DifferentialEquation` the state is a vector (`x[2]`, `x[end]`, `x ./ 100`,
+  `NN(x, z)`); in `@formulas` and in solution accessors `x(t)` returns the vector.
+- Scalar and vector states can be mixed. The solver integrates one flat state vector that
+  holds the states in declaration order; its elements are named `a` for a scalar state
+  and `x[1]`, ..., `x[n]` for a vector state. Dosing (`CMT`), summaries and error
+  messages use these names (see [Data Model Construction](../data-model-construction.md)).
+- Elements can also be written one per line, `D(x[1]) ~ ...`, `D(x[2]) ~ ...`, with
+  integer literal indices covering `1:n`. A state is written either as a whole or
+  element-wise, not both.
+- Global constants of the module the model is written in (such as `NSTATE` above) can be
+  used in `@initialDE`, in right-hand sides (including indices such as `x[NSTATE]` and
+  ranges such as `x[1:(NSTATE - 1)]`) and in `@formulas` indices. Model names
+  (fixed effects, random effects, covariates, preDE variables) take precedence over a
+  global of the same name.
+- Closed-form solutions (`closed_form` in `set_solver_config`) are used only for systems
+  of scalar states; a model with a vector state is always solved numerically.
+
+A transit-compartment chain with a fixed number of compartments:
+
+```julia
+const NTR = 5
+
+@DifferentialEquation begin
+    D(depot) ~ -ktr * depot
+    D(transit) ~ ktr .* (vcat(depot, transit[1:(end - 1)]) .- transit)
+    D(central) ~ ktr * transit[end] - ke * central
+end
+@initialDE begin
+    depot = 0.0
+    transit = zeros(NTR)
+    central = 0.0
 end
 ```
 
