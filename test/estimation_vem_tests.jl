@@ -353,6 +353,47 @@ end
         collect(get_params(rcl; scale = :untransformed)) atol = 0.03
 end
 
+@testset "VEM: prior of a fixed level shared by batches is counted once" begin
+    # site A fixed through constants_re, shared by 4 subjects with free subject REs (4
+    # batches); site B free. At the start q is the exact posterior of this linear Gaussian
+    # model, so the objective is the exact −log p(y | θ) with the fixed prior counted once.
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+        @fixedEffects begin
+            a = RealNumber(0.3)
+            σ = RealNumber(0.5, scale = :log)
+            ω_id = RealNumber(0.7, scale = :log)
+            ω_s = RealNumber(0.9, scale = :log)
+        end
+        @randomEffects begin
+            η_id = RandomEffect(Normal(0.0, ω_id); column = :ID)
+            η_site = RandomEffect(Normal(0.0, ω_s); column = :SITE)
+        end
+        @formulas begin
+            y ~ Normal(a + η_id + η_site, σ)
+        end
+    end
+    ids = repeat(1:6, inner = 3)
+    df = DataFrame(
+        ID = ids, SITE = [i <= 4 ? :A : :B for i in ids], t = repeat([0.0, 1.0, 2.0], 6),
+        y = 0.3 .+ 0.4 .* (ids .<= 4) .+ 0.5 .* randn(Xoshiro(7), 18)
+    )
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    cre = (; η_site = Dict(:A => 0.4))
+    J = ones(3, 3)
+    VB = 0.25 * I(6) + 0.49 * [J zeros(3, 3); zeros(3, 3) J] + 0.81 * ones(6, 6)
+    nll = -(
+        logpdf(Normal(0.0, 0.9), 0.4) +
+            sum(logpdf(MvNormal(fill(0.7, 3), 0.25 * I + 0.49 * J), df.y[df.ID .== i]) for i in 1:4) +
+            logpdf(MvNormal(fill(0.3, 6), Matrix(VB)), df.y[df.ID .> 4])
+    )
+    r = fit_model(dm, _vem_frozen(); constants_re = cre, rng = Xoshiro(3))
+    @test collect(get_params(r; scale = :untransformed)) ≈ [0.3, 0.5, 0.7, 0.9]
+    @test get_objective(r) ≈ nll rtol = 1.0e-6
+end
+
 @testset "VEM: model bounds, ignore_model_bounds, optimizers without bounds support" begin
     dm = _vem_lin_dm(Xoshiro(11))
     model = @Model begin

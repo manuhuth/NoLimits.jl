@@ -5,10 +5,15 @@
 
 using ComponentArrays
 
-struct REConstantsCache{M, S, V}
+# `owner[ri][id]` is the individual that carries the prior density of fixed level `id`
+# (the first individual with that level; 0 for free levels). Fixed levels do not link
+# batches, so one fixed level can sit in several batches; counting its prior only in the
+# batch of its owner makes every sum over batches count it once.
+struct REConstantsCache{M, S, V, O}
     is_const::M
     scalar_vals::S
     vector_vals::V
+    owner::O
 end
 function _normalize_constants_re(
         dm::DataModel, constants_re::NamedTuple;
@@ -65,7 +70,8 @@ function _build_constants_cache(dm::DataModel, constants_re::NamedTuple)
     constants_re = _normalize_constants_re(dm, constants_re)
     cache = dm.re_group_info.laplace_cache
     cache === nothing && return REConstantsCache(
-        BitVector[], Vector{Vector{Float64}}(), Vector{Vector{Vector{Float64}}}()
+        BitVector[], Vector{Vector{Float64}}(), Vector{Vector{Vector{Float64}}}(),
+        Vector{Vector{Int}}()
     )
     re_names = cache.re_names
     nre = length(re_names)
@@ -105,7 +111,13 @@ function _build_constants_cache(dm::DataModel, constants_re::NamedTuple)
             end
         end
     end
-    return REConstantsCache(is_const, scalar_vals, vector_vals)
+    owner = [zeros(Int, length(m)) for m in is_const]
+    for i in eachindex(cache.ind_level_ids), ri in 1:nre
+        for id in cache.ind_level_ids[i][ri]
+            is_const[ri][id] && owner[ri][id] == 0 && (owner[ri][id] = i)
+        end
+    end
+    return REConstantsCache(is_const, scalar_vals, vector_vals, owner)
 end
 function _build_re_batches(dm::DataModel, const_cache::REConstantsCache)
     cache = dm.re_group_info.laplace_cache

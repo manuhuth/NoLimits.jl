@@ -15,6 +15,7 @@ using LinearAlgebra
 using Random
 using SciMLBase
 using OrdinaryDiffEq
+import Optimisers
 
 # Consolidated Laplace tests, part 1 of 2 (part 2: estimation_laplace2_tests.jl,
 # split for CI shard balance — the halves run in different shards).
@@ -351,6 +352,66 @@ end
     )
     @test hasproperty(re_dfs, :η_id) && hasproperty(re_dfs, :η_site)
     @test length(re_dfs.η_id.ID) == 2 && length(re_dfs.η_site.SITE) == 2
+end
+
+@testset "Laplace: prior of a fixed level shared by batches is counted once" begin
+    # Site A is fixed through constants_re and shared by 4 subjects with free subject REs,
+    # so it sits in 4 batches; site B is free (one batch). The model is linear Gaussian, so
+    # Laplace is exact: at the start the objective is the exact marginal −log p(y | θ), with
+    # the prior of the fixed site level counted once (it was counted once per batch).
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+        @fixedEffects begin
+            a = RealNumber(0.3)
+            σ = RealNumber(0.5, scale = :log)
+            ω_id = RealNumber(0.7, scale = :log)
+            ω_s = RealNumber(0.9, scale = :log)
+        end
+        @randomEffects begin
+            η_id = RandomEffect(Normal(0.0, ω_id); column = :ID)
+            η_site = RandomEffect(Normal(0.0, ω_s); column = :SITE)
+        end
+        @formulas begin
+            y ~ Normal(a + η_id + η_site, σ)
+        end
+    end
+    ids = repeat(1:6, inner = 3)
+    df = DataFrame(
+        ID = ids, SITE = [i <= 4 ? :A : :B for i in ids], t = repeat([0.0, 1.0, 2.0], 6),
+        y = 0.3 .+ 0.4 .* (ids .<= 4) .+ 0.5 .* randn(Xoshiro(7), 18)
+    )
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    bA = 0.4
+    cre = (; η_site = Dict(:A => bA))
+    _, infos, cc = NoLimits.build_re_batch_infos(dm, cre)
+    @test length(infos) == 5
+    @test count(info -> any(<=(4), NoLimits.get_inds(info)), infos) == 4
+    function exact_nll(θ)
+        ll = logpdf(Normal(0.0, θ.ω_s), bA)
+        for i in 1:4
+            V = θ.σ^2 * I + θ.ω_id^2 * ones(3, 3)
+            ll += logpdf(MvNormal(fill(θ.a + bA, 3), V), df.y[df.ID .== i])
+        end
+        J = ones(3, 3)
+        V = θ.σ^2 * I(6) + θ.ω_id^2 * [J zeros(3, 3); zeros(3, 3) J] + θ.ω_s^2 * ones(6, 6)
+        ll += logpdf(MvNormal(fill(θ.a, 6), Matrix(V)), df.y[df.ID .> 4])
+        return -ll
+    end
+    frozen = (; optimizer = Optimisers.Adam(0.0), optim_kwargs = (; maxiters = 1))
+    for m in (NoLimits.Laplace(; frozen...), NoLimits.FOCEI(; frozen...), NoLimits.GHQuadrature(; frozen...))
+        r = fit_model(dm, m; constants_re = cre)
+        @test get_objective(r) ≈ exact_nll(get_params(r; scale = :untransformed)) rtol = 1.0e-8
+    end
+    # the RE prior summed over batches (SAEM/MCEM Q2, dev API) counts the fixed level once
+    θ = ComponentArray(a = 0.3, σ = 0.5, ω_id = 0.7, ω_s = 0.9)
+    lp = sum(
+        NoLimits.re_logprior(dm, info, θ, zeros(NoLimits.get_n_b(info)); const_cache = cc)
+            for info in infos
+    )
+    @test lp ≈ 6 * logpdf(Normal(0.0, 0.7), 0.0) + logpdf(Normal(0.0, 0.9), 0.0) +
+        logpdf(Normal(0.0, 0.9), bA) rtol = 1.0e-12
 end
 
 @testset "Laplace fit single-thread vs multithread (if available)" begin

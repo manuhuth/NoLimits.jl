@@ -133,7 +133,9 @@ the reported objective (`get_result(res).notes.elbo` stays the plain ELBO). Like
 weights of the `DataModel` multiply the ELBO term of each random-effect batch, and its
 marginal-likelihood term in `refine` and in the reported objective. Random-effect levels
 fixed through `constants_re` enter as for `Laplace`: with the prior density of the fixed
-values, and a batch without free levels (no q) with its log-likelihood at the fixed values.
+values (once per fixed level, also when the level is shared by several batches, weighted by
+the common weight of its individuals), and a batch without free levels (no q) with its
+log-likelihood at the fixed values.
 
 For mini-batching (stochastic VEM) wrap the method in [`MiniBatch`](@ref); the penalty and
 `extra_objective` are then added once per iteration, not scaled by the number of batches.
@@ -434,7 +436,7 @@ end
 # centered space, joint density from the Enzyme-compatible `_laplace_logf_batch_impl` (no
 # try/catch, no transport measure). Same value as `_vem_batch_elbo` for Gaussian REs:
 # E_q[log p(y, b | θ)] + n/2 (1 + log 2π) + log|det L|, without the prior of levels fixed by
-# `constants_re` (added once per batch by the θ-only terms, as on the ForwardDiff path).
+# `constants_re` (added by the θ-only terms, once per fixed level, as on the ForwardDiff path).
 function _vem_batch_elbo_rev(
         θu::ComponentArray, κ::AbstractVector, dr::_VEMDraws, family::Symbol,
         dm::DataModel, info::REBatchInfo, const_cache, ll_cache::_LLCache
@@ -892,12 +894,15 @@ function _vem_foreach(f, n::Int, caches::Vector)
     return nothing
 end
 
-# whether a batch has random-effect levels fixed by `constants_re`
+# whether a batch carries the prior of a random-effect level fixed by `constants_re`: a
+# fixed level shared by several batches is counted only in the batch of its owner
+# (`_const_re_prior_logf`), so its prior enters the objective once
 function _vem_has_const_levels(dm::DataModel, info::REBatchInfo, const_cache)
     isempty(const_cache.is_const) && return false
     ids = get_ind_level_ids(get_laplace_cache(get_re_group_info(dm)))
     return any(
-        const_cache.is_const[ri][id] for i in get_inds(info)
+        const_cache.is_const[ri][id] && const_cache.owner[ri][id] == i
+            for i in get_inds(info)
             for ri in eachindex(const_cache.is_const) for id in ids[i][ri]
     )
 end
@@ -1020,7 +1025,8 @@ function _fit_model(
     wk = [_batch_weight(dm, get_inds(batch_infos[bi])) for bi in keep]
     # levels fixed by `constants_re` enter as for Laplace/GHQuadrature: a batch without
     # free levels contributes log p(y_b, b_fixed | θ) (it has no q), other batches the
-    # prior density of their fixed levels, log p(b_fixed | θ)
+    # prior density of the fixed levels they own, log p(b_fixed | θ); each fixed level is
+    # owned by one batch, so its prior is counted once even when it is shared by batches
     fixed_b = [
         bi for bi in eachindex(batch_infos)
             if !iszero(_batch_weight(dm, get_inds(batch_infos[bi]))) &&

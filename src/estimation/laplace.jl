@@ -769,8 +769,17 @@ end
     return (gradb, logf)
 end
 
-# Evaluates log p(η_const | θ) for all constant RE levels in the batch.
-# Each unique constant level contributes exactly once (deduplicated via `seen`).
+# Evaluates log p(η_const | θ) for the constant RE levels owned by the batch.
+# Fixed levels do not link batches, so a level fixed through `constants_re` (e.g. a site
+# shared by subjects with free subject REs) can sit in several batches. Only the batch of
+# its owner (`const_cache.owner`, its first individual) counts its prior, so every sum over
+# batches — Laplace/FOCEI/GHQuadrature objectives, the SAEM/MCEM Q functions, the VEM ELBO —
+# counts each fixed level exactly once:
+#   log p(y, b | θ) = Σ_batches [log p(y_b | b, θ) + log p(b_free | θ)] + Σ_fixed log p(b_fixed | θ).
+# Weighting: the term takes the weight of its owner's batch. DataModel weights are equal
+# within each group of individuals sharing any RE level, constant levels included, so all
+# batches holding one fixed level carry the same weight and this is the weight of the level.
+# The term is constant in b, so the EB modes and the b-Hessians do not depend on it.
 function _const_re_prior_logf(
         dm::DataModel,
         batch_info::REBatchInfo,
@@ -788,10 +797,11 @@ function _const_re_prior_logf(
     for (ri, re) in enumerate(get_re_names(re_cache))
         const_mask = const_cache.is_const[ri]
         any(const_mask) || continue
+        owner = const_cache.owner[ri]
         seen = falses(length(const_mask))
         for i in get_inds(batch_info)
             for id in get_ind_level_ids(re_cache)[i][ri]
-                (const_mask[id] && !seen[id]) || continue
+                (const_mask[id] && owner[id] == i && !seen[id]) || continue
                 seen[id] = true
                 dists = dists_builder(
                     θ_re, get_const_cov(get_individuals(dm)[i]),
@@ -1049,7 +1059,7 @@ function _laplace_logf_batch_impl(
         anneal_sds = anneal_sds, tctx = tctx
     )
     !isfinite(ll) && return T_ll(-Inf)
-    # constant-RE prior term (`const_prior = false`: VEM adds it once per batch instead)
+    # constant-RE prior term (`const_prior = false`: VEM adds it with its θ-only terms)
     if const_prior
         const_ll = _const_re_prior_logf(
             dm, batch_info, θ_re, const_cache, cache; anneal_sds = anneal_sds
