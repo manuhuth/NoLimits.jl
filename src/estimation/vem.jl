@@ -688,45 +688,50 @@ function _vem_adapt_rule(
         θu::ComponentArray, μq::Vector{Float64}, Lq::Matrix{Float64}, dm::DataModel,
         info::REBatchInfo, const_cache, ll_cache::_LLCache
     )
+    μ, L, _ = _vem_adapt_rule_cov(θu, μq, Lq, dm, info, const_cache, ll_cache)
+    return μ, L
+end
+
+# `_vem_adapt_rule` and (-H)⁻¹ at the mode (nothing for the fallback q)
+function _vem_adapt_rule_cov(
+        θu::ComponentArray, μq::Vector{Float64}, Lq::Matrix{Float64}, dm::DataModel,
+        info::REBatchInfo, const_cache, ll_cache::_LLCache
+    )
     base = _vem_measure(info, θu, const_cache, dm, ll_cache)
-    base === nothing && return μq, Lq
+    base === nothing && return μq, Lq, nothing
     θ_re = _symmetrize_psd_params(θu, get_fixed(get_model(dm)))
     f = v -> _vem_logjoint(v, base, dm, info, θ_re, const_cache, ll_cache)
     v, Σ = _vem_newton_mode(f, μq)
-    Σ === nothing && return μq, Lq
+    Σ === nothing && return μq, Lq, nothing
     C = cholesky(Symmetric(Σ); check = false)
-    issuccess(C) || return μq, Lq
-    return v, Matrix(C.L)
+    issuccess(C) || return μq, Lq, nothing
+    return v, Matrix(C.L), Σ
 end
 
 # The rule of `_vem_adapt_rule` as a function of θu of any element type (the refinement
 # objective under ForwardDiff). The Float64 rule at θv = value(θu) alone drops dμ/dθ and
 # dL/dθ from the gradient while the value depends on them (M05: AD gradient
 # (0.04, -0.07, 0.04, ...) vs central differences (0.23, 0.91, -0.11, ...) at the end of the
-# refinement). One Newton step from the Float64 mode in dual arithmetic gives the exact
-# first derivatives of the mode (implicit function theorem); L is the Cholesky factor of
-# (-H)⁻¹ at that dual mode. Values are reset to the Float64 rule, so that the objective's
-# value does not depend on the element type.
+# refinement). The first derivatives of the mode follow from the implicit function theorem,
+# dμ/dθ = (-H)⁻¹ ∂g/∂θ with the Float64 (-H)⁻¹ of the Newton mode and the gradient g of the
+# log integrand at the mode in dual arithmetic (one nested-dual Hessian per batch and
+# evaluation instead of two); L is the Cholesky factor of (-H)⁻¹ at that dual mode. Values
+# are reset to the Float64 rule (μ, L, Σ) = `_vem_adapt_rule_cov` at value(θu), so that the
+# objective's value does not depend on the element type.
 function _vem_refine_rule(
-        θu::ComponentArray, θv::ComponentArray, μq::Vector{Float64}, Lq::Matrix{Float64},
-        dm::DataModel, info::REBatchInfo, const_cache, ll_cache::_LLCache
+        θu::ComponentArray, μ::Vector{Float64}, L::Matrix{Float64}, Σ, dm::DataModel,
+        info::REBatchInfo, const_cache, ll_cache::_LLCache
     )
-    μ, L = _vem_adapt_rule(θv, μq, Lq, dm, info, const_cache, ll_cache)
     T = eltype(θu)
     # the fallback rule (q itself) does not depend on θ
-    (T === Float64 || μ === μq) && return μ, L
+    (T === Float64 || Σ === nothing) && return μ, L
     base = _vem_measure(info, θu, const_cache, dm, ll_cache)
     base === nothing && return μ, L
     θ_re = _symmetrize_psd_params(θu, get_fixed(get_model(dm)))
     f = v -> _vem_logjoint(v, base, dm, info, θ_re, const_cache, ll_cache)
-    v0 = Vector{T}(μ)
-    g = ForwardDiff.gradient(f, v0)
-    H = ForwardDiff.hessian(f, v0)
-    (all(isfinite, g) && all(isfinite, H)) || return μ, L
-    C = cholesky(Symmetric(-H); check = false)
-    issuccess(C) || return μ, L
-    Δ = C \ g
-    μd = μ .+ (Δ .- ForwardDiff.value.(Δ))
+    g = ForwardDiff.gradient(f, Vector{T}(μ))
+    all(isfinite, g) || return μ, L
+    μd = μ .+ Σ * (g .- ForwardDiff.value.(g))
     Hd = ForwardDiff.hessian(f, μd)
     all(isfinite, Hd) || return μd, L
     Cd = cholesky(Symmetric(-Hd); check = false)
@@ -738,10 +743,13 @@ function _vem_refine_rule(
 end
 
 # Damped Newton finish of the refinement from x (in place) within [lb, ub]: curvature by
-# central differences of the gradient `grad!(G, x)`, eigenvalues clipped at 1e-8 of the
+# forward differences of the gradient `grad!(G, x)`, eigenvalues clipped at 1e-8 of the
 # largest, Armijo backtracking, coordinates at a bound with the gradient pointing outward
-# held fixed. Converged when |g|∞ ≤ gtol on the free coordinates, or when the predicted
-# or the achieved decrease of a Newton step is at most rtol max(|f|, 1).
+# held fixed. The curvature is kept while full steps reduce |g|∞ at least fourfold, and
+# renewed when a kept one fails its line search (a new one costs p gradients; M14: 5 steps
+# with central differences, 2p gradients each, took 33 of 50 s of the fit). Converged when
+# |g|∞ ≤ gtol on the free coordinates, or when the predicted or the achieved decrease of a
+# Newton step is at most rtol max(|f|, 1).
 # Returns (f(x), converged, iterations).
 function _vem_newton_finish!(
         f, grad!, x::Vector{Float64}, lb, ub, nmax::Int, gtol::Float64, rtol::Float64
@@ -749,27 +757,34 @@ function _vem_newton_finish!(
     p = length(x)
     fx = f(x)
     isfinite(fx) || return fx, false, 0
-    g, gp, gm = zeros(p), zeros(p), zeros(p)
+    g, gp = zeros(p), zeros(p)
+    # curvature of the last step: free set, eigen decomposition, clipped eigenvalues
+    E, λ, free_E = nothing, Float64[], Int[]
+    gmax_prev, keep = Inf, false
     for it in 1:nmax
         grad!(g, x)
         all(isfinite, g) || return fx, false, it - 1
         free = findall(j -> !((x[j] <= lb[j] && g[j] > 0) || (x[j] >= ub[j] && g[j] < 0)), 1:p)
-        maximum(j -> abs(g[j]), free; init = 0.0) <= gtol && return fx, true, it - 1
-        H = zeros(length(free), length(free))
-        for (c, j) in enumerate(free)
-            h = 1.0e-6 * max(1.0, abs(x[j]))
-            xj = copy(x)
-            xj[j] = x[j] + h
-            grad!(gp, xj)
-            xj[j] = x[j] - h
-            grad!(gm, xj)
-            @views H[:, c] .= (gp[free] .- gm[free]) ./ (2h)
+        gmax = maximum(j -> abs(g[j]), free; init = 0.0)
+        gmax <= gtol && return fx, true, it - 1
+        reused = keep && free == free_E && gmax <= gmax_prev / 4
+        if !reused
+            H = zeros(length(free), length(free))
+            for (c, j) in enumerate(free)
+                h = 1.0e-6 * max(1.0, abs(x[j]))
+                xj = copy(x)
+                xj[j] = x[j] + h
+                grad!(gp, xj)
+                @views H[:, c] .= (gp[free] .- g[free]) ./ h
+            end
+            all(isfinite, H) || return fx, false, it - 1
+            E = eigen(Symmetric((H .+ H') ./ 2))
+            λmax = maximum(abs, E.values)
+            λmax > 0 || return fx, false, it - 1
+            λ = max.(E.values, 1.0e-8 * λmax)
+            free_E = free
         end
-        all(isfinite, H) || return fx, false, it - 1
-        E = eigen(Symmetric((H .+ H') ./ 2))
-        λmax = maximum(abs, E.values)
-        λmax > 0 || return fx, false, it - 1
-        λ = max.(E.values, 1.0e-8 * λmax)
+        gmax_prev = gmax
         Δ = -(E.vectors * ((E.vectors' * g[free]) ./ λ))
         pred = -dot(g[free], Δ)
         tol = rtol * max(abs(fx), 1.0)
@@ -779,9 +794,17 @@ function _vem_newton_finish!(
             xn[free] .= clamp.(x[free] .+ α .* Δ, lb[free], ub[free])
             fn = f(xn)
             isfinite(fn) && fn <= fx - 1.0e-4 * α * pred && break
+            # converged: backtracking along a step of predicted decrease ≤ tol only costs
+            # evaluations (M19: near-singular curvature)
+            pred / 2 <= tol && return fx, true, it - 1
             α /= 2
         end
-        isfinite(fn) && fn <= fx - 1.0e-4 * α * pred || return fx, pred / 2 <= tol, it - 1
+        if !(isfinite(fn) && fn <= fx - 1.0e-4 * α * pred)
+            # a kept curvature failed: retry from x with a new one
+            reused && (keep = false; gmax_prev = Inf; continue)
+            return fx, pred / 2 <= tol, it - 1
+        end
+        keep = α == 1.0
         df = fx - fn
         x .= xn
         fx = fn
@@ -1338,16 +1361,26 @@ function _fit_model(
                 end for (k, bi) in enumerate(keep)
         ]
         DRr = ForwardDiff.DiffResults
+        # Float64 rule of each batch at the last value(xθ): ForwardDiff's chunks (p > 12) and
+        # the evaluations of f and its gradient at one point share it
+        RuleT = Tuple{Vector{Float64}, Vector{Float64}, Matrix{Float64}, Union{Nothing, Matrix{Float64}}}
+        rules = Vector{Union{Nothing, RuleT}}(nothing, nk)
         fr = xθ -> begin
             θu = θu_of(xθ)
-            θv = eltype(xθ) === Float64 ? θu : θu_of(ForwardDiff.value.(xθ))
+            xv = eltype(xθ) === Float64 ? xθ : ForwardDiff.value.(xθ)
+            θv = eltype(xθ) === Float64 ? θu : θu_of(xv)
             T = eltype(θu)
             lls = Vector{T}(undef, nk)
             _vem_foreach(nk, caches) do k, lc
                 iszero(wk[k]) && (lls[k] = zero(T); return)
                 μq, Lq, (xn, lw) = qs[k]
                 info = batch_infos[keep[k]]
-                μ, L = _vem_refine_rule(θu, θv, μq, Lq, dm, info, const_cache, lc)
+                rule = rules[k]
+                if rule === nothing || rule[1] != xv
+                    rule = (Vector{Float64}(xv), _vem_adapt_rule_cov(θv, μq, Lq, dm, info, const_cache, lc)...)
+                    rules[k] = rule
+                end
+                μ, L = _vem_refine_rule(θu, rule[2], rule[3], rule[4], dm, info, const_cache, lc)
                 lls[k] = _vem_refine_batch_ll(θu, μ, L, xn, lw, dm, info, const_cache, lc)
             end
             flls = Vector{T}(undef, nf)
