@@ -80,15 +80,22 @@
 - Vector-valued ODE states (#376). A state whose `@initialDE` value is a vector
   (`x = zeros(4)`) is a vector state: `D(x) ~ ...` returns a vector of the same length,
   `x` is a vector inside `@DifferentialEquation`, and `x(t)` returns the vector in
-  `@formulas` and in solution accessors. Elements can also be written one per line,
-  `D(x[1]) ~ ...`, with integer literal indices covering `1:n`. Scalar and vector states
-  mix freely; the solver integrates one flat state vector whose elements are named `a`
-  and `x[1]`, ..., `x[n]`. All estimators, simulation, plotting and UQ work unchanged on
-  such models. Dosing addresses a flat element: `CMT = "x[2]"`, or an integer flat
-  position (for all-scalar models this is the state position, as before); naming a whole
-  vector state is an error. Closed-form solutions stay limited to scalar states, so a
-  model with a vector state is solved numerically. `summarize(model)` shows state lengths
-  (`x[1:4]`) and `summarize(dm)` lists the flat elements.
+  `@formulas` and in solution accessors. A state can also be written element-wise,
+  `D(x[k]) ~ <scalar>` or `D(x[a:b]) ~ <vector>`, with integer literals, `begin`, `end`
+  and `end - k` as indices (e.g. `D(x[2:end])`); every element must be given exactly once
+  and a state is written either as a whole or element-wise. Scalar and vector states mix
+  freely; the solver integrates one flat state vector whose elements are named `a` and
+  `x[1]`, ..., `x[n]`. All estimators, simulation, plotting and UQ work unchanged on such
+  models. Dosing addresses a compartment by name, `CMT = "c"` or `CMT = "x[2]"`; integer
+  `CMT` and naming a whole vector state are errors in models with a vector state (all-
+  scalar models keep integer `CMT`). Closed-form solutions stay limited to scalar states,
+  so a model with a vector state is solved numerically. Broadcast right-hand sides are
+  fused in place into the derivative and state slices are views, so element-wise forms
+  such as a transit chain run without allocations. `summarize(model)` shows state
+  lengths (`x[1:4]`) and `summarize(dm)` lists the flat elements.
+
+- `@DifferentialEquation` accepts broadcast calls with model parameters, e.g.
+  `exp.(-k .* x)` (before, the arguments of `f.(...)` were not resolved).
 
 - `@DifferentialEquation`, `@initialDE` and `@formulas` indices may use global constants
   of the module the model is written in (e.g. `zeros(NSTATE)`, `x[NSTATE]`,

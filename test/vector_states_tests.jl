@@ -402,6 +402,118 @@ const _VS_INTCOV = @Model begin
     end
 end
 
+# Transit chain with element-wise ranges: first element, then `2:end` in one fused,
+# allocation-free broadcast line.
+const _VS_TR_ELEM = @Model begin
+    @fixedEffects begin
+        ktr = RealNumber(2.0, scale = :log)
+        ke = RealNumber(0.3, scale = :log)
+        σ = RealNumber(0.2, scale = :log)
+        ω = RealNumber(0.3, scale = :log)
+    end
+    @covariates begin
+        t = Covariate()
+    end
+    @randomEffects begin
+        η = RandomEffect(Normal(0.0, ω); column = :ID)
+    end
+    @DifferentialEquation begin
+        D(a) ~ -ktr * exp(η) * a
+        D(trn[1]) ~ ktr * exp(η) * (a - trn[1])
+        D(trn[2:end]) ~ ktr * exp(η) .* (trn[1:(end - 1)] .- trn[2:end])
+        D(c) ~ ktr * exp(η) * trn[end] - ke * c
+    end
+    @initialDE begin
+        a = 100.0
+        trn = zeros(_VS_N)
+        c = 0.0
+    end
+    @formulas begin
+        y ~ Normal(c(t) / 10 + 0.01 * trn(t)[_VS_N], σ)
+    end
+end
+
+# Literal range with a (static) vector right-hand side, and `end` for a single element.
+const _VS_MIX_RANGE = @Model begin
+    @fixedEffects begin
+        ka = RealNumber(1.0, scale = :log)
+        k12 = RealNumber(0.3, scale = :log)
+        k21 = RealNumber(0.2, scale = :log)
+        ke0 = RealNumber(0.5, scale = :log)
+        V = RealNumber(10.0, scale = :log)
+        σ = RealNumber(0.2, scale = :log)
+        ω = RealNumber(0.3, scale = :log)
+    end
+    @covariates begin
+        t = Covariate()
+    end
+    @randomEffects begin
+        η = RandomEffect(Normal(0.0, ω); column = :ID)
+    end
+    @DifferentialEquation begin
+        D(a) ~ -ka * exp(η) * a
+        D(x[1:1]) ~ [ka * exp(η) * a - k12 * x[1] + k21 * x[2]]
+        D(x[end]) ~ k12 * x[1] - k21 * x[2]
+        D(e) ~ ke0 * (x[1] / V - e)
+        conc(t) = x[1] / V
+    end
+    @initialDE begin
+        a = 100.0
+        x = [0.0, 0.0]
+        e = 0.0
+    end
+    @formulas begin
+        y ~ Normal(conc(t), σ)
+        z ~ Normal(e(t) + 0.1 * x(t)[2] / V, σ)
+    end
+end
+
+# Broadcast calls `f.(...)` with model parameters, vector vs scalar form.
+const _VS_DOT_VEC = @Model begin
+    @fixedEffects begin
+        k = RealNumber(0.3, scale = :log)
+        cc = RealNumber(0.2, scale = :log)
+        σ = RealNumber(0.2, scale = :log)
+    end
+    @covariates begin
+        t = Covariate()
+    end
+    @DifferentialEquation begin
+        D(x) ~ -k .* exp.(-cc .* x)
+        D(b) ~ -k .* b
+    end
+    @initialDE begin
+        x = [1.0, 2.0]
+        b = 1.0
+    end
+    @formulas begin
+        y ~ Normal(x(t)[2] + b(t), σ)
+    end
+end
+const _VS_DOT_SCA = @Model begin
+    @fixedEffects begin
+        k = RealNumber(0.3, scale = :log)
+        cc = RealNumber(0.2, scale = :log)
+        σ = RealNumber(0.2, scale = :log)
+    end
+    @covariates begin
+        t = Covariate()
+    end
+    @DifferentialEquation begin
+        D(x1) ~ -k * exp(-cc * x1)
+        D(x2) ~ -k * exp(-cc * x2)
+        D(b) ~ -k * b
+    end
+    @initialDE begin
+        x1 = 1.0
+        x2 = 2.0
+        b = 1.0
+    end
+    @formulas begin
+        y ~ Normal(x2(t) + b(t), σ)
+    end
+end
+
 # ---------------------------------------------------------------------------------
 @testset "vector state ≡ scalar states: NN right-hand side" begin
     dmv = DataModel(_VS_NN_VEC, _VS_DF; primary_id = :ID, time_col = :t)
@@ -501,7 +613,7 @@ end
     lls = _vs_ll(dms, θ, ComponentArray())
     gs = _vs_grad(dms, θ, ComponentArray())
     @test isfinite(lls)
-    for (cg1, cg2, cc) in (("g[1]", "g[2]", "c"), (:var"g[1]", :var"g[2]", :c), (1, 2, 3))
+    for (cg1, cg2, cc) in (("g[1]", "g[2]", "c"), (:var"g[1]", :var"g[2]", :c))
         dmv = _vs_dose_dm(_VS_DOSE_VEC, _vs_dose_df(cg1, cg2, cc))
         @test isapprox(_vs_ll(dmv, θ, ComponentArray()), lls; rtol = 1.0e-10)
         @test isapprox(_vs_grad(dmv, θ, ComponentArray()), gs; rtol = 1.0e-8)
@@ -512,7 +624,17 @@ end
     @test_throws ErrorException _vs_dose_dm(_VS_DOSE_VEC, _vs_dose_df("g", "g[2]", "c"))
     @test_throws ErrorException _vs_dose_dm(_VS_DOSE_VEC, _vs_dose_df("g[3]", "g[2]", "c"))
     @test_throws ErrorException _vs_dose_dm(_VS_DOSE_VEC, _vs_dose_df("c[1]", "g[2]", "c"))
-    @test_throws ErrorException _vs_dose_dm(_VS_DOSE_VEC, _vs_dose_df(1, 2, 4))
+    # integer CMT is rejected for models with a vector state (names stay valid when a
+    # state length changes)
+    err = try
+        _vs_dose_dm(_VS_DOSE_VEC, _vs_dose_df(1, 2, 3))
+        nothing
+    catch e
+        e
+    end
+    @test err isa ErrorException
+    @test occursin("Integer CMT", err.msg) && occursin("g[1]", err.msg) &&
+        occursin("g[1], g[2], c", err.msg)
     sim = simulate_data(_vs_dose_dm(_VS_DOSE_VEC, _vs_dose_df("g[1]", "g[2]", "c")); rng = MersenneTwister(3))
     @test count(!ismissing, sim.y) == count(!ismissing, _vs_dose_df(1, 2, 3).y)
 end
@@ -632,7 +754,7 @@ end
             end
         )
     )
-    @test e3 !== nothing && occursin("Duplicate element-wise", sprint(showerror, e3))
+    @test e3 !== nothing && occursin("more than once", sprint(showerror, e3))
     e4 = de_err(
         :(
             @DifferentialEquation begin
@@ -666,4 +788,152 @@ end
     # all-scalar initial values keep the plain (or static) vector
     @test NoLimits._de_initial_state(Val((:a, :b)), Val(false), 1.0, 2.0) == [1.0, 2.0]
     @test NoLimits._de_split_init([1.0, 2.0]) == ([1.0, 2.0], nothing)
+end
+
+@testset "element-wise ranges: parity with scalar and whole-vector forms" begin
+    dme = DataModel(_VS_TR_ELEM, _VS_DF; primary_id = :ID, time_col = :t)
+    dmv = DataModel(_VS_TR_VEC, _VS_DF; primary_id = :ID, time_col = :t)
+    dms = DataModel(_VS_TR_SCA, _VS_DF; primary_id = :ID, time_col = :t)
+    θ = _vs_θ(dme)
+    η = _vs_η(dme, θ)
+    lls = _vs_ll(dms, θ, η)
+    @test _vs_ll(dme, θ, η) == lls
+    @test _vs_ll(dmv, θ, η) == lls
+    @test _vs_grad(dme, θ, η) == _vs_grad(dms, θ, η)
+    dmr = DataModel(_VS_MIX_RANGE, _VS_DF; primary_id = :ID, time_col = :t)
+    dmm = DataModel(_VS_MIX_SCA, _VS_DF; primary_id = :ID, time_col = :t)
+    θm = _vs_θ(dmr)
+    ηm = _vs_η(dmr, θm)
+    @test _vs_ll(dmr, θm, ηm) == _vs_ll(dmm, θm, ηm)
+    @test isapprox(_vs_grad(dmr, θm, ηm), _vs_grad(dmm, θm, ηm); rtol = 1.0e-12)
+    txt = sprint(io -> NoLimits.show_equations(io, _VS_TR_ELEM; latex = false))
+    @test occursin("trn\u0307[2:end](t)", txt)
+    @test !NoLimits.is_cf_eligible(NoLimits._detect_closed_form(_VS_TR_ELEM))
+    # broadcast calls with model parameters; a dotted right-hand side of a scalar state
+    dd = DataModel(_VS_DOT_VEC, _VS_DF; primary_id = :ID, time_col = :t)
+    ds = DataModel(_VS_DOT_SCA, _VS_DF; primary_id = :ID, time_col = :t)
+    θd = _vs_θ(dd)
+    @test _vs_ll(dd, θd, ComponentArray()) == _vs_ll(ds, θd, ComponentArray())
+    # accessor at a saved time: a view, no copy
+    acc = solve_individual(dme, 1, θ, η[1])
+    @test acc.trn(0.5) isa SubArray && length(acc.trn(0.5)) == _VS_N
+end
+
+@testset "element-wise ranges: errors" begin
+    function errmodel(de_block, init)
+        return Core.eval(
+            @__MODULE__, quote
+                @Model begin
+                    @fixedEffects begin
+                        k = RealNumber(0.3, scale = :log)
+                        σ = RealNumber(0.2, scale = :log)
+                    end
+                    @covariates begin
+                        t = Covariate()
+                    end
+                    @DifferentialEquation $(de_block)
+                    @initialDE begin
+                        x = $(init)
+                    end
+                    @formulas begin
+                        y ~ Normal(x(t)[1], σ)
+                    end
+                end
+            end
+        )
+    end
+    function solve_err(de_block, init)
+        m = errmodel(de_block, init)
+        return try
+            Base.invokelatest() do
+                dm = DataModel(m, _VS_DF; primary_id = :ID, time_col = :t)
+                _vs_ll(dm, _vs_θ(dm), ComponentArray())
+            end
+            nothing
+        catch e
+            e
+        end
+    end
+    msg(e) = sprint(showerror, e)
+    # gap (bounds relative to `end`: found at solve time)
+    e = solve_err(
+        :(
+            begin
+                D(x[1]) ~ -k * x[1]
+                D(x[3:end]) ~ -k .* x[3:end]
+            end
+        ), :(zeros(_VS_N))
+    )
+    @test e isa ErrorException && occursin("missing: x[2]", msg(e))
+    # overlap
+    e = solve_err(
+        :(
+            begin
+                D(x[1:2]) ~ -k .* x[1:2]
+                D(x[2:end]) ~ -k .* x[2:end]
+            end
+        ), :(zeros(_VS_N))
+    )
+    @test e isa ErrorException && occursin("overlap", msg(e))
+    # out of range (literal bounds beyond the state length)
+    e = solve_err(
+        :(
+            begin
+                D(x[1:2]) ~ -k .* x[1:2]
+                D(x[3:5]) ~ -k .* x[1:3]
+            end
+        ), :(zeros(_VS_N))
+    )
+    @test e isa ErrorException && occursin("out of range", msg(e))
+    # wrong right-hand-side length, plain vector and broadcast forms
+    e = solve_err(
+        :(
+            begin
+                D(x[1]) ~ 0.0
+                D(x[2:end]) ~ [1.0, 2.0]
+            end
+        ), :(zeros(_VS_N))
+    )
+    @test e isa DimensionMismatch
+    e = solve_err(
+        :(
+            begin
+                D(x) ~ k .* [1.0]
+            end
+        ), :(zeros(2))
+    )
+    @test e isa DimensionMismatch    # no silent spreading of a length-1 broadcast
+    # element-wise derivatives of a scalar initial value
+    e = solve_err(
+        :(
+            begin
+                D(x[1]) ~ -k * x[1]
+            end
+        ), :(1.0)
+    )
+    @test e isa ErrorException && occursin("vector initial value", msg(e))
+    # macro-time errors: literal overlap, step range
+    de_err(ex) = try
+        macroexpand(@__MODULE__, ex)
+        nothing
+    catch err
+        err
+    end
+    e1 = de_err(
+        :(
+            @DifferentialEquation begin
+                D(x[1:2]) ~ -x[1:2]
+                D(x[2]) ~ -x[2]
+            end
+        )
+    )
+    @test e1 !== nothing && occursin("overlap", msg(e1))
+    e2 = de_err(
+        :(
+            @DifferentialEquation begin
+                D(x[1:2:5]) ~ -x[1:2:5]
+            end
+        )
+    )
+    @test e2 !== nothing && occursin("integer literal", msg(e2))
 end
