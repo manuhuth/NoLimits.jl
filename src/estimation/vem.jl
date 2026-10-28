@@ -107,7 +107,8 @@ effects: no inner mode finding or Hessian per objective evaluation, unlike Lapla
 - `n_is::Int = 1000`, `is_df = 5.0`: importance-sampling draws and t degrees of freedom for
   the final marginal-likelihood estimate (the reported objective) of batches with more than
   3 random effects; batches with 1-3 random effects use adaptive Gauss-Hermite quadrature
-  around q (21 / 9² / 7³ nodes, as `refine`). `n_is = 0` reports -ELBO instead.
+  around q (21 / 9² / 7³ nodes, as `refine`). `n_is = 0` reports -ELBO instead (at θ̂ and
+  the fitted q).
 - `refine = :auto`, `refine_nodes = 64`: after the joint VEM optimization, maximize the
   marginal likelihood over the fixed effects with fixed base nodes: a tensor Gauss-Hermite
   rule for batches with 1-3 random effects (adaptive quadrature; 21 / 9² / 7³ nodes),
@@ -211,6 +212,7 @@ function VEM(;
         error("VEM: expectation must be :auto, :mc or :quadrature. Got: $expectation")
     n_is >= 0 || error("VEM: n_is must be ≥ 0. Got: $n_is")
     is_df > 0 || error("VEM: is_df must be > 0. Got: $is_df")
+    refine_nodes >= 1 || error("VEM: refine_nodes must be ≥ 1. Got: $refine_nodes")
     # memory 20; BackTracking step capped at 30 in the preconditioned coordinates (|.|∞): the
     # outer default's maxstep = 1 shortens early steps of the joint problem, while an
     # uncapped first step sent a CT-Markov fit (M14) to rates whose likelihood evaluation
@@ -1030,8 +1032,9 @@ function _fit_model(
 
     # ForwardDiff (default): per batch over (θ, κ_i). Other backends (reverse mode): one
     # DifferentiationInterface pass per batch over z = [xθ; κ_k] with the batch index a
-    # constant context; one function and preparation per task cache, since the Duplicated
-    # function shadow is mutable state of the preparation.
+    # constant context; one function per task cache, since the Duplicated function shadow
+    # is mutable state of the preparation, and one preparation per κ-block length (batches
+    # differ in size, e.g. nested or partly fixed levels).
     use_fd = nameof(typeof(method.adtype)) === :AutoForwardDiff
     if !use_fd
         for bi in keep
@@ -1048,8 +1051,12 @@ function _fit_model(
     ]
     DI = Optimization.OptimizationBase.DifferentiationInterface
     preps = use_fd ? nothing : [
-            DI.prepare_gradient(fb, method.adtype, x0[1:(p + length(first(ranges)))], DI.Constant(1))
-            for fb in fbs
+            Dict(
+                begin
+                    kl = findfirst(r -> length(r) == l, ranges)
+                    l => DI.prepare_gradient(fb, method.adtype, vcat(x0[1:p], x0[ranges[kl]]), DI.Constant(kl))
+                end for l in unique(length.(ranges))
+            ) for fb in fbs
         ]
     tids = collect(eachindex(caches))
     function fg!(F, G, x)
@@ -1094,7 +1101,7 @@ function _fit_model(
                 z = vcat(x[1:p], x[ranges[k]])
                 g = similar(z)
                 vals[j] = try
-                    first(DI.value_and_gradient!(fbs[t], g, preps[t], method.adtype, z, DI.Constant(k)))
+                    first(DI.value_and_gradient!(fbs[t], g, preps[t][length(ranges[k])], method.adtype, z, DI.Constant(k)))
                 catch err
                     _is_numeric_error(err) || rethrow()
                     -Inf
@@ -1211,10 +1218,6 @@ function _fit_model(
     )
     mb_ref[] = nothing
     x̂ = xmap(sol.u)
-    # notes.elbo is the bound itself; the penalty and extra_objective are reported only in
-    # the objective (as for Laplace)
-    obj_joint = fy(sol.u, nothing)
-    elbo = has_pen ? -(obj_joint - pen_of(θu_of(Vector{Float64}(x̂[1:p])))) : -obj_joint
     xθ_hat = Vector{Float64}(x̂[1:p])
     θ_hat_u = θu_of(xθ_hat)
     refine_iters = 0
@@ -1294,6 +1297,11 @@ function _fit_model(
         end
     end
     θ_hat_t = transform(θ_hat_u)
+    # -ELBO at the returned θ̂ and the fitted κ̂ (after an accepted refinement θ̂ is not the
+    # joint optimum). notes.elbo is the bound itself; the penalty and extra_objective are
+    # reported only in the objective (as for Laplace)
+    obj_joint = fg!(0.0, nothing, vcat(xθ_hat, x̂[(p + 1):end]))
+    elbo = has_pen ? -(obj_joint - pen_of(θ_hat_u)) : -obj_joint
 
     # ---- objective: importance-sampling marginal likelihood around the fitted q ----
     # batches with 1-3 REs: adaptive tensor Gauss-Hermite around q (the refinement rule;
@@ -1305,7 +1313,10 @@ function _fit_model(
         _vem_foreach(nk, caches) do k, lc
             iszero(wk[k]) && (lls[k] = 0.0; return)
             bi = keep[k]
-            μq, Lq = _vem_q_moments(Vector{Float64}(x̂[ranges[k]]), ξs[k], nb[bi], family, θ_hat_u)
+            # after a refinement: Newton from the refinement's start, so that 1-3 RE batches
+            # report the value it minimized
+            μq, Lq = do_refine ? (qs[k][1], qs[k][2]) :
+                _vem_q_moments(Vector{Float64}(x̂[ranges[k]]), ξs[k], nb[bi], family, θ_hat_u)
             do_refine &&
                 ((μq, Lq) = _vem_adapt_rule(θ_hat_u, μq, Lq, dm, batch_infos[bi], const_cache, lc))
             lls[k] = nb[bi] <= 3 ?
