@@ -192,6 +192,8 @@ struct DataModel{M, D, I, P, C, K, G, R}
     # Lazily-computed closed-form eligibility (see `get_closed_form_plan`). Mutable
     # cache slot only; the DataModel is otherwise immutable.
     closed_form_plan::Base.RefValue{Union{Nothing, ClosedFormPlan}}
+    # Lazily probed ODE state layout (see `_dm_state_layout`); `missing` = not yet probed.
+    state_layout::Base.RefValue{Any}
 end
 
 function _nl_datamodel_show_line(dm::DataModel)
@@ -1251,6 +1253,14 @@ function _build_callbacks(
 
     function _resolve_cmt(v)
         if v isa Integer
+            # With a vector state the flat position of a compartment depends on the
+            # state lengths, so integer CMT would silently move when a length changes.
+            _de_layout_has_vector(layout) && error(
+                "Integer CMT ($(v)) is not supported for models with vector-valued " *
+                    "states; give the compartment by name, e.g. CMT = \"$(first(flat_names))\" " *
+                    "or an element such as \"$(_de_first_element_name(layout))\". " *
+                    "Compartments: $(join(flat_names, ", "))."
+            )
             return Int(v)
         elseif v isa Symbol || v isa AbstractString
             return _resolve_cmt_name(string(v), layout, flat_names)
@@ -1364,6 +1374,13 @@ function _build_callbacks(
         _cf_f64keys(bolus_by_time), _cf_f64keys(reset_by_time),
         _cf_f64keys(rate_delta_by_time)
     )
+end
+
+function _de_first_element_name(layout::NamedTuple)
+    for (n, idx) in Base.pairs(layout)
+        idx isa Integer || return string(n, "[1]")
+    end
+    return string(first(keys(layout)))
 end
 
 # Flat index of a named CMT: a scalar state `a` or an element `x[k]` of a vector state.
@@ -1822,7 +1839,8 @@ function DataModel(
     ind_weights = _build_individual_weights(df, weights_col, groups, keys_sorted, pairing, primary_id)
     return DataModel(
         model, df, individuals, pairing, config, id_index, row_groups,
-        re_group_info, ind_weights, Base.RefValue{Union{Nothing, ClosedFormPlan}}(nothing)
+        re_group_info, ind_weights, Base.RefValue{Union{Nothing, ClosedFormPlan}}(nothing),
+        Base.RefValue{Any}(missing)
     )
 end
 
@@ -1869,11 +1887,17 @@ Flat state layout of `dm`'s ODE (see `_de_state_layout`), probed with the first
 individual's constant covariates.
 """
 function _dm_state_layout(dm::DataModel)
+    cached = dm.state_layout[]
+    cached === missing || return cached
     model = dm.model
-    model.de.de === nothing && return nothing
-    inds = get_individuals(dm)
-    const_cov = isempty(inds) ? NamedTuple() : get_const_cov(first(inds))
-    return _de_state_layout(model, const_cov)
+    layout = if model.de.de === nothing
+        nothing
+    else
+        inds = get_individuals(dm)
+        _de_state_layout(model, isempty(inds) ? NamedTuple() : get_const_cov(first(inds)))
+    end
+    dm.state_layout[] = layout
+    return layout
 end
 
 # The layout when it has a vector state, `nothing` otherwise (all-scalar or unprobeable).
