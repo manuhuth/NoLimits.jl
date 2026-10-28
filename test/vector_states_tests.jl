@@ -606,24 +606,40 @@ end
     catch err
         err
     end
-    e1 = de_err(:(@DifferentialEquation begin
-        D(x) ~ -x
-        D(x[1]) ~ -x[1]
-    end))
+    e1 = de_err(
+        :(
+            @DifferentialEquation begin
+                D(x) ~ -x
+                D(x[1]) ~ -x[1]
+            end
+        )
+    )
     @test e1 !== nothing && occursin("both as a whole", sprint(showerror, e1))
-    e2 = de_err(:(@DifferentialEquation begin
-        D(x[1]) ~ -x[1]
-        D(x[3]) ~ -x[3]
-    end))
+    e2 = de_err(
+        :(
+            @DifferentialEquation begin
+                D(x[1]) ~ -x[1]
+                D(x[3]) ~ -x[3]
+            end
+        )
+    )
     @test e2 !== nothing && occursin("missing: x[2]", sprint(showerror, e2))
-    e3 = de_err(:(@DifferentialEquation begin
-        D(x[1]) ~ -x[1]
-        D(x[1]) ~ -x[2]
-    end))
+    e3 = de_err(
+        :(
+            @DifferentialEquation begin
+                D(x[1]) ~ -x[1]
+                D(x[1]) ~ -x[2]
+            end
+        )
+    )
     @test e3 !== nothing && occursin("Duplicate element-wise", sprint(showerror, e3))
-    e4 = de_err(:(@DifferentialEquation begin
-        D(x[i]) ~ -x[1]
-    end))
+    e4 = de_err(
+        :(
+            @DifferentialEquation begin
+                D(x[i]) ~ -x[1]
+            end
+        )
+    )
     @test e4 !== nothing && occursin("integer literal", sprint(showerror, e4))
 end
 

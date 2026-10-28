@@ -205,9 +205,9 @@ function get_initialde_builder(
                         $(sym) = getproperty(constant_covariates, $(QuoteNode(sym)))
                 else
                         $(
-                        haskey(globals, sym) ? :($(sym) = $(globals[sym])) :
+                            haskey(globals, sym) ? :($(sym) = $(globals[sym])) :
                             :(error($("Unknown symbol $(sym) in initialDE.")))
-                    )
+                        )
                 end
                 end
         end

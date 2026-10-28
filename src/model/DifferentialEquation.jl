@@ -1265,10 +1265,10 @@ macro DifferentialEquation(block)
 
     state_sol_binds = [
         :(
-            $(state_names[i]) = $(_de_state_at)(
-                sol, $(_de_acc_index)($(_de_states)(pc), $(Val(state_names[i])), $i), t
+                $(state_names[i]) = $(_de_state_at)(
+                    sol, $(_de_acc_index)($(_de_states)(pc), $(Val(state_names[i])), $i), t
+                )
             )
-        )
             for i in eachindex(state_names)
     ]
     signal_fn_exprs = [
