@@ -160,6 +160,9 @@ function _detect_closed_form_impl(model)
     states = get_de_states(de)
     n = length(states)
     n == 0 && return _NO_CLOSED_FORM
+    # Element-wise derivatives `D(x[k]) ~ ...` declare a vector-valued state: closed
+    # forms are scalar-per-state, so such systems stay numerical.
+    _de_has_elementwise_lines(de) && return _NO_CLOSED_FORM
     try
         state_rhs = Dict{Symbol, Any}()
         signal_defs = Dict{Symbol, Any}()

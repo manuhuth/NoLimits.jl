@@ -18,9 +18,19 @@ end
     if lhs isa Expr && lhs.head == :call && length(lhs.args) == 2 && lhs.args[1] == :D
         st = lhs.args[2]
         st isa Symbol && return st
+        # element-wise derivative of a vector state: D(x[k])
+        st isa Expr && st.head == :ref && length(st.args) == 2 && st.args[1] isa Symbol &&
+            return st
     end
     return nothing
 end
+
+# Plain / LaTeX derivative heads: `ẋ` for `x`, `ẋ[k]` for the element `x[k]`.
+_eq_dot_plain(st::Symbol) = string(st, "̇")
+_eq_dot_plain(st::Expr) = string(st.args[1], "̇[", st.args[2], "]")
+_eq_dot_latex(st::Symbol) = "\\dot{" * _eq_show_latex_piece(st) * "}"
+_eq_dot_latex(st::Expr) = "\\dot{" * _eq_show_latex_piece(st.args[1]) * "}_{" *
+    string(st.args[2]) * "}"
 
 @inline function _eq_show_plain_piece(x)
     io = IOBuffer()
@@ -90,7 +100,7 @@ function _eq_plain_string(ex::Expr)
         rhs = ex_clean.args[2]
         st = _eq_derivative_state(lhs)
         if st !== nothing
-            return string(st, "̇(t) = ", _eq_show_plain_piece(rhs))
+            return string(_eq_dot_plain(st), "(t) = ", _eq_show_plain_piece(rhs))
         end
     end
     return _eq_show_plain_piece(ex_clean)
@@ -104,9 +114,8 @@ function _eq_derivative_latex_line(ex_clean::Expr)
     rhs = ex_clean.args[2]
     st = _eq_derivative_state(lhs)
     st === nothing && return nothing
-    lhs_tex = _eq_show_latex_piece(st)
     rhs_tex = _eq_show_latex_piece(rhs)
-    line = "\\dot{" * lhs_tex * "}(t) = " * rhs_tex
+    line = _eq_dot_latex(st) * "(t) = " * rhs_tex
     return _eq_apply_vector_component_notation(line, ex_clean)
 end
 

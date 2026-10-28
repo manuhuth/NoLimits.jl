@@ -94,7 +94,7 @@ function _simulate_sol_accessors(dm::DataModel, idx::Int, θ, η)
     infusion_rates = nothing
     events = _private_event_callbacks(get_callbacks(ind))
     if events !== nothing
-        _de_check_events_supported(u0)
+        _de_check_events_layout(u0, events)
         _apply_initial_events!(u0, events)
         cb = get_callback(events)
         infusion_rates = get_infusion_rates(events)

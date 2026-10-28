@@ -612,6 +612,42 @@ function calculate_initial_state(
     return builder(θ, η, const_covariates_i, model_funs, helpers, pre)
 end
 
+# ---------------------------------------------------------------------------
+# State-layout probe: evaluates `@initialDE` once at the initial fixed effects and the
+# random-effect means to learn which states are vectors and how long they are (state
+# dimensions are structural, so one evaluation fixes the flat layout). Used where the
+# layout is needed before any solve: dosing (CMT) mapping, closed-form eligibility and
+# summaries. Returns `nothing` if the probe cannot be evaluated.
+# ---------------------------------------------------------------------------
+function _probe_random_effects(m::Model, θ::ComponentArray, const_cov::NamedTuple)
+    names = get_re_names(m.random.random)
+    isempty(names) && return ComponentArray(NamedTuple())
+    dists = create_random_effect_distribution(m.random.random)(
+        θ, const_cov, get_model_funs(m), get_helper_funs(m)
+    )
+    vals = map(Tuple(names)) do n
+        d = getproperty(dists, n)
+        v = try
+            Distributions.mean(d)
+        catch
+            rand(Random.MersenneTwister(0), d)
+        end
+        v isa Number ? float(v) : collect(float.(v))
+    end
+    return ComponentArray(NamedTuple{Tuple(names)}(vals))
+end
+
+function _de_state_layout(m::Model, const_cov::NamedTuple = NamedTuple())
+    (m.de.de === nothing || m.de.initial_builder === nothing) && return nothing
+    u0 = try
+        θ = get_θ0_untransformed(m.fixed.fixed)
+        calculate_initial_state(m, θ, _probe_random_effects(m, θ, const_cov), const_cov)
+    catch
+        return nothing
+    end
+    return _de_layout_from_u0(u0, get_de_states(m.de.de))
+end
+
 # Internal pre-aware twin of `calculate_initial_state`: the estimation hot paths
 # compute the preDE NamedTuple once per individual evaluation and reuse it for the
 # initial state, the DE compile context, and every formula row, instead of
@@ -939,6 +975,8 @@ end
 
 function _lhs_key(lhs)
     lhs isa Symbol && return lhs
+    # element of a vector state, `x[k]` in `D(x[k]) ~ ...`
+    lhs isa Expr && lhs.head == :ref && return Tuple(lhs.args)
     if lhs isa Expr && lhs.head == :call && !isempty(lhs.args)
         f = lhs.args[1]
         # D(x1) ~ ...  -> state x1 ; signal s(t) = ... -> :s

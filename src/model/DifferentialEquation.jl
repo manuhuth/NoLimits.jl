@@ -210,6 +210,20 @@ end
 @inline function _de_state_set!(du::ComponentArray, ::Val{s}, ::Int, v) where {s}
     return _de_write_component!(du, _de_ca_index(du, s), v, s)
 end
+@inline function _de_state_set!(
+        du::ComponentArray, ::Val{s}, ::Int, v::AbstractVector
+    ) where {s}
+    return _de_write_component!(du, _de_ca_index(du, s), v, s)
+end
+# A vector derivative for a state whose `@initialDE` value is a scalar.
+function _de_state_set!(du::AbstractVector, ::Val{s}, ::Int, v::AbstractVector) where {s}
+    return throw(
+        DimensionMismatch(
+            "D($(s)) is a vector of length $(length(v)), but @initialDE gives a scalar " *
+                "for $(s). Give $(s) a vector initial value, e.g. $(s) = zeros($(length(v)))."
+        )
+    )
+end
 @inline function _de_write_component!(du, idx::Integer, v, s)
     @inbounds du[idx] = v
     return nothing
@@ -250,14 +264,63 @@ end
 @inline _de_u_state_index(u, ::Val, i::Int) = i
 @inline _de_u_state_index(u::ComponentArray, ::Val{s}, ::Int) where {s} = _de_ca_index(u, s)
 
-# Dosing (EVID/CMT) targets state positions of the all-scalar layout (bolus vectors and
-# infusion rates have one entry per state name); vector states are not mapped yet.
-@inline _de_check_events_supported(u0) = nothing
-function _de_check_events_supported(::ComponentArray)
-    return error(
-        "Dosing events (EVID/CMT) are not supported for models with vector-valued " *
-        "states yet."
+# ---------------------------------------------------------------------------
+# State layout: flat position of every state (Int for a scalar state, a UnitRange for
+# a vector state). Flat elements are named `x` (scalar) and `x[k]` (vector element).
+# ---------------------------------------------------------------------------
+
+"""
+    _de_layout_from_u0(u0, state_names) -> NamedTuple
+
+Flat layout of the states in the initial state `u0`: `Int` for a scalar state, a
+`UnitRange` for a vector state.
+"""
+function _de_layout_from_u0(u0, state_names::AbstractVector{Symbol})
+    return NamedTuple{Tuple(state_names)}(Tuple(1:length(state_names)))
+end
+function _de_layout_from_u0(u0::ComponentArray, state_names::AbstractVector{Symbol})
+    return NamedTuple{Tuple(state_names)}(Tuple(_de_ca_index(u0, n) for n in state_names))
+end
+
+_de_layout_has_vector(layout::NamedTuple) = any(v -> !(v isa Integer), values(layout))
+_de_layout_length(layout::NamedTuple) = sum(length, values(layout); init = 0)
+
+"""
+    _de_flat_state_names(layout) -> Vector{String}
+
+Names of the flat state elements in order: `"a"` for a scalar state `a`, `"x[1]"`,
+`"x[2]"`, ... for a vector state `x`.
+"""
+function _de_flat_state_names(layout::NamedTuple)
+    out = String[]
+    for (name, idx) in Base.pairs(layout)
+        if idx isa Integer
+            push!(out, string(name))
+        else
+            for k in 1:length(idx)
+                push!(out, string(name, "[", k, "]"))
+            end
+        end
+    end
+    return out
+end
+
+# Display form of one state: `x` (scalar) or `x[1:4]` (vector of length 4).
+_de_state_display(name::Symbol, idx::Integer) = string(name)
+_de_state_display(name::Symbol, idx::AbstractUnitRange) = string(name, "[1:", length(idx), "]")
+
+# Dosing events are mapped to flat indices when the DataModel is built (bolus and
+# infusion-rate vectors have one entry per flat state element). The initial state of
+# every solve must have that same flat length.
+@inline _de_check_events_layout(u0, ::Nothing) = nothing
+function _de_check_events_layout(u0, events)
+    n = length(get_infusion_rates(events))
+    length(u0) == n || error(
+        "The ODE state has $(length(u0)) elements, but the dosing events (EVID/CMT) " *
+            "were mapped for $(n). Vector-valued states must have the same length for " *
+            "every individual and parameter value."
     )
+    return nothing
 end
 
 """
@@ -861,6 +924,7 @@ function _parse_de(block::Expr)
     signal_exprs = Any[]
     line_exprs = Expr[]
     seen = Set{Symbol}()
+    elementwise = Dict{Symbol, Dict{Int, Any}}()
 
     ln = nothing
     for stmt in block.args
@@ -895,7 +959,45 @@ function _parse_de(block::Expr)
         length(lhs.args) == 2 ||
             error("Left-hand side must be D(state) with a single symbol." * _stmt_loc(ln, stmt))
         state = lhs.args[2]
-        state isa Symbol || error("State name must be a Symbol." * _stmt_loc(ln, stmt))
+        if state isa Expr && state.head == :ref
+            # Element-wise derivative `D(x[k]) ~ rhs` of a vector-valued state.
+            (
+                length(state.args) == 2 && state.args[1] isa Symbol &&
+                    state.args[2] isa Integer && state.args[2] >= 1
+            ) || error(
+                "Element-wise derivatives need a state name and one positive integer " *
+                    "literal index, e.g. D(x[2]) ~ ... ." * _stmt_loc(ln, stmt)
+            )
+            name, k = state.args[1], Int(state.args[2])
+            if !haskey(elementwise, name)
+                if name in seen
+                    name in state_names && error(
+                        "State $(name) is defined both as a whole (D($(name)) ~ ...) and " *
+                            "element-wise (D($(name)[k]) ~ ...); use one form." *
+                            _stmt_loc(ln, stmt)
+                    )
+                    error("Duplicate DE name: $(name)." * _stmt_loc(ln, stmt))
+                end
+                push!(seen, name)
+                push!(state_names, name)
+                push!(rhs_exprs, nothing)
+                elementwise[name] = Dict{Int, Any}()
+            end
+            haskey(elementwise[name], k) && error(
+                "Duplicate element-wise derivative D($(name)[$(k)])." * _stmt_loc(ln, stmt)
+            )
+            elementwise[name][k] = rhs
+            push!(line_exprs, Expr(:call, :~, lhs, rhs))
+            continue
+        end
+        state isa Symbol || error(
+            "State name must be a Symbol (D(x) ~ ...) or an element x[k] (D(x[k]) ~ ...)." *
+                _stmt_loc(ln, stmt)
+        )
+        haskey(elementwise, state) && error(
+            "State $(state) is defined both as a whole (D($(state)) ~ ...) and " *
+                "element-wise (D($(state)[k]) ~ ...); use one form." * _stmt_loc(ln, stmt)
+        )
         state in seen && error("Duplicate DE name: $(state)." * _stmt_loc(ln, stmt))
         push!(seen, state)
         push!(state_names, state)
@@ -903,7 +1005,31 @@ function _parse_de(block::Expr)
         push!(line_exprs, Expr(:call, :~, lhs, rhs))
     end
 
+    # Element-wise states become one vector derivative `[rhs_1, ..., rhs_n]`; the
+    # indices must cover 1:n (n is checked against @initialDE at solve time).
+    for (name, elems) in elementwise
+        n = maximum(keys(elems))
+        missing_idx = [k for k in 1:n if !haskey(elems, k)]
+        isempty(missing_idx) || error(
+            "Element-wise derivatives of $(name) must cover $(name)[1] to $(name)[$(n)]; " *
+                "missing: " * join(("$(name)[$(k)]" for k in missing_idx), ", ") * "."
+        )
+        pos = findfirst(==(name), state_names)
+        rhs_exprs[pos] = Expr(:vect, (elems[k] for k in 1:n)...)
+    end
+
     return state_names, rhs_exprs, signal_names, signal_exprs, line_exprs
+end
+
+# Whether a @DifferentialEquation block uses element-wise derivatives `D(x[k]) ~ ...`.
+function _de_has_elementwise_lines(de::DifferentialEquation)
+    for ln in get_de_lines(de)
+        ln isa Expr && ln.head === :call && ln.args[1] === :~ || continue
+        lhs = ln.args[2]
+        lhs isa Expr && length(lhs.args) == 2 && lhs.args[2] isa Expr &&
+            lhs.args[2].head === :ref && return true
+    end
+    return false
 end
 
 """
@@ -915,15 +1041,26 @@ end
 
 Compile an ODE system into a [`DifferentialEquation`](@ref) struct.
 
-Two statement forms are supported:
+Statement forms:
 - `D(state) ~ rhs`: defines a state variable whose time derivative equals `rhs`.
+- `D(state[k]) ~ rhs`: defines element `k` (an integer literal) of a vector-valued
+  state; the elements `1:n` must all be given, and a state is either written as a whole
+  or element-wise, never both.
 - `signal(t) = expr`: defines a derived signal computed from states and parameters.
+
+A state is vector-valued when its `@initialDE` value is a vector (e.g. `x = zeros(4)`).
+Inside the block it is then a vector (`x[2]`, `x ./ 100`, `NN(x, ζ)`), `D(x) ~ ...` must
+return a vector of the same length, and in `@formulas` `x(t)` returns the vector. Scalar
+and vector states can be mixed; the solver works on one flat state vector holding the
+states in declaration order (flat elements `a`, `x[1]`, ..., `x[n]`, ...).
 
 Symbols in right-hand sides are resolved from (in order): pre-DE variables, random
 effects, fixed effects, constant covariates, dynamic covariates (called as `w(t)`, or
 `w.a(t)` for a `DynamicCovariateVector` component),
-model functions, and helper functions. Varying (non-dynamic) covariates are not allowed
-inside the DE.
+model functions, and helper functions, and last from global constants of the module the
+block is written in (e.g. a state dimension `const N = 4` used as `x[N]`). Varying
+(non-dynamic) covariates are not allowed inside the DE. Integer-valued quantities (an
+`Int` constant covariate or global) stay exact integers inside the right-hand side.
 
 Small vector literals (up to length 8) are automatically replaced with `StaticArrays.SVector`
 for allocation-free ODE evaluation.

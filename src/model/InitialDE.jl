@@ -80,7 +80,12 @@ is then a vector and `D(x) ~ ...` must return a vector of the same length; insid
 condition. The symbols `t` and `ξ` are forbidden.
 
 Right-hand sides may reference fixed effects, random effects, constant covariates,
-pre-DE variables, model functions, and helper functions.
+pre-DE variables, model functions, and helper functions, and (when the name is none of
+these) global constants of the module the block is written in, e.g.
+`x = zeros(NSTATE)` with `const NSTATE = 4`.
+
+The values are concatenated, in `@DifferentialEquation` state order, into the one flat
+initial state vector the solver integrates.
 """
 macro initialDE(block)
     names, exprs = _parse_initialde(block)

@@ -3872,7 +3872,7 @@ end
     cb = nothing
     infusion_rates = nothing
     if events !== nothing
-        _de_check_events_supported(u0)
+        _de_check_events_layout(u0, events)
         _apply_initial_events!(u0, events)
         cb = get_callback(events)
         infusion_rates = get_infusion_rates(events)
