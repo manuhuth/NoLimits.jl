@@ -232,7 +232,7 @@ function get_initialde_builder(
     # state layout (see `_de_initial_state`).
     vec_expr = Expr(
         :call, GlobalRef(@__MODULE__, :_de_initial_state),
-        Val(Tuple(state_names)), Val(static), ordered_exprs...
+        Val(Tuple(state_names)), Val(static), Expr(:tuple, ordered_exprs...)
     )
 
     func_expr = :(

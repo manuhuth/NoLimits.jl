@@ -191,18 +191,31 @@ struct _DEInitialState{V <: AbstractVector, L <: NamedTuple}
 end
 
 """
-    _de_initial_state(::Val{names}, ::Val{static}, vals...)
+    _de_initial_state(::Val{names}, ::Val{static}, vals::Tuple)
 
 Assemble the ODE initial state from the per-state `@initialDE` values. All-scalar
 values give the same `Vector` (or `SVector` when `static`) as before; if any value is
 an `AbstractVector`, the values are concatenated into one flat `Vector` and returned
 with their layout as an [`_DEInitialState`](@ref).
 """
-@inline _de_initial_state(::Val, ::Val{false}, vals::Number...) = [vals...]
-@inline function _de_initial_state(::Val, ::Val{true}, vals::Number...)
-    return StaticArrays.SVector(vals...)
+# The values arrive as one tuple (not splatted varargs, which heap-allocate for many
+# states); the all-scalar result is built exactly like the `[v1, v2, ...]` literal.
+@inline _de_initial_state(::Val, ::Val{false}, vals::Tuple{Vararg{Number}}) = _de_vect(vals)
+@inline function _de_initial_state(::Val, ::Val{true}, vals::Tuple{Vararg{Number}})
+    return StaticArrays.SVector(vals)
 end
-function _de_initial_state(::Val{names}, ::Val, vals...) where {names}
+@generated function _de_vect(vals::Tuple)
+    n = length(vals.parameters)
+    n == 0 && return :(Any[])
+    T = promote_type(vals.parameters...)      # as `Base.vect` (`promote_typeof`)
+    sets = [:(@inbounds v[$k] = vals[$k]) for k in 1:n]
+    return quote
+        v = Vector{$T}(undef, $n)
+        $(sets...)
+        return v
+    end
+end
+function _de_initial_state(::Val{names}, ::Val, vals::Tuple) where {names}
     # Type-stable over the heterogeneous `vals` tuple (recursion, no loop over a
     # Union-typed element): reverse-mode Enzyme needs this to stay statically typed.
     _de_check_init(names, vals)
