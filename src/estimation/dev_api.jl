@@ -124,7 +124,9 @@ end
     re_logprior(dm, batch::REBatchInfo, θ, b; const_cache, cache=nothing, anneal_sds=NamedTuple())  # one batch
 
 Random-effect prior log-density `log p(η | θ)` summed over the (free and constant) grouping
-levels, deduplicated per level. No ODE. θ is natural-scale and symmetrized here.
+levels, deduplicated per level. A level fixed through `constants_re` that is shared by several
+batches is counted only in the batch of its first individual, so the sum over all batches
+counts it once. No ODE. θ is natural-scale and symmetrized here.
 `complete_data_loglikelihood == conditional_loglikelihood + re_logprior` at batch scale.
 """
 function re_logprior(

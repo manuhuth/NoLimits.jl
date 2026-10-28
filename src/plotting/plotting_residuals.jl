@@ -951,7 +951,7 @@ from `res`; how the random effects are chosen is controlled by `re_mode`:
 Matching in `:ebe` is on the whole random-effect grouping signature, so in
 a hierarchical model a subject with a new primary id counts as unseen even if it shares
 a known upper level. `:ebe`/`:reestimate`/`:marginal` need a random-effects method
-(Laplace, FOCEI, GHQuadrature, MCEM, or SAEM; `:reestimate` excludes GHQuadrature) and
+(Laplace, FOCEI, VEM, GHQuadrature, MCEM, or SAEM; `:reestimate` excludes GHQuadrature) and
 are not available for MCMC/VI posterior-draw fits (whose `:population` path already
 integrates the posterior).
 

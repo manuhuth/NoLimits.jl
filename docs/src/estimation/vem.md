@@ -72,8 +72,9 @@ VEM takes the same optimizer keywords as [`Laplace`](@ref) and [`MLE`](@ref):
   `allow_f_increases = false` for an Optim.jl optimizer. A NamedTuple you pass replaces
   these defaults.
 - `adtype`: the default `AutoForwardDiff()` differentiates batch by batch in forward mode.
-  Reverse mode through Enzyme differentiates the whole objective in one pass and pays off
-  for roughly 100 or more fixed-effect coordinates.
+  Reverse mode through Enzyme differentiates each batch's ELBO over the fixed effects and
+  that batch's variational parameters in one pass (batches threaded like the default) and pays
+  off for roughly 100 or more fixed-effect coordinates.
 - `lb`, `ub`, `ignore_model_bounds`: bounds on the transformed fixed-effect scale, resolved
   as for the other methods (model-declared bounds by default). The variational parameters
   are unbounded, so optimizers that need finite bounds on every coordinate
@@ -129,8 +130,10 @@ term of each random-effect batch, and its marginal-likelihood term in the `refin
 in the reported objective, so a weight of 2 is equivalent to a duplicated individual. The
 optimal variational distribution of a batch does not depend on its weight. Random-effect
 levels fixed through `constants_re` enter as for Laplace: with the prior density of the fixed
-values, and a batch without free levels (and hence without variational distribution) with its
-log-likelihood at the fixed values.
+values, counted once per fixed level (not once per batch that contains it), and a batch without
+free levels (and hence without variational distribution) with its log-likelihood at the fixed
+values. Batches of weight zero do not enter the objective; their reported variational
+distribution is the Laplace approximation at ``\hat\theta``.
 
 ## Variational Options
 
@@ -183,8 +186,7 @@ The `serialization` keyword of `fit_model` (default `EnsembleThreads()`) paralle
 per-batch work (ELBO and gradient, initialization, refinement, importance sampling and
 EBEs) over Julia threads; `EnsembleSerial()` runs it on one thread. Random draws are made
 before the threaded loops and batch results are summed in batch order, so a threaded fit is
-bitwise equal to a serial one with the same `rng`. The reverse-mode (`adtype`) objective
-runs serially.
+bitwise equal to a serial one with the same `rng`, for every `adtype`.
 
 Stochastic VEM (a random subset of batches per optimizer iteration) is a wrapper around the method: `fit_model(dm, MiniBatch(VEM(); schedule = 50))`. See [Mini-batching](minibatch.md).
 
@@ -194,7 +196,10 @@ Stochastic VEM (a random subset of batches per optimizer iteration) is a wrapper
   approximation of the marginal likelihood at the VEM estimate, as for SAEM and MCEM.
 - [`sample_random_effects`](@ref) and the `:conditional` mode of [`fit_cv`](@ref) draw
   from the fitted variational distribution of each batch, ``b = m_i + L_i \xi`` with
-  ``\xi \sim N(0, I)`` (through the prior transport for non-Gaussian random effects).
+  ``\xi \sim N(0, I)`` (through the prior transport for non-Gaussian random effects). For a
+  `PlanarFlowFamily` the draws come from its moment-matched Gaussian; batches of weight zero
+  are drawn from the Laplace approximation at ``\hat\theta``. Fits restored with `load_fit`
+  sample the same way.
 - [`fit_cv`](@ref) passes `constants_re` to the VEM training fits.
 
 ## API

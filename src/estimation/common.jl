@@ -1494,9 +1494,10 @@ end
                                flatten = true, include_constants = true)
     get_laplace_random_effects(res::FitResult; kwargs...)
 
-Empirical-Bayes (EB) random-effects estimates from a `Laplace` or `GHQuadrature` fit,
-returned as a `NamedTuple` of `DataFrame`s (one per random effect). The single-argument
-form uses the `DataModel` stored on `res`.
+Empirical-Bayes (EB) random-effects estimates from a `Laplace`, `FOCEI`, `VEM` or
+`GHQuadrature` fit, returned as a `NamedTuple` of `DataFrame`s (one per random effect).
+EB modes not stored with the fit (`store_eb_modes = false`) are recomputed at the
+estimate. The single-argument form uses the `DataModel` stored on `res`.
 
 # Keyword Arguments
 - `constants_re::NamedTuple = NamedTuple()`: random-effect levels held fixed during fitting.
@@ -1512,12 +1513,25 @@ function get_laplace_random_effects(
     )
     constants_re = _as_namedtuple(constants_re)
     (get_result(res) isa FrequentistREResult || get_result(res) isa GHQuadratureResult) ||
-        error("Laplace-style random-effects accessor requires a Laplace or GHQuadrature fit result.")
+        error("Laplace-style random-effects accessor requires a Laplace, FOCEI, VEM or GHQuadrature fit result.")
     constants_re = _res_constants_re(res, constants_re)
     re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) && return NamedTuple()
     _, batch_infos, _ = _build_re_batch_infos(dm, constants_re)
     bstars = get_eb_modes(get_result(res))
+    if bstars === nothing
+        # Only the recompute path needs the fit kwargs and a likelihood cache.
+        ll_cache = build_ll_cache(
+            dm; ode_args = _fit_kw(res, :ode_args, ()),
+            ode_kwargs = _fit_kw(res, :ode_kwargs, NamedTuple()),
+            serialization = _fit_kw(res, :serialization, EnsembleThreads()),
+            force_saveat = true
+        )
+        bstars = _laplace_type_bstars(
+            dm, res, get_params(res; scale = :untransformed), constants_re, ll_cache,
+            _default_rng()
+        )
+    end
     return _re_dataframes_from_bstars(
         dm, batch_infos, bstars; constants_re = constants_re,
         flatten = flatten, include_constants = include_constants
@@ -1725,7 +1739,9 @@ end
 Return empirical Bayes (EB) random-effect estimates as a `NamedTuple` of `DataFrame`s,
 one per random effect.
 
-Supported methods: `Laplace`, `MCEM`, `SAEM`, `GHQuadrature`.
+Supported methods: `Laplace`, `FOCEI`, `VEM`, `MCEM`, `SAEM`, `GHQuadrature`, and the
+pooled methods (their plugged-in random effects). EB modes not stored with the fit
+(`store_eb_modes = false`) are recomputed at the estimate.
 
 # Keyword Arguments
 - `constants_re::NamedTuple = NamedTuple()`: fix random effects at given values (natural scale).
@@ -1934,6 +1950,26 @@ function get_random_effect_distribution(res::FitResult, re::Symbol; individual::
     return getproperty(dists, re)
 end
 
+# EB modes of a FrequentistREResult / GHQuadratureResult: the stored ones, else (a VEM fit
+# with `store_eb_modes = false`, or `build_fit_result` without `eb_modes`) recomputed at θu
+# with the EBE options of the method when it has them and the defaults otherwise (e.g. a
+# fit loaded from disk), as MCEM/SAEM do for unstored modes.
+function _laplace_type_bstars(
+        dm::DataModel, res::FitResult, θu, constants_re::NamedTuple, ll_cache,
+        rng::AbstractRNG
+    )
+    bstars = get_eb_modes(get_result(res))
+    bstars === nothing || return bstars
+    m = get_method(res)
+    ebe = hasproperty(m, :ebe) && m.ebe isa EBEOptions ? m.ebe : _default_ebe_options()
+    rescue = hasproperty(m, :ebe_rescue) && m.ebe_rescue isa EBERescueOptions ?
+        m.ebe_rescue : nothing
+    bstars, _ = _compute_bstars(
+        dm, θu, constants_re, ll_cache, ebe, _fit_kw(res, :rng, rng); rescue = rescue
+    )
+    return bstars
+end
+
 function _resolve_bstars_for_re(
         dm::DataModel, res::FitResult, constants_re::NamedTuple;
         θ = nothing, rng::AbstractRNG = _default_rng()
@@ -1951,8 +1987,8 @@ function _resolve_bstars_for_re(
             serialization = serialization, force_saveat = true
         )
         _, batch_infos, const_cache = _build_re_batch_infos(dm, constants_re)
-        return get_eb_modes(get_result(res)), batch_infos, θu, const_cache, ll_cache,
-            constants_re
+        bstars = _laplace_type_bstars(dm, res, θu, constants_re, ll_cache, rng)
+        return bstars, batch_infos, θu, const_cache, ll_cache, constants_re
     end
     if get_result(res) isa MCEMResult
         θu = θ === nothing ? get_params(res; scale = :untransformed) : θ
@@ -2042,6 +2078,28 @@ function _bstars_to_re_df(
     return NamedTuple(out_pairs)
 end
 
+# Cholesky factor of the negative Hessian of the joint log-density of batch `bi` at its EB
+# mode: the precision of the Laplace approximation of p(b | y, θu).
+function _laplace_batch_chol(
+        dm::DataModel, info, θu, bstar, const_cache, ll_cache_local, bi::Int, jitter::Real
+    )
+    H = _laplace_hessian_b(
+        dm, info, θu, bstar, const_cache, ll_cache_local,
+        nothing, bi; ctx = "sample_random_effects"
+    )
+    chol, _ = _laplace_cholesky_negH(
+        H; jitter = jitter, max_tries = 8,
+        growth = 10.0, adaptive = true,
+        scale_factor = 1.0e-6
+    )
+    (chol === nothing || chol.info != 0) &&
+        error(
+        "Failed to compute conditional covariance for batch $bi: " *
+            "negative Hessian is not positive definite even with jitter."
+    )
+    return chol
+end
+
 # Laplace-approximation path: bstars come from the EB modes, conditional
 # covariance is (-H)^{-1}. Used for Laplace, GHQuadrature.
 # Returns raw bstars_per_sample (Vector{Vector{Any}}) without the DataFrame conversion.
@@ -2054,25 +2112,8 @@ function _sample_laplace_bstars_raw(
     n_batches = length(batch_infos)
     chols = Vector{Any}(undef, n_batches)
     for (bi, info) in enumerate(batch_infos)
-        if get_n_b(info) == 0
-            chols[bi] = nothing
-            continue
-        end
-        H = _laplace_hessian_b(
-            dm, info, θu, bstars[bi], const_cache, ll_cache_local,
-            nothing, bi; ctx = "sample_random_effects"
-        )
-        chol, _ = _laplace_cholesky_negH(
-            H; jitter = jitter, max_tries = 8,
-            growth = 10.0, adaptive = true,
-            scale_factor = 1.0e-6
-        )
-        (chol === nothing || chol.info != 0) &&
-            error(
-            "Failed to compute conditional covariance for batch $bi: " *
-                "negative Hessian is not positive definite even with jitter."
-        )
-        chols[bi] = chol
+        chols[bi] = get_n_b(info) == 0 ? nothing :
+            _laplace_batch_chol(dm, info, θu, bstars[bi], const_cache, ll_cache_local, bi, jitter)
     end
     bstars_per_sample = Vector{Vector{Any}}(undef, n_samples)
     for s in 1:n_samples
@@ -2110,11 +2151,21 @@ function _sample_re_laplace_path(
     )
 end
 
+# A VEM fit, also after `load_fit` (whose method is a `_SavedFittingMethod`): the fitted
+# variational distributions live in the result notes.
+function _is_vem_fit(res::FitResult)
+    r = get_result(res)
+    return r isa FrequentistREResult && r.notes isa NamedTuple &&
+        haskey(r.notes, :variational_params)
+end
+
 # VEM path: draws from the fitted variational q of each batch, b = mean + scale ξ in the
-# centered space of Gaussian REs and through the prior transport otherwise.
+# centered space of Gaussian REs and through the prior transport otherwise. Batches of
+# weight zero do not enter the VEM objective, so their q is the unfitted start; they are
+# drawn from the Laplace approximation at θ̂ instead (as for a Laplace fit).
 function _sample_vem_bstars_raw(
         dm::DataModel, batch_infos, bstars, θu, const_cache, ll_cache_local,
-        res::FitResult; n_samples::Int, rng::AbstractRNG
+        res::FitResult; n_samples::Int, rng::AbstractRNG, jitter::Real = 1.0e-8
     )
     notes = get_result(res).notes
     keep = notes.variational_batches
@@ -2122,7 +2173,14 @@ function _sample_vem_bstars_raw(
         all(length(notes.variational_params[k].mean) == get_n_b(batch_infos[bi]) for (k, bi) in enumerate(keep)) ||
         error("The batch layout differs from the VEM fit; sample with the fit's constants_re.")
     qs = Vector{Any}(nothing, length(batch_infos))
+    chols = Vector{Any}(nothing, length(batch_infos))
     for (k, bi) in enumerate(keep)
+        if iszero(_batch_weight(dm, get_inds(batch_infos[bi])))
+            chols[bi] = _laplace_batch_chol(
+                dm, batch_infos[bi], θu, bstars[bi], const_cache, ll_cache_local, bi, jitter
+            )
+            continue
+        end
         base = build_re_measure_from_batch(batch_infos[bi], θu, const_cache, dm, ll_cache_local)
         qs[bi] = (notes.variational_params[k], base)
     end
@@ -2130,7 +2188,11 @@ function _sample_vem_bstars_raw(
     for s in 1:n_samples
         sampled = Vector{Any}(undef, length(batch_infos))
         for bi in eachindex(batch_infos)
-            if qs[bi] === nothing
+            if chols[bi] !== nothing
+                b0 = bstars[bi]
+                sampled[bi] = b0 .+ (chols[bi].U \ randn(rng, eltype(b0), length(b0)))
+                continue
+            elseif qs[bi] === nothing
                 sampled[bi] = bstars[bi]
                 continue
             end
@@ -2198,7 +2260,7 @@ function _sample_conditional_bstars(
         ll_cache, res::FitResult, n_samples::Int, rng::AbstractRNG
     )
     lcl = ll_cache isa Vector ? ll_cache[1] : ll_cache
-    if get_method(res) isa VEM
+    if _is_vem_fit(res)
         return _sample_vem_bstars_raw(
             dm, batch_infos, bstars, θu, const_cache, lcl, res;
             n_samples = n_samples, rng = rng
@@ -2222,7 +2284,7 @@ function _sample_conditional_bstars(
         )
     end
     return error(
-        "Conditional random-effect sampling requires Laplace, GHQuadrature, " *
+        "Conditional random-effect sampling requires Laplace, GHQuadrature, VEM, " *
             "MCEM, or SAEM; got $(typeof(get_result(res)))."
     )
 end
@@ -2265,7 +2327,11 @@ conditional distribution, so the draws are consistent with the E-step:
   approximation centered at the EBE mode ``b^\\star`` with covariance
   ``(-H)^{-1}``, where ``H`` is the Hessian of the joint log-density at ``b^\\star``.
 - `VEM`: draws from the fitted variational distribution ``q_i`` of each batch
-  (`get_result(res).notes.variational_params`).
+  (`get_result(res).notes.variational_params`), also for a fit loaded with
+  [`load_fit`](@ref). For a [`PlanarFlowFamily`](@ref) only the moment-matched Gaussian
+  of ``q_i`` is stored, and the draws come from it. Batches of weight zero (DataModel
+  weights) do not enter the VEM objective; they are drawn from the Laplace approximation
+  at ``\\hat{\\theta}``.
 - `MCEM`, `SAEM`: MCMC samples drawn from the exact conditional with the same
   sampler used in the E-step (Turing sampler for MCEM, `SaemixMH` or Turing
   sampler for SAEM), seeded at the EBE mode.
@@ -2279,7 +2345,7 @@ jointly and split per individual.
 - `constants_re::NamedTuple = NamedTuple()`: fix random effects at given values.
 - `flatten::Bool = true`: expand vector random effects to individual columns.
 - `include_constants::Bool = true`: include constant random effects in the output.
-- `jitter::Real = 1e-8`: initial Cholesky jitter (Laplace path only).
+- `jitter::Real = 1e-8`: initial Cholesky jitter (Laplace approximation only).
 - `n_adapt::Int = 200`: MCMC adaptation steps for the first sweep (MCMC path only).
 - `warm_start::Bool = true`: seed the MCMC chain at the EB mode (MCMC path only).
 - `sampler = nothing`: override the MCMC sampler used for MCEM/SAEM. Defaults to
@@ -2317,11 +2383,11 @@ function sample_random_effects(
     )
     isempty(batch_infos) && return NamedTuple()
 
-    if get_method(res) isa VEM
+    if _is_vem_fit(res)
         raw = _sample_vem_bstars_raw(
             dm, batch_infos, bstars, θu, const_cache,
             ll_cache isa Vector ? ll_cache[1] : ll_cache, res;
-            n_samples = n_samples, rng = rng
+            n_samples = n_samples, rng = rng, jitter = jitter
         )
         return _bstars_to_re_df(dm, batch_infos, raw, constants_re, flatten, include_constants)
     end
@@ -2570,9 +2636,10 @@ Compute the log-likelihood at the estimated parameter values. What it measures
 depends on the method:
 
 - MLE/MAP (no random effects): the log-likelihood `log p(y | θ̂)`.
-- Laplace/FOCEI/SAEM/MCEM/Pooled: the *conditional* log-likelihood `log p(y | η̂, θ̂)`
-  at the EB modes (or pooled random effects), without the random-effect prior term.
-  The EB modes are recomputed when the fit was run with `store_eb_modes = false`.
+- Laplace/FOCEI/VEM/SAEM/MCEM/Pooled: the *conditional* log-likelihood
+  `log p(y | η̂, θ̂)` at the EB modes (or pooled random effects), without the
+  random-effect prior term. The EB modes are recomputed when the fit was run with
+  `store_eb_modes = false`.
 - GHQuadrature: the sparse-grid marginal log-likelihood at `θ̂`.
 
 For model comparison across random-effect methods use
@@ -2723,7 +2790,7 @@ the Hessian H of log p(b | y, θ) at b*. The log-correction
 accounts for the prior, Jacobian, and Gaussian quadrature measure.
 
 # Supported methods
-Laplace, FOCEI, SAEM, MCEM, GHQuadrature.
+Laplace, FOCEI, VEM, SAEM, MCEM, GHQuadrature.
 
 # Not supported
 - **MCMC**: raises an error.
