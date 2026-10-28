@@ -215,6 +215,9 @@ function Distributions.rand(rng::AbstractRNG, d::NormalizingPlanarFlow, dims::Di
     return rand(rng, d.base, dims...)
 end
 
+# Forward flow F (base draw z -> sample x = F(z)); `bijector(d)` is its inverse F⁻¹.
+_flow_forward(d::NormalizingPlanarFlow) = d.base.transform
+
 # Use the underlying transformed distribution's bijector for HMC/NUTS.
 Bijectors.bijector(d::NormalizingPlanarFlow) = Bijectors.bijector(d.base)
 
@@ -241,12 +244,12 @@ end
 # Estimate covariance via sampling — used only for MH step-size initialization,
 # so an empirical approximation is sufficient.
 function Statistics.cov(d::NormalizingPlanarFlow; n_samples::Int = 2000)
-    return Statistics.cov(rand(default_rng(), d, n_samples)')
+    return Statistics.cov(rand(_default_rng(), d, n_samples)')
 end
 
 # Sampled counterpart of `cov`; the flow has no closed-form mean.
 function Statistics.mean(d::NormalizingPlanarFlow; n_samples::Int = 2000)
-    return vec(Statistics.mean(rand(default_rng(), d, n_samples); dims = 2))
+    return vec(Statistics.mean(rand(_default_rng(), d, n_samples); dims = 2))
 end
 
 # Constructor-level fields, as `Distributions.params` returns for its own types.

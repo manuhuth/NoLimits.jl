@@ -84,6 +84,9 @@ end
     @test cv_str.kind === cv.kind
     @test cv_str.test_rows == cv.test_rows
     @test_throws ErrorException cross_validate(dm, 3; kind = "identifier")
+
+    # The default rng has a fixed seed: fold assignment is reproducible.
+    @test cross_validate(dm, 3).test_rows == cross_validate(dm, 3).test_rows
 end
 
 @testset "cross_validate observation-wise: structure checks" begin

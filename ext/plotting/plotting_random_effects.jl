@@ -23,7 +23,8 @@ showing how well the parametric distribution fits the estimated random-effect va
   fitted distribution (e.g. `0.99` spans the 0.5th–99.5th percentiles).
 - `xlims::Union{Nothing, Tuple{<:Real, <:Real}} = nothing`: explicit x-axis limits that
   override the quantile-based range; the PDF grid is also computed over this range.
-- `rng::AbstractRNG = Random.default_rng()`: random-number generator.
+- `rng::AbstractRNG = Xoshiro(42)`: random-number generator. A fresh generator with
+  this fixed seed is created per call, so repeated calls draw the same values.
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
 - `kwargs_subplot`, `kwargs_layout`: additional Makie `Axis`/`Figure` attributes for
   subplots and layout.
@@ -48,7 +49,7 @@ function plot_random_effects_pdf(
         flow_bandwidth::Union{Nothing, Float64} = nothing,
         x_quantile::Float64 = 0.99,
         xlims::Union{Nothing, Tuple{<:Real, <:Real}} = nothing,
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
         plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
@@ -87,7 +88,7 @@ function plot_random_effects_pdf(
     merge_limits = (lims, minv, maxv) -> lims === nothing ? (minv, maxv) :
         (min(lims[1], minv), max(lims[2], maxv))
 
-    θ_base = _is_posterior_draw_fit(res) ? _posterior_fixed_means(res, dm)[1] :
+    θ_base = _is_posterior_draw_fit(res) ? _posterior_fixed_means(res, dm; rng = rng)[1] :
         get_params(res; scale = :untransformed)
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = get_model_funs(get_model(dm))
@@ -323,7 +324,7 @@ end
 
 """
     plot_random_effects_scatter(res::FitResult; dm, re_names, levels, individuals_idx,
-                                x_covariate, mcmc_draws, ncols, style, save_path,
+                                x_covariate, mcmc_draws, rng, ncols, style, save_path,
                                 kwargs_subplot, kwargs_layout) -> Makie.Figure
 
 Scatter plot of empirical-Bayes estimates for each random effect against a constant
@@ -336,6 +337,8 @@ covariate or group level index, useful for detecting covariate relationships.
 - `x_covariate::Union{Nothing, Symbol} = nothing`: constant covariate for the x-axis;
   defaults to the group level index.
 - `mcmc_draws::Int = 1000`: MCMC draws for posterior mean EBE.
+- `rng::AbstractRNG = Xoshiro(42)`: random-number generator. A fresh generator with
+  this fixed seed is created per call, so repeated calls draw the same values.
 - `ncols::Int = 3`: number of subplot columns.
 - `style::PlotStyle = PlotStyle()`: visual style configuration.
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
@@ -349,6 +352,7 @@ function plot_random_effects_scatter(
         individuals_idx = nothing,
         x_covariate::Union{Nothing, Symbol} = nothing,
         mcmc_draws::Int = 1000,
+        rng::AbstractRNG = _default_rng(),
         ncols::Int = DEFAULT_PLOT_COLS,
         style::PlotStyle = PlotStyle(),
         save_path::Union{Nothing, String} = nothing,
@@ -381,7 +385,7 @@ function plot_random_effects_scatter(
         lvls = _resolve_levels(dm, re, levels, individuals_idx)
         ebe_map, value_cols = _is_posterior_draw_fit(res) ?
             _ebe_by_level_mcmc(
-                dm, res, re, mcmc_draws, Random.default_rng()
+                dm, res, re, mcmc_draws, rng
             ) : _ebe_by_level(dm, res, re)
         show_comp = length(value_cols) > 1
         lvls_use = [lvl for lvl in lvls if haskey(ebe_map, lvl)]
@@ -456,7 +460,8 @@ effects, useful for visualizing correlations and joint structure.
 - `style::PlotStyle = PlotStyle()`: visual style configuration.
 - `kde_bandwidth::Union{Nothing, Float64} = nothing`: KDE bandwidth for diagonal panels.
 - `mcmc_draws::Int = 1000`: MCMC draws for posterior mean EBE.
-- `rng::AbstractRNG = Random.default_rng()`: random-number generator.
+- `rng::AbstractRNG = Xoshiro(42)`: random-number generator. A fresh generator with
+  this fixed seed is created per call, so repeated calls draw the same values.
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
 - `kwargs_subplot`, `kwargs_layout`: additional Makie `Axis`/`Figure` attributes.
 """
@@ -470,7 +475,7 @@ function plot_random_effect_pairplot(
         style::PlotStyle = PlotStyle(),
         kde_bandwidth::Union{Nothing, Float64} = nothing,
         mcmc_draws::Int = 1000,
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
         plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
@@ -632,7 +637,7 @@ function plot_random_effect_distributions(
         flow_bandwidth::Union{Nothing, Float64} = nothing,
         x_quantile::Float64 = 0.99,
         xlims::Union{Nothing, Tuple{<:Real, <:Real}} = nothing,
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
         plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
@@ -661,7 +666,7 @@ function plot_random_effect_distributions(
     ylims = nothing
     θ_draws_cache = nothing
 
-    θ_base = _is_posterior_draw_fit(res) ? _posterior_fixed_means(res, dm)[1] :
+    θ_base = _is_posterior_draw_fit(res) ? _posterior_fixed_means(res, dm; rng = rng)[1] :
         get_params(res; scale = :untransformed)
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = get_model_funs(get_model(dm))
@@ -716,9 +721,9 @@ function plot_random_effect_distributions(
                                     dists_builder(θd, const_cov, model_funs, helpers), re
                                 )
                                 samp = if dist_d isa Distributions.UnivariateDistribution
-                                    vec(rand(dist_d, flow_samples))
+                                    vec(rand(rng, dist_d, flow_samples))
                                 else
-                                    vals = rand(dist_d, flow_samples)
+                                    vals = rand(rng, dist_d, flow_samples)
                                     vec(vals[ci, :])
                                 end
                                 length(samp) < 2 && continue
@@ -840,9 +845,9 @@ function plot_random_effect_distributions(
                         else
                             @info "Flow marginal plotted via sampling." re = re level = lvl samples = flow_samples
                             samples = if dist isa Distributions.UnivariateDistribution
-                                vec(rand(dist, flow_samples))
+                                vec(rand(rng, dist, flow_samples))
                             else
-                                samp = rand(dist, flow_samples)
+                                samp = rand(rng, dist, flow_samples)
                                 vec(samp[ci, :])
                             end
                             if length(samples) < 2
@@ -992,7 +997,8 @@ falls back to the histogram.
 - `kde_bandwidth::Union{Nothing, Float64} = nothing`: KDE bandwidth.
 - `mcmc_draws`, `mcmc_warmup`, `mcmc_quantiles`, `mcmc_quantiles_alpha`: MCMC settings.
 - `flow_samples::Int = 500`: samples for normalizing-flow distributions.
-- `rng::AbstractRNG = Random.default_rng()`: random-number generator.
+- `rng::AbstractRNG = Xoshiro(42)`: random-number generator. A fresh generator with
+  this fixed seed is created per call, so repeated calls draw the same values.
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
 - `kwargs_subplot`, `kwargs_layout`: additional Makie `Axis`/`Figure` attributes.
 """
@@ -1016,7 +1022,7 @@ function plot_random_effect_pit(
         mcmc_quantiles::Vector{<:Real} = [5, 95],
         mcmc_quantiles_alpha::Float64 = 0.8,
         flow_samples::Int = 500,
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
         plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
@@ -1049,7 +1055,7 @@ function plot_random_effect_pit(
     xlims = nothing
     ylims = nothing
 
-    θ_base = _is_posterior_draw_fit(res) ? _posterior_fixed_means(res, dm)[1] :
+    θ_base = _is_posterior_draw_fit(res) ? _posterior_fixed_means(res, dm; rng = rng)[1] :
         get_params(res; scale = :untransformed)
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = get_model_funs(get_model(dm))
@@ -1088,9 +1094,9 @@ function plot_random_effect_pit(
                                 v = getproperty(η_draws[d][ind_idx], re)
                                 v_use = v isa Number ? Float64(v) : Float64(v[ci])
                                 samp = if dist_d isa Distributions.UnivariateDistribution
-                                    vec(rand(dist_d, flow_samples))
+                                    vec(rand(rng, dist_d, flow_samples))
                                 else
-                                    vals = rand(dist_d, flow_samples)
+                                    vals = rand(rng, dist_d, flow_samples)
                                     vec(vals[ci, :])
                                 end
                                 length(samp) == 0 && continue
@@ -1297,9 +1303,9 @@ function plot_random_effect_pit(
                             @info "Flow PIT via empirical CDF (sampling)." re = re level = lvl samples = flow_samples
                             v_use = Float64(ebe_map[lvl][ci])
                             samp = if dist isa Distributions.UnivariateDistribution
-                                vec(rand(dist, flow_samples))
+                                vec(rand(rng, dist, flow_samples))
                             else
-                                vals = rand(dist, flow_samples)
+                                vals = rand(rng, dist, flow_samples)
                                 vec(vals[ci, :])
                             end
                             length(samp) == 0 && continue
@@ -1404,7 +1410,7 @@ end
 """
     plot_random_effect_standardized(res::FitResult; dm, re_names, levels,
                                     individuals_idx, show_hist, show_kde, kde_bandwidth,
-                                    mcmc_draws, flow_samples, ncols, style, save_path,
+                                    mcmc_draws, flow_samples, rng, ncols, style, save_path,
                                     kwargs_subplot, kwargs_layout) -> Makie.Figure
 
 Plot standardized (z-score) empirical-Bayes estimates for each random effect as a
@@ -1420,6 +1426,8 @@ outliers or misspecification.
 - `kde_bandwidth::Union{Nothing, Float64} = nothing`: KDE bandwidth.
 - `mcmc_draws::Int = 1000`: MCMC draws for posterior mean EBE.
 - `flow_samples::Int = 500`: samples for normalizing-flow distributions.
+- `rng::AbstractRNG = Xoshiro(42)`: random-number generator. A fresh generator with
+  this fixed seed is created per call, so repeated calls draw the same values.
 - `ncols::Int = 3`: number of subplot columns.
 - `style::PlotStyle = PlotStyle()`: visual style configuration.
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
@@ -1436,6 +1444,7 @@ function plot_random_effect_standardized(
         kde_bandwidth::Union{Nothing, Float64} = nothing,
         mcmc_draws::Int = 1000,
         flow_samples::Int = 500,
+        rng::AbstractRNG = _default_rng(),
         ncols::Int = DEFAULT_PLOT_COLS,
         style::PlotStyle = PlotStyle(),
         save_path::Union{Nothing, String} = nothing,
@@ -1447,7 +1456,7 @@ function plot_random_effect_standardized(
     save_path = _resolve_plot_path(save_path, plot_path)
     _require_re_supported(res)
     re_list = _resolve_re_names(dm, re_names)
-    θ_base = _is_posterior_draw_fit(res) ? _posterior_fixed_means(res, dm)[1] :
+    θ_base = _is_posterior_draw_fit(res) ? _posterior_fixed_means(res, dm; rng = rng)[1] :
         get_params(res; scale = :untransformed)
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = get_model_funs(get_model(dm))
@@ -1459,7 +1468,7 @@ function plot_random_effect_standardized(
         lvls = _resolve_levels(dm, re, levels, individuals_idx)
         ebe_map, value_cols = _is_posterior_draw_fit(res) ?
             _ebe_by_level_mcmc(
-                dm, res, re, mcmc_draws, Random.default_rng()
+                dm, res, re, mcmc_draws, rng
             ) : _ebe_by_level(dm, res, re)
         show_comp = length(value_cols) > 1
         lvls_use = [lvl for lvl in lvls if haskey(ebe_map, lvl)]
@@ -1474,7 +1483,7 @@ function plot_random_effect_standardized(
                     dists_builder(θ_base, const_cov, model_funs, helpers), re
                 )
                 z = _standardize_re(
-                    dist, Float64.(ebe_map[lvl]); flow_samples = flow_samples
+                    dist, Float64.(ebe_map[lvl]); flow_samples = flow_samples, rng = rng
                 )
                 z === nothing && continue
                 push!(zvals, Float64(z[ci]))
@@ -1531,7 +1540,7 @@ end
 """
     plot_random_effect_standardized_scatter(res::FitResult; dm, re_names, levels,
                                             individuals_idx, x_covariate, mcmc_draws,
-                                            flow_samples, ncols, style, save_path,
+                                            flow_samples, rng, ncols, style, save_path,
                                             kwargs_subplot, kwargs_layout) -> Makie.Figure
 
 Scatter plot of standardized (z-score) empirical-Bayes estimates against a covariate
@@ -1545,6 +1554,8 @@ of the random-effects model.
 - `x_covariate::Union{Nothing, Symbol} = nothing`: constant covariate for the x-axis.
 - `mcmc_draws::Int = 1000`: MCMC draws for posterior mean EBE.
 - `flow_samples::Int = 500`: samples for normalizing-flow distributions.
+- `rng::AbstractRNG = Xoshiro(42)`: random-number generator. A fresh generator with
+  this fixed seed is created per call, so repeated calls draw the same values.
 - `ncols::Int = 3`: number of subplot columns.
 - `style::PlotStyle = PlotStyle()`: visual style configuration.
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
@@ -1559,6 +1570,7 @@ function plot_random_effect_standardized_scatter(
         x_covariate::Union{Nothing, Symbol} = nothing,
         mcmc_draws::Int = 1000,
         flow_samples::Int = 500,
+        rng::AbstractRNG = _default_rng(),
         ncols::Int = DEFAULT_PLOT_COLS,
         style::PlotStyle = PlotStyle(),
         save_path::Union{Nothing, String} = nothing,
@@ -1575,7 +1587,7 @@ function plot_random_effect_standardized_scatter(
         x_covariate in cov.constants || error("x_covariate must be a constant covariate.")
     end
 
-    θ_base = _is_posterior_draw_fit(res) ? _posterior_fixed_means(res, dm)[1] :
+    θ_base = _is_posterior_draw_fit(res) ? _posterior_fixed_means(res, dm; rng = rng)[1] :
         get_params(res; scale = :untransformed)
     dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
     model_funs = get_model_funs(get_model(dm))
@@ -1588,7 +1600,7 @@ function plot_random_effect_standardized_scatter(
         lvls = _resolve_levels(dm, re, levels, individuals_idx)
         ebe_map, value_cols = _is_posterior_draw_fit(res) ?
             _ebe_by_level_mcmc(
-                dm, res, re, mcmc_draws, Random.default_rng()
+                dm, res, re, mcmc_draws, rng
             ) : _ebe_by_level(dm, res, re)
         show_comp = length(value_cols) > 1
         lvls_use = [lvl for lvl in lvls if haskey(ebe_map, lvl)]
@@ -1605,7 +1617,7 @@ function plot_random_effect_standardized_scatter(
                     dists_builder(θ_base, const_cov, model_funs, helpers), re
                 )
                 z = _standardize_re(
-                    dist, Float64.(ebe_map[lvl]); flow_samples = flow_samples
+                    dist, Float64.(ebe_map[lvl]); flow_samples = flow_samples, rng = rng
                 )
                 z === nothing && continue
                 xv = if x_covariate === nothing

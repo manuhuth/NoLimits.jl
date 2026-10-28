@@ -270,6 +270,44 @@ end
         @test sg1 === sg2
     end
 
+    # Concurrent first use of new keys must not corrupt the shared Dicts ("Multiple
+    # concurrent writes to Dict detected" under a threaded multistart, #371).
+    @testset "grid caches are safe under concurrent first use" begin
+        sg_keys = [(d, l) for d in 1:40 for l in 1:2]
+        an_keys = [([d1, d2], [l1, l2]) for d1 in 1:3 for d2 in 1:3 for l1 in 1:2 for l2 in 1:2]
+        # Without the lock this failed in 3 of 5 runs of 20 rounds on 8 threads.
+        for round in 1:20
+            empty!(NoLimits._SPARSEGRID_CACHE)
+            empty!(NoLimits._ANISOTROPIC_CACHE)
+            go = Threads.Atomic{Bool}(false)   # start all tasks together on new keys
+            tasks = map(1:(4 * Threads.nthreads())) do i
+                Threads.@spawn begin
+                    while !go[]
+                        GC.safepoint()
+                    end
+                    for j in 0:(length(sg_keys) - 1)
+                        NoLimits.get_sparse_grid(sg_keys[mod1(i + 3j, length(sg_keys))]...)
+                        NoLimits.get_anisotropic_grid(an_keys[mod1(i + j, length(an_keys))]...)
+                    end
+                end
+            end
+            go[] = true
+            foreach(fetch, tasks)
+            @test length(NoLimits._SPARSEGRID_CACHE) == length(sg_keys)
+            @test length(NoLimits._ANISOTROPIC_CACHE) == length(an_keys)
+        end
+        for (d, l) in sg_keys
+            ref = build_sparse_grid(d, l)
+            g = NoLimits.get_sparse_grid(d, l)
+            @test g === NoLimits.get_sparse_grid(d, l)
+            @test g.nodes == ref.nodes && g.logweights == ref.logweights && g.signs == ref.signs
+        end
+        for (dims, levels) in an_keys
+            @test NoLimits.get_anisotropic_grid(dims, levels) ===
+                NoLimits.get_anisotropic_grid(copy(dims), copy(levels))
+        end
+    end
+
     # ----------------------------------------------------------
     # Signs: Smolyak at L=1 has all positive weights
     # ----------------------------------------------------------
@@ -807,6 +845,35 @@ end  # @testset "GHQuadrature ghquadrature.jl"
 
             # logcorrection is 0
             @test NoLimits.logcorrection(re_measure, z) == 0.0
+        end
+    end
+
+    # ── NPF transport is the forward flow F (bijector(dist) is F⁻¹) ─────────────
+    @testset "NPF transport pushes N(0, 1) forward through the flow" begin
+        df_v = DataFrame(
+            ID = repeat(1:4, inner = 3),
+            t = repeat([1.0, 2.0, 3.0], outer = 4),
+            y = randn(MersenneTwister(8), 12)
+        )
+        dm_npf = DataModel(_GHQ_NPF_MODEL, df_v; primary_id = :ID, time_col = :t)
+        fe = dm_npf.model.fixed.fixed
+        θ = deepcopy(NoLimits.get_θ0_untransformed(fe))
+        θ.ψ .= [1.0, 1.5, 0.5, -0.8, 1.2, 0.3]  # [w; u; b] per layer: skewed, shifted flow
+        θ_re = NoLimits._symmetrize_psd_params(θ, fe)
+        _, batch_infos, const_cache = NoLimits._build_re_batch_infos(dm_npf, NamedTuple())
+        ll_cache = NoLimits.build_ll_cache(dm_npf; force_saveat = true)
+        rm = NoLimits.build_re_measure_from_batch(
+            batch_infos[1], θ_re, const_cache, dm_npf, ll_cache
+        )
+        dists = NoLimits.create_random_effect_distribution(NoLimits.get_random(dm_npf.model))
+        dist = dists(
+            θ_re, NoLimits.get_const_cov(dm_npf.individuals[1]), ll_cache.model_funs,
+            ll_cache.helpers
+        ).η
+        x = vec(rand(Xoshiro(1), dist, 200_000))
+        # P(η ≤ T(z)) = Φ(z) for the transport T of N(0, 1) onto the RE distribution
+        for z in (-1.0, 0.0, 1.0)
+            @test count(<=(NoLimits.transform(rm, [z])[1]), x) / length(x) ≈ cdf(Normal(), z) atol = 0.01
         end
     end
 

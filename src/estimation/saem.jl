@@ -473,7 +473,7 @@ end
 end
 
 """
-    SAEM(; optimizer, optim_kwargs, adtype, sampler, turing_kwargs, update_schedule,
+    SAEM(; optimizer, optim_kwargs, adtype, sampler, turing_kwargs,
            warm_start, verbose, progress, mcmc_steps, q_store_max, q_store_epsilon,
            q_store_min, t0, kappa, maxiters,
            rtol_theta, atol_theta, rtol_Q, atol_Q, consecutive_params,
@@ -503,13 +503,8 @@ or closed-form updates (when `builtin_stats` is enabled).
   no Turing overhead). Pass `MH()` or `AdaptiveNoLimitsMH()` for Turing-based samplers.
 - `turing_kwargs::NamedTuple = NamedTuple()`: keyword arguments for `Turing.sample` (only
   used by Turing-based samplers; ignored by `SaemixMH`).
-- `update_schedule`: which batches to update per SAEM iteration. Options:
-  - `:all` (default) — update all batches every iteration.
-  - `Int` — random minibatch of that size, sampled without replacement each iteration.
-  - Any callable with signature `(nbatches::Int, iter::Int, rng) -> Vector{Int}` — returns
-    the indices of batches to update. Can be a plain function or a callable struct (a
-    mutable struct with a matching `call` method, useful for stateful schedules).
-    Example: a struct that cycles through all batches in successive windows of 100.
+- Mini-batching (E-step on a subset of batches per iteration): wrap the method in
+  [`MiniBatch`](@ref).
 - `warm_start::Bool = true`: initialize the sampler from the previous iteration's modes.
 - `verbose::Bool = false`: print per-iteration diagnostics.
 - `progress::Bool = true`: show a progress bar.
@@ -607,7 +602,6 @@ function SAEM(;
         adtype = Optimization.AutoForwardDiff(),
         sampler = SaemixMH(),
         turing_kwargs = NamedTuple(),
-        update_schedule = :all,
         warm_start = true,
         verbose = false,
         progress = true,
@@ -677,7 +671,6 @@ function SAEM(;
     )
     sa_schedule = _as_symbol(sa_schedule)
     ebe_multistart_sampling = _as_symbol(ebe_multistart_sampling)
-    update_schedule = _as_symbol(update_schedule)
     builtin_stats = _as_symbol(builtin_stats)
     builtin_mean = _as_symbol(builtin_mean)
     sa_anneal_schedule = _as_symbol(sa_anneal_schedule)
@@ -759,7 +752,7 @@ function SAEM(;
     resolved_mcmc_steps = isnothing(mcmc_steps) ? (sampler isa SaemixMH ? 0 : 80) :
         mcmc_steps
     saem = SAEMOptions(
-        sampler, turing_kwargs, update_schedule, warm_start, verbose, progress,
+        sampler, turing_kwargs, :all, warm_start, verbose, progress,
         resolved_mcmc_steps, q_store_max, q_store_epsilon, q_store_min, resolved_t0, kappa,
         maxiters, rtol_theta, atol_theta, rtol_Q, atol_Q, consecutive_params,
         convergence_window,
@@ -2555,7 +2548,7 @@ function _saem_collect_outcome_stats_individual(
     return (NamedTuple(pairs), true)
 end
 
-# Number of draws contributed by batch `bi`. MCEM's `update_schedule` can leave batches
+# Number of draws contributed by batch `bi`. A mini-batched MCEM E-step can leave batches
 # with different draw counts, so the count may be per-batch rather than shared.
 @inline _saem_n_chains_at(n_chains::Int, ::Int) = n_chains
 @inline _saem_n_chains_at(n_chains::AbstractVector{<:Integer}, bi::Int) = Int(n_chains[bi])
@@ -2622,6 +2615,7 @@ function _saem_builtin_collect_current_stats(
         for (bi, info) in enumerate(batch_infos), c in 1:_saem_n_chains_at(n_chains, bi)
             b = b_chains[bi][c]
             wb = _batch_weight(dm, get_inds(info))
+            iszero(wb) && continue
             rei = get_re_info(info)[ri]
             for (li, lvl_id) in enumerate(get_levels(get_re_map(rei)))
                 v = _re_value_from_b(rei, lvl_id, b)
@@ -2678,6 +2672,7 @@ function _saem_builtin_collect_current_stats(
         obs_acc = Dict{Symbol, Any}()
         all_supported = true
         for (bi, info) in enumerate(batch_infos), c in 1:_saem_n_chains_at(n_chains, bi)
+            iszero(_batch_weight(dm, get_inds(info))) && continue
             b = b_chains[bi][c]
             for i in get_inds(info)
                 η_ind = _build_eta_ind(dm, i, info, b, const_cache, θ)
@@ -2714,6 +2709,7 @@ function _saem_builtin_collect_current_stats(
         hmm_acc = Dict{Symbol, Any}()
         all_supported = true
         for (bi, info) in enumerate(batch_infos), c in 1:_saem_n_chains_at(n_chains, bi)
+            iszero(_batch_weight(dm, get_inds(info))) && continue
             b = b_chains[bi][c]
             for i in get_inds(info)
                 η_ind = _build_eta_ind(dm, i, info, b, const_cache, θ)
@@ -3344,6 +3340,8 @@ function _saem_Q_current_core(
         bad[] && return
         info = batch_infos[bi]
         wb = _batch_weight(dm, get_inds(info))
+        # zero weight (e.g. a batch outside a scaled MiniBatch subset): skip its stale draws
+        iszero(wb) && (parts[bi] = zero(Tθ); return)
         if get_n_b(info) == 0
             # Chain-independent contribution — evaluate once at full weight.
             logf = logf_fn(dm, info, θ, Tθ[], const_cache, cache; anneal_sds = anneal_sds)
@@ -3770,7 +3768,7 @@ function _fit_model(
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         re_0 = nothing,
         store_eb_modes::Bool = true,

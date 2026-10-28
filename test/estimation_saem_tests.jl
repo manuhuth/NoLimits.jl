@@ -383,15 +383,23 @@ end
 
 @testset "SAEM basic (random effects)" begin
     dm = _SAEM_DM_S
-    res = fit_model(
-        dm,
-        NoLimits.SAEM(;
-            sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-            SAEM_FAST...
-        )
+    method = NoLimits.SAEM(;
+        sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
+        SAEM_FAST...
     )
+    res = fit_model(dm, method)
     @test res isa FitResult
     @test NoLimits.get_converged(res) isa Bool
+
+    # The default rng has a fixed seed, independent of the global RNG. Default sampler,
+    # no burn-in and a free ω, so θ depends on the draws after two iterations.
+    θ(r) = collect(NoLimits.get_params(r; scale = :untransformed))
+    m0 = NoLimits.SAEM(; SAEM_FAST..., sa_burnin_iters = 0, progress = false)
+    dm_ω = fx_re_dm()
+    r0 = fit_model(dm_ω, m0)
+    Random.seed!(987)
+    @test θ(fit_model(dm_ω, m0)) == θ(r0)
+    @test θ(fit_model(dm_ω, m0; rng = Xoshiro(7))) != θ(r0)
 end
 
 @testset "SAEM/MCEM serial vs threaded is reproducible" begin
@@ -590,12 +598,41 @@ end
     dm = _SAEM_DM_M
     res = fit_model(
         dm,
-        NoLimits.SAEM(;
-            sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-            update_schedule = 1, SAEM_FAST...
+        NoLimits.MiniBatch(
+            NoLimits.SAEM(;
+                sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
+                SAEM_FAST...
+            ); schedule = 1
         )
     )
     @test res isa FitResult
+    # SaemixMH (default sampler), both variants; the scaled one fits a private weighted
+    # copy of the DataModel and reports the user's.
+    fast = (maxiters = 6, t0 = 2, kappa = 0.6, mcmc_steps = 1, progress = false)
+    for variant in (:incremental, :scaled)
+        r = fit_model(
+            dm, NoLimits.MiniBatch(NoLimits.SAEM(; fast...); schedule = 2, em_variant = variant);
+            rng = MersenneTwister(1)
+        )
+        @test isfinite(NoLimits.get_objective(r))
+        @test NoLimits.get_data_model(r) === dm
+        @test NoLimits.get_method(r).saem.update_schedule == 2
+    end
+    # full batch reproduces the unwrapped fit for both variants
+    mk(m) = fit_model(dm, m; serialization = EnsembleSerial(), rng = MersenneTwister(3))
+    r0 = mk(NoLimits.SAEM(; fast...))
+    for variant in (:incremental, :scaled)
+        r1 = mk(NoLimits.MiniBatch(NoLimits.SAEM(; fast...); schedule = 4, em_variant = variant))
+        @test NoLimits.get_params(r1; scale = :transformed) ≈
+            NoLimits.get_params(r0; scale = :transformed) rtol = 1.0e-10
+        @test NoLimits.get_objective(r1) ≈ NoLimits.get_objective(r0) rtol = 1.0e-10
+    end
+    # threaded == serial under the scaled variant
+    mbs = NoLimits.MiniBatch(NoLimits.SAEM(; fast...); schedule = 2, em_variant = :scaled)
+    rs = fit_model(dm, mbs; serialization = EnsembleSerial(), rng = MersenneTwister(4))
+    rt = fit_model(dm, mbs; serialization = EnsembleThreads(), rng = MersenneTwister(4))
+    @test NoLimits.get_params(rs; scale = :transformed) ==
+        NoLimits.get_params(rt; scale = :transformed)
 end
 
 @testset "SAEM optimizer Adam (OptimizationOptimisers)" begin

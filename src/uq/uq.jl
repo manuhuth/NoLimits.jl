@@ -24,6 +24,7 @@ uq_family(::FOCEI) = :wald_re
 uq_family(::MCEM) = :wald_re
 uq_family(::SAEM) = :wald_re
 uq_family(::GHQuadrature) = :wald_re
+uq_family(::VEM) = :wald_re
 uq_family(::MCMC) = :chain
 uq_family(::VI) = :chain
 
@@ -77,7 +78,8 @@ Four backends are supported:
   either warns.
 - `mcmc_method`, `mcmc_sampler`, `mcmc_turing_kwargs`, `mcmc_adtype`, `mcmc_fit_kwargs`:
   MCMC backend settings.
-- `rng::AbstractRNG = Random.default_rng()`: random-number generator.
+- `rng::AbstractRNG = Xoshiro(42)`: random-number generator. A fresh generator with
+  this fixed seed is created per call, so repeated calls are reproducible.
 
 # Returns
 A [`UQResult`](@ref) with point estimates, intervals, covariance matrices, and draws.
@@ -117,7 +119,7 @@ function compute_uq(
         mcmc_turing_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
         mcmc_adtype = nothing,
         mcmc_fit_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
-        rng::AbstractRNG = Random.default_rng()
+        rng::AbstractRNG = _default_rng()
     )
     profile_kwargs = _as_namedtuple(profile_kwargs)
     mcmc_turing_kwargs = _as_namedtuple(mcmc_turing_kwargs)

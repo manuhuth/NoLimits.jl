@@ -839,6 +839,11 @@ function _half_window_test(win::Vector{<:Real}, atol::Real, rtol::Real)
     return drift <= max(T(atol), T(rtol) * scale, 2 * se), drift, scale
 end
 
+# Default `rng` of every estimator, CV and UQ entry point. A fresh instance per call keeps
+# results independent of call order and of the global RNG (docs state `Xoshiro(42)`).
+const _DEFAULT_RNG_SEED = 42
+_default_rng() = Random.Xoshiro(_DEFAULT_RNG_SEED)
+
 @inline function _spawn_child_rngs(rng::AbstractRNG, n::Int)
     n <= 0 && return Random.Xoshiro[]
     seeds = rand(rng, UInt64, n)
@@ -1751,7 +1756,7 @@ function get_random_effects(
             ode_args = _fit_kw(res, :ode_args, ())
             ode_kwargs = _fit_kw(res, :ode_kwargs, NamedTuple())
             serialization = _fit_kw(res, :serialization, EnsembleThreads())
-            rng = _fit_kw(res, :rng, Random.default_rng())
+            rng = _fit_kw(res, :rng, _default_rng())
             ll_cache = build_ll_cache(
                 dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
                 serialization = serialization, force_saveat = true
@@ -1780,7 +1785,7 @@ function get_random_effects(
             ode_args = _fit_kw(res, :ode_args, ())
             ode_kwargs = _fit_kw(res, :ode_kwargs, NamedTuple())
             serialization = _fit_kw(res, :serialization, EnsembleThreads())
-            rng = _fit_kw(res, :rng, Random.default_rng())
+            rng = _fit_kw(res, :rng, _default_rng())
             ll_cache = build_ll_cache(
                 dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
                 serialization = serialization, force_saveat = true
@@ -1931,7 +1936,7 @@ end
 
 function _resolve_bstars_for_re(
         dm::DataModel, res::FitResult, constants_re::NamedTuple;
-        θ = nothing, rng::AbstractRNG = Random.default_rng()
+        θ = nothing, rng::AbstractRNG = _default_rng()
     )
     # The stored EB modes were computed with the fit's constants_re; the batch layout
     # must match them, so inherit it when the caller passed none.
@@ -2105,6 +2110,39 @@ function _sample_re_laplace_path(
     )
 end
 
+# VEM path: draws from the fitted variational q of each batch, b = mean + scale ξ in the
+# centered space of Gaussian REs and through the prior transport otherwise.
+function _sample_vem_bstars_raw(
+        dm::DataModel, batch_infos, bstars, θu, const_cache, ll_cache_local,
+        res::FitResult; n_samples::Int, rng::AbstractRNG
+    )
+    notes = get_result(res).notes
+    keep = notes.variational_batches
+    keep == findall(info -> get_n_b(info) > 0, batch_infos) &&
+        all(length(notes.variational_params[k].mean) == get_n_b(batch_infos[bi]) for (k, bi) in enumerate(keep)) ||
+        error("The batch layout differs from the VEM fit; sample with the fit's constants_re.")
+    qs = Vector{Any}(nothing, length(batch_infos))
+    for (k, bi) in enumerate(keep)
+        base = build_re_measure_from_batch(batch_infos[bi], θu, const_cache, dm, ll_cache_local)
+        qs[bi] = (notes.variational_params[k], base)
+    end
+    bstars_per_sample = Vector{Vector{Any}}(undef, n_samples)
+    for s in 1:n_samples
+        sampled = Vector{Any}(undef, length(batch_infos))
+        for bi in eachindex(batch_infos)
+            if qs[bi] === nothing
+                sampled[bi] = bstars[bi]
+                continue
+            end
+            q, base = qs[bi]
+            v = q.mean .+ q.scale * randn(rng, length(q.mean))
+            sampled[bi] = base isa GaussianRE ? v : transform(base, v)
+        end
+        bstars_per_sample[s] = sampled
+    end
+    return bstars_per_sample
+end
+
 # MCMC path: draw n_samples from the exact conditional p(b | y, θ̂) using
 # the same MCMC kernel that drives the E-step (Turing sampler for MCEM,
 # SaemixMH or Turing for SAEM). Each call to _mcem_sample_batch advances
@@ -2153,14 +2191,19 @@ end
 
 # Draw n_samples from the conditional posterior of the random effects for every
 # batch, dispatching on the fit type: Laplace/GHQuadrature use the Gaussian Laplace
-# approximation, MCEM/SAEM reuse the E-step MCMC kernel. Shared by fit_cv's
+# approximation, VEM its fitted variational q, MCEM/SAEM reuse the E-step MCMC kernel. Shared by fit_cv's
 # :conditional CV path and predict's :marginal mode.
 function _sample_conditional_bstars(
         dm::DataModel, batch_infos, bstars, θu, const_cache,
         ll_cache, res::FitResult, n_samples::Int, rng::AbstractRNG
     )
     lcl = ll_cache isa Vector ? ll_cache[1] : ll_cache
-    if get_result(res) isa FrequentistREResult || get_result(res) isa GHQuadratureResult
+    if get_method(res) isa VEM
+        return _sample_vem_bstars_raw(
+            dm, batch_infos, bstars, θu, const_cache, lcl, res;
+            n_samples = n_samples, rng = rng
+        )
+    elseif get_result(res) isa FrequentistREResult || get_result(res) isa GHQuadratureResult
         return _sample_laplace_bstars_raw(
             dm, batch_infos, bstars, θu, const_cache, lcl;
             n_samples = n_samples, rng = rng
@@ -2221,6 +2264,8 @@ conditional distribution, so the draws are consistent with the E-step:
 - `Laplace`, `GHQuadrature`: Gaussian Laplace
   approximation centered at the EBE mode ``b^\\star`` with covariance
   ``(-H)^{-1}``, where ``H`` is the Hessian of the joint log-density at ``b^\\star``.
+- `VEM`: draws from the fitted variational distribution ``q_i`` of each batch
+  (`get_result(res).notes.variational_params`).
 - `MCEM`, `SAEM`: MCMC samples drawn from the exact conditional with the same
   sampler used in the E-step (Turing sampler for MCEM, `SaemixMH` or Turing
   sampler for SAEM), seeded at the EBE mode.
@@ -2272,6 +2317,14 @@ function sample_random_effects(
     )
     isempty(batch_infos) && return NamedTuple()
 
+    if get_method(res) isa VEM
+        raw = _sample_vem_bstars_raw(
+            dm, batch_infos, bstars, θu, const_cache,
+            ll_cache isa Vector ? ll_cache[1] : ll_cache, res;
+            n_samples = n_samples, rng = rng
+        )
+        return _bstars_to_re_df(dm, batch_infos, raw, constants_re, flatten, include_constants)
+    end
     if get_result(res) isa FrequentistREResult || get_result(res) isa GHQuadratureResult
         return _sample_re_laplace_path(
             dm, res, constants_re,
@@ -2406,7 +2459,7 @@ function reestimate_ebes(
         individuals = nothing,
         ode_args::Tuple = (),
         ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         progress::Bool = false
     )
     ebe_optim_kwargs = _as_namedtuple(ebe_optim_kwargs)
@@ -2936,7 +2989,7 @@ function _cdll_terms(
         ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial(),
         ebe_options::Union{Nothing, EBEOptions} = nothing,
-        rng::AbstractRNG = Random.default_rng()
+        rng::AbstractRNG = _default_rng()
     )
     eta = _as_symbol(eta)   # every public complete_data_loglikelihood method lands here
     re = get_random(get_model(dm))
@@ -3205,7 +3258,10 @@ Fit a model to data using the specified estimation method.
 - `ode_args::Tuple = ()`: extra positional arguments forwarded to the ODE solver.
 - `ode_kwargs::NamedTuple = NamedTuple()`: extra keyword arguments forwarded to the ODE solver.
 - `serialization = EnsembleThreads()`: parallelisation strategy.
-- `rng = Random.default_rng()`: random number generator (used by MCMC/SAEM/MCEM).
+- `rng = Xoshiro(42)`: random number generator (used by MCMC, VI, SAEM, MCEM,
+  mini-batch schedules and EBE multistarts). Each call creates a fresh generator with
+  this fixed seed, so a fit is reproducible by default and independent of the global
+  RNG. Pass your own `rng` for different draws.
 - `theta_0_untransformed::Union{Nothing, ComponentArray} = nothing`: custom starting
   point on the natural scale; defaults to the model's declared initial values.
 - `re_0 = nothing`: initial random effects for `SAEM` and `MCEM` only. Either a
@@ -3260,7 +3316,7 @@ function fit_model(
         _validate_theta_0(dm, kwargs.theta_0_untransformed)
     end
     _validate_fit_overrides(dm, kwargs)
-    get(kwargs, :re_0, nothing) === nothing || method isa Union{SAEM, MCEM} ||
+    get(kwargs, :re_0, nothing) === nothing || _base_method(method) isa Union{SAEM, MCEM} ||
         error("re_0 is supported only by SAEM and MCEM; got $(nameof(typeof(method))).")
     _warn_degenerate_soft_trees(dm, get(kwargs, :theta_0_untransformed, nothing))
     try
@@ -3272,7 +3328,7 @@ function fit_model(
             )
         end
         θ_init = _pooled_init_theta(
-            dm, method, pooled_init, fit_options_pooled_init, kwargs
+            dm, _base_method(method), pooled_init, fit_options_pooled_init, kwargs
         )
         kw = merge(kwargs, (theta_0_untransformed = θ_init,))
         return _fit_model(dm, method, args...; store_data_model = store_data_model, kw...)
@@ -4142,39 +4198,36 @@ function _hmm_row_column(
         hmm_seen[j] = true
     end
     init_p = hmm_init[j]
-    # check_args=false inside `_hmm_pin_initial_probs`: degenerate posteriors must not
-    # throw — the isfinite guard below catches NaN logpdf.
-    dist_up = _hmm_pin_initial_probs(dist, init_p)
     prior = hmm_has_prior[j] ? hmm_priors[j] : nothing
-    dist_use = try
-        _hmm_with_prior(dist_up, prior)
+    # Only the call sits in the try, so no distribution struct is live across it: Enzyme
+    # forward mode cannot type the struct copies a try region otherwise creates.
+    res = try
+        _hmm_row_eval(dist, init_p, prior, y)
     catch err
         (err isa DomainError || err isa ArgumentError) && return (T_hmm(-Inf), :bad)
         rethrow(err)
     end
     if y === missing
-        hmm_priors[j] = try
-            probabilities_hidden_states(dist_use)
-        catch err
-            (err isa DomainError || err isa ArgumentError) && return (T_hmm(-Inf), :bad)
-            rethrow(err)
-        end
+        hmm_priors[j] = res
         hmm_has_prior[j] = true
         return (zero(T_hmm), :prior)
     end
-    # Combined accessor: continuous-time families propagate the hidden state once and
-    # reuse it for both the likelihood and the posterior (bit-identical to separate calls).
-    lp_post = try
-        _hmm_logpdf_and_posterior(dist_use, y)
-    catch err
-        (err isa DomainError || err isa ArgumentError) && return (T_hmm(-Inf), :bad)
-        rethrow(err)
-    end
-    v = lp_post[1]
+    v = res[1]
     isfinite(v) || return (T_hmm(-Inf), :bad)
-    hmm_priors[j] = lp_post[2]
+    hmm_priors[j] = res[2]
     hmm_has_prior[j] = true
     return (convert(T_hmm, v), :ok)
+end
+
+# One filter step of `_hmm_row_column`, without exception handling (the caller catches
+# numeric errors). check_args=false inside `_hmm_pin_initial_probs`: degenerate
+# posteriors must not throw; the caller's isfinite guard catches a NaN logpdf. The
+# continuous-time families propagate the hidden state once for both the likelihood and
+# the posterior (bit-identical to separate calls).
+@noinline function _hmm_row_eval(dist, init_p, prior, y)
+    dist_use = _hmm_with_prior(_hmm_pin_initial_probs(dist, init_p), prior)
+    y === missing && return probabilities_hidden_states(dist_use)
+    return _hmm_logpdf_and_posterior(dist_use, y)
 end
 
 function _loglikelihood_rows_hmm(
@@ -4340,7 +4393,24 @@ end
     return _xlogy(y_int, λ) - λ - SpecialFunctions.logfactorial(y_int)
 end
 
+@inline _fast_logpdf(dist::MvNormal{<:Real, <:Distributions.PDMats.PDMat}, y::AbstractVector{<:Real}) =
+    _logpdf_ad(dist, y)
+
 @inline _fast_logpdf(::Any, ::Any) = nothing
+
+# `logpdf` with the same value, but for a dense MvNormal the whitening solve uses the
+# 3-argument `ldiv!`. Julia 1.12.7's `LowerTriangular \ x` (BLAS eltypes) runs the 2-argument
+# `ldiv!`, which picks the triangle by value (`istriu`): at an exactly diagonal Cholesky factor
+# Enzyme reverse then drops the off-diagonal covariance gradient (#371).
+@inline _logpdf_ad(dist, x) = logpdf(dist, x)
+function _logpdf_ad(d::MvNormal{<:Real, <:Distributions.PDMats.PDMat}, x::AbstractVector{<:Real})
+    length(x) == length(d) ||
+        throw(DimensionMismatch("MvNormal of length $(length(d)) evaluated at a vector of length $(length(x))"))
+    r = x .- d.μ
+    L = Distributions.PDMats.chol_lower(cholesky(d.Σ))
+    z = ldiv!(similar(r, promote_type(eltype(L), eltype(r))), L, r)
+    return Distributions.mvnormal_c0(d) - sum(abs2, z) / 2
+end
 
 # Function barrier: `dm.individuals` has abstract eltype, so `vary`/`dyn` are only
 # concretely typed once they cross this call. Inside, the comprehension infers a

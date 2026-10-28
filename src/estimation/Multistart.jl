@@ -37,7 +37,10 @@ fully optimized.
   (Latin hypercube sampling).
 - `serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads()`: parallelisation
   strategy for running multiple starts.
-- `rng::AbstractRNG = Random.default_rng()`: random-number generator.
+- `rng::Union{Nothing, AbstractRNG} = nothing`: random-number generator for sampling the
+  starts and seeding the per-start fits. `nothing` creates a fresh `Xoshiro(42)` at each
+  `fit_model` call, so a multistart fit is reproducible by default, also when the same
+  `Multistart` object is reused. A `rng` passed to `fit_model` seeds the per-start fits.
 - `progress::Bool = true`: whether to display progress bars for the screening and fitting phases.
 - `screening::Symbol = :prior_mean`: objective used for pre-selecting starting points.
   - `:prior_mean` — evaluates the observation log-likelihood with random effects fixed at
@@ -95,7 +98,7 @@ function Multistart(;
         n_draws_used::Int = 50,
         sampling::Union{Symbol, AbstractString} = :random,
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        rng::AbstractRNG = Random.default_rng(),
+        rng::Union{Nothing, AbstractRNG} = nothing,
         progress::Bool = true,
         screening::Union{Symbol, AbstractString} = :prior_mean,
         ebe_maxiters::Int = 30
@@ -346,7 +349,10 @@ function _collect_param_dists(dm::DataModel, ms::Multistart; warn::Bool = true)
     return NamedTuple(pairs)
 end
 
-function _multistart_initials(dm::DataModel, ms::Multistart)
+function _multistart_initials(
+        dm::DataModel, ms::Multistart,
+        rng::AbstractRNG = something(ms.rng, _default_rng())
+    )
     fe = get_fixed(get_model(dm))
     θ0_u = get_θ0_untransformed(fe)
     dists = _collect_param_dists(dm, ms)
@@ -368,7 +374,7 @@ function _multistart_initials(dm::DataModel, ms::Multistart)
         haskey(dists, name) || continue
         dist = getfield(dists, name)
         value = getproperty(θ0_u, name)
-        samples = _sample_param(name, value, dist, n_sampled, ms.sampling, ms.rng)
+        samples = _sample_param(name, value, dist, n_sampled, ms.sampling, rng)
         lb = getproperty(lower, name)
         ub = getproperty(upper, name)
         for s in samples
@@ -650,7 +656,8 @@ function fit_model(ms::Multistart, dm::DataModel, method::FittingMethod, args...
     ode_kwargs_inner = get(kw_nt, :ode_kwargs, NamedTuple())
     serialization = get(kw_nt, :serialization, EnsembleThreads())
 
-    all_starts = _multistart_initials(dm, ms)
+    ms_rng = something(ms.rng, _default_rng())
+    all_starts = _multistart_initials(dm, ms, ms_rng)
     n_req = length(all_starts)
     n_used = min(ms.n_draws_used, n_req)
     varied = collect(keys(_collect_param_dists(dm, ms; warn = false)))
@@ -698,7 +705,7 @@ function fit_model(ms::Multistart, dm::DataModel, method::FittingMethod, args...
     errors = Vector{Any}(undef, n_starts)
     # Every start gets its own forked rng: a shared rng object would be raced by the
     # threaded starts (mini-batch draws call `randperm!` on it).
-    seed_rng = get(kw_nt, :rng, ms.rng)
+    seed_rng = get(kw_nt, :rng, ms_rng)
     rngs = [Random.Xoshiro(rand(seed_rng, UInt)) for _ in 1:n_starts]
     fit_p = progress ?
         Progress(n_starts; desc = "Multistart fitting:  ", showspeed = true) : nothing
@@ -761,6 +768,7 @@ const MULTISTART_FORWARDED_FUNCTIONS = (
     :get_laplace_random_effects, :get_loglikelihood, :get_loglikelihood_quadrature,
     :get_fit_args, :get_fit_kwargs, :get_closed_form_mstep_used,
     :get_variational_posterior, :get_vi_state, :get_vi_trace, :get_residuals,
+    :get_variational_distributions,
     :summarize, :compute_uq, :compute_shrinkage, :complete_data_loglikelihood,
     :predict, :reestimate_ebes, :sample_random_effects, :sample_posterior,
     :identifiability_report,

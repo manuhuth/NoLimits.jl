@@ -216,6 +216,14 @@ end
 
     rdf = get_residuals(res; residuals = [:pit, :raw, :pearson], randomize_discrete = true)
     @test nrow(rdf) == nrow(df)
+    # randomized PIT draws come from `rng` (default fixed seed), not the global RNG (#371)
+    Random.seed!(1)
+    pit1 = get_residuals(res; residuals = [:pit]).pit
+    Random.seed!(2)
+    @test isequal(get_residuals(res; residuals = [:pit]).pit, pit1)
+    pit_r = get_residuals(res; residuals = [:pit], rng = Xoshiro(9)).pit
+    @test isequal(get_residuals(res; residuals = [:pit], rng = Xoshiro(9)).pit, pit_r)
+    @test !isequal(pit_r, pit1)
     @test all(.!ismissing.(rdf.res_raw))
     @test all(.!ismissing.(rdf.res_pearson))
     @test plot_residual_distribution(res; residual = :pit) !== nothing

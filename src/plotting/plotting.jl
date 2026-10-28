@@ -436,7 +436,7 @@ function _mcmc_param_means(
         chain::Chains;
         n_adapt::Int = 0,
         max_draws::Int = typemax(Int),
-        rng::AbstractRNG = Random.default_rng()
+        rng::AbstractRNG = _default_rng()
     )
     max_draws >= 1 || error("max_draws must be >= 1.")
     names_all = MCMCChains.names(chain, :parameters)
@@ -552,7 +552,7 @@ function _mcmc_fixed_means(
         res::FitResult,
         dm::DataModel;
         max_draws::Int = typemax(Int),
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         overrides::NamedTuple = NamedTuple()
     )
     chain = get_chain(res)
@@ -569,7 +569,7 @@ end
 function _vi_param_means(
         res::FitResult;
         max_draws::Int = typemax(Int),
-        rng::AbstractRNG = Random.default_rng()
+        rng::AbstractRNG = _default_rng()
     )
     n_draws = max_draws == typemax(Int) ? 1000 : Int(max_draws)
     n_draws >= 1 || error("max_draws must be >= 1.")
@@ -587,7 +587,7 @@ function _vi_fixed_means(
         res::FitResult,
         dm::DataModel;
         max_draws::Int = typemax(Int),
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         overrides::NamedTuple = NamedTuple()
     )
     means = _vi_param_means(res; max_draws = max_draws, rng = rng)
@@ -603,7 +603,7 @@ function _posterior_fixed_means(
         res::FitResult,
         dm::DataModel;
         max_draws::Int = typemax(Int),
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         overrides::NamedTuple = NamedTuple()
     )
     if get_result(res) isa MCMCResult
@@ -654,7 +654,7 @@ function _mcmc_random_effects_means(
         constants_re::NamedTuple,
         θ::ComponentArray;
         max_draws::Int = typemax(Int),
-        rng::AbstractRNG = Random.default_rng()
+        rng::AbstractRNG = _default_rng()
     )
     chain = get_chain(res)
     n_adapt = _mcmc_warmup(res)
@@ -1213,7 +1213,8 @@ plotting. Pass the returned [`PlotCache`](@ref) to `plot_fits` via the `cache` k
 - `ode_args::Tuple = ()`, `ode_kwargs::NamedTuple = NamedTuple()`: forwarded to the ODE solver.
 - `mcmc_draws::Int = 1000`: number of MCMC draws to use for chain-based fits.
 - `mcmc_warmup::Union{Nothing, Int} = nothing`: warm-up count override for MCMC.
-- `rng::AbstractRNG = Random.default_rng()`: random-number generator.
+- `rng::AbstractRNG = Xoshiro(42)`: random-number generator. A fresh generator with
+  this fixed seed is created per call, so repeated calls draw the same values.
 """
 function build_plot_cache(
         res::FitResult;
@@ -1225,7 +1226,7 @@ function build_plot_cache(
         ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
         mcmc_draws::Int = 1000,
         mcmc_warmup::Union{Nothing, Int} = nothing,
-        rng::AbstractRNG = Random.default_rng()
+        rng::AbstractRNG = _default_rng()
     )
     params = _as_namedtuple(params)
     constants_re = _as_namedtuple(constants_re)
@@ -1330,7 +1331,7 @@ function build_plot_cache(
         cache_obs_dists::Bool = false,
         ode_args::Tuple = (),
         ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
-        rng::AbstractRNG = Random.default_rng()
+        rng::AbstractRNG = _default_rng()
     )
     params = _as_namedtuple(params)
     constants_re = _as_namedtuple(constants_re)

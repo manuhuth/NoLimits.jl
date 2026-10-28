@@ -133,15 +133,20 @@ end
 end
 
 @testset "MCEM basic (random effects)" begin
-    res = fit_model(
-        _MCEM_DM2,
-        NoLimits.MCEM(;
-            sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-            maxiters = 2
-        )
+    method = NoLimits.MCEM(;
+        sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
+        maxiters = 2
     )
+    res = fit_model(_MCEM_DM2, method)
     @test res isa FitResult
     @test NoLimits.get_converged(res) isa Bool
+
+    # The default rng has a fixed seed, independent of the global RNG.
+    θ(r) = collect(NoLimits.get_params(r; scale = :untransformed))
+    r0 = fit_model(fx_re_dm(), method)  # ω makes the M-step depend on the draws
+    Random.seed!(987)
+    @test θ(fit_model(fx_re_dm(), method)) == θ(r0)
+    @test θ(fit_model(fx_re_dm(), method; rng = Xoshiro(7))) != θ(r0)
 end
 
 # NOTE: testsets shared line-for-line with SAEM (serial-vs-threaded reproducibility,
@@ -207,41 +212,59 @@ end
     @test res isa FitResult
 end
 
-@testset "MCEM update_schedule minibatching" begin
+@testset "MCEM MiniBatch" begin
     @test NoLimits.MCEM().update_schedule === :all
     # 4 batches. Every schedule must still yield a finite Q: batches skipped by the
-    # E-step keep their previous draws, so the M-step never sees an empty sample set.
-    for (sched, ser) in (
-            (2, EnsembleSerial()),
-            (2, EnsembleThreads()),
-            ((n, it, r) -> [1 + (it % n)], EnsembleSerial()),
-        )
+    # E-step keep their previous draws (incremental) or get weight 0 (scaled).
+    for variant in (:incremental, :scaled), (sched, ser) in (
+                (2, EnsembleSerial()),
+                (2, EnsembleThreads()),
+                ((n, it, r) -> [1 + (it % n)], EnsembleSerial()),
+            )
         res = fit_model(
             _MCEM_DM4,
-            NoLimits.MCEM(;
-                sampler = MH(),
-                turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-                maxiters = 3, update_schedule = sched
+            NoLimits.MiniBatch(
+                NoLimits.MCEM(;
+                    sampler = MH(),
+                    turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
+                    maxiters = 3
+                ); schedule = sched, em_variant = variant
             );
             serialization = ser
         )
         @test res isa FitResult
         @test isfinite(NoLimits.get_objective(res))
+        @test NoLimits.get_data_model(res) === _MCEM_DM4
+        @test NoLimits.get_weights(NoLimits.get_data_model(res)) === nothing
     end
     # MCEM_IS switching out of its MCMC warm-up must refresh every batch, or the IS
     # Q-function would hit batches with no importance weights.
-    res_is = fit_model(
-        _MCEM_DM4,
-        NoLimits.MCEM(;
-            e_step = NoLimits.MCEM_IS(; n_samples = 8, warm_start_mcmc_iters = 1),
-            maxiters = 3, update_schedule = 2, progress = false
+    for variant in (:incremental, :scaled)
+        res_is = fit_model(
+            _MCEM_DM4,
+            NoLimits.MiniBatch(
+                NoLimits.MCEM(;
+                    e_step = NoLimits.MCEM_IS(; n_samples = 8, warm_start_mcmc_iters = 1),
+                    maxiters = 3, progress = false
+                ); schedule = 2, em_variant = variant
+            )
         )
+        @test isfinite(NoLimits.get_objective(res_is))
+    end
+    @test_throws ErrorException NoLimits.MiniBatch(NoLimits.MCEM(); schedule = :nope)
+    # Full batch reproduces the unwrapped fit: the schedule only adds rng draws that the
+    # per-batch sampler rngs (forked before the loop) never see.
+    mk(m) = fit_model(
+        _MCEM_DM4, m; serialization = EnsembleSerial(), rng = MersenneTwister(3)
     )
-    @test isfinite(NoLimits.get_objective(res_is))
-    @test_throws ErrorException fit_model(
-        _MCEM_DM4,
-        NoLimits.MCEM(; maxiters = 2, progress = false, update_schedule = :nope)
-    )
+    base = NoLimits.MCEM(; maxiters = 3, progress = false)
+    r0 = mk(base)
+    for variant in (:incremental, :scaled)
+        r1 = mk(NoLimits.MiniBatch(base; schedule = 4, em_variant = variant))
+        @test NoLimits.get_params(r1; scale = :transformed) ≈
+            NoLimits.get_params(r0; scale = :transformed) rtol = 1.0e-10
+        @test NoLimits.get_objective(r1) ≈ NoLimits.get_objective(r0) rtol = 1.0e-10
+    end
 end
 
 @testset "MCEM multivariate RE" begin

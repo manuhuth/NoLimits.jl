@@ -7,7 +7,7 @@
 #     Σ_i ELBO_i(θ, κ_i),   ELBO_i = E_{q(u; κ_i)}[log p(y_i, u | θ)] + H(q(·; κ_i)),
 #
 # with one Gaussian variational distribution q(u; κ_i) = N(μ_i, L_i L_i') per RE batch,
-# and (θ, κ) are optimized JOINTLY by L-BFGS. The expectation is a sample average over
+# and (θ, κ) are optimized JOINTLY (L-BFGS by default). The expectation is a sample average over
 # draws ξ_ij ~ N(0, I) fixed once per fit (u_ij = μ_i + L_i ξ_ij; "deterministic VEM",
 # the paper's default: a deterministic objective that admits quasi-Newton steps and line
 # searches). The variational family lives in the standardized RE space u of the prior
@@ -17,93 +17,174 @@
 # The final objective is an importance-sampling estimate of -log p(y | θ̂) with a
 # multivariate-t proposal around each fitted q (the ELBO itself is reported in the notes).
 
-export VEM
+export VEM, PlanarFlowFamily, get_variational_distributions
 
 """
-    VEM(; n_samples = :auto, expectation = :auto, family = :dense, maxiters = 1000, g_abstol = 1e-5,
-        f_reltol = 1e-8, init = :laplace, n_is = 1000, is_df = 5.0, ebe_kwargs...)
+    PlanarFlowFamily(K::Integer; base = :dense, seed = 0)
+
+Variational family for [`VEM`](@ref) (`family = PlanarFlowFamily(K)`): `K` planar layers
+F(z) = z + û tanh(wᵀz + b) on the base draw of a Gaussian family, so each batch's q is
+the law of m₀ + S₀(μ + L F(ξ)), ξ ~ N(0, I) (`base = :dense` or `:diagonal` for L).
+Planar layers can represent skewed random-effect posteriors (few binary or count
+observations per subject). û is the invertible reparameterization of u (wᵀû > -1).
+Layers start at the identity (û = 0) with random nonzero w (|w| ≈ 1), drawn from the fit `rng`
+(`seed = 0`) or from `Xoshiro(seed)`. Flow fits use the Monte Carlo expectation with
+max(64, 8 n_b) draws per batch (`n_samples = :auto`) and a joint ForwardDiff gradient;
+the refinement and the importance-sampling objective use a t proposal around the
+moment-matched q.
+"""
+struct PlanarFlowFamily
+    K::Int
+    base::Symbol
+    seed::Int
+end
+
+function PlanarFlowFamily(K::Integer; base = :dense, seed::Integer = 0)
+    K >= 1 || error("PlanarFlowFamily: K must be ≥ 1. Got: $K")
+    base = _as_symbol(base)
+    base in (:diagonal, :dense) ||
+        error("PlanarFlowFamily: base must be :diagonal or :dense. Got: $base")
+    return PlanarFlowFamily(Int(K), base, Int(seed))
+end
+
+"""
+    VEM(; optimizer = nothing, optim_kwargs = nothing, adtype = AutoForwardDiff(), lb = nothing,
+        ub = nothing, ignore_model_bounds = false, n_samples = :auto, expectation = :auto,
+        family = :dense, init = :laplace, n_is = 1000, is_df = 5.0, refine = :auto,
+        refine_nodes = 64, ebe_optimizer, ebe_optim_kwargs, ebe_adtype, ebe_grad_tol,
+        ebe_multistart_n, ebe_multistart_k, ebe_multistart_max_rounds, ebe_multistart_sampling)
 
 Variational Expectation Maximization (Tarek & Afonso 2026). Maximizes the evidence lower
 bound jointly over the fixed effects and one Gaussian variational distribution per
-random-effect batch with L-BFGS, using `n_samples` fixed standard-normal draws per batch
-(sample-average approximation of the ELBO). Scales to models with many population
-parameters (e.g. neural networks) and random effects: no inner mode finding or Hessian
-per objective evaluation, unlike Laplace/FOCEI.
+random-effect batch with an Optimization.jl optimizer (L-BFGS by default), using
+`n_samples` fixed standard-normal draws per batch (sample-average approximation of the
+ELBO). Scales to models with many population parameters (e.g. neural networks) and random
+effects: no inner mode finding or Hessian per objective evaluation, unlike Laplace/FOCEI.
 
 # Keyword Arguments
+- `optimizer`: Optimization.jl-compatible optimizer for the joint ELBO fit and the `refine`
+  step. `nothing` selects `LBFGS(m = 20, linesearch = BackTracking(maxstep = 30.0))`. The optimizer works
+  on a diagonally preconditioned offset of the fixed effects and receives the analytic
+  value and gradient in one call (`fg`).
+- `optim_kwargs = nothing`: keyword arguments forwarded to `Optimization.solve` (both
+  stages). `nothing` uses `(; maxiters = 1000)`, plus `g_abstol = 1e-5`, `reltol = 1e-8` and
+  `allow_f_increases = false` for an Optim.jl optimizer (the sample-average objective's
+  gradient norm stalls around 1e-2 near the optimum, so in practice the relative objective
+  change stops the fit). A user-supplied NamedTuple replaces these defaults.
+- `adtype = AutoForwardDiff()`: automatic differentiation of the joint objective. The default
+  differentiates per batch in forward mode (cheap for few fixed effects). Any other ADTypes
+  backend - typically `AutoEnzyme(mode = Enzyme.set_runtime_activity(Enzyme.Reverse),
+  function_annotation = Enzyme.Duplicated)` with Enzyme loaded (without the `Duplicated`
+  annotation Enzyme rejects the objective, which captures mutable caches) - differentiates
+  each batch's ELBO over the fixed effects and that batch's variational parameters in one
+  DifferentiationInterface pass, batches threaded like the default: reverse mode for large
+  networks (paper: reverse mode is what makes VEM scale). Rule of thumb: reverse mode pays off from
+  roughly 100 fixed-effect coordinates (FFNN with 116 weights: 69 s vs 258 s with forward
+  mode; 27 coordinates with 13-dimensional random effects: 418 s vs 295 s). Requires
+  Gaussian random effects (centered variational space, evaluated through the
+  Enzyme-compatible batch log-joint). The `refine` step always uses ForwardDiff.
+- `lb`, `ub`: bounds on the transformed fixed-effect scale, or `nothing` to use the
+  model-declared bounds (as for [`Laplace`](@ref)). Variational parameters are unbounded,
+  so optimizers that need finite bounds on every coordinate (BlackBoxOptim methods,
+  `ParticleSwarm`) are rejected.
+- `ignore_model_bounds::Bool = false`: ignore the bounds declared in `@fixedEffects`
+  (explicit `lb`/`ub` still apply).
 - `n_samples = :auto`: draws per batch in the sample-average ELBO (fixed per fit). `:auto`
   uses max(16, 4 n_b) for an n_b-dimensional batch: 16 draws biased the 13-dimensional
   network-weight random effects of a test model (objective -59.5 vs -93.4 with 64 draws).
 - `expectation = :auto`: how E_q is computed. `:quadrature` uses a Smolyak Gauss-Hermite
   rule in the base space (7 nodes for scalar random effects, level 5 / 4 for 2 / 3
-  dimensions) — deterministic and far more accurate than a few draws for small batches;
+  dimensions), deterministic and far more accurate than a few draws for small batches;
   `:mc` uses `n_samples` fixed draws (the paper's sample-average approximation). `:auto`
   picks quadrature for batches with ≤ 3 random effects.
-- `family::Symbol = :dense`: `:dense` (full lower-triangular scale) or `:diagonal` (mean-field)
-  Gaussian family in the standardized random-effect space. Mean-field q cannot represent
+- `family = :dense`: `:dense` (full lower-triangular scale) or `:diagonal` (mean-field)
+  Gaussian family in the standardized random-effect space, or a
+  [`PlanarFlowFamily`](@ref) (normalizing planar flow on the Gaussian base draw). Mean-field q cannot represent
   posterior correlations between random effects and biases correlated RE covariances
   (M03 anchor: Ω₁₂ = -0.08 vs 0.15); use it only for very high-dimensional REs.
-- `maxiters::Int = 1000`, `g_abstol = 1e-5`, `f_reltol = 1e-8`: L-BFGS stopping rules (the
-  sample-average objective's gradient norm stalls around 1e-2 near the optimum, so in
-  practice the relative objective change stops the fit).
-- `memory::Int = 20`: L-BFGS memory.
 - `init::Symbol = :laplace`: initialize each q at the Laplace approximation of the batch
   posterior at the starting θ (`:prior` starts from the prior, μ = 0, L = I).
 - `n_is::Int = 1000`, `is_df = 5.0`: importance-sampling draws and t degrees of freedom for
-  the final marginal-likelihood estimate (the reported objective). `n_is = 0` reports
-  -ELBO instead.
-- `refine = :auto`, `refine_nodes = 64`: after the joint VEM optimization, keep each fitted q
-  fixed and maximize the importance-sampled marginal likelihood over the fixed effects with
-  fixed nodes: a tensor Gauss-Hermite rule around q for batches with 1-2 random effects
-  (adaptive quadrature; 21 / 9 x 9 nodes), `refine_nodes` multivariate-t draws (ν = `is_df`)
-  otherwise. This removes the
+  the final marginal-likelihood estimate (the reported objective) of batches with more than
+  3 random effects; batches with 1-3 random effects use adaptive Gauss-Hermite quadrature
+  around q (21 / 9² / 7³ nodes, as `refine`). `n_is = 0` reports -ELBO instead.
+- `refine = :auto`, `refine_nodes = 64`: after the joint VEM optimization, maximize the
+  marginal likelihood over the fixed effects with fixed base nodes: a tensor Gauss-Hermite
+  rule for batches with 1-3 random effects (adaptive quadrature; 21 / 9² / 7³ nodes),
+  `refine_nodes` multivariate-t draws (ν = `is_df`) otherwise. At every θ the rule of each
+  batch is centered at the mode of its integrand and scaled by the curvature there (Newton
+  from the fitted q's mean; q where the curvature is not negative definite), and the
+  reported objective uses the rule at θ̂. This removes the
   variational bias of the Gaussian family (binary toenail data: VEM ω = 3.52, MLE 4.00)
   and is consistent as the number of nodes grows. `:auto` refines when the model has at most
-  50 free fixed-effect coordinates and at most 2 random effects per batch (each refinement
+  50 free fixed-effect coordinates and at most 3 random effects per batch (each refinement
   iteration costs one forward-mode pass over the fixed effects; network models skip it).
-- `adtype = AutoForwardDiff()`: automatic differentiation of the joint objective. The default
-  differentiates per batch in forward mode (cheap for few fixed effects). Any other ADTypes
-  backend - typically `AutoEnzyme(mode = Enzyme.set_runtime_activity(Enzyme.Reverse))` with
-  Enzyme loaded - differentiates the whole objective (all fixed effects and all variational
-  parameters) in ONE pass through DifferentiationInterface: reverse mode for large networks
-  (paper: reverse mode is what makes VEM scale). Rule of thumb: reverse mode pays off from
-  roughly 100 fixed-effect coordinates (FFNN with 116 weights: 69 s vs 258 s with forward
-  mode; 27 coordinates with 13-dimensional random effects: 418 s vs 295 s). Requires
-  Gaussian random effects (centered variational space, evaluated through the
-  Enzyme-compatible batch log-joint).
+  The refinement uses the same `optimizer`, `optim_kwargs` and bounds as the joint fit.
 - `ebe_*`: options of the final empirical-Bayes modes (as for `MCEM`).
+
+The `penalty` and `extra_objective` keywords of [`fit_model`](@ref) act as for `Laplace`:
+both are functions of the natural-scale fixed effects, added (with ForwardDiff gradients
+for every `adtype`, as Laplace does) to the negative ELBO, to the `refine` objective and to
+the reported objective (`get_result(res).notes.elbo` stays the plain ELBO). Likelihood
+weights of the `DataModel` multiply the ELBO term of each random-effect batch, and its
+marginal-likelihood term in `refine` and in the reported objective. Random-effect levels
+fixed through `constants_re` enter as for `Laplace`: with the prior density of the fixed
+values, and a batch without free levels (no q) with its log-likelihood at the fixed values.
+
+For mini-batching (stochastic VEM) wrap the method in [`MiniBatch`](@ref); the penalty and
+`extra_objective` are then added once per iteration, not scaled by the number of batches.
+
+Randomness (the fixed Monte Carlo draws, multivariate-t refinement nodes, importance-sampling
+draws, start repair and EBE multistart) comes only from the `rng` keyword of
+[`fit_model`](@ref), as for `SAEM` and `MCEM`: the same seeded `rng` gives identical fits.
+The `serialization` keyword of `fit_model` (default `EnsembleThreads()`) runs the per-batch
+work on threads, for every `adtype`; threaded and serial (`EnsembleSerial()`) fits are
+bitwise equal.
+
+Fits support Wald UQ ([`compute_uq`](@ref)), and [`sample_random_effects`](@ref) and
+conditional cross-validation draw from the fitted variational distributions.
+[`get_variational_distributions`](@ref) returns these distributions per individual
+(`get_result(res).notes.variational_params` holds them in random-effect batch order).
+Discrete random effects are not supported.
 """
-struct VEM{EB} <: FittingMethod
+struct VEM{O, K, A, L, U, EB, US} <: FittingMethod
+    optimizer::O
+    optim_kwargs::K
+    adtype::A
+    lb::L
+    ub::U
+    ignore_model_bounds::Bool
     n_samples::Union{Int, Symbol}
     expectation::Symbol
     family::Symbol
-    maxiters::Int
-    g_abstol::Float64
-    f_reltol::Float64
-    memory::Int
+    flow::Int
+    flow_seed::Int
     init::Symbol
     n_is::Int
     is_df::Float64
     refine::Symbol
     refine_nodes::Int
-    adtype::Any
     ebe::EB
+    update_schedule::US
 end
 
+_update_schedule(m::VEM) = m.update_schedule
+
 function VEM(;
+        optimizer = nothing,
+        optim_kwargs = nothing,
+        adtype = Optimization.AutoForwardDiff(),
+        lb = nothing,
+        ub = nothing,
+        ignore_model_bounds::Bool = false,
         n_samples::Union{Int, Symbol} = :auto,
         expectation = :auto,
         family = :dense,
-        maxiters::Int = 1000,
-        g_abstol::Real = 1.0e-5,
-        f_reltol::Real = 1.0e-8,
-        memory::Int = 20,
         init = :laplace,
         n_is::Int = 1000,
         is_df::Real = 5.0,
         refine = :auto,
         refine_nodes::Int = 64,
-        adtype = Optimization.AutoForwardDiff(),
         ebe_optimizer = OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0)),
         ebe_optim_kwargs = NamedTuple(),
         ebe_adtype = Optimization.AutoForwardDiff(),
@@ -113,6 +194,10 @@ function VEM(;
         ebe_multistart_max_rounds = 5,
         ebe_multistart_sampling = :lhs
     )
+    flow, flow_seed = 0, 0
+    if family isa PlanarFlowFamily
+        flow, flow_seed, family = family.K, family.seed, family.base
+    end
     family = _as_symbol(family)
     init = _as_symbol(init)
     family in (:diagonal, :dense) ||
@@ -124,20 +209,30 @@ function VEM(;
     expectation = _as_symbol(expectation)
     expectation in (:auto, :mc, :quadrature) ||
         error("VEM: expectation must be :auto, :mc or :quadrature. Got: $expectation")
-    maxiters >= 1 || error("VEM: maxiters must be ≥ 1. Got: $maxiters")
     n_is >= 0 || error("VEM: n_is must be ≥ 0. Got: $n_is")
     is_df > 0 || error("VEM: is_df must be > 0. Got: $is_df")
+    # memory 20; BackTracking step capped at 30 in the preconditioned coordinates (|.|∞): the
+    # outer default's maxstep = 1 shortens early steps of the joint problem, while an
+    # uncapped first step sent a CT-Markov fit (M14) to rates whose likelihood evaluation
+    # did not return for 20 minutes
+    optimizer === nothing &&
+        (optimizer = OptimizationOptimJL.LBFGS(m = 20, linesearch = LineSearches.BackTracking(maxstep = 30.0)))
+    optim_kwargs === nothing && (
+        optim_kwargs = optimizer isa Optim.AbstractOptimizer ?
+            (; maxiters = 1000, g_abstol = 1.0e-5, reltol = 1.0e-8, allow_f_increases = false) :
+            (; maxiters = 1000)
+    )
     ebe = EBEOptions(
         ebe_optimizer, _as_namedtuple(ebe_optim_kwargs), ebe_adtype, ebe_grad_tol,
         ebe_multistart_n, ebe_multistart_k, ebe_multistart_max_rounds,
         ebe_multistart_sampling
     )
     return VEM(
-        n_samples, expectation, family, maxiters, Float64(g_abstol), Float64(f_reltol), memory, init,
-        n_is, Float64(is_df),
+        optimizer, _as_namedtuple(optim_kwargs), adtype, lb, ub, ignore_model_bounds,
+        n_samples, expectation, family, flow, flow_seed, init, n_is, Float64(is_df),
         refine === :auto ? :auto : refine === true ? :on : refine === false ? :off :
             error("VEM: refine must be :auto, true or false. Got: $refine"),
-        refine_nodes, adtype, ebe
+        refine_nodes, ebe, :all
     )
 end
 
@@ -146,6 +241,41 @@ end
 #   κ = [μ (n); log diag(L) (n); strictly-lower entries of L, column-major (dense only)]
 # ---------------------------------------------------------------------------------------
 _vem_nkappa(n::Int, family::Symbol) = family === :dense ? 2n + n * (n - 1) ÷ 2 : 2n
+# planar-flow parameters of one batch, after the Gaussian part: [u (n); w (n); b] per layer
+_vem_nflow(n::Int, K::Int) = K * (2n + 1)
+
+@inline _vem_softplus(x) = x > 30 ? x : log1p(exp(x))
+
+# K planar layers on the base draw ξ (θ = κ, flow block after offset `off`):
+# z ← z + û tanh(wᵀz + b), û = u + (m(wᵀu) - wᵀu) w / |w|², m(x) = softplus(x) - 1, so
+# wᵀû = m(wᵀu) > -1 and log|det ∂z'/∂z| = log1p((1 - tanh²) m(wᵀu)). Plain loops (Enzyme).
+function _vem_flow(θ::AbstractVector, off::Int, ξ::AbstractVector, n::Int, K::Int)
+    T = promote_type(eltype(θ), eltype(ξ))
+    z = Vector{T}(undef, n)
+    for i in 1:n
+        z[i] = ξ[i]
+    end
+    ld = zero(T)
+    for k in 1:K
+        o = off + (k - 1) * (2n + 1)
+        wu = zero(T)
+        ww = zero(T)
+        a = zero(T)
+        for i in 1:n
+            wu += θ[o + n + i] * θ[o + i]
+            ww += θ[o + n + i]^2
+            a += θ[o + n + i] * z[i]
+        end
+        m = _vem_softplus(wu) - 1
+        c = (m - wu) / ww
+        h = tanh(a + θ[o + 2n + 1])
+        for i in 1:n
+            z[i] += (θ[o + i] + c * θ[o + n + i]) * h
+        end
+        ld += log1p((1 - h^2) * m)
+    end
+    return z, ld
+end
 
 function _vem_scale(κ::AbstractVector, n::Int, family::Symbol)
     T = eltype(κ)
@@ -185,6 +315,7 @@ struct _VEMDraws
     # the paired RE coordinates moves by -(fe - fe0), so changing fe does not require all
     # batches' q means to follow along the a-η ridge (M18 crawled along it for 1000 iterations)
     center::Vector{Tuple{Int, Vector{Int}, Float64}}
+    K::Int   # planar-flow layers (0: Gaussian family)
 end
 
 # effective mean and scale of q: m0 + S0 μ̃, S0 L̃
@@ -211,24 +342,26 @@ function _vem_draws(
     m0 = κinit[1:n]
     S0 = _vem_scale(κinit, n, family)
     logdetS0 = sum(log(abs(S0[k, k])) for k in 1:n)
-    mode = method.expectation === :auto ? (n <= 3 ? :quadrature : :mc) : method.expectation
+    K = method.flow
+    mode = method.expectation === :auto ? (n <= 3 && K == 0 ? :quadrature : :mc) :
+        method.expectation
     if mode === :quadrature
         g = get_sparse_grid(n, n == 1 ? 7 : n == 2 ? 5 : 4)
         return _VEMDraws(
             Matrix{Float64}(g.nodes), Float64.(g.signs) .* exp.(g.logweights),
-            m0, S0, logdetS0, center
+            m0, S0, logdetS0, center, K
         )
     end
-    M = method.n_samples === :auto ? max(16, 4n) : method.n_samples
-    return _VEMDraws(randn(rng, n, M), fill(1.0 / M, M), m0, S0, logdetS0, center)
+    M = method.n_samples === :auto ? (K > 0 ? max(64, 8n) : max(16, 4n)) : method.n_samples
+    return _VEMDraws(randn(rng, n, M), fill(1.0 / M, M), m0, S0, logdetS0, center, K)
 end
 
 # Log integrand in the variational space. Gaussian random effects are CENTERED: q lives
 # on b itself, value = logint(L⁻¹(b - μ)) - log|det L| (the standardized u-space of the
 # prior transport, used for other supports, traps VEM at a collapsed RE variance: with a
 # small L the likelihood barely depends on u and the gradient that would grow L vanishes -
-# M03 from a perturbed start converged to Ω₁₁ = 0, objective 992 vs 702). Numerical/model
-# errors at trial points (e.g. an invalid generator matrix) count as -Inf for the line search.
+# M03 from a perturbed start converged to Ω₁₁ = 0, objective 992 vs 702). Numerical errors
+# at trial points count as -Inf for the line search; anything else is rethrown.
 function _vem_logjoint(v, base, dm::DataModel, info::REBatchInfo, θ_re, const_cache, ll_cache::_LLCache)
     T = promote_type(eltype(v), eltype(base), eltype(θ_re))
     try
@@ -240,12 +373,18 @@ function _vem_logjoint(v, base, dm::DataModel, info::REBatchInfo, θ_re, const_c
         end
         return convert(T, _transport_logintegrand(v, base, dm, info, θ_re, const_cache, ll_cache))
     catch err
-        (
-            _is_numeric_error(err) || err isa DomainError || err isa ArgumentError ||
-                err isa ErrorException || err isa LinearAlgebra.PosDefException ||
-                err isa LinearAlgebra.SingularException
-        ) || rethrow(err)
+        _is_numeric_error(err) || rethrow()
         return convert(T, -Inf)
+    end
+end
+
+# RE measure of a batch, `nothing` at a numerically degenerate θ
+function _vem_measure(info::REBatchInfo, θu, const_cache, dm::DataModel, ll_cache::_LLCache)
+    try
+        return build_re_measure_from_batch(info, θu, const_cache, dm, ll_cache)
+    catch err
+        _is_numeric_error(err) || rethrow()
+        return nothing
     end
 end
 
@@ -258,22 +397,21 @@ function _vem_batch_elbo(
     ξ, w = dr.ξ, dr.w
     n = size(ξ, 1)
     T = promote_type(eltype(θu), eltype(κ))
-    base = try
-        build_re_measure_from_batch(info, θu, const_cache, dm, ll_cache)
-    catch err
-        (
-            _is_numeric_error(err) || err isa DomainError || err isa ArgumentError ||
-                err isa LinearAlgebra.PosDefException
-        ) || rethrow(err)
-        return T(-Inf)
-    end
+    base = _vem_measure(info, θu, const_cache, dm, ll_cache)
+    base === nothing && return T(-Inf)
     θ_re = _symmetrize_psd_params(θu, get_fixed(get_model(dm)))
     μ, L = _vem_effective(κ, dr, n, family, θu)
     acc = zero(T)
     M = size(ξ, 2)
+    nG = _vem_nkappa(n, family)
     for j in 1:M
-        u = _vem_draw(μ, L, view(ξ, :, j), family)
-        v = _vem_logjoint(u, base, dm, info, θ_re, const_cache, ll_cache)
+        if dr.K == 0
+            u = _vem_draw(μ, L, view(ξ, :, j), family)
+            v = _vem_logjoint(u, base, dm, info, θ_re, const_cache, ll_cache)
+        else
+            z, ld = _vem_flow(κ, nG, view(ξ, :, j), n, dr.K)
+            v = _vem_logjoint(_vem_draw(μ, L, z, family), base, dm, info, θ_re, const_cache, ll_cache) + ld
+        end
         isfinite(v) || return T(-Inf)
         acc += w[j] * v
     end
@@ -287,7 +425,8 @@ end
 # Batch ELBO for the reverse-mode path (`adtype` other than ForwardDiff): Gaussian REs in the
 # centered space, joint density from the Enzyme-compatible `_laplace_logf_batch_impl` (no
 # try/catch, no transport measure). Same value as `_vem_batch_elbo` for Gaussian REs:
-# E_q[log p(y, b | θ)] + n/2 (1 + log 2π) + log|det L|.
+# E_q[log p(y, b | θ)] + n/2 (1 + log 2π) + log|det L|, without the prior of levels fixed by
+# `constants_re` (added once per batch by the θ-only terms, as on the ForwardDiff path).
 function _vem_batch_elbo_rev(
         θu::ComponentArray, κ::AbstractVector, dr::_VEMDraws, family::Symbol,
         dm::DataModel, info::REBatchInfo, const_cache, ll_cache::_LLCache
@@ -296,15 +435,37 @@ function _vem_batch_elbo_rev(
     n = size(ξ, 1)
     μ, L = _vem_effective(κ, dr, n, family, θu)
     acc = zero(promote_type(eltype(θu), eltype(κ)))
+    nG = _vem_nkappa(n, family)
     for j in 1:size(ξ, 2)
-        v = _vem_draw(μ, L, view(ξ, :, j), family)
-        acc += w[j] * _laplace_logf_batch_impl(dm, info, θu, v, const_cache, ll_cache)
+        if dr.K == 0
+            v = _vem_draw(μ, L, view(ξ, :, j), family)
+            acc += w[j] * _laplace_logf_batch_impl(
+                dm, info, θu, v, const_cache, ll_cache; const_prior = false
+            )
+        else
+            z, ld = _vem_flow(κ, nG, view(ξ, :, j), n, dr.K)
+            v = _vem_draw(μ, L, z, family)
+            lf = _laplace_logf_batch_impl(
+                dm, info, θu, v, const_cache, ll_cache; const_prior = false
+            )
+            acc += w[j] * (lf + ld)
+        end
     end
     logdet = dr.logdetS0
     for k in 1:n
         logdet += κ[n + k]
     end
     return acc + logdet + n / 2 * (1 + log(2π))
+end
+
+# value-only reverse-path ELBO: numerical failures at line-search trial points count as -Inf
+function _vem_batch_elbo_rev_value(args...)
+    try
+        return _vem_batch_elbo_rev(args...)
+    catch err
+        _is_numeric_error(err) || rethrow()
+        return -Inf
+    end
 end
 
 # Value and gradient of one batch's ELBO. θ-part: one ForwardDiff pass over the fixed
@@ -380,13 +541,14 @@ _vem_split_cheaper(p::Int, v::Int, n_b::Int) = cld(p + v, 12) > cld(p, 12) + cld
 
 # IS-refinement nodes of one batch: base-space nodes x (n, K) and log weights such that
 # log p(y_b | θ) ≈ logsumexp_k [lw_k + logint(μ + L x_k)] (+ the u-space Jacobian log|L|).
-# 1-2 REs: tensor Gauss-Hermite (lw = log w + |x|²/2; adaptive quadrature around q);
+# 1-3 REs: tensor Gauss-Hermite (lw = log w + |x|²/2; adaptive quadrature around q);
 # otherwise multivariate-t draws (lw = -log K - log t_ν(x) - n/2 log 2π; `refine = true` only:
 # optimizing θ over a fixed draw set fits its noise - 64 draws moved a 2-D Gaussian fit).
 function _vem_refine_nodes(n::Int, K::Int, ν::Float64, rng::AbstractRNG)
-    if n <= 2
-        # tensor Gauss-Hermite (positive weights): 21 nodes (n = 1), 9 x 9 (n = 2)
-        g = get_sparse_grid(1, n == 1 ? 21 : 9)
+    if n <= 3
+        # tensor Gauss-Hermite (positive weights): 21 (n = 1), 9² (n = 2), 7³ (n = 3) nodes;
+        # 3 REs: the Gaussian-q bias of a skewed binary posterior (Ω₃₃ 12% low) is refined away
+        g = get_sparse_grid(1, n == 1 ? 21 : n == 2 ? 9 : 7)
         x1, w1 = vec(g.nodes), g.logweights
         idx = collect(Iterators.product(ntuple(_ -> eachindex(x1), n)...))
         x = reduce(hcat, [[x1[i] for i in I] for I in vec(idx)])
@@ -404,15 +566,8 @@ function _vem_refine_batch_ll(
         lw::Vector{Float64}, dm::DataModel, info::REBatchInfo, const_cache, ll_cache::_LLCache
     )
     T = eltype(θu)
-    base = try
-        build_re_measure_from_batch(info, θu, const_cache, dm, ll_cache)
-    catch err
-        (
-            _is_numeric_error(err) || err isa DomainError || err isa ArgumentError ||
-                err isa LinearAlgebra.PosDefException
-        ) || rethrow(err)
-        return T(-Inf)
-    end
+    base = _vem_measure(info, θu, const_cache, dm, ll_cache)
+    base === nothing && return T(-Inf)
     θ_re = _symmetrize_psd_params(θu, get_fixed(get_model(dm)))
     K = size(x, 2)
     v = Vector{T}(undef, K)
@@ -431,17 +586,15 @@ function _vem_init_batch(
         θu::ComponentArray, n::Int, family::Symbol, dm::DataModel, info::REBatchInfo,
         const_cache, ll_cache::_LLCache
     )
-    base = try
-        build_re_measure_from_batch(info, θu, const_cache, dm, ll_cache)
-    catch
-        return zeros(Float64, _vem_nkappa(n, family))
-    end
+    base = _vem_measure(info, θu, const_cache, dm, ll_cache)
+    base === nothing && return zeros(Float64, _vem_nkappa(n, family))
     θ_re = _symmetrize_psd_params(θu, get_fixed(get_model(dm)))
     # mode and curvature in the standardized u-space (well conditioned), then mapped to the
     # variational space (centered b for Gaussian REs)
     f = u -> try
         _transport_logintegrand(u, base, dm, info, θ_re, const_cache, ll_cache)
-    catch
+    catch err
+        _is_numeric_error(err) || rethrow()
         -Inf
     end
     û, Σu = _vem_u_laplace(f, n)
@@ -460,11 +613,7 @@ function _vem_init_prior(
         θu::ComponentArray, n::Int, family::Symbol, dm::DataModel, info::REBatchInfo,
         const_cache, ll_cache::_LLCache
     )
-    base = try
-        build_re_measure_from_batch(info, θu, const_cache, dm, ll_cache)
-    catch
-        return _vem_kappa_from(zeros(n), Matrix(1.0I, n, n), n, family)
-    end
+    base = _vem_measure(info, θu, const_cache, dm, ll_cache)
     base isa GaussianRE || return _vem_kappa_from(zeros(n), Matrix(1.0I, n, n), n, family)
     L = Matrix{Float64}(base.L)
     return _vem_kappa_from(Vector{Float64}(base.μ), L * L', n, family)
@@ -472,9 +621,22 @@ end
 
 # damped Newton for the mode of f, curvature covariance (-H)⁻¹ capped at the prior's I
 function _vem_u_laplace(f, n::Int)
-    u = zeros(Float64, n)
+    u, Σ = _vem_newton_mode(f, zeros(Float64, n))
+    Σ === nothing && return u, Matrix(1.0I, n, n)
+    # posterior no wider than the prior in u-space
+    for k in 1:n
+        Σ[k, k] > 1.0 && (r = 1 / sqrt(Σ[k, k]); Σ[k, :] .*= r; Σ[:, k] .*= r)
+    end
+    return u, Σ
+end
+
+# damped Newton for the mode of f from u0: (mode, (-H)⁻¹), or (point, nothing) when f is
+# not finite at u0 or -H is not positive definite at the end point
+function _vem_newton_mode(f, u0::Vector{Float64})
+    n = length(u0)
+    u = copy(u0)
     fu = f(u)
-    isfinite(fu) || return u, Matrix(1.0I, n, n)
+    isfinite(fu) || return u, nothing
     λ = 1.0e-3
     for _ in 1:100
         g = ForwardDiff.gradient(f, u)
@@ -501,18 +663,32 @@ function _vem_u_laplace(f, n::Int)
     end
     H = try
         ForwardDiff.hessian(f, u)
-    catch
-        return u, Matrix(1.0I, n, n)
+    catch err
+        _is_numeric_error(err) || rethrow()
+        return u, nothing
     end
-    all(isfinite, H) || return u, Matrix(1.0I, n, n)
+    all(isfinite, H) || return u, nothing
     C = cholesky(Symmetric(-H); check = false)
-    issuccess(C) || return u, Matrix(1.0I, n, n)
-    Σ = Matrix(inv(C))
-    # posterior no wider than the prior in u-space
-    for k in 1:n
-        Σ[k, k] > 1.0 && (r = 1 / sqrt(Σ[k, k]); Σ[k, :] .*= r; Σ[:, k] .*= r)
-    end
-    return u, Σ
+    issuccess(C) || return u, nothing
+    return u, Matrix(inv(C))
+end
+
+# Center and scale of the adaptive rule of one batch at θu (Float64): the mode of the log
+# integrand in the variational space and the Cholesky factor of (-H)⁻¹ there (Newton from
+# the fitted q's mean), or q itself where that curvature is not negative definite.
+function _vem_adapt_rule(
+        θu::ComponentArray, μq::Vector{Float64}, Lq::Matrix{Float64}, dm::DataModel,
+        info::REBatchInfo, const_cache, ll_cache::_LLCache
+    )
+    base = _vem_measure(info, θu, const_cache, dm, ll_cache)
+    base === nothing && return μq, Lq
+    θ_re = _symmetrize_psd_params(θu, get_fixed(get_model(dm)))
+    f = v -> _vem_logjoint(v, base, dm, info, θ_re, const_cache, ll_cache)
+    v, Σ = _vem_newton_mode(f, μq)
+    Σ === nothing && return μq, Lq
+    C = cholesky(Symmetric(Σ); check = false)
+    issuccess(C) || return μq, Lq
+    return v, Matrix(C.L)
 end
 
 function _vem_kappa_from(m::AbstractVector, Σ::AbstractMatrix, n::Int, family::Symbol)
@@ -540,15 +716,33 @@ function _vem_kappa_from(m::AbstractVector, Σ::AbstractMatrix, n::Int, family::
 end
 
 # log p̂(y_batch | θ) by importance sampling from a multivariate t around the fitted q.
+# Mean and scale factor of q: (μ, L) of the Gaussian family; for a planar flow the
+# moment-matched Gaussian over the fit's draws.
+function _vem_q_moments(κ::Vector{Float64}, dr::_VEMDraws, n::Int, family::Symbol, θu)
+    μ, L = _vem_effective(κ, dr, n, family, θu)
+    family === :dense || (L = Matrix(Diagonal(diag(L))))
+    dr.K == 0 && return μ, L
+    M = size(dr.ξ, 2)
+    B = zeros(Float64, n, M)
+    for j in 1:M
+        z, _ = _vem_flow(κ, _vem_nkappa(n, family), view(dr.ξ, :, j), n, dr.K)
+        B[:, j] .= _vem_draw(μ, L, z, family)
+    end
+    m = vec(sum(B; dims = 2)) ./ M
+    D = B .- m
+    C = cholesky(Symmetric(D * D' ./ max(M - 1, 1)) + 1.0e-10 * I; check = false)
+    issuccess(C) || return μ, L
+    return m, Matrix(C.L)
+end
+
 function _vem_is_loglik(
-        θu::ComponentArray, κ::AbstractVector, dr::_VEMDraws, family::Symbol, n::Int, K::Int,
+        θu::ComponentArray, μ::Vector{Float64}, L::Matrix{Float64}, n::Int, K::Int,
         ν::Float64, rng::AbstractRNG, dm::DataModel, info::REBatchInfo, const_cache,
         ll_cache::_LLCache
     )
-    base = build_re_measure_from_batch(info, θu, const_cache, dm, ll_cache)
+    base = _vem_measure(info, θu, const_cache, dm, ll_cache)
+    base === nothing && return -Inf
     θ_re = _symmetrize_psd_params(θu, get_fixed(get_model(dm)))
-    μ, L = _vem_effective(Vector{Float64}(κ), dr, n, family, θu)
-    family === :dense || (L = Matrix(Diagonal(diag(L))))
     # PDMat from the factor: L L' formed explicitly is not numerically PD for badly scaled REs
     q = Distributions.MvTDist(ν, μ, Distributions.PDMats.PDMat(LinearAlgebra.Cholesky(LowerTriangular(Matrix(L)))))
     lw = Vector{Float64}(undef, K)
@@ -562,6 +756,54 @@ function _vem_is_loglik(
     isfinite(lmax) || return -Inf
     return lmax + log(sum(exp(w - lmax) for w in lw)) - log(K)
 end
+
+# f(k, ll_cache) over batches 1:n; threaded with one cache per task when `caches` has more
+# than one entry. Callers write results by k and reduce in index order.
+function _vem_foreach(f, n::Int, caches::Vector)
+    if length(caches) == 1
+        for k in 1:n
+            f(k, caches[1])
+        end
+    else
+        _greedy_foreach((k, c) -> f(k, caches[c]), n, length(caches))
+    end
+    return nothing
+end
+
+# whether a batch has random-effect levels fixed by `constants_re`
+function _vem_has_const_levels(dm::DataModel, info::REBatchInfo, const_cache)
+    isempty(const_cache.is_const) && return false
+    ids = get_ind_level_ids(get_laplace_cache(get_re_group_info(dm)))
+    return any(
+        const_cache.is_const[ri][id] for i in get_inds(info)
+            for ri in eachindex(const_cache.is_const) for id in ids[i][ri]
+    )
+end
+
+# penalty and extra_objective on the natural scale (both optional), as for Laplace
+function _vem_penalty(θu, penalty::NamedTuple, extra_objective)
+    T = eltype(θu)
+    v = convert(T, _penalty_value(θu, penalty))
+    extra_objective === nothing && return v
+    return v + convert(T, extra_objective(θu))
+end
+
+# The variational parameters are unbounded, so optimizers that need a finite box on every
+# coordinate cannot run the joint problem.
+function _vem_check_optimizer(opt)
+    (
+        nameof(parentmodule(typeof(opt))) === :OptimizationBBO ||
+            opt isa OptimizationOptimJL.ParticleSwarm
+    ) || return nothing
+    return error(
+        "VEM: $(nameof(typeof(opt))) needs finite bounds on every coordinate, but VEM " *
+            "optimizes the unbounded variational parameters jointly with the fixed effects. " *
+            "Use a gradient-based optimizer (e.g. the default LBFGS)."
+    )
+end
+
+_sol_iterations(sol) = hasproperty(sol, :stats) && hasproperty(sol.stats, :iterations) ?
+    sol.stats.iterations : missing
 
 function _vem_theta_u(
         xθ::AbstractVector, θ_const_t::ComponentArray, axs_full, axs_free, free_names,
@@ -584,8 +826,8 @@ function _fit_model(
         extra_objective = nothing,
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
-        serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial(),
-        rng::AbstractRNG = Random.default_rng(),
+        serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
+        rng::AbstractRNG = _default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         store_eb_modes::Bool = true,
         store_data_model::Bool = true
@@ -597,12 +839,11 @@ function _fit_model(
         store_eb_modes = store_eb_modes, store_data_model = store_data_model,
         extra_objective = extra_objective,
     )
-    isempty(penalty) || error("VEM does not support `penalty`.")
-    extra_objective === nothing || error("VEM does not support `extra_objective`.")
+    _vem_check_optimizer(method.optimizer)
     re_names = get_re_names(get_random(get_model(dm)))
     isempty(re_names) &&
         error("VEM requires random effects. Use MLE/MAP for fixed-effects models.")
-    _validate_re_ad_compatible(dm, "VEM")
+    _ghq_validate_re_distributions(dm, "VEM")
     fe = get_fixed(get_model(dm))
     priors = get_priors(fe)
     if any(!(getfield(priors, k) isa Priorless) for k in keys(priors))
@@ -623,11 +864,12 @@ function _fit_model(
     constants_re = _normalize_constants_re(dm, constants_re)
     const_cache = _build_constants_cache(dm, constants_re)
     _, batch_infos, _ = _build_re_batch_infos(dm, constants_re)
-    ll_cache = build_ll_cache(
+    ll_caches = build_ll_cache(
         dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-        serialization = EnsembleSerial(), force_saveat = true
+        serialization = serialization, force_saveat = true
     )
-    ll_cache = ll_cache isa Vector ? ll_cache[1] : ll_cache
+    caches = ll_caches isa Vector ? ll_caches : [ll_caches]
+    ll_cache = caches[1]
     # start repair shared with SAEM/MCEM: no finite log-joint for any initial RE draw
     θ0_r = _em_repair_start(dm, batch_infos, θ0_u, const_cache, ll_cache, rng, re_names, "VEM")
     θ0_u = θ0_r
@@ -651,19 +893,43 @@ function _fit_model(
     p = length(θt_free)
     nb = [get_n_b(info) for info in batch_infos]
     keep = findall(>(0), nb)
+    # DataModel weights multiply each batch's ELBO term (as Laplace weights its
+    # log-likelihood term); zero-weight batches are skipped
+    wk = [_batch_weight(dm, get_inds(batch_infos[bi])) for bi in keep]
+    # levels fixed by `constants_re` enter as for Laplace/GHQuadrature: a batch without
+    # free levels contributes log p(y_b, b_fixed | θ) (it has no q), other batches the
+    # prior density of their fixed levels, log p(b_fixed | θ)
+    fixed_b = [
+        bi for bi in eachindex(batch_infos)
+            if !iszero(_batch_weight(dm, get_inds(batch_infos[bi]))) &&
+            (nb[bi] == 0 || _vem_has_const_levels(dm, batch_infos[bi], const_cache))
+    ]
     ranges = UnitRange{Int}[]
     off = p
     for bi in keep
-        k = _vem_nkappa(nb[bi], family)
+        k = _vem_nkappa(nb[bi], family) + _vem_nflow(nb[bi], method.flow)
         push!(ranges, (off + 1):(off + k))
         off += k
     end
     x0 = zeros(Float64, off)
-    x0[1:p] .= collect(Float64, θt_free)
+    lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
+        fe, free_names, θt_free, method.optimizer, method.lb, method.ub, constants;
+        ignore_model_bounds = method.ignore_model_bounds, method_label = "VEM"
+    )
+    x0[1:p] .= collect(Float64, θ0_init)
     θu0 = θu_of(view(x0, 1:p))
     ξs = _VEMDraws[]
     cpairs = _saem_detect_centering_pairs(dm, free_names)
     idx_u = ComponentArray(collect(1:length(θu0)), getaxes(θu0))
+    nk = length(keep)
+    κinits = Vector{Vector{Float64}}(undef, nk)
+    _vem_foreach(nk, caches) do k, lc
+        bi = keep[k]
+        κinits[k] = method.init === :laplace ?
+            _vem_init_batch(θu0, nb[bi], family, dm, batch_infos[bi], const_cache, lc) :
+            _vem_init_prior(θu0, nb[bi], family, dm, batch_infos[bi], const_cache, lc)
+    end
+    # draws serially, in batch order: the rng stream does not depend on the threading
     for (k, bi) in enumerate(keep)
         center = Tuple{Int, Vector{Int}, Float64}[
             (
@@ -671,48 +937,96 @@ function _fit_model(
                     Float64(getproperty(θu0, cp.fe)),
                 ) for cp in cpairs
         ]
-        κinit = method.init === :laplace ?
-            _vem_init_batch(θu0, nb[bi], family, dm, batch_infos[bi], const_cache, ll_cache) :
-            _vem_init_prior(θu0, nb[bi], family, dm, batch_infos[bi], const_cache, ll_cache)
-        push!(ξs, _vem_draws(nb[bi], method, rng, κinit, family, center))
+        push!(ξs, _vem_draws(nb[bi], method, rng, κinits[k], family, center))
         # preconditioned start: μ̃ = 0, L̃ = I  (κ zeros)
     end
-
-    # ---- objective: -Σ ELBO_i, gradient per batch by ForwardDiff over (θ, κ_i) ----
-    function fg_fd!(F, G, x)
-        xθ = view(x, 1:p)
-        G === nothing || fill!(G, 0.0)
-        total = 0.0
-        θu = G === nothing ? θu_of(xθ) : nothing
+    # planar layers start at the identity: û = 0 for u = w log(e - 1) / |w|², b = 0
+    if method.flow > 0
+        rngf = method.flow_seed == 0 ? rng : Random.Xoshiro(method.flow_seed)
         for (k, bi) in enumerate(keep)
-            info, ξ, r = batch_infos[bi], ξs[k], ranges[k]
-            if G === nothing
-                v = _vem_batch_elbo(θu, view(x, r), ξ, family, dm, info, const_cache, ll_cache)
-                isfinite(v) || return Inf
-                total -= v
-            else
-                v, gθ, gκ = _vem_split_cheaper(p, length(r), size(ξ.ξ, 1)) ?
-                    _vem_batch_grad(
-                        θu_of, collect(xθ), Vector{Float64}(x[r]), ξ, family, dm, info,
-                        const_cache, ll_cache
-                    ) :
-                    _vem_batch_grad_joint(
-                        θu_of, collect(xθ), Vector{Float64}(x[r]), ξ, family, dm, info,
-                        const_cache, ll_cache
-                    )
-                if !(isfinite(v) && all(isfinite, gθ) && all(isfinite, gκ))
-                    fill!(G, NaN)
-                    return Inf
-                end
-                total -= v
-                @views G[1:p] .-= gθ
-                @views G[r] .-= gκ
+            n = nb[bi]
+            o = first(ranges[k]) - 1 + _vem_nkappa(n, family)
+            for l in 1:method.flow
+                # |w| ≈ 1: with |w| = 0.1 the û reparameterization was ill-conditioned
+                # (1000 L-BFGS iterations, Ω off by 0.3 on a 3-RE binary model)
+                w = randn(rngf, n) ./ sqrt(n)
+                ol = o + (l - 1) * (2n + 1)
+                x0[(ol + 1):(ol + n)] .= w .* (log(ℯ - 1) / sum(abs2, w))
+                x0[(ol + n + 1):(ol + 2n)] .= w
             end
         end
-        return F === nothing ? nothing : total
     end
 
-    # ---- reverse-mode path: the whole objective in one pass (DifferentiationInterface) ----
+    # ---- θ-only terms: penalty + extra_objective - Σ_b w_b (fixed-level terms of b) ----
+    # penalty and extra_objective act on the natural-scale θu, as for Laplace; these terms
+    # are added once per evaluation and not scaled under MiniBatch. Their gradients use
+    # ForwardDiff for every adtype, as in Laplace (`obj_grad` there).
+    has_pen = !isempty(keys(penalty)) || extra_objective !== nothing
+    nf = length(fixed_b)
+    has_glob = has_pen || nf > 0
+    pen_of(θu) = _vem_penalty(θu, penalty, extra_objective)
+    function fixed_ll(θu, j, lc)
+        info = batch_infos[fixed_b[j]]
+        w = _batch_weight(dm, get_inds(info))
+        get_n_b(info) == 0 &&
+            return w * _laplace_logf_batch(dm, info, θu, Float64[], const_cache, lc)
+        lp = try
+            _const_re_prior_logf(dm, info, _symmetrize_psd_params(θu, fe), const_cache, lc)
+        catch err
+            _is_numeric_error(err) || rethrow()
+            convert(eltype(θu), -Inf)
+        end
+        return w * lp
+    end
+    fvals = Vector{Float64}(undef, nf)
+    fgs = Vector{Vector{Float64}}(undef, nf)
+    DRg = ForwardDiff.DiffResults
+    # value of the θ-only terms at xθ; with a vector `gθ`, also adds their gradient to it
+    function glob(xθ::Vector{Float64}, gθ)
+        total = 0.0
+        if gθ === nothing
+            θu = θu_of(xθ)
+            has_pen && (total += pen_of(θu))
+            _vem_foreach(nf, caches) do j, lc
+                fvals[j] = fixed_ll(θu, j, lc)
+            end
+        else
+            if has_pen
+                r = DRg.GradientResult(xθ)
+                ForwardDiff.gradient!(r, z -> pen_of(θu_of(z)), xθ)
+                total += DRg.value(r)
+                gθ .+= DRg.gradient(r)
+            end
+            _vem_foreach(nf, caches) do j, lc
+                r = DRg.GradientResult(xθ)
+                ForwardDiff.gradient!(r, z -> fixed_ll(θu_of(z), j, lc), xθ)
+                fvals[j] = DRg.value(r)
+                fgs[j] = copy(DRg.gradient(r))
+            end
+        end
+        for j in 1:nf
+            total -= fvals[j]
+            gθ === nothing || (gθ .-= fgs[j])
+        end
+        return total
+    end
+
+    # ---- objective: -Σ w_i ELBO_i (+ θ-only terms), value and gradient per batch ----
+    # per-batch results by index, reduced in batch order: threaded == serial bitwise.
+    # Under MiniBatch: -(K/|B|) Σ_{i∈B} w_i ELBO_i, the unbiased estimate of the full
+    # objective and its (θ, κ) gradient (zero for the κ blocks outside B). Kept `nothing`
+    # outside solve.
+    all_k = [k for k in eachindex(keep) if !iszero(wk[k])]
+    mb = _minibatch_state(_update_schedule(method), length(keep), rng)
+    mb_ref = Ref{Union{Nothing, typeof(mb)}}(nothing)
+    vals = Vector{Float64}(undef, nk)
+    gθs = Vector{Vector{Float64}}(undef, nk)
+    gκs = Vector{Vector{Float64}}(undef, nk)
+
+    # ForwardDiff (default): per batch over (θ, κ_i). Other backends (reverse mode): one
+    # DifferentiationInterface pass per batch over z = [xθ; κ_k] with the batch index a
+    # constant context; one function and preparation per task cache, since the Duplicated
+    # function shadow is mutable state of the preparation.
     use_fd = nameof(typeof(method.adtype)) === :AutoForwardDiff
     if !use_fd
         for bi in keep
@@ -720,36 +1034,132 @@ function _fit_model(
                 GaussianRE || error("VEM: adtype = $(nameof(typeof(method.adtype))) requires Gaussian (Normal/MvNormal) random effects; use the default AutoForwardDiff().")
         end
     end
-    Ftot = x -> begin
-        θu = θu_of(view(x, 1:p))
-        tot = zero(eltype(x))
-        for (k, bi) in enumerate(keep)
-            tot -= _vem_batch_elbo_rev(
-                θu, view(x, ranges[k]), ξs[k], family, dm, batch_infos[bi], const_cache, ll_cache
-            )
-        end
-        tot
-    end
+    elbo_b = use_fd ? _vem_batch_elbo : _vem_batch_elbo_rev_value
+    fbs = [
+        (z, k) -> _vem_batch_elbo_rev(
+                θu_of(view(z, 1:p)), view(z, (p + 1):length(z)), ξs[k], family, dm,
+                batch_infos[keep[k]], const_cache, lc
+            ) for lc in caches
+    ]
     DI = Optimization.OptimizationBase.DifferentiationInterface
-    prep = use_fd ? nothing : DI.prepare_gradient(Ftot, method.adtype, x0)
-    function fg_rev!(F, G, x)
-        G === nothing && return Ftot(x)
-        v, _ = DI.value_and_gradient!(Ftot, G, prep, method.adtype, x)
-        isfinite(v) || fill!(G, NaN)
-        return F === nothing ? nothing : v
+    preps = use_fd ? nothing : [
+            DI.prepare_gradient(fb, method.adtype, x0[1:(p + length(first(ranges)))], DI.Constant(1))
+            for fb in fbs
+        ]
+    tids = collect(eachindex(caches))
+    function fg!(F, G, x)
+        st = _minibatch_current!(mb_ref[])
+        c = _minibatch_scale(st)
+        ks = st === nothing ? all_k : st.selected
+        nsel = length(ks)
+        if G === nothing
+            θu = θu_of(collect(view(x, 1:p)))
+            _vem_foreach(nsel, caches) do j, lc
+                k = ks[j]
+                vals[j] = elbo_b(
+                    θu, view(x, ranges[k]), ξs[k], family, dm, batch_infos[keep[k]],
+                    const_cache, lc
+                )
+            end
+            total = 0.0
+            for j in 1:nsel
+                w = c * wk[ks[j]]
+                iszero(w) && continue
+                isfinite(vals[j]) || return Inf
+                total -= w * vals[j]
+            end
+            has_glob && (total += glob(collect(view(x, 1:p)), nothing))
+            return isfinite(total) ? total : Inf
+        end
+        if use_fd
+            xθ = collect(view(x, 1:p))
+            _vem_foreach(nsel, caches) do j, lc
+                k = ks[j]
+                r, ξ = ranges[k], ξs[k]
+                grad = ξ.K == 0 && _vem_split_cheaper(p, length(r), size(ξ.ξ, 1)) ?
+                    _vem_batch_grad : _vem_batch_grad_joint
+                vals[j], gθs[j], gκs[j] = grad(
+                    θu_of, xθ, Vector{Float64}(x[r]), ξ, family, dm, batch_infos[keep[k]],
+                    const_cache, lc
+                )
+            end
+        else
+            _vem_foreach(nsel, tids) do j, t
+                k = ks[j]
+                z = vcat(x[1:p], x[ranges[k]])
+                g = similar(z)
+                vals[j] = try
+                    first(DI.value_and_gradient!(fbs[t], g, preps[t], method.adtype, z, DI.Constant(k)))
+                catch err
+                    _is_numeric_error(err) || rethrow()
+                    -Inf
+                end
+                gθs[j] = g[1:p]
+                gκs[j] = g[(p + 1):end]
+            end
+        end
+        fill!(G, 0.0)
+        total = 0.0
+        for j in 1:nsel
+            w = c * wk[ks[j]]
+            iszero(w) && continue
+            v, gθ, gκ = vals[j], gθs[j], gκs[j]
+            if !(isfinite(v) && all(isfinite, gθ) && all(isfinite, gκ))
+                fill!(G, NaN)
+                return Inf
+            end
+            total -= w * v
+            @views G[1:p] .-= w .* gθ
+            @views G[ranges[ks[j]]] .-= w .* gκ
+        end
+        if has_glob
+            gg = zeros(Float64, p)
+            total += glob(collect(view(x, 1:p)), gg)
+            if !(isfinite(total) && all(isfinite, gg))
+                fill!(G, NaN)
+                return Inf
+            end
+            @views G[1:p] .+= gg
+        end
+        return F === nothing ? nothing : total
     end
-    fg! = use_fd ? fg_fd! : fg_rev!
 
     # Diagonal preconditioning of the fixed effects (p <= 50): optimize y with
     # x[1:p] = x0[1:p] + s .* y[1:p], s_j = 1/sqrt(curvature_jj) from a finite difference of
     # the gradient at the start (the variational block is already O(1) through the fixed
     # preconditioner of each q). Badly scaled fixed effects (M18: slope 1e-3 x times up to
     # 5e3) otherwise stalled L-BFGS (5000 iterations, |g| = 3e3, a = 1.5 vs 5).
+    # Where that curvature is not positive, the scale comes from the BHHH information
+    # Σ_b w_b (∂ELBO_b/∂θ_j)² (the per-batch score outer product) instead of s_j = 1: unit scale
+    # was ~100x the posterior-sd scale of the other coordinates, and on a Beta RE (M05)
+    # L-BFGS then drove log α₁ onto the flat asymptote α₁ → ∞ (Beta mass at 1).
     s = ones(Float64, p)
-    if p <= 50
+    # Under MiniBatch an Optimisers rule takes fixed-size steps in these units; posterior-sd
+    # units would make them tiny for well-determined effects, so s stays 1 there.
+    if p <= 50 && !(mb !== nothing && method.optimizer isa Optimisers.AbstractRule)
         G0 = zeros(Float64, off)
         f0 = fg!(0.0, G0, x0)
         if isfinite(f0) && all(isfinite, G0)
+            # BHHH = Σ_b w_b s_b², s_b the unweighted score of batch b (its ELBO plus the
+            # prior of its fixed levels, or the log-likelihood of a batch without q): a
+            # weight-w batch counts as w copies, as in the objective. The penalty and
+            # extra_objective have no per-batch score; their own curvature is added.
+            sc = Vector{Union{Nothing, Vector{Float64}}}(nothing, length(batch_infos))
+            for (j, k) in enumerate(all_k)
+                sc[keep[k]] = copy(gθs[j])
+            end
+            for j in 1:nf
+                g = fgs[j] ./ _batch_weight(dm, get_inds(batch_infos[fixed_b[j]]))
+                bi = fixed_b[j]
+                sc[bi] === nothing ? (sc[bi] = g) : (sc[bi] .+= g)
+            end
+            bhhh = zeros(Float64, p)
+            for bi in eachindex(sc)
+                sc[bi] === nothing && continue
+                bhhh .+= _batch_weight(dm, get_inds(batch_infos[bi])) .* abs2.(sc[bi])
+            end
+            gpen = z -> has_pen ? ForwardDiff.gradient(y -> pen_of(θu_of(y)), z) : zeros(p)
+            gp0 = nothing
             Gj = similar(G0)
             for j in 1:p
                 h = 1.0e-4 * max(1.0, abs(x0[j]))
@@ -757,8 +1167,12 @@ function _fit_model(
                 xj[j] += h
                 fj = fg!(0.0, Gj, xj)
                 Hjj = (Gj[j] - G0[j]) / h
-                (isfinite(fj) && isfinite(Hjj) && Hjj > 0) &&
-                    (s[j] = clamp(1 / sqrt(Hjj), 1.0e-6, 1.0e2))
+                if !(isfinite(fj) && isfinite(Hjj) && Hjj > 0)
+                    gp0 === nothing && (gp0 = gpen(x0[1:p]))
+                    hp = (gpen(xj[1:p])[j] - gp0[j]) / h
+                    Hjj = bhhh[j] + (isfinite(hp) ? max(hp, 0.0) : 0.0)
+                end
+                (isfinite(Hjj) && Hjj > 0) && (s[j] = clamp(1 / sqrt(Hjj), 1.0e-6, 1.0e2))
             end
         end
     end
@@ -771,43 +1185,79 @@ function _fit_model(
     end
     y0 = copy(x0)
     y0[1:p] .= 0.0
-    opt = Optim.LBFGS(; m = method.memory, linesearch = LineSearches.BackTracking())
-    t0 = time()
-    ores = Optim.optimize(
-        Optim.NLSolversBase.only_fg!(fgy!), y0, opt,
-        Optim.Options(;
-            iterations = method.maxiters, g_abstol = method.g_abstol,
-            f_reltol = method.f_reltol, allow_f_increases = false
-        )
+    fy(y, _) = fgy!(0.0, nothing, y)
+    # `fg` makes Optim's line search and Optimisers rules use the fused value + gradient
+    optf = OptimizationFunction(
+        fy, method.adtype;
+        grad = (G, y, _) -> (fgy!(nothing, G, y); nothing),
+        fg = (G, y, _) -> fgy!(0.0, G, y)
     )
-    x̂ = xmap(Optim.minimizer(ores))
-    elbo = -Optim.minimum(ores)
-    θ_hat_u = θu_of(view(x̂, 1:p))
+    # bounds act on the fixed effects only, mapped into y; κ stays unbounded
+    lb_y = vcat((lb .- x0[1:p]) ./ s, fill(-Inf, off - p))
+    ub_y = vcat((ub .- x0[1:p]) ./ s, fill(Inf, off - p))
+    opt_use, use_bounds_y = _bounded_optimizer(method.optimizer, use_bounds, lb_y, ub_y)
+    prob = use_bounds_y ? OptimizationProblem(optf, y0; lb = lb_y, ub = ub_y) :
+        OptimizationProblem(optf, y0)
+    t0 = time()
+    mb_ref[] = mb
+    sol = Optimization.solve(
+        prob, opt_use;
+        _minibatch_solve_kwargs(method.optim_kwargs, opt_use, mb, Returns(nothing))...
+    )
+    mb_ref[] = nothing
+    x̂ = xmap(sol.u)
+    # notes.elbo is the bound itself; the penalty and extra_objective are reported only in
+    # the objective (as for Laplace)
+    obj_joint = fy(sol.u, nothing)
+    elbo = has_pen ? -(obj_joint - pen_of(θu_of(Vector{Float64}(x̂[1:p])))) : -obj_joint
+    xθ_hat = Vector{Float64}(x̂[1:p])
+    θ_hat_u = θu_of(xθ_hat)
     refine_iters = 0
-    do_refine = method.refine === :on ||
-        (method.refine === :auto && p <= 50 && maximum(nb[keep]; init = 0) <= 2)
+    refine_ok = true
+    # a full-data pass per iteration: off by default under MiniBatch
+    do_refine = method.refine === :on || (
+        method.refine === :auto && mb === nothing && p <= 50 &&
+            maximum(nb[keep]; init = 0) <= 3
+    )
     if do_refine
-        # ---- IS refinement with each q frozen (removes the variational bias) ----
+        # ---- refinement: maximize the adaptive quadrature / IS marginal likelihood ----
+        # (removes the variational bias). The rule of each batch is re-centered at every θ
+        # (mode and Laplace scale, Newton from q's mean): nodes frozen at the VEM fit lose
+        # accuracy as θ moves, and the optimizer exploited that error (3 correlated binary
+        # REs: objective 20 below the MLE, a variance 3.7 vs 1.52).
         qs = [
             begin
-                    μq, Lq = _vem_effective(Vector{Float64}(x̂[ranges[k]]), ξs[k], nb[bi], family, θ_hat_u)
-                    (
-                        μq, family === :dense ? Lq : Matrix(Diagonal(diag(Lq))),
-                        _vem_refine_nodes(nb[bi], method.refine_nodes, method.is_df, rng),
-                    )
+                    μq, Lq = _vem_q_moments(Vector{Float64}(x̂[ranges[k]]), ξs[k], nb[bi], family, θ_hat_u)
+                    (μq, Lq, _vem_refine_nodes(nb[bi], method.refine_nodes, method.is_df, rng))
                 end for (k, bi) in enumerate(keep)
         ]
         DRr = ForwardDiff.DiffResults
         fr = xθ -> begin
             θu = θu_of(xθ)
-            tot = zero(eltype(xθ))
-            for (k, bi) in enumerate(keep)
-                μ, L, (xn, lw) = qs[k]
-                ll = _vem_refine_batch_ll(θu, μ, L, xn, lw, dm, batch_infos[bi], const_cache, ll_cache)
-                isfinite(ll) || return convert(eltype(xθ), Inf)
-                tot -= ll
+            θv = eltype(xθ) === Float64 ? θu : θu_of(ForwardDiff.value.(xθ))
+            T = eltype(θu)
+            lls = Vector{T}(undef, nk)
+            _vem_foreach(nk, caches) do k, lc
+                iszero(wk[k]) && (lls[k] = zero(T); return)
+                μq, Lq, (xn, lw) = qs[k]
+                info = batch_infos[keep[k]]
+                μ, L = _vem_adapt_rule(θv, μq, Lq, dm, info, const_cache, lc)
+                lls[k] = _vem_refine_batch_ll(θu, μ, L, xn, lw, dm, info, const_cache, lc)
             end
-            tot
+            flls = Vector{T}(undef, nf)
+            _vem_foreach(nf, caches) do j, lc
+                flls[j] = fixed_ll(θu, j, lc)
+            end
+            (all(isfinite, lls) && all(isfinite, flls)) || return convert(eltype(xθ), Inf)
+            tot = zero(eltype(xθ))
+            for k in 1:nk
+                tot -= wk[k] * lls[k]
+            end
+            for j in 1:nf
+                tot -= flls[j]
+            end
+            has_pen && (tot += pen_of(θu))
+            isfinite(tot) ? tot : convert(eltype(xθ), Inf)
         end
         function fgr!(F, G, xθ)
             if G === nothing
@@ -821,61 +1271,165 @@ function _fit_model(
             return F === nothing ? nothing : v
         end
         xθ0 = Vector{Float64}(x̂[1:p])
-        rres = Optim.optimize(
-            Optim.NLSolversBase.only_fg!(fgr!), xθ0,
-            Optim.LBFGS(; m = method.memory, linesearch = LineSearches.BackTracking()),
-            Optim.Options(;
-                iterations = method.maxiters, g_abstol = method.g_abstol,
-                f_reltol = method.f_reltol
-            )
+        rf = OptimizationFunction(
+            (xθ, _) -> fr(xθ), method.adtype;
+            grad = (G, xθ, _) -> (fgr!(nothing, G, xθ); nothing),
+            fg = (G, xθ, _) -> fgr!(0.0, G, xθ)
         )
-        if isfinite(Optim.minimum(rres)) && Optim.minimum(rres) <= fr(xθ0)
-            θ_hat_u = θu_of(Optim.minimizer(rres))
-            refine_iters = Optim.iterations(rres)
+        ropt, rbounds = _bounded_optimizer(method.optimizer, use_bounds, lb, ub)
+        rprob = rbounds ? OptimizationProblem(rf, xθ0; lb = lb, ub = ub) :
+            OptimizationProblem(rf, xθ0)
+        rsol = Optimization.solve(rprob, ropt; method.optim_kwargs...)
+        fθ = fr(rsol.u)
+        if isfinite(fθ) && fθ <= fr(xθ0)
+            xθ_hat = Vector{Float64}(rsol.u)
+            θ_hat_u = θu_of(xθ_hat)
+            refine_iters = _sol_iterations(rsol)
+            refine_ok = rsol.retcode == SciMLBase.ReturnCode.Success
         end
     end
     θ_hat_t = transform(θ_hat_u)
 
     # ---- objective: importance-sampling marginal likelihood around the fitted q ----
+    # batches with 1-3 REs: adaptive tensor Gauss-Hermite around q (the refinement rule;
+    # deterministic and more accurate than n_is draws), otherwise t importance sampling.
+    # After a refinement the rule is re-centered at θ̂ (q was fitted at the VEM estimate).
     objective = if method.n_is > 0
-        ll = 0.0
-        for (k, bi) in enumerate(keep)
-            ll += _vem_is_loglik(
-                θ_hat_u, view(x̂, ranges[k]), ξs[k], family, nb[bi], method.n_is, method.is_df,
-                rng, dm, batch_infos[bi], const_cache, ll_cache
-            )
+        is_rngs = _spawn_child_rngs(rng, nk)
+        lls = Vector{Float64}(undef, nk)
+        _vem_foreach(nk, caches) do k, lc
+            iszero(wk[k]) && (lls[k] = 0.0; return)
+            bi = keep[k]
+            μq, Lq = _vem_q_moments(Vector{Float64}(x̂[ranges[k]]), ξs[k], nb[bi], family, θ_hat_u)
+            do_refine &&
+                ((μq, Lq) = _vem_adapt_rule(θ_hat_u, μq, Lq, dm, batch_infos[bi], const_cache, lc))
+            lls[k] = nb[bi] <= 3 ?
+                _vem_refine_batch_ll(
+                    θ_hat_u, μq, Lq, _vem_refine_nodes(nb[bi], 0, method.is_df, is_rngs[k])...,
+                    dm, batch_infos[bi], const_cache, lc
+                ) :
+                _vem_is_loglik(
+                    θ_hat_u, μq, Lq, nb[bi], method.n_is, method.is_df,
+                    is_rngs[k], dm, batch_infos[bi], const_cache, lc
+                )
         end
-        -ll
+        ll = 0.0
+        for k in 1:nk
+            ll += wk[k] * lls[k]
+        end
+        # fixed batches, penalty and extra_objective at θ̂ (glob is their negative sum)
+        -ll + (has_glob ? glob(xθ_hat, nothing) : 0.0)
     else
-        -elbo
+        obj_joint
     end
-    converged = (Optim.f_converged(ores) || Optim.g_converged(ores) || Optim.x_converged(ores)) &&
-        Optim.iterations(ores) < method.maxiters && isfinite(objective)
+    niter = _sol_iterations(sol)
+    converged = sol.retcode == SciMLBase.ReturnCode.Success && refine_ok && isfinite(objective)
     q_params = [
         begin
-                μq, Lq = _vem_effective(Vector{Float64}(x̂[ranges[k]]), ξs[k], nb[keep[k]], family, θ_hat_u)
-                (mean = μq, scale = Lq)
+                κk = Vector{Float64}(x̂[ranges[k]])
+                μq, Lq = ξs[k].K == 0 ?
+                _vem_effective(κk, ξs[k], nb[keep[k]], family, θ_hat_u) :
+                _vem_q_moments(κk, ξs[k], nb[keep[k]], family, θ_hat_u)
+                # q lives on b for Gaussian random effects, else on the standardized u of
+                # the prior transport b = T_θ(u) (a type property, so θ0 serves as fallback)
+                base = _vem_measure(batch_infos[keep[k]], θ_hat_u, const_cache, dm, ll_cache)
+                base === nothing &&
+                (base = _vem_measure(batch_infos[keep[k]], θu0, const_cache, dm, ll_cache))
+                (mean = μq, scale = Lq, space = base isa GaussianRE ? :natural : :standardized)
             end for k in eachindex(ranges)
     ]
 
     summary = FitSummary(objective, converged, FitParameters(θ_hat_t, θ_hat_u), NamedTuple())
     diagnostics = FitDiagnostics(
-        (; fit_seconds = time() - t0), (optimizer = opt,),
-        (
-            iterations = Optim.iterations(ores), elbo = elbo, f_calls = Optim.f_calls(ores),
-            g_calls = Optim.g_calls(ores),
-        ),
+        (; fit_seconds = time() - t0), (optimizer = method.optimizer,),
+        (retcode = sol.retcode, iterations = niter, elbo = elbo),
         NamedTuple()
     )
     eb_modes = store_eb_modes ?
-        _compute_bstars(dm, θ_hat_u, constants_re, ll_cache, method.ebe, rng)[1] : nothing
+        _compute_bstars(dm, θ_hat_u, constants_re, ll_caches, method.ebe, rng)[1] : nothing
     notes = (
         elbo = elbo, objective_kind = method.n_is > 0 ? :importance_sampling : :neg_elbo,
         refine_iterations = refine_iters, family = family, n_nodes = [length(ξ.w) for ξ in ξs], variational_params = q_params,
         variational_batches = keep,
     )
-    result = FrequentistREResult(nothing, objective, Optim.iterations(ores), ores, notes, eb_modes)
+    raw = hasproperty(sol, :original) ? sol.original : sol
+    result = FrequentistREResult(sol, objective, niter, raw, notes, eb_modes)
     return FitResult(
         method, result, summary, diagnostics, store_data_model ? dm : nothing, args, fit_kwargs
     )
+end
+
+"""
+    get_variational_distributions(res::FitResult) -> DataFrame
+    get_variational_distributions(dm::DataModel, res::FitResult) -> DataFrame
+
+Fitted variational distributions ``q`` of a [`VEM`](@ref) fit, one row per individual in
+the order of the individuals of the `DataModel` (the order that
+[`get_random_effects`](@ref) uses for random effects grouped by the primary id).
+Individuals linked by a shared random-effect level (e.g. a site effect next to a subject
+effect) form one random-effect batch and share one joint ``q``.
+
+Columns:
+- the primary-id column: the id of the individual;
+- `batch`: index of the batch of the individual in `get_notes(res).variational_params`, or
+  `0` when all its random-effect levels are fixed through `constants_re` (no ``q``);
+- `mean`, `scale`: ``q = N(\\mathrm{mean}, \\mathrm{scale}\\,\\mathrm{scale}^\\top)`` of the
+  batch, with `scale` lower triangular (diagonal for `family = :diagonal`). For a
+  [`PlanarFlowFamily`](@ref) they are the mean and Cholesky factor of the moment-matched
+  Gaussian;
+- `space`: `:natural` when all random effects of the batch are Gaussian (`Normal`,
+  `MvNormal`), so that ``q`` is a distribution of the random effects ``b``;
+  `:standardized` otherwise, so that ``q`` is a distribution of the standardized
+  ``u`` and ``b = T_{\\hat\\theta}(u)`` with the prior transport ``T_{\\hat\\theta}`` (as
+  in [`sample_random_effects`](@ref));
+- `coordinates`: one `(re, level, component)` named tuple per entry of `mean`: the random
+  effect, its grouping level and the component index (`1` for a scalar random effect).
+"""
+function get_variational_distributions(dm::DataModel, res::FitResult)
+    notes = get_notes(res)
+    (notes isa NamedTuple && haskey(notes, :variational_params)) ||
+        error("get_variational_distributions requires a VEM fit result.")
+    _, batch_infos, _ = _build_re_batch_infos(dm, _res_constants_re(res, NamedTuple(), dm))
+    keep = notes.variational_batches
+    qs = notes.variational_params
+    (
+        keep == findall(info -> get_n_b(info) > 0, batch_infos) &&
+            all(length(qs[k].mean) == get_n_b(batch_infos[bi]) for (k, bi) in enumerate(keep))
+    ) || error("The batch layout of this DataModel differs from the VEM fit; pass the DataModel of the fit.")
+    cache = get_laplace_cache(get_re_group_info(dm))
+    re_names = get_re_names(cache)
+    n = length(get_individuals(dm))
+    batch_of = zeros(Int, n)
+    coords = Vector{Vector{NamedTuple}}(undef, length(keep))
+    for (k, bi) in enumerate(keep)
+        info = batch_infos[bi]
+        batch_of[collect(get_inds(info))] .= k
+        c = Vector{NamedTuple}(undef, get_n_b(info))
+        for (ri, re) in enumerate(re_names)
+            rei = get_re_info(info)[ri]
+            levels_all = get_re_index(cache)[ri].levels
+            for (li, lvl_id) in enumerate(get_levels(get_re_map(rei)))
+                for (j, pos) in enumerate(get_ranges(rei)[li])
+                    c[pos] = (re = re, level = levels_all[lvl_id], component = j)
+                end
+            end
+        end
+        coords[k] = c
+    end
+    q_of(i, f, none) = batch_of[i] == 0 ? none : copy(getfield(qs[batch_of[i]], f))
+    return DataFrame(
+        get_primary_id(dm) => [_individual_id(dm, i) for i in 1:n],
+        :batch => batch_of,
+        :mean => [q_of(i, :mean, Float64[]) for i in 1:n],
+        :scale => [q_of(i, :scale, zeros(0, 0)) for i in 1:n],
+        :space => [batch_of[i] == 0 ? :none : qs[batch_of[i]].space for i in 1:n],
+        :coordinates => [batch_of[i] == 0 ? NamedTuple[] : copy(coords[batch_of[i]]) for i in 1:n],
+    )
+end
+
+function get_variational_distributions(res::FitResult)
+    dm = get_data_model(res)
+    dm === nothing &&
+        error("This fit result does not store a DataModel; call get_variational_distributions(dm, res) instead.")
+    return get_variational_distributions(dm, res)
 end

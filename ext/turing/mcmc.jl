@@ -17,6 +17,8 @@ const _MCMC_MODEL_CACHE = Dict{Tuple{Tuple{Vararg{Symbol}}, Tuple{Vararg{Symbol}
 const _MCMC_MODEL_CACHE_RE = Dict{
     Tuple{Tuple{Vararg{Symbol}}, Tuple{Vararg{Symbol}}, Tuple{Vararg{Symbol}}}, Symbol,
 }()
+# Guards both caches; held across the `Core.eval` so each key is defined once.
+const _MCMC_MODEL_CACHE_LOCK = ReentrantLock()
 
 struct _MCMCReMeta{L, M, R}
     levels::L
@@ -88,9 +90,14 @@ end
 
 function _build_turing_model(fixed_names::Vector{Symbol}, free_names::Vector{Symbol})
     key = (Tuple(fixed_names), Tuple(free_names))
-    if haskey(_MCMC_MODEL_CACHE, key)
-        return _MCMC_MODEL_CACHE[key]
+    return @lock _MCMC_MODEL_CACHE_LOCK begin
+        get!(_MCMC_MODEL_CACHE, key) do
+            _define_turing_model(fixed_names, free_names)
+        end
     end
+end
+
+function _define_turing_model(fixed_names::Vector{Symbol}, free_names::Vector{Symbol})
     fname = gensym(:_mcmc_model)
     assigns, θ_expr = _mcmc_theta_reconstruction(fixed_names, free_names)
     epilogue = _mcmc_addlogprob_epilogue()
@@ -108,7 +115,6 @@ function _build_turing_model(fixed_names::Vector{Symbol}, free_names::Vector{Sym
         end
     end
     Core.eval(@__MODULE__, ex)
-    _MCMC_MODEL_CACHE[key] = fname
     return fname
 end
 
@@ -158,9 +164,16 @@ function _build_turing_model_re(
         fixed_names::Vector{Symbol}, free_names::Vector{Symbol}, re_names::Vector{Symbol}
     )
     key = (Tuple(fixed_names), Tuple(free_names), Tuple(re_names))
-    if haskey(_MCMC_MODEL_CACHE_RE, key)
-        return _MCMC_MODEL_CACHE_RE[key]
+    return @lock _MCMC_MODEL_CACHE_LOCK begin
+        get!(_MCMC_MODEL_CACHE_RE, key) do
+            _define_turing_model_re(fixed_names, free_names, re_names)
+        end
     end
+end
+
+function _define_turing_model_re(
+        fixed_names::Vector{Symbol}, free_names::Vector{Symbol}, re_names::Vector{Symbol}
+    )
     fname = gensym(:_mcmc_model_re)
     assigns, θ_expr = _mcmc_theta_reconstruction(fixed_names, free_names)
     epilogue = _mcmc_addlogprob_epilogue()
@@ -357,7 +370,6 @@ function _build_turing_model_re(
         end
     end
     Core.eval(@__MODULE__, ex)
-    _MCMC_MODEL_CACHE_RE[key] = fname
     return fname
 end
 
@@ -378,7 +390,7 @@ function NoLimits._mcmc_fit_impl(
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         extra_objective = nothing,
         store_data_model::Bool = true

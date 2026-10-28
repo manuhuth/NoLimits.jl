@@ -939,6 +939,7 @@ function _validate_re_group_identifiability(model, df, config::DataModelConfig)
 end
 
 const _warned_numeric_re_group_cols = Set{Vector{Symbol}}()
+const _warned_numeric_re_group_cols_lock = ReentrantLock()
 
 function _info_numeric_re_group_levels(model, df)
     re_names = get_re_names(model.random.random)
@@ -957,8 +958,11 @@ function _info_numeric_re_group_levels(model, df)
     end
     isempty(numeric_cols) && return nothing
     sort!(numeric_cols)
-    numeric_cols in _warned_numeric_re_group_cols && return nothing
-    push!(_warned_numeric_re_group_cols, numeric_cols)
+    first_time = @lock _warned_numeric_re_group_cols_lock begin
+        numeric_cols in _warned_numeric_re_group_cols ? false :
+            (push!(_warned_numeric_re_group_cols, numeric_cols); true)
+    end
+    first_time || return nothing
     cols_str = join(string.(numeric_cols), ", ")
     @info "DataModel detected numeric random-effect grouping levels in column(s) $(cols_str). Numbers cannot be NamedTuple keys, so pass `constants_re` for these levels as a Dict, e.g. `constants_re = (; η = Dict(1 => 0.0))`."
     return nothing

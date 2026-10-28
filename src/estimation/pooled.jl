@@ -180,7 +180,7 @@ end
 
 function _pooled_plugin_strategies(
         dm::DataModel, θ::ComponentArray;
-        mc_draws::Int = 256, rng::AbstractRNG = Random.default_rng()
+        mc_draws::Int = 256, rng::AbstractRNG = _default_rng()
     )
     model = get_model(dm)
     lp_cache = get_laplace_cache(get_re_group_info(dm))
@@ -1395,7 +1395,7 @@ function _fit_model(
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         store_data_model::Bool = true
     )
@@ -1428,7 +1428,7 @@ function _fit_model(
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         store_data_model::Bool = true
     )

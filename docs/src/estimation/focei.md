@@ -111,8 +111,7 @@ res_foce = fit_model(dm, NoLimits.FOCEI(; interaction=false))
 
 All keyword arguments of `FOCEI` **mirror those of [`Laplace`](laplace.md)** - the outer
 fixed-effects optimizer, the inner EB optimization, the EB multistart policy, the Hessian
-jitter controls, caching, bounds, and the `update_schedule` mini-batching option all behave
-identically. The only addition is `interaction::Bool=true`. See the [Laplace](laplace.md)
+jitter controls, caching and bounds all behave identically. The only addition is `interaction::Bool=true`. See the [Laplace](laplace.md)
 page for the full description of the shared option groups, and the [`FOCEI`](@ref) API
 entry for the complete keyword list.
 
@@ -123,16 +122,12 @@ to the Gauss-Newton variant of [`NewtonInner`](@ref),
 `NewtonInner(curvature = FisherInformationCurvature(true), x_abstol = 1e-10)`, which uses the
 same Fisher-information curvature as the FOCEI approximation and needs first-order AD only. A
 stalled Newton solve continues on the LBFGS path; LBFGS as the inner optimizer is opt-in via
-`inner_optimizer`. When
-`update_schedule != :all` and no optimizer is passed, the default is `Optimisers.Adam(0.01)`
-instead. If you switch the outer optimizer to NLopt, note that NLopt interprets
+`inner_optimizer`. If you switch the outer optimizer to NLopt, note that NLopt interprets
 `optim_kwargs.maxiters` as a cap on the number of function *evaluations* (`maxeval`);
 reaching it yields `retcode = MaxIters` (reported as not converged).
 
-`update_schedule` selects a random minibatch of random-effect batches (individuals sharing
-random-effect levels) to enter the outer objective/gradient each optimizer iteration; see
-[Laplace's `update_schedule` documentation](laplace.md#Constructor-Options) for the full
-description, unbiasedness scaling, and bounds caveat.
+Mini-batching over random-effect batches is a wrapper around the method:
+`fit_model(dm, MiniBatch(FOCEI(); schedule = 8))`. See [Mini-batching](minibatch.md).
 
 ```julia
 using NoLimits

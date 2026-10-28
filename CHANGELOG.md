@@ -2,7 +2,80 @@
 
 ## Unreleased
 
+### Breaking
+
+- Mini-batching is now a wrapper, `MiniBatch(method; schedule, optimizer, optim_kwargs,
+  em_variant)`, used as `fit_model(dm, MiniBatch(Laplace(); schedule = 8))`. The
+  `update_schedule` keyword is removed from `MLE`, `MAP`, `Laplace`, `FOCEI`,
+  `GHQuadrature`, `SAEM` and `MCEM`; `schedule` takes the same values (`Int`, a callable
+  `(nbatches, iter, rng) -> indices`, or `:all`). Migration:
+  `Laplace(update_schedule = 8, optimizer = o, lb = l)` becomes
+  `MiniBatch(Laplace(lb = l); schedule = 8, optimizer = o)`. The default Adam(0.01) still
+  replaces the default LBFGS while mini-batching; an optimizer set on the wrapped method
+  is kept. `VEM` gains mini-batching (stochastic VEM: unbiased gradient of the full ELBO,
+  zero gradient for the variational parameters of unselected batches). `SAEM`/`MCEM` gain
+  `em_variant = :scaled` (M-step on the selected batches with likelihood weights scaled by
+  `nbatches / |B|`) next to the previous behaviour, `em_variant = :incremental` (the
+  default: smaller error and seed spread in a screening comparison on four models, see the
+  docs page; `:scaled` has lower wall time).
+  New docs page "Estimation > Workflow > Mini-batching".
+
 ### Changes
+
+- New estimator `VEM` (variational expectation maximization, Tarek and Afonso 2026), with
+  the optimizer interface of `Laplace`/`MLE`: `optimizer` (any Optimization.jl optimizer,
+  default `LBFGS(m = 20, linesearch = BackTracking())`), `optim_kwargs` (forwarded to
+  `Optimization.solve`), `adtype`, `lb`, `ub` and `ignore_model_bounds`. The optional
+  `refine` step uses the same optimizer, keywords and bounds. New docs page
+  "Estimation > VEM".
+
+- VEM honors the `serialization` keyword of `fit_model` (default `EnsembleThreads()`,
+  before always serial): batch-wise ELBO/gradient, initialization, refinement,
+  importance sampling and EBEs run on threads, bitwise equal to a serial fit. VEM fits
+  support Wald UQ (`uq_family(::VEM) = :wald_re`), `constants_re` in `fit_cv`, and
+  `sample_random_effects` / conditional CV draws from the fitted variational
+  distributions. Discrete random-effect distributions are rejected up front, and only
+  numeric errors at trial points count as `-Inf`: other errors in a model (e.g. a user
+  `error()`) propagate instead of stalling the fit. The importance-sampling objective
+  now draws from per-batch child generators of `rng`, so its value differs from before
+  for the same seed.
+
+- VEM accepts the `penalty` and `extra_objective` keywords of `fit_model` (#377; before an
+  error). As for `Laplace`, both are functions of the natural-scale fixed effects and are
+  added, with their ForwardDiff gradients, to the negative ELBO, to the `refine` objective
+  and to the reported objective; under `MiniBatch` they are not scaled by
+  `nbatches / |B|`. `notes.elbo` stays the plain ELBO.
+
+- VEM honors `DataModel` likelihood weights (#378; before silently ignored): the ELBO term
+  of each random-effect batch, and its marginal-likelihood term in `refine` and in the
+  reported objective, is multiplied by the batch weight. Random-effect levels fixed through
+  `constants_re` now enter the VEM objective as for `Laplace`/`GHQuadrature`: a batch
+  without free levels contributes its log-likelihood at the fixed values (before, its data
+  were left out), and the prior density of fixed levels is included (before, missing).
+  This changes VEM fits with `constants_re`, e.g. in `fit_cv`.
+
+- VEM rejects optimizers that need finite bounds on every coordinate (BlackBoxOptim
+  methods, `ParticleSwarm`) with an error, since the variational parameters are unbounded
+  (#379, #380).
+
+- New accessor `get_variational_distributions(res)`: the fitted variational distributions
+  of a VEM fit per individual, in `DataModel` order (batch, mean, Cholesky scale, space and
+  the random effect, level and component of each coordinate). `notes.variational_params`
+  is in random-effect batch order, which in general differs from the individual order.
+
+- The `rng` keyword of every estimator, cross-validation and UQ entry point now defaults
+  to a fresh `Xoshiro(42)` per call instead of `Random.default_rng()`. Fits with `SAEM`,
+  `MCEM` (all E-steps), `MCMC`, `VI`, `VEM`, `MiniBatch` schedule draws, EBE multistarts,
+  `Multistart`, `cross_validate`/`fit_cv`, `compute_uq`, `reestimate_ebes`,
+  `complete_data_loglikelihood` and `identifiability_report` are therefore reproducible by
+  default and no longer depend on `Random.seed!` or on earlier calls. `Multistart(; rng)`
+  now defaults to `nothing`, which creates the fixed-seed generator at each
+  `fit_model(ms, ...)` call, so a reused `Multistart` object gives the same starts.
+  Results of fits that relied on the global RNG change. Pass an explicit `rng` for
+  different draws. Simulation and sampling functions (`simulate_data`,
+  `sample_random_effects`, `sample_posterior`, `sample_random_effect_draws`,
+  `mcem_e_step`, `saem_sufficient_statistics`, `fixed_re_normals`) keep
+  `Random.default_rng()`; plotting follows the fixed-seed default (see Bug fixes).
 
 - SAEM skips the M-step in iterations with step size γ = 0 (the `sa_burnin_iters` burn-in
   iterations and, under `:robbins_monro`, the final iteration). The update
@@ -71,6 +144,54 @@
 - The numeric random-effect grouping `@info` claimed constant random effects are
   unavailable. They work with a `Dict`, e.g. `constants_re = (; η = Dict(1 => 0.0))`, and
   the message now says so.
+- The continuous-time Markov propagation (`ContinuousTimeDiscreteStatesHMM`,
+  `MVContinuousTimeDiscreteStatesHMM`, `ContinuousTimeObservedStatesMarkovModel`) took a
+  number of `expv` Taylor substeps proportional to the rates, so one objective evaluation
+  at extreme rates (e.g. after a long optimizer step) ran for more than 20 minutes (#371).
+  When the largest exit rate times `Δt` exceeds 200 and the stationary shortcut does not
+  apply, `exp(QΔt)` is now computed by Padé scaling and squaring, whose cost grows with
+  `log2` of the rates. Below that threshold results are unchanged. Non-finite rates throw
+  a `DomainError` (an infeasible point for the estimators) instead of looping. The extreme-
+  rate path works under ForwardDiff and under Enzyme forward and reverse mode: the Padé
+  step and the stationary solve use plain loops instead of BLAS/LAPACK, and the
+  spectral-gap test of the stationary shortcut (a branch decision on primal values) is
+  marked inactive for Enzyme through a new `EnzymeCore` package extension. Enzyme forward
+  mode on a DataModel log-likelihood with an HMM outcome failed at any rate
+  (`EnzymeNoTypeError` in the per-row filter); the filter step now runs outside its
+  `try` region, which fixes this.
+- `get_sparse_grid` and `get_anisotropic_grid` filled a module-level `Dict` without a lock,
+  so a threaded multistart could fail with "Multiple concurrent writes to Dict detected"
+  (#371). Both caches are now safe under concurrent use (lock-free reads of an immutable
+  snapshot, inserts under a lock). The Turing model caches of `MCMC`/`MCEM` and the
+  `DataModel` numeric-grouping notice set are now locked too.
+- Plotting drew from `Random.default_rng()` (#371). The `rng` keyword of the plotting
+  functions, `build_plot_cache`, `get_residuals` and `predict` now defaults to a fresh
+  `Xoshiro(42)` per call, as for the estimators, and is passed to every draw on the plotting
+  path: posterior-draw subsampling in `plot_random_effects_scatter`,
+  `plot_random_effect_standardized(_scatter)` and `plot_dv_ipred` (which gain an `rng`
+  keyword), normalizing-flow sampling in the random-effect plots, the posterior-mean
+  parameters of MCMC/VI fits, and `plot_fits_comparison`. Randomized PIT residuals and
+  plots of posterior-draw fits are therefore reproducible by default and no longer depend
+  on `Random.seed!`.
+- VEM with an Enzyme reverse-mode `adtype` on Julia 1.12.7 returned a zero gradient for the
+  off-diagonal entries of an `MvNormal` random-effect covariance at an exactly diagonal
+  Cholesky factor (e.g. the default start), because `LowerTriangular \ x` there chooses the
+  triangle by value (#371). Dense `MvNormal` log-densities in the random-effect prior terms
+  and in the outcome likelihood (shared with `Laplace` and the other estimators) now whiten
+  with the three-argument `ldiv!`; their values are unchanged bit for bit.
+- VEM diagonally preconditions the fixed effects with the finite-difference curvature of
+  the objective at the start. Where that curvature was not positive the scale was 1, and on
+  a Beta random effect L-BFGS then drove a shape parameter to 2.7e8 (all Beta mass at 1;
+  objective 263.8 vs 156.2) (#371). Those coordinates now use the BHHH information of the
+  batch scores, `Σ_b w_b s_b²` with the `DataModel` weights `w_b` (a weight-2 batch counts
+  like a duplicated one), plus the curvature of `penalty` and `extra_objective`.
+- The VEM `refine` step kept the quadrature rule of each batch at the q fitted at the VEM
+  estimate. As θ moved away from it the rule lost accuracy, and the optimizer exploited the
+  error (three correlated binary random effects: objective 20 below the MLE, a variance 3.7
+  vs 1.52); the reported objective after a refinement was off by 0.22 (one random effect)
+  to 1.5 (three) (#371). The rule of each batch is now centered at the mode of its integrand
+  and scaled by the curvature there at every θ (Newton from q's mean), and the reported
+  objective uses the rule at θ̂. VEM fits with `refine` change accordingly.
 
 ### Documentation
 

@@ -126,13 +126,15 @@ _cv_method_accepts_constants_re(::FOCEI) = true
 _cv_method_accepts_constants_re(::GHQuadrature) = true
 _cv_method_accepts_constants_re(::MCEM) = true
 _cv_method_accepts_constants_re(::SAEM) = true
+_cv_method_accepts_constants_re(::VEM) = true
 _cv_method_accepts_constants_re(::MCMC) = true
 _cv_method_accepts_constants_re(::VI) = true
+_cv_method_accepts_constants_re(m::MiniBatch) = _cv_method_accepts_constants_re(m.method)
 
 # ── cross_validate ────────────────────────────────────────────────────────────
 
 """
-    cross_validate(dm::DataModel, n_folds::Int; kind=:id, rng=Random.default_rng())
+    cross_validate(dm::DataModel, n_folds::Int; kind=:id, rng=Xoshiro(42))
 
 Partition `dm` into `n_folds` train/test splits for cross-validation.
 
@@ -147,7 +149,7 @@ Returns a [`CVSpec`](@ref) storing row indices only (not full `DataModel`s).
 function cross_validate(
         dm::DataModel, n_folds::Int;
         kind::Union{Symbol, AbstractString} = :id,
-        rng::AbstractRNG = Random.default_rng()
+        rng::AbstractRNG = _default_rng()
     )
     kind = _as_symbol(kind)
     n_folds >= 2 || error("n_folds must be ≥ 2, got $n_folds")
@@ -721,7 +723,7 @@ end
     fit_cv(cv_spec, method, args...;
            seen_re_mode=:ebe, unseen_re_mode=:mean,
            n_mc_samples=100, store_results=false, loss=nothing,
-           fold_serialization=EnsembleSerial(), rng=Random.default_rng(),
+           fold_serialization=EnsembleSerial(), rng=Xoshiro(42),
            constants_re=NamedTuple(), ode_args=(), ode_kwargs=NamedTuple(),
            kwargs...)
 
@@ -782,7 +784,7 @@ function fit_cv(
         store_results::Bool = false,
         loss::Union{Nothing, Function} = nothing,
         fold_serialization::SciMLBase.EnsembleAlgorithm = EnsembleSerial(),
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
         ode_args::Tuple = (),
         ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),

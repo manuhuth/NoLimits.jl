@@ -834,7 +834,7 @@ end
 """
     FOCEI(; interaction=true, optimizer, optim_kwargs, adtype, inner_*, multistart_*,
             jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale, theta_tol,
-            lb, ub, ignore_model_bounds, precondition, update_schedule) <: FittingMethod
+            lb, ub, ignore_model_bounds, precondition) <: FittingMethod
 
 First-Order Conditional Estimation with Interaction for random-effects models.
 
@@ -859,13 +859,12 @@ A gradient-based outer optimizer must cap its line-search step; see the `optimiz
 
 Keyword arguments mirror [`Laplace`](@ref) (including `precondition` and `warm_starts`,
 see [`AcceptedWarmStarts`](@ref)); the only
-addition is `interaction::Bool=true`. The `optimizer` default is LBFGS with backtracking,
-or `Optimisers.Adam(0.01)` when `update_schedule != :all`. The `inner_optimizer` default
+addition is `interaction::Bool=true`. The `optimizer` default is LBFGS with backtracking
+(for mini-batching wrap the method in [`MiniBatch`](@ref)). The `inner_optimizer` default
 differs from Laplace: a Gauss-Newton [`NewtonInner`](@ref) with the same Fisher-information
 curvature (`NewtonInner(curvature = FisherInformationCurvature(true), x_abstol = 1e-10)`),
 which needs first-order AD only and falls back to LBFGS where it stalls. Pass
 `inner_optimizer = LBFGS(...)` for the previous default.
-$(_UPDATE_SCHEDULE_DOC)
 """
 struct FOCEI{O, K, A, IO, HO, CO, MS, L, U, US, WS} <: FittingMethod
     optimizer::O
@@ -914,12 +913,9 @@ function FOCEI(;
         ub = nothing,
         ignore_model_bounds = false,
         precondition = true,
-        update_schedule = :all,
         warm_starts::Union{Nothing, AcceptedWarmStarts} = nothing
     )
-    update_schedule = _check_update_schedule(_as_symbol(update_schedule), "FOCEI")
-    _check_warm_starts(warm_starts, update_schedule, "FOCEI")
-    optimizer = _resolve_outer_optimizer(optimizer, update_schedule, "FOCEI")
+    optimizer = _resolve_outer_optimizer(optimizer)
     inner = inner_options === nothing ?
         LaplaceInnerOptions(
             inner_optimizer, _as_namedtuple(inner_kwargs), inner_adtype, inner_grad_tol
@@ -939,7 +935,7 @@ function FOCEI(;
         (optim_kwargs = _outer_default_optim_kwargs(optimizer, (; maxiters = 1000)))
     return FOCEI(
         optimizer, _as_namedtuple(optim_kwargs), adtype, inner, hess, cache,
-        ms, lb, ub, ignore_model_bounds, precondition, interaction, update_schedule,
+        ms, lb, ub, ignore_model_bounds, precondition, interaction, :all,
         warm_starts
     )
 end
@@ -989,7 +985,7 @@ function _fit_model(
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         store_data_model::Bool = true
     )

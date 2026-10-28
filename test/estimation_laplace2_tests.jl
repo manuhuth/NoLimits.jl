@@ -760,26 +760,46 @@ struct _MBAlternate end
 (::_MBAlternate)(nbatches::Int, iter::Int, rng) = [mod1(iter, nbatches)]
 
 @testset "Laplace/FOCEI/GHQ mini-batching constructors (#281)" begin
-    for ctor in (NoLimits.Laplace, NoLimits.FOCEI, NoLimits.GHQuadrature)
-        @test ctor().update_schedule === :all
-        @test ctor(update_schedule = :all).update_schedule === :all
-        @test ctor(update_schedule = 2).update_schedule == 2
-        @test ctor(update_schedule = _MBFixed([1])).update_schedule isa _MBFixed
-        @test_throws ErrorException ctor(update_schedule = 0)
-        @test_throws ErrorException ctor(update_schedule = "bogus")
-        @test_throws ErrorException ctor(update_schedule = 1.5)
+    MB = NoLimits.MiniBatch
+    for ctor in (NoLimits.Laplace, NoLimits.FOCEI, NoLimits.GHQuadrature, NoLimits.VEM)
+        @test !hasmethod(ctor, Tuple{}, (:update_schedule,))
+        @test NoLimits._update_schedule(ctor()) === :all
+        @test MB(ctor(); schedule = :all).schedule === :all
+        @test MB(ctor(); schedule = 2).schedule == 2
+        @test MB(ctor(); schedule = _MBFixed([1])).schedule isa _MBFixed
+        @test NoLimits._update_schedule(NoLimits._minibatch_method(MB(ctor(); schedule = 2))) == 2
+        @test_throws ErrorException MB(ctor(); schedule = 0)
+        @test_throws ErrorException MB(ctor(); schedule = "bogus")
+        @test_throws ErrorException MB(ctor(); schedule = 1.5)
 
         @test ctor().optimizer isa OptimizationOptimJL.LBFGS
-        @test ctor(update_schedule = 2).optimizer isa Optimisers.AbstractRule
+        @test MB(ctor(); schedule = 2).optimizer isa Optimisers.AbstractRule
+        @test MB(ctor(); schedule = 2).optim_kwargs == (; maxiters = 1000)
 
-        @test_logs (:warn, r"stochastic") ctor(
-            update_schedule = 2, optimizer = OptimizationOptimJL.LBFGS()
+        @test_logs (:warn, r"stochastic") MB(
+            ctor(); schedule = 2, optimizer = OptimizationOptimJL.LBFGS()
         )
         adam = Optimisers.Adam(0.05)
-        @test_logs ctor(update_schedule = 2, optimizer = adam)
-        @test ctor(update_schedule = 2, optimizer = adam).optimizer === adam
-        @test_logs ctor(update_schedule = :all, optimizer = OptimizationOptimJL.LBFGS())
+        @test_logs MB(ctor(); schedule = 2, optimizer = adam)
+        @test MB(ctor(); schedule = 2, optimizer = adam).optimizer === adam
+        @test_logs MB(ctor(); schedule = :all, optimizer = OptimizationOptimJL.LBFGS())
     end
+    for ctor in (NoLimits.SAEM, NoLimits.MCEM)
+        @test !hasmethod(ctor, Tuple{}, (:update_schedule,))
+        @test MB(ctor(); schedule = 2).em_variant === :incremental
+        @test MB(ctor(); schedule = 2, em_variant = "scaled").em_variant === :scaled
+        @test_throws ErrorException MB(ctor(); schedule = 2, optimizer = Optimisers.Adam())
+        @test_throws ErrorException MB(ctor(); schedule = 2, optim_kwargs = (; maxiters = 2))
+    end
+    @test_throws ErrorException MB(
+        NoLimits.SAEM(; mstep_sa_on_params = false); schedule = 2, em_variant = :scaled
+    )
+    @test NoLimits._minibatch_method(MB(NoLimits.SAEM(); schedule = 3)).saem.update_schedule == 3
+    @test NoLimits._minibatch_method(MB(NoLimits.MCEM(); schedule = 3)).update_schedule == 3
+    # AcceptedWarmStarts needs the deterministic full-batch objective
+    ws = NoLimits.Laplace(; warm_starts = NoLimits.AcceptedWarmStarts())
+    @test_throws ErrorException MB(ws; schedule = 2)
+    @test MB(ws; schedule = :all) isa MB
 end
 
 @testset "Minibatch state machinery (#281)" begin
@@ -826,20 +846,33 @@ end
         dm, NoLimits.Laplace(optim_kwargs = (; maxiters = 5)); serialization = ser
     )
     r_all = fit_model(
-        dm, NoLimits.Laplace(update_schedule = :all, optim_kwargs = (; maxiters = 5));
+        dm, NoLimits.MiniBatch(NoLimits.Laplace(optim_kwargs = (; maxiters = 5)); schedule = :all);
         serialization = ser
     )
     @test NoLimits.get_objective(r_def) == NoLimits.get_objective(r_all)
     @test NoLimits.get_params(r_def; scale = :transformed) ==
         NoLimits.get_params(r_all; scale = :transformed)
+    # The minibatch code path with every batch selected (and the same LBFGS) reproduces
+    # the unwrapped fit; only the per-iteration cache invalidation differs.
+    r_full = @test_logs (:warn, r"stochastic") match_mode = :any fit_model(
+        dm,
+        NoLimits.MiniBatch(
+            NoLimits.Laplace(optim_kwargs = (; maxiters = 5)); schedule = 6,
+            optimizer = NoLimits.Laplace().optimizer
+        );
+        serialization = ser
+    )
+    @test NoLimits.get_objective(r_full) ≈ NoLimits.get_objective(r_def) rtol = 1.0e-8
+    @test NoLimits.get_params(r_full; scale = :transformed) ≈
+        NoLimits.get_params(r_def; scale = :transformed) rtol = 1.0e-6
 
     # ── 2. The schedule advances once per OPTIMIZER iteration ────────────────
     rec = _MBRec(Int[], Int[], Any[])
     rng = MersenneTwister(1)
     res_rec = fit_model(
         dm,
-        NoLimits.Laplace(
-            update_schedule = rec, optimizer = Optimisers.Adam(0.05),
+        NoLimits.MiniBatch(
+            NoLimits.Laplace(); schedule = rec, optimizer = Optimisers.Adam(0.05),
             optim_kwargs = (; maxiters = 4)
         );
         rng = rng, serialization = ser
@@ -852,8 +885,8 @@ end
     # ── 3. Integer schedule runs and reports a finite full-data objective ────
     res_int = fit_model(
         dm,
-        NoLimits.Laplace(
-            update_schedule = 2, optimizer = Optimisers.Adam(0.05),
+        NoLimits.MiniBatch(
+            NoLimits.Laplace(); schedule = 2, optimizer = Optimisers.Adam(0.05),
             optim_kwargs = (; maxiters = 3)
         );
         rng = MersenneTwister(7), serialization = ser
@@ -863,8 +896,8 @@ end
     # ── 4. Reproducible given the same rng ───────────────────────────────────
     res_int2 = fit_model(
         dm,
-        NoLimits.Laplace(
-            update_schedule = 2, optimizer = Optimisers.Adam(0.05),
+        NoLimits.MiniBatch(
+            NoLimits.Laplace(); schedule = 2, optimizer = Optimisers.Adam(0.05),
             optim_kwargs = (; maxiters = 3)
         );
         rng = MersenneTwister(7), serialization = ser
@@ -916,8 +949,8 @@ end
     pen = (; a = 100.0)
     res_pen = fit_model(
         dm,
-        NoLimits.Laplace(
-            update_schedule = 2, optimizer = Optimisers.Adam(0.05),
+        NoLimits.MiniBatch(
+            NoLimits.Laplace(); schedule = 2, optimizer = Optimisers.Adam(0.05),
             optim_kwargs = (; maxiters = 3)
         );
         penalty = pen, rng = MersenneTwister(5), serialization = ser
@@ -939,8 +972,8 @@ end
     # ── 8. Alternating single-batch schedule exercises cache invalidation ────
     res_alt = fit_model(
         dm,
-        NoLimits.Laplace(
-            update_schedule = _MBAlternate(), optimizer = Optimisers.Adam(0.05),
+        NoLimits.MiniBatch(
+            NoLimits.Laplace(); schedule = _MBAlternate(), optimizer = Optimisers.Adam(0.05),
             optim_kwargs = (; maxiters = 3)
         );
         rng = MersenneTwister(2), serialization = ser
@@ -950,11 +983,12 @@ end
     # ── 9. Adam under active model bounds uses the projected rule ────────────
     res_proj = fit_model(
         dm,
-        NoLimits.Laplace(
-            update_schedule = 2, optimizer = Optimisers.Adam(1.0),
-            optim_kwargs = (; maxiters = 5),
-            lb = (; a = -10.0, σ = -10.0, ω = -10.0),
-            ub = (; a = 0.25, σ = 10.0, ω = 10.0)
+        NoLimits.MiniBatch(
+            NoLimits.Laplace(;
+                lb = (; a = -10.0, σ = -10.0, ω = -10.0),
+                ub = (; a = 0.25, σ = 10.0, ω = 10.0)
+            );
+            schedule = 2, optimizer = Optimisers.Adam(1.0), optim_kwargs = (; maxiters = 5)
         );
         rng = MersenneTwister(4), serialization = ser
     )
@@ -972,8 +1006,8 @@ end
     rng = MersenneTwister(1)
     res = fit_model(
         dm,
-        NoLimits.FOCEI(
-            update_schedule = rec, optimizer = Optimisers.Adam(0.05),
+        NoLimits.MiniBatch(
+            NoLimits.FOCEI(); schedule = rec, optimizer = Optimisers.Adam(0.05),
             optim_kwargs = (; maxiters = 4)
         );
         rng = rng, serialization = ser
@@ -985,14 +1019,28 @@ end
 
     mk() = fit_model(
         dm,
-        NoLimits.FOCEI(
-            update_schedule = 2, optimizer = Optimisers.Adam(0.05),
+        NoLimits.MiniBatch(
+            NoLimits.FOCEI(); schedule = 2, optimizer = Optimisers.Adam(0.05),
             optim_kwargs = (; maxiters = 3)
         );
         rng = MersenneTwister(7), serialization = ser
     )
     @test NoLimits.get_params(mk(); scale = :transformed) ==
         NoLimits.get_params(mk(); scale = :transformed)
+
+    # every batch selected + the same LBFGS reproduces the unwrapped fit
+    r_def = fit_model(dm, NoLimits.FOCEI(optim_kwargs = (; maxiters = 5)); serialization = ser)
+    r_full = @test_logs (:warn, r"stochastic") match_mode = :any fit_model(
+        dm,
+        NoLimits.MiniBatch(
+            NoLimits.FOCEI(optim_kwargs = (; maxiters = 5)); schedule = 6,
+            optimizer = NoLimits.FOCEI().optimizer
+        );
+        serialization = ser
+    )
+    @test NoLimits.get_objective(r_full) ≈ NoLimits.get_objective(r_def) rtol = 1.0e-8
+    @test NoLimits.get_params(r_full; scale = :transformed) ≈
+        NoLimits.get_params(r_def; scale = :transformed) rtol = 1.0e-6
 end
 
 # Optimisers rules only call the fused AD objective, so the Float64 "last feasible

@@ -1185,22 +1185,35 @@ end
     )
     r_all = fit_model(
         dm,
-        NoLimits.GHQuadrature(
-            level = lvl, update_schedule = :all, optim_kwargs = (; maxiters = 5)
+        NoLimits.MiniBatch(
+            NoLimits.GHQuadrature(level = lvl, optim_kwargs = (; maxiters = 5));
+            schedule = :all
         );
         serialization = ser
     )
     @test NoLimits.get_objective(r_def) == NoLimits.get_objective(r_all)
     @test NoLimits.get_params(r_def; scale = :transformed) ==
         NoLimits.get_params(r_all; scale = :transformed)
+    # every batch selected + the same LBFGS reproduces the unwrapped fit
+    r_full = @test_logs (:warn, r"stochastic") match_mode = :any fit_model(
+        dm,
+        NoLimits.MiniBatch(
+            NoLimits.GHQuadrature(level = lvl, optim_kwargs = (; maxiters = 5));
+            schedule = 6, optimizer = NoLimits.GHQuadrature().optimizer
+        );
+        serialization = ser
+    )
+    @test NoLimits.get_objective(r_full) ≈ NoLimits.get_objective(r_def) rtol = 1.0e-8
+    @test NoLimits.get_params(r_full; scale = :transformed) ≈
+        NoLimits.get_params(r_def; scale = :transformed) rtol = 1.0e-6
 
     # One schedule call per optimizer iteration, always with the fit rng.
     rec = _GHQMBRec(Int[], Int[], Any[])
     rng = MersenneTwister(1)
     res_rec = fit_model(
         dm,
-        NoLimits.GHQuadrature(
-            level = lvl, update_schedule = rec, optimizer = Optimisers.Adam(0.05),
+        NoLimits.MiniBatch(
+            NoLimits.GHQuadrature(level = lvl); schedule = rec, optimizer = Optimisers.Adam(0.05),
             optim_kwargs = (; maxiters = 4)
         );
         rng = rng, serialization = ser
@@ -1213,8 +1226,8 @@ end
     # Integer schedule: runs, finite objective, reproducible for a fixed rng.
     mk() = fit_model(
         dm,
-        NoLimits.GHQuadrature(
-            level = lvl, update_schedule = 2, optimizer = Optimisers.Adam(0.05),
+        NoLimits.MiniBatch(
+            NoLimits.GHQuadrature(level = lvl); schedule = 2, optimizer = Optimisers.Adam(0.05),
             optim_kwargs = (; maxiters = 3)
         );
         rng = MersenneTwister(7), serialization = ser
@@ -1229,8 +1242,8 @@ end
     pen = (; a = 100.0)
     res_pen = fit_model(
         dm,
-        NoLimits.GHQuadrature(
-            level = lvl, update_schedule = 2, optimizer = Optimisers.Adam(0.05),
+        NoLimits.MiniBatch(
+            NoLimits.GHQuadrature(level = lvl); schedule = 2, optimizer = Optimisers.Adam(0.05),
             optim_kwargs = (; maxiters = 3)
         );
         penalty = pen, rng = MersenneTwister(5), serialization = ser

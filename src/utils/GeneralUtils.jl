@@ -8,6 +8,47 @@ import Roots
 import DataFrames
 import DataInterpolations
 
+# Module-level get-or-build cache that is safe under concurrent tasks. Readers take the
+# current immutable snapshot without locking; an insert copies the Dict under the lock and
+# publishes the copy, so a reader never sees a Dict that is being rehashed. Values are
+# shared between callers and must not be mutated.
+mutable struct _SharedCache{K, V}
+    @atomic snapshot::Dict{K, V}
+    const lock::ReentrantLock
+end
+_SharedCache{K, V}() where {K, V} = _SharedCache{K, V}(Dict{K, V}(), ReentrantLock())
+
+@inline _cache_snapshot(c::_SharedCache) = @atomic :acquire c.snapshot
+
+# `build()` runs at most once per key (under the lock). `store_key(key)` is what gets
+# stored, so a lookup can use a caller-owned key (e.g. a vector) and insert a copy.
+function _cache_get!(build, c::_SharedCache{K, V}, key; store_key = identity) where {K, V}
+    v = get(_cache_snapshot(c), key, nothing)
+    v === nothing || return v::V
+    return @lock c.lock begin
+        d = _cache_snapshot(c)
+        hit = get(d, key, nothing)
+        if hit === nothing
+            val = build()::V
+            nd = copy(d)
+            nd[store_key(key)] = val
+            @atomic :release c.snapshot = nd
+            val
+        else
+            hit::V
+        end
+    end
+end
+
+function Base.empty!(c::_SharedCache{K, V}) where {K, V}
+    @lock c.lock begin
+        @atomic :release c.snapshot = Dict{K, V}()
+    end
+    return c
+end
+Base.haskey(c::_SharedCache, key) = haskey(_cache_snapshot(c), key)
+Base.length(c::_SharedCache) = length(_cache_snapshot(c))
+
 # Public symbol-valued options also accept the string spelling, so the Python/R
 # bindings (and serialized federated options) can pass them through unchanged.
 # New public symbol options normalize through this at their entry point.

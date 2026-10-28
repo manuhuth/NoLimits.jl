@@ -805,7 +805,7 @@ function _const_re_prior_logf(
                         getproperty(dists, re),
                         getfield(anneal_sds, re)
                     )
-                    convert(T, logpdf(dist, v))
+                    convert(T, _logpdf_ad(dist, v))
                 else
                     _logpdf_re_static(keys(dists), values(dists), re, v, T)
                 end
@@ -858,7 +858,7 @@ end
 # statically dispatched; recursion depth = number of REs (small).
 function _logpdf_re_static(ks::Tuple, ds::Tuple, re::Symbol, v, ::Type{T}) where {T}
     if first(ks) === re
-        return convert(T, logpdf(first(ds), v))
+        return convert(T, _logpdf_ad(first(ds), v))
     end
     return _logpdf_re_static(Base.tail(ks), Base.tail(ds), re, v, T)
 end
@@ -986,7 +986,7 @@ end
 @inline function _re_prior_lp(dists, re::Symbol, v, has_anneal::Bool, anneal_sds, ::Type{T}) where {T}
     if has_anneal && haskey(anneal_sds, re)
         dist = _saem_apply_anneal_dist(getproperty(dists, re), getfield(anneal_sds, re))
-        return convert(T, logpdf(dist, v))
+        return convert(T, _logpdf_ad(dist, v))
     end
     return _logpdf_re_static(keys(dists), values(dists), re, v, T)
 end
@@ -1037,7 +1037,8 @@ function _laplace_logf_batch_impl(
         const_cache::REConstantsCache,
         cache::_LLCache;
         anneal_sds::NamedTuple = NamedTuple(),
-        tctx = nothing
+        tctx = nothing,
+        const_prior::Bool = true
     )
     T_ll = promote_type(eltype(θ), eltype(b))
     θ_re = tctx === nothing ? _symmetrize_psd_params(θ, get_fixed(get_model(dm))) :
@@ -1048,12 +1049,14 @@ function _laplace_logf_batch_impl(
         anneal_sds = anneal_sds, tctx = tctx
     )
     !isfinite(ll) && return T_ll(-Inf)
-    # constant-RE prior term
-    const_ll = _const_re_prior_logf(
-        dm, batch_info, θ_re, const_cache, cache; anneal_sds = anneal_sds
-    )
-    !isfinite(const_ll) && return T_ll(-Inf)
-    ll += const_ll
+    # constant-RE prior term (`const_prior = false`: VEM adds it once per batch instead)
+    if const_prior
+        const_ll = _const_re_prior_logf(
+            dm, batch_info, θ_re, const_cache, cache; anneal_sds = anneal_sds
+        )
+        !isfinite(const_ll) && return T_ll(-Inf)
+        ll += const_ll
+    end
     # likelihood term
     for i in get_inds(batch_info)
         η_ind = _build_eta_ind(dm, i, batch_info, b, const_cache, θ_re)
@@ -1583,7 +1586,7 @@ function _laplace_compute_bstar_batch!(
         adtype = Optimization.AutoForwardDiff(),
         grad_tol = 1.0e-6,
         multistart = LaplaceMultistartOptions(0, 0, grad_tol, 5, :lhs),
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         mcmc_candidates::Union{Nothing, AbstractMatrix} = nothing
     )
     nb = get_n_b(info)
@@ -1894,7 +1897,7 @@ function _laplace_get_bstar!(
         grad_tol = 1.0e-6,
         theta_tol = 0.0,
         multistart = LaplaceMultistartOptions(0, 0, grad_tol, 5, :lhs),
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
         progress::Bool = false,
         progress_desc::AbstractString = "EBE",
@@ -2249,7 +2252,7 @@ function _laplace_grad_batch(
         use_trace_logdet_grad::Bool = true,
         use_hutchinson::Bool = false,
         hutchinson_n::Int = 8,
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         hmode::_HessMode = _ExactHess(),
         hess_cache::Union{Nothing, _LaplaceHessCache} = nothing,
         use_cache::Bool = false,
@@ -2583,7 +2586,7 @@ point is evaluated with the new warm starts. `refresh = false` never returns `:r
 legacy fits did.
 
 Requires an outer optimizer whose callback is called once per accepted iterate (Optim.jl
-methods, `IPBFGS`), and `update_schedule = :all`.
+methods, `IPBFGS`), and no mini-batching ([`MiniBatch`](@ref) with `schedule = :all` only).
 """
 struct AcceptedWarmStarts
     multistart_every::Union{Nothing, Int}
@@ -2649,7 +2652,7 @@ end
               multistart_grad_tol, multistart_max_rounds, multistart_sampling,
               jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale,
               use_trace_logdet_grad, use_hutchinson, hutchinson_n, theta_tol,
-              lb, ub, precondition, update_schedule) <: FittingMethod
+              lb, ub, precondition) <: FittingMethod
 
 Laplace approximation with Empirical Bayes Estimates (EBE) for random-effects models.
 The outer optimizer maximizes the Laplace-approximated marginal likelihood over the
@@ -2659,7 +2662,7 @@ random effects.
 # Keyword Arguments
 - `optimizer`: outer Optimization.jl optimizer. Defaults to
   `OptimizationOptimJL.LBFGS(linesearch = LineSearches.BackTracking(maxstep = 1.0))`, which uses
-  the analytic marginal gradient, or to `Optimisers.Adam(0.01)` when `update_schedule != :all`.
+  the analytic marginal gradient. For mini-batching wrap the method in [`MiniBatch`](@ref).
 
   **The `maxstep` cap is load-bearing, not decoration.** The gradient is exact, but its
   coordinates can span four orders of magnitude at a poorly scaled start - on `pheno_sd`, where
@@ -2726,7 +2729,6 @@ random effects.
   diagonal at 1 with a small off-diagonal). Set `false` to restore the raw behaviour.
   Note that with preconditioning on, the optimizer object behind [`get_raw`](@ref) works
   in `z`; the fitted parameters from [`get_params`](@ref) are on the usual scales.
-$(_UPDATE_SCHEDULE_DOC)
 """
 struct Laplace{O, K, A, IO, HO, CO, MS, L, U, US, WS} <: FittingMethod
     optimizer::O
@@ -2803,12 +2805,9 @@ function Laplace(;
         ignore_model_bounds = false,
         precondition = true,
         nan_recovery = :backtrack,
-        update_schedule = :all,
         warm_starts::Union{Nothing, AcceptedWarmStarts} = nothing
     )
-    update_schedule = _check_update_schedule(_as_symbol(update_schedule), "Laplace")
-    _check_warm_starts(warm_starts, update_schedule, "Laplace")
-    optimizer = _resolve_outer_optimizer(optimizer, update_schedule, "Laplace")
+    optimizer = _resolve_outer_optimizer(optimizer)
     inner = inner_options === nothing ?
         LaplaceInnerOptions(
             inner_optimizer, _as_namedtuple(inner_kwargs), inner_adtype, inner_grad_tol
@@ -2830,7 +2829,7 @@ function Laplace(;
     return Laplace(
         optimizer, _as_namedtuple(optim_kwargs), adtype, inner, hess, cache,
         ms, lb, ub, ignore_model_bounds, precondition, _as_symbol(nan_recovery),
-        update_schedule, warm_starts
+        :all, warm_starts
     )
 end
 
@@ -3156,7 +3155,7 @@ function _fit_model(
         ode_args::Tuple = (),
         ode_kwargs::NamedTuple = NamedTuple(),
         serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
-        rng::AbstractRNG = Random.default_rng(),
+        rng::AbstractRNG = _default_rng(),
         theta_0_untransformed::Union{Nothing, ComponentArray} = nothing,
         store_data_model::Bool = true
     )
@@ -3224,10 +3223,10 @@ end
 
 # ── AcceptedWarmStarts ───────────────────────────────────────────────────────────
 
-function _check_warm_starts(ws, update_schedule, label)
+function _check_warm_starts(ws, schedule, label)
     ws === nothing && return nothing
-    update_schedule === :all ||
-        error("$(label): warm_starts = AcceptedWarmStarts(...) requires update_schedule = :all.")
+    schedule === :all ||
+        error("$(label): warm_starts = AcceptedWarmStarts(...) requires schedule = :all.")
     return nothing
 end
 

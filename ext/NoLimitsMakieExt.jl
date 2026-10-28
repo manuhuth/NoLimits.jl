@@ -48,7 +48,7 @@ using NoLimits: COLOR_ACCENT, COLOR_CI, COLOR_PRIMARY, COLOR_REFERENCE, COLOR_SE
     _acf_for_series, _apply_hmm_filter!, _apply_param_overrides,
     _as_fit_result_for_plotting, _assign_bins, _axis_label, _bin_edges_quantile,
     _can_dense_plot, _check_positive, _check_positive_int,
-    _check_unit_interval, _collect_ipred_series, _collect_multivariate_series,
+    _check_unit_interval, _collect_ipred_series, _default_rng, _collect_multivariate_series,
     _collect_observed_xy, _collect_pred_series, _collect_scalar_series,
     _comparison_line_colors, _comparison_line_style, _default_random_effects,
     _default_random_effects_from_dm, _dense_time_grid, _density_grid_continuous,

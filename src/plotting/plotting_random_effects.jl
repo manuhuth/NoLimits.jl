@@ -160,17 +160,19 @@ function _ebe_by_level_mcmc(
     return out, value_cols
 end
 
-function _standardize_re(dist, val::Vector{Float64}; flow_samples::Int = 500)
+function _standardize_re(
+        dist, val::Vector{Float64}; flow_samples::Int = 500, rng::AbstractRNG = _default_rng()
+    )
     if dist isa NormalizingPlanarFlow
         n = flow_samples
         if dist isa Distributions.UnivariateDistribution
-            samp = vec(rand(dist, n))
+            samp = vec(rand(rng, dist, n))
             μ = mean(samp)
             σ = std(samp)
             σ == 0 && return nothing
             return [(val[1] - μ) / σ]
         else
-            samp = rand(dist, n)
+            samp = rand(rng, dist, n)
             μv = vec(mean(samp; dims = 2))
             Σm = cov(permutedims(samp))
             L = try

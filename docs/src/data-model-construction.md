@@ -259,6 +259,7 @@ where `b` runs over the batches of individuals that share random-effect levels (
 How the methods use the weights:
 
 - `Laplace`, `FOCEI`, `GHQuadrature`, `MLE`, `MAP`, `Pooled`: each batch contribution to the marginal (or conditional) log-likelihood is multiplied by its weight, including the log-determinant terms. The empirical Bayes modes are unaffected, since the weight of a batch does not change its optimum.
+- `VEM`: the ELBO term of each batch is multiplied by its weight, as is its marginal log-likelihood term in the refinement step and in the reported objective. The fitted variational distributions are unaffected, since the weight of a batch does not change its optimum.
 - `MCMC`, `VI`: the log-likelihood is weighted; the priors on fixed and random effects are not.
 - `SAEM`, `MCEM`: the E-step samples from the unweighted conditional distributions. The M-step objective weights each batch, and the closed-form updates use weighted sufficient statistics divided by the summed weights. User-supplied `suffstats` functions receive the `DataModel` and must apply `get_weights(dm)` themselves.
 - `get_loglikelihood` and the marginal likelihood accessors return the weighted value.

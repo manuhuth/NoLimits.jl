@@ -190,16 +190,33 @@ end
         )
     )
     @test !isempty(NoLimits.get_random_effects(res_mcem))
-    res_saem = fit_model(
-        ms,
-        fx_re_dm(),
-        NoLimits.SAEM(;
-            sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
-            q_store_max = 2,
-            maxiters = 2
-        )
+    saem_m = NoLimits.SAEM(;
+        sampler = MH(), turing_kwargs = (n_samples = 2, n_adapt = 2, progress = false),
+        q_store_max = 2,
+        maxiters = 2
     )
+    res_saem = fit_model(ms, fx_re_dm(), saem_m)
     @test !isempty(NoLimits.get_random_effects(res_saem))
+
+    # Default rng: fixed seed, so reusing `ms` reproduces the fit bitwise; another
+    # Multistart rng changes the starts.
+    θ(r) = collect(NoLimits.get_params(r; scale = :untransformed))
+    mle = NoLimits.MLE(; optim_kwargs = (maxiters = 2,))
+    Random.seed!(987)
+    r1 = fit_model(ms, fx_nore_dm(), mle)
+    r2 = fit_model(ms, fx_nore_dm(), mle)
+    @test θ(r1) == θ(r2)
+    @test NoLimits.get_multistart_starts(r1) == NoLimits.get_multistart_starts(r2)
+    ms7 = NoLimits.Multistart(
+        dists = (; a = Normal(0.0, 1.0)), n_draws_requested = 3, n_draws_used = 2,
+        rng = Xoshiro(7)
+    )
+    @test NoLimits.get_multistart_starts(fit_model(ms7, fx_nore_dm(), mle)) !=
+        NoLimits.get_multistart_starts(r1)
+    saem_d = NoLimits.SAEM(; maxiters = 2, q_store_max = 2, sa_burnin_iters = 0, progress = false)
+    rd = fit_model(ms, fx_re_dm(), saem_d)
+    @test θ(fit_model(ms, fx_re_dm(), saem_d)) == θ(rd)
+    @test θ(fit_model(ms, fx_re_dm(), saem_d; rng = Xoshiro(7))) != θ(rd)
 end
 
 @testset "Multistart SAEM suffstats" begin
@@ -245,8 +262,8 @@ end
 
     # A user-supplied rng must not be shared across threaded starts: mini-batch draws
     # mutate it, which made the fit non-reproducible (#323).
-    mb = NoLimits.MLE(
-        update_schedule = 2, optimizer = Optimisers.Adam(0.05),
+    mb = NoLimits.MiniBatch(
+        NoLimits.MLE(); schedule = 2, optimizer = Optimisers.Adam(0.05),
         optim_kwargs = (; maxiters = 10)
     )
     # A fresh Multistart per run: its rng is consumed when the starts are sampled.

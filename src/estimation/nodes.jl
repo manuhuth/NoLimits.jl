@@ -246,22 +246,19 @@ end
 # Global cache
 # ---------------------------------------------------------------------------
 
-const _SPARSEGRID_CACHE = Dict{Tuple{Int, Int}, GHQuadratureNodes{Float64}}()
+const _SPARSEGRID_CACHE = _SharedCache{Tuple{Int, Int}, GHQuadratureNodes{Float64}}()
 
 """
     get_sparse_grid(dim::Int, level::Int) -> GHQuadratureNodes{Float64}
 
 Return the Smolyak sparse-grid for the given `dim` and `level`, building and
-caching it on first call. Thread-safe only when all needed `(dim, level)` pairs
-are populated before concurrent use (call this for all needed pairs at setup time).
+caching it on first call. Safe to call concurrently from several tasks or threads.
+The returned grid is shared with every other caller and must not be mutated.
 """
 function get_sparse_grid(dim::Integer, level::Integer)
     _check_ghq_dim_level(dim, level)
     key = (Int(dim), Int(level))
-    haskey(_SPARSEGRID_CACHE, key) && return _SPARSEGRID_CACHE[key]
-    sg = build_sparse_grid(dim, level)
-    _SPARSEGRID_CACHE[key] = sg
-    return sg
+    return _cache_get!(() -> build_sparse_grid(key...), _SPARSEGRID_CACHE, key)
 end
 
 """
@@ -358,7 +355,7 @@ end
 # ---------------------------------------------------------------------------
 
 # Key: (dims, levels) — dims[k] = RE-group dimension, levels[k] = GH level for that group
-const _ANISOTROPIC_CACHE = Dict{
+const _ANISOTROPIC_CACHE = _SharedCache{
     Tuple{Vector{Int}, Vector{Int}}, GHQuadratureNodes{Float64},
 }()
 
@@ -373,8 +370,8 @@ level.
 - `levels[k]` : Smolyak accuracy level for the k-th RE group
 
 The returned grid is the tensor product of `get_sparse_grid(dims[k], levels[k])`
-for k = 1,...,length(dims).  Call this for all needed `(dims, levels)` pairs
-at setup time before parallel use.
+for k = 1,...,length(dims). Safe to call concurrently; the returned grid is shared and
+must not be mutated.
 """
 function get_anisotropic_grid(dims::Vector{Int}, levels::Vector{Int})
     (length(dims) == length(levels) && !isempty(dims)) ||
@@ -385,10 +382,7 @@ function get_anisotropic_grid(dims::Vector{Int}, levels::Vector{Int})
     # Lookup with the caller's vectors (hashing does not retain the key); defensive
     # copies are only needed when INSERTING, so the cached-lookup fast path — taken
     # once per batch per objective evaluation — is allocation-free.
-    g = get(_ANISOTROPIC_CACHE, (dims, levels), nothing)
-    g === nothing || return g
-    grids = [get_sparse_grid(d, l) for (d, l) in zip(dims, levels)]
-    sg = build_tensor_product_grid(grids)
-    _ANISOTROPIC_CACHE[(copy(dims), copy(levels))] = sg
-    return sg
+    return _cache_get!(_ANISOTROPIC_CACHE, (dims, levels); store_key = k -> map(copy, k)) do
+        build_tensor_product_grid([get_sparse_grid(d, l) for (d, l) in zip(dims, levels)])
+    end
 end

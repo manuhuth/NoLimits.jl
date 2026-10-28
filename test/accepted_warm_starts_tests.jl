@@ -54,8 +54,8 @@ end
         @test NoLimits.Laplace().warm_starts === nothing
         @test NoLimits.FOCEI().warm_starts === nothing
         @test NoLimits._init_laplace_eval_cache(2, Float64).warm === nothing
-        @test_throws ErrorException NoLimits.Laplace(;
-            warm_starts = AcceptedWarmStarts(), update_schedule = :minibatch
+        @test_throws ErrorException NoLimits.MiniBatch(
+            NoLimits.Laplace(; warm_starts = AcceptedWarmStarts()); schedule = 2
         )
         @test_throws ErrorException AcceptedWarmStarts(; multistart_every = 0)
         @test !NoLimits._supports_refresh(OptimizationOptimJL.LBFGS())

@@ -588,7 +588,8 @@ function build_re_measure_from_batch(
 
             elseif dist isa AbstractNormalizingFlow
                 has_npf = true
-                bij = Bijectors.bijector(dist)   # flow transform F: ℝ^d → ℝ^d
+                # push N(0, I) forward through F; `Bijectors.bijector(dist)` is F⁻¹
+                bij = _flow_forward(dist)
                 let b = bij
                     push!(segment_fns, z_k -> b(z_k))
                 end
@@ -987,24 +988,25 @@ function _validate_re_ad_compatible(dm::DataModel, method_label::AbstractString)
 end
 
 """
-    _ghq_validate_re_distributions(dm::DataModel)
+    _ghq_validate_re_distributions(dm::DataModel, method_label = "GHQuadrature")
 
 Throw an informative error if the model contains random effects whose
-distribution type cannot be handled by GHQuadrature.
+distribution type cannot be handled by GHQuadrature (or VEM, which uses the same
+transport maps).
 
 GHQuadrature supports all `ContinuousUnivariateDistribution` types (via explicit
 or generic transport maps) plus `MvNormal`, `MvLogNormal`, `MvLogitNormal`, and
 `NormalizingPlanarFlow`. Discrete distributions and unsupported multivariate
 types are rejected here.
 
-Called once at the start of `_fit_model(::GHQuadrature, ...)` before any
-expensive computation.
+Called once at the start of `_fit_model(::GHQuadrature, ...)` and `_fit_model(::VEM, ...)`
+before any expensive computation.
 """
-function _ghq_validate_re_distributions(dm::DataModel)
+function _ghq_validate_re_distributions(dm::DataModel, method_label::AbstractString = "GHQuadrature")
     re = get_random(get_model(dm))
     re_t = get_re_types(re)
     isempty(re_t) && return
-    _validate_re_ad_compatible(dm, "GHQuadrature")
+    _validate_re_ad_compatible(dm, method_label)
 
     # Distributions known to be unsupported (discrete or multivariate non-Gaussian).
     # Continuous univariate distributions not in this list are handled by the
@@ -1024,10 +1026,10 @@ function _ghq_validate_re_distributions(dm::DataModel)
         names_str = join(string.(bad), ", ")
         types_str = join([string(get_re_types(re)[n]) for n in bad], ", ")
         error(
-            "GHQuadrature does not support discrete or unsupported multivariate " *
+            "$(method_label) does not support discrete or unsupported multivariate " *
                 "RE distributions.\n" *
                 "Unsupported RE(s): $(names_str) (type(s): $(types_str)).\n" *
-                "GHQuadrature supports all continuous univariate distributions " *
+                "$(method_label) supports all continuous univariate distributions " *
                 "(e.g. LogNormal, Beta), MvNormal, MvLogNormal, MvLogitNormal, " *
                 "and NormalizingPlanarFlow."
         )

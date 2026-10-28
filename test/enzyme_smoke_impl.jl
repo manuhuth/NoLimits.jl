@@ -125,3 +125,57 @@ end
     )
     @test isapprox(g_rev, g_fd; rtol = 1.0e-6, atol = 1.0e-9)
 end
+
+@testset "Enzyme smoke: CT-HMM loglik at extreme rates (fwd + rev)" begin
+    # Past max exit rate × Δt = 200 the propagation takes the stationary shortcut (gated
+    # by a primal eigvals, inactive for Enzyme) or Padé scaling and squaring (plain-loop
+    # solve); both must differentiate like ForwardDiff (#371).
+    model = @Model begin
+        @fixedEffects begin
+            logK = RealNumber(0.0)
+            logε = RealNumber(-3.0)
+        end
+        @covariates begin
+            t = Covariate()
+            dt = Covariate()
+        end
+        @formulas begin
+            K = exp(logK)
+            ε = exp(logε)
+            Q = [-K K 0.0; K -(K + ε) ε; ε 0.0 -ε]
+            y ~ ContinuousTimeDiscreteStatesHMM(
+                Q, (Normal(0.0, 1.0), Normal(1.0, 1.0), Normal(3.0, 1.0)),
+                Categorical([0.2, 0.3, 0.5]), dt
+            )
+        end
+    end
+    df = DataFrame(
+        ID = repeat([1, 2], inner = 4), t = repeat([0.0, 1.0, 2.0, 4.0], 2),
+        dt = repeat([1.0, 1.0, 1.0, 2.0], 2), y = [0.1, 0.4, 2.9, 3.2, 1.1, 0.8, 0.2, 2.5]
+    )
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    cache = NoLimits.build_ll_cache(dm)
+    θu = get_θ0_untransformed(dm.model.fixed.fixed)
+    ax = getaxes(θu)
+    f = let dm = dm, cache = cache, ax = ax
+        xv -> NoLimits.loglikelihood(
+            dm, ComponentArray(xv, ax), ComponentArray();
+            cache = cache, serialization = NoLimits.EnsembleSerial()
+        )
+    end
+    # normal rates (expv), squaring path (slow return, gap·Δt < 200) at two rate scales,
+    # stationary shortcut. At rate K the propagated probabilities carry rounding of order
+    # eps·K·Δt, so the near-zero ∂/∂logK at K = 1e8 is compared at that level.
+    for x0 in (
+            [log(2.0), log(0.3)], [log(1.0e5), log(1.0e-3)], [log(1.0e8), log(1.0e-3)],
+            [log(1.0e8), log(500.0)],
+        )
+        g_fd = ForwardDiff.gradient(f, x0)
+        @test all(isfinite, g_fd)
+        atol = max(1.0e-9, 8 * eps() * 2 * exp(x0[1]) * 2.0)
+        for mode in (set_runtime_activity(Enzyme.Forward), set_runtime_activity(Enzyme.Reverse))
+            g = collect(Enzyme.gradient(mode, Const(f), copy(x0))[1])
+            @test isapprox(g, g_fd; rtol = 1.0e-6, atol = atol)
+        end
+    end
+end
