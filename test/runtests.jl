@@ -162,7 +162,9 @@ const TEST_GROUPS = [
         "estimation_ghquadrature2_tests.jl",
         "copulas_tests.jl",
     ],
-    # ── G28: Aqua persistent-tasks (own lane: its wrapper precompile dies and
+    # ── G28: vector-valued ODE states (issue #376) ───────────────────────────
+    ["vector_states_tests.jl"],
+    # ── G29: Aqua persistent-tasks (own lane: its wrapper precompile dies and
     # retries when it shares a machine budget with anything else) ────────────
     ["aqua_persistent_tasks_tests.jl"],
 ]
