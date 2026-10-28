@@ -567,7 +567,7 @@ function _vem_refine_nodes(n::Int, K::Int, ν::Float64, rng::AbstractRNG)
 end
 
 function _vem_refine_batch_ll(
-        θu::ComponentArray, μ::Vector{Float64}, L::Matrix{Float64}, x::Matrix{Float64},
+        θu::ComponentArray, μ::AbstractVector, L::AbstractMatrix, x::Matrix{Float64},
         lw::Vector{Float64}, dm::DataModel, info::REBatchInfo, const_cache, ll_cache::_LLCache
     )
     T = eltype(θu)
@@ -694,6 +694,44 @@ function _vem_adapt_rule(
     C = cholesky(Symmetric(Σ); check = false)
     issuccess(C) || return μq, Lq
     return v, Matrix(C.L)
+end
+
+# The rule of `_vem_adapt_rule` as a function of θu of any element type (the refinement
+# objective under ForwardDiff). The Float64 rule at θv = value(θu) alone drops dμ/dθ and
+# dL/dθ from the gradient while the value depends on them (M05: AD gradient
+# (0.04, -0.07, 0.04, ...) vs central differences (0.23, 0.91, -0.11, ...) at the end of the
+# refinement). One Newton step from the Float64 mode in dual arithmetic gives the exact
+# first derivatives of the mode (implicit function theorem); L is the Cholesky factor of
+# (-H)⁻¹ at that dual mode. Values are reset to the Float64 rule, so that the objective's
+# value does not depend on the element type.
+function _vem_refine_rule(
+        θu::ComponentArray, θv::ComponentArray, μq::Vector{Float64}, Lq::Matrix{Float64},
+        dm::DataModel, info::REBatchInfo, const_cache, ll_cache::_LLCache
+    )
+    μ, L = _vem_adapt_rule(θv, μq, Lq, dm, info, const_cache, ll_cache)
+    T = eltype(θu)
+    # the fallback rule (q itself) does not depend on θ
+    (T === Float64 || μ === μq) && return μ, L
+    base = _vem_measure(info, θu, const_cache, dm, ll_cache)
+    base === nothing && return μ, L
+    θ_re = _symmetrize_psd_params(θu, get_fixed(get_model(dm)))
+    f = v -> _vem_logjoint(v, base, dm, info, θ_re, const_cache, ll_cache)
+    v0 = Vector{T}(μ)
+    g = ForwardDiff.gradient(f, v0)
+    H = ForwardDiff.hessian(f, v0)
+    (all(isfinite, g) && all(isfinite, H)) || return μ, L
+    C = cholesky(Symmetric(-H); check = false)
+    issuccess(C) || return μ, L
+    Δ = C \ g
+    μd = μ .+ (Δ .- ForwardDiff.value.(Δ))
+    Hd = ForwardDiff.hessian(f, μd)
+    all(isfinite, Hd) || return μd, L
+    Cd = cholesky(Symmetric(-Hd); check = false)
+    issuccess(Cd) || return μd, L
+    Cs = cholesky(Symmetric(Cd \ Matrix{T}(I, length(μ), length(μ))); check = false)
+    issuccess(Cs) || return μd, L
+    Ld = Matrix(Cs.L)
+    return μd, L .+ (Ld .- ForwardDiff.value.(Ld))
 end
 
 function _vem_kappa_from(m::AbstractVector, Σ::AbstractMatrix, n::Int, family::Symbol)
@@ -1253,7 +1291,7 @@ function _fit_model(
                 iszero(wk[k]) && (lls[k] = zero(T); return)
                 μq, Lq, (xn, lw) = qs[k]
                 info = batch_infos[keep[k]]
-                μ, L = _vem_adapt_rule(θv, μq, Lq, dm, info, const_cache, lc)
+                μ, L = _vem_refine_rule(θu, θv, μq, Lq, dm, info, const_cache, lc)
                 lls[k] = _vem_refine_batch_ll(θu, μ, L, xn, lw, dm, info, const_cache, lc)
             end
             flls = Vector{T}(undef, nf)
