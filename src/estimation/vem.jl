@@ -1512,12 +1512,12 @@ function _fit_model(
                         θ_hat_u, nb[bi], family, dm, batch_infos[bi], const_cache, ll_cache
                     )
                     κ0[1:nb[bi]], _vem_scale(κ0, nb[bi], family)
-                else
+            else
                     κk = Vector{Float64}(x̂[ranges[k]])
                     ξs[k].K == 0 ?
-                        _vem_effective(κk, ξs[k], nb[bi], family, θ_hat_u) :
-                        _vem_q_moments(κk, ξs[k], nb[bi], family, θ_hat_u)
-                end
+                    _vem_effective(κk, ξs[k], nb[bi], family, θ_hat_u) :
+                    _vem_q_moments(κk, ξs[k], nb[bi], family, θ_hat_u)
+            end
                 base === nothing &&
                 (base = _vem_measure(batch_infos[bi], θu0, const_cache, dm, ll_cache))
                 (mean = μq, scale = Lq, space = base isa GaussianRE ? :natural : :standardized)
