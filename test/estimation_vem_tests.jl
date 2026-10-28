@@ -56,10 +56,10 @@ end
     @test abs(get_objective(rv) - get_objective(rl)) < 1.0
     @test get_converged(rv)
     @test get_result(rv).notes.elbo isa Real
-    # default Optimization.jl LBFGS reproduces the pre-interface Optim.optimize fit
+    # default fit pinned (joint LBFGS, refinement with the Newton finish)
     @test collect(get_params(rv; scale = :transformed)) ≈ [
-        1.9644147957675464, -0.5044155641405206, -1.350884846083775,
-        -0.4893695877661404, 0.25538065373340313, -0.8110340978938972,
+        1.9644160037839495, -0.5044155745441045, -1.3508847730251867,
+        -0.4893692963941299, 0.2553785623357366, -0.811031668764076,
     ] rtol = 1.0e-6
     @test get_iterations(rv) == 25
     # random effects for prediction
