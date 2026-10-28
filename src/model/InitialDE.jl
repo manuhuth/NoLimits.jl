@@ -227,8 +227,9 @@ function get_initialde_builder(
             for sym in fun_syms
     ]
 
-    # Scalar-only states give the same Vector/SVector as before; any vector-valued
-    # initial value turns the state into a ComponentVector (see `_de_initial_state`).
+    # Scalar-only states give the same Vector/SVector as before; with any vector-valued
+    # initial value the values are concatenated into one flat Vector returned with its
+    # state layout (see `_de_initial_state`).
     vec_expr = Expr(
         :call, GlobalRef(@__MODULE__, :_de_initial_state),
         Val(Tuple(state_names)), Val(static), ordered_exprs...
