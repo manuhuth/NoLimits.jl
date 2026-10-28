@@ -143,7 +143,9 @@ work on threads, for every `adtype`; threaded and serial (`EnsembleSerial()`) fi
 bitwise equal.
 
 Fits support Wald UQ ([`compute_uq`](@ref)), and [`sample_random_effects`](@ref) and
-conditional cross-validation draw from the fitted variational distributions.
+conditional cross-validation draw from the fitted variational distributions: for a
+[`PlanarFlowFamily`](@ref) from its moment-matched Gaussian, and for batches of weight zero
+(which do not enter the objective) from the Laplace approximation at ``\\hat\\theta``.
 [`get_variational_distributions`](@ref) returns these distributions per individual
 (`get_result(res).notes.variational_params` holds them in random-effect batch order).
 Discrete random effects are not supported.
@@ -1342,15 +1344,25 @@ function _fit_model(
     converged = sol.retcode == SciMLBase.ReturnCode.Success && refine_ok && isfinite(objective)
     q_params = [
         begin
-                κk = Vector{Float64}(x̂[ranges[k]])
-                μq, Lq = ξs[k].K == 0 ?
-                _vem_effective(κk, ξs[k], nb[keep[k]], family, θ_hat_u) :
-                _vem_q_moments(κk, ξs[k], nb[keep[k]], family, θ_hat_u)
+                bi = keep[k]
                 # q lives on b for Gaussian random effects, else on the standardized u of
                 # the prior transport b = T_θ(u) (a type property, so θ0 serves as fallback)
-                base = _vem_measure(batch_infos[keep[k]], θ_hat_u, const_cache, dm, ll_cache)
+                base = _vem_measure(batch_infos[bi], θ_hat_u, const_cache, dm, ll_cache)
+                μq, Lq = if iszero(wk[k]) && base !== nothing
+                    # zero-weight batches do not enter the objective, so their κ is the start
+                    # at θ0: report the Laplace approximation at θ̂ (as sampled)
+                    κ0 = _vem_init_batch(
+                        θ_hat_u, nb[bi], family, dm, batch_infos[bi], const_cache, ll_cache
+                    )
+                    κ0[1:nb[bi]], _vem_scale(κ0, nb[bi], family)
+                else
+                    κk = Vector{Float64}(x̂[ranges[k]])
+                    ξs[k].K == 0 ?
+                        _vem_effective(κk, ξs[k], nb[bi], family, θ_hat_u) :
+                        _vem_q_moments(κk, ξs[k], nb[bi], family, θ_hat_u)
+                end
                 base === nothing &&
-                (base = _vem_measure(batch_infos[keep[k]], θu0, const_cache, dm, ll_cache))
+                (base = _vem_measure(batch_infos[bi], θu0, const_cache, dm, ll_cache))
                 (mean = μq, scale = Lq, space = base isa GaussianRE ? :natural : :standardized)
             end for k in eachindex(ranges)
     ]
