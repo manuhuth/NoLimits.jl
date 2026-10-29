@@ -60,6 +60,10 @@ struct DataModelSummary
     covariate_stats::Vector{NamedTuple}
     nonnumeric_covariate_columns::Vector{String}
     random_effect_summaries::Vector{NamedTuple}
+    # flat ODE state elements (`a`, `x[1]`, `x[2]`, ...; empty without a DE) and the
+    # per-state display (`a`, `x[1:2]`)
+    de_flat_states::Vector{String}
+    de_states::Vector{String}
 end
 
 @inline _nan_stats() = DescriptiveStats(0, NaN, NaN, NaN, NaN, NaN, NaN, NaN)
@@ -293,6 +297,15 @@ function _print_covariate_declarations(io::IO, decls::AbstractVector)
 end
 
 function summarize(dm::DataModel)
+    de_layout = _dm_state_layout(dm)
+    de_flat, de_disp = if de_layout === nothing
+        de = get_de(get_model(dm))
+        names = de === nothing ? String[] : string.(get_de_states(de))
+        names, names
+    else
+        _de_flat_state_names(de_layout),
+            [_de_state_display(n, i) for (n, i) in Base.pairs(de_layout)]
+    end
     obs_rows = _collect_obs_rows(dm)
     n_obs_rows = length(obs_rows)
     n_individuals = length(get_individuals(dm))
@@ -476,7 +489,9 @@ function summarize(dm::DataModel)
         covariate_declarations,
         covariate_stats,
         nonnumeric_covariate_columns,
-        random_effect_summaries
+        random_effect_summaries,
+        de_flat,
+        de_disp
     )
 end
 
@@ -500,6 +515,17 @@ function Base.show(io::IO, ::MIME"text/plain", s::DataModelSummary)
             "random effects" => s.n_random_effects,
         ]
     )
+    if !isempty(s.de_states)
+        _print_key_values(
+            io,
+            "ODE states",
+            [
+                "states" => join(s.de_states, ", "),
+                "flat elements ($(length(s.de_flat_states)))" =>
+                    join(s.de_flat_states, ", "),
+            ]
+        )
+    end
     println(io)
 
     _print_key_values(

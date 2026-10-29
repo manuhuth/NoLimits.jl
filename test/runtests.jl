@@ -131,7 +131,10 @@ const TEST_GROUPS = [
         "extra_objective_tests.jl",
     ],
     ["uq_tests.jl"],
-    ["uq_edge_cases_tests.jl"],
+    [
+        "uq_edge_cases_tests.jl",
+        "vector_states_tests.jl",
+    ],
     # ── G24-G25: HMM / Markov / stickbreak / Enzyme ──────────────────────────
     # Enzyme regression tests (merged from enzyme-compat). proxy = always-on,
     # ForwardDiff-only structural/numeric invariants; smoke = opt-in real Enzyme

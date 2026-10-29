@@ -107,6 +107,7 @@ makedocs(;
                 "Interval-Censored Outcomes (Laplace)" => "tutorials/mixed-effects-interval-censored-binned-laplace.md",
                 "Copula Random Effects (Laplace)" => "tutorials/mixed-effects-copula-random-effects-laplace.md",
                 "Hidden & Observed Markov Models" => "tutorials/markov-models-observed-hidden-coarsed.md",
+                "Vector-Valued ODE States (Laplace)" => "tutorials/vector-valued-states.md",
             ],
             "Machine-learning components" => [
                 "Neural Differential Equations (SAEM)" => "tutorials/mixed-effects-nn-saem.md",

@@ -181,13 +181,15 @@ end
 # mirror the checks (and the messages) here.
 function _validate_de_symbols(
         de; fixed_names, re_names, prede_names, const_cov_names, dynamic_cov_names,
-        helper_names, model_fun_names
+        helper_names, model_fun_names, context_module::Union{Nothing, Module} = nothing
     )
     de === nothing && return nothing
     meta = get_de_meta(de)
     known_vars = Set{Symbol}(vcat(prede_names, re_names, fixed_names, const_cov_names))
     for sym in sort(collect(meta.var_syms))
+        # globals of the defining module (e.g. a state dimension) resolve last
         sym in known_vars ||
+            (context_module !== nothing && isdefined(context_module, sym)) ||
             error("Unknown symbol $(sym) in DifferentialEquation.")
     end
     known_funs = Set{Symbol}(vcat(dynamic_cov_names, model_fun_names, helper_names))
@@ -577,7 +579,9 @@ end
     calculate_initial_state(m::Model, θ::ComponentArray, η::ComponentArray,
                             const_covariates_i::NamedTuple; static=false) -> Vector
 
-Evaluate the `@initialDE` block and return the initial ODE state vector.
+Evaluate the `@initialDE` block and return the initial ODE state vector. Vector-valued
+states are concatenated in state order into this one flat vector (scalar `a`, then
+`x[1]`, ..., `x[n]`, ...).
 
 Requires both `@DifferentialEquation` and `@initialDE` blocks to be present.
 
@@ -588,7 +592,8 @@ Requires both `@DifferentialEquation` and `@initialDE` blocks to be present.
 - `const_covariates_i::NamedTuple`: constant-covariate values for one individual.
 
 # Keyword Arguments
-- `static::Bool = false`: if `true`, returns a `StaticArrays.SVector`.
+- `static::Bool = false`: if `true`, returns a `StaticArrays.SVector` (all-scalar
+  states only; with vector states the flat `Vector` is returned).
 """
 function calculate_initial_state(
         m::Model,
@@ -607,13 +612,65 @@ function calculate_initial_state(
     builder = static ?
         get_initialde_builder(m.de.initial, get_de_states(m.de.de); static = true) :
         m.de.initial_builder
-    return builder(θ, η, const_covariates_i, model_funs, helpers, pre)
+    return first(_de_split_init(builder(θ, η, const_covariates_i, model_funs, helpers, pre)))
+end
+
+# ---------------------------------------------------------------------------
+# State-layout probe: evaluates `@initialDE` once at the initial fixed effects and the
+# random-effect means to learn which states are vectors and how long they are (state
+# dimensions are structural, so one evaluation fixes the flat layout). Used where the
+# layout is needed before any solve: dosing (CMT) mapping, closed-form eligibility and
+# summaries. Returns `nothing` if the probe cannot be evaluated.
+# ---------------------------------------------------------------------------
+function _probe_random_effects(m::Model, θ::ComponentArray, const_cov::NamedTuple)
+    names = get_re_names(m.random.random)
+    isempty(names) && return ComponentArray(NamedTuple())
+    dists = create_random_effect_distribution(m.random.random)(
+        θ, const_cov, get_model_funs(m), get_helper_funs(m)
+    )
+    vals = map(Tuple(names)) do n
+        d = getproperty(dists, n)
+        v = try
+            Distributions.mean(d)
+        catch
+            rand(Random.MersenneTwister(0), d)
+        end
+        v isa Number ? float(v) : collect(float.(v))
+    end
+    return ComponentArray(NamedTuple{Tuple(names)}(vals))
+end
+
+function _de_state_layout(m::Model, const_cov::NamedTuple = NamedTuple())
+    (m.de.de === nothing || m.de.initial_builder === nothing) && return nothing
+    # `invokelatest`: the model's generated functions may be newer than the caller's
+    # world (a model defined via `eval` in a running function); one probe call per
+    # DataModel, so the dynamic call costs nothing measurable.
+    u0 = try
+        Base.invokelatest(_probe_initial_state, m, const_cov)
+    catch
+        return nothing
+    end
+    return _de_layout_from_init(u0, get_de_states(m.de.de))
+end
+
+function _probe_initial_state(m::Model, const_cov::NamedTuple)
+    θ = get_θ0_untransformed(m.fixed.fixed)
+    η = _probe_random_effects(m, θ, const_cov)
+    return _initial_state_with_pre(m, θ, η, const_cov, calculate_prede(m, θ, η, const_cov))
+end
+
+# State layout (or `nothing` for all-scalar states) at given (θ, η, covariates).
+function _de_states_at(m::Model, θ, η, const_cov::NamedTuple)
+    raw = _initial_state_with_pre(m, θ, η, const_cov, calculate_prede(m, θ, η, const_cov))
+    return last(_de_split_init(raw))
 end
 
 # Internal pre-aware twin of `calculate_initial_state`: the estimation hot paths
 # compute the preDE NamedTuple once per individual evaluation and reuse it for the
 # initial state, the DE compile context, and every formula row, instead of
-# re-deriving it inside each call.
+# re-deriving it inside each call. Returns the raw builder output: the flat initial
+# vector, or an `_DEInitialState` (flat vector + state layout) with vector states —
+# split it with `_de_split_init`.
 function _initial_state_with_pre(
         m::Model,
         θ::ComponentArray,
@@ -848,7 +905,8 @@ macro Model(block)
             const_cov_names = $(const_cov_names_var),
             dynamic_cov_names = $(covariates_var).dynamic,
             helper_names = $(helper_names_var),
-            model_fun_names = $(model_fun_names_var)
+            model_fun_names = $(model_fun_names_var),
+            context_module = $(__module__)
         )
         _validate_crossings(
             $(formulas_var);
@@ -936,6 +994,8 @@ end
 
 function _lhs_key(lhs)
     lhs isa Symbol && return lhs
+    # element of a vector state, `x[k]` in `D(x[k]) ~ ...`
+    lhs isa Expr && lhs.head == :ref && return Tuple(lhs.args)
     if lhs isa Expr && lhs.head == :call && !isempty(lhs.args)
         f = lhs.args[1]
         # D(x1) ~ ...  -> state x1 ; signal s(t) = ... -> :s

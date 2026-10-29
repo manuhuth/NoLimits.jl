@@ -1,0 +1,3 @@
+ODE states
+  states            : depot, transit[1:4], central
+  flat elements (6) : depot, transit[1], transit[2], transit[3], transit[4], central

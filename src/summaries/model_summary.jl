@@ -41,6 +41,9 @@ struct ModelSummary
     de_states::Vector{Symbol}
     de_signals::Vector{Symbol}
     helper_names::Vector{Symbol}
+    # per-state length: 0 scalar, n ≥ 1 vector of length n, -1 unknown (the initial
+    # state could not be evaluated without data, e.g. it uses a covariate)
+    de_state_dims::Vector{Int}
 end
 
 # Expression/printing helpers are shared with data_model_summary.jl (included
@@ -167,6 +170,15 @@ function _ms_cov_summary(p)
     return (; kind, columns, constant_on, interpolation = _ms_cov_interpolation(p))
 end
 
+# `a, x[1:2]`: vector states with their length (unknown lengths print the bare name).
+function _ms_states_display(names::Vector{Symbol}, dims::Vector{Int})
+    isempty(names) && return "(none)"
+    return join(
+        (d >= 1 ? string(n, "[1:", d, "]") : string(n) for (n, d) in zip(names, dims)),
+        ", "
+    )
+end
+
 function _ms_join_syms(xs::Vector{Symbol})
     isempty(xs) && return "(none)"
     return join(string.(xs), ", ")
@@ -269,6 +281,9 @@ function summarize(m::Model)
     required_signals = copy(m.formulas.required_signals)
     de_states = has_de ? copy(get_de_states(get_de(m))) : Symbol[]
     de_signals = has_de ? copy(get_de_signals(get_de(m))) : Symbol[]
+    de_layout = has_de ? _de_state_layout(m) : nothing
+    de_state_dims = de_layout === nothing ? fill(-1, length(de_states)) :
+        Int[idx isa Integer ? 0 : length(idx) for idx in values(de_layout)]
 
     return ModelSummary(
         model_type,
@@ -300,7 +315,8 @@ function summarize(m::Model)
         required_signals,
         de_states,
         de_signals,
-        helper_names
+        helper_names,
+        de_state_dims
     )
 end
 
@@ -489,7 +505,7 @@ function Base.show(io::IO, ::MIME"text/plain", s::ModelSummary)
             "outcome names" => _ms_join_syms(s.outcome_names),
             "required DE states" => _ms_join_syms(s.required_states),
             "required DE signals" => _ms_join_syms(s.required_signals),
-            "declared DE states" => _ms_join_syms(s.de_states),
+            "declared DE states" => _ms_states_display(s.de_states, s.de_state_dims),
             "declared DE signals" => _ms_join_syms(s.de_signals),
         ]
     )

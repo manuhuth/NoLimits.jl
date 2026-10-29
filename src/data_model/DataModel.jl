@@ -192,6 +192,8 @@ struct DataModel{M, D, I, P, C, K, G, R}
     # Lazily-computed closed-form eligibility (see `get_closed_form_plan`). Mutable
     # cache slot only; the DataModel is otherwise immutable.
     closed_form_plan::Base.RefValue{Union{Nothing, ClosedFormPlan}}
+    # Lazily probed ODE state layout (see `_dm_state_layout`); `missing` = not yet probed.
+    state_layout::Base.RefValue{Any}
 end
 
 function _nl_datamodel_show_line(dm::DataModel)
@@ -1200,7 +1202,14 @@ end
 # `t0` is the individual's actual integration start (see the `tspan` construction in
 # `_data_model`): only events recorded exactly there are folded into u0 / the initial
 # infusion rates, every later event becomes a PresetTimeCallback at its own time.
-function _build_callbacks(model, df, rows, config::DataModelConfig, t0, tend, id_val, truncated)
+# `layout` (from `_de_state_layout`) maps every state to its flat position; `nothing`
+# falls back to one flat element per state name (all-scalar models). CMT addresses a
+# flat element: an Int is the flat index (= state position for all-scalar models), a
+# name is a scalar state `a` or a vector-state element `x[k]`.
+function _build_callbacks(
+        model, df, rows, config::DataModelConfig, t0, tend, id_val, truncated,
+        layout = nothing
+    )
     config.evid_col === nothing && return nothing
     model.de.de === nothing && return nothing
     evid = _get_col(df, config.evid_col)[rows]
@@ -1214,8 +1223,10 @@ function _build_callbacks(model, df, rows, config::DataModelConfig, t0, tend, id
     evid = evid[evt_idx]
 
     state_names = get_de_states(model.de.de)
-    n_states = length(state_names)
-    state_map = Dict{Symbol, Int}((state_names[i] => i) for i in eachindex(state_names))
+    layout === nothing &&
+        (layout = NamedTuple{Tuple(state_names)}(Tuple(1:length(state_names))))
+    n_states = _de_layout_length(layout)
+    flat_names = _de_flat_state_names(layout)
     Tt = eltype(tvals)
     bolus_by_time = Dict{Tt, Vector{Float64}}()
     reset_by_time = Dict{Tt, Vector{Tuple{Int, Float64}}}()
@@ -1242,16 +1253,17 @@ function _build_callbacks(model, df, rows, config::DataModelConfig, t0, tend, id
 
     function _resolve_cmt(v)
         if v isa Integer
+            # With a vector state the flat position of a compartment depends on the
+            # state lengths, so integer CMT would silently move when a length changes.
+            _de_layout_has_vector(layout) && error(
+                "Integer CMT ($(v)) is not supported for models with vector-valued " *
+                    "states; give the compartment by name, e.g. CMT = \"$(first(flat_names))\" " *
+                    "or an element such as \"$(_de_first_element_name(layout))\". " *
+                    "Compartments: $(join(flat_names, ", "))."
+            )
             return Int(v)
-        elseif v isa Symbol
-            haskey(state_map, v) ||
-                error("CMT $(v) does not match any state. Available states: $(join(state_names, ", ")).")
-            return state_map[v]
-        elseif v isa AbstractString
-            sym = Symbol(v)
-            haskey(state_map, sym) ||
-                error("CMT $(v) does not match any state. Available states: $(join(state_names, ", ")).")
-            return state_map[sym]
+        elseif v isa Symbol || v isa AbstractString
+            return _resolve_cmt_name(string(v), layout, flat_names)
         else
             error("CMT values must be Int, Symbol, or String; got $(typeof(v)).")
         end
@@ -1362,6 +1374,43 @@ function _build_callbacks(model, df, rows, config::DataModelConfig, t0, tend, id
         _cf_f64keys(bolus_by_time), _cf_f64keys(reset_by_time),
         _cf_f64keys(rate_delta_by_time)
     )
+end
+
+function _de_first_element_name(layout::NamedTuple)
+    for (n, idx) in Base.pairs(layout)
+        idx isa Integer || return string(n, "[1]")
+    end
+    return string(first(keys(layout)))
+end
+
+# Flat index of a named CMT: a scalar state `a` or an element `x[k]` of a vector state.
+function _resolve_cmt_name(str::AbstractString, layout::NamedTuple, flat_names)
+    sym = Symbol(str)
+    if haskey(layout, sym)
+        idx = layout[sym]
+        idx isa Integer && return Int(idx)
+        error(
+            "CMT $(str) refers to the vector-valued state $(str) (length " *
+                "$(length(idx))). Dose into one element, e.g. CMT = \"$(str)[1]\". " *
+                "Available compartments: $(join(flat_names, ", "))."
+        )
+    end
+    m = match(r"^(.+)\[\s*(\d+)\s*\]$", str)
+    if m !== nothing
+        base = Symbol(m.captures[1])
+        k = parse(Int, m.captures[2])
+        if haskey(layout, base)
+            idx = layout[base]
+            idx isa Integer && error(
+                "CMT $(str): state $(base) is scalar; use CMT = \"$(base)\"."
+            )
+            1 <= k <= length(idx) || error(
+                "CMT $(str): element $(k) is out of range 1:$(length(idx)) of state $(base)."
+            )
+            return Int(idx[k])
+        end
+    end
+    return error("CMT $(str) does not match any state. Available states: $(join(flat_names, ", ")).")
 end
 
 @inline function _apply_initial_events!(u0, callbacks::EventCallbacks)
@@ -1739,7 +1788,14 @@ function DataModel(
             end
             tspan = (oftype(tmin, start), tmax)
         end
-        callbacks = _build_callbacks(model, df, rows, config, tspan[1], tspan[2], keys_sorted[i], truncated_infusions)
+        # Flat state layout for CMT mapping (vector states occupy several elements);
+        # `nothing` when there are no events or the initial state cannot be probed.
+        layout = (evid_col === nothing || model.de.de === nothing) ? nothing :
+            _de_state_layout(model, const_cov)
+        callbacks = _build_callbacks(
+            model, df, rows, config, tspan[1], tspan[2], keys_sorted[i],
+            truncated_infusions, layout
+        )
         if !isempty(de_dyn) && tspan[1] < minimum(tvals)
             error("Formulas request times earlier than the dynamic covariate support for individual $(keys_sorted[i]): the integration span starts at t=$(tspan[1]) (smallest formula time offset $(off_min)), but the dynamic covariate(s) $(join(de_dyn, ", ")) used in @DifferentialEquation are only supported on [$(minimum(tvals)), $(maximum(tvals))] and cannot be extrapolated. Add covariate rows covering t=$(tspan[1]), or change the formula offset (or t0) so that the integration starts at or after $(minimum(tvals)).")
         end
@@ -1783,7 +1839,8 @@ function DataModel(
     ind_weights = _build_individual_weights(df, weights_col, groups, keys_sorted, pairing, primary_id)
     return DataModel(
         model, df, individuals, pairing, config, id_index, row_groups,
-        re_group_info, ind_weights, Base.RefValue{Union{Nothing, ClosedFormPlan}}(nothing)
+        re_group_info, ind_weights, Base.RefValue{Union{Nothing, ClosedFormPlan}}(nothing),
+        Base.RefValue{Any}(missing)
     )
 end
 
@@ -1824,6 +1881,37 @@ Return the [`Model`](@ref) stored in the `DataModel`.
 get_model(dm::DataModel) = dm.model
 
 """
+    _dm_state_layout(dm::DataModel) -> Union{Nothing, NamedTuple}
+
+Flat state layout of `dm`'s ODE (see `_de_state_layout`), probed with the first
+individual's constant covariates.
+"""
+function _dm_state_layout(dm::DataModel)
+    cached = dm.state_layout[]
+    cached === missing || return cached
+    model = dm.model
+    layout = if model.de.de === nothing
+        nothing
+    else
+        inds = get_individuals(dm)
+        _de_state_layout(model, isempty(inds) ? NamedTuple() : get_const_cov(first(inds)))
+    end
+    dm.state_layout[] = layout
+    return layout
+end
+
+# The layout when it has a vector state, `nothing` otherwise (all-scalar or unprobeable).
+function _dm_state_layout_vec(dm::DataModel)
+    layout = _dm_state_layout(dm)
+    return (layout !== nothing && _de_layout_has_vector(layout)) ? layout : nothing
+end
+
+function _dm_has_vector_states(dm::DataModel)
+    layout = _dm_state_layout(dm)
+    return layout !== nothing && _de_layout_has_vector(layout)
+end
+
+"""
     get_closed_form_plan(dm::DataModel) -> ClosedFormPlan
 
 Return the closed-form linear-ODE eligibility plan for `dm`, computing it lazily on
@@ -1839,7 +1927,9 @@ function get_closed_form_plan(dm::DataModel)
     plan = if mode === :off
         _NO_CLOSED_FORM
     else
-        p = _detect_closed_form(model)
+        # Closed forms are scalar-per-state; a vector-valued state (layout probed from
+        # @initialDE) always takes the numerical path.
+        p = _dm_has_vector_states(dm) ? _NO_CLOSED_FORM : _detect_closed_form(model)
         # Fast scalar closed forms (measurably faster than numerical): whole-system
         # diagonal, and the two-state sequential Bateman case (1-cmt oral).
         fast = _cf_is_whole(p) && (p.mode === :diagonal || p.mode === :bateman)

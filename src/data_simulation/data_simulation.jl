@@ -88,18 +88,20 @@ function _simulate_sol_accessors(dm::DataModel, idx::Int, θ, η)
         model_funs = get_model_funs(model),
         preDE = pre,
     )
-    compiled = get_de_compiler(get_de(model))(pc)
-    u0 = calculate_initial_state(model, θ, η, const_cov)
+    u0, states = _de_split_init(_initial_state_with_pre(model, θ, η, const_cov, pre))
+    compiled = _de_with_states(get_de_compiler(get_de(model))(pc), states)
     cb = nothing
     infusion_rates = nothing
     events = _private_event_callbacks(get_callbacks(ind))
     if events !== nothing
+        _de_check_events_layout(u0, events)
         _apply_initial_events!(u0, events)
         cb = get_callback(events)
         infusion_rates = get_infusion_rates(events)
     end
     plan = get_closed_form_plan(dm)
-    if is_cf_eligible(plan) && (_cf_is_whole(plan) || cb === nothing)
+    if is_cf_eligible(plan) && states === nothing &&
+            (_cf_is_whole(plan) || cb === nothing)
         solver_cfg = get_solver_config(model)
         cf_alg = _resolve_ode_alg(solver_cfg.alg)
         sol = _cf_dispatch_solve(
