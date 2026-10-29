@@ -37,12 +37,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Group 27 (Aqua persistent-tasks) is deliberately NOT here: the check
+        # Group 28 (Aqua persistent-tasks) is deliberately NOT here: the check
         # measures 10m40 alone (its wrapper env fresh-resolves and precompiles
         # regardless of every cache), which would set the whole gate's wall
         # clock. It still runs at full strength on every push to main via
-        # Coverage.yml (group "26,27"), in full local runs, and on marvin.
-        group: ["8,25", "17,21", "18,26", "2,24", "19", "22", "13,14",
+        # Coverage.yml (group "28"), in full local runs, and on marvin.
+        # Group 27 (GHQ part 2 + copulas) shares the single-group shard of 22.
+        group: ["8,25", "17,21", "18,26", "2,24", "19", "22,27", "13,14",
                 "6,11", "7,23", "5,16", "4,20", "9,10", "3,12", "1,15"]
     steps:
       - uses: actions/checkout@v7
