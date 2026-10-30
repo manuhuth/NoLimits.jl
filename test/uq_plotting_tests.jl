@@ -160,14 +160,55 @@ end
     @test _first_axis(p).ylabel[] == "Wald KDE Density"
 end
 
-@testset "UQ distribution plotting errors when draws are unavailable" begin
-    ints = UQIntervals(0.95, [0.1], [0.4])
+@testset "UQ distribution plotting of profile intervals (no draws)" begin
+    # Regression: profile UQ used to be unplottable ("does not store parameter draws").
+    # It now shows the profile interval as a span and the estimate as a line.
+    ints = UQIntervals(0.95, [0.1, -1.0], [0.4, NaN])
     uq_profile = make_uq(;
-        backend = :profile, est_t = [0.2], ints_t = ints,
+        backend = :profile, names = [:a, :b], est_t = [0.2, -0.5], ints_t = ints,
         diagnostics = (;)
     )
-    @test_throws ErrorException plot_uq_distributions(uq_profile)
+    fig = plot_uq_distributions(uq_profile; show_legend = true)
+    axs = [a for a in fig.content if a isa CairoMakie.Axis]
+    @test length(axs) == 2
+    spans = [pl for pl in axs[1].scene.plots if pl isa CairoMakie.Makie.VSpan]
+    @test length(spans) == 1
+    @test isempty([pl for pl in axs[2].scene.plots if pl isa CairoMakie.Makie.VSpan])  # open interval
+    @test all(ax -> !CairoMakie.Makie.to_value(ax.yticklabelsvisible), axs)
+    xl = _axis_xlims(fig)
+    @test xl[1] < 0.1 && xl[2] > 0.4
+    leg = only(a for a in fig.content if a isa CairoMakie.Legend)
+    labs = [string(CairoMakie.Makie.to_value(e.label)) for g in leg.entrygroups[] for e in last(g)]
+    @test labs == ["95% Interval", "Estimate"]
     @test_throws ErrorException plot_uq_distributions(uq_profile; plot_type = :histogram)
+    @test_throws ErrorException plot_uq_distributions(
+        uq_profile; show_interval = false, show_estimate = false
+    )
+end
+
+@testset "UQ distribution plotting AoG layout: one legend only when requested" begin
+    rng = Random.Xoshiro(7)
+    draws = randn(rng, 200, 2)
+    ints = UQIntervals(0.9, [-1.5, -1.5], [1.5, 1.5])
+    uq = make_uq(; names = [:a, :b], est_t = [0.0, 0.1], ints_t = ints, draws_t = draws)
+    legends(f) = [l for l in f.content if l isa CairoMakie.Legend]
+    f0 = @test_logs (:info, r"KDE") plot_uq_distributions(uq; scale = :natural)
+    @test isempty(legends(f0))
+    f1 = @test_logs (:info, r"KDE") plot_uq_distributions(uq; scale = :natural, show_legend = true)
+    leg = only(legends(f1))
+    labs = [string(CairoMakie.Makie.to_value(e.label)) for g in leg.entrygroups[] for e in last(g)]
+    @test labs == ["90% Interval", "KDE", "Estimate"]
+    axs = [a for a in f1.content if a isa CairoMakie.Axis]
+    @test length(axs) == 2
+    @test all(ax -> any(pl -> pl isa CairoMakie.Makie.Band, ax.scene.plots), axs)
+
+    # histogram: exact uniform bins as BarPlot, interval as VSpan
+    fh = plot_uq_distributions(uq; scale = :natural, plot_type = :histogram, bins = 7)
+    ax = first(a for a in fh.content if a isa CairoMakie.Axis)
+    bars = only(pl for pl in ax.scene.plots if pl isa CairoMakie.BarPlot)
+    @test length(CairoMakie.Makie.to_value(bars[1])) == 7
+    @test any(pl -> pl isa CairoMakie.Makie.VSpan, ax.scene.plots)
+    @test_throws ErrorException plot_uq_distributions(uq; ncols = 0)
 end
 
 @testset "UQ distribution plotting xlims include estimate and distribution support" begin

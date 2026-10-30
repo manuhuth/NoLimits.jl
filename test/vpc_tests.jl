@@ -171,3 +171,65 @@ end
         [0.0, 1.0], y[1:2], [0.0, 1.0], 0.5, [50.0]
     )[50.0] == [1.0, 2.0]
 end
+
+# AlgebraOfGraphics layout (#383): one panel per observable, one figure-level legend,
+# composable panels with return_panel.
+_vpc_axes(fig) = [a for a in fig.content if a isa CairoMakie.Axis]
+_vpc_legends(fig) = [l for l in fig.content if l isa CairoMakie.Legend]
+_vpc_legend_labels(leg) = [
+    string(CairoMakie.Makie.to_value(e.label)) for g in leg.entrygroups[] for e in last(g)
+]
+
+@testset "plot_vpc AoG layout and legend" begin
+    res = fx_laplace()
+    fig = plot_vpc(res; n_simulations = 5, n_bins = 3, obs_percentiles_method = :quantile)
+    @test fig isa CairoMakie.Figure
+    @test length(_vpc_axes(fig)) == 1
+    legs = _vpc_legends(fig)
+    @test length(legs) == 1
+    labs = _vpc_legend_labels(only(legs))
+    @test labs == [
+        "obs", "obs 5.0%", "obs 50.0%", "obs 95.0%", "sim 5.0%", "sim 50.0%", "sim 95.0%",
+    ]
+    ax = only(_vpc_axes(fig))
+    @test CairoMakie.Makie.to_value(ax.xlabel) == "Time"
+    # median observed percentile solid, outer ones dotted: two distinct line styles
+    styles = unique(
+        CairoMakie.Makie.to_value(pl.linestyle) for pl in ax.scene.plots if pl isa CairoMakie.Lines
+    )
+    @test length(styles) == 2
+
+    # the kernel method draws unlabeled observed percentiles (no legend entries)
+    kern = plot_vpc(res; n_simulations = 5, n_bins = 3)
+    @test !any(startswith("obs "), _vpc_legend_labels(only(_vpc_legends(kern))))
+
+    panel = plot_vpc(res; n_simulations = 5, n_bins = 3, return_panel = true)
+    ext = Base.get_extension(NoLimits, :NoLimitsMakieExt)
+    @test panel isa ext.AoGPanel
+    combined = combine_plots([panel, panel]; ncols = 2)
+    @test length(_vpc_axes(combined)) == 2
+    @test length(_vpc_legends(combined)) == 1
+
+    # user kwargs win
+    custom = plot_vpc(
+        res; n_simulations = 5, n_bins = 3,
+        kwargs_subplot = (; ylabel = "custom"), kwargs_plot = (; size = (700, 500))
+    )
+    @test CairoMakie.Makie.to_value(only(_vpc_axes(custom)).ylabel) == "custom"
+    @test Tuple(custom.scene.viewport[].widths) == (700, 500)
+    @test_throws ErrorException plot_vpc(res; n_simulations = 5, ncols = 0)
+end
+
+@testset "plot_vpc count outcome keeps the per-point PMF colours and a legend entry" begin
+    res = fx_pois_laplace()
+    fig = plot_vpc(res; n_simulations = 5, n_bins = 3)
+    ax = only(_vpc_axes(fig))
+    pmf = [
+        pl for pl in ax.scene.plots if pl isa CairoMakie.Scatter &&
+            CairoMakie.Makie.to_value(pl.color) isa AbstractVector{<:Real}
+    ]
+    @test length(pmf) == 1
+    probs = CairoMakie.Makie.to_value(only(pmf).color)
+    @test all(p -> 0 <= p <= 1, probs)
+    @test "sim PMF" in _vpc_legend_labels(only(_vpc_legends(fig)))
+end
