@@ -180,3 +180,96 @@ end
     dl = LogitNormal(0.1, 0.4)
     @test NoLimits._standardize_re(dl, [0.6])[1] ≈ (log(0.6 / 0.4) - dl.μ) / dl.σ
 end
+
+# ── AlgebraOfGraphics port (#383): layout, legend, kwargs and validation ─────────────
+_re_axes(fig) = [c for c in fig.content if c isa Axis]
+_re_nlegends(fig) = count(c -> c isa Legend, fig.content)
+_re_labels(fig) = [string(c.text[]) for c in fig.content if c isa Makie.Label]
+_re_all_xlabels(fig) = vcat([string(ax.xlabel[]) for ax in _re_axes(fig)], _re_labels(fig))
+
+@testset "RE plots on AlgebraOfGraphics (#383)" begin
+    res = fit_model(
+        _RNP_DM,
+        NoLimits.Laplace(; use_hutchinson = false, optim_kwargs = (maxiters = 2,))
+    )
+    all_fns = (
+        plot_random_effects_pdf, plot_random_effects_scatter, plot_random_effect_pairplot,
+        plot_random_effect_distributions, plot_random_effect_pit,
+        plot_random_effect_standardized, plot_random_effect_standardized_scatter,
+    )
+
+    # kwargs_subplot used to be splatted positionally into create_styled_plot, which broke
+    # every function; now it reaches every axis and wins over the computed labels.
+    for f in all_fns
+        fig = f(
+            res; kwargs_subplot = (; xlabel = "X custom", xgridvisible = true),
+            kwargs_layout = (; size = (900, 600))
+        )
+        @test fig isa Figure
+        @test Tuple(fig.scene.viewport[].widths) == (900, 600)
+        @test all(ax -> ax.xgridvisible[], _re_axes(fig))
+        @test "X custom" in _re_all_xlabels(fig)
+        @test _re_nlegends(fig) <= 1
+        @test_throws ErrorException f(res; ncols = 0)
+    end
+
+    # one panel per RE component, titled by facet labels, one figure legend
+    fig = plot_random_effects_pdf(res)
+    @test length(_re_axes(fig)) == 4
+    @test _re_nlegends(fig) == 1
+    @test "eta" in _re_labels(fig)
+    @test any(l -> startswith(l, "zeta | "), _re_labels(fig))
+
+    # plot_random_effects_pdf used to accept unknown levels / individuals silently
+    @test_throws ErrorException plot_random_effects_pdf(res; re_names = :eta, levels = [:nope])
+    @test plot_random_effects_pdf(res; re_names = :eta, levels = [:ID1]) isa Figure
+
+    # pairplot: 3 variables on ID (eta, zeta_1, zeta_2) and 1 on Center -> 9 + 1 cells,
+    # diagonal titled by variable, off-diagonal labelled by row/column variable
+    fig = plot_random_effect_pairplot(res; kde_bandwidth = 0.2)
+    axs = _re_axes(fig)
+    @test length(axs) == 10
+    @test sort(filter(!isempty, [string(ax.title[]) for ax in axs])) ==
+        sort(["eta", "zeta_1", "zeta_2", "xi"])
+    @test _re_nlegends(fig) == 0
+    @test any(ax -> ax.xlabel[] == "eta" && ax.ylabel[] == "zeta_1", axs)
+    @test_throws ErrorException plot_random_effect_pairplot(res; kde_bandwidth = -1.0)
+
+    # distributions: one panel per (RE, level, component); EBE line in the legend
+    fig = plot_random_effect_distributions(res; re_names = :eta, levels = [:ID1, :ID2])
+    @test length(_re_axes(fig)) == 2
+    @test _re_nlegends(fig) == 1
+
+    # PIT: random effects with fewer than 2 PIT values are skipped (no empty axes); when
+    # nothing is left the figure is a titled placeholder
+    fig = @test_logs (:warn, r"PIT skipped") (:warn, r"No PIT plots") match_mode = :any plot_random_effect_pit(
+        res; re_names = :xi, levels = [:C1]
+    )
+    @test length(_re_axes(fig)) == 1
+    @test string(only(_re_axes(fig)).title[]) == "No PIT plots to display."
+    fig = plot_random_effect_pit(res; show_hist = false, show_qq = true)
+    @test length(_re_axes(fig)) == 4
+    @test _re_nlegends(fig) == 1
+
+    # standardized: nothing selected -> placeholder; KDE needs >= 2 values
+    fig = @test_logs (:warn, r"No standardized") match_mode = :any plot_random_effect_standardized(
+        res; show_hist = false, show_kde = false
+    )
+    @test length(_re_axes(fig)) == 1
+    @test plot_random_effect_standardized(res; show_kde = true) isa Figure
+
+    # scatters share one linked x axis; x_covariate validation is kept
+    fig = plot_random_effects_scatter(res; re_names = :eta)
+    @test length(_re_axes(fig)) == 1
+    @test_throws ErrorException plot_random_effects_scatter(res; x_covariate = :nope)
+end
+
+@testset "RE plots on AlgebraOfGraphics, posterior draws (#383)" begin
+    res = fx_mcmc_re()
+    fig = plot_random_effects_pdf(res; mcmc_draws = 5)
+    @test _re_nlegends(fig) == 1
+    fig = plot_random_effect_pit(res; mcmc_draws = 5, kwargs_subplot = (; ylabel = "Y custom"))
+    @test all(ax -> ax.ylabel[] == "Y custom", _re_axes(fig)) ||
+        "Y custom" in _re_labels(fig)
+    @test_throws ErrorException plot_random_effect_pit(res; mcmc_draws = 5, mcmc_quantiles = [50])
+end

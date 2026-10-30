@@ -239,7 +239,7 @@ p_vpc
 
 ## Random-effects distribution diagnostic
 
-A well-specified random-effects model should produce empirical Bayes estimates consistent with the assumed distributional form. `plot_random_effects_pdf` overlays estimated random-effect values on the model-implied density, providing a direct visual check for distributional adequacy. Departures such as multimodality, skewness, or outlying values may indicate that a more flexible random-effects distribution is needed.
+A well-specified random-effects model should produce empirical Bayes estimates consistent with the assumed distributional form. `plot_random_effects_pdf` draws the fitted population density of each random effect (one panel per random effect or component); `plot_random_effect_distributions` marks each level's empirical Bayes estimate on its fitted distribution, and `plot_random_effect_standardized`, `plot_random_effect_pit` and `plot_random_effect_pairplot` show the estimates as standardized histograms, probability integral transforms and a scatter matrix. Departures such as multimodality, skewness, or outlying values may indicate that a more flexible random-effects distribution is needed.
 
 ```@example plotting_overview
 p_re_pdf = plot_random_effects_pdf(res)
