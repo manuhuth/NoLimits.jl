@@ -104,6 +104,18 @@ function cases_diagnostics()
             _bt_common(),
         )
         append!(cs, _bt_cases(fn, _bt_for(M, fn), sets))
+        # logarithmic axes (ABLines cannot be drawn there; non-positive values are dropped
+        # with a warning) on every fixture, user limits on the representative ones
+        logkw = fn == :plot_wres_pred ? "kwargs_subplot = (; xscale = log10)" :
+            "kwargs_subplot = (; xscale = log10, yscale = log10)"
+        append!(cs, _bt_cases(fn, _bt_for(M, fn), ["log" => logkw]; full = f -> true))
+        lim = fn == :plot_wres_pred ? "((0, 20), (-4, 4))" : "((0, 20), (0, 20))"
+        append!(
+            cs, _bt_cases(
+                fn, filter(in(_BT_FULL), _bt_for(M, fn)),
+                ["user_limits" => "kwargs_subplot = (; limits = $(lim))"]
+            )
+        )
     end
 
     # --- plot_shrinkage -------------------------------------------------------------------
@@ -173,7 +185,11 @@ function cases_diagnostics()
         return vcat(o, _bt_common())
     end
     fx_em = _bt_for(M, :plot_em_trajectories)
+    # `res` is the reloaded fit (`_SavedFittingMethod`; rejected on origin/main, plotted
+    # since #383); `fx.res_em` has the method object restored, so the baseline renders it.
     append!(cs, _bt_cases(:plot_em_trajectories, fx_em, em_sets))
+    em_restored = ["default" => "", "transformed" => "scale = :transformed", "ncols2" => "ncols = 2", "kwsub" => _BT_KWSUB]
+    append!(cs, _bt_cases(:plot_em_trajectories, fx_em, em_restored; input = "fx.res_em", prefix = "restored_", full = f -> true))
     # Non-EM fit must be rejected.
     nonem = [f for f in _bt_for(M, :plot_dv_pred) if _bt_method(M, f) in ("Laplace", "FOCEI", "MLE")]
     isempty(nonem) || append!(cs, _bt_cases(:plot_em_trajectories, [first(nonem)], ["not_em!err" => ""]))

@@ -4783,6 +4783,8 @@ function _fit_model(
         builtin_stats_mode_effective = builtin_stats_mode,
         builtin_stats_closed_form_eligibility = builtin_cf_elig,
         anneal_to_fixed = method.saem.anneal_to_fixed,
+        # stride of `diagnostics.θ_hist` (kept so reloaded fits can plot EM trajectories)
+        diagnostics_every = method.saem.diagnostics_every,
     )
     # A non-finite Q means the E-step's sample landed where the model cannot be evaluated.
     # Report it as-is: substituting an earlier finite Q would pair an objective from one
