@@ -8,9 +8,13 @@
 #SBATCH --cpus-per-task=4
 #SBATCH --time=01:00:00
 #SBATCH --job-name=aog_fixture
-#SBATCH --output=/home/mhuth1_hpc/NoLimits-aog/dev/aog_battletest/logs/%x_%A_%a.log
+#SBATCH --output=logs/%x_%A_%a.log
 set -u
-B=/home/mhuth1_hpc/NoLimits-aog/dev/aog_battletest
+# Paths derive from the submit directory: run sbatch from dev/aog_battletest of the
+# worktree you want to test (or set BT_ROOT). Logs go to ./logs (relative to it).
+B=${BT_ROOT:-$SLURM_SUBMIT_DIR}
+[ -f "$B/lib/render.jl" ] || { echo "submit from dev/aog_battletest (or set BT_ROOT); got B=$B" >&2; exit 2; }
+R=$(cd "$B/../.." && pwd)
 cd $B
 if [ -z "${FIXTURES:-}" ]; then
   mapfile -t ALL < <(ls fixtures/defs/*.jl | xargs -n1 basename | sed 's/\.jl$//' | sort)
