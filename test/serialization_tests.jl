@@ -5,6 +5,7 @@ using DataFrames
 using Distributions
 using ComponentArrays
 using SciMLBase
+using Random
 import Turing   # MCMC/VI need the Turing extension loaded (#36)
 
 # ── Shared fixtures ───────────────────────────────────────────────────────────
@@ -230,6 +231,20 @@ end
     s2 = sample_posterior(res2; n_draws = 20)
     @test size(s1) == size(s2)
     @test get_vi_trace(res2) isa AbstractVector
+
+    # Regression: the reloaded fit used to return its draws on the linked scale (log σ),
+    # so σ came out negative. The model is rebuilt on load and draws are natural again.
+    @test NoLimits.get_result(res2).model !== nothing
+    d1 = sample_posterior(res; n_draws = 200, rng = Random.Xoshiro(3), return_names = true)
+    d2 = sample_posterior(res2; n_draws = 200, rng = Random.Xoshiro(3), return_names = true)
+    @test d1.names == d2.names
+    @test d2.draws ≈ d1.draws
+    iσ = findfirst(==(:σ), d2.names)
+    @test all(>(0), d2.draws[:, iσ])
+
+    # Without a DataModel the model cannot be rebuilt: warn, draws stay linked.
+    res3 = @test_logs (:warn, r"linked") match_mode = :any load_fit(path)
+    @test NoLimits.get_result(res3).model === nothing
 end
 
 # ── Multistart ────────────────────────────────────────────────────────────────
