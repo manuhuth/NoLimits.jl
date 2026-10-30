@@ -7,8 +7,7 @@ module NoLimitsMakieExt
 # The Makie-free core (PlotStyle, PlotCache, get_residuals, build_plot_cache and their
 # helpers) lives in NoLimits proper; this module only adds the plot_* methods plus the
 # AlgebraOfGraphics core layer in plotting/plotting.jl (facet figures, composable panels,
-# legend/linking policy, PlotStyle mapping). plotting/legacy_panels.jl holds the old
-# closure-based panel model still used by functions not yet ported to AoG.
+# legend/linking policy, PlotStyle mapping).
 
 using Makie: Makie, Figure, Axis, GridLayout, Legend, lines!, scatter!, barplot!, heatmap!,
     poly!, band!, hlines!, vlines!, vspan!, text!, axislegend, xlims!,
@@ -111,7 +110,6 @@ using NoLimits: COLOR_ACCENT, COLOR_CI, COLOR_PRIMARY, COLOR_REFERENCE, COLOR_SE
     probabilities_hidden_states, transform
 
 include("plotting/plotting.jl")
-include("plotting/legacy_panels.jl")
 include("plotting/plotting_fits.jl")
 include("plotting/plots.jl")
 include("plotting/plotting_hmm.jl")

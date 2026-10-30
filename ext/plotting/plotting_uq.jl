@@ -282,6 +282,5 @@ function plot_uq_distributions(
     end
 
     fig = combine_plots(panels; ncols = ncols, style = style, _nt(kwargs_layout)...)
-    _grp5_wrap_legend!(fig, style)
     return _save_plot!(fig, save_path)
 end

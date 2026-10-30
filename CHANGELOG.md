@@ -2,7 +2,70 @@
 
 ## Unreleased
 
+### Breaking
+
+- The plotting extension is drawn with AlgebraOfGraphics (#383). It now loads only when
+  a Makie backend **and** AlgebraOfGraphics are loaded: write
+  `using CairoMakie, AlgebraOfGraphics` (AlgebraOfGraphics is a new weak dependency,
+  compat 0.13.2; Makie compat raised to 0.24.4). Calling a `plot_*` function without
+  them raises a `MethodError` hint naming both packages. Function names, keyword
+  arguments and return types are unchanged. `return_panel = true` returns an
+  AlgebraOfGraphics-based panel for `combine_plots`; the old closure-based `MakiePanel`
+  layer is removed.
+
 ### Changes
+
+- Plot layout defaults (#383), the same for every `plot_*` function: one figure-level
+  legend below the panels that wraps into several rows when it does not fit the figure
+  width (no per-panel `axislegend`); shared axes are linked with inner tick labels and
+  repeated axis labels hidden; panels wrap row-wise `ncols` wide; individuals and other
+  categories appear in the order they first occur in the data (before, string ids were
+  drawn `s1, s10, s11, ..., s2`), an explicit `individuals_idx` keeps the given order;
+  `kwargs_subplot` (Axis) and `kwargs_layout` (Figure) attributes win over the
+  defaults. Facet titles are figure labels, not `ax.title`. `calculate_plot_size` no
+  longer shrinks panels below half of the base panel size when many panels are drawn
+  (50 individuals at `ncols = 1` got 48 px per panel). `combine_plots` gains
+  `link_x`/`link_y`. `plot_dv_pred` gains `return_panel`.
+
+- Plotting bugs fixed in the port (#383):
+  - residual and random-effect plots failed for any `kwargs_subplot` (it was splatted
+    positionally into the axis constructor);
+  - `plot_fits(...; plot_func = median)` on vector-valued observables raised a
+    `BoundsError` (a statistic undefined for a multivariate distribution is now a gap),
+    and shared y limits of `:vector` marginal figures used all components instead of
+    the plotted ones;
+  - `plot_fits` density heatmaps painted the whole grid where the density is zero (the
+    colormap now starts transparent);
+  - `plot_random_effects_pdf` accepted invalid `levels`/`individuals_idx`;
+    `plot_random_effect_pairplot` and the other random-effect plots did not validate
+    `ncols`; histogram bars lost per-panel bin widths; pairplot blocks of different
+    size were misaligned; Greek random-effect names were uppercased (`η` shown as `H`);
+    panels without data are dropped instead of left empty;
+  - HMM plots raised a raw `FieldError` for an unknown observable (now an
+    `ArgumentError`, also for non-HMM and univariate observables); emission
+    distribution panel titles overlapped (now state column and individual/time row
+    labels); `figure_layout = :vector` honours `kwargs_layout`;
+  - non-finite residuals (e.g. an `Inf` logscore) produced infinite axis limits (now
+    dropped with a warning); `ncols`, `bins` and `kde_bandwidth` are validated up front;
+  - `plot_uq_distributions` on profile-likelihood UQ errored (now draws the interval
+    spans and estimates; histogram mode gives a clear error); `plot_vpc` validates
+    `observables` and `ncols` up front; `plot_observation_distributions` keeps separate
+    y labels for PMF and PDF panels;
+  - `plot_em_trajectories` failed on fits reloaded with `load_fit` and labelled the
+    iteration axis "(xk)" (now uses the true iteration); user `kwargs_subplot` limits
+    were overridden in `plot_dv_pred`/`plot_dv_ipred`/`plot_wres_pred`, which now also
+    support logarithmic axes; the multistart waterfall title was clipped and its tick
+    labels collapsed when objectives agree to many digits; the FE-variability
+    `:quantiles` mode had no legend.
+
+- `load_fit` rebuilds the DynamicPPL model of a VI fit from its `DataModel` when the
+  Turing extension is loaded, so `sample_posterior` on a reloaded VI fit returns
+  natural-scale draws (before: linked-scale draws, e.g. `log σ`). Without Turing a
+  warning says the draws stay on the linked scale.
+
+- SAEM and MCEM results record `diagnostics_every` (the stride of
+  `diagnostics.θ_hist`) in their notes, so EM trajectories of reloaded fits have exact
+  iteration numbers (inferred for files saved before this change).
 
 - `predict` returns the observed value of each row in a new column `y` (the `y` column
   of `get_residuals`), between `observable` and `prediction`. Rows without an

@@ -162,7 +162,7 @@ end
 function _hidden_states_figures(
         dm, obs_name, θ, η_vec, individuals_idx, figure_layout, save_path; kw...
     )
-    inds = _resolve_individuals(dm, individuals_idx; default_all = true)
+    inds = _plot_individuals(dm, individuals_idx)
     figure_layout == :vector &&
         return Figure[_plot_hidden_states_impl(dm, obs_name, θ, η_vec, [i]; kw...) for i in inds]
     return _plot_hidden_states_impl(dm, obs_name, θ, η_vec, inds; save_path, kw...)
@@ -329,12 +329,13 @@ function _hmm_emission_figure(
         Col = (; categories = states),
         Color = _series_palette([l => c for (l, c) in zip(labels, colors)]),
     )
+    fig_kw = _aog_figure(style, length(rows) * n_states, n_states, kwargs_layout)
     fg = AoG.draw(
         layers, AoG.scales(; sc...);
         axis = _aog_axis(style, kwargs_subplot; xlabel = "Outcome value", ylabel),
-        figure = _aog_figure(style, length(rows) * n_states, n_states, kwargs_layout),
+        figure = fig_kw,
         facet = (; linkxaxes = :none, linkyaxes = _facet_link(shared_y_axis)),
-        legend = _aog_legend(style),
+        legend = _aog_legend(style; nbanks = _legend_nbanks(labels, first(fig_kw.size), style)),
     )
     if ylim !== nothing
         for ae in fg.grid
@@ -357,7 +358,7 @@ function _plot_emission_impl(
                 "observable; :$(obs_name) is a $(nameof(typeof(dist_rep)))."
         )
     )
-    inds = _resolve_individuals(dm, individuals_idx; default_all = true)
+    inds = _plot_individuals(dm, individuals_idx)
     time_col_use = time_col === nothing ? get_time_col(dm) : time_col
     tables = DataFrame[]
     rows = String[]

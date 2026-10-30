@@ -30,7 +30,14 @@ end
 Case(id, fn, fixture, call; tags = String[], expect_error = false, files = String[]) =
     Case(id, Symbol(fn), String(fixture), String(call), String.(tags), expect_error, String.(files))
 
-const _BT_DATA = normpath(joinpath(@__DIR__, "..", "fixtures", "data"))
+# Case metadata come from `BT_CASES_DATA` (default: `BT_FIXTURE_DATA`, else fixtures/data),
+# so a baseline render that loads baseline-generated fixtures still uses the same matrix.
+const _BT_DATA = abspath(
+    get(
+        ENV, "BT_CASES_DATA",
+        get(ENV, "BT_FIXTURE_DATA", normpath(joinpath(@__DIR__, "..", "fixtures", "data")))
+    )
+)
 
 """
     fixture_meta() -> Dict{String, Dict}

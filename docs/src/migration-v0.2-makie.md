@@ -99,9 +99,8 @@ plot_fits(res;
     kwargs_subplot = (xlabelsize = 10, ylabelsize = 10, limits = ((0.0, 24.0), nothing)))
 ```
 
-Legends are created automatically (`axislegend`) whenever a panel has labeled series,
-in the top-right corner by default; functions that previously placed legends elsewhere
-(for example `plot_shrinkage`) keep their placement internally.
+Legends are created automatically: every figure has one legend below its panels (see
+"Figure layout since the AlgebraOfGraphics port" below).
 
 ## `PlotStyle` changes
 
@@ -135,6 +134,25 @@ ax.title = "Individual fits"
 ax.ylabel = "Concentration [mg/L]"
 save("fits.png", fig)
 ```
+
+## Figure layout since the AlgebraOfGraphics port
+
+Since the release after v0.3.0 the plotting extension draws with AlgebraOfGraphics.
+Names, keyword arguments and return types are unchanged; the following differences can
+affect code that post-processes figures:
+
+- `AlgebraOfGraphics` must be loaded next to a Makie backend
+  (`using CairoMakie, AlgebraOfGraphics`), otherwise the `plot_*` functions are not
+  defined.
+- Each figure has one legend below the panels instead of one `axislegend` per panel.
+- Shared axes are linked and inner tick labels and axis labels are hidden.
+- Panel titles of faceted figures are `Makie.Label`s in `fig.content`, not `ax.title`.
+- Individuals are shown in the order they first appear in the data, not in the sorted
+  order of their ids (`s1, s2, ..., s10` instead of `s1, s10, s11, ...`).
+- `return_panel = true` returns an AlgebraOfGraphics-based panel; combine panels with
+  `combine_plots(panels; ncols, link_x, link_y)`.
+- `kwargs_subplot` now reaches every axis of the residual and random-effect plots
+  (before, any value raised an error there).
 
 ## Name collision: `RealVector`
 

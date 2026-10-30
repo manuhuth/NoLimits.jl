@@ -19,7 +19,8 @@ include(joinpath(@__DIR__, "cases.jl"))
 println("packages + harness loaded in ", round(t_load; digits = 1), " s; NoLimits at ", pkgdir(NoLimits))
 println("NoLimitsMakieExt loaded: ", Base.get_extension(NoLimits, :NoLimitsMakieExt) !== nothing)
 
-const OUTDIR = joinpath(BT_ROOT, "out", MODE)
+# `BT_OUT` renders into another output root (default out/).
+const OUTDIR = joinpath(abspath(get(ENV, "BT_OUT", joinpath(BT_ROOT, "out"))), MODE)
 mkpath(joinpath(OUTDIR, "png")); mkpath(joinpath(OUTDIR, "status")); mkpath(joinpath(OUTDIR, "scratch"))
 const PX_PER_UNIT = parse(Float64, get(ENV, "PX_PER_UNIT", "1.5"))
 const FORCE = get(ENV, "FORCE", "0") == "1"

@@ -29,7 +29,9 @@ import AlgebraOfGraphics
 
 const BT_ROOT = normpath(joinpath(@__DIR__, ".."))
 const FIX_DEFS = joinpath(BT_ROOT, "fixtures", "defs")
-const FIX_DATA = joinpath(BT_ROOT, "fixtures", "data")
+# `BT_FIXTURE_DATA` points generation/loading at another fixture directory (e.g. a frozen
+# set, or a baseline-generated copy for fits origin/main cannot load).
+const FIX_DATA = abspath(get(ENV, "BT_FIXTURE_DATA", joinpath(BT_ROOT, "fixtures", "data")))
 
 fixture_names() = sort([splitext(f)[1] for f in readdir(FIX_DEFS) if endswith(f, ".jl")])
 

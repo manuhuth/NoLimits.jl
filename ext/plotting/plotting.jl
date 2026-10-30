@@ -414,17 +414,18 @@ function combine_plots(
     axes = Any[nothing for _ in 1:n]
     keep = Set{Symbol}()
     for (i, panel) in enumerate(panels)
+        panel isa AoGPanel || throw(
+            ArgumentError(
+                "combine_plots expects panels returned with `return_panel = true` " *
+                    "(AoGPanel); got $(typeof(panel))."
+            )
+        )
         row, col = fldmod1(i, ncols_use)
-        if panel isa AoGPanel
-            ax, leg = _materialize_panel!(fig[row, col], panel)
-            axes[i] = ax
-            push!(legends, leg)
-            # decorations the panel sets explicitly (e.g. from kwargs_subplot) win
-            union!(keep, keys(panel.axis))
-        else
-            # LEGACY MakiePanel / MakiePanelGroup (unported functions; legend in-axis)
-            _materialize!(fig[row, col], panel, style)
-        end
+        ax, leg = _materialize_panel!(fig[row, col], panel)
+        axes[i] = ax
+        push!(legends, leg)
+        # decorations the panel sets explicitly (e.g. from kwargs_subplot) win
+        union!(keep, keys(panel.axis))
     end
     (link_x || link_y) && _link_panel_axes!(axes, ncols_use; link_x, link_y, keep)
     nrows = cld(max(n, 1), ncols_use)

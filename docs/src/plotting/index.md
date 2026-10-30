@@ -29,6 +29,26 @@ The plotting functions fall into a handful of diagnostic groups:
 
 See the [Plotting and Diagnostics](../api/plotting.md) section of the API reference for the full list of functions and their arguments.
 
+## Figure layout
+
+All plotting functions draw with [AlgebraOfGraphics](https://aog.makie.org/) on top of
+Makie and share one layout policy:
+
+- One panel per individual, observable, parameter or random-effect level. Panels wrap
+  row-wise, `ncols` panels wide. Individuals and other categories appear in the order
+  they first occur in the data (an explicit `individuals_idx` keeps the given order).
+- Axes that are shared (`shared_x_axis`/`shared_y_axis = true`, the default) are linked:
+  tick labels and axis labels are shown only on the outer panels. Panels that measure
+  different quantities (for example a probability mass function next to a density) keep
+  their own y axis.
+- A figure has a single legend below the panels. It wraps into several rows when its
+  entries do not fit the figure width.
+- `kwargs_subplot` is passed to every panel as Makie `Axis` attributes and
+  `kwargs_layout` as `Figure` attributes; both take precedence over the defaults.
+- Functions with `return_panel = true` return a panel that `combine_plots`
+  places into a grid together with other panels, with one merged legend;
+  `combine_plots(panels; link_x = true, link_y = true)` links their axes.
+
 ## Executable setup
 
 The following model and data are used throughout this page. The model specifies a linear trend with normally distributed random intercepts, fitted via the Laplace approximation. The data comprise four individuals, each observed at three time points.

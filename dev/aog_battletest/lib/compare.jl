@@ -10,7 +10,7 @@
 
 using CairoMakie, TOML, Printf
 const BT = normpath(joinpath(@__DIR__, ".."))
-const OUT = joinpath(BT, "out")
+const OUT = abspath(get(ENV, "BT_OUT", joinpath(BT, "out")))
 const IDRE = length(ARGS) >= 1 && !isempty(ARGS[1]) ? Regex(ARGS[1]) : r""
 const CHUNK = length(ARGS) >= 3 ? parse(Int, ARGS[2]) : 1
 const NCHUNKS = length(ARGS) >= 3 ? parse(Int, ARGS[3]) : 1

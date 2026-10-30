@@ -165,7 +165,7 @@ function _plot_fits_comparison_impl(
     dm_ref = _validate_same_data_model_for_comparison(dms)
 
     obs_name = _get_observable(dm_ref, observable)
-    inds = _resolve_individuals(dm_ref, individuals_idx; default_all = true)
+    inds = _plot_individuals(dm_ref, individuals_idx)
     caches = [
         build_plot_cache(fits[j]; dm = dms[j], cache_obs_dists = false, rng = rng)
             for j in eachindex(fits)
@@ -331,7 +331,7 @@ function plot_observed_profiles(
     )
     save_path = _resolve_plot_path(save_path, plot_path)
     obs_name = _get_observable(dm, observable)
-    inds = _resolve_individuals(dm, individuals_idx; default_all = true)
+    inds = _plot_individuals(dm, individuals_idx)
     (is_mv, n_marginals) = _obs_multivariate_info(dm, obs_name)
     marginal_idx !== nothing && !is_mv &&
         error("marginal_idx only valid when the observable is multivariate.")

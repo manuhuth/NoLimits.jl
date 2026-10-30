@@ -324,7 +324,6 @@ function plot_vpc(
         return only(plots)
     end
     fig = combine_plots(plots; ncols = ncols, style = style, _nt(kwargs_plot)...)
-    _grp5_wrap_legend!(fig, style)
     return _save_plot!(fig, save_path)
 end
 
@@ -382,21 +381,4 @@ function _vpc_panel(
         axis = _aog_axis(style, kwargs_subplot; xlabel = xlabel, ylabel = ylabel),
         post = post
     )
-end
-
-# Wrap the figure legend of `combine_plots` into several rows when its entries do not fit
-# the figure width (a single-panel VPC has up to 7 entries). Estimate per entry: patch +
-# padding + label width at the legend font size. Shared by the VPC, observation
-# distribution and UQ plots (group 5); a candidate for the core `_figure_legend!`.
-function _grp5_wrap_legend!(fig::Figure, style::PlotStyle)
-    width = fig.scene.viewport[].widths[1]
-    for leg in fig.content
-        leg isa Legend || continue
-        labels = [string(Makie.to_value(e.label)) for g in leg.entrygroups[] for e in last(g)]
-        isempty(labels) && continue
-        entry_w = 45 + 0.6 * style.font_size_legend * maximum(length, labels)
-        per_row = max(1, floor(Int, (width - 2 * style.figure_padding) / entry_w))
-        leg.nbanks = cld(length(labels), per_row)
-    end
-    return fig
 end

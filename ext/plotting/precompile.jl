@@ -53,6 +53,33 @@ function _precompile_workload()
     )
     fig = combine_plots([panel, panel]; ncols = 2, style = style)
     Makie.update_state_before_display!(fig)
+    # BarPlot (histograms, PMFs), Band (intervals) and VLines (reference values), used by
+    # the residual, random-effect, UQ, VPC and diagnostic figures.
+    bars = DataFrame(x = [0.5, 1.5, 2.5], y = [0.2, 0.5, 0.3], series = fill("histogram", 3))
+    band = DataFrame(
+        x = [0.0, 1.0, 2.0], lo = [0.5, 1.0, 1.5], hi = [1.5, 2.0, 2.5], series = fill("90% Interval", 3)
+    )
+    vl = DataFrame(x = [1.0], series = ["estimate"])
+    panel2 = AoGPanel(
+        AoG.data(bars) * AoG.mapping(:x, :y; color = :series) *
+            AoG.visual(Makie.BarPlot; gap = 0, strokewidth = 0, width = 1.0) +
+            AoG.data(band) * AoG.mapping(:x, :lo, :hi; color = :series) *
+            AoG.visual(Makie.Band; alpha = 0.3) +
+            AoG.data(vl) * AoG.mapping(:x; color = :series) *
+            AoG.visual(Makie.VLines; linestyle = :dash);
+        scales = (;
+            Color = _series_palette(
+                [
+                    "histogram" => style.color_secondary, "90% Interval" => style.color_primary,
+                    "estimate" => style.color_primary,
+                ]
+            ),
+        ),
+        axis = _aog_axis(style; xlabel = "x", ylabel = "Density"),
+        post = Any[ax -> heatmap!(ax, [0.0, 2.0], [0.0, 1.0], [0.0 1.0; 1.0 0.0]; colormap = cmap)],
+    )
+    fig = combine_plots([panel2, panel2]; ncols = 2, style = style, link_x = true, link_y = true)
+    Makie.update_state_before_display!(fig)
     return nothing
 end
 

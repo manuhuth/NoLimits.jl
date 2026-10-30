@@ -341,12 +341,15 @@ function plot_observation_distributions(
         _obsdist_aog_panel(p, style, kwargs_subplot, mcmc_quantiles_alpha, xl, ylim)
             for (p, xl) in zip(plots, xlims_panels)
     ]
-    fig = combine_plots(panels; ncols = ncols, style = style, _nt(kwargs_layout)...)
-    _grp5_wrap_legend!(fig, style)
-    _obsdist_link_axes!(
-        fig, plots, plot_groups, ncols;
-        shared_x = shared_x_axis, shared_y = shared_y_axis && ylims !== nothing,
-        kwargs_subplot = _nt(kwargs_subplot)
+    # #383 layout defaults: y is shared across all panels and linked (inner labels hidden)
+    # only when every panel has the same y label (PMF and PDF panels keep their own); x is
+    # shared within one (individual, observable, component) group and linked only when all
+    # panels belong to one group.
+    fig = combine_plots(
+        panels; ncols = ncols, style = style,
+        link_x = shared_x_axis && length(panels) > 1 && allequal(plot_groups),
+        link_y = shared_y_axis && ylims !== nothing && allequal(p.ylabel for p in plots),
+        _nt(kwargs_layout)...
     )
     return _save_plot!(fig, save_path)
 end
@@ -389,38 +392,6 @@ function _obsdist_aog_panel(p::_ObsDistPanel, style, kwargs_subplot, q_alpha, xl
         axis = _aog_axis(style, kwargs_subplot; title = p.title, xlabel = p.xlabel, ylabel = p.ylabel),
         post = post
     )
-end
-
-# #383 layout defaults on the combined grid: shared axes are linked and their inner tick
-# labels and repeated axis labels hidden. y is shared across all panels; it is decluttered
-# only when every panel has the same y label (PMF and PDF panels keep their own labels).
-# x is shared within one (individual, observable, component) group; it is linked and
-# decluttered only when all panels belong to one group.
-function _obsdist_link_axes!(
-        fig::Figure, plots::Vector, groups::Vector, ncols::Integer;
-        shared_x::Bool, shared_y::Bool, kwargs_subplot::NamedTuple
-    )
-    axes = [c for c in fig.content if c isa Axis]
-    n = length(axes)
-    (n == length(plots) && n > 1) || return fig
-    ncols_use = min(Int(ncols), n)
-    if shared_y && allequal(p.ylabel for p in plots)
-        Makie.linkyaxes!(axes...)
-        for (k, ax) in enumerate(axes)
-            fldmod1(k, ncols_use)[2] == 1 && continue
-            haskey(kwargs_subplot, :yticklabelsvisible) || (ax.yticklabelsvisible = false)
-            haskey(kwargs_subplot, :ylabelvisible) || (ax.ylabelvisible = false)
-        end
-    end
-    if shared_x && allequal(groups)
-        Makie.linkxaxes!(axes...)
-        for (k, ax) in enumerate(axes)
-            k + ncols_use <= n || continue      # bottom panel of its column
-            haskey(kwargs_subplot, :xticklabelsvisible) || (ax.xticklabelsvisible = false)
-            haskey(kwargs_subplot, :xlabelvisible) || (ax.xlabelvisible = false)
-        end
-    end
-    return fig
 end
 
 function plot_observation_distributions(dm::DataModel; kwargs...)
