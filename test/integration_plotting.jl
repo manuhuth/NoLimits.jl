@@ -5,6 +5,7 @@ using Distributions
 using Turing
 using Random
 using CairoMakie
+import AlgebraOfGraphics  # the plotting extension needs Makie AND AlgebraOfGraphics
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Integration file: plotting, caching, VPC, residuals, observation distributions.

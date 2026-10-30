@@ -2,6 +2,7 @@ using Test
 using NoLimits
 using LinearAlgebra
 using CairoMakie
+import AlgebraOfGraphics  # the plotting extension needs Makie AND AlgebraOfGraphics
 using Random
 using Statistics
 

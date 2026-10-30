@@ -298,7 +298,7 @@ end
     expected_nres = nrow(get_residuals(res))
 
     script = """
-    using NoLimits, Distributions, DataFrames, CairoMakie, JLD2
+    using NoLimits, Distributions, DataFrames, CairoMakie, AlgebraOfGraphics, JLD2
     model = @Model begin
         @fixedEffects begin
             a = RealNumber(1.0)
@@ -320,7 +320,7 @@ end
     write(script_path, script)
 
     # The test environment, not the package's own: JLD2 (load_fit) and CairoMakie
-    # (plot_fits) are optional deps of NoLimits and live only here.
+    # (plot_fits, with AlgebraOfGraphics) are optional deps of NoLimits and live only here.
     out = readchomp(`$(Base.julia_cmd()) --project=$(Base.active_project()) $(script_path)`)
     lines = split(strip(out), '\n'; keepempty = false)
 
@@ -347,7 +347,7 @@ end
     expected_n_ids = nrow(expected_re.η)
 
     script = """
-    using NoLimits, Distributions, DataFrames, CairoMakie, JLD2
+    using NoLimits, Distributions, DataFrames, CairoMakie, AlgebraOfGraphics, JLD2
     model = @Model begin
         @fixedEffects begin
             a = RealNumber(1.0)
@@ -373,7 +373,7 @@ end
     write(script_path, script)
 
     # The test environment, not the package's own: JLD2 (load_fit) and CairoMakie
-    # (plot_fits) are optional deps of NoLimits and live only here.
+    # (plot_fits, with AlgebraOfGraphics) are optional deps of NoLimits and live only here.
     out = readchomp(`$(Base.julia_cmd()) --project=$(Base.active_project()) $(script_path)`)
     lines = split(strip(out), '\n'; keepempty = false)
 

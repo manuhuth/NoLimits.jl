@@ -134,7 +134,7 @@ package and `using` it alongside NoLimits, and the feature appears.
 
 | Feature | Load |
 |---|---|
-| All plotting (`plot_fits`, `plot_vpc`, `plot_residuals`, ...) | `CairoMakie` (or any Makie backend) |
+| All plotting (`plot_fits`, `plot_vpc`, `plot_residuals`, ...) | `CairoMakie` (or any Makie backend) and `AlgebraOfGraphics` |
 | Neural networks in models (`NNParameters`) | `Lux`, or `SimpleChains` |
 | Saving and loading fits (`save_fit`, `load_fit`) | `JLD2` |
 | Bayesian sampling and variational inference (`MCMC`, `VI`, chain-based UQ, Turing samplers in `SAEM`/`MCEM`) | `Turing` |
@@ -162,7 +162,7 @@ This example fits an exponential-decay model with a subject-level random interce
 approximation. The snippet is self-contained — copy it into a Julia session and run.
 
 ```julia
-using NoLimits, DataFrames, Distributions, CairoMakie
+using NoLimits, DataFrames, Distributions, CairoMakie, AlgebraOfGraphics
 
 model = @Model begin
     @fixedEffects begin

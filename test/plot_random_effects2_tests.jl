@@ -1,6 +1,7 @@
 using Test
 using NoLimits
 using CairoMakie
+import AlgebraOfGraphics  # the plotting extension needs Makie AND AlgebraOfGraphics
 using DataFrames
 using Distributions
 using Turing

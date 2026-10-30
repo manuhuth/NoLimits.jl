@@ -22,7 +22,7 @@ We load Theophylline (twelve subjects) and reshape it so each subject receives o
 
 ```julia
 using NoLimits
-using CairoMakie
+using CairoMakie, AlgebraOfGraphics
 using CSV
 using DataFrames
 using Distributions

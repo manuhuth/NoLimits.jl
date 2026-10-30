@@ -3,6 +3,7 @@ using NoLimits
 using DataFrames
 using Distributions
 using CairoMakie
+import AlgebraOfGraphics  # the plotting extension needs Makie AND AlgebraOfGraphics
 using MCMCChains
 using Random
 using Turing: MH

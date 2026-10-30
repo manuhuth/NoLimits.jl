@@ -1,15 +1,19 @@
 module NoLimitsMakieExt
 
-# Makie-dependent drawing layer. Loads when NoLimits and Makie are both present;
-# users get it via `using CairoMakie` (any Makie backend pulls in Makie).
-# This extension may only reference Makie — never a specific backend.
+# Makie/AlgebraOfGraphics drawing layer. Loads when NoLimits, Makie and AlgebraOfGraphics
+# are all present; users get it via `using CairoMakie, AlgebraOfGraphics` (any Makie
+# backend pulls in Makie). This extension may only reference Makie and AlgebraOfGraphics —
+# never a specific backend.
 # The Makie-free core (PlotStyle, PlotCache, get_residuals, build_plot_cache and their
 # helpers) lives in NoLimits proper; this module only adds the plot_* methods plus the
-# panel model / styled-drawing layer in plotting/plotting.jl.
+# AlgebraOfGraphics core layer in plotting/plotting.jl (facet figures, composable panels,
+# legend/linking policy, PlotStyle mapping). plotting/legacy_panels.jl holds the old
+# closure-based panel model still used by functions not yet ported to AoG.
 
-using Makie: Makie, Figure, Axis, GridLayout, lines!, scatter!, barplot!, heatmap!,
+using Makie: Makie, Figure, Axis, GridLayout, Legend, lines!, scatter!, barplot!, heatmap!,
     poly!, band!, hlines!, vlines!, vspan!, text!, axislegend, xlims!,
     ylims!, Rect2f
+using AlgebraOfGraphics: AlgebraOfGraphics
 using KernelDensity
 using Distributions
 using Random
@@ -107,7 +111,10 @@ using NoLimits: COLOR_ACCENT, COLOR_CI, COLOR_PRIMARY, COLOR_REFERENCE, COLOR_SE
     probabilities_hidden_states, transform
 
 include("plotting/plotting.jl")
+include("plotting/legacy_panels.jl")
+include("plotting/plotting_fits.jl")
 include("plotting/plots.jl")
+include("plotting/plotting_multistart_em.jl")
 include("plotting/plotting_vpc.jl")
 include("plotting/plotting_observation_distributions.jl")
 include("plotting/plotting_residuals.jl")

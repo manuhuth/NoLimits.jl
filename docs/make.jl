@@ -6,7 +6,7 @@ push!(LOAD_PATH, joinpath(@__DIR__, ".."))
 using NoLimits
 # Load the Makie extension so its plot_* method docstrings resolve for the @docs
 # blocks in api.md (the drawing functions live in ext/NoLimitsMakieExt.jl).
-using CairoMakie
+using CairoMakie, AlgebraOfGraphics
 # Makie also exports `RealVector`; the explicit import disambiguates the bare name so
 # the `@docs` block and `@ref` links in api.md resolve to the NoLimits binding.
 using NoLimits: RealVector

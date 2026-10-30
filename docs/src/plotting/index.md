@@ -4,11 +4,12 @@ Effective model assessment depends on graphical diagnostics that expose patterns
 
 This page contains executable examples that render directly during the documentation build.
 
-!!! note "A Makie backend is required"
-    Every `plot_*` function lives in a package extension that loads when Makie is available.
-    Install a backend once with `using Pkg; Pkg.add("CairoMakie")`, then write
-    `using CairoMakie` alongside `using NoLimits`. Without it the plotting functions are not
-    defined and calling one reports that a Makie backend has to be loaded. See
+!!! note "A Makie backend and AlgebraOfGraphics are required"
+    Every `plot_*` function lives in a package extension that loads when Makie and
+    AlgebraOfGraphics are available. Install them once with
+    `using Pkg; Pkg.add(["CairoMakie", "AlgebraOfGraphics"])`, then write
+    `using CairoMakie, AlgebraOfGraphics` alongside `using NoLimits`. Without them the plotting
+    functions are not defined and calling one reports which packages have to be loaded. See
     [Optional Dependencies](../installation.md#Optional-Dependencies).
 
 All plotting functions accept a file-path keyword for saving output directly:
@@ -34,7 +35,7 @@ The following model and data are used throughout this page. The model specifies 
 
 ```@example plotting_overview
 using NoLimits
-using CairoMakie
+using CairoMakie, AlgebraOfGraphics
 CairoMakie.activate!(type = "png")
 using DataFrames
 using Distributions

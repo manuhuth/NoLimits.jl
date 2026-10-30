@@ -12,7 +12,7 @@ using NoLimits, Plots
 fig = plot_fits(res)                 # Plots.Plot
 
 # v0.2
-using NoLimits, CairoMakie
+using NoLimits, CairoMakie, AlgebraOfGraphics
 fig = plot_fits(res)                 # Makie.Figure
 ```
 
@@ -23,17 +23,17 @@ exceptions below) keyword arguments. If you never passed `kwargs_subplot`,
 
 ## Loading the plotting extension
 
-The drawing functions live in a package extension that loads when Makie is available.
-Load any Makie backend alongside NoLimits:
+The drawing functions live in a package extension that loads when Makie and
+AlgebraOfGraphics are available. Load any Makie backend and AlgebraOfGraphics alongside NoLimits:
 
 ```julia
 using NoLimits
-using CairoMakie      # static publication-quality output (recommended default)
-# or: using GLMakie   # interactive windows
+using CairoMakie, AlgebraOfGraphics      # static publication-quality output (recommended default)
+# or: using GLMakie, AlgebraOfGraphics   # interactive windows
 ```
 
 Calling a plot function without a backend loaded raises a `MethodError` whose message
-tells you to run `using CairoMakie`.
+tells you to run `using CairoMakie, AlgebraOfGraphics`.
 
 ## Return types and display
 
