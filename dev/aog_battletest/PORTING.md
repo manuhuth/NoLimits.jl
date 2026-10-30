@@ -28,7 +28,8 @@ functions, and verifies them with the same harness.
 | `ext/plotting/plotting.jl` | **AoG core** (below) + `combine_plots` + `_save_plot!` | done |
 | `ext/plotting/legacy_panels.jl` | old closure-based `MakiePanel` layer | delete when all ported |
 | `ext/plotting/plotting_fits.jl` | `plot_data`, `plot_fits` (reference ports) | done |
-| `ext/plotting/plots.jl` | hidden states, emissions, fits_comparison, observed_profiles, dv_pred, dv_ipred, wres_pred, shrinkage | to port |
+| `ext/plotting/plotting_hmm.jl` | `plot_hidden_states`, `plot_emission_distributions` | done (aog/hmm) |
+| `ext/plotting/plots.jl` | fits_comparison, observed_profiles, dv_pred, dv_ipred, wres_pred, shrinkage | to port |
 | `ext/plotting/plotting_multistart_em.jl` | multistart waterfall / FE variability, EM trajectories | to port |
 | `ext/plotting/plotting_residuals.jl`, `plotting_random_effects.jl`, `plotting_vpc.jl`, `plotting_observation_distributions.jl`, `plotting_uq.jl` | the rest | to port |
 

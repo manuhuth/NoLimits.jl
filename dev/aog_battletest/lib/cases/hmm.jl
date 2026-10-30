@@ -9,7 +9,11 @@ function cases_hmm()
     obs(f) = _bt_list(M, f, "observables")
     hasfit(f) = _bt_meta(M, f, "fit_type") != "Nothing"
 
-    function common_sel(f)
+    # Observables a function must reject (non-HMM for both, univariate for emissions).
+    bad_obs(f, fn) = fn == :plot_hidden_states ? _bt_list(M, f, "nonhmm_observables") :
+        _bt_list(M, f, "univariate_observables")
+
+    function common_sel(f, fn)
         o = Pair{String, String}[]
         push!(o, "inds_1" => "individuals_idx = 1")
         nind(f) >= 2 && push!(o, "inds_12" => "individuals_idx = [1, 2]")
@@ -26,7 +30,7 @@ function cases_hmm()
         push!(o, "obs_bad!err" => "observable = :no_such_observable")
         if length(obs(f)) > 1
             for (k, ob) in enumerate(obs(f))
-                push!(o, "obs$(k)" => "observable = $(_bt_sym(ob))")
+                push!(o, "obs$(k)" * (ob in bad_obs(f, fn) ? "!err" : "") => "observable = $(_bt_sym(ob))")
             end
         end
         push!(o, "dm_kw" => "dm = dm")
@@ -36,7 +40,7 @@ function cases_hmm()
 
     # --- plot_hidden_states ----------------------------------------------------------------
     function hs_sets(f)
-        o = vcat(["default" => ""], common_sel(f))
+        o = vcat(["default" => ""], common_sel(f, :plot_hidden_states))
         push!(o, "shx_off" => "shared_x_axis = false")
         push!(o, "shxy_off" => "shared_x_axis = false, shared_y_axis = false")
         push!(o, "mcmc_draws1" => "mcmc_draws = 1")
@@ -58,7 +62,8 @@ function cases_hmm()
     # --- plot_emission_distributions --------------------------------------------------------
     tp = "time_point = sort(unique(skipmissing(NoLimits.get_df(dm)[!, NoLimits.get_time_col(dm)])))[2]"
     function em_sets(f)
-        o = vcat(["default" => ""], common_sel(f))
+        o = vcat(["default" => ""], common_sel(f, :plot_emission_distributions))
+        push!(o, "shy_off_vector" => "shared_y_axis = false, figure_layout = :vector")
         append!(
             o, [
                 "tidx1" => "time_idx = 1", "tidx2" => "time_idx = 2",
