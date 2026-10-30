@@ -3,6 +3,8 @@
 # plot_random_effect_standardized, plot_random_effect_standardized_scatter.
 # Helpers `_bt_*` live in combine.jl.
 
+const _BT_RE_FULL = ("mvre_multigroup_laplace", "flow_re_laplace", "single_individual_re_laplace")
+
 function cases_random_effects()
     M = fixture_meta()
     cs = Case[]
@@ -86,7 +88,10 @@ function cases_random_effects()
         (
             :plot_random_effect_pairplot, f -> vcat(
                 sel(f; shared_axes = false), mcmc_draws_only(f),
-                ["kde_bw" => "kde_bandwidth = 0.3", "kde_bw_small" => "kde_bandwidth = 0.02"],
+                [
+                    "kde_bw" => "kde_bandwidth = 0.3", "kde_bw_small" => "kde_bandwidth = 0.02",
+                    "kde_bw_bad!err" => "kde_bandwidth = -1.0",
+                ],
             ),
         ),
         (
@@ -126,9 +131,15 @@ function cases_random_effects()
             ),
         ),
     ]
+    # Full option sweep also on the RE-specific fixtures (multivariate + several grouping
+    # columns, flow RE, VI posterior, single individual).
+    full(f) = f in _BT_FULL || f in _BT_RE_FULL
     for (fn, extra) in specs
         sets(f) = vcat(["default" => ""], extra(f), _bt_common())
-        append!(cs, _bt_cases(fn, _bt_for(M, fn), sets; base = base))
+        append!(cs, _bt_cases(fn, _bt_for(M, fn), sets; base = base, full = full))
+        # Fits without random effects (MLE, VI/MCMC without REs) must be rejected.
+        nore = sort([n for (n, d) in M if _bt_has_tag(M, n, :no_re) && get(d, "method", "none") != "none"])
+        append!(cs, cross(fn, nore, ["nore!err" => ""]))
     end
     return cs
 end
