@@ -123,6 +123,21 @@ function _check_unit_interval(v, name::AbstractString)
     return nothing
 end
 
+# Smallest default share of `base_subplot_width/height` a panel gets: the MAX_FIGURE_*
+# caps must not squeeze many rows/columns into unreadable strips (e.g. 50 individuals at
+# `ncols = 1` gave 2400 / 50 = 48 px per panel including its title).
+const MIN_PANEL_SCALE = 0.5
+
+"""
+    calculate_plot_size(nplots, ncols, style = PlotStyle()) -> (width, height)
+
+Default figure size for `nplots` panels on an `ncols`-wide grid: each panel gets
+`base_subplot_width x base_subplot_height` of `style`, scaled down for many panels, and
+the figure is clamped to `MIN/MAX_FIGURE_WIDTH/HEIGHT`. The maximum yields where it would
+make a panel smaller than `MIN_PANEL_SCALE` of the base size, so a long panel column grows
+instead of shrinking each panel. Explicit sizes (`kwargs_layout = (; size = ...)`) are
+used as given.
+"""
 function calculate_plot_size(nplots::Int, ncols::Int, style::PlotStyle = PlotStyle())
     _check_positive_int(nplots, "nplots")
     _check_positive_int(ncols, "ncols")
@@ -134,6 +149,8 @@ function calculate_plot_size(nplots::Int, ncols::Int, style::PlotStyle = PlotSty
     height = round(Int, nrows * style.base_subplot_height * scale)
     width = clamp(width, MIN_FIGURE_WIDTH, MAX_FIGURE_WIDTH)
     height = clamp(height, MIN_FIGURE_HEIGHT, MAX_FIGURE_HEIGHT)
+    width = max(width, round(Int, ncols * style.base_subplot_width * MIN_PANEL_SCALE))
+    height = max(height, round(Int, nrows * style.base_subplot_height * MIN_PANEL_SCALE))
     return (width, height)
 end
 

@@ -61,6 +61,21 @@ Tidy tables:
   fixed colors and legend order. Map `color = :series` in every layer that should appear in
   the legend; AoG merges a Scatter and a Lines layer with the same label into one entry.
 
+Category order (individuals, facets, colours): never rely on AoG's default sorting, which
+puts "s10" before "s2". Show categories in the order they first appear in the data:
+
+- `_plot_individuals(dm, individuals_idx; default_all = true)` → individual indices in
+  panel order: an explicit `individuals_idx` keeps the caller's order; `nothing` gives
+  all individuals (or the first one with `default_all = false`) in data order. Use it
+  instead of `_resolve_individuals` wherever individuals become panels / colours.
+  (`DataModel` itself sorts individuals by id, so `get_individuals(dm)` order is
+  lexicographic for string ids; `get_residuals` keeps that order and is unchanged.)
+- `_individuals_in_data_order(dm, inds)` → `inds` sorted by first data row.
+- `_ordered_levels(v)` → distinct values in first-appearance order; pass them as
+  `panels` to `_draw_facets` or as `categories` of an AoG scale.
+- `_data_ordered(:col)` → `:col => AoG.presorted` for a mapping whose levels should
+  keep the table's row order.
+
 Faceted figures (one panel per individual / parameter / observable):
 
 ```julia
@@ -101,6 +116,18 @@ legend row under the grid. It still accepts legacy `MakiePanel`s during the tran
 For a single-axis function without facets, use exactly this path so it has the same
 legend policy as faceted figures.
 
+`combine_plots(panels; ncols, style, link_x = true, link_y = true)` links the panel axes
+and hides repeated decorations (y tick labels/label outside column 1, x tick labels/label
+except on the lowest panel of each column); attributes a panel sets in its `axis` (e.g.
+`yticklabelsvisible` from `kwargs_subplot`) win. Use it instead of private linking code;
+the same policy is available on any vector of axes as
+`_link_panel_axes!(axes, ncols; link_x, link_y, keep = keys(kwargs_subplot))`. Link only
+what is really shared (e.g. skip `link_y` when panels have different y labels/kinds).
+
+Legends wrap: `_figure_legend!` (combine_plots) and `_draw_facets` set `nbanks =
+_legend_nbanks(labels, figure_width, style)`, the smallest number of rows whose estimated
+width fits the figure. Use `_legend_nbanks` for any other horizontal legend.
+
 ## 4. Conventions and pitfalls (learned in stage 1)
 
 - **Density / continuous colour overlays**: an AoG continuous `Color` scale shares one
@@ -108,6 +135,9 @@ legend policy as faceted figures.
   drawing densities as `post` hooks with plain `heatmap!`/`scatter!` (own colorrange per
   call) and `translate!(plot, 0, 0, -1)` so they sit behind the AoG layers. If you need an
   AoG heatmap instead, pre-normalise z per panel to [0, 1].
+  Use a colormap that starts fully transparent (`_density_colormap` in
+  `plotting_fits.jl`: viridis with an alpha ramp, or transparent-to-colour per
+  component), otherwise the whole grid rectangle is painted where the density is ~0.
 - **Histograms**: AoG `histogram(bins = n)` with an integer gives StatsBase "nice" edges,
   not n equal bins. Compute bins with the core helper `_histogram_xy` and draw a
   `visual(BarPlot; gap = 0)` layer (or pass explicit edges) to keep the old binning.
@@ -124,9 +154,13 @@ legend policy as faceted figures.
   unique ("y[1] 5%").
 - **Tests** that inspected `ax.title` or per-axis legends must change: facet titles are
   `Makie.Label`s in `fig.content`, and there is one `Makie.Legend` per figure.
-- **Compile time**: the first AoG draw in a fresh process costs ~50 s of compilation
-  (loading packages ~12 s); later draws take 1-7 s. Keep render jobs batched (the harness
-  already loads each fixture once per chunk).
+- **Compile time**: `ext/plotting/precompile.jl` runs a small AoG workload (faceted
+  figure with scatter/lines/dashed/heatmap post hook + composed `AoGPanel`s) while the
+  extension precompiles, tagging inferred code for the package image (what PrecompileTools
+  does, without the dependency). First `plot_fits` in a fresh process: ~47 s → ~14 s
+  (loading ~13 s and the first CairoMakie save ~6 s unchanged). If your functions use
+  other AoG/Makie paths (BarPlot, Band, Colorbar, ...), add a few lines for them to
+  `_precompile_workload` at merge time. Keep render jobs batched anyway.
 - `using AlgebraOfGraphics` alongside `using CairoMakie` is required for the extension to
   load; tests use `import AlgebraOfGraphics`.
 
@@ -156,9 +190,12 @@ cp /home/mhuth1_hpc/NoLimits-aog/dev/aog_battletest/envs/new/Manifest.toml envs/
 cp /home/mhuth1_hpc/NoLimits-aog/dev/aog_battletest/envs/baseline/Manifest.toml envs/baseline/
 ln -s /home/mhuth1_hpc/NoLimits-aog/dev/aog_battletest/fixtures/data fixtures/data
 mkdir -p logs out && ln -s /home/mhuth1_hpc/NoLimits-aog/dev/aog_battletest/out/baseline out/baseline
-sed -i "s#/home/mhuth1_hpc/NoLimits-aog/dev/aog_battletest#$PWD#g" jobs/*.sbatch   # job paths
 MODES=new sbatch jobs/precompile.sbatch      # compiles this worktree's NoLimits once
 ```
+
+Job scripts take all paths from the submit directory (`$SLURM_SUBMIT_DIR`, or `BT_ROOT`):
+always run `sbatch jobs/...` from `dev/aog_battletest` of your own worktree; logs go to
+`./logs`, `jobs/tests.sbatch` and `jobs/runic.sbatch` act on that worktree.
 
 The baseline screenshots (`out/baseline`) were rendered once from origin/main and are
 shared read-only; do not re-render them unless you add cases (then render only the new

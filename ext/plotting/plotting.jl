@@ -68,6 +68,28 @@ function _aog_legend(style::PlotStyle; kwargs...)
 end
 
 """
+    _legend_nbanks(labels, width, style) -> Int
+
+Number of rows (`nbanks`) a horizontal legend with entries `labels` needs to fit into a
+figure `width` units wide: the smallest row count for which the widest entry of every
+column, summed over the columns, fits. Entry widths are estimated from the label length
+and `style.font_size_legend` (marker patch + gaps included), so long legends wrap instead
+of overflowing the figure.
+"""
+function _legend_nbanks(labels, width::Real, style::PlotStyle)
+    n = length(labels)
+    n <= 1 && return 1
+    fs = style.font_size_legend
+    w = [0.6 * fs * length(string(l)) + 2.5 * fs + 16 for l in labels]  # text + patch + gaps
+    avail = max(Float64(width) - 2 * style.figure_padding - 20, 1.0)
+    for nb in 1:n
+        nc = cld(n, nb)
+        sum(maximum(w[j:nc:n]) for j in 1:nc) <= avail && return nb
+    end
+    return n
+end
+
+"""
     _scatter_visual(style; kwargs...) -> AoG.Layer
 
 `visual(Scatter)` with the style's marker size/alpha/stroke; `kwargs` win.
@@ -143,6 +165,55 @@ keeping the given order in the legend and hiding the legend title.
 """
 _series_palette(pairs) = (; palette = collect(pairs), categories = [first(p) for p in pairs], label = "")
 
+# --- Category order ------------------------------------------------------------------------
+#
+# AoG sorts categorical values (facets, colours, ...) unless told otherwise, which puts
+# "s10" before "s2". NoLimits shows categories in the order they first appear in the data:
+# pass the levels explicitly as scale `categories` (as `_draw_facets` does for `panels`) or
+# map a column with `_data_ordered(:col)`.
+
+"""
+    _ordered_levels(v) -> Vector
+
+Distinct values of `v` in first-appearance order (never sorted). Use it for the
+`categories` of an AoG scale or the `panels` of [`_draw_facets`](@ref).
+"""
+_ordered_levels(v) = unique(v)
+
+"""
+    _data_ordered(col::Symbol) -> Pair
+
+AoG mapping entry `col => presorted`: categorical levels of `col` keep the row order of
+the table instead of AoG's default sorting.
+"""
+_data_ordered(col::Symbol) = col => AoG.presorted
+
+"""
+    _individuals_in_data_order(dm, inds) -> Vector{Int}
+
+The individual indices `inds` sorted by the first row of each individual in the data
+table (`DataModel` itself sorts individuals by id, which for string ids is lexicographic:
+s1, s10, s11, ..., s2).
+"""
+function _individuals_in_data_order(dm::DataModel, inds)
+    rows = get_rows(get_row_groups(dm))
+    return sort!(collect(Int, inds); by = i -> minimum(rows[i]))
+end
+
+"""
+    _plot_individuals(dm, individuals_idx; default_all = true) -> Vector{Int}
+
+Individuals to draw, in panel order. An explicit `individuals_idx` (indices or ids) is
+resolved by `_resolve_individuals` and keeps the caller's order; `nothing` selects all
+individuals (or the first one in data order when `default_all = false`) in the order
+they first appear in the data.
+"""
+function _plot_individuals(dm::DataModel, individuals_idx; default_all::Bool = true)
+    individuals_idx === nothing || return _resolve_individuals(dm, individuals_idx)
+    order = _individuals_in_data_order(dm, eachindex(get_individuals(dm)))
+    return default_all ? order : order[1:1]
+end
+
 # --- Faceted figures ---------------------------------------------------------------------
 
 """
@@ -187,12 +258,14 @@ function _draw_facets(
     sc = (; Layout = (; palette = AoG.wrapped(cols = ncols_use), categories = collect(String, panels)))
     isempty(series) || (sc = merge(sc, (; Color = _series_palette(series))))
     sc = merge(sc, _nt(scales))
+    fig_kw = _aog_figure(style, n, ncols_use, kwargs_layout)
+    nbanks = _legend_nbanks(first.(series), first(fig_kw.size), style)
     fg = AoG.draw(
         layers, AoG.scales(; sc...);
         axis = _aog_axis(style, kwargs_subplot; _nt(axis)...),
-        figure = _aog_figure(style, n, ncols_use, kwargs_layout),
+        figure = fig_kw,
         facet = (; linkxaxes = _facet_link(shared_x), linkyaxes = _facet_link(shared_y)),
-        legend = (legend && !isempty(series)) ? _aog_legend(style) : (; show = false),
+        legend = (legend && !isempty(series)) ? _aog_legend(style; nbanks) : (; show = false),
     )
     for (k, label) in enumerate(panels)
         ax = _facet_axis(fg, k, ncols_use)
@@ -267,40 +340,93 @@ function _figure_legend!(fig::Figure, legends, style::PlotStyle; row::Integer, n
         end
     end
     isempty(labels) && return nothing
+    nbanks = _legend_nbanks(labels, first(fig.scene.viewport[].widths), style)
     return Legend(
         fig[row, 1:ncols], elements, labels;
         orientation = :horizontal, framevisible = false, labelsize = style.font_size_legend,
-        tellheight = true, tellwidth = false
+        nbanks = nbanks, tellheight = true, tellwidth = false
     )
 end
 
 """
-    combine_plots(panels::Vector; ncols, style, kwargs...) -> Makie.Figure
+    _link_panel_axes!(axes, ncols; link_x = false, link_y = false, keep = ()) -> axes
+
+Link the axes of panels laid out row-wise on an `ncols`-wide grid (`axes[k]` is panel
+`k`, `nothing` for a missing panel) and hide the decorations a shared axis repeats: y tick
+labels and y label outside the first column, x tick labels and x label except on the
+lowest panel of each column. Attributes named in `keep` (e.g. `keys(kwargs_subplot)`)
+are left as the caller set them. This is the `combine_plots(...; link_x, link_y)`
+policy and matches the decluttering of `_draw_facets`.
+"""
+function _link_panel_axes!(
+        axes::AbstractVector, ncols::Integer;
+        link_x::Bool = false, link_y::Bool = false, keep = ()
+    )
+    present = [ax for ax in axes if ax !== nothing]
+    length(present) > 1 || return axes
+    n = length(axes)
+    ncols_use = min(Int(ncols), n)
+    _hide!(ax, attr) = attr in keep || setproperty!(ax, attr, false)
+    if link_y
+        Makie.linkyaxes!(present...)
+        for (k, ax) in enumerate(axes)
+            (ax === nothing || fldmod1(k, ncols_use)[2] == 1) && continue
+            _hide!(ax, :yticklabelsvisible)
+            _hide!(ax, :ylabelvisible)
+        end
+    end
+    if link_x
+        Makie.linkxaxes!(present...)
+        for (k, ax) in enumerate(axes)
+            ax === nothing && continue
+            # lowest panel of its column: no panel below it
+            any(j -> axes[j] !== nothing, (k + ncols_use):ncols_use:n) || continue
+            _hide!(ax, :xticklabelsvisible)
+            _hide!(ax, :xlabelvisible)
+        end
+    end
+    return axes
+end
+
+"""
+    combine_plots(panels::Vector; ncols, style, link_x = false, link_y = false,
+                  kwargs...) -> Makie.Figure
 
 Lay `panels` (as returned by plotting functions with `return_panel = true`) into one
 `Figure` on an `ncols`-wide grid, with a single merged legend below the panels.
 `kwargs...` are Makie `Figure` attributes (this is where a caller's `kwargs_layout` flows);
-a caller `size`/`figure_padding`/... wins over the computed defaults.
+a caller `size`/`figure_padding`/... wins over the computed defaults. `link_x`/`link_y`
+link the panels' x/y axes and hide the repeated tick labels and axis labels (x kept on the
+lowest panel of each column, y in the first column); an attribute a panel sets explicitly
+in its `axis` (e.g. `yticklabelsvisible` from `kwargs_subplot`) is kept. The legend wraps
+into several rows when its entries do not fit the figure width.
 """
 function combine_plots(
         panels::Vector; ncols::Int = DEFAULT_PLOT_COLS,
-        style::PlotStyle = PlotStyle(), kwargs...
+        style::PlotStyle = PlotStyle(), link_x::Bool = false, link_y::Bool = false,
+        kwargs...
     )
     _check_positive_int(ncols, "ncols")
     n = length(panels)
     ncols_use = min(ncols, max(n, 1))
     fig = Figure(; _aog_figure(style, n, ncols_use, NamedTuple(kwargs))...)
     legends = Any[]
+    axes = Any[nothing for _ in 1:n]
+    keep = Set{Symbol}()
     for (i, panel) in enumerate(panels)
         row, col = fldmod1(i, ncols_use)
         if panel isa AoGPanel
-            _, leg = _materialize_panel!(fig[row, col], panel)
+            ax, leg = _materialize_panel!(fig[row, col], panel)
+            axes[i] = ax
             push!(legends, leg)
+            # decorations the panel sets explicitly (e.g. from kwargs_subplot) win
+            union!(keep, keys(panel.axis))
         else
             # LEGACY MakiePanel / MakiePanelGroup (unported functions; legend in-axis)
             _materialize!(fig[row, col], panel, style)
         end
     end
+    (link_x || link_y) && _link_panel_axes!(axes, ncols_use; link_x, link_y, keep)
     nrows = cld(max(n, 1), ncols_use)
     _figure_legend!(fig, legends, style; row = nrows + 1, ncols = ncols_use)
     return fig

@@ -139,4 +139,6 @@ for f in (
     end
 end
 
+include("plotting/precompile.jl")
+
 end # module NoLimitsMakieExt

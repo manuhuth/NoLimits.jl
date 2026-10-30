@@ -24,7 +24,7 @@ function _plot_data_dm(
     )
     _check_positive_int(ncols, "ncols")
     obs_name = _get_observable(dm, nothing)
-    inds = _resolve_individuals(dm, individuals_idx; default_all = true)
+    inds = _plot_individuals(dm, individuals_idx)
     (is_mv, n_marginals) = _obs_multivariate_info(dm, obs_name)
     marginal_colors = _marginal_colors(n_marginals, style)
 
@@ -95,7 +95,8 @@ Plot raw observed data for each individual as a multi-panel figure.
 - `dm::Union{Nothing, DataModel} = nothing`: data model (inferred from `res` by default).
 - `x_axis_feature::Union{Symbol, Nothing} = nothing`: covariate to use as the x-axis;
   defaults to the time column.
-- `individuals_idx`: indices or IDs of individuals to include, or `nothing` for all.
+- `individuals_idx`: indices or IDs of individuals to include, in the given panel order,
+  or `nothing` for all individuals in the order they first appear in the data.
 - `shared_x_axis::Bool = true`: share and link the x axis across panels; inner tick labels
   are hidden and one x label spans the grid.
 - `shared_y_axis::Bool = true`: share and link the y axis across panels (same treatment).
@@ -251,9 +252,24 @@ function _component_dists(dists_by_draw, obs_name::Symbol, m, n_marginals::Int)
     ]
 end
 
-# Transparent-to-component-color ramp so per-component density bands can overlay.
+# Density heatmap colormaps start fully transparent, so the part of the grid where the density is
+# ~0 shows the axis background instead of a filled rectangle (the old `(:viridis, 0.5)`
+# painted the whole time x y grid purple). Scalar outcomes: viridis whose opacity ramps
+# from 0 to `_DENSITY_ALPHA_MAX` over the lowest `_DENSITY_ALPHA_RAMP` of the (per-panel)
+# colour range; vector components: transparent-to-component-colour ramp so bands overlay.
+const _DENSITY_ALPHA_MAX = 0.6
+const _DENSITY_ALPHA_RAMP = 0.25
+
 function _density_colormap(m, marginal_colors)
-    m === nothing && return (:viridis, 0.5)
+    if m === nothing
+        cs = Makie.to_colormap(:viridis)
+        n = length(cs)
+        return [
+            Makie.RGBAf(
+                    c.r, c.g, c.b, _DENSITY_ALPHA_MAX * min(1.0, (k - 1) / ((n - 1) * _DENSITY_ALPHA_RAMP))
+                ) for (k, c) in enumerate(cs)
+        ]
+    end
     c = Makie.to_color(marginal_colors[m])
     return Makie.cgrad([Makie.RGBAf(c.r, c.g, c.b, 0.0), Makie.RGBAf(c.r, c.g, c.b, 0.6)])
 end
@@ -326,7 +342,8 @@ Plot model predictions against observed data for each individual as a multi-pane
   prediction line (e.g. `mean`, `median`).
 - `plot_data_points::Bool = true`: overlay the observed data points.
 - `observable`: name of the outcome variable to plot, or `nothing` to use the first.
-- `individuals_idx`: indices or IDs of individuals to include, or `nothing` for all.
+- `individuals_idx`: indices or IDs of individuals to include, in the given panel order,
+  or `nothing` for all individuals in the order they first appear in the data.
 - `x_axis_feature::Union{Nothing, Symbol} = nothing`: covariate for the x-axis.
 - `shared_x_axis::Bool = true`, `shared_y_axis::Bool = true`: share and link the axes
   across panels; inner tick labels are hidden and one axis label spans the grid.
@@ -398,7 +415,7 @@ function plot_fits(
         (1 <= marginal_idx <= n_marginals) ||
             error("marginal_idx must be between 1 and $(n_marginals).")
     end
-    inds = _resolve_individuals(dm, individuals_idx; default_all = true)
+    inds = _plot_individuals(dm, individuals_idx)
 
     if cache === nothing
         cache = build_plot_cache(
