@@ -455,7 +455,7 @@ end
     @test length(plot_hidden_states(res; figure_layout = :vector, individuals_idx = 1)) == 1
     @test isa(plot_hidden_states(dm; figure_layout = :vector), Vector{CairoMakie.Figure})
 
-    @test plot_emission_distributions(res, time_idx = 1, ncols = 1) !== nothing
+    @test plot_emission_distributions(res, time_idx = 1) !== nothing
     @test plot_emission_distributions(res; time_idx = 2) !== nothing
     @test plot_emission_distributions(res; time_point = 1.0) !== nothing
     p_emission_vector = plot_emission_distributions(res; figure_layout = :vector)

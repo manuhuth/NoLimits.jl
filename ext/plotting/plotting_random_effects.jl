@@ -58,8 +58,9 @@ function _re_curve_summary(mat::AbstractMatrix, qs)
     return m, lo, hi
 end
 
-# Probability histogram of each sample on fixed uniform edges (columns: draws).
-function _re_fixed_hist(samples_by_draw, lo::Real, hi::Real, nbins::Int)
+# Histogram of each sample on fixed uniform edges (columns: draws): probabilities (bar
+# heights sum to 1), or densities (area 1) with `density = true`.
+function _re_fixed_hist(samples_by_draw, lo::Real, hi::Real, nbins::Int; density::Bool = false)
     out = Vector{Vector{Float64}}()
     for samp in samples_by_draw
         counts = zeros(Float64, nbins)
@@ -70,7 +71,7 @@ function _re_fixed_hist(samples_by_draw, lo::Real, hi::Real, nbins::Int)
         end
         ssum = sum(counts)
         ssum == 0 && continue
-        push!(out, counts ./ ssum)
+        push!(out, density ? counts ./ (ssum * ((hi - lo) / nbins)) : counts ./ ssum)
     end
     return out
 end
@@ -208,7 +209,8 @@ posterior draws with dashed `mcmc_quantiles` lines.
 - `style::PlotStyle = PlotStyle()`: visual style configuration.
 - `mcmc_draws`, `mcmc_warmup`, `mcmc_quantiles`, `mcmc_quantiles_alpha`: MCMC settings.
 - `flow_samples::Int = 500`: number of samples for normalizing-flow distributions.
-- `flow_plot::Symbol = :kde`: `:kde` or `:hist` for flow-based distributions.
+- `flow_plot::Symbol = :kde`: `:kde` or `:hist` for flow-based distributions (the
+  histogram is drawn on the density scale, area 1, like the other PDF panels).
 - `flow_bins::Int = 20`, `flow_bandwidth`: histogram bins / KDE bandwidth for flows.
 - `x_quantile::Float64 = 0.99`: coverage quantile used to set the x-axis range from the
   fitted distribution (e.g. `0.99` spans the 0.5th–99.5th percentiles).
@@ -344,7 +346,8 @@ function plot_random_effects_pdf(
                 if flow_plot == :hist && !isempty(samples_by_draw)
                     edges = range(min_v, max_v; length = flow_bins + 1)
                     centers = (edges[1:(end - 1)] .+ edges[2:end]) ./ 2
-                    curves = _re_fixed_hist(samples_by_draw, min_v, max_v, flow_bins)
+                    # a flow histogram stands for the PDF: density scale (area 1)
+                    curves = _re_fixed_hist(samples_by_draw, min_v, max_v, flow_bins; density = true)
                     isempty(curves) && continue
                     mean_c, qlo, qhi = _re_curve_summary(reduce(hcat, curves), qs)
                     _re_push!(acc, panel, centers, mean_c, "PDF", :bar)
@@ -382,9 +385,8 @@ function plot_random_effects_pdf(
                         end
                         length(samp) < 2 && continue
                         if flow_plot == :hist
-                            h = _histogram_xy(
-                                samp; bins = flow_bins, normalization = :probability
-                            )
+                            # a flow histogram stands for the PDF: density scale (area 1)
+                            h = _histogram_xy(samp; bins = flow_bins, normalization = :pdf)
                             _re_push!(acc, panel, h.centers, h.heights, "PDF", :bar)
                             y_max = maximum(h.heights)
                             xlims_acc = _re_merge(xlims_acc, minimum(samp), maximum(samp))
@@ -571,7 +573,7 @@ end
 
 """
     plot_random_effect_pairplot(res::FitResult; dm, re_names, levels, individuals_idx,
-                                ncols, style, kde_bandwidth, mcmc_draws, rng, save_path,
+                                style, kde_bandwidth, mcmc_draws, rng, save_path,
                                 kwargs_subplot, kwargs_layout) -> Makie.Figure
 
 Pairplot (scatter matrix) of empirical-Bayes estimates across all pairs of random
@@ -579,7 +581,8 @@ effects, useful for visualizing correlations and joint structure.
 
 Random effects are grouped by their grouping column (only random effects of the same
 column share levels). Each group is an `n × n` block of rows: the diagonal shows the
-probability histogram (20 uniform bins, optional KDE) of one random effect (component),
+histogram (20 uniform bins) of one random effect (component), as probabilities, or as a
+density (area 1) with the KDE overlaid when `kde_bandwidth` is given,
 the off-diagonal cells the scatter of row variable against column variable. Blocks of
 several groups are stacked below each other; axes are not linked.
 
@@ -587,8 +590,6 @@ several groups are stacked below each other; axes are not linked.
 - `dm::Union{Nothing, DataModel} = nothing`: data model (inferred from `res` by default).
 - `re_names`: random-effect names to include, or `nothing` for all.
 - `levels`, `individuals_idx`: grouping level or individual filters.
-- `ncols::Int = 3`: validated (`>= 1`); the matrix layout is fixed by the number of
-  variables.
 - `style::PlotStyle = PlotStyle()`: visual style configuration.
 - `kde_bandwidth::Union{Nothing, Float64} = nothing`: when given, a KDE with this
   bandwidth is overlaid on the diagonal histograms.
@@ -605,7 +606,6 @@ function plot_random_effect_pairplot(
         re_names = nothing,
         levels = nothing,
         individuals_idx = nothing,
-        ncols::Int = DEFAULT_PLOT_COLS,
         style::PlotStyle = PlotStyle(),
         kde_bandwidth::Union{Nothing, Float64} = nothing,
         mcmc_draws::Int = 1000,
@@ -617,7 +617,6 @@ function plot_random_effect_pairplot(
     )
     dm = _get_dm(res, dm)
     save_path = _resolve_plot_path(save_path, plot_path)
-    _check_positive_int(ncols, "ncols")
     kde_bandwidth === nothing || _check_positive(kde_bandwidth, "kde_bandwidth")
     _require_re_supported(res)
     re_list = _filter_re_without_covariates(res, unique(_resolve_re_names(dm, re_names)))
@@ -691,11 +690,13 @@ function plot_random_effect_pairplot(
                     Axis(pos; axis...)
                     continue
                 end
-                h = _histogram_xy(v; bins = 20, normalization = :probability)
+                # density scale (area 1) when a KDE is drawn on the same axis
+                with_kde = kde_bandwidth !== nothing && length(v) >= 2
+                h = _histogram_xy(v; bins = 20, normalization = with_kde ? :pdf : :probability)
                 layers = AoG.data((; x = h.centers, y = h.heights)) * AoG.mapping(:x, :y) *
                     AoG.visual(Makie.BarPlot; gap = 0, strokewidth = 0, width = h.width, color = style.color_secondary)
                 y_max = maximum(h.heights)
-                if kde_bandwidth !== nothing && length(v) >= 2
+                if with_kde
                     xk, yk = _kde_xy(v; bandwidth = kde_bandwidth)
                     layers += AoG.data((; x = collect(xk), y = collect(yk))) * AoG.mapping(:x, :y) *
                         _line_visual(style; color = style.color_secondary)
@@ -852,7 +853,9 @@ function plot_random_effect_distributions(
                         if flow_plot == :hist
                             edges = range(min_v, max_v; length = flow_bins + 1)
                             centers = (edges[1:(end - 1)] .+ edges[2:end]) ./ 2
-                            counts_list = _re_fixed_hist(samples_by_draw, min_v, max_v, flow_bins)
+                            counts_list = _re_fixed_hist(
+                                samples_by_draw, min_v, max_v, flow_bins; density = true
+                            )
                             if isempty(counts_list)
                                 @warn "Skipping RE flow histogram (insufficient samples)." re = re level = lvl
                                 continue
@@ -885,7 +888,7 @@ function plot_random_effect_distributions(
                             continue
                         end
                         if flow_plot == :hist
-                            h = _histogram_xy(samples; bins = flow_bins, normalization = :probability)
+                            h = _histogram_xy(samples; bins = flow_bins, normalization = :pdf)
                             _re_push!(acc, panel, h.centers, h.heights, "flow", :bar)
                             y_max = maximum(h.heights)
                             xlims_acc = _re_merge(xlims_acc, minimum(samples), maximum(samples))
@@ -1188,8 +1191,9 @@ end
                                     kwargs_subplot, kwargs_layout) -> Makie.Figure
 
 Plot standardized (z-score) empirical-Bayes estimates for each random effect as a
-probability histogram (20 uniform bins) and/or KDE, one panel per random effect
-(component). Values far from zero indicate outliers or misspecification.
+histogram (20 uniform bins) and/or KDE, one panel per random effect (component). The
+histogram shows probabilities on its own and a density (area 1, y axis "Density") when
+the KDE is drawn on the same axis. Values far from zero indicate outliers or misspecification.
 
 # Keyword Arguments
 - `dm::Union{Nothing, DataModel} = nothing`: data model (inferred from `res` by default).
@@ -1268,7 +1272,11 @@ function plot_random_effect_standardized(
             panel = show_comp ? string(re, " | ", comp_name) : string(re)
             y_max = 0.0
             if show_hist
-                h = _histogram_xy(zvals; bins = 20, normalization = :probability)
+                # density scale (area 1) when the KDE is drawn on the same axis
+                h = _histogram_xy(
+                    zvals; bins = 20,
+                    normalization = show_kde && length(zvals) >= 2 ? :pdf : :probability
+                )
                 _re_push!(acc, panel, h.centers, h.heights, "z", :bar)
                 y_max = max(y_max, maximum(h.heights))
             end
@@ -1284,8 +1292,7 @@ function plot_random_effect_standardized(
             y_max > 0 && (acc.ylim[panel] = (0.0, y_max * 1.05))
         end
     end
-    y_label = show_hist && show_kde ? "Probability / Density" :
-        (show_kde ? "Density" : "Probability")
+    y_label = show_kde ? "Density" : "Probability"
     fig = _re_draw(
         acc; style = style, ncols = ncols,
         series = ["z" => style.color_secondary, "KDE" => style.color_secondary],

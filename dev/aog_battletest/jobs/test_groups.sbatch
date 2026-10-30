@@ -17,7 +17,10 @@ B=${BT_ROOT:-$SLURM_SUBMIT_DIR}
 R=$(cd "$B/../.." && pwd)
 cd $R/test
 if [ "$SLURM_ARRAY_TASK_ID" = "0" ]; then
-  JULIA_NUM_PRECOMPILE_TASKS=4 julia --project=$R/test -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
+  # same cache flags as the test subprocesses (runtests.jl runs them with -O0 and the
+  # parent's --check-bounds), so the array tasks do not all precompile concurrently
+  julia --project=$R/test -e 'using Pkg; Pkg.instantiate()'
+  JULIA_NUM_PRECOMPILE_TASKS=4 julia --project=$R/test --check-bounds=yes -O0 --min-optlevel=0 -e 'using Pkg; Pkg.precompile()'
   echo "exit=$?"; exit 0
 fi
 echo "group=$SLURM_ARRAY_TASK_ID host=$(hostname)"; date

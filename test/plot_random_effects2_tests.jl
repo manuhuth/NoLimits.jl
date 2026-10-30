@@ -78,7 +78,14 @@ end
 @testset "random effects new plots Laplace flow dim2" begin
     res = fx_npf2_laplace()
 
-    @test plot_random_effects_pdf(res; flow_samples = 50, flow_plot = :hist) !== nothing
+    fig = plot_random_effects_pdf(res; flow_samples = 50, flow_plot = :hist)
+    # a flow histogram stands for the PDF: density scale (area 1)
+    fbars = [p for ax in fig.content if ax isa Axis for p in ax.scene.plots if p isa BarPlot]
+    @test !isempty(fbars)
+    @test all(b -> isapprox(sum(pt[2] for pt in b[1][]) * b.width[], 1.0; atol = 1.0e-8), fbars)
+    fig = plot_random_effect_distributions(res; flow_samples = 50, flow_plot = :hist)
+    fbars = [p for ax in fig.content if ax isa Axis for p in ax.scene.plots if p isa BarPlot]
+    @test all(b -> isapprox(sum(pt[2] for pt in b[1][]) * b.width[], 1.0; atol = 1.0e-8), fbars)
     @test plot_random_effects_scatter(res) !== nothing
     @test plot_random_effect_pairplot(res) !== nothing
 end
@@ -210,7 +217,10 @@ _re_all_xlabels(fig) = vcat([string(ax.xlabel[]) for ax in _re_axes(fig)], _re_l
         @test all(ax -> ax.xgridvisible[], _re_axes(fig))
         @test "X custom" in _re_all_xlabels(fig)
         @test _re_nlegends(fig) <= 1
-        @test_throws ErrorException f(res; ncols = 0)
+        # the pairplot matrix has no `ncols` (its layout is fixed by the variables)
+        f === plot_random_effect_pairplot ?
+            (@test_throws MethodError f(res; ncols = 2)) :
+            (@test_throws ErrorException f(res; ncols = 0))
     end
 
     # one panel per RE component, titled by facet labels, one figure legend
@@ -234,6 +244,20 @@ _re_all_xlabels(fig) = vcat([string(ax.xlabel[]) for ax in _re_axes(fig)], _re_l
     @test _re_nlegends(fig) == 0
     @test any(ax -> ax.xlabel[] == "eta" && ax.ylabel[] == "zeta_1", axs)
     @test_throws ErrorException plot_random_effect_pairplot(res; kde_bandwidth = -1.0)
+    # diagonal histograms: a density (area 1) under the KDE, probabilities without it
+    _bars(fig) = [p for ax in _re_axes(fig) for p in ax.scene.plots if p isa BarPlot]
+    _area(b) = sum(pt[2] for pt in b[1][]) * b.width[]
+    _psum(b) = sum(pt[2] for pt in b[1][])
+    @test all(b -> isapprox(_area(b), 1.0; atol = 1.0e-8), _bars(fig))
+    @test all(b -> isapprox(_psum(b), 1.0; atol = 1.0e-8), _bars(plot_random_effect_pairplot(res)))
+    # standardized EBEs: same rule, and the y axis says what is drawn
+    fig_s = plot_random_effect_standardized(res; show_hist = true, show_kde = true)
+    @test !isempty(_bars(fig_s))
+    @test all(b -> isapprox(_area(b), 1.0; atol = 1.0e-8), _bars(fig_s))
+    @test all(ax -> ax.ylabel[] == "Density", _re_axes(fig_s))
+    fig_s = plot_random_effect_standardized(res; show_hist = true, show_kde = false)
+    @test all(b -> isapprox(_psum(b), 1.0; atol = 1.0e-8), _bars(fig_s))
+    @test all(ax -> ax.ylabel[] == "Probability", _re_axes(fig_s))
 
     # distributions: one panel per (RE, level, component); EBE line in the legend
     fig = plot_random_effect_distributions(res; re_names = :eta, levels = [:ID1, :ID2])

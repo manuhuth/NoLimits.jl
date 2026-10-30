@@ -138,8 +138,8 @@ save("fits.png", fig)
 ## Figure layout since the AlgebraOfGraphics port
 
 Since the release after v0.3.0 the plotting extension draws with AlgebraOfGraphics.
-Names, keyword arguments and return types are unchanged; the following differences can
-affect code that post-processes figures:
+Function names and return types are unchanged; the following changes can affect
+existing code:
 
 - `AlgebraOfGraphics` must be loaded next to a Makie backend
   (`using CairoMakie, AlgebraOfGraphics`), otherwise the `plot_*` functions are not
@@ -153,6 +153,13 @@ affect code that post-processes figures:
   `combine_plots(panels; ncols, link_x, link_y)`.
 - `kwargs_subplot` now reaches every axis of the residual and random-effect plots
   (before, any value raised an error there).
+- Removed keywords: `ncols` of `plot_emission_distributions` and
+  `plot_random_effect_pairplot`, and `rng` of the `DataModel` methods of
+  `plot_hidden_states` and `plot_emission_distributions`. Drop them from your calls.
+- A histogram drawn together with a density curve (residual distribution against N(0,1),
+  pairplot diagonal with KDE, standardized EBEs with KDE, normalizing-flow histograms of
+  the random-effect PDF plots) is scaled as a density (area 1); other histograms show
+  probabilities.
 
 ## Name collision: `RealVector`
 

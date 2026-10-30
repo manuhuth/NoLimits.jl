@@ -18,8 +18,10 @@ function cases_hmm()
         push!(o, "inds_1" => "individuals_idx = 1")
         nind(f) >= 2 && push!(o, "inds_12" => "individuals_idx = [1, 2]")
         push!(o, "inds_empty!err" => "individuals_idx = Int[]")
-        push!(o, "ncols1" => "ncols = 1")
-        push!(o, "ncols2" => "ncols = 2")
+        # the emission grid (individuals x states) has no `ncols` keyword: rejected
+        e = fn == :plot_emission_distributions ? "!err" : ""
+        push!(o, "ncols1$(e)" => "ncols = 1")
+        push!(o, "ncols2$(e)" => "ncols = 2")
         push!(o, "ncols0!err" => "ncols = 0")
         push!(o, "shy_off" => "shared_y_axis = false")
         push!(o, "vector" => "figure_layout = :vector")

@@ -191,7 +191,7 @@ only propagate the filter and draw no bar.
 - `kwargs_subplot`, `kwargs_layout`: Makie `Axis` / `Figure` attributes (user values win).
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot (`:single` only).
 - `params`, `constants_re`, `mcmc_draws`, `rng`: parameter overrides and random-effect
-  settings as in [`plot_fits`](@ref).
+  settings as in [`plot_fits`](@ref) (`mcmc_draws` and `rng` only for a `FitResult`).
 """
 function plot_hidden_states(
         res::FitResult;
@@ -247,8 +247,7 @@ function plot_hidden_states(
         save_path::Union{Nothing, String} = nothing,
         plot_path::Union{Nothing, String} = nothing,
         params::NamedTuple = NamedTuple(),
-        constants_re::NamedTuple = NamedTuple(),
-        rng::AbstractRNG = _default_rng()
+        constants_re::NamedTuple = NamedTuple()
     )
     _hmm_check_layout(figure_layout, save_path, plot_path)
     _check_positive_int(ncols, "ncols")
@@ -389,9 +388,8 @@ function _plot_emission_impl(
     return _save_plot!(fig, save_path)
 end
 
-function _emission_checks(figure_layout, ncols, time_idx, time_point, save_path, plot_path)
+function _emission_checks(figure_layout, time_idx, time_point, save_path, plot_path)
     _hmm_check_layout(figure_layout, save_path, plot_path)
-    _check_positive_int(ncols, "ncols")
     (time_idx !== nothing) && (time_point !== nothing) &&
         error("Specify only one of time_idx or time_point.")
     return nothing
@@ -429,15 +427,13 @@ panel; the y axes are linked when `shared_y_axis = true`.
 - `time_col::Union{Nothing, Symbol} = nothing`: column used for `time_point` and the row
   label (defaults to the model's time column).
 - `shared_y_axis::Bool = true`: common y range for all panels.
-- `ncols::Int = 3`: validated for API compatibility; the grid always has one column per
-  hidden state.
 - `figure_layout::Symbol = :single`: `:vector` returns one `Figure` (one row of state
   panels) per individual.
 - `style::PlotStyle = PlotStyle()`: visual style configuration.
 - `kwargs_subplot`, `kwargs_layout`: Makie `Axis` / `Figure` attributes (user values win).
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot (`:single` only).
 - `params`, `constants_re`, `mcmc_draws`, `rng`: parameter overrides and random-effect
-  settings as in [`plot_fits`](@ref).
+  settings as in [`plot_fits`](@ref) (`mcmc_draws` and `rng` only for a `FitResult`).
 """
 function plot_emission_distributions(
         res::FitResult;
@@ -448,7 +444,6 @@ function plot_emission_distributions(
         time_point = nothing,
         time_col::Union{Nothing, Symbol} = nothing,
         shared_y_axis::Bool = true,
-        ncols::Int = DEFAULT_PLOT_COLS,
         figure_layout::Symbol = :single,
         style::PlotStyle = PlotStyle(),
         kwargs_subplot = NamedTuple(),
@@ -460,7 +455,7 @@ function plot_emission_distributions(
         mcmc_draws::Int = 1,
         rng::AbstractRNG = _default_rng()
     )
-    _emission_checks(figure_layout, ncols, time_idx, time_point, save_path, plot_path)
+    _emission_checks(figure_layout, time_idx, time_point, save_path, plot_path)
     dm = _get_dm(res, dm)
     save_path = _resolve_plot_path(save_path, plot_path)
     constants_re_use = _res_constants_re(res, constants_re)
@@ -486,7 +481,6 @@ function plot_emission_distributions(
         time_point = nothing,
         time_col::Union{Nothing, Symbol} = nothing,
         shared_y_axis::Bool = true,
-        ncols::Int = DEFAULT_PLOT_COLS,
         figure_layout::Symbol = :single,
         style::PlotStyle = PlotStyle(),
         kwargs_subplot = NamedTuple(),
@@ -494,10 +488,9 @@ function plot_emission_distributions(
         save_path::Union{Nothing, String} = nothing,
         plot_path::Union{Nothing, String} = nothing,
         params::NamedTuple = NamedTuple(),
-        constants_re::NamedTuple = NamedTuple(),
-        rng::AbstractRNG = _default_rng()
+        constants_re::NamedTuple = NamedTuple()
     )
-    _emission_checks(figure_layout, ncols, time_idx, time_point, save_path, plot_path)
+    _emission_checks(figure_layout, time_idx, time_point, save_path, plot_path)
     save_path = _resolve_plot_path(save_path, plot_path)
     obs_name = _emission_observable(dm, observable)
 

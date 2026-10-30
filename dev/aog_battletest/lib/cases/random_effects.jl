@@ -17,7 +17,8 @@ function cases_random_effects()
     lv2(re) = "levels = collect(getfield(NoLimits.get_re_values(NoLimits.get_re_group_info(dm)), $(_bt_sym(re))))[1:min(2, end)]"
     constcov = "x_covariate = first(NoLimits.get_covariates(NoLimits.get_model(dm)).constants)"
 
-    function sel(f; shared_axes = true)
+    # `has_ncols = false` (the pairplot matrix): `ncols` is not a keyword and must be rejected
+    function sel(f; shared_axes = true, has_ncols = true)
         o = Pair{String, String}[]
         rn = renames(f)
         if !isempty(rn)
@@ -31,8 +32,9 @@ function cases_random_effects()
         push!(o, "re_bad!err" => "re_names = :no_such_re")
         nind(f) >= 2 && push!(o, "inds_12" => "individuals_idx = [1, 2]")
         push!(o, "inds_1" => "individuals_idx = 1")
-        push!(o, "ncols1" => "ncols = 1")
-        push!(o, "ncols2" => "ncols = 2")
+        e = has_ncols ? "" : "!err"
+        push!(o, "ncols1$(e)" => "ncols = 1")
+        push!(o, "ncols2$(e)" => "ncols = 2")
         push!(o, "ncols0!err" => "ncols = 0")
         if shared_axes
             push!(o, "shx_off" => "shared_x_axis = false")
@@ -87,7 +89,7 @@ function cases_random_effects()
         ),
         (
             :plot_random_effect_pairplot, f -> vcat(
-                sel(f; shared_axes = false), mcmc_draws_only(f),
+                sel(f; shared_axes = false, has_ncols = false), mcmc_draws_only(f),
                 [
                     "kde_bw" => "kde_bandwidth = 0.3", "kde_bw_small" => "kde_bandwidth = 0.02",
                     "kde_bw_bad!err" => "kde_bandwidth = -1.0",

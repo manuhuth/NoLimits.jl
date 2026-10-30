@@ -3,6 +3,7 @@ using NoLimits
 using DataFrames
 using Distributions
 using CairoMakie
+using Random
 import AlgebraOfGraphics  # the plotting extension needs Makie AND AlgebraOfGraphics
 
 # HMM plots on AlgebraOfGraphics (#383): plot_hidden_states (stacked bars, one facet per
@@ -215,7 +216,10 @@ end
         @test_throws ArgumentError plot_emission_distributions(dm; observable = :c)
         @test_throws ArgumentError plot_hidden_states(dm; observable = 1)
         @test_throws ErrorException plot_hidden_states(dm; observable = :y, ncols = 0)
-        @test_throws ErrorException plot_emission_distributions(dm; observable = :y, ncols = 0)
+        # the individual x state grid has no `ncols` keyword (removed, #383)
+        @test_throws MethodError plot_emission_distributions(dm; observable = :y, ncols = 2)
+        # DataModel methods draw nothing at random and take no `rng`
+        @test_throws MethodError plot_hidden_states(dm; observable = :y, rng = Random.Xoshiro(1))
         @test_throws ErrorException plot_emission_distributions(dm; observable = :y, time_idx = 1, time_point = 0.0)
         @test_throws ErrorException plot_hidden_states(dm; observable = :y, figure_layout = :grid)
     end

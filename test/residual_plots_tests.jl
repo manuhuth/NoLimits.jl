@@ -778,7 +778,14 @@ end
     bars = [p for ax in axes_of(fig_d) for p in ax.scene.plots if p isa CairoMakie.BarPlot]
     @test length(bars) == 1
     @test length(bars[1][1][]) == 4
-    @test sum(pt[2] for pt in bars[1][1][]) ≈ 1.0
+    # with the N(0,1) density on the same axis the histogram is a density (area 1)
+    @test sum(pt[2] for pt in bars[1][1][]) * bars[1].width[] ≈ 1.0
+    @test only(axes_of(fig_d)).ylabel[] == "Density"
+    # without an overlaid density it stays a probability histogram (heights sum to 1)
+    fig_r = plot_residual_distribution(res; residual = :raw, bins = 4)
+    bars_r = [p for ax in axes_of(fig_r) for p in ax.scene.plots if p isa CairoMakie.BarPlot]
+    @test sum(pt[2] for pt in only(bars_r)[1][]) ≈ 1.0
+    @test only(axes_of(fig_r)).ylabel[] == "Probability"
     @test nlegends(plot_residual_distribution(res; residual = :raw)) == 0
     @test_throws ErrorException plot_residual_distribution(res; bins = 0)
 

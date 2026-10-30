@@ -18,5 +18,8 @@ B=${BT_ROOT:-$SLURM_SUBMIT_DIR}
 R=$(cd "$B/../.." && pwd)
 MODE=${MODE:-new}
 cd $B
-echo "mode=$MODE chunk=$SLURM_ARRAY_TASK_ID/${NCHUNKS:-40} filter=${FILTER:-} host=$(hostname)"
-julia --project=$B/envs/$MODE -t $SLURM_CPUS_PER_TASK $B/lib/render.jl $MODE $SLURM_ARRAY_TASK_ID ${NCHUNKS:-40} "${FILTER:-}"
+# CHUNK_OFFSET shifts the array index (MaxArraySize = 100: chunks 101-200 are submitted as
+# --array=1-100 with CHUNK_OFFSET=100).
+CHUNK=$(( SLURM_ARRAY_TASK_ID + ${CHUNK_OFFSET:-0} ))
+echo "mode=$MODE chunk=$CHUNK/${NCHUNKS:-40} filter=${FILTER:-} host=$(hostname)"
+julia --project=$B/envs/$MODE -t $SLURM_CPUS_PER_TASK $B/lib/render.jl $MODE $CHUNK ${NCHUNKS:-40} "${FILTER:-}"

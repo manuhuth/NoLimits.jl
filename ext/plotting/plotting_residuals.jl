@@ -107,11 +107,15 @@ _resid_vals(col, what::AbstractString) = last(_resid_xy(Iterators.repeated(0.0),
 _resid_hline(value::Real, style::PlotStyle) =
     ax -> hlines!(ax, Float64(value); color = style.color_dark, linestyle = :dash)
 
-# Exact uniform-bin probability histogram of one panel as an AoG BarPlot layer (one layer
-# per panel, because the bin width differs between panels). Returns the layer and the
+# Exact uniform-bin histogram of one panel as an AoG BarPlot layer (one layer per panel,
+# because the bin width differs between panels). `normalization = :pdf` (area 1) when a
+# density is drawn on the same axis, `:probability` otherwise. Returns the layer and the
 # tallest bar.
-function _resid_hist_layer(panel::AbstractString, vals, bins::Int, series::AbstractString, style::PlotStyle)
-    h = _histogram_xy(vals; bins = bins, normalization = :probability)
+function _resid_hist_layer(
+        panel::AbstractString, vals, bins::Int, series::AbstractString, style::PlotStyle;
+        normalization::Symbol = :probability
+    )
+    h = _histogram_xy(vals; bins = bins, normalization = normalization)
     n = length(h.centers)
     t = DataFrame(
         panel = fill(String(panel), n), x = collect(Float64, h.centers),
@@ -344,7 +348,11 @@ function _plot_residual_distribution_df(
         isempty(vals) && continue
         panel = string(g.observable[1])
         push!(panels, panel)
-        layer, ymax = _resid_hist_layer(panel, vals, bins, "data", style)
+        # with the N(0,1) density overlaid the histogram is a density too (area 1)
+        layer, ymax = _resid_hist_layer(
+            panel, vals, bins, "data", style;
+            normalization = metric == :quantile ? :pdf : :probability
+        )
         push!(hist_layers, layer)
         if metric == :quantile
             xs = range(minimum(vals), maximum(vals); length = 200)
@@ -374,7 +382,7 @@ function _plot_residual_distribution_df(
         layers; panels = panels, ncols = ncols, style = style,
         shared_x = shared_x_axis, shared_y = shared_y_axis,
         kwargs_subplot = kwargs_subplot, kwargs_layout = kwargs_layout,
-        axis = (; xlabel = label, ylabel = "Probability"),
+        axis = (; xlabel = label, ylabel = metric == :quantile ? "Density" : "Probability"),
         series = series, legend = metric == :quantile, post = post,
         xlim = _shared_lim(shared_x_axis, xlims), ylim = _shared_lim(shared_y_axis, ylims),
     )
@@ -393,10 +401,11 @@ end
 
     plot_residual_distribution(dm::DataModel; ...) -> Makie.Figure
 
-Plot the marginal distribution of residuals as probability histograms, one facet per
-observable (component for vector-valued observables). `:quantile` adds the dashed N(0,1)
-density and a figure legend; `:pit` adds a dashed reference line at the uniform bar height
-`1 / bins`.
+Plot the marginal distribution of residuals as histograms, one facet per observable
+(component for vector-valued observables). `:quantile` draws a density histogram (area 1,
+y axis "Density") with the dashed N(0,1) density and a figure legend; the other metrics
+draw probability histograms (bar heights sum to 1), and `:pit` adds a dashed reference
+line at the uniform bar height `1 / bins`.
 
 # Keyword Arguments
 - `residual::Symbol = :quantile`: residual metric (`:pit`, `:quantile`, `:raw`,

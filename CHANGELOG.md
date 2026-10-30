@@ -4,14 +4,33 @@
 
 ### Breaking
 
+This release changes the plotting API without deprecation paths:
+
 - The plotting extension is drawn with AlgebraOfGraphics (#383). It now loads only when
   a Makie backend **and** AlgebraOfGraphics are loaded: write
   `using CairoMakie, AlgebraOfGraphics` (AlgebraOfGraphics is a new weak dependency,
   compat 0.13.2; Makie compat raised to 0.24.4). Calling a `plot_*` function without
-  them raises a `MethodError` hint naming both packages. Function names, keyword
-  arguments and return types are unchanged. `return_panel = true` returns an
-  AlgebraOfGraphics-based panel for `combine_plots`; the old closure-based `MakiePanel`
-  layer is removed.
+  them raises a `MethodError` hint naming both packages.
+- `return_panel = true` returns an AlgebraOfGraphics-based panel for `combine_plots`;
+  the closure-based `MakiePanel` layer is removed and `combine_plots` accepts only such
+  panels (anything else raises an `ArgumentError`).
+- Removed keywords (passing them now raises a `MethodError` like any unknown keyword):
+  `ncols` of `plot_emission_distributions` (the figure is always an individuals x
+  states grid) and of `plot_random_effect_pairplot` (the matrix layout follows the
+  number of variables); `rng` of the `DataModel` methods of `plot_hidden_states` and
+  `plot_emission_distributions` (they draw nothing at random).
+- Histogram scale: a histogram drawn on the same axis as a density curve is now a
+  density (area 1, y axis "Density") instead of a probability histogram:
+  `plot_residual_distribution(...; residual = :quantile)` (with the N(0,1) density),
+  the diagonal of `plot_random_effect_pairplot` when `kde_bandwidth` is given,
+  `plot_random_effect_standardized` with `show_hist = true, show_kde = true`, and the
+  normalizing-flow histograms (`flow_plot = :hist`) of `plot_random_effects_pdf` and
+  `plot_random_effect_distributions`, which stand for the PDF on a "Probability
+  Density" axis. Histograms without an overlaid density keep probability
+  normalisation (bar heights sum to 1).
+- Figure layout and order (see Changes): one figure legend instead of per-panel
+  legends, linked shared axes, facet titles as figure labels instead of `ax.title`,
+  individuals in data order.
 
 ### Changes
 
