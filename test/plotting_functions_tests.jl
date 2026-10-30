@@ -224,6 +224,33 @@ end
     )
 end
 
+# Binary 0/1 data on a log y axis: the zeros are blanked with the usual warning and the
+# ones are drawn, also in a facet whose values were all blanked (setting the shared
+# limits after drawing used to trip a raw Makie assertion).
+@testset "plot_data: binary data on a log y axis" begin
+    df = DataFrame(
+        ID = repeat(1:3, inner = 3), t = repeat(0.0:2.0, 3), y = [0, 0, 0, 1, 0, 1, 1, 1, 0]
+    )
+    dm = DataModel(fx_bern_model(), df; primary_id = :ID, time_col = :t)
+    for shared in (true, false)
+        fig = @test_logs (:warn, r"not drawing 5 non-positive") match_mode = :any plot_data(
+            dm; kwargs_subplot = (; yscale = log10), shared_y_axis = shared
+        )
+        axes = [c for c in fig.content if c isa CairoMakie.Axis]
+        @test length(axes) == 3
+        @test all(ax -> ax.finallimits[].origin[2] > 0, axes)
+        path = tempname() * ".png"
+        CairoMakie.save(path, fig)
+        @test isfile(path)
+        rm(path)
+    end
+    # only the all-zero individual: nothing positive remains, the panel is still drawn
+    fig = @test_logs (:warn, r"not drawing 3 non-positive") match_mode = :any plot_data(
+        dm; individuals_idx = [1], kwargs_subplot = (; yscale = log10)
+    )
+    @test count(c -> c isa CairoMakie.Axis, fig.content) == 1
+end
+
 @testset "fonts scale with large figures" begin
     @test NoLimits._font_scale(600, 450) == 1.0
     @test NoLimits._font_scale(682, 1000) ≈ sqrt(1000 / NoLimits.FONT_REFERENCE_EXTENT)

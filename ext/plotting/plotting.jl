@@ -308,26 +308,27 @@ function _draw_facets(
     fig_kw = _aog_figure(style, n, ncols_use, kwargs_layout)
     fstyle = _figure_style(style, fig_kw.size)
     nbanks = _legend_nbanks(first.(series), first(fig_kw.size), fstyle)
+    # Explicit limits are Axis attributes from the start (user `limits` in kwargs_subplot
+    # win, `_aog_axis` merges them last). Setting them with xlims!/ylims! after drawing
+    # tripped Makie's Float32 limits assertion on linked log-scale facets (binary data
+    # whose zeros were blanked).
+    ax_kw = _nt(axis)
+    (xlim === nothing && ylim === nothing) || (ax_kw = merge(ax_kw, (; limits = (xlim, ylim))))
     fg = AoG.draw(
         layers, AoG.scales(; sc...);
-        axis = _aog_axis(fstyle, kwargs_subplot; _nt(axis)...),
+        axis = _aog_axis(fstyle, kwargs_subplot; ax_kw...),
         figure = fig_kw,
         facet = (; linkxaxes = _facet_link(shared_x), linkyaxes = _facet_link(shared_y)),
         legend = (legend && !isempty(series)) ?
             _aog_legend(fstyle; nbanks, patchsize = _legend_patchsize(fstyle, style)) :
             (; show = false),
     )
-    # user `limits` in kwargs_subplot win over the computed shared limits
-    user_limits = haskey(_nt(kwargs_subplot), :limits)
     for (k, label) in enumerate(panels)
         ax = _facet_axis(fg, k, ncols_use)
         ax === nothing && continue
         for f in get(post, label, ())
             f(ax)
         end
-        user_limits && continue
-        xlim === nothing || xlims!(ax, xlim...)
-        ylim === nothing || ylims!(ax, ylim...)
     end
     return fg.figure
 end
