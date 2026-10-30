@@ -9,6 +9,12 @@
 Plot the predictive observation distributions at each time point as density or PMF
 curves overlaid on the observed data, providing a detailed look at model calibration.
 
+One panel per (individual, observation row, vector component), titled by ID and time,
+with one legend below the panels. Shared axes are linked and their inner tick labels
+hidden; panels keep their own y label when PMF and PDF panels are mixed, and x is only
+linked when all panels show the same individual and outcome (x ranges are shared per
+individual and outcome).
+
 # Keyword Arguments
 - `dm::Union{Nothing, DataModel} = nothing`: data model (inferred from `res` by default).
 - `individuals_idx`: individuals to include (default: first individual only).
@@ -105,18 +111,15 @@ function plot_observation_distributions(
                 )
                 has_obs_val = y_obs isa Number && isfinite(float(y_obs))
                 tval = get_df(dm)[row, get_time_col(dm)]
-                p = create_styled_plot(;
-                    title = string(
+                p = _ObsDistPanel(
+                    string(
                         get_primary_id(dm), ": ", get_df(dm)[row, get_primary_id(dm)], ", ",
                         get_time_col(dm), ": ", tval
                     ),
-                    xlabel = _axis_label(
+                    _axis_label(
                         marginal === nothing ? string(obs_name) :
                             _marginal_label(obs_name, m)
-                    ),
-                    ylabel = "Probability Density",
-                    style = style,
-                    kwargs_subplot...
+                    )
                 )
 
                 if is_mcmc
@@ -171,30 +174,11 @@ function plot_observation_distributions(
                         )
                         qlo = vec(qlo)
                         qhi = vec(qhi)
-                        lbl = _label(p, "posterior mean PMF")
-                        _record!(
-                            p,
-                            ax -> barplot!(
-                                ax, vals, probs; color = style.color_secondary, label = lbl
-                            )
-                        )
-                        create_styled_line!(
-                            p, vals, qlo; color = style.color_secondary,
-                            alpha = mcmc_quantiles_alpha, linestyle = :dash,
-                            label = "$(mcmc_quantiles[1])%", style = style
-                        )
-                        create_styled_line!(
-                            p, vals, qhi; color = style.color_secondary,
-                            alpha = mcmc_quantiles_alpha, linestyle = :dash,
-                            label = "$(mcmc_quantiles[end])%", style = style
-                        )
-                        _axis_attrs!(p; ylabel = "Probability Mass")
-                        if has_obs_val
-                            add_reference_line!(
-                                p, y_obs; orientation = :vertical,
-                                color = style.color_primary, label = "observed"
-                            )
-                        end
+                        _push_xy!(p.bars, "", vals, probs, "posterior mean PMF")
+                        _push_xy!(p.quantiles, "", vals, qlo, "$(mcmc_quantiles[1])%")
+                        _push_xy!(p.quantiles, "", vals, qhi, "$(mcmc_quantiles[end])%")
+                        p.ylabel = "Probability Mass"
+                        has_obs_val && _push_xy!(p.observed, "", [y_obs], [NaN], "observed")
                         xlim = (minimum(vals), maximum(vals))
                         if has_obs_val
                             xlim = (min(xlim[1], float(y_obs)), max(xlim[2], float(y_obs)))
@@ -224,27 +208,10 @@ function plot_observation_distributions(
                         )
                         qlo = vec(qlo)
                         qhi = vec(qhi)
-                        create_styled_line!(
-                            p, grid.y, pdf_mean;
-                            color = style.color_secondary,
-                            label = "posterior mean PDF", style = style
-                        )
-                        create_styled_line!(
-                            p, grid.y, qlo; color = style.color_secondary,
-                            alpha = mcmc_quantiles_alpha, linestyle = :dash,
-                            label = "$(mcmc_quantiles[1])%", style = style
-                        )
-                        create_styled_line!(
-                            p, grid.y, qhi; color = style.color_secondary,
-                            alpha = mcmc_quantiles_alpha, linestyle = :dash,
-                            label = "$(mcmc_quantiles[end])%", style = style
-                        )
-                        if has_obs_val
-                            add_reference_line!(
-                                p, y_obs; orientation = :vertical,
-                                color = style.color_primary, label = "observed"
-                            )
-                        end
+                        _push_xy!(p.curves, "", grid.y, pdf_mean, "posterior mean PDF")
+                        _push_xy!(p.quantiles, "", grid.y, qlo, "$(mcmc_quantiles[1])%")
+                        _push_xy!(p.quantiles, "", grid.y, qhi, "$(mcmc_quantiles[end])%")
+                        has_obs_val && _push_xy!(p.observed, "", [y_obs], [NaN], "observed")
                         xlim = (minimum(grid.y), maximum(grid.y))
                         if has_obs_val
                             xlim = (min(xlim[1], float(y_obs)), max(xlim[2], float(y_obs)))
@@ -313,20 +280,9 @@ function plot_observation_distributions(
                             vals = grid.vals
                         end
                         probs = pdf.(Ref(dist), vals)
-                        lbl = _label(p, "PMF")
-                        _record!(
-                            p,
-                            ax -> barplot!(
-                                ax, vals, probs; color = style.color_secondary, label = lbl
-                            )
-                        )
-                        _axis_attrs!(p; ylabel = "Probability Mass")
-                        if has_obs_val
-                            add_reference_line!(
-                                p, y_obs; orientation = :vertical,
-                                color = style.color_primary, label = "observed"
-                            )
-                        end
+                        _push_xy!(p.bars, "", vals, probs, "PMF")
+                        p.ylabel = "Probability Mass"
+                        has_obs_val && _push_xy!(p.observed, "", [y_obs], [NaN], "observed")
                         xlim = (minimum(vals), maximum(vals))
                         if has_obs_val
                             xlim = (min(xlim[1], float(y_obs)), max(xlim[2], float(y_obs)))
@@ -348,16 +304,8 @@ function plot_observation_distributions(
                         grid === nothing &&
                             error("Unable to build PDF grid for $(obs_name).")
                         pdf_vals = vec(grid.z[:, 1])
-                        create_styled_line!(
-                            p, grid.y, pdf_vals;
-                            color = style.color_secondary, label = "PDF", style = style
-                        )
-                        if has_obs_val
-                            add_reference_line!(
-                                p, y_obs; orientation = :vertical,
-                                color = style.color_primary, label = "observed"
-                            )
-                        end
+                        _push_xy!(p.curves, "", grid.y, pdf_vals, "PDF")
+                        has_obs_val && _push_xy!(p.observed, "", [y_obs], [NaN], "observed")
                         xlim = (minimum(grid.y), maximum(grid.y))
                         if has_obs_val
                             xlim = (min(xlim[1], float(y_obs)), max(xlim[2], float(y_obs)))
@@ -384,20 +332,95 @@ function plot_observation_distributions(
         end
     end
 
-    if shared_x_axis
-        for (p, key) in zip(plots, plot_groups)
-            lims = xlims_by_group[key]
-            _set_limits!(p; xlim = _pad_limits(lims[1], lims[2]))
-        end
-    end
-    if shared_y_axis && ylims !== nothing
-        for p in plots
-            _set_limits!(p; ylim = _pad_limits(ylims[1], ylims[2]))
-        end
-    end
+    isempty(plots) && error("Nothing to plot: no observation rows were selected.")
+    xlims_panels = shared_x_axis ?
+        [(l = xlims_by_group[key]; _pad_limits(l[1], l[2])) for key in plot_groups] :
+        fill(nothing, length(plots))
+    ylim = (shared_y_axis && ylims !== nothing) ? _pad_limits(ylims[1], ylims[2]) : nothing
+    panels = [
+        _obsdist_aog_panel(p, style, kwargs_subplot, mcmc_quantiles_alpha, xl, ylim)
+            for (p, xl) in zip(plots, xlims_panels)
+    ]
+    fig = combine_plots(panels; ncols = ncols, style = style, _nt(kwargs_layout)...)
+    _grp5_wrap_legend!(fig, style)
+    _obsdist_link_axes!(
+        fig, plots, plot_groups, ncols;
+        shared_x = shared_x_axis, shared_y = shared_y_axis && ylims !== nothing,
+        kwargs_subplot = _nt(kwargs_subplot)
+    )
+    return _save_plot!(fig, save_path)
+end
 
-    p = combine_plots(plots; ncols = ncols, style = style, kwargs_layout...)
-    return _save_plot!(p, save_path)
+# Series of one observation-distribution panel, collected before drawing (tidy tables in
+# the `_tidy()` layout; `observed` holds the observed value in `x`).
+mutable struct _ObsDistPanel
+    title::String
+    xlabel::String
+    ylabel::String
+    curves::DataFrame
+    quantiles::DataFrame
+    bars::DataFrame
+    observed::DataFrame
+end
+
+_ObsDistPanel(title, xlabel) = _ObsDistPanel(
+    String(title), String(xlabel), "Probability Density", _tidy(), _tidy(), _tidy(), _tidy()
+)
+
+function _obsdist_aog_panel(p::_ObsDistPanel, style, kwargs_subplot, q_alpha, xlim, ylim)
+    xy = AoG.mapping(:x, :y; color = :series)
+    layers = _layers(
+        _layer(p.bars, xy, AoG.visual(Makie.BarPlot)),
+        _layer(p.curves, xy, _line_visual(style)),
+        _layer(p.quantiles, xy, _line_visual(style; linestyle = :dash, alpha = q_alpha)),
+        _layer(p.observed, AoG.mapping(:x; color = :series), AoG.visual(Makie.VLines; linestyle = :dash)),
+    )
+    palette = Pair{String, Any}[]
+    for df in (p.bars, p.curves, p.quantiles), s in unique(df.series)
+        push!(palette, s => style.color_secondary)
+    end
+    nrow(p.observed) > 0 && push!(palette, "observed" => style.color_primary)
+    post = Any[]
+    xlim === nothing || push!(post, ax -> xlims!(ax, xlim...))
+    ylim === nothing || push!(post, ax -> ylims!(ax, ylim...))
+    return AoGPanel(
+        layers;
+        scales = isempty(palette) ? NamedTuple() : (; Color = _series_palette(palette)),
+        axis = _aog_axis(style, kwargs_subplot; title = p.title, xlabel = p.xlabel, ylabel = p.ylabel),
+        post = post
+    )
+end
+
+# #383 layout defaults on the combined grid: shared axes are linked and their inner tick
+# labels and repeated axis labels hidden. y is shared across all panels; it is decluttered
+# only when every panel has the same y label (PMF and PDF panels keep their own labels).
+# x is shared within one (individual, observable, component) group; it is linked and
+# decluttered only when all panels belong to one group.
+function _obsdist_link_axes!(
+        fig::Figure, plots::Vector, groups::Vector, ncols::Integer;
+        shared_x::Bool, shared_y::Bool, kwargs_subplot::NamedTuple
+    )
+    axes = [c for c in fig.content if c isa Axis]
+    n = length(axes)
+    (n == length(plots) && n > 1) || return fig
+    ncols_use = min(Int(ncols), n)
+    if shared_y && allequal(p.ylabel for p in plots)
+        Makie.linkyaxes!(axes...)
+        for (k, ax) in enumerate(axes)
+            fldmod1(k, ncols_use)[2] == 1 && continue
+            haskey(kwargs_subplot, :yticklabelsvisible) || (ax.yticklabelsvisible = false)
+            haskey(kwargs_subplot, :ylabelvisible) || (ax.ylabelvisible = false)
+        end
+    end
+    if shared_x && allequal(groups)
+        Makie.linkxaxes!(axes...)
+        for (k, ax) in enumerate(axes)
+            k + ncols_use <= n || continue      # bottom panel of its column
+            haskey(kwargs_subplot, :xticklabelsvisible) || (ax.xticklabelsvisible = false)
+            haskey(kwargs_subplot, :xlabelvisible) || (ax.xlabelvisible = false)
+        end
+    end
+    return fig
 end
 
 function plot_observation_distributions(dm::DataModel; kwargs...)

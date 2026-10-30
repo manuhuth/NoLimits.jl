@@ -155,9 +155,12 @@ function cases_vpc_obs_uq()
                 "legend_transformed" => "show_legend = true, scale = :transformed",
             ]
             sets = vcat(sets, _bt_common())
-            # profile UQ has no draws: the OLD implementation rejects every plot that needs a
-            # KDE; keep a small set instead of repeating the same error ~30 times
-            k == "uq_profile" && (sets = filter(p -> first(p) in ("default", "transformed", "param1", "histogram", "no_interval", "legend"), sets))
+            # profile UQ has no draws: the OLD implementation rejected every plot; the port
+            # draws interval spans + estimates, and histograms (or nothing left to draw) error
+            if k == "uq_profile"
+                sets = filter(p -> !(occursin("histogram", first(p)) || first(p) in ("no_est_no_int", "bins5", "kde_bw")), sets)
+                append!(sets, ["histogram!err" => "plot_type = :histogram", "no_est_no_int!err" => "show_estimate = false, show_interval = false"])
+            end
             append!(cs, _bt_cases(:plot_uq_distributions, [f], sets; input = "fx.$(k)", prefix = replace(k, "uq_" => "") * "_", full = ff -> ff in _BT_FULL || k != "uq_wald"))
         end
     end
