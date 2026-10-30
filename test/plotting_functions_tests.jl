@@ -128,6 +128,96 @@ end
     @test plot_fits_comparison([res, res]) !== nothing
 end
 
+# #383: facets follow the order in which individuals first appear in the data. DataModel
+# sorts ids, so string ids s1..s12 used to be drawn s1, s10, s11, s12, s2, ...
+@testset "plot_data/plot_fits facets in data order (#383)" begin
+    ids = ["s$(i)" for i in 1:12]
+    df = DataFrame(
+        ID = repeat(ids; inner = 2), t = repeat([0.0, 1.0]; outer = 12),
+        y = 0.1 .* (1:24)
+    )
+    dm = DataModel(fx_nore_model(), df; primary_id = :ID, time_col = :t)
+    ext = Base.get_extension(NoLimits, :NoLimitsMakieExt)
+    order = ext._plot_individuals(dm, nothing)
+    @test [string(NoLimits._individual_id(dm, i)) for i in order] == ids
+    @test ext._plot_individuals(dm, nothing; default_all = false) == order[1:1]
+    # an explicit selection keeps the caller's order
+    @test ext._plot_individuals(dm, [3, 1]) == [3, 1]
+    @test ext._ordered_levels(["b", "a", "b", "c"]) == ["b", "a", "c"]
+
+    # panel k sits at fldmod1(k, ncols): with ncols = 12 the titles run left to right
+    title_x(fig, lab) = only(
+        CairoMakie.Makie.to_value(l.layoutobservables.computedbbox).origin[1]
+            for l in fig.content if l isa CairoMakie.Label &&
+            string(CairoMakie.Makie.to_value(l.text)) == lab
+    )
+    for fig in (plot_data(dm; ncols = 12), plot_fits(dm; ncols = 12))
+        xs = [title_x(fig, "ID: $(id)") for id in ids]
+        @test issorted(xs)
+    end
+end
+
+# #383: the scalar density overlay starts transparent (the zero-density part of the
+# time x y grid used to be painted purple) and stays normalised per panel.
+@testset "plot_fits density overlay is transparent at zero density" begin
+    res = fx_laplace()
+    fig = plot_fits(res; plot_density = true)
+    hms = [pl for ax in _axes(fig) for pl in ax.scene.plots if pl isa CairoMakie.Heatmap]
+    @test !isempty(hms)
+    cmap = CairoMakie.Makie.to_colormap(CairoMakie.Makie.to_value(hms[1].colormap))
+    @test CairoMakie.Makie.Colors.alpha(first(cmap)) == 0
+    @test CairoMakie.Makie.Colors.alpha(last(cmap)) > 0.5
+end
+
+# Many panels: the MAX_FIGURE_HEIGHT cap no longer squeezes a long column of panels
+# into strips; explicit sizes are untouched.
+@testset "default figure size keeps panels readable" begin
+    st = NoLimits.PlotStyle()
+    w, h = NoLimits.calculate_plot_size(50, 1, st)
+    @test h >= 50 * st.base_subplot_height * NoLimits.MIN_PANEL_SCALE
+    @test NoLimits.calculate_plot_size(50, 3, st) == (682, 2400)     # unchanged
+    @test NoLimits.calculate_plot_size(4, 2, st) == (700, 560)        # unchanged
+end
+
+# Core layout helpers shared by all ported plot functions (#383): legend wrapping and
+# combine_plots axis linking.
+@testset "combine_plots linking and legend wrapping" begin
+    ext = Base.get_extension(NoLimits, :NoLimitsMakieExt)
+    AoG = AlgebraOfGraphics
+    st = NoLimits.PlotStyle()
+    @test ext._legend_nbanks(["data", "fit"], 1000, st) == 1
+    long = ["component label $(i)" for i in 1:7]
+    @test ext._legend_nbanks(long, 400, st) > 1
+    @test ext._legend_nbanks(long, 400, st) <= length(long)
+
+    df = DataFrame(x = [0.0, 1.0], y = [1.0, 2.0], series = ["a", "a"])
+    mk(axis) = ext.AoGPanel(
+        AoG.data(df) * AoG.mapping(:x, :y; color = :series) * AoG.visual(CairoMakie.Lines);
+        axis = axis
+    )
+    vis(ax, a) = CairoMakie.Makie.to_value(getproperty(ax, a))
+    fig = combine_plots([mk((;)) for _ in 1:4]; ncols = 2, link_x = true, link_y = true)
+    axs = _axes(fig)
+    @test length(axs) == 4
+    @test [vis(ax, :yticklabelsvisible) for ax in axs] == [true, false, true, false]
+    @test [vis(ax, :xticklabelsvisible) for ax in axs] == [false, false, true, true]
+    # 3 panels on 2 columns: panel 2 is the lowest of column 2 and keeps its x ticks
+    fig3 = combine_plots([mk((;)) for _ in 1:3]; ncols = 2, link_x = true)
+    @test [vis(ax, :xticklabelsvisible) for ax in _axes(fig3)] == [false, true, true]
+    # unlinked by default; explicit panel attributes win over the decluttering
+    @test all(ax -> vis(ax, :yticklabelsvisible), _axes(combine_plots([mk((;)) for _ in 1:4]; ncols = 2)))
+    kept = combine_plots([mk((; yticklabelsvisible = true)) for _ in 1:4]; ncols = 2, link_y = true)
+    @test all(ax -> vis(ax, :yticklabelsvisible), _axes(kept))
+
+    # a legend that does not fit the figure width wraps into several rows
+    dfl = DataFrame(x = repeat([0.0, 1.0]; outer = 7), y = rand(14), series = repeat(long; inner = 2))
+    pl = ext.AoGPanel(
+        AoG.data(dfl) * AoG.mapping(:x, :y; color = :series) * AoG.visual(CairoMakie.Lines)
+    )
+    wide = combine_plots([pl]; ncols = 1, size = (400, 300))
+    @test CairoMakie.Makie.to_value(only(_legends(wide)).nbanks) > 1
+end
+
 @testset "plot_fits discrete poisson" begin
     p_fits = plot_fits(fx_pois_laplace(); plot_density = false)
     @test p_fits !== nothing

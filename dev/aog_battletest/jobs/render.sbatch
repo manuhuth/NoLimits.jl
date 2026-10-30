@@ -9,9 +9,13 @@
 #SBATCH --cpus-per-task=2
 #SBATCH --time=01:30:00
 #SBATCH --job-name=aog_render
-#SBATCH --output=/home/mhuth1_hpc/NoLimits-aog/dev/aog_battletest/logs/%x_%A_%a.log
+#SBATCH --output=logs/%x_%A_%a.log
 set -u
-B=/home/mhuth1_hpc/NoLimits-aog/dev/aog_battletest
+# Paths derive from the submit directory: run sbatch from dev/aog_battletest of the
+# worktree you want to test (or set BT_ROOT). Logs go to ./logs (relative to it).
+B=${BT_ROOT:-$SLURM_SUBMIT_DIR}
+[ -f "$B/lib/render.jl" ] || { echo "submit from dev/aog_battletest (or set BT_ROOT); got B=$B" >&2; exit 2; }
+R=$(cd "$B/../.." && pwd)
 MODE=${MODE:-new}
 cd $B
 echo "mode=$MODE chunk=$SLURM_ARRAY_TASK_ID/${NCHUNKS:-40} filter=${FILTER:-} host=$(hostname)"
