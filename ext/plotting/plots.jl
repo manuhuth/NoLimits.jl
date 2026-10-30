@@ -1,4 +1,3 @@
-
 function _plot_hidden_states_impl(
         dm::DataModel,
         obs_name::Symbol,

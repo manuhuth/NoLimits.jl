@@ -60,7 +60,7 @@ function _plot_data_dm(
     series = is_mv ?
         [
             _marginal_label(obs_name, m) => marginal_colors[m]
-                for m in (marginal_idx === nothing ? (1:n_marginals) : (marginal_idx:marginal_idx))
+            for m in (marginal_idx === nothing ? (1:n_marginals) : (marginal_idx:marginal_idx))
         ] :
         ["data" => style.color_primary]
     layers = _layer(
@@ -787,4 +787,3 @@ function plot_fits(
         rng = rng
     )
 end
-

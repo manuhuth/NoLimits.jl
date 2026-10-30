@@ -205,6 +205,23 @@ end
 Call strings see `res`, `dm`, `fx` (fixture extras, e.g. `fx.uq_wald`, `fx.fit_focei`) and
 `OUT`. Option names ending in `!err` are expected-error cases.
 
+### Fixture notes
+
+- 19 fixtures; `feeds` were verified against origin/main (`fixtures/check_feeds.jl`,
+  results in `out/check_feeds_baseline/`).
+- Reloaded fits carry `_SavedFittingMethod`: use `fx.res_em` (method restored) for
+  `plot_em_trajectories` on `saem_diag` / `mcem_diag`.
+- `fx.uq_profile` cannot be plotted by design (no draws); use it for error cases only.
+- `vi_nore` uses natural-scale parameters because a reloaded VI fit returns
+  linked-scale posterior draws (NoLimits bug, see stage-1 report).
+- Old-implementation bugs found by the baseline render (do not reproduce): residual and
+  random-effect functions break on any `kwargs_subplot` (splatted positionally into
+  `create_styled_plot`); `plot_random_effects_pdf` accepts invalid `levels`;
+  `plot_random_effect_pairplot` does not validate `ncols`; HMM functions raise a raw
+  `FieldError` for an unknown observable; emission-distribution panel titles overlap;
+  `plot_fits(...; plot_func = median)` on vector observables raised a BoundsError (fixed in
+  the port); `:vector` marginal figures framed y on all components (fixed in the port).
+
 ### Adding fixtures
 
 Write `fixtures/defs/<name>.jl` following the contract in `lib/common.jl` (INFO with
