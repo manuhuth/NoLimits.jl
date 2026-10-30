@@ -7,6 +7,7 @@ import AlgebraOfGraphics  # the plotting extension needs Makie AND AlgebraOfGrap
 using MCMCChains
 using Random
 using Turing: MH
+using JLD2  # save_fit / load_fit (EM trajectories of reloaded fits)
 
 # Note: "plot_data and plot_fits basic", "plot_fits MCMC", "plot_fits VI"
 # have been moved to integration_plotting.jl (shared fixtures).
@@ -31,6 +32,12 @@ _points(fig, T) = sum(
         for pl in ax.scene.plots if pl isa T;
     init = 0
 )
+
+# Labels of the figure-level legend(s) (AoG layers carry no per-plot labels).
+_legend_labels(fig) = [
+    string(CairoMakie.Makie.to_value(e.label)) for leg in _legends(fig)
+        for (_, es) in CairoMakie.Makie.to_value(leg.entrygroups) for e in es
+]
 
 @testset "plot_fits/plot_data AoG layout policy" begin
     res = fx_laplace()                      # 6 individuals x 3 observations
@@ -342,7 +349,7 @@ end
 
     p_vec = plot_fits_comparison([res1, res2]; individuals_idx = 1:2)
     @test p_vec !== nothing
-    labels_vec = _series_labels(p_vec)
+    labels_vec = _legend_labels(p_vec)
     @test "data" in labels_vec
     @test "Model 1" in labels_vec
     @test "Model 2" in labels_vec
@@ -351,7 +358,7 @@ end
         (baseline = res1, constrained = res2); individuals_idx = 1:2
     )
     @test p_nt !== nothing
-    labels_nt = _series_labels(p_nt)
+    labels_nt = _legend_labels(p_nt)
     @test "baseline" in labels_nt
     @test "constrained" in labels_nt
 
@@ -360,18 +367,20 @@ end
         (baseline = res1, constrained = res2); individuals_idx = 1:2, style = styled
     )
     @test p_nt_style !== nothing
-    idx_base = findfirst(==("baseline"), _series_labels(p_nt_style))
-    @test idx_base !== nothing
-    baseline_plt = _first_axis(p_nt_style).scene.plots[idx_base]
+    @test "baseline" in _legend_labels(p_nt_style)
     # Makie stores linestyles converted (:dash -> dash pattern vector, :solid -> nothing).
-    @test CairoMakie.Makie.to_value(baseline_plt.linestyle) ==
-        CairoMakie.Makie.convert_attribute(:dash, CairoMakie.Makie.key"linestyle"())
+    dash = CairoMakie.Makie.convert_attribute(:dash, CairoMakie.Makie.key"linestyle"())
+    line_styles = [
+        CairoMakie.Makie.to_value(pl.linestyle)
+            for pl in _first_axis(p_nt_style).scene.plots if pl isa CairoMakie.Lines
+    ]
+    @test count(==(dash), line_styles) == 1   # baseline dashed, constrained solid
 
     p_dict = plot_fits_comparison(
         Dict("first" => res1, "second" => res2); individuals_idx = 1:2
     )
     @test p_dict !== nothing
-    labels_dict = _series_labels(p_dict)
+    labels_dict = _legend_labels(p_dict)
     @test "first" in labels_dict
     @test "second" in labels_dict
 
@@ -492,7 +501,7 @@ end
         # Failure C: nested observation vectors expand into component series.
         @test scatter_counts(plot_observed_profiles(dm)) == [9]
         @test scatter_counts(plot_observed_profiles(res; marginal_idx = 2)) == [4]
-        @test "y[1]" in _series_labels(plot_observed_profiles(dm))
+        @test "y[1]" in _legend_labels(plot_observed_profiles(dm))
 
         # Failure D: DV/PRED/IPRED/WRES keep vector rows instead of emptying out.
         for f_gof in (plot_dv_pred(res), plot_dv_ipred(res), plot_wres_pred(res))
@@ -611,4 +620,167 @@ end
         dm, "MCMC chain", _ -> nothing; overrides = ov
     )
     @test all(getproperty(θ, n) == getproperty(θ0, n) for n in names)
+end
+
+# --- Diagnostics on AlgebraOfGraphics (#383, group 3) ------------------------------------
+
+const _MakieExt = Base.get_extension(NoLimits, :NoLimitsMakieExt)
+_plots_of(fig, T) = [pl for ax in _axes(fig) for pl in ax.scene.plots if pl isa T]
+
+@testset "goodness-of-fit plots on AoG (#383)" begin
+    res = fx_laplace()                      # 6 individuals x 3 observations, scalar y
+    n_obs = 18
+    for f in (plot_dv_pred, plot_dv_ipred, plot_wres_pred)
+        fig = f(res)
+        @test length(_axes(fig)) == 1
+        @test isempty(_legends(fig))
+        @test _points(fig, CairoMakie.Scatter) == n_obs
+    end
+    # identity line is an ABLines on linear axes; zero line an HLines
+    @test length(_plots_of(plot_dv_pred(res), CairoMakie.Makie.ABLines)) == 1
+    @test length(_plots_of(plot_dv_ipred(res), CairoMakie.Makie.ABLines)) == 1
+    @test length(_plots_of(plot_wres_pred(res), CairoMakie.Makie.HLines)) == 1
+
+    # plot_dv_pred gained return_panel; the three panels compose into one figure
+    panels = [
+        plot_dv_pred(res; return_panel = true), plot_dv_ipred(res; return_panel = true),
+        plot_wres_pred(res; return_panel = true),
+    ]
+    @test all(p -> p isa _MakieExt.AoGPanel, panels)
+    combo = combine_plots(panels; ncols = 3)
+    @test length(_axes(combo)) == 3
+    @test _points(combo, CairoMakie.Scatter) == 3 * n_obs
+
+    # logarithmic axes: ABLines is undefined there, the identity becomes a dense line
+    log_kw = (; xscale = log10, yscale = log10)
+    flog = plot_dv_pred(res; kwargs_subplot = log_kw)
+    @test isempty(_plots_of(flog, CairoMakie.Makie.ABLines))
+    @test length(_plots_of(flog, CairoMakie.Lines)) == 1
+    @test plot_dv_ipred(res; kwargs_subplot = log_kw) isa CairoMakie.Figure
+    @test plot_wres_pred(res; kwargs_subplot = (; xscale = log10)) isa CairoMakie.Figure
+    # non-positive values are dropped (with a warning) instead of erroring in Makie
+    pois = fx_pois_laplace()
+    @test (
+        @test_logs (:warn, r"non-positive") match_mode = :any plot_dv_pred(
+            pois; kwargs_subplot = log_kw
+        )
+    ) isa CairoMakie.Figure
+
+    # user limits win over the computed square limits
+    fl = plot_dv_pred(res; kwargs_subplot = (; limits = ((0.0, 2.0), (0.0, 3.0))))
+    CairoMakie.Makie.reset_limits!(_first_axis(fl))
+    lims = _first_axis(fl).finallimits[]
+    @test collect(lims.widths) ≈ [2.0, 3.0]
+end
+
+@testset "plot_shrinkage / plot_observed_profiles on AoG (#383)" begin
+    res = fx_laplace()
+    fig = plot_shrinkage(res)
+    @test length(_axes(fig)) == 1
+    @test _legend_labels(fig) == ["30%"]
+    @test length(_plots_of(fig, CairoMakie.BarPlot)) == 1
+    @test length(_plots_of(fig, CairoMakie.Makie.VLines)) == 1
+    @test _legend_labels(plot_shrinkage(res; threshold = 0.1, bar_color = "#888888")) == ["10%"]
+    @test_throws ErrorException plot_shrinkage(res; threshold = 1.5)
+
+    prof = plot_observed_profiles(res)
+    @test length(_axes(prof)) == 1
+    @test isempty(_legends(prof))            # scalar: one series, no legend
+    @test _points(prof, CairoMakie.Scatter) == 18
+    @test _points(plot_observed_profiles(res; individuals_idx = [1, 2]), CairoMakie.Scatter) == 6
+end
+
+@testset "plot_fits_comparison on AoG (#383)" begin
+    res1 = fx_mle()
+    res2 = fit_model(
+        fx_nore_dm(), NoLimits.MLE(; optim_kwargs = (maxiters = 2,)); constants = (; a = 0.2)
+    )
+    fig = plot_fits_comparison((first = res1, second = res2); individuals_idx = 1:2, ncols = 1)
+    @test length(_axes(fig)) == 2
+    @test length(_legends(fig)) == 1
+    @test _legend_labels(fig) == ["data", "first", "second"]
+    @test all(l -> l in _labels(fig), ["ID: 1", "ID: 2"])
+    nodata = plot_fits_comparison([res1, res2]; individuals_idx = 1, plot_data_points = false)
+    @test _legend_labels(nodata) == ["Model 1", "Model 2"]
+    @test _points(nodata, CairoMakie.Scatter) == 0
+    @test_throws ErrorException plot_fits_comparison([res1, res2]; ncols = 0)
+end
+
+@testset "multistart plots on AoG (#383)" begin
+    ms = NoLimits.Multistart(;
+        dists = (; a = Normal(0.0, 0.5), b = Normal(0.0, 0.5)),
+        n_draws_requested = 4, n_draws_used = 3, sampling = :lhs
+    )
+    res_ms = fit_model(ms, fx_nore_dm(), NoLimits.MLE(; optim_kwargs = (maxiters = 2,)))
+    wf = plot_multistart_waterfall(res_ms)
+    @test length(_axes(wf)) == 1
+    @test CairoMakie.Makie.to_value(_first_axis(wf).title) == "Multistart Objectives"
+    # objectives agreeing in many digits get offset tick labels relative to the best
+    fmt = _MakieExt._ms_offset_ticks(30.0)
+    @test fmt([30.0, 30.0 + 2.0^-40]) == ["0", "+9.09e-13"]   # exact binary offset
+
+    pts = plot_multistart_fixed_effect_variability(res_ms; k_best = 3)
+    @test isempty(_legends(pts))
+    q = plot_multistart_fixed_effect_variability(res_ms; k_best = 3, mode = :quantiles)
+    @test _legend_labels(q) == ["10%–90% quantile range", "50% quantile"]
+    sized = plot_multistart_fixed_effect_variability(res_ms; kwargs_subplot = (; size = (700, 500)))
+    @test Tuple(sized.scene.viewport[].widths) == (700, 500)
+end
+
+@testset "plot_em_trajectories after save_fit/load_fit (#383)" begin
+    dm = fx_fixre_dm()
+    method = NoLimits.MCEM(;
+        sampler = MH(), turing_kwargs = (n_samples = 10, n_adapt = 3, progress = false),
+        maxiters = 4, store_diagnostics = true, diagnostics_every = 2
+    )
+    res = fit_model(dm, method; rng = Random.Xoshiro(1))
+    @test NoLimits.get_notes(res).diagnostics_every == 2
+    n_q = length(NoLimits.get_notes(res).diagnostics.Q_hist)
+    fig = plot_em_trajectories(res)
+    n_panels = 1 + 2                          # Q function, a, σ
+    @test length(_axes(fig)) == n_panels
+    @test all(l -> l in _labels(fig), ["Q Function", "a", "σ"])
+    # parameter traces sit at the stored iterations 2, 4, ...
+    xs = [CairoMakie.Makie.to_value(pl[1]) for pl in _plots_of(fig, CairoMakie.Lines)]
+    @test any(x -> first.(x) == Float64.(2:2:n_q), xs)
+
+    mktempdir() do tmp
+        path = joinpath(tmp, "mcem.jld2")
+        save_fit(path, res; include_data = true)
+        loaded = load_fit(path; dm = dm)
+        @test NoLimits.get_method(loaded) isa NoLimits._SavedFittingMethod
+        # used to raise "requires a SAEM or MCEM fit result" for any reloaded fit
+        fl = plot_em_trajectories(loaded)
+        @test length(_axes(fl)) == n_panels
+        @test plot_em_trajectories(loaded; scale = :transformed, include_parameters = :a) isa
+            CairoMakie.Figure
+
+        # a reloaded non-EM fit is still rejected, with a clear message
+        lap = fx_fixre_laplace()
+        p2 = joinpath(tmp, "laplace.jld2")
+        save_fit(p2, lap; include_data = true)
+        err = try
+            plot_em_trajectories(load_fit(p2; dm = dm))
+            nothing
+        catch e
+            e
+        end
+        @test err isa ErrorException && occursin("reloaded :laplace fit", err.msg)
+    end
+
+    # an EM fit without stored diagnostics gives a clear error
+    res_nodiag = fit_model(
+        dm, NoLimits.MCEM(;
+            sampler = MH(), turing_kwargs = (n_samples = 4, n_adapt = 2, progress = false),
+            maxiters = 2
+        ); rng = Random.Xoshiro(1)
+    )
+    @test_throws ErrorException plot_em_trajectories(res_nodiag)
+
+    # stride inference for fits saved before the stride was recorded in the notes
+    stub = NoLimits._SavedFittingMethod(:saem)
+    @test _MakieExt._em_diagnostics_every(stub, (;), 10, 10) == 1
+    @test _MakieExt._em_diagnostics_every(stub, (;), 10, 5) == 2
+    @test _MakieExt._em_diagnostics_every(stub, (;), 5, 1) === nothing   # 3, 4 or 5
+    @test _MakieExt._em_diagnostics_every(stub, (; diagnostics_every = 3), 5, 1) == 3
 end

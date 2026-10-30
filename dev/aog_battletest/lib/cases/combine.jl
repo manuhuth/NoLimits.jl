@@ -186,6 +186,10 @@ function cases_combine()
             "single" => "combine_plots([plot_wres_pred(res; return_panel = true)])",
             "ncols0!err" => "combine_plots($(two); ncols = 0)",
         ]
+        # plot_dv_pred has `return_panel` since #383
+        gof = "[plot_dv_pred(res; return_panel = true), plot_dv_ipred(res; return_panel = true), plot_wres_pred(res; return_panel = true)]"
+        push!(opts, "gof3" => "combine_plots($(gof); ncols = 3)")
+        push!(opts, "gof3_log" => "combine_plots([plot_dv_pred(res; return_panel = true, kwargs_subplot = (; xscale = log10, yscale = log10)), plot_dv_ipred(res; return_panel = true)]; ncols = 2)")
         if f in vpc
             three = "[plot_dv_ipred(res; return_panel = true), plot_wres_pred(res; return_panel = true), $(vpcpanelm(f))]"
             push!(opts, "three" => "combine_plots($(three))")
@@ -195,7 +199,7 @@ function cases_combine()
         # every layout variant on a few representative fixtures, the plain compositions
         # everywhere
         if !(f in _BT_COMBINE_FULL)
-            opts = filter(p -> first(p) in ("two", "three"), opts)
+            opts = filter(p -> first(p) in ("two", "three", "gof3"), opts)
         end
         for (name, call) in opts
             err = endswith(name, "!err")

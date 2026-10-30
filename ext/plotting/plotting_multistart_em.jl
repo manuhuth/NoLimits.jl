@@ -1,3 +1,5 @@
+using NoLimits: _SavedFittingMethod
+
 # --- Public plotting functions ---------------------------------------------------------
 
 """
@@ -41,26 +43,49 @@ function plot_multistart_waterfall(
         error("No finite objective values available among successful multistart runs.")
 
     n_failed = length(res.errors_err)
-    p = create_styled_plot(;
-        title = "Multistart Objectives (best → worst; successful starts only)",
-        xlabel = "Rank",
-        ylabel = "Objective",
-        style = style,
-        kwargs_subplot...
-    )
-    create_styled_scatter!(
-        p, ranks, objectives; label = "", color = style.color_primary, style = style
-    )
-    _axis_attrs!(p; xticks = collect(1:length(objectives)))
-
+    post = Any[]
     if n_failed > 0
-        add_annotation!(
-            p, maximum(ranks), maximum(objectives), "Failed starts omitted: $(n_failed)";
-            fontsize = style.font_size_annotation
-        )
+        post = Any[
+            ax -> text!(
+                ax, [float(maximum(ranks))], [maximum(objectives)];
+                text = ["Failed starts omitted: $(n_failed)"], align = (:right, :center),
+                fontsize = style.font_size_annotation
+            ),
+        ]
     end
-    fig = combine_plots([p]; ncols = 1, style = style)
+    df = _tidy()
+    _push_xy!(df, "", ranks, objectives, "objective")
+    # Converged starts often agree in the first 10+ digits, where Makie's tick labels all
+    # read the same: then label the ticks as offsets from the best objective.
+    best = minimum(objectives)
+    spread = maximum(objectives) - best
+    offset = spread > 0 && spread <= 1.0e-6 * max(abs(best), 1.0)
+    ylabels = offset ?
+        (; ylabel = "Objective − $(round(best; sigdigits = 12)) (best)", ytickformat = _ms_offset_ticks(best)) :
+        (; ylabel = "Objective")
+    panel = AoGPanel(
+        AoG.data(df) * AoG.mapping(:x, :y) * _scatter_visual(style; color = style.color_primary);
+        axis = _aog_axis(
+            style, kwargs_subplot;
+            title = "Multistart Objectives",
+            subtitle = "best → worst; successful starts only",
+            xlabel = "Rank", xticks = collect(1:length(objectives)), ylabels...,
+        ),
+        post = post, legend = false
+    )
+    fig = combine_plots([panel]; ncols = 1, style = style)
     return _save_plot!(fig, save_path)
+end
+
+# Tick formatter showing `value - ref` ("0", "+1.2e-12", ...), for objective values that
+# differ only far behind the leading digits.
+function _ms_offset_ticks(ref::Real)
+    return function (vs)
+        return map(vs) do v
+            d = round(Float64(v) - ref; sigdigits = 3)
+            d == 0 ? "0" : (d > 0 ? "+" : "") * string(d)
+        end
+    end
 end
 
 """
@@ -217,48 +242,47 @@ function plot_multistart_fixed_effect_variability(
         end
     end
 
-    y = collect(1:length(labels))
+    y = collect(1.0:length(labels))
     plot_height = clamp(200 + 22 * length(labels), MIN_FIGURE_HEIGHT, MAX_FIGURE_HEIGHT)
-    subplot_kwargs = NamedTuple(kwargs_subplot)
+    subplot_kwargs = _nt(kwargs_subplot)
     fig_size = get(subplot_kwargs, :size, (900, plot_height))
     axis_kwargs = Base.structdiff(subplot_kwargs, NamedTuple{(:size,)})
 
-    p = create_styled_plot(;
-        title = "Fixed-Effect Variability Across Top-$(k_use) Multistarts",
-        xlabel = "Z-score",
-        ylabel = "Parameter",
-        style = style,
-        axis_kwargs...
-    )
-    p.legend_position = :none
-    add_reference_line!(
-        p, 0.0; orientation = :vertical, color = style.color_dark, alpha = 0.7, label = ""
-    )
-
+    pts = _tidy()
+    seg = _tidy(; grp = String)
+    series = Pair{String, Any}[]
     if mode == :points
         for i in eachindex(y)
-            create_styled_scatter!(
-                p, vec(@view z[i, :]), fill(y[i], k_use);
-                label = "", color = style.color_primary, style = style
-            )
+            _push_xy!(pts, "", vec(z[i, :]), fill(y[i], k_use), "estimate")
         end
+        layers = _layer(pts, AoG.mapping(:x, :y), _scatter_visual(style; color = style.color_primary))
+        scales = NamedTuple()
+        show_legend = false
     else
         q = sort(Float64.(collect(quantiles)))
         (length(q) == 3 && all(0 .<= q .<= 1)) ||
             error("quantiles must contain three probabilities in [0, 1].")
+        range_label = "$(_ms_fmt_q(q[1]))–$(_ms_fmt_q(q[3])) quantile range"
+        mid_label = "$(_ms_fmt_q(q[2])) quantile"
         for i in eachindex(y)
-            zi = vec(@view z[i, :])
-            lo = quantile(zi, q[1])
-            mid = quantile(zi, q[2])
-            hi = quantile(zi, q[3])
-            create_styled_line!(
-                p, [lo, hi], [y[i], y[i]]; label = "",
-                color = style.color_primary, style = style
-            )
-            create_styled_scatter!(
-                p, [mid], [y[i]]; label = "", color = style.color_secondary, style = style
-            )
+            zi = vec(z[i, :])
+            lo, mid, hi = quantile(zi, q[1]), quantile(zi, q[2]), quantile(zi, q[3])
+            for xv in (lo, hi)
+                push!(seg, (panel = "", x = xv, y = y[i], series = range_label, grp = string(i)))
+            end
+            _push_xy!(pts, "", [mid], [y[i]], mid_label)
         end
+        xy = AoG.mapping(:x, :y; color = :series)
+        layers = _layers(
+            _layer(seg, AoG.mapping(:x, :y; color = :series, group = :grp), _line_visual(style)),
+            _layer(pts, xy, _scatter_visual(style)),
+        )
+        scales = (;
+            Color = _series_palette(
+                [range_label => style.color_primary, mid_label => style.color_secondary]
+            ),
+        )
+        show_legend = true
     end
 
     all_z = vec(z)
@@ -271,10 +295,50 @@ function plot_multistart_fixed_effect_variability(
         zmin -= pad
         zmax += pad
     end
-    _axis_attrs!(p; yticks = (y, labels), yreversed = true)
-    _set_limits!(p; xlim = (zmin, zmax), ylim = (0.5, length(labels) + 0.5))
-    fig = combine_plots([p]; ncols = 1, style = style, size = fig_size)
+    function zero_line!(ax)
+        vl = vlines!(ax, 0.0; color = (style.color_dark, 0.7), linestyle = :dash)
+        Makie.translate!(vl, 0, 0, -1)
+        return ax
+    end
+    post = Any[zero_line!]
+    haskey(axis_kwargs, :limits) ||
+        push!(post, ax -> Makie.limits!(ax, (zmin, zmax), (0.5, length(labels) + 0.5)))
+    panel = AoGPanel(
+        layers;
+        scales = scales,
+        axis = _aog_axis(
+            style, axis_kwargs;
+            title = "Fixed-Effect Variability Across Top-$(k_use) Multistarts",
+            xlabel = "Z-score", ylabel = "Parameter",
+            yticks = (y, labels), yreversed = true,
+        ),
+        post = post, legend = show_legend
+    )
+    fig = combine_plots([panel]; ncols = 1, style = style, size = fig_size)
     return _save_plot!(fig, save_path)
+end
+
+# Probability as a short percentage label (0.1 -> "10%", 0.025 -> "2.5%").
+_ms_fmt_q(p) = (v = round(100 * p; digits = 2); (isinteger(v) ? string(Int(v)) : string(v)) * "%")
+
+# EM method kind of a fit (`:saem`/`:mcem`), also after `load_fit` (whose method is a
+# `_SavedFittingMethod`); `nothing` for any other method.
+_em_kind(::SAEM) = :saem
+_em_kind(::MCEM) = :mcem
+_em_kind(m::_SavedFittingMethod) = m.kind in (:saem, :mcem) ? m.kind : nothing
+_em_kind(::Any) = nothing
+
+# Stride of the stored parameter history (`θ_hist[k]` belongs to iteration
+# `k * diagnostics_every`). Taken from the method, else from the notes (fits since #383
+# record it), else inferred from the history lengths of a reloaded fit; `nothing` when the
+# lengths admit more than one stride.
+function _em_diagnostics_every(method, notes, n_q::Int, n_θ::Int)
+    method isa SAEM && return method.saem.diagnostics_every
+    method isa MCEM && return method.diagnostics_every
+    hasproperty(notes, :diagnostics_every) && return Int(getproperty(notes, :diagnostics_every))
+    n_θ == n_q && return 1
+    cands = [e for e in 1:max(n_q, 1) if fld(n_q, e) == n_θ]
+    return length(cands) == 1 ? only(cands) : nothing
 end
 
 """
@@ -283,11 +347,14 @@ end
     -> Makie.Figure
 
 Plot the Q-function and fixed-effect parameter trajectories over EM iterations for a
-[`SAEM`](@ref) or [`MCEM`](@ref) fit result.
+[`SAEM`](@ref) or [`MCEM`](@ref) fit result, also after a [`save_fit`](@ref) /
+[`load_fit`](@ref) round trip (the stored trajectories are part of the saved fit).
 
 Requires the fit to have been run with `store_diagnostics=true`. The first panel shows
 the Q-function over all iterations; subsequent panels show one trace per scalar
-parameter element (e.g. `β[1]`, `β[2]`, `Ω[1,1]`, ...).
+parameter element (e.g. `β[1]`, `β[2]`, `Ω[1,1]`, ...), at the iterations where it was
+stored (every `diagnostics_every`-th). Panels are AlgebraOfGraphics facets with a shared
+(linked) iteration axis and free y axes.
 
 # Keyword Arguments
 - `dm::Union{Nothing, DataModel} = nothing`: data model for the inverse transform when
@@ -300,8 +367,8 @@ parameter element (e.g. `β[1]`, `β[2]`, `Ω[1,1]`, ...).
   are removed from the selection. Applied after `include_parameters`.
 - `ncols::Int = $(DEFAULT_PLOT_COLS)`: number of subplot columns.
 - `style::PlotStyle = PlotStyle()`: visual style configuration.
-- `kwargs_subplot`: additional Makie `Axis` attributes forwarded to each individual subplot.
-- `kwargs_layout`: additional Makie `Figure` attributes forwarded to the combined layout.
+- `kwargs_subplot`: additional Makie `Axis` attributes forwarded to every panel.
+- `kwargs_layout`: additional Makie `Figure` attributes forwarded to the figure.
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
 """
 function plot_em_trajectories(
@@ -323,16 +390,26 @@ function plot_em_trajectories(
         error("scale must be :untransformed or :transformed. Got: $(scale).")
 
     method = get_method(res)
-    method isa Union{SAEM, MCEM} ||
-        error("plot_em_trajectories requires a SAEM or MCEM fit result. Got: $(typeof(method)).")
+    _em_kind(method) === nothing &&
+        error(
+        "plot_em_trajectories requires a SAEM or MCEM fit result. Got: " *
+            (method isa _SavedFittingMethod ? "a reloaded :$(method.kind) fit." : "$(typeof(method)).")
+    )
 
-    diag = get_notes(res).diagnostics
+    notes = get_notes(res)
+    diag = hasproperty(notes, :diagnostics) ? getproperty(notes, :diagnostics) : nothing
+    (diag === nothing || !hasproperty(diag, :θ_hist) || !hasproperty(diag, :Q_hist)) &&
+        error(
+        "No EM trajectory stored in this fit result (its notes carry no diagnostics). " *
+            "Re-fit with store_diagnostics=true."
+    )
     isempty(diag.θ_hist) &&
         error("No parameter trajectory stored. Re-fit with store_diagnostics=true.")
 
-    diagnostics_every = method isa SAEM ? method.saem.diagnostics_every :
-        method.diagnostics_every
-    stored_iters = [k * diagnostics_every for k in 1:length(diag.θ_hist)]
+    n_q = length(diag.Q_hist)
+    every = _em_diagnostics_every(method, notes, n_q, length(diag.θ_hist))
+    stored_x = every === nothing ? collect(1:length(diag.θ_hist)) :
+        [k * every for k in 1:length(diag.θ_hist)]
 
     # Resolve DataModel and build inverse transform if needed.
     if scale == :untransformed
@@ -397,84 +474,46 @@ function plot_em_trajectories(
     isempty(selected_order) &&
         error("No parameters selected for plotting after include/exclude filters.")
 
-    x_label = diagnostics_every == 1 ? "EM Iteration" :
-        "EM Iteration (×$(diagnostics_every))"
-
-    panels = MakiePanel[]
-
-    # Q-function panel (always uses all iterations, not just stored ones).
-    # Plot index 1 is always in column 1, so it gets the ylabel.
-    q_plot = create_styled_plot(;
-        title = "Q Function", xlabel = "EM Iteration",
-        ylabel = "Value", style = style, kwargs_subplot...
-    )
-    create_styled_line!(
-        q_plot, collect(1:length(diag.Q_hist)), Float64.(diag.Q_hist);
-        label = "", color = style.color_primary, style = style
-    )
-    push!(panels, q_plot)
-
-    # One panel per scalar element of each selected parameter block.
+    # Tidy table: the Q function over all iterations, then one panel per scalar element
+    # of each selected parameter block (declaration order).
+    df = _tidy()
+    panels = String["Q Function"]
+    _push_xy!(df, "Q Function", 1:n_q, diag.Q_hist, "trajectory")
     for pname in selected_order
         first_val = getproperty(θ_vals[1], pname)
-        if first_val isa Number
-            traj = Float64[float(getproperty(θ, pname)) for θ in θ_vals]
-            push!(
-                panels,
-                create_styled_plot(;
-                    title = string(pname), xlabel = x_label,
-                    ylabel = "", style = style, kwargs_subplot...
-                )
-            )
-            create_styled_line!(
-                panels[end], stored_iters, traj;
-                label = "", color = style.color_primary, style = style
-            )
+        elems = if first_val isa Number
+            [(string(pname), θ -> getproperty(θ, pname))]
         elseif first_val isa AbstractVector
             n_elem = length(first_val)
-            for j in eachindex(first_val)
-                traj = Float64[float(getproperty(θ, pname)[j]) for θ in θ_vals]
-                label = n_elem == 1 ? string(pname) : string(pname, "[", j, "]")
-                push!(
-                    panels,
-                    create_styled_plot(;
-                        title = label, xlabel = x_label,
-                        ylabel = "", style = style, kwargs_subplot...
-                    )
-                )
-                create_styled_line!(
-                    panels[end], stored_iters, traj;
-                    label = "", color = style.color_primary, style = style
-                )
-            end
+            [
+                (n_elem == 1 ? string(pname) : string(pname, "[", j, "]"), θ -> getproperty(θ, pname)[j])
+                    for j in eachindex(first_val)
+            ]
         elseif first_val isa AbstractMatrix
-            for r in axes(first_val, 1)
-                for c in axes(first_val, 2)
-                    traj = Float64[float(getproperty(θ, pname)[r, c]) for θ in θ_vals]
-                    label = string(pname, "[", r, ",", c, "]")
-                    push!(
-                        panels,
-                        create_styled_plot(;
-                            title = label, xlabel = x_label,
-                            ylabel = "", style = style, kwargs_subplot...
-                        )
-                    )
-                    create_styled_line!(
-                        panels[end], stored_iters, traj;
-                        label = "", color = style.color_primary, style = style
-                    )
-                end
-            end
+            [
+                (string(pname, "[", r, ",", c, "]"), θ -> getproperty(θ, pname)[r, c])
+                    for r in axes(first_val, 1) for c in axes(first_val, 2)
+            ]
+        else
+            Tuple{String, Any}[]
+        end
+        for (label, get_el) in elems
+            push!(panels, label)
+            _push_xy!(df, label, stored_x, [float(get_el(θ)) for θ in θ_vals], "trajectory")
         end
     end
 
-    # Apply "Value" ylabel only to panels in the first column.
-    for i in eachindex(panels)
-        if (i - 1) % ncols == 0
-            _axis_attrs!(panels[i]; ylabel = "Value")
-        end
-    end
-
-    result = combine_plots(panels; ncols = ncols, style = style, kwargs_layout...)
-    return _save_plot!(result, save_path)
+    layers = _layer(
+        df, AoG.mapping(:x, :y; layout = :panel),
+        _line_visual(style; color = style.color_primary)
+    )
+    xlabel = every === nothing ?
+        "EM iteration (Q function) / stored snapshot (parameters)" : "EM Iteration"
+    fig = _draw_facets(
+        layers; panels = panels, ncols = ncols, style = style,
+        shared_x = every !== nothing, shared_y = false,
+        kwargs_subplot = kwargs_subplot, kwargs_layout = kwargs_layout,
+        axis = (; xlabel = xlabel, ylabel = "Value"), legend = false
+    )
+    return _save_plot!(fig, save_path)
 end
