@@ -36,7 +36,8 @@ This release changes the plotting API without deprecation paths:
 
 - Plot layout defaults (#383), the same for every `plot_*` function: one figure-level
   legend below the panels that wraps into several rows when it does not fit the figure
-  width (no per-panel `axislegend`); shared axes are linked with inner tick labels and
+  width (no per-panel `axislegend`; no legend for a single unlabelled series); shared
+  axes are linked with inner tick labels and
   repeated axis labels hidden; panels wrap row-wise `ncols` wide; individuals and other
   categories appear in the order they first occur in the data (before, string ids were
   drawn `s1, s10, s11, ..., s2`), an explicit `individuals_idx` keeps the given order;

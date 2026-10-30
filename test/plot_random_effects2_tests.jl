@@ -223,10 +223,11 @@ _re_all_xlabels(fig) = vcat([string(ax.xlabel[]) for ax in _re_axes(fig)], _re_l
             (@test_throws ErrorException f(res; ncols = 0))
     end
 
-    # one panel per RE component, titled by facet labels, one figure legend
+    # one panel per RE component, titled by facet labels; a single series ("PDF") gets
+    # no legend (several series get one figure legend, see below)
     fig = plot_random_effects_pdf(res)
     @test length(_re_axes(fig)) == 4
-    @test _re_nlegends(fig) == 1
+    @test _re_nlegends(fig) == 0
     @test "eta" in _re_labels(fig)
     @test any(l -> startswith(l, "zeta | "), _re_labels(fig))
 

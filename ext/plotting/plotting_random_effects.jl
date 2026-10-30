@@ -165,7 +165,9 @@ function _re_draw(
         shared_x = shared_x && !per_panel_xlabel, shared_y = shared_y,
         kwargs_subplot = kwargs_subplot, kwargs_layout = kwargs_layout,
         axis = axis, series = series_use, xlim = xlim, ylim = ylim,
-        post = post, legend = legend,
+        # a legend only names series apart: none for a single series (as in the
+        # residual figures)
+        post = post, legend = legend && length(series_use) > 1,
     )
     return fig
 end
