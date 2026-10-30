@@ -57,7 +57,7 @@ function _short(err)
     io = IOBuffer()
     showerror(io, err)
     s = String(take!(io))
-    return length(s) > 1500 ? s[1:1500] * " …" : s
+    return length(s) > 1500 ? first(s, 1500) * " …" : s
 end
 
 fixtures_cache = Dict{String, Any}()

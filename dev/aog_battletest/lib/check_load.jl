@@ -18,7 +18,7 @@ for name in ARGS[2:end]
         global status = 1
         io = IOBuffer(); showerror(io, err); s = String(take!(io))
         rec["status"] = "error"
-        rec["error"] = length(s) > 2000 ? s[1:2000] : s
+        rec["error"] = first(s, 2000)
     end
     println(rpad(rec["status"], 8), name, " ", get(rec, "error", "")[1:min(end, 300)])
     open(io -> TOML.print(io, rec), joinpath(DIR, name * ".toml"), "w")

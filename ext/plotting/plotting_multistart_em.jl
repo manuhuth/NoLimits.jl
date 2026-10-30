@@ -347,8 +347,8 @@ end
     -> Makie.Figure
 
 Plot the Q-function and fixed-effect parameter trajectories over EM iterations for a
-[`SAEM`](@ref) or [`MCEM`](@ref) fit result, also after a [`save_fit`](@ref) /
-[`load_fit`](@ref) round trip (the stored trajectories are part of the saved fit).
+[`SAEM`](@ref) or [`MCEM`](@ref) fit result, also after a [`save_fit`](@ref NoLimits.save_fit) /
+[`load_fit`](@ref NoLimits.load_fit) round trip (the stored trajectories are part of the saved fit).
 
 Requires the fit to have been run with `store_diagnostics=true`. The first panel shows
 the Q-function over all iterations; subsequent panels show one trace per scalar

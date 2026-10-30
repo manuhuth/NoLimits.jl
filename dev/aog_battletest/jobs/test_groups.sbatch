@@ -2,6 +2,7 @@
 # Full package test suite as a job array, one TEST_GROUPS entry of test/runtests.jl per
 # task (same grouping and -O0 subprocess flags as CI):
 #   sbatch --array=1-28 jobs/test_groups.sbatch
+#   NL_GROUPS=6,7 sbatch --array=1 jobs/test_groups.sbatch   # several groups, one process chain
 # Task 0 only instantiates/precompiles the test environment (run it first, alone).
 #SBATCH --partition=intelsr_short
 #SBATCH --account=ag_irumls_hasenauer
@@ -23,7 +24,7 @@ if [ "$SLURM_ARRAY_TASK_ID" = "0" ]; then
   JULIA_NUM_PRECOMPILE_TASKS=4 julia --project=$R/test --check-bounds=yes -O0 --min-optlevel=0 -e 'using Pkg; Pkg.precompile()'
   echo "exit=$?"; exit 0
 fi
-echo "group=$SLURM_ARRAY_TASK_ID host=$(hostname)"; date
-NL_TEST_GROUP=$SLURM_ARRAY_TASK_ID julia --project=$R/test --check-bounds=yes $R/test/runtests.jl
+echo "group=${NL_GROUPS:-$SLURM_ARRAY_TASK_ID} host=$(hostname)"; date
+NL_TEST_GROUP=${NL_GROUPS:-$SLURM_ARRAY_TASK_ID} julia --project=$R/test --check-bounds=yes $R/test/runtests.jl
 rc=$?
 date; echo "exit=$rc"; exit $rc

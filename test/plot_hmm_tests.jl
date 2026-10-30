@@ -133,9 +133,13 @@ end
         @test length(_hm_legends(fig)) == 1
         @test _hm_legend_labels(only(_hm_legends(fig))) == ["State 1", "State 2"]
         labs = _hm_labels(fig)
-        # facets in DataModel individual order
+        # facets in data order: "b" appears first in the data, although the DataModel
+        # sorts it after "a" (#383)
+        @test findfirst(==("ID: b"), labs) < findfirst(==("ID: a"), labs)
+        # an explicit individuals_idx keeps the caller's order
+        labs_sel = _hm_labels(@test_logs (:warn,) match_mode = :any plot_hidden_states(dm; individuals_idx = [1, 2]))
         order = [string("ID: ", NoLimits._individual_id(dm, i)) for i in 1:2]
-        @test findfirst(==(order[1]), labs) < findfirst(==(order[2]), labs)
+        @test findfirst(==(order[1]), labs_sel) < findfirst(==(order[2]), labs_sel)
         @test count(==("Time"), labs) == 1
         # per-individual bar width: 0.8 * smallest spacing, at most 1
         widths(ax) = unique(round.([b[4] for p in _hm_plots(ax, _HM.BarPlot) for b in _hm_bars(p)]; digits = 8))
