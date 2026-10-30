@@ -128,12 +128,12 @@ function cases_diagnostics()
             "bar_color" => "bar_color = \"#888888\"",
             "dm_kw" => "dm = dm",
         ],
-        _bt_common(layout = false),
+        _bt_common(),
     )
     append!(cs, _bt_cases(:plot_shrinkage, _bt_for(M, :plot_shrinkage), sh_sets))
 
     # --- plot_multistart_waterfall --------------------------------------------------------
-    wf_sets = vcat(["default" => ""], _bt_common(layout = false))
+    wf_sets = vcat(["default" => ""], _bt_common())
     append!(cs, _bt_cases(:plot_multistart_waterfall, _bt_for(M, :plot_multistart_waterfall), wf_sets))
 
     # --- plot_multistart_fixed_effect_variability ------------------------------------------
@@ -148,7 +148,9 @@ function cases_diagnostics()
             "transformed" => "scale = :transformed",
             "transformed_quantiles" => "scale = :transformed, mode = :quantiles",
             "dm_kw" => "dm = dm",
-            "kwsub_size" => "kwargs_subplot = (; size = (700, 500), xgridvisible = true)",
+            # the figure size moved from `kwargs_subplot` to `kwargs_layout`
+            "kwsub_size!err" => "kwargs_subplot = (; size = (700, 500), xgridvisible = true)",
+            "kwlay_size" => "kwargs_layout = (; size = (700, 500)), kwargs_subplot = (; xgridvisible = true)",
             "mode_bad!err" => "mode = :bad", "scale_bad!err" => "scale = :bad",
             "k0!err" => "k_best = 0", "incl_bad!err" => "include_parameters = :no_such_param",
             "excl_bad!err" => "exclude_parameters = :no_such_param",
@@ -160,7 +162,7 @@ function cases_diagnostics()
             length(ps) >= 2 && push!(o, "excl1" => "exclude_parameters = $(_bt_sym(ps[1]))")
             push!(o, "excl_all!err" => "include_parameters = $(_bt_syms(ps)), exclude_parameters = $(_bt_syms(ps))")
         end
-        return vcat(o, _bt_common(layout = false))
+        return vcat(o, _bt_common())
     end
     append!(cs, _bt_cases(:plot_multistart_fixed_effect_variability, _bt_for(M, :plot_multistart_fixed_effect_variability), fev_sets))
 

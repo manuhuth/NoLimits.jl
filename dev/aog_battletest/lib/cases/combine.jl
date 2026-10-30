@@ -36,7 +36,8 @@ const _BT_KWSUB = "kwargs_subplot = (; xlabel = \"X custom\", xgridvisible = tru
 const _BT_KWLAY = "kwargs_layout = (; size = (900, 600))"
 const _BT_SAVE = [
     "save_path" => "save_path = joinpath(OUT, \"x.png\")",
-    "plot_path" => "plot_path = joinpath(OUT, \"x.png\")",
+    # `plot_path` was removed (one keyword API): the alias must now be rejected.
+    "plot_path!err" => "plot_path = joinpath(OUT, \"x.png\")",
     "save_noext" => "save_path = joinpath(OUT, \"x\")",
     "save_pdf" => "save_path = joinpath(OUT, \"x.pdf\")",
     "save_conflict!err" => "save_path = joinpath(OUT, \"a.png\"), plot_path = joinpath(OUT, \"b.png\")",

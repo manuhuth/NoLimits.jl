@@ -21,7 +21,7 @@ function _common_layout_optsets()
         "kwsub" => "kwargs_subplot = (; xlabel = \"X custom\", ylabel = \"Y custom\", xgridvisible = true)",
         "kwlayout" => "kwargs_layout = (; size = (900, 600))",
         "save" => "save_path = joinpath(OUT, \"x.png\")",
-        "plotpath" => "plot_path = joinpath(OUT, \"x.png\")",
+        "plotpath!err" => "plot_path = joinpath(OUT, \"x.png\")",
         "ncols0!err" => "ncols = 0",
         "badlayout!err" => "marginal_layout = :bogus",
     ]
@@ -38,7 +38,7 @@ function cases_fits_data()
         opts = _applicable(f, _common_layout_optsets())
         input = get(get(fixture_meta(), f, Dict()), "fit_type", "") == "Nothing" ? "dm" : "res"
         for c in cross(:plot_data, [f], opts; input = input)
-            occursin("__save", c.id) || occursin("__plotpath", c.id) ?
+            occursin("__save", c.id) ?
                 push!(cs, Case(c.id, c.fn, c.fixture, c.call; tags = c.tags, files = ["x.png"])) :
                 push!(cs, c)
         end
@@ -70,7 +70,7 @@ function cases_fits_data()
             ]
         )
         for c in cross(:plot_fits, [f], _applicable(f, opts))
-            occursin("__save", c.id) || occursin("__plotpath", c.id) ?
+            occursin("__save", c.id) ?
                 push!(cs, Case(c.id, c.fn, c.fixture, c.call; tags = c.tags, files = ["x.png"])) :
                 push!(cs, c)
         end

@@ -36,7 +36,8 @@ function cases_vpc_obs_uq()
             "quantile_perind_nbins3" => "obs_percentiles_method = :quantile, obs_percentiles_mode = :per_individual, n_bins = 3",
             "seed1" => "seed = 1",
             "ncols1" => "ncols = 1", "ncols2" => "ncols = 2",
-            "kwplot" => "kwargs_plot = (; size = (900, 600))",
+            # `kwargs_plot` was renamed `kwargs_layout` (the "kwlay" optset below)
+            "kwplot!err" => "kwargs_plot = (; size = (900, 600))",
             "dm_kw" => "dm = dm",
             # validation
             "nsim0!err" => "n_simulations = 0", "nsim_alias0!err" => "n_sim = 0",
@@ -64,7 +65,7 @@ function cases_vpc_obs_uq()
         if post(f)
             push!(o, "mcmc_warmup" => "mcmc_draws = 20, mcmc_warmup = 5")
         end
-        return vcat(o, _bt_common(layout = false))
+        return vcat(o, _bt_common())
     end
     append!(cs, _bt_cases(:plot_vpc, filter(hasfit, _bt_for(M, :plot_vpc)), vpc_sets; base = vbase))
 
