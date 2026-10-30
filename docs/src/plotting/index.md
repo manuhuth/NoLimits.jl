@@ -120,6 +120,8 @@ p_fits = plot_fits(res; cache=cache)
 p_fits
 ```
 
+`predict` returns the observed value of each row in the column `y` next to the `prediction` column (`missing` where the data have no observation), so data and predictions can be plotted from the same table without a join.
+
 ## Multistart objective-value plot
 
 When the optimization landscape is multimodal, a single fit may converge to a local rather than global optimum. `plot_multistart_waterfall` visualizes the objective values from all successful multistart runs, sorted by rank. A flat plateau among the top runs suggests convergence to a consistent solution, while large gaps or a smooth decline may signal identifiability issues or the presence of multiple basins of attraction.

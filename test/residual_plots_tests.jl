@@ -471,6 +471,12 @@ end
     @test dev < dev_few
     @test !isapprox(collect(marg.prediction), collect(ebe.prediction); atol = 0.5)
 
+    # #383: every re_mode returns the observed value next to the prediction.
+    for pr in (pop, ebe, reest, marg)
+        @test names(pr) == ["id", "time", "observable", "y", "prediction"]
+        @test isequal(collect(pr.y), df.y)
+    end
+
     # Unseen subject with only missing outcomes: rows are kept, and :ebe/:marginal
     # fall back to the population value (prior mean / prior draws).
     df_new = DataFrame(ID = [99, 99], t = [0.0, 1.0], y = [missing, missing])
@@ -481,6 +487,8 @@ end
         rng = MersenneTwister(2)
     )
     @test nrow(ebe_new) == 2
+    # No observation in the new data: `y` is missing on every path (#383).
+    @test all(pr -> all(ismissing, pr.y), (pop_new, ebe_new, marg_new))
     @test isapprox(collect(ebe_new.prediction), collect(pop_new.prediction); atol = 1.0e-8)
     @test isapprox(collect(marg_new.prediction), collect(pop_new.prediction); atol = 0.3)
 

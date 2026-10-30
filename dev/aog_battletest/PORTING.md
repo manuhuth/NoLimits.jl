@@ -17,8 +17,9 @@ functions, and verifies them with the same harness.
   `julia --project=/home/mhuth1_hpc/NoLimitsAutoresearch/tools/runic-env -e 'using Runic; exit(Runic.main(ARGS))' -- --inplace src test docs ext`
   (in a job; template `~/NoLimitsAutoresearch/debug/vemfix-oct28/runic_inplace.sbatch`).
 - Fixture fits are test fixtures (tiny data, few iterations), never results.
-- Do not implement observed `y` in `predict` (other branch). Build tidy tables inside the
-  extension (from `get_residuals`, the plot cache, etc.).
+- `predict` returns the observed value in a `y` column (`missing` without an observation;
+  ported from `fix/383-facet-layout-predict-y`). Build tidy tables inside the extension
+  (from `get_residuals`, `predict`, the plot cache, etc.).
 
 ## 2. Layout of the extension
 

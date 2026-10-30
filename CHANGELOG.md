@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Changes
+
+- `predict` returns the observed value of each row in a new column `y` (the `y` column
+  of `get_residuals`), between `observable` and `prediction`. Rows without an
+  observation, for example in new data, hold `missing`. This applies to every
+  `re_mode` and to MCMC/VI fits (#383).
+
 ## v0.3.0
 
 ### Breaking
