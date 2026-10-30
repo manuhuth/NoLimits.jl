@@ -707,3 +707,108 @@ end
     )
     @test mv.logscore == Inf
 end
+
+# AlgebraOfGraphics port (#383): residual figures are facet grids with the shared layout
+# policy, `kwargs_subplot` reaches every panel axis, and facets keep data order.
+@testset "residual plots on AlgebraOfGraphics (#383)" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.1)
+            b = RealNumber(0.3)
+            σ = RealNumber(0.3, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @formulas begin
+            y ~ Normal(a + b * t, σ)
+        end
+    end
+    ids = [10, 2, 1]   # string facet labels "1", "10", "2" would sort differently
+    df = DataFrame(
+        ID = repeat(ids; inner = 4), t = repeat([0.0, 1.0, 2.0, 3.0]; outer = 3),
+        y = [0.1, 0.5, 0.6, 1.1, 0.0, 0.3, 0.8, 0.9, 0.2, 0.4, 0.7, 1.2]
+    )
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    res = fit_model(dm, NoLimits.MLE(; optim_kwargs = (maxiters = 5,)))
+
+    axes_of(fig) = [c for c in fig.content if c isa CairoMakie.Axis]
+    labels_of(fig) = [c.text[] for c in fig.content if c isa CairoMakie.Label]
+    nlegends(fig) = count(c -> c isa CairoMakie.Legend, fig.content)
+    kw = (; xlabel = "X custom", xgridvisible = true, title = "T")
+
+    # Old bug: any kwargs_subplot was splatted positionally into create_styled_plot.
+    for f in (
+            () -> plot_residuals(res; kwargs_subplot = kw),
+            () -> plot_residual_distribution(res; kwargs_subplot = kw),
+            () -> plot_residual_qq(res; kwargs_subplot = kw),
+            () -> plot_residual_pit(res; kwargs_subplot = kw),
+            () -> plot_residual_acf(res; kwargs_subplot = kw),
+            () -> plot_residuals(dm; kwargs_subplot = kw),
+        )
+        fig = f()
+        @test fig isa CairoMakie.Figure
+        @test all(ax -> ax.xgridvisible[], axes_of(fig))
+        @test any(ax -> ax.xlabel[] == "X custom", axes_of(fig)) ||
+            "X custom" in labels_of(fig)
+    end
+
+    fig = plot_residuals(res; residual = :raw, kwargs_layout = (; size = (700, 500)))
+    @test length(axes_of(fig)) == 3
+    titles = filter(l -> occursin("| id=", l), labels_of(fig))
+    # facets follow the data (first appearance), not DataModel's or AoG's sorting
+    @test titles == ["y | id=10", "y | id=2", "y | id=1"]
+    # an explicit individuals_idx keeps the caller's order
+    sel = [2, 1]
+    fig_sel = plot_residuals(res; residual = :raw, individuals_idx = sel)
+    @test filter(l -> occursin("| id=", l), labels_of(fig_sel)) ==
+        ["y | id=$(i)" for i in unique(get_residuals(res; residuals = [:raw], individuals_idx = sel).id)]
+    @test nlegends(fig) == 0
+    @test Tuple(fig.scene.viewport[].widths) == (700, 500)
+    # shared axes get the padded common range
+    lims = [ax.limits[] for ax in axes_of(fig)]
+    @test all(l -> l == lims[1], lims)
+    @test lims[1][1] isa Tuple && lims[1][2] isa Tuple
+    fig_free = plot_residuals(res; residual = :raw, shared_y_axis = false, shared_x_axis = false)
+    @test length(axes_of(fig_free)) == 3
+
+    # quantile histograms carry the N(0,1) overlay and ONE figure legend
+    fig_d = plot_residual_distribution(res; residual = :quantile, bins = 4)
+    @test nlegends(fig_d) == 1
+    bars = [p for ax in axes_of(fig_d) for p in ax.scene.plots if p isa CairoMakie.BarPlot]
+    @test length(bars) == 1
+    @test length(bars[1][1][]) == 4
+    @test sum(pt[2] for pt in bars[1][1][]) ≈ 1.0
+    @test nlegends(plot_residual_distribution(res; residual = :raw)) == 0
+    @test_throws ErrorException plot_residual_distribution(res; bins = 0)
+
+    # PIT figures fix x to [0, 1]
+    for kwm in ((;), (; show_hist = false, show_kde = true), (; show_hist = false, show_qq = true))
+        figp = plot_residual_pit(res; kwm...)
+        ax = only(axes_of(figp))
+        @test ax.limits[][1] == (0.0, 1.0)
+    end
+    @test_throws ErrorException plot_residual_pit(res; show_kde = true, show_hist = false, kde_bandwidth = -1.0)
+
+    # validation
+    @test_throws ErrorException plot_residuals(res; ncols = 0)
+    @test_throws ErrorException plot_residual_qq(res; ncols = 0)
+    @test_throws ErrorException plot_residual_acf(res; max_lag = 0)
+
+    # Non-finite residuals (an impossible observation has logscore Inf) are dropped
+    # with a warning instead of producing infinite axis limits.
+    _ext = Base.get_extension(NoLimits, :NoLimitsMakieExt)
+    rdf = get_residuals(res; residuals = [:logscore])
+    rdf.logscore = Vector{Union{Missing, Float64}}(rdf.logscore)
+    rdf.logscore[1] = Inf
+    fig_inf = @test_logs (:warn, r"non-finite") match_mode = :any _ext._plot_residuals_df(
+        rdf; metric = :logscore
+    )
+    @test all(ax -> all(isfinite, ax.limits[][2]), axes_of(fig_inf))
+
+    # A table without drawable residuals gives one titled empty axis.
+    rdf_empty = copy(rdf)
+    rdf_empty.logscore .= missing
+    fig_empty = _ext._plot_residuals_df(rdf_empty; metric = :logscore)
+    @test only(axes_of(fig_empty)).title[] == "No residual data to plot."
+end
