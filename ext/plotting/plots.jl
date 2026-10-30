@@ -159,6 +159,10 @@ function _plot_fits_comparison_impl(
         error("Internal error: fits and labels length mismatch.")
     isempty(fits) && error("plot_fits_comparison requires at least one fit result.")
     _check_positive_int(ncols, "ncols")
+    # model names and "data" share one colour/legend scale
+    plot_data_points && "data" in labels &&
+        error("plot_fits_comparison: a model named \"data\" collides with the observed-data legend entry; rename the model or pass `plot_data_points = false`.")
+    allunique(labels) || error("plot_fits_comparison: model names must be unique; got $(labels).")
 
     save_path = _resolve_plot_path(save_path, plot_path)
     dms = dm === nothing ? [_get_dm(res, nothing) for res in fits] : fill(dm, length(fits))
@@ -211,6 +215,7 @@ function _plot_fits_comparison_impl(
             )
             for j in eachindex(fits)
     ]
+    _mask_nonpositive!(kwargs_subplot, "plot_fits_comparison", line_dfs..., obs_df)
     layers = _layers(line_layers..., _layer(obs_df, xy, _scatter_visual(style)))
     fig = _draw_facets(
         layers; panels = panels, ncols = ncols, style = style,
@@ -221,7 +226,8 @@ function _plot_fits_comparison_impl(
             ylabel = _axis_label(obs_name),
         ),
         series = series,
-        xlim = _shared_lim(shared_x_axis, xlims), ylim = _shared_lim(shared_y_axis, ylims),
+        xlim = _shared_lim(shared_x_axis, xlims; kwargs_subplot, col = :x, tables = (line_dfs..., obs_df)),
+        ylim = _shared_lim(shared_y_axis, ylims; kwargs_subplot, col = :y, tables = (line_dfs..., obs_df)),
     )
     return _save_plot!(fig, save_path)
 end

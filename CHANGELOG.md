@@ -45,7 +45,15 @@ This release changes the plotting API without deprecation paths:
   defaults. Facet titles are figure labels, not `ax.title`. `calculate_plot_size` no
   longer shrinks panels below half of the base panel size when many panels are drawn
   (50 individuals at `ncols = 1` got 48 px per panel). `combine_plots` gains
-  `link_x`/`link_y`. `plot_dv_pred` gains `return_panel`.
+  `link_x`/`link_y`. `plot_dv_pred` gains `return_panel`. Fonts, facet labels and the
+  legend of figures larger than about 800 units grow with the figure (by the square
+  root of the size ratio, at most 1.5x), so tall grids stay readable when viewed scaled
+  down; explicit sizes in `kwargs_subplot` win. A function with nothing to draw returns
+  the message on an empty figure instead of an empty 0..10 axis. PIT histograms
+  (`plot_random_effect_pit`, `plot_residual_pit`,
+  `plot_residual_distribution(...; residual = :pit)`) use uniform bins on [0, 1] and
+  x limits [0, 1]. The multistart waterfall draws near-equal objectives as offsets from
+  the best value in units of a power of ten (best value in the subtitle).
 
 - Plotting bugs fixed in the port (#383):
   - residual and random-effect plots failed for any `kwargs_subplot` (it was splatted
@@ -76,12 +84,22 @@ This release changes the plotting API without deprecation paths:
     were overridden in `plot_dv_pred`/`plot_dv_ipred`/`plot_wres_pred`, which now also
     support logarithmic axes; the multistart waterfall title was clipped and its tick
     labels collapsed when objectives agree to many digits; the FE-variability
-    `:quantiles` mode had no legend.
+    `:quantiles` mode had no legend;
+  - user `limits` in `kwargs_subplot` were overwritten by the computed facet limits;
+    shared limits on logarithmic axes could reach <= 0 (now padded multiplicatively
+    on the positive values) in `plot_fits`, `plot_data`, `plot_fits_comparison` and
+    `plot_residuals`;
+  - PIT histograms were binned over the data range (very thin bars, and the `1 / bins`
+    reference line of `plot_residual_distribution(...; residual = :pit)` was wrong);
+  - `plot_observation_distributions` defaulted to the first id in sorted order instead
+    of the first individual in the data; `plot_fits_comparison` with a model named
+    `"data"` merged it with the observed data (now an error); `plot_vpc` drew the
+    median line dotted for percentile lists whose middle value is not 50.
 
 - `load_fit` rebuilds the DynamicPPL model of a VI fit from its `DataModel` when the
   Turing extension is loaded, so `sample_posterior` on a reloaded VI fit returns
-  natural-scale draws (before: linked-scale draws, e.g. `log σ`). Without Turing a
-  warning says the draws stay on the linked scale.
+  natural-scale draws (before: linked-scale draws, e.g. `log σ`). Without Turing, or
+  when the rebuild fails, a warning says the draws stay on the linked scale.
 
 - SAEM and MCEM results record `diagnostics_every` (the stride of
   `diagnostics.θ_hist`) in their notes, so EM trajectories of reloaded fits have exact

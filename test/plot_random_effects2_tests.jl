@@ -75,6 +75,11 @@ end
     end
 end
 
+# Bar widths of a BarPlot: one value per bar (the RE figures map a width column) or one
+# number for all bars; the area is the sum of height x width.
+_bar_widths(b) = (w = b.width[]; w isa AbstractVector ? w : fill(w, length(b[1][])))
+_bar_area(b) = sum(pt[2] * w for (pt, w) in zip(b[1][], _bar_widths(b)))
+
 @testset "random effects new plots Laplace flow dim2" begin
     res = fx_npf2_laplace()
 
@@ -82,10 +87,10 @@ end
     # a flow histogram stands for the PDF: density scale (area 1)
     fbars = [p for ax in fig.content if ax isa Axis for p in ax.scene.plots if p isa BarPlot]
     @test !isempty(fbars)
-    @test all(b -> isapprox(sum(pt[2] for pt in b[1][]) * b.width[], 1.0; atol = 1.0e-8), fbars)
+    @test all(b -> isapprox(_bar_area(b), 1.0; atol = 1.0e-8), fbars)
     fig = plot_random_effect_distributions(res; flow_samples = 50, flow_plot = :hist)
     fbars = [p for ax in fig.content if ax isa Axis for p in ax.scene.plots if p isa BarPlot]
-    @test all(b -> isapprox(sum(pt[2] for pt in b[1][]) * b.width[], 1.0; atol = 1.0e-8), fbars)
+    @test all(b -> isapprox(_bar_area(b), 1.0; atol = 1.0e-8), fbars)
     @test plot_random_effects_scatter(res) !== nothing
     @test plot_random_effect_pairplot(res) !== nothing
 end
@@ -247,7 +252,7 @@ _re_all_xlabels(fig) = vcat([string(ax.xlabel[]) for ax in _re_axes(fig)], _re_l
     @test_throws ErrorException plot_random_effect_pairplot(res; kde_bandwidth = -1.0)
     # diagonal histograms: a density (area 1) under the KDE, probabilities without it
     _bars(fig) = [p for ax in _re_axes(fig) for p in ax.scene.plots if p isa BarPlot]
-    _area(b) = sum(pt[2] for pt in b[1][]) * b.width[]
+    _area(b) = _bar_area(b)
     _psum(b) = sum(pt[2] for pt in b[1][])
     @test all(b -> isapprox(_area(b), 1.0; atol = 1.0e-8), _bars(fig))
     @test all(b -> isapprox(_psum(b), 1.0; atol = 1.0e-8), _bars(plot_random_effect_pairplot(res)))
@@ -258,6 +263,11 @@ _re_all_xlabels(fig) = vcat([string(ax.xlabel[]) for ax in _re_axes(fig)], _re_l
     @test all(ax -> ax.ylabel[] == "Density", _re_axes(fig_s))
     fig_s = plot_random_effect_standardized(res; show_hist = true, show_kde = false)
     @test all(b -> isapprox(_psum(b), 1.0; atol = 1.0e-8), _bars(fig_s))
+    # one bar plot per panel, each bar as wide as its own panel's bin spacing
+    @test all(ax -> count(p -> p isa BarPlot, ax.scene.plots) == 1, _re_axes(fig_s))
+    _spacing(b) = minimum(diff(sort(unique(first.(b[1][])))))
+    @test all(b -> all(≈(_spacing(b)), _bar_widths(b)), _bars(fig_s))
+    @test length(unique(round.(_spacing.(_bars(fig_s)); sigdigits = 6))) > 1
     @test all(ax -> ax.ylabel[] == "Probability", _re_axes(fig_s))
 
     # distributions: one panel per (RE, level, component); EBE line in the legend
@@ -266,21 +276,43 @@ _re_all_xlabels(fig) = vcat([string(ax.xlabel[]) for ax in _re_axes(fig)], _re_l
     @test _re_nlegends(fig) == 1
 
     # PIT: random effects with fewer than 2 PIT values are skipped (no empty axes); when
-    # nothing is left the figure is a titled placeholder
+    # nothing is left the figure is a placeholder message
     fig = @test_logs (:warn, r"PIT skipped") (:warn, r"No PIT plots") match_mode = :any plot_random_effect_pit(
         res; re_names = :xi, levels = [:C1]
     )
-    @test length(_re_axes(fig)) == 1
-    @test string(only(_re_axes(fig)).title[]) == "No PIT plots to display."
+    # the placeholder is the message on an empty figure (no axis, ticks or title)
+    @test isempty(_re_axes(fig))
+    @test _re_labels(fig) == ["No PIT plots to display."]
     fig = plot_random_effect_pit(res; show_hist = false, show_qq = true)
     @test length(_re_axes(fig)) == 4
     @test _re_nlegends(fig) == 1
+    # PIT histograms: 20 uniform bins on [0, 1] (they used to span the data range, which
+    # gave very thin bars) and x fixed to [0, 1], linked or not
+    for shx in (true, false)
+        fig = plot_random_effect_pit(res; shared_x_axis = shx)
+        for b in _bars(fig)
+            @test all(≈(0.05), _bar_widths(b))
+            @test all(pt -> any(c -> isapprox(pt[1], c; atol = 1.0e-10), 0.025:0.05:0.975), b[1][])
+        end
+        @test !isempty(_bars(fig))
+        @test all(
+            ax -> isapprox(ax.finallimits[].origin[1], 0.0; atol = 1.0e-10) &&
+                isapprox(ax.finallimits[].widths[1], 1.0; atol = 1.0e-10), _re_axes(fig)
+        )
+    end
+
+    # user limits win over the per-panel / fixed limits
+    for kw in ((; shared_y_axis = false), (; shared_x_axis = false))
+        fig = plot_random_effect_pit(res; kw..., kwargs_subplot = (; limits = ((-0.5, 1.5), (0.0, 2.0))))
+        @test all(ax -> ax.limits[] == ((-0.5, 1.5), (0.0, 2.0)), _re_axes(fig))
+    end
 
     # standardized: nothing selected -> placeholder; KDE needs >= 2 values
     fig = @test_logs (:warn, r"No standardized") match_mode = :any plot_random_effect_standardized(
         res; show_hist = false, show_kde = false
     )
-    @test length(_re_axes(fig)) == 1
+    @test isempty(_re_axes(fig))
+    @test _re_labels(fig) == ["No standardized random effects to plot."]
     @test plot_random_effect_standardized(res; show_kde = true) isa Figure
 
     # scatters share one linked x axis; x_covariate validation is kept

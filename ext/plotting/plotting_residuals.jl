@@ -109,13 +109,13 @@ _resid_hline(value::Real, style::PlotStyle) =
 
 # Exact uniform-bin histogram of one panel as an AoG BarPlot layer (one layer per panel,
 # because the bin width differs between panels). `normalization = :pdf` (area 1) when a
-# density is drawn on the same axis, `:probability` otherwise. Returns the layer and the
-# tallest bar.
+# density is drawn on the same axis, `:probability` otherwise; `range = (lo, hi)` fixes the
+# bin range (PIT values: (0, 1)). Returns the layer and the tallest bar.
 function _resid_hist_layer(
         panel::AbstractString, vals, bins::Int, series::AbstractString, style::PlotStyle;
-        normalization::Symbol = :probability
+        normalization::Symbol = :probability, range = nothing
     )
-    h = _histogram_xy(vals; bins = bins, normalization = normalization)
+    h = _histogram_xy(vals; bins = bins, normalization = normalization, range = range)
     n = length(h.centers)
     t = DataFrame(
         panel = fill(String(panel), n), x = collect(Float64, h.centers),
@@ -126,10 +126,9 @@ function _resid_hist_layer(
     return layer, maximum(h.heights)
 end
 
-# Figure returned when no panel has drawable residuals (one titled empty axis).
-function _resid_empty(msg::AbstractString, style::PlotStyle, kwargs_subplot, kwargs_layout, save_path)
-    panel = AoGPanel(nothing; axis = _aog_axis(style, kwargs_subplot; title = msg))
-    fig = combine_plots([panel]; ncols = 1, style = style, _nt(kwargs_layout)...)
+# Figure returned when no panel has drawable residuals (the message, no axis).
+function _resid_empty(msg::AbstractString, style::PlotStyle, kwargs_layout, save_path)
+    fig = _placeholder_figure(msg, style; kwargs_layout = kwargs_layout)
     return _save_plot!(fig, save_path)
 end
 
@@ -153,6 +152,8 @@ function _plot_residuals_df(
     data_order && (df = _resid_in_data_order(df))
     label = _residual_metric_label(metric)
     ref = metric == :pit ? 0.5 : (metric == :logscore ? nothing : 0.0)
+    # a logarithmic y axis cannot show the reference line at 0
+    last(_diag_log_axes(kwargs_subplot)) && ref !== nothing && ref <= 0 && (ref = nothing)
 
     pts = _tidy()
     panels = String[]
@@ -170,8 +171,9 @@ function _plot_residuals_df(
         ylims = _merge_limits(ylims, y)
     end
     isempty(panels) &&
-        return _resid_empty("No residual data to plot.", style, kwargs_subplot, kwargs_layout, save_path)
+        return _resid_empty("No residual data to plot.", style, kwargs_layout, save_path)
 
+    _mask_nonpositive!(kwargs_subplot, "plot_residuals", pts)
     layers = _layer(
         pts, AoG.mapping(:x, :y; layout = :panel),
         _scatter_visual(style; color = style.color_secondary)
@@ -181,7 +183,8 @@ function _plot_residuals_df(
         shared_x = shared_x_axis, shared_y = shared_y_axis,
         kwargs_subplot = kwargs_subplot, kwargs_layout = kwargs_layout,
         axis = (; xlabel = x_label, ylabel = label), legend = false, post = post,
-        xlim = _shared_lim(shared_x_axis, xlims), ylim = _shared_lim(shared_y_axis, ylims),
+        xlim = _shared_lim(shared_x_axis, xlims; kwargs_subplot, col = :x, tables = (pts,)),
+        ylim = _shared_lim(shared_y_axis, ylims; kwargs_subplot, col = :y, tables = (pts,)),
     )
     return _save_plot!(fig, save_path)
 end
@@ -348,10 +351,12 @@ function _plot_residual_distribution_df(
         isempty(vals) && continue
         panel = string(g.observable[1])
         push!(panels, panel)
-        # with the N(0,1) density overlaid the histogram is a density too (area 1)
+        # with the N(0,1) density overlaid the histogram is a density too (area 1); PIT
+        # values are binned on [0, 1], so the uniform reference 1 / bins is exact
         layer, ymax = _resid_hist_layer(
             panel, vals, bins, "data", style;
-            normalization = metric == :quantile ? :pdf : :probability
+            normalization = metric == :quantile ? :pdf : :probability,
+            range = metric == :pit ? (0.0, 1.0) : nothing
         )
         push!(hist_layers, layer)
         if metric == :quantile
@@ -367,7 +372,7 @@ function _plot_residual_distribution_df(
         ylims = _merge_limits(ylims, (0.0, ymax))
     end
     isempty(panels) &&
-        return _resid_empty("No residual data to plot.", style, kwargs_subplot, kwargs_layout, save_path)
+        return _resid_empty("No residual data to plot.", style, kwargs_layout, save_path)
 
     series = Pair{String, Any}["data" => style.color_secondary]
     metric == :quantile && push!(series, "N(0,1)" => style.color_dark)
@@ -382,9 +387,13 @@ function _plot_residual_distribution_df(
         layers; panels = panels, ncols = ncols, style = style,
         shared_x = shared_x_axis, shared_y = shared_y_axis,
         kwargs_subplot = kwargs_subplot, kwargs_layout = kwargs_layout,
-        axis = (; xlabel = label, ylabel = metric == :quantile ? "Density" : "Probability"),
+        axis = merge(
+            (; xlabel = label, ylabel = metric == :quantile ? "Density" : "Probability"),
+            metric == :pit ? (; xticks = UNIT_INTERVAL_TICKS) : (;)
+        ),
         series = series, legend = metric == :quantile, post = post,
-        xlim = _shared_lim(shared_x_axis, xlims), ylim = _shared_lim(shared_y_axis, ylims),
+        xlim = metric == :pit ? (0.0, 1.0) : _shared_lim(shared_x_axis, xlims),
+        ylim = _shared_lim(shared_y_axis, ylims),
     )
     return _save_plot!(fig, save_path)
 end
@@ -404,8 +413,8 @@ end
 Plot the marginal distribution of residuals as histograms, one facet per observable
 (component for vector-valued observables). `:quantile` draws a density histogram (area 1,
 y axis "Density") with the dashed N(0,1) density and a figure legend; the other metrics
-draw probability histograms (bar heights sum to 1), and `:pit` adds a dashed reference
-line at the uniform bar height `1 / bins`.
+draw probability histograms (bar heights sum to 1), and `:pit` (bins on [0, 1], x fixed
+to [0, 1]) adds a dashed reference line at the uniform bar height `1 / bins`.
 
 # Keyword Arguments
 - `residual::Symbol = :quantile`: residual metric (`:pit`, `:quantile`, `:raw`,
@@ -549,7 +558,7 @@ function _plot_residual_qq_df(
         _push_xy!(diag, panel, (lo, hi), (lo, hi), "reference")
     end
     isempty(panels) &&
-        return _resid_empty("No residual data to plot.", style, kwargs_subplot, kwargs_layout, save_path)
+        return _resid_empty("No residual data to plot.", style, kwargs_layout, save_path)
 
     xy = AoG.mapping(:x, :y; layout = :panel)
     layers = _layers(
@@ -720,7 +729,7 @@ function _plot_residual_pit_df(
         panel = string(g.observable[1], " | ", mode)
         push!(panels, panel)
         if show_hist
-            layer, _ = _resid_hist_layer(panel, pits, 20, "data", style)
+            layer, _ = _resid_hist_layer(panel, pits, 20, "data", style; range = (0.0, 1.0))
             push!(hist_layers, layer)
         elseif show_kde
             xk, yk = _kde_xy(pits; bandwidth = kde_bandwidth, what = "kde_bandwidth")
@@ -733,7 +742,7 @@ function _plot_residual_pit_df(
         end
     end
     isempty(panels) &&
-        return _resid_empty("No PIT data to plot.", style, kwargs_subplot, kwargs_layout, save_path)
+        return _resid_empty("No PIT data to plot.", style, kwargs_layout, save_path)
 
     xy = AoG.mapping(:x, :y; layout = :panel)
     layers = _layers(
@@ -749,7 +758,7 @@ function _plot_residual_pit_df(
         layers; panels = panels, ncols = ncols, style = style,
         shared_x = true, shared_y = false,
         kwargs_subplot = kwargs_subplot, kwargs_layout = kwargs_layout,
-        axis = (; xlabel = xlabel, ylabel = ylabel),
+        axis = (; xlabel = xlabel, ylabel = ylabel, xticks = UNIT_INTERVAL_TICKS),
         series = show_hist ? Pair{String, Any}["data" => style.color_secondary] : Pair{String, Any}[],
         legend = false, xlim = (0.0, 1.0),
     )
@@ -767,7 +776,7 @@ end
     plot_residual_pit(dm::DataModel; ...) -> Makie.Figure
 
 Plot the probability integral transform (PIT) values, one facet per observable, as a
-histogram (20 bins), a kernel density estimate, or a uniform QQ plot. Uniform PIT values
+histogram (20 uniform bins on [0, 1]), a kernel density estimate, or a uniform QQ plot. Uniform PIT values
 indicate a well-calibrated model. The x axis is fixed to [0, 1] and linked.
 
 Exactly one display mode is drawn: enabling none is an error, enabling several warns and
@@ -920,7 +929,7 @@ function _plot_residual_acf_df(
         post[panel] = Any[_resid_hline(0.0, style)]
     end
     isempty(panels) &&
-        return _resid_empty("No residual data to plot.", style, kwargs_subplot, kwargs_layout, save_path)
+        return _resid_empty("No residual data to plot.", style, kwargs_layout, save_path)
 
     layers = _layer(
         acf_df, AoG.mapping(:x, :y; layout = :panel),

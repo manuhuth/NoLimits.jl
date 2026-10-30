@@ -1,3 +1,8 @@
+# Observed percentile lines: the median (50th percentile) solid whenever it is requested,
+# every other percentile dotted (also for even-length lists, whose middle value is no
+# requested percentile).
+_vpc_line_style(pctl::Real) = pctl == 50 ? :solid : :dot
+
 """
     plot_vpc(res::FitResult; dm, n_simulations, n_sim, percentiles, show_obs_points,
              show_obs_percentiles, n_bins, seed, observables, x_axis_feature, ncols,
@@ -197,7 +202,6 @@ function plot_vpc(
             _push_xy!(obs_df, "", all_x, all_y, "obs")
             push!(palette, "obs" => Makie.coloralpha(Makie.to_color(style.color_primary), 0.3))
         end
-        pct_style(pctl) = pctl == median(percentiles) ? :solid : :dot
 
         if show_obs_percentiles && !is_discrete && !isempty(all_y)
             if obs_percentiles_method == :kernel
@@ -208,7 +212,7 @@ function plot_vpc(
                 xgrid = sort(unique(all_x))
                 sm = _kernel_quantiles(all_x, all_y, xgrid, bw, percentiles)
                 for pctl in percentiles
-                    _push_xy!(kern_df[pct_style(pctl)], "", xgrid, sm[pctl], "obs $(pctl)%")
+                    _push_xy!(kern_df[_vpc_line_style(pctl)], "", xgrid, sm[pctl], "obs $(pctl)%")
                 end
             elseif obs_percentiles_method == :quantile
                 bins = _assign_bins(all_x, edges)
@@ -248,7 +252,7 @@ function plot_vpc(
                 for pctl in percentiles
                     x_plot, y_plot = _extend_bin_series(x_centers, obs_q[pctl], edges)
                     lbl = "obs $(pctl)%"
-                    _push_xy!(lines_df[pct_style(pctl)], "", x_plot, y_plot, lbl)
+                    _push_xy!(lines_df[_vpc_line_style(pctl)], "", x_plot, y_plot, lbl)
                     push!(palette, lbl => COLOR_ACCENT)
                 end
             else

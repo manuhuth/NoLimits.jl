@@ -89,6 +89,53 @@ function _legend_nbanks(labels, width::Real, style::PlotStyle)
     return n
 end
 
+# Makie's default legend patch size, scaled with the fonts of large figures.
+const _LEGEND_PATCHSIZE = (20.0f0, 20.0f0)
+
+_FONT_FIELDS = (
+    :font_size_title, :font_size_label, :font_size_tick, :font_size_legend,
+    :font_size_annotation,
+)
+
+"""
+    _figure_style(style, size) -> PlotStyle
+
+`style` with its font sizes multiplied by `_font_scale(size...)` (rounded), the style a
+figure of `size` is drawn with. Large figures are viewed scaled down; enlarging their
+fonts (and the legend patches, see `_legend_patchsize`) keeps text and legends readable.
+Every figure builder ([`_draw_facets`](@ref), [`combine_plots`](@ref) and the grids that
+create their own `Figure`) draws with it, before layout, so Makie lays out the final
+sizes. User values in `kwargs_subplot` still win (they are merged last).
+"""
+function _figure_style(style::PlotStyle, size)
+    f = _font_scale(size[1], size[2])
+    f == 1.0 && return style
+    nt = NamedTuple{fieldnames(PlotStyle)}(Tuple(getfield(style, k) for k in fieldnames(PlotStyle)))
+    scaled = NamedTuple{_FONT_FIELDS}(Tuple(round(Int, getfield(style, k) * f) for k in _FONT_FIELDS))
+    return PlotStyle(; merge(nt, scaled)...)
+end
+
+# Legend patch size for a figure drawn with `fstyle = _figure_style(style, size)`.
+_legend_patchsize(fstyle::PlotStyle, style::PlotStyle) =
+    _LEGEND_PATCHSIZE .* Float32(fstyle.font_size_legend / style.font_size_legend)
+
+# Axis attributes of a composable panel rescaled to the figure style: font sizes that still
+# equal the panel's `style` value (i.e. were not set by the user) take the `fstyle` value.
+function _rescale_axis_fonts(axis::NamedTuple, style::PlotStyle, fstyle::PlotStyle)
+    style === fstyle && return axis
+    pairs_ = (
+        :titlesize => :font_size_title, :subtitlesize => :font_size_label,
+        :xlabelsize => :font_size_label, :ylabelsize => :font_size_label,
+        :xticklabelsize => :font_size_tick, :yticklabelsize => :font_size_tick,
+    )
+    out = axis
+    for (attr, field) in pairs_
+        haskey(out, attr) && out[attr] == getfield(style, field) || continue
+        out = merge(out, NamedTuple{(attr,)}((getfield(fstyle, field),)))
+    end
+    return out
+end
+
 """
     _scatter_visual(style; kwargs...) -> AoG.Layer
 
@@ -259,20 +306,26 @@ function _draw_facets(
     isempty(series) || (sc = merge(sc, (; Color = _series_palette(series))))
     sc = merge(sc, _nt(scales))
     fig_kw = _aog_figure(style, n, ncols_use, kwargs_layout)
-    nbanks = _legend_nbanks(first.(series), first(fig_kw.size), style)
+    fstyle = _figure_style(style, fig_kw.size)
+    nbanks = _legend_nbanks(first.(series), first(fig_kw.size), fstyle)
     fg = AoG.draw(
         layers, AoG.scales(; sc...);
-        axis = _aog_axis(style, kwargs_subplot; _nt(axis)...),
+        axis = _aog_axis(fstyle, kwargs_subplot; _nt(axis)...),
         figure = fig_kw,
         facet = (; linkxaxes = _facet_link(shared_x), linkyaxes = _facet_link(shared_y)),
-        legend = (legend && !isempty(series)) ? _aog_legend(style; nbanks) : (; show = false),
+        legend = (legend && !isempty(series)) ?
+            _aog_legend(fstyle; nbanks, patchsize = _legend_patchsize(fstyle, style)) :
+            (; show = false),
     )
+    # user `limits` in kwargs_subplot win over the computed shared limits
+    user_limits = haskey(_nt(kwargs_subplot), :limits)
     for (k, label) in enumerate(panels)
         ax = _facet_axis(fg, k, ncols_use)
         ax === nothing && continue
         for f in get(post, label, ())
             f(ax)
         end
+        user_limits && continue
         xlim === nothing || xlims!(ax, xlim...)
         ylim === nothing || ylims!(ax, ylim...)
     end
@@ -326,7 +379,10 @@ end
 
 # One horizontal legend below everything, merging AoG legend triples by label (first
 # occurrence wins).
-function _figure_legend!(fig::Figure, legends, style::PlotStyle; row::Integer, ncols::Integer)
+function _figure_legend!(
+        fig::Figure, legends, style::PlotStyle; row::Integer, ncols::Integer,
+        patchsize = _LEGEND_PATCHSIZE
+    )
     elements = Any[]
     labels = String[]
     for leg in legends
@@ -344,6 +400,7 @@ function _figure_legend!(fig::Figure, legends, style::PlotStyle; row::Integer, n
     return Legend(
         fig[row, 1:ncols], elements, labels;
         orientation = :horizontal, framevisible = false, labelsize = style.font_size_legend,
+        patchsize = patchsize,
         nbanks = nbanks, tellheight = true, tellwidth = false
     )
 end
@@ -409,7 +466,9 @@ function combine_plots(
     _check_positive_int(ncols, "ncols")
     n = length(panels)
     ncols_use = min(ncols, max(n, 1))
-    fig = Figure(; _aog_figure(style, n, ncols_use, NamedTuple(kwargs))...)
+    fig_kw = _aog_figure(style, n, ncols_use, NamedTuple(kwargs))
+    fig = Figure(; fig_kw...)
+    fstyle = _figure_style(style, fig_kw.size)
     legends = Any[]
     axes = Any[nothing for _ in 1:n]
     keep = Set{Symbol}()
@@ -421,6 +480,13 @@ function combine_plots(
             )
         )
         row, col = fldmod1(i, ncols_use)
+        # fonts of large figures grow before layout (sizes the user set are kept)
+        fstyle === style || (
+            panel = AoGPanel(
+                panel.layers, panel.scales, _rescale_axis_fonts(panel.axis, style, fstyle),
+                panel.post, panel.legend
+            )
+        )
         ax, leg = _materialize_panel!(fig[row, col], panel)
         axes[i] = ax
         push!(legends, leg)
@@ -429,7 +495,26 @@ function combine_plots(
     end
     (link_x || link_y) && _link_panel_axes!(axes, ncols_use; link_x, link_y, keep)
     nrows = cld(max(n, 1), ncols_use)
-    _figure_legend!(fig, legends, style; row = nrows + 1, ncols = ncols_use)
+    _figure_legend!(
+        fig, legends, fstyle; row = nrows + 1, ncols = ncols_use,
+        patchsize = _legend_patchsize(fstyle, style)
+    )
+    return fig
+end
+
+"""
+    _placeholder_figure(msg, style; kwargs_layout = (;)) -> Figure
+
+Figure returned when a plotting function has nothing to draw: the message `msg` centred
+on an otherwise empty single-panel figure, in the style's label font (no axis, ticks or
+title).
+"""
+function _placeholder_figure(msg::AbstractString, style::PlotStyle; kwargs_layout = NamedTuple())
+    fig = Figure(; _aog_figure(style, 1, 1, kwargs_layout)...)
+    Makie.Label(
+        fig[1, 1], msg; fontsize = style.font_size_label, color = style.color_dark,
+        tellwidth = false, tellheight = false
+    )
     return fig
 end
 

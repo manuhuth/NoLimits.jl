@@ -58,13 +58,21 @@ function _re_curve_summary(mat::AbstractMatrix, qs)
     return m, lo, hi
 end
 
+# Bin range of `_re_fixed_hist`: [lo, hi], widened to [lo - 0.5, hi + 0.5] for degenerate
+# samples (lo == hi), as `_histogram_xy` does.
+_re_hist_range(lo::Real, hi::Real) = lo < hi ? (Float64(lo), Float64(hi)) :
+    (Float64(lo) - 0.5, Float64(hi) + 0.5)
+
 # Histogram of each sample on fixed uniform edges (columns: draws): probabilities (bar
-# heights sum to 1), or densities (area 1) with `density = true`.
+# heights sum to 1), or densities (area 1) with `density = true`. Non-finite values are
+# skipped; callers build the bin centres from `_re_hist_range(lo, hi)`.
 function _re_fixed_hist(samples_by_draw, lo::Real, hi::Real, nbins::Int; density::Bool = false)
+    lo, hi = _re_hist_range(lo, hi)
     out = Vector{Vector{Float64}}()
     for samp in samples_by_draw
         counts = zeros(Float64, nbins)
         for s in samp
+            isfinite(s) || continue
             idx = s == hi ? nbins :
                 clamp(floor(Int, (s - lo) / (hi - lo) * nbins) + 1, 1, nbins)
             counts[idx] += 1
@@ -82,25 +90,20 @@ function _re_layers(acc::_REFacets, style::PlotStyle; qalpha::Real = 0.8, bar_kw
     df = acc.df
     m = AoG.mapping(:x, :y; color = :series, layout = :panel)
     mg = AoG.mapping(:x, :y; color = :series, group = :grp, layout = :panel)
-    # Histogram bars: one layer per panel with the panel's bin width (a single layer would
-    # size every bar by the smallest x spacing across all panels).
+    # Histogram bars: one layer, each bar sized by its panel's bin width (a `w` column;
+    # a fixed width would size every bar by the smallest x spacing across all panels).
     bars = _re_sub(df, :bar)
-    bar_layers = Any[]
-    for panel in acc.panels
-        sub = bars[bars.panel .== panel, :]
-        nrow(sub) == 0 && continue
-        xs = sort(unique(sub.x))
-        w = length(xs) >= 2 ? minimum(diff(xs)) : 1.0
-        push!(
-            bar_layers, _layer(
-                sub, m, AoG.visual(
-                    Makie.BarPlot; merge((; gap = 0, strokewidth = 0, width = w), _nt(bar_kw))...
-                )
-            )
-        )
+    bars.w = zeros(Float64, nrow(bars))
+    for g in groupby(bars, :panel)
+        xs = sort(unique(g.x))
+        g.w .= length(xs) >= 2 ? minimum(diff(xs)) : 1.0
     end
+    bar_layer = _layer(
+        bars, AoG.mapping(:x, :y; color = :series, layout = :panel, width = :w),
+        AoG.visual(Makie.BarPlot; merge((; gap = 0, strokewidth = 0), _nt(bar_kw))...)
+    )
     return _layers(
-        bar_layers...,
+        bar_layer,
         _layer(_re_sub(df, :pmf), m, AoG.visual(Makie.BarPlot)),
         _layer(_re_sub(df, :line), mg, _line_visual(style)),
         _layer(_re_sub(df, :qline), mg, _line_visual(style; linestyle = :dash, alpha = qalpha)),
@@ -113,11 +116,10 @@ function _re_layers(acc::_REFacets, style::PlotStyle; qalpha::Real = 0.8, bar_kw
     )
 end
 
-# Placeholder figure (one titled empty axis) for "nothing to plot" results.
-function _re_placeholder(msg::AbstractString, style::PlotStyle, kwargs_subplot, kwargs_layout)
+# Placeholder figure (the message, no axis) for "nothing to plot" results.
+function _re_placeholder(msg::AbstractString, style::PlotStyle, kwargs_layout)
     @warn msg
-    panel = AoGPanel(nothing; axis = _aog_axis(style, kwargs_subplot; title = msg))
-    return combine_plots([panel]; ncols = 1, style = style, _nt(kwargs_layout)...)
+    return _placeholder_figure(msg, style; kwargs_layout = kwargs_layout)
 end
 
 """
@@ -134,7 +136,7 @@ function _re_draw(
         kwargs_subplot = NamedTuple(), kwargs_layout = NamedTuple(), legend::Bool = true,
         qalpha::Real = 0.8, bar_kw = NamedTuple(), empty_msg::AbstractString
     )
-    isempty(acc.panels) && return _re_placeholder(empty_msg, style, kwargs_subplot, kwargs_layout)
+    isempty(acc.panels) && return _re_placeholder(empty_msg, style, kwargs_layout)
     present = Set(acc.df.series)
     series_use = [p for p in series if first(p) in present]
     user_ax = _nt(kwargs_subplot)
@@ -149,7 +151,7 @@ function _re_draw(
     post = Dict{String, Vector{Any}}()
     for panel in acc.panels
         fs = Any[]
-        if ylim === nothing && !shared_y && haskey(acc.ylim, panel)
+        if ylim === nothing && !shared_y && haskey(acc.ylim, panel) && !haskey(user_ax, :limits)
             lo, hi = acc.ylim[panel]
             push!(fs, ax -> ylims!(ax, lo, hi))
         end
@@ -269,7 +271,7 @@ function plot_random_effects_pdf(
     if isempty(re_list)
         fig = _re_placeholder(
             "No random-effect distributions without covariates to plot.",
-            style, kwargs_subplot, kwargs_layout
+            style, kwargs_layout
         )
         return _save_plot!(fig, save_path)
     end
@@ -346,7 +348,7 @@ function plot_random_effects_pdf(
                 end
                 xlims_acc = _re_merge(xlims_acc, min_v, max_v)
                 if flow_plot == :hist && !isempty(samples_by_draw)
-                    edges = range(min_v, max_v; length = flow_bins + 1)
+                    edges = range(_re_hist_range(min_v, max_v)...; length = flow_bins + 1)
                     centers = (edges[1:(end - 1)] .+ edges[2:end]) ./ 2
                     # a flow histogram stands for the PDF: density scale (area 1)
                     curves = _re_fixed_hist(samples_by_draw, min_v, max_v, flow_bins; density = true)
@@ -522,7 +524,7 @@ function plot_random_effects_scatter(
     if isempty(re_list)
         fig = _re_placeholder(
             "No random-effect distributions without covariates to plot.",
-            style, kwargs_subplot, kwargs_layout
+            style, kwargs_layout
         )
         return _save_plot!(fig, save_path)
     end
@@ -625,7 +627,7 @@ function plot_random_effect_pairplot(
     if isempty(re_list)
         fig = _re_placeholder(
             "No random-effect distributions without covariates to plot.",
-            style, kwargs_subplot, kwargs_layout
+            style, kwargs_layout
         )
         return _save_plot!(fig, save_path)
     end
@@ -673,13 +675,16 @@ function plot_random_effect_pairplot(
         push!(blocks, (labels, vals))
     end
     if isempty(blocks)
-        fig = _re_placeholder("No random-effect pairplots to plot.", style, kwargs_subplot, kwargs_layout)
+        fig = _re_placeholder("No random-effect pairplots to plot.", style, kwargs_layout)
         return _save_plot!(fig, save_path)
     end
 
     max_nvars = maximum(length(first(b)) for b in blocks)
     nrows = sum(length(first(b)) for b in blocks)
-    fig = Figure(; _aog_figure(style, nrows * max_nvars, max_nvars, kwargs_layout)...)
+    fig_kw = _aog_figure(style, nrows * max_nvars, max_nvars, kwargs_layout)
+    fig = Figure(; fig_kw...)
+    # fonts of large figures grow (see `_figure_style`); user kwargs_subplot still win
+    style = _figure_style(style, fig_kw.size)
     row0 = 0
     for (labels, vals) in blocks
         nvars = length(labels)
@@ -853,7 +858,7 @@ function plot_random_effect_distributions(
                             continue
                         end
                         if flow_plot == :hist
-                            edges = range(min_v, max_v; length = flow_bins + 1)
+                            edges = range(_re_hist_range(min_v, max_v)...; length = flow_bins + 1)
                             centers = (edges[1:(end - 1)] .+ edges[2:end]) ./ 2
                             counts_list = _re_fixed_hist(
                                 samples_by_draw, min_v, max_v, flow_bins; density = true
@@ -962,10 +967,10 @@ fitted prior distributions, providing a calibration check for the random-effects
 One panel per random effect (component).
 
 Only one of `show_hist`, `show_kde` and `show_qq` is drawn; enabling several warns and
-falls back to the histogram. For posterior-draw fits (MCMC, VI) the panel shows the mean
-across posterior draws (histogram bars on 20 bins in [0, 1], KDE or QQ line) with dashed
-`mcmc_quantiles` lines. Random effects with fewer than two PIT values are skipped with a
-warning.
+falls back to the histogram. The histogram has 20 uniform bins on [0, 1] and every panel
+shows x in [0, 1]. For posterior-draw fits (MCMC, VI) the panel shows the mean across
+posterior draws (histogram bars, KDE or QQ line) with dashed `mcmc_quantiles` lines.
+Random effects with fewer than two PIT values are skipped with a warning.
 
 # Keyword Arguments
 - `dm::Union{Nothing, DataModel} = nothing`: data model (inferred from `res` by default).
@@ -974,7 +979,7 @@ warning.
 - `show_hist::Bool = true`: show a PIT histogram.
 - `show_kde::Bool = false`: draw a KDE curve instead of a histogram.
 - `show_qq::Bool = false`: draw a Uniform QQ plot instead of a histogram.
-- `shared_x_axis::Bool = true`: common, linked x axis `[0, 1]`.
+- `shared_x_axis::Bool = true`: link the x axes (the x range is `[0, 1]` either way).
 - `shared_y_axis::Bool = true`: common, linked y axis (padded union of the panels).
 - `ncols::Int = 3`: number of subplot columns.
 - `style::PlotStyle = PlotStyle()`: visual style configuration.
@@ -1068,6 +1073,14 @@ function plot_random_effect_pit(
         return _pit_value(dist_use, v)
     end
 
+    # posterior draws of (θ, η), drawn once for all random effects and components
+    θ_draws, η_draws = if is_mcmc
+        drawn = _posterior_drawn_params(res, dm, _fit_constants_re(res), NamedTuple(), mcmc_draws, rng)
+        drawn[1], drawn[2]
+    else
+        nothing, nothing
+    end
+
     for re in re_list
         level_to_ind = _level_to_individual(dm, re)
         lvls = _resolve_levels(dm, re, levels, individuals_idx)
@@ -1080,10 +1093,6 @@ function plot_random_effect_pit(
         for (ci, comp_name) in enumerate(value_cols)
             panel = (show_comp ? string(re, " | ", comp_name) : string(re)) * kind_title
             if is_mcmc
-                constants_re = _fit_constants_re(res)
-                θ_draws, η_draws, _ = _posterior_drawn_params(
-                    res, dm, constants_re, NamedTuple(), mcmc_draws, rng
-                )
                 pits_by_draw = Vector{Vector{Float64}}()
                 for d in eachindex(θ_draws)
                     pits_d = Float64[]
@@ -1145,7 +1154,9 @@ function plot_random_effect_pit(
                     continue
                 end
                 if show_hist
-                    h = _histogram_xy(pits; bins = 20, normalization = :probability)
+                    h = _histogram_xy(
+                        pits; bins = 20, normalization = :probability, range = (0.0, 1.0)
+                    )
                     _re_push!(acc, panel, h.centers, h.heights, "PIT", :bar)
                     y_max = maximum(h.heights)
                 elseif show_kde
@@ -1171,10 +1182,10 @@ function plot_random_effect_pit(
         series = [
             "PIT" => c2, "KDE" => c2, "QQ" => c2, qlabel => c2, "Uniform" => style.color_dark,
         ],
-        axis = (; xlabel = xlabel, ylabel = ylabel),
+        axis = (; xlabel = xlabel, ylabel = ylabel, xticks = UNIT_INTERVAL_TICKS),
         shared_x = shared_x_axis, shared_y = shared_y_axis,
-        # slightly padded [0, 1] so the end tick labels of neighbouring facets do not touch
-        xlim = shared_x_axis ? _pad_limits(0.0, 1.0; frac = 0.03) : nothing,
+        # PIT values live on [0, 1] (as in plot_residual_pit)
+        xlim = (0.0, 1.0),
         ylim = shared_y_axis && ylims !== nothing && !show_qq ? ylims : nothing,
         kwargs_subplot = kwargs_subplot, kwargs_layout = kwargs_layout,
         qalpha = mcmc_quantiles_alpha,

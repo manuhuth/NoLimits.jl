@@ -380,7 +380,13 @@ function _restore_vi_model(r::VIResult, dm, fkw::NamedTuple)
             "on the linked (unconstrained) scale. Pass `dm` and load Turing before `load_fit`."
         return r
     end
-    model = _vi_rebuild_model(dm, fkw)
+    model = try
+        _vi_rebuild_model(dm, fkw)
+    catch err
+        @warn "load_fit: rebuilding the VI model failed, so `sample_posterior` returns the " *
+            "reloaded posterior draws on the linked (unconstrained) scale." exception = err
+        return r
+    end
     return VIResult(
         r.posterior, r.trace, r.state, r.n_iter, r.max_iter, r.final_elbo, r.converged,
         r.notes, r.observed, r.coord_names, model

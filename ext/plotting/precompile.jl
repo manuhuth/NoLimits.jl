@@ -89,13 +89,28 @@ end
 # is dropped and the first draw still compiles it).
 const _TAG_INFERRED = VERSION >= v"1.12.0-"
 
-if ccall(:jl_generating_output, Cint, ()) == 1
-    _TAG_INFERRED && ccall(:jl_tag_newly_inferred_enable, Cvoid, ())
+# Everything, including the tagging ccalls, runs inside the `try`: the workload is an
+# optimisation and must never break loading the extension.
+function _run_precompile_workload()
+    tagged = false
     try
+        if _TAG_INFERRED
+            ccall(:jl_tag_newly_inferred_enable, Cvoid, ())
+            tagged = true
+        end
         _precompile_workload()
     catch err
         @debug "NoLimitsMakieExt precompile workload failed" exception = err
     finally
-        _TAG_INFERRED && ccall(:jl_tag_newly_inferred_disable, Cvoid, ())
+        if tagged
+            try
+                ccall(:jl_tag_newly_inferred_disable, Cvoid, ())
+            catch err
+                @debug "NoLimitsMakieExt: disabling inference tagging failed" exception = err
+            end
+        end
     end
+    return nothing
 end
+
+ccall(:jl_generating_output, Cint, ()) == 1 && _run_precompile_workload()

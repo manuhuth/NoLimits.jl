@@ -795,6 +795,21 @@ end
         ax = only(axes_of(figp))
         @test ax.limits[][1] == (0.0, 1.0)
     end
+    # PIT histogram bins: 20 uniform bins on [0, 1], not on the data range
+    bars_p = [p for ax in axes_of(plot_residual_pit(res)) for p in ax.scene.plots if p isa CairoMakie.BarPlot]
+    @test only(bars_p).width[] ≈ 0.05
+    @test [pt[1] for pt in only(bars_p)[1][]] ≈ collect(0.025:0.05:0.975)
+    # same in plot_residual_distribution(...; residual = :pit), whose 1 / bins reference
+    # line assumes bins on [0, 1]
+    fig_pd = plot_residual_distribution(res; residual = :pit, bins = 10)
+    bars_pd = [p for ax in axes_of(fig_pd) for p in ax.scene.plots if p isa CairoMakie.BarPlot]
+    @test [pt[1] for pt in only(bars_pd)[1][]] ≈ collect(0.05:0.1:0.95)
+    @test only(axes_of(fig_pd)).limits[][1] == (0.0, 1.0)
+
+    # plot_observation_distributions defaults to the first individual in data order (id
+    # 10), not the first of DataModel's sorted ids
+    fig_od = plot_observation_distributions(res)
+    @test all(ax -> startswith(string(ax.title[]), "ID: 10"), axes_of(fig_od))
     @test_throws ErrorException plot_residual_pit(res; show_kde = true, show_hist = false, kde_bandwidth = -1.0)
 
     # validation
@@ -813,9 +828,10 @@ end
     )
     @test all(ax -> all(isfinite, ax.limits[][2]), axes_of(fig_inf))
 
-    # A table without drawable residuals gives one titled empty axis.
+    # A table without drawable residuals gives a placeholder message (no axis).
     rdf_empty = copy(rdf)
     rdf_empty.logscore .= missing
     fig_empty = _ext._plot_residuals_df(rdf_empty; metric = :logscore)
-    @test only(axes_of(fig_empty)).title[] == "No residual data to plot."
+    @test isempty(axes_of(fig_empty))
+    @test labels_of(fig_empty) == ["No residual data to plot."]
 end

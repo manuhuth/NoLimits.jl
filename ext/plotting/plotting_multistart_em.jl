@@ -42,34 +42,31 @@ function plot_multistart_waterfall(
     isempty(objectives) &&
         error("No finite objective values available among successful multistart runs.")
 
+    # Converged starts often agree in the first 10+ digits, where Makie's tick labels all
+    # read the same: then plot the offsets from the best objective in units of a power of
+    # ten (short tick labels) and state the best value in the subtitle.
+    ys, ylabel, best_note = _ms_waterfall_y(objectives)
     n_failed = length(res.errors_err)
     post = Any[]
     if n_failed > 0
         post = Any[
             ax -> text!(
-                ax, [float(maximum(ranks))], [maximum(objectives)];
+                ax, [float(maximum(ranks))], [maximum(ys)];
                 text = ["Failed starts omitted: $(n_failed)"], align = (:right, :center),
                 fontsize = style.font_size_annotation
             ),
         ]
     end
     df = _tidy()
-    _push_xy!(df, "", ranks, objectives, "objective")
-    # Converged starts often agree in the first 10+ digits, where Makie's tick labels all
-    # read the same: then label the ticks as offsets from the best objective.
-    best = minimum(objectives)
-    spread = maximum(objectives) - best
-    offset = spread > 0 && spread <= 1.0e-6 * max(abs(best), 1.0)
-    ylabels = offset ?
-        (; ylabel = "Objective − $(round(best; sigdigits = 12)) (best)", ytickformat = _ms_offset_ticks(best)) :
-        (; ylabel = "Objective")
+    _push_xy!(df, "", ranks, ys, "objective")
+    subtitle = best_note === nothing ? "best → worst; successful starts only" :
+        "best → worst; successful starts only\n$(best_note)"
     panel = AoGPanel(
         AoG.data(df) * AoG.mapping(:x, :y) * _scatter_visual(style; color = style.color_primary);
         axis = _aog_axis(
             style, kwargs_subplot;
-            title = "Multistart Objectives",
-            subtitle = "best → worst; successful starts only",
-            xlabel = "Rank", xticks = collect(1:length(objectives)), ylabels...,
+            title = "Multistart Objectives", subtitle = subtitle,
+            xlabel = "Rank", xticks = collect(1:length(objectives)), ylabel = ylabel,
         ),
         post = post, legend = false
     )
@@ -77,15 +74,20 @@ function plot_multistart_waterfall(
     return _save_plot!(fig, save_path)
 end
 
-# Tick formatter showing `value - ref` ("0", "+1.2e-12", ...), for objective values that
-# differ only far behind the leading digits.
-function _ms_offset_ticks(ref::Real)
-    return function (vs)
-        return map(vs) do v
-            d = round(Float64(v) - ref; sigdigits = 3)
-            d == 0 ? "0" : (d > 0 ? "+" : "") * string(d)
-        end
-    end
+# y values, y label and subtitle note of the waterfall. Objectives that differ only far
+# behind the leading digits (spread <= 1e-6 relative) are shown as offsets from the best
+# value in units of 10^k (k from the spread), so the tick labels stay short:
+# ylabel "Objective − best (×10⁻¹⁴)" (Makie rich text), note "best = 30.9437636397".
+# Otherwise the raw objectives, ylabel "Objective" and no note.
+function _ms_waterfall_y(objectives::AbstractVector{<:Real})
+    best = minimum(objectives)
+    spread = maximum(objectives) - best
+    (spread > 0 && spread <= 1.0e-6 * max(abs(best), 1.0)) ||
+        return collect(Float64, objectives), "Objective", nothing
+    k = floor(Int, log10(spread))
+    ys = (objectives .- best) ./ exp10(k)
+    ylabel = Makie.rich("Objective − best (×10", Makie.superscript(replace(string(k), "-" => "−")), ")")
+    return ys, ylabel, "best = $(round(best; sigdigits = 12))"
 end
 
 """

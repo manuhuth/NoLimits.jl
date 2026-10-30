@@ -43,6 +43,9 @@ Makie and share one layout policy:
   their own y axis.
 - A figure has a single legend below the panels. It wraps into several rows when its
   entries do not fit the figure width.
+- Figures with many panels are large; their fonts and legend grow with the figure size
+  (at most 1.5x) so they stay readable when the figure is viewed scaled down. Sizes
+  set in `kwargs_subplot` are kept.
 - Histograms use equal-width bins. A histogram drawn on the same axis as a density curve
   (for example quantile residuals against N(0,1)) is scaled as a density (area 1, y axis
   "Density"); a histogram on its own shows probabilities (bar heights sum to 1).

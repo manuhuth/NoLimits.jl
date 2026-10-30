@@ -186,6 +186,95 @@ end
     @test NoLimits.calculate_plot_size(4, 2, st) == (700, 560)        # unchanged
 end
 
+# Large figures are viewed scaled down: their fonts and legend grow with the figure
+# (one shared rule, `_font_scale`), small figures keep the style sizes, and explicit user
+# sizes win.
+# User `limits` in kwargs_subplot win over the computed shared facet limits, and shared
+# limits on a logarithmic axis stay positive (multiplicative padding of the positive
+# values drawn instead of a linear pad that can reach <= 0).
+@testset "user limits and log-scale shared limits" begin
+    res = fx_mle()
+    lims = ((-1.0, 20.0), (-3.0, 30.0))
+    for f in (plot_fits, plot_data, plot_fits_comparison, plot_residuals)
+        fig = f(res; kwargs_subplot = (; limits = lims))
+        @test all(
+            ax -> ax.limits[] == lims,
+            [c for c in fig.content if c isa CairoMakie.Axis]
+        )
+    end
+    ext = Base.get_extension(NoLimits, :NoLimitsMakieExt)
+    t = DataFrame(x = [1.0, 2.0, 3.0], y = [0.01, 0.0, 100.0])
+    @test ext._shared_lim(true, (0.0, 100.0)) == NoLimits._pad_limits(0.0, 100.0)
+    lo, hi = ext._shared_lim(
+        true, (0.0, 100.0); kwargs_subplot = (; yscale = log10), col = :y, tables = (t,)
+    )
+    @test 0 < lo < 0.01 && hi > 100.0
+    @test ext._shared_lim(
+        true, (1.0, 3.0); kwargs_subplot = (; yscale = log10), col = :x, tables = (t,)
+    ) == NoLimits._pad_limits(1.0, 3.0)
+    @test ext._shared_lim(false, (0.0, 1.0); kwargs_subplot = (; yscale = log10), col = :y) === nothing
+    # values a log axis cannot show are blanked (NaN) with a warning, not a DomainError
+    tm = DataFrame(x = [1.0, 2.0, 3.0], y = [-1.0, 0.0, 2.0])
+    @test_logs (:warn, r"2 non-positive") ext._mask_nonpositive!((; yscale = log10), "f", tm)
+    @test isnan(tm.y[1]) && isnan(tm.y[2]) && tm.y[3] == 2.0 && tm.x == [1.0, 2.0, 3.0]
+    fig = plot_data(res; kwargs_subplot = (; yscale = log10))
+    @test all(
+        ax -> ax.finallimits[].origin[2] > 0,
+        [c for c in fig.content if c isa CairoMakie.Axis]
+    )
+end
+
+@testset "fonts scale with large figures" begin
+    @test NoLimits._font_scale(600, 450) == 1.0
+    @test NoLimits._font_scale(682, 1000) ≈ sqrt(1000 / NoLimits.FONT_REFERENCE_EXTENT)
+    @test NoLimits._font_scale(700, 10_000) == NoLimits.MAX_FONT_SCALE
+    st = NoLimits.PlotStyle()
+    ext = Base.get_extension(NoLimits, :NoLimitsMakieExt)
+    AoG = AlgebraOfGraphics
+    function facets(n; kw = (;), kwl = (;))
+        df = ext._tidy()
+        for k in 1:n
+            ext._push_xy!(df, "p$(k)", [0.0, 1.0], [0.0, 1.0], "data")
+            ext._push_xy!(df, "p$(k)", [0.0, 1.0], [1.0, 0.0], "fit")
+        end
+        layer = AoG.data(df) * AoG.mapping(:x, :y; color = :series, layout = :panel) *
+            ext._line_visual(st)
+        return ext._draw_facets(
+            layer; panels = ["p$(k)" for k in 1:n], ncols = 3, style = st,
+            series = ["data" => st.color_primary, "fit" => st.color_secondary],
+            kwargs_subplot = kw, kwargs_layout = kwl
+        )
+    end
+    axes_of(fig) = [c for c in fig.content if c isa CairoMakie.Axis]
+    leg(fig) = only(c for c in fig.content if c isa CairoMakie.Legend)
+    small = facets(1)
+    @test all(ax -> ax.xticklabelsize[] == st.font_size_tick, axes_of(small))
+    @test leg(small).labelsize[] == st.font_size_legend
+    tall = facets(50)
+    f = NoLimits._font_scale(tall.scene.viewport[].widths...)
+    @test f > 1.2
+    @test all(ax -> ax.xticklabelsize[] == round(Int, st.font_size_tick * f), axes_of(tall))
+    @test all(ax -> ax.titlesize[] == round(Int, st.font_size_title * f), axes_of(tall))
+    @test leg(tall).labelsize[] == round(Int, st.font_size_legend * f)
+    @test leg(tall).patchsize[][1] > 20
+    # facet titles follow
+    @test all(
+        l -> l.fontsize[] == round(Int, st.font_size_title * f),
+        [c for c in tall.content if c isa CairoMakie.Label && startswith(string(c.text[]), "p")]
+    )
+    # user values win
+    user = facets(50; kw = (; xticklabelsize = 9))
+    @test all(ax -> ax.xticklabelsize[] == 9, axes_of(user))
+    # an explicit small size keeps the style sizes
+    sized = facets(50; kwl = (; size = (700, 600)))
+    @test all(ax -> ax.xticklabelsize[] == st.font_size_tick, axes_of(sized))
+    # composed panels (combine_plots) follow the same rule
+    pan = ext.AoGPanel(nothing; axis = ext._aog_axis(st, (;); title = "t"))
+    big = combine_plots(fill(pan, 50); ncols = 3, style = st)
+    fb = NoLimits._font_scale(big.scene.viewport[].widths...)
+    @test all(ax -> ax.titlesize[] == round(Int, st.font_size_title * fb), axes_of(big))
+end
+
 # Core layout helpers shared by all ported plot functions (#383): legend wrapping and
 # combine_plots axis linking.
 @testset "combine_plots linking and legend wrapping" begin
@@ -361,6 +450,13 @@ end
     labels_nt = _legend_labels(p_nt)
     @test "baseline" in labels_nt
     @test "constrained" in labels_nt
+    # a model named "data" would share the observed data's legend entry and colour
+    @test_throws r"collides with the observed-data" plot_fits_comparison(
+        (data = res1, other = res2); individuals_idx = 1:2
+    )
+    @test plot_fits_comparison(
+        (data = res1, other = res2); individuals_idx = 1:2, plot_data_points = false
+    ) isa CairoMakie.Figure
 
     styled = PlotStyle(comparison_line_styles = Dict("baseline" => :dash))
     p_nt_style = plot_fits_comparison(
@@ -715,9 +811,24 @@ end
     wf = plot_multistart_waterfall(res_ms)
     @test length(_axes(wf)) == 1
     @test CairoMakie.Makie.to_value(_first_axis(wf).title) == "Multistart Objectives"
-    # objectives agreeing in many digits get offset tick labels relative to the best
-    fmt = _MakieExt._ms_offset_ticks(30.0)
-    @test fmt([30.0, 30.0 + 2.0^-40]) == ["0", "+9.09e-13"]   # exact binary offset
+    # objectives agreeing in many digits are drawn as offsets from the best value in
+    # units of a power of ten (short tick labels); the best value goes to the subtitle
+    ys, ylab, note = _MakieExt._ms_waterfall_y([30.0 + 3.0e-13, 30.0, 30.0 + 2.5e-14])
+    @test isapprox(ys, [3.0, 0.0, 0.25]; atol = 0.05)   # 30 + δ is exact to ~4e-15
+    @test ylab isa CairoMakie.Makie.RichText
+    @test note == "best = 30.0"
+    # small helpers from the review of #383
+    # VPC: the median line is solid whenever 50 is requested (also in even-length lists),
+    # every other percentile dotted
+    @test [_MakieExt._vpc_line_style(p) for p in (5, 50, 75, 95)] == [:dot, :solid, :dot, :dot]
+    @test all(==(:dot), _MakieExt._vpc_line_style.((5, 25, 75, 95)))
+    # RE fixed-edge histogram: degenerate samples (min == max) and non-finite values
+    h = _MakieExt._re_fixed_hist([[2.0, 2.0, 2.0], [2.0, NaN]], 2.0, 2.0, 4; density = true)
+    @test length(h) == 2 && all(c -> all(isfinite, c), h)
+    @test all(c -> sum(c) * (1.0 / 4) ≈ 1.0, h)   # area 1 on the widened range [1.5, 2.5]
+    @test _MakieExt._re_hist_range(2.0, 2.0) == (1.5, 2.5)
+    ys, ylab, note = _MakieExt._ms_waterfall_y([3.0, 1.0, 2.0])
+    @test ys == [3.0, 1.0, 2.0] && ylab == "Objective" && note === nothing
 
     pts = plot_multistart_fixed_effect_variability(res_ms; k_best = 3)
     @test isempty(_legends(pts))

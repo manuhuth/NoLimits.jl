@@ -329,12 +329,16 @@ function _hmm_emission_figure(
         Color = _series_palette([l => c for (l, c) in zip(labels, colors)]),
     )
     fig_kw = _aog_figure(style, length(rows) * n_states, n_states, kwargs_layout)
+    fstyle = _figure_style(style, fig_kw.size)
     fg = AoG.draw(
         layers, AoG.scales(; sc...);
-        axis = _aog_axis(style, kwargs_subplot; xlabel = "Outcome value", ylabel),
+        axis = _aog_axis(fstyle, kwargs_subplot; xlabel = "Outcome value", ylabel),
         figure = fig_kw,
         facet = (; linkxaxes = :none, linkyaxes = _facet_link(shared_y_axis)),
-        legend = _aog_legend(style; nbanks = _legend_nbanks(labels, first(fig_kw.size), style)),
+        legend = _aog_legend(
+            fstyle; nbanks = _legend_nbanks(labels, first(fig_kw.size), fstyle),
+            patchsize = _legend_patchsize(fstyle, style)
+        ),
     )
     if ylim !== nothing
         for ae in fg.grid

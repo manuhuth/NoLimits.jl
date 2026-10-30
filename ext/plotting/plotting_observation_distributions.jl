@@ -17,7 +17,7 @@ individual and outcome).
 
 # Keyword Arguments
 - `dm::Union{Nothing, DataModel} = nothing`: data model (inferred from `res` by default).
-- `individuals_idx`: individuals to include (default: first individual only).
+- `individuals_idx`: individuals to include (default: the first individual in data order).
 - `obs_rows`: specific observation row indices, or `nothing` for all.
 - `observables`: outcome name(s) to include, or `nothing` for first.
 - `x_axis_feature::Union{Nothing, Symbol} = nothing`: covariate for the x-axis.
@@ -63,7 +63,8 @@ function plot_observation_distributions(
     _check_unit_interval(mcmc_quantiles_alpha, "mcmc_quantiles_alpha")
     constants_re_use = _res_constants_re(res, constants_re)
     obs_list = _resolve_observables(dm, observables)
-    inds = _resolve_individuals(dm, individuals_idx)
+    # default: the first individual in data order (DataModel sorts ids)
+    inds = _plot_individuals(dm, individuals_idx; default_all = false)
     if get_de(get_model(dm)) === nothing
         x_axis_feature = _require_varying_covariate(dm, x_axis_feature)
     end

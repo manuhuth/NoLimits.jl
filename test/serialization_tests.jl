@@ -399,3 +399,17 @@ end
     @test parse(Int, strip(lines[end - 1])) == expected_n_ids
     @test occursin("Figure", strip(lines[end]))  # plot_fits returns a Makie.Figure
 end
+
+# A VI model that cannot be rebuilt on load must not make load_fit fail: warn and keep
+# the reloaded result (draws stay on the linked scale, as without the Turing extension).
+@testset "load_fit: failed VI model rebuild only warns" begin
+    @test Base.get_extension(NoLimits, :NoLimitsTuringExt) !== nothing
+    r = NoLimits.VIResult(
+        nothing, nothing, nothing, 0, 0, 0.0, false, nothing, nothing, nothing, nothing
+    )
+    # not a DataModel: `_vi_rebuild_model` throws
+    out = @test_logs (:warn, r"rebuilding the VI model failed") NoLimits._restore_vi_model(
+        r, "not a DataModel", (;)
+    )
+    @test out === r
+end

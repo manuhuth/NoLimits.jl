@@ -6,8 +6,41 @@
 # Panel label of individual `i` ("ID: 3"): the facet title and the `:panel` value.
 _individual_panel(dm::DataModel, i::Integer) = string(get_primary_id(dm), ": ", _individual_id(dm, i))
 
-# Padded shared limits (`nothing` when the axis is not shared or nothing is finite).
-_shared_lim(shared::Bool, lims) = shared && lims !== nothing ? _pad_limits(lims[1], lims[2]) : nothing
+# Padded shared limits (`nothing` when the axis is not shared or nothing is finite). On a
+# logarithmic axis (`xscale`/`yscale` in `kwargs_subplot`; `col` is :x or :y) the limits
+# come from the positive values of column `col` of the drawn `tables`, padded
+# multiplicatively (`_diag_lims`): a linear pad can reach <= 0 there.
+# Logarithmic axes (`xscale`/`yscale` in `kwargs_subplot`) cannot show values <= 0: blank
+# them (NaN: no point, a gap in a line) in the drawn tables, with one warning, instead of
+# Makie's DomainError.
+function _mask_nonpositive!(kwargs_subplot, fn::AbstractString, tables...)
+    xlog, ylog = _diag_log_axes(kwargs_subplot)
+    (xlog || ylog) || return nothing
+    n = 0
+    for t in tables, (col, on) in ((:x, xlog), (:y, ylog))
+        (on && t !== nothing && nrow(t) > 0) || continue
+        v = t[!, col]
+        bad = [isfinite(a) && a <= 0 for a in v]
+        n += count(bad)
+        v[bad] .= NaN
+    end
+    n > 0 && @warn "$(fn): not drawing $(n) non-positive value(s) that a logarithmic axis cannot show."
+    return nothing
+end
+
+function _shared_lim(
+        shared::Bool, lims; kwargs_subplot = NamedTuple(), col::Symbol = :x, tables = ()
+    )
+    (shared && lims !== nothing) || return nothing
+    xlog, ylog = _diag_log_axes(kwargs_subplot)
+    (col === :x ? xlog : ylog) || return _pad_limits(lims[1], lims[2])
+    vals = Float64[]
+    for t in tables
+        (t === nothing || nrow(t) == 0) && continue
+        append!(vals, _f64.(t[!, col]))
+    end
+    return _diag_lims(vals, true)
+end
 
 function _plot_data_dm(
         dm::DataModel;
@@ -63,6 +96,7 @@ function _plot_data_dm(
             for m in (marginal_idx === nothing ? (1:n_marginals) : (marginal_idx:marginal_idx))
         ] :
         ["data" => style.color_primary]
+    _mask_nonpositive!(kwargs_subplot, "plot_data", obs_df)
     layers = _layer(
         obs_df, AoG.mapping(:x, :y; color = :series, layout = :panel), _scatter_visual(style)
     )
@@ -75,7 +109,8 @@ function _plot_data_dm(
             ylabel = _axis_label(obs_name),
         ),
         series = series, legend = is_mv,
-        xlim = _shared_lim(shared_x_axis, xlims), ylim = _shared_lim(shared_y_axis, ylims),
+        xlim = _shared_lim(shared_x_axis, xlims; kwargs_subplot, col = :x, tables = (obs_df,)),
+        ylim = _shared_lim(shared_y_axis, ylims; kwargs_subplot, col = :y, tables = (obs_df,)),
     )
     return _save_plot!(fig, save_path)
 end
@@ -722,6 +757,7 @@ function plot_fits(
             push!(series, _qlabel(m, q) => (m === nothing ? style.color_secondary : marginal_colors[m]))
         end
     end
+    _mask_nonpositive!(kwargs_subplot, "plot_fits", fit_df, q_df, obs_df)
     xy = AoG.mapping(:x, :y; color = :series, layout = :panel)
     layers = _layers(
         _layer(fit_df, xy, _line_visual(style)),
@@ -737,7 +773,8 @@ function plot_fits(
             ylabel = _axis_label(obs_name),
         ),
         series = series, post = post,
-        xlim = _shared_lim(shared_x_axis, xlims), ylim = _shared_lim(shared_y_axis, ylims),
+        xlim = _shared_lim(shared_x_axis, xlims; kwargs_subplot, col = :x, tables = (fit_df, q_df, obs_df)),
+        ylim = _shared_lim(shared_y_axis, ylims; kwargs_subplot, col = :y, tables = (fit_df, q_df, obs_df)),
     )
     return _save_plot!(fig, save_path)
 end
