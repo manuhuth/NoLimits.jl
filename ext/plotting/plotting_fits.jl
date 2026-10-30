@@ -226,13 +226,19 @@ function _store_stat!(preds, d, j, dist, plot_func, is_mv::Bool, n_marginals::In
     v = _stat_from_dist(dist, plot_func)
     if is_mv
         for m in 1:n_marginals
-            preds[d, j, m] = _float_if_real(v[m])
+            preds[d, j, m] = _component_stat(v, m)
         end
     else
         preds[d, j, 1] = _float_if_real(v)
     end
     return preds
 end
+
+# Component `m` of a vector statistic. A statistic the multivariate distribution does not
+# define (e.g. `median` of an MvNormal) comes back from `_stat_from_dist` as a scalar NaN:
+# plot it as a gap instead of raising a BoundsError (old behaviour).
+_component_stat(v::AbstractVector, m::Int) = _f64(_float_if_real(v[m]))
+_component_stat(v, ::Int) = NaN
 
 # Component `m` of every stored distribution (`m === nothing` keeps them as they are).
 function _component_dists(dists_by_draw, obs_name::Symbol, m, n_marginals::Int)
@@ -650,7 +656,7 @@ function plot_fits(
                 if is_mv
                     mean_vec = _stat_from_dist(dist, plot_func)
                     for m in 1:n_marginals
-                        preds[j, m] = _float_if_real(mean_vec[m])
+                        preds[j, m] = _component_stat(mean_vec, m)
                     end
                 else
                     preds[j] = _float_if_real(_stat_from_dist(dist, plot_func))
@@ -677,7 +683,9 @@ function plot_fits(
         # `_merge_limits` skips empty/non-finite series, so event-only individuals
         # contribute nothing instead of erroring in `minimum`.
         xlims = _merge_limits(xlims, x_fit)
-        observed_values = is_mv ? [val for vec in ys_per_margin for val in vec] : y_obs_plot
+        # only the plotted components frame the shared y axis (marginal_idx / :vector mode)
+        observed_values = is_mv ? [val for m in margin_range for val in ys_per_margin[m]] :
+            y_obs_plot
         ylims = _merge_limits(ylims, observed_values)
     end
 

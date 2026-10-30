@@ -43,7 +43,13 @@ function fixture_meta()
     isdir(_BT_DATA) || return out
     for f in readdir(_BT_DATA)
         endswith(f, ".toml") || continue
-        d = TOML.parsefile(joinpath(_BT_DATA, f))
+        # tolerate a metadata file that is being rewritten by a fixture job
+        d = try
+            TOML.parsefile(joinpath(_BT_DATA, f))
+        catch err
+            @warn "skipping unreadable fixture metadata $(f)" err
+            continue
+        end
         out[d["name"]] = d
     end
     return out

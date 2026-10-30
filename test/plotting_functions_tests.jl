@@ -20,6 +20,62 @@ function _series_labels(fig)
     return [l isa AbstractString ? String(l) : "" for l in raw]
 end
 
+# AlgebraOfGraphics layout policy (#383): one facet per individual, linked axes with
+# hidden inner tick labels when shared, a single figure-level legend, user Axis/Figure
+# kwargs win over defaults.
+_axes(fig) = [a for a in fig.content if a isa CairoMakie.Axis]
+_legends(fig) = [l for l in fig.content if l isa CairoMakie.Legend]
+_labels(fig) = [string(CairoMakie.Makie.to_value(l.text)) for l in fig.content if l isa CairoMakie.Label]
+_points(fig, T) = sum(
+    length(CairoMakie.Makie.to_value(pl[1])) for ax in _axes(fig)
+        for pl in ax.scene.plots if pl isa T;
+    init = 0
+)
+
+@testset "plot_fits/plot_data AoG layout policy" begin
+    res = fx_laplace()                      # 6 individuals x 3 observations
+    n_ind = 6
+    fig = plot_fits(res; ncols = 4)
+    @test fig isa CairoMakie.Figure
+    axs = _axes(fig)
+    @test length(axs) == n_ind
+    @test length(_legends(fig)) == 1
+    @test all(l -> "ID: $(l)" in _labels(fig), 1:n_ind)       # facet titles
+    @test count(==("Time"), _labels(fig)) == 1                 # one spanning x label
+    @test _points(fig, CairoMakie.Scatter) == 3 * n_ind        # every observation drawn once
+    @test count(pl -> pl isa CairoMakie.Lines, (pl for ax in axs for pl in ax.scene.plots)) == n_ind
+    # linked + shared: identical limits, inner y tick labels hidden (col 2..4 of row 1)
+    lims = [ax.finallimits[] for ax in axs]
+    @test all(==(lims[1]), lims)
+    @test count(ax -> !CairoMakie.Makie.to_value(ax.yticklabelsvisible), axs) == n_ind - 2
+
+    free = plot_fits(res; shared_x_axis = false, shared_y_axis = false)
+    @test all(ax -> CairoMakie.Makie.to_value(ax.yticklabelsvisible), _axes(free))
+
+    # user kwargs win over the computed defaults
+    custom = plot_fits(
+        res; kwargs_subplot = (; xlabel = "X custom", xgridvisible = true),
+        kwargs_layout = (; size = (900, 600))
+    )
+    @test "X custom" in _labels(custom)
+    @test all(ax -> CairoMakie.Makie.to_value(ax.xgridvisible), _axes(custom))
+    @test Tuple(custom.scene.viewport[].widths) == (900, 600)
+
+    # data only: scalar observable -> no legend; subset of individuals
+    d = plot_data(res; individuals_idx = [1, 2], ncols = 1)
+    @test length(_axes(d)) == 2
+    @test isempty(_legends(d))
+    @test _points(d, CairoMakie.Scatter) == 6
+
+    # density overlay: one heatmap per panel, drawn behind the data
+    dens = plot_fits(res; plot_density = true)
+    hms = [pl for ax in _axes(dens) for pl in ax.scene.plots if pl isa CairoMakie.Heatmap]
+    @test length(hms) == n_ind
+
+    @test_throws ErrorException plot_fits(res; ncols = 0)
+    @test_throws ErrorException plot_data(res; ncols = 0)
+end
+
 @testset "plot_fits supports non-:t time_col" begin
     model = @Model begin
         @fixedEffects begin
@@ -282,7 +338,10 @@ end
     @test isa(p_data_vector, Vector{CairoMakie.Figure})
     @test length(p_data_vector) == n_marginals
 
-    @test plot_fits(res; marginal_layout = :single) !== nothing
+    p_fits_single = plot_fits(res; marginal_layout = :single)
+    @test length(_legends(p_fits_single)) == 1
+    @test length(_axes(p_fits_single)) == 2
+    @test _points(p_fits_single, CairoMakie.Scatter) == 9   # 5 + 4 observed components
     p_fits_vector = plot_fits(res; marginal_layout = :vector)
     @test isa(p_fits_vector, Vector{CairoMakie.Figure})
     @test length(p_fits_vector) == n_marginals

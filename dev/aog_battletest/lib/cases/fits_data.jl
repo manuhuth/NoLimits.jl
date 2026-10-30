@@ -27,11 +27,15 @@ function _common_layout_optsets()
     ]
 end
 
+_nind(f) = get(get(fixture_meta(), f, Dict()), "n_individuals", 0)
+# `first2` needs two individuals
+_applicable(f, opts) = _nind(f) >= 2 ? opts : filter(p -> first(p) != "first2", opts)
+
 function cases_fits_data()
     cs = Case[]
     # ---------------- plot_data ----------------
     for f in fixtures_for(:plot_data)
-        opts = _common_layout_optsets()
+        opts = _applicable(f, _common_layout_optsets())
         input = get(get(fixture_meta(), f, Dict()), "fit_type", "") == "Nothing" ? "dm" : "res"
         for c in cross(:plot_data, [f], opts; input = input)
             occursin("__save", c.id) || occursin("__plotpath", c.id) ?
@@ -65,7 +69,7 @@ function cases_fits_data()
                 "alpha_bad!err" => "mcmc_quantiles_alpha = 1.5",
             ]
         )
-        for c in cross(:plot_fits, [f], opts)
+        for c in cross(:plot_fits, [f], _applicable(f, opts))
             occursin("__save", c.id) || occursin("__plotpath", c.id) ?
                 push!(cs, Case(c.id, c.fn, c.fixture, c.call; tags = c.tags, files = ["x.png"])) :
                 push!(cs, c)

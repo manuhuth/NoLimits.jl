@@ -47,8 +47,8 @@ if CHUNK == 1
             b = get(st["baseline"], id, Dict{String, Any}())
             n = get(st["new"], id, Dict{String, Any}())
             r = isempty(n) ? b : n
-            ax(x) = haskey(x, "figures") ? join([string(v["n_axes"]) for (_, v) in sort(collect(x["figures"]))], "+") : ""
-            lg(x) = haskey(x, "figures") ? join([string(v["n_legends"]) for (_, v) in sort(collect(x["figures"]))], "+") : ""
+            ax(x) = haskey(x, "figures") ? join([string(v["n_axes"]) for (_, v) in sort(collect(x["figures"]); by = first)], "+") : ""
+            lg(x) = haskey(x, "figures") ? join([string(v["n_legends"]) for (_, v) in sort(collect(x["figures"]); by = first)], "+") : ""
             println(
                 io, join(
                     [
