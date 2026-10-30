@@ -152,7 +152,6 @@ function _plot_fits_comparison_impl(
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         rng::AbstractRNG = _default_rng()
     )
     length(fits) == length(labels) ||
@@ -164,7 +163,6 @@ function _plot_fits_comparison_impl(
         error("plot_fits_comparison: a model named \"data\" collides with the observed-data legend entry; rename the model or pass `plot_data_points = false`.")
     allunique(labels) || error("plot_fits_comparison: model names must be unique; got $(labels).")
 
-    save_path = _resolve_plot_path(save_path, plot_path)
     dms = dm === nothing ? [_get_dm(res, nothing) for res in fits] : fill(dm, length(fits))
     dm_ref = _validate_same_data_model_for_comparison(dms)
 
@@ -258,7 +256,7 @@ in the model's colour and line style (`PlotStyle.comparison_line_styles`,
 - `dm`, `plot_func = mean`, `plot_data_points = true`, `observable`, `individuals_idx`,
   `x_axis_feature`, `shared_x_axis = true`, `shared_y_axis = true`, `ncols = 3`,
   `style`, `kwargs_subplot` (Makie `Axis` attributes, passed to AlgebraOfGraphics as
-  `axis`), `kwargs_layout` (Makie `Figure` attributes), `save_path`, `plot_path`.
+  `axis`), `kwargs_layout` (Makie `Figure` attributes), `save_path`.
 - `rng` (default: a fresh `Xoshiro(42)` per call) for the posterior-mean parameters of
   MCMC/VI fits.
 """
@@ -297,12 +295,12 @@ end
 
 """
     plot_observed_profiles(dm::DataModel; observable, individuals_idx, x_axis_feature,
-                           marginal_idx, style, kwargs_subplot, kwargs_layout, save_path,
-                           plot_path) -> Makie.Figure
+                           marginal_idx, style, kwargs_subplot, kwargs_layout,
+                           save_path) -> Makie.Figure
 
     plot_observed_profiles(res::FitResult; dm, observable, individuals_idx,
                            x_axis_feature, marginal_idx, style, kwargs_subplot,
-                           kwargs_layout, save_path, plot_path) -> Makie.Figure
+                           kwargs_layout, save_path) -> Makie.Figure
 
 Plot observed trajectories for all (or selected) individuals overlaid on a single panel
 (spaghetti plot). Each individual's time series is drawn as a connected line with
@@ -321,7 +319,6 @@ scatter points at the observed time points.
 - `kwargs_subplot`: additional Makie `Axis` attributes for the panel (user values win).
 - `kwargs_layout`: additional Makie `Figure` attributes (user values win).
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
-- `plot_path::Union{Nothing, String} = nothing`: alias for `save_path`.
 """
 function plot_observed_profiles(
         dm::DataModel;
@@ -333,9 +330,7 @@ function plot_observed_profiles(
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     obs_name = _get_observable(dm, observable)
     inds = _plot_individuals(dm, individuals_idx)
     (is_mv, n_marginals) = _obs_multivariate_info(dm, obs_name)
@@ -402,7 +397,6 @@ function plot_observed_profiles(
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing
     )
     dm = _get_dm(res, dm)
     return plot_observed_profiles(
@@ -414,14 +408,13 @@ function plot_observed_profiles(
         style = style,
         kwargs_subplot = kwargs_subplot,
         kwargs_layout = kwargs_layout,
-        save_path = save_path,
-        plot_path = plot_path
+        save_path = save_path
     )
 end
 
 """
     plot_dv_pred(res::FitResult; dm, observable, style, kwargs_subplot,
-                 kwargs_layout, save_path, plot_path, return_panel) -> Makie.Figure
+                 kwargs_layout, save_path, return_panel) -> Makie.Figure
 
 Goodness-of-fit scatter plot of observed values (DV) against population
 predictions (PRED). PRED is the model prediction evaluated at each
@@ -440,7 +433,6 @@ values are dropped with a warning.
 - `kwargs_subplot`: additional Makie `Axis` attributes (user values win, e.g. `limits`).
 - `kwargs_layout`: additional Makie `Figure` attributes forwarded to the layout.
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
-- `plot_path::Union{Nothing, String} = nothing`: alias for `save_path`.
 - `return_panel::Bool = false`: return the panel instead of a `Figure`, for composing
   several diagnostics into one figure via `combine_plots` (scalar observables only).
 """
@@ -452,11 +444,9 @@ function plot_dv_pred(
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         return_panel::Bool = false
     )
     dm = _get_dm(res, dm)
-    save_path = _resolve_plot_path(save_path, plot_path)
     obs_name = _get_observable(dm, observable)
     θ = get_params(res; scale = :untransformed)
     η_pred = _pred_re_per_individual(dm, θ)
@@ -483,7 +473,7 @@ end
 
 """
     plot_dv_ipred(res::FitResult; dm, observable, style, rng, kwargs_subplot,
-                  kwargs_layout, save_path, plot_path, return_panel) -> Makie.Figure
+                  kwargs_layout, save_path, return_panel) -> Makie.Figure
 
 Goodness-of-fit scatter plot of observed values (DV) against individual
 predictions (IPRED). IPRED is the model prediction evaluated at each
@@ -503,7 +493,6 @@ values are dropped with a warning.
 - `kwargs_subplot`: additional Makie `Axis` attributes (user values win, e.g. `limits`).
 - `kwargs_layout`: additional Makie `Figure` attributes forwarded to the layout.
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
-- `plot_path::Union{Nothing, String} = nothing`: alias for `save_path`.
 - `return_panel::Bool = false`: return the panel instead of a `Figure`, for composing
   several diagnostics into one figure via `combine_plots` (scalar observables only).
 """
@@ -516,11 +505,9 @@ function plot_dv_ipred(
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         return_panel::Bool = false
     )
     dm = _get_dm(res, dm)
-    save_path = _resolve_plot_path(save_path, plot_path)
     obs_name = _get_observable(dm, observable)
     θ = get_params(res; scale = :untransformed)
     constants_re = _res_constants_re(res, NamedTuple())
@@ -548,7 +535,7 @@ end
 
 """
     plot_wres_pred(res::FitResult; dm, observable, style, kwargs_subplot,
-                   kwargs_layout, save_path, plot_path, return_panel) -> Makie.Figure
+                   kwargs_layout, save_path, return_panel) -> Makie.Figure
 
 Population residual diagnostic plot: weighted population residuals (WRES)
 against population predictions (PRED). WRES is defined as
@@ -567,7 +554,6 @@ dropped with a warning.
 - `kwargs_subplot`: additional Makie `Axis` attributes (user values win, e.g. `limits`).
 - `kwargs_layout`: additional Makie `Figure` attributes forwarded to the layout.
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
-- `plot_path::Union{Nothing, String} = nothing`: alias for `save_path`.
 - `return_panel::Bool = false`: return the panel instead of a `Figure`, for composing
   several diagnostics into one figure via `combine_plots` (scalar observables only).
 """
@@ -579,11 +565,9 @@ function plot_wres_pred(
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         return_panel::Bool = false
     )
     dm = _get_dm(res, dm)
-    save_path = _resolve_plot_path(save_path, plot_path)
     obs_name = _get_observable(dm, observable)
     θ = get_params(res; scale = :untransformed)
     η_pred = _pred_re_per_individual(dm, θ)
@@ -610,7 +594,7 @@ end
 
 """
     plot_shrinkage(res::FitResult; dm, constants_re, threshold, bar_color, style,
-                   kwargs_subplot, save_path, plot_path) -> Makie.Figure
+                   kwargs_subplot, kwargs_layout, save_path) -> Makie.Figure
 
 Horizontal bar chart of eta shrinkage for all scalar random effects, with a dashed
 vertical reference line at `threshold` (default 30 %, listed in the figure legend).
@@ -629,8 +613,8 @@ of 0 and colored green. Shrinkage is computed via
   severity colours.
 - `style::PlotStyle = PlotStyle()`: visual style configuration.
 - `kwargs_subplot`: additional Makie `Axis` attributes passed to the subplot.
+- `kwargs_layout`: additional Makie `Figure` attributes (e.g. `size`; user values win).
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
-- `plot_path::Union{Nothing, String} = nothing`: alias for `save_path`.
 """
 function plot_shrinkage(
         res::FitResult;
@@ -640,17 +624,22 @@ function plot_shrinkage(
         bar_color::Union{Nothing, String} = nothing,
         style::PlotStyle = PlotStyle(),
         kwargs_subplot = NamedTuple(),
+        kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     _check_unit_interval(threshold, "threshold")
     shrink_nt = compute_shrinkage(res; dm = dm, constants_re = constants_re)
-    fig = _shrinkage_figure(shrink_nt; threshold = threshold, bar_color = bar_color, style = style, kwargs_subplot = kwargs_subplot)
+    fig = _shrinkage_figure(
+        shrink_nt; threshold = threshold, bar_color = bar_color, style = style,
+        kwargs_subplot = kwargs_subplot, kwargs_layout = kwargs_layout
+    )
     return _save_plot!(fig, save_path)
 end
 
-function _shrinkage_figure(shrink_nt::NamedTuple; threshold, bar_color, style, kwargs_subplot)
+function _shrinkage_figure(
+        shrink_nt::NamedTuple; threshold, bar_color, style, kwargs_subplot,
+        kwargs_layout = NamedTuple()
+    )
     isempty(shrink_nt) &&
         error("No shrinkage values computed; check that the model has scalar random effects.")
 
@@ -698,5 +687,5 @@ function _shrinkage_figure(shrink_nt::NamedTuple; threshold, bar_color, style, k
         ),
         post = post
     )
-    return combine_plots([panel]; ncols = 1, style = style)
+    return combine_plots([panel]; ncols = 1, style = style, _nt(kwargs_layout)...)
 end

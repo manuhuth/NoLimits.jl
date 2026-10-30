@@ -363,7 +363,7 @@ end
 
     mktempdir() do tmp
         p_path = joinpath(tmp, "plot_multistart_waterfall.png")
-        plot_multistart_waterfall(res_ms; plot_path = p_path)
+        plot_multistart_waterfall(res_ms; save_path = p_path)
         @test isfile(p_path)
     end
 end
@@ -422,7 +422,7 @@ end
 
     mktempdir() do tmp
         p_path = joinpath(tmp, "plot_multistart_fixed_effect_variability.png")
-        plot_multistart_fixed_effect_variability(res_ms; k_best = 3, plot_path = p_path)
+        plot_multistart_fixed_effect_variability(res_ms; k_best = 3, save_path = p_path)
         @test isfile(p_path)
     end
 end
@@ -482,7 +482,7 @@ end
 
     mktempdir() do tmp
         p_path = joinpath(tmp, "plot_fits_comparison.png")
-        plot_fits_comparison([res1, res2]; individuals_idx = 1:2, plot_path = p_path)
+        plot_fits_comparison([res1, res2]; individuals_idx = 1:2, save_path = p_path)
         @test isfile(p_path)
     end
 
@@ -778,6 +778,8 @@ end
     @test length(_plots_of(fig, CairoMakie.Makie.VLines)) == 1
     @test _legend_labels(plot_shrinkage(res; threshold = 0.1, bar_color = "#888888")) == ["10%"]
     @test_throws ErrorException plot_shrinkage(res; threshold = 1.5)
+    @test Tuple(plot_shrinkage(res; kwargs_layout = (; size = (640, 420))).scene.viewport[].widths) ==
+        (640, 420)
 
     prof = plot_observed_profiles(res)
     @test length(_axes(prof)) == 1
@@ -834,8 +836,11 @@ end
     @test isempty(_legends(pts))
     q = plot_multistart_fixed_effect_variability(res_ms; k_best = 3, mode = :quantiles)
     @test _legend_labels(q) == ["10%–90% quantile range", "50% quantile"]
-    sized = plot_multistart_fixed_effect_variability(res_ms; kwargs_subplot = (; size = (700, 500)))
+    # figure attributes go to kwargs_layout like in every other plot function
+    sized = plot_multistart_fixed_effect_variability(res_ms; kwargs_layout = (; size = (700, 500)))
     @test Tuple(sized.scene.viewport[].widths) == (700, 500)
+    sized = plot_multistart_waterfall(res_ms; kwargs_layout = (; size = (640, 420)))
+    @test Tuple(sized.scene.viewport[].widths) == (640, 420)
 end
 
 @testset "plot_em_trajectories after save_fit/load_fit (#383)" begin

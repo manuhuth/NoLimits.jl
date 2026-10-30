@@ -3,8 +3,8 @@ using NoLimits: _SavedFittingMethod
 # --- Public plotting functions ---------------------------------------------------------
 
 """
-    plot_multistart_waterfall(res::MultistartFitResult; style, kwargs_subplot, save_path)
-    -> Makie.Figure
+    plot_multistart_waterfall(res::MultistartFitResult; style, kwargs_subplot,
+                              kwargs_layout, save_path) -> Makie.Figure
 
 Plot the objective values of all successful multistart runs in ascending order
 (waterfall plot), highlighting the best run.
@@ -12,16 +12,16 @@ Plot the objective values of all successful multistart runs in ascending order
 # Keyword Arguments
 - `style::PlotStyle = PlotStyle()`: visual style configuration.
 - `kwargs_subplot`: additional Makie `Axis` attributes forwarded to the subplot.
+- `kwargs_layout`: additional Makie `Figure` attributes (e.g. `size`; user values win).
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot, or `nothing`.
 """
 function plot_multistart_waterfall(
         res::MultistartFitResult;
         style::PlotStyle = PlotStyle(),
         kwargs_subplot = NamedTuple(),
+        kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
 
     n_ok = length(res.results_ok)
     n_ok >= 1 || error("No successful multistart runs available for plotting.")
@@ -70,7 +70,7 @@ function plot_multistart_waterfall(
         ),
         post = post, legend = false
     )
-    fig = combine_plots([panel]; ncols = 1, style = style)
+    fig = combine_plots([panel]; ncols = 1, style = style, _nt(kwargs_layout)...)
     return _save_plot!(fig, save_path)
 end
 
@@ -94,7 +94,7 @@ end
     plot_multistart_fixed_effect_variability(res::MultistartFitResult; dm, k_best, mode,
                                              quantiles, scale, include_parameters,
                                              exclude_parameters, style, kwargs_subplot,
-                                             save_path) -> Makie.Figure
+                                             kwargs_layout, save_path) -> Makie.Figure
 
 Plot the variation of fixed-effect estimates across the `k_best` multistart runs with
 the lowest objective values.
@@ -108,8 +108,9 @@ the lowest objective values.
 - `scale::Symbol = :untransformed`: `:untransformed` or `:transformed`.
 - `include_parameters`, `exclude_parameters`: parameter name filters.
 - `style::PlotStyle = PlotStyle()`: visual style configuration.
-- `kwargs_subplot`: additional Makie `Axis` attributes forwarded to the subplot (a `size`
-  entry, if given, sets the figure size instead).
+- `kwargs_subplot`: additional Makie `Axis` attributes forwarded to the subplot.
+- `kwargs_layout`: additional Makie `Figure` attributes (e.g. `size`; user values win).
+  The default height grows with the number of parameters.
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
 """
 function plot_multistart_fixed_effect_variability(
@@ -123,10 +124,9 @@ function plot_multistart_fixed_effect_variability(
         exclude_parameters = nothing,
         style::PlotStyle = PlotStyle(),
         kwargs_subplot = NamedTuple(),
+        kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     mode in (:points, :quantiles) || error("mode must be :points or :quantiles.")
     scale in (:untransformed, :transformed) ||
         error("scale must be :untransformed or :transformed.")
@@ -246,9 +246,7 @@ function plot_multistart_fixed_effect_variability(
 
     y = collect(1.0:length(labels))
     plot_height = clamp(200 + 22 * length(labels), MIN_FIGURE_HEIGHT, MAX_FIGURE_HEIGHT)
-    subplot_kwargs = _nt(kwargs_subplot)
-    fig_size = get(subplot_kwargs, :size, (900, plot_height))
-    axis_kwargs = Base.structdiff(subplot_kwargs, NamedTuple{(:size,)})
+    axis_kwargs = _nt(kwargs_subplot)
 
     pts = _tidy()
     seg = _tidy(; grp = String)
@@ -316,7 +314,10 @@ function plot_multistart_fixed_effect_variability(
         ),
         post = post, legend = show_legend
     )
-    fig = combine_plots([panel]; ncols = 1, style = style, size = fig_size)
+    fig = combine_plots(
+        [panel]; ncols = 1, style = style,
+        merge((; size = (900, plot_height)), _nt(kwargs_layout))...
+    )
     return _save_plot!(fig, save_path)
 end
 
@@ -384,9 +385,7 @@ function plot_em_trajectories(
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     _check_positive_int(ncols, "ncols")
     scale in (:untransformed, :transformed) ||
         error("scale must be :untransformed or :transformed. Got: $(scale).")

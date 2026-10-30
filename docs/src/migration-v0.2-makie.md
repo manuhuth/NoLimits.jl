@@ -46,8 +46,8 @@ tells you to run `using CairoMakie, AlgebraOfGraphics`.
 
 ## Saving figures
 
-Unchanged: every plot function accepts `save_path` (alias `plot_path`) and `.png`
-output matches the previous 300 dpi resolution.
+Unchanged: every plot function accepts `save_path`, and `.png` output matches the
+previous 300 dpi resolution. (The `plot_path` alias was removed in 0.3.)
 
 ```julia
 plot_fits(res; save_path = "fits.png")

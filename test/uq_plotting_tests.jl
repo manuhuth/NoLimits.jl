@@ -64,7 +64,7 @@ end
     mktempdir() do tmp
         p_path = joinpath(tmp, "plot_uq_distributions.png")
         @test_logs (:info, r"sampling \+ KDE") plot_uq_distributions(
-            uq; scale = :natural, plot_path = p_path
+            uq; scale = :natural, save_path = p_path
         )
         @test isfile(p_path)
     end

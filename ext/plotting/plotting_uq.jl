@@ -103,9 +103,7 @@ function plot_uq_distributions(
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     _check_unit_interval(interval_alpha, "interval_alpha")
     _check_unit_interval(histogram_alpha, "histogram_alpha")
     _check_positive_int(ncols, "ncols")

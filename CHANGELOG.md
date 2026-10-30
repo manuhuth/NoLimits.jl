@@ -19,6 +19,12 @@ This release changes the plotting API without deprecation paths:
   states grid) and of `plot_random_effect_pairplot` (the matrix layout follows the
   number of variables); `rng` of the `DataModel` methods of `plot_hidden_states` and
   `plot_emission_distributions` (they draw nothing at random).
+- Keyword names: the `plot_path` alias of `save_path` is removed from every plot
+  function (use `save_path`); `plot_vpc`'s `kwargs_plot` is renamed `kwargs_layout`, as in
+  every other plot function. `plot_shrinkage`, `plot_multistart_waterfall` and
+  `plot_multistart_fixed_effect_variability` gain `kwargs_layout` (Figure attributes);
+  the figure `size` of `plot_multistart_fixed_effect_variability` moves from
+  `kwargs_subplot` to `kwargs_layout`. Passing a removed keyword raises a `MethodError`.
 - Histogram scale: a histogram drawn on the same axis as a density curve is now a
   density (area 1, y axis "Density") instead of a probability histogram:
   `plot_residual_distribution(...; residual = :quantile)` (with the N(0,1) density),

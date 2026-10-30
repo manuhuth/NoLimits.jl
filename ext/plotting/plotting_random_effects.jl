@@ -250,12 +250,10 @@ function plot_random_effects_pdf(
         xlims::Union{Nothing, Tuple{<:Real, <:Real}} = nothing,
         rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
     dm = _get_dm(res, dm)
-    save_path = _resolve_plot_path(save_path, plot_path)
     _check_positive_int(ncols, "ncols")
     _check_unit_interval(mcmc_quantiles_alpha, "mcmc_quantiles_alpha")
     _check_positive_int(flow_bins, "flow_bins")
@@ -512,12 +510,10 @@ function plot_random_effects_scatter(
         ncols::Int = DEFAULT_PLOT_COLS,
         style::PlotStyle = PlotStyle(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
     dm = _get_dm(res, dm)
-    save_path = _resolve_plot_path(save_path, plot_path)
     _check_positive_int(ncols, "ncols")
     _require_re_supported(res)
     re_list = _filter_re_without_covariates(res, unique(_resolve_re_names(dm, re_names)))
@@ -615,12 +611,10 @@ function plot_random_effect_pairplot(
         mcmc_draws::Int = 1000,
         rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
     dm = _get_dm(res, dm)
-    save_path = _resolve_plot_path(save_path, plot_path)
     kde_bandwidth === nothing || _check_positive(kde_bandwidth, "kde_bandwidth")
     _require_re_supported(res)
     re_list = _filter_re_without_covariates(res, unique(_resolve_re_names(dm, re_names)))
@@ -768,12 +762,10 @@ function plot_random_effect_distributions(
         xlims::Union{Nothing, Tuple{<:Real, <:Real}} = nothing,
         rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
     dm = _get_dm(res, dm)
-    save_path = _resolve_plot_path(save_path, plot_path)
     _check_positive_int(ncols, "ncols")
     _check_unit_interval(mcmc_quantiles_alpha, "mcmc_quantiles_alpha")
     _check_positive_int(flow_bins, "flow_bins")
@@ -1014,12 +1006,10 @@ function plot_random_effect_pit(
         flow_samples::Int = 500,
         rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
     dm = _get_dm(res, dm)
-    save_path = _resolve_plot_path(save_path, plot_path)
     _check_positive_int(ncols, "ncols")
     _check_unit_interval(mcmc_quantiles_alpha, "mcmc_quantiles_alpha")
     kde_bandwidth === nothing || _check_positive(kde_bandwidth, "kde_bandwidth")
@@ -1240,12 +1230,10 @@ function plot_random_effect_standardized(
         ncols::Int = DEFAULT_PLOT_COLS,
         style::PlotStyle = PlotStyle(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
     dm = _get_dm(res, dm)
-    save_path = _resolve_plot_path(save_path, plot_path)
     _check_positive_int(ncols, "ncols")
     kde_bandwidth === nothing || _check_positive(kde_bandwidth, "kde_bandwidth")
     _require_re_supported(res)
@@ -1355,12 +1343,10 @@ function plot_random_effect_standardized_scatter(
         ncols::Int = DEFAULT_PLOT_COLS,
         style::PlotStyle = PlotStyle(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
     dm = _get_dm(res, dm)
-    save_path = _resolve_plot_path(save_path, plot_path)
     _check_positive_int(ncols, "ncols")
     _require_re_supported(res)
     re_list = unique(_resolve_re_names(dm, re_names))

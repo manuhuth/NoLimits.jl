@@ -213,11 +213,13 @@ _vpc_legend_labels(leg) = [
     # user kwargs win
     custom = plot_vpc(
         res; n_simulations = 5, n_bins = 3,
-        kwargs_subplot = (; ylabel = "custom"), kwargs_plot = (; size = (700, 500))
+        kwargs_subplot = (; ylabel = "custom"), kwargs_layout = (; size = (700, 500))
     )
     @test CairoMakie.Makie.to_value(only(_vpc_axes(custom)).ylabel) == "custom"
     @test Tuple(custom.scene.viewport[].widths) == (700, 500)
     @test_throws ErrorException plot_vpc(res; n_simulations = 5, ncols = 0)
+    # `kwargs_plot` was renamed to `kwargs_layout` (as in every other plot function)
+    @test_throws MethodError plot_vpc(res; n_simulations = 5, kwargs_plot = (; size = (700, 500)))
 end
 
 @testset "plot_vpc count outcome keeps the per-point PMF colours and a legend entry" begin

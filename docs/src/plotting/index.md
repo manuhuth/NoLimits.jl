@@ -12,9 +12,7 @@ This page contains executable examples that render directly during the documenta
     functions are not defined and calling one reports which packages have to be loaded. See
     [Optional Dependencies](../installation.md#Optional-Dependencies).
 
-All plotting functions accept a file-path keyword for saving output directly:
-- `save_path="path/to/plot.png"` (existing)
-- `plot_path="path/to/plot.png"` (alias)
+All plotting functions save their figure directly with `save_path = "path/to/plot.png"`.
 
 ## Plotting APIs
 
@@ -50,7 +48,8 @@ Makie and share one layout policy:
   (for example quantile residuals against N(0,1)) is scaled as a density (area 1, y axis
   "Density"); a histogram on its own shows probabilities (bar heights sum to 1).
 - `kwargs_subplot` is passed to every panel as Makie `Axis` attributes and
-  `kwargs_layout` as `Figure` attributes; both take precedence over the defaults.
+  `kwargs_layout` as `Figure` attributes (for example `size`) in every plotting function;
+  both take precedence over the defaults.
 - Functions with `return_panel = true` return a panel that `combine_plots`
   places into a grid together with other panels, with one merged legend;
   `combine_plots(panels; link_x = true, link_y = true)` links their axes.

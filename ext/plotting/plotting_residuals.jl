@@ -218,7 +218,7 @@ Non-finite residuals (e.g. an `Inf` logscore) are dropped with a warning.
   AlgebraOfGraphics as `axis`; they win over the defaults).
 - `kwargs_layout`: Makie `Figure` attributes (passed as `figure`; they win over the
   defaults).
-- `save_path`/`plot_path`: file path to save the figure.
+- `save_path`: file path to save the figure.
 - All other arguments are forwarded to [`get_residuals`](@ref); see that function for
   descriptions.
 """
@@ -248,11 +248,9 @@ function plot_residuals(
         mcmc_quantiles::Vector{<:Real} = [5, 95],
         rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     metric = _validate_plot_metric(residual)
     df = get_residuals(
         res; dm = dm, cache = cache, observables = observables,
@@ -297,11 +295,9 @@ function plot_residuals(
         mcmc_quantiles::Vector{<:Real} = [5, 95],
         rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     metric = _validate_plot_metric(residual)
     df = get_residuals(
         dm; cache = cache, observables = observables,
@@ -428,7 +424,7 @@ to [0, 1]) adds a dashed reference line at the uniform bar height `1 / bins`.
   AlgebraOfGraphics as `axis`; they win over the defaults).
 - `kwargs_layout`: Makie `Figure` attributes (passed as `figure`; they win over the
   defaults).
-- `save_path`/`plot_path`: file path to save the figure.
+- `save_path`: file path to save the figure.
 - All other arguments are forwarded to [`get_residuals`](@ref).
 """
 function plot_residual_distribution(
@@ -458,11 +454,9 @@ function plot_residual_distribution(
         mcmc_quantiles::Vector{<:Real} = [5, 95],
         rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     metric = _validate_plot_metric(residual)
     df = get_residuals(
         res; dm = dm, cache = cache, observables = observables,
@@ -505,11 +499,9 @@ function plot_residual_distribution(
         mcmc_quantiles::Vector{<:Real} = [5, 95],
         rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     metric = _validate_plot_metric(residual)
     df = get_residuals(
         dm; cache = cache, observables = observables,
@@ -603,7 +595,7 @@ identity line. Axes are not linked (each panel has its own range).
   AlgebraOfGraphics as `axis`; they win over the defaults).
 - `kwargs_layout`: Makie `Figure` attributes (passed as `figure`; they win over the
   defaults).
-- `save_path`/`plot_path`: file path to save the figure.
+- `save_path`: file path to save the figure.
 - All other arguments are forwarded to [`get_residuals`](@ref).
 """
 function plot_residual_qq(
@@ -630,11 +622,9 @@ function plot_residual_qq(
         mcmc_quantiles::Vector{<:Real} = [5, 95],
         rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     metric = _validate_plot_metric(residual)
     df = get_residuals(
         res; dm = dm, cache = cache, observables = observables,
@@ -673,11 +663,9 @@ function plot_residual_qq(
         mcmc_quantiles::Vector{<:Real} = [5, 95],
         rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     metric = _validate_plot_metric(residual)
     df = get_residuals(
         dm; cache = cache, observables = observables,
@@ -794,7 +782,7 @@ falls back to the histogram.
   AlgebraOfGraphics as `axis`; they win over the defaults).
 - `kwargs_layout`: Makie `Figure` attributes (passed as `figure`; they win over the
   defaults).
-- `save_path`/`plot_path`: file path to save the figure.
+- `save_path`: file path to save the figure.
 - All other arguments are forwarded to [`get_residuals`](@ref).
 """
 function plot_residual_pit(
@@ -823,11 +811,9 @@ function plot_residual_pit(
         mcmc_quantiles::Vector{<:Real} = [5, 95],
         rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     df = get_residuals(
         res; dm = dm, cache = cache, observables = observables,
         individuals_idx = individuals_idx, obs_rows = obs_rows,
@@ -868,11 +854,9 @@ function plot_residual_pit(
         mcmc_quantiles::Vector{<:Real} = [5, 95],
         rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     df = get_residuals(
         dm; cache = cache, observables = observables,
         individuals_idx = individuals_idx, obs_rows = obs_rows,
@@ -972,7 +956,7 @@ individuals, with a dashed reference line at 0. Lags without a usable pair are g
   AlgebraOfGraphics as `axis`; they win over the defaults).
 - `kwargs_layout`: Makie `Figure` attributes (passed as `figure`; they win over the
   defaults).
-- `save_path`/`plot_path`: file path to save the figure.
+- `save_path`: file path to save the figure.
 - All other arguments are forwarded to [`get_residuals`](@ref).
 """
 function plot_residual_acf(
@@ -1000,11 +984,9 @@ function plot_residual_acf(
         mcmc_quantiles::Vector{<:Real} = [5, 95],
         rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     metric = _validate_plot_metric(residual)
     df = get_residuals(
         res; dm = dm, cache = cache, observables = observables,
@@ -1044,11 +1026,9 @@ function plot_residual_acf(
         mcmc_quantiles::Vector{<:Real} = [5, 95],
         rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     metric = _validate_plot_metric(residual)
     df = get_residuals(
         dm; cache = cache, observables = observables,

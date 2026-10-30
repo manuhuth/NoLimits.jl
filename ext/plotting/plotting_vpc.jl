@@ -6,7 +6,7 @@ _vpc_line_style(pctl::Real) = pctl == 50 ? :solid : :dot
 """
     plot_vpc(res::FitResult; dm, n_simulations, n_sim, percentiles, show_obs_points,
              show_obs_percentiles, n_bins, seed, observables, x_axis_feature, ncols,
-             kwargs_subplot, kwargs_plot, save_path, obs_percentiles_mode, bandwidth,
+             kwargs_subplot, kwargs_layout, save_path, obs_percentiles_mode, bandwidth,
              obs_percentiles_method, constants_re, mcmc_draws, mcmc_warmup, style)
              -> Makie.Figure
 
@@ -28,7 +28,7 @@ summarized component-wise. Panels have their own axes; one legend is drawn below
   to time.
 - `ncols::Int = 3`: number of subplot columns.
 - `kwargs_subplot`: additional Makie `Axis` attributes forwarded to each subplot.
-- `kwargs_plot`: additional Makie `Figure` attributes forwarded to the combined layout.
+- `kwargs_layout`: additional Makie `Figure` attributes forwarded to the combined layout.
 - `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
 - `obs_percentiles_mode::Symbol = :pooled`: `:pooled` or `:individual` percentile
   computation.
@@ -55,9 +55,8 @@ function plot_vpc(
         x_axis_feature::Union{Nothing, Symbol} = nothing,
         ncols::Int = DEFAULT_PLOT_COLS,
         serialization = nothing,
-        kwargs_plot = NamedTuple(),
+        kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         return_panel::Bool = false,
         obs_percentiles_mode::Symbol = :pooled,
         bandwidth::Union{Nothing, Float64} = nothing,
@@ -69,7 +68,6 @@ function plot_vpc(
         kwargs_subplot = NamedTuple()
     )
     dm = _get_dm(res, dm)
-    save_path = _resolve_plot_path(save_path, plot_path)
     bandwidth === nothing || _check_positive(bandwidth, "bandwidth")
     _check_positive_int(ncols, "ncols")
     if n_sim !== nothing
@@ -327,7 +325,7 @@ function plot_vpc(
             error("return_panel requires a single observable; pass `observables = :name`.")
         return only(plots)
     end
-    fig = combine_plots(plots; ncols = ncols, style = style, _nt(kwargs_plot)...)
+    fig = combine_plots(plots; ncols = ncols, style = style, _nt(kwargs_layout)...)
     return _save_plot!(fig, save_path)
 end
 

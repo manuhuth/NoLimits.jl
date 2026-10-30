@@ -118,11 +118,11 @@ end
 """
     plot_data(res::FitResult; dm, x_axis_feature, individuals_idx, shared_x_axis,
               shared_y_axis, ncols, style, kwargs_subplot, kwargs_layout,
-              save_path, plot_path, marginal_layout) -> Makie.Figure | Vector{Makie.Figure}
+              save_path, marginal_layout) -> Makie.Figure | Vector{Makie.Figure}
 
     plot_data(dm::DataModel; x_axis_feature, individuals_idx, shared_x_axis,
               shared_y_axis, ncols, style, kwargs_subplot, kwargs_layout,
-              save_path, plot_path, marginal_layout) -> Makie.Figure | Vector{Makie.Figure}
+              save_path, marginal_layout) -> Makie.Figure | Vector{Makie.Figure}
 
 Plot raw observed data for each individual as a multi-panel figure.
 
@@ -136,7 +136,7 @@ Plot raw observed data for each individual as a multi-panel figure.
   are hidden and one x label spans the grid.
 - `shared_y_axis::Bool = true`: share and link the y axis across panels (same treatment).
 - `ncols::Int = 3`: number of subplot columns.
-- `marginal_layout::Symbol = :single`: `:single` keeps one figure with every marginal overlaid per individual; `:vector` returns a figure per marginal (only valid for vector-valued observables and requires `save_path`/`plot_path` to be `nothing`).
+- `marginal_layout::Symbol = :single`: `:single` keeps one figure with every marginal overlaid per individual; `:vector` returns a figure per marginal (only valid for vector-valued observables and requires `save_path` to be `nothing`).
 - `style::PlotStyle = PlotStyle()`: visual style configuration.
 - `kwargs_subplot`: additional Makie `Axis` attributes forwarded to each subplot (passed to
   AlgebraOfGraphics as `axis`; they win over the defaults).
@@ -159,7 +159,6 @@ function plot_data(
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         marginal_layout::Symbol = :single
     )
     dm = _get_dm(res, dm)
@@ -168,8 +167,8 @@ function plot_data(
         error("marginal_layout must be :single or :vector.")
     (is_mv, n_marginals) = _obs_multivariate_info(dm, obs_name)
     if is_mv && marginal_layout == :vector
-        (save_path === nothing && plot_path === nothing) ||
-            error("save_path/plot_path are not supported when returning multiple marginal figures.")
+        save_path === nothing ||
+            error("save_path is not supported when returning multiple marginal figures.")
         plots = Vector{Figure}(undef, n_marginals)
         for m in 1:n_marginals
             plots[m] = _plot_data_dm(
@@ -188,7 +187,6 @@ function plot_data(
         end
         return plots
     end
-    save_path = _resolve_plot_path(save_path, plot_path)
     return _plot_data_dm(
         dm;
         x_axis_feature = x_axis_feature,
@@ -214,7 +212,6 @@ function plot_data(
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         marginal_layout::Symbol = :single
     )
     obs_name = _get_observable(dm, nothing)
@@ -222,8 +219,8 @@ function plot_data(
         error("marginal_layout must be :single or :vector.")
     (is_mv, n_marginals) = _obs_multivariate_info(dm, obs_name)
     if is_mv && marginal_layout == :vector
-        (save_path === nothing && plot_path === nothing) ||
-            error("save_path/plot_path are not supported when returning multiple marginal figures.")
+        save_path === nothing ||
+            error("save_path is not supported when returning multiple marginal figures.")
         plots = Vector{Figure}(undef, n_marginals)
         for m in 1:n_marginals
             plots[m] = _plot_data_dm(
@@ -242,7 +239,6 @@ function plot_data(
         end
         return plots
     end
-    save_path = _resolve_plot_path(save_path, plot_path)
     return _plot_data_dm(
         dm;
         x_axis_feature = x_axis_feature,
@@ -422,7 +418,6 @@ function plot_fits(
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         cache::Union{Nothing, PlotCache} = nothing,
         params::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple(),
@@ -436,7 +431,6 @@ function plot_fits(
         rng::AbstractRNG = _default_rng()
     )
     dm = _get_dm(res, dm)
-    save_path = _resolve_plot_path(save_path, plot_path)
     _check_unit_interval(mcmc_quantiles_alpha, "mcmc_quantiles_alpha")
     constants_re_use = _res_constants_re(res, constants_re)
     obs_name = _get_observable(dm, observable)
@@ -461,8 +455,8 @@ function plot_fits(
     end
 
     if is_mv && marginal_layout == :vector && marginal_idx === nothing
-        (save_path === nothing && plot_path === nothing) ||
-            error("save_path/plot_path are not supported when returning multiple marginal figures.")
+        save_path === nothing ||
+            error("save_path is not supported when returning multiple marginal figures.")
         plots_vector = Vector{Figure}(undef, n_marginals)
         for m in 1:n_marginals
             plots_vector[m] = plot_fits(
@@ -482,7 +476,6 @@ function plot_fits(
                 kwargs_subplot = kwargs_subplot,
                 kwargs_layout = kwargs_layout,
                 save_path = nothing,
-                plot_path = nothing,
                 cache = cache,
                 params = params,
                 constants_re = constants_re,
@@ -795,7 +788,6 @@ function plot_fits(
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         params::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple(),
         cache_obs_dists::Bool = false,
@@ -803,7 +795,6 @@ function plot_fits(
         mcmc_warmup::Union{Nothing, Int} = nothing,
         rng::AbstractRNG = _default_rng()
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     cache = build_plot_cache(
         dm; params = params, constants_re = constants_re,
         cache_obs_dists = cache_obs_dists, rng = rng

@@ -160,14 +160,13 @@ const _OBS_RES_MLE = fit_model(_OBS_DM, NoLimits.MLE())
     mktempdir() do tmp
         data_path = joinpath(tmp, "plot_data.png")
         fits_path = joinpath(tmp, "plot_fits.png")
-        plot_data(_PLOT_RES_MLE; plot_path = data_path)
-        plot_fits(_PLOT_RES_MLE; plot_path = fits_path)
+        plot_data(_PLOT_RES_MLE; save_path = data_path)
+        plot_fits(_PLOT_RES_MLE; save_path = fits_path)
         @test isfile(data_path)
         @test isfile(fits_path)
-        @test_throws ErrorException plot_data(
-            _PLOT_RES_MLE;
-            save_path = joinpath(tmp, "a.png"), plot_path = joinpath(tmp, "b.png")
-        )
+        # the `plot_path` alias of `save_path` is removed: an unknown keyword
+        @test_throws MethodError plot_data(_PLOT_RES_MLE; plot_path = joinpath(tmp, "b.png"))
+        @test_throws MethodError plot_fits(_PLOT_RES_MLE; plot_path = joinpath(tmp, "b.png"))
         @test_throws ErrorException plot_data(
             _PLOT_RES_MLE; save_path = joinpath(tmp, "missing_dir", "c.png")
         )
@@ -232,7 +231,7 @@ end
 
     mktempdir() do tmp
         p_path = joinpath(tmp, "plot_vpc.png")
-        plot_vpc(_PLOT_RES_MLE; n_simulations = 5, n_bins = 2, plot_path = p_path)
+        plot_vpc(_PLOT_RES_MLE; n_simulations = 5, n_bins = 2, save_path = p_path)
         @test isfile(p_path)
     end
 end
@@ -289,7 +288,7 @@ end
                 (plot_residual_acf, (residual = :raw, max_lag = 1)),
             ]
             p_path = joinpath(tmp, "$(f).png")
-            f(_PLOT_RES_MLE; kw..., plot_path = p_path)
+            f(_PLOT_RES_MLE; kw..., save_path = p_path)
             @test isfile(p_path)
         end
     end
@@ -316,7 +315,7 @@ end
         p_path = joinpath(tmp, "plot_observation_distributions.png")
         plot_observation_distributions(
             _OBS_RES_MLE;
-            individuals_idx = 1, obs_rows = 1, observables = :y, plot_path = p_path
+            individuals_idx = 1, obs_rows = 1, observables = :y, save_path = p_path
         )
         @test isfile(p_path)
     end

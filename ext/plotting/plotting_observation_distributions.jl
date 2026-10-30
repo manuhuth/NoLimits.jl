@@ -54,12 +54,10 @@ function plot_observation_distributions(
         mcmc_warmup::Union{Nothing, Int} = nothing,
         rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
     dm = _get_dm(res, dm)
-    save_path = _resolve_plot_path(save_path, plot_path)
     _check_unit_interval(mcmc_quantiles_alpha, "mcmc_quantiles_alpha")
     constants_re_use = _res_constants_re(res, constants_re)
     obs_list = _resolve_observables(dm, observables)

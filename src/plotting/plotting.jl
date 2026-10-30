@@ -257,16 +257,6 @@ function _ensure_save_path(save_path::Union{Nothing, String})
     return save_path
 end
 
-function _resolve_plot_path(
-        save_path::Union{Nothing, String},
-        plot_path::Union{Nothing, String}
-    )
-    if save_path !== nothing && plot_path !== nothing && save_path != plot_path
-        error("Specify only one of save_path or plot_path when saving plots.")
-    end
-    return plot_path === nothing ? save_path : plot_path
-end
-
 function _normalize_top_level_parameter_selection(sel, argname::String)
     sel === nothing && return nothing
     out = Symbol[]

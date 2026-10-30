@@ -52,12 +52,12 @@ function _hmm_obs_dist_fn(dm::DataModel, obs_name::Symbol, θ, η_ind, i::Intege
     end
 end
 
-function _hmm_check_layout(figure_layout, save_path, plot_path)
+function _hmm_check_layout(figure_layout, save_path)
     figure_layout in (:single, :vector) ||
         error("figure_layout must be :single or :vector.")
     if figure_layout == :vector
-        (save_path === nothing && plot_path === nothing) ||
-            error("save_path/plot_path are not supported when returning multiple figures.")
+        save_path === nothing ||
+            error("save_path is not supported when returning multiple figures.")
     end
     return nothing
 end
@@ -207,16 +207,14 @@ function plot_hidden_states(
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         params::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple(),
         mcmc_draws::Int = 1,
         rng::AbstractRNG = _default_rng()
     )
     dm = _get_dm(res, dm)
-    _hmm_check_layout(figure_layout, save_path, plot_path)
+    _hmm_check_layout(figure_layout, save_path)
     _check_positive_int(ncols, "ncols")
-    save_path = _resolve_plot_path(save_path, plot_path)
     constants_re_use = _res_constants_re(res, constants_re)
     obs_name = _hmm_observable(dm, observable, "plot_hidden_states")
     _is_posterior_draw_fit(res) &&
@@ -245,13 +243,11 @@ function plot_hidden_states(
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         params::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple()
     )
-    _hmm_check_layout(figure_layout, save_path, plot_path)
+    _hmm_check_layout(figure_layout, save_path)
     _check_positive_int(ncols, "ncols")
-    save_path = _resolve_plot_path(save_path, plot_path)
     obs_name = _hmm_observable(dm, observable, "plot_hidden_states")
 
     θ = get_θ0_untransformed(get_fixed(get_model(dm)))
@@ -392,8 +388,8 @@ function _plot_emission_impl(
     return _save_plot!(fig, save_path)
 end
 
-function _emission_checks(figure_layout, time_idx, time_point, save_path, plot_path)
-    _hmm_check_layout(figure_layout, save_path, plot_path)
+function _emission_checks(figure_layout, time_idx, time_point, save_path)
+    _hmm_check_layout(figure_layout, save_path)
     (time_idx !== nothing) && (time_point !== nothing) &&
         error("Specify only one of time_idx or time_point.")
     return nothing
@@ -453,15 +449,13 @@ function plot_emission_distributions(
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         params::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple(),
         mcmc_draws::Int = 1,
         rng::AbstractRNG = _default_rng()
     )
-    _emission_checks(figure_layout, time_idx, time_point, save_path, plot_path)
+    _emission_checks(figure_layout, time_idx, time_point, save_path)
     dm = _get_dm(res, dm)
-    save_path = _resolve_plot_path(save_path, plot_path)
     constants_re_use = _res_constants_re(res, constants_re)
     obs_name = _emission_observable(dm, observable)
     _is_posterior_draw_fit(res) &&
@@ -490,12 +484,10 @@ function plot_emission_distributions(
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         params::NamedTuple = NamedTuple(),
         constants_re::NamedTuple = NamedTuple()
     )
-    _emission_checks(figure_layout, time_idx, time_point, save_path, plot_path)
-    save_path = _resolve_plot_path(save_path, plot_path)
+    _emission_checks(figure_layout, time_idx, time_point, save_path)
     obs_name = _emission_observable(dm, observable)
 
     θ = get_θ0_untransformed(get_fixed(get_model(dm)))

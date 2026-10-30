@@ -74,7 +74,7 @@ using NoLimits: COLOR_ACCENT, COLOR_CI, COLOR_PRIMARY, COLOR_REFERENCE, COLOR_SE
     _require_re_supported, _require_varying_covariate, _res_constants_re,
     _residual_metric_column, _residual_metric_label, _resolve_emission_row,
     _resolve_individuals, _resolve_levels, _resolve_n_bins, _resolve_obs_rows,
-    _resolve_observables, _resolve_plot_path, _resolve_re_names,
+    _resolve_observables, _resolve_re_names,
     _row_random_effects_at,
     _sample_random_effects_levels, _simulate_obs, _solve_dense_individual,
     _sol_accessors_with_crossings, _standardize_re,
