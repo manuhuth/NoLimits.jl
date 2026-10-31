@@ -15,8 +15,7 @@
 #     `combine_plots([panel]; ncols = 1, style, kwargs_layout...)`.
 #
 # Precedence everywhere: PlotStyle defaults < values computed by the plotting function <
-# user `kwargs_subplot` (Axis) / `kwargs_layout` (Figure). See
-# dev/aog_battletest/PORTING.md for the full conventions.
+# user `kwargs_subplot` (Axis) / `kwargs_layout` (Figure).
 
 const AoG = AlgebraOfGraphics
 
