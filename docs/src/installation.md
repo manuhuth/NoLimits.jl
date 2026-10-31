@@ -44,7 +44,7 @@ add the package and `using` it alongside NoLimits, and the feature becomes avail
 
 | Feature | Packages to load |
 |:--------|:-----------------|
-| All plotting functions (`plot_data`, `plot_fits`, `plot_vpc`, `plot_residuals`, `plot_uq_distributions`, ...) | `CairoMakie` (or any other Makie backend) |
+| All plotting functions (`plot_data`, `plot_fits`, `plot_vpc`, `plot_residuals`, `plot_uq_distributions`, ...) | `CairoMakie` (or any other Makie backend) and `AlgebraOfGraphics` |
 | Bayesian sampling and variational inference (`MCMC`, `VI`, chain-based `uq`, Turing samplers in `SAEM`/`MCEM`) | `Turing` |
 | Neural networks inside models (`NNParameters`) | `Lux`, or `SimpleChains` |
 | Saving and loading fit results (`save_fit`, `load_fit`) | `JLD2` |
@@ -58,9 +58,9 @@ For example, to fit a model and plot the result:
 
 ```julia
 using Pkg
-Pkg.add("CairoMakie")
+Pkg.add(["CairoMakie", "AlgebraOfGraphics"])
 
-using NoLimits, CairoMakie   # plot_fits and friends are now defined
+using NoLimits, CairoMakie, AlgebraOfGraphics   # plot_fits and friends are now defined
 ```
 
 Using a feature without its package raises an error that names what to install; nothing

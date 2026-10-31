@@ -5,6 +5,7 @@ using DataFrames
 using Distributions
 using ComponentArrays
 using SciMLBase
+using Random
 import Turing   # MCMC/VI need the Turing extension loaded (#36)
 
 # ── Shared fixtures ───────────────────────────────────────────────────────────
@@ -230,6 +231,20 @@ end
     s2 = sample_posterior(res2; n_draws = 20)
     @test size(s1) == size(s2)
     @test get_vi_trace(res2) isa AbstractVector
+
+    # Regression: the reloaded fit used to return its draws on the linked scale (log σ),
+    # so σ came out negative. The model is rebuilt on load and draws are natural again.
+    @test NoLimits.get_result(res2).model !== nothing
+    d1 = sample_posterior(res; n_draws = 200, rng = Random.Xoshiro(3), return_names = true)
+    d2 = sample_posterior(res2; n_draws = 200, rng = Random.Xoshiro(3), return_names = true)
+    @test d1.names == d2.names
+    @test d2.draws ≈ d1.draws
+    iσ = findfirst(==(:σ), d2.names)
+    @test all(>(0), d2.draws[:, iσ])
+
+    # Without a DataModel the model cannot be rebuilt: warn, draws stay linked.
+    res3 = @test_logs (:warn, r"linked") match_mode = :any load_fit(path)
+    @test NoLimits.get_result(res3).model === nothing
 end
 
 # ── Multistart ────────────────────────────────────────────────────────────────
@@ -298,7 +313,7 @@ end
     expected_nres = nrow(get_residuals(res))
 
     script = """
-    using NoLimits, Distributions, DataFrames, CairoMakie, JLD2
+    using NoLimits, Distributions, DataFrames, CairoMakie, AlgebraOfGraphics, JLD2
     model = @Model begin
         @fixedEffects begin
             a = RealNumber(1.0)
@@ -320,7 +335,7 @@ end
     write(script_path, script)
 
     # The test environment, not the package's own: JLD2 (load_fit) and CairoMakie
-    # (plot_fits) are optional deps of NoLimits and live only here.
+    # (plot_fits, with AlgebraOfGraphics) are optional deps of NoLimits and live only here.
     out = readchomp(`$(Base.julia_cmd()) --project=$(Base.active_project()) $(script_path)`)
     lines = split(strip(out), '\n'; keepempty = false)
 
@@ -347,7 +362,7 @@ end
     expected_n_ids = nrow(expected_re.η)
 
     script = """
-    using NoLimits, Distributions, DataFrames, CairoMakie, JLD2
+    using NoLimits, Distributions, DataFrames, CairoMakie, AlgebraOfGraphics, JLD2
     model = @Model begin
         @fixedEffects begin
             a = RealNumber(1.0)
@@ -373,7 +388,7 @@ end
     write(script_path, script)
 
     # The test environment, not the package's own: JLD2 (load_fit) and CairoMakie
-    # (plot_fits) are optional deps of NoLimits and live only here.
+    # (plot_fits, with AlgebraOfGraphics) are optional deps of NoLimits and live only here.
     out = readchomp(`$(Base.julia_cmd()) --project=$(Base.active_project()) $(script_path)`)
     lines = split(strip(out), '\n'; keepempty = false)
 
@@ -383,4 +398,18 @@ end
     @test parse(Float64, strip(lines[end - 2])) ≈ expected_ll atol = 1.0e-8
     @test parse(Int, strip(lines[end - 1])) == expected_n_ids
     @test occursin("Figure", strip(lines[end]))  # plot_fits returns a Makie.Figure
+end
+
+# A VI model that cannot be rebuilt on load must not make load_fit fail: warn and keep
+# the reloaded result (draws stay on the linked scale, as without the Turing extension).
+@testset "load_fit: failed VI model rebuild only warns" begin
+    @test Base.get_extension(NoLimits, :NoLimitsTuringExt) !== nothing
+    r = NoLimits.VIResult(
+        nothing, nothing, nothing, 0, 0, 0.0, false, nothing, nothing, nothing, nothing
+    )
+    # not a DataModel: `_vi_rebuild_model` throws
+    out = @test_logs (:warn, r"rebuilding the VI model failed") NoLimits._restore_vi_model(
+        r, "not a DataModel", (;)
+    )
+    @test out === r
 end

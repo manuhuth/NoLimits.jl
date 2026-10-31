@@ -77,6 +77,7 @@ Note: `get_multistart_errors` returns `Vector{String}` after loading rather than
 | `get_raw` | Returns `nothing` - the optimization solver cache is not serializable |
 | `get_sampler` (MCMC) | Returns a `_SavedSamplerStub` recording the sampler kind (`:nuts`, `:mh`, …) |
 | `get_multistart_errors` | `Vector{String}` instead of `Vector{Exception}` |
+| `plot_em_trajectories` (SAEM/MCEM) | Works when the fit was run with `store_diagnostics=true`: the stored Q-function and parameter histories are part of the saved notes |
 
 ## API
 

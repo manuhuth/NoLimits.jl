@@ -28,7 +28,7 @@ y_{it} \sim \mathcal{N}\bigl(D_{i1} + D_{i2}\,t,\ s\bigr),
 
 ```julia
 using NoLimits
-using CairoMakie
+using CairoMakie, AlgebraOfGraphics
 using Copulas
 using DataFrames
 using Distributions

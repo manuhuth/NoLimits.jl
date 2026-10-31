@@ -1,6 +1,6 @@
 # Public plotting API. The drawing implementations live in the Makie extension
 # (ext/NoLimitsMakieExt.jl) and load automatically when a Makie backend (e.g.
-# CairoMakie) is imported alongside NoLimits. Without Makie these are method-less
+# CairoMakie) and AlgebraOfGraphics are imported alongside NoLimits. Without Makie these are method-less
 # stubs; calling one raises a MethodError carrying a hint to load Makie (registered
 # in `__init__` below). The Makie-free pieces (PlotStyle, PlotCache, get_residuals,
 # build_plot_cache and their helpers) live in the core module, in the other
@@ -62,8 +62,9 @@ function __init__()
             print(
                 io,
                 "\n\nNoLimits plotting functions live in a package extension that loads ",
-                "when Makie.jl is available. Run `using CairoMakie` (or another Makie ",
-                "backend) alongside `using NoLimits` to enable `", nameof(f),
+                "when both Makie.jl and AlgebraOfGraphics.jl are available. Run ",
+                "`using CairoMakie, AlgebraOfGraphics` (or another Makie backend together ",
+                "with AlgebraOfGraphics) alongside `using NoLimits` to enable `", nameof(f),
                 "` and the other plotting functions."
             )
         end

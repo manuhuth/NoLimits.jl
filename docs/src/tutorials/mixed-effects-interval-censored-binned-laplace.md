@@ -26,7 +26,7 @@ The mean is an exponential decay whose intercept carries a subject random effect
 
 ```julia
 using NoLimits
-using CairoMakie
+using CairoMakie, AlgebraOfGraphics
 using CensoredDistributions
 using DataFrames
 using Distributions

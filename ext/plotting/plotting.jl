@@ -1,284 +1,521 @@
-# Makie panel model + helper layer shared by every drawing file in this extension.
+# AlgebraOfGraphics (AoG) core layer shared by every drawing file of this extension.
 #
-# A `MakiePanel` records the intent of a subplot (axis attributes + a list of drawing
-# closures + limits/legend state) without touching Makie until `combine_plots`
-# materializes the whole figure at once. Downstream drawing files build panels through
-# the `create_styled_*!` / `add_*!` helpers and never call `Axis`/`Figure` directly.
+# Two figure shapes cover every NoLimits plot:
+#
+#  1. Faceted figures (one panel per individual / observable / parameter / ...): build tidy
+#     `DataFrame`s with a `:panel` column, combine AoG layers that map `layout = :panel`,
+#     and hand them to [`_draw_facets`](@ref). It applies the shared policy: panel order
+#     and `ncols` wrapping, linked axes when shared (inner tick labels and repeated axis
+#     labels hidden), ONE figure-level legend, `PlotStyle` + `kwargs_subplot` +
+#     `kwargs_layout` mapping, explicit shared limits, and per-panel plain-Makie extras.
+#
+#  2. Composable single-axis panels ([`AoGPanel`](@ref)): what `return_panel = true`
+#     returns; [`combine_plots`](@ref) lays any vector of panels into one figure with one
+#     merged legend. A function that draws a single axis builds an `AoGPanel` and returns
+#     `combine_plots([panel]; ncols = 1, style, kwargs_layout...)`.
+#
+# Precedence everywhere: PlotStyle defaults < values computed by the plotting function <
+# user `kwargs_subplot` (Axis) / `kwargs_layout` (Figure).
 
-mutable struct MakiePanel
-    axis_kwargs::Vector{Pair{Symbol, Any}}  # title/xlabel/ylabel + user Axis kwargs (later wins)
-    commands::Vector{Any}                    # callables: ax::Axis -> plot object
-    xlim::Union{Nothing, Tuple{Float64, Float64}}
-    ylim::Union{Nothing, Tuple{Float64, Float64}}
-    legend_position::Union{Symbol, Nothing}  # nothing => auto (:rt) when has_labels; :none => suppress
-    has_labels::Bool
-end
+const AoG = AlgebraOfGraphics
 
-# A nested grid of panels placed into a single figure cell (used by grouped layouts
-# such as plot_emission_distributions).
-struct MakiePanelGroup
-    panels::Vector{MakiePanel}
-    ncols::Int
-end
+_nt(x::NamedTuple) = x
+_nt(x::Nothing) = NamedTuple()
+_nt(x) = NamedTuple(Symbol(k) => v for (k, v) in pairs(x))
 
-# --- Panel construction / mutation -----------------------------------------------------
-
-"""
-    create_styled_plot(; title, xlabel, ylabel, style, kwargs...) -> MakiePanel
-
-Start a new subplot. `kwargs...` are Makie `Axis` attributes (this is where a caller's
-`kwargs_subplot` flows). Nothing is drawn until [`combine_plots`](@ref) materializes it.
-"""
-function create_styled_plot(;
-        title = "", xlabel = "", ylabel = "",
-        style::PlotStyle = PlotStyle(), kwargs...
-    )
-    axis_kwargs = Pair{Symbol, Any}[:title => title, :xlabel => xlabel, :ylabel => ylabel]
-    for (k, v) in kwargs
-        push!(axis_kwargs, k => v)
-    end
-    return MakiePanel(axis_kwargs, Any[], nothing, nothing, nothing, false)
-end
-
-# Push a drawing closure `f(ax::Axis)` onto the panel.
-_record!(p::MakiePanel, f) = (push!(p.commands, f); p)
+# --- PlotStyle mapping -------------------------------------------------------------------
 
 """
-    _axis_attrs!(p; kwargs...) -> MakiePanel
+    _aog_axis(style, kwargs_subplot = (;); computed...) -> NamedTuple
 
-Append Makie `Axis` attributes mid-build (replaces the old `plot!(p; ...)` for axis
-tweaks). Later entries win over earlier ones. Translate Plots names when calling:
-`yflip=true` -> `yreversed=true`; `yticks`/`xticks` pass through unchanged as
-`(positions, labels)` or a positions vector.
+Axis attributes for AoG's `axis =` keyword: `default_axis_kwargs(style)` merged with the
+function's `computed` attributes (xlabel, ylabel, ...) merged with the user's
+`kwargs_subplot` (user wins).
 """
-function _axis_attrs!(p::MakiePanel; kwargs...)
-    for (k, v) in kwargs
-        push!(p.axis_kwargs, k => v)
-    end
-    return p
-end
-
-# Set axis limits (materialized via xlims!/ylims!). Also see `_apply_shared_axes!`.
-function _set_limits!(p::MakiePanel; xlim = nothing, ylim = nothing)
-    xlim !== nothing && (p.xlim = xlim)
-    ylim !== nothing && (p.ylim = ylim)
-    return p
+function _aog_axis(style::PlotStyle, kwargs_subplot = NamedTuple(); computed...)
+    return merge(default_axis_kwargs(style), NamedTuple(computed), _nt(kwargs_subplot))
 end
 
 """
-    _label(p, label) -> Union{String, Nothing}
+    _aog_figure(style, n_panels, ncols, kwargs_layout = (;)) -> NamedTuple
 
-Normalize a legend label. `""`/`nothing` -> `nothing` (no legend entry); a non-empty
-String flips `p.has_labels` and is returned. ALL label handling routes through here so a
-figure only gains a legend when something is actually labeled.
+Figure attributes for AoG's `figure =` keyword (size from `calculate_plot_size`, fonts,
+padding) merged with the user's `kwargs_layout` (user wins).
 """
-function _label(p::MakiePanel, label)
-    (label === nothing || (label isa AbstractString && isempty(label))) && return nothing
-    p.has_labels = true
-    return String(label)
-end
-
-# --- Styled drawing primitives ---------------------------------------------------------
-
-"""
-    create_styled_scatter!(p, x, y; label, color, style, kwargs...) -> MakiePanel
-
-Record a styled `scatter!`. A scalar `color` is drawn with the style's marker alpha; a
-vector/tuple `color` (e.g. a per-point colormap) is used verbatim. Any Makie scatter
-attribute passed via `kwargs...` (`markersize`, `marker`, `colormap`, `colorrange`, a
-`color` override, ...) wins over the styled defaults.
-"""
-function create_styled_scatter!(
-        p::MakiePanel, x, y; label = "", color = COLOR_PRIMARY,
-        style::PlotStyle = PlotStyle(), kwargs...
-    )
-    # Individuals with no observations (event-only rows) yield empty series; Makie's
-    # dimension conversion cannot infer a type from those, so drop them.
-    (x isa AbstractArray && isempty(x)) && return p
-    lbl = _label(p, label)
-    kw = NamedTuple(kwargs)
-    col = haskey(kw, :color) ? kw.color : color
-    styled_col = col isa Union{AbstractVector, Tuple} ? col : (col, style.marker_alpha)
+function _aog_figure(style::PlotStyle, n_panels::Integer, ncols::Integer, kwargs_layout = NamedTuple())
+    n = max(Int(n_panels), 1)
     defaults = (;
-        color = styled_col, markersize = style.marker_size,
-        strokewidth = style.marker_stroke_width, strokecolor = :black,
+        size = calculate_plot_size(n, min(Int(ncols), n), style),
+        fonts = (; regular = style.font_family, bold = style.font_family),
+        figure_padding = style.figure_padding,
     )
-    attrs = merge(defaults, Base.structdiff(kw, NamedTuple{(:color,)}))
-    _record!(p, ax -> scatter!(ax, x, y; label = lbl, attrs...))
-    return p
+    return merge(defaults, _nt(kwargs_layout))
 end
 
 """
-    create_styled_line!(p, x, y; label, color, style, kwargs...) -> MakiePanel
+    _aog_legend(style; kwargs...) -> NamedTuple
 
-Record a styled `lines!`. `kwargs...` (`linewidth`, `linestyle`, a `color` override, ...)
-win over the styled defaults.
+Figure-level legend attributes: one horizontal legend below the panels, no frame, no
+section titles.
 """
-function create_styled_line!(
-        p::MakiePanel, x, y; label = "", color = COLOR_SECONDARY,
-        style::PlotStyle = PlotStyle(), kwargs...
+function _aog_legend(style::PlotStyle; kwargs...)
+    defaults = (;
+        position = :bottom, orientation = :horizontal, framevisible = false,
+        labelsize = style.font_size_legend, titlevisible = false,
     )
-    (x isa AbstractArray && isempty(x)) && return p
-    lbl = _label(p, label)
-    defaults = (; color = color, linewidth = style.line_width_primary)
-    attrs = merge(defaults, NamedTuple(kwargs))
-    _record!(p, ax -> lines!(ax, x, y; label = lbl, attrs...))
-    return p
+    return merge(defaults, NamedTuple(kwargs))
 end
 
 """
-    add_reference_line!(p, value; orientation, color, kwargs...) -> MakiePanel
+    _legend_nbanks(labels, width, style) -> Int
 
-Record a dashed reference line (`hlines!` for `:horizontal`, `vlines!` for `:vertical`).
-A `label` kwarg is routed through [`_label`](@ref); other kwargs pass through.
+Number of rows (`nbanks`) a horizontal legend with entries `labels` needs to fit into a
+figure `width` units wide: the smallest row count for which the widest entry of every
+column, summed over the columns, fits. Entry widths are estimated from the label length
+and `style.font_size_legend` (marker patch + gaps included), so long legends wrap instead
+of overflowing the figure.
 """
-function add_reference_line!(
-        p::MakiePanel, value; orientation = :horizontal,
-        color = COLOR_REFERENCE, kwargs...
-    )
-    kw = NamedTuple(kwargs)
-    lbl = haskey(kw, :label) ? _label(p, kw.label) : nothing
-    rest = Base.structdiff(kw, NamedTuple{(:label,)})
-    draw = orientation == :horizontal ? hlines! : vlines!
-    _record!(
-        p,
-        ax -> draw(ax, value; color = color, linestyle = :dash, label = lbl, rest...)
-    )
-    return p
-end
-
-"""
-    add_annotation!(p, x, y, txt; fontsize, halign) -> MakiePanel
-
-Record a text annotation at data coordinates `(x, y)`. `halign` (`:right`/`:left`/
-`:center`) is the horizontal text alignment.
-"""
-function add_annotation!(p::MakiePanel, x, y, txt; fontsize = 7, halign = :right)
-    _record!(
-        p,
-        ax -> text!(
-            ax, [float(x)], [float(y)];
-            text = [string(txt)], align = (halign, :center), fontsize = fontsize
-        )
-    )
-    return p
-end
-
-"""
-    _hist!(p, vals; bins, normalization, color, label, style, kwargs...) -> MakiePanel
-
-Draw a histogram as a touching `barplot!` from uniform bins (via `_histogram_xy`). This
-is the mechanical replacement for the old `histogram!(p, vals; bins, normalize, fillcolor,
-linecolor)` call. `normalization ∈ (:probability, :pdf, :none)`. Map old `fillcolor` to
-`color` and old `linecolor` to `strokecolor` (passed via `kwargs...`).
-"""
-function _hist!(
-        p::MakiePanel, vals; bins::Int = 30, normalization::Symbol = :probability,
-        color = COLOR_PRIMARY, label = "", style::PlotStyle = PlotStyle(), kwargs...
-    )
-    lbl = _label(p, label)
-    h = _histogram_xy(collect(float.(vals)); bins = bins, normalization = normalization)
-    defaults = (; color = color, strokewidth = 0, gap = 0, width = h.width)
-    attrs = merge(defaults, NamedTuple(kwargs))
-    _record!(p, ax -> barplot!(ax, h.centers, h.heights; label = lbl, attrs...))
-    return p
-end
-
-# --- Materialization -------------------------------------------------------------------
-
-# Merge the style defaults with the panel's accumulated axis attributes so that later
-# panel entries win over both the defaults and earlier entries (Makie does not dedup
-# duplicate keyword arguments, so we dedup here).
-function _merged_axis_kwargs(style::PlotStyle, panel_kwargs::Vector{Pair{Symbol, Any}})
-    merged = Dict{Symbol, Any}()
-    for (k, v) in Base.pairs(default_axis_kwargs(style))
-        merged[k] = v
+function _legend_nbanks(labels, width::Real, style::PlotStyle)
+    n = length(labels)
+    n <= 1 && return 1
+    fs = style.font_size_legend
+    w = [0.6 * fs * length(string(l)) + 2.5 * fs + 16 for l in labels]  # text + patch + gaps
+    avail = max(Float64(width) - 2 * style.figure_padding - 20, 1.0)
+    for nb in 1:n
+        nc = cld(n, nb)
+        sum(maximum(w[j:nc:n]) for j in 1:nc) <= avail && return nb
     end
-    for (k, v) in panel_kwargs
-        merged[k] = v
-    end
-    return merged
+    return n
 end
 
-# Build one Axis at grid position `pos`, run its drawing commands, apply limits, and add
-# a legend when the panel has labeled series and legends are not suppressed.
-function _materialize!(pos, p::MakiePanel, style::PlotStyle)
-    ax = Axis(pos; _merged_axis_kwargs(style, p.axis_kwargs)...)
-    for cmd in p.commands
-        cmd(ax)
+# Makie's default legend patch size, scaled with the fonts of large figures.
+const _LEGEND_PATCHSIZE = (20.0f0, 20.0f0)
+
+_FONT_FIELDS = (
+    :font_size_title, :font_size_label, :font_size_tick, :font_size_legend,
+    :font_size_annotation,
+)
+
+"""
+    _figure_style(style, size) -> PlotStyle
+
+`style` with its font sizes multiplied by `_font_scale(size...)` (rounded), the style a
+figure of `size` is drawn with. Large figures are viewed scaled down; enlarging their
+fonts (and the legend patches, see `_legend_patchsize`) keeps text and legends readable.
+Every figure builder ([`_draw_facets`](@ref), [`combine_plots`](@ref) and the grids that
+create their own `Figure`) draws with it, before layout, so Makie lays out the final
+sizes. User values in `kwargs_subplot` still win (they are merged last).
+"""
+function _figure_style(style::PlotStyle, size)
+    f = _font_scale(size[1], size[2])
+    f == 1.0 && return style
+    nt = NamedTuple{fieldnames(PlotStyle)}(Tuple(getfield(style, k) for k in fieldnames(PlotStyle)))
+    scaled = NamedTuple{_FONT_FIELDS}(Tuple(round(Int, getfield(style, k) * f) for k in _FONT_FIELDS))
+    return PlotStyle(; merge(nt, scaled)...)
+end
+
+# Legend patch size for a figure drawn with `fstyle = _figure_style(style, size)`.
+_legend_patchsize(fstyle::PlotStyle, style::PlotStyle) =
+    _LEGEND_PATCHSIZE .* Float32(fstyle.font_size_legend / style.font_size_legend)
+
+# Axis attributes of a composable panel rescaled to the figure style: font sizes that still
+# equal the panel's `style` value (i.e. were not set by the user) take the `fstyle` value.
+function _rescale_axis_fonts(axis::NamedTuple, style::PlotStyle, fstyle::PlotStyle)
+    style === fstyle && return axis
+    pairs_ = (
+        :titlesize => :font_size_title, :subtitlesize => :font_size_label,
+        :xlabelsize => :font_size_label, :ylabelsize => :font_size_label,
+        :xticklabelsize => :font_size_tick, :yticklabelsize => :font_size_tick,
+    )
+    out = axis
+    for (attr, field) in pairs_
+        haskey(out, attr) && out[attr] == getfield(style, field) || continue
+        out = merge(out, NamedTuple{(attr,)}((getfield(fstyle, field),)))
     end
-    p.xlim !== nothing && xlims!(ax, p.xlim...)
-    p.ylim !== nothing && ylims!(ax, p.ylim...)
-    if p.has_labels && p.legend_position !== :none
-        # has_labels guards the "no labeled plots" case Makie errors on; the try/catch is
-        # a defensive backstop (e.g. only reference lines were labeled).
-        try
-            axislegend(
-                ax; position = something(p.legend_position, :rt),
-                unique = true, labelsize = style.font_size_legend
-            )
-        catch
+    return out
+end
+
+"""
+    _scatter_visual(style; kwargs...) -> AoG.Layer
+
+`visual(Scatter)` with the style's marker size/alpha/stroke; `kwargs` win.
+"""
+function _scatter_visual(style::PlotStyle; kwargs...)
+    defaults = (;
+        markersize = style.marker_size, strokewidth = style.marker_stroke_width,
+        strokecolor = :black, alpha = style.marker_alpha,
+    )
+    return AoG.visual(Makie.Scatter; merge(defaults, NamedTuple(kwargs))...)
+end
+
+"""
+    _line_visual(style; kwargs...) -> AoG.Layer
+
+`visual(Lines)` with the style's primary line width; `kwargs` win.
+"""
+function _line_visual(style::PlotStyle; kwargs...)
+    return AoG.visual(Makie.Lines; merge((; linewidth = style.line_width_primary), NamedTuple(kwargs))...)
+end
+
+# --- Tidy tables ---------------------------------------------------------------------------
+
+_f64(v) = (v === missing || v === nothing || !(v isa Real)) ? NaN : Float64(v)
+
+"""
+    _tidy(; extra...) -> DataFrame
+
+Empty long-format table with the standard columns `panel::String, x, y::Float64,
+series::String` plus `extra` columns given as `name = T` (element type).
+"""
+function _tidy(; extra...)
+    df = DataFrame(panel = String[], x = Float64[], y = Float64[], series = String[])
+    for (k, T) in extra
+        df[!, k] = T[]
+    end
+    return df
+end
+
+"""
+    _push_xy!(df, panel, xs, ys, series) -> df
+
+Append one series to a `_tidy()` table (`missing`/non-real values become `NaN`, which
+AoG/Makie draw as gaps).
+"""
+function _push_xy!(df::DataFrame, panel::AbstractString, xs, ys, series::AbstractString)
+    for (x, y) in zip(xs, ys)
+        push!(df, (String(panel), _f64(x), _f64(y), String(series)); promote = false)
+    end
+    return df
+end
+
+# `data(df) * mapping(...) * visual` only when the table has rows (AoG cannot infer
+# scales from an empty table); returns `nothing` otherwise. Combine with `_layers`.
+_layer(df::DataFrame, m, v) = nrow(df) == 0 ? nothing : AoG.data(df) * m * v
+
+"""
+    _layers(ls...) -> AoG.Layers | nothing
+
+Sum the non-`nothing` layers (`nothing` when all are `nothing`).
+"""
+function _layers(ls...)
+    keep = [l for l in ls if l !== nothing]
+    isempty(keep) && return nothing
+    return reduce(+, keep)
+end
+
+"""
+    _series_palette(pairs) -> NamedTuple
+
+`Color` scale settings mapping series labels to colors (`["data" => "#0072B2", ...]`),
+keeping the given order in the legend and hiding the legend title.
+"""
+_series_palette(pairs) = (; palette = collect(pairs), categories = [first(p) for p in pairs], label = "")
+
+# --- Category order ------------------------------------------------------------------------
+#
+# AoG sorts categorical values (facets, colours, ...) unless told otherwise, which puts
+# "s10" before "s2". NoLimits shows categories in the order they first appear in the data:
+# pass the levels explicitly as scale `categories` (as `_draw_facets` does for `panels`) or
+# map a column with `_data_ordered(:col)`.
+
+"""
+    _ordered_levels(v) -> Vector
+
+Distinct values of `v` in first-appearance order (never sorted). Use it for the
+`categories` of an AoG scale or the `panels` of [`_draw_facets`](@ref).
+"""
+_ordered_levels(v) = unique(v)
+
+"""
+    _data_ordered(col::Symbol) -> Pair
+
+AoG mapping entry `col => presorted`: categorical levels of `col` keep the row order of
+the table instead of AoG's default sorting.
+"""
+_data_ordered(col::Symbol) = col => AoG.presorted
+
+"""
+    _individuals_in_data_order(dm, inds) -> Vector{Int}
+
+The individual indices `inds` sorted by the first row of each individual in the data
+table (`DataModel` itself sorts individuals by id, which for string ids is lexicographic:
+s1, s10, s11, ..., s2).
+"""
+function _individuals_in_data_order(dm::DataModel, inds)
+    rows = get_rows(get_row_groups(dm))
+    return sort!(collect(Int, inds); by = i -> minimum(rows[i]))
+end
+
+"""
+    _plot_individuals(dm, individuals_idx; default_all = true) -> Vector{Int}
+
+Individuals to draw, in panel order. An explicit `individuals_idx` (indices or ids) is
+resolved by `_resolve_individuals` and keeps the caller's order; `nothing` selects all
+individuals (or the first one in data order when `default_all = false`) in the order
+they first appear in the data.
+"""
+function _plot_individuals(dm::DataModel, individuals_idx; default_all::Bool = true)
+    individuals_idx === nothing || return _resolve_individuals(dm, individuals_idx)
+    order = _individuals_in_data_order(dm, eachindex(get_individuals(dm)))
+    return default_all ? order : order[1:1]
+end
+
+# --- Faceted figures ---------------------------------------------------------------------
+
+"""
+    _facet_link(shared::Bool) -> Symbol
+
+`:all` when the axis is shared across panels, `:none` otherwise (AoG then shows inner tick
+labels; when shared, inner decorations are hidden and labels are spanned).
+"""
+_facet_link(shared::Bool) = shared ? :all : :none
+
+"""
+    _draw_facets(layers; panels, ncols, style, shared_x, shared_y, kwargs_subplot,
+                 kwargs_layout, axis, series, scales, xlim, ylim, post, legend) -> Figure
+
+Draw AoG `layers` (which must map `layout = :panel`) as a wrapped facet grid.
+
+- `panels::Vector{String}`: panel labels in display order (the `:panel` column values).
+- `ncols`: wrap width (validated `>= 1`); panel `k` sits at `fldmod1(k, min(ncols, n))`.
+- `shared_x`/`shared_y`: link axes (`:all`) and hide inner decorations, or keep them free.
+- `axis`: computed Axis attributes (xlabel, ylabel, ...); `kwargs_subplot` wins over them.
+- `series`: `label => color` pairs for the categorical `Color` scale (one legend entry each).
+- `scales`: extra AoG scale settings as a NamedTuple (e.g. `(; LineStyle = (; ...))`).
+- `xlim`/`ylim`: explicit limits applied to every panel (typically the padded union when
+  shared, `nothing` to let Makie autoscale).
+- `post::Dict{String, Vector}`: per-panel plain-Makie extras `ax -> ...` (heatmaps,
+  reference lines with panel-specific values, annotations) run after AoG drew the panel.
+- `legend`: draw the single figure-level legend when a series scale exists.
+"""
+function _draw_facets(
+        layers; panels::AbstractVector{<:AbstractString}, ncols::Integer, style::PlotStyle,
+        shared_x::Bool = true, shared_y::Bool = true,
+        kwargs_subplot = NamedTuple(), kwargs_layout = NamedTuple(), axis = NamedTuple(),
+        series = Pair{String, Any}[], scales = NamedTuple(),
+        xlim = nothing, ylim = nothing,
+        post::AbstractDict = Dict{String, Vector{Any}}(), legend::Bool = true
+    )
+    _check_positive_int(ncols, "ncols")
+    n = length(panels)
+    ncols_use = min(Int(ncols), max(n, 1))
+    layers === nothing &&
+        error("Nothing to plot: no finite data for the selected individuals/observables.")
+    sc = (; Layout = (; palette = AoG.wrapped(cols = ncols_use), categories = collect(String, panels)))
+    isempty(series) || (sc = merge(sc, (; Color = _series_palette(series))))
+    sc = merge(sc, _nt(scales))
+    fig_kw = _aog_figure(style, n, ncols_use, kwargs_layout)
+    fstyle = _figure_style(style, fig_kw.size)
+    nbanks = _legend_nbanks(first.(series), first(fig_kw.size), fstyle)
+    # Explicit limits are Axis attributes from the start (user `limits` in kwargs_subplot
+    # win, `_aog_axis` merges them last). Setting them with xlims!/ylims! after drawing
+    # tripped Makie's Float32 limits assertion on linked log-scale facets (binary data
+    # whose zeros were blanked).
+    ax_kw = _nt(axis)
+    (xlim === nothing && ylim === nothing) || (ax_kw = merge(ax_kw, (; limits = (xlim, ylim))))
+    fg = AoG.draw(
+        layers, AoG.scales(; sc...);
+        axis = _aog_axis(fstyle, kwargs_subplot; ax_kw...),
+        figure = fig_kw,
+        facet = (; linkxaxes = _facet_link(shared_x), linkyaxes = _facet_link(shared_y)),
+        legend = (legend && !isempty(series)) ?
+            _aog_legend(fstyle; nbanks, patchsize = _legend_patchsize(fstyle, style)) :
+            (; show = false),
+    )
+    for (k, label) in enumerate(panels)
+        ax = _facet_axis(fg, k, ncols_use)
+        ax === nothing && continue
+        for f in get(post, label, ())
+            f(ax)
         end
     end
-    return ax
+    return fg.figure
 end
 
-# Materialize a nested panel group as a sub-GridLayout in a single figure cell.
-function _materialize!(pos, g::MakiePanelGroup, style::PlotStyle)
-    gl = GridLayout(pos)
-    ncols_use = min(g.ncols, max(length(g.panels), 1))
-    for (i, panel) in enumerate(g.panels)
-        row, col = fldmod1(i, ncols_use)
-        _materialize!(gl[row, col], panel, style)
+# Axis of panel `k` in a wrapped facet grid (`nothing` if AoG deleted it as empty).
+function _facet_axis(fg, k::Integer, ncols::Integer)
+    r, c = fldmod1(k, ncols)
+    (r <= size(fg.grid, 1) && c <= size(fg.grid, 2)) || return nothing
+    ae = fg.grid[r, c]
+    return isempty(ae.entries) ? nothing : ae.axis
+end
+
+# --- Composable panels (return_panel / combine_plots) ------------------------------------
+
+"""
+    AoGPanel(layers; scales = (;), axis = (;), post = [], legend = true)
+
+One single-axis subplot: AoG `layers` (no `layout` mapping; `nothing` for a panel drawn
+only by `post`), AoG scale settings (NamedTuple, e.g. `(; Color = _series_palette(...))`),
+the complete Axis attributes (build them with [`_aog_axis`](@ref)), and plain-Makie extras
+`post` (`ax -> ...`) run after the layers are drawn. This is what plotting functions
+return with `return_panel = true`; [`combine_plots`](@ref) materializes panels.
+"""
+struct AoGPanel
+    layers::Any
+    scales::NamedTuple
+    axis::NamedTuple
+    post::Vector{Any}
+    legend::Bool
+end
+
+AoGPanel(layers; scales = NamedTuple(), axis = NamedTuple(), post = Any[], legend::Bool = true) =
+    AoGPanel(layers, _nt(scales), _nt(axis), collect(Any, post), legend)
+
+# Draw an AoGPanel into a grid position; returns (axis, legend-or-nothing), where the legend
+# is AoG's `(elements, labels, titles)` triple.
+function _materialize_panel!(pos, p::AoGPanel)
+    if p.layers === nothing
+        ax = Axis(pos; p.axis...)
+        foreach(f -> f(ax), p.post)
+        return ax, nothing
     end
-    return gl
+    ag = AoG.draw!(pos, p.layers, AoG.scales(; p.scales...); axis = p.axis)
+    ax = first(ag).axis
+    foreach(f -> f(ax), p.post)
+    leg = p.legend ? AoG.compute_legend(ag; order = nothing, hide_unused = true) : nothing
+    return ax, leg
+end
+
+# One horizontal legend below everything, merging AoG legend triples by label (first
+# occurrence wins).
+function _figure_legend!(
+        fig::Figure, legends, style::PlotStyle; row::Integer, ncols::Integer,
+        patchsize = _LEGEND_PATCHSIZE
+    )
+    elements = Any[]
+    labels = String[]
+    for leg in legends
+        leg === nothing && continue
+        els, labs, _ = leg
+        for (sec_els, sec_labs) in zip(els, labs), (e, l) in zip(sec_els, sec_labs)
+            s = string(l)
+            s in labels && continue
+            push!(elements, e)
+            push!(labels, s)
+        end
+    end
+    isempty(labels) && return nothing
+    nbanks = _legend_nbanks(labels, first(fig.scene.viewport[].widths), style)
+    return Legend(
+        fig[row, 1:ncols], elements, labels;
+        orientation = :horizontal, framevisible = false, labelsize = style.font_size_legend,
+        patchsize = patchsize,
+        nbanks = nbanks, tellheight = true, tellwidth = false
+    )
 end
 
 """
-    combine_plots(panels::Vector; ncols, style, kwargs...) -> Makie.Figure
+    _link_panel_axes!(axes, ncols; link_x = false, link_y = false, keep = ()) -> axes
 
-The single materialization point: lay `panels` (MakiePanel and/or MakiePanelGroup) into a
-`Figure` on a `ncols`-wide grid and return it. `kwargs...` are Makie `Figure` attributes
-(this is where a caller's `kwargs_layout` flows); a caller `size`/`figure_padding`/... wins
-over the computed defaults.
+Link the axes of panels laid out row-wise on an `ncols`-wide grid (`axes[k]` is panel
+`k`, `nothing` for a missing panel) and hide the decorations a shared axis repeats: y tick
+labels and y label outside the first column, x tick labels and x label except on the
+lowest panel of each column. Attributes named in `keep` (e.g. `keys(kwargs_subplot)`)
+are left as the caller set them. This is the `combine_plots(...; link_x, link_y)`
+policy and matches the decluttering of `_draw_facets`.
+"""
+function _link_panel_axes!(
+        axes::AbstractVector, ncols::Integer;
+        link_x::Bool = false, link_y::Bool = false, keep = ()
+    )
+    present = [ax for ax in axes if ax !== nothing]
+    length(present) > 1 || return axes
+    n = length(axes)
+    ncols_use = min(Int(ncols), n)
+    _hide!(ax, attr) = attr in keep || setproperty!(ax, attr, false)
+    if link_y
+        Makie.linkyaxes!(present...)
+        for (k, ax) in enumerate(axes)
+            (ax === nothing || fldmod1(k, ncols_use)[2] == 1) && continue
+            _hide!(ax, :yticklabelsvisible)
+            _hide!(ax, :ylabelvisible)
+        end
+    end
+    if link_x
+        Makie.linkxaxes!(present...)
+        for (k, ax) in enumerate(axes)
+            ax === nothing && continue
+            # lowest panel of its column: no panel below it
+            any(j -> axes[j] !== nothing, (k + ncols_use):ncols_use:n) || continue
+            _hide!(ax, :xticklabelsvisible)
+            _hide!(ax, :xlabelvisible)
+        end
+    end
+    return axes
+end
+
+"""
+    combine_plots(panels::Vector; ncols, style, link_x = false, link_y = false,
+                  kwargs...) -> Makie.Figure
+
+Lay `panels` (as returned by plotting functions with `return_panel = true`) into one
+`Figure` on an `ncols`-wide grid, with a single merged legend below the panels.
+`kwargs...` are Makie `Figure` attributes (this is where a caller's `kwargs_layout` flows);
+a caller `size`/`figure_padding`/... wins over the computed defaults. `link_x`/`link_y`
+link the panels' x/y axes and hide the repeated tick labels and axis labels (x kept on the
+lowest panel of each column, y in the first column); an attribute a panel sets explicitly
+in its `axis` (e.g. `yticklabelsvisible` from `kwargs_subplot`) is kept. The legend wraps
+into several rows when its entries do not fit the figure width.
 """
 function combine_plots(
         panels::Vector; ncols::Int = DEFAULT_PLOT_COLS,
-        style::PlotStyle = PlotStyle(), kwargs...
+        style::PlotStyle = PlotStyle(), link_x::Bool = false, link_y::Bool = false,
+        kwargs...
     )
     _check_positive_int(ncols, "ncols")
     n = length(panels)
     ncols_use = min(ncols, max(n, 1))
-    fig_defaults = (;
-        size = calculate_plot_size(max(n, 1), ncols_use, style),
-        fonts = (; regular = style.font_family, bold = style.font_family),
-        figure_padding = style.figure_padding,
-    )
-    fig = Figure(; merge(fig_defaults, NamedTuple(kwargs))...)
+    fig_kw = _aog_figure(style, n, ncols_use, NamedTuple(kwargs))
+    fig = Figure(; fig_kw...)
+    fstyle = _figure_style(style, fig_kw.size)
+    legends = Any[]
+    axes = Any[nothing for _ in 1:n]
+    keep = Set{Symbol}()
     for (i, panel) in enumerate(panels)
+        panel isa AoGPanel || throw(
+            ArgumentError(
+                "combine_plots expects panels returned with `return_panel = true` " *
+                    "(AoGPanel); got $(typeof(panel))."
+            )
+        )
         row, col = fldmod1(i, ncols_use)
-        _materialize!(fig[row, col], panel, style)
+        # fonts of large figures grow before layout (sizes the user set are kept)
+        fstyle === style || (
+            panel = AoGPanel(
+                panel.layers, panel.scales, _rescale_axis_fonts(panel.axis, style, fstyle),
+                panel.post, panel.legend
+            )
+        )
+        ax, leg = _materialize_panel!(fig[row, col], panel)
+        axes[i] = ax
+        push!(legends, leg)
+        # decorations the panel sets explicitly (e.g. from kwargs_subplot) win
+        union!(keep, keys(panel.axis))
     end
+    (link_x || link_y) && _link_panel_axes!(axes, ncols_use; link_x, link_y, keep)
+    nrows = cld(max(n, 1), ncols_use)
+    _figure_legend!(
+        fig, legends, fstyle; row = nrows + 1, ncols = ncols_use,
+        patchsize = _legend_patchsize(fstyle, style)
+    )
     return fig
 end
 
-# Set shared x/y limits across panels (recursing into groups) before materialization.
-function _apply_shared_axes!(panels::AbstractVector, xlim, ylim)
-    for panel in panels
-        _apply_shared_axes_one!(panel, xlim, ylim)
-    end
-    return panels
-end
+"""
+    _placeholder_figure(msg, style; kwargs_layout = (;)) -> Figure
 
-function _apply_shared_axes_one!(p::MakiePanel, xlim, ylim)
-    return _set_limits!(p; xlim = xlim, ylim = ylim)
-end
-
-function _apply_shared_axes_one!(g::MakiePanelGroup, xlim, ylim)
-    for p in g.panels
-        _set_limits!(p; xlim = xlim, ylim = ylim)
-    end
-    return g
+Figure returned when a plotting function has nothing to draw: the message `msg` centred
+on an otherwise empty single-panel figure, in the style's label font (no axis, ticks or
+title).
+"""
+function _placeholder_figure(msg::AbstractString, style::PlotStyle; kwargs_layout = NamedTuple())
+    fig = Figure(; _aog_figure(style, 1, 1, kwargs_layout)...)
+    Makie.Label(
+        fig[1, 1], msg; fontsize = style.font_size_label, color = style.color_dark,
+        tellwidth = false, tellheight = false
+    )
+    return fig
 end
 
 """
@@ -305,485 +542,4 @@ function _save_plot!(fig::Figure, save_path::Union{Nothing, String})
         )
     end
     return fig
-end
-
-# --- Public plotting functions ---------------------------------------------------------
-
-"""
-    plot_multistart_waterfall(res::MultistartFitResult; style, kwargs_subplot, save_path)
-    -> Makie.Figure
-
-Plot the objective values of all successful multistart runs in ascending order
-(waterfall plot), highlighting the best run.
-
-# Keyword Arguments
-- `style::PlotStyle = PlotStyle()`: visual style configuration.
-- `kwargs_subplot`: additional Makie `Axis` attributes forwarded to the subplot.
-- `save_path::Union{Nothing, String} = nothing`: file path to save the plot, or `nothing`.
-"""
-function plot_multistart_waterfall(
-        res::MultistartFitResult;
-        style::PlotStyle = PlotStyle(),
-        kwargs_subplot = NamedTuple(),
-        save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing
-    )
-    save_path = _resolve_plot_path(save_path, plot_path)
-
-    n_ok = length(res.results_ok)
-    n_ok >= 1 || error("No successful multistart runs available for plotting.")
-
-    perm = sortperm(res.scores_ok)
-    objectives = Float64[]
-    ranks = Int[]
-    for (rank, idx) in enumerate(perm)
-        obj = get_objective(res.results_ok[idx])
-        if isfinite(obj)
-            push!(objectives, float(obj))
-            push!(ranks, rank)
-        else
-            @warn "Skipping successful multistart run with non-finite objective value." rank = rank objective = obj
-        end
-    end
-
-    isempty(objectives) &&
-        error("No finite objective values available among successful multistart runs.")
-
-    n_failed = length(res.errors_err)
-    p = create_styled_plot(;
-        title = "Multistart Objectives (best → worst; successful starts only)",
-        xlabel = "Rank",
-        ylabel = "Objective",
-        style = style,
-        kwargs_subplot...
-    )
-    create_styled_scatter!(
-        p, ranks, objectives; label = "", color = style.color_primary, style = style
-    )
-    _axis_attrs!(p; xticks = collect(1:length(objectives)))
-
-    if n_failed > 0
-        add_annotation!(
-            p, maximum(ranks), maximum(objectives), "Failed starts omitted: $(n_failed)";
-            fontsize = style.font_size_annotation
-        )
-    end
-    fig = combine_plots([p]; ncols = 1, style = style)
-    return _save_plot!(fig, save_path)
-end
-
-"""
-    plot_multistart_fixed_effect_variability(res::MultistartFitResult; dm, k_best, mode,
-                                             quantiles, scale, include_parameters,
-                                             exclude_parameters, style, kwargs_subplot,
-                                             save_path) -> Makie.Figure
-
-Plot the variation of fixed-effect estimates across the `k_best` multistart runs with
-the lowest objective values.
-
-# Keyword Arguments
-- `dm::Union{Nothing, DataModel} = nothing`: data model (inferred from `res` by default).
-- `k_best::Int = 20`: number of best runs to include.
-- `mode::Symbol = :points`: `:points` to show individual estimates; `:quantiles` to show
-  quantile bands.
-- `quantiles::AbstractVector = [0.1, 0.5, 0.9]`: quantile levels for `:quantiles` mode.
-- `scale::Symbol = :untransformed`: `:untransformed` or `:transformed`.
-- `include_parameters`, `exclude_parameters`: parameter name filters.
-- `style::PlotStyle = PlotStyle()`: visual style configuration.
-- `kwargs_subplot`: additional Makie `Axis` attributes forwarded to the subplot (a `size`
-  entry, if given, sets the figure size instead).
-- `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
-"""
-function plot_multistart_fixed_effect_variability(
-        res::MultistartFitResult;
-        dm::Union{Nothing, DataModel} = nothing,
-        k_best::Int = 20,
-        mode::Symbol = :points,
-        quantiles::AbstractVector{<:Real} = [0.1, 0.5, 0.9],
-        scale::Symbol = :untransformed,
-        include_parameters = nothing,
-        exclude_parameters = nothing,
-        style::PlotStyle = PlotStyle(),
-        kwargs_subplot = NamedTuple(),
-        save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing
-    )
-    save_path = _resolve_plot_path(save_path, plot_path)
-    mode in (:points, :quantiles) || error("mode must be :points or :quantiles.")
-    scale in (:untransformed, :transformed) ||
-        error("scale must be :untransformed or :transformed.")
-    k_best >= 1 || error("k_best must be >= 1.")
-
-    dm_use = _multistart_data_model(res, dm)
-    fe = get_fixed(get_model(dm_use))
-    fe_names = get_names(fe) # declaration order
-    fe_params = get_params(fe)
-
-    include_set = _normalize_top_level_parameter_selection(
-        include_parameters, "include_parameters"
-    )
-    exclude_set = _normalize_top_level_parameter_selection(
-        exclude_parameters, "exclude_parameters"
-    )
-    known = Set(fe_names)
-
-    if include_set !== nothing
-        unknown = [n for n in include_set if !(n in known)]
-        isempty(unknown) ||
-            error("Unknown include_parameters names: $(unknown). Known names: $(fe_names).")
-    end
-    if exclude_set !== nothing
-        unknown = [n for n in exclude_set if !(n in known)]
-        isempty(unknown) ||
-            error("Unknown exclude_parameters names: $(unknown). Known names: $(fe_names).")
-    end
-
-    # Default: only calculate_se=true blocks. include_parameters can add names explicitly.
-    selected = Set{Symbol}()
-    for n in fe_names
-        p = getfield(fe_params, n)
-        p.calculate_se && push!(selected, n)
-    end
-    include_set !== nothing && union!(selected, include_set)
-    if exclude_set !== nothing
-        for n in exclude_set
-            delete!(selected, n)
-        end
-    end
-    selected_order = [n for n in fe_names if n in selected]
-    isempty(selected_order) &&
-        error("No fixed-effect parameters selected for plotting after include/exclude filters.")
-
-    n_ok = length(res.results_ok)
-    n_ok >= 1 || error("No successful multistart runs available for plotting.")
-    perm = sortperm(res.scores_ok)
-    if k_best > n_ok
-        @warn "k_best exceeds successful multistart runs; clipping to available runs." k_best = k_best available = n_ok
-    end
-    k_use = min(k_best, n_ok)
-    keep = perm[1:k_use]
-
-    θ_list = [get_params(res.results_ok[idx]; scale = scale) for idx in keep]
-
-    labels = String[]
-    values = Matrix{Float64}(undef, 0, k_use)
-
-    # Build row labels and value matrix in top-level declaration order.
-    row_offset = 0
-    row_labels = String[]
-    for pname in selected_order
-        lbls_ref, vals_ref = _flatten_param_with_labels(
-            pname, getproperty(θ_list[1], pname)
-        )
-        nrows = length(vals_ref)
-        nrows >= 1 || continue
-
-        block_vals = Matrix{Float64}(undef, nrows, k_use)
-        block_vals[:, 1] .= vals_ref
-        for col in 2:k_use
-            lbls_cur, vals_cur = _flatten_param_with_labels(
-                pname, getproperty(θ_list[col], pname)
-            )
-            lbls_cur == lbls_ref ||
-                error("Parameter shape/labels changed across multistarts for $(pname).")
-            length(vals_cur) == nrows ||
-                error("Parameter length changed across multistarts for $(pname).")
-            block_vals[:, col] .= vals_cur
-        end
-
-        append!(row_labels, lbls_ref)
-        row_offset += nrows
-        values = vcat(values, block_vals)
-    end
-
-    isempty(row_labels) &&
-        error("No plottable fixed-effect coordinates found for selected parameters.")
-
-    # Drop rows with non-finite values across selected starts.
-    keep_rows = [i for i in 1:size(values, 1) if all(isfinite, @view values[i, :])]
-    if length(keep_rows) < size(values, 1)
-        @warn "Dropping non-finite parameter coordinates from variability plot." dropped = (
-            size(
-                values, 1
-            ) - length(keep_rows)
-        )
-    end
-    isempty(keep_rows) &&
-        error("No finite fixed-effect coordinates available for variability plotting.")
-    values = values[keep_rows, :]
-    labels = row_labels[keep_rows]
-
-    # Standard z-score per coordinate across the selected top-k runs.
-    z = similar(values)
-    for i in 1:size(values, 1)
-        v = @view values[i, :]
-        μ = sum(v) / length(v)
-        σ = sqrt(sum((v .- μ) .^ 2) / length(v))
-        if σ == 0.0 || !isfinite(σ)
-            z[i, :] .= 0.0
-        else
-            z[i, :] .= (v .- μ) ./ σ
-        end
-    end
-
-    y = collect(1:length(labels))
-    plot_height = clamp(200 + 22 * length(labels), MIN_FIGURE_HEIGHT, MAX_FIGURE_HEIGHT)
-    subplot_kwargs = NamedTuple(kwargs_subplot)
-    fig_size = get(subplot_kwargs, :size, (900, plot_height))
-    axis_kwargs = Base.structdiff(subplot_kwargs, NamedTuple{(:size,)})
-
-    p = create_styled_plot(;
-        title = "Fixed-Effect Variability Across Top-$(k_use) Multistarts",
-        xlabel = "Z-score",
-        ylabel = "Parameter",
-        style = style,
-        axis_kwargs...
-    )
-    p.legend_position = :none
-    add_reference_line!(
-        p, 0.0; orientation = :vertical, color = style.color_dark, alpha = 0.7, label = ""
-    )
-
-    if mode == :points
-        for i in eachindex(y)
-            create_styled_scatter!(
-                p, vec(@view z[i, :]), fill(y[i], k_use);
-                label = "", color = style.color_primary, style = style
-            )
-        end
-    else
-        q = sort(Float64.(collect(quantiles)))
-        (length(q) == 3 && all(0 .<= q .<= 1)) ||
-            error("quantiles must contain three probabilities in [0, 1].")
-        for i in eachindex(y)
-            zi = vec(@view z[i, :])
-            lo = quantile(zi, q[1])
-            mid = quantile(zi, q[2])
-            hi = quantile(zi, q[3])
-            create_styled_line!(
-                p, [lo, hi], [y[i], y[i]]; label = "",
-                color = style.color_primary, style = style
-            )
-            create_styled_scatter!(
-                p, [mid], [y[i]]; label = "", color = style.color_secondary, style = style
-            )
-        end
-    end
-
-    all_z = vec(z)
-    zmin, zmax = extrema(all_z)
-    if zmin == zmax
-        zmin -= 1.0
-        zmax += 1.0
-    else
-        pad = 0.05 * (zmax - zmin)
-        zmin -= pad
-        zmax += pad
-    end
-    _axis_attrs!(p; yticks = (y, labels), yreversed = true)
-    _set_limits!(p; xlim = (zmin, zmax), ylim = (0.5, length(labels) + 0.5))
-    fig = combine_plots([p]; ncols = 1, style = style, size = fig_size)
-    return _save_plot!(fig, save_path)
-end
-
-"""
-    plot_em_trajectories(res::FitResult; dm, scale, include_parameters, exclude_parameters,
-                         ncols, style, kwargs_subplot, kwargs_layout, save_path)
-    -> Makie.Figure
-
-Plot the Q-function and fixed-effect parameter trajectories over EM iterations for a
-[`SAEM`](@ref) or [`MCEM`](@ref) fit result.
-
-Requires the fit to have been run with `store_diagnostics=true`. The first panel shows
-the Q-function over all iterations; subsequent panels show one trace per scalar
-parameter element (e.g. `β[1]`, `β[2]`, `Ω[1,1]`, ...).
-
-# Keyword Arguments
-- `dm::Union{Nothing, DataModel} = nothing`: data model for the inverse transform when
-  `scale=:untransformed`. Inferred from `res` when stored.
-- `scale::Symbol = :untransformed`: `:untransformed` (natural scale) or `:transformed`
-  (optimizer scale). Affects the plotted values; `:untransformed` requires the DataModel.
-- `include_parameters`: `Symbol`, `String`, or vector thereof. If set, only the named
-  top-level parameter blocks are plotted. Defaults to `nothing` (all free parameters).
-- `exclude_parameters`: `Symbol`, `String`, or vector thereof. If set, the named blocks
-  are removed from the selection. Applied after `include_parameters`.
-- `ncols::Int = $(DEFAULT_PLOT_COLS)`: number of subplot columns.
-- `style::PlotStyle = PlotStyle()`: visual style configuration.
-- `kwargs_subplot`: additional Makie `Axis` attributes forwarded to each individual subplot.
-- `kwargs_layout`: additional Makie `Figure` attributes forwarded to the combined layout.
-- `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
-"""
-function plot_em_trajectories(
-        res::FitResult;
-        dm::Union{Nothing, DataModel} = nothing,
-        scale::Symbol = :untransformed,
-        include_parameters = nothing,
-        exclude_parameters = nothing,
-        ncols::Int = DEFAULT_PLOT_COLS,
-        style::PlotStyle = PlotStyle(),
-        kwargs_subplot = NamedTuple(),
-        kwargs_layout = NamedTuple(),
-        save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing
-    )
-    save_path = _resolve_plot_path(save_path, plot_path)
-    _check_positive_int(ncols, "ncols")
-    scale in (:untransformed, :transformed) ||
-        error("scale must be :untransformed or :transformed. Got: $(scale).")
-
-    method = get_method(res)
-    method isa Union{SAEM, MCEM} ||
-        error("plot_em_trajectories requires a SAEM or MCEM fit result. Got: $(typeof(method)).")
-
-    diag = get_notes(res).diagnostics
-    isempty(diag.θ_hist) &&
-        error("No parameter trajectory stored. Re-fit with store_diagnostics=true.")
-
-    diagnostics_every = method isa SAEM ? method.saem.diagnostics_every :
-        method.diagnostics_every
-    stored_iters = [k * diagnostics_every for k in 1:length(diag.θ_hist)]
-
-    # Resolve DataModel and build inverse transform if needed.
-    if scale == :untransformed
-        dm_use = dm !== nothing ? dm : get_data_model(res)
-        dm_use === nothing &&
-            error(
-            "scale=:untransformed requires the DataModel. Re-fit with " *
-                "store_data_model=true (the default), or pass dm=... explicitly."
-        )
-        full_inv = get_inverse_transform(get_fixed(get_model(dm_use)))
-        hist_names = collect(keys(diag.θ_hist[1]))
-        name_to_idx = Dict(full_inv.names[i] => i for i in eachindex(full_inv.names))
-        valid_idxs = [name_to_idx[n] for n in hist_names if haskey(name_to_idx, n)]
-        restricted_inv = InverseTransform(
-            full_inv.names[valid_idxs],
-            full_inv.specs[valid_idxs]
-        )
-        θ_vals = [restricted_inv(θ_t) for θ_t in diag.θ_hist]
-
-        # Determine parameter declaration order from the DataModel.
-        all_fe_names = get_names(get_fixed(get_model(dm_use)))
-        free_fe_names = [n for n in all_fe_names if n in Set(hist_names)]
-    else
-        θ_vals = diag.θ_hist
-        free_fe_names = collect(keys(diag.θ_hist[1]))
-    end
-
-    # Apply include / exclude filters.
-    include_set = _normalize_top_level_parameter_selection(
-        include_parameters,
-        "include_parameters"
-    )
-    exclude_set = _normalize_top_level_parameter_selection(
-        exclude_parameters,
-        "exclude_parameters"
-    )
-    known = Set(free_fe_names)
-    if include_set !== nothing
-        unknown = [n for n in include_set if !(n in known)]
-        isempty(unknown) ||
-            error(
-            "Unknown include_parameters: $(unknown). " *
-                "Available free parameters: $(free_fe_names)."
-        )
-    end
-    if exclude_set !== nothing
-        unknown = [n for n in exclude_set if !(n in known)]
-        isempty(unknown) ||
-            error(
-            "Unknown exclude_parameters: $(unknown). " *
-                "Available free parameters: $(free_fe_names)."
-        )
-    end
-    selected_order = if include_set !== nothing
-        [n for n in free_fe_names if n in include_set]
-    else
-        copy(free_fe_names)
-    end
-    if exclude_set !== nothing
-        filter!(n -> !(n in exclude_set), selected_order)
-    end
-    isempty(selected_order) &&
-        error("No parameters selected for plotting after include/exclude filters.")
-
-    x_label = diagnostics_every == 1 ? "EM Iteration" :
-        "EM Iteration (×$(diagnostics_every))"
-
-    panels = MakiePanel[]
-
-    # Q-function panel (always uses all iterations, not just stored ones).
-    # Plot index 1 is always in column 1, so it gets the ylabel.
-    q_plot = create_styled_plot(;
-        title = "Q Function", xlabel = "EM Iteration",
-        ylabel = "Value", style = style, kwargs_subplot...
-    )
-    create_styled_line!(
-        q_plot, collect(1:length(diag.Q_hist)), Float64.(diag.Q_hist);
-        label = "", color = style.color_primary, style = style
-    )
-    push!(panels, q_plot)
-
-    # One panel per scalar element of each selected parameter block.
-    for pname in selected_order
-        first_val = getproperty(θ_vals[1], pname)
-        if first_val isa Number
-            traj = Float64[float(getproperty(θ, pname)) for θ in θ_vals]
-            push!(
-                panels,
-                create_styled_plot(;
-                    title = string(pname), xlabel = x_label,
-                    ylabel = "", style = style, kwargs_subplot...
-                )
-            )
-            create_styled_line!(
-                panels[end], stored_iters, traj;
-                label = "", color = style.color_primary, style = style
-            )
-        elseif first_val isa AbstractVector
-            n_elem = length(first_val)
-            for j in eachindex(first_val)
-                traj = Float64[float(getproperty(θ, pname)[j]) for θ in θ_vals]
-                label = n_elem == 1 ? string(pname) : string(pname, "[", j, "]")
-                push!(
-                    panels,
-                    create_styled_plot(;
-                        title = label, xlabel = x_label,
-                        ylabel = "", style = style, kwargs_subplot...
-                    )
-                )
-                create_styled_line!(
-                    panels[end], stored_iters, traj;
-                    label = "", color = style.color_primary, style = style
-                )
-            end
-        elseif first_val isa AbstractMatrix
-            for r in axes(first_val, 1)
-                for c in axes(first_val, 2)
-                    traj = Float64[float(getproperty(θ, pname)[r, c]) for θ in θ_vals]
-                    label = string(pname, "[", r, ",", c, "]")
-                    push!(
-                        panels,
-                        create_styled_plot(;
-                            title = label, xlabel = x_label,
-                            ylabel = "", style = style, kwargs_subplot...
-                        )
-                    )
-                    create_styled_line!(
-                        panels[end], stored_iters, traj;
-                        label = "", color = style.color_primary, style = style
-                    )
-                end
-            end
-        end
-    end
-
-    # Apply "Value" ylabel only to panels in the first column.
-    for i in eachindex(panels)
-        if (i - 1) % ncols == 0
-            _axis_attrs!(panels[i]; ylabel = "Value")
-        end
-    end
-
-    result = combine_plots(panels; ncols = ncols, style = style, kwargs_layout...)
-    return _save_plot!(result, save_path)
 end
