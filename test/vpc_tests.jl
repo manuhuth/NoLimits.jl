@@ -203,15 +203,23 @@ end
     ax = only(_vpc_axes(fig))
     @test CairoMakie.Makie.to_value(ax.xlabel) == "Time"
     lines = [pl for pl in ax.scene.plots if pl isa CairoMakie.Lines]
-    # two line styles (solid median, dashed outer pair); Makie stores the converted pattern
-    @test length(unique(CairoMakie.Makie.to_value(pl.linestyle) for pl in lines)) == 2
-    # 2 sources x 2 styles, each with its own (colour, line style)
-    @test length(
-        unique(
-            (CairoMakie.Makie.to_value(pl.color), CairoMakie.Makie.to_value(pl.linestyle))
-                for pl in lines
-        )
-    ) == 4
+    # Makie stores the converted line style (`nothing`/a pattern vector, or from Makie
+    # 0.24.16 a `Linestyle` wrapper that defines `==` but not `hash`), so compare with `==`
+    # against Makie's own conversion of :solid / :dash instead of hashing (`unique`).
+    to_ls(ls) = CairoMakie.Makie.convert_attribute(ls, CairoMakie.Makie.key"linestyle"())
+    solid, dash = to_ls(:solid), to_ls(:dash)
+    @test solid != dash
+    styles = [CairoMakie.Makie.to_value(pl.linestyle) for pl in lines]
+    colors = [CairoMakie.Makie.to_value(pl.color) for pl in lines]
+    # median solid and outer pair dashed, for each of the two sources
+    @test length(lines) == 4
+    @test count(==(solid), styles) == 2
+    @test count(==(dash), styles) == 2
+    # one colour per source: each colour carries one solid and one dashed line
+    @test length(unique(colors)) == 2
+    @test all(unique(colors)) do c
+        sort([styles[i] == dash for i in eachindex(lines) if colors[i] == c]) == [false, true]
+    end
 
     # the kernel method labels the observed percentiles in the same way
     kern = plot_vpc(res; n_simulations = 5, n_bins = 3)
