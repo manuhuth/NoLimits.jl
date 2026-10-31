@@ -49,7 +49,7 @@ features:
 ## A complete model, fitted, in one screen
 
 ```julia
-using NoLimits, CairoMakie
+using NoLimits, CairoMakie, AlgebraOfGraphics
 
 model = @Model begin
     @fixedEffects begin

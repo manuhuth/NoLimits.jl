@@ -1,6 +1,6 @@
 # Plotting and Diagnostics API
 
-Every `plot_*` function. All of them require a Makie backend to be loaded.
+Every `plot_*` function. All of them require a Makie backend and AlgebraOfGraphics to be loaded.
 
 !!! note "Some entries need an optional dependency"
     Parts of this API are implemented in package extensions and become available only once the

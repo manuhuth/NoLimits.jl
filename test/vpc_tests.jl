@@ -1,6 +1,7 @@
 using Test
 using NoLimits
 using CairoMakie
+import AlgebraOfGraphics  # the plotting extension needs Makie AND AlgebraOfGraphics
 using DataFrames
 using Distributions
 using Random
@@ -169,4 +170,114 @@ end
     @test NoLimits._kernel_quantiles(
         [0.0, 1.0], y[1:2], [0.0, 1.0], 0.5, [50.0]
     )[50.0] == [1.0, 2.0]
+end
+
+# AlgebraOfGraphics layout (#383): one panel per observable, one figure-level legend,
+# composable panels with return_panel.
+_vpc_axes(fig) = [a for a in fig.content if a isa CairoMakie.Axis]
+_vpc_legends(fig) = [l for l in fig.content if l isa CairoMakie.Legend]
+_vpc_legend_labels(leg) = [
+    string(CairoMakie.Makie.to_value(e.label)) for g in leg.entrygroups[] for e in last(g)
+]
+# line style of the first line element of each legend entry (`nothing` for markers only)
+function _vpc_legend_linestyles(leg)
+    out = Any[]
+    for g in leg.entrygroups[], e in last(g)
+        ls = [el for el in e.elements if el isa CairoMakie.LineElement]
+        push!(out, isempty(ls) ? nothing : CairoMakie.Makie.to_value(first(ls).attributes[:linestyle]))
+    end
+    return filter(!isnothing, out)
+end
+
+@testset "plot_vpc AoG layout and legend" begin
+    res = fx_laplace()
+    fig = plot_vpc(res; n_simulations = 5, n_bins = 3, obs_percentiles_method = :quantile)
+    @test fig isa CairoMakie.Figure
+    @test length(_vpc_axes(fig)) == 1
+    legs = _vpc_legends(fig)
+    @test length(legs) == 1
+    labs = _vpc_legend_labels(only(legs))
+    # one colour per source; median solid, outer percentiles merged into one dashed entry
+    @test labs == ["obs", "obs median", "obs 5–95%", "sim median", "sim 5–95%"]
+    @test _vpc_legend_linestyles(only(legs)) == [:solid, :dash, :solid, :dash]
+    ax = only(_vpc_axes(fig))
+    @test CairoMakie.Makie.to_value(ax.xlabel) == "Time"
+    lines = [pl for pl in ax.scene.plots if pl isa CairoMakie.Lines]
+    # Makie stores the converted line style (`nothing`/a pattern vector, or from Makie
+    # 0.24.16 a `Linestyle` wrapper that defines `==` but not `hash`), so compare with `==`
+    # against Makie's own conversion of :solid / :dash instead of hashing (`unique`).
+    to_ls(ls) = CairoMakie.Makie.convert_attribute(ls, CairoMakie.Makie.key"linestyle"())
+    solid, dash = to_ls(:solid), to_ls(:dash)
+    @test solid != dash
+    styles = [CairoMakie.Makie.to_value(pl.linestyle) for pl in lines]
+    colors = [CairoMakie.Makie.to_value(pl.color) for pl in lines]
+    # median solid and outer pair dashed, for each of the two sources
+    @test length(lines) == 4
+    @test count(==(solid), styles) == 2
+    @test count(==(dash), styles) == 2
+    # one colour per source: each colour carries one solid and one dashed line
+    @test length(unique(colors)) == 2
+    @test all(unique(colors)) do c
+        sort([styles[i] == dash for i in eachindex(lines) if colors[i] == c]) == [false, true]
+    end
+
+    # the kernel method labels the observed percentiles in the same way
+    kern = plot_vpc(res; n_simulations = 5, n_bins = 3)
+    @test _vpc_legend_labels(only(_vpc_legends(kern))) ==
+        ["obs", "obs median", "obs 5–95%", "sim median", "sim 5–95%"]
+    # smoothed simulated percentiles (bandwidth) as well
+    smooth = plot_vpc(res; n_simulations = 5, n_bins = 3, bandwidth = 0.5)
+    @test _vpc_legend_labels(only(_vpc_legends(smooth))) ==
+        ["obs", "obs median", "obs 5–95%", "sim median", "sim 5–95%"]
+    # the entries name the requested outer percentiles; no median entry without 50
+    p1090 = plot_vpc(
+        res; n_simulations = 5, n_bins = 3, percentiles = [10, 90],
+        obs_percentiles_method = :quantile
+    )
+    @test _vpc_legend_labels(only(_vpc_legends(p1090))) == ["obs", "obs 10–90%", "sim 10–90%"]
+    # more than three percentiles: inner pairs get the next line style
+    p5 = plot_vpc(
+        res; n_simulations = 5, n_bins = 3, percentiles = [5, 25, 50, 75, 95],
+        show_obs_points = false
+    )
+    leg5 = only(_vpc_legends(p5))
+    @test _vpc_legend_labels(leg5) == [
+        "obs median", "obs 5–95%", "obs 25–75%", "sim median", "sim 5–95%", "sim 25–75%",
+    ]
+    @test _vpc_legend_linestyles(leg5) == [:solid, :dash, :dashdot, :solid, :dash, :dashdot]
+
+    panel = plot_vpc(res; n_simulations = 5, n_bins = 3, return_panel = true)
+    ext = Base.get_extension(NoLimits, :NoLimitsMakieExt)
+    @test panel isa ext.AoGPanel
+    combined = combine_plots([panel, panel]; ncols = 2)
+    @test length(_vpc_axes(combined)) == 2
+    @test length(_vpc_legends(combined)) == 1
+
+    # user kwargs win
+    custom = plot_vpc(
+        res; n_simulations = 5, n_bins = 3,
+        kwargs_subplot = (; ylabel = "custom"), kwargs_layout = (; size = (700, 500))
+    )
+    @test CairoMakie.Makie.to_value(only(_vpc_axes(custom)).ylabel) == "custom"
+    @test Tuple(custom.scene.viewport[].widths) == (700, 500)
+    @test_throws ErrorException plot_vpc(res; n_simulations = 5, ncols = 0)
+    # `kwargs_plot` was renamed to `kwargs_layout` (as in every other plot function)
+    @test_throws MethodError plot_vpc(res; n_simulations = 5, kwargs_plot = (; size = (700, 500)))
+end
+
+@testset "plot_vpc count outcome keeps the per-point PMF colours and a legend entry" begin
+    res = fx_pois_laplace()
+    fig = plot_vpc(res; n_simulations = 5, n_bins = 3)
+    ax = only(_vpc_axes(fig))
+    pmf = [
+        pl for pl in ax.scene.plots if pl isa CairoMakie.Scatter &&
+            CairoMakie.Makie.to_value(pl.color) isa AbstractVector{<:Real}
+    ]
+    @test length(pmf) == 1
+    probs = CairoMakie.Makie.to_value(only(pmf).color)
+    @test all(p -> 0 <= p <= 1, probs)
+    labs = _vpc_legend_labels(only(_vpc_legends(fig)))
+    @test "sim PMF" in labs
+    # discrete outcomes draw no percentile lines, so no median / interval entries
+    @test !any(l -> occursin("median", l) || occursin("–", l), labs)
 end

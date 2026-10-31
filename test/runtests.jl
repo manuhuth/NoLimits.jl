@@ -77,6 +77,7 @@ const TEST_GROUPS = [
     [
         "plot_observation_distributions_tests.jl",
         "residual_plots_tests.jl",
+        "plot_hmm_tests.jl",
     ],
     ["plot_random_effects_tests.jl"],
     # ── G9-G11: estimation API + samplers + cv ───────────────────────────────

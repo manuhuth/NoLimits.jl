@@ -1,6 +1,7 @@
 using Test
 using NoLimits
 using CairoMakie
+import AlgebraOfGraphics  # the plotting extension needs Makie AND AlgebraOfGraphics
 using DataFrames
 using Distributions
 using Lux
@@ -213,4 +214,51 @@ end
     # Moved from coverage_gap_tests.jl (path coverage for the RE-fit branch).
     @test plot_observation_distributions(fx_fixre_laplace()) !== nothing
     @test plot_observation_distributions(fx_fixre_dm()) !== nothing
+end
+
+# AlgebraOfGraphics layout (#383): panel titles kept, one figure legend, shared axes
+# linked with inner tick labels hidden; free axes keep their own ticks.
+@testset "plot_observation_distributions AoG layout and legend" begin
+    axes_of(f) = [a for a in f.content if a isa CairoMakie.Axis]
+    legends_of(f) = [l for l in f.content if l isa CairoMakie.Legend]
+    labels_of(leg) = [
+        string(CairoMakie.Makie.to_value(e.label)) for g in leg.entrygroups[] for e in last(g)
+    ]
+    vis(ax, a) = CairoMakie.Makie.to_value(getproperty(ax, a))
+
+    res = fx_laplace()                       # 6 individuals x 3 observations
+    fig = plot_observation_distributions(res; individuals_idx = 1, ncols = 2)
+    axs = axes_of(fig)
+    @test length(axs) == 3
+    @test vis(axs[1], :title) == "ID: 1, t: 0.0"
+    @test labels_of(only(legends_of(fig))) == ["PDF", "observed"]
+    # shared x and y within one individual: panel 2 (column 2) hides y ticks, panel 1
+    # (above panel 3) hides x ticks, the bottom panels keep them
+    @test !vis(axs[2], :yticklabelsvisible) && vis(axs[3], :yticklabelsvisible)
+    @test !vis(axs[1], :xticklabelsvisible) && vis(axs[2], :xticklabelsvisible)
+    lims = [ax.finallimits[] for ax in axs]
+    @test all(==(lims[1]), lims)
+
+    free = plot_observation_distributions(
+        res; individuals_idx = 1, ncols = 2, shared_x_axis = false, shared_y_axis = false
+    )
+    @test all(ax -> vis(ax, :yticklabelsvisible) && vis(ax, :xticklabelsvisible), axes_of(free))
+
+    # two individuals: x ranges differ per individual, so x stays per panel
+    two = plot_observation_distributions(res; individuals_idx = [1, 2], obs_rows = 1)
+    @test all(ax -> vis(ax, :xticklabelsvisible), axes_of(two))
+
+    # discrete outcome: PMF bars and a "Probability Mass" label per panel
+    pois = plot_observation_distributions(fx_pois_laplace(); individuals_idx = 1)
+    pax = axes_of(pois)
+    @test all(ax -> vis(ax, :ylabel) == "Probability Mass", pax)
+    @test all(ax -> any(pl -> pl isa CairoMakie.BarPlot, ax.scene.plots), pax)
+    @test "PMF" in labels_of(only(legends_of(pois)))
+
+    custom = plot_observation_distributions(
+        res; individuals_idx = 1, kwargs_subplot = (; yticklabelsvisible = true),
+        kwargs_layout = (; size = (800, 400))
+    )
+    @test all(ax -> vis(ax, :yticklabelsvisible), axes_of(custom))
+    @test Tuple(custom.scene.viewport[].widths) == (800, 400)
 end

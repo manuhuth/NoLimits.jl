@@ -1,5 +1,127 @@
 # Changelog
 
+## Unreleased
+
+### Breaking
+
+This release changes the plotting API without deprecation paths:
+
+- The plotting extension is drawn with AlgebraOfGraphics (#383). It now loads only when
+  a Makie backend **and** AlgebraOfGraphics are loaded: write
+  `using CairoMakie, AlgebraOfGraphics` (AlgebraOfGraphics is a new weak dependency,
+  compat 0.13.2; Makie compat raised to 0.24.4). Calling a `plot_*` function without
+  them raises a `MethodError` hint naming both packages.
+- `return_panel = true` returns an AlgebraOfGraphics-based panel for `combine_plots`;
+  the closure-based `MakiePanel` layer is removed and `combine_plots` accepts only such
+  panels (anything else raises an `ArgumentError`).
+- Removed keywords (passing them now raises a `MethodError` like any unknown keyword):
+  `ncols` of `plot_emission_distributions` (the figure is always an individuals x
+  states grid) and of `plot_random_effect_pairplot` (the matrix layout follows the
+  number of variables); `rng` of the `DataModel` methods of `plot_hidden_states` and
+  `plot_emission_distributions` (they draw nothing at random).
+- Keyword names: the `plot_path` alias of `save_path` is removed from every plot
+  function (use `save_path`); `plot_vpc`'s `kwargs_plot` is renamed `kwargs_layout`, as in
+  every other plot function. `plot_shrinkage`, `plot_multistart_waterfall` and
+  `plot_multistart_fixed_effect_variability` gain `kwargs_layout` (Figure attributes);
+  the figure `size` of `plot_multistart_fixed_effect_variability` moves from
+  `kwargs_subplot` to `kwargs_layout`. Passing a removed keyword raises a `MethodError`.
+- Histogram scale: a histogram drawn on the same axis as a density curve is now a
+  density (area 1, y axis "Density") instead of a probability histogram:
+  `plot_residual_distribution(...; residual = :quantile)` (with the N(0,1) density),
+  the diagonal of `plot_random_effect_pairplot` when `kde_bandwidth` is given,
+  `plot_random_effect_standardized` with `show_hist = true, show_kde = true`, and the
+  normalizing-flow histograms (`flow_plot = :hist`) of `plot_random_effects_pdf` and
+  `plot_random_effect_distributions`, which stand for the PDF on a "Probability
+  Density" axis. Histograms without an overlaid density keep probability
+  normalisation (bar heights sum to 1).
+- `plot_vpc` legend and line styles: colour marks the source (observed / simulated),
+  line style the percentile. The median is solid and each pair of outer percentiles
+  dashed (inner pairs dash-dotted, then dotted), with one legend entry per group:
+  `obs median`, `obs 5–95%`, `sim median`, `sim 5–95%` (named after the requested
+  percentiles) instead of one entry per percentile (`sim 5.0%`, `sim 50.0%`, ...). The
+  observed percentile lines of the default kernel method now have legend entries too.
+- Figure layout and order (see Changes): one figure legend instead of per-panel
+  legends, linked shared axes, facet titles as figure labels instead of `ax.title`,
+  individuals in data order.
+
+### Changes
+
+- Plot layout defaults (#383), the same for every `plot_*` function: one figure-level
+  legend below the panels that wraps into several rows when it does not fit the figure
+  width (no per-panel `axislegend`; no legend for a single unlabelled series); shared
+  axes are linked with inner tick labels and
+  repeated axis labels hidden; panels wrap row-wise `ncols` wide; individuals and other
+  categories appear in the order they first occur in the data (before, string ids were
+  drawn `s1, s10, s11, ..., s2`), an explicit `individuals_idx` keeps the given order;
+  `kwargs_subplot` (Axis) and `kwargs_layout` (Figure) attributes win over the
+  defaults. Facet titles are figure labels, not `ax.title`. `calculate_plot_size` no
+  longer shrinks panels below half of the base panel size when many panels are drawn
+  (50 individuals at `ncols = 1` got 48 px per panel). `combine_plots` gains
+  `link_x`/`link_y`. `plot_dv_pred` gains `return_panel`. Fonts, facet labels and the
+  legend of figures larger than about 800 units grow with the figure (by the square
+  root of the size ratio, at most 1.5x), so tall grids stay readable when viewed scaled
+  down; explicit sizes in `kwargs_subplot` win. A function with nothing to draw returns
+  the message on an empty figure instead of an empty 0..10 axis. PIT histograms
+  (`plot_random_effect_pit`, `plot_residual_pit`,
+  `plot_residual_distribution(...; residual = :pit)`) use uniform bins on [0, 1] and
+  x limits [0, 1]. The multistart waterfall draws near-equal objectives as offsets from
+  the best value in units of a power of ten (best value in the subtitle).
+
+- Plotting bugs fixed in the port (#383):
+  - residual and random-effect plots failed for any `kwargs_subplot` (it was splatted
+    positionally into the axis constructor);
+  - `plot_fits(...; plot_func = median)` on vector-valued observables raised a
+    `BoundsError` (a statistic undefined for a multivariate distribution is now a gap),
+    and shared y limits of `:vector` marginal figures used all components instead of
+    the plotted ones;
+  - `plot_fits` density heatmaps painted the whole grid where the density is zero (the
+    colormap now starts transparent);
+  - `plot_random_effects_pdf` accepted invalid `levels`/`individuals_idx`;
+    `plot_random_effect_pairplot` and the other random-effect plots did not validate
+    `ncols`; histogram bars lost per-panel bin widths; pairplot blocks of different
+    size were misaligned; Greek random-effect names were uppercased (`η` shown as `H`);
+    panels without data are dropped instead of left empty;
+  - HMM plots raised a raw `FieldError` for an unknown observable (now an
+    `ArgumentError`, also for non-HMM and univariate observables); emission
+    distribution panel titles overlapped (now state column and individual/time row
+    labels); `figure_layout = :vector` honours `kwargs_layout`;
+  - non-finite residuals (e.g. an `Inf` logscore) produced infinite axis limits (now
+    dropped with a warning); `ncols`, `bins` and `kde_bandwidth` are validated up front;
+  - `plot_uq_distributions` on profile-likelihood UQ errored (now draws the interval
+    spans and estimates; histogram mode gives a clear error); `plot_vpc` validates
+    `observables` and `ncols` up front; `plot_observation_distributions` keeps separate
+    y labels for PMF and PDF panels;
+  - `plot_em_trajectories` failed on fits reloaded with `load_fit` and labelled the
+    iteration axis "(xk)" (now uses the true iteration); user `kwargs_subplot` limits
+    were overridden in `plot_dv_pred`/`plot_dv_ipred`/`plot_wres_pred`, which now also
+    support logarithmic axes; the multistart waterfall title was clipped and its tick
+    labels collapsed when objectives agree to many digits; the FE-variability
+    `:quantiles` mode had no legend;
+  - user `limits` in `kwargs_subplot` were overwritten by the computed facet limits;
+    shared limits on logarithmic axes could reach <= 0 (now padded multiplicatively
+    on the positive values) in `plot_fits`, `plot_data`, `plot_fits_comparison` and
+    `plot_residuals`;
+  - PIT histograms were binned over the data range (very thin bars, and the `1 / bins`
+    reference line of `plot_residual_distribution(...; residual = :pit)` was wrong);
+  - `plot_observation_distributions` defaulted to the first id in sorted order instead
+    of the first individual in the data; `plot_fits_comparison` with a model named
+    `"data"` merged it with the observed data (now an error); `plot_vpc` drew the
+    median line dotted for percentile lists whose middle value is not 50.
+
+- `load_fit` rebuilds the DynamicPPL model of a VI fit from its `DataModel` when the
+  Turing extension is loaded, so `sample_posterior` on a reloaded VI fit returns
+  natural-scale draws (before: linked-scale draws, e.g. `log σ`). Without Turing, or
+  when the rebuild fails, a warning says the draws stay on the linked scale.
+
+- SAEM and MCEM results record `diagnostics_every` (the stride of
+  `diagnostics.θ_hist`) in their notes, so EM trajectories of reloaded fits have exact
+  iteration numbers (inferred for files saved before this change).
+
+- `predict` returns the observed value of each row in a new column `y` (the `y` column
+  of `get_residuals`), between `observable` and `prediction`. Rows without an
+  observation, for example in new data, hold `missing`. This applies to every
+  `re_mode` and to MCMC/VI fits (#383).
+
 ## v0.3.0
 
 ### Breaking

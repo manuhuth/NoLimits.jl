@@ -4,16 +4,15 @@ Effective model assessment depends on graphical diagnostics that expose patterns
 
 This page contains executable examples that render directly during the documentation build.
 
-!!! note "A Makie backend is required"
-    Every `plot_*` function lives in a package extension that loads when Makie is available.
-    Install a backend once with `using Pkg; Pkg.add("CairoMakie")`, then write
-    `using CairoMakie` alongside `using NoLimits`. Without it the plotting functions are not
-    defined and calling one reports that a Makie backend has to be loaded. See
+!!! note "A Makie backend and AlgebraOfGraphics are required"
+    Every `plot_*` function lives in a package extension that loads when Makie and
+    AlgebraOfGraphics are available. Install them once with
+    `using Pkg; Pkg.add(["CairoMakie", "AlgebraOfGraphics"])`, then write
+    `using CairoMakie, AlgebraOfGraphics` alongside `using NoLimits`. Without them the plotting
+    functions are not defined and calling one reports which packages have to be loaded. See
     [Optional Dependencies](../installation.md#Optional-Dependencies).
 
-All plotting functions accept a file-path keyword for saving output directly:
-- `save_path="path/to/plot.png"` (existing)
-- `plot_path="path/to/plot.png"` (alias)
+All plotting functions save their figure directly with `save_path = "path/to/plot.png"`.
 
 ## Plotting APIs
 
@@ -28,13 +27,40 @@ The plotting functions fall into a handful of diagnostic groups:
 
 See the [Plotting and Diagnostics](../api/plotting.md) section of the API reference for the full list of functions and their arguments.
 
+## Figure layout
+
+All plotting functions draw with [AlgebraOfGraphics](https://aog.makie.org/) on top of
+Makie and share one layout policy:
+
+- One panel per individual, observable, parameter or random-effect level. Panels wrap
+  row-wise, `ncols` panels wide. Individuals and other categories appear in the order
+  they first occur in the data (an explicit `individuals_idx` keeps the given order).
+- Axes that are shared (`shared_x_axis`/`shared_y_axis = true`, the default) are linked:
+  tick labels and axis labels are shown only on the outer panels. Panels that measure
+  different quantities (for example a probability mass function next to a density) keep
+  their own y axis.
+- A figure has a single legend below the panels. It wraps into several rows when its
+  entries do not fit the figure width.
+- Figures with many panels are large; their fonts and legend grow with the figure size
+  (at most 1.5x) so they stay readable when the figure is viewed scaled down. Sizes
+  set in `kwargs_subplot` are kept.
+- Histograms use equal-width bins. A histogram drawn on the same axis as a density curve
+  (for example quantile residuals against N(0,1)) is scaled as a density (area 1, y axis
+  "Density"); a histogram on its own shows probabilities (bar heights sum to 1).
+- `kwargs_subplot` is passed to every panel as Makie `Axis` attributes and
+  `kwargs_layout` as `Figure` attributes (for example `size`) in every plotting function;
+  both take precedence over the defaults.
+- Functions with `return_panel = true` return a panel that `combine_plots`
+  places into a grid together with other panels, with one merged legend;
+  `combine_plots(panels; link_x = true, link_y = true)` links their axes.
+
 ## Executable setup
 
 The following model and data are used throughout this page. The model specifies a linear trend with normally distributed random intercepts, fitted via the Laplace approximation. The data comprise four individuals, each observed at three time points.
 
 ```@example plotting_overview
 using NoLimits
-using CairoMakie
+using CairoMakie, AlgebraOfGraphics
 CairoMakie.activate!(type = "png")
 using DataFrames
 using Distributions
@@ -118,6 +144,8 @@ p_data
 p_fits = plot_fits(res; cache=cache)
 p_fits
 ```
+
+`predict` returns the observed value of each row in the column `y` next to the `prediction` column (`missing` where the data have no observation), so data and predictions can be plotted from the same table without a join.
 
 ## Multistart objective-value plot
 
@@ -234,11 +262,11 @@ p_vpc = plot_vpc(res; n_simulations=20, percentiles=[5, 50, 95])
 p_vpc
 ```
 
-`n_simulations` sets the number of simulated datasets used to build the predictive envelopes, and `percentiles` selects the envelope quantiles (here the 5th, 50th, and 95th); see the API reference for the remaining keywords.
+`n_simulations` sets the number of simulated datasets used to build the predictive envelopes, and `percentiles` selects the envelope quantiles (here the 5th, 50th, and 95th); see the API reference for the remaining keywords. Colour distinguishes observed from simulated summaries, and line style distinguishes the percentiles: the median is solid and the outer percentiles are dashed, with one legend entry per pair (`sim median`, `sim 5–95%`, and likewise for the observed lines).
 
 ## Random-effects distribution diagnostic
 
-A well-specified random-effects model should produce empirical Bayes estimates consistent with the assumed distributional form. `plot_random_effects_pdf` overlays estimated random-effect values on the model-implied density, providing a direct visual check for distributional adequacy. Departures such as multimodality, skewness, or outlying values may indicate that a more flexible random-effects distribution is needed.
+A well-specified random-effects model should produce empirical Bayes estimates consistent with the assumed distributional form. `plot_random_effects_pdf` draws the fitted population density of each random effect (one panel per random effect or component); `plot_random_effect_distributions` marks each level's empirical Bayes estimate on its fitted distribution, and `plot_random_effect_standardized`, `plot_random_effect_pit` and `plot_random_effect_pairplot` show the estimates as standardized histograms, probability integral transforms and a scatter matrix. Departures such as multimodality, skewness, or outlying values may indicate that a more flexible random-effects distribution is needed.
 
 ```@example plotting_overview
 p_re_pdf = plot_random_effects_pdf(res)

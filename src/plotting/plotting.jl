@@ -123,6 +123,27 @@ function _check_unit_interval(v, name::AbstractString)
     return nothing
 end
 
+# Smallest default share of `base_subplot_width/height` a panel gets: the MAX_FIGURE_*
+# caps must not squeeze many rows/columns into unreadable strips (e.g. 50 individuals at
+# `ncols = 1` gave 2400 / 50 = 48 px per panel including its title).
+const MIN_PANEL_SCALE = 0.5
+
+# Ticks of a [0, 1] axis (PIT values, uniform quantiles). Short end labels ("0", "1")
+# keep the labels of neighbouring facets, whose x ranges end and start at the shared
+# column edge, from running into each other ("1.00.0").
+const UNIT_INTERVAL_TICKS = ([0.0, 0.5, 1.0], ["0", "0.5", "1"])
+
+"""
+    calculate_plot_size(nplots, ncols, style = PlotStyle()) -> (width, height)
+
+Default figure size for `nplots` panels on an `ncols`-wide grid: each panel gets
+`base_subplot_width x base_subplot_height` of `style`, scaled down for many panels, and
+the figure is clamped to `MIN/MAX_FIGURE_WIDTH/HEIGHT`. The maximum yields where it would
+make a panel smaller than `MIN_PANEL_SCALE` of the base size, so a long panel column grows
+instead of shrinking each panel. Explicit sizes (`kwargs_layout = (; size = ...)`) are
+used as given. Fonts of figures larger than `FONT_REFERENCE_EXTENT` units are enlarged
+by `_font_scale` so they stay readable when the figure is viewed scaled down.
+"""
 function calculate_plot_size(nplots::Int, ncols::Int, style::PlotStyle = PlotStyle())
     _check_positive_int(nplots, "nplots")
     _check_positive_int(ncols, "ncols")
@@ -134,8 +155,27 @@ function calculate_plot_size(nplots::Int, ncols::Int, style::PlotStyle = PlotSty
     height = round(Int, nrows * style.base_subplot_height * scale)
     width = clamp(width, MIN_FIGURE_WIDTH, MAX_FIGURE_WIDTH)
     height = clamp(height, MIN_FIGURE_HEIGHT, MAX_FIGURE_HEIGHT)
+    width = max(width, round(Int, ncols * style.base_subplot_width * MIN_PANEL_SCALE))
+    height = max(height, round(Int, nrows * style.base_subplot_height * MIN_PANEL_SCALE))
     return (width, height)
 end
+
+# Font scaling of large figures. A figure is usually viewed scaled to fit a screen or a
+# page column, so the style's font sizes (meant for a figure of about
+# FONT_REFERENCE_EXTENT units) shrink with its largest dimension. `_font_scale` enlarges
+# them for larger figures, by the square root of the size ratio and at most
+# MAX_FONT_SCALE, so text and legends stay readable without crowding small panels.
+const FONT_REFERENCE_EXTENT = 800
+const MAX_FONT_SCALE = 1.5
+
+"""
+    _font_scale(width, height) -> Float64
+
+Factor applied to the style's font sizes (and legend patches) of a `width x height`
+figure: `clamp(sqrt(max(width, height) / FONT_REFERENCE_EXTENT), 1, MAX_FONT_SCALE)`.
+"""
+_font_scale(width::Real, height::Real) =
+    clamp(sqrt(max(Float64(width), Float64(height)) / FONT_REFERENCE_EXTENT), 1.0, MAX_FONT_SCALE)
 
 function default_axis_kwargs(style::PlotStyle = PlotStyle())
     return (
@@ -153,18 +193,22 @@ end
 
 # Uniform-bin histogram (centers/heights/width) so the drawing layer can size axes
 # without reading rendered series back; normalization ∈ (:probability, :pdf, :none).
-function _histogram_xy(vals::AbstractVector{<:Real}; bins::Int, normalization::Symbol)
+# The bins span the data range, or the fixed interval `range = (lo, hi)` (e.g. (0, 1) for
+# PIT values); values outside a fixed range fall into the first/last bin.
+function _histogram_xy(
+        vals::AbstractVector{<:Real}; bins::Int, normalization::Symbol, range = nothing
+    )
     _check_positive_int(bins, "bins")
     vals = filter(isfinite, vals)
     n = length(vals)
     n == 0 &&
         error("Cannot build a histogram: no finite values remain after dropping missing/NaN/Inf entries.")
-    lo, hi = extrema(vals)
+    lo, hi = range === nothing ? extrema(vals) : (Float64(range[1]), Float64(range[2]))
     if lo == hi
         lo -= 0.5
         hi += 0.5
     end
-    edges = range(lo, hi; length = bins + 1)
+    edges = Base.range(lo, hi; length = bins + 1)
     binwidth = step(edges)
     counts = zeros(Int, bins)
     for v in vals
@@ -211,16 +255,6 @@ function _ensure_save_path(save_path::Union{Nothing, String})
     # An empty dirname means a bare filename in the current directory.
     isempty(dir) || isdir(dir) || error("save_path directory does not exist: $(dir)")
     return save_path
-end
-
-function _resolve_plot_path(
-        save_path::Union{Nothing, String},
-        plot_path::Union{Nothing, String}
-    )
-    if save_path !== nothing && plot_path !== nothing && save_path != plot_path
-        error("Specify only one of save_path or plot_path when saving plots.")
-    end
-    return plot_path === nothing ? save_path : plot_path
 end
 
 function _normalize_top_level_parameter_selection(sel, argname::String)
