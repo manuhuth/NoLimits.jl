@@ -179,6 +179,15 @@ _vpc_legends(fig) = [l for l in fig.content if l isa CairoMakie.Legend]
 _vpc_legend_labels(leg) = [
     string(CairoMakie.Makie.to_value(e.label)) for g in leg.entrygroups[] for e in last(g)
 ]
+# line style of the first line element of each legend entry (`nothing` for markers only)
+function _vpc_legend_linestyles(leg)
+    out = Any[]
+    for g in leg.entrygroups[], e in last(g)
+        ls = [el for el in e.elements if el isa CairoMakie.LineElement]
+        push!(out, isempty(ls) ? nothing : CairoMakie.Makie.to_value(first(ls).attributes[:linestyle]))
+    end
+    return filter(!isnothing, out)
+end
 
 @testset "plot_vpc AoG layout and legend" begin
     res = fx_laplace()
@@ -188,20 +197,46 @@ _vpc_legend_labels(leg) = [
     legs = _vpc_legends(fig)
     @test length(legs) == 1
     labs = _vpc_legend_labels(only(legs))
-    @test labs == [
-        "obs", "obs 5.0%", "obs 50.0%", "obs 95.0%", "sim 5.0%", "sim 50.0%", "sim 95.0%",
-    ]
+    # one colour per source; median solid, outer percentiles merged into one dashed entry
+    @test labs == ["obs", "obs median", "obs 5–95%", "sim median", "sim 5–95%"]
+    @test _vpc_legend_linestyles(only(legs)) == [:solid, :dash, :solid, :dash]
     ax = only(_vpc_axes(fig))
     @test CairoMakie.Makie.to_value(ax.xlabel) == "Time"
-    # median observed percentile solid, outer ones dotted: two distinct line styles
-    styles = unique(
-        CairoMakie.Makie.to_value(pl.linestyle) for pl in ax.scene.plots if pl isa CairoMakie.Lines
-    )
-    @test length(styles) == 2
+    lines = [pl for pl in ax.scene.plots if pl isa CairoMakie.Lines]
+    # two line styles (solid median, dashed outer pair); Makie stores the converted pattern
+    @test length(unique(CairoMakie.Makie.to_value(pl.linestyle) for pl in lines)) == 2
+    # 2 sources x 2 styles, each with its own (colour, line style)
+    @test length(
+        unique(
+            (CairoMakie.Makie.to_value(pl.color), CairoMakie.Makie.to_value(pl.linestyle))
+                for pl in lines
+        )
+    ) == 4
 
-    # the kernel method draws unlabeled observed percentiles (no legend entries)
+    # the kernel method labels the observed percentiles in the same way
     kern = plot_vpc(res; n_simulations = 5, n_bins = 3)
-    @test !any(startswith("obs "), _vpc_legend_labels(only(_vpc_legends(kern))))
+    @test _vpc_legend_labels(only(_vpc_legends(kern))) ==
+        ["obs", "obs median", "obs 5–95%", "sim median", "sim 5–95%"]
+    # smoothed simulated percentiles (bandwidth) as well
+    smooth = plot_vpc(res; n_simulations = 5, n_bins = 3, bandwidth = 0.5)
+    @test _vpc_legend_labels(only(_vpc_legends(smooth))) ==
+        ["obs", "obs median", "obs 5–95%", "sim median", "sim 5–95%"]
+    # the entries name the requested outer percentiles; no median entry without 50
+    p1090 = plot_vpc(
+        res; n_simulations = 5, n_bins = 3, percentiles = [10, 90],
+        obs_percentiles_method = :quantile
+    )
+    @test _vpc_legend_labels(only(_vpc_legends(p1090))) == ["obs", "obs 10–90%", "sim 10–90%"]
+    # more than three percentiles: inner pairs get the next line style
+    p5 = plot_vpc(
+        res; n_simulations = 5, n_bins = 3, percentiles = [5, 25, 50, 75, 95],
+        show_obs_points = false
+    )
+    leg5 = only(_vpc_legends(p5))
+    @test _vpc_legend_labels(leg5) == [
+        "obs median", "obs 5–95%", "obs 25–75%", "sim median", "sim 5–95%", "sim 25–75%",
+    ]
+    @test _vpc_legend_linestyles(leg5) == [:solid, :dash, :dashdot, :solid, :dash, :dashdot]
 
     panel = plot_vpc(res; n_simulations = 5, n_bins = 3, return_panel = true)
     ext = Base.get_extension(NoLimits, :NoLimitsMakieExt)
@@ -233,5 +268,8 @@ end
     @test length(pmf) == 1
     probs = CairoMakie.Makie.to_value(only(pmf).color)
     @test all(p -> 0 <= p <= 1, probs)
-    @test "sim PMF" in _vpc_legend_labels(only(_vpc_legends(fig)))
+    labs = _vpc_legend_labels(only(_vpc_legends(fig)))
+    @test "sim PMF" in labs
+    # discrete outcomes draw no percentile lines, so no median / interval entries
+    @test !any(l -> occursin("median", l) || occursin("–", l), labs)
 end

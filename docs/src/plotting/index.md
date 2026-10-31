@@ -262,7 +262,7 @@ p_vpc = plot_vpc(res; n_simulations=20, percentiles=[5, 50, 95])
 p_vpc
 ```
 
-`n_simulations` sets the number of simulated datasets used to build the predictive envelopes, and `percentiles` selects the envelope quantiles (here the 5th, 50th, and 95th); see the API reference for the remaining keywords.
+`n_simulations` sets the number of simulated datasets used to build the predictive envelopes, and `percentiles` selects the envelope quantiles (here the 5th, 50th, and 95th); see the API reference for the remaining keywords. Colour distinguishes observed from simulated summaries, and line style distinguishes the percentiles: the median is solid and the outer percentiles are dashed, with one legend entry per pair (`sim median`, `sim 5–95%`, and likewise for the observed lines).
 
 ## Random-effects distribution diagnostic
 

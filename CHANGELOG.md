@@ -34,6 +34,12 @@ This release changes the plotting API without deprecation paths:
   `plot_random_effect_distributions`, which stand for the PDF on a "Probability
   Density" axis. Histograms without an overlaid density keep probability
   normalisation (bar heights sum to 1).
+- `plot_vpc` legend and line styles: colour marks the source (observed / simulated),
+  line style the percentile. The median is solid and each pair of outer percentiles
+  dashed (inner pairs dash-dotted, then dotted), with one legend entry per group:
+  `obs median`, `obs 5–95%`, `sim median`, `sim 5–95%` (named after the requested
+  percentiles) instead of one entry per percentile (`sim 5.0%`, `sim 50.0%`, ...). The
+  observed percentile lines of the default kernel method now have legend entries too.
 - Figure layout and order (see Changes): one figure legend instead of per-panel
   legends, linked shared axes, facet titles as figure labels instead of `ax.title`,
   individuals in data order.

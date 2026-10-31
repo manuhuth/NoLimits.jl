@@ -1,7 +1,50 @@
-# Observed percentile lines: the median (50th percentile) solid whenever it is requested,
-# every other percentile dotted (also for even-length lists, whose middle value is no
-# requested percentile).
-_vpc_line_style(pctl::Real) = pctl == 50 ? :solid : :dot
+# Percentile lines are grouped into legend entries: the median (50th percentile) is drawn
+# solid ("median"); the remaining percentiles are paired from the outside in (lowest with
+# highest, second lowest with second highest, ...) and each pair is one entry ("5–95%")
+# whose two lines share a line style: dashed for the outermost pair, then dash-dotted,
+# dotted. An unpaired percentile (odd number of non-median percentiles) gets its own entry
+# ("40%"). The same grouping is used for observed and simulated lines, which differ in
+# colour only.
+const _VPC_OUTER_LINESTYLES = (:dash, :dashdot, :dot)
+const _VPC_LINESTYLES = (:solid, _VPC_OUTER_LINESTYLES...)
+
+_vpc_pct_str(p::Real) = isinteger(p) ? string(Int(p)) : string(p)
+
+function _vpc_percentile_groups(percentiles::AbstractVector{<:Real})
+    groups = NamedTuple{(:label, :linestyle, :pctls), Tuple{String, Symbol, Vector{Float64}}}[]
+    50 in percentiles && push!(groups, (label = "median", linestyle = :solid, pctls = [50.0]))
+    rest = sort!(Float64[p for p in percentiles if p != 50])
+    lo, hi, k = 1, length(rest), 0
+    while lo <= hi
+        ls = _VPC_OUTER_LINESTYLES[mod1(k += 1, length(_VPC_OUTER_LINESTYLES))]
+        if lo == hi
+            push!(groups, (label = "$(_vpc_pct_str(rest[lo]))%", linestyle = ls, pctls = [rest[lo]]))
+        else
+            label = "$(_vpc_pct_str(rest[lo]))–$(_vpc_pct_str(rest[hi]))%"
+            push!(groups, (label = label, linestyle = ls, pctls = [rest[lo], rest[hi]]))
+        end
+        lo += 1
+        hi -= 1
+    end
+    return groups
+end
+
+# Append the percentile lines of one source ("obs" / "sim") to the per-line-style tables,
+# one legend entry per group; the two lines of a pair are one series separated by a gap.
+# `curve(p)` returns the (x, y) values of percentile `p`.
+function _push_vpc_percentiles!(lines_df, palette, source, groups, color, curve)
+    for g in groups
+        lbl = "$(source) $(g.label)"
+        df = lines_df[g.linestyle]
+        for (k, p) in enumerate(g.pctls)
+            xs, ys = curve(p)
+            k > 1 && !isempty(xs) && _push_xy!(df, "", xs[1:1], [NaN], lbl)
+            _push_xy!(df, "", xs, ys, lbl)
+        end
+        push!(palette, lbl => color)
+    end
+    return lines_df
+end
 
 """
     plot_vpc(res::FitResult; dm, n_simulations, n_sim, percentiles, show_obs_points,
@@ -15,10 +58,20 @@ predictive percentile bands stratified by x-axis bins. Vector-valued (multivaria
 outcomes get one panel per component; observed and simulated values are binned and
 summarized component-wise. Panels have their own axes; one legend is drawn below them.
 
+Colour marks the source (observed or simulated), line style the percentile: the median
+(50th percentile) is solid, the outer pair of percentiles dashed. The legend has one entry
+per source and group, e.g. `obs median`, `obs 5–95%`, `sim median`, `sim 5–95%`, named
+after the requested percentiles (`percentiles = [10, 50, 90]` gives `sim 10–90%`). With
+more percentiles, pairs are formed from the outside in and inner pairs are dash-dotted,
+then dotted (`[5, 25, 50, 75, 95]` gives `5–95%` and `25–75%`); an unpaired percentile
+has its own entry, and without 50 there is no median line. Discrete outcomes show the
+simulated probability `P(Y=1)` (Bernoulli) or PMF instead of percentile lines.
+
 # Keyword Arguments
 - `dm::Union{Nothing, DataModel} = nothing`: data model (inferred from `res` by default).
 - `n_simulations::Int = 100`: number of simulated datasets for the VPC envelopes.
-- `percentiles::Vector = [5, 50, 95]`: percentiles to display (in [0, 100]).
+- `percentiles::Vector = [5, 50, 95]`: percentiles to display (in [0, 100], at least two);
+  see above for the line styles and legend entries.
 - `show_obs_points::Bool = true`: overlay observed data points.
 - `show_obs_percentiles::Bool = true`: overlay observed percentile lines.
 - `n_bins::Union{Nothing, Int} = nothing`: number of x-axis bins; `nothing` for auto.
@@ -189,9 +242,9 @@ function plot_vpc(
             end
         end
 
-        # percentile lines by line style: labeled (legend) and unlabeled kernel obs lines
-        lines_df = Dict(:solid => _tidy(), :dot => _tidy())
-        kern_df = Dict(:solid => _tidy(), :dot => _tidy())
+        # percentile lines by line style (one legend entry per percentile group)
+        groups = _vpc_percentile_groups(percentiles)
+        lines_df = Dict(ls => _tidy() for ls in _VPC_LINESTYLES)
         obs_df = _tidy()
         bern_df = _tidy()
         pmf = (x = Float64[], y = Float64[], p = Float64[])
@@ -209,9 +262,9 @@ function plot_vpc(
                     bandwidth
                 xgrid = sort(unique(all_x))
                 sm = _kernel_quantiles(all_x, all_y, xgrid, bw, percentiles)
-                for pctl in percentiles
-                    _push_xy!(kern_df[_vpc_line_style(pctl)], "", xgrid, sm[pctl], "obs $(pctl)%")
-                end
+                _push_vpc_percentiles!(
+                    lines_df, palette, "obs", groups, COLOR_ACCENT, p -> (xgrid, sm[p])
+                )
             elseif obs_percentiles_method == :quantile
                 bins = _assign_bins(all_x, edges)
                 x_centers = [mean(edges[b:(b + 1)]) for b in 1:n_bins_eff]
@@ -247,12 +300,10 @@ function plot_vpc(
                 else
                     error("obs_percentiles_mode must be :pooled or :per_individual.")
                 end
-                for pctl in percentiles
-                    x_plot, y_plot = _extend_bin_series(x_centers, obs_q[pctl], edges)
-                    lbl = "obs $(pctl)%"
-                    _push_xy!(lines_df[_vpc_line_style(pctl)], "", x_plot, y_plot, lbl)
-                    push!(palette, lbl => COLOR_ACCENT)
-                end
+                _push_vpc_percentiles!(
+                    lines_df, palette, "obs", groups, COLOR_ACCENT,
+                    p -> _extend_bin_series(x_centers, obs_q[p], edges)
+                )
             else
                 error("obs_percentiles_method must be :quantile or :kernel.")
             end
@@ -287,11 +338,10 @@ function plot_vpc(
                     sm_sim = _kernel_quantiles(
                         sim_x_all, sim_y_all, xgrid, bandwidth, percentiles
                     )
-                    for pctl in percentiles
-                        lbl = "sim $(pctl)%"
-                        _push_xy!(lines_df[:solid], "", xgrid, sm_sim[pctl], lbl)
-                        push!(palette, lbl => COLOR_SECONDARY)
-                    end
+                    _push_vpc_percentiles!(
+                        lines_df, palette, "sim", groups, COLOR_SECONDARY,
+                        p -> (xgrid, sm_sim[p])
+                    )
                 else
                     sim_q = Dict{Float64, Vector{Float64}}(
                         (pc => Vector{Float64}(undef, n_bins_eff)) for pc in percentiles
@@ -303,19 +353,17 @@ function plot_vpc(
                                 quantile(vals, pctl / 100)
                         end
                     end
-                    for pctl in percentiles
-                        x_plot, y_plot = _extend_bin_series(x_centers, sim_q[pctl], edges)
-                        lbl = "sim $(pctl)%"
-                        _push_xy!(lines_df[:solid], "", x_plot, y_plot, lbl)
-                        push!(palette, lbl => COLOR_SECONDARY)
-                    end
+                    _push_vpc_percentiles!(
+                        lines_df, palette, "sim", groups, COLOR_SECONDARY,
+                        p -> _extend_bin_series(x_centers, sim_q[p], edges)
+                    )
                 end
             end
         end
 
         plots[oi] = _vpc_panel(
             style, kwargs_subplot, x_label, _axis_label(obs_label);
-            obs_df, kern_df, lines_df, bern_df, pmf, palette,
+            obs_df, lines_df, bern_df, pmf, palette,
             xlim = _pad_limits(minimum(x_for_bins), maximum(x_for_bins))
         )
     end
@@ -329,25 +377,17 @@ function plot_vpc(
     return _save_plot!(fig, save_path)
 end
 
-# One VPC panel: observed points, observed percentile lines (labeled for the quantile
-# method, unlabeled for the kernel method as before), simulated percentile lines, the
-# simulated Bernoulli probability, or the simulated PMF (markers coloured by probability).
+# One VPC panel: observed points, observed and simulated percentile lines (colour by
+# source, line style by percentile group), the simulated Bernoulli probability, or the
+# simulated PMF (markers coloured by probability).
 function _vpc_panel(
         style::PlotStyle, kwargs_subplot, xlabel, ylabel;
-        obs_df, kern_df, lines_df, bern_df, pmf, palette, xlim
+        obs_df, lines_df, bern_df, pmf, palette, xlim
     )
     xy = AoG.mapping(:x, :y; color = :series)
-    line_layers = Any[]
-    for ls in (:solid, :dot)
-        push!(line_layers, _layer(lines_df[ls], xy, _line_visual(style; linestyle = ls)))
-        push!(
-            line_layers,
-            _layer(
-                kern_df[ls], AoG.mapping(:x, :y; group = :series),
-                _line_visual(style; linestyle = ls, color = COLOR_ACCENT)
-            )
-        )
-    end
+    line_layers = Any[
+        _layer(lines_df[ls], xy, _line_visual(style; linestyle = ls)) for ls in _VPC_LINESTYLES
+    ]
     pmf_marker = (;
         marker = :xcross, markersize = style.marker_size_pmf,
         strokewidth = style.marker_stroke_width_pmf, strokecolor = :black,

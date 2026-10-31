@@ -847,10 +847,19 @@ end
     @test ylab isa CairoMakie.Makie.RichText
     @test note == "best = 30.0"
     # small helpers from the review of #383
-    # VPC: the median line is solid whenever 50 is requested (also in even-length lists),
-    # every other percentile dotted
-    @test [_MakieExt._vpc_line_style(p) for p in (5, 50, 75, 95)] == [:dot, :solid, :dot, :dot]
-    @test all(==(:dot), _MakieExt._vpc_line_style.((5, 25, 75, 95)))
+    # VPC percentile groups: median solid, outer percentiles paired from the outside in
+    # (dashed, then dash-dotted), an unpaired percentile gets its own entry
+    _grp(ps) = [(g.label, g.linestyle, g.pctls) for g in _MakieExt._vpc_percentile_groups(ps)]
+    @test _grp([5.0, 50.0, 95.0]) == [("median", :solid, [50.0]), ("5–95%", :dash, [5.0, 95.0])]
+    @test _grp([10.0, 90.0]) == [("10–90%", :dash, [10.0, 90.0])]
+    @test _grp([5.0, 25.0, 50.0, 75.0, 95.0]) == [
+        ("median", :solid, [50.0]), ("5–95%", :dash, [5.0, 95.0]),
+        ("25–75%", :dashdot, [25.0, 75.0]),
+    ]
+    @test _grp([5.0, 50.0, 75.0, 95.0]) == [
+        ("median", :solid, [50.0]), ("5–95%", :dash, [5.0, 95.0]), ("75%", :dashdot, [75.0]),
+    ]
+    @test _grp([2.5, 97.5]) == [("2.5–97.5%", :dash, [2.5, 97.5])]
     # RE fixed-edge histogram: degenerate samples (min == max) and non-finite values
     h = _MakieExt._re_fixed_hist([[2.0, 2.0, 2.0], [2.0, NaN]], 2.0, 2.0, 4; density = true)
     @test length(h) == 2 && all(c -> all(isfinite, c), h)
