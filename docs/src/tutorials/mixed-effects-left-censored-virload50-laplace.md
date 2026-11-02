@@ -19,7 +19,7 @@ The `virload50` dataset has four columns: `ID`, `Time`, log10 viral load `Log_VL
 
 ```julia
 using NoLimits
-using CairoMakie
+using CairoMakie, AlgebraOfGraphics
 using CSV
 using DataFrames
 using Distributions

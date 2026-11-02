@@ -254,7 +254,8 @@ struct VIResult{Q, T, S, N, O, C, M} <: MethodResult
     observed::O
     coord_names::C
     model::M       # DynamicPPL model used for VI; needed to unlink posterior draws to
-    # natural space. `nothing` after deserialization (draws stay linked).
+    # natural space. `load_fit` rebuilds it from the DataModel (`nothing` only when
+    # that is impossible; draws then stay linked).
 end
 
 get_variational_posterior(res::VIResult) = res.posterior
@@ -274,8 +275,9 @@ function _vi_unlink_draws end
     sample_posterior(res::VIResult; n_draws, rng, return_names)
 
 Draw `n_draws` parameter vectors from a variational posterior, mapped back to the
-natural (constrained) scale. A deserialized result carries no model, so its draws are
-returned on the linked scale unchanged - that path needs no Turing.
+natural (constrained) scale. `load_fit` rebuilds the model of a reloaded fit from its
+DataModel; only when that is impossible (no DataModel, Turing not loaded) does the result
+carry no model, and its draws are then returned on the linked scale unchanged.
 """
 function sample_posterior(
         res::VIResult; n_draws::Int = 1000,

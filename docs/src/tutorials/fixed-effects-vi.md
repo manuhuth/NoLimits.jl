@@ -13,7 +13,7 @@ This tutorial shows a complete fixed-effects Bayesian workflow with `VI` in NoLi
 
 ```julia
 using NoLimits
-using CairoMakie
+using CairoMakie, AlgebraOfGraphics
 using DataFrames
 using Distributions
 using Random

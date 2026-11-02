@@ -15,7 +15,7 @@ The classic Orange tree growth study (Draper and Smith; R's `datasets::Orange`) 
 
 ```julia
 using NoLimits
-using CairoMakie
+using CairoMakie, AlgebraOfGraphics
 using CSV
 using DataFrames
 using Distributions

@@ -1,6 +1,7 @@
 using Test
 using NoLimits
 using CairoMakie
+import AlgebraOfGraphics  # the plotting extension needs Makie AND AlgebraOfGraphics
 using DataFrames
 using Distributions
 using Turing
@@ -122,16 +123,16 @@ const _PRE_NORM_RES_MCMC = fit_model(
         p_pdf_path = joinpath(tmp, "plot_random_effects_pdf.png")
         p_scatter_path = joinpath(tmp, "plot_random_effects_scatter.png")
         p_pair_path = joinpath(tmp, "plot_random_effect_pairplot.png")
-        plot_random_effect_distributions(res; plot_path = p_dist_path)
+        plot_random_effect_distributions(res; save_path = p_dist_path)
         plot_random_effect_pit(
             res; show_hist = true, show_kde = false,
-            show_qq = false, plot_path = p_pit_path
+            show_qq = false, save_path = p_pit_path
         )
-        plot_random_effect_standardized(res; show_hist = true, plot_path = p_std_path)
-        plot_random_effect_standardized_scatter(res; plot_path = p_std_sc_path)
-        plot_random_effects_pdf(res; plot_path = p_pdf_path)
-        plot_random_effects_scatter(res; plot_path = p_scatter_path)
-        plot_random_effect_pairplot(res; plot_path = p_pair_path)
+        plot_random_effect_standardized(res; show_hist = true, save_path = p_std_path)
+        plot_random_effect_standardized_scatter(res; save_path = p_std_sc_path)
+        plot_random_effects_pdf(res; save_path = p_pdf_path)
+        plot_random_effects_scatter(res; save_path = p_scatter_path)
+        plot_random_effect_pairplot(res; save_path = p_pair_path)
         @test isfile(p_dist_path)
         @test isfile(p_pit_path)
         @test isfile(p_std_path)
@@ -297,6 +298,10 @@ end
 
     p_std_sc = plot_random_effect_standardized_scatter(res)
     @test p_std_sc !== nothing
+    # one panel per RE component, one z-score per individual
+    sc_axes = [a for a in p_std_sc.content if a isa CairoMakie.Axis]
+    @test length(sc_axes) == 2
+    @test [sum(length(pl[1][]) for pl in ax.scene.plots if pl isa CairoMakie.Scatter) for ax in sc_axes] == [6, 6]
 
     p_pit_hist = plot_random_effect_pit(
         res; show_hist = true, show_kde = false, show_qq = false

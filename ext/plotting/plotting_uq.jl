@@ -1,24 +1,35 @@
-function _plot_density_interval_fill!(
-        p,
-        x::AbstractVector{<:Real},
-        y::AbstractVector{<:Real},
-        lo::Real,
-        hi::Real,
-        level::Real,
-        interval_alpha::Float64;
-        show_legend::Bool = false
-    )
+# plot_uq_distributions on the AlgebraOfGraphics layer: one AoGPanel per parameter (own x
+# limits, own density scale), laid out by `combine_plots` with a single figure legend.
+#
+# Series of one panel (label => color); the labels are also the legend entries.
+const _UQ_ESTIMATE = "Estimate"
+
+_uq_interval_label(level::Real) = "$(round(Int, 100 * level))% Interval"
+
+# Long table of one panel's series (x, y, lo, hi share the table so every layer uses the
+# same `color = :series` scale).
+_uq_df() = DataFrame(x = Float64[], y = Float64[], lo = Float64[], hi = Float64[], series = String[])
+
+function _uq_push!(df::DataFrame, series::AbstractString; x = NaN, y = NaN, lo = NaN, hi = NaN)
+    push!(df, (Float64(x), Float64(y), Float64(lo), Float64(hi), String(series)))
+    return df
+end
+
+function _uq_push_xy!(df::DataFrame, series::AbstractString, xs, ys)
+    for (x, y) in zip(xs, ys)
+        _uq_push!(df, series; x = x, y = y)
+    end
+    return df
+end
+
+# Area under a density curve between the interval endpoints (Band from 0 to the curve).
+function _uq_interval_band!(df::DataFrame, label, x, y, lo::Real, hi::Real)
     sliced = _density_interval_slice(x, y, lo, hi)
     sliced === nothing && return false
     xs, ys = sliced
-    lbl = _label(p, show_legend ? "$(round(Int, 100 * level))% Interval" : "")
-    _record!(
-        p,
-        ax -> band!(
-            ax, xs, zeros(length(xs)), ys;
-            color = (COLOR_CI, interval_alpha), label = lbl
-        )
-    )
+    for (xi, yi) in zip(xs, ys)
+        _uq_push!(df, label; x = xi, lo = 0.0, hi = yi)
+    end
     return true
 end
 
@@ -40,12 +51,16 @@ end
                           kwargs_layout=NamedTuple(),
                           save_path=nothing)
 
-Plot marginal parameter distributions from a `UQResult`.
+Plot marginal parameter distributions from a `UQResult`, one panel per parameter, each
+with its own x and y range.
 
 For `:chain` and `:mcmc_refit` backends, draws are shown as a KDE or histogram. For the
 `:wald` backend, analytic Gaussian approximations are plotted where the parameter is on
 a transformed scale; otherwise KDE is used. Point estimates and credible/confidence
-intervals are overlaid as vertical lines and shaded regions.
+intervals are overlaid as vertical lines and shaded regions. The `:profile` backend
+stores no distribution: its panels show the profile-likelihood interval as a shaded
+span and the estimate (the y axis carries no scale), and `plot_type = :histogram` is
+unavailable.
 
 # Arguments
 - `uq::UQResult` - Uncertainty quantification result from `compute_uq`.
@@ -57,8 +72,8 @@ intervals are overlaid as vertical lines and shaded regions.
 - `histogram_alpha::Float64` - Opacity of histogram bars (default: `0.45`).
 - `show_estimate::Bool` - Show point estimate as a vertical line (default: `true`).
 - `show_interval::Bool` - Shade the credible/confidence interval (default: `true`).
-- `show_legend::Bool` - Show plot legend (default: `false`).
-- `bins` - Histogram bin count or `:auto` (default).
+- `show_legend::Bool` - Show the figure legend below the panels (default: `false`).
+- `bins` - Histogram bin count or `:auto` (default, Sturges' rule).
 - `plot_type::Symbol` - `:density` (KDE, default) or `:histogram`.
 - `kde_bandwidth::Union{Nothing, Float64}` - KDE bandwidth; `nothing` uses automatic
   selection (default).
@@ -88,14 +103,23 @@ function plot_uq_distributions(
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     _check_unit_interval(interval_alpha, "interval_alpha")
     _check_unit_interval(histogram_alpha, "histogram_alpha")
+    _check_positive_int(ncols, "ncols")
     plot_type in (:density, :histogram) ||
         error("plot_type must be :density or :histogram.")
     backend = get_uq_backend(uq)
+    if backend == :profile
+        plot_type == :histogram && error(
+            "Profile UQ stores no parameter draws, so plot_type = :histogram is unavailable. " *
+                "Use plot_type = :density to plot the profile-likelihood intervals and estimates."
+        )
+        (show_interval || show_estimate) || error(
+            "Profile UQ has no distribution to plot; with show_interval = false and " *
+                "show_estimate = false nothing is left to draw."
+        )
+    end
     draws = get_uq_draws(uq; scale = scale)
     vcov_t = backend == :wald ? get_uq_vcov(uq; scale = :transformed) : nothing
     est_t = backend == :wald ?
@@ -123,144 +147,138 @@ function plot_uq_distributions(
     analytic_wald_all = backend == :wald && plot_type == :density && n_closed == pidx
     mixed_wald = backend == :wald && plot_type == :density && n_closed > 0 &&
         n_closed < pidx
-    if plot_type == :density && draws === nothing && n_closed < pidx
+    if backend != :profile && plot_type == :density && draws === nothing && n_closed < pidx
         error("UQ backend $(backend) does not store parameter draws for scale=$(scale). At least one selected parameter requires sampling + KDE.")
     end
 
-    plots = Vector{Any}(undef, pidx)
-    y_label = _uq_density_ylabel(
-        backend; analytic_wald = analytic_wald_all,
-        mixed_wald = mixed_wald, plot_type = plot_type
-    )
+    y_label = backend == :profile ? "" :
+        _uq_density_ylabel(
+            backend; analytic_wald = analytic_wald_all,
+            mixed_wald = mixed_wald, plot_type = plot_type
+        )
+    # Profile panels have no density: hide the meaningless y scale (user kwargs still win).
+    y_axis = backend == :profile ?
+        (; yticklabelsvisible = false, yticksvisible = false, ygridvisible = false) :
+        NamedTuple()
+    interval_label = ints === nothing ? "" : _uq_interval_label(ints.level)
+    panels = Vector{Any}(undef, pidx)
     kde_fallback_params = Symbol[]
     for (k, j) in enumerate(idx)
         pname = string(names[j])
-        p = create_styled_plot(;
-            title = pname,
-            xlabel = pname,
-            ylabel = y_label,
-            style = style,
-            kwargs_subplot...
-        )
-        p.legend_position = show_legend ? nothing : :none
+        df = _uq_df()
+        band_df = _uq_df()
+        span_df = _uq_df()
+        bar_df = _uq_df()
+        vline_df = _uq_df()
+        est_df = _uq_df()
+        curve_label = ""
+        bar_width = 1.0
         xlims_param = nothing
+        interval_ok(lo, hi) = show_interval && isfinite(lo) && isfinite(hi)
 
-        if plot_type == :histogram
+        if backend == :profile
+            if ints !== nothing && interval_ok(ints.lower[j], ints.upper[j])
+                lo, hi = ints.lower[j], ints.upper[j]
+                _uq_push!(span_df, interval_label; lo = lo, hi = hi)
+                xlims_param = _uq_merge_limits(xlims_param, lo, hi)
+            end
+        elseif plot_type == :histogram
             x = draws[:, j]
             xlims_param = _uq_merge_limits(xlims_param, minimum(x), maximum(x))
-            if show_interval && ints !== nothing
-                lo = ints.lower[j]
-                hi = ints.upper[j]
-                if isfinite(lo) && isfinite(hi)
-                    lbl = _label(
-                        p,
-                        show_legend ? "$(round(Int, 100 * ints.level))% Interval" : ""
-                    )
-                    _record!(
-                        p,
-                        ax -> vspan!(
-                            ax, lo, hi; color = (COLOR_CI, interval_alpha),
-                            label = lbl
-                        )
-                    )
-                    xlims_param = _uq_merge_limits(xlims_param, lo, hi)
-                end
+            if ints !== nothing && interval_ok(ints.lower[j], ints.upper[j])
+                lo, hi = ints.lower[j], ints.upper[j]
+                _uq_push!(span_df, interval_label; lo = lo, hi = hi)
+                xlims_param = _uq_merge_limits(xlims_param, lo, hi)
             end
             # Resolve :auto to a Sturges bin count (Plots' former default engine).
             bins_int = bins === :auto ?
                 max(1, ceil(Int, log2(max(length(x), 2))) + 1) : Int(bins)
-            _hist!(
-                p, x;
-                bins = bins_int,
-                normalization = :pdf,
-                color = (style.color_primary, histogram_alpha),
-                strokecolor = style.color_primary,
-                strokewidth = 0.5,
-                label = show_legend ? "Histogram" : "",
-                style = style
-            )
+            h = _histogram_xy(collect(float.(x)); bins = bins_int, normalization = :pdf)
+            curve_label = "Histogram"
+            bar_width = h.width
+            _uq_push_xy!(bar_df, curve_label, h.centers, h.heights)
         else
             kind = closed_form_kinds[k]
             if kind == :normal || kind == :lognormal || kind == :logitnormal
+                curve_label = "Approx. Density"
                 xy = _wald_density_xy(kind, est_t[j], vcov_t[j, j])
-                if show_interval && ints !== nothing && xy !== nothing
-                    lo = ints.lower[j]
-                    hi = ints.upper[j]
-                    if isfinite(lo) && isfinite(hi)
-                        _plot_density_interval_fill!(
-                            p, xy[1], xy[2], lo, hi, ints.level,
-                            interval_alpha; show_legend = show_legend
-                        )
-                        xlims_param = _uq_merge_limits(xlims_param, lo, hi)
-                    end
+                if xy !== nothing && ints !== nothing && interval_ok(ints.lower[j], ints.upper[j])
+                    lo, hi = ints.lower[j], ints.upper[j]
+                    _uq_interval_band!(band_df, interval_label, xy[1], xy[2], lo, hi)
+                    xlims_param = _uq_merge_limits(xlims_param, lo, hi)
                 end
                 if xy === nothing
-                    lbl = _label(p, show_legend ? "Approx. Density" : "")
-                    _record!(
-                        p,
-                        ax -> vlines!(
-                            ax, est[j]; color = style.color_primary,
-                            linewidth = style.line_width_primary, label = lbl
-                        )
-                    )
+                    # Degenerate variance: the density collapses to the estimate.
+                    _uq_push!(vline_df, curve_label; x = est[j])
                     xlims_param = _uq_merge_limits(xlims_param, est[j], est[j])
                 else
-                    create_styled_line!(
-                        p, xy[1], xy[2];
-                        color = style.color_primary,
-                        linewidth = style.line_width_primary,
-                        label = show_legend ? "Approx. Density" : "", style = style
-                    )
+                    _uq_push_xy!(df, curve_label, xy[1], xy[2])
                     xlims_param = _uq_merge_limits(
                         xlims_param, minimum(xy[1]), maximum(xy[1])
                     )
                 end
             else
+                curve_label = "KDE"
                 x = draws[:, j]
                 xk, yk = _uq_kde_xy(x; bandwidth = kde_bandwidth)
                 xlims_param = _uq_merge_limits(xlims_param, minimum(xk), maximum(xk))
-                if show_interval && ints !== nothing
-                    lo = ints.lower[j]
-                    hi = ints.upper[j]
-                    if isfinite(lo) && isfinite(hi)
-                        _plot_density_interval_fill!(
-                            p, xk, yk, lo, hi, ints.level,
-                            interval_alpha; show_legend = show_legend
-                        )
-                        xlims_param = _uq_merge_limits(xlims_param, lo, hi)
-                    end
+                if ints !== nothing && interval_ok(ints.lower[j], ints.upper[j])
+                    lo, hi = ints.lower[j], ints.upper[j]
+                    _uq_interval_band!(band_df, interval_label, xk, yk, lo, hi)
+                    xlims_param = _uq_merge_limits(xlims_param, lo, hi)
                 end
-                create_styled_line!(
-                    p, xk, yk;
-                    color = style.color_primary,
-                    linewidth = style.line_width_primary,
-                    alpha = 1.0,
-                    label = show_legend ? "KDE" : "", style = style
-                )
+                _uq_push_xy!(df, curve_label, xk, yk)
                 push!(kde_fallback_params, names[j])
             end
         end
 
-        if show_estimate
-            add_reference_line!(
-                p, est[j]; orientation = :vertical,
-                color = style.color_dark,
-                linewidth = style.line_width_secondary,
-                label = show_legend ? "Estimate" : ""
-            )
+        if show_estimate && isfinite(est[j])
+            _uq_push!(est_df, _UQ_ESTIMATE; x = est[j])
             xlims_param = _uq_merge_limits(xlims_param, est[j], est[j])
         end
 
-        if xlims_param !== nothing
-            _set_limits!(p; xlim = _pad_limits(xlims_param[1], xlims_param[2]))
-        end
+        palette = Pair{String, Any}[]
+        nrow(band_df) + nrow(span_df) > 0 && push!(palette, interval_label => COLOR_CI)
+        nrow(df) + nrow(vline_df) + nrow(bar_df) > 0 && push!(palette, curve_label => style.color_primary)
+        nrow(est_df) > 0 && push!(palette, _UQ_ESTIMATE => style.color_dark)
 
-        plots[k] = p
+        m_x = AoG.mapping(:x; color = :series)
+        layers = _layers(
+            _layer(span_df, AoG.mapping(:lo, :hi; color = :series), AoG.visual(Makie.VSpan; alpha = interval_alpha)),
+            _layer(band_df, AoG.mapping(:x, :lo, :hi; color = :series), AoG.visual(Makie.Band; alpha = interval_alpha)),
+            _layer(
+                bar_df, AoG.mapping(:x, :y; color = :series),
+                AoG.visual(
+                    Makie.BarPlot; gap = 0, width = bar_width, alpha = histogram_alpha,
+                    strokecolor = style.color_primary, strokewidth = 0.5
+                )
+            ),
+            _layer(df, AoG.mapping(:x, :y; color = :series), _line_visual(style)),
+            _layer(vline_df, m_x, AoG.visual(Makie.VLines; linewidth = style.line_width_primary)),
+            _layer(
+                est_df, m_x,
+                AoG.visual(Makie.VLines; linestyle = :dash, linewidth = style.line_width_secondary)
+            ),
+        )
+        xlim = xlims_param === nothing ? nothing : _pad_limits(xlims_param[1], xlims_param[2])
+        post = Any[]
+        xlim === nothing || push!(post, ax -> xlims!(ax, xlim...))
+        backend == :profile && push!(post, ax -> ylims!(ax, 0, 1))
+        panels[k] = AoGPanel(
+            layers;
+            scales = isempty(palette) ? NamedTuple() : (; Color = _series_palette(palette)),
+            axis = _aog_axis(
+                style, merge(y_axis, _nt(kwargs_subplot));
+                title = pname, xlabel = pname, ylabel = y_label
+            ),
+            post = post,
+            legend = show_legend
+        )
     end
     if plot_type == :density && !isempty(kde_fallback_params)
         @info "plot_uq_distributions used sampling + KDE because no closed-form density is available." backend = backend scale = scale parameters = kde_fallback_params
     end
 
-    p = combine_plots(plots; ncols = ncols, style = style, kwargs_layout...)
-    return _save_plot!(p, save_path)
+    fig = combine_plots(panels; ncols = ncols, style = style, _nt(kwargs_layout)...)
+    return _save_plot!(fig, save_path)
 end

@@ -132,10 +132,11 @@ roughly 0.49 per time unit, with a between-subject SD of 0.16 on the log scale. 
 ## 5. Visualize the fit
 
 Plotting lives in a package extension, so a Makie backend has to be installed and loaded
-alongside NoLimits: `using Pkg; Pkg.add("CairoMakie")` once, then
+alongside NoLimits, together with AlgebraOfGraphics:
+`using Pkg; Pkg.add(["CairoMakie", "AlgebraOfGraphics"])` once, then
 
 ```julia
-using CairoMakie
+using CairoMakie, AlgebraOfGraphics
 
 plot_fits(res; ncols=2)
 ```

@@ -12,7 +12,7 @@ using NoLimits, Plots
 fig = plot_fits(res)                 # Plots.Plot
 
 # v0.2
-using NoLimits, CairoMakie
+using NoLimits, CairoMakie, AlgebraOfGraphics
 fig = plot_fits(res)                 # Makie.Figure
 ```
 
@@ -23,17 +23,17 @@ exceptions below) keyword arguments. If you never passed `kwargs_subplot`,
 
 ## Loading the plotting extension
 
-The drawing functions live in a package extension that loads when Makie is available.
-Load any Makie backend alongside NoLimits:
+The drawing functions live in a package extension that loads when Makie and
+AlgebraOfGraphics are available. Load any Makie backend and AlgebraOfGraphics alongside NoLimits:
 
 ```julia
 using NoLimits
-using CairoMakie      # static publication-quality output (recommended default)
-# or: using GLMakie   # interactive windows
+using CairoMakie, AlgebraOfGraphics      # static publication-quality output (recommended default)
+# or: using GLMakie, AlgebraOfGraphics   # interactive windows
 ```
 
 Calling a plot function without a backend loaded raises a `MethodError` whose message
-tells you to run `using CairoMakie`.
+tells you to run `using CairoMakie, AlgebraOfGraphics`.
 
 ## Return types and display
 
@@ -46,8 +46,8 @@ tells you to run `using CairoMakie`.
 
 ## Saving figures
 
-Unchanged: every plot function accepts `save_path` (alias `plot_path`) and `.png`
-output matches the previous 300 dpi resolution.
+Unchanged: every plot function accepts `save_path`, and `.png` output matches the
+previous 300 dpi resolution. (The `plot_path` alias was removed in 0.3.)
 
 ```julia
 plot_fits(res; save_path = "fits.png")
@@ -99,9 +99,8 @@ plot_fits(res;
     kwargs_subplot = (xlabelsize = 10, ylabelsize = 10, limits = ((0.0, 24.0), nothing)))
 ```
 
-Legends are created automatically (`axislegend`) whenever a panel has labeled series,
-in the top-right corner by default; functions that previously placed legends elsewhere
-(for example `plot_shrinkage`) keep their placement internally.
+Legends are created automatically: every figure has one legend below its panels (see
+"Figure layout since the AlgebraOfGraphics port" below).
 
 ## `PlotStyle` changes
 
@@ -135,6 +134,32 @@ ax.title = "Individual fits"
 ax.ylabel = "Concentration [mg/L]"
 save("fits.png", fig)
 ```
+
+## Figure layout since the AlgebraOfGraphics port
+
+Since the release after v0.3.0 the plotting extension draws with AlgebraOfGraphics.
+Function names and return types are unchanged; the following changes can affect
+existing code:
+
+- `AlgebraOfGraphics` must be loaded next to a Makie backend
+  (`using CairoMakie, AlgebraOfGraphics`), otherwise the `plot_*` functions are not
+  defined.
+- Each figure has one legend below the panels instead of one `axislegend` per panel.
+- Shared axes are linked and inner tick labels and axis labels are hidden.
+- Panel titles of faceted figures are `Makie.Label`s in `fig.content`, not `ax.title`.
+- Individuals are shown in the order they first appear in the data, not in the sorted
+  order of their ids (`s1, s2, ..., s10` instead of `s1, s10, s11, ...`).
+- `return_panel = true` returns an AlgebraOfGraphics-based panel; combine panels with
+  `combine_plots(panels; ncols, link_x, link_y)`.
+- `kwargs_subplot` now reaches every axis of the residual and random-effect plots
+  (before, any value raised an error there).
+- Removed keywords: `ncols` of `plot_emission_distributions` and
+  `plot_random_effect_pairplot`, and `rng` of the `DataModel` methods of
+  `plot_hidden_states` and `plot_emission_distributions`. Drop them from your calls.
+- A histogram drawn together with a density curve (residual distribution against N(0,1),
+  pairplot diagonal with KDE, standardized EBEs with KDE, normalizing-flow histograms of
+  the random-effect PDF plots) is scaled as a density (area 1); other histograms show
+  probabilities.
 
 ## Name collision: `RealVector`
 

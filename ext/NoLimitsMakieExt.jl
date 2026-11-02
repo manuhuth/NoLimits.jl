@@ -1,15 +1,18 @@
 module NoLimitsMakieExt
 
-# Makie-dependent drawing layer. Loads when NoLimits and Makie are both present;
-# users get it via `using CairoMakie` (any Makie backend pulls in Makie).
-# This extension may only reference Makie — never a specific backend.
+# Makie/AlgebraOfGraphics drawing layer. Loads when NoLimits, Makie and AlgebraOfGraphics
+# are all present; users get it via `using CairoMakie, AlgebraOfGraphics` (any Makie
+# backend pulls in Makie). This extension may only reference Makie and AlgebraOfGraphics —
+# never a specific backend.
 # The Makie-free core (PlotStyle, PlotCache, get_residuals, build_plot_cache and their
 # helpers) lives in NoLimits proper; this module only adds the plot_* methods plus the
-# panel model / styled-drawing layer in plotting/plotting.jl.
+# AlgebraOfGraphics core layer in plotting/plotting.jl (facet figures, composable panels,
+# legend/linking policy, PlotStyle mapping).
 
-using Makie: Makie, Figure, Axis, GridLayout, lines!, scatter!, barplot!, heatmap!,
+using Makie: Makie, Figure, Axis, GridLayout, Legend, lines!, scatter!, barplot!, heatmap!,
     poly!, band!, hlines!, vlines!, vspan!, text!, axislegend, xlims!,
     ylims!, Rect2f
+using AlgebraOfGraphics: AlgebraOfGraphics
 using KernelDensity
 using Distributions
 using Random
@@ -38,7 +41,7 @@ import NoLimits: plot_data, plot_dv_ipred, plot_dv_pred, plot_em_trajectories,
 using NoLimits: COLOR_ACCENT, COLOR_CI, COLOR_PRIMARY, COLOR_REFERENCE, COLOR_SECONDARY,
     DEFAULT_DPI, DEFAULT_PLOT_COLS, DataModel, FitDiagnostics, FitParameters,
     FitResult,
-    FitSummary, Individual, InverseTransform, MAX_FIGURE_HEIGHT, MCEM, MCMC,
+    FitSummary, Individual, InverseTransform, MAX_FIGURE_HEIGHT, UNIT_INTERVAL_TICKS, MCEM, MCMC,
     MIN_FIGURE_HEIGHT, MLE, FrequentistResult, MVContinuousTimeDiscreteStatesHMM,
     MVDiscreteTimeDiscreteStatesHMM,
     Model,
@@ -71,7 +74,7 @@ using NoLimits: COLOR_ACCENT, COLOR_CI, COLOR_PRIMARY, COLOR_REFERENCE, COLOR_SE
     _require_re_supported, _require_varying_covariate, _res_constants_re,
     _residual_metric_column, _residual_metric_label, _resolve_emission_row,
     _resolve_individuals, _resolve_levels, _resolve_n_bins, _resolve_obs_rows,
-    _resolve_observables, _resolve_plot_path, _resolve_re_names,
+    _resolve_observables, _resolve_re_names,
     _row_random_effects_at,
     _sample_random_effects_levels, _simulate_obs, _solve_dense_individual,
     _sol_accessors_with_crossings, _standardize_re,
@@ -82,7 +85,7 @@ using NoLimits: COLOR_ACCENT, COLOR_CI, COLOR_PRIMARY, COLOR_REFERENCE, COLOR_SE
     _varying_at,
     _wald_closed_form_kind, _wald_density_xy, _with_posterior_warmup,
     build_plot_cache,
-    calculate_formulas_obs, calculate_plot_size, calculate_prede,
+    calculate_formulas_obs, calculate_plot_size, _font_scale, calculate_prede,
     compute_shrinkage,
     compute_uq, default_axis_kwargs, flatten_re_names,
     create_random_effect_distribution, build_re_dists, get_data_model,
@@ -107,7 +110,10 @@ using NoLimits: COLOR_ACCENT, COLOR_CI, COLOR_PRIMARY, COLOR_REFERENCE, COLOR_SE
     probabilities_hidden_states, transform
 
 include("plotting/plotting.jl")
+include("plotting/plotting_fits.jl")
 include("plotting/plots.jl")
+include("plotting/plotting_hmm.jl")
+include("plotting/plotting_multistart_em.jl")
 include("plotting/plotting_vpc.jl")
 include("plotting/plotting_observation_distributions.jl")
 include("plotting/plotting_residuals.jl")
@@ -131,5 +137,7 @@ for f in (
         return $f(_as_fit_result_for_plotting(res), args...; kwargs...)
     end
 end
+
+include("plotting/precompile.jl")
 
 end # module NoLimitsMakieExt

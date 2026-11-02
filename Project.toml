@@ -40,6 +40,7 @@ StatsFuns = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
 Symbolics = "0c5d862f-8b57-4792-8d23-62f2024744c7"
 
 [weakdeps]
+AlgebraOfGraphics = "cbdf2221-f076-402e-a563-3d30da359d67"
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
 Copulas = "ae264745-0b69-425e-9d9d-cf662c5eec93"
 EnzymeCore = "f151be2c-9106-41f4-ab19-57ee4f262869"
@@ -61,12 +62,13 @@ NoLimitsJLD2Ext = "JLD2"
 NoLimitsLatexifyExt = "Latexify"
 NoLimitsLikelihoodProfilerExt = ["LikelihoodProfiler", "OptimizationNLopt"]
 NoLimitsLuxExt = "Lux"
-NoLimitsMakieExt = "Makie"
+NoLimitsMakieExt = ["Makie", "AlgebraOfGraphics"]
 NoLimitsSciMLSensitivityExt = "SciMLSensitivity"
 NoLimitsSimpleChainsExt = "SimpleChains"
 NoLimitsTuringExt = "Turing"
 
 [compat]
+AlgebraOfGraphics = "0.13.2"
 Bijectors = "0.15.15, 0.16"
 CSV = "0.10.15"
 ComponentArrays = "0.15"
@@ -91,7 +93,7 @@ LinearAlgebra = "1.10"
 Logging = "1.10"
 Lux = "1.29.4"
 MCMCChains = "7.7.0"
-Makie = "0.24"
+Makie = "0.24.4"
 Optimisers = "0.4.7"
 Optimization = "5.4.0 - 5.6"
 OptimizationNLopt = "0.3.11"

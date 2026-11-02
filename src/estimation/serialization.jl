@@ -357,12 +357,39 @@ function _reconstruct_method_result(s::SavedMCMCResult)
     return MCMCResult(s.chain, _SavedSamplerStub(s.sampler_kind), s.n_samples, s.notes, s.observed)
 end
 
-# VIResult: state=nothing, model=nothing — not reconstructable from disk.
-# (Without the model, `sample_posterior` cannot unlink draws and returns them as-is.)
+# VIResult: state=nothing, model=nothing — not stored on disk. `_restore_vi_model`
+# rebuilds the model once the DataModel is known (without it, `sample_posterior` cannot
+# unlink draws and returns them on the linked scale).
 function _reconstruct_method_result(s::SavedVIResult)
     return VIResult(
         s.posterior, s.trace, nothing, s.n_iter, s.max_iter,
         s.final_elbo, s.converged, s.notes, s.observed, s.coord_names, nothing
+    )
+end
+
+# Filled in by NoLimitsTuringExt: rebuild the DynamicPPL model of a VI fit from its
+# DataModel and saved fit keywords.
+function _vi_rebuild_model end
+
+_restore_vi_model(r, dm, fkw) = r
+function _restore_vi_model(r::VIResult, dm, fkw::NamedTuple)
+    r.model === nothing || return r
+    if dm === nothing || Base.get_extension(@__MODULE__, :NoLimitsTuringExt) === nothing
+        @warn "load_fit: the VI model cannot be rebuilt (it needs the DataModel and the " *
+            "Turing extension), so `sample_posterior` returns the reloaded posterior draws " *
+            "on the linked (unconstrained) scale. Pass `dm` and load Turing before `load_fit`."
+        return r
+    end
+    model = try
+        _vi_rebuild_model(dm, fkw)
+    catch err
+        @warn "load_fit: rebuilding the VI model failed, so `sample_posterior` returns the " *
+            "reloaded posterior draws on the linked (unconstrained) scale." exception = err
+        return r
+    end
+    return VIResult(
+        r.posterior, r.trace, r.state, r.n_iter, r.max_iter, r.final_elbo, r.converged,
+        r.notes, r.observed, r.coord_names, model
     )
 end
 
@@ -404,8 +431,8 @@ end
 
 function _reconstruct_fit_result(saved::SavedFitResult, model, dm)
     dm_r = _resolve_dm(saved.df, saved.data_model_config, model, dm)
-    result = _reconstruct_method_result(saved.result)
     fkw = _reconstruct_fit_kwargs(saved.fit_kwargs_saved)
+    result = _restore_vi_model(_reconstruct_method_result(saved.result), dm_r, fkw)
     return FitResult(
         saved.method, result, saved.summary, saved.diagnostics,
         dm_r, (dm_r, saved.method), fkw
@@ -496,6 +523,7 @@ functions.
 | `get_raw` | Returns `nothing` (solver cache not serializable) |
 | `get_sampler` (MCMC) | Returns `_SavedSamplerStub` (not a live sampler) |
 | `get_vi_state` (VI) | Returns `nothing` (state not serializable) |
+| `sample_posterior` (VI) | Natural scale (model rebuilt from `dm`; needs Turing loaded) |
 | `get_random_effects`, `get_loglikelihood`, plotting | Require `dm` or `include_data=true` |
 | `get_multistart_errors` | Returns `Vector{String}` instead of `Vector{Exception}` |
 

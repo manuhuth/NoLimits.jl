@@ -84,6 +84,7 @@ end
     p_c = NoLimits.predict(res, df; kw..., marginal_draws = 150, rng = MersenneTwister(1))
     @test p_a.prediction == p_b.prediction        # same rng, same draws
     @test p_a.prediction != p_c.prediction        # the draws actually enter the answer
+    @test isequal(collect(p_a.y), df.y)            # observed values ride along (#383)
     # This model's conditional mean is linear in the parameters, so integrating the
     # posterior and plugging in its mean agree up to Monte Carlo error.
     θ = NoLimits.get_params(res; scale = :untransformed)

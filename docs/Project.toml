@@ -1,4 +1,5 @@
 [deps]
+AlgebraOfGraphics = "cbdf2221-f076-402e-a563-3d30da359d67"
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 CensoredDistributions = "b2eeebe4-5992-4301-9193-7ebc9f62c855"
 ColorSchemes = "35d6a980-a343-548e-a6ea-1d62b119f2f4"
@@ -18,6 +19,7 @@ Turing = "fce5fe82-541a-59a6-adf8-730c64b5f9a0"
 NoLimits = {path = ".."}
 
 [compat]
+AlgebraOfGraphics = "0.13.2"
 CairoMakie = "0.15"
 CensoredDistributions = "0.2.22"
 ColorSchemes = "3.31.0"
@@ -28,7 +30,7 @@ Documenter = "1.17"
 DocumenterCitations = "1.4"
 DocumenterVitepress = "0.3"
 LiveServer = "1.5.0"
-NoLimits = "0.2.0"
+NoLimits = "0.3"
 RDatasets = "0.8.1"
 Turing = "0.45.0, 0.46"
 julia = "1.12"

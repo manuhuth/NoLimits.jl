@@ -54,6 +54,84 @@ function _expand_residual_components(df::DataFrame, col::Symbol)
     return DataFrame(rows)
 end
 
+# --- AlgebraOfGraphics helpers of the residual figures (prefix `_resid_`) --------------
+#
+# Every residual figure is a facet grid drawn with `_draw_facets` (one panel per
+# observable, or per observable and individual for `plot_residuals`); reference lines are
+# per-panel `post` hooks, histograms are exact uniform-bin `BarPlot` layers.
+
+# Groups of the residual table in first-appearance order: individuals in data order,
+# observables in model order (never AoG's lexicographic order).
+_resid_groups(df::AbstractDataFrame, cols) = groupby(df, cols; sort = false)
+
+# Residual rows reordered so individuals appear in the order of their first data row
+# (`DataModel` sorts individuals by id, which is lexicographic for string ids: s1, s10,
+# s11, ..., s2). Stable, so rows of one individual keep their order. Same policy as the
+# core helper `_individuals_in_data_order`, applied to the residual table.
+function _resid_in_data_order(df::DataFrame)
+    (hasproperty(df, :row) && hasproperty(df, :individual_idx)) || return df
+    first_row = Dict{Any, Int}()
+    for (i, r) in zip(df.individual_idx, df.row)
+        first_row[i] = min(get(first_row, i, typemax(Int)), Int(r))
+    end
+    perm = sortperm([first_row[i] for i in df.individual_idx]; alg = MergeSort)
+    return df[perm, :]
+end
+
+# Finite `(x, y)` pairs of two residual columns. Non-finite values (e.g. the `Inf`
+# logscore of an observation with zero probability) cannot be placed on an axis; they
+# are dropped with a warning instead of producing infinite axis limits.
+function _resid_xy(xcol, ycol, what::AbstractString)
+    xs = Float64[]
+    ys = Float64[]
+    dropped = 0
+    for (x, y) in zip(xcol, ycol)
+        (ismissing(x) || ismissing(y)) && continue
+        xf = Float64(x)
+        yf = Float64(y)
+        if isfinite(xf) && isfinite(yf)
+            push!(xs, xf)
+            push!(ys, yf)
+        else
+            dropped += 1
+        end
+    end
+    dropped > 0 &&
+        @warn "Dropped $(dropped) non-finite $(what) value(s) that cannot be drawn." maxlog = 1
+    return xs, ys
+end
+
+_resid_vals(col, what::AbstractString) = last(_resid_xy(Iterators.repeated(0.0), col, what))
+
+# Dashed horizontal reference line in one panel (`post` hook of `_draw_facets`).
+_resid_hline(value::Real, style::PlotStyle) =
+    ax -> hlines!(ax, Float64(value); color = style.color_dark, linestyle = :dash)
+
+# Exact uniform-bin histogram of one panel as an AoG BarPlot layer (one layer per panel,
+# because the bin width differs between panels). `normalization = :pdf` (area 1) when a
+# density is drawn on the same axis, `:probability` otherwise; `range = (lo, hi)` fixes the
+# bin range (PIT values: (0, 1)). Returns the layer and the tallest bar.
+function _resid_hist_layer(
+        panel::AbstractString, vals, bins::Int, series::AbstractString, style::PlotStyle;
+        normalization::Symbol = :probability, range = nothing
+    )
+    h = _histogram_xy(vals; bins = bins, normalization = normalization, range = range)
+    n = length(h.centers)
+    t = DataFrame(
+        panel = fill(String(panel), n), x = collect(Float64, h.centers),
+        y = collect(Float64, h.heights), series = fill(String(series), n)
+    )
+    layer = AoG.data(t) * AoG.mapping(:x, :y; color = :series, layout = :panel) *
+        AoG.visual(Makie.BarPlot; gap = 0, strokewidth = 0, width = h.width)
+    return layer, maximum(h.heights)
+end
+
+# Figure returned when no panel has drawable residuals (the message, no axis).
+function _resid_empty(msg::AbstractString, style::PlotStyle, kwargs_layout, save_path)
+    fig = _placeholder_figure(msg, style; kwargs_layout = kwargs_layout)
+    return _save_plot!(fig, save_path)
+end
+
 function _plot_residuals_df(
         df::DataFrame;
         metric::Symbol = :quantile,
@@ -64,64 +142,51 @@ function _plot_residuals_df(
         style::PlotStyle = PlotStyle(),
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
-        save_path::Union{Nothing, String} = nothing
+        save_path::Union{Nothing, String} = nothing,
+        data_order::Bool = false
     )
+    _check_positive_int(ncols, "ncols")
     metric = _validate_plot_metric(metric)
     col = _residual_metric_column(metric)
     df = _expand_residual_components(df, col)
-    plots = Vector{Any}()
+    data_order && (df = _resid_in_data_order(df))
+    label = _residual_metric_label(metric)
+    ref = metric == :pit ? 0.5 : (metric == :logscore ? nothing : 0.0)
+    # a logarithmic y axis cannot show the reference line at 0
+    last(_diag_log_axes(kwargs_subplot)) && ref !== nothing && ref <= 0 && (ref = nothing)
+
+    pts = _tidy()
+    panels = String[]
+    post = Dict{String, Vector{Any}}()
     xlims = nothing
     ylims = nothing
-
-    for g in groupby(df, [:observable, :individual_idx])
-        obs_name = g.observable[1]
-        id_val = g.id[1]
-        mask = .!ismissing.(g.x) .& .!ismissing.(g[!, col])
-        x = Float64.(g.x[mask])
-        y = Float64.(g[!, col][mask])
+    for g in _resid_groups(df, [:observable, :individual_idx])
+        x, y = _resid_xy(g.x, g[!, col], label)
         isempty(x) && continue
+        panel = string(g.observable[1], " | id=", g.id[1])
+        push!(panels, panel)
+        _push_xy!(pts, panel, x, y, "residual")
+        ref === nothing || (post[panel] = Any[_resid_hline(ref, style)])
+        xlims = _merge_limits(xlims, x)
+        ylims = _merge_limits(ylims, y)
+    end
+    isempty(panels) &&
+        return _resid_empty("No residual data to plot.", style, kwargs_layout, save_path)
 
-        p = create_styled_plot(
-            title = string(obs_name, " | id=", id_val),
-            xlabel = x_label,
-            ylabel = _residual_metric_label(metric),
-            style = style,
-            kwargs_subplot...
-        )
-        create_styled_scatter!(
-            p, x, y; label = "", color = style.color_secondary, style = style
-        )
-        if metric == :pit
-            add_reference_line!(
-                p, 0.5; orientation = :horizontal, color = style.color_dark, label = ""
-            )
-        elseif metric != :logscore
-            add_reference_line!(
-                p, 0.0; orientation = :horizontal, color = style.color_dark, label = ""
-            )
-        end
-        push!(plots, p)
-        xlims = xlims === nothing ? (minimum(x), maximum(x)) :
-            (min(xlims[1], minimum(x)), max(xlims[2], maximum(x)))
-        ylims = ylims === nothing ? (minimum(y), maximum(y)) :
-            (min(ylims[1], minimum(y)), max(ylims[2], maximum(y)))
-    end
-
-    if isempty(plots)
-        p = create_styled_plot(
-            title = "No residual data to plot.", style = style, kwargs_subplot...
-        )
-        return _save_plot!(combine_plots([p]; ncols = 1, style = style), save_path)
-    end
-    if shared_x_axis || shared_y_axis
-        xlim_use = shared_x_axis && xlims !== nothing ? _pad_limits(xlims[1], xlims[2]) :
-            nothing
-        ylim_use = shared_y_axis && ylims !== nothing ? _pad_limits(ylims[1], ylims[2]) :
-            nothing
-        _apply_shared_axes!(plots, xlim_use, ylim_use)
-    end
-    p = combine_plots(plots; ncols = ncols, style = style, kwargs_layout...)
-    return _save_plot!(p, save_path)
+    _mask_nonpositive!(kwargs_subplot, "plot_residuals", pts)
+    layers = _layer(
+        pts, AoG.mapping(:x, :y; layout = :panel),
+        _scatter_visual(style; color = style.color_secondary)
+    )
+    fig = _draw_facets(
+        layers; panels = panels, ncols = ncols, style = style,
+        shared_x = shared_x_axis, shared_y = shared_y_axis,
+        kwargs_subplot = kwargs_subplot, kwargs_layout = kwargs_layout,
+        axis = (; xlabel = x_label, ylabel = label), legend = false, post = post,
+        xlim = _shared_lim(shared_x_axis, xlims; kwargs_subplot, col = :x, tables = (pts,)),
+        ylim = _shared_lim(shared_y_axis, ylims; kwargs_subplot, col = :y, tables = (pts,)),
+    )
+    return _save_plot!(fig, save_path)
 end
 
 """
@@ -136,17 +201,26 @@ end
 
 Plot residuals versus time (or another x-axis feature) for each individual.
 
+One AlgebraOfGraphics facet per observable and individual (titled `"<observable> |
+id=<id>"`; individuals in the order they first appear in the data, or in the order of
+`individuals_idx` when given), with a dashed reference line at 0 (0.5 for `:pit`,
+none for `:logscore`). Vector-valued observables get one facet per component.
+Non-finite residuals (e.g. an `Inf` logscore) are dropped with a warning.
+
 # Keyword Arguments
 - `residual::Symbol = :quantile`: residual metric to plot. One of `:pit`, `:quantile`,
   `:raw`, `:pearson`, `:logscore`.
+- `shared_x_axis::Bool = true`, `shared_y_axis::Bool = true`: share and link the axis
+  across panels (padded common range; inner tick labels hidden).
+- `ncols::Int = 3`: number of panel columns (panels wrap row-wise).
+- `style::PlotStyle = PlotStyle()`: visual style configuration.
+- `kwargs_subplot`: Makie `Axis` attributes for every panel (passed to
+  AlgebraOfGraphics as `axis`; they win over the defaults).
+- `kwargs_layout`: Makie `Figure` attributes (passed as `figure`; they win over the
+  defaults).
+- `save_path`: file path to save the figure.
 - All other arguments are forwarded to [`get_residuals`](@ref); see that function for
   descriptions.
-- `shared_x_axis::Bool = true`, `shared_y_axis::Bool = true`: share axis ranges.
-- `ncols::Int = 3`: number of subplot columns.
-- `style::PlotStyle = PlotStyle()`: visual style configuration.
-- `kwargs_subplot`, `kwargs_layout`: additional Makie `Axis`/`Figure` attributes for
-  subplots and layout.
-- `save_path::Union{Nothing, String} = nothing`: file path to save the plot.
 """
 function plot_residuals(
         res::FitResult;
@@ -174,11 +248,9 @@ function plot_residuals(
         mcmc_quantiles::Vector{<:Real} = [5, 95],
         rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     metric = _validate_plot_metric(residual)
     df = get_residuals(
         res; dm = dm, cache = cache, observables = observables,
@@ -189,10 +261,12 @@ function plot_residuals(
         mcmc_draws = mcmc_draws, mcmc_warmup = mcmc_warmup, mcmc_quantiles = mcmc_quantiles, rng = rng
     )
     xlabel = x_axis_feature === nothing ? "Time" : _axis_label(x_axis_feature)
+    # all individuals: data order; an explicit `individuals_idx` keeps the caller's order
     return _plot_residuals_df(
         df; metric = metric, x_label = xlabel, shared_x_axis = shared_x_axis,
         shared_y_axis = shared_y_axis, ncols = ncols, style = style,
-        kwargs_subplot = kwargs_subplot, kwargs_layout = kwargs_layout, save_path = save_path
+        kwargs_subplot = kwargs_subplot, kwargs_layout = kwargs_layout, save_path = save_path,
+        data_order = individuals_idx === nothing
     )
 end
 
@@ -221,11 +295,9 @@ function plot_residuals(
         mcmc_quantiles::Vector{<:Real} = [5, 95],
         rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     metric = _validate_plot_metric(residual)
     df = get_residuals(
         dm; cache = cache, observables = observables,
@@ -236,10 +308,12 @@ function plot_residuals(
         mcmc_draws = mcmc_draws, mcmc_warmup = mcmc_warmup, mcmc_quantiles = mcmc_quantiles, rng = rng
     )
     xlabel = x_axis_feature === nothing ? "Time" : _axis_label(x_axis_feature)
+    # all individuals: data order; an explicit `individuals_idx` keeps the caller's order
     return _plot_residuals_df(
         df; metric = metric, x_label = xlabel, shared_x_axis = shared_x_axis,
         shared_y_axis = shared_y_axis, ncols = ncols, style = style,
-        kwargs_subplot = kwargs_subplot, kwargs_layout = kwargs_layout, save_path = save_path
+        kwargs_subplot = kwargs_subplot, kwargs_layout = kwargs_layout, save_path = save_path,
+        data_order = individuals_idx === nothing
     )
 end
 
@@ -255,67 +329,69 @@ function _plot_residual_distribution_df(
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing
     )
+    _check_positive_int(ncols, "ncols")
+    _check_positive_int(bins, "bins")
     metric = _validate_plot_metric(metric)
     col = _residual_metric_column(metric)
     df = _expand_residual_components(df, col)
-    plots = Vector{Any}()
+    label = _residual_metric_label(metric)
+
+    hist_layers = Any[]
+    curve = _tidy()
+    panels = String[]
+    post = Dict{String, Vector{Any}}()
     xlims = nothing
     ylims = nothing
-    for g in groupby(df, :observable)
-        obs_name = g.observable[1]
-        vals = Float64.(collect(skipmissing(g[!, col])))
+    for g in _resid_groups(df, :observable)
+        vals = _resid_vals(g[!, col], label)
         isempty(vals) && continue
-        p = create_styled_plot(
-            title = string(obs_name),
-            xlabel = _residual_metric_label(metric),
-            ylabel = "Probability",
-            style = style, kwargs_subplot...
+        panel = string(g.observable[1])
+        push!(panels, panel)
+        # with the N(0,1) density overlaid the histogram is a density too (area 1); PIT
+        # values are binned on [0, 1], so the uniform reference 1 / bins is exact
+        layer, ymax = _resid_hist_layer(
+            panel, vals, bins, "data", style;
+            normalization = metric == :quantile ? :pdf : :probability,
+            range = metric == :pit ? (0.0, 1.0) : nothing
         )
-        # Compute bar heights once (drawing recomputes internally) so we can size the
-        # y-axis explicitly instead of reading rendered series back.
-        h = _histogram_xy(vals; bins = bins, normalization = :probability)
-        _hist!(
-            p, vals; bins = bins, normalization = :probability,
-            color = style.color_secondary, label = "data"
-        )
-        ymax = maximum(h.heights)
+        push!(hist_layers, layer)
         if metric == :quantile
             xs = range(minimum(vals), maximum(vals); length = 200)
             pdf_vals = pdf.(Normal(), xs)
-            create_styled_line!(
-                p, xs, pdf_vals; color = style.color_dark,
-                linestyle = :dash, label = "N(0,1)", style = style
-            )
+            _push_xy!(curve, panel, xs, pdf_vals, "N(0,1)")
             ymax = max(ymax, maximum(pdf_vals))
         elseif metric == :pit
-            add_reference_line!(
-                p, 1.0 / bins; orientation = :horizontal,
-                color = style.color_dark, label = ""
-            )
+            post[panel] = Any[_resid_hline(1.0 / bins, style)]
         end
-        push!(plots, p)
-        xlims = xlims === nothing ? (minimum(vals), maximum(vals)) :
-            (min(xlims[1], minimum(vals)), max(xlims[2], maximum(vals)))
-        # y_max = max(histogram heights, overlay curve values) — what the old code
-        # intended; it previously read the last drawn series, i.e. the N(0,1) overlay.
-        ylims = ylims === nothing ? (0.0, ymax) : (0.0, max(ylims[2], ymax))
+        xlims = _merge_limits(xlims, vals)
+        # y range = histogram heights and the N(0,1) overlay, from 0.
+        ylims = _merge_limits(ylims, (0.0, ymax))
     end
+    isempty(panels) &&
+        return _resid_empty("No residual data to plot.", style, kwargs_layout, save_path)
 
-    if isempty(plots)
-        p = create_styled_plot(
-            title = "No residual data to plot.", style = style, kwargs_subplot...
-        )
-        return _save_plot!(combine_plots([p]; ncols = 1, style = style), save_path)
-    end
-    if shared_x_axis || shared_y_axis
-        xlim_use = shared_x_axis && xlims !== nothing ? _pad_limits(xlims[1], xlims[2]) :
-            nothing
-        ylim_use = shared_y_axis && ylims !== nothing ? _pad_limits(ylims[1], ylims[2]) :
-            nothing
-        _apply_shared_axes!(plots, xlim_use, ylim_use)
-    end
-    p = combine_plots(plots; ncols = ncols, style = style, kwargs_layout...)
-    return _save_plot!(p, save_path)
+    series = Pair{String, Any}["data" => style.color_secondary]
+    metric == :quantile && push!(series, "N(0,1)" => style.color_dark)
+    layers = _layers(
+        reduce(+, hist_layers),
+        _layer(
+            curve, AoG.mapping(:x, :y; color = :series, layout = :panel),
+            _line_visual(style; linestyle = :dash)
+        ),
+    )
+    fig = _draw_facets(
+        layers; panels = panels, ncols = ncols, style = style,
+        shared_x = shared_x_axis, shared_y = shared_y_axis,
+        kwargs_subplot = kwargs_subplot, kwargs_layout = kwargs_layout,
+        axis = merge(
+            (; xlabel = label, ylabel = metric == :quantile ? "Density" : "Probability"),
+            metric == :pit ? (; xticks = UNIT_INTERVAL_TICKS) : (;)
+        ),
+        series = series, legend = metric == :quantile, post = post,
+        xlim = metric == :pit ? (0.0, 1.0) : _shared_lim(shared_x_axis, xlims),
+        ylim = _shared_lim(shared_y_axis, ylims),
+    )
+    return _save_plot!(fig, save_path)
 end
 
 """
@@ -330,12 +406,25 @@ end
 
     plot_residual_distribution(dm::DataModel; ...) -> Makie.Figure
 
-Plot the marginal distribution of residuals as histograms with optional density overlays.
+Plot the marginal distribution of residuals as histograms, one facet per observable
+(component for vector-valued observables). `:quantile` draws a density histogram (area 1,
+y axis "Density") with the dashed N(0,1) density and a figure legend; the other metrics
+draw probability histograms (bar heights sum to 1), and `:pit` (bins on [0, 1], x fixed
+to [0, 1]) adds a dashed reference line at the uniform bar height `1 / bins`.
 
 # Keyword Arguments
 - `residual::Symbol = :quantile`: residual metric (`:pit`, `:quantile`, `:raw`,
   `:pearson`, `:logscore`).
-- `bins::Int = 20`: number of histogram bins.
+- `bins::Int = 20`: number of equal-width histogram bins.
+- `shared_x_axis::Bool = true`, `shared_y_axis::Bool = true`: share and link the axis
+  across panels.
+- `ncols::Int = 3`: number of panel columns (panels wrap row-wise).
+- `style::PlotStyle = PlotStyle()`: visual style configuration.
+- `kwargs_subplot`: Makie `Axis` attributes for every panel (passed to
+  AlgebraOfGraphics as `axis`; they win over the defaults).
+- `kwargs_layout`: Makie `Figure` attributes (passed as `figure`; they win over the
+  defaults).
+- `save_path`: file path to save the figure.
 - All other arguments are forwarded to [`get_residuals`](@ref).
 """
 function plot_residual_distribution(
@@ -365,11 +454,9 @@ function plot_residual_distribution(
         mcmc_quantiles::Vector{<:Real} = [5, 95],
         rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     metric = _validate_plot_metric(residual)
     df = get_residuals(
         res; dm = dm, cache = cache, observables = observables,
@@ -412,11 +499,9 @@ function plot_residual_distribution(
         mcmc_quantiles::Vector{<:Real} = [5, 95],
         rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     metric = _validate_plot_metric(residual)
     df = get_residuals(
         dm; cache = cache, observables = observables,
@@ -442,48 +527,50 @@ function _plot_residual_qq_df(
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing
     )
+    _check_positive_int(ncols, "ncols")
     metric = _validate_plot_metric(metric)
     col = _residual_metric_column(metric)
     df = _expand_residual_components(df, col)
-    plots = Vector{Any}()
-    for g in groupby(df, :observable)
-        obs_name = g.observable[1]
-        vals = sort(Float64.(collect(skipmissing(g[!, col]))))
+    label = _residual_metric_label(metric)
+
+    pts = _tidy()
+    diag = _tidy()
+    panels = String[]
+    for g in _resid_groups(df, :observable)
+        vals = sort(_resid_vals(g[!, col], label))
         length(vals) < 2 && continue
         n = length(vals)
         probs = ((1:n) .- 0.5) ./ n
-        theo = if metric == :pit
-            probs
-        else
-            quantile.(Normal(), probs)
-        end
-        xlabel = metric == :pit ? "Theoretical Uniform Quantile" :
-            "Theoretical Normal Quantile"
-        ylabel = string("Sample ", _residual_metric_label(metric))
-        p = create_styled_plot(
-            title = string(obs_name), xlabel = xlabel, ylabel = ylabel,
-            style = style, kwargs_subplot...
-        )
-        create_styled_scatter!(
-            p, theo, vals; label = "", color = style.color_secondary,
-            markersize = style.marker_size_small, style = style
-        )
+        theo = metric == :pit ? collect(probs) : quantile.(Normal(), probs)
+        panel = string(g.observable[1])
+        push!(panels, panel)
+        _push_xy!(pts, panel, theo, vals, "sample")
         lo = min(minimum(theo), minimum(vals))
         hi = max(maximum(theo), maximum(vals))
-        create_styled_line!(
-            p, [lo, hi], [lo, hi]; label = "", color = style.color_dark,
-            linestyle = :dash, style = style
-        )
-        push!(plots, p)
+        _push_xy!(diag, panel, (lo, hi), (lo, hi), "reference")
     end
-    if isempty(plots)
-        p = create_styled_plot(
-            title = "No residual data to plot.", style = style, kwargs_subplot...
-        )
-        return _save_plot!(combine_plots([p]; ncols = 1, style = style), save_path)
-    end
-    p = combine_plots(plots; ncols = ncols, style = style, kwargs_layout...)
-    return _save_plot!(p, save_path)
+    isempty(panels) &&
+        return _resid_empty("No residual data to plot.", style, kwargs_layout, save_path)
+
+    xy = AoG.mapping(:x, :y; layout = :panel)
+    layers = _layers(
+        _layer(diag, xy, _line_visual(style; color = style.color_dark, linestyle = :dash)),
+        _layer(
+            pts, xy,
+            _scatter_visual(style; color = style.color_secondary, markersize = style.marker_size_small)
+        ),
+    )
+    fig = _draw_facets(
+        layers; panels = panels, ncols = ncols, style = style,
+        shared_x = false, shared_y = false,
+        kwargs_subplot = kwargs_subplot, kwargs_layout = kwargs_layout,
+        axis = (;
+            xlabel = metric == :pit ? "Theoretical Uniform Quantile" : "Theoretical Normal Quantile",
+            ylabel = string("Sample ", label),
+        ),
+        legend = false,
+    )
+    return _save_plot!(fig, save_path)
 end
 
 """
@@ -496,11 +583,19 @@ end
     plot_residual_qq(dm::DataModel; ...) -> Makie.Figure
 
 Quantile-quantile plot of residuals against the theoretical distribution
-(Uniform for `:pit`, Normal for other metrics).
+(Uniform for `:pit`, Normal for other metrics), one facet per observable with a dashed
+identity line. Axes are not linked (each panel has its own range).
 
 # Keyword Arguments
 - `residual::Symbol = :quantile`: residual metric (`:pit`, `:quantile`, `:raw`,
   `:pearson`, `:logscore`).
+- `ncols::Int = 3`: number of panel columns (panels wrap row-wise).
+- `style::PlotStyle = PlotStyle()`: visual style configuration.
+- `kwargs_subplot`: Makie `Axis` attributes for every panel (passed to
+  AlgebraOfGraphics as `axis`; they win over the defaults).
+- `kwargs_layout`: Makie `Figure` attributes (passed as `figure`; they win over the
+  defaults).
+- `save_path`: file path to save the figure.
 - All other arguments are forwarded to [`get_residuals`](@ref).
 """
 function plot_residual_qq(
@@ -527,11 +622,9 @@ function plot_residual_qq(
         mcmc_quantiles::Vector{<:Real} = [5, 95],
         rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     metric = _validate_plot_metric(residual)
     df = get_residuals(
         res; dm = dm, cache = cache, observables = observables,
@@ -570,11 +663,9 @@ function plot_residual_qq(
         mcmc_quantiles::Vector{<:Real} = [5, 95],
         rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     metric = _validate_plot_metric(residual)
     df = get_residuals(
         dm; cache = cache, observables = observables,
@@ -602,6 +693,7 @@ function _plot_residual_pit_df(
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing
     )
+    _check_positive_int(ncols, "ncols")
     (show_hist + show_kde + show_qq) == 0 &&
         error("plot_residual_pit has every display mode disabled; enable one of show_hist, show_kde or show_qq.")
     if (show_hist + show_kde + show_qq) > 1
@@ -610,63 +702,55 @@ function _plot_residual_pit_df(
         show_kde = false
         show_qq = false
     end
+    kde_bandwidth === nothing || _check_positive(kde_bandwidth, "kde_bandwidth")
     df = _expand_residual_components(df, :pit)
-    plots = Vector{Any}()
-    for g in groupby(df, :observable)
-        obs_name = g.observable[1]
-        pits = Float64.(collect(skipmissing(g.pit)))
+    mode = show_hist ? "PIT Histogram" : (show_kde ? "PIT Density" : "PIT QQ")
+
+    hist_layers = Any[]
+    lines_df = _tidy()
+    pts = _tidy()
+    diag = _tidy()
+    panels = String[]
+    for g in _resid_groups(df, :observable)
+        pits = _resid_vals(g.pit, "PIT")
         length(pits) < 2 && continue
+        panel = string(g.observable[1], " | ", mode)
+        push!(panels, panel)
         if show_hist
-            p = create_styled_plot(
-                title = string(obs_name, " | PIT Histogram"),
-                xlabel = "PIT", ylabel = "Probability",
-                style = style, kwargs_subplot...
-            )
-            _hist!(
-                p, pits; bins = 20, normalization = :probability,
-                color = style.color_secondary, label = ""
-            )
-            push!(plots, p)
+            layer, _ = _resid_hist_layer(panel, pits, 20, "data", style; range = (0.0, 1.0))
+            push!(hist_layers, layer)
         elseif show_kde
-            p = create_styled_plot(
-                title = string(obs_name, " | PIT Density"),
-                xlabel = "PIT", ylabel = "Density",
-                style = style, kwargs_subplot...
-            )
-            xk, yk = _kde_xy(pits; bandwidth = kde_bandwidth)
-            create_styled_line!(
-                p, xk, yk; color = style.color_secondary, label = "",
-                style = style
-            )
-            push!(plots, p)
+            xk, yk = _kde_xy(pits; bandwidth = kde_bandwidth, what = "kde_bandwidth")
+            _push_xy!(lines_df, panel, xk, yk, "data")
         else
-            p = create_styled_plot(
-                title = string(obs_name, " | PIT QQ"),
-                xlabel = "Theoretical Uniform Quantile",
-                ylabel = "Empirical PIT Quantile",
-                style = style, kwargs_subplot...
-            )
             q = sort(pits)
             u = range(0.0, 1.0; length = length(q))
-            create_styled_scatter!(
-                p, u, q; color = style.color_secondary, label = "", style = style
-            )
-            create_styled_line!(
-                p, u, u; color = style.color_dark, linestyle = :dash,
-                label = "", style = style
-            )
-            push!(plots, p)
+            _push_xy!(pts, panel, u, q, "data")
+            _push_xy!(diag, panel, (0.0, 1.0), (0.0, 1.0), "reference")
         end
     end
-    if isempty(plots)
-        p = create_styled_plot(
-            title = "No PIT data to plot.", style = style, kwargs_subplot...
-        )
-        return _save_plot!(combine_plots([p]; ncols = 1, style = style), save_path)
-    end
-    _apply_shared_axes!(plots, (0.0, 1.0), nothing)
-    p = combine_plots(plots; ncols = ncols, style = style, kwargs_layout...)
-    return _save_plot!(p, save_path)
+    isempty(panels) &&
+        return _resid_empty("No PIT data to plot.", style, kwargs_layout, save_path)
+
+    xy = AoG.mapping(:x, :y; layout = :panel)
+    layers = _layers(
+        isempty(hist_layers) ? nothing : reduce(+, hist_layers),
+        _layer(lines_df, xy, _line_visual(style; color = style.color_secondary)),
+        _layer(diag, xy, _line_visual(style; color = style.color_dark, linestyle = :dash)),
+        _layer(pts, xy, _scatter_visual(style; color = style.color_secondary)),
+    )
+    ylabel = show_hist ? "Probability" : (show_kde ? "Density" : "Empirical PIT Quantile")
+    xlabel = show_qq ? "Theoretical Uniform Quantile" : "PIT"
+    # PIT values live on [0, 1]: one fixed, linked x range; y stays per panel.
+    fig = _draw_facets(
+        layers; panels = panels, ncols = ncols, style = style,
+        shared_x = true, shared_y = false,
+        kwargs_subplot = kwargs_subplot, kwargs_layout = kwargs_layout,
+        axis = (; xlabel = xlabel, ylabel = ylabel, xticks = UNIT_INTERVAL_TICKS),
+        series = show_hist ? Pair{String, Any}["data" => style.color_secondary] : Pair{String, Any}[],
+        legend = false, xlim = (0.0, 1.0),
+    )
+    return _save_plot!(fig, save_path)
 end
 
 """
@@ -679,14 +763,26 @@ end
 
     plot_residual_pit(dm::DataModel; ...) -> Makie.Figure
 
-Plot the probability integral transform (PIT) values as histograms and/or KDE curves.
-Uniform PIT values indicate a well-calibrated model.
+Plot the probability integral transform (PIT) values, one facet per observable, as a
+histogram (20 uniform bins on [0, 1]), a kernel density estimate, or a uniform QQ plot. Uniform PIT values
+indicate a well-calibrated model. The x axis is fixed to [0, 1] and linked.
+
+Exactly one display mode is drawn: enabling none is an error, enabling several warns and
+falls back to the histogram.
 
 # Keyword Arguments
-- `show_hist::Bool = true`: show a histogram of PIT values.
-- `show_kde::Bool = false`: overlay a kernel density estimate.
-- `show_qq::Bool = false`: add a uniform QQ reference line.
-- `kde_bandwidth::Union{Nothing, Float64} = nothing`: KDE bandwidth, or `nothing` for auto.
+- `show_hist::Bool = true`: histogram of PIT values.
+- `show_kde::Bool = false`: kernel density estimate of PIT values.
+- `show_qq::Bool = false`: empirical PIT quantiles against uniform quantiles.
+- `kde_bandwidth::Union{Nothing, Float64} = nothing`: positive KDE bandwidth, or
+  `nothing` for automatic selection.
+- `ncols::Int = 3`: number of panel columns (panels wrap row-wise).
+- `style::PlotStyle = PlotStyle()`: visual style configuration.
+- `kwargs_subplot`: Makie `Axis` attributes for every panel (passed to
+  AlgebraOfGraphics as `axis`; they win over the defaults).
+- `kwargs_layout`: Makie `Figure` attributes (passed as `figure`; they win over the
+  defaults).
+- `save_path`: file path to save the figure.
 - All other arguments are forwarded to [`get_residuals`](@ref).
 """
 function plot_residual_pit(
@@ -715,11 +811,9 @@ function plot_residual_pit(
         mcmc_quantiles::Vector{<:Real} = [5, 95],
         rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     df = get_residuals(
         res; dm = dm, cache = cache, observables = observables,
         individuals_idx = individuals_idx, obs_rows = obs_rows,
@@ -760,11 +854,9 @@ function plot_residual_pit(
         mcmc_quantiles::Vector{<:Real} = [5, 95],
         rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     df = get_residuals(
         dm; cache = cache, observables = observables,
         individuals_idx = individuals_idx, obs_rows = obs_rows,
@@ -791,58 +883,53 @@ function _plot_residual_acf_df(
         save_path::Union{Nothing, String} = nothing
     )
     max_lag >= 1 || error("max_lag must be >= 1.")
+    _check_positive_int(ncols, "ncols")
     metric = _validate_plot_metric(metric)
     col = _residual_metric_column(metric)
     df = _expand_residual_components(df, col)
-    plots = Vector{Any}()
-    for gobs in groupby(df, :observable)
-        obs_name = gobs.observable[1]
-        by_ind = groupby(gobs, :individual_idx)
+    label = _residual_metric_label(metric)
+
+    acf_df = _tidy()
+    panels = String[]
+    post = Dict{String, Vector{Any}}()
+    lags = collect(1:max_lag)
+    for gobs in _resid_groups(df, :observable)
         acfs = Vector{Vector{Union{Missing, Float64}}}()
-        for gi in by_ind
+        for gi in _resid_groups(gobs, :individual_idx)
             order = sortperm(gi.obs_index)
-            vals = gi[order, col]
-            v = Float64.(collect(skipmissing(vals)))
+            v = _resid_vals(gi[order, col], label)
             length(v) < 2 && continue
             push!(acfs, _acf_for_series(v, max_lag))
         end
         isempty(acfs) && continue
-        acf_mean = Vector{Float64}(undef, max_lag)
-        for lag in 1:max_lag
-            vals_lag = Float64[]
-            for a in acfs
-                ismissing(a[lag]) || push!(vals_lag, a[lag])
-            end
-            acf_mean[lag] = isempty(vals_lag) ? NaN : mean(vals_lag)
+        # Mean ACF over individuals; a lag without any usable pair is a gap (NaN).
+        acf_mean = map(lags) do lag
+            vals_lag = Float64[a[lag] for a in acfs if !ismissing(a[lag])]
+            isempty(vals_lag) ? NaN : mean(vals_lag)
         end
-        lags = collect(1:max_lag)
-        p = create_styled_plot(
-            title = string(obs_name), xlabel = "Lag",
-            ylabel = string(_residual_metric_label(metric), " Autocorrelation"),
-            style = style, kwargs_subplot...
-        )
-        # Old `plot!(...; marker=:circle)` == line + markers; Makie's equivalent is
-        # `scatterlines!` (no `marker` kwarg on `lines!`).
-        _record!(
-            p,
-            ax -> Makie.scatterlines!(
-                ax, lags, acf_mean; color = style.color_secondary,
-                linewidth = style.line_width_primary, markersize = style.marker_size
-            )
-        )
-        add_reference_line!(
-            p, 0.0; orientation = :horizontal, color = style.color_dark, label = ""
-        )
-        push!(plots, p)
+        panel = string(gobs.observable[1])
+        push!(panels, panel)
+        _push_xy!(acf_df, panel, lags, acf_mean, "acf")
+        post[panel] = Any[_resid_hline(0.0, style)]
     end
-    if isempty(plots)
-        p = create_styled_plot(
-            title = "No residual data to plot.", style = style, kwargs_subplot...
+    isempty(panels) &&
+        return _resid_empty("No residual data to plot.", style, kwargs_layout, save_path)
+
+    layers = _layer(
+        acf_df, AoG.mapping(:x, :y; layout = :panel),
+        AoG.visual(
+            Makie.ScatterLines; color = style.color_secondary,
+            linewidth = style.line_width_primary, markersize = style.marker_size
         )
-        return _save_plot!(combine_plots([p]; ncols = 1, style = style), save_path)
-    end
-    p = combine_plots(plots; ncols = ncols, style = style, kwargs_layout...)
-    return _save_plot!(p, save_path)
+    )
+    fig = _draw_facets(
+        layers; panels = panels, ncols = ncols, style = style,
+        shared_x = false, shared_y = false,
+        kwargs_subplot = kwargs_subplot, kwargs_layout = kwargs_layout,
+        axis = (; xlabel = "Lag", ylabel = string(label, " Autocorrelation")),
+        legend = false, post = post,
+    )
+    return _save_plot!(fig, save_path)
 end
 
 """
@@ -855,12 +942,21 @@ end
 
     plot_residual_acf(dm::DataModel; ...) -> Makie.Figure
 
-Plot the autocorrelation function (ACF) of residuals across time lags for each outcome.
+Plot the autocorrelation function (ACF) of residuals across time lags, one facet per
+observable: the per-individual ACF (observations in data order) averaged over
+individuals, with a dashed reference line at 0. Lags without a usable pair are gaps.
 
 # Keyword Arguments
 - `residual::Symbol = :quantile`: residual metric (`:pit`, `:quantile`, `:raw`,
   `:pearson`, `:logscore`).
-- `max_lag::Int = 5`: maximum lag to compute and display.
+- `max_lag::Int = 5`: maximum lag to compute and display (`>= 1`).
+- `ncols::Int = 3`: number of panel columns (panels wrap row-wise).
+- `style::PlotStyle = PlotStyle()`: visual style configuration.
+- `kwargs_subplot`: Makie `Axis` attributes for every panel (passed to
+  AlgebraOfGraphics as `axis`; they win over the defaults).
+- `kwargs_layout`: Makie `Figure` attributes (passed as `figure`; they win over the
+  defaults).
+- `save_path`: file path to save the figure.
 - All other arguments are forwarded to [`get_residuals`](@ref).
 """
 function plot_residual_acf(
@@ -888,11 +984,9 @@ function plot_residual_acf(
         mcmc_quantiles::Vector{<:Real} = [5, 95],
         rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     metric = _validate_plot_metric(residual)
     df = get_residuals(
         res; dm = dm, cache = cache, observables = observables,
@@ -932,11 +1026,9 @@ function plot_residual_acf(
         mcmc_quantiles::Vector{<:Real} = [5, 95],
         rng::AbstractRNG = _default_rng(),
         save_path::Union{Nothing, String} = nothing,
-        plot_path::Union{Nothing, String} = nothing,
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple()
     )
-    save_path = _resolve_plot_path(save_path, plot_path)
     metric = _validate_plot_metric(residual)
     df = get_residuals(
         dm; cache = cache, observables = observables,

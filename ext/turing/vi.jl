@@ -108,6 +108,53 @@ function NoLimits._vi_unlink_draws(res::VIResult, linked::AbstractMatrix)
     return out === nothing ? linked : out
 end
 
+# The DynamicPPL model VI runs on. Its VarInfo layout and the priors' bijectors define the
+# linked space of the variational draws, so `_vi_unlink_draws` needs exactly this model.
+function _vi_turing_model(
+        dm::DataModel, free_names;
+        constants::NamedTuple = NamedTuple(), ode_args::Tuple = (),
+        ode_kwargs::NamedTuple = NamedTuple(),
+        serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads(),
+        extra_objective = nothing
+    )
+    fe = get_fixed(get_model(dm))
+    priors = get_priors(fe)
+    fixed_names = get_names(fe)
+    cache = build_ll_cache(
+        dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
+        serialization = serialization, force_saveat = true
+    )
+    free_names_t = Tuple(free_names)
+    priors_nt = NamedTuple{free_names_t}(
+        Tuple(
+            _turing_prior(getfield(priors, n), n)
+                for n in free_names
+        )
+    )
+    fname = _build_turing_model(fixed_names, free_names)
+    model_fn = Base.invokelatest(getfield, @__MODULE__, fname)
+    model = Base.invokelatest(
+        model_fn, dm, cache, serialization, priors_nt, constants, extra_objective
+    )
+    return _invokelatest_model(model)
+end
+
+# Rebuild the VI model of a reloaded fit (`load_fit` drops it) from its DataModel and the
+# saved fit keywords, so `sample_posterior` maps the draws back to the natural scale again.
+# `extra_objective` is not saved; it only adds log-density terms and does not change the
+# linked space.
+function NoLimits._vi_rebuild_model(dm::DataModel, fit_kwargs::NamedTuple)
+    constants = get(fit_kwargs, :constants, NamedTuple())
+    fixed_names = get_names(get_fixed(get_model(dm)))
+    free_names = [n for n in fixed_names if !(n in keys(constants))]
+    return _vi_turing_model(
+        dm, free_names; constants = constants,
+        ode_args = get(fit_kwargs, :ode_args, ()),
+        ode_kwargs = get(fit_kwargs, :ode_kwargs, NamedTuple()),
+        serialization = get(fit_kwargs, :serialization, EnsembleThreads())
+    )
+end
+
 function NoLimits._vi_fit_impl(
         dm::DataModel, method::VI, args...;
         constants::NamedTuple = NamedTuple(),
@@ -170,24 +217,11 @@ function NoLimits._vi_fit_impl(
         @debug "theta_0_untransformed is currently not used by VI unless turing_kwargs provides q_init."
     end
 
-    cache = build_ll_cache(
-        dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-        serialization = serialization, force_saveat = true
+    model = _vi_turing_model(
+        dm, free_names; constants = constants, ode_args = ode_args,
+        ode_kwargs = ode_kwargs, serialization = serialization,
+        extra_objective = extra_objective
     )
-
-    free_names_t = Tuple(free_names)
-    priors_nt = NamedTuple{free_names_t}(
-        Tuple(
-            _turing_prior(getfield(priors, n), n)
-                for n in free_names
-        )
-    )
-    fname = _build_turing_model(fixed_names, free_names)
-    model_fn = Base.invokelatest(getfield, @__MODULE__, fname)
-    model = Base.invokelatest(
-        model_fn, dm, cache, serialization, priors_nt, constants, extra_objective
-    )
-    model = _invokelatest_model(model)
 
     max_iter = Int(get(method.turing_kwargs, :max_iter, 1000))
     max_iter >= 1 || error("VI requires max_iter >= 1.")

@@ -40,7 +40,7 @@ using NoLimits
 using Optimization, OptimizationOptimJL, LineSearches, SciMLBase
 using ComponentArrays, Distributions, DataFrames, Random, LinearAlgebra
 using Turing: MH
-using CairoMakie
+using CairoMakie, AlgebraOfGraphics
 
 Random.seed!(1)
 

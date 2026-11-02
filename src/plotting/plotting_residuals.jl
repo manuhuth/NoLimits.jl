@@ -958,11 +958,13 @@ integrates the posterior).
 Pass `newdata` as a `DataFrame` or any Tables.jl-compatible table, rebuilt into a
 `DataModel` using the fitted model and
 the grouping, time and event columns of the original fit, or as a ready-made
-`DataModel`. Returns a `DataFrame` with the individual identifier, the time, the
-observable, and the predicted response in the `prediction` column. For a multivariate
-outcome each `prediction` cell is a `Vector{Float64}` with one entry per outcome
-component. Extra keyword
-arguments are forwarded to [`get_residuals`](@ref).
+`DataModel`. Returns a `DataFrame` with the columns `id` (individual identifier), `time`,
+`observable` (outcome name), `y` (the observed value of that row, as in the `y` column of
+[`get_residuals`](@ref); `missing` where `newdata` has no observation) and `prediction`
+(the predicted response), so predictions and data can be plotted from one table without
+a join. For a multivariate outcome each `y` and `prediction` cell is a vector with one
+entry per outcome component. Extra keyword arguments are forwarded to
+[`get_residuals`](@ref).
 
 # Keyword Arguments
 - `re_mode::Symbol = :population`: random-effect strategy (see above).
@@ -1020,7 +1022,7 @@ function predict(
             fitted_stat = fitted_stat, constants_re = constants_re,
             ode_args = ode_args, ode_kwargs = ode_kwargs, kwargs...
         )
-        return _prediction_frame(df.id, df.time, df.observable, df.fitted)
+        return _prediction_frame(df.id, df.time, df.observable, df.y, df.fitted)
     end
     _validate_predict_re_mode(res, dm_new, re_mode)
     if re_mode == :marginal
@@ -1044,7 +1046,7 @@ function predict(
             fitted_stat = fitted_stat, constants_re = constants_re,
             ode_args = ode_args, ode_kwargs = ode_kwargs, kwargs...
         )
-        return _prediction_frame(df.id, df.time, df.observable, df.fitted)
+        return _prediction_frame(df.id, df.time, df.observable, df.y, df.fitted)
     end
     # :ebe
     η_vec = _predict_eta_ebe(res, dm_new, θ, constants_re)
@@ -1057,7 +1059,7 @@ function predict(
         fitted_stat = fitted_stat, constants_re = constants_re,
         ode_args = ode_args, ode_kwargs = ode_kwargs, kwargs...
     )
-    return _prediction_frame(df.id, df.time, df.observable, df.fitted)
+    return _prediction_frame(df.id, df.time, df.observable, df.y, df.fitted)
 end
 
 function predict(res::FitResult, newdata; kwargs...)
@@ -1078,8 +1080,12 @@ function predict(res::FitResult, newdata; kwargs...)
     return predict(res, dm_new; kwargs...)
 end
 
-function _prediction_frame(id, time, observable, prediction)
-    return DataFrame(id = id, time = time, observable = observable, prediction = prediction)
+# `y` is the observed value of the row (`missing` where `newdata` has no observation),
+# taken from the `y` column of `get_residuals`.
+function _prediction_frame(id, time, observable, y, prediction)
+    return DataFrame(
+        id = id, time = time, observable = observable, y = y, prediction = prediction
+    )
 end
 
 # Validate that re_mode is supported for this fit; :population is handled before this.
@@ -1221,7 +1227,7 @@ function _average_prediction_frames(frames)
             for r in eachindex(sum_acc)
     ]
     return _prediction_frame(
-        base.id, base.time, base.observable, identity.(prediction)
+        base.id, base.time, base.observable, base.y, identity.(prediction)
     )
 end
 

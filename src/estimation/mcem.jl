@@ -2300,6 +2300,8 @@ function _fit_model(
         builtin_stats_closed_form_eligibility = _cf_cfg.builtin_cf_elig,
         closed_form_targets = closed_form_targets,
         numeric_targets = numeric_targets,
+        # stride of `diagnostics.θ_hist` (kept so reloaded fits can plot EM trajectories)
+        diagnostics_every = method.diagnostics_every,
     )
 
     result = MCEMResult(nothing, Q_prev, length(diag.Q_hist), nothing, notes, eb_modes)

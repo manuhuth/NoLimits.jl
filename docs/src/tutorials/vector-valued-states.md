@@ -28,7 +28,7 @@ initial value is `zeros(NTR)`. Its first element receives from `depot`; elements
 
 ```julia
 using NoLimits
-using CairoMakie
+using CairoMakie, AlgebraOfGraphics
 using DataFrames
 using Distributions
 using Random
