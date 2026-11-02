@@ -567,6 +567,17 @@ end
     p_fits_vector = plot_fits(res; marginal_layout = :vector)
     @test isa(p_fits_vector, Vector{CairoMakie.Figure})
     @test length(p_fits_vector) == n_marginals
+    @test_throws r"marginal_layout must be :single or :vector" plot_fits(res; marginal_layout = :grid)
+    @test_throws r"marginal_layout must be :single or :vector" plot_data(res; marginal_layout = :grid)
+    mktempdir() do tmp
+        p = joinpath(tmp, "multi.png")
+        @test_throws r"save_path is not supported" plot_data(res; marginal_layout = :vector, save_path = p)
+        @test_throws r"save_path is not supported" plot_fits(res; marginal_layout = :vector, save_path = p)
+        @test_throws r"save_path is not supported" plot_hidden_states(
+            res; figure_layout = :vector, save_path = p
+        )
+        @test !isfile(p)
+    end
 
     n_inds = length(unique(df.ID))
     @test plot_hidden_states(res) !== nothing
@@ -620,6 +631,11 @@ end
         f_vpc = plot_vpc(res; n_simulations = 2, n_bins = 2)
         @test length(all_axes(f_vpc)) == n_marginals
         @test scatter_counts(f_vpc) == [5, 4]
+        @test length(_legends(f_vpc)) == 1
+        @test _legend_labels(f_vpc) == ["obs", "obs median", "obs 5–95%", "sim median", "sim 5–95%"]
+        @test_throws r"return_panel requires a single observable" plot_vpc(
+            res; n_simulations = 2, n_bins = 2, return_panel = true
+        )
 
         # Failure C: nested observation vectors expand into component series.
         @test scatter_counts(plot_observed_profiles(dm)) == [9]
@@ -631,6 +647,7 @@ end
             @test length(all_axes(f_gof)) == n_marginals
             @test scatter_counts(f_gof) == [5, 4]
         end
+        @test_throws r"return_panel requires a scalar observable" plot_dv_pred(res; return_panel = true)
 
         # Residual panels follow the component-wise residual schema when it provides
         # vector cells; the plots are a no-op on a scalar table.
@@ -668,6 +685,20 @@ end
             res_mcmc; mcmc_draws = 2, individuals_idx = 1, plot_density = true
         )
         @test length(heatmaps(f_mcmc)) == n_marginals
+
+        # posterior quantiles: one dashed line per component and quantile
+        f_q = plot_fits(
+            res_mcmc; mcmc_draws = 2, individuals_idx = 1, plot_mcmc_quantiles = true,
+            mcmc_quantiles = [5, 95]
+        )
+        dash = CairoMakie.Makie.convert_attribute(:dash, CairoMakie.Makie.key"linestyle"())
+        styles = [
+            CairoMakie.Makie.to_value(pl.linestyle) for ax in _axes(f_q)
+                for pl in ax.scene.plots if pl isa CairoMakie.Lines
+        ]
+        @test count(==(dash), styles) == 2 * n_marginals
+        @test all(l -> l in _legend_labels(f_q), ["y[1] 5%", "y[1] 95%", "y[2] 5%", "y[2] 95%"])
+        @test_throws r"does not support posterior draws" plot_hidden_states(res_mcmc)
     end
 end
 
@@ -935,4 +966,128 @@ end
     @test _MakieExt._em_diagnostics_every(stub, (;), 10, 5) == 2
     @test _MakieExt._em_diagnostics_every(stub, (;), 5, 1) === nothing   # 3, 4 or 5
     @test _MakieExt._em_diagnostics_every(stub, (; diagnostics_every = 3), 5, 1) == 3
+
+    # SAEM records the same stride in its notes
+    dm_re = fx_re_dm()
+    saem = fit_model(
+        dm_re, NoLimits.SAEM(;
+            maxiters = 4, sa_burnin_iters = 1, store_diagnostics = true, diagnostics_every = 2
+        ); rng = Random.Xoshiro(1)
+    )
+    @test NoLimits.get_notes(saem).diagnostics_every == 2
+    saem_xs(fig) = [first.(CairoMakie.Makie.to_value(pl[1])) for pl in _plots_of(fig, CairoMakie.Lines)]
+    fs = plot_em_trajectories(saem)
+    @test length(_axes(fs)) == 4                     # Q function, a, σ, ω
+    @test all(l -> l in _labels(fs), ["Q Function", "a", "σ", "ω"])
+    @test [1.0, 2.0, 3.0, 4.0] in saem_xs(fs)       # Q at every iteration
+    @test count(==([2.0, 4.0]), saem_xs(fs)) == 3   # parameters at 2, 4
+    mktempdir() do tmp
+        path = joinpath(tmp, "saem.jld2")
+        save_fit(path, saem; include_data = true)
+        fl = plot_em_trajectories(load_fit(path; dm = dm_re))
+        @test length(_axes(fl)) == 4
+        @test saem_xs(fl) == saem_xs(fs)
+    end
+end
+
+@testset "plot_fits posterior quantile lines (#383)" begin
+    res = fx_mcmc()                          # 4 individuals, scalar y
+    fig = plot_fits(res; plot_mcmc_quantiles = true, mcmc_quantiles = [5, 95], mcmc_draws = 5)
+    dash = CairoMakie.Makie.convert_attribute(:dash, CairoMakie.Makie.key"linestyle"())
+    @test length(_axes(fig)) == 4
+    for ax in _axes(fig)
+        styles = [CairoMakie.Makie.to_value(pl.linestyle) for pl in ax.scene.plots if pl isa CairoMakie.Lines]
+        @test count(==(dash), styles) == 2   # 5% and 95%
+        @test length(styles) == 3            # plus the solid mean line
+    end
+    @test _legend_labels(fig) == ["data", "fit", "5%", "95%"]
+    @test _legend_labels(
+        plot_fits(res; plot_mcmc_quantiles = true, mcmc_quantiles = [2.5, 97.5], mcmc_draws = 5)
+    ) == ["data", "fit", "2.5%", "97.5%"]
+end
+
+@testset "plot functions without the plotting extension hint at loading it" begin
+    # Fresh process: NoLimits alone, then with CairoMakie but without AlgebraOfGraphics.
+    script = """
+    using NoLimits, DataFrames, Distributions
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.0)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @formulas begin
+            y ~ Normal(a, 1.0)
+        end
+    end
+    df = DataFrame(ID = [1, 1], t = [0.0, 1.0], y = [0.1, 0.2])
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    hint() =
+        try
+            plot_data(dm)
+            "no error"
+        catch e
+            sprint(showerror, e)
+        end
+    println("no Makie: ", occursin("AlgebraOfGraphics", hint()))
+    using CairoMakie
+    println("ext loaded: ", Base.get_extension(NoLimits, :NoLimitsMakieExt) !== nothing)
+    println("Makie only: ", occursin("AlgebraOfGraphics", hint()))
+    """
+    out = mktempdir() do tmp
+        path = joinpath(tmp, "hint.jl")
+        write(path, script)
+        readchomp(`$(Base.julia_cmd()) --startup-file=no --project=$(Base.active_project()) $(path)`)
+    end
+    @test occursin("no Makie: true", out)
+    @test occursin("ext loaded: false", out)
+    @test occursin("Makie only: true", out)
+end
+
+@testset "plotting error paths (#383)" begin
+    st = PlotStyle()
+    # the extension's precompile workload swallows errors; it must run cleanly
+    @test _MakieExt._precompile_workload() === nothing
+
+    @test_throws ArgumentError combine_plots([1])
+    @test_throws r"expects panels returned with `return_panel = true`" combine_plots([1])
+    @test_throws r"Nothing to plot" _MakieExt._draw_facets(
+        nothing; panels = String[], ncols = 1, style = st
+    )
+    # a log axis on which no observation is positive
+    @test_throws r"no observations of :y can be shown on a logarithmic axis" _MakieExt._diag_gof_figure(
+        [("y", [-1.0, -2.0], [1.0, 2.0])], :identity; xlabel = "PRED", ylabel = "DV",
+        style = st, kwargs_subplot = (; xscale = log10), kwargs_layout = (;),
+        save_path = nothing, return_panel = false, fn = "plot_dv_pred"
+    )
+
+    res1 = fx_mle()
+    @test_throws r"model names must be unique" plot_fits_comparison(Dict(:m => res1, "m" => res1))
+    @test_throws r"non-empty vector" plot_fits_comparison([])
+    @test_throws r"non-empty NamedTuple" plot_fits_comparison(NamedTuple())
+    @test_throws r"non-empty Dict" plot_fits_comparison(Dict{String, Any}())
+
+    # a failing Makie.save keeps its own error; the backend hint only without a backend
+    dm = fx_nore_dm()
+    mktempdir() do tmp
+        err = try
+            plot_data(dm; save_path = joinpath(tmp, "fig.xyz"))
+            nothing
+        catch e
+            e
+        end
+        @test err !== nothing
+        @test !occursin("Makie backend", sprint(showerror, err))
+        backend = CairoMakie.Makie.current_backend()
+        try
+            CairoMakie.Makie.set_active_backend!(missing)
+            @test_throws r"requires a Makie backend" plot_data(dm; save_path = joinpath(tmp, "fig.png"))
+        finally
+            CairoMakie.Makie.set_active_backend!(backend)
+        end
+        @test !isfile(joinpath(tmp, "fig.png"))
+        plot_data(dm; save_path = joinpath(tmp, "ok.png"))
+        @test isfile(joinpath(tmp, "ok.png"))
+    end
 end

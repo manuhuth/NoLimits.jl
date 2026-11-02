@@ -42,6 +42,18 @@ import Turing   # MCMC/VI need the Turing extension loaded (#36)
     @test plot_residual_distribution(res; residual = :pit) !== nothing
     @test plot_residual_pit(res; show_hist = false, show_kde = true, show_qq = false) !==
         nothing
+
+    # VPC with two observables: one axis each, one shared legend
+    vpc_axes(fig) = [a for a in fig.content if a isa CairoMakie.Axis]
+    fig_vpc = plot_vpc(res; n_simulations = 2, n_bins = 2)
+    @test length(vpc_axes(fig_vpc)) == 2
+    @test count(c -> c isa CairoMakie.Legend, fig_vpc.content) == 1
+    @test_throws r"return_panel requires a single observable" plot_vpc(
+        res; n_simulations = 2, n_bins = 2, return_panel = true
+    )
+    ext = Base.get_extension(NoLimits, :NoLimitsMakieExt)
+    @test plot_vpc(res; n_simulations = 2, n_bins = 2, observables = :y_cont, return_panel = true) isa
+        ext.AoGPanel
 end
 
 @testset "residuals with constants_re inherited from fit result" begin
@@ -816,6 +828,16 @@ end
     @test_throws ErrorException plot_residuals(res; ncols = 0)
     @test_throws ErrorException plot_residual_qq(res; ncols = 0)
     @test_throws ErrorException plot_residual_acf(res; max_lag = 0)
+
+    # QQ: one scatter of all n residuals plus a two-point reference line
+    plots_of(fig, T) = [p for ax in axes_of(fig) for p in ax.scene.plots if p isa T]
+    fig_qq = plot_residual_qq(res; residual = :raw)
+    @test length(only(plots_of(fig_qq, CairoMakie.Scatter))[1][]) == nrow(df)
+    @test length(only(plots_of(fig_qq, CairoMakie.Lines))[1][]) == 2
+    # ACF: the mean autocorrelation at lags 1:max_lag plus a zero line
+    fig_acf = plot_residual_acf(res; residual = :raw, max_lag = 3)
+    @test [pt[1] for pt in only(plots_of(fig_acf, CairoMakie.ScatterLines))[1][]] == [1.0, 2.0, 3.0]
+    @test length(plots_of(fig_acf, CairoMakie.Makie.HLines)) == 1
 
     # Non-finite residuals (an impossible observation has logscore Inf) are dropped
     # with a warning instead of producing infinite axis limits.

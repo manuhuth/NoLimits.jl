@@ -298,6 +298,10 @@ end
 
     p_std_sc = plot_random_effect_standardized_scatter(res)
     @test p_std_sc !== nothing
+    # one panel per RE component, one z-score per individual
+    sc_axes = [a for a in p_std_sc.content if a isa CairoMakie.Axis]
+    @test length(sc_axes) == 2
+    @test [sum(length(pl[1][]) for pl in ax.scene.plots if pl isa CairoMakie.Scatter) for ax in sc_axes] == [6, 6]
 
     p_pit_hist = plot_random_effect_pit(
         res; show_hist = true, show_kde = false, show_qq = false

@@ -245,6 +245,22 @@ end
     # Without a DataModel the model cannot be rebuilt: warn, draws stay linked.
     res3 = @test_logs (:warn, r"linked") match_mode = :any load_fit(path)
     @test NoLimits.get_result(res3).model === nothing
+
+    # The rebuilt model keeps constants out of the linked space.
+    resc = fit_model(
+        dm, NoLimits.VI(; turing_kwargs = (max_iter = 30, family = :meanfield, progress = false));
+        constants = (; a = 0.5)
+    )
+    pathc = tempname() * ".jld2"
+    save_fit(pathc, resc)
+    resc2 = load_fit(pathc; dm = dm)
+    @test NoLimits.get_result(resc2).model !== nothing
+    c1 = sample_posterior(resc; n_draws = 100, rng = Random.Xoshiro(4), return_names = true)
+    c2 = sample_posterior(resc2; n_draws = 100, rng = Random.Xoshiro(4), return_names = true)
+    @test c1.names == c2.names
+    @test !(:a in c2.names)
+    @test c2.draws ≈ c1.draws
+    @test all(>(0), c2.draws[:, findfirst(==(:σ), c2.names)])
 end
 
 # ── Multistart ────────────────────────────────────────────────────────────────
