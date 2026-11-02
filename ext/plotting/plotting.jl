@@ -522,24 +522,20 @@ end
     _save_plot!(fig::Figure, save_path) -> Figure
 
 Save `fig` to `save_path` (a `.png` uses `px_per_unit = DEFAULT_DPI/100`). Saving needs a
-rasterizing Makie backend loaded (e.g. `using CairoMakie`); a clearer error is raised if
-none is available.
+Makie backend loaded (e.g. `using CairoMakie`); a clearer error is raised if none is
+active. Any other error of `Makie.save` propagates unchanged.
 """
 function _save_plot!(fig::Figure, save_path::Union{Nothing, String})
     save_path = _ensure_save_path(save_path)
     save_path === nothing && return fig
+    ismissing(Makie.current_backend()) && error(
+        "Saving figures requires a Makie backend. Load one first, e.g. `using CairoMakie`."
+    )
     _, ext = splitext(save_path)
-    try
-        if ext == ".png"
-            Makie.save(save_path, fig; px_per_unit = DEFAULT_DPI / 100)
-        else
-            Makie.save(save_path, fig)
-        end
-    catch err
-        error(
-            "Saving figures requires a rasterizing Makie backend. Load one first, " *
-                "e.g. `using CairoMakie`. Underlying error: $(err)"
-        )
+    if ext == ".png"
+        Makie.save(save_path, fig; px_per_unit = DEFAULT_DPI / 100)
+    else
+        Makie.save(save_path, fig)
     end
     return fig
 end
