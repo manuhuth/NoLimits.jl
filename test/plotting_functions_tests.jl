@@ -633,7 +633,7 @@ end
         @test scatter_counts(f_vpc) == [5, 4]
         @test length(_legends(f_vpc)) == 1
         @test _legend_labels(f_vpc) == ["obs", "obs median", "obs 5–95%", "sim median", "sim 5–95%"]
-        @test_throws r"return_panel requires a single observable" plot_vpc(
+        @test_throws r"return_panel is not supported for vector-valued outcomes \(:y\): they draw one panel per component" plot_vpc(
             res; n_simulations = 2, n_bins = 2, return_panel = true
         )
 

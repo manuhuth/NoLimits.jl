@@ -91,7 +91,7 @@ simulated probability `P(Y=1)` (Bernoulli) or PMF instead of percentile lines.
 - `constants_re::NamedTuple = NamedTuple()`: random-effect constants.
 - `mcmc_draws::Int = 1000`, `mcmc_warmup`: MCMC draw settings.
 - `style::PlotStyle = PlotStyle()`: visual style configuration.
-- `return_panel::Bool = false`: with a single observable, return the built panel (an
+- `return_panel::Bool = false`: with a single scalar observable, return the built panel (an
   AlgebraOfGraphics panel) instead of a `Figure`, for composing several diagnostics into one figure via `combine_plots`.
 """
 function plot_vpc(
@@ -369,6 +369,11 @@ function plot_vpc(
     end
 
     if return_panel
+        vec_obs = unique(s[1] for s in panel_specs if s[2] !== nothing)
+        isempty(vec_obs) || error(
+            "return_panel is not supported for vector-valued outcomes " *
+                "($(join(":" .* string.(vec_obs), ", "))): they draw one panel per component."
+        )
         length(plots) == 1 ||
             error("return_panel requires a single observable; pass `observables = :name`.")
         return only(plots)
