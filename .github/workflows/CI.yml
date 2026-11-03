@@ -32,8 +32,9 @@ jobs:
     name: test shard ${{ matrix.group }}
     runs-on: ubuntu-latest
     # Slowest shard on a green run is ~15 min; GitHub's 360-minute default let a
-    # hung shard burn 6 h and block the PR before reporting anything.
-    timeout-minutes: 60
+    # hung shard burn 6 h and block the PR before reporting anything. A cold-cache
+    # run (after dependency changes) spends ~48 min precompiling.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
