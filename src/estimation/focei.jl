@@ -705,7 +705,23 @@ function _focei_obs_values_batch(dm::DataModel, batch_info::REBatchInfo)
             _obs_is_missing(y) || push!(out, y)
         end
     end
-    return out
+    return map(identity, out)  # concrete eltype (e.g. Vector{Float64}) for the score loop
+end
+
+# grad += Σⱼ Jⱼᵀ sⱼ; `false` when a family has no closed-form score. Function barrier: the
+# caller sees `ys` and `grad` abstractly typed, which made every per-observation score and
+# broadcast a dynamic dispatch with heap allocations (dual-typed in the one-pass kernel).
+function _focei_add_scores!(grad, dists_b, ys, J)
+    offset = 0
+    for j in eachindex(dists_b)
+        s = _focei_score(dists_b[j], ys[j])
+        s === nothing && return false
+        for k in eachindex(s)
+            grad .+= s[k] .* view(J, offset + k, :)
+        end
+        offset += length(s)
+    end
+    return true
 end
 
 # Gradient of the batch log-joint and the negative FOCEI curvature from ONE Jacobian pass:
@@ -731,18 +747,7 @@ function _focei_grad_negH_batch(
         if J !== nothing
             ys = _focei_obs_values_batch(dm, batch_info)
             length(ys) == length(dists_b) || return nothing
-            offset = 0
-            for (j, d) in enumerate(dists_b)
-                s = _focei_score(d, ys[j])
-                if s === nothing
-                    grad = nothing
-                    break
-                end
-                for k in eachindex(s)
-                    grad .+= s[k] .* view(J, offset + k, :)
-                end
-                offset += length(s)
-            end
+            _focei_add_scores!(grad, dists_b, ys, J) || (grad = nothing)
             Hdata = _focei_data_term(J, dists_b, dists_m, interaction, T)
         end
         return (grad, Hdata .+ _focei_prior_negH(dm, batch_info, θ_re, b, const_cache, cache, tctx))

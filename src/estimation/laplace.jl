@@ -277,9 +277,12 @@ mutable struct _LaplaceCache{T, B, G, A, H}
     # Committed warm starts of `AcceptedWarmStarts` (one vector per batch, empty until the
     # first commit); `nothing` = default rule (warm start from the last evaluated θ).
     warm::Union{Nothing, Vector{Vector{Float64}}}
+    # Per-thread likelihood caches `(dm, ll_cache, caches)` of `_laplace_thread_caches`,
+    # built once per EBE cache instead of on every objective call (they hold no θ).
+    thread_caches::Any
     # explicit inner ctor: the auto outer ctor leaves T unbound for θ_cache=nothing (Aqua, 1.10)
     function _LaplaceCache{T, B, G, A, H}(θ_cache, bstar_cache, grad_cache, ad_cache, hess_cache) where {T, B, G, A, H}
-        return new{T, B, G, A, H}(θ_cache, bstar_cache, grad_cache, ad_cache, hess_cache, nothing)
+        return new{T, B, G, A, H}(θ_cache, bstar_cache, grad_cache, ad_cache, hess_cache, nothing, nothing)
     end
 end
 
@@ -1939,7 +1942,7 @@ function _laplace_get_bstar!(
         ll_cache isa AbstractVector
     if use_threaded
         nthreads = Threads.maxthreadid()
-        caches = _laplace_thread_caches(dm, ll_cache, nthreads)
+        caches = _laplace_thread_caches(dm, ll_cache, nthreads, cache)
         ind_counter = Threads.Atomic{Int}(0)
         # Each task owns cache slot `c` for its whole life. Indexing by
         # `Threads.threadid()` is unsafe under task migration (the inner `solve(...)`
@@ -2914,6 +2917,21 @@ end
     return caches isa Vector ? caches : [deepcopy(caches) for _ in 1:nthreads]
 end
 
+# Memoized in the EBE cache, keyed by the DataModel, the source cache and the thread count.
+# The thread caches hold only θ-independent data (vary rows, saveat, interpolants, event
+# callbacks, problem templates) — the state the serial path already reuses across calls
+# through its single `ll_cache`; every slot stays owned by one task at a time.
+function _laplace_thread_caches(dm::DataModel, ll_cache, nthreads::Int, ebe::_LaplaceCache)
+    ll_cache isa Vector && return ll_cache
+    tc = ebe.thread_caches
+    if tc !== nothing && tc[1] === dm && tc[2] === ll_cache && length(tc[3]) == nthreads
+        return tc[3]
+    end
+    caches = _laplace_thread_caches(dm, ll_cache, nthreads)
+    ebe.thread_caches = (dm, ll_cache, caches)
+    return caches
+end
+
 @inline function _laplace_thread_rngs(rng::AbstractRNG, nthreads::Int)
     return _spawn_child_rngs(rng, nthreads)
 end
@@ -2960,7 +2978,7 @@ function _laplace_objective_and_grad(
     batch_rngs = _laplace_thread_rngs(rng, length(batch_infos))
     if serialization isa SciMLBase.EnsembleThreads
         nthreads = Threads.maxthreadid()
-        caches = _laplace_thread_caches(dm, ll_cache, nthreads)
+        caches = _laplace_thread_caches(dm, ll_cache, nthreads, ebe_cache)
         obj_by_batch = Vector{eltype(θ)}(undef, length(batch_infos))
         grad_by_batch = Matrix{eltype(θ)}(undef, length(θ), length(batch_infos))
         bad = Threads.Atomic{Bool}(false)
@@ -3083,7 +3101,7 @@ function _laplace_objective_only(
     end
     if serialization isa SciMLBase.EnsembleThreads
         nthreads = Threads.maxthreadid()
-        caches = _laplace_thread_caches(dm, ll_cache, nthreads)
+        caches = _laplace_thread_caches(dm, ll_cache, nthreads, ebe_cache)
         obj_by_batch = Vector{eltype(θ)}(undef, length(batch_infos))
         bad = Threads.Atomic{Bool}(false)
         # Each task owns cache slot `c` (see _laplace_get_bstar!).
@@ -3385,7 +3403,7 @@ function _laplace_accepted_multistart!(
         ws::AcceptedWarmStarts; from_default::Bool = false
     )
     θ_val = _laplace_floatize(θ)
-    caches = _laplace_thread_caches(dm, ll_cache, Threads.maxthreadid())
+    caches = _laplace_thread_caches(dm, ll_cache, Threads.maxthreadid(), cache)
     changed = fill(false, length(batch_infos))
     n_chunks = length(caches)
     # Chunk-indexed cache assignment, as in `_laplace_get_bstar!`.
