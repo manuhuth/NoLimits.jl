@@ -934,3 +934,87 @@ end
         @test H_uq ≈ H_ref rtol = 2.0e-4
     end
 end
+
+# ── Logit(a, b) scale ────────────────────────────────────────────────────────
+
+@testset "Logit(a, b) UQ helpers and Wald density" begin
+    fe = @fixedEffects begin
+        p = RealNumber(2.0; scale = Logit(0, 5), calculate_se = true)
+        v = RealVector([0.3, 1.0]; scale = [:logit, Logit(0, 5)], calculate_se = true)
+    end
+    kinds = NoLimits._flat_transform_kinds_for_free(fe, [:p, :v])
+    @test kinds == [Logit(0, 5), :logit, Logit(0, 5)]
+    @test NoLimits._is_monotone_scalar_kind(Logit(0, 5))
+    @test NoLimits._wald_closed_form_kind(:wald, :natural, 1, ones(1, 1), [Logit(0, 5)]) == Logit(0, 5)
+
+    μ, σ = 0.4, 0.7
+    x, y = NoLimits._wald_density_xy(Logit(0, 5), μ, σ^2)
+    @test all(0.0 .< x .< 5.0)
+    @test all(y .>= 0.0)
+    area = sum((x[2:end] .- x[1:(end - 1)]) .* (y[2:end] .+ y[1:(end - 1)]) ./ 2)
+    @test isapprox(area, 1.0; atol = 0.01)
+    @test y[150] ≈ pdf(LogitNormal(μ, σ), x[150] / 5) / 5 rtol = 1.0e-10
+    @test NoLimits._wald_density_xy(Logit(0, 5), 0.0, 0.0) === nothing
+end
+
+@testset "Logit(a, b) scale: MLE fit and Wald UQ on fx_nore_df" begin
+    m_logit = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+        @fixedEffects begin
+            a = RealNumber(0.2)
+            b = RealNumber(0.1)
+            σ = RealNumber(0.3, scale = :logit)
+        end
+        @formulas begin
+            y ~ Normal(a + b * t, σ)
+        end
+    end
+    m_logit01 = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+        @fixedEffects begin
+            a = RealNumber(0.2)
+            b = RealNumber(0.1)
+            σ = RealNumber(0.3, scale = Logit(0, 1))
+        end
+        @formulas begin
+            y ~ Normal(a + b * t, σ)
+        end
+    end
+    m_logit05 = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+        @fixedEffects begin
+            a = RealNumber(0.2)
+            b = RealNumber(0.1)
+            σ = RealNumber(0.3, scale = Logit(0, 5))
+        end
+        @formulas begin
+            y ~ Normal(a + b * t, σ)
+        end
+    end
+    fit(m) = fit_model(DataModel(m, fx_nore_df(); primary_id = :ID, time_col = :t), NoLimits.MLE())
+    r1 = fit(m_logit)
+    r2 = fit(m_logit01)
+    r5 = fit(m_logit05)
+    # the true σ̂ (≈ 0.06) lies well inside (0, 1)
+    @test 0.0 < NoLimits.get_params(r1; scale = :untransformed).σ < 1.0
+    @test NoLimits.get_params(r1; scale = :untransformed) == NoLimits.get_params(r2; scale = :untransformed)
+    @test get_objective(r1) == get_objective(r2)
+    @test NoLimits.get_params(r5; scale = :untransformed).σ ≈ NoLimits.get_params(r1; scale = :untransformed).σ rtol = 1.0e-4
+
+    uq = compute_uq(r5; method = :wald, n_draws = 20, rng = Random.Xoshiro(3))
+    j = findfirst(==(:σ), get_uq_parameter_names(uq))
+    est_t = get_uq_estimates(uq; scale = :transformed, as_component = false)
+    se_t = sqrt.(diag(get_uq_vcov(uq; scale = :transformed)))
+    z = quantile(Normal(), 0.975)
+    ints_n = get_uq_intervals(uq; scale = :natural, as_component = false)
+    sig(x) = 1 / (1 + exp(-x))
+    @test ints_n.lower[j] ≈ 5 * sig(est_t[j] - z * se_t[j]) rtol = 1.0e-10
+    @test ints_n.upper[j] ≈ 5 * sig(est_t[j] + z * se_t[j]) rtol = 1.0e-10
+    @test get_uq_estimates(uq; scale = :natural, as_component = false)[j] ≈ 5 * sig(est_t[j]) rtol = 1.0e-10
+end

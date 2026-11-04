@@ -46,6 +46,12 @@ This release changes the plotting API without deprecation paths:
 
 ### Changes
 
+- New scale `Logit(a, b)` for `RealNumber` and `RealVector`: the logit transform on a
+  finite open interval `(a, b)`, usable per element in mixed `RealVector` scales.
+  `Logit(0, 1)` is identical to `:logit`. Wald intervals and densities use the closed
+  logit-normal form mapped to `(a, b)`.
+- `:logit` (and `Logit(a, b)`) parameters now reject a finite `lower`/`upper` outside the
+  domain `[0, 1]` (`[a, b]`) with an error. Such bounds were previously ignored silently.
 - Plot layout defaults (#383), the same for every `plot_*` function: one figure-level
   legend below the panels that wraps into several rows when it does not fit the figure
   width (no per-panel `axislegend`; no legend for a single unlabelled series); shared

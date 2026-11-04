@@ -205,3 +205,25 @@ _spec_for(it, name) = it.specs[findfirst(s -> s.name == name, it.specs)]
         @test all(isfinite, ForwardDiff.gradient(z -> _block_logabsdetjac(spec, z), blk))
     end
 end
+
+@testset "logabsdetjac Logit(a, b)" begin
+    fe = @fixedEffects begin
+        p = RealNumber(1.0; scale = Logit(0, 5))
+        v = RealVector([1.0, 0.3, 2.0]; scale = [Logit(0, 5), :logit, :log])
+    end
+    it, θt = _it_theta(fe)
+    sp = _spec_for(it, :p)
+    sv = _spec_for(it, :v)
+    z = θt.p
+    s = 1 / (1 + exp(-z))
+    @test _block_logabsdetjac(sp, z) ≈ log(5) + log(s * (1 - s)) rtol = 1.0e-12
+    @test _block_logabsdetjac(sp, z) ≈ fd_ref(t -> [5 / (1 + exp(-t[1]))], [z]) atol = 1.0e-8
+    ax = getaxes(θt)
+    z0 = collect(θt)
+    @test logabsdetjac(it, θt) ≈ fd_ref(t -> collect(it(ComponentArray(t, ax))), z0) atol = 1.0e-8
+    @test all(isfinite, ForwardDiff.gradient(t -> logabsdetjac(it, ComponentArray(t, ax)), z0))
+    # beyond the clamp the inverse is constant: singular Jacobian
+    @test _block_logabsdetjac(sp, 20.0) == -Inf
+    @test _block_logabsdetjac(sp, -25.0) == -Inf
+    @test _block_logabsdetjac(sv, [25.0, 0.0, 0.0]) == -Inf
+end

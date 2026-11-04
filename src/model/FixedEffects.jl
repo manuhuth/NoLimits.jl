@@ -567,7 +567,7 @@ function _param_spec(name::Symbol, p::RealNumber)
 end
 
 function _param_spec(name::Symbol, p::RealVector)
-    scales = p.scale  # Vector{Symbol}
+    scales = p.scale  # Vector{_ScaleKind}
     n = length(p.value)
     first_scale = scales[1]
     if all(s -> s === first_scale, scales)
@@ -809,6 +809,16 @@ function _flatten_by_specs(
     return flat_names
 end
 
+# A natural bound at or beyond the logit domain edge is no extra box: map it to ∓Inf.
+function _logit_lower_bound_t(sk, x)
+    a, _ = _logit_domain(sk)
+    return (isinf(x) || x <= a) ? -Inf : _scalar_forward(sk, x)
+end
+function _logit_upper_bound_t(sk, x)
+    _, b = _logit_domain(sk)
+    return (isinf(x) || x >= b) ? Inf : _scalar_forward(sk, x)
+end
+
 function _transform_bounds(
         bounds::Tuple{ComponentArray, ComponentArray},
         names::Vector{Symbol}, specs::Vector{TransformSpec}; params = NamedTuple()
@@ -833,17 +843,16 @@ function _transform_bounds(
                 push!(lower_pairs, name => l2)
                 push!(upper_pairs, name => u2)
             end
-        elseif spec.kind == :logit
+        elseif _is_logit_scale(spec.kind)
+            sk = spec.kind
             if l isa AbstractArray
-                l2 = map(x -> (isinf(x) || x <= 0) ? -Inf : logit_forward(x), l)
-                u2 = map(x -> (isinf(x) || x >= 1) ? Inf : logit_forward(x), u)
+                l2 = map(x -> _logit_lower_bound_t(sk, x), l)
+                u2 = map(x -> _logit_upper_bound_t(sk, x), u)
                 push!(lower_pairs, name => l2)
                 push!(upper_pairs, name => u2)
             else
-                l2 = (isinf(l) || l <= 0) ? -Inf : logit_forward(l)
-                u2 = (isinf(u) || u >= 1) ? Inf : logit_forward(u)
-                push!(lower_pairs, name => l2)
-                push!(upper_pairs, name => u2)
+                push!(lower_pairs, name => _logit_lower_bound_t(sk, l))
+                push!(upper_pairs, name => _logit_upper_bound_t(sk, u))
             end
         elseif spec.kind == :elementwise
             mask = spec.mask
@@ -853,11 +862,9 @@ function _transform_bounds(
                 if mask[j] === :log
                     l2[j] = l2[j] == -Inf ? log(EPSILON) : log(l2[j])
                     u2[j] = u2[j] == Inf ? Inf : log(u2[j])
-                elseif mask[j] === :logit
-                    lj = l2[j]
-                    uj = u2[j]
-                    l2[j] = (isinf(lj) || lj <= 0) ? -Inf : logit_forward(lj)
-                    u2[j] = (isinf(uj) || uj >= 1) ? Inf : logit_forward(uj)
+                elseif _is_logit_scale(mask[j])
+                    l2[j] = _logit_lower_bound_t(mask[j], l2[j])
+                    u2[j] = _logit_upper_bound_t(mask[j], u2[j])
                 end
             end
             push!(lower_pairs, name => l2)

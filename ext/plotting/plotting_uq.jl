@@ -199,7 +199,7 @@ function plot_uq_distributions(
             _uq_push_xy!(bar_df, curve_label, h.centers, h.heights)
         else
             kind = closed_form_kinds[k]
-            if kind == :normal || kind == :lognormal || kind == :logitnormal
+            if kind == :normal || kind == :lognormal || kind == :logitnormal || kind isa Logit
                 curve_label = "Approx. Density"
                 xy = _wald_density_xy(kind, est_t[j], vcov_t[j, j])
                 if xy !== nothing && ints !== nothing && interval_ok(ints.lower[j], ints.upper[j])

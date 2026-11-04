@@ -145,7 +145,7 @@ function _flat_transform_kinds_for_free(fe::FixedEffects, free_names::Vector{Sym
     θt = get_θ0_transformed(fe)
     spec_map = _spec_map(fe)
 
-    out = Symbol[]
+    out = _ScaleKind[]
     for name in free_names
         spec = spec_map[name]
         v = getproperty(θt, name)
@@ -267,7 +267,7 @@ function _extend_natural_stickbreak(
         fe::FixedEffects,
         free_names::Vector{Symbol},
         active_names::Vector{Symbol},
-        active_kinds::Vector{Symbol},
+        active_kinds::AbstractVector,
         est_n::Vector{Float64},
         draws_n::Union{Nothing, Matrix{Float64}},
         intervals_n::Union{Nothing, UQIntervals}
