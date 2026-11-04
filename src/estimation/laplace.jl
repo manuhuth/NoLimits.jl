@@ -239,6 +239,9 @@ mutable struct _LaplaceGradBuffers{T}
     logdet_b_cfg::_FDCfgStore
     Jθ_cfg::_FDCfgStore
     Jb_cfg::_FDCfgStore
+    # memo of `_theta_split_obs_re` (see `_onepass_split!`): key (nothing = unset), (o, p)
+    split_key::Any
+    split::Tuple{Vector{Int}, Vector{Int}}
 end
 
 struct _LaplaceHessCache{T, L, H, C, V}
@@ -393,7 +396,7 @@ function _get_grad_buffers!(
             grad_logf, Gθ, grad_logdet_θ, grad_logdet_b, Jθ, Jb,
             nθ, nb, gradb_tmp,
             _FDCfgStore(), _FDCfgStore(), _FDCfgStore(), _FDCfgStore(),
-            _FDCfgStore(), _FDCfgStore(), _FDCfgStore()
+            _FDCfgStore(), _FDCfgStore(), _FDCfgStore(), nothing, (Int[], Int[])
         )
         ad_cache.buffers[bi] = entry
     elseif use_trace && (size(entry.Jθ, 1) == 0 || size(entry.Jb, 1) == 0)
@@ -1265,7 +1268,6 @@ function _newton_inner_solve(
         tctx = nothing,
         f0_min::Union{Nothing, Float64} = nothing
     )
-    nb = length(b0)
     # Exception-safe: a degenerate θ falls back to the per-call path inside the
     # logf wrapper (-Inf) instead of throwing out of the inner solve.
     tctx === nothing && (tctx = _safe_theta_ctx(dm, batch_info, θ_val, cache))
@@ -1281,7 +1283,19 @@ function _newton_inner_solve(
         ad_cache.grad_cfg[bi] = entry
     end
     cfg = _get_fd_cfg!(entry::_FDCfgStore, f, b, () -> ForwardDiff.GradientConfig(f, b))
-    g = Vector{Float64}(undef, nb)
+    # `cfg` comes out of the untyped store: run the loop behind a function barrier so its
+    # AD calls and the work on their results dispatch statically.
+    return _newton_inner_loop(
+        f, cfg, newton, dm, batch_info, θ_val, const_cache, cache, ad_cache, bi, b,
+        fval, tctx
+    )
+end
+
+function _newton_inner_loop(
+        f::FF, cfg, newton::NewtonInner, dm, batch_info, θ_val, const_cache, cache,
+        ad_cache, bi, b, fval, tctx
+    ) where {FF}
+    g = Vector{Float64}(undef, length(b))
     b_try = similar(b)
     for _ in 1:(newton.maxiters)
         H = _newton_grad_hess!(
@@ -1338,10 +1352,18 @@ end
 # start against an alternative with the first pass of the solve itself.
 function _newton_exact_solve(f, b0::Vector{Float64}, newton::NewtonInner; f0_min::Union{Nothing, Float64} = nothing)
     b = copy(b0)
-    b_try = similar(b)
     rc = ForwardDiff.DiffResults.HessianResult(b)
+    # ForwardDiff picks the chunk, hence the type of `cfg`, from length(b) at runtime: run
+    # the loop behind a function barrier so every hessian! call in it dispatches statically.
+    return _newton_exact_loop(f, b, rc, ForwardDiff.HessianConfig(f, rc, b), newton, f0_min)
+end
+
+function _newton_exact_loop(
+        f::FF, b::Vector{Float64}, rc, cfg::ForwardDiff.HessianConfig, newton::NewtonInner,
+        f0_min::Union{Nothing, Float64}
+    ) where {FF}
+    b_try = similar(b)
     rt = ForwardDiff.DiffResults.HessianResult(b)
-    cfg = ForwardDiff.HessianConfig(f, rc, b)
     rc = ForwardDiff.hessian!(rc, f, b, cfg)
     fval = Float64(ForwardDiff.DiffResults.value(rc))
     f0_min === nothing || (isfinite(fval) && fval > f0_min) || return nothing
@@ -2340,7 +2362,7 @@ function _laplace_grad_batch(
             nθ, nb,
             Vector{eltype(θ_vec)}(undef, nb),
             _FDCfgStore(), _FDCfgStore(), _FDCfgStore(), _FDCfgStore(),
-            _FDCfgStore(), _FDCfgStore(), _FDCfgStore()
+            _FDCfgStore(), _FDCfgStore(), _FDCfgStore(), nothing, (Int[], Int[])
         ) :
         _get_grad_buffers!(ad_cache, bi, eltype(θ_vec), nθ, nb, use_trace_logdet_grad)
     # g = ∂ logf / ∂b and the curvature H from one pass (`_onepass_logdet_derivatives`), so
@@ -2348,7 +2370,10 @@ function _laplace_grad_batch(
     # RE-only fixed effects no model solve. `nothing` (e.g. a third-party curvature): the
     # separate passes below.
     fast = use_trace_logdet_grad && !use_hutchinson ?
-        _onepass_logdet_derivatives(hmode, dm, batch_info, θ_vec, b, const_cache, cache, tctx) :
+        _onepass_logdet_derivatives(
+            hmode, dm, batch_info, θ_vec, b, const_cache, cache, tctx;
+            split = _onepass_split!(buf, dm, θ_vec)
+        ) :
         nothing
     # envelope term (from the one-pass θ derivatives when they carry it)
     grad_logf = if fast !== nothing && fast.grad_logf !== nothing
@@ -3806,18 +3831,20 @@ end
 # (symmetrized), Jb = ∂vech(H)/∂b), or `nothing`, and then `_laplace_grad_batch`
 # differentiates gradient and curvature separately. Methods: exact Hessian here,
 # FisherInformationCurvature in focei.jl; other curvatures take the separate passes.
-_onepass_logdet_derivatives(::AbstractCurvature, args...) = nothing
+_onepass_logdet_derivatives(::AbstractCurvature, args...; kwargs...) = nothing
 
 function _onepass_logdet_derivatives(
         ::ExactHessianCurvature, dm::DataModel, batch_info::REBatchInfo, θ, b,
-        const_cache::REConstantsCache, cache::_LLCache, tctx
+        const_cache::REConstantsCache, cache::_LLCache, tctx; split = nothing
     )
     # value, gradient and Hessian of log f in b from one second-order pass; the value row
-    # gives the envelope term ∂ log f/∂θ from the same θ pass (`with_logf`)
-    function F(θv, bv, tc)
+    # gives the envelope term ∂ log f/∂θ from the same θ pass (`with_logf`). `cb` is the
+    # (default) ForwardDiff chunk for b, passed in so the config type is static.
+    function F(θv, bv, tc, cb)
         T = promote_type(eltype(θv), eltype(bv))
         f = bw -> _laplace_logf_batch(dm, batch_info, θv, bw, const_cache, cache; tctx = tc)
-        res = ForwardDiff.hessian!(ForwardDiff.DiffResults.HessianResult(similar(bv, T)), f, bv)
+        res = ForwardDiff.DiffResults.HessianResult(similar(bv, T))
+        res = ForwardDiff.hessian!(res, f, bv, ForwardDiff.HessianConfig(f, res, bv, cb))
         return vcat(
             ForwardDiff.DiffResults.value(res), ForwardDiff.DiffResults.gradient(res),
             _vech(ForwardDiff.DiffResults.hessian(res))
@@ -3829,7 +3856,8 @@ function _onepass_logdet_derivatives(
         eltype(b) !== Float64) ? nothing :
         o -> _onepass_J_x_inner(dm, batch_info, θ, b, const_cache, cache, o)
     return _onepass_from_F(
-        F, dm, batch_info, θ, b, const_cache, cache, tctx; with_logf = true, Jx = Jx
+        F, dm, batch_info, θ, b, const_cache, cache, tctx; with_logf = true, split = split,
+        Jx = Jx
     )
 end
 
@@ -3884,6 +3912,16 @@ function _onepass_J_x_inner(dm::DataModel, batch_info::REBatchInfo, θ, b, const
     return J
 end
 
+# Result of `_onepass_from_F` (concrete field types, so `_laplace_grad_batch` stays
+# statically dispatched behind the kernel's function barrier).
+struct _OnePassDerivs
+    Gθ::Matrix{Float64}
+    Jθ::Matrix{Float64}
+    Hex::Matrix{Float64}
+    Jb::Matrix{Float64}
+    grad_logf::Union{Nothing, Vector{Float64}}
+end
+
 # The θ pass gets no θ-context: a cached prior Hessian is constant in θ only at the
 # Float64 point. Fixed effects that appear only in random-effects distributions (not in
 # `@formulas`, `@preDifferentialEquation`, `@DifferentialEquation`, `@initialDE`) move F
@@ -3891,38 +3929,80 @@ end
 # model solve.
 # `with_logf = true`: F's first row is log f itself, and `grad_logf` = ∂ log f/∂θ comes
 # from the same θ pass (for the RE-only fixed effects from the RE prior, constant levels
-# included); otherwise `grad_logf = nothing`.
+# included); otherwise `grad_logf = nothing`. `split`: `(o, p)` of `_theta_split_obs_re`
+# when the caller has it memoized. F is called as `F(θv, bv, tc, cb)` with `cb` the
+# ForwardDiff chunk for b.
+# `Jx`: `nothing`, or `o -> J` returning the (θ[o], b) Jacobian of F's rows directly
+# (DE models, `_onepass_J_x_inner`); it is passed through the barrier and replaces the
+# outer `ForwardDiff.jacobian` over F, so `cx` is then unused.
+#
+# ForwardDiff picks its default chunk from the input length at runtime, so configs built
+# inside this kernel would make every AD call, and all the work on its results, a
+# dynamic dispatch with boxed values. The default chunks are picked here and the kernel
+# is entered once through a function barrier: same chunks, tags and arithmetic.
 function _onepass_from_F(
         F, dm::DataModel, batch_info::REBatchInfo, θ, b, const_cache, cache, tctx;
-        with_logf::Bool = false, Jx = nothing
+        with_logf::Bool = false, split = nothing, Jx = nothing
     )
+    o, p = split === nothing ? _theta_split_obs_re(dm, θ) : split
+    cx = ForwardDiff.Chunk(length(o) + length(b))
+    cp = isempty(p) ? nothing : ForwardDiff.Chunk(length(p))
+    return _onepass_kernel(
+        F, dm, batch_info, θ, b, const_cache, cache, o, p,
+        cx, ForwardDiff.Chunk(b), cp, with_logf, Jx
+    )::_OnePassDerivs
+end
+
+function _onepass_kernel(
+        F::FF, dm::DataModel, batch_info::REBatchInfo, θ, b, const_cache, cache, o, p,
+        cx::ForwardDiff.Chunk, cb::ForwardDiff.Chunk, cp, with_logf::Bool, Jx::JX
+    ) where {FF, JX}
     nb = length(b)
     nv = _ntri(nb)
     k = with_logf ? 1 : 0
-    o, p = _theta_split_obs_re(dm, θ)
     Jθ = Matrix{Float64}(undef, k + nb + nv, length(θ))
     # outcome-side θ and b differentiated together: one model solve instead of two
     no = length(o)
-    J = Jx !== nothing ? Jx(o) : ForwardDiff.jacobian(
-        x -> F(_theta_with(θ, o, view(x, 1:no)), x[(no + 1):end], nothing), vcat(θ[o], b)
-    )
+    J = if Jx === nothing
+        gx = x -> F(_theta_with(θ, o, view(x, 1:no)), x[(no + 1):end], nothing, cb)
+        xo = vcat(θ[o], b)
+        ForwardDiff.jacobian(gx, xo, ForwardDiff.JacobianConfig(gx, xo, cx))
+    else
+        Jx(o)::Matrix{Float64}
+    end
     Jθ[:, o] = view(J, :, 1:no)
     if !isempty(p)
         prior(θv) = begin
             θr = _symmetrize_psd_params(θv, get_fixed(get_model(dm)))
             lp = _FOCEIPriorLogf(dm, batch_info, θr, const_cache, cache)
-            gh = vcat(ForwardDiff.gradient(lp, b), _vech(ForwardDiff.hessian(lp, b)))
+            gh = vcat(
+                ForwardDiff.gradient(lp, b, ForwardDiff.GradientConfig(lp, b, cb)),
+                _vech(ForwardDiff.hessian(lp, b, ForwardDiff.HessianConfig(lp, b, cb)))
+            )
             with_logf ? vcat(_re_logpdf_batch(dm, batch_info, θv, b, const_cache, cache), gh) : gh
         end
-        Jθ[:, p] = ForwardDiff.jacobian(x -> prior(_theta_with(θ, p, x)), θ[p])
+        gp = x -> prior(_theta_with(θ, p, x))
+        xp = θ[p]
+        Jθ[:, p] = ForwardDiff.jacobian(gp, xp, ForwardDiff.JacobianConfig(gp, xp, cp))
     end
     Jb = J[:, (no + 1):end]
     Hex = Jb[(k + 1):(k + nb), :]
-    return (
-        Gθ = Jθ[(k + 1):(k + nb), :], Jθ = Jθ[(k + nb + 1):end, :],
-        Hex = (Hex + Hex') / 2, Jb = Jb[(k + nb + 1):end, :],
-        grad_logf = with_logf ? Jθ[1, :] : nothing,
+    return _OnePassDerivs(
+        Jθ[(k + 1):(k + nb), :], Jθ[(k + nb + 1):end, :],
+        (Hex + Hex') / 2, Jb[(k + nb + 1):end, :],
+        with_logf ? Jθ[1, :] : nothing
     )
+end
+
+# `_theta_split_obs_re(dm, θ)` memoized in a batch's gradient buffers: it depends only on
+# the model and θ's axes (the key, compared with `===`), but rebuilds name sets and a
+# ComponentArray, once per batch and gradient call without the memo.
+function _onepass_split!(buf::_LaplaceGradBuffers, dm::DataModel, θ::ComponentArray)
+    key = (get_model(dm), getaxes(θ))
+    buf.split_key === key && return buf.split
+    buf.split = _theta_split_obs_re(dm, θ)
+    buf.split_key = key
+    return buf.split
 end
 
 # Positions in θ of the outcome-side fixed effects (`o`) and of those that enter only

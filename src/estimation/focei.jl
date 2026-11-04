@@ -798,14 +798,14 @@ end
 # closed-form score or the evaluation fails at (θ, b).
 function _onepass_logdet_derivatives(
         c::FisherInformationCurvature, dm::DataModel, batch_info::REBatchInfo, θ, b,
-        const_cache::REConstantsCache, cache::_LLCache, tctx
+        const_cache::REConstantsCache, cache::_LLCache, tctx; split = nothing
     )
     r = _focei_grad_negH_batch(
         dm, batch_info, θ, b, const_cache, cache; interaction = c.interaction, tctx = tctx
     )
     (r === nothing || r[1] === nothing) && return nothing
     nv = _ntri(length(b))
-    function F(θv, bv, tc)
+    function F(θv, bv, tc, _)
         s = _focei_grad_negH_batch(
             dm, batch_info, θv, bv, const_cache, cache; interaction = c.interaction, tctx = tc
         )
@@ -813,7 +813,7 @@ function _onepass_logdet_derivatives(
         (s === nothing || s[1] === nothing) && return fill(T(NaN), length(bv) + nv)
         return vcat(s[1], _vech(-s[2]))
     end
-    return _onepass_from_F(F, dm, batch_info, θ, b, const_cache, cache, tctx)
+    return _onepass_from_F(F, dm, batch_info, θ, b, const_cache, cache, tctx; split = split)
 end
 
 # Newton-step hook (laplace.jl `_newton_grad_hess!`): gradient and curvature in one pass.
