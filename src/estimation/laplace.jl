@@ -968,6 +968,24 @@ function _safe_theta_ctx(
     end
 end
 
+# Context for a Gauss-Newton inner solve (`FisherInformationCurvature`) at a fixed Float64
+# θ: the b-constant Gaussian-RE prior Hessian attached once per solve, so the Newton
+# iterations (`_focei_prior_negH`) stop re-running ForwardDiff.hessian of the prior at
+# every step. Same matrix bit for bit (see `_ctx_with_prior_hess`); a non-Gaussian RE
+# prior, an existing Λ, another curvature or a failed evaluation leave `tctx` unchanged.
+function _newton_curvature_ctx(
+        curvature, tctx, dm::DataModel, batch_info::REBatchInfo,
+        const_cache::REConstantsCache, cache::_LLCache, b
+    )
+    (curvature isa _FOCEIHess && tctx isa _LaplaceThetaCtx && tctx.prior_hess === nothing) ||
+        return tctx
+    return try
+        _ctx_with_prior_hess(tctx, dm, batch_info, const_cache, cache, b)
+    catch err
+        _is_numeric_error(err) ? tctx : rethrow(err)
+    end
+end
+
 # Context for one objective/gradient batch term; FOCEI additionally gets the
 # cached prior Hessian when the REs are all Gaussian. (`hmode` is untyped here
 # because `_HessMode` is defined further down this file.)
@@ -1274,6 +1292,7 @@ function _newton_inner_solve(
     f = _LaplaceLogfBatch(dm, batch_info, θ_val, const_cache, cache, tctx)
     newton.curvature isa ExactHessianCurvature &&
         return _newton_exact_solve(f, b0, newton; f0_min = f0_min)
+    tctx = _newton_curvature_ctx(newton.curvature, tctx, dm, batch_info, const_cache, cache, b0)
     b = copy(b0)
     fval = f(b)
     isfinite(fval) || return _NewtonSol(b, -Inf, Inf, false)
@@ -1440,6 +1459,7 @@ function _newton_tr_inner_solve(
     tctx === nothing && (tctx = _safe_theta_ctx(dm, batch_info, θ_val, cache))
     f = _LaplaceLogfBatch(dm, batch_info, θ_val, const_cache, cache, tctx)
     isfinite(f(b0)) || return _NewtonSol(copy(b0), -Inf, Inf, false)
+    tctx = _newton_curvature_ctx(newton.curvature, tctx, dm, batch_info, const_cache, cache, b0)
     entry = ad_cache.grad_cfg[bi]
     if entry === nothing
         entry = _FDCfgStore()
