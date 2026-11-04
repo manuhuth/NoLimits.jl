@@ -3823,9 +3823,65 @@ function _onepass_logdet_derivatives(
             _vech(ForwardDiff.DiffResults.hessian(res))
         )
     end
+    # DE models: the (θ[o], b) level innermost in the call order (`_onepass_J_x_inner`),
+    # so the ODE solve can compress it (`_ode_dual_compress`, common.jl)
+    Jx = (get_de(get_model(dm)) === nothing || eltype(θ) !== Float64 ||
+        eltype(b) !== Float64) ? nothing :
+        o -> _onepass_J_x_inner(dm, batch_info, θ, b, const_cache, cache, o)
     return _onepass_from_F(
-        F, dm, batch_info, θ, b, const_cache, cache, tctx; with_logf = true
+        F, dm, batch_info, θ, b, const_cache, cache, tctx; with_logf = true, Jx = Jx
     )
+end
+
+# J = ∂[log f; ∇_b log f; vech ∇²_b log f]/∂(θ[o], b), the matrix `_onepass_from_F` gets
+# from `ForwardDiff.jacobian` of F, with the nesting reversed: two outer passes over a
+# shift β of b (second order in b) around an inner gradient over x = (θ[o], b). The
+# innermost call is the outermost dual level, so the ODE solve sees the n = no + nb
+# partials of x on its OUTER level, where `_ode_dual_compress` reduces them to the few DE
+# parameters that depend on x (e.g. n = 8 -> 3); in the original order that level is the
+# innermost one and cannot be compressed. Same function (log f at θ(x), x_b + (β - b);
+# x_b + (β - b) == b exactly in Float64), same derivatives, one model solve.
+function _onepass_J_x_inner(dm::DataModel, batch_info::REBatchInfo, θ, b, const_cache, cache, o)
+    no, nb = length(o), length(b)
+    n = no + nb
+    m1 = n + 1
+    x0 = vcat(θ[o], b)
+    function Gx(β)      # [log f; ∇_x log f] at the shift β
+        δ = β .- b
+        g = x -> _laplace_logf_batch(
+            dm, batch_info, _theta_with(θ, o, view(x, 1:no)), view(x, (no + 1):n) .+ δ,
+            const_cache, cache; tctx = nothing
+        )
+        xT = convert(Vector{eltype(β)}, x0)
+        r = ForwardDiff.gradient!(ForwardDiff.DiffResults.GradientResult(similar(xT)), g, xT)
+        return vcat(ForwardDiff.DiffResults.value(r), ForwardDiff.DiffResults.gradient(r))
+    end
+    function A(β)       # [Gx; vec ∂_β Gx]
+        r = ForwardDiff.jacobian!(
+            ForwardDiff.DiffResults.JacobianResult(similar(β, m1), β), Gx, β
+        )
+        return vcat(ForwardDiff.DiffResults.value(r), vec(ForwardDiff.DiffResults.jacobian(r)))
+    end
+    bv = Vector{Float64}(b)
+    res = ForwardDiff.jacobian!(
+        ForwardDiff.DiffResults.JacobianResult(zeros(m1 * (nb + 1)), bv), A, bv
+    )
+    Av = ForwardDiff.DiffResults.value(res)
+    B = ForwardDiff.DiffResults.jacobian(res)
+    # Av[m1*a + 1 + i] = ∂²log f/∂β_a∂x_i;  B[m1*a + 1 + i, c] = ∂³log f/∂β_c∂β_a∂x_i
+    J = Matrix{Float64}(undef, 1 + nb + _ntri(nb), n)
+    @inbounds for i in 1:n
+        J[1, i] = Av[1 + i]
+        for a in 1:nb
+            J[1 + a, i] = Av[m1 * a + 1 + i]
+        end
+        r = 1 + nb
+        for c in 1:nb, a in 1:c          # `_vech` order: H[a, c], a <= c
+            r += 1
+            J[r, i] = B[m1 * a + 1 + i, c]
+        end
+    end
+    return J
 end
 
 # The θ pass gets no θ-context: a cached prior Hessian is constant in θ only at the
@@ -3838,7 +3894,7 @@ end
 # included); otherwise `grad_logf = nothing`.
 function _onepass_from_F(
         F, dm::DataModel, batch_info::REBatchInfo, θ, b, const_cache, cache, tctx;
-        with_logf::Bool = false
+        with_logf::Bool = false, Jx = nothing
     )
     nb = length(b)
     nv = _ntri(nb)
@@ -3847,7 +3903,7 @@ function _onepass_from_F(
     Jθ = Matrix{Float64}(undef, k + nb + nv, length(θ))
     # outcome-side θ and b differentiated together: one model solve instead of two
     no = length(o)
-    J = ForwardDiff.jacobian(
+    J = Jx !== nothing ? Jx(o) : ForwardDiff.jacobian(
         x -> F(_theta_with(θ, o, view(x, 1:no)), x[(no + 1):end], nothing), vcat(θ[o], b)
     )
     Jθ[:, o] = view(J, :, 1:no)
