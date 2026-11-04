@@ -3986,7 +3986,7 @@ end
 
 # Expand the levels of `Ps` (outermost first), innermost first.
 @inline _dual_expand(::Tuple{}, y) = y
-@inline function _dual_expand(Ps::Tuple, y::ForwardDiff.Dual{Tg}) where {Tg}
+@inline function _dual_expand(Ps::Tuple{Any, Vararg{Any}}, y::ForwardDiff.Dual{Tg}) where {Tg}
     P = first(Ps)
     rest = Base.tail(Ps)
     g = ForwardDiff.partials(y)
