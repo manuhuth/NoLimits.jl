@@ -341,12 +341,35 @@ function _focei_collect_obs_dists!(
     return _focei_collect_obs!(_focei_rows_push!, out, dm, idx, θ, η_ind, cache)
 end
 
+# Largest number of distinct concrete element types `_focei_narrow` keeps as a `Union`
+# (Julia's union splitting limit, `InferenceParams.max_union_splitting`).
+const _FOCEI_MAX_UNION = 4
+
+# Narrow a boxed `Vector{Any}` for the per-observation loops. One element type: the
+# concrete vector of `map(identity, out)`. Two to `_FOCEI_MAX_UNION` types (models with
+# several outcome families, e.g. Normal + Poisson + Bernoulli): a `Vector` of their
+# `Union`, so the score and information loops union-split into static calls;
+# `map(identity, out)` would give their abstract `typejoin` (e.g.
+# `UnivariateDistribution`) and one dynamic dispatch per observation and call.
+function _focei_narrow(out::Vector{Any})
+    isempty(out) && return map(identity, out)
+    types = Any[]
+    for x in out
+        t = typeof(x)
+        any(s -> s === t, types) || push!(types, t)
+        length(types) > _FOCEI_MAX_UNION && return map(identity, out)
+    end
+    length(types) == 1 && return map(identity, out)
+    return Vector{Union{types...}}(out)
+end
+
 # Returns a Vector of the outcome distributions for every (non-missing) observation in
 # the batch, in a fixed order. Collected into `Vector{Any}`, then narrowed via
-# `map(identity, ...)`: for the (typical) single-family model this yields a concretely
+# `_focei_narrow`: for the (typical) single-family model this yields a concretely
 # typed vector, so every downstream `_focei_paramcount` / `_focei_diag_information` /
 # `_focei_expected_information` call in the Hessian assembly dispatches statically —
-# measured ~50× on `_focei_data_term` vs iterating the boxed `Vector{Any}`.
+# measured ~50× on `_focei_data_term` vs iterating the boxed `Vector{Any}`; with a few
+# families a small-`Union` vector, on which these calls union-split.
 function _focei_obs_dists_batch(
         dm::DataModel, batch_info::REBatchInfo, θ_re::ComponentArray,
         b, const_cache::REConstantsCache, cache::_LLCache
@@ -357,7 +380,7 @@ function _focei_obs_dists_batch(
         ok = _focei_collect_obs_dists!(out, dm, i, θ_re, η_ind, cache)
         ok || return Vector{Any}()
     end
-    return map(identity, out)
+    return _focei_narrow(out)
 end
 
 # Stacked outcome-distribution parameters Φ(b) — the Jacobian target. Collected
@@ -694,7 +717,12 @@ function _focei_score(d::MvNormal, y)
 end
 
 # Observed values in the order of `_focei_obs_dists_batch`: individual, observation row,
-# outcome column, missing values skipped.
+# outcome column, missing values skipped. Concrete eltype (e.g. Vector{Float64}) for the
+# score loop. Scalar columns of mixed number types (Float64 next to Int64 counts or 0/1
+# outcomes) are promoted to Float64 when exactly representable (every closed-form
+# score converts y to the float type of the distribution parameters anyway): their
+# `typejoin` `Real` would make every score call a dynamic dispatch, and the product of
+# value and distribution unions too large to split.
 function _focei_obs_values_batch(dm::DataModel, batch_info::REBatchInfo)
     out = Any[]
     cols = get_obs_cols(dm)
@@ -705,7 +733,11 @@ function _focei_obs_values_batch(dm::DataModel, batch_info::REBatchInfo)
             _obs_is_missing(y) || push!(out, y)
         end
     end
-    return map(identity, out)  # concrete eltype (e.g. Vector{Float64}) for the score loop
+    ys = map(identity, out)
+    isconcretetype(eltype(ys)) && return ys
+    all(y -> y isa Float64 || (y isa Integer && Float64(y) == y), ys) &&
+        return Vector{Float64}(ys)
+    return ys
 end
 
 # grad += Σⱼ Jⱼᵀ sⱼ; `false` when a family has no closed-form score. Function barrier: the
