@@ -252,7 +252,9 @@ end
 # solve the DE (if any) reusing the precomputed `pre`, hoist the row-constant
 # formula context, and hand the row loop to `rows_f!` behind a function barrier
 # (mirrors `_loglikelihood_individual`). `rows_f!` is called as
-# `rows_f!(out, obs_f, ctx, sol_acc, const_cov, obs_series, vrows, obs_cols)`.
+# `rows_f!(out, obs_f, ctx, sol_acc, const_cov, obs_series, vrows, cols)` with the
+# outcome columns as a type-level tuple `cols = Val((obs_cols...,))` (see
+# `_focei_push_cols!`).
 function _focei_collect_obs!(
         rows_f!::RF, out::Vector, dm::DataModel, idx::Int,
         θ, η_ind, cache::_LLCache
@@ -309,28 +311,70 @@ function _focei_collect_obs!(
             length(obs_rows)
         )
     sol_acc = sol_accessors === nothing ? NamedTuple() : sol_accessors
-    rows_f!(out, model.formulas.obs, ctx, sol_acc, const_cov, obs_series, vrows, obs_cols)
+    rows_f!(
+        out, model.formulas.obs, ctx, sol_acc, const_cov, obs_series, vrows,
+        _focei_cols_val(obs_cols)
+    )
     return true
+end
+
+# Outcome column names as a type parameter. Indexing the row's NamedTuples with a Symbol
+# taken from `get_obs_cols(dm)::Vector{Symbol}` is a runtime field lookup: a `getfield`
+# builtin call that boxes the NamedTuple and its field, per observation and pass (dual
+# typed in the Φ Jacobian and the one-pass kernel). With the names in `Val`, the
+# recursion below unrolls over the columns and every field access is static.
+@inline _focei_cols_val(cols::AbstractVector{Symbol}) = Val((cols...,))
+
+# Push the (non-missing) outcome distributions of one row, in column order.
+@inline _focei_push_cols!(out, obs, obs_series, i, ::Val{()}) = nothing
+@inline function _focei_push_cols!(out, obs, obs_series, i, ::Val{C}) where {C}
+    col = first(C)
+    y = getfield(obs_series, col)[i]
+    _obs_is_missing(y) || _focei_collect_push!(out, getproperty(obs, col))
+    return _focei_push_cols!(out, obs, obs_series, i, Val(Base.tail(C)))
+end
+
+# Push the (non-missing) observed values of one row, in column order.
+@inline _focei_push_ys!(out, obs_series, i, ::Val{()}) = nothing
+@inline function _focei_push_ys!(out, obs_series, i, ::Val{C}) where {C}
+    y = getfield(obs_series, first(C))[i]
+    _obs_is_missing(y) || push!(out, y)
+    return _focei_push_ys!(out, obs_series, i, Val(Base.tail(C)))
+end
+
+# All rows of one individual behind a function barrier (`obs_series` concrete).
+function _focei_push_ys_ind!(out::Vector{Any}, obs_series::OS, n::Int, cols::Val) where {OS}
+    for r in 1:n
+        _focei_push_ys!(out, obs_series, r, cols)
+    end
+    return nothing
 end
 
 # Element push dispatch: distribution objects for the dists collector, flattened
 # native parameters for the typed Jacobian target.
 @inline _focei_collect_push!(out::Vector{Any}, dist) = push!(out, dist)
-@inline _focei_collect_push!(out::Vector{T}, dist) where {T <: Real} = append!(
-    out, _focei_params(dist)
+@inline _focei_collect_push!(out::Vector{T}, dist) where {T <: Real} = _focei_push_params!(
+    out, dist
 )
+
+# `append!(out, _focei_params(d))` without the per-observation temporary vector for the
+# scalar families (same values, same order as `_focei_params`).
+_focei_push_params!(out, d) = append!(out, _focei_params(d))
+_focei_push_params!(out, d::Union{Normal, LogNormal, Cauchy}) = push!(out, d.μ, d.σ)
+_focei_push_params!(out, d::Distributions.Laplace) = push!(out, d.μ, d.θ)
+_focei_push_params!(out, d::Exponential) = push!(out, d.θ)
+_focei_push_params!(out, d::Poisson) = push!(out, d.λ)
+_focei_push_params!(out, d::Union{Bernoulli, Binomial, Geometric}) = push!(out, d.p)
+_focei_push_params!(out, d::Gamma) = push!(out, d.α, d.θ)
+_focei_push_params!(out, d::Beta) = push!(out, d.α, d.β)
 
 function _focei_rows_push!(
         out::Vector, obs_f::F, ctx::C, sol_acc::SA, const_cov::CC,
-        obs_series::OS, vrows::Vector{V}, obs_cols
+        obs_series::OS, vrows::Vector{V}, cols::Val
     ) where {F, C, SA, CC, OS, V}
     for i in eachindex(vrows)
         obs = obs_f(ctx, sol_acc, const_cov, vrows[i])
-        for col in obs_cols
-            y = getfield(obs_series, col)[i]
-            _obs_is_missing(y) && continue
-            _focei_collect_push!(out, getproperty(obs, col))
-        end
+        _focei_push_cols!(out, obs, obs_series, i, cols)
     end
     return nothing
 end
@@ -725,13 +769,10 @@ end
 # value and distribution unions too large to split.
 function _focei_obs_values_batch(dm::DataModel, batch_info::REBatchInfo)
     out = Any[]
-    cols = get_obs_cols(dm)
+    cols = _focei_cols_val(get_obs_cols(dm))
     for i in get_inds(batch_info)
         obs_series = get_obs(get_series(get_individuals(dm)[i]))
-        for r in eachindex(get_obs_rows(get_row_groups(dm))[i]), col in cols
-            y = getfield(obs_series, col)[r]
-            _obs_is_missing(y) || push!(out, y)
-        end
+        _focei_push_ys_ind!(out, obs_series, length(get_obs_rows(get_row_groups(dm))[i]), cols)
     end
     ys = map(identity, out)
     isconcretetype(eltype(ys)) && return ys

@@ -251,15 +251,21 @@ struct _LaplaceHessCache{T, L, H, C, V}
     last_chol::C
     last_valid::V
     last_logf::Vector{T}   # log f at last_b when the inner solve left it, else NaN
+    # curvature of a seeded entry's H (the inner Newton solve's `curvature`), else nothing
+    last_seed::Vector{Any}
 end
 _LaplaceHessCache(last_b, last_logdet, last_H, last_chol, last_valid) = _LaplaceHessCache(
-    last_b, last_logdet, last_H, last_chol, last_valid, fill(eltype(last_logdet)(NaN), length(last_logdet))
+    last_b, last_logdet, last_H, last_chol, last_valid,
+    fill(eltype(last_logdet)(NaN), length(last_logdet)),
+    Any[nothing for _ in eachindex(last_logdet)]
 )
 
 # Exact Hessian ∇²_b log f at b left by the inner Newton solve at the current θ (seeded
-# entry, `last_chol === nothing`; see `_laplace_store_mode_hess!`), else `nothing`.
+# entry, `last_chol === nothing`, from an exact-Hessian solve; see
+# `_laplace_store_mode_hess!`), else `nothing`.
 function _laplace_mode_hess(hc, bi::Int, b)
     (hc !== nothing && hc.last_valid[bi] && hc.last_chol[bi] === nothing) || return nothing
+    hc.last_seed[bi] isa ExactHessianCurvature || return nothing
     hc.last_b[bi] == b || return nothing
     return hc.last_H[bi]
 end
@@ -1322,7 +1328,9 @@ function _newton_inner_loop(
         )
         gn = maximum(abs, g)
         isfinite(gn) || return _NewtonSol(b, Float64(fval), Inf, false)
-        gn <= newton.g_abstol && return _NewtonSol(b, Float64(fval), gn, true)
+        # H (when the curvature gave it with the gradient) is the curvature at this b:
+        # returned for the log-determinant (see `_laplace_store_mode_hess!`).
+        gn <= newton.g_abstol && return _NewtonSol(b, Float64(fval), gn, true, H)
         H === nothing && (
             H = _build_hess_b(
                 newton.curvature, dm, batch_info, θ_val, b, const_cache, cache, ad_cache, bi;
@@ -1343,7 +1351,7 @@ function _newton_inner_loop(
         Δmax = maximum(abs, Δ)
         while α >= newton.alpha_min
             # step below the tolerance: b is at the mode up to x_abstol
-            α * Δmax <= newton.x_abstol && return _NewtonSol(b, Float64(fval), gn, true)
+            α * Δmax <= newton.x_abstol && return _NewtonSol(b, Float64(fval), gn, true, H)
             @. b_try = b + α * Δ
             f_try = f(b_try)
             if isfinite(f_try) && f_try >= fval + 1.0e-4 * α * slope
@@ -1891,7 +1899,10 @@ function _laplace_compute_bstar_batch!(
         end
     end
     _laplace_store_bstar!(cache, bi, b_best)
-    _laplace_store_mode_hess!(cache.hess_cache, bi, b_best, H_best, best_f)
+    _laplace_store_mode_hess!(
+        cache.hess_cache, bi, b_best, H_best, best_f,
+        optimizer isa NewtonInner ? optimizer.curvature : nothing
+    )
     return nothing
 end
 
@@ -1919,10 +1930,12 @@ end
 @inline _laplace_sol_hess(sol) = nothing
 
 # The b*-solve at a new θ invalidates the batch's log-determinant cache (keyed by b only)
-# and, when the exact Newton solve returned the Hessian at b*, seeds it with that Hessian
-# (`last_chol = nothing` marks such an entry: the factorization is still to be done, and
-# only the exact-Hessian log-determinant may use it; see `_laplace_logdet_negH`).
-function _laplace_store_mode_hess!(hc::_LaplaceHessCache, bi::Int, b, H, logf)
+# and, when the Newton solve returned its curvature at b*, seeds it with that matrix
+# (`last_chol = nothing` marks such an entry: the factorization is still to be done).
+# `curv` is the curvature that produced H (exact Hessian, or the Gauss-Newton /
+# Fisher-information form of FOCEI); only a log-determinant of the same curvature may
+# use the seed (see `_laplace_logdet_negH`), and only an exact one `_laplace_mode_hess`.
+function _laplace_store_mode_hess!(hc::_LaplaceHessCache, bi::Int, b, H, logf, curv)
     if H === nothing || length(b) != size(H, 1) || !(H isa eltype(hc.last_H))
         hc.last_valid[bi] = false
         return nothing
@@ -1932,12 +1945,13 @@ function _laplace_store_mode_hess!(hc::_LaplaceHessCache, bi::Int, b, H, logf)
     copyto!(b_last, b)
     hc.last_H[bi] = H
     hc.last_chol[bi] = nothing
+    hc.last_seed[bi] = curv
     hc.last_logdet[bi] = NaN
     hc.last_logf[bi] = isfinite(logf) ? logf : NaN
     hc.last_valid[bi] = true
     return nothing
 end
-_laplace_store_mode_hess!(::Nothing, bi::Int, b, H, logf) = nothing
+_laplace_store_mode_hess!(::Nothing, bi::Int, b, H, logf, curv) = nothing
 
 function _laplace_get_bstar!(
         cache::_LaplaceCache,
@@ -2253,8 +2267,10 @@ function _laplace_logdet_negH(
                         hess_cache.last_logdet[bi],
                         hess_cache.last_H[bi], hess_cache.last_chol[bi],
                     )
-                    # exact Hessian left by the inner Newton solve at this b*
-                    hmode isa _ExactHess && eltype(hess_cache.last_H[bi]) === eltype(θ) &&
+                    # curvature left by the inner Newton solve at this b*, when it is
+                    # the curvature of this log-determinant (`===`: same type and fields)
+                    hess_cache.last_seed[bi] === hmode &&
+                        eltype(hess_cache.last_H[bi]) === eltype(θ) &&
                         (H_seed = hess_cache.last_H[bi])
                 end
             end
