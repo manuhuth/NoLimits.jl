@@ -3888,6 +3888,119 @@ end
     return compiled, u0, cb, infusion_rates
 end
 
+# Dual compression of the ODE solve, per dual level. Under ForwardDiff the solve
+# carries one dual level per nested AD pass (e.g. (θ_o, b) outermost and two b levels
+# inside it in the one-pass kernel; two b levels in the inner Newton Hessian), each
+# with one partial per differentiated input of that pass (N_l of them). The solution
+# depends on those inputs only through the packed DE parameters and the initial state
+# s_1..s_K. At level l, let the active scalars be the s_k whose level-l value
+# value^(l-1)(s_k) has a nonzero partial (m_l of them). Write
+#     s_k = value(s_k) + ε_1·P1_k,  value(s_k) = value²(s_k) + ε_2·P2_k,  ...
+# (P_l,k: the level-l partials of value^(l-1)(s_k), in the original inner types). The
+# ODE is solved on
+#     s'_k = value^L(s_k) + η_1[k] + η_2[k] + ... + η_L[k]
+# (η_l: m_l unit seeds on level l with the same tag, one per active scalar, zero for
+# the inactive ones; levels deeper than L untouched), and every state read is mapped
+# back by substituting η_l[k] = ε_l·P_l,k level by level, innermost first:
+#     ∂x/∂ε_l,n = Σ_k (∂x/∂η_l,k) · P_l,k[n]      (products in the inner dual arithmetic).
+# The substitution turns s' into s exactly (the decomposition above is exact and η_l
+# carries the ε_l factor, so the η_l-products dropped by the compressed arithmetic
+# vanish), and forward mode is a truncated Taylor composition, so for a fixed step
+# sequence this equals the uncompressed propagation up to floating-point reassociation.
+# Level l is re-seeded for every l <= L, where L is the deepest level with m_l < N_l:
+# re-seeding with constant unit seeds moves all deeper-level content into the values,
+# which the deeper levels then compress. Tags are unchanged at every level, and the
+# expansion multiplies only quantities of one level with each other (also for the
+# same-tag levels of `ForwardDiff.hessian`). The adaptive error norm of DiffEqBase
+# includes the dual partials, so the accepted steps can differ from the uncompressed
+# solve at the solver-tolerance level; the result is the exact derivative of one
+# adaptive solve (steps held fixed, as before), and value, gradient and Hessian rows of
+# one evaluation still come from that single solve.
+@inline _outer_partials_zero(x::ForwardDiff.Dual) = all(_all_zero, ForwardDiff.partials(x))
+@inline _all_zero(x::Real) = iszero(x)
+@inline _all_zero(x::ForwardDiff.Dual) =
+    _all_zero(ForwardDiff.value(x)) && all(_all_zero, ForwardDiff.partials(x))
+
+# Slots carried as layout constants must not hold duals (they would bypass compression).
+@inline _layout_dual_free(layout::NamedTuple) = all(_slot_dual_free, values(layout))
+@inline _slot_dual_free(::DEVarSlot) = true
+@inline _slot_dual_free(::DEVarConst{<:Union{Bool, Integer, AbstractArray{Bool}, AbstractString, Symbol}}) = true
+@inline _slot_dual_free(_) = false
+
+# Per level, outermost first: (pos, P) with pos[j] = position of input j among the
+# active inputs of that level (0 = inactive) and P the level partials of the active ones.
+_dual_levels(xs) = ()
+function _dual_levels(xs::Vector{ForwardDiff.Dual{Tg, V, N}}) where {Tg, V, N}
+    pos = zeros(Int, length(xs))
+    P = ForwardDiff.Partials{N, V}[]
+    @inbounds for j in eachindex(xs)
+        _outer_partials_zero(xs[j]) && continue
+        push!(P, ForwardDiff.partials(xs[j]))
+        pos[j] = length(P)
+    end
+    return ((pos, P), _dual_levels(V[ForwardDiff.value(x) for x in xs])...)
+end
+_npartials(::Vector{ForwardDiff.Partials{N, V}}) where {N, V} = N
+
+_ode_dual_compress(u0, p) = nothing
+function _ode_dual_compress(u0::Vector{D}, p::Vector{D}) where {D <: ForwardDiff.Dual}
+    xs = vcat(u0, p)
+    lv = _dual_levels(xs)
+    L = 0
+    for (l, (_, P)) in enumerate(lv)
+        length(P) < _npartials(P) && (L = l)
+    end
+    L == 0 && return nothing
+    lvL = lv[1:L]
+    return xs, length(u0), lvL, map(l -> Val(length(l[2])), lvL)
+end
+
+# Compressed input j: unit seed (or zero) on each of the levels in `lv`, deeper levels kept.
+@inline _dual_seed(x, ::Tuple{}, ::Tuple{}, j) = x
+@inline function _dual_seed(
+        x::ForwardDiff.Dual{Tg}, lv::Tuple, ms::Tuple{Val{m}, Vararg{Any}}, j
+    ) where {Tg, m}
+    inner = _dual_seed(ForwardDiff.value(x), Base.tail(lv), Base.tail(ms), j)
+    Vc = typeof(inner)
+    k = @inbounds first(lv)[1][j]
+    seed = ForwardDiff.Partials{m, Vc}(ntuple(i -> i == k ? one(Vc) : zero(Vc), Val(m)))
+    return ForwardDiff.Dual{Tg}(inner, seed)
+end
+
+# Function barrier: the counts m_l are runtime values, so the compressed types are
+# known only here.
+function _ll_solve_compressed(cache::_LLCache, prob, xs, nu, lv, ms, reset, builder, compiled)
+    xc = [_dual_seed(xs[j], lv, ms, j) for j in eachindex(xs)]
+    sol = _ll_ode_solve_baked(
+        cache, remake(prob; u0 = xc[1:nu], p = xc[(nu + 1):end]), reset
+    )
+    SciMLBase.successful_retcode(sol) || return _ll_drop_solve(sol.retcode)
+    return builder(_DualExpandSol(sol, map(l -> l[2], lv)), compiled)
+end
+
+# Solution wrapper read by the DE accessors: states come back with the original partials.
+struct _DualExpandSol{S, P}
+    sol::S
+    P::P      # per compressed level: partials (∂s_k/∂ε_l) of its m_l active scalars
+end
+
+# Expand the levels of `Ps` (outermost first), innermost first.
+@inline _dual_expand(::Tuple{}, y) = y
+@inline function _dual_expand(Ps::Tuple{Any, Vararg{Any}}, y::ForwardDiff.Dual{Tg}) where {Tg}
+    P = first(Ps)
+    rest = Base.tail(Ps)
+    g = ForwardDiff.partials(y)
+    acc = zero(eltype(P))
+    @inbounds for k in eachindex(P)
+        acc = acc + P[k] * _dual_expand(rest, g[k])
+    end
+    return ForwardDiff.Dual{Tg}(_dual_expand(rest, ForwardDiff.value(y)), acc)
+end
+
+@inline _de_state_at(w::_DualExpandSol, idx, t) = _dual_expand(w.P, _de_state_at(w.sol, idx, t))
+@inline _de_state_at(w::_DualExpandSol, idx::AbstractUnitRange, t) =
+    map(y -> _dual_expand(w.P, y), _de_state_at(w.sol, idx, t))
+
 function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
     model = get_model(dm)
     ind = get_individuals(dm)[idx]
@@ -3940,11 +4053,14 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
                 cache.prob_templates[idx] = prob
             end
         end
-        prob = remake(prob; u0 = u0_T, p = p_flat)
-        sol = _ll_ode_solve_baked(
-            cache, prob,
-            events === nothing ? nothing : _CrossingReset((), Base.RefValue{Bool}[], (), events)
+        reset = events === nothing ? nothing :
+            _CrossingReset((), Base.RefValue{Bool}[], (), events)
+        cmp = _layout_dual_free(layout) ? _ode_dual_compress(u0_T, p_flat) : nothing
+        cmp === nothing || return _ll_solve_compressed(
+            cache, prob, cmp..., reset, get_de_accessors_builder(get_de(model)), compiled
         )
+        prob = remake(prob; u0 = u0_T, p = p_flat)
+        sol = _ll_ode_solve_baked(cache, prob, reset)
         SciMLBase.successful_retcode(sol) || return _ll_drop_solve(sol.retcode)
         return get_de_accessors_builder(get_de(model))(sol, compiled)
     end
