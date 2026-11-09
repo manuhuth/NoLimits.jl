@@ -65,11 +65,14 @@ function _ms_scale_summary(p)
     s = getfield(p, :scale)
     if s isa Symbol
         return String(s)
+    elseif s isa Logit
+        return repr(s)
     elseif s isa AbstractVector
-        counts = Dict{Symbol, Int}()
+        counts = Dict{String, Int}()
         for si in s
-            si isa Symbol || continue
-            counts[si] = get(counts, si, 0) + 1
+            (si isa Symbol || si isa Logit) || continue
+            k = si isa Symbol ? String(si) : repr(si)
+            counts[k] = get(counts, k, 0) + 1
         end
         isempty(counts) && return "n/a"
         parts = String[]

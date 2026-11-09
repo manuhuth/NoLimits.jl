@@ -83,7 +83,7 @@ using NoLimits: COLOR_ACCENT, COLOR_CI, COLOR_PRIMARY, COLOR_REFERENCE, COLOR_SE
     _uq_wald_coord_transforms,
     _validate_plot_metric, _validate_same_data_model_for_comparison,
     _varying_at,
-    _wald_closed_form_kind, _wald_density_xy, _with_posterior_warmup,
+    _wald_closed_form_kind, _wald_density_xy, _with_posterior_warmup, Logit,
     build_plot_cache,
     calculate_formulas_obs, calculate_plot_size, _font_scale, calculate_prede,
     compute_shrinkage,

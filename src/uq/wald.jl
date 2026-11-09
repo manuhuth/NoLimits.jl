@@ -101,13 +101,14 @@ end
 @inline function _is_monotone_scalar_kind(kind::Symbol)
     return kind === :identity || kind === :log || kind === :logit
 end
+_is_monotone_scalar_kind(::Logit) = true
 
 # Exact natural-scale variances where they exist: identity copies the transformed one,
 # `:log` uses the lognormal closed form. Rows/columns are rescaled by the same factor so
 # the drawn correlations - and with them PSD-ness - are preserved.
 function _wald_closed_form_natural_vcov(
         Vn::Matrix{Float64}, est_t::Vector{Float64}, Vt::Matrix{Float64},
-        active_kinds::Vector{Symbol}
+        active_kinds::AbstractVector
     )
     p = size(Vn, 1)
     r = ones(Float64, p)

@@ -916,6 +916,7 @@ function _scale_domain(kind::Symbol)
         kind === :logit ? ("values in (0, 1)", x -> 0.0 < x < 1.0) :
         nothing
 end
+_scale_domain(s::Logit) = ("values in ($(s.lower), $(s.upper))", x -> s.lower < x < s.upper)
 
 function _validate_constant_domain(name::Symbol, spec::TransformSpec, val)
     if spec.kind === :elementwise && spec.mask !== nothing
@@ -933,7 +934,7 @@ function _validate_constant_domain(name::Symbol, spec::TransformSpec, val)
     desc, ok = dom
     all(ok, val) ||
         error(
-        "Invalid constant $(name)=$(val): scale :$(spec.kind) requires $(desc) on the " *
+        "Invalid constant $(name)=$(val): scale $(repr(spec.kind)) requires $(desc) on the " *
             "natural (untransformed) scale."
     )
     return nothing

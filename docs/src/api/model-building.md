@@ -26,6 +26,7 @@ Macros, parameter types, covariates, random effects, and the `Model` struct itse
 ```@docs
 RealNumber
 RealVector
+Logit
 RealPSDMatrix
 RealLiePSDMatrix
 RealDiagonalMatrix

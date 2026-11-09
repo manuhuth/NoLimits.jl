@@ -383,6 +383,22 @@ end
     @test isapprox(θ_back.v[3], -1.5; rtol = 1.0e-10)
 end
 
+@testset "_transform_bounds Logit(a, b) — interior bounds mapped, domain edges dropped" begin
+    fe = @fixedEffects begin
+        p = RealNumber(4.0; scale = Logit(2, 7), lower = 3.0)
+        w = RealVector([4.0, 5.0]; scale = Logit(2, 7), lower = [3.0, 2.0])
+        v = RealVector([4.0, 0.5]; scale = [Logit(2, 7), :logit], lower = [3.0, 0.0], upper = [7.0, 1.0])
+    end
+    lb, ub = get_bounds_transformed(fe)
+    l02 = logit_forward(0.2)
+    @test lb.p == l02
+    @test ub.p == Inf
+    @test lb.w == [l02, -Inf]
+    @test ub.w == [Inf, Inf]
+    @test lb.v == [l02, -Inf]
+    @test ub.v == [Inf, Inf]
+end
+
 @testset "_transform_bounds :logit scalar — transformed bounds are (-Inf, Inf)" begin
     fe = @fixedEffects begin
         p = RealNumber(0.3; scale = :logit)

@@ -140,6 +140,13 @@ end
     @test s.outcome_distribution_types.y == :Normal
 end
 
+@testset "ModelSummary: Logit(a, b) scale is printed" begin
+    @test NoLimits._ms_scale_summary(RealNumber(2.0; scale = Logit(0, 5))) == "Logit(0.0, 5.0)"
+    s = NoLimits._ms_scale_summary(RealVector([2.0, 1.0, 3.0]; scale = [Logit(0, 5), :log, Logit(0, 5)]))
+    @test occursin("Logit(0.0, 5.0)x2", s)
+    @test occursin("logx1", s)
+end
+
 @testset "DataModelSummary: non-ODE, obs-row stats, and REPL show" begin
     model = @Model begin
         @fixedEffects begin
