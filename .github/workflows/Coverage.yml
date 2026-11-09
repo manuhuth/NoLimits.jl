@@ -1,13 +1,14 @@
 name: Coverage
 
 # Coverage instrumentation is ~4x slower than a plain test run, so it is kept
-# OUT of the PR gate (CI.yml) and runs here: on pushes to main and on demand.
+# OUT of the PR gate (CI.yml) and runs here: weekly (Sunday 03:23 UTC) and on
+# demand. A full run costs ~510 runner-minutes, too much for every merge.
 # Sharded like CI.yml; each shard uploads its lcov and Codecov merges all
 # uploads for the commit. Non-blocking (fail_ci_if_error: false).
 
 on:
-  push:
-    branches: [main]
+  schedule:
+    - cron: "23 3 * * 0"
   workflow_dispatch:
 
 concurrency:
