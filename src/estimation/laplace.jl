@@ -239,6 +239,9 @@ mutable struct _LaplaceGradBuffers{T}
     logdet_b_cfg::_FDCfgStore
     Jθ_cfg::_FDCfgStore
     Jb_cfg::_FDCfgStore
+    # memo of `_theta_split_obs_re` (see `_onepass_split!`): key (nothing = unset), (o, p)
+    split_key::Any
+    split::Tuple{Vector{Int}, Vector{Int}}
 end
 
 struct _LaplaceHessCache{T, L, H, C, V}
@@ -248,15 +251,21 @@ struct _LaplaceHessCache{T, L, H, C, V}
     last_chol::C
     last_valid::V
     last_logf::Vector{T}   # log f at last_b when the inner solve left it, else NaN
+    # curvature of a seeded entry's H (the inner Newton solve's `curvature`), else nothing
+    last_seed::Vector{Any}
 end
 _LaplaceHessCache(last_b, last_logdet, last_H, last_chol, last_valid) = _LaplaceHessCache(
-    last_b, last_logdet, last_H, last_chol, last_valid, fill(eltype(last_logdet)(NaN), length(last_logdet))
+    last_b, last_logdet, last_H, last_chol, last_valid,
+    fill(eltype(last_logdet)(NaN), length(last_logdet)),
+    Any[nothing for _ in eachindex(last_logdet)]
 )
 
 # Exact Hessian ∇²_b log f at b left by the inner Newton solve at the current θ (seeded
-# entry, `last_chol === nothing`; see `_laplace_store_mode_hess!`), else `nothing`.
+# entry, `last_chol === nothing`, from an exact-Hessian solve; see
+# `_laplace_store_mode_hess!`), else `nothing`.
 function _laplace_mode_hess(hc, bi::Int, b)
     (hc !== nothing && hc.last_valid[bi] && hc.last_chol[bi] === nothing) || return nothing
+    hc.last_seed[bi] isa ExactHessianCurvature || return nothing
     hc.last_b[bi] == b || return nothing
     return hc.last_H[bi]
 end
@@ -277,9 +286,12 @@ mutable struct _LaplaceCache{T, B, G, A, H}
     # Committed warm starts of `AcceptedWarmStarts` (one vector per batch, empty until the
     # first commit); `nothing` = default rule (warm start from the last evaluated θ).
     warm::Union{Nothing, Vector{Vector{Float64}}}
+    # Per-thread likelihood caches `(dm, ll_cache, caches)` of `_laplace_thread_caches`,
+    # built once per EBE cache instead of on every objective call (they hold no θ).
+    thread_caches::Any
     # explicit inner ctor: the auto outer ctor leaves T unbound for θ_cache=nothing (Aqua, 1.10)
     function _LaplaceCache{T, B, G, A, H}(θ_cache, bstar_cache, grad_cache, ad_cache, hess_cache) where {T, B, G, A, H}
-        return new{T, B, G, A, H}(θ_cache, bstar_cache, grad_cache, ad_cache, hess_cache, nothing)
+        return new{T, B, G, A, H}(θ_cache, bstar_cache, grad_cache, ad_cache, hess_cache, nothing, nothing)
     end
 end
 
@@ -390,7 +402,7 @@ function _get_grad_buffers!(
             grad_logf, Gθ, grad_logdet_θ, grad_logdet_b, Jθ, Jb,
             nθ, nb, gradb_tmp,
             _FDCfgStore(), _FDCfgStore(), _FDCfgStore(), _FDCfgStore(),
-            _FDCfgStore(), _FDCfgStore(), _FDCfgStore()
+            _FDCfgStore(), _FDCfgStore(), _FDCfgStore(), nothing, (Int[], Int[])
         )
         ad_cache.buffers[bi] = entry
     elseif use_trace && (size(entry.Jθ, 1) == 0 || size(entry.Jb, 1) == 0)
@@ -962,6 +974,24 @@ function _safe_theta_ctx(
     end
 end
 
+# Context for a Gauss-Newton inner solve (`FisherInformationCurvature`) at a fixed Float64
+# θ: the b-constant Gaussian-RE prior Hessian attached once per solve, so the Newton
+# iterations (`_focei_prior_negH`) stop re-running ForwardDiff.hessian of the prior at
+# every step. Same matrix bit for bit (see `_ctx_with_prior_hess`); a non-Gaussian RE
+# prior, an existing Λ, another curvature or a failed evaluation leave `tctx` unchanged.
+function _newton_curvature_ctx(
+        curvature, tctx, dm::DataModel, batch_info::REBatchInfo,
+        const_cache::REConstantsCache, cache::_LLCache, b
+    )
+    (curvature isa _FOCEIHess && tctx isa _LaplaceThetaCtx && tctx.prior_hess === nothing) ||
+        return tctx
+    return try
+        _ctx_with_prior_hess(tctx, dm, batch_info, const_cache, cache, b)
+    catch err
+        _is_numeric_error(err) ? tctx : rethrow(err)
+    end
+end
+
 # Context for one objective/gradient batch term; FOCEI additionally gets the
 # cached prior Hessian when the REs are all Gaussian. (`hmode` is untyped here
 # because `_HessMode` is defined further down this file.)
@@ -1262,13 +1292,13 @@ function _newton_inner_solve(
         tctx = nothing,
         f0_min::Union{Nothing, Float64} = nothing
     )
-    nb = length(b0)
     # Exception-safe: a degenerate θ falls back to the per-call path inside the
     # logf wrapper (-Inf) instead of throwing out of the inner solve.
     tctx === nothing && (tctx = _safe_theta_ctx(dm, batch_info, θ_val, cache))
     f = _LaplaceLogfBatch(dm, batch_info, θ_val, const_cache, cache, tctx)
     newton.curvature isa ExactHessianCurvature &&
         return _newton_exact_solve(f, b0, newton; f0_min = f0_min)
+    tctx = _newton_curvature_ctx(newton.curvature, tctx, dm, batch_info, const_cache, cache, b0)
     b = copy(b0)
     fval = f(b)
     isfinite(fval) || return _NewtonSol(b, -Inf, Inf, false)
@@ -1278,7 +1308,19 @@ function _newton_inner_solve(
         ad_cache.grad_cfg[bi] = entry
     end
     cfg = _get_fd_cfg!(entry::_FDCfgStore, f, b, () -> ForwardDiff.GradientConfig(f, b))
-    g = Vector{Float64}(undef, nb)
+    # `cfg` comes out of the untyped store: run the loop behind a function barrier so its
+    # AD calls and the work on their results dispatch statically.
+    return _newton_inner_loop(
+        f, cfg, newton, dm, batch_info, θ_val, const_cache, cache, ad_cache, bi, b,
+        fval, tctx
+    )
+end
+
+function _newton_inner_loop(
+        f::FF, cfg, newton::NewtonInner, dm, batch_info, θ_val, const_cache, cache,
+        ad_cache, bi, b, fval, tctx
+    ) where {FF}
+    g = Vector{Float64}(undef, length(b))
     b_try = similar(b)
     for _ in 1:(newton.maxiters)
         H = _newton_grad_hess!(
@@ -1286,7 +1328,9 @@ function _newton_inner_solve(
         )
         gn = maximum(abs, g)
         isfinite(gn) || return _NewtonSol(b, Float64(fval), Inf, false)
-        gn <= newton.g_abstol && return _NewtonSol(b, Float64(fval), gn, true)
+        # H (when the curvature gave it with the gradient) is the curvature at this b:
+        # returned for the log-determinant (see `_laplace_store_mode_hess!`).
+        gn <= newton.g_abstol && return _NewtonSol(b, Float64(fval), gn, true, H)
         H === nothing && (
             H = _build_hess_b(
                 newton.curvature, dm, batch_info, θ_val, b, const_cache, cache, ad_cache, bi;
@@ -1307,7 +1351,7 @@ function _newton_inner_solve(
         Δmax = maximum(abs, Δ)
         while α >= newton.alpha_min
             # step below the tolerance: b is at the mode up to x_abstol
-            α * Δmax <= newton.x_abstol && return _NewtonSol(b, Float64(fval), gn, true)
+            α * Δmax <= newton.x_abstol && return _NewtonSol(b, Float64(fval), gn, true, H)
             @. b_try = b + α * Δ
             f_try = f(b_try)
             if isfinite(f_try) && f_try >= fval + 1.0e-4 * α * slope
@@ -1335,10 +1379,18 @@ end
 # start against an alternative with the first pass of the solve itself.
 function _newton_exact_solve(f, b0::Vector{Float64}, newton::NewtonInner; f0_min::Union{Nothing, Float64} = nothing)
     b = copy(b0)
-    b_try = similar(b)
     rc = ForwardDiff.DiffResults.HessianResult(b)
+    # ForwardDiff picks the chunk, hence the type of `cfg`, from length(b) at runtime: run
+    # the loop behind a function barrier so every hessian! call in it dispatches statically.
+    return _newton_exact_loop(f, b, rc, ForwardDiff.HessianConfig(f, rc, b), newton, f0_min)
+end
+
+function _newton_exact_loop(
+        f::FF, b::Vector{Float64}, rc, cfg::ForwardDiff.HessianConfig, newton::NewtonInner,
+        f0_min::Union{Nothing, Float64}
+    ) where {FF}
+    b_try = similar(b)
     rt = ForwardDiff.DiffResults.HessianResult(b)
-    cfg = ForwardDiff.HessianConfig(f, rc, b)
     rc = ForwardDiff.hessian!(rc, f, b, cfg)
     fval = Float64(ForwardDiff.DiffResults.value(rc))
     f0_min === nothing || (isfinite(fval) && fval > f0_min) || return nothing
@@ -1415,6 +1467,7 @@ function _newton_tr_inner_solve(
     tctx === nothing && (tctx = _safe_theta_ctx(dm, batch_info, θ_val, cache))
     f = _LaplaceLogfBatch(dm, batch_info, θ_val, const_cache, cache, tctx)
     isfinite(f(b0)) || return _NewtonSol(copy(b0), -Inf, Inf, false)
+    tctx = _newton_curvature_ctx(newton.curvature, tctx, dm, batch_info, const_cache, cache, b0)
     entry = ad_cache.grad_cfg[bi]
     if entry === nothing
         entry = _FDCfgStore()
@@ -1846,7 +1899,10 @@ function _laplace_compute_bstar_batch!(
         end
     end
     _laplace_store_bstar!(cache, bi, b_best)
-    _laplace_store_mode_hess!(cache.hess_cache, bi, b_best, H_best, best_f)
+    _laplace_store_mode_hess!(
+        cache.hess_cache, bi, b_best, H_best, best_f,
+        optimizer isa NewtonInner ? optimizer.curvature : nothing
+    )
     return nothing
 end
 
@@ -1874,10 +1930,12 @@ end
 @inline _laplace_sol_hess(sol) = nothing
 
 # The b*-solve at a new θ invalidates the batch's log-determinant cache (keyed by b only)
-# and, when the exact Newton solve returned the Hessian at b*, seeds it with that Hessian
-# (`last_chol = nothing` marks such an entry: the factorization is still to be done, and
-# only the exact-Hessian log-determinant may use it; see `_laplace_logdet_negH`).
-function _laplace_store_mode_hess!(hc::_LaplaceHessCache, bi::Int, b, H, logf)
+# and, when the Newton solve returned its curvature at b*, seeds it with that matrix
+# (`last_chol = nothing` marks such an entry: the factorization is still to be done).
+# `curv` is the curvature that produced H (exact Hessian, or the Gauss-Newton /
+# Fisher-information form of FOCEI); only a log-determinant of the same curvature may
+# use the seed (see `_laplace_logdet_negH`), and only an exact one `_laplace_mode_hess`.
+function _laplace_store_mode_hess!(hc::_LaplaceHessCache, bi::Int, b, H, logf, curv)
     if H === nothing || length(b) != size(H, 1) || !(H isa eltype(hc.last_H))
         hc.last_valid[bi] = false
         return nothing
@@ -1887,12 +1945,13 @@ function _laplace_store_mode_hess!(hc::_LaplaceHessCache, bi::Int, b, H, logf)
     copyto!(b_last, b)
     hc.last_H[bi] = H
     hc.last_chol[bi] = nothing
+    hc.last_seed[bi] = curv
     hc.last_logdet[bi] = NaN
     hc.last_logf[bi] = isfinite(logf) ? logf : NaN
     hc.last_valid[bi] = true
     return nothing
 end
-_laplace_store_mode_hess!(::Nothing, bi::Int, b, H, logf) = nothing
+_laplace_store_mode_hess!(::Nothing, bi::Int, b, H, logf, curv) = nothing
 
 function _laplace_get_bstar!(
         cache::_LaplaceCache,
@@ -1939,7 +1998,7 @@ function _laplace_get_bstar!(
         ll_cache isa AbstractVector
     if use_threaded
         nthreads = Threads.maxthreadid()
-        caches = _laplace_thread_caches(dm, ll_cache, nthreads)
+        caches = _laplace_thread_caches(dm, ll_cache, nthreads, cache)
         ind_counter = Threads.Atomic{Int}(0)
         # Each task owns cache slot `c` for its whole life. Indexing by
         # `Threads.threadid()` is unsafe under task migration (the inner `solve(...)`
@@ -2208,8 +2267,10 @@ function _laplace_logdet_negH(
                         hess_cache.last_logdet[bi],
                         hess_cache.last_H[bi], hess_cache.last_chol[bi],
                     )
-                    # exact Hessian left by the inner Newton solve at this b*
-                    hmode isa _ExactHess && eltype(hess_cache.last_H[bi]) === eltype(θ) &&
+                    # curvature left by the inner Newton solve at this b*, when it is
+                    # the curvature of this log-determinant (`===`: same type and fields)
+                    hess_cache.last_seed[bi] === hmode &&
+                        eltype(hess_cache.last_H[bi]) === eltype(θ) &&
                         (H_seed = hess_cache.last_H[bi])
                 end
             end
@@ -2337,7 +2398,7 @@ function _laplace_grad_batch(
             nθ, nb,
             Vector{eltype(θ_vec)}(undef, nb),
             _FDCfgStore(), _FDCfgStore(), _FDCfgStore(), _FDCfgStore(),
-            _FDCfgStore(), _FDCfgStore(), _FDCfgStore()
+            _FDCfgStore(), _FDCfgStore(), _FDCfgStore(), nothing, (Int[], Int[])
         ) :
         _get_grad_buffers!(ad_cache, bi, eltype(θ_vec), nθ, nb, use_trace_logdet_grad)
     # g = ∂ logf / ∂b and the curvature H from one pass (`_onepass_logdet_derivatives`), so
@@ -2345,7 +2406,10 @@ function _laplace_grad_batch(
     # RE-only fixed effects no model solve. `nothing` (e.g. a third-party curvature): the
     # separate passes below.
     fast = use_trace_logdet_grad && !use_hutchinson ?
-        _onepass_logdet_derivatives(hmode, dm, batch_info, θ_vec, b, const_cache, cache, tctx) :
+        _onepass_logdet_derivatives(
+            hmode, dm, batch_info, θ_vec, b, const_cache, cache, tctx;
+            split = _onepass_split!(buf, dm, θ_vec)
+        ) :
         nothing
     # envelope term (from the one-pass θ derivatives when they carry it)
     grad_logf = if fast !== nothing && fast.grad_logf !== nothing
@@ -2914,6 +2978,21 @@ end
     return caches isa Vector ? caches : [deepcopy(caches) for _ in 1:nthreads]
 end
 
+# Memoized in the EBE cache, keyed by the DataModel, the source cache and the thread count.
+# The thread caches hold only θ-independent data (vary rows, saveat, interpolants, event
+# callbacks, problem templates) — the state the serial path already reuses across calls
+# through its single `ll_cache`; every slot stays owned by one task at a time.
+function _laplace_thread_caches(dm::DataModel, ll_cache, nthreads::Int, ebe::_LaplaceCache)
+    ll_cache isa Vector && return ll_cache
+    tc = ebe.thread_caches
+    if tc !== nothing && tc[1] === dm && tc[2] === ll_cache && length(tc[3]) == nthreads
+        return tc[3]
+    end
+    caches = _laplace_thread_caches(dm, ll_cache, nthreads)
+    ebe.thread_caches = (dm, ll_cache, caches)
+    return caches
+end
+
 @inline function _laplace_thread_rngs(rng::AbstractRNG, nthreads::Int)
     return _spawn_child_rngs(rng, nthreads)
 end
@@ -2960,7 +3039,7 @@ function _laplace_objective_and_grad(
     batch_rngs = _laplace_thread_rngs(rng, length(batch_infos))
     if serialization isa SciMLBase.EnsembleThreads
         nthreads = Threads.maxthreadid()
-        caches = _laplace_thread_caches(dm, ll_cache, nthreads)
+        caches = _laplace_thread_caches(dm, ll_cache, nthreads, ebe_cache)
         obj_by_batch = Vector{eltype(θ)}(undef, length(batch_infos))
         grad_by_batch = Matrix{eltype(θ)}(undef, length(θ), length(batch_infos))
         bad = Threads.Atomic{Bool}(false)
@@ -3083,7 +3162,7 @@ function _laplace_objective_only(
     end
     if serialization isa SciMLBase.EnsembleThreads
         nthreads = Threads.maxthreadid()
-        caches = _laplace_thread_caches(dm, ll_cache, nthreads)
+        caches = _laplace_thread_caches(dm, ll_cache, nthreads, ebe_cache)
         obj_by_batch = Vector{eltype(θ)}(undef, length(batch_infos))
         bad = Threads.Atomic{Bool}(false)
         # Each task owns cache slot `c` (see _laplace_get_bstar!).
@@ -3385,7 +3464,7 @@ function _laplace_accepted_multistart!(
         ws::AcceptedWarmStarts; from_default::Bool = false
     )
     θ_val = _laplace_floatize(θ)
-    caches = _laplace_thread_caches(dm, ll_cache, Threads.maxthreadid())
+    caches = _laplace_thread_caches(dm, ll_cache, Threads.maxthreadid(), cache)
     changed = fill(false, length(batch_infos))
     n_chunks = length(caches)
     # Chunk-indexed cache assignment, as in `_laplace_get_bstar!`.
@@ -3788,26 +3867,95 @@ end
 # (symmetrized), Jb = ∂vech(H)/∂b), or `nothing`, and then `_laplace_grad_batch`
 # differentiates gradient and curvature separately. Methods: exact Hessian here,
 # FisherInformationCurvature in focei.jl; other curvatures take the separate passes.
-_onepass_logdet_derivatives(::AbstractCurvature, args...) = nothing
+_onepass_logdet_derivatives(::AbstractCurvature, args...; kwargs...) = nothing
 
 function _onepass_logdet_derivatives(
         ::ExactHessianCurvature, dm::DataModel, batch_info::REBatchInfo, θ, b,
-        const_cache::REConstantsCache, cache::_LLCache, tctx
+        const_cache::REConstantsCache, cache::_LLCache, tctx; split = nothing
     )
     # value, gradient and Hessian of log f in b from one second-order pass; the value row
-    # gives the envelope term ∂ log f/∂θ from the same θ pass (`with_logf`)
-    function F(θv, bv, tc)
+    # gives the envelope term ∂ log f/∂θ from the same θ pass (`with_logf`). `cb` is the
+    # (default) ForwardDiff chunk for b, passed in so the config type is static.
+    function F(θv, bv, tc, cb)
         T = promote_type(eltype(θv), eltype(bv))
         f = bw -> _laplace_logf_batch(dm, batch_info, θv, bw, const_cache, cache; tctx = tc)
-        res = ForwardDiff.hessian!(ForwardDiff.DiffResults.HessianResult(similar(bv, T)), f, bv)
+        res = ForwardDiff.DiffResults.HessianResult(similar(bv, T))
+        res = ForwardDiff.hessian!(res, f, bv, ForwardDiff.HessianConfig(f, res, bv, cb))
         return vcat(
             ForwardDiff.DiffResults.value(res), ForwardDiff.DiffResults.gradient(res),
             _vech(ForwardDiff.DiffResults.hessian(res))
         )
     end
+    # DE models: the (θ[o], b) level innermost in the call order (`_onepass_J_x_inner`),
+    # so the ODE solve can compress it (`_ode_dual_compress`, common.jl)
+    Jx = (get_de(get_model(dm)) === nothing || eltype(θ) !== Float64 ||
+        eltype(b) !== Float64) ? nothing :
+        o -> _onepass_J_x_inner(dm, batch_info, θ, b, const_cache, cache, o)
     return _onepass_from_F(
-        F, dm, batch_info, θ, b, const_cache, cache, tctx; with_logf = true
+        F, dm, batch_info, θ, b, const_cache, cache, tctx; with_logf = true, split = split,
+        Jx = Jx
     )
+end
+
+# J = ∂[log f; ∇_b log f; vech ∇²_b log f]/∂(θ[o], b), the matrix `_onepass_from_F` gets
+# from `ForwardDiff.jacobian` of F, with the nesting reversed: two outer passes over a
+# shift β of b (second order in b) around an inner gradient over x = (θ[o], b). The
+# innermost call is the outermost dual level, so the ODE solve sees the n = no + nb
+# partials of x on its OUTER level, where `_ode_dual_compress` reduces them to the few DE
+# parameters that depend on x (e.g. n = 8 -> 3); in the original order that level is the
+# innermost one and cannot be compressed. Same function (log f at θ(x), x_b + (β - b);
+# x_b + (β - b) == b exactly in Float64), same derivatives, one model solve.
+function _onepass_J_x_inner(dm::DataModel, batch_info::REBatchInfo, θ, b, const_cache, cache, o)
+    no, nb = length(o), length(b)
+    n = no + nb
+    m1 = n + 1
+    x0 = vcat(θ[o], b)
+    function Gx(β)      # [log f; ∇_x log f] at the shift β
+        δ = β .- b
+        g = x -> _laplace_logf_batch(
+            dm, batch_info, _theta_with(θ, o, view(x, 1:no)), view(x, (no + 1):n) .+ δ,
+            const_cache, cache; tctx = nothing
+        )
+        xT = convert(Vector{eltype(β)}, x0)
+        r = ForwardDiff.gradient!(ForwardDiff.DiffResults.GradientResult(similar(xT)), g, xT)
+        return vcat(ForwardDiff.DiffResults.value(r), ForwardDiff.DiffResults.gradient(r))
+    end
+    function A(β)       # [Gx; vec ∂_β Gx]
+        r = ForwardDiff.jacobian!(
+            ForwardDiff.DiffResults.JacobianResult(similar(β, m1), β), Gx, β
+        )
+        return vcat(ForwardDiff.DiffResults.value(r), vec(ForwardDiff.DiffResults.jacobian(r)))
+    end
+    bv = Vector{Float64}(b)
+    res = ForwardDiff.jacobian!(
+        ForwardDiff.DiffResults.JacobianResult(zeros(m1 * (nb + 1)), bv), A, bv
+    )
+    Av = ForwardDiff.DiffResults.value(res)
+    B = ForwardDiff.DiffResults.jacobian(res)
+    # Av[m1*a + 1 + i] = ∂²log f/∂β_a∂x_i;  B[m1*a + 1 + i, c] = ∂³log f/∂β_c∂β_a∂x_i
+    J = Matrix{Float64}(undef, 1 + nb + _ntri(nb), n)
+    @inbounds for i in 1:n
+        J[1, i] = Av[1 + i]
+        for a in 1:nb
+            J[1 + a, i] = Av[m1 * a + 1 + i]
+        end
+        r = 1 + nb
+        for c in 1:nb, a in 1:c          # `_vech` order: H[a, c], a <= c
+            r += 1
+            J[r, i] = B[m1 * a + 1 + i, c]
+        end
+    end
+    return J
+end
+
+# Result of `_onepass_from_F` (concrete field types, so `_laplace_grad_batch` stays
+# statically dispatched behind the kernel's function barrier).
+struct _OnePassDerivs
+    Gθ::Matrix{Float64}
+    Jθ::Matrix{Float64}
+    Hex::Matrix{Float64}
+    Jb::Matrix{Float64}
+    grad_logf::Union{Nothing, Vector{Float64}}
 end
 
 # The θ pass gets no θ-context: a cached prior Hessian is constant in θ only at the
@@ -3817,38 +3965,80 @@ end
 # model solve.
 # `with_logf = true`: F's first row is log f itself, and `grad_logf` = ∂ log f/∂θ comes
 # from the same θ pass (for the RE-only fixed effects from the RE prior, constant levels
-# included); otherwise `grad_logf = nothing`.
+# included); otherwise `grad_logf = nothing`. `split`: `(o, p)` of `_theta_split_obs_re`
+# when the caller has it memoized. F is called as `F(θv, bv, tc, cb)` with `cb` the
+# ForwardDiff chunk for b.
+# `Jx`: `nothing`, or `o -> J` returning the (θ[o], b) Jacobian of F's rows directly
+# (DE models, `_onepass_J_x_inner`); it is passed through the barrier and replaces the
+# outer `ForwardDiff.jacobian` over F, so `cx` is then unused.
+#
+# ForwardDiff picks its default chunk from the input length at runtime, so configs built
+# inside this kernel would make every AD call, and all the work on its results, a
+# dynamic dispatch with boxed values. The default chunks are picked here and the kernel
+# is entered once through a function barrier: same chunks, tags and arithmetic.
 function _onepass_from_F(
         F, dm::DataModel, batch_info::REBatchInfo, θ, b, const_cache, cache, tctx;
-        with_logf::Bool = false
+        with_logf::Bool = false, split = nothing, Jx = nothing
     )
+    o, p = split === nothing ? _theta_split_obs_re(dm, θ) : split
+    cx = ForwardDiff.Chunk(length(o) + length(b))
+    cp = isempty(p) ? nothing : ForwardDiff.Chunk(length(p))
+    return _onepass_kernel(
+        F, dm, batch_info, θ, b, const_cache, cache, o, p,
+        cx, ForwardDiff.Chunk(b), cp, with_logf, Jx
+    )::_OnePassDerivs
+end
+
+function _onepass_kernel(
+        F::FF, dm::DataModel, batch_info::REBatchInfo, θ, b, const_cache, cache, o, p,
+        cx::ForwardDiff.Chunk, cb::ForwardDiff.Chunk, cp, with_logf::Bool, Jx::JX
+    ) where {FF, JX}
     nb = length(b)
     nv = _ntri(nb)
     k = with_logf ? 1 : 0
-    o, p = _theta_split_obs_re(dm, θ)
     Jθ = Matrix{Float64}(undef, k + nb + nv, length(θ))
     # outcome-side θ and b differentiated together: one model solve instead of two
     no = length(o)
-    J = ForwardDiff.jacobian(
-        x -> F(_theta_with(θ, o, view(x, 1:no)), x[(no + 1):end], nothing), vcat(θ[o], b)
-    )
+    J = if Jx === nothing
+        gx = x -> F(_theta_with(θ, o, view(x, 1:no)), x[(no + 1):end], nothing, cb)
+        xo = vcat(θ[o], b)
+        ForwardDiff.jacobian(gx, xo, ForwardDiff.JacobianConfig(gx, xo, cx))
+    else
+        Jx(o)::Matrix{Float64}
+    end
     Jθ[:, o] = view(J, :, 1:no)
     if !isempty(p)
         prior(θv) = begin
             θr = _symmetrize_psd_params(θv, get_fixed(get_model(dm)))
             lp = _FOCEIPriorLogf(dm, batch_info, θr, const_cache, cache)
-            gh = vcat(ForwardDiff.gradient(lp, b), _vech(ForwardDiff.hessian(lp, b)))
+            gh = vcat(
+                ForwardDiff.gradient(lp, b, ForwardDiff.GradientConfig(lp, b, cb)),
+                _vech(ForwardDiff.hessian(lp, b, ForwardDiff.HessianConfig(lp, b, cb)))
+            )
             with_logf ? vcat(_re_logpdf_batch(dm, batch_info, θv, b, const_cache, cache), gh) : gh
         end
-        Jθ[:, p] = ForwardDiff.jacobian(x -> prior(_theta_with(θ, p, x)), θ[p])
+        gp = x -> prior(_theta_with(θ, p, x))
+        xp = θ[p]
+        Jθ[:, p] = ForwardDiff.jacobian(gp, xp, ForwardDiff.JacobianConfig(gp, xp, cp))
     end
     Jb = J[:, (no + 1):end]
     Hex = Jb[(k + 1):(k + nb), :]
-    return (
-        Gθ = Jθ[(k + 1):(k + nb), :], Jθ = Jθ[(k + nb + 1):end, :],
-        Hex = (Hex + Hex') / 2, Jb = Jb[(k + nb + 1):end, :],
-        grad_logf = with_logf ? Jθ[1, :] : nothing,
+    return _OnePassDerivs(
+        Jθ[(k + 1):(k + nb), :], Jθ[(k + nb + 1):end, :],
+        (Hex + Hex') / 2, Jb[(k + nb + 1):end, :],
+        with_logf ? Jθ[1, :] : nothing
     )
+end
+
+# `_theta_split_obs_re(dm, θ)` memoized in a batch's gradient buffers: it depends only on
+# the model and θ's axes (the key, compared with `===`), but rebuilds name sets and a
+# ComponentArray, once per batch and gradient call without the memo.
+function _onepass_split!(buf::_LaplaceGradBuffers, dm::DataModel, θ::ComponentArray)
+    key = (get_model(dm), getaxes(θ))
+    buf.split_key === key && return buf.split
+    buf.split = _theta_split_obs_re(dm, θ)
+    buf.split_key = key
+    return buf.split
 end
 
 # Positions in θ of the outcome-side fixed effects (`o`) and of those that enter only
