@@ -1,9 +1,10 @@
 name: CI
 
+# Not on push to main: strict branch protection means a PR's run already
+# tested the merged tree. Before a release, start CI on main by hand.
 on:
-  push:
-    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
