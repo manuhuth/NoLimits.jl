@@ -2,8 +2,10 @@ name: CI
 
 # Not on push to main: strict branch protection means a PR's run already
 # tested the merged tree. Before a release, start CI on main by hand.
+# Drafts run no tests; marking a PR ready for review starts CI.
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 concurrency:
@@ -32,6 +34,7 @@ jobs:
   shard:
     name: test shard ${{ matrix.group }}
     runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     # Slowest shard on a green run is ~15 min; GitHub's 360-minute default let a
     # hung shard burn 6 h and block the PR before reporting anything. A cold-cache
     # run (after dependency changes) spends ~48 min precompiling.
@@ -88,6 +91,7 @@ jobs:
   threaded:
     name: test threaded (invariance oracles)
     runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
@@ -114,6 +118,7 @@ jobs:
   compat-lts:
     name: test compat (Julia 1.10)
     runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     # Own cache lane, so cold-cache runs reach ~42 min.
     timeout-minutes: 120
     steps:
@@ -147,6 +152,10 @@ jobs:
     steps:
       - name: Check results
         run: |
+          if [ "${{ github.event.pull_request.draft }}" = "true" ]; then
+            echo "::error::Draft PR: tests skipped. Mark the PR ready for review to run CI."
+            exit 1
+          fi
           failed=0
           for r in "shard:${{ needs.shard.result }}" "threaded:${{ needs.threaded.result }}" "compat-lts:${{ needs.compat-lts.result }}"; do
             echo "$r"
