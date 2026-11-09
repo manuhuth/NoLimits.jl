@@ -21,6 +21,9 @@
   <a href="https://manuhuth.github.io/NoLimits.jl/dev/">
     <img src="https://img.shields.io/badge/docs-dev-blue.svg" alt="Documentation"/>
   </a>
+  <a href="https://manuhuth.github.io/NoLimits.jl/stable/">
+    <img src="https://img.shields.io/badge/docs-stable-blue.svg" alt="Documentation (stable)"/>
+  </a>
   <a href="https://codecov.io/gh/manuhuth/NoLimits.jl">
     <img src="https://codecov.io/gh/manuhuth/NoLimits.jl/branch/main/graph/badge.svg" alt="Coverage"/>
   </a>
@@ -82,9 +85,9 @@ directly on the same model and dataset without rewriting it.
 | Inference paradigm | Methods |
 |---|---|
 | **Fixed effects** | MLE, MAP, MCMC, VI |
-| **Mixed effects** | Laplace, FOCEI, GHQuadrature, MCEM, SAEM, MCMC |
+| **Mixed effects** | Laplace, FOCEI, GHQuadrature, MCEM, SAEM, VEM, MCMC |
 | **Pooled (mixed effects)** | Pooled, PooledMap |
-| **Cross-method** | Multistart |
+| **Cross-method** | Multistart, [MiniBatch](https://manuhuth.github.io/NoLimits.jl/dev/estimation/minibatch) |
 
 ### Uncertainty quantification
 
@@ -99,6 +102,12 @@ A unified `compute_uq` interface exposes:
 Visual predictive checks (VPCs); residual diagnostics (QQ, PIT, ACF); random-effects
 distribution diagnostics; observation-level predictive plots; UQ parameter distributions; and
 cross-validation with principled random-effects predictions for seen and unseen individuals.
+
+### Also included
+
+- [Cross-validation](https://manuhuth.github.io/NoLimits.jl/dev/estimation/cv) (`cross_validate`), simulation and prediction ([`simulate_data`, `predict`](https://manuhuth.github.io/NoLimits.jl/dev/api/uncertainty))
+- [Dosing and event columns](https://manuhuth.github.io/NoLimits.jl/dev/data-model-construction) and closed-form linear ODEs ([`@DifferentialEquation`](https://manuhuth.github.io/NoLimits.jl/dev/model-building/differential-equation))
+- [Copulas](https://manuhuth.github.io/NoLimits.jl/dev/model-building/copulas), [count](https://manuhuth.github.io/NoLimits.jl/dev/tutorials/mixed-effects-seizure-counts-poisson-nb-mcem) and multi-outcome models
 
 See [Capabilities](https://manuhuth.github.io/NoLimits.jl/dev/capabilities) for the complete list.
 
@@ -138,7 +147,7 @@ package and `using` it alongside NoLimits, and the feature appears.
 | Neural networks in models (`NNParameters`) | `Lux`, or `SimpleChains` |
 | Saving and loading fits (`save_fit`, `load_fit`) | `JLD2` |
 | Bayesian sampling and variational inference (`MCMC`, `VI`, chain-based UQ, Turing samplers in `SAEM`/`MCEM`) | `Turing` |
-| Profile-likelihood UQ (`uq(...; method=:profile)`) | `LikelihoodProfiler` and `OptimizationNLopt` |
+| Profile-likelihood UQ (`compute_uq(...; method=:profile)`) | `LikelihoodProfiler` and `OptimizationNLopt` |
 | LaTeX equations (`show_equations(...; latex=true)`) | `Latexify` |
 | Bundled example data (`load_warfarin_from_monolix`) | `CSV` |
 | Copula random effects (`Copulas.SklarDist`) | `Copulas` |
@@ -159,7 +168,7 @@ and therefore does not install or load for you.
 ## Quickstart
 
 This example fits an exponential-decay model with a subject-level random intercept by Laplace
-approximation. The snippet is self-contained — copy it into a Julia session and run.
+approximation. The snippet is self-contained: copy it into a Julia session and run.
 
 ```julia
 using NoLimits, DataFrames, Distributions, CairoMakie, AlgebraOfGraphics
@@ -203,9 +212,9 @@ plot_fits(res)                          # fit vs. data
 ```
 
 Swapping the inference paradigm is a one-line change: `fit_model(dm, SAEM())`, `fit_model(dm, MCEM())`,
-or `fit_model(dm, MCMC())` all fit the *same* model (`MCMC` needs `import Turing`). More examples — neural-ODE models, Markov-model
+or `fit_model(dm, MCMC())` all fit the *same* model (`MCMC` needs `import Turing`). More examples (neural-ODE models, Markov-model
 outcomes, normalizing-flow random effects, count outcomes, censored data, and multi-method
-comparison — are in the [Tutorials](https://manuhuth.github.io/NoLimits.jl/dev/tutorials/mixed-effects-multiple-methods).
+comparison) are in the [Tutorials](https://manuhuth.github.io/NoLimits.jl/dev/tutorials/mixed-effects-multiple-methods).
 
 ## R and Python interfaces
 
@@ -241,7 +250,7 @@ Symbols and NamedTuples map onto native R and Python ones.
 
 ## Federated learning (experimental)
 
-NoLimits exposes the per-site objective and gradient primitives for federated estimation, where several sites fit one shared model without pooling their data. [NoLimitsFlowerDemo](https://github.com/manuhuth/NoLimitsFlowerDemo) is a public showcase that runs this over [Flower](https://flower.ai), matches the equivalent pooled fit, and adds optional secure aggregation and differential privacy. It is under active development and not yet a released package, so its interfaces may change.
+NoLimits exposes per-site [MCEM and SAEM primitives](https://manuhuth.github.io/NoLimits.jl/dev/method-developer-api) (`mcem_*`, `saem_*`) for federated estimation, where several sites fit one shared model without pooling their data. [NoLimitsFlowerDemo](https://github.com/manuhuth/NoLimitsFlowerDemo) is a public showcase that runs this over [Flower](https://flower.ai), matches the equivalent pooled fit, and adds optional secure aggregation and differential privacy. It is under active development and not yet a released package, so its interfaces may change.
 
 ## Built on the Julia ecosystem
 
@@ -252,7 +261,7 @@ distributions, [Turing.jl](https://github.com/TuringLang/Turing.jl) for MCMC and
 inference, [Lux.jl](https://github.com/LuxDL/Lux.jl) and
 [SimpleChains.jl](https://github.com/PumasAI/SimpleChains.jl) for neural-network components,
 [ForwardDiff.jl](https://github.com/JuliaDiff/ForwardDiff.jl) for automatic differentiation, and
-[Optimization.jl](https://github.com/SciML/Optimization.jl) for optimization — among others.
+[Optimization.jl](https://github.com/SciML/Optimization.jl) for optimization, among others.
 
 ## Documentation
 
@@ -266,6 +275,8 @@ Full documentation is hosted at **[manuhuth.github.io/NoLimits.jl](https://manuh
 | [Model Building](https://manuhuth.github.io/NoLimits.jl/dev/model-building/) · [Estimation](https://manuhuth.github.io/NoLimits.jl/dev/estimation/) · [Uncertainty Quantification](https://manuhuth.github.io/NoLimits.jl/dev/uncertainty-quantification/) | Reference guides |
 | [Tutorials](https://manuhuth.github.io/NoLimits.jl/dev/tutorials/mixed-effects-multiple-methods) | Hands-on, end-to-end examples |
 | [API](https://manuhuth.github.io/NoLimits.jl/dev/api) | Full function reference |
+| [Coming from NONMEM / Monolix / nlmixr2](https://manuhuth.github.io/NoLimits.jl/dev/coming-from-nonmem) · [Troubleshooting](https://manuhuth.github.io/NoLimits.jl/dev/troubleshooting) | Migration and common problems |
+| [Method-Developer API](https://manuhuth.github.io/NoLimits.jl/dev/method-developer-api) | Primitives for building custom estimators |
 
 ## Getting help & contributing
 
@@ -299,7 +310,7 @@ button (from [`CITATION.cff`](CITATION.cff)) provides APA and BibTeX exports:
 NoLimits.jl was developed with substantial assistance from large language models, primarily
 Anthropic's Claude (via Claude Code), for code generation, refactoring, test authoring, and
 documentation. All contributions were reviewed, tested, and are understood by the maintainers,
-who take full responsibility for the package — disclosed per the Julia General Registry's
+who take full responsibility for the package - disclosed per the Julia General Registry's
 guidance on AI-assisted packages.
 
 ## License

@@ -29,7 +29,7 @@ fit_summary
 
 ## Choosing a Method
 
-Start here. The four questions below narrow thirteen methods down to one or two, and the table
+Start here. The four questions below narrow twelve methods down to one or two, and the table
 underneath gives the trade-offs behind each answer.
 
 1. **Does the model have random effects?** No: `MLE`, `MAP`, `VI`, or `MCMC`. Yes: continue - `MCMC` handles both cases, the others below do not.

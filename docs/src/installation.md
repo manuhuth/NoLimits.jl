@@ -48,7 +48,7 @@ add the package and `using` it alongside NoLimits, and the feature becomes avail
 | Bayesian sampling and variational inference (`MCMC`, `VI`, chain-based `uq`, Turing samplers in `SAEM`/`MCEM`) | `Turing` |
 | Neural networks inside models (`NNParameters`) | `Lux`, or `SimpleChains` |
 | Saving and loading fit results (`save_fit`, `load_fit`) | `JLD2` |
-| Profile-likelihood uncertainty quantification (`uq(res; method = :profile)`) | `LikelihoodProfiler` and `OptimizationNLopt` |
+| Profile-likelihood uncertainty quantification (`compute_uq(res; method = :profile)`) | `LikelihoodProfiler` and `OptimizationNLopt` |
 | LaTeX rendering of model equations (`show_equations(model; latex = true)`) | `Latexify` |
 | Bundled example datasets (`load_warfarin_from_monolix`) | `CSV` |
 | Copula-based random effects (`Copulas.SklarDist` in `@randomEffects`) | `Copulas` |
