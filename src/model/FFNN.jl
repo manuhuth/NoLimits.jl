@@ -87,15 +87,11 @@ end
 # to a concrete `Vector{T}` so the layer loop below keeps one element type throughout.
 _ffnn_promote(::Type{T}, x::AbstractVector) where {T} = convert(Vector{T}, x)
 
-# Non-mutating forward pass: every intermediate is a fresh array, so nothing is shared
-# across nested (or concurrent) calls.
-function (net::FFNN)(x::AbstractVector, θ::AbstractVector)
+# Allocating reference forward pass (`W * y .+ b` per layer). Used for callables whose
+# output type differs from the promoted element type, where the scalar loops below would
+# convert results.
+function _ffnn_forward_generic(net::FFNN, x::AbstractVector, θ::AbstractVector, ::Type{T}) where {T}
     s = net.sizes
-    length(x) == s[1] ||
-        error("FFNN input has length $(length(x)); the network expects $(s[1]).")
-    length(θ) == _ffnn_nparams(net) ||
-        error("FFNN parameter vector has length $(length(θ)); the network expects $(_ffnn_nparams(net)).")
-    T = promote_type(eltype(θ), eltype(x))
     y = _ffnn_promote(T, x)
     offset = 0
     n_layers = length(s) - 1
@@ -110,6 +106,119 @@ function (net::FFNN)(x::AbstractVector, θ::AbstractVector)
     end
     return y
 end
+
+# Pre-activation of unit `j` of a dense layer: Σ_k W[j, k] y[k] + b[j], with W stored
+# column-major at `θ[off+1 : off+n_out*n_in]` and b right after it. The sum starts at b
+# and accumulates with `muladd` (fused multiply-add where available), so results differ
+# from `W * y .+ b` by rounding only (about 1e-16 absolute). `y` is read unpromoted: a
+# plain-number input times a Dual weight skips the zero partials that promotion would
+# multiply through.
+@inline function _ffnn_preact(::Type{T}, θ, y, off::Int, n_in::Int, n_out::Int, j::Int) where {T}
+    acc = zero(T) + @inbounds(θ[off + n_in * n_out + j])
+    @inbounds for k in 1:n_in
+        acc = muladd(θ[off + (k - 1) * n_out + j], y[k], acc)
+    end
+    return acc
+end
+
+# Hidden layer `y -> act.(W y .+ b)` into a fresh vector (no buffer shared across calls).
+function _ffnn_hidden(act, ::Type{T}, θ, y, off::Int, n_in::Int, n_out::Int) where {T}
+    h = Vector{T}(undef, n_out)
+    @inbounds for j in 1:n_out
+        h[j] = act(_ffnn_preact(T, θ, y, off, n_in, n_out, j))
+    end
+    return h
+end
+
+# Last hidden layer fused with the output layer: each hidden unit is computed once and
+# immediately accumulated into the outputs, so the last hidden vector is never stored.
+# Each output starts at its bias and accumulates over hidden units with `muladd`.
+function _ffnn_last(net::FFNN, ::Type{T}, θ, y, off::Int, n_in::Int, n_hid::Int, n_out::Int) where {T}
+    off2 = off + n_hid * (n_in + 1)
+    act = net.activation
+    if n_out == 1
+        # Scalar output (the common case in model formulas): the sum stays in a register.
+        acc = zero(T) + @inbounds(θ[off2 + n_hid + 1])
+        @inbounds for j in 1:n_hid
+            acc = muladd(θ[off2 + j], act(_ffnn_preact(T, θ, y, off, n_in, n_hid, j)), acc)
+        end
+        return _ffnn_apply_out!(net.output_activation, T[acc])
+    end
+    z = Vector{T}(undef, n_out)
+    @inbounds for o in 1:n_out
+        z[o] = θ[off2 + n_hid * n_out + o]
+    end
+    @inbounds for j in 1:n_hid
+        h = act(_ffnn_preact(T, θ, y, off, n_in, n_hid, j))
+        for o in 1:n_out
+            z[o] = muladd(θ[off2 + (j - 1) * n_out + o], h, z[o])
+        end
+    end
+    return _ffnn_apply_out!(net.output_activation, z)
+end
+
+# Output layer without a hidden layer in front (sizes `(n_in, n_out)`).
+function _ffnn_linear_out(net::FFNN, ::Type{T}, θ, y, n_in::Int, n_out::Int) where {T}
+    z = Vector{T}(undef, n_out)
+    @inbounds for o in 1:n_out
+        z[o] = _ffnn_preact(T, θ, y, 0, n_in, n_out, o)
+    end
+    return _ffnn_apply_out!(net.output_activation, z)
+end
+
+_ffnn_apply_out!(::_FFNNSoftmax, z) = softmax(z)
+function _ffnn_apply_out!(f, z)
+    @inbounds for o in eachindex(z)
+        z[o] = f(z[o])
+    end
+    return z
+end
+
+# Forward pass. Scalar loops over the flat parameter vector: no promoted input copy, no
+# `W * y` / broadcast temporaries; the only allocations are one vector per hidden layer
+# beyond the last and the returned output. Nothing is shared across nested (or concurrent)
+# calls.
+function (net::FFNN)(x::AbstractVector, θ::AbstractVector)
+    s = net.sizes
+    length(x) == s[1] ||
+        error("FFNN input has length $(length(x)); the network expects $(s[1]).")
+    length(θ) == _ffnn_nparams(net) ||
+        error("FFNN parameter vector has length $(length(θ)); the network expects $(_ffnn_nparams(net)).")
+    T = promote_type(eltype(θ), eltype(x))
+    _ffnn_scalar_ok(net, T) || return _ffnn_forward_generic(net, x, θ, T)
+    _ffnn_use_blas(net, T) && return _ffnn_forward_generic(net, x, θ, T)
+    n_layers = length(s) - 1
+    n_layers == 1 && return _ffnn_linear_out(net, T, θ, x, s[1], s[2])
+    y = x
+    offset = 0
+    for i in 1:(n_layers - 2)
+        y = _ffnn_hidden(net.activation, T, θ, y, offset, s[i], s[i + 1])
+        offset += s[i + 1] * (s[i] + 1)
+    end
+    return _ffnn_last(net, T, θ, y, offset, s[n_layers - 1], s[n_layers], s[n_layers + 1])
+end
+
+# Plain floating-point evaluations of wide networks go through BLAS: from a hidden width
+# of 16 a BLAS matrix-vector product plus a separate (vectorizable) activation loop is as
+# fast as or faster than the fused scalar loop (one thread, 2026-11 measurements: width 32
+# BLAS 1.9x faster, width 8 scalar 1.6x faster). Dual numbers never reach BLAS, and for
+# them the scalar loop wins at every width measured (up to 64), so they always take it.
+const _FFNN_BLAS_MIN_WIDTH = 16
+function _ffnn_use_blas(net::FFNN, ::Type{T}) where {T}
+    T <: LinearAlgebra.BlasFloat || return false
+    s = net.sizes
+    for i in 2:(length(s) - 1)
+        s[i] >= _FFNN_BLAS_MIN_WIDTH && return true
+    end
+    return false
+end
+
+# The scalar loops store activations in `Vector{T}`; callables that change the element
+# type (e.g. user functions returning Float32) take the broadcast path instead.
+_ffnn_scalar_ok(net::FFNN, ::Type{T}) where {T} =
+    Base.promote_op(net.activation, T) === T && _ffnn_out_ok(net.output_activation, T)
+_ffnn_out_ok(::_FFNNSoftmax, ::Type) = true
+_ffnn_out_ok(f, ::Type{T}) where {T} = Base.promote_op(f, T) === T
 
 # Glorot-uniform weights, zero biases, in the flat layout the forward pass reads.
 function _ffnn_init_params(net::FFNN, ::Type{T}, rng::Random.AbstractRNG) where {T}

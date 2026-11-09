@@ -37,6 +37,7 @@ const TEST_GROUPS = [
     # ── G3: AD + model-layer units + closed-form part 1 ──────────────────────
     [
         "simplechains_nn_tests.jl",
+        "ffnn_forward_tests.jl",
         "ad_tests.jl",
         "transform_tests.jl",
         "fixed_effects_tests.jl",
