@@ -1637,21 +1637,21 @@ macro DifferentialEquation(block)
     # Solve-time vars: the referenced original vars, then the hoisted invariants
     # (evaluated from the original vars; no statement when nothing is hoisted).
     hoist_stmts = isempty(hoisted) ? Any[] : Any[
-        :(
-            vars = NamedTuple{$(Expr(:tuple, QuoteNode.(vcat(kept_vars, first.(hoisted)))...))}(
-                $(
-                    Expr(
-                        :tuple,
-                        (Expr(:., :vars, QuoteNode(s)) for s in kept_vars)...,
-                        (
-                            _de_rewrite_all(h, state_map, var_syms_no_states, fun_syms)
+            :(
+                vars = NamedTuple{$(Expr(:tuple, QuoteNode.(vcat(kept_vars, first.(hoisted)))...))}(
+                    $(
+                        Expr(
+                            :tuple,
+                            (Expr(:., :vars, QuoteNode(s)) for s in kept_vars)...,
+                            (
+                                _de_rewrite_all(h, state_map, var_syms_no_states, fun_syms)
                                 for h in last.(hoisted)
-                        )...
+                            )...
+                        )
                     )
                 )
-            )
-        ),
-    ]
+            ),
+        ]
 
     compile_expr = :(
         function (p)

@@ -3888,8 +3888,10 @@ function _onepass_logdet_derivatives(
     end
     # DE models: the (θ[o], b) level innermost in the call order (`_onepass_J_x_inner`),
     # so the ODE solve can compress it (`_ode_dual_compress`, common.jl)
-    Jx = (get_de(get_model(dm)) === nothing || eltype(θ) !== Float64 ||
-        eltype(b) !== Float64) ? nothing :
+    Jx = (
+            get_de(get_model(dm)) === nothing || eltype(θ) !== Float64 ||
+            eltype(b) !== Float64
+        ) ? nothing :
         o -> _onepass_J_x_inner(dm, batch_info, θ, b, const_cache, cache, o)
     return _onepass_from_F(
         F, dm, batch_info, θ, b, const_cache, cache, tctx; with_logf = true, split = split,
