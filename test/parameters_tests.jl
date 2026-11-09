@@ -330,6 +330,50 @@ end
     )
 end
 
+@testset "Logit(a, b) scale — construction and validation" begin
+    @test Logit() === Logit(0.0, 1.0)
+    @test RealNumber(0.3; scale = Logit(0, 1)).scale === :logit
+    @test RealNumber(2.0; scale = Logit(0, 5)).scale === Logit(0.0, 5.0)
+    v = RealVector([0.3, 2.0, 1.0]; scale = [:logit, Logit(0, 5), :log])
+    @test v.scale == [:logit, Logit(0.0, 5.0), :log]
+    @test RealVector([0.3, 0.4]; scale = Logit(0, 1)).scale == [:logit, :logit]
+
+    @test_throws ArgumentError Logit(1, 0)
+    @test_throws ArgumentError Logit(0, Inf)
+    @test_throws ArgumentError Logit(0, 0)
+
+    # value must lie in the open domain
+    @test_throws ErrorException RealNumber(5.0; scale = Logit(0, 5))
+    @test_throws ErrorException RealNumber(-1.0; scale = Logit(0, 5))
+    @test_throws ErrorException RealVector([0.3, 6.0]; scale = [:logit, Logit(0, 5)])
+    err = try
+        RealNumber(1.5; scale = :logit)
+    catch e
+        e
+    end
+    @test occursin("(0, 1) for scale :logit", err.msg)
+
+    # finite bounds outside the domain error with name, value, domain and scale
+    err = try
+        RealNumber(2.0; name = :k, scale = Logit(0, 5), lower = -1.0)
+    catch e
+        e
+    end
+    @test err isa ErrorException
+    @test all(s -> occursin(s, err.msg), ("k", "lower=-1.0", "[0.0, 5.0]", "Logit(0.0, 5.0)"))
+    @test_throws ErrorException RealNumber(2.0; scale = Logit(0, 5), upper = 6.0)
+    @test_throws ErrorException RealVector([2.0]; scale = [Logit(0, 5)], upper = [6.0])
+    @test_throws ErrorException RealNumber(0.3; scale = :logit, lower = -0.5)
+    @test_throws ErrorException RealNumber(0.3; scale = :logit, upper = 1.5)
+
+    # default prior: Uniform only for explicit finite bounds
+    @test RealNumber(2.0; scale = Logit(0, 5), lower = 0.0, upper = 5.0).prior == Uniform(0.0, 5.0)
+    @test RealNumber(2.0; scale = Logit(0, 5)).prior isa Priorless
+
+    @test_logs (:warn, r"Logit\(0\.0, 5\.0\)") RealNumber(5.0e-10; name = :q, scale = Logit(0, 5))
+    @test_logs RealNumber(2.0; scale = Logit(0, 5), lower = 0.0, upper = 5.0)
+end
+
 @testset "NPFParameter seeded initialization is reproducible" begin
     p1 = NPFParameter(2, 3; name = :ψ, seed = 7)
     p2 = NPFParameter(2, 3; name = :ψ, seed = 7)

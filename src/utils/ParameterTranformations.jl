@@ -41,17 +41,18 @@ end
 
 struct TransformSpec
     name::Symbol
-    kind::Symbol
+    kind::_ScaleKind
     size::Tuple{Int, Int}
-    mask::Union{Nothing, Vector{Symbol}}
+    mask::Union{Nothing, Vector{_ScaleKind}}
     lie::Union{Nothing, LiePSDLayout}
 end
 # Backward-compatible 4-arg constructor (all non-Lie specs carry no layout).
 function TransformSpec(
-        name::Symbol, kind::Symbol, size::Tuple{Int, Int},
-        mask::Union{Nothing, Vector{Symbol}}
+        name::Symbol, kind::_ScaleKind, size::Tuple{Int, Int},
+        mask::Union{Nothing, AbstractVector}
     )
-    return TransformSpec(name, kind, size, mask, nothing)
+    m = mask === nothing ? nothing : convert(Vector{_ScaleKind}, mask)
+    return TransformSpec(name, kind, size, m, nothing)
 end
 
 # `out_axes`/`n_out` (when provided) describe the output ComponentArray layout and
@@ -138,6 +139,16 @@ function _write_forward_spec!(flat::Vector, k::Int, spec::TransformSpec, val)
             k += 1
         end
         return k
+    elseif kind isa Logit
+        if val isa Number
+            flat[k] = _scalar_forward(kind, val)
+            return k + 1
+        end
+        for x in val
+            flat[k] = _scalar_forward(kind, x)
+            k += 1
+        end
+        return k
     elseif kind === :elementwise
         for j in eachindex(val)
             flat[k] = _scalar_forward(spec.mask[j], val[j])
@@ -201,6 +212,16 @@ function _write_inverse_spec!(flat::Vector, k::Int, spec::TransformSpec, val)
         end
         for x in val
             flat[k] = logit_inverse(x)
+            k += 1
+        end
+        return k
+    elseif kind isa Logit
+        if val isa Number
+            flat[k] = _scalar_inverse(kind, val)
+            return k + 1
+        end
+        for x in val
+            flat[k] = _scalar_inverse(kind, x)
             k += 1
         end
         return k
@@ -492,6 +513,11 @@ end
     kind === :logit && return g * _logit_inv_jacobian(x)
     return g
 end
+
+# Scaled logit on (a, b): x = a + (b - a) * logistic(z).
+@inline _scalar_forward(s::Logit, x::Real) = logit_forward((x - s.lower) / (s.upper - s.lower))
+@inline _scalar_inverse(s::Logit, x::Real) = s.lower + (s.upper - s.lower) * logit_inverse(x)
+@inline _scalar_inv_jacobian(s::Logit, g::Real, x::Real) = g * (s.upper - s.lower) * _logit_inv_jacobian(x)
 
 function cholesky_forward(A::AbstractMatrix{<:Real})
     Asym = Symmetric((A + A') / 2)
@@ -1040,6 +1066,12 @@ function _block_logabsdetjac(spec::TransformSpec, block)
         return _sum_block(block)
     elseif kind === :logit
         return _logabsdetjac_logit(block)
+    elseif kind isa Logit
+        s = zero(_block_eltype(block))
+        for z in _block_scalars(block)
+            s += _logabsdetjac_scalar(kind, z)
+        end
+        return s
     elseif kind === :elementwise
         return _logabsdetjac_elementwise(spec, block)
     elseif kind === :cholesky
@@ -1067,6 +1099,8 @@ end
     return log(sig) + log(one(sig) - sig)
 end
 
+@inline _logabsdetjac_scalar(s::Logit, z::Real) = log(s.upper - s.lower) + _logabsdetjac_logit_scalar(z)
+
 # Scalar / diagonal closed forms. :log -> sum z (dexp/dz = exp z); :logit -> sum log sigma(1-sigma).
 function _logabsdetjac_logit(block)
     s = zero(_block_eltype(block))
@@ -1085,6 +1119,8 @@ function _logabsdetjac_elementwise(spec::TransformSpec, block)
             s += block[j]
         elseif m === :logit
             s += _logabsdetjac_logit_scalar(block[j])
+        elseif m isa Logit
+            s += _logabsdetjac_scalar(m, block[j])
         end
     end
     return s
@@ -1220,6 +1256,8 @@ function _inv_jac_spec_val(spec::TransformSpec, θti, gu)
             return _safe_log_inv_jac.(gu, θti)
         elseif spec.kind == :logit
             return gu .* _logit_inv_jacobian.(θti)
+        elseif spec.kind isa Logit
+            return _scalar_inv_jacobian.(spec.kind, gu, θti)
         elseif spec.kind == :elementwise
             return [
                 _scalar_inv_jacobian(spec.mask[j], gu[j], θti[j])
@@ -1313,6 +1351,8 @@ function _transform_vals(
             return log.(val)
         elseif spec.kind == :logit
             return logit_forward.(val)
+        elseif spec.kind isa Logit
+            return _scalar_forward.(spec.kind, val)
         elseif spec.kind == :elementwise
             return [_scalar_forward(spec.mask[j], val[j]) for j in eachindex(val)]
         elseif spec.kind == :cholesky
@@ -1346,6 +1386,8 @@ function _inverse_vals(
             return exp.(val)
         elseif spec.kind == :logit
             return logit_inverse.(val)
+        elseif spec.kind isa Logit
+            return _scalar_inverse.(spec.kind, val)
         elseif spec.kind == :elementwise
             return [_scalar_inverse(spec.mask[j], val[j]) for j in eachindex(val)]
         elseif spec.kind == :cholesky

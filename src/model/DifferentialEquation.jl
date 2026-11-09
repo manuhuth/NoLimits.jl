@@ -1153,6 +1153,80 @@ function _de_rewrite_all(
     end
 end
 
+# ---------------------------------------------------------------------------
+# Loop-invariant hoisting (macro time). A subexpression of a right-hand side or signal
+# that is a call of a pure arithmetic/elementary function on parameter-like symbols
+# only (pre-DE variables, random and fixed effects, constant covariates, globals) and
+# numeric literals takes the same value at every RHS evaluation of a solve. It is
+# evaluated once in the compiler (same expression, same operands, so the same value)
+# and enters the solve as a var of its own; vars no longer referenced afterwards are
+# dropped from the solve parameters. Only maximal call subtrees reached through call
+# arguments are hoisted (never inside indices, broadcasts, conditionals or local
+# scopes), and only subtrees with at least two distinct parameter symbols, e.g.
+# `CL_i / V_i` in `ka * depot - (CL_i / V_i) * central`. This also reduces the number
+# of solve inputs that carry dual partials (the dual compression in `_ll_solve_de`
+# counts active inputs): there, `CL_i` and `V_i` both depend on both random effects,
+# their ratio is one input. The hoisting is applied only when the number of solve
+# vars does not grow.
+# ---------------------------------------------------------------------------
+const _DE_HOIST_OPS = (
+    :+, :-, :*, :/, :^, :inv, :abs, :exp, :log, :sqrt, :cbrt, :log1p, :expm1,
+    :exp2, :exp10, :log2, :log10,
+)
+
+function _de_is_invariant(ex, var_syms::Set{Symbol}, fun_syms::Set{Symbol})
+    ex isa Symbol && return ex in var_syms
+    ex isa Number && return true
+    (ex isa Expr && ex.head === :call && length(ex.args) >= 2) || return false
+    f = ex.args[1]
+    (f isa Symbol && f in _DE_HOIST_OPS && !(f in fun_syms)) || return false
+    return all(a -> _de_is_invariant(a, var_syms, fun_syms), @view(ex.args[2:end]))
+end
+
+_de_param_syms!(out, ex::Symbol, var_syms) = (ex in var_syms && push!(out, ex); out)
+function _de_param_syms!(out, ex::Expr, var_syms)
+    for a in @view(ex.args[2:end])
+        _de_param_syms!(out, a, var_syms)
+    end
+    return out
+end
+_de_param_syms!(out, ex, var_syms) = out
+
+_de_mentions(ex::Symbol, s::Symbol) = ex === s
+_de_mentions(ex::Expr, s::Symbol) = any(a -> _de_mentions(a, s), ex.args)
+_de_mentions(ex, s::Symbol) = false
+
+function _de_hoist!(ex, var_syms, fun_syms, table::Vector{Pair{Symbol, Any}})
+    (ex isa Expr && ex.head === :call) || return ex
+    if _de_is_invariant(ex, var_syms, fun_syms) &&
+            length(_de_param_syms!(Set{Symbol}(), ex, var_syms)) >= 2
+        for (s, h) in table
+            h == ex && return s
+        end
+        s = Symbol("__de_inv_", length(table) + 1)
+        push!(table, s => ex)
+        return s
+    end
+    return Expr(
+        :call, ex.args[1],
+        (_de_hoist!(a, var_syms, fun_syms, table) for a in @view(ex.args[2:end]))...
+    )
+end
+
+# -> (rhs, signals, hoisted::Vector{Pair{Symbol,Any}}, kept::Vector{Symbol}); the inputs
+# unchanged and `hoisted` empty when nothing is hoisted or the var count would grow.
+function _de_hoist_invariants(rhs_exprs, signal_exprs, var_syms::Set{Symbol}, fun_syms::Set{Symbol})
+    table = Pair{Symbol, Any}[]
+    rhs2 = Any[_de_hoist!(ex, var_syms, fun_syms, table) for ex in rhs_exprs]
+    sig2 = Any[_de_hoist!(ex, var_syms, fun_syms, table) for ex in signal_exprs]
+    isempty(table) && return rhs_exprs, signal_exprs, table, Symbol[]
+    all_ex = vcat(rhs2, sig2)
+    kept = Symbol[s for s in collect(var_syms) if any(ex -> _de_mentions(ex, s), all_ex)]
+    length(kept) + length(table) <= length(var_syms) ||
+        return rhs_exprs, signal_exprs, Pair{Symbol, Any}[], Symbol[]
+    return rhs2, sig2, table, kept
+end
+
 _de_dotted_call_base(f) = f isa Expr && f.head == :. && f.args[1] isa Symbol ? f.args[1] : nothing
 
 function _de_collect_dotted_call_bases(ex, out::Set{Symbol})
@@ -1505,12 +1579,18 @@ macro DifferentialEquation(block)
     fun_syms = Set([s for s in call_syms if !(s in signal_set)])
     state_map = Dict{Symbol, Int}((state_names[i] => i) for i in eachindex(state_names))
     state_set = Set(state_names)
+    # Parameter-only subexpressions are computed once per solve (`_de_hoist_invariants`).
+    rhs_rewritten, signal_rewritten, hoisted, kept_vars = _de_hoist_invariants(
+        rhs_rewritten, signal_rewritten, var_syms_no_states, fun_syms
+    )
+    rewrite_syms = isempty(hoisted) ? var_syms_no_states :
+        union(var_syms_no_states, Set(first.(hoisted)))
     rhs_fast = [
-        _de_view_state_slices(_de_rewrite_all(ex, state_map, var_syms_no_states, fun_syms), state_set)
+        _de_view_state_slices(_de_rewrite_all(ex, state_map, rewrite_syms, fun_syms), state_set)
             for ex in rhs_rewritten
     ]
     signal_fast = [
-        _de_view_state_slices(_de_rewrite_all(ex, state_map, var_syms_no_states, fun_syms), state_set)
+        _de_view_state_slices(_de_rewrite_all(ex, state_map, rewrite_syms, fun_syms), state_set)
             for ex in signal_rewritten
     ]
 
@@ -1554,6 +1634,24 @@ macro DifferentialEquation(block)
         :call, Expr(:curly, :NamedTuple, Expr(:tuple, QuoteNode.(collect(fun_syms))...)),
         Expr(:tuple, compile_funs...)
     )
+    # Solve-time vars: the referenced original vars, then the hoisted invariants
+    # (evaluated from the original vars; no statement when nothing is hoisted).
+    hoist_stmts = isempty(hoisted) ? Any[] : Any[
+            :(
+                vars = NamedTuple{$(Expr(:tuple, QuoteNode.(vcat(kept_vars, first.(hoisted)))...))}(
+                    $(
+                        Expr(
+                            :tuple,
+                            (Expr(:., :vars, QuoteNode(s)) for s in kept_vars)...,
+                            (
+                                _de_rewrite_all(h, state_map, var_syms_no_states, fun_syms)
+                                for h in last.(hoisted)
+                            )...
+                        )
+                    )
+                )
+            ),
+        ]
 
     compile_expr = :(
         function (p)
@@ -1565,6 +1663,7 @@ macro DifferentialEquation(block)
             model_funs = p.model_funs
             preDE = p.preDE
             vars = $vars_nt
+            $(hoist_stmts...)
             funs = $funs_nt
             return (vars = vars, funs = funs)
         end

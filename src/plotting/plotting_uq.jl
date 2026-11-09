@@ -67,6 +67,7 @@ end
         k == :identity && return :normal
         k == :log && return :lognormal
         k == :logit && return :logitnormal
+        k isa Logit && return k
     end
     return :none
 end
@@ -104,6 +105,14 @@ function _wald_density_xy(kind::Symbol, μ::Float64, v::Float64; npts::Int = 300
         return (x, y)
     end
     error("Unknown closed-form density kind $(kind).")
+end
+
+# Logit(a, b): x = a + (b - a) * x01 with x01 logit-normal, so the density is y01 / (b - a).
+function _wald_density_xy(s::Logit, μ::Float64, v::Float64; npts::Int = 300)
+    xy = _wald_density_xy(:logitnormal, μ, v; npts = npts)
+    xy === nothing && return nothing
+    w = s.upper - s.lower
+    return (s.lower .+ w .* xy[1], xy[2] ./ w)
 end
 
 @inline function _interp_on_grid(x::Vector{Float64}, y::Vector{Float64}, z::Float64)

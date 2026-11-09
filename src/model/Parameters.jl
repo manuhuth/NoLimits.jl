@@ -27,15 +27,72 @@ export RealNumber, RealVector, RealPSDMatrix, RealLiePSDMatrix, RealDiagonalMatr
 export ProbabilityVector, DiscreteTransitionMatrix, ContinuousTransitionMatrix
 export Priorless
 
+"""
+    Logit(lower = 0.0, upper = 1.0)
+
+Scaled logit scale for [`RealNumber`](@ref) and [`RealVector`](@ref) parameters that live
+in the open interval `(lower, upper)`. The optimizer works on
+`z = logit((x - lower) / (upper - lower))` and maps back with
+`x = lower + (upper - lower) * logistic(z)`. Both bounds must be finite with
+`lower < upper`. `Logit(0, 1)` is the same as `scale = :logit`.
+"""
+struct Logit
+    lower::Float64
+    upper::Float64
+    function Logit(lower::Real = 0.0, upper::Real = 1.0)
+        (isfinite(lower) && isfinite(upper) && lower < upper) || throw(
+            ArgumentError(
+                "Logit(lower, upper) requires finite bounds with lower < upper; got lower=$(lower), upper=$(upper)."
+            )
+        )
+        return new(Float64(lower), Float64(upper))
+    end
+end
+
+export Logit
+
+Base.broadcastable(s::Logit) = Ref(s)
+Base.show(io::IO, s::Logit) = print(io, "Logit(", s.lower, ", ", s.upper, ")")
+
+const _ScaleKind = Union{Symbol, Logit}
+
+# `Logit(0, 1)` is stored as `:logit` so it runs the plain logit path bit for bit.
+_normalize_scale(s::Logit) = (s.lower == 0 && s.upper == 1) ? :logit : s
+_normalize_scale(s) = s
+
+_is_logit_scale(s) = s === :logit || s isa Logit
+_logit_domain(::Symbol) = (0.0, 1.0)
+_logit_domain(s::Logit) = (s.lower, s.upper)
+_scale_label(s) = repr(s)
+
 # The logit transform clamps to ±LOGIT_CLAMP, so a value or finite bound whose log-odds
 # exceed that limit cannot be represented: the forward transform saturates and the inverse
 # maps back to a different number. Say so at declaration instead of corrupting it silently
 # (issue #167).
-function _warn_logit_unrepresentable(name, what, x)
-    (x <= 0 || x >= 1 || abs(log(x / (1 - x))) <= LOGIT_CLAMP) && return nothing
+function _warn_logit_unrepresentable(name, what, x, scale = :logit)
+    a, b = _logit_domain(scale)
+    y = (x - a) / (b - a)
+    (y <= 0 || y >= 1 || abs(log(y / (1 - y))) <= LOGIT_CLAMP) && return nothing
     @warn "Parameter $(name): $(what) $(x) is outside the range representable on the " *
-        ":logit scale (|logit(x)| ≤ $(LOGIT_CLAMP)); it saturates at " *
-        "$(sign(x - 0.5) * LOGIT_CLAMP) and will not round-trip to $(x)."
+        "$(_scale_label(scale)) scale (|logit((x - $(a)) / ($(b) - $(a)))| ≤ $(LOGIT_CLAMP)); " *
+        "it saturates at $(sign(y - 0.5) * LOGIT_CLAMP) and will not round-trip to $(x)."
+    return nothing
+end
+
+# Value must lie in the open domain (a, b); finite extra box bounds must lie in [a, b].
+function _check_logit_scale(name, where, scale, value, lower, upper)
+    a, b = _logit_domain(scale)
+    label = _scale_label(scale)
+    dom = scale === :logit ? "(0, 1)" : "($(a), $(b))"
+    (value > a && value < b) ||
+        error("Invalid initial value for parameter $(name)$(where). Expected value ∈ $(dom) for scale $(label); got value=$(value).")
+    _warn_logit_unrepresentable(name, "initial value$(where)", value, scale)
+    for (what, x) in (("lower", lower), ("upper", upper))
+        isfinite(x) || continue
+        (a <= x <= b) ||
+            error("Invalid $(what) bound for parameter $(name)$(where): $(what)=$(x) lies outside the domain [$(a), $(b)] of scale $(label). Finite bounds of a logit-scaled parameter must lie in that domain; leave the bound at its default to use the whole domain.")
+        _warn_logit_unrepresentable(name, "$(what) bound$(where)", x, scale)
+    end
     return nothing
 end
 
@@ -86,8 +143,10 @@ A scalar real-valued fixed-effect parameter block.
 
 # Keyword Arguments
 - `name::Symbol = :unnamed`: parameter name (injected automatically by `@fixedEffects`).
-- `scale::Symbol = :identity`: reparameterization applied during optimization.
-  Must be one of `REAL_SCALES` (`:identity`, `:log`, `:logit`).
+- `scale = :identity`: reparameterization applied during optimization. One of
+  `REAL_SCALES` (`:identity`, `:log`, `:logit`) or a [`Logit`](@ref)`(a, b)` for values
+  in `(a, b)`. For `:logit`/`Logit(a, b)` the initial value must lie in the open domain and
+  finite `lower`/`upper` must lie in the closed domain (`[0, 1]` for `:logit`).
 - `lower::Real = -Inf`: lower bound on the natural scale (defaults to `EPSILON` when `scale=:log`).
 - `upper::Real = Inf`: upper bound on the natural scale.
 - `prior = Priorless()`: prior distribution (`Distributions.Distribution`) or `Priorless()`.
@@ -99,7 +158,7 @@ A scalar real-valued fixed-effect parameter block.
 Base.@kwdef struct RealNumber{T <: Real} <: AbstractParameterBlock
     name::Symbol = :unnamed
     value::T
-    scale::Symbol = :identity
+    scale::_ScaleKind = :identity
     lower::T = -Inf
     upper::T = Inf
     prior = Priorless()
@@ -107,15 +166,16 @@ Base.@kwdef struct RealNumber{T <: Real} <: AbstractParameterBlock
 end
 
 function RealNumber(
-        value::Real; name::Symbol = :unnamed, scale::Symbol = :identity,
+        value::Real; name::Symbol = :unnamed, scale::_ScaleKind = :identity,
         lower::Real = -Inf, upper::Real = Inf, prior = Priorless(), calculate_se::Bool = true
     )
     _check_prior(prior, name)
     isfinite(value) ||
         error("Invalid initial value for parameter $(name). Expected a finite number; got $(value).")
     explicit_bounds = isfinite(lower) && isfinite(upper)
-    scale in REAL_SCALES ||
-        error("Invalid scale for parameter $(name). Expected one of $(REAL_SCALES); got $(scale).")
+    scale = _normalize_scale(scale)
+    (scale isa Logit || scale in REAL_SCALES) ||
+        error("Invalid scale for parameter $(name). Expected one of $(REAL_SCALES) or Logit(lower, upper); got $(scale).")
     scale == :log && lower == -Inf && (lower = EPSILON)
     lower < upper ||
         error("Invalid bounds for parameter $(name). Expected lower < upper; got lower=$(lower), upper=$(upper).")
@@ -123,13 +183,7 @@ function RealNumber(
         lower >= 0 ||
             error("Invalid lower bound for parameter $(name). Expected lower > 0 for scale :log; got lower=$(lower).")
     end
-    if scale == :logit
-        (value > 0 && value < 1) ||
-            error("Invalid initial value for parameter $(name). Expected value ∈ (0, 1) for scale :logit; got value=$(value).")
-        _warn_logit_unrepresentable(name, "initial value", value)
-        isfinite(lower) && _warn_logit_unrepresentable(name, "lower bound", lower)
-        isfinite(upper) && _warn_logit_unrepresentable(name, "upper bound", upper)
-    end
+    _is_logit_scale(scale) && _check_logit_scale(name, "", scale, value, lower, upper)
     T = value isa AbstractFloat ? typeof(value) : Float64
     v = T(value)
     l = T(lower)
@@ -150,9 +204,9 @@ A vector of real-valued fixed-effect parameters with per-element scale options.
 
 # Keyword Arguments
 - `name::Symbol = :unnamed`: parameter name (injected automatically by `@fixedEffects`).
-- `scale`: per-element scale symbols. A single `Symbol` or a `Vector{Symbol}` of
-  the same length as `value`. Each element must be in `REAL_SCALES` (`:identity`, `:log`, `:logit`).
-  Defaults to all `:identity`.
+- `scale`: per-element scales. A single scale or a vector of the same length as `value`.
+  Each element is in `REAL_SCALES` (`:identity`, `:log`, `:logit`) or a
+  [`Logit`](@ref)`(a, b)`, e.g. `[:log, Logit(0, 5)]`. Defaults to all `:identity`.
 - `lower`: lower bounds per element. Defaults to `-Inf` (or `EPSILON` for `:log` elements).
 - `upper`: upper bounds per element. Defaults to `Inf`.
 - `prior = Priorless()`: a `Distributions.Distribution`, a `Vector{Distribution}` of
@@ -166,7 +220,7 @@ A vector of real-valued fixed-effect parameters with per-element scale options.
 Base.@kwdef struct RealVector{T <: Real, VT <: AbstractVector{T}} <: AbstractParameterBlock
     name::Symbol = :unnamed
     value::VT
-    scale::Vector{Symbol} = fill(:identity, length(value))
+    scale::Vector{_ScaleKind} = _ScaleKind[:identity for _ in value]
     lower::VT = fill(-Inf, length(value))
     upper::VT = fill(Inf, length(value))
     prior = Priorless()
@@ -185,7 +239,7 @@ function RealVector(
     _check_prior(prior, name)
     # The docstring allows a single Symbol for `scale`; broadcasting it here keeps that
     # promise instead of failing with `no method matching iterate(::Symbol)` (#221).
-    scale isa Symbol && (scale = fill(scale, length(value)))
+    scale isa _ScaleKind && (scale = fill(scale, length(value)))
     length(scale) == length(value) ||
         error("Invalid scale for parameter $(name). Expected one scale per element ($(length(value))); got $(length(scale)).")
     let bad = findfirst(!isfinite, value)
@@ -196,24 +250,17 @@ function RealVector(
     # turns an unset lower into a finite EPSILON (which must NOT count as user-specified).
     explicit_lower = isfinite.(lower)
     explicit_upper = isfinite.(upper)
-    all(s -> s in REAL_SCALES, scale) ||
-        error("Invalid scale for parameter $(name). Expected each scale in $(REAL_SCALES); got $(scale).")
-    s = collect(scale)
+    all(s -> s isa Logit || s in REAL_SCALES, scale) ||
+        error("Invalid scale for parameter $(name). Expected each scale in $(REAL_SCALES) or a Logit(lower, upper); got $(scale).")
+    s = _ScaleKind[_normalize_scale(x) for x in scale]
     if any(s .== :log)
         lower = map((l, sc) -> (sc == :log && l == -Inf) ? EPSILON : l, lower, s)
     end
     for (idx, (sc, vi)) in enumerate(zip(s, value))
-        if sc == :logit
-            (vi > 0 && vi < 1) ||
-                error("Invalid initial value for parameter $(name) at index $(idx). Expected value ∈ (0, 1) for scale :logit; got value=$(vi).")
-            _warn_logit_unrepresentable(name, "initial value at index $(idx)", vi)
-            li = lower isa AbstractVector ? lower[idx] : lower
-            ui = upper isa AbstractVector ? upper[idx] : upper
-            isfinite(li) &&
-                _warn_logit_unrepresentable(name, "lower bound at index $(idx)", li)
-            isfinite(ui) &&
-                _warn_logit_unrepresentable(name, "upper bound at index $(idx)", ui)
-        end
+        _is_logit_scale(sc) || continue
+        li = lower isa AbstractVector ? lower[idx] : lower
+        ui = upper isa AbstractVector ? upper[idx] : upper
+        _check_logit_scale(name, " at index $(idx)", sc, vi, li, ui)
     end
 
     T = eltype(value) <: AbstractFloat ? eltype(value) : Float64
@@ -240,7 +287,7 @@ function RealVector(
     end
     explicit_bounds = collect(explicit_lower .& explicit_upper)
     prior = _default_uniform_prior(prior, explicit_bounds, l, u)
-    return RealVector{T, typeof(v)}(name, v, Vector{Symbol}(s), l, u, prior, calculate_se)
+    return RealVector{T, typeof(v)}(name, v, s, l, u, prior, calculate_se)
 end
 
 """

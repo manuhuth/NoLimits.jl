@@ -457,7 +457,7 @@ context's caches reused instead of rebuilt per call; kwargs frozen by the contex
 Scale contract: `θ` is natural-scale (as everywhere in this API) and `scale` selects the
 scale of the RETURNED gradient. `:untransformed` (default) is `∂/∂θ` on the natural scale;
 `:transformed` applies the fixed-effects transform Jacobian and returns `∂/∂θ_t` on the
-optimizer's transformed scale (`:log`, `:logit`, Cholesky, ... - see
+optimizer's transformed scale (`:log`, `:logit`, `Logit(a, b)`, Cholesky, ... - see
 `get_transform`). The gradient is a `ComponentArray` on `θ`'s axes for
 `:untransformed` and on the transformed-θ axes for `:transformed`.
 """
@@ -1732,7 +1732,7 @@ export NLFreeLayout, free_parameter_layout, resolve_fitted_parameters, build_fit
 Log absolute determinant of the Jacobian of the inverse parameter transform (unconstrained →
 natural) at the transformed point `θt` - the change-of-variables correction for a density
 placed on the unconstrained optimizer scale. Summed block-by-block over fixed effects: scalar
-scales (`:identity`/`:log`/`:logit`/`:elementwise`) use their closed form, and the structured
+scales (`:identity`/`:log`/`:logit`/`Logit(a, b)`/`:elementwise`) use their closed form, and the structured
 matrix/simplex scales (`:cholesky`/`:expm`/`:stickbreak`/`:stickbreakrows`/`:lograterows`/`:lie`)
 differentiate their minimal square inverse map. ForwardDiff-safe, including nested AD.
 
@@ -2085,7 +2085,7 @@ Minimise an objective written purely in **natural-scale** parameters. `f_natural
 symmetrised natural-scale `ComponentArray` and returns the value to minimise (a negative
 log-likelihood, negative Q-function, ...). The unconstrained-scale round trip - transform,
 `ComponentArray` reassembly, PSD symmetrisation, and the back-transform of the optimum - is
-handled here, so bounded parameters (`scale=:log`, `:logit`, matrix scales) need no attention
+handled here, so bounded parameters (`scale=:log`, `:logit`, `Logit(a, b)`, matrix scales) need no attention
 in `f_natural`. Do-block friendly:
 
     θ̂, sol = optimize_parameters(ctx; θ_start=θ) do θn

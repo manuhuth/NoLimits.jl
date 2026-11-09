@@ -337,3 +337,40 @@ end
 
     @test_logs (:warn,) match_mode = :any RealNumber(1.0e-10; name = :q, scale = :logit)
 end
+
+@testset "Logit(a, b) transforms — round trip and inverse Jacobian" begin
+    lg(x) = log(x / (1 - x))
+    fe = @fixedEffects begin
+        p = RealNumber(3.0; scale = Logit(2, 7))
+        u = RealVector([1.0, 4.0]; scale = Logit(0, 5))
+        m = RealVector([0.3, 2.0, 1.5]; scale = [:logit, Logit(0, 5), :log])
+    end
+    ft = NoLimits.get_transform(fe)
+    it = NoLimits.get_inverse_transform(fe)
+    θ = get_θ0_untransformed(fe)
+    θt = ft(θ)
+    @test θt.p ≈ lg(0.2) rtol = 1.0e-12
+    @test θt.u ≈ lg.([0.2, 0.8]) rtol = 1.0e-12
+    @test θt.m ≈ [lg(0.3), lg(0.4), log(1.5)] rtol = 1.0e-12
+    @test collect(it(θt)) ≈ collect(θ) rtol = 1.0e-12
+
+    # legacy no-axes path agrees with the axes path
+    ft0 = ForwardTransform(ft.names, ft.specs)
+    it0 = InverseTransform(it.names, it.specs)
+    @test collect(ft0(θ)) ≈ collect(θt) rtol = 1.0e-12
+    @test collect(it0(θt)) ≈ collect(θ) rtol = 1.0e-12
+
+    ax = getaxes(θt)
+    z0 = collect(θt)
+    g = ComponentArray(collect(1.0:length(θ)), getaxes(θ))
+    jtg = collect(apply_inv_jacobian_T(it, θt, g))
+    inv_flat = z -> collect(it(ComponentArray(z, ax)))
+    J_fd = FiniteDifferences.jacobian(central_fdm(5, 1), inv_flat, z0)[1]
+    J_ad = ForwardDiff.jacobian(inv_flat, z0)
+    @test jtg ≈ J_fd' * collect(g) rtol = 1.0e-7
+    @test jtg ≈ J_ad' * collect(g) rtol = 1.0e-12
+    # apply_inv_jacobian_T itself under Dual
+    jt_flat = z -> collect(apply_inv_jacobian_T(it, ComponentArray(z, ax), g))
+    @test ForwardDiff.jacobian(jt_flat, z0) ≈
+        FiniteDifferences.jacobian(central_fdm(5, 1), jt_flat, z0)[1] rtol = 1.0e-6
+end
