@@ -46,7 +46,7 @@ jobs:
         # measures 10m40 alone (its wrapper env fresh-resolves and precompiles
         # regardless of every cache), which would set the whole gate's wall
         # clock. It still runs at full strength weekly via
-        # Coverage.yml (group "28"), in full local runs, and on marvin.
+        # Coverage.yml (group "28"), in full local runs, and on a cluster.
         # Group 27 (GHQ part 2 + copulas) shares the single-group shard of 22.
         group: ["8,25", "17,21", "18,26", "2,24", "19", "22,27", "13,14",
                 "6,11", "7,23", "5,16", "4,20", "9,10", "3,12", "1,15"]
@@ -111,7 +111,7 @@ jobs:
   # Compat canary for the 1.10 (LTS) floor (#37): one job, four groups (Aqua
   # compat/deps, RE plotting so 1.10 draws real figures, estimation API,
   # pooled — the file with 1.10-RNG-sensitive tolerances). The full 1.10 sweep
-  # runs on marvin, not here. Own cache family: a 1.10 depot shares nothing with the 1.12 shards. The pinned
+  # runs on a cluster, not here. Own cache family: a 1.10 depot shares nothing with the 1.12 shards. The pinned
   # test/Manifest.toml is 1.12-only and 1.10's Pkg.test sandbox errors on it
   # ("can not merge projects"), so drop it and re-resolve (~2-6 min) —
   # accepted for a single job.
