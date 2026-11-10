@@ -21,7 +21,7 @@ using Test
 # closed_form_ode) are physically split into part-1/part-2 files whose halves
 # sit in different groups — no single file may exceed ~5 min or it becomes the
 # wall-clock floor. Keep each group's opening line as a bare `[` or `["...` —
-# parallel.sh and the marvin sbatch count groups via `^\s+\[($|")`.
+# parallel.sh and cluster job scripts count groups via `^\s+\[($|")`.
 const TEST_GROUPS = [
     # ── G1: Aqua ambiguity scan + tiny unit/AD ───────────────────────────────
     [
