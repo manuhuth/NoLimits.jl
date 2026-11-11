@@ -46,6 +46,17 @@ This release changes the plotting API without deprecation paths:
 
 ### Changes
 
+- Nested random effects (#408): a random-effects batch with several individuals and a
+  small shared block (e.g. subject-level REs inside experiment-level REs) is now solved
+  through its block-arrow structure. Gradients and Hessians of the log-joint are taken
+  per individual, and the inner Newton step, the log-determinant and its gradient go
+  through the Schur complement on the shared random effects. This applies to Laplace,
+  FOCEI and the mode solves of GHQuadrature and MCEM. Such batches now use `NewtonInner`
+  whenever one individual's and the shared random effects each fit in `max_dim`, where
+  they previously fell back to LBFGS above 32 dimensions. Results agree with the dense
+  path to rounding. The new `Laplace`/`FOCEI` keyword `batch_threading = false` spreads
+  the per-individual work of such a batch over all threads (with
+  `serialization = EnsembleThreads()`); results are bitwise identical either way.
 - New scale `Logit(a, b)` for `RealNumber` and `RealVector`: the logit transform on a
   finite open interval `(a, b)`, usable per element in mixed `RealVector` scales.
   `Logit(0, 1)` is identical to `:logit`. Wald intervals and densities use the closed
