@@ -57,9 +57,6 @@ function _macro_collect_call_symbols(ex, out::Set{Symbol})
             _macro_collect_call_symbols(arg, out)
         end
         return out
-    elseif ex.head == :ref
-        _macro_collect_call_symbols(ex.args[1], out)
-        return out
     else
         for arg in ex.args
             _macro_collect_call_symbols(arg, out)
@@ -77,7 +74,14 @@ function _macro_collect_var_symbols(ex, out::Set{Symbol})
         end
         return out
     elseif ex.head == :ref
+        # Index symbols are variables too (#404); `begin`/`end` are index keywords.
         _macro_collect_var_symbols(ex.args[1], out)
+        idx = Set{Symbol}()
+        foreach(arg -> _macro_collect_var_symbols(arg, idx), ex.args[2:end])
+        return union!(out, setdiff!(idx, (:begin, :end)))
+    elseif ex.head == :kw && length(ex.args) == 2
+        # Keyword names are not variables (#407).
+        _macro_collect_var_symbols(ex.args[2], out)
         return out
     elseif ex.head == :.
         _macro_collect_var_symbols(ex.args[1], out)

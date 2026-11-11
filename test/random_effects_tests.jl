@@ -124,6 +124,7 @@ end
         lab = (CRP = 3.2, BMI = 26.5, LDL = 110.0),
         z = 3.0,
         xv = [1.0, 0.5, -0.25, 2.0],
+        k = 2,
     )
 
     helper_functions = @helpers begin
@@ -155,6 +156,9 @@ end
         η_sp = RandomEffect(Normal(SP2(0.4, sp2), σ); column = :id)
         η_nn2 = RandomEffect(Normal(NN2([x.Age, lab.CRP, z], ζ2)[1], σ); column = :site)
         η_dot = RandomEffect(Normal(dotp(xv, b), σ); column = :id)
+        # Keyword names are not symbols (#407); index symbols are covariates (#404).
+        η_kw = RandomEffect(truncated(Normal(μ, σ); lower = -1.0, upper = z); column = :id)
+        η_idx = RandomEffect(Normal(b[k] + xv[end - 1], σ); column = :id)
     end
 
     create = create_random_effect_distribution(re)
@@ -164,7 +168,7 @@ end
         η_lap = 0.0, η_logit = 0.5, η_nn = 1.0,
         η_weib = 1.0, η_gamma = 1.0, η_invg = 1.0,
         η_trunc = 0.0, η_st = 1.0,
-        η_sp = 0.0, η_nn2 = 0.0, η_dot = 0.0
+        η_sp = 0.0, η_nn2 = 0.0, η_dot = 0.0, η_kw = 0.5, η_idx = 0.0
     )
     total_lp = get_re_logpdf(re)(dists, re_vals)
     expected = logpdf(dists.η_cauchy, re_vals.η_cauchy) +
@@ -180,7 +184,9 @@ end
         logpdf(dists.η_st, re_vals.η_st) +
         logpdf(dists.η_sp, re_vals.η_sp) +
         logpdf(dists.η_nn2, re_vals.η_nn2) +
-        logpdf(dists.η_dot, re_vals.η_dot)
+        logpdf(dists.η_dot, re_vals.η_dot) +
+        logpdf(dists.η_kw, re_vals.η_kw) +
+        logpdf(dists.η_idx, re_vals.η_idx)
     @test isapprox(total_lp, expected)
 
     @test dists.η_cauchy isa Truncated
@@ -197,6 +203,23 @@ end
     @test dists.η_sp isa Normal
     @test dists.η_nn2 isa Normal
     @test dists.η_dot isa Normal
+    @test dists.η_kw isa Truncated
+    @test (minimum(dists.η_kw), maximum(dists.η_kw)) == (-1.0, 3.0)
+    @test dists.η_idx == Normal(-0.4 - 0.25, 0.6)
+    re_syms = get_re_syms(re)
+    @test re_syms.η_kw == [:z, :μ, :σ]
+    @test re_syms.η_idx == [:b, :k, :xv, :σ]
+end
+
+@testset "Symbol walkers: keyword names and index symbols (#404, #407)" begin
+    vars(ex) = NoLimits._macro_collect_var_symbols(ex, Set{Symbol}())
+    @test vars(:(truncated(Normal(m, s); upper = 2.0))) == Set([:m, :s])
+    @test vars(:(truncated(Normal(m, s), lower = lo, upper = hi))) == Set([:m, :s, :lo, :hi])
+    @test vars(:(Normal(μ + Main.FEATS[k], ω))) == Set([:Main, :k, :μ, :ω])
+    @test vars(:(x[end - j] + y[begin] + z[1] + w[a[end]])) == Set([:x, :j, :y, :z, :w, :a])
+    @test NoLimits._macro_collect_call_symbols(:(x[idx(k)]), Set{Symbol}()) == Set([:idx])
+    fvars(ex) = NoLimits._formulas_collect_var_symbols(ex, Set{Symbol}())
+    @test fvars(:(truncated(Normal(m, s); upper = u))) == Set([:truncated, :Normal, :m, :s, :u])
 end
 
 @testset "RandomEffects logpdf" begin
