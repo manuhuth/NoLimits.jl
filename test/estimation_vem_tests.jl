@@ -764,6 +764,57 @@ end
     @test_throws DimensionMismatch NoLimits._logpdf_ad(MvNormal(zeros(2), [1.0 0.0; 0.0 1.0]), [1.0])
 end
 
+# Counts RE-distribution builder runs: `_vem_tap` sits in one of two RE expressions.
+const _VEM_TAP = Ref(0)
+_vem_tap(x) = (_VEM_TAP[] += 1; x)
+function _vem_tap_setup()
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            μ_m = RealNumber(0.2)
+            μ_r = RealNumber(-0.1)
+            ω_m = RealNumber(0.3; scale = :log)
+            ω_r = RealNumber(0.4; scale = :log)
+            σ = RealNumber(0.5; scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            m = RandomEffect(Normal(Main._vem_tap(μ_m), ω_m); column = :ID)
+            r = RandomEffect(Normal(μ_r, ω_r); column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(a + m * exp(-exp(r) * t), σ)
+        end
+    end
+    df = DataFrame(ID = repeat(1:3, inner = 3), t = repeat([0.5, 1.0, 2.0], 3), y = randn(Xoshiro(1), 9))
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    cre = NoLimits._normalize_constants_re(dm, NamedTuple())
+    cc = NoLimits._build_constants_cache(dm, cre)
+    _, infos, _ = NoLimits._build_re_batch_infos(dm, cre)
+    lc = NoLimits.build_ll_cache(dm; serialization = NoLimits.EnsembleSerial(), force_saveat = true)
+    θu = get_θ0_untransformed(NoLimits.get_fixed(NoLimits.get_model(dm)))
+    return dm, infos, cc, lc, θu
+end
+
+@testset "VEM: reverse-path ELBO builds RE distributions once per evaluation (#400)" begin
+    dm, infos, cc, lc, θu = _vem_tap_setup()
+    for info in infos
+        κ = NoLimits._vem_init_batch(θu, 2, :dense, dm, info, cc, lc)
+        for m in (
+                NoLimits.VEM(; n_is = 0, expectation = :mc, n_samples = 4),
+                NoLimits.VEM(; n_is = 0, expectation = :mc, n_samples = 16),
+                NoLimits.VEM(; n_is = 0, expectation = :quadrature),
+            )
+            dr = NoLimits._vem_draws(2, m, Xoshiro(3), κ, :dense)
+            _VEM_TAP[] = 0
+            @test isfinite(NoLimits._vem_batch_elbo_rev(θu, κ, dr, :dense, dm, info, cc, lc))
+            @test _VEM_TAP[] == 1
+        end
+    end
+end
+
 # Opt-in like enzyme_compat_proxy_tests.jl: Enzyme is not a test dependency. One outer
 # testset, last in the file: a failure is reported without skipping other testsets.
 if get(ENV, "NOLIMITS_TEST_ENZYME", "false") == "true" && VERSION >= v"1.12.5" &&
@@ -831,6 +882,26 @@ if get(ENV, "NOLIMITS_TEST_ENZYME", "false") == "true" && VERSION >= v"1.12.5" &
             rme = fit_model(dm, mbv(ad); rng = Xoshiro(3))
             @test collect(get_params(rme; scale = :transformed)) ≈
                 collect(get_params(rmf; scale = :transformed)) rtol = 1.0e-6
+        end
+        @testset "theta context inside the reverse pass (#400)" begin
+            DI = NoLimits.Optimization.OptimizationBase.DifferentiationInterface
+            dm, infos, cc, lc, θu = _vem_tap_setup()
+            fe = NoLimits.get_fixed(NoLimits.get_model(dm))
+            θ0t = NoLimits.get_transform(fe)(θu)
+            axs = NoLimits.ComponentArrays.getaxes(θ0t)
+            x0 = Vector{Float64}(NoLimits.ComponentArrays.getdata(θ0t))
+            itr = NoLimits.get_inverse_transform(fe)
+            θu_of(x) = itr(NoLimits._merge_free_into_full(x0, collect(eachindex(x0)), x, axs))
+            p = length(x0)
+            for info in infos
+                κ = NoLimits._vem_init_batch(θu, 2, :dense, dm, info, cc, lc)
+                dr = NoLimits._vem_draws(2, NoLimits.VEM(; n_is = 0, expectation = :quadrature), Xoshiro(3), κ, :dense)
+                f = z -> NoLimits._vem_batch_elbo_rev(
+                    θu_of(view(z, 1:p)), view(z, (p + 1):length(z)), dr, :dense, dm, info, cc, lc
+                )
+                z0 = vcat(x0, κ)
+                @test isapprox(DI.gradient(f, ad, z0), ForwardDiff.gradient(f, z0); rtol = 1.0e-10, atol = 1.0e-10)
+            end
         end
         @testset "planar-flow family" begin
             dm = _vem_lin_dm(Xoshiro(11))

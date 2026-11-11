@@ -3114,11 +3114,13 @@ function _cdll_terms(
     end
 
     # Per-level RE distribution (built once; carries θ, so it is Dual under AD).
+    # The builder returns all REs' distributions: one call per representative (#401).
+    rep_dists = Dict{Int, Any}()
     level_dist = [Dict{Int, Any}() for _ in re_names]
     for ri in eachindex(re_names), (li, rep) in rep_ind[ri]
-        dists = dists_builder(
-            θs, get_const_cov(get_individuals(dm)[rep]), model_funs, helpers
-        )
+        dists = get!(rep_dists, rep) do
+            dists_builder(θs, get_const_cov(get_individuals(dm)[rep]), model_funs, helpers)
+        end
         level_dist[ri][li] = getproperty(dists, re_names[ri])
     end
 

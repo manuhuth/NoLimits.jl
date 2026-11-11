@@ -233,9 +233,7 @@ function build_re_measure_from_batch(
         error("build_re_measure_from_batch: batch has n_b == 0 (no free RE levels).")
 
     θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
-    dists_b = create_random_effect_distribution(get_random(get_model(dm)))
-    model_funs = ll_cache.model_funs
-    helpers = ll_cache.helpers
+    all_dists = _batch_re_dists(dm, batch_info, θ_re, ll_cache)
     re_cache = get_laplace_cache(get_re_group_info(dm))
     re_names = get_re_names(re_cache)
 
@@ -253,10 +251,7 @@ function build_re_measure_from_batch(
         info = get_re_info(batch_info)[ri]
         isempty(get_levels(get_re_map(info))) && continue
         for (li, _) in enumerate(get_levels(get_re_map(info)))
-            rep_idx = get_reps(info)[li]
-            const_cov = get_const_cov(get_individuals(dm)[rep_idx])
-            dists = dists_b(θ_re, const_cov, model_funs, helpers)
-            dist = getproperty(dists, re)
+            dist = getproperty(all_dists[ri][li], re)
             range = get_ranges(info)[li]
             push!(all_ranges, range)
 
