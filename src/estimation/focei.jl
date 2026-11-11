@@ -912,7 +912,8 @@ end
 """
     FOCEI(; interaction=true, optimizer, optim_kwargs, adtype, inner_*, multistart_*,
             jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale, theta_tol,
-            lb, ub, ignore_model_bounds, precondition) <: FittingMethod
+            lb, ub, ignore_model_bounds, precondition, warm_starts,
+            batch_threading) <: FittingMethod
 
 First-Order Conditional Estimation with Interaction for random-effects models.
 
@@ -935,8 +936,9 @@ not supported — use [`Laplace`](@ref) for those.
 A gradient-based outer optimizer must cap its line-search step; see the `optimizer` entry in
 [`Laplace`](@ref) for why and for the measured numbers.
 
-Keyword arguments mirror [`Laplace`](@ref) (including `precondition` and `warm_starts`,
-see [`AcceptedWarmStarts`](@ref)); the only
+Keyword arguments mirror [`Laplace`](@ref) (including `precondition`, `warm_starts`,
+see [`AcceptedWarmStarts`](@ref), and `batch_threading`, which threads over the individuals
+of a nested random-effects batch, default `false`); the only
 addition is `interaction::Bool=true`. The `optimizer` default is LBFGS with backtracking
 (for mini-batching wrap the method in [`MiniBatch`](@ref)). The `inner_optimizer` default
 differs from Laplace: a Gauss-Newton [`NewtonInner`](@ref) with the same Fisher-information
@@ -959,6 +961,7 @@ struct FOCEI{O, K, A, IO, HO, CO, MS, L, U, US, WS} <: FittingMethod
     interaction::Bool
     update_schedule::US
     warm_starts::WS
+    batch_threading::Bool
 end
 
 _update_schedule(m::FOCEI) = m.update_schedule
@@ -991,7 +994,8 @@ function FOCEI(;
         ub = nothing,
         ignore_model_bounds = false,
         precondition = true,
-        warm_starts::Union{Nothing, AcceptedWarmStarts} = nothing
+        warm_starts::Union{Nothing, AcceptedWarmStarts} = nothing,
+        batch_threading::Bool = false
     )
     optimizer = _resolve_outer_optimizer(optimizer)
     inner = inner_options === nothing ?
@@ -1014,7 +1018,7 @@ function FOCEI(;
     return FOCEI(
         optimizer, _as_namedtuple(optim_kwargs), adtype, inner, hess, cache,
         ms, lb, ub, ignore_model_bounds, precondition, interaction, :all,
-        warm_starts
+        warm_starts, batch_threading
     )
 end
 

@@ -1216,7 +1216,9 @@ per-solve `OptimizationProblem` setup overhead (in profiles of a GHQ fit on a 1-
 the LBFGS inner solves with their backtracking line search were ~2/3 of the time).
 
 - `max_dim`: batches with more than `max_dim` random-effect dimensions fall
-  back to the default LBFGS path.
+  back to the default LBFGS path. For a nested random-effects batch solved through its
+  block-arrow structure (see `batch_threading` in [`Laplace`](@ref)) the bound applies to
+  the random effects of one individual and to the shared random effects instead.
 - `maxiters`: maximum Newton iterations.
 - `g_abstol`: gradient sup-norm convergence tolerance (matches the Optim.jl
   default of `1e-8`).
@@ -2032,11 +2034,12 @@ function _laplace_get_bstar!(
         # Each task owns cache slot `c` for its whole life. Indexing by
         # `Threads.threadid()` is unsafe under task migration (the inner `solve(...)`
         # yields, so two tasks could share one slot and race on its mutable buffers).
-        _greedy_foreach(length(batch_infos), length(caches)) do bi, c
+        _laplace_foreach_batch(cache, length(batch_infos), caches) do bi, cache_c, pool
             active_batches !== nothing && !(bi ∈ active_batches) && return
             info = batch_infos[bi]
             _laplace_compute_bstar_batch!(
-                cache, bi, dm, info, θ_val, const_cache, caches[c];
+                cache, bi, dm, info, θ_val, const_cache, cache_c;
+                pool = pool,
                 optimizer = optimizer,
                 optim_kwargs = optim_kwargs,
                 adtype = adtype,
@@ -2755,7 +2758,7 @@ end
               multistart_grad_tol, multistart_max_rounds, multistart_sampling,
               jitter, max_tries, jitter_growth, adaptive_jitter, jitter_scale,
               use_trace_logdet_grad, use_hutchinson, hutchinson_n, theta_tol,
-              lb, ub, precondition) <: FittingMethod
+              lb, ub, precondition, batch_threading) <: FittingMethod
 
 Laplace approximation with Empirical Bayes Estimates (EBE) for random-effects models.
 The outer optimizer maximizes the Laplace-approximated marginal likelihood over the
@@ -2820,6 +2823,14 @@ random effects.
 - `warm_starts = nothing`: inner-mode warm-start strategy. `nothing` warm-starts from the
   modes of the last evaluated θ. [`AcceptedWarmStarts`](@ref) warm-starts from the modes of
   the last accepted outer iterate, optionally with a periodic prior-LHS inner multistart.
+- `batch_threading::Bool = false`: thread over the individuals inside one random-effects
+  batch. With nested random effects (e.g. subject-level REs inside experiment-level REs)
+  all individuals sharing a level form one batch, and batches are otherwise the unit of
+  threading. A batch with at least two individuals whose shared random effects make up at
+  most half of its random-effect dimension is always solved through its block-arrow
+  structure (per-individual derivatives, Schur complement on the shared random effects);
+  with this option its per-individual work runs on all threads. Only active with
+  `serialization = EnsembleThreads()`. Results are bitwise identical to `false`.
 - `lb`, `ub`: bounds on the transformed fixed-effect scale, or `nothing`.
 - `precondition::Bool = true`: optimize the scaled offset `z` with
   `θ_transformed = θ0 + s .* z`, where `s` is 1 for every coordinate that already lives in
@@ -2848,6 +2859,7 @@ struct Laplace{O, K, A, IO, HO, CO, MS, L, U, US, WS} <: FittingMethod
     nan_recovery::Symbol   # :backtrack (default; NaN grad → non-finite objective), :fd (finite-difference gradient fallback), or :nan (propagate NaN to the optimizer)
     update_schedule::US
     warm_starts::WS
+    batch_threading::Bool
 end
 
 # Invalid retry counts and jitter used to be accepted and deferred to the Hessian
@@ -2908,7 +2920,8 @@ function Laplace(;
         ignore_model_bounds = false,
         precondition = true,
         nan_recovery = :backtrack,
-        warm_starts::Union{Nothing, AcceptedWarmStarts} = nothing
+        warm_starts::Union{Nothing, AcceptedWarmStarts} = nothing,
+        batch_threading::Bool = false
     )
     optimizer = _resolve_outer_optimizer(optimizer)
     inner = inner_options === nothing ?
@@ -2932,7 +2945,7 @@ function Laplace(;
     return Laplace(
         optimizer, _as_namedtuple(optim_kwargs), adtype, inner, hess, cache,
         ms, lb, ub, ignore_model_bounds, precondition, _as_symbol(nan_recovery),
-        :all, warm_starts
+        :all, warm_starts, batch_threading
     )
 end
 
@@ -3093,13 +3106,26 @@ function _laplace_obj_term(
 end
 
 # Threaded loop over the batches: `f(bi, cache, pool)` with `cache` the task's own slot of
-# `caches` and `pool` the slots a block-arrow batch may thread over (nothing: serial).
+# `caches` and `pool` the slots a block-arrow batch threads over (nothing: serial). With
+# `batch_threading`, the structured batches run after the others, one at a time, each
+# owning all of `caches` for its per-individual work, so no slot is ever shared by two
+# tasks.
 function _laplace_foreach_batch(f, ebe::_LaplaceCache, n::Int, caches)
+    inner = ebe.batch_threading && length(caches) > 1 && ebe.structures !== nothing
+    sts = inner ? ebe.structures[2] : nothing
     _greedy_foreach(n, length(caches)) do bi, c
+        inner && sts[bi] !== nothing && return
         f(bi, caches[c], nothing)
+    end
+    if inner
+        for bi in 1:n
+            sts[bi] === nothing || f(bi, caches[1], caches)
+        end
     end
     return nothing
 end
+
+_batch_threading(method) = hasproperty(method, :batch_threading) && method.batch_threading
 
 function _laplace_objective_and_grad(
         dm::DataModel,
@@ -3590,6 +3616,7 @@ function _fit_laplace_family(
     n_batches = length(batch_infos)
     Tθ = eltype(layout.θ0_free_t)
     ebe_cache = _init_laplace_eval_cache(n_batches, Tθ)
+    ebe_cache.batch_threading = _batch_threading(method)
     ws = _warm_starts(method)
     ws === nothing || (ebe_cache.warm = [Float64[] for _ in 1:n_batches])
     mb = _minibatch_state(_update_schedule(method), n_batches, rng)
