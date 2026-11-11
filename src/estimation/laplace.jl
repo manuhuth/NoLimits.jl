@@ -289,9 +289,15 @@ mutable struct _LaplaceCache{T, B, G, A, H}
     # Per-thread likelihood caches `(dm, ll_cache, caches)` of `_laplace_thread_caches`,
     # built once per EBE cache instead of on every objective call (they hold no θ).
     thread_caches::Any
+    # `(batch_infos, structures)` of `_ba_structures!` (block_arrow.jl), or nothing
+    structures::Any
+    # thread over the individuals of a structured batch (`batch_threading` of the method)
+    batch_threading::Bool
     # explicit inner ctor: the auto outer ctor leaves T unbound for θ_cache=nothing (Aqua, 1.10)
     function _LaplaceCache{T, B, G, A, H}(θ_cache, bstar_cache, grad_cache, ad_cache, hess_cache) where {T, B, G, A, H}
-        return new{T, B, G, A, H}(θ_cache, bstar_cache, grad_cache, ad_cache, hess_cache, nothing, nothing)
+        return new{T, B, G, A, H}(
+            θ_cache, bstar_cache, grad_cache, ad_cache, hess_cache, nothing, nothing, nothing, false
+        )
     end
 end
 
@@ -1043,11 +1049,16 @@ function _re_free_prior_logf(
     re_cache = get_laplace_cache(get_re_group_info(dm))
     re_names = get_re_names(re_cache)
     has_anneal = !isempty(anneal_sds)
+    # single-individual batch: a level whose representative is another individual is a
+    # shared level of a block-arrow sub-batch (block_arrow.jl), its prior counted there
+    inds = get_inds(batch_info)
+    single = length(inds) == 1 ? first(inds) : 0
     for (ri, re) in enumerate(re_names)
         info = get_re_info(batch_info)[ri]
         isempty(get_levels(get_re_map(info))) && continue
         for (li, level_id) in enumerate(get_levels(get_re_map(info)))
             rep_idx = get_reps(info)[li]
+            single == 0 || rep_idx == single || continue
             dists = tctx === nothing ?
                 dists_builder(
                     θ_re, get_const_cov(get_individuals(dm)[rep_idx]),
@@ -1550,7 +1561,9 @@ function _laplace_solve_batch!(
         optim_kwargs::NamedTuple = NamedTuple(),
         adtype = Optimization.AutoForwardDiff(),
         tctx = nothing,
-        f0_min::Union{Nothing, Float64} = nothing
+        f0_min::Union{Nothing, Float64} = nothing,
+        structure = nothing,
+        pool = nothing
     )
     nb = get_n_b(batch_info)
     nb == 0 && return Float64[]
@@ -1571,7 +1584,17 @@ function _laplace_solve_batch!(
     end
     optimizer_use = optimizer
     if optimizer isa NewtonInner
-        if nb <= optimizer.max_dim
+        # block-arrow batch: `max_dim` bounds the sub-batch and shared-block dimensions
+        if structure !== nothing && optimizer.globalization === :linesearch &&
+                structure.max_dim <= optimizer.max_dim
+            nsol = _ba_newton_solve(
+                structure, dm, θ_val, const_cache, cache, pool, collect(Float64, b0_use),
+                optimizer; f0_min = f0_min
+            )
+            nsol === nothing && return nothing
+            nsol.converged && return nsol
+            b0_use = nsol.u
+        elseif nb <= optimizer.max_dim
             solve_fn = optimizer.globalization === :trust_region ? _newton_tr_inner_solve :
                 _newton_inner_solve
             nsol = solve_fn(
@@ -1650,9 +1673,11 @@ function _laplace_compute_bstar_batch!(
         grad_tol = 1.0e-6,
         multistart = LaplaceMultistartOptions(0, 0, grad_tol, 5, :lhs),
         rng::AbstractRNG = _default_rng(),
-        mcmc_candidates::Union{Nothing, AbstractMatrix} = nothing
+        mcmc_candidates::Union{Nothing, AbstractMatrix} = nothing,
+        pool = nothing
     )
     nb = get_n_b(info)
+    st = _ba_get(cache, bi, info)
     if nb == 0
         b_slot = cache.bstar_cache.b_star[bi]
         if !isempty(b_slot)
@@ -1704,7 +1729,7 @@ function _laplace_compute_bstar_batch!(
                 presolved = _laplace_try_solve(
                     dm, info, θ_val, const_cache, ll_cache, cache.ad_cache, bi, pred;
                     optimizer = optimizer, optim_kwargs = optim_kwargs, adtype = adtype,
-                    tctx = tctx, f0_min = f_def
+                    tctx = tctx, f0_min = f_def, structure = st, pool = pool
                 )
                 f_pred = presolved === nothing ? -Inf : _laplace_sol_logf(presolved)
                 isfinite(f_pred) || (presolved = nothing)
@@ -1762,7 +1787,8 @@ function _laplace_compute_bstar_batch!(
     g_best_norm = Inf   # the gradient at b_start is needed only when the solve fails (below)
     sol_best = presolved !== nothing ? presolved : _laplace_try_solve(
             dm, info, θ_val, const_cache, ll_cache, cache.ad_cache, bi, b_start;
-            optimizer = optimizer, optim_kwargs = optim_kwargs, adtype = adtype, tctx = tctx
+            optimizer = optimizer, optim_kwargs = optim_kwargs, adtype = adtype, tctx = tctx,
+            structure = st, pool = pool
         )
     H_best = nothing   # exact Hessian at b_best when the inner solve returned it
     if sol_best !== nothing
@@ -1852,7 +1878,9 @@ function _laplace_compute_bstar_batch!(
                         optimizer = optimizer,
                         optim_kwargs = optim_kwargs,
                         adtype = adtype,
-                        tctx = tctx
+                        tctx = tctx,
+                        structure = st,
+                        pool = pool
                     )
                 catch err
                     if err isa DomainError || err isa ArgumentError ||
@@ -1973,6 +2001,7 @@ function _laplace_get_bstar!(
         mcmc_candidates_by_batch::Union{Nothing, Vector} = nothing,
         active_batches::Union{Nothing, AbstractSet{Int}} = nothing
     )
+    _ba_structures!(cache, dm, batch_infos, const_cache)
     θ_vec = θ
     if cache.θ_cache !== nothing && length(cache.θ_cache) == length(θ_vec)
         maxdiff = _maxabsdiff(θ_vec, cache.θ_cache)
@@ -2997,6 +3026,81 @@ end
     return _spawn_child_rngs(rng, nthreads)
 end
 
+# One batch term of the objective and gradient: the block-arrow path (block_arrow.jl) for a
+# structured batch at a Float64 θ with the one-pass trace gradient, the dense one otherwise.
+function _laplace_grad_term(
+        dm::DataModel, info::REBatchInfo, θ::ComponentArray, b,
+        const_cache::REConstantsCache, cache::_LLCache, ebe_cache::_LaplaceCache, bi::Int,
+        pool; hessian::LaplaceHessianOptions, rng::AbstractRNG, hmode::_HessMode,
+        use_cache::Bool
+    )
+    st = _ba_get(ebe_cache, bi, info)
+    if st !== nothing && eltype(θ) === Float64 && hessian.use_trace_logdet_grad &&
+            !hessian.use_hutchinson
+        res = _ba_grad_batch(
+            st, dm, θ, b, const_cache, cache, pool, bi;
+            hmode = hmode, bstar_cache = ebe_cache.bstar_cache
+        )
+        res === nothing || return res
+    end
+    return _laplace_grad_batch(
+        dm, info, θ, b, const_cache, cache, ebe_cache.ad_cache, bi;
+        jitter = hessian.jitter,
+        max_tries = hessian.max_tries,
+        growth = hessian.growth,
+        adaptive = hessian.adaptive,
+        scale_factor = hessian.scale_factor,
+        use_trace_logdet_grad = hessian.use_trace_logdet_grad,
+        use_hutchinson = hessian.use_hutchinson,
+        hutchinson_n = hessian.hutchinson_n,
+        rng = rng,
+        hmode = hmode,
+        hess_cache = ebe_cache.hess_cache,
+        use_cache = use_cache,
+        bstar_cache = ebe_cache.bstar_cache
+    )
+end
+
+# One batch term (log f, logdet(-H)) of the objective; logf = -Inf or logdet = Inf flags an
+# infeasible point. `ad_cache`: the dense log-determinant's config cache (or nothing).
+function _laplace_obj_term(
+        dm::DataModel, info::REBatchInfo, θ::ComponentArray, b,
+        const_cache::REConstantsCache, cache::_LLCache, ebe_cache::_LaplaceCache, bi::Int,
+        pool, ad_cache; hessian::LaplaceHessianOptions, hmode::_HessMode, use_cache::Bool
+    )
+    st = _ba_get(ebe_cache, bi, info)
+    if st !== nothing && eltype(θ) === Float64
+        return _ba_objective_batch(st, dm, θ, b, const_cache, cache, pool, hmode)
+    end
+    tctx = _objective_theta_ctx(dm, info, θ, const_cache, cache, b, hmode)
+    logf = _laplace_cached_logf(ebe_cache.hess_cache, bi, b, use_cache)
+    isnan(logf) &&
+        (logf = _laplace_logf_batch(dm, info, θ, b, const_cache, cache; tctx = tctx))
+    logf == -Inf && return (logf = logf, logdet = convert(eltype(θ), Inf))
+    logdet, _, _ = _laplace_logdet_negH(
+        dm, info, θ, b, const_cache, cache, ad_cache, bi;
+        jitter = hessian.jitter,
+        max_tries = hessian.max_tries,
+        growth = hessian.growth,
+        adaptive = hessian.adaptive,
+        scale_factor = hessian.scale_factor,
+        hess_cache = ebe_cache.hess_cache,
+        use_cache = use_cache,
+        hmode = hmode,
+        tctx = tctx
+    )
+    return (logf = logf, logdet = logdet)
+end
+
+# Threaded loop over the batches: `f(bi, cache, pool)` with `cache` the task's own slot of
+# `caches` and `pool` the slots a block-arrow batch may thread over (nothing: serial).
+function _laplace_foreach_batch(f, ebe::_LaplaceCache, n::Int, caches)
+    _greedy_foreach(n, length(caches)) do bi, c
+        f(bi, caches[c], nothing)
+    end
+    return nothing
+end
+
 function _laplace_objective_and_grad(
         dm::DataModel,
         batch_infos::Vector{REBatchInfo},
@@ -3045,26 +3149,13 @@ function _laplace_objective_and_grad(
         bad = Threads.Atomic{Bool}(false)
         # Each task owns cache slot `c` (see _laplace_get_bstar!); per-batch results are
         # reduced below in batch order.
-        _greedy_foreach(length(batch_infos), length(caches)) do bi, c
+        _laplace_foreach_batch(ebe_cache, length(batch_infos), caches) do bi, cache_c, pool
             bad[] && return
             active !== nothing && !(bi in active) && return
             info = batch_infos[bi]
-            b = bstars[bi]
-            res = _laplace_grad_batch(
-                dm, info, θ, b, const_cache, caches[c], ebe_cache.ad_cache, bi;
-                jitter = hessian.jitter,
-                max_tries = hessian.max_tries,
-                growth = hessian.growth,
-                adaptive = hessian.adaptive,
-                scale_factor = hessian.scale_factor,
-                use_trace_logdet_grad = hessian.use_trace_logdet_grad,
-                use_hutchinson = hessian.use_hutchinson,
-                hutchinson_n = hessian.hutchinson_n,
-                rng = batch_rngs[bi],
-                hmode = hmode,
-                hess_cache = ebe_cache.hess_cache,
-                use_cache = use_cache,
-                bstar_cache = ebe_cache.bstar_cache
+            res = _laplace_grad_term(
+                dm, info, θ, bstars[bi], const_cache, cache_c, ebe_cache, bi, pool;
+                hessian = hessian, rng = batch_rngs[bi], hmode = hmode, use_cache = use_cache
             )
             if res.logf == -Inf
                 bad[] = true
@@ -3092,22 +3183,9 @@ function _laplace_objective_and_grad(
         total = 0.0
         for (bi, info) in enumerate(batch_infos)
             active !== nothing && !(bi in active) && continue
-            b = bstars[bi]
-            res = _laplace_grad_batch(
-                dm, info, θ, b, const_cache, ll_cache, ebe_cache.ad_cache, bi;
-                jitter = hessian.jitter,
-                max_tries = hessian.max_tries,
-                growth = hessian.growth,
-                adaptive = hessian.adaptive,
-                scale_factor = hessian.scale_factor,
-                use_trace_logdet_grad = hessian.use_trace_logdet_grad,
-                use_hutchinson = hessian.use_hutchinson,
-                hutchinson_n = hessian.hutchinson_n,
-                rng = batch_rngs[bi],
-                hmode = hmode,
-                hess_cache = ebe_cache.hess_cache,
-                use_cache = use_cache,
-                bstar_cache = ebe_cache.bstar_cache
+            res = _laplace_grad_term(
+                dm, info, θ, bstars[bi], const_cache, ll_cache, ebe_cache, bi, nothing;
+                hessian = hessian, rng = batch_rngs[bi], hmode = hmode, use_cache = use_cache
             )
             res.logf == -Inf && return (infT, ComponentArray(grad, axs), bstars)
             w = _batch_weight(dm, get_inds(info))
@@ -3166,33 +3244,17 @@ function _laplace_objective_only(
         obj_by_batch = Vector{eltype(θ)}(undef, length(batch_infos))
         bad = Threads.Atomic{Bool}(false)
         # Each task owns cache slot `c` (see _laplace_get_bstar!).
-        _greedy_foreach(length(batch_infos), length(caches)) do bi, c
+        _laplace_foreach_batch(ebe_cache, length(batch_infos), caches) do bi, cache_c, pool
             bad[] && return
             active !== nothing && !(bi in active) && return
-            cache_c = caches[c]
             info = batch_infos[bi]
-            b = bstars[bi]
-            tctx = _objective_theta_ctx(dm, info, θ, const_cache, cache_c, b, hmode)
-            logf = _laplace_cached_logf(ebe_cache.hess_cache, bi, b, use_cache)
-            isnan(logf) && (
-                logf = _laplace_logf_batch(dm, info, θ, b, const_cache, cache_c; tctx = tctx)
+            r = _laplace_obj_term(
+                dm, info, θ, bstars[bi], const_cache, cache_c, ebe_cache, bi, pool, nothing;
+                hessian = hessian, hmode = hmode, use_cache = use_cache
             )
-            logf == -Inf && (bad[] = true; return)
-            logdet, _, _ = _laplace_logdet_negH(
-                dm, info, θ, b, const_cache, cache_c, nothing, bi;
-                jitter = hessian.jitter,
-                max_tries = hessian.max_tries,
-                growth = hessian.growth,
-                adaptive = hessian.adaptive,
-                scale_factor = hessian.scale_factor,
-                hess_cache = ebe_cache.hess_cache,
-                use_cache = use_cache,
-                hmode = hmode,
-                tctx = tctx
-            )
-            logdet == Inf && (bad[] = true; return)
+            (r.logf == -Inf || r.logdet == Inf) && (bad[] = true; return)
             obj_by_batch[bi] = _batch_weight(dm, get_inds(info)) *
-                (logf + 0.5 * get_n_b(info) * log(2π) - 0.5 * logdet)
+                (r.logf + 0.5 * get_n_b(info) * log(2π) - 0.5 * r.logdet)
         end
         bad[] && return infT
         total = 0.0
@@ -3207,28 +3269,13 @@ function _laplace_objective_only(
         total = 0.0
         for (bi, info) in enumerate(batch_infos)
             active !== nothing && !(bi in active) && continue
-            b = bstars[bi]
-            tctx = _objective_theta_ctx(dm, info, θ, const_cache, ll_cache_use, b, hmode)
-            logf = _laplace_cached_logf(ebe_cache.hess_cache, bi, b, use_cache)
-            isnan(logf) && (
-                logf = _laplace_logf_batch(dm, info, θ, b, const_cache, ll_cache_use; tctx = tctx)
+            r = _laplace_obj_term(
+                dm, info, θ, bstars[bi], const_cache, ll_cache_use, ebe_cache, bi, nothing,
+                ebe_cache.ad_cache; hessian = hessian, hmode = hmode, use_cache = use_cache
             )
-            logf == -Inf && return infT
-            logdet, _, _ = _laplace_logdet_negH(
-                dm, info, θ, b, const_cache, ll_cache_use, ebe_cache.ad_cache, bi;
-                jitter = hessian.jitter,
-                max_tries = hessian.max_tries,
-                growth = hessian.growth,
-                adaptive = hessian.adaptive,
-                scale_factor = hessian.scale_factor,
-                hess_cache = ebe_cache.hess_cache,
-                use_cache = use_cache,
-                hmode = hmode,
-                tctx = tctx
-            )
-            logdet == Inf && return infT
+            (r.logf == -Inf || r.logdet == Inf) && return infT
             total += _batch_weight(dm, get_inds(info)) *
-                (logf + 0.5 * get_n_b(info) * log(2π) - 0.5 * logdet)
+                (r.logf + 0.5 * get_n_b(info) * log(2π) - 0.5 * r.logdet)
         end
     end
     minibatch !== nothing && (total *= minibatch.scale)
