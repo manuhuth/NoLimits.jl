@@ -2,6 +2,9 @@ using Test
 using NoLimits
 using ComponentArrays
 using Distributions
+using DataFrames
+
+const _NL404_FEATS = [0.1, 0.2]
 
 @testset "Model macro wiring (no DE)" begin
     model = @Model begin
@@ -268,6 +271,34 @@ end
             y ~ Normal(a + b, 1.0)
         end
     end
+
+    # Keyword names in an RE distribution are not undefined symbols (#407), and a constant
+    # covariate used as an index is bound at evaluation time (#404).
+    m407 = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.2)
+            om = RealNumber(0.3, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+            k = ConstantCovariate(; constant_on = :ID)
+        end
+        @randomEffects begin
+            b = RandomEffect(truncated(Normal(a + _NL404_FEATS[k], om); upper = 2.0); column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(b, 1.0)
+        end
+    end
+    df407 = DataFrame(ID = ["A", "A", "B", "B"], t = [0.0, 1.0, 0.0, 1.0], k = [1, 1, 2, 2], y = [0.1, 0.3, 0.4, 0.2])
+    dm407 = DataModel(m407, df407; primary_id = :ID, time_col = :t)
+    θ407 = NoLimits.get_params(dm407; scale = :untransformed)
+    η407 = (; b = (; A = 0.5, B = 0.5))
+    ll407 = NoLimits.complete_data_loglikelihood(dm407, θ407; eta = η407)
+    ref407 = sum(logpdf.(Normal(0.5, 1.0), df407.y)) +
+        logpdf(truncated(Normal(0.2 + 0.1, 0.3); upper = 2.0), 0.5) +
+        logpdf(truncated(Normal(0.2 + 0.2, 0.3); upper = 2.0), 0.5)
+    @test ll407 ≈ ref407
 
     # An outcome name colliding with a fixed effect used to resolve to the fixed effect (#312).
     @test_throws "ambiguous in @formulas" @Model begin
