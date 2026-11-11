@@ -15,6 +15,7 @@ using LinearAlgebra
 using Random
 using SciMLBase
 using OrdinaryDiffEq
+using ForwardDiff
 import Optimisers
 
 # Consolidated Laplace tests, part 1 of 2 (part 2: estimation_laplace2_tests.jl,
@@ -310,6 +311,61 @@ end
         NoLimits._laplace_logf_batch(dm, info, θ, zeros(info.n_b), const_cache, cache),
         ll + prior_sum; atol = 1.0e-8, rtol = 1.0e-8
     )
+end
+
+# Counts RE-distribution builder runs: `_re_tap` sits in one of two RE expressions.
+const _RE_TAP = Ref(0)
+_re_tap(x) = (_RE_TAP[] += 1; x)
+
+@testset "RE distribution builder runs once per individual, not once per RE (#401)" begin
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(1.0)
+            μ_m = RealNumber(0.2)
+            μ_r = RealNumber(-0.1)
+            ω_m = RealNumber(0.3; scale = :log)
+            ω_r = RealNumber(0.4; scale = :log)
+            σ = RealNumber(0.5; scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+            x = ConstantCovariateVector([:Age]; constant_on = :ID)
+        end
+        @randomEffects begin
+            m = RandomEffect(Normal(Main._re_tap(μ_m + 0.01 * x.Age), ω_m); column = :ID)
+            r = RandomEffect(Normal(μ_r, ω_r); column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(a + m + r * t, σ)
+        end
+    end
+    df = DataFrame(
+        ID = repeat(1:3, inner = 2), t = repeat([0.0, 1.0], 3),
+        Age = repeat([20.0, 40.0, 60.0], inner = 2), y = [1.0, 1.2, 0.8, 0.9, 1.4, 1.1]
+    )
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    _, infos, cc = NoLimits._build_re_batch_infos(dm, NamedTuple())
+    lc = build_ll_cache(dm)
+    θ = get_θ0_untransformed(model.fixed.fixed)
+    b = [0.1, -0.2]
+    for (k, info) in enumerate(infos)
+        age = dm.individuals[only(info.inds)].const_cov.x.Age
+        _RE_TAP[] = 0
+        lp = NoLimits._re_prior_logf_batch(dm, info, θ, b, cc, lc)
+        @test _RE_TAP[] == 1
+        @test lp ≈ logpdf(Normal(0.2 + 0.01 * age, 0.3), 0.1) + logpdf(Normal(-0.1, 0.4), -0.2)
+        _RE_TAP[] = 0
+        lf = NoLimits._laplace_logf_batch_impl(dm, info, θ, b, cc, lc)
+        @test _RE_TAP[] == 1
+        _RE_TAP[] = 0
+        tctx = NoLimits.build_batch_theta_context(dm, info, θ, lc)
+        @test _RE_TAP[] == 1
+        @test NoLimits._laplace_logf_batch_impl(dm, info, θ, b, cc, lc; tctx = tctx) == lf
+        @test isfinite(sum(ForwardDiff.gradient(z -> NoLimits._laplace_logf_batch_impl(dm, info, θ, z, cc, lc), b)))
+    end
+    _RE_TAP[] = 0
+    complete_data_loglikelihood(dm, θ; eta = :mean)
+    @test _RE_TAP[] == 3
 end
 
 @testset "Laplace with constants_re fixes all REs for one individual" begin
