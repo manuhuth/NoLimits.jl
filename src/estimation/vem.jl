@@ -446,17 +446,19 @@ function _vem_batch_elbo_rev(
     μ, L = _vem_effective(κ, dr, n, family, θu)
     acc = zero(promote_type(eltype(θu), eltype(κ)))
     nG = _vem_nkappa(n, family)
+    # θ-only RE distributions built once per evaluation, not per node (#400)
+    tctx = build_batch_theta_context(dm, info, θu, ll_cache)
     for j in 1:size(ξ, 2)
         if dr.K == 0
             v = _vem_draw(μ, L, view(ξ, :, j), family)
             acc += w[j] * _laplace_logf_batch_impl(
-                dm, info, θu, v, const_cache, ll_cache; const_prior = false
+                dm, info, θu, v, const_cache, ll_cache; const_prior = false, tctx = tctx
             )
         else
             z, ld = _vem_flow(κ, nG, view(ξ, :, j), n, dr.K)
             v = _vem_draw(μ, L, z, family)
             lf = _laplace_logf_batch_impl(
-                dm, info, θu, v, const_cache, ll_cache; const_prior = false
+                dm, info, θu, v, const_cache, ll_cache; const_prior = false, tctx = tctx
             )
             acc += w[j] * (lf + ld)
         end

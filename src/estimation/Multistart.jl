@@ -648,6 +648,8 @@ function fit_model(ms::Multistart, dm::DataModel, method::FittingMethod, args...
     # discarded, so a deterministic start can be compared against sampled ones (#226).
     theta_0_user = get(kw_nt, :theta_0_untransformed, nothing)
     if theta_0_user !== nothing
+        # A NamedTuple start must share the sampled starts' ComponentArray layout (#399).
+        theta_0_user = _coerce_theta_0(dm, theta_0_user)
         kw_nt = Base.structdiff(kw_nt, (theta_0_untransformed = nothing,))
     end
 

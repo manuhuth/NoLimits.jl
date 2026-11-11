@@ -38,6 +38,18 @@ end
     starts = NoLimits.get_multistart_starts(res)
     @test length(starts) == 3
     @test starts[1].a == 0.4321
+
+    # NamedTuple starts, partial and full, are merged onto the model defaults (#399).
+    for nt in ((; a = 0.4321), (; a = 0.4321, b = 0.1, σ = 0.3))
+        res_nt = fit_model(
+            ms, dm, NoLimits.MLE(; optim_kwargs = (maxiters = 2,));
+            theta_0_untransformed = nt
+        )
+        @test res_nt isa NoLimits.MultistartFitResult
+        s1 = NoLimits.get_multistart_starts(res_nt)[1]
+        @test s1 isa ComponentArray
+        @test s1 == θ0
+    end
 end
 
 @testset "Multistart LHS + fixed params" begin

@@ -596,6 +596,12 @@ the fixed-effects `ComponentArray`.
   convention are identical for both backends, so a `SimpleChain` is a drop-in replacement
   for a `Lux.Chain`.
 
+  The initial parameters of a `Lux.Chain` are converted to `Float64` (Lux initialises in
+  `Float32`), so they match the `Float64` covariates and avoid NNlib's slow mixed-precision
+  fallbacks. Layer states are built in test mode (`Lux.testmode`): `Dropout` acts as the
+  identity and normalisation layers such as `BatchNorm` use their fixed running statistics,
+  so the network is a deterministic function. A warning names such layers at construction.
+
 # Keyword Arguments
 - `name::Symbol = :unnamed`: parameter name (injected automatically by `@fixedEffects`).
 - `function_name::Symbol`: the name used to call the network in model blocks.

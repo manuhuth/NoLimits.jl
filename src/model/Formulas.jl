@@ -169,6 +169,8 @@ end
 function _formulas_collect_var_symbols(ex, out)
     ex isa Symbol && push!(out, ex)
     ex isa Expr || return out
+    # Keyword names are not variables (#407).
+    ex.head == :kw && length(ex.args) == 2 && return _formulas_collect_var_symbols(ex.args[2], out)
     for arg in ex.args
         _formulas_collect_var_symbols(arg, out)
     end

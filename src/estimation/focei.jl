@@ -496,9 +496,7 @@ function _focei_prior_mean_b_impl(
     nb = get_n_b(batch_info)
     T = eltype(θ_re)
     m = zeros(T, nb)
-    model_funs = cache.model_funs
-    helpers = cache.helpers
-    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
+    shared = _shared_re_dists(dm, batch_info, θ_re, cache)
     re_cache = get_laplace_cache(get_re_group_info(dm))
     for (ri, re) in enumerate(get_re_names(re_cache))
         info = get_re_info(batch_info)[ri]
@@ -506,10 +504,7 @@ function _focei_prior_mean_b_impl(
         for (li, level_id) in enumerate(get_levels(get_re_map(info)))
             idx = get_level_to_index(get_re_map(info))[level_id]
             idx == 0 && continue
-            rep_idx = get_reps(info)[li]
-            const_cov = get_const_cov(get_individuals(dm)[rep_idx])
-            dists = dists_builder(θ_re, const_cov, model_funs, helpers)
-            dist = getproperty(dists, re)
+            dist = getproperty(_level_re_dists(shared, dm, info, ri, li, θ_re, cache), re)
             r = get_ranges(info)[idx]
             mv = _re_mean(dist)
             if get_is_scalar(info)
