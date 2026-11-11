@@ -912,22 +912,40 @@ function build_batch_theta_context(
         cache::_LLCache
     )
     θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
+    return _LaplaceThetaCtx(θ_re, _batch_re_dists(dm, batch_info, θ_re, cache), nothing)
+end
+
+# Builder outputs per (RE, free level). The builder returns the distributions of all REs at
+# once, so it runs once per representative individual and is shared across the REs (#401).
+function _batch_re_dists(dm::DataModel, batch_info::REBatchInfo, θ_re, cache::_LLCache)
     builder = create_random_effect_distribution(get_random(get_model(dm)))
-    model_funs = cache.model_funs
-    helpers = cache.helpers
-    dists = [
-        [
-                builder(
-                    θ_re, get_const_cov(get_individuals(dm)[get_reps(rinfo)[li]]),
-                    model_funs, helpers
-                )
-                for li in eachindex(get_levels(get_re_map(rinfo)))
-            ]
-            for rinfo in get_re_info(batch_info)
-    ]
-    return _LaplaceThetaCtx(θ_re, dists, nothing)
+    re_info = get_re_info(batch_info)
+    build(rep) = builder(
+        θ_re, get_const_cov(get_individuals(dm)[rep]), cache.model_funs, cache.helpers
+    )
+    length(re_info) == 1 && return [[build(rep) for rep in get_reps(re_info[1])]]
+    # ponytail: linear scans, O(levels × reps) per batch; a rep→slot map if huge nested batches matter
+    reps = Int[]
+    for rinfo in re_info, rep in get_reps(rinfo)
+        rep in reps || push!(reps, rep)
+    end
+    built = [build(rep) for rep in reps]
+    return [[built[findfirst(==(rep), reps)] for rep in get_reps(rinfo)] for rinfo in re_info]
 end
 const _build_theta_ctx = build_batch_theta_context
+
+# Hot-path variant for per-evaluation callers: `nothing` for a single RE, where every builder
+# call is already needed and the nested vectors would only allocate; `_level_re_dists` then
+# calls the builder per level directly.
+@inline _shared_re_dists(dm::DataModel, batch_info::REBatchInfo, θ_re, cache::_LLCache) =
+    length(get_re_info(batch_info)) == 1 ? nothing : _batch_re_dists(dm, batch_info, θ_re, cache)
+
+@inline function _level_re_dists(shared, dm::DataModel, rinfo, ri::Int, li::Int, θ_re, cache::_LLCache)
+    shared === nothing || return shared[ri][li]
+    return create_random_effect_distribution(get_random(get_model(dm)))(
+        θ_re, get_const_cov(get_individuals(dm)[get_reps(rinfo)[li]]), cache.model_funs, cache.helpers
+    )
+end
 
 @inline function _re_all_gaussian(dm::DataModel)
     types = get_re_types(get_random(get_model(dm)))
@@ -1037,9 +1055,7 @@ function _re_free_prior_logf(
     )
     T_ll = promote_type(eltype(θ_re), eltype(b))
     ll = zero(T_ll)
-    model_funs = cache.model_funs
-    helpers = cache.helpers
-    dists_builder = create_random_effect_distribution(get_random(get_model(dm)))
+    shared = tctx === nothing ? _shared_re_dists(dm, batch_info, θ_re, cache) : tctx.dists
     re_cache = get_laplace_cache(get_re_group_info(dm))
     re_names = get_re_names(re_cache)
     has_anneal = !isempty(anneal_sds)
@@ -1047,12 +1063,7 @@ function _re_free_prior_logf(
         info = get_re_info(batch_info)[ri]
         isempty(get_levels(get_re_map(info))) && continue
         for (li, level_id) in enumerate(get_levels(get_re_map(info)))
-            rep_idx = get_reps(info)[li]
-            dists = tctx === nothing ?
-                dists_builder(
-                    θ_re, get_const_cov(get_individuals(dm)[rep_idx]),
-                    model_funs, helpers
-                ) : tctx.dists[ri][li]
+            dists = _level_re_dists(shared, dm, info, ri, li, θ_re, cache)
             # Branch on scalar-ness here instead of taking `_re_value_from_b`'s
             # Union{Nothing, scalar, view}: each branch hands a concretely typed value to
             # logpdf, which Enzyme's type analysis needs (EnzymeNoTypeError on MvNormal REs).
