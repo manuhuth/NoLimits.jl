@@ -101,6 +101,9 @@ end
     @test all(isinf, nn.lower)
     @test all(isinf, nn.upper)
     @test length(nn.value) > 0
+    # #405: Float64 weights by default (Lux initialises Float32)
+    @test eltype(nn.value) == Float64
+    @test eltype(nn.reconstructor(nn.value).layer_1.weight) == Float64
     @test_throws ErrorException NNParameters(
         chain; name = :bad_nn, function_name = :NN2, prior = :not_a_prior
     )

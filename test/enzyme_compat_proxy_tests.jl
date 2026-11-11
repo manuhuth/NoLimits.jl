@@ -131,6 +131,45 @@ end
     @test isapprox(mf.NN1(xin, collect(θ0.ζ)), nn_direct; rtol = 1.0e-6)
     g = ForwardDiff.gradient(v -> mf.NN1(xin, v)[1], collect(θ0.ζ))
     @test all(isfinite, g)
+
+    # #402: the forward pass infers a concrete type (an `Any` output breaks Enzyme reverse),
+    # also for nested containers such as a BranchLayer with attention pooling.
+    attn(t) = dropdims(sum(t[1] .* Lux.softmax(t[2]; dims = (1, 2)); dims = (1, 2)); dims = (1, 2))
+    conv = Chain(Conv((1, 1), 3 => 4, tanh), WrappedFunction(x -> dropdims(sum(x; dims = (1, 2)); dims = (1, 2))), Dense(4 => 2))
+    branch = Chain(
+        BranchLayer(Conv((1, 1), 3 => 4, tanh), Chain(Conv((1, 1), 3 => 4, tanh), Conv((1, 1), 4 => 1))),
+        WrappedFunction(attn), Dense(4 => 2; use_bias = false)
+    )
+    F = randn(Xoshiro(1), 4, 4, 3, 2)
+    for (c, x) in ((chain, xin), (conv, F), (branch, F))
+        nl = NNParameters(c; function_name = :H, seed = 1)
+        h = NoLimits._nn_model_fun(c, nl, Float64)
+        y = @inferred h(x, nl.value)
+        yref = first(Lux.apply(c, x isa AbstractVector ? reshape(x, :, 1) : x, nl.reconstructor(nl.value), Lux.initialstates(Xoshiro(0), c)))
+        @test vec(y) ≈ vec(yref)
+        θd = ForwardDiff.Dual{Nothing}.(nl.value, 1.0)
+        @test (@inferred h(x, θd)) isa AbstractArray{<:ForwardDiff.Dual}
+        @test (@inferred h(ForwardDiff.Dual{Nothing}.(x, 1.0), nl.value)) isa AbstractArray{<:ForwardDiff.Dual}
+    end
+
+    # #403: stateful layers are frozen in test mode, with one warning at construction.
+    xs = [0.1, 0.2, 0.3]
+    plain = Chain(Dense(3 => 8, tanh), Dense(8 => 1))
+    drop = Chain(Dense(3 => 8, tanh), Dropout(0.5), Dense(8 => 1))
+    nlp = NNParameters(plain; function_name = :H, seed = 1)
+    nld = @test_logs (:warn, r"Dropout") NNParameters(drop; function_name = :H, seed = 1)
+    hd = @test_logs NoLimits._nn_model_fun(drop, nld, Float64)
+    @test hd(xs, nld.value) == hd(xs, nld.value)
+    fed = @test_logs (:warn, r"ζd.*Dropout") @fixedEffects begin
+        ζd = NNParameters(drop; function_name = :ND, seed = 1)
+    end
+    @test_logs get_model_funs(fed)
+    @test hd(xs, nld.value) ≈ NoLimits._nn_model_fun(plain, nlp, Float64)(xs, nlp.value)
+    bn = Chain(Dense(3 => 8, tanh), BatchNorm(8), Dense(8 => 1))
+    nlb = @test_logs (:warn, r"BatchNorm") NNParameters(bn; function_name = :H, seed = 1)
+    hb = NoLimits._nn_model_fun(bn, nlb, Float64)
+    @test all(isfinite, @inferred hb(xs, nlb.value))
+    @test all(isfinite, ForwardDiff.gradient(v -> sum(hb(xs, v)), nlb.value))
 end
 
 @testset "NPF: positional planar rebuild round-trips; base dist structure preserved" begin
