@@ -330,10 +330,11 @@ const _RE_TAP_MODEL = @Model begin
     @covariates begin
         t = Covariate()
         x = ConstantCovariateVector([:Age]; constant_on = :ID)
+        w = ConstantCovariateVector([:SiteCov]; constant_on = :SITE)
     end
     @randomEffects begin
         m = RandomEffect(Normal(Main._re_tap(μ_m + 0.01 * x.Age), ω_m); column = :ID)
-        r = RandomEffect(Normal(μ_r, ω_r); column = :SITE)
+        r = RandomEffect(Normal(μ_r + 0.5 * w.SiteCov, ω_r); column = :SITE)
     end
     @formulas begin
         y ~ Normal(a + m + r * t, σ)
@@ -343,7 +344,8 @@ end
 @testset "RE distribution builder runs once per individual, not once per RE (#401)" begin
     model = _RE_TAP_MODEL
     df = DataFrame(
-        ID = repeat(1:3, inner = 2), SITE = repeat(1:3, inner = 2), t = repeat([0.0, 1.0], 3),
+        ID = repeat(1:3, inner = 2), SITE = repeat(1:3, inner = 2), SiteCov = zeros(6),
+        t = repeat([0.0, 1.0], 3),
         Age = repeat([20.0, 40.0, 60.0], inner = 2), y = [1.0, 1.2, 0.8, 0.9, 1.4, 1.1]
     )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
@@ -568,7 +570,8 @@ end
     # n builder runs for an n-individual batch, not one more per sub-batch for the shared
     # level (2n - 1)
     df = DataFrame(
-        ID = repeat(1:6, inner = 2), SITE = repeat(1:2, inner = 6), t = repeat([0.0, 1.0], 6),
+        ID = repeat(1:6, inner = 2), SITE = repeat(1:2, inner = 6),
+        SiteCov = repeat([1.0, -2.0], inner = 6), t = repeat([0.0, 1.0], 6),
         Age = repeat(20.0:10.0:70.0, inner = 2),
         y = [1.0, 1.2, 0.8, 0.9, 1.4, 1.1, 0.7, 1.0, 1.3, 1.2, 0.9, 1.1]
     )
@@ -603,13 +606,37 @@ end
         @test _RE_TAP[] == 0
         # gradient: n for the parent context, then per individual one run in the one-pass
         # Jacobian and one in the prior's θ pass; FOCEI/FOCE take ∂ log f/∂θ from a separate
-        # θ gradient (n more), FOCE's prior mean also needs the shared level's
-        # representative (n - 1 more)
+        # θ gradient (n more); FOCE's shared prior mean comes from the representative's run
         _RE_TAP[] = 0
         NoLimits._ba_grad_batch(st, dm, θ, b, cc, cache, nothing, 1; hmode = curv)
         fisher = curv isa NoLimits.FisherInformationCurvature
-        @test _RE_TAP[] == (!fisher ? 9 : curv.interaction ? 12 : 14)
+        @test _RE_TAP[] == (fisher ? 12 : 9)
     end
+    # FOCE reuses a shared level's dual prior mean across sub-batches, per (RE, level): one
+    # cache over both sites, whose means differ through the SITE covariate, reproduces the
+    # per-sub-batch rebuild bit for bit and saves the n - 1 rebuilds per site
+    foce = NoLimits.FisherInformationCurvature(false)
+    sm = NoLimits._SharedMeans()
+    c0 = c1 = 0
+    for info in infos
+        st = NoLimits._ba_structure(dm, info, cc)
+        b = collect(range(-0.2, 0.3; length = NoLimits.get_n_b(info)))
+        for (k, sub) in enumerate(st.subs)
+            bk = b[st.maps[k]]
+            _RE_TAP[] = 0
+            d0 = NoLimits._onepass_logdet_derivatives(foce, dm, sub, θ, bk, cc, cache, nothing)
+            c0 += _RE_TAP[]
+            _RE_TAP[] = 0
+            d1 = NoLimits._onepass_logdet_derivatives(
+                foce, dm, sub, θ, bk, cc, cache, nothing; shared_means = sm
+            )
+            c1 += _RE_TAP[]
+            @test all(f -> isequal(getfield(d0, f), getfield(d1, f)), fieldnames(typeof(d0)))
+        end
+    end
+    @test c0 - c1 == 4
+    site_means = [ForwardDiff.value(v[2]) for (key, v) in sm.d if key[1] == 2]
+    @test length(site_means) == 2 && site_means[1] != site_means[2]
 
     # objective and gradient through the drivers, structured vs forced dense
     function obj_grad(dm, hmode, dense)

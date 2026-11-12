@@ -417,6 +417,8 @@ function _ba_grad_batch(
     gls = Vector{Vector{Float64}}(undef, n)
     ds = Vector{Union{Nothing, _OnePassDerivs}}(nothing, n)
     pctx = _safe_theta_ctx(dm, st.info, θ, cache)
+    # FOCE: the shared levels' dual prior means, reused across the sub-batches
+    okw = hmode isa _FOCEIHess && !hmode.interaction ? (; shared_means = _SharedMeans()) : (;)
     _ba_foreach(n, cache, pool) do k, c
         sub = st.subs[k]
         bk = b[st.maps[k]]
@@ -426,7 +428,7 @@ function _ba_grad_batch(
         vals[k] = _laplace_logf_batch(dm, sub, θ, bk, const_cache, c; tctx = tctx)
         isfinite(vals[k]) || return
         dk = _onepass_logdet_derivatives(
-            hmode, dm, sub, θ, bk, const_cache, c, tctx; split = split
+            hmode, dm, sub, θ, bk, const_cache, c, tctx; split = split, okw...
         )
         ds[k] = dk
         dk === nothing && return

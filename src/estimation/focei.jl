@@ -488,10 +488,13 @@ _FOCEIPriorLogf(dm, info, θ, const_cache, cache, tctx = nothing) =
 # backtracks instead of crashing the fit (mirrors `_laplace_logf_batch`).
 function _focei_prior_mean_b(
         dm::DataModel, batch_info::REBatchInfo, θ_re::ComponentArray,
-        const_cache::REConstantsCache, cache::_LLCache; tctx = nothing
+        const_cache::REConstantsCache, cache::_LLCache; tctx = nothing, own = nothing,
+        shared_means = nothing
     )
     try
-        return _focei_prior_mean_b_impl(dm, batch_info, θ_re, const_cache, cache, tctx)
+        return _focei_prior_mean_b_impl(
+            dm, batch_info, θ_re, const_cache, cache, tctx, own, shared_means
+        )
     catch err
         if _is_numeric_error(err)
             return zeros(eltype(θ_re), get_n_b(batch_info))
@@ -502,12 +505,18 @@ end
 
 function _focei_prior_mean_b_impl(
         dm::DataModel, batch_info::REBatchInfo, θ_re::ComponentArray,
-        const_cache::REConstantsCache, cache::_LLCache, tctx = nothing
+        const_cache::REConstantsCache, cache::_LLCache, tctx = nothing, own = nothing,
+        shared_means = nothing
     )
     nb = get_n_b(batch_info)
     T = eltype(θ_re)
     m = zeros(T, nb)
-    shared = tctx !== nothing ? tctx.dists : _shared_re_dists(dm, batch_info, θ_re, cache)
+    # a single individual without a context: its own levels from `own`, the shared levels
+    # of a block-arrow sub-batch from their representatives (through `shared_means`)
+    inds = get_inds(batch_info)
+    single = tctx === nothing && length(inds) == 1 ? first(inds) : 0
+    shared = tctx !== nothing ? tctx.dists :
+        single == 0 ? _shared_re_dists(dm, batch_info, θ_re, cache) : nothing
     re_cache = get_laplace_cache(get_re_group_info(dm))
     for (ri, re) in enumerate(get_re_names(re_cache))
         info = get_re_info(batch_info)[ri]
@@ -515,9 +524,18 @@ function _focei_prior_mean_b_impl(
         for (li, level_id) in enumerate(get_levels(get_re_map(info)))
             idx = get_level_to_index(get_re_map(info))[level_id]
             idx == 0 && continue
-            dist = getproperty(_level_re_dists(shared, dm, info, ri, li, θ_re, cache), re)
+            rep = get_reps(info)[li]
             r = get_ranges(info)[idx]
-            mv = _re_mean(dist)
+            mv = if single == 0
+                _re_mean(getproperty(_level_re_dists(shared, dm, info, ri, li, θ_re, cache), re))
+            elseif rep == single
+                own === nothing && (own = _own_re_dists(dm, single, θ_re, cache))
+                v = _re_mean(getproperty(own, re))
+                _focei_store_mean!(shared_means, ri, level_id, θ_re, v)
+                v
+            else
+                _focei_shared_mean(shared_means, dm, ri, level_id, rep, re, θ_re, cache)
+            end
             if get_is_scalar(info)
                 m[first(r)] = mv isa AbstractVector ? mv[1] : mv
             else
@@ -528,6 +546,41 @@ function _focei_prior_mean_b_impl(
         end
     end
     return m
+end
+
+# Prior means of a structured batch's levels in the one-pass Jacobians of its sub-batches,
+# per (RE, level id). A level's distribution is built from θ and its representative's
+# covariates, and DataModel requires a group-level RE's covariates to be constant_on that
+# group, so the mean is reused whenever θ_re matches bit for bit (same dual type and partials).
+struct _SharedMeans
+    lock::ReentrantLock
+    d::Dict{Tuple{Int, Int}, Tuple{Any, Any}}
+end
+_SharedMeans() = _SharedMeans(ReentrantLock(), Dict{Tuple{Int, Int}, Tuple{Any, Any}}())
+
+function _bits_equal(a::ComponentArray, b)
+    b isa typeof(a) || return false
+    x, y = ComponentArrays.getdata(a), ComponentArrays.getdata(b)
+    length(x) == length(y) || return false
+    return all(i -> x[i] === y[i], eachindex(x))
+end
+
+_focei_store_mean!(::Nothing, ri, level_id, θ_re, mv) = nothing
+function _focei_store_mean!(sm::_SharedMeans, ri, level_id, θ_re, mv)
+    lock(sm.lock) do
+        sm.d[(ri, level_id)] = (θ_re, mv)
+    end
+    return nothing
+end
+
+function _focei_shared_mean(sm, dm::DataModel, ri, level_id, rep, re, θ_re, cache::_LLCache)
+    if sm !== nothing
+        hit = lock(() -> get(sm.d, (ri, level_id), nothing), sm.lock)
+        hit !== nothing && _bits_equal(θ_re, hit[1]) && return hit[2]
+    end
+    mv = _re_mean(getproperty(_own_re_dists(dm, rep, θ_re, cache), re))
+    _focei_store_mean!(sm, ri, level_id, θ_re, mv)
+    return mv
 end
 
 # -------------------------------------------------------------------------------------
@@ -679,9 +732,11 @@ function _focei_negH_batch_impl(
     # curvature below; FOCEI has no prior mean, so a single individual needs only its own
     own = nothing
     tctx === nothing &&
-        ((tctx, own) = _prior_dists(dm, batch_info, θ_re, cache; own_only = interaction))
+        ((tctx, own) = _prior_dists(dm, batch_info, θ_re, cache))
 
-    parts = _focei_dists_jacobian(dm, batch_info, θ_re, b, const_cache, cache, interaction, tctx)
+    parts = _focei_dists_jacobian(
+        dm, batch_info, θ_re, b, const_cache, cache, interaction, tctx, own
+    )
     parts === nothing && return fill(convert(T, NaN), nb, nb)
     dists_b, J, dists_m = parts
     Hdata = J === nothing ? zeros(T, nb, nb) : _focei_data_term(J, dists_b, dists_m, interaction, T)
@@ -694,7 +749,8 @@ end
 # prior mean; the callers turn that into a non-finite result.
 function _focei_dists_jacobian(
         dm::DataModel, batch_info::REBatchInfo, θ_re, b,
-        const_cache::REConstantsCache, cache::_LLCache, interaction::Bool, tctx = nothing
+        const_cache::REConstantsCache, cache::_LLCache, interaction::Bool, tctx = nothing,
+        own = nothing, shared_means = nothing
     )
     dists_b = _focei_obs_dists_batch(dm, batch_info, θ_re, b, const_cache, cache)
     isempty(dists_b) && return (dists_b, nothing, nothing)
@@ -707,7 +763,8 @@ function _focei_dists_jacobian(
     dists_m = nothing
     if !interaction && any(d -> !isempty(_focei_dispersion_indices(d)), dists_b)
         m_b = _focei_prior_mean_b(
-            dm, batch_info, θ_re, const_cache, cache; tctx = _focei_ctx_for(tctx, θ_re)
+            dm, batch_info, θ_re, const_cache, cache; tctx = _focei_ctx_for(tctx, θ_re),
+            own = own, shared_means = shared_means
         )
         dists_m = _focei_obs_dists_batch(dm, batch_info, θ_re, m_b, const_cache, cache)
         # An empty batch means the model failed to evaluate at the prior mean; the
@@ -821,7 +878,7 @@ end
 function _focei_grad_negH_batch(
         dm::DataModel, batch_info::REBatchInfo, θ, b,
         const_cache::REConstantsCache, cache::_LLCache;
-        interaction::Bool, tctx = nothing
+        interaction::Bool, tctx = nothing, shared_means = nothing
     )
     try
         θ_re = tctx === nothing ? _symmetrize_psd_params(θ, get_fixed(get_model(dm))) :
@@ -830,8 +887,10 @@ function _focei_grad_negH_batch(
         nb = get_n_b(batch_info)
         own = nothing
         tctx === nothing &&
-            ((tctx, own) = _prior_dists(dm, batch_info, θ_re, cache; own_only = interaction))
-        parts = _focei_dists_jacobian(dm, batch_info, θ_re, b, const_cache, cache, interaction, tctx)
+            ((tctx, own) = _prior_dists(dm, batch_info, θ_re, cache))
+        parts = _focei_dists_jacobian(
+            dm, batch_info, θ_re, b, const_cache, cache, interaction, tctx, own, shared_means
+        )
         parts === nothing && return nothing
         dists_b, J, dists_m = parts
         lp = _FOCEIPriorLogf(
@@ -893,7 +952,8 @@ end
 # closed-form score or the evaluation fails at (θ, b).
 function _onepass_logdet_derivatives(
         c::FisherInformationCurvature, dm::DataModel, batch_info::REBatchInfo, θ, b,
-        const_cache::REConstantsCache, cache::_LLCache, tctx; split = nothing
+        const_cache::REConstantsCache, cache::_LLCache, tctx; split = nothing,
+        shared_means = nothing
     )
     r = _focei_grad_negH_batch(
         dm, batch_info, θ, b, const_cache, cache; interaction = c.interaction, tctx = tctx
@@ -902,7 +962,8 @@ function _onepass_logdet_derivatives(
     nv = _ntri(length(b))
     function F(θv, bv, tc, _)
         s = _focei_grad_negH_batch(
-            dm, batch_info, θv, bv, const_cache, cache; interaction = c.interaction, tctx = tc
+            dm, batch_info, θv, bv, const_cache, cache; interaction = c.interaction, tctx = tc,
+            shared_means = shared_means
         )
         T = promote_type(eltype(θv), eltype(bv))
         (s === nothing || s[1] === nothing) && return fill(T(NaN), length(bv) + nv)
