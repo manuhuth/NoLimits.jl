@@ -1017,7 +1017,7 @@ function _newton_curvature_ctx(
 end
 
 # Context for one objective/gradient batch term; FOCEI additionally gets the
-# cached prior Hessian when the REs are all Gaussian. (`hmode` is untyped here
+# cached prior Hessian when the REs are all Gaussian. `tctx`: a prebuilt context. (`hmode` is untyped here
 # because `_HessMode` is defined further down this file.)
 function _objective_theta_ctx(
         dm::DataModel,
@@ -1026,9 +1026,9 @@ function _objective_theta_ctx(
         const_cache::REConstantsCache,
         cache::_LLCache,
         b,
-        hmode
+        hmode;
+        tctx = _safe_theta_ctx(dm, batch_info, θ, cache)
     )
-    tctx = _safe_theta_ctx(dm, batch_info, θ, cache)
     tctx === nothing && return nothing
     hmode isa _FOCEIHess || return tctx
     return try

@@ -15,6 +15,7 @@ struct _BAStructure{I}
     info::REBatchInfo             # parent batch (identity key)
     subs::Vector{I}               # one single-individual sub-batch per individual
     maps::Vector{Vector{Int}}     # sub-batch position -> parent b index
+    lidx::Vector{Vector{Vector{Int}}}  # per RE: sub-batch level -> parent level index
     own::Vector{Vector{Int}}      # sub-batch positions of the individual's own indices
     ownglob::Vector{Vector{Int}}  # their parent b indices
     shl::Vector{Vector{Int}}      # sub-batch positions of shared indices
@@ -33,15 +34,17 @@ function _ba_sub_batch(dm::DataModel, info::REBatchInfo, i::Int, const_cache::RE
     glob = Int[]
     pos = 0
     re_info = Vector{Any}(undef, length(get_re_info(info)))
+    lidx = Vector{Vector{Int}}(undef, length(re_info))
     for (ri, pinfo) in enumerate(get_re_info(info))
         plti = get_level_to_index(get_re_map(pinfo))
-        levels, reps, ranges = Int[], Int[], UnitRange{Int}[]
+        levels, reps, ranges, pl = Int[], Int[], UnitRange{Int}[], Int[]
         lti = Dict{Int, Int}()
         d = get_dim(pinfo)
         for id in get_ind_level_ids(rc)[i][ri]
             (const_cache.is_const[ri][id] || haskey(lti, id)) && continue
             pidx = plti[id]
             push!(levels, id)
+            push!(pl, pidx)
             push!(reps, get_reps(pinfo)[pidx])
             lti[id] = length(levels)
             push!(ranges, (pos + 1):(pos + d))
@@ -49,8 +52,9 @@ function _ba_sub_batch(dm::DataModel, info::REBatchInfo, i::Int, const_cache::RE
             append!(glob, get_ranges(pinfo)[pidx])
         end
         re_info[ri] = RELevelInfo(_REMap(levels, lti), ranges, reps, d, get_is_scalar(pinfo))
+        lidx[ri] = pl
     end
-    return REBatchInfo([i], identity.(re_info), pos), glob
+    return REBatchInfo([i], identity.(re_info), pos), glob, lidx
 end
 
 function _ba_structure(dm::DataModel, info::REBatchInfo, const_cache::REConstantsCache)
@@ -58,8 +62,8 @@ function _ba_structure(dm::DataModel, info::REBatchInfo, const_cache::REConstant
     nb = get_n_b(info)
     length(inds) >= 2 || return nothing
     built = [_ba_sub_batch(dm, info, i, const_cache) for i in inds]
-    subs = [s for (s, _) in built]
-    maps = [m for (_, m) in built]
+    subs = [s for (s, _, _) in built]
+    maps = [m for (_, m, _) in built]
     count = zeros(Int, nb)
     for m in maps, j in m
         count[j] += 1
@@ -72,7 +76,7 @@ function _ba_structure(dm::DataModel, info::REBatchInfo, const_cache::REConstant
     own = [findall(j -> count[j] == 1, m) for m in maps]
     shl = [findall(j -> count[j] >= 2, m) for m in maps]
     return _BAStructure(
-        info, subs, maps, own, [m[o] for (m, o) in zip(maps, own)], shl,
+        info, subs, maps, [l for (_, _, l) in built], own, [m[o] for (m, o) in zip(maps, own)], shl,
         [shpos[m[s]] for (m, s) in zip(maps, shl)], shared,
         max(ns, maximum(length, maps))
     )
@@ -229,14 +233,24 @@ function _ba_inverse_block(st::_BAStructure, F::_BAFactor, Sinv::AbstractMatrix,
     return W
 end
 
+# θ-context of sub-batch k: the parent's builder outputs (`pctx`, built once per θ before
+# the per-individual loop, so a shared level is built once, not in every sub-batch) indexed
+# by the sub-batch's levels. `nothing` when the parent context failed.
+function _ba_sub_ctx(st::_BAStructure, pctx, k::Int)
+    pctx === nothing && return nothing
+    dists = [pctx.dists[ri][l] for (ri, l) in enumerate(st.lidx[k])]
+    return _LaplaceThetaCtx(pctx.θ_re, dists, nothing)
+end
+
 # Per-individual θ-contexts for one inner solve at fixed θ.
 function _ba_theta_ctxs(
         st::_BAStructure, curvature, dm::DataModel, θ, const_cache, cache, pool, b
     )
     ctxs = Vector{Any}(undef, length(st.subs))
+    pctx = _safe_theta_ctx(dm, st.info, θ, cache)
     _ba_foreach(length(st.subs), cache, pool) do k, c
         sub = st.subs[k]
-        t = _safe_theta_ctx(dm, sub, θ, c)
+        t = _ba_sub_ctx(st, pctx, k)
         ctxs[k] = _newton_curvature_ctx(curvature, t, dm, sub, const_cache, c, b[st.maps[k]])
     end
     return ctxs
@@ -364,10 +378,13 @@ function _ba_objective_batch(
     n = length(st.subs)
     vals = Vector{Float64}(undef, n)
     Hs = Vector{Matrix{Float64}}(undef, n)
+    pctx = _safe_theta_ctx(dm, st.info, θ, cache)
     _ba_foreach(n, cache, pool) do k, c
         sub = st.subs[k]
         bk = b[st.maps[k]]
-        tctx = _objective_theta_ctx(dm, sub, θ, const_cache, c, bk, hmode)
+        tctx = _objective_theta_ctx(
+            dm, sub, θ, const_cache, c, bk, hmode; tctx = _ba_sub_ctx(st, pctx, k)
+        )
         vals[k] = _laplace_logf_batch(dm, sub, θ, bk, const_cache, c; tctx = tctx)
         isfinite(vals[k]) || return
         Hs[k] = _build_hess_b(
@@ -398,10 +415,13 @@ function _ba_grad_batch(
     Hs = Vector{Matrix{Float64}}(undef, n)
     gls = Vector{Vector{Float64}}(undef, n)
     ds = Vector{Union{Nothing, _OnePassDerivs}}(nothing, n)
+    pctx = _safe_theta_ctx(dm, st.info, θ, cache)
     _ba_foreach(n, cache, pool) do k, c
         sub = st.subs[k]
         bk = b[st.maps[k]]
-        tctx = _objective_theta_ctx(dm, sub, θ, const_cache, c, bk, hmode)
+        tctx = _objective_theta_ctx(
+            dm, sub, θ, const_cache, c, bk, hmode; tctx = _ba_sub_ctx(st, pctx, k)
+        )
         vals[k] = _laplace_logf_batch(dm, sub, θ, bk, const_cache, c; tctx = tctx)
         isfinite(vals[k]) || return
         dk = _onepass_logdet_derivatives(

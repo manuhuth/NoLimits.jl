@@ -317,30 +317,33 @@ end
 const _RE_TAP = Ref(0)
 _re_tap(x) = (_RE_TAP[] += 1; x)
 
-@testset "RE distribution builder runs once per individual, not once per RE (#401)" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(1.0)
-            μ_m = RealNumber(0.2)
-            μ_r = RealNumber(-0.1)
-            ω_m = RealNumber(0.3; scale = :log)
-            ω_r = RealNumber(0.4; scale = :log)
-            σ = RealNumber(0.5; scale = :log)
-        end
-        @covariates begin
-            t = Covariate()
-            x = ConstantCovariateVector([:Age]; constant_on = :ID)
-        end
-        @randomEffects begin
-            m = RandomEffect(Normal(Main._re_tap(μ_m + 0.01 * x.Age), ω_m); column = :ID)
-            r = RandomEffect(Normal(μ_r, ω_r); column = :ID)
-        end
-        @formulas begin
-            y ~ Normal(a + m + r * t, σ)
-        end
+# `r` sits on SITE: one site per individual here, shared sites in the #408 testset below.
+const _RE_TAP_MODEL = @Model begin
+    @fixedEffects begin
+        a = RealNumber(1.0)
+        μ_m = RealNumber(0.2)
+        μ_r = RealNumber(-0.1)
+        ω_m = RealNumber(0.3; scale = :log)
+        ω_r = RealNumber(0.4; scale = :log)
+        σ = RealNumber(0.5; scale = :log)
     end
+    @covariates begin
+        t = Covariate()
+        x = ConstantCovariateVector([:Age]; constant_on = :ID)
+    end
+    @randomEffects begin
+        m = RandomEffect(Normal(Main._re_tap(μ_m + 0.01 * x.Age), ω_m); column = :ID)
+        r = RandomEffect(Normal(μ_r, ω_r); column = :SITE)
+    end
+    @formulas begin
+        y ~ Normal(a + m + r * t, σ)
+    end
+end
+
+@testset "RE distribution builder runs once per individual, not once per RE (#401)" begin
+    model = _RE_TAP_MODEL
     df = DataFrame(
-        ID = repeat(1:3, inner = 2), t = repeat([0.0, 1.0], 3),
+        ID = repeat(1:3, inner = 2), SITE = repeat(1:3, inner = 2), t = repeat([0.0, 1.0], 3),
         Age = repeat([20.0, 40.0, 60.0], inner = 2), y = [1.0, 1.2, 0.8, 0.9, 1.4, 1.1]
     )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
@@ -560,6 +563,40 @@ end
     Hz = [zeros(length(m), length(m)) for m in st.maps]
     @test NoLimits._ba_factor(st, Hz) === nothing
     @test NoLimits._ba_factor_jittered(st, Hz) !== nothing
+
+    # the parent's RE distributions are built once per θ and shared by the sub-batches:
+    # n builder runs for an n-individual batch, not one more per sub-batch for the shared
+    # level (2n - 1)
+    df = DataFrame(
+        ID = repeat(1:6, inner = 2), SITE = repeat(1:2, inner = 6), t = repeat([0.0, 1.0], 6),
+        Age = repeat(20.0:10.0:70.0, inner = 2),
+        y = [1.0, 1.2, 0.8, 0.9, 1.4, 1.1, 0.7, 1.0, 1.3, 1.2, 0.9, 1.1]
+    )
+    dm = DataModel(_RE_TAP_MODEL, df; primary_id = :ID, time_col = :t)
+    _, infos, cc = NoLimits._build_re_batch_infos(dm, NamedTuple())
+    θ = get_θ0_untransformed(_RE_TAP_MODEL.fixed.fixed)
+    cache = build_ll_cache(dm)
+    exact = NoLimits.ExactHessianCurvature()
+    @test length(infos) == 2
+    for info in infos
+        st = NoLimits._ba_structure(dm, info, cc)
+        @test length(st.subs) == 3
+        b = collect(range(-0.2, 0.3; length = NoLimits.get_n_b(info)))
+        _RE_TAP[] = 0
+        ctxs = NoLimits._ba_theta_ctxs(st, exact, dm, θ, cc, cache, nothing, b)
+        @test _RE_TAP[] == 3
+        for k in eachindex(st.subs)
+            @test ctxs[k].dists == NoLimits.build_batch_theta_context(dm, st.subs[k], θ, cache).dists
+        end
+        _RE_TAP[] = 0
+        lf = NoLimits._ba_logf(st, dm, θ, b, cc, cache, nothing, ctxs)
+        @test _RE_TAP[] == 0
+        @test lf == NoLimits._ba_logf(st, dm, θ, b, cc, cache, nothing, Any[nothing for _ in st.subs])
+        _RE_TAP[] = 0
+        ro = NoLimits._ba_objective_batch(st, dm, θ, b, cc, cache, nothing, exact)
+        @test _RE_TAP[] == 3
+        @test ro.logf == lf
+    end
 
     # objective and gradient through the drivers, structured vs forced dense
     function obj_grad(dm, hmode, dense)
