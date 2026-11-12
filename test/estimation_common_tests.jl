@@ -10,6 +10,7 @@ using Roots
 import Bijectors
 using DataInterpolations
 using LinearAlgebra
+using Random
 
 import NoLimits: loglikelihood
 
@@ -706,6 +707,44 @@ const _INV_SER = NoLimits.EnsembleSerial()
             for _ in 1:5
                 @test ll_of(EnsembleThreads())(x_ll) === v_ser
                 @test ForwardDiff.gradient(ll_of(EnsembleThreads()), x_ll) == g_ser
+            end
+        end
+
+        # #408: `batch_threading` only changes which task fills the per-individual slots of
+        # a block-arrow batch (ID + SITE fixture); the slots are reduced in index order.
+        @testset "batch_threading is bit-identical" begin
+            dm_n = fx_mg_dm()
+            _, infos_n, cc_n = NoLimits._build_re_batch_infos(dm_n, NamedTuple())
+            θ_n = get_θ0_untransformed(NoLimits.get_model(dm_n).fixed.fixed)
+            pool = [build_ll_cache(dm_n) for _ in 1:Threads.maxthreadid()]
+            for (bi, info) in enumerate(infos_n)
+                st = NoLimits._ba_structure(dm_n, info, cc_n)
+                b = collect(range(-0.2, 0.3; length = NoLimits.get_n_b(info)))
+                for curv in (NoLimits.ExactHessianCurvature(), NoLimits.FisherInformationCurvature(true))
+                    newton = NewtonInner(; curvature = curv, x_abstol = 1.0e-10)
+                    s0 = NoLimits._ba_newton_solve(st, dm_n, θ_n, cc_n, pool[1], nothing, b, newton)
+                    r0 = NoLimits._ba_grad_batch(st, dm_n, θ_n, s0.u, cc_n, pool[1], nothing, bi; hmode = curv)
+                    for _ in 1:3
+                        s1 = NoLimits._ba_newton_solve(st, dm_n, θ_n, cc_n, pool[1], pool, b, newton)
+                        r1 = NoLimits._ba_grad_batch(st, dm_n, θ_n, s1.u, cc_n, pool[1], pool, bi; hmode = curv)
+                        @test s1.u == s0.u
+                        @test r1.logf === r0.logf && r1.logdet === r0.logdet
+                        @test collect(r1.grad) == collect(r0.grad)
+                    end
+                end
+            end
+            for M in (NoLimits.Laplace, NoLimits.FOCEI)
+                fit_of(bt) = fit_model(
+                    dm_n, M(; optim_kwargs = (maxiters = 3,), batch_threading = bt);
+                    serialization = EnsembleThreads(), rng = MersenneTwister(1)
+                )
+                r0 = fit_of(false)
+                for _ in 1:3
+                    r1 = fit_of(true)
+                    @test get_objective(r1) === get_objective(r0)
+                    @test collect(NoLimits.get_params(r1; scale = :untransformed)) ==
+                        collect(NoLimits.get_params(r0; scale = :untransformed))
+                end
             end
         end
 

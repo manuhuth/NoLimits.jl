@@ -317,30 +317,35 @@ end
 const _RE_TAP = Ref(0)
 _re_tap(x) = (_RE_TAP[] += 1; x)
 
-@testset "RE distribution builder runs once per individual, not once per RE (#401)" begin
-    model = @Model begin
-        @fixedEffects begin
-            a = RealNumber(1.0)
-            μ_m = RealNumber(0.2)
-            μ_r = RealNumber(-0.1)
-            ω_m = RealNumber(0.3; scale = :log)
-            ω_r = RealNumber(0.4; scale = :log)
-            σ = RealNumber(0.5; scale = :log)
-        end
-        @covariates begin
-            t = Covariate()
-            x = ConstantCovariateVector([:Age]; constant_on = :ID)
-        end
-        @randomEffects begin
-            m = RandomEffect(Normal(Main._re_tap(μ_m + 0.01 * x.Age), ω_m); column = :ID)
-            r = RandomEffect(Normal(μ_r, ω_r); column = :ID)
-        end
-        @formulas begin
-            y ~ Normal(a + m + r * t, σ)
-        end
+# `r` sits on SITE: one site per individual here, shared sites in the #408 testset below.
+const _RE_TAP_MODEL = @Model begin
+    @fixedEffects begin
+        a = RealNumber(1.0)
+        μ_m = RealNumber(0.2)
+        μ_r = RealNumber(-0.1)
+        ω_m = RealNumber(0.3; scale = :log)
+        ω_r = RealNumber(0.4; scale = :log)
+        σ = RealNumber(0.5; scale = :log)
     end
+    @covariates begin
+        t = Covariate()
+        x = ConstantCovariateVector([:Age]; constant_on = :ID)
+        w = ConstantCovariateVector([:SiteCov]; constant_on = :SITE)
+    end
+    @randomEffects begin
+        m = RandomEffect(Normal(Main._re_tap(μ_m + 0.01 * x.Age), ω_m); column = :ID)
+        r = RandomEffect(Normal(μ_r + 0.5 * w.SiteCov, ω_r); column = :SITE)
+    end
+    @formulas begin
+        y ~ Normal(a + m + r * t, σ)
+    end
+end
+
+@testset "RE distribution builder runs once per individual, not once per RE (#401)" begin
+    model = _RE_TAP_MODEL
     df = DataFrame(
-        ID = repeat(1:3, inner = 2), t = repeat([0.0, 1.0], 3),
+        ID = repeat(1:3, inner = 2), SITE = repeat(1:3, inner = 2), SiteCov = zeros(6),
+        t = repeat([0.0, 1.0], 3),
         Age = repeat([20.0, 40.0, 60.0], inner = 2), y = [1.0, 1.2, 0.8, 0.9, 1.4, 1.1]
     )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
@@ -481,4 +486,185 @@ end
     @test rs.summary.objective == rt.summary.objective
     @test collect(NoLimits.get_params(rs, scale = :untransformed)) ==
         collect(NoLimits.get_params(rt, scale = :untransformed))
+end
+
+# #408: nested REs (ID + SITE) make each site a block-arrow batch; its structured path
+# (per-individual sub-batches, Schur complement on the shared block) must reproduce the
+# dense path.
+@testset "block-arrow batches match the dense path (#408)" begin
+    curvatures = (
+        NoLimits.ExactHessianCurvature(), NoLimits.FisherInformationCurvature(true),
+        NoLimits.FisherInformationCurvature(false),
+    )
+    cases = (
+        (fx_mg_dm(), NamedTuple()),
+        (fx_mvn_dm(), NamedTuple()),             # MvNormal REs, RE-only fixed effect μ
+        (fx_mg_dm(), (; η_id = Dict(1 => 0.1))),  # fixed level: individual 1 has no own block
+    )
+    for (dm, cre) in cases
+        _, infos, cc = NoLimits._build_re_batch_infos(dm, cre)
+        θ = get_θ0_untransformed(NoLimits.get_model(dm).fixed.fixed)
+        cache = build_ll_cache(dm)
+        n_struct = 0
+        for (bi, info) in enumerate(infos)
+            length(NoLimits.get_inds(info)) >= 2 || continue
+            st = NoLimits._ba_structure(dm, info, cc)
+            @test st !== nothing
+            n_struct += 1
+            b0 = collect(range(-0.2, 0.3; length = NoLimits.get_n_b(info)))
+            ctxs = Any[nothing for _ in st.subs]
+            @test NoLimits._ba_logf(st, dm, θ, b0, cc, cache, nothing, ctxs) ≈
+                NoLimits._laplace_logf_batch(dm, info, θ, b0, cc, cache) rtol = 1.0e-12
+            for curv in curvatures
+                newton = NewtonInner(; curvature = curv, x_abstol = 1.0e-10)
+                sol = NoLimits._ba_newton_solve(st, dm, θ, cc, cache, nothing, b0, newton)
+                ref = NoLimits._newton_inner_solve(
+                    dm, info, θ, cc, cache, NoLimits._init_laplace_ad_cache(length(infos)),
+                    bi, b0, newton
+                )
+                @test sol.converged && ref.converged
+                @test sol.u ≈ ref.u atol = 1.0e-8
+                b = ref.u
+                rs = NoLimits._ba_grad_batch(st, dm, θ, b, cc, cache, nothing, bi; hmode = curv)
+                rd = NoLimits._laplace_grad_batch(dm, info, θ, b, cc, cache, nothing, bi; hmode = curv)
+                @test rs.logf ≈ rd.logf rtol = 1.0e-12
+                @test rs.logdet ≈ rd.logdet rtol = 1.0e-10
+                @test collect(rs.grad) ≈ collect(rd.grad) rtol = 1.0e-9 atol = 1.0e-12
+                ro = NoLimits._ba_objective_batch(st, dm, θ, b, cc, cache, nothing, curv)
+                @test ro.logf ≈ rd.logf rtol = 1.0e-12
+                @test ro.logdet ≈ rd.logdet rtol = 1.0e-10
+            end
+        end
+        @test n_struct >= 1
+    end
+
+    # Schur-complement factor against the dense Cholesky of the assembled matrix
+    dm = fx_mvn_dm()
+    _, infos, cc = NoLimits._build_re_batch_infos(dm, NamedTuple())
+    st = NoLimits._ba_structure(dm, infos[1], cc)
+    nb = NoLimits.get_n_b(infos[1])
+    rng = MersenneTwister(1)
+    Hs = map(st.maps) do m
+        R = randn(rng, length(m), length(m))
+        -(R * R' + I)
+    end
+    A = zeros(nb, nb)
+    for (H, m) in zip(Hs, st.maps)
+        A[m, m] .-= H
+    end
+    F = NoLimits._ba_factor(st, Hs)
+    @test F.logdet ≈ logdet(A) rtol = 1.0e-12
+    R = randn(rng, nb, 3)
+    @test NoLimits._ba_solve(st, F, R) ≈ A \ R rtol = 1.0e-10
+    @test NoLimits._ba_solve(st, F, R[:, 1]) ≈ A \ R[:, 1] rtol = 1.0e-10
+    Ainv, Sinv = inv(A), inv(F.S)
+    for k in eachindex(st.maps)
+        @test NoLimits._ba_inverse_block(st, F, Sinv, k) ≈ Ainv[st.maps[k], st.maps[k]] rtol = 1.0e-10
+    end
+    @test NoLimits._ba_factor(st, [-H for H in Hs]) === nothing
+    Hz = [zeros(length(m), length(m)) for m in st.maps]
+    @test NoLimits._ba_factor(st, Hz) === nothing
+    @test NoLimits._ba_factor_jittered(st, Hz) !== nothing
+
+    # the parent's RE distributions are built once per θ and shared by the sub-batches:
+    # n builder runs for an n-individual batch, not one more per sub-batch for the shared
+    # level (2n - 1)
+    df = DataFrame(
+        ID = repeat(1:6, inner = 2), SITE = repeat(1:2, inner = 6),
+        SiteCov = repeat([1.0, -2.0], inner = 6), t = repeat([0.0, 1.0], 6),
+        Age = repeat(20.0:10.0:70.0, inner = 2),
+        y = [1.0, 1.2, 0.8, 0.9, 1.4, 1.1, 0.7, 1.0, 1.3, 1.2, 0.9, 1.1]
+    )
+    dm = DataModel(_RE_TAP_MODEL, df; primary_id = :ID, time_col = :t)
+    _, infos, cc = NoLimits._build_re_batch_infos(dm, NamedTuple())
+    θ = get_θ0_untransformed(_RE_TAP_MODEL.fixed.fixed)
+    cache = build_ll_cache(dm)
+    # FOCEI's prior-Hessian attach and FOCE's prior mean read the same distributions
+    @test length(infos) == 2
+    for info in infos, curv in curvatures
+        st = NoLimits._ba_structure(dm, info, cc)
+        @test length(st.subs) == 3
+        b = collect(range(-0.2, 0.3; length = NoLimits.get_n_b(info)))
+        _RE_TAP[] = 0
+        ctxs = NoLimits._ba_theta_ctxs(st, curv, dm, θ, cc, cache, nothing, b)
+        @test _RE_TAP[] == 3
+        for k in eachindex(st.subs)
+            @test ctxs[k].dists == NoLimits.build_batch_theta_context(dm, st.subs[k], θ, cache).dists
+        end
+        _RE_TAP[] = 0
+        lf = NoLimits._ba_logf(st, dm, θ, b, cc, cache, nothing, ctxs)
+        @test _RE_TAP[] == 0
+        @test lf == NoLimits._ba_logf(st, dm, θ, b, cc, cache, nothing, Any[nothing for _ in st.subs])
+        _RE_TAP[] = 0
+        ro = NoLimits._ba_objective_batch(st, dm, θ, b, cc, cache, nothing, curv)
+        @test _RE_TAP[] == 3
+        @test ro.logf == lf
+        # an inner solve given the parent's context builds nothing
+        pctx = NoLimits.build_batch_theta_context(dm, info, θ, cache)
+        _RE_TAP[] = 0
+        NoLimits._ba_theta_ctxs(st, curv, dm, θ, cc, cache, nothing, b; pctx = pctx)
+        @test _RE_TAP[] == 0
+        # gradient: n for the parent context, then per individual one run in the one-pass
+        # Jacobian and one in the prior's θ pass; FOCEI/FOCE take ∂ log f/∂θ from a separate
+        # θ gradient (n more); FOCE's shared prior mean comes from the representative's run
+        _RE_TAP[] = 0
+        NoLimits._ba_grad_batch(st, dm, θ, b, cc, cache, nothing, 1; hmode = curv)
+        fisher = curv isa NoLimits.FisherInformationCurvature
+        @test _RE_TAP[] == (fisher ? 12 : 9)
+    end
+    # FOCE reuses a shared level's dual prior mean across sub-batches, per (RE, level): one
+    # cache over both sites, whose means differ through the SITE covariate, reproduces the
+    # per-sub-batch rebuild bit for bit and saves the n - 1 rebuilds per site
+    foce = NoLimits.FisherInformationCurvature(false)
+    sm = NoLimits._SharedMeans()
+    c0 = c1 = 0
+    for info in infos
+        st = NoLimits._ba_structure(dm, info, cc)
+        b = collect(range(-0.2, 0.3; length = NoLimits.get_n_b(info)))
+        for (k, sub) in enumerate(st.subs)
+            bk = b[st.maps[k]]
+            _RE_TAP[] = 0
+            d0 = NoLimits._onepass_logdet_derivatives(foce, dm, sub, θ, bk, cc, cache, nothing)
+            c0 += _RE_TAP[]
+            _RE_TAP[] = 0
+            d1 = NoLimits._onepass_logdet_derivatives(
+                foce, dm, sub, θ, bk, cc, cache, nothing; shared_means = sm
+            )
+            c1 += _RE_TAP[]
+            @test all(f -> isequal(getfield(d0, f), getfield(d1, f)), fieldnames(typeof(d0)))
+        end
+    end
+    @test c0 - c1 == 4
+    site_means = [ForwardDiff.value(v[2]) for (key, v) in sm.d if key[1] == 2]
+    @test length(site_means) == 2 && site_means[1] != site_means[2]
+
+    # objective and gradient through the drivers, structured vs forced dense
+    function obj_grad(dm, hmode, dense)
+        _, infos, cc = NoLimits._build_re_batch_infos(dm, NamedTuple())
+        θ = get_θ0_untransformed(NoLimits.get_model(dm).fixed.fixed) .* 1.1
+        ebe = _make_laplace_ebe_cache(Float64, length(infos))
+        dense && (ebe.structures = (infos, Union{Nothing, NoLimits._BAStructure}[nothing for _ in infos]))
+        inner = NoLimits.LaplaceInnerOptions(
+            NewtonInner(; curvature = hmode, x_abstol = 1.0e-10), NamedTuple(),
+            Optimization.AutoForwardDiff(), 1.0e-8
+        )
+        kw = (;
+            inner = inner,
+            hessian = NoLimits.LaplaceHessianOptions(1.0e-6, 6, 10.0, true, 1.0e-6, true, false, 8),
+            cache_opts = NoLimits.LaplaceCacheOptions(0.0),
+            multistart = NoLimits.LaplaceMultistartOptions(0, 0, 1.0e-8, 1, :lhs),
+            rng = MersenneTwister(1), serialization = EnsembleSerial(), hmode = hmode,
+        )
+        o, g, _ = NoLimits._laplace_objective_and_grad(dm, infos, θ, cc, build_ll_cache(dm), ebe; kw...)
+        oo = NoLimits._laplace_objective_only(dm, infos, θ, cc, build_ll_cache(dm), ebe; kw...)
+        return o, collect(g), oo
+    end
+    for dm in (fx_mg_dm(), fx_mvn_dm()), hmode in curvatures[1:2]
+        os, gs, oos = obj_grad(dm, hmode, false)
+        od, gd, ood = obj_grad(dm, hmode, true)
+        @test os ≈ od rtol = 1.0e-10
+        @test gs ≈ gd rtol = 1.0e-8 atol = 1.0e-10
+        @test oos ≈ ood rtol = 1.0e-10
+        @test oos ≈ os rtol = 1.0e-10
+    end
 end
