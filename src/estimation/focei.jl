@@ -477,8 +477,21 @@ _FOCEIPriorLogf(dm, info, θ, const_cache, cache) =
 
 # Context of one negH/gradient evaluation without a caller context (also at dual θ): the
 # builder runs once for the prior mean, gradient and curvature instead of once per use.
-_focei_local_ctx(dm::DataModel, batch_info::REBatchInfo, θ_re, cache::_LLCache) =
-    _LaplaceThetaCtx(θ_re, _batch_re_dists(dm, batch_info, θ_re, cache), nothing)
+# FOCEI on a single individual reads only the levels it represents (the prior skips the
+# others, there is no prior mean), so one builder run fills every slot with its own
+# distributions.
+function _focei_local_ctx(
+        dm::DataModel, batch_info::REBatchInfo, θ_re, cache::_LLCache, interaction::Bool
+    )
+    inds = get_inds(batch_info)
+    (interaction && length(inds) == 1) ||
+        return _LaplaceThetaCtx(θ_re, _batch_re_dists(dm, batch_info, θ_re, cache), nothing)
+    own = create_random_effect_distribution(get_random(get_model(dm)))(
+        θ_re, get_const_cov(get_individuals(dm)[only(inds)]), cache.model_funs, cache.helpers
+    )
+    dists = [fill(own, length(get_reps(rinfo))) for rinfo in get_re_info(batch_info)]
+    return _LaplaceThetaCtx(θ_re, dists, nothing)
+end
 
 # -------------------------------------------------------------------------------------
 # 3. Prior mean mᵢ in b-space (FOCE freezes dispersion parameters here).
@@ -678,7 +691,7 @@ function _focei_negH_batch_impl(
     T = promote_type(eltype(θ_re), eltype(b))
     nb == 0 && return zeros(T, 0, 0)
     # one builder pass for the prior mean and prior curvature below
-    tctx === nothing && (tctx = _focei_local_ctx(dm, batch_info, θ_re, cache))
+    tctx === nothing && (tctx = _focei_local_ctx(dm, batch_info, θ_re, cache, interaction))
 
     parts = _focei_dists_jacobian(dm, batch_info, θ_re, b, const_cache, cache, interaction, tctx)
     parts === nothing && return fill(convert(T, NaN), nb, nb)
@@ -825,7 +838,7 @@ function _focei_grad_negH_batch(
             tctx.θ_re
         T = promote_type(eltype(θ_re), eltype(b))
         nb = get_n_b(batch_info)
-        tctx === nothing && (tctx = _focei_local_ctx(dm, batch_info, θ_re, cache))
+        tctx === nothing && (tctx = _focei_local_ctx(dm, batch_info, θ_re, cache, interaction))
         parts = _focei_dists_jacobian(dm, batch_info, θ_re, b, const_cache, cache, interaction, tctx)
         parts === nothing && return nothing
         dists_b, J, dists_m = parts

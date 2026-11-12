@@ -1618,7 +1618,8 @@ function _laplace_solve_batch!(
                 structure.max_dim <= optimizer.max_dim
             nsol = _ba_newton_solve(
                 structure, dm, θ_val, const_cache, cache, pool, collect(Float64, b0_use),
-                optimizer; f0_min = f0_min
+                optimizer; f0_min = f0_min,
+                pctx = tctx isa _LaplaceThetaCtx ? tctx : _safe_theta_ctx(dm, batch_info, θ_val, cache)
             )
             nsol === nothing && return nothing
             nsol.converged && return nsol

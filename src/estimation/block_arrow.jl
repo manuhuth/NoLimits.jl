@@ -242,12 +242,12 @@ function _ba_sub_ctx(st::_BAStructure, pctx, k::Int)
     return _LaplaceThetaCtx(pctx.θ_re, dists, nothing)
 end
 
-# Per-individual θ-contexts for one inner solve at fixed θ.
+# Per-individual θ-contexts for one inner solve at fixed θ; `pctx`: the parent's context.
 function _ba_theta_ctxs(
-        st::_BAStructure, curvature, dm::DataModel, θ, const_cache, cache, pool, b
+        st::_BAStructure, curvature, dm::DataModel, θ, const_cache, cache, pool, b;
+        pctx = _safe_theta_ctx(dm, st.info, θ, cache)
     )
     ctxs = Vector{Any}(undef, length(st.subs))
-    pctx = _safe_theta_ctx(dm, st.info, θ, cache)
     _ba_foreach(length(st.subs), cache, pool) do k, c
         sub = st.subs[k]
         t = _ba_sub_ctx(st, pctx, k)
@@ -317,10 +317,11 @@ end
 # batch: same tests, backtracking and fallback signal, with the step from the Schur solve.
 function _ba_newton_solve(
         st::_BAStructure, dm::DataModel, θ::ComponentArray, const_cache, cache, pool,
-        b0::Vector{Float64}, newton::NewtonInner; f0_min::Union{Nothing, Float64} = nothing
+        b0::Vector{Float64}, newton::NewtonInner; f0_min::Union{Nothing, Float64} = nothing,
+        pctx = _safe_theta_ctx(dm, st.info, θ, cache)
     )
     curv = newton.curvature
-    ctxs = _ba_theta_ctxs(st, curv, dm, θ, const_cache, cache, pool, b0)
+    ctxs = _ba_theta_ctxs(st, curv, dm, θ, const_cache, cache, pool, b0; pctx = pctx)
     gh(b) = _ba_grad_hess(st, curv, dm, θ, b, const_cache, cache, pool, ctxs)
     b = copy(b0)
     fval, g, Hs = gh(b)
