@@ -576,14 +576,14 @@ end
     _, infos, cc = NoLimits._build_re_batch_infos(dm, NamedTuple())
     θ = get_θ0_untransformed(_RE_TAP_MODEL.fixed.fixed)
     cache = build_ll_cache(dm)
-    exact = NoLimits.ExactHessianCurvature()
+    # FOCEI's prior-Hessian attach and FOCE's prior mean read the same distributions
     @test length(infos) == 2
-    for info in infos
+    for info in infos, curv in curvatures
         st = NoLimits._ba_structure(dm, info, cc)
         @test length(st.subs) == 3
         b = collect(range(-0.2, 0.3; length = NoLimits.get_n_b(info)))
         _RE_TAP[] = 0
-        ctxs = NoLimits._ba_theta_ctxs(st, exact, dm, θ, cc, cache, nothing, b)
+        ctxs = NoLimits._ba_theta_ctxs(st, curv, dm, θ, cc, cache, nothing, b)
         @test _RE_TAP[] == 3
         for k in eachindex(st.subs)
             @test ctxs[k].dists == NoLimits.build_batch_theta_context(dm, st.subs[k], θ, cache).dists
@@ -593,7 +593,7 @@ end
         @test _RE_TAP[] == 0
         @test lf == NoLimits._ba_logf(st, dm, θ, b, cc, cache, nothing, Any[nothing for _ in st.subs])
         _RE_TAP[] = 0
-        ro = NoLimits._ba_objective_batch(st, dm, θ, b, cc, cache, nothing, exact)
+        ro = NoLimits._ba_objective_batch(st, dm, θ, b, cc, cache, nothing, curv)
         @test _RE_TAP[] == 3
         @test ro.logf == lf
     end

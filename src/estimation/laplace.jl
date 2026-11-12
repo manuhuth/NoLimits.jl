@@ -973,7 +973,7 @@ function _ctx_with_prior_hess(
     )
     _re_all_gaussian(dm) || return tctx
     Λ = -ForwardDiff.hessian(
-        _FOCEIPriorLogf(dm, batch_info, tctx.θ_re, const_cache, cache), b
+        _FOCEIPriorLogf(dm, batch_info, tctx.θ_re, const_cache, cache, tctx), b
     )
     return _LaplaceThetaCtx(tctx.θ_re, tctx.dists, Λ)
 end
@@ -1215,10 +1215,11 @@ function _re_prior_logf_batch(
         θ::ComponentArray,
         b,
         const_cache::REConstantsCache,
-        ll_cache::_LLCache
+        ll_cache::_LLCache;
+        tctx = nothing
     )
     θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
-    return _re_free_prior_logf(dm, batch_info, θ_re, b, ll_cache)
+    return _re_free_prior_logf(dm, batch_info, θ_re, b, ll_cache; tctx = tctx)
 end
 
 """

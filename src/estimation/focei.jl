@@ -456,16 +456,29 @@ end
     f.dm, f.info, f.θ, b, f.const_cache, f.cache
 )
 
-struct _FOCEIPriorLogf{DM, INFO, TH, CC, CA}
+# `tctx`: a θ-context built from `θ` (its distributions are read instead of rebuilt), or nothing.
+struct _FOCEIPriorLogf{DM, INFO, TH, CC, CA, TC}
     dm::DM
     info::INFO
     θ::TH
     const_cache::CC
     cache::CA
+    tctx::TC
 end
+_FOCEIPriorLogf(dm, info, θ, const_cache, cache) =
+    _FOCEIPriorLogf(dm, info, θ, const_cache, cache, nothing)
 @inline (f::_FOCEIPriorLogf)(b) = _re_prior_logf_batch(
-    f.dm, f.info, f.θ, b, f.const_cache, f.cache
+    f.dm, f.info, f.θ, b, f.const_cache, f.cache; tctx = f.tctx
 )
+
+# `tctx` when it was built from exactly this θ_re (so its distributions carry the same θ
+# partials), else nothing.
+@inline _focei_ctx_for(tctx, θ_re) = tctx !== nothing && tctx.θ_re === θ_re ? tctx : nothing
+
+# Context of one negH/gradient evaluation without a caller context (also at dual θ): the
+# builder runs once for the prior mean, gradient and curvature instead of once per use.
+_focei_local_ctx(dm::DataModel, batch_info::REBatchInfo, θ_re, cache::_LLCache) =
+    _LaplaceThetaCtx(θ_re, _batch_re_dists(dm, batch_info, θ_re, cache), nothing)
 
 # -------------------------------------------------------------------------------------
 # 3. Prior mean mᵢ in b-space (FOCE freezes dispersion parameters here).
@@ -477,10 +490,10 @@ end
 # backtracks instead of crashing the fit (mirrors `_laplace_logf_batch`).
 function _focei_prior_mean_b(
         dm::DataModel, batch_info::REBatchInfo, θ_re::ComponentArray,
-        const_cache::REConstantsCache, cache::_LLCache
+        const_cache::REConstantsCache, cache::_LLCache; tctx = nothing
     )
     try
-        return _focei_prior_mean_b_impl(dm, batch_info, θ_re, const_cache, cache)
+        return _focei_prior_mean_b_impl(dm, batch_info, θ_re, const_cache, cache, tctx)
     catch err
         if _is_numeric_error(err)
             return zeros(eltype(θ_re), get_n_b(batch_info))
@@ -491,12 +504,12 @@ end
 
 function _focei_prior_mean_b_impl(
         dm::DataModel, batch_info::REBatchInfo, θ_re::ComponentArray,
-        const_cache::REConstantsCache, cache::_LLCache
+        const_cache::REConstantsCache, cache::_LLCache, tctx = nothing
     )
     nb = get_n_b(batch_info)
     T = eltype(θ_re)
     m = zeros(T, nb)
-    shared = _shared_re_dists(dm, batch_info, θ_re, cache)
+    shared = tctx !== nothing ? tctx.dists : _shared_re_dists(dm, batch_info, θ_re, cache)
     re_cache = get_laplace_cache(get_re_group_info(dm))
     for (ri, re) in enumerate(get_re_names(re_cache))
         info = get_re_info(batch_info)[ri]
@@ -664,8 +677,10 @@ function _focei_negH_batch_impl(
     nb = get_n_b(batch_info)
     T = promote_type(eltype(θ_re), eltype(b))
     nb == 0 && return zeros(T, 0, 0)
+    # one builder pass for the prior mean and prior curvature below
+    tctx === nothing && (tctx = _focei_local_ctx(dm, batch_info, θ_re, cache))
 
-    parts = _focei_dists_jacobian(dm, batch_info, θ_re, b, const_cache, cache, interaction)
+    parts = _focei_dists_jacobian(dm, batch_info, θ_re, b, const_cache, cache, interaction, tctx)
     parts === nothing && return fill(convert(T, NaN), nb, nb)
     dists_b, J, dists_m = parts
     Hdata = J === nothing ? zeros(T, nb, nb) : _focei_data_term(J, dists_b, dists_m, interaction, T)
@@ -678,7 +693,7 @@ end
 # prior mean; the callers turn that into a non-finite result.
 function _focei_dists_jacobian(
         dm::DataModel, batch_info::REBatchInfo, θ_re, b,
-        const_cache::REConstantsCache, cache::_LLCache, interaction::Bool
+        const_cache::REConstantsCache, cache::_LLCache, interaction::Bool, tctx = nothing
     )
     dists_b = _focei_obs_dists_batch(dm, batch_info, θ_re, b, const_cache, cache)
     isempty(dists_b) && return (dists_b, nothing, nothing)
@@ -690,7 +705,9 @@ function _focei_dists_jacobian(
     size(J, 1) == sum(_focei_paramcount, dists_b; init = 0) || return nothing
     dists_m = nothing
     if !interaction && any(d -> !isempty(_focei_dispersion_indices(d)), dists_b)
-        m_b = _focei_prior_mean_b(dm, batch_info, θ_re, const_cache, cache)
+        m_b = _focei_prior_mean_b(
+            dm, batch_info, θ_re, const_cache, cache; tctx = _focei_ctx_for(tctx, θ_re)
+        )
         dists_m = _focei_obs_dists_batch(dm, batch_info, θ_re, m_b, const_cache, cache)
         # An empty batch means the model failed to evaluate at the prior mean; the
         # dispersion lookups would index it out of bounds.
@@ -709,7 +726,8 @@ function _focei_prior_negH(
         const_cache::REConstantsCache, cache::_LLCache, tctx
     )
     tctx !== nothing && tctx.prior_hess !== nothing && return tctx.prior_hess
-    return -ForwardDiff.hessian(_FOCEIPriorLogf(dm, batch_info, θ_re, const_cache, cache), b)
+    lp = _FOCEIPriorLogf(dm, batch_info, θ_re, const_cache, cache, _focei_ctx_for(tctx, θ_re))
+    return -ForwardDiff.hessian(lp, b)
 end
 
 # Score ∂ log p(y | φ)/∂φ in the `_focei_params` order, for every family with a registered
@@ -807,10 +825,12 @@ function _focei_grad_negH_batch(
             tctx.θ_re
         T = promote_type(eltype(θ_re), eltype(b))
         nb = get_n_b(batch_info)
-        parts = _focei_dists_jacobian(dm, batch_info, θ_re, b, const_cache, cache, interaction)
+        tctx === nothing && (tctx = _focei_local_ctx(dm, batch_info, θ_re, cache))
+        parts = _focei_dists_jacobian(dm, batch_info, θ_re, b, const_cache, cache, interaction, tctx)
         parts === nothing && return nothing
         dists_b, J, dists_m = parts
-        grad = ForwardDiff.gradient(_FOCEIPriorLogf(dm, batch_info, θ_re, const_cache, cache), b)
+        lp = _FOCEIPriorLogf(dm, batch_info, θ_re, const_cache, cache, _focei_ctx_for(tctx, θ_re))
+        grad = ForwardDiff.gradient(lp, b)
         Hdata = zeros(T, nb, nb)
         if J !== nothing
             ys = _focei_obs_values_batch(dm, batch_info)
