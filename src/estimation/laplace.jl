@@ -1055,9 +1055,11 @@ end
     return _logpdf_re_static(keys(dists), values(dists), re, v, T)
 end
 
+# `own`: a single-individual batch's own builder output at θ_re, when already built.
 function _re_free_prior_logf(
         dm::DataModel, batch_info::REBatchInfo, θ_re::ComponentArray,
-        b, cache::_LLCache; anneal_sds::NamedTuple = NamedTuple(), tctx = nothing
+        b, cache::_LLCache; anneal_sds::NamedTuple = NamedTuple(), tctx = nothing,
+        own = nothing
     )
     T_ll = promote_type(eltype(θ_re), eltype(b))
     ll = zero(T_ll)
@@ -1072,7 +1074,6 @@ function _re_free_prior_logf(
     # so one lazy builder call serves them all
     shared = tctx !== nothing ? tctx.dists :
         single == 0 ? _shared_re_dists(dm, batch_info, θ_re, cache) : nothing
-    own = nothing
     for (ri, re) in enumerate(re_names)
         info = get_re_info(batch_info)[ri]
         isempty(get_levels(get_re_map(info))) && continue
@@ -1080,12 +1081,7 @@ function _re_free_prior_logf(
             rep_idx = get_reps(info)[li]
             single == 0 || rep_idx == single || continue
             if tctx === nothing && single != 0
-                own === nothing && (
-                    own = create_random_effect_distribution(get_random(get_model(dm)))(
-                        θ_re, get_const_cov(get_individuals(dm)[single]),
-                        cache.model_funs, cache.helpers
-                    )
-                )
+                own === nothing && (own = _own_re_dists(dm, single, θ_re, cache))
                 dists = own
             else
                 dists = _level_re_dists(shared, dm, info, ri, li, θ_re, cache)
@@ -1162,12 +1158,13 @@ function _re_logpdf_batch(
         const_cache::REConstantsCache,
         cache::_LLCache;
         anneal_sds::NamedTuple = NamedTuple(),
-        tctx = nothing
+        tctx = nothing,
+        own = nothing
     )
     try
         return __re_logpdf_batch(
             dm, batch_info, θ, b, const_cache, cache;
-            anneal_sds = anneal_sds, tctx = tctx
+            anneal_sds = anneal_sds, tctx = tctx, own = own
         )
     catch err
         _is_numeric_error(err) || rethrow(err)
@@ -1188,14 +1185,15 @@ function __re_logpdf_batch(
         const_cache::REConstantsCache,
         cache::_LLCache;
         anneal_sds::NamedTuple = NamedTuple(),
-        tctx = nothing
+        tctx = nothing,
+        own = nothing
     )
     T_ll = promote_type(eltype(θ), eltype(b))
     θ_re = tctx === nothing ? _symmetrize_psd_params(θ, get_fixed(get_model(dm))) :
         tctx.θ_re
     ll = _re_free_prior_logf(
         dm, batch_info, θ_re, b, cache;
-        anneal_sds = anneal_sds, tctx = tctx
+        anneal_sds = anneal_sds, tctx = tctx, own = own
     )
     !isfinite(ll) && return T_ll(-Inf)
     const_ll = _const_re_prior_logf(
@@ -1216,10 +1214,29 @@ function _re_prior_logf_batch(
         b,
         const_cache::REConstantsCache,
         ll_cache::_LLCache;
-        tctx = nothing
+        tctx = nothing,
+        own = nothing
     )
     θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
-    return _re_free_prior_logf(dm, batch_info, θ_re, b, ll_cache; tctx = tctx)
+    return _re_free_prior_logf(dm, batch_info, θ_re, b, ll_cache; tctx = tctx, own = own)
+end
+
+# Builder output of individual `i` at θ_re.
+_own_re_dists(dm::DataModel, i::Int, θ_re, cache::_LLCache) =
+    create_random_effect_distribution(get_random(get_model(dm)))(
+    θ_re, get_const_cov(get_individuals(dm)[i]), cache.model_funs, cache.helpers
+)
+
+# RE distributions for the prior terms of one evaluation at θ_re, built once:
+# `(nothing, own)` for a single individual whose prior is all that is read (its prior
+# reads only the levels it represents), else `(context, nothing)`.
+function _prior_dists(
+        dm::DataModel, batch_info::REBatchInfo, θ_re, cache::_LLCache; own_only::Bool = true
+    )
+    inds = get_inds(batch_info)
+    own_only && length(inds) == 1 &&
+        return (nothing, _own_re_dists(dm, only(inds), θ_re, cache))
+    return (_LaplaceThetaCtx(θ_re, _batch_re_dists(dm, batch_info, θ_re, cache), nothing), nothing)
 end
 
 """
@@ -4114,12 +4131,18 @@ function _onepass_kernel(
     if !isempty(p)
         prior(θv) = begin
             θr = _symmetrize_psd_params(θv, get_fixed(get_model(dm)))
-            lp = _FOCEIPriorLogf(dm, batch_info, θr, const_cache, cache)
+            # one builder pass for the prior gradient, curvature and log-density
+            tc, own = _prior_dists(dm, batch_info, θr, cache)
+            lp = _FOCEIPriorLogf(dm, batch_info, θr, const_cache, cache, tc, own)
             gh = vcat(
                 ForwardDiff.gradient(lp, b, ForwardDiff.GradientConfig(lp, b, cb)),
                 _vech(ForwardDiff.hessian(lp, b, ForwardDiff.HessianConfig(lp, b, cb)))
             )
-            with_logf ? vcat(_re_logpdf_batch(dm, batch_info, θv, b, const_cache, cache), gh) : gh
+            with_logf ? vcat(
+                    _re_logpdf_batch(
+                        dm, batch_info, θv, b, const_cache, cache; tctx = tc, own = own
+                    ), gh
+                ) : gh
         end
         gp = x -> prior(_theta_with(θ, p, x))
         xp = θ[p]

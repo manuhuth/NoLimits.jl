@@ -456,42 +456,27 @@ end
     f.dm, f.info, f.θ, b, f.const_cache, f.cache
 )
 
-# `tctx`: a θ-context built from `θ` (its distributions are read instead of rebuilt), or nothing.
-struct _FOCEIPriorLogf{DM, INFO, TH, CC, CA, TC}
+# `tctx`: a θ-context built from `θ`, `own`: a single individual's builder output at `θ`
+# (read instead of rebuilt), or nothing.
+struct _FOCEIPriorLogf{DM, INFO, TH, CC, CA, TC, OW}
     dm::DM
     info::INFO
     θ::TH
     const_cache::CC
     cache::CA
     tctx::TC
+    own::OW
 end
-_FOCEIPriorLogf(dm, info, θ, const_cache, cache) =
-    _FOCEIPriorLogf(dm, info, θ, const_cache, cache, nothing)
+_FOCEIPriorLogf(dm, info, θ, const_cache, cache, tctx = nothing) =
+    _FOCEIPriorLogf(dm, info, θ, const_cache, cache, tctx, nothing)
 @inline (f::_FOCEIPriorLogf)(b) = _re_prior_logf_batch(
-    f.dm, f.info, f.θ, b, f.const_cache, f.cache; tctx = f.tctx
+    f.dm, f.info, f.θ, b, f.const_cache, f.cache; tctx = f.tctx, own = f.own
 )
 
 # `tctx` when it was built from exactly this θ_re (so its distributions carry the same θ
 # partials), else nothing.
 @inline _focei_ctx_for(tctx, θ_re) = tctx !== nothing && tctx.θ_re === θ_re ? tctx : nothing
 
-# Context of one negH/gradient evaluation without a caller context (also at dual θ): the
-# builder runs once for the prior mean, gradient and curvature instead of once per use.
-# FOCEI on a single individual reads only the levels it represents (the prior skips the
-# others, there is no prior mean), so one builder run fills every slot with its own
-# distributions.
-function _focei_local_ctx(
-        dm::DataModel, batch_info::REBatchInfo, θ_re, cache::_LLCache, interaction::Bool
-    )
-    inds = get_inds(batch_info)
-    (interaction && length(inds) == 1) ||
-        return _LaplaceThetaCtx(θ_re, _batch_re_dists(dm, batch_info, θ_re, cache), nothing)
-    own = create_random_effect_distribution(get_random(get_model(dm)))(
-        θ_re, get_const_cov(get_individuals(dm)[only(inds)]), cache.model_funs, cache.helpers
-    )
-    dists = [fill(own, length(get_reps(rinfo))) for rinfo in get_re_info(batch_info)]
-    return _LaplaceThetaCtx(θ_re, dists, nothing)
-end
 
 # -------------------------------------------------------------------------------------
 # 3. Prior mean mᵢ in b-space (FOCE freezes dispersion parameters here).
@@ -690,14 +675,17 @@ function _focei_negH_batch_impl(
     nb = get_n_b(batch_info)
     T = promote_type(eltype(θ_re), eltype(b))
     nb == 0 && return zeros(T, 0, 0)
-    # one builder pass for the prior mean and prior curvature below
-    tctx === nothing && (tctx = _focei_local_ctx(dm, batch_info, θ_re, cache, interaction))
+    # without a caller context (also at dual θ): one builder pass for the prior mean and
+    # curvature below; FOCEI has no prior mean, so a single individual needs only its own
+    own = nothing
+    tctx === nothing &&
+        ((tctx, own) = _prior_dists(dm, batch_info, θ_re, cache; own_only = interaction))
 
     parts = _focei_dists_jacobian(dm, batch_info, θ_re, b, const_cache, cache, interaction, tctx)
     parts === nothing && return fill(convert(T, NaN), nb, nb)
     dists_b, J, dists_m = parts
     Hdata = J === nothing ? zeros(T, nb, nb) : _focei_data_term(J, dists_b, dists_m, interaction, T)
-    return Hdata .+ _focei_prior_negH(dm, batch_info, θ_re, b, const_cache, cache, tctx)
+    return Hdata .+ _focei_prior_negH(dm, batch_info, θ_re, b, const_cache, cache, tctx, own)
 end
 
 # Outcome distributions at b, the Jacobian J = ∂Φ/∂b of their stacked parameters (`nothing`
@@ -736,10 +724,12 @@ end
 # (or none at all), keeping ∂Λ/∂θ exact.
 function _focei_prior_negH(
         dm::DataModel, batch_info::REBatchInfo, θ_re, b,
-        const_cache::REConstantsCache, cache::_LLCache, tctx
+        const_cache::REConstantsCache, cache::_LLCache, tctx, own = nothing
     )
     tctx !== nothing && tctx.prior_hess !== nothing && return tctx.prior_hess
-    lp = _FOCEIPriorLogf(dm, batch_info, θ_re, const_cache, cache, _focei_ctx_for(tctx, θ_re))
+    lp = _FOCEIPriorLogf(
+        dm, batch_info, θ_re, const_cache, cache, _focei_ctx_for(tctx, θ_re), own
+    )
     return -ForwardDiff.hessian(lp, b)
 end
 
@@ -838,11 +828,15 @@ function _focei_grad_negH_batch(
             tctx.θ_re
         T = promote_type(eltype(θ_re), eltype(b))
         nb = get_n_b(batch_info)
-        tctx === nothing && (tctx = _focei_local_ctx(dm, batch_info, θ_re, cache, interaction))
+        own = nothing
+        tctx === nothing &&
+            ((tctx, own) = _prior_dists(dm, batch_info, θ_re, cache; own_only = interaction))
         parts = _focei_dists_jacobian(dm, batch_info, θ_re, b, const_cache, cache, interaction, tctx)
         parts === nothing && return nothing
         dists_b, J, dists_m = parts
-        lp = _FOCEIPriorLogf(dm, batch_info, θ_re, const_cache, cache, _focei_ctx_for(tctx, θ_re))
+        lp = _FOCEIPriorLogf(
+            dm, batch_info, θ_re, const_cache, cache, _focei_ctx_for(tctx, θ_re), own
+        )
         grad = ForwardDiff.gradient(lp, b)
         Hdata = zeros(T, nb, nb)
         if J !== nothing
@@ -851,7 +845,7 @@ function _focei_grad_negH_batch(
             _focei_add_scores!(grad, dists_b, ys, J) || (grad = nothing)
             Hdata = _focei_data_term(J, dists_b, dists_m, interaction, T)
         end
-        return (grad, Hdata .+ _focei_prior_negH(dm, batch_info, θ_re, b, const_cache, cache, tctx))
+        return (grad, Hdata .+ _focei_prior_negH(dm, batch_info, θ_re, b, const_cache, cache, tctx, own))
     catch err
         _is_numeric_error(err) && return nothing
         rethrow(err)

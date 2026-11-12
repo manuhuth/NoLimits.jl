@@ -602,12 +602,13 @@ end
         NoLimits._ba_theta_ctxs(st, curv, dm, θ, cc, cache, nothing, b; pctx = pctx)
         @test _RE_TAP[] == 0
         # gradient: n for the parent context, then per individual one run in the one-pass
-        # Jacobian and three in the prior's θ pass; FOCE's prior mean also needs the
-        # shared level's representative (n - 1 more)
+        # Jacobian and one in the prior's θ pass; FOCEI/FOCE take ∂ log f/∂θ from a separate
+        # θ gradient (n more), FOCE's prior mean also needs the shared level's
+        # representative (n - 1 more)
         _RE_TAP[] = 0
         NoLimits._ba_grad_batch(st, dm, θ, b, cc, cache, nothing, 1; hmode = curv)
-        foce = curv isa NoLimits.FisherInformationCurvature && !curv.interaction
-        @test _RE_TAP[] == (foce ? 17 : 15)
+        fisher = curv isa NoLimits.FisherInformationCurvature
+        @test _RE_TAP[] == (!fisher ? 9 : curv.interaction ? 12 : 14)
     end
 
     # objective and gradient through the drivers, structured vs forced dense
