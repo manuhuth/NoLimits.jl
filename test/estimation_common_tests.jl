@@ -356,6 +356,47 @@ end
     @test all(isfinite, collect(g))
 end
 
+@testset "ODE dual compression with no active input on a level (#408)" begin
+    Tg = typeof(ForwardDiff.Tag(sin, Float64))
+    D1(v, ps...) = ForwardDiff.Dual{Tg}(v, ps...)
+    # `==` on duals compares values only.
+    flat(x::Real) = [x]
+    flat(x::ForwardDiff.Dual) = vcat(flat(ForwardDiff.value(x)), map(flat, collect(ForwardDiff.partials(x)))...)
+    z2 = D1(0.0, 0.0, 0.0)
+    # Flat: all outer partials zero (a gradient chunk no input depends on).
+    # Nested, outer empty: inner level active on some inputs only.
+    # Nested, inner empty: outer active, no inner partials (a Hessian chunk).
+    cases = (
+        ([D1(1.0, 0.0, 0.0, 0.0)], [D1(2.0, 0.0, 0.0, 0.0), D1(3.0, 0.0, 0.0, 0.0)], (Val(1),)),
+        (
+            [D1(D1(1.0, 1.0, 0.0), z2, z2)],
+            [D1(D1(2.0, 0.0, 0.0), z2, z2), D1(D1(3.0, 0.0, 2.0), z2, z2)],
+            (Val(1),),
+        ),
+        (
+            [D1(D1(1.0, 0.0, 0.0), D1(0.5, 0.0, 0.0), z2)],
+            [D1(D1(2.0, 0.0, 0.0), z2, z2), D1(D1(3.0, 0.0, 0.0), z2, z2)],
+            (Val(1), Val(1)),
+        ),
+    )
+    for (u0, p, ms_expected) in cases
+        @test length(NoLimits._dual_levels(vcat(u0, p))) == (eltype(u0) <: ForwardDiff.Dual{Tg, <:ForwardDiff.Dual} ? 2 : 1)
+        cmp = NoLimits._ode_dual_compress(u0, p)
+        @test cmp !== nothing
+        xs, nu, lv, ms = cmp
+        @test nu == length(u0)
+        @test ms === ms_expected
+        Ps = map(l -> l[2], lv)
+        for j in eachindex(xs)
+            xc = NoLimits._dual_seed(xs[j], lv, ms, j)
+            @test ForwardDiff.npartials(xc) >= 1
+            y = NoLimits._dual_expand(Ps, xc)
+            @test y isa eltype(xs)
+            @test flat(y) == flat(xs[j])
+        end
+    end
+end
+
 @testset "loglikelihood skips missing scalar observables (non-ODE regression)" begin
     model = @Model begin
         @fixedEffects begin
