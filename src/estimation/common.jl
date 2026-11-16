@@ -3955,7 +3955,8 @@ function _ode_dual_compress(u0::Vector{D}, p::Vector{D}) where {D <: ForwardDiff
     end
     L == 0 && return nothing
     lvL = lv[1:L]
-    return xs, length(u0), lvL, map(l -> Val(length(l[2])), lvL)
+    # A level with no active input keeps one all-zero seed: solvers reject Dual{T,V,0} (#408).
+    return xs, length(u0), lvL, map(l -> Val(max(length(l[2]), 1)), lvL)
 end
 
 # Compressed input j: unit seed (or zero) on each of the levels in `lv`, deeper levels kept.
