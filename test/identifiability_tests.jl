@@ -101,3 +101,46 @@ end
     @test rep.rank <= length(rep.free_parameters)
     @test all(info -> info.rank <= info.n_latent, rep.random_effect_information)
 end
+
+@testset "identifiability_report for FOCEI uses the FOCEI objective" begin
+    # Mean nonlinear in η, so the FOCEI curvature differs from the exact Hessian.
+    model = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.2)
+            σ = RealNumber(0.3, scale = :log)
+            ω = RealNumber(0.4, scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, ω); column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(exp(a + η), σ)
+        end
+    end
+    dm = DataModel(model, fx_re_df(); primary_id = :ID, time_col = :t)
+    fe = NoLimits.get_fixed(model)
+    θ = NoLimits.get_θ0_untransformed(fe)
+    prep = NoLimits._prepare_ident_point(fe, θ, NamedTuple())
+    x0 = Float64.(collect(prep.θ_free_t))
+    ser = NoLimits.EnsembleSerial()
+
+    objs = map((NoLimits.FOCEI(), NoLimits.Laplace())) do m
+        obj, grad, _, _ = NoLimits._build_laplace_objective(dm, m, prep, fe; serialization = ser)
+        v, g = objective_and_gradient(m, dm, θ; scale = :transformed, serialization = ser)
+        @test obj(x0) ≈ -v rtol = 1.0e-8
+        @test grad(x0) ≈ -collect(g) rtol = 1.0e-6
+        obj(x0)
+    end
+    @test abs(objs[1] - objs[2]) > 1.0e-6
+
+    res = fit_model(dm, NoLimits.FOCEI(; optim_kwargs = (maxiters = 2,)); serialization = ser)
+    rep = @test_logs min_level = Base.CoreLogging.Warn identifiability_report(
+        res; hessian_backend = :fd_gradient
+    )
+    @test rep.method === :focei
+    @test !isempty(rep.random_effect_information)
+    @test identifiability_report(dm; method = :focei, hessian_backend = :fd_gradient).method === :focei
+end

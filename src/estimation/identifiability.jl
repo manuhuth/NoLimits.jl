@@ -65,7 +65,7 @@ Result of [`identifiability_report`](@ref). Contains the Hessian of the objectiv
 evaluation point, its spectral decomposition, and a local identifiability verdict.
 
 Fields:
-- `method::Symbol`: estimation method used (e.g. `:mle`, `:laplace`).
+- `method::Symbol`: estimation method used (`:mle`, `:map`, `:laplace`, or `:focei`).
 - `objective::Symbol`: objective evaluated (`:likelihood`, `:posterior`, or
   `:laplace_likelihood`).
 - `at::Symbol`: where the Hessian was evaluated (`:start`, `:fit`, or `:custom` for a
@@ -109,6 +109,7 @@ function _ident_method_symbol(method)
     method isa MLE && return :mle
     method isa MAP && return :map
     method isa Laplace && return :laplace
+    method isa FOCEI && return :focei
     error("Unsupported method $(typeof(method)) for identifiability_report.")
 end
 
@@ -119,9 +120,10 @@ function _resolve_ident_method(dm::DataModel, method_spec)
         method_spec === :mle && return MLE()
         method_spec === :map && return MAP()
         method_spec === :laplace && return Laplace()
-        error("Unknown identifiability method $(method_spec). Use :auto, :mle, :map, or :laplace.")
+        method_spec === :focei && return FOCEI()
+        error("Unknown identifiability method $(method_spec). Use :auto, :mle, :map, :laplace, or :focei.")
     end
-    if method_spec isa MLE || method_spec isa MAP || method_spec isa Laplace
+    if method_spec isa Union{MLE, MAP, Laplace, FOCEI}
         return method_spec
     end
     error("Unsupported method specification $(typeof(method_spec)) for identifiability_report.")
@@ -132,9 +134,9 @@ function _validate_ident_method(dm::DataModel, method)
     if method isa MLE || method isa MAP
         has_re &&
             error("MLE/MAP identifiability diagnostics require models without random effects. Use method=:laplace for random-effects models.")
-    elseif method isa Laplace
+    elseif method isa Union{Laplace, FOCEI}
         has_re ||
-            error("Laplace identifiability diagnostics require random effects. Use method=:mle or :map for fixed-effects models.")
+            error("Laplace/FOCEI identifiability diagnostics require random effects. Use method=:mle or :map for fixed-effects models.")
     else
         error("Unsupported method $(typeof(method)) for identifiability diagnostics.")
     end
@@ -372,7 +374,7 @@ end
 
 function _build_re_information(
         dm::DataModel,
-        method::Laplace,
+        method::Union{Laplace, FOCEI},
         θu::ComponentArray,
         batch_infos::Vector{REBatchInfo},
         const_cache::REConstantsCache,
@@ -398,6 +400,7 @@ function _build_re_information(
         rng = Random.Xoshiro(seed),
         serialization = ebe_serialization
     )
+    hmode = _dev_curvature(method)
     out = RandomEffectInformation[]
     hess_opts = method.hessian
     for (bi, info) in enumerate(batch_infos)
@@ -422,6 +425,7 @@ function _build_re_information(
             adaptive = hess_opts.adaptive,
             scale_factor = hess_opts.scale_factor,
             ctx = "identifiability_re",
+            hmode = hmode,
             hess_cache = nothing,
             use_cache = false
         )
@@ -495,7 +499,7 @@ end
 
 function _build_laplace_objective(
         dm::DataModel,
-        method::Laplace,
+        method::Union{Laplace, FOCEI},
         prep,
         fe::FixedEffects;
         constants_re::NamedTuple = NamedTuple(),
@@ -519,6 +523,7 @@ function _build_laplace_objective(
     inner_opts = _resolve_inner_options(method.inner, dm)
     multistart_opts = _resolve_multistart_options(method.multistart, inner_opts)
     has_penalty = !isempty(keys(penalty))
+    hmode = _dev_curvature(method)
 
     function eval_obj_grad(x_vec::Vector{Float64})
         θt_free = ComponentArray(x_vec, prep.axs_free)
@@ -532,7 +537,8 @@ function _build_laplace_objective(
             cache_opts = cache_opts,
             multistart = multistart_opts,
             rng = Random.Xoshiro(seed),
-            serialization = serialization
+            serialization = serialization,
+            hmode = hmode
         )
         obj == Inf && return (Inf, fill(NaN, length(x_vec)), θu)
 
@@ -679,7 +685,7 @@ function _identifiability_report(
     cond = _condition_number_from_svals(svals, tol)
     null_dirs = _build_null_directions(Hsym, prep.free_names, prep.ranges, tol)
     locally_identifiable = nullity == 0
-    if method isa Laplace
+    if method isa Union{Laplace, FOCEI}
         re_info = re_info_fun(x0)
     end
 
@@ -735,7 +741,8 @@ used by default (`at=:fit`).
 # Keyword Arguments
 - `method::Union{Symbol, FittingMethod} = :auto`: estimation method whose objective is
   used. `:auto` selects `MLE` for models without random effects and `Laplace` otherwise.
-  Supported symbols: `:mle`, `:map`, `:laplace`.
+  Supported symbols: `:mle`, `:map`, `:laplace`, `:focei`. `FOCEI` uses its
+  Fisher-information inner curvature, as in its fit.
 - `at::Union{Symbol, ComponentArray} = :start`: evaluation point. `:start` uses the
   model initial values, `:fit` uses the fitted estimates (only for the `FitResult`
   method), or a `ComponentArray` of untransformed parameter values.
@@ -830,7 +837,7 @@ function identifiability_report(
     at = _as_symbol(at)
     hessian_backend = _as_symbol(hessian_backend)
     method_use = if method === :fit
-        if get_method(res) isa MLE || get_method(res) isa MAP || get_method(res) isa Laplace
+        if get_method(res) isa Union{MLE, MAP, Laplace, FOCEI}
             get_method(res)
         else
             @warn "identifiability_report does not have a direct objective for $(typeof(get_method(res))); using method=:auto."
