@@ -394,6 +394,13 @@ end
             @test y isa eltype(xs)
             @test flat(y) == flat(xs[j])
         end
+        # The type-erased wrapper still reads states back as the original dual type.
+        xc_all = [NoLimits._dual_seed(xs[j], lv, ms, j) for j in eachindex(xs)]
+        w = NoLimits._DualExpandSol{eltype(xs)}((t; idxs) -> xc_all[idxs], Ps)
+        @test NoLimits._de_state_at(w, 1, 0.0) isa eltype(xs)
+        ys = NoLimits._de_state_at(w, 1:length(xs), 0.0)
+        @test ys isa Vector{eltype(xs)}
+        @test map(flat, ys) == map(flat, xs)
     end
 end
 

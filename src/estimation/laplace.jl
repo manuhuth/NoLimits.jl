@@ -942,9 +942,11 @@ const _build_theta_ctx = build_batch_theta_context
 
 # Hot-path variant for per-evaluation callers: `nothing` for a single RE, where every builder
 # call is already needed and the nested vectors would only allocate; `_level_re_dists` then
-# calls the builder per level directly.
+# calls the builder per level directly. Also `nothing` under dual θ: storing and reloading
+# nested-dual distributions blows up LLVM optimization of the prior (minutes per type).
 @inline _shared_re_dists(dm::DataModel, batch_info::REBatchInfo, θ_re, cache::_LLCache) =
-    length(get_re_info(batch_info)) == 1 ? nothing : _batch_re_dists(dm, batch_info, θ_re, cache)
+    (length(get_re_info(batch_info)) == 1 || eltype(θ_re) <: ForwardDiff.Dual) ? nothing :
+    _batch_re_dists(dm, batch_info, θ_re, cache)
 
 @inline function _level_re_dists(shared, dm::DataModel, rinfo, ri::Int, li::Int, θ_re, cache::_LLCache)
     shared === nothing || return shared[ri][li]

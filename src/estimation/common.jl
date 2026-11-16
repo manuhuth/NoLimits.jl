@@ -3986,13 +3986,16 @@ function _ll_solve_compressed(cache::_LLCache, prob, xs, nu, lv, ms, reset, buil
         cache, remake(prob; u0 = xc[1:nu], p = xc[(nu + 1):end]), reset
     )
     SciMLBase.successful_retcode(sol) || return _ll_drop_solve(sol.retcode)
-    return builder(_DualExpandSol(sol, map(l -> l[2], lv)), compiled)
+    return builder(_DualExpandSol{eltype(xs)}(sol, map(l -> l[2], lv)), compiled)
 end
 
 # Solution wrapper read by the DE accessors: states come back with the original partials.
-struct _DualExpandSol{S, P}
-    sol::S
-    P::P      # per compressed level: partials (∂s_k/∂ε_l) of its m_l active scalars
+# Type-erased to the original dual type `Y`: the compressed types depend on the runtime
+# counts m_l, which vary between individuals and chunks, and would otherwise give every
+# caller (`_ll_rows_obs`, formulas) one heavy specialization per sparsity pattern.
+struct _DualExpandSol{Y}
+    sol::Any
+    P::Any    # per compressed level: partials (∂s_k/∂ε_l) of its m_l active scalars
 end
 
 # Expand the levels of `Ps` (outermost first), innermost first.
@@ -4008,9 +4011,13 @@ end
     return ForwardDiff.Dual{Tg}(_dual_expand(rest, ForwardDiff.value(y)), acc)
 end
 
-@inline _de_state_at(w::_DualExpandSol, idx, t) = _dual_expand(w.P, _de_state_at(w.sol, idx, t))
-@inline _de_state_at(w::_DualExpandSol, idx::AbstractUnitRange, t) =
-    map(y -> _dual_expand(w.P, y), _de_state_at(w.sol, idx, t))
+@inline _de_state_at(w::_DualExpandSol{Y}, idx, t) where {Y} =
+    _dual_expand_at(w.sol, w.P, idx, t)::Y
+@inline _de_state_at(w::_DualExpandSol{Y}, idx::AbstractUnitRange, t) where {Y} =
+    _dual_expand_at(w.sol, w.P, idx, t)::Vector{Y}
+_dual_expand_at(sol, P, idx, t) = _dual_expand(P, _de_state_at(sol, idx, t))
+_dual_expand_at(sol, P, idx::AbstractUnitRange, t) =
+    map(y -> _dual_expand(P, y), _de_state_at(sol, idx, t))
 
 function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
     model = get_model(dm)
