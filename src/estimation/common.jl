@@ -2747,9 +2747,15 @@ end
     EBEOptions(; optimizer, optim_kwargs, adtype, grad_tol=:auto, multistart_n=50,
               multistart_k=10, max_rounds=1, sampling=:lhs) -> EBEOptions
 
-Empirical-Bayes mode-finder settings (the same options the `Laplace()` EBE step uses), for
-`empirical_bayes`/`empirical_bayes_covariance`/`laplace_marginal`. `grad_tol=:auto` resolves to a
-data-scaled tolerance.
+Empirical-Bayes mode-finder settings for `empirical_bayes`, `empirical_bayes_covariance`,
+`laplace_marginal` and `laplace_marginal_gradient`. Defaults: `optimizer` is
+`LBFGS(linesearch = BackTracking(maxstep = 1.0))` with `adtype = AutoForwardDiff()`;
+`grad_tol = :auto` resolves to `1e-4`, or `1e-2` for models with a differential equation.
+
+These are not the inner settings of `Laplace()` or `FOCEI()`, whose default inner optimizer
+is `NewtonInner(x_abstol = 1e-10)` (FOCEI with Fisher-information curvature), which stops at
+its own gradient tolerance `g_abstol = 1e-8`. Modes from `EBEOptions()` can therefore differ
+slightly from the modes of a fit.
 """
 function EBEOptions(;
         optimizer = OptimizationOptimJL.LBFGS(
