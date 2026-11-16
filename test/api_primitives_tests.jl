@@ -443,19 +443,26 @@ end
             end
         end
 
+        # EBEOptions equal to a method's inner mode solve (its multistart defaults match).
+        ebe_of(m) = NoLimits.EBEOptions(;
+            optimizer = m.inner.optimizer, optim_kwargs = m.inner.kwargs,
+            adtype = m.inner.adtype,
+            grad_tol = NoLimits._resolve_inner_options(m.inner, dm).grad_tol
+        )
+
         @testset "Laplace / FOCEI forward to the analytic kernel" begin
             for m in (NoLimits.Laplace(), NoLimits.FOCEI())
                 cur = m isa NoLimits.FOCEI ?
                     NoLimits.FisherInformationCurvature(m.interaction) :
                     NoLimits.ExactHessianCurvature()
                 lm(θx) = NoLimits.laplace_marginal(
-                    dm, θx; curvature = cur, serialization = ser
+                    dm, θx; curvature = cur, serialization = ser, ebe_options = ebe_of(m)
                 )
                 for s in (1.0, 0.85)
                     θ = ComponentArray(collect(θ0) .* s, getaxes(θ0))
                     v, g = og(m, dm, θ; serialization = ser)
                     vk, gk = NoLimits.laplace_marginal_gradient(
-                        dm, θ; curvature = cur, serialization = ser
+                        dm, θ; curvature = cur, serialization = ser, ebe_options = ebe_of(m)
                     )
                     @test v == vk                       # thin cover over the #270 kernel
                     @test collect(g) == collect(gk)
@@ -475,7 +482,7 @@ end
             v, g = og(m, dm, θ; serialization = ser)
 
             # batch pairs sum to the population pair (the federation property)
-            bstars = NoLimits.empirical_bayes(dm, θ; serialization = ser)
+            bstars = NoLimits.empirical_bayes(dm, θ; serialization = ser, ebe_options = ebe_of(m))
             _, infos, cc = NoLimits.build_re_batch_infos(dm, NamedTuple())
             cache = NoLimits.build_likelihood_cache(dm; force_saveat = true)
             vs = 0.0
@@ -532,6 +539,48 @@ end
                 )
                 @test maximum(abs, gc) < 1.0e-4
             end
+        end
+
+        # The dev pair is the fit's own objective/gradient at a fixed θ: the method's inner
+        # mode solve (not the EBEOptions() default) and the block-arrow path of a crossed
+        # ID + SITE batch, which must agree with the dense path.
+        @testset "Laplace / FOCEI equal the fit path" begin
+            for dmx in (fx_mg_dm(), fx_ode_dm()), m in (NoLimits.Laplace(), NoLimits.FOCEI())
+                θb = NoLimits.get_θ0_untransformed(NoLimits.get_fixed(NoLimits.get_model(dmx)))
+                θ = ComponentArray(collect(θb) .* 0.9, getaxes(θb))
+                _, infos, cc = NoLimits.build_re_batch_infos(dmx, NamedTuple())
+                ll = NoLimits.build_likelihood_cache(dmx; force_saveat = true)
+                hm = m isa NoLimits.FOCEI ?
+                    NoLimits.FisherInformationCurvature(m.interaction) :
+                    NoLimits.ExactHessianCurvature()
+                function fit_path(dense)
+                    ebe = NoLimits._init_laplace_eval_cache(length(infos), Float64)
+                    dense && (
+                        ebe.structures = (
+                            infos, Union{Nothing, NoLimits._BAStructure}[nothing for _ in infos],
+                        )
+                    )
+                    o, gr, _ = NoLimits._laplace_objective_and_grad(
+                        dmx, infos, θ, cc, ll, ebe; inner = m.inner, hessian = m.hessian,
+                        cache_opts = m.cache, multistart = m.multistart,
+                        rng = Random.Xoshiro(1), serialization = ser, hmode = hm
+                    )
+                    return -o, -collect(gr)
+                end
+                v, g = og(m, dmx, θ; serialization = ser)
+                vf, gf = fit_path(false)
+                @test v ≈ vf rtol = 1.0e-10
+                @test collect(g) ≈ gf rtol = 1.0e-8
+                vd, gd = fit_path(true)
+                @test v ≈ vd rtol = 1.0e-6
+                @test collect(g) ≈ gd rtol = 1.0e-6
+                vc, gc = og(m, build_fit_context(dmx), θ)
+                @test vc ≈ vf rtol = 1.0e-10
+                @test collect(gc) ≈ gf rtol = 1.0e-8
+            end
+            dmg = fx_mg_dm()
+            _, infos_g, cc_g = NoLimits.build_re_batch_infos(dmg, NamedTuple())
+            @test NoLimits._ba_structure(dmg, infos_g[1], cc_g) !== nothing
         end
 
         @testset "GHQuadrature keeps the fit's fixed centers" begin

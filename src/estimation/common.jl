@@ -1667,14 +1667,15 @@ function _compute_bstars(
         progress::Bool = false,
         progress_desc::AbstractString = "Final EBE",
         mcmc_candidates_by_batch::Union{Nothing, Vector} = nothing,
-        active_batch_indices::Union{Nothing, AbstractVector{Int}} = nothing
+        active_batch_indices::Union{Nothing, AbstractVector{Int}} = nothing,
+        ebe_cache = nothing
     )
     ebe = _resolve_ebe_options(ebe, dm)
     rescue = _resolve_ebe_rescue_options(rescue, ebe.grad_tol, dm)
     _, batch_infos, const_cache = _build_re_batch_infos(dm, constants_re)
     T = eltype(θu)
     n_batches = length(batch_infos)
-    ebe_cache = _init_laplace_eval_cache(n_batches, T)
+    ebe_cache === nothing && (ebe_cache = _init_laplace_eval_cache(n_batches, T))
     ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
     ebe_serialization = ll_cache isa Vector ? SciMLBase.EnsembleThreads() :
         SciMLBase.EnsembleSerial()
