@@ -292,7 +292,7 @@ function _empirical_bayes_batches(
     θ_re = symmetrize_psd_parameters(θ, get_fixed(get_model(dm)))
     cache = build_likelihood_cache(
         dm; ode_args = ode_args, ode_kwargs = ode_kwargs,
-        serialization = serialization
+        serialization = serialization, force_saveat = true
     )
     _, infos, cc = build_re_batch_infos(dm, constants_re)
     bstars, _ = _compute_bstars(
@@ -450,7 +450,10 @@ implicit `db*/dθ` envelope correction, so naive AD through the re-optimized mod
 needed. `value` is identical to `laplace_marginal` at the same arguments. The batch form
 takes one supplied mode `b_star`; the population form finds the modes and sums both value and
 gradient over batches (subjects are independent, so per-site sums are exact - this is the
-federation property). The `FitContext` form is the same population computation with the
+federation property). The population form runs the fit's own objective kernel (including the
+block-arrow path for crossed random effects); its modes follow `ebe_options` (default
+`EBEOptions()`, plus `rescue`), while `objective_and_gradient(Laplace()/FOCEI(), …)` uses the
+method's inner solver settings and so returns the fit's objective and gradient. The `FitContext` form is the same population computation with the
 context's caches reused instead of rebuilt per call; kwargs frozen by the context
 (`constants_re`, `ode_args`, `ode_kwargs`, the caches) error rather than silently diverge.
 
@@ -487,33 +490,79 @@ function laplace_marginal_gradient(
 end
 
 function laplace_marginal_gradient(
-        dm::DataModel, θ::ComponentArray;
-        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(),
-        scale::Symbol = :untransformed,
+        dm::DataModel, θ::ComponentArray; scale::Symbol = :untransformed, kwargs...
+    )
+    value, grad = _dev_laplace_population(dm, θ; kwargs...)
+    return (value, _dev_gradient_scale(dm, θ, grad, scale))
+end
+
+function _dev_laplace_setup(dm::DataModel, constants_re, ode_args, ode_kwargs, serialization)
+    constants_re = _as_namedtuple(constants_re)
+    _, infos, cc = build_re_batch_infos(dm, constants_re)
+    cache = build_likelihood_cache(
+        dm; ode_args = ode_args, ode_kwargs = _as_namedtuple(ode_kwargs),
+        serialization = serialization, force_saveat = true
+    )
+    return dm, infos, cc, cache, constants_re, serialization
+end
+
+# Population value + natural-scale θ-gradient through the fit's own
+# `_laplace_objective_and_grad` on a fresh EBE cache: same inner mode solve, block-arrow path
+# and batch threading as `fit_model`. Without `inner`, the modes follow `ebe_options`. A
+# `rescue` pre-solves the modes into that cache, which then serves them at this θ.
+function _dev_laplace_population(
+        target, θ::ComponentArray;
+        inner = nothing, multistart = nothing, ebe_options::EBEOptions = EBEOptions(),
+        rescue = nothing, batch_threading::Bool = false,
         curvature::AbstractCurvature = ExactHessianCurvature(), jitter = 1.0e-6,
         max_tries::Int = 6, growth = 10.0, adaptive::Bool = false, scale_factor = 0.0,
         use_trace_logdet_grad::Bool = true, use_hutchinson::Bool = false,
-        hutchinson_n::Int = 8, rng::AbstractRNG = _default_rng(), kwargs...
+        hutchinson_n::Int = 8, rng::AbstractRNG = _default_rng(),
+        constants_re::Union{NamedTuple, AbstractDict} = NamedTuple(), ode_args::Tuple = (),
+        ode_kwargs::Union{NamedTuple, AbstractDict} = NamedTuple(),
+        serialization::SciMLBase.EnsembleAlgorithm = EnsembleThreads()
     )
-    constants_re = _as_namedtuple(constants_re)
-    bstars, infos, cc, θ_re, cache = _empirical_bayes_batches(
-        dm, θ; constants_re = constants_re, rng = rng, kwargs...
+    dm, infos, cc, cache, constants_re, serialization = _dev_laplace_setup(
+        target, constants_re, ode_args, ode_kwargs, serialization
     )
-    value = zero(eltype(θ_re))
-    grad = ComponentArray(zeros(eltype(θ_re), length(θ_re)), getaxes(θ_re))
-    for bi in eachindex(infos)
-        v, g = laplace_marginal_gradient(
-            dm, θ_re, infos[bi], bstars[bi]; const_cache = cc, cache = cache,
-            scale = :untransformed, curvature = curvature, jitter = jitter,
-            max_tries = max_tries, growth = growth, adaptive = adaptive,
-            scale_factor = scale_factor, use_trace_logdet_grad = use_trace_logdet_grad,
-            use_hutchinson = use_hutchinson, hutchinson_n = hutchinson_n, rng = rng
+    θ_re = symmetrize_psd_parameters(θ, get_fixed(get_model(dm)))
+    zero_grad = ComponentArray(zeros(eltype(θ_re), length(θ_re)), getaxes(θ_re))
+    isempty(infos) && return (zero(eltype(θ_re)), zero_grad)
+    if inner === nothing
+        e = _resolve_ebe_options(ebe_options, dm)
+        inner = LaplaceInnerOptions(e.optimizer, e.optim_kwargs, e.adtype, e.grad_tol)
+        multistart = LaplaceMultistartOptions(
+            e.multistart_n, e.multistart_k, e.grad_tol, e.max_rounds, e.sampling
         )
-        w = _batch_weight(dm, get_inds(infos[bi]))
-        value += w * v
-        grad .+= w .* g
     end
-    return (value, _dev_gradient_scale(dm, θ_re, grad, scale))
+    inner = _resolve_inner_options(inner, dm)
+    multistart = _resolve_multistart_options(multistart, inner)
+    j, g, sf = promote(jitter, growth, scale_factor)
+    hess = LaplaceHessianOptions(
+        j, max_tries, g, adaptive, sf, use_trace_logdet_grad, use_hutchinson, hutchinson_n
+    )
+    ebe = _init_laplace_eval_cache(length(infos), eltype(θ_re))
+    ebe.batch_threading = batch_threading
+    if rescue !== nothing
+        ebe_opts = EBEOptions(
+            inner.optimizer, inner.kwargs, inner.adtype, inner.grad_tol, multistart.n,
+            multistart.k, multistart.max_rounds, multistart.sampling
+        )
+        _compute_bstars(
+            dm, θ_re, constants_re, cache, ebe_opts, rng; rescue = rescue, ebe_cache = ebe
+        )
+    end
+    obj, grad, _ = _laplace_objective_and_grad(
+        dm, infos, θ_re, cc, cache, ebe;
+        inner = inner, hessian = hess, cache_opts = LaplaceCacheOptions(0.0),
+        multistart = multistart, rng = rng, serialization = serialization, hmode = curvature
+    )
+    if !isfinite(obj)
+        @warn "laplace_marginal_gradient: the Laplace expansion is invalid at b* (-H " *
+            "degenerate or not factorizable; b* may not be a true mode). Returning -Inf."
+        return (convert(eltype(θ_re), -Inf), zero_grad)
+    end
+    return (-obj, -grad)
 end
 
 """
@@ -834,8 +883,9 @@ penalty and are always part of the `MAP` objective.
 
 Shipped dispatches, and the finer-grained forms:
 
-  - `Laplace`, `FOCEI`: forwards to [`laplace_marginal_gradient`](@ref) with the method's own
-    curvature (exact inner Hessian / Fisher information) and Hessian options. Per-batch form
+  - `Laplace`, `FOCEI`: the population [`laplace_marginal_gradient`](@ref) with the method's own
+    curvature (exact inner Hessian / Fisher information), Hessian options, inner mode solver
+    and `batch_threading`; an explicit `ebe_options` replaces the inner solver. Per-batch form
     `objective_and_gradient(method, dm, θ, batch, b_star; const_cache, …)`; batch pairs sum to
     the population pair (the federation property).
   - `GHQuadrature`: sweeps [`ghq_marginal`](@ref), whose adaptive centers are built from the
@@ -886,8 +936,17 @@ end
 # `target` is a `DataModel` or a `FitContext` (defined below); dispatch picks the route.
 _dev_dm(dm::DataModel) = dm
 
+# Population form: also the method's inner mode solve and batch threading; an explicit
+# `ebe_options` replaces the inner solve.
+function _dev_laplace_pop_kwargs(method, kwargs)
+    base = _dev_laplace_kwargs(method, kwargs)
+    bt = (; batch_threading = _batch_threading(method))
+    haskey(kwargs, :ebe_options) && return merge(bt, base)
+    return merge((; inner = method.inner, multistart = method.multistart), bt, base)
+end
+
 function _dev_laplace_pair(target, θ::ComponentArray, call_kwargs, include_penalty, penalty)
-    v, g = laplace_marginal_gradient(target, θ; scale = :untransformed, call_kwargs...)
+    v, g = _dev_laplace_population(target, θ; call_kwargs...)
     if include_penalty && !isempty(keys(penalty))
         v += _dev_penalty_term(θ, true, penalty)
         g = _dev_penalty_gradient!(g, θ, penalty)
@@ -911,7 +970,7 @@ function _dev_laplace_og(
     )
     scale = _dev_check_scale(scale)
     penalty = _as_namedtuple(penalty)
-    call_kwargs = _dev_laplace_kwargs(method, kwargs)
+    call_kwargs = _dev_laplace_pop_kwargs(method, kwargs)
     dm = _dev_dm(target)
     fe = get_fixed(get_model(dm))
     θ_re = symmetrize_psd_parameters(θ, fe)
@@ -1951,31 +2010,17 @@ end
     )
 end
 
+_dev_laplace_setup(ctx::FitContext, _...) =
+    (ctx.dm, ctx.batch_infos, ctx.const_cache, ctx.cache, ctx.constants_re, EnsembleSerial())
+
 function laplace_marginal_gradient(
         ctx::FitContext, θ::ComponentArray;
-        scale::Union{Symbol, AbstractString} = :untransformed,
-        curvature::AbstractCurvature = ExactHessianCurvature(),
-        ebe_options::EBEOptions = EBEOptions(), rescue = nothing,
-        rng::AbstractRNG = _default_rng(), kwargs...
+        scale::Union{Symbol, AbstractString} = :untransformed, kwargs...
     )
     _ctx_check_kwargs(:laplace_marginal_gradient, kwargs)
     scale = _dev_check_scale(scale)
-    θ_re = symmetrize_psd_parameters(θ, get_fixed(get_model(ctx.dm)))
-    value = zero(eltype(θ_re))
-    grad = ComponentArray(zeros(eltype(θ_re), length(θ_re)), getaxes(θ_re))
-    isempty(ctx.batch_infos) && return (value, _dev_gradient_scale(ctx.dm, θ_re, grad, scale))
-    bstars = empirical_bayes(ctx, θ_re; ebe_options = ebe_options, rescue = rescue, rng = rng)
-    for bi in eachindex(ctx.batch_infos)
-        v, g = laplace_marginal_gradient(
-            ctx.dm, θ_re, ctx.batch_infos[bi], bstars[bi];
-            const_cache = ctx.const_cache, cache = ctx.cache, scale = :untransformed,
-            curvature = curvature, rng = rng, kwargs...
-        )
-        w = _batch_weight(ctx.dm, get_inds(ctx.batch_infos[bi]))
-        value += w * v
-        grad .+= w .* g
-    end
-    return (value, _dev_gradient_scale(ctx.dm, θ_re, grad, scale))
+    value, grad = _dev_laplace_population(ctx, θ; kwargs...)
+    return (value, _dev_gradient_scale(ctx.dm, θ, grad, scale))
 end
 
 # Context forms of the joint value+gradient primitive: same results, caches reused.

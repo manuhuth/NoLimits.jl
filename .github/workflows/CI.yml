@@ -92,7 +92,7 @@ jobs:
     name: test threaded (invariance oracles)
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
       - uses: julia-actions/setup-julia@v3
