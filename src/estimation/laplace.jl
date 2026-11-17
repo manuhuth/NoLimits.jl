@@ -1254,7 +1254,7 @@ Laplace approximation already uses.
 It is the default inner optimizer of `Laplace` and `GHQuadrature`
 (`NewtonInner(x_abstol = 1e-10)`); FOCEI defaults to its Gauss-Newton variant
 (`curvature = FisherInformationCurvature(true)`). A stalled solve falls back to LBFGS
-(see `alpha_min` below). Pass `inner_optimizer = OptimizationOptimJL.LBFGS(linesearch =
+(see `alpha_min` below), as does a solve that reaches `maxiters` unconverged. Pass `inner_optimizer = OptimizationOptimJL.LBFGS(linesearch =
 LineSearches.BackTracking(maxstep = 1.0))` for the previous default; a different optimizer
 can reach a (numerically) different conditional mode on hard problems. Newton converges
 quadratically from the warm starts the outer optimization provides and avoids the
@@ -1284,7 +1284,8 @@ the LBFGS inner solves with their backtracking line search were ~2/3 of the time
 - `globalization`: `:linesearch` (default) is the damped Newton ascent with Armijo
   backtracking described above. `:trust_region` runs Optim.jl's `NewtonTrustRegion()` on
   `-log f` with the `curvature` Hessian, `Optim.Options(; x_abstol, g_abstol, iterations =
-  maxiters)` (`alpha_min` unused); gradient and Hessian at a point come from one pass, the
+  maxiters)` (`alpha_min` unused; a solve Optim does not report converged falls back to
+  LBFGS); gradient and Hessian at a point come from one pass, the
   value of a trial point from a plain evaluation. With
   `curvature = FisherInformationCurvature(true)` this is the Gauss-Newton trust-region
   inner solve of MEMOIR-style FOCEI codes.
@@ -1515,8 +1516,7 @@ end
 # Trust-region variant (`globalization = :trust_region`): Optim.jl's NewtonTrustRegion on
 # -log f. Optim asks for the value of a trial point alone and for gradient and Hessian of an
 # accepted point; the last two share one pass (`_newton_grad_hess!`), cached per point.
-# The result is taken as it is when finite (as an Optim-based inner solve would), a
-# non-finite one signals the LBFGS fallback.
+# A non-converged or non-finite result signals the LBFGS fallback (#426).
 function _newton_tr_inner_solve(
         dm::DataModel, batch_info::REBatchInfo, θ_val::ComponentArray,
         const_cache::REConstantsCache, cache::_LLCache, ad_cache::LaplaceADCache,
@@ -1580,7 +1580,7 @@ function _newton_tr_inner_solve(
     isfinite(fval) || return _NewtonSol(b, -Inf, Inf, false)
     derivs_at!(b)
     gn = maximum(abs, g_d)
-    return _NewtonSol(b, Float64(fval), isfinite(gn) ? gn : Inf, true)
+    return _NewtonSol(b, Float64(fval), isfinite(gn) ? gn : Inf, Optim.converged(res))
 end
 
 # Gradient of the Newton step into `g`. Returns the Hessian when the curvature yields it in
@@ -2847,7 +2847,9 @@ random effects.
   (damped Newton, falls back to LBFGS when a solve stalls).
 - `inner_kwargs::NamedTuple = NamedTuple()`: keyword arguments for the inner `solve` call.
 - `inner_adtype`: AD backend for the inner optimizer. Defaults to `AutoForwardDiff()`.
-- `inner_grad_tol`: gradient tolerance for inner convergence (`:auto` chooses automatically).
+- `inner_grad_tol`: EB-mode gradient threshold (`:auto`: `1e-8`, or `1e-2` for ODE models).
+  It does not stop the inner solve (`NewtonInner` uses its own `g_abstol`/`x_abstol`); it
+  is the default of `multistart_grad_tol` and the threshold of the post-fit EB gradient warning.
 - `multistart_n::Int = 50`: number of random starts for the inner EBE multistart.
 - `multistart_k::Int = 10`: number of best starts to refine in the inner multistart.
 - `multistart_grad_tol`: gradient tolerance for multistart refinement.
@@ -3569,7 +3571,8 @@ function _laplace_accepted_multistart_batch!(
         end
         sol === nothing && continue
         f = logf(sol.u)
-        if isfinite(f) && f > best_f
+        # A rounding-level gain is the same mode, not a changed one (#426).
+        if isfinite(f) && (!isfinite(best_f) || f > best_f + max(1.0e-8, 1.0e-10 * abs(best_f)))
             best_b, best_f = collect(Float64, sol.u), f
         end
     end

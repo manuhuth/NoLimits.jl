@@ -486,6 +486,16 @@ end
                 @test NoLimits._laplace_sol_logf(sol_tr) ≈ NoLimits._laplace_sol_logf(sol_def) atol = 1.0e-8
             end
         end
+        # at the iteration cap the solve is not converged and falls back to LBFGS (#426)
+        tr1 = NewtonInner(maxiters = 1, globalization = :trust_region)
+        info = binfos[1]
+        raw = NoLimits._newton_tr_inner_solve(
+            dm, info, θ, ccache, llc, adc, 1, fill(5.0, info.n_b), tr1
+        )
+        @test !raw.converged
+        sol_def = NoLimits._laplace_solve_batch!(dm, info, θ, ccache, llc, adc, 1, zeros(info.n_b))
+        sol_1 = NoLimits._laplace_solve_batch!(dm, info, θ, ccache, llc, adc, 1, fill(5.0, info.n_b); optimizer = tr1)
+        @test collect(sol_1.u) ≈ collect(sol_def.u) atol = 1.0e-4
     end
 
     @testset "Laplace fit matches default within tolerance" begin
@@ -771,6 +781,9 @@ struct _MBAlternate end
         @test_throws ErrorException MB(ctor(); schedule = 0)
         @test_throws ErrorException MB(ctor(); schedule = "bogus")
         @test_throws ErrorException MB(ctor(); schedule = 1.5)
+        # a schedule typed for the default rng is accepted (#426)
+        sch_x = (nb::Int, it::Int, rng::Xoshiro) -> [mod1(it, nb)]
+        @test MB(ctor(); schedule = sch_x).schedule === sch_x
 
         @test ctor().optimizer isa OptimizationOptimJL.LBFGS
         @test MB(ctor(); schedule = 2).optimizer isa Optimisers.AbstractRule
@@ -803,6 +816,9 @@ struct _MBAlternate end
 end
 
 @testset "Minibatch state machinery (#281)" begin
+    sch_x = (nb::Int, it::Int, rng::Xoshiro) -> [mod1(it, nb)]
+    @test NoLimits._schedule_batches!(Int[], sch_x, 4, 6, Xoshiro(1)) == [2]
+    @test_throws r"rng::AbstractRNG" NoLimits._schedule_batches!(Int[], sch_x, 4, 6, MersenneTwister(1))
     @test NoLimits._minibatch_state(:all, 6, MersenneTwister(1)) === nothing
     @test NoLimits._minibatch_current!(nothing) === nothing
     @test NoLimits._minibatch_active(nothing) === nothing

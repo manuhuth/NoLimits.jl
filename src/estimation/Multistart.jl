@@ -325,14 +325,22 @@ function _bound_dist(name::Symbol, p, value, lo, hi, source::AbstractString, war
     return out
 end
 
-function _collect_param_dists(dm::DataModel, ms::Multistart; warn::Bool = true)
+# Parameters fixed by `constants` are not sampled (#426).
+function _collect_param_dists(
+        dm::DataModel, ms::Multistart; warn::Bool = true, constants::NamedTuple = NamedTuple()
+    )
     fe = get_fixed(get_model(dm))
     priors = get_priors(fe)
     names = get_names(fe)
+    for k in keys(ms.dists)
+        k in names ||
+            error("Multistart: dists key $(k) is not a fixed-effect name; fixed effects are $(join(names, ", ")).")
+    end
     θ0_u = get_θ0_untransformed(fe)
     lower, upper = get_bounds_untransformed(fe)
     pairs = Pair{Symbol, Any}[]
     for name in names
+        haskey(constants, name) && continue
         user = haskey(ms.dists, name)
         p = user ? getfield(ms.dists, name) :
             (hasproperty(priors, name) ? getfield(priors, name) : Priorless())
@@ -351,11 +359,19 @@ end
 
 function _multistart_initials(
         dm::DataModel, ms::Multistart,
-        rng::AbstractRNG = something(ms.rng, _default_rng())
+        rng::AbstractRNG = something(ms.rng, _default_rng());
+        constants::NamedTuple = NamedTuple()
     )
     fe = get_fixed(get_model(dm))
     θ0_u = get_θ0_untransformed(fe)
-    dists = _collect_param_dists(dm, ms)
+    # Screening must score candidates with the values the fit will use (#426).
+    if !isempty(constants)
+        θ0_u = deepcopy(θ0_u)
+        for (k, v) in Base.pairs(constants)
+            setproperty!(θ0_u, k, v)
+        end
+    end
+    dists = _collect_param_dists(dm, ms; constants = constants)
     bounds = get_bounds_untransformed(fe)
     lower = bounds[1]
     upper = bounds[2]
@@ -658,11 +674,13 @@ function fit_model(ms::Multistart, dm::DataModel, method::FittingMethod, args...
     ode_kwargs_inner = get(kw_nt, :ode_kwargs, NamedTuple())
     serialization = get(kw_nt, :serialization, EnsembleThreads())
 
+    _validate_fit_overrides(dm, kw_nt)
+    constants = get(kw_nt, :constants, NamedTuple())
     ms_rng = something(ms.rng, _default_rng())
-    all_starts = _multistart_initials(dm, ms, ms_rng)
+    all_starts = _multistart_initials(dm, ms, ms_rng; constants = constants)
     n_req = length(all_starts)
     n_used = min(ms.n_draws_used, n_req)
-    varied = collect(keys(_collect_param_dists(dm, ms; warn = false)))
+    varied = collect(keys(_collect_param_dists(dm, ms; warn = false, constants = constants)))
     varied_str = isempty(varied) ? "none" : join(string.(varied), ", ")
 
     if n_req > n_used

@@ -27,10 +27,10 @@ function _schedule_batches!(
         Random.randperm!(rng, buf)
         resize!(buf, m)
         return buf
-    elseif hasmethod(update_schedule, Tuple{Int, Int, AbstractRNG})
+    elseif applicable(update_schedule, nbatches, iter, rng)
         return update_schedule(nbatches, iter, rng)
     else
-        error("Invalid MiniBatch schedule. Use :all, Int minibatch size, or a callable (nbatches, iter, rng) -> indices (any iterable of Int).")
+        error("Invalid MiniBatch schedule. Use :all, Int minibatch size, or a callable (nbatches::Int, iter::Int, rng::AbstractRNG) -> indices (any iterable of Int); got rng::$(typeof(rng)).")
     end
 end
 
@@ -46,12 +46,13 @@ function _check_update_schedule(update_schedule, label::AbstractString)
         update_schedule >= 1 ||
             error("$label: schedule minibatch size must be ≥ 1. Got: $update_schedule")
         return update_schedule
-    elseif hasmethod(update_schedule, Tuple{Int, Int, AbstractRNG})
+    elseif hasmethod(update_schedule, Tuple{Int, Int, AbstractRNG}) ||
+            hasmethod(update_schedule, Tuple{Int, Int, typeof(_default_rng())})
         return update_schedule
     end
     return error(
         "$label: invalid schedule. Use :all, an Int minibatch size, or a " *
-            "callable (nbatches::Int, iter::Int, rng) -> indices (any iterable of Int)."
+            "callable (nbatches::Int, iter::Int, rng::AbstractRNG) -> indices (any iterable of Int)."
     )
 end
 
