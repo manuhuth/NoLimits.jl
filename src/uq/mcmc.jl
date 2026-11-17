@@ -254,11 +254,11 @@ function _compute_uq_chain(
         @warn "Chain UQ: some draws of these coordinates lie outside the domain of their scale; they are reported on the natural scale for scale = :transformed." parameters = unique(
         out_of_domain
     ) maxlog = 1
-    append!(natural_only, out_of_domain)
     isempty(natural_only) ||
         @warn "Chain UQ: these coordinates have no per-coordinate forward transform and are reported on the natural scale for scale = :transformed." parameters = unique(
         natural_only
     ) maxlog = 1
+    append!(natural_only, out_of_domain)
     diag = merge(
         diag, (; transformed_scale_natural_only = natural_only, coordinate_transforms = active_kinds)
     )
