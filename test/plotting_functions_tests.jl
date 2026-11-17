@@ -133,6 +133,14 @@ end
     @test plot_fits(res) !== nothing
     @test plot_fits(dm) !== nothing
     @test plot_fits_comparison([res, res]) !== nothing
+
+    # an individual without observations gets no facet instead of crashing AoG (#429)
+    df_empty = vcat(df, DataFrame(ID = [3, 3], t = [0.0, 1.0], y = Union{Missing, Float64}[missing, missing]))
+    dm_empty = DataModel(fx_nore_model(), df_empty; primary_id = :ID, time_col = :t)
+    @test length(_axes(plot_data(dm_empty))) == 2
+    @test length(
+        _axes(plot_data(dm_empty; individuals_idx = [1, 3], shared_x_axis = false, shared_y_axis = false))
+    ) == 1
 end
 
 # #383: facets follow the order in which individuals first appear in the data. DataModel
@@ -556,6 +564,10 @@ end
     n_marginals = 2
 
     @test plot_data(res; marginal_layout = :single) !== nothing
+    # vector outcome in plot_fits_comparison: one curve per (model, component) (#429)
+    p_cmp = plot_fits_comparison((m1 = res, m2 = res))
+    @test length(_axes(p_cmp)) == 2
+    @test Set(_legend_labels(p_cmp)) == Set(["y[1]", "y[2]", "m1 y[1]", "m1 y[2]", "m2 y[1]", "m2 y[2]"])
     p_data_vector = plot_data(res; marginal_layout = :vector)
     @test isa(p_data_vector, Vector{CairoMakie.Figure})
     @test length(p_data_vector) == n_marginals

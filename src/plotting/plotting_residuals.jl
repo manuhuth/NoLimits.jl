@@ -161,7 +161,7 @@ function _pit_from_dist(
     )
     ismissing(y) && return missing
     if applicable(cdf, dist, y)
-        if dist isa DiscreteDistribution
+        if _pit_point_mass(dist, y)
             hi = clamp(Float64(cdf(dist, y)), 0.0, 1.0)
             if randomize_discrete && applicable(pdf, dist, y)
                 mass = Float64(pdf(dist, y))
@@ -185,6 +185,10 @@ function _pit_from_dist(
     end
     return missing
 end
+
+# Discrete outcomes, and censored ones at a censoring bound (where pdf is the bound's mass).
+_pit_point_mass(dist, y) = dist isa DiscreteDistribution ||
+    (dist isa Distributions.Censored && (y == minimum(dist) || y == maximum(dist)))
 
 function _mv_fitted(dist, fitted_stat)
     v = try
@@ -476,7 +480,8 @@ Compute residuals for each observation and return a `DataFrame`.
 - `residuals`: residual metrics to compute. Allowed: `:pit`, `:quantile`, `:raw`,
   `:pearson`, `:logscore`.
 - `fitted_stat = mean`: statistic applied to the predictive distribution for raw residuals.
-- `randomize_discrete::Bool = true`: randomize PIT values for discrete outcomes.
+- `randomize_discrete::Bool = true`: randomize PIT values for discrete outcomes and for
+  censored outcomes at a censoring bound.
 - `cdf_fallback_mc::Int = 0`: MC samples for CDF approximation with non-analytic distributions.
 - `ode_args::Tuple = ()`, `ode_kwargs::NamedTuple = NamedTuple()`: forwarded to ODE solver.
 - `mcmc_draws::Int = 1000`, `mcmc_warmup`: MCMC draw settings.

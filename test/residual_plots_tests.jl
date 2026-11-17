@@ -54,6 +54,14 @@ import Turing   # MCMC/VI need the Turing extension loaded (#36)
     ext = Base.get_extension(NoLimits, :NoLimitsMakieExt)
     @test plot_vpc(res; n_simulations = 2, n_bins = 2, observables = :y_cont, return_panel = true) isa
         ext.AoGPanel
+    # plot_data selects the outcome (#429)
+    scatter_y(fig) = [
+        p[2] for a in fig.content if a isa CairoMakie.Axis
+            for pl in a.scene.plots if pl isa CairoMakie.Scatter for p in CairoMakie.Makie.to_value(pl[1])
+    ]
+    @test sort(unique(scatter_y(plot_data(res; observable = :y_bin)))) == [0.0, 1.0]
+    @test sort(scatter_y(plot_data(dm; observable = :y_cont))) ≈ sort(Float32.(df.y_cont))
+    @test_throws r"Observable zz not found" plot_data(dm; observable = :zz)
 end
 
 @testset "residuals with constants_re inherited from fit result" begin
@@ -243,6 +251,17 @@ end
     @test plot_residuals(res; residual = :pearson) !== nothing
     @test plot_residual_pit(res; show_hist = true, show_kde = false, show_qq = true) !==
         nothing
+
+    # censored outcomes at a bound are randomized like discrete ones (#429)
+    dc = censored(Normal(0.0, 1.0); lower = -0.5, upper = 1.0)
+    FL, FU = cdf(Normal(), -0.5), cdf(Normal(), 1.0)
+    rng = Xoshiro(3)
+    lo = [NoLimits._pit_from_dist(dc, -0.5; rng) for _ in 1:200]
+    hi = [NoLimits._pit_from_dist(dc, 1.0; rng) for _ in 1:200]
+    @test all(0 .<= lo .<= FL) && length(unique(lo)) == 200
+    @test all(FU .<= hi .<= 1) && length(unique(hi)) == 200
+    @test NoLimits._pit_from_dist(dc, -0.5; randomize_discrete = false) ≈ FL
+    @test NoLimits._pit_from_dist(dc, 0.2; rng) ≈ cdf(Normal(), 0.2)
 end
 
 @testset "residuals use row-specific random effects for varying non-ODE groups" begin
