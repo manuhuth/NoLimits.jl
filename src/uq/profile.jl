@@ -174,6 +174,7 @@ function _build_uq_obj_re(
             ll_cache_local = ll_cache isa AbstractVector ? ll_cache[1] : ll_cache
             total = 0.0
             for info in batch_infos
+                iszero(_batch_weight(dm, get_inds(info))) && continue
                 bll = _ghq_batch_ll(
                     dm, info,
                     _symmetrize_psd_params(θu, fe),

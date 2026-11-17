@@ -699,7 +699,8 @@ function _em_seed_batch_b(
     )
     b_init = _re_prior_mean_b(dm, info, θ0_u, const_cache, cache_init, re_names)
     logf = _laplace_logf_batch(dm, info, θ0_u, b_init, const_cache, cache_init)
-    isfinite(logf) && return b_init
+    # Weight 0 is removal: its log-joint does not enter the objective.
+    (isfinite(logf) || iszero(_batch_weight(dm, get_inds(info)))) && return b_init
     for _ in 1:10
         samp, _ = _is_prior_sample_batch(
             dm, info, θ0_u, const_cache, cache_init, rng, 1, re_names
@@ -728,7 +729,7 @@ function _em_start_seedable(
     )
     probe = copy(rng)
     for info in batch_infos
-        get_n_b(info) == 0 && continue
+        (get_n_b(info) == 0 || iszero(_batch_weight(dm, get_inds(info)))) && continue
         ok = try
             b = _re_prior_mean_b(dm, info, θ_u, const_cache, cache_init, re_names)
             isfinite(_laplace_logf_batch(dm, info, θ_u, b, const_cache, cache_init)) ||

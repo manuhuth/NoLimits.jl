@@ -3192,7 +3192,7 @@ function _saem_Q_core(
     const_total = zero(Tθ)
     ll_cache_c = ll_cache isa Vector ? ll_cache[1] : ll_cache
     for (bi, info) in enumerate(batch_infos)
-        get_n_b(info) > 0 && continue
+        (get_n_b(info) > 0 || iszero(_batch_weight(dm, get_inds(info)))) && continue
         logf = logf_fn(
             dm, info, θ, Tθ[], const_cache, ll_cache_c; anneal_sds = anneal_sds
         )
@@ -3214,6 +3214,7 @@ function _saem_Q_core(
         _greedy_foreach(length(batch_infos), length(caches)) do bi, c
             bad[] && return
             get_n_b(batch_infos[bi]) == 0 && return
+            iszero(_batch_weight(dm, get_inds(batch_infos[bi]))) && return
             cache_c = caches[c]
             info = batch_infos[bi]
             acc = zero(Tθ)
@@ -3244,7 +3245,7 @@ function _saem_Q_core(
         ll_cache_local = ll_cache isa Vector ? ll_cache[1] : ll_cache
         weighted_total = zero(Tθ)
         for (bi, info) in enumerate(batch_infos)
-            get_n_b(info) == 0 && continue
+            (get_n_b(info) == 0 || iszero(_batch_weight(dm, get_inds(info)))) && continue
             acc = zero(Tθ)
             h = h_start
             tctx = _safe_theta_ctx(dm, info, θ, ll_cache_local)

@@ -2696,7 +2696,9 @@ function get_loglikelihood(
         caches = ll_cache isa AbstractVector ? ll_cache : [ll_cache]
         parts = zeros(Float64, length(batch_infos))
         _greedy_foreach(length(batch_infos), length(caches)) do bi, c
-            parts[bi] = _batch_weight(dm, get_inds(batch_infos[bi])) * _ghq_batch_ll(
+            w = _batch_weight(dm, get_inds(batch_infos[bi]))
+            iszero(w) && return
+            parts[bi] = w * _ghq_batch_ll(
                 dm, batch_infos[bi], θu_re, const_cache, caches[c], level
             )
         end
@@ -2932,6 +2934,7 @@ function _quadrature_batch_ll(
         dm, bi, info, θu_re, const_cache, ll_cache, bstars,
         level, jitter, mc_integrator, fallback, rng
     )
+    iszero(_batch_weight(dm, get_inds(info))) && return 0.0
     if get_n_b(info) == 0
         s = 0.0
         empty_b = Float64[]
@@ -2949,10 +2952,17 @@ function _quadrature_batch_ll(
             )
         else
             b_star = bstars[bi]
-            re_measure = build_centered_re_measure(
-                b_star, info, bi, θu_re, const_cache, dm, ll_cache;
-                jitter = jitter
-            )
+            prior_m = build_re_measure_from_batch(info, θu_re, const_cache, dm, ll_cache)
+            # Bounded-support REs: the transport-space adaptive rule of the fit (#424).
+            re_measure = if prior_m isa CompositeRE && !prior_m.unbounded
+                mc = _ghq_adaptive_measure(dm, info, θu_re, const_cache, ll_cache, prior_m, b_star)
+                mc === nothing ? prior_m : mc
+            else
+                build_centered_re_measure(
+                    b_star, info, bi, θu_re, const_cache, dm, ll_cache;
+                    jitter = jitter
+                )
+            end
             if re_measure !== nothing
                 sgrid = level isa Int ? get_sparse_grid(get_n_b(info), level) :
                     _build_anisotropic_batch_grid(dm, info, level)
@@ -3205,7 +3215,9 @@ function _cdll_terms(
             push!(seen, (ri, li))
             v += logpdf(level_dist[ri][li], getval(ri, li))
         end
-        vals[k] = v
+        # Likelihood weights as in `loglikelihood` (weight 0 is removal).
+        w = _ind_weight(dm, i)
+        vals[k] = iszero(w) ? zero(T) : w * v
     end
     return ids, vals
 end
@@ -3219,6 +3231,9 @@ end
 Joint (complete-data) log-density `ln p(y, η | θ)` for a random-effects model: the
 per-individual observation log-likelihood plus the random-effect prior summed once per
 grouping level. With no random effects it reduces to the population log-likelihood.
+With likelihood weights (`DataModel(...; weights)`) each individual's term, including the
+random-effect prior it carries, is multiplied by its weight, so an integer weight `k`
+equals `k` copies of the individual.
 
 `eta` supplies the random-effect values to plug in:
 - a `NamedTuple` keyed by random-effect name, then by grouping-level id, e.g.
@@ -3247,7 +3262,8 @@ end
 Per-individual breakdown of [`complete_data_loglikelihood`](@ref) (same arguments): a
 `DataFrame` with the `primary_id` column and a `:complete_data_loglikelihood` column
 giving, for each selected individual, its observation log-likelihood plus the
-random-effect prior of any grouping level it is the first to contribute. The values sum
+random-effect prior of any grouping level it is the first to contribute, multiplied by
+the individual's likelihood weight. The values sum
 to `complete_data_loglikelihood` called with the same arguments. Useful for inspecting
 per-subject fit before running an estimation.
 """
@@ -4843,6 +4859,11 @@ function _loglikelihood_indices(
         _greedy_foreach(m, length(caches)) do k, c
             bad[] && return
             i = sel[k]
+            # Weight 0 is removal: never evaluated, so invalid data there cannot poison the sum.
+            if iszero(_ind_weight(dm, i))
+                by_individual[k] = zero(T)
+                return
+            end
             η_ind = ηs isa Vector ? ηs[i] : ηs
             lli = _loglikelihood_individual(dm, i, θs, η_ind, caches[c])
             if !isfinite(lli)
@@ -4863,6 +4884,7 @@ function _loglikelihood_indices(
         # promotes the same way).
         ll = zero(T)
         for i in sel
+            iszero(_ind_weight(dm, i)) && continue
             η_ind = ηs isa Vector ? ηs[i] : ηs
             lli = _loglikelihood_individual(dm, i, θs, η_ind, cache_use)
             !isfinite(lli) && return -Inf

@@ -424,7 +424,7 @@ function laplace_marginal(
                 cache = cache, curvature = curvature, jitter = jitter,
                 max_tries = max_tries, adaptive = adaptive, scale_factor = scale_factor
             )
-            for bi in eachindex(infos)
+            for bi in eachindex(infos) if !iszero(_batch_weight(dm, get_inds(infos[bi])))
     )
 end
 
@@ -569,11 +569,13 @@ end
     ghq_marginal(dm, θ, batch::REBatchInfo; level=3, const_cache, cache=nothing) -> Real
     ghq_marginal(dm, θ; level=3, constants_re=NamedTuple(), ode_args=(), ode_kwargs=NamedTuple()) -> Float64
 
-Gauss-Hermite (Smolyak sparse-grid) marginal log-likelihood `log p(y | θ)`, integrating the
-free random effects against their prior-centered Gaussian measure - the deterministic
-integrator the `GHQuadrature` estimator uses (no mode-finding). `level` is an `Int` (isotropic)
-or a `NamedTuple` mapping RE name → level (anisotropic). This is distinct from the adaptive
-`get_marginal_likelihood` (AGHQ, centered at the posterior mode).
+Gauss-Hermite (Smolyak sparse-grid) marginal log-likelihood `log p(y | θ)` with the adaptive
+rule the `GHQuadrature` estimator uses: for each batch the empirical-Bayes mode is solved at
+`θ` and the nodes are centered and scaled there (in the transport reference space for
+bounded-support random effects). `level` is an `Int` (isotropic) or a `NamedTuple` mapping
+RE name → level (anisotropic). The mode and curvature are not differentiated, so the
+`ForwardDiff` gradient matches the objective only up to the quadrature error. Batches of
+weight 0 are skipped.
 """
 function ghq_marginal(
         dm::DataModel, θ::ComponentArray, batch::REBatchInfo;
@@ -600,7 +602,7 @@ function ghq_marginal(
     isempty(infos) && return zero(eltype(θ_re))
     return sum(
         _batch_weight(dm, get_inds(infos[bi])) * _ghq_batch_ll(dm, infos[bi], θ_re, cc, c, level)
-            for bi in eachindex(infos)
+            for bi in eachindex(infos) if !iszero(_batch_weight(dm, get_inds(infos[bi])))
     )
 end
 
@@ -1027,6 +1029,7 @@ end
     total = _dev_penalty_term(θ, o.include_penalty, o.penalty)
     for bi in eachindex(o.infos)
         w = o.weighted ? _batch_weight(o.dm, get_inds(o.infos[bi])) : 1.0
+        iszero(w) && continue
         total += w * ghq_marginal(
             o.dm, θ, o.infos[bi]; level = o.level,
             const_cache = o.const_cache, cache = o.cache
@@ -1944,7 +1947,7 @@ function ghq_marginal(ctx::FitContext, θ::ComponentArray; level = 3)
     isempty(ctx.batch_infos) && return zero(eltype(θ))
     return sum(
         _batch_weight(ctx.dm, get_inds(ctx.batch_infos[bi])) * ghq_marginal(ctx, bi, θ; level = level)
-            for bi in eachindex(ctx.batch_infos)
+            for bi in eachindex(ctx.batch_infos) if !iszero(_batch_weight(ctx.dm, get_inds(ctx.batch_infos[bi])))
     )
 end
 
@@ -1996,7 +1999,7 @@ function laplace_marginal(
                 const_cache = ctx.const_cache, cache = ctx.cache,
                 curvature = curvature, kwargs...
             )
-            for bi in eachindex(ctx.batch_infos)
+            for bi in eachindex(ctx.batch_infos) if !iszero(_batch_weight(ctx.dm, get_inds(ctx.batch_infos[bi])))
     )
 end
 

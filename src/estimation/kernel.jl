@@ -95,7 +95,8 @@ function batch_loglik_ghq(
         re_measure::AbstractREMeasure,
         sgrid::GHQuadratureNodes{Float64},
         const_cache::REConstantsCache,
-        ll_cache::_LLCache
+        ll_cache::_LLCache;
+        fallback::Bool = true   # false: return -Inf instead of the level-1 fallback
     )
     R = size(sgrid.nodes, 2)
     θ_re = _symmetrize_psd_params(θ, get_fixed(get_model(dm)))
@@ -155,7 +156,7 @@ function batch_loglik_ghq(
     # "likelihood". Returning -Inf there made the whole marginal -Inf. The level-1 rule
     # (one node at z = 0, weight 1; the Laplace value under the adaptive measure) cannot
     # be negative, so use it for this batch.
-    R == 1 && return T(-Inf)
+    (R == 1 || !fallback) && return T(-Inf)
     @warn "GHQuadrature: the signed sparse-grid sum of a $(sgrid.dim)-dimensional batch is " *
         "not positive (the rule is not accurate for this non-Gaussian integrand); using " *
         "the level-1 rule for this batch. A higher `level` or SAEM/MCEM gives a more " *

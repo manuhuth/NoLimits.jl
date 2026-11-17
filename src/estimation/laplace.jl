@@ -3228,6 +3228,12 @@ function _laplace_objective_and_grad(
             bad[] && return
             active !== nothing && !(bi in active) && return
             info = batch_infos[bi]
+            # Weight 0 is removal: skip before evaluating (invalid data there gives -Inf).
+            if iszero(_batch_weight(dm, get_inds(info)))
+                obj_by_batch[bi] = 0.0
+                @views grad_by_batch[:, bi] .= 0.0
+                return
+            end
             res = _laplace_grad_term(
                 dm, info, θ, bstars[bi], const_cache, cache_c, ebe_cache, bi, pool;
                 hessian = hessian, rng = batch_rngs[bi], hmode = hmode, use_cache = use_cache
@@ -3258,6 +3264,7 @@ function _laplace_objective_and_grad(
         total = 0.0
         for (bi, info) in enumerate(batch_infos)
             active !== nothing && !(bi in active) && continue
+            iszero(_batch_weight(dm, get_inds(info))) && continue
             res = _laplace_grad_term(
                 dm, info, θ, bstars[bi], const_cache, ll_cache, ebe_cache, bi, nothing;
                 hessian = hessian, rng = batch_rngs[bi], hmode = hmode, use_cache = use_cache
@@ -3323,6 +3330,10 @@ function _laplace_objective_only(
             bad[] && return
             active !== nothing && !(bi in active) && return
             info = batch_infos[bi]
+            if iszero(_batch_weight(dm, get_inds(info)))
+                obj_by_batch[bi] = 0.0
+                return
+            end
             r = _laplace_obj_term(
                 dm, info, θ, bstars[bi], const_cache, cache_c, ebe_cache, bi, pool, nothing;
                 hessian = hessian, hmode = hmode, use_cache = use_cache
@@ -3344,6 +3355,7 @@ function _laplace_objective_only(
         total = 0.0
         for (bi, info) in enumerate(batch_infos)
             active !== nothing && !(bi in active) && continue
+            iszero(_batch_weight(dm, get_inds(info))) && continue
             r = _laplace_obj_term(
                 dm, info, θ, bstars[bi], const_cache, ll_cache_use, ebe_cache, bi, nothing,
                 ebe_cache.ad_cache; hessian = hessian, hmode = hmode, use_cache = use_cache

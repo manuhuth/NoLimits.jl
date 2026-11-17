@@ -57,7 +57,14 @@ Laplace approximation but whose gradient is not; use `Laplace()` for that, and
   The Smolyak weights are signed and the weight at the mode grows with the
   number of random effects `d` (−(d−1) at level 2, e.g. −7 for d = 8). A batch
   whose integrand is far from Gaussian can therefore get a negative signed sum;
-  that batch then falls back to the level-1 (Laplace) value with a warning.
+  that batch then falls back to the level-1 (Laplace) value with a warning. A positive
+  sum can be inaccurate as well, and the error need not decrease monotonically in the
+  level. For batches with two or more random effects the fit therefore compares, at
+  the estimate, the marginal log-likelihood under `level` with the next finer rule
+  (`level + 2`) and warns when they differ by more than 0.5; the values and the
+  batches that fell back to level 1 are stored in `get_notes(res).rule_check`.
+  The outer gradient treats the mode and curvature as constants, so it matches the
+  objective only up to the quadrature error.
 - `optimizer`: outer Optimization.jl-compatible optimizer.  Defaults to LBFGS
   with backtracking line search. For mini-batching wrap the method in
   [`MiniBatch`](@ref).
@@ -225,7 +232,8 @@ function _ghq_batch_ll(
         ll_cache::_LLCache,
         level,   # Int, NamedTuple or :auto
         b_star = nothing,
-        H_star = nothing   # exact ∇²_b log f at b_star (Float64 θ), when known
+        H_star = nothing;   # exact ∇²_b log f at b_star (Float64 θ), when known
+        fallback::Bool = true
     )
     level === :auto && (level = _ghq_auto_level(dm, info))
     T = eltype(θu_re)
@@ -263,7 +271,9 @@ function _ghq_batch_ll(
         rethrow(e)
     end
     # A negative signed Smolyak sum falls back to the level-1 rule inside batch_loglik_ghq.
-    ghq_ll = batch_loglik_ghq(dm, info, θu_re, re_measure, sgrid, const_cache, ll_cache)
+    ghq_ll = batch_loglik_ghq(
+        dm, info, θu_re, re_measure, sgrid, const_cache, ll_cache; fallback = fallback
+    )
     const_ll = _const_re_prior_logf(dm, info, θu_re, const_cache, ll_cache)
     (!isfinite(ghq_ll) || !isfinite(const_ll)) && return T(-Inf)
     return ghq_ll + T(const_ll)
@@ -304,9 +314,11 @@ function _ghq_adaptive_measure(
         prior_measure::AbstractREMeasure, b_star, H_star = nothing
     )
     if prior_measure isa CompositeRE && !prior_measure.unbounded
+        θ_val = _laplace_floatize(θu_re)
+        # Warm start from the EB mode as in the fit; a cold start at u = 0 can miss the mode.
+        b = b_star === nothing ? _ghq_bstar_batch(dm, info, θ_val, const_cache, ll_cache) : b_star
         return build_adaptive_transport_measure(
-            prior_measure, dm, info, _laplace_floatize(θu_re), const_cache, ll_cache;
-            b_star = b_star
+            prior_measure, dm, info, θ_val, const_cache, ll_cache; b_star = b
         )
     end
     prior_measure isa GaussianRE ||
@@ -548,7 +560,8 @@ function _fit_model_scalar(
             # unsafe under task migration (two tasks could share one cache slot).
             _greedy_foreach(length(batch_infos), length(ll_cache)) do bi, c
                 active !== nothing && !(bi in active) && return
-                if bad[]
+                # Weight 0 is removal: skip before evaluating (invalid data there gives -Inf).
+                if bad[] || iszero(_batch_weight(dm, get_inds(batch_infos[bi])))
                     results[bi] = zero(T)
                     return
                 end
@@ -570,6 +583,10 @@ function _fit_model_scalar(
         else
             for (bi, info) in enumerate(batch_infos)
                 active !== nothing && !(bi in active) && continue
+                if iszero(_batch_weight(dm, get_inds(info)))
+                    results[bi] = zero(T)
+                    continue
+                end
                 bll = _ghq_batch_ll(
                     dm, info, θu_re, const_cache, ll_cache,
                     method.level, bstars[bi],
@@ -657,6 +674,11 @@ function _fit_model_scalar(
         inner_opts.grad_tol; label = string(nameof(typeof(method)))
     )
 
+    rule_check = _ghq_rule_check(
+        dm, batch_infos, θ_hat_u, const_cache, ll_cache, method.level,
+        ebe_cache.bstar_cache.b_star
+    )
+
     # ── Build result ─────────────────────────────────────────────────────────
     isfinite(final_obj) ||
         _warn_nonfinite_fit(dm, θ_hat_u, string(nameof(typeof(method))))
@@ -674,7 +696,7 @@ function _fit_model_scalar(
         sol.stats.iterations : missing
     raw = hasproperty(sol, :original) ? sol.original : sol
     result = GHQuadratureResult(
-        sol, final_obj, niter, raw, NamedTuple(),
+        sol, final_obj, niter, raw, rule_check,
         ebe_cache.bstar_cache.b_star
     )
     return FitResult(
@@ -699,6 +721,53 @@ const _GHQ_AUTO_TOL = 0.5
 const _GHQ_AUTO_MAX_REFINE = 4
 const _GHQ_AUTO_MAX_NODES = 2_000
 _ghq_next_level(level::Int, maxdim::Int) = maxdim <= 1 ? 2level + 1 : level + 2
+
+# Post-fit accuracy check for multi-RE batches (#424), which `:auto` does not refine: the
+# marginal at θ̂ under the fitted rule and the next finer one, and the batches whose signed
+# sum fell back to the level-1 rule. Stored in the result notes; warns when they disagree.
+# The outer gradient treats the mode and curvature as constants, so an inaccurate rule also
+# gives a gradient that need not match the objective.
+function _ghq_rule_check(dm, batch_infos, θu, const_cache, ll_cache, level, bstars)
+    level isa Int || return NamedTuple()
+    maxdim = maximum(get_n_b, batch_infos; init = 0)
+    maxdim >= 2 || return NamedTuple()
+    L2 = _ghq_next_level(level, maxdim)
+    finer = all(
+        info -> get_n_b(info) == 0 || _batch_grid_bound(dm, info, L2) <= _GHQ_AUTO_MAX_NODES,
+        batch_infos
+    )
+    c = ll_cache isa AbstractVector ? ll_cache[1] : ll_cache
+    θ_re = _symmetrize_psd_params(θu, get_fixed(get_model(dm)))
+    ll, ll2 = 0.0, finer ? 0.0 : NaN
+    fallback_batches = Int[]
+    for (bi, info) in enumerate(batch_infos)
+        w = _batch_weight(dm, get_inds(info))
+        (get_n_b(info) == 0 || iszero(w)) && continue
+        b = bstars[bi]
+        v = _ghq_batch_ll(dm, info, θ_re, const_cache, c, level, b; fallback = false)
+        if !isfinite(v)
+            v = _ghq_batch_ll(dm, info, θ_re, const_cache, c, 1, b)
+            isfinite(v) && push!(fallback_batches, bi)
+        end
+        ll += w * v
+        finer && (ll2 += w * _ghq_batch_ll(dm, info, θ_re, const_cache, c, L2, b))
+    end
+    isempty(fallback_batches) || @warn "GHQuadrature: at the estimate the level-$level sum " *
+        "of RE batch(es) $fallback_batches is not positive and uses the level-1 rule; the " *
+        "estimates are not reliable. Use a higher `level`, Laplace, or SAEM/MCEM."
+    if isfinite(ll) && isfinite(ll2) && abs(ll2 - ll) > _GHQ_AUTO_TOL
+        @warn "GHQuadrature: at the estimate the marginal log-likelihood is " *
+            "$(round(ll; sigdigits = 6)) at level $level and $(round(ll2; sigdigits = 6)) at " *
+            "level $L2. The rule is not accurate for these multi-dimensional random-effect " *
+            "batches, so the estimates and the gradient may be off; use a higher `level`."
+    end
+    return (
+        rule_check = (
+            level = level, loglikelihood = ll, finer_level = L2,
+            loglikelihood_finer = ll2, fallback_batches = fallback_batches,
+        ),
+    )
+end
 
 function _ghq_fit_auto(
         dm::DataModel, method::GHQuadrature, args...;

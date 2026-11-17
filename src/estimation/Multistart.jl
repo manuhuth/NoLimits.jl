@@ -500,7 +500,8 @@ function _build_ebe_eta(dm::DataModel, θu::ComponentArray, ll_cache; maxiters::
         η0_i = _prior_mean_eta(dists, re_cache, _ind_nlev(re_cache, i))
         axs = getaxes(η0_i)
         η0_flat = Vector(η0_i)
-        if isempty(η0_flat)
+        # Weight 0 is removal: no EBE solve, no score term.
+        if isempty(η0_flat) || iszero(_ind_weight(dm, i))
             etas[i] = η0_i
             continue
         end
@@ -529,7 +530,7 @@ function _build_ebe_eta(dm::DataModel, θu::ComponentArray, ll_cache; maxiters::
             sol = solve(prob, optimizer; maxiters = maxiters)
             etas[i] = ComponentArray(sol.u, axs)
             f_sol = sol.objective  # = -(joint log-density at EBE)
-            joint_score += isfinite(f_sol) ? -f_sol : -Inf
+            joint_score += isfinite(f_sol) ? _ind_weight(dm, i) * -f_sol : -Inf
         catch
             # A failed EBE must not score better than a valid (negative) joint density,
             # and a partial sum must not be compared against complete ones (#226).
