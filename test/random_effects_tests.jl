@@ -1,6 +1,7 @@
 using Test
 using ComponentArrays
 using Distributions
+using ForwardDiff
 using LinearAlgebra
 using Lux
 using NoLimits
@@ -267,6 +268,14 @@ end
     @test dists.η2 == Normal(0.5, exp(-0.5))
     @test dists.η3 == Normal(0.0, 0.5)
     @test get_re_syms(re).η2 == [:lo]
+    g = ForwardDiff.derivative(
+        lo -> std(
+            create_random_effect_distribution(re)(
+                ComponentArray(lo = lo), NamedTuple(), NamedTuple(), NamedTuple()
+            ).η1
+        ), -0.5
+    )
+    @test g ≈ 2 * -0.5 + exp(-0.5)
 end
 
 @testset "RandomEffects logpdf" begin

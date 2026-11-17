@@ -2,6 +2,7 @@ using Test
 using NoLimits
 using ComponentArrays
 using Lux
+using ForwardDiff
 
 const _NL427_GB = [5.0, 5.0]
 
@@ -54,6 +55,12 @@ end
     @test out.a ≈ exp(0.2)
     @test out.b ≈ exp(-0.3) + sum(abs2, gb) + exp(0.2)
     @test out.c ≈ sum(abs2, gb) + 0.2 - 0.3
+    g = ForwardDiff.gradient(
+        p -> get_prede_builder(prede)(
+            ComponentArray(_NL427_GB = p), ComponentArray(), NamedTuple(), NamedTuple(), NamedTuple()
+        ).c, gb
+    )
+    @test g ≈ 2 .* gb .+ 1
 end
 
 @testset "PreDifferentialEquation validation" begin

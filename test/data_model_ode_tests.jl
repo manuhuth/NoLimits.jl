@@ -192,7 +192,8 @@ end
         end
         @DifferentialEquation begin
             s(t) = 0.5 * inp.i2(t)
-            D(x) ~ -k * x + inp.i1(t) + s(t)
+            # A lambda call head must read the fixed effect `k` (#427).
+            D(x) ~ -(v -> v * k)(1.0) * x + inp.i1(t) + s(t)
         end
         @initialDE begin
             x = 1.0

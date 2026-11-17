@@ -1133,13 +1133,21 @@ function _de_rewrite_all(
         elseif _de_dotted_call_base(f) in fun_syms
             # DynamicCovariateVector component, e.g. `w.a(t)`.
             return Expr(:call, Expr(:., Expr(:., :funs, QuoteNode(f.args[1])), f.args[2]), new_args...)
+        elseif f isa Expr && _de_dotted_call_base(f) === nothing
+            # Expression head, e.g. a lambda `(v -> v * k)(1.0)` (#427).
+            f = _de_rewrite_all(f, state_map, var_syms, fun_syms)
         end
         return Expr(:call, f, new_args...)
+    elseif ex.head == :->
+        # Rewrite the body only; parameters shadow model variables.
+        inner = setdiff(var_syms, _macro_scope_bound(ex))
+        return Expr(:->, ex.args[1], _de_rewrite_all(ex.args[2], state_map, inner, fun_syms))
     elseif ex.head == :. && length(ex.args) == 2 && ex.args[2] isa Expr &&
             ex.args[2].head == :tuple
         # broadcast call `f.(args...)`: rewrite the arguments; `f` is a function
         f = ex.args[1]
-        f_new = f isa Symbol && f in fun_syms ? Expr(:., :funs, QuoteNode(f)) : f
+        f_new = f isa Symbol && f in fun_syms ? Expr(:., :funs, QuoteNode(f)) :
+            f isa Expr ? _de_rewrite_all(f, state_map, var_syms, fun_syms) : f
         args = map(a -> _de_rewrite_all(a, state_map, var_syms, fun_syms), ex.args[2].args)
         return Expr(:., f_new, Expr(:tuple, args...))
     elseif ex.head == :.
