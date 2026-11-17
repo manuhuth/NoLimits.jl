@@ -70,7 +70,9 @@ effects: no inner mode finding or Hessian per objective evaluation, unlike Lapla
   stages). `nothing` uses `(; maxiters = 1000)`, plus `g_abstol = 1e-5`, `reltol = 1e-8` and
   `allow_f_increases = false` for an Optim.jl optimizer (the sample-average objective's
   gradient norm stalls around 1e-2 near the optimum, so in practice the relative objective
-  change stops the fit). A user-supplied NamedTuple replaces these defaults.
+  change stops the fit). For a [`PlanarFlowFamily`](@ref) the default `reltol` is `1e-12`:
+  the flow's joint problem is ill-conditioned, and `1e-8` stopped it far from the optimum
+  with a successful return code. A user-supplied NamedTuple replaces these defaults.
 - `adtype = AutoForwardDiff()`: automatic differentiation of the joint objective. The default
   differentiates per batch in forward mode (cheap for few fixed effects). Any other ADTypes
   backend - typically `AutoEnzyme(mode = Enzyme.set_runtime_activity(Enzyme.Reverse),
@@ -136,6 +138,11 @@ fixed through `constants_re` enter as for `Laplace`: with the prior density of t
 values (once per fixed level, also when the level is shared by several batches, weighted by
 the common weight of its individuals), and a batch without free levels (no q) with its
 log-likelihood at the fixed values.
+
+`get_result(res).notes.elbo` is the ELBO of the joint fit at its fixed effects and fitted q,
+also when `refine` moved ``\\hat\\theta``. With Monte Carlo draws (`expectation = :mc`, flows)
+it is the sample average over the fixed draws the fit optimized, biased upward, so it can
+exceed log p(y | θ).
 
 For mini-batching (stochastic VEM) wrap the method in [`MiniBatch`](@ref); the penalty and
 `extra_objective` are then added once per iteration, not scaled by the number of batches.
@@ -228,7 +235,7 @@ function VEM(;
         (optimizer = OptimizationOptimJL.LBFGS(m = 20, linesearch = LineSearches.BackTracking(maxstep = 30.0)))
     optim_kwargs === nothing && (
         optim_kwargs = optimizer isa Optim.AbstractOptimizer ?
-            (; maxiters = 1000, g_abstol = 1.0e-5, reltol = 1.0e-8, allow_f_increases = false) :
+            (; maxiters = 1000, g_abstol = 1.0e-5, reltol = flow > 0 ? 1.0e-12 : 1.0e-8, allow_f_increases = false) :
             (; maxiters = 1000)
     )
     ebe = EBEOptions(
@@ -896,6 +903,23 @@ function _vem_foreach(f, n::Int, caches::Vector)
     return nothing
 end
 
+# #430: from a tiny start the ELBO is flat in a Normal/LogNormal RE scale and L-BFGS can stop
+# near zero (objective far above the MLE, converged = true)
+function _vem_warn_collapsed_scales(dm::DataModel, θ0::ComponentArray, θ::ComponentArray)
+    re_model = get_random(get_model(dm))
+    dists = get_re_dist_exprs(re_model)
+    fixed_set = Set{Symbol}(propertynames(θ0))
+    for re in get_re_names(re_model)
+        hasproperty(dists, re) || continue
+        m = _saem_parse_re_gaussian_mapping(getproperty(dists, re), fixed_set)
+        (m === nothing || !(m.family in (:normal, :lognormal)) || m.cov === nothing) && continue
+        v0, v = getproperty(θ0, m.cov), getproperty(θ, m.cov)
+        (v0 isa Real && v isa Real && v < min(0.1 * v0, 1.0e-3)) || continue
+        @warn "VEM: the scale $(m.cov) of random effect $re ended at $v, below 10% of its start $v0. The ELBO is flat near a zero random-effect variance, so the fit may have stopped there although the data support a larger one; compare with Laplace or a larger start."
+    end
+    return nothing
+end
+
 # whether a batch carries the prior of a random-effect level fixed by `constants_re`: a
 # fixed level shared by several batches is counted only in the batch of its owner
 # (`_const_re_prior_logf`), so its prior enters the objective once
@@ -1132,7 +1156,7 @@ function _fit_model(
                 gθ .+= DRg.gradient(r)
             end
             _vem_foreach(nf, caches) do j, lc
-                r = DRg.GradientResult(xθ)
+                local r = DRg.GradientResult(xθ)
                 ForwardDiff.gradient!(r, z -> fixed_ll(θu_of(z), j, lc), xθ)
                 fvals[j] = DRg.value(r)
                 fgs[j] = copy(DRg.gradient(r))
@@ -1454,11 +1478,13 @@ function _fit_model(
         end
     end
     θ_hat_t = transform(θ_hat_u)
-    # -ELBO at the returned θ̂ and the fitted κ̂ (after an accepted refinement θ̂ is not the
-    # joint optimum). notes.elbo is the bound itself; the penalty and extra_objective are
-    # reported only in the objective (as for Laplace)
+    _vem_warn_collapsed_scales(dm, θu0, θ_hat_u)
+    # -ELBO at the returned θ̂ and the fitted κ̂ (the n_is = 0 objective). notes.elbo is the
+    # ELBO of the joint fit (θ, κ̂), also after an accepted refinement (κ̂ was not fitted at
+    # the refined θ); the penalty and extra_objective are reported only in the objective
     obj_joint = fg!(0.0, nothing, vcat(xθ_hat, x̂[(p + 1):end]))
-    elbo = has_pen ? -(obj_joint - pen_of(θ_hat_u)) : -obj_joint
+    obj_elbo = refined ? fg!(0.0, nothing, x̂) : obj_joint
+    elbo = has_pen ? -(obj_elbo - pen_of(θu_of(x̂[1:p]))) : -obj_elbo
 
     # ---- objective: importance-sampling marginal likelihood around the fitted q ----
     # batches with 1-3 REs: adaptive tensor Gauss-Hermite around q (the refinement rule;

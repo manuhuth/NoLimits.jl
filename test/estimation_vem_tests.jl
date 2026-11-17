@@ -56,6 +56,9 @@ end
     @test abs(get_objective(rv) - get_objective(rl)) < 1.0
     @test get_converged(rv)
     @test get_result(rv).notes.elbo isa Real
+    # notes.elbo is the joint fit's ELBO, also after an accepted refinement (#430)
+    @test get_result(rv).notes.elbo ==
+        get_result(fit_model(dm, NoLimits.VEM(; refine = false); rng = Xoshiro(3))).notes.elbo
     # default fit pinned (joint LBFGS, refinement with the Newton finish)
     @test collect(get_params(rv; scale = :transformed)) ≈ [
         1.9644160037839495, -0.5044155745441045, -1.3508847730251867,
@@ -113,6 +116,8 @@ end
     @test_throws ErrorException PlanarFlowFamily(0)
     @test_throws ErrorException PlanarFlowFamily(2; base = :full)
     @test NoLimits.VEM(; family = PlanarFlowFamily(2)).flow == 2
+    @test NoLimits.VEM(; family = PlanarFlowFamily(2)).optim_kwargs.reltol == 1.0e-12
+    @test NoLimits.VEM().optim_kwargs.reltol == 1.0e-8
     # identity at the init (û = 0) and exact log-Jacobian of the layer stack
     n, K = 3, 2
     rng = Xoshiro(4)
@@ -392,6 +397,12 @@ end
     r = fit_model(dm, _vem_frozen(); constants_re = cre, rng = Xoshiro(3))
     @test collect(get_params(r; scale = :untransformed)) ≈ [0.3, 0.5, 0.7, 0.9]
     @test get_objective(r) ≈ nll rtol = 1.0e-6
+    # warning for an RE scale that collapsed from its start (#430)
+    θ0 = get_params(r; scale = :untransformed)
+    θc = copy(θ0)
+    θc.ω_id = 1.0e-5
+    @test_logs (:warn, r"ω_id") NoLimits._vem_warn_collapsed_scales(dm, θ0, θc)
+    @test_logs NoLimits._vem_warn_collapsed_scales(dm, θ0, θ0)
 end
 
 @testset "VEM: model bounds, ignore_model_bounds, optimizers without bounds support" begin
@@ -650,6 +661,14 @@ end
         @test get_result(rt).notes.elbo === get_result(rs).notes.elbo
         @test get_result(rt).eb_modes == get_result(rs).eb_modes
     end
+    # two fixed constants_re levels: per-level gradients of the fixed priors (#430; only
+    # exercised with more than one thread)
+    m = NoLimits.VEM(; refine = false, optim_kwargs = (; maxiters = 20))
+    cre = (; η = Dict(1 => [0.0, 0.0], 2 => [0.2, -0.1]))
+    rt = fit_model(dm, m; constants_re = cre, rng = Xoshiro(3))
+    rs = fit_model(dm, m; constants_re = cre, rng = Xoshiro(3), serialization = NoLimits.EnsembleSerial())
+    @test collect(get_params(rt; scale = :transformed)) == collect(get_params(rs; scale = :transformed))
+    @test get_objective(rt) === get_objective(rs)
 end
 
 @testset "VEM: Wald UQ, conditional draws from q, CV with constants_re" begin
