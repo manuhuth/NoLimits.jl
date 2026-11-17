@@ -2,6 +2,10 @@ using MCMCChains
 using Random
 using Statistics
 
+# MCMC samples the natural scale, so a draw can leave a scale's domain (#422).
+_in_scale_domain(k, x) = k === :log ? x > 0 :
+    _is_logit_scale(k) ? _logit_domain(k)[1] <= x <= _logit_domain(k)[2] : true
+
 function _chain_keys_for_free(fe::FixedEffects, free_names::Vector{Symbol})
     spec_map = _spec_map(fe)
     θ0_u = get_θ0_untransformed(fe)
@@ -234,13 +238,23 @@ function _compute_uq_chain(
     active_kinds = _flat_transform_kinds_for_free(fe, free_names)[active_idx]
     draws_t = copy(draws_n)
     natural_only = Symbol[]
+    out_of_domain = Symbol[]
     for j in eachindex(active_kinds)
-        if _is_monotone_scalar_kind(active_kinds[j])
-            @views draws_t[:, j] .= _scalar_forward.(active_kinds[j], draws_n[:, j])
-        else
+        k = active_kinds[j]
+        if !_is_monotone_scalar_kind(k)
             push!(natural_only, active_names[j])
+        elseif all(x -> _in_scale_domain(k, x), @view(draws_n[:, j]))
+            @views draws_t[:, j] .= _scalar_forward.(k, draws_n[:, j])
+        else
+            # MCMC samples the natural scale, so draws can leave the domain (#422)
+            push!(out_of_domain, active_names[j])
         end
     end
+    isempty(out_of_domain) ||
+        @warn "Chain UQ: some draws of these coordinates lie outside the domain of their scale; they are reported on the natural scale for scale = :transformed." parameters = unique(
+        out_of_domain
+    ) maxlog = 1
+    append!(natural_only, out_of_domain)
     isempty(natural_only) ||
         @warn "Chain UQ: these coordinates have no per-coordinate forward transform and are reported on the natural scale for scale = :transformed." parameters = unique(
         natural_only

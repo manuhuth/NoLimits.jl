@@ -77,7 +77,7 @@ using LineSearches
 method = NoLimits.SAEM(;
     # M-step optimizer
     optimizer=OptimizationOptimJL.LBFGS(linesearch=LineSearches.BackTracking()),
-    optim_kwargs=(; iterations=10, g_abstol=1e-4, f_reltol=1e-6),
+    optim_kwargs=(; iterations=4, g_abstol=1e-4, f_reltol=1e-6),
     adtype=Optimization.AutoForwardDiff(),
 
     # E-step sampler
@@ -225,7 +225,7 @@ When the M-step is performed numerically (i.e., no closed-form update is provide
 
 - `optim_kwargs`
   - Keyword arguments forwarded to `Optimization.solve`.
-  - Default: `(; iterations=10, g_abstol=1e-4, f_reltol=1e-6)`. The inner LBFGS is capped at 10 iterations per SAEM step; the outer SA loop provides the global convergence trajectory.
+  - Default: `(; iterations=4, g_abstol=1e-4, f_reltol=1e-6)`. The inner LBFGS is capped at 4 iterations per SAEM step; the outer SA loop provides the global convergence trajectory.
 - `mstep_sa_on_params`
   - When `true` (default), the M-step optimizes only the current iteration's samples and applies a Robbins-Monro parameter update: `θ_new = θ_old + γ*(θ̂ - θ_old)`. The ring buffer is capped to capacity 1, eliminating storage and reweighting overhead from previous snapshots. This is significantly more memory-efficient than the ring-buffer path and is the recommended mode.
   - When `false`, the M-step minimizes the full ring-buffer Q-function and sets `θ_new = θ̂` directly. Useful as a diagnostic or when you want the classical ring-buffer SAEM behavior.

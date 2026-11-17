@@ -624,7 +624,16 @@ function _with_posterior_params(res::FitResult, dm::DataModel; rng::AbstractRNG)
         res, dm; rng = rng, overrides = _fit_kw(res, :constants, NamedTuple())
     )
     fe = get_fixed(get_model(dm))
-    params = FitParameters(get_transform(fe)(θ_u), θ_u)
+    θ_t = try
+        get_transform(fe)(θ_u)
+    catch err
+        err isa DomainError || rethrow()
+        # natural-scale sampling: the posterior mean can leave a scale's domain (#422)
+        @warn "The posterior mean lies outside the domain of a parameter scale; the transformed point estimate is NaN. Use priors restricted to each scale's domain."
+        θ0_t = get_θ0_transformed(fe)
+        ComponentArray(fill(NaN, length(θ0_t)), getaxes(θ0_t))
+    end
+    params = FitParameters(θ_t, θ_u)
     s = get_summary(res)
     summary = FitSummary(s.objective, s.converged, params, s.notes)
     return FitResult(
@@ -1054,6 +1063,19 @@ function _validate_theta_override(dm::DataModel, θ, option::AbstractString)
     for i in eachindex(flat)
         lo[i] <= flat[i] <= hi[i] ||
             error("Value $(_label(i)) in $(option) is $(flat[i]), outside its declared bounds [$(lo[i]), $(hi[i])].")
+    end
+    # A logit domain is open, but its default bounds are the closed edges; logit_forward
+    # clamps the edge to a finite value, so the check below would not catch it (#422).
+    for spec in get_transform(fe).specs
+        hasproperty(θ, spec.name) || continue
+        v = getproperty(θ, spec.name)
+        ks = spec.kind === :elementwise ? spec.mask : Iterators.repeated(spec.kind)
+        for (x, k) in zip(v isa Number ? (v,) : v, ks)
+            _is_logit_scale(k) || continue
+            a, b = _logit_domain(k)
+            a < x < b ||
+                error("Value of $(spec.name) in $(option) is $(x); scale $(repr(k)) needs a value strictly between $(a) and $(b).")
+        end
     end
     # Those bounds are inclusive, but the transform's domain is open: a value sitting
     # exactly on the boundary still transforms to -Inf/NaN (#249).

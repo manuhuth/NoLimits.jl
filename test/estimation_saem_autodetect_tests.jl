@@ -3,6 +3,7 @@ using NoLimits
 using DataFrames
 using Distributions
 using LinearAlgebra
+using ComponentArrays
 
 @inline function _auto_cfg(model, df; primary_id = :ID)
     dm = DataModel(model, df; primary_id = primary_id, time_col = :t)
@@ -337,6 +338,29 @@ end
     @test auto_cfg.re_mean_params == NamedTuple()
     @test auto_cfg.re_cov_params == (; η = :Ω)
     @test auto_cfg.resid_var_param == :σ
+    # known mean [0, 0]: Ω is the second moment about it, not the centered covariance (#421)
+    @test auto_cfg.re_mean_offsets == (; η = true)
+
+    # One frozen SAEM step from re_0: Ω = second moment of the given η. Value columns are
+    # matched by name, and an all-closed-form fit stays Float64 (#421).
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    E = [0.4, -0.2]
+    F = [1.0, 0.6]
+    frozen = SaemixMH(n_kern1 = 0, n_kern2 = 0, n_kern3 = 0)
+    m1 = SAEM(
+        maxiters = 1, t0 = 1, sa_burnin_iters = 0, sampler = frozen, mcmc_steps = 1,
+        progress = false, sa_anneal_alpha = 0.0
+    )
+    S2 = [sum(E .^ 2) sum(E .* F); sum(E .* F) sum(F .^ 2)] ./ 2
+    for re0 in ((η = DataFrame(ID = [:A, :B], η_1 = E, η_2 = F),), (η = DataFrame(ID = [:A, :B], η_2 = F, η_1 = E),))
+        r = fit_model(dm, m1; re_0 = re0, store_eb_modes = false)
+        Ω = NoLimits.get_params(r; scale = :untransformed).Ω
+        @test eltype(Ω) == Float64
+        @test Matrix(Ω) ≈ S2 rtol = 1.0e-6
+    end
+    @test_throws ErrorException fit_model(
+        dm, m1; re_0 = (η = DataFrame(ID = [:A, :B], u = E, v = F),), store_eb_modes = false
+    )
 end
 
 @testset "SAEM auto-detect: MvNormal unrecognized covariance expression still detects means" begin
@@ -626,6 +650,10 @@ end
     )
     @test parse(:(LogNormal(0.0, τ)), fs).mean_offset
     @test parse(:(Normal(log(x), τ)), fs).mean_offset
+    @test parse(:(MvNormal([0.0, 0.0], τ)), fs).mean_offset
+    @test parse(:(MvNormal([0.0, x], τ)), fs).mean_offset
+    @test !parse(:(MvNormal([a, b], τ)), fs).mean_offset
+    @test !parse(:(MvNormal([a, 0.0], τ)), fs).mean_offset
 
     # A mean carrying a fixed effect we cannot extract is neither a target nor centrable:
     # it stays numeric and the moments stay about the pooled empirical mean.
@@ -747,6 +775,78 @@ end
     cf_x, num_x = NoLimits.saem_closed_form_eligibility(dm; extra_objective = extra)
     @test isempty(cf_x)
     @test Set(num_x) == Set([:μ, :ω, :s])
+
+    # A penalized name is never updated in closed form; an RE loses mean and cov together (#421).
+    for opts in (NoLimits.SAEM().saem, NoLimits._mcem_saem_opts(NoLimits.MCEM()))
+        cfg_ω = NoLimits._saem_resolve_closed_form_config(dm, opts; penalty = (; ω = 1.0))
+        @test cfg_ω.re_cov_params == NamedTuple()
+        @test cfg_ω.re_mean_params == NamedTuple()
+        @test cfg_ω.builtin_stats_mode == :closed_form   # s still is
+        cfg_s = NoLimits._saem_resolve_closed_form_config(dm, opts; penalty = (; s = 1.0))
+        @test cfg_s.re_cov_params == (; η = :ω)
+        @test isempty(cfg_s.builtin_cf_elig.outcome_targets_non_hmm)
+    end
+    # The penalty also enters the numeric Q2 M-step of ω.
+    sae = SAEM(maxiters = 20, progress = false, builtin_stats = :none)
+    ω_free = NoLimits.get_params(fit_model(dm, sae); scale = :untransformed).ω
+    ω_pen = NoLimits.get_params(fit_model(dm, sae; penalty = (; ω = 1.0e4)); scale = :untransformed).ω
+    @test ω_pen < 0.5 * ω_free
+end
+
+@testset "SAEM centering detector: transform kind, penalty, bounds, extra objective" begin
+    model = @Model begin
+        @covariates begin
+            t = Covariate()
+        end
+        @fixedEffects begin
+            a = RealNumber(0.0)
+            mu = RealNumber(3.0, scale = Logit(2, 5), prior = Normal(3.0, 1.0))
+            ω = RealNumber(0.3, scale = :log)
+            s = RealNumber(0.5, scale = :log)
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(0.0, ω); column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(a + η + mu, s)
+        end
+    end
+    df = DataFrame(
+        ID = [:A, :A, :B, :B], t = [0.0, 1.0, 0.0, 1.0], y = [3.1, 3.2, 3.0, 2.9]
+    )
+    dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    free = [:a, :mu, :ω, :s]
+    detect = NoLimits._saem_detect_centering_pairs
+    # a Logit(2, 5) parameter used to crash the 0.37 probe (#422)
+    pairs = detect(dm, free)
+    @test [(p.fe, p.re, p.mode) for p in pairs] == [(:a, :η, :add)]
+    @test isempty(detect(dm, free; penalty = (; a = 1.0)))
+    @test isempty(detect(dm, free; lb = (; a = -1.0)))
+    @test isempty(detect(dm, free; extra_objective = θ -> 0.0))
+    @test length(detect(dm, free; lb = (; ω = -5.0))) == 1
+    θt = NoLimits.get_θ0_transformed(NoLimits.get_fixed(model))
+    lbv = NoLimits._em_named_bounds([-1.0, -Inf, -Inf, -Inf], θt, free, "SAEM")
+    @test lbv.a == -1.0
+    @test isempty(detect(dm, free; lb = lbv))
+    @test_throws ErrorException NoLimits._em_named_bounds([-1.0], θt, free, "SAEM")
+
+    # Logit domain: default bounds are its edges, theta_0 on an edge is rejected (#422)
+    fe = NoLimits.get_fixed(model)
+    lo, hi = NoLimits.get_bounds_untransformed(fe)
+    @test (lo.mu, hi.mu) == (2.0, 5.0)
+    lot, hit = NoLimits.get_bounds_transformed(fe)
+    @test (lot.mu, hit.mu) == (-Inf, Inf)
+    θ0 = ComponentArray(a = 0.0, mu = 3.0, ω = 0.3, s = 0.5)
+    @test NoLimits._validate_theta_0(dm, θ0) === nothing
+    for v in (2.0, 5.0, 1.9)
+        θ0.mu = v
+        @test_throws ErrorException NoLimits._validate_theta_0(dm, θ0)
+    end
+    # MCMC ignores scales: a prior reaching outside (2, 5) warns; chain UQ skips such draws
+    @test_logs (:warn, r"beyond the domain") match_mode = :any NoLimits._warn_if_scaled_params(fe)
+    @test !NoLimits._in_scale_domain(Logit(2.0, 5.0), 1.9)
+    @test NoLimits._in_scale_domain(Logit(2.0, 5.0), 3.0)
+    @test !NoLimits._in_scale_domain(:log, -0.1)
 end
 
 @testset "SAEM auto-detect: no closed-form RE mean with a group-varying sd" begin

@@ -494,7 +494,7 @@ or closed-form updates (when `builtin_stats` is enabled).
 # Keyword Arguments
 - `optimizer`: M-step Optimization.jl optimizer. Defaults to `LBFGS` with backtracking.
 - `optim_kwargs::NamedTuple = (; iterations=4, g_abstol=1e-4, f_reltol=1e-6)`: keyword
-  arguments for the M-step `solve`. The defaults cap the inner LBFGS at 10 iterations
+  arguments for the M-step `solve`. The defaults cap the inner LBFGS at 4 iterations
   and convergence tolerances (max-norm gradient < 1e-4, relative function improvement
   < 1e-6) appropriate for the approximate M-step in SAEM — tight convergence is
   unnecessary since the SA step-size γ already limits how far θ moves.
@@ -1397,10 +1397,12 @@ function _saem_parse_re_gaussian_mapping(dist_expr, fixed_set::Set{Symbol})
                 end
             end
         end
-        _saem_expr_group_invariant(Σarg, fixed_set) || (mean_target = nothing)
+        # a literal or covariate-only mean is known: Ω is the second moment about it (#421)
+        known = mean_target === nothing && !_saem_expr_has_fixed_symbol(μarg, fixed_set)
+        _saem_expr_group_invariant(Σarg, fixed_set) || ((mean_target, known) = (nothing, false))
         return (
             family = :mvnormal, mean = mean_target, cov = cov_target,
-            mean_offset = false,
+            mean_offset = known,
         )
     end
 
@@ -1860,8 +1862,12 @@ function _cs_count_prod_pairs(ex, fe::Symbol, re::Symbol)
 end
 
 function _saem_detect_centering_pairs(
-        dm::DataModel, free_names::Vector{Symbol}; lognormal::Bool = false
+        dm::DataModel, free_names::Vector{Symbol}; lognormal::Bool = false,
+        penalty::NamedTuple = NamedTuple(), extra_objective = nothing,
+        lb = nothing, ub = nothing
     )
+    # The shift after each M-step would undo a penalty, extra objective or user bound (#421).
+    extra_objective === nothing || return NamedTuple{(:fe, :re, :k, :mode), Tuple{Symbol, Symbol, Int, Symbol}}[]
     model = get_model(dm)
     fe = get_fixed(model)
     lines = Any[]
@@ -1881,22 +1887,21 @@ function _saem_detect_centering_pairs(
     family = _saem_re_family_map(dm)
     θ0 = get_θ0_untransformed(fe)
     lo, hi = get_bounds_untransformed(fe)
-    tr = get_transform(fe)
+    kinds = Dict(s.name => s.kind for s in get_transform(fe).specs)
     count_all(f) = sum((f(l) for l in lines); init = 0)
     candidates = Pair{Symbol, Symbol}[]      # fe => :add (identity, unbounded) | :mul (log)
     for a in free_names
         a in in_re_dists && continue
         a in excluded && continue
+        haskey(penalty, a) && continue
+        (_em_user_bound_finite(lb, a) || _em_user_bound_finite(ub, a)) && continue
         getproperty(θ0, a) isa Real || continue
         l, h = getproperty(lo, a), getproperty(hi, a)
-        θp = copy(θ0)
-        setproperty!(θp, a, 0.37)
-        t1 = getproperty(tr(θp), a)
-        if !isfinite(l) && !isfinite(h) && t1 == 0.37
+        kind = get(kinds, a, nothing)
+        if kind === :identity && !isfinite(l) && !isfinite(h)
             push!(candidates, a => :add)
-        elseif 0 <= l <= EPSILON && !isfinite(h) && isapprox(t1, log(0.37); rtol = 1.0e-12)
-            setproperty!(θp, a, 2.5)
-            isapprox(getproperty(tr(θp), a), log(2.5); rtol = 1.0e-12) && push!(candidates, a => :mul)
+        elseif kind === :log && 0 <= l <= EPSILON && !isfinite(h)
+            push!(candidates, a => :mul)
         end
     end
     pairs = NamedTuple{(:fe, :re, :k, :mode), Tuple{Symbol, Symbol, Int, Symbol}}[]
@@ -1951,6 +1956,23 @@ function _saem_detect_centering_pairs(
         end
     end
     return pairs
+end
+
+_em_user_bound_finite(::Nothing, ::Symbol) = false
+_em_user_bound_finite(b::Number, ::Symbol) = isfinite(b)
+function _em_user_bound_finite(b, a::Symbol)
+    has = b isa NamedTuple ? haskey(b, a) : hasproperty(b, a)
+    return has && any(isfinite, getproperty(b, a))
+end
+
+# SAEM/MCEM user lb/ub: a full-length plain vector is named over the free coordinates once,
+# so each M-step sub-problem can take its own subset (#421).
+function _em_named_bounds(b, θt::ComponentArray, free_names, label::AbstractString)
+    (b === nothing || b isa Number || b isa NamedTuple || b isa ComponentArray) && return b
+    ref = _ca_subset(θt, free_names)
+    length(b) == length(ref) ||
+        error("$(label): a plain-vector lb/ub has $(length(b)) entries but the model has $(length(ref)) free parameter coordinate(s) ($(join(string.(free_names), ", "))). Pass one bound per free coordinate, or name them with a NamedTuple.")
+    return ComponentArray(collect(promote_type(eltype(b), Float64), b), getaxes(ref))
 end
 
 # Flat-b indices of every level of (re, k) in one batch.
@@ -2565,7 +2587,7 @@ function _saem_re_mean_offsets(
     β = mean_sym === nothing ? zero(Tθ) : Tθ(getproperty(θ, mean_sym))
     return map(batch_infos) do info
         dists = getproperty(_re_dists_for_info(dm, info, θ, ll_cache), re)
-        return Tθ[Tθ(Distributions.params(d)[1]) - β for d in dists]
+        return [Tθ.(Distributions.params(d)[1]) .- β for d in dists]
     end
 end
 
@@ -3651,7 +3673,7 @@ end
 # disables the closed-form path (the M-step is no longer separable), matching the fit.
 function _saem_resolve_closed_form_config(
         dm::DataModel, saem::SAEMOptions, extra_objective = nothing;
-        label::String = "SAEM"
+        label::String = "SAEM", penalty::NamedTuple = NamedTuple()
     )
     fixed_names = get_names(get_fixed(get_model(dm)))
     builtin_stats_mode = _saem_normalize_builtin_stats_mode(saem.builtin_stats)
@@ -3706,6 +3728,24 @@ function _saem_resolve_closed_form_config(
     end
     if isempty(keys(hmm_emission_params))
         hmm_emission_params = _saem_autodetect_hmm_emission_params(dm, Set(fixed_names))
+    end
+    # A closed-form update ignores the penalty, so penalized names stay numeric (#421). An RE
+    # loses both its mean and covariance update: the covariance is centered on the mean.
+    if !isempty(keys(penalty))
+        pen = Set(keys(penalty))
+        hit(nt, re) = haskey(nt, re) && _saem_target_is_shared(getfield(nt, re), pen)
+        drop_re = [re for re in union(keys(re_cov_params), keys(re_mean_params)) if hit(re_cov_params, re) || hit(re_mean_params, re)]
+        keep_re(nt) = NamedTuple([k => v for (k, v) in Base.pairs(nt) if !(k in drop_re)])
+        re_cov_params = keep_re(re_cov_params)
+        re_mean_params = keep_re(re_mean_params)
+        re_mean_offsets = keep_re(re_mean_offsets)
+        resid_var_param = _saem_drop_shared_resid_targets(resid_var_param, pen)
+        hmm_emission_params = NamedTuple(
+            [
+                k => v for (k, v) in Base.pairs(hmm_emission_params)
+                    if !(hasproperty(v, :target) && _saem_target_is_shared(v.target, pen))
+            ]
+        )
     end
     builtin_cf_elig = _saem_builtin_closed_form_eligibility(
         dm, re_cov_params, re_mean_params,
@@ -3844,7 +3884,9 @@ function _fit_model(
         end
     end
 
-    _cf_cfg = _saem_resolve_closed_form_config(dm, method.saem, extra_objective)
+    _cf_cfg = _saem_resolve_closed_form_config(
+        dm, method.saem, extra_objective; penalty = penalty
+    )
     builtin_stats_mode = _cf_cfg.builtin_stats_mode
     re_cov_params = _cf_cfg.re_cov_params
     re_mean_params = _cf_cfg.re_mean_params
@@ -3886,7 +3928,12 @@ function _fit_model(
     end
     re_family_map = _cf_cfg.re_family_map
     # automatic centering of additive fixed effects (see _saem_detect_centering_pairs)
-    center_pairs = _saem_detect_centering_pairs(dm, base_free_names)
+    user_lb = _em_named_bounds(method.lb, θ0_t, base_free_names, "SAEM")
+    user_ub = _em_named_bounds(method.ub, θ0_t, base_free_names, "SAEM")
+    center_pairs = _saem_detect_centering_pairs(
+        dm, base_free_names; penalty = penalty, extra_objective = extra_objective,
+        lb = user_lb, ub = user_ub
+    )
     if !isempty(center_pairs)
         @info "SAEM: centering fixed effects on their additive random effects: " *
             join(["$(p.mode === :mul ? "log " : "")$(p.fe) ↔ $(p.k == 0 ? p.re : "$(p.re)[$(p.k)]")" for p in center_pairs], ", ")
@@ -4287,7 +4334,7 @@ function _fit_model(
                         serialization = serialization, penalty = penalty,
                         extra_objective = extra_objective,
                         anneal_sds = anneal_sds,
-                        user_lb = method.lb, user_ub = method.ub
+                        user_lb = user_lb, user_ub = user_ub
                     )
                     if !isempty(mean_updates)
                         iter_constants = merge(iter_constants, mean_updates)
@@ -4377,11 +4424,11 @@ function _fit_model(
                             )
                         end
                         isfinite(Q2val) || return T(Inf)
-                        return -Q2val
+                        return -Q2val + _penalty_value(θu_q2, penalty)
                     end
                     lb_q2, ub_q2, use_bounds_q2, θ0_q2 = _resolve_optim_bounds(
-                        fe, q2_free_now, collect(θt_q2), method.optimizer, method.lb,
-                        method.ub, NamedTuple(); allow_bbo = false, method_label = "SAEM"
+                        fe, q2_free_now, collect(θt_q2), method.optimizer, user_lb,
+                        user_ub, NamedTuple(); allow_bbo = false, method_label = "SAEM"
                     )
                     optf_q2 = OptimizationFunction(obj_q2, method.adtype)
                     z0_q2 = _z_from_q2(θ0_q2)
@@ -4529,7 +4576,7 @@ function _fit_model(
                 optf = _saem_mstep_optf(obj_only, method.adtype, length(θt_free))
                 lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
                     fe, free_names_iter, collect(θt_free), method.optimizer,
-                    method.lb, method.ub, constants; method_label = "SAEM"
+                    user_lb, user_ub, constants; method_label = "SAEM"
                 )
                 # z-space problem only; `lb`/`ub` stay on the θt scale below, where the closed-form
                 # M-step clamps with them directly.
@@ -4763,7 +4810,8 @@ function _fit_model(
     ProgressMeter.finish!(progress)
 
     θ_hat_t_free = θ_prev isa ComponentArray ? θ_prev : ComponentArray(θ_prev, axs_free)
-    θ_hat_t = ComponentArray(eltype(θ_hat_t_free).(θ_const_t), axs_full)
+    # an all-closed-form fit leaves θ_hat_t_free empty, whose eltype is Float32 (#421)
+    θ_hat_t = ComponentArray(promote_type(eltype(θ_hat_t_free), Float64).(θ_const_t), axs_full)
     for name in base_free_names
         setproperty!(θ_hat_t, name, getproperty(θ_hat_t_free, name))
     end

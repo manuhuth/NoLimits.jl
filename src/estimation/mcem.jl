@@ -665,6 +665,16 @@ function _em_re_0_bstars(dm::DataModel, batch_infos, re_0)
         df = getfield(re_0, re)
         col = getfield(re_groups, re)
         vcols = [c for c in propertynames(df) if c != col]
+        # several value columns are matched by their component index, not their order (#421)
+        if length(vcols) > 1
+            idx = map(vcols) do c
+                m = match(Regex("^" * string(re) * "_(\\d+)\$"), string(c))
+                m === nothing ? nothing : parse(Int, m[1])
+            end
+            any(isnothing, idx) &&
+                error("re_0.$(re): value columns $(vcols) must be named $(re)_1, $(re)_2, ... as in get_random_effects output.")
+            vcols = vcols[sortperm(idx)]
+        end
         Dict(
             string(df[k, col]) => reduce(vcat, (df[k, c] for c in vcols); init = Float64[])
                 for k in 1:nrow(df)
@@ -1686,7 +1696,7 @@ function _fit_model(
     end
 
     _cf_cfg = _saem_resolve_closed_form_config(
-        dm, _mcem_saem_opts(method), extra_objective; label = "MCEM"
+        dm, _mcem_saem_opts(method), extra_objective; label = "MCEM", penalty = penalty
     )
     cf_mode = _cf_cfg.builtin_stats_mode
     if cf_mode == :closed_form && method.e_step isa MCEM_IS
@@ -1779,7 +1789,12 @@ function _fit_model(
     re_types = get_re_types(get_random(get_model(dm)))
     ll_cache_single = ll_cache isa Vector ? ll_cache[1] : ll_cache
     # automatic centering of additive fixed effects (shared detector, see saem.jl)
-    center_pairs = _saem_detect_centering_pairs(dm, free_names; lognormal = true)
+    user_lb = _em_named_bounds(method.lb, θ0_t, free_names, "MCEM")
+    user_ub = _em_named_bounds(method.ub, θ0_t, free_names, "MCEM")
+    center_pairs = _saem_detect_centering_pairs(
+        dm, free_names; lognormal = true, penalty = penalty,
+        extra_objective = extra_objective, lb = user_lb, ub = user_ub
+    )
     if !isempty(center_pairs)
         @info "MCEM: centering fixed effects on their additive random effects: " *
             join(["$(p.mode === :mul ? "log " : "")$(p.fe) ↔ $(p.mode === :lnmul ? "log " : "")$(p.k == 0 ? p.re : "$(p.re)[$(p.k)]")" for p in center_pairs], ", ")
@@ -2029,11 +2044,11 @@ function _fit_model(
                         serialization = serialization
                     )
                     isfinite(Q2val) || return T(Inf)
-                    return -Q2val
+                    return -Q2val + _penalty_value(θu_q2, penalty)
                 end
                 lb_q2, ub_q2, use_bounds_q2, θ0_q2 = _resolve_optim_bounds(
-                    fe, q2_free_now, collect(θt_q2), method.optimizer, method.lb,
-                    method.ub, NamedTuple(); allow_bbo = false, method_label = "MCEM"
+                    fe, q2_free_now, collect(θt_q2), method.optimizer, user_lb,
+                    user_ub, NamedTuple(); allow_bbo = false, method_label = "MCEM"
                 )
                 optf_q2 = OptimizationFunction(obj_q2, method.adtype)
                 z0_q2 = _z_from_q2(θ0_q2)
@@ -2142,8 +2157,8 @@ function _fit_model(
             # trial point, and each M-step's LBFGS starts from the curvature of the last ones.
             optf = _saem_mstep_optf(obj_only, method.adtype, length(θt_free_iter))   # coordinates, not names
             lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
-                fe, free_names_q1, collect(θt_free_iter), method.optimizer, method.lb,
-                method.ub, constants; method_label = "MCEM"
+                fe, free_names_q1, collect(θt_free_iter), method.optimizer, user_lb,
+                user_ub, constants; method_label = "MCEM"
             )
             z0 = _z_from_θt(θ0_init)
             prob = use_bounds ?
@@ -2164,7 +2179,7 @@ function _fit_model(
             else
                 θ_hat_t_free = _θt_from_z(sol.u)
 
-                θt_full_new = ComponentArray(eltype(θ_hat_t_free).(θ_const_t_q1), axs_full_q1)
+                θt_full_new = ComponentArray(promote_type(eltype(θ_hat_t_free), Float64).(θ_const_t_q1), axs_full_q1)
                 for name in free_names_q1
                     setproperty!(θt_full_new, name, getproperty(θ_hat_t_free, name))
                 end
