@@ -173,6 +173,15 @@ end
     @test_throws ErrorException set_solver_config(
         _fb_model(; crossing = false); stiffness_check = -1.0
     )
+    # Bool <: Real would act as threshold 1 (#428)
+    @test_throws ErrorException set_solver_config(
+        _fb_model(; crossing = false); stiffness_check = true
+    )
+    # a Float64-only RHS skips the Jacobian check instead of throwing (#428)
+    f64only(x::Float64) = x / (1.0 + x)
+    @test NoLimits._stiff_at_start((u, p, t) -> [-f64only(u[1])], false, [5.0], nothing, 0.0) == 0.0
+    @test NoLimits._stiff_at_start((du, u, p, t) -> (du[1] = -f64only(u[1])), true, [5.0], nothing, 0.0) == 0.0
+    @test_throws UndefVarError NoLimits._stiff_at_start((u, p, t) -> [undefined_428(u[1])], false, [5.0], nothing, 0.0)
     # stiff at the start (ρ·T = 2e5): one Jacobian call, then exactly the calls of the
     # fallback solved directly; the primary is never run.
     _, c_direct = _fb_raw_solve(1.0e5, [0.0], nothing; alg = Rodas5P(), fallback = nothing)

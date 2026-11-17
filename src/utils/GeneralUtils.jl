@@ -217,9 +217,15 @@ function _route_to_fallback(prob, alg, args, reset!, threshold; kw...)
 end
 
 # Spectral radius of the state Jacobian at (u0, p, t0), `Inf` when it is not finite.
+# A RHS that rejects dual numbers (Float64-only helpers) counts as not stiff (#428).
 function _stiff_at_start(f, iip::Bool, u0, p, t0)
-    J = iip ? ForwardDiff.jacobian((du, u) -> f(du, u, p, t0), similar(u0), u0) :
-        ForwardDiff.jacobian(u -> f(u, p, t0), u0)
+    J = try
+        iip ? ForwardDiff.jacobian((du, u) -> f(du, u, p, t0), similar(u0), u0) :
+            ForwardDiff.jacobian(u -> f(u, p, t0), u0)
+    catch e
+        e isa MethodError && any(a -> a isa Union{ForwardDiff.Dual, AbstractArray{<:ForwardDiff.Dual}}, e.args) || rethrow()
+        return 0.0
+    end
     all(isfinite, J) || return Inf
     return maximum(abs, eigvals(J))
 end

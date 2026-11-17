@@ -3810,7 +3810,7 @@ SciMLBase.successful_retcode(s::_CFHybridSolution) = SciMLBase.successful_retcod
 
 function _cf_hybrid_solve(
         model, compiled, u0, tspan, saveat, plan::ClosedFormPlan,
-        alg, ode_args, solve_kwargs
+        alg, ode_args, solve_kwargs, solver_cfg
     )
     cf = get_cf_states(plan)
     n = get_cf_n(plan)
@@ -3825,7 +3825,11 @@ function _cf_hybrid_solve(
     prob = ODEProblem(g!, u0N, tspan, nothing)
     kw = saveat === nothing ? merge(solve_kwargs, (; dense = true)) :
         merge(solve_kwargs, (; saveat = saveat, save_everystep = false, dense = false))
-    N_sol = solve(prob, alg, ode_args...; kw...)
+    N_sol = _solve_with_fallback(
+        prob, alg, solver_cfg.fallback_alg, ode_args;
+        stiffness_check = solver_cfg.stiffness_check,
+        fallback_kwargs = solver_cfg.fallback_kwargs, kw...
+    )
     SciMLBase.successful_retcode(N_sol) || return _ll_drop_solve(N_sol.retcode)
     is_L = fill(false, n)
     local_idx = zeros(Int, n)
@@ -3843,14 +3847,14 @@ end
 # (`plan.eligible`, and either whole-system or event-free for the partial case).
 function _cf_dispatch_solve(
         model, compiled, u0, tspan, saveat, plan::ClosedFormPlan,
-        events, alg, ode_args, solve_kwargs
+        events, alg, ode_args, solve_kwargs, solver_cfg
     )
     _cf_is_whole(plan) && return _closed_form_solve_de(
         model, compiled, u0, tspan, saveat, float(tspan[1]),
         get_cf_mode(plan); events = events
     )
     return _cf_hybrid_solve(
-        model, compiled, u0, tspan, saveat, plan, alg, ode_args, solve_kwargs
+        model, compiled, u0, tspan, saveat, plan, alg, ode_args, solve_kwargs, solver_cfg
     )
 end
 
@@ -4041,7 +4045,8 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
         sol = _cf_dispatch_solve(
             model, compiled, u0_T, get_tspan(ind), saveat_use, plan,
             events, cache.alg, cache.ode_args,
-            _ode_solve_kwargs(cache.solver_cfg.kwargs, cache.ode_kwargs, NamedTuple())
+            _ode_solve_kwargs(cache.solver_cfg.kwargs, cache.ode_kwargs, NamedTuple()),
+            cache.solver_cfg
         )
         sol === nothing && return _ll_drop_solve(:closed_form_failed)
         return get_de_accessors_builder(get_de(model))(sol, compiled)

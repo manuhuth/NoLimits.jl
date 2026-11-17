@@ -419,7 +419,7 @@ function _solve_dense_individual(
         sol = _cf_dispatch_solve(
             model, compiled, u0, get_tspan(ind), nothing, plan,
             events, cf_alg, solver_cfg.args,
-            _ode_solve_kwargs(solver_cfg.kwargs, ode_kwargs, NamedTuple())
+            _ode_solve_kwargs(solver_cfg.kwargs, ode_kwargs, NamedTuple()), solver_cfg
         )
         sol !== nothing && return sol, compiled
     end
