@@ -3,6 +3,8 @@ using NoLimits
 using ComponentArrays
 using Lux
 
+const _NL427_GB = [5.0, 5.0]
+
 @testset "PreDifferentialEquation macro" begin
     # Builds preDE values from fixed/random effects and helpers.
     prede = @preDifferentialEquation begin
@@ -33,6 +35,25 @@ end
         fixed_effects, random_effects, constant_features_i, NamedTuple(), NamedTuple()
     )
     @test out.v == 6.0
+
+    # Lambda call heads, broadcasts, function arguments and locally bound names (#427).
+    # The lambda must read the fixed effect, not the same-named global.
+    prede = @preDifferentialEquation begin
+        a = (u -> u + exp(_NL427_GB[1]))(0.0)
+        b = exp.(_NL427_GB)[2] + sum(abs2, _NL427_GB) + map(exp, _NL427_GB)[1]
+        c = sum(u -> u^2, _NL427_GB) + (
+            let z = _NL427_GB[1]
+                z
+            end
+        ) + (z = _NL427_GB[2], r = 1).z
+    end
+    gb = [0.2, -0.3]
+    out = get_prede_builder(prede)(
+        ComponentArray(_NL427_GB = gb), ComponentArray(), NamedTuple(), NamedTuple(), NamedTuple()
+    )
+    @test out.a ≈ exp(0.2)
+    @test out.b ≈ exp(-0.3) + sum(abs2, gb) + exp(0.2)
+    @test out.c ≈ sum(abs2, gb) + 0.2 - 0.3
 end
 
 @testset "PreDifferentialEquation validation" begin

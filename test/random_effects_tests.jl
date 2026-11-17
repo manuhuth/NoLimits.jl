@@ -220,6 +220,53 @@ end
     @test NoLimits._macro_collect_call_symbols(:(x[idx(k)]), Set{Symbol}()) == Set([:idx])
     fvars(ex) = NoLimits._formulas_collect_var_symbols(ex, Set{Symbol}())
     @test fvars(:(truncated(Normal(m, s); upper = u))) == Set([:truncated, :Normal, :m, :s, :u])
+
+    # Lambda call heads, broadcasts and locally bound names (#427).
+    props(ex) = NoLimits._macro_collect_property_bases(ex, Set{Symbol}())
+    @test vars(:((u -> u + exp(gb[1]))(0.0))) == Set([:gb])
+    @test vars(:(exp.(lo))) == Set([:lo]) && isempty(props(:(exp.(lo))))
+    @test :exp in NoLimits._macro_collect_call_symbols(:(exp.(lo)), Set{Symbol}())
+    @test vars(
+        :(
+            let z = exp(lo)
+                z
+            end
+        )
+    ) == Set([:lo])
+    @test vars(:((z = exp(lo), r = 1).z)) == Set([:lo])
+    @test vars(:(sum(x -> x^2, [lo]))) == Set([:lo])
+    @test vars(:(sum(exp(b) for b in v))) == Set([:v])
+    @test vars(:(w.a(t))) == Set([:t])
+    unknown(exs...) = NoLimits._nl_unknown_syms(collect(exs), Set([:a]), @__MODULE__)
+    @test isempty(
+        unknown(
+            :(a + [0.0, 0.0][end]), :(sum([a, a][begin:end])), :(
+                let z = a
+                    z
+                end
+            ), :((z = a, r = 1).z)
+        )
+    )
+    @test unknown(:(exp.(qq))) == [:qq]
+
+    re = @randomEffects begin
+        η1 = RandomEffect(Normal(0.0, sum(abs2, [lo]) + exp.(lo)); column = :id)
+        η2 = RandomEffect(
+            Normal(
+                (u -> u + lo)(1.0), let z = exp(lo)
+                    z
+                end
+            ); column = :id
+        )
+        η3 = RandomEffect(Normal(0.0, sum(x -> x^2, [lo]) + (z = lo, r = 1).z^2); column = :id)
+    end
+    dists = create_random_effect_distribution(re)(
+        ComponentArray(lo = -0.5), NamedTuple(), NamedTuple(), NamedTuple()
+    )
+    @test dists.η1 == Normal(0.0, 0.25 + exp(-0.5))
+    @test dists.η2 == Normal(0.5, exp(-0.5))
+    @test dists.η3 == Normal(0.0, 0.5)
+    @test get_re_syms(re).η2 == [:lo]
 end
 
 @testset "RandomEffects logpdf" begin

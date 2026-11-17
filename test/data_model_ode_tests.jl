@@ -8,6 +8,9 @@ using DataInterpolations
 using Lux
 using ForwardDiff
 
+# A same-named global must not replace the DynamicCovariateVector `inp` in the DE (#427).
+const inp = (i1 = t -> 100.0, i2 = t -> 0.0)
+
 function _varying_at(ind, idx)
     pairs = Pair{Symbol, Any}[]
     vary = ind.series.vary

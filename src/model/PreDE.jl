@@ -173,8 +173,10 @@ macro preDifferentialEquation(block)
     # An unresolvable symbol used to fall through to a bare `UndefVarError` at the first
     # objective evaluation (#309). Pre-DE variables assigned in this same block resolve
     # from the generated assignments below, so they keep the fall-through.
-    _unknown_sym = sym -> sym in names ? :() :
-        :(error($("Unknown symbol $(sym) in preDifferentialEquation.")))
+    # Last resort: a caller-module or NoLimits global, e.g. `abs2` in `sum(abs2, x)` (#427).
+    _unknown_sym = sym -> sym in names ? :() : _macro_global_fallback(
+            __module__, sym, :(error($("Unknown symbol $(sym) in preDifferentialEquation.")))
+        )
     binds_vars = [
         if sym in prop_syms
                 quote

@@ -489,29 +489,27 @@ macro randomEffects(block)
     # evaluation in the estimation hot paths.)
     #
     # A speculative `hasproperty` bind makes the symbol local, so it escapes the
-    # GlobalRef rewrite below. Seed it from the caller module when only that module
-    # defines it (user types, `Copulas`, ...); the branches overwrite it when they hit.
-    _caller_ref = function (s::Symbol)
-        (__module__ === @__MODULE__) && return nothing
-        return (!isdefined(@__MODULE__, s) && isdefined(__module__, s)) ?
-            :($(s) = $(GlobalRef(__module__, s))) : nothing
-    end
+    # GlobalRef rewrite below. Fall back to the caller module (user types, `Copulas`, ...)
+    # or NoLimits (`abs2` in `sum(abs2, x)`, #427) when no branch hits.
+    _caller_ref = s -> _macro_global_fallback(__module__, s, nothing)
 
     binds_vars = [
         if sym in prop_syms
                 quote
-                    $(_caller_ref(sym))
                     if hasproperty(constant_features_i, $(QuoteNode(sym)))
                         $(sym) = getproperty(constant_features_i, $(QuoteNode(sym)))
+                else
+                        $(_caller_ref(sym))
                 end
                 end
         else
                 quote
-                    $(_caller_ref(sym))
                     if hasproperty(constant_features_i, $(QuoteNode(sym)))
                         $(sym) = getproperty(constant_features_i, $(QuoteNode(sym)))
                 elseif hasproperty(fixed_effects, $(QuoteNode(sym)))
                         $(sym) = _re_materialize(getproperty(fixed_effects, $(QuoteNode(sym))))
+                else
+                        $(_caller_ref(sym))
                 end
                 end
         end
@@ -520,11 +518,12 @@ macro randomEffects(block)
 
     binds_funs = [
         quote
-                $(_caller_ref(sym))
                 if hasproperty(model_funs, $(QuoteNode(sym)))
                     $(sym) = getproperty(model_funs, $(QuoteNode(sym)))
             elseif hasproperty(helper_functions, $(QuoteNode(sym)))
                     $(sym) = getproperty(helper_functions, $(QuoteNode(sym)))
+            else
+                    $(_caller_ref(sym))
             end
             end
             for sym in call_syms

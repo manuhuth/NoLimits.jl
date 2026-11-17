@@ -1227,6 +1227,9 @@ function _de_hoist_invariants(rhs_exprs, signal_exprs, var_syms::Set{Symbol}, fu
     return rhs2, sig2, table, kept
 end
 
+_de_is_module(mod::Module, s::Symbol) =
+    any(m -> isdefined(m, s) && getfield(m, s) isa Module, (Base, @__MODULE__, mod))
+
 _de_dotted_call_base(f) = f isa Expr && f.head == :. && f.args[1] isa Symbol ? f.args[1] : nothing
 
 function _de_collect_dotted_call_bases(ex, out::Set{Symbol})
@@ -1564,7 +1567,9 @@ macro DifferentialEquation(block)
         [
             s
                 for s in call_syms
-                if !(isdefined(Base, s) || isdefined(@__MODULE__, s) || s in dotted_bases && isdefined(__module__, s))
+                # A dotted base (`w.a(t)`) is kept unless it is a module, so a dynamic
+                # covariate wins over a same-named global (#427).
+                if !(s in dotted_bases ? _de_is_module(__module__, s) : (isdefined(Base, s) || isdefined(@__MODULE__, s)))
         ]
     )
     var_syms = _macro_filter_var_syms(var_syms)
@@ -1625,7 +1630,10 @@ macro DifferentialEquation(block)
             elseif hasproperty(helper_functions, $(QuoteNode(sym)))
                     getproperty(helper_functions, $(QuoteNode(sym)))
             else
-                    error("Unknown function $(string($(QuoteNode(sym)))) in DifferentialEquation.")
+                    $(
+                        sym in dotted_bases ? _de_global_fallback(__module__, sym, "DifferentialEquation") :
+                        :(error($("Unknown function $(sym) in DifferentialEquation.")))
+                    )
             end
             end
             for sym in fun_syms

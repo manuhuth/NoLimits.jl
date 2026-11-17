@@ -48,12 +48,14 @@ end
 
 function _macro_collect_call_symbols(ex, out::Set{Symbol})
     ex isa Expr || return out
-    if ex.head == :call
+    if ex.head == :call || _macro_is_broadcast(ex)
         f = ex.args[1]
         if f isa Symbol && _macro_is_identifier(f)
             push!(out, f)
         end
-        for arg in ex.args[2:end]
+        f isa Expr && _macro_collect_call_symbols(f, out)
+        args = ex.head == :call ? ex.args[2:end] : ex.args[2].args
+        for arg in args
             _macro_collect_call_symbols(arg, out)
         end
         return out
@@ -65,13 +67,54 @@ function _macro_collect_call_symbols(ex, out::Set{Symbol})
     end
 end
 
+# Broadcast call `f.(args...)`, as opposed to property access `x.p`.
+_macro_is_broadcast(ex) = ex isa Expr && ex.head == :. && length(ex.args) == 2 &&
+    ex.args[2] isa Expr && ex.args[2].head == :tuple
+
+# Names bound by `->`, `function`, `let` and generator `for` clauses (#427).
+function _macro_scope_bound(ex::Expr)
+    bound = Set{Symbol}()
+    if ex.head == :-> || ex.head == :function
+        _nl_collect_bound_syms!(bound, ex.args[1])
+    elseif ex.head == :let || ex.head == :generator
+        specs = ex.head == :let ? Any[ex.args[1]] : ex.args[2:end]
+        while !isempty(specs)
+            a = popfirst!(specs)
+            if a isa Symbol
+                push!(bound, a)
+            elseif a isa Expr && a.head == :(=)
+                _nl_collect_bound_syms!(bound, a.args[1])
+            elseif a isa Expr && (a.head == :block || a.head == :filter)
+                append!(specs, a.head == :block ? a.args : a.args[2:end])
+            end
+        end
+    end
+    return bound
+end
+
 function _macro_collect_var_symbols(ex, out::Set{Symbol})
     ex isa Symbol && return (push!(out, ex); out)
     ex isa Expr || return out
     if ex.head == :call
+        # A call head that is itself an expression (`(u -> u + a)(0.0)`) is scanned (#427).
+        # Dotted heads (`w.a(t)`, `Mod.f(x)`) name functions, not variables.
+        f = ex.args[1]
+        f isa Expr && f.head != :. && _macro_collect_var_symbols(f, out)
         for arg in ex.args[2:end]
             _macro_collect_var_symbols(arg, out)
         end
+        return out
+    elseif ex.head in (:->, :function, :let, :generator)
+        inner = Set{Symbol}()
+        foreach(arg -> _macro_collect_var_symbols(arg, inner), ex.args)
+        return union!(out, setdiff!(inner, _macro_scope_bound(ex)))
+    elseif ex.head == :(=) && length(ex.args) == 2
+        # Named-tuple keys and `let`/`for` targets are not variables.
+        return _macro_collect_var_symbols(ex.args[2], out)
+    elseif _macro_is_broadcast(ex)
+        # `f.(x)`: `f` is a function, the arguments hold the variables.
+        ex.args[1] isa Expr && _macro_collect_var_symbols(ex.args[1], out)
+        foreach(arg -> _macro_collect_var_symbols(arg, out), ex.args[2].args)
         return out
     elseif ex.head == :ref
         # Index symbols are variables too (#404); `begin`/`end` are index keywords.
@@ -96,7 +139,7 @@ end
 
 function _macro_collect_property_bases(ex, out::Set{Symbol})
     ex isa Expr || return out
-    if ex.head == :.
+    if ex.head == :. && !_macro_is_broadcast(ex)
         base = ex.args[1]
         base isa Symbol && push!(out, base)
         _macro_collect_property_bases(base, out)
@@ -117,6 +160,14 @@ function _macro_filter_var_syms(var_syms::Set{Symbol})
     skip_vars = Set([:Inf, :NaN, :nothing, :missing, :true, :false])
     var_syms = Set([s for s in var_syms if !(s in skip_vars)])
     return var_syms
+end
+
+# Binding for a name no model namespace provides: a global of the calling module, else of
+# NoLimits (Base functions passed as arguments, `sum(abs2, x)`), else `err` (#427).
+function _macro_global_fallback(mod::Module, sym::Symbol, err)
+    isdefined(mod, sym) && return :($(sym) = $(GlobalRef(mod, sym)))
+    isdefined(@__MODULE__, sym) && return :($(sym) = $(GlobalRef(@__MODULE__, sym)))
+    return err
 end
 
 function _macro_forbidden_symbol(ex)
