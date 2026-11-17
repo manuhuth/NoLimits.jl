@@ -489,7 +489,7 @@ macro randomEffects(block)
     # evaluation in the estimation hot paths.)
     #
     # A speculative `hasproperty` bind makes the symbol local, so it escapes the
-    # GlobalRef rewrite below. Fall back to the caller module (user types, `Copulas`, ...)
+    # caller-global rewrite below. Fall back to the caller module (user types, `Copulas`, ...)
     # or NoLimits (`abs2` in `sum(abs2, x)`, #427) when no branch hits.
     _caller_ref = s -> _macro_global_fallback(__module__, s, nothing)
 

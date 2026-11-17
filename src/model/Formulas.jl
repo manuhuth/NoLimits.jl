@@ -686,8 +686,11 @@ end
 _qcg(ex, ::Module, ::Set{Symbol}) = ex
 @inline function _qcg_sym(s::Symbol, mod::Module, locals::Set{Symbol})
     s in locals && return s
-    return !isdefined(@__MODULE__, s) && isdefined(mod, s) ? GlobalRef(mod, s) : s
+    return !isdefined(@__MODULE__, s) && isdefined(mod, s) ? _caller_global(mod, s) : s
 end
+# `getglobal(mod, :s)`, not a `GlobalRef`: a GlobalRef in a stored body holds a `Core.Binding`,
+# which Enzyme's `make_zero` cannot copy (#432).
+_caller_global(mod::Module, s::Symbol) = Expr(:call, :getglobal, mod, QuoteNode(s))
 _qcg_index(ex, mod::Module, locals::Set{Symbol}) = _qcg(ex, mod, locals)
 function _qcg_index(s::Symbol, mod::Module, locals::Set{Symbol})
     (s === :end || s === :begin) && return s

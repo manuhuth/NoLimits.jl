@@ -38,7 +38,9 @@ evaluated.
 # Keyword Arguments
 - `optimizer`: Optimization.jl-compatible optimizer. Defaults to `LBFGS` with backtracking.
 - `optim_kwargs::NamedTuple = NamedTuple()`: forwarded to `Optimization.solve`.
-- `adtype`: AD backend. Defaults to `AutoForwardDiff()`.
+- `adtype`: AD backend. Defaults to `AutoForwardDiff()`. For Enzyme use
+  `AutoEnzyme(; mode = Enzyme.set_runtime_activity(Enzyme.Reverse))`. Any `adtype` other
+  than ForwardDiff or FiniteDiff evaluates the objective serially.
 - `lb`/`ub`: bounds on the transformed scale, or `nothing` to use model-declared bounds.
 - `ignore_model_bounds::Bool = false`: ignore bounds declared in `@fixedEffects`.
 - `precondition::Bool = true`: optimize the scaled offset `z` with
@@ -1050,6 +1052,7 @@ function _fit_pooled(
         fit_args::Tuple = (),
         extra_objective = nothing
     )
+    serialization = _ad_serialization(method.adtype, serialization)
     model = get_model(dm)
     fe = get_fixed(model)
     fixed_names = get_names(fe)

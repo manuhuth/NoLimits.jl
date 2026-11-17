@@ -20,7 +20,10 @@ Maximum Likelihood Estimation for models without random effects.
   line search. For mini-batching wrap the method in [`MiniBatch`](@ref).
 - `optim_kwargs::NamedTuple = NamedTuple()`: keyword arguments forwarded to `Optimization.solve`
   (e.g. `maxiters`, `reltol`).
-- `adtype`: automatic-differentiation backend. Defaults to `AutoForwardDiff()`.
+- `adtype`: automatic-differentiation backend. Defaults to `AutoForwardDiff()`. For
+  Enzyme use `AutoEnzyme(; mode = Enzyme.set_runtime_activity(Enzyme.Reverse))`; bare
+  `AutoEnzyme()` fails. Any `adtype` other than ForwardDiff or FiniteDiff evaluates the
+  objective serially, whatever `serialization` is.
 - `lb`: lower bounds on the transformed parameter scale, or `nothing` to use the
   model-declared bounds.
 - `ub`: upper bounds on the transformed parameter scale, or `nothing`.
@@ -88,6 +91,12 @@ function _require_no_random_effects(dm::DataModel)
     return nothing
 end
 
+# Enzyme cannot differentiate task creation (`_greedy_foreach`), so an `adtype` other than
+# ForwardDiff or finite differences evaluates the objective serially (#432).
+_ad_serialization(adtype, serialization) =
+    nameof(typeof(adtype)) in (:AutoForwardDiff, :AutoFiniteDiff) ? serialization :
+    EnsembleSerial()
+
 function _fit_no_re(
         dm::DataModel, method;
         constants::NamedTuple,
@@ -103,6 +112,7 @@ function _fit_no_re(
         fit_kwargs::NamedTuple = NamedTuple()
     )
     _require_no_random_effects(dm)
+    serialization = _ad_serialization(method.adtype, serialization)
 
     fe = get_fixed(get_model(dm))
     fixed_names = get_names(fe)

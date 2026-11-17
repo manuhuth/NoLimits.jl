@@ -52,7 +52,7 @@ add the package and `using` it alongside NoLimits, and the feature becomes avail
 | LaTeX rendering of model equations (`show_equations(model; latex = true)`) | `Latexify` |
 | Bundled example datasets (`load_warfarin_from_monolix`) | `CSV` |
 | Copula-based random effects (`Copulas.SklarDist` in `@randomEffects`) | `Copulas` |
-| Reverse-mode differentiation through an ODE (`adtype = AutoEnzyme()`) | `SciMLSensitivity` |
+| Reverse-mode differentiation through an ODE (`adtype = AutoEnzyme(; mode = Enzyme.set_runtime_activity(Enzyme.Reverse))`; bare `AutoEnzyme()` fails) | `SciMLSensitivity` |
 
 For example, to fit a model and plot the result:
 

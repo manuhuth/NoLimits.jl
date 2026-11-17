@@ -23,6 +23,20 @@ import Optimisers
 # Enzyme compiles. Real Enzyme gradients: opt-in smoke gate at the end of this file.
 # ─────────────────────────────────────────────────────────────────────────────
 
+const _NL432_MU = 0.0
+_nl432_shift(x) = x
+
+# GlobalRefs stored in a model hold a `Core.Binding`, which Enzyme's `make_zero` cannot copy.
+_nl432_has_globalref(x::GlobalRef, seen) = true
+function _nl432_has_globalref(x, seen)
+    (x isa Union{Module, DataType, Symbol, String} || isbits(x)) && return false
+    ismutable(x) && (x in seen ? (return false) : push!(seen, x))
+    x isa Expr && return any(a -> _nl432_has_globalref(a, seen), x.args)
+    x isa AbstractArray && !isbitstype(eltype(x)) &&
+        return any(i -> isassigned(x, i) && _nl432_has_globalref(x[i], seen), eachindex(x))
+    return any(f -> isdefined(x, f) && _nl432_has_globalref(getfield(x, f), seen), fieldnames(typeof(x)))
+end
+
 @testset "individuals container is concrete (reverse-mode getfield)" begin
     model = @Model begin
         @fixedEffects begin
@@ -34,10 +48,10 @@ import Optimisers
             x = ConstantCovariateVector([:Age])
         end
         @randomEffects begin
-            η = RandomEffect(Normal(0.0, 1.0); column = :ID)
+            η = RandomEffect(Normal(_NL432_MU, 1.0); column = :ID)
         end
         @formulas begin
-            y ~ Normal(a + x.Age + η, σ)
+            y ~ Normal(_nl432_shift(a) + x.Age + η, σ)
         end
     end
     df = DataFrame(
@@ -46,6 +60,18 @@ import Optimisers
     )
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
     @test isconcretetype(eltype(dm.individuals))
+    # #432: references, so indexing never copies a mixed pointer/bits struct to the stack
+    @test ismutabletype(eltype(dm.individuals))
+    # #432: caller-module globals are emitted as `getglobal` calls, not GlobalRefs
+    @test !_nl432_has_globalref(dm, Base.IdSet{Any}())
+    @test NoLimits.loglikelihood(dm, get_θ0_untransformed(model.fixed.fixed), [ComponentArray(η = 0.1) for _ in 1:3]) isa Float64
+end
+
+@testset "reverse-mode adtype evaluates the no-RE objective serially (#432)" begin
+    ser, thr = NoLimits.EnsembleSerial(), NoLimits.EnsembleThreads()
+    @test NoLimits._ad_serialization(NoLimits.Optimization.AutoEnzyme(), thr) === ser
+    @test NoLimits._ad_serialization(NoLimits.Optimization.AutoForwardDiff(), thr) === thr
+    @test NoLimits._ad_serialization(NoLimits.Optimization.AutoFiniteDiff(), thr) === thr
 end
 
 @testset "transforms carry output axes; stable path ≡ legacy path" begin

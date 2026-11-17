@@ -20,7 +20,10 @@ Requires prior distributions on at least one free fixed effect.
   line search. For mini-batching wrap the method in [`MiniBatch`](@ref).
 - `optim_kwargs::NamedTuple = NamedTuple()`: keyword arguments forwarded to `Optimization.solve`
   (e.g. `maxiters`, `reltol`).
-- `adtype`: automatic-differentiation backend. Defaults to `AutoForwardDiff()`.
+- `adtype`: automatic-differentiation backend. Defaults to `AutoForwardDiff()`. For
+  Enzyme use `AutoEnzyme(; mode = Enzyme.set_runtime_activity(Enzyme.Reverse))`; bare
+  `AutoEnzyme()` fails. Any `adtype` other than ForwardDiff or FiniteDiff evaluates the
+  objective serially, whatever `serialization` is.
 - `lb`: lower bounds on the transformed parameter scale, or `nothing` to use the
   model-declared bounds.
 - `ub`: upper bounds on the transformed parameter scale, or `nothing`.

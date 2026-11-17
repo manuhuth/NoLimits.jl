@@ -1071,7 +1071,7 @@ canonicalize(::SciMLStructures.Initials, p::DEParams) = _canonicalize_empty(p)
 # written in (e.g. `const NSTATE = 4`), resolved when the macro expands. Model names
 # take precedence because the generated lookup tries them first.
 function _de_global_fallback(mod::Module, sym::Symbol, block::String)
-    isdefined(mod, sym) && return GlobalRef(mod, sym)
+    isdefined(mod, sym) && return _caller_global(mod, sym)
     return :(error($("Unknown symbol $(sym) in $(block).")))
 end
 
@@ -1364,7 +1364,7 @@ function _de_rewrite_small_vectors(ex)
     if ex.head == :vect
         if length(ex.args) <= 8
             new_args = map(_de_rewrite_small_vectors, ex.args)
-            return Expr(:call, GlobalRef(StaticArrays, :SVector), new_args...)
+            return Expr(:call, _caller_global(StaticArrays, :SVector), new_args...)
         end
     end
     return Expr(ex.head, map(arg -> _de_rewrite_small_vectors(arg), ex.args)...)
