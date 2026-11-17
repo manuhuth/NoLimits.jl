@@ -107,7 +107,7 @@ function _simulate_sol_accessors(dm::DataModel, idx::Int, θ, η)
         sol = _cf_dispatch_solve(
             model, compiled, u0, get_tspan(ind), get_saveat(ind), plan,
             events, cf_alg, solver_cfg.args,
-            _ode_solve_kwargs(solver_cfg.kwargs, NamedTuple(), NamedTuple())
+            _ode_solve_kwargs(solver_cfg.kwargs, NamedTuple(), NamedTuple()), solver_cfg
         )
         sol !== nothing && return get_de_accessors_builder(get_de(model))(sol, compiled)
     end

@@ -653,7 +653,7 @@ function _formulas_build_formulas_expr(
 end
 
 # Rewrite call heads and dot-path bases that the @Model caller's module defines but
-# NoLimits does not (user-loaded modules/types) into GlobalRefs, so the generated
+# NoLimits does not (user-loaded modules/types) into `getglobal` calls, so the generated
 # functions can use them while all NoLimits-visible names keep their old resolution.
 # Names bound inside the generated function (arguments, covariate/node binds) are
 # excluded so same-named globals at the call site cannot hijack them.
@@ -686,8 +686,11 @@ end
 _qcg(ex, ::Module, ::Set{Symbol}) = ex
 @inline function _qcg_sym(s::Symbol, mod::Module, locals::Set{Symbol})
     s in locals && return s
-    return !isdefined(@__MODULE__, s) && isdefined(mod, s) ? GlobalRef(mod, s) : s
+    return !isdefined(@__MODULE__, s) && isdefined(mod, s) ? _caller_global(mod, s) : s
 end
+# `getglobal(mod, :s)`, not a `GlobalRef`: a GlobalRef in a stored body holds a `Core.Binding`,
+# which Enzyme's `make_zero` cannot copy (#432).
+_caller_global(mod::Module, s::Symbol) = Expr(:call, :getglobal, mod, QuoteNode(s))
 _qcg_index(ex, mod::Module, locals::Set{Symbol}) = _qcg(ex, mod, locals)
 function _qcg_index(s::Symbol, mod::Module, locals::Set{Symbol})
     (s === :end || s === :begin) && return s

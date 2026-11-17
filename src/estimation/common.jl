@@ -624,7 +624,16 @@ function _with_posterior_params(res::FitResult, dm::DataModel; rng::AbstractRNG)
         res, dm; rng = rng, overrides = _fit_kw(res, :constants, NamedTuple())
     )
     fe = get_fixed(get_model(dm))
-    params = FitParameters(get_transform(fe)(θ_u), θ_u)
+    θ_t = try
+        get_transform(fe)(θ_u)
+    catch err
+        err isa DomainError || rethrow()
+        # natural-scale sampling: the posterior mean can leave a scale's domain (#422)
+        @warn "The posterior mean lies outside the domain of a parameter scale; the transformed point estimate is NaN. Use priors restricted to each scale's domain."
+        θ0_t = get_θ0_transformed(fe)
+        ComponentArray(fill(NaN, length(θ0_t)), getaxes(θ0_t))
+    end
+    params = FitParameters(θ_t, θ_u)
     s = get_summary(res)
     summary = FitSummary(s.objective, s.converged, params, s.notes)
     return FitResult(
@@ -707,9 +716,12 @@ Return the raw method-specific result object (e.g. the Optim.jl result for MLE/M
 get_raw(res::FitResult) = get_raw(get_result(res))
 
 """
-    get_notes(res::FitResult) -> String or Nothing
+    get_notes(res::FitResult)
 
-Return any method-specific string notes attached to the result.
+Return the method-specific notes attached to the result. Depending on the method this is
+`nothing`, a `String`, or a `NamedTuple` (for example `GHQuadrature` stores its
+`rule_check`, and `VEM`, `SAEM`, `MCEM` and `Pooled` store diagnostics there).
+Errors for methods that keep no notes.
 """
 get_notes(res::FitResult) = get_notes(get_result(res))
 
@@ -1054,6 +1066,19 @@ function _validate_theta_override(dm::DataModel, θ, option::AbstractString)
     for i in eachindex(flat)
         lo[i] <= flat[i] <= hi[i] ||
             error("Value $(_label(i)) in $(option) is $(flat[i]), outside its declared bounds [$(lo[i]), $(hi[i])].")
+    end
+    # A logit domain is open, but its default bounds are the closed edges; logit_forward
+    # clamps the edge to a finite value, so the check below would not catch it (#422).
+    for spec in get_transform(fe).specs
+        hasproperty(θ, spec.name) || continue
+        v = getproperty(θ, spec.name)
+        ks = spec.kind === :elementwise ? spec.mask : Iterators.repeated(spec.kind)
+        for (x, k) in zip(v isa Number ? (v,) : v, ks)
+            _is_logit_scale(k) || continue
+            a, b = _logit_domain(k)
+            a < x < b ||
+                error("Value of $(spec.name) in $(option) is $(x); scale $(repr(k)) needs a value strictly between $(a) and $(b).")
+        end
     end
     # Those bounds are inclusive, but the transform's domain is open: a value sitting
     # exactly on the boundary still transforms to -Inf/NaN (#249).
@@ -2696,7 +2721,9 @@ function get_loglikelihood(
         caches = ll_cache isa AbstractVector ? ll_cache : [ll_cache]
         parts = zeros(Float64, length(batch_infos))
         _greedy_foreach(length(batch_infos), length(caches)) do bi, c
-            parts[bi] = _batch_weight(dm, get_inds(batch_infos[bi])) * _ghq_batch_ll(
+            w = _batch_weight(dm, get_inds(batch_infos[bi]))
+            iszero(w) && return
+            parts[bi] = w * _ghq_batch_ll(
                 dm, batch_infos[bi], θu_re, const_cache, caches[c], level
             )
         end
@@ -2932,6 +2959,7 @@ function _quadrature_batch_ll(
         dm, bi, info, θu_re, const_cache, ll_cache, bstars,
         level, jitter, mc_integrator, fallback, rng
     )
+    iszero(_batch_weight(dm, get_inds(info))) && return 0.0
     if get_n_b(info) == 0
         s = 0.0
         empty_b = Float64[]
@@ -2949,10 +2977,17 @@ function _quadrature_batch_ll(
             )
         else
             b_star = bstars[bi]
-            re_measure = build_centered_re_measure(
-                b_star, info, bi, θu_re, const_cache, dm, ll_cache;
-                jitter = jitter
-            )
+            prior_m = build_re_measure_from_batch(info, θu_re, const_cache, dm, ll_cache)
+            # Bounded-support REs: the transport-space adaptive rule of the fit (#424).
+            re_measure = if prior_m isa CompositeRE && !prior_m.unbounded
+                mc = _ghq_adaptive_measure(dm, info, θu_re, const_cache, ll_cache, prior_m, b_star)
+                mc === nothing ? prior_m : mc
+            else
+                build_centered_re_measure(
+                    b_star, info, bi, θu_re, const_cache, dm, ll_cache;
+                    jitter = jitter
+                )
+            end
             if re_measure !== nothing
                 sgrid = level isa Int ? get_sparse_grid(get_n_b(info), level) :
                     _build_anisotropic_batch_grid(dm, info, level)
@@ -3205,7 +3240,9 @@ function _cdll_terms(
             push!(seen, (ri, li))
             v += logpdf(level_dist[ri][li], getval(ri, li))
         end
-        vals[k] = v
+        # Likelihood weights as in `loglikelihood` (weight 0 is removal).
+        w = _ind_weight(dm, i)
+        vals[k] = iszero(w) ? zero(T) : w * v
     end
     return ids, vals
 end
@@ -3219,6 +3256,9 @@ end
 Joint (complete-data) log-density `ln p(y, η | θ)` for a random-effects model: the
 per-individual observation log-likelihood plus the random-effect prior summed once per
 grouping level. With no random effects it reduces to the population log-likelihood.
+With likelihood weights (`DataModel(...; weights)`) each individual's term, including the
+random-effect prior it carries, is multiplied by its weight, so an integer weight `k`
+equals `k` copies of the individual.
 
 `eta` supplies the random-effect values to plug in:
 - a `NamedTuple` keyed by random-effect name, then by grouping-level id, e.g.
@@ -3247,7 +3287,8 @@ end
 Per-individual breakdown of [`complete_data_loglikelihood`](@ref) (same arguments): a
 `DataFrame` with the `primary_id` column and a `:complete_data_loglikelihood` column
 giving, for each selected individual, its observation log-likelihood plus the
-random-effect prior of any grouping level it is the first to contribute. The values sum
+random-effect prior of any grouping level it is the first to contribute, multiplied by
+the individual's likelihood weight. The values sum
 to `complete_data_loglikelihood` called with the same arguments. Useful for inspecting
 per-subject fit before running an estimation.
 """
@@ -3810,7 +3851,7 @@ SciMLBase.successful_retcode(s::_CFHybridSolution) = SciMLBase.successful_retcod
 
 function _cf_hybrid_solve(
         model, compiled, u0, tspan, saveat, plan::ClosedFormPlan,
-        alg, ode_args, solve_kwargs
+        alg, ode_args, solve_kwargs, solver_cfg
     )
     cf = get_cf_states(plan)
     n = get_cf_n(plan)
@@ -3825,7 +3866,11 @@ function _cf_hybrid_solve(
     prob = ODEProblem(g!, u0N, tspan, nothing)
     kw = saveat === nothing ? merge(solve_kwargs, (; dense = true)) :
         merge(solve_kwargs, (; saveat = saveat, save_everystep = false, dense = false))
-    N_sol = solve(prob, alg, ode_args...; kw...)
+    N_sol = _solve_with_fallback(
+        prob, alg, solver_cfg.fallback_alg, ode_args;
+        stiffness_check = solver_cfg.stiffness_check,
+        fallback_kwargs = solver_cfg.fallback_kwargs, kw...
+    )
     SciMLBase.successful_retcode(N_sol) || return _ll_drop_solve(N_sol.retcode)
     is_L = fill(false, n)
     local_idx = zeros(Int, n)
@@ -3843,14 +3888,14 @@ end
 # (`plan.eligible`, and either whole-system or event-free for the partial case).
 function _cf_dispatch_solve(
         model, compiled, u0, tspan, saveat, plan::ClosedFormPlan,
-        events, alg, ode_args, solve_kwargs
+        events, alg, ode_args, solve_kwargs, solver_cfg
     )
     _cf_is_whole(plan) && return _closed_form_solve_de(
         model, compiled, u0, tspan, saveat, float(tspan[1]),
         get_cf_mode(plan); events = events
     )
     return _cf_hybrid_solve(
-        model, compiled, u0, tspan, saveat, plan, alg, ode_args, solve_kwargs
+        model, compiled, u0, tspan, saveat, plan, alg, ode_args, solve_kwargs, solver_cfg
     )
 end
 
@@ -4041,7 +4086,8 @@ function _ll_solve_de(dm::DataModel, idx::Int, θ, η_ind, cache::_LLCache, pre)
         sol = _cf_dispatch_solve(
             model, compiled, u0_T, get_tspan(ind), saveat_use, plan,
             events, cache.alg, cache.ode_args,
-            _ode_solve_kwargs(cache.solver_cfg.kwargs, cache.ode_kwargs, NamedTuple())
+            _ode_solve_kwargs(cache.solver_cfg.kwargs, cache.ode_kwargs, NamedTuple()),
+            cache.solver_cfg
         )
         sol === nothing && return _ll_drop_solve(:closed_form_failed)
         return get_de_accessors_builder(get_de(model))(sol, compiled)
@@ -4838,6 +4884,11 @@ function _loglikelihood_indices(
         _greedy_foreach(m, length(caches)) do k, c
             bad[] && return
             i = sel[k]
+            # Weight 0 is removal: never evaluated, so invalid data there cannot poison the sum.
+            if iszero(_ind_weight(dm, i))
+                by_individual[k] = zero(T)
+                return
+            end
             η_ind = ηs isa Vector ? ηs[i] : ηs
             lli = _loglikelihood_individual(dm, i, θs, η_ind, caches[c])
             if !isfinite(lli)
@@ -4858,6 +4909,7 @@ function _loglikelihood_indices(
         # promotes the same way).
         ll = zero(T)
         for i in sel
+            iszero(_ind_weight(dm, i)) && continue
             η_ind = ηs isa Vector ? ηs[i] : ηs
             lli = _loglikelihood_individual(dm, i, θs, η_ind, cache_use)
             !isfinite(lli) && return -Inf

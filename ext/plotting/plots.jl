@@ -172,7 +172,13 @@ function _plot_fits_comparison_impl(
         build_plot_cache(fits[j]; dm = dms[j], cache_obs_dists = false, rng = rng)
             for j in eachindex(fits)
     ]
-    line_colors = _comparison_line_colors(length(fits), style)
+    (is_mv, n_marginals) = _obs_multivariate_info(dm_ref, obs_name)
+    margins = is_mv ? (1:n_marginals) : (0:0)
+    line_colors = _comparison_line_colors(length(fits) * length(margins), style)
+    marginal_colors = _marginal_colors(max(n_marginals, 1), style)
+    data_label(m) = m == 0 ? "data" : _marginal_label(obs_name, m)
+    line_label(j, m) = m == 0 ? labels[j] : "$(labels[j]) $(_marginal_label(obs_name, m))"
+    line_color(j, m) = line_colors[(j - 1) * length(margins) + max(m, 1)]
 
     panels = String[]
     obs_df = _tidy()
@@ -184,26 +190,37 @@ function _plot_fits_comparison_impl(
         obs_rows = get_obs_rows(get_row_groups(dm_ref))[i]
         x_obs = _get_x_values(dm_ref, ind, obs_rows, x_axis_feature)
         y_obs = getfield(get_obs(get_series(ind)), obs_name)
-        x_obs_plot, y_obs_plot = _collect_scalar_series(x_obs, y_obs)
         panel = _individual_panel(dm_ref, i)
         push!(panels, panel)
-        plot_data_points && _push_xy!(obs_df, panel, x_obs_plot, y_obs_plot, "data")
+        for m in margins
+            x_obs_plot, y_obs_plot = m == 0 ? _collect_scalar_series(x_obs, y_obs) :
+                _collect_multivariate_series(x_obs, y_obs, n_marginals; marginal_idx = m)
+            plot_data_points && _push_xy!(obs_df, panel, x_obs_plot, y_obs_plot, data_label(m))
+            ylims = _merge_limits(ylims, y_obs_plot)
+        end
         for j in eachindex(fits)
             curve = _fit_curve_from_cache(
                 dms[j], caches[j], i, obs_name, x_axis_feature, plot_func
             )
-            _push_xy!(line_dfs[j], panel, curve.x_fit, curve.preds, labels[j])
             xlims = _merge_limits(xlims, curve.x_fit)
-            ylims = _merge_limits(ylims, curve.preds)
+            for m in margins
+                preds = m == 0 ? Float64[_f64(_float_if_real(v)) for v in curve.preds] :
+                    Float64[_component_stat(v, m) for v in curve.preds]
+                _push_xy!(line_dfs[j], panel, curve.x_fit, preds, line_label(j, m))
+                ylims = _merge_limits(ylims, preds)
+            end
         end
-        ylims = _merge_limits(ylims, y_obs_plot)
     end
 
     # One legend entry per model (line in the model's colour and line style) plus the data.
     series = Pair{String, Any}[]
-    plot_data_points && push!(series, "data" => style.color_primary)
-    for j in eachindex(fits)
-        push!(series, labels[j] => line_colors[j])
+    if plot_data_points
+        for m in margins
+            push!(series, data_label(m) => (m == 0 ? style.color_primary : marginal_colors[m]))
+        end
+    end
+    for j in eachindex(fits), m in margins
+        push!(series, line_label(j, m) => line_color(j, m))
     end
     xy = AoG.mapping(:x, :y; color = :series, layout = :panel)
     line_layers = [
@@ -249,7 +266,8 @@ model on the same panel, labeled by vector index (`"Model 1"`, ...), `NamedTuple
 
 Panels are AlgebraOfGraphics facets titled by individual (linked axes when shared, inner
 tick labels hidden), with one figure-level legend: `data` and one entry per model, drawn
-in the model's colour and line style (`PlotStyle.comparison_line_styles`,
+in the model's colour and line style (for a vector-valued outcome, one data and one model
+entry per component) (`PlotStyle.comparison_line_styles`,
 `PlotStyle.comparison_default_linestyle`).
 
 # Keyword Arguments (collections)

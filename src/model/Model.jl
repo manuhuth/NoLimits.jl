@@ -469,7 +469,7 @@ function _validate_solver_config(cfg::ODESolverConfig)
     cfg.fallback_alg === nothing || cfg.fallback_alg isa SciMLBase.AbstractODEAlgorithm ||
         error("fallback_alg must be an OrdinaryDiffEq algorithm such as Rodas5P() or nothing; got $(typeof(cfg.fallback_alg)).")
     cfg.stiffness_check === nothing ||
-        (cfg.stiffness_check isa Real && cfg.stiffness_check > 0) ||
+        (cfg.stiffness_check isa Real && !(cfg.stiffness_check isa Bool) && cfg.stiffness_check > 0) ||
         error("stiffness_check must be a positive number or nothing; got $(repr(cfg.stiffness_check)).")
     return nothing
 end
@@ -492,7 +492,8 @@ arguments and replaces the existing configuration.
   with `alg` fails (non-successful retcode, e.g. `MaxIters` of a non-stiff method on a stiff
   stretch). Same `kwargs`/`args`; a step budget in `kwargs` applies to both attempts.
   Applies to every numerical solve (estimation incl. dual-number solves and crossing
-  models, simulation, plotting), not to the closed-form path.
+  models, simulation, plotting, and the numerical part of a `closed_form = :all` split),
+  not to an analytic closed-form solve.
 - `stiffness_check = 2.0e4`: with a `fallback_alg`, solve with the fallback directly,
   without the attempt with `alg`, when the problem is stiff at its start:
   `ρ · (t_end − t0) > stiffness_check`, where ρ is the spectral radius of the state

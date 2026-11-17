@@ -960,6 +960,9 @@ function _onepass_logdet_derivatives(
     )
     (r === nothing || r[1] === nothing) && return nothing
     nv = _ntri(length(b))
+    # FOCE: H depends on θ through the prior mean too (dispersion at m(θ)), so no fixed
+    # effect is prior-only and all of θ is differentiated through F (#423).
+    c.interaction || (split = (collect(1:length(θ)), Int[]))
     function F(θv, bv, tc, _)
         s = _focei_grad_negH_batch(
             dm, batch_info, θv, bv, const_cache, cache; interaction = c.interaction, tctx = tc,
@@ -1099,7 +1102,7 @@ function FOCEI(;
     optim_kwargs === nothing &&
         (optim_kwargs = _outer_default_optim_kwargs(optimizer, (; maxiters = 1000)))
     return FOCEI(
-        optimizer, _as_namedtuple(optim_kwargs), adtype, inner, hess, cache,
+        optimizer, _as_namedtuple(optim_kwargs), _normalize_adtype(adtype), inner, hess, cache,
         ms, lb, ub, ignore_model_bounds, precondition, interaction, :all,
         warm_starts, batch_threading
     )

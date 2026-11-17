@@ -605,12 +605,14 @@ end
         NoLimits._ba_theta_ctxs(st, curv, dm, θ, cc, cache, nothing, b; pctx = pctx)
         @test _RE_TAP[] == 0
         # gradient: n for the parent context, then per individual one run in the one-pass
-        # Jacobian and one in the prior's θ pass; FOCEI/FOCE take ∂ log f/∂θ from a separate
-        # θ gradient (n more); FOCE's shared prior mean comes from the representative's run
+        # Jacobian and one in the prior's θ pass; FOCEI takes ∂ log f/∂θ from a separate
+        # θ gradient (n more). FOCE also takes that θ gradient but differentiates all of θ in
+        # the one-pass Jacobian (its curvature depends on the prior mean, #423), so it has
+        # no prior θ pass (9); its shared prior mean comes from the representative's run
         _RE_TAP[] = 0
         NoLimits._ba_grad_batch(st, dm, θ, b, cc, cache, nothing, 1; hmode = curv)
-        fisher = curv isa NoLimits.FisherInformationCurvature
-        @test _RE_TAP[] == (fisher ? 12 : 9)
+        focei = curv isa NoLimits.FisherInformationCurvature && curv.interaction
+        @test _RE_TAP[] == (focei ? 12 : 9)
     end
     # FOCE reuses a shared level's dual prior mean across sub-batches, per (RE, level): one
     # cache over both sites, whose means differ through the SITE covariate, reproduces the

@@ -38,7 +38,8 @@ evaluated.
 # Keyword Arguments
 - `optimizer`: Optimization.jl-compatible optimizer. Defaults to `LBFGS` with backtracking.
 - `optim_kwargs::NamedTuple = NamedTuple()`: forwarded to `Optimization.solve`.
-- `adtype`: AD backend. Defaults to `AutoForwardDiff()`.
+- `adtype`: AD backend. Defaults to `AutoForwardDiff()`. Any `adtype` other than
+  ForwardDiff or FiniteDiff evaluates the objective serially.
 - `lb`/`ub`: bounds on the transformed scale, or `nothing` to use model-declared bounds.
 - `ignore_model_bounds::Bool = false`: ignore bounds declared in `@fixedEffects`.
 - `precondition::Bool = true`: optimize the scaled offset `z` with
@@ -93,7 +94,7 @@ function Pooled(;
     n_probes >= 1 || error("n_probes must be >= 1.")
     mc_draws >= 1 || error("mc_draws must be >= 1.")
     return Pooled(
-        optimizer, _as_namedtuple(optim_kwargs), adtype, lb, ub, ignore_model_bounds,
+        optimizer, _as_namedtuple(optim_kwargs), _normalize_adtype(adtype), lb, ub, ignore_model_bounds,
         force_free, refreeze_check, identifiable_only, n_probes, mc_draws, precondition
     )
 end
@@ -144,7 +145,7 @@ function PooledMap(;
     n_probes >= 1 || error("n_probes must be >= 1.")
     mc_draws >= 1 || error("mc_draws must be >= 1.")
     return PooledMap(
-        optimizer, _as_namedtuple(optim_kwargs), adtype, lb, ub, ignore_model_bounds,
+        optimizer, _as_namedtuple(optim_kwargs), _normalize_adtype(adtype), lb, ub, ignore_model_bounds,
         force_free, refreeze_check, identifiable_only, n_probes, mc_draws, precondition
     )
 end
@@ -1050,6 +1051,7 @@ function _fit_pooled(
         fit_args::Tuple = (),
         extra_objective = nothing
     )
+    serialization = _ad_serialization(method.adtype, serialization)
     model = get_model(dm)
     fe = get_fixed(model)
     fixed_names = get_names(fe)

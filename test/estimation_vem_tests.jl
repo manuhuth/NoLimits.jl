@@ -56,6 +56,9 @@ end
     @test abs(get_objective(rv) - get_objective(rl)) < 1.0
     @test get_converged(rv)
     @test get_result(rv).notes.elbo isa Real
+    # notes.elbo is the joint fit's ELBO, also after an accepted refinement (#430)
+    @test get_result(rv).notes.elbo ==
+        get_result(fit_model(dm, NoLimits.VEM(; refine = false); rng = Xoshiro(3))).notes.elbo
     # default fit pinned (joint LBFGS, refinement with the Newton finish)
     @test collect(get_params(rv; scale = :transformed)) ≈ [
         1.9644160037839495, -0.5044155745441045, -1.3508847730251867,
@@ -113,6 +116,8 @@ end
     @test_throws ErrorException PlanarFlowFamily(0)
     @test_throws ErrorException PlanarFlowFamily(2; base = :full)
     @test NoLimits.VEM(; family = PlanarFlowFamily(2)).flow == 2
+    @test NoLimits.VEM(; family = PlanarFlowFamily(2)).optim_kwargs.reltol == 1.0e-12
+    @test NoLimits.VEM().optim_kwargs.reltol == 1.0e-8
     # identity at the init (û = 0) and exact log-Jacobian of the layer stack
     n, K = 3, 2
     rng = Xoshiro(4)
@@ -511,6 +516,11 @@ end
     @test isapprox(θv.k, θl.k; rtol = 0.05)
     @test isapprox(θv.ω, θl.ω; rtol = 0.15)
     @test isapprox(θv.σ, θl.σ; rtol = 0.05)
+    # planar layers start with |w| = 1: randn / √n gave small |w| for one RE and stopped
+    # this flow fit at objective 82.2 against 64.03 for the dense family (#430)
+    rd = fit_model(dm, NoLimits.VEM(; refine = false); rng = Xoshiro(2))
+    rf = fit_model(dm, NoLimits.VEM(; family = PlanarFlowFamily(2), refine = false); rng = Xoshiro(3))
+    @test abs(get_objective(rf) - get_objective(rd)) < 0.2
 end
 
 @testset "VEM: Beta random effect does not collapse to a point mass (#371)" begin
@@ -571,6 +581,35 @@ end
     @test collect(get_params(rw; scale = :untransformed)) ≈
         collect(get_params(rd; scale = :untransformed)) rtol = 1.0e-2
     @test get_objective(rw) ≈ get_objective(rd) atol = 1.0e-3
+end
+
+@testset "VEM: Normal RE sd from a tiny start does not collapse (#430)" begin
+    # the gradient in log ω vanishes near 0: the joint fit from ω = 1e-3 stops at ω = 5e-5
+    # (objective 70.27 vs the MLE 58.43); the refinement probes larger ω and restarts there
+    rng = Xoshiro(1)
+    ids = repeat(1:12, inner = 5)
+    e = 0.8 .* randn(rng, 12)
+    noise = 0.5 .* randn(rng, 60)
+    θ0 = deepcopy(NoLimits.get_θ0_untransformed(NoLimits.get_fixed(fx_re_model())))
+    θ0.a, θ0.σ, θ0.ω = 1.0, 0.6, 1.0e-3
+    dm = DataModel(fx_re_model(), DataFrame(ID = ids, t = repeat(collect(1.0:5.0), 12), y = 2.0 .+ e[ids] .+ noise); primary_id = :ID, time_col = :t)
+    rl = fit_model(dm, NoLimits.Laplace(); theta_0_untransformed = θ0)
+    rv = fit_model(dm, NoLimits.VEM(; ignore_model_bounds = true); theta_0_untransformed = θ0, rng = Xoshiro(1))
+    @test get_objective(rv) ≈ get_objective(rl) atol = 1.0e-6
+    @test get_params(rv; scale = :untransformed).ω ≈ get_params(rl; scale = :untransformed).ω rtol = 1.0e-4
+    # without refinement: a warning
+    @test_logs (:warn, r"scale ω") match_mode = :any fit_model(
+        dm, NoLimits.VEM(; ignore_model_bounds = true, refine = false); theta_0_untransformed = θ0, rng = Xoshiro(1)
+    )
+    # no RE in the data: Laplace and VEM end near ω = 0, without a warning or a probe restart
+    dz = DataModel(fx_re_model(), DataFrame(ID = ids, t = repeat(collect(1.0:5.0), 12), y = 2.0 .+ noise); primary_id = :ID, time_col = :t)
+    θ0.ω = 0.3
+    @test get_params(fit_model(dz, NoLimits.Laplace(); theta_0_untransformed = θ0); scale = :untransformed).ω < 1.0e-3
+    @test_logs min_level = Base.CoreLogging.Warn fit_model(
+        dz, NoLimits.VEM(; ignore_model_bounds = true, refine = false); theta_0_untransformed = θ0, rng = Xoshiro(1)
+    )
+    rz = fit_model(dz, NoLimits.VEM(; ignore_model_bounds = true); theta_0_untransformed = θ0, rng = Xoshiro(1))
+    @test get_params(rz; scale = :untransformed).ω < 1.0e-3
 end
 
 @testset "VEM: objective after refinement is the marginal likelihood at the estimate (#371)" begin
@@ -650,6 +689,14 @@ end
         @test get_result(rt).notes.elbo === get_result(rs).notes.elbo
         @test get_result(rt).eb_modes == get_result(rs).eb_modes
     end
+    # two fixed constants_re levels: per-level gradients of the fixed priors (#430; only
+    # exercised with more than one thread)
+    m = NoLimits.VEM(; refine = false, optim_kwargs = (; maxiters = 20))
+    cre = (; η = Dict(1 => [0.0, 0.0], 2 => [0.2, -0.1]))
+    rt = fit_model(dm, m; constants_re = cre, rng = Xoshiro(3))
+    rs = fit_model(dm, m; constants_re = cre, rng = Xoshiro(3), serialization = NoLimits.EnsembleSerial())
+    @test collect(get_params(rt; scale = :transformed)) == collect(get_params(rs; scale = :transformed))
+    @test get_objective(rt) === get_objective(rs)
 end
 
 @testset "VEM: Wald UQ, conditional draws from q, CV with constants_re" begin

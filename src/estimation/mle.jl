@@ -20,7 +20,10 @@ Maximum Likelihood Estimation for models without random effects.
   line search. For mini-batching wrap the method in [`MiniBatch`](@ref).
 - `optim_kwargs::NamedTuple = NamedTuple()`: keyword arguments forwarded to `Optimization.solve`
   (e.g. `maxiters`, `reltol`).
-- `adtype`: automatic-differentiation backend. Defaults to `AutoForwardDiff()`.
+- `adtype`: automatic-differentiation backend. Defaults to `AutoForwardDiff()`. With
+  Enzyme loaded, `AutoEnzyme()` works (runtime activity is switched on for you). Any
+  `adtype` other than ForwardDiff or FiniteDiff evaluates the objective serially, whatever
+  `serialization` is.
 - `lb`: lower bounds on the transformed parameter scale, or `nothing` to use the
   model-declared bounds.
 - `ub`: upper bounds on the transformed parameter scale, or `nothing`.
@@ -58,7 +61,7 @@ function MLE(;
     )
     optimizer = _resolve_outer_optimizer(optimizer)
     return MLE(
-        optimizer, _as_namedtuple(optim_kwargs), adtype, lb, ub,
+        optimizer, _as_namedtuple(optim_kwargs), _normalize_adtype(adtype), lb, ub,
         ignore_model_bounds, precondition, :all
     )
 end
@@ -88,6 +91,21 @@ function _require_no_random_effects(dm::DataModel)
     return nothing
 end
 
+# Enzyme cannot differentiate task creation (`_greedy_foreach`), so an `adtype` other than
+# ForwardDiff or finite differences evaluates the objective serially (#432).
+_ad_serialization(adtype, serialization) =
+    nameof(typeof(adtype)) in (:AutoForwardDiff, :AutoFiniteDiff) ? serialization :
+    EnsembleSerial()
+
+# Bare `AutoEnzyme()` gets runtime activity (and `Duplicated` where the objective captures
+# mutable caches); the conversion lives in NoLimitsEnzymeCoreExt (#432).
+_normalize_adtype(adtype; duplicated::Bool = false) = adtype
+function _normalize_adtype(adtype::Optimization.AutoEnzyme; duplicated::Bool = false)
+    _require_ext(:NoLimitsEnzymeCoreExt, :Enzyme, "`adtype = AutoEnzyme()`")
+    return _normalize_enzyme_adtype(adtype, duplicated)
+end
+function _normalize_enzyme_adtype end
+
 function _fit_no_re(
         dm::DataModel, method;
         constants::NamedTuple,
@@ -103,6 +121,7 @@ function _fit_no_re(
         fit_kwargs::NamedTuple = NamedTuple()
     )
     _require_no_random_effects(dm)
+    serialization = _ad_serialization(method.adtype, serialization)
 
     fe = get_fixed(get_model(dm))
     fixed_names = get_names(fe)

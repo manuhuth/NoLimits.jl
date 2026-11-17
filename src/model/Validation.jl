@@ -47,10 +47,21 @@ end
 # names and locally bound names excluded (`x.Age` contributes `x`, `Normal(; σ = s)`
 # contributes `s`, `j -> f(j)` contributes neither).
 function _nl_collect_free_syms!(out::Set{Symbol}, ex, bound::Set{Symbol} = Set{Symbol}())
-    ex isa Symbol && (ex in bound || push!(out, ex); return out)
+    # `begin`/`end` are index keywords (#427).
+    ex isa Symbol && (ex in bound || ex === :begin || ex === :end || push!(out, ex); return out)
     ex isa Expr || return out
-    if ex.head == :.
+    if _macro_is_broadcast(ex)
+        _nl_collect_free_syms!(out, ex.args[1], bound)
+        return _nl_collect_free_syms!(out, ex.args[2], bound)
+    elseif ex.head == :.
         return _nl_collect_free_syms!(out, ex.args[1], bound)
+    elseif ex.head == :(=) && length(ex.args) == 2
+        # Named-tuple keys and `let` targets are not free.
+        return _nl_collect_free_syms!(out, ex.args[2], bound)
+    elseif ex.head == :let
+        inner = union(bound, _macro_scope_bound(ex))
+        foreach(a -> _nl_collect_free_syms!(out, a, inner), ex.args)
+        return out
     elseif ex.head == :kw && length(ex.args) == 2
         return _nl_collect_free_syms!(out, ex.args[2], bound)
     elseif ex.head == :-> || ex.head == :function || ex.head == :do

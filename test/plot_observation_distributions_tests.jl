@@ -200,6 +200,9 @@ end
     @test plot_observation_distributions(
         dm; individuals_idx = 1, obs_rows = 1, observables = :y
     ) !== nothing
+    # shared y range starts at 0 so no bar is clipped (#429)
+    fig = plot_observation_distributions(res; individuals_idx = 1, obs_rows = 1:2, observables = :y)
+    @test all(a.finallimits[].origin[2] <= 0 for a in fig.content if a isa CairoMakie.Axis)
 end
 
 @testset "plot_observation_distributions supports varying non-ODE random-effect groups" begin

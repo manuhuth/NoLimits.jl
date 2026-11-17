@@ -10,6 +10,7 @@ using OptimizationOptimJL
 using OptimizationBBO
 using NoLimits.LineSearches
 using FiniteDifferences
+using ForwardDiff
 using Random
 using SciMLBase
 import Optimisers
@@ -379,6 +380,15 @@ for c in _GHQ_RE_FAMILY_CASES
                 dm, NoLimits.GHQuadrature(level = 2; optim_kwargs = (maxiters = 2,))
             )
             c.fit.check(res, dm)
+            # The accessor uses the fit's rule, also for bounded-support REs (#424).
+            θ̂ = NoLimits.get_params(res; scale = :untransformed)
+            @test get_loglikelihood_quadrature(res; level = 3) ≈
+                NoLimits.ghq_marginal(dm, θ̂; level = 3) rtol = 1.0e-6
+            # The AD gradient differentiates the mode and scale of the rule (#424).
+            fv = v -> NoLimits.ghq_marginal(dm, ComponentArray(v, getaxes(θ̂)); level = 3)
+            v = collect(θ̂)
+            @test ForwardDiff.gradient(fv, v) ≈
+                FiniteDifferences.grad(central_fdm(5, 1), fv, v)[1] rtol = 1.0e-5 atol = 1.0e-7
         end
 
         if c.re !== nothing
@@ -802,6 +812,13 @@ end
                 @test isapprox(bll, exact; rtol = 1.0e-5)
             end
         end
+        # The prior-centered level-2 sum of batch 1 is negative: `fallback = false` (used by
+        # the post-fit rule check, #424) reports it instead of using the level-1 rule.
+        m1 = NoLimits.build_re_measure_from_batch(infos[1], θ_re, cc, dm, cache)
+        sg2 = NoLimits.get_sparse_grid(2, 2)
+        @test NoLimits.batch_loglik_ghq(dm, infos[1], θ_re, m1, sg2, cc, cache; fallback = false) == -Inf
+        @test NoLimits.batch_loglik_ghq(dm, infos[1], θ_re, m1, sg2, cc, cache) ≈
+            NoLimits.batch_loglik_ghq(dm, infos[1], θ_re, m1, NoLimits.get_sparse_grid(2, 1), cc, cache)
     end
 
     @testset "fit recovers what Laplace recovers, with a finite objective" begin
@@ -865,6 +882,14 @@ end
             NoLimits._ghq_batch_ll(dm, infos[1], θ, cc, cache, level), exact; atol = 1.0e-8
         )
     end
+    # Post-fit rule check (#424): an exact rule agrees with the finer one, no warning.
+    rc = @test_logs min_level = Base.CoreLogging.Warn NoLimits._ghq_rule_check(
+        dm, infos, θ, cc, cache, 1, Any[nothing]
+    )
+    @test rc.rule_check.finer_level == 3
+    @test rc.rule_check.loglikelihood ≈ exact atol = 1.0e-8
+    @test rc.rule_check.loglikelihood_finer ≈ exact atol = 1.0e-8
+    @test isempty(rc.rule_check.fallback_batches)
 end
 
 # Issue #151: on ill-conditioned batches the adaptive rule was rejected by the
@@ -1045,6 +1070,16 @@ end
         rng = Xoshiro(42)
     )
     @test isfinite(get_objective(res))
+    rc = get_notes(res).rule_check
+    @test rc.level == 3 && rc.finer_level == 5
+    @test isfinite(rc.loglikelihood) && isfinite(rc.loglikelihood_finer)
+    @test rc.fallback_batches == Int[]
+    # 2-D non-Gaussian batch, unconverged rule: AD still matches FD of the objective (#424).
+    θ̂ = NoLimits.get_params(res; scale = :untransformed)
+    fv = v -> NoLimits.ghq_marginal(dm, ComponentArray(v, getaxes(θ̂)); level = 3)
+    v = collect(θ̂)
+    @test ForwardDiff.gradient(fv, v) ≈
+        FiniteDifferences.grad(central_fdm(5, 1), fv, v)[1] rtol = 1.0e-5 atol = 1.0e-7
 end
 
 @testset "Transports for one-sided shifted supports (#249 NL-05)" begin

@@ -147,8 +147,10 @@ A scalar real-valued fixed-effect parameter block.
   `REAL_SCALES` (`:identity`, `:log`, `:logit`) or a [`Logit`](@ref)`(a, b)` for values
   in `(a, b)`. For `:logit`/`Logit(a, b)` the initial value must lie in the open domain and
   finite `lower`/`upper` must lie in the closed domain (`[0, 1]` for `:logit`).
-- `lower::Real = -Inf`: lower bound on the natural scale (defaults to `EPSILON` when `scale=:log`).
-- `upper::Real = Inf`: upper bound on the natural scale.
+- `lower::Real = -Inf`: lower bound on the natural scale (defaults to `EPSILON` when `scale=:log`
+  and to `a` for `Logit(a, b)`, `0` for `:logit`).
+- `upper::Real = Inf`: upper bound on the natural scale (defaults to `b` for `Logit(a, b)`, `1`
+  for `:logit`).
 - `prior = Priorless()`: prior distribution (`Distributions.Distribution`) or `Priorless()`.
   If left `Priorless()` while BOTH `lower` and `upper` are explicitly finite, the prior
   defaults to `Uniform(lower, upper)` on the natural scale. The `EPSILON` lower auto-applied
@@ -183,7 +185,12 @@ function RealNumber(
         lower >= 0 ||
             error("Invalid lower bound for parameter $(name). Expected lower > 0 for scale :log; got lower=$(lower).")
     end
-    _is_logit_scale(scale) && _check_logit_scale(name, "", scale, value, lower, upper)
+    if _is_logit_scale(scale)
+        _check_logit_scale(name, "", scale, value, lower, upper)
+        # the open domain (a, b) is the default box, so every bound check sees it (#422)
+        a, b = _logit_domain(scale)
+        lower, upper = max(lower, a), min(upper, b)
+    end
     T = value isa AbstractFloat ? typeof(value) : Float64
     v = T(value)
     l = T(lower)
@@ -207,8 +214,9 @@ A vector of real-valued fixed-effect parameters with per-element scale options.
 - `scale`: per-element scales. A single scale or a vector of the same length as `value`.
   Each element is in `REAL_SCALES` (`:identity`, `:log`, `:logit`) or a
   [`Logit`](@ref)`(a, b)`, e.g. `[:log, Logit(0, 5)]`. Defaults to all `:identity`.
-- `lower`: lower bounds per element. Defaults to `-Inf` (or `EPSILON` for `:log` elements).
-- `upper`: upper bounds per element. Defaults to `Inf`.
+- `lower`: lower bounds per element. Defaults to `-Inf` (`EPSILON` for `:log` elements, the
+  domain edge `a` for `Logit(a, b)` and `0` for `:logit` elements).
+- `upper`: upper bounds per element. Defaults to `Inf` (`b` for `Logit(a, b)`, `1` for `:logit`).
 - `prior = Priorless()`: a `Distributions.Distribution`, a `Vector{Distribution}` of
   matching length, or `Priorless()`. If left `Priorless()` while at least one element has
   BOTH an explicitly finite `lower` and `upper`, the prior defaults to a product
@@ -261,6 +269,11 @@ function RealVector(
         li = lower isa AbstractVector ? lower[idx] : lower
         ui = upper isa AbstractVector ? upper[idx] : upper
         _check_logit_scale(name, " at index $(idx)", sc, vi, li, ui)
+    end
+    if any(_is_logit_scale, s)
+        dom = map(sc -> _is_logit_scale(sc) ? _logit_domain(sc) : (-Inf, Inf), s)
+        lower = max.(lower, first.(dom))
+        upper = min.(upper, last.(dom))
     end
 
     T = eltype(value) <: AbstractFloat ? eltype(value) : Float64

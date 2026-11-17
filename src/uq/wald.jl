@@ -599,6 +599,7 @@ function _compute_uq_wald_re(
             ll_cache_local = ll_cache isa AbstractVector ? ll_cache[1] : ll_cache
             total = 0.0
             for info in batch_infos
+                iszero(_batch_weight(dm, get_inds(info))) && continue
                 bll = _ghq_batch_ll(
                     dm, info,
                     _symmetrize_psd_params(θu, fe),
@@ -683,6 +684,7 @@ function _compute_uq_wald_re(
     elseif vcov == :sandwich
         B = zeros(Float64, length(active_idx), length(active_idx))
         for (bi, info) in enumerate(batch_infos)
+            iszero(_batch_weight(dm, get_inds(info))) && continue
             info_single = REBatchInfo[info]
             ebe_cache_i = _init_laplace_eval_cache(1, Float64)
             seed_i = seed + UInt64(bi)

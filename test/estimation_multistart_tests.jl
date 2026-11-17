@@ -61,6 +61,23 @@ end
     starts = NoLimits.get_multistart_starts(res)
     @test length(starts) == 3
     @test all(s -> s.σ == starts[1].σ, starts) # σ not sampled, stays fixed
+
+    # constants are applied before screening and are not sampled (#426)
+    ms_c = NoLimits.Multistart(
+        dists = (; a = Normal(0.0, 1.0), b = Normal(0.0, 1.0)), n_draws_requested = 6,
+        n_draws_used = 2, progress = false
+    )
+    res_c = @test_logs (:info, "Multistart") match_mode = :any fit_model(
+        ms_c, fx_nore_dm(), NoLimits.MLE(; optim_kwargs = (maxiters = 2,));
+        constants = (; a = 0.7)
+    )
+    @test all(s -> s.a == 0.7, NoLimits.get_multistart_starts(res_c))
+    @test collect(keys(NoLimits._collect_param_dists(fx_nore_dm(), ms_c; constants = (; a = 0.7)))) == [:b]
+    # a dists key that names no fixed effect is an error (#426)
+    @test_throws r"not a fixed-effect name" fit_model(
+        NoLimits.Multistart(dists = (; aa = Normal()), n_draws_requested = 2, n_draws_used = 2),
+        fx_nore_dm(), NoLimits.MLE(; optim_kwargs = (maxiters = 2,))
+    )
 end
 
 @testset "Multistart supplied dists are truncated to bounds" begin

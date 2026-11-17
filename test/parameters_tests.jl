@@ -337,6 +337,15 @@ end
     @test Logit() === Logit(0.0, 1.0)
     @test RealNumber(0.3; scale = Logit(0, 1)).scale === :logit
     @test RealNumber(2.0; scale = Logit(0, 5)).scale === Logit(0.0, 5.0)
+    # the domain is the default box; explicit tighter bounds win (#422)
+    p = RealNumber(2.0; scale = Logit(0, 5))
+    @test (p.lower, p.upper) == (0.0, 5.0)
+    @test (RealNumber(2.0; scale = Logit(0, 5), upper = 4.0).upper) == 4.0
+    @test (RealNumber(0.3; scale = :logit).lower, RealNumber(0.3; scale = :logit).upper) == (0.0, 1.0)
+    @test RealNumber(2.0; scale = Logit(0, 5)).prior isa NoLimits.Priorless
+    vb = RealVector([0.3, 2.0, 1.0, -1.0]; scale = [:logit, Logit(0, 5), :log, :identity])
+    @test vb.lower == [0.0, 0.0, NoLimits.EPSILON, -Inf]
+    @test vb.upper == [1.0, 5.0, Inf, Inf]
     v = RealVector([0.3, 2.0, 1.0]; scale = [:logit, Logit(0, 5), :log])
     @test v.scale == [:logit, Logit(0.0, 5.0), :log]
     @test RealVector([0.3, 0.4]; scale = Logit(0, 1)).scale == [:logit, :logit]

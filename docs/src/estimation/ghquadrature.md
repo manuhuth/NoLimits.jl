@@ -183,6 +183,8 @@ ll         = get_loglikelihood(res)   # sparse-grid marginal log-likelihood
 
 The Smolyak weights alternate in sign at higher levels (inclusion-exclusion construction). When the integrand is not well approximated by the Gaussian reference of the rule, the positive and negative contributions can nearly cancel, producing a numerically small or negative result from the signed logsumexp. When the signed sum of a batch is not positive and finite, that batch falls back to the single-node level-1 rule (weight 1, so it cannot be negative; under the adaptive rule its value is the Laplace approximation), and a warning is emitted once. This applies to adaptive and prior-centered batches alike. The batch log-likelihood is `-Inf` only if the level-1 value is not finite either.
 
+A positive signed sum can be inaccurate as well, and with several random effects per batch the error need not decrease monotonically in the level. After a fit with an integer `level` and at least one batch with two or more random effects, the marginal log-likelihood at the estimate is recomputed with the next finer rule (`level + 2`); a warning is emitted when the two differ by more than 0.5, or when a batch uses the level-1 fallback at the estimate. The values and the fallback batches are stored in `get_notes(res).rule_check`.
+
 Practical guidance:
 
 - Levels 1-3 are numerically stable for most NLME models with moderate data.

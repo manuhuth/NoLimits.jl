@@ -264,7 +264,9 @@ How the methods use the weights:
 - `VEM`: the ELBO term of each batch is multiplied by its weight, as is its marginal log-likelihood term in the refinement step and in the reported objective. The fitted variational distributions are unaffected, since the weight of a batch does not change its optimum.
 - `MCMC`, `VI`: the log-likelihood is weighted; the priors on fixed and random effects are not.
 - `SAEM`, `MCEM`: the E-step samples from the unweighted conditional distributions. The M-step objective weights each batch, and the closed-form updates use weighted sufficient statistics divided by the summed weights. User-supplied `suffstats` functions receive the `DataModel` and must apply `get_weights(dm)` themselves.
-- `get_loglikelihood` and the marginal likelihood accessors return the weighted value.
+- `get_loglikelihood` and the marginal likelihood accessors return the weighted value. `complete_data_loglikelihood` and `complete_data_loglikelihood_per_individual` multiply each individual's term, including the random-effect prior it carries, by its weight; the batch-level method-developer functions (`complete_data_loglikelihood(dm, batch, θ, b)`) stay unweighted.
+- `Multistart(; screening = :ebe)` weights each individual's joint log-density in the screening score.
+- An individual (or batch) of weight 0 is skipped before it is evaluated, so it is equivalent to removing it even when its log-likelihood is not finite.
 - `compute_uq(res; method = :wald)` defaults to the sandwich covariance `H^{-1} B H^{-1}` with `B = \sum_b w_b^2 g_b g_b^T` when the data model is weighted; the inverse Hessian of a weighted objective is not a covariance estimate. Pass `vcov = :hessian` to override. Profile likelihoods use the weighted objective.
 - `fit_cv` adds a `:weight` column to `get_obs_scores` and weights each held-out individual's scores by its weight in the fold totals; `mean_obs_loglikelihood` divides the weighted sum by the summed weights of the scored observations. The per-row `:loglikelihood` values stay unweighted. Pass `weighted = false` for unweighted totals. The training fits are weighted either way.
 

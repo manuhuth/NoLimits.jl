@@ -69,8 +69,9 @@ VEM takes the same optimizer keywords as [`Laplace`](@ref) and [`MLE`](@ref):
   `LBFGS(m = 20, linesearch = BackTracking(maxstep = 30.0))` from OptimizationOptimJL.
 - `optim_kwargs`: keyword arguments forwarded to `Optimization.solve`. With the default
   (`nothing`) VEM uses `(; maxiters = 1000)`, plus `g_abstol = 1e-5`, `reltol = 1e-8` and
-  `allow_f_increases = false` for an Optim.jl optimizer. A NamedTuple you pass replaces
-  these defaults.
+  `allow_f_increases = false` for an Optim.jl optimizer (`reltol = 1e-12` for a
+  `PlanarFlowFamily`, whose ill-conditioned joint problem `1e-8` stopped early). A
+  NamedTuple you pass replaces these defaults.
 - `adtype`: the default `AutoForwardDiff()` differentiates batch by batch in forward mode.
   Reverse mode through Enzyme differentiates each batch's ELBO over the fixed effects and
   that batch's variational parameters in one pass (batches threaded like the default) and pays
@@ -147,13 +148,20 @@ distribution is the Laplace approximation at ``\hat\theta``.
   quadrature (or importance-sampled) marginal likelihood over the fixed effects, with the
   rule of each batch re-centered at the mode of its integrand at every θ. This removes the
   bias of the Gaussian family. `:auto` refines for at most 50 free fixed-effect
-  coordinates and at most three random effects per batch.
+  coordinates and at most three random effects per batch. When a 10 times larger standard
+  deviation of a Normal or LogNormal random effect lowers that objective, the refinement
+  restarts from there, since the gradient in log scale vanishes near zero variance and a fit
+  from a tiny start could stop at a collapsed variance (scalar standard deviations only).
+  Without a refinement, and with `n_is > 0`, VEM warns in that case.
 - `n_is = 1000`, `is_df = 5.0`: importance-sampling draws and t degrees of freedom of the
   reported objective, an estimate of ``-\log p(y \mid \hat\theta)``, for batches with more
   than three random effects. Batches with one to three random effects use adaptive
   Gauss-Hermite quadrature around q (21, 9² or 7³ nodes, the `refine` rule; after a
   refinement centered at the mode at the estimate) instead.
   `n_is = 0` reports the negative ELBO instead.
+  `get_result(res).notes.elbo` is the ELBO of the joint fit (its fixed effects and fitted
+  q, also after a refinement). With Monte Carlo draws it is the sample average over the
+  fixed draws the fit optimized, biased upward, so it can exceed ``\log p(y \mid \theta)``.
 - `ebe_*`: options of the empirical Bayes modes computed after the fit.
 
 ## Results and Reproducibility

@@ -70,7 +70,9 @@ effects: no inner mode finding or Hessian per objective evaluation, unlike Lapla
   stages). `nothing` uses `(; maxiters = 1000)`, plus `g_abstol = 1e-5`, `reltol = 1e-8` and
   `allow_f_increases = false` for an Optim.jl optimizer (the sample-average objective's
   gradient norm stalls around 1e-2 near the optimum, so in practice the relative objective
-  change stops the fit). A user-supplied NamedTuple replaces these defaults.
+  change stops the fit). For a [`PlanarFlowFamily`](@ref) the default `reltol` is `1e-12`:
+  the flow's joint problem is ill-conditioned, and `1e-8` stopped it far from the optimum
+  with a successful return code. A user-supplied NamedTuple replaces these defaults.
 - `adtype = AutoForwardDiff()`: automatic differentiation of the joint objective. The default
   differentiates per batch in forward mode (cheap for few fixed effects). Any other ADTypes
   backend - typically `AutoEnzyme(mode = Enzyme.set_runtime_activity(Enzyme.Reverse),
@@ -123,7 +125,12 @@ effects: no inner mode finding or Hessian per objective evaluation, unlike Lapla
   The refinement uses the same `optimizer`, `optim_kwargs` and bounds as the joint fit,
   followed by a damped Newton finish (at most 50 fixed-effect coordinates; Hessian by
   central differences of the gradient) within the remaining `maxiters`, whose
-  `g_abstol` / `reltol` test decides the refinement's convergence.
+  `g_abstol` / `reltol` test decides the refinement's convergence. When a larger standard
+  deviation of a Normal/LogNormal random effect lowers the objective (10x steps), the
+  refinement restarts from there: the gradient in log scale vanishes near zero variance, so
+  a fit from a tiny start could otherwise stop at a collapsed variance (the restart has its
+  own `maxiters`; scalar standard deviations only). Without refinement VEM warns in that
+  case (with `n_is > 0`).
 - `ebe_*`: options of the final empirical-Bayes modes (as for `MCEM`).
 
 The `penalty` and `extra_objective` keywords of [`fit_model`](@ref) act as for `Laplace`:
@@ -136,6 +143,11 @@ fixed through `constants_re` enter as for `Laplace`: with the prior density of t
 values (once per fixed level, also when the level is shared by several batches, weighted by
 the common weight of its individuals), and a batch without free levels (no q) with its
 log-likelihood at the fixed values.
+
+`get_result(res).notes.elbo` is the ELBO of the joint fit at its fixed effects and fitted q,
+also when `refine` moved ``\\hat\\theta``. With Monte Carlo draws (`expectation = :mc`, flows)
+it is the sample average over the fixed draws the fit optimized, biased upward, so it can
+exceed log p(y | θ).
 
 For mini-batching (stochastic VEM) wrap the method in [`MiniBatch`](@ref); the penalty and
 `extra_objective` are then added once per iteration, not scaled by the number of batches.
@@ -228,7 +240,7 @@ function VEM(;
         (optimizer = OptimizationOptimJL.LBFGS(m = 20, linesearch = LineSearches.BackTracking(maxstep = 30.0)))
     optim_kwargs === nothing && (
         optim_kwargs = optimizer isa Optim.AbstractOptimizer ?
-            (; maxiters = 1000, g_abstol = 1.0e-5, reltol = 1.0e-8, allow_f_increases = false) :
+            (; maxiters = 1000, g_abstol = 1.0e-5, reltol = flow > 0 ? 1.0e-12 : 1.0e-8, allow_f_increases = false) :
             (; maxiters = 1000)
     )
     ebe = EBEOptions(
@@ -237,7 +249,7 @@ function VEM(;
         ebe_multistart_sampling
     )
     return VEM(
-        optimizer, _as_namedtuple(optim_kwargs), adtype, lb, ub, ignore_model_bounds,
+        optimizer, _as_namedtuple(optim_kwargs), _normalize_adtype(adtype; duplicated = true), lb, ub, ignore_model_bounds,
         n_samples, expectation, family, flow, flow_seed, init, n_is, Float64(is_df),
         refine === :auto ? :auto : refine === true ? :on : refine === false ? :off :
             error("VEM: refine must be :auto, true or false. Got: $refine"),
@@ -896,6 +908,22 @@ function _vem_foreach(f, n::Int, caches::Vector)
     return nothing
 end
 
+# free scalar sds of Normal/LogNormal random effects
+function _vem_re_sd_names(dm::DataModel, idx_free::ComponentArray)
+    re_model = get_random(get_model(dm))
+    dists = get_re_dist_exprs(re_model)
+    fixed_set = Set{Symbol}(get_names(get_fixed(get_model(dm))))
+    names = Symbol[]
+    for re in get_re_names(re_model)
+        hasproperty(dists, re) || continue
+        m = _saem_parse_re_gaussian_mapping(getproperty(dists, re), fixed_set)
+        (m === nothing || !(m.family in (:normal, :lognormal)) || m.cov === nothing) && continue
+        (hasproperty(idx_free, m.cov) && getproperty(idx_free, m.cov) isa Int) || continue
+        m.cov in names || push!(names, m.cov)
+    end
+    return names
+end
+
 # whether a batch carries the prior of a random-effect level fixed by `constants_re`: a
 # fixed level shared by several batches is counted only in the batch of its owner
 # (`_const_re_prior_logf`), so its prior enters the objective once
@@ -1016,6 +1044,8 @@ function _fit_model(
     idx_full = ComponentArray(collect(1:length(θ_const_t)), axs_full)
     free_idx = reduce(vcat, [vec(collect(getproperty(idx_full, n))) for n in free_names])
     θu_of(xθ) = inv_transform(_merge_free_into_full(θ_const_t_vec, free_idx, xθ, axs_full))
+    idx_free = ComponentArray(collect(1:length(θt_free)), axs_free)
+    sd_names = _vem_re_sd_names(dm, idx_free)
 
     # ---- variational layout, fixed draws, initialization ----
     family = method.family
@@ -1081,9 +1111,10 @@ function _fit_model(
             n = nb[bi]
             o = first(ranges[k]) - 1 + _vem_nkappa(n, family)
             for l in 1:method.flow
-                # |w| ≈ 1: with |w| = 0.1 the û reparameterization was ill-conditioned
-                # (1000 L-BFGS iterations, Ω off by 0.3 on a 3-RE binary model)
-                w = randn(rngf, n) ./ sqrt(n)
+                # |w| = 1: with |w| = 0.1 the û reparameterization was ill-conditioned
+                # (1000 L-BFGS iterations, Ω off by 0.3 on a 3-RE binary model); randn / √n
+                # gave small |w| for n = 1 and stopped flow fits far from the optimum (#430)
+                w = normalize(randn(rngf, n))
                 ol = o + (l - 1) * (2n + 1)
                 x0[(ol + 1):(ol + n)] .= w .* (log(ℯ - 1) / sum(abs2, w))
                 x0[(ol + n + 1):(ol + 2n)] .= w
@@ -1132,7 +1163,7 @@ function _fit_model(
                 gθ .+= DRg.gradient(r)
             end
             _vem_foreach(nf, caches) do j, lc
-                r = DRg.GradientResult(xθ)
+                local r = DRg.GradientResult(xθ)
                 ForwardDiff.gradient!(r, z -> fixed_ll(θu_of(z), j, lc), xθ)
                 fvals[j] = DRg.value(r)
                 fgs[j] = copy(DRg.gradient(r))
@@ -1426,25 +1457,58 @@ function _fit_model(
         ropt, rbounds = _bounded_optimizer(method.optimizer, use_bounds, lb, ub)
         rprob = rbounds ? OptimizationProblem(rf, xθ0; lb = lb, ub = ub) :
             OptimizationProblem(rf, xθ0)
-        rsol = Optimization.solve(rprob, ropt; method.optim_kwargs...)
-        refine_retcode = rsol.retcode
-        refine_iters = _sol_iterations(rsol)
         # damped Newton finish (p ≤ 50), which also decides convergence: L-BFGS in these
         # coordinates stalls when the problem is ill-conditioned (M18: cond(H) ≈ 6e5, stopped
         # by reltol 0.004 above the optimum, which Newton reaches in 2 steps) or fails its
         # first line search (M19: fr = Inf at α = 1 along -g). Within the remaining maxiters.
-        xr = Vector{Float64}(rsol.u)
         okw = method.optim_kwargs
-        nmax = p <= 50 ? min(50, get(okw, :maxiters, 1000) - refine_iters) : 0
-        newton_ok = rsol.retcode == SciMLBase.ReturnCode.Success
-        if nmax > 0
-            fθ, newton_ok, nit = _vem_newton_finish!(
-                fr, (G, x) -> fgr!(nothing, G, x), xr, lb, ub, nmax,
-                Float64(get(okw, :g_abstol, 1.0e-5)), Float64(get(okw, :reltol, 1.0e-8))
-            )
-            refine_iters += nit
-        else
-            fθ = fr(xr)
+        rtol = Float64(get(okw, :reltol, 1.0e-8))
+        function refine_from(xs)
+            local rsol = Optimization.solve(remake(rprob; u0 = xs), ropt; okw...)
+            local its = _sol_iterations(rsol)
+            local x = Vector{Float64}(rsol.u)
+            local nmax = p <= 50 ? min(50, get(okw, :maxiters, 1000) - its) : 0
+            local ok = rsol.retcode == SciMLBase.ReturnCode.Success
+            local fx, nit
+            if nmax > 0
+                fx, ok, nit = _vem_newton_finish!(
+                    fr, (G, z) -> fgr!(nothing, G, z), x, lb, ub, nmax,
+                    Float64(get(okw, :g_abstol, 1.0e-5)), rtol
+                )
+                its += nit
+            else
+                fx = fr(x)
+            end
+            return x, fx, ok, its, rsol.retcode
+        end
+        xr, fθ, newton_ok, refine_iters, refine_retcode = refine_from(xθ0)
+        # #430: the gradient in log sd vanishes as an RE sd goes to 0, so a fit from a tiny
+        # start could end there although the marginal likelihood still decreases with the
+        # variance (sd 5e-5, objective 70.27 vs 58.43). Probe 10x larger sds and restart
+        # from the best when the objective drops.
+        if isfinite(fθ) && newton_ok
+            tol = rtol * max(abs(fθ), 1.0)
+            xb, fb = xr, fθ
+            for name in sd_names
+                j = getproperty(idx_free, name)
+                for _ in 1:8
+                    θn = θu_of(xb)
+                    setproperty!(θn, name, 10 * getproperty(θn, name))
+                    xp = copy(xb)
+                    xp[j] = getproperty(transform(θn), name)
+                    xp[j] <= ub[j] || break
+                    fp = fr(xp)
+                    fp < fb - tol || break
+                    xb, fb = xp, fp
+                end
+            end
+            if xb !== xr
+                xe, fθe, oke, itse, rce = refine_from(xb)
+                refine_iters += itse
+                if isfinite(fθe) && fθe < fθ - tol
+                    xr, fθ, newton_ok, refine_retcode = xe, fθe, oke, rce
+                end
+            end
         end
         if isfinite(fθ) && fθ <= fr(xθ0)
             xθ_hat = xr
@@ -1454,47 +1518,72 @@ function _fit_model(
         end
     end
     θ_hat_t = transform(θ_hat_u)
-    # -ELBO at the returned θ̂ and the fitted κ̂ (after an accepted refinement θ̂ is not the
-    # joint optimum). notes.elbo is the bound itself; the penalty and extra_objective are
-    # reported only in the objective (as for Laplace)
+    # -ELBO at the returned θ̂ and the fitted κ̂ (the n_is = 0 objective). notes.elbo is the
+    # ELBO of the joint fit (θ, κ̂), also after an accepted refinement (κ̂ was not fitted at
+    # the refined θ); the penalty and extra_objective are reported only in the objective
     obj_joint = fg!(0.0, nothing, vcat(xθ_hat, x̂[(p + 1):end]))
-    elbo = has_pen ? -(obj_joint - pen_of(θ_hat_u)) : -obj_joint
+    obj_elbo = refined ? fg!(0.0, nothing, x̂) : obj_joint
+    elbo = has_pen ? -(obj_elbo - pen_of(θu_of(x̂[1:p]))) : -obj_elbo
 
     # ---- objective: importance-sampling marginal likelihood around the fitted q ----
     # batches with 1-3 REs: adaptive tensor Gauss-Hermite around q (the refinement rule;
     # deterministic and more accurate than n_is draws), otherwise t importance sampling.
     # After a refinement the rule is re-centered at θ̂ (q was fitted at the VEM estimate).
-    objective = if method.n_is > 0
-        is_rngs = _spawn_child_rngs(rng, nk)
+    # -log marginal at θu: adaptive GH (1-3 REs) or t importance sampling around q, the rule
+    # re-centered at θu when `adapt`; `rngs` drive the nodes and draws
+    function marg_nll(θu, xθ, adapt, rngs)
         lls = Vector{Float64}(undef, nk)
         _vem_foreach(nk, caches) do k, lc
             iszero(wk[k]) && (lls[k] = 0.0; return)
-            bi = keep[k]
+            local bi = keep[k]
             # after a refinement: Newton from the refinement's start, so that 1-3 RE batches
             # report the value it minimized
-            μq, Lq = do_refine ? (qs[k][1], qs[k][2]) :
+            local μq, Lq = do_refine ? (qs[k][1], qs[k][2]) :
                 _vem_q_moments(Vector{Float64}(x̂[ranges[k]]), ξs[k], nb[bi], family, θ_hat_u)
-            do_refine &&
-                ((μq, Lq) = _vem_adapt_rule(θ_hat_u, μq, Lq, dm, batch_infos[bi], const_cache, lc))
+            adapt &&
+                ((μq, Lq) = _vem_adapt_rule(θu, μq, Lq, dm, batch_infos[bi], const_cache, lc))
             lls[k] = nb[bi] <= 3 ?
                 _vem_refine_batch_ll(
-                    θ_hat_u, μq, Lq, _vem_refine_nodes(nb[bi], 0, method.is_df, is_rngs[k])...,
+                    θu, μq, Lq, _vem_refine_nodes(nb[bi], 0, method.is_df, rngs[k])...,
                     dm, batch_infos[bi], const_cache, lc
                 ) :
                 _vem_is_loglik(
-                    θ_hat_u, μq, Lq, nb[bi], method.n_is, method.is_df,
-                    is_rngs[k], dm, batch_infos[bi], const_cache, lc
+                    θu, μq, Lq, nb[bi], method.n_is, method.is_df,
+                    rngs[k], dm, batch_infos[bi], const_cache, lc
                 )
         end
         ll = 0.0
         for k in 1:nk
             ll += wk[k] * lls[k]
         end
-        # fixed batches, penalty and extra_objective at θ̂ (glob is their negative sum)
-        -ll + (has_glob ? glob(xθ_hat, nothing) : 0.0)
-    else
-        obj_joint
+        # fixed batches, penalty and extra_objective (glob is their negative sum)
+        return -ll + (has_glob ? glob(xθ, nothing) : 0.0)
     end
+    is_rngs = method.n_is > 0 ? _spawn_child_rngs(rng, nk) : nothing
+    # #430 without refinement: warn when an RE sd ended far below its start while larger sds
+    # have a smaller marginal objective (common random numbers); a fit at a genuine
+    # zero variance stays silent
+    if !do_refine && is_rngs !== nothing
+        f_hat = nothing
+        for name in sd_names
+            v0, v = getproperty(θu0, name), getproperty(θ_hat_u, name)
+            v < min(0.1 * v0, 1.0e-3) || continue
+            f_hat === nothing && (f_hat = marg_nll(θ_hat_u, xθ_hat, true, copy.(is_rngs)))
+            j = getproperty(idx_free, name)
+            for c in (10.0, 1.0e2, 1.0e3, 1.0e4)
+                θn = copy(θ_hat_u)
+                setproperty!(θn, name, c * v)
+                xp = copy(xθ_hat)
+                xp[j] = getproperty(transform(θn), name)
+                xp[j] <= ub[j] || break
+                if marg_nll(θn, xp, true, copy.(is_rngs)) < f_hat - 1.0e-8 * max(abs(f_hat), 1.0)
+                    @warn "VEM: the scale $name of a random effect ended at $v, below 10% of its start $v0, although the marginal likelihood increases with it. The gradient in log scale vanishes near zero variance, so the fit stopped early; use refine = true or a larger start."
+                    break
+                end
+            end
+        end
+    end
+    objective = is_rngs === nothing ? obj_joint : marg_nll(θ_hat_u, xθ_hat, do_refine, is_rngs)
     niter = _sol_iterations(sol)
     # after an accepted refinement θ̂ is the refinement's optimum and the objective is
     # re-centered there, so the joint fit's retcode does not bear on it (M18: the joint fit

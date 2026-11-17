@@ -256,7 +256,7 @@ end
     # Linear PK compartment x1 (closed-form) driving a nonlinear PD state x2
     # (numerical, reads x1(t) from the closed form). Compare marginal loglik at
     # fixed params to the full numerical solve.
-    function pkpd(cf; alg = nothing)
+    function pkpd(cf; alg = nothing, kw...)
         m = @Model begin
             @fixedEffects begin
                 k = RealNumber(0.5, scale = :log)
@@ -279,7 +279,7 @@ end
                 y ~ Normal(x2(t), σ)
             end
         end
-        set_solver_config(m; alg = alg, saveat_mode = :saveat, closed_form = cf)
+        set_solver_config(m; alg = alg, saveat_mode = :saveat, closed_form = cf, kw...)
     end
     df = DataFrame(
         ID = [1, 1, 1, 1, 2, 2, 2, 2],
@@ -310,6 +310,22 @@ end
     r_s = fit_model(dm_off_s, NoLimits.MLE())
     @test isfinite(NoLimits.get_objective(fit_model(dm_cf_s, NoLimits.MLE())))
     @test NoLimits.get_loglikelihood(dm_cf_s, r_s) ≈ NoLimits.get_loglikelihood(dm_off_s, r_s) rtol = 1.0e-4
+
+    # The hybrid's numerical solve honours fallback_alg (#428): stiff kout exhausts the
+    # Tsit5 step budget, the Rodas5P retry must match the stiff-solver reference.
+    fbkw = (; kwargs = (; maxiters = 300, abstol = 1.0e-8, reltol = 1.0e-8))
+    θs = get_θ0_untransformed(get_model(dm_cf).fixed.fixed)
+    vs = collect(θs)
+    vs[3] = 1.0e5
+    llf(dm) = v -> NoLimits.loglikelihood(
+        dm, ComponentArray(v, getaxes(θs)), NoLimits._default_random_effects_from_dm(dm, NamedTuple(), θs)
+    )
+    f_nofb = llf(DataModel(pkpd(:all; alg = Tsit5(), fbkw...), df; primary_id = :ID, time_col = :t))
+    f_fb = llf(DataModel(pkpd(:all; alg = Tsit5(), fallback_alg = Rodas5P(), fbkw...), df; primary_id = :ID, time_col = :t))
+    f_ref = llf(DataModel(pkpd(:all; alg = Rodas5P(), fbkw...), df; primary_id = :ID, time_col = :t))
+    @test f_nofb(vs) == -Inf
+    @test f_fb(vs) ≈ f_ref(vs) rtol = 1.0e-8
+    @test ForwardDiff.gradient(f_fb, vs) ≈ ForwardDiff.gradient(f_ref, vs) rtol = 1.0e-6
 end
 
 # Bidirectional two-compartment (genuinely `:linear`, so opt-in via `closed_form = :all`)

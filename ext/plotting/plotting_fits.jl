@@ -53,10 +53,11 @@ function _plot_data_dm(
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        marginal_idx::Union{Nothing, Int} = nothing
+        marginal_idx::Union{Nothing, Int} = nothing,
+        observable = nothing
     )
     _check_positive_int(ncols, "ncols")
-    obs_name = _get_observable(dm, nothing)
+    obs_name = _get_observable(dm, observable)
     inds = _plot_individuals(dm, individuals_idx)
     (is_mv, n_marginals) = _obs_multivariate_info(dm, obs_name)
     marginal_colors = _marginal_colors(n_marginals, style)
@@ -71,10 +72,12 @@ function _plot_data_dm(
         x = _get_x_values(dm, ind, obs_rows, x_axis_feature)
         y = getfield(get_obs(get_series(ind)), obs_name)
         panel = _individual_panel(dm, i)
-        push!(panels, panel)
         if is_mv
             ms = marginal_idx === nothing ? (1:n_marginals) : (marginal_idx:marginal_idx)
             xs, ys = _collect_multivariate_series(x, y, n_marginals)
+            # an empty facet breaks AlgebraOfGraphics
+            all(m -> isempty(xs[m]), ms) && continue
+            push!(panels, panel)
             for m in ms
                 _push_xy!(obs_df, panel, xs[m], ys[m], _marginal_label(obs_name, m))
                 xlims = _merge_limits(xlims, xs[m])
@@ -82,6 +85,8 @@ function _plot_data_dm(
             end
         else
             xs, ys = _collect_scalar_series(x, y)
+            isempty(xs) && continue
+            push!(panels, panel)
             _push_xy!(obs_df, panel, xs, ys, "data")
             xlims = _merge_limits(xlims, xs)
             ylims = _merge_limits(ylims, ys)
@@ -116,11 +121,11 @@ function _plot_data_dm(
 end
 
 """
-    plot_data(res::FitResult; dm, x_axis_feature, individuals_idx, shared_x_axis,
+    plot_data(res::FitResult; dm, observable, x_axis_feature, individuals_idx, shared_x_axis,
               shared_y_axis, ncols, style, kwargs_subplot, kwargs_layout,
               save_path, marginal_layout) -> Makie.Figure | Vector{Makie.Figure}
 
-    plot_data(dm::DataModel; x_axis_feature, individuals_idx, shared_x_axis,
+    plot_data(dm::DataModel; observable, x_axis_feature, individuals_idx, shared_x_axis,
               shared_y_axis, ncols, style, kwargs_subplot, kwargs_layout,
               save_path, marginal_layout) -> Makie.Figure | Vector{Makie.Figure}
 
@@ -128,10 +133,12 @@ Plot raw observed data for each individual as a multi-panel figure.
 
 # Keyword Arguments
 - `dm::Union{Nothing, DataModel} = nothing`: data model (inferred from `res` by default).
+- `observable`: name of the outcome variable to plot, or `nothing` to use the first.
 - `x_axis_feature::Union{Symbol, Nothing} = nothing`: covariate to use as the x-axis;
   defaults to the time column.
 - `individuals_idx`: indices or IDs of individuals to include, in the given panel order,
   or `nothing` for all individuals in the order they first appear in the data.
+  Individuals without an observation of the outcome get no panel.
 - `shared_x_axis::Bool = true`: share and link the x axis across panels; inner tick labels
   are hidden and one x label spans the grid.
 - `shared_y_axis::Bool = true`: share and link the y axis across panels (same treatment).
@@ -159,10 +166,11 @@ function plot_data(
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        marginal_layout::Symbol = :single
+        marginal_layout::Symbol = :single,
+        observable = nothing
     )
     dm = _get_dm(res, dm)
-    obs_name = _get_observable(dm, nothing)
+    obs_name = _get_observable(dm, observable)
     marginal_layout in (:single, :vector) ||
         error("marginal_layout must be :single or :vector.")
     (is_mv, n_marginals) = _obs_multivariate_info(dm, obs_name)
@@ -182,7 +190,8 @@ function plot_data(
                 kwargs_subplot = kwargs_subplot,
                 kwargs_layout = kwargs_layout,
                 save_path = nothing,
-                marginal_idx = m
+                marginal_idx = m,
+                observable = observable
             )
         end
         return plots
@@ -197,7 +206,8 @@ function plot_data(
         style = style,
         kwargs_subplot = kwargs_subplot,
         kwargs_layout = kwargs_layout,
-        save_path = save_path
+        save_path = save_path,
+        observable = observable
     )
 end
 
@@ -212,9 +222,10 @@ function plot_data(
         kwargs_subplot = NamedTuple(),
         kwargs_layout = NamedTuple(),
         save_path::Union{Nothing, String} = nothing,
-        marginal_layout::Symbol = :single
+        marginal_layout::Symbol = :single,
+        observable = nothing
     )
-    obs_name = _get_observable(dm, nothing)
+    obs_name = _get_observable(dm, observable)
     marginal_layout in (:single, :vector) ||
         error("marginal_layout must be :single or :vector.")
     (is_mv, n_marginals) = _obs_multivariate_info(dm, obs_name)
@@ -234,7 +245,8 @@ function plot_data(
                 kwargs_subplot = kwargs_subplot,
                 kwargs_layout = kwargs_layout,
                 save_path = nothing,
-                marginal_idx = m
+                marginal_idx = m,
+                observable = observable
             )
         end
         return plots
@@ -249,7 +261,8 @@ function plot_data(
         style = style,
         kwargs_subplot = kwargs_subplot,
         kwargs_layout = kwargs_layout,
-        save_path = save_path
+        save_path = save_path,
+        observable = observable
     )
 end
 

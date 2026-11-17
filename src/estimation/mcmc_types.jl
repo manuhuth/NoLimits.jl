@@ -25,6 +25,17 @@ function _warn_if_scaled_params(fe::FixedEffects; method_name::AbstractString = 
     end
     isempty(ignored) ||
         @debug "$(method_name) uses priors on the natural scale; parameter scale settings are ignored during sampling." ignored_parameters = ignored
+    # Draws outside a scale's domain have no transformed value (#422).
+    priors = get_priors(fe)
+    for spec in specs
+        k = spec.kind
+        (k === :log || _is_logit_scale(k)) || continue
+        pr = haskey(priors, spec.name) ? getfield(priors, spec.name) : nothing
+        pr isa UnivariateDistribution || continue
+        a, b = k === :log ? (0.0, Inf) : _logit_domain(k)
+        (minimum(pr) < a || maximum(pr) > b) &&
+            @warn "$(method_name): the prior of $(spec.name) has support [$(minimum(pr)), $(maximum(pr))] beyond the domain ($(a), $(b)) of its scale $(repr(k)). Sampling ignores the scale, so draws can leave the domain; use a prior restricted to it, e.g. truncated(prior, $(a), $(b))."
+    end
     return nothing
 end
 

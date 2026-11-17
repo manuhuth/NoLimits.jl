@@ -423,7 +423,8 @@ function _fit_curve_from_cache(
         sol_accessors = _sol_accessors_from_cached(dm, ind, sol, θ, η_ind)
     end
 
-    preds = Vector{Float64}(undef, length(x_fit))
+    # raw statistics: vectors for multivariate outcomes, split per component by the caller
+    preds = Vector{Any}(undef, length(x_fit))
     rowwise_re = _needs_rowwise_random_effects(dm, ind_idx; obs_only = true)
     if use_dense
         for (j, t) in enumerate(x_fit)

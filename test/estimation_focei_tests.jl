@@ -198,6 +198,14 @@ end
     @test all(isfinite, Hmv_foce) && all(isfinite, Hmv_foci)
     @test !isapprox(Hmv_foce[1, 1], Hmv_foci[1, 1]; rtol = 1.0e-6)
 
+    # FOCE gradient includes ∂H/∂m · ∂m/∂μη through the frozen dispersion (#423).
+    θd = NL.get_params(dm; scale = :untransformed)
+    ebe = NL.EBEOptions(grad_tol = 1.0e-10, multistart_n = 1, multistart_k = 1)
+    foce = NL.FisherInformationCurvature(false)
+    _, gfoce = NL.laplace_marginal_gradient(dm, θd; curvature = foce, ebe_options = ebe)
+    margfoce(x) = NL.laplace_marginal(dm, ComponentArray(x, getaxes(θd)); curvature = foce, ebe_options = ebe)
+    @test collect(gfoce) ≈ FiniteDifferences.grad(central_fdm(5, 1), margfoce, collect(θd))[1] rtol = 1.0e-5
+
     # FOCE end-to-end fit runs.
     rf = fit_model(
         dm,

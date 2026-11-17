@@ -713,8 +713,8 @@ sampling-based marginal likelihood estimator.
 
 `θ_prior` supplies the parameters used inside the prior term of the correction. It
 defaults to `θu` and only differs on the AD path, where `θu` is the Float64 value
-(b*, H and S are frozen w.r.t. the outer derivative) while `θ_prior` still carries
-the `Dual` tags the gradient has to flow through.
+(b*, H and S are built in Float64 and lifted to the Duals by the caller) while
+`θ_prior` still carries the `Dual` tags the gradient has to flow through.
 """
 function build_centered_re_measure(
         b_star::AbstractVector,
@@ -789,14 +789,14 @@ which is exact for any invertible S, so this is the same integral; only the node
 changes. Centered at the prior (û = 0, S = I) a narrow likelihood bump is missed by the
 nodes and the estimate is badly off at any practical level.
 
-`û` and `S` are Float64 and frozen w.r.t. the outer AD (as for `CenteredREMeasure`);
+`û` and `S` are found in Float64 and lifted to the outer Duals by `_ghq_lift_mode`;
 `base` carries the θ-dependence of T and c.
 """
-struct AdaptiveTransportRE{M <: AbstractREMeasure} <: AbstractREMeasure
+struct AdaptiveTransportRE{M <: AbstractREMeasure, V <: AbstractVector, LT <: LowerTriangular, R <: Real} <: AbstractREMeasure
     base::M
-    û::Vector{Float64}
-    S::LowerTriangular{Float64, Matrix{Float64}}
-    log_det_S::Float64
+    û::V
+    S::LT
+    log_det_S::R
     n_b::Int
 end
 
@@ -805,7 +805,7 @@ function logcorrection(re::AdaptiveTransportRE, x::AbstractVector)
     u = re.û .+ re.S * x
     return logcorrection(re.base, u) - sum(abs2, u) / 2 + sum(abs2, x) / 2 + re.log_det_S
 end
-Base.eltype(re::AdaptiveTransportRE) = eltype(re.base)
+Base.eltype(re::AdaptiveTransportRE) = promote_type(eltype(re.base), eltype(re.û))
 
 # log of the u-space integrand of one batch (up to the constant -n_b/2 log 2π):
 # Σᵢ ℓᵢ(T(u)) + c(u) - |u|²/2. Generic in eltype(u) for ForwardDiff.

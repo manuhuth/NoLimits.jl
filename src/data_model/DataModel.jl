@@ -125,7 +125,9 @@ struct IndividualSeries{O, V, D}
     dyn::D
 end
 
-struct Individual{S, C, CB, TS, RG, SA}
+# Mutable: a `Vector{Individual}` then holds references, so indexing it never copies a mixed
+# pointer/bits struct to the stack, which Enzyme cannot type (#432).
+mutable struct Individual{S, C, CB, TS, RG, SA}
     series::S
     const_cov::C
     callbacks::CB

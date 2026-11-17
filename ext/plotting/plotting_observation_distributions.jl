@@ -190,8 +190,9 @@ function plot_observation_distributions(
                                 max(xlims_by_group[(i, obs_name, m)][2], xlim[2]),
                             ) :
                             xlim
-                        ylims = ylims === nothing ? (minimum(qlo), maximum(qhi)) :
-                            (min(ylims[1], minimum(qlo)), max(ylims[2], maximum(qhi)))
+                        # bars start at 0
+                        ylims = ylims === nothing ? (0.0, maximum(qhi)) :
+                            (min(ylims[1], 0.0), max(ylims[2], maximum(qhi)))
                     else
                         grid = _density_grid_continuous(dists, 0.99, 200)
                         grid === nothing &&
@@ -294,10 +295,9 @@ function plot_observation_distributions(
                                 max(xlims_by_group[(i, obs_name, m)][2], xlim[2]),
                             ) :
                             xlim
-                        ylims = ylims === nothing ? (minimum(probs), maximum(probs)) :
-                            (
-                                min(ylims[1], minimum(probs)), max(ylims[2], maximum(probs)),
-                            )
+                        # bars start at 0
+                        ylims = ylims === nothing ? (0.0, maximum(probs)) :
+                            (min(ylims[1], 0.0), max(ylims[2], maximum(probs)))
                     else
                         grid = _density_grid_continuous([dist], 0.99, 200)
                         grid === nothing &&

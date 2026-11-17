@@ -1435,6 +1435,42 @@ end
         @test NoLimits.get_loglikelihood(rw) ≈ NoLimits.get_loglikelihood(rd) rtol = 1.0e-6
     end
 
+    # Weight 0 is removal, also for an individual whose log-likelihood is -Inf (#425).
+    bad = df[df.ID .== 1, :]
+    bad.ID .= maximum(df.ID) + 1
+    bad.y .= 1.0e200
+    dfz = vcat(df, bad)
+    dfz.wz = [id == maximum(dfz.ID) ? 0.0 : 1.0 for id in dfz.ID]
+    dmz = mk(dfz; weights = :wz)
+    for m in (NoLimits.Laplace(), NoLimits.FOCEI(), NoLimits.GHQuadrature(level = 2))
+        vz, gz = og(m, dmz, θ)
+        v0, g0 = og(m, dm0, θ)
+        @test vz ≈ v0 rtol = 1.0e-10
+        @test collect(gz) ≈ collect(g0) rtol = 1.0e-8
+    end
+    @test NoLimits.laplace_marginal(dmz, θ) ≈ NoLimits.laplace_marginal(dm0, θ) rtol = 1.0e-10
+    @test NoLimits.ghq_marginal(dmz, θ; level = 2) ≈ NoLimits.ghq_marginal(dm0, θ; level = 2) rtol = 1.0e-10
+    η0 = NoLimits._build_mean_eta(dmz, θ)
+    @test NoLimits.loglikelihood(dmz, θ, η0) ≈ NoLimits.loglikelihood(dm0, θ, η0[1:(end - 1)]) rtol = 1.0e-12
+    lap2 = NoLimits.Laplace(; optim_kwargs = (maxiters = 2,))
+    @test NoLimits.get_objective(fit_model(dmz, lap2; serialization = ser)) ≈
+        NoLimits.get_objective(fit_model(dm0, lap2; serialization = ser)) rtol = 1.0e-8
+    @test complete_data_loglikelihood(dmz, θ; eta = :mean) ≈
+        complete_data_loglikelihood(dm0, θ; eta = :mean) rtol = 1.0e-12
+
+    # complete_data_loglikelihood and the :ebe Multistart screen score are weighted (#425).
+    for eta in (:mean, :ebe)
+        @test complete_data_loglikelihood(dmw, θ; eta = eta) ≈
+            complete_data_loglikelihood(dmd, θ; eta = eta) rtol = 1.0e-8
+        @test sum(complete_data_loglikelihood_per_individual(dmw, θ; eta = eta).complete_data_loglikelihood) ≈
+            complete_data_loglikelihood(dmw, θ; eta = eta) rtol = 1.0e-12
+    end
+    ebe_score(d) = NoLimits._build_ebe_eta(
+        d, θ, NoLimits.build_ll_cache(d; serialization = ser, force_saveat = true)
+    )[2]
+    @test ebe_score(dmw) ≈ ebe_score(dmd) rtol = 1.0e-8
+    @test ebe_score(dmz) ≈ ebe_score(dm0) rtol = 1.0e-12
+
     # No random effects: MLE objective/gradient.
     mn = fx_nore_model()
     dfn = copy(fx_nore_df())

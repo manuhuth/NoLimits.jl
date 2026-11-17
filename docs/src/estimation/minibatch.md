@@ -25,7 +25,8 @@ iteration:
 - an `Int` `m`: a random subset of `min(m, nbatches)` batches, drawn without replacement
   in every iteration;
 - a callable `(nbatches::Int, iter::Int, rng) -> indices` returning any iterable of `Int`
-  (duplicates are ignored), for example a deterministic cycle:
+  (duplicates are ignored); `rng` is the fit's `rng` (an `AbstractRNG`, so the argument
+  may be typed `rng::AbstractRNG`). For example, a deterministic cycle:
 
   ```julia
   cycle(nbatches, iter, rng) = [mod1(iter, nbatches)]

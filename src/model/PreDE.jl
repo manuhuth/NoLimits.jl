@@ -126,7 +126,12 @@ Each statement must be an assignment `name = expr`. The right-hand side may refe
 - fixed effects and random effects by name,
 - constant covariates (including vector fields `x.field`),
 - helper functions,
-- model functions (NNs, splines, soft trees).
+- model functions (NNs, splines, soft trees),
+- globals of the calling module.
+
+A variable name resolves from constant covariates, random effects and fixed effects first,
+then from a global of the calling module, then from a NoLimits global. A function name in
+call position resolves from model functions and helper functions only.
 
 The symbols `t` and `ξ` are forbidden (pre-DE variables are time-constant).
 
@@ -173,8 +178,10 @@ macro preDifferentialEquation(block)
     # An unresolvable symbol used to fall through to a bare `UndefVarError` at the first
     # objective evaluation (#309). Pre-DE variables assigned in this same block resolve
     # from the generated assignments below, so they keep the fall-through.
-    _unknown_sym = sym -> sym in names ? :() :
-        :(error($("Unknown symbol $(sym) in preDifferentialEquation.")))
+    # Last resort: a caller-module or NoLimits global, e.g. `abs2` in `sum(abs2, x)` (#427).
+    _unknown_sym = sym -> sym in names ? :() : _macro_global_fallback(
+            __module__, sym, :(error($("Unknown symbol $(sym) in preDifferentialEquation.")))
+        )
     binds_vars = [
         if sym in prop_syms
                 quote

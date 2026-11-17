@@ -8,6 +8,9 @@ using DataInterpolations
 using Lux
 using ForwardDiff
 
+# A same-named global must not replace the DynamicCovariateVector `inp` in the DE (#427).
+const inp = (i1 = t -> 100.0, i2 = t -> 0.0)
+
 function _varying_at(ind, idx)
     pairs = Pair{Symbol, Any}[]
     vary = ind.series.vary
@@ -189,7 +192,8 @@ end
         end
         @DifferentialEquation begin
             s(t) = 0.5 * inp.i2(t)
-            D(x) ~ -k * x + inp.i1(t) + s(t)
+            # A lambda call head must read the fixed effect `k` (#427).
+            D(x) ~ -(v -> v * k)(1.0) * x + inp.i1(t) + s(t)
         end
         @initialDE begin
             x = 1.0

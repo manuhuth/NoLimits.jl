@@ -1071,7 +1071,7 @@ canonicalize(::SciMLStructures.Initials, p::DEParams) = _canonicalize_empty(p)
 # written in (e.g. `const NSTATE = 4`), resolved when the macro expands. Model names
 # take precedence because the generated lookup tries them first.
 function _de_global_fallback(mod::Module, sym::Symbol, block::String)
-    isdefined(mod, sym) && return GlobalRef(mod, sym)
+    isdefined(mod, sym) && return _caller_global(mod, sym)
     return :(error($("Unknown symbol $(sym) in $(block).")))
 end
 
@@ -1133,13 +1133,21 @@ function _de_rewrite_all(
         elseif _de_dotted_call_base(f) in fun_syms
             # DynamicCovariateVector component, e.g. `w.a(t)`.
             return Expr(:call, Expr(:., Expr(:., :funs, QuoteNode(f.args[1])), f.args[2]), new_args...)
+        elseif f isa Expr && _de_dotted_call_base(f) === nothing
+            # Expression head, e.g. a lambda `(v -> v * k)(1.0)` (#427).
+            f = _de_rewrite_all(f, state_map, var_syms, fun_syms)
         end
         return Expr(:call, f, new_args...)
+    elseif ex.head == :->
+        # Rewrite the body only; parameters shadow model variables.
+        inner = setdiff(var_syms, _macro_scope_bound(ex))
+        return Expr(:->, ex.args[1], _de_rewrite_all(ex.args[2], state_map, inner, fun_syms))
     elseif ex.head == :. && length(ex.args) == 2 && ex.args[2] isa Expr &&
             ex.args[2].head == :tuple
         # broadcast call `f.(args...)`: rewrite the arguments; `f` is a function
         f = ex.args[1]
-        f_new = f isa Symbol && f in fun_syms ? Expr(:., :funs, QuoteNode(f)) : f
+        f_new = f isa Symbol && f in fun_syms ? Expr(:., :funs, QuoteNode(f)) :
+            f isa Expr ? _de_rewrite_all(f, state_map, var_syms, fun_syms) : f
         args = map(a -> _de_rewrite_all(a, state_map, var_syms, fun_syms), ex.args[2].args)
         return Expr(:., f_new, Expr(:tuple, args...))
     elseif ex.head == :.
@@ -1226,6 +1234,9 @@ function _de_hoist_invariants(rhs_exprs, signal_exprs, var_syms::Set{Symbol}, fu
         return rhs_exprs, signal_exprs, Pair{Symbol, Any}[], Symbol[]
     return rhs2, sig2, table, kept
 end
+
+_de_is_module(mod::Module, s::Symbol) =
+    any(m -> isdefined(m, s) && getfield(m, s) isa Module, (Base, @__MODULE__, mod))
 
 _de_dotted_call_base(f) = f isa Expr && f.head == :. && f.args[1] isa Symbol ? f.args[1] : nothing
 
@@ -1353,7 +1364,7 @@ function _de_rewrite_small_vectors(ex)
     if ex.head == :vect
         if length(ex.args) <= 8
             new_args = map(_de_rewrite_small_vectors, ex.args)
-            return Expr(:call, GlobalRef(StaticArrays, :SVector), new_args...)
+            return Expr(:call, _caller_global(StaticArrays, :SVector), new_args...)
         end
     end
     return Expr(ex.head, map(arg -> _de_rewrite_small_vectors(arg), ex.args)...)
@@ -1564,7 +1575,9 @@ macro DifferentialEquation(block)
         [
             s
                 for s in call_syms
-                if !(isdefined(Base, s) || isdefined(@__MODULE__, s) || s in dotted_bases && isdefined(__module__, s))
+                # A dotted base (`w.a(t)`) is kept unless it is a module, so a dynamic
+                # covariate wins over a same-named global (#427).
+                if !(s in dotted_bases ? _de_is_module(__module__, s) : (isdefined(Base, s) || isdefined(@__MODULE__, s)))
         ]
     )
     var_syms = _macro_filter_var_syms(var_syms)
@@ -1625,7 +1638,10 @@ macro DifferentialEquation(block)
             elseif hasproperty(helper_functions, $(QuoteNode(sym)))
                     getproperty(helper_functions, $(QuoteNode(sym)))
             else
-                    error("Unknown function $(string($(QuoteNode(sym)))) in DifferentialEquation.")
+                    $(
+                        sym in dotted_bases ? _de_global_fallback(__module__, sym, "DifferentialEquation") :
+                        :(error($("Unknown function $(sym) in DifferentialEquation.")))
+                    )
             end
             end
             for sym in fun_syms

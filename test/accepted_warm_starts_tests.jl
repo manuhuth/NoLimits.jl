@@ -111,6 +111,17 @@ end
         @test !NoLimits._laplace_accepted_multistart!(
             s.cache, dm, s.binfos, ComponentArray(μ = 0.5), s.cc, s.llc, s.inner, ws
         )
+        # a rounding-level gain from re-solving the same mode is no change (#426)
+        foreach(b -> (b .+= 1.0e-7), s.cache.bstar_cache.b_star)
+        @test !NoLimits._laplace_accepted_multistart!(
+            s.cache, dm, s.binfos, ComponentArray(μ = 0.5), s.cc, s.llc, s.inner, ws
+        )
+        # a stored mode with log f = -Inf is still replaced
+        foreach(b -> fill!(b, 1.0e200), s.cache.bstar_cache.b_star)
+        @test NoLimits._laplace_accepted_multistart!(
+            s.cache, dm, s.binfos, ComponentArray(μ = 0.5), s.cc, s.llc, s.inner, ws
+        )
+        @test all(b -> abs(abs(b[1]) - 2) < 0.1, s.cache.bstar_cache.b_star)
     end
 
     @testset "legacy options: initial multistart, no refresh, per-individual seed" begin
