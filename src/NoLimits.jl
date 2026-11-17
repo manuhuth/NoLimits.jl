@@ -87,5 +87,8 @@ include("plotting/plotting_observation_distributions.jl")
 include("plotting/plotting_residuals.jl")
 include("plotting/plotting_random_effects.jl")
 include("plotting/plotting_uq.jl")
+# Precompilation workload for the model-independent outer-optimizer glue (#408); last,
+# so that every method it exercises is defined.
+include("precompile.jl")
 
 end # module NoLimits
