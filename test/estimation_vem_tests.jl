@@ -397,12 +397,6 @@ end
     r = fit_model(dm, _vem_frozen(); constants_re = cre, rng = Xoshiro(3))
     @test collect(get_params(r; scale = :untransformed)) ≈ [0.3, 0.5, 0.7, 0.9]
     @test get_objective(r) ≈ nll rtol = 1.0e-6
-    # warning for an RE scale that collapsed from its start (#430)
-    θ0 = get_params(r; scale = :untransformed)
-    θc = copy(θ0)
-    θc.ω_id = 1.0e-5
-    @test_logs (:warn, r"ω_id") NoLimits._vem_warn_collapsed_scales(dm, θ0, θc)
-    @test_logs NoLimits._vem_warn_collapsed_scales(dm, θ0, θ0)
 end
 
 @testset "VEM: model bounds, ignore_model_bounds, optimizers without bounds support" begin
@@ -522,6 +516,11 @@ end
     @test isapprox(θv.k, θl.k; rtol = 0.05)
     @test isapprox(θv.ω, θl.ω; rtol = 0.15)
     @test isapprox(θv.σ, θl.σ; rtol = 0.05)
+    # planar layers start with |w| = 1: randn / √n gave small |w| for one RE and stopped
+    # this flow fit at objective 82.2 against 64.03 for the dense family (#430)
+    rd = fit_model(dm, NoLimits.VEM(; refine = false); rng = Xoshiro(2))
+    rf = fit_model(dm, NoLimits.VEM(; family = PlanarFlowFamily(2), refine = false); rng = Xoshiro(3))
+    @test abs(get_objective(rf) - get_objective(rd)) < 0.2
 end
 
 @testset "VEM: Beta random effect does not collapse to a point mass (#371)" begin
@@ -582,6 +581,35 @@ end
     @test collect(get_params(rw; scale = :untransformed)) ≈
         collect(get_params(rd; scale = :untransformed)) rtol = 1.0e-2
     @test get_objective(rw) ≈ get_objective(rd) atol = 1.0e-3
+end
+
+@testset "VEM: Normal RE sd from a tiny start does not collapse (#430)" begin
+    # the gradient in log ω vanishes near 0: the joint fit from ω = 1e-3 stops at ω = 5e-5
+    # (objective 70.27 vs the MLE 58.43); the refinement probes larger ω and restarts there
+    rng = Xoshiro(1)
+    ids = repeat(1:12, inner = 5)
+    e = 0.8 .* randn(rng, 12)
+    noise = 0.5 .* randn(rng, 60)
+    θ0 = deepcopy(NoLimits.get_θ0_untransformed(NoLimits.get_fixed(fx_re_model())))
+    θ0.a, θ0.σ, θ0.ω = 1.0, 0.6, 1.0e-3
+    dm = DataModel(fx_re_model(), DataFrame(ID = ids, t = repeat(collect(1.0:5.0), 12), y = 2.0 .+ e[ids] .+ noise); primary_id = :ID, time_col = :t)
+    rl = fit_model(dm, NoLimits.Laplace(); theta_0_untransformed = θ0)
+    rv = fit_model(dm, NoLimits.VEM(; ignore_model_bounds = true); theta_0_untransformed = θ0, rng = Xoshiro(1))
+    @test get_objective(rv) ≈ get_objective(rl) atol = 1.0e-6
+    @test get_params(rv; scale = :untransformed).ω ≈ get_params(rl; scale = :untransformed).ω rtol = 1.0e-4
+    # without refinement: a warning
+    @test_logs (:warn, r"scale ω") match_mode = :any fit_model(
+        dm, NoLimits.VEM(; ignore_model_bounds = true, refine = false); theta_0_untransformed = θ0, rng = Xoshiro(1)
+    )
+    # no RE in the data: Laplace and VEM end near ω = 0, without a warning or a probe restart
+    dz = DataModel(fx_re_model(), DataFrame(ID = ids, t = repeat(collect(1.0:5.0), 12), y = 2.0 .+ noise); primary_id = :ID, time_col = :t)
+    θ0.ω = 0.3
+    @test get_params(fit_model(dz, NoLimits.Laplace(); theta_0_untransformed = θ0); scale = :untransformed).ω < 1.0e-3
+    @test_logs min_level = Base.CoreLogging.Warn fit_model(
+        dz, NoLimits.VEM(; ignore_model_bounds = true, refine = false); theta_0_untransformed = θ0, rng = Xoshiro(1)
+    )
+    rz = fit_model(dz, NoLimits.VEM(; ignore_model_bounds = true); theta_0_untransformed = θ0, rng = Xoshiro(1))
+    @test get_params(rz; scale = :untransformed).ω < 1.0e-3
 end
 
 @testset "VEM: objective after refinement is the marginal likelihood at the estimate (#371)" begin

@@ -148,7 +148,11 @@ distribution is the Laplace approximation at ``\hat\theta``.
   quadrature (or importance-sampled) marginal likelihood over the fixed effects, with the
   rule of each batch re-centered at the mode of its integrand at every θ. This removes the
   bias of the Gaussian family. `:auto` refines for at most 50 free fixed-effect
-  coordinates and at most three random effects per batch.
+  coordinates and at most three random effects per batch. When a 10 times larger standard
+  deviation of a Normal or LogNormal random effect lowers that objective, the refinement
+  restarts from there, since the gradient in log scale vanishes near zero variance and a fit
+  from a tiny start could stop at a collapsed variance (scalar standard deviations only).
+  Without a refinement, and with `n_is > 0`, VEM warns in that case.
 - `n_is = 1000`, `is_df = 5.0`: importance-sampling draws and t degrees of freedom of the
   reported objective, an estimate of ``-\log p(y \mid \hat\theta)``, for batches with more
   than three random effects. Batches with one to three random effects use adaptive
