@@ -244,7 +244,7 @@ function VEM(;
         ebe_multistart_sampling
     )
     return VEM(
-        optimizer, _as_namedtuple(optim_kwargs), adtype, lb, ub, ignore_model_bounds,
+        optimizer, _as_namedtuple(optim_kwargs), _normalize_adtype(adtype; duplicated = true), lb, ub, ignore_model_bounds,
         n_samples, expectation, family, flow, flow_seed, init, n_is, Float64(is_df),
         refine === :auto ? :auto : refine === true ? :on : refine === false ? :off :
             error("VEM: refine must be :auto, true or false. Got: $refine"),

@@ -193,7 +193,7 @@ function GHQuadrature(;
     optim_kwargs === nothing &&
         (optim_kwargs = _outer_default_optim_kwargs(optimizer, NamedTuple()))
     return GHQuadrature(
-        level, optimizer, _as_namedtuple(optim_kwargs), adtype, inner, ms, lb, ub,
+        level, optimizer, _as_namedtuple(optim_kwargs), _normalize_adtype(adtype), inner, ms, lb, ub,
         ignore_model_bounds, precondition, :all
     )
 end

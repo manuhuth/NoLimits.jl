@@ -237,4 +237,15 @@ _nl432_w = [0.0]
     mle(ser) = fit_model(dm2, NoLimits.MLE(; adtype = ra, optim_kwargs = (; maxiters = 30)); serialization = ser)
     rt, rs = mle(NoLimits.EnsembleThreads()), mle(NoLimits.EnsembleSerial())
     @test collect(get_params(rt; scale = :transformed)) == collect(get_params(rs; scale = :transformed))
+
+    # bare AutoEnzyme() is normalized to runtime activity (+ Duplicated for VEM)
+    bare = NoLimits.Optimization.AutoEnzyme()
+    @test NoLimits.MLE(; adtype = bare).adtype == ra
+    @test NoLimits.VEM(; adtype = bare).adtype == ad
+    fwd = NoLimits.Optimization.AutoEnzyme(; mode = Enzyme.Forward)
+    @test NoLimits.MAP(; adtype = fwd).adtype === fwd
+    rb = fit_model(dm2, NoLimits.MLE(; adtype = bare, optim_kwargs = (; maxiters = 30)))
+    @test collect(get_params(rb; scale = :transformed)) == collect(get_params(rs; scale = :transformed))
+    @test collect(get_params(fit(bare); scale = :transformed)) ≈
+        collect(get_params(rf; scale = :transformed)) rtol = 1.0e-6
 end

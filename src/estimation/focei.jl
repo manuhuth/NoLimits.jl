@@ -1102,7 +1102,7 @@ function FOCEI(;
     optim_kwargs === nothing &&
         (optim_kwargs = _outer_default_optim_kwargs(optimizer, (; maxiters = 1000)))
     return FOCEI(
-        optimizer, _as_namedtuple(optim_kwargs), adtype, inner, hess, cache,
+        optimizer, _as_namedtuple(optim_kwargs), _normalize_adtype(adtype), inner, hess, cache,
         ms, lb, ub, ignore_model_bounds, precondition, interaction, :all,
         warm_starts, batch_threading
     )

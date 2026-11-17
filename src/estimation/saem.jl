@@ -770,7 +770,7 @@ function SAEM(;
         auto_var_lb, var_lb_value, max_estep_retries, retry_mcmc_steps,
         store_obsLL, obsLL_every, store_diagnostics, diagnostics_every
     )
-    return SAEM(optimizer, optim_kwargs, adtype, saem, lb, ub, precondition)
+    return SAEM(optimizer, optim_kwargs, _normalize_adtype(adtype), saem, lb, ub, precondition)
 end
 
 # SAEMResult is a StandardOptimizationResult{:saem} alias (see common.jl).

@@ -151,7 +151,7 @@ package and `using` it alongside NoLimits, and the feature appears.
 | LaTeX equations (`show_equations(...; latex=true)`) | `Latexify` |
 | Bundled example data (`load_warfarin_from_monolix`) | `CSV` |
 | Copula random effects (`Copulas.SklarDist`) | `Copulas` |
-| Reverse-mode AD through an ODE (`AutoEnzyme(; mode = Enzyme.set_runtime_activity(Enzyme.Reverse))`) | `SciMLSensitivity` |
+| Reverse-mode AD through an ODE (`AutoEnzyme`) | `SciMLSensitivity` |
 
 Calling one of these without its package raises an error naming exactly what to install, so
 nothing fails silently. For example:

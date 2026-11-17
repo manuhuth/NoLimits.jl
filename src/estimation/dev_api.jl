@@ -2165,7 +2165,7 @@ function optimize_parameters(
             dm, inv_transform(ComponentArray(θt_vec, axs))
         )
     )
-    prob = OptimizationProblem(OptimizationFunction(obj, adtype), collect(θt0))
+    prob = OptimizationProblem(OptimizationFunction(obj, _normalize_adtype(adtype)), collect(θt0))
     sol = Optimization.solve(prob, optimizer; optim_kwargs...)
     θ̂ = symmetrize_psd_parameters(dm, inv_transform(ComponentArray(sol.u, axs)))
     return θ̂, sol

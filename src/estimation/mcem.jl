@@ -389,7 +389,7 @@ function MCEM(;
         ebe_rescue_grad_tol, ebe_rescue_multistart_sampling
     )
     return MCEM(
-        optimizer, _as_namedtuple(optim_kwargs), adtype, e_step_actual, em, ebe, ebe_rescue,
+        optimizer, _as_namedtuple(optim_kwargs), _normalize_adtype(adtype), e_step_actual, em, ebe, ebe_rescue,
         lb, ub, :all, verbose, progress, store_diagnostics,
         diagnostics_every, precondition, _as_symbol(builtin_stats), resid_var_param,
         re_cov_params, re_mean_params
