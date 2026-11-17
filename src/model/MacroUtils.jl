@@ -165,8 +165,8 @@ end
 # Binding for a name no model namespace provides: a global of the calling module, else of
 # NoLimits (Base functions passed as arguments, `sum(abs2, x)`), else `err` (#427).
 function _macro_global_fallback(mod::Module, sym::Symbol, err)
-    isdefined(mod, sym) && return :($(sym) = $(GlobalRef(mod, sym)))
-    isdefined(@__MODULE__, sym) && return :($(sym) = $(GlobalRef(@__MODULE__, sym)))
+    isdefined(mod, sym) && return :($(sym) = $(_caller_global(mod, sym)))
+    isdefined(@__MODULE__, sym) && return :($(sym) = $(_caller_global(@__MODULE__, sym)))
     return err
 end
 
