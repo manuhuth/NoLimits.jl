@@ -70,7 +70,7 @@ Several keyword arguments are shared across methods (though not all apply to eve
 
 - `constants`: fix selected fixed effects to known values (specified on the natural, untransformed scale).
 - `constants_re`: fix selected random-effect levels to known values (available for mixed-effects methods only).
-- `penalty`: L2-style parameter penalties (not supported by `MCMC` or `VI`; use `MAP` for penalized estimation instead). In `SAEM` and `MCEM` a penalized parameter is updated numerically, never in closed form, and is not shifted by the automatic centering of additive random effects; the same holds for a parameter with a finite user `lb`/`ub`, and an `extra_objective` turns the centering off.
+- `penalty`: L2-style parameter penalties (not supported by `MCMC` or `VI`; use `MAP` for penalized estimation instead). In `SAEM` and `MCEM` a penalized parameter is updated numerically, never in closed form, and is not shifted by the automatic centering of additive random effects. A parameter with a finite user `lb`/`ub` is also excluded from that centering, and an `extra_objective` turns the centering off.
 - `ode_args`, `ode_kwargs`: forwarded to the ODE solver during likelihood evaluation.
 - `serialization`: `EnsembleSerial()` or `EnsembleThreads()` for parallel evaluation across individuals.
 - `rng`: random-number generator. The default is a fresh `Xoshiro(42)` per call, so stochastic estimators (`SAEM`, `MCEM`, `MCMC`, `VI`, `Multistart`, mini-batch schedules) give the same result on every run, independent of `Random.seed!`. Pass another `rng` for different draws.
