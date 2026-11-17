@@ -126,7 +126,12 @@ Each statement must be an assignment `name = expr`. The right-hand side may refe
 - fixed effects and random effects by name,
 - constant covariates (including vector fields `x.field`),
 - helper functions,
-- model functions (NNs, splines, soft trees).
+- model functions (NNs, splines, soft trees),
+- globals of the calling module.
+
+A variable name resolves from constant covariates, random effects and fixed effects first,
+then from a global of the calling module, then from a NoLimits global. A function name in
+call position resolves from model functions and helper functions only.
 
 The symbols `t` and `ξ` are forbidden (pre-DE variables are time-constant).
 

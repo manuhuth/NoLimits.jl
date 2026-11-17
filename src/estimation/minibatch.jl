@@ -204,7 +204,7 @@ Supported methods: `MLE`, `MAP`, `Laplace`, `FOCEI`, `GHQuadrature`, `VEM`, `SAE
     (`min(m, nbatches)` batches).
   - Any callable `(nbatches::Int, iter::Int, rng) -> indices` returning an iterable of
     `Int` (a `Vector{Int}`, a range, ...): the batches of iteration `iter`. Duplicates are
-    ignored. A stateful callable is shared by every fit that uses this wrapper (including
+    ignored. `rng` is the fit's `AbstractRNG` and may be typed as such. A stateful callable is shared by every fit that uses this wrapper (including
     all `Multistart` starts), so pass a fresh instance per fit.
   - `:all`: every batch every iteration; the wrapped method then behaves exactly like the
     unwrapped one.

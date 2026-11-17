@@ -716,9 +716,12 @@ Return the raw method-specific result object (e.g. the Optim.jl result for MLE/M
 get_raw(res::FitResult) = get_raw(get_result(res))
 
 """
-    get_notes(res::FitResult) -> String or Nothing
+    get_notes(res::FitResult)
 
-Return any method-specific string notes attached to the result.
+Return the method-specific notes attached to the result. Depending on the method this is
+`nothing`, a `String`, or a `NamedTuple` (for example `GHQuadrature` stores its
+`rule_check`, and `VEM`, `SAEM`, `MCEM` and `Pooled` store diagnostics there).
+Errors for methods that keep no notes.
 """
 get_notes(res::FitResult) = get_notes(get_result(res))
 
