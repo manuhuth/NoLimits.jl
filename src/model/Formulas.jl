@@ -653,7 +653,7 @@ function _formulas_build_formulas_expr(
 end
 
 # Rewrite call heads and dot-path bases that the @Model caller's module defines but
-# NoLimits does not (user-loaded modules/types) into GlobalRefs, so the generated
+# NoLimits does not (user-loaded modules/types) into `getglobal` calls, so the generated
 # functions can use them while all NoLimits-visible names keep their old resolution.
 # Names bound inside the generated function (arguments, covariate/node binds) are
 # excluded so same-named globals at the call site cannot hijack them.

@@ -179,3 +179,62 @@ end
         end
     end
 end
+
+
+# #432: a non-const global named like a covariate (seeded into the RE builder before the fix)
+_nl432_w = [0.0]
+
+@testset "Enzyme smoke: constant covariates in VEM and threaded MLE (#432)" begin
+    rng = Xoshiro(2)
+    ID = repeat(1:8, inner = 5)
+    tt = repeat(Float64.(1:5), 8)
+    w = 0.5 .+ 0.1 .* ID
+    df = DataFrame(; ID, t = tt, _nl432_w = w, y = 1.0 .+ randn(rng, 8)[ID] .+ 0.3 .* tt .* w .+ 0.4 .* randn(rng, 40))
+    ad = NoLimits.Optimization.AutoEnzyme(;
+        mode = set_runtime_activity(Enzyme.Reverse), function_annotation = Enzyme.Duplicated
+    )
+    m = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.5)
+            g = RealNumber(0.2)
+            ω = RealNumber(0.6; scale = :log)
+            σ = RealNumber(0.5; scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+            _nl432_w = ConstantCovariate(; constant_on = :ID)
+        end
+        @randomEffects begin
+            η = RandomEffect(Normal(g * _nl432_w, ω); column = :ID)
+        end
+        @formulas begin
+            y ~ Normal(a + η * _nl432_w * t, σ)
+        end
+    end
+    dm = DataModel(m, df; primary_id = :ID, time_col = :t)
+    fit(adt) = fit_model(
+        dm, NoLimits.VEM(; adtype = adt, optim_kwargs = (; maxiters = 5)); rng = Xoshiro(1)
+    )
+    rf, re = fit(NoLimits.Optimization.AutoForwardDiff()), fit(ad)
+    @test collect(get_params(re; scale = :transformed)) ≈
+        collect(get_params(rf; scale = :transformed)) rtol = 1.0e-6
+
+    m2 = @Model begin
+        @fixedEffects begin
+            a = RealNumber(0.5)
+            b = RealNumber(0.2)
+            σ = RealNumber(0.5; scale = :log)
+        end
+        @covariates begin
+            t = Covariate()
+        end
+        @formulas begin
+            y ~ Normal(a + b * t, σ)
+        end
+    end
+    dm2 = DataModel(m2, df; primary_id = :ID, time_col = :t)
+    ra = NoLimits.Optimization.AutoEnzyme(; mode = set_runtime_activity(Enzyme.Reverse))
+    mle(ser) = fit_model(dm2, NoLimits.MLE(; adtype = ra, optim_kwargs = (; maxiters = 30)); serialization = ser)
+    rt, rs = mle(NoLimits.EnsembleThreads()), mle(NoLimits.EnsembleSerial())
+    @test collect(get_params(rt; scale = :transformed)) == collect(get_params(rs; scale = :transformed))
+end

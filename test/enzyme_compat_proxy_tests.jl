@@ -239,6 +239,8 @@ end
     # so force the numerical path (closed_form defaults to :auto and would bypass it).
     model = set_solver_config(model; closed_form = :off)
     dm = DataModel(model, df; primary_id = :ID, time_col = :t)
+    # #432: the @initialDE builder used to store a GlobalRef
+    @test !_nl432_has_globalref(dm, Base.IdSet{Any}())
     θu = get_θ0_untransformed(dm.model.fixed.fixed)
     # fitting-path cache (force_saveat=true, as in _fit_no_re/laplace): saveat baked
     cache = NoLimits.build_ll_cache(dm; force_saveat = true)
