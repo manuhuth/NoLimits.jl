@@ -806,6 +806,13 @@ end
                 @test isapprox(bll, exact; rtol = 1.0e-5)
             end
         end
+        # The prior-centered level-2 sum of batch 1 is negative: `fallback = false` (used by
+        # the post-fit rule check, #424) reports it instead of using the level-1 rule.
+        m1 = NoLimits.build_re_measure_from_batch(infos[1], θ_re, cc, dm, cache)
+        sg2 = NoLimits.get_sparse_grid(2, 2)
+        @test NoLimits.batch_loglik_ghq(dm, infos[1], θ_re, m1, sg2, cc, cache; fallback = false) == -Inf
+        @test NoLimits.batch_loglik_ghq(dm, infos[1], θ_re, m1, sg2, cc, cache) ≈
+            NoLimits.batch_loglik_ghq(dm, infos[1], θ_re, m1, NoLimits.get_sparse_grid(2, 1), cc, cache)
     end
 
     @testset "fit recovers what Laplace recovers, with a finite objective" begin
