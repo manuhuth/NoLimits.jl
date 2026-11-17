@@ -39,8 +39,7 @@ space of the transport map: nodes centered at the mode of the integrand in that 
 a higher `level` for the same accuracy.  The prior-centered transport-map rule is used
 only when that mode or curvature is not available.
 For ℝ-supported random effects `level = 1` is a single-node rule whose value is the
-Laplace approximation but whose gradient is not; use `Laplace()` for that, and
-`level ≥ 3` here.
+Laplace approximation; `Laplace()` computes it faster, so use `level ≥ 3` here.
 
 # Keyword Arguments
 - `level = :auto`: Smolyak accuracy level, error-controlled. The fit starts at 5 when some
@@ -63,8 +62,8 @@ Laplace approximation but whose gradient is not; use `Laplace()` for that, and
   the estimate, the marginal log-likelihood under `level` with the next finer rule
   (`level + 2`) and warns when they differ by more than 0.5; the values and the
   batches that fell back to level 1 are stored in `get_notes(res).rule_check`.
-  The outer gradient treats the mode and curvature as constants, so it matches the
-  objective only up to the quadrature error.
+  The ForwardDiff outer gradient differentiates the mode and curvature that place the
+  nodes (implicit function theorem), so it is the exact gradient of this objective.
 - `optimizer`: outer Optimization.jl-compatible optimizer.  Defaults to LBFGS
   with backtracking line search. For mini-batching wrap the method in
   [`MiniBatch`](@ref).
@@ -313,28 +312,63 @@ function _ghq_adaptive_measure(
         θu_re::ComponentArray, const_cache::REConstantsCache, ll_cache::_LLCache,
         prior_measure::AbstractREMeasure, b_star, H_star = nothing
     )
+    # The center and scale are found at Float64 θ; under ForwardDiff they are then lifted
+    # to the outer Duals (`_ghq_lift_mode`), so the gradient is that of the rule's value.
     if prior_measure isa CompositeRE && !prior_measure.unbounded
         θ_val = _laplace_floatize(θu_re)
         # Warm start from the EB mode as in the fit; a cold start at u = 0 can miss the mode.
         b = b_star === nothing ? _ghq_bstar_batch(dm, info, θ_val, const_cache, ll_cache) : b_star
-        return build_adaptive_transport_measure(
+        mt = build_adaptive_transport_measure(
             prior_measure, dm, info, θ_val, const_cache, ll_cache; b_star = b
         )
+        (mt === nothing || !(eltype(θu_re) <: ForwardDiff.Dual)) && return mt
+        θ_re = _symmetrize_psd_params(θu_re, get_fixed(get_model(dm)))
+        F = u -> _transport_logintegrand(u, prior_measure, dm, info, θ_re, const_cache, ll_cache)
+        lifted = _ghq_lift_mode(F, mt.û, mt.S)
+        lifted === nothing && return mt
+        return AdaptiveTransportRE(prior_measure, lifted..., mt.n_b)
     end
     prior_measure isa GaussianRE ||
         (prior_measure isa CompositeRE && prior_measure.unbounded) || return nothing
-    # b*, H and S are frozen w.r.t. the outer AD: at a converged rule the value no
-    # longer depends on where the nodes sit, so the dropped ∂/∂b*, ∂/∂S terms are of
-    # the order of the quadrature error. `θ_prior` keeps the RE-prior term of the
-    # correction differentiable in θ.
+    # `θ_prior` keeps the RE-prior term of the correction differentiable in θ.
     θ_val = _laplace_floatize(θu_re)
     b = b_star === nothing ?
         _ghq_bstar_batch(dm, info, θ_val, const_cache, ll_cache) : b_star
     (b === nothing || length(b) != get_n_b(info)) && return nothing
-    return build_centered_re_measure(
+    mc = build_centered_re_measure(
         b, info, 1, θ_val, const_cache, dm, ll_cache;
         θ_prior = θu_re, H_star = b_star === nothing ? nothing : H_star
     )
+    (mc === nothing || !(eltype(θu_re) <: ForwardDiff.Dual)) && return mc
+    F = _LaplaceLogfBatch(dm, info, θu_re, const_cache, ll_cache)
+    lifted = _ghq_lift_mode(F, mc.b_star, mc.S)
+    lifted === nothing && return mc
+    return CenteredREMeasure(lifted..., mc.re_prior_logf, mc.n_b)
+end
+
+# Mode x̂ (Float64) of F, which closes over the Dual θ, lifted to the Duals by a Newton
+# step with the Float64 S0 S0' = (-H)⁻¹: its partials are dx̂/dθ = (-H)⁻¹ ∂θ∇F, the
+# implicit-function sensitivity Laplace uses (`dbdθ`). A second step makes nested Duals
+# (outer Hessians) exact to second order. The Hessian at the lifted mode then carries
+# ∂θH + ∂ₓH·dx̂/dθ. Returns (x, S, log|det S|) with S S' = (-H)⁻¹, or `nothing` (then
+# the caller keeps the Float64 center and scale).
+function _ghq_lift_mode(F, x̂::AbstractVector, S0::AbstractMatrix)
+    x = Vector{Float64}(x̂)
+    δ = S0' * ForwardDiff.gradient(F, x)
+    # Not stationary: a kink of log f (e.g. a Laplace RE at its center) pins the mode.
+    if maximum(d -> abs(_laplace_value(d)), δ; init = 0.0) <= 1.0e-6
+        x = x .+ S0 * δ
+        eltype(x) <: ForwardDiff.Dual{<:Any, <:ForwardDiff.Dual} &&
+            (x = x .+ S0 * (S0' * ForwardDiff.gradient(F, x)))
+    end
+    H = ForwardDiff.hessian(F, x)
+    all(h -> isfinite(_laplace_value(h)), H) || return nothing
+    L = cholesky(Symmetric(-H); check = false)
+    issuccess(L) || return nothing
+    Linv = inv(L.L)
+    cS = cholesky(Symmetric(Linv' * Linv); check = false)
+    issuccess(cS) || return nothing
+    return convert.(eltype(H), x), cS.L, -sum(log, diag(L.L))
 end
 
 """
@@ -725,8 +759,6 @@ _ghq_next_level(level::Int, maxdim::Int) = maxdim <= 1 ? 2level + 1 : level + 2
 # Post-fit accuracy check for multi-RE batches (#424), which `:auto` does not refine: the
 # marginal at θ̂ under the fitted rule and the next finer one, and the batches whose signed
 # sum fell back to the level-1 rule. Stored in the result notes; warns when they disagree.
-# The outer gradient treats the mode and curvature as constants, so an inaccurate rule also
-# gives a gradient that need not match the objective.
 function _ghq_rule_check(dm, batch_infos, θu, const_cache, ll_cache, level, bstars)
     level isa Int || return NamedTuple()
     maxdim = maximum(get_n_b, batch_infos; init = 0)
@@ -759,7 +791,7 @@ function _ghq_rule_check(dm, batch_infos, θu, const_cache, ll_cache, level, bst
         @warn "GHQuadrature: at the estimate the marginal log-likelihood is " *
             "$(round(ll; sigdigits = 6)) at level $level and $(round(ll2; sigdigits = 6)) at " *
             "level $L2. The rule is not accurate for these multi-dimensional random-effect " *
-            "batches, so the estimates and the gradient may be off; use a higher `level`."
+            "batches, so the estimates may be off; use a higher `level`."
     end
     return (
         rule_check = (

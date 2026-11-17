@@ -573,9 +573,8 @@ Gauss-Hermite (Smolyak sparse-grid) marginal log-likelihood `log p(y | θ)` with
 rule the `GHQuadrature` estimator uses: for each batch the empirical-Bayes mode is solved at
 `θ` and the nodes are centered and scaled there (in the transport reference space for
 bounded-support random effects). `level` is an `Int` (isotropic) or a `NamedTuple` mapping
-RE name → level (anisotropic). The mode and curvature are not differentiated, so the
-`ForwardDiff` gradient matches the objective only up to the quadrature error. Batches of
-weight 0 are skipped.
+RE name → level (anisotropic). The `ForwardDiff` gradient differentiates the mode and
+curvature as well, so it is the gradient of this value. Batches of weight 0 are skipped.
 """
 function ghq_marginal(
         dm::DataModel, θ::ComponentArray, batch::REBatchInfo;

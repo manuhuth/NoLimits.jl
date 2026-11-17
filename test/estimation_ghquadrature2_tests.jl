@@ -10,6 +10,7 @@ using OptimizationOptimJL
 using OptimizationBBO
 using NoLimits.LineSearches
 using FiniteDifferences
+using ForwardDiff
 using Random
 using SciMLBase
 import Optimisers
@@ -383,6 +384,11 @@ for c in _GHQ_RE_FAMILY_CASES
             θ̂ = NoLimits.get_params(res; scale = :untransformed)
             @test get_loglikelihood_quadrature(res; level = 3) ≈
                 NoLimits.ghq_marginal(dm, θ̂; level = 3) rtol = 1.0e-6
+            # The AD gradient differentiates the mode and scale of the rule (#424).
+            fv = v -> NoLimits.ghq_marginal(dm, ComponentArray(v, getaxes(θ̂)); level = 3)
+            v = collect(θ̂)
+            @test ForwardDiff.gradient(fv, v) ≈
+                FiniteDifferences.grad(central_fdm(5, 1), fv, v)[1] rtol = 1.0e-5 atol = 1.0e-7
         end
 
         if c.re !== nothing
@@ -1068,6 +1074,12 @@ end
     @test rc.level == 3 && rc.finer_level == 5
     @test isfinite(rc.loglikelihood) && isfinite(rc.loglikelihood_finer)
     @test rc.fallback_batches == Int[]
+    # 2-D non-Gaussian batch, unconverged rule: AD still matches FD of the objective (#424).
+    θ̂ = NoLimits.get_params(res; scale = :untransformed)
+    fv = v -> NoLimits.ghq_marginal(dm, ComponentArray(v, getaxes(θ̂)); level = 3)
+    v = collect(θ̂)
+    @test ForwardDiff.gradient(fv, v) ≈
+        FiniteDifferences.grad(central_fdm(5, 1), fv, v)[1] rtol = 1.0e-5 atol = 1.0e-7
 end
 
 @testset "Transports for one-sided shifted supports (#249 NL-05)" begin
