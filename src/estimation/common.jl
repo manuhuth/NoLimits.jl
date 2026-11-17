@@ -1358,6 +1358,28 @@ function _precondition_scale(model, free_names, θ0_free_t)
     return s
 end
 
+# Type-erased callables for the outer `OptimizationFunction` (#408). The objective closures
+# capture the DataModel; erasing their type keeps it out of the Optimization.jl/Optim types,
+# so that glue is compiled once instead of once per model. One dynamic call per evaluation;
+# the wrapped closures stay fully specialized. Only for sites whose `f` is not AD-differentiated
+# on the default path (an analytic `grad`/`fg` is supplied).
+struct _ErasedObjective
+    f::Any
+end
+(o::_ErasedObjective)(x::AbstractVector{Float64}, p) = o.f(x, p)::Float64
+(o::_ErasedObjective)(x, p) = o.f(x, p)
+
+struct _ErasedGradient
+    f::Any
+end
+(g::_ErasedGradient)(G, x, p) = (g.f(G, x, p); nothing)
+
+struct _ErasedValueGradient
+    f::Any
+end
+(g::_ErasedValueGradient)(G, x::AbstractVector{Float64}, p) = g.f(G, x, p)::Float64
+(g::_ErasedValueGradient)(G, x, p) = g.f(G, x, p)
+
 # Single definition of the optimizer reparameterization θt = θ0_pc + s_pc .* z, shared by every
 # numerical driver. `on = false` makes both maps the identity, so a fit is bit-identical to one
 # from before preconditioning existed. Note `z_from_θt` is also the bounds map: mapping `lb`/`ub`
