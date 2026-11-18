@@ -1856,11 +1856,11 @@ function DataModel(
     ind_weights = _build_individual_weights(df, weights_col, groups, keys_sorted, pairing, primary_id)
     lik_weights = lik_weights_col === nothing ? nothing :
         _LikWeights(
-        lik_weights_col,
-        _build_individual_weights(
-            df, lik_weights_col, groups, keys_sorted, pairing, primary_id; batch_equal = false
+            lik_weights_col,
+            _build_individual_weights(
+                df, lik_weights_col, groups, keys_sorted, pairing, primary_id; batch_equal = false
+            )
         )
-    )
     return DataModel(
         model, df, individuals, pairing, config, id_index, row_groups,
         re_group_info, ind_weights, lik_weights, Base.RefValue{Union{Nothing, ClosedFormPlan}}(nothing),
