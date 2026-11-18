@@ -68,6 +68,39 @@ end
     # random effects for prediction
     p = NoLimits.predict(rv, get_df(dm); re_mode = :ebe)
     @test all(isfinite, p.prediction)
+
+    # #408: the precompile workload runs without error and its outer-solve types match the
+    # fit sites under default settings, so drift in defaults cannot silently void it.
+    @test NoLimits._precompile_workload(; strict = true) === nothing
+    function pc_sol_types(m)
+        optf = NoLimits._pc_erased_optf(m.adtype)
+        z0 = [1.0, -1.0]
+        probs = (
+            NoLimits.OptimizationProblem(optf, z0),
+            NoLimits.OptimizationProblem(optf, z0; lb = [-2.0, -2.0], ub = [2.0, 2.0]),
+        )
+        return Set(typeof(NoLimits.Optimization.solve(pr, m.optimizer; m.optim_kwargs...)) for pr in probs)
+    end
+    # FOCEI with one multistart start: the outer-solve fields keep their default types
+    fo = NoLimits.FOCEI(; multistart_n = 1, multistart_k = 1)
+    @test typeof.((fo.optimizer, fo.optim_kwargs, fo.adtype)) ==
+        typeof.((NoLimits.FOCEI().optimizer, NoLimits.FOCEI().optim_kwargs, NoLimits.FOCEI().adtype))
+    rf = fit_model(dm, fo)
+    for (r, m) in ((rl, NoLimits.Laplace()), (rf, NoLimits.FOCEI()), (rv, NoLimits.VEM()))
+        @test typeof(get_result(r).solution) in pc_sol_types(m)
+    end
+    # SAEM/MCEM M-step: same erased OptimizationFunction, and the default optimizer takes
+    # the preconditioned branch of `_saem_mstep_optimizer`.
+    curv = NoLimits._SAEMMStepCurvature(
+        [:a, :b], [2.0 0.0; 0.0 2.0], 1, Vector{Float64}[], Vector{Float64}[]
+    )
+    for M in (NoLimits.SAEM, NoLimits.MCEM)
+        m = M()
+        @test typeof(NoLimits._saem_mstep_optf((z, p) -> 0.0, m.adtype, 2)) ==
+            typeof(NoLimits._pc_erased_optf(m.adtype))
+        @test typeof(NoLimits._saem_mstep_optimizer(m.optimizer, curv, [1.0, 1.0])) !=
+            typeof(m.optimizer)
+    end
 end
 
 @testset "VEM: options and validation" begin

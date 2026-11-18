@@ -9,7 +9,7 @@
 # generated, so the compiled code is cached in it instead of being compiled on the first
 # fit. The optimizers and `solve` keywords are taken from the default-constructed methods,
 # so their types are the ones `fit_model` uses with default settings. It runs only during
-# precompilation and never makes precompilation fail (every step is wrapped in `_pc_try`).
+# precompilation and never makes precompilation fail; `strict = true` rethrows (tests).
 
 using PrecompileTools: @compile_workload, @setup_workload
 
@@ -45,19 +45,20 @@ function _pc_outer_solve(optf, opt, kw::NamedTuple, bounded::Bool, remake_too::B
     return (sol.u, sol.objective, niter, raw, ok)
 end
 
-function _pc_try(f)
+function _pc_try(f, strict::Bool)
     try
         f()
     catch
+        strict && rethrow()
     end
     return nothing
 end
 
-function _precompile_workload()
+function _precompile_workload(; strict::Bool = false)
     # Laplace and FOCEI: default outer LBFGS, `(; maxiters, reltol)`, with and without bounds
     # (with bounds OptimizationOptimJL wraps the optimizer in `Fminbox`).
     for M in (Laplace, FOCEI)
-        _pc_try() do
+        _pc_try(strict) do
             m = M()
             optf = _pc_erased_optf(m.adtype)
             _pc_outer_solve(optf, m.optimizer, m.optim_kwargs, false, false)
@@ -65,7 +66,7 @@ function _precompile_workload()
         end
     end
     # VEM: its own default LBFGS and keywords; main solve and `remake`d refinement solve.
-    _pc_try() do
+    _pc_try(strict) do
         m = VEM()
         optf = _pc_erased_optf(m.adtype)
         _pc_outer_solve(optf, m.optimizer, m.optim_kwargs, false, true)
@@ -74,7 +75,7 @@ function _precompile_workload()
     # SAEM and MCEM numeric M-step: plain LBFGS (first M-step, or bounded -> Fminbox) and
     # the LBFGS carrying the Cholesky preconditioner from `_saem_mstep_optimizer`.
     for M in (SAEM, MCEM)
-        _pc_try() do
+        _pc_try(strict) do
             m = M()
             optf = _pc_erased_optf(m.adtype)
             _pc_outer_solve(optf, m.optimizer, m.optim_kwargs, false, false)
@@ -88,7 +89,7 @@ function _precompile_workload()
     end
     # Symbolic closed-form ODE detection (argument types are model-independent):
     # a diagonal, a Bateman (1-cmt oral) and a nonlinear (ineligible) system.
-    _pc_try() do
+    _pc_try(strict) do
         @lock _CLOSED_FORM_LOCK begin
             _cf_plan([:x], Expr[:(D(x) ~ -k * x + r)], Symbol[])
             _cf_plan(
