@@ -3915,6 +3915,18 @@ function _fit_laplace_family(
                 G .= s_pc .* obj_grad(z, p)[2]
             end
         ),
+        # A second-order optimizer would otherwise get the AD Hessian of `obj_only`, which
+        # holds the EB modes fixed: central differences of the exact gradient instead, the
+        # scheme of the Wald :fd_gradient Hessian (default steps). Only for such optimizers,
+        # so the default OptimizationFunction type matches the precompile workload (#408).
+        hess = SciMLBase.requireshessian(method.optimizer) ? _ErasedGradient(
+                (H, z, p) -> begin
+                    H .= _hessian_fd_from_grad(
+                        zz -> s_pc .* collect(obj_grad(zz, p)[2]), collect(Float64, z);
+                        abs_step = 1.0e-4, rel_step = 1.0e-3, max_tries = 8
+                    )
+                end
+            ) : nothing,
         # Without `fg`, Optimization.jl builds a fused AD `fg!` by differentiating
         # `obj_only` and ignores `grad` (Optim's line search and every Optimisers rule
         # call it), so the analytic marginal gradient would go unused.

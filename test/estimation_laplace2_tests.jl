@@ -1096,6 +1096,13 @@ end
         @test NoLimits.get_params(f1; scale = :transformed) ==
             NoLimits.get_params(f2; scale = :transformed)
         @test NoLimits.get_objective(f1) == NoLimits.get_objective(f2)
+        # second-order optimizer: the Hessian is supplied (FD of the exact gradient), so
+        # NoAD works and the optimum matches the LBFGS one
+        ref, fn = map((ctor(), ctor(optimizer = OptimizationOptimJL.Newton(), adtype = SciMLBase.NoAD(), ignore_model_bounds = true))) do m
+            fit_model(fx_re_dm(), m; serialization = SciMLBase.EnsembleSerial())
+        end
+        @test NoLimits.get_params(fn; scale = :transformed) ≈
+            NoLimits.get_params(ref; scale = :transformed) rtol = 1.0e-6
     end
 end
 
