@@ -883,6 +883,8 @@ end
     @test NoLimits._wald_fallback_methods(:mcem) == "method = :mcmc_refit"
     @test NoLimits._wald_fallback_methods(:saem) == "method = :mcmc_refit"
     @test NoLimits._wald_fallback_methods(:focei) == "method = :mcmc_refit"
+    # A weighted fit is never sent to :profile (#437).
+    @test NoLimits._wald_fallback_methods(:laplace, true) == "method = :mcmc_refit"
     @test_logs (:warn, r"Prefer method = :mcmc_refit for those parameters\.") NoLimits._project_psd_covariance(
         [-1.0 0.0; 0.0 1.0]; fallbacks = NoLimits._wald_fallback_methods(:mcem)
     )

@@ -31,6 +31,7 @@ MLE
 MAP
 Laplace
 FOCEI
+FOCE
 NewtonInner
 AcceptedWarmStarts
 GHQuadrature

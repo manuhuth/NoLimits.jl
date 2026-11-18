@@ -1,4 +1,5 @@
 export FOCEI
+export FOCE
 
 using Optimization
 using OptimizationOptimJL
@@ -1117,6 +1118,20 @@ function FOCEI(;
         ms, lb, ub, ignore_model_bounds, precondition, interaction, :all,
         warm_starts, batch_threading
     )
+end
+
+"""
+    FOCE(; kwargs...) -> FOCEI
+
+First-Order Conditional Estimation without interaction: an alias for
+`FOCEI(; interaction = false, kwargs...)`. Dispersion-type parameters (e.g. a residual-error
+standard deviation) are frozen at the random-effects prior mean. Accepts every keyword of
+[`FOCEI`](@ref) except `interaction`, which raises an `ArgumentError`.
+"""
+function FOCE(; kwargs...)
+    haskey(kwargs, :interaction) &&
+        throw(ArgumentError("FOCE() has no interaction keyword; use FOCEI(interaction = ...) instead."))
+    return FOCEI(; interaction = false, kwargs...)
 end
 
 # -------------------------------------------------------------------------------------
