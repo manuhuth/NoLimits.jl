@@ -2484,7 +2484,7 @@ function _laplace_grad_batch(
         scale_factor = scale_factor
     )
 
-    # θ is the (Float64) evaluation point for everything below except the
+    # θ is the evaluation point (Float64 unless in an outer AD pass) for everything below except the
     # explicitly θ-differentiated closures (logf_θ, gθ!, fθ — those see dual θ
     # and rebuild their own context). For FOCEI with all-Gaussian REs the prior
     # Hessian Λ is constant in b, so it is computed once here and reused by the

@@ -399,6 +399,28 @@ end
             @test gs ≈ g rtol = 1.0e-12
         end
 
+        # ForwardDiff over the batch form at the supplied modes: their implicit derivative
+        # db*/dθ makes the summed Jacobian that of the population gradient (FD, modes re-solved)
+        let θ = θ0, ax = getaxes(θ0), x0 = collect(θ0)
+            bstars = NoLimits.empirical_bayes(dm, θ; serialization = ser)
+            _, infos_g, cc_g = NoLimits.build_re_batch_infos(dm, NamedTuple())
+            cache_g = NoLimits.build_likelihood_cache(dm; force_saveat = true)
+            gsum(x) = sum(
+                collect(
+                        NoLimits.laplace_marginal_gradient(
+                            dm, ComponentArray(x, ax), infos_g[bi], bstars[bi];
+                            const_cache = cc_g, cache = cache_g
+                        )[2]
+                    ) for bi in eachindex(infos_g)
+            )
+            J = ForwardDiff.jacobian(gsum, x0)
+            Jfd = FiniteDifferences.jacobian(
+                central_fdm(5, 1), x -> collect(lmg(ComponentArray(x, ax))[2]), x0
+            )[1]
+            @test J ≈ Jfd rtol = 1.0e-5
+            @test norm(J - J') <= 1.0e-10 * norm(J)
+        end
+
         # (2) additivity over disjoint-subject data models (the federation property)
         df = fx_re_df()
         model = fx_re_model()

@@ -174,11 +174,14 @@ end
 # ForwardDiff Jacobian of the analytic outer gradient (an outer Dual pass, so the Float64 mode
 # b* needs its implicit derivative db*/dθ) vs central differences of the Float64 gradient. With
 # h = 1e-4 and the inner mode solved to 1e-10 the FD error is ~1e-6 relative (observed).
+struct _GradJacTag end
 function _grad_jacobian_matches_fd(method, dm; rtol = 1.0e-4)
     θ0 = get_θ0_untransformed(NoLimits.get_model(dm).fixed.fixed) .* 1.05
     ax, x0 = getaxes(θ0), collect(θ0)
     gf(x) = collect(NoLimits.objective_and_gradient(method, dm, ComponentArray(x, ax))[2])
-    r = ForwardDiff.jacobian!(ForwardDiff.DiffResults.JacobianResult(x0), gf, x0)
+    # one tag for every call, so the Dual path compiles once per DataModel
+    cfg = ForwardDiff.JacobianConfig(gf, x0, ForwardDiff.Chunk(x0), ForwardDiff.Tag(_GradJacTag(), Float64))
+    r = ForwardDiff.jacobian!(ForwardDiff.DiffResults.JacobianResult(x0), gf, x0, cfg, Val(false))
     J = ForwardDiff.DiffResults.jacobian(r)
     Jfd = reduce(
         hcat, map(eachindex(x0)) do j
