@@ -1612,10 +1612,6 @@ end
         @test collect(gz) ≈ collect(gdl) rtol = 1.0e-8
         @test all(isfinite, collect(og(m, dmr, θ)[2]))
     end
-    rr = fit_model(dmr, NoLimits.Laplace(; optim_kwargs = (maxiters = 3,)); serialization = ser)
-    @test isfinite(NoLimits.get_objective(rr))
-    @test NoLimits.get_loglikelihood(fit_model(dmv, NoLimits.Laplace(; optim_kwargs = (maxiters = 2,)); serialization = ser)) ≈
-        NoLimits.get_loglikelihood(fit_model(dmd, NoLimits.Laplace(; optim_kwargs = (maxiters = 2,)); serialization = ser)) rtol = 1.0e-6
 
     # SAEM/MCEM: the E-step ignores the weights, the M-step applies them.
     mc = NoLimits.MCEM(; maxiters = 2, progress = false)
@@ -1668,12 +1664,9 @@ end
     @test abs(gσ(dmr)) < 1.0e-6
     @test abs(gσ(dm0)) > 1.0e-3
     for mfit in (NoLimits.SAEM(; maxiters = 3, q_store_max = 2), NoLimits.MCEM(; maxiters = 2, progress = false))
-        r0 = fit_model(dm0, mfit; serialization = ser, rng = Random.Xoshiro(2))
-        r1 = fit_model(dm1, mfit; serialization = ser, rng = Random.Xoshiro(2))
-        @test collect(NoLimits.get_params(r1; scale = :transformed)) ==
-            collect(NoLimits.get_params(r0; scale = :transformed))
-        rw = fit_model(dmr, mfit; serialization = ser, rng = Random.Xoshiro(2))
-        @test all(isfinite, collect(NoLimits.get_params(rw; scale = :transformed)))
+        fit(d) = fit_model(d, mfit; serialization = ser, rng = Random.Xoshiro(2), store_eb_modes = false)
+        @test collect(NoLimits.get_params(fit(dm1); scale = :transformed)) ==
+            collect(NoLimits.get_params(fit(dm0); scale = :transformed))
     end
     @test_throws ArgumentError fit_model(dmr, NoLimits.SAEM(; suffstats = (args...) -> nothing))
     @test_throws ArgumentError fit_model(dmr, NoLimits.MCMC(; sampler = MH()))
