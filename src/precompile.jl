@@ -9,7 +9,9 @@
 # generated, so the compiled code is cached in it instead of being compiled on the first
 # fit. The optimizers and `solve` keywords are taken from the default-constructed methods,
 # so their types are the ones `fit_model` uses with default settings. It runs only during
-# precompilation and never makes precompilation fail.
+# precompilation and never makes precompilation fail (every step is wrapped in `_pc_try`).
+
+using PrecompileTools: @compile_workload, @setup_workload
 
 function _pc_erased_optf(adtype)
     return OptimizationFunction(
@@ -111,29 +113,9 @@ precompile(
     (Any, Float64, Int, Any, NamedTuple{(), Tuple{}}, Vector{Vector{Float64}})
 )
 precompile(_cf_plan, (Vector{Symbol}, Vector{Expr}, Vector{Symbol}))
-precompile(_precompile_workload, ())
 
-if ccall(:jl_generating_output, Cint, ()) == 1
-    # Julia >= 1.12: tag everything inferred during the workload for the package image,
-    # including runtime-dispatched callees in other packages (what PrecompileTools'
-    # `@compile_workload` does). On older Julia versions the ccall fails and only code
-    # reachable through backedges from NoLimits methods is cached.
-    let tagged = try
-            ccall(:jl_tag_newly_inferred_enable, Cvoid, ())
-            true
-        catch
-            false
-        end
-        try
-            _precompile_workload()
-        catch
-        finally
-            if tagged
-                try
-                    ccall(:jl_tag_newly_inferred_disable, Cvoid, ())
-                catch
-                end
-            end
-        end
+@setup_workload begin
+    @compile_workload begin
+        _precompile_workload()
     end
 end
