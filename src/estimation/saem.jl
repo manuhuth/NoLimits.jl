@@ -4894,7 +4894,7 @@ function _fit_model(
     ]
     eb_modes = store_eb_modes ?
         _compute_bstars(
-            dm, θ_hat_u, ebe_fixed_maps, ll_cache, ebe, rng;
+            dm_s, θ_hat_u, ebe_fixed_maps, ll_cache, ebe, rng;
             rescue = method.saem.ebe_rescue,
             progress = method.saem.progress,
             progress_desc = "SAEM Final EBE",

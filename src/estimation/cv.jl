@@ -553,7 +553,8 @@ function _cv_evaluate_mc(
     bstars_per_sample = seen_re_mode == :conditional ?
         _sample_conditional_bstars(
             dm_train, batch_infos, bstars, θu,
-            const_cache, ll_cache_train, res_train, n_mc_samples, rng
+            const_cache, ll_cache_train, res_train, n_mc_samples, rng;
+            constants_re = _res_constants_re(res_train, constants_re)
         ) : nothing
 
     # RE distribution builder — used for unseen :montecarlo draws and :mean plug-in.

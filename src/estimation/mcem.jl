@@ -2304,7 +2304,7 @@ function _fit_model(
     last_b_candidates = samples_by_batch
     eb_modes = store_eb_modes ?
         _compute_bstars(
-            dm, θ_hat_u, constants_re, ll_cache, method.ebe, rng;
+            dm_s, θ_hat_u, constants_re, ll_cache, method.ebe, rng;
             rescue = method.ebe_rescue,
             progress = method.progress,
             progress_desc = "MCEM Final EBE",

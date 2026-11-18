@@ -1663,11 +1663,33 @@ end
     )[2][:σ]
     @test abs(gσ(dmr)) < 1.0e-6
     @test abs(gσ(dm0)) > 1.0e-3
+    llc0 = NoLimits.build_ll_cache(dm0; serialization = ser, force_saveat = true)
     for mfit in (NoLimits.SAEM(; maxiters = 3, q_store_max = 2), NoLimits.MCEM(; maxiters = 2, progress = false))
-        fit(d) = fit_model(d, mfit; serialization = ser, rng = Random.Xoshiro(2), store_eb_modes = false)
+        fit(d; kw...) = fit_model(d, mfit; serialization = ser, rng = Random.Xoshiro(2), store_eb_modes = false, kw...)
         @test collect(NoLimits.get_params(fit(dm1); scale = :transformed)) ==
             collect(NoLimits.get_params(fit(dm0); scale = :transformed))
+        # the reported EBEs are the modes of the unweighted conditional posterior at θ̂
+        rw = fit(dmr; store_eb_modes = true)
+        θw = NoLimits.get_params(rw; scale = :untransformed)
+        modes(d) = first(NoLimits._compute_bstars(d, θw, NamedTuple(), llc0, NoLimits._default_ebe_options(), Random.Xoshiro(1)))
+        stored = NoLimits.get_eb_modes(NoLimits.get_result(rw))
+        @test all(isapprox.(stored, modes(dm0); rtol = 1.0e-5, atol = 1.0e-7))
+        @test !all(isapprox.(stored, modes(dmr); rtol = 1.0e-5, atol = 1.0e-7))
     end
+    # Post-fit draws of a Laplace fit come from the unweighted conditional posterior at θ̂.
+    # (a weighted fit stores the modes of its weighted integrand; its draws equal those of an
+    # unweighted fit at the same θ, whose stored modes are the unweighted ones)
+    eb(d) = NoLimits.empirical_bayes(NoLimits.build_fit_context(d), θ)
+    fr(d) = NoLimits.build_fit_result(
+        d, NoLimits.Laplace(), θ; kind = :frequentist_re, objective = 0.0, eb_modes = eb(d),
+        fit_kwargs = (; rng = Random.Xoshiro(9))
+    )
+    sw_ = sample_random_effects(dmr, fr(dmr); n_samples = 4, rng = Random.Xoshiro(7))
+    s0_ = sample_random_effects(dm0, fr(dm0); n_samples = 4, rng = Random.Xoshiro(7))
+    for re in (:η_e, :η_s)
+        @test getproperty(sw_, re)[!, end] ≈ getproperty(s0_, re)[!, end] rtol = 1.0e-6
+    end
+    @test !(sample_random_effects(dm0, fr(dmr); n_samples = 4, rng = Random.Xoshiro(7)).η_s[!, end] ≈ s0_.η_s[!, end])
     @test_throws ArgumentError fit_model(dmr, NoLimits.SAEM(; suffstats = (args...) -> nothing))
     @test_throws ArgumentError fit_model(dmr, NoLimits.MCMC(; sampler = MH()))
 
