@@ -331,6 +331,10 @@ lb, ub = default_bounds_from_start(dm; margin=1.0)
 
 These bounds are then passed directly to the `Laplace` constructor via `lb` and `ub`.
 
+## Likelihood Weights
+
+With `DataModel(...; likelihood_weights = :v)` Laplace maximizes the weighted marginal likelihood of [Conditional-Likelihood Weights](../data-model-construction.md#Conditional-Likelihood-Weights). The empirical Bayes modes are modes of the weighted integrand; `sample_random_effects` draws from the Laplace approximation of the unweighted conditional posterior at `θ̂`, and Wald intervals default to the sandwich covariance.
+
 ## Where to go next
 
 - [Choosing a method](index.md#Choosing-a-Method) - how this compares with the alternatives.

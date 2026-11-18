@@ -136,6 +136,8 @@ free levels (and hence without variational distribution) with its log-likelihood
 values. Batches of weight zero do not enter the objective; their reported variational
 distribution is the Laplace approximation at ``\hat\theta``.
 
+With `DataModel(...; likelihood_weights = :v)` each individual's conditional log-likelihood in the ELBO is multiplied by its weight, so `q` approximates the posterior of the weighted integrand of [Conditional-Likelihood Weights](../data-model-construction.md#Conditional-Likelihood-Weights). `sample_random_effects` therefore does not draw from `q` in this case but from the Laplace approximation of the unweighted conditional posterior at ``\hat\theta``.
+
 ## Variational Options
 
 - `family = :dense`: full lower-triangular scale; `:diagonal` gives a mean-field family,

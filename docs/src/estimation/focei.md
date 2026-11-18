@@ -172,6 +172,10 @@ Wald confidence intervals from the inverse observed-information matrix are avail
 FOCEI fits through [`compute_uq`](@ref); see
 [Uncertainty Quantification](../uncertainty-quantification/index.md).
 
+## Likelihood Weights
+
+With `DataModel(...; likelihood_weights = :v)` FOCEI and FOCE scale the expected information and the score of each observation by its individual's weight and maximize the weighted marginal likelihood of [Conditional-Likelihood Weights](../data-model-construction.md#Conditional-Likelihood-Weights). The empirical Bayes modes are modes of the weighted integrand; `sample_random_effects` draws from the Laplace approximation of the unweighted conditional posterior at `θ̂`, and Wald intervals default to the sandwich covariance.
+
 ## Where to go next
 
 - [Choosing a method](index.md#Choosing-a-Method) - how this compares with the alternatives.
