@@ -106,13 +106,6 @@ function _precompile_workload(; strict::Bool = false)
     return nothing
 end
 
-# Result constructors store `solution`/`raw` untyped (@nospecialize), so these signatures
-# are the ones the fit functions call (Laplace/FOCEI/VEM: Float64 objective, Int
-# iterations, no notes, Vector{Vector{Float64}} EB modes).
-precompile(
-    FrequentistREResult,
-    (Any, Float64, Int, Any, NamedTuple{(), Tuple{}}, Vector{Vector{Float64}})
-)
 precompile(_cf_plan, (Vector{Symbol}, Vector{Expr}, Vector{Symbol}))
 
 @setup_workload begin
