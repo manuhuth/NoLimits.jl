@@ -2297,7 +2297,7 @@ uuid = "ca575930-c2e3-43a9-ace4-1e988b2c1908"
 version = "1.3.0"
 
 [[deps.NoLimits]]
-deps = ["Bijectors", "ComponentArrays", "DataFrames", "DataInterpolations", "DiffEqBase", "DiffEqCallbacks", "Distributions", "Downloads", "ExponentialAction", "ForwardDiff", "FunctionChains", "Functors", "KernelDensity", "LineSearches", "LinearAlgebra", "Logging", "MCMCChains", "Optimisers", "Optimization", "OptimizationOptimJL", "OptimizationOptimisers", "OrdinaryDiffEq", "ProgressMeter", "Random", "Roots", "RuntimeGeneratedFunctions", "SciMLBase", "SciMLStructures", "SpecialFunctions", "StaticArrays", "Statistics", "StatsFuns", "Symbolics"]
+deps = ["Bijectors", "ComponentArrays", "DataFrames", "DataInterpolations", "DiffEqBase", "DiffEqCallbacks", "Distributions", "Downloads", "ExponentialAction", "ForwardDiff", "FunctionChains", "Functors", "KernelDensity", "LineSearches", "LinearAlgebra", "Logging", "MCMCChains", "Optimisers", "Optimization", "OptimizationOptimJL", "OptimizationOptimisers", "OrdinaryDiffEq", "PrecompileTools", "ProgressMeter", "Random", "Roots", "RuntimeGeneratedFunctions", "SciMLBase", "SciMLStructures", "SpecialFunctions", "StaticArrays", "Statistics", "StatsFuns", "Symbolics"]
 path = ".."
 uuid = "1d491b74-35a5-408f-ae19-cf8524c3769d"
 version = "0.3.0"

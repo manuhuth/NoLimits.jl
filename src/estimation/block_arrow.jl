@@ -284,7 +284,8 @@ function _ba_grad_hess(
         bk = b[st.maps[k]]
         f = _LaplaceLogfBatch(dm, sub, θ, const_cache, c, ctxs[k])
         if curvature isa ExactHessianCurvature
-            r = ForwardDiff.hessian!(ForwardDiff.DiffResults.HessianResult(bk), f, bk)
+            res = ForwardDiff.DiffResults.HessianResult(bk)
+            r = ForwardDiff.hessian!(res, f, bk, _logfb_hess_cfg(f, res, bk), Val(false))
             vals[k] = ForwardDiff.DiffResults.value(r)
             gs[k] = copy(ForwardDiff.DiffResults.gradient(r))
             Hs[k] = copy(ForwardDiff.DiffResults.hessian(r))
@@ -292,7 +293,7 @@ function _ba_grad_hess(
             vals[k] = f(bk)
             gk = similar(bk)
             Hk = _newton_grad_hess!(
-                gk, curvature, f, ForwardDiff.GradientConfig(f, bk), dm, sub, θ, bk,
+                gk, curvature, f, _logfb_grad_cfg(f, bk), dm, sub, θ, bk,
                 const_cache, c, ctxs[k]
             )
             Hk === nothing && (
@@ -432,7 +433,7 @@ function _ba_grad_batch(
         )
         ds[k] = dk
         dk === nothing && return
-        gls[k] = dk.grad_logf !== nothing ? dk.grad_logf : ForwardDiff.gradient(
+        gls[k] = dk.grad_logf !== nothing ? dk.grad_logf : _logftheta_gradient(
                 _LaplaceLogfTheta(dm, sub, bk, const_cache, c), θ
             )
         Hs[k] = hmode isa ExactHessianCurvature ? dk.Hex : _build_hess_b(

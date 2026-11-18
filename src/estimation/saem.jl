@@ -307,10 +307,12 @@ end
 function _saem_mstep_optf(obj::F, adtype, n::Int) where {F}
     if adtype isa Optimization.AutoForwardDiff && 1 <= n <= 12
         fgc = _SAEMFGCache(n)
+        # Erased wrappers (#408): `obj` captures the DataModel. The dual pass inside
+        # `_saem_fg_pass!` still sees the concrete `obj`.
         return OptimizationFunction(
-            (z, p) -> _saem_fg_value(fgc, obj, z, p), adtype;
-            grad = (G, z, p) -> (_saem_fg_grad!(fgc, obj, G, z, p); nothing),
-            fg = (G, z, p) -> _saem_fg_grad!(fgc, obj, G, z, p)
+            _ErasedObjective((z, p) -> _saem_fg_value(fgc, obj, z, p)), adtype;
+            grad = _ErasedGradient((G, z, p) -> (_saem_fg_grad!(fgc, obj, G, z, p); nothing)),
+            fg = _ErasedValueGradient((G, z, p) -> _saem_fg_grad!(fgc, obj, G, z, p))
         )
     end
     return OptimizationFunction(obj, adtype)

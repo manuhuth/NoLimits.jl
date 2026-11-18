@@ -473,6 +473,17 @@ _FOCEIPriorLogf(dm, info, θ, const_cache, cache, tctx = nothing) =
     f.dm, f.info, f.θ, b, f.const_cache, f.cache; tctx = f.tctx, own = f.own
 )
 
+# Compact tags (#408, see `_TagLogfB` in laplace.jl); default chunks.
+@inline _prior_hess_cfg(f::_FOCEIPriorLogf, b) = ForwardDiff.HessianConfig(
+    f, b, ForwardDiff.Chunk(b), _nl_tag(_TagPriorLogfB(), b, f.θ)
+)
+@inline _prior_grad_cfg(f::_FOCEIPriorLogf, b) = ForwardDiff.GradientConfig(
+    f, b, ForwardDiff.Chunk(b), _nl_tag(_TagPriorLogfB(), b, f.θ)
+)
+@inline _phi_jac_cfg(f::_FOCEIPhi, b) = ForwardDiff.JacobianConfig(
+    f, b, ForwardDiff.Chunk(b), _nl_tag(_TagFOCEIPhiB(), b, f.θ)
+)
+
 # `tctx` when it was built from exactly this θ_re (so its distributions carry the same θ
 # partials), else nothing.
 @inline _focei_ctx_for(tctx, θ_re) = tctx !== nothing && tctx.θ_re === θ_re ? tctx : nothing
@@ -755,7 +766,7 @@ function _focei_dists_jacobian(
     dists_b = _focei_obs_dists_batch(dm, batch_info, θ_re, b, const_cache, cache)
     isempty(dists_b) && return (dists_b, nothing, nothing)
     Φ = _FOCEIPhi(dm, batch_info, θ_re, const_cache, cache)
-    J = ForwardDiff.jacobian(Φ, b)
+    J = ForwardDiff.jacobian(Φ, b, _phi_jac_cfg(Φ, b), Val(false))
     # Guard against an ODE solve that succeeds at the base point but reports failure
     # under the AD seed (length mismatch): signal a non-finite Hessian so the marginal
     # becomes -Inf and the outer optimizer backtracks out of the unstable region.
@@ -787,7 +798,7 @@ function _focei_prior_negH(
     lp = _FOCEIPriorLogf(
         dm, batch_info, θ_re, const_cache, cache, _focei_ctx_for(tctx, θ_re), own
     )
-    return -ForwardDiff.hessian(lp, b)
+    return -ForwardDiff.hessian(lp, b, _prior_hess_cfg(lp, b), Val(false))
 end
 
 # Score ∂ log p(y | φ)/∂φ in the `_focei_params` order, for every family with a registered
@@ -896,7 +907,7 @@ function _focei_grad_negH_batch(
         lp = _FOCEIPriorLogf(
             dm, batch_info, θ_re, const_cache, cache, _focei_ctx_for(tctx, θ_re), own
         )
-        grad = ForwardDiff.gradient(lp, b)
+        grad = ForwardDiff.gradient(lp, b, _prior_grad_cfg(lp, b), Val(false))
         Hdata = zeros(T, nb, nb)
         if J !== nothing
             ys = _focei_obs_values_batch(dm, batch_info)
@@ -984,7 +995,7 @@ function _newton_grad_hess!(
         dm, batch_info, θ, b, const_cache, cache; interaction = c.interaction, tctx = tctx
     )
     if r === nothing || r[1] === nothing
-        ForwardDiff.gradient!(g, f, b, cfg)
+        ForwardDiff.gradient!(g, f, b, cfg, Val(false))
         return r === nothing ? nothing : -r[2]
     end
     copyto!(g, r[1])

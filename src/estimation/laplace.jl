@@ -39,6 +39,59 @@ end
     return _laplace_logf_batch(f.dm, f.info, f.θ, b, f.const_cache, f.cache; tctx = f.tctx)
 end
 
+# Compact ForwardDiff tags (#408). The default tag `Tag{typeof(f), eltype(x)}` embeds the
+# closure type (DataModel, caches) in every Dual type and in every signature the Duals
+# reach. The Laplace/FOCEI AD sites use one small tag type per differentiated function
+# instead. Invariants that keep nested passes free of perturbation confusion:
+# 1. a tag type stands for one differentiated function role (as `typeof(f)` did); a pass is
+#    never nested in a pass with the same tag (a Hessian's two levels share it, as usual);
+# 2. its value type is the promoted eltype of x and of every captured input that can carry
+#    duals (θ, b; contexts are built from θ), so a pass inside an outer AD pass gets a tag
+#    whose value type contains the outer tag, and `≺` below orders them by that containment.
+# The tags no longer match `typeof(f)`, so these calls pass `Val(false)` (no tag check).
+struct _TagLogfB end        # _LaplaceLogfBatch in b (inner Newton, b-Hessian, block-arrow)
+struct _TagLogfTheta end    # _LaplaceLogfTheta in θ (envelope term)
+struct _TagPriorLogfB end   # _FOCEIPriorLogf in b (prior gradient/Hessian)
+struct _TagFOCEIPhiB end    # _FOCEIPhi in b (FOCEI outcome-parameter Jacobian)
+struct _TagOnePassX end     # one-pass Jacobian over x = (θ[o], b) (`_onepass_kernel`)
+struct _TagOnePassFb end    # its inner b-Hessian of log f (exact-Hessian F)
+struct _TagOnePassP end     # one-pass Jacobian over the prior-only θ[p]
+struct _TagJxA end          # `_onepass_J_x_inner`: outer Jacobian over β (A)
+struct _TagJxGx end         # middle Jacobian over β (Gx)
+struct _TagJxG end          # innermost gradient over x (g)
+
+@inline _tag_eltype(x::AbstractArray) = eltype(x)
+@inline _nl_tag(t, x, ctx...) =
+    ForwardDiff.Tag(t, promote_type(_tag_eltype(x), map(_tag_eltype, ctx)...))
+
+# ForwardDiff orders tags by a creation counter, but a package image can cache counter values
+# from its own precompile session, which can put an outer tag after the inner one. A pair with
+# a NoLimits tag is ordered by type instead: the tag whose value type contains the other is inner.
+const _NLTag = Union{
+    _TagLogfB, _TagLogfTheta, _TagPriorLogfB, _TagFOCEIPhiB, _TagOnePassX, _TagOnePassFb,
+    _TagOnePassP, _TagJxA, _TagJxGx, _TagJxG,
+}
+@inline _has_tag(::Type, ::Type) = false
+@inline _has_tag(::Type{ForwardDiff.Dual{S, V, N}}, ::Type{T}) where {S, V, N, T} =
+    S === T || _has_tag(S, T) || _has_tag(V, T)
+@inline _has_tag(::Type{ForwardDiff.Tag{F, V}}, ::Type{T}) where {F, V, T} = _has_tag(V, T)
+@inline _nl_prec(a, b) = _has_tag(b, a) ? true :
+    _has_tag(a, b) ? false : ForwardDiff.tagcount(a) < ForwardDiff.tagcount(b)
+@inline ForwardDiff.:≺(a::Type{ForwardDiff.Tag{F1, V1}}, b::Type{ForwardDiff.Tag{F2, V2}}) where {F1 <: _NLTag, V1, F2, V2} =
+    _nl_prec(a, b)
+@inline ForwardDiff.:≺(a::Type{ForwardDiff.Tag{F1, V1}}, b::Type{ForwardDiff.Tag{F2, V2}}) where {F1, V1, F2 <: _NLTag, V2} =
+    _nl_prec(a, b)
+@inline ForwardDiff.:≺(a::Type{ForwardDiff.Tag{F1, V1}}, b::Type{ForwardDiff.Tag{F2, V2}}) where {F1 <: _NLTag, V1, F2 <: _NLTag, V2} =
+    _nl_prec(a, b)
+
+@inline _logfb_tag(f::_LaplaceLogfBatch, b) = _nl_tag(_TagLogfB(), b, f.θ)
+@inline _logfb_grad_cfg(f::_LaplaceLogfBatch, b) =
+    ForwardDiff.GradientConfig(f, b, ForwardDiff.Chunk(b), _logfb_tag(f, b))
+@inline _logfb_hess_cfg(f::_LaplaceLogfBatch, b) =
+    ForwardDiff.HessianConfig(f, b, ForwardDiff.Chunk(b), _logfb_tag(f, b))
+@inline _logfb_hess_cfg(f::_LaplaceLogfBatch, res, b) =
+    ForwardDiff.HessianConfig(f, res, b, ForwardDiff.Chunk(b), _logfb_tag(f, b))
+
 struct _LaplaceLogfBatchParam{DM, INFO, CC, CA}
     dm::DM
     info::INFO
@@ -69,6 +122,12 @@ end
 @inline function (f::_LaplaceLogfTheta)(θ)
     return _laplace_logf_batch(f.dm, f.info, θ, f.b, f.const_cache, f.cache)
 end
+
+@inline _logftheta_grad_cfg(f::_LaplaceLogfTheta, θ) = ForwardDiff.GradientConfig(
+    f, θ, ForwardDiff.Chunk(θ), _nl_tag(_TagLogfTheta(), θ, f.b)
+)
+_logftheta_gradient(f::_LaplaceLogfTheta, θ) =
+    ForwardDiff.gradient(f, θ, _logftheta_grad_cfg(f, θ), Val(false))
 
 struct _LaplaceLogdetTheta{DM, INFO, B, CC, CA, H, A}
     dm::DM
@@ -770,13 +829,13 @@ end
         cache.ad_cache.grad_cfg[bi] = entry
     end
     entry = entry::_FDCfgStore
-    cfg = _get_fd_cfg!(entry, f, b, () -> ForwardDiff.GradientConfig(f, b))
+    cfg = _get_fd_cfg!(entry, f, b, () -> _logfb_grad_cfg(f, b))
     gradb = grad_cache.last_gradb[bi]
     if length(gradb) != length(b)
         gradb = similar(b)
         grad_cache.last_gradb[bi] = gradb
     end
-    ForwardDiff.gradient!(gradb, f, b, cfg)
+    ForwardDiff.gradient!(gradb, f, b, cfg, Val(false))
     b_last = grad_cache.last_b[bi]
     if length(b_last) != length(b)
         resize!(b_last, length(b))
@@ -974,9 +1033,8 @@ function _ctx_with_prior_hess(
         b
     )
     _re_all_gaussian(dm) || return tctx
-    Λ = -ForwardDiff.hessian(
-        _FOCEIPriorLogf(dm, batch_info, tctx.θ_re, const_cache, cache, tctx), b
-    )
+    lp = _FOCEIPriorLogf(dm, batch_info, tctx.θ_re, const_cache, cache, tctx)
+    Λ = -ForwardDiff.hessian(lp, b, _prior_hess_cfg(lp, b), Val(false))
     return _LaplaceThetaCtx(tctx.θ_re, tctx.dists, Λ)
 end
 
@@ -1367,7 +1425,7 @@ function _newton_inner_solve(
         entry = _FDCfgStore()
         ad_cache.grad_cfg[bi] = entry
     end
-    cfg = _get_fd_cfg!(entry::_FDCfgStore, f, b, () -> ForwardDiff.GradientConfig(f, b))
+    cfg = _get_fd_cfg!(entry::_FDCfgStore, f, b, () -> _logfb_grad_cfg(f, b))
     # `cfg` comes out of the untyped store: run the loop behind a function barrier so its
     # AD calls and the work on their results dispatch statically.
     return _newton_inner_loop(
@@ -1442,7 +1500,7 @@ function _newton_exact_solve(f, b0::Vector{Float64}, newton::NewtonInner; f0_min
     rc = ForwardDiff.DiffResults.HessianResult(b)
     # ForwardDiff picks the chunk, hence the type of `cfg`, from length(b) at runtime: run
     # the loop behind a function barrier so every hessian! call in it dispatches statically.
-    return _newton_exact_loop(f, b, rc, ForwardDiff.HessianConfig(f, rc, b), newton, f0_min)
+    return _newton_exact_loop(f, b, rc, _logfb_hess_cfg(f, rc, b), newton, f0_min)
 end
 
 function _newton_exact_loop(
@@ -1451,7 +1509,7 @@ function _newton_exact_loop(
     ) where {FF}
     b_try = similar(b)
     rt = ForwardDiff.DiffResults.HessianResult(b)
-    rc = ForwardDiff.hessian!(rc, f, b, cfg)
+    rc = ForwardDiff.hessian!(rc, f, b, cfg, Val(false))
     fval = Float64(ForwardDiff.DiffResults.value(rc))
     f0_min === nothing || (isfinite(fval) && fval > f0_min) || return nothing
     isfinite(fval) || return _NewtonSol(b, -Inf, Inf, false)
@@ -1478,7 +1536,7 @@ function _newton_exact_loop(
             α * Δmax <= newton.x_abstol && return _NewtonSol(b, fval, gn, true, copy(H))
             @. b_try = b + α * Δ
             if α == 1.0
-                rt = ForwardDiff.hessian!(rt, f, b_try, cfg)
+                rt = ForwardDiff.hessian!(rt, f, b_try, cfg, Val(false))
                 f_try = Float64(ForwardDiff.DiffResults.value(rt))
             else
                 f_try = f(b_try)
@@ -1499,7 +1557,7 @@ function _newton_exact_loop(
                 if α == 1.0
                     rc, rt = rt, rc
                 else
-                    rc = ForwardDiff.hessian!(rc, f, b, cfg)
+                    rc = ForwardDiff.hessian!(rc, f, b, cfg, Val(false))
                 end
                 fval = f_try
                 accepted = true
@@ -1532,7 +1590,7 @@ function _newton_tr_inner_solve(
         entry = _FDCfgStore()
         ad_cache.grad_cfg[bi] = entry
     end
-    cfg = _get_fd_cfg!(entry::_FDCfgStore, f, b0, () -> ForwardDiff.GradientConfig(f, b0))
+    cfg = _get_fd_cfg!(entry::_FDCfgStore, f, b0, () -> _logfb_grad_cfg(f, b0))
     b_v, f_v = fill(NaN, nb), Ref(NaN)                   # value cache
     b_d, g_d, H_d = fill(NaN, nb), zeros(nb), zeros(nb, nb)   # gradient/Hessian cache (log f)
     function value_at(b)
@@ -1589,7 +1647,7 @@ end
 function _newton_grad_hess!(
         g, curvature, f, cfg, dm, batch_info, θ, b, const_cache, cache, tctx
     )
-    ForwardDiff.gradient!(g, f, b, cfg)
+    ForwardDiff.gradient!(g, f, b, cfg, Val(false))
     return nothing
 end
 
@@ -2149,12 +2207,12 @@ function _laplace_hessian_b(
     H = Matrix{promote_type(eltype(θ), eltype(b))}(undef, length(b), length(b))
     cfg = nothing
     if ad_cache === nothing
-        cfg = ForwardDiff.HessianConfig(f, b)
+        cfg = _logfb_hess_cfg(f, b)
     else
         entry = ad_cache.hess_cfg[bi]
         ftype = typeof(f)
         if entry === nothing
-            cfg = ForwardDiff.HessianConfig(f, b)
+            cfg = _logfb_hess_cfg(f, b)
             ad_cache.hess_cfg[bi] = _FDHessCfgStore([((ftype, eltype(b)), cfg)])
         else
             entry = entry::_FDHessCfgStore
@@ -2167,12 +2225,12 @@ function _laplace_hessian_b(
                 end
             end
             if !found
-                cfg = ForwardDiff.HessianConfig(f, b)
+                cfg = _logfb_hess_cfg(f, b)
                 push!(entry, ((ftype, eltype(b)), cfg))
             end
         end
     end
-    ForwardDiff.hessian!(H, f, b, cfg)
+    ForwardDiff.hessian!(H, f, b, cfg, Val(false))
     return H
 end
 
@@ -2496,9 +2554,9 @@ function _laplace_grad_batch(
     else
         logf_θ = _LaplaceLogfTheta(dm, batch_info, b, const_cache, cache)
         cfg = _get_fd_cfg!(
-            buf.grad_logf_cfg, logf_θ, θ_vec, () -> ForwardDiff.GradientConfig(logf_θ, θ_vec)
+            buf.grad_logf_cfg, logf_θ, θ_vec, () -> _logftheta_grad_cfg(logf_θ, θ_vec)
         )
-        ForwardDiff.gradient!(buf.grad_logf, logf_θ, θ_vec, cfg)
+        ForwardDiff.gradient!(buf.grad_logf, logf_θ, θ_vec, cfg, Val(false))
         buf.grad_logf
     end
     Gθ = if fast === nothing
@@ -3817,22 +3875,26 @@ function _fit_laplace_family(
     end
 
     optf = OptimizationFunction(
-        obj_only,
+        _ErasedObjective(obj_only),
         method.adtype;
-        grad = (G, z, p) -> begin
-            # chain rule for θt = θt0 + s .* z
-            G .= s_pc .* obj_grad(z, p)[2]
-        end,
+        grad = _ErasedGradient(
+            (G, z, p) -> begin
+                # chain rule for θt = θt0 + s .* z
+                G .= s_pc .* obj_grad(z, p)[2]
+            end
+        ),
         # Without `fg`, Optimization.jl builds a fused AD `fg!` by differentiating
         # `obj_only` and ignores `grad` (Optim's line search and every Optimisers rule
         # call it), so the analytic marginal gradient would go unused.
-        fg = (G, z, p) -> begin
-            obj, g = obj_grad(z, p)
-            G .= s_pc .* g
-            # `obj_grad` reports infeasibility as `Inf`; return the same finite wall as
-            # `obj_only` so the line search backtracks instead of giving up.
-            return isfinite(obj) ? obj : _infeasible(typeof(obj))
-        end
+        fg = _ErasedValueGradient(
+            (G, z, p) -> begin
+                obj, g = obj_grad(z, p)
+                G .= s_pc .* g
+                # `obj_grad` reports infeasibility as `Inf`; return the same finite wall as
+                # `obj_only` so the line search backtracks instead of giving up.
+                return isfinite(obj) ? obj : _infeasible(typeof(obj))
+            end
+        )
     )
     lb, ub, use_bounds, θ0_init = _resolve_optim_bounds(
         fe, free_names, θ0_free_t, method.optimizer, method.lb, method.ub, constants;
@@ -4016,7 +4078,8 @@ function _onepass_logdet_derivatives(
         T = promote_type(eltype(θv), eltype(bv))
         f = bw -> _laplace_logf_batch(dm, batch_info, θv, bw, const_cache, cache; tctx = tc)
         res = ForwardDiff.DiffResults.HessianResult(similar(bv, T))
-        res = ForwardDiff.hessian!(res, f, bv, ForwardDiff.HessianConfig(f, res, bv, cb))
+        cfg_b = ForwardDiff.HessianConfig(f, res, bv, cb, _nl_tag(_TagOnePassFb(), bv, θv))
+        res = ForwardDiff.hessian!(res, f, bv, cfg_b, Val(false))
         return vcat(
             ForwardDiff.DiffResults.value(res), ForwardDiff.DiffResults.gradient(res),
             _vech(ForwardDiff.DiffResults.hessian(res))
@@ -4055,18 +4118,31 @@ function _onepass_J_x_inner(dm::DataModel, batch_info::REBatchInfo, θ, b, const
             const_cache, cache; tctx = nothing
         )
         xT = convert(Vector{eltype(β)}, x0)
-        r = ForwardDiff.gradient!(ForwardDiff.DiffResults.GradientResult(similar(xT)), g, xT)
+        cfg_g = ForwardDiff.GradientConfig(
+            g, xT, ForwardDiff.Chunk(xT), _nl_tag(_TagJxG(), xT, θ, b)
+        )
+        r = ForwardDiff.gradient!(
+            ForwardDiff.DiffResults.GradientResult(similar(xT)), g, xT, cfg_g, Val(false)
+        )
         return vcat(ForwardDiff.DiffResults.value(r), ForwardDiff.DiffResults.gradient(r))
     end
     function A(β)       # [Gx; vec ∂_β Gx]
+        cfg_gx = ForwardDiff.JacobianConfig(
+            Gx, β, ForwardDiff.Chunk(β), _nl_tag(_TagJxGx(), β, θ, b)
+        )
         r = ForwardDiff.jacobian!(
-            ForwardDiff.DiffResults.JacobianResult(similar(β, m1), β), Gx, β
+            ForwardDiff.DiffResults.JacobianResult(similar(β, m1), β), Gx, β, cfg_gx,
+            Val(false)
         )
         return vcat(ForwardDiff.DiffResults.value(r), vec(ForwardDiff.DiffResults.jacobian(r)))
     end
     bv = Vector{Float64}(b)
+    cfg_a = ForwardDiff.JacobianConfig(
+        A, bv, ForwardDiff.Chunk(bv), _nl_tag(_TagJxA(), bv, θ)
+    )
     res = ForwardDiff.jacobian!(
-        ForwardDiff.DiffResults.JacobianResult(zeros(m1 * (nb + 1)), bv), A, bv
+        ForwardDiff.DiffResults.JacobianResult(zeros(m1 * (nb + 1)), bv), A, bv, cfg_a,
+        Val(false)
     )
     Av = ForwardDiff.DiffResults.value(res)
     B = ForwardDiff.DiffResults.jacobian(res)
@@ -4140,7 +4216,8 @@ function _onepass_kernel(
     J = if Jx === nothing
         gx = x -> F(_theta_with(θ, o, view(x, 1:no)), x[(no + 1):end], nothing, cb)
         xo = vcat(θ[o], b)
-        ForwardDiff.jacobian(gx, xo, ForwardDiff.JacobianConfig(gx, xo, cx))
+        cfg_x = ForwardDiff.JacobianConfig(gx, xo, cx, _nl_tag(_TagOnePassX(), xo, θ, b))
+        ForwardDiff.jacobian(gx, xo, cfg_x, Val(false))
     else
         Jx(o)::Matrix{Float64}
     end
@@ -4151,9 +4228,12 @@ function _onepass_kernel(
             # one builder pass for the prior gradient, curvature and log-density
             tc, own = _prior_dists(dm, batch_info, θr, cache)
             lp = _FOCEIPriorLogf(dm, batch_info, θr, const_cache, cache, tc, own)
+            tg = _nl_tag(_TagPriorLogfB(), b, θr)
+            gcfg = ForwardDiff.GradientConfig(lp, b, cb, tg)
+            hcfg = ForwardDiff.HessianConfig(lp, b, cb, tg)
             gh = vcat(
-                ForwardDiff.gradient(lp, b, ForwardDiff.GradientConfig(lp, b, cb)),
-                _vech(ForwardDiff.hessian(lp, b, ForwardDiff.HessianConfig(lp, b, cb)))
+                ForwardDiff.gradient(lp, b, gcfg, Val(false)),
+                _vech(ForwardDiff.hessian(lp, b, hcfg, Val(false)))
             )
             with_logf ? vcat(
                     _re_logpdf_batch(
@@ -4163,7 +4243,8 @@ function _onepass_kernel(
         end
         gp = x -> prior(_theta_with(θ, p, x))
         xp = θ[p]
-        Jθ[:, p] = ForwardDiff.jacobian(gp, xp, ForwardDiff.JacobianConfig(gp, xp, cp))
+        cfg_p = ForwardDiff.JacobianConfig(gp, xp, cp, _nl_tag(_TagOnePassP(), xp, θ, b))
+        Jθ[:, p] = ForwardDiff.jacobian(gp, xp, cfg_p, Val(false))
     end
     Jb = J[:, (no + 1):end]
     Hex = Jb[(k + 1):(k + nb), :]

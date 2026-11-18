@@ -163,17 +163,26 @@ function _detect_closed_form_impl(model)
     # Element-wise derivatives `D(x[k]) ~ ...` declare a vector-valued state: closed
     # forms are scalar-per-state, so such systems stay numerical.
     _de_has_elementwise_lines(de) && return _NO_CLOSED_FORM
+    return _cf_plan(states, get_de_lines(de), get_de_signals(de))
+end
+
+# The symbolic part of `_detect_closed_form_impl`, on model-independent argument types
+# (`Vector{Symbol}`, `Vector{Expr}`, `Vector{Symbol}`) so that its compiled code, and the
+# Symbolics code it reaches, can be cached in the package image (src/precompile.jl, #408).
+# Callers hold `_CLOSED_FORM_LOCK`.
+function _cf_plan(states::Vector{Symbol}, lines::Vector{Expr}, signals::Vector{Symbol})
+    n = length(states)
     try
         state_rhs = Dict{Symbol, Any}()
         signal_defs = Dict{Symbol, Any}()
-        for ln in get_de_lines(de)
+        for ln in lines
             if ln isa Expr && ln.head === :call && ln.args[1] === :~
                 state_rhs[ln.args[2].args[2]] = ln.args[3]
             elseif ln isa Expr && ln.head === :(=)
                 signal_defs[ln.args[1].args[1]] = ln.args[2]
             end
         end
-        signalset = Set(get_de_signals(de))
+        signalset = Set(signals)
         stateset = Set(states)
         Symbolics.@variables _t_cf
         svars = [Symbolics.variable(Symbol("_cf_x", i)) for i in 1:n]

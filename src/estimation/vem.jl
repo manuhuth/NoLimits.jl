@@ -1358,9 +1358,9 @@ function _fit_model(
     fy(y, _) = fgy!(0.0, nothing, y)
     # `fg` makes Optim's line search and Optimisers rules use the fused value + gradient
     optf = OptimizationFunction(
-        fy, method.adtype;
-        grad = (G, y, _) -> (fgy!(nothing, G, y); nothing),
-        fg = (G, y, _) -> fgy!(0.0, G, y)
+        _ErasedObjective(fy), method.adtype;
+        grad = _ErasedGradient((G, y, _) -> (fgy!(nothing, G, y); nothing)),
+        fg = _ErasedValueGradient((G, y, _) -> fgy!(0.0, G, y))
     )
     # bounds act on the fixed effects only, mapped into y; κ stays unbounded
     lb_y = vcat((lb .- x0[1:p]) ./ s, fill(-Inf, off - p))
@@ -1450,9 +1450,9 @@ function _fit_model(
         end
         xθ0 = Vector{Float64}(x̂[1:p])
         rf = OptimizationFunction(
-            (xθ, _) -> fr(xθ), method.adtype;
-            grad = (G, xθ, _) -> (fgr!(nothing, G, xθ); nothing),
-            fg = (G, xθ, _) -> fgr!(0.0, G, xθ)
+            _ErasedObjective((xθ, _) -> fr(xθ)), method.adtype;
+            grad = _ErasedGradient((G, xθ, _) -> (fgr!(nothing, G, xθ); nothing)),
+            fg = _ErasedValueGradient((G, xθ, _) -> fgr!(0.0, G, xθ))
         )
         ropt, rbounds = _bounded_optimizer(method.optimizer, use_bounds, lb, ub)
         rprob = rbounds ? OptimizationProblem(rf, xθ0; lb = lb, ub = ub) :
