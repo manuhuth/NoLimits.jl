@@ -669,4 +669,84 @@ end
         @test oos ≈ ood rtol = 1.0e-10
         @test oos ≈ os rtol = 1.0e-10
     end
+
+    # Compact tags (_nl_tag, Val(false)) against ForwardDiff's default tags and finite
+    # differences, at every nesting the Laplace/FOCEI paths use (#408)
+    @testset "compact ForwardDiff tags in nested passes (#408)" begin
+        exact, focei = NoLimits.ExactHessianCurvature(), NoLimits.FisherInformationCurvature(true)
+        vech = NoLimits._vech
+        fdm = FiniteDifferences.central_fdm(5, 1)
+        for (dm, rt) in ((fx_mvn_dm(), 1.0e-10), (fx_ode_dm(), 1.0e-6))
+            _, infos, cc = NoLimits._build_re_batch_infos(dm, NamedTuple())
+            θ0 = get_θ0_untransformed(NoLimits.get_model(dm).fixed.fixed) .* 1.1
+            ax = getaxes(θ0)
+            x0 = collect(θ0)
+            θc(x) = ComponentArray(x, ax)
+            cache = build_ll_cache(dm)
+            info = infos[1]
+            b = collect(0.05 .* (1:NoLimits.get_n_b(info)) .- 0.1)
+            lf(θv, bv) = NoLimits._laplace_logf_batch(dm, info, θv, bv, cc, cache)
+            # one-pass kernel (OnePassX/Fb/P, PriorLogfB; Jx* for the ODE model)
+            d = NoLimits._onepass_logdet_derivatives(exact, dm, info, θ0, b, cc, cache, nothing)
+            @test d.Gθ ≈ ForwardDiff.jacobian(x -> ForwardDiff.gradient(bv -> lf(θc(x), bv), b), x0) rtol = rt
+            @test d.Jθ ≈ ForwardDiff.jacobian(x -> vech(ForwardDiff.hessian(bv -> lf(θc(x), bv), b)), x0) rtol = rt
+            @test d.Hex ≈ ForwardDiff.hessian(bv -> lf(θ0, bv), b) rtol = rt
+            @test d.Jb ≈ ForwardDiff.jacobian(bb -> vech(ForwardDiff.hessian(bv -> lf(θ0, bv), bb)), b) rtol = rt
+            @test d.grad_logf ≈ ForwardDiff.gradient(x -> lf(θc(x), b), x0) rtol = rt
+            @test NoLimits._logftheta_gradient(NoLimits._LaplaceLogfTheta(dm, info, b, cc, cache), θ0) ≈
+                ForwardDiff.gradient(θv -> lf(θv, b), θ0) rtol = 1.0e-12
+            # inner b-Hessian (LogfB) under an outer θ gradient
+            hb(x) = NoLimits._laplace_hessian_b(dm, info, θc(x), b, cc, cache, nothing, 1)
+            href(x) = ForwardDiff.hessian(bv -> lf(θc(x), bv), b)
+            @test ForwardDiff.jacobian(x -> vec(hb(x)), x0) ≈ ForwardDiff.jacobian(x -> vec(href(x)), x0) rtol = rt
+            # FOCEI curvature (FOCEIPhiB, PriorLogfB) under an outer θ pass and in the one-pass kernel
+            cf(x) = NoLimits.inner_curvature(focei, dm, info, θc(x), b, cc, cache, NoLimits.CurvatureWorkspace())
+            Jcf = FiniteDifferences.jacobian(fdm, x -> vech(cf(x)), x0)[1]
+            @test ForwardDiff.jacobian(x -> vech(cf(x)), x0) ≈ Jcf rtol = 1.0e-6
+            df = NoLimits._onepass_logdet_derivatives(focei, dm, info, θ0, b, cc, cache, nothing)
+            @test df.Jθ ≈ Jcf rtol = 1.0e-6
+            @test df.Gθ ≈ d.Gθ rtol = rt
+            NoLimits.get_de(NoLimits.get_model(dm)) === nothing || continue
+            # θ Hessian over the b-Hessian: four dual levels, two of them compact
+            @test ForwardDiff.hessian(x -> sum(abs2, hb(x)), x0) ≈
+                ForwardDiff.hessian(x -> sum(abs2, href(x)), x0) rtol = 1.0e-10
+            # block-arrow sub-batches (LogfB Hessian) against plain ForwardDiff
+            st = NoLimits._ba_structure(dm, info, cc)
+            _, gba, Hs = NoLimits._ba_grad_hess(st, exact, dm, θ0, b, cc, cache, nothing, Any[nothing for _ in st.subs])
+            @test gba ≈ ForwardDiff.gradient(bv -> lf(θ0, bv), b) rtol = 1.0e-12
+            for (k, sub) in enumerate(st.subs)
+                @test Hs[k] ≈ ForwardDiff.hessian(bv -> NoLimits._laplace_logf_batch(dm, sub, θ0, bv, cc, cache), b[st.maps[k]]) rtol = 1.0e-12
+            end
+            # outer ForwardDiff over the marginal objective: the modes b* are re-solved in
+            # Float64, so the derivative is the one at fixed b*
+            for hmode in (exact, focei)
+                inner = NoLimits.LaplaceInnerOptions(
+                    NewtonInner(; curvature = hmode, x_abstol = 1.0e-10), NamedTuple(),
+                    Optimization.AutoForwardDiff(), 1.0e-8
+                )
+                kw = (;
+                    inner = inner,
+                    hessian = NoLimits.LaplaceHessianOptions(1.0e-6, 6, 10.0, false, 0.0, true, false, 8),
+                    cache_opts = NoLimits.LaplaceCacheOptions(0.0),
+                    multistart = NoLimits.LaplaceMultistartOptions(0, 0, 1.0e-8, 1, :lhs),
+                    rng = MersenneTwister(1), serialization = EnsembleSerial(), hmode = hmode,
+                )
+                ebe = _make_laplace_ebe_cache(Float64, length(infos))
+                NoLimits._laplace_objective_only(dm, infos, θ0, cc, cache, ebe; kw...)
+                bs = deepcopy(ebe.bstar_cache.b_star)
+                curv(θv, i, bv) = hmode isa NoLimits.ExactHessianCurvature ?
+                    ForwardDiff.hessian(bb -> NoLimits._laplace_logf_batch(dm, infos[i], θv, bb, cc, cache), bv) :
+                    NoLimits.inner_curvature(hmode, dm, infos[i], θv, bv, cc, cache, NoLimits.CurvatureWorkspace())
+                twin(x) = -sum(eachindex(infos)) do i
+                    NoLimits._laplace_logf_batch(dm, infos[i], θc(x), bs[i], cc, cache) +
+                        0.5 * length(bs[i]) * log(2π) - 0.5 * logdet(-curv(θc(x), i, bs[i]))
+                end
+                obj(x) = NoLimits._laplace_objective_only(
+                    dm, infos, θc(x), cc, cache, _make_laplace_ebe_cache(Float64, length(infos)); kw...
+                )
+                @test ForwardDiff.gradient(obj, x0) ≈ FiniteDifferences.grad(fdm, twin, x0)[1] rtol = 1.0e-6
+                @test ForwardDiff.hessian(obj, x0) ≈ FiniteDifferences.jacobian(fdm, x -> ForwardDiff.gradient(twin, x), x0)[1] rtol = 1.0e-6
+            end
+        end
+    end
 end
