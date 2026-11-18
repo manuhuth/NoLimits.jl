@@ -634,6 +634,8 @@ function _focei_obs_weights_batch(w::AbstractVector, dm::DataModel, batch_info::
 end
 @inline _focei_obs_scale(::Nothing, j::Int, x) = x
 @inline _focei_obs_scale(v::AbstractVector, j::Int, x) = iszero(v[j]) ? zero(x) : v[j] * x
+@inline _focei_obs_skip(::Nothing, j::Int) = false
+@inline _focei_obs_skip(v::AbstractVector, j::Int) = iszero(v[j])
 @inline _focei_obs_alpha(::Nothing, j::Int) = true
 @inline _focei_obs_alpha(v::AbstractVector, j::Int) = v[j]
 
@@ -686,6 +688,10 @@ function _focei_data_term(J, dists_b::Vector, dists_m, interaction::Bool, T::Typ
     tmp = Matrix{T}(undef, size(J, 1), nb)
     offset = 0
     for (j, d) in enumerate(dists_b)
+        if _focei_obs_skip(vobs, j)
+            offset += _focei_paramcount(d)
+            continue
+        end
         dmj = dists_m === nothing ? nothing : dists_m[j]
         offset = _focei_data_term_obs!(
             H, tmp, J, offset, d, dmj, interaction, _focei_obs_alpha(vobs, j)
@@ -702,7 +708,6 @@ function _focei_data_term_obs!(
         α = true
     )
     dj = _focei_paramcount(d)
-    iszero(α) && return offset + dj
     Jj = view(J, (offset + 1):(offset + dj), :)
     Tj = view(tmp, 1:dj, :)
     disp = _focei_dispersion_indices(d)

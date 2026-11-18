@@ -1583,6 +1583,12 @@ end
     @test NoLimits.get_likelihood_weights(dmr) == [0.5, 3.0, 1.5, 0.25]
     @test NoLimits.get_weights(dmr) === nothing
     θ = NoLimits.get_θ0_untransformed(NoLimits.get_fixed(model))
+    # experiment A of dmv takes the block-arrow path, its duplicate copy the dense one
+    _, bisv, ccv = NoLimits.build_re_batch_infos(dmv, NamedTuple())
+    _, bisd, ccd = NoLimits.build_re_batch_infos(dmd, NamedTuple())
+    batch_of(bis, i) = findfirst(b -> i in NoLimits.get_batch_individuals(b), bis)
+    @test NoLimits._ba_structure(dmv, bisv[batch_of(bisv, 1)], ccv) !== nothing
+    @test NoLimits._ba_structure(dmd, bisd[batch_of(bisd, 1)], ccd) === nothing
 
     for m in (
             NoLimits.Laplace(), NoLimits.FOCEI(), NoLimits.FOCEI(; interaction = false),
@@ -1618,6 +1624,31 @@ end
     @test q(dmv)[1] ≈ q(dmd)[1] rtol = 1.0e-12
     @test collect(q(dmv)[2]) ≈ collect(q(dmd)[2]) rtol = 1.0e-10
     @test !(q(dmr)[1] ≈ q(dm0)[1])
+    # v = 0 equals deletion at fixed draws: drop s2's coordinate from experiment A's draws;
+    # the values differ by s2's prior term only, which does not depend on a and σ.
+    _, bis0, _ = NoLimits.build_re_batch_infos(dm0, NamedTuple())
+    rc = NoLimits.get_laplace_cache(NoLimits.get_re_group_info(dm0))
+    ri = findfirst(==(:η_s), NoLimits.get_re_names(rc))
+    ia = batch_of(bis0, 1)
+    rinfo = NoLimits.get_re_info(bis0[ia])[ri]
+    lid = only(NoLimits.get_ind_level_ids(rc)[2][ri])
+    s2 = NoLimits.get_ranges(rinfo)[NoLimits.get_level_to_index(NoLimits.get_re_map(rinfo))[lid]]
+    keep = setdiff(1:NoLimits.get_n_b(bis0[ia]), s2)
+    _, bisdel, _ = NoLimits.build_re_batch_infos(dmdel, NamedTuple())
+    draws_del = [
+        1 in NoLimits.get_batch_individuals(b) ?
+            NoLimits.RandomEffectPosteriorSample(NoLimits.get_draws(draws0[ia])[keep, :], nothing, nothing, :mcmc) :
+            draws0[3 - ia] for b in bisdel
+    ]
+    gz = q(dmz; free_names = [:a, :σ])[2]
+    gdel = NoLimits.mcem_q_objective_and_gradient(dmdel, θ, draws_del; serialization = ser, free_names = [:a, :σ])[2]
+    @test collect(gz) ≈ collect(gdel) rtol = 1.0e-10
+    # MCEM importance sampling: draws and IS weights ignore the likelihood weights.
+    mis = NoLimits.MCEM(; e_step = NoLimits.MCEM_IS(; n_samples = 20), maxiters = 2, progress = false)
+    is0, _ = NoLimits.mcem_e_step(dm0, θ, mis, nothing; rng = Random.Xoshiro(3))
+    isr, _ = NoLimits.mcem_e_step(dmr, θ, mis, nothing; rng = Random.Xoshiro(3))
+    @test all(NoLimits.get_draws(a) == NoLimits.get_draws(b) for (a, b) in zip(is0, isr))
+    @test all(NoLimits.get_log_weights(a) == NoLimits.get_log_weights(b) for (a, b) in zip(is0, isr))
     # closed form: σ² = Σ v_i SS_i / Σ v_i n_i, ω from the RE statistics without v
     sv, sd = NoLimits.saem_sufficient_statistics(dmv, θ, draws0), NoLimits.saem_sufficient_statistics(dmd, θ, draws0)
     @test sv.outcome.y.s1 ≈ sd.outcome.y.s1 rtol = 1.0e-12
