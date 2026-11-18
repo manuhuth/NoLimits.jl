@@ -673,6 +673,21 @@ end
     # Compact tags (_nl_tag, Val(false)) against ForwardDiff's default tags and finite
     # differences, at every nesting the Laplace/FOCEI paths use (#408)
     @testset "compact ForwardDiff tags in nested passes (#408)" begin
+        # tag order by containment, not by creation count: a package image can cache counts
+        # that put the inner tag first (Float16: a value type no other test creates)
+        TO = ForwardDiff.Tag{NoLimits._TagOnePassX, Float16}
+        TI = ForwardDiff.Tag{NoLimits._TagOnePassFb, ForwardDiff.Dual{TO, Float16, 2}}
+        TF = ForwardDiff.Tag{:foreign_inner, ForwardDiff.Dual{TI, ForwardDiff.Dual{TO, Float16, 2}, 1}}
+        ForwardDiff.tagcount(TF)
+        ForwardDiff.tagcount(TI)
+        @test ForwardDiff.tagcount(TI) < ForwardDiff.tagcount(TO)
+        @test ForwardDiff.:≺(TO, TI) && !ForwardDiff.:≺(TI, TO)
+        @test ForwardDiff.:≺(TI, TF) && !ForwardDiff.:≺(TF, TI) && ForwardDiff.:≺(TO, TF)
+        xo = ForwardDiff.Dual{TO}(Float16(2), Float16(1), Float16(0))
+        xi = ForwardDiff.Dual{TI}(xo, one(xo))
+        @test xi * xo isa ForwardDiff.Dual{TI}
+        @test ForwardDiff.partials(ForwardDiff.value(xi * xo), 1) == Float16(4)
+        @test ForwardDiff.partials(xi * xo, 1) == xo
         exact, focei = NoLimits.ExactHessianCurvature(), NoLimits.FisherInformationCurvature(true)
         vech = NoLimits._vech
         fdm = FiniteDifferences.central_fdm(5, 1)

@@ -47,7 +47,7 @@ end
 #    never nested in a pass with the same tag (a Hessian's two levels share it, as usual);
 # 2. its value type is the promoted eltype of x and of every captured input that can carry
 #    duals (θ, b; contexts are built from θ), so a pass inside an outer AD pass gets a tag
-#    containing the outer tag, created after it: ForwardDiff orders tags by creation.
+#    whose value type contains the outer tag, and `≺` below orders them by that containment.
 # The tags no longer match `typeof(f)`, so these calls pass `Val(false)` (no tag check).
 struct _TagLogfB end        # _LaplaceLogfBatch in b (inner Newton, b-Hessian, block-arrow)
 struct _TagLogfTheta end    # _LaplaceLogfTheta in θ (envelope term)
@@ -63,6 +63,26 @@ struct _TagJxG end          # innermost gradient over x (g)
 @inline _tag_eltype(x::AbstractArray) = eltype(x)
 @inline _nl_tag(t, x, ctx...) =
     ForwardDiff.Tag(t, promote_type(_tag_eltype(x), map(_tag_eltype, ctx)...))
+
+# ForwardDiff orders tags by a creation counter, but a package image can cache counter values
+# from its own precompile session, which can put an outer tag after the inner one. A pair with
+# a NoLimits tag is ordered by type instead: the tag whose value type contains the other is inner.
+const _NLTag = Union{
+    _TagLogfB, _TagLogfTheta, _TagPriorLogfB, _TagFOCEIPhiB, _TagOnePassX, _TagOnePassFb,
+    _TagOnePassP, _TagJxA, _TagJxGx, _TagJxG,
+}
+@inline _has_tag(::Type, ::Type) = false
+@inline _has_tag(::Type{ForwardDiff.Dual{S, V, N}}, ::Type{T}) where {S, V, N, T} =
+    S === T || _has_tag(S, T) || _has_tag(V, T)
+@inline _has_tag(::Type{ForwardDiff.Tag{F, V}}, ::Type{T}) where {F, V, T} = _has_tag(V, T)
+@inline _nl_prec(a, b) = _has_tag(b, a) ? true :
+    _has_tag(a, b) ? false : ForwardDiff.tagcount(a) < ForwardDiff.tagcount(b)
+@inline ForwardDiff.:≺(a::Type{ForwardDiff.Tag{F1, V1}}, b::Type{ForwardDiff.Tag{F2, V2}}) where {F1 <: _NLTag, V1, F2, V2} =
+    _nl_prec(a, b)
+@inline ForwardDiff.:≺(a::Type{ForwardDiff.Tag{F1, V1}}, b::Type{ForwardDiff.Tag{F2, V2}}) where {F1, V1, F2 <: _NLTag, V2} =
+    _nl_prec(a, b)
+@inline ForwardDiff.:≺(a::Type{ForwardDiff.Tag{F1, V1}}, b::Type{ForwardDiff.Tag{F2, V2}}) where {F1 <: _NLTag, V1, F2 <: _NLTag, V2} =
+    _nl_prec(a, b)
 
 @inline _logfb_tag(f::_LaplaceLogfBatch, b) = _nl_tag(_TagLogfB(), b, f.θ)
 @inline _logfb_grad_cfg(f::_LaplaceLogfBatch, b) =
