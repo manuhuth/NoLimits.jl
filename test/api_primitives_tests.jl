@@ -1590,8 +1590,12 @@ end
     @test NoLimits._ba_structure(dmv, bisv[batch_of(bisv, 1)], ccv) !== nothing
     @test NoLimits._ba_structure(dmd, bisd[batch_of(bisd, 1)], ccd) === nothing
 
+    # FOCEI/FOCE with an exact-Newton inner solve: the default Gauss-Newton stops at a
+    # tolerance that leaves ~1e-7 between the weighted and the duplicated mode.
+    exact_inner = NoLimits.NewtonInner(curvature = NoLimits.ExactHessianCurvature(), x_abstol = 1.0e-14)
     for m in (
-            NoLimits.Laplace(), NoLimits.FOCEI(), NoLimits.FOCEI(; interaction = false),
+            NoLimits.Laplace(), NoLimits.FOCEI(; inner_optimizer = exact_inner),
+            NoLimits.FOCEI(; interaction = false, inner_optimizer = exact_inner),
             NoLimits.GHQuadrature(level = 2),
         )
         v0, g0 = og(m, dm0, θ)
