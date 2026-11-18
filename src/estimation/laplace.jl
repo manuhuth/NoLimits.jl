@@ -249,6 +249,7 @@ _LaplaceBStarCache(b_star, has_bstar) = _LaplaceBStarCache(
 )
 
 function _laplace_store_predictor!(bc::_LaplaceBStarCache, bi::Int, θ, b, dbdθ)
+    eltype(dbdθ) <: ForwardDiff.Dual && return nothing
     (all(isfinite, dbdθ) && all(isfinite, b)) || (empty!(bc.pred_θ[bi]); return nothing)
     bc.pred_θ[bi] = collect(Float64, θ)
     bc.pred_b[bi] = collect(Float64, b)
@@ -2475,6 +2476,13 @@ function _laplace_grad_batch(
         grad = grad isa ComponentArray ? grad : ComponentArray(grad, getaxes(θ))
         return (logf = logf, logdet = 0.0, grad = grad)
     end
+    # Dual θ: the Float64 caches hold no partials, and b* needs its θ-derivative
+    use_cache = use_cache && !(eltype(θ) <: ForwardDiff.Dual)
+    b = _laplace_lift_bstar(
+        dm, batch_info, θ, b, const_cache, cache;
+        jitter = jitter, max_tries = max_tries, growth = growth, adaptive = adaptive,
+        scale_factor = scale_factor
+    )
 
     # θ is the (Float64) evaluation point for everything below except the
     # explicitly θ-differentiated closures (logf_θ, gθ!, fθ — those see dual θ
@@ -2716,6 +2724,30 @@ function _laplace_grad_batch(
     corr = vec(grad_logdet_b' * dbdθ)
     grad = grad_logf .- 0.5 .* (grad_logdet_θ .+ corr)
     return (logf = logf, logdet = logdet, grad = ComponentArray(grad, axs))
+end
+
+# An outer ForwardDiff pass over the gradient (Dual θ) sees the mode b*, solved in Float64,
+# as a constant. Give it the partials db*/dθ·dθ, with db*/dθ = (-H)⁻¹ ∂²log f/∂b∂θ (implicit
+# function theorem, exact H as for the gradient's own correction): Δ = (-H)⁻¹ ∇_b log f(θ, b*)
+# has value ≈ 0 and exactly these partials, so b* + (Δ - value(Δ)) keeps the value b*. Exact
+# for the first derivative of the gradient; Dual-over-Dual gets no second-order mode term.
+_laplace_lift_bstar(dm, info, θ, b, const_cache, cache; kwargs...) = b
+function _laplace_lift_bstar(
+        dm::DataModel, info::REBatchInfo, θ::ComponentArray{<:ForwardDiff.Dual}, b,
+        const_cache::REConstantsCache, cache::_LLCache; jitter, max_tries, growth,
+        adaptive, scale_factor
+    )
+    bv = map(_laplace_value, b)
+    H = _laplace_hessian_b(dm, info, _laplace_floatize(θ), bv, const_cache, cache, nothing, 1)
+    negH_definite_without_jitter(H) || return b
+    chol, _ = _laplace_cholesky_negH(
+        H; jitter = jitter, max_tries = max_tries, growth = growth, adaptive = adaptive,
+        scale_factor = scale_factor
+    )
+    (chol === nothing || chol.info != 0) && return b
+    f = _LaplaceLogfBatch(dm, info, θ, const_cache, cache)
+    Δ = chol \ ForwardDiff.gradient(f, bv, _logfb_grad_cfg(f, bv), Val(false))
+    return bv .+ (Δ .- ForwardDiff.value.(Δ))
 end
 
 struct LaplaceInnerOptions{O, K, A, T}
@@ -4194,6 +4226,8 @@ function _onepass_from_F(
         F, dm::DataModel, batch_info::REBatchInfo, θ, b, const_cache, cache, tctx;
         with_logf::Bool = false, split = nothing, Jx = nothing
     )
+    # Dual θ or b (an outer AD pass): the caller's eltype-generic separate passes
+    (eltype(θ) === Float64 && eltype(b) === Float64) || return nothing
     o, p = split === nothing ? _theta_split_obs_re(dm, θ) : split
     cx = ForwardDiff.Chunk(length(o) + length(b))
     cp = isempty(p) ? nothing : ForwardDiff.Chunk(length(p))

@@ -256,6 +256,20 @@ end
     g_fd = FiniteDifferences.grad(central_fdm(5, 1), obju, collect(θu))[1]
     @test collect(g) ≈ g_fd rtol = 1.0e-4
     @test all(isfinite, collect(g))
+
+    # ForwardDiff Jacobian of that gradient (serial path; the mode gets its db*/dθ partials)
+    # vs finite differences of it: exact up to FD error, and symmetric.
+    gu(x) = collect(
+        NL._laplace_objective_and_grad(
+            dm, batch_infos, ComponentArray(x, getaxes(θu)), const_cache, ll_cache, mkcache();
+            inner = inner_opts, hessian = method.hessian, cache_opts = method.cache,
+            multistart = ms_opts, rng = Xoshiro(0), serialization = NL.EnsembleSerial(),
+            hmode = hmode
+        )[2]
+    )
+    J = ForwardDiff.jacobian(gu, collect(θu))
+    @test J ≈ FiniteDifferences.jacobian(central_fdm(5, 1), gu, collect(θu))[1] rtol = 1.0e-5
+    @test norm(J - J') <= 1.0e-10 * norm(J)
 end
 
 @testset "FOCEI and Laplace gradients with a crossing level and an RE-only parameter" begin
